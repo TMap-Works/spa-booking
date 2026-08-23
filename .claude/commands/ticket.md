@@ -147,11 +147,22 @@ Avec `--draft`, ouvrir en brouillon et **s'arrêter ici** en donnant l'URL.
 ## Phase 7 — Intégration continue
 
 ```bash
-gh pr checks <pr> --repo TMap-Works/spa-booking --watch --fail-fast
+python scripts/pr_gate.py <pr>
 ```
 
+Le script attend que **tous** les workflows déclenchés par la PR aient conclu,
+puis rend son verdict par un code de sortie : `0` vert · `1` en attente ou délai
+dépassé · `2` check en échec · `3` PR inapte au merge · `4` erreur d'appel.
+
+Ne comptent comme verts que `SUCCESS`, `SKIPPED` et `NEUTRAL` — `SKIPPED` couvre
+les workflows filtrés par chemin (`terraform.yml` hors `infra/`) et
+`project-automation.yml` qui sort proprement sans `PROJECT_TOKEN`. Tout le reste
+bloque, y compris `CANCELLED` et `TIMED_OUT`. Une PR **sans aucun check** bloque
+également : cela veut dire qu'aucun workflow ne s'est déclenché, pas que tout va
+bien.
+
 Si la CI échoue : lire les logs (`gh run view --log-failed`), corriger, pousser,
-attendre à nouveau. **Trois échecs consécutifs → s'arrêter**, commenter la PR
+relancer le script. **Trois échecs consécutifs → s'arrêter**, commenter la PR
 avec le diagnostic et rendre la main. Une boucle de correction qui s'entête
 masque un problème de fond.
 
@@ -180,18 +191,34 @@ les options passées.
 
 ## Phase 9 — Merge
 
-Sauf `--no-merge` ou `--draft`. Trois conditions, toutes obligatoires :
-
-1. CI verte sur le dernier commit ;
-2. aucun constat bloquant en suspens ;
-3. la PR cible bien `develop`.
+Sauf `--no-merge` ou `--draft`. Le merge passe **toujours** par la barrière,
+jamais par un `gh pr merge` en direct :
 
 ```bash
-gh pr merge <pr> --repo TMap-Works/spa-booking --squash --delete-branch
+python scripts/pr_gate.py <pr> --merge
 ```
 
-Squash uniquement : c'est le seul mode autorisé sur le dépôt. Le titre de PR
-devient le message de merge, d'où l'exigence Conventional Commits.
+Le script relit l'état de la PR juste avant d'agir — un workflow a pu démarrer
+entre le verdict de la phase 7 et maintenant, ce qui périmerait ce verdict — et
+ne merge que si tout est encore vert. Il refuse également une PR en brouillon,
+en conflit, ou qui ne cible pas `develop`. Squash uniquement : c'est le seul
+mode autorisé sur le dépôt, et le titre de PR devient le message de merge, d'où
+l'exigence Conventional Commits.
+
+Pourquoi un script et non la consigne « vérifier que la CI est verte » : le
+dépôt est sur un plan GitHub **Free**, sans protection de branche ni check
+obligatoire. GitHub accepterait de merger une PR rouge. Le seul verrou est
+celui-ci, et un code de sortie ne se contourne pas aussi facilement qu'une
+phrase.
+
+**La seule condition que le script ne peut pas voir** est le résultat de la
+phase 8 : s'il reste un constat bloquant non résolu, ne pas l'appeler du tout.
+
+Après un merge réussi, le script supprime la branche **distante**, vérifie
+qu'elle a bien disparu, puis délègue le local à `worktree_gc.py` — qui emporte
+worktree et branche locale d'un même geste, avec ses garde-fous. Si la locale
+subsiste, il le dit : c'est que le worktree était sale ou portait des commits
+non poussés.
 
 ## Phase 10 — Clôture du ticket
 
@@ -213,21 +240,34 @@ label adéquat et une référence à la PR.
 
 ## Phase 11 — Nettoyage
 
-Si le merge a eu lieu : `ExitWorktree` avec `action: "remove"`, puis supprimer la
-branche locale restée derrière.
+Sortir du worktree avec `ExitWorktree`, `action: "keep"`, puis vérifier depuis
+le dépôt principal que la phase 9 a bien tout emporté :
 
 ```bash
-git branch -D feature/42-moteur-disponibilite   # depuis le dépôt principal
-git branch --list "*$1-*"                        # doit être vide
+python scripts/worktree_gc.py   # sans effet si pr_gate a déjà fait le ménage
+git worktree list               # plus de ligne pour ce ticket
+git branch --list "*$1-*"       # doit être vide
 ```
 
-Ce ménage explicite est nécessaire : `ExitWorktree` ne supprime que la branche
-qu'il a lui-même créée (`worktree-…`), et le renommage de la phase 1 la lui a
-fait perdre de vue. Sans cela, une branche orpheline reste à chaque ticket.
+Après un merge par `pr_gate.py --merge`, il ne reste normalement rien à faire :
+le ramasse-miettes a déjà été appelé. Ce second appel est idempotent et sert de
+contrôle — c'est lui qui rattrape les parcours interrompus, `--no-merge`, ou un
+merge fait à la main sur GitHub.
 
-Si la commande s'est arrêtée avant le merge : `action: "keep"`, et **dire où le
-travail se trouve** — chemin du worktree, nom de branche, URL de la PR, et ce
-qui reste à faire.
+`"keep"` plutôt que `"remove"` est délibéré : `ExitWorktree` ne supprime que la
+branche qu'il a lui-même créée (`worktree-…`), que le renommage de la phase 1
+lui a fait perdre de vue — il laisserait une branche orpheline à chaque ticket.
+Le script, lui, supprime le worktree **et** sa branche, et seulement sur preuve
+que le ticket est terminé : PR mergée, branche intégrée, ou issue fermée.
+
+Si la commande s'est arrêtée avant le merge, il n'y a rien à faire : le script
+conserve tout worktree dont la PR est encore ouverte, tout worktree sale et tout
+commit jamais poussé. **Dire où le travail se trouve** — chemin du worktree, nom
+de branche, URL de la PR, et ce qui reste à faire.
+
+Ce nettoyage est de toute façon automatique — les hooks `SessionStart` et `Stop`
+lancent le même script (voir [.claude/hooks/README.md](.claude/hooks/README.md)).
+L'appeler ici ne fait que le rendre immédiat et vérifiable dans le compte rendu.
 
 ## Compte rendu final
 

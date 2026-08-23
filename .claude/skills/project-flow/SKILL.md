@@ -35,6 +35,12 @@ Une issue hors périmètre MVP reçoit `post-mvp`, **aucun milestone**, et n'est
 travaillée. C'est le garde-fou contre le scope creep — risque à probabilité élevée
 du CDC §6.
 
+Les tickets de traçabilité ouverts par les hooks Claude Code (label `tracking`)
+ne font pas exception : même anatomie, même carte sur le board. Un ticket sans
+jalon n'apparaît dans aucun suivi et ne documente donc rien. Ils se filtrent par
+leur label quand une vue doit ne montrer que le backlog produit. Détail dans
+[.claude/hooks/README.md](../../hooks/README.md).
+
 Le corps d'une issue de fonctionnalité contient des **critères d'acceptation
 vérifiables**. « L'API renvoie 409 si le créneau est pris » est vérifiable ;
 « la réservation marche bien » ne l'est pas.
@@ -137,9 +143,20 @@ Une issue n'est `Done` que si **tout** est vrai :
 gh issue list --milestone "S2 — Réservation" --label "ws:backend"
 gh issue create --template feature.yml
 gh pr create --base develop --fill
-gh pr checks
 gh project item-list 2 --owner TMap-Works
+
+python scripts/pr_gate.py 42            # attend la CI, rend un verdict
+python scripts/pr_gate.py 42 --merge    # merge en squash si tout est vert
+python scripts/worktree_gc.py --dry-run # ce que le ménage supprimerait
+python scripts/project_status.py 42 "In review"          # bouge la carte
+python scripts/tracking.py classify 90 --module payments # corrige un ticket
 ```
+
+**Ne pas merger avec `gh pr merge` en direct.** Le dépôt est sur un plan GitHub
+Free : sans protection de branche ni check obligatoire, GitHub accepte de merger
+une PR rouge. `scripts/pr_gate.py` est le seul verrou — il exige que tous les
+workflows aient conclu au vert, relit l'état juste avant d'agir, puis supprime
+la branche distante et locale.
 
 ## 10. Automatisation du cycle
 
@@ -154,11 +171,19 @@ Trois points à connaître avant de s'y fier :
   pas posé, `project-automation.yml` ne s'exécute pas. C'est
   `scripts/project_status.py` qui pilote le champ Status, appelé explicitement
   par la commande.
-- **Le merge se fait sans approbation.** GitHub interdit d'approuver sa propre
-  PR : la revue est publiée en commentaire. Sur un changement sensible, préférer
-  `--no-merge` ou le parcours pas à pas.
+- **Le merge se fait sans approbation, mais jamais sans CI verte.** GitHub
+  interdit d'approuver sa propre PR : la revue est publiée en commentaire. La CI,
+  elle, est un verrou dur — `scripts/pr_gate.py` refuse de merger tant qu'un
+  workflow n'a pas conclu au vert. Sur un changement sensible, préférer quand
+  même `--no-merge` ou le parcours pas à pas : c'est la relecture *humaine* qui
+  manque, pas la vérification automatique.
 - **Le worktree exige `origin/HEAD` bien positionné**, sinon il part de `main`.
   Voir [docs/github-setup.md](../../../docs/github-setup.md).
 
 Pour garder la main étape par étape, utiliser `/feature-start`, `/pr-open` et
 `/sprint-status`, qui appliquent les mêmes conventions sans enchaîner.
+
+`/ticket-new` ne traite rien : il ouvre le **ticket de traçabilité** de la
+demande en cours, ou corrige le classement de celui que le hook a déjà ouvert.
+Le confondre avec `/ticket <issue>` reviendrait à documenter un échange au lieu
+de livrer une fonctionnalité.

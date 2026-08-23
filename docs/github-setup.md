@@ -17,7 +17,7 @@
 | CODEOWNERS | Revue obligatoire sur `infra/`, workflows, paiements, disponibilité, rendez-vous, migrations, `.claude/` |
 | Merge | Squash uniquement, suppression automatique de la branche, titre de PR comme message |
 | Environnements | `dev`, `staging`, `prod` |
-| Traçabilité | Hooks Claude Code : un ticket `tracking` par demande, clôturé avec le résumé des changements |
+| Traçabilité | Hooks Claude Code : un ticket `tracking` par demande — jalon, labels, carte Project — clôturé avec le résumé des changements |
 
 ## Workflows
 
@@ -37,8 +37,9 @@
 ## Labels particuliers
 
 - `tracking` — ticket ouvert automatiquement par les hooks Claude Code pour
-  historiser une demande. Sans milestone, exclu du Project. Voir
-  [.claude/hooks/README.md](../.claude/hooks/README.md).
+  historiser une demande, ou à la main par `/ticket-new`. Rattaché au jalon du
+  sprint et au Project comme n'importe quelle issue ; ce label est ce qui permet
+  de l'en filtrer. Voir [.claude/hooks/README.md](../.claude/hooks/README.md).
 - `post-mvp` — hors périmètre, sans milestone, non travaillé pendant le MVP.
 
 ## À faire manuellement
