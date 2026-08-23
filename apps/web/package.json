@@ -1,0 +1,7 @@
+{
+  "name": "@spa/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Front Next.js — parcours client public et tableau de bord admin",
+  "scripts": {}
+}

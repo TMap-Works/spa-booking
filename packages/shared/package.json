@@ -1,0 +1,9 @@
+{
+  "name": "@spa/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Types, schémas de validation et codes d'erreur partagés front/back",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {}
+}

@@ -17,6 +17,10 @@ jobs:
   deploy:
     name: Déployer sur dev
     runs-on: ubuntu-latest
+    # Tant que le compte AWS et le rôle OIDC n'existent pas (issue #14), le
+    # déploiement est ignoré proprement plutôt que de faire échouer chaque push.
+    # Poser la variable de dépôt AWS_REGION active les déploiements.
+    if: ${{ vars.AWS_REGION != '' }}
     environment: dev
     steps:
       - uses: actions/checkout@v4

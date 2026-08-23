@@ -26,7 +26,21 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ vars.PROJECT_NUMBER != '' }}
     steps:
+      # Sans PROJECT_TOKEN, le workflow ne peut rien écrire : on sort proprement
+      # avec un avertissement plutôt qu'en échec sur chaque issue.
+      - id: guard
+        env:
+          TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::secret PROJECT_TOKEN absent — voir docs/github-setup.md"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Mettre à jour le Project
+        if: steps.guard.outputs.ready == 'true'
         env:
           GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}

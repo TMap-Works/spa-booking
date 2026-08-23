@@ -3,13 +3,14 @@ name: Security scan
 on:
   pull_request:
     branches: [develop, staging, main]
+  push:
+    branches: [develop]
   schedule:
     - cron: '0 3 * * 1'
   workflow_dispatch:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   secrets:
@@ -19,36 +20,59 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Le CLI gitleaks (MIT) plutôt que gitleaks-action, qui exige une licence
+      # payante pour les dépôts d'organisation.
+      - name: gitleaks
+        run: |
+          curl -sSL -o gitleaks.tar.gz \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz
+          tar -xzf gitleaks.tar.gz gitleaks
+          ./gitleaks detect --source . --redact --verbose --no-banner
 
   dependencies:
     name: Vulnérabilités des dépendances
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: aquasecurity/trivy-action@master
+      - uses: aquasecurity/trivy-action@0.28.0
         with:
           scan-type: fs
           scan-ref: .
           severity: HIGH,CRITICAL
           exit-code: '1'
           ignore-unfixed: true
+          skip-dirs: docs/specs
 
   iac:
     name: Terraform (tfsec)
     runs-on: ubuntu-latest
-    if: hashFiles('infra/terraform/**/*.tf') != ''
     steps:
       - uses: actions/checkout@v4
+      # hashFiles n'est pas évaluable au niveau du job : le test se fait ici,
+      # après le checkout.
+      - id: tf
+        run: |
+          if compgen -G "infra/terraform/**/*.tf" > /dev/null; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "Aucun fichier Terraform pour l'instant — analyse ignorée."
+          fi
       - uses: aquasecurity/tfsec-action@v1.0.3
+        if: steps.tf.outputs.present == 'true'
         with:
           working_directory: infra/terraform
 
   codeql:
     name: CodeQL
+    # Le code scanning n'est pas disponible sur un dépôt privé en plan Free.
+    # Activer en posant la variable de dépôt ENABLE_CODEQL à 'true' après une
+    # montée de plan, ou si le dépôt devient public.
+    if: ${{ vars.ENABLE_CODEQL == 'true' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
       - uses: github/codeql-action/init@v3

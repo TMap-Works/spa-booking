@@ -20,11 +20,11 @@
     "test": "npm run test --workspaces --if-present",
     "test:unit": "npm run test:unit --workspaces --if-present",
     "test:integration": "npm run test:integration --workspaces --if-present",
-    "test:concurrency": "npm run test:concurrency --workspace apps/api --if-present",
-    "test:e2e": "npm run test:e2e --workspace apps/web --if-present",
-    "db:migrate": "npm run db:migrate --workspace apps/api --if-present",
-    "db:migrate:deploy": "npm run db:migrate:deploy --workspace apps/api --if-present",
-    "db:seed": "npm run db:seed --workspace apps/api --if-present"
+    "test:concurrency": "npm run test:concurrency --workspaces --if-present",
+    "test:e2e": "npm run test:e2e --workspaces --if-present",
+    "db:migrate": "npm run db:migrate --workspaces --if-present",
+    "db:migrate:deploy": "npm run db:migrate:deploy --workspaces --if-present",
+    "db:seed": "npm run db:seed --workspaces --if-present"
   },
   "devDependencies": {
     "@commitlint/cli": "^19.0.0",
