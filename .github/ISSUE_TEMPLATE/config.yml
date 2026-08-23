@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Cahier des charges (périmètre MVP)
+    url: https://github.com/TMap-Works/spa-booking/tree/main/docs/specs
+    about: Vérifiez le périmètre MVP avant d'ouvrir une issue.

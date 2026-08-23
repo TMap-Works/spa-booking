@@ -1,0 +1,11 @@
+# Revue par défaut
+*                       @spyle23
+
+# Zones sensibles — relecture obligatoire
+/infra/                 @spyle23
+/.github/workflows/     @spyle23
+/apps/api/src/modules/payments/       @spyle23
+/apps/api/src/modules/availability/   @spyle23
+/apps/api/src/modules/appointments/   @spyle23
+/apps/api/prisma/       @spyle23
+/.claude/               @spyle23

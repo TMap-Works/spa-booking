@@ -1,0 +1,73 @@
+name: Terraform
+
+on:
+  pull_request:
+    paths: ['infra/terraform/**']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environnement à appliquer
+        required: true
+        type: choice
+        options: [dev, staging, prod]
+
+permissions:
+  contents: read
+  pull-requests: write
+  id-token: write   # OIDC — aucune clé AWS statique
+
+jobs:
+  plan:
+    name: Plan (${{ matrix.env }})
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        env: [dev, staging, prod]
+    defaults:
+      run:
+        working-directory: infra/terraform/envs/${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check -recursive
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: terraform init
+      - run: terraform validate
+      - id: plan
+        run: terraform plan -no-color -out=tfplan
+        continue-on-error: true
+      - name: Publier le plan en commentaire
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = `### Terraform plan — \`${{ matrix.env }}\`\n\n<details><summary>Voir le plan</summary>\n\n\`\`\`terraform\n${{ steps.plan.outputs.stdout }}\n\`\`\`\n\n</details>`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body,
+            });
+      - if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  apply:
+    name: Apply (${{ inputs.environment }})
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}   # approbation manuelle sur prod
+    defaults:
+      run:
+        working-directory: infra/terraform/envs/${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - run: terraform init
+      - run: terraform apply -auto-approve

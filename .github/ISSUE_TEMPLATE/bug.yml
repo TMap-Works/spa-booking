@@ -1,0 +1,50 @@
+name: Bug
+description: Un comportement incorrect
+title: "fix: "
+labels: ["type:bug"]
+body:
+  - type: textarea
+    id: attendu
+    attributes:
+      label: Comportement attendu vs observé
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Étapes de reproduction
+      value: |
+        1. 
+        2. 
+        3. 
+    validations:
+      required: true
+  - type: dropdown
+    id: env
+    attributes:
+      label: Environnement
+      options: [local, dev, staging, production]
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Gravité
+      options:
+        - "P0 — bloquant (production indisponible, double réservation, fuite de données)"
+        - "P1 — majeur (fonctionnalité MVP inutilisable)"
+        - "P2 — mineur"
+    validations:
+      required: true
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module métier
+      options: [identity, catalog, availability, appointments, crm, payments, notifications, reporting, infra]
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, traces, captures
+      description: Ne collez aucun secret, jeton, ni donnée personnelle client.

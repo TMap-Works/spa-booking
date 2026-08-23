@@ -1,0 +1,53 @@
+name: Deploy Staging
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write   # OIDC — aucune clé AWS statique
+
+jobs:
+  deploy:
+    name: Déployer sur staging
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Construire et pousser les images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/spa-staging-api:$TAG -f apps/api/Dockerfile .
+          docker build -t $REGISTRY/spa-staging-web:$TAG -f apps/web/Dockerfile .
+          docker push $REGISTRY/spa-staging-api:$TAG
+          docker push $REGISTRY/spa-staging-web:$TAG
+
+      - name: Appliquer les migrations de base de données
+        run: |
+          aws ecs run-task             --cluster spa-staging             --task-definition spa-staging-migrate             --launch-type FARGATE             --network-configuration "${{ vars.ECS_NETWORK_CONFIG }}"             --wait
+
+      - name: Déployer les services ECS
+        run: |
+          aws ecs update-service --cluster spa-staging --service spa-staging-api --force-new-deployment
+          aws ecs update-service --cluster spa-staging --service spa-staging-web --force-new-deployment
+          aws ecs wait services-stable --cluster spa-staging --services spa-staging-api spa-staging-web
+
+      - name: Vérification de santé
+        run: curl --fail --retry 5 --retry-delay 10 ${{ vars.APP_URL }}/health

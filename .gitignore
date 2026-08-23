@@ -1,0 +1,57 @@
+# Dépendances
+node_modules/
+.pnp.*
+.yarn/
+
+# Build
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Environnement — jamais de secret versionné
+.env
+.env.local
+.env.*.local
+.env.development
+.env.staging
+.env.production
+!.env.example
+
+# Terraform — l'état contient des valeurs sensibles
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+.terraform.lock.hcl
+
+# Clés et certificats
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Tests et couverture
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+
+# Logs
+*.log
+npm-debug.log*
+logs/
+
+# Éditeurs et OS
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude Code — les réglages partagés sont versionnés, les locaux non
+.claude/settings.local.json

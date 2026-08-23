@@ -1,0 +1,27 @@
+name: Hors périmètre (post-MVP)
+description: Une idée à conserver pour après le MVP
+title: "post-mvp: "
+labels: ["post-mvp"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cette issue est enregistrée **sans milestone** et n'est pas travaillée
+        pendant le MVP. C'est le garde-fou contre la dérive de portée (CDC §6).
+  - type: textarea
+    id: besoin
+    attributes:
+      label: Besoin
+    validations:
+      required: true
+  - type: textarea
+    id: pourquoi_hors
+    attributes:
+      label: Pourquoi hors périmètre MVP
+      description: Citez la ligne du hors-périmètre du CDC §1.4 concernée.
+    validations:
+      required: true
+  - type: textarea
+    id: contournement
+    attributes:
+      label: Contournement possible pendant le MVP

@@ -1,0 +1,177 @@
+name: Project automation
+
+# Tient la carte du GitHub Project à jour sans intervention manuelle.
+# Conventions : .claude/skills/project-flow/SKILL.md
+#
+# Prérequis : un secret de dépôt PROJECT_TOKEN (PAT classique avec les scopes
+# `project` et `repo`). GITHUB_TOKEN ne peut pas écrire dans un projet
+# d'organisation, c'est une limite de GitHub et non un choix de configuration.
+
+on:
+  issues:
+    types: [opened, reopened, assigned, unassigned, closed, milestoned, demilestoned, labeled]
+  pull_request_target:
+    types: [opened, ready_for_review, converted_to_draft, closed]
+
+permissions:
+  contents: read
+
+env:
+  ORG: TMap-Works
+  PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+
+jobs:
+  sync:
+    name: Synchroniser la carte
+    runs-on: ubuntu-latest
+    if: ${{ vars.PROJECT_NUMBER != '' }}
+    steps:
+      - name: Mettre à jour le Project
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          ISSUE_NODE_ID: ${{ github.event.issue.node_id }}
+          ISSUE_MILESTONE: ${{ github.event.issue.milestone.title }}
+          ISSUE_LABELS: ${{ toJSON(github.event.issue.labels.*.name) }}
+          ISSUE_ASSIGNEES: ${{ toJSON(github.event.issue.assignees.*.login) }}
+          PR_NODE_ID: ${{ github.event.pull_request.node_id }}
+          PR_MERGED: ${{ github.event.pull_request.merged }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
+        run: |
+          set -euo pipefail
+
+          # ---------------------------------------------------------------
+          # Identifiants du projet et de ses champs
+          # ---------------------------------------------------------------
+          project=$(gh api graphql -f query='
+            query($org: String!, $num: Int!) {
+              organization(login: $org) {
+                projectV2(number: $num) {
+                  id
+                  fields(first: 30) {
+                    nodes {
+                      ... on ProjectV2SingleSelectField {
+                        id name options { id name }
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f org="$ORG" -F num="$PROJECT_NUMBER")
+
+          project_id=$(jq -r '.data.organization.projectV2.id' <<<"$project")
+
+          field_id() { jq -r --arg n "$1" \
+            '.data.organization.projectV2.fields.nodes[]? | select(.name==$n) | .id' <<<"$project"; }
+          option_id() { jq -r --arg f "$1" --arg o "$2" \
+            '.data.organization.projectV2.fields.nodes[]? | select(.name==$f) | .options[]? | select(.name==$o) | .id' <<<"$project"; }
+
+          set_select() {   # set_select <champ> <option>
+            local fid oid
+            fid=$(field_id "$1"); oid=$(option_id "$1" "$2")
+            if [ -z "$fid" ] || [ -z "$oid" ]; then
+              echo "::warning::champ '$1' ou option '$2' introuvable — ignoré"
+              return 0
+            fi
+            gh api graphql -f query='
+              mutation($p: ID!, $i: ID!, $f: ID!, $o: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $p, itemId: $i, fieldId: $f,
+                  value: { singleSelectOptionId: $o }
+                }) { projectV2Item { id } }
+              }' -f p="$project_id" -f i="$item_id" -f f="$fid" -f o="$oid" >/dev/null
+            echo "  $1 → $2"
+          }
+
+          # ---------------------------------------------------------------
+          # Élément concerné : l'issue, ou les issues liées à la PR
+          # ---------------------------------------------------------------
+          content_ids=()
+          if [ "$EVENT_NAME" = "issues" ]; then
+            content_ids=("$ISSUE_NODE_ID")
+          else
+            # Les issues que cette PR ferme (via "Closes #42")
+            mapfile -t content_ids < <(gh api graphql -f query='
+              query($id: ID!) {
+                node(id: $id) {
+                  ... on PullRequest {
+                    closingIssuesReferences(first: 10) { nodes { id } }
+                  }
+                }
+              }' -f id="$PR_NODE_ID" \
+              | jq -r '.data.node.closingIssuesReferences.nodes[]?.id')
+
+            if [ ${#content_ids[@]} -eq 0 ]; then
+              echo "::warning::aucune issue liée à cette PR — ajoutez 'Closes #<numéro>' dans le corps"
+              exit 0
+            fi
+          fi
+
+          for content_id in "${content_ids[@]}"; do
+            [ -z "$content_id" ] && continue
+
+            # Ajout au projet (idempotent : renvoie l'élément existant)
+            item_id=$(gh api graphql -f query='
+              mutation($p: ID!, $c: ID!) {
+                addProjectV2ItemById(input: { projectId: $p, contentId: $c }) {
+                  item { id }
+                }
+              }' -f p="$project_id" -f c="$content_id" \
+              | jq -r '.data.addProjectV2ItemById.item.id')
+
+            echo "Élément $item_id ($EVENT_NAME/$EVENT_ACTION)"
+
+            # -------------------------------------------------------------
+            # Status
+            # -------------------------------------------------------------
+            if [ "$EVENT_NAME" = "issues" ]; then
+              case "$EVENT_ACTION" in
+                opened|reopened)
+                  set_select "Status" "Backlog" ;;
+                assigned)
+                  set_select "Status" "In progress" ;;
+                unassigned)
+                  [ "$(jq 'length' <<<"$ISSUE_ASSIGNEES")" -eq 0 ] && set_select "Status" "Ready" ;;
+                closed)
+                  set_select "Status" "Done" ;;
+              esac
+            else
+              case "$EVENT_ACTION" in
+                opened|ready_for_review)
+                  [ "$PR_DRAFT" != "true" ] && set_select "Status" "In review" ;;
+                converted_to_draft)
+                  set_select "Status" "In progress" ;;
+                closed)
+                  if [ "$PR_MERGED" = "true" ]; then
+                    set_select "Status" "Done"
+                  else
+                    set_select "Status" "In progress"
+                  fi ;;
+              esac
+            fi
+
+            # -------------------------------------------------------------
+            # Sprint (depuis le milestone) et labels — issues uniquement
+            # -------------------------------------------------------------
+            if [ "$EVENT_NAME" = "issues" ]; then
+              case "$ISSUE_MILESTONE" in
+                S1*) set_select "Sprint" "S1" ;;
+                S2*) set_select "Sprint" "S2" ;;
+                S3*) set_select "Sprint" "S3" ;;
+                S4*) set_select "Sprint" "S4" ;;
+              esac
+
+              for label in $(jq -r '.[]' <<<"$ISSUE_LABELS"); do
+                case "$label" in
+                  ws:devops)          set_select "Workstream" "DevOps" ;;
+                  ws:backend)         set_select "Workstream" "Backend" ;;
+                  ws:frontend)        set_select "Workstream" "Frontend" ;;
+                  ws:design)          set_select "Workstream" "Design" ;;
+                  ws:qa)              set_select "Workstream" "QA" ;;
+                  mod:*)              set_select "Module" "${label#mod:}" ;;
+                  P0|P1|P2)           set_select "Priority" "$label" ;;
+                esac
+              done
+            fi
+          done

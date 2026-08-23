@@ -1,0 +1,33 @@
+{
+  "name": "spa-booking",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Plateforme SaaS de réservation pour spas et salons de beauté — MVP",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=20 <21",
+    "npm": ">=10"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:unit": "npm run test:unit --workspaces --if-present",
+    "test:integration": "npm run test:integration --workspaces --if-present",
+    "test:concurrency": "npm run test:concurrency --workspace apps/api --if-present",
+    "test:e2e": "npm run test:e2e --workspace apps/web --if-present",
+    "db:migrate": "npm run db:migrate --workspace apps/api --if-present",
+    "db:migrate:deploy": "npm run db:migrate:deploy --workspace apps/api --if-present",
+    "db:seed": "npm run db:seed --workspace apps/api --if-present"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^19.0.0",
+    "@commitlint/config-conventional": "^19.0.0"
+  }
+}

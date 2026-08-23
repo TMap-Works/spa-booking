@@ -1,0 +1,53 @@
+name: Deploy Development
+
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write   # OIDC — aucune clé AWS statique
+
+jobs:
+  deploy:
+    name: Déployer sur dev
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Construire et pousser les images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/spa-dev-api:$TAG -f apps/api/Dockerfile .
+          docker build -t $REGISTRY/spa-dev-web:$TAG -f apps/web/Dockerfile .
+          docker push $REGISTRY/spa-dev-api:$TAG
+          docker push $REGISTRY/spa-dev-web:$TAG
+
+      - name: Appliquer les migrations de base de données
+        run: |
+          aws ecs run-task             --cluster spa-dev             --task-definition spa-dev-migrate             --launch-type FARGATE             --network-configuration "${{ vars.ECS_NETWORK_CONFIG }}"             --wait
+
+      - name: Déployer les services ECS
+        run: |
+          aws ecs update-service --cluster spa-dev --service spa-dev-api --force-new-deployment
+          aws ecs update-service --cluster spa-dev --service spa-dev-web --force-new-deployment
+          aws ecs wait services-stable --cluster spa-dev --services spa-dev-api spa-dev-web
+
+      - name: Vérification de santé
+        run: curl --fail --retry 5 --retry-delay 10 ${{ vars.APP_URL }}/health

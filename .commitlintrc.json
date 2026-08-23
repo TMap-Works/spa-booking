@@ -1,0 +1,17 @@
+{
+  "extends": ["@commitlint/config-conventional"],
+  "rules": {
+    "type-enum": [2, "always", [
+      "feat", "fix", "docs", "ci", "chore",
+      "security", "perf", "hotfix", "test", "refactor"
+    ]],
+    "scope-enum": [1, "always", [
+      "identity", "catalog", "availability", "appointments",
+      "crm", "payments", "notifications", "reporting",
+      "api", "web", "shared", "infra", "ci", "docs", "deps"
+    ]],
+    "subject-max-length": [2, "always", 100],
+    "subject-empty": [2, "never"],
+    "type-empty": [2, "never"]
+  }
+}

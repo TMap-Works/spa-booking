@@ -1,0 +1,27 @@
+name: Tâche technique
+description: Chantier technique, infrastructure, outillage ou documentation
+title: "chore: "
+labels: ["type:chore"]
+body:
+  - type: textarea
+    id: objectif
+    attributes:
+      label: Objectif
+    validations:
+      required: true
+  - type: textarea
+    id: dod
+    attributes:
+      label: Définition de terminé
+      value: |
+        - [ ] 
+        - [ ] 
+    validations:
+      required: true
+  - type: dropdown
+    id: workstream
+    attributes:
+      label: Workstream
+      options: [DevOps, Backend, Frontend, Design, QA]
+    validations:
+      required: true

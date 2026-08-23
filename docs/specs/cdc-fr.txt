@@ -1,0 +1,649 @@
+DOCUMENT DE CADRAGE PROJET
+Application de Réservation
+Spa & Salon — MVP
+Planning · Roadmap d'implémentation · Infrastructure AWS
+Inspiré de la plateforme Booker.com
+
+Version du document
+1.2 — Français
+Date
+19 août 2026
+Statut
+Pour revue
+Type de projet
+Développement d'un produit SaaS (MVP)
+Public visé
+Direction produit, équipe technique, sponsors
+Durée cible
+1 mois (4 semaines)
+
+
+Sommaire
+
+	1. Introduction et contexte3
+	1.1 Objet du document3
+	1.2 Vision produit3
+	1.3 Enseignements tirés de l'analyse de Booker3
+	1.4 Rappel du périmètre MVP4
+	2. Architecture technique cible5
+	2.1 Principes d'architecture5
+	2.2 Stack technologique proposée5
+	2.3 Composants applicatifs (modules métier)6
+	2.4 Modèle de données — entités principales6
+	3. Roadmap et planning d'implémentation7
+	3.1 Méthodologie7
+	3.2 Découpage hebdomadaire (workstreams en parallèle)7
+	3.3 Détail des sprints7
+	3.4 Jalons clés8
+	3.5 Estimation d'effort (indicative)8
+	4. Requirements d'infrastructure AWS10
+	4.1 Principes directeurs de l'infrastructure10
+	4.2 Vue d'ensemble de l'architecture cible10
+	4.3 Réseau — Amazon VPC10
+	4.4 Compute — conteneurs applicatifs11
+	4.5 Bases de données et cache11
+	4.6 Stockage objet et diffusion de contenu11
+	4.7 Authentification et identités12
+	4.8 Notifications et tâches planifiées12
+	4.9 Paiements et conformité PCI-DSS12
+	4.10 Sécurité de l'infrastructure13
+	4.11 Observabilité et supervision13
+	4.12 CI/CD et Infrastructure-as-Code13
+	4.13 Environnements13
+	4.14 Sauvegarde et reprise d'activité (PRA/DR)14
+	4.15 Dimensionnement initial (production)14
+	4.16 Estimation budgétaire mensuelle (indicative)14
+	5. Sécurité, conformité et protection des données16
+	5.1 Principes de protection des données16
+	5.2 Conformité des paiements16
+	6. Risques et mesures d'atténuation17
+	7. Facteurs clés de succès et prochaines étapes18
+	7.1 Facteurs clés de succès18
+	7.2 Prochaines étapes immédiates18
+	7.3 Trajectoire post-MVP (aperçu)18
+
+
+1. Introduction et contexte
+1.1 Objet du document
+Ce document constitue le dossier de cadrage pour la conception et la mise en œuvre d'une application de réservation destinée aux spas et salons de beauté, dont le périmètre fonctionnel MVP (Minimum Viable Product) a été défini dans le document « Spa & Salon Booking App — MVP Feature Scope ». Il poursuit trois objectifs :
+Traduire le périmètre fonctionnel MVP en un plan d'implémentation concret, séquencé et estimé (roadmap, phases, sprints, jalons) ;
+Définir l'architecture technique cible et la stack technologique retenue ;
+Spécifier de manière détaillée les besoins d'infrastructure sur Amazon Web Services (AWS), incluant les services, le dimensionnement, la sécurité, la conformité et une estimation budgétaire.
+Il sert de référence commune entre la direction produit, l'équipe de développement, l'équipe infrastructure/DevOps et les sponsors du projet.
+1.2 Vision produit
+L'application vise à offrir aux instituts de beauté, spas, salons de coiffure, barbershops et studios de massage une plateforme de gestion tout-en-un : prise de rendez-vous en ligne pour les clients, tableau de bord d'administration pour le back-office, gestion des équipes et de leurs disponibilités, encaissement au comptoir, notifications automatisées et reporting d'activité. La plateforme de référence, Booker (groupe Mindbody), illustre le standard du marché.
+1.3 Enseignements tirés de l'analyse de Booker
+L'analyse de la plateforme Booker.com met en évidence les piliers d'une solution mature du secteur. Ces enseignements orientent nos priorités MVP et notre feuille de route post-MVP :
+Pilier observé chez Booker
+Traduction pour notre produit
+Horizon
+Réservation en ligne 24/7 et multi-canal (site, app, place de marché)
+Moteur de disponibilité temps réel et parcours de réservation client fluide
+MVP
+Réceptionniste IA (Messenger[ai]) gérant SMS et rendez-vous
+Notifications automatisées d'abord ; assistant IA en phase ultérieure
+Post-MVP
+POS intégré, Apple Pay, vente de produits, cartes cadeaux et forfaits
+POS de base (services + retail) au MVP ; cartes cadeaux/forfaits ensuite
+MVP / Post-MVP
+Outils de coordination d'équipe, substitutions, performance
+Comptes staff, rôles, disponibilités et plages bloquées
+MVP
+Marketing (booking de marque, emails/SMS ciblés, avis)
+Hors périmètre MVP — phase de croissance
+Post-MVP
+Insights de performance et reporting transactionnel détaillé
+Reporting de base : revenu, volume, no-shows
+MVP
+Inventaire (back bar), pourboires multi-staff, gestion caisse
+Hors périmètre MVP — à intégrer progressivement
+Post-MVP
+
+Positionnement MVP
+Notre MVP se concentre délibérément sur la boucle de valeur fondamentale : réserver → confirmer → honorer le rendez-vous → encaisser → mesurer. Les fonctionnalités de fidélisation, marketing, inventaire et multi-établissement — présentes chez Booker — sont explicitement reportées aux phases ultérieures afin de livrer vite un produit utilisable et générateur de revenus.
+1.4 Rappel du périmètre MVP
+Le périmètre retenu couvre six domaines fonctionnels. Les éléments hors périmètre sont listés pour éviter toute dérive de portée (scope creep).
+Domaine
+Fonctionnalités clés incluses au MVP
+Réservation client
+Catalogue de services (durée, prix), choix du praticien ou « premier disponible », calendrier de disponibilité temps réel, réservation/report/annulation, confirmations et rappels e-mail/SMS, compte client avec historique.
+Back-office / Admin
+Vue calendrier jour/semaine, création et édition manuelle de RDV (front-desk), gestion des horaires du personnel, catalogue de services, CRM client de base (coordonnées, notes, historique de visites).
+Gestion du personnel
+Comptes staff avec rôles et permissions, affectation de services par praticien, disponibilités et plages bloquées.
+Paiements
+Encaissement au checkout (carte/espèces), POS de base (services + produits retail), historique des ventes.
+Notifications
+Confirmation automatique, rappel 24 h avant, avis d'annulation au staff et au client.
+Reporting de base
+Synthèse du revenu quotidien, volume de rendez-vous, suivi des no-shows.
+
+Hors périmètre MVP (phases futures)
+Abonnements et forfaits · cartes cadeaux · campagnes marketing et e-mailing · paie (payroll) · multi-établissement · gestion d'inventaire · assistant de messagerie IA · référencement sur une place de marché tierce.
+
+
+2. Architecture technique cible
+2.1 Principes d'architecture
+L'architecture retenue privilégie la simplicité de mise en œuvre au stade MVP tout en préservant les capacités d'évolution vers une plateforme multi-établissement et multi-tenant. Les principes directeurs sont les suivants :
+Monolithe modulaire d'abord. Un backend applicatif unique, structuré en modules métier découplés (réservation, catalogue, staff, paiements, notifications, reporting), plutôt qu'une architecture microservices prématurée. Cela réduit le coût opérationnel du MVP tout en autorisant une extraction ultérieure en services distincts.
+Cloud-native et managé. Recours systématique aux services AWS managés (bases de données, files, notifications) pour minimiser la charge d'exploitation.
+Multi-tenant dès la conception. Isolation logique des données par établissement (tenant_id) dès le modèle de données, afin de préparer l'ouverture à plusieurs salons sans refonte.
+API-first. Une API REST/JSON versionnée expose l'ensemble des capacités, consommée par le web client, le tableau de bord admin et une future application mobile.
+Sécurité et conformité par défaut. Chiffrement au repos et en transit, externalisation de la conformité PCI-DSS au prestataire de paiement, respect des principes RGPD sur les données clients.
+2.2 Stack technologique proposée
+La pile technique suivante est recommandée. Elle repose sur des technologies matures, largement documentées et bien intégrées à l'écosystème AWS.
+Couche
+Technologie proposée
+Justification
+Web client & Admin
+React + Next.js (TypeScript)
+Rendu performant, SEO pour les pages de réservation publiques, écosystème riche.
+Application mobile
+React Native (post-MVP proche)
+Réutilisation des compétences et d'une partie du code TypeScript.
+Backend / API
+Node.js (NestJS) ou Python (FastAPI/Django)
+Framework structurant, typage, productivité élevée, adapté au monolithe modulaire.
+Base de données
+PostgreSQL (Amazon RDS)
+Relationnel robuste, transactions ACID indispensables pour la réservation et le paiement.
+Cache & sessions
+Redis (Amazon ElastiCache)
+Cache de disponibilités, verrous de réservation, files légères.
+Recherche/plein-texte
+PostgreSQL (extensions) au MVP
+Suffisant pour le catalogue ; OpenSearch envisageable ultérieurement.
+Paiements
+Stripe (ou Adyen)
+PCI-DSS pris en charge par le prestataire, tokenisation, Apple/Google Pay natifs.
+E-mails transactionnels
+Amazon SES
+Coût faible, intégration native, bonne délivrabilité.
+SMS
+Amazon SNS / Pinpoint (ou Twilio)
+Rappels et confirmations ; Twilio en secours selon la couverture pays.
+Conteneurisation
+Docker + Amazon ECS (Fargate)
+Exécution serverless de conteneurs, sans gestion de serveurs.
+IaC
+Terraform (ou AWS CDK)
+Infrastructure reproductible, versionnée, multi-environnements.
+2.3 Composants applicatifs (modules métier)
+Le backend est organisé en modules cohérents avec le périmètre MVP. Chaque module encapsule ses règles métier et expose ses points d'entrée d'API.
+Module
+Responsabilités principales
+Identité & accès
+Authentification (clients, staff, admin), gestion des rôles et permissions, tenants.
+Catalogue de services
+Services, catégories, durée, prix, affectation aux praticiens.
+Disponibilités & agenda
+Calcul de créneaux libres en temps réel, horaires du staff, plages bloquées, règles de préparation/finition.
+Réservations
+Cycle de vie du RDV : création, report, annulation, no-show ; verrouillage anti-double-réservation.
+CRM client
+Profils clients, coordonnées, notes, historique de visites.
+Paiements & POS
+Encaissement, tokenisation, ventes retail, historique des transactions, réconciliation.
+Notifications
+Orchestration des confirmations et rappels (e-mail/SMS), gestion des modèles et des envois planifiés.
+Reporting
+Agrégation du revenu, du volume de RDV et des no-shows ; exports.
+2.4 Modèle de données — entités principales
+Les entités clés et leurs relations sont résumées ci-dessous. Toutes les tables métier portent un tenant_id pour l'isolation multi-établissement.
+Entité
+Description
+Relations majeures
+Tenant
+Établissement (salon/spa)
+1–N vers Staff, Service, Client, Appointment
+User
+Compte (client / staff / admin) + rôle
+N–1 vers Tenant ; 1–N vers Appointment
+Service
+Prestation (nom, durée, prix, catégorie)
+N–N vers Staff ; 1–N vers Appointment
+Staff
+Praticien, horaires, plages bloquées
+N–N vers Service ; 1–N vers Appointment
+Appointment
+Rendez-vous (statut, créneau, praticien)
+N–1 vers Client, Staff, Service
+Payment
+Transaction (montant, moyen, statut)
+1–1 vers Appointment ou vente POS
+Notification
+Message émis (type, canal, statut)
+N–1 vers Appointment / Client
+
+
+3. Roadmap et planning d'implémentation
+Cible 1 mois — modèle de livraison
+Ce plan comprime l'intégralité du périmètre MVP en 4 semaines. C'est un calendrier ambitieux, tenable uniquement sous certaines conditions (voir les hypothèses ci-dessous) : une équipe pluridisciplinaire expérimentée travaillant pleinement en parallèle, le recours à des services AWS managés et à des gabarits de démarrage éprouvés, des prestataires tiers pour le paiement et la messagerie (sans développement interne), et un périmètre strictement figé.
+3.1 Méthodologie
+Le projet est conduit en mode Agile avec des sprints d'une semaine. Le travail est réparti en workstreams parallèles (infrastructure/DevOps, backend, frontend, QA) afin que les domaines avancent simultanément plutôt que séquentiellement. Chaque semaine se conclut par un incrément démontrable.
+Durée de sprint : 1 semaine.
+Durée totale du MVP : 4 semaines (1 mois), soit 4 sprints.
+Cérémonies : planification hebdomadaire, point quotidien, revue et rétrospective hebdomadaires ; démonstration en fin de semaine.
+Définition de « terminé » (DoD) : code revu, testé (unitaire + intégration), déployé en environnement de recette, documenté.
+3.2 Découpage hebdomadaire (workstreams en parallèle)
+Le MVP est livré sur quatre phases hebdomadaires. Au sein de chaque semaine, plusieurs workstreams s'exécutent en parallèle, ce qui rend la cible d'un mois atteignable.
+Sem.
+Thème
+Workstreams en parallèle
+S1
+Fondations & services cœur
+DevOps : socle AWS + CI/CD. Backend : modèle de données, auth/rôles, catalogue de services. Design : parcours UX & design system.
+S2
+Moteur de réservation & expérience client
+Backend : moteur de disponibilité temps réel, réservation/report/annulation, anti-double-réservation. Frontend : parcours client, comptes & historique.
+S3
+Back-office, staff & paiements
+Frontend : tableau de bord admin & calendrier. Backend : gestion du staff, CRM de base, intégration paiement & checkout, POS de base.
+S4
+Notifications, reporting & lancement
+Backend : notifications (confirmations, rappels 24 h, annulations) & reporting de base. QA : recette & durcissement. DevOps : mise en production.
+3.3 Détail des sprints
+Les quatre sprints d'une semaine ci-dessous rattachent chaque sprint à ses principaux lots de travaux (epics), livrés simultanément par les workstreams.
+Sprint
+Sem.
+Contenu principal
+S1
+Sem. 1
+Provisionnement du socle AWS (VPC, environnements) et du pipeline CI/CD ; modèle de données ; authentification et rôles ; module catalogue de services ; parcours UX et design system.
+S2
+Sem. 2
+Moteur de disponibilité temps réel (créneaux en direct) ; réservation, report et annulation ; comptes clients et historique ; verrouillage transactionnel anti-double-réservation.
+S3
+Sem. 3
+Tableau de bord admin avec calendrier jour/semaine et édition manuelle des RDV ; horaires du staff, plages bloquées et affectation des services ; CRM client de base ; intégration paiement (checkout tokenisé) et POS de base.
+S4
+Sem. 4
+Notifications (confirmations, rappels 24 h, avis d'annulation) avec envois planifiés ; reporting de base (revenu, volume, no-shows) ; recette (UAT), durcissement sécurité/performance ; bascule et mise en production.
+3.4 Jalons clés
+Jalon
+Échéance (fin de semaine)
+Critère de franchissement
+M1 — Fondations prêtes
+Sem. 1
+Infrastructure de base déployée, CI/CD opérationnel, authentification et catalogue de services fonctionnels.
+M2 — Réservation client complète
+Sem. 2
+Un client peut réserver, reporter, annuler et consulter son historique.
+M3 — Back-office & paiements en service
+Sem. 3
+Le front-desk gère l'agenda, le staff et les fiches clients ; encaissement au checkout et POS de base fonctionnels.
+M4 — Go-Live
+Sem. 4
+Toutes les fonctionnalités MVP livrées, recette validée, durcies et en production.
+3.5 Estimation d'effort (indicative)
+À titre d'ordre de grandeur, l'effort par workstream est estimé ci-dessous en jours-homme (j·h). Ces valeurs dimensionnent uniquement la charge de travail ; la constitution et la dotation de l'équipe sont volontairement hors du périmètre de ce document. Elles supposent le modèle de livraison énoncé ci-dessus (accélérateurs, services managés, périmètre figé) et sont à affiner en Semaine 1.
+Workstream / lot de travaux
+Effort estimé (j·h)
+Cadrage, UX/UI, design system
+12 – 18
+Socle AWS + CI/CD (IaC)
+12 – 18
+Catalogue + moteur de disponibilité
+20 – 28
+Parcours client (réservation/compte)
+20 – 28
+Back-office & gestion du staff
+22 – 30
+Paiements & POS
+16 – 22
+Notifications (e-mail/SMS)
+8 – 12
+Reporting de base
+6 – 10
+Recette, durcissement, lancement
+12 – 18
+Total indicatif MVP
+≈ 128 – 184 j·h
+
+Hypothèses derrière le calendrier d'1 mois
+Une capacité de livraison pluridisciplinaire expérimentée travaillant pleinement en parallèle · services AWS managés et gabarits de démarrage éprouvés · paiement et messagerie délégués à des prestataires tiers (sans développement interne) · périmètre MVP strictement figé · finitions non critiques réduites. Si l'une de ces hypothèses n'est pas réunie, le calendrier s'allonge en conséquence.
+
+
+4. Requirements d'infrastructure AWS
+4.1 Principes directeurs de l'infrastructure
+La conception de l'infrastructure suit le AWS Well-Architected Framework et ses six piliers : excellence opérationnelle, sécurité, fiabilité, efficacité des performances, optimisation des coûts et durabilité. Les grands choix structurants sont :
+Serverless de conteneurs. L'application s'exécute sur Amazon ECS en mode Fargate : aucun serveur à administrer, mise à l'échelle automatique.
+Haute disponibilité multi-AZ. Répartition sur au moins deux zones de disponibilité pour la production (calcul et base de données).
+Tout en Infrastructure-as-Code. L'ensemble est décrit en Terraform/CDK, versionné et déployé de façon reproductible sur chaque environnement.
+Moindre privilège. Rôles IAM granulaires, secrets isolés, réseau segmenté en sous-réseaux publics/privés.
+Région principale. Sélection d'une région AWS adaptée à la localisation des utilisateurs et aux exigences de résidence des données (ex. eu-west-1/eu-west-3 pour l'Europe/Afrique) ; CDN mondial via CloudFront.
+4.2 Vue d'ensemble de l'architecture cible
+Le flux logique ci-dessous va de l'utilisateur jusqu'aux services de données. Le trafic entrant est protégé par le CDN et le pare-feu applicatif, réparti par un load balancer vers les conteneurs applicatifs, lesquels s'appuient sur une base relationnelle managée, un cache, un stockage objet et des services de notification.
+Chaîne de traitement (haut niveau)
+Client / Admin  →  Amazon CloudFront (CDN) + AWS WAF
+→  Application Load Balancer (HTTPS/ACM)
+→  Amazon ECS Fargate (conteneurs API + web, multi-AZ)
+→  Amazon RDS PostgreSQL (Multi-AZ)  ·  Amazon ElastiCache Redis
+→  Amazon S3 (médias)  ·  Amazon SES/SNS (notifications)  ·  EventBridge + Lambda (rappels planifiés)
+Transverse : Cognito (identités) · Secrets Manager · CloudWatch/X-Ray · CodePipeline (CI/CD)
+4.3 Réseau — Amazon VPC
+Un VPC dédié par environnement isole les ressources. La segmentation en sous-réseaux publics et privés répartis sur deux zones de disponibilité constitue le socle de sécurité et de disponibilité.
+Composant
+Configuration
+Rôle
+VPC
+Un par environnement (dev, staging, prod), plage /16
+Isolation réseau.
+Sous-réseaux publics
+2 (une par AZ)
+ALB, NAT Gateway.
+Sous-réseaux privés (app)
+2 (une par AZ)
+Tâches ECS Fargate, Lambda.
+Sous-réseaux privés (données)
+2 (une par AZ)
+RDS, ElastiCache (non exposés à Internet).
+Internet Gateway
+1
+Sortie Internet pour les sous-réseaux publics.
+NAT Gateway
+1 à 2 (2 en prod pour la résilience)
+Sortie Internet contrôlée des sous-réseaux privés.
+Security Groups
+Par composant, moindre privilège
+Filtrage du trafic (ALB→ECS→RDS).
+VPC Endpoints
+S3, ECR, Secrets Manager, CloudWatch (privés)
+Accès aux services AWS sans passer par Internet.
+4.4 Compute — conteneurs applicatifs
+L'application (API et rendu web) s'exécute dans des conteneurs Docker orchestrés par Amazon ECS en mode Fargate, avec mise à l'échelle automatique selon la charge CPU/mémoire et derrière un Application Load Balancer.
+Service AWS
+Rôle
+Configuration de départ (prod)
+Amazon ECS (Fargate)
+Exécution des conteneurs applicatifs
+2–3 tâches, 0,5–1 vCPU / 1–2 Go par tâche, auto-scaling 2→8.
+Application Load Balancer
+Répartition HTTPS, health checks
+1 ALB, terminaison TLS via ACM.
+Amazon ECR
+Registre d'images Docker privé
+Un dépôt par service, scan de vulnérabilités activé.
+AWS Lambda
+Tâches asynchrones et planifiées (rappels)
+Fonctions déclenchées par EventBridge/SQS.
+Auto Scaling
+Adaptation à la charge
+Cible d'utilisation CPU ~60 %, montée/descente automatique.
+4.5 Bases de données et cache
+La persistance repose sur PostgreSQL managé (Amazon RDS) en configuration Multi-AZ pour la production, complété par un cache Redis (ElastiCache) pour les disponibilités et les verrous de réservation.
+Service
+Rôle
+Configuration (prod)
+Amazon RDS PostgreSQL
+Base de données transactionnelle principale
+Instance db.t4g.medium/large, Multi-AZ, stockage gp3 chiffré, sauvegardes automatiques 7–30 j.
+Amazon ElastiCache (Redis)
+Cache disponibilités, sessions, verrous
+cache.t4g.small, 1 réplica, chiffrement activé.
+Réplicas de lecture (option)
+Décharger les lectures reporting
+1 read replica à activer selon la charge.
+Amazon RDS Proxy (option)
+Mutualisation des connexions
+Recommandé si usage intensif de Lambda.
+4.6 Stockage objet et diffusion de contenu
+Service
+Rôle
+Configuration
+Amazon S3
+Médias (photos de services, avatars), exports, sauvegardes applicatives
+Buckets chiffrés (SSE-KMS), versioning, blocage d'accès public, politiques de cycle de vie.
+Amazon CloudFront
+CDN mondial pour le web et les médias
+Distribution HTTPS, cache proche des utilisateurs, intégration WAF.
+AWS Certificate Manager
+Certificats TLS gratuits et gérés
+Certificats pour ALB et CloudFront, renouvellement automatique.
+4.7 Authentification et identités
+La gestion des comptes (clients, staff, administrateurs) et des rôles peut s'appuyer sur Amazon Cognito, ou sur une solution interne selon les besoins de personnalisation.
+Service
+Rôle
+Détails
+Amazon Cognito
+Inscription/connexion, jetons JWT, fédération
+User pools par tenant ou pool unique avec attributs de rôle ; MFA optionnel pour le staff.
+AWS IAM
+Droits d'accès aux ressources AWS
+Rôles par service, moindre privilège, pas de clés statiques.
+AWS Secrets Manager
+Secrets applicatifs (BD, clés API paiement)
+Rotation automatique, accès via le rôle IAM des tâches ECS.
+4.8 Notifications et tâches planifiées
+Les confirmations, rappels et avis d'annulation reposent sur des services managés. Les rappels « 24 h avant » sont déclenchés par une planification et exécutés de façon asynchrone.
+Service
+Rôle
+Détails
+Amazon SES
+E-mails transactionnels (confirmation, rappel, annulation)
+Modèles, domaine vérifié (DKIM/SPF/DMARC), suivi des bounces.
+Amazon SNS / Pinpoint
+SMS de confirmation et de rappel
+Envoi transactionnel ; Twilio en alternative selon la couverture.
+Amazon EventBridge (Scheduler)
+Déclenchement planifié des rappels
+Règles horaires évaluant les RDV à J-1.
+Amazon SQS
+File de découplage des envois
+Fiabilise et lisse les pics d'envoi de notifications.
+AWS Lambda
+Logique d'envoi asynchrone
+Consomme SQS, appelle SES/SNS, met à jour le statut.
+4.9 Paiements et conformité PCI-DSS
+Le traitement des paiements est délégué à un prestataire certifié PCI-DSS de niveau 1 (Stripe ou équivalent). L'application ne stocke jamais de numéro de carte : elle manipule uniquement des jetons (tokens). Cette approche réduit fortement le périmètre de conformité PCI à notre charge (auto-évaluation SAQ A).
+Tokenisation côté client. Les données de carte transitent directement du navigateur vers le prestataire ; notre backend ne reçoit qu'un jeton.
+Webhooks sécurisés. Réception des événements de paiement (succès, échec, remboursement) via des webhooks signés et vérifiés.
+Journalisation et réconciliation. Historique des transactions conservé côté application, rapproché des relevés du prestataire.
+Aucune donnée de carte au repos. Conformité renforcée, périmètre d'audit minimal.
+4.10 Sécurité de l'infrastructure
+Service / mesure
+Objectif
+AWS WAF
+Protection contre les attaques applicatives (injections, XSS, bots) en amont de CloudFront/ALB.
+AWS Shield (Standard)
+Protection DDoS de base incluse ; Shield Advanced en option.
+Chiffrement KMS
+Chiffrement au repos (RDS, S3, EBS, ElastiCache, secrets) via clés gérées.
+TLS partout
+Chiffrement en transit (HTTPS/TLS 1.2+) sur toutes les communications externes.
+AWS GuardDuty
+Détection de menaces et d'activités anormales sur le compte.
+AWS Config + CloudTrail
+Traçabilité des changements et audit complet des appels d'API.
+Security Groups & NACL
+Segmentation réseau stricte entre couches (web, app, données).
+IAM & moindre privilège
+Aucune clé statique, rôles temporaires, séparation des environnements.
+4.11 Observabilité et supervision
+Service
+Rôle
+Amazon CloudWatch
+Métriques, logs applicatifs et d'infrastructure, tableaux de bord, alarmes.
+AWS X-Ray
+Traçage distribué des requêtes pour diagnostiquer la latence.
+CloudWatch Alarms + SNS
+Alertes automatiques (CPU, erreurs 5xx, latence, saturation BD) vers l'équipe.
+CloudWatch Synthetics (option)
+Sondes de disponibilité simulant des parcours clés (réservation).
+4.12 CI/CD et Infrastructure-as-Code
+Le déploiement est automatisé de bout en bout. Le code d'infrastructure et le code applicatif suivent le même flux : revue, tests, construction, déploiement progressif.
+Élément
+Outil
+Rôle
+Gestion de source
+GitHub / AWS CodeCommit
+Dépôts versionnés, revues par pull request.
+Intégration continue
+GitHub Actions / AWS CodeBuild
+Tests automatisés, construction et scan des images Docker.
+Déploiement continu
+AWS CodePipeline / CodeDeploy
+Déploiement vers ECS avec stratégie blue-green ou canary.
+Infrastructure-as-Code
+Terraform (ou AWS CDK)
+Provisionnement reproductible de tous les environnements.
+Registre d'images
+Amazon ECR
+Stockage sécurisé des images conteneur.
+4.13 Environnements
+Trois environnements isolés couvrent le cycle de vie. Les environnements hors production sont dimensionnés a minima et peuvent être arrêtés hors heures ouvrées pour réduire les coûts.
+Environnement
+Usage
+Dimensionnement
+Développement (dev)
+Développement quotidien, intégration
+Ressources minimales, mono-AZ, données fictives.
+Recette (staging)
+Tests d'intégration, UAT, pré-production
+Proche de la production à échelle réduite.
+Production (prod)
+Service aux utilisateurs finaux
+Multi-AZ, haute disponibilité, sauvegardes et supervision complètes.
+4.14 Sauvegarde et reprise d'activité (PRA/DR)
+Mesure
+Détail
+Objectif
+Sauvegardes RDS automatiques
+Rétention 7–30 jours + snapshots manuels avant releases
+RPO faible sur les données transactionnelles.
+AWS Backup
+Sauvegardes centralisées et planifiées (RDS, S3, EFS)
+Politique de rétention unifiée et auditable.
+Multi-AZ
+Bascule automatique de la base en cas de panne d'une AZ
+Haute disponibilité intra-région.
+Réplication S3 (option)
+Copie inter-région des médias et exports
+Résilience régionale.
+Runbook de restauration
+Procédure testée de restauration et de bascule
+RTO maîtrisé, restauration éprouvée.
+
+Objectifs de continuité (cibles à confirmer)
+RPO (perte de données maximale tolérée) : ≤ 1 heure.   RTO (temps de reprise visé) : ≤ 4 heures.
+Ces valeurs sont des cibles de départ, à valider avec le métier selon la criticité et le budget.
+4.15 Dimensionnement initial (production)
+Le dimensionnement ci-dessous correspond à un MVP servant un à quelques établissements, avec une charge modérée. L'auto-scaling absorbe les pics ; le dimensionnement est réévalué après le lancement en fonction des métriques réelles.
+Ressource
+Dimension de départ
+Levier de montée en charge
+ECS Fargate
+2–3 tâches (0,5–1 vCPU / 1–2 Go)
+Auto-scaling jusqu'à 8 tâches.
+RDS PostgreSQL
+db.t4g.medium, Multi-AZ, 50–100 Go gp3
+Instance supérieure + read replicas.
+ElastiCache Redis
+cache.t4g.small, 1 réplica
+Nœuds plus grands / cluster mode.
+ALB
+1 (2 AZ)
+Débit géré automatiquement.
+NAT Gateway
+2 (une par AZ)
+Débit géré automatiquement.
+4.16 Estimation budgétaire mensuelle (indicative)
+L'estimation suivante donne un ordre de grandeur du coût mensuel de la production, en dollars US, hors taxes, hors coûts de développement et hors volumétrie SMS (très variable selon le pays et le volume). Les montants réels dépendent de la région, du trafic et des optimisations (instances réservées, Savings Plans).
+Poste (production)
+Fourchette mensuelle (USD)
+Amazon ECS Fargate
+70 – 130
+Amazon RDS PostgreSQL (Multi-AZ)
+180 – 260
+Amazon ElastiCache (Redis)
+25 – 60
+Application Load Balancer
+20 – 30
+NAT Gateway (×2) + transfert de données
+70 – 120
+Amazon S3 + CloudFront
+20 – 60
+Amazon SES (e-mails)
+1 – 15
+WAF, Secrets Manager, KMS, CloudWatch
+40 – 90
+Cognito (selon MAU)
+0 – 30
+Sous-total production (hors SMS)
+≈ 430 – 800 / mois
+Environnements dev + staging (réduits)
+150 – 300
+SMS (SNS/Pinpoint ou Twilio)
+Selon volume et pays
+
+Leviers d'optimisation des coûts
+Compute Savings Plans / instances réservées sur RDS et Fargate (jusqu'à ~40 % d'économie sur charge stable) · arrêt programmé des environnements hors production · politiques de cycle de vie S3 · surveillance via AWS Budgets et Cost Explorer · révision du dimensionnement après 1 à 2 mois d'exploitation réelle.
+
+
+5. Sécurité, conformité et protection des données
+Au-delà des mesures d'infrastructure (section 4.10), la protection des données personnelles des clients constitue une exigence transverse. L'application traite des données à caractère personnel (identité, coordonnées, historique de rendez-vous, notes) soumises aux réglementations applicables (RGPD en Europe et cadres équivalents).
+5.1 Principes de protection des données
+Minimisation. Ne collecter que les données strictement nécessaires à la réservation et au suivi client.
+Consentement et finalités. Information claire des utilisateurs, base légale explicite pour chaque traitement (notifications, marketing ultérieur).
+Droits des personnes. Mécanismes d'accès, de rectification, d'export et de suppression des données (droit à l'oubli).
+Chiffrement. Chiffrement systématique au repos (KMS) et en transit (TLS).
+Cloisonnement multi-tenant. Isolation logique stricte des données entre établissements.
+Résidence des données. Choix de la région AWS en cohérence avec les obligations de localisation.
+5.2 Conformité des paiements
+La délégation du traitement des cartes à un prestataire PCI-DSS de niveau 1 et l'absence de stockage de données de carte réduisent le périmètre de conformité à notre charge à une auto-évaluation simplifiée (SAQ A). Les webhooks et clés d'API sont sécurisés via Secrets Manager.
+
+
+6. Risques et mesures d'atténuation
+Les principaux risques identifiés et leurs mesures d'atténuation sont recensés ci-dessous. Ce registre est vivant : il est revu à chaque fin de semaine.
+Risque
+Impact
+Prob.
+Mesure d'atténuation
+Glissement du calendrier comprimé d'1 mois
+Élevé
+Moy.
+Périmètre figé, workstreams en parallèle, suivi quotidien, accélérateurs ; report des éléments en excès sur une release rapide de suivi.
+Double réservation d'un même créneau
+Élevé
+Moy.
+Verrouillage transactionnel et contraintes d'unicité en base ; tests de concurrence.
+Dérive du périmètre (scope creep)
+Élevé
+Élevée
+Périmètre MVP figé, backlog priorisé, gouvernance des changements.
+Délivrabilité e-mail/SMS insuffisante
+Moyen
+Moy.
+Domaine vérifié (DKIM/SPF/DMARC), suivi des bounces, fournisseur SMS de secours.
+Coûts AWS supérieurs aux prévisions
+Moyen
+Moy.
+AWS Budgets, Cost Explorer, right-sizing, Savings Plans, arrêt des environnements hors prod.
+Non-conformité RGPD
+Élevé
+Faible
+Privacy by design, registre des traitements, gestion des droits, région adaptée.
+Indisponibilité (panne d'AZ)
+Élevé
+Faible
+Multi-AZ, sauvegardes, runbook de restauration testé.
+
+
+7. Facteurs clés de succès et prochaines étapes
+7.1 Facteurs clés de succès
+Un périmètre MVP strictement maîtrisé et protégé de toute dérive — critique compte tenu du calendrier d'un mois.
+Des workstreams en parallèle et un socle technique plus une infrastructure automatisés dès le premier jour (Semaine 1).
+Une attention particulière au moteur de disponibilité et à la prévention des doubles réservations, cœur de la valeur perçue.
+Une expérience de réservation client simple, rapide et fiable.
+Une observabilité et une supervision en place avant le lancement.
+Une gouvernance produit et une communication régulières avec les parties prenantes.
+7.2 Prochaines étapes immédiates
+Valider ce document de cadrage avec les parties prenantes et confirmer la cible d'un mois et ses hypothèses.
+Confirmer la stack technologique et la région AWS cible.
+Initialiser le backlog priorisé et figer le modèle de livraison et les hypothèses.
+Lancer la Semaine 1 : socle AWS, CI/CD, modèle de données, authentification, catalogue de services et parcours UX en parallèle.
+Affiner les estimations d'effort et de budget à la fin de la Semaine 1.
+7.3 Trajectoire post-MVP (aperçu)
+Une fois le MVP stabilisé, la feuille de route de croissance pourra intégrer, par ordre de valeur : abonnements et forfaits, cartes cadeaux, campagnes marketing et e-mailing, gestion d'inventaire (back bar), pourboires multi-staff, support multi-établissement, assistant de messagerie IA (à l'image de Messenger[ai] de Booker) et application mobile native. Ces évolutions s'appuieront sur l'architecture modulaire et multi-tenant posée dès le MVP.
+
+Fin du document — Application de Réservation Spa & Salon (MVP) · Planning, Roadmap & Infrastructure AWS · v1.2

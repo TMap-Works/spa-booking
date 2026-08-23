@@ -1,0 +1,61 @@
+name: Fonctionnalité
+description: Une fonctionnalité du périmètre MVP
+title: "feat: "
+labels: ["type:feature"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Vérifiez d'abord que la demande est **dans le périmètre MVP** (CDC §1.4).
+        Si elle n'y est pas, utilisez plutôt le modèle « Hors périmètre (post-MVP) ».
+  - type: textarea
+    id: contexte
+    attributes:
+      label: Contexte et besoin
+      description: Quel problème utilisateur cette fonctionnalité résout-elle ?
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Critères d'acceptation
+      description: Vérifiables un par un. « L'API renvoie 409 si le créneau est pris » est vérifiable ; « la réservation marche bien » ne l'est pas.
+      value: |
+        - [ ] 
+        - [ ] 
+        - [ ] 
+    validations:
+      required: true
+  - type: dropdown
+    id: workstream
+    attributes:
+      label: Workstream
+      options: [DevOps, Backend, Frontend, Design, QA]
+    validations:
+      required: true
+  - type: dropdown
+    id: module
+    attributes:
+      label: Module métier
+      options: [identity, catalog, availability, appointments, crm, payments, notifications, reporting, infra]
+    validations:
+      required: true
+  - type: dropdown
+    id: sprint
+    attributes:
+      label: Sprint visé
+      options: ["S1 — Fondations", "S2 — Réservation", "S3 — Back-office & paiements", "S4 — Notifications, reporting & lancement"]
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priorité
+      options: ["P0 — bloquant", "P1 — requis pour le MVP", "P2 — souhaitable"]
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Points d'attention
+      description: Isolation multi-tenant, concurrence, fuseaux horaires, montants, conformité PCI, RGPD…

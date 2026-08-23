@@ -1,0 +1,86 @@
+name: PR governance
+
+# Fait respecter les conventions de CONTRIBUTING.md avant la revue humaine,
+# pour que les relecteurs ne perdent pas leur temps sur du formalisme.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  checks:
+    name: Conventions de PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Vérifier le nom de branche
+        env:
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          if [[ ! "$BRANCH" =~ ^(feature|bugfix|hotfix|chore|docs)/[0-9]+-[a-z0-9._-]+$ ]]; then
+            echo "::error::Nom de branche invalide : '$BRANCH'"
+            echo "Attendu : <type>/<numéro-issue>-<description> — ex. feature/42-moteur-disponibilite"
+            echo "Le numéro d'issue est ce qui relie la branche à sa carte du Project (BRANCHING.md)."
+            exit 1
+          fi
+
+      - name: Vérifier la branche cible
+        env:
+          BASE: ${{ github.base_ref }}
+          HEAD: ${{ github.head_ref }}
+        run: |
+          if [ "$BASE" = "main" ] && [ "$HEAD" != "staging" ] && [[ ! "$HEAD" =~ ^hotfix/ ]]; then
+            echo "::error::Une PR vers main ne peut venir que de staging ou d'un hotfix/* (BRANCHING.md)"
+            exit 1
+          fi
+          if [ "$BASE" = "staging" ] && [ "$HEAD" != "develop" ] && [[ ! "$HEAD" =~ ^hotfix/ ]]; then
+            echo "::error::Une PR vers staging ne peut venir que de develop ou d'un hotfix/*"
+            exit 1
+          fi
+
+      - name: Vérifier la référence à l'issue
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if ! grep -qiE '(clos(e|es|ed)|fix(e[sd])?|resolv(e|es|ed))[[:space:]]+#[0-9]+' <<<"$BODY"; then
+            echo "::error::Le corps de la PR doit contenir 'Closes #<numéro>'"
+            echo "C'est cette ligne qui ferme l'issue et déplace la carte du Project en Done."
+            exit 1
+          fi
+
+      - name: Signaler une PR volumineuse
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          changed=$(gh pr view "$PR" --repo "$REPO" --json changedFiles --jq '.changedFiles')
+          if [ "$changed" -gt 40 ]; then
+            echo "::warning::$changed fichiers modifiés — envisagez de découper cette PR (une PR = une issue)"
+          fi
+
+      - name: Rappeler les vérifications sensibles
+        if: github.event.action == 'opened'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          files=$(gh pr diff "$PR" --repo "$REPO" --name-only)
+          notes=""
+          grep -q '^apps/api/prisma/migrations/' <<<"$files" && \
+            notes="$notes\n- **Migration Prisma** : additive et réversible ? \`tenant_id\` non nullable ? index préfixé par \`tenant_id\` ?"
+          grep -qE '^apps/api/src/modules/(payments|checkout)/' <<<"$files" && \
+            notes="$notes\n- **Paiements** : aucune donnée de carte côté serveur, webhook vérifié sur le corps brut, traitement idempotent (SAQ A)."
+          grep -qE '^apps/api/src/modules/(availability|appointments)/' <<<"$files" && \
+            notes="$notes\n- **Réservation** : la contrainte d'exclusion reste la source de vérité, les tests de concurrence passent."
+          grep -q '^infra/terraform/' <<<"$files" && \
+            notes="$notes\n- **Infrastructure** : plan relu, aucune suppression involontaire, étiquettes de coût présentes."
+
+          if [ -n "$notes" ]; then
+            printf "### Points à vérifier en revue\n%b\n" "$notes" \
+              | gh pr comment "$PR" --repo "$REPO" --body-file -
+          fi

@@ -1,0 +1,93 @@
+name: Deploy Production
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write   # OIDC — aucune clé AWS statique
+
+jobs:
+  deploy:
+    name: Déployer en production
+    runs-on: ubuntu-latest
+    environment: prod   # approbation manuelle requise
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+
+      - name: Snapshot RDS avant déploiement
+        run: |
+          aws rds create-db-snapshot \
+            --db-instance-identifier spa-prod-rds \
+            --db-snapshot-identifier "spa-prod-predeploy-$(date +%Y%m%d%H%M%S)"
+
+      - name: Construire et pousser les images
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker build -t $REGISTRY/spa-prod-api:$TAG -f apps/api/Dockerfile .
+          docker build -t $REGISTRY/spa-prod-web:$TAG -f apps/web/Dockerfile .
+          docker push $REGISTRY/spa-prod-api:$TAG
+          docker push $REGISTRY/spa-prod-web:$TAG
+
+      - name: Appliquer les migrations de base de données
+        run: |
+          aws ecs run-task \
+            --cluster spa-prod \
+            --task-definition spa-prod-migrate \
+            --launch-type FARGATE \
+            --network-configuration "${{ vars.ECS_NETWORK_CONFIG }}" \
+            --wait
+
+      - name: Déployer les services ECS
+        run: |
+          aws ecs update-service --cluster spa-prod --service spa-prod-api --force-new-deployment
+          aws ecs update-service --cluster spa-prod --service spa-prod-web --force-new-deployment
+          aws ecs wait services-stable --cluster spa-prod --services spa-prod-api spa-prod-web
+
+      - name: Vérification de santé
+        run: curl --fail --retry 10 --retry-delay 15 ${{ vars.APP_URL }}/health
+
+      - name: Étiqueter la version déployée
+        run: |
+          git tag "deploy-prod-$(date +%Y%m%d-%H%M%S)" ${{ github.sha }}
+          git push --tags
+
+  rollback-on-failure:
+    name: Rollback
+    needs: deploy
+    if: failure()
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+      - name: Revenir à la définition de tâche précédente
+        run: |
+          for svc in api web; do
+            prev=$(aws ecs describe-services --cluster spa-prod --services spa-prod-$svc \
+              --query 'services[0].deployments[1].taskDefinition' --output text)
+            if [ "$prev" != "None" ] && [ -n "$prev" ]; then
+              aws ecs update-service --cluster spa-prod --service spa-prod-$svc --task-definition "$prev"
+            fi
+          done
+          aws ecs wait services-stable --cluster spa-prod --services spa-prod-api spa-prod-web
