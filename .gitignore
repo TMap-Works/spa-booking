@@ -57,3 +57,5 @@ Thumbs.db
 .claude/settings.local.json
 # État des tickets de traçabilité : propre à chaque session
 .claude/.tracking/
+# Worktrees créés par /ticket
+.claude/worktrees/
