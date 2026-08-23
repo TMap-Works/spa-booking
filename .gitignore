@@ -40,6 +40,10 @@ coverage/
 playwright-report/
 test-results/
 
+# Python — outillage de scripts/
+__pycache__/
+*.py[cod]
+
 # Logs
 *.log
 npm-debug.log*
