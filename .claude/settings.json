@@ -33,9 +33,14 @@
       "Bash(terraform plan:*)",
       "Bash(docker compose ps:*)",
       "Bash(docker compose logs:*)",
+      "Bash(python scripts/worktree_gc.py:*)",
+      "Bash(python scripts/tracking.py:*)",
+      "Bash(python scripts/project_status.py:*)",
       "Bash(gh issue create:*)",
       "Bash(gh issue comment:*)",
-      "Bash(gh issue close:*)"
+      "Bash(gh issue edit:*)",
+      "Bash(gh issue close:*)",
+      "Bash(gh api repos/TMap-Works/spa-booking/milestones:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",
@@ -66,7 +71,7 @@
           {
             "type": "command",
             "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/request_open.py\"",
-            "timeout": 25,
+            "timeout": 60,
             "statusMessage": "Ouverture du ticket de traçabilité…"
           }
         ]
@@ -78,8 +83,32 @@
           {
             "type": "command",
             "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/request_close.py\"",
-            "timeout": 25,
+            "timeout": 60,
             "statusMessage": "Clôture du ticket de traçabilité…"
+          },
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree_gc.py\"",
+            "timeout": 70,
+            "statusMessage": "Nettoyage des worktrees terminés…"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree_gc.py\"",
+            "timeout": 70,
+            "statusMessage": "Nettoyage des worktrees terminés…"
+          },
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/tracking.py\" sweep",
+            "timeout": 60,
+            "statusMessage": "Clôture des tickets laissés ouverts…"
           }
         ]
       }
