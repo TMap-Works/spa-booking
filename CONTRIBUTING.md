@@ -81,8 +81,20 @@ Le dépôt embarque un environnement Claude Code complet dans [.claude/](.claude
 | `aws-infra` | Terraform, AWS, déploiement |
 | `project-flow` | Issues, branches, PR, Project |
 
-**Commandes** : `/feature-start <issue>`, `/pr-open`, `/sprint-status [S1-S4]`,
-`/adr-new <titre>`
+**Commandes**
+
+| Commande | Usage |
+|---|---|
+| `/ticket <issue>` | **Traitement complet et automatique** : worktree, branche, implémentation, `npm run verify`, PR, revue, merge, mise à jour du ticket et de la carte |
+| `/feature-start <issue>` | Même départ, mais **pas à pas** : ouvre la branche et le plan, vous gardez la main sur la suite |
+| `/pr-open` | Ouvre la PR de la branche courante avec les contrôles attendus |
+| `/sprint-status [S1-S4]` | Point d'avancement factuel du sprint |
+| `/adr-new <titre>` | Rédige un Architecture Decision Record |
+
+`/ticket` va jusqu'au merge sans approbation humaine — GitHub interdit
+d'approuver sa propre PR, la revue automatique est donc un commentaire, pas une
+approbation. Utiliser `/ticket <issue> --no-merge`, ou `/feature-start`, dès
+qu'une relecture humaine compte : paiements, sécurité, migrations, infrastructure.
 
 **Agents** : `tenant-leak-auditor` (audit d'isolation multi-tenant),
 `mvp-scope-guard` (verdict dans/hors périmètre MVP)

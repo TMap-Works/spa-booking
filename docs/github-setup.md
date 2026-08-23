@@ -113,3 +113,18 @@ qu'aux tests d'intégration en CI.
   (`feature/42-moteur-disponibilite`) : c'est ce qui relie la branche à sa carte.
 - Le corps de PR **doit** contenir `Closes #42` : c'est ce qui ferme l'issue et
   déplace la carte en `Done`.
+
+### Prérequis local pour `/ticket`
+
+`EnterWorktree` branche depuis `origin/<branche par défaut>`, résolue via
+`origin/HEAD`. Sur un clone où cette référence n'est pas posée, le worktree part
+d'`origin/main` — la production — au lieu de `develop`. À faire une fois par
+clone :
+
+```bash
+git remote set-head origin develop
+git symbolic-ref refs/remotes/origin/HEAD   # doit afficher refs/remotes/origin/develop
+```
+
+Un clone frais de GitHub hérite déjà de `develop`, puisque c'est la branche par
+défaut du dépôt ; la correction ne concerne que les clones antérieurs.

@@ -48,16 +48,34 @@ plutôt que de coder à l'aveugle.
 
 ## Phase 1 — Isolation
 
-Sauf `--no-worktree` : `EnterWorktree` avec `name` = le nom de branche final,
-`{type}/{$1}-{slug-du-titre}` où `type` découle du label `type:*`
-(`feature`, `bugfix`, `chore`, `docs`) — par exemple
-`feature/42-moteur-disponibilite`.
+Sauf `--no-worktree` : `EnterWorktree` avec `name` = `{type}/{$1}-{slug-du-titre}`,
+où `type` découle du label `type:*` (`feature`, `bugfix`, `chore`, `docs`) —
+par exemple `feature/42-moteur-disponibilite`.
 
-Le worktree branche depuis `origin/develop` et `node_modules` y est symboliqué :
-inutile de réinstaller. Vérifier quand même que `npm run verify` démarre.
+Puis, **dans cet ordre**, trois corrections indispensables — chacune vérifiée
+sur ce dépôt, aucune n'est théorique :
 
-Le numéro d'issue dans le nom de branche est **obligatoire** :
-`pr-governance.yml` rejette toute autre forme.
+```bash
+# 1. EnterWorktree ne crée PAS la branche sous le nom demandé : il produit
+#    worktree-feature+42-moteur-disponibilite (préfixe ajouté, "/" → "+").
+#    Ce nom est rejeté par pr-governance.yml. Renommer immédiatement.
+git branch -m feature/42-moteur-disponibilite
+
+# 2. La base dépend de origin/HEAD. S'il n'est pas défini, le worktree part de
+#    origin/main — la PRODUCTION — au lieu de develop.
+git fetch origin develop
+git rebase origin/develop        # sans commit encore, c'est un fast-forward
+
+# 3. node_modules n'est symboliqué que si le réglage worktree est actif.
+[ -d node_modules ] || npm install
+```
+
+Confirmer avant d'aller plus loin : `git log --oneline -1` doit correspondre à
+la tête d'`origin/develop`, et le nom de branche doit satisfaire
+`^(feature|bugfix|hotfix|chore|docs)/[0-9]+-[a-z0-9._-]+$`.
+
+Le numéro d'issue dans le nom de branche est **obligatoire** : c'est ce qui relie
+la branche à sa carte, et `pr-governance.yml` rejette toute autre forme.
 
 ## Phase 2 — Prise en charge
 
@@ -195,11 +213,21 @@ label adéquat et une référence à la PR.
 
 ## Phase 11 — Nettoyage
 
-`ExitWorktree` avec `action: "remove"` si le merge a eu lieu — la branche est
-déjà supprimée côté distant.
+Si le merge a eu lieu : `ExitWorktree` avec `action: "remove"`, puis supprimer la
+branche locale restée derrière.
 
-Si la commande s'est arrêtée avant le merge, `action: "keep"` et **dire où le
-travail se trouve** : chemin du worktree, nom de branche, URL de la PR.
+```bash
+git branch -D feature/42-moteur-disponibilite   # depuis le dépôt principal
+git branch --list "*$1-*"                        # doit être vide
+```
+
+Ce ménage explicite est nécessaire : `ExitWorktree` ne supprime que la branche
+qu'il a lui-même créée (`worktree-…`), et le renommage de la phase 1 la lui a
+fait perdre de vue. Sans cela, une branche orpheline reste à chaque ticket.
+
+Si la commande s'est arrêtée avant le merge : `action: "keep"`, et **dire où le
+travail se trouve** — chemin du worktree, nom de branche, URL de la PR, et ce
+qui reste à faire.
 
 ## Compte rendu final
 

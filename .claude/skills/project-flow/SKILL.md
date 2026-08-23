@@ -141,5 +141,24 @@ gh pr checks
 gh project item-list 2 --owner TMap-Works
 ```
 
-Les commandes `/feature-start`, `/pr-open` et `/sprint-status` de ce dépôt
-enchaînent ces étapes en respectant les conventions ci-dessus.
+## 10. Automatisation du cycle
+
+`/ticket <issue>` enchaîne tout ce qui précède dans un worktree isolé :
+recevabilité, branche conforme, prise en charge, implémentation, `npm run verify`,
+PR, attente de la CI, revue automatique et merge — en tenant l'issue et la carte
+Project à jour à chaque phase.
+
+Trois points à connaître avant de s'y fier :
+
+- **La carte ne bouge pas toute seule.** Tant que le secret `PROJECT_TOKEN` n'est
+  pas posé, `project-automation.yml` ne s'exécute pas. C'est
+  `scripts/project_status.py` qui pilote le champ Status, appelé explicitement
+  par la commande.
+- **Le merge se fait sans approbation.** GitHub interdit d'approuver sa propre
+  PR : la revue est publiée en commentaire. Sur un changement sensible, préférer
+  `--no-merge` ou le parcours pas à pas.
+- **Le worktree exige `origin/HEAD` bien positionné**, sinon il part de `main`.
+  Voir [docs/github-setup.md](../../../docs/github-setup.md).
+
+Pour garder la main étape par étape, utiliser `/feature-start`, `/pr-open` et
+`/sprint-status`, qui appliquent les mêmes conventions sans enchaîner.
