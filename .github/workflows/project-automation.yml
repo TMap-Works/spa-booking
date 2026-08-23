@@ -24,7 +24,9 @@ jobs:
   sync:
     name: Synchroniser la carte
     runs-on: ubuntu-latest
-    if: ${{ vars.PROJECT_NUMBER != '' }}
+    # Les tickets de traçabilité (label `tracking`) documentent l'historique
+    # des demandes ; ils n'ont rien à faire sur le board de suivi du MVP.
+    if: ${{ vars.PROJECT_NUMBER != '' && !contains(github.event.issue.labels.*.name, 'tracking') }}
     steps:
       # Sans PROJECT_TOKEN, le workflow ne peut rien écrire : on sort proprement
       # avec un avertissement plutôt qu'en échec sur chaque issue.

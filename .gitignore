@@ -55,3 +55,5 @@ Thumbs.db
 
 # Claude Code — les réglages partagés sont versionnés, les locaux non
 .claude/settings.local.json
+# État des tickets de traçabilité : propre à chaque session
+.claude/.tracking/

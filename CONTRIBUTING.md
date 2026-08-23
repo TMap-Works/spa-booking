@@ -86,3 +86,9 @@ Le dépôt embarque un environnement Claude Code complet dans [.claude/](.claude
 
 **Agents** : `tenant-leak-auditor` (audit d'isolation multi-tenant),
 `mvp-scope-guard` (verdict dans/hors périmètre MVP)
+
+**Traçabilité automatique** : chaque demande substantielle faite à Claude Code
+ouvre un ticket GitHub (label `tracking`), refermé en fin de tour avec le résumé
+des changements produits. Ces tickets historisent la collaboration ; ils sont
+exclus du board de suivi du MVP et ne remplacent pas les issues du backlog.
+Détail et réglages dans [.claude/hooks/README.md](.claude/hooks/README.md).

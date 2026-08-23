@@ -32,7 +32,10 @@
       "Bash(terraform validate:*)",
       "Bash(terraform plan:*)",
       "Bash(docker compose ps:*)",
-      "Bash(docker compose logs:*)"
+      "Bash(docker compose logs:*)",
+      "Bash(gh issue create:*)",
+      "Bash(gh issue comment:*)",
+      "Bash(gh issue close:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",
@@ -54,6 +57,32 @@
       "Read(./**/*.tfstate)",
       "Read(./**/*.tfstate.backup)",
       "Read(./**/*.pem)"
+    ]
+  },
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/request_open.py\"",
+            "timeout": 25,
+            "statusMessage": "Ouverture du ticket de traçabilité…"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/request_close.py\"",
+            "timeout": 25,
+            "statusMessage": "Clôture du ticket de traçabilité…"
+          }
+        ]
+      }
     ]
   }
 }
