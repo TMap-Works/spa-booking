@@ -78,6 +78,34 @@ def fetch_pr(number):
         return None, "réponse gh illisible"
 
 
+def latest_only(rollup):
+    """Ne garde, pour un même check, que son passage le plus récent.
+
+    Un workflow rejoué — titre de PR corrigé, `gh run rerun`, PR rouverte —
+    attache au même commit un check run **de plus**, sans retirer le précédent.
+    Le rollup porte alors les deux, et compter l'ancien condamnerait la PR :
+    rien de ce qu'on pousse ensuite ne détache un échec déjà inscrit. La seule
+    issue serait de réécrire l'historique pour obtenir un SHA neuf, c'est-à-dire
+    de tordre le dépôt pour satisfaire la barrière.
+
+    Deux passages d'un même workflow ne peuvent pas coexister dans un même run :
+    dédupliquer sur (workflow, nom de job) ne masque donc jamais un vrai échec —
+    un job matriciel porte ses paramètres dans son nom.
+    """
+    freshest = {}
+    for item in rollup or []:
+        if item.get("__typename") == "StatusContext":
+            key = ("status", item.get("context") or "")
+        else:
+            key = ("check", item.get("workflowName") or "", item.get("name") or "")
+        # ISO 8601 en UTC : l'ordre lexicographique est l'ordre chronologique.
+        stamp = item.get("startedAt") or item.get("createdAt") or ""
+        kept = freshest.get(key)
+        if kept is None or stamp >= kept[0]:
+            freshest[key] = (stamp, item)
+    return [item for _, item in freshest.values()]
+
+
 def check_entries(rollup):
     """Normalise le rollup hétérogène de GitHub en (nom, état, détail)."""
     for item in rollup or []:
@@ -130,7 +158,7 @@ def assess(pr, base, allow_no_checks):
     if unfit:
         return UNFIT, unfit, []
 
-    checks = list(check_entries(pr.get("statusCheckRollup")))
+    checks = list(check_entries(latest_only(pr.get("statusCheckRollup"))))
     failed = [c for c in checks if c[1] == "fail"]
     pending = [c for c in checks if c[1] == "pending"]
 
