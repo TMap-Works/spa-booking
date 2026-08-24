@@ -200,9 +200,15 @@ Pour chaque PR de la vague, par ordre de score décroissant :
 
 ```bash
 python scripts/pr_gate.py <pr> --request-merge
+# et seulement si le code de sortie est 0 :
 python scripts/milestone_run.py event --ticket <n> --phase merge --status merged \
        --actor orchestrateur --message "mergée en squash"
 ```
+
+**Ne journaliser `merged` que sur un code 0.** Avec `--request-merge`, le code 1
+— délai dépassé, label posé, merge pas encore fait — est un résultat courant :
+écrire « mergée » pour une PR encore ouverte fait reprendre le run sur un état
+faux.
 
 `--request-merge` pose le label `merge-when-green` et **attend** que
 [auto-merge.yml](../../.github/workflows/auto-merge.yml) ait mergé. L'attente est

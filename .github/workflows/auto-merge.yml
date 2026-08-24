@@ -46,6 +46,12 @@ jobs:
   merge:
     name: Merger les PR étiquetées et vertes
     runs-on: ubuntu-latest
+    # Le dépôt pose des dizaines de labels (ws:*, mod:*, type:*, P0, tracking),
+    # dont certains automatiquement : sans ce filtre, chacun démarrerait un
+    # runner complet pour ne rien trouver, et encombrerait la file de concurrence.
+    if: >-
+      github.event_name != 'pull_request_target' ||
+      github.event.label.name == 'merge-when-green'
     steps:
       - name: Récupérer le code de confiance
         uses: actions/checkout@v4
@@ -61,38 +67,57 @@ jobs:
       - name: Merger ce qui est prêt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          LABEL: merge-when-green
+          # Le shell et la barrière doivent viser le même dépôt et le même
+          # label : `pr_gate.py` lit ces deux variables, avec des valeurs par
+          # défaut qui seraient fausses sur un fork ou un dépôt renommé.
+          SPA_TRACKING_REPO: ${{ github.repository }}
+          SPA_MERGE_LABEL: merge-when-green
         run: |
           set -uo pipefail
 
-          prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --base develop \
-                  --label "$LABEL" --state open --json number --jq '.[].number')
+          if ! prs=$(gh pr list --repo "$SPA_TRACKING_REPO" --base develop \
+                       --label "$SPA_MERGE_LABEL" --state open \
+                       --json number --jq '.[].number'); then
+            echo "::error::impossible de lister les PR étiquetées — la file n'est pas vide, elle est illisible"
+            exit 1
+          fi
 
           if [ -z "$prs" ]; then
-            echo "Aucune PR ouverte ne porte le label $LABEL." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "Aucune PR ouverte ne porte le label $SPA_MERGE_LABEL." >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
+          # Une seule PR par exécution, délibérément. Après un merge, GitHub
+          # recalcule `mergeable` et `mergeStateStatus` des autres PR de façon
+          # asynchrone : les lire dans la foulée renverrait des valeurs d'avant
+          # le merge, et la barrière laisserait passer une PR jamais testée
+          # contre la base réelle. Les suivantes attendent le prochain réveil.
+          pr=$(echo "$prs" | head -n 1)
+          restantes=$(echo "$prs" | tail -n +2 | tr '\n' ' ')
+
           echo "## Auto-merge" >> "$GITHUB_STEP_SUMMARY"
+          echo "::group::PR #$pr"
+          # --no-wait : le verdict est immédiat. Si la CI tourne encore, la
+          # conclusion du workflow suivant redéclenchera ce job.
+          python scripts/pr_gate.py "$pr" --merge --no-wait
+          code=$?
+          echo "::endgroup::"
 
-          for pr in $prs; do
-            echo "::group::PR #$pr"
-            # --no-wait : le verdict est immédiat. Si la CI tourne encore, la
-            # conclusion du workflow suivant redéclenchera ce job.
-            python scripts/pr_gate.py "$pr" --merge --no-wait
-            code=$?
-            echo "::endgroup::"
+          case $code in
+            0) verdict="mergée" ;;
+            1) verdict="CI encore en cours — nouvel essai à la fin du prochain workflow" ;;
+            2) verdict="**check en échec** — le label reste posé, la PR attend une correction" ;;
+            3) verdict="**inapte** (brouillon, conflit, base divergée ou déjà fermée)" ;;
+            *) verdict="**erreur d'appel de la barrière**" ;;
+          esac
+          echo "- #$pr — $verdict" >> "$GITHUB_STEP_SUMMARY"
+          [ -n "$restantes" ] && echo "- en attente d'un prochain réveil : $restantes" >> "$GITHUB_STEP_SUMMARY"
 
-            case $code in
-              0) verdict="mergée" ;;
-              1) verdict="CI encore en cours — nouvel essai à la fin du prochain workflow" ;;
-              2) verdict="**check en échec** — le label reste posé, la PR attend une correction" ;;
-              3) verdict="**inapte** (brouillon, conflit, base divergée ou déjà fermée)" ;;
-              *) verdict="**erreur d'appel de la barrière**" ;;
-            esac
-            echo "- #$pr — $verdict" >> "$GITHUB_STEP_SUMMARY"
-          done
-
-          # Ce job ne rougit pas parce qu'une PR n'est pas prête : son échec
-          # n'apprendrait rien que la CI de la PR elle-même ne dise déjà.
+          # Une PR pas encore prête ne fait pas rougir ce job : son propre CI le
+          # dit déjà. Une barrière qui n'a pas pu rendre de verdict, si — sinon
+          # l'automatisation meurt en silence dans un résumé que personne ne lit.
+          if [ "$code" -ge 4 ]; then
+            echo "::error::la barrière n'a pas pu se prononcer sur #$pr (code $code)"
+            exit 1
+          fi
           exit 0
