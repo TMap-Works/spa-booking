@@ -22,6 +22,14 @@ jobs:
           node-version: '20'
       - run: npm install --no-save @commitlint/cli @commitlint/config-conventional
       - name: Valider les commits de la PR
-        run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: npx commitlint --from "$BASE_SHA" --to "$HEAD_SHA" --verbose
+      # Le titre est du texte écrit par un humain : l'interpoler directement
+      # dans le `run:` exécuterait ce qu'il contient. Il passe donc par
+      # l'environnement, où il reste une donnée. Même motif que pr-governance.yml.
       - name: Valider le titre de la PR
-        run: echo "${{ github.event.pull_request.title }}" | npx commitlint --verbose
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: printf '%s\n' "$PR_TITLE" | npx commitlint --verbose
