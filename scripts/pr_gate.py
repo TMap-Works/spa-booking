@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Barrière de merge : n'autorise une PR que si toute la CI est verte.
 
-    python scripts/pr_gate.py 42                # attend la CI, rend un verdict
-    python scripts/pr_gate.py 42 --merge        # merge en squash si tout est vert
-    python scripts/pr_gate.py 42 --no-wait      # verdict immédiat, sans attendre
+    python scripts/pr_gate.py 42                  # attend la CI, rend un verdict
+    python scripts/pr_gate.py 42 --request-merge  # demande le merge à la CI, attend qu'il ait lieu
+    python scripts/pr_gate.py 42 --merge          # merge ici même, en squash
+    python scripts/pr_gate.py 42 --no-wait        # verdict immédiat, sans attendre
+
+Deux façons de merger, et elles ne se valent pas. `--request-merge` pose le
+label `merge-when-green` et laisse [auto-merge.yml](../.github/workflows/auto-merge.yml)
+faire le merge côté GitHub — c'est le mode normal, le seul qui fonctionne depuis
+une vague `claude -p` où aucune demande de permission ne peut être répondue.
+`--merge` merge depuis la machine appelante ; il reste pour le dépannage.
 
 Le dépôt est sur un plan GitHub Free : ni protection de branche, ni check
 obligatoire. GitHub laisserait donc merger une PR dont la CI est rouge — c'est
@@ -34,6 +41,9 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 REPO = os.environ.get("SPA_TRACKING_REPO", "TMap-Works/spa-booking")
+# Le label est une demande de merge, pas un ordre : auto-merge.yml rejoue cette
+# barrière avant d'agir, et ne merge que si le verdict est encore vert.
+MERGE_LABEL = os.environ.get("SPA_MERGE_LABEL", "merge-when-green")
 ROOT = Path(__file__).resolve().parents[1]
 
 # Un workflow filtré par chemin (terraform.yml) ou sorti volontairement
@@ -213,12 +223,56 @@ def branch_cleanup(head):
     return "Branche {} supprimée, distante et locale.".format(head)
 
 
+def request_merge(number, pr, args):
+    """Demande le merge à la CI en posant le label, puis attend qu'il ait lieu.
+
+    Le merge lui-même est fait par `.github/workflows/auto-merge.yml`, qui
+    rejoue cette même barrière côté GitHub. Poser le label ne court-circuite donc
+    rien : une PR rouge étiquetée reste non mergée.
+
+    Attendre plutôt que rendre la main tout de suite est délibéré — un jalon
+    merge ses PR en séquence, et la suivante doit partir d'un `develop` qui porte
+    déjà la précédente.
+    """
+    proc = run(["gh", "pr", "edit", str(number), "--repo", REPO,
+                "--add-label", MERGE_LABEL])
+    if proc.returncode != 0:
+        return USAGE, "label {} non posé : {}".format(
+            MERGE_LABEL, (proc.stderr or proc.stdout).strip())
+
+    if args.no_await:
+        return GREEN, "label {} posé — la CI mergera #{}.".format(MERGE_LABEL, number)
+
+    deadline = time.time() + args.timeout
+    while time.time() < deadline:
+        time.sleep(args.interval)
+        fresh, _ = fetch_pr(number)
+        if fresh is None:
+            continue
+        state = (fresh.get("state") or "").upper()
+        if state == "MERGED":
+            lines = ["PR #{} mergée par la CI.".format(number)]
+            if not args.no_delete_branch:
+                lines.append(branch_cleanup(
+                    fresh.get("headRefName") or pr.get("headRefName")))
+            return GREEN, " ".join(part for part in lines if part)
+        if state == "CLOSED":
+            return UNFIT, "PR #{} fermée sans avoir été mergée.".format(number)
+    return PENDING, ("délai dépassé — le label {} reste posé, le merge se fera à "
+                     "la prochaine conclusion de workflow.".format(MERGE_LABEL))
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="N'autorise le merge d'une PR que si toute la CI est verte.")
     parser.add_argument("pr", type=int, help="numéro de la pull request")
-    parser.add_argument("--merge", action="store_true",
-                        help="merge en squash si et seulement si tout est vert")
+    comment = parser.add_mutually_exclusive_group()
+    comment.add_argument("--merge", action="store_true",
+                         help="merge en squash ici même, si et seulement si tout est vert")
+    comment.add_argument("--request-merge", action="store_true",
+                         help="pose le label {} et laisse la CI merger".format(MERGE_LABEL))
+    parser.add_argument("--no-await", action="store_true",
+                        help="avec --request-merge : ne pas attendre que le merge ait lieu")
     parser.add_argument("--base", default="develop",
                         help="base attendue de la PR (défaut : develop)")
     parser.add_argument("--timeout", type=int, default=1800,
@@ -252,7 +306,7 @@ def main():
         return code
 
     print("VERT : {}".format(message))
-    if not args.merge:
+    if not (args.merge or args.request_merge):
         return GREEN
 
     # Deuxième lecture juste avant d'agir : un check a pu démarrer entre le
@@ -268,7 +322,8 @@ def main():
               file=sys.stderr)
         return recheck
 
-    code, message = merge(args.pr, fresh, args)
+    code, message = (request_merge if args.request_merge else merge)(
+        args.pr, fresh, args)
     print(message if code == GREEN else "BLOQUÉ : " + message,
           file=sys.stdout if code == GREEN else sys.stderr)
     return code

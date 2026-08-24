@@ -1,0 +1,98 @@
+# Merge délégué à la CI — pourquoi ce workflow existe
+#
+# Le dépôt est sur un plan GitHub Free : ni protection de branche, ni check
+# obligatoire, donc l'auto-merge natif de GitHub n'a rien à attendre et mergerait
+# une PR rouge. La barrière du projet est `scripts/pr_gate.py`, et c'est elle qui
+# est rejouée ici — même code, même verdict, mais exécuté par GitHub plutôt que
+# depuis une session Claude Code.
+#
+# Ce que cela change : `/ticket` et `/milestone` ne mergent plus eux-mêmes. Ils
+# posent le label `merge-when-green`, qui est une demande, pas un ordre — le
+# merge n'a lieu que si `pr_gate.py` le juge encore recevable au moment où il
+# s'exécute.
+#
+# Sécurité : `pull_request_target` donne un jeton en écriture. Le code exécuté
+# ici est TOUJOURS celui de la branche par défaut, jamais celui de la PR — voir
+# le `ref:` explicite du checkout. Ne jamais y ajouter d'étape qui installe ou
+# lance quoi que ce soit venant de la branche proposée.
+
+name: Auto-merge
+
+on:
+  # Le label vient d'être posé : la CI est peut-être déjà verte.
+  pull_request_target:
+    types: [labeled]
+  # Un workflow vient de conclure : une PR déjà étiquetée est peut-être devenue
+  # verte. `workflow_run` plutôt que `check_suite` pour ne pas se redéclencher
+  # soi-même en boucle.
+  workflow_run:
+    workflows: [CI, Commitlint, PR governance, Security scan, Terraform, Project automation]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+# Les merges sur develop sont sérialisés : deux merges concurrents se voient en
+# conflit, ou passent tous deux sur un état que ni l'un ni l'autre n'a testé.
+concurrency:
+  group: auto-merge-develop
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Merger les PR étiquetées et vertes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Récupérer le code de confiance
+        uses: actions/checkout@v4
+        with:
+          # Explicite : jamais la branche de la PR.
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Merger ce qui est prêt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LABEL: merge-when-green
+        run: |
+          set -uo pipefail
+
+          prs=$(gh pr list --repo "$GITHUB_REPOSITORY" --base develop \
+                  --label "$LABEL" --state open --json number --jq '.[].number')
+
+          if [ -z "$prs" ]; then
+            echo "Aucune PR ouverte ne porte le label $LABEL." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          echo "## Auto-merge" >> "$GITHUB_STEP_SUMMARY"
+
+          for pr in $prs; do
+            echo "::group::PR #$pr"
+            # --no-wait : le verdict est immédiat. Si la CI tourne encore, la
+            # conclusion du workflow suivant redéclenchera ce job.
+            python scripts/pr_gate.py "$pr" --merge --no-wait
+            code=$?
+            echo "::endgroup::"
+
+            case $code in
+              0) verdict="mergée" ;;
+              1) verdict="CI encore en cours — nouvel essai à la fin du prochain workflow" ;;
+              2) verdict="**check en échec** — le label reste posé, la PR attend une correction" ;;
+              3) verdict="**inapte** (brouillon, conflit, base divergée ou déjà fermée)" ;;
+              *) verdict="**erreur d'appel de la barrière**" ;;
+            esac
+            echo "- #$pr — $verdict" >> "$GITHUB_STEP_SUMMARY"
+          done
+
+          # Ce job ne rougit pas parce qu'une PR n'est pas prête : son échec
+          # n'apprendrait rien que la CI de la PR elle-même ne dise déjà.
+          exit 0
