@@ -22,14 +22,43 @@ le fichier d'observations.
 import json
 import os
 import shlex
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OBSERVED = Path(os.environ.get("SPA_PERMISSION_LOG",
-                               ROOT / ".claude" / ".permissions" / "observed.ndjson"))
-CURRENT_RUN = ROOT / ".claude" / ".milestone" / "current"
+
+
+def main_root():
+    """La racine du dépôt principal, même appelé depuis un worktree lié.
+
+    Un run de jalon fait travailler ses agents dans des worktrees isolés, où
+    `.claude/.milestone/` n'existe pas — il est ignoré par git. Sans cette
+    résolution, chaque observation d'agent serait rattachée à `run: null`, et la
+    revue de fin de run (`permissions_review.py --run <id>`) annoncerait qu'aucune
+    commande n'a demandé de permission alors que des dizaines l'auront fait.
+    """
+    try:
+        proc = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=ROOT,
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        return ROOT
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return ROOT
+    common = Path(proc.stdout.strip())
+    if not common.is_absolute():
+        common = (ROOT / common).resolve()
+    candidate = common.parent
+    return candidate if (candidate / ".claude").is_dir() else ROOT
+
+
+STATE_ROOT = main_root()
+OBSERVED = Path(os.environ.get(
+    "SPA_PERMISSION_LOG",
+    STATE_ROOT / ".claude" / ".permissions" / "observed.ndjson"))
+CURRENT_RUN = STATE_ROOT / ".claude" / ".milestone" / "current"
 
 SETTINGS = [
     ROOT / ".claude" / "settings.json",

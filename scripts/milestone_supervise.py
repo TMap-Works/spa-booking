@@ -62,6 +62,7 @@ Pour un jalon qui touche `mod:payments`, `security`, une migration Prisma ou
 `infra/terraform`, armer avec `--no-merge` et relire les PR au réveil.
 """
 import argparse
+import atexit
 import json
 import os
 import re
@@ -113,9 +114,24 @@ GO, PAUSE, STOP, NO_RUN, QUOTA = 0, 1, 2, 3, 4
 FALLBACK_WINDOW = 5 * 3600
 # Le mot du serveur, pas le nôtre : ces motifs ne servent que si le flux s'est
 # interrompu avant l'événement structuré.
+# `429` seul se retrouve dans un numéro de ligne, un port ou un compte de tests :
+# le motif exige donc un contexte HTTP. Ce filet ne sert que si le flux s'est
+# interrompu avant l'événement structuré, qui reste la source de vérité.
 LIMIT_TEXT = re.compile(
-    r"usage limit reached|rate.?limit|limite d'utilisation|quota (?:épuisé|exceeded)"
-    r"|too many requests|429", re.I)
+    r"usage limit reached|rate[ _-]?limit|limite d'utilisation"
+    r"|quota (?:épuisé|exceeded)|too many requests"
+    r"|(?:status|http|code)\s*[:= ]?\s*429", re.I)
+
+
+def resolve_binary(name):
+    """Le chemin complet de l'exécutable, ou son nom si on ne le trouve pas.
+
+    Indispensable sous Windows : Claude Code s'installe en `claude.CMD`, que
+    `Popen` sans shell ne résout pas — il lève `FileNotFoundError`. Le préflight
+    passait pourtant, parce qu'il interroge `shutil.which` sans réinjecter ce
+    qu'il trouve dans la commande.
+    """
+    return shutil.which(name) or name
 
 
 def now():
@@ -304,39 +320,63 @@ def supervisor_alive():
     return age is not None and age < HEARTBEAT_STALE
 
 
-def start_beating(stop_flag):
-    """Un fil qui bat pendant que le superviseur travaille.
+def start_beating():
+    """Bat tant que le processus vit, et rend de quoi l'arrêter à la toute fin.
 
     Il faut un fil : la boucle principale passe des heures bloquée sur la
     lecture d'un flux ou sur une attente de quota, et un battement posé au fil
     des tours vieillirait assez pour que le chien de garde croie le superviseur
     mort et en lance un second.
+
+    Son signal lui est propre — surtout pas celui de l'arrêt demandé. Un Ctrl-C
+    ne coupe pas la vague en cours : elle tourne encore des dizaines de minutes.
+    Faire cesser le battement à cet instant, c'est se déclarer mort en
+    travaillant, et voir la veille lancer un second superviseur qui mènera une
+    seconde vague et une seconde série de merges sur le même `develop`.
     """
+    silence = threading.Event()
+
     def loop():
-        while not stop_flag.wait(HEARTBEAT_EVERY):
+        while not silence.wait(HEARTBEAT_EVERY):
             beat()
+
+    def stop():
+        # Le battement s'éteint avec le processus, et le fichier disparaît avec
+        # lui : sinon la veille attendrait trois minutes de plus avant de
+        # constater une mort déjà consommée.
+        silence.set()
+        try:
+            HEARTBEAT.unlink()
+        except OSError:
+            pass
+
     beat()
     threading.Thread(target=loop, daemon=True).start()
+    atexit.register(stop)
+    return silence
 
 
-def merged_count(no_merge=False):
-    """L'avancement du jalon, mesuré selon ce qu'on lui a demandé.
+def progress_count(no_merge=False):
+    """Combien de tickets ont abouti depuis l'ouverture du run.
 
-    En marche normale, un ticket qui compte est un ticket clos. Avec
-    `--no-merge`, rien ne se ferme jamais : c'est la PR ouverte qui est le
-    livrable, et compter les merges ferait conclure à tort que le run piétine.
+    Délégué à `milestone_run.py progress`, qui compte dans le journal et non
+    dans le plan. La distinction décide du sort du dispositif : chaque vague se
+    termine par un `replan`, qui retire du plan les issues closes. Un décompte
+    pris sur le plan retomberait donc à zéro après chaque vague **réussie**, le
+    détecteur d'enlisement conclurait que rien n'avance, et le superviseur se
+    débrancherait au bout de trois vagues — précisément quand tout va bien.
+
+    En `--no-merge` c'est pire encore : rien ne se ferme jamais, le compte reste
+    à zéro dès la première vague. D'où `--pr-open`, qui compte alors les tickets
+    arrivés en PR — le seul avancement observable dans ce mode.
     """
-    proc = runner("status", "--json")
+    proc = runner("progress", *(["--pr-open"] if no_merge else []))
     if proc.returncode not in (GO, QUOTA) or not proc.stdout.strip():
         return None
     try:
-        tickets = json.loads(proc.stdout)["tickets"]
-    except (json.JSONDecodeError, KeyError, TypeError):
+        return int(proc.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError):
         return None
-    done = {"merged", "skipped"}
-    if no_merge:
-        done |= {"pr_open", "ci_green", "reviewed"}
-    return sum(1 for t in tickets if t["status"] in done)
 
 
 def journal(status, message, level=None):
@@ -395,7 +435,10 @@ def arm_watchdog(every):
             "`milestone_supervise.py` tourner dans un terminal", "WARN")
         return False
     write_watchdog_cmd()
-    proc = schtasks("/Create", "/TN", TASK_NAME, "/TR", str(WATCHDOG_CMD),
+    # Les guillemets sont indispensables et invisibles : sans eux `schtasks`
+    # coupe le chemin à la première espace, rend malgré tout 0, et la tâche ne
+    # s'exécute jamais. Vérifié — création réussie, exécution muette.
+    proc = schtasks("/Create", "/TN", TASK_NAME, "/TR", f'"{WATCHDOG_CMD}"',
                     "/SC", "MINUTE", "/MO", str(every), "/F")
     if proc.returncode != 0:
         say("la tâche de veille n'a pas pu être enregistrée : "
@@ -421,7 +464,8 @@ def disarm_watchdog(quiet=False):
 
 def spawn_supervisor(intent):
     """Relance un superviseur détaché — il survivra à la tâche qui l'a lancé."""
-    command = [pythonw(), str(Path(__file__).resolve()), *intent_argv(intent)]
+    command = [resolve_binary(pythonw()), str(Path(__file__).resolve()),
+               *intent_argv(intent)]
     flags = 0
     if os.name == "nt":
         flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -604,7 +648,7 @@ def run_leg(args, index):
     a refusé la requête : le reste du flux n'a plus d'intérêt, l'appel est mort.
     """
     prompt = leg_prompt(args)
-    command = [args.claude, "-p", prompt,
+    command = [resolve_binary(args.claude), "-p", prompt,
                "--output-format", "stream-json", "--verbose",
                "--permission-mode", args.permission_mode]
     if args.model:
@@ -617,9 +661,15 @@ def run_leg(args, index):
     LEGS_DIR.mkdir(parents=True, exist_ok=True)
     raw_path = LEGS_DIR / f"leg-{index:03d}-{datetime.now():%Y%m%d-%H%M%S}.ndjson"
 
-    process = subprocess.Popen(
-        command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True, encoding="utf-8", errors="replace", bufsize=1)
+    try:
+        process = subprocess.Popen(
+            command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, encoding="utf-8", errors="replace", bufsize=1)
+    except (OSError, ValueError) as exc:
+        # Sans cela, l'exception remonte, le superviseur meurt, et la veille le
+        # relance toutes les cinq minutes pour qu'il remeure de la même façon.
+        say(f"impossible de lancer « {command[0]} » : {exc}", "ERROR")
+        return "lancement", None, f"{type(exc).__name__} : {exc}"
 
     errors = []
     pump = threading.Thread(target=drain, args=(process.stderr, errors), daemon=True)
@@ -768,7 +818,7 @@ def supervise(args):
         say("arrêt demandé (Ctrl-C) — fin après l'étape en cours", "WARN")
 
     signal.signal(signal.SIGINT, interrupt)
-    start_beating(stop_flag)
+    start_beating()
 
     say(f"superviseur ouvert · jalon {args.milestone or '(le plus proche)'} "
         f"· largeur {args.width} · {'PR seules' if args.no_merge else 'merge automatique'}")
@@ -825,7 +875,7 @@ def supervise(args):
                 return 1
             continue
 
-        before = merged_count(args.no_merge)
+        before = progress_count(args.no_merge)
         legs += 1
         started = time.time()
         journal("leg_started", f"étape {legs} — une vague, largeur {args.width}")
@@ -846,7 +896,7 @@ def supervise(args):
                 return 1
             continue
 
-        after = merged_count(args.no_merge)
+        after = progress_count(args.no_merge)
         progressed = before is None or after is None or after > before
         barren = 0 if progressed else barren + 1
         if progressed and after is not None:
@@ -966,15 +1016,7 @@ def main():
             return 2
         args.yes = True
 
-    try:
-        return supervise(args)
-    finally:
-        # Le battement doit disparaître avec le processus : sinon la veille
-        # attendrait trois minutes de plus avant de constater la mort.
-        try:
-            HEARTBEAT.unlink()
-        except OSError:
-            pass
+    return supervise(args)
 
 
 if __name__ == "__main__":

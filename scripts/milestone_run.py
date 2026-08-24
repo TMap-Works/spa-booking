@@ -73,13 +73,46 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 ROOT = Path(__file__).resolve().parents[1]
-RUNS_DIR = ROOT / ".claude" / ".milestone"
+
+
+def main_root():
+    """La racine du dépôt principal, même appelé depuis un worktree lié.
+
+    Les agents d'un run travaillent chacun dans un worktree isolé, où
+    `.claude/.milestone/` n'existe pas : le dossier est ignoré par git, donc
+    jamais recopié. Sans cette résolution, chaque `event` d'agent sortirait sans
+    rien écrire — et le journal, qui est la seule trace visible de leur travail,
+    resterait vide alors que tout semblerait marcher.
+    """
+    try:
+        proc = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=ROOT,
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return ROOT
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return ROOT
+    common = Path(proc.stdout.strip())
+    if not common.is_absolute():
+        common = (ROOT / common).resolve()
+    candidate = common.parent
+    return candidate if (candidate / ".claude").is_dir() else ROOT
+
+
+# L'état d'un run appartient au dépôt principal, jamais au worktree d'un agent.
+STATE_ROOT = main_root()
+RUNS_DIR = STATE_ROOT / ".claude" / ".milestone"
 CURRENT = RUNS_DIR / "current"
 # Chemin stable, quel que soit le run : c'est celui qu'on ouvre dans un éditeur
 # ou qu'on suit avec `tail -f`, sans avoir à connaître l'identifiant du run.
 LATEST_LOG = RUNS_DIR / "latest.log"
 PLANNER = ROOT / "scripts" / "milestone_plan.py"
-OBSERVED = ROOT / ".claude" / ".permissions" / "observed.ndjson"
+# Même chemin que `permission_watch.py` et `permissions_review.py`, variable
+# d'environnement comprise : trois lectures divergentes d'un même journal
+# donneraient un état vide sans que personne ne s'en aperçoive.
+OBSERVED = Path(os.environ.get(
+    "SPA_PERMISSION_LOG",
+    STATE_ROOT / ".claude" / ".permissions" / "observed.ndjson"))
 
 LEVELS = ["DEBUG", "INFO", "WARN", "ERROR"]
 LEVEL_OF_STATUS = {
@@ -106,6 +139,12 @@ RUN_STATUSES = ["started", "resumed", "replanned", "reconciled", "quota_hold",
 
 REPO = os.environ.get("SPA_TRACKING_REPO", "TMap-Works/spa-booking")
 BRANCH_RE = re.compile(r"^(?:feature|bugfix|chore|docs)/(\d+)-")
+# Seul un mot-clé de fermeture lie une PR à une issue. Un `#24` cité au fil du
+# texte — « suit le même schéma que #24 » — n'est qu'une référence : le prendre
+# pour un lien ferait passer l'issue 24 pour traitée, et personne n'y
+# reviendrait jamais.
+CLOSES_RE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)",
+                       re.IGNORECASE)
 
 PHASES = ["recevabilite", "isolation", "prise-en-charge", "implementation",
           "validation", "commits", "pr", "ci", "revue", "merge", "cloture",
@@ -130,6 +169,30 @@ def fail(message):
 
 def run_dir(run_id):
     return RUNS_DIR / run_id
+
+
+def run_dirs():
+    """Les runs présents, du plus récent au plus ancien.
+
+    Trier sur le nom du dossier classerait par jalon d'abord et par date
+    ensuite : « le run le plus récent » deviendrait celui du jalon dernier dans
+    l'alphabet. Un S2 vieux de trois semaines passerait devant le S1 d'hier —
+    et `start` reprendrait le mauvais, `prune` supprimerait le bon.
+    """
+    if not RUNS_DIR.exists():
+        return []
+    found = []
+    for directory in RUNS_DIR.iterdir():
+        if not directory.is_dir() or not (directory / "run.json").exists():
+            continue
+        try:
+            created = json.loads(
+                (directory / "run.json").read_text(encoding="utf-8")).get("created")
+        except (OSError, json.JSONDecodeError, AttributeError):
+            created = None
+        found.append((created or "", directory.name, directory))
+    return [d for _, _, d in sorted(found, key=lambda row: (row[0], row[1]),
+                                    reverse=True)]
 
 
 def current_id():
@@ -311,7 +374,9 @@ def replay(run, events, control):
             ticket["note"] = event["message"]
 
     for raw, reason in (control.get("skip") or {}).items():
-        number = int(raw)
+        number = as_ticket(raw)
+        if number is None:
+            continue                  # jeton abîmé : l'ignorer, pas planter dessus
         if number in tickets and tickets[number]["status"] not in TERMINAL:
             tickets[number]["status"] = "skipped"
             tickets[number]["note"] = reason or "écarté à la main"
@@ -513,7 +578,7 @@ def pr_by_issue(prs):
         match = BRANCH_RE.match(pr.get("headRefName") or "")
         if match:
             numbers.add(int(match.group(1)))
-        numbers |= {int(n) for n in re.findall(r"#(\d+)", pr.get("body") or "")}
+        numbers |= {int(n) for n in CLOSES_RE.findall(pr.get("body") or "")}
         for number in numbers:
             best = found.get(number)
             if best is None or rank.get(pr.get("state"), 0) > rank.get(best.get("state"), 0):
@@ -575,7 +640,22 @@ def cmd_reconcile(args):
         else:
             target, why = "pending", "ni branche ni PR — jamais démarré"
 
-        if target == ticket["status"] and (pr is None or ticket["pr"] == pr["number"]):
+        # GitHub ne connaît que trois états ; le journal en connaît six. Un ticket
+        # dont l'agent avait journalisé `ci_green` puis `reviewed` avant d'être tué
+        # a bien une PR ouverte — le ramener à `pr_open` ferait refaire la CI et la
+        # revue à chaque reprise. Un état déjà plus avancé que ce que le dépôt sait
+        # dire n'est donc pas une divergence.
+        avance = (target in FLOW and ticket["status"] in FLOW
+                  and FLOW.index(ticket["status"]) > FLOW.index(target))
+        if target == ticket["status"] or avance:
+            # Rien à corriger sur l'état. Reste à noter la PR si le journal ne la
+            # connaissait pas — sans `reset`, qui ferait reculer le ticket.
+            if pr and ticket["pr"] != pr["number"]:
+                append_journal(run_id, {
+                    "ts": now(), "kind": "ticket", "ticket": number,
+                    "phase": "orchestration", "actor": "reconcile",
+                    "pr": pr["number"], "branch": branch,
+                    "message": f"PR #{pr['number']} rattachée au ticket"})
             continue
 
         event = {"ts": now(), "kind": "ticket", "ticket": number,
@@ -623,12 +703,8 @@ def unfinished_run(milestone):
 
     Un run arrêté à la main (`stop`) n'est pas repris : l'humain a tranché.
     """
-    if not RUNS_DIR.exists():
-        return None
     needle = (milestone or "").strip().lower()
-    for directory in sorted(RUNS_DIR.iterdir(), reverse=True):
-        if not directory.is_dir() or not (directory / "run.json").exists():
-            continue
+    for directory in run_dirs():
         try:
             run = json.loads((directory / "run.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -741,10 +817,7 @@ def cmd_start(args):
 
 def prune(keep):
     """Ne garde que les `keep` runs les plus récents — le reste encombre."""
-    directories = sorted((d for d in RUNS_DIR.iterdir()
-                          if d.is_dir() and (d / "run.json").exists()),
-                         key=lambda d: d.name, reverse=True)
-    for directory in directories[keep:]:
+    for directory in run_dirs()[keep:]:
         try:
             shutil.rmtree(directory)
         except OSError:
@@ -887,6 +960,29 @@ def cmd_status(args):
     return GO
 
 
+def cmd_progress(args):
+    """Combien de tickets ont abouti depuis l'ouverture du run.
+
+    Mesuré sur le journal, jamais sur le plan : `replan` retire du plan les
+    issues closes, si bien qu'un décompte fondé sur le plan retomberait à zéro
+    après chaque vague réussie. Le superviseur en conclurait que le run piétine
+    et se débrancherait au bout de quelques vagues — précisément quand tout va
+    bien. Le journal, lui, est en ajout seul : ce compte ne recule jamais.
+
+    `--pr-open` compte aussi les tickets arrivés en PR : c'est le seul
+    avancement observable quand le run tourne en `--no-merge`, où rien ne se
+    ferme jamais.
+    """
+    run_id = resolve(args.run)
+    counted = {"merged", "skipped"}
+    if args.pr_open:
+        counted |= {"pr_open", "ci_green", "reviewed"}
+    reached = {event["ticket"] for event in read_journal(run_id)
+               if event.get("ticket") is not None and event.get("status") in counted}
+    print(len(reached))
+    return GO
+
+
 def cmd_log(args):
     run_id = resolve(args.run)
     events = read_journal(run_id)
@@ -967,9 +1063,7 @@ def cmd_list(args):
         return NO_RUN
     active = current_id()
     rows = []
-    for directory in sorted(RUNS_DIR.iterdir(), reverse=True):
-        if not directory.is_dir() or not (directory / "run.json").exists():
-            continue
+    for directory in run_dirs():
         run = json.loads((directory / "run.json").read_text(encoding="utf-8"))
         control = load_control(directory.name)
         tickets = replay(run, read_journal(directory.name), control)
@@ -1023,6 +1117,16 @@ HELP = """\
   help                cet écran
   quit                sortir (le run n'est pas arrêté)
 """
+
+
+def as_ticket(token):
+    """Le numéro d'issue porté par ce jeton, ou None — `#19` compris."""
+    if not token:
+        return None
+    try:
+        return int(str(token).lstrip("#"))
+    except (TypeError, ValueError):
+        return None
 
 
 def cmd_shell(args):
@@ -1082,34 +1186,46 @@ def cmd_shell(args):
             elif verb == "go":
                 cmd_signal(namespace, "run")
             elif verb == "skip":
-                if not rest:
-                    print("skip N [raison]")
+                # Valider avant d'écrire : `control.json` est relu par `replay` à
+                # chaque appel, et un jeton non numérique y ferait planter status,
+                # gate, watch et resume jusqu'à correction du fichier à la main.
+                number = as_ticket(rest[0] if rest else None)
+                if number is None:
+                    print("skip N [raison] — N est un numéro d'issue")
                     continue
+                reason = " ".join(rest[1:])
                 control = load_control(run_id)
-                control.setdefault("skip", {})[rest[0]] = " ".join(rest[1:])
+                control.setdefault("skip", {})[str(number)] = reason
                 save_control(run_id, control)
                 append_journal(run_id, {"ts": now(), "kind": "ticket",
-                                        "ticket": int(rest[0]), "status": "skipped",
+                                        "ticket": number, "status": "skipped",
                                         "actor": "humain",
-                                        "message": " ".join(rest[1:]) or "écarté à la main"})
-                print(f"#{rest[0]} écarté — l'orchestrateur le verra au prochain `gate`")
+                                        "message": reason or "écarté à la main"})
+                print(f"#{number} écarté — l'orchestrateur le verra au prochain `gate`")
             elif verb == "retry":
-                if not rest:
-                    print("retry N")
+                number = as_ticket(rest[0] if rest else None)
+                if number is None:
+                    print("retry N — N est un numéro d'issue")
                     continue
                 control = load_control(run_id)
-                retries = set(control.get("retry") or [])
-                retries.add(int(rest[0]))
-                control["retry"] = sorted(retries)
-                control.get("skip", {}).pop(rest[0], None)
+                control["retry"] = sorted(set(control.get("retry") or []) | {number})
+                control.get("skip", {}).pop(str(number), None)
                 save_control(run_id, control)
-                print(f"#{rest[0]} sera relancé à la prochaine vague")
+                # `skip` a journalisé un statut terminal, que `replay` n'annule
+                # pas : sans cette ligne, « sera relancé » serait un mensonge et
+                # le ticket disparaîtrait du jalon.
+                append_journal(run_id, {"ts": now(), "kind": "ticket",
+                                        "ticket": number, "status": "pending",
+                                        "reset": True, "actor": "humain",
+                                        "message": "remis en file à la main"})
+                print(f"#{number} sera relancé à la prochaine vague")
             elif verb == "note":
-                if len(rest) < 2:
-                    print("note N <texte>")
+                number = as_ticket(rest[0] if rest else None)
+                if number is None or len(rest) < 2:
+                    print("note N <texte> — N est un numéro d'issue")
                     continue
                 append_journal(run_id, {"ts": now(), "kind": "ticket",
-                                        "ticket": int(rest[0]), "actor": "humain",
+                                        "ticket": number, "actor": "humain",
                                         "message": " ".join(rest[1:])})
                 print("noté")
             elif verb == "runs":
@@ -1359,6 +1475,12 @@ def main():
     quota.add_argument("--actor", default="superviseur")
     quota.add_argument("--json", action="store_true")
 
+    progress = sub.add_parser("progress",
+                              help="nombre de tickets aboutis depuis l'ouverture")
+    progress.add_argument("--run")
+    progress.add_argument("--pr-open", action="store_true",
+                          help="compter aussi les tickets arrivés en PR")
+
     viewer = sub.add_parser("status", help="état du run")
     viewer.add_argument("--run")
     viewer.add_argument("--json", action="store_true")
@@ -1392,6 +1514,7 @@ def main():
         "gate": cmd_gate, "status": cmd_status, "log": cmd_log,
         "resume": cmd_resume, "shell": cmd_shell, "list": cmd_list,
         "reconcile": cmd_reconcile, "quota": cmd_quota,
+        "progress": cmd_progress,
         "watch": cmd_watch, "path": cmd_path,
         "pause": lambda a: cmd_signal(a, "pause"),
         "stop": lambda a: cmd_signal(a, "stop"),

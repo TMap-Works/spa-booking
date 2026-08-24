@@ -72,13 +72,20 @@ def load_observations(run=None, session=None):
 
 
 def aggregate(records):
-    grouped = defaultdict(lambda: {"count": 0, "examples": [], "risk": "write",
+    # Plancher au risque le plus faible : l'agrégat ne fait ensuite que monter.
+    grouped = defaultdict(lambda: {"count": 0, "examples": [], "risk": "read",
                                    "denied": False, "runs": set(), "first": None,
                                    "last": None})
     for record in records:
         entry = grouped[record["pattern"]]
         entry["count"] += 1
-        entry["risk"] = record.get("risk", "write")
+        # Le plus élevé l'emporte, jamais le dernier vu : `git reset --hard`
+        # (destructif) et `git reset HEAD~1` (écriture) se réduisent au même
+        # motif `git reset`. Retenir le dernier observé ferait passer le motif
+        # pour anodin et autoriserait `--hard` sans jamais demander le drapeau.
+        seen = record.get("risk", "write")
+        if RISK_ORDER.get(seen, 1) > RISK_ORDER.get(entry["risk"], 1):
+            entry["risk"] = seen
         entry["denied"] = entry["denied"] or bool(record.get("denied"))
         if record.get("run"):
             entry["runs"].add(record["run"])

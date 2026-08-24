@@ -378,19 +378,24 @@ def plan_waves(nodes, prereqs, width):
             cut.append(ready[0])
 
         ready.sort(key=lambda n: (-index[n]["score"], n))
-        groups = []
-        for number in ready:
-            claimed = blocking(index[number]["resources"])
-            for group in groups:
-                if len(group["issues"]) < width and not claimed & group["claimed"]:
-                    group["issues"].append(number)
-                    group["claimed"] |= claimed
-                    break
-            else:
-                groups.append({"issues": [number], "claimed": set(claimed)})
 
-        waves.extend(group["issues"] for group in groups)
-        remaining -= set(ready)
+        # Une seule vague par tour, puis on recalcule ce qui est prêt. Vider la
+        # couche entière d'un coup ferait passer une issue de faible score avant
+        # une issue à fort score que la vague qu'on vient de composer vient
+        # justement de débloquer — l'inverse de la promesse du plan, où ce qui
+        # ouvre la voie passe avant ce qui n'est qu'urgent.
+        wave, claimed = [], set()
+        for number in ready:
+            if len(wave) >= width:
+                break
+            needs = blocking(index[number]["resources"])
+            if needs & claimed:
+                continue          # même empreinte qu'un ticket déjà dans la vague
+            wave.append(number)
+            claimed |= needs
+
+        waves.append(wave)
+        remaining -= set(wave)
 
     return waves, cut
 
