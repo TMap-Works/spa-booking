@@ -145,6 +145,7 @@ gh issue create --template feature.yml
 gh pr create --base develop --fill
 gh project item-list 2 --owner TMap-Works
 
+python scripts/milestone_plan.py S1     # ordre et vagues parallélisables du jalon
 python scripts/pr_gate.py 42            # attend la CI, rend un verdict
 python scripts/pr_gate.py 42 --merge    # merge en squash si tout est vert
 python scripts/worktree_gc.py --dry-run # ce que le ménage supprimerait
@@ -182,6 +183,124 @@ Trois points à connaître avant de s'y fier :
 
 Pour garder la main étape par étape, utiliser `/feature-start`, `/pr-open` et
 `/sprint-status`, qui appliquent les mêmes conventions sans enchaîner.
+
+## 11. Traiter un jalon entier
+
+`/milestone <jalon>` orchestre `/ticket` à l'échelle d'un sprint :
+`scripts/milestone_plan.py` ordonne les issues du jalon et les regroupe en
+**vagues**, puis la commande lance un agent par ticket d'une même vague et
+intègre les PR séquentiellement avant de replanifier.
+
+Deux notions portent tout le reste :
+
+- **L'ordre** est un score : priorité, `risk`, `security`, et surtout le nombre
+  d'issues que l'issue débloque. Le socle passe avant l'urgent.
+- **Une vague** est un groupe d'issues dont aucune ne dépend d'une autre et dont
+  les **empreintes de fichiers sont disjointes**. C'est la seconde condition qui
+  compte en pratique : deux branches simultanées sur le même fichier finissent en
+  conflit de fusion, et le conflit coûte plus que le parallélisme ne rapporte.
+
+Ce que le script ne peut pas déduire des labels — l'empreinte réelle d'une issue,
+un prérequis qu'aucune règle générale ne donne — se fige dans
+[.claude/milestone-rules.json](../../milestone-rules.json). C'est là que se
+corrige un plan qui se trompe, jamais à la main dans le fil de la conversation.
+
+Trois points à connaître :
+
+- **Les merges sont séquentiels**, même quand le travail était parallèle, et
+  chaque vague se termine par un `npm run verify` sur `develop` : la CI d'une PR
+  a été validée contre un `develop` plus ancien que celui dans lequel elle
+  atterrit. La disjonction des empreintes rend ce décalage acceptable ; le
+  contrôle de fin de vague le vérifie.
+- **Un ticket sensible** — `mod:payments`, `security`, migration Prisma,
+  `infra/terraform` — déclenche un arbitrage humain avant merge. C'est la
+  relecture que le plan Free ne peut pas imposer.
+- **Une PR laissée ouverte gèle ses dépendantes** : leur branche partirait d'un
+  `develop` amputé. Le plan suivant les écarte de lui-même.
+
+### Suivre un run
+
+Les comptes rendus des agents ne sont pas montrés à l'utilisateur : sans journal,
+un run est une boîte noire de plusieurs heures. La section « Journal d'exécution »
+de [/ticket](../../commands/ticket.md) fait écrire à chaque agent ce qu'il fait,
+phase par phase — c'est ce qui remplit le log, et cela vaut aussi pour un
+`/ticket` lancé seul, où les appels sont sans effet faute de run ouvert.
+
+Deux vues, aucune à relancer pour se tenir au courant :
+
+- `.claude/.milestone/latest.log` — un log daté, à niveaux (`DEBUG` `INFO` `WARN`
+  `ERROR`), qui se remplit tout seul. On l'ouvre dans l'éditeur ou sous `tail -f`.
+- `python scripts/milestone_run.py watch` — tableau de bord rafraîchi en continu :
+  avancement, vague en cours avec le temps passé dans chaque phase, ce qu'il y a
+  à reprendre, dernières lignes de journal.
+
+```bash
+python scripts/milestone_run.py watch           # la vue qu'on laisse ouverte
+python scripts/milestone_run.py log --level WARN  # seulement ce qui a mal tourné
+python scripts/milestone_run.py log --ticket 19   # tout ce qu'a fait ce ticket
+python scripts/milestone_run.py shell           # pause, skip, retry, note
+python scripts/milestone_run.py resume          # où reprendre après un arrêt
+python scripts/milestone_run.py reconcile       # réaligner le journal sur le dépôt
+python scripts/milestone_run.py quota           # quand le quota revient
+python scripts/milestone_run.py path            # où sont log, journal et plan
+```
+
+L'état d'un ticket n'est stocké nulle part : il se **rejoue** depuis un journal
+en ajout seul, doublé du log en clair. C'est ce qui permet à plusieurs agents
+d'écrire en même temps sans verrou ni écrasement.
+
+`pause`, `skip` et `retry` sont lus par l'orchestrateur au `gate` de la vague
+suivante : ils prennent effet au prochain point de contrôle, **pas au milieu
+d'une vague** — un agent déjà lancé va au bout de son ticket.
+
+### Reprendre, et survivre au quota
+
+Un run interrompu se reprend par `/milestone`, sans rien de plus : `start`
+retrouve le run inachevé, et `reconcile` réaligne le journal sur l'état réel du
+dépôt — issues closes, PR ouvertes ou mergées, branches poussées. Il n'y a donc
+plus rien à vérifier à la main : le journal dit ce que les agents ont eu le
+temps d'écrire, le dépôt dit ce qui existe, et c'est le dépôt qui fait foi.
+
+La fenêtre de quota de cinq heures, elle, tombe au milieu d'un jalon et **tue la
+session qui orchestre**. Aucune commande lancée depuis Claude Code ne peut donc
+attendre son rafraîchissement. C'est le rôle de
+[scripts/milestone_supervise.py](../../../scripts/milestone_supervise.py), que
+`start` arme tout seul à l'ouverture du run — **il n'y a rien à lancer à la
+main** :
+
+- il appelle `claude -p "/milestone … --waves 1"` une vague à la fois, lit
+  l'événement `rate_limit_event` du flux `stream-json` — qui porte `resetsAt`,
+  l'instant exact du rafraîchissement —, inscrit la retenue, dort, et relance ;
+- une tâche planifiée Windows le ressuscite dans les cinq minutes s'il meurt
+  d'autre chose : plantage, terminal fermé, redémarrage, ou limite atteinte au
+  milieu d'un `/milestone` interactif où aucun superviseur ne tournait.
+
+Pendant l'attente, `milestone_run.py gate` rend `4` : aucun agent n'est lancé, et
+le tableau de bord affiche le compte à rebours. Le dispositif se débranche seul
+quand le jalon est déroulé.
+
+```bash
+python scripts/milestone_supervise.py --state    # qui veille, sur quoi
+python scripts/milestone_supervise.py --disarm   # tout débrancher
+```
+
+### Les permissions qui interrompent un run
+
+Le hook `permission_watch.py` consigne chaque commande Bash qu'aucune règle
+`allow` ne couvre. En fin de run, les motifs **répétés** se transforment en
+règles durables, sur accord explicite :
+
+```bash
+python scripts/permissions_review.py --run <id>   # ce qui a bloqué, et combien de fois
+python scripts/permissions_review.py --apply      # après confirmation
+```
+
+Rien de tout cela n'est automatique : élargir l'allowlist réduit ce sur quoi
+l'utilisateur sera consulté. Détail et garde-fous dans
+[.claude/hooks/README.md](../../hooks/README.md).
+
+`/sprint-status` observe un sprint, `/milestone` l'exécute. Les deux lisent le
+même jalon ; seul le second écrit dans le dépôt.
 
 `/ticket-new` ne traite rien : il ouvre le **ticket de traçabilité** de la
 demande en cours, ou corrige le classement de celui que le hook a déjà ouvert.

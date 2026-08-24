@@ -36,6 +36,11 @@
       "Bash(python scripts/worktree_gc.py:*)",
       "Bash(python scripts/tracking.py:*)",
       "Bash(python scripts/project_status.py:*)",
+      "Bash(python scripts/milestone_plan.py:*)",
+      "Bash(python scripts/milestone_run.py:*)",
+      "Bash(python scripts/permissions_review.py:*)",
+      "Bash(python scripts/milestone_supervise.py:*)",
+      "Bash(python scripts/pr_gate.py:*)",
       "Bash(gh issue create:*)",
       "Bash(gh issue comment:*)",
       "Bash(gh issue edit:*)",
@@ -65,6 +70,18 @@
     ]
   },
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/permission_watch.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

@@ -27,6 +27,41 @@ brouillon et n'enchaîne ni la revue ni le merge.
 
 ---
 
+## Journal d'exécution
+
+**À chaque phase**, avant de l'entamer et à son issue :
+
+```bash
+python scripts/milestone_run.py event --ticket $1 --phase <phase> \
+       [--status <statut>] [--level DEBUG|INFO|WARN|ERROR] \
+       [--pr <n>] [--branch <b>] --message "<ce qui vient de se passer>"
+```
+
+Phases : `recevabilite`, `isolation`, `prise-en-charge`, `implementation`,
+`validation`, `commits`, `pr`, `ci`, `revue`, `merge`, `cloture`, `nettoyage`.
+Statuts — à ne poser que sur un vrai changement d'état : `running`, `pr_open`,
+`ci_green`, `reviewed`, `merged`, `failed`, `blocked`. Sans `--status`, la ligne
+est un simple détail d'avancement ; `--level DEBUG` pour ce qui n'intéresse que
+le diagnostic.
+
+Le message est ce qu'un humain doit lire pour comprendre **sans ouvrir le
+transcript**. Un verdict, un chiffre, un chemin — jamais « étape terminée » :
+
+```
+npm run verify : lint ok, typecheck ok, 142 tests, 0 échec (48s)
+terraform validate : variable "region" non déclarée dans modules/bootstrap/main.tf:12
+revue : 2 constats bloquants (fuite inter-tenant L84), 3 non bloquants
+```
+
+Ce que cela produit : un log lisible en continu dans
+`.claude/.milestone/latest.log`, un tableau de bord (`milestone_run.py watch`),
+et la matière du compte rendu final.
+
+**Sans run de jalon ouvert, la commande sort sans rien faire** — ces appels sont
+donc inoffensifs quand `/ticket` est lancé seul, et indispensables quand
+`/milestone` orchestre plusieurs agents dont les comptes rendus ne sont montrés
+à personne. Ne pas les conditionner à quoi que ce soit.
+
 ## Phase 0 — Recevabilité
 
 ```bash

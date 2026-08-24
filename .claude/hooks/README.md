@@ -1,12 +1,14 @@
 # Hooks du projet
 
-Deux automatismes vivent ici : la **traçabilité des demandes** — un ticket GitHub
-par demande faite à Claude Code — et le **nettoyage des worktrees**, qui efface
-ce qu'un ticket terminé laisse derrière lui.
+Trois automatismes vivent ici : la **traçabilité des demandes** — un ticket
+GitHub par demande faite à Claude Code —, le **nettoyage des worktrees**, qui
+efface ce qu'un ticket terminé laisse derrière lui, et la **veille sur les
+permissions**, qui répertorie les commandes venant interrompre le travail.
 
 | Hook | Script | Effet |
 |---|---|---|
 | `UserPromptSubmit` | `request_open.py` | Crée l'issue qualifiée, enregistre le commit de départ, injecte le numéro dans le contexte de Claude |
+| `PreToolUse` (Bash) | `permission_watch.py` | Consigne les commandes qu'aucune règle `allow` ne couvre — celles qui vont demander une permission |
 | `Stop` | `request_close.py` | Commente les commits, le diffstat et le travail non commité, passe la carte en `Done`, clôture l'issue |
 | `Stop` | `worktree_gc.py` | Supprime les worktrees et branches des tickets validés pendant le tour |
 | `SessionStart` | `worktree_gc.py` | Idem, pour ce que les sessions précédentes ont laissé |
@@ -141,6 +143,50 @@ Le script est aussi appelé par [`scripts/pr_gate.py`](../../scripts/pr_gate.py)
 juste après un merge réussi : la barrière supprime la branche distante, puis lui
 délègue le worktree et la branche locale plutôt que de dupliquer ses garde-fous.
 
+## Veille sur les permissions
+
+Un run de jalon (`/milestone`) fait travailler plusieurs agents en parallèle
+pendant des heures. Chaque commande non autorisée interrompt le travail par une
+demande d'accord — et ce sont les mêmes qui reviennent d'un ticket à l'autre :
+le même `npm run verify` bloque à chaque agent.
+
+`permission_watch.py` **ne décide rien et ne bloque rien**. Pour chaque commande
+Bash, il calcule le motif d'allowlist correspondant, regarde si une règle
+existante le couvre déjà, et sinon consigne l'observation dans
+`.claude/.permissions/observed.ndjson` — non versionné, une ligne par
+observation, ce qui rend l'écriture concurrente sûre sans verrou.
+
+C'est [`scripts/permissions_review.py`](../../scripts/permissions_review.py)
+qui, plus tard et **sur accord explicite**, transforme les motifs répétés en
+règles `allow` de `.claude/settings.json` :
+
+```bash
+python scripts/permissions_review.py              # ce qui a bloqué, et combien de fois
+python scripts/permissions_review.py --run <id>   # pendant ce run de jalon seulement
+python scripts/permissions_review.py --apply      # après confirmation, écrit les règles
+python scripts/permissions_review.py --forget     # repart de zéro
+```
+
+La séparation est délibérée : un hook qui ajouterait lui-même des permissions
+élargirait silencieusement ce que Claude Code peut faire sans demander. Le hook
+compte, l'humain décide.
+
+### Ce qui n'est jamais proposé
+
+- un motif couvert par une règle `deny` — `git push --force` reste refusé même
+  observé cent fois ;
+- les classes `réseau` et `destructif`, sauf drapeau `--include-*` **et** motif
+  nommé un par un avec `--pattern` ;
+- ce qui n'a bloqué qu'une fois : le seuil (`--threshold`, 2 par défaut) traduit
+  l'idée qu'une commande vue une seule fois n'a rien prouvé.
+
+Le motif proposé est toujours le plus étroit qui couvre les commandes observées :
+`git status:*`, jamais `git:*`. Une commande composée est découpée sur `&&`,
+`||`, `;` et `|`, car elle bloque dès que l'un de ses morceaux bloque.
+
+Une règle ajoutée n'est relue qu'au démarrage : il faut relancer Claude Code,
+ou rejouer les réglages via `/permissions`.
+
 ## Réglages
 
 | Variable | Effet |
@@ -153,6 +199,8 @@ délègue le worktree et la branche locale plutôt que de dupliquer ses garde-fo
 | `SPA_WORKTREE_GC=off` | Désactive le nettoyage automatique (le script reste appelable à la main) |
 | `SPA_WORKTREE_BASE` | Base de référence du nettoyage (défaut : `origin/develop`) |
 | `SPA_WORKTREE_GC_TIMEOUT` | Budget du hook en secondes (défaut : 60) |
+| `SPA_PERMISSION_WATCH=off` | Désactive la veille sur les permissions |
+| `SPA_PERMISSION_LOG` | Déplace le fichier d'observations |
 
 Pour désactiver durablement sans toucher au dépôt, retirer les blocs concernés
 de `.claude/settings.local.json`, ou passer par `/hooks`.
@@ -164,7 +212,9 @@ de `.claude/settings.local.json`, ou passer par `/hooks`.
   signal local (l'ancestralité). Aucun automatisme ne doit empêcher le travail.
 - **Aucun bruit.** Le nettoyage ne dit rien quand il n'a rien supprimé, et sort
   en quelques millisecondes — sans toucher au réseau — s'il n'existe aucun
-  worktree secondaire, ce qui est le cas courant.
+  worktree secondaire, ce qui est le cas courant. `permission_watch.py`
+  n'écrit jamais sur la sortie standard : il se contente d'observer, et une
+  faute de sa part est avalée plutôt que de retarder la commande observée.
 - **Rattachement systématique.** Un ticket sans jalon ni carte serait invisible :
   la carte est posée par `scripts/project_status.py` au moment de l'ouverture,
   sans attendre `project-automation.yml` — ce workflow reste inerte tant que le

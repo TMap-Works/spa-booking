@@ -61,5 +61,9 @@ Thumbs.db
 .claude/settings.local.json
 # État des tickets de traçabilité : propre à chaque session
 .claude/.tracking/
+# Journal et état des runs de jalon : propres à chaque machine
+.claude/.milestone/
+# Commandes ayant demandé une permission, en attente de revue
+.claude/.permissions/
 # Worktrees créés par /ticket
 .claude/worktrees/
