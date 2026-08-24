@@ -28,7 +28,8 @@
     "16": ["infra/terraform/envs", "ci:workflows"],
     "17": ["infra/terraform/modules/budgets"],
     "18": ["api/core"],
-    "26": ["contracts:shared"]
+    "26": ["contracts:shared"],
+    "108": ["docs/adr"]
   },
 
   "depends": {
