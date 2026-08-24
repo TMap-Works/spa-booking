@@ -84,12 +84,22 @@ Option D. Le dispositif est armé par `milestone_run.py start` — donc par
 **L'échéance vient du serveur.** Le superviseur lance chaque vague par
 `claude -p … --output-format stream-json` et lit ce flux. Claude Code y émet un
 événement `rate_limit_event` portant `status`, `rateLimitType` et `resetsAt` :
-l'instant exact où les jetons reviennent. Sur `rejected`, la retenue est
-inscrite dans le run, le superviseur dort jusqu'à cette seconde-là — plus une
-marge — puis relance. Ni sondage, ni estimation. Quand, et seulement quand, le
-flux s'interrompt avant l'événement structuré, un filet de repli reconnaît le
-refus dans le texte et retient la fenêtre pleine de cinq heures : se réveiller
+l'instant exact où les jetons reviennent. Sur `rejected`, l'appel est abandonné,
+la retenue est inscrite dans le run, le superviseur dort jusqu'à cette
+seconde-là — plus une marge — puis relance. Ni sondage, ni estimation.
+
+L'échéance retenue est le dernier `resetsAt` vu dans le flux de la vague, quel
+que soit l'événement qui le portait : un `allowed_warning` annonçant la fin de
+la fenêtre courante fait tout aussi bien l'affaire qu'un `rejected`. La fenêtre
+pleine de cinq heures n'est prise que lorsque **aucun** `resetsAt` n'a été vu —
+le serveur n'ayant alors rien annoncé, mieux vaut attendre trop : se réveiller
 trop tôt coûterait un appel refusé de plus, et la même attente derrière.
+
+Un filet de repli reconnaît le refus dans le texte, pour les cas où l'événement
+structuré n'est jamais arrivé : flux interrompu, message `result` marqué en
+erreur, ou code de sortie non nul dont la sortie d'erreur porte la mention. Ce
+filet ne fait que déclencher l'attente — l'événement structuré reste la seule
+source d'échéance.
 
 **Deux boucles, parce qu'aucune ne suffit seule.** La boucle courte — le
 superviseur — ne protège que du quota ; elle ne survit ni au plantage ni au
@@ -99,64 +109,99 @@ réveille toutes les cinq minutes — pose trois questions dans cet ordre : un
 superviseur bat-il encore ? l'autorisation tient-elle ? reste-t-il du travail ?
 Si non, oui, oui, elle relance un superviseur détaché. La vitalité se lit sur un
 battement daté et non sur un PID, qu'un système recycle et qu'un processus
-bloqué garderait. Ensemble : la coupure de quota est encaissée à la seconde
-près, et tout ce qui pourrait tuer la boucle courte est rattrapé en cinq
-minutes.
+bloqué garderait.
+
+Le rattrapage n'est donc pas instantané : un superviseur est déclaré mort quand
+son dernier battement dépasse 210 secondes, et celui qui meurt juste après avoir
+battu est encore vu vivant au réveil suivant. Le pire cas est de l'ordre de
+**huit minutes et demie**, pas de cinq.
 
 **L'autorisation est le run lui-même.** Tant qu'un run est ouvert, la relance
 automatique a le droit de s'exécuter ; dès qu'il n'y en a plus, elle n'a plus
-rien à faire et se supprime. C'est la seule autorisation du dispositif, elle est
-vérifiée à chaque réveil, et son marqueur est le run — le fichier `current`
-pointant sur un dossier de run existant — et non le terminal qui l'a ouvert : un
-run doit survivre à la fermeture d'une fenêtre et à un redémarrage, sans quoi la
-reprise après quota ne servirait à rien.
+rien à faire et se supprime. C'est la seule autorisation du dispositif, et son
+marqueur est le run — le fichier `current` pointant sur un dossier de run
+existant — non le terminal qui l'a ouvert : un run doit survivre à la fermeture
+d'une fenêtre et à un redémarrage, sans quoi la reprise après quota ne servirait
+à rien.
+
+Elle est vérifiée à chaque réveil **où aucun superviseur ne bat**. Un superviseur
+vivant court-circuite le contrôle, et c'est délibéré : au tout premier réveil le
+run n'existe pas encore — c'est la première vague qui l'ouvre — et désarmer là
+tuerait le dispositif à l'instant précis où il démarre.
 
 **L'état se rejoue, puis se réconcilie.** L'état d'un ticket n'est stocké nulle
-part. `journal.ndjson` est en ajout seul — chaque agent y écrit ses propres
-lignes, ce qui rend l'écriture concurrente sûre sans verrou — et l'état se
-rejoue depuis ces lignes. Avant chaque reprise, `reconcile` confronte cet état
-au dépôt réel — issues closes, PR ouvertes ou mergées, branches poussées — et
-corrige le journal. **Le dépôt fait foi**, jamais le journal.
+part. `journal.ndjson` est en ajout seul, et l'invariant qui rend l'écriture
+concurrente sûre sans verrou est **une ligne, une écriture, en mode ajout** —
+pas le fait que chaque agent écrive ses propres lignes. L'état se rejoue depuis
+ces lignes ; avant chaque reprise, `reconcile` le confronte au dépôt réel —
+issues closes, PR ouvertes ou mergées, branches poussées — et corrige le
+journal. **Le dépôt fait foi**, à deux exceptions près, toutes deux
+délibérées : un statut journalisé plus avancé que ce que GitHub sait exprimer
+(`ci_green`, `reviewed`) est conservé plutôt que rabaissé ; et quand GitHub est
+injoignable, la reprise se fait sur le seul journal, en le disant.
 
-### Les quatre situations qui retirent l'autorisation
+### Ce qui retire l'autorisation
 
-`authorised()` rend un couple (autorisé, motif du refus) et refuse dans trois
-cas : aucune intention armée, aucun run ouvert — `current` absent, ou pointant
-sur un dossier effacé — et intention périmée. La quatrième situation est lue au
-même réveil, juste après, dans le code de sortie de `milestone_run.py gate`.
-Les quatre, et ce que chacune déclenche :
+`authorised()` rend un couple (autorisé, motif du refus) et exige trois choses :
+une intention armée, un run ouvert — `current` présent et pointant sur un
+dossier existant — et une intention non périmée. Les autres motifs de
+désarmement sont lus au même réveil, juste après, dans le code de sortie de
+`milestone_run.py gate`, ou depuis la boucle courte elle-même.
 
-| Situation | Détectée par | Effet au réveil suivant |
+| Situation | Détectée par | Effet |
 |---|---|---|
-| Jalon déroulé — plus rien à traiter | `gate` rend `3` (aucun run actif) | Tâche planifiée supprimée **et** intention effacée |
-| `stop` ou `pause` demandé dans le run | `gate` rend `2` ou `1` | Tâche planifiée supprimée, intention conservée |
+| Jalon déroulé — plus rien à traiter | `gate` rend `3`, branche « toutes les vagues sont achevées » | Veille supprimée **et** intention effacée |
+| `stop` ou `pause` demandé dans le run | `gate` rend `2` ou `1` | Veille supprimée. Vue par la boucle courte : intention effacée aussi. Vue par la veille : intention conservée |
 | Run effacé — `current` absent ou orphelin | `authorised()` | Désarmement complet |
 | Intention vieille de plus de quatorze jours | `authorised()`, champ `expires` | Désarmement complet |
+| Jalon qui n'avance plus — `--patience` étapes de suite sans un ticket de plus | Boucle courte, après comptage des tickets aboutis | Désarmement complet, journalisé `blocked` en `ERROR` |
 
-Les deux dernières sont des garde-fous de dernier recours : le désarmement
-normal vient de la fin du jalon. Une panne qui n'est pas le quota — session `gh`
-expirée, dépôt inaccessible — ne désarme rien : elle repousse le prochain réveil
-d'une demi-heure, parce qu'elle peut se réparer seule et qu'une relance toutes
-les cinq minutes n'y changerait rien.
+Les deux situations du milieu sont des garde-fous de dernier recours. La
+dernière est la seule où l'humain doit revenir : ce n'est plus une affaire de
+quota, et relancer indéfiniment un run qui n'avance pas brûlerait des jetons
+pour rien.
+
+Une nuance à connaître avant de lire le code : la docstring d'en-tête de
+`scripts/milestone_supervise.py` n'annonce que **quatre** situations et omet le
+détecteur d'enlisement. Le tableau ci-dessus suit l'implémentation, qui en
+compte cinq.
+
+Une panne qui n'est pas le quota — session `gh` expirée, dépôt inaccessible — ne
+désarme rien : elle repousse le prochain réveil d'une demi-heure, parce qu'elle
+peut se réparer seule et qu'une relance toutes les cinq minutes n'y changerait
+rien.
 
 ## Conséquences
 
 **Facilite.** Un jalon lancé le soir est déroulé au matin, quota compris : la
 reprise se fait à la seconde où les jetons reviennent, pas à l'heure où
-quelqu'un s'en aperçoit. Le dispositif n'ayant aucun état propre, le superviseur
-peut être tué à tout moment sans rien perdre. Le journal en ajout seul autorise
-plusieurs agents à écrire en parallèle sans verrou, et
-`milestone_supervise.py --state` dit en une commande qui veille, sur quoi, et
-jusqu'à quand le quota est fermé.
+quelqu'un s'en aperçoit. Aucun état de progression ne vit dans le superviseur —
+il se rejoue depuis le journal — de sorte qu'on peut le tuer à tout moment sans
+perdre le fil du jalon. Le journal en ajout seul autorise plusieurs agents à
+écrire en parallèle sans verrou, et `milestone_supervise.py --state` dit en une
+commande qui veille, sur quoi, et jusqu'à quand le quota est fermé.
 
 **Coûte.** Le dispositif s'appuie sur le planificateur de tâches Windows : la
 boucle longue est aujourd'hui liée à cette plateforme et devra être réécrite
 pour une autre — `cron`, `systemd`, `launchd`. Il dépend aussi de la forme de
 l'événement `rate_limit_event` du flux `stream-json` de Claude Code, un contrat
 non versionné susceptible de changer sans préavis ; le repli textuel limite les
-dégâts mais rendrait l'attente moins précise. Enfin, un dossier de travail non
-approuvé fait échouer les agents en silence en mode `-p`, aucune demande de
-permission ne pouvant y être répondue : cela se vérifie avant d'armer.
+dégâts mais rendrait l'attente moins précise.
+
+Il n'est pas non plus sans état sur disque : `supervisor.json` porte l'intention,
+`supervisor.alive` le battement, `supervisor.backoff` la panne récente, et
+`quota.json` la retenue en cours. Surtout, deux compteurs vivent **en mémoire
+seulement** : le nombre d'étapes (`--max-legs`) et le nombre d'étapes stériles
+(`--patience`). Un superviseur qui plante en boucle et que la veille ressuscite
+toutes les cinq minutes les remet à zéro à chaque fois : `--max-legs` n'est donc
+pas un plafond global sur le run, et le détecteur d'enlisement peut ne jamais
+atteindre son seuil.
+
+Enfin, un dossier de travail non approuvé fait échouer les agents en silence en
+mode `-p`, aucune demande de permission ne pouvant y être répondue. Ce contrôle
+existe, mais il fait partie du préflight, qui ne s'exécute qu'au démarrage
+effectif d'un superviseur — **pas à l'armement** : `--arm` inscrit l'intention et
+rend la main avant de l'atteindre.
 
 **Ferme, et c'est le point à peser.** Dans son mode par défaut, le dispositif
 **merge sur `develop` sans relecture humaine**. Il ne relit pas le code : il
@@ -164,10 +209,25 @@ enchaîne les vagues, et toute PR verte est mergée. C'est le prix explicite du
 « sans intervention », et une entorse assumée à la Definition of Done du CDC
 §3.1, qui exige que le code soit revu. La revue automatique de `/ticket` n'est
 pas une approbation : GitHub interdit d'approuver sa propre pull request, les
-constats sont donc publiés en commentaire. Le contournement existe et il est
-unique : **armer avec `--no-merge`**, ce qui laisse les PR ouvertes et n'en
-merge aucune. C'est ce qu'il faut faire pour tout jalon qui touche
-`mod:payments`, un sujet de sécurité, une migration Prisma ou
-`infra/terraform/` — les PR sont alors relues au réveil. Sans `--no-merge`, la
-commande demande confirmation avant d'armer, et refuse de partir s'il n'y a pas
-de terminal pour la donner.
+constats sont donc publiés en commentaire.
+
+Deux choses doivent être dites sans les enjoliver, parce qu'elles vont plus loin
+que le simple « merge automatique » :
+
+- **L'armement ne demande aucune confirmation.** Le garde-fou interactif
+  (« sans `--no-merge`, chaque PR verte sera mergée sur `develop` sans relecture
+  humaine — confirmer ? ») existe, mais il ne protège que le lancement à la main
+  d'un superviseur. Sur le chemin qu'emprunte `/milestone`, `--arm` rend la main
+  avant lui. Armer la reprise automatique est donc silencieux.
+- **L'arbitrage par vague est neutralisé.** `/milestone` prévoit de demander un
+  arbitrage lorsqu'une vague touche un périmètre sensible — `mod:payments`, le
+  label `security`, une migration Prisma, `infra/terraform` — sauf sous `--yes`.
+  Or le superviseur relaie toujours `--yes` aux vagues qu'il lance. Aucune vague
+  automatique ne posera donc cette question.
+
+Le contournement principal est **d'armer avec `--no-merge`** : les PR restent
+ouvertes, aucune n'est mergée, et elles sont relues au réveil. C'est ce qu'il
+faut faire pour tout jalon touchant un périmètre sensible. Ce n'est pas le seul
+levier — `milestone_run.py shell` permet de poser `pause` ou `stop` sur un run en
+cours, et `milestone_supervise.py --disarm` débranche tout — mais c'est le seul
+qui se décide **avant** que la première PR ne soit mergée.
