@@ -45,7 +45,17 @@
       "Bash(gh issue comment:*)",
       "Bash(gh issue edit:*)",
       "Bash(gh issue close:*)",
-      "Bash(gh api repos/TMap-Works/spa-booking/milestones:*)"
+      "Bash(gh api repos/TMap-Works/spa-booking/milestones:*)",
+      "Bash(cd:*)",
+      "Bash(echo:*)",
+      "Bash(head:*)",
+      "Bash(sed:*)",
+      "Bash(grep:*)",
+      "Bash(tail:*)",
+      "Bash(git commit:*)",
+      "Bash(git worktree:*)",
+      "Bash(gh label list:*)",
+      "Bash(npm run verify:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",
