@@ -230,27 +230,43 @@ Sauf `--no-merge` ou `--draft`. Le merge passe **toujours** par la barrière,
 jamais par un `gh pr merge` en direct :
 
 ```bash
-python scripts/pr_gate.py <pr> --merge
+python scripts/pr_gate.py <pr> --request-merge
 ```
 
-Le script relit l'état de la PR juste avant d'agir — un workflow a pu démarrer
-entre le verdict de la phase 7 et maintenant, ce qui périmerait ce verdict — et
-ne merge que si tout est encore vert. Il refuse également une PR en brouillon,
-en conflit, ou qui ne cible pas `develop`. Squash uniquement : c'est le seul
-mode autorisé sur le dépôt, et le titre de PR devient le message de merge, d'où
-l'exigence Conventional Commits.
+Le script vérifie la CI, pose le label `merge-when-green`, puis **attend que le
+merge ait lieu**. Ce n'est pas lui qui merge : c'est
+[auto-merge.yml](../../.github/workflows/auto-merge.yml), côté GitHub, qui rejoue
+la même barrière avant d'agir. Poser le label ne court-circuite donc rien — une
+PR rouge étiquetée reste non mergée, et le workflow réessaie à chaque fois qu'un
+workflow conclut.
 
-Pourquoi un script et non la consigne « vérifier que la CI est verte » : le
+Ce détour existe pour une raison précise : merger depuis la session est une
+action qu'un classifieur de permissions retient pour la faire valider, ce qui
+arrête le ticket. Sous `/milestone`, les vagues tournent en `claude -p`, où
+**aucune demande de permission ne peut être répondue** — la vague échouerait en
+silence. Déléguer le merge à la CI met l'autorisation là où elle est explicite,
+tracée et révocable : retirer le label, ou désactiver le workflow.
+
+`--merge` merge encore depuis la machine appelante. Le garder pour le dépannage,
+pas pour le déroulé normal.
+
+Ni l'un ni l'autre ne relâche quoi que ce soit : la barrière refuse une PR en
+brouillon, en conflit, ou qui ne cible pas `develop`, et relit l'état juste avant
+d'agir — un workflow a pu démarrer entre le verdict de la phase 7 et maintenant.
+Squash uniquement : c'est le seul mode autorisé sur le dépôt, et le titre de PR
+devient le message de merge, d'où l'exigence Conventional Commits.
+
+Pourquoi une barrière et non la consigne « vérifier que la CI est verte » : le
 dépôt est sur un plan GitHub **Free**, sans protection de branche ni check
-obligatoire. GitHub accepterait de merger une PR rouge. Le seul verrou est
-celui-ci, et un code de sortie ne se contourne pas aussi facilement qu'une
-phrase.
+obligatoire. GitHub accepterait de merger une PR rouge, et son auto-merge natif
+n'aurait aucun check requis à attendre. Le seul verrou est celui-ci, et un code
+de sortie ne se contourne pas aussi facilement qu'une phrase.
 
 **La seule condition que le script ne peut pas voir** est le résultat de la
 phase 8 : s'il reste un constat bloquant non résolu, ne pas l'appeler du tout.
 
-Après un merge réussi, le script supprime la branche **distante**, vérifie
-qu'elle a bien disparu, puis délègue le local à `worktree_gc.py` — qui emporte
+Après un merge réussi, le script vérifie que la branche **distante** a bien
+disparu — le workflow la supprime — puis délègue le local à `worktree_gc.py` — qui emporte
 worktree et branche locale d'un même geste, avec ses garde-fous. Si la locale
 subsiste, il le dit : c'est que le worktree était sale ou portait des commits
 non poussés.

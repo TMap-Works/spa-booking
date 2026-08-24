@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Barrière de merge : n'autorise une PR que si toute la CI est verte.
 
-    python scripts/pr_gate.py 42                # attend la CI, rend un verdict
-    python scripts/pr_gate.py 42 --merge        # merge en squash si tout est vert
-    python scripts/pr_gate.py 42 --no-wait      # verdict immédiat, sans attendre
+    python scripts/pr_gate.py 42                  # attend la CI, rend un verdict
+    python scripts/pr_gate.py 42 --request-merge  # demande le merge à la CI, attend qu'il ait lieu
+    python scripts/pr_gate.py 42 --merge          # merge ici même, en squash
+    python scripts/pr_gate.py 42 --no-wait        # verdict immédiat, sans attendre
+
+Deux façons de merger, et elles ne se valent pas. `--request-merge` pose le
+label `merge-when-green` et laisse [auto-merge.yml](../.github/workflows/auto-merge.yml)
+faire le merge côté GitHub — c'est le mode normal, le seul qui fonctionne depuis
+une vague `claude -p` où aucune demande de permission ne peut être répondue.
+`--merge` merge depuis la machine appelante ; il reste pour le dépannage.
 
 Le dépôt est sur un plan GitHub Free : ni protection de branche, ni check
 obligatoire. GitHub laisserait donc merger une PR dont la CI est rouge — c'est
@@ -34,6 +41,9 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 REPO = os.environ.get("SPA_TRACKING_REPO", "TMap-Works/spa-booking")
+# Le label est une demande de merge, pas un ordre : auto-merge.yml rejoue cette
+# barrière avant d'agir, et ne merge que si le verdict est encore vert.
+MERGE_LABEL = os.environ.get("SPA_MERGE_LABEL", "merge-when-green")
 ROOT = Path(__file__).resolve().parents[1]
 
 # Un workflow filtré par chemin (terraform.yml) ou sorti volontairement
@@ -43,7 +53,7 @@ PASSING = {"SUCCESS", "SKIPPED", "NEUTRAL"}
 PENDING_STATUS = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED"}
 
 FIELDS = ("number,state,isDraft,baseRefName,headRefName,mergeable,"
-          "mergeStateStatus,statusCheckRollup,url,title")
+          "mergeStateStatus,statusCheckRollup,url,title,labels")
 
 GREEN, PENDING, FAILED, UNFIT, USAGE = 0, 1, 2, 3, 4
 
@@ -66,6 +76,46 @@ def fetch_pr(number):
         return json.loads(proc.stdout), None
     except json.JSONDecodeError:
         return None, "réponse gh illisible"
+
+
+def latest_only(rollup):
+    """Ne garde, pour un même check, que son passage le plus récent.
+
+    Un workflow rejoué — titre de PR corrigé, `gh run rerun`, PR rouverte —
+    attache au même commit un check run **de plus**, sans retirer le précédent.
+    Le rollup porte alors les deux, et compter l'ancien condamnerait la PR :
+    rien de ce qu'on pousse ensuite ne détache un échec déjà inscrit. La seule
+    issue serait de réécrire l'historique pour obtenir un SHA neuf, c'est-à-dire
+    de tordre le dépôt pour satisfaire la barrière.
+
+    Deux passages d'un même workflow ne peuvent pas coexister dans un même run :
+    dédupliquer sur (workflow, nom de job) ne masque donc jamais un vrai échec —
+    un job matriciel porte ses paramètres dans son nom.
+
+    **Un passage en cours l'emporte toujours sur un passage terminé**, quelles que
+    soient les dates. Un check run encore en file n'a pas forcément de `startedAt`
+    exploitable, et le comparer à l'ancien ferait gagner l'ancien : la barrière
+    déclarerait vert sur un résultat périmé pendant que la nouvelle exécution
+    tourne encore. Attendre est le seul comportement sûr.
+    """
+    freshest = {}
+    for item in rollup or []:
+        if item.get("__typename") == "StatusContext":
+            key = ("status", item.get("context") or "")
+            running = (item.get("state") or "").upper() in {"PENDING", "EXPECTED"}
+        else:
+            key = ("check", item.get("workflowName") or "", item.get("name") or "")
+            status = (item.get("status") or "").upper()
+            running = status != "COMPLETED" or not item.get("conclusion")
+        # ISO 8601 en UTC : l'ordre lexicographique est l'ordre chronologique.
+        # `completedAt` départage deux passages lancés dans la même seconde.
+        rank = (1 if running else 0,
+                item.get("startedAt") or "",
+                item.get("completedAt") or "")
+        kept = freshest.get(key)
+        if kept is None or rank > kept[0]:
+            freshest[key] = (rank, item)
+    return [item for _, item in freshest.values()]
 
 
 def check_entries(rollup):
@@ -120,7 +170,7 @@ def assess(pr, base, allow_no_checks):
     if unfit:
         return UNFIT, unfit, []
 
-    checks = list(check_entries(pr.get("statusCheckRollup")))
+    checks = list(check_entries(latest_only(pr.get("statusCheckRollup"))))
     failed = [c for c in checks if c[1] == "fail"]
     pending = [c for c in checks if c[1] == "pending"]
 
@@ -196,16 +246,25 @@ def branch_cleanup(head):
     """Vérifie la disparition du distant, délègue le local au ramasse-miettes."""
     if not head:
         return ""
+    # Dans un runner, le checkout est jetable : aucun worktree à ramasser, aucune
+    # branche locale à supprimer. Y faire tourner le ramasse-miettes du poste de
+    # travail ne servirait qu'à dépenser du temps avec un jeton en écriture.
+    if os.environ.get("CI"):
+        return ""
     run(["git", "fetch", "--prune", "--quiet", "origin"], timeout=60)
-    remote = run(["git", "ls-remote", "--heads", "origin", head], timeout=60)
-    if remote.returncode == 0 and remote.stdout.strip():
-        return "Branche distante {} toujours présente — à supprimer à la main.".format(head)
 
     # worktree_gc voit la PR mergée et supprime worktree comme branche locale ;
     # lui déléguer évite de dupliquer ici ses garde-fous (worktree sale, etc.).
+    # Il est appelé sans condition sur le distant : quand le merge vient de la
+    # CI, la suppression de la branche distante est un appel d'API postérieur au
+    # basculement en MERGED, et s'arrêter là laisserait le worktree derrière.
     gc = ROOT / "scripts" / "worktree_gc.py"
     if gc.exists():
         run([sys.executable, str(gc), "--quiet", "--no-fetch"], timeout=120)
+
+    remote = run(["git", "ls-remote", "--heads", "origin", head], timeout=60)
+    if remote.returncode == 0 and remote.stdout.strip():
+        return "Branche distante {} toujours présente — à supprimer à la main.".format(head)
     still_local = run(["git", "branch", "--list", head])
     if still_local.returncode == 0 and still_local.stdout.strip():
         return ("Branche distante supprimée ; la locale {} subsiste "
@@ -213,12 +272,74 @@ def branch_cleanup(head):
     return "Branche {} supprimée, distante et locale.".format(head)
 
 
+def request_merge(number, pr, args):
+    """Demande le merge à la CI en posant le label, puis attend qu'il ait lieu.
+
+    Le merge lui-même est fait par `.github/workflows/auto-merge.yml`, qui
+    rejoue cette même barrière côté GitHub. Poser le label ne court-circuite donc
+    rien : une PR rouge étiquetée reste non mergée.
+
+    Attendre plutôt que rendre la main tout de suite est délibéré — un jalon
+    merge ses PR en séquence, et la suivante doit partir d'un `develop` qui porte
+    déjà la précédente.
+    """
+    # Le workflow ne ramasse que les PR ouvertes vers develop. Étiqueter une PR
+    # visant staging ou main poserait un label que personne ne regarde, et
+    # laisserait attendre jusqu'au délai un merge qui n'arriverait jamais.
+    if args.base != "develop":
+        return UNFIT, ("--request-merge ne vaut que pour une PR vers develop ; "
+                       "celle-ci cible {}. Utiliser --merge.".format(args.base))
+
+    already = MERGE_LABEL in [label.get("name") for label in pr.get("labels") or []]
+    proc = run(["gh", "pr", "edit", str(number), "--repo", REPO,
+                "--add-label", MERGE_LABEL])
+    if proc.returncode != 0:
+        return USAGE, "label {} non posé : {}".format(
+            MERGE_LABEL, (proc.stderr or proc.stdout).strip())
+
+    # Reposer un label déjà présent n'émet aucun événement : sur une PR verte,
+    # plus aucun workflow ne conclura, donc plus rien ne réveillerait la CI. On
+    # la déclenche explicitement — le cas se produit dès qu'un premier
+    # --request-merge a dépassé son délai en laissant le label derrière lui.
+    if already:
+        dispatch = run(["gh", "workflow", "run", "auto-merge.yml", "--repo", REPO])
+        if dispatch.returncode != 0 and not args.quiet:
+            print("label déjà posé et relance du workflow impossible : "
+                  + (dispatch.stderr or dispatch.stdout).strip(), file=sys.stderr)
+
+    if args.no_await:
+        return GREEN, "label {} posé — la CI mergera #{}.".format(MERGE_LABEL, number)
+
+    deadline = time.time() + args.timeout
+    while time.time() < deadline:
+        time.sleep(args.interval)
+        fresh, _ = fetch_pr(number)
+        if fresh is None:
+            continue
+        state = (fresh.get("state") or "").upper()
+        if state == "MERGED":
+            lines = ["PR #{} mergée par la CI.".format(number)]
+            if not args.no_delete_branch:
+                lines.append(branch_cleanup(
+                    fresh.get("headRefName") or pr.get("headRefName")))
+            return GREEN, " ".join(part for part in lines if part)
+        if state == "CLOSED":
+            return UNFIT, "PR #{} fermée sans avoir été mergée.".format(number)
+    return PENDING, ("délai dépassé — le label {} reste posé, le merge se fera à "
+                     "la prochaine conclusion de workflow.".format(MERGE_LABEL))
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="N'autorise le merge d'une PR que si toute la CI est verte.")
     parser.add_argument("pr", type=int, help="numéro de la pull request")
-    parser.add_argument("--merge", action="store_true",
-                        help="merge en squash si et seulement si tout est vert")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--merge", action="store_true",
+                      help="merge en squash ici même, si et seulement si tout est vert")
+    mode.add_argument("--request-merge", action="store_true",
+                      help="pose le label {} et laisse la CI merger".format(MERGE_LABEL))
+    parser.add_argument("--no-await", action="store_true",
+                        help="avec --request-merge : ne pas attendre que le merge ait lieu")
     parser.add_argument("--base", default="develop",
                         help="base attendue de la PR (défaut : develop)")
     parser.add_argument("--timeout", type=int, default=1800,
@@ -233,7 +354,12 @@ def parse_args():
                         help="tolère une PR sur laquelle aucun workflow ne tourne")
     parser.add_argument("--quiet", action="store_true",
                         help="n'affiche que le verdict final")
-    return parser.parse_args()
+    args = parser.parse_args()
+    # Un drapeau accepté puis ignoré en silence laisse croire à un effet qui
+    # n'existe pas — ici, à un appel qui rend la main alors qu'il attend.
+    if args.no_await and not args.request_merge:
+        parser.error("--no-await ne s'utilise qu'avec --request-merge")
+    return args
 
 
 def main():
@@ -252,7 +378,7 @@ def main():
         return code
 
     print("VERT : {}".format(message))
-    if not args.merge:
+    if not (args.merge or args.request_merge):
         return GREEN
 
     # Deuxième lecture juste avant d'agir : un check a pu démarrer entre le
@@ -268,7 +394,8 @@ def main():
               file=sys.stderr)
         return recheck
 
-    code, message = merge(args.pr, fresh, args)
+    code, message = (request_merge if args.request_merge else merge)(
+        args.pr, fresh, args)
     print(message if code == GREEN else "BLOQUÉ : " + message,
           file=sys.stdout if code == GREEN else sys.stderr)
     return code

@@ -21,7 +21,8 @@ ne sert plus à rien : **la reprise est le comportement par défaut**.
 ## Ce que cette commande ne fait pas
 
 - **Elle ne remplace pas la relecture humaine.** Elle enchaîne des merges
-  automatiques sur `develop`. Le seul verrou dur est la CI (`pr_gate.py`) ; sur
+  automatiques sur `develop` — posés par la CI, via le label `merge-when-green`.
+  Le seul verrou dur est la CI (`pr_gate.py`, rejouée par auto-merge.yml) ; sur
   un plan GitHub Free il n'y a ni protection de branche ni approbation exigée.
   D'où l'arbitrage demandé à chaque vague qui contient un ticket sensible.
 - **Elle ne rattrape pas un backlog mal tenu.** Une issue sans milestone, sans
@@ -198,11 +199,29 @@ un état que ni l'un ni l'autre n'a testé.
 Pour chaque PR de la vague, par ordre de score décroissant :
 
 ```bash
-python scripts/pr_gate.py <pr> --merge
+python scripts/pr_gate.py <pr> --request-merge
+# et seulement si le code de sortie est 0 :
 python scripts/milestone_run.py event --ticket <n> --phase merge --status merged \
        --actor orchestrateur --message "mergée en squash"
 ```
 
+**Ne journaliser `merged` que sur un code 0.** Avec `--request-merge`, le code 1
+— délai dépassé, label posé, merge pas encore fait — est un résultat courant :
+écrire « mergée » pour une PR encore ouverte fait reprendre le run sur un état
+faux.
+
+`--request-merge` pose le label `merge-when-green` et **attend** que
+[auto-merge.yml](../../.github/workflows/auto-merge.yml) ait mergé. L'attente est
+ce qui préserve la séquence : la PR suivante doit partir d'un `develop` qui porte
+déjà la précédente. Ne pas la remplacer par `--no-await` dans cette boucle.
+
+C'est le seul mode qui fonctionne ici. Une vague tourne en `claude -p`, où aucune
+demande de permission ne peut être répondue : un merge lancé depuis l'agent, si
+un classifieur le retenait, ferait échouer la vague **en silence**.
+
+- **`1` (en attente)** : le délai est passé sans merge. Le label reste posé et le
+  workflow réessaiera, mais **ne pas enchaîner la PR suivante** — chercher
+  d'abord ce qui bloque, sans quoi la séquence est rompue.
 - **`3` (inapte)** après un merge précédent : la base a divergé. Renvoyer un
   agent court sur cette seule branche — `git fetch origin develop && git rebase
   origin/develop`, résoudre, `git push --force-with-lease`, puis rappeler le
