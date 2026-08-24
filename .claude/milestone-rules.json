@@ -1,0 +1,55 @@
+{
+  "$doc": [
+    "Ce que scripts/milestone_plan.py ne peut pas déduire des labels d'une issue.",
+    "",
+    "resources — l'empreinte de fichiers attendue d'une issue, qui remplace",
+    "  entièrement l'heuristique. Deux issues d'une même vague ne partagent jamais",
+    "  une ressource : c'est ce qui évite qu'elles se marchent dessus. Découper une",
+    "  ressource trop grosse (infra/terraform) en ressources fines (modules/network)",
+    "  est le levier principal du parallélisme — à condition que ce soit vrai.",
+    "",
+    "depends — les prérequis durs qu'aucune règle générale ne donne. Ils priment",
+    "  sur l'heuristique et peuvent la contredire : #19 après #18 tient, alors même",
+    "  que la règle « le schéma précède le code » voudrait l'inverse.",
+    "",
+    "why — la justification affichée dans le plan, une par issue enfant.",
+    "",
+    "Corriger ici plutôt qu'à la main dans le plan : la correction sert au prochain",
+    "passage, et la revue porte sur un fichier versionné."
+  ],
+
+  "resources": {
+    "10": ["infra/terraform/bootstrap"],
+    "11": ["infra/terraform/modules/network", "infra/terraform/envs"],
+    "12": ["infra/terraform/modules/database", "infra/terraform/modules/cache"],
+    "13": ["infra/terraform/modules/ecs-service"],
+    "14": ["infra/terraform/modules/oidc", "ci:workflows"],
+    "15": ["ci:workflows", "docker"],
+    "16": ["infra/terraform/envs", "ci:workflows"],
+    "17": ["infra/terraform/modules/budgets"],
+    "18": ["api/core"],
+    "26": ["contracts:shared"]
+  },
+
+  "depends": {
+    "11": [10],
+    "12": [11],
+    "13": [11],
+    "14": [10],
+    "15": [18],
+    "16": [11, 12, 13, 14, 15],
+    "17": [10],
+    "19": [18]
+  },
+
+  "why": {
+    "11": "aucun module Terraform ne s'applique sans backend d'état distant",
+    "12": "les sous-réseaux et groupes de sécurité viennent du module network",
+    "13": "le service ECS se pose dans le VPC du module network",
+    "14": "le rôle OIDC s'écrit dans l'état Terraform distant",
+    "15": "la CI ne peut être verte que sur un squelette qui compile",
+    "16": "le déploiement de bout en bout assemble tous les modules et la CI",
+    "17": "les budgets s'écrivent dans l'état Terraform distant",
+    "19": "le schéma Prisma se pose dans le squelette NestJS, pas l'inverse"
+  }
+}

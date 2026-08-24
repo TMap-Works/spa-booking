@@ -75,6 +75,12 @@ GitFlow simplifié, identique aux autres dépôts TMap-Works :
 
 Pour dérouler ce flux, utiliser les commandes `/feature-start`, `/pr-open`,
 `/sprint-status` définies dans [.claude/commands/](.claude/commands/).
+`/ticket <issue>` traite une issue de bout en bout ; `/milestone <jalon>` traite
+un sprint entier, en menant de front les tickets dont les empreintes de fichiers
+sont disjointes — et reprend d'elle-même le run inachevé. Ouvrir un run arme
+aussi la reprise automatique : coupure de quota, plantage ou redémarrage, le
+jalon repart seul (`scripts/milestone_supervise.py --state` pour regarder,
+`--disarm` pour débrancher).
 
 ## Règles de code
 
