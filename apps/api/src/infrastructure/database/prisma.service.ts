@@ -5,12 +5,18 @@ import { StructuredLogger } from '../../common/logging/structured-logger';
 import { AppConfigService } from '../../config/app-config.service';
 
 /**
- * Client Prisma unique de l'application — **le** chemin d'accès aux données
- * métier. Il coexiste avec `DatabaseConnection` sans se confondre avec lui :
- * le pool `pg` sert la sonde `/health` et le SQL brut que Prisma n'exprime pas
- * (contrainte d'exclusion, verrou consultatif) ; Prisma sert tout le reste.
- * Seuls les repositories l'injectent — ni un contrôleur, ni un service métier
- * ne connaît le schéma (.claude/skills/api-module/SKILL.md §2).
+ * Client Prisma unique de l'application — la **racine non scopée**, propriétaire
+ * de la connexion. Il coexiste avec `DatabaseConnection` sans se confondre avec
+ * lui : le pool `pg` sert la sonde `/health` et le SQL brut que Prisma n'exprime
+ * pas (contrainte d'exclusion, verrou consultatif) ; Prisma sert tout le reste.
+ *
+ * **Cette classe ne s'injecte pas.** `DatabaseModule` ne l'exporte pas : elle
+ * n'est visible que par les deux providers de `prisma-clients.ts`, qui en
+ * dérivent les deux portes de l'application — `PRISMA`, scopé par tenant, que
+ * les repositories injectent, et `PRISMA_UNSCOPED`, l'échappatoire nommée. Un
+ * accès non scopé doit porter un nom qui se grep ; celui-ci n'en aurait pas.
+ * Seuls les repositories touchent à Prisma — ni un contrôleur, ni un service
+ * métier ne connaît le schéma (.claude/skills/api-module/SKILL.md §2).
  *
  * Trois choix méritent leur explication :
  *
@@ -28,11 +34,11 @@ import { AppConfigService } from '../../config/app-config.service';
  *    `warn` et `error` sont écoutés, et ils passent par le logger structuré qui
  *    rédige.
  *
- * Le scoping automatique par `tenant_id` — l'extension Prisma décrite en
- * tenant-isolation §3 — n'est pas ici : il a besoin du contexte de requête
- * authentifié, qui arrive avec le module `identity`. Tant qu'il n'existe pas,
- * chaque repository porte son `where: { tenantId }` et le test de fuite de son
- * module en est la preuve.
+ * Le scoping automatique par `tenant_id` (tenant-isolation §3) n'est pas posé
+ * ici mais **au-dessus**, par `createScopedPrismaClient` : appliquer l'extension
+ * dans ce constructeur ne laisserait aucun moyen d'obtenir le client non scopé
+ * dont les traitements inter-tenants ont besoin. La séparation des deux portes
+ * vit donc dans `prisma-clients.ts`, et celle-ci reste le client nu.
  */
 /**
  * Options passées au client, déclarées comme **type** et pas seulement comme

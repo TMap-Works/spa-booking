@@ -1,8 +1,16 @@
-import { Module, ValidationPipe } from '@nestjs/common';
+import {
+  type MiddlewareConsumer,
+  Module,
+  type NestModule,
+  RequestMethod,
+  ValidationPipe,
+} from '@nestjs/common';
 import { APP_FILTER, APP_PIPE } from '@nestjs/core';
 
 import { DomainExceptionFilter } from './common/filters/domain-exception.filter';
 import { LoggingModule } from './common/logging/logging.module';
+import { TenantContextModule } from './common/tenant/tenant-context.module';
+import { TenantScopeMiddleware } from './common/tenant/tenant-scope.middleware';
 import { AppConfigModule } from './config/app-config.module';
 import { HealthModule } from './health/health.module';
 import { CacheModule } from './infrastructure/cache/cache.module';
@@ -19,7 +27,15 @@ import { DatabaseModule } from './infrastructure/database/database.module';
  * et la seule qui permette au filtre d'injecter le logger.
  */
 @Module({
-  imports: [AppConfigModule, LoggingModule, DatabaseModule, CacheModule, HealthModule],
+  imports: [
+    AppConfigModule,
+    LoggingModule,
+    // Avant `DatabaseModule` : le client Prisma scopé lit le contexte de tenant.
+    TenantContextModule,
+    DatabaseModule,
+    CacheModule,
+    HealthModule,
+  ],
   providers: [
     {
       provide: APP_PIPE,
@@ -43,4 +59,18 @@ import { DatabaseModule } from './infrastructure/database/database.module';
     },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  /**
+   * La portée de tenant s'ouvre sur **toutes** les routes, sans exception —
+   * `/health` et les pages publiques comprises. Une liste d'exclusions serait
+   * une liste de routes servies hors contexte, donc la première fuite à écrire.
+   *
+   * Le motif est `{*path}` et non `*` : Express 5 s'appuie sur path-to-regexp
+   * v8, qui rejette le joker nu. Un motif invalide fait échouer l'amorçage —
+   * toute la suite d'intégration, qui monte cette application et la sollicite en
+   * HTTP, rougirait donc d'un bloc.
+   */
+  public configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(TenantScopeMiddleware).forRoutes({ path: '{*path}', method: RequestMethod.ALL });
+  }
+}
