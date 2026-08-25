@@ -160,6 +160,14 @@ BRANCH_RE = re.compile(r"^(?:feature|bugfix|chore|docs)/(\d+)-")
 # reviendrait jamais.
 CLOSES_RE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d+)",
                        re.IGNORECASE)
+# La branche que `EnterWorktree` crée **avant** le renommage de la phase 1 de
+# `/ticket` : il préfixe `worktree-` et remplace le « / » par un « + ». Elle ne
+# satisfait pas BRANCH_RE, et personne ne la pousse — mais elle nomme bien un
+# ticket, et c'est la seule trace d'un agent pendant les quelques secondes qui
+# séparent la création du worktree de `git branch -m`. La lire ici évite que le
+# requeue d'un `running` sans trace (#134) ne relance un agent sur l'empreinte
+# d'un autre (#130).
+WORKTREE_BRANCH_RE = re.compile(r"^worktree-(?:feature|bugfix|chore|docs)\+(\d+)-")
 
 PHASES = ["recevabilite", "isolation", "prise-en-charge", "implementation",
           "validation", "commits", "pr", "ci", "revue", "merge", "cloture",
@@ -629,16 +637,33 @@ def gh_json(args):
         return None, "réponse gh illisible"
 
 
+# Les sondes locales (`git ls-remote`, `git worktree list`) rendent un
+# dictionnaire vide aussi bien quand elles n'ont rien trouvé que quand elles
+# n'ont pas pu regarder — réseau coupé, timeout, git en erreur. Les deux se
+# lisaient « ni branche ni worktree », ce qui est sans conséquence tant que
+# `reconcile` ne fait pas reculer un ticket, mais devient destructeur depuis
+# qu'un `running` sans trace est requeué (#134) : une sonde muette suffirait
+# alors à relancer un agent sur un ticket dont le travail existe. Chaque échec
+# se note ici, et `reconcile` s'abstient tant que la liste n'est pas vide.
+PROBE_FAILURES = []
+
+
+def note_probe_failure(what):
+    PROBE_FAILURES.append(what)
+    return {}
+
+
 def remote_branches():
     """Numéro d'issue → branche poussée sur origin."""
     try:
         proc = subprocess.run(["git", "ls-remote", "--heads", "origin"], cwd=ROOT,
                               capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return {}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return note_probe_failure(f"git ls-remote ({exc})")
     if proc.returncode != 0:
-        return {}
+        return note_probe_failure("git ls-remote : "
+                                  + ((proc.stderr or "").strip() or "en erreur"))
     found = {}
     for line in proc.stdout.splitlines():
         _, _, ref = line.partition("refs/heads/")
@@ -660,22 +685,35 @@ def live_worktrees():
     Un worktree est la trace qu'un agent tient le ticket. Elle vaut avant le
     premier push, c'est-à-dire précisément pendant la fenêtre où le dépôt
     distant ne sait rien dire.
+
+    Les deux formes de nom comptent : celle d'après le renommage de la phase 1
+    (`bugfix/134-…`) et celle que `EnterWorktree` pose avant lui
+    (`worktree-bugfix+134-…`). Depuis #134, un ticket `running` sans aucune
+    trace redevient `pending` : ne pas lire la seconde forme rendrait invisible
+    l'agent qui n'a pas encore eu le temps de renommer sa branche.
+
+    Reste une fenêtre irréductible, à connaître : le worktree qu'un agent de
+    jalon reçoit s'appelle d'abord `agent-<aléa>`, sans numéro d'issue. Un agent
+    mort là n'a rien posé et son ticket doit repartir ; un agent **vivant** là
+    n'est pas détectable — c'est pourquoi `reconcile` se lance entre deux
+    vagues, jamais pendant.
     """
     try:
         proc = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=ROOT,
                               capture_output=True, text=True, encoding="utf-8",
                               errors="replace", timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return {}
+    except (OSError, subprocess.SubprocessError) as exc:
+        return note_probe_failure(f"git worktree list ({exc})")
     if proc.returncode != 0:
-        return {}
+        return note_probe_failure("git worktree list : "
+                                  + ((proc.stderr or "").strip() or "en erreur"))
 
     found, current = {}, {}
     for line in proc.stdout.splitlines() + [""]:
         line = line.strip()
         if not line:                       # ligne vide : fin d'une entrée
             branch = current.get("branch", "")
-            match = BRANCH_RE.match(branch)
+            match = BRANCH_RE.match(branch) or WORKTREE_BRANCH_RE.match(branch)
             if match and current.get("path"):
                 found.setdefault(int(match.group(1)), {
                     "path": current["path"], "branch": branch,
@@ -718,6 +756,13 @@ def cmd_reconcile(args):
     laisse un ticket en `pr_open` alors qu'il est fini. Trois appels — issues,
     PR, branches distantes — suffisent à trancher, et le dépôt a toujours
     raison contre le journal.
+
+    Le cas symétrique compte autant, et manquait (#134) : l'agent tué **avant**
+    son premier push laisse un `running` que rien n'atteste. C'est le mode de
+    mort ordinaire sous reprise automatique, où les agents meurent avec le leg
+    qui les a lancés. Ce ticket-là redevient `pending` — sans quoi il ne peut
+    plus rien devenir : le `gate` ne lance que des `pending`, et une vague qui
+    en garde un ne se clôt jamais.
     """
     run_id = resolve(args.run)
     run = load_run(run_id)
@@ -745,8 +790,16 @@ def cmd_reconcile(args):
 
     issue_state = {i["number"]: i["state"] for i in issues}
     carried = pr_by_issue(prs)
+    # Requeuer un `running` ne se fonde pas sur une absence de trace, mais sur
+    # une absence **constatée** : les deux sondes doivent avoir répondu. Muettes,
+    # elles rendent le même dictionnaire vide qu'un ticket jamais démarré.
+    PROBE_FAILURES.clear()
     branches = remote_branches()
     worktrees = live_worktrees()
+    sondes_sures = not PROBE_FAILURES
+    if not sondes_sures:
+        print("sonde locale muette (" + " ; ".join(PROBE_FAILURES) + ") — les "
+              "tickets `running` sont laissés tels quels", file=sys.stderr)
 
     corrections = []
     for number, ticket in sorted(pending.items()):
@@ -778,8 +831,19 @@ def cmd_reconcile(args):
         # a bien une PR ouverte — le ramener à `pr_open` ferait refaire la CI et la
         # revue à chaque reprise. Un état déjà plus avancé que ce que le dépôt sait
         # dire n'est donc pas une divergence.
+        #
+        # `running` est l'exception, et c'est tout le sujet de #134 : c'est le
+        # seul état de FLOW qui ne laisse **aucune trace** — ni PR, ni branche,
+        # ni worktree. N'en rien trouver n'est donc pas une ignorance du dépôt
+        # mais une information sûre : l'agent est mort avant d'avoir rien posé.
+        # Le protéger comme les autres figeait le ticket pour toujours — le
+        # `gate` ne lance que des `pending`, et la vague ne pouvait plus ni
+        # avancer ni se clore. Sûre à une condition : que les sondes locales
+        # aient répondu. Muettes, elles ne prouvent rien et le garde-fou tient.
+        recule_running = ticket["status"] == "running" and sondes_sures
         avance = (target in FLOW and ticket["status"] in FLOW
-                  and FLOW.index(ticket["status"]) > FLOW.index(target))
+                  and FLOW.index(ticket["status"]) > FLOW.index(target)
+                  and not recule_running)
         if target == ticket["status"] or avance:
             # Rien à corriger sur l'état. Reste à noter la PR si le journal ne la
             # connaissait pas — sans `reset`, qui ferait reculer le ticket.
@@ -1286,8 +1350,21 @@ def cmd_gate(args):
 
     for number, reason in (control.get("skip") or {}).items():
         print(f"écarter #{number} · {reason or 'décision humaine'}")
+    # Une demande de reprise ne vaut que tant qu'elle n'a pas été honorée : le
+    # `reset → pending` du shell la consomme, et la vague suivante la relance.
+    # Continuer de l'annoncer ensuite — c'est ce que faisait cette boucle, pour
+    # tout le reste du run — dirait à l'orchestrateur de relancer un ticket déjà
+    # mergé, ou pire, un ticket qu'un agent tient à cet instant (#130).
+    # `control["retry"]` n'est jamais purgé : seul l'état du ticket dit si la
+    # demande reste à honorer. Un ticket tombé (`failed`/`blocked`) l'est encore
+    # — c'est le seul cas où le shell n'a pas déjà écrit son `reset → pending`,
+    # ou bien le ticket est retombé depuis et l'humain doit le revoir. Tout le
+    # reste — `pending` en file, `running` relancé, `pr_open` en vol, `merged` —
+    # a consommé la demande.
     for number in control.get("retry") or []:
-        print(f"reprendre #{number}")
+        ticket = tickets.get(number)
+        if ticket and ticket["status"] in BAD:
+            print(f"reprendre #{number} ({ticket['status']})")
 
     signal = control.get("signal", "run")
     if signal == "stop":
@@ -1746,7 +1823,7 @@ HELP = """\
   go                  lever la pause et reprendre
   onerror [pause|continue]  armer/désarmer la pause automatique sur ticket en échec
   skip N [raison]     écarter un ticket du run
-  retry N             relancer un ticket en échec
+  retry N             relancer un ticket en échec — ou figé en running
   note N <texte>      annoter un ticket dans le journal
   runs                tous les runs connus
   help                cet écran
@@ -1864,9 +1941,11 @@ def cmd_shell(args):
                 control["retry"] = sorted(set(control.get("retry") or []) | {number})
                 control.get("skip", {}).pop(str(number), None)
                 save_control(run_id, control)
-                # `skip` a journalisé un statut terminal, que `replay` n'annule
-                # pas : sans cette ligne, « sera relancé » serait un mensonge et
-                # le ticket disparaîtrait du jalon.
+                # C'est cette ligne qui remet le ticket en file, et elle seule :
+                # `reset` est le seul moyen de faire reculer un statut, si bien
+                # que `retry` mord sur tout — un `skip` journalisé terminal comme
+                # un `running` figé par un agent mort (#134), que `reconcile` ne
+                # rattrape que si le dépôt confirme l'absence de trace.
                 append_journal(run_id, {"ts": now(), "kind": "ticket",
                                         "ticket": number, "status": "pending",
                                         "reset": True, "actor": "humain",
