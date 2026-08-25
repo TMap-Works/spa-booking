@@ -16,6 +16,15 @@ Le plan répond à deux questions, et à elles seules :
      branches qui écrivent le même fichier finissent en conflit de fusion : c'est
      le coût qui annule le gain du parallélisme.
 
+Une issue que le plan écarte — PR déjà ouverte, classement incomplet, quelqu'un
+d'autre dessus — reste un **prérequis non satisfait** : son travail n'est pas sur
+`develop`. Elle retient donc ses dépendants, qui sortent du plan sous la rubrique
+« Retenues » plutôt que d'être dispatchés sur une base amputée (#155). Seule une
+issue **fermée** libère les siens, et elle n'arrive jamais jusqu'à `qualify()` :
+`fetch_issues` ne lit que les ouvertes, une issue fermée n'a donc aucune arête.
+Font exception les écartées de `NEVER_HOLDS` (hors périmètre, traçabilité,
+épique) : elles ne seront jamais faites, les retenir gèlerait le jalon à vie.
+
 Rien ici n'est deviné définitivement. `.claude/milestone-rules.json` fige les
 dépendances et les empreintes que l'heuristique ne peut pas connaître ; toute
 correction faite en lisant une issue a vocation à y être écrite.
@@ -151,15 +160,35 @@ def whoami():
 # agent sur une issue qu'il refuserait de traiter.
 # --------------------------------------------------------------------------- #
 
+# Écarter n'a pas partout le même sens. Ces trois raisons-là sont structurelles :
+# l'issue ne sera jamais dispatchée, et aucun merge ne la fermera. La tenir pour
+# un prérequis non satisfait gèlerait ses dépendants pour toujours — le plan
+# n'aurait plus aucun moyen de repartir. Les autres raisons — PR en vol,
+# classement à compléter, quelqu'un d'autre dessus — se résorbent, et retiennent
+# donc à raison.
+OUT_OF_SCOPE = "hors périmètre MVP (post-mvp)"
+TRACKING = "ticket de traçabilité, pas du travail produit"
+EPIC = "épique — conteneur, ce sont ses sous-tâches qui portent le travail"
+NEVER_HOLDS = {OUT_OF_SCOPE, TRACKING, EPIC}
+
+
 def qualify(issue, busy, me):
-    """(recevable, raison d'écarter)."""
+    """(recevable, raison d'écarter).
+
+    Ne voit que des issues **ouvertes** : `fetch_issues` filtre sur `--state open`.
+    Une issue fermée ne passe donc jamais ici — elle est simplement absente, et
+    c'est ce qui la fait, à raison, libérer ses dépendants : son travail est sur
+    `develop`. Une issue qui ressort d'ici avec une raison résorbable, elle, a son
+    travail ailleurs — en vol, en attente ou pas commencé — et retient les siens ;
+    les raisons de `NEVER_HOLDS` ne retiennent personne.
+    """
     labels = {label["name"] for label in issue["labels"]}
     if "post-mvp" in labels:
-        return False, "hors périmètre MVP (post-mvp)"
+        return False, OUT_OF_SCOPE
     if "tracking" in labels:
-        return False, "ticket de traçabilité, pas du travail produit"
+        return False, TRACKING
     if "type:epic" in labels:
-        return False, "épique — conteneur, ce sont ses sous-tâches qui portent le travail"
+        return False, EPIC
 
     missing = []
     if not any(l.startswith("ws:") for l in labels):
@@ -241,7 +270,7 @@ CLOSING = re.compile(
     r"d[ée]ployer staging", re.IGNORECASE)
 
 
-def build_edges(nodes, rules):
+def build_edges(nodes, rules, held=()):
     """prereqs[n] = {parents}, et la liste des arêtes avec leur justification.
 
     Trois sources, par confiance décroissante : ce que l'issue déclare, ce que le
@@ -251,6 +280,17 @@ def build_edges(nodes, rules):
     qui la contredit (« le squelette NestJS précède le schéma »).
     """
     index = {n["number"]: n for n in nodes}
+    # Une issue écartée du plan reste un sommet valide du graphe : c'est
+    # précisément parce que son travail n'est pas sur `develop` qu'elle doit
+    # retenir ses dépendants. Elle ne peut être que parent — le plan ne la
+    # programme pas, seul `withheld_by` lit ce qu'elle bloque. Elle est donc
+    # décrite comme les autres (`describe` + `resources_of`) et entre dans les
+    # trois sources d'arêtes, l'heuristique comprise : c'est elle qui en produit
+    # le plus, et l'en priver laisserait passer très exactement le défaut de #155
+    # (l'écran part alors que l'API du même module est encore en PR).
+    held = list(held)
+    candidates = list(nodes) + held
+    known = set(index) | {n["number"] for n in held}
     prereqs = {n["number"]: set() for n in nodes}
     edges = []
 
@@ -268,7 +308,7 @@ def build_edges(nodes, rules):
         return False
 
     def add(child, parent, reason, hard):
-        if child == parent or child not in index or parent not in index:
+        if child == parent or child not in index or parent not in known:
             return
         if parent in prereqs[child]:
             return
@@ -293,8 +333,8 @@ def build_edges(nodes, rules):
                 why.get(str(child), "règle du dépôt (.claude/milestone-rules.json)"), True)
 
     # 3. Ce que l'heuristique déduit.
-    schema = [n["number"] for n in nodes if "db:schema" in n["resources"]]
-    contracts = [n["number"] for n in nodes if "contracts:shared" in n["resources"]]
+    schema = [n["number"] for n in candidates if "db:schema" in n["resources"]]
+    contracts = [n["number"] for n in candidates if "contracts:shared" in n["resources"]]
     for node in nodes:
         number, ws, mod = node["number"], node["workstream"], node["module"]
 
@@ -305,24 +345,54 @@ def build_edges(nodes, rules):
         if ws == "frontend":
             for parent in contracts:
                 add(number, parent, "l'écran consomme les contrats partagés", False)
-            for other in nodes:
+            for other in candidates:
                 if other["module"] == mod and other["workstream"] == "backend":
                     add(number, other["number"], "l'écran consomme l'API du même module", False)
                 if other["module"] == mod and other["workstream"] == "design":
                     add(number, other["number"], "l'écran suit sa maquette", False)
 
         if ws == "qa":
-            for other in nodes:
+            for other in candidates:
                 if other["module"] == mod and other["workstream"] in {"backend", "frontend"}:
                     add(number, other["number"], "le test suit ce qu'il vérifie", False)
 
-    closing = {n["number"] for n in nodes if CLOSING.search(n["title"])}
+    closing = {n["number"] for n in candidates if CLOSING.search(n["title"])}
     for number in closing:
-        for other in nodes:
+        for other in candidates:
             if other["number"] not in closing:
                 add(number, other["number"], "un jalon se clôt par sa recette", False)
 
     return prereqs, edges
+
+
+def withheld_by(numbers, prereqs, held):
+    """{issue : prérequis retenus qui la bloquent}, transitivement.
+
+    Un prérequis écarté du plan n'est pas satisfait : son travail est en vol ou en
+    attente, pas sur `develop`. L'issue qui en dépend ne peut donc pas démarrer —
+    ni celles qui dépendent d'elle. C'est le défaut de #155 : `plan_waves` lisait
+    « absent de `remaining` » comme « fait », alors que la seule absence qui vaut
+    « fait » est celle d'une issue fermée, jamais entrée dans le graphe.
+
+    Point fixe plutôt que descente récursive : `prereqs` est acyclique par
+    construction (`add` refuse ce qui referme un cycle), mais un graphe qui
+    bouclerait ne doit pas faire boucler le planificateur. Les causes ne font que
+    croître dans un ensemble fini, la boucle termine.
+    """
+    blocked = {}
+    changed = True
+    while changed:
+        changed = False
+        for number in numbers:
+            causes = set()
+            for parent in prereqs.get(number, ()):
+                if parent in held:
+                    causes.add(parent)
+                causes |= blocked.get(parent, set())
+            if causes and causes != blocked.get(number):
+                blocked[number] = causes
+                changed = True
+    return blocked
 
 
 def reachable_pairs(prereqs):
@@ -436,10 +506,14 @@ def due_in(milestone):
     return f"échéance {due:%Y-%m-%d} ({when})"
 
 
-def render(milestone, waves, index, excluded, edges, cut, width, closure):
+def render(milestone, waves, index, excluded, edges, cut, width, closure,
+           withheld, catalog, reasons):
+    counted = f"{len(index)} traitables"
+    if withheld:
+        counted += f" · {len(withheld)} retenues"
     print(f"Jalon {milestone['title']} · {due_in(milestone)}")
     print(f"{milestone['open_issues']} ouvertes · {milestone['closed_issues']} fermées · "
-          f"{len(index)} traitables · {len(waves)} vagues · largeur max {width}")
+          f"{counted} · {len(waves)} vagues · largeur max {width}")
     print()
 
     rank = 0
@@ -493,8 +567,25 @@ def render(milestone, waves, index, excluded, edges, cut, width, closure):
             print(f"  #{edge['child']} après #{edge['parent']} · {edge['dropped']}")
         print()
 
+    # Distincte des « Écartées » : ces tickets-là sont recevables. Ce qui manque
+    # n'est pas leur classement, c'est le travail dont ils dépendent — resté dans
+    # une PR ouverte, donc pas sur `develop`.
+    if withheld:
+        print("Retenues · un prérequis n'est pas sur develop")
+        for number in sorted(withheld):
+            title = catalog[number]["title"]
+            if len(title) > 46:
+                title = title[:45] + "…"
+            causes = " · ".join(
+                (f"#{parent} ({reasons[parent]['reason']})" if parent in reasons
+                 else f"#{parent}")
+                for parent in sorted(withheld[number]))
+            print(f"  #{number:<4} {title:<46} retenue par {causes}")
+        print()
+
     if excluded:
-        print("Écartées")
+        print("Écartées · pas dispatchables — et, sauf hors périmètre, "
+              "elles retiennent leurs dépendants")
         for item in excluded:
             print(f"  #{item['number']:<4} {item['reason']} — {item['title'][:58]}")
 
@@ -524,14 +615,20 @@ def main():
     busy = {} if args.include_busy else fetch_busy()
     me = whoami()
 
-    nodes, excluded = [], []
+    nodes, excluded, held_nodes = [], [], []
     for issue in issues:
         ok, reason = qualify(issue, busy, me)
         if ok:
             nodes.append(describe(issue))
         else:
             excluded.append({"number": issue["number"], "title": issue["title"],
-                             "reason": reason})
+                             "reason": reason, "pr": busy.get(issue["number"])})
+            # Écartée du plan ne veut pas dire faite : aucune de ces issues n'a
+            # son travail sur `develop`. Elles restent donc des prérequis non
+            # satisfaits — sauf celles qui ne seront jamais faites du tout, qui
+            # ne retiendraient personne, seulement pour toujours.
+            if reason not in NEVER_HOLDS:
+                held_nodes.append(describe(issue))
 
     if not nodes:
         print(f"Jalon {milestone['title']} : rien de traitable "
@@ -540,19 +637,28 @@ def main():
             print(f"  #{item['number']:<4} {item['reason']}")
         return EMPTY
 
+    held = {n["number"] for n in held_nodes}
+
     rules = load_rules()
-    for node in nodes:
+    for node in nodes + held_nodes:
         node["resources"] = resources_of(node, rules)
 
-    prereqs, edges = build_edges(nodes, rules)
+    prereqs, edges = build_edges(nodes, rules, held_nodes)
     closure = reachable_pairs(prereqs)
     unblocks = downstream(closure)
     for node in nodes:
         node["unblocks"] = unblocks[node["number"]]
         node["score"] = score(node, node["unblocks"])
 
-    index = {n["number"]: n for n in nodes}
-    waves, cut = plan_waves(nodes, prereqs, args.width)
+    # Ce qu'un prérequis retenu bloque sort du plan sans être « écarté » : le
+    # ticket est recevable, c'est sa base qui n'est pas prête.
+    catalog = {n["number"]: n for n in nodes}
+    withheld = withheld_by(catalog, prereqs, held)
+    reasons = {item["number"]: item for item in excluded}
+    planned = [n for n in nodes if n["number"] not in withheld]
+
+    index = {n["number"]: n for n in planned}
+    waves, cut = plan_waves(planned, prereqs, args.width)
 
     if args.json:
         payload = {
@@ -569,12 +675,23 @@ def main():
             ],
             "edges": edges,
             "excluded": excluded,
+            "withheld": [
+                {"number": number,
+                 "title": catalog[number]["title"],
+                 "url": catalog[number]["url"],
+                 "held_by": [{"number": parent,
+                              "reason": reasons.get(parent, {}).get("reason"),
+                              "pr": reasons.get(parent, {}).get("pr")}
+                             for parent in sorted(causes)]}
+                for number, causes in sorted(withheld.items())
+            ],
             "cycles_cut": cut,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return OK
 
-    render(milestone, waves, index, excluded, edges, cut, args.width, closure)
+    render(milestone, waves, index, excluded, edges, cut, args.width, closure,
+           withheld, catalog, reasons)
     return OK
 
 
