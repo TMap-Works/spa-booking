@@ -36,10 +36,11 @@
 
 ## Labels particuliers
 
-- `tracking` — ticket ouvert automatiquement par les hooks Claude Code pour
-  historiser une demande, ou à la main par `/ticket-new`. Rattaché au jalon du
-  sprint et au Project comme n'importe quelle issue ; ce label est ce qui permet
-  de l'en filtrer. Voir [.claude/hooks/README.md](../.claude/hooks/README.md).
+- `tracking` — ticket ouvert par `/ticket-new` pour historiser une demande faite
+  à Claude Code, refermé par `/ticket-close`. Rattaché au jalon du sprint et au
+  Project comme n'importe quelle issue ; ce label est ce qui permet de l'en
+  filtrer. Voir
+  [project-flow §12](../.claude/skills/project-flow/SKILL.md).
 - `post-mvp` — hors périmètre, sans milestone, non travaillé pendant le MVP.
 
 ## À faire manuellement

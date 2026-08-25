@@ -87,27 +87,9 @@
         ]
       }
     ],
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/request_open.py\"",
-            "timeout": 60,
-            "statusMessage": "Ouverture du ticket de traçabilité…"
-          }
-        ]
-      }
-    ],
     "Stop": [
       {
         "hooks": [
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/request_close.py\"",
-            "timeout": 60,
-            "statusMessage": "Clôture du ticket de traçabilité…"
-          },
           {
             "type": "command",
             "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree_gc.py\"",
@@ -125,12 +107,6 @@
             "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/worktree_gc.py\"",
             "timeout": 70,
             "statusMessage": "Nettoyage des worktrees terminés…"
-          },
-          {
-            "type": "command",
-            "command": "python \"$CLAUDE_PROJECT_DIR/scripts/tracking.py\" sweep",
-            "timeout": 60,
-            "statusMessage": "Clôture des tickets laissés ouverts…"
           }
         ]
       }

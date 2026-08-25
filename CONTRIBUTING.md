@@ -90,6 +90,8 @@ Le dépôt embarque un environnement Claude Code complet dans [.claude/](.claude
 | `/pr-open` | Ouvre la PR de la branche courante avec les contrôles attendus |
 | `/sprint-status [S1-S4]` | Point d'avancement factuel du sprint |
 | `/adr-new <titre>` | Rédige un Architecture Decision Record |
+| `/ticket-new` | Ouvre le ticket de traçabilité de la demande en cours |
+| `/ticket-close` | Le referme avec le résumé des changements produits |
 
 `/ticket` va jusqu'au merge sans approbation humaine — GitHub interdit
 d'approuver sa propre PR, la revue automatique est donc un commentaire, pas une
@@ -99,8 +101,10 @@ qu'une relecture humaine compte : paiements, sécurité, migrations, infrastruct
 **Agents** : `tenant-leak-auditor` (audit d'isolation multi-tenant),
 `mvp-scope-guard` (verdict dans/hors périmètre MVP)
 
-**Traçabilité automatique** : chaque demande substantielle faite à Claude Code
-ouvre un ticket GitHub (label `tracking`), refermé en fin de tour avec le résumé
-des changements produits. Ces tickets historisent la collaboration ; ils sont
-exclus du board de suivi du MVP et ne remplacent pas les issues du backlog.
-Détail et réglages dans [.claude/hooks/README.md](.claude/hooks/README.md).
+**Traçabilité des demandes** : `/ticket-new` ouvre un ticket GitHub (label
+`tracking`) pour historiser une demande faite à Claude Code, `/ticket-close` le
+referme avec le résumé des changements produits. L'ouverture est délibérée — ce
+qui ne mérite pas d'être documenté n'ouvre rien. Ces tickets historisent la
+collaboration ; ils sont exclus du board de suivi du MVP et ne remplacent pas
+les issues du backlog. Doctrine dans
+[.claude/skills/project-flow/SKILL.md](.claude/skills/project-flow/SKILL.md) §12.

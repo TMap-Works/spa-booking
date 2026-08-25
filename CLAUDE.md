@@ -75,6 +75,8 @@ GitFlow simplifié, identique aux autres dépôts TMap-Works :
 
 Pour dérouler ce flux, utiliser les commandes `/feature-start`, `/pr-open`,
 `/sprint-status` définies dans [.claude/commands/](.claude/commands/).
+`/ticket-new` ouvre le ticket de traçabilité d'une demande faite à Claude Code
+et `/ticket-close` le referme — historisation délibérée, jamais automatique.
 `/ticket <issue>` traite une issue de bout en bout ; `/milestone <jalon>` traite
 un sprint entier, en menant de front les tickets dont les empreintes de fichiers
 sont disjointes — et reprend d'elle-même le run inachevé. Ouvrir un run arme

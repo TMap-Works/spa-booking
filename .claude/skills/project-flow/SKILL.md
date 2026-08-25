@@ -35,11 +35,10 @@ Une issue hors périmètre MVP reçoit `post-mvp`, **aucun milestone**, et n'est
 travaillée. C'est le garde-fou contre le scope creep — risque à probabilité élevée
 du CDC §6.
 
-Les tickets de traçabilité ouverts par les hooks Claude Code (label `tracking`)
-ne font pas exception : même anatomie, même carte sur le board. Un ticket sans
-jalon n'apparaît dans aucun suivi et ne documente donc rien. Ils se filtrent par
-leur label quand une vue doit ne montrer que le backlog produit. Détail dans
-[.claude/hooks/README.md](../../hooks/README.md).
+Les tickets de traçabilité ouverts par `/ticket-new` (label `tracking`) ne font
+pas exception : même anatomie, même carte sur le board. Un ticket sans jalon
+n'apparaît dans aucun suivi et ne documente donc rien. Ils se filtrent par leur
+label quand une vue doit ne montrer que le backlog produit. Détail au §12.
 
 Le corps d'une issue de fonctionnalité contient des **critères d'acceptation
 vérifiables**. « L'API renvoie 409 si le créneau est pris » est vérifiable ;
@@ -150,7 +149,8 @@ python scripts/pr_gate.py 42            # attend la CI, rend un verdict
 python scripts/pr_gate.py 42 --merge    # merge en squash si tout est vert
 python scripts/worktree_gc.py --dry-run # ce que le ménage supprimerait
 python scripts/project_status.py 42 "In review"          # bouge la carte
-python scripts/tracking.py classify 90 --module payments # corrige un ticket
+python scripts/tracking.py status                        # le ticket de traçabilité ouvert
+python scripts/tracking.py classify 90 --module payments # corrige son classement
 ```
 
 **Ne pas merger avec `gh pr merge` en direct.** Le dépôt est sur un plan GitHub
@@ -302,7 +302,49 @@ l'utilisateur sera consulté. Détail et garde-fous dans
 `/sprint-status` observe un sprint, `/milestone` l'exécute. Les deux lisent le
 même jalon ; seul le second écrit dans le dépôt.
 
-`/ticket-new` ne traite rien : il ouvre le **ticket de traçabilité** de la
-demande en cours, ou corrige le classement de celui que le hook a déjà ouvert.
-Le confondre avec `/ticket <issue>` reviendrait à documenter un échange au lieu
-de livrer une fonctionnalité.
+`/ticket-new` et `/ticket-close` ne traitent rien : ils ouvrent et referment le
+**ticket de traçabilité** de la demande en cours (§12). Confondre `/ticket-new`
+avec `/ticket <issue>` reviendrait à documenter un échange au lieu de livrer une
+fonctionnalité.
+
+## 12. Traçabilité des demandes
+
+L'objectif est d'avoir dans GitHub l'historique de ce qui a été **demandé** à
+Claude Code, et pas seulement de ce qui a été commité.
+
+```bash
+/ticket-new     # ouvre le ticket de la demande en cours, classé et rattaché
+/ticket-close   # publie le résumé des changements, passe la carte en Done, ferme
+```
+
+Les deux vont par paire. Entre les deux, les commits de la demande portent
+`Refs #N` : le ticket et le code sont liés dans les deux sens. L'état du ticket
+ouvert vit dans `.claude/.tracking/`, non versionné.
+
+**L'ouverture est une décision, pas un automatisme.** C'était un hook
+`UserPromptSubmit` jusqu'à l'abandon du procédé : un ticket par message de plus
+de trente caractères, classé aux mots-clés, produisait un board bruyant et faux.
+Juger qu'une demande mérite d'être historisée suppose de l'avoir lue. Ce qui
+n'en vaut pas la peine — une relance, une question, une correction de détail —
+n'ouvre plus rien.
+
+**Un ticket est une issue comme les autres** : anatomie complète du §2, carte
+`In progress` à l'ouverture, `Done` à la clôture. Le label `tracking` est ce qui
+permet de les exclure d'une vue du backlog produit.
+
+**Deux demandes du même travail, un seul ticket.** La seconde se rattache en
+commentaire (`tracking.py note`) plutôt que d'ouvrir un ticket qui resterait
+ouvert, ou fermerait sur un résumé vide.
+
+**Un ticket oublié se rattrape.** `python scripts/tracking.py sweep --dry-run`
+montre ce qui traîne ; le seuil `--older-than` épargne les travaux en cours,
+sessions parallèles comprises.
+
+| Variable | Effet |
+|---|---|
+| `SPA_TRACKING_REPO` | Dépôt cible (défaut : `TMap-Works/spa-booking`) |
+| `SPA_TRACKING_SWEEP_HOURS` | Âge par défaut du balayage, en heures (défaut : 6) |
+
+**Limite connue.** Un ticket documente une **demande**, pas une tâche métier :
+ces tickets historisent la collaboration, ils ne remplacent pas les issues du
+backlog MVP, qui restent la référence du suivi d'avancement.

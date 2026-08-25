@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Tickets de traçabilité des demandes Claude Code — ouverture, qualification, clôture.
 
-    python scripts/tracking.py open --session <id> --prompt-file -
     python scripts/tracking.py open --prompt "..." --module payments --type feature
     python scripts/tracking.py classify 90 --module infra --workstream DevOps --priority P1
-    python scripts/tracking.py note --session <id> --prompt-file -
-    python scripts/tracking.py close --session <id>
+    python scripts/tracking.py note --prompt "demande complémentaire"
+    python scripts/tracking.py close
     python scripts/tracking.py status
+    python scripts/tracking.py sweep --dry-run
 
-Les hooks `.claude/hooks/request_*.py` décident *quand* ouvrir et fermer ; ce
-script décide *quoi* écrire dans GitHub.
+Les commandes `/ticket-new` et `/ticket-close` décident *quand* ouvrir et
+fermer ; ce script décide *quoi* écrire dans GitHub. Ouvrir un ticket est une
+décision prise à la demande, pas un effet de bord d'un hook : ce qui mérite
+d'être historisé se juge en lisant la demande, ce qu'aucune heuristique de
+mots-clés ne sait faire.
 
 Un ticket de traçabilité est une issue comme les autres : il porte un milestone
 de sprint, un label workstream, un label module, un label type, une priorité, et
@@ -17,8 +20,13 @@ une carte sur le GitHub Project — exactement l'anatomie exigée par
 `.claude/skills/project-flow/SKILL.md` §2. Sans ce rattachement, le ticket
 n'apparaît dans aucun suivi et ne documente donc rien.
 
-Le classement automatique n'est qu'une heuristique de mots-clés : Claude, qui a
-lu la demande, la corrige avec la sous-commande `classify` ou via `/ticket-new`.
+Sans `--session`, chaque sous-commande travaille sur le ticket ouvert le plus
+récent : une commande slash n'a pas d'identifiant de session à passer.
+
+Le classement déduit par défaut n'est qu'une heuristique de mots-clés. Les
+options `--module`, `--workstream`, `--type` et `--priority` la court-circuitent,
+et c'est le chemin normal depuis `/ticket-new`, qui a lu la demande ; `classify`
+corrige après coup.
 """
 import argparse
 import json
@@ -43,8 +51,9 @@ STATE_DIR = ROOT / ".claude" / ".tracking"
 PROJECT_STATUS = ROOT / "scripts" / "project_status.py"
 TRACKING_LABEL = "tracking"
 MAX_LINES = 40
-# Ticket ouvert hors hook (/ticket-new) : sans identifiant de session, l'état
-# est rangé sous ce nom, que le hook `Stop` referme comme n'importe quel autre.
+# Sans identifiant de session — le cas courant, `/ticket-new` n'en connaît pas —
+# l'état du ticket est rangé sous ce nom. `--session` reste utile aux runs de
+# jalon, qui font vivre plusieurs tickets en parallèle sans les confondre.
 MANUAL_SESSION = "manual"
 SWEEP_HOURS = float(os.environ.get("SPA_TRACKING_SWEEP_HOURS", "6"))
 
@@ -188,6 +197,16 @@ def read_state(session):
         return None
 
 
+def latest_session():
+    """La session du ticket ouvert le plus récent — le ticket courant, à défaut de mieux."""
+    dated = []
+    for path in STATE_DIR.glob("*.json") if STATE_DIR.exists() else []:
+        state = read_state(path.stem)
+        if state:
+            dated.append((state.get("opened_at", ""), path.stem))
+    return max(dated)[1] if dated else None
+
+
 def block(title, content, lang=""):
     if not content.strip():
         return ""
@@ -252,8 +271,8 @@ def cmd_open(args):
         + (f"- Commit de départ : `{base[:8]}`\n" if base else "")
         + (f"- Session Claude Code : `{args.session[:8]}`\n" if args.session else "")
         + "\n---\n\n"
-        "_Ticket de traçabilité. Le résumé des changements est publié en "
-        "commentaire à la fin du tour, puis le ticket est clôturé._"
+        "_Ticket de traçabilité. `/ticket-close` publie le résumé des "
+        "changements en commentaire, puis referme le ticket._"
     )
 
     if args.dry_run:
@@ -364,18 +383,19 @@ def cmd_classify(args):
 # --------------------------------------------------------------------------- note
 
 def cmd_note(args):
-    """Rattache une demande enchaînée au ticket déjà ouvert pour le tour.
+    """Rattache une demande complémentaire au ticket déjà ouvert.
 
-    Un message envoyé pendant que Claude travaille est traité dans le même tour :
-    le hook `Stop` ne passera qu'une fois, il n'y aura donc pas de second ticket.
-    Sans ce commentaire, cette demande-là ne serait consignée nulle part.
+    Deux demandes qui relèvent du même travail ne justifient pas deux tickets :
+    le second resterait ouvert, ou fermerait sur un résumé vide. La demande est
+    donc publiée en commentaire sur le ticket en cours, qui les couvre toutes.
     """
-    state = read_state(args.session)
+    session = args.session or latest_session()
+    state = read_state(session) if session else None
     if state is None:
-        return 0
+        sys.exit("aucun ticket de traçabilité ouvert — rien à compléter")
     text = read_prompt(args).strip()
     if not text:
-        return 0
+        sys.exit("aucune demande à rattacher (--prompt / --prompt-file vide)")
     now = datetime.now(timezone.utc).astimezone()
     body = ("## Demande complémentaire\n\n" + quote(text)
             + f"\n\n_Enchaînée dans le même tour, le "
@@ -392,9 +412,10 @@ def cmd_note(args):
 # -------------------------------------------------------------------------- close
 
 def cmd_close(args):
-    state = read_state(args.session) if args.session else None
+    session = args.session or (None if args.issue else latest_session())
+    state = read_state(session) if session else None
     if state is None and not args.issue:
-        return 0
+        sys.exit("aucun ticket de traçabilité ouvert — rien à clôturer")
     number = args.issue or state["issue"]
     base = (state or {}).get("base") or args.base or ""
 
@@ -413,8 +434,9 @@ def cmd_close(args):
     parts.append(block("Fichiers modifiés", diffstat))
     parts.append(block("Travail non commité en fin de tour", pending))
     if args.interrupted:
-        parts.append("> Tour interrompu : ticket clôturé à l'ouverture de la demande "
-                     "suivante, le hook `Stop` n'ayant jamais été atteint.\n\n")
+        parts.append("> Ticket resté ouvert : clôturé par le balayage "
+                     "`tracking.py sweep`, faute d'un `/ticket-close` en fin de "
+                     "travail.\n\n")
     parts.append(f"---\n\nClôturé le {now.strftime('%d/%m/%Y à %H:%M %Z')} · "
                  f"branche `{branch or 'inconnue'}`")
     comment = "".join(parts)
@@ -430,8 +452,8 @@ def cmd_close(args):
              "--reason", "completed"])
         sync_project(number, "Done", {})
 
-    if args.session:
-        state_path(args.session).unlink(missing_ok=True)
+    if session:
+        state_path(session).unlink(missing_ok=True)
     if not getattr(args, "quiet", False):
         print(json.dumps({"issue": number, "closed": commented.returncode == 0},
                          ensure_ascii=False))
@@ -441,11 +463,11 @@ def cmd_close(args):
 # ------------------------------------------------------------------ sweep, status
 
 def cmd_sweep(args):
-    """Referme les tickets qu'un tour interrompu a laissés ouverts.
+    """Referme les tickets qu'un travail terminé sans `/ticket-close` a laissés ouverts.
 
-    Une interruption (Échap) n'atteint jamais le hook `Stop` : l'état de session
-    survit et le ticket reste ouvert indéfiniment. Passé quelques heures, il n'y
-    a plus de tour en cours à attendre.
+    Filet de rattrapage, à passer à la main : un ticket oublié reste ouvert
+    indéfiniment et fausse le suivi du sprint. Le seuil d'âge épargne les tickets
+    d'un travail encore en cours, ici ou dans une session parallèle.
     """
     swept = []
     for path in sorted(STATE_DIR.glob("*.json")) if STATE_DIR.exists() else []:
@@ -469,24 +491,20 @@ def cmd_sweep(args):
             session=session, issue=None, base=None, interrupted=True,
             dry_run=False, quiet=True))
         swept.append(state["issue"])
-    # Silence quand il n'y a rien eu à balayer : ce script tourne à chaque
-    # démarrage de session, il n'a pas à parler pour ne rien dire.
-    if swept:
-        numbers = ", ".join(f"#{number}" for number in swept)
-        print(f"Tickets de traçabilité laissés ouverts par un tour interrompu, "
-              f"clôturés : {numbers}")
+    # Appelé à la main, ce balayage rend toujours compte — y compris de n'avoir
+    # rien eu à fermer, qui est la réponse attendue à « reste-t-il des oublis ? ».
+    numbers = ", ".join(f"#{number}" for number in swept)
+    print(f"Tickets de traçabilité clôturés : {numbers}" if swept
+          else "Aucun ticket de traçabilité en souffrance.")
     return 0
 
 
 def cmd_status(args):
     """L'état du ticket ouvert le plus récent — ce que /ticket-new interroge."""
-    states = []
-    for path in STATE_DIR.glob("*.json") if STATE_DIR.exists() else []:
-        state = read_state(path.stem)
-        if state:
-            states.append(dict(state, session=path.stem))
-    states.sort(key=lambda s: s.get("opened_at", ""))
-    print(json.dumps(states[-1] if states else {}, ensure_ascii=False, indent=2))
+    session = latest_session()
+    state = read_state(session) if session else None
+    print(json.dumps(dict(state, session=session) if state else {},
+                     ensure_ascii=False, indent=2))
     return 0
 
 
@@ -505,7 +523,7 @@ def main():
         target.add_argument("--dry-run", action="store_true")
 
     opener = sub.add_parser("open", help="ouvre un ticket de traçabilité qualifié")
-    opener.add_argument("--session")
+    opener.add_argument("--session", help="isole l'état du ticket, pour les runs parallèles")
     opener.add_argument("--prompt")
     opener.add_argument("--prompt-file", default="-")
     opener.add_argument("--title")
@@ -518,22 +536,22 @@ def main():
     add_classement(fixer)
     fixer.set_defaults(func=cmd_classify)
 
-    noter = sub.add_parser("note", help="rattache une demande enchaînée au ticket du tour")
-    noter.add_argument("--session", required=True)
+    noter = sub.add_parser("note", help="rattache une demande complémentaire au ticket ouvert")
+    noter.add_argument("--session", help="défaut : le ticket ouvert le plus récent")
     noter.add_argument("--prompt")
     noter.add_argument("--prompt-file", default="-")
     noter.set_defaults(func=cmd_note)
 
-    closer = sub.add_parser("close", help="publie le résumé du tour et clôture")
-    closer.add_argument("--session")
+    closer = sub.add_parser("close", help="publie le résumé des changements et clôture")
+    closer.add_argument("--session", help="défaut : le ticket ouvert le plus récent")
     closer.add_argument("--issue", type=int)
     closer.add_argument("--base", help="commit de départ si l'état de session est perdu")
     closer.add_argument("--interrupted", action="store_true")
     closer.add_argument("--dry-run", action="store_true")
     closer.set_defaults(func=cmd_close)
 
-    sweeper = sub.add_parser("sweep", help="referme les tickets des tours interrompus")
-    sweeper.add_argument("--session", help="session en cours, jamais balayée")
+    sweeper = sub.add_parser("sweep", help="referme les tickets restés ouverts")
+    sweeper.add_argument("--session", help="ticket à épargner du balayage")
     sweeper.add_argument("--older-than", type=float, default=SWEEP_HOURS,
                          metavar="HEURES")
     sweeper.add_argument("--dry-run", action="store_true")
