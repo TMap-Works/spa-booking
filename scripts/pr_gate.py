@@ -28,9 +28,15 @@ s'attendrait elle-même et cette attente condamnerait la PR — voir
 
 Sur un périmètre où une relecture humaine compte — `mod:payments`, le label
 `security`, un schéma ou une migration Prisma, `infra/terraform`, le module
-`payments` — le merge est refusé dès lors que la vague tourne sans surveillance,
-et la PR reste ouverte. C'est ce qui remplace l'arbitrage que personne ne
-pourrait poser sous `claude -p`.
+`payments` — le merge est refusé et la PR reste ouverte. C'est ce qui remplace
+l'arbitrage que personne ne pourrait poser sous `claude -p`.
+
+Deux conditions, et il a fallu #156 pour cesser de les confondre. `SPA_UNATTENDED`
+dit que **personne ne peut répondre maintenant** ; `SPA_MERGE_SENSITIVE` dit ce
+qui a **déjà été répondu**, à l'armement du run, périmètre par périmètre. Le
+refus ne tombe que sur ce qui n'a pas été pré-autorisé. Déduire l'interdiction de
+l'absence de l'opérateur revenait à interdire précisément quand la reprise
+automatique doit travailler — c'est-à-dire à ne jamais s'en servir.
 
 Les deux labels sont lus sur **l'issue que la PR referme**, pas sur la PR : nos
 PR n'en portent aucun (`gh pr create` est appelé sans `--label`, et
@@ -47,7 +53,7 @@ telle PR, le refus étant évalué avant la pose.
 
 Codes de sortie — 0 vert · 1 en attente ou délai dépassé · 2 check en échec ·
 3 PR inapte au merge (brouillon, conflit, mauvaise base) · 4 erreur d'appel ·
-5 périmètre sensible, PR laissée ouverte pour relecture humaine.
+5 périmètre sensible non pré-autorisé, PR laissée ouverte pour relecture humaine.
 """
 import argparse
 import json
@@ -107,10 +113,30 @@ CLOSES = re.compile(
 # recopié : une liste écrite à la main finit par décrire autre chose que ce que
 # la barrière refuse, et c'est le message que l'opérateur ne peut pas vérifier —
 # il est lu à l'instant où il cesse de regarder.
+PRISMA_SCOPE = "schéma ou migration Prisma"
 SENSITIVE_SCOPES = ", ".join(
     ["label " + name for name in sorted(SENSITIVE_LABELS)]
     + [prefix.rstrip("/") for prefix in SENSITIVE_PREFIXES]
-    + ["schéma ou migration Prisma"])
+    + [PRISMA_SCOPE])
+
+# La clé sous laquelle un périmètre se pré-autorise, pour chaque motif que
+# `sensitive()` sait produire. Dérivée des règles ci-dessus, elle aussi : une
+# table écrite à la main finirait par ouvrir autre chose que ce qu'elle nomme.
+#
+# Un motif qui n'y figure pas ne se pré-autorise pas — c'est le cas des deux
+# motifs d'ignorance (« liste des fichiers indisponible », « labels de l'issue
+# indisponibles »). Ne pas savoir ce que la PR touche ne peut pas se couvrir par
+# une autorisation donnée à l'avance : l'opérateur aurait autorisé un périmètre
+# nommé, pas un périmètre inconnu.
+SENSITIVE_KEYS = dict(
+    [("label " + name, name) for name in SENSITIVE_LABELS]
+    + [(prefix.rstrip("/"), prefix.rstrip("/")) for prefix in SENSITIVE_PREFIXES]
+    + [(PRISMA_SCOPE, "prisma")])
+# Ce qu'un opérateur peut taper derrière `--merge-sensitive`.
+SCOPE_KEYS = frozenset(SENSITIVE_KEYS.values())
+# Le raccourci qui les prend toutes. Nommé plutôt qu'implicite : une liste vide
+# doit valoir « aucune », jamais « toutes ».
+ALL_SCOPES = "all"
 
 # Posé par le superviseur dans l'environnement de `claude -p`. Le lire dans
 # l'environnement plutôt que d'attendre un drapeau est délibéré : tout
@@ -119,6 +145,18 @@ SENSITIVE_SCOPES = ", ".join(
 # l'appelle n'en est pas un — c'est le défaut que ce script corrige, il ne va
 # pas le réintroduire.
 UNATTENDED_ENV = "SPA_UNATTENDED"
+# L'autorisation, elle, est un geste humain donné à l'avance : l'opérateur arme
+# le run en nommant les périmètres qu'il accepte de voir merger sans lui. Elle
+# voyage par l'environnement pour la même raison que `SPA_UNATTENDED` — tout
+# `pr_gate.py` lancé dans la vague en hérite, y compris ceux que l'orchestrateur
+# invoque sans y penser.
+#
+# Les deux variables disaient jusqu'ici la même chose, et c'était le défaut
+# (#156) : l'absence d'opérateur valait interdiction, alors que c'est justement
+# quand il est absent que la reprise automatique doit travailler. `SPA_UNATTENDED`
+# dit « personne ne peut répondre » ; celle-ci dit « voici ce qui a déjà été
+# répondu ».
+AUTHORISED_ENV = "SPA_MERGE_SENSITIVE"
 
 
 def run(args, cwd=None, timeout=120):
@@ -251,9 +289,46 @@ def check_entries(rollup):
 
 
 def unattended():
-    """Vrai quand la vague tourne sans personne pour répondre à un arbitrage."""
+    """Vrai quand la vague tourne sans personne pour répondre à un arbitrage.
+
+    Cette absence ne vaut pas interdiction : elle dit seulement qu'aucun
+    arbitrage ne peut être posé maintenant. Ce qui autorise, c'est
+    `authorised_scopes()` — un arbitrage posé avant.
+    """
     return os.environ.get(UNATTENDED_ENV, "").strip().lower() not in (
         "", "0", "false", "no")
+
+
+def authorised_scopes():
+    """Les périmètres que l'opérateur a pré-autorisés en armant le run.
+
+    `SPA_MERGE_SENSITIVE=infra/terraform,prisma` — une liste de clés séparées
+    par des virgules ou des espaces, ou `all` pour les prendre toutes. Vide,
+    absente, illisible : aucun périmètre autorisé, ce qui est le comportement
+    d'avant #156.
+
+    Une clé inconnue n'est pas rejetée ici, elle est simplement inerte : elle ne
+    correspond à aucun motif, donc elle n'ouvre rien. C'est le bon sens de
+    l'échec — une faute de frappe rend la barrière plus stricte, jamais plus
+    permissive. Le refus franc d'une clé inconnue se fait à l'armement, là où
+    quelqu'un est encore là pour la corriger.
+    """
+    raw = os.environ.get(AUTHORISED_ENV, "")
+    tokens = {token.strip().lower()
+              for token in raw.replace(",", " ").split() if token.strip()}
+    if ALL_SCOPES in tokens:
+        return set(SCOPE_KEYS)
+    return tokens
+
+
+def blocking(reasons, allowed):
+    """Ce qui reste à faire relire une fois les pré-autorisations défalquées.
+
+    Un motif sans clé — l'ignorance — ne se défalque jamais : voir
+    `SENSITIVE_KEYS`.
+    """
+    return [reason for reason in reasons
+            if SENSITIVE_KEYS.get(reason) not in allowed]
 
 
 def changed_paths(number):
@@ -315,7 +390,7 @@ def sensitive(pr, paths):
     reasons.extend(prefix.rstrip("/") for prefix in SENSITIVE_PREFIXES
                    if any(path.startswith(prefix) for path in paths))
     if any(PRISMA.search(path) for path in paths):
-        reasons.append("schéma ou migration Prisma")
+        reasons.append(PRISMA_SCOPE)
     return reasons
 
 
@@ -553,11 +628,20 @@ def main():
     # PR sensible en conclurait qu'il peut la merger lui-même.
     if unattended():
         reasons = sensitive(pr, changed_paths(args.pr))
-        if reasons:
-            print("BLOQUÉ : périmètre sensible ({}) et vague sans surveillance — "
+        allowed = authorised_scopes()
+        refused = blocking(reasons, allowed)
+        if refused:
+            print("BLOQUÉ : périmètre sensible ({}) sans autorisation préalable — "
                   "PR #{} laissée ouverte pour relecture humaine."
-                  .format(", ".join(reasons), args.pr), file=sys.stderr)
+                  .format(", ".join(refused), args.pr), file=sys.stderr)
             return SENSITIVE
+        # Ce qui a été mergé sur une pré-autorisation doit se lire après coup :
+        # « qui a autorisé quoi, et quand » se répond depuis le journal du
+        # superviseur, mais encore faut-il que la trace existe des deux côtés.
+        waived = [reason for reason in reasons if reason not in refused]
+        if waived and not args.quiet:
+            print("périmètre sensible ({}) pré-autorisé à l'armement du run — "
+                  "merge poursuivi.".format(", ".join(waived)))
 
     print("VERT : {}".format(message))
     if not (args.merge or args.request_merge):

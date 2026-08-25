@@ -461,6 +461,146 @@ class TestSansLeWorkflowDAutoMerge(unittest.TestCase):
         self.assertEqual(declared.group(1), pr_gate.MERGE_WORKFLOW)
 
 
+class TestAuthorisedScopes(unittest.TestCase):
+    """`authorised_scopes()` — ce que l'opérateur a autorisé avant de partir.
+
+    La variable dit ce qui a **déjà été répondu**, là où `SPA_UNATTENDED` dit
+    seulement que personne ne peut répondre maintenant. Confondre les deux (#156)
+    revenait à interdire tout merge sensible dès que l'opérateur s'absentait,
+    c'est-à-dire à ne jamais se servir de la reprise automatique.
+    """
+
+    def scopes(self, value):
+        with mock.patch.dict(os.environ, {pr_gate.AUTHORISED_ENV: value}):
+            return pr_gate.authorised_scopes()
+
+    def test_variable_absente_n_autorise_rien(self):
+        with mock.patch.dict(os.environ, clear=True):
+            self.assertEqual(pr_gate.authorised_scopes(), set())
+
+    def test_variable_vide_n_autorise_rien(self):
+        # Le superviseur la pose toujours, même vide : la lire comme « tout »
+        # ferait de l'armement le plus prudent le plus permissif.
+        self.assertEqual(self.scopes(""), set())
+
+    def test_une_seule_cle(self):
+        self.assertEqual(self.scopes("infra/terraform"), {"infra/terraform"})
+
+    def test_plusieurs_cles_separees_par_des_virgules(self):
+        self.assertEqual(self.scopes("infra/terraform,prisma"),
+                         {"infra/terraform", "prisma"})
+
+    def test_espaces_et_casse_tolerees(self):
+        self.assertEqual(self.scopes("  INFRA/Terraform ,  prisma  "),
+                         {"infra/terraform", "prisma"})
+
+    def test_all_prend_tous_les_perimetres(self):
+        self.assertEqual(self.scopes(pr_gate.ALL_SCOPES), set(pr_gate.SCOPE_KEYS))
+
+    def test_cle_inconnue_n_ouvre_rien(self):
+        # Fail-closed, comme `unattended()` : une faute de frappe rend la
+        # barrière plus stricte, jamais plus permissive. Le refus franc se fait
+        # à l'armement, là où quelqu'un peut encore corriger.
+        self.assertEqual(
+            pr_gate.blocking(["infra/terraform"], self.scopes("terraform")),
+            ["infra/terraform"])
+
+
+class TestBlocking(unittest.TestCase):
+    """`blocking()` — ce qui reste à relire une fois les autorisations défalquées."""
+
+    def test_sans_autorisation_tout_bloque(self):
+        """Le comportement d'avant #156, et le défaut d'aujourd'hui."""
+        reasons = ["label mod:payments", "infra/terraform",
+                   "schéma ou migration Prisma"]
+        self.assertEqual(pr_gate.blocking(reasons, set()), reasons)
+
+    def test_le_perimetre_autorise_ne_bloque_plus(self):
+        self.assertEqual(
+            pr_gate.blocking(["infra/terraform"], {"infra/terraform"}), [])
+
+    def test_autorisation_nommee_n_ouvre_que_ce_qu_elle_nomme(self):
+        """Le cœur de l'arbitrage : ouvrir le socle sans ouvrir le paiement."""
+        reasons = ["label mod:payments", "infra/terraform"]
+        self.assertEqual(pr_gate.blocking(reasons, {"infra/terraform"}),
+                         ["label mod:payments"])
+
+    def test_tout_autorise_ne_bloque_rien(self):
+        reasons = ["label mod:payments", "label security", "infra/terraform",
+                   "apps/api/src/modules/payments", "schéma ou migration Prisma"]
+        self.assertEqual(pr_gate.blocking(reasons, set(pr_gate.SCOPE_KEYS)), [])
+
+    def test_pr_anodine_ne_bloque_pas(self):
+        self.assertEqual(pr_gate.blocking([], set()), [])
+
+    # --- l'ignorance ne se pré-autorise pas -------------------------------
+
+    def test_fichiers_indisponibles_bloquent_meme_tout_autorise(self):
+        """« Ne pas savoir vaut refus » survit à la pré-autorisation.
+
+        L'opérateur a autorisé un périmètre **nommé** ; il n'a pas autorisé un
+        périmètre inconnu. Laisser `all` couvrir l'ignorance rendrait le
+        garde-fou muet précisément les jours de forte charge, quand `gh` est en
+        limite de débit — c'est-à-dire le trou que #121 avait bouché.
+        """
+        self.assertEqual(
+            pr_gate.blocking(["liste des fichiers indisponible"],
+                             set(pr_gate.SCOPE_KEYS)),
+            ["liste des fichiers indisponible"])
+
+    def test_labels_indisponibles_bloquent_meme_tout_autorise(self):
+        self.assertEqual(
+            pr_gate.blocking(["labels de l'issue indisponibles"],
+                             set(pr_gate.SCOPE_KEYS)),
+            ["labels de l'issue indisponibles"])
+
+    def test_un_motif_connu_autorise_ne_sauve_pas_un_motif_ignore(self):
+        self.assertEqual(
+            pr_gate.blocking(["label security", "liste des fichiers indisponible"],
+                             set(pr_gate.SCOPE_KEYS)),
+            ["liste des fichiers indisponible"])
+
+
+class TestSensitiveKeys(unittest.TestCase):
+    """`SENSITIVE_KEYS` — chaque motif refusable doit avoir une clé, ou aucune.
+
+    Un motif que `sensitive()` sait produire mais que `SENSITIVE_KEYS` ignore est
+    un périmètre impossible à pré-autoriser : l'opérateur le nommerait dans son
+    armement sans que rien ne s'ouvre, et il ne l'apprendrait qu'en relisant un
+    journal, des heures plus tard.
+    """
+
+    def reasons(self, pr, paths, from_issue=frozenset()):
+        with mock.patch.object(pr_gate, "issue_labels", return_value=from_issue):
+            return pr_gate.sensitive(pr, paths)
+
+    def test_chaque_motif_reel_a_une_cle(self):
+        paths = ["infra/terraform/prod/main.tf",
+                 "apps/api/src/modules/payments/refund.service.ts",
+                 "apps/api/prisma/schema.prisma"]
+        produced = self.reasons(pr_stub(), paths, set(pr_gate.SENSITIVE_LABELS))
+        # Le jeu ci-dessus couvre bien tous les périmètres, sans quoi le test
+        # passerait en n'en vérifiant qu'une partie.
+        self.assertEqual(len(produced), len(pr_gate.SCOPE_KEYS))
+        for reason in produced:
+            with self.subTest(motif=reason):
+                self.assertIn(reason, pr_gate.SENSITIVE_KEYS)
+
+    def test_les_motifs_d_ignorance_n_ont_pas_de_cle(self):
+        for reason in ("liste des fichiers indisponible",
+                       "labels de l'issue indisponibles"):
+            with self.subTest(motif=reason):
+                self.assertNotIn(reason, pr_gate.SENSITIVE_KEYS)
+
+    def test_aucune_cle_en_trop(self):
+        """Une clé qui ne correspond à aucun motif serait une autorisation qui
+        n'autorise rien — annoncée à l'opérateur dans l'aide de l'armement."""
+        self.assertEqual(len(pr_gate.SCOPE_KEYS), len(pr_gate.SENSITIVE_KEYS))
+        self.assertEqual(
+            len(pr_gate.SCOPE_KEYS),
+            len(pr_gate.SENSITIVE_LABELS) + len(pr_gate.SENSITIVE_PREFIXES) + 1)
+
+
 class TestSensitiveScopes(unittest.TestCase):
     """`SENSITIVE_SCOPES` — le message d'armement doit décrire les vrais refus.
 
