@@ -19,7 +19,10 @@
 name: Auto-merge
 
 on:
-  # Le label vient d'être posé : la CI est peut-être déjà verte.
+  # Le label vient d'être posé : la CI est peut-être déjà verte. Le run qui en
+  # naît est rattaché à la PR et s'inscrit donc dans ses checks — `pr_gate.py`
+  # écarte ce workflow de son propre rollup pour ne pas s'attendre lui-même,
+  # voir #147.
   pull_request_target:
     types: [labeled]
   # Un workflow vient de conclure : une PR déjà étiquetée est peut-être devenue
@@ -106,8 +109,16 @@ jobs:
           echo "::group::PR #$pr"
           # --no-wait : le verdict est immédiat. Si la CI tourne encore, la
           # conclusion du workflow suivant redéclenchera ce job.
-          python scripts/pr_gate.py "$pr" --merge --no-wait
-          code=$?
+          #
+          # `|| code=$?` n'est pas une précaution de style : GitHub Actions
+          # exécute les blocs `run:` avec `bash -e {0}`, que `set -uo pipefail`
+          # ne désarme pas. Sans cette garde, tout code non nul avortait l'étape
+          # avant la ligne suivante — le `case` ci-dessous n'était donc jamais
+          # atteint, et le verdict le plus banal, « CI encore en cours »,
+          # faisait rougir ce job. Son échec devenait un check rouge de la PR,
+          # qu'aucun réveil ultérieur n'efface. Voir #147.
+          code=0
+          python scripts/pr_gate.py "$pr" --merge --no-wait || code=$?
           echo "::endgroup::"
 
           case $code in

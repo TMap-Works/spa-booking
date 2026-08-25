@@ -21,6 +21,7 @@ Aucune dépendance : `unittest` de la bibliothèque standard. Le dépôt n'a pas
 gestion de paquets Python, et la CI n'a ainsi qu'un interpréteur à poser.
 """
 import os
+import re
 import subprocess
 import sys
 import unittest
@@ -332,6 +333,132 @@ class TestSensitive(unittest.TestCase):
         with mock.patch.object(pr_gate, "run", fake):
             reasons = pr_gate.sensitive(pr_stub(body="Fixed #42"), ["README.md"])
         self.assertEqual(reasons, ["label mod:payments"])
+
+
+class TestSansLeWorkflowDAutoMerge(unittest.TestCase):
+    """`assess()` — le workflow qui merge n'est pas un check qu'on attend.
+
+    Déclenché par `pull_request_target`, son run est rattaché à la PR et
+    s'inscrit dans ses checks. La barrière s'y voyait elle-même « en cours » et
+    rendait 1 ; ce 1 avortait l'étape qui l'appelait, le job rougissait, et son
+    échec devenait un check rouge de la PR. Rouge définitif : les réveils
+    suivants viennent de `workflow_run`, rattaché à la branche par défaut, et ne
+    rafraîchissent jamais l'entrée. Deux PR vertes en sont mortes — #145 et
+    #146. Voir #147.
+    """
+
+    JOB = "Merger les PR étiquetées et vertes"
+
+    def check(self, workflow, name, status="COMPLETED", conclusion="SUCCESS"):
+        return {"__typename": "CheckRun", "workflowName": workflow, "name": name,
+                "status": status, "conclusion": conclusion,
+                "startedAt": "2026-08-25T10:00:00Z",
+                "completedAt": "2026-08-25T10:01:00Z"}
+
+    def assess(self, rollup):
+        """`assess()` sur une PR par ailleurs irréprochable : seul le rollup varie."""
+        pr = {"state": "OPEN", "isDraft": False, "baseRefName": "develop",
+              "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+              "statusCheckRollup": rollup}
+        return pr_gate.assess(pr, "develop", False)
+
+    # --- ce que la barrière ne doit plus voir -----------------------------
+
+    def test_son_propre_passage_en_cours_ne_l_attend_pas(self):
+        code, _, checks = self.assess([
+            self.check("CI", "Tests"),
+            self.check(pr_gate.MERGE_WORKFLOW, self.JOB,
+                       status="IN_PROGRESS", conclusion=None),
+        ])
+        self.assertEqual(code, pr_gate.GREEN)
+        self.assertEqual([name for name, _, _ in checks], ["CI / Tests"])
+
+    def test_son_echec_deja_inscrit_ne_condamne_plus(self):
+        # L'état exact de #145 et #146 : tout au vert, sauf le job qui merge.
+        code, _, checks = self.assess([
+            self.check("CI", "Tests"),
+            self.check(pr_gate.MERGE_WORKFLOW, self.JOB, conclusion="FAILURE"),
+        ])
+        self.assertEqual(code, pr_gate.GREEN)
+        self.assertEqual([name for name, _, _ in checks], ["CI / Tests"])
+
+    def test_rollup_sans_workflow_developpe(self):
+        # Repli sur `name` quand le rollup ne développe pas `workflowName`.
+        code, _, checks = self.assess([
+            self.check("CI", "Tests"),
+            {"__typename": "CheckRun", "name": pr_gate.MERGE_WORKFLOW,
+             "status": "IN_PROGRESS", "conclusion": None},
+        ])
+        self.assertEqual(code, pr_gate.GREEN)
+        self.assertEqual([name for name, _, _ in checks], ["CI / Tests"])
+
+    # --- ce qu'elle doit continuer de voir --------------------------------
+
+    def test_les_autres_echecs_bloquent_toujours(self):
+        code, message, _ = self.assess([
+            self.check("CI", "Tests", conclusion="FAILURE"),
+            self.check(pr_gate.MERGE_WORKFLOW, self.JOB, conclusion="FAILURE"),
+        ])
+        self.assertEqual(code, pr_gate.FAILED)
+        self.assertEqual(message, "1 check(s) en échec")
+
+    def test_les_autres_attentes_font_toujours_attendre(self):
+        code, message, _ = self.assess([
+            self.check("CI", "Build", status="QUEUED", conclusion=None),
+            self.check(pr_gate.MERGE_WORKFLOW, self.JOB, conclusion="FAILURE"),
+        ])
+        self.assertEqual(code, pr_gate.PENDING)
+        self.assertEqual(message, "1 check(s) en cours")
+
+    def test_une_pr_reduite_a_ce_seul_check_reste_en_attente(self):
+        # L'écarter ne doit pas fabriquer un vert : plus aucun check déclaré
+        # signifie qu'aucun workflow n'a tourné, pas que tout va bien.
+        code, message, checks = self.assess(
+            [self.check(pr_gate.MERGE_WORKFLOW, self.JOB)])
+        self.assertEqual(code, pr_gate.PENDING)
+        self.assertEqual(message, "aucun check déclaré pour l'instant")
+        self.assertEqual(checks, [])
+
+    def test_un_statut_externe_homonyme_est_conserve(self):
+        # Un statut externe ne vient d'aucun workflow : l'écarter sur son seul
+        # nom laisserait passer le rouge de quelqu'un d'autre.
+        code, _, checks = self.assess([
+            {"__typename": "StatusContext", "context": pr_gate.MERGE_WORKFLOW,
+             "state": "FAILURE"},
+        ])
+        self.assertEqual(code, pr_gate.FAILED)
+        self.assertEqual([name for name, _, _ in checks], [pr_gate.MERGE_WORKFLOW])
+
+    def test_un_check_d_application_homonyme_est_conserve(self):
+        # Un check run posé par une application GitHub porte un `workflowName`
+        # vide, pas absent : il ne vient d'aucun workflow, et l'écarter sur son
+        # seul nom laisserait passer le rouge de quelqu'un d'autre.
+        code, _, checks = self.assess([
+            {"__typename": "CheckRun", "workflowName": "",
+             "name": pr_gate.MERGE_WORKFLOW,
+             "status": "COMPLETED", "conclusion": "FAILURE"},
+        ])
+        self.assertEqual(code, pr_gate.FAILED)
+        self.assertEqual([name for name, _, _ in checks], [pr_gate.MERGE_WORKFLOW])
+
+    def test_rollup_vide_ou_absent(self):
+        for rollup in ([], None):
+            with self.subTest(rollup=rollup):
+                self.assertEqual(pr_gate.without_merge_workflow(rollup), [])
+
+    # --- la constante ne doit pas dériver du workflow ---------------------
+
+    def test_le_nom_suit_celui_declare_par_le_workflow(self):
+        """Une constante recopiée finit par désigner un workflow qui n'existe plus.
+
+        Renommer `auto-merge.yml` sans toucher ici rétablirait la panne à
+        l'identique, et rien ne le dirait avant qu'une PR verte ne meure.
+        """
+        source = (pr_gate.ROOT / ".github" / "workflows" / "auto-merge.yml"
+                  ).read_text(encoding="utf-8")
+        declared = re.search(r"(?m)^name:[ \t]*(.+?)[ \t]*$", source)
+        self.assertIsNotNone(declared, "auto-merge.yml n'a plus de `name:`")
+        self.assertEqual(declared.group(1), pr_gate.MERGE_WORKFLOW)
 
 
 class TestSensitiveScopes(unittest.TestCase):
