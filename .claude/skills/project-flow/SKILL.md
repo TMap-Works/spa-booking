@@ -144,6 +144,7 @@ gh issue create --template feature.yml
 gh pr create --base develop --fill
 gh project item-list 2 --owner TMap-Works
 
+python scripts/milestone_run.py next    # où en est-on, quel jalon lancer
 python scripts/milestone_plan.py S1     # ordre et vagues parallélisables du jalon
 python scripts/pr_gate.py 42            # attend la CI, rend un verdict
 python scripts/pr_gate.py 42 --merge    # merge en squash si tout est vert
@@ -191,10 +192,15 @@ Pour garder la main étape par étape, utiliser `/feature-start`, `/pr-open` et
 
 ## 11. Traiter un jalon entier
 
-`/milestone <jalon>` orchestre `/ticket` à l'échelle d'un sprint :
+`/milestone [jalon]` orchestre `/ticket` à l'échelle d'un sprint :
 `scripts/milestone_plan.py` ordonne les issues du jalon et les regroupe en
 **vagues**, puis la commande lance un agent par ticket d'une même vague et
 intègre les PR séquentiellement avant de replanifier.
+
+**Le jalon n'a pas à être nommé.** `milestone_run.py next` confronte les jalons
+GitHub aux runs présents et propose celui qu'il reste à dérouler — un run
+inachevé passe avant un jalon neuf, l'échéance tranche ensuite. La commande pose
+alors le choix, la proposition en tête.
 
 Deux notions portent tout le reste :
 
