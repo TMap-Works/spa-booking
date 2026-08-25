@@ -212,9 +212,11 @@ Trois points à connaître :
   a été validée contre un `develop` plus ancien que celui dans lequel elle
   atterrit. La disjonction des empreintes rend ce décalage acceptable ; le
   contrôle de fin de vague le vérifie.
-- **Un ticket sensible** — `mod:payments`, `security`, migration Prisma,
-  `infra/terraform` — déclenche un arbitrage humain avant merge. C'est la
-  relecture que le plan Free ne peut pas imposer.
+- **Un ticket sensible** — `mod:payments`, `security`, schéma ou migration
+  Prisma, `infra/terraform` — ne part jamais au merge automatique. En session,
+  il déclenche un arbitrage humain ; sous reprise automatique, où personne ne
+  pourrait y répondre, `pr_gate.py` refuse le merge et laisse la PR ouverte
+  (code de sortie `5`). C'est la relecture que le plan Free ne peut pas imposer.
 - **Une PR laissée ouverte gèle ses dépendantes** : leur branche partirait d'un
   `develop` amputé. Le plan suivant les écarte de lui-même.
 

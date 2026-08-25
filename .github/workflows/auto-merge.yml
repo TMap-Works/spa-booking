@@ -108,6 +108,7 @@ jobs:
             1) verdict="CI encore en cours — nouvel essai à la fin du prochain workflow" ;;
             2) verdict="**check en échec** — le label reste posé, la PR attend une correction" ;;
             3) verdict="**inapte** (brouillon, conflit, base divergée ou déjà fermée)" ;;
+            5) verdict="**périmètre sensible** — laissée ouverte pour relecture humaine" ;;
             *) verdict="**erreur d'appel de la barrière**" ;;
           esac
           echo "- #$pr — $verdict" >> "$GITHUB_STEP_SUMMARY"
@@ -116,7 +117,12 @@ jobs:
           # Une PR pas encore prête ne fait pas rougir ce job : son propre CI le
           # dit déjà. Une barrière qui n'a pas pu rendre de verdict, si — sinon
           # l'automatisation meurt en silence dans un résumé que personne ne lit.
-          if [ "$code" -ge 4 ]; then
+          # Le 5 n'est pas une erreur de barrière mais un refus délibéré : la PR
+          # touche un périmètre qu'un humain doit relire. Il ne peut pas tomber
+          # ici tant que `SPA_UNATTENDED` n'est pas posée dans le runner, mais
+          # le classer avec les codes >= 4 ferait rougir ce job le jour où il le
+          # serait — pour une PR qui attend simplement quelqu'un.
+          if [ "$code" -ge 4 ] && [ "$code" -ne 5 ]; then
             echo "::error::la barrière n'a pas pu se prononcer sur #$pr (code $code)"
             exit 1
           fi

@@ -15,8 +15,10 @@ cette commande ne le réimplémente pas, elle l'orchestre.
 `--waves N` : s'arrêter après N vagues · `--plan` : produire le plan et rendre
 la main · `--fresh` : ouvrir un run neuf au lieu de reprendre l'inachevé ·
 `--no-merge` : tout mener jusqu'à la PR sans rien merger · `--yes` : ne pas
-demander d'arbitrage sur les tickets sensibles. `--resume` reste accepté mais
-ne sert plus à rien : **la reprise est le comportement par défaut**.
+demander d'arbitrage sur les tickets sensibles — leurs PR sont alors **laissées
+ouvertes** plutôt que mergées sans que personne les ait lues. `--resume` reste
+accepté mais ne sert plus à rien : **la reprise est le comportement par
+défaut**.
 
 ## Ce que cette commande ne fait pas
 
@@ -24,7 +26,9 @@ ne sert plus à rien : **la reprise est le comportement par défaut**.
   automatiques sur `develop` — posés par la CI, via le label `merge-when-green`.
   Le seul verrou dur est la CI (`pr_gate.py`, rejouée par auto-merge.yml) ; sur
   un plan GitHub Free il n'y a ni protection de branche ni approbation exigée.
-  D'où l'arbitrage demandé à chaque vague qui contient un ticket sensible.
+  D'où l'arbitrage demandé à chaque vague qui contient un ticket sensible — et,
+  quand il ne peut pas être demandé (`--yes`, reprise automatique), le refus de
+  merger ces PR-là, qui restent ouvertes.
 - **Elle ne rattrape pas un backlog mal tenu.** Une issue sans milestone, sans
   label de classement ou sans critère d'acceptation est écartée du plan, pas
   devinée. Le plan dit lesquelles et pourquoi.
@@ -51,9 +55,11 @@ le faire : rouvrir un run repartirait de zéro sur des tickets déjà en PR.
 
 `start` **arme aussi la reprise automatique** : à partir de cet instant, une
 coupure de quota, un plantage ou un redémarrage ne demandent plus rien à
-personne (voir « La reprise automatique », plus bas). Pour un jalon dont les PR
-doivent être relues, ouvrir le run avec `--no-merge` — c'est ce réglage-là qui
-sera rejoué à chaque reprise.
+personne (voir « La reprise automatique », plus bas). Pour un jalon dont **toutes**
+les PR doivent être relues, ouvrir le run avec `--no-merge` — c'est ce
+réglage-là qui sera rejoué à chaque reprise. Les seules PR de périmètre sensible
+n'ont pas besoin de ce réglage : elles restent ouvertes d'office sous reprise
+automatique.
 
 À la reprise, `start` enchaîne tout seul sur `reconcile`, qui confronte le
 journal à l'état réel du dépôt — issues closes, PR ouvertes ou mergées, branches
@@ -120,10 +126,30 @@ de la vague 1, ce qui sera mergé automatiquement, et **comment suivre le run**
 (section « Suivre et piloter un run en cours », chemin du log compris).
 Demander l'accord.
 
-Sont **sensibles**, au sens de [/ticket](.claude/commands/ticket.md) : `mod:payments`,
-le label `security`, une migration Prisma, et `infra/terraform`. Quand une vague
-en contient, demander l'arbitrage **une fois pour la vague** (`AskUserQuestion`,
+Sont **sensibles**, au sens de [/ticket](.claude/commands/ticket.md) : les labels
+`mod:payments` et `security` — portés par l'**issue**, jamais par la PR —, un
+schéma ou une migration Prisma, `infra/terraform`, et `apps/api/src/modules/payments`.
+La liste qui fait foi est celle de `scripts/pr_gate.py` (`SENSITIVE_LABELS`,
+`SENSITIVE_PREFIXES`, `PRISMA`) ; celle-ci en est le reflet. Quand une vague en
+contient, demander l'arbitrage **une fois pour la vague** (`AskUserQuestion`,
 sauf `--yes`) : tout merger · laisser ces PR ouvertes pour relecture · s'arrêter.
+
+**Sous `--yes`, la question n'est pas posée et la réponse est « laisser ces PR
+ouvertes ».** C'est le seul choix tenable : une vague lancée par la reprise
+automatique tourne en `claude -p`, où personne ne peut répondre, et merger par
+défaut reviendrait à poser la question pour n'en jamais tenir compte.
+
+Deux chemins appliquent cette règle, et il faut les distinguer :
+
+- **Sous reprise automatique**, elle ne t'est pas confiée : le superviseur pose
+  `SPA_UNATTENDED` dans l'environnement de chaque vague, et `pr_gate.py` refuse
+  alors de merger une PR sensible — il retire même le label `merge-when-green`
+  s'il était déjà posé, sans quoi auto-merge.yml la mergerait depuis un runner
+  où la variable n'existe pas.
+- **Sous `/milestone --yes` tapé à la main**, cette variable n'existe pas et la
+  barrière ne refusera rien : c'est alors à toi de tenir la règle. Ne passe pas
+  ces PR à `pr_gate.py --request-merge`, laisse-les ouvertes, et dis-le dans le
+  compte rendu de vague.
 
 Laisser une PR ouverte a une conséquence à dire tout de suite : **les issues qui
 en dépendent ne pourront pas démarrer**, puisque leur branche partirait d'un
@@ -229,6 +255,20 @@ un classifieur le retenait, ferait échouer la vague **en silence**.
 - **`2` (échec)** : journaliser `failed` avec la raison, la PR reste ouverte, on
   passe à la suivante. Le ticket repartira au plan suivant sous « PR déjà
   ouverte ».
+- **`5` (périmètre sensible)** : ce n'est **pas** un échec. La PR est verte et
+  relue, elle attend un humain. Journaliser **`skipped`** en disant quel
+  périmètre l'a retenue, laisser la PR ouverte, passer à la suivante, et le
+  porter au compte rendu de vague : sans cela personne ne saura qu'il y a là
+  quelque chose à relire.
+
+  `skipped` et pas autre chose, pour trois raisons mécaniques : c'est un statut
+  **terminal**, donc la vague peut s'achever au lieu de rester ouverte
+  indéfiniment ; il **compte comme un avancement**, donc le détecteur
+  d'enlisement ne conclura pas à tort que le jalon piétine et ne désarmera pas
+  la reprise automatique ; et il est journalisé en `WARN`, pas en `ERROR`, donc
+  la PR ne se lit pas comme un échec. `reviewed` gèlerait la vague — il n'est ni
+  terminal ni fatal, et `wave_state()` l'attendrait pour toujours ; `blocked` la
+  ferait passer pour tombée.
 
 Le gate relit l'état juste avant d'agir, mais **il ne peut pas savoir que la CI
 d'une PR a été validée contre un `develop` plus ancien**. C'est la disjonction
@@ -382,10 +422,12 @@ python scripts/milestone_supervise.py --disarm    # tout débrancher
 
 Trois points à dire à l'utilisateur en phase 2, avant la première vague :
 
-- **La reprise automatique merge sur `develop` sans relecture.** C'est le prix du
-  « sans intervention ». Pour un jalon qui touche `mod:payments`, `security`, une
-  migration Prisma ou `infra/terraform`, ouvrir le run avec
-  `milestone_run.py start … --no-merge` : la reprise s'arrêtera alors aux PR.
+- **La reprise automatique merge sur `develop` sans relecture** — sauf sur les
+  périmètres sensibles, dont les PR restent ouvertes d'office (la barrière les
+  refuse, cf. phase 2). C'est le prix du « sans intervention ». Pour un jalon
+  dont **toutes** les PR doivent être relues, et pas seulement les sensibles,
+  ouvrir le run avec `milestone_run.py start … --no-merge` : la reprise
+  s'arrêtera alors aux PR.
 - **Le dossier doit être approuvé dans Claude Code.** Sinon `claude -p` ignore
   l'allowlist de `.claude/settings.json`, aucune demande de permission ne peut
   être répondue en mode `-p`, et les agents échouent en silence. Le préflight du
