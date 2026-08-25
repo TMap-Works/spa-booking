@@ -85,6 +85,17 @@ for _stream in (sys.stdout, sys.stderr):
     except AttributeError:
         pass
 
+# Les périmètres sensibles sont définis — et appliqués — par `pr_gate.py`. Les
+# relire chez lui plutôt que d'en recopier la liste évite que l'annonce faite à
+# l'opérateur finisse par décrire autre chose que ce que la barrière refuse. Et
+# c'est justement le message qu'il ne peut pas vérifier : il est lu à l'instant
+# où il cesse de regarder.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from pr_gate import SENSITIVE_SCOPES
+except ImportError:
+    SENSITIVE_SCOPES = "voir SENSITIVE_LABELS / SENSITIVE_PREFIXES dans pr_gate.py"
+
 ROOT = Path(__file__).resolve().parents[1]
 RUNS_DIR = ROOT / ".claude" / ".milestone"
 CURRENT = RUNS_DIR / "current"
@@ -593,9 +604,6 @@ def workspace_trusted():
     return False
 
 
-SENSITIVE_SCOPES = "mod:payments, security, migration Prisma, infra/terraform"
-
-
 def announce_merge_policy(args):
     """Dit, à l'armement, ce que le dispositif mergera tout seul.
 
@@ -626,7 +634,8 @@ def preflight(args):
         problems.append("« gh » introuvable — le plan ne peut pas être calculé")
     else:
         proc = subprocess.run(["gh", "auth", "status"], capture_output=True,
-                              text=True, encoding="utf-8", errors="replace")
+                              text=True, encoding="utf-8", errors="replace",
+                              timeout=30)
         if proc.returncode != 0:
             problems.append("`gh auth status` en échec — session GitHub expirée")
     if not (ROOT / ".git").exists():
@@ -1039,6 +1048,14 @@ def main():
         if not preflight(args) and not args.force:
             say("préflight en échec — rien n'a été armé (`--force` pour passer "
                 "outre)", "ERROR")
+            # Ne rien armer ne veut pas dire que rien n'est armé : une veille
+            # d'un run précédent survivrait, et continuerait de ressusciter un
+            # superviseur sur l'ancienne intention. Le taire laisserait
+            # l'opérateur croire le dispositif à l'arrêt.
+            if watchdog_armed():
+                say("une veille d'un run précédent est toujours enregistrée et "
+                    "continuera de tourner sur l'ancienne intention — "
+                    "`--disarm` pour la retirer.", "WARN")
             return 2
         announce_merge_policy(args)
         save_intent(args)
@@ -1058,8 +1075,10 @@ def main():
         return 2
 
     if not args.no_merge and not args.yes and not args.dry_run:
-        say("sans --no-merge, chaque PR verte sera mergée sur develop sans "
-            "relecture humaine.", "WARN")
+        # Le même texte qu'à l'armement, et pour la même raison : deux
+        # descriptions du même dispositif finiraient par diverger, et c'est
+        # celle-ci que l'opérateur confirme.
+        announce_merge_policy(args)
         try:
             if input("Confirmer ? [o/N] ").strip().lower() not in {"o", "oui", "y"}:
                 say("abandon")
