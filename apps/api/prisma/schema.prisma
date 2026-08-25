@@ -1,0 +1,461 @@
+// Modèle de données du CDC §2.4 — les sept entités du MVP.
+//
+// Trois règles tiennent tout ce fichier, et aucune n'est négociable :
+//
+// 1. **`tenant_id` non nullable sur toute table métier**, avec clé étrangère
+//    vers `tenants`. Seule `tenants` en est exemptée — c'est la racine, pas une
+//    donnée d'établissement (.claude/skills/tenant-isolation/SKILL.md §1).
+//    Tout index métier commence par `tenant_id`, et tout unique métier est
+//    composite avec lui : deux salons ont le droit d'avoir chacun un service
+//    « Massage 60 min » et une cliente « alice@example.test ».
+// 2. **Aucun montant en flottant.** Un montant est un entier dans la plus petite
+//    unité monétaire (`*_amount_minor`) accompagné de son code devise ISO 4217.
+//    Un prix n'a pas de sens sans sa devise : les deux voyagent ensemble.
+// 3. **Tout instant est un `timestamptz`**, stocké en UTC, converti à
+//    l'affichage selon `tenants.timezone`. Un rendez-vous mal fuseau-horairé est
+//    un bug de sévérité haute.
+//
+// Les identifiants sont des UUID v4 générés côté application : l'énumération
+// d'identifiants séquentiels est un vecteur de fuite inter-tenant à part entière
+// (tenant-isolation §4).
+//
+// Les suppressions sont volontairement `Restrict` : rien dans le périmètre MVP
+// ne supprime un tenant, un client ou un rendez-vous — une annulation est un
+// *statut*, pas un `DELETE`. L'effacement RGPD est une procédure dédiée et
+// étagée, pas un effet de bord de cascade. Une seule exception, assumée :
+// `ServiceStaff` est en `Cascade`, parce qu'une ligne d'affectation n'est pas une
+// donnée en propre — elle ne survit ni à la prestation ni au praticien qu'elle
+// relie.
+//
+// Deux garanties ne sont pas exprimables ici et vivent en SQL brut à la fin de la
+// migration (api-module §6) :
+//
+// - les **clés étrangères composites `(tenant_id, id)`**, sans lesquelles une
+//   ligne d'un salon pourrait référencer celle d'un autre — `tenant_id` sur la
+//   table est nécessaire, il n'est pas suffisant ;
+// - les **contraintes `CHECK`** qui bornent montants, durées et intervalles.
+//
+// Toute migration générée ensuite qui prétendrait les retirer est à corriger à la
+// main avant d'être versée.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Énumérations
+// ---------------------------------------------------------------------------
+
+/// Rôle du compte — CDC §2.4 « Compte (client / staff / admin) + rôle ».
+enum UserRole {
+  CLIENT
+  STAFF
+  ADMIN
+}
+
+/// Cycle de vie du rendez-vous. `CANCELLED` et `NO_SHOW` sont des statuts, pas
+/// des suppressions : le reporting de base du MVP compte les no-shows.
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+/// Moyen d'encaissement au comptoir — CDC §1.4 « carte/espèces ».
+enum PaymentMethod {
+  CARD
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+}
+
+/// Les trois messages du périmètre MVP — CDC §1.4 « Notifications ».
+enum NotificationType {
+  BOOKING_CONFIRMATION
+  REMINDER_24H
+  CANCELLATION
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// ---------------------------------------------------------------------------
+// Tenant — la racine de l'isolation
+// ---------------------------------------------------------------------------
+
+/// Établissement (salon, spa, barbershop).
+///
+/// Seule table sans `tenant_id` : elle *est* le tenant. Son `slug` est donc le
+/// seul unique global du schéma — c'est lui qui résout l'établissement depuis
+/// le sous-domaine ou l'URL des pages de réservation publiques, avant toute
+/// authentification.
+model Tenant {
+  id String @id @default(uuid()) @db.Uuid
+
+  slug String @unique @db.VarChar(63)
+  name String @db.VarChar(160)
+
+  /// Fuseau IANA (« Europe/Paris »), **obligatoire** : sans lui, aucun instant
+  /// UTC stocké ici ne peut être rendu à l'écran. Pas de valeur par défaut —
+  /// un défaut silencieux décalerait tout un agenda d'une heure.
+  timezone String @db.VarChar(64)
+
+  /// Devise par défaut de l'établissement (ISO 4217). Chaque montant porte
+  /// malgré tout la sienne : celle-ci peut changer, les montants déjà encaissés
+  /// non.
+  defaultCurrency String @map("default_currency") @db.Char(3)
+
+  contactEmail String? @map("contact_email") @db.VarChar(320)
+  contactPhone String? @map("contact_phone") @db.VarChar(32)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  users         User[]
+  services      Service[]
+  staff         Staff[]
+  serviceStaff  ServiceStaff[]
+  appointments  Appointment[]
+  payments      Payment[]
+  notifications Notification[]
+
+  @@map("tenants")
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+/// Compte client, praticien ou administrateur.
+///
+/// L'unicité de l'e-mail est **par tenant** : une même personne peut être
+/// cliente de deux salons sans que l'un puisse deviner l'existence de l'autre.
+model User {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  /// L'unicité porte sur les octets : `Alice@Example.test` et
+  /// `alice@example.test` cohabiteraient dans le même salon, et la recherche à
+  /// la connexion ne trouverait qu'une des deux lignes. La normalisation en
+  /// minuscules **avant écriture** revient au module `identity` — c'est là que
+  /// se décide la forme canonique d'une adresse, pas ici.
+  email String   @db.VarChar(320)
+  role  UserRole
+
+  /// Empreinte du mot de passe — jamais le mot de passe. Nullable : un client
+  /// peut exister sans compte, saisi au comptoir par le staff.
+  passwordHash String? @map("password_hash") @db.VarChar(255)
+
+  firstName String  @map("first_name") @db.VarChar(80)
+  lastName  String  @map("last_name") @db.VarChar(80)
+  phone     String? @db.VarChar(32)
+
+  isActive    Boolean   @default(true) @map("is_active")
+  lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// Au plus une fiche praticien — garanti par `@@unique([tenantId, userId])`
+  /// sur `Staff`. Prisma type la relation en liste parce que la cardinalité
+  /// s'appuie sur un unique **composite** et non sur un unique mono-colonne :
+  /// c'est le prix à payer pour qu'aucun index métier ne commence par autre
+  /// chose que `tenant_id`.
+  staffProfiles         Staff[]
+  clientAppointments    Appointment[]  @relation("AppointmentClient")
+  receivedNotifications Notification[] @relation("NotificationRecipient")
+
+  @@unique([tenantId, email])
+  // Cible des clés étrangères composites `(tenant_id, id)` posées en SQL brut
+  // dans la migration — c'est ce couple, et non `id` seul, qui rend impossible
+  // de rattacher la ligne d'un salon à celle d'un autre. Il sert aussi de clé de
+  // lecture tenant-sûre : un `findUnique` sur `{ tenantId, id }` renvoie `null`
+  // pour l'id d'un autre établissement, ce qui donne le 404 attendu plutôt qu'un
+  // 403 (tenant-isolation §4).
+  @@unique([tenantId, id])
+  @@index([tenantId, role])
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// Catalog
+// ---------------------------------------------------------------------------
+
+/// Prestation vendue par l'établissement (nom, durée, prix, catégorie).
+model Service {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  slug        String  @db.VarChar(80)
+  name        String  @db.VarChar(160)
+  description String? @db.VarChar(2000)
+  category    String? @db.VarChar(80)
+
+  /// Durée facturée du soin, en minutes. Les tampons avant/après relèvent du
+  /// moteur de disponibilité et arriveront avec lui.
+  durationMinutes Int @map("duration_minutes")
+
+  /// Prix affiché : entier dans la plus petite unité (3500 = 35,00 €) et code
+  /// devise explicite. Jamais de flottant sur un montant.
+  priceAmountMinor Int    @map("price_amount_minor")
+  priceCurrency    String @map("price_currency") @db.Char(3)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  assignedStaff ServiceStaff[]
+  appointments  Appointment[]
+
+  @@unique([tenantId, slug])
+  // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
+  @@unique([tenantId, id])
+  @@index([tenantId, isActive])
+  @@map("services")
+}
+
+/// Praticien. Distinct de `User` : le compte porte l'identité et les droits, la
+/// fiche praticien porte la vitrine publique et l'affectation aux prestations.
+/// Un administrateur qui ne prend pas de rendez-vous n'a pas de fiche.
+model Staff {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  displayName String  @map("display_name") @db.VarChar(160)
+  bio         String? @db.VarChar(2000)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  assignedServices ServiceStaff[]
+  appointments     Appointment[]
+
+  @@unique([tenantId, userId])
+  // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
+  @@unique([tenantId, id])
+  @@index([tenantId, isActive])
+  @@map("staff")
+}
+
+/// Affectation N–N « ce praticien pratique cette prestation ».
+///
+/// Table de jonction **explicite** et non implicite : une relation implicite de
+/// Prisma ne porterait pas de `tenant_id`, et il n'y aurait alors rien à quoi
+/// accrocher la frontière.
+///
+/// Porter la colonne ne suffit pourtant pas : les clés étrangères que Prisma
+/// génère ici sont mono-colonne (`service_id` → `services(id)`), donc muettes sur
+/// le tenant. Ce sont les clés composites `(tenant_id, service_id)` et
+/// `(tenant_id, staff_id)`, posées en SQL brut dans la migration, qui rendent
+/// réellement impossible d'affecter le praticien d'un salon à la prestation d'un
+/// autre.
+model ServiceStaff {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  serviceId String  @map("service_id") @db.Uuid
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  staffId String @map("staff_id") @db.Uuid
+  staff   Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([tenantId, serviceId, staffId])
+  @@index([tenantId, staffId])
+  @@map("service_staff")
+}
+
+// ---------------------------------------------------------------------------
+// Appointments
+// ---------------------------------------------------------------------------
+
+/// Rendez-vous. Le cœur de la boucle de valeur : réserver → confirmer →
+/// honorer → encaisser → mesurer.
+///
+/// `starts_at` et `ends_at` sont des instants UTC. La contrainte d'exclusion
+/// anti-double-réservation (`EXCLUDE USING gist`) porte sur ce couple ; elle
+/// n'est pas exprimable en Prisma et arrivera en SQL brut avec le moteur de
+/// réservation. Les index posés ici sont ceux dont ce moteur et le calendrier
+/// admin auront besoin.
+///
+/// `CHECK ("ends_at" > "starts_at")` est déjà en base, dans la migration : un
+/// intervalle vide (`ends_at = starts_at`) ne chevauche rien et passerait sous
+/// la contrainte d'exclusion sans la déclencher — deux réservations sur le même
+/// praticien au même instant.
+model Appointment {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  clientId String @map("client_id") @db.Uuid
+  client   User   @relation("AppointmentClient", fields: [clientId], references: [id], onDelete: Restrict)
+
+  staffId String @map("staff_id") @db.Uuid
+  staff   Staff  @relation(fields: [staffId], references: [id], onDelete: Restrict)
+
+  serviceId String  @map("service_id") @db.Uuid
+  service   Service @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+  startsAt DateTime @map("starts_at") @db.Timestamptz(6)
+  endsAt   DateTime @map("ends_at") @db.Timestamptz(6)
+
+  status AppointmentStatus @default(PENDING)
+
+  /// Prix figé à la réservation : le tarif du catalogue peut changer ensuite,
+  /// le montant dû par ce client-là, non.
+  priceAmountMinor Int    @map("price_amount_minor")
+  priceCurrency    String @map("price_currency") @db.Char(3)
+
+  clientNote String? @map("client_note") @db.VarChar(2000)
+  staffNote  String? @map("staff_note") @db.VarChar(2000)
+
+  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
+  cancellationReason String?   @map("cancellation_reason") @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// Au plus un encaissement — garanti par `@@unique([tenantId, appointmentId])`
+  /// sur `Payment`, pour la même raison que `User.staffProfiles`.
+  payments      Payment[]
+  notifications Notification[]
+
+  // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
+  @@unique([tenantId, id])
+  @@index([tenantId, startsAt])
+  @@index([tenantId, staffId, startsAt])
+  @@index([tenantId, clientId, startsAt])
+  @@index([tenantId, status, startsAt])
+  @@map("appointments")
+}
+
+// ---------------------------------------------------------------------------
+// Payments
+// ---------------------------------------------------------------------------
+
+/// Transaction d'encaissement — rendez-vous ou vente retail au comptoir.
+///
+/// **Aucune donnée de carte n'atterrit ici** : la tokenisation se fait côté
+/// client vers Stripe, et le serveur ne conserve que des références opaques du
+/// prestataire. Pas de PAN, pas de cryptogramme, pas de date d'expiration —
+/// c'est ce qui maintient le périmètre PCI en SAQ A
+/// (.claude/skills/payments-stripe/SKILL.md).
+model Payment {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  /// Nul pour une vente retail sans rendez-vous. Un rendez-vous n'a qu'un
+  /// encaissement : c'est `@@unique([tenantId, appointmentId])` qui le garantit
+  /// — PostgreSQL autorise autant de lignes nulles qu'on veut sous une
+  /// contrainte d'unicité, donc les ventes retail ne se gênent pas entre elles.
+  appointmentId String?      @map("appointment_id") @db.Uuid
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+
+  amountMinor         Int    @map("amount_minor")
+  refundedAmountMinor Int    @default(0) @map("refunded_amount_minor")
+  currency            String @db.Char(3)
+
+  method PaymentMethod
+  status PaymentStatus @default(PENDING)
+
+  /// Références Stripe. `provider_payment_intent_id` est unique **par tenant**,
+  /// ce qui rend l'écriture idempotente une fois le tenant connu — mais un
+  /// webhook Stripe n'arrive qu'avec `pi_xxx`. Le module `payments` devra donc
+  /// résoudre le tenant avant de chercher (métadonnée d'intention, ou point
+  /// d'entrée de webhook par établissement) : un index non préfixé de
+  /// `tenant_id` n'est pas une option ici.
+  providerPaymentIntentId String? @map("provider_payment_intent_id") @db.VarChar(255)
+  providerChargeId        String? @map("provider_charge_id") @db.VarChar(255)
+
+  capturedAt DateTime? @map("captured_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([tenantId, appointmentId])
+  @@unique([tenantId, providerPaymentIntentId])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, createdAt])
+  @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+/// Message émis (confirmation, rappel J-1, avis d'annulation).
+///
+/// `dedupe_key` porte l'idempotence des envois : le planificateur peut rejouer
+/// un rappel, la contrainte d'unicité garantit qu'un client ne reçoit pas deux
+/// fois le même SMS. Aucune coordonnée n'est recopiée ici — l'adresse de
+/// destination se relit sur le compte au moment de l'envoi, pour ne pas
+/// dupliquer de donnée personnelle (CDC §5.1).
+model Notification {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  appointmentId String?      @map("appointment_id") @db.Uuid
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+
+  recipientUserId String? @map("recipient_user_id") @db.Uuid
+  recipient       User?   @relation("NotificationRecipient", fields: [recipientUserId], references: [id], onDelete: Restrict)
+
+  type    NotificationType
+  channel NotificationChannel
+  status  NotificationStatus  @default(PENDING)
+
+  /// Clé d'idempotence : « ce message-là, pour ce rendez-vous-là, une fois ».
+  dedupeKey String @map("dedupe_key") @db.VarChar(255)
+
+  /// Instant d'envoi voulu — le rappel J-1 est planifié, pas immédiat.
+  scheduledFor DateTime? @map("scheduled_for") @db.Timestamptz(6)
+  sentAt       DateTime? @map("sent_at") @db.Timestamptz(6)
+
+  attemptCount  Int     @default(0) @map("attempt_count")
+  failureReason String? @map("failure_reason") @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([tenantId, dedupeKey])
+  @@index([tenantId, status, scheduledFor])
+  @@index([tenantId, appointmentId])
+  @@map("notifications")
+}
