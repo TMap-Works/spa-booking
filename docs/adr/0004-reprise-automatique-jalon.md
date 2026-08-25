@@ -246,13 +246,16 @@ avant de devenir une règle :
   `tracking.py` n'étiquette que des issues. Chercher `mod:payments` sur la PR
   revenait à ne jamais le trouver : le périmètre le plus sensible du projet
   était le seul que le garde-fou ne voyait pas.
-- **Le refus retire le label `merge-when-green`.** Un `--request-merge`
-  antérieur a pu le poser puis dépasser son délai. Le laisser en place ferait
-  merger la PR par `auto-merge.yml`, qui tourne dans un runner sans
-  `SPA_UNATTENDED` — le refus aurait été purement décoratif.
-- **Ne pas savoir vaut refus.** Si la liste des fichiers ne peut être obtenue,
-  la PR est traitée comme sensible. Un garde-fou qui s'ouvre quand il ne voit
-  plus rien ne protège que les jours où tout va bien.
+- **Le refus ne retire pas le label `merge-when-green`.** La barrière refuse de
+  merger *elle-même* ; elle ne révoque pas la décision d'un autre. Poser ce
+  label est un geste humain explicite, et c'est l'autorisation que reconnaît
+  `auto-merge.yml` — la retirer inverserait le raisonnement qui fonde tout ce
+  détour. Elle ne peut d'ailleurs pas l'avoir posé sur une PR sensible, le refus
+  étant évalué avant la pose.
+- **Ne pas savoir vaut refus.** Liste des fichiers inaccessible, labels d'une
+  issue illisibles : la PR est traitée comme sensible. Un garde-fou qui s'ouvre
+  quand il ne voit plus rien ne protège que les jours où tout va bien — et un
+  `gh` en limite de débit, c'est justement les jours de forte charge.
 
 Le choix d'une variable d'environnement plutôt que d'un drapeau de ligne de
 commande est le cœur du correctif : un garde-fou que l'appelant doit penser à

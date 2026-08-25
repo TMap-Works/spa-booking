@@ -126,9 +126,12 @@ de la vague 1, ce qui sera mergé automatiquement, et **comment suivre le run**
 (section « Suivre et piloter un run en cours », chemin du log compris).
 Demander l'accord.
 
-Sont **sensibles**, au sens de [/ticket](.claude/commands/ticket.md) : `mod:payments`,
-le label `security`, une migration Prisma, et `infra/terraform`. Quand une vague
-en contient, demander l'arbitrage **une fois pour la vague** (`AskUserQuestion`,
+Sont **sensibles**, au sens de [/ticket](.claude/commands/ticket.md) : les labels
+`mod:payments` et `security` — portés par l'**issue**, jamais par la PR —, un
+schéma ou une migration Prisma, `infra/terraform`, et `apps/api/src/modules/payments`.
+La liste qui fait foi est celle de `scripts/pr_gate.py` (`SENSITIVE_LABELS`,
+`SENSITIVE_PREFIXES`, `PRISMA`) ; celle-ci en est le reflet. Quand une vague en
+contient, demander l'arbitrage **une fois pour la vague** (`AskUserQuestion`,
 sauf `--yes`) : tout merger · laisser ces PR ouvertes pour relecture · s'arrêter.
 
 **Sous `--yes`, la question n'est pas posée et la réponse est « laisser ces PR
@@ -253,18 +256,19 @@ un classifieur le retenait, ferait échouer la vague **en silence**.
   passe à la suivante. Le ticket repartira au plan suivant sous « PR déjà
   ouverte ».
 - **`5` (périmètre sensible)** : ce n'est **pas** un échec. La PR est verte et
-  relue, elle attend un humain. Journaliser **`reviewed`** — surtout pas
-  `blocked`, que `milestone_run.py` classe en `ERROR` et compte parmi les
-  tickets en échec — en disant quel périmètre l'a retenue. Laisser la PR
-  ouverte, passer à la suivante, et le porter au compte rendu de vague : sans
-  cela personne ne saura qu'il y a là quelque chose à relire.
+  relue, elle attend un humain. Journaliser **`skipped`** en disant quel
+  périmètre l'a retenue, laisser la PR ouverte, passer à la suivante, et le
+  porter au compte rendu de vague : sans cela personne ne saura qu'il y a là
+  quelque chose à relire.
 
-  Conséquence à connaître : ces tickets ne se ferment pas, donc ils ne comptent
-  pas dans l'avancement que surveille `--patience`. Un jalon dont il ne resterait
-  que des PR sensibles finirait par être déclaré enlisé, et la reprise
-  automatique se désarmerait. C'est le bon moment pour qu'un humain revienne,
-  mais le diagnostic journalisé nommera l'enlisement — pas l'attente de
-  relecture.
+  `skipped` et pas autre chose, pour trois raisons mécaniques : c'est un statut
+  **terminal**, donc la vague peut s'achever au lieu de rester ouverte
+  indéfiniment ; il **compte comme un avancement**, donc le détecteur
+  d'enlisement ne conclura pas à tort que le jalon piétine et ne désarmera pas
+  la reprise automatique ; et il est journalisé en `WARN`, pas en `ERROR`, donc
+  la PR ne se lit pas comme un échec. `reviewed` gèlerait la vague — il n'est ni
+  terminal ni fatal, et `wave_state()` l'attendrait pour toujours ; `blocked` la
+  ferait passer pour tombée.
 
 Le gate relit l'état juste avant d'agir, mais **il ne peut pas savoir que la CI
 d'une PR a été validée contre un `develop` plus ancien**. C'est la disjonction
@@ -418,10 +422,12 @@ python scripts/milestone_supervise.py --disarm    # tout débrancher
 
 Trois points à dire à l'utilisateur en phase 2, avant la première vague :
 
-- **La reprise automatique merge sur `develop` sans relecture.** C'est le prix du
-  « sans intervention ». Pour un jalon qui touche `mod:payments`, `security`, une
-  migration Prisma ou `infra/terraform`, ouvrir le run avec
-  `milestone_run.py start … --no-merge` : la reprise s'arrêtera alors aux PR.
+- **La reprise automatique merge sur `develop` sans relecture** — sauf sur les
+  périmètres sensibles, dont les PR restent ouvertes d'office (la barrière les
+  refuse, cf. phase 2). C'est le prix du « sans intervention ». Pour un jalon
+  dont **toutes** les PR doivent être relues, et pas seulement les sensibles,
+  ouvrir le run avec `milestone_run.py start … --no-merge` : la reprise
+  s'arrêtera alors aux PR.
 - **Le dossier doit être approuvé dans Claude Code.** Sinon `claude -p` ignore
   l'allowlist de `.claude/settings.json`, aucune demande de permission ne peut
   être répondue en mode `-p`, et les agents échouent en silence. Le préflight du
