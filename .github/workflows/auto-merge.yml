@@ -45,6 +45,16 @@ permissions:
   # son échec devient un check rouge de la PR : elle ne peut plus être mergée du
   # tout, même à la main. Voir #125.
   actions: read
+  # GitHub ferme une issue liée (`Closes #N`) **au nom de l'acteur qui merge** —
+  # ici le `GITHUB_TOKEN` de ce workflow. Sans `issues: write`, la fermeture est
+  # abandonnée en silence : le merge réussit, l'issue reste ouverte, et rien
+  # n'est journalisé. Ce n'est pas cosmétique — `milestone_plan.py` raisonne sur
+  # l'état des **issues**, pas des PR : une issue jamais fermée est reproposée à
+  # la vague suivante et un agent refait du travail déjà mergé (#139), tandis
+  # que ses dépendantes ne se débloquent jamais. Corrélation vérifiée sur les
+  # huit PR du projet : les trois mergées par un jeton utilisateur ont fermé
+  # leur issue, les cinq mergées par `app/github-actions` non. Voir #154.
+  issues: write
 
 # Les merges sur develop sont sérialisés : deux merges concurrents se voient en
 # conflit, ou passent tous deux sur un état que ni l'un ni l'autre n'a testé.
@@ -105,6 +115,16 @@ jobs:
           pr=$(echo "$prs" | head -n 1)
           restantes=$(echo "$prs" | tail -n +2 | tr '\n' ' ')
 
+          # Les issues que ce merge est censé fermer, lues AVANT de merger : une
+          # fois la PR close, un appel qui échouerait ne laisserait plus aucun
+          # moyen de les nommer dans le résumé. `?` distingue « pas lisible » de
+          # « aucun lien », deux situations qui n'appellent pas le même geste.
+          if ! liees=$(gh pr view "$pr" --repo "$SPA_TRACKING_REPO" \
+                         --json closingIssuesReferences \
+                         --jq '[.closingIssuesReferences[].number | "#\(.)"] | join(", ")'); then
+            liees="?"
+          fi
+
           echo "## Auto-merge" >> "$GITHUB_STEP_SUMMARY"
           echo "::group::PR #$pr"
           # --no-wait : le verdict est immédiat. Si la CI tourne encore, la
@@ -130,6 +150,26 @@ jobs:
             *) verdict="**erreur d'appel de la barrière**" ;;
           esac
           echo "- #$pr — $verdict" >> "$GITHUB_STEP_SUMMARY"
+
+          # Un merge qui ne ferme rien ne doit plus être muet (#154) : c'est ce
+          # silence qui a laissé cinq issues ouvertes sans que personne le voie.
+          #
+          # Ce qui est rapporté est ce que le merge a **demandé**, pas un état
+          # relu : GitHub ferme les issues liées de façon asynchrone, et une
+          # relecture dans la foulée renverrait souvent `OPEN` pour une issue en
+          # train de se fermer — un résumé faux vaut moins que pas de résumé.
+          if [ "$code" -eq 0 ]; then
+            if [ "$liees" = "?" ]; then
+              echo "  - liens de fermeture illisibles : vérifier à la main ce que #$pr devait fermer" >> "$GITHUB_STEP_SUMMARY"
+              echo "::warning::impossible de lire les issues liées à #$pr — fermeture non vérifiable"
+            elif [ -n "$liees" ]; then
+              echo "  - ferme $liees — fermeture déclenchée par le merge, effective en quelques secondes" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "  - **aucune issue fermée** : #$pr ne déclare aucun lien de fermeture (\`Closes #N\` absent du corps, ou pointant hors du dépôt)" >> "$GITHUB_STEP_SUMMARY"
+              echo "::warning::#$pr a été mergée sans fermer d'issue — le travail restera « à traiter » pour milestone_plan.py"
+            fi
+          fi
+
           [ -n "$restantes" ] && echo "- en attente d'un prochain réveil : $restantes" >> "$GITHUB_STEP_SUMMARY"
 
           # Une PR pas encore prête ne fait pas rougir ce job : son propre CI le
