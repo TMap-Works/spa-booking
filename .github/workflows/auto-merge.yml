@@ -35,6 +35,13 @@ permissions:
   pull-requests: write
   checks: read
   statuses: read
+  # `pr_gate.py` lit `statusCheckRollup`, que `gh` développe jusqu'à
+  # `checkSuite.workflowRun` — un champ du scope `actions`. Sans ce droit, la
+  # requête GraphQL renvoie « Resource not accessible by integration », la
+  # barrière croit la PR introuvable et sort en code 4. Le job rougit alors, et
+  # son échec devient un check rouge de la PR : elle ne peut plus être mergée du
+  # tout, même à la main. Voir #125.
+  actions: read
 
 # Les merges sur develop sont sérialisés : deux merges concurrents se voient en
 # conflit, ou passent tous deux sur un état que ni l'un ni l'autre n'a testé.
