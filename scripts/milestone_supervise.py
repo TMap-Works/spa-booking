@@ -58,8 +58,12 @@ Le superviseur ne garde donc aucun état : on peut le tuer à tout moment.
 
 Il ne relit pas le code. Sauf `--no-merge`, il enchaîne des merges automatiques
 sur `develop` sans arbitrage humain — c'est le prix du « sans intervention ».
-Pour un jalon qui touche `mod:payments`, `security`, une migration Prisma ou
-`infra/terraform`, armer avec `--no-merge` et relire les PR au réveil.
+
+Une exception, et elle est mécanique plutôt que consignée : sur un périmètre
+sensible — `mod:payments`, le label `security`, une migration Prisma,
+`infra/terraform` — `pr_gate.py` refuse le merge et laisse la PR ouverte. Le
+superviseur le lui dit en posant `SPA_UNATTENDED` dans l'environnement des
+vagues. Pour un jalon sensible de bout en bout, armer plutôt avec `--no-merge`.
 """
 import argparse
 import atexit
@@ -253,6 +257,12 @@ def intent_argv(intent):
     argv = []
     if intent.get("milestone"):
         argv.append(intent["milestone"])
+    # `--yes` est inconditionnel, et c'est assumé : un superviseur ressuscité
+    # par la tâche planifiée n'a aucun terminal, et une vague tourne en
+    # `claude -p` où aucune question ne peut recevoir de réponse. Demander un
+    # arbitrage ici bloquerait le jalon sans personne pour le débloquer. La
+    # protection des périmètres sensibles ne passe donc pas par une question,
+    # mais par `pr_gate.py`, qui refuse de les merger sans surveillance.
     argv += ["--width", str(intent.get("width", 3)),
              "--waves-per-leg", str(intent.get("waves_per_leg", 1)),
              "--permission-mode", intent.get("permission_mode", "acceptEdits"),
@@ -583,6 +593,30 @@ def workspace_trusted():
     return False
 
 
+SENSITIVE_SCOPES = "mod:payments, security, migration Prisma, infra/terraform"
+
+
+def announce_merge_policy(args):
+    """Dit, à l'armement, ce que le dispositif mergera tout seul.
+
+    Ce n'est pas une invite, et ce n'est pas un oubli : `arm_supervision()`
+    appelle ce script en `subprocess.run(capture_output=True)`, donc sans
+    terminal ni entrée standard. Un `input()` ici n'aurait personne pour y
+    répondre — il ferait échouer l'armement au lieu de le protéger. L'opérateur
+    est donc informé par la sortie, que l'appelant recopie ligne à ligne.
+    """
+    if args.no_merge:
+        say("armé en --no-merge : les vagues s'arrêteront aux PR, aucune ne "
+            "sera mergée.")
+        return
+    say("armé SANS --no-merge : toute PR verte sera mergée sur develop sans "
+        "relecture humaine, y compris après une coupure de quota et hors de "
+        "toute session.", "WARN")
+    say("exception — périmètres sensibles ({}) : ces PR ne seront pas mergées "
+        "et resteront ouvertes pour relecture.".format(SENSITIVE_SCOPES), "WARN")
+    say("tout débrancher : python scripts/milestone_supervise.py --disarm")
+
+
 def preflight(args):
     problems, warnings = [], []
 
@@ -661,10 +695,19 @@ def run_leg(args, index):
     LEGS_DIR.mkdir(parents=True, exist_ok=True)
     raw_path = LEGS_DIR / f"leg-{index:03d}-{datetime.now():%Y%m%d-%H%M%S}.ndjson"
 
+    # Sans surveillance, aucun arbitrage ne peut être posé : `pr_gate.py` lit
+    # cette variable et refuse alors de merger les PR de périmètre sensible, qui
+    # restent ouvertes. Passer par l'environnement plutôt que par un drapeau du
+    # prompt est ce qui rend la règle vraie même si l'orchestrateur l'oublie —
+    # tout `pr_gate.py` lancé dans la vague en hérite sans avoir à y penser.
+    env = dict(os.environ)
+    if not args.no_merge:
+        env["SPA_UNATTENDED"] = "1"
+
     try:
         process = subprocess.Popen(
             command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", errors="replace", bufsize=1)
+            text=True, encoding="utf-8", errors="replace", bufsize=1, env=env)
     except (OSError, ValueError) as exc:
         # Sans cela, l'exception remonte, le superviseur meurt, et la veille le
         # relance toutes les cinq minutes pour qu'il remeure de la même façon.
@@ -987,6 +1030,17 @@ def main():
         retire("désarmement demandé")
         return 0
     if args.arm:
+        # Le préflight et l'annonce de la politique de merge étaient jusqu'ici
+        # hors d'atteinte de ce chemin : `--arm` rendait la main avant eux,
+        # alors que c'est précisément lui qu'appelle `/milestone`. Armer était
+        # donc silencieux, et un dossier de travail non approuvé n'était
+        # découvert qu'au premier réveil de la veille — des heures plus tard,
+        # après que les agents eurent échoué en silence faute de permissions.
+        if not preflight(args) and not args.force:
+            say("préflight en échec — rien n'a été armé (`--force` pour passer "
+                "outre)", "ERROR")
+            return 2
+        announce_merge_policy(args)
         save_intent(args)
         return 0 if arm_watchdog(args.every) else 2
 
