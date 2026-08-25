@@ -77,9 +77,11 @@ Pour dérouler ce flux, utiliser les commandes `/feature-start`, `/pr-open`,
 `/sprint-status` définies dans [.claude/commands/](.claude/commands/).
 `/ticket-new` ouvre le ticket de traçabilité d'une demande faite à Claude Code
 et `/ticket-close` le referme — historisation délibérée, jamais automatique.
-`/ticket <issue>` traite une issue de bout en bout ; `/milestone <jalon>` traite
+`/ticket <issue>` traite une issue de bout en bout ; `/milestone [jalon]` traite
 un sprint entier, en menant de front les tickets dont les empreintes de fichiers
-sont disjointes — et reprend d'elle-même le run inachevé. Ouvrir un run arme
+sont disjointes — et reprend d'elle-même le run inachevé. Sans argument, elle
+propose le jalon à dérouler plutôt que de le demander
+(`scripts/milestone_run.py next` pour le même état, sans rien ouvrir). Ouvrir un run arme
 aussi la reprise automatique : coupure de quota, plantage ou redémarrage, le
 jalon repart seul (`scripts/milestone_supervise.py --state` pour regarder,
 `--disarm` pour débrancher).

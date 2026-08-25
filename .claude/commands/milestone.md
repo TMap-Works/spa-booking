@@ -1,11 +1,12 @@
 ---
 description: Déroule un jalon entier — ordonne ses issues, les regroupe en vagues parallélisables, lance un agent par ticket et intègre vague après vague
-argument-hint: [S1|S2|S3|S4] [--width N] [--waves N] [--plan] [--fresh] [--no-merge] [--yes]
+argument-hint: [jalon] [--width N] [--waves N] [--plan] [--fresh] [--no-merge] [--yes]
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Agent, Skill, AskUserQuestion
 ---
 
-Déroule le jalon **$1** (à défaut, le jalon ouvert dont l'échéance est la plus
-proche) : ordonner, paralléliser, exécuter, intégrer — en journalisant tout.
+Déroule le jalon **$1** — et **sans argument, celui qu'il reste à dérouler** :
+ordonner, paralléliser, exécuter, intégrer, en journalisant tout. Savoir où on
+en est est le travail de la commande, pas celui de qui la tape (phase 0).
 
 Conventions de référence : [.claude/skills/project-flow/SKILL.md](.claude/skills/project-flow/SKILL.md).
 Le traitement d'un ticket isolé reste [/ticket](.claude/commands/ticket.md) —
@@ -41,13 +42,35 @@ défaut**.
 
 ---
 
-## Phase 0 — Le plan et le run
+## Phase 0 — Le jalon, le plan et le run
 
-Une seule commande, qu'il s'agisse d'un premier passage ou d'une reprise :
+**Sans `$1`, ne pas deviner et ne pas demander à sec.** Dresser d'abord le
+tableau :
+
+```bash
+python scripts/milestone_run.py next --json
+```
+
+Il rend chaque jalon avec ses issues closes, le run qui lui est attaché et son
+avancement, plus le `recommended` que le script propose — reprendre avant
+ouvrir, puis l'échéance. Poser alors **une** `AskUserQuestion` avec la
+proposition en première option (suffixée « (Recommandé) ») et les autres jalons
+encore ouverts en face. La réponse devient `$1` pour tout le reste de la
+commande.
+
+Deux cas où l'on n'interroge personne : `recommended` est le seul jalon
+proposable, ou la commande tourne sous reprise automatique (`SPA_UNATTENDED`).
+On prend alors la proposition et on l'annonce.
+
+Puis une seule commande, qu'il s'agisse d'un premier passage ou d'une reprise :
 
 ```bash
 python scripts/milestone_run.py start "$1" --width <N>
 ```
+
+`start` sans jalon fait ce même choix tout seul — c'est ce qui rend le script
+utilisable à la main et depuis le superviseur. Passer `$1` quand il est connu
+évite simplement de rejouer l'appel à GitHub.
 
 **`start` reprend le run inachevé du jalon** au lieu d'en ouvrir un nouveau. Il
 faut `--fresh` pour forcer un run neuf — et il n'y a presque jamais de raison de

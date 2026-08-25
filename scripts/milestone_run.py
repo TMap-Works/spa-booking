@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Journal, état et pilotage d'un run de jalon lancé par /milestone.
 
-    python scripts/milestone_run.py start S1 --width 3     # ouvre le run
+    python scripts/milestone_run.py next                   # où en est-on, que lancer
+    python scripts/milestone_run.py start                  # ouvre — ou reprend — ce jalon-là
+    python scripts/milestone_run.py start S1 --width 3     # ou le nommer soi-même
     python scripts/milestone_run.py watch                  # tableau de bord continu
     python scripts/milestone_run.py event --ticket 19 --phase implementation \
                                           --status running --message "..."
@@ -35,6 +37,16 @@ l'humain, depuis `shell`.
 L'état d'un ticket n'est donc stocké nulle part : il se **rejoue** depuis le
 journal. C'est ce qui permet à cinq agents d'écrire en même temps sans qu'aucun
 n'écrase l'état d'un autre.
+
+## Sans nommer le jalon
+
+`start` sans argument ne demande pas « lequel ? » : il le déduit. `next` montre
+le même raisonnement sans rien ouvrir — un tableau des jalons, leurs issues
+closes, le run attaché à chacun, et celui qu'il propose. La règle tient en une
+phrase : **reprendre passe avant ouvrir**, puis c'est l'échéance qui tranche.
+Sur un terminal, la proposition peut être écartée d'un chiffre ; ailleurs — le
+superviseur, la tâche planifiée, `claude -p` — elle est prise telle quelle,
+faute de clavier à qui demander.
 
 ## Reprendre, et survivre au quota
 
@@ -811,7 +823,240 @@ def arm_supervision(milestone, args):
           "repart tout seul")
 
 
+# --------------------------------------------------------------------------- #
+# Quel jalon ? — la question à laquelle l'orchestrateur répond de lui-même
+# --------------------------------------------------------------------------- #
+#
+# Taper « S1 » suppose de savoir où on en est : quel jalon est entamé, lequel
+# est déroulé, s'il traîne un run inachevé quelque part. Or c'est exactement ce
+# que l'état sait déjà — le journal des runs d'un côté, les jalons GitHub de
+# l'autre. `start` sans argument dresse donc le tableau, propose, et sur un
+# terminal laisse trancher.
+
+def run_digest(name):
+    """Ce qu'un run raconte de lui-même : avancement, vague en cours, signal.
+
+    None si le run est illisible — et « illisible » va au-delà du fichier
+    absent : un `run.json` sans plan, ou qui n'est pas un objet, se relit sans
+    erreur mais ne se rejoue pas. Le tableau doit sauter ce run-là, pas mourir
+    dessus : `next` et `start` sans jalon passent ici sur *tous* les runs du
+    disque, et un seul dossier abîmé rendrait les deux inutilisables.
+    """
+    try:
+        run = json.loads((run_dir(name) / "run.json").read_text(encoding="utf-8"))
+        control = load_control(name)
+        tickets = replay(run, read_journal(name), control)
+        current, waves = wave_state(run, tickets)
+    except (OSError, json.JSONDecodeError, AttributeError, TypeError, KeyError):
+        return None
+    return {
+        "id": name,
+        "milestone": run.get("milestone", ""),
+        "created": run.get("created", ""),
+        "width": run.get("width"),
+        "done": sum(1 for t in tickets.values() if t["status"] in TERMINAL),
+        "total": len(tickets),
+        "wave": current["index"] if current else None,
+        "waves": len(waves),
+        "signal": control.get("signal", "run"),
+        "finished": current is None,
+        "active": name == current_id(),
+    }
+
+
+def survey():
+    """(lignes, avertissement) — un jalon par ligne, GitHub et runs réunis.
+
+    GitHub muet ne rend pas la commande inutilisable : les runs présents sur le
+    disque portent leur plan et suffisent à reprendre. Le tableau est alors
+    réduit à ceux-là, et le dit plutôt que de laisser croire à un jalon vide.
+    """
+    digests = [d for d in (run_digest(directory.name) for directory in run_dirs())
+               if d]
+    milestones, error = gh_json(["api", f"repos/{REPO}/milestones", "--paginate",
+                                 "-X", "GET", "-f", "state=all"])
+    rows = []
+    for milestone in milestones or []:
+        title = milestone.get("title", "")
+        # `run_dirs()` va du plus récent au plus ancien : le premier run trouvé
+        # sur un jalon est celui qui compte, les précédents sont de l'histoire.
+        attached = next((d for d in digests if d["milestone"] == title), None)
+        if milestone.get("state") != "open" and attached is None:
+            continue          # jalon clos et sans run : plus rien à en dire
+        rows.append({
+            "title": title, "state": milestone.get("state", "open"),
+            "due": (milestone.get("due_on") or "")[:10],
+            "open": milestone.get("open_issues", 0),
+            "closed": milestone.get("closed_issues", 0),
+            "run": attached,
+        })
+    rows.sort(key=lambda row: (row["due"] or "9999", row["title"]))
+
+    # Un run dont le jalon n'a pas été retrouvé — dépôt injoignable, jalon
+    # supprimé — reste reprenable : son plan est dans son run.json.
+    for digest in digests:
+        if not any(row["title"] == digest["milestone"] for row in rows):
+            rows.append({"title": digest["milestone"], "state": "?", "due": "",
+                         "open": None, "closed": None, "run": digest})
+    return rows, error
+
+
+def workable(row):
+    """Un jalon sur lequel il reste quelque chose à faire."""
+    if row["run"] and not row["run"]["finished"] and row["run"]["signal"] != "stop":
+        return True
+    return row["state"] == "open" and (row["open"] or 0) > 0
+
+
+def held(row):
+    """« · pause demandée », le cas échéant — un signal posé à la main survit à
+    la reprise, et `gate` le fera valoir dès la vague suivante."""
+    signal = row["run"]["signal"] if row["run"] else "run"
+    return f" · {signal} demandée" if signal != "run" else ""
+
+
+def recommend(rows):
+    """(ligne à lancer, pourquoi) — l'ordre dans lequel un humain choisirait.
+
+    **Reprendre passe avant ouvrir.** Un run inachevé, ce sont des worktrees
+    vivants, des branches poussées et des PR ouvertes ; ouvrir un autre jalon
+    par-dessus les laisserait en plan sans que rien ne le signale. Entre deux
+    runs inachevés, celui que `current` désigne — le dernier ouvert — passe
+    devant ; à défaut, le jalon dont l'échéance est la plus proche, les jalons
+    se déroulant dans l'ordre, S1 avant S3.
+    """
+    live = [row for row in rows if row["run"] and not row["run"]["finished"]
+            and row["run"]["signal"] != "stop"]
+    active = next((row for row in live if row["run"]["active"]), None)
+    if active:
+        return active, f"run {active['run']['id']} en cours{held(active)}"
+    if live:
+        return live[0], f"run {live[0]['run']['id']} inachevé{held(live[0])}"
+    todo = [row for row in rows if row["state"] == "open" and (row["open"] or 0) > 0]
+    if todo:
+        return todo[0], "jalon ouvert dont l'échéance est la plus proche"
+    return None, "aucun jalon ouvert n'a d'issue à traiter"
+
+
+def print_survey(rows, error=None):
+    if error:
+        print(f"GitHub muet ({error}) — tableau réduit aux runs présents ici\n")
+    if not rows:
+        print("aucun jalon connu")
+        return
+    width = max(len(row["title"]) for row in rows + [{"title": "jalon"}])
+    print(f"   {'jalon':<{width}} {'échéance':<11} {'issues':<14} run")
+    for row in rows:
+        digest = row["run"]
+        if digest is None:
+            state = "—"
+        elif digest["finished"]:
+            state = f"{digest['id']} · déroulé"
+        else:
+            state = (f"{digest['id']} · {digest['done']}/{digest['total']} tickets"
+                     f" · vague {digest['wave']}/{digest['waves']}")
+            if digest["signal"] != "run":
+                state += f" · {digest['signal']}"
+        if row["open"] is None:
+            issues = "?"
+        else:
+            issues = f"{row['closed']}/{row['closed'] + row['open']} closes"
+        print(f" {'*' if digest and digest['active'] else ' '} "
+              f"{row['title']:<{width}} {row['due'] or '—':<11} {issues:<14} "
+              f"{state}")
+
+
+def ask_milestone(rows, default):
+    """Le jalon retenu — la question n'étant posée que s'il y a un clavier.
+
+    Un run est aussi ouvert par le superviseur, par la tâche planifiée et par
+    `claude -p` : aucun des trois n'a quelqu'un derrière lui. Une question posée
+    là bloquerait la reprise automatique pour de bon, c'est-à-dire exactement ce
+    que la reprise automatique existe pour éviter. Hors terminal, on prend donc
+    la proposition — et on l'écrit, pour qu'elle reste lisible dans le log.
+    """
+    # Même lecture que `pr_gate.py` : « 0 », « false », « no » disent qu'il y a
+    # bien quelqu'un. Se contenter de la vérité de Python ferait de `=0` — la
+    # façon dont on désarme une variable — l'exact contraire de ce qu'il dit.
+    if os.environ.get("SPA_UNATTENDED", "").strip().lower() not in (
+            "", "0", "false", "no"):
+        return default
+    try:
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return default
+    except (AttributeError, ValueError):
+        return default
+
+    candidates = [row for row in rows if workable(row)]
+    if default not in candidates:
+        candidates.insert(0, default)
+    if len(candidates) < 2:
+        return default          # rien à arbitrer : une seule réponse possible
+
+    print()
+    for index, row in enumerate(candidates, 1):
+        print(f"  {'→' if row is default else ' '} {index}. {row['title']}")
+    try:
+        answer = input(f"\njalon [{candidates.index(default) + 1}] ? ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return default
+    if not answer:
+        return default
+    if answer.isdigit() and 1 <= int(answer) <= len(candidates):
+        return candidates[int(answer) - 1]
+    matches = [row for row in candidates if answer.lower() in row["title"].lower()]
+    if len(matches) == 1:
+        return matches[0]
+    print(f"« {answer} » ne désigne aucun jalon de la liste — "
+          f"{default['title']} retenu")
+    return default
+
+
+def choose_milestone():
+    """Le jalon sur lequel `start` va travailler quand personne ne l'a nommé."""
+    rows, error = survey()
+    if not rows:
+        fail("aucun jalon à proposer" + (f" — {error}" if error else "")
+             + "\n`milestone_run.py start <jalon>` pour en nommer un à la main")
+    print_survey(rows, error)
+    proposed, why = recommend(rows)
+    if proposed is None:
+        print(f"\n{why} — rien à lancer")
+        return None
+    chosen = ask_milestone(rows, proposed)
+    print(f"\n→ {chosen['title']} · "
+          f"{why if chosen is proposed else 'choisi à la main'}")
+    return chosen["title"]
+
+
+def cmd_next(args):
+    """Où en est-on, et que lancer — sans rien ouvrir."""
+    rows, error = survey()
+    proposed, why = recommend(rows)
+    if args.json:
+        print(json.dumps({"milestones": rows, "warning": error, "reason": why,
+                          "recommended": proposed["title"] if proposed else None},
+                         ensure_ascii=False, indent=2))
+        return GO if proposed else NO_RUN
+    print_survey(rows, error)
+    if proposed is None:
+        print(f"\n{why}")
+        return NO_RUN
+    print(f"\n→ {proposed['title']} · {why}")
+    print("  python scripts/milestone_run.py start     # sans nommer le jalon")
+    return GO
+
+
 def cmd_start(args):
+    # Sans jalon nommé, l'orchestrateur regarde où on en est et propose : savoir
+    # qu'on en est au S1 est son travail, pas celui de qui tape la commande.
+    if not args.milestone:
+        args.milestone = choose_milestone()
+        if args.milestone is None:
+            return NO_RUN
+        print()
+
     # Reprendre est le cas courant : un jalon dure plus longtemps qu'une session,
     # et rouvrir un run repartirait de zéro sur des tickets déjà en PR. Il faut
     # dire `--fresh` pour en ouvrir un nouveau — jamais l'inverse.
@@ -1472,7 +1717,8 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     starter = sub.add_parser("start", help="ouvre un run sur un jalon")
-    starter.add_argument("milestone", nargs="?")
+    starter.add_argument("milestone", nargs="?",
+                         help="préfixe du titre ; à défaut, le jalon proposé")
     starter.add_argument("--width", type=int, default=3)
     starter.add_argument("--keep", type=int, default=10,
                          help="nombre de runs conservés sur le disque")
@@ -1560,6 +1806,9 @@ def main():
 
     sub.add_parser("list", help="tous les runs connus").add_argument("--run")
 
+    nexter = sub.add_parser("next", help="où en est-on, et quel jalon lancer")
+    nexter.add_argument("--json", action="store_true")
+
     args = parser.parse_args()
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1568,7 +1817,7 @@ def main():
         "gate": cmd_gate, "status": cmd_status, "log": cmd_log,
         "resume": cmd_resume, "shell": cmd_shell, "list": cmd_list,
         "reconcile": cmd_reconcile, "quota": cmd_quota,
-        "progress": cmd_progress,
+        "progress": cmd_progress, "next": cmd_next,
         "watch": cmd_watch, "path": cmd_path,
         "pause": lambda a: cmd_signal(a, "pause"),
         "stop": lambda a: cmd_signal(a, "stop"),

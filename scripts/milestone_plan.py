@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Ordonne les issues d'un jalon et regroupe celles qui peuvent avancer en parallèle.
 
-    python scripts/milestone_plan.py                 # jalon ouvert dont l'échéance est la plus proche
+    python scripts/milestone_plan.py                 # premier jalon ouvert qui a encore des issues
     python scripts/milestone_plan.py S1              # un préfixe de titre suffit
     python scripts/milestone_plan.py S1 --width 4    # largeur maximale d'une vague
     python scripts/milestone_plan.py S1 --json       # sortie machine, consommée par /milestone
@@ -97,7 +97,7 @@ def load_rules():
 # --------------------------------------------------------------------------- #
 
 def resolve_milestone(prefix):
-    """Le jalon demandé, ou à défaut l'ouvert dont l'échéance est la plus proche."""
+    """Le jalon demandé, ou à défaut le premier ouvert qui a encore des issues."""
     milestones = gh_json(["api", f"repos/{REPO}/milestones", "--paginate",
                           "-X", "GET", "-f", "state=all"])
     if prefix:
@@ -114,7 +114,11 @@ def resolve_milestone(prefix):
     opened = [m for m in milestones if m["state"] == "open"]
     if not opened:
         sys.exit("aucun jalon ouvert")
-    return sorted(opened, key=lambda m: m.get("due_on") or "9999")[0]
+    opened.sort(key=lambda m: m.get("due_on") or "9999")
+    # Un jalon dont toutes les issues sont closes reste « ouvert » jusqu'à ce que
+    # quelqu'un le clôture à la main. Le retenir ferait sortir le planificateur
+    # sur « aucune issue traitable » alors que le jalon suivant, lui, en a.
+    return next((m for m in opened if m.get("open_issues", 0) > 0), opened[0])
 
 
 def fetch_issues(title, limit):
