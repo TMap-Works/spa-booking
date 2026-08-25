@@ -32,7 +32,10 @@
     "108": ["docs/adr"],
     "117": ["scripts/permissions"],
     "128": ["scripts/tests"],
-    "129": ["ci:workflows", "scripts/pr-gate"]
+    "129": ["ci:workflows", "scripts/pr-gate"],
+    "154": ["ci:workflows", "scripts/tests/automerge"],
+    "155": ["scripts/milestone-plan", "scripts/tests/plan"],
+    "156": ["scripts/milestone-supervise", "scripts/pr-gate", "scripts/tests/gate"]
   },
 
   "depends": {
