@@ -17,17 +17,24 @@ jobs:
   deploy:
     name: Déployer sur dev
     runs-on: ubuntu-latest
-    # Tant que le compte AWS et le rôle OIDC n'existent pas (issue #14), le
+    # Tant que le rôle OIDC n'est pas appliqué (infra/terraform/modules/oidc), le
     # déploiement est ignoré proprement plutôt que de faire échouer chaque push.
-    # Poser la variable de dépôt AWS_REGION active les déploiements.
-    if: ${{ vars.AWS_REGION != '' }}
+    # Poser les variables de dépôt AWS_REGION et AWS_DEPLOY_ROLE_ARN active les
+    # déploiements. Ce sont des `vars` et non des `secrets` : un ARN de rôle n'est
+    # pas un secret, et le tenir hors des secrets rend visible qu'aucun identifiant
+    # AWS n'y est stocké.
+    if: ${{ vars.AWS_REGION != '' && vars.AWS_DEPLOY_ROLE_ARN != '' }}
     environment: dev
     steps:
       - uses: actions/checkout@v4
 
+      # Le sujet OIDC présenté ici est `repo:<dépôt>:environment:dev`, parce que le
+      # job déclare `environment:`. C'est cette forme que la politique de confiance
+      # du rôle attend — pas la branche.
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: gha-deploy-dev-${{ github.run_id }}
           aws-region: ${{ vars.AWS_REGION }}
 
       - uses: aws-actions/amazon-ecr-login@v2
