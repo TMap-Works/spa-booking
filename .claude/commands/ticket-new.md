@@ -12,24 +12,30 @@ Demande à historiser : **$ARGUMENTS** — si l'argument est vide, prendre la
 dernière demande de l'utilisateur dans cette conversation.
 
 Conventions de référence : [.claude/skills/project-flow/SKILL.md](.claude/skills/project-flow/SKILL.md) §2
-(anatomie d'une issue) et [.claude/hooks/README.md](.claude/hooks/README.md).
+(anatomie d'une issue) et §12 (traçabilité des demandes).
 
 ## Pourquoi cette commande existe
 
-Le hook `UserPromptSubmit` ouvre un ticket tout seul, mais il se tait dans trois
-cas : commande slash, relance triviale, demande de moins de 30 caractères. Et
-son classement n'est qu'une heuristique de mots-clés, alors que toi tu as lu la
-demande. Cette commande couvre les deux manques — le trou et l'erreur.
+L'objectif est d'avoir dans GitHub l'historique de ce qui a été **demandé** à
+Claude Code, et pas seulement de ce qui a été commité.
 
-## Phase 1 — Y a-t-il déjà un ticket pour ce tour ?
+Cette ouverture est **délibérée** : c'est l'utilisateur qui décide qu'une demande
+mérite un ticket, pas une heuristique de mots-clés déclenchée à chaque message.
+Un historique noyé sous des tickets « ok, continue » ne documente rien.
+
+Un ticket ouvert ici se referme avec **`/ticket-close`**, qui y publie le résumé
+des changements. Les deux vont par paire : un ticket laissé ouvert fausse le
+suivi du sprint.
+
+## Phase 1 — Y a-t-il déjà un ticket ouvert ?
 
 ```bash
 python scripts/tracking.py status
 ```
 
-- **Sortie `{}`** → aucun ticket ouvert : aller en phase 3 (créer).
-- **Sortie avec un `issue`** → un ticket existe déjà pour cette session. Ne
-  **jamais** en créer un second : aller en phase 4 (corriger).
+- **Sortie `{}`** → aucun ticket ouvert : aller en phase 2, puis 3 (créer).
+- **Sortie avec un `issue`** → un ticket existe déjà. Ne **jamais** en créer un
+  second : aller en phase 4 (compléter ou corriger).
 
 ## Phase 2 — Classer la demande
 
@@ -42,6 +48,9 @@ d'après ses mots :
 | `--workstream` | `Backend` `Frontend` `DevOps` `Design` `QA` |
 | `--type` | `feature` `bug` `chore` `docs` `spike` `epic` |
 | `--priority` | `P0` bloquant · `P1` requis pour le MVP · `P2` souhaitable |
+
+Toujours passer les quatre options : ce qui n'est pas fourni retombe sur une
+déduction par mots-clés, souvent fausse, et un board qui ment ne sert à rien.
 
 Le jalon est celui du sprint en cours, résolu automatiquement — ne passer
 `--milestone` que pour rattacher la demande à un autre sprint.
@@ -62,11 +71,19 @@ python scripts/tracking.py open \
 Vérifier d'abord avec `--dry-run` si le classement mérite d'être confirmé par
 l'utilisateur.
 
-Le ticket est enregistré sous l'état `manual` : le hook `Stop` le refermera en
-fin de tour avec le résumé des changements, exactement comme un ticket
-automatique. Ajouter `Refs #N` aux commits produits pour cette demande.
+Une fois le ticket ouvert, ajouter `Refs #N` aux commits produits pour cette
+demande : c'est ce qui relie le ticket et le code dans les deux sens.
 
-## Phase 4 — Corriger un ticket existant
+## Phase 4 — Compléter ou corriger un ticket existant
+
+La demande en cours est **nouvelle mais relève du même travail** — la rattacher
+au ticket ouvert plutôt que d'en ouvrir un second :
+
+```bash
+python scripts/tracking.py note --prompt "<la demande complémentaire>"
+```
+
+Le **classement du ticket est faux** — le corriger :
 
 ```bash
 python scripts/tracking.py classify <N> --module <m> --workstream <w> \
@@ -77,11 +94,16 @@ Les attributs déjà justes s'omettent — ce qui n'est pas passé est conservé
 commande remplace les labels de la même famille, pose le jalon s'il manque et
 met la carte du Project à jour.
 
+La demande en cours **n'a rien à voir** avec le ticket ouvert : refermer d'abord
+l'ancien avec `/ticket-close`, puis reprendre en phase 2.
+
 ## Phase 5 — Rendre compte
 
 Une ligne, pas un rapport : numéro et URL du ticket, jalon, les quatre labels,
 et l'état de la carte. Si `"project": false` apparaît dans la sortie, le dire
 franchement avec la raison — un ticket hors board ne remplit pas son office.
+
+Rappeler la suite : `/ticket-close` en fin de travail.
 
 ## Ce que cette commande n'est pas
 
