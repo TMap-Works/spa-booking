@@ -63,11 +63,32 @@ automatique.
 
 À la reprise, `start` enchaîne tout seul sur `reconcile`, qui confronte le
 journal à l'état réel du dépôt — issues closes, PR ouvertes ou mergées, branches
-poussées — et le corrige. C'est indispensable, parce que **l'état journalisé
-n'est pas l'état réel** : un agent tué entre son `git push` et l'ouverture de sa
-PR laisse le journal sur `running` alors que le travail est là ; un autre, tué
-juste après un merge, laisse un ticket en `pr_open` alors qu'il est fini. Le
-dépôt fait foi, et il n'y a donc **rien à vérifier à la main** avant de relancer.
+poussées, **worktrees vivants** — et le corrige. C'est indispensable, parce que
+**l'état journalisé n'est pas l'état réel** : un agent tué entre son `git push`
+et l'ouverture de sa PR laisse le journal sur `running` alors que le travail est
+là ; un autre, tué juste après un merge, laisse un ticket en `pr_open` alors
+qu'il est fini. Le dépôt fait foi, et il n'y a donc **rien à vérifier à la
+main** avant de relancer.
+
+**Ne jamais supprimer un worktree pour « faire le ménage » avant une reprise.**
+Une branche à zéro commit n'est pas une branche abandonnée : la phase 1 de
+`ticket.md` impose un `git rebase origin/develop` avant tout commit, si bien que
+*toute* branche y passe et y reste le temps que l'agent installe ses
+dépendances, lise le CDC et compose son plan. Deux signaux disent qu'un agent la
+tient encore, et l'un suffit :
+
+- `git worktree list` la donne **`locked`** — un worktree verrouillé est un
+  worktree occupé ;
+- son worktree contient des fichiers non commités.
+
+`reconcile` connaît maintenant ces signaux et classe un tel ticket `running`, pas
+`pending`. Le contredire à la main — supprimer le worktree, relancer le ticket —
+détruit un travail qui n'a simplement pas encore été poussé, et lance un second
+agent sur l'empreinte du premier. C'est ce qui s'est produit en #130.
+
+Le ménage a son moment et son outil : `worktree_gc.py`, en fin de vague
+(phase 4), qui conserve d'office tout worktree sale ou porteur de commits non
+poussés.
 
 Ce que la commande imprime alors — vague de reprise, tickets déjà engagés,
 tickets à lancer — est le point de départ : reprendre en phase 1 sur cette

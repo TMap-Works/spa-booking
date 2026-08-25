@@ -19,8 +19,12 @@ mode de défaillance que #138 décrit.
 Aucune dépendance : `unittest` de la bibliothèque standard, comme
 `test_pr_gate.py`.
 """
+import json
+import os
 import subprocess
 import sys
+import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -143,6 +147,81 @@ class EndReasons(unittest.TestCase):
     def test_les_arrets_anormaux_sont_nommes(self):
         self.assertIn("tours", sup.END_REASONS["error_max_turns"])
         self.assertIn("erreur", sup.END_REASONS["error_during_execution"])
+
+
+class OrchestratorActive(unittest.TestCase):
+    """Le verrou de #130 : la veille ne double pas un orchestrateur vivant.
+
+    `supervisor_alive()` ne voit qu'un superviseur, parce que lui seul écrit un
+    battement. Une session Claude Code qui déroule `/milestone` à la main
+    orchestre tout autant et n'en écrit aucun — c'est cette cécité qui a fait
+    lancer un second orchestrateur sur le run S1, lequel a supprimé les
+    worktrees du premier.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.run = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def journal(self, age_seconds):
+        path = self.run / "journal.ndjson"
+        path.write_text("{}\n", encoding="utf-8")
+        stamp = time.time() - age_seconds
+        os.utime(path, (stamp, stamp))
+
+    def test_journal_recent_signifie_quelqu_un_orchestre(self):
+        self.journal(30)
+        with mock.patch.object(sup, "current_run_dir", return_value=self.run):
+            self.assertTrue(sup.orchestrator_active())
+
+    def test_journal_muet_depuis_longtemps_signifie_personne(self):
+        self.journal(sup.ORCHESTRATOR_QUIET + 60)
+        with mock.patch.object(sup, "current_run_dir", return_value=self.run):
+            self.assertFalse(sup.orchestrator_active())
+
+    def test_aucun_run_ouvert(self):
+        with mock.patch.object(sup, "current_run_dir", return_value=None):
+            self.assertFalse(sup.orchestrator_active())
+
+    def test_journal_absent(self):
+        """Un run ouvert dont le journal n'existe pas encore n'orchestre rien —
+        et surtout, cela ne doit pas lever."""
+        with mock.patch.object(sup, "current_run_dir", return_value=self.run):
+            self.assertFalse(sup.orchestrator_active())
+
+
+class CurrentRunMilestone(unittest.TestCase):
+    """Un run ouvert désigne son jalon ; le redeviner en ouvre un autre.
+
+    Lancé sans argument, le superviseur a résolu « le jalon le plus proche » en
+    S3 et ouvert un run neuf, abandonnant le run S1 en cours.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.run = Path(self.tmp.name)
+        self.addCleanup(self.tmp.cleanup)
+
+    def test_jalon_lu_dans_le_run_ouvert(self):
+        (self.run / "run.json").write_text(
+            json.dumps({"milestone": "S1 — Fondations"}), encoding="utf-8")
+        with mock.patch.object(sup, "current_run_dir", return_value=self.run):
+            self.assertEqual(sup.current_run_milestone(), "S1 — Fondations")
+
+    def test_aucun_run_ouvert(self):
+        with mock.patch.object(sup, "current_run_dir", return_value=None):
+            self.assertIsNone(sup.current_run_milestone())
+
+    def test_run_json_illisible(self):
+        (self.run / "run.json").write_text("{ pas du json", encoding="utf-8")
+        with mock.patch.object(sup, "current_run_dir", return_value=self.run):
+            self.assertIsNone(sup.current_run_milestone())
+
+    def test_run_json_sans_jalon(self):
+        (self.run / "run.json").write_text("{}", encoding="utf-8")
+        with mock.patch.object(sup, "current_run_dir", return_value=self.run):
+            self.assertIsNone(sup.current_run_milestone())
 
 
 if __name__ == "__main__":

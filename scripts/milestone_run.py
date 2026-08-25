@@ -569,6 +569,50 @@ def remote_branches():
     return found
 
 
+def live_worktrees():
+    """Numéro d'issue → worktree vivant, verrouillé ou non.
+
+    Le pendant local de `remote_branches()`, et il manquait. `reconcile` ne
+    regardait que le dépôt distant : un ticket dont le travail existe en local
+    mais n'a pas encore été poussé s'y lisait « ni branche ni PR — jamais
+    démarré ». Il était donc remis en file, un second agent était lancé dessus,
+    et le premier se faisait prendre son worktree pour un vestige (#130).
+
+    Un worktree est la trace qu'un agent tient le ticket. Elle vaut avant le
+    premier push, c'est-à-dire précisément pendant la fenêtre où le dépôt
+    distant ne sait rien dire.
+    """
+    try:
+        proc = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=ROOT,
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if proc.returncode != 0:
+        return {}
+
+    found, current = {}, {}
+    for line in proc.stdout.splitlines() + [""]:
+        line = line.strip()
+        if not line:                       # ligne vide : fin d'une entrée
+            branch = current.get("branch", "")
+            match = BRANCH_RE.match(branch)
+            if match and current.get("path"):
+                found.setdefault(int(match.group(1)), {
+                    "path": current["path"], "branch": branch,
+                    "locked": current.get("locked", False)})
+            current = {}
+            continue
+        key, _, value = line.partition(" ")
+        if key == "worktree":
+            current["path"] = value
+        elif key == "branch":
+            current["branch"] = value.replace("refs/heads/", "")
+        elif key == "locked":
+            current["locked"] = True
+    return found
+
+
 def pr_by_issue(prs):
     """Numéro d'issue → la PR qui la porte, la plus avancée l'emportant."""
     rank = {"MERGED": 3, "OPEN": 2, "CLOSED": 1}
@@ -623,11 +667,13 @@ def cmd_reconcile(args):
     issue_state = {i["number"]: i["state"] for i in issues}
     carried = pr_by_issue(prs)
     branches = remote_branches()
+    worktrees = live_worktrees()
 
     corrections = []
     for number, ticket in sorted(pending.items()):
         pr = carried.get(number)
         branch = branches.get(number)
+        worktree = worktrees.get(number)
 
         if issue_state.get(number) == "CLOSED":
             target, why = "merged", "issue close sur GitHub"
@@ -637,8 +683,16 @@ def cmd_reconcile(args):
             target, why = "pr_open", f"PR #{pr['number']} ouverte"
         elif branch:
             target, why = "running", f"branche {branch} poussée, aucune PR"
+        elif worktree:
+            # Avant le premier push, le dépôt distant ne sait rien dire. Le
+            # worktree, lui, dit qu'un agent tient le ticket — et le remettre en
+            # file lancerait un second agent sur la même empreinte, dont le
+            # premier réflexe serait de « nettoyer » le worktree du premier.
+            target = "running"
+            why = (f"worktree vivant sur {worktree['branch']}, rien de poussé"
+                   + (" (verrouillé)" if worktree["locked"] else ""))
         else:
-            target, why = "pending", "ni branche ni PR — jamais démarré"
+            target, why = "pending", "ni branche ni PR ni worktree — jamais démarré"
 
         # GitHub ne connaît que trois états ; le journal en connaît six. Un ticket
         # dont l'agent avait journalisé `ci_green` puis `reviewed` avant d'être tué

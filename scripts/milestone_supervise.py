@@ -134,6 +134,10 @@ INTEGRATION_BRANCHES = {"develop", "staging", "main"}
 # stérile coûte une dizaine de dollars, et le troisième n'apprend rien de plus
 # que le deuxième.
 DRY_LEGS_LIMIT = 2
+# Au-delà de ce silence dans le journal du run, plus personne ne l'orchestre.
+# Une phase de ticket dure quelques minutes, jamais dix : un journal muet depuis
+# dix minutes signifie que l'orchestrateur est parti, pas qu'il réfléchit.
+ORCHESTRATOR_QUIET = 600
 # Ce que dit le `subtype` du message `result` de Claude Code, en clair. « success »
 # ne signifie pas « la vague est terminée » : il dit seulement que l'appel s'est
 # achevé sans erreur — y compris lorsque la boucle a rendu la main alors que ses
@@ -462,6 +466,61 @@ def work_commits():
     return shas
 
 
+def current_run_dir():
+    """Le dossier du run courant, ou None si aucun n'est ouvert."""
+    try:
+        run_id = (RUNS_DIR / "current").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not run_id:
+        return None
+    path = RUNS_DIR / run_id
+    return path if path.is_dir() else None
+
+
+def current_run_milestone():
+    """Le jalon du run ouvert, ou None.
+
+    Un run ouvert **désigne déjà son jalon**. Sans cela, un superviseur lancé
+    sans argument redevine « le jalon dont l'échéance est la plus proche » et
+    peut ouvrir un run neuf sur un autre jalon, en abandonnant celui qui était
+    en cours — c'est arrivé, et le run S1 a perdu la main au profit d'un S3
+    parasite (#130).
+    """
+    directory = current_run_dir()
+    if directory is None:
+        return None
+    try:
+        return (json.loads((directory / "run.json").read_text(encoding="utf-8"))
+                .get("milestone")) or None
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return None
+
+
+def orchestrator_active():
+    """Quelqu'un orchestre-t-il déjà ce run, superviseur ou non ?
+
+    `supervisor_alive()` ne voit qu'un superviseur, parce que lui seul écrit un
+    battement. Une session Claude Code qui déroule `/milestone` à la main
+    orchestre pourtant tout autant — et lui était invisible : la veille lançait
+    un second orchestrateur sur le même run, dont la réconciliation prenait les
+    worktrees du premier pour des vestiges et les supprimait (#130).
+
+    Le journal du run fait office de battement : agents et orchestrateur y
+    écrivent à chaque phase. Un journal touché il y a moins de
+    `ORCHESTRATOR_QUIET` secondes signifie que quelqu'un travaille, et la veille
+    n'a alors rien à faire.
+    """
+    directory = current_run_dir()
+    if directory is None:
+        return False
+    try:
+        age = time.time() - (directory / "journal.ndjson").stat().st_mtime
+    except OSError:
+        return False
+    return age < ORCHESTRATOR_QUIET
+
+
 def sterile_streak(previous, fresh, issue):
     """Combien de legs de suite n'ont rien rendu durable, celui-ci compris.
 
@@ -588,6 +647,13 @@ def cmd_watchdog(args):
     # le run n'existe pas encore — c'est la première vague qui l'ouvre — et le
     # désarmer ici tuerait le dispositif au moment précis où il démarre.
     if supervisor_alive():
+        return 0
+
+    # Un orchestrateur qui n'est pas un superviseur en est un quand même. Une
+    # session Claude Code déroulant `/milestone` à la main n'écrit aucun
+    # battement : sans ce contrôle, la veille lui lance un concurrent sur le
+    # même run, et le second prend les worktrees du premier pour des vestiges.
+    if orchestrator_active():
         return 0
 
     # L'autorisation ensuite, avant toute relance : sans run ouvert, la veille
@@ -1194,6 +1260,21 @@ def main():
         say(f"un superviseur bat déjà (il y a {human_delta(heartbeat_age())}) "
             "— rien à faire. `--state` pour le voir, `--force` pour passer outre.")
         return 0
+
+    # Même règle pour un orchestrateur qui n'est pas un superviseur : deux
+    # orchestrateurs sur un run, c'est deux vagues sur le même `develop`.
+    if orchestrator_active() and not args.force:
+        say("le journal du run vient d'être écrit : quelqu'un orchestre déjà ce "
+            "run — rien à faire. `milestone_run.py watch` pour le voir, "
+            "`--force` pour passer outre.")
+        return 0
+
+    # Un run ouvert désigne son jalon ; le redeviner peut en ouvrir un autre et
+    # abandonner celui qui était en cours.
+    if not args.milestone:
+        args.milestone = current_run_milestone()
+        if args.milestone:
+            say(f"jalon repris du run ouvert : {args.milestone}")
 
     if not preflight(args) and not args.force:
         say("préflight en échec — rien n'a été lancé (`--force` pour passer outre)",
