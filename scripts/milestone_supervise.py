@@ -124,6 +124,27 @@ BACKOFF_SECONDS = 1800
 # relance des mois plus tard. Le désarmement normal vient de la fin du run.
 INTENT_TTL = 14 * 86400
 
+# Les branches d'intégration ne portent pas de travail de ticket. `develop`
+# avance à chaque merge sans qu'un agent y soit pour rien : la compter ferait
+# passer un leg stérile pour un leg productif.
+INTEGRATION_BRANCHES = {"develop", "staging", "main"}
+# Deux legs de suite sans un commit de plus, c'est la signature de #138 : la
+# boucle rend la main avant la phase de commit, le leg suivant refait le même
+# travail, et rien ne devient jamais durable. Deux et pas trois — chaque leg
+# stérile coûte une dizaine de dollars, et le troisième n'apprend rien de plus
+# que le deuxième.
+DRY_LEGS_LIMIT = 2
+# Ce que dit le `subtype` du message `result` de Claude Code, en clair. « success »
+# ne signifie pas « la vague est terminée » : il dit seulement que l'appel s'est
+# achevé sans erreur — y compris lorsque la boucle a rendu la main alors que ses
+# agents travaillaient encore. Le journal doit nommer cela, sans quoi cinq legs
+# stériles se lisent comme cinq succès.
+END_REASONS = {
+    "success": "rendu la main de lui-même",
+    "error_max_turns": "limite de tours atteinte",
+    "error_during_execution": "erreur pendant l'exécution",
+}
+
 GO, PAUSE, STOP, NO_RUN, QUOTA = 0, 1, 2, 3, 4
 
 # Une fenêtre de quota dure cinq heures : c'est la seule attente à tenir quand
@@ -400,6 +421,61 @@ def progress_count(no_merge=False):
         return int(proc.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
         return None
+
+
+def git_lines(*argv):
+    """Sortie de `git`, ligne à ligne ; liste vide si l'appel échoue.
+
+    Le superviseur ne doit jamais mourir d'un appel git. Un dépôt momentanément
+    verrouillé par un agent doit se lire « rien de neuf », pas « plantage » —
+    sans quoi la veille relancerait toutes les cinq minutes un superviseur qui
+    remourrait de la même façon.
+    """
+    try:
+        proc = subprocess.run(["git", *argv], cwd=ROOT, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace",
+                              timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        return []
+    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+
+def work_commits():
+    """Les empreintes des commits de travail, toutes branches de tickets confondues.
+
+    On rend un **ensemble d'empreintes**, jamais un décompte, et c'est délibéré :
+    une branche mergée disparaît, et un décompte retomberait — le même piège que
+    `progress_count` documente au-dessus. L'appelant accumule les empreintes
+    vues, si bien qu'un merge ne peut pas faire passer un leg productif pour un
+    leg stérile.
+
+    Les branches d'intégration sont exclues : elles ne portent pas de travail de
+    ticket, et `develop` avance à chaque merge sans qu'un agent y soit pour rien.
+    """
+    shas = set()
+    for ref in git_lines("for-each-ref", "--format=%(refname:short)", "refs/heads"):
+        if ref in INTEGRATION_BRANCHES:
+            continue
+        shas.update(git_lines("rev-list", f"origin/develop..{ref}"))
+    return shas
+
+
+def sterile_streak(previous, fresh, issue):
+    """Combien de legs de suite n'ont rien rendu durable, celui-ci compris.
+
+    Un leg est stérile quand il n'a produit aucun commit — quoi qu'en dise son
+    propre compte rendu. Le quota fait exception : un leg coupé par l'API n'a pas
+    démérité, il n'a pas eu le temps, et le compter stérile désarmerait le
+    dispositif pour la seule raison que la fenêtre s'est refermée.
+
+    Toute autre panne compte, elle : un leg qui échoue sans rien commiter laisse
+    exactement le même dépôt qu'un leg qui rend la main trop tôt.
+    """
+    if issue == "quota":
+        return previous
+    return 0 if fresh else previous + 1
 
 
 def journal(status, message, level=None):
@@ -796,7 +872,9 @@ def run_leg(args, index):
     note = "terminée"
     if summary:
         cost = summary.get("total_cost_usd")
-        note = (f"{summary.get('subtype', '?')} · {summary.get('num_turns', '?')} tours"
+        subtype = summary.get("subtype") or "?"
+        note = (f"{END_REASONS.get(subtype, subtype)} · "
+                f"{summary.get('num_turns', '?')} tours"
                 + (f" · {cost:.2f} $" if isinstance(cost, (int, float)) else ""))
     elif stderr.strip():
         note = stderr.strip().splitlines()[-1][:160]
@@ -902,7 +980,11 @@ def supervise(args):
                               source="retenue déjà inscrite dans le run"):
             return 1
 
-    legs, barren = 0, 0
+    legs, barren, dry_legs = 0, 0, 0
+    # Les commits déjà là en arrivant ne sont l'œuvre d'aucun leg de ce
+    # superviseur : on les tient pour vus, faute de quoi le premier leg
+    # passerait pour productif sans avoir rien produit.
+    seen_commits = work_commits()
     while not stop_flag.is_set():
         if legs >= args.max_legs:
             say(f"{legs} étapes atteintes (--max-legs) — arrêt", "WARN")
@@ -943,19 +1025,47 @@ def supervise(args):
 
         issue, info, note = run_leg(args, legs)
         elapsed = human_delta(time.time() - started)
+
+        # Ce que le leg a rendu durable, mesuré sur le dépôt et non sur son
+        # propre compte rendu : un leg qui se termine « success » sans un commit
+        # de plus n'a rien produit qu'un `reconcile` ne puisse effacer.
+        fresh = set() if args.dry_run else work_commits() - seen_commits
+        seen_commits |= fresh
+        if not args.dry_run:
+            note = f"{note} · {len(fresh)} commit(s)"
+
+        sterile = not args.dry_run and issue is None and not fresh
         journal("leg_ended", f"étape {legs} en {elapsed} — {note}",
-                level="WARN" if issue else "INFO")
+                level="WARN" if issue or sterile else "INFO")
         say(f"vague {legs} rendue en {elapsed} · {note}",
-            "WARN" if issue else "INFO")
+            "WARN" if issue or sterile else "INFO")
 
         if args.dry_run:
             say("--dry-run : une seule étape simulée")
             return 0
 
         if issue == "quota":
+            # Un leg coupé par le quota n'a pas démérité : il n'a pas eu le temps.
+            # Le compter stérile désarmerait le dispositif pour la seule raison
+            # que l'API s'est refermée.
             if not wait_for_quota(args, info or {}, stop_flag):
                 return 1
             continue
+
+        dry_legs = sterile_streak(dry_legs, fresh, issue)
+        if dry_legs >= DRY_LEGS_LIMIT:
+            # Le travail existe peut-être dans les worktrees, mais il n'est pas
+            # commité : le leg suivant le refera à l'identique, pour le même
+            # prix. On s'arrête et on dit où regarder.
+            say(f"{dry_legs} legs de suite sans un commit de plus. Le travail "
+                "n'atteint pas la phase de commit — il ne survivra pas au "
+                "prochain `reconcile`. Arrêt et désarmement : regarder les "
+                "worktrees de `git worktree list`, commiter ce qui s'y trouve, "
+                "puis relancer. Voir #138.", "ERROR")
+            journal("blocked",
+                    f"{dry_legs} legs sans commit — superviseur arrêté (#138)")
+            retire(f"{dry_legs} legs sans commit")
+            return 1
 
         after = progress_count(args.no_merge)
         progressed = before is None or after is None or after > before

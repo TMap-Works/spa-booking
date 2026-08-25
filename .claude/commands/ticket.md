@@ -135,6 +135,23 @@ Présenter un plan court adossé aux critères d'acceptation, **puis** coder.
 Traiter les critères un par un ; ne pas élargir le périmètre en chemin — une
 idée qui déborde devient une issue `post-mvp`, pas une ligne de code en plus.
 
+**Commiter dès que l'état est cohérent, sans attendre la phase 6.** Un commit
+local ne coûte rien et ne s'annonce à personne :
+
+```bash
+git add -A && git commit -m "wip($1): <ce qui vient d'être posé>"
+```
+
+Ce n'est pas une coquetterie d'hygiène, c'est ce qui rend le travail durable.
+Tant qu'un fichier n'est pas commité, il ne vit que dans le worktree — et une
+branche à zéro commit est exactement ce que le ramasse-miettes de `reconcile`
+supprime, en la prenant pour une branche abandonnée (#130). Un agent tué entre
+son premier fichier et la phase 6 ne laisse alors **rien**, et son ticket
+repart de zéro au leg suivant (#138).
+
+Ces commits de travail n'ont pas à être propres : la phase 6 les recompose.
+Commiter souvent vaut mieux que commiter bien, à ce stade.
+
 ## Phase 4 — Validation locale
 
 ```bash
@@ -222,6 +239,10 @@ Garder la synthèse sous la main : elle se publie sur la PR en phase 7.
 
 Commits en Conventional Commits, portée = module métier concerné. Inclure
 `Refs #$1` dans le corps. Découper par intention, pas en un seul commit fourre-tout.
+
+Les commits `wip(...)` posés en phase 3 se recomposent ici — `git reset --soft`
+sur la base, puis les vrais commits. **Recomposer, jamais jeter** : ils ont servi
+à protéger le travail, leur contenu est le travail.
 
 Avant de pousser, vérifier qu'aucun secret, clé ou `.env` n'est dans le diff.
 
