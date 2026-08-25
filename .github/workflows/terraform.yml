@@ -17,9 +17,45 @@ permissions:
   id-token: write   # OIDC — aucune clé AWS statique
 
 jobs:
+  # Format et validation ne demandent aucun accès AWS : `-backend=false` évite
+  # d'ouvrir l'état distant. C'est ce qui permet à ce contrôle de tourner sur
+  # chaque pull request, y compris avant que le compte AWS n'existe.
+  validate:
+    name: Format et validation
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+
+      # Récursif depuis la racine : le contrôle par environnement laissait les
+      # modules non formatés passer entre les mailles.
+      - name: Format
+        run: terraform fmt -check -recursive -no-color infra/terraform
+
+      - name: Validation de chaque racine
+        run: |
+          set -uo pipefail
+          status=0
+          # Lecture ligne à ligne plutôt que `for dir in $(...)` : un chemin
+          # contenant une espace y serait découpé en deux répertoires inexistants,
+          # et l'échec passerait pour une erreur de configuration.
+          while IFS= read -r dir; do
+            echo "::group::$dir"
+            terraform -chdir="$dir" init -backend=false -input=false -no-color || status=1
+            terraform -chdir="$dir" validate -no-color || status=1
+            echo "::endgroup::"
+          done < <(find infra/terraform -name '.terraform' -prune -o -name '*.tf' -printf '%h\n' | sort -u)
+          exit $status
+
+  # Le plan a besoin d'AWS : il lit l'état distant et interroge le compte. Tant
+  # que les variables de dépôt ne sont pas posées — c'est-à-dire tant que le
+  # fournisseur OIDC et ses rôles n'ont pas été appliqués (infra/terraform/modules/oidc) —
+  # le job est ignoré proprement plutôt que d'échouer sur un rôle vide.
   plan:
     name: Plan (${{ matrix.env }})
-    if: github.event_name == 'pull_request'
+    needs: validate
+    if: ${{ github.event_name == 'pull_request' && vars.AWS_REGION != '' && vars.AWS_TERRAFORM_PLAN_ROLE_ARN != '' }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -30,22 +66,39 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
-      - run: terraform fmt -check -recursive
+
+      # Rôle en lecture seule : ce job tourne sur du code de pull request, que
+      # personne n'a encore relu, et un `plan` exécute ce que la configuration lui
+      # demande d'exécuter.
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_TERRAFORM_PLAN_ROLE_ARN }}
+          role-session-name: gha-tf-plan-${{ matrix.env }}-${{ github.run_id }}
           aws-region: ${{ vars.AWS_REGION }}
-      - run: terraform init
-      - run: terraform validate
+
+      - run: terraform init -input=false
       - id: plan
-        run: terraform plan -no-color -out=tfplan
+        run: terraform plan -no-color -input=false -out=tfplan
         continue-on-error: true
+      # La sortie du plan passe par l'environnement, jamais par `${{ }}` dans le
+      # script : interpolée dans un gabarit JavaScript, elle est exécutée. Or elle
+      # est dictée par le code de la pull request — un nom de ressource suffirait à
+      # faire tourner du JavaScript arbitraire dans un job qui porte `id-token:
+      # write` et `pull-requests: write`.
       - name: Publier le plan en commentaire
         uses: actions/github-script@v7
+        env:
+          PLAN_ENV: ${{ matrix.env }}
+          PLAN_STDOUT: ${{ steps.plan.outputs.stdout }}
         with:
           script: |
-            const body = `### Terraform plan — \`${{ matrix.env }}\`\n\n<details><summary>Voir le plan</summary>\n\n\`\`\`terraform\n${{ steps.plan.outputs.stdout }}\n\`\`\`\n\n</details>`;
-            github.rest.issues.createComment({
+            const limit = 60000;   // un commentaire GitHub est refusé au-delà de 65536 caractères
+            const raw = process.env.PLAN_STDOUT || '(aucune sortie)';
+            const plan = raw.length > limit
+              ? `${raw.slice(0, limit)}\n\n… plan tronqué, voir le journal du job.`
+              : raw;
+            const body = `### Terraform plan — \`${process.env.PLAN_ENV}\`\n\n<details><summary>Voir le plan</summary>\n\n\`\`\`terraform\n${plan}\n\`\`\`\n\n</details>`;
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -65,9 +118,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: hashicorp/setup-terraform@v3
+
+      # `AWS_TERRAFORM_ROLE_ARN` n'est acceptée qu'en variable de dépôt : un ARN
+      # de rôle n'est pas un secret, et le tenir hors des secrets rend visible
+      # d'un coup d'œil qu'aucun identifiant AWS n'y est stocké.
+      - name: Vérifier que les rôles OIDC sont configurés
+        run: |
+          if [ -z "${{ vars.AWS_TERRAFORM_ROLE_ARN }}" ] || [ -z "${{ vars.AWS_REGION }}" ]; then
+            echo "::error::Poser les variables de dépôt AWS_REGION et AWS_TERRAFORM_ROLE_ARN — voir infra/terraform/modules/oidc/README.md."
+            exit 1
+          fi
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_TERRAFORM_ROLE_ARN }}
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          role-session-name: gha-tf-apply-${{ inputs.environment }}-${{ github.run_id }}
           aws-region: ${{ vars.AWS_REGION }}
-      - run: terraform init
-      - run: terraform apply -auto-approve
+
+      - run: terraform init -input=false
+      - run: terraform apply -auto-approve -input=false
