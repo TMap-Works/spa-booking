@@ -197,7 +197,9 @@ conversation :
 >   `^(feature|bugfix|chore|docs)/[0-9]+-[a-z0-9._-]+$` (`git branch -m`), base
 >   sur `origin/develop` (`git fetch origin develop && git rebase origin/develop`
 >   avant tout commit), `node_modules` présent.
-> - **Tu ne merges pas.** Tu t'arrêtes après la revue de la phase 8, PR ouverte.
+> - **Tu ne merges pas.** Tu t'arrêtes après la barrière de CI de la phase 8, PR
+>   ouverte. La revue a eu lieu en phase 5, avant le push : **ne la relance pas**
+>   après avoir corrigé la CI.
 >
 > **Ton empreinte est `<ressources>`**, c'est-à-dire `<chemins>`. D'autres agents
 > travaillent en parallèle sur d'autres tickets, à partir du même `develop`. Si
