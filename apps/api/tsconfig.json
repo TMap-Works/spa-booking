@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    // Obligatoire avec `target: ES2022` : la sémantique `defineProperty` des
+    // champs de classe redéfinirait à `undefined` toute propriété déclarée sans
+    // initialiseur — écrasant les valeurs posées par class-transformer sur les
+    // DTO, et les métadonnées de décorateurs de Nest.
+    "useDefineForClassFields": false,
+    "declaration": false,
+    "types": ["node", "jest"]
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "exclude": ["node_modules", "dist"]
+}
