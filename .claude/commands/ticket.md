@@ -172,6 +172,40 @@ Gates supplémentaires selon ce qui a été touché :
 **Ne pas passer à la suite tant que tout n'est pas vert.** Rapporter fidèlement
 les échecs — sortie incluse — plutôt que de contourner un test qui gêne.
 
+### Quand la barrière échoue pour une raison d'environnement
+
+Un `npm run verify` rouge n'incrimine pas toujours le diff. **Faire le tri avant
+de chercher** : c'est l'environnement, et non le ticket, quand l'erreur ne nomme
+aucun fichier du diff et que la même commande échoue à l'identique sur
+`origin/develop` intact.
+
+| Symptôme | Cause | Remède |
+|---|---|---|
+| `Cannot find module 'D:\...'` sur un chemin **tronqué**, ou `'…\node_modules\.bin\' n'est pas reconnu` | le chemin du dépôt contient une esperluette et `cmd.exe` coupe dessus (#139) | `npm config set script-shell "C:/Program Files/Git/bin/bash.exe"` |
+| binaire local introuvable, `node_modules` absent | worktree sans dépendances installées | `npm install` — correction 3 de la phase 1 |
+| `test:integration` ou `test:concurrency` sans base joignable | Postgres et Redis éteints | `docker compose up -d` |
+
+**Ce n'est pas un échec du ticket**, et cela ne se journalise pas comme tel :
+appliquer le remède, relancer la barrière, poursuivre le parcours. Une ligne de
+journal suffit, sans `--status` :
+
+```bash
+python scripts/milestone_run.py event --ticket $1 --phase validation --level DEBUG \
+  --message "script-shell bash pose (chemin a esperluette, #139), npm run verify relance"
+```
+
+Trois conduites sont **interdites** ici : conclure à l'échec et rendre la main,
+contourner en sautant une cible de la barrière, ou consumer le leg à instruire
+une cause déjà connue. Le prérequis Windows est écrit dans
+[CONTRIBUTING.md](../../CONTRIBUTING.md) — s'y reporter, ne pas le redécouvrir.
+C'est exactement ce qui a stérilisé les cinq legs de #138 : la barrière posée
+pour protéger la qualité avait fini par empêcher le travail d'exister.
+
+Si le remède ne se trouve pas en quelques minutes, ne pas s'entêter : **commiter
+le travail déjà fait** (phase 3), journaliser `--status blocked` avec la sortie
+exacte, et rendre la main. Une branche qui porte des commits survit au
+ramasse-miettes ; une branche vide, non (#130).
+
 ## Phase 5 — Revue et correction, en une seule passe
 
 Une revue complète, puis une correction complète. **Pas de seconde revue.**
