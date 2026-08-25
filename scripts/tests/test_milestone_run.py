@@ -87,6 +87,20 @@ class LiveWorktrees(unittest.TestCase):
         self.assertEqual(found[18]["branch"], "feature/18-squelette-nestjs")
         self.assertTrue(found[18]["path"].endswith("agent-aaa"))
 
+    def test_la_branche_d_avant_renommage_compte_aussi(self):
+        """`EnterWorktree` crée `worktree-bugfix+134-…` ; la phase 1 de /ticket
+        la renomme aussitôt. Entre les deux, c'est la seule trace de l'agent —
+        et depuis #134 un `running` sans trace est requeué, donc ne pas la lire
+        relancerait un second agent sur l'empreinte du premier (#130)."""
+        found = self.parse(PORCELAIN + """
+worktree D:/spyle/Spa & Booking/.claude/worktrees/bugfix+134-reconcile
+HEAD df4ae3f00000000000000000000000000000000
+branch refs/heads/worktree-bugfix+134-reconcile-running-abandonne
+""")
+        self.assertIn(134, found)
+        self.assertEqual(found[134]["branch"],
+                         "worktree-bugfix+134-reconcile-running-abandonne")
+
     def test_le_depot_principal_et_les_detaches_sont_ignores(self):
         """`develop` n'est pas un ticket, et une HEAD détachée ne dit à quel
         ticket elle appartient."""
@@ -583,6 +597,190 @@ class SegmentsDePhases(unittest.TestCase):
         self.assertIn("failed", frame)
         self.assertIn("verify rouge", frame)
         self.assertIn("tickets", frame)          # le chemin du log par ticket
+
+
+class ReconcileRunningAbandonne(unittest.TestCase):
+    """#134 — l'agent tué **avant** son premier push laissait un `running` que
+    rien n'attestait et que rien ne rattrapait : `reconcile` le protégeait comme
+    un état avancé, le `gate` ne lance que des `pending`, et la vague ne pouvait
+    plus ni avancer ni se clore. Le run s'y était figé trois heures.
+
+    Le garde-fou qu'on assouplit protégeait `ci_green` et `reviewed`, que GitHub
+    ne sait pas exprimer : ces cas-là doivent continuer de tenir.
+    """
+
+    def reconcile(self, journal, issues=(), prs=(), branches=None, worktrees=None):
+        """(état des tickets après réconciliation, sortie).
+
+        `branches` et `worktrees` acceptent un dictionnaire — ce que la sonde a
+        trouvé — ou une fonction, pour jouer une sonde muette.
+        """
+        def sonde(valeur):
+            return ({"side_effect": valeur} if callable(valeur)
+                    else {"return_value": valeur or {}})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, journal=journal)
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
+                 mock.patch.object(run_mod, "gh_json",
+                                   side_effect=[(list(issues), None),
+                                                (list(prs), None)]), \
+                 mock.patch.object(run_mod, "remote_branches", **sonde(branches)), \
+                 mock.patch.object(run_mod, "live_worktrees", **sonde(worktrees)), \
+                 contextlib.redirect_stdout(output):
+                run_mod.cmd_reconcile(argparse.Namespace(run="r1"))
+                run = run_mod.load_run("r1")
+                tickets = run_mod.replay(run, run_mod.read_journal("r1"),
+                                         run_mod.load_control("r1"))
+            return tickets, output.getvalue()
+
+    RUNNING = {"ts": "2026-08-25T07:26:00+00:00", "kind": "ticket", "ticket": 19,
+               "phase": "implementation", "status": "running",
+               "message": "plan pose, implementation en cours"}
+
+    def test_un_running_sans_aucune_trace_revient_pending(self):
+        """Critère 1 — c'est le déblocage que le ticket demande."""
+        tickets, output = self.reconcile([self.RUNNING])
+        self.assertEqual(tickets[19]["status"], "pending")
+        self.assertIn("jamais démarré", output)
+
+    def test_un_running_avec_branche_poussee_ne_recule_pas(self):
+        """Le travail est là, poussé : le requeuer le referait de zéro."""
+        tickets, _ = self.reconcile(
+            [self.RUNNING], branches={19: "feature/19-truc"})
+        self.assertEqual(tickets[19]["status"], "running")
+
+    def test_un_running_avec_worktree_vivant_ne_recule_pas(self):
+        """#130 — le worktree dit qu'un agent tient le ticket, avant tout push."""
+        tickets, _ = self.reconcile(
+            [self.RUNNING],
+            worktrees={19: {"path": "/w/agent-aaa", "branch": "feature/19-truc",
+                            "locked": True}})
+        self.assertEqual(tickets[19]["status"], "running")
+
+    def test_ci_green_avec_pr_ouverte_ne_recule_pas(self):
+        """Critère 2 — GitHub ne connaît pas `ci_green` : le ramener à `pr_open`
+        referait la CI et la revue à chaque reprise."""
+        journal = [self.RUNNING,
+                   {"ts": "2026-08-25T08:00:00+00:00", "kind": "ticket",
+                    "ticket": 19, "phase": "ci", "status": "ci_green",
+                    "pr": 77, "message": "12 checks au vert"}]
+        tickets, _ = self.reconcile(
+            journal, prs=[{"number": 77, "state": "OPEN", "body": "Closes #19",
+                           "headRefName": "feature/19-truc"}])
+        self.assertEqual(tickets[19]["status"], "ci_green")
+
+    def test_reviewed_avec_pr_ouverte_ne_recule_pas(self):
+        journal = [{"ts": "2026-08-25T08:10:00+00:00", "kind": "ticket",
+                    "ticket": 19, "phase": "revue", "status": "reviewed",
+                    "pr": 77, "message": "revue publiee"}]
+        tickets, _ = self.reconcile(
+            journal, prs=[{"number": 77, "state": "OPEN", "body": "Closes #19",
+                           "headRefName": "feature/19-truc"}])
+        self.assertEqual(tickets[19]["status"], "reviewed")
+
+    def test_une_sonde_muette_ne_vaut_pas_une_absence_de_trace(self):
+        """`git ls-remote` hors réseau rend le même dictionnaire vide qu'un
+        ticket jamais démarré. Requeuer là-dessus relancerait un agent sur un
+        ticket déjà poussé : tant qu'une sonde n'a pas répondu, le garde-fou
+        d'avant #134 tient."""
+        def muette():
+            run_mod.PROBE_FAILURES.append("git ls-remote : Could not resolve host")
+            return {}
+
+        tickets, output = self.reconcile([self.RUNNING], branches=muette)
+        self.assertEqual(tickets[19]["status"], "running")
+
+    def test_une_pr_mergee_emporte_le_running(self):
+        """Le sens inverse continue de jouer : le dépôt fait foi."""
+        tickets, _ = self.reconcile(
+            [self.RUNNING],
+            prs=[{"number": 77, "state": "MERGED", "body": "Closes #19",
+                  "headRefName": "feature/19-truc"}])
+        self.assertEqual(tickets[19]["status"], "merged")
+
+
+class RetryDebloqueUnRunning(unittest.TestCase):
+    """Critère 3 — `retry N` doit mordre sur un ticket figé, pas seulement sur
+    un ticket tombé. C'est le rattrapage humain quand le dépôt ne tranche pas."""
+
+    def replay_apres_retry(self, statut_initial):
+        journal = [
+            {"ts": "2026-08-25T07:26:00+00:00", "kind": "ticket", "ticket": 19,
+             "phase": "implementation", "status": statut_initial,
+             "message": "agent parti"},
+            # Ce que le shell écrit sur `retry 19` : seul `reset` fait reculer
+            # un statut, et il ne regarde pas lequel.
+            {"ts": "2026-08-25T09:00:00+00:00", "kind": "ticket", "ticket": 19,
+             "status": "pending", "reset": True, "actor": "humain",
+             "message": "remis en file à la main"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, journal=journal, control={"signal": "run",
+                                                     "retry": [19]})
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)):
+                run = run_mod.load_run("r1")
+                return run_mod.replay(run, run_mod.read_journal("r1"),
+                                      run_mod.load_control("r1"))
+
+    def test_retry_deloge_un_running(self):
+        self.assertEqual(self.replay_apres_retry("running")[19]["status"], "pending")
+
+    def test_retry_deloge_aussi_un_blocked(self):
+        self.assertEqual(self.replay_apres_retry("blocked")[19]["status"], "pending")
+
+    def test_le_gate_n_annonce_plus_un_retry_honore(self):
+        """La demande est consommée dès que le ticket est reparti : continuer de
+        l'annoncer ferait relancer un ticket déjà traité à chaque vague."""
+        journal = [{"ts": "2026-08-25T09:00:00+00:00", "kind": "ticket",
+                    "ticket": 19, "status": "pending", "reset": True,
+                    "actor": "humain", "message": "remis en file"},
+                   {"ts": "2026-08-25T10:00:00+00:00", "kind": "ticket",
+                    "ticket": 20, "phase": "merge", "status": "merged",
+                    "message": "mergée"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, journal=journal,
+                      control={"signal": "run", "retry": [19, 20]})
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 contextlib.redirect_stdout(output):
+                run_mod.cmd_gate(argparse.Namespace(run="r1"))
+        self.assertNotIn("reprendre #19", output.getvalue())
+        self.assertNotIn("reprendre #20", output.getvalue())
+
+    def test_le_gate_n_annonce_plus_un_retry_deja_relance(self):
+        """Le pire cas : la demande a été honorée, un agent tient le ticket. La
+        réannoncer ferait lancer un second agent sur la même empreinte (#130) —
+        `control["retry"]` n'étant jamais purgé, elle vaudrait pour tout le run."""
+        journal = [{"ts": "2026-08-25T09:00:00+00:00", "kind": "ticket",
+                    "ticket": 19, "status": "pending", "reset": True,
+                    "actor": "humain", "message": "remis en file"},
+                   {"ts": "2026-08-25T09:05:00+00:00", "kind": "ticket",
+                    "ticket": 19, "phase": "implementation", "status": "running",
+                    "message": "second agent au travail"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, journal=journal,
+                      control={"signal": "run", "retry": [19]})
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 contextlib.redirect_stdout(output):
+                run_mod.cmd_gate(argparse.Namespace(run="r1"))
+        self.assertNotIn("reprendre #19", output.getvalue())
+
+    def test_le_gate_annonce_un_retry_en_attente(self):
+        journal = [{"ts": "2026-08-25T07:26:00+00:00", "kind": "ticket",
+                    "ticket": 19, "phase": "validation", "status": "failed",
+                    "message": "verify rouge"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, journal=journal,
+                      control={"signal": "run", "retry": [19]})
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 contextlib.redirect_stdout(output):
+                run_mod.cmd_gate(argparse.Namespace(run="r1"))
+        self.assertIn("reprendre #19", output.getvalue())
 
 
 if __name__ == "__main__":
