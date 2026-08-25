@@ -3,6 +3,11 @@ node_modules/
 .pnp.*
 .yarn/
 
+# Réglages npm propres au poste. `npm config set` doit écrire dans ~/.npmrc ;
+# un chemin absolu versionné ici casserait la CI Linux et les autres postes
+# (voir CONTRIBUTING.md, prérequis Windows — #139).
+.npmrc
+
 # Build
 dist/
 build/
