@@ -805,6 +805,11 @@ def arm_supervision(milestone, args):
         command.append(milestone)
     if getattr(args, "no_merge", False):
         command.append("--no-merge")
+    # Relayée telle quelle. `cmd_start` l'a déjà confrontée au registre — celui
+    # du superviseur, emprunté et non recopié — de sorte qu'une coquille se dise
+    # avant l'ouverture du run plutôt qu'ici, où elle emporterait la veille.
+    if getattr(args, "merge_sensitive", ""):
+        command += ["--merge-sensitive", args.merge_sensitive]
     try:
         proc = subprocess.run(command, cwd=ROOT, capture_output=True, text=True,
                               encoding="utf-8", errors="replace", timeout=120)
@@ -1048,7 +1053,45 @@ def cmd_next(args):
     return GO
 
 
+def check_merge_sensitive(value):
+    """Refuse une pré-autorisation fautive **avant** que le run ne s'ouvre.
+
+    Le registre reste celui du superviseur : on le lui emprunte au lieu d'en
+    tenir une seconde copie, qui finirait par diverger de ce que la barrière
+    refuse vraiment.
+
+    Vérifier ici, et pas seulement à l'armement, tient à l'ordre des choses :
+    `start` ouvre le run puis arme la veille. Une faute de frappe découverte à
+    l'armement fait échouer tout le sous-processus — et le run se retrouve
+    ouvert **sans aucune reprise automatique**, pour un mot mal tapé. Le
+    dispositif que ce ticket répare se serait débranché sur une coquille.
+
+    Rend un message d'erreur, ou None.
+    """
+    if not (value or "").strip():
+        return None
+    try:
+        sys.path.insert(0, str(ROOT / "scripts"))
+        from milestone_supervise import ALL_SCOPES, SCOPE_KEYS, parse_scopes
+    except Exception:  # noqa: BLE001 — un superviseur illisible ne doit pas
+        # emporter `start` : il le dira lui-même à l'armement, et le run vaut
+        # mieux ouvert sans veille que pas ouvert du tout.
+        return None
+    _, unknown = parse_scopes(value)
+    if not unknown or not SCOPE_KEYS:
+        return None
+    return "périmètre inconnu : {} — attendus : {}, ou « {} »".format(
+        ", ".join(unknown), ", ".join(sorted(SCOPE_KEYS)), ALL_SCOPES)
+
+
 def cmd_start(args):
+    # Une pré-autorisation fautive se dit maintenant, avant d'ouvrir quoi que ce
+    # soit : plus tard, elle coûterait la veille entière (voir ci-dessus).
+    problem = check_merge_sensitive(getattr(args, "merge_sensitive", ""))
+    if problem:
+        print(problem, file=sys.stderr)
+        return NO_RUN
+
     # Sans jalon nommé, l'orchestrateur regarde où on en est et propose : savoir
     # qu'on en est au S1 est son travail, pas celui de qui tape la commande.
     if not args.milestone:
@@ -1728,6 +1771,10 @@ def main():
                          help="à la reprise, ne pas interroger GitHub")
     starter.add_argument("--no-merge", action="store_true",
                          help="la reprise automatique s'arrêtera aux PR, sans merger")
+    starter.add_argument("--merge-sensitive", default="", metavar="PÉRIMÈTRES",
+                         help="pré-autorise le merge de ces périmètres sensibles "
+                              "pour tout le run, séparés par des virgules "
+                              "(voir milestone_supervise.py --merge-sensitive)")
     starter.add_argument("--no-watchdog", action="store_true",
                          help="ne pas armer la reprise automatique")
 

@@ -82,7 +82,8 @@ personne (voir « La reprise automatique », plus bas). Pour un jalon dont **tou
 les PR doivent être relues, ouvrir le run avec `--no-merge` — c'est ce
 réglage-là qui sera rejoué à chaque reprise. Les seules PR de périmètre sensible
 n'ont pas besoin de ce réglage : elles restent ouvertes d'office sous reprise
-automatique.
+automatique, **sauf celles que `--merge-sensitive` a pré-autorisées** à
+l'ouverture du run (phase 2). Ce réglage-là se rejoue lui aussi à chaque reprise.
 
 À la reprise, `start` enchaîne tout seul sur `reconcile`, qui confronte le
 journal à l'état réel du dépôt — issues closes, PR ouvertes ou mergées, branches
@@ -174,9 +175,43 @@ Sont **sensibles**, au sens de [/ticket](.claude/commands/ticket.md) : les label
 `mod:payments` et `security` — portés par l'**issue**, jamais par la PR —, un
 schéma ou une migration Prisma, `infra/terraform`, et `apps/api/src/modules/payments`.
 La liste qui fait foi est celle de `scripts/pr_gate.py` (`SENSITIVE_LABELS`,
-`SENSITIVE_PREFIXES`, `PRISMA`) ; celle-ci en est le reflet. Quand une vague en
-contient, demander l'arbitrage **une fois pour la vague** (`AskUserQuestion`,
-sauf `--yes`) : tout merger · laisser ces PR ouvertes pour relecture · s'arrêter.
+`SENSITIVE_PREFIXES`, `PRISMA`) ; celle-ci en est le reflet.
+
+### Ce que le run a déjà autorisé
+
+Ce n'est pas une question ouverte : la réponse a pu être donnée à l'armement, et
+elle se lit avant de la reposer.
+
+```bash
+python scripts/milestone_supervise.py --state
+```
+
+La ligne `périmètres armés` dit lequel des trois cas s'applique, et **il faut
+l'annoncer dans la présentation de la phase 2**, avant la première vague :
+
+| `périmètres armés` | Ce que fait la vague |
+|---|---|
+| `pré-autorisés : infra/terraform, prisma` | ces périmètres se mergent comme le reste ; les autres restent ouverts |
+| `aucun pré-autorisé` | toute PR sensible reste ouverte pour relecture |
+| `sans objet — armé en --no-merge` | rien n'est mergé, sensible ou non |
+
+Le réglage se pose à l'ouverture du run et **pas ailleurs** — c'est ce qui en
+fait un geste humain daté plutôt qu'une déduction :
+
+```bash
+python scripts/milestone_run.py start "$1" --width 3 --merge-sensitive infra/terraform,prisma
+```
+
+Nommer les périmètres un par un plutôt que tout ouvrir d'un coup est le réglage
+attendu : le socle Terraform peut avancer seul pendant que `mod:payments` reste
+sous relecture humaine.
+
+### L'arbitrage qui reste
+
+Pour ce que le run n'a **pas** pré-autorisé, et seulement pour cela : quand une
+vague en contient, demander l'arbitrage **une fois pour la vague**
+(`AskUserQuestion`, sauf `--yes`) : tout merger · laisser ces PR ouvertes pour
+relecture · s'arrêter.
 
 **Sous `--yes`, la question n'est pas posée et la réponse est « laisser ces PR
 ouvertes ».** C'est le seul choix tenable : une vague lancée par la reprise
@@ -186,11 +221,12 @@ défaut reviendrait à poser la question pour n'en jamais tenir compte.
 Deux chemins appliquent cette règle, et il faut les distinguer :
 
 - **Sous reprise automatique**, elle ne t'est pas confiée : le superviseur pose
-  `SPA_UNATTENDED` dans l'environnement de chaque vague, et `pr_gate.py` refuse
-  alors de merger une PR sensible — il retire même le label `merge-when-green`
-  s'il était déjà posé, sans quoi auto-merge.yml la mergerait depuis un runner
-  où la variable n'existe pas.
-- **Sous `/milestone --yes` tapé à la main**, cette variable n'existe pas et la
+  `SPA_UNATTENDED` dans l'environnement de chaque vague — « personne ne peut
+  répondre » — et, à côté, `SPA_MERGE_SENSITIVE` — « voici ce qui a déjà été
+  répondu ». `pr_gate.py` refuse alors les PR sensibles **hors** de cette liste,
+  et laisse passer celles qui y sont. Ne pas trier toi-même : passe-lui toutes
+  les PR vertes, le code de sortie 5 désigne celles qui restent ouvertes.
+- **Sous `/milestone --yes` tapé à la main**, ces variables n'existent pas et la
   barrière ne refusera rien : c'est alors à toi de tenir la règle. Ne passe pas
   ces PR à `pr_gate.py --request-merge`, laisse-les ouvertes, et dis-le dans le
   compte rendu de vague.
@@ -301,11 +337,14 @@ un classifieur le retenait, ferait échouer la vague **en silence**.
 - **`2` (échec)** : journaliser `failed` avec la raison, la PR reste ouverte, on
   passe à la suivante. Le ticket repartira au plan suivant sous « PR déjà
   ouverte ».
-- **`5` (périmètre sensible)** : ce n'est **pas** un échec. La PR est verte et
-  relue, elle attend un humain. Journaliser **`skipped`** en disant quel
-  périmètre l'a retenue, laisser la PR ouverte, passer à la suivante, et le
-  porter au compte rendu de vague : sans cela personne ne saura qu'il y a là
-  quelque chose à relire.
+- **`5` (périmètre sensible non pré-autorisé)** : ce n'est **pas** un échec. La
+  PR est verte et relue, elle attend un humain. Journaliser **`skipped`** en
+  disant quel périmètre l'a retenue, laisser la PR ouverte, passer à la
+  suivante, et le porter au compte rendu de vague : sans cela personne ne saura
+  qu'il y a là quelque chose à relire.
+
+  Ne pas trier ces PR toi-même : passe-les toutes à la barrière. Elle sait ce
+  que le run a pré-autorisé, tu ne le sais qu'en la relisant.
 
   `skipped` et pas autre chose, pour trois raisons mécaniques : c'est un statut
   **terminal**, donc la vague peut s'achever au lieu de rester ouverte
@@ -470,10 +509,13 @@ Trois points à dire à l'utilisateur en phase 2, avant la première vague :
 
 - **La reprise automatique merge sur `develop` sans relecture** — sauf sur les
   périmètres sensibles, dont les PR restent ouvertes d'office (la barrière les
-  refuse, cf. phase 2). C'est le prix du « sans intervention ». Pour un jalon
-  dont **toutes** les PR doivent être relues, et pas seulement les sensibles,
-  ouvrir le run avec `milestone_run.py start … --no-merge` : la reprise
-  s'arrêtera alors aux PR.
+  refuse, cf. phase 2). C'est le prix du « sans intervention ». Deux réglages
+  déplacent cette frontière, et tous deux se posent **à l'ouverture du run**,
+  jamais après :
+  - `--merge-sensitive infra/terraform,prisma` ouvre nommément quelques
+    périmètres sensibles, en laissant les autres sous relecture. C'est le
+    réglage qui débloque un jalon d'infrastructure sans ouvrir `mod:payments` ;
+  - `--no-merge` ferme tout, sensible ou non : la reprise s'arrêtera aux PR.
 - **Le dossier doit être approuvé dans Claude Code.** Sinon `claude -p` ignore
   l'allowlist de `.claude/settings.json`, aucune demande de permission ne peut
   être répondue en mode `-p`, et les agents échouent en silence. Le préflight du

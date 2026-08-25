@@ -61,9 +61,20 @@ sur `develop` sans arbitrage humain — c'est le prix du « sans intervention »
 
 Une exception, et elle est mécanique plutôt que consignée : sur un périmètre
 sensible — `mod:payments`, le label `security`, une migration Prisma,
-`infra/terraform` — `pr_gate.py` refuse le merge et laisse la PR ouverte. Le
-superviseur le lui dit en posant `SPA_UNATTENDED` dans l'environnement des
-vagues. Pour un jalon sensible de bout en bout, armer plutôt avec `--no-merge`.
+`infra/terraform` — `pr_gate.py` refuse le merge et laisse la PR ouverte.
+
+Ce refus se lève périmètre par périmètre, et seulement à l'armement :
+
+    --merge-sensitive infra/terraform,prisma
+
+L'absence de l'opérateur ne vaut plus interdiction (#156) — elle ne l'a jamais
+valu, c'est même quand il est absent que ce dispositif doit travailler. Ce qui
+interdit, c'est l'absence d'un accord donné à l'avance. Les deux voyagent
+séparément vers les vagues : `SPA_UNATTENDED` dit que personne ne peut répondre,
+`SPA_MERGE_SENSITIVE` dit ce qui a déjà été répondu. Le choix est inscrit dans
+`supervisor.json` et rejoué à chaque reprise, comme l'est `--no-merge`.
+
+Pour un jalon sensible de bout en bout, armer plutôt avec `--no-merge`.
 """
 import argparse
 import atexit
@@ -92,11 +103,25 @@ for _stream in (sys.stdout, sys.stderr):
 # où il cesse de regarder.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from pr_gate import SENSITIVE_SCOPES
+    from pr_gate import ALL_SCOPES, AUTHORISED_ENV, SCOPE_KEYS, SENSITIVE_SCOPES
+    SCOPES_KNOWN = True
 except Exception:  # noqa: BLE001 — un pr_gate.py à demi écrit ne doit pas
     # emporter avec lui `--state`, `--disarm` et le réveil de la veille : ce
     # sont précisément les commandes qui servent à reprendre la main.
     SENSITIVE_SCOPES = "voir SENSITIVE_LABELS / SENSITIVE_PREFIXES dans pr_gate.py"
+    # Un registre vide ne pré-autorise rien : sans la liste qui fait foi, on
+    # n'ouvre aucun périmètre. `--merge-sensitive` refusera alors toute clé, ce
+    # qui est le bon sens de l'échec — mieux vaut un armement qui râle qu'un
+    # armement qui merge du paiement parce que le fichier d'en face est cassé.
+    ALL_SCOPES, SCOPE_KEYS = "all", frozenset()
+    AUTHORISED_ENV = "SPA_MERGE_SENSITIVE"
+    # Et le registre est *su* indisponible, pas simplement vide. La nuance porte
+    # tout le reste : sans elle, une clé parfaitement valide devient « inconnue »
+    # et fait échouer l'armement — y compris celui d'un superviseur ressuscité
+    # par la veille, qui rejoue `--merge-sensitive` depuis `supervisor.json` et
+    # n'a personne pour corriger. Il mourrait à chaque relance, toutes les cinq
+    # minutes, et le jalon s'arrêterait là.
+    SCOPES_KNOWN = False
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNS_DIR = ROOT / ".claude" / ".milestone"
@@ -245,11 +270,44 @@ def quota_file_hold():
     return quota
 
 
+def parse_scopes(value):
+    """`--merge-sensitive` : la liste de périmètres pré-autorisés, validée.
+
+    Rend (clés, inconnues). Une clé inconnue est **rendue**, pas ignorée : c'est
+    à l'armement qu'un humain est encore là pour corriger sa faute de frappe.
+    Plus tard, dans `pr_gate.py`, la même faute sera muette et inerte — elle
+    n'ouvrira simplement rien, ce qui est sans danger mais indébogable.
+    """
+    tokens = [token.strip().lower()
+              for token in (value or "").replace(",", " ").split()
+              if token.strip()]
+    # Relevées avant tout raccourci : `all,prsima` ouvrirait tout *et* tairait la
+    # faute, c'est-à-dire le seul sens dans lequel une mauvaise saisie ne doit
+    # jamais jouer. L'opérateur doit apprendre ici que sa liste est fautive, même
+    # quand ce qu'il a tapé par ailleurs suffit à tout ouvrir.
+    unknown = [token for token in tokens
+               if token not in SCOPE_KEYS and token != ALL_SCOPES]
+    if ALL_SCOPES in tokens:
+        return set(SCOPE_KEYS), unknown
+    return ({token for token in tokens if token in SCOPE_KEYS}, unknown)
+
+
+def describe_scopes(intent):
+    """Ce que `--state` doit dire d'une intention : quoi, et rien de vague."""
+    scopes = sorted((intent or {}).get("merge_sensitive") or [])
+    if (intent or {}).get("no_merge"):
+        return "sans objet — armé en --no-merge, rien n'est mergé"
+    if not scopes:
+        return "aucun pré-autorisé — tout périmètre sensible reste sous relecture"
+    return "pré-autorisés : " + ", ".join(scopes)
+
+
 def save_intent(args):
     INTENT.parent.mkdir(parents=True, exist_ok=True)
     INTENT.write_text(json.dumps({
         "milestone": args.milestone, "width": args.width,
         "waves_per_leg": args.waves_per_leg, "no_merge": args.no_merge,
+        "merge_sensitive": sorted(args.merge_sensitive),
         "permission_mode": args.permission_mode, "model": args.model,
         "margin": args.margin, "patience": args.patience,
         "max_legs": args.max_legs, "claude": args.claude, "armed": now(),
@@ -310,6 +368,14 @@ def intent_argv(intent):
              "--claude", intent.get("claude", "claude"), "--yes"]
     if intent.get("no_merge"):
         argv.append("--no-merge")
+    # La pré-autorisation se rejoue comme `no_merge`, et pour la même raison :
+    # un superviseur ressuscité par la tâche planifiée n'a personne à qui la
+    # redemander. L'oublier ferait qu'un run armé cesse de merger au premier
+    # redémarrage, sans que rien ne le dise — le dispositif s'arrêterait de
+    # travailler exactement là où il est censé prendre le relais.
+    scopes = intent.get("merge_sensitive") or []
+    if scopes:
+        argv += ["--merge-sensitive", ",".join(scopes)]
     if intent.get("model"):
         argv += ["--model", intent["model"]]
     return argv
@@ -712,6 +778,7 @@ def cmd_state(args):
         print(f"jalon armé         : {intent.get('milestone') or '(le plus proche)'}"
               f" · largeur {intent.get('width')} · "
               f"{'PR seules' if intent.get('no_merge') else 'merge automatique'}")
+        print("périmètres armés   : " + describe_scopes(intent))
         print(f"armé le            : {intent.get('armed')}")
     else:
         print("jalon armé         : aucun")
@@ -764,8 +831,24 @@ def announce_merge_policy(args):
     say("armé SANS --no-merge : toute PR verte sera mergée sur develop sans "
         "relecture humaine, y compris après une coupure de quota et hors de "
         "toute session.", "WARN")
-    say("exception — périmètres sensibles ({}) : ces PR ne seront pas mergées "
-        "et resteront ouvertes pour relecture.".format(SENSITIVE_SCOPES), "WARN")
+
+    # Nommer un par un ce qui est pré-autorisé, et pas seulement compter : la
+    # question à laquelle ces lignes doivent répondre après coup est « qui a
+    # autorisé quoi, et quand », et « 2 périmètres » n'y répond pas. Le niveau
+    # WARN les fait ressortir du journal du superviseur, où l'armement est la
+    # seule trace qu'un humain ait donné son accord.
+    allowed = sorted(args.merge_sensitive)
+    if allowed:
+        say("pré-autorisés à l'armement — ces périmètres SERONT mergés sans "
+            "relecture : {}.".format(", ".join(allowed)), "WARN")
+    refused = sorted(SCOPE_KEYS - set(allowed))
+    if refused:
+        say("laissés sous relecture — ces PR ne seront pas mergées : {}."
+            .format(", ".join(refused)), "WARN")
+    else:
+        say("aucun périmètre sensible ne reste sous relecture.", "WARN")
+    say("liste complète des périmètres sensibles : {}".format(SENSITIVE_SCOPES),
+        "DEBUG")
     say("tout débrancher : python scripts/milestone_supervise.py --disarm")
 
 
@@ -863,6 +946,15 @@ def run_leg(args, index):
     env = dict(os.environ)
     if not args.no_merge:
         env["SPA_UNATTENDED"] = "1"
+    # Et, à côté, ce que l'opérateur a autorisé d'avance. Les deux voyagent
+    # ensemble mais ne disent pas la même chose : la première dit que personne ne
+    # peut répondre, la seconde ce qui a déjà été répondu.
+    #
+    # Posée hors du `if`, et toujours — vide sous `--no-merge`, où il n'y a rien
+    # de pré-autorisé. Ne la poser que sur une branche laisserait passer telle
+    # quelle une variable héritée de l'environnement de l'appelant : un run armé
+    # sans rien ouvrir hériterait alors des autorisations d'un autre.
+    env[AUTHORISED_ENV] = ",".join(sorted(args.merge_sensitive))
 
     try:
         process = subprocess.Popen(
@@ -1172,6 +1264,11 @@ def main():
                         help="vagues traitées par appel à Claude Code")
     parser.add_argument("--no-merge", action="store_true",
                         help="tout mener jusqu'à la PR, sans rien merger")
+    parser.add_argument("--merge-sensitive", default="", metavar="PÉRIMÈTRES",
+                        help="pré-autorise le merge de ces périmètres sensibles, "
+                             "séparés par des virgules ({}, ou « {} »). "
+                             "Absente, aucun n'est mergé sans relecture."
+                             .format(", ".join(sorted(SCOPE_KEYS)), ALL_SCOPES))
     parser.add_argument("--yes", action="store_true",
                         help="ne demander aucun arbitrage — indispensable sans surveillance")
     parser.add_argument("--model", help="modèle passé à claude -p")
@@ -1211,6 +1308,35 @@ def main():
     veille.add_argument("--no-watchdog", action="store_true",
                         help="ne pas armer la veille — la reprise redevient manuelle")
     args = parser.parse_args()
+
+    # Une pré-autorisation mal orthographiée ne doit pas se découvrir en lisant
+    # un journal, des heures plus tard, sur une PR restée ouverte : c'est ici, et
+    # seulement ici, qu'un humain est encore devant le terminal.
+    scopes, unknown = parse_scopes(args.merge_sensitive)
+    if unknown and SCOPES_KNOWN:
+        parser.error("périmètre inconnu : {} — attendus : {}, ou « {} »".format(
+            ", ".join(unknown), ", ".join(sorted(SCOPE_KEYS)), ALL_SCOPES))
+    if not SCOPES_KNOWN and args.merge_sensitive.strip():
+        # Registre illisible : ce n'est pas la liste de l'opérateur qui est
+        # fautive, c'est `pr_gate.py`. Refuser de démarrer punirait la reprise
+        # automatique d'une panne qui la concerne à peine — elle n'a alors qu'à
+        # ne rien pré-autoriser, ce que `parse_scopes()` a déjà fait.
+        #
+        # Sur toute la valeur, et pas seulement sur `unknown` : sans le registre,
+        # « all » est syntaxiquement reconnu et n'ouvre pourtant rien. Ne rien
+        # dire dans ce cas-là serait taire précisément l'armement le plus large
+        # que l'opérateur ait cru poser.
+        say("registre des périmètres illisible (pr_gate.py) : « {} » n'ouvre "
+            "rien. Aucun périmètre sensible ne sera mergé sans relecture."
+            .format(args.merge_sensitive.strip()), "WARN")
+    if scopes and args.no_merge:
+        # Deux consignes qui se contredisent : l'une dit de ne rien merger,
+        # l'autre nomme ce qui doit l'être. En appliquer une en silence, c'est
+        # choisir à la place de l'opérateur sur le seul réglage qu'il ait voulu
+        # poser lui-même.
+        parser.error("--merge-sensitive et --no-merge se contredisent : "
+                     "--no-merge ne merge rien, il n'y a rien à pré-autoriser")
+    args.merge_sensitive = scopes
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
 

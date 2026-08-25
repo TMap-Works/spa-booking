@@ -343,5 +343,37 @@ class RunAbime(unittest.TestCase):
         self.assertEqual(self.digest(json.dumps(run))["milestone"], "S1")
 
 
+class PreAutorisationFautive(unittest.TestCase):
+    """Une coquille dans `--merge-sensitive` ne doit pas coûter la veille.
+
+    `start` ouvre le run **puis** arme la reprise automatique. Une clé mal tapée
+    découverte à l'armement fait échouer tout le sous-processus, et le run se
+    retrouve ouvert sans aucune reprise — le dispositif que #156 répare se
+    débrancherait sur un mot mal orthographié. D'où le contrôle avant ouverture.
+    """
+
+    def test_cle_inconnue_refusee(self):
+        message = run_mod.check_merge_sensitive("terraform")
+        self.assertIsNotNone(message)
+        self.assertIn("terraform", message)
+
+    def test_cle_connue_acceptee(self):
+        self.assertIsNone(run_mod.check_merge_sensitive("infra/terraform,prisma"))
+
+    def test_valeur_absente_ne_dit_rien(self):
+        for value in ("", "   ", None):
+            with self.subTest(valeur=repr(value)):
+                self.assertIsNone(run_mod.check_merge_sensitive(value))
+
+    def test_all_accepte(self):
+        self.assertIsNone(run_mod.check_merge_sensitive("all"))
+
+    def test_registre_illisible_n_empeche_pas_d_ouvrir_le_run(self):
+        """Le superviseur le dira lui-même à l'armement : un run vaut mieux
+        ouvert sans veille que pas ouvert du tout."""
+        with mock.patch.dict(sys.modules, {"milestone_supervise": None}):
+            self.assertIsNone(run_mod.check_merge_sensitive("nimportequoi"))
+
+
 if __name__ == "__main__":
     unittest.main()
