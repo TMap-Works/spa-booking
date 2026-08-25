@@ -9,9 +9,9 @@ Traite l'issue **#$1** de bout en bout, dans un worktree isolé.
 Conventions de référence : [.claude/skills/project-flow/SKILL.md](.claude/skills/project-flow/SKILL.md)
 et [BRANCHING.md](BRANCHING.md).
 
-**Options** — `--no-merge` : s'arrête après la revue, laisse la PR ouverte ·
-`--no-worktree` : travaille dans le dépôt courant · `--draft` : ouvre la PR en
-brouillon et n'enchaîne ni la revue ni le merge.
+**Options** — `--no-merge` : s'arrête après la barrière de CI, laisse la PR
+ouverte · `--no-worktree` : travaille dans le dépôt courant · `--draft` : ouvre
+la PR en brouillon et s'arrête là.
 
 ## Ce que cette commande ne fait pas
 
@@ -37,8 +37,9 @@ python scripts/milestone_run.py event --ticket $1 --phase <phase> \
        [--pr <n>] [--branch <b>] --message "<ce qui vient de se passer>"
 ```
 
-Phases : `recevabilite`, `isolation`, `prise-en-charge`, `implementation`,
-`validation`, `commits`, `pr`, `ci`, `revue`, `merge`, `cloture`, `nettoyage`.
+Phases, dans l'ordre où elles se déroulent : `recevabilite`, `isolation`,
+`prise-en-charge`, `implementation`, `validation`, `revue`, `commits`, `pr`,
+`ci`, `merge`, `cloture`, `nettoyage`.
 Statuts — à ne poser que sur un vrai changement d'état : `running`, `pr_open`,
 `ci_green`, `reviewed`, `merged`, `failed`, `blocked`. Sans `--status`, la ligne
 est un simple détail d'avancement ; `--level DEBUG` pour ce qui n'intéresse que
@@ -154,7 +155,70 @@ Gates supplémentaires selon ce qui a été touché :
 **Ne pas passer à la suite tant que tout n'est pas vert.** Rapporter fidèlement
 les échecs — sortie incluse — plutôt que de contourner un test qui gêne.
 
-## Phase 5 — Commits et push
+## Phase 5 — Revue et correction, en une seule passe
+
+Une revue complète, puis une correction complète. **Pas de seconde revue.**
+
+Invoquer la skill `code-review` sur le **diff local**, avec `--fix`, avant tout
+commit :
+
+| Le diff touche | Niveau |
+|---|---|
+| `mod:payments`, `mod:availability`, `mod:appointments`, une migration Prisma, `infra/terraform/`, l'authentification ou le scoping tenant | `high` |
+| tout le reste | `medium` |
+
+`high` élargit la couverture au prix de constats incertains — donc de corrections
+à instruire. Le réserver à ce qui casse cher.
+
+Deux raisons de revoir **avant** de pousser plutôt qu'après :
+
+- `--fix` corrige dans la même passe que la revue — une seule lecture du diff au
+  lieu de deux ;
+- les corrections se fondent dans les commits de la phase 6, au lieu d'ajouter un
+  commit « corrections de revue » **et un second cycle de CI complet**.
+
+### Ce qui se traite dans la passe
+
+Classer les constats une fois pour toutes :
+
+- **Bloquant** — correctness, fuite inter-tenant, régression de concurrence,
+  donnée de carte exposée, secret, migration destructive. **Tous corrigés ici**,
+  y compris ceux que `--fix` n'a pas su traiter seul.
+- **Non bloquant** — simplification, lisibilité, performance non critique.
+  Corrigé si c'est une ligne dans un fichier déjà touché ; sinon **issue de
+  suivi** (phase 10), pas une rallonge de diff.
+
+Puis rejouer les vérifications que les corrections peuvent avoir cassées : la
+cible concernée si le correctif est localisé, `npm run verify` en entier sinon.
+
+### La règle qui tient le temps de traitement
+
+**Ne pas relancer `code-review` après avoir corrigé.** Un second passage relit
+tout le diff pour, presque toujours, ne rien trouver de neuf — et il coûte une
+revue *plus* un cycle de CI, puisque ses constats arrivent après le push. C'est
+ce doublon qui a fait déraper le traitement de #111.
+
+Le compromis est explicite : **les corrections de revue ne sont pas elles-mêmes
+revues**, elles sont couvertes par `npm run verify` et par la CI de la phase 8.
+Sur un changement où cela ne se tolère pas — paiements, sécurité, migration,
+infra — c'est `--no-merge` qu'il faut, et une relecture humaine.
+
+**Un bloquant qui ne se corrige pas dans cette passe** — il demande une décision,
+un changement de conception, ou sort de l'empreinte du ticket — arrête le
+parcours : journaliser `--status blocked`, commenter l'issue avec le constat,
+**ne pas merger**. Pas de seconde revue pour trancher à sa place.
+
+Journaliser le verdict **sans `--status`** : `reviewed` ne se pose qu'en phase 8,
+une fois la CI verte — le journal refuse un statut qui recule.
+
+```bash
+python scripts/milestone_run.py event --ticket $1 --phase revue \
+  --message "revue medium : 2 bloquants corrigés (fuite tenant L84, montant float L112), 3 non bloquants → suivi"
+```
+
+Garder la synthèse sous la main : elle se publie sur la PR en phase 7.
+
+## Phase 6 — Commits et push
 
 Commits en Conventional Commits, portée = module métier concerné. Inclure
 `Refs #$1` dans le corps. Découper par intention, pas en un seul commit fourre-tout.
@@ -165,7 +229,7 @@ Avant de pousser, vérifier qu'aucun secret, clé ou `.env` n'est dans le diff.
 git push -u origin <branche>
 ```
 
-## Phase 6 — Pull request
+## Phase 7 — Pull request
 
 ```bash
 gh pr create --repo TMap-Works/spa-booking --base develop \
@@ -177,9 +241,19 @@ Le corps suit [.github/pull_request_template.md](.github/pull_request_template.m
 et **doit** contenir `Closes #$1` — c'est cette ligne qui ferme l'issue au merge.
 Reprendre les critères d'acceptation en cases cochées.
 
+Publier ensuite la synthèse de la revue de la phase 5 :
+
+```bash
+gh pr review <pr> --repo TMap-Works/spa-booking --comment --body "..."
+```
+
+Ce qui a été trouvé, ce qui a été corrigé dans le même diff, ce qui part en issue
+de suivi. C'est la seule trace de revue attendue : pas de commentaires inline —
+ils porteraient sur des lignes déjà réécrites par la phase 5.
+
 Avec `--draft`, ouvrir en brouillon et **s'arrêter ici** en donnant l'URL.
 
-## Phase 7 — Intégration continue
+## Phase 8 — Intégration continue
 
 ```bash
 python scripts/pr_gate.py <pr>
@@ -209,30 +283,18 @@ bien.
 Si la CI échoue : lire les logs (`gh run view --log-failed`), corriger, pousser,
 relancer le script. **Trois échecs consécutifs → s'arrêter**, commenter la PR
 avec le diagnostic et rendre la main. Une boucle de correction qui s'entête
-masque un problème de fond.
+masque un problème de fond. Corriger la CI ne rouvre **jamais** la revue : on
+répare ce que le check nomme, rien d'autre.
 
-## Phase 8 — Revue automatique
-
-Invoquer la skill `code-review` en visant la PR, niveau `high`, avec `--comment`
-pour publier les constats en commentaires inline.
-
-Puis publier une synthèse de revue :
+Une fois vert, journaliser les deux statuts dans cet ordre — `advance()` ne
+recule pas, et `reviewed` avalerait `ci_green` s'il était posé avant :
 
 ```bash
-gh pr review <pr> --repo TMap-Works/spa-booking --comment --body "..."
+python scripts/milestone_run.py event --ticket $1 --phase ci --status ci_green \
+  --message "pr_gate : 6 workflows conclus, 0 échec"
+python scripts/milestone_run.py event --ticket $1 --phase revue --status reviewed \
+  --message "revue phase 5 publiée sur la PR, 2 bloquants traités, 0 restant"
 ```
-
-Classer les constats :
-
-- **Bloquant** — correctness, fuite inter-tenant, régression de concurrence,
-  donnée de carte exposée, secret, migration destructive.
-- **Non bloquant** — simplification, lisibilité, performance non critique.
-
-Traiter les bloquants et reboucler sur les phases 4 à 7. **Au-delà de deux
-itérations, s'arrêter** : commenter la PR et l'issue, laisser la PR ouverte.
-
-S'il reste un constat bloquant non résolu, **ne pas merger**, quelles que soient
-les options passées.
 
 ## Phase 9 — Merge
 
@@ -262,7 +324,7 @@ pas pour le déroulé normal.
 
 Ni l'un ni l'autre ne relâche quoi que ce soit : la barrière refuse une PR en
 brouillon, en conflit, ou qui ne cible pas `develop`, et relit l'état juste avant
-d'agir — un workflow a pu démarrer entre le verdict de la phase 7 et maintenant.
+d'agir — un workflow a pu démarrer entre le verdict de la phase 8 et maintenant.
 Squash uniquement : c'est le seul mode autorisé sur le dépôt, et le titre de PR
 devient le message de merge, d'où l'exigence Conventional Commits.
 
@@ -273,7 +335,7 @@ n'aurait aucun check requis à attendre. Le seul verrou est celui-ci, et un code
 de sortie ne se contourne pas aussi facilement qu'une phrase.
 
 **La seule condition que le script ne peut pas voir** est le résultat de la
-phase 8 : s'il reste un constat bloquant non résolu, ne pas l'appeler du tout.
+phase 5 : s'il reste un constat bloquant non résolu, ne pas l'appeler du tout.
 
 Après un merge réussi, le script vérifie que la branche **distante** a bien
 disparu — le workflow la supprime — puis délègue le local à `worktree_gc.py` — qui emporte

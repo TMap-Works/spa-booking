@@ -163,7 +163,7 @@ la branche distante et locale.
 
 `/ticket <issue>` enchaîne tout ce qui précède dans un worktree isolé :
 recevabilité, branche conforme, prise en charge, implémentation, `npm run verify`,
-PR, attente de la CI, revue automatique et merge — en tenant l'issue et la carte
+revue automatique, PR, attente de la CI et merge — en tenant l'issue et la carte
 Project à jour à chaque phase.
 
 Trois points à connaître avant de s'y fier :
@@ -172,6 +172,11 @@ Trois points à connaître avant de s'y fier :
   pas posé, `project-automation.yml` ne s'exécute pas. C'est
   `scripts/project_status.py` qui pilote le champ Status, appelé explicitement
   par la commande.
+- **Une seule revue, avant le push.** La skill `code-review` passe sur le diff
+  local avec `--fix` : revue complète, correction complète, et c'est tout. Les
+  corrections partent dans les mêmes commits et ne déclenchent donc qu'un seul
+  cycle de CI. Contrepartie assumée : les corrections de revue ne sont pas
+  elles-mêmes revues.
 - **Le merge se fait sans approbation, mais jamais sans CI verte.** GitHub
   interdit d'approuver sa propre PR : la revue est publiée en commentaire. La CI,
   elle, est un verrou dur — `scripts/pr_gate.py` refuse de merger tant qu'un
