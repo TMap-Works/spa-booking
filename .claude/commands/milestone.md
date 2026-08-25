@@ -390,7 +390,9 @@ python scripts/milestone_run.py replan
 Reprendre en phase 3 jusqu'à épuisement du jalon, ou jusqu'à l'une de ces
 **conditions d'arrêt** :
 
-- `gate` rend `1` ou `2` — un humain a demandé la pause ou l'arrêt ;
+- `gate` rend `1` ou `2` — un humain a demandé la pause ou l'arrêt, ou la pause
+  sur erreur (`onerror pause`) retient le run sur un ticket tombé : le dire, et
+  nommer les tickets à traiter (`retry N` / `skip N`) ;
 - `gate` rend `4` — quota épuisé : s'arrêter net, sans lancer la vague ;
 - `--waves N` atteint ;
 - `npm run verify` rouge sur `develop` (phase 4) ;
@@ -440,25 +442,39 @@ Rien de tout cela n'est à relancer pour se tenir au courant :
 |---|---|
 | Voir défiler le détail | ouvrir `.claude/.milestone/latest.log` dans l'éditeur — il se remplit tout seul |
 | Un tableau de bord | `python scripts/milestone_run.py watch` — se rafraîchit toutes les 2 s |
+| Entrer dans un traitement | `python scripts/milestone_run.py ticket N` — phases, durées, journal, worktree ; `--follow` pour le suivre en continu |
+| Suivre un seul ticket | `tail -f .claude/.milestone/<run>/tickets/N.log` — chaque traitement a son propre log |
 | Depuis un autre terminal | `tail -f .claude/.milestone/latest.log` |
 | Agir sur le run | `python scripts/milestone_run.py shell` |
 | Savoir quand le quota revient | `python scripts/milestone_run.py quota` |
 
 Le tableau de bord montre l'avancement, la vague en cours ticket par ticket avec
 le temps passé dans la phase courante, ce qu'il y a à reprendre, et les dernières
-lignes de journal. Un ticket dont le temps de phase grimpe sans nouvelle ligne
-est un agent en difficulté : c'est le signal à surveiller.
+lignes de journal. Un signal `pause` ou `stop` s'y affiche en bannière — qui l'a
+posé, quand, et ce que le run va faire de la vague en cours. Les tickets en
+échec ont leur section propre, en rouge, avec la phase où ils sont tombés. Un
+ticket dont le temps de phase grimpe sans nouvelle ligne est un agent en
+difficulté : `ticket N --follow` est la loupe à poser dessus.
 
 Dans le shell, `pause` arrête proprement à la fin de la vague, `skip N` écarte un
-ticket, `retry N` en relance un tombé, `note N` annote, `quota` dit quand le run
-repartira et `quota clear` lève l'attente sans attendre. Ces décisions sont lues
-par le `gate` de la vague suivante : elles prennent effet au prochain point de
-contrôle, **pas au milieu d'une vague** — un agent déjà lancé va au bout de son
-ticket.
+ticket, `retry N` en relance un tombé, `ticket N` entre dans son traitement,
+`note N` annote, `quota` dit quand le run repartira et `quota clear` lève
+l'attente sans attendre. Ces décisions sont lues par le `gate` de la vague
+suivante : elles prennent effet au prochain point de contrôle, **pas au milieu
+d'une vague** — un agent déjà lancé va au bout de son ticket.
+
+**`onerror pause`** (dans le shell ou en commande directe) arme la pause sur
+erreur : dès qu'un ticket finit `failed` ou `blocked`, le `gate` suivant rend
+`1` et le run se retient — l'erreur se traite d'abord (`retry N` ou `skip N`),
+la vague suivante attend. Sans elle, comportement historique : un échec reste
+visible mais n'arrête rien avant les garde-fous de la phase 5. `onerror
+continue` désarme.
 
 Le log est un vrai fichier daté et à niveaux (`DEBUG`, `INFO`, `WARN`, `ERROR`),
 conservé par run dans `.claude/.milestone/<run>/run.log`, avec le pendant
-machine en NDJSON à côté. Pour ne relire que ce qui a mal tourné :
+machine en NDJSON à côté — et un log par ticket dans
+`.claude/.milestone/<run>/tickets/N.log`, alimenté en temps réel par les mêmes
+événements. Pour ne relire que ce qui a mal tourné :
 `python scripts/milestone_run.py log --level WARN`.
 
 ## La reprise automatique — rien à relancer, jamais

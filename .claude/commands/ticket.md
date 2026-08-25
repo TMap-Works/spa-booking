@@ -55,8 +55,14 @@ revue : 2 constats bloquants (fuite inter-tenant L84), 3 non bloquants
 ```
 
 Ce que cela produit : un log lisible en continu dans
-`.claude/.milestone/latest.log`, un tableau de bord (`milestone_run.py watch`),
-et la matière du compte rendu final.
+`.claude/.milestone/latest.log`, un log propre à ce ticket dans
+`.claude/.milestone/<run>/tickets/N.log`, un tableau de bord
+(`milestone_run.py watch`), une vue détaillée du traitement
+(`milestone_run.py ticket N`), et la matière du compte rendu final.
+
+En cas d'échec, le message est ce qui s'affiche en rouge dans ces vues :
+journaliser `--status failed` ou `--status blocked` avec la **cause exacte** —
+sortie de commande, chemin, critère en cause — jamais un « étape échouée » sec.
 
 **Sans run de jalon ouvert, la commande sort sans rien faire** — ces appels sont
 donc inoffensifs quand `/ticket` est lancé seul, et indispensables quand
