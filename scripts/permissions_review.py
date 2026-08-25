@@ -15,14 +15,24 @@ fait le bilan et, **sur accord explicite**, ajoute les motifs à
 
 ## Ce qui n'est jamais autorisé automatiquement
 
-Élargir une allowlist, c'est réduire ce sur quoi on sera consulté. Trois
+Élargir une allowlist, c'est réduire ce sur quoi on sera consulté. Quatre
 garde-fous, qu'aucun `--yes` ne lève :
 
   - un motif couvert par une règle `deny` n'est jamais proposé ;
+  - un motif dont la portée est bornée par ses **arguments** et non par la
+    commande — `head`, `cat`, `grep`, `sed`, `echo`, `tee`… — exige
+    `--include-file-tools` **et** d'être nommé avec `--pattern` ;
   - `network` et `destructive` exigent leur drapeau `--include-*` **et** d'être
     nommés un par un avec `--pattern` ;
   - le motif proposé est le plus étroit qui couvre les commandes observées,
     jamais `git:*` là où `git status:*` suffit.
+
+**Une règle `deny` protège un outil, jamais un chemin.** Les permissions sont
+indexées par outil : `Read(./**/.env.production)` interdit à l'outil `Read`
+d'ouvrir ce fichier, et ne dit rien de ce que `Bash` peut en faire. Autoriser
+`Bash(head:*)` rend donc lisible tout ce que les `deny` de `Read` mettent à
+l'abri, sans qu'aucune règle ne soit enfreinte — c'est ce qu'a montré #117. Le
+garde-fou correspondant ne se déduit pas du bloc `deny` : il tient même vide.
 
 Le seuil de répétition (`--threshold`, 2 par défaut) traduit la demande d'origine :
 ce qui n'a bloqué qu'une fois n'a pas fait ses preuves.
@@ -31,7 +41,7 @@ import argparse
 import json
 import os
 import sys
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from pathlib import Path
 
 for _stream in (sys.stdout, sys.stderr):
@@ -49,6 +59,58 @@ SAFE_BY_DEFAULT = {"read", "write"}
 RISK_ORDER = {"read": 0, "write": 1, "network": 2, "destructive": 3}
 RISK_LABEL = {"read": "lecture", "write": "écriture",
               "network": "réseau", "destructive": "destructif"}
+
+# Utilitaires dont la portée n'est pas bornée par la commande mais par ses
+# arguments. `Bash(git status:*)` ne peut faire que ce que `git status` fait ;
+# `Bash(head:*)` peut rendre le contenu de n'importe quel fichier du dépôt, et
+# `Bash(echo:*)` en écrire n'importe lequel — `.claude/settings.json` compris,
+# ce qui laisserait l'allowlist s'élargir toute seule.
+#
+# Ces deux ensembles ne remplacent pas le classement par risque de
+# `.claude/hooks/permission_watch.py` : ils s'y ajoutent. `head` reste une
+# lecture pour le système de fichiers ; ce qui se refuse ici, c'est la
+# *largeur du motif*, pas ce que la commande observée a fait.
+#
+# Volontairement conservateurs : mieux vaut un drapeau de trop qu'un motif qui
+# ouvre le dépôt. La liste s'allonge sans risque, elle ne peut que refuser plus.
+FILE_READERS = {
+    "cat", "tac", "nl", "head", "tail", "sed", "awk", "grep", "egrep", "fgrep",
+    "rg", "ag", "ack", "less", "more", "strings", "xxd", "od", "hexdump",
+    "cut", "sort", "uniq", "jq", "yq", "diff", "base64", "xargs",
+}
+FILE_WRITERS = {
+    "echo", "printf", "tee", "sed", "cp", "mv", "dd", "install", "ln",
+    "truncate", "touch", "chmod", "chown",
+}
+
+# Les paramètres d'une revue, réunis pour ne pas les faire circuler un par un.
+Policy = namedtuple("Policy", "allow read_denies threshold classes file_tools")
+
+
+def arbitrary_file_tool(pattern):
+    """La portée de ce motif dépend-elle de ses arguments ? `"read"`, `"write"` ou `None`.
+
+    `sed` figure dans les deux ensembles : il lit, et `sed -i` réécrit. La
+    réponse la plus forte l'emporte — refuser au titre de l'écriture dit la
+    chose la plus grave que le motif autoriserait.
+    """
+    head = pattern.split()[0] if pattern else ""
+    if head in FILE_WRITERS:
+        return "write"
+    if head in FILE_READERS:
+        return "read"
+    return None
+
+
+def file_tool_reason(kind, read_denies):
+    """Pourquoi ce motif exige un drapeau — en nommant ce qu'il contournerait."""
+    if kind == "write":
+        return ("écrit un fichier quelconque, .claude/settings.json compris — "
+                "exige --include-file-tools et --pattern")
+    if read_denies:
+        return (f"lit un fichier quelconque, dont les {len(read_denies)} chemins "
+                "protégés par un deny Read — exige --include-file-tools et --pattern")
+    return ("lit un fichier quelconque — exige --include-file-tools et --pattern")
 
 
 def load_observations(run=None, session=None):
@@ -97,11 +159,25 @@ def aggregate(records):
     return grouped
 
 
-def current_allow():
+def current_rules():
+    """Les blocs `allow` et `deny` du fichier de réglages, tels quels."""
     if not SETTINGS.exists():
-        return []
-    data = json.loads(SETTINGS.read_text(encoding="utf-8"))
-    return (data.get("permissions") or {}).get("allow") or []
+        return [], []
+    permissions = (json.loads(SETTINGS.read_text(encoding="utf-8"))
+                   .get("permissions") or {})
+    return permissions.get("allow") or [], permissions.get("deny") or []
+
+
+def read_denies(deny):
+    """Les règles `deny` posées sur l'outil `Read`.
+
+    Le hook d'observation ne confronte les commandes qu'aux `deny` **Bash** —
+    seuls ceux-là peuvent l'empêcher de s'exécuter. Ces règles-ci n'arrêteront
+    donc jamais une commande Bash : elles servent ici à *nommer* ce qu'un motif
+    trop large rendrait accessible malgré elles.
+    """
+    return [rule for rule in deny
+            if isinstance(rule, str) and rule.startswith("Read(")]
 
 
 def already_covered(pattern, allow):
@@ -116,26 +192,31 @@ def already_covered(pattern, allow):
     return False
 
 
-def eligible(pattern, entry, allow, threshold, classes):
+def eligible(pattern, entry, policy):
     if entry["denied"]:
         return False, "couvert par une règle deny"
-    if already_covered(pattern, allow):
+    if already_covered(pattern, policy.allow):
         return False, "déjà autorisé"
-    if entry["count"] < threshold:
-        return False, f"vu {entry['count']}× (seuil {threshold})"
-    if entry["risk"] not in classes:
+    if entry["count"] < policy.threshold:
+        return False, f"vu {entry['count']}× (seuil {policy.threshold})"
+    if entry["risk"] not in policy.classes:
         return False, f"{RISK_LABEL[entry['risk']]} — exige --include-{entry['risk']}"
+    # Après le rang de risque, et non avant : un `rm` reste refusé au titre du
+    # destructif, qui est l'objection la plus forte.
+    kind = arbitrary_file_tool(pattern)
+    if kind and not policy.file_tools:
+        return False, file_tool_reason(kind, policy.read_denies)
     return True, None
 
 
-def show(grouped, allow, threshold, classes, as_json):
+def show(grouped, policy, as_json):
     if not grouped:
         print("aucune commande n'a demandé de permission depuis la dernière revue")
         return 0
 
     rows = []
     for pattern, entry in grouped.items():
-        ok, why = eligible(pattern, entry, allow, threshold, classes)
+        ok, why = eligible(pattern, entry, policy)
         rows.append((pattern, entry, ok, why))
     rows.sort(key=lambda r: (-r[1]["count"], RISK_ORDER.get(r[1]["risk"], 9), r[0]))
 
@@ -163,20 +244,28 @@ def show(grouped, allow, threshold, classes, as_json):
     return 0
 
 
-def apply(grouped, allow, threshold, classes, wanted, assume_yes):
+def apply(grouped, policy, wanted, assume_yes):
     chosen = []
     for pattern, entry in grouped.items():
         if wanted and pattern not in wanted:
             continue
-        ok, why = eligible(pattern, entry, allow, threshold, classes)
+        ok, why = eligible(pattern, entry, policy)
         if not ok:
             if wanted:
                 print(f"refusé · Bash({pattern}:*) — {why}")
             continue
-        if entry["risk"] in {"network", "destructive"} and pattern not in (wanted or set()):
-            print(f"ignoré · Bash({pattern}:*) — {RISK_LABEL[entry['risk']]}, "
-                  f"à nommer explicitement avec --pattern")
-            continue
+        # Un drapeau `--include-*` ne suffit jamais à lui seul : ce qu'il ouvre
+        # se nomme, motif par motif. Sans cela, `--include-file-tools` lâcherait
+        # d'un coup tout ce que la campagne d'observation a croisé.
+        if pattern not in (wanted or set()):
+            if entry["risk"] in {"network", "destructive"}:
+                print(f"ignoré · Bash({pattern}:*) — {RISK_LABEL[entry['risk']]}, "
+                      f"à nommer explicitement avec --pattern")
+                continue
+            if arbitrary_file_tool(pattern):
+                print(f"ignoré · Bash({pattern}:*) — portée bornée par ses arguments, "
+                      f"à nommer explicitement avec --pattern")
+                continue
         chosen.append((pattern, entry))
 
     if not chosen:
@@ -247,6 +336,10 @@ def main():
                         help="ne traiter que ce motif (répétable)")
     parser.add_argument("--include-network", action="store_true")
     parser.add_argument("--include-destructive", action="store_true")
+    parser.add_argument("--include-file-tools", action="store_true",
+                        help="autoriser les motifs dont la portée dépend de leurs "
+                             "arguments (head, cat, grep, sed, echo, tee…) — "
+                             "à combiner avec --pattern")
     parser.add_argument("--yes", action="store_true", help="ne pas demander confirmation")
     parser.add_argument("--forget", action="store_true",
                         help="effacer les observations et repartir de zéro")
@@ -264,15 +357,20 @@ def main():
     if args.include_destructive:
         classes.add("destructive")
         print("attention : --include-destructive autorise des commandes irréversibles\n")
+    if args.include_file_tools:
+        print("attention : --include-file-tools autorise des motifs qui atteignent "
+              "n'importe quel chemin, y compris ceux qu'un deny Read protège\n")
 
     records = load_observations(args.run, args.session)
     grouped = aggregate(records)
-    allow = current_allow()
+    allow, deny = current_rules()
+    policy = Policy(allow=allow, read_denies=read_denies(deny),
+                    threshold=args.threshold, classes=classes,
+                    file_tools=args.include_file_tools)
 
     if args.apply:
-        return apply(grouped, allow, args.threshold, classes,
-                     set(args.pattern), args.yes)
-    return show(grouped, allow, args.threshold, classes, args.json)
+        return apply(grouped, policy, set(args.pattern), args.yes)
+    return show(grouped, policy, args.json)
 
 
 if __name__ == "__main__":
