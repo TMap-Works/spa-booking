@@ -233,9 +233,26 @@ consignées ici parce que le raisonnement porte au-delà du correctif.
   y bloquerait le jalon sans personne pour le débloquer. La protection ne passe
   donc plus par une question mais par un code de sortie — `pr_gate.py` **refuse
   de merger une PR de périmètre sensible** (`mod:payments`, label `security`,
-  migration Prisma, `infra/terraform`) tant que `SPA_UNATTENDED` est posée dans
-  son environnement, ce que le superviseur fait pour chaque vague qu'il lance.
-  Ces PR restent ouvertes, vertes et relues, et attendent un humain.
+  schéma ou migration Prisma, `infra/terraform`, module `payments`) tant que
+  `SPA_UNATTENDED` est posée dans son environnement, ce que le superviseur fait
+  pour chaque vague qu'il lance. Ces PR restent ouvertes, vertes et relues, et
+  attendent un humain.
+
+Trois détails décident si ce refus tient vraiment, et chacun a été une faille
+avant de devenir une règle :
+
+- **Les labels se lisent sur l'issue refermée, pas sur la PR.** Nos PR ne
+  portent aucun label — `gh pr create` est appelé sans `--label` et
+  `tracking.py` n'étiquette que des issues. Chercher `mod:payments` sur la PR
+  revenait à ne jamais le trouver : le périmètre le plus sensible du projet
+  était le seul que le garde-fou ne voyait pas.
+- **Le refus retire le label `merge-when-green`.** Un `--request-merge`
+  antérieur a pu le poser puis dépasser son délai. Le laisser en place ferait
+  merger la PR par `auto-merge.yml`, qui tourne dans un runner sans
+  `SPA_UNATTENDED` — le refus aurait été purement décoratif.
+- **Ne pas savoir vaut refus.** Si la liste des fichiers ne peut être obtenue,
+  la PR est traitée comme sensible. Un garde-fou qui s'ouvre quand il ne voit
+  plus rien ne protège que les jours où tout va bien.
 
 Le choix d'une variable d'environnement plutôt que d'un drapeau de ligne de
 commande est le cœur du correctif : un garde-fou que l'appelant doit penser à

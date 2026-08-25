@@ -134,10 +134,19 @@ sauf `--yes`) : tout merger · laisser ces PR ouvertes pour relecture · s'arrê
 **Sous `--yes`, la question n'est pas posée et la réponse est « laisser ces PR
 ouvertes ».** C'est le seul choix tenable : une vague lancée par la reprise
 automatique tourne en `claude -p`, où personne ne peut répondre, et merger par
-défaut reviendrait à poser la question pour n'en jamais tenir compte. Cette
-règle n'est pas confiée à l'orchestrateur — `pr_gate.py` refuse lui-même de
-merger une PR sensible tant que `SPA_UNATTENDED` est posée dans son
-environnement, ce que fait le superviseur pour chaque vague qu'il lance.
+défaut reviendrait à poser la question pour n'en jamais tenir compte.
+
+Deux chemins appliquent cette règle, et il faut les distinguer :
+
+- **Sous reprise automatique**, elle ne t'est pas confiée : le superviseur pose
+  `SPA_UNATTENDED` dans l'environnement de chaque vague, et `pr_gate.py` refuse
+  alors de merger une PR sensible — il retire même le label `merge-when-green`
+  s'il était déjà posé, sans quoi auto-merge.yml la mergerait depuis un runner
+  où la variable n'existe pas.
+- **Sous `/milestone --yes` tapé à la main**, cette variable n'existe pas et la
+  barrière ne refusera rien : c'est alors à toi de tenir la règle. Ne passe pas
+  ces PR à `pr_gate.py --request-merge`, laisse-les ouvertes, et dis-le dans le
+  compte rendu de vague.
 
 Laisser une PR ouverte a une conséquence à dire tout de suite : **les issues qui
 en dépendent ne pourront pas démarrer**, puisque leur branche partirait d'un
@@ -244,10 +253,18 @@ un classifieur le retenait, ferait échouer la vague **en silence**.
   passe à la suivante. Le ticket repartira au plan suivant sous « PR déjà
   ouverte ».
 - **`5` (périmètre sensible)** : ce n'est **pas** un échec. La PR est verte et
-  relue, elle attend un humain. Journaliser `blocked` en disant quel périmètre
-  l'a retenue, laisser la PR ouverte, passer à la suivante — et le dire dans le
-  compte rendu de vague, sans quoi personne ne saura qu'il y a là quelque chose
-  à relire.
+  relue, elle attend un humain. Journaliser **`reviewed`** — surtout pas
+  `blocked`, que `milestone_run.py` classe en `ERROR` et compte parmi les
+  tickets en échec — en disant quel périmètre l'a retenue. Laisser la PR
+  ouverte, passer à la suivante, et le porter au compte rendu de vague : sans
+  cela personne ne saura qu'il y a là quelque chose à relire.
+
+  Conséquence à connaître : ces tickets ne se ferment pas, donc ils ne comptent
+  pas dans l'avancement que surveille `--patience`. Un jalon dont il ne resterait
+  que des PR sensibles finirait par être déclaré enlisé, et la reprise
+  automatique se désarmerait. C'est le bon moment pour qu'un humain revienne,
+  mais le diagnostic journalisé nommera l'enlisement — pas l'attente de
+  relecture.
 
 Le gate relit l'état juste avant d'agir, mais **il ne peut pas savoir que la CI
 d'une PR a été validée contre un `develop` plus ancien**. C'est la disjonction
