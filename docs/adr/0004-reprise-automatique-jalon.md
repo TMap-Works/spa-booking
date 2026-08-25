@@ -2,6 +2,7 @@
 
 - **Statut** : Accepté
 - **Date** : 2026-08-24
+- **Mis à jour** : 2026-08-25 — garde-fous d'armement et périmètres sensibles (#111)
 - **Contexte CDC** : §3.1 Méthodologie, §3.4 Jalons clés, §4.12 CI/CD et
   Infrastructure-as-Code
 
@@ -199,35 +200,58 @@ atteindre son seuil.
 
 Enfin, un dossier de travail non approuvé fait échouer les agents en silence en
 mode `-p`, aucune demande de permission ne pouvant y être répondue. Ce contrôle
-existe, mais il fait partie du préflight, qui ne s'exécute qu'au démarrage
-effectif d'un superviseur — **pas à l'armement** : `--arm` inscrit l'intention et
-rend la main avant de l'atteindre.
+fait partie du préflight, qui s'exécute désormais **aussi à l'armement** (#111) :
+un dossier non approuvé est signalé à l'instant où `/milestone` arme le
+dispositif, et non plusieurs heures plus tard, une fois les agents échoués sans
+rien dire.
 
 **Ferme, et c'est le point à peser.** Dans son mode par défaut, le dispositif
 **merge sur `develop` sans relecture humaine**. Il ne relit pas le code : il
-enchaîne les vagues, et toute PR verte est mergée. C'est le prix explicite du
+enchaîne les vagues, et toute PR verte hors périmètre sensible est mergée. C'est
+le prix explicite du
 « sans intervention », et une entorse assumée à la Definition of Done du CDC
 §3.1, qui exige que le code soit revu. La revue automatique de `/ticket` n'est
 pas une approbation : GitHub interdit d'approuver sa propre pull request, les
 constats sont donc publiés en commentaire.
 
-Deux choses doivent être dites sans les enjoliver, parce qu'elles vont plus loin
-que le simple « merge automatique » :
+Deux limites ont été relevées après coup (#111) et traitées. Elles sont
+consignées ici parce que le raisonnement porte au-delà du correctif.
 
-- **L'armement ne demande aucune confirmation.** Le garde-fou interactif
-  (« sans `--no-merge`, chaque PR verte sera mergée sur `develop` sans relecture
-  humaine — confirmer ? ») existe, mais il ne protège que le lancement à la main
-  d'un superviseur. Sur le chemin qu'emprunte `/milestone`, `--arm` rend la main
-  avant lui. Armer la reprise automatique est donc silencieux.
-- **L'arbitrage par vague est neutralisé.** `/milestone` prévoit de demander un
-  arbitrage lorsqu'une vague touche un périmètre sensible — `mod:payments`, le
-  label `security`, une migration Prisma, `infra/terraform` — sauf sous `--yes`.
-  Or le superviseur relaie toujours `--yes` aux vagues qu'il lance. Aucune vague
-  automatique ne posera donc cette question.
+- **L'armement était silencieux.** Le garde-fou interactif (« sans `--no-merge`,
+  chaque PR verte sera mergée sur `develop` sans relecture humaine —
+  confirmer ? ») ne protégeait que le lancement à la main d'un superviseur : sur
+  le chemin qu'emprunte `/milestone`, `--arm` rendait la main avant lui. Le
+  préflight et l'annonce de la politique de merge s'exécutent désormais **dans**
+  la branche `--arm`, avant que l'intention ne soit inscrite. Ce n'est toujours
+  pas une confirmation, et ce ne peut pas l'être : `arm_supervision()` appelle le
+  script en `subprocess.run(capture_output=True)`, sans terminal ni entrée
+  standard. L'opérateur est **informé, non consulté** — un `input()` à cet
+  endroit ferait échouer l'armement au lieu de le protéger.
+- **L'arbitrage par vague reste neutralisé, et c'est désormais délibéré.**
+  `--yes` est relayé à toutes les vagues, parce qu'une vague tourne en
+  `claude -p` où aucune question ne peut recevoir de réponse : poser l'arbitrage
+  y bloquerait le jalon sans personne pour le débloquer. La protection ne passe
+  donc plus par une question mais par un code de sortie — `pr_gate.py` **refuse
+  de merger une PR de périmètre sensible** (`mod:payments`, label `security`,
+  migration Prisma, `infra/terraform`) tant que `SPA_UNATTENDED` est posée dans
+  son environnement, ce que le superviseur fait pour chaque vague qu'il lance.
+  Ces PR restent ouvertes, vertes et relues, et attendent un humain.
 
-Le contournement principal est **d'armer avec `--no-merge`** : les PR restent
-ouvertes, aucune n'est mergée, et elles sont relues au réveil. C'est ce qu'il
-faut faire pour tout jalon touchant un périmètre sensible. Ce n'est pas le seul
-levier — `milestone_run.py shell` permet de poser `pause` ou `stop` sur un run en
-cours, et `milestone_supervise.py --disarm` débranche tout — mais c'est le seul
-qui se décide **avant** que la première PR ne soit mergée.
+Le choix d'une variable d'environnement plutôt que d'un drapeau de ligne de
+commande est le cœur du correctif : un garde-fou que l'appelant doit penser à
+demander est précisément celui qui ne se déclenche pas — c'est le défaut que
+#111 a mis au jour, et le reproduire dans sa correction n'aurait rien réglé.
+Posée une fois par le superviseur, la variable est héritée par tout
+`pr_gate.py` lancé dans la vague, y compris ceux que l'orchestrateur invoque
+sans y penser.
+
+Ce refus ne s'applique qu'aux vagues sans surveillance. `auto-merge.yml`, qui
+rejoue la même barrière côté GitHub, ne le voit pas : y parvenir suppose que le
+label `merge-when-green` ait été posé, et le poser est un geste humain explicite,
+tracé et révocable. L'autorisation reste donc là où l'ADR la met.
+
+**Armer avec `--no-merge`** reste le bon réglage pour un jalon dont *toutes* les
+PR doivent être relues : rien n'est mergé, tout est relu au réveil. Ce n'est pas
+le seul levier — `milestone_run.py shell` permet de poser `pause` ou `stop` sur
+un run en cours, et `milestone_supervise.py --disarm` débranche tout — mais c'est
+le seul qui se décide **avant** que la première PR ne soit mergée.

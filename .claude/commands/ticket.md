@@ -187,7 +187,12 @@ python scripts/pr_gate.py <pr>
 
 Le script attend que **tous** les workflows déclenchés par la PR aient conclu,
 puis rend son verdict par un code de sortie : `0` vert · `1` en attente ou délai
-dépassé · `2` check en échec · `3` PR inapte au merge · `4` erreur d'appel.
+dépassé · `2` check en échec · `3` PR inapte au merge · `4` erreur d'appel ·
+`5` périmètre sensible, PR laissée ouverte pour relecture humaine.
+
+Le `5` ne peut tomber que sous reprise automatique — `pr_gate.py` ne refuse un
+périmètre sensible que si `SPA_UNATTENDED` est posée, ce que fait le superviseur
+de jalon et personne d'autre. Lancée à la main, `/ticket` ne le voit jamais.
 
 Ne comptent comme verts que `SUCCESS`, `SKIPPED` et `NEUTRAL` — `SKIPPED` couvre
 les workflows filtrés par chemin (`terraform.yml` hors `infra/`) et

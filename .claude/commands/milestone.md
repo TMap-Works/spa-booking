@@ -15,8 +15,10 @@ cette commande ne le réimplémente pas, elle l'orchestre.
 `--waves N` : s'arrêter après N vagues · `--plan` : produire le plan et rendre
 la main · `--fresh` : ouvrir un run neuf au lieu de reprendre l'inachevé ·
 `--no-merge` : tout mener jusqu'à la PR sans rien merger · `--yes` : ne pas
-demander d'arbitrage sur les tickets sensibles. `--resume` reste accepté mais
-ne sert plus à rien : **la reprise est le comportement par défaut**.
+demander d'arbitrage sur les tickets sensibles — leurs PR sont alors **laissées
+ouvertes** plutôt que mergées sans que personne les ait lues. `--resume` reste
+accepté mais ne sert plus à rien : **la reprise est le comportement par
+défaut**.
 
 ## Ce que cette commande ne fait pas
 
@@ -24,7 +26,9 @@ ne sert plus à rien : **la reprise est le comportement par défaut**.
   automatiques sur `develop` — posés par la CI, via le label `merge-when-green`.
   Le seul verrou dur est la CI (`pr_gate.py`, rejouée par auto-merge.yml) ; sur
   un plan GitHub Free il n'y a ni protection de branche ni approbation exigée.
-  D'où l'arbitrage demandé à chaque vague qui contient un ticket sensible.
+  D'où l'arbitrage demandé à chaque vague qui contient un ticket sensible — et,
+  quand il ne peut pas être demandé (`--yes`, reprise automatique), le refus de
+  merger ces PR-là, qui restent ouvertes.
 - **Elle ne rattrape pas un backlog mal tenu.** Une issue sans milestone, sans
   label de classement ou sans critère d'acceptation est écartée du plan, pas
   devinée. Le plan dit lesquelles et pourquoi.
@@ -51,9 +55,11 @@ le faire : rouvrir un run repartirait de zéro sur des tickets déjà en PR.
 
 `start` **arme aussi la reprise automatique** : à partir de cet instant, une
 coupure de quota, un plantage ou un redémarrage ne demandent plus rien à
-personne (voir « La reprise automatique », plus bas). Pour un jalon dont les PR
-doivent être relues, ouvrir le run avec `--no-merge` — c'est ce réglage-là qui
-sera rejoué à chaque reprise.
+personne (voir « La reprise automatique », plus bas). Pour un jalon dont **toutes**
+les PR doivent être relues, ouvrir le run avec `--no-merge` — c'est ce
+réglage-là qui sera rejoué à chaque reprise. Les seules PR de périmètre sensible
+n'ont pas besoin de ce réglage : elles restent ouvertes d'office sous reprise
+automatique.
 
 À la reprise, `start` enchaîne tout seul sur `reconcile`, qui confronte le
 journal à l'état réel du dépôt — issues closes, PR ouvertes ou mergées, branches
@@ -124,6 +130,14 @@ Sont **sensibles**, au sens de [/ticket](.claude/commands/ticket.md) : `mod:paym
 le label `security`, une migration Prisma, et `infra/terraform`. Quand une vague
 en contient, demander l'arbitrage **une fois pour la vague** (`AskUserQuestion`,
 sauf `--yes`) : tout merger · laisser ces PR ouvertes pour relecture · s'arrêter.
+
+**Sous `--yes`, la question n'est pas posée et la réponse est « laisser ces PR
+ouvertes ».** C'est le seul choix tenable : une vague lancée par la reprise
+automatique tourne en `claude -p`, où personne ne peut répondre, et merger par
+défaut reviendrait à poser la question pour n'en jamais tenir compte. Cette
+règle n'est pas confiée à l'orchestrateur — `pr_gate.py` refuse lui-même de
+merger une PR sensible tant que `SPA_UNATTENDED` est posée dans son
+environnement, ce que fait le superviseur pour chaque vague qu'il lance.
 
 Laisser une PR ouverte a une conséquence à dire tout de suite : **les issues qui
 en dépendent ne pourront pas démarrer**, puisque leur branche partirait d'un
@@ -229,6 +243,11 @@ un classifieur le retenait, ferait échouer la vague **en silence**.
 - **`2` (échec)** : journaliser `failed` avec la raison, la PR reste ouverte, on
   passe à la suivante. Le ticket repartira au plan suivant sous « PR déjà
   ouverte ».
+- **`5` (périmètre sensible)** : ce n'est **pas** un échec. La PR est verte et
+  relue, elle attend un humain. Journaliser `blocked` en disant quel périmètre
+  l'a retenue, laisser la PR ouverte, passer à la suivante — et le dire dans le
+  compte rendu de vague, sans quoi personne ne saura qu'il y a là quelque chose
+  à relire.
 
 Le gate relit l'état juste avant d'agir, mais **il ne peut pas savoir que la CI
 d'une PR a été validée contre un `develop` plus ancien**. C'est la disjonction
