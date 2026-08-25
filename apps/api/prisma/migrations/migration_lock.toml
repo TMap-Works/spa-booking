@@ -1,0 +1,3 @@
+# Ne pas éditer à la main. Ce fichier verrouille le connecteur de migration :
+# une migration écrite pour PostgreSQL ne se rejoue pas sur un autre moteur.
+provider = "postgresql"
