@@ -29,6 +29,29 @@ jobs:
           tar -xzf gitleaks.tar.gz gitleaks
           ./gitleaks detect --source . --redact --verbose --no-banner
 
+  aws-static-keys:
+    name: Aucune clé AWS statique
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Les workflows s'authentifient auprès d'AWS par OIDC (issue #14,
+      # infra/terraform/modules/oidc) : un jeton signé, valable quelques minutes,
+      # que rien ne stocke. Réintroduire une clé d'accès statique annulerait le
+      # bénéfice sans que personne ne s'en aperçoive — gitleaks ne voit que les
+      # valeurs, pas les références à un secret de dépôt.
+      #
+      # Les motifs sont assemblés par alternation plutôt qu'écrits en toutes
+      # lettres : sinon ce fichier se détecterait lui-même à chaque exécution.
+      - name: Aucune référence à une clé d'accès AWS
+        run: |
+          set -uo pipefail
+          patterns='AWS_(ACCESS_KEY_ID|SECRET_ACCESS_KEY)|aws-(access-key-id|secret-access-key)|secrets\.AWS_'
+          if grep -rnE "$patterns" .github/workflows; then
+            echo "::error::Identifiant AWS statique référencé dans un workflow. Les rôles OIDC passent par des variables de dépôt (vars.AWS_*) — voir infra/terraform/modules/oidc/README.md."
+            exit 1
+          fi
+          echo "Aucune clé AWS statique référencée dans .github/workflows."
+
   dependencies:
     name: Vulnérabilités des dépendances
     runs-on: ubuntu-latest
