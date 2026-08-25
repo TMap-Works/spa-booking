@@ -5,9 +5,11 @@
     python scripts/milestone_run.py start                  # ouvre — ou reprend — ce jalon-là
     python scripts/milestone_run.py start S1 --width 3     # ou le nommer soi-même
     python scripts/milestone_run.py watch                  # tableau de bord continu
+    python scripts/milestone_run.py ticket 19 --follow     # entrer dans un traitement
     python scripts/milestone_run.py event --ticket 19 --phase implementation \
                                           --status running --message "..."
     python scripts/milestone_run.py log --level WARN       # ce qui a mal tourné
+    python scripts/milestone_run.py onerror pause          # un échec retient le run
     python scripts/milestone_run.py gate                   # continuer ? code de sortie
     python scripts/milestone_run.py shell                  # piloter le run à la main
 
@@ -31,8 +33,9 @@ faire : la même commande sert donc au ticket isolé sans le perturber.
 `run.json` porte le plan et n'est écrit que par l'orchestrateur (`start`,
 `replan`). `journal.ndjson` (machine) et `run.log` (humain) sont en **ajout
 seul** : chaque agent y écrit ses propres lignes, une ligne par écriture, ce qui
-rend l'écriture concurrente sûre sans verrou. `control.json` n'est écrit que par
-l'humain, depuis `shell`.
+rend l'écriture concurrente sûre sans verrou — et chaque événement porteur d'un
+ticket est recopié dans `tickets/<N>.log`, le log propre à ce traitement.
+`control.json` n'est écrit que par l'humain, depuis `shell`.
 
 L'état d'un ticket n'est donc stocké nulle part : il se **rejoue** depuis le
 journal. C'est ce qui permet à cinq agents d'écrire en même temps sans qu'aucun
@@ -171,6 +174,34 @@ def now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def iso_seconds(start, end):
+    """Secondes entre deux instants ISO, ou None si l'un des deux est illisible."""
+    try:
+        return (datetime.fromisoformat(end)
+                - datetime.fromisoformat(start)).total_seconds()
+    except (ValueError, TypeError):
+        return None
+
+
+def clock(ts, seconds=True):
+    """L'heure locale d'un instant ISO — HH:MM:SS, ou HH:MM.
+
+    Locale, pas UTC : c'est l'heure qu'on affiche à un humain, à côté de
+    `local_hm` qui fait déjà ce choix pour le quota. Le journal sur disque,
+    lui, reste en UTC.
+    """
+    try:
+        moment = datetime.fromisoformat(ts).astimezone()
+    except (ValueError, TypeError):
+        return ""
+    return moment.strftime("%H:%M:%S" if seconds else "%H:%M")
+
+
+def event_level(event):
+    """Le niveau d'un événement : explicite, déduit du statut, INFO sinon."""
+    return event.get("level") or LEVEL_OF_STATUS.get(event.get("status"), "INFO")
+
+
 def fail(message):
     sys.exit(message)
 
@@ -279,9 +310,9 @@ def log_line(event, short=False):
     `short` ne garde que l'heure : dans le tableau de bord, la date est la même
     pour tout le monde et ne fait que manger la largeur utile.
     """
-    stamp = (event.get("ts") or "").replace("T", " ")[11:19] if short \
+    stamp = clock(event.get("ts")) if short \
         else (event.get("ts") or "").replace("T", " ")[:19]
-    level = event.get("level") or LEVEL_OF_STATUS.get(event.get("status"), "INFO")
+    level = event_level(event)
     who = f"#{event['ticket']}" if event.get("ticket") else "run"
     phase = event.get("phase") or ("orchestration" if not event.get("ticket") else "")
 
@@ -306,18 +337,33 @@ def append_journal(run_id, event):
     une copie de chaque ligne — c'est le chemin stable qu'on laisse ouvert dans
     un éditeur ou sous un `tail -f` pendant tout le run.
     """
-    event.setdefault("level", LEVEL_OF_STATUS.get(event.get("status"), "INFO"))
+    event.setdefault("level", event_level(event))
     payload = json.dumps(event, ensure_ascii=False) + "\n"
     readable = log_line(event) + "\n"
 
     with open(run_dir(run_id) / "journal.ndjson", "a", encoding="utf-8") as handle:
         handle.write(payload)
-    for path in (run_dir(run_id) / "run.log", LATEST_LOG):
+    targets = [run_dir(run_id) / "run.log", LATEST_LOG]
+    # Chaque ticket a aussi son propre fichier : `tail -f tickets/117.log` suit
+    # un seul traitement sans le bruit des agents voisins. Son dossier est le
+    # seul à créer ici — les autres chemins existent dès l'ouverture du run.
+    if event.get("ticket") is not None:
+        per_ticket = ticket_log_path(run_id, event["ticket"])
+        try:
+            per_ticket.parent.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        targets.append(per_ticket)
+    for path in targets:
         try:
             with open(path, "a", encoding="utf-8") as handle:
                 handle.write(readable)
         except OSError:
             pass          # journaliser ne doit jamais interrompre le travail
+
+
+def ticket_log_path(run_id, number):
+    return run_dir(run_id) / "tickets" / f"{number}.log"
 
 
 # --------------------------------------------------------------------------- #
@@ -393,12 +439,33 @@ def replay(run, events, control):
             tickets[number]["status"] = "skipped"
             tickets[number]["note"] = reason or "écarté à la main"
 
-    for number in control.get("retry") or []:
-        if number in tickets and tickets[number]["status"] in BAD:
-            tickets[number]["status"] = "pending"
-            tickets[number]["note"] = "reprise demandée"
+    # `retry` ne se rejoue pas ici : c'est l'événement `reset → pending` que le
+    # shell journalise qui remet le ticket en file, dans l'ordre du journal.
+    # Rejouer la liste par-dessus masquerait un **second** échec pour toujours —
+    # le ticket relancé retomberait, et `replay` le redirait pending à chaque
+    # lecture, gate ouvert, échec invisible. La liste ne sert qu'au `gate`, qui
+    # la porte à l'orchestrateur.
 
     return tickets
+
+
+def fallen_tickets(tickets):
+    """Les tickets tombés, du plus petit numéro au plus grand — la définition
+    unique de « en échec » que gate, status et watch partagent."""
+    return sorted((t for t in tickets.values() if t["status"] in BAD),
+                  key=lambda t: t["number"])
+
+
+def failure_line(ticket):
+    """La ligne d'échec commune à status et watch : marque, statut, phase, cause."""
+    return (f"{MARK.get(ticket['status'], '✖')} #{ticket['number']:<4} "
+            f"{ticket['status']:<8} {(ticket['phase'] or '?'):<15} "
+            f"{ticket['note'] or 'sans détail'}")
+
+
+def brief_failure(ticket):
+    suffix = f", {ticket['phase']}" if ticket["phase"] else ""
+    return f"#{ticket['number']} ({ticket['status']}{suffix})"
 
 
 def wave_state(run, tickets):
@@ -1245,6 +1312,20 @@ def cmd_gate(args):
         print("toutes les vagues sont achevées")
         return NO_RUN
 
+    # La pause sur erreur, quand elle est armée (`onerror pause`) : un ticket
+    # tombé retient le run entier tant qu'un humain n'a pas tranché — `retry N`
+    # pour le relancer, `skip N` pour l'écarter, `onerror continue` pour
+    # désarmer. Sans elle, l'échec s'empile sous les vagues suivantes et ne se
+    # traite qu'en fin de jalon. Après la fin du jalon (`current is None`),
+    # elle n'a plus rien à retenir : l'échec se lit dans le compte rendu.
+    if control.get("pause_on_error") and any(t["status"] in BAD
+                                             for t in tickets.values()):
+        print("pause sur erreur — traiter d'abord : "
+              + ", ".join(brief_failure(t) for t in fallen_tickets(tickets)))
+        print("`milestone_run.py shell` puis `retry N`, `skip N [raison]` ou "
+              "`onerror continue` ; `ticket N` pour entrer dans le détail")
+        return PAUSE
+
     ready = [n for n in current["numbers"] if tickets[n]["status"] == "pending"]
     print(f"vague {current['index']} · {len(ready)} ticket(s) à lancer : "
           + (", ".join(f"#{n}" for n in ready) or "aucun"))
@@ -1273,7 +1354,21 @@ def cmd_status(args):
 
     print(f"run {run_id} · {run['milestone']} · signal {control.get('signal', 'run')}")
     print(f"{len(tickets)} tickets · {summary}")
+    if control.get("pause_on_error"):
+        print(paint("pause sur erreur armée — un ticket tombé retiendra le run "
+                    "au prochain gate", "WARN"))
     print()
+
+    # Les échecs d'abord, en clair : c'est ce qu'on vient chercher quand un run
+    # tourne mal, et ils se noyaient dans la liste des vagues.
+    fallen = fallen_tickets(tickets)
+    if fallen:
+        print(paint(f"⚠ {len(fallen)} ticket(s) en échec — "
+                    f"`milestone_run.py ticket N` pour entrer dans le détail :",
+                    "failed"))
+        for ticket in fallen:
+            print(paint("    " + failure_line(ticket), "failed"))
+        print()
 
     for wave in waves:
         if wave["done"]:
@@ -1291,8 +1386,9 @@ def cmd_status(args):
             if ticket["note"]:
                 extra.append(ticket["note"][:60])
             title = ticket["title"][:44]
-            print(f"    {MARK.get(ticket['status'], '?')} #{number:<4} "
-                  f"{ticket['status']:<9} {title:<44} {' · '.join(extra)}")
+            line = (f"    {MARK.get(ticket['status'], '?')} #{number:<4} "
+                    f"{ticket['status']:<9} {title:<44} {' · '.join(extra)}")
+            print(paint_if_bad(line, ticket["status"]))
         print()
 
     observations = permission_observations(run_id)
@@ -1339,9 +1435,199 @@ def cmd_log(args):
         events = [e for e in events
                   if LEVELS.index(e.get("level") or "INFO") >= floor]
     for event in events:
-        print(log_line(event))
+        level = event.get("level") or LEVEL_OF_STATUS.get(event.get("status"), "INFO")
+        print(paint(log_line(event), level))
     if not events:
         print("journal vide pour ce filtre")
+    return GO
+
+
+# --------------------------------------------------------------------------- #
+# Vue ticket — entrer dans un traitement pendant le run
+# --------------------------------------------------------------------------- #
+#
+# Le tableau de bord montre la vague ; il ne dit pas ce qu'un agent fait de son
+# ticket. Cette vue rejoue le journal d'un seul ticket : les phases traversées
+# avec leur durée, l'échec là où il s'est produit, et les derniers événements.
+# `--follow` la redessine en continu — c'est la loupe qu'on pose sur un ticket
+# dont le temps de phase grimpe sans nouvelle ligne.
+
+def iso_seconds(start, end):
+    try:
+        return (datetime.fromisoformat(end)
+                - datetime.fromisoformat(start)).total_seconds()
+    except (ValueError, TypeError):
+        return None
+
+
+def phase_segments(mine):
+    """Les phases dans l'ordre où le ticket les a vécues, avec leurs bornes.
+
+    Une phase peut revenir — validation, revue, validation de nouveau — et
+    chaque retour est un segment distinct : fusionner les occurrences ferait
+    d'une boucle de correction une phase unique faussement longue. Un retour
+    sur la phase **même nom** après un échec est aussi un segment neuf : c'est
+    un `retry`, et l'échec du premier passage doit rester visible.
+
+    Un événement sans phase ne se jette pas : son statut appartient au segment
+    en cours — `event --status failed` sans `--phase` est accepté, et l'échec
+    doit marquer la phase où il est tombé.
+    """
+    segments = []
+    for event in mine:
+        phase = event.get("phase")
+        if not phase:
+            if segments and event.get("status"):
+                segments[-1]["status"] = event["status"]
+                segments[-1]["end"] = event.get("ts") or segments[-1]["end"]
+            continue
+        retried = (segments and segments[-1]["phase"] == phase
+                   and segments[-1]["status"] in BAD and event.get("status"))
+        if not segments or segments[-1]["phase"] != phase or retried:
+            segments.append({"phase": phase, "start": event.get("ts"),
+                             "end": event.get("ts"), "status": None})
+        segment = segments[-1]
+        segment["end"] = event.get("ts") or segment["end"]
+        if event.get("status"):
+            segment["status"] = event["status"]
+    return segments
+
+
+def ticket_frame(run_id, number, tail, worktrees=None):
+    run = load_run(run_id)
+    control = load_control(run_id)
+    events = read_journal(run_id)
+    tickets = replay(run, events, control)
+    if number not in tickets:
+        fail(f"#{number} n'est pas au plan du run {run_id} — "
+             "`milestone_run.py status` pour la liste")
+    ticket = tickets[number]
+    mine = [e for e in events if e.get("ticket") == number]
+    worktree = (live_worktrees() if worktrees is None else worktrees).get(number)
+    columns = max(60, shutil.get_terminal_size((110, 30)).columns - 1)
+
+    out = [""]
+
+    def emit(text, tint=None):
+        # Tronquer avant de peindre : couper une chaîne déjà peinte emporterait
+        # le code de reset, et une ligne trop longue casse le redessin --follow.
+        out.append(paint(text[:columns], tint) if tint else text[:columns])
+
+    emit(f" #{number}  {ticket['title']}")
+    facts = [ticket["status"], f"vague {ticket['wave']}",
+             f"{ticket['priority']} · {ticket['workstream']}/{ticket['module']}"]
+    if ticket["phase"]:
+        facts.append(f"phase {ticket['phase']}")
+    if ticket["last"]:
+        facts.append(f"dernier événement il y a {human_delta(age(ticket['last']))}")
+    emit(" " + "  ·  ".join(facts),
+         ticket["status"] if ticket["status"] in BAD else None)
+    if ticket["status"] in BAD:
+        emit(f" ⚠ {ticket['status']} — {ticket['note'] or 'sans détail'}"
+             f"  ·  `shell` puis `retry {number}` ou `skip {number}`", "failed")
+    if ticket["pr"]:
+        emit(f" PR       #{ticket['pr']}")
+    if ticket["branch"] or worktree:
+        emit(f" branche  {ticket['branch'] or worktree['branch']}")
+    if worktree:
+        emit(f" worktree {worktree['path']}"
+             + ("  (verrouillé)" if worktree["locked"] else ""))
+    if ticket["resources"]:
+        emit(f" empreinte {', '.join(ticket['resources'])}")
+
+    segments = phase_segments(mine)
+    if segments:
+        emit("")
+        emit(" PHASES")
+        open_ended = ticket["status"] not in TERMINAL and ticket["status"] not in BAD
+        for index, segment in enumerate(segments):
+            last = index + 1 == len(segments)
+            if last and open_ended:
+                # La phase en cours vieillit entre deux événements : la mesurer
+                # au dernier événement la figerait — et un agent muet depuis
+                # 40 minutes semblerait n'avoir que 12 secondes de retard.
+                spent = human_delta(iso_seconds(segment["start"], now()))
+            else:
+                following = segments[index + 1]["start"] if not last else segment["end"]
+                spent = human_delta(iso_seconds(segment["start"], following))
+            badge = f"[{segment['status']}]" if segment["status"] else ""
+            if last and open_ended:
+                badge = (badge + "  ← en cours").lstrip()
+            emit(f"   {clock(segment['start'])}  {segment['phase']:<16} "
+                 f"{spent:>6}  {badge}",
+                 segment["status"] if segment["status"] in BAD else None)
+
+    emit("")
+    shown = mine[-tail:] if tail else mine
+    emit(f" JOURNAL — {len(mine)} événement(s)"
+         + (f", {len(shown)} derniers" if len(shown) < len(mine) else ""))
+    for event in shown:
+        emit("   " + log_line(event, short=True), event_level(event))
+    if not mine:
+        emit("   aucun événement journalisé pour ce ticket")
+
+    log_path = ticket_log_path(run_id, number)
+    emit("")
+    emit(f" log ticket  {log_path}"
+         + ("" if log_path.exists() else "  (pas encore écrit)"), "DEBUG")
+    return "\n".join(out)
+
+
+def cmd_ticket(args):
+    run_id = resolve(args.run)
+    if not args.follow:
+        print(ticket_frame(run_id, args.number, args.tail))
+        return GO
+    if os.name == "nt":
+        os.system("")          # active le traitement des séquences ANSI sous Windows
+    # Le worktree bouge rarement ; le journal, tout le temps. Un `git worktree
+    # list` par redessin serait un fork toutes les 2 s pour une donnée quasi
+    # figée — on la rafraîchit toutes les 30 s.
+    worktrees, refreshed = live_worktrees(), time.monotonic()
+    clear = "\x1b[H\x1b[J" if COLOR else ""
+    try:
+        while True:
+            if time.monotonic() - refreshed > 30:
+                worktrees, refreshed = live_worktrees(), time.monotonic()
+            frame = ticket_frame(run_id, args.number, args.tail,
+                                 worktrees=worktrees)
+            sys.stdout.write(clear + frame + "\n")
+            sys.stdout.flush()
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        sys.stdout.write("\n")
+        return GO
+
+
+def cmd_onerror(args):
+    """Arme ou désarme la pause sur erreur — lue par le `gate` de chaque vague."""
+    run_id = resolve(args.run)
+    control = load_control(run_id)
+
+    if not args.mode:
+        if control.get("pause_on_error"):
+            print("pause sur erreur armée — un ticket tombé retiendra le run au "
+                  "prochain gate")
+        else:
+            print("pause sur erreur désarmée — un échec ne retient pas le run")
+        return GO
+
+    wanted = args.mode == "pause"
+    control["pause_on_error"] = wanted
+    save_control(run_id, control)
+    if wanted:
+        journal_message = ("pause sur erreur armée — un ticket en échec "
+                           "retiendra le run à la fin de sa vague")
+        answer = ("pause sur erreur armée — au premier échec, le run se "
+                  "retiendra à la fin de la vague, `retry N` ou `skip N` pour "
+                  "le relâcher")
+    else:
+        journal_message = "pause sur erreur désarmée"
+        answer = "pause sur erreur désarmée — les échecs ne retiennent plus le run"
+    append_journal(run_id, {"ts": now(), "kind": "run", "actor": args.actor,
+                            "level": "WARN" if wanted else "INFO",
+                            "message": journal_message})
+    print(answer)
     return GO
 
 
@@ -1355,6 +1641,11 @@ def cmd_signal(args, signal):
     print({"pause": "pause demandée — prendra effet à la fin de la vague en cours",
            "stop": "arrêt demandé — aucun nouvel agent ne sera lancé",
            "run": "run relancé"}[signal])
+    # `go` lève le signal, pas la retenue d'erreur : elle se lève en traitant
+    # l'échec. Le dire ici épargne un gate qui « re-refuse » sans explication.
+    if signal == "run" and control.get("pause_on_error"):
+        print("pause sur erreur toujours armée — un ticket encore en échec "
+              "retiendra le gate (`retry N`, `skip N` ou `onerror continue`)")
     return GO
 
 
@@ -1443,6 +1734,7 @@ HELP = """\
   status              état du run, vague par vague
   plan                le plan courant
   log [N] [-n K]      journal, filtré sur le ticket N
+  ticket N [-n K] [-f]  entrer dans le traitement du ticket N — phases, durées, journal
   watch               tableau de bord rafraîchi en continu (Ctrl-C pour sortir)
   tail                défilement brut du log, ligne à ligne
   perms               commandes ayant demandé une permission pendant ce run
@@ -1452,6 +1744,7 @@ HELP = """\
   pause               s'arrêter à la fin de la vague en cours
   stop                s'arrêter sans lancer d'autre agent
   go                  lever la pause et reprendre
+  onerror [pause|continue]  armer/désarmer la pause automatique sur ticket en échec
   skip N [raison]     écarter un ticket du run
   retry N             relancer un ticket en échec
   note N <texte>      annoter un ticket dans le journal
@@ -1510,6 +1803,17 @@ def cmd_shell(args):
                 elif namespace.ticket is None:
                     namespace.tail = 30
                 cmd_log(namespace)
+            elif verb == "ticket":
+                number = as_ticket(rest[0] if rest else None)
+                if number is None:
+                    print("ticket N [-n K] [-f] — N est un numéro d'issue")
+                    continue
+                options = rest[1:]
+                count = (int(options[options.index("-n") + 1])
+                         if "-n" in options else 15)
+                cmd_ticket(argparse.Namespace(
+                    run=run_id, number=number, tail=count,
+                    follow="-f" in options or "--follow" in options, interval=2))
             elif verb == "watch":
                 cmd_watch(namespace)
             elif verb == "tail":
@@ -1527,6 +1831,13 @@ def cmd_shell(args):
                 cmd_signal(namespace, verb)
             elif verb == "go":
                 cmd_signal(namespace, "run")
+            elif verb == "onerror":
+                mode = rest[0].lower() if rest else None
+                if mode not in (None, "pause", "continue"):
+                    print("onerror [pause|continue]")
+                    continue
+                cmd_onerror(argparse.Namespace(run=run_id, mode=mode,
+                                               actor="humain"))
             elif verb == "skip":
                 # Valider avant d'écrire : `control.json` est relu par `replay` à
                 # chaque appel, et un jeton non numérique y ferait planter status,
@@ -1638,6 +1949,26 @@ def paint(text, key):
     return f"\x1b[{code}m{text}\x1b[0m" if COLOR and code else text
 
 
+def paint_if_bad(text, status):
+    return paint(text, status) if status in BAD else text
+
+
+def signal_event(events, signal):
+    """Le dernier événement qui a posé ce signal — pour dire qui, et quand."""
+    for event in reversed(events):
+        if event.get("kind") == "run" and event.get("status") == signal:
+            return event
+    return None
+
+
+def posed_by(event, participle):
+    if event is None:
+        return f" {participle}"
+    stamp = clock(event.get("ts"), seconds=False)
+    actor = event.get("actor") or "humain"
+    return f" {participle} par {actor}" + (f" à {stamp}" if stamp else "")
+
+
 def human_delta(seconds):
     if seconds is None:
         return "—"
@@ -1689,6 +2020,22 @@ def dashboard(run_id, lines):
                f"{len(active)} agent(s) au travail"
                + (f"  ·  {paint(str(len(failed)) + ' en échec', 'failed')}" if failed else ""))
 
+    # Un signal posé à la main mérite mieux qu'un mot dans l'en-tête : la
+    # bannière dit qui l'a posé, quand, et ce que le run va faire de la vague
+    # en cours — c'est ce qu'on vient vérifier en ouvrant le tableau de bord.
+    if signal == "pause":
+        banner = (" ⏸  PAUSE" + posed_by(signal_event(events, "pause"), "demandée")
+                  + "  ·  la vague en cours se termine, aucune nouvelle ne sera "
+                    "lancée  ·  `shell` puis `go` pour reprendre")
+        out.append(paint(banner[:columns], "WARN"))
+    elif signal == "stop":
+        banner = (" ⏹  ARRÊT" + posed_by(signal_event(events, "stop"), "demandé")
+                  + "  ·  aucun nouvel agent ne sera lancé")
+        out.append(paint(banner[:columns], "failed"))
+    if control.get("pause_on_error"):
+        out.append(paint(" ⚠  pause sur erreur armée — un ticket tombé retiendra le "
+                         "run au prochain gate"[:columns], "WARN"))
+
     hold = quota_hold(run_id)
     if hold:
         left = human_delta(float(hold["until"]) - time.time())
@@ -1712,16 +2059,16 @@ def dashboard(run_id, lines):
         out.append("")
 
     if failed:
-        out.append(" À REPRENDRE")
-        for ticket in failed:
-            out.append(paint(f"   ✖ #{ticket['number']:<4} {ticket['note'] or ''}"[:columns],
-                             "failed"))
+        out.append(paint(" EN ÉCHEC — `shell` puis `retry N` ou `skip N` · "
+                         "`ticket N` pour le détail", "failed"))
+        for ticket in sorted(failed, key=lambda t: t["number"]):
+            out.append(paint(("   " + failure_line(ticket))[:columns], "failed"))
         out.append("")
 
     out.append(" JOURNAL")
     for event in events[-lines:]:
-        level = event.get("level") or "INFO"
-        out.append("   " + paint(log_line(event, short=True)[:columns - 4], level))
+        out.append("   " + paint(log_line(event, short=True)[:columns - 4],
+                                 event_level(event)))
 
     out.append("")
     out.append(paint(" milestone_run.py shell pour agir  ·  Ctrl-C pour sortir", "DEBUG"))
@@ -1745,10 +2092,11 @@ def cmd_watch(args):
 
 def cmd_path(args):
     run_id = resolve(args.run)
-    print(f"log courant  {LATEST_LOG}")
-    print(f"log du run   {run_dir(run_id) / 'run.log'}")
-    print(f"journal      {run_dir(run_id) / 'journal.ndjson'}")
-    print(f"plan         {run_dir(run_id) / 'run.json'}")
+    print(f"log courant     {LATEST_LOG}")
+    print(f"log du run      {run_dir(run_id) / 'run.log'}")
+    print(f"logs par ticket {run_dir(run_id) / 'tickets' / '<N>.log'}")
+    print(f"journal         {run_dir(run_id) / 'journal.ndjson'}")
+    print(f"plan            {run_dir(run_id) / 'run.json'}")
     return GO
 
 
@@ -1845,6 +2193,24 @@ def main():
     watcher.add_argument("--lines", type=int, default=14,
                          help="lignes de journal affichées sous l'état")
 
+    entrant = sub.add_parser("ticket",
+                             help="entrer dans le traitement d'un ticket — "
+                                  "phases, durées, journal, worktree")
+    entrant.add_argument("number", type=int, metavar="N")
+    entrant.add_argument("--run")
+    entrant.add_argument("-n", "--tail", type=int, default=15,
+                         help="événements affichés (0 = tous)")
+    entrant.add_argument("-f", "--follow", action="store_true",
+                         help="redessiner en continu, comme watch")
+    entrant.add_argument("--interval", type=float, default=2.0)
+
+    onerror = sub.add_parser("onerror",
+                             help="pause automatique quand un ticket échoue")
+    onerror.add_argument("mode", nargs="?", choices=["pause", "continue"],
+                         help="sans argument : l'état courant")
+    onerror.add_argument("--run")
+    onerror.add_argument("--actor", default="humain")
+
     sub.add_parser("path", help="où se trouvent le log et le journal").add_argument("--run")
 
     for name in ("pause", "stop"):
@@ -1866,6 +2232,7 @@ def main():
         "reconcile": cmd_reconcile, "quota": cmd_quota,
         "progress": cmd_progress, "next": cmd_next,
         "watch": cmd_watch, "path": cmd_path,
+        "ticket": cmd_ticket, "onerror": cmd_onerror,
         "pause": lambda a: cmd_signal(a, "pause"),
         "stop": lambda a: cmd_signal(a, "stop"),
     }

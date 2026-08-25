@@ -21,6 +21,9 @@ quand il n'y a pas de clavier, sous peine de bloquer la reprise automatique.
 
 Aucune dépendance : `unittest` de la bibliothèque standard.
 """
+import argparse
+import contextlib
+import io
 import json
 import subprocess
 import sys
@@ -373,6 +376,213 @@ class PreAutorisationFautive(unittest.TestCase):
         ouvert sans veille que pas ouvert du tout."""
         with mock.patch.dict(sys.modules, {"milestone_supervise": None}):
             self.assertIsNone(run_mod.check_merge_sensitive("nimportequoi"))
+
+
+def plan_issue(number, resources=("scripts/x",)):
+    return {"number": number, "title": f"issue {number}", "priority": "P1",
+            "workstream": "devops", "module": "infra",
+            "resources": list(resources)}
+
+
+def write_run(tmp, journal=(), control=None):
+    """Un run complet sur disque — deux vagues, trois tickets."""
+    directory = Path(tmp) / "r1"
+    directory.mkdir()
+    run = {"id": "r1", "milestone": "S1", "created": "2026-08-01T00:00:00+00:00",
+           "width": 2, "plan": {"waves": [
+               {"index": 1, "issues": [plan_issue(19), plan_issue(20)]},
+               {"index": 2, "issues": [plan_issue(21)]}]}}
+    (directory / "run.json").write_text(json.dumps(run), encoding="utf-8")
+    if control is not None:
+        (directory / "control.json").write_text(json.dumps(control),
+                                                encoding="utf-8")
+    with open(directory / "journal.ndjson", "w", encoding="utf-8") as handle:
+        for event in journal:
+            handle.write(json.dumps(event) + "\n")
+    return directory
+
+
+class LogParTicket(unittest.TestCase):
+    """Chaque traitement a son propre fichier — `tail -f tickets/19.log` suit un
+    seul agent sans le bruit des voisins. Avant, tout se mêlait dans run.log."""
+
+    def append(self, event):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"):
+                (Path(tmp) / "r1").mkdir()
+                run_mod.append_journal("r1", event)
+                per_ticket = Path(tmp) / "r1" / "tickets"
+                return {p.name: p.read_text(encoding="utf-8")
+                        for p in per_ticket.glob("*.log")} if per_ticket.exists() else {}
+
+    def test_un_evenement_de_ticket_alimente_son_propre_log(self):
+        found = self.append({"ts": "2026-08-25T10:00:00+00:00", "kind": "ticket",
+                             "ticket": 19, "phase": "ci", "status": "ci_green",
+                             "message": "pr_gate vert"})
+        self.assertIn("19.log", found)
+        self.assertIn("pr_gate vert", found["19.log"])
+
+    def test_un_evenement_de_run_n_ecrit_aucun_log_de_ticket(self):
+        self.assertEqual(self.append({"ts": "2026-08-25T10:00:00+00:00",
+                                      "kind": "run", "status": "resumed",
+                                      "message": "reprise"}), {})
+
+
+class PauseSurErreur(unittest.TestCase):
+    """`onerror pause` armée, un ticket tombé retient le run entier au gate —
+    c'est ce qui fait traiter l'erreur avant la vague suivante au lieu de
+    l'empiler dessus."""
+
+    FAILED = {"ts": "2026-08-25T10:00:00+00:00", "kind": "ticket", "ticket": 19,
+              "phase": "validation", "status": "failed", "message": "verify rouge"}
+    # Ce que le shell journalise quand on tape `retry 19` — c'est l'événement,
+    # pas la liste `control["retry"]`, qui remet le ticket en file.
+    RETRIED = {"ts": "2026-08-25T11:00:00+00:00", "kind": "ticket", "ticket": 19,
+               "status": "pending", "reset": True, "actor": "humain",
+               "message": "remis en file à la main"}
+
+    def gate(self, journal, control):
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, journal=journal, control=control)
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 contextlib.redirect_stdout(output):
+                code = run_mod.cmd_gate(argparse.Namespace(run="r1"))
+            return code, output.getvalue()
+
+    def test_armee_un_echec_retient_le_run(self):
+        code, output = self.gate([self.FAILED],
+                                 {"signal": "run", "pause_on_error": True})
+        self.assertEqual(code, run_mod.PAUSE)
+        self.assertIn("#19", output)
+        self.assertIn("pause sur erreur", output)
+
+    def test_desarmee_un_echec_laisse_passer(self):
+        code, _ = self.gate([self.FAILED], {"signal": "run"})
+        self.assertEqual(code, run_mod.GO)
+
+    def test_armee_sans_echec_laisse_passer(self):
+        code, _ = self.gate([], {"signal": "run", "pause_on_error": True})
+        self.assertEqual(code, run_mod.GO)
+
+    def test_retry_relache_la_retenue(self):
+        """La retenue existe pour qu'un humain tranche : `retry` est ce
+        tranchement, le gate doit alors rendre la main."""
+        code, _ = self.gate([self.FAILED, self.RETRIED],
+                            {"signal": "run", "pause_on_error": True,
+                             "retry": [19]})
+        self.assertEqual(code, run_mod.GO)
+
+    def test_un_second_echec_apres_retry_retient_de_nouveau(self):
+        """`control["retry"]` ne se rejoue pas par-dessus le journal : un
+        ticket relancé qui retombe doit se relire `failed`, pas `pending` —
+        sinon la boucle de relance est infinie et l'échec invisible."""
+        again = dict(self.FAILED, ts="2026-08-25T11:30:00+00:00",
+                     message="verify rouge, seconde fois")
+        code, output = self.gate([self.FAILED, self.RETRIED, again],
+                                 {"signal": "run", "pause_on_error": True,
+                                  "retry": [19]})
+        self.assertEqual(code, run_mod.PAUSE)
+        self.assertIn("#19", output)
+
+    def test_apres_la_derniere_vague_l_echec_ne_retient_plus(self):
+        """Jalon déroulé, un ticket laissé en échec : le gate doit dire
+        « toutes les vagues sont achevées » (NO_RUN), pas retenir pour
+        toujours un run qui n'a plus rien à lancer."""
+        done = [{"ts": f"2026-08-25T12:0{i}:00+00:00", "kind": "ticket",
+                 "ticket": n, "phase": "merge", "status": "merged",
+                 "message": "mergée"} for i, n in enumerate((20, 21))]
+        code, output = self.gate([self.FAILED] + done,
+                                 {"signal": "run", "pause_on_error": True})
+        self.assertEqual(code, run_mod.NO_RUN)
+        self.assertIn("achevées", output)
+
+
+class SegmentsDePhases(unittest.TestCase):
+    """La vue `ticket N` rejoue les phases dans l'ordre vécu, retours compris."""
+
+    def test_un_retour_de_phase_ouvre_un_segment_distinct(self):
+        events = [
+            {"ts": "2026-08-25T10:00:00+00:00", "phase": "validation"},
+            {"ts": "2026-08-25T10:05:00+00:00", "phase": "revue"},
+            {"ts": "2026-08-25T10:09:00+00:00", "phase": "validation"},
+        ]
+        segments = run_mod.phase_segments(events)
+        self.assertEqual([s["phase"] for s in segments],
+                         ["validation", "revue", "validation"])
+
+    def test_le_statut_du_segment_est_le_dernier_journalise(self):
+        events = [
+            {"ts": "2026-08-25T10:00:00+00:00", "phase": "implementation",
+             "status": "running"},
+            {"ts": "2026-08-25T10:07:00+00:00", "phase": "implementation",
+             "status": "blocked"},
+        ]
+        self.assertEqual(run_mod.phase_segments(events)[0]["status"], "blocked")
+
+    def test_un_retour_apres_echec_rouvre_la_meme_phase(self):
+        """Un retry rejoue la phase où le ticket est tombé : l'échec du premier
+        passage doit rester un segment visible, pas être avalé par le second."""
+        events = [
+            {"ts": "2026-08-25T10:00:00+00:00", "phase": "implementation",
+             "status": "running"},
+            {"ts": "2026-08-25T10:20:00+00:00", "phase": "implementation",
+             "status": "failed"},
+            {"ts": "2026-08-25T11:30:00+00:00", "phase": "implementation",
+             "status": "running"},
+        ]
+        segments = run_mod.phase_segments(events)
+        self.assertEqual([s["status"] for s in segments], ["failed", "running"])
+
+    def test_un_statut_sans_phase_marque_le_segment_courant(self):
+        """`event --status failed` sans `--phase` est accepté : l'échec doit
+        marquer la phase en cours, pas disparaître de la table."""
+        events = [
+            {"ts": "2026-08-25T10:00:00+00:00", "phase": "validation",
+             "status": "running"},
+            {"ts": "2026-08-25T10:10:00+00:00", "status": "failed"},
+        ]
+        self.assertEqual(run_mod.phase_segments(events)[0]["status"], "failed")
+
+    def test_un_ticket_hors_plan_est_refuse(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp)
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)):
+                with self.assertRaises(SystemExit):
+                    run_mod.ticket_frame("r1", 999, 15)
+
+    def test_la_phase_en_cours_se_mesure_a_maintenant(self):
+        """Un agent muet depuis 40 minutes doit afficher 40 minutes, pas la
+        durée figée au dernier événement — c'est le signal que la vue existe
+        pour montrer."""
+        journal = [{"ts": "2026-08-25T10:00:00+00:00", "kind": "ticket",
+                    "ticket": 19, "phase": "implementation",
+                    "status": "running", "message": "démarré"}]
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, journal=journal)
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "live_worktrees", return_value={}):
+                frame = run_mod.ticket_frame("r1", 19, 15)
+        self.assertIn("en cours", frame)
+        self.assertNotIn("    0s  ", frame)
+
+    def test_la_vue_montre_phases_et_echec(self):
+        journal = [
+            {"ts": "2026-08-25T10:00:00+00:00", "kind": "ticket", "ticket": 19,
+             "phase": "implementation", "status": "running", "message": "démarré"},
+            {"ts": "2026-08-25T10:20:00+00:00", "kind": "ticket", "ticket": 19,
+             "phase": "validation", "status": "failed", "message": "verify rouge"},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, journal=journal)
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "live_worktrees", return_value={}):
+                frame = run_mod.ticket_frame("r1", 19, 15)
+        self.assertIn("implementation", frame)
+        self.assertIn("failed", frame)
+        self.assertIn("verify rouge", frame)
+        self.assertIn("tickets", frame)          # le chemin du log par ticket
 
 
 if __name__ == "__main__":
