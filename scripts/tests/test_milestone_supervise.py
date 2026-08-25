@@ -19,6 +19,7 @@ mode de défaillance que #138 décrit.
 Aucune dépendance : `unittest` de la bibliothèque standard, comme
 `test_pr_gate.py`.
 """
+import argparse
 import json
 import os
 import subprocess
@@ -222,6 +223,198 @@ class CurrentRunMilestone(unittest.TestCase):
         (self.run / "run.json").write_text("{}", encoding="utf-8")
         with mock.patch.object(sup, "current_run_dir", return_value=self.run):
             self.assertIsNone(sup.current_run_milestone())
+
+
+class ParseScopes(unittest.TestCase):
+    """`--merge-sensitive` — l'autorisation donnée à l'avance, validée à l'armement.
+
+    C'est ici, et seulement ici, qu'un humain est encore devant le terminal :
+    une faute de frappe qui passerait serait ensuite muette et inerte dans
+    `pr_gate.py` — elle n'ouvrirait rien, et personne ne saurait pourquoi la PR
+    est restée ouverte.
+    """
+
+    def test_valeur_absente_n_autorise_rien(self):
+        self.assertEqual(sup.parse_scopes(""), (set(), []))
+        self.assertEqual(sup.parse_scopes(None), (set(), []))
+
+    def test_cles_connues(self):
+        scopes, unknown = sup.parse_scopes("infra/terraform,prisma")
+        self.assertEqual(scopes, {"infra/terraform", "prisma"})
+        self.assertEqual(unknown, [])
+
+    def test_espaces_et_casse_tolerees(self):
+        scopes, unknown = sup.parse_scopes(" INFRA/Terraform ,  PRISMA ")
+        self.assertEqual(scopes, {"infra/terraform", "prisma"})
+        self.assertEqual(unknown, [])
+
+    def test_all_prend_tout(self):
+        scopes, unknown = sup.parse_scopes(sup.ALL_SCOPES)
+        self.assertEqual(scopes, set(sup.SCOPE_KEYS))
+        self.assertEqual(unknown, [])
+
+    def test_cle_inconnue_est_rendue_et_n_ouvre_rien(self):
+        scopes, unknown = sup.parse_scopes("terraform")
+        self.assertEqual(scopes, set())
+        self.assertEqual(unknown, ["terraform"])
+
+    def test_le_bon_grain_passe_et_l_ivraie_est_nommee(self):
+        scopes, unknown = sup.parse_scopes("infra/terraform,paiements")
+        self.assertEqual(scopes, {"infra/terraform"})
+        self.assertEqual(unknown, ["paiements"])
+
+    def test_les_cles_sont_celles_de_la_barriere(self):
+        """Recopier la liste ferait diverger l'armement de ce que refuse la
+        barrière — et c'est le message que l'opérateur ne peut pas vérifier."""
+        for key in ("mod:payments", "security", "infra/terraform",
+                    "apps/api/src/modules/payments", "prisma"):
+            with self.subTest(cle=key):
+                self.assertIn(key, sup.SCOPE_KEYS)
+
+
+class IntentPersistence(unittest.TestCase):
+    """Le réglage survit à la reprise — sinon il ne sert qu'au premier leg.
+
+    Un superviseur ressuscité par la tâche planifiée n'a personne à qui
+    redemander l'autorisation : sans rejeu, un run armé cesserait de merger au
+    premier redémarrage, silencieusement.
+    """
+
+    def intent(self, **fields):
+        base = {"milestone": "S1 — Fondations", "width": 3, "waves_per_leg": 1,
+                "no_merge": False, "merge_sensitive": [], "claude": "claude"}
+        base.update(fields)
+        return base
+
+    def test_les_perimetres_sont_rejoues_dans_la_ligne_de_commande(self):
+        argv = sup.intent_argv(
+            self.intent(merge_sensitive=["infra/terraform", "prisma"]))
+        self.assertIn("--merge-sensitive", argv)
+        self.assertEqual(argv[argv.index("--merge-sensitive") + 1],
+                         "infra/terraform,prisma")
+
+    def test_sans_perimetre_aucun_drapeau(self):
+        self.assertNotIn("--merge-sensitive", sup.intent_argv(self.intent()))
+
+    def test_intention_ancienne_sans_le_champ(self):
+        """Un `supervisor.json` écrit avant #156 n'a pas le champ : il ne doit
+        ni lever, ni se mettre à autoriser quoi que ce soit."""
+        old = self.intent()
+        del old["merge_sensitive"]
+        self.assertNotIn("--merge-sensitive", sup.intent_argv(old))
+
+    def test_l_aller_retour_par_le_disque_conserve_le_reglage(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        args = argparse.Namespace(
+            milestone="S1 — Fondations", width=3, waves_per_leg=1,
+            no_merge=False, merge_sensitive={"prisma", "infra/terraform"},
+            permission_mode="acceptEdits", model=None, margin=90, patience=2,
+            max_legs=40, claude="claude")
+        with mock.patch.object(sup, "INTENT", Path(tmp.name) / "supervisor.json"):
+            sup.save_intent(args)
+            reloaded = sup.load_intent()
+        self.assertEqual(reloaded["merge_sensitive"],
+                         ["infra/terraform", "prisma"])
+        argv = sup.intent_argv(reloaded)
+        self.assertEqual(argv[argv.index("--merge-sensitive") + 1],
+                         "infra/terraform,prisma")
+
+
+class DescribeScopes(unittest.TestCase):
+    """Ce que `--state` doit dire : les périmètres, nommés — jamais un décompte.
+
+    « Qui a autorisé quoi, et quand » ne se répond pas avec « 2 périmètres ».
+    """
+
+    def test_aucun_perimetre(self):
+        self.assertIn("aucun", sup.describe_scopes({"merge_sensitive": []}))
+
+    def test_les_perimetres_sont_nommes(self):
+        described = sup.describe_scopes(
+            {"merge_sensitive": ["infra/terraform", "prisma"]})
+        self.assertIn("infra/terraform", described)
+        self.assertIn("prisma", described)
+
+    def test_no_merge_rend_la_question_sans_objet(self):
+        self.assertIn("sans objet", sup.describe_scopes(
+            {"no_merge": True, "merge_sensitive": ["prisma"]}))
+
+    def test_aucune_intention(self):
+        self.assertIn("aucun", sup.describe_scopes(None))
+
+
+class AnnounceMergePolicy(unittest.TestCase):
+    """La bannière d'armement — la seule trace qu'un humain ait dit oui.
+
+    Elle est lue à l'instant où l'opérateur cesse de regarder : c'est le message
+    qu'il ne peut plus vérifier, et celui auquel on demandera plus tard « qui a
+    autorisé quoi, et quand ».
+    """
+
+    def banner(self, **fields):
+        args = argparse.Namespace(no_merge=False, merge_sensitive=set())
+        for key, value in fields.items():
+            setattr(args, key, value)
+        lines = []
+        with mock.patch.object(sup, "say",
+                               lambda message, level="INFO": lines.append(
+                                   (level, message))):
+            sup.announce_merge_policy(args)
+        return lines
+
+    def warnings(self, **fields):
+        return [message for level, message in self.banner(**fields)
+                if level == "WARN"]
+
+    def test_les_perimetres_autorises_sont_nommes_en_warn(self):
+        warned = " | ".join(self.warnings(
+            merge_sensitive={"infra/terraform", "prisma"}))
+        self.assertIn("infra/terraform", warned)
+        self.assertIn("prisma", warned)
+
+    def test_ce_qui_reste_sous_relecture_est_nomme_aussi(self):
+        """Dire ce qui est ouvert sans dire ce qui reste fermé laisse
+        l'opérateur deviner la moitié de la réponse."""
+        warned = " | ".join(self.warnings(merge_sensitive={"infra/terraform"}))
+        self.assertIn("mod:payments", warned)
+
+    def test_sans_pre_autorisation_rien_n_est_annonce_comme_ouvert(self):
+        warned = " | ".join(self.warnings())
+        self.assertNotIn("SERONT mergés", warned)
+        for key in sup.SCOPE_KEYS:
+            with self.subTest(cle=key):
+                self.assertIn(key, warned)
+
+    def test_no_merge_n_annonce_aucune_autorisation(self):
+        self.assertEqual(self.warnings(no_merge=True), [])
+
+
+class MergeSensitiveCommandLine(unittest.TestCase):
+    """Le parcours complet, par la ligne de commande — ce que tape l'opérateur."""
+
+    def supervise(self, *argv):
+        return subprocess.run(
+            [sys.executable, str(sup.ROOT / "scripts" / "milestone_supervise.py")]
+            + list(argv), capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=60)
+
+    def test_cle_inconnue_refusee_a_l_armement(self):
+        proc = self.supervise("--merge-sensitive", "terraform", "--state")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("périmètre inconnu", proc.stderr)
+
+    def test_contradiction_avec_no_merge_refusee(self):
+        """Deux consignes qui s'opposent : en appliquer une en silence, c'est
+        choisir à la place de l'opérateur sur le seul réglage qu'il ait posé."""
+        proc = self.supervise("--merge-sensitive", "prisma", "--no-merge",
+                              "--state")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("contredisent", proc.stderr)
+
+    def test_cle_connue_acceptee(self):
+        proc = self.supervise("--merge-sensitive", "infra/terraform", "--state")
+        self.assertEqual(proc.returncode, 0)
 
 
 if __name__ == "__main__":
