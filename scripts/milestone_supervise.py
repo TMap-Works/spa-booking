@@ -93,7 +93,9 @@ for _stream in (sys.stdout, sys.stderr):
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from pr_gate import SENSITIVE_SCOPES
-except ImportError:
+except Exception:  # noqa: BLE001 — un pr_gate.py à demi écrit ne doit pas
+    # emporter avec lui `--state`, `--disarm` et le réveil de la veille : ce
+    # sont précisément les commandes qui servent à reprendre la main.
     SENSITIVE_SCOPES = "voir SENSITIVE_LABELS / SENSITIVE_PREFIXES dans pr_gate.py"
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -633,10 +635,17 @@ def preflight(args):
     if shutil.which("gh") is None:
         problems.append("« gh » introuvable — le plan ne peut pas être calculé")
     else:
-        proc = subprocess.run(["gh", "auth", "status"], capture_output=True,
-                              text=True, encoding="utf-8", errors="replace",
-                              timeout=30)
-        if proc.returncode != 0:
+        # Le délai est indispensable — ce contrôle est sur le chemin critique de
+        # `/milestone start` — mais il lève, et l'exception tuerait le
+        # superviseur que la veille relancerait pour qu'il remeure pareil.
+        try:
+            proc = subprocess.run(["gh", "auth", "status"], capture_output=True,
+                                  text=True, encoding="utf-8",
+                                  errors="replace", timeout=30)
+            failed = proc.returncode != 0
+        except subprocess.SubprocessError:
+            failed = True
+        if failed:
             problems.append("`gh auth status` en échec — session GitHub expirée")
     if not (ROOT / ".git").exists():
         problems.append(f"{ROOT} n'est pas un dépôt git")
@@ -1059,6 +1068,14 @@ def main():
             return 2
         announce_merge_policy(args)
         save_intent(args)
+        # `--no-watchdog` était accepté puis ignoré sur ce chemin : l'intention
+        # était inscrite et la veille armée quand même. Seul `arm_supervision()`
+        # filtrait, côté appelant — un garde-fou que l'appelant doit penser à
+        # demander, c'est-à-dire celui qui ne se déclenche pas.
+        if args.no_watchdog:
+            say("veille non armée (--no-watchdog) : la reprise après une "
+                "coupure devra être relancée à la main", "WARN")
+            return 0
         return 0 if arm_watchdog(args.every) else 2
 
     # Deux superviseurs sur le même run se marcheraient dessus : deux vagues

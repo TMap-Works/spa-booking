@@ -34,9 +34,11 @@ PR n'en portent aucun (`gh pr create` est appelé sans `--label`, et
 l'API paginée des fichiers — `--json files` s'arrête à une centaine d'entrées et
 laisserait passer le fichier sensible d'une grosse PR.
 
-Le refus **retire aussi le label `merge-when-green`** s'il est posé : sans cela
-il serait décoratif, auto-merge.yml tournant dans un runner où la variable
-d'absence de surveillance n'existe pas.
+Le refus **ne retire pas** le label `merge-when-green`. Poser ce label est un
+geste humain explicite, et c'est l'autorisation que reconnaît auto-merge.yml : la
+barrière refuse de merger *elle-même* une PR sensible, elle ne révoque pas la
+décision de quelqu'un d'autre. Elle ne peut d'ailleurs pas l'avoir posé sur une
+telle PR, le refus étant évalué avant la pose.
 
 Codes de sortie — 0 vert · 1 en attente ou délai dépassé · 2 check en échec ·
 3 PR inapte au merge (brouillon, conflit, mauvaise base) · 4 erreur d'appel ·
@@ -86,12 +88,19 @@ SENSITIVE_PREFIXES = ("infra/terraform/", "apps/api/src/modules/payments/")
 # Le schéma autant que les migrations : changer `schema.prisma` porte le même
 # risque, et la migration n'est pas toujours commitée dans la même PR.
 PRISMA = re.compile(r"(^|/)prisma/(migrations/|schema\.prisma$)")
-CLOSES = re.compile(r"\b(?:closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
+# Les neuf mots-clés que GitHub reconnaît. N'en lire que trois laissait « Fixed
+# #42 » — pourtant fermant — sans aucune lecture de labels, donc sans garde-fou.
+CLOSES = re.compile(
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)", re.IGNORECASE)
 
-# Ce que l'armement annonce à l'opérateur — défini ici, avec les règles, pour
-# que l'annonce ne puisse pas décrire autre chose que ce que le code applique.
-SENSITIVE_SCOPES = ("mod:payments, security, schéma ou migration Prisma, "
-                    "infra/terraform, module payments")
+# Ce que l'armement annonce à l'opérateur, **dérivé** des règles ci-dessus et non
+# recopié : une liste écrite à la main finit par décrire autre chose que ce que
+# la barrière refuse, et c'est le message que l'opérateur ne peut pas vérifier —
+# il est lu à l'instant où il cesse de regarder.
+SENSITIVE_SCOPES = ", ".join(
+    ["label " + name for name in sorted(SENSITIVE_LABELS)]
+    + [prefix.rstrip("/") for prefix in SENSITIVE_PREFIXES]
+    + ["schéma ou migration Prisma"])
 
 # Posé par le superviseur dans l'environnement de `claude -p`. Le lire dans
 # l'environnement plutôt que d'attendre un drapeau est délibéré : tout
@@ -206,8 +215,11 @@ def changed_paths(number):
     grosse PR y passait inaperçu. La liste n'est demandée qu'au moment de
     décider, et non à chaque sondage de la CI.
     """
+    # `per_page=100` plutôt que les 30 par défaut : trois fois moins d'allers-
+    # retours, donc trois fois moins de chances d'atteindre le délai — qui vaut
+    # refus et bloquerait une grosse PR pourtant anodine.
     proc = run(["gh", "api", "--paginate",
-                "repos/{}/pulls/{}/files".format(REPO, number),
+                "repos/{}/pulls/{}/files?per_page=100".format(REPO, number),
                 "--jq", ".[].filename"], timeout=120)
     if proc.returncode != 0:
         return None
@@ -215,18 +227,23 @@ def changed_paths(number):
 
 
 def issue_labels(pr):
-    """Les labels de l'issue que la PR referme — la PR, elle, n'en porte pas.
+    """Les labels des issues que la PR referme — la PR, elle, n'en porte pas.
 
     `mod:payments` et `security` vivent sur l'issue : `/ticket` ouvre ses PR sans
     `--label` et `tracking.py` n'étiquette que des issues. Les chercher sur la PR
     laissait ces deux périmètres sans aucun garde-fou.
+
+    Rend `None` si une issue n'a pas pu être lue. Comme pour les chemins, ne pas
+    savoir vaut refus : un `gh` en limite de débit rendait sinon le garde-fou
+    muet précisément quand la charge est forte.
     """
     labels = set()
     for number in sorted(set(CLOSES.findall(pr.get("body") or ""))):
         proc = run(["gh", "issue", "view", number, "--repo", REPO,
                     "--json", "labels", "--jq", ".labels[].name"])
-        if proc.returncode == 0:
-            labels.update(n.strip() for n in proc.stdout.splitlines() if n.strip())
+        if proc.returncode != 0:
+            return None
+        labels.update(n.strip() for n in proc.stdout.splitlines() if n.strip())
     return labels
 
 
@@ -234,7 +251,11 @@ def sensitive(pr, paths):
     """Ce qui, dans cette PR, appelle une relecture humaine — vide s'il n'y a rien."""
     reasons = []
     labels = {(label.get("name") or "") for label in pr.get("labels") or []}
-    labels |= issue_labels(pr)
+    from_issue = issue_labels(pr)
+    if from_issue is None:
+        reasons.append("labels de l'issue indisponibles")
+    else:
+        labels |= from_issue
     reasons.extend("label " + name for name in sorted(SENSITIVE_LABELS & labels))
 
     # Ne pas savoir ce que la PR touche vaut refus : un garde-fou qui s'ouvre
@@ -248,28 +269,6 @@ def sensitive(pr, paths):
     if any(PRISMA.search(path) for path in paths):
         reasons.append("schéma ou migration Prisma")
     return reasons
-
-
-def drop_merge_label(number, pr):
-    """Retire `merge-when-green` d'une PR qu'on refuse de merger.
-
-    Sans cela le refus serait décoratif : un `--request-merge` précédent a pu
-    poser le label puis dépasser son délai, et auto-merge.yml — qui tourne dans
-    un runner sans `SPA_UNATTENDED` — mergerait la PR au prochain workflow
-    conclu, c'est-à-dire exactement ce qu'on vient de refuser.
-    """
-    if MERGE_LABEL not in [label.get("name") for label in pr.get("labels") or []]:
-        return
-    proc = run(["gh", "pr", "edit", str(number), "--repo", REPO,
-                "--remove-label", MERGE_LABEL])
-    if proc.returncode == 0:
-        print("label {} retiré de #{} : la CI ne la mergera pas.".format(
-            MERGE_LABEL, number), file=sys.stderr)
-    else:
-        print("ATTENTION : label {} toujours posé sur #{} et non retiré ({}) — "
-              "la CI pourrait la merger.".format(
-                  MERGE_LABEL, number,
-                  (proc.stderr or proc.stdout).strip()), file=sys.stderr)
 
 
 def fitness(pr, base):
@@ -506,7 +505,6 @@ def main():
     if unattended():
         reasons = sensitive(pr, changed_paths(args.pr))
         if reasons:
-            drop_merge_label(args.pr, pr)
             print("BLOQUÉ : périmètre sensible ({}) et vague sans surveillance — "
                   "PR #{} laissée ouverte pour relecture humaine."
                   .format(", ".join(reasons), args.pr), file=sys.stderr)
