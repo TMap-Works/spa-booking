@@ -21,6 +21,11 @@ Un check ne passe que s'il conclut sur SUCCESS, SKIPPED ou NEUTRAL. Tout le
 reste bloque. Une PR sans aucun check bloque aussi : cela signifie qu'aucun
 workflow ne s'est déclenché, pas que tout va bien.
 
+Le workflow d'auto-merge fait seul exception : il n'est pas un check mais
+l'actionneur du merge. La barrière l'écarte du rollup, sans quoi elle
+s'attendrait elle-même et cette attente condamnerait la PR — voir
+`without_merge_workflow`.
+
 Sur un périmètre où une relecture humaine compte — `mod:payments`, le label
 `security`, un schéma ou une migration Prisma, `infra/terraform`, le module
 `payments` — le merge est refusé dès lors que la vague tourne sans surveillance,
@@ -65,6 +70,11 @@ REPO = os.environ.get("SPA_TRACKING_REPO", "TMap-Works/spa-booking")
 # Le label est une demande de merge, pas un ordre : auto-merge.yml rejoue cette
 # barrière avant d'agir, et ne merge que si le verdict est encore vert.
 MERGE_LABEL = os.environ.get("SPA_MERGE_LABEL", "merge-when-green")
+# Le nom du workflow qui merge, tel qu'il s'annonce dans les checks de la PR.
+# Pas de variable d'environnement ici : ce nom est écrit dans auto-merge.yml et
+# nulle part ailleurs, et un test le relit dans le fichier pour que la constante
+# ne puisse pas dériver du workflow qu'elle désigne.
+MERGE_WORKFLOW = "Auto-merge"
 ROOT = Path(__file__).resolve().parents[1]
 
 # Un workflow filtré par chemin (terraform.yml) ou sorti volontairement
@@ -129,6 +139,44 @@ def fetch_pr(number):
         return json.loads(proc.stdout), None
     except json.JSONDecodeError:
         return None, "réponse gh illisible"
+
+
+def without_merge_workflow(rollup):
+    """Écarte du rollup le workflow d'auto-merge — l'actionneur, pas un check.
+
+    `auto-merge.yml` se déclenche sur `pull_request_target` : son run est
+    rattaché à la PR et s'inscrit dans ses checks. La barrière, appelée depuis
+    ce job, s'y voyait donc elle-même « en cours » et rendait 1 — le seul code
+    que ce workflow sait absorber sans rougir, et précisément celui qui le
+    tuait, faute de garde autour de l'appel.
+
+    Ce rouge-là ne s'efface jamais. Les réveils suivants viennent de
+    `workflow_run`, dont les runs sont rattachés à la branche par défaut et non
+    à la PR : `latest_only` n'a rien de plus frais à opposer à l'entrée en
+    échec, et la PR reste inmergeable à vie, y compris à la main. Voir #147, et
+    #125 pour le même mode de défaillance par une autre cause.
+
+    L'écarter ne masque aucun signal sur la santé de la PR : ce job ne teste
+    rien, il agit. Ce qu'il diagnostique reste lisible dans les annotations et
+    le résumé de son propre run.
+    """
+    kept = []
+    for item in rollup or []:
+        # Un statut externe ne vient d'aucun workflow : ce n'est pas celui-ci,
+        # même s'il en porte le nom.
+        if item.get("__typename") == "StatusContext":
+            kept.append(item)
+            continue
+        # `workflowName` est le champ normal ; `name` ne sert de repli que
+        # lorsque le rollup ne développe pas du tout le champ. Un check run
+        # posé par une application GitHub, lui, porte un `workflowName` *vide* :
+        # s'y rabattre sur `name` rouvrirait pour ces checks-là le trou que le
+        # cas `StatusContext` ci-dessus vient de fermer — un rouge étranger
+        # homonyme serait écarté en silence.
+        workflow = item["workflowName"] if "workflowName" in item else item.get("name")
+        if (workflow or "") != MERGE_WORKFLOW:
+            kept.append(item)
+    return kept
 
 
 def latest_only(rollup):
@@ -292,7 +340,8 @@ def assess(pr, base, allow_no_checks):
     if unfit:
         return UNFIT, unfit, []
 
-    checks = list(check_entries(latest_only(pr.get("statusCheckRollup"))))
+    rollup = without_merge_workflow(pr.get("statusCheckRollup"))
+    checks = list(check_entries(latest_only(rollup)))
     failed = [c for c in checks if c[1] == "fail"]
     pending = [c for c in checks if c[1] == "pending"]
 
