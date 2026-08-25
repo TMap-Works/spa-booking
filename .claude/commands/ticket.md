@@ -317,11 +317,17 @@ python scripts/pr_gate.py <pr>
 Le script attend que **tous** les workflows déclenchés par la PR aient conclu,
 puis rend son verdict par un code de sortie : `0` vert · `1` en attente ou délai
 dépassé · `2` check en échec · `3` PR inapte au merge · `4` erreur d'appel ·
-`5` périmètre sensible, PR laissée ouverte pour relecture humaine.
+`5` périmètre sensible non pré-autorisé, PR laissée ouverte pour relecture humaine.
 
 Le `5` ne peut tomber que sous reprise automatique — `pr_gate.py` ne refuse un
 périmètre sensible que si `SPA_UNATTENDED` est posée, ce que fait le superviseur
 de jalon et personne d'autre. Lancée à la main, `/ticket` ne le voit jamais.
+
+Il ne tombe pas non plus sur tout périmètre sensible : l'opérateur a pu en
+pré-autoriser à l'armement du run (`--merge-sensitive infra/terraform,prisma`),
+et la variable `SPA_MERGE_SENSITIVE` porte cette liste jusqu'ici. Ces PR-là se
+mergent comme les autres, et il n'y a rien de plus à faire de ce côté — le code
+de sortie désigne à lui seul celles qui restent ouvertes.
 
 **Sur un `5`, s'arrêter là.** Ce n'est pas un échec : la PR est verte, elle
 attend une relecture humaine. Journaliser `--status skipped` avec le périmètre en

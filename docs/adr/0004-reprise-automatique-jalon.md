@@ -2,7 +2,8 @@
 
 - **Statut** : Accepté
 - **Date** : 2026-08-24
-- **Mis à jour** : 2026-08-25 — garde-fous d'armement et périmètres sensibles (#111)
+- **Mis à jour** : 2026-08-25 — garde-fous d'armement et périmètres sensibles (#111),
+  puis pré-autorisation nommée des périmètres sensibles (#156)
 - **Contexte CDC** : §3.1 Méthodologie, §3.4 Jalons clés, §4.12 CI/CD et
   Infrastructure-as-Code
 
@@ -269,6 +270,58 @@ Ce refus ne s'applique qu'aux vagues sans surveillance. `auto-merge.yml`, qui
 rejoue la même barrière côté GitHub, ne le voit pas : y parvenir suppose que le
 label `merge-when-green` ait été posé, et le poser est un geste humain explicite,
 tracé et révocable. L'autorisation reste donc là où l'ADR la met.
+
+### L'absence d'un opérateur n'est pas son refus (#156)
+
+Le dispositif ci-dessus a tenu deux mois et s'est révélé faux sur un point, au
+premier jalon qu'il devait dérouler pour de bon. `SPA_UNATTENDED` y portait deux
+sens sans rapport : « personne ne peut répondre à une question » — vrai et utile,
+c'est ce qui neutralise l'arbitrage par vague — et « refuse de merger tout
+périmètre sensible ». Le second **déduisait l'interdiction de l'absence**.
+
+Cette déduction retire au dispositif sa raison d'être. Le jalon S1 est fait de
+socle Terraform, de schéma de données et de rôle OIDC : presque chacune de ses
+issues touche un périmètre déclaré sensible. Sur le run
+`s1-fondations-20260825-093729`, le superviseur a mené les tickets jusqu'à la PR
+verte, puis s'est arrêté ; `develop` n'a pas avancé, les tickets dépendants se
+sont empilés, et l'opérateur a dû revenir merger à la main — c'est-à-dire faire
+exactement ce que la reprise automatique existe pour éviter.
+
+**Les deux notions sont désormais séparées.** `SPA_UNATTENDED` garde son sens de
+« pas de clavier ». L'autorisation de merger un périmètre sensible devient un
+geste humain **explicite, donné à l'avance et enregistré** :
+
+```bash
+python scripts/milestone_run.py start "S1" --merge-sensitive infra/terraform,prisma
+```
+
+Trois propriétés font que c'est une autorisation et non une déduction :
+
+- **Nommée par périmètre, pas globale.** Les clés sont `mod:payments`,
+  `security`, `infra/terraform`, `apps/api/src/modules/payments` et `prisma` —
+  dérivées de `SENSITIVE_LABELS` / `SENSITIVE_PREFIXES` / `PRISMA` plutôt que
+  recopiées, pour la raison déjà donnée plus haut à propos de `SENSITIVE_SCOPES`.
+  Une autorisation globale aurait obligé à ouvrir `mod:payments` pour faire
+  avancer du Terraform ; c'est précisément le compromis qu'un MVP de réservation
+  ne doit pas avoir à prendre. `all` reste disponible, mais il faut le taper.
+- **Enregistrée et rejouée.** Le choix est écrit dans `supervisor.json` au même
+  titre que `no_merge`, et `intent_argv()` le remet dans la ligne de commande de
+  chaque superviseur ressuscité. Sans cela, un run armé cesserait de merger au
+  premier redémarrage, sans que rien ne le dise.
+- **Traçable après coup.** La bannière d'armement énumère nommément ce qui est
+  pré-autorisé *et* ce qui reste sous relecture, en `WARN` dans le journal du
+  superviseur. « Qui a autorisé quoi, et quand » se répond depuis ce journal, et
+  `--state` le redit à tout moment. Compter les périmètres au lieu de les nommer
+  n'aurait répondu à aucune de ces questions.
+
+Ce qui ne se pré-autorise pas : **l'ignorance**. Liste de fichiers inaccessible,
+labels d'une issue illisibles — ces motifs-là n'ont aucune clé, donc aucune
+autorisation ne les couvre. L'opérateur a autorisé un périmètre nommé, pas un
+périmètre inconnu, et la règle « ne pas savoir vaut refus » survit intacte.
+
+Sans l'option, rien ne change : refus, PR laissée ouverte, code de sortie 5. Le
+défaut reste le comportement prudent — ce qui se déplace, c'est seulement la
+possibilité de dire oui à l'avance.
 
 **Armer avec `--no-merge`** reste le bon réglage pour un jalon dont *toutes* les
 PR doivent être relues : rien n'est mergé, tout est relu au réveil. Ce n'est pas
