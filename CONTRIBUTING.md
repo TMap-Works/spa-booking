@@ -3,6 +3,7 @@
 ## Prérequis
 
 - Node.js 20 LTS, npm 10
+- Python 3.12 (outillage de `scripts/` et ses tests)
 - Docker (Postgres + Redis en local)
 - AWS CLI et Terraform (pour l'infrastructure)
 - GitHub CLI (`gh`), authentifié sur l'organisation TMap-Works
@@ -54,6 +55,22 @@ security(payments): vérifier la signature des webhooks sur le corps brut
   la carte du Project en `Done`.
 - Une PR = une issue.
 - CI verte obligatoire : lint, types, tests, commitlint, scan de sécurité.
+
+## Tests de l'outillage
+
+`scripts/` porte la barrière de merge du dépôt (`pr_gate.py`) : une régression y
+remergerait des PR sensibles sans que rien ne rougisse. Ses tests vivent dans
+`scripts/tests/` et n'ont aucune dépendance — `unittest` de la bibliothèque
+standard suffit.
+
+```bash
+npm run test:scripts                          # inclus dans npm run verify
+python -m unittest discover -s scripts/tests  # le même, sans passer par npm
+python -m unittest scripts.tests.test_pr_gate.TestSensitive -v   # un seul cas
+```
+
+La CI l'exécute sur chaque PR, dans le job « Tests de l'outillage (Python) » de
+[ci.yml](.github/workflows/ci.yml).
 
 ## Definition of Done
 

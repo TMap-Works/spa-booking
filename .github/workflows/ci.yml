@@ -12,6 +12,7 @@ concurrency:
 
 env:
   NODE_VERSION: '20'
+  PYTHON_VERSION: '3.12'
 
 jobs:
   lint:
@@ -64,6 +65,28 @@ jobs:
       # les tests de concurrence ne sont jamais optionnels.
       - name: Tests de concurrence (anti-double-réservation)
         run: npm run test:concurrency
+
+  # L'outillage de `scripts/` n'est couvert par aucun test JS : `npm run verify`
+  # ne parcourt que les workspaces. Or `pr_gate.py` est la barrière de merge du
+  # dépôt — une régression sur son verdict remergerait des PR de paiement ou
+  # d'infrastructure sans que rien ne rougisse. Voir #122.
+  #
+  # Sans filtre de chemin, délibérément : GitHub Actions ne sait filtrer qu'au
+  # niveau du workflow, pas du job. Restreindre à `scripts/**` demanderait soit
+  # un workflow séparé — qu'il faudrait alors ajouter à la liste `workflows:` de
+  # auto-merge.yml, un oubli valant trou dans la barrière — soit une action
+  # tierce. Le job dure quelques secondes et n'installe rien.
+  scripts:
+    name: Tests de l'outillage (Python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      # `unittest` de la bibliothèque standard : aucune dépendance à installer,
+      # donc rien à verrouiller ni à mettre à jour pour huit scripts d'outillage.
+      - run: python -m unittest discover -s scripts/tests --verbose
 
   build:
     name: Build

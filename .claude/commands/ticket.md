@@ -138,7 +138,7 @@ idée qui déborde devient une issue `post-mvp`, pas une ligne de code en plus.
 ## Phase 4 — Validation locale
 
 ```bash
-npm run verify   # lint, typecheck, build, test:unit, test:integration, test:concurrency
+npm run verify   # lint, typecheck, test:scripts, build, test:unit, test:integration, test:concurrency
 ```
 
 Gates supplémentaires selon ce qui a été touché :
