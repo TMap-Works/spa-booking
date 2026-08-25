@@ -21,12 +21,20 @@ Un check ne passe que s'il conclut sur SUCCESS, SKIPPED ou NEUTRAL. Tout le
 reste bloque. Une PR sans aucun check bloque aussi : cela signifie qu'aucun
 workflow ne s'est déclenché, pas que tout va bien.
 
+Sur un périmètre où une relecture humaine compte — `mod:payments`, le label
+`security`, une migration Prisma, `infra/terraform` — le merge est refusé dès
+lors que la vague tourne sans surveillance, et la PR reste ouverte. C'est ce qui
+remplace l'arbitrage que personne ne pourrait poser sous `claude -p`.
+`--allow-sensitive` lève ce refus.
+
 Codes de sortie — 0 vert · 1 en attente ou délai dépassé · 2 check en échec ·
-3 PR inapte au merge (brouillon, conflit, mauvaise base) · 4 erreur d'appel.
+3 PR inapte au merge (brouillon, conflit, mauvaise base) · 4 erreur d'appel ·
+5 périmètre sensible, PR laissée ouverte pour relecture humaine.
 """
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -53,9 +61,23 @@ PASSING = {"SUCCESS", "SKIPPED", "NEUTRAL"}
 PENDING_STATUS = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED"}
 
 FIELDS = ("number,state,isDraft,baseRefName,headRefName,mergeable,"
-          "mergeStateStatus,statusCheckRollup,url,title,labels")
+          "mergeStateStatus,statusCheckRollup,url,title,labels,files")
 
-GREEN, PENDING, FAILED, UNFIT, USAGE = 0, 1, 2, 3, 4
+GREEN, PENDING, FAILED, UNFIT, USAGE, SENSITIVE = 0, 1, 2, 3, 4, 5
+
+# Les périmètres où une relecture humaine compte, nommés comme /ticket et
+# /milestone les nomment. Deux se lisent sur les labels, deux sur les fichiers.
+SENSITIVE_LABELS = {"mod:payments", "security"}
+SENSITIVE_PREFIXES = ("infra/terraform/",)
+MIGRATION = re.compile(r"(^|/)prisma/migrations/")
+
+# Posé par le superviseur dans l'environnement de `claude -p`. Le lire dans
+# l'environnement plutôt que d'attendre un drapeau est délibéré : tout
+# `pr_gate.py` lancé dans la vague en hérite, y compris ceux que l'orchestrateur
+# lance sans y penser. Un garde-fou qui dépend de la mémoire de celui qui
+# l'appelle n'en est pas un — c'est le défaut que ce script corrige, il ne va
+# pas le réintroduire.
+UNATTENDED_ENV = "SPA_UNATTENDED"
 
 
 def run(args, cwd=None, timeout=120):
@@ -147,6 +169,30 @@ def check_entries(rollup):
             yield name, "pending", status or "PENDING"
         else:
             yield name, "fail", conclusion
+
+
+def unattended():
+    """Vrai quand la vague tourne sans personne pour répondre à un arbitrage."""
+    return os.environ.get(UNATTENDED_ENV, "").strip().lower() not in (
+        "", "0", "false", "no")
+
+
+def sensitive(pr):
+    """Ce qui, dans cette PR, appelle une relecture humaine — vide s'il n'y a rien.
+
+    `gh` tronque `files` au-delà d'une centaine d'entrées : une PR énorme
+    pourrait masquer son propre fichier sensible. Les labels, eux, sont toujours
+    lus en entier — d'où la double lecture plutôt qu'une seule.
+    """
+    reasons = []
+    labels = {(label.get("name") or "") for label in pr.get("labels") or []}
+    reasons.extend("label " + name for name in sorted(SENSITIVE_LABELS & labels))
+    paths = [entry.get("path") or "" for entry in pr.get("files") or []]
+    if any(path.startswith(SENSITIVE_PREFIXES) for path in paths):
+        reasons.append("infra/terraform")
+    if any(MIGRATION.search(path) for path in paths):
+        reasons.append("migration Prisma")
+    return reasons
 
 
 def fitness(pr, base):
@@ -352,6 +398,8 @@ def parse_args():
                         help="conserve la branche après le merge")
     parser.add_argument("--allow-no-checks", action="store_true",
                         help="tolère une PR sur laquelle aucun workflow ne tourne")
+    parser.add_argument("--allow-sensitive", action="store_true",
+                        help="merger malgré un périmètre sensible, sans surveillance")
     parser.add_argument("--quiet", action="store_true",
                         help="n'affiche que le verdict final")
     args = parser.parse_args()
@@ -393,6 +441,16 @@ def main():
         print("BLOQUÉ : l'état a changé avant le merge — " + remessage,
               file=sys.stderr)
         return recheck
+
+    # Le dernier contrôle, et le seul que la CI ne saurait rendre : sur un
+    # périmètre sensible, sans personne pour arbitrer, la PR reste ouverte. Elle
+    # est verte et relue — il ne lui manque qu'un humain, ce qui est le but.
+    reasons = [] if args.allow_sensitive else sensitive(fresh)
+    if reasons and unattended():
+        print("BLOQUÉ : périmètre sensible ({}) et vague sans surveillance — "
+              "PR #{} laissée ouverte pour relecture humaine."
+              .format(", ".join(reasons), args.pr), file=sys.stderr)
+        return SENSITIVE
 
     code, message = (request_merge if args.request_merge else merge)(
         args.pr, fresh, args)
