@@ -1,0 +1,9 @@
+# Copier en terraform.tfvars (non versionné) pour surcharger les valeurs par défaut.
+# Les défauts conviennent tels quels : ce fichier ne sert qu'en cas de collision de
+# nom de bucket ou de changement de région.
+
+# aws_region                        = "eu-west-3"
+# environments                      = ["dev", "staging", "prod"]
+# state_bucket_prefix               = "spa-booking"
+# noncurrent_version_retention_days = 90
+# kms_deletion_window_in_days       = 30
