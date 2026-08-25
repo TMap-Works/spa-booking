@@ -29,7 +29,10 @@
     "17": ["infra/terraform/modules/budgets"],
     "18": ["api/core"],
     "26": ["contracts:shared"],
-    "108": ["docs/adr"]
+    "108": ["docs/adr"],
+    "117": ["scripts/permissions"],
+    "128": ["scripts/tests"],
+    "129": ["ci:workflows", "scripts/pr-gate"]
   },
 
   "depends": {
@@ -40,7 +43,8 @@
     "15": [18],
     "16": [11, 12, 13, 14, 15],
     "17": [10],
-    "19": [18]
+    "19": [18],
+    "128": [129]
   },
 
   "why": {
@@ -51,6 +55,7 @@
     "15": "la CI ne peut être verte que sur un squelette qui compile",
     "16": "le déploiement de bout en bout assemble tous les modules et la CI",
     "17": "les budgets s'écrivent dans l'état Terraform distant",
-    "19": "le schéma Prisma se pose dans le squelette NestJS, pas l'inverse"
+    "19": "le schéma Prisma se pose dans le squelette NestJS, pas l'inverse",
+    "128": "le harnais teste les décisions de pr_gate.py que #129 réécrit — l'écrire avant figerait le comportement fautif"
   }
 }
