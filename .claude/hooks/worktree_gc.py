@@ -20,6 +20,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 ENGINE = ROOT / "scripts" / "worktree_gc.py"
 TIMEOUT = int(os.environ.get("SPA_WORKTREE_GC_TIMEOUT", "60"))
+SHOWN = 5   # au-delà, le message déborde la ligne d'état
 
 
 def quiet():
@@ -68,12 +69,24 @@ def main():
     if not removed:
         quiet()
 
-    names = ", ".join(item.get("branch") or item.get("path", "?") for item in removed)
+    # Un répertoire orphelin n'a pas de branche : son chemin absolu ferait une
+    # ligne à lui seul, et il y en a eu quatorze d'un coup (#173). Le nom suffit.
+    def label(item):
+        if item.get("branch"):
+            return item["branch"]
+        return os.path.basename((item.get("path") or "?").rstrip("/\\")) or "?"
+
+    names = ", ".join(label(item) for item in removed[:SHOWN])
+    if len(removed) > SHOWN:
+        names += " +{}".format(len(removed) - SHOWN)
+
+    volume = result.get("volume")
     reasons = {item.get("reason", "") for item in removed}
     detail = " ({})".format(reasons.pop()) if len(reasons) == 1 else ""
-    emit("Worktree{} nettoyé{} : {}{}".format(
-        "s" if len(removed) > 1 else "",
-        "s" if len(removed) > 1 else "",
+    plural = "s" if len(removed) > 1 else ""
+    emit("Worktree{} nettoyé{}{} : {}{}".format(
+        plural, plural,
+        " — {} récupéré".format(volume) if volume else "",
         names, detail,
     ))
 
