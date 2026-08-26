@@ -6,6 +6,37 @@
 
 locals {
   environment = "staging"
+
+  # Rétention des journaux CloudWatch de l'environnement : 30 jours hors
+  # production, 90 en production (skill aws-infra §8). Sans rétention explicite,
+  # CloudWatch conserve indéfiniment et la facture monte sans bruit.
+  #
+  # Aucun module composé ici ne crée encore de groupe de journaux — `network` n'en
+  # produit pas. La valeur est posée maintenant, et exposée en sortie pour être
+  # vérifiable, parce que c'est le contrat que devront recevoir `database`,
+  # `cache` et `ecs-service` le jour où cet environnement les composera, comme le
+  # fait déjà `envs/dev`.
+  log_retention_days = 30
+}
+
+# --- Maîtrise budgétaire ------------------------------------------------------
+
+module "budgets" {
+  source = "../../modules/budgets"
+
+  environment = local.environment
+
+  # Même plafond qu'en développement : la recette a vocation à reproduire la
+  # forme de la production, pas son dimensionnement — et elle ne compose encore
+  # que son réseau. Le plafond décrit donc l'environnement complet à venir, pas
+  # la poignée de ressources d'aujourd'hui : c'est ce qui évite d'avoir à le
+  # relever — et à réapprendre à ignorer l'alerte — à chaque module ajouté.
+  monthly_limit = 250
+
+  alert_emails = var.budget_alert_emails
+
+  # Les étiquettes de répartition de coûts sont activées pour le compte entier,
+  # par le seul environnement `prod` — voir modules/budgets/README.md.
 }
 
 module "network" {

@@ -13,6 +13,14 @@
 locals {
   environment = "dev"
 
+  # Rétention des journaux CloudWatch de l'environnement, passée explicitement à
+  # chacun des modules qui créent un groupe de journaux plutôt que laissée à leur
+  # défaut : 30 jours hors production, 90 en production (skill aws-infra §8).
+  # Sans rétention explicite, CloudWatch conserve indéfiniment — c'est un des
+  # postes que le budget de l'environnement voit grossir sans jamais dire
+  # pourquoi. La sortie `log_retention_days` rend la valeur vérifiable.
+  log_retention_days = 30
+
   # Image tirée par le service ECS et par la tâche de migration. L'étiquette est
   # le sha du commit déployé : les dépôts du module `ecr` sont **immuables**, une
   # étiquette mobile du genre `:develop` ne pourrait donc être poussée qu'une
@@ -50,6 +58,29 @@ module "network" {
   # sur un environnement de développement, où une coupure de sortie se répare
   # en attendant le retour de la zone.
   nat_gateway_count = 1
+}
+
+# --- Maîtrise budgétaire ------------------------------------------------------
+
+module "budgets" {
+  source = "../../modules/budgets"
+
+  environment = local.environment
+
+  # Ordre de grandeur du coût nominal de cet environnement, en USD par mois :
+  # quatre endpoints d'interface sur deux zones (~65), RDS `db.t4g.medium`
+  # mono-AZ et son stockage (~55), une NAT Gateway (~35), l'ALB (~20), une tâche
+  # Fargate 0,5 vCPU (~18), ElastiCache `cache.t4g.micro` (~12), les clés KMS et
+  # le stockage ECR pour le reste. Le plafond laisse la marge d'un environnement
+  # qu'on recrée : sous ~230, l'alerte à 80 % serait permanente, donc ignorée.
+  monthly_limit = 250
+
+  # Vide tant qu'aucune adresse n'est fournie : le topic existe quand même, et
+  # s'abonner ne demande alors qu'un `-var`.
+  alert_emails = var.budget_alert_emails
+
+  # Les étiquettes de répartition de coûts sont activées pour le compte entier,
+  # par le seul environnement `prod` — voir modules/budgets/README.md.
 }
 
 # --- Registre d'images --------------------------------------------------------
@@ -99,6 +130,11 @@ module "database" {
   # de maintenance : sur un environnement de développement, attendre lundi 3 h 30
   # pour voir un paramètre pris en compte n'a aucun intérêt.
   apply_immediately = true
+
+  # Rétention des journaux PostgreSQL exportés vers CloudWatch. Le défaut du
+  # module vaut déjà 30 jours ; la poser ici rend le contrat de l'environnement
+  # lisible sans ouvrir le module, et le fait bouger d'un seul endroit.
+  log_retention_days = local.log_retention_days
 }
 
 module "cache" {
@@ -131,6 +167,10 @@ module "cache" {
   # après un `destroy` — et le `terraform apply` suivant échoue sur un nom déjà
   # pris. Un environnement qu'on recrée souvent ne peut pas vivre avec ça.
   secret_recovery_window_in_days = 0
+
+  # Rétention des journaux Redis exportés vers CloudWatch, même contrat que pour
+  # PostgreSQL et pour le service ECS.
+  log_retention_days = local.log_retention_days
 }
 
 # --- Configuration d'exécution de l'API ---------------------------------------
@@ -244,7 +284,7 @@ module "ecs_service" {
   app_subnet_ids    = module.network.app_subnet_ids
   certificate_arn   = local.certificate_arn
 
-  log_retention_days         = 30
+  log_retention_days         = local.log_retention_days
   container_insights_enabled = false
   alb_deletion_protection    = false
 

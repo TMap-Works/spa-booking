@@ -17,6 +17,7 @@ Internet → ALB (443, certificat auto-signé)
 | PostgreSQL 16, mono-AZ, 7 j de sauvegardes | `spa-dev-rds` | `database` |
 | Redis 7.1, un nœud, chiffré en transit | `spa-dev-redis` | `cache` |
 | Cluster, ALB, service `api`, auto-scaling | `spa-dev-cluster` | `ecs-service` |
+| Budget mensuel 250 USD, alertes 80 % et 100 % | `spa-dev-monthly` | `budgets` |
 | Définition de tâche de migration | `spa-dev-migrate` | déclarée ici |
 | Secret d'exécution de l'API | `spa-dev/api/runtime-…` | déclarée ici |
 | Certificat de terminaison TLS | `spa-dev-alb` | déclarée ici |
@@ -82,6 +83,28 @@ workflow), et la clé privée est écrite dans l'état — chiffré, à accès r
 
 Fournir `certificate_arn` remplace ce montage par un vrai certificat ACM.
 
+## Coût et rétention
+
+Le module `budgets` pose un budget mensuel de **250 USD** sur cet environnement,
+filtré sur l'étiquette `Environment` et notifié à 80 % puis 100 % de ce plafond
+sur le topic SNS `spa-dev-budget-alerts`. Le plafond décrit l'ordre de grandeur
+du coût nominal — endpoints d'interface, RDS, NAT, ALB, Fargate, ElastiCache —
+avec la marge d'un environnement qu'on recrée.
+
+Le topic n'a **aucun destinataire par défaut**. Poser `budget_alert_emails` à
+l'`apply`, ou s'abonner à la main sur l'ARN de la sortie
+`budget_alerts_topic_arn` — puis **confirmer le message d'abonnement** : sans
+confirmation, l'adresse ne reçoit rien.
+
+La rétention des journaux CloudWatch est de **30 jours**, passée explicitement à
+`database`, `cache` et `ecs-service` depuis un seul `local` — c'est la sortie
+`log_retention_days`. Sans rétention explicite, CloudWatch conserve indéfiniment
+et le poste grossit sans jamais apparaître dans une revue.
+
+La ventilation de la dépense par environnement dans Cost Explorer dépend en
+revanche d'une activation faite **une fois pour le compte**, portée par
+`envs/prod` : voir [modules/budgets/README.md](../../modules/budgets/README.md).
+
 ## Comment un push sur `develop` déploie
 
 Trois contraintes se croisent ici, et c'est leur intersection qui dicte le
@@ -124,7 +147,9 @@ déploiement saura publier une révision de définition de tâche, ou le module
   `modules/ecs-service` pour la tâche de migration, un module `dns` pour le
   certificat.
 - Aucune alarme CloudWatch n'est posée : le module `observability` n'existe pas
-  encore (skill aws-infra §8).
+  encore (skill aws-infra §8). Le topic `spa-dev-budget-alerts` créé par
+  `budgets` est fait pour les accueillir — les alarmes n'ont pas à créer un
+  second canal.
 - `terraform fmt -check` et `terraform validate` sont joués à chaque pull request
   par le job « Format et validation » de `terraform.yml`. En revanche **aucun
   `apply` réel n'a eu lieu** et aucun appel AWS n'a été fait : la machine du run
