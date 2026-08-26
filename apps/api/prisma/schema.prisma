@@ -141,6 +141,7 @@ model Tenant {
   appointments  Appointment[]
   payments      Payment[]
   notifications Notification[]
+  refreshTokens RefreshToken[]
 
   @@map("tenants")
 }
@@ -188,6 +189,7 @@ model User {
   staffProfiles         Staff[]
   clientAppointments    Appointment[]  @relation("AppointmentClient")
   receivedNotifications Notification[] @relation("NotificationRecipient")
+  refreshTokens         RefreshToken[]
 
   @@unique([tenantId, email])
   // Cible des clés étrangères composites `(tenant_id, id)` posées en SQL brut
@@ -199,6 +201,60 @@ model User {
   @@unique([tenantId, id])
   @@index([tenantId, role])
   @@map("users")
+}
+
+/// Session de rafraîchissement — une ligne par ouverture de session, et c'est
+/// elle qui rend la déconnexion **invalidante**.
+///
+/// Un refresh token purement JWT ne se révoque pas : signé, il reste valable
+/// jusqu'à son expiration, et « se déconnecter » se réduirait alors à effacer un
+/// cookie que l'attaquant qui l'a volé n'effacera pas. L'état vit donc en base,
+/// et le jeton n'en est que le porteur.
+///
+/// Ce qui est stocké n'est **pas** le jeton mais l'empreinte SHA-256 de son
+/// `jti`. Une fuite de cette table ne donne donc aucune session : le `jti` est un
+/// aléa de 256 bits, non devinable depuis son empreinte, et le jeton lui-même
+/// doit de toute façon être signé pour être accepté. SHA-256 nu suffit ici — là
+/// où un mot de passe exige bcrypt, un secret aléatoire de 256 bits n'a pas
+/// d'espace de recherche à ralentir.
+///
+/// `token_hash` change à **chaque** rafraîchissement (rotation). Présenter un
+/// `jti` qui ne correspond plus à l'empreinte courante signifie qu'un jeton déjà
+/// consommé ressort : soit le vol, soit le rejeu. La session entière est alors
+/// révoquée — c'est la détection de réemploi, et c'est ce qui limite la valeur
+/// d'un refresh token dérobé à un seul usage.
+model RefreshToken {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  userId String @map("user_id") @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  /// Empreinte SHA-256 hexadécimale du `jti` courant — 64 caractères.
+  tokenHash String @map("token_hash") @db.VarChar(64)
+
+  /// Fin de vie de la session, indépendante de l'`exp` du jeton : c'est la base
+  /// qui tranche, pas le porteur.
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+
+  /// Déconnexion, ou révocation sur détection de réemploi. Renseigné une fois,
+  /// jamais remis à nul — une session révoquée ne se rouvre pas.
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // L'empreinte est unique **par tenant**, comme tout unique métier. Elle n'est
+  // pas la clé de lecture — le rafraîchissement retrouve la session par son `sid`
+  // — mais elle interdit que deux sessions partagent un `jti`.
+  @@unique([tenantId, tokenHash])
+  // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
+  @@unique([tenantId, id])
+  // Les deux lectures du module : « les sessions vivantes de cet utilisateur »
+  // (déconnexion globale, purge) et le balayage des sessions expirées.
+  @@index([tenantId, userId, expiresAt])
+  @@map("refresh_tokens")
 }
 
 // ---------------------------------------------------------------------------

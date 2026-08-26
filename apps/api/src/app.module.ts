@@ -15,11 +15,13 @@ import { AppConfigModule } from './config/app-config.module';
 import { HealthModule } from './health/health.module';
 import { CacheModule } from './infrastructure/cache/cache.module';
 import { DatabaseModule } from './infrastructure/database/database.module';
+import { IdentityModule } from './modules/identity/identity.module';
 
 /**
  * Racine du monolithe modulaire. Les huit modules métier du CDC §2.3
  * (`identity`, `catalog`, `availability`, `appointments`, `crm`, `payments`,
- * `notifications`, `reporting`) viendront s'ajouter ici, chacun dans son issue.
+ * `notifications`, `reporting`) viennent s'ajouter ici, chacun dans son issue —
+ * `identity` est le premier (#21).
  *
  * Pipe et filtre sont déclarés **par injection** (`APP_PIPE`, `APP_FILTER`)
  * plutôt que par `app.useGlobalPipes()` dans `main.ts` : c'est la seule forme
@@ -35,6 +37,9 @@ import { DatabaseModule } from './infrastructure/database/database.module';
     DatabaseModule,
     CacheModule,
     HealthModule,
+    // Après `TenantContextModule` et `DatabaseModule` : sa garde renseigne le
+    // contexte de tenant, ses repositories consomment le client scopé.
+    IdentityModule,
   ],
   providers: [
     {

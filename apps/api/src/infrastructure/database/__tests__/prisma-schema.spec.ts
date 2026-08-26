@@ -29,7 +29,17 @@ const PRISMA_DIR = join(__dirname, '..', '..', '..', '..', 'prisma');
  */
 const TENANT_ROOT_TABLE = 'tenants';
 
-/** Les sept entités du CDC §2.4, plus la jonction N–N Service↔Staff. */
+/**
+ * Les sept entités du CDC §2.4, plus la jonction N–N Service↔Staff et la table
+ * de sessions du module `identity`.
+ *
+ * `refresh_tokens` n'est pas une huitième entité métier : c'est l'état qui rend
+ * la déconnexion invalidante (#21). Un JWT signé ne se révoque pas — sans ligne
+ * en base, « se déconnecter » se réduirait à effacer un cookie que l'attaquant
+ * qui l'a volé n'effacera pas. Elle est inscrite ici pour la même raison que les
+ * autres : que son `tenant_id`, ses index et ses clés composites soient relus
+ * par cette suite comme ceux de n'importe quelle table métier.
+ */
 const EXPECTED_TABLES = [
   'tenants',
   'users',
@@ -39,6 +49,7 @@ const EXPECTED_TABLES = [
   'appointments',
   'payments',
   'notifications',
+  'refresh_tokens',
 ] as const;
 
 interface Column {
