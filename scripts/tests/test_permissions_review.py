@@ -34,6 +34,16 @@ Ce qui se vérifie ici, donc :
 5. et, symétriquement, qu'un motif ordinaire reste proposé : un garde-fou qui
    refuse tout ne protège de rien, il fait seulement abandonner l'outil.
 
+S'y ajoute #137, d'une autre nature : la revue proposait des fragments qui ne
+sont **même pas des commandes**. Le hook d'observation découpe une invocation
+ligne par ligne et prend le premier mot de chaque ligne pour un nom de
+programme ; or un heredoc embarque un document entier, une commande à rallonge
+se poursuit derrière un `\\`, une boucle occupe trois lignes. D'où `Bash(##:*)`,
+`Bash(le:*)`, `Bash(for:*)`, `Bash(import:*)` — et `Bash(":*)`, qui couvre toute
+commande commençant par un guillemet. `NonCommandFragments` vérifie qu'aucun de
+ces fragments n'est plus proposé, et `RealCommandsSurvive` qu'on n'a pas jeté
+les vraies commandes avec.
+
 Aucune dépendance : `unittest` de la bibliothèque standard, comme les autres
 harnais de `scripts/tests`.
 """
@@ -284,6 +294,232 @@ class OrdinaryPatternsStillPass(ReviewTestCase):
         code, out = self.run_review()
         self.assertEqual(code, 0)
         self.assertIn("aucune commande", out)
+
+
+class NonCommandFragments(ReviewTestCase):
+    """#137 — ce qui n'est pas une commande n'entre pas dans une allowlist.
+
+    Chaque cas rejoue ce que le hook consigne réellement : une observation par
+    ligne, la première portant la vraie commande et les suivantes le corps du
+    document, la continuation ou le mot réservé.
+    """
+
+    def listed(self, *argv):
+        """Les motifs que la revue retient — ceux qu'un opérateur verra."""
+        return set(self.report(*argv))
+
+    def test_heredoc_body_yields_a_single_pattern(self):
+        """Un heredoc ne produit qu'un motif : celui de sa première ligne.
+
+        `python scripts/gen.py <<'EOF' … EOF` : tout ce qui suit la première
+        ligne est le document, pas une suite de commandes.
+        """
+        self.observe("python scripts/gen.py", "python scripts/gen.py <<'EOF'",
+                     risk="write")
+        for pattern, example in (("##", "## Index"),
+                                 ("-", "- **Le rafraîchissement ne coûte rien.**"),
+                                 ("le", "Le créneau pris entre la sélection"),
+                                 ("```", "```"),
+                                 ("eof", "EOF")):
+            self.observe(pattern, example, risk="write")
+
+        self.assertEqual(self.listed(), {"python scripts/gen.py"})
+        self.assertTrue(self.report()["python scripts/gen.py"]["eligible"])
+
+    def test_backslash_continuation_yields_a_single_pattern(self):
+        """Une commande continuée par `\\` ne produit qu'un motif.
+
+        Les lignes suivantes commencent par un drapeau : `--title`,
+        `--body-file`. Un nom de programme ne commence jamais par un tiret.
+        """
+        self.observe("gh issue create", "gh issue create --repo TMap-Works/x \\",
+                     risk="write")
+        for pattern, example in (("--title", '--title "La veille planifiée" \\'),
+                                 ("--label", "--label bug \\"),
+                                 ("--body-file", "--body-file -")):
+            self.observe(pattern, example, risk="write")
+
+        self.assertEqual(self.listed(), {"gh issue create"})
+
+    def test_shell_keywords_are_never_proposed(self):
+        """`for … do … done` occupe trois lignes, dont deux mots réservés."""
+        self.observe("for", "for n in 18 10 28", risk="write")
+        self.observe("do", 'do echo "=== #$n ==="', risk="write")
+        self.observe("done", "done", risk="write")
+        self.observe("if", "if t['number'] in (18,10):", risk="write")
+        self.observe("then", 'then echo "$b"', risk="write")
+        self.observe("fi", "fi", risk="write")
+
+        self.assertEqual(self.listed(), set())
+        rows = self.report("--show-rejected")
+        for keyword in ("for", "do", "done", "if", "then", "fi"):
+            with self.subTest(keyword=keyword):
+                self.assertFalse(rows[keyword]["eligible"])
+                self.assertIn("mot réservé du shell", rows[keyword]["reason"])
+
+    def test_command_name_charset_is_enforced(self):
+        """Le filet de sécurité : hors de `^[A-Za-z0-9_.\\-/]+$`, rien ne passe.
+
+        `Bash(":*)` couvrirait toute commande commençant par un guillemet —
+        une classe entière d'invocations sous une étiquette qui ne dit rien.
+        """
+        for pattern, example in (('"', '"'),
+                                 ("`", "`"),
+                                 ("```", "```"),
+                                 ("##", "## Index"),
+                                 ("---", "---"),
+                                 ("(.number)", '"#\\(.number) \\(.headRefName)"'),
+                                 ("co-authored-by:",
+                                  "Co-Authored-By: Claude Opus 5 <x@y.z>"),
+                                 ("try:", "try:")):
+            self.observe(pattern, example, risk="write")
+
+        self.assertEqual(self.listed(), set())
+
+    def test_french_prose_is_not_a_command(self):
+        """La prose d'un corps de PR ou d'un livrable Markdown n'est pas exécutée."""
+        for pattern, example in (("le", "Le créneau pris entre la sélection"),
+                                 ("les", "Les six étapes, écran par écran"),
+                                 ("une", "Une session interactive orchestre"),
+                                 ("périmètre", "Périmètre retenu : conception"),
+                                 ("prisma sert", "Prisma sert tout le reste."),
+                                 ("npm exécute ses",
+                                  "npm exécute ses scripts par cmd.exe")):
+            self.observe(pattern, example, risk="write")
+
+        self.assertEqual(self.listed(), set())
+
+    def test_source_lines_are_not_commands(self):
+        """Python, TypeScript ou Prisma tombés dans un heredoc restent des données."""
+        for pattern, example in (("import", "import io, pathlib"),
+                                 ("def", "def reconcile(args):"),
+                                 ("return", "return bool(project.get('x'))"),
+                                 ("const", "const net = require('net')"),
+                                 ("assert", "assert old in s, 'introuvable'"),
+                                 ("source", 'source  = "hashicorp/aws"'),
+                                 ("id", "id String @id @default(uuid())"),
+                                 ("terraform {", "terraform {"),
+                                 ("python \"", 'python -c "'),
+                                 ("python <<PY", "python - <<'PY'")):
+            self.observe(pattern, example, risk="write")
+
+        self.assertEqual(self.listed(), set())
+
+    def test_a_named_fragment_cannot_be_forced_into_the_allowlist(self):
+        """`--pattern` ne rachète pas un fragment : le refus tient, et il est motivé."""
+        self.observe("##", "## Index", risk="write")
+        code, out = self.run_review("--apply", "--yes", "--pattern", "##")
+        self.assertEqual(code, 1, out)
+        self.assertIn("refusé · Bash(##:*)", out)
+        self.assertEqual(self.allowlist(), [])
+
+    def test_apply_without_pattern_adds_nothing(self):
+        self.observe("import", "import io, pathlib", risk="write", times=40)
+        code, out = self.run_review("--apply", "--yes")
+        self.assertEqual(code, 1, out)
+        self.assertEqual(self.allowlist(), [])
+
+    def test_rejected_fragments_are_counted_not_hidden(self):
+        """Écarter n'est pas escamoter : la sortie dit combien, et pourquoi les voir."""
+        self.observe("npm run verify", "npm run verify")
+        self.observe("##", "## Index", risk="write")
+        code, out = self.run_review()
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 fragment(s) écarté(s)", out)
+        self.assertIn("--show-rejected", out)
+        self.assertNotIn("Bash(##:*)", out)
+
+    def test_show_rejected_brings_them_back_with_their_reason(self):
+        self.observe("##", "## Index", risk="write")
+        row = self.report("--show-rejected")["##"]
+        self.assertFalse(row["eligible"])
+        self.assertIn("^[A-Za-z0-9_.\\-/]+$", row["reason"])
+
+
+class RealCommandsSurvive(ReviewTestCase):
+    """Le garde-fou de #137 ne doit pas emporter les vraies commandes avec lui."""
+
+    ORDINARY = (
+        ("npm run verify", "npm run verify"),
+        ("git rev-parse", "git rev-parse --abbrev-ref HEAD"),
+        ("npx jest", "npx jest --config jest.unit.config.js 2>&1"),
+        ("docker compose up", "docker compose up -d"),
+        ("terraform init", "terraform init -backend=false"),
+        ("python scripts/pr_gate.py", "python scripts/pr_gate.py 145"),
+        ("gh pr review", "gh pr review 145 --repo TMap-Works/x --comment"),
+        ("npx prisma",
+         'DATABASE_URL="postgresql://spa@localhost/spa" npx prisma generate'),
+        ("mkdir", "mkdir -p docs/design/booking-funnel"),
+        ("test", "test -d node_modules"),
+    )
+
+    def test_ordinary_patterns_stay_eligible(self):
+        for pattern, example in self.ORDINARY:
+            self.observe(pattern, example, risk="write")
+        rows = self.report()
+        for pattern, _ in self.ORDINARY:
+            with self.subTest(pattern=pattern):
+                self.assertIn(pattern, rows)
+                self.assertTrue(rows[pattern]["eligible"], rows[pattern]["reason"])
+
+    def test_an_env_prefixed_invocation_is_still_an_invocation(self):
+        """`DATABASE_URL=… npx prisma` : l'affectation n'est pas le programme.
+
+        Son premier mot est capitalisé — comme la prose. Ce qui les sépare est
+        le `=`, que le hook écarte déjà pour nommer la commande.
+        """
+        self.observe("npx prisma",
+                     'DATABASE_URL="postgresql://spa@localhost/spa" npx prisma db push',
+                     risk="write")
+        self.assertTrue(self.report()["npx prisma"]["eligible"])
+
+    def test_an_observation_without_example_is_still_judged_on_its_name(self):
+        """Sans exemple, seul le nom parle — et il suffit à trancher."""
+        self.observe("npm run verify", "", risk="write")
+        self.observe("done", "", risk="write")
+        rows = self.report("--show-rejected")
+        self.assertTrue(rows["npm run verify"]["eligible"])
+        self.assertFalse(rows["done"]["eligible"])
+
+    DOT_ARGUMENT = (
+        ("git add", "git add ."),
+        ("ruff", "ruff check ."),
+        ("terraform fmt", "terraform fmt ."),
+        ("docker build", "docker build ."),
+    )
+
+    def test_a_trailing_dot_argument_is_not_a_full_stop(self):
+        """`git add .` finit par un point sans être une phrase.
+
+        Le repérage de la prose demande plusieurs mots, un point final et aucun
+        drapeau ni chemin — ce que remplit exactement `git add .`. Confondre
+        l'argument « le répertoire courant » avec une ponctuation faisait sortir
+        de la revue les commandes les plus banales du dépôt, et sans bruit :
+        écartées, elles n'apparaissaient même plus dans la sortie.
+        """
+        for pattern, example in self.DOT_ARGUMENT:
+            self.observe(pattern, example, risk="write")
+        rows = self.report()
+        for pattern, _ in self.DOT_ARGUMENT:
+            with self.subTest(pattern=pattern):
+                self.assertIn(pattern, rows)
+                self.assertTrue(rows[pattern]["eligible"], rows[pattern]["reason"])
+
+    def test_a_real_sentence_is_still_prose(self):
+        """La correction ne rouvre pas la porte : un point qui clôt un mot reste un point."""
+        self.observe("prisma sert", "Prisma sert tout le reste.", risk="write")
+        self.observe("npm fait le reste", "npm fait tout le reste.", risk="write")
+        self.assertEqual(set(self.report()), set())
+
+    def test_windows_where_is_a_command_not_an_sql_keyword(self):
+        """`where` est le `which` de Windows — la plateforme de ce dépôt.
+
+        Le mot est aussi celui de SQL. Le classer parmi les mots-clés de langage
+        le refusait d'office, y compris sur l'observation bien réelle
+        `where pythonw`, qu'aucun `--pattern` n'aurait pu rattraper.
+        """
+        self.observe("where", "where pythonw 2>/dev/null", risk="read")
+        self.assertTrue(self.report()["where"]["eligible"])
 
 
 if __name__ == "__main__":
