@@ -1,5 +1,17 @@
 export { CurrentTenant } from './current-tenant.decorator';
 export {
+  describePublicTenantRequest,
+  publicBaseHost,
+  PUBLIC_ROUTE_SEGMENT,
+  readSubdomainSlug,
+  type PublicTenantDesignation,
+} from './public-tenant-request';
+export {
+  PUBLIC_TENANT_RESOLVER,
+  type PublicTenantResolver,
+  type PublicTenantResolverProvider,
+} from './public-tenant.resolver';
+export {
   getTenantId,
   hasTenantScope,
   requireTenantId,
