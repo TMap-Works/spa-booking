@@ -19,7 +19,10 @@ Des garde-fous priment sur ces signaux :
   - un worktree sale ou porteur de commits jamais poussés est conservé, avec
     les fichiers en cause nommés — sauf `--force`. Une preuve d'intégration
     lève ce garde-fou pour les seuls **résidus d'outillage** (vidage de crash,
-    lockfile réécrit par `npm install`), jamais pour du travail.
+    lockfile réécrit par `npm install`), jamais pour du travail ;
+  - un worktree dont les commits non poussés n'ont **pas pu être comptés** est
+    conservé au même titre : une mesure impossible est une raison de garder,
+    jamais un zéro déguisé (#178).
 
 Second passage : les **branches de ticket orphelines**, que plus aucun worktree
 ne détient — ce que laisse derrière lui un répertoire supprimé à la main. Leur
@@ -373,17 +376,30 @@ def human(size):
         value /= 1024
 
 
+def count(proc):
+    """Le décompte rendu par `rev-list --count`, ou None s'il est illisible.
+
+    Une sortie qui n'est pas un nombre est une mesure ratée comme une autre :
+    la rendre sous forme de None laisse `safety_hold` retenir le worktree, là
+    où lever une `ValueError` avorterait tout le nettoyage (#178).
+    """
+    try:
+        return int(proc.stdout.strip() or 0)
+    except ValueError:
+        return None
+
+
 def unpushed(root, path):
     """Commits présents ici et nulle part ailleurs, ou None si indéterminable."""
     proc = run(["git", "rev-list", "--count", "@{upstream}..HEAD"], cwd=path)
     if proc.returncode == 0:
-        return int(proc.stdout.strip() or 0)
+        return count(proc)
     # Pas de branche de suivi : comparer à la base. Une branche jamais poussée
     # dont les commits ne sont pas dans develop est du travail à ne pas perdre.
     proc = run(["git", "rev-list", "--count", BASE_REF + "..HEAD"], cwd=path)
     if proc.returncode != 0:
         return None
-    return int(proc.stdout.strip() or 0)
+    return count(proc)
 
 
 def issue_number(branch):
@@ -449,6 +465,12 @@ def safety_hold(root, entry, reason, force):
     if integrated:
         return None
     ahead = unpushed(root, entry["path"])
+    # `None` n'est pas zéro : c'est « je n'ai pas pu compter ». Les confondre
+    # revient à supprimer sur la foi d'un garde-fou qui n'a rien vérifié, et ce
+    # qui se perd alors est du travail jamais poussé (#178). Sans preuve
+    # d'intégration — écartée juste au-dessus —, l'ignorance retient.
+    if ahead is None:
+        return "commits non poussés invérifiables (comptage git en échec)"
     if ahead:
         return "{} commit(s) jamais poussé(s)".format(ahead)
     return None
