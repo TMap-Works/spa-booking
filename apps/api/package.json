@@ -9,6 +9,7 @@
     "start": "node dist/main.js",
     "start:dev": "node --watch --require ts-node/register src/main.ts",
     "lint": "eslint .",
+    "pretypecheck": "prisma generate",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "jest --config jest.unit.config.js",
