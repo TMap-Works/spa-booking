@@ -191,6 +191,9 @@ aucun fichier du diff et que la même commande échoue à l'identique sur
 | binaire local introuvable, `node_modules` absent | worktree sans dépendances installées | `npm install` — correction 3 de la phase 1 |
 | `test:integration` ou `test:concurrency` sans base joignable | Postgres et Redis éteints | `docker compose up -d` |
 | `TS2322` sur une valeur d'énumération Prisma récemment ajoutée (« `X` n'est pas assignable à `Y` ») | le client Prisma généré dans `node_modules` précède la migration qui a ajouté la valeur | `npm run db:generate` |
+| `tenant-scope.isolation-spec` en échec (« Authentication failed … credentials … not valid ») alors que les autres suites d'intégration passent | les identifiants du volume `postgres-data` local précèdent le `docker-compose.yml` courant — `POSTGRES_PASSWORD` n'agit qu'à l'initialisation du volume | aligner le `.env` local sur le compose, ou recréer le volume : `docker compose down -v && docker compose up -d` puis `npm run db:migrate:deploy` |
+
+**La suite d'isolation inter-tenant fait exception à une chose** : elle exige une vraie base migrée, par conception. Si elle est la **seule** à échouer pendant que les autres passent, c'est l'environnement local, pas le diff — la CI la joue contre un service Postgres neuf et fait foi. Ne pas la contourner, ne pas s'en attribuer la panne.
 
 **Ce n'est pas un échec du ticket**, et cela ne se journalise pas comme tel :
 appliquer le remède, relancer la barrière, poursuivre le parcours. Une ligne de
