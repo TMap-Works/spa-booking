@@ -159,12 +159,18 @@ disparaît du radar :
 ```bash
 gh issue create --repo TMap-Works/spa-booking \
   --title "<type>(<scope>): <ce qui reste à faire sur #N>" \
-  --label "type:bug,ws:devops,mod:<module>,P1" \
+  --label "type:bug,ws:devops,mod:<module>,P1,nature:<projet|outillage>" \
   --body "<cause exacte · extraits de log · ce qui a été tenté · où en est la branche et la PR · ce qu'il reste>"
 ```
 
-Reprends le `mod:*` et le `ws:*` du ticket écarté, pas ceux de l'outillage.
-Rattache-la au jalon si elle bloque encore le sprint, laisse-la sans jalon sinon.
+Reprends le `mod:*`, le `ws:*` **et la `nature:`** du ticket écarté, pas ceux de
+l'outillage : ce qui reste à faire d'un ticket produit est du produit, et le
+prochain run doit pouvoir le reprendre. Rattache-la au jalon si elle bloque
+encore le sprint, laisse-la sans jalon sinon.
+
+**Le label `nature:` n'est pas facultatif** : sans lui, l'issue sort du plan
+suivant en « classement incomplet » et retient tout ce qui dépend d'elle. C'est
+la seule étiquette dont l'oubli coûte plus qu'un classement approximatif.
 
 ### Le cas particulier : `blocked` sur un fichier hors empreinte
 
@@ -294,8 +300,9 @@ Rouge après une vague verte = une interaction entre deux tickets que le plan
 croyait indépendants. Trouve laquelle — les empreintes des tickets mergés dans
 la vague sont dans le dossier —, corrige, corrige aussi
 `.claude/milestone-rules.json` pour que la paire ne se reproduise pas, et ouvre
-une issue `type:bug` `P0` rattachée au jalon qui dit quelles empreintes se sont
-recouvertes. Puis `record`.
+une issue `type:bug` `P0` `nature:outillage` rattachée au jalon qui dit quelles
+empreintes se sont recouvertes — c'est le plan qui s'est trompé, pas le produit.
+Puis `record`.
 
 Tant que `develop` est rouge, **ne merge plus rien** : chaque PR suivante
 validerait sa CI contre une base cassée.
@@ -350,9 +357,19 @@ rien :
 gh issue list --repo TMap-Works/spa-booking --state open --search "<mots-clés>"
 ```
 
-Puis crée, avec les quatre labels et sans jalon si ce n'est pas bloquant pour le
+Puis crée, avec les cinq labels et sans jalon si ce n'est pas bloquant pour le
 sprint en cours. Une amélioration hors des six domaines du MVP prend le label
 `post-mvp` et aucun jalon — le périmètre reste figé, y compris pour toi.
+
+**Ces issues-là sont presque toujours `nature:outillage`** : une panne du
+dispositif, une phase de commande qui échoue toujours au même endroit, une règle
+de plan démentie, une permission manquante — tout cela vit dans `scripts/` et
+`.claude/`, et **aucun run ne les traitera**. C'est délibéré : elles attendent
+qu'un humain leur consacre une session, une par une. Tu es la seule chose qui les
+fasse exister ; les écrire avec assez de matière pour qu'elles soient reprises
+des jours plus tard fait partie du travail. Une anomalie qui touche le produit —
+un test métier faux, une migration bancale — prend `nature:projet` et repart dans
+le run.
 
 ## Phase 8 — Compte rendu
 

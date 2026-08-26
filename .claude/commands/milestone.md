@@ -33,6 +33,11 @@ défaut**.
 - **Elle ne rattrape pas un backlog mal tenu.** Une issue sans milestone, sans
   label de classement ou sans critère d'acceptation est écartée du plan, pas
   devinée. Le plan dit lesquelles et pourquoi.
+- **Elle ne touche pas à l'outillage.** Une issue `nature:outillage` — `scripts/`,
+  `.claude/`, le harnais qui les teste — est écartée d'office : elle modifierait
+  le dispositif au moment même où il tourne. Ces tickets-là se prennent à la
+  main, un par session, et c'est l'arbitrage du run qui les ouvre. Le run, lui,
+  ne déroule que `nature:projet`.
 - **Elle ne traite pas un jalon en une fois.** Chaque vague est un point d'arrêt
   net : rien n'est perdu si on s'arrête là, et la relance reprend d'elle-même.
 - **Elle ne survit pas à sa propre limite de quota.** La session qui orchestre
@@ -129,8 +134,13 @@ Le plan lui-même se calcule à part quand on veut seulement le lire :
 python scripts/milestone_plan.py "$1" --width <N>     # l'ordre et les vagues
 ```
 
-Le plan répond à deux questions :
+Le plan répond à trois questions :
 
+- **quoi** — le produit, et lui seul. `nature:projet` entre dans le plan,
+  `nature:outillage` en sort sous la rubrique « Écartées », et une issue sans
+  label `nature:*` sort en « classement incomplet ». L'en-tête du plan compte
+  les tickets d'outillage laissés de côté : c'est la liste des chantiers à
+  prendre à la main, une session à la fois ;
 - **l'ordre** — score d'importance : priorité, `risk`, `security`, et surtout le
   nombre d'issues que l'issue débloque. Ce qui ouvre la voie passe avant ce qui
   est seulement urgent ;
@@ -150,6 +160,7 @@ première vague et des deux suivantes**, et confronter :
 | les prérequis | deux issues d'une même vague dont l'une consomme visiblement le travail de l'autre |
 | les sérialisations | deux issues séparées alors qu'elles vivent dans des répertoires distincts |
 | les issues écartées | un classement incomplet qu'il suffit de corriger pour rendre l'issue traitable |
+| les issues d'outillage | une issue produit étiquetée `nature:outillage` par erreur — elle ne sera jamais dispatchée, et personne ne s'en apercevra |
 
 Toute correction s'écrit dans
 [.claude/milestone-rules.json](.claude/milestone-rules.json) — `resources` pour
@@ -406,7 +417,8 @@ régression sur un artefact local arrêterait le jalon pour rien.
 
 Une fois l'environnement écarté, rouge = une interaction que le plan
 croyait impossible. **Ne pas enchaîner** : ouvrir une issue `type:bug` `P0`
-rattachée au jalon, dire quelles empreintes se sont recouvertes, corriger
+`nature:outillage` rattachée au jalon — c'est le plan qui s'est trompé, pas le
+produit —, dire quelles empreintes se sont recouvertes, corriger
 `.claude/milestone-rules.json` pour que la paire ne se reproduise pas, puis
 journaliser **au niveau du run** — sans `--ticket`, et en nommant la barrière :
 
@@ -448,7 +460,9 @@ Reprendre en phase 3 jusqu'à épuisement du jalon, ou jusqu'à l'une de ces
 - deux vagues consécutives dont plus de la moitié des tickets a échoué — c'est
   un problème de fond, pas une série de malchances ;
 - plus aucune issue traitable alors qu'il en reste d'ouvertes : le plan dit
-  pourquoi, c'est un problème de backlog, à régler avec l'humain.
+  pourquoi, c'est un problème de backlog, à régler avec l'humain. Un jalon dont
+  il ne reste que de l'outillage est **déroulé**, pas bloqué : le dire ainsi, et
+  lister les tickets qui attendent une session humaine.
 
 À l'arrêt, journaliser et **dire où reprendre** : `/milestone` suffit, la
 reprise est automatique. Si l'arrêt vient du quota (`gate` `4`), donner l'heure

@@ -48,9 +48,14 @@ d'après ses mots :
 | `--workstream` | `Backend` `Frontend` `DevOps` `Design` `QA` |
 | `--type` | `feature` `bug` `chore` `docs` `spike` `epic` |
 | `--priority` | `P0` bloquant · `P1` requis pour le MVP · `P2` souhaitable |
+| `--nature` | `projet` (produit MVP) · `outillage` (`scripts/`, `.claude/`, le dispositif de collaboration) |
 
-Toujours passer les quatre options : ce qui n'est pas fourni retombe sur une
+Toujours passer les cinq options : ce qui n'est pas fourni retombe sur une
 déduction par mots-clés, souvent fausse, et un board qui ment ne sert à rien.
+
+`--nature` dit **qui traitera le travail** : `projet` part dans un run de jalon,
+`outillage` attend une session humaine dédiée. Voir
+[project-flow §2](../skills/project-flow/SKILL.md).
 
 Le jalon est celui du sprint en cours, résolu automatiquement — ne passer
 `--milestone` que pour rattacher la demande à un autre sprint.
@@ -65,7 +70,7 @@ charger l'agent `mvp-scope-guard`.
 ```bash
 python scripts/tracking.py open \
   --prompt "<la demande, telle que formulée>" \
-  --module <m> --workstream <w> --type <t> --priority <p>
+  --module <m> --workstream <w> --type <t> --priority <p> --nature <n>
 ```
 
 Vérifier d'abord avec `--dry-run` si le classement mérite d'être confirmé par
@@ -87,7 +92,7 @@ Le **classement du ticket est faux** — le corriger :
 
 ```bash
 python scripts/tracking.py classify <N> --module <m> --workstream <w> \
-  --type <t> --priority <p>
+  --type <t> --priority <p> --nature <n>
 ```
 
 Les attributs déjà justes s'omettent — ce qui n'est pas passé est conservé. La
@@ -99,7 +104,7 @@ l'ancien avec `/ticket-close`, puis reprendre en phase 2.
 
 ## Phase 5 — Rendre compte
 
-Une ligne, pas un rapport : numéro et URL du ticket, jalon, les quatre labels,
+Une ligne, pas un rapport : numéro et URL du ticket, jalon, les cinq labels,
 et l'état de la carte. Si `"project": false` apparaît dans la sortie, le dire
 franchement avec la raison — un ticket hors board ne remplit pas son office.
 

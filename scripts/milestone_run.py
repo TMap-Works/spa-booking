@@ -1282,6 +1282,45 @@ def run_digest(name):
     }
 
 
+PROJECT_LABEL = "nature:projet"
+# Portées avant même la nature par `milestone_plan.qualify()` : ces issues-là
+# portent bien `nature:projet` mais ne seront jamais dispatchées. Les compter
+# ferait proposer un jalon dont le plan sort vide.
+NEVER_PLANNED = {"tracking", "post-mvp", "type:epic"}
+BACKLOG_LIMIT = 500
+
+
+def project_backlog():
+    """{jalon : issues produit encore ouvertes}, ou None si GitHub est muet.
+
+    Le run ne dispatche que `nature:projet` — voir `milestone_plan.qualify()`.
+    Un jalon dont il ne reste que de l'outillage n'a donc rien à dérouler, et le
+    proposer enverrait l'orchestrateur ouvrir un run sur un plan vide : c'est
+    exactement ce que `next` existe pour éviter.
+
+    Une seule requête pour tout le dépôt plutôt qu'une par jalon — le décompte
+    ne vaut pas quatre allers-retours. GitHub muet rend `None` : l'appelant
+    retombe alors sur le décompte du jalon, qui surestime, mais dans le sens qui
+    ne cache rien. Une page pleine rend `None` pour la même raison : tronquée,
+    elle sous-estimerait, et un jalon caché à tort ne se voit jamais.
+    """
+    issues, error = gh_json(["issue", "list", "--repo", REPO, "--state", "open",
+                             "--label", PROJECT_LABEL,
+                             "--limit", str(BACKLOG_LIMIT),
+                             "--json", "number,milestone,labels"])
+    if error or issues is None or len(issues) >= BACKLOG_LIMIT:
+        return None
+    counts = {}
+    for issue in issues:
+        labels = {label.get("name") for label in issue.get("labels") or []}
+        if labels & NEVER_PLANNED:
+            continue
+        title = (issue.get("milestone") or {}).get("title")
+        if title:
+            counts[title] = counts.get(title, 0) + 1
+    return counts
+
+
 def survey():
     """(lignes, avertissement) — un jalon par ligne, GitHub et runs réunis.
 
@@ -1293,6 +1332,9 @@ def survey():
                if d]
     milestones, error = gh_json(["api", f"repos/{REPO}/milestones", "--paginate",
                                  "-X", "GET", "-f", "state=all"])
+    # Inutile de redemander le backlog si GitHub vient déjà de ne pas répondre :
+    # le second appel échouerait de la même façon, en faisant attendre autant.
+    backlog = project_backlog() if milestones else None
     rows = []
     for milestone in milestones or []:
         title = milestone.get("title", "")
@@ -1305,6 +1347,8 @@ def survey():
             "title": title, "state": milestone.get("state", "open"),
             "due": (milestone.get("due_on") or "")[:10],
             "open": milestone.get("open_issues", 0),
+            "todo": (milestone.get("open_issues", 0) if backlog is None
+                     else backlog.get(title, 0)),
             "closed": milestone.get("closed_issues", 0),
             "run": attached,
         })
@@ -1315,15 +1359,22 @@ def survey():
     for digest in digests:
         if not any(row["title"] == digest["milestone"] for row in rows):
             rows.append({"title": digest["milestone"], "state": "?", "due": "",
-                         "open": None, "closed": None, "run": digest})
+                         "open": None, "todo": None, "closed": None,
+                         "run": digest})
     return rows, error
 
 
 def workable(row):
-    """Un jalon sur lequel il reste quelque chose à faire."""
+    """Un jalon sur lequel il reste quelque chose que le run sache faire.
+
+    « Quelque chose » se compte en issues `nature:projet` : l'outillage se
+    traite à la main, une session à la fois, et un jalon qui n'a plus que cela
+    n'est pas un jalon à dérouler. Un run inachevé, lui, passe avant tout
+    décompte — il a des worktrees vivants et des PR ouvertes derrière lui.
+    """
     if row["run"] and not row["run"]["finished"] and row["run"]["signal"] != "stop":
         return True
-    return row["state"] == "open" and (row["open"] or 0) > 0
+    return row["state"] == "open" and (row["todo"] or 0) > 0
 
 
 def held(row):
@@ -1350,10 +1401,10 @@ def recommend(rows):
         return active, f"run {active['run']['id']} en cours{held(active)}"
     if live:
         return live[0], f"run {live[0]['run']['id']} inachevé{held(live[0])}"
-    todo = [row for row in rows if row["state"] == "open" and (row["open"] or 0) > 0]
+    todo = [row for row in rows if row["state"] == "open" and (row["todo"] or 0) > 0]
     if todo:
         return todo[0], "jalon ouvert dont l'échéance est la plus proche"
-    return None, "aucun jalon ouvert n'a d'issue à traiter"
+    return None, "aucun jalon ouvert n'a d'issue produit à traiter"
 
 
 def print_survey(rows, error=None):
@@ -1363,7 +1414,7 @@ def print_survey(rows, error=None):
         print("aucun jalon connu")
         return
     width = max(len(row["title"]) for row in rows + [{"title": "jalon"}])
-    print(f"   {'jalon':<{width}} {'échéance':<11} {'issues':<14} run")
+    print(f"   {'jalon':<{width}} {'échéance':<11} {'issues':<26} run")
     for row in rows:
         digest = row["run"]
         if digest is None:
@@ -1379,8 +1430,13 @@ def print_survey(rows, error=None):
             issues = "?"
         else:
             issues = f"{row['closed']}/{row['closed'] + row['open']} closes"
+            # Ce qui reste ouvert n'est pas ce qui reste à dérouler : le second
+            # chiffre est celui sur lequel `recommend` se prononce.
+            todo = row.get("todo")
+            if todo is not None and todo != row["open"]:
+                issues += f" · {todo} projet"
         print(f" {'*' if digest and digest['active'] else ' '} "
-              f"{row['title']:<{width}} {row['due'] or '—':<11} {issues:<14} "
+              f"{row['title']:<{width}} {row['due'] or '—':<11} {issues:<26} "
               f"{state}")
 
 
