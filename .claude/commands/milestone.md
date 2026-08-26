@@ -399,8 +399,18 @@ npm run verify
 Rouge après une vague verte = une interaction entre deux tickets que le plan
 croyait indépendants. **Ne pas enchaîner** : ouvrir une issue `type:bug` `P0`
 rattachée au jalon, dire quelles empreintes se sont recouvertes, corriger
-`.claude/milestone-rules.json` pour que la paire ne se reproduise pas,
-journaliser, et s'arrêter.
+`.claude/milestone-rules.json` pour que la paire ne se reproduise pas, puis
+journaliser **au niveau du run** — sans `--ticket`, et en nommant la barrière :
+
+```bash
+python scripts/milestone_run.py event --phase validation --status blocked \
+       --actor orchestrateur \
+       --message "npm run verify rouge sur develop apres la vague N : <ce qui casse>"
+```
+
+C'est cette ligne, et elle seule, qui porte le constat à l'arbitre : personne ne
+peut le déduire d'un fichier, puisque `develop` compile toujours du point de vue
+de git. Sans elle, un `develop` cassé dort jusqu'au matin. Puis s'arrêter.
 
 Puis le ménage, une fois pour toute la vague :
 
@@ -573,8 +583,55 @@ Trois points à dire à l'utilisateur en phase 2, avant la première vague :
 
 Garde-fous : `--max-legs`, `--max-hours`, un report d'une demi-heure quand le
 préflight échoue (session `gh` expirée, dépôt injoignable), et le désarmement
-complet après `--patience` étapes consécutives sans un ticket de plus — c'est le
-seul cas où l'humain doit revenir, et il est dit dans le journal.
+complet après `--patience` étapes consécutives sans un ticket de plus — le seul
+cas où l'humain doit revenir, et il est dit dans le journal.
+
+## L'arbitre — ce qui décide quand tu n'es pas là
+
+La reprise automatique sait faire **repartir** un run. Elle ne savait pas
+**décider**. Au premier ticket tombé, à la première PR verte laissée ouverte, à
+la première étape coupée au temps, le superviseur s'effaçait et attendait
+quelqu'un : un jalon lancé le soir s'arrêtait sur la première question posée.
+
+À chacun de ces points d'arrêt, le superviseur appelle désormais
+[/milestone-arbitrate](milestone-arbitrate.md) sur **Claude Opus 5**. L'arbitre
+lit le dossier du run — journal, log de chaque ticket, flux de la dernière étape
+avec ses erreurs d'outil et ses refus de permission, PR du jalon et verdict de la
+barrière, état de `develop`, worktrees vivants — puis tranche, en se fondant sur
+le CDC, les ADR et les skills du dépôt.
+
+**Ce qu'il traite :** ticket `failed` ou `blocked`, fichier hors empreinte, gate
+retenu par la pause sur erreur, étapes stériles, patience épuisée, étape morte
+debout, rebase en conflit, CI rouge, PR verte non mergée, périmètre sensible,
+`verify` rouge sur `develop`.
+
+**Ce qu'il ne fait jamais :** poser une question — personne ne peut y répondre —,
+arrêter le jalon parce que c'est difficile, ou lever une pause posée à la main.
+Son dernier cran d'escalade est **d'écarter un ticket** avec une issue de suivi
+détaillée, pour que les vingt autres continuent.
+
+Trois bornes le tiennent :
+
+- **il n'est appelé que s'il y a matière** — `milestone_arbiter.py should` regarde
+  d'abord ce qui est gratuit, et une étape saine ne coûte aucun tour d'Opus 5 ;
+- **l'escalade est mécanique** — relancer, puis corriger, puis écarter ; deux
+  arbitrages par ticket, et la même cause rencontrée deux fois saute un cran ;
+- **le budget du run est compté** — douze arbitrages, après quoi le dispositif
+  s'arrête et le dit : ce n'est plus un ticket qui résiste, c'est le jalon.
+
+Chaque décision est journalisée avec l'acteur `arbitre` : elle se lit dans
+`milestone_run.py watch`, `log` et `ticket N`, comme le reste. `status` et le
+tableau de bord affichent le compte et la dernière décision.
+
+En cas de merge d'un périmètre sensible, l'arbitre publie sa revue sur la PR
+**avant** de merger, et n'ouvre que ce périmètre-là, pour cet appel-là. C'est une
+relecture par un modèle, pas par quelqu'un : pour un jalon où cela ne se tolère
+pas, c'est `--no-merge` qu'il faut à l'ouverture du run.
+
+Réglages, sur `milestone_supervise.py` : `--no-arbiter` (comportement d'avant),
+`--arbiter-model`, `--arbiter-budget`, `--arbiter-timeout`, et `--stall-minutes`
+— au-delà duquel un journal muet fait couper l'étape et porter l'affaire à
+l'arbitrage, sans attendre `--leg-timeout`.
 
 **`--leg-timeout` (120 min par défaut)** borne l'attente d'une étape. Depuis que
 l'orchestrateur attend ses agents, une étape n'a plus de fin naturelle : un seul

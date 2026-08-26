@@ -84,7 +84,12 @@ propose le jalon à dérouler plutôt que de le demander
 (`scripts/milestone_run.py next` pour le même état, sans rien ouvrir). Ouvrir un run arme
 aussi la reprise automatique : coupure de quota, plantage ou redémarrage, le
 jalon repart seul (`scripts/milestone_supervise.py --state` pour regarder,
-`--disarm` pour débrancher).
+`--disarm` pour débrancher). Et quand le run bute sur une décision — ticket
+tombé, merge non faite, CI rouge, choix laissé en suspens —, un **arbitre
+Opus 5** (`/milestone-arbitrate`) tranche à la place de l'humain sur la foi du
+CDC et des ADR, jusqu'à écarter un ticket avec une issue de suivi plutôt que
+d'immobiliser le jalon. Ses décisions sont journalisées sous l'acteur `arbitre` ;
+`--no-arbiter` le débranche.
 
 ## Règles de code
 
