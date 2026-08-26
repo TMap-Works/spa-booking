@@ -40,6 +40,7 @@
       "Bash(python scripts/milestone_run.py:*)",
       "Bash(python scripts/permissions_review.py:*)",
       "Bash(python scripts/milestone_supervise.py:*)",
+      "Bash(python scripts/milestone_arbiter.py:*)",
       "Bash(python scripts/pr_gate.py:*)",
       "Bash(gh issue create:*)",
       "Bash(gh issue comment:*)",

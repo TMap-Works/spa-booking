@@ -421,5 +421,171 @@ class MergeSensitiveCommandLine(unittest.TestCase):
         self.assertEqual(proc.returncode, 0)
 
 
+class EnvironnementDAppel(unittest.TestCase):
+    """Ce que l'appel hérite, et pourquoi ce n'est pas le même pour une étape et
+    pour un arbitrage.
+
+    `SPA_LEG_START` fait requeuer par `reconcile` les tickets restés `running` :
+    c'est juste au début d'une vague, dont les agents précédents sont morts. Le
+    poser sur un arbitrage lui retirerait sous les pieds ce qu'il vient examiner.
+    """
+
+    def env(self, leg_start, no_merge=False, scopes=()):
+        """L'environnement composé, à partir d'un environnement **vide**.
+
+        `call_env` part de `os.environ` : lu tel quel, ce test dirait « posée »
+        d'une variable simplement héritée du terminal — et resterait vert le jour
+        où le code cesserait de la poser. Un superviseur lancé depuis un autre
+        superviseur hérite précisément de `SPA_UNATTENDED` et `SPA_LEG_START`.
+        """
+        args = argparse.Namespace(no_merge=no_merge, merge_sensitive=set(scopes))
+        with mock.patch.dict(os.environ, {}, clear=True):
+            return sup.call_env(args, leg_start=leg_start)
+
+    def test_une_etape_annonce_son_demarrage(self):
+        self.assertEqual(self.env(leg_start=True)["SPA_LEG_START"], "1")
+
+    def test_un_arbitrage_ne_l_annonce_pas(self):
+        self.assertNotIn("SPA_LEG_START", self.env(leg_start=False))
+
+    def test_sans_surveillance_est_pose_des_qu_on_merge(self):
+        self.assertEqual(self.env(leg_start=True)["SPA_UNATTENDED"], "1")
+
+    def test_no_merge_ne_pose_pas_sans_surveillance(self):
+        self.assertNotIn("SPA_UNATTENDED",
+                         self.env(leg_start=True, no_merge=True))
+
+    def test_la_pre_autorisation_est_toujours_posee(self):
+        """Même vide : ne la poser que sur une branche laisserait passer telle
+        quelle une variable héritée de l'environnement de l'appelant."""
+        self.assertEqual(self.env(leg_start=False, no_merge=True)[sup.AUTHORISED_ENV],
+                         "")
+
+    def test_les_perimetres_sont_transmis_tries(self):
+        env = self.env(leg_start=True, scopes=["prisma", "infra/terraform"])
+        self.assertEqual(env[sup.AUTHORISED_ENV], "infra/terraform,prisma")
+
+
+class SilenceDUneEtape(unittest.TestCase):
+    """La coupure au temps borne l'attente à deux heures. Le journal muet dit
+    bien avant qu'une étape est morte debout : une phase de ticket dure quelques
+    minutes, jamais vingt-cinq."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.directory = Path(self.tmp.name) / "r1"
+        self.directory.mkdir()
+        self.journal = self.directory / "journal.ndjson"
+
+    def quiet(self, age=None, since=None):
+        if age is not None:
+            self.journal.write_text("{}\n", encoding="utf-8")
+            os.utime(self.journal, (time.time() - age, time.time() - age))
+        with mock.patch.object(sup, "current_run_dir", return_value=self.directory):
+            return sup.journal_quiet(since)
+
+    def test_un_journal_frais_ne_dit_aucun_silence(self):
+        self.assertLess(self.quiet(age=5), 60)
+
+    def test_un_journal_vieux_donne_son_age(self):
+        self.assertGreater(self.quiet(age=3000), 2900)
+
+    def test_le_silence_est_borne_au_demarrage_de_l_appel(self):
+        """Sans cela, une étape qui n'a encore rien écrit hériterait du silence
+        de la précédente et serait coupée dans la minute."""
+        self.assertLess(self.quiet(age=3000, since=time.time() - 10), 60)
+
+    def test_aucun_run_ouvert(self):
+        with mock.patch.object(sup, "current_run_dir", return_value=None):
+            self.assertIsNone(sup.journal_quiet())
+
+    def test_journal_absent(self):
+        with mock.patch.object(sup, "current_run_dir", return_value=self.directory):
+            self.assertIsNone(sup.journal_quiet())
+
+    def test_le_guetteur_coupe_au_dela_du_seuil(self):
+        args = argparse.Namespace(stall_minutes=1)
+        with mock.patch.object(sup, "journal_quiet", return_value=120):
+            self.assertIn("muet", sup.stall_watch(args)())
+
+    def test_le_guetteur_laisse_travailler_en_deca(self):
+        args = argparse.Namespace(stall_minutes=25)
+        with mock.patch.object(sup, "journal_quiet", return_value=120):
+            self.assertIsNone(sup.stall_watch(args)())
+
+    def test_le_guetteur_se_debranche_a_zero(self):
+        self.assertIsNone(sup.stall_watch(argparse.Namespace(stall_minutes=0)))
+
+
+class ArbitrageRejoue(unittest.TestCase):
+    """Un superviseur ressuscité par la veille doit trancher comme celui qu'il
+    remplace : l'arbitrage se rejoue comme le reste, sinon un run armé perd sa
+    capacité de décision au premier redémarrage — le moment où elle sert."""
+
+    def intent(self, **fields):
+        base = {"milestone": "S1", "width": 3, "waves_per_leg": 1,
+                "no_merge": False, "merge_sensitive": [], "claude": "claude"}
+        base.update(fields)
+        return base
+
+    def test_le_modele_de_l_arbitre_est_rejoue(self):
+        argv = sup.intent_argv(self.intent(arbiter_model="claude-opus-5"))
+        self.assertEqual(argv[argv.index("--arbiter-model") + 1], "claude-opus-5")
+
+    def test_une_intention_sans_le_champ_retombe_sur_le_defaut(self):
+        """Un `supervisor.json` écrit avant l'arbitre n'a pas le champ : il ne
+        doit ni faire échouer la relance, ni la laisser sans arbitrage."""
+        argv = sup.intent_argv(self.intent())
+        self.assertEqual(argv[argv.index("--arbiter-model") + 1], sup.ARBITER_MODEL)
+        self.assertNotIn("--no-arbiter", argv)
+
+    def test_l_arbitrage_debranche_le_reste(self):
+        self.assertIn("--no-arbiter", sup.intent_argv(self.intent(no_arbiter=True)))
+
+    def test_le_budget_et_le_silence_sont_rejoues(self):
+        argv = sup.intent_argv(self.intent(arbiter_budget=4, stall_minutes=10))
+        self.assertEqual(argv[argv.index("--arbiter-budget") + 1], "4")
+        self.assertEqual(argv[argv.index("--stall-minutes") + 1], "10")
+
+
+class DemandeDArbitrage(unittest.TestCase):
+    """`should` est ce qu'on lit avant de dépenser un tour d'Opus 5. Débranché,
+    le superviseur doit retrouver exactement son comportement d'avant."""
+
+    def args(self, no_arbiter=False):
+        return argparse.Namespace(no_arbiter=no_arbiter, arbiter_budget=12)
+
+    def test_debranche_on_ne_demande_rien(self):
+        with mock.patch.object(sup.subprocess, "run") as called:
+            self.assertIsNone(sup.arbiter_should(self.args(no_arbiter=True), []))
+        called.assert_not_called()
+
+    def test_rien_a_arbitrer_rend_none(self):
+        done = mock.Mock(returncode=1, stdout="rien à arbitrer\n")
+        with mock.patch.object(sup.subprocess, "run", return_value=done):
+            self.assertIsNone(sup.arbiter_should(self.args(), []))
+
+    def test_un_motif_est_rendu_tel_quel(self):
+        done = mock.Mock(returncode=0, stdout="tickets_tombes — #21 en échec\n")
+        with mock.patch.object(sup.subprocess, "run", return_value=done):
+            self.assertIn("tickets_tombes", sup.arbiter_should(self.args(), []))
+
+    def test_un_dossier_indisponible_ne_bloque_pas_le_run(self):
+        """Un dossier qu'on ne sait pas constituer fait retomber le superviseur
+        sur son comportement d'avant — il ne fait pas mourir le run."""
+        with mock.patch.object(sup.subprocess, "run",
+                               side_effect=OSError("python introuvable")):
+            self.assertIsNone(sup.arbiter_should(self.args(), []))
+
+    def test_les_motifs_sont_transmis_au_dossier(self):
+        done = mock.Mock(returncode=0, stdout="leg_delai — coupée\n")
+        with mock.patch.object(sup.subprocess, "run", return_value=done) as called:
+            sup.arbiter_should(self.args(), ["leg_delai", "patience"])
+        argv = called.call_args[0][0]
+        self.assertEqual(argv.count("--reason"), 2)
+        self.assertIn("patience", argv)
+
+
 if __name__ == "__main__":
     unittest.main()

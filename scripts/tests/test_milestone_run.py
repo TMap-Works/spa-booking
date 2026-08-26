@@ -924,5 +924,119 @@ class ContexteDeReprise(unittest.TestCase):
         self.assertNotIn("À REPRENDRE", output.getvalue())
 
 
+class DecisionsSansClavier(unittest.TestCase):
+    """`skip`, `retry` et `note` ne vivaient que dans le `shell` interactif.
+
+    C'était tenable tant que seul un humain écartait un ticket. L'arbitre, lui,
+    tourne dans un `claude -p` où il n'y a aucune invite à qui parler : une
+    décision qu'on ne peut poser qu'au clavier est une décision que la reprise
+    automatique ne peut pas prendre — c'est-à-dire le run qui s'arrête, la panne
+    même que l'arbitrage existe pour lever.
+    """
+
+    def run_command(self, command, tmp, **fields):
+        write_run(tmp, control={"signal": "run"})
+        output = io.StringIO()
+        namespace = argparse.Namespace(run="r1", actor="arbitre", **fields)
+        with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+             mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
+             contextlib.redirect_stdout(output):
+            command(namespace)
+        control = json.loads((Path(tmp) / "r1" / "control.json").read_text(
+            encoding="utf-8"))
+        events = [json.loads(line) for line in
+                  (Path(tmp) / "r1" / "journal.ndjson").read_text(
+                      encoding="utf-8").splitlines() if line.strip()]
+        return control, events, output.getvalue()
+
+    def test_ecarter_un_ticket_l_inscrit_dans_le_controle(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            control, events, _ = self.run_command(
+                run_mod.cmd_skip, tmp, ticket="21", reason="dépendance non tenue")
+        self.assertEqual(control["skip"]["21"], "dépendance non tenue")
+        self.assertEqual(events[-1]["status"], "skipped")
+        self.assertEqual(events[-1]["actor"], "arbitre")
+
+    def test_relancer_un_ticket_le_remet_en_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            control, events, _ = self.run_command(
+                run_mod.cmd_retry, tmp, ticket="21", message="quota, worktree intact")
+        self.assertEqual(control["retry"], [21])
+        self.assertEqual(events[-1]["status"], "pending")
+        self.assertTrue(events[-1]["reset"])
+
+    def test_relancer_leve_un_ecartement_precedent(self):
+        """Sans cela, un ticket écarté puis relancé resterait `skipped` au
+        prochain `replay`, et la relance serait sans effet."""
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, control={"signal": "run", "skip": {"21": "à revoir"}})
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                run_mod.cmd_retry(argparse.Namespace(
+                    run="r1", ticket="21", message=None, actor="arbitre"))
+            control = json.loads((Path(tmp) / "r1" / "control.json").read_text(
+                encoding="utf-8"))
+        self.assertNotIn("21", control["skip"])
+
+    def test_annoter_ne_touche_pas_a_l_etat(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _, events, _ = self.run_command(
+                run_mod.cmd_note, tmp, ticket="21", message="empreinte élargie")
+        self.assertIsNone(events[-1].get("status"))
+        self.assertEqual(events[-1]["message"], "empreinte élargie")
+
+    def test_un_numero_abime_ne_touche_a_rien(self):
+        """`control.json` est relu par `replay` à chaque appel : un jeton non
+        numérique y ferait planter status, gate, watch et resume."""
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, control={"signal": "run"})
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    run_mod.cmd_skip(argparse.Namespace(
+                        run="r1", ticket="vingt-et-un", reason="", actor="arbitre"))
+            control = json.loads((Path(tmp) / "r1" / "control.json").read_text(
+                encoding="utf-8"))
+        self.assertEqual(control.get("skip", {}), {})
+
+
+class LigneDArbitrage(unittest.TestCase):
+    """Une décision prise à la place de quelqu'un doit se lire là où il regarde.
+    La laisser dans un fichier qu'il faut savoir ouvrir revient à la cacher."""
+
+    def line(self, entries):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "r1").mkdir()
+            if entries is not None:
+                (Path(tmp) / "r1" / "arbitrations.ndjson").write_text(
+                    "".join(json.dumps(entry) + "\n" for entry in entries),
+                    encoding="utf-8")
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)):
+                return run_mod.arbitration_line("r1")
+
+    def test_aucun_arbitrage_n_affiche_rien(self):
+        self.assertIsNone(self.line(None))
+
+    def test_le_compte_et_la_derniere_decision(self):
+        found = self.line([{"ticket": 19, "motif": "gate_pause", "rung": "retry"},
+                           {"ticket": 21, "motif": "tickets_tombes", "rung": "skip"}])
+        self.assertIn("2 arbitrage(s)", found)
+        self.assertIn("#21", found)
+        self.assertIn("skip", found)
+
+    def test_une_decision_de_run_n_a_pas_de_ticket(self):
+        found = self.line([{"motif": "fin_de_run", "message": "3 issues ouvertes"}])
+        self.assertIn("run", found)
+
+    def test_un_fichier_abime_ne_fait_pas_planter_le_tableau_de_bord(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "r1").mkdir()
+            (Path(tmp) / "r1" / "arbitrations.ndjson").write_text(
+                "pas du json\n", encoding="utf-8")
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)):
+                self.assertIsNone(run_mod.arbitration_line("r1"))
+
+
 if __name__ == "__main__":
     unittest.main()

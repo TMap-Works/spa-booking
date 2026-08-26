@@ -114,6 +114,13 @@
       "scripts/milestone-supervise",
       ".claude/commands",
       ".claude/settings"
+    ],
+    "182": [
+      "scripts/milestone-arbiter",
+      "scripts/milestone-run",
+      "scripts/milestone-supervise",
+      ".claude/commands",
+      ".claude/settings"
     ]
   },
   "depends": {

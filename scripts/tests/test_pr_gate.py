@@ -506,6 +506,44 @@ class TestAuthorisedScopes(unittest.TestCase):
             ["infra/terraform"])
 
 
+class TestScopesDeLAppel(unittest.TestCase):
+    """`--merge-sensitive` : la même autorisation, mais donnée PR par PR.
+
+    Elle existe pour l'arbitre du run, qui n'autorise qu'après avoir lu le diff
+    et publié sa revue. Le faire passer par la variable d'environnement
+    l'obligerait à écrire `SPA_MERGE_SENSITIVE=… python …`, une forme que
+    l'allowlist de `.claude/settings.json` ne reconnaît pas : son mandat de merge
+    aurait été refusé en silence sous `claude -p`.
+    """
+
+    def scopes(self, extra, env=None):
+        with mock.patch.dict(os.environ, env or {}, clear=True):
+            return pr_gate.authorised_scopes(extra)
+
+    def test_le_drapeau_ouvre_un_perimetre(self):
+        self.assertEqual(self.scopes("infra/terraform"), {"infra/terraform"})
+
+    def test_le_drapeau_vide_n_ouvre_rien(self):
+        self.assertEqual(self.scopes(""), set())
+
+    def test_le_drapeau_s_ajoute_a_l_armement_du_run(self):
+        """L'un dit ce qui a été autorisé pour tout le run, l'autre ce que
+        l'arbitre autorise ici : ni l'un ni l'autre ne doit effacer le second."""
+        found = self.scopes("prisma",
+                            env={pr_gate.AUTHORISED_ENV: "infra/terraform"})
+        self.assertEqual(found, {"infra/terraform", "prisma"})
+
+    def test_une_cle_inconnue_au_drapeau_reste_inerte(self):
+        self.assertEqual(
+            pr_gate.blocking(["infra/terraform"], self.scopes("terraform")),
+            ["infra/terraform"])
+
+    def test_all_reste_possible_mais_la_commande_l_interdit(self):
+        """La barrière l'accepte — c'est la commande d'arbitrage qui interdit à
+        l'arbitre de l'écrire. Le vérifier ici documente où vit la limite."""
+        self.assertEqual(self.scopes(pr_gate.ALL_SCOPES), set(pr_gate.SCOPE_KEYS))
+
+
 class TestBlocking(unittest.TestCase):
     """`blocking()` — ce qui reste à relire une fois les autorisations défalquées."""
 

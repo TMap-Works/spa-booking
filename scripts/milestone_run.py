@@ -136,6 +136,11 @@ LEVEL_OF_STATUS = {
     "skipped": "WARN", "pause": "WARN", "stop": "WARN", "blocked": "ERROR",
     "failed": "ERROR", "reconciled": "INFO", "quota_hold": "WARN",
     "quota_cleared": "INFO", "leg_started": "INFO", "leg_ended": "INFO",
+    # Un arbitrage se lit en WARN, toujours : c'est une décision prise à la place
+    # de quelqu'un. Elle doit ressortir du journal même quand tout s'est bien
+    # passé — surtout quand tout s'est bien passé, en fait, puisque personne
+    # n'ira la chercher.
+    "arbitrage": "WARN",
 }
 
 GO, PAUSE, STOP, NO_RUN, QUOTA = 0, 1, 2, 3, 4
@@ -150,7 +155,11 @@ STATUSES = FLOW + ["failed", "blocked", "skipped"]
 # Statuts de cycle de vie du run. Journalisables comme les autres, mais sans
 # effet sur l'état d'un ticket : `replay` ne retient que ceux de STATUSES.
 RUN_STATUSES = ["started", "resumed", "replanned", "reconciled", "quota_hold",
-                "quota_cleared", "leg_started", "leg_ended"]
+                "quota_cleared", "leg_started", "leg_ended", "arbitrage"]
+
+# Le NDJSON des décisions de l'arbitre, écrit par `milestone_arbiter.py record`
+# et relu ici pour `status` et le tableau de bord.
+ARBITRATIONS = "arbitrations.ndjson"
 
 REPO = os.environ.get("SPA_TRACKING_REPO", "TMap-Works/spa-booking")
 BRANCH_RE = re.compile(r"^(?:feature|bugfix|chore|docs)/(\d+)-")
@@ -372,6 +381,57 @@ def append_journal(run_id, event):
 
 def ticket_log_path(run_id, number):
     return run_dir(run_id) / "tickets" / f"{number}.log"
+
+
+def read_arbitrations(run_id):
+    """Les décisions de l'arbitre, du plus ancien au plus récent.
+
+    Lue ici et non dans `milestone_arbiter.py`, qui importe déjà ce module :
+    l'import croisé fermerait la boucle, et c'est donc l'arbitre qui vient
+    chercher sa mémoire ici plutôt que l'inverse. Le fichier est un NDJSON en
+    ajout seul ; une ligne abîmée est sautée, jamais propagée en exception —
+    `status`, `watch` et le tableau de bord le lisent à chaque redessin.
+    """
+    path = run_dir(run_id) / ARBITRATIONS
+    if not path.exists():
+        return []
+    found = []
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                found.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    except OSError:
+        return []
+    return found
+
+
+def arbitrations(run_id):
+    """Ce que l'arbitre a décidé sur ce run — (nombre, dernière décision).
+
+    Ce compte a sa place dans `status` et dans le tableau de bord pour une raison
+    simple : ce sont des décisions prises à la place de quelqu'un. Les laisser
+    dans un fichier qu'il faut savoir ouvrir reviendrait à les cacher.
+    """
+    found = read_arbitrations(run_id)
+    return len(found), (found[-1] if found else None)
+
+
+def arbitration_line(run_id):
+    """La ligne à afficher, ou None s'il n'y a rien eu à arbitrer."""
+    count, last = arbitrations(run_id)
+    if not count:
+        return None
+    detail = ""
+    if last:
+        who = f"#{last['ticket']}" if last.get("ticket") else "run"
+        detail = (f" · dernier : {who} {last.get('motif') or ''}"
+                  f"{' → ' + last['rung'] if last.get('rung') else ''}")
+    return f"{count} arbitrage(s) — décisions prises sans humain{detail}"
 
 
 # --------------------------------------------------------------------------- #
@@ -1492,7 +1552,7 @@ def cmd_gate(args):
                                              for t in tickets.values()):
         print("pause sur erreur — traiter d'abord : "
               + ", ".join(brief_failure(t) for t in fallen_tickets(tickets)))
-        print("`milestone_run.py shell` puis `retry N`, `skip N [raison]` ou "
+        print("`milestone_run.py retry N`, `skip N [raison]` ou "
               "`onerror continue` ; `ticket N` pour entrer dans le détail")
         return PAUSE
 
@@ -1539,6 +1599,9 @@ def cmd_status(args):
     if control.get("pause_on_error"):
         print(paint("pause sur erreur armée — un ticket tombé retiendra le run "
                     "au prochain gate", "WARN"))
+    arbitrage = arbitration_line(run_id)
+    if arbitrage:
+        print(paint(arbitrage, "WARN"))
     print()
 
     # Les échecs d'abord, en clair : c'est ce qu'on vient chercher quand un run
@@ -1706,7 +1769,7 @@ def ticket_frame(run_id, number, tail, worktrees=None):
          ticket["status"] if ticket["status"] in BAD else None)
     if ticket["status"] in BAD:
         emit(f" ⚠ {ticket['status']} — {ticket['note'] or 'sans détail'}"
-             f"  ·  `shell` puis `retry {number}` ou `skip {number}`", "failed")
+             f"  ·  `milestone_run.py retry {number}` ou `skip {number}`", "failed")
     if ticket["pr"]:
         emit(f" PR       #{ticket['pr']}")
     if ticket["branch"] or worktree:
@@ -1813,13 +1876,77 @@ def cmd_onerror(args):
     return GO
 
 
+def cmd_skip(args):
+    """Écarte un ticket du run — le `gate` le portera à l'orchestrateur.
+
+    Cette décision ne vivait que dans le `shell` interactif. C'était tenable tant
+    que seul un humain écartait un ticket ; l'arbitre, lui, tourne dans un
+    `claude -p` où il n'y a aucune invite à qui parler. Une décision qu'on ne
+    peut poser qu'au clavier est une décision que la reprise automatique ne peut
+    pas prendre — c'est-à-dire le run qui s'arrête, précisément la panne que
+    l'arbitrage existe pour lever.
+    """
+    run_id = resolve(args.run)
+    number = as_ticket(args.ticket)
+    if number is None:
+        fail("skip N [raison] — N est un numéro d'issue")
+    reason = (args.reason if isinstance(args.reason, str)
+              else " ".join(args.reason or []))
+    control = load_control(run_id)
+    control.setdefault("skip", {})[str(number)] = reason
+    save_control(run_id, control)
+    append_journal(run_id, {"ts": now(), "kind": "ticket", "ticket": number,
+                            "status": "skipped", "actor": args.actor,
+                            "message": reason or f"écarté par {args.actor}"})
+    print(f"#{number} écarté — l'orchestrateur le verra au prochain `gate`")
+    return GO
+
+
+def cmd_retry(args):
+    """Remet un ticket en file, quel que soit l'état où il est tombé."""
+    run_id = resolve(args.run)
+    number = as_ticket(args.ticket)
+    if number is None:
+        fail("retry N — N est un numéro d'issue")
+    control = load_control(run_id)
+    control["retry"] = sorted(set(control.get("retry") or []) | {number})
+    control.get("skip", {}).pop(str(number), None)
+    save_control(run_id, control)
+    # C'est cette ligne qui remet le ticket en file, et elle seule : `reset` est
+    # le seul moyen de faire reculer un statut, si bien que `retry` mord sur
+    # tout — un `skip` journalisé terminal comme un `running` figé par un agent
+    # mort (#134), que `reconcile` ne rattrape que si le dépôt confirme
+    # l'absence de trace.
+    append_journal(run_id, {"ts": now(), "kind": "ticket", "ticket": number,
+                            "status": "pending", "reset": True,
+                            "actor": args.actor,
+                            "message": args.message
+                                       or f"remis en file par {args.actor}"})
+    print(f"#{number} sera relancé à la prochaine vague")
+    return GO
+
+
+def cmd_note(args):
+    """Une ligne de journal sur un ticket, sans toucher à son état."""
+    run_id = resolve(args.run)
+    number = as_ticket(args.ticket)
+    text = (args.message if isinstance(args.message, str)
+            else " ".join(args.message or []))
+    if number is None or not text.strip():
+        fail("note N <texte> — N est un numéro d'issue")
+    append_journal(run_id, {"ts": now(), "kind": "ticket", "ticket": number,
+                            "actor": args.actor, "message": text})
+    print("noté")
+    return GO
+
+
 def cmd_signal(args, signal):
     run_id = resolve(args.run)
     control = load_control(run_id)
     control["signal"] = signal
     save_control(run_id, control)
     append_journal(run_id, {"ts": now(), "kind": "run", "status": signal,
-                            "actor": "humain"})
+                            "actor": getattr(args, "actor", None) or "humain"})
     print({"pause": "pause demandée — prendra effet à la fin de la vague en cours",
            "stop": "arrêt demandé — aucun nouvel agent ne sera lancé",
            "run": "run relancé"}[signal])
@@ -2028,43 +2155,26 @@ def cmd_shell(args):
                 if number is None:
                     print("skip N [raison] — N est un numéro d'issue")
                     continue
-                reason = " ".join(rest[1:])
-                control = load_control(run_id)
-                control.setdefault("skip", {})[str(number)] = reason
-                save_control(run_id, control)
-                append_journal(run_id, {"ts": now(), "kind": "ticket",
-                                        "ticket": number, "status": "skipped",
-                                        "actor": "humain",
-                                        "message": reason or "écarté à la main"})
-                print(f"#{number} écarté — l'orchestrateur le verra au prochain `gate`")
+                cmd_skip(argparse.Namespace(
+                    run=run_id, ticket=number,
+                    reason=" ".join(rest[1:]) or "écarté à la main",
+                    actor="humain"))
             elif verb == "retry":
                 number = as_ticket(rest[0] if rest else None)
                 if number is None:
                     print("retry N — N est un numéro d'issue")
                     continue
-                control = load_control(run_id)
-                control["retry"] = sorted(set(control.get("retry") or []) | {number})
-                control.get("skip", {}).pop(str(number), None)
-                save_control(run_id, control)
-                # C'est cette ligne qui remet le ticket en file, et elle seule :
-                # `reset` est le seul moyen de faire reculer un statut, si bien
-                # que `retry` mord sur tout — un `skip` journalisé terminal comme
-                # un `running` figé par un agent mort (#134), que `reconcile` ne
-                # rattrape que si le dépôt confirme l'absence de trace.
-                append_journal(run_id, {"ts": now(), "kind": "ticket",
-                                        "ticket": number, "status": "pending",
-                                        "reset": True, "actor": "humain",
-                                        "message": "remis en file à la main"})
-                print(f"#{number} sera relancé à la prochaine vague")
+                cmd_retry(argparse.Namespace(run=run_id, ticket=number,
+                                             message="remis en file à la main",
+                                             actor="humain"))
             elif verb == "note":
                 number = as_ticket(rest[0] if rest else None)
                 if number is None or len(rest) < 2:
                     print("note N <texte> — N est un numéro d'issue")
                     continue
-                append_journal(run_id, {"ts": now(), "kind": "ticket",
-                                        "ticket": number, "actor": "humain",
-                                        "message": " ".join(rest[1:])})
-                print("noté")
+                cmd_note(argparse.Namespace(run=run_id, ticket=number,
+                                            message=" ".join(rest[1:]),
+                                            actor="humain"))
             elif verb == "runs":
                 cmd_list(namespace)
             else:
@@ -2219,6 +2329,9 @@ def dashboard(run_id, lines):
     if control.get("pause_on_error"):
         out.append(paint(" ⚠  pause sur erreur armée — un ticket tombé retiendra le "
                          "run au prochain gate"[:columns], "WARN"))
+    arbitrage = arbitration_line(run_id)
+    if arbitrage:
+        out.append(paint((" ⚖  " + arbitrage)[:columns], "WARN"))
 
     hold = quota_hold(run_id)
     if hold:
@@ -2243,7 +2356,7 @@ def dashboard(run_id, lines):
         out.append("")
 
     if failed:
-        out.append(paint(" EN ÉCHEC — `shell` puis `retry N` ou `skip N` · "
+        out.append(paint(" EN ÉCHEC — `retry N` ou `skip N` · "
                          "`ticket N` pour le détail", "failed"))
         for ticket in sorted(failed, key=lambda t: t["number"]):
             out.append(paint(("   " + failure_line(ticket))[:columns], "failed"))
@@ -2397,9 +2510,35 @@ def main():
 
     sub.add_parser("path", help="où se trouvent le log et le journal").add_argument("--run")
 
-    for name in ("pause", "stop"):
-        node = sub.add_parser(name, help=f"{name} le run")
+    # Les quatre décisions du `shell`, sorties du clavier. Elles y restent
+    # disponibles, à l'identique — mais l'arbitre tourne dans un `claude -p`, où
+    # il n'y a personne pour taper `retry 42`. Sans ces sous-commandes, sa
+    # décision serait juste et inapplicable.
+    skipper = sub.add_parser("skip", help="écarter un ticket du run")
+    skipper.add_argument("ticket", metavar="N")
+    skipper.add_argument("reason", nargs="*", default=[], metavar="RAISON")
+    skipper.add_argument("--run")
+    skipper.add_argument("--actor", default="humain")
+
+    retrier = sub.add_parser("retry",
+                             help="relancer un ticket tombé — ou figé en running")
+    retrier.add_argument("ticket", metavar="N")
+    retrier.add_argument("--run")
+    retrier.add_argument("--message")
+    retrier.add_argument("--actor", default="humain")
+
+    noter = sub.add_parser("note", help="annoter un ticket dans le journal")
+    noter.add_argument("ticket", metavar="N")
+    noter.add_argument("message", nargs="+", metavar="TEXTE")
+    noter.add_argument("--run")
+    noter.add_argument("--actor", default="humain")
+
+    for name, helptext in (("pause", "s'arrêter à la fin de la vague en cours"),
+                           ("stop", "s'arrêter sans lancer d'autre agent"),
+                           ("go", "lever la pause et reprendre")):
+        node = sub.add_parser(name, help=helptext)
         node.add_argument("--run")
+        node.add_argument("--actor", default="humain")
 
     sub.add_parser("list", help="tous les runs connus").add_argument("--run")
 
@@ -2417,8 +2556,10 @@ def main():
         "progress": cmd_progress, "next": cmd_next,
         "watch": cmd_watch, "path": cmd_path,
         "ticket": cmd_ticket, "onerror": cmd_onerror,
+        "skip": cmd_skip, "retry": cmd_retry, "note": cmd_note,
         "pause": lambda a: cmd_signal(a, "pause"),
         "stop": lambda a: cmd_signal(a, "stop"),
+        "go": lambda a: cmd_signal(a, "run"),
     }
     return handlers[args.command](args)
 
