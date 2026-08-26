@@ -22,6 +22,7 @@ import { DomainError } from '../../common/errors';
 export const CATALOG_ERROR_CODES = {
   SERVICE_SLUG_TAKEN: 'SERVICE_SLUG_TAKEN',
   SERVICE_CATEGORY_SLUG_TAKEN: 'SERVICE_CATEGORY_SLUG_TAKEN',
+  SERVICE_STAFF_ALREADY_ASSIGNED: 'SERVICE_STAFF_ALREADY_ASSIGNED',
 } as const;
 
 const CONFLICT = 409;
@@ -55,5 +56,30 @@ export class ServiceCategorySlugTakenError extends DomainError {
 
   public constructor(slug: string) {
     super('Une catégorie de cet établissement porte déjà ce slug.', { slug });
+  }
+}
+
+/**
+ * Ce praticien pratique déjà cette prestation.
+ *
+ * Traduit l'unicité `(tenant_id, service_id, staff_id)`. Le conflit vient de la
+ * base et non d'un contrôle préalable : deux clics concurrents sur la même case
+ * passeraient tous les deux le contrôle, et le perdant recevrait un 500.
+ *
+ * **409 et non 200** : le geste n'est pas idempotent par accident, il est refusé
+ * sciemment. Un écran qui reçoit 200 sur une affectation qu'il croyait créer ne
+ * peut pas distinguer « c'était déjà fait » de « quelqu'un vient de le faire »,
+ * et l'un des deux mérite d'être rafraîchi.
+ *
+ * Les deux identifiants sont rendus dans `details` parce que ce sont **ceux que
+ * l'appelant vient d'envoyer** : ils ne lui apprennent rien, et lui évitent de
+ * deviner quelle case de sa liste a fauté.
+ */
+export class ServiceStaffAlreadyAssignedError extends DomainError {
+  public override readonly code = CATALOG_ERROR_CODES.SERVICE_STAFF_ALREADY_ASSIGNED;
+  public override readonly status = CONFLICT;
+
+  public constructor(serviceId: string, staffId: string) {
+    super('Ce praticien est déjà affecté à cette prestation.', { serviceId, staffId });
   }
 }

@@ -2,8 +2,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
-import { ServiceCategorySlugTakenError, ServiceSlugTakenError } from './catalog.errors';
-import type { ServiceCategoryView, ServiceView } from './catalog.types';
+import {
+  ServiceCategorySlugTakenError,
+  ServiceStaffAlreadyAssignedError,
+  ServiceSlugTakenError,
+} from './catalog.errors';
+import type { PublicServiceView, ServiceCategoryView, ServiceView } from './catalog.types';
 
 /**
  * Seul point du module qui connaît le schéma (api-module §2).
@@ -55,6 +59,26 @@ export interface ServicePatch {
   isActive?: boolean;
 }
 
+/** Une fiche praticien, réduite à ce que le catalogue en montre. */
+export interface StaffRecord {
+  id: string;
+  displayName: string;
+  isActive: boolean;
+}
+
+/** Une prestation publiable, praticiens actifs déjà joints. */
+export interface PublicServiceRecord {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  category: { id: string; slug: string; name: string } | null;
+  durationMinutes: number;
+  priceAmountMinor: number;
+  priceCurrency: string;
+  staff: { id: string; displayName: string }[];
+}
+
 /** Champs modifiables d'une catégorie. */
 export interface ServiceCategoryPatch {
   slug?: string;
@@ -100,6 +124,51 @@ const SERVICE_SELECT = {
   // `(tenant_id, category_id)` de la migration qui interdisent que cette ligne
   // en désigne une d'un autre établissement.
   category: { select: CATEGORY_SUMMARY_SELECT },
+} as const;
+
+/**
+ * La fiche praticien, réduite à ce que le catalogue a le droit d'en montrer.
+ *
+ * Ni `userId` — il révélerait le compte derrière la fiche —, ni `bio`, qui est
+ * de la vitrine et n'a rien à faire dans une liste d'affectations où il ferait
+ * transiter deux mille caractères par ligne.
+ */
+const STAFF_SELECT = { id: true, displayName: true, isActive: true } as const;
+
+/** Forme réduite du praticien, telle que la page publique la reçoit. */
+const STAFF_SUMMARY_SELECT = { id: true, displayName: true } as const;
+
+/**
+ * La prestation telle que le catalogue **public** la lit.
+ *
+ * Ni les tampons, ni `isActive` : le premier couple est de l'exploitation — la
+ * cadence interne du salon —, le second vaudrait toujours `true` puisque la
+ * lecture ne porte que sur des prestations actives. Ce qui n'est pas lu ici ne
+ * peut pas fuiter plus loin.
+ *
+ * `assignedStaff` est filtré sur les praticiens **actifs** : un praticien
+ * désactivé ne prend plus de rendez-vous, et le proposer au choix mènerait à un
+ * créneau qu'aucun agenda ne peut honorer. Le filtre porte sur la relation, pas
+ * sur la ligne d'affectation — celle-ci survit intacte à la désactivation, et la
+ * réactivation la fait réapparaître sans avoir à la recréer.
+ */
+const PUBLIC_SERVICE_SELECT = {
+  id: true,
+  slug: true,
+  name: true,
+  description: true,
+  durationMinutes: true,
+  priceAmountMinor: true,
+  priceCurrency: true,
+  category: { select: CATEGORY_SUMMARY_SELECT },
+  assignedStaff: {
+    where: { staff: { isActive: true } },
+    select: { staff: { select: STAFF_SUMMARY_SELECT } },
+    // Objet et non tableau à un élément : `as const` fige un littéral de tableau
+    // en `readonly`, et Prisma n'accepte qu'un `OrderByInput[]` mutable. La forme
+    // objet dit la même chose sans buter dessus.
+    orderBy: { staff: { displayName: 'asc' } },
+  },
 } as const;
 
 /**
@@ -157,6 +226,26 @@ export function toServiceView(service: ServiceRecord): ServiceView {
     // de raison de manipuler un entier sans sa devise.
     price: { amountMinor: service.priceAmountMinor, currency: service.priceCurrency },
     isActive: service.isActive,
+  };
+}
+
+/**
+ * Une prestation publiable, sous la forme que la page de réservation reçoit.
+ *
+ * Le prix se recompose ici comme dans `toServiceView`, et les praticiens sont
+ * recopiés champ par champ plutôt qu'étalés : c'est la même frontière, et un
+ * `{ ...staff }` publierait le jour venu tout champ ajouté à la projection.
+ */
+export function toPublicServiceView(service: PublicServiceRecord): PublicServiceView {
+  return {
+    id: service.id,
+    slug: service.slug,
+    name: service.name,
+    description: service.description,
+    category: service.category,
+    durationMinutes: service.durationMinutes,
+    price: { amountMinor: service.priceAmountMinor, currency: service.priceCurrency },
+    staff: service.staff.map((member) => ({ id: member.id, displayName: member.displayName })),
   };
 }
 
@@ -368,5 +457,127 @@ export class CatalogRepository {
     }
 
     return this.findServiceById(id);
+  }
+
+  // -------------------------------------------------------------------------
+  // Affectation « ce praticien pratique cette prestation »
+  // -------------------------------------------------------------------------
+
+  /**
+   * Une fiche praticien de l'établissement courant — `null` hors de celui-ci.
+   *
+   * Le module `catalog` lit la table `staff` sans en être propriétaire : il ne
+   * la crée ni ne la modifie, il vérifie seulement qu'un identifiant reçu
+   * désigne un praticien **d'ici** avant d'écrire l'affectation. Ce n'est pas
+   * l'import du repository d'un autre module (api-module §3) — aucun module ne
+   * possède encore la fiche praticien, et le jour où l'un la prendra, cette
+   * lecture deviendra l'appel de service correspondant.
+   */
+  public async findStaffById(id: string): Promise<StaffRecord | null> {
+    return this.prisma.staff.findFirst({ where: { id }, select: STAFF_SELECT });
+  }
+
+  /**
+   * Les praticiens affectés à une prestation de l'établissement courant.
+   *
+   * `@@index([tenantId, staffId])` ne sert pas cette lecture-ci ; c'est l'unicité
+   * `(tenant_id, service_id, staff_id)` qui la porte, son préfixe couvrant
+   * exactement `where: { tenantId, serviceId }`.
+   *
+   * Les praticiens **désactivés** y figurent, contrairement au catalogue public :
+   * un écran d'affectation doit montrer qu'une prestation reste rattachée à
+   * quelqu'un qui ne prend plus de rendez-vous. Le masquer ferait croire à une
+   * affectation perdue et inviterait à la recréer, pour se heurter au conflit
+   * d'unicité.
+   */
+  public async listServiceStaff(serviceId: string): Promise<StaffRecord[]> {
+    const assignments = await this.prisma.serviceStaff.findMany({
+      where: { serviceId },
+      select: { staff: { select: STAFF_SELECT } },
+      orderBy: [{ staff: { displayName: 'asc' } }],
+    });
+    return assignments.map((assignment) => assignment.staff);
+  }
+
+  /**
+   * Affecte un praticien à une prestation, tous deux de l'établissement courant.
+   *
+   * Lève `ServiceStaffAlreadyAssignedError` sur l'unicité
+   * `(tenant_id, service_id, staff_id)` : c'est la base qui tranche, et non un
+   * contrôle préalable du service, parce que deux clics concurrents sur la même
+   * case le passeraient tous les deux. Sans cette traduction, le perdant
+   * recevrait un 500 là où le contrat annonce un 409.
+   *
+   * Les deux clés étrangères composites `(tenant_id, service_id)` et
+   * `(tenant_id, staff_id)` sont ce qui rend impossible d'affecter le praticien
+   * d'un salon à la prestation d'un autre — même si les contrôles applicatifs
+   * venaient à être contournés, l'insertion échouerait en base.
+   */
+  public async assignStaff(serviceId: string, staffId: string): Promise<void> {
+    try {
+      await this.prisma.serviceStaff.create({
+        data: withScopedTenant<Prisma.ServiceStaffUncheckedCreateInput>({ serviceId, staffId }),
+        select: { id: true },
+      });
+    } catch (error: unknown) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === UNIQUE_VIOLATION) {
+        throw new ServiceStaffAlreadyAssignedError(serviceId, staffId);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Retire l'affectation. Rend `false` si elle n'existait pas — identifiants
+   * inconnus, ou d'un autre établissement, indistinctement.
+   *
+   * `deleteMany` et non `delete` : sous le scoping, le `where` porte `tenantId`
+   * en plus, ce qui n'est pas une clé unique au sens de Prisma. Le compte est de
+   * toute façon la propriété utile — il vaut `0` pour une affectation d'ailleurs,
+   * ce qui donne le 404 sans avoir à distinguer les deux cas.
+   *
+   * Une **suppression** ici, là où le reste du module désactive : une ligne
+   * d'affectation n'est pas une donnée d'historique. Les rendez-vous déjà pris
+   * portent leur propre `staff_id` et ne la référencent pas, si bien que la
+   * retirer n'efface rien de ce qui a été vendu.
+   */
+  public async removeStaff(serviceId: string, staffId: string): Promise<boolean> {
+    const { count } = await this.prisma.serviceStaff.deleteMany({ where: { serviceId, staffId } });
+    return count > 0;
+  }
+
+  // -------------------------------------------------------------------------
+  // Catalogue public
+  // -------------------------------------------------------------------------
+
+  /**
+   * Le catalogue **publiable** de l'établissement de la requête.
+   *
+   * L'établissement vient du contexte ouvert par `TenantScopeMiddleware`, qui a
+   * résolu le slug d'URL contre la table `tenants` : le client Prisma est déjà
+   * borné, et il n'y a pas de paramètre par lequel désigner un autre salon.
+   *
+   * Ne rend que les prestations **actives** — le filtre est ici et non chez
+   * l'appelant, pour que la donnée d'un catalogue retiré ne quitte jamais la
+   * base. `@@index([tenantId, isActive])` le sert.
+   */
+  public async listPublicServices(): Promise<PublicServiceRecord[]> {
+    const services = await this.prisma.service.findMany({
+      where: { isActive: true },
+      select: PUBLIC_SERVICE_SELECT,
+      orderBy: [{ name: 'asc' }],
+    });
+
+    return services.map((service) => ({
+      id: service.id,
+      slug: service.slug,
+      name: service.name,
+      description: service.description,
+      category: service.category,
+      durationMinutes: service.durationMinutes,
+      priceAmountMinor: service.priceAmountMinor,
+      priceCurrency: service.priceCurrency,
+      staff: service.assignedStaff.map((assignment) => assignment.staff),
+    }));
   }
 }

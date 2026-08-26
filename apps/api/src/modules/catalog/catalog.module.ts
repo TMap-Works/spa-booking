@@ -2,8 +2,12 @@ import { Module } from '@nestjs/common';
 
 import { IdentityModule } from '../identity/identity.module';
 import { CatalogRepository } from './catalog.repository';
+import { PublicServicesController } from './public-services.controller';
+import { PublicServicesService } from './public-services.service';
 import { ServiceCategoriesController } from './service-categories.controller';
 import { ServiceCategoriesService } from './service-categories.service';
+import { ServiceStaffController } from './service-staff.controller';
+import { ServiceStaffService } from './service-staff.service';
 import { ServicesController } from './services.controller';
 import { ServicesService } from './services.service';
 
@@ -28,12 +32,35 @@ import { ServicesService } from './services.service';
  *
  * `ServiceCategoriesService` n'est pas exporté : une rubrique est une affaire
  * d'affichage du catalogue, et aucun autre module n'a de décision à prendre
- * dessus.
+ * dessus. `ServiceStaffService` et `PublicServicesService` non plus : le premier
+ * n'est qu'un écran de back-office, et le second une projection publique de ce
+ * que `ServicesService` sait déjà rendre. Le moteur de disponibilité (#31), qui
+ * aura besoin de « quels praticiens pratiquent cette prestation », passera par
+ * `ServicesService` — un module n'a pas à choisir entre plusieurs portes.
+ *
+ * ## Un contrôleur public dans un module de back-office
+ *
+ * `PublicServicesController` sert `/api/v1/public/:tenantSlug/services`, sans
+ * garde, à côté de `PublicTenantController` qui vit dans `identity`. L'espace
+ * d'URL est partagé, la responsabilité ne l'est pas : une prestation est du
+ * catalogue, et le ranger dans `identity` pour la seule raison d'un préfixe
+ * commun obligerait ce module à connaître le schéma du catalogue (api-module §3).
  */
 @Module({
   imports: [IdentityModule],
-  controllers: [ServicesController, ServiceCategoriesController],
-  providers: [ServicesService, ServiceCategoriesService, CatalogRepository],
+  controllers: [
+    ServicesController,
+    ServiceStaffController,
+    ServiceCategoriesController,
+    PublicServicesController,
+  ],
+  providers: [
+    ServicesService,
+    ServiceStaffService,
+    ServiceCategoriesService,
+    PublicServicesService,
+    CatalogRepository,
+  ],
   exports: [ServicesService],
 })
 export class CatalogModule {}
