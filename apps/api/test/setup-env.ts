@@ -20,6 +20,17 @@ const DEFAULTS: Readonly<Record<string, string>> = {
   // sortie de test lisible sans désactiver la journalisation, que la suite
   // d'isolation inspecte réellement.
   LOG_LEVEL: 'error',
+  // Deux clés de signature distinctes, sans quoi `AppConfigModule` refuse de
+  // démarrer et **toute** la suite d'intégration échoue à l'amorçage. Ce ne sont
+  // pas des secrets : ce sont des chaînes de remplissage, jamais déployées, et
+  // le dépôt n'en contient aucun autre. Les faire différer n'est pas cosmétique
+  // — `validateEnv` refuse deux clés identiques.
+  JWT_SECRET: 'test-access-signing-key-not-a-secret-0001',
+  JWT_REFRESH_SECRET: 'test-refresh-signing-key-not-a-secret-0002',
+  // Coût bcrypt plancher : 12 ferait payer ~250 ms à chaque inscription de test,
+  // soit des dizaines de secondes sur la suite. Le coût réel est validé par le
+  // test unitaire du hacheur, pas par le temps que met la suite d'intégration.
+  BCRYPT_COST: '4',
 };
 
 for (const [name, value] of Object.entries(DEFAULTS)) {
