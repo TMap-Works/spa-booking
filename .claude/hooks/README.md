@@ -124,6 +124,30 @@ Le motif proposé est toujours le plus étroit qui couvre les commandes observé
 `git status:*`, jamais `git:*`. Une commande composée est découpée sur `&&`,
 `||`, `;` et `|`, car elle bloque dès que l'un de ses morceaux bloque.
 
+### Une invocation, une observation
+
+Une invocation est très souvent multi-lignes sans être multi-commandes. Un
+heredoc porte les corps de PR et d'issue de ce dépôt, une commande `gh` à
+rallonge se poursuit derrière un `\`, une boucle `for … do … done` occupe trois
+lignes : découper naïvement sur le saut de ligne revenait à prendre chaque ligne
+de prose pour un programme. Sur le run `s1-fondations-20260825-093729`, 94 % du
+journal était de la donnée (#215).
+
+Avant tout découpage, le hook retire donc le corps des heredocs et recolle les
+continuations ; il ignore ensuite ce qui est entre quotes — un `|` dans un
+message de commit n'est pas un tuyau, et un saut de ligne à l'intérieur de
+quotes n'ouvre pas une commande. Le saut de ligne qui subsiste après ces passes
+sépare bien deux commandes, et reste un séparateur : `cd apps/api` suivi de
+`npm run verify` donne deux observations, sans quoi le second ne serait jamais
+proposé à l'allowlist. Le corps de `python -c` / `node -e` n'est pas la cible du
+runner : `python -c` est consigné, jamais le premier mot du code — mais `-e` ne
+vaut que pour les runners qui évaluent (`node`, `deno`, `ruby`, `perl`), jamais
+pour `bash -e script.sh`. Ce qui reste passe enfin par le
+garde-fou de la revue (`permissions_review.py::not_a_command`), importé plutôt
+que dupliqué : le hook n'écrit plus ce que la revue écarterait de toute façon.
+
+`scripts/tests/test_permission_watch.py` tient ces règles.
+
 Une règle ajoutée n'est relue qu'au démarrage : il faut relancer Claude Code,
 ou rejouer les réglages via `/permissions`.
 
