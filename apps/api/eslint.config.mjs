@@ -2,6 +2,8 @@ import js from '@eslint/js';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+import tenant from './eslint-rules/index.js';
+
 export default tseslint.config(
   { ignores: ['dist/**', 'coverage/**', 'node_modules/**'] },
   js.configs.recommended,
@@ -31,6 +33,22 @@ export default tseslint.config(
     // Les fichiers de configuration sont du CommonJS pur.
     files: ['**/*.js'],
     rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  {
+    // Les deux gardes du scoping multi-tenant (#169). Elles ne valent que
+    // branchées : c'est ce bloc qui les met dans `npm run lint`, donc dans
+    // `npm run verify` et dans le job `lint` de la CI.
+    //
+    // Portée à tout le code applicatif **et** à ses tests d'intégration : une
+    // fuite écrite dans un harnais de test finit par être recopiée en
+    // production, et le SQL brut de préparation d'un jeu de données a les mêmes
+    // raisons de porter son tenant que celui d'un repository.
+    files: ['src/**/*.ts', 'test/**/*.ts'],
+    plugins: { tenant },
+    rules: {
+      'tenant/raw-sql-tenant-filter': 'error',
+      'tenant/unscoped-prisma-name': 'error',
+    },
   },
   {
     files: ['**/*.mjs'],
