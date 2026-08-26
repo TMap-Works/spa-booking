@@ -3,8 +3,14 @@ import { randomUUID } from 'node:crypto';
 import { getTenantId } from '../../../common/tenant';
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
 import type { AppConfigService } from '../../../config/app-config.service';
+import { toProfile } from '../identity.repository';
 import type { IdentityRepository, SessionRecord, UserRecord } from '../identity.repository';
-import type { UserRole } from '../identity.types';
+import type { UserProfile } from '../identity.types';
+import {
+  PERSISTABLE_STAFF_ROLES,
+  USER_ROLE_RANK,
+  type PersistableUserRole,
+} from '../roles';
 
 /**
  * Doubles du module `identity`, partagés par ses suites unitaires.
@@ -28,6 +34,27 @@ export function fakeConfig(overrides: Partial<AppConfigService> = {}): AppConfig
     refreshTokenExpiresIn: '7d',
     ...overrides,
   } as AppConfigService;
+}
+
+/**
+ * L'erreur rejetée par une promesse, pour les assertions qui portent sur son
+ * **contenu** — code, message, `details` — et pas seulement sur son type.
+ *
+ * `expect(...).rejects` ne rend pas l'erreur, et un `.catch((error) => error)`
+ * donne un type union avec la valeur de succès, qu'il faut ensuite transtyper.
+ * Ici la promesse qui aboutit est un échec de test explicite, et ce qui revient
+ * est l'erreur, rien d'autre.
+ */
+export async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
+  const RESOLVED = Symbol('resolved');
+  const outcome: unknown = await promise.then(
+    () => RESOLVED,
+    (error: unknown) => error,
+  );
+  if (outcome === RESOLVED) {
+    throw new Error('la promesse a abouti alors qu’un échec était attendu');
+  }
+  return outcome;
 }
 
 export function silentLogger(): StructuredLogger {
@@ -72,7 +99,12 @@ export class FakeIdentityRepository {
     tenantId: string;
     email: string;
     passwordHash: string | null;
-    role?: UserRole;
+    /**
+     * `PersistableUserRole` comme en base : le double ne doit pas savoir écrire
+     * un rôle que PostgreSQL refuserait. Un test qui poserait un `MANAGER` en
+     * mémoire passerait au vert sur un scénario impossible en production.
+     */
+    role?: PersistableUserRole;
     isActive?: boolean;
   }): StoredUser {
     const user: StoredUser = {
@@ -121,9 +153,20 @@ export class FakeIdentityRepository {
     return this.users.find((user) => user.tenantId === tenantId && user.id === id) ?? null;
   }
 
+  public async findStaffAccountById(id: string): Promise<UserRecord | null> {
+    const tenantId = this.requireTenant();
+    const staffRoles: readonly string[] = PERSISTABLE_STAFF_ROLES;
+    return (
+      this.users.find(
+        (user) =>
+          user.tenantId === tenantId && user.id === id && staffRoles.includes(user.role),
+      ) ?? null
+    );
+  }
+
   public async createUser(input: {
     email: string;
-    role: UserRole;
+    role: PersistableUserRole;
     passwordHash: string;
     firstName: string;
     lastName: string;
@@ -147,6 +190,58 @@ export class FakeIdentityRepository {
 
   public async touchLastLogin(_userId: string): Promise<void> {
     // Sans effet observable ici : la colonne ne participe à aucune décision.
+  }
+
+  /**
+   * Les comptes internes de l'établissement courant.
+   *
+   * Reproduit les trois propriétés du vrai dont un test dépend : le filtre de
+   * tenant, le filtre sur les rôles stockables — la clientèle n'y figure pas —
+   * et l'ordre stable `(role, email)`. Un double qui rendrait les lignes dans
+   * l'ordre d'insertion ferait passer une assertion d'ordre pour de mauvaises
+   * raisons.
+   *
+   * Le tri des rôles passe par `USER_ROLE_RANK` et **non** par `localeCompare` :
+   * `orderBy: { role: 'asc' }` porte sur une colonne `enum`, et PostgreSQL
+   * ordonne un enum par son ordre de **déclaration**, pas alphabétiquement. Un
+   * tri alphabétique rendrait `[ADMIN, STAFF]` là où la base rend
+   * `[STAFF, ADMIN]` — une assertion d'ordre serait alors verte sur l'inverse du
+   * résultat réel, jusqu'au jour où un test sur vraie base la contredirait.
+   * `roles.spec.ts` verrouille la concordance des deux ordres.
+   */
+  public async listStaffAccounts(): Promise<UserProfile[]> {
+    const tenantId = this.requireTenant();
+    const staffRoles: readonly string[] = PERSISTABLE_STAFF_ROLES;
+    return this.users
+      .filter((user) => user.tenantId === tenantId && staffRoles.includes(user.role))
+      .sort((left, right) =>
+        left.role === right.role
+          ? left.email.localeCompare(right.email)
+          : USER_ROLE_RANK[left.role] - USER_ROLE_RANK[right.role],
+      )
+      .map((user) => toProfile(user));
+  }
+
+  /**
+   * Attribue un rôle à un compte de l'établissement courant.
+   *
+   * Rend `false` — et n'écrit rien — pour un identifiant inconnu **ou**
+   * appartenant à un autre établissement, exactement comme le `updateMany` scopé
+   * du vrai dépôt rend `count: 0`. C'est cette valeur-là qui devient le 404.
+   */
+  public async updateUserRole(input: {
+    userId: string;
+    role: PersistableUserRole;
+  }): Promise<boolean> {
+    const tenantId = this.requireTenant();
+    const user = this.users.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.id === input.userId,
+    );
+    if (user === undefined) {
+      return false;
+    }
+    user.role = input.role;
+    return true;
   }
 
   public async createSession(input: {
