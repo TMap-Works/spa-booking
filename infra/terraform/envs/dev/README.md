@@ -29,12 +29,6 @@ Internet → ALB (443, certificat auto-signé)
    les rôles GitHub Actions. Poser ensuite les variables de dépôt `AWS_REGION`,
    `AWS_DEPLOY_ROLE_ARN`, `AWS_TERRAFORM_ROLE_ARN`, `AWS_TERRAFORM_PLAN_ROLE_ARN`.
 
-   **En l'état, le rôle de déploiement ne fonctionnera pas** : ses ARN sont
-   construits sur `cluster/spa-{env}` alors que `modules/ecs-service` nomme le
-   cluster `spa-{env}-cluster`, et chaque appel `ecs:DescribeServices`,
-   `RunTask`, `DescribeTasks` ou `UpdateService` est refusé. La correction vit
-   dans `modules/oidc/main.tf`, hors du périmètre de cet environnement — voir
-   l'issue de suivi.
 3. **`terraform apply` ici.** Les dépôts ECR sont alors vides : le service ECS est
    créé mais ses tâches ne démarrent pas encore. C'est attendu — Terraform
    n'attend pas la stabilité du service, l'`apply` aboutit quand même.
@@ -131,9 +125,8 @@ déploiement saura publier une révision de définition de tâche, ou le module
   certificat.
 - Aucune alarme CloudWatch n'est posée : le module `observability` n'existe pas
   encore (skill aws-infra §8).
-- Les ARN ECS du rôle de déploiement (`modules/oidc`) ne correspondent pas au nom
-  du cluster : tant que ce n'est pas corrigé, l'étape de migration du workflow
-  échoue en `AccessDenied`. Correction hors du périmètre de cet environnement.
-- Rien de tout ceci n'a été appliqué : ni `terraform apply`, ni `terraform
-  validate`, ni le moindre appel AWS n'ont pu être joués sur la machine qui a
-  écrit ce répertoire. Le premier `apply` réel est aussi la première vérification.
+- `terraform fmt -check` et `terraform validate` sont joués à chaque pull request
+  par le job « Format et validation » de `terraform.yml`. En revanche **aucun
+  `apply` réel n'a eu lieu** et aucun appel AWS n'a été fait : la machine du run
+  n'a ni `terraform` installé ni compte joignable. Le premier `apply` reste donc
+  la première vérification de bout en bout — il est suivi en #200.
