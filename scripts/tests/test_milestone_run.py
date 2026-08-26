@@ -917,6 +917,227 @@ class DemarrageEtape(unittest.TestCase):
                 self.assertFalse(self.lit(value))
 
 
+class FrontiereEtapeLueDansLeJournal(unittest.TestCase):
+    """#233 — le verdict qui gèle une vague ne se tire plus au sort.
+
+    Le 26 août, trois `reconcile` en 65 secondes ont rendu trois verdicts
+    contraires sur les mêmes tickets (#25, #29, #168), sans que rien ne change
+    sur le disque : `pending`, puis `running`, puis `pending`. La bascule venait
+    de `SPA_LEG_START`, que seuls certains appels portaient. Et le dernier
+    verdict avant le `gate` décide de tout, puisque `gate` ne compose sa liste
+    `ready` que de tickets `pending` : sur « running », l'étape lancée à
+    13:01:30 UTC a annoncé « 0 ticket(s) à lancer : aucun » et n'a lancé
+    personne.
+
+    La frontière d'étape se lit désormais dans le journal — le dernier
+    `leg_started`, que le superviseur écrit avant chaque `claude -p` — et se
+    compare au battement de chaque ticket, c'est-à-dire à son dernier événement
+    hors de ceux que `reconcile` écrit lui-même. Deux nombres sur disque, que
+    tout appel lit pareil.
+    """
+
+    LEG = {"ts": "2026-08-26T13:01:30+00:00", "kind": "run",
+           "status": "leg_started", "actor": "superviseur",
+           "message": "étape 3 — une vague, largeur 3"}
+    # Le battement d'avant la frontière : l'agent qui l'a écrit est mort avec le
+    # `claude -p` de son étape.
+    AVANT = {"ts": "2026-08-26T11:30:35+00:00", "kind": "ticket", "ticket": 19,
+             "phase": "implementation", "status": "running",
+             "message": "plan pose, implementation en cours"}
+    # Celui d'après : un agent vivant tient le ticket.
+    APRES = {"ts": "2026-08-26T13:09:05+00:00", "kind": "ticket", "ticket": 19,
+             "phase": "implementation", "status": "running",
+             "message": "reprise apres coupure de quota"}
+    WORKTREE = {19: {"path": "/w/agent-a40c", "branch": "feature/19-truc",
+                     "locked": True}}
+
+    def rejoue(self, journal, envs, worktrees=None, branches=None):
+        """Les verdicts successifs de N `reconcile` sur le **même** run.
+
+        Rejouer sur le même dossier est la seule façon de voir une oscillation :
+        chaque tour relit ce que le précédent a écrit. `envs` donne
+        l'environnement de chaque appel — c'est là que se jouait le tirage au
+        sort.
+        """
+        verdicts = []
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, journal=journal)
+            reponses = [([], None)] * (2 * len(envs))   # issues puis PR, par tour
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
+                 mock.patch.object(run_mod, "gh_json", side_effect=reponses), \
+                 mock.patch.object(run_mod, "remote_branches",
+                                   return_value=branches or {}), \
+                 mock.patch.object(run_mod, "live_worktrees",
+                                   return_value=worktrees or {}), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                for env in envs:
+                    with mock.patch.dict(run_mod.os.environ, env, clear=True):
+                        run_mod.cmd_reconcile(argparse.Namespace(run="r1"))
+                    tickets = run_mod.replay(run_mod.load_run("r1"),
+                                             run_mod.read_journal("r1"),
+                                             run_mod.load_control("r1"))
+                    verdicts.append(tickets[19]["status"])
+        return verdicts
+
+    def test_deux_reconcile_de_suite_rendent_le_meme_verdict(self):
+        """Critère 1 — sans rien changer au dépôt entre les deux."""
+        self.assertEqual(
+            self.rejoue([self.LEG, self.AVANT], [{}, {}],
+                        worktrees=self.WORKTREE),
+            ["pending", "pending"])
+
+    def test_le_requeue_n_est_pas_son_propre_battement(self):
+        """Le cœur de l'oscillation : `reconcile` requeue le ticket, puis relit
+        sa propre écriture comme la preuve qu'un agent travaillait, et le
+        rebascule. Trois tours suffisent à le voir."""
+        self.assertEqual(
+            self.rejoue([self.LEG, self.AVANT], [{}, {}, {}],
+                        worktrees=self.WORKTREE),
+            ["pending", "pending", "pending"])
+
+    def test_le_verdict_ne_depend_pas_de_l_environnement_de_l_appel(self):
+        """Critère 2 — la séquence exacte du 26 août : superviseur, puis appel
+        sans la variable, puis superviseur. Elle rendait pending/running/pending
+        et gelait la vague ; elle rend maintenant trois fois le même verdict."""
+        self.assertEqual(
+            self.rejoue([self.LEG, self.AVANT],
+                        [{"SPA_LEG_START": "1"}, {}, {"SPA_LEG_START": "1"}],
+                        worktrees=self.WORKTREE),
+            ["pending", "pending", "pending"])
+
+    def test_un_agent_qui_journalise_apres_l_etape_garde_son_worktree(self):
+        """Critère 3 — la protection de #130 tient, et elle tient même quand
+        l'appelant se dit en démarrage d'étape : c'est le journal qui tranche,
+        et il montre un agent au travail depuis l'ouverture de l'étape."""
+        self.assertEqual(
+            self.rejoue([self.AVANT, self.LEG, self.APRES],
+                        [{}, {"SPA_LEG_START": "1"}], worktrees=self.WORKTREE),
+            ["running", "running"])
+
+    def test_une_branche_poussee_ne_couvre_pas_un_agent_mort(self):
+        """Un agent mort après son push laissait un `running` que rien ne
+        rattrapait : la branche primait sur le worktree, et le `gate` ne lançait
+        toujours personne. Le worktree porte la branche, l'agent relancé la
+        retrouve."""
+        verdicts = self.rejoue([self.LEG, self.AVANT], [{}, {}],
+                               worktrees=self.WORKTREE,
+                               branches={19: "feature/19-truc"})
+        self.assertEqual(verdicts, ["pending", "pending"])
+
+    def test_sans_worktree_une_branche_poussee_reste_intouchee(self):
+        """Sans worktree où reprendre, requeuer ferait repartir un agent d'une
+        branche neuve et abandonnerait ce qui est déjà sur le distant."""
+        self.assertEqual(
+            self.rejoue([self.LEG, self.AVANT], [{}, {}],
+                        branches={19: "feature/19-truc"}),
+            ["running", "running"])
+
+
+class FrontiereEtEmpreinteDuJournal(unittest.TestCase):
+    """Les trois lectures qui remplacent `SPA_LEG_START`, prises isolément."""
+
+    def test_la_frontiere_est_le_dernier_leg_started(self):
+        events = [{"ts": "2026-08-26T09:00:00+00:00", "kind": "run",
+                   "status": "leg_started"},
+                  {"ts": "2026-08-26T10:00:00+00:00", "kind": "run",
+                   "status": "leg_ended"},
+                  {"ts": "2026-08-26T13:01:30+00:00", "kind": "run",
+                   "status": "leg_started"}]
+        self.assertEqual(run_mod.leg_frontier(events),
+                         "2026-08-26T13:01:30+00:00")
+
+    def test_un_journal_sans_etape_n_a_pas_de_frontiere(self):
+        self.assertIsNone(run_mod.leg_frontier(
+            [{"ts": "2026-08-26T09:00:00+00:00", "kind": "ticket", "ticket": 19,
+              "status": "running"}]))
+
+    def test_un_evenement_de_ticket_ne_deplace_pas_la_frontiere(self):
+        """`leg_started` est un statut de run. Un événement de ticket qui le
+        porterait — journal repris à la main, ligne recopiée — ne doit pas
+        déplacer la borne de tout le monde."""
+        self.assertIsNone(run_mod.leg_frontier(
+            [{"ts": "2026-08-26T09:00:00+00:00", "kind": "ticket", "ticket": 19,
+              "status": "leg_started"}]))
+
+    def test_reconcile_n_ecrit_pas_de_battement(self):
+        events = [{"ts": "2026-08-26T11:30:00+00:00", "kind": "ticket",
+                   "ticket": 19, "status": "running", "actor": "agent"},
+                  {"ts": "2026-08-26T13:02:38+00:00", "kind": "ticket",
+                   "ticket": 19, "status": "pending", "reset": True,
+                   "actor": "reconcile", "message": "agent mort avec son étape"}]
+        self.assertEqual(run_mod.ticket_heartbeats(events),
+                         {19: "2026-08-26T11:30:00+00:00"})
+
+    def test_deux_lignes_a_l_envers_gardent_le_battement_le_plus_tardif(self):
+        """Le journal est en ajout seul et une dizaine de processus y écrivent à
+        la fois : chacun date sa ligne avant d'obtenir le fichier, si bien que
+        deux événements d'un même ticket peuvent atterrir à l'envers. Retenir la
+        dernière ligne écrite rendrait un battement périmé — et un agent vivant
+        passerait pour mort, ce qui lancerait un second agent sur son worktree."""
+        events = [{"ts": "2026-08-26T13:09:05+00:00", "kind": "ticket",
+                   "ticket": 19, "status": "running", "actor": "agent"},
+                  {"ts": "2026-08-26T13:01:31+00:00", "kind": "ticket",
+                   "ticket": 19, "status": "running", "actor": "orchestrateur"}]
+        self.assertEqual(run_mod.ticket_heartbeats(events),
+                         {19: "2026-08-26T13:09:05+00:00"})
+        self.assertFalse(run_mod.orphaned(
+            19, "2026-08-26T13:01:30+00:00", run_mod.ticket_heartbeats(events)))
+
+    def test_la_frontiere_est_l_etape_la_plus_tardive(self):
+        """Même désordre d'écriture, même règle : la borne est le `leg_started`
+        le plus tardif, pas le dernier posé dans le fichier."""
+        events = [{"ts": "2026-08-26T13:01:30+00:00", "kind": "run",
+                   "status": "leg_started"},
+                  {"ts": "2026-08-26T09:00:00+00:00", "kind": "run",
+                   "status": "leg_started"}]
+        self.assertEqual(run_mod.leg_frontier(events),
+                         "2026-08-26T13:01:30+00:00")
+
+    def test_l_orchestrateur_et_l_arbitre_battent_comme_un_agent(self):
+        """Eux non plus ne journalisent qu'en agissant : leur écriture atteste
+        que quelque chose s'est passé sur ce ticket dans l'étape en cours."""
+        for actor in ("agent", "orchestrateur", "arbitre", "humain", None):
+            with self.subTest(acteur=actor):
+                event = {"ts": "2026-08-26T13:05:00+00:00", "kind": "ticket",
+                         "ticket": 19, "message": "…"}
+                if actor:
+                    event["actor"] = actor
+                self.assertIn(19, run_mod.ticket_heartbeats([event]))
+
+    def test_un_ticket_muet_depuis_l_ouverture_est_abandonne(self):
+        beats = {19: "2026-08-26T11:30:00+00:00"}
+        self.assertTrue(run_mod.orphaned(19, "2026-08-26T13:01:30+00:00", beats))
+
+    def test_un_ticket_sans_le_moindre_battement_est_abandonne(self):
+        self.assertTrue(run_mod.orphaned(19, "2026-08-26T13:01:30+00:00", {}))
+
+    def test_un_ticket_qui_bat_depuis_l_ouverture_ne_l_est_pas(self):
+        beats = {19: "2026-08-26T13:09:05+00:00"}
+        self.assertFalse(run_mod.orphaned(19, "2026-08-26T13:01:30+00:00", beats))
+
+    def test_sans_frontiere_on_retombe_sur_le_repli(self):
+        """Un run mené à la main n'a pas de `leg_started` : le journal ne dit
+        rien, et l'environnement redevient le seul indice — c'est le seul cas où
+        il est encore consulté."""
+        self.assertTrue(run_mod.orphaned(19, None, {}, fallback=True))
+        self.assertFalse(run_mod.orphaned(19, None, {}, fallback=False))
+
+    def test_deux_decalages_horaires_se_comparent_sur_l_instant(self):
+        """Comparer les chaînes classerait « 14:00+02:00 » (midi UTC) après
+        « 13:00+00:00 », et un ticket vivant passerait pour abandonné."""
+        self.assertTrue(run_mod.iso_before("2026-08-26T14:00:00+02:00",
+                                           "2026-08-26T13:00:00+00:00"))
+        self.assertFalse(run_mod.iso_before("2026-08-26T13:00:00+00:00",
+                                            "2026-08-26T14:00:00+02:00"))
+
+    def test_un_horodatage_illisible_ne_fait_pas_planter(self):
+        """Le journal est en ajout seul et peut porter une ligne abîmée : elle
+        ne doit pas emporter la réconciliation de tout le run."""
+        self.assertFalse(run_mod.iso_before("pas une date",
+                                            "2026-08-26T13:00:00+00:00"))
+
+
 class ContexteDeReprise(unittest.TestCase):
     """Ce que le `gate` doit dire à l'orchestrateur pour qu'il n'ouvre pas un
     worktree vierge sur un ticket qui en a déjà un — et n'efface pas l'ancien."""
