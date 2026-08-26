@@ -15,18 +15,24 @@ d'être historisé se juge en lisant la demande, ce qu'aucune heuristique de
 mots-clés ne sait faire.
 
 Un ticket de traçabilité est une issue comme les autres : il porte un milestone
-de sprint, un label workstream, un label module, un label type, une priorité, et
-une carte sur le GitHub Project — exactement l'anatomie exigée par
-`.claude/skills/project-flow/SKILL.md` §2. Sans ce rattachement, le ticket
-n'apparaît dans aucun suivi et ne documente donc rien.
+de sprint, un label workstream, un label module, un label type, une priorité,
+un label nature, et une carte sur le GitHub Project — exactement l'anatomie
+exigée par `.claude/skills/project-flow/SKILL.md` §2. Sans ce rattachement, le
+ticket n'apparaît dans aucun suivi et ne documente donc rien.
+
+`nature:` dit qui traite le ticket : `projet` pour le produit MVP, que le run de
+jalon dispatche, `outillage` pour le dispositif de collaboration, qu'un humain
+prend une session à la fois. Un ticket de traçabilité, lui, n'est de toute façon
+jamais dispatché — sa nature ne sert qu'à savoir, en fin de sprint, où est passé
+le temps.
 
 Sans `--session`, chaque sous-commande travaille sur le ticket ouvert le plus
 récent : une commande slash n'a pas d'identifiant de session à passer.
 
 Le classement déduit par défaut n'est qu'une heuristique de mots-clés. Les
-options `--module`, `--workstream`, `--type` et `--priority` la court-circuitent,
-et c'est le chemin normal depuis `/ticket-new`, qui a lu la demande ; `classify`
-corrige après coup.
+options `--module`, `--workstream`, `--type`, `--priority` et `--nature` la
+court-circuitent, et c'est le chemin normal depuis `/ticket-new`, qui a lu la
+demande ; `classify` corrige après coup.
 """
 import argparse
 import json
@@ -65,6 +71,7 @@ MODULES = ["identity", "catalog", "availability", "appointments", "crm",
            "payments", "notifications", "reporting", "infra"]
 TYPES = ["feature", "bug", "chore", "docs", "spike", "epic"]
 PRIORITIES = ["P0", "P1", "P2"]
+NATURES = ["projet", "outillage"]
 
 # Heuristiques de classement, dans l'ordre : la première qui accroche gagne.
 MODULE_HINTS = [
@@ -99,6 +106,26 @@ PRIORITY_HINTS = [
     ("P0", r"bloquant|urgent|critique|cass[ée]|production"),
     ("P1", r"imp[ée]rativ|important|prioritaire|indispensable|\bmvp\b"),
 ]
+# `nature` sépare ce que le run de jalon dispatche de ce qu'un humain traite à la
+# main. Outillage : le dispositif de collaboration lui-même — `scripts/`,
+# `.claude/`, le harnais qui les teste, les workflows qui les servent. Produit :
+# tout ce que le MVP livre, `infra/terraform` et sa CI de déploiement comprises.
+# Le doute penche vers `projet` : c'est le sens qui laisse le ticket sous les
+# yeux du run, au lieu de l'en sortir sans que personne ne le voie.
+#
+# Chaque motif doit donc être propre au dispositif. « permission », « hook »,
+# « jalon », « milestone » et « slash » ne le sont pas : rôles et permissions du
+# back-office, hook React, « pour le jalon S2 » — c'est du vocabulaire produit
+# courant, et les laisser accrocher ferait sortir du sprint un vrai ticket MVP
+# sans que rien ne le signale.
+NATURE_HINTS = [
+    ("outillage", r"outillage|\bscripts?/|\.claude|worktree|arbitr|"
+                  r"/ticket|/milestone|milestone_\w+\.py|tracking\.py|"
+                  r"(run|plan|arbitrage) de jalon|commande slash|"
+                  r"hooks? claude|allowlist|permission_watch|"
+                  r"journal de permissions|ticket de tra[çc]abilit|"
+                  r"superviseur|orchestrateur"),
+]
 
 
 def run(args, **kw):
@@ -124,6 +151,7 @@ def classify_prompt(prompt):
                                   "DevOps" if module == "infra" else "Backend"),
         "type": first_match(TYPE_HINTS, prompt, "chore"),
         "priority": first_match(PRIORITY_HINTS, prompt, "P2"),
+        "nature": first_match(NATURE_HINTS, prompt, "projet"),
     }
 
 
@@ -170,6 +198,7 @@ def labels_for(classement):
         WORKSTREAMS[classement["workstream"]],
         f"mod:{classement['module']}",
         classement["priority"],
+        f"nature:{classement['nature']}",
     ]
 
 
@@ -239,7 +268,7 @@ def cmd_open(args):
 
     guessed = classify_prompt(prompt)
     classement = dict(guessed)
-    for key in ("module", "workstream", "type", "priority"):
+    for key in ("module", "workstream", "type", "priority", "nature"):
         if getattr(args, key):
             classement[key] = getattr(args, key)
     auto = [k for k, v in guessed.items() if classement[k] == v]
@@ -262,7 +291,8 @@ def cmd_open(args):
         f"- Jalon : `{milestone or 'aucun jalon résolu'}`\n"
         f"- Workstream : `{classement['workstream']}` · Module : "
         f"`{classement['module']}` · Type : `{classement['type']}` · "
-        f"Priorité : `{classement['priority']}`\n"
+        f"Priorité : `{classement['priority']}` · "
+        f"Nature : `{classement['nature']}`\n"
         + ("- Déduit des mots-clés de la demande, donc faillible — corriger avec "
            "`python scripts/tracking.py classify`.\n" if auto else "")
         + "\n## Contexte\n\n"
@@ -339,6 +369,8 @@ def cmd_classify(args):
             (n.split(":", 1)[1] for n in current if n.startswith("type:")), None),
         "priority": args.priority or next(
             (n for n in current if n in PRIORITIES), None),
+        "nature": args.nature or next(
+            (n.split(":", 1)[1] for n in current if n.startswith("nature:")), None),
     }
     missing = [k for k, v in classement.items() if not v]
     if missing:
@@ -350,7 +382,7 @@ def cmd_classify(args):
     wanted = labels_for(classement)
     add = [n for n in wanted if n not in current]
     stale = [n for n in current
-             if (n.startswith(("type:", "mod:", "ws:")) or n in PRIORITIES)
+             if (n.startswith(("type:", "mod:", "ws:", "nature:")) or n in PRIORITIES)
              and n not in wanted]
 
     if args.dry_run:
@@ -518,6 +550,10 @@ def main():
         target.add_argument("--workstream", choices=list(WORKSTREAMS))
         target.add_argument("--type", choices=TYPES)
         target.add_argument("--priority", choices=PRIORITIES)
+        target.add_argument("--nature", choices=NATURES,
+                            help="produit MVP (projet) ou dispositif de "
+                                 "collaboration (outillage) — ce second n'est "
+                                 "jamais dispatché par un run de jalon")
         target.add_argument("--milestone", metavar="TITRE",
                             help="titre du jalon, ex. « S1 — Fondations »")
         target.add_argument("--dry-run", action="store_true")
