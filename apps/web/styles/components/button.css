@@ -1,0 +1,126 @@
+/*
+ * Composant — Bouton
+ * =============================================================================
+ *
+ * États : repos · survol · actif · focus · désactivé · CHARGEMENT · VIDE.
+ *
+ * L'état de chargement conserve la largeur du bouton (le libellé reste dans le
+ * flux, rendu transparent) : sans cela, le remplacement du texte par un spinner
+ * fait sauter la mise en page au moment précis où le client vient de cliquer.
+ */
+
+.spa-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spa-space-2);
+  position: relative;
+  min-block-size: var(--spa-target-min-size);
+  padding-block: var(--spa-space-2);
+  padding-inline: var(--spa-space-5);
+  border: 1px solid transparent;
+  border-radius: var(--spa-radius-md);
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-medium);
+  line-height: var(--spa-line-height-snug);
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    background-color var(--spa-duration-fast) var(--spa-easing-standard),
+    border-color var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+/* --- Variantes ----------------------------------------------------------- */
+
+.spa-button--accent {
+  background-color: var(--spa-color-accent);
+  color: var(--spa-color-text-on-accent);
+}
+
+/* `aria-disabled` autant que `disabled` : un `<a>` ne peut pas porter `disabled`,
+ * et la règle de survol pèse plus lourd en spécificité que le bloc désactivé —
+ * sans cette exclusion, un bouton inerte s'allumerait au survol. */
+.spa-button--accent:hover:not(:disabled, [aria-disabled='true']) {
+  background-color: var(--spa-color-accent-hover);
+}
+
+.spa-button--accent:active:not(:disabled, [aria-disabled='true']) {
+  background-color: var(--spa-color-accent-active);
+}
+
+.spa-button--neutral {
+  background-color: var(--spa-color-surface);
+  border-color: var(--spa-color-border-interactive);
+  color: var(--spa-color-text);
+}
+
+.spa-button--neutral:hover:not(:disabled, [aria-disabled='true']) {
+  background-color: var(--spa-color-surface-sunken);
+}
+
+.spa-button--quiet {
+  background-color: transparent;
+  color: var(--spa-color-accent-text);
+}
+
+.spa-button--quiet:hover:not(:disabled, [aria-disabled='true']) {
+  background-color: var(--spa-color-accent-soft);
+}
+
+/* Actions destructives — annulation d'un rendez-vous, suppression. Toujours
+ * accompagnées d'une confirmation côté composant appelant. */
+.spa-button--danger {
+  background-color: var(--spa-color-danger);
+  color: var(--spa-color-text-on-accent);
+}
+
+.spa-button--block {
+  display: flex;
+  inline-size: 100%;
+}
+
+/* --- Désactivé ------------------------------------------------------------ */
+
+/* WCAG 1.4.3 exempte les contrôles désactivés du seuil de contraste : la teinte
+ * atténuée est justement ce qui signale l'inactivité. L'information n'est pas
+ * portée par la seule couleur — `disabled` est exposé aux technologies
+ * d'assistance, et l'état vide ci-dessous porte en plus un libellé explicite. */
+.spa-button:disabled,
+.spa-button[aria-disabled='true'] {
+  background-color: var(--spa-color-disabled-surface);
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  cursor: not-allowed;
+}
+
+/* --- État de chargement --------------------------------------------------- */
+
+.spa-button--loading {
+  cursor: progress;
+}
+
+/* Le libellé garde sa place et sa largeur, il devient seulement invisible. */
+.spa-button--loading .spa-button__label {
+  visibility: hidden;
+}
+
+.spa-button__spinner {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  translate: -50% -50%;
+  font-size: var(--spa-font-size-lg);
+}
+
+/* --- État vide ------------------------------------------------------------ */
+
+/* « Vide » pour un bouton = l'action n'a rien sur quoi s'exercer (« Réserver »
+ * sans créneau choisi). On affiche pourquoi, plutôt qu'un bouton muet. */
+.spa-button--empty {
+  background-color: var(--spa-color-disabled-surface);
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  cursor: not-allowed;
+  font-weight: var(--spa-font-weight-regular);
+}

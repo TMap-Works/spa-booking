@@ -1,0 +1,208 @@
+/*
+ * Composant — Notification
+ * =============================================================================
+ *
+ * États : information · succès · avertissement · erreur · CHARGEMENT · VIDE.
+ *
+ * Deux usages, un seul composant :
+ *
+ *   .spa-notification            message en ligne, dans le flux (erreur de
+ *                                formulaire, avis « ce créneau vient d'être
+ *                                pris »)
+ *   .spa-notification-region     pile flottante d'avis transitoires
+ *
+ * Sémantique d'annonce — c'est la partie qui ne se voit pas et qui compte :
+ *
+ *   variante `danger`  → role="alert"    (interrompt, annonce immédiatement)
+ *   autres variantes   → role="status"   (annonce au prochain répit)
+ *
+ * La région flottante porte `aria-live` et existe dans le DOM **avant** d'avoir
+ * un enfant : une région insérée en même temps que son message n'est pas
+ * annoncée par les lecteurs d'écran. C'est exactement pourquoi l'état vide
+ * ci-dessous ne masque pas la région mais seulement son contenu.
+ *
+ * Le 409 `SLOT_NO_LONGER_AVAILABLE` du parcours de réservation s'affiche ici, en
+ * variante `warning` : sous concurrence, c'est un cas normal, pas une panne.
+ */
+
+.spa-notification {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-3) var(--spa-space-4);
+  border: 1px solid transparent;
+  border-radius: var(--spa-radius-md);
+  font-size: var(--spa-font-size-sm);
+  line-height: var(--spa-line-height-normal);
+  color: var(--spa-color-text);
+}
+
+/* L'icône est décorative (`aria-hidden`) : le texte porte déjà l'information.
+ * Elle reste présente parce que la couleur seule ne doit pas distinguer les
+ * variantes (WCAG 1.4.1). */
+.spa-notification__icon {
+  flex: none;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+}
+
+.spa-notification__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  flex: 1 1 auto;
+  /* Sans quoi un message long force la boîte à s'élargir au lieu de revenir à
+   * la ligne. */
+  min-inline-size: 0;
+}
+
+.spa-notification__title {
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-notification__actions {
+  display: flex;
+  gap: var(--spa-space-2);
+  margin-block-start: var(--spa-space-1);
+}
+
+.spa-notification__dismiss {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--spa-target-min-size);
+  min-block-size: var(--spa-target-min-size);
+  margin: calc(var(--spa-space-2) * -1);
+  background: transparent;
+  border: none;
+  border-radius: var(--spa-radius-sm);
+  color: inherit;
+  cursor: pointer;
+}
+
+/* --- Variantes ------------------------------------------------------------- */
+
+.spa-notification--info {
+  background-color: var(--spa-color-info-surface);
+  border-color: var(--spa-color-info);
+}
+
+.spa-notification--info .spa-notification__icon {
+  color: var(--spa-color-info);
+}
+
+.spa-notification--success {
+  background-color: var(--spa-color-success-surface);
+  border-color: var(--spa-color-success);
+}
+
+.spa-notification--success .spa-notification__icon {
+  color: var(--spa-color-success);
+}
+
+.spa-notification--warning {
+  background-color: var(--spa-color-warning-surface);
+  border-color: var(--spa-color-warning);
+}
+
+.spa-notification--warning .spa-notification__icon {
+  color: var(--spa-color-warning);
+}
+
+.spa-notification--danger {
+  background-color: var(--spa-color-danger-surface);
+  border-color: var(--spa-color-danger);
+}
+
+.spa-notification--danger .spa-notification__icon {
+  color: var(--spa-color-danger);
+}
+
+/* --- Région flottante ------------------------------------------------------ */
+
+.spa-notification-region {
+  position: fixed;
+  inset-block-start: var(--spa-space-4);
+  inset-inline-end: var(--spa-space-4);
+  z-index: var(--spa-z-notification);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  inline-size: min(24rem, calc(100vw - var(--spa-space-8)));
+  /* La région couvre la largeur de ses avis mais ne doit pas intercepter les
+   * clics là où elle est vide ; chaque avis les réactive pour lui-même. */
+  pointer-events: none;
+}
+
+.spa-notification-region > .spa-notification {
+  pointer-events: auto;
+  box-shadow: var(--spa-shadow-md);
+}
+
+/* --- État de chargement ---------------------------------------------------- */
+
+/*
+ * Une notification qui porte une action asynchrone (« Renvoyer la confirmation »)
+ * reste affichée pendant l'appel, avec un spinner à la place de l'icône et son
+ * action désactivée. On ne la remplace pas par un squelette : le message, lui,
+ * est déjà connu et reste lisible.
+ */
+.spa-notification--loading .spa-notification__actions {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.spa-notification__spinner {
+  flex: none;
+  font-size: var(--spa-font-size-lg);
+  color: var(--spa-color-text-muted);
+}
+
+/*
+ * Chargement d'une liste d'avis (centre de notifications admin) : silhouette de
+ * deux lignes, dans la boîte d'une notification réelle.
+ */
+.spa-notification--skeleton {
+  background-color: var(--spa-color-surface-raised);
+  border-color: var(--spa-color-border);
+  flex-direction: column;
+  gap: var(--spa-space-2);
+}
+
+.spa-notification__skeleton-line {
+  block-size: 0.75rem;
+  inline-size: 100%;
+}
+
+.spa-notification__skeleton-line--short {
+  inline-size: 45%;
+}
+
+/* --- État vide ------------------------------------------------------------- */
+
+/*
+ * « Vide » = aucune notification à afficher. La région `aria-live` reste dans le
+ * DOM — la retirer casserait l'annonce du premier avis à venir — et c'est son
+ * contenu seul qui devient vide. En ligne, `.spa-notification-empty` affiche le
+ * texte d'absence plutôt qu'une zone muette.
+ */
+/*
+ * Pas de `display: none` sur la région vide, aussi tentant soit-il : un élément
+ * masqué ainsi sort de l'arbre d'accessibilité, et une région `aria-live` qui
+ * réapparaît en même temps que son premier message n'est pas annoncée — le
+ * défaut même que l'on cherche à éviter en gardant la région dans le DOM. Vide,
+ * elle n'occupe rien (colonne flex sans enfant, donc sans hauteur ni `gap`) et
+ * n'intercepte rien (`pointer-events: none` ci-dessus).
+ */
+
+.spa-notification-empty {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-3) var(--spa-space-4);
+  border: 1px dashed var(--spa-color-disabled-border);
+  border-radius: var(--spa-radius-md);
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}

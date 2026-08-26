@@ -1,0 +1,150 @@
+/*
+ * Composant — Modale
+ * =============================================================================
+ *
+ * États : ouvert · fermé · CHARGEMENT · VIDE.
+ *
+ * Bâtie sur `<dialog>` et ouverte par `showModal()`. Le natif apporte quatre
+ * comportements qu'une implémentation en div doit réécrire à la main, et rate
+ * presque toujours : le piège de focus, la fermeture par Échap, l'inertie du
+ * fond, et le calque supérieur (« top layer ») qui affranchit la modale des
+ * `overflow: hidden` de ses ancêtres.
+ *
+ *   <dialog class="spa-modal" aria-labelledby="t">
+ *     <form method="dialog" class="spa-modal__panel">
+ *       <header class="spa-modal__header">
+ *         <h2 id="t" class="spa-modal__title">Annuler le rendez-vous</h2>
+ *       </header>
+ *       <div class="spa-modal__body">…</div>
+ *       <footer class="spa-modal__actions">…</footer>
+ *     </form>
+ *   </dialog>
+ *
+ * `aria-labelledby` pointe le titre : sans lui, la modale s'annonce sans nom.
+ */
+
+.spa-modal {
+  padding: 0;
+  border: none;
+  background: transparent;
+  /* Une modale d'annulation ne doit pas dépasser l'écran d'un mobile. */
+  max-inline-size: min(32rem, calc(100vw - var(--spa-space-8)));
+  max-block-size: calc(100vh - var(--spa-space-8));
+  overflow: visible;
+  color: var(--spa-color-text);
+}
+
+/* Depuis la révision de `::backdrop` (CSS Position 4), le pseudo-élément hérite
+ * de son élément d'origine : `--spa-color-scrim`, déclaré sur `:root`, descend
+ * donc jusqu'ici par la cascade. C'est la raison d'être du jeton `scrim` — seule
+ * primitive non opaque du système, parce qu'elle se compose avec la page. */
+.spa-modal::backdrop {
+  background-color: var(--spa-color-scrim);
+}
+
+.spa-modal__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  padding: var(--spa-space-6);
+  background-color: var(--spa-color-surface);
+  border-radius: var(--spa-radius-lg);
+  box-shadow: var(--spa-shadow-lg);
+  max-block-size: inherit;
+}
+
+.spa-modal__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spa-space-4);
+}
+
+.spa-modal__title {
+  font-size: var(--spa-font-size-xl);
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: var(--spa-line-height-snug);
+}
+
+.spa-modal__description {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+/* Le corps défile, l'en-tête et le pied restent : sur un petit écran, le bouton
+ * de confirmation doit rester atteignable sans faire défiler toute la modale. */
+.spa-modal__body {
+  overflow-y: auto;
+  /* Un élément flexible ne descend pas sous la hauteur de son contenu tant que
+   * `min-block-size` vaut `auto` : sans cette ligne, le corps ne défile jamais,
+   * le panneau dépasse sa hauteur maximale et le pied — donc le bouton de
+   * confirmation — sort de l'écran, exactement ce que le découpage évite. */
+  min-block-size: 0;
+  font-size: var(--spa-font-size-md);
+}
+
+.spa-modal__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--spa-space-2);
+}
+
+/* La croix de fermeture est un contrôle non textuel : elle porte un `aria-label`
+ * et respecte la cible tactile minimale malgré sa petite icône. */
+.spa-modal__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--spa-target-min-size);
+  min-block-size: var(--spa-target-min-size);
+  padding: var(--spa-space-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--spa-radius-sm);
+  color: var(--spa-color-text-muted);
+  cursor: pointer;
+}
+
+.spa-modal__close:hover {
+  background-color: var(--spa-color-surface-sunken);
+  color: var(--spa-color-text);
+}
+
+/* --- État de chargement ---------------------------------------------------- */
+
+/*
+ * La modale s'ouvre avant que son contenu soit prêt (détail d'un rendez-vous
+ * chargé au clic). Le titre est connu tout de suite et reste affiché ; seul le
+ * corps est en squelette, et les actions sont désactivées — confirmer une
+ * annulation avant d'avoir vu ce que l'on annule n'a pas de sens.
+ */
+.spa-modal__body--loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+}
+
+.spa-modal__skeleton-line {
+  block-size: 0.75rem;
+  inline-size: 100%;
+}
+
+.spa-modal__skeleton-line--short {
+  inline-size: 55%;
+}
+
+/* --- État vide ------------------------------------------------------------- */
+
+/*
+ * « Vide » = la modale s'est ouverte sur un contenu qui n'existe plus ou est
+ * sans objet (un rendez-vous annulé entre-temps, une liste filtrée à zéro). On
+ * ne referme pas la modale toute seule : le client a cliqué, il attend une
+ * réponse. Le corps porte `.spa-empty-state` et le pied ne garde que « Fermer ».
+ */
+.spa-modal__body--empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: 8rem;
+}
