@@ -609,11 +609,13 @@ class ReconcileRunningAbandonne(unittest.TestCase):
     ne sait pas exprimer : ces cas-là doivent continuer de tenir.
     """
 
-    def reconcile(self, journal, issues=(), prs=(), branches=None, worktrees=None):
+    def reconcile(self, journal, issues=(), prs=(), branches=None, worktrees=None,
+                  leg_start=False):
         """(état des tickets après réconciliation, sortie).
 
         `branches` et `worktrees` acceptent un dictionnaire — ce que la sonde a
-        trouvé — ou une fonction, pour jouer une sonde muette.
+        trouvé — ou une fonction, pour jouer une sonde muette. `leg_start` joue
+        le démarrage d'une étape de reprise automatique.
         """
         def sonde(valeur):
             return ({"side_effect": valeur} if callable(valeur)
@@ -630,7 +632,8 @@ class ReconcileRunningAbandonne(unittest.TestCase):
                  mock.patch.object(run_mod, "remote_branches", **sonde(branches)), \
                  mock.patch.object(run_mod, "live_worktrees", **sonde(worktrees)), \
                  contextlib.redirect_stdout(output):
-                run_mod.cmd_reconcile(argparse.Namespace(run="r1"))
+                run_mod.cmd_reconcile(argparse.Namespace(run="r1",
+                                                         leg_start=leg_start))
                 run = run_mod.load_run("r1")
                 tickets = run_mod.replay(run, run_mod.read_journal("r1"),
                                          run_mod.load_control("r1"))
@@ -781,6 +784,144 @@ class RetryDebloqueUnRunning(unittest.TestCase):
                  contextlib.redirect_stdout(output):
                 run_mod.cmd_gate(argparse.Namespace(run="r1"))
         self.assertIn("reprendre #19", output.getvalue())
+
+
+class AgentMortAvecSonEtape(unittest.TestCase):
+    """#180 — la nuit du 25 août : 3 étapes, 20,80 $, 0 ticket abouti.
+
+    L'orchestrateur lançait ses agents en arrière-plan puis terminait son tour ;
+    `claude -p` sortait et les tuait en phase `prise-en-charge`. Les tickets
+    restaient `running` avec leur worktree, `reconcile` y voyait un agent au
+    travail — c'était la protection de #130 — et le `gate` annonçait « 0 ticket
+    à lancer ». Deux étapes entières n'ont donc eu personne à lancer.
+
+    La distinction qui manquait : **au démarrage d'une étape, aucun agent de
+    l'étape précédente n'a survécu**. Un `running` y est un abandon, et le
+    worktree n'est pas une revendication mais un travail à reprendre.
+    """
+
+    RUNNING = {"ts": "2026-08-25T20:14:00+00:00", "kind": "ticket", "ticket": 19,
+               "phase": "prise-en-charge", "status": "running",
+               "message": "carte en In progress, empreinte annoncee"}
+    WORKTREE = {19: {"path": "/w/agent-a9e8", "branch": "feature/19-truc",
+                     "locked": True}}
+
+    def reconcile(self, **kwargs):
+        return ReconcileRunningAbandonne.reconcile(self, **kwargs)
+
+    def test_au_demarrage_d_etape_un_running_abandonne_repart(self):
+        tickets, output = self.reconcile(journal=[self.RUNNING],
+                                         worktrees=self.WORKTREE, leg_start=True)
+        self.assertEqual(tickets[19]["status"], "pending")
+        self.assertIn("/w/agent-a9e8", output)
+
+    def test_hors_demarrage_d_etape_le_worktree_reste_une_revendication(self):
+        """La protection de #130 doit continuer de tenir : hors étape, un
+        worktree vivant veut dire qu'un agent travaille."""
+        tickets, _ = self.reconcile(journal=[self.RUNNING],
+                                    worktrees=self.WORKTREE, leg_start=False)
+        self.assertEqual(tickets[19]["status"], "running")
+
+    def test_une_sonde_muette_suspend_le_requeue_meme_au_demarrage(self):
+        """Sans certitude sur l'état local, on ne fait reculer personne — sinon
+        un `git worktree list` en erreur relancerait toute la vague."""
+        def muette():
+            return run_mod.note_probe_failure("git worktree list : en erreur")
+
+        tickets, _ = self.reconcile(journal=[self.RUNNING], worktrees=muette,
+                                    leg_start=True)
+        self.assertEqual(tickets[19]["status"], "running")
+
+    def test_une_pr_ouverte_prime_sur_le_requeue(self):
+        """Un ticket arrivé en PR n'est pas à relancer : il attend la CI."""
+        journal = [self.RUNNING,
+                   {"ts": "2026-08-25T20:20:00+00:00", "kind": "ticket",
+                    "ticket": 19, "phase": "pr", "status": "pr_open", "pr": 88,
+                    "message": "PR ouverte"}]
+        tickets, _ = self.reconcile(
+            journal=journal, worktrees=self.WORKTREE, leg_start=True,
+            prs=[{"number": 88, "state": "OPEN", "body": "Closes #19",
+                  "headRefName": "feature/19-truc"}])
+        self.assertEqual(tickets[19]["status"], "pr_open")
+
+    def test_un_ticket_tombe_n_est_pas_relance_d_office(self):
+        """Seul un `running` est un abandon. Un ticket `failed` a été jugé : le
+        requeuer viderait la pause sur erreur de son objet — le `gate` ne retient
+        que ce qui est tombé, et un ticket qui échoue à chaque étape repartirait
+        indéfiniment sans que personne soit consulté."""
+        journal = [self.RUNNING,
+                   {"ts": "2026-08-25T20:40:00+00:00", "kind": "ticket",
+                    "ticket": 19, "phase": "validation", "status": "failed",
+                    "message": "tests rouges"}]
+        tickets, _ = self.reconcile(journal=journal, worktrees=self.WORKTREE,
+                                    leg_start=True)
+        self.assertEqual(tickets[19]["status"], "failed")
+
+
+class DemarrageEtape(unittest.TestCase):
+    """`leg_start()` lit le signal du superviseur — « 0 », « false », « no »
+    désarment, comme partout ailleurs dans le dépôt."""
+
+    def lit(self, value, name="SPA_LEG_START"):
+        env = {} if value is None else {name: value}
+        with mock.patch.dict(run_mod.os.environ, env, clear=True):
+            return run_mod.leg_start()
+
+    def test_le_repli_sur_spa_unattended(self):
+        """Une étape armée sans `SPA_LEG_START` reste reconnue."""
+        self.assertTrue(self.lit("1", name="SPA_UNATTENDED"))
+
+    def test_spa_unattended_absente_ne_desarme_pas_le_signal_propre(self):
+        """`--no-merge` ne pose pas `SPA_UNATTENDED` : le requeue doit tenir
+        quand même, sans quoi le mode recommandé pour un jalon sensible
+        retrouverait la vague figée de #180."""
+        self.assertTrue(self.lit("1"))
+
+    def test_posee_a_1_c_est_un_demarrage_d_etape(self):
+        self.assertTrue(self.lit("1"))
+
+    def test_absente_c_est_une_session_humaine(self):
+        self.assertFalse(self.lit(None))
+
+    def test_desarmee_explicitement(self):
+        for value in ("0", "false", "no", ""):
+            with self.subTest(valeur=value):
+                self.assertFalse(self.lit(value))
+
+
+class ContexteDeReprise(unittest.TestCase):
+    """Ce que le `gate` doit dire à l'orchestrateur pour qu'il n'ouvre pas un
+    worktree vierge sur un ticket qui en a déjà un — et n'efface pas l'ancien."""
+
+    def test_le_gate_annonce_ou_reprendre(self):
+        worktrees = {19: {"path": "/w/agent-a9e8", "branch": "feature/19-truc",
+                          "locked": True}}
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, control={"signal": "run"})
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "live_worktrees",
+                                   return_value=worktrees), \
+                 mock.patch.object(run_mod, "git_lines",
+                                   side_effect=[["4ae5aed wip(19)"],
+                                                [" M apps/api/src/x.ts"]]), \
+                 contextlib.redirect_stdout(output):
+                run_mod.cmd_gate(argparse.Namespace(run="r1"))
+        rendu = output.getvalue()
+        self.assertIn("À REPRENDRE", rendu)
+        self.assertIn("/w/agent-a9e8", rendu)
+        self.assertIn("1 commit(s)", rendu)
+        self.assertIn("EnterWorktree", rendu)
+
+    def test_un_ticket_sans_worktree_n_a_rien_a_reprendre(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, control={"signal": "run"})
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "live_worktrees", return_value={}), \
+                 contextlib.redirect_stdout(output):
+                run_mod.cmd_gate(argparse.Namespace(run="r1"))
+        self.assertNotIn("À REPRENDRE", output.getvalue())
 
 
 if __name__ == "__main__":

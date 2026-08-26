@@ -50,7 +50,9 @@
       "Bash(git commit:*)",
       "Bash(git worktree:*)",
       "Bash(gh label list:*)",
-      "Bash(npm run verify:*)"
+      "Bash(npm run verify:*)",
+      "Edit(./.claude/milestone-rules.json)",
+      "Write(./.claude/milestone-rules.json)"
     ],
     "deny": [
       "Bash(git push --force:*)",

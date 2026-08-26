@@ -256,7 +256,30 @@ vague.**
 Puis un agent par issue, **tous lancés dans un seul message** — c'est ce qui les
 fait travailler en même temps plutôt qu'à la queue leu leu. Jamais plus que la
 largeur du plan. `Agent` avec `subagent_type: "general-purpose"`,
-`isolation: "worktree"` et `run_in_background: true`.
+`isolation: "worktree"` et **`run_in_background: false`**.
+
+### `run_in_background: false`, et ce n'est pas négociable
+
+Une vague tourne dans `claude -p`, et **`claude -p` sort dès que le modèle cesse
+d'écrire**. Un agent lancé en arrière-plan meurt donc avec le processus qui l'a
+lancé, au milieu de son ticket, sans PR et sans rien pousser.
+
+C'est ce qui s'est produit dans la nuit du 25 août : trois étapes de suite,
+15 minutes chacune, 20,80 $, **zéro ticket abouti**. Les trois tickets lancés
+étaient tous figés en phase `prise-en-charge` — la deuxième sur onze. Un ticket
+complet demande 25 à 40 minutes ; l'orchestrateur, lui, avait fini son tour en
+quinze.
+
+`run_in_background: false` fait exactement ce qu'il faut ici : les agents d'un
+même message travaillent toujours **en parallèle**, mais l'appel ne rend la main
+qu'une fois **tous** les comptes rendus reçus. Le tour ne peut donc pas se
+terminer sous eux, et `claude -p` ne peut pas sortir.
+
+**Ne termine pas ton tour tant qu'un agent de la vague n'a pas rendu son compte
+rendu.** Ni pour annoncer que la vague est lancée, ni pour rendre un état
+d'avancement : tout ce qui est écrit avant le retour des agents les tue. Une
+vague dure des dizaines de minutes — c'est normal, et c'est le seul mode où un
+ticket va à son terme.
 
 Chaque prompt est autonome — l'agent démarre sans rien savoir de cette
 conversation :
@@ -280,6 +303,14 @@ conversation :
 > - **Tu ne merges pas.** Tu t'arrêtes après la barrière de CI de la phase 8, PR
 >   ouverte. La revue a eu lieu en phase 5, avant le push : **ne la relance pas**
 >   après avoir corrigé la CI.
+>
+> **Reprise, le cas échéant.** Si le `gate` a annoncé « À REPRENDRE » pour ce
+> ticket, un worktree porte déjà du travail : appelle `EnterWorktree` avec
+> `path: <le chemin annoncé>` **avant toute autre chose**, et poursuis ce qui
+> s'y trouve. Ne l'efface pas, ne le prends pas pour un vestige, n'ouvre pas de
+> worktree neuf — ce sont des commits et des fichiers déjà gagnés. Commence par
+> `git status` et `git log --oneline origin/develop..HEAD` pour voir où le
+> précédent s'est arrêté, puis reprends à la phase de `ticket.md` qui suit.
 >
 > **Ton empreinte est `<ressources>`**, c'est-à-dire `<chemins>`. D'autres agents
 > travaillent en parallèle sur d'autres tickets, à partir du même `develop`. Si
@@ -544,6 +575,14 @@ Garde-fous : `--max-legs`, `--max-hours`, un report d'une demi-heure quand le
 préflight échoue (session `gh` expirée, dépôt injoignable), et le désarmement
 complet après `--patience` étapes consécutives sans un ticket de plus — c'est le
 seul cas où l'humain doit revenir, et il est dit dans le journal.
+
+**`--leg-timeout` (120 min par défaut)** borne l'attente d'une étape. Depuis que
+l'orchestrateur attend ses agents, une étape n'a plus de fin naturelle : un seul
+agent coincé — invite de permission sans personne pour y répondre, commande qui
+ne rend jamais la main — retiendrait le superviseur indéfiniment, et la veille,
+le voyant battre, ne le relancerait pas. Le run serait mort en paraissant vivant.
+La coupure ne juge pas le travail, elle borne l'attente : les worktrees sont
+conservés et l'étape suivante reprend les tickets là où ils en sont.
 
 ## Compte rendu final
 
