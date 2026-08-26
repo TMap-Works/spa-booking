@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { BusinessRuleError, NotFoundError } from '../../common/errors';
 import { IdentityRepository, toProfile } from './identity.repository';
 import type { AuthenticatedUser, UserProfile } from './identity.types';
-import type { PersistableUserRole } from './roles';
+import type { UserRole } from './roles';
 
 /**
  * Administration des comptes de l'établissement — CDC §1.4 « comptes staff avec
@@ -62,13 +62,13 @@ export class UsersService {
    * sans clé. Le contrôle est une règle métier (422), pas un refus de droit
    * (403) : l'appelant *a* le droit, c'est l'opération qui n'a pas de sens.
    *
-   * Le rôle visé est déjà borné aux valeurs stockables par le DTO ; le type le
-   * redit ici pour que le repository n'ait pas à le supposer.
+   * Le rôle visé est déjà borné à l'énumération par le DTO ; le type le redit
+   * ici pour que le repository n'ait pas à le supposer.
    */
   public async changeRole(input: {
     actor: AuthenticatedUser;
     userId: string;
-    role: PersistableUserRole;
+    role: UserRole;
   }): Promise<UserProfile> {
     if (input.actor.userId === input.userId) {
       throw new BusinessRuleError('Un compte ne peut pas modifier son propre rôle.');

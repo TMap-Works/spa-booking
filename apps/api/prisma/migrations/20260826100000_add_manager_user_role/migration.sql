@@ -1,0 +1,72 @@
+-- Le rang intermédiaire `MANAGER` devient stockable — #202, CDC §1.4.
+--
+-- #201 a livré la hiérarchie `STAFF` < `MANAGER` < `ADMIN` dans la couche
+-- d'autorisation, mais `enum UserRole` n'en connaissait que trois libellés :
+-- le rôle se nommait, se vérifiait, et ne s'écrivait nulle part. Aucun compte
+-- ne pouvait *être* manager.
+--
+-- ## Purement additive
+--
+-- Une seule instruction, qui ajoute un libellé à un type existant. Aucune
+-- colonne n'est retypée, aucune ligne n'est réécrite, aucune valeur existante
+-- ne change de sens : les comptes `CLIENT`, `STAFF` et `ADMIN` déjà en base
+-- sont inchangés, et rien ne devient invalide. Elle s'applique sur une base
+-- portant déjà le schéma initial.
+--
+-- ## Pas de `IF NOT EXISTS`, délibérément
+--
+-- La forme tolérante paraît plus sûre ; elle l'est moins ici. Sur une base où
+-- `MANAGER` aurait déjà été ajouté **en queue** — un `prisma db push` sur une
+-- base de développement, un `ALTER TYPE` passé à la main — elle ne ferait rien
+-- du tout, et le voisinage `BEFORE 'ADMIN'` serait perdu sans bruit : le type
+-- resterait ordonné `… ADMIN, MANAGER`, `listStaffAccounts` rendrait la liste du
+-- personnel dans un ordre contredisant la hiérarchie, et **aucun test ne le
+-- verrait** — ce fichier est relu comme du texte, jamais interrogé sur une base.
+-- Telle quelle, l'instruction échoue au contraire bruyamment, ce qui est le bon
+-- comportement : la base est dans un état qu'aucune migration n'a écrit, il faut
+-- le savoir.
+--
+-- Ce que la forme tolérante aurait apporté par ailleurs — la reprise d'un
+-- déploiement interrompu — n'existe pas : `prisma migrate deploy` applique
+-- chaque migration dans une transaction, une application interrompue est donc
+-- annulée et le libellé n'est pas là au second passage. Et une migration déjà
+-- appliquée n'est jamais rejouée : `_prisma_migrations` en tient l'état.
+--
+-- ## Réversibilité
+--
+-- L'inverse d'un ajout de libellé n'est pas une instruction unique en
+-- PostgreSQL : un `enum` ne se rétracte pas sur place, il se reconstruit. Ce
+-- n'est pas la voie de retour à préférer, et elle n'est pas écrite ici — même
+-- en commentaire : `prisma-schema.spec.ts` relit ce fichier pour vérifier qu'il
+-- est purement additif, et il lit le texte, pas les intentions.
+--
+-- La voie de retour réelle est le déploiement précédent lui-même. Un libellé
+-- ajouté et non utilisé est **inerte** : la version antérieure de l'application
+-- ne l'émet jamais, ne le lit jamais, et le type élargi ne la gêne en rien. Un
+-- retour arrière du code se fait donc sans toucher au schéma — la seule
+-- précaution étant de rétrograder les comptes passés `MANAGER` entre-temps, que
+-- l'ancienne application ne saurait pas nommer. C'est exactement la propriété
+-- qu'exige le déploiement progressif d'api-module §6 : la version en cours
+-- d'exécution survit à la migration, et la migration survit au retour arrière.
+--
+-- ## Pourquoi `BEFORE 'ADMIN'` et non un ajout en queue
+--
+-- PostgreSQL ordonne un `enum` par son ordre de **déclaration** ; `ADD VALUE`
+-- sans voisin place le nouveau libellé en dernier. `MANAGER` se retrouverait
+-- alors trié après `ADMIN`, et le `orderBy: { role: 'asc' }` de
+-- `listStaffAccounts` rendrait la liste du personnel dans un ordre qui
+-- contredit la hiérarchie affichée — `[STAFF, ADMIN, MANAGER]`. Le voisinage
+-- explicite aligne l'ordre de tri de la colonne sur `USER_ROLE_RANK`, et
+-- `roles.spec.ts` verrouille la concordance des deux.
+--
+-- ## Transaction
+--
+-- `ADD VALUE` dans un bloc transactionnel n'est autorisé qu'à partir de
+-- PostgreSQL 12, et à la condition que le libellé ajouté ne soit pas *utilisé*
+-- dans la même transaction. Le socle est PostgreSQL 16 partout — `postgres:16`
+-- dans le job `test` de ci.yml, `engine_version` du module Terraform `database`
+-- en déployé — et cette migration n'écrit aucune donnée : les deux conditions
+-- sont tenues, elle s'applique telle quelle sous `prisma migrate deploy`.
+
+-- AlterEnum
+ALTER TYPE "UserRole" ADD VALUE 'MANAGER' BEFORE 'ADMIN';

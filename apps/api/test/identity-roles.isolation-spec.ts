@@ -32,11 +32,15 @@ import { ProbeDouble } from './utils/test-app';
  *
  * Ils sont signés par le **vrai** `TokenService` : ce ne sont pas des
  * contrefaçons, ce sont exactement les jetons qu'une connexion émettrait. Passer
- * par `/auth/login` obligerait à créer un compte par rôle, or `MANAGER` n'est pas
- * encore stockable en base — `enum UserRole` ne le connaît pas, et la migration
- * additive appartient à l'empreinte `prisma/`. Le rôle est pourtant reconnu par
- * la couche d'autorisation, et le laisser hors du tableau laisserait justement
- * le rang intermédiaire — celui où une erreur d'un cran se cache — sans test.
+ * par `/auth/login` obligerait à faire hacher un mot de passe par rôle et par
+ * cas, sans rien prouver de plus sur la garde — c'est `identity-auth` qui exerce
+ * la connexion.
+ *
+ * Les quatre rôles ont désormais un compte réel derrière leur jeton, `MANAGER`
+ * compris : la migration `20260826100000_add_manager_user_role` a rendu la
+ * valeur stockable (#202). Le rang intermédiaire — celui où une erreur d'un cran
+ * se cache — est donc exercé sur un compte que la colonne saurait porter, et non
+ * plus sur un emprunt d'identifiant.
  */
 
 const SALON_A = 'salon-des-lilas';
@@ -49,9 +53,11 @@ interface Harness {
   tenantA: string;
   tenantB: string;
   adminA: string;
+  managerA: string;
   staffA: string;
   clientA: string;
   adminB: string;
+  managerB: string;
   close(): Promise<void>;
 }
 
@@ -79,6 +85,12 @@ async function createHarness(): Promise<Harness> {
     passwordHash: null,
     role: 'ADMIN',
   });
+  const managerA = repository.addUser({
+    tenantId: tenantA,
+    email: 'manager@lilas.test',
+    passwordHash: null,
+    role: 'MANAGER',
+  });
   const staffA = repository.addUser({
     tenantId: tenantA,
     email: 'praticienne@lilas.test',
@@ -97,6 +109,15 @@ async function createHarness(): Promise<Harness> {
     passwordHash: null,
     role: 'ADMIN',
   });
+  // Le pendant de `managerA` dans l'autre établissement : c'est lui qui rend
+  // vérifiable qu'un rôle nouvellement stockable ne franchit pas la frontière —
+  // ni en lecture, ni en réattribution (tenant-isolation §6).
+  const managerB = repository.addUser({
+    tenantId: tenantB,
+    email: 'manager@port.test',
+    passwordHash: null,
+    role: 'MANAGER',
+  });
 
   return {
     app,
@@ -104,9 +125,11 @@ async function createHarness(): Promise<Harness> {
     tenantA,
     tenantB,
     adminA: adminA.id,
+    managerA: managerA.id,
     staffA: staffA.id,
     clientA: clientA.id,
     adminB: adminB.id,
+    managerB: managerB.id,
     close: () => app.close(),
   };
 }
@@ -127,16 +150,21 @@ describe('Rôles, permissions et isolation — #22', () => {
   /**
    * Un jeton d'accès pour ce rôle, dans l'établissement A.
    *
-   * Le compte porteur est réel — `/auth/me` le relit — sauf pour `MANAGER`, qui
-   * emprunte l'identifiant du compte `STAFF` : le rang vit dans la revendication
-   * signée, pas dans la colonne, et c'est le rang que la garde juge.
+   * Le compte porteur est réel pour les quatre rôles — `/auth/me` le relit — et
+   * porte en mémoire le rôle qu'annonce la revendication : depuis #202, la
+   * colonne sait écrire les quatre, il n'y a plus d'identité à emprunter.
    */
+  const HOLDERS: Readonly<Record<UserRole, () => string>> = {
+    CLIENT: () => harness.clientA,
+    STAFF: () => harness.staffA,
+    MANAGER: () => harness.managerA,
+    ADMIN: () => harness.adminA,
+  };
+
   const tokenFor = async (role: UserRole, tenantId = harness.tenantA): Promise<string> => {
-    const holder =
-      role === 'ADMIN' ? harness.adminA : role === 'CLIENT' ? harness.clientA : harness.staffA;
     return harness.app
       .get(TokenService)
-      .signAccessToken({ userId: holder, tenantId, role });
+      .signAccessToken({ userId: HOLDERS[role](), tenantId, role });
   };
 
 
@@ -178,9 +206,13 @@ describe('Rôles, permissions et isolation — #22', () => {
         .expect(200);
 
       // Ordre `(role, email)` : le rang d'un `enum` PostgreSQL est son ordre de
-      // déclaration — `STAFF` avant `ADMIN`.
+      // déclaration — `STAFF` avant `MANAGER` avant `ADMIN`. C'est ce que la
+      // migration de #202 obtient en insérant `MANAGER` *avant* `ADMIN` plutôt
+      // qu'en queue d'énumération ; un ajout en queue aurait rendu
+      // `[STAFF, ADMIN, MANAGER]`.
       expect(response.body.map((user: { id: string }) => user.id)).toEqual([
         harness.staffA,
+        harness.managerA,
         harness.adminA,
       ]);
     });
@@ -205,6 +237,10 @@ describe('Rôles, permissions et isolation — #22', () => {
 
       const serialized = JSON.stringify(response.body);
       expect(serialized).not.toContain(harness.adminB);
+      // Le compte `MANAGER` de l'autre établissement pas davantage : un rôle
+      // devenu stockable est un rôle de plus à ne pas laisser franchir la
+      // frontière.
+      expect(serialized).not.toContain(harness.managerB);
       expect(serialized).not.toContain('port.test');
       expect(serialized).not.toContain(harness.clientA);
       // Ni le tenant, jamais rendu par l'API (tenant-isolation §4).
@@ -251,6 +287,20 @@ describe('Rôles, permissions et isolation — #22', () => {
 
       expect(response.body.code).toBe('NOT_FOUND');
       expect(response.body.details).toEqual({});
+      expect(JSON.stringify(response.body)).not.toContain('port.test');
+    });
+
+    it('rend 404 sur le compte `MANAGER` de l’autre établissement', async () => {
+      // Le rôle que #202 rend stockable est un compte de plus derrière la
+      // frontière : sans cette assertion, rien ne dirait que le filtre sur les
+      // rôles internes ne l'a pas rendu lisible d'ailleurs.
+      const token = await tokenFor('ADMIN');
+      const response = await request(server())
+        .get(`/api/v1/users/${harness.managerB}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(404);
+
+      expect(response.body.code).toBe('NOT_FOUND');
       expect(JSON.stringify(response.body)).not.toContain('port.test');
     });
 
@@ -355,20 +405,89 @@ describe('Rôles, permissions et isolation — #22', () => {
       expect(response.body).toMatchObject({ id: harness.clientA, role: 'STAFF' });
     });
 
-    it('rejette en 400 un rôle que la colonne ne sait pas écrire', async () => {
-      // `MANAGER` est nommable par l'autorisation, pas encore stockable. Le
-      // refuser à la validation donne un 400 qui nomme les valeurs acceptées ;
-      // le laisser passer donnerait une erreur Prisma remontée en 500.
+    it('attribue `MANAGER`, que la colonne sait désormais écrire', async () => {
+      // Le critère d'acceptation de #202 : le rang intermédiaire a cessé d'être
+      // refusé en 400. La garde le nommait depuis #201, `enum UserRole` ne
+      // l'écrivait pas, et le DTO le rejetait pour éviter une erreur Prisma en
+      // 500. La migration additive a levé les trois d'un coup.
       const token = await tokenFor('ADMIN');
       const response = await request(server())
         .patch(`/api/v1/users/${harness.staffA}/role`)
         .set('Authorization', `Bearer ${token}`)
         .send({ role: 'MANAGER' })
+        .expect(200);
+
+      expect(response.body).toMatchObject({ id: harness.staffA, role: 'MANAGER' });
+      expect(harness.repository.users.find((user) => user.id === harness.staffA)?.role).toBe(
+        'MANAGER',
+      );
+    });
+
+    it('relit ensuite le compte avec son rôle `MANAGER`', async () => {
+      // « Créé **et lu** » : l'écriture ne prouve rien si la lecture ne rend pas
+      // le rôle. `GET /users/:id` filtre sur les rôles internes — un `MANAGER`
+      // absent de ce filtre disparaîtrait de l'administration des droits juste
+      // après y avoir été promu.
+      const token = await tokenFor('ADMIN');
+      await request(server())
+        .patch(`/api/v1/users/${harness.staffA}/role`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ role: 'MANAGER' })
+        .expect(200);
+
+      const relu = await request(server())
+        .get(`/api/v1/users/${harness.staffA}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(relu.body).toMatchObject({ id: harness.staffA, role: 'MANAGER' });
+    });
+
+    it('rejette toujours en 400 un rôle absent de l’énumération', async () => {
+      // Le `@IsIn` du DTO n'a pas disparu avec la restriction de #201 : c'est lui
+      // qui empêche une chaîne arbitraire de descendre jusqu'au pilote
+      // PostgreSQL, qui la refuserait par une erreur de type remontée en 500.
+      const token = await tokenFor('ADMIN');
+      const response = await request(server())
+        .patch(`/api/v1/users/${harness.staffA}/role`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ role: 'SUPERADMIN' })
         .expect(400);
 
       expect(response.body.code).toBe('VALIDATION_ERROR');
       expect(harness.repository.users.find((user) => user.id === harness.staffA)?.role).toBe(
         'STAFF',
+      );
+    });
+
+    it('rend 404 — et non 403 — en promouvant `MANAGER` un compte de l’autre établissement', async () => {
+      // tenant-isolation §6, point 4, appliqué au rôle que #202 rend stockable :
+      // la tentative échoue en 404 et la ressource du tenant B est intacte.
+      const token = await tokenFor('ADMIN');
+      const response = await request(server())
+        .patch(`/api/v1/users/${harness.adminB}/role`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ role: 'MANAGER' })
+        .expect(404);
+
+      expect(response.body.code).toBe('NOT_FOUND');
+      expect(harness.repository.users.find((user) => user.id === harness.adminB)?.role).toBe(
+        'ADMIN',
+      );
+    });
+
+    it('rend 404 sur le compte `MANAGER` de l’autre établissement, qui reste intact', async () => {
+      const token = await tokenFor('ADMIN');
+      const response = await request(server())
+        .patch(`/api/v1/users/${harness.managerB}/role`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ role: 'CLIENT' })
+        .expect(404);
+
+      expect(response.body.code).toBe('NOT_FOUND');
+      expect(JSON.stringify(response.body)).not.toContain('port.test');
+      expect(harness.repository.users.find((user) => user.id === harness.managerB)?.role).toBe(
+        'MANAGER',
       );
     });
 
@@ -421,7 +540,11 @@ describe('Rôles, permissions et isolation — #22', () => {
         .set('Authorization', `Bearer ${croise}`)
         .expect(200);
 
-      expect(response.body.map((user: { id: string }) => user.id)).toEqual([harness.adminB]);
+      // Les deux comptes internes de B, dans l'ordre du rang — et aucun de A.
+      expect(response.body.map((user: { id: string }) => user.id)).toEqual([
+        harness.managerB,
+        harness.adminB,
+      ]);
       expect(JSON.stringify(response.body)).not.toContain('lilas.test');
     });
   });

@@ -6,11 +6,7 @@ import type { AppConfigService } from '../../../config/app-config.service';
 import { toProfile } from '../identity.repository';
 import type { IdentityRepository, SessionRecord, UserRecord } from '../identity.repository';
 import type { UserProfile } from '../identity.types';
-import {
-  PERSISTABLE_STAFF_ROLES,
-  USER_ROLE_RANK,
-  type PersistableUserRole,
-} from '../roles';
+import { STAFF_ROLES, USER_ROLE_RANK, type UserRole } from '../roles';
 
 /**
  * Doubles du module `identity`, partagés par ses suites unitaires.
@@ -100,11 +96,14 @@ export class FakeIdentityRepository {
     email: string;
     passwordHash: string | null;
     /**
-     * `PersistableUserRole` comme en base : le double ne doit pas savoir écrire
-     * un rôle que PostgreSQL refuserait. Un test qui poserait un `MANAGER` en
-     * mémoire passerait au vert sur un scénario impossible en production.
+     * `UserRole` comme en base : le double n'écrit que des rôles que
+     * `enum UserRole` connaît, et il les connaît désormais tous les quatre
+     * (#202). Un double capable d'écrire un rôle que PostgreSQL refuserait
+     * ferait passer au vert un scénario impossible en production — c'est
+     * `roles.spec.ts` qui tient cette équivalence, en comparant le vocabulaire
+     * à l'énumération réellement générée.
      */
-    role?: PersistableUserRole;
+    role?: UserRole;
     isActive?: boolean;
   }): StoredUser {
     const user: StoredUser = {
@@ -155,7 +154,7 @@ export class FakeIdentityRepository {
 
   public async findStaffAccountById(id: string): Promise<UserRecord | null> {
     const tenantId = this.requireTenant();
-    const staffRoles: readonly string[] = PERSISTABLE_STAFF_ROLES;
+    const staffRoles: readonly string[] = STAFF_ROLES;
     return (
       this.users.find(
         (user) =>
@@ -166,7 +165,7 @@ export class FakeIdentityRepository {
 
   public async createUser(input: {
     email: string;
-    role: PersistableUserRole;
+    role: UserRole;
     passwordHash: string;
     firstName: string;
     lastName: string;
@@ -196,7 +195,7 @@ export class FakeIdentityRepository {
    * Les comptes internes de l'établissement courant.
    *
    * Reproduit les trois propriétés du vrai dont un test dépend : le filtre de
-   * tenant, le filtre sur les rôles stockables — la clientèle n'y figure pas —
+   * tenant, le filtre sur les rôles internes — la clientèle n'y figure pas —
    * et l'ordre stable `(role, email)`. Un double qui rendrait les lignes dans
    * l'ordre d'insertion ferait passer une assertion d'ordre pour de mauvaises
    * raisons.
@@ -211,7 +210,7 @@ export class FakeIdentityRepository {
    */
   public async listStaffAccounts(): Promise<UserProfile[]> {
     const tenantId = this.requireTenant();
-    const staffRoles: readonly string[] = PERSISTABLE_STAFF_ROLES;
+    const staffRoles: readonly string[] = STAFF_ROLES;
     return this.users
       .filter((user) => user.tenantId === tenantId && staffRoles.includes(user.role))
       .sort((left, right) =>
@@ -229,10 +228,7 @@ export class FakeIdentityRepository {
    * appartenant à un autre établissement, exactement comme le `updateMany` scopé
    * du vrai dépôt rend `count: 0`. C'est cette valeur-là qui devient le 404.
    */
-  public async updateUserRole(input: {
-    userId: string;
-    role: PersistableUserRole;
-  }): Promise<boolean> {
+  public async updateUserRole(input: { userId: string; role: UserRole }): Promise<boolean> {
     const tenantId = this.requireTenant();
     const user = this.users.find(
       (candidate) => candidate.tenantId === tenantId && candidate.id === input.userId,

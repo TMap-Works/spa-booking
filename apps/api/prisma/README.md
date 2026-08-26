@@ -5,13 +5,15 @@ Modèle de données du CDC §2.4. Conventions d'écriture :
 [tenant-isolation](../../../.claude/skills/tenant-isolation/SKILL.md).
 
 ```
-schema.prisma                     source de vérité du modèle
+schema.prisma                           source de vérité du modèle
 migrations/
-  migration_lock.toml             connecteur verrouillé sur PostgreSQL
-  20260825120000_initial_schema/  les sept entités du CDC
+  migration_lock.toml                   connecteur verrouillé sur PostgreSQL
+  20260825120000_initial_schema/        les sept entités du CDC
+  20260825140000_add_refresh_tokens/    sessions de rafraîchissement (#21)
+  20260826100000_add_manager_user_role/ `MANAGER` dans `enum UserRole` (#202)
 ```
 
-## Les huit tables
+## Les neuf tables
 
 | Table | Rôle | `tenant_id` |
 |---|---|---|
@@ -23,6 +25,14 @@ migrations/
 | `appointments` | Rendez-vous : créneau, statut, prix figé | oui |
 | `payments` | Encaissement d'un rendez-vous ou vente retail | oui |
 | `notifications` | Message émis : type, canal, statut, planification | oui |
+| `refresh_tokens` | Session de rafraîchissement — ce qui rend la déconnexion invalidante (#21) | oui |
+
+`refresh_tokens` n'est pas une neuvième entité métier : un JWT signé ne se
+révoque pas, et sans ligne en base « se déconnecter » se réduirait à effacer un
+cookie que l'attaquant qui l'a volé n'effacera pas. Elle est inscrite ici pour la
+même raison que les autres — pour que son `tenant_id`, ses index et ses clés
+composites soient relus par la suite de tests du schéma comme ceux de n'importe
+quelle table métier.
 
 `service_staff` est une table de jonction **explicite** : une relation N–N
 implicite de Prisma produirait une table `_ServiceToStaff` sans `tenant_id`, et
