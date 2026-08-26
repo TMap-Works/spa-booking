@@ -27,9 +27,21 @@ Internet → ALB (443, certificat auto-signé)
 1. **`../../bootstrap`** — bucket d'état et table de verrouillage. Sans lui,
    `terraform init` n'a pas de backend.
 2. **`../../modules/oidc`**, appliqué par une identité d'administrateur — il crée
-   les rôles GitHub Actions. Poser ensuite les variables de dépôt `AWS_REGION`,
-   `AWS_DEPLOY_ROLE_ARN`, `AWS_TERRAFORM_ROLE_ARN`, `AWS_TERRAFORM_PLAN_ROLE_ARN`.
-
+   les rôles GitHub Actions. Son entrée `ecs_cluster_names` est **obligatoire et
+   sans défaut**, et doit nommer le cluster de **chaque** environnement de
+   `deployment_environments` — `dev`, `staging` et `prod` par défaut, soit
+   `spa-dev-cluster`, `spa-staging-cluster`, `spa-prod-cluster` : la valeur que la
+   sortie `cluster_name` de `modules/ecs-service` produit pour chacun. Sans
+   l'entrée, le `plan` de la racine d'administration s'arrête sur une variable
+   manquante ; avec un seul environnement renseigné, il s'arrête sur la
+   précondition de `aws_iam_role_policy.deploy_scoped`, qui nomme ceux qui
+   manquent ; avec une valeur approximative, les ARN de la politique de
+   déploiement désignent un cluster inexistant et le déploiement revient en
+   `AccessDenied` (#198). Elle s'écrit en clair parce que cette racine est
+   distincte d'`envs/dev` et n'a pas accès à son état — voir
+   [modules/oidc/README.md](../../modules/oidc/README.md).
+   Poser ensuite les variables de dépôt `AWS_REGION`, `AWS_DEPLOY_ROLE_ARN`,
+   `AWS_TERRAFORM_ROLE_ARN`, `AWS_TERRAFORM_PLAN_ROLE_ARN`.
 3. **`terraform apply` ici.** Les dépôts ECR sont alors vides : le service ECS est
    créé mais ses tâches ne démarrent pas encore. C'est attendu — Terraform
    n'attend pas la stabilité du service, l'`apply` aboutit quand même.
