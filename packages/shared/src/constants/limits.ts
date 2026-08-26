@@ -1,0 +1,67 @@
+/**
+ * Bornes du contrat : longueurs de champs, pagination, politique de mot de passe.
+ *
+ * Les longueurs reprennent **exactement** les largeurs déclarées dans
+ * `apps/api/prisma/schema.prisma`. Ce n'est pas de la duplication décorative :
+ * une borne front plus large que la colonne produit un 500 sur un `VARCHAR` trop
+ * court là où l'utilisateur attendait un message de champ. Les deux se corrigent
+ * ensemble, et ce fichier est l'endroit où le front les lit.
+ */
+
+/** `VARCHAR(320)` — longueur maximale d'une adresse e-mail (RFC 5321). */
+export const EMAIL_MAX_LENGTH = 320;
+
+/** `VARCHAR(32)` — numéro de téléphone, format libre à ce stade du MVP. */
+export const PHONE_MAX_LENGTH = 32;
+
+/** `VARCHAR(80)` — prénom, nom, catégorie. */
+export const NAME_MAX_LENGTH = 80;
+
+/** `VARCHAR(160)` — nom d'établissement, de prestation, nom public de praticien. */
+export const DISPLAY_NAME_MAX_LENGTH = 160;
+
+/**
+ * `VARCHAR(63)` — slug de tenant, borné par la longueur d'un label DNS.
+ *
+ * Le slug de prestation s'y aligne alors que sa colonne accepte 80 caractères
+ * (`services.slug`) : la borne la plus étroite est celle qui tient, et un slug
+ * de prestation est destiné à une URL au même titre que celui d'un
+ * établissement. Le sens du décalage compte — une borne **plus étroite** que la
+ * colonne refuse proprement en 422, une borne plus large produit un 500 sur un
+ * `VARCHAR` trop court.
+ */
+export const SLUG_MAX_LENGTH = 63;
+
+/** `VARCHAR(2000)` — description de prestation, biographie, note de rendez-vous. */
+export const LONG_TEXT_MAX_LENGTH = 2000;
+
+/** `VARCHAR(500)` — motif d'annulation, cause d'échec d'envoi. */
+export const REASON_MAX_LENGTH = 500;
+
+/** `VARCHAR(64)` — identifiant de fuseau IANA. */
+export const TIMEZONE_MAX_LENGTH = 64;
+
+/**
+ * Politique de mot de passe (#21).
+ *
+ * Le plancher est une **longueur**, pas une composition : imposer majuscule +
+ * chiffre + caractère spécial produit des mots de passe plus courts et plus
+ * prévisibles, pour un gain d'entropie nul. Le plafond n'est pas une contrainte
+ * de sécurité mais une borne de coût : sans lui, une chaîne de plusieurs
+ * mégaoctets soumise à argon2id est un déni de service à une requête.
+ */
+export const PASSWORD_MIN_LENGTH = 12;
+export const PASSWORD_MAX_LENGTH = 128;
+
+/** Pagination : valeur par défaut et plafond dur, appliqués côté serveur. */
+export const DEFAULT_PAGE_SIZE = 20;
+export const MAX_PAGE_SIZE = 100;
+
+/**
+ * Fenêtre maximale d'une requête de disponibilité, en jours.
+ *
+ * Le calcul des créneaux se fait à la demande (booking-engine §3) : une plage
+ * non bornée fait exploser le temps de réponse et le cache. Trente et un jours
+ * couvrent le « mois suivant » du calendrier public.
+ */
+export const MAX_AVAILABILITY_RANGE_DAYS = 31;
