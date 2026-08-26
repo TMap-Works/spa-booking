@@ -1,0 +1,148 @@
+/*
+ * Admin — création et édition manuelle d'un rendez-vous
+ * =============================================================================
+ *
+ * Critère d'acceptation n° 2 de l'issue #30. Le formulaire vit dans un
+ * `.spa-admin-panel` accolé au calendrier : le planning reste lisible pendant la
+ * saisie, ce qui est exactement ce dont l'opérateur a besoin pour proposer une
+ * autre heure au client qui lui parle.
+ *
+ * Création et édition sont le même écran, à trois différences près : le titre,
+ * le libellé du bouton de validation, et la présence des actions destructives
+ * (annuler le rendez-vous, marquer un no-show) qui n'ont pas de sens à la
+ * création. Deux gabarits divergeraient à la première évolution.
+ *
+ * Trois points que la maquette rend visibles parce qu'ils sont faciles à rater :
+ *
+ *   · LE FUSEAU. Toutes les heures sont écrites dans celui du salon, et il est
+ *     affiché en clair sous les champs d'horaire. Le stockage est en UTC, la
+ *     conversion se fait à l'affichage — un rendez-vous mal fuseau-horairé est un
+ *     bug de sévérité haute.
+ *
+ *   · LE RÉCAPITULATIF CALCULÉ. Fin, durée, tampon et montant ne se saisissent
+ *     pas : ils découlent de la prestation choisie. Les rendre saisissables
+ *     ouvrirait la porte à une fin incohérente avec le début, donc à un
+ *     chevauchement que la contrainte d'exclusion en base refuserait — après la
+ *     saisie, trop tard pour l'opérateur.
+ *
+ *   · LE CONFLIT. Un créneau peut avoir été pris pendant la saisie. Sous
+ *     concurrence c'est un cas normal, pas une panne : la zone de conflit reçoit
+ *     une notification `warning`, les disponibilités sont rechargées, et TOUTES
+ *     les autres saisies sont conservées.
+ */
+
+.spa-admin-appointment {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+}
+
+/* --- Champs ---------------------------------------------------------------- */
+
+/*
+ * Deux colonnes : les paires qui se lisent ensemble — date et heure, praticien
+ * et prestation — tiennent alors sur une ligne de regard. `.spa-admin-appointment__span`
+ * ramène à la pleine largeur ce qui ne se coupe pas en deux (le client, les notes).
+ */
+.spa-admin-appointment__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--spa-space-3);
+}
+
+.spa-admin-appointment__span {
+  grid-column: 1 / -1;
+}
+
+/*
+ * Le fuseau du salon, sous les champs d'horaire. Écrit en permanence : un
+ * opérateur qui consulte depuis un autre fuseau — un gérant en déplacement — n'a
+ * aucun moyen de deviner que « 14 h 30 » n'est pas son 14 h 30.
+ */
+.spa-admin-appointment__timezone {
+  grid-column: 1 / -1;
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Récapitulatif calculé ------------------------------------------------- */
+
+.spa-admin-appointment__summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-3);
+  background-color: var(--spa-color-surface-sunken);
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-admin-appointment__summary-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spa-space-3);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-admin-appointment__summary-label {
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-appointment__summary-value {
+  font-weight: var(--spa-font-weight-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Le montant vient d'un entier en plus petite unité monétaire et d'un code
+ * devise, formaté à l'affichage. Aucune arithmétique n'est faite ici, et le
+ * total qui fait foi est celui que le serveur recalcule. */
+.spa-admin-appointment__summary-row--total .spa-admin-appointment__summary-value {
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+/* Le tampon de nettoyage est du temps réservé qui n'est pas de la prestation :
+ * il est affiché à part pour que l'opérateur comprenne pourquoi le créneau
+ * suivant n'est pas libre à l'heure qu'il attendait. */
+.spa-admin-appointment__summary-row--buffer {
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-xs);
+}
+
+/* --- Conflit de créneau ---------------------------------------------------- */
+
+.spa-admin-appointment__conflict {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+}
+
+/* --- État de chargement ---------------------------------------------------- */
+
+/*
+ * L'édition d'un rendez-vous existant charge ses données : les champs sont des
+ * squelettes à la boîte exacte du contrôle, le pied reste visible mais inerte.
+ * Le formulaire garde sa hauteur, donc le tiroir ne saute pas quand les données
+ * arrivent.
+ */
+.spa-admin-appointment--loading {
+  pointer-events: none;
+}
+
+.spa-admin-appointment__skeleton-field {
+  block-size: var(--spa-target-min-size);
+  inline-size: 100%;
+  border-radius: var(--spa-radius-md);
+}
+
+/* --- État vide ------------------------------------------------------------- */
+
+/*
+ * « Vide » a ici un sens précis et rare : le catalogue du salon ne contient
+ * aucune prestation, donc aucun rendez-vous n'est possible. Afficher un
+ * formulaire dont le sélecteur de prestation est vide laisserait l'opérateur
+ * chercher son erreur ; l'écran dit la cause et mène au catalogue.
+ */
+.spa-admin-appointment--empty {
+  align-items: stretch;
+}

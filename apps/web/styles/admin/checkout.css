@@ -1,0 +1,234 @@
+/*
+ * Admin — encaissement et POS
+ * =============================================================================
+ *
+ * Critère d'acceptation n° 5 de l'issue #30.
+ *
+ * LA LIGNE À NE JAMAIS FRANCHIR
+ * -----------------------------
+ * Cet écran ne contient AUCUN champ de numéro de carte, de CVC ou d'expiration,
+ * et il n'en contiendra jamais. Ce n'est pas un oubli de la maquette : c'est la
+ * condition qui maintient le projet en auto-évaluation PCI SAQ A. Le jour où un
+ * numéro de carte traverse notre code, l'obligation devient SAQ D et un audit
+ * annuel — pour avoir économisé un lecteur.
+ *
+ * Ce qui est donc dessiné, et rien d'autre :
+ *
+ *   · ESPÈCES — aucun appel Stripe. La vente est enregistrée avec son opérateur,
+ *     son horodatage et son montant ; c'est la caisse qui fait foi au
+ *     rapprochement.
+ *   · CARTE — le montant part vers un lecteur Stripe Terminal, et l'écran suit
+ *     l'état du lecteur. Le client compose son code sur le lecteur, pas chez
+ *     nous. À défaut de lecteur, un lien de paiement lui est envoyé.
+ *
+ * Un numéro dicté au téléphone et saisi dans un formulaire est exactement ce que
+ * SAQ A interdit. La maquette n'offre nulle part où le taper — c'est la forme la
+ * plus solide d'interdiction.
+ *
+ * `checkout.test` (voir `apps/web/tests/admin-mockups.test.mjs`) refuse tout
+ * champ de saisie qui ressemblerait à une carte : la règle est vérifiée par
+ * exécution, pas confiée à la vigilance du prochain contributeur.
+ *
+ * MONTANTS
+ * --------
+ * Tous les montants affichés proviennent d'entiers exprimés dans la plus petite
+ * unité de leur devise, accompagnés de leur code ISO 4217, formatés au dernier
+ * moment. Aucun total n'est calculé ici : celui qui fait foi est recalculé par le
+ * serveur, et le front ne fait jamais autorité sur ce qu'il envoie.
+ */
+
+.spa-admin-checkout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem);
+  gap: var(--spa-space-4);
+  align-items: start;
+}
+
+/* --- Ticket ---------------------------------------------------------------- */
+
+.spa-admin-checkout__ticket {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  min-inline-size: 0;
+}
+
+/*
+ * Une vente POS peut être rattachée à un rendez-vous ou totalement autonome
+ * (vente de produit au comptoir). Le bandeau dit lequel des deux, parce que
+ * l'opérateur doit savoir ce qu'il clôture.
+ */
+.spa-admin-checkout__origin {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spa-space-2);
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Totaux ---------------------------------------------------------------- */
+
+.spa-admin-checkout__totals {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-3);
+  background-color: var(--spa-color-surface-sunken);
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-admin-checkout__total-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spa-space-4);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-admin-checkout__total-label {
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-checkout__total-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--spa-font-weight-medium);
+}
+
+/* Taxe et remise sont des lignes distinctes, jamais fondues dans un prix : c'est
+ * ce qui rend le ticket vérifiable par le client et réconciliable par le salon. */
+.spa-admin-checkout__total-row--grand {
+  padding-block-start: var(--spa-space-2);
+  border-block-start: 1px solid var(--spa-color-border);
+  font-size: var(--spa-font-size-lg);
+}
+
+.spa-admin-checkout__total-row--grand .spa-admin-checkout__total-label,
+.spa-admin-checkout__total-row--grand .spa-admin-checkout__total-value {
+  color: var(--spa-color-text);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+/* --- Moyens de paiement ---------------------------------------------------- */
+
+.spa-admin-checkout__payment {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+}
+
+.spa-admin-checkout__methods {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/*
+ * Un groupe de boutons radio natifs dans un `<fieldset>` nommé par sa `<legend>` :
+ * le lecteur d'écran annonce « Moyen de paiement, Espèces, 1 sur 2 » sans qu'on
+ * ait rien à déclarer, et les flèches naviguent d'elles-mêmes.
+ */
+.spa-admin-checkout__method {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--spa-space-1);
+  min-block-size: var(--spa-target-min-size);
+  padding: var(--spa-space-3);
+  border: 1px solid var(--spa-color-border-interactive);
+  border-radius: var(--spa-radius-md);
+  cursor: pointer;
+}
+
+.spa-admin-checkout__method:hover {
+  background-color: var(--spa-color-surface-raised);
+}
+
+.spa-admin-checkout__method-input:checked + .spa-admin-checkout__method {
+  border-color: var(--spa-color-accent);
+  box-shadow: inset 0 0 0 1px var(--spa-color-accent);
+  background-color: var(--spa-color-accent-soft);
+}
+
+.spa-admin-checkout__method-input:focus-visible + .spa-admin-checkout__method {
+  outline: var(--spa-focus-ring-width) solid var(--spa-color-focus);
+  outline-offset: var(--spa-focus-ring-offset);
+}
+
+.spa-admin-checkout__method-label {
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-medium);
+}
+
+.spa-admin-checkout__method-hint {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- État du lecteur ------------------------------------------------------- */
+
+/*
+ * Le lecteur Stripe Terminal a son propre état, indépendant de la vente : hors
+ * ligne, prêt, en attente de la carte, en cours d'autorisation. L'afficher évite
+ * la question la plus coûteuse du comptoir — « ça a marché ou pas ? » — devant un
+ * client qui attend.
+ */
+.spa-admin-checkout__terminal {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-2) var(--spa-space-3);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-info-surface);
+  color: var(--spa-color-info);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-admin-checkout__terminal--offline {
+  background-color: var(--spa-color-warning-surface);
+  color: var(--spa-color-warning);
+}
+
+/*
+ * La frontière PCI, écrite sur l'écran lui-même. Ce n'est pas une note de
+ * développeur laissée par mégarde : l'opérateur doit savoir qu'il n'a pas le
+ * droit de noter un numéro de carte quelque part, et le prochain contributeur
+ * doit trouver la raison avant d'ajouter le champ qui semblerait manquer.
+ */
+.spa-admin-checkout__pci {
+  display: flex;
+  gap: var(--spa-space-2);
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- État de chargement ---------------------------------------------------- */
+
+/*
+ * « Paiement en cours » est l'état le plus sensible de l'écran : c'est celui
+ * pendant lequel un double clic produirait deux encaissements. Le pied entier
+ * devient inerte, et le bouton porte son propre `--loading` — la désactivation ne
+ * repose pas sur le seul style.
+ */
+.spa-admin-checkout--loading .spa-admin-checkout__payment {
+  pointer-events: none;
+}
+
+.spa-admin-checkout__skeleton-line {
+  block-size: 0.75rem;
+  inline-size: 100%;
+}
+
+/* --- État vide ------------------------------------------------------------- */
+
+/*
+ * Ticket vide : la caisse est ouverte mais rien n'a été ajouté. Distinct du
+ * chargement, et distinct d'une erreur — l'écran propose d'ajouter une
+ * prestation ou de partir d'un rendez-vous du jour.
+ */
+.spa-admin-checkout--empty .spa-admin-checkout__ticket {
+  justify-content: center;
+}

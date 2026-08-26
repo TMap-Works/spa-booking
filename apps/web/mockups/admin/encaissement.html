@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Maquette — Encaissement et POS</title>
+    <link rel="stylesheet" href="../../styles/index.css" />
+    <link rel="stylesheet" href="../../styles/admin/index.css" />
+  </head>
+  <body>
+    <div class="spa-admin">
+      <nav class="spa-admin__rail" aria-label="Sections du tableau de bord">
+        <span class="spa-admin__brand">Maison Lotus</span>
+        <div class="spa-admin__nav">
+          <a class="spa-admin__nav-link" href="calendrier.html">Planning</a>
+          <a class="spa-admin__nav-link" href="rendez-vous.html">Rendez-vous</a>
+          <a class="spa-admin__nav-link" href="fiche-client.html">Clients</a>
+          <a class="spa-admin__nav-link" href="personnel.html">Personnel</a>
+          <a class="spa-admin__nav-link" href="encaissement.html" aria-current="page">Encaissement</a>
+        </div>
+        <div class="spa-admin__rail-footer">
+          <strong>Maison Lotus — Antananarivo</strong>
+          <span>Fuseau du salon : Indian/Antananarivo (UTC+3)</span>
+          <span>Connectée : Hasina R., gérante</span>
+        </div>
+      </nav>
+
+      <div class="spa-admin__main">
+        <header class="spa-admin__topbar">
+          <h1 class="spa-admin__title">Encaissement</h1>
+          <div class="spa-admin__topbar-actions">
+            <button class="spa-button spa-button--neutral" type="button">
+              <span class="spa-button__label">Vente au comptoir</span>
+            </button>
+          </div>
+        </header>
+
+        <main class="spa-admin__content">
+          <!--
+            AUCUN CHAMP DE CARTE SUR CET ÉCRAN, ET IL N'Y EN AURA JAMAIS.
+            C'est la condition qui maintient le projet en auto-évaluation PCI
+            SAQ A : le jour où un numéro de carte traverse notre code, l'obligation
+            devient SAQ D et un audit annuel. Le montant part vers un lecteur
+            Stripe Terminal ; le client compose son code sur le lecteur.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-ticket">
+            <h2 class="spa-admin__section-title" id="titre-ticket">Ticket en cours</h2>
+
+            <div class="spa-admin-checkout">
+              <div class="spa-admin-checkout__ticket">
+                <div class="spa-admin-checkout__origin">
+                  <span>Rattaché au rendez-vous de</span>
+                  <strong>Fara Rakotoson — 26 août, 11:00</strong>
+                  <span class="spa-admin-badge spa-admin-badge--completed">Honoré</span>
+                </div>
+
+                <table class="spa-admin-table">
+                  <caption class="spa-visually-hidden">Lignes du ticket</caption>
+                  <thead>
+                    <tr>
+                      <th class="spa-admin-table__head" scope="col">Ligne</th>
+                      <th class="spa-admin-table__head spa-admin-table__head--numeric" scope="col">Qté</th>
+                      <th class="spa-admin-table__head spa-admin-table__head--numeric" scope="col">P.U.</th>
+                      <th class="spa-admin-table__head spa-admin-table__head--numeric" scope="col">Total</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr class="spa-admin-table__row">
+                      <td class="spa-admin-table__cell">Soin visage — 90 min</td>
+                      <td class="spa-admin-table__cell spa-admin-table__cell--numeric">1</td>
+                      <td class="spa-admin-table__cell spa-admin-table__cell--numeric">180 000</td>
+                      <td class="spa-admin-table__cell spa-admin-table__cell--numeric">180 000</td>
+                    </tr>
+                    <tr class="spa-admin-table__row">
+                      <td class="spa-admin-table__cell">Huile d’amande douce — 100 ml</td>
+                      <td class="spa-admin-table__cell spa-admin-table__cell--numeric">2</td>
+                      <td class="spa-admin-table__cell spa-admin-table__cell--numeric">25 000</td>
+                      <td class="spa-admin-table__cell spa-admin-table__cell--numeric">50 000</td>
+                    </tr>
+                  </tbody>
+                </table>
+
+                <div class="spa-admin-checkout__totals">
+                  <div class="spa-admin-checkout__total-row">
+                    <span class="spa-admin-checkout__total-label">Sous-total</span>
+                    <span class="spa-admin-checkout__total-value">230 000 MGA</span>
+                  </div>
+                  <div class="spa-admin-checkout__total-row">
+                    <span class="spa-admin-checkout__total-label">Remise fidélité</span>
+                    <span class="spa-admin-checkout__total-value">−10 000 MGA</span>
+                  </div>
+                  <div class="spa-admin-checkout__total-row">
+                    <span class="spa-admin-checkout__total-label">TVA 20 %</span>
+                    <span class="spa-admin-checkout__total-value">44 000 MGA</span>
+                  </div>
+                  <div class="spa-admin-checkout__total-row spa-admin-checkout__total-row--grand">
+                    <span class="spa-admin-checkout__total-label">À encaisser</span>
+                    <span class="spa-admin-checkout__total-value">264 000 MGA</span>
+                  </div>
+                </div>
+
+                <p class="spa-admin-toolbar__hint">
+                  Montants exprimés en ariary entiers — le total qui fait foi est celui
+                  que le serveur recalcule à la validation.
+                </p>
+              </div>
+
+              <div class="spa-admin-checkout__payment">
+                <fieldset class="spa-admin-checkout__methods">
+                  <legend class="spa-admin__section-title">Moyen de paiement</legend>
+
+                  <input
+                    class="spa-admin-checkout__method-input spa-visually-hidden"
+                    type="radio"
+                    name="moyen"
+                    id="moyen-carte"
+                    checked
+                  />
+                  <label class="spa-admin-checkout__method" for="moyen-carte">
+                    <span class="spa-admin-checkout__method-label">Carte — lecteur du comptoir</span>
+                    <span class="spa-admin-checkout__method-hint">
+                      Le montant est envoyé au lecteur. La cliente insère sa carte et compose
+                      son code sur le lecteur.
+                    </span>
+                  </label>
+
+                  <input
+                    class="spa-admin-checkout__method-input spa-visually-hidden"
+                    type="radio"
+                    name="moyen"
+                    id="moyen-especes"
+                  />
+                  <label class="spa-admin-checkout__method" for="moyen-especes">
+                    <span class="spa-admin-checkout__method-label">Espèces</span>
+                    <span class="spa-admin-checkout__method-hint">
+                      Enregistré avec l’opérateur et l’horodatage ; la caisse fait foi au
+                      rapprochement.
+                    </span>
+                  </label>
+
+                  <input
+                    class="spa-admin-checkout__method-input spa-visually-hidden"
+                    type="radio"
+                    name="moyen"
+                    id="moyen-lien"
+                  />
+                  <label class="spa-admin-checkout__method" for="moyen-lien">
+                    <span class="spa-admin-checkout__method-label">Lien de paiement</span>
+                    <span class="spa-admin-checkout__method-hint">
+                      Envoyé par SMS ou e-mail à la cliente, qui paie depuis son téléphone.
+                    </span>
+                  </label>
+                </fieldset>
+
+                <p class="spa-admin-checkout__terminal">
+                  <span aria-hidden="true">●</span>
+                  Lecteur « Comptoir 1 » prêt — en attente de la carte
+                </p>
+
+                <button class="spa-button spa-button--accent spa-button--block" type="button">
+                  <span class="spa-button__label">Encaisser 264 000 MGA</span>
+                </button>
+
+                <p class="spa-admin-checkout__pci">
+                  <span aria-hidden="true">🔒</span>
+                  Aucun numéro de carte ne se saisit ici, ni ne se note ailleurs : les
+                  données de carte ne transitent que par le lecteur, jamais par le salon
+                  ni par nos serveurs.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <!-- Lecteur injoignable — le cas le plus fréquent au comptoir. -->
+          <section class="spa-admin__section" aria-labelledby="titre-lecteur">
+            <h2 class="spa-admin__section-title" id="titre-lecteur">Lecteur hors ligne</h2>
+
+            <div class="spa-admin-checkout__payment">
+              <p class="spa-admin-checkout__terminal spa-admin-checkout__terminal--offline">
+                <span aria-hidden="true">●</span>
+                Lecteur « Comptoir 1 » injoignable depuis 2 min
+              </p>
+              <div class="spa-notification spa-notification--warning" role="status">
+                <span class="spa-notification__icon" aria-hidden="true">!</span>
+                <div class="spa-notification__content">
+                  <p class="spa-notification__title">Le lecteur ne répond pas</p>
+                  <p>
+                    Encaissez en espèces, ou envoyez un lien de paiement à la cliente. Ne
+                    demandez jamais un numéro de carte à recopier.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!--
+            ÉTAT DE CHARGEMENT — « paiement en cours ». C'est l'instant où un
+            double clic produirait deux encaissements : la zone entière est
+            inerte et le bouton porte son propre état de chargement.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-pos-chargement">
+            <h2 class="spa-admin__section-title" id="titre-pos-chargement">État de chargement</h2>
+
+            <div class="spa-admin-checkout spa-admin-checkout--loading" aria-busy="true">
+              <div class="spa-admin-checkout__ticket">
+                <p class="spa-visually-hidden">Autorisation en cours auprès du lecteur…</p>
+                <span class="spa-admin-checkout__skeleton-line spa-skeleton"></span>
+                <span class="spa-admin-checkout__skeleton-line spa-skeleton"></span>
+                <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
+              </div>
+              <div class="spa-admin-checkout__payment">
+                <p class="spa-admin-checkout__terminal">
+                  <span aria-hidden="true">●</span>
+                  Carte lue — autorisation en cours
+                </p>
+                <button class="spa-button spa-button--accent spa-button--block spa-button--loading" type="button" disabled>
+                  <span class="spa-button__label">Encaisser 264 000 MGA</span>
+                  <span class="spa-spinner spa-button__spinner" aria-hidden="true"></span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!--
+            ÉTAT VIDE — la caisse est ouverte, rien n'a été ajouté. Distinct du
+            chargement et distinct d'une erreur.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-pos-vide">
+            <h2 class="spa-admin__section-title" id="titre-pos-vide">État vide</h2>
+
+            <div class="spa-admin-checkout spa-admin-checkout--empty">
+              <div class="spa-admin-checkout__ticket">
+                <div class="spa-empty-state">
+                  <p class="spa-empty-state__title">Ticket vide</p>
+                  <p class="spa-empty-state__description">
+                    Ajoutez une prestation ou un produit, ou partez d’un rendez-vous
+                    honoré du jour pour reprendre ses lignes.
+                  </p>
+                  <button class="spa-button spa-button--accent" type="button">
+                    <span class="spa-button__label">Reprendre un rendez-vous du jour</span>
+                  </button>
+                </div>
+              </div>
+              <div class="spa-admin-checkout__payment">
+                <button class="spa-button spa-button--accent spa-button--block spa-button--empty" type="button" disabled>
+                  <span class="spa-button__label">Encaisser</span>
+                </button>
+                <p class="spa-admin-checkout__pci">
+                  <span aria-hidden="true">🔒</span>
+                  Périmètre PCI SAQ A — aucune donnée de carte n’est saisie, transmise ni
+                  conservée par le salon.
+                </p>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

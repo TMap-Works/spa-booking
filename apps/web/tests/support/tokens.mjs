@@ -12,7 +12,7 @@
  * et `package-lock.json` sont à la racine du dépôt, hors de son périmètre.
  */
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, posix, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,6 +23,74 @@ export const stylesDir = join(here, '..', '..', 'styles');
 
 /** Chemin du fichier de jetons — seul endroit où une couleur littérale est permise. */
 export const tokensFile = join(stylesDir, 'tokens.css');
+
+/**
+ * Les points d'entrée du front, un par produit de `apps/web`.
+ *
+ * `index.css` porte les jetons, le socle et les six composants de base : les deux
+ * produits en ont besoin, il est importé par le layout racine. `admin/index.css`
+ * porte le chrome du tableau de bord — calendrier, grille d'horaires, écran
+ * d'encaissement — que le parcours client public n'affiche jamais et qui n'a donc
+ * pas à peser sur son LCP (skill web-frontend §7).
+ *
+ * Toute feuille ajoutée sous `styles/` doit être atteignable depuis exactement
+ * l'un des deux, directement ou par transitivité.
+ */
+export const entryPoints = ['index.css', 'admin/index.css'];
+
+/** Chemin absolu d'une feuille désignée par son nom relatif POSIX. */
+export function styleSheetPath(name) {
+  return join(stylesDir, ...name.split(posix.sep));
+}
+
+/**
+ * Feuilles importées par `file`, en noms relatifs à `styles/`.
+ *
+ * Les chemins sont résolus depuis le dossier du fichier importateur, et non
+ * depuis `styles/` : `admin/index.css` écrit `./calendar.css` et désigne bien
+ * `admin/calendar.css`.
+ */
+export function readImportedSheets(file) {
+  const css = stripComments(readStyleSheet(file));
+  const from = dirname(file);
+  return [...css.matchAll(/@import\s+['"]([^'"]+)['"]/g)].map((match) =>
+    relativeName(join(from, match[1])),
+  );
+}
+
+/**
+ * Parcourt le graphe d'imports depuis les points d'entrée.
+ *
+ * Renvoie `owner` — feuille → point d'entrée qui l'atteint — et `duplicates`, les
+ * feuilles atteintes deux fois. Une feuille importée par les deux entrées y
+ * figure : elle serait chargée en double sur le tableau de bord, et l'ordre de
+ * cascade cesserait d'être lisible.
+ *
+ * Une feuille importée mais absente du disque est enregistrée sans être suivie :
+ * elle ressort alors comme import orphelin dans la comparaison avec le contenu
+ * réel de `styles/`, plutôt qu'en `ENOENT` sans explication.
+ */
+export function walkEntryPoints(entries = entryPoints) {
+  const owner = new Map();
+  const duplicates = [];
+
+  for (const entry of entries) {
+    const queue = [entry];
+    while (queue.length > 0) {
+      const sheet = queue.shift();
+      if (owner.has(sheet)) {
+        duplicates.push(sheet);
+        continue;
+      }
+      owner.set(sheet, entry);
+
+      const full = styleSheetPath(sheet);
+      if (existsSync(full)) queue.push(...readImportedSheets(full));
+    }
+  }
+
+  return { owner, duplicates };
+}
 
 /**
  * Tous les fichiers `.css` du design system, chemins relatifs à `styles/` et

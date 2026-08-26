@@ -1,0 +1,31 @@
+/*
+ * Tableau de bord admin — point d'entrée
+ * =============================================================================
+ *
+ * SECOND point d'entrée du front, distinct de `styles/index.css`. Les deux
+ * produits de `apps/web` ne partagent pas leur chrome (skill web-frontend §1) :
+ *
+ *     app/layout.tsx           import '../styles/index.css';        // les deux
+ *     app/(admin)/layout.tsx   import '../../styles/admin/index.css'; // admin seul
+ *
+ * Pourquoi deux entrées et non une : le parcours client public vise un LCP
+ * < 2,5 s en 4G (skill web-frontend §7), et il n'affiche jamais un calendrier de
+ * planning, une grille d'horaires ni un écran d'encaissement. Faire transiter ce
+ * chrome par `styles/index.css` le ferait payer à la surface qui génère le
+ * revenu, pour rien.
+ *
+ * Ce fichier ne redéclare aucun jeton : il consomme ceux de `styles/tokens.css`,
+ * chargés par l'entrée partagée du layout racine. L'ordre des deux imports dans
+ * l'application est donc contraint — l'entrée partagée d'abord.
+ *
+ * `tokens.test.mjs` vérifie que chaque feuille de `styles/` est atteignable
+ * depuis exactement une de ces deux entrées : un fichier ajouté ici sans import
+ * fait rougir la suite.
+ */
+
+@import './shell.css';
+@import './calendar.css';
+@import './appointment.css';
+@import './client.css';
+@import './staff.css';
+@import './checkout.css';

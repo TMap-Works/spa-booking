@@ -15,6 +15,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  entryPoints,
   listStyleSheets,
   readStyleSheet,
   readTokenDeclarations,
@@ -22,6 +23,7 @@ import {
   resolveToken,
   stripComments,
   tokensFile,
+  walkEntryPoints,
 } from './support/tokens.mjs';
 
 const declarations = readTokenDeclarations();
@@ -162,34 +164,49 @@ describe('Cohérence des références', () => {
     }
   });
 
-  it('index.css importe chaque feuille du système, une seule fois', () => {
-    // Le point d'entrée liste ses imports à la main pour garder un ordre de
+  it('chaque feuille est atteignable depuis exactement un point d’entrée', () => {
+    // Les points d'entrée listent leurs imports à la main pour garder un ordre de
     // cascade lisible ; le prix de ce choix est qu'un fichier ajouté peut être
     // oublié. Ce test est ce qui rend ce prix acceptable.
-    const indexPath = sheets.find((sheet) => relativeName(sheet) === 'index.css');
-    assert.ok(indexPath, 'styles/index.css est introuvable.');
-
-    const imported = [
-      ...stripComments(readStyleSheet(indexPath)).matchAll(
-        /@import\s+['"]\.\/([^'"]+)['"]/g,
-      ),
-    ].map((match) => match[1]);
-
-    const expected = sheets
-      .map(relativeName)
-      .filter((name) => name !== 'index.css');
+    //
+    // Le graphe est parcouru en profondeur et non sur un seul niveau : depuis
+    // l'arrivée du tableau de bord admin (#30), `styles/` a deux entrées — une
+    // partagée, une propre au back-office — et la seconde importe ses feuilles
+    // par des chemins relatifs à son propre dossier.
+    const { owner, duplicates } = walkEntryPoints();
 
     assert.deepEqual(
-      [...imported].sort(),
-      [...expected].sort(),
-      'les imports de index.css ne correspondent pas aux feuilles présentes ' +
-        'dans styles/ (fichier ajouté sans import, ou import orphelin).',
+      duplicates,
+      [],
+      `feuille(s) atteinte(s) deux fois : ${duplicates.join(', ')}. Un double ` +
+        `import la charge deux fois et rend l'ordre de cascade imprévisible.`,
     );
-    assert.equal(
-      new Set(imported).size,
-      imported.length,
-      'index.css importe deux fois la même feuille.',
+
+    assert.deepEqual(
+      [...owner.keys()].sort(),
+      sheets.map(relativeName).sort(),
+      `les feuilles atteignables depuis ${entryPoints.join(' et ')} ne ` +
+        `correspondent pas au contenu de styles/ (fichier ajouté sans import, ` +
+        `ou import orphelin).`,
     );
+  });
+
+  it('le chrome admin ne pèse pas sur le parcours client public', () => {
+    // La raison d'être de la seconde entrée. Sans ce test, un `@import` ajouté
+    // par commodité dans `index.css` ferait payer le calendrier de planning, la
+    // grille d'horaires et l'écran d'encaissement à la surface qui vise un
+    // LCP < 2,5 s en 4G — et personne ne s'en apercevrait.
+    const { owner } = walkEntryPoints();
+
+    for (const [sheet, entry] of owner) {
+      if (!sheet.startsWith('admin/')) continue;
+      assert.equal(
+        entry,
+        'admin/index.css',
+        `${sheet} est atteinte depuis ${entry} : le chrome du tableau de bord ` +
+          `serait chargé par le parcours client public, qui ne l'affiche jamais.`,
+      );
+    }
   });
 
   it('déclare les jetons dans l’ordre annoncé : primitives puis sémantiques', () => {

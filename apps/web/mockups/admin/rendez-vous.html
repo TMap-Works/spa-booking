@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Maquette — Création et édition d’un rendez-vous</title>
+    <link rel="stylesheet" href="../../styles/index.css" />
+    <link rel="stylesheet" href="../../styles/admin/index.css" />
+  </head>
+  <body>
+    <div class="spa-admin">
+      <nav class="spa-admin__rail" aria-label="Sections du tableau de bord">
+        <span class="spa-admin__brand">Maison Lotus</span>
+        <div class="spa-admin__nav">
+          <a class="spa-admin__nav-link" href="calendrier.html">Planning</a>
+          <a class="spa-admin__nav-link" href="rendez-vous.html" aria-current="page">Rendez-vous</a>
+          <a class="spa-admin__nav-link" href="fiche-client.html">Clients</a>
+          <a class="spa-admin__nav-link" href="personnel.html">Personnel</a>
+          <a class="spa-admin__nav-link" href="encaissement.html">Encaissement</a>
+        </div>
+        <div class="spa-admin__rail-footer">
+          <strong>Maison Lotus — Antananarivo</strong>
+          <span>Fuseau du salon : Indian/Antananarivo (UTC+3)</span>
+          <span>Connectée : Hasina R., gérante</span>
+        </div>
+      </nav>
+
+      <div class="spa-admin__main">
+        <header class="spa-admin__topbar">
+          <h1 class="spa-admin__title">Rendez-vous</h1>
+        </header>
+
+        <main class="spa-admin__content">
+          <!--
+            CRÉATION. Le tiroir est accolé au planning dans l'application ; la
+            maquette le montre seul. Fin, durée, tampon et montant ne se
+            saisissent pas : ils découlent de la prestation choisie.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-creation">
+            <h2 class="spa-admin__section-title" id="titre-creation">Création manuelle</h2>
+
+            <div class="spa-admin-panel">
+              <div class="spa-admin-panel__header">
+                <h3 class="spa-admin-panel__title">Nouveau rendez-vous</h3>
+                <button class="spa-button spa-button--quiet" type="button">
+                  <span class="spa-button__label" aria-hidden="true">×</span>
+                  <span class="spa-visually-hidden">Fermer le tiroir</span>
+                </button>
+              </div>
+
+              <div class="spa-admin-panel__body">
+                <form id="rdv-creation" class="spa-admin-appointment">
+                  <div class="spa-admin-appointment__grid">
+                    <div class="spa-field spa-admin-appointment__span">
+                      <label class="spa-field__label" for="rdv-client">
+                        Client<span class="spa-field__required" aria-hidden="true">*</span>
+                      </label>
+                      <input
+                        id="rdv-client"
+                        class="spa-field__control"
+                        type="text"
+                        required
+                        aria-describedby="rdv-client-hint"
+                      />
+                      <p id="rdv-client-hint" class="spa-field__hint">
+                        Recherche par nom ou par téléphone. Un client inconnu est créé à la volée.
+                      </p>
+                    </div>
+
+                    <div class="spa-select">
+                      <label class="spa-select__label" for="rdv-prestation">Prestation</label>
+                      <div class="spa-select__shell">
+                        <select id="rdv-prestation" class="spa-select__control">
+                          <option>Massage suédois — 60 min</option>
+                          <option>Soin visage — 90 min</option>
+                          <option>Rituel corps — 120 min</option>
+                        </select>
+                        <span class="spa-select__chevron" aria-hidden="true"></span>
+                      </div>
+                    </div>
+
+                    <div class="spa-select">
+                      <label class="spa-select__label" for="rdv-praticien">Praticien</label>
+                      <div class="spa-select__shell">
+                        <select id="rdv-praticien" class="spa-select__control">
+                          <option>Hasina</option>
+                          <option>Tiana</option>
+                          <option>Njara</option>
+                        </select>
+                        <span class="spa-select__chevron" aria-hidden="true"></span>
+                      </div>
+                    </div>
+
+                    <div class="spa-field">
+                      <label class="spa-field__label" for="rdv-date">Date</label>
+                      <input id="rdv-date" class="spa-field__control" type="date" value="2026-08-26" />
+                    </div>
+
+                    <div class="spa-field">
+                      <label class="spa-field__label" for="rdv-heure">Heure de début</label>
+                      <input id="rdv-heure" class="spa-field__control" type="time" value="14:30" />
+                    </div>
+
+                    <p class="spa-admin-appointment__timezone">
+                      Heures saisies et affichées dans le fuseau du salon —
+                      Indian/Antananarivo (UTC+3). Le stockage se fait en UTC.
+                    </p>
+
+                    <div class="spa-field spa-admin-appointment__span">
+                      <label class="spa-field__label" for="rdv-notes">Note interne</label>
+                      <textarea
+                        id="rdv-notes"
+                        class="spa-field__control"
+                        rows="2"
+                        aria-describedby="rdv-notes-hint"
+                      ></textarea>
+                      <p id="rdv-notes-hint" class="spa-field__hint">
+                        Visible du salon uniquement — jamais transmise au client.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div class="spa-admin-appointment__summary">
+                    <div class="spa-admin-appointment__summary-row">
+                      <span class="spa-admin-appointment__summary-label">Début</span>
+                      <span class="spa-admin-appointment__summary-value">14:30</span>
+                    </div>
+                    <div class="spa-admin-appointment__summary-row">
+                      <span class="spa-admin-appointment__summary-label">Fin (calculée)</span>
+                      <span class="spa-admin-appointment__summary-value">15:30</span>
+                    </div>
+                    <div class="spa-admin-appointment__summary-row spa-admin-appointment__summary-row--buffer">
+                      <span class="spa-admin-appointment__summary-label">Tampon de remise en état</span>
+                      <span class="spa-admin-appointment__summary-value">15 min — libre à 15:45</span>
+                    </div>
+                    <div class="spa-admin-appointment__summary-row spa-admin-appointment__summary-row--total">
+                      <span class="spa-admin-appointment__summary-label">Montant</span>
+                      <span class="spa-admin-appointment__summary-value">120 000 MGA</span>
+                    </div>
+                  </div>
+                </form>
+              </div>
+
+              <div class="spa-admin-panel__footer">
+                <button class="spa-button spa-button--neutral" type="button">
+                  <span class="spa-button__label">Annuler</span>
+                </button>
+                <!--
+                  Le pied du tiroir est HORS du <form> : le bouton doit donc
+                  désigner son formulaire par `form=`, sans quoi il ne soumet
+                  rien. C'est le contrat que reprendra le composant React.
+                -->
+                <button class="spa-button spa-button--accent" type="submit" form="rdv-creation">
+                  <span class="spa-button__label">Créer le rendez-vous</span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!--
+            ÉDITION. Même écran, trois différences : le titre, le libellé de
+            validation et les actions destructives. Cette maquette porte en plus
+            le cas de CONFLIT — sous concurrence, un créneau peut avoir été pris
+            pendant la saisie. Ce n'est pas une panne : les disponibilités sont
+            rechargées et toutes les autres saisies sont conservées.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-edition">
+            <h2 class="spa-admin__section-title" id="titre-edition">Édition — créneau pris entre-temps</h2>
+
+            <div class="spa-admin-panel">
+              <div class="spa-admin-panel__header">
+                <h3 class="spa-admin-panel__title">Rina Andriamana — 26 août</h3>
+                <span class="spa-admin-badge spa-admin-badge--confirmed">Confirmé</span>
+              </div>
+
+              <div class="spa-admin-panel__body">
+                <div class="spa-admin-appointment__conflict">
+                  <div class="spa-notification spa-notification--warning" role="status">
+                    <span class="spa-notification__icon" aria-hidden="true">!</span>
+                    <div class="spa-notification__content">
+                      <p class="spa-notification__title">Ce créneau vient d’être réservé</p>
+                      <p>
+                        Un autre poste a posé un rendez-vous à 14:30 avec Hasina. Les
+                        disponibilités ont été rechargées ; vos autres saisies sont conservées.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <form id="rdv-edition" class="spa-admin-appointment">
+                  <div class="spa-admin-appointment__grid">
+                    <div class="spa-field">
+                      <label class="spa-field__label" for="edit-heure">Heure de début</label>
+                      <input
+                        id="edit-heure"
+                        class="spa-field__control"
+                        type="time"
+                        value="14:30"
+                        aria-invalid="true"
+                        aria-describedby="edit-heure-erreur"
+                      />
+                      <p id="edit-heure-erreur" class="spa-field__error" role="alert">
+                        Créneau indisponible — choisissez une autre heure.
+                      </p>
+                    </div>
+
+                    <div class="spa-select">
+                      <label class="spa-select__label" for="edit-repli">Créneaux voisins libres</label>
+                      <div class="spa-select__shell">
+                        <select id="edit-repli" class="spa-select__control">
+                          <option>15:00 — Hasina</option>
+                          <option>15:30 — Hasina</option>
+                          <option>14:30 — Tiana</option>
+                        </select>
+                        <span class="spa-select__chevron" aria-hidden="true"></span>
+                      </div>
+                    </div>
+
+                    <p class="spa-admin-appointment__timezone">
+                      Indian/Antananarivo (UTC+3) — fuseau du salon.
+                    </p>
+                  </div>
+                </form>
+              </div>
+
+              <div class="spa-admin-panel__footer">
+                <button class="spa-button spa-button--danger" type="button">
+                  <span class="spa-button__label">Annuler le rendez-vous</span>
+                </button>
+                <button class="spa-button spa-button--quiet" type="button">
+                  <span class="spa-button__label">Marquer non présenté</span>
+                </button>
+                <button class="spa-button spa-button--accent" type="submit" form="rdv-edition">
+                  <span class="spa-button__label">Enregistrer</span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!--
+            ÉTAT DE CHARGEMENT — les libellés restent, les contrôles deviennent
+            des squelettes à la boîte exacte du champ. Le tiroir ne saute pas
+            quand les données arrivent.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-rdv-chargement">
+            <h2 class="spa-admin__section-title" id="titre-rdv-chargement">État de chargement</h2>
+
+            <div class="spa-admin-panel">
+              <div class="spa-admin-panel__header">
+                <h3 class="spa-admin-panel__title">Chargement du rendez-vous</h3>
+              </div>
+              <div class="spa-admin-panel__body">
+                <div class="spa-admin-appointment spa-admin-appointment--loading" aria-busy="true">
+                  <p class="spa-visually-hidden">Chargement des informations du rendez-vous…</p>
+                  <div class="spa-admin-appointment__grid">
+                    <div class="spa-field spa-admin-appointment__span">
+                      <span class="spa-field__label">Client</span>
+                      <span class="spa-admin-appointment__skeleton-field spa-skeleton"></span>
+                    </div>
+                    <div class="spa-field">
+                      <span class="spa-field__label">Prestation</span>
+                      <span class="spa-admin-appointment__skeleton-field spa-skeleton"></span>
+                    </div>
+                    <div class="spa-field">
+                      <span class="spa-field__label">Praticien</span>
+                      <span class="spa-admin-appointment__skeleton-field spa-skeleton"></span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="spa-admin-panel__footer">
+                <button class="spa-button spa-button--accent spa-button--loading" type="button" disabled>
+                  <span class="spa-button__label">Enregistrer</span>
+                  <span class="spa-spinner spa-button__spinner" aria-hidden="true"></span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!--
+            ÉTAT VIDE — cas rare mais réel : le catalogue du salon ne contient
+            aucune prestation, donc aucun rendez-vous n'est possible. Afficher un
+            sélecteur vide laisserait l'opérateur chercher son erreur.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-rdv-vide">
+            <h2 class="spa-admin__section-title" id="titre-rdv-vide">État vide</h2>
+
+            <div class="spa-admin-panel">
+              <div class="spa-admin-panel__header">
+                <h3 class="spa-admin-panel__title">Nouveau rendez-vous</h3>
+              </div>
+              <div class="spa-admin-panel__body">
+                <div class="spa-admin-appointment spa-admin-appointment--empty">
+                  <div class="spa-select spa-select--empty">
+                    <label class="spa-select__label" for="rdv-vide-prestation">Prestation</label>
+                    <div class="spa-select__shell">
+                      <select id="rdv-vide-prestation" class="spa-select__control" disabled></select>
+                      <span class="spa-select__chevron" aria-hidden="true"></span>
+                    </div>
+                    <p class="spa-select__empty">Aucune prestation au catalogue.</p>
+                  </div>
+
+                  <div class="spa-empty-state spa-empty-state--inline">
+                    <p class="spa-empty-state__title">Le catalogue est vide</p>
+                    <p class="spa-empty-state__description">
+                      Un rendez-vous se pose sur une prestation. Créez-en au moins une —
+                      durée et prix compris — avant de planifier.
+                    </p>
+                    <button class="spa-button spa-button--accent" type="button">
+                      <span class="spa-button__label">Ouvrir le catalogue</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

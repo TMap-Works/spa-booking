@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Maquettes du tableau de bord admin</title>
+    <link rel="stylesheet" href="../../styles/index.css" />
+    <link rel="stylesheet" href="../../styles/admin/index.css" />
+  </head>
+  <body>
+    <div class="spa-admin">
+      <nav class="spa-admin__rail" aria-label="Sections du tableau de bord">
+        <span class="spa-admin__brand">Maison Lotus</span>
+        <div class="spa-admin__nav">
+          <a class="spa-admin__nav-link" href="calendrier.html">Planning</a>
+          <a class="spa-admin__nav-link" href="rendez-vous.html">Rendez-vous</a>
+          <a class="spa-admin__nav-link" href="fiche-client.html">Clients</a>
+          <a class="spa-admin__nav-link" href="personnel.html">Personnel</a>
+          <a class="spa-admin__nav-link" href="encaissement.html">Encaissement</a>
+        </div>
+        <div class="spa-admin__rail-footer">
+          <strong>Maison Lotus — Antananarivo</strong>
+          <span>Jeu de données fictif — aucune donnée réelle</span>
+        </div>
+      </nav>
+
+      <div class="spa-admin__main">
+        <header class="spa-admin__topbar">
+          <h1 class="spa-admin__title">Maquettes du tableau de bord</h1>
+        </header>
+
+        <main class="spa-admin__content">
+          <div class="spa-notification spa-notification--info" role="status">
+            <span class="spa-notification__icon" aria-hidden="true">i</span>
+            <div class="spa-notification__content">
+              <p class="spa-notification__title">Maquettes statiques, sans JavaScript</p>
+              <p>
+                Elles se lisent en ouvrant le fichier dans un navigateur. Rien n’y est
+                interactif : ce sont les contrats de balisage des cinq écrans de l’issue
+                #30, rendus avec les jetons et les composants du design system (#29).
+                Les composants React les porteront sans redéfinir un seul style.
+              </p>
+            </div>
+          </div>
+
+          <section class="spa-admin__section" aria-labelledby="titre-ecrans">
+            <h2 class="spa-admin__section-title" id="titre-ecrans">Les cinq écrans</h2>
+
+            <ul class="spa-admin-client-list">
+              <li>
+                <a class="spa-admin-client-list__item" href="calendrier.html">
+                  <span class="spa-admin-client-list__name">Planning — vues jour et semaine</span>
+                  <span class="spa-admin-client-list__meta">
+                    Grille de 30 min, blocs par statut, temps indisponible, heure courante
+                  </span>
+                </a>
+              </li>
+              <li>
+                <a class="spa-admin-client-list__item" href="rendez-vous.html">
+                  <span class="spa-admin-client-list__name">Rendez-vous — création et édition</span>
+                  <span class="spa-admin-client-list__meta">
+                    Récapitulatif calculé, fuseau du salon, conflit de créneau
+                  </span>
+                </a>
+              </li>
+              <li>
+                <a class="spa-admin-client-list__item" href="fiche-client.html">
+                  <span class="spa-admin-client-list__name">Clients — fiche, notes et historique</span>
+                  <span class="spa-admin-client-list__meta">
+                    Notes internes explicitement marquées, historique avec annulations
+                  </span>
+                </a>
+              </li>
+              <li>
+                <a class="spa-admin-client-list__item" href="personnel.html">
+                  <span class="spa-admin-client-list__name">Personnel — équipe et horaires</span>
+                  <span class="spa-admin-client-list__meta">
+                    Grille hebdomadaire, pauses, jours fermés, exceptions datées
+                  </span>
+                </a>
+              </li>
+              <li>
+                <a class="spa-admin-client-list__item" href="encaissement.html">
+                  <span class="spa-admin-client-list__name">Encaissement — ticket et POS</span>
+                  <span class="spa-admin-client-list__meta">
+                    Frontière PCI SAQ A : aucun champ de carte, lecteur Stripe Terminal
+                  </span>
+                </a>
+              </li>
+            </ul>
+          </section>
+
+          <section class="spa-admin__section" aria-labelledby="titre-lecture">
+            <h2 class="spa-admin__section-title" id="titre-lecture">Comment les lire</h2>
+            <p>
+              Chaque écran montre son état nominal, puis son état de chargement et son
+              état vide — ce sont trois écrans distincts, pas trois nuances du même.
+              « Ça charge » et « il n’y a rien » appellent deux réactions différentes de
+              l’opérateur, et un écran vide sans explication est un bug d’UX.
+            </p>
+            <p>
+              Les contrats de balisage, les classes et leurs états sont documentés dans
+              <a href="../../styles/admin/README.md">styles/admin/README.md</a>.
+            </p>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

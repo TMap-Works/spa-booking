@@ -9,7 +9,7 @@ Conventions du front : [.claude/skills/web-frontend/SKILL.md](../../../.claude/s
 
 ```
 styles/
-  index.css            point d'entrée unique — importe tout, dans l'ordre
+  index.css            point d'entrée partagé — importe tout ce qui suit, dans l'ordre
   tokens.css           jetons : primitives + rôles sémantiques
   base.css             défauts d'éléments, focus, squelettes, état vide partagé
   components/
@@ -19,19 +19,30 @@ styles/
     card.css           carte
     modal.css          modale
     notification.css   notification
+  admin/               chrome du tableau de bord — voir admin/README.md (#30)
+    index.css          second point d'entrée, chargé par le seul layout admin
 ```
 
 ## Mise en service
 
-Un seul import, dans le layout racine :
-
 ```tsx
+// app/layout.tsx — les deux produits
 import '../styles/index.css';
+
+// app/(admin)/layout.tsx — le back-office seul
+import '../../styles/admin/index.css';
 ```
 
-`index.css` liste ses imports à la main plutôt que par un glob : l'ordre de
-cascade reste lisible, et un fichier oublié se voit. Un test le vérifie, pour que
-ce choix ne coûte pas un oubli silencieux.
+Deux points d'entrée, parce qu'il y a deux produits. L'entrée partagée porte les
+jetons, le socle et les six composants ci-dessous : les deux en ont besoin.
+L'entrée admin porte le calendrier de planning, la grille d'horaires et l'écran
+d'encaissement, que le parcours client public n'affiche jamais et qui n'ont donc
+pas à peser sur son LCP. L'ordre est contraint : les jetons d'abord.
+
+Chaque entrée liste ses imports à la main plutôt que par un glob : l'ordre de
+cascade reste lisible, et un fichier oublié se voit. `tokens.test.mjs` vérifie
+que toute feuille de `styles/` est atteignable depuis **exactement une** des
+deux, pour que ce choix ne coûte pas un oubli silencieux.
 
 ## 1. Les deux couches de jetons
 
@@ -69,11 +80,12 @@ vérifier avant de livrer un thème évite un bouton « Réserver » illisible.
 
 | Famille | Préfixe | Échelle |
 |---|---|---|
-| Couleur | `--spa-color-*` | surfaces, texte, bordures, accent, états, focus |
+| Couleur | `--spa-color-*` | surfaces, texte, bordures, accent, états, statuts de rendez-vous, focus |
 | Typographie | `--spa-font-*`, `--spa-line-height-*`, `--spa-letter-spacing-*` | `xs` → `3xl` |
 | Espacement | `--spa-space-*` | base 4 px, `0` → `16` |
 | Rayons | `--spa-radius-*` | `none` → `full` |
 | Support | `--spa-shadow-*`, `--spa-z-*`, `--spa-duration-*`, `--spa-target-min-size` | — |
+| Densité admin | `--spa-admin-*` | largeurs de coquille, hauteurs de ligne et de créneau (#30) |
 
 Deux valeurs ne se négocient pas :
 
@@ -202,9 +214,11 @@ variante `warning` : sous concurrence, c'est un cas normal, pas une panne.
 
 ## 3. Accessibilité
 
-- **Contraste AA vérifié par exécution**, pas à l'œil : 39 paires de jetons —
-  29 au seuil 4.5:1 du texte (WCAG 1.4.3), 10 au seuil 3:1 des éléments non
-  textuels, bordures de contrôle et anneau de focus (WCAG 1.4.11).
+- **Contraste AA vérifié par exécution**, pas à l'œil : 60 paires de jetons —
+  44 au seuil 4.5:1 du texte (WCAG 1.4.3), 16 au seuil 3:1 des éléments non
+  textuels, bordures de contrôle et anneau de focus (WCAG 1.4.11). Les 21 paires
+  ajoutées par #30 couvrent les cinq statuts de rendez-vous et la barre latérale
+  sombre du tableau de bord.
 - **Focus** — `:focus-visible` et non `:focus` : un clic souris ne laisse pas
   d'anneau, une tabulation le laisse toujours. L'anneau est décalé
   (`outline-offset`) pour se dessiner sur la surface de la page, ce qui lui
@@ -221,13 +235,14 @@ variante `warning` : sous concurrence, c'est un cas normal, pas une panne.
 ## 4. Vérifications
 
 ```bash
-node --test apps/web/tests/
+npm run test:unit --workspace @spa/web   # ou : node --test apps/web/tests/
 ```
 
 | Suite | Ce qu'elle empêche |
 |---|---|
 | `contrast.test.mjs` | qu'une teinte passe sous le seuil AA — y compris après substitution de rampe par un tenant |
-| `tokens.test.mjs` | qu'une couleur littérale ou une primitive entre dans un composant, et qu'une feuille échappe à `index.css` |
+| `tokens.test.mjs` | qu'une couleur littérale ou une primitive entre dans un composant, qu'une feuille échappe aux points d'entrée, et que le chrome admin fuie vers le parcours client public |
+| `admin-mockups.test.mjs` | que les maquettes du tableau de bord et leurs feuilles dérivent l'une de l'autre (#30) |
 
 Les paires de contraste sont énoncées en **noms sémantiques** et résolues
 jusqu'aux primitives : changer un `--spa-palette-*` sous un rôle fait donc
@@ -238,26 +253,26 @@ vérifié » deviendrait faux sans que rien ne rougisse.
 
 Aucune dépendance : `node:test` et `node:assert` sont fournis par la plateforme.
 
-> **Non rattachées à `npm run test:unit` à ce jour — donc non exécutées par la
-> CI.** Le rattachement tient en une ligne (`"test:unit": "node --test tests/"`
-> dans `apps/web/package.json`), mais ce fichier est hors de l'empreinte de
-> l'issue #29, qui a été traitée en parallèle d'autres tickets écrivant ailleurs
-> dans le dépôt. « Contraste AA vérifié » n'est donc, à cette étape, tenu que par
-> une exécution manuelle. C'est le premier geste de l'amorçage npm du front.
+Ces suites sont rattachées à `npm run test:unit` (#244) : la CI les exécute, et
+« contraste AA vérifié » n'est donc plus tenu par une exécution manuelle.
 
 ## 5. Portée actuelle et suite
 
 Livré ici : **la couche CSS pilotée par jetons**, sans dépendance ajoutée.
-`apps/web` ne porte aujourd'hui ni `react`, ni `next`, ni `next.config.*` — son
-`package.json` n'a aucun script, et la CI l'ignore de bout en bout.
+`apps/web` ne porte toujours ni `react`, ni `next`, ni `next.config.*` — le seul
+script de son `package.json` est `test:unit`.
+
+Le tableau de bord admin (#30) reprend ce parti pris : cinq écrans en CSS et en
+contrats de balisage, rendus en maquettes HTML statiques ouvrables dans un
+navigateur — voir [admin/README.md](admin/README.md) et `mockups/admin/`.
 
 Reste à faire, à l'amorçage npm du front :
 
-1. rattacher les deux suites à `npm run test:unit` (voir l'encadré ci-dessus) ;
-2. installer `react` / `next` et poser `next.config.*` ;
-3. envelopper ces six composants dans `components/ui/` (React), en Server
+1. installer `react` / `next` et poser `next.config.*` ;
+2. envelopper ces six composants dans `components/ui/` (React), en Server
    Components par défaut, `"use client"` uniquement pour la modale et les
-   contrôles qui portent un état.
+   contrôles qui portent un état ;
+3. porter les cinq écrans admin en `app/(admin)/`.
 
 Les classes ci-dessus sont la source de vérité visuelle : les composants React
 les porteront sans redéfinir un seul style.

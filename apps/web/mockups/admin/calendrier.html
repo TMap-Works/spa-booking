@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Maquette — Planning jour et semaine</title>
+    <link rel="stylesheet" href="../../styles/index.css" />
+    <link rel="stylesheet" href="../../styles/admin/index.css" />
+  </head>
+  <body>
+    <div class="spa-admin">
+      <nav class="spa-admin__rail" aria-label="Sections du tableau de bord">
+        <span class="spa-admin__brand">Maison Lotus</span>
+        <div class="spa-admin__nav">
+          <a class="spa-admin__nav-link" href="calendrier.html" aria-current="page">Planning</a>
+          <a class="spa-admin__nav-link" href="rendez-vous.html">Rendez-vous</a>
+          <a class="spa-admin__nav-link" href="fiche-client.html">Clients</a>
+          <a class="spa-admin__nav-link" href="personnel.html">Personnel</a>
+          <a class="spa-admin__nav-link" href="encaissement.html">Encaissement</a>
+        </div>
+        <div class="spa-admin__rail-footer">
+          <strong>Maison Lotus — Antananarivo</strong>
+          <span>Fuseau du salon : Indian/Antananarivo (UTC+3)</span>
+          <span>Connectée : Hasina R., gérante</span>
+        </div>
+      </nav>
+
+      <div class="spa-admin__main">
+        <header class="spa-admin__topbar">
+          <h1 class="spa-admin__title">Planning</h1>
+          <div class="spa-admin__topbar-actions">
+            <button class="spa-button spa-button--accent" type="button">
+              <span class="spa-button__label">Nouveau rendez-vous</span>
+            </button>
+          </div>
+        </header>
+
+        <main class="spa-admin__content">
+          <div class="spa-admin-toolbar">
+            <div class="spa-admin-toolbar__group">
+              <button class="spa-button spa-button--neutral" type="button">
+                <span class="spa-button__label" aria-hidden="true">‹</span>
+                <span class="spa-visually-hidden">Jour précédent</span>
+              </button>
+              <span class="spa-admin-toolbar__caption">Mardi 26 août 2026</span>
+              <button class="spa-button spa-button--neutral" type="button">
+                <span class="spa-button__label" aria-hidden="true">›</span>
+                <span class="spa-visually-hidden">Jour suivant</span>
+              </button>
+              <button class="spa-button spa-button--quiet" type="button">
+                <span class="spa-button__label">Aujourd’hui</span>
+              </button>
+            </div>
+
+            <fieldset class="spa-admin-segmented">
+              <legend class="spa-visually-hidden">Vue du planning</legend>
+              <input
+                class="spa-admin-segmented__input spa-visually-hidden"
+                type="radio"
+                name="vue"
+                id="vue-jour"
+                checked
+              />
+              <label class="spa-admin-segmented__option" for="vue-jour">Jour</label>
+              <input
+                class="spa-admin-segmented__input spa-visually-hidden"
+                type="radio"
+                name="vue"
+                id="vue-semaine"
+              />
+              <label class="spa-admin-segmented__option" for="vue-semaine">Semaine</label>
+            </fieldset>
+
+            <div class="spa-admin-toolbar__group spa-admin-toolbar__spacer">
+              <span class="spa-admin-toolbar__hint">Heures affichées dans le fuseau du salon (UTC+3)</span>
+            </div>
+          </div>
+
+          <!--
+            VUE JOUR — une colonne par praticien.
+            Chaque colonne est une liste nommée par son en-tête ; ses cellules se
+            suivent dans l'ordre chronologique et couvrent autant de rangées de
+            30 min que le rendez-vous dure. Rien n'est positionné en absolu.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-jour">
+            <h2 class="spa-admin__section-title" id="titre-jour">Vue jour — 4 praticiens en poste</h2>
+
+            <div class="spa-admin-calendar">
+              <div class="spa-admin-calendar__legend">
+                <span class="spa-admin-badge spa-admin-badge--confirmed">Confirmé</span>
+                <span class="spa-admin-badge spa-admin-badge--pending">À confirmer</span>
+                <span class="spa-admin-badge spa-admin-badge--completed">Honoré</span>
+                <span class="spa-admin-badge spa-admin-badge--cancelled">Annulé</span>
+                <span class="spa-admin-badge spa-admin-badge--no-show">Non présenté</span>
+              </div>
+
+              <div class="spa-admin-calendar__head">
+                <div class="spa-admin-calendar__head-spacer"></div>
+                <div class="spa-admin-calendar__column-head" id="col-hasina">
+                  <span class="spa-admin-calendar__column-name">Hasina</span>
+                  <span class="spa-admin-calendar__column-meta">Massages · 09 h – 18 h</span>
+                </div>
+                <div class="spa-admin-calendar__column-head" id="col-tiana">
+                  <span class="spa-admin-calendar__column-name">Tiana</span>
+                  <span class="spa-admin-calendar__column-meta">Coiffure · 09 h – 17 h</span>
+                </div>
+                <div class="spa-admin-calendar__column-head" id="col-njara">
+                  <span class="spa-admin-calendar__column-name">Njara</span>
+                  <span class="spa-admin-calendar__column-meta">Esthétique · 09 h – 17 h</span>
+                </div>
+                <div class="spa-admin-calendar__column-head" id="col-fanja">
+                  <span class="spa-admin-calendar__column-name">Fanja</span>
+                  <span class="spa-admin-calendar__column-meta">Soins corps · 10 h – 19 h</span>
+                </div>
+              </div>
+
+              <div class="spa-admin-calendar__body">
+                <div class="spa-admin-calendar__gutter" aria-hidden="true">
+                  <span class="spa-admin-calendar__hour">09 h</span>
+                  <span class="spa-admin-calendar__hour">10 h</span>
+                  <span class="spa-admin-calendar__hour">11 h</span>
+                  <span class="spa-admin-calendar__hour">12 h</span>
+                </div>
+
+                <div class="spa-admin-calendar__columns">
+                  <ul class="spa-admin-calendar__column" aria-labelledby="col-hasina">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed" type="button">
+                        <span class="spa-admin-calendar__event-time">09:00 – 10:00</span>
+                        <span class="spa-admin-calendar__event-client">Rina Andriamana</span>
+                        <span class="spa-admin-calendar__event-service">Massage suédois · 60 min</span>
+                        <span class="spa-visually-hidden">Statut : confirmé. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell">
+                      <div class="spa-admin-calendar__blocked">
+                        <span class="spa-admin-calendar__blocked-label">Tampon</span>
+                      </div>
+                    </li>
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">10 h 30, libre — créer un rendez-vous avec Hasina</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-3">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--pending" type="button">
+                        <span class="spa-admin-calendar__event-time">11:00 – 12:30</span>
+                        <span class="spa-admin-calendar__event-client">Fara Rakotoson</span>
+                        <span class="spa-admin-calendar__event-service">Soin visage · 90 min</span>
+                        <span class="spa-visually-hidden">Statut : à confirmer. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">12 h 30, libre — créer un rendez-vous avec Hasina</span>
+                      </button>
+                    </li>
+                  </ul>
+
+                  <ul class="spa-admin-calendar__column" aria-labelledby="col-tiana">
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">09 h 00, libre — créer un rendez-vous avec Tiana</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed" type="button">
+                        <span class="spa-admin-calendar__event-time">09:30 – 10:30</span>
+                        <span class="spa-admin-calendar__event-client">Naina Rabe</span>
+                        <span class="spa-admin-calendar__event-service">Coupe + brushing</span>
+                        <span class="spa-visually-hidden">Statut : confirmé. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot spa-admin-calendar__slot--now" type="button">
+                        <span class="spa-visually-hidden">10 h 30, libre, heure courante — créer un rendez-vous avec Tiana</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--completed" type="button">
+                        <span class="spa-admin-calendar__event-time">11:00 – 12:00</span>
+                        <span class="spa-admin-calendar__event-client">Miora Hery</span>
+                        <span class="spa-admin-calendar__event-service">Manucure</span>
+                        <span class="spa-visually-hidden">Statut : honoré. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <div class="spa-admin-calendar__blocked">
+                        <span class="spa-admin-calendar__blocked-label">Pause déjeuner</span>
+                      </div>
+                    </li>
+                  </ul>
+
+                  <ul class="spa-admin-calendar__column" aria-labelledby="col-njara">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--cancelled" type="button">
+                        <span class="spa-admin-calendar__event-time">09:00 – 10:00</span>
+                        <span class="spa-admin-calendar__event-client">Solo Ravelo</span>
+                        <span class="spa-admin-calendar__event-service">Massage dos · annulé la veille</span>
+                        <span class="spa-visually-hidden">Statut : annulé. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">10 h 00, libre — créer un rendez-vous avec Njara</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">10 h 30, libre — créer un rendez-vous avec Njara</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--no-show" type="button">
+                        <span class="spa-admin-calendar__event-time">11:00 – 12:00</span>
+                        <span class="spa-admin-calendar__event-client">Lova Andrian</span>
+                        <span class="spa-admin-calendar__event-service">Épilation</span>
+                        <span class="spa-visually-hidden">Statut : non présenté. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <div class="spa-admin-calendar__blocked">
+                        <span class="spa-admin-calendar__blocked-label">Pause déjeuner</span>
+                      </div>
+                    </li>
+                  </ul>
+
+                  <ul class="spa-admin-calendar__column" aria-labelledby="col-fanja">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <div class="spa-admin-calendar__blocked">
+                        <span class="spa-admin-calendar__blocked-label">Hors horaires</span>
+                      </div>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-4">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed" type="button">
+                        <span class="spa-admin-calendar__event-time">10:00 – 12:00</span>
+                        <span class="spa-admin-calendar__event-client">Ravaka Mamy</span>
+                        <span class="spa-admin-calendar__event-service">Rituel corps · 120 min</span>
+                        <span class="spa-visually-hidden">Statut : confirmé. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">12 h 00, libre — créer un rendez-vous avec Fanja</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">12 h 30, libre — créer un rendez-vous avec Fanja</span>
+                      </button>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!--
+            VUE SEMAINE — même mécanique, une colonne par jour. La prestation
+            disparaît des blocs faute de place ; le client, jamais.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-semaine">
+            <h2 class="spa-admin__section-title" id="titre-semaine">Vue semaine — 24 au 30 août 2026</h2>
+
+            <div class="spa-admin-calendar spa-admin-calendar--week">
+              <div class="spa-admin-calendar__head">
+                <div class="spa-admin-calendar__head-spacer"></div>
+                <div class="spa-admin-calendar__column-head" id="col-lun">
+                  <span class="spa-admin-calendar__column-name">Lun 24</span>
+                  <span class="spa-admin-calendar__column-meta">2 RDV</span>
+                </div>
+                <div class="spa-admin-calendar__column-head" id="col-mar">
+                  <span class="spa-admin-calendar__column-name">Mar 25</span>
+                  <span class="spa-admin-calendar__column-meta">1 RDV</span>
+                </div>
+                <div class="spa-admin-calendar__column-head" id="col-mer">
+                  <span class="spa-admin-calendar__column-name">Mer 26</span>
+                  <span class="spa-admin-calendar__column-meta">Fermé</span>
+                </div>
+                <div class="spa-admin-calendar__column-head" id="col-jeu">
+                  <span class="spa-admin-calendar__column-name">Jeu 27</span>
+                  <span class="spa-admin-calendar__column-meta">2 RDV</span>
+                </div>
+                <div class="spa-admin-calendar__column-head" id="col-ven">
+                  <span class="spa-admin-calendar__column-name">Ven 28</span>
+                  <span class="spa-admin-calendar__column-meta">2 RDV</span>
+                </div>
+                <div class="spa-admin-calendar__column-head" id="col-sam">
+                  <span class="spa-admin-calendar__column-name">Sam 29</span>
+                  <span class="spa-admin-calendar__column-meta">2 RDV</span>
+                </div>
+                <div class="spa-admin-calendar__column-head" id="col-dim">
+                  <span class="spa-admin-calendar__column-name">Dim 30</span>
+                  <span class="spa-admin-calendar__column-meta">Fermé</span>
+                </div>
+              </div>
+
+              <div class="spa-admin-calendar__body">
+                <div class="spa-admin-calendar__gutter" aria-hidden="true">
+                  <span class="spa-admin-calendar__hour">09 h</span>
+                  <span class="spa-admin-calendar__hour">10 h</span>
+                  <span class="spa-admin-calendar__hour">11 h</span>
+                  <span class="spa-admin-calendar__hour">12 h</span>
+                </div>
+
+                <div class="spa-admin-calendar__columns">
+                  <ul class="spa-admin-calendar__column" aria-labelledby="col-lun">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed" type="button">
+                        <span class="spa-admin-calendar__event-time">09:00</span>
+                        <span class="spa-admin-calendar__event-client">Rina A.</span>
+                        <span class="spa-visually-hidden">Statut : confirmé. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">Lundi 24, 10 h 00, libre — créer un rendez-vous</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--pending" type="button">
+                        <span class="spa-admin-calendar__event-time">10:30</span>
+                        <span class="spa-admin-calendar__event-client">Fara R.</span>
+                        <span class="spa-visually-hidden">Statut : à confirmer. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-3">
+                      <div class="spa-admin-calendar__blocked">
+                        <span class="spa-admin-calendar__blocked-label">Pause</span>
+                      </div>
+                    </li>
+                  </ul>
+
+                  <ul class="spa-admin-calendar__column" aria-labelledby="col-mar">
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">Mardi 25, 09 h 00, libre — créer un rendez-vous</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-6">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed" type="button">
+                        <span class="spa-admin-calendar__event-time">09:30</span>
+                        <span class="spa-admin-calendar__event-client">Ravaka M.</span>
+                        <span class="spa-visually-hidden">Rituel corps, 3 heures. Statut : confirmé. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">Mardi 25, 12 h 30, libre — créer un rendez-vous</span>
+                      </button>
+                    </li>
+                  </ul>
+
+                  <ul class="spa-admin-calendar__column" aria-labelledby="col-mer">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-8">
+                      <div class="spa-admin-calendar__blocked">
+                        <span class="spa-admin-calendar__blocked-label">Fermé</span>
+                      </div>
+                    </li>
+                  </ul>
+
+                  <ul class="spa-admin-calendar__column" aria-labelledby="col-jeu">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--completed" type="button">
+                        <span class="spa-admin-calendar__event-time">09:00</span>
+                        <span class="spa-admin-calendar__event-client">Miora H.</span>
+                        <span class="spa-visually-hidden">Statut : honoré. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--no-show" type="button">
+                        <span class="spa-admin-calendar__event-time">10:00</span>
+                        <span class="spa-admin-calendar__event-client">Lova A.</span>
+                        <span class="spa-visually-hidden">Statut : non présenté. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">Jeudi 27, 11 h 00, libre — créer un rendez-vous</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <div class="spa-admin-calendar__blocked">
+                        <span class="spa-admin-calendar__blocked-label">Pause</span>
+                      </div>
+                    </li>
+                  </ul>
+
+                  <ul class="spa-admin-calendar__column" aria-labelledby="col-ven">
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">Vendredi 28, 09 h 00, libre — créer un rendez-vous</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-3">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed" type="button">
+                        <span class="spa-admin-calendar__event-time">09:30</span>
+                        <span class="spa-admin-calendar__event-client">Naina R.</span>
+                        <span class="spa-visually-hidden">Statut : confirmé. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">Vendredi 28, 11 h 00, libre — créer un rendez-vous</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--pending" type="button">
+                        <span class="spa-admin-calendar__event-time">11:30</span>
+                        <span class="spa-admin-calendar__event-client">Solo R.</span>
+                        <span class="spa-visually-hidden">Statut : à confirmer. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell">
+                      <button class="spa-admin-calendar__slot" type="button">
+                        <span class="spa-visually-hidden">Vendredi 28, 12 h 30, libre — créer un rendez-vous</span>
+                      </button>
+                    </li>
+                  </ul>
+
+                  <ul class="spa-admin-calendar__column" aria-labelledby="col-sam">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-4">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed" type="button">
+                        <span class="spa-admin-calendar__event-time">09:00</span>
+                        <span class="spa-admin-calendar__event-client">Hanta N.</span>
+                        <span class="spa-visually-hidden">Statut : confirmé. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-4">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed" type="button">
+                        <span class="spa-admin-calendar__event-time">11:00</span>
+                        <span class="spa-admin-calendar__event-client">Tantely B.</span>
+                        <span class="spa-visually-hidden">Statut : confirmé. Ouvrir la fiche.</span>
+                      </button>
+                    </li>
+                  </ul>
+
+                  <ul class="spa-admin-calendar__column" aria-labelledby="col-dim">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-8">
+                      <div class="spa-admin-calendar__blocked">
+                        <span class="spa-admin-calendar__blocked-label">Fermé</span>
+                      </div>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!--
+            ÉTAT DE CHARGEMENT — la grille reste dessinée, les blocs deviennent
+            des silhouettes. La page garde sa hauteur ; « ça charge » ne se
+            confond pas avec « il n'y a rien ».
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-chargement">
+            <h2 class="spa-admin__section-title" id="titre-chargement">État de chargement</h2>
+
+            <div class="spa-admin-calendar spa-admin-calendar--loading" aria-busy="true">
+              <p class="spa-visually-hidden">Chargement du planning…</p>
+              <div class="spa-admin-calendar__head">
+                <div class="spa-admin-calendar__head-spacer"></div>
+                <div class="spa-admin-calendar__column-head">
+                  <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
+                </div>
+                <div class="spa-admin-calendar__column-head">
+                  <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
+                </div>
+                <div class="spa-admin-calendar__column-head">
+                  <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
+                </div>
+              </div>
+              <div class="spa-admin-calendar__body">
+                <div class="spa-admin-calendar__gutter" aria-hidden="true">
+                  <span class="spa-admin-calendar__hour">09 h</span>
+                  <span class="spa-admin-calendar__hour">10 h</span>
+                </div>
+                <div class="spa-admin-calendar__columns">
+                  <ul class="spa-admin-calendar__column">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+                      <span class="spa-admin-calendar__skeleton-event spa-skeleton"></span>
+                    </li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2"></li>
+                  </ul>
+                  <ul class="spa-admin-calendar__column">
+                    <li class="spa-admin-calendar__cell"></li>
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-3">
+                      <span class="spa-admin-calendar__skeleton-event spa-skeleton"></span>
+                    </li>
+                  </ul>
+                  <ul class="spa-admin-calendar__column">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-4">
+                      <span class="spa-admin-calendar__skeleton-event spa-skeleton"></span>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!--
+            ÉTAT VIDE — le salon est fermé ce jour-là. Ce n'est pas une panne, et
+            l'écran propose l'action qui a du sens : changer de date.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-vide">
+            <h2 class="spa-admin__section-title" id="titre-vide">État vide</h2>
+
+            <div class="spa-admin-calendar spa-admin-calendar--empty">
+              <div class="spa-admin-calendar__head">
+                <div class="spa-admin-calendar__head-spacer"></div>
+                <div class="spa-admin-calendar__column-head">
+                  <span class="spa-admin-calendar__column-name">Mercredi 26 août</span>
+                  <span class="spa-admin-calendar__column-meta">Salon fermé</span>
+                </div>
+              </div>
+              <div class="spa-admin-calendar__body">
+                <div class="spa-empty-state">
+                  <p class="spa-empty-state__title">Le salon est fermé ce jour-là</p>
+                  <p class="spa-empty-state__description">
+                    Les horaires d’ouverture indiquent une fermeture le mercredi. Ouvrez une
+                    exception dans « Personnel » si vous devez recevoir malgré tout.
+                  </p>
+                  <button class="spa-button spa-button--neutral" type="button">
+                    <span class="spa-button__label">Aller au jour suivant</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

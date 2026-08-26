@@ -42,6 +42,44 @@ const AA_TEXT = 4.5;
 const AA_NON_TEXT = 3;
 
 /**
+ * Statuts de rendez-vous du tableau de bord admin (#30).
+ *
+ * Leurs paires sont dérivées plutôt qu'écrites une à une : chaque statut se peint
+ * exactement de la même façon — un badge dont le libellé est de la couleur du
+ * statut sur sa propre surface, et un bloc de calendrier dont le liseré marque la
+ * même couleur sur la surface blanche du planning, le texte du bloc restant
+ * neutre. Trois vérifications, les mêmes pour tous. Les écrire à la main
+ * inviterait à en oublier une au sixième statut.
+ */
+const APPOINTMENT_STATUSES = [
+  'confirmed',
+  'pending',
+  'completed',
+  'cancelled',
+  'no-show',
+];
+
+const STATUS_PAIRS = APPOINTMENT_STATUSES.flatMap((status) => {
+  const role = `--spa-color-status-${status}`;
+  const surface = `${role}-surface`;
+  return [
+    [role, surface, AA_TEXT, `statut ${status} — libellé du badge / sa surface`],
+    [
+      role,
+      '--spa-color-surface',
+      AA_NON_TEXT,
+      `statut ${status} — liseré du bloc / surface du planning`,
+    ],
+    [
+      '--spa-color-text',
+      surface,
+      AA_TEXT,
+      `statut ${status} — texte du bloc / sa surface`,
+    ],
+  ];
+});
+
+/**
  * Chaque entrée : [premier plan, arrière-plan, seuil, ce que l'on regarde].
  * Toute surface sur laquelle un rôle de texte peut atterrir figure ici — c'est
  * la liste qu'il faut allonger en ajoutant un composant, pas les seuils qu'il
@@ -60,6 +98,11 @@ const PAIRS = [
   ['--spa-color-text-subtle', '--spa-color-surface', AA_TEXT, 'texte discret / surface'],
   ['--spa-color-text-subtle', '--spa-color-surface-raised', AA_TEXT, 'texte discret / surface surélevée'],
   ['--spa-color-text-inverse', '--spa-color-surface-inverse', AA_TEXT, 'texte inversé / surface inversée'],
+  // Barre latérale du tableau de bord admin : fond sombre au repos, fond sombre
+  // surélevé pour l'élément de navigation courant ou survolé.
+  ['--spa-color-text-inverse', '--spa-color-surface-inverse-raised', AA_TEXT, 'texte inversé / surface inversée surélevée'],
+  ['--spa-color-text-inverse-muted', '--spa-color-surface-inverse', AA_TEXT, 'texte inversé atténué / surface inversée'],
+  ['--spa-color-text-inverse-muted', '--spa-color-surface-inverse-raised', AA_TEXT, 'texte inversé atténué / surface inversée surélevée'],
 
   // --- Accent : les trois états du bouton « Réserver » ---
   ['--spa-color-text-on-accent', '--spa-color-accent', AA_TEXT, 'texte sur accent / accent au repos'],
@@ -70,6 +113,11 @@ const PAIRS = [
   // Carte sélectionnée et bouton discret au survol peignent tous deux sur `accent-soft`.
   ['--spa-color-accent-text', '--spa-color-accent-soft', AA_TEXT, 'lien d’accent / accent doux'],
   ['--spa-color-text', '--spa-color-accent-soft', AA_TEXT, 'texte / accent doux'],
+  // Accent posé sur la barre latérale sombre — il y porte le libellé de
+  // l'élément courant, il est donc soumis au seuil du texte et non à celui d'un
+  // repère. C'est ce qui a écarté `--spa-color-accent`, qui n'y atteint que 3.09:1.
+  ['--spa-color-accent-inverse', '--spa-color-surface-inverse', AA_TEXT, 'accent inversé / surface inversée'],
+  ['--spa-color-accent-inverse', '--spa-color-surface-inverse-raised', AA_TEXT, 'accent inversé / surface inversée surélevée'],
 
   // --- États, sur surface neutre et sur leur propre surface ---
   ['--spa-color-success', '--spa-color-surface', AA_TEXT, 'succès / surface'],
@@ -103,6 +151,10 @@ const PAIRS = [
   ['--spa-color-warning', '--spa-color-warning-surface', AA_NON_TEXT, 'bordure d’avertissement / sa surface'],
   ['--spa-color-danger', '--spa-color-danger-surface', AA_NON_TEXT, 'bordure d’erreur / sa surface'],
   ['--spa-color-info', '--spa-color-info-surface', AA_NON_TEXT, 'bordure d’information / sa surface'],
+  // Le trait de l'heure courante dans le calendrier : un repère, pas du texte.
+  ['--spa-color-now', '--spa-color-surface', AA_NON_TEXT, 'heure courante / surface du planning'],
+
+  ...STATUS_PAIRS,
 ];
 
 describe('Contraste AA des jetons de couleur', () => {
@@ -134,6 +186,32 @@ describe('Contraste AA des jetons de couleur', () => {
         verified.has(role),
         `${role} n'est vérifié par aucune paire de contraste — ajouter la paire ` +
           `correspondante dans PAIRS, ou justifier son exemption dans l'en-tête.`,
+      );
+    }
+  });
+
+  it('couvre chaque statut de rendez-vous déclaré', () => {
+    // Même garde-fou que ci-dessus, pour la famille de rôles ajoutée par #30 : un
+    // sixième statut déclaré dans tokens.css et absent d'APPOINTMENT_STATUSES ne
+    // serait vérifié par rien, et se peindrait au jugé.
+    const declared = [...declarations.keys()]
+      .filter(
+        (name) =>
+          name.startsWith('--spa-color-status-') && !name.endsWith('-surface'),
+      )
+      .map((name) => name.slice('--spa-color-status-'.length));
+
+    assert.deepEqual(
+      [...declared].sort(),
+      [...APPOINTMENT_STATUSES].sort(),
+      'les statuts déclarés dans tokens.css et ceux vérifiés ici ont divergé.',
+    );
+
+    for (const status of declared) {
+      assert.ok(
+        declarations.has(`--spa-color-status-${status}-surface`),
+        `--spa-color-status-${status} n'a pas de surface associée : un badge de ` +
+          `statut se peint toujours sur sa propre teinte, jamais sur du blanc.`,
       );
     }
   });

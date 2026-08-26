@@ -1,0 +1,257 @@
+/*
+ * Admin — fiche client : notes et historique
+ * =============================================================================
+ *
+ * Critère d'acceptation n° 3 de l'issue #30, et le cœur du module `crm`.
+ *
+ * L'écran est un `.spa-admin__split` : la recherche et la liste à gauche, la
+ * fiche à droite. Le front-desk cherche un client pendant qu'il l'a au
+ * téléphone — la liste ne disparaît donc jamais au profit du détail.
+ *
+ * Deux choses qui ne relèvent pas du style mais que la maquette doit porter,
+ * parce qu'elles seront reprises telles quelles par le composant :
+ *
+ *   · LES NOTES SONT INTERNES. Elles ne sont jamais montrées au client, et
+ *     l'écran le dit — un libellé explicite, pas seulement une teinte. Une note
+ *     du type « arrive systématiquement en retard » est utile au salon et
+ *     désastreuse si elle fuit. Le doute sur ce point conduirait à ne plus rien
+ *     écrire, et la fonctionnalité perdrait son intérêt.
+ *
+ *   · UNE FICHE APPARTIENT À UN SALON. Aucune recherche ne traverse la frontière
+ *     d'un tenant ; deux clients homonymes chez deux salons sont deux fiches sans
+ *     lien. Le front n'a pas à filtrer quoi que ce soit — l'API ne lui renvoie
+ *     déjà que le tenant courant — mais aucun écran ne doit non plus laisser
+ *     croire à un carnet d'adresses partagé.
+ */
+
+/* --- Liste de recherche ---------------------------------------------------- */
+
+.spa-admin-client-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
+ * Un `<button>` et non une `<div>` cliquable : sans cela l'élément sort de
+ * l'ordre de tabulation, et la liste devient inatteignable au clavier. L'élément
+ * courant porte `aria-current="true"` — l'aplat suit l'attribut, il ne le double
+ * pas d'une classe qui pourrait diverger.
+ *
+ * La même ligne sert aussi de lien (le sommaire des maquettes) : `color` et
+ * `text-decoration` sont donc neutralisés en plus du chrome de bouton, faute de
+ * quoi un `<a>` peindrait toute la ligne en couleur d'accent et la soulignerait.
+ */
+.spa-admin-client-list__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  inline-size: 100%;
+  min-block-size: var(--spa-admin-row-height);
+  padding: var(--spa-space-2) var(--spa-space-3);
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--spa-radius-md);
+  color: var(--spa-color-text);
+  text-align: start;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.spa-admin-client-list__item:hover {
+  background-color: var(--spa-color-surface-raised);
+}
+
+.spa-admin-client-list__item[aria-current='true'] {
+  background-color: var(--spa-color-accent-soft);
+  border-color: var(--spa-color-accent);
+}
+
+.spa-admin-client-list__name {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+}
+
+.spa-admin-client-list__meta {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Fiche ----------------------------------------------------------------- */
+
+.spa-admin-client {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  min-inline-size: 0;
+}
+
+.spa-admin-client__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+}
+
+.spa-admin-client__identity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  margin-inline-end: auto;
+}
+
+.spa-admin-client__name {
+  font-size: var(--spa-font-size-2xl);
+}
+
+.spa-admin-client__contact {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-1) var(--spa-space-4);
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+/* Le téléphone est normalisé en E.164 et composé en chiffres tabulaires : c'est
+ * le champ que l'opérateur recopie le plus souvent, à voix haute. */
+.spa-admin-client__contact-item {
+  font-variant-numeric: tabular-nums;
+}
+
+.spa-admin-client__metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: var(--spa-space-2);
+}
+
+/* --- Notes internes -------------------------------------------------------- */
+
+.spa-admin-notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+}
+
+.spa-admin-notes__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-admin-notes__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  padding: var(--spa-space-3);
+  background-color: var(--spa-color-surface-raised);
+  border-inline-start: 3px solid var(--spa-color-border-interactive);
+  border-radius: var(--spa-radius-sm);
+}
+
+.spa-admin-notes__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-1) var(--spa-space-3);
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-notes__body {
+  font-size: var(--spa-font-size-sm);
+}
+
+/*
+ * « Interne » est écrit, pas seulement suggéré par une couleur. C'est la seule
+ * garantie qu'un opérateur qui tourne son écran vers le client sait ce qu'il
+ * montre — et la seule qui survive à un daltonisme ou à une impression en gris.
+ */
+.spa-admin-notes__private {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-1);
+  padding-inline: var(--spa-space-2);
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-warning-surface);
+  color: var(--spa-color-warning);
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-medium);
+}
+
+/* --- Historique ------------------------------------------------------------ */
+
+/*
+ * Une liste ordonnée du plus récent au plus ancien. Les rendez-vous annulés et
+ * les no-shows y figurent : c'est précisément l'information qu'on vient chercher
+ * avant d'accorder un créneau du samedi matin.
+ */
+.spa-admin-history {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-admin-history__item {
+  display: grid;
+  grid-template-columns: 7rem minmax(0, 1fr) auto;
+  gap: var(--spa-space-3);
+  align-items: baseline;
+  padding-block: var(--spa-space-2);
+  border-block-end: 1px solid var(--spa-color-border);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-admin-history__item:last-child {
+  border-block-end: 0;
+}
+
+.spa-admin-history__date {
+  font-variant-numeric: tabular-nums;
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-xs);
+}
+
+.spa-admin-history__body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--spa-space-2);
+  min-inline-size: 0;
+}
+
+.spa-admin-history__service {
+  font-weight: var(--spa-font-weight-medium);
+}
+
+.spa-admin-history__practitioner {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-history__amount {
+  font-variant-numeric: tabular-nums;
+  text-align: end;
+}
+
+/* Un rendez-vous non honoré n'a pas encaissé : le montant est neutralisé plutôt
+ * qu'affiché comme une recette. */
+.spa-admin-history__amount--void {
+  color: var(--spa-color-text-subtle);
+  text-decoration: line-through;
+}
+
+/* --- États de chargement --------------------------------------------------- */
+
+.spa-admin-client__skeleton-title {
+  block-size: 1.75rem;
+  inline-size: 40%;
+}

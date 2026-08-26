@@ -1,0 +1,224 @@
+/*
+ * Admin — personnel et horaires
+ * =============================================================================
+ *
+ * Critère d'acceptation n° 4 de l'issue #30.
+ *
+ * L'écran a deux moitiés qui répondent à deux questions différentes : « qui
+ * travaille ici » (la liste) et « quand » (la grille hebdomadaire et ses
+ * exceptions). Elles vivent côte à côte parce qu'on ne modifie jamais l'une sans
+ * regarder l'autre.
+ *
+ * Pourquoi les horaires ne sont pas un simple champ texte
+ * -------------------------------------------------------
+ * Cette grille est l'entrée du moteur de disponibilité : ce qui est saisi ici
+ * détermine les créneaux que le parcours client proposera. Trois conséquences
+ * que la maquette rend visibles :
+ *
+ *   · une journée FERMÉE est un état à part entière, pas une plage vide — sans
+ *     quoi « pas encore saisi » et « le salon ferme le lundi » se confondent ;
+ *   · une PAUSE est une plage retirée, pas un second horaire : elle se lit comme
+ *     un creux dans la journée, comme elle se lira dans le calendrier ;
+ *   · une EXCEPTION (congé, jour férié, formation) prime sur la règle
+ *     hebdomadaire et se date — elle ne se range donc pas dans la même liste.
+ *
+ * Les heures sont écrites dans le fuseau du salon, comme partout dans le
+ * back-office, et stockées en UTC.
+ */
+
+/* --- Liste du personnel ---------------------------------------------------- */
+
+.spa-admin-staff {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-admin-staff__member {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  inline-size: 100%;
+  min-block-size: var(--spa-admin-row-height);
+  padding: var(--spa-space-2) var(--spa-space-3);
+  background-color: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--spa-radius-md);
+  text-align: start;
+  cursor: pointer;
+}
+
+.spa-admin-staff__member:hover {
+  background-color: var(--spa-color-surface-raised);
+}
+
+/*
+ * Pendant le chargement, les lignes de la liste sont des silhouettes : elles
+ * gardent la classe pour garder la boîte, mais ne doivent ni s'éclairer au
+ * survol ni afficher un curseur de main — rien n'y est encore cliquable.
+ */
+.spa-admin-staff[aria-busy='true'] .spa-admin-staff__member {
+  cursor: default;
+  pointer-events: none;
+}
+
+.spa-admin-staff__member[aria-current='true'] {
+  background-color: var(--spa-color-accent-soft);
+  border-color: var(--spa-color-accent);
+}
+
+/*
+ * Initiales plutôt que photo : le salon n'a aucune raison de stocker le portrait
+ * de ses employés pour un écran de planning, et une pastille de deux lettres se
+ * charge instantanément — ce qui compte sur un écran rouvert cent fois par jour.
+ * La pastille est décorative (`aria-hidden`), le nom la suit en clair.
+ */
+.spa-admin-staff__initials {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-admin-staff__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-inline-size: 0;
+  margin-inline-end: auto;
+}
+
+.spa-admin-staff__name {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+}
+
+.spa-admin-staff__role {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Grille hebdomadaire --------------------------------------------------- */
+
+.spa-admin-schedule {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+}
+
+/*
+ * Une ligne par jour. Le libellé du jour, l'interrupteur ouvert/fermé, puis les
+ * plages : la lecture verticale d'une semaine se fait alors d'un seul coup d'œil,
+ * ce qui est le seul moyen de repérer l'incohérence — le mercredi resté fermé.
+ */
+.spa-admin-schedule__day {
+  display: grid;
+  grid-template-columns: 7rem auto minmax(0, 1fr);
+  gap: var(--spa-space-3);
+  align-items: center;
+  min-block-size: var(--spa-admin-row-height);
+  padding-block: var(--spa-space-2);
+  border-block-end: 1px solid var(--spa-color-border);
+}
+
+.spa-admin-schedule__day:last-child {
+  border-block-end: 0;
+}
+
+.spa-admin-schedule__day-label {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+}
+
+/*
+ * Case à cocher native, non déguisée. Le design system n'a pas d'interrupteur
+ * parmi ses six composants, et en improviser un ici — avec son état, son
+ * annonce et sa navigation clavier à réécrire — coûterait plus cher que ce qu'il
+ * rapporte pour sept lignes. Le libellé porte l'état en toutes lettres, ce qui
+ * évite l'ambiguïté classique de l'interrupteur : « ouvert » décrit-il l'état
+ * courant ou l'action ?
+ */
+.spa-admin-schedule__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  min-block-size: var(--spa-target-min-size);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-admin-schedule__ranges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spa-space-2);
+}
+
+.spa-admin-schedule__range {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  padding-block: var(--spa-space-1);
+  padding-inline: var(--spa-space-3);
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-text);
+  font-size: var(--spa-font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+/* La pause est un creux, pas une plage de travail : elle se distingue par son
+ * fond neutre et par son libellé, jamais par la seule couleur. */
+.spa-admin-schedule__range--break {
+  background-color: var(--spa-color-surface-sunken);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-schedule__closed {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  font-style: italic;
+}
+
+/* --- Exceptions ------------------------------------------------------------ */
+
+.spa-admin-schedule__exceptions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-admin-schedule__exception {
+  display: grid;
+  grid-template-columns: 10rem minmax(0, 1fr) auto;
+  gap: var(--spa-space-3);
+  align-items: center;
+  min-block-size: var(--spa-admin-row-height);
+  padding-inline: var(--spa-space-3);
+  border: 1px solid var(--spa-color-border);
+  border-inline-start: 3px solid var(--spa-color-warning);
+  border-radius: var(--spa-radius-md);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-admin-schedule__exception-date {
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--spa-font-weight-medium);
+}
+
+.spa-admin-schedule__exception-label {
+  color: var(--spa-color-text-muted);
+}

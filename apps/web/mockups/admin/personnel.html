@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Maquette — Personnel et horaires</title>
+    <link rel="stylesheet" href="../../styles/index.css" />
+    <link rel="stylesheet" href="../../styles/admin/index.css" />
+  </head>
+  <body>
+    <div class="spa-admin">
+      <nav class="spa-admin__rail" aria-label="Sections du tableau de bord">
+        <span class="spa-admin__brand">Maison Lotus</span>
+        <div class="spa-admin__nav">
+          <a class="spa-admin__nav-link" href="calendrier.html">Planning</a>
+          <a class="spa-admin__nav-link" href="rendez-vous.html">Rendez-vous</a>
+          <a class="spa-admin__nav-link" href="fiche-client.html">Clients</a>
+          <a class="spa-admin__nav-link" href="personnel.html" aria-current="page">Personnel</a>
+          <a class="spa-admin__nav-link" href="encaissement.html">Encaissement</a>
+        </div>
+        <div class="spa-admin__rail-footer">
+          <strong>Maison Lotus — Antananarivo</strong>
+          <span>Fuseau du salon : Indian/Antananarivo (UTC+3)</span>
+          <span>Connectée : Hasina R., gérante</span>
+        </div>
+      </nav>
+
+      <div class="spa-admin__main">
+        <header class="spa-admin__topbar">
+          <h1 class="spa-admin__title">Personnel et horaires</h1>
+          <div class="spa-admin__topbar-actions">
+            <button class="spa-button spa-button--accent" type="button">
+              <span class="spa-button__label">Ajouter un praticien</span>
+            </button>
+          </div>
+        </header>
+
+        <main class="spa-admin__content">
+          <div class="spa-admin__split">
+            <!-- QUI travaille ici. -->
+            <section class="spa-admin__section" aria-labelledby="titre-equipe">
+              <h2 class="spa-admin__section-title" id="titre-equipe">Équipe — 4 praticiens</h2>
+
+              <ul class="spa-admin-staff">
+                <li>
+                  <button class="spa-admin-staff__member" type="button" aria-current="true">
+                    <span class="spa-admin-staff__initials" aria-hidden="true">HR</span>
+                    <span class="spa-admin-staff__identity">
+                      <span class="spa-admin-staff__name">Hasina Rakoto</span>
+                      <span class="spa-admin-staff__role">Gérante · massages</span>
+                    </span>
+                    <span class="spa-admin-badge spa-admin-badge--confirmed">Active</span>
+                  </button>
+                </li>
+                <li>
+                  <button class="spa-admin-staff__member" type="button">
+                    <span class="spa-admin-staff__initials" aria-hidden="true">TA</span>
+                    <span class="spa-admin-staff__identity">
+                      <span class="spa-admin-staff__name">Tiana Andria</span>
+                      <span class="spa-admin-staff__role">Coiffure</span>
+                    </span>
+                    <span class="spa-admin-badge spa-admin-badge--confirmed">Active</span>
+                  </button>
+                </li>
+                <li>
+                  <button class="spa-admin-staff__member" type="button">
+                    <span class="spa-admin-staff__initials" aria-hidden="true">NB</span>
+                    <span class="spa-admin-staff__identity">
+                      <span class="spa-admin-staff__name">Njara Be</span>
+                      <span class="spa-admin-staff__role">Esthétique</span>
+                    </span>
+                    <span class="spa-admin-badge spa-admin-badge--confirmed">Active</span>
+                  </button>
+                </li>
+                <li>
+                  <button class="spa-admin-staff__member" type="button">
+                    <span class="spa-admin-staff__initials" aria-hidden="true">FR</span>
+                    <span class="spa-admin-staff__identity">
+                      <span class="spa-admin-staff__name">Fanja Rasoa</span>
+                      <span class="spa-admin-staff__role">Soins corps · à temps partiel</span>
+                    </span>
+                    <span class="spa-admin-badge spa-admin-badge--cancelled">Suspendue</span>
+                  </button>
+                </li>
+              </ul>
+            </section>
+
+            <!--
+              QUAND. Cette grille est l'entrée du moteur de disponibilité : ce
+              qui est saisi ici détermine les créneaux que le parcours client
+              proposera. Une journée fermée est un état à part entière, pas une
+              plage vide.
+            -->
+            <section class="spa-admin__section" aria-labelledby="titre-horaires">
+              <h2 class="spa-admin__section-title" id="titre-horaires">
+                Horaires hebdomadaires — Hasina Rakoto
+              </h2>
+              <p class="spa-admin-toolbar__hint">
+                Heures écrites dans le fuseau du salon (Indian/Antananarivo, UTC+3),
+                stockées en UTC.
+              </p>
+
+              <!--
+                Le nom accessible de la grille vient de la <section> ci-dessus :
+                `aria-labelledby` posé sur une <div> sans rôle est ignoré par les
+                lecteurs d'écran, et le libellé se perdrait sans que rien ne le dise.
+              -->
+              <div class="spa-admin-schedule">
+                <div class="spa-admin-schedule__day">
+                  <span class="spa-admin-schedule__day-label">Lundi</span>
+                  <span class="spa-admin-schedule__toggle">
+                    <input type="checkbox" id="jour-lundi" checked />
+                    <label for="jour-lundi">Ouvert</label>
+                  </span>
+                  <div class="spa-admin-schedule__ranges">
+                    <span class="spa-admin-schedule__range">09:00 – 12:30</span>
+                    <span class="spa-admin-schedule__range spa-admin-schedule__range--break">
+                      Pause 12:30 – 13:30
+                    </span>
+                    <span class="spa-admin-schedule__range">13:30 – 18:00</span>
+                    <button class="spa-button spa-button--quiet" type="button">
+                      <span class="spa-button__label">Modifier</span>
+                      <span class="spa-visually-hidden">les plages du lundi</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="spa-admin-schedule__day">
+                  <span class="spa-admin-schedule__day-label">Mardi</span>
+                  <span class="spa-admin-schedule__toggle">
+                    <input type="checkbox" id="jour-mardi" checked />
+                    <label for="jour-mardi">Ouvert</label>
+                  </span>
+                  <div class="spa-admin-schedule__ranges">
+                    <span class="spa-admin-schedule__range">09:00 – 18:00</span>
+                    <button class="spa-button spa-button--quiet" type="button">
+                      <span class="spa-button__label">Modifier</span>
+                      <span class="spa-visually-hidden">les plages du mardi</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="spa-admin-schedule__day">
+                  <span class="spa-admin-schedule__day-label">Mercredi</span>
+                  <span class="spa-admin-schedule__toggle">
+                    <input type="checkbox" id="jour-mercredi" />
+                    <label for="jour-mercredi">Ouvert</label>
+                  </span>
+                  <div class="spa-admin-schedule__ranges">
+                    <span class="spa-admin-schedule__closed">Fermé — aucun créneau proposé</span>
+                  </div>
+                </div>
+
+                <div class="spa-admin-schedule__day">
+                  <span class="spa-admin-schedule__day-label">Jeudi</span>
+                  <span class="spa-admin-schedule__toggle">
+                    <input type="checkbox" id="jour-jeudi" checked />
+                    <label for="jour-jeudi">Ouvert</label>
+                  </span>
+                  <div class="spa-admin-schedule__ranges">
+                    <span class="spa-admin-schedule__range">09:00 – 12:30</span>
+                    <span class="spa-admin-schedule__range spa-admin-schedule__range--break">
+                      Pause 12:30 – 13:30
+                    </span>
+                    <span class="spa-admin-schedule__range">13:30 – 18:00</span>
+                    <button class="spa-button spa-button--quiet" type="button">
+                      <span class="spa-button__label">Modifier</span>
+                      <span class="spa-visually-hidden">les plages du jeudi</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="spa-admin-schedule__day">
+                  <span class="spa-admin-schedule__day-label">Vendredi</span>
+                  <span class="spa-admin-schedule__toggle">
+                    <input type="checkbox" id="jour-vendredi" checked />
+                    <label for="jour-vendredi">Ouvert</label>
+                  </span>
+                  <div class="spa-admin-schedule__ranges">
+                    <span class="spa-admin-schedule__range">09:00 – 20:00</span>
+                    <button class="spa-button spa-button--quiet" type="button">
+                      <span class="spa-button__label">Modifier</span>
+                      <span class="spa-visually-hidden">les plages du vendredi</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="spa-admin-schedule__day">
+                  <span class="spa-admin-schedule__day-label">Samedi</span>
+                  <span class="spa-admin-schedule__toggle">
+                    <input type="checkbox" id="jour-samedi" checked />
+                    <label for="jour-samedi">Ouvert</label>
+                  </span>
+                  <div class="spa-admin-schedule__ranges">
+                    <span class="spa-admin-schedule__range">08:00 – 17:00</span>
+                    <button class="spa-button spa-button--quiet" type="button">
+                      <span class="spa-button__label">Modifier</span>
+                      <span class="spa-visually-hidden">les plages du samedi</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="spa-admin-schedule__day">
+                  <span class="spa-admin-schedule__day-label">Dimanche</span>
+                  <span class="spa-admin-schedule__toggle">
+                    <input type="checkbox" id="jour-dimanche" />
+                    <label for="jour-dimanche">Ouvert</label>
+                  </span>
+                  <div class="spa-admin-schedule__ranges">
+                    <span class="spa-admin-schedule__closed">Fermé — aucun créneau proposé</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <!--
+            EXCEPTIONS. Elles priment sur la règle hebdomadaire et se datent —
+            elles ne peuvent donc pas vivre dans la même liste.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-exceptions">
+            <h2 class="spa-admin__section-title" id="titre-exceptions">
+              Exceptions — congés, fériés, formations
+            </h2>
+
+            <ul class="spa-admin-schedule__exceptions">
+              <li class="spa-admin-schedule__exception">
+                <span class="spa-admin-schedule__exception-date">2 – 16 sept. 2026</span>
+                <span class="spa-admin-schedule__exception-label">Congés annuels — Hasina Rakoto</span>
+                <button class="spa-button spa-button--quiet" type="button">
+                  <span class="spa-button__label">Retirer</span>
+                  <span class="spa-visually-hidden">l’exception du 2 au 16 septembre</span>
+                </button>
+              </li>
+              <li class="spa-admin-schedule__exception">
+                <span class="spa-admin-schedule__exception-date">11 nov. 2026</span>
+                <span class="spa-admin-schedule__exception-label">Jour férié — salon fermé</span>
+                <button class="spa-button spa-button--quiet" type="button">
+                  <span class="spa-button__label">Retirer</span>
+                  <span class="spa-visually-hidden">l’exception du 11 novembre</span>
+                </button>
+              </li>
+              <li class="spa-admin-schedule__exception">
+                <span class="spa-admin-schedule__exception-date">3 oct. 2026, matin</span>
+                <span class="spa-admin-schedule__exception-label">Formation produit — Njara Be</span>
+                <button class="spa-button spa-button--quiet" type="button">
+                  <span class="spa-button__label">Retirer</span>
+                  <span class="spa-visually-hidden">l’exception du 3 octobre</span>
+                </button>
+              </li>
+            </ul>
+          </section>
+
+          <!-- ÉTAT DE CHARGEMENT. -->
+          <section class="spa-admin__section" aria-labelledby="titre-personnel-chargement">
+            <h2 class="spa-admin__section-title" id="titre-personnel-chargement">État de chargement</h2>
+
+            <ul class="spa-admin-staff" aria-busy="true">
+              <li class="spa-visually-hidden">Chargement de l’équipe…</li>
+              <li class="spa-admin-staff__member">
+                <span class="spa-admin-staff__initials spa-skeleton" aria-hidden="true"></span>
+                <span class="spa-admin-staff__identity">
+                  <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
+                  <span class="spa-admin-skeleton-line spa-skeleton"></span>
+                </span>
+              </li>
+              <li class="spa-admin-staff__member">
+                <span class="spa-admin-staff__initials spa-skeleton" aria-hidden="true"></span>
+                <span class="spa-admin-staff__identity">
+                  <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
+                  <span class="spa-admin-skeleton-line spa-skeleton"></span>
+                </span>
+              </li>
+            </ul>
+          </section>
+
+          <!--
+            ÉTAT VIDE. Aucun praticien : le salon ne peut proposer aucun créneau,
+            et l'écran le dit plutôt que d'afficher une grille d'horaires qui ne
+            s'appliquerait à personne.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-personnel-vide">
+            <h2 class="spa-admin__section-title" id="titre-personnel-vide">État vide</h2>
+
+            <div class="spa-empty-state">
+              <p class="spa-empty-state__title">Aucun praticien enregistré</p>
+              <p class="spa-empty-state__description">
+                Tant que personne n’est déclaré, le parcours de réservation ne propose
+                aucun créneau. Ajoutez au moins un praticien et ses horaires.
+              </p>
+              <button class="spa-button spa-button--accent" type="button">
+                <span class="spa-button__label">Ajouter un praticien</span>
+              </button>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>
