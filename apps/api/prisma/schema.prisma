@@ -51,10 +51,21 @@ datasource db {
 // Énumérations
 // ---------------------------------------------------------------------------
 
-/// Rôle du compte — CDC §2.4 « Compte (client / staff / admin) + rôle ».
+/// Rôle du compte — CDC §2.4 « Compte (client / staff / admin) + rôle », étendu
+/// par le CDC §1.4 (« comptes staff avec rôles et permissions ») au rang
+/// intermédiaire `MANAGER`.
+///
+/// **L'ordre des quatre libellés est signifiant.** PostgreSQL ordonne un `enum`
+/// par son ordre de **déclaration**, et c'est cet ordre que rend le
+/// `orderBy: { role: 'asc' }` de `listStaffAccounts`. Il est ici celui de la
+/// hiérarchie d'autorisation — `CLIENT` < `STAFF` < `MANAGER` < `ADMIN` — et
+/// `MANAGER` a donc été inséré *avant* `ADMIN` par la migration
+/// `20260826100000_add_manager_user_role`, non ajouté en queue. Les deux ordres
+/// sont verrouillés ensemble par `src/modules/identity/__tests__/roles.spec.ts`.
 enum UserRole {
   CLIENT
   STAFF
+  MANAGER
   ADMIN
 }
 
