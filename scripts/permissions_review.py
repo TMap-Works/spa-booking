@@ -3,6 +3,7 @@
 
     python scripts/permissions_review.py                      # ce qui a bloqué, et combien de fois
     python scripts/permissions_review.py --run <id>           # pendant ce run de jalon seulement
+    python scripts/permissions_review.py --show-rejected      # y compris ce qui n'est pas une commande
     python scripts/permissions_review.py --apply              # autorise les motifs répétés
     python scripts/permissions_review.py --apply --pattern "npm run verify"
     python scripts/permissions_review.py --forget             # repart de zéro
@@ -15,9 +16,11 @@ fait le bilan et, **sur accord explicite**, ajoute les motifs à
 
 ## Ce qui n'est jamais autorisé automatiquement
 
-Élargir une allowlist, c'est réduire ce sur quoi on sera consulté. Quatre
+Élargir une allowlist, c'est réduire ce sur quoi on sera consulté. Cinq
 garde-fous, qu'aucun `--yes` ne lève :
 
+  - un motif dont le nom de commande n'en est pas un — corps de heredoc, prose,
+    mot réservé du shell, ligne de source — est écarté avant tout le reste ;
   - un motif couvert par une règle `deny` n'est jamais proposé ;
   - un motif dont la portée est bornée par ses **arguments** et non par la
     commande — `head`, `cat`, `grep`, `sed`, `echo`, `tee`… — exige
@@ -38,12 +41,21 @@ Le rang de risque affiché est celui qu'a observé le hook, **relevé** à ce qu
 l'outil rend possible : ce qui peut écrire n'est jamais annoncé comme une
 lecture, même si l'observation le prétend.
 
+De la même façon, un motif n'est pas cru sur parole quand il prétend nommer une
+commande : le hook découpe les invocations **ligne par ligne**, si bien que le
+corps d'un heredoc, la suite d'une commande continuée par `\\` ou le milieu d'une
+boucle `for … do … done` remontent comme autant de « commandes ». Ce qui n'en est
+pas une est écarté de la revue — voir `not_a_command`, et `--show-rejected` pour
+le voir quand même.
+
 Le seuil de répétition (`--threshold`, 2 par défaut) traduit la demande d'origine :
 ce qui n'a bloqué qu'une fois n'a pas fait ses preuves.
 """
 import argparse
+import functools
 import json
 import os
+import re
 import sys
 from collections import defaultdict, namedtuple
 from pathlib import Path
@@ -86,6 +98,239 @@ FILE_WRITERS = {
     "echo", "printf", "tee", "sed", "cp", "mv", "dd", "install", "ln",
     "truncate", "touch", "chmod", "chown",
 }
+
+# ---------------------------------------------------------------------------
+# Ce qui n'est même pas une commande (#137)
+#
+# Le hook d'observation découpe une invocation Bash sur ses séparateurs, saut de
+# ligne compris, et prend le premier mot de chaque morceau pour un nom de
+# commande. Or une commande réelle est très souvent multi-lignes :
+#
+#   - un heredoc (`cat > f <<'EOF' … EOF`) embarque un document entier — c'est
+#     ainsi que les corps de PR, les corps d'issue et les livrables Markdown de
+#     ce dépôt sont écrits. Ce corps n'est pas exécuté : c'est de la donnée ;
+#   - une commande à rallonge se poursuit derrière un `\` — d'où `--title`,
+#     `--label`, `--body-file` promus au rang d'exécutables ;
+#   - une boucle `for … do … done` occupe trois lignes, dont deux mots réservés.
+#
+# Sur le run s1-fondations-20260825-093729, cela donnait `Bash(-:*)`,
+# `Bash(##:*)`, `Bash(":*)`, `Bash(le:*)`, `Bash(for:*)`, `Bash(import:*)`
+# proposés à l'allowlist. `Bash(":*)` couvre *toute* commande commençant par un
+# guillemet : ce n'est pas « une commande » de plus, c'est une classe entière
+# d'invocations que personne n'a examinée, sous une étiquette qui ne veut rien
+# dire. Et l'opérateur à qui l'on présente 206 motifs dont la moitié est du bruit
+# ne les lit plus — c'est le mécanisme même de la revue qui se vide de son sens.
+#
+# La correction de fond appartient au tokeniseur du hook, qui doit ne retenir que
+# le premier mot de la *première* ligne, sauter les corps de heredoc et recoller
+# les continuations. Ce qui se décide ici est ce que la revue **propose** : un
+# fragment qui n'est pas une commande n'a rien à faire dans une allowlist, quelle
+# que soit la raison pour laquelle il a été consigné.
+# ---------------------------------------------------------------------------
+
+# Le filet de sécurité, et le seul critère qui ne relève d'aucune heuristique :
+# un nom de commande ne contient ni guillemet, ni accent, ni ponctuation
+# Markdown. À lui seul il élimine `"`, `` ` ``, ``` ``` ```, `##`, `---`,
+# `(.number)`, `try:`, `co-authored-by:` et `périmètre`.
+COMMAND_NAME_RE = re.compile(r"^[A-Za-z0-9_.\-/]+$")
+
+# Un motif entier — nom **et** sous-verbes — s'écrit en ASCII. Un accent dans
+# `npm exécute ses scripts…` ou `périmètre retenu…` ne vient jamais d'une ligne
+# de commande : c'est de la prose tombée dans un heredoc.
+# (La règle jumelle — un nom de programme s'écrit en minuscules, d'où `Claude
+# Code…`, `PR »…`, `EOF`, `ALTER TABLE…` écartés — vit dans
+# `looks_like_invocation`, qui juge l'observation et non le motif.)
+NON_ASCII_RE = re.compile(r"[^\x00-\x7f]")
+
+# Ce qui suit le nom de commande dans un motif est un sous-verbe ou un chemin.
+# Ni une accolade Terraform (`terraform {`), ni un reste de heredoc
+# (`python <<PY`), ni un guillemet ouvert (`python "`), ni un numéro de version
+# (`terraform 1.9.8`) : ceux-là viennent d'une ligne qui n'était pas une commande.
+# Le `~` n'y figure pas : il n'a jamais désigné que le dossier personnel —
+# `bash ~/bin/deploy.sh` est une invocation, pas un débris.
+ARGUMENT_DEBRIS = ("\"", "'", "`", "{", "}", "#", "<<", "::")
+VERSION_RE = re.compile(r"^[0-9][0-9.]*$")
+
+# `id String @id`, `users User[]`, `description String?` : une ligne de schéma
+# Prisma, où le second mot est un type. Une commande n'a pas de second mot
+# capitalisé.
+TYPE_TOKEN_RE = re.compile(r"^[A-Z][A-Za-z0-9_]*(\[\])?\??$")
+
+# Ce qui trahit une vraie ligne de commande dans une phrase : un drapeau, un
+# chemin, une redirection, une variable. Une phrase française n'en a aucun.
+SHELLISH_RE = re.compile(r"^-|[/\\|><$=]")
+
+# Mots réservés du shell. Ils ouvrent ou ferment une structure, ils ne nomment
+# jamais un programme — et `Bash(done:*)` n'autoriserait rien d'intelligible.
+SHELL_KEYWORDS = {
+    "for", "do", "done", "if", "then", "elif", "else", "fi", "while", "until",
+    "case", "esac", "select", "function", "in", "coproc", "time",
+}
+
+# Mots-clés de langage relevés dans les observations réelles : lignes de source
+# Python, TypeScript, SQL ou Prisma tombées dans un heredoc. Certains existent
+# aussi comme exécutables quelque part (`import` d'ImageMagick, `print` de
+# Windows) : les nommer ici les refuse indépendamment de la machine, ce que le
+# détour par le PATH ne saurait pas faire.
+CODE_KEYWORDS = {
+    "import", "from", "def", "class", "return", "lambda", "yield", "assert",
+    "raise", "except", "finally", "try", "pass", "continue", "break", "with",
+    "global", "nonlocal", "del", "async", "await", "const", "let", "var",
+    "interface", "enum", "extends", "implements", "typeof", "instanceof",
+    "public", "private", "protected", "static", "readonly", "namespace",
+    "declare", "module", "generator", "datasource", "print",
+    "insert", "update", "alter", "create", "drop", "table", "values",
+    "join", "group", "order", "begin", "commit", "rollback",
+}
+# `where` manque volontairement à cette liste : c'est le `which` de Windows, la
+# plateforme de ce dépôt, et il figure à ce titre parmi les outils connus. Le
+# nommer ici le refuserait d'office, quelle que soit l'observation. Un `WHERE`
+# de SQL tombé dans un heredoc reste écarté par `looks_like_invocation`, qui
+# refuse un premier mot capitalisé et une ligne dont le second mot est `=`.
+
+NEVER_COMMANDS = SHELL_KEYWORDS | CODE_KEYWORDS
+
+# Exécutables tenus pour légitimes même absents de la machine qui passe la revue
+# — un poste sans Terraform ni Docker doit pouvoir instruire les observations
+# d'un run qui, lui, les avait. La liste s'allonge sans risque : elle ne peut que
+# faire *proposer* un motif de plus, jamais en autoriser un.
+KNOWN_COMMANDS = FILE_READERS | FILE_WRITERS | {
+    "git", "gh", "npm", "npx", "node", "yarn", "pnpm", "nvm", "corepack",
+    "python", "python3", "py", "pip", "pipx", "poetry", "pytest", "ruff",
+    "bash", "sh", "zsh", "pwsh", "powershell", "cmd", "wsl",
+    "docker", "docker-compose", "terraform", "tflint", "aws", "kubectl", "helm",
+    "prisma", "psql", "pg_dump", "redis-cli", "sqlite3",
+    "curl", "wget", "ssh", "scp", "rsync", "ping", "nc", "openssl",
+    "ls", "pwd", "cd", "pushd", "popd", "mkdir", "rmdir", "rm", "find", "which",
+    "where", "file", "stat", "tree", "wc", "date", "env", "export", "source",
+    "true", "false", "test", "kill", "killall", "ps", "top", "df", "du",
+    "tar", "zip", "unzip", "gzip", "gunzip", "make", "cargo", "go", "java",
+    "mvn", "gradle", "ruby", "perl", "deno", "bun", "code", "sleep",
+}
+
+
+@functools.lru_cache(maxsize=1)
+def path_executables():
+    """Les noms d'exécutables présents sur le `PATH`, sans extension.
+
+    Un simple `shutil.which` par motif coûterait, sur les 4 549 motifs distincts
+    d'un run de jalon, des centaines de milliers d'appels système. Un seul
+    parcours du `PATH` suffit, et le résultat sert à toute la revue.
+    """
+    suffixes = {ext.lower()
+                for ext in os.environ.get("PATHEXT", "").split(os.pathsep) if ext}
+    names = set()
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        try:
+            with os.scandir(entry) as children:
+                for child in children:
+                    try:
+                        if not child.is_file():
+                            continue
+                    except OSError:
+                        continue
+                    lowered = child.name.lower()
+                    names.add(lowered)
+                    stem, dot, ext = lowered.rpartition(".")
+                    if dot and "." + ext in suffixes:
+                        names.add(stem)
+        except OSError:
+            continue
+    return names
+
+
+def plausible_command_name(head):
+    """Ce mot peut-il désigner un programme ?
+
+    Trois façons de l'être : porter un chemin ou une extension d'exécutable,
+    figurer parmi les outils connus du projet, ou se trouver sur le `PATH`. Un
+    mot réservé du shell ou un mot-clé de langage est refusé d'abord, avant même
+    le `PATH` — sans quoi la réponse dépendrait de ce qui est installé sur la
+    machine, et `import` passerait là où ImageMagick traîne.
+    """
+    if not head or head in NEVER_COMMANDS:
+        return False
+    if "/" in head:
+        return True
+    stem, dot, ext = head.rpartition(".")
+    if dot and stem and ext in {"sh", "bash", "py", "rb", "pl", "js", "mjs",
+                                "cjs", "ts", "exe", "com", "bat", "cmd", "ps1"}:
+        return True
+    return head in KNOWN_COMMANDS or head in path_executables()
+
+
+def looks_like_invocation(example):
+    """Cette ligne observée ressemble-t-elle à une invocation, ou à de la donnée ?
+
+    Trois formes se reconnaissent à coup sûr et ne sont jamais des commandes :
+    un premier mot capitalisé (`Claude Code…`, `PR »…`, `EOF`, `ALTER TABLE…`),
+    une affectation (`source = "hashicorp/aws"`, `cmd = \\`), une déclaration de
+    schéma (`id String @id`). S'y ajoute la phrase : plusieurs mots, un point
+    final **qui termine un mot**, et pas le moindre drapeau, chemin ni
+    redirection. La nuance n'est pas cosmétique : `git add .`, `ruff check .`,
+    `terraform fmt .` ou `docker build .` finissent eux aussi par un point, sans
+    porter ni drapeau ni chemin — un point isolé est un argument, jamais une
+    ponctuation.
+    """
+    tokens = example.split()
+    # Le hook écarte les affectations d'environnement avant de nommer la
+    # commande — `DATABASE_URL=… npx prisma` reste une invocation de `npx`.
+    while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):
+        tokens = tokens[1:]
+    if not tokens:
+        return False
+    lead = tokens[0].lstrip("\"'`")
+    if not lead:
+        return False
+    name = Path(lead).name
+    if name != name.lower():
+        return False
+    if len(tokens) > 1:
+        if tokens[1] == "=" or TYPE_TOKEN_RE.match(tokens[1]):
+            return False
+        words = example.split()
+        final = words[-1] if words else ""
+        if (len(tokens) >= 3 and final.endswith(".") and final.strip(".")
+                and not any(SHELLISH_RE.search(token) for token in tokens)):
+            return False
+    return True
+
+
+def not_a_command(pattern, examples=()):
+    """Pourquoi ce motif ne nomme pas une commande — ou `None` s'il en nomme une.
+
+    Les critères vont du plus mécanique au plus heuristique, et le message rendu
+    dit lequel a joué : un refus qu'on ne peut pas expliquer est un refus qu'on
+    finit par désactiver.
+    """
+    tokens = pattern.split()
+    head = tokens[0] if tokens else ""
+    if not head:
+        return "motif vide"
+    if head.startswith("-"):
+        return "fragment d'une commande continuée par « \\ » — commence par un tiret"
+    if not COMMAND_NAME_RE.match(head):
+        return "nom de commande hors de ^[A-Za-z0-9_.\\-/]+$"
+    lowered = head.lower()
+    if lowered in SHELL_KEYWORDS:
+        return "mot réservé du shell, jamais un exécutable"
+    if lowered in CODE_KEYWORDS:
+        return "mot-clé de langage — ligne de source, pas une commande"
+    if NON_ASCII_RE.search(pattern):
+        return "prose — un nom de commande et ses sous-verbes sont en ASCII"
+    for token in tokens[1:]:
+        if any(debris in token for debris in ARGUMENT_DEBRIS):
+            return "débris de guillemet, de heredoc ou de ponctuation dans le motif"
+        if VERSION_RE.match(token):
+            return "numéro de version en guise de sous-commande — ligne de prose"
+    if not plausible_command_name(lowered):
+        return "introuvable comme exécutable — ni outil connu, ni binaire du PATH"
+    if examples and not any(looks_like_invocation(ex) for ex in examples):
+        return "aucune observation ne ressemble à une invocation — prose ou ligne de source"
+    return None
+
 
 # Les paramètres d'une revue, réunis pour ne pas les faire circuler un par un.
 Policy = namedtuple("Policy", "allow read_denies threshold classes file_tools")
@@ -219,6 +464,12 @@ def already_covered(pattern, allow):
 
 
 def eligible(pattern, entry, policy):
+    # Avant toute question de risque ou de seuil : est-ce seulement une commande ?
+    # Le refus vaut aussi pour `--pattern`, qui ne peut donc pas faire entrer un
+    # fragment de heredoc dans l'allowlist en le nommant (#137).
+    verdict = not_a_command(pattern, entry.get("examples") or ())
+    if verdict:
+        return False, verdict
     if entry["denied"]:
         return False, "couvert par une règle deny"
     if already_covered(pattern, policy.allow):
@@ -235,15 +486,28 @@ def eligible(pattern, entry, policy):
     return True, None
 
 
-def show(grouped, policy, as_json):
+def show(grouped, policy, as_json, show_rejected=False):
     if not grouped:
         print("aucune commande n'a demandé de permission depuis la dernière revue")
         return 0
 
-    rows = []
+    # Ce qui n'est pas une commande sort de la revue : le lister reviendrait à
+    # noyer les vrais motifs sous du bruit, et c'est précisément ce bruit qui
+    # avait fait cesser de lire la sortie (#137).
+    # Le verdict se demande une fois : `eligible` l'oppose d'abord à tout le
+    # reste, si bien qu'un second appel dirait la même chose — et qu'un jour où
+    # il ne la dirait plus, la revue filtrerait sur un critère et motiverait sur
+    # un autre.
+    rows, ecartes = [], 0
     for pattern, entry in grouped.items():
-        ok, why = eligible(pattern, entry, policy)
-        rows.append((pattern, entry, ok, why))
+        verdict = not_a_command(pattern, entry.get("examples") or ())
+        if verdict:
+            ecartes += 1
+            if not show_rejected:
+                continue
+            rows.append((pattern, entry, False, verdict))
+            continue
+        rows.append((pattern, entry, *eligible(pattern, entry, policy)))
     rows.sort(key=lambda r: (-r[1]["count"], RISK_ORDER.get(r[1]["risk"], 9), r[0]))
 
     if as_json:
@@ -254,7 +518,10 @@ def show(grouped, policy, as_json):
         return 0
 
     retenus = [r for r in rows if r[2]]
-    print(f"{len(rows)} motif(s) observé(s) · {len(retenus)} éligible(s) à l'allowlist\n")
+    entete = f"{len(rows)} motif(s) observé(s)"
+    if ecartes and not show_rejected:
+        entete += f" · {ecartes} fragment(s) écarté(s)"
+    print(f"{entete} · {len(retenus)} éligible(s) à l'allowlist\n")
     for pattern, entry, ok, why in rows:
         mark = "+" if ok else " "
         note = "" if ok else f"  ({why})"
@@ -263,6 +530,11 @@ def show(grouped, policy, as_json):
         for example in entry["examples"][:2]:
             print(f"            {example[:88]}")
     print()
+
+    if ecartes and not show_rejected:
+        print(f"{ecartes} fragment(s) écarté(s) — corps de heredoc, prose, "
+              "mots réservés du shell, lignes de source ;")
+        print("  python scripts/permissions_review.py --show-rejected  pour les voir\n")
 
     if retenus:
         print("Pour les autoriser durablement :")
@@ -366,6 +638,10 @@ def main():
                         help="autoriser les motifs dont la portée dépend de leurs "
                              "arguments (head, cat, grep, sed, echo, tee…) — "
                              "à combiner avec --pattern")
+    parser.add_argument("--show-rejected", action="store_true",
+                        help="montrer aussi les fragments écartés faute d'être "
+                             "des commandes (corps de heredoc, prose, mots "
+                             "réservés du shell, lignes de source)")
     parser.add_argument("--yes", action="store_true", help="ne pas demander confirmation")
     parser.add_argument("--forget", action="store_true",
                         help="effacer les observations et repartir de zéro")
@@ -396,7 +672,7 @@ def main():
 
     if args.apply:
         return apply(grouped, policy, set(args.pattern), args.yes)
-    return show(grouped, policy, args.json)
+    return show(grouped, policy, args.json, args.show_rejected)
 
 
 if __name__ == "__main__":
