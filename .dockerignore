@@ -1,0 +1,86 @@
+# Contexte de build des images `apps/api` et `apps/web`.
+#
+# Les deux Dockerfile se construisent depuis la **racine du monorepo**
+# (`docker build -f apps/api/Dockerfile .`), parce que npm workspaces résout les
+# dépendances depuis `package-lock.json` racine : un contexte limité à `apps/api`
+# n'y donnerait pas accès. Ce fichier est donc le seul filtre du contexte, et il
+# porte deux responsabilités distinctes.
+#
+# 1. **Ne rien envoyer d'inutile au démon Docker.** Sans filtre, le contexte
+#    embarque les `node_modules` du poste — plusieurs centaines de mégaoctets,
+#    compilés pour Windows ou macOS, donc inutilisables dans l'image et fatals
+#    s'ils y étaient copiés par-dessus une installation Linux.
+# 2. **Ne rien envoyer de sensible.** Un `.env.local`, un `*.tfvars` ou une clé
+#    privée entrés dans le contexte finissent dans une couche d'image, d'où ils
+#    restent lisibles même si une étape ultérieure les supprime.
+#
+# Les motifs suivent .gitignore, sans s'y substituer : un fichier non versionné
+# mais présent sur le poste fait partie du contexte tant qu'il n'est pas exclu
+# ici.
+
+# --- Dépendances et artefacts de build ---------------------------------------
+# Réinstallés dans l'image par `npm ci`, à partir du lockfile et pour la bonne
+# plateforme.
+**/node_modules
+**/dist
+**/build
+**/.next
+**/out
+**/*.tsbuildinfo
+
+# --- Secrets et état ---------------------------------------------------------
+# Aucune exception, pas même `.env.example` : une image n'a jamais besoin d'un
+# gabarit d'environnement, et une liste d'exclusions sans exception est la seule
+# qui se relit sans avoir à vérifier ce qui traverse.
+**/.env
+**/.env.*
+**/*.tfvars
+**/*.tfstate
+**/*.tfstate.*
+**/.terraform
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+.npmrc
+
+# --- Historique et outillage de dépôt ----------------------------------------
+# `.git` pèse plus que le code utile et n'apporte rien à une image d'exécution.
+.git
+.gitignore
+.gitattributes
+.github
+.husky
+.claude
+
+# --- Ce qui ne sert à aucune des deux images ---------------------------------
+# L'infrastructure et l'outillage se déploient hors conteneur applicatif ; les
+# spécifications et ADR n'ont pas à voyager jusqu'à ECS.
+infra
+scripts
+docs
+**/*.md
+
+# --- Tests et couverture -----------------------------------------------------
+# Les tests tournent dans la CI, pas dans l'image d'exécution. Les exclure du
+# contexte évite aussi que `tsc` ne les compile dans `dist`.
+**/__tests__
+**/*.spec.ts
+**/*.test.ts
+**/coverage
+**/playwright-report
+**/test-results
+apps/api/test
+apps/api/jest.*.config.js
+
+# --- Divers ------------------------------------------------------------------
+**/__pycache__
+**/*.py[cod]
+**/*.log
+**/.DS_Store
+**/Thumbs.db
+**/.vscode
+**/.idea
+docker-compose*.yml
+**/Dockerfile
+**/.dockerignore
