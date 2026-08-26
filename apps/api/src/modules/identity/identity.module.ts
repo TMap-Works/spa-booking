@@ -7,17 +7,25 @@ import { AuthService } from './auth.service';
 import { IdentityRepository } from './identity.repository';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PasswordHasher } from './password.hasher';
+import { RolesGuard } from './roles.guard';
 import { TokenService } from './token.service';
+import { UsersController } from './users.controller';
+import { UsersService } from './users.service';
 
 /**
- * Module `identity` — authentification, rôles, sessions (CDC §2.3).
+ * Module `identity` — authentification, rôles, permissions, sessions (CDC §2.3).
  *
  * ## Ce qu'il exporte, et pourquoi si peu
  *
- * `JwtAuthGuard` et `TokenService` seulement. Les autres modules métier
- * gouverneront l'accès à leurs routes avec la garde ; aucun n'a de raison
- * d'atteindre `IdentityRepository` — un module n'importe jamais le repository
- * d'un autre (api-module §3).
+ * `JwtAuthGuard`, `RolesGuard` et `TokenService` seulement. Les autres modules
+ * métier gouverneront l'accès à leurs routes avec les deux gardes — par
+ * `@Auth(...)` / `@AuthAtLeast(...)`, qui les montent ensemble et dans le bon
+ * ordre. Aucun n'a de raison d'atteindre `IdentityRepository` ni `UsersService` :
+ * un module n'importe jamais le repository d'un autre (api-module §3).
+ *
+ * Les deux gardes sont déclarées comme fournisseurs — et non seulement
+ * référencées par `@UseGuards` — parce qu'elles ont des dépendances à injecter :
+ * `TokenService` pour la première, `Reflector` pour la seconde.
  *
  * ## `JwtModule` sans secret ici
  *
@@ -46,8 +54,16 @@ import { TokenService } from './token.service';
       ],
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, IdentityRepository, PasswordHasher, TokenService, JwtAuthGuard],
-  exports: [JwtAuthGuard, TokenService],
+  controllers: [AuthController, UsersController],
+  providers: [
+    AuthService,
+    UsersService,
+    IdentityRepository,
+    PasswordHasher,
+    TokenService,
+    JwtAuthGuard,
+    RolesGuard,
+  ],
+  exports: [JwtAuthGuard, RolesGuard, TokenService],
 })
 export class IdentityModule {}
