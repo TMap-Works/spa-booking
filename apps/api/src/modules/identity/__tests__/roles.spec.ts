@@ -1,8 +1,11 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
-
 import { UserRole as PrismaUserRole } from '@prisma/client';
 
+// Le SQL de migration est lu par un module unique, partagé avec
+// `prisma-schema.spec.ts` (#217). L'import traverse les dossiers, mais il ne
+// franchit aucune frontière de module métier au sens d'api-module §3 :
+// `infrastructure/database` est le seul endroit du dépôt qui connaisse le
+// schéma, et ce lecteur n'existe que pour les suites de test.
+import { readMigrationSql } from '../../../infrastructure/database/__tests__/migration-sql';
 import {
   hasAtLeastRole,
   isStaffRole,
@@ -22,33 +25,6 @@ import {
  * client Prisma à la couche repository.
  */
 const PRISMA_USER_ROLE_VALUES: readonly string[] = Object.values(PrismaUserRole);
-
-/**
- * Le SQL de migration concaténé, dans son ordre d'application.
- *
- * `PRISMA_USER_ROLE_VALUES` vient de `schema.prisma` : il dit l'ordre du client
- * généré, **pas** celui du type PostgreSQL. Les deux se règlent séparément — un
- * `ADD VALUE` sans voisin place le libellé en queue du type quel que soit son
- * rang dans le schéma — et seul le SQL réellement appliqué décrit le second.
- * C'est cet ordre-là que suit `orderBy: { role: 'asc' }`.
- *
- * `prisma-schema.spec.ts` porte une lecture jumelle, et il faudra un jour ne
- * plus la lire deux fois — issue de suivi ouverte avec cette PR. La factoriser
- * ici demanderait de créer un module partagé sous `src/infrastructure/`, hors de
- * l'empreinte de fichiers de ce ticket.
- */
-const MIGRATIONS_DIR = join(__dirname, '..', '..', '..', '..', 'prisma', 'migrations');
-
-function readMigrationSql(): string {
-  return readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    // Prisma préfixe chaque dossier d'un horodatage : l'ordre alphabétique est
-    // l'ordre d'application.
-    .map((entry) => entry.name)
-    .sort()
-    .map((directory) => readFileSync(join(MIGRATIONS_DIR, directory, 'migration.sql'), 'utf8'))
-    .join('\n');
-}
 
 /**
  * Vocabulaire des rôles et hiérarchie — le socle sur lequel la garde décide.

@@ -1,5 +1,7 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+import { MIGRATIONS_DIR, PRISMA_DIR, readMigrationSql } from './migration-sql';
 
 /**
  * Le schéma comme objet de test.
@@ -15,12 +17,14 @@ import { join } from 'node:path';
  * existera vraiment. `schema.prisma` n'est interrogé que pour ce que le SQL ne
  * dit pas — la génération applicative des UUID.
  *
+ * La lecture elle-même vit dans `./migration-sql` : `roles.spec.ts` relit le même
+ * texte pour l'ordre du type `UserRole`, et deux lecteurs jumeaux finiraient par
+ * asserter sur deux textes différents (#217).
+ *
  * Le test est volontairement générique : il découvre les tables au lieu de les
  * énumérer. Une huitième table ajoutée demain sans `tenant_id` fera rougir cette
  * suite sans que personne ait pensé à l'y inscrire.
  */
-
-const PRISMA_DIR = join(__dirname, '..', '..', '..', '..', 'prisma');
 
 /**
  * `tenants` est la seule table exemptée de `tenant_id` : elle *est* le tenant.
@@ -114,22 +118,6 @@ function group(match: RegExpMatchArray, index: number): string {
     throw new Error(`groupe ${index} absent de la correspondance « ${match[0]} »`);
   }
   return value;
-}
-
-function readMigrationSql(): string {
-  const migrationsDir = join(PRISMA_DIR, 'migrations');
-  const directories = readdirSync(migrationsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    // Prisma préfixe chaque dossier d'un horodatage : l'ordre alphabétique est
-    // l'ordre d'application.
-    .sort();
-
-  expect(directories.length).toBeGreaterThan(0);
-
-  return directories
-    .map((directory) => readFileSync(join(migrationsDir, directory, 'migration.sql'), 'utf8'))
-    .join('\n');
 }
 
 /** Une colonne, telle que son fragment de SQL la décrit. */
@@ -492,7 +480,7 @@ describe('Schéma Prisma — migration', () => {
   });
 
   it('verrouille le connecteur sur PostgreSQL', () => {
-    const lock = readFileSync(join(PRISMA_DIR, 'migrations', 'migration_lock.toml'), 'utf8');
+    const lock = readFileSync(join(MIGRATIONS_DIR, 'migration_lock.toml'), 'utf8');
     expect(lock).toContain('provider = "postgresql"');
   });
 });
