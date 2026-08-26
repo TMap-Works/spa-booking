@@ -1,0 +1,387 @@
+/*
+ * Admin — calendrier jour et semaine
+ * =============================================================================
+ *
+ * Critère d'acceptation n° 1 de l'issue #30, et l'écran le plus regardé du
+ * back-office : c'est celui qui est ouvert toute la journée.
+ *
+ * Deux vues, une seule mécanique
+ * ------------------------------
+ * vue jour     `.spa-admin-calendar` seule — une colonne par praticien ;
+ * vue semaine  `.spa-admin-calendar--week` — une colonne par jour.
+ *
+ * La vue jour est le cas par défaut et ne porte donc aucun modificateur : c'est
+ * l'écran ouvert du matin au soir, et un modificateur qu'il faudrait poser
+ * partout ne dirait rien de plus.
+ *
+ * Les deux partagent la même mécanique : une gouttière d'heures à gauche, puis N
+ * colonnes dont les lignes valent 30 minutes (`--spa-admin-slot-height`). Seuls
+ * le nombre de colonnes — une donnée, pas un style — et la densité du bloc
+ * changent.
+ *
+ * Pourquoi une grille et non du positionnement absolu
+ * ---------------------------------------------------
+ * Chaque colonne est une grille dont les rangées sont les créneaux de 30 min.
+ * Les cellules s'y suivent dans l'ordre chronologique : un créneau libre occupe
+ * une rangée, un rendez-vous d'une heure en couvre deux (`--span-2`), une pause
+ * en couvre autant qu'elle dure. Aucune coordonnée n'est calculée, rien n'est
+ * positionné en absolu — et donc rien ne se désaligne quand la police de
+ * l'utilisateur grossit ou quand la fenêtre rétrécit.
+ *
+ * Balisage et clavier
+ * -------------------
+ * Une colonne est une liste (`<ul>`) nommée par son en-tête (`aria-labelledby`),
+ * ses cellules sont des `<li>`, et tout ce qui est cliquable est un `<button>` :
+ * un créneau libre ouvre la création d'un rendez-vous, un bloc ouvre sa fiche.
+ * La tabulation parcourt donc la journée dans l'ordre chronologique, sans souris
+ * et sans motif ARIA inventé.
+ *
+ * Ce que la maquette ne montre pas, et qui devra suivre (skill web-frontend §5) :
+ * la vue semaine se virtualise — plusieurs centaines de blocs y sont possibles,
+ * et ils ne peuvent pas tous être montés ; le glisser-déposer d'un bloc déclenche
+ * un REPORT et non un `UPDATE` (skill booking-engine), avec état optimiste puis
+ * retour en arrière visible sur 409.
+ */
+
+.spa-admin-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  min-inline-size: 0;
+}
+
+/* --- Légende --------------------------------------------------------------- */
+
+.spa-admin-calendar__legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spa-space-2);
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- En-têtes de colonnes -------------------------------------------------- */
+
+/*
+ * L'en-tête reprend le gabarit de colonnes du corps et se colle en haut : le
+ * nom du praticien reste lisible après avoir fait défiler jusqu'à 18 h.
+ */
+.spa-admin-calendar__head {
+  display: flex;
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--spa-z-sticky);
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-md) var(--spa-radius-md) 0 0;
+}
+
+.spa-admin-calendar__head-spacer {
+  flex: 0 0 var(--spa-admin-time-gutter);
+  border-inline-end: 1px solid var(--spa-color-border);
+}
+
+/*
+ * `flex: 1 1 0` et non une grille à N pistes : le nombre de colonnes est une
+ * donnée — quatre praticiens en poste aujourd'hui, deux demain — et non une
+ * valeur de style. Le flex partage l'espace sans que personne ait à compter, et
+ * l'en-tête reste aligné sur le corps parce que les deux emploient la même règle.
+ */
+.spa-admin-calendar__column-head {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  padding: var(--spa-space-2) var(--spa-space-3);
+  border-inline-end: 1px solid var(--spa-color-border);
+}
+
+.spa-admin-calendar__column-head:last-child {
+  border-inline-end: 0;
+}
+
+.spa-admin-calendar__column-name {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-admin-calendar__column-meta {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Corps ----------------------------------------------------------------- */
+
+.spa-admin-calendar__body {
+  display: flex;
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-block-start: 0;
+  border-radius: 0 0 var(--spa-radius-md) var(--spa-radius-md);
+  overflow: hidden;
+}
+
+.spa-admin-calendar__columns {
+  display: flex;
+  flex: 1 1 auto;
+  min-inline-size: 0;
+}
+
+/* --- Gouttière des heures -------------------------------------------------- */
+
+.spa-admin-calendar__gutter {
+  flex: 0 0 var(--spa-admin-time-gutter);
+  display: grid;
+  grid-auto-rows: var(--spa-admin-slot-height);
+  border-inline-end: 1px solid var(--spa-color-border);
+  background-color: var(--spa-color-surface-raised);
+}
+
+/* Une étiquette par heure pleine, donc deux rangées de 30 min. */
+.spa-admin-calendar__hour {
+  grid-row: span 2;
+  padding-inline: var(--spa-space-2);
+  padding-block-start: var(--spa-space-1);
+  border-block-start: 1px solid var(--spa-color-border);
+  font-size: var(--spa-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-calendar__hour:first-child {
+  border-block-start: 0;
+}
+
+/* --- Colonnes -------------------------------------------------------------- */
+
+.spa-admin-calendar__column {
+  flex: 1 1 0;
+  min-inline-size: 0;
+  display: grid;
+  grid-auto-rows: var(--spa-admin-slot-height);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-inline-end: 1px solid var(--spa-color-border);
+}
+
+.spa-admin-calendar__column:last-child {
+  border-inline-end: 0;
+}
+
+.spa-admin-calendar__cell {
+  display: flex;
+  min-inline-size: 0;
+  padding: 1px;
+}
+
+.spa-admin-calendar__cell--span-2 {
+  grid-row: span 2;
+}
+
+.spa-admin-calendar__cell--span-3 {
+  grid-row: span 3;
+}
+
+.spa-admin-calendar__cell--span-4 {
+  grid-row: span 4;
+}
+
+.spa-admin-calendar__cell--span-6 {
+  grid-row: span 6;
+}
+
+/* Toute la plage affichée d'un seul tenant : un jour de fermeture en vue
+ * semaine, une journée de formation. */
+.spa-admin-calendar__cell--span-8 {
+  grid-row: span 8;
+}
+
+/* --- Créneau libre --------------------------------------------------------- */
+
+/*
+ * Un créneau libre est un bouton, pas une case morte : le geste le plus fréquent
+ * du front-desk est « le client est devant moi, je le pose à 14 h 30 ». Il n'a
+ * pas de libellé visible — la grille en serait illisible — mais un nom accessible
+ * complet en `.spa-visually-hidden` : « 14 h 30, libre, créer un rendez-vous ».
+ */
+.spa-admin-calendar__slot {
+  inline-size: 100%;
+  min-block-size: 100%;
+  padding: 0;
+  background-color: transparent;
+  border: 0;
+  border-block-start: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-xs);
+  cursor: pointer;
+}
+
+.spa-admin-calendar__slot:hover {
+  background-color: var(--spa-color-accent-soft);
+}
+
+/*
+ * Heure courante. La maquette pose le trait au début du demi-créneau en cours.
+ *
+ * `--now-offset` est délibérément HORS du préfixe `--spa-` : ce n'est pas un
+ * jeton de design mais une donnée d'exécution, la minute qu'il est, que le
+ * composant injectera sur l'élément (`style={{ '--now-offset': '40%' }}`). La
+ * distinction n'est pas cosmétique — `tokens.test.mjs` exige que tout
+ * `var(--spa-*)` employé par une feuille soit déclaré dans `tokens.css`, et une
+ * position qui change toutes les minutes n'a rien à y faire. Le repli `0` garde
+ * la règle valide tant que rien n'est injecté.
+ */
+.spa-admin-calendar__slot--now {
+  position: relative;
+}
+
+.spa-admin-calendar__slot--now::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: var(--now-offset, 0);
+  block-size: 2px;
+  background-color: var(--spa-color-now);
+}
+
+/* --- Bloc de rendez-vous --------------------------------------------------- */
+
+/*
+ * Trois informations, dans cet ordre : l'heure, le client, la prestation. C'est
+ * l'ordre dans lequel le front-desk lit un planning au téléphone. En vue semaine,
+ * la prestation disparaît faute de place — jamais le client.
+ *
+ * Le statut est porté par le liseré ET par le badge du nom accessible, jamais par
+ * la seule couleur de fond (WCAG 1.4.1).
+ */
+.spa-admin-calendar__event {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  inline-size: 100%;
+  min-inline-size: 0;
+  overflow: hidden;
+  padding-block: var(--spa-space-1);
+  padding-inline: var(--spa-space-2);
+  border: 1px solid transparent;
+  border-inline-start-width: 3px;
+  border-radius: var(--spa-radius-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+.spa-admin-calendar__event-time {
+  font-size: var(--spa-font-size-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-calendar__event-client {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spa-admin-calendar__event-service {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.spa-admin-calendar--week .spa-admin-calendar__event-service {
+  display: none;
+}
+
+.spa-admin-calendar__event--confirmed {
+  background-color: var(--spa-color-status-confirmed-surface);
+  border-inline-start-color: var(--spa-color-status-confirmed);
+}
+
+.spa-admin-calendar__event--pending {
+  background-color: var(--spa-color-status-pending-surface);
+  border-inline-start-color: var(--spa-color-status-pending);
+}
+
+.spa-admin-calendar__event--completed {
+  background-color: var(--spa-color-status-completed-surface);
+  border-inline-start-color: var(--spa-color-status-completed);
+}
+
+/* Un rendez-vous annulé reste affiché : il explique le trou dans le planning, et
+ * l'opérateur doit pouvoir le retrouver. Il est barré, pas effacé. */
+.spa-admin-calendar__event--cancelled {
+  background-color: var(--spa-color-status-cancelled-surface);
+  border-inline-start-color: var(--spa-color-status-cancelled);
+}
+
+.spa-admin-calendar__event--cancelled .spa-admin-calendar__event-client {
+  text-decoration: line-through;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-calendar__event--no-show {
+  background-color: var(--spa-color-status-no-show-surface);
+  border-inline-start-color: var(--spa-color-status-no-show);
+}
+
+/* --- Temps indisponible ---------------------------------------------------- */
+
+/*
+ * Pause, fermeture, tampon de nettoyage entre deux prestations. Hachuré et non
+ * cliquable : ce n'est pas un créneau libre, et le proposer à la réservation
+ * serait un bug. Le motif tient lieu de second repère à la couleur.
+ */
+.spa-admin-calendar__blocked {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 100%;
+  border-block-start: 1px solid var(--spa-color-border);
+  background-color: var(--spa-color-surface-sunken);
+  background-image: repeating-linear-gradient(
+    135deg,
+    var(--spa-color-border) 0 1px,
+    transparent 1px 6px
+  );
+}
+
+.spa-admin-calendar__blocked-label {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- État de chargement ---------------------------------------------------- */
+
+/*
+ * La grille reste dessinée et les blocs deviennent des silhouettes : la page
+ * garde sa hauteur, et l'opérateur reconnaît déjà la journée qui arrive. Le
+ * conteneur porte `aria-busy="true"`, l'annonce passe par `.spa-visually-hidden`.
+ */
+.spa-admin-calendar--loading .spa-admin-calendar__column {
+  pointer-events: none;
+}
+
+.spa-admin-calendar__skeleton-event {
+  inline-size: 100%;
+  block-size: 100%;
+  border-radius: var(--spa-radius-sm);
+}
+
+/* --- État vide ------------------------------------------------------------- */
+
+/*
+ * Vide n'est pas une panne : le salon est peut-être fermé ce jour-là, ou la
+ * journée est simplement encore libre. Le texte le dit et propose l'action —
+ * un écran vide sans explication est un bug d'UX (skill web-frontend §6).
+ */
+.spa-admin-calendar--empty .spa-admin-calendar__body {
+  display: block;
+  padding: var(--spa-space-8) var(--spa-space-4);
+}

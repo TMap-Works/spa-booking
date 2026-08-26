@@ -17,10 +17,8 @@
  * couleur littérale hors de ce fichier est un bug — `tests/tokens.test.mjs` le
  * vérifie.
  *
- * Les deux suites se lancent par `node --test apps/web/tests/`. Elles ne sont
- * pas encore rattachées à `npm run test:unit` : cela demanderait d'écrire dans
- * `apps/web/package.json`, hors de l'empreinte de l'issue #29 (voir le README du
- * design system, § « Vérifications »).
+ * Les suites se lancent par `node --test apps/web/tests/`, et la CI les exécute
+ * via `npm run test:unit` (rattachement fait par #244).
  *
  * Personnalisation par tenant — redéfinir la rampe de marque suffit, les rôles
  * sémantiques suivent par cascade :
@@ -92,6 +90,10 @@
   --spa-color-surface-raised: var(--spa-palette-neutral-50);
   --spa-color-surface-sunken: var(--spa-palette-neutral-100);
   --spa-color-surface-inverse: var(--spa-palette-neutral-900);
+  /* Surface sombre surélevée : l'élément de navigation actif de la barre latérale
+   * du tableau de bord admin. Sans elle, un survol s'écrirait en blanc translucide
+   * littéral, hors de la couche de jetons. */
+  --spa-color-surface-inverse-raised: var(--spa-palette-neutral-800);
   --spa-color-scrim: var(--spa-palette-scrim);
 
   /* Texte */
@@ -99,6 +101,9 @@
   --spa-color-text-muted: var(--spa-palette-neutral-600);
   --spa-color-text-subtle: var(--spa-palette-neutral-500);
   --spa-color-text-inverse: var(--spa-palette-neutral-0);
+  /* Équivalent de `text-muted` sur fond sombre — libellés secondaires de la barre
+   * latérale admin (nom du salon, fuseau, rôle de l'opérateur). */
+  --spa-color-text-inverse-muted: var(--spa-palette-neutral-300);
   --spa-color-text-on-accent: var(--spa-palette-neutral-0);
 
   /* Bordures. `border` est décoratif (séparateurs, arêtes de carte) et n'est pas
@@ -114,6 +119,11 @@
   --spa-color-accent-active: var(--spa-palette-brand-700);
   --spa-color-accent-soft: var(--spa-palette-brand-50);
   --spa-color-accent-text: var(--spa-palette-brand-600);
+  /* Accent posé sur fond sombre. `--spa-color-accent` n'atteint que 3.09:1 sur
+   * `surface-inverse` : assez pour un repère non textuel, trop juste pour porter
+   * un libellé, et trop juste pour survivre à une rampe substituée. La nuance
+   * claire de la même rampe monte à 7.24:1 et peut donc porter du texte. */
+  --spa-color-accent-inverse: var(--spa-palette-brand-300);
 
   /* États */
   --spa-color-success: var(--spa-palette-green-600);
@@ -124,6 +134,32 @@
   --spa-color-danger-surface: var(--spa-palette-red-50);
   --spa-color-info: var(--spa-palette-blue-700);
   --spa-color-info-surface: var(--spa-palette-blue-50);
+
+  /* Statuts de rendez-vous — tableau de bord admin (issue #30).
+   * -------------------------------------------------------------------------
+   * Rôles distincts des rôles d'état ci-dessus, bien qu'ils empruntent les mêmes
+   * rampes aujourd'hui : « annulé » n'est pas « erreur », et « honoré » n'est pas
+   * « information ». Les fondre reviendrait à interdire de repeindre les statuts
+   * d'agenda sans repeindre les messages d'erreur.
+   *
+   * Le statut n'est jamais porté par la seule couleur (WCAG 1.4.1) : le badge
+   * affiche toujours son libellé, et le bloc du calendrier son liseré ET son
+   * texte. La couleur n'est qu'un repère de balayage. */
+  --spa-color-status-confirmed: var(--spa-palette-green-600);
+  --spa-color-status-confirmed-surface: var(--spa-palette-green-50);
+  --spa-color-status-pending: var(--spa-palette-amber-700);
+  --spa-color-status-pending-surface: var(--spa-palette-amber-50);
+  --spa-color-status-completed: var(--spa-palette-blue-700);
+  --spa-color-status-completed-surface: var(--spa-palette-blue-50);
+  --spa-color-status-cancelled: var(--spa-palette-neutral-600);
+  --spa-color-status-cancelled-surface: var(--spa-palette-neutral-100);
+  --spa-color-status-no-show: var(--spa-palette-red-600);
+  --spa-color-status-no-show-surface: var(--spa-palette-red-50);
+
+  /* Repère de l'heure courante dans le calendrier. Rôle nommé pour sa fonction
+   * et non emprunté à `--spa-color-danger` : « maintenant » n'est pas une erreur,
+   * et un salon doit pouvoir déplacer l'un sans l'autre. */
+  --spa-color-now: var(--spa-palette-red-600);
 
   /* Chargement et inertie. `skeleton-*` est décoratif : un squelette n'est pas
    * du texte, il ne porte aucune information, et l'information « ça charge »
@@ -233,4 +269,27 @@
 
   /* Cible tactile minimale (WCAG 2.5.8) — tout contrôle interactif s'y conforme. */
   --spa-target-min-size: 2.75rem;
+
+  /* ==========================================================================
+   * 7. DENSITÉ DU TABLEAU DE BORD ADMIN (issue #30)
+   * --------------------------------------------------------------------------
+   * « Le back-office est utilisé toute la journée par le front-desk : la densité
+   * d'information prime sur l'esthétique. » La densité vient d'ici — gouttières
+   * étroites, chrome minimal — et de corps de texte plus petits, jamais de cibles
+   * cliquables rétrécies : les deux alias ci-dessous en sont la garantie écrite.
+   * ========================================================================== */
+
+  --spa-admin-rail-width: 15rem;
+  --spa-admin-topbar-height: 3.5rem;
+  /* Tiroir d'édition d'un rendez-vous, à droite du calendrier. */
+  --spa-admin-panel-width: 26rem;
+
+  /* Ligne de tableau dense et maille de 30 min du calendrier. Toutes deux sont
+   * cliquables — une ligne ouvre une fiche, une maille libre ouvre la création
+   * d'un rendez-vous — donc aucune ne descend sous la cible minimale. C'est un
+   * alias et non une valeur : la densité se gagne ailleurs. */
+  --spa-admin-row-height: var(--spa-target-min-size);
+  --spa-admin-slot-height: var(--spa-target-min-size);
+  /* Colonne des heures du calendrier, à gauche de la grille. */
+  --spa-admin-time-gutter: 4.5rem;
 }

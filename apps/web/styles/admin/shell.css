@@ -1,0 +1,437 @@
+/*
+ * Admin — coquille et primitives denses
+ * =============================================================================
+ *
+ * Ce que partagent les cinq écrans du tableau de bord : la coquille (barre
+ * latérale, en-tête, contenu), la barre d'outils, le sélecteur segmenté, le
+ * badge de statut, le tableau dense, le tiroir latéral et la métrique.
+ *
+ * Tout est préfixé `.spa-admin` : le préfixe est ce qui rend visible, à la
+ * lecture d'un gabarit, qu'une classe appartient au back-office et non au
+ * parcours client. Les deux produits partagent les jetons et les six composants
+ * de base de `styles/components/`, jamais leur chrome.
+ *
+ * La barre latérale est sombre délibérément. Sur un écran regardé huit heures
+ * d'affilée, faire reculer la navigation est ce qui laisse les données occuper
+ * l'attention — la densité d'information prime sur l'esthétique (issue #30).
+ */
+
+.spa-admin {
+  display: grid;
+  grid-template-columns: var(--spa-admin-rail-width) minmax(0, 1fr);
+  min-block-size: 100vh;
+  background-color: var(--spa-color-surface-sunken);
+}
+
+/* --- Barre latérale -------------------------------------------------------- */
+
+.spa-admin__rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-6);
+  padding: var(--spa-space-4);
+  background-color: var(--spa-color-surface-inverse);
+  color: var(--spa-color-text-inverse);
+}
+
+.spa-admin__brand {
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-tight);
+}
+
+.spa-admin__nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+}
+
+.spa-admin__nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-3);
+  border-inline-start: 2px solid transparent;
+  border-radius: var(--spa-radius-sm);
+  color: var(--spa-color-text-inverse-muted);
+  font-size: var(--spa-font-size-sm);
+  text-decoration: none;
+}
+
+.spa-admin__nav-link:hover {
+  background-color: var(--spa-color-surface-inverse-raised);
+  color: var(--spa-color-text-inverse);
+}
+
+/*
+ * L'élément courant est marqué par TROIS repères — liseré, aplat, couleur — et
+ * porte `aria-current="page"`. Le sélecteur s'appuie sur l'attribut plutôt que
+ * sur une classe `--active` : l'état visuel ne peut alors pas diverger de l'état
+ * annoncé au lecteur d'écran, puisqu'il n'y a plus qu'une source.
+ */
+.spa-admin__nav-link[aria-current='page'] {
+  background-color: var(--spa-color-surface-inverse-raised);
+  border-inline-start-color: var(--spa-color-accent-inverse);
+  color: var(--spa-color-accent-inverse);
+  font-weight: var(--spa-font-weight-medium);
+}
+
+/*
+ * Pied de barre : le salon courant et son fuseau. Le fuseau est affiché en
+ * permanence et non au survol — toutes les heures du back-office sont écrites
+ * dans le fuseau du salon, et un opérateur qui consulte depuis ailleurs doit
+ * pouvoir le constater sans le chercher.
+ */
+.spa-admin__rail-footer {
+  margin-block-start: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  padding-block-start: var(--spa-space-4);
+  border-block-start: 1px solid var(--spa-color-surface-inverse-raised);
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-inverse-muted);
+}
+
+.spa-admin__rail-footer strong {
+  color: var(--spa-color-text-inverse);
+  font-weight: var(--spa-font-weight-medium);
+  font-size: var(--spa-font-size-sm);
+}
+
+/* --- Zone principale ------------------------------------------------------- */
+
+.spa-admin__main {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+}
+
+.spa-admin__topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-4);
+  min-block-size: var(--spa-admin-topbar-height);
+  padding-inline: var(--spa-space-5);
+  background-color: var(--spa-color-surface);
+  border-block-end: 1px solid var(--spa-color-border);
+}
+
+.spa-admin__title {
+  font-size: var(--spa-font-size-xl);
+  margin-inline-end: auto;
+}
+
+.spa-admin__topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+}
+
+.spa-admin__content {
+  flex: 1;
+  min-inline-size: 0;
+  padding: var(--spa-space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+}
+
+/* Liste à gauche, détail à droite — fiche client, personnel, encaissement. */
+.spa-admin__split {
+  display: grid;
+  grid-template-columns: minmax(16rem, 22rem) minmax(0, 1fr);
+  gap: var(--spa-space-4);
+  align-items: start;
+}
+
+.spa-admin__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-4);
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-lg);
+}
+
+.spa-admin__section-title {
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+/* --- Barre d'outils -------------------------------------------------------- */
+
+.spa-admin-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-2) var(--spa-space-3);
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-admin-toolbar__group {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+}
+
+.spa-admin-toolbar__spacer {
+  margin-inline-start: auto;
+}
+
+.spa-admin-toolbar__caption {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+}
+
+.spa-admin-toolbar__hint {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Sélecteur segmenté (jour / semaine) ----------------------------------- */
+
+/*
+ * Bâti sur un groupe de boutons radio natifs, avec l'entrée visuellement masquée
+ * et le libellé peint : la navigation par flèches, la sémantique de groupe et
+ * l'annonce « 1 sur 2 » viennent alors du navigateur. Une rangée de `<button>`
+ * avec `aria-pressed` obligerait à réécrire tout cela — et une rangée de `<div>`
+ * sortirait de l'ordre de tabulation.
+ */
+/* `border` et `margin` remis à zéro : le groupe est un `<fieldset>`, que le
+ * navigateur dote par défaut d'un cadre et de marges latérales. */
+.spa-admin-segmented {
+  display: inline-flex;
+  min-inline-size: 0;
+  margin: 0;
+  padding: var(--spa-space-1);
+  gap: var(--spa-space-1);
+  background-color: var(--spa-color-surface-sunken);
+  border: 0;
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-admin-segmented__option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-4);
+  /* La bordure est réservée dès le repos, transparente : sans elle, l'option
+   * cochée s'élargirait de 2 px et déplacerait sa voisine à chaque bascule. */
+  border: 1px solid transparent;
+  border-radius: var(--spa-radius-sm);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text-muted);
+  cursor: pointer;
+}
+
+.spa-admin-segmented__option:hover {
+  color: var(--spa-color-text);
+}
+
+/* L'anneau de focus suit l'entrée masquée jusqu'au libellé peint : sans cette
+ * règle, une tabulation dans le groupe ne laisserait aucune trace visible. */
+.spa-admin-segmented__input:focus-visible + .spa-admin-segmented__option {
+  outline: var(--spa-focus-ring-width) solid var(--spa-color-focus);
+  outline-offset: var(--spa-focus-ring-offset);
+}
+
+.spa-admin-segmented__input:checked + .spa-admin-segmented__option {
+  background-color: var(--spa-color-surface);
+  border-color: var(--spa-color-border-interactive);
+  color: var(--spa-color-text);
+  box-shadow: var(--spa-shadow-sm);
+}
+
+/* --- Badge de statut ------------------------------------------------------- */
+
+/*
+ * Le libellé est toujours écrit. La couleur ne fait que rendre le balayage
+ * rapide — un planning se lit d'un coup d'œil, pas mot à mot — mais elle ne
+ * porte jamais l'information seule (WCAG 1.4.1).
+ */
+.spa-admin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-1);
+  padding-block: var(--spa-space-1);
+  padding-inline: var(--spa-space-2);
+  border-radius: var(--spa-radius-full);
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-medium);
+  white-space: nowrap;
+}
+
+.spa-admin-badge--confirmed {
+  background-color: var(--spa-color-status-confirmed-surface);
+  color: var(--spa-color-status-confirmed);
+}
+
+.spa-admin-badge--pending {
+  background-color: var(--spa-color-status-pending-surface);
+  color: var(--spa-color-status-pending);
+}
+
+.spa-admin-badge--completed {
+  background-color: var(--spa-color-status-completed-surface);
+  color: var(--spa-color-status-completed);
+}
+
+.spa-admin-badge--cancelled {
+  background-color: var(--spa-color-status-cancelled-surface);
+  color: var(--spa-color-status-cancelled);
+}
+
+.spa-admin-badge--no-show {
+  background-color: var(--spa-color-status-no-show-surface);
+  color: var(--spa-color-status-no-show);
+}
+
+/* --- Tableau dense --------------------------------------------------------- */
+
+.spa-admin-table {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-admin-table__head {
+  text-align: start;
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-text-muted);
+  padding-block: var(--spa-space-2);
+  padding-inline: var(--spa-space-2);
+  border-block-end: 1px solid var(--spa-color-border);
+  background-color: var(--spa-color-surface-raised);
+}
+
+.spa-admin-table__cell {
+  block-size: var(--spa-admin-row-height);
+  padding-inline: var(--spa-space-2);
+  border-block-end: 1px solid var(--spa-color-border);
+  vertical-align: middle;
+}
+
+/*
+ * Les montants s'alignent à droite et se composent en chiffres tabulaires : les
+ * colonnes de centimes deviennent alors comparables d'un coup d'œil. Le montant
+ * arrive formaté depuis un entier en plus petite unité et un code devise — le
+ * front n'en fait jamais l'arithmétique.
+ */
+.spa-admin-table__cell--numeric {
+  text-align: end;
+  font-variant-numeric: tabular-nums;
+}
+
+/* L'en-tête d'une colonne de montants s'aligne sur ses valeurs, sans quoi le
+ * repère visuel de la colonne se dédouble. */
+.spa-admin-table__head--numeric {
+  text-align: end;
+}
+
+.spa-admin-table__row:hover .spa-admin-table__cell {
+  background-color: var(--spa-color-surface-raised);
+}
+
+/* --- Tiroir latéral -------------------------------------------------------- */
+
+/*
+ * Le tiroir plutôt que la modale, pour l'édition d'un rendez-vous : le
+ * planning reste visible et lisible pendant la saisie. C'est ce qui permet à
+ * l'opérateur de répondre « et à 15 h, ça vous irait ? » sans fermer sa fiche.
+ * Une modale, elle, occulterait précisément l'information dont il a besoin.
+ */
+.spa-admin-panel {
+  display: flex;
+  flex-direction: column;
+  inline-size: var(--spa-admin-panel-width);
+  max-inline-size: 100%;
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-lg);
+  box-shadow: var(--spa-shadow-md);
+}
+
+.spa-admin-panel__header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-4);
+  border-block-end: 1px solid var(--spa-color-border);
+}
+
+.spa-admin-panel__title {
+  font-size: var(--spa-font-size-lg);
+  margin-inline-end: auto;
+}
+
+.spa-admin-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  padding: var(--spa-space-4);
+}
+
+.spa-admin-panel__footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-4);
+  border-block-start: 1px solid var(--spa-color-border);
+  background-color: var(--spa-color-surface-raised);
+}
+
+/* --- Métrique -------------------------------------------------------------- */
+
+.spa-admin-metric {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  padding: var(--spa-space-3);
+  background-color: var(--spa-color-surface-raised);
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-admin-metric__value {
+  font-size: var(--spa-font-size-xl);
+  font-weight: var(--spa-font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.spa-admin-metric__label {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- États partagés : chargement et vide ----------------------------------- */
+
+/*
+ * « Ça charge » et « il n'y a rien » ne sont pas le même écran. Un planning vide
+ * parce que la requête est en vol et un planning vide parce que le salon est
+ * fermé ce jour-là appellent deux réactions différentes de l'opérateur : l'un
+ * demande d'attendre, l'autre de changer de date.
+ */
+.spa-admin-skeleton-line {
+  block-size: 0.75rem;
+  inline-size: 100%;
+}
+
+.spa-admin-skeleton-line--short {
+  inline-size: 45%;
+}
+
+/* Un squelette n'est pas cliquable, même là où le contenu réel le sera. */
+[aria-busy='true'] .spa-admin-skeleton-line {
+  pointer-events: none;
+}
