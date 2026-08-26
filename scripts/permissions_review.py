@@ -34,6 +34,10 @@ d'ouvrir ce fichier, et ne dit rien de ce que `Bash` peut en faire. Autoriser
 l'abri, sans qu'aucune règle ne soit enfreinte — c'est ce qu'a montré #117. Le
 garde-fou correspondant ne se déduit pas du bloc `deny` : il tient même vide.
 
+Le rang de risque affiché est celui qu'a observé le hook, **relevé** à ce que
+l'outil rend possible : ce qui peut écrire n'est jamais annoncé comme une
+lecture, même si l'observation le prétend.
+
 Le seuil de répétition (`--threshold`, 2 par défaut) traduit la demande d'origine :
 ce qui n'a bloqué qu'une fois n'a pas fait ses preuves.
 """
@@ -85,6 +89,26 @@ FILE_WRITERS = {
 
 # Les paramètres d'une revue, réunis pour ne pas les faire circuler un par un.
 Policy = namedtuple("Policy", "allow read_denies threshold classes file_tools")
+
+
+def effective_risk(pattern, risk):
+    """Le rang de risque observé, relevé à ce que l'outil rend possible.
+
+    Le rang vient du hook d'observation, qui décrit la commande *vue*. Deux
+    raisons de ne pas s'y fier seul : un hook peut se tromper — `sed` et `echo`
+    ont longtemps figuré parmi ses lectures alors que `sed -i` réécrit sur place
+    et `echo >` écrase (#117) — et rien ne garantit que les observations lues
+    ici viennent du hook de ce dépôt.
+
+    Le plancher ne change pas ce qui est autorisé : `write` reste sûr par
+    défaut, et le garde-fou des utilitaires à portée arbitraire refuse ces
+    motifs de toute façon. Il change ce que la revue **annonce** — un `echo`
+    présenté comme une « lecture » invite à l'autoriser sans y regarder.
+    """
+    head = pattern.split()[0] if pattern else ""
+    if head in FILE_WRITERS and RISK_ORDER.get(risk, 1) < RISK_ORDER["write"]:
+        return "write"
+    return risk
 
 
 def arbitrary_file_tool(pattern):
@@ -156,6 +180,8 @@ def aggregate(records):
         example = record.get("example")
         if example and example not in entry["examples"] and len(entry["examples"]) < 3:
             entry["examples"].append(example)
+    for pattern, entry in grouped.items():
+        entry["risk"] = effective_risk(pattern, entry["risk"])
     return grouped
 
 
