@@ -13,15 +13,34 @@
  * responsabilité de la couche repository, qui est déjà la seule à connaître le
  * schéma (api-module §2). Rien de ce fichier ne doit dépendre de Prisma.
  *
- * **Écart connu avec la base, à la date de ce ticket** : `enum UserRole` ne
- * compte que `CLIENT`, `STAFF` et `ADMIN` — `MANAGER` lui manque. Les quatre
- * rôles ci-dessous sont ceux qu'exige #22 (« Rôles client, staff, manager et
- * admin »), et le contrat les pose en premier, conformément à api-module §4 :
- * un changement de contrat commence par ce paquet, les erreurs de compilation
- * qui en découlent dans `apps/*` sont la liste de travail. #22 doit donc porter
- * la migration additive `ALTER TYPE "UserRole" ADD VALUE 'MANAGER'` avant de
- * persister un compte dans ce rôle : jusque-là, `manager` est un rôle que le
- * contrat sait nommer et que la base sait encore refuser.
+ * **Les quatre rôles existent des deux côtés.** Ils sont ceux qu'exige #22
+ * (« Rôles client, staff, manager et admin »), et le contrat les a posés en
+ * premier, conformément à api-module §4 : un changement de contrat commence par
+ * ce paquet, les erreurs de compilation qui en découlent dans `apps/*` sont la
+ * liste de travail. `enum UserRole` a longtemps compté un libellé de moins ;
+ * la migration additive `20260826100000_add_manager_user_role` a refermé cet
+ * écart (#202), et `manager` est depuis un rôle que le contrat nomme *et* que la
+ * base stocke.
+ *
+ * **L'ordre de cette liste est celui de la colonne**, et pas seulement son
+ * contenu. PostgreSQL ordonne un `enum` par son ordre de déclaration, et c'est
+ * lui que rend un `orderBy` sur le rôle : la migration insère donc `MANAGER`
+ * *avant* `ADMIN` plutôt qu'en queue d'énumération, pour que le tri de la base
+ * suive la hiérarchie de `USER_ROLE_RANK`.
+ *
+ * **Deux témoins, et aucun ne couvre l'autre.** `apps/api` ne dépend pas encore
+ * de ce paquet : il porte sa propre liste, en majuscules
+ * (`apps/api/src/modules/identity/roles.ts`), et c'est elle — pas celle-ci — que
+ * `apps/api/src/modules/identity/__tests__/roles.spec.ts` compare à
+ * l'énumération générée par Prisma, contenu **et** ordre, avant de relire le SQL
+ * appliqué pour vérifier le voisinage `MANAGER` / `ADMIN` que le client généré ne
+ * peut pas trahir. De ce côté-ci, seul `__tests__/constants.spec.ts` fige le
+ * contenu et l'ordre de la liste ci-dessous ; rien ne les confronte
+ * automatiquement au schéma. Un cinquième rôle ajouté ici se propage donc à la
+ * main : cette liste, celle d'`apps/api`, puis la migration additive — et c'est
+ * la suite d'`apps/api` qui rougit s'il manque la dernière. Le jour où `apps/api`
+ * importera `@spa/shared`, les deux listes n'en feront plus qu'une et le témoin
+ * vaudra pour les deux.
  */
 
 export const USER_ROLES = ['client', 'staff', 'manager', 'admin'] as const;
