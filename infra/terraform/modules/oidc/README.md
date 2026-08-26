@@ -223,7 +223,9 @@ Liste complète et justifications dans `variables.tf`.
   un `AccessDenied` au déploiement, pas une faille — mais le message ne le dira
   pas clairement. C'est précisément ce qui est arrivé au **cluster** (#198), d'où
   son passage en entrée explicite ; les autres noms tiennent tant que
-  `modules/ecr` et `modules/ecs-service` gardent leur préfixe `spa-{env}-`.
+  `modules/ecr` et `modules/ecs-service` gardent leur préfixe `spa-{env}-` — et,
+  pour la seule famille de migration, tant que `envs/<env>/main.tf`, qui la
+  déclare faute de module, garde la sienne.
 
 ## Ce que le module ne corrige pas
 
