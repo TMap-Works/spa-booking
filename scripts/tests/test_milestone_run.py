@@ -168,8 +168,13 @@ def digest(name, milestone, finished=False, signal="run", active=False):
             "finished": finished, "active": active}
 
 
-def row(title, due, open_issues=0, closed=0, state="open", run=None):
+def row(title, due, open_issues=0, closed=0, state="open", run=None, todo=None):
+    """Une ligne de `survey`. `todo` — les issues produit — vaut `open` par
+    défaut : c'est ce que fait `survey` quand GitHub ne répond pas sur les
+    labels, et cela laisse les cas historiques dire exactement ce qu'ils
+    disaient."""
     return {"title": title, "state": state, "due": due, "open": open_issues,
+            "todo": open_issues if todo is None else todo,
             "closed": closed, "run": run}
 
 
@@ -235,6 +240,30 @@ class QuelJalon(unittest.TestCase):
         pick, why = run_mod.recommend(rows)
         self.assertIsNone(pick)
         self.assertIn("aucun jalon", why)
+
+    def test_un_jalon_qui_n_a_plus_que_de_l_outillage_n_est_pas_propose(self):
+        """Le run ne dispatche que `nature:projet` : proposer un jalon qui n'a
+        plus que des chantiers d'outillage l'enverrait ouvrir un run sur un plan
+        vide, et masquerait le jalon suivant, qui a du vrai travail."""
+        rows = [row("S1", "2026-08-28", open_issues=12, todo=0),
+                row("S2", "2026-09-04", open_issues=9, todo=9)]
+        pick, why = run_mod.recommend(rows)
+        self.assertEqual(pick["title"], "S2")
+        self.assertIn("échéance", why)
+
+    def test_plus_que_de_l_outillage_partout_ne_propose_rien(self):
+        rows = [row("S1", "2026-08-28", open_issues=12, todo=0)]
+        pick, why = run_mod.recommend(rows)
+        self.assertIsNone(pick)
+        self.assertIn("produit", why)
+
+    def test_un_run_inacheve_se_reprend_meme_sans_ticket_produit(self):
+        """La reprise passe avant tout décompte : le run a des worktrees vivants
+        et des PR ouvertes qu'un abandon laisserait derrière lui."""
+        rows = [row("S1", "2026-08-28", open_issues=3, todo=0,
+                    run=digest("s1-x", "S1"))]
+        self.assertTrue(run_mod.workable(rows[0]))
+        self.assertEqual(run_mod.recommend(rows)[0]["title"], "S1")
 
 
 class SansClavier(unittest.TestCase):
@@ -310,9 +339,10 @@ class SansClavier(unittest.TestCase):
 class Tableau(unittest.TestCase):
     """`survey` — les jalons de GitHub et les runs du disque, sur une même ligne."""
 
-    def survey(self, milestones, digests=(), error=None):
+    def survey(self, milestones, digests=(), error=None, backlog=None):
         dirs = [Path(str(index)) for index in range(len(digests))]
         with mock.patch.object(run_mod, "gh_json", return_value=(milestones, error)), \
+             mock.patch.object(run_mod, "project_backlog", return_value=backlog), \
              mock.patch.object(run_mod, "run_dirs", return_value=dirs), \
              mock.patch.object(run_mod, "run_digest", side_effect=list(digests)):
             return run_mod.survey()
@@ -359,6 +389,73 @@ class Tableau(unittest.TestCase):
     def test_un_run_illisible_est_ignore(self):
         rows, _ = self.survey([self.milestone("S1", "2026-08-28")], [None])
         self.assertIsNone(rows[0]["run"])
+
+    def test_le_decompte_a_derouler_ne_compte_que_le_produit(self):
+        rows, _ = self.survey([self.milestone("S1", "2026-08-28", opened=12)],
+                              backlog={"S1 — Fondations": 3, "S1": 3})
+        self.assertEqual(rows[0]["open"], 12)
+        self.assertEqual(rows[0]["todo"], 3)
+
+    def test_un_jalon_absent_du_decompte_n_a_plus_rien_a_derouler(self):
+        """Aucune issue produit ouverte : le jalon n'apparaît pas dans le
+        décompte, et son `todo` vaut zéro — pas son nombre d'issues ouvertes."""
+        rows, _ = self.survey([self.milestone("S1", "2026-08-28", opened=12)],
+                              backlog={"S2 — Réservation": 4})
+        self.assertEqual(rows[0]["todo"], 0)
+
+    def test_github_muet_sur_les_labels_retombe_sur_le_decompte_du_jalon(self):
+        """Surestimer est le seul sens acceptable : un jalon proposé à tort se
+        voit au premier plan vide, un jalon caché à tort ne se voit jamais."""
+        rows, _ = self.survey([self.milestone("S1", "2026-08-28", opened=12)],
+                              backlog=None)
+        self.assertEqual(rows[0]["todo"], 12)
+
+
+class DecompteProduit(unittest.TestCase):
+    """`project_backlog` — combien d'issues `nature:projet` restent, par jalon."""
+
+    def backlog(self, payload, error=None):
+        with mock.patch.object(run_mod, "gh_json", return_value=(payload, error)):
+            return run_mod.project_backlog()
+
+    def test_les_issues_se_comptent_par_jalon(self):
+        counts = self.backlog([
+            {"number": 1, "milestone": {"title": "S1 — Fondations"}},
+            {"number": 2, "milestone": {"title": "S1 — Fondations"}},
+            {"number": 3, "milestone": {"title": "S2 — Réservation"}},
+        ])
+        self.assertEqual(counts, {"S1 — Fondations": 2, "S2 — Réservation": 1})
+
+    def test_ce_que_le_plan_ecarte_d_office_ne_compte_pas(self):
+        """`qualify()` écarte tracking, post-mvp et épiques avant même de
+        regarder la nature : les compter ferait proposer un jalon dont le plan
+        sort vide — exactement ce que ce décompte existe pour éviter."""
+        counts = self.backlog([
+            {"number": 1, "milestone": {"title": "S1"},
+             "labels": [{"name": "tracking"}]},
+            {"number": 2, "milestone": {"title": "S1"},
+             "labels": [{"name": "type:epic"}]},
+            {"number": 3, "milestone": {"title": "S1"},
+             "labels": [{"name": "post-mvp"}]},
+            {"number": 4, "milestone": {"title": "S1"},
+             "labels": [{"name": "type:feature"}]},
+        ])
+        self.assertEqual(counts, {"S1": 1})
+
+    def test_une_page_pleine_rend_none_plutot_qu_un_decompte_tronque(self):
+        """Tronquer sous-estimerait, et un jalon caché à tort ne se voit jamais.
+        `None` renvoie l'appelant sur le décompte du jalon, qui surestime."""
+        page = [{"number": n, "milestone": {"title": "S1"}, "labels": []}
+                for n in range(run_mod.BACKLOG_LIMIT)]
+        self.assertIsNone(self.backlog(page))
+
+    def test_une_issue_sans_jalon_ne_compte_pour_aucun(self):
+        self.assertEqual(self.backlog([{"number": 1, "milestone": None}]), {})
+
+    def test_github_muet_rend_none_plutot_que_zero(self):
+        """Zéro voudrait dire « rien à dérouler » et arrêterait le jalon ;
+        `None` dit « je ne sais pas », et l'appelant retombe sur GitHub."""
+        self.assertIsNone(self.backlog(None, error="gh indisponible"))
 
 
 class RunAbime(unittest.TestCase):
