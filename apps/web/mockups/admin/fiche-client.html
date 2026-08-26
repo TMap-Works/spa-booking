@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Maquette — Fiche client, notes et historique</title>
+    <link rel="stylesheet" href="../../styles/index.css" />
+    <link rel="stylesheet" href="../../styles/admin/index.css" />
+  </head>
+  <body>
+    <div class="spa-admin">
+      <nav class="spa-admin__rail" aria-label="Sections du tableau de bord">
+        <span class="spa-admin__brand">Maison Lotus</span>
+        <div class="spa-admin__nav">
+          <a class="spa-admin__nav-link" href="calendrier.html">Planning</a>
+          <a class="spa-admin__nav-link" href="rendez-vous.html">Rendez-vous</a>
+          <a class="spa-admin__nav-link" href="fiche-client.html" aria-current="page">Clients</a>
+          <a class="spa-admin__nav-link" href="personnel.html">Personnel</a>
+          <a class="spa-admin__nav-link" href="encaissement.html">Encaissement</a>
+        </div>
+        <div class="spa-admin__rail-footer">
+          <strong>Maison Lotus — Antananarivo</strong>
+          <span>Fuseau du salon : Indian/Antananarivo (UTC+3)</span>
+          <span>Connectée : Hasina R., gérante</span>
+        </div>
+      </nav>
+
+      <div class="spa-admin__main">
+        <header class="spa-admin__topbar">
+          <h1 class="spa-admin__title">Clients</h1>
+          <div class="spa-admin__topbar-actions">
+            <button class="spa-button spa-button--accent" type="button">
+              <span class="spa-button__label">Nouveau client</span>
+            </button>
+          </div>
+        </header>
+
+        <main class="spa-admin__content">
+          <div class="spa-admin__split">
+            <!--
+              LISTE. Elle ne disparaît pas au profit du détail : le front-desk
+              cherche un client pendant qu'il l'a au téléphone. Le fichier client
+              appartient au salon — aucune recherche ne traverse la frontière
+              d'un tenant.
+            -->
+            <section class="spa-admin__section" aria-labelledby="titre-liste">
+              <h2 class="spa-admin__section-title" id="titre-liste">Fichier client</h2>
+
+              <div class="spa-field">
+                <label class="spa-field__label spa-visually-hidden" for="recherche-client">
+                  Rechercher un client
+                </label>
+                <input
+                  id="recherche-client"
+                  class="spa-field__control"
+                  type="search"
+                  value="rako"
+                  aria-describedby="recherche-client-hint"
+                />
+                <p id="recherche-client-hint" class="spa-field__hint">
+                  Nom ou téléphone — 3 résultats
+                </p>
+              </div>
+
+              <ul class="spa-admin-client-list">
+                <li>
+                  <button class="spa-admin-client-list__item" type="button" aria-current="true">
+                    <span class="spa-admin-client-list__name">Fara Rakotoson</span>
+                    <span class="spa-admin-client-list__meta">+261 34 12 345 67 · 12 visites</span>
+                  </button>
+                </li>
+                <li>
+                  <button class="spa-admin-client-list__item" type="button">
+                    <span class="spa-admin-client-list__name">Naina Rakoto</span>
+                    <span class="spa-admin-client-list__meta">+261 33 98 765 43 · 4 visites</span>
+                  </button>
+                </li>
+                <li>
+                  <button class="spa-admin-client-list__item" type="button">
+                    <span class="spa-admin-client-list__name">Solo Rakotomalala</span>
+                    <span class="spa-admin-client-list__meta">+261 32 44 556 67 · 1 visite</span>
+                  </button>
+                </li>
+              </ul>
+            </section>
+
+            <!-- FICHE. -->
+            <section class="spa-admin__section" aria-labelledby="titre-fiche">
+              <h2 class="spa-admin__section-title spa-visually-hidden" id="titre-fiche">
+                Fiche de Fara Rakotoson
+              </h2>
+
+              <div class="spa-admin-client">
+                <div class="spa-admin-client__header">
+                  <div class="spa-admin-client__identity">
+                    <p class="spa-admin-client__name">Fara Rakotoson</p>
+                    <div class="spa-admin-client__contact">
+                      <span class="spa-admin-client__contact-item">+261 34 12 345 67</span>
+                      <span class="spa-admin-client__contact-item">fara.rakotoson@example.mg</span>
+                      <span class="spa-admin-client__contact-item">Cliente depuis mars 2025</span>
+                    </div>
+                  </div>
+                  <button class="spa-button spa-button--neutral" type="button">
+                    <span class="spa-button__label">Modifier</span>
+                  </button>
+                  <button class="spa-button spa-button--accent" type="button">
+                    <span class="spa-button__label">Prendre rendez-vous</span>
+                  </button>
+                </div>
+
+                <div class="spa-notification spa-notification--warning" role="status">
+                  <span class="spa-notification__icon" aria-hidden="true">!</span>
+                  <div class="spa-notification__content">
+                    <p class="spa-notification__title">2 absences non prévenues sur les 12 derniers mois</p>
+                    <p>À prendre en compte avant d’accorder un créneau de forte affluence.</p>
+                  </div>
+                </div>
+
+                <div class="spa-admin-client__metrics">
+                  <div class="spa-admin-metric">
+                    <span class="spa-admin-metric__value">12</span>
+                    <span class="spa-admin-metric__label">Visites honorées</span>
+                  </div>
+                  <div class="spa-admin-metric">
+                    <span class="spa-admin-metric__value">2</span>
+                    <span class="spa-admin-metric__label">Absences non prévenues</span>
+                  </div>
+                  <div class="spa-admin-metric">
+                    <span class="spa-admin-metric__value">95 000 MGA</span>
+                    <span class="spa-admin-metric__label">Panier moyen</span>
+                  </div>
+                  <div class="spa-admin-metric">
+                    <span class="spa-admin-metric__value">12 août 2026</span>
+                    <span class="spa-admin-metric__label">Dernière visite</span>
+                  </div>
+                </div>
+
+                <!--
+                  NOTES INTERNES. « Interne » est écrit, pas seulement suggéré par
+                  une teinte : c'est la seule garantie qu'un opérateur qui tourne
+                  son écran vers la cliente sait ce qu'il montre.
+                -->
+                <div class="spa-admin-notes">
+                  <h3 class="spa-admin__section-title">
+                    Notes
+                    <span class="spa-admin-notes__private">Internes au salon</span>
+                  </h3>
+
+                  <div class="spa-field">
+                    <label class="spa-field__label spa-visually-hidden" for="note-nouvelle">
+                      Ajouter une note interne
+                    </label>
+                    <textarea
+                      id="note-nouvelle"
+                      class="spa-field__control"
+                      rows="2"
+                      aria-describedby="note-nouvelle-hint"
+                    ></textarea>
+                    <p id="note-nouvelle-hint" class="spa-field__hint">
+                      Jamais transmise à la cliente, ni dans un e-mail, ni dans un SMS.
+                    </p>
+                  </div>
+
+                  <ul class="spa-admin-notes__list">
+                    <li class="spa-admin-notes__item">
+                      <div class="spa-admin-notes__meta">
+                        <span>Hasina R.</span>
+                        <span>12 août 2026, 11:40</span>
+                      </div>
+                      <p class="spa-admin-notes__body">
+                        Peau réactive — éviter les huiles parfumées, préférer l’amande douce.
+                      </p>
+                    </li>
+                    <li class="spa-admin-notes__item">
+                      <div class="spa-admin-notes__meta">
+                        <span>Tiana A.</span>
+                        <span>3 juin 2026, 16:05</span>
+                      </div>
+                      <p class="spa-admin-notes__body">
+                        Préfère les rendez-vous de fin de journée, arrive souvent 10 min en avance.
+                      </p>
+                    </li>
+                  </ul>
+                </div>
+
+                <!--
+                  HISTORIQUE. Annulations et absences y figurent : c'est
+                  exactement ce qu'on vient chercher avant d'accorder un créneau
+                  du samedi matin.
+                -->
+                <div>
+                  <h3 class="spa-admin__section-title">Historique</h3>
+                  <ol class="spa-admin-history">
+                    <li class="spa-admin-history__item">
+                      <span class="spa-admin-history__date">12 août 2026</span>
+                      <span class="spa-admin-history__body">
+                        <span class="spa-admin-history__service">Soin visage — 90 min</span>
+                        <span class="spa-admin-history__practitioner">avec Hasina</span>
+                        <span class="spa-admin-badge spa-admin-badge--completed">Honoré</span>
+                      </span>
+                      <span class="spa-admin-history__amount">180 000 MGA</span>
+                    </li>
+                    <li class="spa-admin-history__item">
+                      <span class="spa-admin-history__date">28 juillet 2026</span>
+                      <span class="spa-admin-history__body">
+                        <span class="spa-admin-history__service">Massage suédois — 60 min</span>
+                        <span class="spa-admin-history__practitioner">avec Njara</span>
+                        <span class="spa-admin-badge spa-admin-badge--no-show">Non présentée</span>
+                      </span>
+                      <span class="spa-admin-history__amount spa-admin-history__amount--void">120 000 MGA</span>
+                    </li>
+                    <li class="spa-admin-history__item">
+                      <span class="spa-admin-history__date">3 juin 2026</span>
+                      <span class="spa-admin-history__body">
+                        <span class="spa-admin-history__service">Coupe + brushing</span>
+                        <span class="spa-admin-history__practitioner">avec Tiana</span>
+                        <span class="spa-admin-badge spa-admin-badge--cancelled">Annulé</span>
+                      </span>
+                      <span class="spa-admin-history__amount spa-admin-history__amount--void">60 000 MGA</span>
+                    </li>
+                    <li class="spa-admin-history__item">
+                      <span class="spa-admin-history__date">14 mai 2026</span>
+                      <span class="spa-admin-history__body">
+                        <span class="spa-admin-history__service">Rituel corps — 120 min</span>
+                        <span class="spa-admin-history__practitioner">avec Fanja</span>
+                        <span class="spa-admin-badge spa-admin-badge--completed">Honoré</span>
+                      </span>
+                      <span class="spa-admin-history__amount">240 000 MGA</span>
+                    </li>
+                  </ol>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <!-- ÉTAT DE CHARGEMENT. -->
+          <section class="spa-admin__section" aria-labelledby="titre-client-chargement">
+            <h2 class="spa-admin__section-title" id="titre-client-chargement">État de chargement</h2>
+
+            <div class="spa-admin-client" aria-busy="true">
+              <p class="spa-visually-hidden">Chargement de la fiche client…</p>
+              <span class="spa-admin-client__skeleton-title spa-skeleton"></span>
+              <div class="spa-admin-client__metrics">
+                <div class="spa-admin-metric">
+                  <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
+                  <span class="spa-admin-metric__label">Visites honorées</span>
+                </div>
+                <div class="spa-admin-metric">
+                  <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
+                  <span class="spa-admin-metric__label">Absences non prévenues</span>
+                </div>
+                <div class="spa-admin-metric">
+                  <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
+                  <span class="spa-admin-metric__label">Panier moyen</span>
+                </div>
+              </div>
+              <ul class="spa-admin-notes__list">
+                <li class="spa-admin-notes__item">
+                  <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
+                  <span class="spa-admin-skeleton-line spa-skeleton"></span>
+                </li>
+              </ul>
+            </div>
+          </section>
+
+          <!--
+            ÉTAT VIDE. Une fiche neuve n'a ni note ni historique — et ce n'est
+            pas une anomalie. Les deux zones le disent séparément, parce qu'elles
+            appellent deux gestes différents.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-client-vide">
+            <h2 class="spa-admin__section-title" id="titre-client-vide">État vide — cliente créée à l’instant</h2>
+
+            <div class="spa-admin-client">
+              <div class="spa-admin-client__header">
+                <div class="spa-admin-client__identity">
+                  <p class="spa-admin-client__name">Hanta Nirina</p>
+                  <div class="spa-admin-client__contact">
+                    <span class="spa-admin-client__contact-item">+261 34 55 667 78</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="spa-admin-notes">
+                <h3 class="spa-admin__section-title">
+                  Notes
+                  <span class="spa-admin-notes__private">Internes au salon</span>
+                </h3>
+                <div class="spa-empty-state spa-empty-state--inline">
+                  <p class="spa-empty-state__title">Aucune note</p>
+                  <p class="spa-empty-state__description">
+                    Préférences, allergies, sensibilités : ce qui aide à mieux recevoir
+                    la prochaine fois se note ici.
+                  </p>
+                </div>
+              </div>
+
+              <div>
+                <h3 class="spa-admin__section-title">Historique</h3>
+                <div class="spa-empty-state">
+                  <p class="spa-empty-state__title">Aucune visite pour l’instant</p>
+                  <p class="spa-empty-state__description">
+                    L’historique se remplit à partir du premier rendez-vous honoré.
+                  </p>
+                  <button class="spa-button spa-button--accent" type="button">
+                    <span class="spa-button__label">Prendre le premier rendez-vous</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>
