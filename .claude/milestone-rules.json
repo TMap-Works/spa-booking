@@ -17,39 +17,141 @@
     "Corriger ici plutôt qu'à la main dans le plan : la correction sert au prochain",
     "passage, et la revue porte sur un fichier versionné."
   ],
-
   "resources": {
-    "10": ["infra/terraform/bootstrap"],
-    "11": ["infra/terraform/modules/network", "infra/terraform/envs"],
-    "12": ["infra/terraform/modules/database", "infra/terraform/modules/cache"],
-    "13": ["infra/terraform/modules/ecs-service"],
-    "14": ["infra/terraform/modules/oidc", "ci:workflows"],
-    "15": ["ci:workflows", "docker"],
-    "16": ["infra/terraform/envs", "ci:workflows"],
-    "17": ["infra/terraform/modules/budgets"],
-    "18": ["api/core"],
-    "26": ["contracts:shared"],
-    "108": ["docs/adr"],
-    "117": ["scripts/permissions"],
-    "128": ["scripts/tests"],
-    "129": ["ci:workflows", "scripts/pr-gate"],
-    "154": ["ci:workflows", "scripts/tests/automerge"],
-    "155": ["scripts/milestone-plan", "scripts/tests/plan"],
-    "156": ["scripts/milestone-supervise", "scripts/pr-gate", "scripts/tests/gate"]
+    "10": [
+      "infra/terraform/bootstrap"
+    ],
+    "11": [
+      "infra/terraform/modules/network",
+      "infra/terraform/envs"
+    ],
+    "12": [
+      "infra/terraform/modules/database",
+      "infra/terraform/modules/cache"
+    ],
+    "13": [
+      "infra/terraform/modules/ecs-service"
+    ],
+    "14": [
+      "infra/terraform/modules/oidc",
+      "ci:workflows"
+    ],
+    "15": [
+      "ci:workflows",
+      "docker",
+      "infra/terraform/modules/ecr"
+    ],
+    "16": [
+      "infra/terraform/envs",
+      "ci:workflows"
+    ],
+    "17": [
+      "infra/terraform/modules/budgets"
+    ],
+    "18": [
+      "api/core"
+    ],
+    "26": [
+      "contracts:shared"
+    ],
+    "108": [
+      "docs/adr"
+    ],
+    "117": [
+      "scripts/permissions"
+    ],
+    "128": [
+      "scripts/tests"
+    ],
+    "129": [
+      "ci:workflows",
+      "scripts/pr-gate"
+    ],
+    "154": [
+      "ci:workflows",
+      "scripts/tests/automerge"
+    ],
+    "155": [
+      "scripts/milestone-plan",
+      "scripts/tests/plan"
+    ],
+    "156": [
+      "scripts/milestone-supervise",
+      "scripts/pr-gate",
+      "scripts/tests/gate"
+    ],
+    "21": [
+      "api/identity",
+      "db:schema"
+    ],
+    "137": [
+      "scripts/permissions"
+    ],
+    "133": [
+      "scripts/milestone-plan",
+      "scripts/pr-gate"
+    ],
+    "175": [
+      "scripts/milestone-run"
+    ],
+    "177": [
+      "scripts/worktree-gc"
+    ],
+    "179": [
+      ".claude/settings"
+    ],
+    "131": [
+      "scripts/milestone-supervise"
+    ],
+    "167": [
+      ".claude/commands"
+    ],
+    "178": [
+      "scripts/worktree-gc"
+    ],
+    "180": [
+      "scripts/milestone-run",
+      "scripts/milestone-supervise",
+      ".claude/commands",
+      ".claude/settings"
+    ]
   },
-
   "depends": {
-    "11": [10],
-    "12": [11],
-    "13": [11],
-    "14": [10],
-    "15": [18],
-    "16": [11, 12, 13, 14, 15],
-    "17": [10],
-    "19": [18],
-    "128": [129]
+    "11": [
+      10
+    ],
+    "12": [
+      11
+    ],
+    "13": [
+      11
+    ],
+    "14": [
+      10
+    ],
+    "15": [
+      18
+    ],
+    "16": [
+      11,
+      12,
+      13,
+      14,
+      15
+    ],
+    "17": [
+      10
+    ],
+    "19": [
+      18
+    ],
+    "128": [
+      129
+    ],
+    "21": [
+      26
+    ]
   },
-
   "why": {
     "11": "aucun module Terraform ne s'applique sans backend d'état distant",
     "12": "les sous-réseaux et groupes de sécurité viennent du module network",
@@ -59,6 +161,7 @@
     "16": "le déploiement de bout en bout assemble tous les modules et la CI",
     "17": "les budgets s'écrivent dans l'état Terraform distant",
     "19": "le schéma Prisma se pose dans le squelette NestJS, pas l'inverse",
-    "128": "le harnais teste les décisions de pr_gate.py que #129 réécrit — l'écrire avant figerait le comportement fautif"
+    "128": "le harnais teste les décisions de pr_gate.py que #129 réécrit — l'écrire avant figerait le comportement fautif",
+    "21": "l'authentification consomme les DTO, l'enumeration de roles et les codes d'erreur de packages/shared"
   }
 }

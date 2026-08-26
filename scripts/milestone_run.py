@@ -457,6 +457,70 @@ def replay(run, events, control):
     return tickets
 
 
+def leg_start():
+    """Sommes-nous au démarrage d'une étape de reprise automatique ?
+
+    Le superviseur lance chaque vague dans un `claude -p` neuf, et **tous les
+    agents de l'étape précédente sont morts avec le processus qui les portait**.
+    À cet instant précis, aucun agent ne tient de worktree : un ticket resté
+    `running` n'est donc pas un ticket en cours, c'est un ticket abandonné.
+
+    Le distinguer compte, parce que c'est l'inverse du cas #130 — là, un agent
+    était vivant et on lui a pris son worktree. Ici personne ne travaille, et
+    ne pas requeuer fige la vague pour toujours : `gate` ne lance que des
+    `pending`, si bien qu'une étape entière n'a plus rien à faire. C'est ce qui
+    a coûté deux étapes à vide dans la nuit du 25 août (#180).
+
+    Le worktree, lui, n'est pas détruit : il porte le travail déjà fait, et
+    l'agent relancé est envoyé dedans (voir `milestone.md`, phase 3).
+
+    `SPA_LEG_START` est le signal propre, posé par `milestone_supervise.py` sur
+    **chaque** étape. `SPA_UNATTENDED` n'est qu'un repli : le superviseur ne la
+    pose que hors `--no-merge`, si bien qu'un jalon armé en `--no-merge` — le
+    mode recommandé pour un jalon sensible — n'aurait jamais requeué ses agents
+    morts, et retrouverait la vague figée de #180.
+    """
+    for name in ("SPA_LEG_START", "SPA_UNATTENDED"):
+        if os.environ.get(name, "").strip().lower() not in ("", "0", "false", "no"):
+            return True
+    return False
+
+
+def resume_context(number, worktrees):
+    """Où reprendre un ticket déjà entamé — worktree, branche, travail présent.
+
+    Rendue à l'orchestrateur par `gate`, cette ligne est ce qui empêche l'agent
+    relancé de repartir d'un worktree vierge et de perdre le travail du
+    précédent.
+    """
+    found = worktrees.get(number)
+    if not found:
+        return None
+    detail = []
+    ahead = git_lines(["log", "--oneline", f"origin/develop..{found['branch']}"])
+    if ahead:
+        detail.append(f"{len(ahead)} commit(s)")
+    dirty = git_lines(["status", "--porcelain"], cwd=found["path"])
+    if dirty:
+        detail.append(f"{len(dirty)} fichier(s) non commités")
+    if not detail:
+        detail.append("rien encore posé")
+    return {"path": found["path"], "branch": found["branch"],
+            "detail": ", ".join(detail)}
+
+
+def git_lines(args, cwd=None):
+    try:
+        proc = subprocess.run(["git"] + args, cwd=cwd or ROOT, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace",
+                              timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if proc.returncode != 0:
+        return []
+    return [line for line in proc.stdout.splitlines() if line.strip()]
+
+
 def fallen_tickets(tickets):
     """Les tickets tombés, du plus petit numéro au plus grand — la définition
     unique de « en échec » que gate, status et watch partagent."""
@@ -801,6 +865,15 @@ def cmd_reconcile(args):
         print("sonde locale muette (" + " ; ".join(PROBE_FAILURES) + ") — les "
               "tickets `running` sont laissés tels quels", file=sys.stderr)
 
+    # Au démarrage d'une étape de reprise automatique, aucun agent de l'étape
+    # précédente n'a survécu : un `running` y est un abandon, pas un travail en
+    # cours. Une sonde muette suspend ce raisonnement comme le reste — sans
+    # certitude sur l'état local, on ne fait reculer personne.
+    depart = sondes_sures and (getattr(args, "leg_start", False) or leg_start())
+    if depart:
+        print("démarrage d'étape : les tickets restés `running` sont repris "
+              "dans leur worktree existant")
+
     corrections = []
     for number, ticket in sorted(pending.items()):
         pr = carried.get(number)
@@ -815,7 +888,16 @@ def cmd_reconcile(args):
             target, why = "pr_open", f"PR #{pr['number']} ouverte"
         elif branch:
             target, why = "running", f"branche {branch} poussée, aucune PR"
-        elif worktree:
+        elif worktree and ticket["status"] in BAD:
+            # Un ticket tombé a été **jugé**, pas abandonné : son worktree ne dit
+            # rien de plus que ce que l'agent a déjà journalisé. Le déplacer —
+            # vers `running` comme vers `pending` — effacerait le seul état que
+            # la pause sur erreur regarde : `gate` ne retient que ce qui est
+            # `failed` ou `blocked`, et un ticket qui échoue à chaque étape
+            # repartirait indéfiniment sans que personne soit consulté. C'est
+            # `retry N` qui le remet en file, et lui seul.
+            target, why = ticket["status"], "ticket tombé — worktree conservé"
+        elif worktree and not (depart and ticket["status"] == "running"):
             # Avant le premier push, le dépôt distant ne sait rien dire. Le
             # worktree, lui, dit qu'un agent tient le ticket — et le remettre en
             # file lancerait un second agent sur la même empreinte, dont le
@@ -823,6 +905,17 @@ def cmd_reconcile(args):
             target = "running"
             why = (f"worktree vivant sur {worktree['branch']}, rien de poussé"
                    + (" (verrouillé)" if worktree["locked"] else ""))
+        elif worktree:
+            # Au démarrage d'une étape, personne ne tient plus ce worktree : les
+            # agents de l'étape précédente sont morts avec leur `claude -p`. Le
+            # ticket doit être resté `running` pour ça — un ticket tombé est
+            # traité au-dessus. Le ticket est donc à reprendre — **dans ce worktree-là**, que l'agent
+            # relancé rejoint par `EnterWorktree(path=…)` au lieu d'en ouvrir un
+            # neuf. Ne pas le faire figeait la vague : `gate` ne lance que des
+            # `pending`, et deux étapes de suite n'ont eu personne à lancer.
+            target = "pending"
+            why = (f"agent mort avec son étape — reprendre dans {worktree['path']} "
+                   f"({worktree['branch']})")
         else:
             target, why = "pending", "ni branche ni PR ni worktree — jamais démarré"
 
@@ -1406,6 +1499,18 @@ def cmd_gate(args):
     ready = [n for n in current["numbers"] if tickets[n]["status"] == "pending"]
     print(f"vague {current['index']} · {len(ready)} ticket(s) à lancer : "
           + (", ".join(f"#{n}" for n in ready) or "aucun"))
+
+    # Un ticket déjà entamé garde son worktree et son travail. Le dire ici est
+    # ce qui empêche l'agent relancé d'ouvrir un worktree vierge et de repartir
+    # de zéro — ou, pire, de prendre l'ancien pour un vestige et de l'effacer.
+    if ready:
+        worktrees = live_worktrees()
+        for number in ready:
+            context = resume_context(number, worktrees)
+            if context:
+                print(f"  #{number} À REPRENDRE dans {context['path']} "
+                      f"({context['branch']} — {context['detail']}) : "
+                      f"EnterWorktree(path=…), ne pas en ouvrir un neuf")
     return GO
 
 

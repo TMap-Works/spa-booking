@@ -310,13 +310,17 @@ class IntentPersistence(unittest.TestCase):
             milestone="S1 — Fondations", width=3, waves_per_leg=1,
             no_merge=False, merge_sensitive={"prisma", "infra/terraform"},
             permission_mode="acceptEdits", model=None, margin=90, patience=2,
-            max_legs=40, claude="claude")
+            max_legs=40, leg_timeout=120, claude="claude")
         with mock.patch.object(sup, "INTENT", Path(tmp.name) / "supervisor.json"):
             sup.save_intent(args)
             reloaded = sup.load_intent()
         self.assertEqual(reloaded["merge_sensitive"],
                          ["infra/terraform", "prisma"])
+        # La coupure au temps se rejoue comme le reste : un superviseur
+        # ressuscité par la veille doit borner ses étapes comme le premier.
+        self.assertEqual(reloaded["leg_timeout"], 120)
         argv = sup.intent_argv(reloaded)
+        self.assertEqual(argv[argv.index("--leg-timeout") + 1], "120")
         self.assertEqual(argv[argv.index("--merge-sensitive") + 1],
                          "infra/terraform,prisma")
 

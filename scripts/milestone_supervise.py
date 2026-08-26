@@ -310,7 +310,13 @@ def save_intent(args):
         "merge_sensitive": sorted(args.merge_sensitive),
         "permission_mode": args.permission_mode, "model": args.model,
         "margin": args.margin, "patience": args.patience,
-        "max_legs": args.max_legs, "claude": args.claude, "armed": now(),
+        # `getattr` et pas `args.leg_timeout` : une intention écrite par une
+        # version antérieure, ou un Namespace composé ailleurs, n'a pas ce
+        # champ — et l'armement ne doit pas mourir sur un réglage ajouté après
+        # coup, sous peine d'emporter toute la reprise automatique.
+        "max_legs": args.max_legs,
+        "leg_timeout": getattr(args, "leg_timeout", 120),
+        "claude": args.claude, "armed": now(),
         "expires": time.time() + INTENT_TTL,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -365,6 +371,7 @@ def intent_argv(intent):
              "--margin", str(intent.get("margin", 90)),
              "--patience", str(intent.get("patience", 2)),
              "--max-legs", str(intent.get("max_legs", 40)),
+             "--leg-timeout", str(intent.get("leg_timeout", 120)),
              "--claude", intent.get("claude", "claude"), "--yes"]
     if intent.get("no_merge"):
         argv.append("--no-merge")
@@ -944,6 +951,13 @@ def run_leg(args, index):
     # prompt est ce qui rend la règle vraie même si l'orchestrateur l'oublie —
     # tout `pr_gate.py` lancé dans la vague en hérite sans avoir à y penser.
     env = dict(os.environ)
+    # Le démarrage d'une étape, dit explicitement et **toujours** : les agents de
+    # l'étape précédente sont morts avec leur `claude -p`, et `reconcile` doit
+    # pouvoir requeuer les tickets restés `running`. Séparée de `SPA_UNATTENDED`,
+    # qui ne parle que des merges et disparaît sous `--no-merge` — s'y adosser
+    # rendait le requeue inerte précisément dans le mode recommandé pour un jalon
+    # sensible, et y ramenait la vague figée de #180.
+    env["SPA_LEG_START"] = "1"
     if not args.no_merge:
         env["SPA_UNATTENDED"] = "1"
     # Et, à côté, ce que l'opérateur a autorisé d'avance. Les deux voyagent
@@ -969,6 +983,31 @@ def run_leg(args, index):
     errors = []
     pump = threading.Thread(target=drain, args=(process.stderr, errors), daemon=True)
     pump.start()
+
+    # Une étape n'a plus de fin naturelle depuis que l'orchestrateur attend ses
+    # agents (#180) : c'est ce qui permet à un ticket d'aller à son terme, mais
+    # c'est aussi ce qui fait qu'un seul agent coincé — invite de permission sans
+    # personne pour y répondre, commande qui ne rend jamais la main — retiendrait
+    # le superviseur pour toujours. Et la veille, qui le voit battre, ne le
+    # relancerait pas : le run serait mort en paraissant vivant.
+    #
+    # D'où cette coupure au temps. Elle ne juge pas le travail, elle borne
+    # l'attente : les tickets déjà avancés gardent leur worktree, et l'étape
+    # suivante les reprend là où ils en sont.
+    expired = threading.Event()
+
+    def cutoff():
+        expired.set()
+        say(f"étape sans réponse depuis {args.leg_timeout} min — arrêt de l'appel ; "
+            f"les tickets engagés seront repris à l'étape suivante", "ERROR")
+        try:
+            process.terminate()
+        except OSError:
+            pass
+
+    timer = threading.Timer(args.leg_timeout * 60, cutoff)
+    timer.daemon = True
+    timer.start()
 
     limit_info, summary, issue = None, None, None
     with open(raw_path, "w", encoding="utf-8") as raw:
@@ -1013,6 +1052,7 @@ def run_leg(args, index):
                         str(message.get("result") or "")):
                     issue = issue or "quota"
 
+    timer.cancel()
     try:
         process.wait(timeout=30)
     except subprocess.TimeoutExpired:
@@ -1024,7 +1064,13 @@ def run_leg(args, index):
     pump.join(timeout=5)
 
     stderr = "".join(errors)
-    if issue is None and process.returncode not in (0, None):
+    if expired.is_set():
+        # Nommer la panne, et ne pas la confondre avec un échec de l'appel : une
+        # étape coupée au temps n'a pas démérité, elle a été retenue. Le compteur
+        # de stérilité la compte comme les autres — trois de suite disent bien
+        # que quelque chose ne passe plus.
+        issue = "délai"
+    elif issue is None and process.returncode not in (0, None):
         issue = "quota" if LIMIT_TEXT.search(stderr) else "échec"
 
     note = "terminée"
@@ -1284,6 +1330,10 @@ def main():
                         help="garde-fou : nombre d'appels à Claude Code")
     parser.add_argument("--max-hours", type=float,
                         help="garde-fou : durée totale du superviseur")
+    parser.add_argument("--leg-timeout", type=float, default=120,
+                        metavar="MINUTES",
+                        help="au-delà, l'appel d'une étape est coupé et ses "
+                             "tickets repris à l'étape suivante (défaut 120)")
     parser.add_argument("--patience", type=int, default=3,
                         help="étapes sans avancement tolérées avant l'arrêt")
     parser.add_argument("--echo", action="store_true",
