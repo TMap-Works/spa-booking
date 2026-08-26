@@ -49,15 +49,24 @@ import milestone_supervise as sup  # noqa: E402 — l'insertion de chemin la pr�
 # peut plus écrire dans le vrai fichier, sans qu'on ait à compter sur la
 # vigilance de chacun.
 _LOG_TMP = None
+_LOG_REEL = None
 
 
 def setUpModule():
-    global _LOG_TMP
+    global _LOG_TMP, _LOG_REEL
+    _LOG_REEL = sup.SUPERVISOR_LOG
     _LOG_TMP = tempfile.TemporaryDirectory()
     sup.SUPERVISOR_LOG = Path(_LOG_TMP.name) / "supervisor.log"
 
 
 def tearDownModule():
+    # Restituer AVANT de supprimer le répertoire : sans cela la constante
+    # pointerait vers un chemin effacé, et tout `say()` d'un module chargé
+    # ensuite par `unittest discover` échouerait — en silence, puisque `say`
+    # avale l'OSError par conception. On remplacerait une pollution du journal
+    # par une perte, ce qui ne vaut pas mieux.
+    if _LOG_REEL is not None:
+        sup.SUPERVISOR_LOG = _LOG_REEL
     if _LOG_TMP is not None:
         _LOG_TMP.cleanup()
 
