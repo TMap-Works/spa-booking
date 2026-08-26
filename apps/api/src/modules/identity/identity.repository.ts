@@ -34,6 +34,20 @@ export interface UserRecord {
   isActive: boolean;
 }
 
+/**
+ * L'établissement tel qu'il sort vers une page publique. Aucun champ interne :
+ * voir `PUBLIC_TENANT_SELECT`.
+ */
+export interface PublicTenantRecord {
+  id: string;
+  slug: string;
+  name: string;
+  timezone: string;
+  defaultCurrency: string;
+  contactEmail: string | null;
+  contactPhone: string | null;
+}
+
 export interface SessionRecord {
   id: string;
   userId: string;
@@ -75,6 +89,32 @@ const PROFILE_SELECT = {
   firstName: true,
   lastName: true,
   phone: true,
+} as const;
+
+/**
+ * La vitrine publique d'un établissement — servie **avant toute
+ * authentification** à la page de réservation.
+ *
+ * La liste est une liste **blanche**, et c'est tout son intérêt : ce qui n'y
+ * figure pas ne peut pas fuiter par distraction. `isActive` en est absent — il
+ * dit qu'un salon a fermé, et à qui le demande —, comme `createdAt` et tout ce
+ * qui n'aide pas à réserver. Elle reprend exactement `publicTenantSchema` du
+ * contrat partagé (`packages/shared/src/schemas/tenant.ts`), qui fige la même
+ * frontière côté front.
+ *
+ * `id` y est, et c'est la seule exception à « ne jamais exposer `tenantId` »
+ * (tenant-isolation §4) : cet objet **est** l'établissement, l'identifiant n'y
+ * révèle donc aucune frontière qu'il ne documente déjà. Le contrat partagé pose
+ * la même exception, au même endroit et pour la même raison.
+ */
+const PUBLIC_TENANT_SELECT = {
+  id: true,
+  slug: true,
+  name: true,
+  timezone: true,
+  defaultCurrency: true,
+  contactEmail: true,
+  contactPhone: true,
 } as const;
 
 /**
@@ -145,6 +185,22 @@ export class IdentityRepository {
       return null;
     }
     return tenant.id;
+  }
+
+  /**
+   * La vitrine publique de l'établissement **de la portée courante**.
+   *
+   * Par le client **scopé**, et sans le moindre `where` : l'extension borne le
+   * modèle racine sur son `id` (`tenant-scope.extension.ts`), si bien que cette
+   * requête ne peut lire que l'établissement que le middleware a résolu. Passer
+   * un identifiant en paramètre rouvrirait justement ce que le scoping ferme —
+   * il faudrait alors se demander d'où il vient, à chaque site d'appel.
+   *
+   * Hors portée résolue, l'extension lève plutôt que de tout rendre : la route
+   * publique est donc illisible tant que le slug n'a pas été résolu.
+   */
+  public async findCurrentPublicTenant(): Promise<PublicTenantRecord | null> {
+    return this.prisma.tenant.findFirst({ select: PUBLIC_TENANT_SELECT });
   }
 
   /**

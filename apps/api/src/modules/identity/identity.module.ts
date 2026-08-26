@@ -2,22 +2,53 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ThrottlerModule } from '@nestjs/throttler';
 
+import {
+  PUBLIC_TENANT_RESOLVER,
+  type PublicTenantResolverProvider,
+} from '../../common/tenant/public-tenant.resolver';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { IdentityRepository } from './identity.repository';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PasswordHasher } from './password.hasher';
+import { PublicTenantController } from './public-tenant.controller';
+import { PublicTenantService } from './public-tenant.service';
 import { RolesGuard } from './roles.guard';
 import { TokenService } from './token.service';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
 
 /**
+ * La résolution `slug → tenantId` que `TenantScopeMiddleware` réclame (#23).
+ *
+ * `useExisting` et non `useClass` : **la même instance** qu'injectent les
+ * services du module. Une seconde instance aurait son propre client Prisma, et
+ * surtout : un test qui substitue `IdentityRepository` par un double verrait le
+ * middleware continuer à interroger le vrai dépôt — la substitution mentirait
+ * exactement là où elle sert le plus.
+ */
+const publicTenantResolver: PublicTenantResolverProvider = {
+  provide: PUBLIC_TENANT_RESOLVER,
+  useExisting: IdentityRepository,
+};
+
+/**
  * Module `identity` — authentification, rôles, permissions, sessions (CDC §2.3).
  *
  * ## Ce qu'il exporte, et pourquoi si peu
  *
- * `JwtAuthGuard`, `RolesGuard` et `TokenService` seulement. Les autres modules
+ * `JwtAuthGuard`, `RolesGuard`, `TokenService` — et `PUBLIC_TENANT_RESOLVER`,
+ * qui n'est pas destiné aux modules métier mais à `AppModule` : c'est lui qui
+ * monte `TenantScopeMiddleware`, et Nest résout les dépendances d'un middleware
+ * dans le module qui le déclare. Sans cet export, l'amorçage échouerait sur le
+ * jeton manquant — bruyamment, ce qui est le bon mode de défaillance.
+ *
+ * Le sens de la dépendance est délibéré : `common/tenant` **déclare** le contrat
+ * (`public-tenant.resolver.ts`) et `identity` le **remplit**, parce que la table
+ * `tenants` lui appartient. Un socle transverse qui importerait un module métier
+ * serait l'inverse, et api-module §3 l'interdit.
+ *
+ * Les autres modules
  * métier gouverneront l'accès à leurs routes avec les deux gardes — par
  * `@Auth(...)` / `@AuthAtLeast(...)`, qui les montent ensemble et dans le bon
  * ordre. Aucun n'a de raison d'atteindre `IdentityRepository` ni `UsersService` :
@@ -54,16 +85,18 @@ import { UsersService } from './users.service';
       ],
     }),
   ],
-  controllers: [AuthController, UsersController],
+  controllers: [AuthController, UsersController, PublicTenantController],
   providers: [
     AuthService,
     UsersService,
+    PublicTenantService,
     IdentityRepository,
     PasswordHasher,
     TokenService,
     JwtAuthGuard,
     RolesGuard,
+    publicTenantResolver,
   ],
-  exports: [JwtAuthGuard, RolesGuard, TokenService],
+  exports: [JwtAuthGuard, RolesGuard, TokenService, PUBLIC_TENANT_RESOLVER],
 })
 export class IdentityModule {}

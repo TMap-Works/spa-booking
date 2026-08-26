@@ -4,7 +4,12 @@ import { getTenantId } from '../../../common/tenant';
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
 import type { AppConfigService } from '../../../config/app-config.service';
 import { toProfile } from '../identity.repository';
-import type { IdentityRepository, SessionRecord, UserRecord } from '../identity.repository';
+import type {
+  IdentityRepository,
+  PublicTenantRecord,
+  SessionRecord,
+  UserRecord,
+} from '../identity.repository';
 import type { UserProfile } from '../identity.types';
 import { STAFF_ROLES, USER_ROLE_RANK, type UserRole } from '../roles';
 
@@ -61,6 +66,10 @@ export function silentLogger(): StructuredLogger {
   } as unknown as StructuredLogger;
 }
 
+interface StoredTenant extends PublicTenantRecord {
+  isActive: boolean;
+}
+
 interface StoredUser extends UserRecord {
   tenantId: string;
 }
@@ -83,11 +92,34 @@ interface StoredSession extends SessionRecord {
  */
 export class FakeIdentityRepository {
   public readonly tenants = new Map<string, string>();
+  public readonly tenantRecords = new Map<string, StoredTenant>();
   public readonly users: StoredUser[] = [];
   public readonly sessions: StoredSession[] = [];
 
-  public addTenant(slug: string, tenantId = randomUUID()): string {
+  /**
+   * Déclare un établissement.
+   *
+   * `isActive` est modélisé parce que le vrai dépôt s'en sert : un salon
+   * désactivé se comporte comme un salon inexistant, et un double qui
+   * l'ignorerait ferait passer au vert une résolution que la production refuse.
+   */
+  public addTenant(
+    slug: string,
+    tenantId = randomUUID(),
+    overrides: Partial<Omit<StoredTenant, 'id' | 'slug'>> = {},
+  ): string {
     this.tenants.set(slug, tenantId);
+    this.tenantRecords.set(tenantId, {
+      id: tenantId,
+      slug,
+      name: `Établissement ${slug}`,
+      timezone: 'Europe/Paris',
+      defaultCurrency: 'EUR',
+      contactEmail: `contact@${slug}.test`,
+      contactPhone: '+33100000000',
+      isActive: true,
+      ...overrides,
+    });
     return tenantId;
   }
 
@@ -139,7 +171,30 @@ export class FakeIdentityRepository {
    * veut exercer.
    */
   public async findTenantIdBySlug(slug: string): Promise<string | null> {
-    return this.tenants.get(slug) ?? null;
+    const tenantId = this.tenants.get(slug);
+    if (tenantId === undefined) {
+      return null;
+    }
+    // Désactivé = introuvable, comme dans le vrai dépôt.
+    return this.tenantRecords.get(tenantId)?.isActive === false ? null : tenantId;
+  }
+
+  /**
+   * La vitrine de l'établissement **de la portée** — le pendant du `findFirst`
+   * scopé sur le modèle racine, que l'extension borne sur son `id`.
+   *
+   * Elle passe par `requireTenant()` comme toutes les autres lectures : sans
+   * portée résolue, rien. C'est ce qui rend probant le test « une route publique
+   * ne répond pas avant que le middleware ait résolu le slug ».
+   */
+  public async findCurrentPublicTenant(): Promise<PublicTenantRecord | null> {
+    const tenantId = this.requireTenant();
+    const stored = this.tenantRecords.get(tenantId);
+    if (stored === undefined) {
+      return null;
+    }
+    const { isActive: _isActive, ...vitrine } = stored;
+    return vitrine;
   }
 
   public async findUserByEmail(email: string): Promise<UserRecord | null> {
