@@ -31,13 +31,16 @@ export type {
 } from './availability';
 
 export {
+  assignServiceStaffRequestSchema,
   bufferMinutesSchema,
   createServiceCategoryRequestSchema,
   createServiceRequestSchema,
   createStaffMemberRequestSchema,
+  publicServiceSchema,
   serviceCategorySchema,
   serviceCategorySummarySchema,
   serviceSchema,
+  serviceStaffMemberSchema,
   serviceSummarySchema,
   setStaffServicesRequestSchema,
   staffMemberSchema,
@@ -47,12 +50,15 @@ export {
   updateStaffMemberRequestSchema,
 } from './catalog';
 export type {
+  AssignServiceStaffRequest,
   CreateServiceCategoryRequest,
   CreateServiceRequest,
   CreateStaffMemberRequest,
+  PublicService,
   Service,
   ServiceCategory,
   ServiceCategorySummary,
+  ServiceStaffMember,
   ServiceSummary,
   SetStaffServicesRequest,
   StaffMember,

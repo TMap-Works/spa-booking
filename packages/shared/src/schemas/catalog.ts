@@ -252,3 +252,79 @@ export const setStaffServicesRequestSchema = z
   .strict();
 
 export type SetStaffServicesRequest = z.infer<typeof setStaffServicesRequestSchema>;
+
+/**
+ * Un praticien affecté à une prestation, tel que le **back-office** le liste.
+ *
+ * Le résumé public ne porte que l'identifiant et le nom d'affichage ; celui-ci y
+ * ajoute `isActive`, parce qu'un écran d'affectation doit pouvoir montrer qu'une
+ * prestation reste rattachée à un praticien qui ne prend plus de rendez-vous.
+ * Masquer cette ligne ferait croire à une affectation perdue et inviterait à la
+ * recréer — pour se heurter au conflit d'unicité de `service_staff`.
+ *
+ * `bio` n'y figure pas : c'est de la vitrine, pas de la gestion, et une liste
+ * d'affectations n'a aucune raison de transporter deux mille caractères par
+ * ligne.
+ */
+export const serviceStaffMemberSchema = staffMemberSummarySchema.extend({
+  isActive: z.boolean(),
+});
+
+export type ServiceStaffMember = z.infer<typeof serviceStaffMemberSchema>;
+
+/**
+ * Affecte **un** praticien à une prestation.
+ *
+ * Volontairement unitaire, là où `setStaffServicesRequestSchema` remplace en
+ * bloc l'ensemble des prestations d'un praticien. Les deux gestes ne sont pas le
+ * même : l'écran d'une prestation coche et décoche un praticien à la fois, et
+ * lui imposer d'envoyer la liste complète ferait écraser, à chaque clic, les
+ * affectations qu'un collègue vient d'ajouter. Le retrait a sa propre route —
+ * `DELETE …/staff/{staffId}` — plutôt qu'un drapeau dans ce corps.
+ *
+ * Aucun `tenantId` : l'établissement vient du jeton vérifié et de nulle part
+ * ailleurs (tenant-isolation §2). Le `.strict()` est ce qui refuse le champ s'il
+ * était glissé quand même.
+ */
+export const assignServiceStaffRequestSchema = z
+  .object({
+    staffId: uuidSchema,
+  })
+  .strict();
+
+export type AssignServiceStaffRequest = z.infer<typeof assignServiceStaffRequestSchema>;
+
+/**
+ * Une prestation telle que la **page de réservation publique** la reçoit, avec
+ * les praticiens qui la pratiquent.
+ *
+ * Trois champs de `serviceSchema` en sont délibérément absents :
+ *
+ * - `bufferBeforeMinutes` et `bufferAfterMinutes` — le contrat les décrit
+ *   lui-même comme « invisibles du client ». Ce sont des temps de cabine, donc
+ *   une information d'exploitation : les publier révélerait la cadence interne
+ *   d'un salon à qui lit son catalogue, sans rien apporter au visiteur, qui ne
+ *   voit et ne paie que la durée du soin ;
+ * - `occupiedMinutes`, qui n'est que leur somme avec la durée et fuiterait donc
+ *   la même information par soustraction ;
+ * - `isActive`, qui vaudrait toujours `true` — le catalogue public ne contient
+ *   que des prestations actives. Un champ constant invite à écrire un filtre
+ *   côté client et à croire qu'il peut valoir `false`.
+ *
+ * `staff` porte le **résumé** public de chaque praticien actif. Un praticien
+ * désactivé n'y apparaît pas : il ne prend pas de rendez-vous, et le proposer au
+ * choix mènerait à un créneau qu'aucun agenda ne peut honorer.
+ */
+export const publicServiceSchema = serviceSchema
+  .pick({
+    id: true,
+    slug: true,
+    name: true,
+    description: true,
+    category: true,
+    durationMinutes: true,
+    price: true,
+  })
+  .extend({ staff: z.array(staffMemberSummarySchema) });
+
+export type PublicService = z.infer<typeof publicServiceSchema>;
