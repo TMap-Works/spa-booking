@@ -123,7 +123,17 @@ PR_STALE = 30 * 60
 # Ce qui, dans un `blocked` de run, désigne une barrière rouge sur `develop` —
 # par opposition aux `blocked` que le superviseur pose pour son propre
 # enlisement. La phase 4 de `/milestone` impose la formule.
-BROKEN_RE = re.compile(r"verify|develop rouge|build rouge|tests? rouges?", re.I)
+#
+# L'assertion, jamais le mot seul. `verify` en alternative isolée levait le motif
+# sur cette ligne-ci, journalisée le 25/08 sur le run S1 :
+#
+#     « vague 1 close : #19 et #14 mergees, develop vert (npm run verify exit 0) »
+#
+# — c'est-à-dire un arbitrage Opus 5 dépensé pour annoncer que tout va bien, et
+# redépensé à chaque étape puisque rien dans le journal ne cesse d'être vrai.
+BROKEN_RE = re.compile(
+    r"verify\s+rouge|develop\s+rouge|build\s+rouge|tests?\s+rouges?"
+    r"|rouge\s+(?:sur\s+)?develop", re.I)
 
 
 # --------------------------------------------------------------------------- #
