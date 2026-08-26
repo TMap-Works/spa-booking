@@ -145,14 +145,15 @@ model Tenant {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  users         User[]
-  services      Service[]
-  staff         Staff[]
-  serviceStaff  ServiceStaff[]
-  appointments  Appointment[]
-  payments      Payment[]
-  notifications Notification[]
-  refreshTokens RefreshToken[]
+  users             User[]
+  services          Service[]
+  serviceCategories ServiceCategory[]
+  staff             Staff[]
+  serviceStaff      ServiceStaff[]
+  appointments      Appointment[]
+  payments          Payment[]
+  notifications     Notification[]
+  refreshTokens     RefreshToken[]
 
   @@map("tenants")
 }
@@ -272,6 +273,41 @@ model RefreshToken {
 // Catalog
 // ---------------------------------------------------------------------------
 
+/// Regroupement de prestations au catalogue — « Soins du visage », « Coiffure ».
+///
+/// Table à part entière, et non plus la chaîne libre que portait
+/// `services.category` : une chaîne recopiée à chaque prestation se renomme
+/// prestation par prestation, se faute de frappe (« Massages » / « massage »),
+/// et ne peut ni se désactiver ni s'ordonner. Le CRUD réclamé par #24 suppose
+/// une ligne à créer, lire, modifier et retirer du catalogue.
+///
+/// Comme une prestation, une catégorie **ne se supprime pas** : `is_active` la
+/// retire du catalogue sans casser les prestations qui la référencent, ni
+/// l'historique de reporting qui les compte.
+model ServiceCategory {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  /// Unique **par tenant** : deux salons ont chacun droit à leur « coiffure ».
+  slug        String  @db.VarChar(80)
+  name        String  @db.VarChar(160)
+  description String? @db.VarChar(2000)
+
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  services Service[]
+
+  @@unique([tenantId, slug])
+  // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
+  @@unique([tenantId, id])
+  @@index([tenantId, isActive])
+  @@map("service_categories")
+}
+
 /// Prestation vendue par l'établissement (nom, durée, prix, catégorie).
 model Service {
   id       String @id @default(uuid()) @db.Uuid
@@ -281,17 +317,50 @@ model Service {
   slug        String  @db.VarChar(80)
   name        String  @db.VarChar(160)
   description String? @db.VarChar(2000)
-  category    String? @db.VarChar(80)
 
-  /// Durée facturée du soin, en minutes. Les tampons avant/après relèvent du
-  /// moteur de disponibilité et arriveront avec lui.
+  /// Ancienne catégorie en chaîne libre, **plus lue ni écrite** par le module
+  /// `catalog` depuis #24 : `categoryId` l'a remplacée. La colonne survit le
+  /// temps d'un déploiement — la retirer dans la migration qui cesse de la lire
+  /// casserait la version encore en vol pendant un déploiement progressif
+  /// (api-module §6). Son retrait fait l'objet d'une issue de suivi.
+  ///
+  /// Le champ Prisma est renommé, la colonne non : `@map("category")` désigne
+  /// toujours `services.category`, et aucun SQL n'accompagne donc ce renommage.
+  legacyCategory String? @map("category") @db.VarChar(80)
+
+  /// Catégorie de catalogue. Nullable : une prestation non classée reste
+  /// vendable, et imposer une catégorie obligerait à en inventer une avant de
+  /// pouvoir créer la première prestation.
+  ///
+  /// `Restrict` : une catégorie encore portée par une prestation ne se supprime
+  /// pas. C'est cohérent avec le reste du schéma — au catalogue on désactive,
+  /// on n'efface pas.
+  categoryId String?          @map("category_id") @db.Uuid
+  category   ServiceCategory? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+
+  /// Durée facturée du soin, en minutes — ce que le client voit et paie.
   durationMinutes Int @map("duration_minutes")
+
+  /// Tampons de part et d'autre du soin, en minutes : préparation de la cabine,
+  /// nettoyage, remise en état. Ils ne sont **pas** facturés et n'apparaissent
+  /// pas au client, mais le moteur de disponibilité les occupe : le créneau
+  /// réellement bloqué sur l'agenda du praticien vaut
+  /// `buffer_before + duration + buffer_after`.
+  ///
+  /// Valeur par défaut `0`, ce qui rend l'ajout de ces colonnes sans effet sur
+  /// les prestations déjà en base : le comportement d'avant #24 est exactement
+  /// celui de deux tampons nuls.
+  bufferBeforeMinutes Int @default(0) @map("buffer_before_minutes")
+  bufferAfterMinutes  Int @default(0) @map("buffer_after_minutes")
 
   /// Prix affiché : entier dans la plus petite unité (3500 = 35,00 €) et code
   /// devise explicite. Jamais de flottant sur un montant.
   priceAmountMinor Int    @map("price_amount_minor")
   priceCurrency    String @map("price_currency") @db.Char(3)
 
+  /// Sortie du catalogue — jamais une suppression : les rendez-vous passés
+  /// référencent la prestation, et le reporting doit continuer à savoir ce qui a
+  /// été vendu.
   isActive Boolean @default(true) @map("is_active")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -304,6 +373,10 @@ model Service {
   // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
   @@unique([tenantId, id])
   @@index([tenantId, isActive])
+  // Sert « les prestations de cette catégorie », la seule lecture qui filtre sur
+  // ce couple — et le contrôle de référencement avant désactivation d'une
+  // catégorie.
+  @@index([tenantId, categoryId])
   @@map("services")
 }
 
