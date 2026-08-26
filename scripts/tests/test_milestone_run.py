@@ -25,6 +25,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,33 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import milestone_run as run_mod  # noqa: E402 — l'insertion de chemin la précède
+
+
+# Ces tests interrogent des fonctions qui lisent l'environnement — `leg_start()`
+# et `ask_milestone()`. Sous un run de jalon, le superviseur pose
+# `SPA_UNATTENDED` et `SPA_LEG_START` dans l'environnement de l'étape, dont
+# **hérite chaque `npm run verify` lancé par un agent** : quatre tests y
+# rougissaient alors que le dépôt était sain. Un agent perdait donc du temps à
+# instruire une panne qui n'existait pas, à chaque ticket.
+#
+# On neutralise les deux variables pour tout le module. Les tests qui les
+# étudient vraiment posent leur propre environnement avec `clear=True`, et ne
+# dépendent donc pas de celui-ci.
+_ENV = None
+ENV_DU_RUN = ("SPA_UNATTENDED", "SPA_LEG_START")
+
+
+def setUpModule():
+    global _ENV
+    _ENV = mock.patch.dict(os.environ, {})
+    _ENV.start()
+    for nom in ENV_DU_RUN:
+        os.environ.pop(nom, None)
+
+
+def tearDownModule():
+    if _ENV is not None:
+        _ENV.stop()
 
 
 PORCELAIN = """\
