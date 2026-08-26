@@ -33,6 +33,25 @@ Ensemble : la coupure est encaissée à la seconde près par la boucle courte, e
 tout ce qui pourrait tuer la boucle courte est rattrapé en cinq minutes par la
 longue.
 
+**La troisième — l'arbitre.** Les deux premières savent faire repartir un run ;
+aucune ne sait **décider**. Au premier ticket tombé, à la première PR verte
+laissée ouverte, à la première étape coupée au temps, le superviseur rendait la
+main et attendait quelqu'un — si bien qu'un jalon lancé le soir s'arrêtait sur la
+première question posée, et que la nuit était perdue.
+
+À chacun de ces points d'arrêt, on appelle donc `claude -p /milestone-arbitrate`
+sur Opus 5. Cet appel lit le dossier du run — journal, logs par ticket, flux de
+la dernière étape, PR et verdict de la barrière — puis tranche : relancer un
+ticket, corriger une branche, merger une PR, écarter un ticket avec une issue de
+suivi. Ce qu'il a le droit de faire est écrit dans
+`.claude/commands/milestone-arbitrate.md` ; ce qu'il ne peut pas dépasser —
+budget, échelle d'escalade — est tenu par `milestone_arbiter.py`.
+
+Deux garde-fous, parce qu'un arbitre qui se trompe coûte plus cher qu'une étape
+perdue : il n'est appelé que si le dossier montre un motif (une étape saine n'en
+déclenche aucun), et son dernier cran est l'**écartement d'un ticket**, jamais
+l'arrêt du jalon. `--no-arbiter` rend au superviseur son comportement d'avant.
+
 ## La règle d'autorisation
 
 **Tant qu'un run est ouvert, la relance automatique a le droit de s'exécuter.
@@ -56,8 +75,11 @@ Le superviseur ne garde donc aucun état : on peut le tuer à tout moment.
 
 ## Ce qu'il ne fait pas
 
-Il ne relit pas le code. Sauf `--no-merge`, il enchaîne des merges automatiques
-sur `develop` sans arbitrage humain — c'est le prix du « sans intervention ».
+Lui-même ne relit aucun code. Sauf `--no-merge`, il enchaîne des merges
+automatiques sur `develop` sans relecture humaine — c'est le prix du « sans
+intervention ». Ce que l'arbitre y ajoute est une relecture *par un modèle*, pas
+par quelqu'un : elle est publiée sur la PR avant le merge, et c'est tout ce qui
+en tient lieu.
 
 Une exception, et elle est mécanique plutôt que consignée : sur un périmètre
 sensible — `mod:payments`, le label `security`, une migration Prisma,
@@ -75,6 +97,11 @@ séparément vers les vagues : `SPA_UNATTENDED` dit que personne ne peut répond
 `supervisor.json` et rejoué à chaque reprise, comme l'est `--no-merge`.
 
 Pour un jalon sensible de bout en bout, armer plutôt avec `--no-merge`.
+
+L'arbitre peut lever ce refus lui-même, PR par PR et périmètre par périmètre,
+après avoir lu le diff et publié sa revue — c'est le mandat que l'opérateur lui a
+donné. Il ne peut pas le lever globalement : `SPA_MERGE_SENSITIVE` reste posée
+par l'appel, jamais exportée, et `all` lui est interdit.
 """
 import argparse
 import atexit
@@ -129,6 +156,31 @@ CURRENT = RUNS_DIR / "current"
 LEGS_DIR = RUNS_DIR / "legs"
 SUPERVISOR_LOG = RUNS_DIR / "supervisor.log"
 RUNNER = ROOT / "scripts" / "milestone_run.py"
+ARBITER = ROOT / "scripts" / "milestone_arbiter.py"
+
+# L'arbitre — la couche qui manquait. Tout ce que ce fichier savait faire jusqu'à
+# présent était mécanique : attendre le quota, survivre à un plantage, couper une
+# étape morte. Aucune de ces protections ne *décide*, et c'est pourquoi un jalon
+# lancé le soir s'arrêtait sur la première question posée. À chaque point d'arrêt,
+# on appelle donc un modèle qui tranche, et le run repart.
+#
+# Opus 5 et pas le modèle des vagues : l'arbitre ne code presque rien, il juge —
+# une PR de paiement à merger ou non, un ticket à relancer ou à écarter, une
+# anomalie à porter en issue. C'est le seul endroit du dispositif où se tromper
+# coûte plus cher qu'un tour de modèle.
+ARBITER_MODEL = "claude-opus-5"
+# Un arbitrage lit un dossier, corrige parfois une branche, publie une revue :
+# beaucoup moins qu'une vague, mais pas rien. Au-delà, il tourne en rond.
+ARBITER_TIMEOUT = 45
+# Douze pour tout le run — le même plafond que `milestone_arbiter.PER_RUN`, redit
+# ici parce que c'est cette valeur-là que la ligne de commande expose.
+ARBITER_BUDGET = 12
+# Le silence qui dit qu'une étape est morte debout. Une phase de ticket dure
+# quelques minutes ; un journal muet depuis vingt-cinq minutes, alors que des
+# agents sont censés y écrire, signifie qu'ils attendent tous quelque chose que
+# personne ne leur donnera. La coupure au temps (`--leg-timeout`, deux heures)
+# finirait par les libérer — mais deux heures plus tard.
+STALL_MINUTES = 25
 
 # Ce que le chien de garde doit relancer, et avec quels réglages. Écrit une fois
 # à l'armement ; c'est la mémoire du dispositif entre deux vies du superviseur.
@@ -316,6 +368,15 @@ def save_intent(args):
         # coup, sous peine d'emporter toute la reprise automatique.
         "max_legs": args.max_legs,
         "leg_timeout": getattr(args, "leg_timeout", 120),
+        # L'arbitrage se rejoue comme le reste : un superviseur ressuscité par la
+        # veille doit trancher comme celui qu'il remplace. L'oublier ferait qu'un
+        # run armé perde sa capacité de décision au premier redémarrage — c'est
+        # précisément le moment où elle sert.
+        "no_arbiter": getattr(args, "no_arbiter", False),
+        "arbiter_model": getattr(args, "arbiter_model", ARBITER_MODEL),
+        "arbiter_budget": getattr(args, "arbiter_budget", ARBITER_BUDGET),
+        "arbiter_timeout": getattr(args, "arbiter_timeout", ARBITER_TIMEOUT),
+        "stall_minutes": getattr(args, "stall_minutes", STALL_MINUTES),
         "claude": args.claude, "armed": now(),
         "expires": time.time() + INTENT_TTL,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -372,9 +433,15 @@ def intent_argv(intent):
              "--patience", str(intent.get("patience", 2)),
              "--max-legs", str(intent.get("max_legs", 40)),
              "--leg-timeout", str(intent.get("leg_timeout", 120)),
+             "--arbiter-model", intent.get("arbiter_model") or ARBITER_MODEL,
+             "--arbiter-budget", str(intent.get("arbiter_budget", ARBITER_BUDGET)),
+             "--arbiter-timeout", str(intent.get("arbiter_timeout", ARBITER_TIMEOUT)),
+             "--stall-minutes", str(intent.get("stall_minutes", STALL_MINUTES)),
              "--claude", intent.get("claude", "claude"), "--yes"]
     if intent.get("no_merge"):
         argv.append("--no-merge")
+    if intent.get("no_arbiter"):
+        argv.append("--no-arbiter")
     # La pré-autorisation se rejoue comme `no_merge`, et pour la même raison :
     # un superviseur ressuscité par la tâche planifiée n'a personne à qui la
     # redemander. L'oublier ferait qu'un run armé cesse de merger au premier
@@ -925,8 +992,85 @@ def drain(stream, sink):
         pass
 
 
+def call_env(args, leg_start):
+    """L'environnement d'un appel `claude -p` — étape comme arbitrage.
+
+    Sans surveillance, aucun arbitrage humain ne peut être posé : `pr_gate.py`
+    lit `SPA_UNATTENDED` et refuse alors de merger les PR de périmètre sensible,
+    qui restent ouvertes. Passer par l'environnement plutôt que par un drapeau du
+    prompt est ce qui rend la règle vraie même si l'appelant l'oublie — tout
+    `pr_gate.py` lancé dans l'appel en hérite sans avoir à y penser.
+    """
+    env = dict(os.environ)
+    # Le démarrage d'une étape, dit explicitement : les agents de l'étape
+    # précédente sont morts avec leur `claude -p`, et `reconcile` doit pouvoir
+    # requeuer les tickets restés `running`. Séparée de `SPA_UNATTENDED`, qui ne
+    # parle que des merges et disparaît sous `--no-merge` — s'y adosser rendait le
+    # requeue inerte précisément dans le mode recommandé pour un jalon sensible,
+    # et y ramenait la vague figée de #180.
+    #
+    # Un arbitrage ne la pose pas : il n'ouvre aucune vague, et requeuer les
+    # `running` sous ses pieds lui retirerait ce qu'il est venu examiner.
+    if leg_start:
+        env["SPA_LEG_START"] = "1"
+    if not args.no_merge:
+        env["SPA_UNATTENDED"] = "1"
+    # Et, à côté, ce que l'opérateur a autorisé d'avance. Les deux voyagent
+    # ensemble mais ne disent pas la même chose : la première dit que personne ne
+    # peut répondre, la seconde ce qui a déjà été répondu.
+    #
+    # Posée hors du `if`, et toujours — vide sous `--no-merge`, où il n'y a rien
+    # de pré-autorisé. Ne la poser que sur une branche laisserait passer telle
+    # quelle une variable héritée de l'environnement de l'appelant : un run armé
+    # sans rien ouvrir hériterait alors des autorisations d'un autre.
+    env[AUTHORISED_ENV] = ",".join(sorted(args.merge_sensitive))
+    return env
+
+
+def journal_quiet(since=None):
+    """Depuis combien de secondes plus personne n'écrit dans le journal du run.
+
+    Agents et orchestrateur y écrivent à chaque phase : c'est le seul battement
+    qu'on ait de l'intérieur d'une étape. `since` borne la mesure au démarrage de
+    l'appel — sans quoi une étape qui n'a jamais rien écrit hériterait du silence
+    de la précédente et serait coupée dans la minute.
+    """
+    directory = current_run_dir()
+    if directory is None:
+        return None
+    try:
+        touched = (directory / "journal.ndjson").stat().st_mtime
+    except OSError:
+        return None
+    return time.time() - max(touched, since or 0)
+
+
+def stall_watch(args):
+    """Le guetteur qui coupe une étape morte debout, sans attendre l'heure.
+
+    La coupure au temps borne l'attente à deux heures. C'est ce qu'il faut pour
+    une étape qui travaille — un ticket complet demande 25 à 40 minutes, trois
+    en parallèle davantage — mais c'est deux heures perdues quand les agents sont
+    tous arrêtés sur la même invite de permission à laquelle personne ne peut
+    répondre. Le journal muet le dit bien avant, et le dit sans se tromper : une
+    phase de ticket dure quelques minutes, jamais vingt-cinq.
+    """
+    minutes = getattr(args, "stall_minutes", STALL_MINUTES)
+    if not minutes:
+        return None
+    started = time.time()
+
+    def look():
+        quiet = journal_quiet(started)
+        if quiet is None or quiet < minutes * 60:
+            return None
+        return (f"journal muet depuis {human_delta(quiet)} — l'étape n'avance "
+                f"plus, arrêt de l'appel pour la faire arbitrer")
+    return look
+
+
 def run_leg(args, index):
-    """Un appel `claude -p`, lu au fil de l'eau.
+    """Un appel `claude -p` sur une vague, lu au fil de l'eau.
 
     Rend (issue, info_quota, résumé). `issue` vaut « quota » dès que le serveur
     a refusé la requête : le reste du flux n'a plus d'intérêt, l'appel est mort.
@@ -944,32 +1088,22 @@ def run_leg(args, index):
 
     LEGS_DIR.mkdir(parents=True, exist_ok=True)
     raw_path = LEGS_DIR / f"leg-{index:03d}-{datetime.now():%Y%m%d-%H%M%S}.ndjson"
+    return stream_call(args, command, raw_path, call_env(args, leg_start=True),
+                       args.leg_timeout, "étape", stall=stall_watch(args))
 
-    # Sans surveillance, aucun arbitrage ne peut être posé : `pr_gate.py` lit
-    # cette variable et refuse alors de merger les PR de périmètre sensible, qui
-    # restent ouvertes. Passer par l'environnement plutôt que par un drapeau du
-    # prompt est ce qui rend la règle vraie même si l'orchestrateur l'oublie —
-    # tout `pr_gate.py` lancé dans la vague en hérite sans avoir à y penser.
-    env = dict(os.environ)
-    # Le démarrage d'une étape, dit explicitement et **toujours** : les agents de
-    # l'étape précédente sont morts avec leur `claude -p`, et `reconcile` doit
-    # pouvoir requeuer les tickets restés `running`. Séparée de `SPA_UNATTENDED`,
-    # qui ne parle que des merges et disparaît sous `--no-merge` — s'y adosser
-    # rendait le requeue inerte précisément dans le mode recommandé pour un jalon
-    # sensible, et y ramenait la vague figée de #180.
-    env["SPA_LEG_START"] = "1"
-    if not args.no_merge:
-        env["SPA_UNATTENDED"] = "1"
-    # Et, à côté, ce que l'opérateur a autorisé d'avance. Les deux voyagent
-    # ensemble mais ne disent pas la même chose : la première dit que personne ne
-    # peut répondre, la seconde ce qui a déjà été répondu.
-    #
-    # Posée hors du `if`, et toujours — vide sous `--no-merge`, où il n'y a rien
-    # de pré-autorisé. Ne la poser que sur une branche laisserait passer telle
-    # quelle une variable héritée de l'environnement de l'appelant : un run armé
-    # sans rien ouvrir hériterait alors des autorisations d'un autre.
-    env[AUTHORISED_ENV] = ",".join(sorted(args.merge_sensitive))
 
+def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
+    """Lance l'appel et lit son flux `stream-json` — le corps commun.
+
+    Une étape et un arbitrage n'ont ni le même prompt, ni le même modèle, ni le
+    même délai ; ils ont exactement la même façon de mourir. Le quota refusé, le
+    binaire introuvable, le processus qui ne rend jamais la main : dupliquer ce
+    traitement, c'est accepter qu'une des deux copies finisse par ne plus
+    reconnaître une fenêtre de quota qui se referme — et que le dispositif
+    s'arrête là où il devait attendre.
+
+    Rend (issue, info_quota, résumé).
+    """
     try:
         process = subprocess.Popen(
             command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -995,19 +1129,36 @@ def run_leg(args, index):
     # l'attente : les tickets déjà avancés gardent leur worktree, et l'étape
     # suivante les reprend là où ils en sont.
     expired = threading.Event()
+    stalled = threading.Event()
+    finished = threading.Event()
 
-    def cutoff():
-        expired.set()
-        say(f"étape sans réponse depuis {args.leg_timeout} min — arrêt de l'appel ; "
-            f"les tickets engagés seront repris à l'étape suivante", "ERROR")
+    def kill(why, flag):
+        flag.set()
+        say(why, "ERROR")
         try:
             process.terminate()
         except OSError:
             pass
 
-    timer = threading.Timer(args.leg_timeout * 60, cutoff)
+    def cutoff():
+        kill(f"{label} sans réponse depuis {timeout_min} min — arrêt de l'appel ; "
+             f"les tickets engagés seront repris à l'étape suivante", expired)
+
+    timer = threading.Timer(timeout_min * 60, cutoff)
     timer.daemon = True
     timer.start()
+
+    # Le guetteur, quand il y en a un. Il ne juge pas davantage que la coupure au
+    # temps : il constate qu'il ne se passe plus rien, et rend la main au
+    # superviseur — qui, lui, fera arbitrer.
+    if stall:
+        def watching():
+            while not finished.wait(60):
+                why = stall()
+                if why:
+                    kill(why, stalled)
+                    return
+        threading.Thread(target=watching, daemon=True).start()
 
     limit_info, summary, issue = None, None, None
     with open(raw_path, "w", encoding="utf-8") as raw:
@@ -1052,6 +1203,7 @@ def run_leg(args, index):
                         str(message.get("result") or "")):
                     issue = issue or "quota"
 
+    finished.set()
     timer.cancel()
     try:
         process.wait(timeout=30)
@@ -1064,7 +1216,23 @@ def run_leg(args, index):
     pump.join(timeout=5)
 
     stderr = "".join(errors)
-    if expired.is_set():
+    if issue == "quota":
+        # Une fenêtre qui se referme prime sur la façon dont l'appel est mort :
+        # c'est la seule panne qu'on attend au lieu de la compter.
+        pass
+    elif stalled.is_set():
+        # Distinguée du délai, et ce n'est pas une nuance : un appel coupé au
+        # temps a peut-être travaillé jusqu'au bout de ses deux heures, tandis
+        # qu'un appel coupé sur le silence n'écrivait plus rien depuis vingt-cinq
+        # minutes. Le second est un motif d'arbitrage à lui seul ; le premier ne
+        # l'est que parce qu'il laisse des tickets en plan.
+        #
+        # Le quota se relit malgré tout dans stderr : un `claude -p` qui attend
+        # la réouverture de sa fenêtre est muet, donc coupé par le guetteur. Le
+        # dire « stérile » ferait s'arrêter et se désarmer le dispositif après
+        # deux étapes — au moment précis où il devait attendre.
+        issue = "quota" if LIMIT_TEXT.search(stderr) else "silence"
+    elif expired.is_set():
         # Nommer la panne, et ne pas la confondre avec un échec de l'appel : une
         # étape coupée au temps n'a pas démérité, elle a été retenue. Le compteur
         # de stérilité la compte comme les autres — trois de suite disent bien
@@ -1084,6 +1252,93 @@ def run_leg(args, index):
         note = stderr.strip().splitlines()[-1][:160]
 
     return issue, limit_info, note
+
+
+# --------------------------------------------------------------------------- #
+# L'arbitrage — le modèle qui tranche à la place de l'humain
+# --------------------------------------------------------------------------- #
+
+def arbiter_should(args, reasons):
+    """Ce que le dossier répond : le motif, ou rien.
+
+    On demande avant de dépenser. `milestone_arbiter.py should` regarde ce qui
+    est gratuit — verdict du gate, statut des tickets, budget déjà consommé — et
+    ne rend 0 que s'il y a matière. Une étape saine ne coûte donc aucun tour
+    d'Opus 5, ce qui est la condition pour que l'arbitrage puisse rester armé en
+    permanence sans ruiner personne.
+    """
+    if args.no_arbiter:
+        return None
+    argv = [sys.executable, str(ARBITER), "should",
+            "--per-run", str(args.arbiter_budget)]
+    for name in reasons:
+        argv += ["--reason", name]
+    try:
+        proc = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=300)
+    except (OSError, subprocess.SubprocessError) as exc:
+        # Un dossier qu'on ne sait pas constituer ne doit pas arrêter le run : on
+        # le dit, et le superviseur retombe sur son comportement d'avant.
+        say(f"dossier d'arbitrage indisponible : {exc}", "WARN")
+        return None
+    lines = [line for line in (proc.stdout or "").strip().splitlines() if line.strip()]
+    if proc.returncode != 0:
+        if lines:
+            say("  arbitre · " + lines[-1], "DEBUG")
+        return None
+    return lines[-1] if lines else "motif non nommé"
+
+
+def run_arbiter(args, reasons, index):
+    """Un appel d'arbitrage — Opus 5 sur le dossier du run.
+
+    Le prompt est une commande, pas un cahier des charges : tout ce que l'arbitre
+    doit savoir et respecter vit dans
+    `.claude/commands/milestone-arbitrate.md`, versionné et relisible. Le passer
+    ici ligne à ligne le rendrait invisible en revue et impossible à corriger
+    sans toucher au superviseur.
+    """
+    motifs = ",".join(reasons)
+    prompt = "/milestone-arbitrate" + (f" {motifs}" if motifs else "")
+    command = [resolve_binary(args.claude), "-p", prompt,
+               "--output-format", "stream-json", "--verbose",
+               "--permission-mode", args.permission_mode,
+               "--model", args.arbiter_model]
+
+    say(f"arbitrage {index} · claude -p \"{prompt}\" · {args.arbiter_model}", "WARN")
+    if args.dry_run:
+        return None, None, "simulation — aucun arbitrage lancé"
+
+    LEGS_DIR.mkdir(parents=True, exist_ok=True)
+    raw_path = (LEGS_DIR /
+                f"arbitrage-{index:03d}-{datetime.now():%Y%m%d-%H%M%S}.ndjson")
+    # Pas de guetteur de silence sur un arbitrage : il passe l'essentiel de son
+    # temps à lire des logs et des diffs sans rien journaliser, et le couper pour
+    # cela reviendrait à interdire précisément le travail qu'on lui demande. Sa
+    # borne est le délai, plus court que celui d'une étape.
+    return stream_call(args, command, raw_path, call_env(args, leg_start=False),
+                       args.arbiter_timeout, "arbitrage")
+
+
+def arbitrate(args, reasons, index):
+    """Un tour d'arbitrage, si le dossier en montre le besoin.
+
+    Rend (lancé, issue, info_quota). `lancé` est faux quand il n'y avait rien à
+    trancher, quand le budget est épuisé, ou quand l'arbitrage est débranché —
+    trois cas où le superviseur doit reprendre son comportement d'avant plutôt
+    que d'attendre un secours qui ne viendra pas.
+    """
+    why = arbiter_should(args, reasons)
+    if why is None:
+        return False, None, None
+
+    say(f"arbitrage demandé — {why}", "WARN")
+    journal("arbitrage", f"arbitrage {index} ouvert — {why}")
+    issue, info, note = run_arbiter(args, reasons, index)
+    say(f"arbitrage {index} rendu · {note}", "ERROR" if issue else "INFO")
+    journal("arbitrage", f"arbitrage {index} rendu — {note}"
+                         + (f" (interrompu : {issue})" if issue else ""))
+    return True, issue, info
 
 
 # --------------------------------------------------------------------------- #
@@ -1184,11 +1439,34 @@ def supervise(args):
                               source="retenue déjà inscrite dans le run"):
             return 1
 
-    legs, barren, dry_legs = 0, 0, 0
+    legs, barren, dry_legs, arbitrages = 0, 0, 0, 0
+    # Un secours ne se redonne pas deux fois de suite sans que rien n'ait bougé
+    # entre-temps. Sans ce verrou, un run que l'arbitre ne sait pas débloquer
+    # ferait relancer un arbitrage par étape jusqu'à épuisement du budget, pour
+    # le même verdict à chaque fois. Il retombe dès qu'un ticket avance.
+    rescued = False
     # Les commits déjà là en arrivant ne sont l'œuvre d'aucun leg de ce
     # superviseur : on les tient pour vus, faute de quoi le premier leg
     # passerait pour productif sans avoir rien produit.
     seen_commits = work_commits()
+
+    def rescue(reasons):
+        """Faire arbitrer, si le budget le permet — (lancé, panne, info_quota).
+
+        Le budget est compté ici **en plus** du compteur tenu par le dossier :
+        celui-ci ne s'incrémente que si l'arbitre inscrit sa décision, et un
+        arbitre mort avant d'avoir rien écrit laisserait le sien à zéro. Deux
+        compteurs pour une seule borne, parce que celui qui protège du gaspillage
+        doit être celui qui ne dépend de personne.
+        """
+        nonlocal arbitrages
+        if arbitrages >= args.arbiter_budget:
+            return False, None, None
+        ran, issue, info = arbitrate(args, reasons, arbitrages + 1)
+        if ran:
+            arbitrages += 1
+        return ran, issue, info
+
     while not stop_flag.is_set():
         if legs >= args.max_legs:
             say(f"{legs} étapes atteintes (--max-legs) — arrêt", "WARN")
@@ -1201,16 +1479,43 @@ def supervise(args):
 
         if verdict == NO_RUN and legs > 0:
             say("plus rien à traiter — jalon déroulé")
+            # Un dernier tour, et il n'a rien de cérémonial : les anomalies d'un
+            # run ne se lisent qu'une fois le jalon déroulé, quand on peut
+            # comparer ce qui a coincé d'un ticket à l'autre. C'est là que
+            # l'arbitre ouvre les issues d'amélioration ; passé cet instant,
+            # personne ne relira ces logs.
+            rescue(["fin_de_run"])
             retire("jalon déroulé")
             return 0
         if verdict == STOP:
+            # Le seul ordre que l'arbitrage ne discute pas. `stop` est posé à la
+            # main, par quelqu'un qui a décidé que ce run devait cesser : le faire
+            # arbitrer reviendrait à le lui reprendre.
             say("arrêt demandé dans le run — le superviseur s'efface", "WARN")
             retire("arrêt demandé dans le run")
             return 0
         if verdict == PAUSE:
+            # Le verrou se lit **avant** de dépenser : un secours déjà donné sans
+            # que rien n'ait bougé depuis ne sera pas relu, et l'appeler quand
+            # même reviendrait à payer un tour d'Opus 5 pour jeter sa décision
+            # une ligne plus bas, juste avant de s'effacer.
+            if not rescued:
+                ran, arb_issue, arb_info = rescue(["gate_pause"])
+                if arb_issue == "quota":
+                    if not wait_for_quota(args, arb_info or {}, stop_flag):
+                        return 1
+                    continue
+                if ran:
+                    # L'arbitre a tranché ce qui retenait le gate — un ticket
+                    # tombé relancé, écarté, ou sa PR débloquée. On relit le
+                    # verdict plutôt que de s'effacer : c'est exactement le point
+                    # où le dispositif rendait la main et perdait la nuit.
+                    rescued = True
+                    say("le gate est relu après arbitrage", "WARN")
+                    continue
             say("pause demandée dans le run — le superviseur s'efface. "
-                "`milestone_run.py shell` puis `go`, puis relancer "
-                "`/milestone`, pour repartir", "WARN")
+                "`milestone_run.py go`, puis relancer `/milestone`, pour "
+                "repartir", "WARN")
             retire("pause demandée dans le run")
             return 0
         if verdict == QUOTA:
@@ -1257,6 +1562,50 @@ def supervise(args):
             continue
 
         dry_legs = sterile_streak(dry_legs, fresh, issue)
+        after = progress_count(args.no_merge)
+        progressed = before is None or after is None or after > before
+        barren = 0 if progressed else barren + 1
+        if progressed and after is not None:
+            say(f"{after} ticket(s) aboutis sur le jalon")
+            # Quelque chose a abouti : le secours précédent a servi, et le
+            # suivant redevient légitime.
+            rescued = False
+
+        # Ce que l'étape laisse derrière elle, dit dans les termes du dossier.
+        # Le reste — tickets tombés, PR verte non mergée, gate qui retient — est
+        # relu par `milestone_arbiter.py should`, qui voit le run tel qu'il est
+        # plutôt que tel que cette boucle s'en souvient.
+        reasons = []
+        if issue in ("délai", "silence"):
+            reasons.append("leg_delai")
+        if dry_legs >= DRY_LEGS_LIMIT:
+            reasons.append("leg_sterile")
+        if barren >= args.patience:
+            reasons.append("patience")
+
+        # Un enlisement déjà arbitré sans que rien n'ait bougé depuis ne sera pas
+        # relu : les compteurs resteront tels quels et la boucle s'arrêtera juste
+        # en dessous. Appeler l'arbitre à cet instant, ce serait payer un tour
+        # d'Opus 5 pour jeter sa décision. Les motifs que seul le dossier voit —
+        # un ticket tombé, une PR en souffrance — n'ont pas ce verrou : ils ne
+        # remettent aucun compteur à zéro.
+        if reasons and rescued:
+            ran, arb_issue, arb_info = False, None, None
+        else:
+            ran, arb_issue, arb_info = rescue(reasons)
+        if arb_issue == "quota":
+            if not wait_for_quota(args, arb_info or {}, stop_flag):
+                return 1
+            continue
+        if ran and reasons:
+            # L'enlisement vient d'être traité par quelqu'un : les compteurs
+            # comptaient une situation qui n'a plus cours. Les laisser courir
+            # ferait s'arrêter le dispositif à l'étape suivante pour une cause
+            # déjà levée — et un seul secours par situation, faute de quoi un
+            # arbitre impuissant relancerait la boucle indéfiniment.
+            rescued, dry_legs, barren = True, 0, 0
+            say("enlisement arbitré — compteurs remis à zéro, on repart", "WARN")
+
         if dry_legs >= DRY_LEGS_LIMIT:
             # Le travail existe peut-être dans les worktrees, mais il n'est pas
             # commité : le leg suivant le refera à l'identique, pour le même
@@ -1271,11 +1620,6 @@ def supervise(args):
             retire(f"{dry_legs} legs sans commit")
             return 1
 
-        after = progress_count(args.no_merge)
-        progressed = before is None or after is None or after > before
-        barren = 0 if progressed else barren + 1
-        if progressed and after is not None:
-            say(f"{after} ticket(s) aboutis sur le jalon")
         if barren >= args.patience:
             # Ce n'est plus une question de quota : relancer indéfiniment un run
             # qui n'avance pas brûlerait des jetons pour rien. On débranche tout,
@@ -1342,6 +1686,28 @@ def main():
                         help="montrer l'appel qui serait fait, et s'arrêter")
     parser.add_argument("--force", action="store_true",
                         help="passer outre le préflight, ou un superviseur déjà vivant")
+
+    arbitre = parser.add_argument_group(
+        "arbitrage", "le modèle qui tranche à la place de l'humain")
+    arbitre.add_argument("--no-arbiter", action="store_true",
+                         help="ne faire arbitrer aucun blocage — le superviseur "
+                              "retrouve son comportement d'avant : au premier "
+                              "ticket tombé, il rend la main")
+    arbitre.add_argument("--arbiter-model", default=ARBITER_MODEL,
+                         help=f"modèle de l'arbitre (défaut : {ARBITER_MODEL})")
+    arbitre.add_argument("--arbiter-budget", type=int, default=ARBITER_BUDGET,
+                         help="arbitrages autorisés sur tout le run "
+                              f"(défaut {ARBITER_BUDGET})")
+    arbitre.add_argument("--arbiter-timeout", type=float, default=ARBITER_TIMEOUT,
+                         metavar="MINUTES",
+                         help="au-delà, l'appel d'arbitrage est coupé "
+                              f"(défaut {ARBITER_TIMEOUT})")
+    arbitre.add_argument("--stall-minutes", type=float, default=STALL_MINUTES,
+                         metavar="MINUTES",
+                         help="journal du run muet plus longtemps que cela : "
+                              "l'étape est coupée et portée à l'arbitrage sans "
+                              f"attendre --leg-timeout (défaut {STALL_MINUTES}, "
+                              "0 pour débrancher)")
 
     veille = parser.add_argument_group(
         "veille", "la tâche planifiée qui ressuscite le superviseur")
