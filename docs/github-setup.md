@@ -11,7 +11,7 @@
 | Project | [Spa & Salon Booking — MVP](https://github.com/orgs/TMap-Works/projects/2) — org, n°2, lié au dépôt |
 | Champs du Project | Status, Sprint, Workstream, Module, Priority, Estimate |
 | Milestones | S1 à S4, avec échéances hebdomadaires du 28/08 au 18/09/2026 |
-| Labels | 27 — workstream, module, type, priorité, transverses |
+| Labels | 29 — workstream, module, type, nature, priorité, transverses |
 | Backlog | 9 epics et 74 issues, rattachées en sous-issues, toutes dans le Project |
 | Modèles | Issues (fonctionnalité, bug, tâche, post-MVP) et pull request |
 | CODEOWNERS | Revue obligatoire sur `infra/`, workflows, paiements, disponibilité, rendez-vous, migrations, `.claude/` |
@@ -42,6 +42,11 @@
   filtrer. Voir
   [project-flow §12](../.claude/skills/project-flow/SKILL.md).
 - `post-mvp` — hors périmètre, sans milestone, non travaillé pendant le MVP.
+- `nature:projet` / `nature:outillage` — qui traite le ticket. Le run de jalon
+  ne dispatche que `nature:projet` ; l'outillage — `scripts/`, `.claude/`, le
+  harnais qui les teste — attend une session humaine, un ticket à la fois. Toute
+  issue en porte un : sans lui, le plan l'écarte pour classement incomplet. Voir
+  [project-flow §2](../.claude/skills/project-flow/SKILL.md).
 
 ## À faire manuellement
 

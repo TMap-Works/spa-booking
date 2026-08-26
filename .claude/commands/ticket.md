@@ -82,11 +82,17 @@ gh pr list --repo TMap-Works/spa-booking --search "$1 in:body" --state open
 - l'issue est déjà fermée, ou porte le label `post-mvp` (hors périmètre, CDC §1.4) ;
 - une PR ouverte la référence déjà ;
 - elle est assignée à quelqu'un d'autre ;
-- il manque un label `ws:*`, un label `mod:*` ou un milestone ;
+- il manque un label `ws:*`, un label `mod:*`, un label `nature:*` ou un milestone ;
 - le corps ne contient aucun critère d'acceptation vérifiable.
 
 Sur les trois derniers cas, proposer les corrections à appliquer à l'issue
 plutôt que de coder à l'aveugle.
+
+**`nature:outillage` n'arrête rien ici.** C'est même le seul chemin par lequel un
+ticket d'outillage se traite : `/milestone` l'écarte de tout plan, et il attend
+qu'un humain lui consacre une session. Une seule à la fois — modifier `scripts/`
+ou `.claude/` pendant qu'un run tourne reviendrait à réécrire l'orchestrateur en
+pleine vague.
 
 ## Phase 1 — Isolation
 

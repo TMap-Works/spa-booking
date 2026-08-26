@@ -43,6 +43,14 @@ body:
       options: [identity, catalog, availability, appointments, crm, payments, notifications, reporting, infra]
     validations:
       required: true
+  - type: dropdown
+    id: nature
+    attributes:
+      label: Nature
+      description: Qui traitera le ticket. « projet » part dans un run de jalon ; « outillage » (scripts/, .claude/) attend une session humaine dédiée.
+      options: ["projet — produit MVP", "outillage — dispositif de collaboration"]
+    validations:
+      required: true
   - type: textarea
     id: logs
     attributes:

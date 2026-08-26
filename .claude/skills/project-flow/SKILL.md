@@ -29,7 +29,37 @@ Chaque issue porte, sans exception :
 | **Label workstream** | `ws:devops`, `ws:backend`, `ws:frontend`, `ws:design`, `ws:qa` |
 | **Label module** | `mod:identity`, `mod:catalog`, `mod:availability`, `mod:appointments`, `mod:crm`, `mod:payments`, `mod:notifications`, `mod:reporting`, `mod:infra` |
 | **Label type** | `type:epic`, `type:feature`, `type:bug`, `type:chore`, `type:docs`, `type:spike` |
+| **Label nature** | `nature:projet`, `nature:outillage` |
 | **Label priorité** | `P0` (bloquant), `P1` (MVP requis), `P2` (souhaitable) |
+
+### La nature : qui traite le ticket
+
+`nature:` ne dit pas *de quoi* parle l'issue — `mod:` et `type:` s'en chargent —
+mais **qui la traite**, et c'est la seule question à laquelle un run de jalon
+doit pouvoir répondre seul.
+
+| | `nature:projet` | `nature:outillage` |
+|---|---|---|
+| Ce que ça couvre | le produit MVP : `apps/`, `packages/`, `infra/terraform`, les workflows de CI et de déploiement du produit, ses tests | le dispositif de collaboration : `scripts/milestone_*`, `scripts/tracking.py`, `scripts/pr_gate.py`, `.claude/` (commandes, skills, hooks, réglages), les workflows qui servent le run, le harnais qui teste tout cela |
+| Qui le traite | `/milestone` — un agent par ticket, en vagues | un humain, **une session à la fois**, par `/ticket <issue>` |
+| Qui l'ouvre | le planning de sprint, une revue, un bug constaté | l'arbitrage du run (`/milestone-arbitrate`, phases `skip` et 7), ou une demande explicite |
+
+**Le run ne dispatche que `nature:projet`.** La raison n'est pas cosmétique : un
+agent de vague qui réécrit `milestone_run.py` modifie l'orchestrateur qui
+l'exécute, pendant qu'il l'exécute. Ces chantiers-là se prennent isolément, en
+sachant ce qu'on touche.
+
+Un ticket `nature:outillage` **ne retient jamais ses dépendants** : le plan le
+range avec les hors-périmètre et les épiques, parce que le run ne le fermera
+jamais et que le tenir pour un prérequis non satisfait gèlerait le jalon à vie.
+La contrepartie est explicite : si un ticket produit dépend réellement d'un
+chantier d'outillage, c'est à l'humain de le faire d'abord — le plan ne le saura
+pas.
+
+Une issue **sans** label `nature:*` est écartée du plan pour classement
+incomplet, comme il en va d'un `ws:*` manquant. Rien n'est deviné : la supposer
+« produit » enverrait un agent réécrire l'outillage, la supposer « outillage »
+ferait disparaître du sprint un vrai ticket MVP.
 
 Une issue hors périmètre MVP reçoit `post-mvp`, **aucun milestone**, et n'est pas
 travaillée. C'est le garde-fou contre le scope creep — risque à probabilité élevée
@@ -151,7 +181,7 @@ python scripts/pr_gate.py 42 --merge    # merge en squash si tout est vert
 python scripts/worktree_gc.py --dry-run # ce que le ménage supprimerait
 python scripts/project_status.py 42 "In review"          # bouge la carte
 python scripts/tracking.py status                        # le ticket de traçabilité ouvert
-python scripts/tracking.py classify 90 --module payments # corrige son classement
+python scripts/tracking.py classify 90 --module payments --nature projet
 ```
 
 **Ne pas merger avec `gh pr merge` en direct.** Le dépôt est sur un plan GitHub
@@ -200,10 +230,16 @@ intègre les PR séquentiellement avant de replanifier.
 **Le jalon n'a pas à être nommé.** `milestone_run.py next` confronte les jalons
 GitHub aux runs présents et propose celui qu'il reste à dérouler — un run
 inachevé passe avant un jalon neuf, l'échéance tranche ensuite. La commande pose
-alors le choix, la proposition en tête.
+alors le choix, la proposition en tête. Ce qu'il « reste à dérouler » se compte
+en issues `nature:projet` : un jalon dont il ne reste que de l'outillage n'est
+plus proposé, et le tableau affiche les deux chiffres côte à côte.
 
-Deux notions portent tout le reste :
+Trois notions portent tout le reste :
 
+- **Le périmètre du run** est le produit : seules les issues `nature:projet`
+  entrent dans un plan (§2). L'outillage se traite à la main, une session à la
+  fois — c'est la seule façon de modifier le dispositif sans le faire pendant
+  qu'il tourne.
 - **L'ordre** est un score : priorité, `risk`, `security`, et surtout le nombre
   d'issues que l'issue débloque. Le socle passe avant l'urgent.
 - **Une vague** est un groupe d'issues dont aucune ne dépend d'une autre et dont
@@ -343,7 +379,9 @@ n'ouvre plus rien.
 
 **Un ticket est une issue comme les autres** : anatomie complète du §2, carte
 `In progress` à l'ouverture, `Done` à la clôture. Le label `tracking` est ce qui
-permet de les exclure d'une vue du backlog produit.
+permet de les exclure d'une vue du backlog produit. Il porte aussi une
+`nature:` — jamais dispatché de toute façon, mais c'est ce qui permet de dire,
+en fin de sprint, si les demandes ont porté sur le produit ou sur l'outillage.
 
 **Deux demandes du même travail, un seul ticket.** La seconde se rattache en
 commentaire (`tracking.py note`) plutôt que d'ouvrir un ticket qui resterait
