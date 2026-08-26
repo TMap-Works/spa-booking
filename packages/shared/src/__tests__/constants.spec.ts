@@ -83,6 +83,14 @@ describe('statuts de rendez-vous', () => {
 });
 
 describe('rôles', () => {
+  it('énumère les quatre rôles du CDC §1.4, dans l’ordre de déclaration de la colonne', () => {
+    // Contenu **et** ordre : `enum UserRole` porte les mêmes quatre libellés en
+    // majuscules, et PostgreSQL trie un `enum` par son ordre de déclaration.
+    // Réordonner cette liste sans réordonner le type ferait diverger le rang
+    // annoncé par le contrat du tri que rend l'API.
+    expect([...USER_ROLES]).toEqual(['client', 'staff', 'manager', 'admin']);
+  });
+
   it('classe les quatre rôles dans un ordre strictement croissant', () => {
     const ranks = USER_ROLES.map((role) => USER_ROLE_RANK[role]);
 
