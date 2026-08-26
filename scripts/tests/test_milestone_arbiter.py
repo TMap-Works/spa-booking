@@ -217,6 +217,29 @@ class DevelopCasse(unittest.TestCase):
         self.assertIsNotNone(found)
         self.assertIn("verify", found["message"])
 
+    def test_un_develop_vert_ne_leve_rien(self):
+        """La ligne exacte qui levait le motif sur le run S1 du 25/08.
+
+        `verify` en alternative isolée suffisait : un compte rendu de vague qui
+        **annonce** que la barrière est verte contient le mot, et faisait donc
+        dépenser un arbitrage Opus 5 pour dire que tout allait bien — à chaque
+        étape, puisque rien dans le journal ne cesse d'être vrai.
+        """
+        self.assertIsNone(arb.broken_develop(
+            [self.blocked("2026-08-25T12:26:07+00:00",
+                          "vague 1 close : #19 et #14 mergees, develop vert "
+                          "(npm run verify exit 0). Arret sur #150.")], []))
+
+    def test_les_formules_de_la_phase_4_sont_toutes_reconnues(self):
+        for message in ("npm run verify rouge sur develop apres la vague 2",
+                        "develop rouge : test:concurrency en echec",
+                        "build rouge apres le merge de #21",
+                        "tests rouges sur develop",
+                        "barriere rouge sur develop"):
+            with self.subTest(message=message):
+                self.assertIsNotNone(arb.broken_develop(
+                    [self.blocked("2026-08-26T10:00:00+00:00", message)], []))
+
     def test_l_enlisement_du_superviseur_n_est_pas_un_develop_casse(self):
         """Le superviseur journalise lui aussi des `blocked` de run. Les
         confondre ferait arbitrer une panne pour une autre."""
