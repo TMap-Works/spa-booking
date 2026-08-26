@@ -10,6 +10,7 @@ import {
 } from 'class-validator';
 
 import type { UserProfile, UserRole } from '../identity.types';
+import { USER_ROLES } from '../roles';
 
 /**
  * DTO d'entrée et de sortie du module `identity`.
@@ -107,7 +108,9 @@ export class UserProfileDto implements UserProfile {
   @ApiProperty()
   public email!: string;
 
-  @ApiProperty({ enum: ['CLIENT', 'STAFF', 'ADMIN'] })
+  // `USER_ROLES` et non une liste recopiée : le document OpenAPI est le contrat,
+  // et un contrat qui énumère d'autres rôles que la garde est un contrat faux.
+  @ApiProperty({ enum: USER_ROLES })
   public role!: UserRole;
 
   @ApiProperty()

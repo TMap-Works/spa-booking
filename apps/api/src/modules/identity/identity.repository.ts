@@ -9,6 +9,7 @@ import {
 } from '../../infrastructure/database/prisma-clients';
 import { EmailAlreadyRegisteredError } from './identity.errors';
 import type { UserProfile, UserRole } from './identity.types';
+import { PERSISTABLE_STAFF_ROLES, type PersistableUserRole } from './roles';
 
 /**
  * Seul point du module qui connaît le schéma (api-module §2).
@@ -57,6 +58,23 @@ const USER_SELECT = {
   lastName: true,
   phone: true,
   isActive: true,
+} as const;
+
+/**
+ * Projection sans l'empreinte, pour les lectures qui n'ont pas à la vérifier.
+ *
+ * Une liste de comptes n'a aucune raison de ramener une empreinte par ligne :
+ * `toProfile` la retirerait à la sortie, mais elle aurait quand même traversé le
+ * réseau, la mémoire du processus et, sur un chemin d'erreur, un log. La bonne
+ * défense est de ne pas la lire.
+ */
+const PROFILE_SELECT = {
+  id: true,
+  email: true,
+  role: true,
+  firstName: true,
+  lastName: true,
+  phone: true,
 } as const;
 
 /**
@@ -152,6 +170,29 @@ export class IdentityRepository {
   }
 
   /**
+   * Un **compte interne** de l'établissement courant, par identifiant.
+   *
+   * Le filtre sur le rôle est ce qui distingue cette lecture de `findUserById`,
+   * et il n'est pas cosmétique : sans lui, `GET /users/:id` — une route ouverte
+   * au rang `STAFF` — rendrait la fiche d'une cliente, nom, e-mail et téléphone
+   * compris, depuis un point d'entrée d'administration des droits. Les données
+   * personnelles de la clientèle relèvent du module `crm` et de ses propres
+   * permissions (CDC §5.1) ; ne pas les lire ici est plus sûr que d'espérer que
+   * personne n'appelle la route avec le bon identifiant.
+   *
+   * Un compte `CLIENT` du tenant courant est donc **introuvable** par cette
+   * méthode, exactement comme un compte d'un autre établissement — et pour la
+   * même raison de forme : le service traduit `null` en 404, sans avoir à
+   * choisir entre deux motifs de refus.
+   */
+  public async findStaffAccountById(id: string): Promise<UserRecord | null> {
+    return this.prisma.user.findFirst({
+      where: { id, role: { in: [...PERSISTABLE_STAFF_ROLES] } },
+      select: USER_SELECT,
+    });
+  }
+
+  /**
    * Crée un compte dans le tenant courant.
    *
    * Aucun `tenantId` n'est passé : c'est l'extension qui le pose, et elle
@@ -167,7 +208,12 @@ export class IdentityRepository {
    */
   public async createUser(input: {
     email: string;
-    role: UserRole;
+    /**
+     * `PersistableUserRole` et non `UserRole` : la colonne ne connaît pas encore
+     * `MANAGER` (voir `roles.ts`). Le type le dit, plutôt qu'un `as` qui aurait
+     * repoussé la découverte à une erreur Prisma en 500.
+     */
+    role: PersistableUserRole;
     passwordHash: string;
     firstName: string;
     lastName: string;
@@ -198,6 +244,49 @@ export class IdentityRepository {
       where: { id: userId },
       data: { lastLoginAt: new Date() },
     });
+  }
+
+  /**
+   * Les **comptes internes** de l'établissement courant — le « comptes staff »
+   * du CDC §1.4.
+   *
+   * Le filtre sur `role` n'est pas cosmétique : sans lui, la lecture ramènerait
+   * aussi la clientèle, qui se compte en milliers là où le personnel se compte
+   * en dizaines. Les fiches clients relèvent du module `crm` et de sa
+   * pagination ; ce point d'entrée-ci répond à une question d'administration des
+   * droits, et sa taille est bornée par nature.
+   *
+   * `@@index([tenantId, role])` du schéma sert exactement cette requête — c'est
+   * la seule qui filtre sur ce couple.
+   */
+  public async listStaffAccounts(): Promise<UserProfile[]> {
+    return this.prisma.user.findMany({
+      where: { role: { in: [...PERSISTABLE_STAFF_ROLES] } },
+      select: PROFILE_SELECT,
+      // Ordre stable : le rang d'abord, l'adresse pour départager. Sans `orderBy`,
+      // PostgreSQL n'en garantit aucun et la liste change d'un appel à l'autre.
+      orderBy: [{ role: 'asc' }, { email: 'asc' }],
+    });
+  }
+
+  /**
+   * Attribue un rôle à un compte de l'établissement courant.
+   *
+   * `updateMany` et non `update` : sous le scoping, le `where` porte à la fois
+   * `id` et `tenantId`, ce qui n'est pas une clé unique au sens de Prisma. Le
+   * compte est surtout la propriété utile — il vaut `0` pour un identifiant d'un
+   * autre établissement, ce qui donne le 404 attendu plutôt qu'une exception
+   * « record not found » indistinguable d'un incident.
+   */
+  public async updateUserRole(input: {
+    userId: string;
+    role: PersistableUserRole;
+  }): Promise<boolean> {
+    const { count } = await this.prisma.user.updateMany({
+      where: { id: input.userId },
+      data: { role: input.role },
+    });
+    return count === 1;
   }
 
   public async createSession(input: {

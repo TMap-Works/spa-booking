@@ -9,7 +9,7 @@ import {
   InvalidRefreshTokenError,
 } from './identity.errors';
 import { IdentityRepository, toProfile, type UserRecord } from './identity.repository';
-import type { AuthenticationResult, UserProfile, UserRole } from './identity.types';
+import type { AuthenticationResult, UserProfile } from './identity.types';
 import { PasswordHasher } from './password.hasher';
 import { hashJti, TokenService } from './token.service';
 
@@ -365,7 +365,7 @@ export class AuthService {
     const accessToken = await this.tokens.signAccessToken({
       userId: user.id,
       tenantId,
-      role: user.role as UserRole,
+      role: user.role,
     });
 
     return {

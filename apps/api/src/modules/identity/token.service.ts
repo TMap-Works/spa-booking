@@ -5,7 +5,7 @@ import { JwtService } from '@nestjs/jwt';
 
 import { AppConfigService } from '../../config/app-config.service';
 import { InvalidRefreshTokenError } from './identity.errors';
-import { USER_ROLES, type UserRole } from './identity.types';
+import { isUserRole, type UserRole } from './roles';
 
 /**
  * Émission et vérification des deux jetons.
@@ -60,11 +60,6 @@ export interface IssuedRefreshToken {
   jti: string;
   tokenHash: string;
   expiresAt: Date;
-}
-
-/** `true` si la valeur est l'un des trois rôles du schéma. */
-function isUserRole(value: unknown): value is UserRole {
-  return typeof value === 'string' && (USER_ROLES as readonly string[]).includes(value);
 }
 
 /**

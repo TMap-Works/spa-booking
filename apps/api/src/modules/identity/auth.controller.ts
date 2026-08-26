@@ -9,20 +9,16 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import {
-  ApiBearerAuth,
-  ApiOkResponse,
-  ApiOperation,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
 import { AppConfigService } from '../../config/app-config.service';
+import { Auth } from './auth.decorator';
 import { AuthService } from './auth.service';
 import { AuthTokensDto, LoginDto, RegisterDto, UserProfileDto } from './dto/auth.dto';
 import type { AuthenticationResult } from './identity.types';
-import { CurrentUser, JwtAuthGuard } from './jwt-auth.guard';
+import { CurrentUser } from './jwt-auth.guard';
 import type { AuthenticatedUser } from './identity.types';
 import { clearRefreshCookie, readRefreshCookie, setRefreshCookie } from './refresh-cookie';
 
@@ -154,8 +150,10 @@ export class AuthController {
    * chemin serait la première fuite à écrire.
    */
   @Get('me')
-  @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
+  // `@Auth()` sans argument : toute identité vérifiée, quel que soit son rôle.
+  // Lire son propre compte n'est pas un privilège, et la restreindre priverait
+  // la clientèle de la seule route qui lui rend son profil.
+  @Auth()
   @ApiOperation({ summary: 'Lire le compte authentifié' })
   @ApiOkResponse({ type: UserProfileDto })
   public async me(@CurrentUser() user: AuthenticatedUser): Promise<UserProfileDto> {
