@@ -15,6 +15,11 @@
     "declaration": false,
     "types": ["node", "jest"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"],
+  // `eslint-rules` porte le plugin ESLint local : ses règles sont en CommonJS
+  // (ESLint charge sa configuration avant tout compilateur TypeScript), mais
+  // leurs déclarations et leur suite de tests sont typées comme le reste.
+  // `tsconfig.build.json` restreint la compilation à `src` — rien de tout cela
+  // n'entre dans `dist`.
+  "include": ["src/**/*.ts", "test/**/*.ts", "eslint-rules/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
