@@ -56,15 +56,37 @@ locals {
     ]
   ]))
 
+  # Nom du cluster de chaque environnement, **fourni** et non déduit : le
+  # reconstruire ici en `spa-<env>` alors que `modules/ecs-service/cluster.tf` le
+  # crée sous `${local.name_prefix}-cluster`, donc `spa-<env>-cluster`, est ce qui
+  # a fait viser à toute cette politique des ressources inexistantes (#198).
+  #
+  # `lookup` avec un repli vide plutôt qu'un accès direct : un environnement absent
+  # de la carte produirait sinon un « Invalid index » qui ne dit pas quoi corriger.
+  # La précondition de `aws_iam_role_policy.deploy_scoped` le dit, elle.
+  ecs_cluster_name_by_environment = {
+    for env in var.deployment_environments :
+    env => lookup(var.ecs_cluster_names, env, "")
+  }
+
+  ecs_environments_without_cluster = sort([
+    for env, name in local.ecs_cluster_name_by_environment : env if name == ""
+  ])
+
+  # L'ARN d'un cluster porte son nom ; celui d'un service et celui d'une tâche le
+  # portent aussi, en premier segment — le format long est le seul en vigueur
+  # depuis 2021. Les trois se recalent donc ensemble, et la condition
+  # `ecs:cluster` de `RunTask` et `DescribeTasks` avec eux, puisqu'elle compare à
+  # `local.ecs_cluster_arns`.
   ecs_cluster_arns = sort([
     for env in var.deployment_environments :
-    "arn:${local.partition}:ecs:${local.region}:${local.account_id}:cluster/spa-${env}"
+    "arn:${local.partition}:ecs:${local.region}:${local.account_id}:cluster/${local.ecs_cluster_name_by_environment[env]}"
   ])
 
   ecs_service_arns = sort(flatten([
     for env in var.deployment_environments : [
       for service in var.container_services :
-      "arn:${local.partition}:ecs:${local.region}:${local.account_id}:service/spa-${env}/spa-${env}-${service}"
+      "arn:${local.partition}:ecs:${local.region}:${local.account_id}:service/${local.ecs_cluster_name_by_environment[env]}/spa-${env}-${service}"
     ]
   ]))
 
@@ -77,7 +99,7 @@ locals {
 
   ecs_task_arns = sort([
     for env in var.deployment_environments :
-    "arn:${local.partition}:ecs:${local.region}:${local.account_id}:task/spa-${env}/*"
+    "arn:${local.partition}:ecs:${local.region}:${local.account_id}:task/${local.ecs_cluster_name_by_environment[env]}/*"
   ])
 
   ecs_task_role_arns = sort([

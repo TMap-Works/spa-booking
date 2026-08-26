@@ -73,6 +73,19 @@ resource "aws_iam_role_policy" "deploy_scoped" {
   name   = "${var.role_prefix}-deploy-scoped"
   role   = aws_iam_role.deploy.id
   policy = data.aws_iam_policy_document.deploy_scoped.json
+
+  # Une politique IAM qui nomme une ressource inexistante s'applique sans broncher
+  # et ne se voit qu'au déploiement, sous la forme d'un `AccessDenied` qui accuse
+  # les droits plutôt que le nom (#198). La seule occasion de le dire est donc le
+  # plan. Le contrôle est posé ici, sur la première ressource qui consomme le nom
+  # du cluster — `local.ecs_service_arns` en fait son premier segment — et il
+  # suffit à arrêter le plan pour toutes les autres.
+  lifecycle {
+    precondition {
+      condition     = length(local.ecs_environments_without_cluster) == 0
+      error_message = "`ecs_cluster_names` ne nomme pas le cluster ECS de : ${join(", ", local.ecs_environments_without_cluster)}. Y reporter la sortie `cluster_name` du module `ecs-service` de chaque environnement de `deployment_environments` — sans elle, la politique du rôle de déploiement désignerait un cluster inexistant."
+    }
+  }
 }
 
 # Les actions regroupées ici ne peuvent pas être restreintes davantage :

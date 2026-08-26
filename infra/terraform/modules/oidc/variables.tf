@@ -89,6 +89,29 @@ variable "container_services" {
   default     = ["api", "web"]
 }
 
+variable "ecs_cluster_names" {
+  description = "Nom du cluster ECS de chaque environnement de `deployment_environments`, tel que `modules/ecs-service` le crée — c'est-à-dire la valeur de sa sortie `cluster_name`, reportée ici pour l'environnement correspondant. Ce module s'applique depuis une racine d'administration distincte de `envs/<env>`, dont l'état ne lui est pas accessible : à défaut de pouvoir lire la sortie, la valeur littérale convient, ce qui compte étant qu'elle soit écrite une fois au vu du module qui crée le cluster, et non déduite ici. Pas de valeur par défaut, délibérément : le module reconstruisait auparavant ce nom à la main en `spa-<env>` alors que `modules/ecs-service` nomme le cluster `spa-<env>-cluster`, si bien que les ARN de la politique de déploiement désignaient des ressources inexistantes et que `ecs:UpdateService`, `ecs:RunTask` et `ecs:DescribeTasks` revenaient en `AccessDenied` (#198). Un défaut rétablirait la duplication qui a produit l'écart, et le ferait en silence."
+  type        = map(string)
+
+  # Obligatoire *et* non nul. Avec `nullable` à sa valeur par défaut — `true` —,
+  # un appelant qui relaie sa propre variable optionnelle (`ecs_cluster_names =
+  # var.cluster_names`, nulle) ferait échouer `length(null)` sur « invalid value
+  # for "v": argument must not be null », sans jamais atteindre le message de la
+  # validation ci-dessous ni celui de la précondition. Refuser le nul ici, c'est
+  # garder l'erreur lisible.
+  nullable = false
+
+  validation {
+    condition     = length(var.ecs_cluster_names) > 0
+    error_message = "Nommer le cluster ECS de chaque environnement de déploiement : sans lui, la politique du rôle de déploiement ne peut désigner ni le cluster, ni ses services, ni ses tâches."
+  }
+
+  validation {
+    condition     = alltrue([for name in values(var.ecs_cluster_names) : can(regex("^[A-Za-z0-9_-]{1,255}$", name))])
+    error_message = "Un nom de cluster ECS se limite à 255 caractères parmi lettres, chiffres, tirets et soulignés. Ce qui est attendu ici est un **nom** (`spa-dev-cluster`), pas un ARN ni un identifiant de cluster — l'ARN est composé par le module."
+  }
+}
+
 variable "production_environment" {
   description = "Environnement considéré comme la production. Seul son rôle reçoit le droit de prendre un instantané RDS avant déploiement ; les autres ne l'ont pas."
   type        = string

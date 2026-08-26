@@ -130,6 +130,18 @@ module "github_oidc" {
 
   github_repository = "TMap-Works/spa-booking"
 
+  # Nom du cluster ECS de chaque environnement, tel que `modules/ecs-service` le
+  # crée — sa sortie `cluster_name`. Il n'a pas de valeur par défaut, et c'est
+  # voulu : le module le reconstruisait en `spa-<env>` alors que le cluster
+  # s'appelle `spa-<env>-cluster`, ce qui faisait viser à toute la politique de
+  # déploiement des ressources inexistantes (#198). Le déduire une seconde fois
+  # ici rétablirait l'écart au premier changement de convention.
+  ecs_cluster_names = {
+    dev     = "spa-dev-cluster"
+    staging = "spa-staging-cluster"
+    prod    = "spa-prod-cluster"
+  }
+
   # Une fois l'amorçage appliqué, relever les identifiants dans sa sortie
   # `state_kms_key_ids` et les composer en ARN — une politique IAM refuse un UUID
   # nu en `Resource` :
@@ -187,6 +199,7 @@ comparer à la sortie `trusted_subjects`.
 |---|---|---|
 | `github_repository` | `TMap-Works/spa-booking` | Seul dépôt autorisé |
 | `deployment_environments` | `["dev","staging","prod"]` | Environnements GitHub acceptés |
+| `ecs_cluster_names` | **aucun** | Nom du cluster ECS par environnement (`cluster_name` de `ecs-service`) — obligatoire, voir ci-dessous |
 | `deployment_branches` | `[]` | Branches acceptées sans environnement — rouvre le contournement de l'approbation `prod` |
 | `existing_oidc_provider_arn` | `null` | Se raccorder à un fournisseur déjà créé |
 | `terraform_managed_policy_arns` | `AdministratorAccess` | Droits du rôle d'`apply` |
@@ -203,7 +216,20 @@ Liste complète et justifications dans `variables.tf`.
   étroite se traduirait par un `apply` qui échoue à mi-parcours en laissant
   l'infrastructure à moitié posée. Le confinement vient de la politique de
   confiance et de l'approbation manuelle sur `prod`, pas de l'étendue des droits.
-- Les ARN de ressources du rôle de déploiement sont construits par convention de
-  nommage (`spa-{env}-api`, `spa-{env}`, …). Un module qui s'écarterait de cette
-  convention obtiendrait un `AccessDenied` au déploiement, pas une faille — mais
-  le message ne le dira pas clairement.
+- Les ARN de ressources du rôle de déploiement restent construits par convention
+  de nommage pour tout ce qui n'est pas le cluster : dépôts ECR `spa-{env}-{app}`,
+  services `spa-{env}-{app}`, famille de migration `spa-{env}-migrate`, rôles de
+  tâche `spa-{env}-*`. Un module qui s'écarterait de cette convention obtiendrait
+  un `AccessDenied` au déploiement, pas une faille — mais le message ne le dira
+  pas clairement. C'est précisément ce qui est arrivé au **cluster** (#198), d'où
+  son passage en entrée explicite ; les autres noms tiennent tant que
+  `modules/ecr` et `modules/ecs-service` gardent leur préfixe `spa-{env}-`.
+
+## Ce que le module ne corrige pas
+
+`deploy-staging.yml` et `deploy-production.yml` appellent encore
+`aws ecs --cluster spa-staging` / `spa-prod`, c'est-à-dire les noms que la
+politique visait avant #198. Ces clusters n'existent pas — `modules/ecs-service`
+crée `spa-{env}-cluster` — donc ces deux workflows échouaient déjà, et la
+politique corrigée ne les autorise pas davantage. `deploy-dev.yml` est, lui, sur
+le bon nom depuis #199. Le sujet est côté workflows, pas côté module.
