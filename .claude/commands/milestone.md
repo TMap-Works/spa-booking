@@ -396,8 +396,16 @@ git -C <dépôt principal> fetch origin develop && git -C <dépôt principal> pu
 npm run verify
 ```
 
-Rouge après une vague verte = une interaction entre deux tickets que le plan
-croyait indépendants. **Ne pas enchaîner** : ouvrir une issue `type:bug` `P0`
+Rouge après une vague verte n'est pas toujours une interaction entre deux
+tickets. **Faire le tri d'abord** avec la table « Quand la barrière échoue
+pour une raison d'environnement » de [ticket.md](ticket.md) — le dépôt
+principal a un `node_modules` de longue durée, que ni la CI ni les agents
+n'ont : un client Prisma généré avant une migration qui vient d'être mergée
+y produit des `TS2322` que `npm run db:generate` efface. Conclure à une
+régression sur un artefact local arrêterait le jalon pour rien.
+
+Une fois l'environnement écarté, rouge = une interaction que le plan
+croyait impossible. **Ne pas enchaîner** : ouvrir une issue `type:bug` `P0`
 rattachée au jalon, dire quelles empreintes se sont recouvertes, corriger
 `.claude/milestone-rules.json` pour que la paire ne se reproduise pas, puis
 journaliser **au niveau du run** — sans `--ticket`, et en nommant la barrière :

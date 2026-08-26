@@ -190,6 +190,7 @@ aucun fichier du diff et que la même commande échoue à l'identique sur
 | `Cannot find module 'D:\...'` sur un chemin **tronqué**, ou `'…\node_modules\.bin\' n'est pas reconnu` | le chemin du dépôt contient une esperluette et `cmd.exe` coupe dessus (#139) | `npm config set script-shell "C:/Program Files/Git/bin/bash.exe"` |
 | binaire local introuvable, `node_modules` absent | worktree sans dépendances installées | `npm install` — correction 3 de la phase 1 |
 | `test:integration` ou `test:concurrency` sans base joignable | Postgres et Redis éteints | `docker compose up -d` |
+| `TS2322` sur une valeur d'énumération Prisma récemment ajoutée (« `X` n'est pas assignable à `Y` ») | le client Prisma généré dans `node_modules` précède la migration qui a ajouté la valeur | `npm run db:generate` |
 
 **Ce n'est pas un échec du ticket**, et cela ne se journalise pas comme tel :
 appliquer le remède, relancer la barrière, poursuivre le parcours. Une ligne de
