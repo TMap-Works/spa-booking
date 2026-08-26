@@ -13,25 +13,40 @@ permissions:
   contents: read
   id-token: write   # OIDC — aucune clé AWS statique
 
+env:
+  # Noms posés par infra/terraform/envs/dev. Le cluster s'appelle
+  # `spa-{env}-cluster` (modules/ecs-service/cluster.tf), les services, les dépôts
+  # et la famille de migration `spa-{env}-{composant}`.
+  CLUSTER: spa-dev-cluster
+  API_REPOSITORY: spa-dev-api
+  API_SERVICE: spa-dev-api
+  WEB_REPOSITORY: spa-dev-web
+  MIGRATE_TASK_DEFINITION: spa-dev-migrate
+  TF_DIR: infra/terraform/envs/dev
+
 jobs:
   deploy:
     name: Déployer sur dev
     runs-on: ubuntu-latest
-    # Tant que le rôle OIDC n'est pas appliqué (infra/terraform/modules/oidc), le
-    # déploiement est ignoré proprement plutôt que de faire échouer chaque push.
-    # Poser les variables de dépôt AWS_REGION et AWS_DEPLOY_ROLE_ARN active les
-    # déploiements. Ce sont des `vars` et non des `secrets` : un ARN de rôle n'est
-    # pas un secret, et le tenir hors des secrets rend visible qu'aucun identifiant
-    # AWS n'y est stocké.
-    if: ${{ vars.AWS_REGION != '' && vars.AWS_DEPLOY_ROLE_ARN != '' }}
+    # Tant que les rôles OIDC ne sont pas appliqués (infra/terraform/modules/oidc),
+    # le déploiement est ignoré proprement plutôt que de faire échouer chaque push.
+    # Poser les variables de dépôt AWS_REGION, AWS_DEPLOY_ROLE_ARN et
+    # AWS_TERRAFORM_ROLE_ARN active les déploiements. Ce sont des `vars` et non des
+    # `secrets` : un ARN de rôle n'est pas un secret, et le tenir hors des secrets
+    # rend visible qu'aucun identifiant AWS n'y est stocké.
+    if: ${{ vars.AWS_REGION != '' && vars.AWS_DEPLOY_ROLE_ARN != '' && vars.AWS_TERRAFORM_ROLE_ARN != '' }}
     environment: dev
     steps:
       - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
 
+      # --- Publication des images -------------------------------------------
+      #
       # Le sujet OIDC présenté ici est `repo:<dépôt>:environment:dev`, parce que le
       # job déclare `environment:`. C'est cette forme que la politique de confiance
-      # du rôle attend — pas la branche.
-      - uses: aws-actions/configure-aws-credentials@v4
+      # des deux rôles attend — pas la branche.
+      - name: Identité de publication (rôle de déploiement)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: gha-deploy-dev-${{ github.run_id }}
@@ -40,25 +55,209 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr
 
-      - name: Construire et pousser les images
+      # Une seule étiquette, le sha du commit : les dépôts ECR sont immuables
+      # (modules/ecr/repositories.tf), une étiquette mobile ne pourrait donc être
+      # poussée qu'une fois. C'est aussi ce qui garantit que l'image analysée par
+      # le scan de vulnérabilités est celle qui s'exécute.
+      - name: Construire et pousser l'image de l'API
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          TAG: ${{ github.sha }}
+          SHA_TAG: ${{ github.sha }}
         run: |
-          docker build -t $REGISTRY/spa-dev-api:$TAG -f apps/api/Dockerfile .
-          docker build -t $REGISTRY/spa-dev-web:$TAG -f apps/web/Dockerfile .
-          docker push $REGISTRY/spa-dev-api:$TAG
-          docker push $REGISTRY/spa-dev-web:$TAG
+          set -euo pipefail
+          docker build \
+            --tag "$REGISTRY/$API_REPOSITORY:$SHA_TAG" \
+            --file apps/api/Dockerfile .
+          docker push "$REGISTRY/$API_REPOSITORY:$SHA_TAG"
 
+      # Même garde que le job `docker` de ci.yml : `apps/web` ne porte pas encore
+      # de `next.config.*`, son image ne se construit donc pas. Sans cette garde,
+      # chaque push sur develop échouerait sur le build du front — et le
+      # déploiement de l'API avec lui.
+      - id: web
+        name: Le front est-il initialisé ?
+        run: |
+          if compgen -G "apps/web/next.config.*" > /dev/null; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice file=apps/web/Dockerfile::apps/web ne porte aucun next.config.* — image web ignoree tant que le front n est pas pose."
+          fi
+
+      - name: Construire et pousser l'image du front
+        if: steps.web.outputs.present == 'true'
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker build \
+            --tag "$REGISTRY/$WEB_REPOSITORY:$SHA_TAG" \
+            --file apps/web/Dockerfile .
+          docker push "$REGISTRY/$WEB_REPOSITORY:$SHA_TAG"
+
+      # --- Migrations --------------------------------------------------------
+      #
+      # La définition de tâche appartient à l'état Terraform : c'est `apply` qui
+      # la fait pointer sur l'image qu'on vient de publier, et le rôle de
+      # déploiement n'a de toute façon pas `ecs:RegisterTaskDefinition`.
+      #
+      # Cet `apply` est **ciblé** sur la seule tâche de migration, délibérément :
+      # il faut que le schéma soit migré avant que les nouvelles tâches de l'API
+      # ne démarrent. Un `apply` complet ici lancerait les deux en même temps.
+      - name: Identité d'infrastructure (rôle Terraform)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          role-session-name: gha-tf-dev-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init -input=false
+
+      - name: Publier la définition de tâche de migration
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          terraform apply -auto-approve -input=false \
+            -var="image_tag=$SHA_TAG" \
+            -target=aws_ecs_task_definition.migrate
+
+      - name: Identité de déploiement (rôle de déploiement)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: gha-deploy-dev-migrate-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # La configuration réseau se lit sur le service plutôt que dans une
+      # variable de dépôt : elle vaut par construction ce que Terraform a posé —
+      # les sous-réseaux applicatifs et le groupe de sécurité des tâches, seul
+      # autorisé à joindre RDS. Une variable recopiée à la main divergerait au
+      # premier changement de réseau, et la migration échouerait sur un délai
+      # d'attente que rien n'expliquerait.
+      - id: network
+        name: Relever la configuration réseau du service
+        run: |
+          set -euo pipefail
+          config="$(aws ecs describe-services \
+            --cluster "$CLUSTER" \
+            --services "$API_SERVICE" \
+            --query 'services[0].networkConfiguration' \
+            --output json)"
+          if [ -z "$config" ] || [ "$config" = "null" ]; then
+            echo "::error::Le service $API_SERVICE est introuvable sur le cluster $CLUSTER. Appliquer infra/terraform/envs/dev avant le premier deploiement."
+            exit 1
+          fi
+          {
+            echo "config<<EOF"
+            echo "$config"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      # `aws ecs run-task` rend la main dès la tâche lancée : il n'a pas d'option
+      # `--wait`. Sans l'attente explicite ci-dessous, le déploiement démarrerait
+      # sur un schéma non migré et l'échec se lirait dans les journaux de
+      # l'application, pas dans ceux du workflow.
       - name: Appliquer les migrations de base de données
+        env:
+          NETWORK_CONFIGURATION: ${{ steps.network.outputs.config }}
         run: |
-          aws ecs run-task             --cluster spa-dev             --task-definition spa-dev-migrate             --launch-type FARGATE             --network-configuration "${{ vars.ECS_NETWORK_CONFIG }}"             --wait
+          set -euo pipefail
+          task_arn="$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$MIGRATE_TASK_DEFINITION" \
+            --launch-type FARGATE \
+            --network-configuration "$NETWORK_CONFIGURATION" \
+            --started-by "gha-${GITHUB_RUN_ID}" \
+            --query 'tasks[0].taskArn' \
+            --output text)"
 
-      - name: Déployer les services ECS
+          if [ -z "$task_arn" ] || [ "$task_arn" = "None" ]; then
+            echo "::error::La tache de migration n a pas demarre — voir la cle failures de la reponse ECS."
+            exit 1
+          fi
+          echo "Tâche de migration : $task_arn"
+
+          # L'attente plafonne à une dizaine de minutes : au-delà, le job échoue
+          # alors que la migration peut encore aboutir. Elle échoue donc du bon
+          # côté — sans déployer une application en avance sur son schéma.
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$task_arn"
+
+          # Le code de sortie du conteneur est le seul verdict qui compte : une
+          # tâche « STOPPED » l'est aussi bien après un succès qu'après un échec
+          # de migration.
+          exit_code="$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$task_arn" \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)"
+          reason="$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$task_arn" \
+            --query 'tasks[0].stoppedReason' \
+            --output text)"
+
+          if [ "$exit_code" != "0" ]; then
+            echo "::error::Migration en echec (code de sortie $exit_code) : $reason"
+            echo "Journaux : groupe /ecs/spa-dev/api, flux prefixe migrate."
+            exit 1
+          fi
+          echo "Migrations appliquées."
+
+      # --- Déploiement -------------------------------------------------------
+      #
+      # L'`apply` complet fait pointer la définition de tâche du service sur la
+      # nouvelle image, et ECS déroule un déploiement rolling :
+      # `minimum_healthy_percent = 100` interdit de descendre sous la capacité
+      # nominale, la nouvelle tâche doit être saine pour l'ALB avant que
+      # l'ancienne ne soit retirée — donc aucune coupure. Le disjoncteur de
+      # déploiement revient de lui-même à la révision précédente si les nouvelles
+      # tâches ne passent jamais le contrôle de santé.
+      - name: Identité d'infrastructure (rôle Terraform)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          role-session-name: gha-tf-dev-deploy-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Déployer
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          SHA_TAG: ${{ github.sha }}
         run: |
-          aws ecs update-service --cluster spa-dev --service spa-dev-api --force-new-deployment
-          aws ecs update-service --cluster spa-dev --service spa-dev-web --force-new-deployment
-          aws ecs wait services-stable --cluster spa-dev --services spa-dev-api spa-dev-web
+          set -euo pipefail
+          terraform apply -auto-approve -input=false -var="image_tag=$SHA_TAG"
 
+      # `terraform apply` n'attend pas la stabilité du service — il rend la main
+      # dès la mise à jour acceptée. C'est ici qu'on constate que le déploiement
+      # a réellement abouti.
+      - name: Attendre la stabilité du service
+        run: aws ecs wait services-stable --cluster "$CLUSTER" --services "$API_SERVICE"
+
+      # `--insecure` est délibéré et cantonné à dev : faute de nom de domaine,
+      # l'ALB de cet environnement porte un certificat auto-signé fabriqué par
+      # Terraform (infra/terraform/envs/dev/main.tf). Le jour où `certificate_arn`
+      # reçoit un vrai certificat ACM, cette option doit disparaître.
+      #
+      # L'URL vient d'une variable de dépôt : `terraform output app_url` la donne
+      # après le premier apply.
       - name: Vérification de santé
-        run: curl --fail --retry 5 --retry-delay 10 ${{ vars.APP_URL }}/health
+        if: ${{ vars.APP_URL != '' }}
+        env:
+          # Par l'environnement et non par `${{ }}` dans le script : interpolée
+          # dans la ligne de commande, une variable de dépôt y serait exécutée.
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          set -euo pipefail
+          curl --fail --insecure --silent --show-error \
+            --retry 5 --retry-delay 10 --retry-connrefused \
+            "${APP_URL%/}/health"
+          echo
+
+      - name: Vérification de santé ignorée
+        if: ${{ vars.APP_URL == '' }}
+        run: echo "::warning::Variable de depot APP_URL absente — controle de sante post-deploiement ignore. La poser avec la sortie app_url de infra/terraform/envs/dev."
