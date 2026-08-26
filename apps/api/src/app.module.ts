@@ -15,6 +15,7 @@ import { AppConfigModule } from './config/app-config.module';
 import { HealthModule } from './health/health.module';
 import { CacheModule } from './infrastructure/cache/cache.module';
 import { DatabaseModule } from './infrastructure/database/database.module';
+import { CatalogModule } from './modules/catalog/catalog.module';
 import { IdentityModule } from './modules/identity/identity.module';
 
 /**
@@ -40,6 +41,8 @@ import { IdentityModule } from './modules/identity/identity.module';
     // Après `TenantContextModule` et `DatabaseModule` : sa garde renseigne le
     // contexte de tenant, ses repositories consomment le client scopé.
     IdentityModule,
+    // Après `IdentityModule`, dont il monte les gardes sur ses routes (#24).
+    CatalogModule,
   ],
   providers: [
     {

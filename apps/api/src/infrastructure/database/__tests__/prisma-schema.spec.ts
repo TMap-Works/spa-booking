@@ -39,11 +39,19 @@ const TENANT_ROOT_TABLE = 'tenants';
  * qui l'a volé n'effacera pas. Elle est inscrite ici pour la même raison que les
  * autres : que son `tenant_id`, ses index et ses clés composites soient relus
  * par cette suite comme ceux de n'importe quelle table métier.
+ *
+ * `service_categories` n'en est pas une neuvième : le CDC §2.4 nomme la
+ * catégorie comme un attribut de la prestation, et elle l'était — une chaîne
+ * libre recopiée dans `services.category`. #24 la normalise en table pour
+ * qu'elle se crée, se renomme et se retire du catalogue en un geste plutôt
+ * qu'une prestation à la fois. Même exigence qu'ailleurs, donc : `tenant_id`,
+ * index préfixés, unique composite.
  */
 const EXPECTED_TABLES = [
   'tenants',
   'users',
   'services',
+  'service_categories',
   'staff',
   'service_staff',
   'appointments',
@@ -124,6 +132,19 @@ function readMigrationSql(): string {
     .join('\n');
 }
 
+/** Une colonne, telle que son fragment de SQL la décrit. */
+function toColumn(name: string, definition: string): Column {
+  return {
+    name,
+    definition,
+    type: definition
+      .replace(/\s+(NOT NULL|NULL)\b.*$/, '')
+      .replace(/\s+DEFAULT\b.*$/, '')
+      .trim(),
+    nullable: !/\bNOT NULL\b/.test(definition),
+  };
+}
+
 function parseTables(sql: string): Table[] {
   const tables: Table[] = [];
   // Le motif accepte les majuscules **à dessein** : une relation N–N implicite
@@ -142,22 +163,49 @@ function parseTables(sql: string): Table[] {
       if (parsed === null) {
         continue;
       }
-      const definition = group(parsed, 2);
-      columns.push({
-        name: group(parsed, 1),
-        definition,
-        type: definition
-          .replace(/\s+(NOT NULL|NULL)\b.*$/, '')
-          .replace(/\s+DEFAULT\b.*$/, '')
-          .trim(),
-        nullable: !/\bNOT NULL\b/.test(definition),
-      });
+      columns.push(toColumn(group(parsed, 1), group(parsed, 2)));
     }
 
     tables.push({ name: group(match, 1), columns });
   }
 
+  applyAddedColumns(sql, tables);
+
   return tables;
+}
+
+/**
+ * Replie les colonnes ajoutées après coup dans la table qu'elles complètent.
+ *
+ * Sans cela, une colonne née d'une migration ultérieure — `ALTER TABLE …
+ * ADD COLUMN`, la forme normale de toute évolution additive (api-module §6) —
+ * n'existe tout simplement pas pour cette suite : elle échappe au contrôle du
+ * type entier d'un montant, du `timestamptz` d'un instant, de l'UUID d'une clé
+ * étrangère. Le défaut n'était pas seulement une lacune de couverture, il était
+ * **bruyant du mauvais côté** : une clé étrangère posée sur une telle colonne
+ * faisait échouer le contrôle des types d'identifiants sur « la table n'a pas de
+ * colonne », c'est-à-dire sur le parseur et non sur le schéma.
+ *
+ * `ADD COLUMN` seulement : le retrait d'une colonne est déjà interdit par le
+ * test d'additivité, et une redéfinition de type ne se lit pas comme un ajout.
+ */
+function applyAddedColumns(sql: string, tables: Table[]): void {
+  // Un `ALTER TABLE` peut enchaîner plusieurs `ADD COLUMN` séparés par des
+  // virgules jusqu'au point-virgule — c'est la forme que génère Prisma.
+  const statements = /ALTER TABLE "([A-Za-z_0-9]+)"\s+(ADD COLUMN[^;]*);/g;
+
+  for (const statement of sql.matchAll(statements)) {
+    const owner = tables.find((candidate) => candidate.name === group(statement, 1));
+    if (owner === undefined) {
+      throw new Error(`« ${group(statement, 1)} » complétée avant d'être créée`);
+    }
+
+    for (const added of group(statement, 2).matchAll(
+      /ADD COLUMN\s+"([A-Za-z_0-9]+)"\s+([^,]+?)\s*(?:,|$)/g,
+    )) {
+      owner.columns.push(toColumn(group(added, 1), group(added, 2)));
+    }
+  }
 }
 
 function parseIndexes(sql: string): Index[] {

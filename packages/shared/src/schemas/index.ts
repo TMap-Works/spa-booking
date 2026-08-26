@@ -31,24 +31,33 @@ export type {
 } from './availability';
 
 export {
+  bufferMinutesSchema,
+  createServiceCategoryRequestSchema,
   createServiceRequestSchema,
   createStaffMemberRequestSchema,
+  serviceCategorySchema,
+  serviceCategorySummarySchema,
   serviceSchema,
   serviceSummarySchema,
   setStaffServicesRequestSchema,
   staffMemberSchema,
   staffMemberSummarySchema,
+  updateServiceCategoryRequestSchema,
   updateServiceRequestSchema,
   updateStaffMemberRequestSchema,
 } from './catalog';
 export type {
+  CreateServiceCategoryRequest,
   CreateServiceRequest,
   CreateStaffMemberRequest,
   Service,
+  ServiceCategory,
+  ServiceCategorySummary,
   ServiceSummary,
   SetStaffServicesRequest,
   StaffMember,
   StaffMemberSummary,
+  UpdateServiceCategoryRequest,
   UpdateServiceRequest,
   UpdateStaffMemberRequest,
 } from './catalog';

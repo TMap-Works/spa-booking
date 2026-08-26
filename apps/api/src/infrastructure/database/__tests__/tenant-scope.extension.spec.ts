@@ -42,14 +42,15 @@ describe('Extension de scoping tenant', () => {
   describe('modèles couverts', () => {
     it('déduit du schéma les modèles métier, sans liste écrite à la main', () => {
       // Le point de la déduction : `RefreshToken`, ajouté par #21 bien après ce
-      // fichier, est couvert sans que personne ait eu à l'inscrire dans
-      // l'extension — seule cette attente-ci a bougé.
+      // fichier, puis `ServiceCategory` par #24, sont couverts sans que personne
+      // ait eu à les inscrire dans l'extension — seule cette attente-ci a bougé.
       expect([...TENANT_SCOPED_MODELS].sort()).toEqual([
         'Appointment',
         'Notification',
         'Payment',
         'RefreshToken',
         'Service',
+        'ServiceCategory',
         'ServiceStaff',
         'Staff',
         'User',
