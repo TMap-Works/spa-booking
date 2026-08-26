@@ -13,6 +13,15 @@ permissions:
   contents: read
   id-token: write   # OIDC — aucune clé AWS statique
 
+env:
+  # Nom posé par infra/terraform/modules/ecs-service/cluster.tf : le cluster
+  # s'appelle `${local.name_prefix}-cluster`, suffixe compris — le préfixe
+  # d'environnement seul ne désigne aucune ressource. La politique du rôle OIDC
+  # (modules/oidc) cible ce nom-là et lui seul : s'en écarter donne un
+  # AccessDenied qui accuse les droits au lieu du nom. Posé une seule fois ici,
+  # comme dans deploy-dev.yml.
+  CLUSTER: spa-staging-cluster
+
 jobs:
   deploy:
     name: Déployer sur staging
@@ -50,15 +59,25 @@ jobs:
           docker push $REGISTRY/spa-staging-api:$TAG
           docker push $REGISTRY/spa-staging-web:$TAG
 
+      # Nom du cluster et remise en forme seulement — les retours à la ligne de
+      # cette commande avaient disparu. Les autres défauts de l'étape (`run-task`
+      # n'a pas d'option `--wait` ; la configuration réseau recopiée à la main
+      # dans une variable de dépôt) relèvent de #204, qui les traite le jour où
+      # `envs/staging` composera le module `ecs-service`.
       - name: Appliquer les migrations de base de données
         run: |
-          aws ecs run-task             --cluster spa-staging             --task-definition spa-staging-migrate             --launch-type FARGATE             --network-configuration "${{ vars.ECS_NETWORK_CONFIG }}"             --wait
+          aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition spa-staging-migrate \
+            --launch-type FARGATE \
+            --network-configuration "${{ vars.ECS_NETWORK_CONFIG }}" \
+            --wait
 
       - name: Déployer les services ECS
         run: |
-          aws ecs update-service --cluster spa-staging --service spa-staging-api --force-new-deployment
-          aws ecs update-service --cluster spa-staging --service spa-staging-web --force-new-deployment
-          aws ecs wait services-stable --cluster spa-staging --services spa-staging-api spa-staging-web
+          aws ecs update-service --cluster "$CLUSTER" --service spa-staging-api --force-new-deployment
+          aws ecs update-service --cluster "$CLUSTER" --service spa-staging-web --force-new-deployment
+          aws ecs wait services-stable --cluster "$CLUSTER" --services spa-staging-api spa-staging-web
 
       - name: Vérification de santé
         run: curl --fail --retry 5 --retry-delay 10 ${{ vars.APP_URL }}/health

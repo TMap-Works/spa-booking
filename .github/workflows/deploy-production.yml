@@ -13,6 +13,16 @@ permissions:
   contents: write
   id-token: write   # OIDC — aucune clé AWS statique
 
+env:
+  # Nom posé par infra/terraform/modules/ecs-service/cluster.tf : le cluster
+  # s'appelle `${local.name_prefix}-cluster`, suffixe compris — le préfixe
+  # d'environnement seul ne désigne aucune ressource. La politique du rôle OIDC
+  # (modules/oidc) cible ce nom-là et lui seul : s'en écarter donne un
+  # AccessDenied qui accuse les droits au lieu du nom. Posé une seule fois ici,
+  # comme dans deploy-dev.yml, et lu aussi bien par le job `deploy` que par
+  # `rollback-on-failure`.
+  CLUSTER: spa-prod-cluster
+
 jobs:
   deploy:
     name: Déployer en production
@@ -59,10 +69,14 @@ jobs:
           docker push $REGISTRY/spa-prod-api:$TAG
           docker push $REGISTRY/spa-prod-web:$TAG
 
+      # Nom du cluster seulement — les autres défauts de l'étape (`run-task` n'a
+      # pas d'option `--wait` ; la configuration réseau recopiée à la main dans
+      # une variable de dépôt) relèvent de #204, qui les traite le jour où
+      # `envs/prod` composera le module `ecs-service`.
       - name: Appliquer les migrations de base de données
         run: |
           aws ecs run-task \
-            --cluster spa-prod \
+            --cluster "$CLUSTER" \
             --task-definition spa-prod-migrate \
             --launch-type FARGATE \
             --network-configuration "${{ vars.ECS_NETWORK_CONFIG }}" \
@@ -70,9 +84,9 @@ jobs:
 
       - name: Déployer les services ECS
         run: |
-          aws ecs update-service --cluster spa-prod --service spa-prod-api --force-new-deployment
-          aws ecs update-service --cluster spa-prod --service spa-prod-web --force-new-deployment
-          aws ecs wait services-stable --cluster spa-prod --services spa-prod-api spa-prod-web
+          aws ecs update-service --cluster "$CLUSTER" --service spa-prod-api --force-new-deployment
+          aws ecs update-service --cluster "$CLUSTER" --service spa-prod-web --force-new-deployment
+          aws ecs wait services-stable --cluster "$CLUSTER" --services spa-prod-api spa-prod-web
 
       - name: Vérification de santé
         run: curl --fail --retry 10 --retry-delay 15 ${{ vars.APP_URL }}/health
@@ -97,10 +111,10 @@ jobs:
       - name: Revenir à la définition de tâche précédente
         run: |
           for svc in api web; do
-            prev=$(aws ecs describe-services --cluster spa-prod --services spa-prod-$svc \
+            prev=$(aws ecs describe-services --cluster "$CLUSTER" --services spa-prod-$svc \
               --query 'services[0].deployments[1].taskDefinition' --output text)
             if [ "$prev" != "None" ] && [ -n "$prev" ]; then
-              aws ecs update-service --cluster spa-prod --service spa-prod-$svc --task-definition "$prev"
+              aws ecs update-service --cluster "$CLUSTER" --service spa-prod-$svc --task-definition "$prev"
             fi
           done
-          aws ecs wait services-stable --cluster spa-prod --services spa-prod-api spa-prod-web
+          aws ecs wait services-stable --cluster "$CLUSTER" --services spa-prod-api spa-prod-web
