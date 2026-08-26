@@ -12,6 +12,9 @@ components/
 lib/
   api-client.ts  seul point d'accès à l'API, types importés de @spa/shared
 styles/          jetons et composants de base — voir styles/README.md
+  admin/         chrome du tableau de bord — voir styles/admin/README.md
+mockups/admin/   maquettes HTML statiques des cinq écrans du back-office
+tests/           suites node:test du design system et des maquettes
 ```
 
 Server Components par défaut. `"use client"` est une décision, ajoutée aussi bas
@@ -25,4 +28,24 @@ et état vide : [styles/README.md](styles/README.md).
 
 Aucune page n'écrit une couleur littérale — tout passe par la couche sémantique
 `--spa-color-*`, ce qui permettra à un salon de substituer sa rampe de marque
-sans réécriture. Vérifié par `node --test apps/web/tests/`.
+sans réécriture.
+
+## Tableau de bord admin
+
+Les cinq écrans du back-office — planning jour et semaine, création et édition
+d'un rendez-vous, fiche client, personnel et horaires, encaissement — sont
+livrés en CSS piloté par jetons et en contrats de balisage documentés :
+[styles/admin/README.md](styles/admin/README.md).
+
+Les maquettes s'ouvrent telles quelles dans un navigateur, sans serveur et sans
+build : `mockups/admin/index.html`.
+
+## Vérifications
+
+```bash
+npm run test:unit --workspace @spa/web   # ou : node --test apps/web/tests/
+```
+
+Contraste AA, intégrité des jetons, et cohérence entre les maquettes et leurs
+feuilles de style — y compris la garantie que l'écran d'encaissement n'offre
+nulle part où saisir un numéro de carte.
