@@ -1,12 +1,12 @@
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { UserRole as PrismaUserRole } from '@prisma/client';
 
 import {
   hasAtLeastRole,
-  isPersistableUserRole,
   isStaffRole,
   isUserRole,
-  PERSISTABLE_STAFF_ROLES,
-  PERSISTABLE_USER_ROLES,
   rolesAtLeast,
   STAFF_ROLES,
   USER_ROLE_RANK,
@@ -14,14 +14,41 @@ import {
 } from '../roles';
 
 /**
- * L'énumération telle que Prisma la génère — le témoin de l'écart entre ce que
- * l'autorisation nomme et ce que la colonne sait écrire.
+ * L'énumération telle que Prisma la génère — le témoin que le vocabulaire
+ * d'autorisation et la colonne disent bien la même chose.
  *
  * Elle est importée **ici** et non dans `roles.ts` : ce dernier est chargé par la
  * garde, donc par tous les contrôleurs, et api-module §2 réserve l'import du
  * client Prisma à la couche repository.
  */
 const PRISMA_USER_ROLE_VALUES: readonly string[] = Object.values(PrismaUserRole);
+
+/**
+ * Le SQL de migration concaténé, dans son ordre d'application.
+ *
+ * `PRISMA_USER_ROLE_VALUES` vient de `schema.prisma` : il dit l'ordre du client
+ * généré, **pas** celui du type PostgreSQL. Les deux se règlent séparément — un
+ * `ADD VALUE` sans voisin place le libellé en queue du type quel que soit son
+ * rang dans le schéma — et seul le SQL réellement appliqué décrit le second.
+ * C'est cet ordre-là que suit `orderBy: { role: 'asc' }`.
+ *
+ * `prisma-schema.spec.ts` porte une lecture jumelle, et il faudra un jour ne
+ * plus la lire deux fois — issue de suivi ouverte avec cette PR. La factoriser
+ * ici demanderait de créer un module partagé sous `src/infrastructure/`, hors de
+ * l'empreinte de fichiers de ce ticket.
+ */
+const MIGRATIONS_DIR = join(__dirname, '..', '..', '..', '..', 'prisma', 'migrations');
+
+function readMigrationSql(): string {
+  return readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    // Prisma préfixe chaque dossier d'un horodatage : l'ordre alphabétique est
+    // l'ordre d'application.
+    .map((entry) => entry.name)
+    .sort()
+    .map((directory) => readFileSync(join(MIGRATIONS_DIR, directory, 'migration.sql'), 'utf8'))
+    .join('\n');
+}
 
 /**
  * Vocabulaire des rôles et hiérarchie — le socle sur lequel la garde décide.
@@ -108,50 +135,50 @@ describe('roles — vocabulaire et hiérarchie', () => {
     });
   });
 
-  describe('frontière entre ce que l’autorisation nomme et ce que la base écrit', () => {
-    it('tout rôle stockable est un rôle connu', () => {
-      for (const role of PERSISTABLE_USER_ROLES) {
-        expect(isUserRole(role)).toBe(true);
-      }
-    });
-
-    it('`PERSISTABLE_USER_ROLES` reflète l’énumération réellement générée par Prisma', () => {
-      // Le témoin annoncé par `roles.ts` : le jour où la migration additive
-      // `ALTER TYPE "UserRole" ADD VALUE 'MANAGER'` passera, cette assertion
-      // rougira — et la correction tiendra en une ligne, déplacer `MANAGER` dans
-      // `PERSISTABLE_USER_ROLES`. Sans ce test, le rôle deviendrait stockable
-      // pendant que le DTO continuerait de le refuser en 400, sans que rien ne
-      // le dise.
-      expect([...PERSISTABLE_USER_ROLES].sort()).toEqual([...PRISMA_USER_ROLE_VALUES].sort());
-    });
-
-    it('`PERSISTABLE_USER_ROLES` suit l’ordre de déclaration de l’énumération PostgreSQL', () => {
-      // Ce n'est pas une coquetterie : PostgreSQL ordonne un `enum` par son ordre
-      // de **déclaration**, et c'est cet ordre que rend `orderBy: { role: 'asc' }`
+  describe('concordance entre ce que l’autorisation nomme et ce que la colonne écrit', () => {
+    it('`USER_ROLES` est exactement l’énumération générée par Prisma, dans le même ordre', () => {
+      // Le garde-fou hérité de #202 : le module a porté deux listes tant que
+      // `enum UserRole` ignorait `MANAGER`, le temps que le DTO refuse en 400 un
+      // rôle qui aurait produit une erreur Prisma en 500. La migration
+      // `20260826100000_add_manager_user_role` a refermé l'écart ; ce test est ce
+      // qui interdit qu'il se rouvre en silence. Un cinquième rôle ajouté à
+      // l'autorisation sans sa migration rougit ici, et non à la première
+      // écriture en production.
+      //
+      // L'ordre compte autant que le contenu : PostgreSQL ordonne un `enum` par
+      // son ordre de déclaration, et c'est lui que rend `orderBy: { role: 'asc' }`
       // dans `listStaffAccounts`. Le double de test trie sur `USER_ROLE_RANK`,
       // qui dérive de `USER_ROLES` ; si les deux ordres divergeaient, le double
       // rendrait une liste que l'endpoint réel ne rend pas, et les assertions
       // d'ordre passeraient au vert sur le mauvais résultat.
-      expect(PERSISTABLE_USER_ROLES).toEqual(PRISMA_USER_ROLE_VALUES);
-
-      const ranks = PRISMA_USER_ROLE_VALUES.filter(isUserRole).map((role) => USER_ROLE_RANK[role]);
-      expect(ranks).toHaveLength(PRISMA_USER_ROLE_VALUES.length);
-      expect(ranks).toEqual([...ranks].sort((left, right) => left - right));
+      expect(USER_ROLES).toEqual(PRISMA_USER_ROLE_VALUES);
     });
 
-    it('`MANAGER` est aujourd’hui nommable mais pas stockable', () => {
-      expect(isUserRole('MANAGER')).toBe(true);
-      expect(isPersistableUserRole('MANAGER')).toBe(false);
+    it('déclare `MANAGER` avant `ADMIN` dans le type PostgreSQL lui-même', () => {
+      // `PRISMA_USER_ROLE_VALUES` vient de `schema.prisma` : il ne prouve que
+      // l'ordre du client généré. L'ordre du type en base se joue dans le SQL —
+      // un `ADD VALUE` sans voisin aurait placé `MANAGER` en queue, donc trié
+      // *après* `ADMIN`, et la liste du personnel serait sortie dans un ordre
+      // contredisant la hiérarchie sans qu'aucune assertion sur le double ne
+      // puisse le voir.
+      const sql = readMigrationSql();
+      expect(sql).toMatch(/ADD VALUE (?:IF NOT EXISTS )?'MANAGER' BEFORE 'ADMIN'/);
     });
 
-    it('`PERSISTABLE_STAFF_ROLES` est dérivé, jamais recopié', () => {
-      // Une liste écrite à la main qui citerait `MANAGER` ferait échouer le
-      // `WHERE role IN (…)` sur la totalité des tenants — PostgreSQL rejette une
-      // comparaison à un libellé absent de l'énumération.
-      expect(PERSISTABLE_STAFF_ROLES).toEqual(STAFF_ROLES.filter(isPersistableUserRole));
-      for (const role of PERSISTABLE_STAFF_ROLES) {
+    it('`STAFF_ROLES` ne cite que des libellés que la colonne connaît', () => {
+      // Un rôle cité dans un `WHERE role IN (…)` sans exister dans l'énumération
+      // ferait échouer la requête — `invalid input value for enum "UserRole"` —
+      // sur la totalité des tenants, en lecture comme en écriture.
+      for (const role of STAFF_ROLES) {
         expect(PRISMA_USER_ROLE_VALUES).toContain(role);
       }
+    });
+
+    it('`MANAGER` est nommable *et* stockable', () => {
+      // Le critère d'acceptation de #202, réduit à son noyau vérifiable sans
+      // base : la garde le nomme, l'énumération générée le contient.
+      expect(isUserRole('MANAGER')).toBe(true);
+      expect(PRISMA_USER_ROLE_VALUES).toContain('MANAGER');
     });
   });
 });
