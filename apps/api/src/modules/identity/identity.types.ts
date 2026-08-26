@@ -1,18 +1,22 @@
-import type { UserRole } from '@prisma/client';
+import type { UserRole } from './roles';
 
 /**
  * Formes de données du module `identity`.
  *
  * TODO(#26) : `AuthenticatedUser`, `UserProfile` et `UserRole` appartiennent au
  * contrat d'API et devront être réexportés depuis `@spa/shared` — le front ne
- * redéclare jamais un type que l'API expose (CLAUDE.md). Le paquet est tenu par
- * #26 en parallèle ; les définir ici évite d'écrire dans son empreinte.
+ * redéclare jamais un type que l'API expose (CLAUDE.md). Le paquet expose déjà
+ * ces rôles (`packages/shared/src/constants/roles.ts`) ; l'import se substituera
+ * à la déclaration locale le jour où `apps/api` dépendra du paquet partagé, ce
+ * qui touche `apps/api/package.json` — hors du périmètre de fichiers de #22.
+ *
+ * Le vocabulaire des rôles et leur hiérarchie vivent dans `roles.ts` : ils sont
+ * consommés par la garde de permissions autant que par ces formes de données, et
+ * les rassembler ici mélangerait une décision d'autorisation à une description
+ * de charge utile.
  */
 
 export type { UserRole };
-
-/** Les trois publics du CDC §2.4, tels que le schéma les énumère. */
-export const USER_ROLES: readonly UserRole[] = ['CLIENT', 'STAFF', 'ADMIN'];
 
 /**
  * L'identité que la garde attache à la requête, **entièrement** issue d'un jeton
