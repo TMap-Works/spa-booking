@@ -125,6 +125,34 @@ class TestDirt(unittest.TestCase):
         self.assertEqual(self.read("fatal: not a git repository", returncode=128), [])
 
 
+class TestUnpushed(unittest.TestCase):
+    """Compter les commits qui ne sont qu'ici — et dire quand on n'a pas pu."""
+
+    def count(self, *responses):
+        with mock.patch.object(gc, "run", side_effect=list(responses)):
+            return gc.unpushed("/repo", "/tmp/wt")
+
+    def test_compte_face_a_la_branche_de_suivi(self):
+        self.assertEqual(self.count(completed(0, "2\n")), 2)
+
+    def test_sans_branche_de_suivi_se_rabat_sur_la_base(self):
+        self.assertEqual(
+            self.count(completed(128, "", "no upstream"), completed(0, "5\n")), 5)
+
+    def test_rend_none_quand_rien_n_a_pu_etre_compte(self):
+        # Le contrat sur lequel s'appuie `safety_hold` : None veut dire
+        # « indéterminable », jamais « zéro ».
+        self.assertIsNone(
+            self.count(completed(128, "", "no upstream"),
+                       completed(128, "", "unknown revision origin/develop")))
+
+    def test_sortie_illisible_vaut_mesure_impossible_et_ne_leve_pas(self):
+        # Un `rev-list --count` qui rend autre chose qu'un nombre est une mesure
+        # ratée, pas un zéro — et surtout pas une `ValueError` qui ferait avorter
+        # le nettoyage entier au premier worktree venu.
+        self.assertIsNone(self.count(completed(0, "warning: refname\n")))
+
+
 class TestSafetyHold(unittest.TestCase):
     """Le garde-fou qui a retenu 484 Mo derrière deux PR mergées."""
 
@@ -170,9 +198,38 @@ class TestSafetyHold(unittest.TestCase):
         # Un merge en squash laisse des commits locaux sans jumeau dans develop.
         self.assertIsNone(self.hold(self.MERGED, [], ahead=3))
 
+    def test_aucun_commit_non_pousse_n_empeche_rien(self):
+        # Le pendant de `test_mesure_impossible_retient` : un vrai zéro, lui,
+        # laisse passer. C'est ce que `None` ne doit plus avoir le droit de faire.
+        self.assertIsNone(self.hold(self.CLOSED, [], ahead=0))
+
+    def test_mesure_impossible_retient_hors_integration(self):
+        # `unpushed` rend None quand elle n'a rien pu compter (base absente,
+        # dépôt en mauvais état, git indisponible). La confondre avec un zéro
+        # supprimait un worktree sur la foi d'un garde-fou qui n'avait rien
+        # vérifié — et ce qui se perdait était du travail jamais poussé (#178).
+        held = self.hold(self.CLOSED, [], ahead=None)
+        self.assertIsNotNone(held)
+        self.assertIn("invérifiables", held)
+
+    def test_mesure_impossible_ne_prime_pas_sur_une_preuve_d_integration(self):
+        # Le contenu est dans develop : il n'y a plus rien à protéger, et
+        # `unpushed` n'est même pas interrogée — et on le vérifie, sans quoi
+        # ce test passerait tout aussi bien si elle l'était.
+        self.assertIsNone(self.hold(self.MERGED, [], ahead=None))
+        self.assertIsNone(
+            self.hold("branche déjà intégrée dans origin/develop", [], ahead=None))
+        with mock.patch.object(gc, "dirt", return_value=[]), \
+             mock.patch.object(gc, "unpushed") as asked:
+            gc.safety_hold("/repo", entry(), self.MERGED, False)
+        asked.assert_not_called()
+
     def test_force_leve_tout(self):
         self.assertIsNone(
             self.hold(self.CLOSED, [(" M", "apps/api/src/x.ts")], ahead=9, force=True))
+
+    def test_force_leve_aussi_une_mesure_impossible(self):
+        self.assertIsNone(self.hold(self.CLOSED, [], ahead=None, force=True))
 
     def test_nomme_au_plus_trois_fichiers(self):
         changes = [(" M", "f{}.ts".format(i)) for i in range(7)]
