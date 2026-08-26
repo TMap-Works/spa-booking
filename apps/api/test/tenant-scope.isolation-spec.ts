@@ -5,6 +5,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { runInTenantScope, runWithTenant } from '../src/common/tenant/tenant-context';
 import { MissingTenantContextError } from '../src/common/tenant/tenant-context.errors';
 import { createScopedPrismaClient } from '../src/infrastructure/database/prisma-clients';
+import { createDisposableDatabase, type DisposableDatabase } from './utils/disposable-database';
 
 /**
  * Isolation inter-tenant de l'extension Prisma — **contre un vrai moteur
@@ -44,12 +45,18 @@ import { createScopedPrismaClient } from '../src/infrastructure/database/prisma-
  *
  * ## Prérequis
  *
- * Un PostgreSQL joignable sur `DATABASE_URL`, **migré**. La CI le garantit
- * (services du job `test` de `ci.yml`, puis `npm run db:migrate:deploy`). En
- * local : `docker compose up -d && npm run db:migrate:deploy`. L'absence de base
- * fait échouer cette suite, délibérément — un test d'isolation qui se
- * désactiverait tout seul quand la base manque annoncerait une garantie que rien
- * n'a vérifiée.
+ * Un serveur PostgreSQL joignable sur `DATABASE_URL`. La suite n'y travaille pas
+ * : elle s'y crée une **base jetable**, migrée puis détruite
+ * (`utils/disposable-database.ts`, #27). Rien n'est donc partagé avec les autres
+ * suites, et le ménage n'a plus à viser chaque ligne semée sous peine
+ * d'emporter les leurs.
+ *
+ * La CI garantit le serveur (services du job `test` de `ci.yml`) ; en local,
+ * `docker compose up -d` suffit — la migration de la base jetable est faite par
+ * la suite, `npm run db:migrate:deploy` n'est plus un prérequis de celle-ci.
+ * L'absence de serveur fait échouer la suite, délibérément : un test d'isolation
+ * qui se désactiverait tout seul quand la base manque annoncerait une garantie
+ * que rien n'a vérifiée.
  */
 
 /**
@@ -85,18 +92,6 @@ type QueryLoggingOptions = {
  */
 function withScopedTenant<T>(data: Omit<T, 'tenantId' | 'tenant'>): T {
   return data as T;
-}
-
-function requireDatabaseUrl(): string {
-  const url = process.env.DATABASE_URL;
-  if (url === undefined || url === '') {
-    throw new Error(
-      'DATABASE_URL est absent : cette suite exige un PostgreSQL réel. ' +
-        '`test/setup-env.ts` en pose un par défaut — son absence signale que le ' +
-        'fichier de setup n’a pas été chargé.',
-    );
-  }
-  return url;
 }
 
 /**
@@ -149,6 +144,8 @@ describe('Extension de scoping tenant — contre un vrai PostgreSQL', () => {
    */
   let prismaUnscoped: PrismaClient<QueryLoggingOptions>;
   let scoped: ReturnType<typeof createScopedPrismaClient>;
+  /** La base créée pour cette suite, et détruite avec elle. */
+  let database: DisposableDatabase | undefined;
 
   /** Requêtes réellement parties au moteur, dans l'ordre. */
   const executedQueries: string[] = [];
@@ -172,8 +169,12 @@ describe('Extension de scoping tenant — contre un vrai PostgreSQL', () => {
   }
 
   beforeAll(async () => {
+    // La base est créée et migrée ici, pour cette suite seule : ce qui suit ne
+    // peut donc ni voir ni abîmer les données d'une autre suite.
+    database = await createDisposableDatabase();
+
     prismaUnscoped = new PrismaClient<QueryLoggingOptions>({
-      datasourceUrl: requireDatabaseUrl(),
+      datasourceUrl: database.url,
       errorFormat: 'minimal',
       log: [{ emit: 'event', level: 'query' }],
     });
@@ -181,20 +182,12 @@ describe('Extension de scoping tenant — contre un vrai PostgreSQL', () => {
       executedQueries.push(event.query);
     });
 
-    try {
-      await prismaUnscoped.$connect();
-      // Une requête réelle, et pas seulement `$connect` : c'est elle qui prouve
-      // que le schéma est migré. Une base joignable mais vide produirait sinon
-      // une erreur bien plus loin, sur un cas d'isolation, où elle se lirait
-      // comme un défaut de l'extension.
-      await prismaUnscoped.tenant.count();
-    } catch (error) {
-      throw new Error(
-        'PostgreSQL injoignable ou non migré sur DATABASE_URL. Cette suite exige ' +
-          'une vraie base : `docker compose up -d` puis `npm run db:migrate:deploy`. ' +
-          `Cause : ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
+    // Une requête réelle, et pas seulement `$connect` : c'est elle qui prouve
+    // que le schéma est bien en place. Une base joignable mais vide produirait
+    // sinon une erreur bien plus loin, sur un cas d'isolation, où elle se lirait
+    // comme un défaut de l'extension.
+    await prismaUnscoped.$connect();
+    await prismaUnscoped.tenant.count();
 
     // Le client scopé est construit **par la fabrique de l'application**, pas
     // recomposé ici : c'est `createScopedPrismaClient` qui est sous test, avec
@@ -209,18 +202,17 @@ describe('Extension de scoping tenant — contre un vrai PostgreSQL', () => {
   });
 
   afterAll(async () => {
-    if (prismaUnscoped === undefined) {
-      return;
+    // Le ménage tient en une ligne : la base entière disparaît. Il n'y a plus de
+    // lignes à cibler une à une, ni de risque d'emporter celles d'une suite
+    // voisine — c'est ce que la base jetable achète.
+    //
+    // La déconnexion d'abord : `DROP DATABASE … WITH (FORCE)` saurait couper la
+    // session, mais fermer proprement évite de laisser Prisma journaliser une
+    // rupture de connexion qui se lirait comme un incident.
+    if (prismaUnscoped !== undefined) {
+      await prismaUnscoped.$disconnect();
     }
-    // Ciblé sur les deux établissements de la suite, jamais un `deleteMany` nu :
-    // la base de test est partagée avec les autres suites, et un balayage global
-    // emporterait leurs lignes. Les comptes d'abord — `onDelete: Restrict`.
-    const tenants = [tenantA, tenantB].filter((id) => id !== undefined);
-    if (tenants.length > 0) {
-      await prismaUnscoped.user.deleteMany({ where: { tenantId: { in: tenants } } });
-      await prismaUnscoped.tenant.deleteMany({ where: { id: { in: tenants } } });
-    }
-    await prismaUnscoped.$disconnect();
+    await database?.drop();
   });
 
   /** Une ligne du tenant courant, créée par le **client scopé**. */

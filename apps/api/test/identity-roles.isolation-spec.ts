@@ -1,17 +1,9 @@
 import type { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
 
-import { AppModule } from '../src/app.module';
-import { configureApp } from '../src/bootstrap';
-import { AppConfigService } from '../src/config/app-config.service';
-import { CacheConnection } from '../src/infrastructure/cache/cache.connection';
-import { DatabaseConnection } from '../src/infrastructure/database/database.connection';
-import { IdentityRepository } from '../src/modules/identity/identity.repository';
 import { USER_ROLES, type UserRole } from '../src/modules/identity/roles';
 import { TokenService } from '../src/modules/identity/token.service';
-import { FakeIdentityRepository } from '../src/modules/identity/__tests__/identity.doubles';
-import { ProbeDouble } from './utils/test-app';
+import { createTenantHarness, UNKNOWN_ID, type TenantHarness } from './utils/tenant-harness';
 
 /**
  * Rôles, permissions et isolation — #22.
@@ -43,109 +35,42 @@ import { ProbeDouble } from './utils/test-app';
  * plus sur un emprunt d'identifiant.
  */
 
-const SALON_A = 'salon-des-lilas';
-const SALON_B = 'barbier-du-port';
-const UNKNOWN_ID = '99999999-9999-4999-8999-999999999999';
-
-interface Harness {
-  app: INestApplication;
-  repository: FakeIdentityRepository;
-  tenantA: string;
-  tenantB: string;
-  adminA: string;
-  managerA: string;
-  staffA: string;
-  clientA: string;
-  adminB: string;
-  managerB: string;
-  close(): Promise<void>;
-}
-
-async function createHarness(): Promise<Harness> {
-  const repository = new FakeIdentityRepository();
-  const tenantA = repository.addTenant(SALON_A);
-  const tenantB = repository.addTenant(SALON_B);
-
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(DatabaseConnection)
-    .useValue(new ProbeDouble())
-    .overrideProvider(CacheConnection)
-    .useValue(new ProbeDouble())
-    .overrideProvider(IdentityRepository)
-    .useValue(repository)
-    .compile();
-
-  const app = moduleRef.createNestApplication({ logger: false });
-  configureApp(app, app.get(AppConfigService));
-  await app.init();
-
-  const adminA = repository.addUser({
-    tenantId: tenantA,
-    email: 'admin@lilas.test',
-    passwordHash: null,
-    role: 'ADMIN',
-  });
-  const managerA = repository.addUser({
-    tenantId: tenantA,
-    email: 'manager@lilas.test',
-    passwordHash: null,
-    role: 'MANAGER',
-  });
-  const staffA = repository.addUser({
-    tenantId: tenantA,
-    email: 'praticienne@lilas.test',
-    passwordHash: null,
-    role: 'STAFF',
-  });
-  const clientA = repository.addUser({
-    tenantId: tenantA,
-    email: 'cliente@lilas.test',
-    passwordHash: null,
-    role: 'CLIENT',
-  });
-  const adminB = repository.addUser({
-    tenantId: tenantB,
-    email: 'admin@port.test',
-    passwordHash: null,
-    role: 'ADMIN',
-  });
-  // Le pendant de `managerA` dans l'autre établissement : c'est lui qui rend
-  // vérifiable qu'un rôle nouvellement stockable ne franchit pas la frontière —
-  // ni en lecture, ni en réattribution (tenant-isolation §6).
-  const managerB = repository.addUser({
-    tenantId: tenantB,
-    email: 'manager@port.test',
-    passwordHash: null,
-    role: 'MANAGER',
-  });
-
-  return {
-    app,
-    repository,
-    tenantA,
-    tenantB,
-    adminA: adminA.id,
-    managerA: managerA.id,
-    staffA: staffA.id,
-    clientA: clientA.id,
-    adminB: adminB.id,
-    managerB: managerB.id,
-    close: () => app.close(),
-  };
-}
-
 describe('Rôles, permissions et isolation — #22', () => {
-  let harness: Harness;
+  let harness: TenantHarness;
+  /** Les quatre rangs de l'établissement A, chacun sur un compte réel. */
+  let adminA: string;
+  let managerA: string;
+  let staffA: string;
+  let clientA: string;
+  let adminB: string;
+  /**
+   * Le pendant de `managerA` dans l'autre établissement : c'est lui qui rend
+   * vérifiable qu'un rôle nouvellement stockable ne franchit pas la frontière —
+   * ni en lecture, ni en réattribution (tenant-isolation §6).
+   */
+  let managerB: string;
 
   beforeEach(async () => {
-    harness = await createHarness();
+    harness = await createTenantHarness();
+    const seed = async (
+      tenant: typeof harness.a,
+      email: string,
+      role: UserRole,
+    ): Promise<string> => (await harness.seedUser(tenant, { email, role })).id;
+
+    adminA = await seed(harness.a, 'admin@lilas.test', 'ADMIN');
+    managerA = await seed(harness.a, 'manager@lilas.test', 'MANAGER');
+    staffA = await seed(harness.a, 'praticienne@lilas.test', 'STAFF');
+    clientA = await seed(harness.a, 'cliente@lilas.test', 'CLIENT');
+    adminB = await seed(harness.b, 'admin@port.test', 'ADMIN');
+    managerB = await seed(harness.b, 'manager@port.test', 'MANAGER');
   });
 
   afterEach(async () => {
     await harness.close();
   });
 
-  const server = (): ReturnType<INestApplication['getHttpServer']> => harness.app.getHttpServer();
+  const server = (): ReturnType<INestApplication['getHttpServer']> => harness.server();
 
   /**
    * Un jeton d'accès pour ce rôle, dans l'établissement A.
@@ -153,15 +78,19 @@ describe('Rôles, permissions et isolation — #22', () => {
    * Le compte porteur est réel pour les quatre rôles — `/auth/me` le relit — et
    * porte en mémoire le rôle qu'annonce la revendication : depuis #202, la
    * colonne sait écrire les quatre, il n'y a plus d'identité à emprunter.
+   *
+   * C'est la seule raison pour laquelle cette suite ne se sert pas du
+   * `tokenFor` du harnais partagé : celui-ci tire un `userId` au hasard, ce qui
+   * convient à un test de fuite mais pas à une suite qui relit le compte porteur.
    */
   const HOLDERS: Readonly<Record<UserRole, () => string>> = {
-    CLIENT: () => harness.clientA,
-    STAFF: () => harness.staffA,
-    MANAGER: () => harness.managerA,
-    ADMIN: () => harness.adminA,
+    CLIENT: () => clientA,
+    STAFF: () => staffA,
+    MANAGER: () => managerA,
+    ADMIN: () => adminA,
   };
 
-  const tokenFor = async (role: UserRole, tenantId = harness.tenantA): Promise<string> => {
+  const tokenFor = async (role: UserRole, tenantId = harness.a.id): Promise<string> => {
     return harness.app
       .get(TokenService)
       .signAccessToken({ userId: HOLDERS[role](), tenantId, role });
@@ -211,9 +140,9 @@ describe('Rôles, permissions et isolation — #22', () => {
       // qu'en queue d'énumération ; un ajout en queue aurait rendu
       // `[STAFF, ADMIN, MANAGER]`.
       expect(response.body.map((user: { id: string }) => user.id)).toEqual([
-        harness.staffA,
-        harness.managerA,
-        harness.adminA,
+        staffA,
+        managerA,
+        adminA,
       ]);
     });
 
@@ -236,16 +165,16 @@ describe('Rôles, permissions et isolation — #22', () => {
         .expect(200);
 
       const serialized = JSON.stringify(response.body);
-      expect(serialized).not.toContain(harness.adminB);
+      expect(serialized).not.toContain(adminB);
       // Le compte `MANAGER` de l'autre établissement pas davantage : un rôle
       // devenu stockable est un rôle de plus à ne pas laisser franchir la
       // frontière.
-      expect(serialized).not.toContain(harness.managerB);
+      expect(serialized).not.toContain(managerB);
       expect(serialized).not.toContain('port.test');
-      expect(serialized).not.toContain(harness.clientA);
+      expect(serialized).not.toContain(clientA);
       // Ni le tenant, jamais rendu par l'API (tenant-isolation §4).
-      expect(serialized).not.toContain(harness.tenantA);
-      expect(serialized).not.toContain(harness.tenantB);
+      expect(serialized).not.toContain(harness.a.id);
+      expect(serialized).not.toContain(harness.b.id);
     });
   });
 
@@ -253,11 +182,11 @@ describe('Rôles, permissions et isolation — #22', () => {
     it.each(['STAFF', 'MANAGER', 'ADMIN'] as const)('laisse passer %s', async (role) => {
       const token = await tokenFor(role);
       const response = await request(server())
-        .get(`/api/v1/users/${harness.staffA}`)
+        .get(`/api/v1/users/${staffA}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
 
-      expect(response.body.id).toBe(harness.staffA);
+      expect(response.body.id).toBe(staffA);
       expect(Object.keys(response.body).sort()).toEqual([
         'email',
         'firstName',
@@ -271,7 +200,7 @@ describe('Rôles, permissions et isolation — #22', () => {
     it('refuse CLIENT en 403', async () => {
       const token = await tokenFor('CLIENT');
       await request(server())
-        .get(`/api/v1/users/${harness.staffA}`)
+        .get(`/api/v1/users/${staffA}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(403);
     });
@@ -281,7 +210,7 @@ describe('Rôles, permissions et isolation — #22', () => {
       // compte visé (tenant-isolation §4).
       const token = await tokenFor('ADMIN');
       const response = await request(server())
-        .get(`/api/v1/users/${harness.adminB}`)
+        .get(`/api/v1/users/${adminB}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(404);
 
@@ -296,7 +225,7 @@ describe('Rôles, permissions et isolation — #22', () => {
       // rôles internes ne l'a pas rendu lisible d'ailleurs.
       const token = await tokenFor('ADMIN');
       const response = await request(server())
-        .get(`/api/v1/users/${harness.managerB}`)
+        .get(`/api/v1/users/${managerB}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(404);
 
@@ -311,7 +240,7 @@ describe('Rôles, permissions et isolation — #22', () => {
       // cliente depuis un point d'entrée qui s'annonce « comptes internes ».
       const token = await tokenFor('STAFF');
       const response = await request(server())
-        .get(`/api/v1/users/${harness.clientA}`)
+        .get(`/api/v1/users/${clientA}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(404);
 
@@ -326,7 +255,7 @@ describe('Rôles, permissions et isolation — #22', () => {
         .set('Authorization', `Bearer ${token}`)
         .expect(404);
       const ailleurs = await request(server())
-        .get(`/api/v1/users/${harness.adminB}`)
+        .get(`/api/v1/users/${adminB}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(404);
 
@@ -338,13 +267,13 @@ describe('Rôles, permissions et isolation — #22', () => {
     it('laisse passer ADMIN et attribue le rôle', async () => {
       const token = await tokenFor('ADMIN');
       const response = await request(server())
-        .patch(`/api/v1/users/${harness.staffA}/role`)
+        .patch(`/api/v1/users/${staffA}/role`)
         .set('Authorization', `Bearer ${token}`)
         .send({ role: 'ADMIN' })
         .expect(200);
 
-      expect(response.body).toMatchObject({ id: harness.staffA, role: 'ADMIN' });
-      expect(harness.repository.users.find((user) => user.id === harness.staffA)?.role).toBe(
+      expect(response.body).toMatchObject({ id: staffA, role: 'ADMIN' });
+      expect(harness.identity.users.find((user) => user.id === staffA)?.role).toBe(
         'ADMIN',
       );
     });
@@ -352,14 +281,14 @@ describe('Rôles, permissions et isolation — #22', () => {
     it.each(['CLIENT', 'STAFF', 'MANAGER'] as const)('refuse %s en 403, sans rien écrire', async (role) => {
       const token = await tokenFor(role);
       const response = await request(server())
-        .patch(`/api/v1/users/${harness.clientA}/role`)
+        .patch(`/api/v1/users/${clientA}/role`)
         .set('Authorization', `Bearer ${token}`)
         .send({ role: 'ADMIN' })
         .expect(403);
 
       expect(response.body.code).toBe('FORBIDDEN');
       expect(response.body.details).toEqual({ requiredRoles: ['ADMIN'] });
-      expect(harness.repository.users.find((user) => user.id === harness.clientA)?.role).toBe(
+      expect(harness.identity.users.find((user) => user.id === clientA)?.role).toBe(
         'CLIENT',
       );
     });
@@ -367,14 +296,14 @@ describe('Rôles, permissions et isolation — #22', () => {
     it('rend 404 — et non 403 — sur un compte de l’autre établissement, qui reste intact', async () => {
       const token = await tokenFor('ADMIN');
       const response = await request(server())
-        .patch(`/api/v1/users/${harness.adminB}/role`)
+        .patch(`/api/v1/users/${adminB}/role`)
         .set('Authorization', `Bearer ${token}`)
         .send({ role: 'CLIENT' })
         .expect(404);
 
       expect(response.body.code).toBe('NOT_FOUND');
       // La ressource du tenant B est intacte — tenant-isolation §6, point 4.
-      expect(harness.repository.users.find((user) => user.id === harness.adminB)?.role).toBe(
+      expect(harness.identity.users.find((user) => user.id === adminB)?.role).toBe(
         'ADMIN',
       );
     });
@@ -382,13 +311,13 @@ describe('Rôles, permissions et isolation — #22', () => {
     it('refuse en 422 qu’un compte modifie son propre rôle', async () => {
       const token = await tokenFor('ADMIN');
       const response = await request(server())
-        .patch(`/api/v1/users/${harness.adminA}/role`)
+        .patch(`/api/v1/users/${adminA}/role`)
         .set('Authorization', `Bearer ${token}`)
         .send({ role: 'STAFF' })
         .expect(422);
 
       expect(response.body.code).toBe('BUSINESS_RULE_VIOLATION');
-      expect(harness.repository.users.find((user) => user.id === harness.adminA)?.role).toBe(
+      expect(harness.identity.users.find((user) => user.id === adminA)?.role).toBe(
         'ADMIN',
       );
     });
@@ -397,12 +326,12 @@ describe('Rôles, permissions et isolation — #22', () => {
       // La lecture d'une fiche cliente est refusée ; sa promotion ne l'est pas.
       const token = await tokenFor('ADMIN');
       const response = await request(server())
-        .patch(`/api/v1/users/${harness.clientA}/role`)
+        .patch(`/api/v1/users/${clientA}/role`)
         .set('Authorization', `Bearer ${token}`)
         .send({ role: 'STAFF' })
         .expect(200);
 
-      expect(response.body).toMatchObject({ id: harness.clientA, role: 'STAFF' });
+      expect(response.body).toMatchObject({ id: clientA, role: 'STAFF' });
     });
 
     it('attribue `MANAGER`, que la colonne sait désormais écrire', async () => {
@@ -412,13 +341,13 @@ describe('Rôles, permissions et isolation — #22', () => {
       // 500. La migration additive a levé les trois d'un coup.
       const token = await tokenFor('ADMIN');
       const response = await request(server())
-        .patch(`/api/v1/users/${harness.staffA}/role`)
+        .patch(`/api/v1/users/${staffA}/role`)
         .set('Authorization', `Bearer ${token}`)
         .send({ role: 'MANAGER' })
         .expect(200);
 
-      expect(response.body).toMatchObject({ id: harness.staffA, role: 'MANAGER' });
-      expect(harness.repository.users.find((user) => user.id === harness.staffA)?.role).toBe(
+      expect(response.body).toMatchObject({ id: staffA, role: 'MANAGER' });
+      expect(harness.identity.users.find((user) => user.id === staffA)?.role).toBe(
         'MANAGER',
       );
     });
@@ -430,17 +359,17 @@ describe('Rôles, permissions et isolation — #22', () => {
       // après y avoir été promu.
       const token = await tokenFor('ADMIN');
       await request(server())
-        .patch(`/api/v1/users/${harness.staffA}/role`)
+        .patch(`/api/v1/users/${staffA}/role`)
         .set('Authorization', `Bearer ${token}`)
         .send({ role: 'MANAGER' })
         .expect(200);
 
       const relu = await request(server())
-        .get(`/api/v1/users/${harness.staffA}`)
+        .get(`/api/v1/users/${staffA}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
 
-      expect(relu.body).toMatchObject({ id: harness.staffA, role: 'MANAGER' });
+      expect(relu.body).toMatchObject({ id: staffA, role: 'MANAGER' });
     });
 
     it('rejette toujours en 400 un rôle absent de l’énumération', async () => {
@@ -449,13 +378,13 @@ describe('Rôles, permissions et isolation — #22', () => {
       // PostgreSQL, qui la refuserait par une erreur de type remontée en 500.
       const token = await tokenFor('ADMIN');
       const response = await request(server())
-        .patch(`/api/v1/users/${harness.staffA}/role`)
+        .patch(`/api/v1/users/${staffA}/role`)
         .set('Authorization', `Bearer ${token}`)
         .send({ role: 'SUPERADMIN' })
         .expect(400);
 
       expect(response.body.code).toBe('VALIDATION_ERROR');
-      expect(harness.repository.users.find((user) => user.id === harness.staffA)?.role).toBe(
+      expect(harness.identity.users.find((user) => user.id === staffA)?.role).toBe(
         'STAFF',
       );
     });
@@ -465,13 +394,13 @@ describe('Rôles, permissions et isolation — #22', () => {
       // la tentative échoue en 404 et la ressource du tenant B est intacte.
       const token = await tokenFor('ADMIN');
       const response = await request(server())
-        .patch(`/api/v1/users/${harness.adminB}/role`)
+        .patch(`/api/v1/users/${adminB}/role`)
         .set('Authorization', `Bearer ${token}`)
         .send({ role: 'MANAGER' })
         .expect(404);
 
       expect(response.body.code).toBe('NOT_FOUND');
-      expect(harness.repository.users.find((user) => user.id === harness.adminB)?.role).toBe(
+      expect(harness.identity.users.find((user) => user.id === adminB)?.role).toBe(
         'ADMIN',
       );
     });
@@ -479,14 +408,14 @@ describe('Rôles, permissions et isolation — #22', () => {
     it('rend 404 sur le compte `MANAGER` de l’autre établissement, qui reste intact', async () => {
       const token = await tokenFor('ADMIN');
       const response = await request(server())
-        .patch(`/api/v1/users/${harness.managerB}/role`)
+        .patch(`/api/v1/users/${managerB}/role`)
         .set('Authorization', `Bearer ${token}`)
         .send({ role: 'CLIENT' })
         .expect(404);
 
       expect(response.body.code).toBe('NOT_FOUND');
       expect(JSON.stringify(response.body)).not.toContain('port.test');
-      expect(harness.repository.users.find((user) => user.id === harness.managerB)?.role).toBe(
+      expect(harness.identity.users.find((user) => user.id === managerB)?.role).toBe(
         'MANAGER',
       );
     });
@@ -496,12 +425,12 @@ describe('Rôles, permissions et isolation — #22', () => {
       // en silence — c'est le scénario de fuite que le pipe global refuse.
       const token = await tokenFor('ADMIN');
       await request(server())
-        .patch(`/api/v1/users/${harness.staffA}/role`)
+        .patch(`/api/v1/users/${staffA}/role`)
         .set('Authorization', `Bearer ${token}`)
-        .send({ role: 'ADMIN', tenantId: harness.tenantB })
+        .send({ role: 'ADMIN', tenantId: harness.b.id })
         .expect(400);
 
-      expect(harness.repository.users.find((user) => user.id === harness.staffA)?.role).toBe(
+      expect(harness.identity.users.find((user) => user.id === staffA)?.role).toBe(
         'STAFF',
       );
     });
@@ -513,7 +442,7 @@ describe('Rôles, permissions et isolation — #22', () => {
       // consulte aucune ressource, son refus ne peut donc en distinguer aucune.
       const token = await tokenFor('CLIENT');
       const bodies = [];
-      for (const id of [harness.staffA, harness.adminB, UNKNOWN_ID]) {
+      for (const id of [staffA, adminB, UNKNOWN_ID]) {
         const response = await request(server())
           .get(`/api/v1/users/${id}`)
           .set('Authorization', `Bearer ${token}`)
@@ -533,7 +462,7 @@ describe('Rôles, permissions et isolation — #22', () => {
       // jeton mal apparié. La liste doit être celle de B, jamais celle de A.
       const croise = await harness.app
         .get(TokenService)
-        .signAccessToken({ userId: harness.adminA, tenantId: harness.tenantB, role: 'ADMIN' });
+        .signAccessToken({ userId: adminA, tenantId: harness.b.id, role: 'ADMIN' });
 
       const response = await request(server())
         .get('/api/v1/users')
@@ -542,8 +471,8 @@ describe('Rôles, permissions et isolation — #22', () => {
 
       // Les deux comptes internes de B, dans l'ordre du rang — et aucun de A.
       expect(response.body.map((user: { id: string }) => user.id)).toEqual([
-        harness.managerB,
-        harness.adminB,
+        managerB,
+        adminB,
       ]);
       expect(JSON.stringify(response.body)).not.toContain('lilas.test');
     });
