@@ -9,7 +9,7 @@ import {
 } from '../../infrastructure/database/prisma-clients';
 import { EmailAlreadyRegisteredError } from './identity.errors';
 import type { UserProfile, UserRole } from './identity.types';
-import { PERSISTABLE_STAFF_ROLES, type PersistableUserRole } from './roles';
+import { STAFF_ROLES } from './roles';
 
 /**
  * Seul point du module qui connaît le schéma (api-module §2).
@@ -187,7 +187,7 @@ export class IdentityRepository {
    */
   public async findStaffAccountById(id: string): Promise<UserRecord | null> {
     return this.prisma.user.findFirst({
-      where: { id, role: { in: [...PERSISTABLE_STAFF_ROLES] } },
+      where: { id, role: { in: [...STAFF_ROLES] } },
       select: USER_SELECT,
     });
   }
@@ -208,12 +208,7 @@ export class IdentityRepository {
    */
   public async createUser(input: {
     email: string;
-    /**
-     * `PersistableUserRole` et non `UserRole` : la colonne ne connaît pas encore
-     * `MANAGER` (voir `roles.ts`). Le type le dit, plutôt qu'un `as` qui aurait
-     * repoussé la découverte à une erreur Prisma en 500.
-     */
-    role: PersistableUserRole;
+    role: UserRole;
     passwordHash: string;
     firstName: string;
     lastName: string;
@@ -261,7 +256,7 @@ export class IdentityRepository {
    */
   public async listStaffAccounts(): Promise<UserProfile[]> {
     return this.prisma.user.findMany({
-      where: { role: { in: [...PERSISTABLE_STAFF_ROLES] } },
+      where: { role: { in: [...STAFF_ROLES] } },
       select: PROFILE_SELECT,
       // Ordre stable : le rang d'abord, l'adresse pour départager. Sans `orderBy`,
       // PostgreSQL n'en garantit aucun et la liste change d'un appel à l'autre.
@@ -278,10 +273,7 @@ export class IdentityRepository {
    * autre établissement, ce qui donne le 404 attendu plutôt qu'une exception
    * « record not found » indistinguable d'un incident.
    */
-  public async updateUserRole(input: {
-    userId: string;
-    role: PersistableUserRole;
-  }): Promise<boolean> {
+  public async updateUserRole(input: { userId: string; role: UserRole }): Promise<boolean> {
     const { count } = await this.prisma.user.updateMany({
       where: { id: input.userId },
       data: { role: input.role },

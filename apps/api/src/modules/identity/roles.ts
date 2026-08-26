@@ -2,36 +2,40 @@
  * Vocabulaire des rôles et hiérarchie d'autorisation — CDC §1.4 « comptes staff
  * avec rôles et permissions », §2.4 « Compte (client / staff / admin) + rôle ».
  *
- * ## Deux vocabulaires, et c'est délibéré
+ * ## Un seul vocabulaire, depuis #202
  *
- * `USER_ROLES` est ce que la **couche d'autorisation** sait nommer : les quatre
- * rôles qu'exige #22. `PERSISTABLE_USER_ROLES` est ce que la **base** sait
- * écrire : `enum UserRole` de `apps/api/prisma/schema.prisma` n'en compte que
- * trois — `MANAGER` lui manque, et l'ajouter demande un `ALTER TYPE`.
+ * Cette liste est à la fois ce que la **couche d'autorisation** sait nommer et
+ * ce que la **colonne** sait écrire. Les deux ont divergé le temps d'un ticket :
+ * #201 a livré la hiérarchie `STAFF` < `MANAGER` < `ADMIN` dans la garde alors
+ * que `enum UserRole` ne comptait que trois libellés, et le module portait
+ * jusqu'ici deux listes — `USER_ROLES` et un `PERSISTABLE_USER_ROLES` amputé de
+ * `MANAGER` — pour que le DTO refuse en 400 un rôle qui aurait sinon produit une
+ * erreur Prisma en 500. La migration additive
+ * `20260826100000_add_manager_user_role` a refermé l'écart, et cette seconde
+ * liste a disparu avec lui : un prédicat « stockable ? » qui rend toujours vrai
+ * ne protège rien et fait croire à une frontière qui n'existe plus.
  *
- * Les deux listes cohabitent au lieu de se confondre parce que la garde et la
- * colonne ne répondent pas à la même question. La garde décide « ce porteur
- * a-t-il le rang requis » : elle n'écrit rien, elle peut donc connaître un rang
- * que la colonne refuse. La colonne, elle, doit rester la vérité de ce qui est
- * stockable — un DTO qui accepterait `MANAGER` produirait une erreur Prisma en
- * 500 là où le contrat doit répondre 400.
+ * Ce qui reste de ce garde-fou, c'est le **témoin** : `roles.spec.ts` compare
+ * cette liste à l'énumération réellement générée par Prisma, dans l'ordre. Un
+ * cinquième rôle ajouté ici sans sa migration y rougit immédiatement, avant
+ * qu'une écriture ne le découvre en production.
  *
- * `MANAGER` est donc, à la date de ce ticket, **un rôle que l'autorisation sait
- * nommer et que la base sait encore refuser** — exactement ce qu'annonce le
- * contrat partagé (`packages/shared/src/constants/roles.ts`). La migration
- * additive `ALTER TYPE "UserRole" ADD VALUE 'MANAGER'` n'est pas portée ici :
- * `apps/api/prisma/**` est hors du périmètre de fichiers de #22. Le jour où elle
- * arrivera, `roles.spec.ts` rougira — c'est **lui** qui importe l'énumération
- * générée par Prisma et la compare à cette liste — et la correction tiendra en
- * une ligne : déplacer `MANAGER` dans `PERSISTABLE_USER_ROLES`.
- *
- * Le témoin est dans la suite de test et non dans ce fichier, délibérément :
+ * Ce témoin est dans la suite de test et non dans ce fichier, délibérément :
  * `roles.ts` est importé par la garde, donc par tous les contrôleurs de tous les
  * modules. Y lire `@prisma/client` **comme valeur** ferait du client généré une
  * dépendance d'exécution de la couche d'autorisation, là où api-module §2
  * réserve cet import au repository — et une machine sans `prisma generate`
  * verrait échouer toutes les suites qui touchent la garde ou les jetons, au lieu
  * de la seule qui parle du schéma.
+ *
+ * ## L'ordre de cette liste est celui de la colonne
+ *
+ * PostgreSQL ordonne un `enum` par son ordre de **déclaration**, et c'est cet
+ * ordre que rend le `orderBy: { role: 'asc' }` de `listStaffAccounts`. Les deux
+ * ordres doivent donc coïncider, faute de quoi la liste du personnel sortirait
+ * dans un ordre qui contredit la hiérarchie. C'est pourquoi la migration insère
+ * `MANAGER` *avant* `ADMIN` plutôt qu'en queue d'énumération, et pourquoi
+ * `roles.spec.ts` verrouille la concordance dans les deux sens.
  *
  * ## Pourquoi un rang et non une matrice de permissions
  *
@@ -52,7 +56,10 @@
  * ailleurs tous les jetons en circulation.
  */
 
-/** Les quatre rôles que l'autorisation sait nommer, du moins au plus capable. */
+/**
+ * Les quatre rôles, du moins au plus capable — et dans l'ordre de déclaration de
+ * `enum UserRole`.
+ */
 export const USER_ROLES = ['CLIENT', 'STAFF', 'MANAGER', 'ADMIN'] as const;
 
 export type UserRole = (typeof USER_ROLES)[number];
@@ -68,26 +75,16 @@ export const USER_ROLE_RANK: Readonly<Record<UserRole, number>> = Object.fromEnt
 ) as Record<UserRole, number>;
 
 /**
- * Les rôles que `enum UserRole` de PostgreSQL accepte aujourd'hui.
- *
- * `satisfies readonly UserRole[]` garantit qu'aucune valeur d'ici n'échappe au
- * vocabulaire d'autorisation ; la réciproque — que Prisma ne connaisse rien de
- * plus — est vérifiée à l'exécution par `roles.spec.ts`, seul endroit où
- * l'énumération générée est comparable à cette liste.
- */
-export const PERSISTABLE_USER_ROLES = [
-  'CLIENT',
-  'STAFF',
-  'ADMIN',
-] as const satisfies readonly UserRole[];
-
-export type PersistableUserRole = (typeof PERSISTABLE_USER_ROLES)[number];
-
-/**
  * Rôles internes à l'établissement, par opposition au rôle `CLIENT`.
  *
- * C'est la définition de « compte staff » du CDC §1.4, et la liste que
- * `GET /api/v1/users` renvoie.
+ * C'est la définition de « compte staff » du CDC §1.4, la liste que
+ * `GET /api/v1/users` renvoie, et celle qu'un `WHERE role IN (…)` cite. À ce
+ * dernier titre elle est **contrainte par la colonne** : PostgreSQL rejette une
+ * comparaison à un libellé absent de l'énumération, et un rôle cité ici sans sa
+ * migration ferait échouer la requête — `invalid input value for enum
+ * "UserRole"` — sur la totalité des tenants, pas seulement à l'écriture. Le
+ * `satisfies` interdit d'y écrire un rôle inconnu de l'autorisation ;
+ * `roles.spec.ts` interdit d'y écrire un rôle inconnu de la base.
  */
 export const STAFF_ROLES = ['STAFF', 'MANAGER', 'ADMIN'] as const satisfies readonly UserRole[];
 
@@ -96,11 +93,6 @@ export type StaffRole = (typeof STAFF_ROLES)[number];
 /** `true` si la valeur est l'un des rôles connus — à utiliser avant tout transtypage. */
 export function isUserRole(value: unknown): value is UserRole {
   return typeof value === 'string' && (USER_ROLES as readonly string[]).includes(value);
-}
-
-/** `true` si le rôle est aujourd'hui stockable en base. */
-export function isPersistableUserRole(role: UserRole): role is PersistableUserRole {
-  return (PERSISTABLE_USER_ROLES as readonly UserRole[]).includes(role);
 }
 
 /** `true` si `role` est un rôle interne à l'établissement — tout sauf `CLIENT`. */
@@ -124,27 +116,3 @@ export function hasAtLeastRole(role: UserRole, minimum: UserRole): boolean {
 export function rolesAtLeast(minimum: UserRole): readonly UserRole[] {
   return USER_ROLES.filter((role) => hasAtLeastRole(role, minimum));
 }
-
-/**
- * Les rôles internes que la base sait **aujourd'hui** écrire, donc les seuls
- * qu'un `WHERE role IN (…)` puisse citer.
- *
- * Dérivé et non recopié, et c'est la seule forme sûre : PostgreSQL rejette une
- * comparaison à un libellé absent de l'énumération. Une liste écrite à la main
- * qui contiendrait `MANAGER` ferait échouer la requête — `invalid input value
- * for enum "UserRole"` — sur la totalité des tenants, jusqu'à ce que la
- * migration passe. Le jour où elle passera, `MANAGER` entrera ici tout seul.
- *
- * Le filtrage part de `PERSISTABLE_USER_ROLES` et non de `STAFF_ROLES`, et
- * l'ordre des deux n'est pas indifférent. Filtrer les rôles internes par
- * « stockable ? » donne le bon tableau **à l'exécution**, mais un type que
- * TypeScript ne sait pas rétrécir : le prédicat de garde annonce un ensemble qui
- * n'est pas un sous-ensemble de celui d'entrée, l'inférence retombe alors sur le
- * type d'entrée, et `MANAGER` reste dans le type. Prisma refuse ce tableau —
- * c'est ce qui l'a fait voir — mais le vrai danger était ailleurs : un type qui
- * contient un libellé que la valeur ne contiendra jamais dit exactement
- * l'inverse de ce que ce fichier promet. Filtrer les rôles stockables par
- * « interne ? » rend le type juste sans un seul transtypage.
- */
-export const PERSISTABLE_STAFF_ROLES: readonly PersistableUserRole[] =
-  PERSISTABLE_USER_ROLES.filter((role) => isStaffRole(role));
