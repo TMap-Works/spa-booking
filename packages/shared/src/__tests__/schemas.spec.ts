@@ -12,7 +12,13 @@
 import { MAX_AVAILABILITY_RANGE_DAYS, PASSWORD_MIN_LENGTH } from '../constants/limits';
 import { appointmentListQuerySchema, createAppointmentRequestSchema } from '../schemas/appointment';
 import { availabilityQuerySchema } from '../schemas/availability';
-import { createServiceRequestSchema, serviceSchema } from '../schemas/catalog';
+import {
+  createServiceRequestSchema,
+  serviceCategorySchema,
+  serviceSchema,
+  updateServiceCategoryRequestSchema,
+  updateServiceRequestSchema,
+} from '../schemas/catalog';
 import { registerRequestSchema, userSchema } from '../schemas/identity';
 import { notificationSchema } from '../schemas/notification';
 import { recordCounterPaymentRequestSchema, refundPaymentRequestSchema } from '../schemas/payment';
@@ -113,17 +119,58 @@ describe('tenant', () => {
 });
 
 describe('catalog', () => {
-  it('porte le prix comme un couple montant/devise indissociable', () => {
-    const parsed = serviceSchema.parse({
-      id: UUID,
-      slug: 'massage-suedois',
-      name: 'Massage suédois',
-      durationMinutes: 60,
-      price: { amountMinor: 7500, currency: 'EUR' },
-      isActive: true,
-    });
+  const service = {
+    id: UUID,
+    slug: 'massage-suedois',
+    name: 'Massage suédois',
+    description: null,
+    category: null,
+    durationMinutes: 60,
+    bufferBeforeMinutes: 10,
+    bufferAfterMinutes: 15,
+    occupiedMinutes: 85,
+    price: { amountMinor: 7500, currency: 'EUR' },
+    isActive: true,
+  };
 
-    expect(parsed.price).toEqual({ amountMinor: 7500, currency: 'EUR' });
+  it('porte le prix comme un couple montant/devise indissociable', () => {
+    expect(serviceSchema.parse(service).price).toEqual({ amountMinor: 7500, currency: 'EUR' });
+  });
+
+  it('porte les deux tampons et la durée réellement occupée', () => {
+    // Le créneau bloqué sur l'agenda vaut avant + durée + après. Le serveur le
+    // calcule : la règle réécrite côté client finirait par diverger.
+    const parsed = serviceSchema.parse(service);
+
+    expect(parsed.bufferBeforeMinutes + parsed.durationMinutes + parsed.bufferAfterMinutes).toBe(
+      parsed.occupiedMinutes,
+    );
+  });
+
+  it('refuse un tampon négatif — il rendrait la cabine avant la fin du soin', () => {
+    expect(serviceSchema.safeParse({ ...service, bufferAfterMinutes: -5 }).success).toBe(false);
+    // Zéro reste permis, contrairement à une durée de soin : un soin sans temps
+    // de préparation est le cas courant.
+    expect(
+      serviceSchema.safeParse({
+        ...service,
+        bufferBeforeMinutes: 0,
+        bufferAfterMinutes: 0,
+        occupiedMinutes: 60,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rattache la prestation à une rubrique par identifiant, jamais par son nom', () => {
+    const base = { name: 'Massage suédois', durationMinutes: 60, price: { amountMinor: 7500, currency: 'EUR' } };
+
+    expect(createServiceRequestSchema.safeParse({ ...base, categoryId: OTHER_UUID }).success).toBe(
+      true,
+    );
+    // La chaîne libre d'avant #24 : elle ne désigne plus rien.
+    expect(createServiceRequestSchema.safeParse({ ...base, category: 'Massages' }).success).toBe(
+      false,
+    );
   });
 
   it('refuse un prix négatif et un prix plat sans devise', () => {
@@ -140,6 +187,38 @@ describe('catalog', () => {
     ).toBe(false);
     expect(
       createServiceRequestSchema.safeParse({ ...base, priceAmountMinor: 7500 }).success,
+    ).toBe(false);
+  });
+
+  it('n’efface une rubrique ou une description que par un `null` explicite', () => {
+    // L'absence du champ et son effacement sont deux gestes distincts : un
+    // formulaire vidé doit pouvoir dire le second.
+    expect(updateServiceRequestSchema.safeParse({}).success).toBe(true);
+    expect(
+      updateServiceRequestSchema.safeParse({ categoryId: null, description: null }).success,
+    ).toBe(true);
+    // Un prix ou une durée, en revanche, ne s'efface pas : il se remplace.
+    expect(updateServiceRequestSchema.safeParse({ price: null }).success).toBe(false);
+    expect(updateServiceRequestSchema.safeParse({ durationMinutes: null }).success).toBe(false);
+  });
+
+  it('sort une rubrique du catalogue par `isActive`, jamais par suppression', () => {
+    const category = {
+      id: UUID,
+      slug: 'soins-du-visage',
+      name: 'Soins du visage',
+      description: null,
+      isActive: true,
+    };
+
+    expect(serviceCategorySchema.safeParse(category).success).toBe(true);
+    expect(updateServiceCategoryRequestSchema.safeParse({ isActive: false }).success).toBe(true);
+    // Le slug d'une rubrique est une URL publique : même exigence que celui d'un
+    // établissement, ni tiret en tête ni tiret en fin.
+    expect(serviceCategorySchema.safeParse({ ...category, slug: '-soins' }).success).toBe(false);
+    // Un champ hors contrat est refusé — pas d'`isDeleted` qui s'inviterait.
+    expect(
+      updateServiceCategoryRequestSchema.safeParse({ isDeleted: true }).success,
     ).toBe(false);
   });
 });
