@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "types": ["node"],
+
+    // `composite` fait de ce paquet une **cible de référence de projet**
+    // TypeScript. C'est ce qui permettra à `apps/api` — qui compile avec
+    // `rootDir: src` — de consommer `@spa/shared` sans que le compilateur tente
+    // d'aspirer nos sources dans son propre programme : avec
+    // `"references": [{ "path": "../../packages/shared/tsconfig.build.json" }]`,
+    // tsc redirige de lui-même le chemin `packages/shared/src/index.ts` du
+    // `paths` racine vers le `.d.ts` produit ici. Sans cela, la compilation de
+    // l'API échouerait en TS6059 (« file is not under rootDir ») au premier
+    // import du contrat.
+    "composite": true,
+    "declaration": true,
+    "declarationMap": true
+  },
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules", "dist", "**/__tests__/**", "**/*.spec.ts"]
+}
