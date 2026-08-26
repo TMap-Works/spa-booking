@@ -38,6 +38,31 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import milestone_supervise as sup  # noqa: E402 — l'insertion de chemin la précède
 
 
+# `say()` écrit dans `.claude/.milestone/supervisor.log`, le journal
+# **opérationnel** d'un run. Des tests qui exercent des chemins d'erreur y
+# injectaient donc de fausses lignes — « dossier d'arbitrage indisponible :
+# python introuvable » y a été lu le 26/08 comme une panne réelle, alors qu'un
+# test venait de la fabriquer. Et comme `npm run verify` lance `test:scripts`,
+# chaque agent polluait le journal à chaque ticket.
+#
+# On redirige le journal pour tout le module : aucun test, présent ou futur, ne
+# peut plus écrire dans le vrai fichier, sans qu'on ait à compter sur la
+# vigilance de chacun.
+_LOG_TMP = None
+
+
+def setUpModule():
+    global _LOG_TMP
+    _LOG_TMP = tempfile.TemporaryDirectory()
+    sup.SUPERVISOR_LOG = Path(_LOG_TMP.name) / "supervisor.log"
+
+
+def tearDownModule():
+    if _LOG_TMP is not None:
+        _LOG_TMP.cleanup()
+
+
+
 class SterileStreak(unittest.TestCase):
     """La règle d'arrêt de #138 : deux legs de suite sans un commit de plus."""
 
