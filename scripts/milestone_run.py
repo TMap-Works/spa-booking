@@ -518,32 +518,126 @@ def replay(run, events, control):
 
 
 def leg_start():
-    """Sommes-nous au démarrage d'une étape de reprise automatique ?
+    """Repli d'environnement — vrai si l'appelant se dit en démarrage d'étape.
 
-    Le superviseur lance chaque vague dans un `claude -p` neuf, et **tous les
-    agents de l'étape précédente sont morts avec le processus qui les portait**.
-    À cet instant précis, aucun agent ne tient de worktree : un ticket resté
-    `running` n'est donc pas un ticket en cours, c'est un ticket abandonné.
+    **Ce n'est plus la source de vérité** : le démarrage d'étape se lit dans le
+    journal (`leg_frontier`), et cette fonction n'est consultée que lorsque le
+    journal n'en porte aucune trace. C'est tout le sujet de #233 : trois
+    `reconcile` en 65 secondes ont rendu trois verdicts contradictoires sur les
+    mêmes tickets, parce que `SPA_LEG_START` n'atteint pas tous les appels — le
+    dernier verdict avant le `gate` décidait alors du sort d'une vague entière,
+    par tirage au sort.
 
-    Le distinguer compte, parce que c'est l'inverse du cas #130 — là, un agent
-    était vivant et on lui a pris son worktree. Ici personne ne travaille, et
-    ne pas requeuer fige la vague pour toujours : `gate` ne lance que des
-    `pending`, si bien qu'une étape entière n'a plus rien à faire. C'est ce qui
-    a coûté deux étapes à vide dans la nuit du 25 août (#180).
-
-    Le worktree, lui, n'est pas détruit : il porte le travail déjà fait, et
-    l'agent relancé est envoyé dedans (voir `milestone.md`, phase 3).
-
-    `SPA_LEG_START` est le signal propre, posé par `milestone_supervise.py` sur
-    **chaque** étape. `SPA_UNATTENDED` n'est qu'un repli : le superviseur ne la
-    pose que hors `--no-merge`, si bien qu'un jalon armé en `--no-merge` — le
-    mode recommandé pour un jalon sensible — n'aurait jamais requeué ses agents
+    `SPA_LEG_START` est le signal que pose `milestone_supervise.py` sur chaque
+    étape. `SPA_UNATTENDED` n'est qu'un second repli : le superviseur ne la pose
+    que hors `--no-merge`, si bien qu'un jalon armé en `--no-merge` — le mode
+    recommandé pour un jalon sensible — n'aurait jamais requeué ses agents
     morts, et retrouverait la vague figée de #180.
     """
     for name in ("SPA_LEG_START", "SPA_UNATTENDED"):
         if os.environ.get(name, "").strip().lower() not in ("", "0", "false", "no"):
             return True
     return False
+
+
+# Un événement écrit par `reconcile` n'atteste de rien : c'est son propre
+# verdict, pas le battement d'un agent. Le compter comme un signe de vie
+# rendrait le requeue auto-réfutant — `reconcile` requeue un ticket, puis relit
+# sa propre écriture comme la preuve qu'un agent travaillait, et le rebascule.
+# C'est exactement l'oscillation `pending → running → pending` de #233.
+MUTE_ACTORS = {"reconcile"}
+
+
+def leg_frontier(events):
+    """Instant du dernier `leg_started` journalisé, ou None s'il n'y en a pas.
+
+    C'est la frontière d'étape, et c'est ce qui remplace `SPA_LEG_START` : le
+    superviseur journalise `leg_started` **avant** de lancer son `claude -p`
+    (`milestone_supervise.py`, boucle principale), si bien que tout ce qu'un
+    agent a écrit avant cette borne appartient à une étape révolue — donc à un
+    processus mort. Aucune variable à transmettre, un seul fichier, et la
+    décision se rejoue à l'identique autant de fois qu'on la relit.
+
+    `leg_started` est un statut de run : le filtre sur `ticket` empêche qu'un
+    événement de ticket homonyme ne déplace la frontière.
+
+    La borne retenue est la plus **tardive**, pas la dernière écrite : le journal
+    est en ajout seul et plusieurs processus y écrivent à la fois, chacun ayant
+    daté sa ligne avant de prendre le fichier. L'ordre des lignes n'est donc pas
+    l'ordre du temps.
+    """
+    found = None
+    for event in events:
+        if event.get("ticket") is None and event.get("status") == "leg_started":
+            ts = event.get("ts")
+            if ts and (found is None or not iso_before(ts, found)):
+                found = ts
+    return found
+
+
+def ticket_heartbeats(events):
+    """Numéro de ticket → instant du dernier événement qu'un **agent** y a écrit.
+
+    Le battement d'un ticket, au sens strict : ce que `reconcile` y a inscrit ne
+    compte pas (voir `MUTE_ACTORS`). Tout le reste compte — agent, orchestrateur,
+    arbitre, humain —, parce que tous ne journalisent qu'en agissant.
+
+    Le battement retenu est le plus **tardif**, pas le dernier écrit. Une vague
+    fait écrire le journal par une dizaine de processus concurrents, et chacun
+    date sa ligne avant d'obtenir le fichier : deux lignes d'un même ticket
+    peuvent atterrir à l'envers. Prendre la dernière écrite rendrait alors un
+    battement périmé — et un agent bien vivant passerait pour mort, ce qui
+    lancerait un second agent sur son worktree (#130).
+    """
+    beats = {}
+    for event in events:
+        number = event.get("ticket")
+        if number is None or event.get("actor") in MUTE_ACTORS:
+            continue
+        ts = event.get("ts")
+        if ts and (number not in beats or not iso_before(ts, beats[number])):
+            beats[number] = ts
+    return beats
+
+
+def iso_before(left, right):
+    """`left` est-il antérieur à `right` ? Sur les instants, pas sur les chaînes.
+
+    Le journal est écrit en UTC de bout en bout, mais un fichier repris à la main
+    peut porter un autre décalage : comparer les chaînes rendrait alors un ordre
+    faux, et un ticket vivant passerait pour abandonné.
+    """
+    try:
+        return datetime.fromisoformat(left) < datetime.fromisoformat(right)
+    except (ValueError, TypeError):
+        return str(left) < str(right)
+
+
+def orphaned(number, frontier, beats, fallback=False):
+    """Le ticket a-t-il été abandonné par l'étape qui le portait ?
+
+    Le superviseur lance chaque vague dans un `claude -p` neuf, et **tous les
+    agents de l'étape précédente meurent avec le processus qui les portait**. Un
+    ticket dont le dernier battement précède la frontière d'étape n'est donc pas
+    un ticket en cours, c'est un ticket abandonné : personne ne tient plus son
+    worktree, et ne pas le requeuer fige la vague pour toujours — `gate` ne lance
+    que des `pending`, si bien qu'une étape entière n'a plus rien à faire (#180).
+
+    Le worktree n'est pas détruit pour autant : il porte le travail déjà fait, et
+    l'agent relancé y est renvoyé (voir `milestone.md`, phase 3).
+
+    Le cas inverse est la protection de #130, et elle tient par construction :
+    un ticket dont un agent a journalisé **après** la frontière est tenu par un
+    vivant, et on ne lui prend pas son worktree.
+
+    Sans frontière au journal — un run mené à la main, sans superviseur —, la
+    question n'a pas de réponse dans le journal : on retombe sur ce que
+    l'appelant en dit (`fallback`).
+    """
+    if frontier is None:
+        return fallback
+    beat = beats.get(number)
+    return beat is None or iso_before(beat, frontier)
 
 
 def resume_context(number, worktrees):
@@ -887,11 +981,22 @@ def cmd_reconcile(args):
     qui les a lancés. Ce ticket-là redevient `pending` — sans quoi il ne peut
     plus rien devenir : le `gate` ne lance que des `pending`, et une vague qui
     en garde un ne se clôt jamais.
+
+    Distinguer les deux — l'agent vivant qu'on ne dérange pas, l'agent mort
+    qu'on remplace — se lit **dans le journal**, jamais dans l'environnement
+    (#233). Le journal porte la frontière d'étape (`leg_started`, écrit par le
+    superviseur avant chaque `claude -p`) et le battement de chaque ticket (son
+    dernier événement, hors ceux que `reconcile` écrit lui-même) : deux nombres
+    sur disque, que tout appel lit pareil. Faire dépendre ce verdict de
+    `SPA_LEG_START` le rendait tributaire de qui appelait — trois `reconcile` en
+    65 secondes, trois verdicts contraires sur les mêmes tickets, et un `gate`
+    qui annonce « 0 ticket à lancer » quand le dernier est tombé du mauvais côté.
     """
     run_id = resolve(args.run)
     run = load_run(run_id)
     control = load_control(run_id)
-    tickets = replay(run, read_journal(run_id), control)
+    events = read_journal(run_id)
+    tickets = replay(run, events, control)
     pending = {n: t for n, t in tickets.items() if t["status"] not in TERMINAL}
     if not pending:
         print("rien à réconcilier — aucun ticket ouvert")
@@ -925,14 +1030,30 @@ def cmd_reconcile(args):
         print("sonde locale muette (" + " ; ".join(PROBE_FAILURES) + ") — les "
               "tickets `running` sont laissés tels quels", file=sys.stderr)
 
-    # Au démarrage d'une étape de reprise automatique, aucun agent de l'étape
-    # précédente n'a survécu : un `running` y est un abandon, pas un travail en
-    # cours. Une sonde muette suspend ce raisonnement comme le reste — sans
-    # certitude sur l'état local, on ne fait reculer personne.
-    depart = sondes_sures and (getattr(args, "leg_start", False) or leg_start())
-    if depart:
-        print("démarrage d'étape : les tickets restés `running` sont repris "
-              "dans leur worktree existant")
+    # Qui a été abandonné par l'étape qui le portait, ticket par ticket, et lu
+    # dans le journal plutôt que dans l'environnement (#233) : la frontière
+    # d'étape est le dernier `leg_started`, le battement d'un ticket est son
+    # dernier événement non écrit par `reconcile`. Deux appels successifs sans
+    # rien changer au dépôt lisent les mêmes deux nombres et concluent pareil —
+    # ce que trois `reconcile` en 65 secondes ne faisaient pas.
+    frontier = leg_frontier(events)
+    beats = ticket_heartbeats(events)
+    # Le repli d'environnement ne sert que si le journal ne dit rien : un run
+    # mené à la main n'a pas de `leg_started` à lire.
+    fallback = (frontier is None
+                and (getattr(args, "leg_start", False) or leg_start()))
+    # Annoncé seulement si la reprise peut effectivement avoir lieu : sonde
+    # muette, personne ne recule, et le dire quand même contredirait mot pour mot
+    # l'avertissement imprimé quatre lignes plus haut.
+    if frontier and sondes_sures:
+        print(f"dernière étape ouverte à {clock(frontier)} — les tickets restés "
+              "`running` sans rien journaliser depuis sont repris dans leur "
+              "worktree existant")
+
+    def abandonne(number):
+        # Une sonde muette suspend ce raisonnement comme le reste : sans
+        # certitude sur l'état local, on ne fait reculer personne.
+        return sondes_sures and orphaned(number, frontier, beats, fallback)
 
     corrections = []
     for number, ticket in sorted(pending.items()):
@@ -946,8 +1067,6 @@ def cmd_reconcile(args):
             target, why = "merged", f"PR #{pr['number']} déjà mergée"
         elif pr and pr["state"] == "OPEN":
             target, why = "pr_open", f"PR #{pr['number']} ouverte"
-        elif branch:
-            target, why = "running", f"branche {branch} poussée, aucune PR"
         elif worktree and ticket["status"] in BAD:
             # Un ticket tombé a été **jugé**, pas abandonné : son worktree ne dit
             # rien de plus que ce que l'agent a déjà journalisé. Le déplacer —
@@ -957,25 +1076,35 @@ def cmd_reconcile(args):
             # repartirait indéfiniment sans que personne soit consulté. C'est
             # `retry N` qui le remet en file, et lui seul.
             target, why = ticket["status"], "ticket tombé — worktree conservé"
-        elif worktree and not (depart and ticket["status"] == "running"):
-            # Avant le premier push, le dépôt distant ne sait rien dire. Le
-            # worktree, lui, dit qu'un agent tient le ticket — et le remettre en
-            # file lancerait un second agent sur la même empreinte, dont le
-            # premier réflexe serait de « nettoyer » le worktree du premier.
-            target = "running"
-            why = (f"worktree vivant sur {worktree['branch']}, rien de poussé"
-                   + (" (verrouillé)" if worktree["locked"] else ""))
-        elif worktree:
-            # Au démarrage d'une étape, personne ne tient plus ce worktree : les
-            # agents de l'étape précédente sont morts avec leur `claude -p`. Le
-            # ticket doit être resté `running` pour ça — un ticket tombé est
-            # traité au-dessus. Le ticket est donc à reprendre — **dans ce worktree-là**, que l'agent
-            # relancé rejoint par `EnterWorktree(path=…)` au lieu d'en ouvrir un
-            # neuf. Ne pas le faire figeait la vague : `gate` ne lance que des
-            # `pending`, et deux étapes de suite n'ont eu personne à lancer.
+        elif worktree and abandonne(number):
+            # Personne ne tient plus ce worktree : son agent n'a rien journalisé
+            # depuis l'ouverture de l'étape, il est mort avec le `claude -p` qui
+            # le portait. Le ticket est donc à reprendre — **dans ce worktree-là**,
+            # que l'agent relancé rejoint par `EnterWorktree(path=…)` au lieu d'en
+            # ouvrir un neuf. Ne pas le faire figeait la vague : `gate` ne lance
+            # que des `pending`, et deux étapes de suite n'ont eu personne à
+            # lancer (#180). Le verdict est le même à chaque relecture, parce
+            # qu'il ne dépend que du journal : requeuer n'écrit aucun battement
+            # qui le contredirait au tour suivant (#233).
             target = "pending"
             why = (f"agent mort avec son étape — reprendre dans {worktree['path']} "
                    f"({worktree['branch']})")
+        elif worktree:
+            # Avant le premier push, le dépôt distant ne sait rien dire. Le
+            # worktree d'un agent qui journalise encore, lui, dit qu'un vivant
+            # tient le ticket — et le remettre en file lancerait un second agent
+            # sur la même empreinte, dont le premier réflexe serait de
+            # « nettoyer » le worktree du premier (#130).
+            target = "running"
+            why = (f"worktree vivant sur {worktree['branch']}"
+                   + (", branche poussée" if branch else ", rien de poussé")
+                   + (" (verrouillé)" if worktree["locked"] else ""))
+        elif branch:
+            # Le travail est poussé : il survit à tout, y compris à la
+            # suppression du worktree. Rien à reprendre en file — sans worktree,
+            # relancer un agent lui ferait repartir d'une branche neuve et
+            # abandonner ce qui est déjà sur le distant.
+            target, why = "running", f"branche {branch} poussée, aucune PR"
         else:
             target, why = "pending", "ni branche ni PR ni worktree — jamais démarré"
 
