@@ -132,6 +132,10 @@
     "202": [
       "api/identity",
       "db:schema"
+    ],
+    "208": [
+      ".claude/settings",
+      "scripts/milestone-rules"
     ]
   },
   "depends": {
