@@ -99,3 +99,95 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
+
+  # Les images sont construites ici et nulle part ailleurs avant `deploy-*.yml`.
+  # Sans ce job, un Dockerfile cassé ne se découvre qu'au premier déploiement,
+  # c'est-à-dire après le merge sur `develop` — donc sur une branche que rien ne
+  # protège plus. Les images ne sont pas poussées : construire suffit à savoir si
+  # elles se construisent, et le registre n'a pas à recevoir une image de PR.
+  #
+  # `npm run build` du job précédent ne le remplace pas : il compile sur le Node
+  # du runner, avec les dépendances déjà installées et le contexte complet du
+  # dépôt. Le build d'image, lui, éprouve ce que `.dockerignore` laisse passer,
+  # l'ordre des `COPY`, et la capacité de l'image finale à démarrer sans les
+  # dépendances de build.
+  docker:
+    name: Images Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Image API
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          # `load` et non `push` : l'image reste sur le runner, le temps des
+          # contrôles ci-dessous.
+          load: true
+          push: false
+          tags: spa-api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api
+
+      # Le critère « les images tournent en utilisateur non root » se vérifie sur
+      # l'image construite, pas en relisant le Dockerfile : un `USER` posé avant
+      # un `COPY --chown` manquant, ou effacé par une étape ultérieure, ne se voit
+      # qu'à l'exécution.
+      - name: L'image API ne tourne pas en root
+        run: |
+          uid="$(docker run --rm spa-api:ci id -u)"
+          if [ "$uid" = "0" ]; then
+            echo "::error file=apps/api/Dockerfile::L'image API démarre en root (uid 0). Vérifier la directive USER de l'étape runtime."
+            exit 1
+          fi
+          echo "Image API : uid $uid, $(docker run --rm spa-api:ci id -un)."
+
+      # Aucun compilateur ni CLI de test dans l'image d'exécution — c'est la
+      # contrepartie des étapes séparées. `tsc` est le témoin retenu parce qu'il
+      # revient tout seul : `@prisma/client` déclare `typescript` en pair
+      # optionnel, et npm l'installe même sous `--omit=dev`.
+      - name: L'image API ne contient pas de dépendances de build
+        run: |
+          if docker run --rm spa-api:ci sh -c 'test -e node_modules/.bin/tsc'; then
+            echo "::error file=apps/api/Dockerfile::TypeScript est présent dans l'image d'exécution. Voir l'étape prod-deps."
+            exit 1
+          fi
+          echo "Aucun compilateur TypeScript dans l'image API."
+
+      # `apps/web` n'est pas encore initialisé : le workspace ne porte qu'un
+      # `package.json` sans script, et `next build` n'a rien à compiler. Le
+      # Dockerfile décrit la cible et se construira le jour où un `next.config.*`
+      # apparaît — sans qu'il faille revenir modifier ce workflow.
+      - id: web
+        name: Le front est-il initialisé ?
+        run: |
+          if compgen -G "apps/web/next.config.*" > /dev/null; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice file=apps/web/Dockerfile::apps/web ne porte aucun next.config.* — build de l'image web ignoré tant que le front n'est pas posé."
+          fi
+
+      - name: Image web
+        if: steps.web.outputs.present == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          load: true
+          push: false
+          tags: spa-web:ci
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+      - name: L'image web ne tourne pas en root
+        if: steps.web.outputs.present == 'true'
+        run: |
+          uid="$(docker run --rm spa-web:ci id -u)"
+          if [ "$uid" = "0" ]; then
+            echo "::error file=apps/web/Dockerfile::L'image web démarre en root (uid 0). Vérifier la directive USER de l'étape runtime."
+            exit 1
+          fi
+          echo "Image web : uid $uid, $(docker run --rm spa-web:ci id -un)."
