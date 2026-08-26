@@ -78,3 +78,47 @@ export interface ServiceView {
   readonly price: Money;
   readonly isActive: boolean;
 }
+
+/**
+ * Un praticien affecté à une prestation, tel que le back-office le liste.
+ *
+ * `isActive` y figure parce qu'une affectation survit à la désactivation du
+ * praticien : la masquer ferait croire à une affectation perdue et inviterait à
+ * la recréer, pour se heurter au conflit d'unicité de `service_staff`.
+ *
+ * Ni `userId`, ni `bio` : le premier révélerait le compte derrière la fiche, le
+ * second ferait transiter deux mille caractères par ligne dans une liste
+ * d'affectations.
+ */
+export interface ServiceStaffMemberView {
+  readonly id: string;
+  readonly displayName: string;
+  readonly isActive: boolean;
+}
+
+/** Forme réduite d'un praticien, telle que la page publique la reçoit. */
+export interface StaffMemberSummaryView {
+  readonly id: string;
+  readonly displayName: string;
+}
+
+/**
+ * Une prestation telle que la page de réservation **publique** la reçoit.
+ *
+ * Trois champs de `ServiceView` en sont délibérément absents : les deux tampons,
+ * que le contrat décrit comme « invisibles du client » — ce sont des temps de
+ * cabine, donc la cadence interne du salon —, `occupiedMinutes` qui les
+ * redonnerait par soustraction, et `isActive` qui vaudrait toujours `true`
+ * puisque le catalogue public ne contient que des prestations actives.
+ */
+export interface PublicServiceView {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly description: string | null;
+  readonly category: ServiceCategorySummary | null;
+  readonly durationMinutes: number;
+  readonly price: Money;
+  /** Les praticiens **actifs** qui pratiquent la prestation, par nom. */
+  readonly staff: readonly StaffMemberSummaryView[];
+}

@@ -13,9 +13,12 @@ import { MAX_AVAILABILITY_RANGE_DAYS, PASSWORD_MIN_LENGTH } from '../constants/l
 import { appointmentListQuerySchema, createAppointmentRequestSchema } from '../schemas/appointment';
 import { availabilityQuerySchema } from '../schemas/availability';
 import {
+  assignServiceStaffRequestSchema,
   createServiceRequestSchema,
+  publicServiceSchema,
   serviceCategorySchema,
   serviceSchema,
+  serviceStaffMemberSchema,
   updateServiceCategoryRequestSchema,
   updateServiceRequestSchema,
 } from '../schemas/catalog';
@@ -220,6 +223,77 @@ describe('catalog', () => {
     expect(
       updateServiceCategoryRequestSchema.safeParse({ isDeleted: true }).success,
     ).toBe(false);
+  });
+
+  it('n’accepte que le praticien dans une demande d’affectation', () => {
+    expect(assignServiceStaffRequestSchema.safeParse({ staffId: UUID }).success).toBe(true);
+    // Le `.strict()` est ce qui ferme la porte la plus directe : un `tenantId`
+    // glissé dans le corps ferait choisir son établissement au client.
+    expect(
+      assignServiceStaffRequestSchema.safeParse({ staffId: UUID, tenantId: OTHER_UUID }).success,
+    ).toBe(false);
+    // Ni la prestation : elle vient du chemin, et l'accepter ici ouvrirait deux
+    // sources pour la même désignation.
+    expect(
+      assignServiceStaffRequestSchema.safeParse({ staffId: UUID, serviceId: OTHER_UUID }).success,
+    ).toBe(false);
+    expect(assignServiceStaffRequestSchema.safeParse({ staffId: 'camille' }).success).toBe(false);
+  });
+
+  it('montre au back-office le praticien désactivé, et rien de son compte', () => {
+    const member = { id: UUID, displayName: 'Camille Rousseau', isActive: false };
+
+    expect(serviceStaffMemberSchema.safeParse(member).success).toBe(true);
+
+    // Un schéma de **sortie** n'est pas `.strict()` — il décrit ce que l'API
+    // rend, et refuser une réponse enrichie casserait le client au premier champ
+    // ajouté par le serveur. Sa garantie est ailleurs, et elle est plus forte :
+    // il **élague**. Ce que l'assertion vérifie n'est donc pas un refus mais une
+    // absence — `userId` révélerait le compte derrière la fiche, `bio` ferait
+    // transiter deux mille caractères par ligne dans une liste d'affectations,
+    // et ni l'un ni l'autre ne survit à la validation.
+    const parsed = serviceStaffMemberSchema.parse({
+      ...member,
+      userId: OTHER_UUID,
+      bio: 'Dix ans de pratique.',
+    });
+
+    expect(parsed).toEqual(member);
+  });
+
+  it('publie les praticiens d’une prestation sans publier la cadence du salon', () => {
+    const published = {
+      id: UUID,
+      slug: 'massage-60-min',
+      name: 'Massage 60 min',
+      description: null,
+      category: { id: OTHER_UUID, slug: 'massages', name: 'Massages' },
+      durationMinutes: 60,
+      price: { amountMinor: 7000, currency: 'EUR' },
+      staff: [{ id: OTHER_UUID, displayName: 'Camille Rousseau' }],
+    };
+
+    expect(publicServiceSchema.safeParse(published).success).toBe(true);
+    // Une prestation que personne ne pratique encore reste publiable — elle se
+    // réserve simplement sans choix de praticien.
+    expect(publicServiceSchema.safeParse({ ...published, staff: [] }).success).toBe(true);
+
+    // Les tampons sont des temps de cabine — de l'exploitation, pas du catalogue —
+    // et `occupiedMinutes` les redonnerait par soustraction ; `isActive` vaudrait
+    // toujours `true`. Les quatre sont **élagués** : quand bien même le serveur
+    // les mettrait dans le corps, ils ne franchiraient pas la validation du
+    // client, et un écran ne pourrait pas se mettre à les afficher.
+    const parsed = publicServiceSchema.parse({
+      ...published,
+      bufferBeforeMinutes: 10,
+      bufferAfterMinutes: 15,
+      occupiedMinutes: 85,
+      isActive: true,
+      tenantId: OTHER_UUID,
+      staff: [{ id: OTHER_UUID, displayName: 'Camille Rousseau', isActive: true }],
+    });
+
+    expect(parsed).toEqual(published);
   });
 });
 
