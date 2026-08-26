@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import milestone_plan  # noqa: E402 — l'insertion de chemin ci-dessus doit la précéder
 
 
-FULL = ("ws:devops", "mod:infra", "type:chore", "P1")
+FULL = ("ws:devops", "mod:infra", "type:chore", "P1", "nature:projet")
 
 
 def issue(number, title=None, body="", labels=FULL, assignees=()):
@@ -269,7 +269,8 @@ class CasReelS1(unittest.TestCase):
             16: "Déployer l'environnement dev de bout en bout",
         }
         self.hub = FakeHub(
-            [issue(n, title=t, labels=("ws:devops", "mod:infra", "type:chore", "P0"))
+            [issue(n, title=t, labels=("ws:devops", "mod:infra", "type:chore",
+                                       "P0", "nature:projet"))
              for n, t in titres.items()],
             [pull(157, closes=12), pull(158, closes=13)])
 
@@ -310,9 +311,11 @@ class PrerequisHeuristique(unittest.TestCase):
     def test_l_ecran_ne_part_pas_si_l_api_du_module_est_en_pr(self):
         hub = FakeHub(
             [issue(10, title="API catalogue",
-                   labels=("ws:backend", "mod:catalog", "type:feat", "P1")),
+                   labels=("ws:backend", "mod:catalog", "type:feat", "P1",
+                           "nature:projet")),
              issue(20, title="Écran catalogue",
-                   labels=("ws:frontend", "mod:catalog", "type:feat", "P1"))],
+                   labels=("ws:frontend", "mod:catalog", "type:feat", "P1",
+                           "nature:projet"))],
             [pull(157, closes=10)])
         _, plan = plan_of(hub, {})
         self.assertNotIn(20, scheduled(plan))
@@ -322,9 +325,11 @@ class PrerequisHeuristique(unittest.TestCase):
     def test_le_test_ne_part_pas_si_ce_qu_il_verifie_est_en_pr(self):
         hub = FakeHub(
             [issue(10, title="API rendez-vous",
-                   labels=("ws:backend", "mod:appointments", "type:feat", "P1")),
+                   labels=("ws:backend", "mod:appointments", "type:feat", "P1",
+                           "nature:projet")),
              issue(20, title="Tests du moteur",
-                   labels=("ws:qa", "mod:appointments", "type:test", "P1"))],
+                   labels=("ws:qa", "mod:appointments", "type:test", "P1",
+                           "nature:projet"))],
             [pull(157, closes=10)])
         _, plan = plan_of(hub, {})
         self.assertNotIn(20, scheduled(plan))
@@ -358,6 +363,67 @@ class EcarteeQuiNeSeraJamaisFaite(unittest.TestCase):
         _, plan = plan_of(FakeHub([trace, issue(20)]), self.RULES)
         self.assertIn(20, scheduled(plan))
         self.assertEqual(plan["withheld"], [])
+
+    def test_un_prerequis_d_outillage_ne_retient_pas(self):
+        """Le seul des quatre dont le travail sera peut-être fait — mais ailleurs.
+
+        Un ticket d'outillage attend une session humaine, que rien n'oblige à
+        venir avant le sprint. Le tenir pour un prérequis non satisfait
+        suspendrait le produit à un chantier dont le run ne sait rien, et pour
+        une durée que personne ne contrôle.
+        """
+        outil = issue(10, labels=("ws:devops", "mod:infra", "type:chore", "P1",
+                                  "nature:outillage"))
+        _, plan = plan_of(FakeHub([outil, issue(20)]), self.RULES)
+        self.assertIn(20, scheduled(plan))
+        self.assertEqual(plan["withheld"], [])
+        self.assertIn("outillage", ecartees(plan)[10]["reason"])
+
+
+class OutillageHorsDuRun(unittest.TestCase):
+    """Le run ne déroule que le produit — et ne devine jamais de quel côté ranger.
+
+    Un agent de vague qui réécrit `milestone_run.py` modifie l'orchestrateur qui
+    l'exécute, pendant qu'il l'exécute. C'est la raison d'être de l'exclusion :
+    ces chantiers-là se prennent à la main, une session à la fois.
+    """
+
+    def outil(self, number, **kw):
+        return issue(number, labels=("ws:devops", "mod:infra", "type:chore",
+                                     "P1", "nature:outillage"), **kw)
+
+    def test_un_ticket_d_outillage_n_est_jamais_dispatche(self):
+        _, plan = plan_of(FakeHub([self.outil(10), issue(20)]), DEUX)
+        self.assertNotIn(10, scheduled(plan))
+        self.assertIn(20, scheduled(plan))
+
+    def test_un_jalon_qui_n_a_plus_que_de_l_outillage_n_a_rien_a_derouler(self):
+        code, out = run_plan(FakeHub([self.outil(10), self.outil(20)]), rules=DEUX)
+        self.assertEqual(code, milestone_plan.EMPTY)
+        self.assertIn("outillage", out)
+
+    def test_l_en_tete_compte_les_tickets_d_outillage(self):
+        """Le chiffre est la liste des chantiers qui attendent un humain : le
+        cacher ferait passer un jalon à moitié traité pour un jalon déroulé."""
+        _, out = run_plan(FakeHub([self.outil(10), self.outil(30), issue(20)]),
+                          rules=DEUX)
+        self.assertIn("2 outillage", out.splitlines()[1])
+
+    def test_sans_nature_l_issue_sort_en_classement_incomplet(self):
+        """Ni dispatchée ni oubliée : rien n'autorise à choisir à sa place."""
+        muette = issue(10, labels=("ws:devops", "mod:infra", "type:chore", "P1"))
+        _, plan = plan_of(FakeHub([muette, issue(20)]), DEUX)
+        self.assertNotIn(10, scheduled(plan))
+        self.assertIn("nature", ecartees(plan)[10]["reason"])
+
+    def test_sans_nature_l_issue_retient_ses_dependants(self):
+        """Contrairement à l'outillage : un classement se corrige en une minute,
+        et le dépendant repartira au plan suivant."""
+        rules = {"resources": {"10": ["a"], "20": ["b"]}, "depends": {"20": [10]}}
+        muette = issue(10, labels=("ws:devops", "mod:infra", "type:chore", "P1"))
+        _, plan = plan_of(FakeHub([muette, issue(20)]), rules)
+        self.assertNotIn(20, scheduled(plan))
+        self.assertIn("classement incomplet", retenues(plan)[20]["held_by"][0]["reason"])
 
 
 class Invariants(unittest.TestCase):

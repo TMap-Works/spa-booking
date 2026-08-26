@@ -23,7 +23,15 @@ d'autre dessus — reste un **prérequis non satisfait** : son travail n'est pas
 issue **fermée** libère les siens, et elle n'arrive jamais jusqu'à `qualify()` :
 `fetch_issues` ne lit que les ouvertes, une issue fermée n'a donc aucune arête.
 Font exception les écartées de `NEVER_HOLDS` (hors périmètre, traçabilité,
-épique) : elles ne seront jamais faites, les retenir gèlerait le jalon à vie.
+épique, outillage) : le run ne les fera jamais, les retenir gèlerait le jalon à
+vie.
+
+**Le plan ne dispatche que du produit.** Une issue `nature:outillage` — scripts,
+`.claude/`, CI du dépôt — est écartée d'office : cet outillage se traite à la
+main, une session à la fois, parce qu'il modifie le dispositif au moment même où
+le dispositif tourne. Le run, lui, ne traite que `nature:projet`. Une issue sans
+label `nature:*` n'est pas dispatchée non plus : elle sort en « classement
+incomplet », au même titre qu'un `ws:*` manquant.
 
 Rien ici n'est deviné définitivement. `.claude/milestone-rules.json` fige les
 dépendances et les empreintes que l'heuristique ne peut pas connaître ; toute
@@ -166,16 +174,21 @@ def whoami():
 # agent sur une issue qu'il refuserait de traiter.
 # --------------------------------------------------------------------------- #
 
-# Écarter n'a pas partout le même sens. Ces trois raisons-là sont structurelles :
-# l'issue ne sera jamais dispatchée, et aucun merge ne la fermera. La tenir pour
-# un prérequis non satisfait gèlerait ses dépendants pour toujours — le plan
-# n'aurait plus aucun moyen de repartir. Les autres raisons — PR en vol,
-# classement à compléter, quelqu'un d'autre dessus — se résorbent, et retiennent
-# donc à raison.
+# Écarter n'a pas partout le même sens. Ces quatre raisons-là sont structurelles :
+# le run ne dispatchera jamais l'issue, et aucun merge qu'il déclenche ne la
+# fermera. La tenir pour un prérequis non satisfait gèlerait ses dépendants pour
+# toujours — le plan n'aurait plus aucun moyen de repartir. Les autres raisons —
+# PR en vol, classement à compléter, quelqu'un d'autre dessus — se résorbent, et
+# retiennent donc à raison.
+#
+# `TOOLING` est le seul des quatre dont le travail sera peut-être fait, et même
+# bientôt : simplement, il le sera par un humain, hors run. Le retenir reviendrait
+# à suspendre le produit à un chantier d'outillage dont le run ne sait rien.
 OUT_OF_SCOPE = "hors périmètre MVP (post-mvp)"
 TRACKING = "ticket de traçabilité, pas du travail produit"
 EPIC = "épique — conteneur, ce sont ses sous-tâches qui portent le travail"
-NEVER_HOLDS = {OUT_OF_SCOPE, TRACKING, EPIC}
+TOOLING = "outillage — traité à la main, une session à la fois"
+NEVER_HOLDS = {OUT_OF_SCOPE, TRACKING, EPIC, TOOLING}
 
 
 def qualify(issue, busy, me):
@@ -195,6 +208,8 @@ def qualify(issue, busy, me):
         return False, TRACKING
     if "type:epic" in labels:
         return False, EPIC
+    if "nature:outillage" in labels:
+        return False, TOOLING
 
     missing = []
     if not any(l.startswith("ws:") for l in labels):
@@ -203,6 +218,12 @@ def qualify(issue, busy, me):
         missing.append("module")
     if not any(l.startswith("type:") for l in labels):
         missing.append("type")
+    # Sans nature, on ne sait pas si l'issue relève du run ou de l'humain.
+    # Choisir à sa place serait faux dans un sens comme dans l'autre : la
+    # supposer produit enverrait un agent réécrire l'outillage pendant qu'il
+    # tourne, la supposer outillage ferait sortir du sprint un vrai ticket MVP.
+    if not any(l.startswith("nature:") for l in labels):
+        missing.append("nature")
     if not labels & set(PRIORITY_SCORE):
         missing.append("priorité")
     if missing:
@@ -228,6 +249,7 @@ def describe(issue):
         "workstream": next((WORKSTREAMS[l] for l in labels if l in WORKSTREAMS), "?"),
         "module": next((l[4:] for l in labels if l.startswith("mod:")), "?"),
         "type": next((l[5:] for l in labels if l.startswith("type:")), "?"),
+        "nature": next((l[7:] for l in labels if l.startswith("nature:")), "?"),
         "priority": next((l for l in labels if l in PRIORITY_SCORE), "P2"),
         "body": issue.get("body") or "",
     }
@@ -517,6 +539,9 @@ def render(milestone, waves, index, excluded, edges, cut, width, closure,
     counted = f"{len(index)} traitables"
     if withheld:
         counted += f" · {len(withheld)} retenues"
+    tooling = sum(1 for item in excluded if item["reason"] == TOOLING)
+    if tooling:
+        counted += f" · {tooling} outillage"
     print(f"Jalon {milestone['title']} · {due_in(milestone)}")
     print(f"{milestone['open_issues']} ouvertes · {milestone['closed_issues']} fermées · "
           f"{counted} · {len(waves)} vagues · largeur max {width}")
@@ -590,8 +615,8 @@ def render(milestone, waves, index, excluded, edges, cut, width, closure,
         print()
 
     if excluded:
-        print("Écartées · pas dispatchables — et, sauf hors périmètre, "
-              "elles retiennent leurs dépendants")
+        print("Écartées · pas dispatchables — et celles dont la raison peut se "
+              "résorber retiennent leurs dépendants")
         for item in excluded:
             print(f"  #{item['number']:<4} {item['reason']} — {item['title'][:58]}")
 
