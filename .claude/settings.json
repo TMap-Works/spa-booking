@@ -38,6 +38,7 @@
       "Bash(python scripts/project_status.py:*)",
       "Bash(python scripts/milestone_plan.py:*)",
       "Bash(python scripts/milestone_run.py:*)",
+      "Bash(python scripts/milestone_rules.py:*)",
       "Bash(python scripts/permissions_review.py:*)",
       "Bash(python scripts/milestone_supervise.py:*)",
       "Bash(python scripts/milestone_arbiter.py:*)",
@@ -51,9 +52,7 @@
       "Bash(git commit:*)",
       "Bash(git worktree:*)",
       "Bash(gh label list:*)",
-      "Bash(npm run verify:*)",
-      "Edit(./.claude/milestone-rules.json)",
-      "Write(./.claude/milestone-rules.json)"
+      "Bash(npm run verify:*)"
     ],
     "deny": [
       "Bash(git push --force:*)",
