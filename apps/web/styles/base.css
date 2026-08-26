@@ -1,0 +1,200 @@
+/*
+ * Design system — socle
+ * =============================================================================
+ *
+ * Défauts d'éléments, utilitaires d'accessibilité et animations partagées.
+ * Aucune couleur littérale ici : tout passe par la couche sémantique de
+ * `tokens.css`.
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  /* Une ancre ne doit pas déposer sa cible sous un en-tête collant. */
+  scroll-padding-block-start: var(--spa-space-16);
+}
+
+body {
+  margin: 0;
+  background-color: var(--spa-color-surface);
+  color: var(--spa-color-text);
+  font-family: var(--spa-font-sans);
+  font-size: var(--spa-font-size-md);
+  line-height: var(--spa-line-height-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-tight);
+  line-height: var(--spa-line-height-tight);
+}
+
+h1 {
+  font-size: var(--spa-font-size-3xl);
+}
+
+h2 {
+  font-size: var(--spa-font-size-2xl);
+}
+
+h3 {
+  font-size: var(--spa-font-size-xl);
+}
+
+h4 {
+  font-size: var(--spa-font-size-lg);
+}
+
+p {
+  margin: 0;
+}
+
+a {
+  color: var(--spa-color-accent-text);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
+/* Les contrôles n'héritent pas de la police du document par défaut. */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+img,
+svg,
+video {
+  display: block;
+  max-inline-size: 100%;
+}
+
+/*
+ * Focus
+ * -----------------------------------------------------------------------------
+ * `:focus-visible` et non `:focus` : un clic à la souris sur un bouton ne doit
+ * pas laisser d'anneau, une tabulation au clavier le doit toujours. L'anneau est
+ * décalé pour se dessiner sur la surface de la page — c'est ce qui lui garantit
+ * son rapport de 3:1 y compris par-dessus un bouton d'accent.
+ */
+:focus-visible {
+  outline: var(--spa-focus-ring-width) solid var(--spa-color-focus);
+  outline-offset: var(--spa-focus-ring-offset);
+}
+
+/* Réservé aux lecteurs d'écran — porte les annonces de chargement et de vide. */
+.spa-visually-hidden {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*
+ * Squelettes de chargement
+ * -----------------------------------------------------------------------------
+ * Une seule animation, partagée par tous les composants : leurs squelettes
+ * pulsent alors en phase plutôt que de scintiller chacun pour soi.
+ */
+.spa-skeleton {
+  background-color: var(--spa-color-skeleton);
+  border-radius: var(--spa-radius-sm);
+  animation: spa-skeleton-pulse 1.4s var(--spa-easing-standard) infinite;
+}
+
+@keyframes spa-skeleton-pulse {
+  0%,
+  100% {
+    background-color: var(--spa-color-skeleton);
+  }
+
+  50% {
+    background-color: var(--spa-color-skeleton-highlight);
+  }
+}
+
+.spa-spinner {
+  display: inline-block;
+  inline-size: 1em;
+  block-size: 1em;
+  border: 2px solid currentcolor;
+  border-block-start-color: transparent;
+  border-radius: var(--spa-radius-full);
+  animation: spa-spin 0.7s linear infinite;
+}
+
+@keyframes spa-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/*
+ * `prefers-reduced-motion` n'est pas un confort : un mouvement continu peut
+ * déclencher un trouble vestibulaire. Les squelettes et le spinner deviennent
+ * statiques — l'état reste lisible, seul le mouvement disparaît.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .spa-spinner {
+    border-block-start-color: currentcolor;
+    opacity: 0.6;
+  }
+}
+
+/*
+ * État vide partagé
+ * -----------------------------------------------------------------------------
+ * « Un écran vide sans explication est un bug d'UX » (skill web-frontend §6) :
+ * un état vide porte donc toujours un texte, et optionnellement une action.
+ */
+.spa-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spa-space-2);
+  padding-block: var(--spa-space-8);
+  padding-inline: var(--spa-space-4);
+  text-align: center;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-empty-state__title {
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+}
+
+.spa-empty-state__description {
+  font-size: var(--spa-font-size-sm);
+  max-inline-size: 42ch;
+}
+
+.spa-empty-state--inline {
+  padding-block: var(--spa-space-3);
+  align-items: flex-start;
+  text-align: start;
+}
