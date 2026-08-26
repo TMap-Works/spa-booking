@@ -125,6 +125,13 @@
     "22": [
       "api/identity",
       "db:schema"
+    ],
+    "198": [
+      "infra/terraform/modules/oidc"
+    ],
+    "202": [
+      "api/identity",
+      "db:schema"
     ]
   },
   "depends": {
@@ -174,6 +181,7 @@
     "19": "le schéma Prisma se pose dans le squelette NestJS, pas l'inverse",
     "128": "le harnais teste les décisions de pr_gate.py que #129 réécrit — l'écrire avant figerait le comportement fautif",
     "21": "l'authentification consomme les DTO, l'enumeration de roles et les codes d'erreur de packages/shared",
-    "22": "le role MANAGER doit exister dans l'enumeration Prisma UserRole avant d'etre attribuable"
+    "22": "le role MANAGER doit exister dans l'enumeration Prisma UserRole avant d'etre attribuable",
+    "202": "la migration ADD VALUE 'MANAGER' ecrit l'enumeration UserRole du schema Prisma"
   }
 }
