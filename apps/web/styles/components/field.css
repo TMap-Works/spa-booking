@@ -1,0 +1,125 @@
+/*
+ * Composant — Champ de saisie
+ * =============================================================================
+ *
+ * États : repos · survol · focus · invalide · désactivé · CHARGEMENT · VIDE.
+ *
+ * Structure attendue (voir README du design system) :
+ *
+ *   <div class="spa-field">
+ *     <label class="spa-field__label" for="tel">Téléphone</label>
+ *     <input id="tel" class="spa-field__control" aria-describedby="tel-hint">
+ *     <p id="tel-hint" class="spa-field__hint">Format international, +261…</p>
+ *   </div>
+ *
+ * Le message d'erreur est référencé par `aria-describedby` et porte `role="alert"` :
+ * une erreur de validation doit être annoncée, pas seulement colorée. La couleur
+ * ne porte jamais l'information seule (WCAG 1.4.1) — l'erreur a toujours un texte.
+ */
+
+.spa-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+}
+
+.spa-field__label {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+}
+
+/* Marqueur de champ requis. `aria-hidden` sur l'astérisque côté markup : il est
+ * décoratif, `required` porte déjà l'information pour les lecteurs d'écran. */
+.spa-field__required {
+  color: var(--spa-color-danger);
+  margin-inline-start: var(--spa-space-1);
+}
+
+.spa-field__control {
+  min-block-size: var(--spa-target-min-size);
+  inline-size: 100%;
+  padding-block: var(--spa-space-2);
+  padding-inline: var(--spa-space-3);
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border-interactive);
+  border-radius: var(--spa-radius-md);
+  color: var(--spa-color-text);
+  /* Jamais en deçà de `md` : sous 16px, iOS zoome à la mise au point et casse le
+   * parcours de réservation sur mobile. */
+  font-size: var(--spa-font-size-md);
+  line-height: var(--spa-line-height-snug);
+}
+
+.spa-field__control::placeholder {
+  color: var(--spa-color-text-subtle);
+}
+
+/* `readonly` figure ici pour la même raison que `disabled` : le champ est inerte,
+ * et la règle de survol l'emporterait sinon sur le bloc désactivé ci-dessous. */
+.spa-field__control:hover:not(:disabled, [readonly], [aria-invalid='true']) {
+  border-color: var(--spa-color-border-strong);
+}
+
+/* --- Invalide -------------------------------------------------------------- */
+
+.spa-field__control[aria-invalid='true'] {
+  border-color: var(--spa-color-danger);
+}
+
+.spa-field__error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-1);
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-danger);
+}
+
+.spa-field__hint {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Désactivé ------------------------------------------------------------- */
+
+.spa-field__control:disabled,
+.spa-field__control[readonly] {
+  background-color: var(--spa-color-disabled-surface);
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  cursor: not-allowed;
+}
+
+/* --- État de chargement ---------------------------------------------------- */
+
+/*
+ * Le squelette occupe exactement la boîte du contrôle — même hauteur minimale,
+ * même rayon : quand la valeur arrive, rien ne se déplace. Le conteneur porte
+ * `aria-busy="true"` et le libellé reste visible, si bien que la nature du champ
+ * est connue avant même sa valeur.
+ */
+.spa-field__skeleton {
+  min-block-size: var(--spa-target-min-size);
+  inline-size: 100%;
+  border-radius: var(--spa-radius-md);
+}
+
+/* --- État vide ------------------------------------------------------------- */
+
+/*
+ * « Vide » pour un champ = il n'y a rien à saisir, et ce n'est pas au client de
+ * le deviner (une liste de suggestions sans aucune entrée, un champ dépendant
+ * d'un choix amont pas encore fait). Le contrôle reste rendu mais inerte, et le
+ * message dit pourquoi.
+ */
+.spa-field--empty .spa-field__control {
+  background-color: var(--spa-color-disabled-surface);
+  border-style: dashed;
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+}
+
+.spa-field__empty {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}

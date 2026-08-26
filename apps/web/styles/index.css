@@ -1,0 +1,28 @@
+/*
+ * Design system — point d'entrée unique
+ * =============================================================================
+ *
+ * À importer une seule fois, dans le layout racine de `apps/web` :
+ *
+ *     import '../styles/index.css';
+ *
+ * L'ordre ci-dessous n'est pas décoratif. `@import` doit précéder toute autre
+ * règle du fichier, et les jetons doivent être déclarés avant d'être lus :
+ *
+ *   1. tokens.css      déclare les variables — rien ne peut les employer avant
+ *   2. base.css        défauts d'éléments et utilitaires partagés
+ *   3. components/*    styles de composants, qui surchargent les défauts
+ *
+ * Les composants sont listés un par un plutôt que par un glob : l'ordre de
+ * cascade reste alors lisible et reproductible, et un fichier oublié se voit.
+ */
+
+@import './tokens.css';
+@import './base.css';
+
+@import './components/button.css';
+@import './components/field.css';
+@import './components/select.css';
+@import './components/card.css';
+@import './components/modal.css';
+@import './components/notification.css';

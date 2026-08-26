@@ -1,0 +1,236 @@
+/*
+ * Design system — jetons (tokens)
+ * =============================================================================
+ *
+ * Deux couches, et la distinction entre les deux est la raison d'être du fichier
+ * (issue #29) : « un salon personnalisera ses couleurs plus tard sans réécriture
+ * des pages ».
+ *
+ *   --spa-palette-*   PRIMITIVES. Des valeurs littérales, et rien d'autre.
+ *                     C'est la seule couche qu'un tenant redéfinit.
+ *
+ *   --spa-color-*     SÉMANTIQUES. Un rôle d'interface (surface, texte, accent,
+ *                     bordure…). Sa valeur est TOUJOURS un `var(--spa-palette-*)`,
+ *                     jamais une couleur littérale.
+ *
+ * Les composants et les pages n'emploient **que** la couche sémantique. Une
+ * couleur littérale hors de ce fichier est un bug — `tests/tokens.test.mjs` le
+ * vérifie.
+ *
+ * Les deux suites se lancent par `node --test apps/web/tests/`. Elles ne sont
+ * pas encore rattachées à `npm run test:unit` : cela demanderait d'écrire dans
+ * `apps/web/package.json`, hors de l'empreinte de l'issue #29 (voir le README du
+ * design system, § « Vérifications »).
+ *
+ * Personnalisation par tenant — redéfinir la rampe de marque suffit, les rôles
+ * sémantiques suivent par cascade :
+ *
+ *     :root[data-spa-theme='maison-lotus'] {
+ *       --spa-palette-brand-500: #7a4b8f;
+ *       --spa-palette-brand-600: #633b74;
+ *       --spa-palette-brand-700: #4c2d59;
+ *     }
+ *
+ * Toute rampe substituée doit conserver les rapports de contraste vérifiés par
+ * `tests/contrast.test.mjs` — c'est le contrat, pas une recommandation.
+ */
+
+:root {
+  /* ==========================================================================
+   * 1. PRIMITIVES — couleur
+   * ========================================================================== */
+
+  /* Neutres chauds. La progression n'est pas linéaire : `neutral-400` est calé
+   * sur le seuil de 3:1 sur fond clair (WCAG 1.4.11) parce que c'est la teinte
+   * des bordures de champ, et `neutral-500` sur 4.5:1 parce que c'est celle du
+   * texte de remplacement (placeholder). */
+  --spa-palette-neutral-0: #ffffff;
+  --spa-palette-neutral-50: #faf9f8;
+  --spa-palette-neutral-100: #f2f0ee;
+  --spa-palette-neutral-200: #e5e1dd;
+  --spa-palette-neutral-300: #b5ada6;
+  --spa-palette-neutral-400: #8e857d;
+  --spa-palette-neutral-500: #756c65;
+  --spa-palette-neutral-600: #5c554f;
+  --spa-palette-neutral-700: #45403b;
+  --spa-palette-neutral-800: #302c28;
+  --spa-palette-neutral-900: #1c1917;
+
+  /* Marque — vert-bleu profond. C'est la rampe qu'un salon remplace. */
+  --spa-palette-brand-50: #eef6f5;
+  --spa-palette-brand-100: #d3e9e5;
+  --spa-palette-brand-200: #a5d2cb;
+  --spa-palette-brand-300: #6fb3a9;
+  --spa-palette-brand-400: #3f9084;
+  --spa-palette-brand-500: #2a7268;
+  --spa-palette-brand-600: #215c53;
+  --spa-palette-brand-700: #194741;
+  --spa-palette-brand-800: #12332e;
+  --spa-palette-brand-900: #0b201d;
+
+  /* États. Volontairement hors de la rampe de marque : un salon qui passe au
+   * rose ne doit pas repeindre ses messages d'erreur en rose. */
+  --spa-palette-green-600: #1c7a4b;
+  --spa-palette-green-50: #e9f5ee;
+  --spa-palette-amber-700: #8a5300;
+  --spa-palette-amber-50: #fdf1e0;
+  --spa-palette-red-600: #b3261e;
+  --spa-palette-red-50: #fdecec;
+  --spa-palette-blue-700: #1a5fa8;
+  --spa-palette-blue-50: #e9f1fb;
+
+  /* Voile de l'arrière-plan de modale. Seule primitive non opaque : elle se
+   * compose avec ce qu'il y a dessous, aucun rôle sémantique ne peut la dériver. */
+  --spa-palette-scrim: rgb(28 25 23 / 55%);
+
+  /* ==========================================================================
+   * 2. SÉMANTIQUES — couleur
+   * ========================================================================== */
+
+  /* Surfaces */
+  --spa-color-surface: var(--spa-palette-neutral-0);
+  --spa-color-surface-raised: var(--spa-palette-neutral-50);
+  --spa-color-surface-sunken: var(--spa-palette-neutral-100);
+  --spa-color-surface-inverse: var(--spa-palette-neutral-900);
+  --spa-color-scrim: var(--spa-palette-scrim);
+
+  /* Texte */
+  --spa-color-text: var(--spa-palette-neutral-900);
+  --spa-color-text-muted: var(--spa-palette-neutral-600);
+  --spa-color-text-subtle: var(--spa-palette-neutral-500);
+  --spa-color-text-inverse: var(--spa-palette-neutral-0);
+  --spa-color-text-on-accent: var(--spa-palette-neutral-0);
+
+  /* Bordures. `border` est décoratif (séparateurs, arêtes de carte) et n'est pas
+   * soumis au seuil de 3:1 ; `border-interactive` délimite un contrôle de
+   * formulaire et l'est — c'est ce qui permet de voir où commence le champ. */
+  --spa-color-border: var(--spa-palette-neutral-200);
+  --spa-color-border-interactive: var(--spa-palette-neutral-400);
+  --spa-color-border-strong: var(--spa-palette-neutral-600);
+
+  /* Accent — l'action principale du produit : « Réserver ». */
+  --spa-color-accent: var(--spa-palette-brand-500);
+  --spa-color-accent-hover: var(--spa-palette-brand-600);
+  --spa-color-accent-active: var(--spa-palette-brand-700);
+  --spa-color-accent-soft: var(--spa-palette-brand-50);
+  --spa-color-accent-text: var(--spa-palette-brand-600);
+
+  /* États */
+  --spa-color-success: var(--spa-palette-green-600);
+  --spa-color-success-surface: var(--spa-palette-green-50);
+  --spa-color-warning: var(--spa-palette-amber-700);
+  --spa-color-warning-surface: var(--spa-palette-amber-50);
+  --spa-color-danger: var(--spa-palette-red-600);
+  --spa-color-danger-surface: var(--spa-palette-red-50);
+  --spa-color-info: var(--spa-palette-blue-700);
+  --spa-color-info-surface: var(--spa-palette-blue-50);
+
+  /* Chargement et inertie. `skeleton-*` est décoratif : un squelette n'est pas
+   * du texte, il ne porte aucune information, et l'information « ça charge »
+   * passe par `aria-busy` et un message en lecture d'écran — pas par le
+   * contraste. Il est donc exclu des paires vérifiées. */
+  --spa-color-skeleton: var(--spa-palette-neutral-200);
+  --spa-color-skeleton-highlight: var(--spa-palette-neutral-100);
+  --spa-color-disabled-surface: var(--spa-palette-neutral-100);
+  --spa-color-disabled-text: var(--spa-palette-neutral-500);
+  --spa-color-disabled-border: var(--spa-palette-neutral-300);
+
+  /* Focus. Le décalage (`outline-offset`) fait dessiner l'anneau sur la surface
+   * de la page et non sur le contrôle : le rapport à vérifier est donc toujours
+   * « focus sur surface », y compris pour un bouton d'accent. */
+  --spa-color-focus: var(--spa-palette-brand-600);
+
+  /* ==========================================================================
+   * 3. TYPOGRAPHIE
+   * ========================================================================== */
+
+  /* Pile système, sans police distante : le parcours de réservation vise un
+   * LCP < 2,5 s en 4G (skill web-frontend §7) et une police web coûte un
+   * aller-retour avant le premier texte peint. */
+  --spa-font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+    Arial, 'Noto Sans', sans-serif;
+  --spa-font-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono',
+    monospace;
+
+  /* Échelle de corps. `md` = 16px : en deçà, iOS zoome à la mise au point sur un
+   * champ, ce qui casse le parcours mobile. Aucun contrôle de saisie ne descend
+   * sous `md`. */
+  --spa-font-size-xs: 0.75rem;
+  --spa-font-size-sm: 0.875rem;
+  --spa-font-size-md: 1rem;
+  --spa-font-size-lg: 1.125rem;
+  --spa-font-size-xl: 1.375rem;
+  --spa-font-size-2xl: 1.75rem;
+  --spa-font-size-3xl: 2.25rem;
+
+  --spa-font-weight-regular: 400;
+  --spa-font-weight-medium: 500;
+  --spa-font-weight-semibold: 600;
+  --spa-font-weight-bold: 700;
+
+  --spa-line-height-tight: 1.2;
+  --spa-line-height-snug: 1.35;
+  --spa-line-height-normal: 1.55;
+  --spa-line-height-relaxed: 1.7;
+
+  --spa-letter-spacing-tight: -0.01em;
+  --spa-letter-spacing-normal: 0;
+  --spa-letter-spacing-wide: 0.02em;
+
+  /* ==========================================================================
+   * 4. ESPACEMENT — base 4px
+   * ========================================================================== */
+
+  --spa-space-0: 0;
+  --spa-space-1: 0.25rem;
+  --spa-space-2: 0.5rem;
+  --spa-space-3: 0.75rem;
+  --spa-space-4: 1rem;
+  --spa-space-5: 1.25rem;
+  --spa-space-6: 1.5rem;
+  --spa-space-8: 2rem;
+  --spa-space-10: 2.5rem;
+  --spa-space-12: 3rem;
+  --spa-space-16: 4rem;
+
+  /* ==========================================================================
+   * 5. RAYONS
+   * ========================================================================== */
+
+  --spa-radius-none: 0;
+  --spa-radius-xs: 0.125rem;
+  --spa-radius-sm: 0.25rem;
+  --spa-radius-md: 0.5rem;
+  --spa-radius-lg: 0.75rem;
+  --spa-radius-xl: 1rem;
+  --spa-radius-full: 9999px;
+
+  /* ==========================================================================
+   * 6. JETONS DE SUPPORT
+   * --------------------------------------------------------------------------
+   * Hors des quatre familles demandées par #29, mais sans eux les composants de
+   * base ne peuvent pas exister : une modale a besoin d'un plan, un anneau de
+   * focus d'une épaisseur, une transition d'une durée.
+   * ========================================================================== */
+
+  --spa-focus-ring-width: 2px;
+  --spa-focus-ring-offset: 2px;
+
+  --spa-shadow-sm: 0 1px 2px rgb(28 25 23 / 8%);
+  --spa-shadow-md: 0 2px 4px rgb(28 25 23 / 8%), 0 4px 12px rgb(28 25 23 / 6%);
+  --spa-shadow-lg: 0 8px 24px rgb(28 25 23 / 12%), 0 2px 6px rgb(28 25 23 / 8%);
+
+  --spa-z-base: 0;
+  --spa-z-sticky: 100;
+  --spa-z-modal: 400;
+  --spa-z-notification: 500;
+
+  --spa-duration-fast: 120ms;
+  --spa-duration-normal: 200ms;
+  --spa-easing-standard: cubic-bezier(0.2, 0, 0.2, 1);
+
+  /* Cible tactile minimale (WCAG 2.5.8) — tout contrôle interactif s'y conforme. */
+  --spa-target-min-size: 2.75rem;
+}

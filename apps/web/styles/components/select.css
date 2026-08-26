@@ -1,0 +1,146 @@
+/*
+ * Composant — Sélecteur
+ * =============================================================================
+ *
+ * États : repos · survol · focus · invalide · désactivé · CHARGEMENT · VIDE.
+ *
+ * Bâti sur un `<select>` natif, délibérément. Le parcours de réservation doit
+ * fonctionner au clavier et au lecteur d'écran sans exception (skill
+ * web-frontend §7) ; une liste déroulante réimplémentée en div est le contrôle
+ * que l'on rate le plus souvent, et le natif donne gratuitement la navigation
+ * clavier, la recherche par frappe et le rendu tactile de la plateforme.
+ *
+ *   <div class="spa-select">
+ *     <label class="spa-select__label" for="praticien">Praticien</label>
+ *     <div class="spa-select__shell">
+ *       <select id="praticien" class="spa-select__control">…</select>
+ *       <span class="spa-select__chevron" aria-hidden="true"></span>
+ *     </div>
+ *   </div>
+ */
+
+.spa-select {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+}
+
+.spa-select__label {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+}
+
+/* Le chevron est posé en superposition du contrôle : il doit donc être hors du
+ * flux, d'où la coque en `position: relative`. */
+.spa-select__shell {
+  position: relative;
+  display: flex;
+}
+
+.spa-select__control {
+  min-block-size: var(--spa-target-min-size);
+  inline-size: 100%;
+  /* Réserve à droite la place du chevron, pour que le libellé de l'option la
+   * plus longue ne passe pas dessous. */
+  padding-block: var(--spa-space-2);
+  padding-inline: var(--spa-space-3) var(--spa-space-8);
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border-interactive);
+  border-radius: var(--spa-radius-md);
+  color: var(--spa-color-text);
+  font-size: var(--spa-font-size-md);
+  line-height: var(--spa-line-height-snug);
+  cursor: pointer;
+  /* Le chevron du composant remplace celui de la plateforme, qui ne se met pas
+   * aux couleurs des jetons. */
+  appearance: none;
+}
+
+.spa-select__control:hover:not(:disabled):not([aria-invalid='true']) {
+  border-color: var(--spa-color-border-strong);
+}
+
+.spa-select__control[aria-invalid='true'] {
+  border-color: var(--spa-color-danger);
+}
+
+/* Chevron dessiné en CSS — pas d'image à charger sur le chemin critique. */
+.spa-select__chevron {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-end: var(--spa-space-4);
+  inline-size: 0.5rem;
+  block-size: 0.5rem;
+  border-inline-end: 2px solid var(--spa-color-text-muted);
+  border-block-end: 2px solid var(--spa-color-text-muted);
+  translate: 0 -70%;
+  rotate: 45deg;
+  /* Sans quoi un clic sur le chevron n'ouvrirait pas la liste. */
+  pointer-events: none;
+}
+
+.spa-select__hint {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-select__error {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-danger);
+}
+
+/* --- Désactivé ------------------------------------------------------------- */
+
+.spa-select__control:disabled {
+  background-color: var(--spa-color-disabled-surface);
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  cursor: not-allowed;
+}
+
+.spa-select__control:disabled ~ .spa-select__chevron {
+  border-color: var(--spa-color-disabled-text);
+}
+
+/* --- État de chargement ---------------------------------------------------- */
+
+/*
+ * Les options arrivent de l'API (praticiens d'un service, créneaux d'un jour).
+ * Le squelette tient la boîte du contrôle, `aria-busy="true"` sur le conteneur,
+ * et le chevron disparaît : il n'y a rien à dérouler tant que rien n'est chargé.
+ */
+.spa-select__skeleton {
+  min-block-size: var(--spa-target-min-size);
+  inline-size: 100%;
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-select--loading .spa-select__chevron {
+  display: none;
+}
+
+/* --- État vide ------------------------------------------------------------- */
+
+/*
+ * « Vide » = la liste a bien été chargée et ne contient aucune option (« aucun
+ * praticien ne propose ce service »). C'est un résultat, pas une panne : le
+ * contrôle reste en place, désactivé, et le message dit la suite à donner.
+ * Distinguer ce cas du chargement est ce qui évite un sélecteur muet.
+ */
+.spa-select--empty .spa-select__control {
+  background-color: var(--spa-color-disabled-surface);
+  border-style: dashed;
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  cursor: not-allowed;
+}
+
+.spa-select--empty .spa-select__chevron {
+  display: none;
+}
+
+.spa-select__empty {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}

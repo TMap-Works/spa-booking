@@ -1,0 +1,151 @@
+/*
+ * Composant — Carte
+ * =============================================================================
+ *
+ * États : repos · survol · focus · sélectionné · désactivé · CHARGEMENT · VIDE.
+ *
+ * La carte porte une prestation, un praticien ou un rendez-vous. Deux formes :
+ *
+ *   .spa-card               présentation seule, non interactive
+ *   .spa-card--selectable   choix du parcours de réservation
+ *
+ * Une carte cliquable est un `<button>` ou un `<a>`, jamais une `<div>` avec un
+ * gestionnaire de clic : sans cela elle sort de l'ordre de tabulation et devient
+ * inatteignable au clavier — le parcours de réservation doit être utilisable
+ * sans souris (skill web-frontend §7).
+ */
+
+.spa-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-4);
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-lg);
+  color: var(--spa-color-text);
+}
+
+.spa-card__title {
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: var(--spa-line-height-snug);
+}
+
+.spa-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-1) var(--spa-space-3);
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-card__body {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+/* Le prix est l'information décisive d'une carte de prestation : il reprend la
+ * couleur de texte pleine plutôt que l'atténuée. Le montant est formaté en amont
+ * à partir d'un entier et d'un code devise — jamais d'un flottant. */
+.spa-card__price {
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+}
+
+.spa-card__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-3);
+  margin-block-start: var(--spa-space-2);
+}
+
+/* --- Sélectionnable -------------------------------------------------------- */
+
+.spa-card--selectable {
+  inline-size: 100%;
+  text-align: start;
+  cursor: pointer;
+  background-color: var(--spa-color-surface);
+  transition:
+    border-color var(--spa-duration-fast) var(--spa-easing-standard),
+    box-shadow var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+/* Les exclusions ne sont pas décoratives : `:hover:not(:disabled)` pèse plus
+ * lourd en spécificité que `[aria-pressed='true']` ou `[aria-disabled='true']`.
+ * Sans elles, survoler la carte sélectionnée effacerait sa bordure d'accent et
+ * son liseré, et une carte inerte s'allumerait au survol. */
+.spa-card--selectable:hover:not(:disabled, [aria-disabled='true'], [aria-pressed='true'], [aria-checked='true']) {
+  border-color: var(--spa-color-border-interactive);
+  box-shadow: var(--spa-shadow-sm);
+}
+
+/*
+ * Sélection : bordure d'accent ET pastille de contrôle. Deux marqueurs, parce
+ * qu'une bordure colorée seule ferait porter l'information par la couleur
+ * (WCAG 1.4.1). L'état réel est exposé par `aria-pressed` ou `aria-checked`.
+ */
+.spa-card--selectable[aria-pressed='true'],
+.spa-card--selectable[aria-checked='true'] {
+  border-color: var(--spa-color-accent);
+  box-shadow: inset 0 0 0 1px var(--spa-color-accent);
+  background-color: var(--spa-color-accent-soft);
+}
+
+.spa-card--selectable:disabled,
+.spa-card--selectable[aria-disabled='true'] {
+  background-color: var(--spa-color-disabled-surface);
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* --- État de chargement ---------------------------------------------------- */
+
+/*
+ * Le squelette reproduit la silhouette de la carte réelle — titre, deux lignes,
+ * pied — et non un rectangle plein : la page garde sa hauteur quand les données
+ * arrivent, et l'utilisateur reconnaît déjà ce qui se charge. Le conteneur porte
+ * `aria-busy="true"` et un texte en `.spa-visually-hidden` annonce le chargement.
+ */
+.spa-card--loading {
+  gap: var(--spa-space-3);
+  /* Un squelette n'est pas cliquable, même si la carte réelle le sera. */
+  pointer-events: none;
+}
+
+.spa-card__skeleton-line {
+  block-size: 0.75rem;
+  inline-size: 100%;
+}
+
+.spa-card__skeleton-line--title {
+  block-size: 1.125rem;
+  inline-size: 60%;
+}
+
+.spa-card__skeleton-line--short {
+  inline-size: 40%;
+}
+
+/* --- État vide ------------------------------------------------------------- */
+
+/*
+ * « Vide » = la carte existe mais n'a rien à montrer (une journée d'agenda sans
+ * rendez-vous, une prestation sans praticien affecté). La bordure en tirets dit
+ * l'absence, et `.spa-empty-state` de `base.css` fournit le texte — un écran
+ * vide sans explication est un bug d'UX (skill web-frontend §6).
+ */
+.spa-card--empty {
+  border-style: dashed;
+  border-color: var(--spa-color-disabled-border);
+  background-color: transparent;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--spa-color-text-muted);
+}
