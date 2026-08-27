@@ -47,3 +47,31 @@ variable "kms_deletion_window_in_days" {
     error_message = "AWS n'accepte qu'une valeur comprise entre 7 et 30 jours."
   }
 }
+
+variable "cost_allocation_tag_keys" {
+  description = <<-EOT
+    Étiquettes à activer comme **étiquettes de répartition de coûts**. Sans cette
+    activation, Cost Explorer connaît l'étiquette mais refuse de regrouper la
+    dépense dessus : le filtre des budgets d'environnement et la ventilation de la
+    facture restent lettre morte.
+
+    Les quatre clés par défaut sont celles que les `default_tags` posent partout
+    (skill aws-infra §2). Activer `Environment` seule ventilerait par
+    environnement mais ni par projet ni par propriétaire, et il faudrait attendre
+    un mois de facturation de plus pour obtenir la ventilation manquante — AWS ne
+    rétro-applique pas une étiquette.
+
+    L'activation vaut pour le **compte entier**, ce qui est la raison d'être de
+    cette variable ici plutôt que dans un module composé une fois par
+    environnement. La vider désactive les étiquettes plutôt que de les laisser en
+    l'état : `aws_ce_cost_allocation_tag` repasse la clé en `Inactive` à sa
+    destruction.
+  EOT
+  type        = set(string)
+  default     = ["Environment", "ManagedBy", "Owner", "Project"]
+
+  validation {
+    condition     = alltrue([for key in var.cost_allocation_tag_keys : can(regex("^[A-Za-z0-9+=._:/-]{1,128}$", key))])
+    error_message = "Chaque entrée de cost_allocation_tag_keys doit être une clé d'étiquette AWS valide : 128 caractères au plus, sans espace."
+  }
+}

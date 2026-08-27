@@ -120,31 +120,3 @@ variable "include_credits_and_refunds" {
   type        = bool
   default     = false
 }
-
-# --- Répartition Cost Explorer ------------------------------------------------
-
-variable "cost_allocation_tag_keys" {
-  description = <<-EOT
-    Étiquettes à activer comme **étiquettes de répartition de coûts**. Sans cette
-    activation, Cost Explorer connaît l'étiquette mais refuse de regrouper la
-    dépense dessus : le filtre du budget et la ventilation par environnement
-    restent lettre morte.
-
-    Vide par défaut, et pour une raison : l'activation vaut pour le **compte
-    entier**, pas pour l'environnement. Si les trois environnements la
-    déclaraient, le dernier `apply` gagnerait en écrasant les deux autres —
-    exactement ce que le module `ecr` refuse de faire du scan « enhanced ». Un
-    seul environnement la porte donc, `prod`.
-
-    Deux conséquences à connaître : l'activation n'est possible que depuis le
-    compte de facturation, et la dépense n'est ventilée qu'à partir du moment où
-    elle est faite — AWS ne rétro-applique pas une étiquette aux mois passés.
-  EOT
-  type        = set(string)
-  default     = []
-
-  validation {
-    condition     = alltrue([for key in var.cost_allocation_tag_keys : can(regex("^[A-Za-z0-9+=._:/-]{1,128}$", key))])
-    error_message = "Chaque entrée de cost_allocation_tag_keys doit être une clé d'étiquette AWS valide : 128 caractères au plus, sans espace."
-  }
-}

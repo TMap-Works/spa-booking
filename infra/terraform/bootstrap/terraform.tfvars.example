@@ -7,3 +7,4 @@
 # state_bucket_prefix               = "spa-booking"
 # noncurrent_version_retention_days = 90
 # kms_deletion_window_in_days       = 30
+# cost_allocation_tag_keys          = ["Environment", "ManagedBy", "Owner", "Project"]

@@ -1,4 +1,4 @@
-# bootstrap — état distant et verrouillage
+# bootstrap — état distant, verrouillage et réglages à portée de compte
 
 Ce module crée ce dont **tous** les autres modules Terraform dépendent : un état
 distant chiffré, versionné et verrouillé, isolé par environnement.
@@ -6,6 +6,11 @@ distant chiffré, versionné et verrouillé, isolé par environnement.
 Il s'applique **une fois**, avant tout le reste. Sans lui, deux `apply` concurrents
 écrivent l'état l'un par-dessus l'autre et laissent des ressources orphelines —
 toujours facturées, mais que plus aucun code ne sait nommer.
+
+C'est aussi le seul état de ce dépôt à **portée de compte**, et à ce titre le seul
+endroit où poser un réglage qui ne se décline pas par environnement — aujourd'hui
+l'activation des étiquettes de répartition de coûts, demain le scan « enhanced »
+d'Amazon Inspector.
 
 ## Ce qu'il crée, par environnement
 
@@ -20,6 +25,15 @@ strictement étanches. Les clés étant distinctes, une politique IAM qui n'auto
 `kms:Decrypt` que sur la clé de `dev` interdit de lire l'état de `prod` — la
 séparation est offerte par ce module, mais c'est IAM qui la rend effective (voir
 « Choix de sécurité »).
+
+## Ce qu'il crée, pour le compte entier
+
+| Ressource | Rôle |
+|---|---|
+| Étiquettes de répartition de coûts | Active `Environment`, `ManagedBy`, `Owner` et `Project` dans Cost Explorer |
+
+Voir « Étiquettes de répartition de coûts » plus bas — c'est le seul bloc de ce
+module dont l'effet ne se range pas dans un environnement.
 
 ### Pourquoi un seul état pour les trois environnements
 
@@ -45,6 +59,12 @@ attendues par son bloc `backend`. **Elles doivent correspondre trait pour trait 
 ce qui est déjà versionné dans `envs/<env>/backend.tf`.** Un écart signifie qu'un
 environnement pointe vers un état inexistant : corriger avant d'appliquer quoi que
 ce soit d'autre.
+
+Sur un compte neuf, cet `apply` s'arrête sur une clé d'étiquette inconnue, et ce
+n'est pas un échec d'amorçage : voir « Étiquettes de répartition de coûts ». Les
+buckets, les tables et les clés KMS sont créés avant ce bloc, la commande se
+rejoue le lendemain — ou s'applique du premier coup avec
+`-var 'cost_allocation_tag_keys=[]'`, la surcharge étant retirée le lendemain.
 
 ### Migrer l'état de l'amorçage
 
@@ -124,6 +144,67 @@ interpolation, la valeur y est nécessairement littérale.
   par défaut** et ne sont créés par aucun module de ce dépôt à ce jour. Tant que le
   trail dédié n'existe pas, l'exemption `tfsec` laisse les accès à l'état sans
   journal : c'est une dette à solder avec l'observabilité (#16).
+
+## Étiquettes de répartition de coûts
+
+Les `default_tags` posent `Project`, `Environment`, `ManagedBy` et `Owner` sur
+tout ce que ce dépôt crée (skill aws-infra §2). Cela ne suffit pas : tant qu'une
+clé n'est pas **activée comme étiquette de répartition de coûts**, Cost Explorer
+la connaît mais refuse de regrouper la dépense dessus. Le filtre `user:Environment$dev`
+des budgets de `modules/budgets` ne mesure alors rien, et le CDC §4.16 devient
+inapplicable.
+
+Cette activation vaut pour le **compte entier**, jamais pour un environnement.
+C'est pourquoi elle est ici et non dans `modules/budgets`, composé une fois par
+environnement : déclarée dans les trois, le dernier `apply` gagnerait en écrasant
+silencieusement les deux autres. Même raisonnement que celui qui tient le scan
+« enhanced » d'Inspector hors de `modules/ecr`.
+
+Deux propriétés en découlent, et aucune n'est intuitive.
+
+**L'activation ne vaut que pour l'avenir.** AWS ne rétro-applique pas une
+étiquette aux mois déjà facturés : la ventilation par environnement, par projet et
+par propriétaire commence au mois où l'`apply` a eu lieu, et les données mettent
+jusqu'à 24 heures à apparaître dans Cost Explorer. Le mois d'amorçage restera donc
+partiellement indivisible, quoi qu'on fasse ensuite — c'est la raison d'activer
+les quatre clés dès maintenant plutôt qu'au premier relevé de facture, et de les
+activer toutes en une fois : ajouter `Owner` un mois plus tard coûterait un mois
+de ventilation manquante sur cette dimension.
+
+> **Sur un compte neuf, le premier `apply` échoue ici — c'est attendu.** Une clé
+> n'est activable qu'une fois que la **facturation l'a découverte** — c'est-à-dire
+> après qu'une ressource l'a portée et que la journée de facturation a été
+> traitée, jusqu'à 24 heures. Or l'amorçage est précisément ce qui crée les
+> premières ressources étiquetées du compte : à son premier passage, aucune des
+> quatre clés n'a encore été vue par la facturation.
+> `UpdateCostAllocationTagsStatus` répond qu'elles sont inconnues et Terraform
+> s'arrête. Ce n'est pas une erreur de configuration : le bloc est ordonné
+> derrière les buckets, les tables et les clés KMS, qui sont donc déjà créés —
+> `terraform output backend_configuration` répond, et relancer l'`apply` le
+> lendemain suffit. Pour un premier `apply` vert du même coup, appliquer avec
+> `-var 'cost_allocation_tag_keys=[]'` puis retirer la surcharge le lendemain.
+>
+> C'est le prix de la portée de compte, pas un gain de l'amorçage : dans
+> `envs/prod`, appliqué après lui, les clés avaient de bonnes chances d'être déjà
+> découvertes. Ce que l'amorçage apporte, c'est qu'un seul état porte l'activation
+> et qu'elle est en place bien avant que les budgets d'environnement n'aient
+> besoin de son filtre.
+
+La sortie `cost_allocation_tag_keys` liste les clés effectivement activées. En
+retirer une de `cost_allocation_tag_keys` ne se contente pas de l'oublier :
+Terraform détruit la ressource, ce qui repasse la clé en `Inactive` et arrête la
+ventilation sur cette dimension au mois suivant.
+
+> **Si `envs/prod` a déjà été appliqué du temps où il portait l'activation**, ses
+> quatre `aws_ce_cost_allocation_tag` sont encore dans son état. Le prochain
+> `apply` de `envs/prod` les **détruit**, ce qui repasse les clés en `Inactive`
+> pour le compte entier — y compris celles que l'amorçage vient d'activer, sans
+> que son état s'en aperçoive avant le `plan` suivant. Les faire sortir de l'état
+> sans y toucher, depuis `envs/prod`, **avant** tout autre `apply` :
+>
+> ```bash
+> terraform state rm 'module.budgets.aws_ce_cost_allocation_tag.this'
+> ```
 
 ## Coût
 

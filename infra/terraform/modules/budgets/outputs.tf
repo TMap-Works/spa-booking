@@ -32,8 +32,3 @@ output "alert_email_subscription_arns" {
   description = "ARN des abonnements par courriel, par adresse. Un ARN valant `pending confirmation` signale un destinataire qui n'a pas encore confirmé son abonnement : il ne recevra aucune alerte tant qu'il ne l'aura pas fait."
   value       = { for address, subscription in aws_sns_topic_subscription.email : address => subscription.arn }
 }
-
-output "cost_allocation_tag_keys" {
-  description = "Étiquettes de répartition de coûts activées par cet environnement. Vide partout sauf sur celui qui porte l'activation — elle vaut pour le compte entier."
-  value       = sort([for tag in aws_ce_cost_allocation_tag.this : tag.tag_key])
-}
