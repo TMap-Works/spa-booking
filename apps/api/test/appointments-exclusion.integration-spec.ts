@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { Prisma, PrismaClient } from '@prisma/client';
 
-import { InvalidStateTransitionError, NotFoundError } from '../src/common/errors';
+import { ConflictError, InvalidStateTransitionError, NotFoundError } from '../src/common/errors';
 import { runWithTenant } from '../src/common/tenant/tenant-context';
 import { createScopedPrismaClient } from '../src/infrastructure/database/prisma-clients';
 import { SLOT_EXCLUSION_CONSTRAINT } from '../src/modules/appointments/appointments.conflicts';
@@ -10,6 +10,7 @@ import { SlotNoLongerAvailableError } from '../src/modules/appointments/appointm
 import { AppointmentsRepository } from '../src/modules/appointments/appointments.repository';
 import type {
   AppointmentDraft,
+  CancelDraft,
   RescheduleDraft,
 } from '../src/modules/appointments/appointments.types';
 import { createDisposableDatabase, type DisposableDatabase } from './utils/disposable-database';
@@ -204,9 +205,13 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
   }
 
   /**
-   * Change le statut d'un rendez-vous — ce que fera le service d'annulation
-   * (#40), qui n'existe pas encore. Écrit par le client non scopé parce que la
-   * suite observe la base, elle n'exerce pas le scoping ici.
+   * Change le statut d'un rendez-vous **sans passer par le domaine** — ce que
+   * ferait une correction d'exploitation. Écrit par le client non scopé parce
+   * que la suite observe la base, elle n'exerce pas le scoping ici.
+   *
+   * À ne pas confondre avec `repository.cancel` (#40), qui inscrit la trace :
+   * ce raccourci sert à **amener** un rendez-vous dans un statut de départ, pas
+   * à exercer l'annulation.
    */
   async function setStatus(id: string, status: FreeingStatus): Promise<void> {
     await prismaUnscoped.appointment.update({ where: { id }, data: { status } });
@@ -492,6 +497,9 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
       );
 
       expect(Object.keys(created).sort()).toEqual([
+        'cancellationReason',
+        'cancelledAt',
+        'cancelledBy',
         'clientNote',
         'clientId',
         'endsAt',
@@ -735,6 +743,177 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
           },
         }),
       ).rejects.toThrow();
+    });
+  });
+
+  /**
+   * L'annulation contre un vrai moteur (#40).
+   *
+   * Trois choses ne se prouvent qu'ici :
+   *
+   * 1. **le créneau est réservable dès le `COMMIT`.** Aucune purge, aucune
+   *    invalidation : la ligne quitte le filtre partiel de la contrainte, et
+   *    c'est tout. Le double en mémoire reproduit cet effet ; seul PostgreSQL
+   *    prouve que l'index le fait vraiment ;
+   * 2. **la trace est bien écrite en base**, sur les trois colonnes que le
+   *    deuxième critère du ticket nomme — et sur le bon type d'énumération, ce
+   *    qu'aucun test unitaire ne peut vérifier ;
+   * 3. **deux annulations concurrentes n'en réussissent qu'une.** C'est
+   *    l'`UPDATE` conditionnel qui les départage, et c'est le seul moyen de
+   *    savoir laquelle des deux a inscrit son auteur et son motif.
+   */
+  describe('l’annulation — trace écrite et créneau rendu', () => {
+    /** Une demande d'annulation sur ce rendez-vous. */
+    function cancellation(
+      appointmentId: string,
+      overrides: Partial<Omit<CancelDraft, 'appointmentId'>> = {},
+    ): CancelDraft {
+      return {
+        appointmentId,
+        cancelledAt: new Date('2026-08-31T09:15:00.000Z'),
+        cancelledBy: 'CLIENT',
+        reason: null,
+        ...overrides,
+      };
+    }
+
+    it('a posé la colonne `cancelled_by`, nullable et sur son propre type', async () => {
+      // eslint-disable-next-line tenant/raw-sql-tenant-filter -- catalogue système : `pg_attribute` décrit le schéma, pas des lignes d'établissement.
+      const rows = await prismaUnscoped.$queryRaw<{ type: string; notnull: boolean }[]>`
+        SELECT atttypid::regtype::text AS type, attnotnull AS notnull
+        FROM pg_attribute
+        WHERE attrelid = 'appointments'::regclass AND attname = 'cancelled_by'
+      `;
+
+      // Nullable : le report annule la ligne d'origine sans auteur à nommer.
+      expect(rows[0]).toEqual({ type: '"AppointmentCancelledBy"', notnull: false });
+    });
+
+    it('inscrit statut, horodatage, auteur et motif d’un seul geste', async () => {
+      const start = new Date('2027-01-05T09:00:00.000Z');
+      const created = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, new Date(start.getTime() + ONE_HOUR))),
+      );
+
+      await inTenant(salon.tenantId, () =>
+        repository.cancel(
+          cancellation(created.id, { cancelledBy: 'STAFF', reason: 'Praticien souffrant' }),
+        ),
+      );
+
+      const row = await prismaUnscoped.appointment.findUnique({
+        where: { id: created.id },
+        select: {
+          status: true,
+          cancelledAt: true,
+          cancelledBy: true,
+          cancellationReason: true,
+        },
+      });
+
+      expect(row).toEqual({
+        status: 'CANCELLED',
+        cancelledAt: new Date('2026-08-31T09:15:00.000Z'),
+        cancelledBy: 'STAFF',
+        cancellationReason: 'Praticien souffrant',
+      });
+    });
+
+    it('rend le créneau réservable immédiatement, sans rien relâcher d’autre', async () => {
+      const start = new Date('2027-01-06T09:00:00.000Z');
+      const end = new Date(start.getTime() + ONE_HOUR);
+      const created = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, end)),
+      );
+
+      // Tant qu'il occupe, le créneau est refusé…
+      await expect(
+        inTenant(salon.tenantId, () => repository.create(draft(salon, start, end))),
+      ).rejects.toBeInstanceOf(SlotNoLongerAvailableError);
+
+      await inTenant(salon.tenantId, () => repository.cancel(cancellation(created.id)));
+
+      // …et dès l'annulation validée, il est repris. Troisième critère de #40,
+      // tenu par le `WHERE status IN ('PENDING','CONFIRMED')` de la contrainte.
+      const reprise = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, end)),
+      );
+      expect(reprise.id).not.toBe(created.id);
+
+      // Et le créneau n'est pas devenu libre pour tout le monde : la contrainte
+      // juge la reprise comme elle jugeait la réservation d'origine.
+      await expect(
+        inTenant(salon.tenantId, () => repository.create(draft(salon, start, end))),
+      ).rejects.toBeInstanceOf(SlotNoLongerAvailableError);
+    });
+
+    it('ne laisse aboutir qu’une seule de plusieurs annulations concurrentes', async () => {
+      // Deux succès inscriraient deux auteurs et deux motifs sur la même ligne,
+      // dont un seul survivrait — sans que personne sache lequel.
+      const start = new Date('2027-01-07T09:00:00.000Z');
+      const created = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, new Date(start.getTime() + ONE_HOUR))),
+      );
+
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: CONCURRENT_ATTEMPTS }, (_unused, index) =>
+          inTenant(salon.tenantId, () =>
+            repository.cancel(cancellation(created.id, { reason: `essai ${index}` })),
+          ),
+        ),
+      );
+
+      expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+      for (const outcome of outcomes) {
+        if (outcome.status === 'rejected') {
+          // 409 ou 422 selon que la perdante a relu la ligne avant ou après la
+          // validation de la gagnante — jamais un 500, et jamais un succès.
+          expect(
+            outcome.reason instanceof ConflictError ||
+              outcome.reason instanceof InvalidStateTransitionError,
+          ).toBe(true);
+        }
+      }
+
+      // Un seul motif inscrit, celui de la gagnante.
+      const row = await prismaUnscoped.appointment.findUnique({
+        where: { id: created.id },
+        select: { status: true, cancellationReason: true },
+      });
+      expect(row?.status).toBe('CANCELLED');
+      expect(row?.cancellationReason).toMatch(/^essai \d$/);
+    });
+
+    it('refuse d’annuler un rendez-vous qui n’occupe plus son créneau', async () => {
+      const start = new Date('2027-01-08T09:00:00.000Z');
+      const created = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, new Date(start.getTime() + ONE_HOUR))),
+      );
+      await setStatus(created.id, 'COMPLETED');
+
+      await expect(
+        inTenant(salon.tenantId, () => repository.cancel(cancellation(created.id))),
+      ).rejects.toBeInstanceOf(InvalidStateTransitionError);
+    });
+
+    it('ne laisse pas le voisin annuler le rendez-vous du salon', async () => {
+      const start = new Date('2027-01-09T09:00:00.000Z');
+      const created = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, new Date(start.getTime() + ONE_HOUR))),
+      );
+
+      // 404 et non 403 : l'annulation est une **écriture**, et un 403 aurait
+      // confirmé l'existence de la ligne à qui vient d'essayer de l'effacer de
+      // l'agenda (tenant-isolation §4).
+      await expect(
+        inTenant(voisin.tenantId, () => repository.cancel(cancellation(created.id))),
+      ).rejects.toBeInstanceOf(NotFoundError);
+
+      const kept = await prismaUnscoped.appointment.findUnique({
+        where: { id: created.id },
+        select: { status: true, cancelledAt: true, cancelledBy: true },
+      });
+      expect(kept).toEqual({ status: 'PENDING', cancelledAt: null, cancelledBy: null });
     });
   });
 

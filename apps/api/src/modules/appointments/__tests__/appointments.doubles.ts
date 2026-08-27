@@ -2,13 +2,14 @@ import { randomUUID } from 'node:crypto';
 
 import { InvalidStateTransitionError, NotFoundError } from '../../../common/errors';
 import { getTenantId } from '../../../common/tenant';
-import type { AppointmentStatus } from '../appointment-status';
+import type { AppointmentCancelledBy, AppointmentStatus } from '../appointment-status';
 import { OCCUPYING_STATUSES, occupiesSlot } from '../appointment-status';
 import { SlotNoLongerAvailableError } from '../appointments.errors';
 import type { AppointmentsRepository } from '../appointments.repository';
 import type {
   AppointmentDraft,
   AppointmentRecord,
+  CancelDraft,
   GuestContact,
   RescheduleDraft,
   RescheduleOutcome,
@@ -37,7 +38,11 @@ import type {
  *    l'intervalle d'origine ; et si l'insertion est refusée, l'ancien rendez-vous
  *    retrouve son statut. C'est ce que le `ROLLBACK` fait en vrai, et un double
  *    qui laisserait l'ancien annulé après un refus ferait passer pour vert le
- *    seul scénario que #39 doit rendre impossible.
+ *    seul scénario que #39 doit rendre impossible ;
+ * 6. la **libération du créneau par l'annulation** — une ligne annulée sort de
+ *    `overlaps`, exactement comme elle sort du filtre partiel de la contrainte.
+ *    C'est le troisième critère de #40, et un double qui compterait encore la
+ *    ligne annulée ferait échouer une reréservation pourtant légitime.
  *
  * ## Ce que ce double ne prouve pas, et ne prétend pas prouver
  *
@@ -62,6 +67,9 @@ interface StoredAppointment {
   priceCurrency: string;
   clientNote: string | null;
   rescheduledFromId: string | null;
+  cancelledAt: Date | null;
+  cancelledBy: AppointmentCancelledBy | null;
+  cancellationReason: string | null;
 }
 
 /** L'intervalle **occupé** d'un praticien — ce que la contrainte compare. */
@@ -127,6 +135,11 @@ export class FakeAppointmentsRepository {
       priceCurrency: 'EUR',
       clientNote: null,
       rescheduledFromId: null,
+      // Semé sans trace d'annulation, y compris quand le statut est `CANCELLED` :
+      // une suite qui veut la trace passe par `cancel`, qui est ce qui l'écrit.
+      cancelledAt: null,
+      cancelledBy: null,
+      cancellationReason: null,
     };
     this.appointments.push(appointment);
     return appointment;
@@ -154,6 +167,9 @@ export class FakeAppointmentsRepository {
       priceCurrency: draft.price.currency,
       clientNote: draft.clientNote,
       rescheduledFromId: null,
+      cancelledAt: null,
+      cancelledBy: null,
+      cancellationReason: null,
     };
     this.appointments.push(stored);
     return toRecord(stored);
@@ -189,11 +205,15 @@ export class FakeAppointmentsRepository {
 
     const before = previous.status;
     previous.status = 'CANCELLED';
+    // Comme le vrai : un report horodate l'annulation de la ligne d'origine,
+    // sans lui donner ni auteur ni motif — ce n'est pas un abandon.
+    previous.cancelledAt = new Date();
 
     if (this.overlaps(tenantId, draft)) {
-      // Le `ROLLBACK` : sans cette ligne, un créneau refusé laisserait la cliente
+      // Le `ROLLBACK` : sans ces lignes, un créneau refusé laisserait la cliente
       // sans rendez-vous du tout.
       previous.status = before;
+      previous.cancelledAt = null;
       throw new SlotNoLongerAvailableError(draft.staffId, draft.startsAt);
     }
 
@@ -210,10 +230,52 @@ export class FakeAppointmentsRepository {
       priceCurrency: previous.priceCurrency,
       clientNote: previous.clientNote,
       rescheduledFromId: previous.id,
+      cancelledAt: null,
+      cancelledBy: null,
+      cancellationReason: null,
     };
     this.appointments.push(stored);
 
-    return { previous: toRecord({ ...previous, status: before }), created: toRecord(stored) };
+    return {
+      previous: toRecord({ ...previous, status: before, cancelledAt: null }),
+      created: toRecord(stored),
+    };
+  }
+
+  /**
+   * L'annulation : trace écrite et créneau libéré, **ou rien** (#40).
+   *
+   * Reproduit les trois propriétés du vrai dont l'appelant dépend :
+   *
+   * 1. la trace est posée d'un seul geste — statut, horodatage, auteur, motif —
+   *    et rien n'est écrit si le rendez-vous n'occupe plus son créneau ;
+   * 2. le créneau redevient libre **immédiatement**, parce que `overlaps` ne
+   *    compte que les statuts occupants — comme le filtre partiel de
+   *    `appointments_no_overlap` en base ;
+   * 3. un rendez-vous d'un autre établissement est **introuvable**, jamais
+   *    interdit : `NotFoundError`, donc 404, jamais 403.
+   */
+  public async cancel(draft: CancelDraft): Promise<AppointmentRecord> {
+    const tenantId = this.requireTenant();
+
+    const found = this.appointments.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.id === draft.appointmentId,
+    );
+
+    if (found === undefined) {
+      throw new NotFoundError('Rendez-vous introuvable.');
+    }
+
+    if (!occupiesSlot(found.status)) {
+      throw new InvalidStateTransitionError(found.status, 'CANCELLED');
+    }
+
+    found.status = 'CANCELLED';
+    found.cancelledAt = draft.cancelledAt;
+    found.cancelledBy = draft.cancelledBy;
+    found.cancellationReason = draft.reason;
+
+    return toRecord(found);
   }
 
   public async findById(id: string): Promise<AppointmentRecord | null> {
@@ -293,5 +355,8 @@ function toRecord(stored: StoredAppointment): AppointmentRecord {
     price: { amountMinor: stored.priceAmountMinor, currency: stored.priceCurrency },
     clientNote: stored.clientNote,
     rescheduledFromId: stored.rescheduledFromId,
+    cancelledAt: stored.cancelledAt,
+    cancelledBy: stored.cancelledBy,
+    cancellationReason: stored.cancellationReason,
   };
 }

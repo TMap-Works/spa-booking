@@ -1,0 +1,87 @@
+-- Auteur de l'annulation — #40, booking-engine §5.
+--
+-- « Consigner `cancelled_at`, `cancelled_by` (client / staff / système) et
+-- `cancellation_reason` ». Deux des trois colonnes existent depuis la migration
+-- initiale ; celle qui manquait est l'**auteur**, et c'est celle dont le
+-- reporting du CDC §1.4 a le plus besoin : un taux d'annulation qui mêle les
+-- clientes qui se décommandent et les journées que le salon a fermées ne dit
+-- rien de ce qu'il faut corriger.
+--
+-- ## Pourquoi un type d'énumération et non une colonne texte
+--
+-- Trois valeurs, closes, dont le sens est structurel : une chaîne libre aurait
+-- laissé entrer `client`, `Client`, `CLIENT ` et `customer` dans la même
+-- colonne, et tout agrégat aurait eu à les réconcilier après coup. Le moteur
+-- refuse ici ce que le code n'aurait pas su interdire.
+--
+-- ## Pourquoi ce n'est pas `UserRole`
+--
+-- La question posée n'est pas « quel droit avait l'auteur ? » mais « de quel
+-- côté du comptoir la décision vient-elle ? ». Un `MANAGER` qui annule est du
+-- côté du salon, exactement comme un `STAFF` ; et `SYSTEM` n'est le rôle de
+-- personne. Réutiliser `UserRole` aurait fait porter au type d'autorisation une
+-- seconde signification, et tout ajout de rôle serait devenu un ajout de
+-- catégorie de reporting.
+--
+-- `SYSTEM` n'est écrit par aucune surface HTTP aujourd'hui. Il nomme d'avance
+-- l'annulation automatique — purge des `PENDING` jamais payés, fermeture
+-- exceptionnelle propagée — et le déclarer maintenant coûte zéro : ajouter une
+-- valeur à un type d'énumération demanderait sinon une migration à elle seule.
+--
+-- ## Pourquoi la colonne reste nullable
+--
+-- Parce que le **report** (#39) annule lui aussi la ligne d'origine, et qu'il
+-- n'y a là aucun auteur d'annulation à nommer : ce n'est pas un abandon, et ce
+-- qui le dit est le `rescheduled_from_id` que porte le successeur. Un `NOT NULL`
+-- aurait obligé à ranger chaque report sous l'un des trois auteurs, et à fausser
+-- d'autant le taux d'annulation que cette colonne existe pour établir.
+--
+-- `NULL` se lit donc « pas d'auteur nommé », jamais « inconnu ».
+--
+-- ## Purement additive, et réversible
+--
+-- Un type, une colonne nullable. Aucune colonne n'est retypée, aucune ligne
+-- n'est réécrite, aucune valeur existante ne change de sens. L'inverse exact est
+-- le retrait de la colonne puis du type, et il ne perd que l'auteur — jamais un
+-- rendez-vous, jamais une annulation.
+--
+-- Le retour arrière du **code** seul ne demande rien : la colonne est nullable
+-- et sans défaut, la version antérieure de l'application ne l'émet ni ne la lit,
+-- et les annulations qu'elle écrit y laissent `NULL`. Aucune incompatibilité
+-- descendante n'est introduite.
+--
+-- ## Aucun verrou long
+--
+-- `ADD COLUMN` d'une colonne nullable **sans valeur par défaut** ne réécrit pas
+-- la table depuis PostgreSQL 11 : c'est une mise à jour du catalogue, prise et
+-- relâchée en quelques millisecondes. `CREATE TYPE` ne touche aucune table.
+--
+-- ## Aucun index, et c'est un choix
+--
+-- La question du reporting est « combien d'annulations, par qui, sur telle
+-- période » : elle se lit sur `appointments_tenant_id_status_starts_at_idx`,
+-- posé par la migration initiale, dont `cancelled_by` n'est qu'une projection.
+-- Un index de plus sur une colonne nulle pour la majorité des lignes coûterait
+-- une écriture à chaque réservation sans servir aucune lecture d'aujourd'hui.
+--
+-- ## Ce que cette migration ne fait pas : contraindre la cohérence des trois colonnes
+--
+-- Un `CHECK` liant `status = 'CANCELLED'` à `cancelled_at IS NOT NULL` serait
+-- tentant. Il n'est pas posé ici : il interdirait tout passage de statut écrit
+-- autrement que par le service d'annulation — y compris les corrections
+-- d'exploitation et les jeux d'essai qui promeuvent une ligne en `CANCELLED`
+-- sans l'horodater. La cohérence est tenue là où elle se décide, dans
+-- `AppointmentsRepository.cancel`, qui écrit les trois colonnes d'un seul
+-- `UPDATE` conditionnel.
+--
+-- ## Invariants
+--
+-- `src/infrastructure/database/__tests__/prisma-schema.spec.ts` relit ce texte :
+-- migration additive (aucun retrait), aucun instant sans fuseau, aucune colonne
+-- susceptible de porter une donnée de carte.
+
+-- CreateEnum
+CREATE TYPE "AppointmentCancelledBy" AS ENUM ('CLIENT', 'STAFF', 'SYSTEM');
+
+-- AlterTable
+ALTER TABLE "appointments" ADD COLUMN "cancelled_by" "AppointmentCancelledBy";

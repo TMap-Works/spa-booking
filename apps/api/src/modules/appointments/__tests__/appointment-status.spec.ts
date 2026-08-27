@@ -1,4 +1,7 @@
-import { AppointmentStatus as PrismaAppointmentStatus } from '@prisma/client';
+import {
+  AppointmentCancelledBy as PrismaAppointmentCancelledBy,
+  AppointmentStatus as PrismaAppointmentStatus,
+} from '@prisma/client';
 
 // Le SQL de migration est lu par un module unique, partagé avec
 // `prisma-schema.spec.ts` (#217). L'import traverse les dossiers, mais il ne
@@ -8,6 +11,7 @@ import { AppointmentStatus as PrismaAppointmentStatus } from '@prisma/client';
 import { readMigrationSql } from '../../../infrastructure/database/__tests__/migration-sql';
 import {
   APPOINTMENT_STATUSES,
+  CANCELLATION_AUTHORS,
   isAppointmentStatus,
   OCCUPYING_STATUSES,
   occupiesSlot,
@@ -106,5 +110,31 @@ describe('appointment-status — statuts qui occupent le créneau', () => {
     // listes qui divergent d'un statut, et la base cesse de garantir ce que le
     // code croit garanti.
     expect(statusesInExclusionPredicate().sort()).toEqual([...OCCUPYING_STATUSES].sort());
+  });
+});
+
+describe('appointment-status — auteurs d’annulation', () => {
+  it('nomme les trois côtés du comptoir, dans l’ordre de la colonne', () => {
+    expect(CANCELLATION_AUTHORS).toEqual(['CLIENT', 'STAFF', 'SYSTEM']);
+  });
+
+  it('dit exactement ce que dit `enum AppointmentCancelledBy`', () => {
+    // Même témoin, même mode de défaillance que pour les statuts : une valeur
+    // ajoutée ici sans sa migration ferait échouer toute écriture qui la cite —
+    // `invalid input value for enum "AppointmentCancelledBy"` —, et sur toutes
+    // les annulations à la fois.
+    expect([...CANCELLATION_AUTHORS]).toEqual([...Object.values(PrismaAppointmentCancelledBy)]);
+  });
+
+  it('déclare la colonne dans une migration, nullable et sans défaut', () => {
+    // Nullable : le report (#39) annule la ligne d'origine sans auteur à nommer.
+    // Sans défaut : une valeur par défaut rangerait ces annulations-là sous un
+    // auteur qu'elles n'ont pas, et fausserait le taux d'annulation du CDC §1.4.
+    const added = /ALTER TABLE "appointments" ADD COLUMN "cancelled_by"([^;]*);/.exec(migrationSql);
+
+    expect(added).not.toBeNull();
+    expect(added?.[1]).toContain('"AppointmentCancelledBy"');
+    expect(added?.[1]).not.toMatch(/NOT NULL/i);
+    expect(added?.[1]).not.toMatch(/DEFAULT/i);
   });
 });

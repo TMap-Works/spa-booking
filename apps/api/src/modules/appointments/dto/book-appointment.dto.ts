@@ -12,7 +12,8 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-import type { AppointmentStatus } from '../appointment-status';
+import type { AppointmentCancelledBy, AppointmentStatus } from '../appointment-status';
+import { CANCELLATION_AUTHORS } from '../appointment-status';
 import type { AppointmentView, GuestContact, Money } from '../appointments.types';
 import {
   EMAIL_MAX_LENGTH,
@@ -186,6 +187,14 @@ export class BookAppointmentDto {
  * Ni `tenantId`, ni `staffNote` : le premier n'apprend rien à l'appelant et
  * invite aux essais (tenant-isolation §4), le second est un champ de back-office
  * que le contrat partagé documente comme « jamais servi au parcours public ».
+ *
+ * **Ni `cancellationReason`**, et pour la même famille de raisons (#40). Le motif
+ * est bien enregistré — c'est le deuxième critère du ticket — mais c'est un texte
+ * libre écrit par un humain : celui qu'un praticien saisit est une note interne,
+ * et cette classe est la sortie unique du module, servie au comptoir comme au
+ * parcours public. `cancelledAt` et `cancelledBy`, eux, y sont : ils sont
+ * structurels, et c'est d'eux que le front tire « vous avez annulé » plutôt que
+ * « le salon a annulé ».
  */
 export class AppointmentDto implements AppointmentView {
   @ApiProperty({ format: 'uuid' })
@@ -231,6 +240,33 @@ export class AppointmentDto implements AppointmentView {
       'd’annoncer un déplacement plutôt qu’une réservation neuve.',
   })
   public rescheduledFromId!: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    description:
+      'Instant de l’annulation, ISO 8601 UTC, ou `null`. Posé aussi sur le ' +
+      'rendez-vous que **remplace** un report — c’est la même colonne (#39).',
+    example: '2026-08-27T14:32:10.000Z',
+  })
+  public cancelledAt!: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    // `null` fait partie de l'énumération, et pas seulement de `nullable` :
+    // OpenAPI 3.0 juge la valeur contre `enum` **avant** de regarder
+    // `nullable`, si bien qu'un `enum` sans `null` publierait un contrat qui
+    // refuse le `cancelledBy: null` que rend tout rendez-vous non annulé —
+    // c'est-à-dire la quasi-totalité des réponses de ce module.
+    enum: [...CANCELLATION_AUTHORS, null],
+    description:
+      'De quel côté du comptoir l’annulation vient — `CLIENT`, `STAFF` ou ' +
+      '`SYSTEM` —, ou `null`. Un `null` **avec** un `cancelledAt` posé n’est pas ' +
+      'une donnée manquante : c’est l’annulation qu’un report produit sur la ' +
+      'ligne d’origine, où il n’y a pas d’auteur d’annulation à nommer.',
+    example: 'CLIENT',
+  })
+  public cancelledBy!: AppointmentCancelledBy | null;
 }
 
 /** Les coordonnées validées, sous la forme que le service attend. */

@@ -1,4 +1,4 @@
-import type { AppointmentStatus } from './appointment-status';
+import type { AppointmentCancelledBy, AppointmentStatus } from './appointment-status';
 
 /**
  * Le vocabulaire du module `appointments`, côté domaine.
@@ -71,6 +71,64 @@ export interface AppointmentRecord {
    * nullable et sans défaut, et rien d'autre que le report ne l'écrit.
    */
   readonly rescheduledFromId: string | null;
+  /**
+   * Quand le rendez-vous a été annulé, ou `null` (#40).
+   *
+   * C'est cette borne qui gouverne les deux champs suivants : nulle, il n'y a
+   * jamais eu d'annulation et le reste n'a aucun sens.
+   */
+  readonly cancelledAt: Date | null;
+  /**
+   * De quel côté du comptoir l'annulation vient, ou `null` (#40).
+   *
+   * `null` **avec** un `cancelledAt` posé est un cas réel, et non une donnée
+   * manquante : c'est l'annulation qu'un report (#39) produit sur la ligne
+   * d'origine, où il n'y a pas d'auteur d'annulation à nommer.
+   */
+  readonly cancelledBy: AppointmentCancelledBy | null;
+  /**
+   * Le motif saisi, ou `null` (#40).
+   *
+   * Texte libre écrit par un humain — donc traité comme une donnée personnelle
+   * potentielle : il ne part dans aucun événement de domaine ni dans aucun
+   * journal (CDC §5.1), et `AppointmentView` ne le rend pas.
+   */
+  readonly cancellationReason: string | null;
+}
+
+/**
+ * Ce qu'une annulation demande, telle que le **service** la reçoit (#40).
+ *
+ * Ni statut, ni horodatage : le premier est la destination fixe de cette
+ * opération, le second est posé par le serveur. Les laisser entrer par le corps
+ * de la requête ferait d'une annulation une écriture d'agenda arbitraire.
+ *
+ * `cancelledBy` ne vient **jamais** du corps non plus : c'est la surface qui le
+ * détermine — la route publique dit `CLIENT`, la route de back-office dit
+ * `STAFF`. Un champ de requête l'aurait laissé à la main de l'appelant, et une
+ * cliente aurait pu inscrire au registre du salon que le salon l'avait annulée.
+ */
+export interface CancelAppointmentInput {
+  /** Le rendez-vous à annuler, dans l'établissement courant. */
+  readonly appointmentId: string;
+  readonly cancelledBy: AppointmentCancelledBy;
+  /** Motif saisi, ou `null` — le CDC ne le rend obligatoire d'aucun côté. */
+  readonly reason: string | null;
+}
+
+/**
+ * Ce que le repository écrit lors d'une annulation — la trace, et rien d'autre.
+ *
+ * `cancelledAt` est porté par ce type plutôt que produit dans le repository pour
+ * la raison qui vaut partout ailleurs dans ce module : l'horloge est un
+ * paramètre, jamais un `new Date()` enfoui — c'est ce qui rend l'horodatage
+ * observable en test sans décaler celle de la machine.
+ */
+export interface CancelDraft {
+  readonly appointmentId: string;
+  readonly cancelledAt: Date;
+  readonly cancelledBy: AppointmentCancelledBy;
+  readonly reason: string | null;
 }
 
 /**
@@ -198,4 +256,27 @@ export interface AppointmentView {
    * est celui que l'appelant vient d'envoyer — il ne lui apprend rien.
    */
   readonly rescheduledFromId: string | null;
+  /** Instant de l'annulation en ISO 8601 UTC, ou `null` (#40). */
+  readonly cancelledAt: string | null;
+  /**
+   * De quel côté du comptoir l'annulation vient, ou `null` (#40).
+   *
+   * Rendu au parcours public **à dessein** : « votre rendez-vous a été annulé
+   * par le salon » et « vous avez annulé ce rendez-vous » ne s'affichent pas de
+   * la même façon, et le front n'a aucun autre moyen de les distinguer.
+   *
+   * ## Ce que cette vue ne porte **pas** : le motif
+   *
+   * `cancellation_reason` est un texte libre saisi par un humain. Celui qu'une
+   * cliente écrit lui appartient ; celui qu'un praticien écrit est une note
+   * interne — « cliente injoignable », « désistement répété » — et n'a rien à
+   * faire sur l'écran de la cliente. Or `AppointmentView` est la sortie unique
+   * du module : elle servira l'historique client de #47 aussi bien que la
+   * réponse de l'annulation. Un champ ajouté ici pour l'écho immédiat d'une
+   * saisie serait devenu une fuite le jour de la première lecture d'historique.
+   *
+   * Le motif est **enregistré** — c'est le deuxième critère de #40 — et se relit
+   * depuis la ligne par qui a le droit de le voir.
+   */
+  readonly cancelledBy: AppointmentCancelledBy | null;
 }

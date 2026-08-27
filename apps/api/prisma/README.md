@@ -15,6 +15,15 @@ migrations/
                                         catégories et tampons de prestation
   20260827120000_add_appointment_exclusion/
                                         contrainte anti-double-réservation (#31)
+  20260827140000_add_staff_schedules_and_closing_days/
+                                        horaires du personnel et fermetures (#32)
+  20260827160000_add_staff_time_off/    congés et absences du praticien (#33)
+  20260827180000_add_tenant_slot_settings/
+                                        pas de créneau et préavis minimum (#34)
+  20260827200000_add_appointment_reschedule_link/
+                                        chaîne de report du rendez-vous (#39)
+  20260827220000_add_appointment_cancellation_author/
+                                        auteur de l'annulation (#40)
 ```
 
 ## Les neuf tables
