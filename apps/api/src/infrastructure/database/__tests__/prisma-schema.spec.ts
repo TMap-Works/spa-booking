@@ -50,6 +50,14 @@ const TENANT_ROOT_TABLE = 'tenants';
  * qu'elle se crée, se renomme et se retire du catalogue en un geste plutôt
  * qu'une prestation à la fois. Même exigence qu'ailleurs, donc : `tenant_id`,
  * index préfixés, unique composite.
+ *
+ * `staff_schedules` et `tenant_closing_days` non plus ne sont pas des entités
+ * nouvelles : le CDC §1.4 range les horaires du personnel dans la gestion du
+ * personnel, et la fermeture de l'établissement dans son paramétrage. #32 les
+ * pose en tables parce qu'un praticien a plusieurs plages par jour — la coupure
+ * méridienne — et que rien de tout cela ne tient dans une colonne. Elles sont
+ * inscrites ici pour la même raison que les autres : que leur `tenant_id`, leurs
+ * index et leurs clés composites soient relus par cette suite.
  */
 const EXPECTED_TABLES = [
   'tenants',
@@ -58,6 +66,8 @@ const EXPECTED_TABLES = [
   'service_categories',
   'staff',
   'service_staff',
+  'staff_schedules',
+  'tenant_closing_days',
   'appointments',
   'payments',
   'notifications',

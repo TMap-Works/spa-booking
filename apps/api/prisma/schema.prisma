@@ -150,6 +150,8 @@ model Tenant {
   serviceCategories ServiceCategory[]
   staff             Staff[]
   serviceStaff      ServiceStaff[]
+  staffSchedules    StaffSchedule[]
+  closingDays       TenantClosingDay[]
   appointments      Appointment[]
   payments          Payment[]
   notifications     Notification[]
@@ -401,12 +403,100 @@ model Staff {
 
   assignedServices ServiceStaff[]
   appointments     Appointment[]
+  schedules        StaffSchedule[]
 
   @@unique([tenantId, userId])
   // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
   @@unique([tenantId, id])
   @@index([tenantId, isActive])
   @@map("staff")
+}
+
+// ---------------------------------------------------------------------------
+// Availability
+// ---------------------------------------------------------------------------
+
+/// Plage de travail **récurrente** d'un praticien : ce jour de la semaine, de
+/// telle à telle heure de l'horloge du salon (CDC §1.4, gestion du personnel).
+///
+/// ## Une heure murale n'est pas un instant, et ne se stocke pas comme tel
+///
+/// C'est la seule table du schéma qui ne porte aucun `timestamptz` métier, et
+/// c'est délibéré. « Ouvre à 09:00 » vaut `08:00Z` en hiver et `07:00Z` en été à
+/// Paris : figer l'un des deux décalerait l'agenda six mois par an — le bug de
+/// sévérité haute que CLAUDE.md interdit. La ligne ne décrit pas un point de la
+/// ligne du temps, elle décrit ce que montre l'horloge.
+///
+/// Les bornes sont donc des **minutes écoulées depuis minuit local**, entières,
+/// et non un type `TIME` : PostgreSQL ordonne et compare `time` sans difficulté,
+/// mais le convertir demanderait de toute façon une date et un fuseau, et le
+/// type ferait croire à un instant. L'entier ne peut se lire que pour ce qu'il
+/// est. La conversion en instants UTC se fait à la volée, date par date, par
+/// `TenantClockService` (#41) — jamais ici.
+///
+/// Borne haute **exclue**, comme celle d'un créneau : `09:00–12:00` et
+/// `12:00–18:00` décrivent une journée continue, pas un chevauchement.
+///
+/// Plusieurs lignes par `(praticien, jour)` : c'est ainsi que se dit la coupure
+/// méridienne. Leur non-recouvrement est garanti par une contrainte d'exclusion
+/// `EXCLUDE USING gist` posée en SQL brut dans la migration — Prisma ne sait pas
+/// l'exprimer (api-module §6).
+model StaffSchedule {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  /// `Cascade` : une plage de travail n'est pas une donnée en propre, elle ne
+  /// survit pas au praticien qu'elle décrit. Même arbitrage que `ServiceStaff`,
+  /// et pour la même raison — rien d'historique ne s'y perd, les rendez-vous
+  /// déjà pris portent leurs propres bornes.
+  staffId String @map("staff_id") @db.Uuid
+  staff   Staff  @relation(fields: [staffId], references: [id], onDelete: Cascade)
+
+  /// Jour de la semaine en numérotation **ISO 8601** : 1 lundi … 7 dimanche.
+  /// Pas le `0`-dimanche de `Date.getDay` — `0` est *falsy*, et le praticien du
+  /// dimanche disparaîtrait au premier `weekday ?? défaut`.
+  weekday Int @db.SmallInt
+
+  /// Minutes depuis minuit **local**, 0 à 1440. `540` = 09:00 à l'horloge du
+  /// salon, quel que soit l'offset du jour.
+  startMinute Int @map("start_minute")
+  endMinute   Int @map("end_minute")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // La seule lecture du module : « les plages de ce praticien », que le calcul
+  // de créneaux (#34) parcourt jour par jour.
+  @@index([tenantId, staffId, weekday])
+  @@map("staff_schedules")
+}
+
+/// Jour de fermeture **récurrent** de l'établissement — « fermé le dimanche ».
+///
+/// Une ligne par jour fermé, et rien d'autre : la fermeture est un fait de
+/// l'établissement, pas de chaque praticien. La décrire ici plutôt que d'exiger
+/// qu'elle soit retirée de chaque semaine de travail évite qu'un praticien
+/// embauché après coup rouvre le salon à lui seul.
+///
+/// Les fermetures **ponctuelles** — jour férié, semaine de congés — portent une
+/// date et ne sont pas de cette nature : elles relèvent des plages bloquées
+/// (#33). C'est aussi pourquoi aucune colonne de date n'apparaît ici.
+model TenantClosingDay {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  /// Jour de semaine ISO — même numérotation que `StaffSchedule.weekday`.
+  weekday Int @db.SmallInt
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Un jour ne se ferme qu'une fois — et l'unicité est composite avec le tenant,
+  // comme tout unique métier : deux salons ferment chacun le lundi.
+  @@unique([tenantId, weekday])
+  @@map("tenant_closing_days")
 }
 
 /// Affectation N–N « ce praticien pratique cette prestation ».

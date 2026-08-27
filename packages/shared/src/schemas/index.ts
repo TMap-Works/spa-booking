@@ -21,13 +21,33 @@ export {
   availabilityQuerySchema,
   availabilityResponseSchema,
   availabilitySlotSchema,
+  closingDaysSchema,
   dayAvailabilitySchema,
+  END_OF_DAY_LOCAL_TIME,
+  isoWeekdayOf,
+  isoWeekdaySchema,
+  MAX_STAFF_SCHEDULE_ENTRIES,
+  MINUTES_IN_CIVIL_DAY,
+  scheduleEndTimeSchema,
+  scheduleEndToMinutes,
+  setClosingDaysRequestSchema,
+  setStaffScheduleRequestSchema,
+  staffScheduleEntriesOverlap,
+  staffScheduleEntrySchema,
+  staffScheduleSchema,
 } from './availability';
 export type {
   AvailabilityQuery,
   AvailabilityResponse,
   AvailabilitySlot,
+  ClosingDays,
   DayAvailability,
+  IsoWeekday,
+  ScheduleEndTime,
+  SetClosingDaysRequest,
+  SetStaffScheduleRequest,
+  StaffSchedule,
+  StaffScheduleEntry,
 } from './availability';
 
 export {

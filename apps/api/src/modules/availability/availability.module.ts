@@ -1,5 +1,11 @@
 import { Module } from '@nestjs/common';
 
+import { IdentityModule } from '../identity/identity.module';
+import { AvailabilityRepository } from './availability.repository';
+import { ClosingDaysController } from './closing-days.controller';
+import { ClosingDaysService } from './closing-days.service';
+import { StaffScheduleController } from './staff-schedule.controller';
+import { StaffScheduleService } from './staff-schedule.service';
 import { TenantClockService } from './tenant-clock.service';
 
 /**
@@ -8,37 +14,44 @@ import { TenantClockService } from './tenant-clock.service';
  *
  * ## Ce qu'il contient aujourd'hui
  *
- * L'horloge de l'établissement, et rien d'autre. #41 pose la frontière heure
- * locale ↔ UTC sur laquelle tout le reste du module reposera : le calcul de
- * créneaux (#31), les horaires récurrents du personnel (#32) et les plages
- * bloquées ne sont pas encore écrits, et rien ici ne les préempte.
+ * L'horloge de l'établissement (#41) et les **horaires récurrents du personnel**
+ * (#32) : la semaine de travail d'un praticien, les jours de fermeture de
+ * l'établissement, et la conversion de ces heures murales en fenêtres de travail
+ * UTC. Le calcul de créneaux (#34), l'option premier disponible (#36) et les
+ * plages bloquées (#33) ne sont pas écrits, et rien ici ne les préempte.
  *
- * ## Pourquoi aucun contrôleur
+ * ## Ce qu'il importe
  *
- * #41 n'ouvre **aucune route**. La conversion de fuseau n'est pas une ressource
- * qu'on interroge, c'est une règle que les autres endpoints appliquent. Exposer
- * un `/api/v1/availability/convert` ferait de la mécanique interne un contrat
- * public à maintenir, sans qu'aucun écran du MVP ne le consomme.
+ * `IdentityModule`, et seulement pour ses **gardes** : `@AuthAtLeast(...)` monte
+ * `JwtAuthGuard` et `RolesGuard`, qui ont des dépendances à injecter. C'est la
+ * voie prévue par api-module §3 — un appel de service, jamais un import du
+ * repository d'un autre module. Rien ici n'atteint `IdentityRepository`.
  *
- * ## Ce qu'il exporte
+ * ## Ce qu'il exporte, et pourquoi
  *
- * `TenantClockService`, la seule porte d'entrée du module vers l'extérieur — un
- * appel de service, jamais un import de fichier profond (api-module §3). Le
- * module n'importe rien : l'horloge ne dépend ni du catalogue, ni de l'identité,
- * ni de la base. Le fuseau du tenant lui est passé en argument, ce qui la rend
- * utilisable aussi bien sous requête HTTP scopée que depuis un traitement
- * planifié inter-établissements.
+ * - `TenantClockService`, la frontière heure locale ↔ UTC, que tout module ayant
+ *   à afficher une heure consommera (notifications, reporting).
+ * - `StaffScheduleService`, pour sa seule méthode `windowsFor` : le calcul de
+ *   créneaux (#34) a besoin des fenêtres de travail d'un praticien, et c'est un
+ *   appel de service — la première des deux voies autorisées entre modules.
  *
- * ## Branchement dans `AppModule`
+ * `ClosingDaysService` n'est pas exporté : les jours de fermeture entrent déjà
+ * dans le calcul des fenêtres, et un module n'a pas à choisir entre plusieurs
+ * portes pour la même information. `AvailabilityRepository` reste privé — un
+ * module n'importe jamais celui d'un autre.
  *
- * Délibérément non fait par #41 : le module n'a encore aucun consommateur, et
- * l'enregistrer sans besoin ferait porter à `AppModule` — fichier que plusieurs
- * tickets du jalon S2 modifient en parallèle — un conflit sans contrepartie.
- * C'est le premier consommateur (#31 ou #32) qui l'importera, en même temps que
- * le contrôleur qui le justifie.
+ * ## Pourquoi ce module apparaît maintenant dans `AppModule`
+ *
+ * #41 l'avait délibérément laissé hors du graphe : il n'ouvrait aucune route, et
+ * l'enregistrer sans besoin aurait fait porter à `AppModule` — fichier que
+ * plusieurs tickets du jalon S2 modifient en parallèle — un conflit sans
+ * contrepartie. #32 est le premier consommateur : il apporte quatre routes, donc
+ * la raison d'enregistrer le module.
  */
 @Module({
-  providers: [TenantClockService],
-  exports: [TenantClockService],
+  imports: [IdentityModule],
+  controllers: [StaffScheduleController, ClosingDaysController],
+  providers: [TenantClockService, StaffScheduleService, ClosingDaysService, AvailabilityRepository],
+  exports: [TenantClockService, StaffScheduleService],
 })
 export class AvailabilityModule {}
