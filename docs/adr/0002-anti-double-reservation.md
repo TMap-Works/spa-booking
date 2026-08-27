@@ -65,3 +65,13 @@ exceptionnelle. L'extension btree_gist doit être activée sur la base.
 **Ferme** : toute conception où deux rendez-vous actifs se chevaucheraient
 légitimement pour le même praticien. Si un tel besoin apparaît, la contrainte
 devra être repensée, pas contournée.
+
+## Suite
+
+La mise en œuvre (#31) a révélé une conséquence que cet ADR n'avait pas prévue :
+sous concurrence réelle, des insertions aux intervalles décalés mais
+chevauchants s'attendent en cycle et produisent des **interblocages** — donc des
+500 — au lieu de la violation de contrainte attendue. La réponse est un verrou
+consultatif d'ordonnancement par agenda de praticien, décrit par
+l'[ADR 0006](0006-verrou-consultatif-agenda-praticien.md). Il ne modifie rien de
+la décision ci-dessus : la contrainte reste la seule source de vérité.
