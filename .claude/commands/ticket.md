@@ -11,7 +11,8 @@ et [BRANCHING.md](BRANCHING.md).
 
 **Options** — `--no-merge` : s'arrête après la barrière de CI, laisse la PR
 ouverte · `--no-worktree` : travaille dans le dépôt courant · `--draft` : ouvre
-la PR en brouillon et s'arrête là.
+la PR en brouillon et s'arrête là · `--no-recette` : saute la phase 4bis, pour
+le dépannage seulement — et le dire dans le compte rendu.
 
 ## Ce que cette commande ne fait pas
 
@@ -38,8 +39,8 @@ python scripts/milestone_run.py event --ticket $1 --phase <phase> \
 ```
 
 Phases, dans l'ordre où elles se déroulent : `recevabilite`, `isolation`,
-`prise-en-charge`, `implementation`, `validation`, `revue`, `commits`, `pr`,
-`ci`, `merge`, `cloture`, `nettoyage`.
+`prise-en-charge`, `implementation`, `validation`, `recette`, `revue`,
+`commits`, `pr`, `ci`, `merge`, `cloture`, `nettoyage`.
 Statuts — à ne poser que sur un vrai changement d'état : `running`, `pr_open`,
 `ci_green`, `reviewed`, `merged`, `failed`, `blocked`. Sans `--status`, la ligne
 est un simple détail d'avancement ; `--level DEBUG` pour ce qui n'intéresse que
@@ -222,6 +223,129 @@ le travail déjà fait** (phase 3), journaliser `--status blocked` avec la sorti
 exacte, et rendre la main. Une branche qui porte des commits survit au
 ramasse-miettes ; une branche vide, non (#130).
 
+## Phase 4bis — Recette fonctionnelle par MCP
+
+`npm run verify` prouve que le code compile et que les tests passent. Il ne
+prouve pas qu'un endpoint **répond** quand on l'appelle, ni qu'un bouton soumet
+son formulaire. Un contrôleur oublié dans les `controllers` de son module
+compile, passe ses tests unitaires — et rend 404 en vrai. Cette phase comble cet
+écart, et rien d'autre.
+
+Deux serveurs MCP la servent, déclarés dans [.mcp.json](../../.mcp.json) :
+`recette` (sonde de l'API) et `playwright` (navigateur). Doctrine détaillée,
+outil par outil : [.claude/skills/recette-mcp/SKILL.md](../skills/recette-mcp/SKILL.md).
+
+### 1. Le périmètre d'abord — avant tout démarrage
+
+Appeler `mcp__recette__perimetre`. Il rend les routes et les pages que **ce
+diff** a touchées : méthode, chemin réellement servi, rôle exigé, statut attendu.
+
+C'est la liste exhaustive de ce qu'il y a à recetter. **Une route qui n'y figure
+pas ne se recette pas** — elle est couverte par la CI, et l'exercer coûterait le
+temps du ticket sans rien apprendre. Recetter le système entier à chaque ticket
+reviendrait à rejouer la CI à la main, en plus lent et moins fiable.
+
+### 2. Quand la phase se saute
+
+`perimetre` rend `saut: true` : journaliser la raison du saut, **sans
+`--status`**, et passer directement à la phase 5. C'est le cas de la majorité des
+tickets d'outillage et d'infrastructure.
+
+`--status skipped` est **terminal** pour le ticket entier (`TERMINAL` dans
+`scripts/milestone_run.py`) : posé ici, il ferait compter le ticket pour clos par
+`/milestone`, qui n'ouvrirait jamais sa PR. C'est la phase qui est sautée, pas le
+ticket.
+
+| Le diff ne porte que sur | Ce qui en fait déjà foi |
+|---|---|
+| `infra/terraform/` | `terraform fmt -check` et `terraform validate`, phase 4 |
+| `scripts/`, `.claude/` | `npm run test:scripts` |
+| `docs/`, `.github/` | aucune surface exécutable |
+| `packages/shared` seul | des types ; aucun comportement d'endpoint ne change |
+| une migration Prisma seule, sans route | la relecture de migration, phase 4 |
+| des fichiers de test seuls | ils sont leur propre preuve |
+
+```bash
+python scripts/milestone_run.py event --ticket $1 --phase recette \
+  --message "recette sautee : aucune route ni page touchee (diff = scripts/, .claude/)"
+```
+
+Sauter ne se justifie **que** par ce verdict. Ni parce que la recette paraît
+lourde, ni parce que les tests d'intégration « couvrent déjà ça » : ils couvrent
+des doubles en mémoire, pas l'application servie.
+
+### 3. Recette d'API — ce qui se prouve, route par route
+
+`api_demarrer` → `api_jeu_dessai` (avec `--ticket $1`) → `api_openapi` → les
+appels. Le jeu d'essai pose l'établissement, les comptes des quatre rôles et un
+**établissement voisin** : sans lui, aucune route gardée ne s'exerce.
+
+Pour **chaque route du périmètre**, et pour aucune autre :
+
+1. **Elle est servie** — son chemin figure dans `api_openapi`. C'est ce qui
+   confond un contrôleur non enregistré.
+2. **Le cas passant** — appel au rôle le plus bas autorisé : statut attendu, et
+   le corps porte les champs du DTO.
+3. **Un refus de validation** — corps invalide : 400, et le corps d'erreur a bien
+   la forme `{ code, message, details }`.
+4. **La frontière du tenant**, dès que la route lit ou écrit une donnée
+   d'établissement : la rejouer avec le jeton du **voisin** doit rendre **404** —
+   jamais 403, jamais la donnée (tenant-isolation §4).
+5. **Le refus d'authentification**, si la route est gardée : sans jeton → 401 ;
+   avec un rôle sous le seuil → 403.
+
+Trois à cinq appels par route suffisent. Au-delà, on est en train de réécrire les
+tests d'intégration à la main — leur place est dans `apps/api/test/`.
+
+### 4. Recette web — page par page, composant par composant
+
+`web_demarrer` rend l'URL de base à donner à Playwright. Pour **chaque cible du
+périmètre**, et pour aucune autre :
+
+- `browser_navigate` puis `browser_snapshot` — la page rend ce qu'elle annonce ;
+- `browser_console_messages` — aucune erreur de console, le `404` de
+  `favicon.ico` mis à part ;
+- chaque **formulaire** touché : `browser_fill_form` puis soumission. Le cas
+  passant aboutit ; un champ invalide affiche son message **sur le champ**, pas
+  en bloc en haut de page (web-frontend §4) ;
+- chaque **bouton** touché : cliqué, il fait ce qu'il annonce. Un bouton de
+  soumission se désactive au premier clic — un double clic ne produit jamais deux
+  réservations (web-frontend §3) ;
+- les **états** que le composant sait rendre : vide, en chargement, en erreur ;
+- `browser_take_screenshot` de ce qui mérite d'être montré sur la PR — sans
+  `filename`, qui déposerait la capture à la racine du dépôt.
+
+Une page traversée en chemin mais non touchée par le diff ne se recette pas.
+
+### 5. Le verdict est bloquant
+
+Un endpoint qui ne répond pas, un formulaire qui ne se soumet pas, une fuite
+inter-tenant : **le ticket s'arrête ici**. Même régime que `npm run verify` —
+journaliser `--status blocked` avec l'appel exact et ce qu'il a rendu, commenter
+l'issue, **ne pas ouvrir de PR**.
+
+```bash
+python scripts/milestone_run.py event --ticket $1 --phase recette --status blocked \
+  --message "POST /api/v1/services : 404 alors que la route est declaree — controleur absent des controllers du module"
+```
+
+Ce qui **n'est pas** un échec de recette, et se traite comme en phase 4 : une
+dépendance éteinte (`docker compose up -d`), un `dist/` périmé (l'outil
+recompile seul), un navigateur absent (`npx playwright install chromium`, une
+fois pour toutes). Appliquer le remède, relancer, poursuivre — une ligne de
+journal en `--level DEBUG`, sans `--status`.
+
+### 6. Fin de phase
+
+`arreter` — les processus démarrés ne doivent pas survivre au ticket, une vague
+en lance jusqu'à trois en parallèle. Puis `rapport`, dont le tableau markdown se
+journalise ici et se republie sur la PR en phase 7.
+
+```bash
+python scripts/milestone_run.py event --ticket $1 --phase recette \
+  --message "recette : 4 routes, 14 appels, 0 echec — isolation voisin 404 verifiee"
+```
+
 ## Phase 5 — Revue et correction, en une seule passe
 
 Une revue complète, puis une correction complète. **Pas de seconde revue.**
@@ -310,7 +434,10 @@ python scripts/project_status.py $1 "In review"
 
 Le corps suit [.github/pull_request_template.md](.github/pull_request_template.md)
 et **doit** contenir `Closes #$1` — c'est cette ligne qui ferme l'issue au merge.
-Reprendre les critères d'acceptation en cases cochées.
+Reprendre les critères d'acceptation en cases cochées, et y joindre le tableau
+rendu par `rapport` en phase 4bis — ou, si la recette a été sautée, la raison
+qu'en a donnée `perimetre`. C'est la seule preuve qu'un relecteur a que le code
+a été exercé et pas seulement compilé.
 
 Publier ensuite la synthèse de la revue de la phase 5 :
 
@@ -471,7 +598,8 @@ L'appeler ici ne fait que le rendre immédiat et vérifiable dans le compte rend
 
 ## Compte rendu final
 
-Terminer par un état factuel : issue, branche, PR, statut CI, constats de revue
-traités et laissés, merge fait ou non, statut de la carte Project. Si une étape a
-été sautée ou a échoué, le dire explicitement — ne pas conclure « terminé » sur
-un parcours partiel.
+Terminer par un état factuel : issue, branche, PR, statut CI, verdict de recette
+(nombre d'appels et d'échecs, ou saut motivé), constats de revue traités et
+laissés, merge fait ou non, statut de la carte Project. Si une étape a été sautée
+ou a échoué, le dire explicitement — ne pas conclure « terminé » sur un parcours
+partiel.

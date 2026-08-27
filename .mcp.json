@@ -1,0 +1,37 @@
+{
+  "$doc": [
+    "Serveurs MCP du dépôt — la recette fonctionnelle de la phase 4bis de /ticket.",
+    "",
+    "recette   — sonde de l'API locale : périmètre du ticket, démarrage, jeu",
+    "            d'essai, appels HTTP. Python de la bibliothèque standard, aucune",
+    "            dépendance à installer. Voir scripts/mcp/recette_server.py.",
+    "playwright — navigateur, pour les pages, formulaires et boutons du front.",
+    "",
+    "Les deux se lancent par « node » ou « python » et jamais par « npx » : sous",
+    "Windows, npm et npx sont des .CMD qu'un spawn sans shell ne trouve pas, et",
+    "les vagues de /milestone tournent précisément sans shell. C'est aussi",
+    "pourquoi @playwright/mcp est une devDependency versionnée plutôt qu'un",
+    "« npx @latest » : la version du navigateur ne doit pas changer sous un run.",
+    "",
+    "Les chemins sont relatifs à la racine du dépôt — donc au worktree quand un",
+    "ticket s'y traite, ce qui donne à chaque agent sa propre instance."
+  ],
+  "mcpServers": {
+    "recette": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["scripts/mcp/recette_server.py"]
+    },
+    "playwright": {
+      "type": "stdio",
+      "command": "node",
+      "args": [
+        "node_modules/@playwright/mcp/cli.js",
+        "--headless",
+        "--isolated",
+        "--output-dir",
+        ".claude/.recette/playwright"
+      ]
+    }
+  }
+}
