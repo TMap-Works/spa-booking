@@ -67,6 +67,45 @@ export const MAX_PAGE_SIZE = 100;
 export const MAX_AVAILABILITY_RANGE_DAYS = 31;
 
 /**
+ * Pas de découpage des créneaux proposés, en minutes (#34).
+ *
+ * `tenants.slot_interval_minutes` porte la valeur, ces trois constantes portent
+ * ses bornes — les **mêmes** que la contrainte
+ * `tenants_slot_interval_minutes_check`. Comme les longueurs de champs plus
+ * haut, ce n'est pas de la duplication décorative : un écran de réglages qui
+ * accepterait ce que la base refuse produirait un 500 là où l'utilisateur
+ * attendait un message de champ.
+ *
+ * La borne basse n'est pas une préférence d'ergonomie : un pas nul ou négatif
+ * fait **boucler indéfiniment** le découpage d'une fenêtre de travail, puisque
+ * le curseur n'avance plus. La borne haute est une borne de faute de frappe — un
+ * pas d'une journée entière ne propose qu'un créneau par jour, au-delà la valeur
+ * ne veut plus rien dire.
+ */
+export const DEFAULT_SLOT_INTERVAL_MINUTES = 15;
+export const MIN_SLOT_INTERVAL_MINUTES = 1;
+export const MAX_SLOT_INTERVAL_MINUTES = 1440;
+
+/**
+ * Délai minimum entre l'instant présent et le début d'un créneau proposable, en
+ * minutes (#34).
+ *
+ * Sans lui, la page publique propose un créneau qui commence dans deux minutes :
+ * le praticien n'a pas vu passer la réservation, et personne n'accueille la
+ * cliente. `0` est licite — c'est le salon qui accepte le passage immédiat —, et
+ * le filtre « créneaux dans le passé » reste alors actif de lui-même,
+ * `maintenant + 0` valant `maintenant`.
+ *
+ * La borne haute vaut trente jours. Au-delà, le préavis vide l'agenda du mois
+ * entier sans qu'aucune erreur ne le signale : le moteur cesse simplement de
+ * rendre des créneaux, ce qui est exactement le mode de défaillance qu'une borne
+ * de faute de frappe existe pour rendre impossible.
+ */
+export const DEFAULT_MIN_BOOKING_NOTICE_MINUTES = 60;
+export const MIN_BOOKING_NOTICE_MINUTES_FLOOR = 0;
+export const MAX_MIN_BOOKING_NOTICE_MINUTES = 43_200;
+
+/**
  * Fenêtre maximale d'une plage bloquée ou d'un congé, en jours — et la même
  * borne pour la fenêtre qu'en interroge le planning de back-office (#33).
  *
