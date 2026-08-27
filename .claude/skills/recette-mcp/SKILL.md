@@ -50,6 +50,33 @@ sans shell ne trouve pas, et les vagues tournent sans shell.
 | `recette` | l'API locale — périmètre, démarrage, jeu d'essai, appels HTTP |
 | `playwright` | un navigateur headless — navigation, instantanés, clics, formulaires |
 
+### Le dépôt sur lequel la recette porte se dit, il ne se devine pas
+
+**Toujours passer `ticket` — à `perimetre`, `api_demarrer`, `api_jeu_dessai` et
+`web_demarrer`.** Ce n'est pas une politesse : c'est la seule chose qui dit au
+serveur dans quel dépôt regarder.
+
+Un serveur stdio est lancé depuis la racine de la session qui l'ouvre. Une vague
+de `/milestone` ouvre la sienne depuis le **dépôt principal**, puis son agent
+entre dans un worktree — et le serveur, déjà démarré, ne peut pas suivre. Sans
+le numéro de ticket, il lisait donc le diff du dépôt principal : périmètre sans
+rapport quand celui-ci était sale, et surtout faux `saut: true` quand il était
+propre. Une phase réputée bloquante qui n'exerçait rien, en silence (#304).
+
+Depuis, ces outils **refusent** de répondre quand rien ne les renseigne et que
+des worktrees de ticket sont ouverts. Un refus n'est pas un échec de recette :
+c'est un appel à refaire avec `ticket`.
+
+```jsonc
+{"ticket": "304"}                       // le worktree dont la branche porte 304
+{"racine": "D:/chemin/vers/le/depot"}   // un dépôt sans branche de ticket
+```
+
+Le premier outil qui tranche fixe la racine pour tous les suivants — deux outils
+sur deux dépôts différents rendraient ensemble un verdict qui ne veut rien dire.
+`perimetre` et `rapport` rendent `racine` : **la relire une fois**, c'est le
+contrôle le moins cher qu'il y ait sur tout le dispositif.
+
 **Prérequis, une fois par machine** :
 
 1. `docker compose up -d` — Postgres et Redis ;
@@ -69,14 +96,21 @@ Pointer la recette ailleurs reste possible sans toucher à un fichier versionné
 un `DATABASE_URL` dans `.env.local`, ou dans l'environnement du processus, qui
 l'emporte sur les fichiers `.env`.
 
+Ces fichiers-là sont gitignorés : un worktree fraîchement créé ne les porte
+jamais. Les valeurs sont donc lues dans le **dépôt principal d'abord**, puis
+dans le dépôt du ticket, qui l'emporte s'il en a. Sans quoi une recette menée
+dans un worktree démarrerait sans `DATABASE_URL`.
+
 ## 4. Les outils de `recette`, dans l'ordre où ils servent
 
 ### `perimetre`
 
-Le premier appel de la phase, avant tout démarrage. Rend :
+Le premier appel de la phase, avant tout démarrage, et **avec le numéro de
+ticket** — `{"ticket": "42"}`. Rend :
 
 ```json
 {
+  "racine": "…/.claude/worktrees/agent-a2d9…",
   "api": {"routes": [
     {"methode": "POST", "chemin": "/api/v1/services", "auth": ["MANAGER", "ADMIN"],
      "statut_attendu": 201, "fichier": "…/services.controller.ts", "ligne": 93}
@@ -89,6 +123,8 @@ Le premier appel de la phase, avant tout démarrage. Rend :
 
 Ce qu'il sait faire, et qui évite de le refaire à la main :
 
+- il lit le dépôt du **ticket** — le worktree dont la branche porte ce numéro —
+  et non celui d'où le serveur a été lancé ;
 - il lit les commits de la branche **et** l'arbre de travail — la recette a lieu
   avant les commits propres de la phase 6 ;
 - il traverse commentaires et chaînes : `public-services.controller.ts` **cite**

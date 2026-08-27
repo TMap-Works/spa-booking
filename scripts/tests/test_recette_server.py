@@ -21,17 +21,24 @@ d'écrire. Ce qui est vérifié ici :
 3. `PerimetreDuDiff` — le verdict de saut par nature de fichier, et le fait
    qu'un service modifié se recette par les contrôleurs qui le citent, pas par
    tous ceux de son module ;
-4. `MasquageDesSorties` — aucun jeton, mot de passe ou secret d'environnement ne
+4. `RacineDuDepot` — le serveur lit le dépôt du **ticket** et non celui d'où il a
+   été lancé (#304) : deux dépôts réels, deux diffs distincts, et le refus de
+   deviner quand rien ne dit lequel des deux ;
+5. `MasquageDesSorties` — aucun jeton, mot de passe ou secret d'environnement ne
    franchit la frontière du serveur ;
-5. `AllocationDesPorts` — deux agents d'une même vague obtiennent deux ports.
+6. `AllocationDesPorts` — deux agents d'une même vague obtiennent deux ports.
 
 Aucune dépendance : `unittest` de la bibliothèque standard, comme les autres
 harnais de `scripts/tests`.
 """
 import json
+import os
+import shutil
 import socket
+import stat
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -313,6 +320,185 @@ class PerimetreDuDiff(unittest.TestCase):
     def test_le_rappel_de_bornage_accompagne_toujours_le_verdict(self):
         verdict = self.perimetre("apps/api/src/modules/catalog/services.controller.ts")
         self.assertIn("Ne recetter que ce qui figure", verdict["rappel"])
+
+
+def git(racine, *args):
+    """Une commande git dans `racine`, identité fournie — un dépôt jetable n'en a pas."""
+    sortie = subprocess.run(
+        ["git", "-c", "user.email=recette@test", "-c", "user.name=Recette"] + list(args),
+        cwd=str(racine), capture_output=True, text=True,
+        encoding="utf-8", errors="replace", timeout=120,
+    )
+    if sortie.returncode != 0:
+        raise AssertionError("git %s : %s" % (" ".join(args), (sortie.stderr or sortie.stdout).strip()))
+    return sortie.stdout
+
+
+def ecrire(chemin: Path, contenu: str):
+    chemin.parent.mkdir(parents=True, exist_ok=True)
+    chemin.write_text(contenu, encoding="utf-8")
+
+
+def effacer(chemin: Path):
+    """`rmtree` qui passe outre les fichiers en lecture seule que git pose dans `.git`."""
+    def forcer(fonction, cible, _exc):
+        os.chmod(cible, stat.S_IWRITE)
+        fonction(cible)
+
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(chemin, onexc=forcer)
+    else:
+        shutil.rmtree(chemin, onerror=forcer)
+
+
+class RacineDuDepot(unittest.TestCase):
+    """Deux dépôts, deux diffs : c'est celui du ticket qui doit ressortir (#304).
+
+    Le harnais construit un vrai dépôt et de vrais worktrees liés, parce que
+    c'est bien `git worktree list` que le serveur interroge. Un double en
+    mémoire prouverait la logique de tri et manquerait précisément ce qui avait
+    cassé : une racine déduite de l'emplacement du fichier serveur, donc du
+    dépôt d'où la session `claude -p` de la vague l'avait lancé — jamais du
+    worktree où l'agent travaille.
+
+    Le dépôt principal est laissé **sale**, comme il l'était le jour du
+    constat : un ` M .claude/milestone-rules.json` qui n'a rien à voir avec le
+    ticket et qui ne doit apparaître dans aucun périmètre.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = Path(tempfile.mkdtemp(prefix="recette-racine-"))
+        cls.principal = cls.temp / "principal"
+        cls.principal.mkdir()
+
+        git(cls.principal, "init", "-q")
+        ecrire(cls.principal / ".gitignore", ".claude/worktrees/\n")
+        ecrire(cls.principal / ".claude" / "milestone-rules.json", '{"jalons": []}\n')
+        git(cls.principal, "add", "-A")
+        git(cls.principal, "commit", "-q", "-m", "socle")
+        git(cls.principal, "branch", "-M", "develop")
+
+        # Le worktree du ticket, tel que la phase 1 de `/ticket` le laisse : la
+        # branche a été renommée, le travail n'est pas encore commité.
+        cls.worktree = cls.principal / ".claude" / "worktrees" / "agent-999"
+        git(cls.principal, "worktree", "add", "-q", "-b", "bugfix/999-recette",
+            str(cls.worktree), "develop")
+        ecrire(cls.worktree / "apps" / "api" / "src" / "modules" / "demo" / "demo.controller.ts",
+               CONTROLEUR)
+        ecrire(cls.worktree / ".env", "MARQUEUR_RECETTE=worktree\n")
+
+        # Celui d'un agent tué avant `git branch -m` : sa branche porte encore le
+        # nom qu'`EnterWorktree` lui a donné, et elle nomme pourtant son ticket.
+        cls.avant_renommage = cls.principal / ".claude" / "worktrees" / "agent-998"
+        git(cls.principal, "worktree", "add", "-q", "-b", "worktree-chore+998-outillage",
+            str(cls.avant_renommage), "develop")
+
+        # `.env.local` n'est **que** dans le dépôt principal : il est gitignoré,
+        # donc aucun worktree ne le porte. C'est pourtant là que vivent
+        # DATABASE_URL et les secrets locaux.
+        ecrire(cls.principal / ".env.local",
+               "MARQUEUR_RECETTE=principal\nDATABASE_URL=postgres://local\n")
+
+        # Le dépôt principal, sale — exactement le cas du constat.
+        ecrire(cls.principal / ".claude" / "milestone-rules.json", '{"jalons": [1]}\n')
+
+    @classmethod
+    def tearDownClass(cls):
+        for worktree in (cls.worktree, cls.avant_renommage):
+            subprocess.run(["git", "worktree", "remove", "--force", str(worktree)],
+                           cwd=str(cls.principal), capture_output=True, timeout=120)
+        effacer(cls.temp)
+
+    def setUp(self):
+        self.vraie_racine = rs.RACINE
+        rs.RACINE = self.principal
+        rs.RACINE_ACTIVE["chemin"] = None
+        rs.RACINE_ACTIVE["origine"] = None
+
+    def tearDown(self):
+        rs.RACINE = self.vraie_racine
+        rs.RACINE_ACTIVE["chemin"] = None
+        rs.RACINE_ACTIVE["origine"] = None
+
+    def perimetre(self, **args):
+        return rs.outil_perimetre(dict(args, base="develop"))
+
+    def test_le_numero_de_ticket_designe_le_worktree_et_son_diff(self):
+        verdict = self.perimetre(ticket="999")
+        self.assertEqual(Path(verdict["racine"]), self.worktree)
+        self.assertFalse(verdict["saut"], verdict["raison"])
+        self.assertIn("/api/v1/demo", {r["chemin"] for r in verdict["api"]["routes"]})
+
+    def test_un_depot_principal_sale_ninfluence_pas_le_perimetre(self):
+        verdict = self.perimetre(ticket="999")
+        touches = {c for liste in verdict["fichiers"].values() for c in liste}
+        self.assertNotIn(".claude/milestone-rules.json", touches)
+
+    def test_le_depot_principal_a_bien_un_autre_diff(self):
+        # Le pendant du test précédent : sans lui, « le worktree l'emporte »
+        # passerait aussi bien si les deux dépôts rendaient la même chose.
+        verdict = self.perimetre(racine=str(self.principal))
+        self.assertEqual(Path(verdict["racine"]), self.principal)
+        self.assertTrue(verdict["saut"], verdict["raison"])
+        touches = {c for liste in verdict["fichiers"].values() for c in liste}
+        self.assertIn(".claude/milestone-rules.json", touches)
+
+    def test_un_chemin_non_indexe_nest_pas_rogne(self):
+        # `git status --porcelain` rend « ␣M chemin » pour une modification non
+        # indexée : rogner l'espace de tête donnait « claude/milestone-rules.json ».
+        verdict = self.perimetre(racine=str(self.principal))
+        touches = {c for liste in verdict["fichiers"].values() for c in liste}
+        self.assertFalse([c for c in touches if c.startswith("claude/")], touches)
+
+    def test_la_branche_davant_le_renommage_nomme_deja_son_ticket(self):
+        verdict = self.perimetre(ticket="998")
+        self.assertEqual(Path(verdict["racine"]), self.avant_renommage)
+
+    def test_sans_indication_les_outils_refusent_plutot_que_de_deviner(self):
+        verdict = self.perimetre()
+        self.assertIn("erreur", verdict)
+        self.assertIn("ticket", verdict["remede"])
+        self.assertEqual({w["ticket"] for w in verdict["worktrees"]}, {998, 999})
+        self.assertNotIn("saut", verdict)
+
+    def test_un_ticket_sans_worktree_retombe_sur_le_depot_du_serveur(self):
+        racine, origine, refus = rs.resoudre_racine({"ticket": "12345"}, memoriser=False)
+        self.assertIsNone(refus)
+        self.assertEqual(racine, self.principal)
+        self.assertIn("12345", origine)
+
+    def test_une_racine_qui_nest_pas_un_depot_est_refusee(self):
+        verdict = self.perimetre(racine=str(self.temp / "nulle-part"))
+        self.assertIn("erreur", verdict)
+        self.assertIn("dépôt git", verdict["erreur"])
+
+    def test_la_racine_resolue_vaut_pour_tous_les_outils(self):
+        self.perimetre(ticket="999")
+        self.assertEqual(rs.racine_active(), self.worktree)
+        self.assertEqual(rs.travail(), self.worktree / ".claude" / ".recette")
+        self.assertEqual(rs.charger_env(environnement={}).get("MARQUEUR_RECETTE"), "worktree")
+        appels = rs.ETAT["appels"]
+        rs.ETAT["appels"] = []
+        try:
+            self.assertEqual(Path(rs.outil_rapport({})["racine"]), self.worktree)
+        finally:
+            rs.ETAT["appels"] = appels
+
+    def test_les_env_du_depot_principal_survivent_au_changement_de_racine(self):
+        # Le worktree n'a pas de `.env.local` — il est gitignoré. N'y lire que
+        # lui priverait la recette de DATABASE_URL, et l'API ne démarrerait pas.
+        self.perimetre(ticket="999")
+        env = rs.charger_env(environnement={})
+        self.assertEqual(env.get("DATABASE_URL"), "postgres://local")
+        # Et ce que le worktree dit, lui, l'emporte sur le dépôt principal.
+        self.assertEqual(env.get("MARQUEUR_RECETTE"), "worktree")
+
+    def test_la_racine_deja_resolue_ne_change_plus_sans_quon_le_demande(self):
+        self.perimetre(ticket="999")
+        racine, _, refus = rs.resoudre_racine({})
+        self.assertIsNone(refus)
+        self.assertEqual(racine, self.worktree)
 
 
 class ClassementDesChemins(unittest.TestCase):

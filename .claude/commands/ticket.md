@@ -238,8 +238,17 @@ outil par outil : [.claude/skills/recette-mcp/SKILL.md](../skills/recette-mcp/SK
 
 ### 1. Le périmètre d'abord — avant tout démarrage
 
-Appeler `mcp__recette__perimetre`. Il rend les routes et les pages que **ce
-diff** a touchées : méthode, chemin réellement servi, rôle exigé, statut attendu.
+Appeler `mcp__recette__perimetre` avec `{"ticket": "$1"}`. Il rend les routes et
+les pages que **ce diff** a touchées : méthode, chemin réellement servi, rôle
+exigé, statut attendu.
+
+Le numéro de ticket n'est pas décoratif : c'est lui qui désigne le worktree où
+le travail se trouve. Le serveur MCP a été lancé par la session, depuis le dépôt
+d'où elle a démarré — le dépôt **principal** sous `/milestone` — et il ne suit
+pas l'agent qui entre dans son worktree. Sans lui, le verdict portait sur le
+mauvais dépôt, et rendait un `saut: true` que rien ne trahissait (#304). Relire
+la `racine` rendue avant d'aller plus loin : elle doit être celle du worktree de
+la phase 1.
 
 C'est la liste exhaustive de ce qu'il y a à recetter. **Une route qui n'y figure
 pas ne se recette pas** — elle est couverte par la CI, et l'exercer coûterait le
@@ -277,8 +286,10 @@ des doubles en mémoire, pas l'application servie.
 
 ### 3. Recette d'API — ce qui se prouve, route par route
 
-`api_demarrer` → `api_jeu_dessai` (avec `--ticket $1`) → `api_openapi` → les
-appels. Le jeu d'essai pose l'établissement, les comptes des quatre rôles et un
+`api_demarrer` → `api_jeu_dessai` → `api_openapi` → les appels. Les deux
+premiers prennent `{"ticket": "$1"}`, pour la même raison que `perimetre` :
+c'est le dépôt du ticket qu'il faut compiler et servir, pas celui du serveur.
+Le jeu d'essai pose l'établissement, les comptes des quatre rôles et un
 **établissement voisin** : sans lui, aucune route gardée ne s'exerce.
 
 Pour **chaque route du périmètre**, et pour aucune autre :
@@ -300,8 +311,8 @@ tests d'intégration à la main — leur place est dans `apps/api/test/`.
 
 ### 4. Recette web — page par page, composant par composant
 
-`web_demarrer` rend l'URL de base à donner à Playwright. Pour **chaque cible du
-périmètre**, et pour aucune autre :
+`web_demarrer`, lui aussi avec `{"ticket": "$1"}`, rend l'URL de base à donner à
+Playwright. Pour **chaque cible du périmètre**, et pour aucune autre :
 
 - `browser_navigate` puis `browser_snapshot` — la page rend ce qu'elle annonce ;
 - `browser_console_messages` — aucune erreur de console, le `404` de
