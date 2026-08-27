@@ -43,6 +43,14 @@ du problème sans qu'il faille ouvrir les logs.
 démarrent le leur (voir plus bas). Aucune ne lit `DATABASE_URL`, et les autres —
 l'immense majorité — n'ont toujours besoin de rien.
 
+Le contrat entre ces cibles est tenu par une garde du job `test`, et non par une
+convention : la CI appelle les **feuilles** (`test:integration:api`,
+`test:isolation`) pour ne pas rejouer les suites d'isolation deux fois, tandis
+que `npm run verify` passe par l'alias `test:integration`. Un workspace qui
+déclarerait l'alias sans ses feuilles serait sauté en silence par `--if-present`
+en CI ; un alias qui oublierait une feuille la sauterait en silence dans
+`verify`. L'étape « Contrat des cibles de test d'intégration » refuse les deux.
+
 ### Harnais de tests d'isolation inter-tenant
 
 Tout endpoint nouveau ou modifié livre son test de fuite — c'est la Definition
