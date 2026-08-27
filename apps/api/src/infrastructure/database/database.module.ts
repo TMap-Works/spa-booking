@@ -18,7 +18,11 @@ import { PrismaService } from './prisma.service';
  *   légitimement inter-tenants. Chaque usage se justifie en commentaire
  *   (voir `prisma-clients.ts`) ;
  * - `DatabaseConnection` — le pool `pg` de service, réservé à la sonde
- *   `/health` et au SQL brut que Prisma n'exprime pas.
+ *   `/health`. **Il n'est plus le chemin du SQL brut** : #268 a acté que ce
+ *   pool échappe à toutes nos gardes de scoping, et l'a confiné à sa sonde. Le
+ *   SQL que Prisma n'exprime pas — contrainte d'exclusion, verrous consultatifs
+ *   (ADR 0002) — s'écrit en migration ou via `$queryRaw` / `$executeRaw`, que
+ *   `tenant/raw-sql-tenant-filter` inspecte.
  *
  * `PrismaService` reste un provider **interne** : il possède le cycle de vie de
  * la connexion, mais il n'est pas exporté. Un repository qui l'injecterait

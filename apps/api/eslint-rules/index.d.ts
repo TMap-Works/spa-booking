@@ -12,6 +12,7 @@ declare const tenantPlugin: {
   meta: { name: string; version: string };
   rules: {
     'raw-sql-tenant-filter': Rule.RuleModule;
+    'service-pool-confinement': Rule.RuleModule;
     'unscoped-prisma-name': Rule.RuleModule;
   };
 };

@@ -51,6 +51,21 @@ export default tseslint.config(
     },
   },
   {
+    // Le confinement du pool `pg` de service (#268), branché sur `src/**`
+    // **seulement** — à la différence des deux gardes ci-dessus.
+    //
+    // Le harnais de test jetable (`test/utils/disposable-database.ts`) ouvre
+    // légitimement un client `pg` : il crée et détruit des bases, ce qui n'est
+    // pas un accès au schéma métier et que Prisma n'a pas à exprimer. L'exclure
+    // par la portée, plutôt que par trois `eslint-disable`, garde l'exemption
+    // en un seul endroit lisible.
+    files: ['src/**/*.ts'],
+    plugins: { tenant },
+    rules: {
+      'tenant/service-pool-confinement': 'error',
+    },
+  },
+  {
     files: ['**/*.mjs'],
     languageOptions: { sourceType: 'module' },
   },
