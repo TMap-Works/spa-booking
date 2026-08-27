@@ -45,6 +45,13 @@ const ROW = {
   priceCurrency: 'EUR',
   clientNote: null,
   rescheduledFromId: null,
+  // Une ligne fraîchement insérée n'a aucune trace d'annulation. Les trois
+  // colonnes sont présentes parce que `APPOINTMENT_SELECT` les demande : une
+  // ligne mimée qui les omettrait ferait rendre `undefined` là où le domaine
+  // annonce `null` (#40).
+  cancelledAt: null,
+  cancelledBy: null,
+  cancellationReason: null,
 };
 
 function deadlock(): Error {

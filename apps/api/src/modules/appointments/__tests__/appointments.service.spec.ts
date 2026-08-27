@@ -7,9 +7,14 @@ import type { AvailabilityService } from '../../availability/availability.servic
 import type { AvailabilityView } from '../../availability/availability.types';
 import type { ServiceView } from '../../catalog/catalog.types';
 import type { ServicesService } from '../../catalog/services.service';
+import { AppointmentLifecycleService } from '../appointment-lifecycle.service';
 import { SlotNoLongerAvailableError } from '../appointments.errors';
 import { AppointmentsService } from '../appointments.service';
 import type { BookAppointmentInput } from '../appointments.types';
+import {
+  APPOINTMENT_CANCELLED,
+  type AppointmentCancelledEvent,
+} from '../events/appointment-cancelled.event';
 import { APPOINTMENT_CREATED, type AppointmentCreatedEvent } from '../events/appointment-created.event';
 import {
   APPOINTMENT_RESCHEDULED,
@@ -166,6 +171,10 @@ function createHarness(
       fakeCatalog(view),
       availability.service,
       events,
+      // Le **vrai** service de cycle de vie, et non un double : c'est une règle
+      // pure, sans collaborateur, et la substituer ferait passer au vert un
+      // service qui refuserait les mauvaises transitions (#40).
+      new AppointmentLifecycleService(),
     ),
     repository,
     events,
@@ -702,6 +711,288 @@ describe('AppointmentsService.reschedule', () => {
 
     await expect(
       service.reschedule({ appointmentId: randomUUID(), startsAt: MOVED_START, staffId: null }, NOW),
+    ).rejects.toThrow(/tenant/i);
+  });
+});
+
+/**
+ * L'annulation — la décision, sans HTTP et sans base (#40).
+ *
+ * Ce que cette suite exerce, et qu'aucune autre ne voit :
+ *
+ * 1. la **trace** est écrite d'un seul geste — statut, horodatage, auteur,
+ *    motif —, et l'horodatage est celui de l'horloge passée, jamais celui de la
+ *    machine ;
+ * 2. `cancelledBy` vient de l'appelant du service — donc de la **porte** — et
+ *    rien du corps de la requête ne peut le contredire ;
+ * 3. le créneau libéré est **immédiatement** reréservable, sans que la porte
+ *    s'ouvre pour autant à une double réservation ;
+ * 4. un rendez-vous qui n'occupe plus est refusé en 422 par le service dédié, et
+ *    rien n'est écrit ;
+ * 5. le motif **n'est rendu par aucune vue** et ne part dans **aucun** événement.
+ */
+describe('AppointmentsService.cancel', () => {
+  /** L'instant où l'annulation est demandée — l'horloge de l'appelant. */
+  const CANCELLED_AT = new Date('2026-08-31T09:15:00.000Z');
+
+  /**
+   * Un rendez-vous déjà pris à 10:00 chez `STAFF_ID`, dans son intervalle
+   * occupé — la forme que la base porte réellement.
+   */
+  function seedBooked(
+    repository: FakeAppointmentsRepository,
+    overrides: { status?: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'COMPLETED' | 'NO_SHOW' } = {},
+  ): { id: string } {
+    return repository.seedAppointment({
+      tenantId: TENANT,
+      staffId: STAFF_ID,
+      serviceId: SERVICE_ID,
+      startsAt: new Date('2026-09-01T09:50:00.000Z'),
+      endsAt: new Date('2026-09-01T11:10:00.000Z'),
+      ...overrides,
+    });
+  }
+
+  it('consigne le statut, l’horodatage, l’auteur et le motif', async () => {
+    const { service, repository } = createHarness();
+    const booked = seedBooked(repository);
+
+    const view = await runWithTenant(TENANT, () =>
+      service.cancel(
+        { appointmentId: booked.id, cancelledBy: 'CLIENT', reason: 'Empêchement' },
+        CANCELLED_AT,
+      ),
+    );
+
+    expect(view.status).toBe('CANCELLED');
+    const stored = repository.appointments[0];
+    expect(stored?.status).toBe('CANCELLED');
+    // L'horloge de l'appelant, et non celle de la machine : c'est ce qui rend
+    // l'horodatage observable sans avoir à décaler celle du système.
+    expect(stored?.cancelledAt?.toISOString()).toBe('2026-08-31T09:15:00.000Z');
+    expect(stored?.cancelledBy).toBe('CLIENT');
+    expect(stored?.cancellationReason).toBe('Empêchement');
+  });
+
+  it('accepte une annulation sans motif — `null`, jamais une chaîne vide', async () => {
+    const { service, repository } = createHarness();
+    const booked = seedBooked(repository);
+
+    await runWithTenant(TENANT, () =>
+      service.cancel({ appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null }, CANCELLED_AT),
+    );
+
+    // Le CDC n'exige de motif d'aucun côté : l'imposer ferait abandonner des
+    // annulations, donc laisserait des créneaux fantômes bloqués.
+    expect(repository.appointments[0]?.cancellationReason).toBeNull();
+  });
+
+  it('inscrit `STAFF` quand c’est le salon qui annule', async () => {
+    const { service, repository } = createHarness();
+    const booked = seedBooked(repository, { status: 'CONFIRMED' });
+
+    const view = await runWithTenant(TENANT, () =>
+      service.cancel(
+        { appointmentId: booked.id, cancelledBy: 'STAFF', reason: 'Praticien souffrant' },
+        CANCELLED_AT,
+      ),
+    );
+
+    // C'est le seul chiffre que cette colonne existe pour établir (CDC §1.4) :
+    // une cliente qui se décommande et un salon qui ferme sa journée ne se
+    // lisent pas de la même façon dans un taux d'annulation.
+    expect(view.cancelledBy).toBe('STAFF');
+    expect(repository.appointments[0]?.cancelledBy).toBe('STAFF');
+  });
+
+  it('rend la trace structurelle mais **jamais** le motif', async () => {
+    const { service, repository } = createHarness();
+    const booked = seedBooked(repository);
+
+    const view = await runWithTenant(TENANT, () =>
+      service.cancel(
+        { appointmentId: booked.id, cancelledBy: 'STAFF', reason: 'Cliente injoignable' },
+        CANCELLED_AT,
+      ),
+    );
+
+    expect(view.cancelledAt).toBe('2026-08-31T09:15:00.000Z');
+    expect(view.cancelledBy).toBe('STAFF');
+    // La vue est la sortie unique du module, servie au comptoir comme au
+    // parcours public : un motif écrit par un praticien est une note interne.
+    expect(JSON.stringify(view)).not.toContain('Cliente injoignable');
+  });
+
+  it('libère le créneau : il redevient réservable immédiatement', async () => {
+    const { service, repository } = createHarness();
+    const booked = seedBooked(repository);
+
+    // Tant qu'il occupe, le créneau est refusé…
+    await expect(runWithTenant(TENANT, () => service.book(bookingInput(), NOW))).rejects.toThrow(
+      SlotNoLongerAvailableError,
+    );
+
+    await runWithTenant(TENANT, () =>
+      service.cancel({ appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null }, CANCELLED_AT),
+    );
+
+    // …et dès qu'il n'occupe plus, il l'est. Troisième critère de #40 — tenu par
+    // le filtre partiel de la contrainte, pas par une purge applicative.
+    const rebooked = await runWithTenant(TENANT, () => service.book(bookingInput(), NOW));
+    expect(rebooked.status).toBe('PENDING');
+    expect(rebooked.startsAt).toBe('2026-09-01T10:00:00.000Z');
+  });
+
+  it('n’ouvre pas la porte à une double réservation sur le créneau libéré', async () => {
+    const { service, repository } = createHarness();
+    const booked = seedBooked(repository);
+
+    await runWithTenant(TENANT, () =>
+      service.cancel({ appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null }, CANCELLED_AT),
+    );
+    await runWithTenant(TENANT, () => service.book(bookingInput(), NOW));
+
+    // Le créneau a été **rendu**, il n'a pas été ouvert : la seconde réservation
+    // se heurte à la première exactement comme avant l'annulation.
+    await expect(runWithTenant(TENANT, () => service.book(bookingInput(), NOW))).rejects.toThrow(
+      SlotNoLongerAvailableError,
+    );
+  });
+
+  it('refuse en 404 un rendez-vous inconnu de l’établissement', async () => {
+    const { service, repository } = createHarness();
+
+    await expect(
+      runWithTenant(TENANT, () =>
+        service.cancel(
+          { appointmentId: randomUUID(), cancelledBy: 'CLIENT', reason: null },
+          CANCELLED_AT,
+        ),
+      ),
+    ).rejects.toThrow(NotFoundError);
+    expect(repository.appointments).toHaveLength(0);
+  });
+
+  it.each(['CANCELLED', 'COMPLETED', 'NO_SHOW'] as const)(
+    'refuse en 422 un rendez-vous %s, sans rien écrire',
+    async (status) => {
+      const { service, repository } = createHarness();
+      const booked = seedBooked(repository, { status });
+
+      await expect(
+        runWithTenant(TENANT, () =>
+          service.cancel(
+            { appointmentId: booked.id, cancelledBy: 'STAFF', reason: 'trop tard' },
+            CANCELLED_AT,
+          ),
+        ),
+      ).rejects.toThrow(InvalidStateTransitionError);
+
+      // Le refus vient du service de cycle de vie, **avant** toute écriture :
+      // rien n'est horodaté, aucun auteur ni motif n'est inscrit.
+      const stored = repository.appointments[0];
+      expect(stored?.status).toBe(status);
+      expect(stored?.cancelledAt).toBeNull();
+      expect(stored?.cancelledBy).toBeNull();
+      expect(stored?.cancellationReason).toBeNull();
+    },
+  );
+
+  it('émet `appointment.cancelled` avec le créneau facturé et le statut d’avant', async () => {
+    const { service, events, repository } = createHarness();
+    const received: AppointmentCancelledEvent[] = [];
+    events.onAppointmentCancelled((event) => received.push(event));
+    const booked = seedBooked(repository, { status: 'CONFIRMED' });
+
+    const view = await runWithTenant(TENANT, () =>
+      service.cancel(
+        { appointmentId: booked.id, cancelledBy: 'CLIENT', reason: 'Grippe' },
+        CANCELLED_AT,
+      ),
+    );
+
+    expect(received).toHaveLength(1);
+    const event = received[0];
+    expect(event?.name).toBe(APPOINTMENT_CANCELLED);
+    expect(event?.tenantId).toBe(TENANT);
+    expect(event?.appointmentId).toBe(view.id);
+    expect(event?.serviceId).toBe(SERVICE_ID);
+    expect(event?.staffId).toBe(STAFF_ID);
+    // Les heures du **soin**, tampons exclus : c'est l'heure que la cliente
+    // avait notée, et celle que l'avis d'annulation doit rappeler.
+    expect(event?.startsAt).toBe('2026-09-01T10:00:00.000Z');
+    expect(event?.endsAt).toBe('2026-09-01T11:00:00.000Z');
+    // Le statut d'**avant** : c'est lui qui dit à l'aval s'il y avait un rappel
+    // J-1 à déprogrammer. Un `PENDING` n'en a jamais eu.
+    expect(event?.previousStatus).toBe('CONFIRMED');
+    expect(event?.cancelledBy).toBe('CLIENT');
+    expect(event?.cancelledAt).toBe('2026-08-31T09:15:00.000Z');
+    expect(event?.occurredAt).toMatch(/Z$/);
+  });
+
+  it('ne fait voyager le motif dans aucun événement', async () => {
+    const { service, events, repository } = createHarness();
+    const received: AppointmentCancelledEvent[] = [];
+    events.onAppointmentCancelled((event) => received.push(event));
+    const booked = seedBooked(repository);
+
+    await runWithTenant(TENANT, () =>
+      service.cancel(
+        { appointmentId: booked.id, cancelledBy: 'STAFF', reason: 'hospitalisation de la cliente' },
+        CANCELLED_AT,
+      ),
+    );
+
+    // Un événement circule, se journalise et se rejoue. Un texte libre écrit par
+    // un humain peut contenir n'importe quoi — un état de santé, le nom d'un
+    // tiers : il reste sur la ligne (CDC §5.1).
+    expect(JSON.stringify(received)).not.toContain('hospitalisation');
+  });
+
+  it('n’émet rien quand l’annulation est refusée', async () => {
+    const { service, events, repository } = createHarness();
+    const received: AppointmentCancelledEvent[] = [];
+    events.onAppointmentCancelled((event) => received.push(event));
+    const booked = seedBooked(repository, { status: 'COMPLETED' });
+
+    await expect(
+      runWithTenant(TENANT, () =>
+        service.cancel(
+          { appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null },
+          CANCELLED_AT,
+        ),
+      ),
+    ).rejects.toThrow(InvalidStateTransitionError);
+
+    expect(received).toHaveLength(0);
+  });
+
+  it('n’émet ni `appointment.created` ni `appointment.rescheduled` sur une annulation', async () => {
+    const { service, events, repository } = createHarness();
+    const created: AppointmentCreatedEvent[] = [];
+    const rescheduled: AppointmentRescheduledEvent[] = [];
+    events.onAppointmentCreated((event) => created.push(event));
+    events.onAppointmentRescheduled((event) => rescheduled.push(event));
+    const booked = seedBooked(repository);
+
+    await runWithTenant(TENANT, () =>
+      service.cancel({ appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null }, CANCELLED_AT),
+    );
+
+    // L'aval n'enverrait pas la même chose : une annulation demande un avis
+    // d'annulation **et** la déprogrammation du rappel J-1.
+    expect(created).toHaveLength(0);
+    expect(rescheduled).toHaveLength(0);
+  });
+
+  it('refuse d’annuler hors de toute portée de tenant', async () => {
+    const { service } = createHarness();
+
+    await expect(
+      service.cancel(
+        { appointmentId: randomUUID(), cancelledBy: 'CLIENT', reason: null },
+        CANCELLED_AT,
+      ),
     ).rejects.toThrow(/tenant/i);
   });
 });
