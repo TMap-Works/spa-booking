@@ -1,12 +1,16 @@
 import { randomUUID } from 'node:crypto';
 
 import { getTenantId } from '../../../common/tenant';
+import { OCCUPYING_STATUSES } from '../../appointments/appointment-status';
 import type {
   AvailabilityRepository,
   StaffRecord,
+  StaffScheduleRangeRecord,
   StaffScheduleRecord,
+  TenantBookingSettingsRecord,
 } from '../availability.repository';
 import type { ScheduleRange } from '../availability.schedule';
+import type { StaffBusyRange, TimeOffWindow } from '../staff-time-off.types';
 
 /**
  * Doubles du module `availability`, partagés par ses suites unitaires et par les
@@ -28,6 +32,17 @@ import type { ScheduleRange } from '../availability.schedule';
  *    vrai. Sans lui, une assertion d'ordre passerait une fois sur deux ;
  * 5. la **lecture du fuseau de l'établissement courant**, et d'aucun autre : le
  *    modèle `Tenant` est scopé sur son `id` par l'extension.
+ *
+ * #34 en ajoute trois, sur les tables que le module lit sans les posséder :
+ *
+ * 6. `service_staff` ne rend que les praticiens **actifs** — le filtre porte sur
+ *    la fiche jointe, pas sur l'affectation, qui lui survit ;
+ * 7. `appointments` ne rend que les statuts **occupants** (`PENDING`,
+ *    `CONFIRMED`). Un double complaisant sur ce point ferait passer au vert un
+ *    moteur qui masque les créneaux d'un rendez-vous annulé ;
+ * 8. le **recoupement** de fenêtre, `startsAt < to AND endsAt > from`, et non
+ *    l'inclusion : un rendez-vous commencé avant la fenêtre et courant encore
+ *    occupe bien le praticien pendant celle-ci.
  */
 
 interface StoredSchedule {
@@ -47,6 +62,8 @@ interface StoredStaff {
 interface StoredTenant {
   id: string;
   timezone: string;
+  slotIntervalMinutes: number;
+  minBookingNoticeMinutes: number;
 }
 
 interface StoredClosingDay {
@@ -54,23 +71,94 @@ interface StoredClosingDay {
   weekday: number;
 }
 
+/** Une affectation `service_staff`, telle que le catalogue l'écrit (#24). */
+interface StoredServiceStaff {
+  tenantId: string;
+  serviceId: string;
+  staffId: string;
+}
+
+/**
+ * Un rendez-vous, réduit à ce que le moteur de créneaux en lit (#31, #34).
+ *
+ * Ni client, ni prix, ni notes : la projection du vrai repository ne les
+ * sélectionne pas, et un double plus bavard laisserait passer un test qui les
+ * lirait. `status` y figure parce que c'est lui qui décide si le créneau est
+ * occupé.
+ */
+interface StoredAppointment {
+  tenantId: string;
+  staffId: string;
+  startsAt: Date;
+  endsAt: Date;
+  status: string;
+}
+
+/**
+ * Les statuts qui occupent l'agenda — la **même** liste que le vrai repository,
+ * importée de #31 et non recopiée : un double qui figerait sa propre liste
+ * cesserait de rougir le jour où la vraie change.
+ */
+const OCCUPYING = new Set<string>(OCCUPYING_STATUSES);
+
 export class FakeAvailabilityRepository {
   public readonly staff: StoredStaff[] = [];
   public readonly schedules: StoredSchedule[] = [];
   public readonly closingDays: StoredClosingDay[] = [];
   public readonly tenants: StoredTenant[] = [];
+  public readonly serviceStaff: StoredServiceStaff[] = [];
+  public readonly appointments: StoredAppointment[] = [];
 
   /**
-   * Déclare un établissement et son fuseau — l'équivalent d'une ligne `tenants`.
+   * Déclare un établissement, son fuseau et ses réglages de créneaux —
+   * l'équivalent d'une ligne `tenants`.
    *
    * Sans lui, `currentTimeZone` rend `null` et le service répond 404 : c'est le
    * comportement voulu pour un jeton signé sur une portée disparue, et il ne
    * doit pas être le comportement par défaut d'un test qui l'a oublié.
+   *
+   * Les deux réglages reprennent les valeurs par défaut de la colonne (#34), de
+   * sorte qu'un test qui ne s'y intéresse pas n'a pas à les écrire — et qu'un
+   * test qui s'y intéresse les pose explicitement.
    */
-  public seedTenant(input: { id: string; timezone?: string }): StoredTenant {
-    const tenant: StoredTenant = { id: input.id, timezone: input.timezone ?? 'Europe/Paris' };
+  public seedTenant(input: {
+    id: string;
+    timezone?: string;
+    slotIntervalMinutes?: number;
+    minBookingNoticeMinutes?: number;
+  }): StoredTenant {
+    const tenant: StoredTenant = {
+      id: input.id,
+      timezone: input.timezone ?? 'Europe/Paris',
+      slotIntervalMinutes: input.slotIntervalMinutes ?? 15,
+      minBookingNoticeMinutes: input.minBookingNoticeMinutes ?? 60,
+    };
     this.tenants.push(tenant);
     return tenant;
+  }
+
+  /** Affecte un praticien à une prestation — l'équivalent d'une ligne `service_staff`. */
+  public seedServiceStaff(input: {
+    tenantId: string;
+    serviceId: string;
+    staffId: string;
+  }): StoredServiceStaff {
+    const assignment: StoredServiceStaff = { ...input };
+    this.serviceStaff.push(assignment);
+    return assignment;
+  }
+
+  /** Pose un rendez-vous sur l'agenda d'un praticien. `PENDING` par défaut. */
+  public seedAppointment(input: {
+    tenantId: string;
+    staffId: string;
+    startsAt: Date;
+    endsAt: Date;
+    status?: string;
+  }): StoredAppointment {
+    const appointment: StoredAppointment = { ...input, status: input.status ?? 'PENDING' };
+    this.appointments.push(appointment);
+    return appointment;
   }
 
   /**
@@ -123,6 +211,19 @@ export class FakeAvailabilityRepository {
     return this.tenants.find((candidate) => candidate.id === tenantId)?.timezone ?? null;
   }
 
+  public async currentBookingSettings(): Promise<TenantBookingSettingsRecord | null> {
+    const tenantId = this.requireTenant();
+    const found = this.tenants.find((candidate) => candidate.id === tenantId);
+
+    return found === undefined
+      ? null
+      : {
+          timezone: found.timezone,
+          slotIntervalMinutes: found.slotIntervalMinutes,
+          minBookingNoticeMinutes: found.minBookingNoticeMinutes,
+        };
+  }
+
   public async findStaffById(id: string): Promise<StaffRecord | null> {
     const tenantId = this.requireTenant();
     const found = this.staff.find(
@@ -130,6 +231,96 @@ export class FakeAvailabilityRepository {
     );
 
     return found === undefined ? null : { id: found.id, isActive: found.isActive };
+  }
+
+  /**
+   * Les praticiens **actifs** affectés à la prestation, croissants.
+   *
+   * Le filtre sur `isActive` est celui du vrai — il porte sur la table `staff`
+   * jointe, pas sur l'affectation : une affectation survit à la désactivation du
+   * praticien, et c'est le moteur de créneaux qui l'écarte.
+   */
+  public async listServiceStaffIds(serviceId: string): Promise<string[]> {
+    const tenantId = this.requireTenant();
+    const active = new Set(
+      this.staff
+        .filter((member) => member.tenantId === tenantId && member.isActive)
+        .map((member) => member.id),
+    );
+
+    return this.serviceStaff
+      .filter(
+        (assignment) =>
+          assignment.tenantId === tenantId &&
+          assignment.serviceId === serviceId &&
+          active.has(assignment.staffId),
+      )
+      .map((assignment) => assignment.staffId)
+      .sort((left, right) => left.localeCompare(right));
+  }
+
+  public async listSchedulesForStaff(
+    staffIds: readonly string[],
+  ): Promise<StaffScheduleRangeRecord[]> {
+    const tenantId = this.requireTenant();
+
+    if (staffIds.length === 0) {
+      return [];
+    }
+
+    const wanted = new Set(staffIds);
+
+    return this.schedules
+      .filter((candidate) => candidate.tenantId === tenantId && wanted.has(candidate.staffId))
+      .map((candidate) => ({
+        staffId: candidate.staffId,
+        weekday: candidate.weekday,
+        startMinute: candidate.startMinute,
+        endMinute: candidate.endMinute,
+      }))
+      .sort(
+        (left, right) =>
+          left.staffId.localeCompare(right.staffId) ||
+          left.weekday - right.weekday ||
+          left.startMinute - right.startMinute,
+      );
+  }
+
+  /**
+   * Les rendez-vous qui **recoupent** la fenêtre — `startsAt < to AND endsAt >
+   * from`, et non l'inclusion.
+   *
+   * Le prédicat est celui du vrai : un rendez-vous commencé avant la fenêtre et
+   * courant encore occupe bien le praticien pendant celle-ci. Le double le
+   * reproduit pour que le test le constate plutôt que de le supposer.
+   */
+  public async listBookedRanges(
+    staffIds: readonly string[],
+    window: TimeOffWindow,
+  ): Promise<StaffBusyRange[]> {
+    const tenantId = this.requireTenant();
+
+    if (staffIds.length === 0) {
+      return [];
+    }
+
+    const wanted = new Set(staffIds);
+
+    return this.appointments
+      .filter(
+        (candidate) =>
+          candidate.tenantId === tenantId &&
+          wanted.has(candidate.staffId) &&
+          OCCUPYING.has(candidate.status) &&
+          candidate.startsAt.getTime() < window.to.getTime() &&
+          candidate.endsAt.getTime() > window.from.getTime(),
+      )
+      .map((candidate) => ({
+        staffId: candidate.staffId,
+        startsAt: candidate.startsAt,
+        endsAt: candidate.endsAt,
+      }))
+      .sort((left, right) => left.startsAt.getTime() - right.startsAt.getTime());
   }
 
   public async listStaffSchedule(staffId: string): Promise<StaffScheduleRecord[]> {

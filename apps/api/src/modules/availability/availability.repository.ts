@@ -2,7 +2,18 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
+// Les statuts qui **occupent** l'agenda, importés et non redéclarés : c'est la
+// liste du `WHERE` partiel de `appointments_no_overlap` (#31), et une suite de
+// test la compare au SQL de la migration. Une seconde copie ici produirait
+// exactement ce que ce témoin existe pour empêcher — un moteur qui masque un
+// créneau que la base laisserait réserver, ou qui en propose un qu'elle refusera
+// en 409. L'import traverse une frontière de module, mais pas celle
+// qu'api-module §3 ferme : `appointment-status.ts` est un **vocabulaire** sans
+// dépendance, ni repository ni service. Même précédent que
+// `../identity/auth.decorator`, que trois contrôleurs de ce module importent.
+import { OCCUPYING_STATUSES } from '../appointments/appointment-status';
 import type { ScheduleRange } from './availability.schedule';
+import type { StaffBusyRange, TimeOffWindow } from './staff-time-off.types';
 
 /**
  * Seul point du module qui connaît le schéma (api-module §2).
@@ -45,9 +56,58 @@ export interface StaffRecord {
   isActive: boolean;
 }
 
+/**
+ * La même plage, mais **pour plusieurs praticiens à la fois** (#34).
+ *
+ * Le calcul de créneaux lit la semaine de travail de tous les candidats d'une
+ * prestation en une requête : à raison d'une lecture par praticien, un service
+ * pratiqué par six personnes coûterait six allers-retours pour une réponse que
+ * #35 doit rendre sous 300 ms.
+ */
+export interface StaffScheduleRangeRecord extends StaffScheduleRecord {
+  staffId: string;
+}
+
+/**
+ * Les réglages de l'établissement dont dépend le calcul de créneaux.
+ *
+ * Le fuseau y figure avec les deux autres parce qu'ils se lisent sur la même
+ * ligne : les demander séparément coûterait deux allers-retours pour deux
+ * colonnes de la même table, sur le chemin le plus chaud de l'API.
+ */
+export interface TenantBookingSettingsRecord {
+  timezone: string;
+  slotIntervalMinutes: number;
+  minBookingNoticeMinutes: number;
+}
+
 const SCHEDULE_SELECT = { weekday: true, startMinute: true, endMinute: true } as const;
 
+const SCHEDULE_RANGE_SELECT = {
+  staffId: true,
+  weekday: true,
+  startMinute: true,
+  endMinute: true,
+} as const;
+
 const STAFF_SELECT = { id: true, isActive: true } as const;
+
+const BOOKING_SETTINGS_SELECT = {
+  timezone: true,
+  slotIntervalMinutes: true,
+  minBookingNoticeMinutes: true,
+} as const;
+
+/**
+ * L'intervalle occupé par un rendez-vous, et rien de plus.
+ *
+ * Ni client, ni prestation, ni prix, ni notes : le moteur soustrait des
+ * intervalles de l'agenda d'un praticien, il n'a aucune ligne à désigner ni
+ * personne à nommer. La projection est la garantie — ce qui n'est pas lu ne peut
+ * pas se retrouver dans une réponse publique, où ces créneaux manquants
+ * aboutissent (même arbitrage que `BUSY_SELECT` des absences).
+ */
+const BOOKED_SELECT = { staffId: true, startsAt: true, endsAt: true } as const;
 
 /**
  * Charge utile de création **sans** le tenant, tel que le repository l'écrit.
@@ -78,9 +138,151 @@ export class AvailabilityRepository {
     return tenant?.timezone ?? null;
   }
 
+  /**
+   * Fuseau, pas de créneau et délai minimum de l'établissement courant — `null`
+   * s'il n'existe pas.
+   *
+   * Comme `currentTimeZone`, `Tenant` est scopé par l'extension **sur son `id`** :
+   * cette lecture ne peut rendre que l'établissement de la requête, et il n'y a
+   * aucun paramètre par lequel en désigner un autre.
+   *
+   * Elle ne remplace pas `currentTimeZone` et ne fait pas double emploi avec
+   * elle : les horaires récurrents n'ont besoin que du fuseau, et leur faire
+   * charger deux réglages qu'ils n'utilisent pas ferait passer la projection pour
+   * un détail sans conséquence — c'est précisément l'habitude qui finit par
+   * transporter une colonne interne jusqu'à une réponse publique.
+   */
+  public async currentBookingSettings(): Promise<TenantBookingSettingsRecord | null> {
+    return this.prisma.tenant.findFirst({ select: BOOKING_SETTINGS_SELECT });
+  }
+
   /** Un praticien de l'établissement courant — `null` hors de celui-ci. */
   public async findStaffById(id: string): Promise<StaffRecord | null> {
     return this.prisma.staff.findFirst({ where: { id }, select: STAFF_SELECT });
+  }
+
+  /**
+   * Les praticiens **actifs** de l'établissement courant qui pratiquent cette
+   * prestation — la première étape du moteur de créneaux (booking-engine §3).
+   *
+   * ## Pourquoi cette lecture est ici et non derrière un appel au catalogue
+   *
+   * `CatalogModule` n'exporte que `ServicesService`, dont la surface ne porte pas
+   * l'affectation des praticiens ; `ServiceStaffService` reste privé, et le
+   * rendre public relève du module qui le possède, pas de celui-ci. Un module
+   * n'importe jamais le repository d'un autre (api-module §3) — et n'écrit pas
+   * non plus dans le sien.
+   *
+   * Ce qui reste est une **lecture** de deux tables que ce module ne possède
+   * pas, exactement comme `findStaffById` juste au-dessus lit `staff` sans en
+   * être propriétaire : il ne les crée ni ne les modifie. Le jour où le catalogue
+   * exposera « quels praticiens pratiquent cette prestation », cette lecture
+   * deviendra l'appel de service correspondant, et rien d'autre ne bougera.
+   *
+   * ## Les praticiens désactivés sont écartés, contrairement au back-office
+   *
+   * `CatalogRepository.listServiceStaff` les garde délibérément — un écran
+   * d'affectation doit montrer qu'une prestation reste rattachée à quelqu'un qui
+   * ne prend plus de rendez-vous. Ici c'est l'inverse qui compte : proposer le
+   * créneau d'un praticien désactivé produirait une réservation que personne
+   * n'honorerait. C'est aussi ce que `StaffScheduleService` annonce en gardant
+   * ses horaires intacts à la désactivation — « c'est le calcul de créneaux qui
+   * écarte les praticiens inactifs ».
+   *
+   * L'ordre est stable — par identifiant : sans `orderBy`, PostgreSQL n'en
+   * garantit aucun, et l'ordre des créneaux d'une même heure changerait d'un
+   * rafraîchissement à l'autre.
+   */
+  public async listServiceStaffIds(serviceId: string): Promise<string[]> {
+    const assignments = await this.prisma.serviceStaff.findMany({
+      where: { serviceId, staff: { isActive: true } },
+      select: { staffId: true },
+      orderBy: [{ staffId: 'asc' }],
+    });
+
+    return assignments.map((assignment) => assignment.staffId);
+  }
+
+  /**
+   * Les plages récurrentes de **plusieurs** praticiens, en une requête.
+   *
+   * `@@index([tenantId, staffId, weekday])` sert le filtre par son préfixe. Le
+   * tri est stable pour la même raison que celui de `listStaffSchedule`, et
+   * inclut `staffId` en tête : c'est ce qui rend le regroupement par praticien
+   * lisible sans dépendre de l'ordre de la base.
+   *
+   * `staffIds` vide rend une liste vide **sans requête** : c'est le cas d'une
+   * prestation qu'aucun praticien actif ne pratique, et un `IN ()` s'écrirait
+   * `false` en SQL sans que ce soit lisible.
+   */
+  public async listSchedulesForStaff(
+    staffIds: readonly string[],
+  ): Promise<StaffScheduleRangeRecord[]> {
+    if (staffIds.length === 0) {
+      return [];
+    }
+
+    return this.prisma.staffSchedule.findMany({
+      where: { staffId: { in: [...staffIds] } },
+      select: SCHEDULE_RANGE_SELECT,
+      orderBy: [{ staffId: 'asc' }, { weekday: 'asc' }, { startMinute: 'asc' }],
+    });
+  }
+
+  /**
+   * Les rendez-vous qui **occupent** l'agenda de ces praticiens sur la fenêtre —
+   * l'étape 3 du moteur de créneaux.
+   *
+   * ## Lire les rendez-vous n'est pas s'en remettre à cette lecture
+   *
+   * Elle sert à *proposer*, ce qui est une question d'affichage ; elle ne garantit
+   * rien. Entre le moment où ce `SELECT` s'exécute et celui où la cliente valide,
+   * une autre transaction peut insérer — et aucune relecture ne rattrape cela. La
+   * garantie est la contrainte d'exclusion `appointments_no_overlap`, et elle
+   * seule (ADR 0002, booking-engine §1). C'est exactement ce que
+   * `AppointmentsRepository` annonce de son côté : « le moteur de disponibilité
+   * lira bien les rendez-vous existants — pour proposer des créneaux ».
+   *
+   * ## Pourquoi la lecture est ici plutôt que dans `appointments`
+   *
+   * Ce module ne peut pas importer `AppointmentsRepository` : un module
+   * n'importe jamais le repository d'un autre (api-module §3), et celui-là
+   * documente d'ailleurs son propre export comme transitoire, en attendant le
+   * service que #37 posera. Même arbitrage que pour `staff` et `service_staff` :
+   * une **lecture** d'une table qu'on ne possède pas, à projection réduite, qui
+   * deviendra un appel de service le jour où il y en aura un.
+   *
+   * Le prédicat est le **recoupement** — `startsAt < to AND endsAt > from` — et
+   * non l'inclusion : un rendez-vous commencé avant la fenêtre et courant encore
+   * occupe bien le praticien pendant celle-ci. Le retenir sur son seul début
+   * proposerait un créneau déjà pris.
+   *
+   * `@@index([tenantId, staffId, startsAt])` sert cette lecture.
+   */
+  public async listBookedRanges(
+    staffIds: readonly string[],
+    window: TimeOffWindow,
+  ): Promise<StaffBusyRange[]> {
+    if (staffIds.length === 0) {
+      return [];
+    }
+
+    const rows = await this.prisma.appointment.findMany({
+      where: {
+        staffId: { in: [...staffIds] },
+        status: { in: [...OCCUPYING_STATUSES] },
+        startsAt: { lt: window.to },
+        endsAt: { gt: window.from },
+      },
+      select: BOOKED_SELECT,
+      orderBy: [{ startsAt: 'asc' }],
+    });
+
+    return rows.map((row) => ({
+      staffId: row.staffId,
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+    }));
   }
 
   /**

@@ -14,6 +14,7 @@ import {
   offsetMinutesAt,
   resolveZonedWallTime,
   utcToZonedWallTime,
+  zonedCalendarDate,
   zonedDateTimeToUtc,
   zonedDayLengthMinutes,
   zonedDayRange,
@@ -79,6 +80,19 @@ export class TenantClockService {
     this.assertKnownTimeZone(timeZone);
 
     return utcToZonedWallTime(instant, timeZone);
+  }
+
+  /**
+   * Journée civile du tenant à laquelle appartient un instant — `YYYY-MM-DD`.
+   *
+   * L'inverse de `dayRange`. C'est par là que passe tout regroupement par
+   * journée du salon : reconstruire la chaîne depuis `wallTimeOf` chez chaque
+   * appelant laisserait le format diverger d'un endroit à l'autre.
+   */
+  public calendarDateOf(instant: Date, timeZone: string): string {
+    this.assertKnownTimeZone(timeZone);
+
+    return zonedCalendarDate(instant, timeZone);
   }
 
   /**
