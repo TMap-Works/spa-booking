@@ -1,0 +1,155 @@
+import { Transform } from 'class-transformer';
+import { Matches, registerDecorator, ValidationArguments, ValidationOptions } from 'class-validator';
+
+import { LOCAL_TIME_PATTERN } from '../availability.time';
+
+/**
+ * Briques de validation des dates qui traversent l'API (#41).
+ *
+ * ## La règle
+ *
+ * **Toute date-heure entrante porte un offset explicite** — `Z` ou `±HH:MM`. Une
+ * date-heure nue (`2026-03-29T03:30:00`) est refusée en 400.
+ *
+ * Ce n'est pas du purisme de format. Une date-heure nue n'a de sens que rapportée
+ * à un fuseau, et le serveur ne peut que **deviner** lequel : celui du tenant ?
+ * celui du navigateur ? celui de la machine, qui n'est le fuseau de personne ?
+ * Trois réponses défendables, donc aucune — et `new Date('2026-03-29T03:30:00')`
+ * choisit la troisième, en silence. La refuser à la frontière est la seule façon
+ * de n'avoir jamais à choisir.
+ *
+ * ## L'asymétrie entrée / sortie, et pourquoi elle est voulue
+ *
+ * | Sens | Format | Raison |
+ * |---|---|---|
+ * | Entrée | ISO 8601 avec offset (`Z` **ou** `±HH:MM`), normalisé en UTC | ne pas faire porter la conversion au client |
+ * | Sortie | instant UTC suffixé `Z` | un seul référentiel : deux horodatages se comparent par simple ordre lexicographique |
+ *
+ * `Z` **est** un offset explicite : la sortie satisfait la règle autant que
+ * l'entrée. Ce qui est proscrit des deux côtés, c'est l'instant nu.
+ *
+ * L'heure locale de l'établissement, elle, ne voyage jamais dans un corps de
+ * réponse : elle se recalcule à l'affichage à partir de l'instant UTC et de
+ * `tenants.timezone` — c'est le rôle de `TenantClockService`.
+ *
+ * TODO(#26) : `OFFSET_DATE_TIME_PATTERN` est le motif de `@spa/shared`
+ * (`packages/shared/src/common/time.ts`) et devra en être importé le jour où
+ * `apps/api` dépendra du paquet — même TODO que dans `catalog/dto/validation.ts`.
+ * Le nom est donc **celui du paquet partagé**, pour que la substitution ne change
+ * pas une borne en silence. `LOCAL_TIME_PATTERN`, lui, vient déjà d'une source
+ * unique : le moteur de conversion du module, qui est ce qui lira l'heure.
+ */
+
+/**
+ * ISO 8601 avec offset explicite, secondes et fraction facultatives.
+ *
+ * La latitude sur les secondes et la fraction est celle du profil RFC 3339 :
+ * `2026-03-29T01:30Z`, `…:30Z` et `…:30.123456789Z` sont trois horodatages
+ * parfaitement formés, produits par des piles différentes. Les refuser
+ * n'apporterait aucune sûreté et casserait des clients légitimes.
+ *
+ * L'heure est en revanche **bornée** à `00`-`23`, comme celle de
+ * `LOCAL_TIME_PATTERN` : le profil RFC 3339 ne connaît pas `24:00`, et un
+ * `\d{2}` complaisant laisserait `2026-03-29T24:00:00Z` franchir la frontière
+ * pour être normalisé, sans un mot, au 30 mars — un rendez-vous déplacé d'un
+ * jour par une saisie que rien n'a refusée.
+ */
+export const OFFSET_DATE_TIME_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,9})?)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$/;
+
+/**
+ * Heure murale `HH:MM`, 00:00 à 23:59 — un horaire de personnel (#32).
+ *
+ * Réexportée depuis le moteur de conversion plutôt que redéclarée : le DTO et
+ * `zonedDateTimeToUtc` doivent accepter exactement la même forme. Les
+ * redéclarer laisserait le DTO admettre en 400 ce que le moteur refuserait
+ * ensuite en `RangeError` — donc en 500. Même précédent que
+ * `catalog/dto/validation.ts`, qui tient `SLUG_PATTERN` de `catalog.slug`.
+ */
+export { LOCAL_TIME_PATTERN };
+
+/**
+ * `true` si la chaîne est une date-heure ISO 8601 à offset explicite **et**
+ * désigne un instant réel.
+ *
+ * Le motif seul ne suffit pas : `2026-02-31T10:00:00Z` le satisfait, et
+ * `Date.parse` le ramènerait au 3 mars sans rien signaler — un rendez-vous
+ * déplacé de deux jours par une faute de frappe. La date civile est donc
+ * rejouée composant par composant.
+ */
+export function isOffsetDateTime(value: unknown): boolean {
+  if (typeof value !== 'string' || !OFFSET_DATE_TIME_PATTERN.test(value)) {
+    return false;
+  }
+
+  const parsed = Date.parse(value);
+
+  if (Number.isNaN(parsed)) {
+    return false;
+  }
+
+  const year = Number(value.slice(0, 4));
+  const month = Number(value.slice(5, 7));
+  const day = Number(value.slice(8, 10));
+
+  const replayed = new Date(0);
+  replayed.setUTCFullYear(year, month - 1, day);
+
+  return (
+    replayed.getUTCFullYear() === year &&
+    replayed.getUTCMonth() === month - 1 &&
+    replayed.getUTCDate() === day
+  );
+}
+
+/**
+ * Refuse toute date-heure sans offset explicite, en 400 nommant le champ.
+ *
+ * Écrit en décorateur dédié plutôt qu'en `@Matches(OFFSET_DATE_TIME_PATTERN)` :
+ * le motif laisse passer le 31 février, et le message d'un `@Matches` générique
+ * (« doit correspondre à l'expression régulière ») n'apprend rien à qui a
+ * simplement oublié le `Z`.
+ */
+export function IsOffsetDateTime(options?: ValidationOptions): PropertyDecorator {
+  return (target: object, propertyName: string | symbol): void => {
+    registerDecorator({
+      name: 'isOffsetDateTime',
+      target: target.constructor,
+      propertyName: propertyName.toString(),
+      options: options ?? {},
+      validator: {
+        validate: (value: unknown): boolean => isOffsetDateTime(value),
+        defaultMessage: (args?: ValidationArguments): string =>
+          `${args?.property ?? 'date'} : ISO 8601 avec offset explicite attendu ` +
+          '(« 2026-03-29T01:30:00Z » ou « 2026-03-29T03:30:00+02:00 »)',
+      },
+    });
+  };
+}
+
+/**
+ * Normalise en instant UTC (`…Z`) une date-heure à offset explicite.
+ *
+ * La conversion se fait **à la frontière**, avant que la valeur n'atteigne le
+ * service : passé ce point, plus aucune couche n'a à se demander dans quel
+ * référentiel elle lit un horodatage. C'est ce qui rend `startsAt < endsAt` une
+ * comparaison sûre partout ailleurs.
+ *
+ * Rend la valeur **telle quelle** si elle n'est pas une date-heure valable :
+ * c'est `@IsOffsetDateTime()` qui la refuse ensuite, en 400 nommant le champ.
+ * Transformer avant d'avoir validé produirait un `Invalid Date` que le
+ * validateur ne saurait plus décrire.
+ */
+export function ToUtcInstant(): PropertyDecorator {
+  return Transform(({ value }: { value: unknown }) =>
+    isOffsetDateTime(value) ? new Date(value as string).toISOString() : value,
+  );
+}
+
+/** Heure murale `HH:MM` — le format de saisie d'un horaire de personnel. */
+export function IsLocalTime(options?: ValidationOptions): PropertyDecorator {
+  return Matches(LOCAL_TIME_PATTERN, {
+    message: '$property : heure locale attendue au format HH:MM (00:00 à 23:59)',
+    ...options,
+  });
+}
