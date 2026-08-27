@@ -97,6 +97,16 @@ export interface AppointmentsHarness {
   a: BookableTenant;
   /** L'établissement voisin, pour les scénarios de traversée. */
   b: BookableTenant;
+  /**
+   * Un **second** praticien pour cet établissement, affecté à la même
+   * prestation et sur le même horaire.
+   *
+   * Le report peut changer de praticien en chemin (#39) : sans un second
+   * candidat, ce chemin ne s'exerce pas. Il n'est pas semé d'office — les suites
+   * de réservation raisonnent sur un praticien, et un second ferait apparaître
+   * des créneaux qu'elles ne comptent pas.
+   */
+  addStaff(target: BookableTenant): string;
   server(): ReturnType<INestApplication['getHttpServer']>;
   close(): Promise<void>;
 }
@@ -108,12 +118,22 @@ export interface AppointmentsHarness {
  * le corps de la requête porte. La grille se pose sur l'intervalle *occupé*,
  * ancrée à l'ouverture : `10:00` occupé donne `10:10` facturé, le tampon avant
  * valant dix minutes.
+ *
+ * `occupiedHourUtc` désigne l'heure **occupée** du créneau voulu, dans la
+ * journée de travail du praticien (9 h – 18 h). Le paramètre existe pour le
+ * report (#39), qui a besoin de deux créneaux du même jour : celui d'où l'on
+ * part et celui où l'on va. Toute heure pleine de la fenêtre tombe sur la
+ * grille de quinze minutes, et laisse tenir les quatre-vingts minutes occupées.
  */
-export function bookableSlot(): { startsAt: Date; endsAt: Date; occupiedStartsAt: Date } {
+export function bookableSlot(occupiedHourUtc = 10): {
+  startsAt: Date;
+  endsAt: Date;
+  occupiedStartsAt: Date;
+} {
   const day = new Date(Date.now() + 14 * DAY_MS);
   day.setUTCHours(0, 0, 0, 0);
 
-  const occupiedStartsAt = new Date(day.getTime() + 10 * 60 * MINUTE_MS);
+  const occupiedStartsAt = new Date(day.getTime() + occupiedHourUtc * 60 * MINUTE_MS);
   const startsAt = new Date(occupiedStartsAt.getTime() + BUFFER_BEFORE_MINUTES * MINUTE_MS);
 
   return {
@@ -145,6 +165,27 @@ export async function createAppointmentsHarness(): Promise<AppointmentsHarness> 
 
   const weekday = isoWeekdayOf(bookableSlot().startsAt);
 
+  /**
+   * Un praticien affecté à cette prestation, ouvert sur la journée cible.
+   *
+   * Le praticien n'est déclaré que du côté `availability` : la réservation ne
+   * demande au catalogue que la durée, les tampons et le prix — jamais la fiche
+   * du praticien, dont l'affectation se lit dans `service_staff`.
+   */
+  const equipStaff = (tenantId: string, serviceId: string): string => {
+    const staff = availability.seedStaff({ tenantId });
+    availability.seedServiceStaff({ tenantId, serviceId, staffId: staff.id });
+    availability.seedSchedule({
+      tenantId,
+      staffId: staff.id,
+      weekday,
+      startMinute: WORKDAY_START_MINUTE,
+      endMinute: WORKDAY_END_MINUTE,
+    });
+    timeOff.registerStaff(tenantId, staff.id);
+    return staff.id;
+  };
+
   const equip = (tenant: TenantFixture): BookableTenant => {
     availability.seedTenant({
       id: tenant.id,
@@ -160,25 +201,7 @@ export async function createAppointmentsHarness(): Promise<AppointmentsHarness> 
       priceAmountMinor: SERVICE_PRICE_MINOR,
     });
 
-    // Le praticien n'est déclaré que du côté `availability` : la réservation ne
-    // demande au catalogue que la durée, les tampons et le prix — jamais la
-    // fiche du praticien, dont l'affectation se lit dans `service_staff`.
-    const staff = availability.seedStaff({ tenantId: tenant.id });
-    availability.seedServiceStaff({
-      tenantId: tenant.id,
-      serviceId: service.id,
-      staffId: staff.id,
-    });
-    availability.seedSchedule({
-      tenantId: tenant.id,
-      staffId: staff.id,
-      weekday,
-      startMinute: WORKDAY_START_MINUTE,
-      endMinute: WORKDAY_END_MINUTE,
-    });
-    timeOff.registerStaff(tenant.id, staff.id);
-
-    return { tenant, serviceId: service.id, staffId: staff.id };
+    return { tenant, serviceId: service.id, staffId: equipStaff(tenant.id, service.id) };
   };
 
   return {
@@ -189,6 +212,7 @@ export async function createAppointmentsHarness(): Promise<AppointmentsHarness> 
     events: harness.app.get(AppointmentEvents),
     a: equip(harness.a),
     b: equip(harness.b),
+    addStaff: (target: BookableTenant) => equipStaff(target.tenant.id, target.serviceId),
     server: () => harness.server(),
     close: () => harness.close(),
   };

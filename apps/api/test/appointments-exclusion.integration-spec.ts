@@ -2,12 +2,16 @@ import { randomUUID } from 'node:crypto';
 
 import { Prisma, PrismaClient } from '@prisma/client';
 
+import { InvalidStateTransitionError, NotFoundError } from '../src/common/errors';
 import { runWithTenant } from '../src/common/tenant/tenant-context';
 import { createScopedPrismaClient } from '../src/infrastructure/database/prisma-clients';
 import { SLOT_EXCLUSION_CONSTRAINT } from '../src/modules/appointments/appointments.conflicts';
 import { SlotNoLongerAvailableError } from '../src/modules/appointments/appointments.errors';
 import { AppointmentsRepository } from '../src/modules/appointments/appointments.repository';
-import type { AppointmentDraft } from '../src/modules/appointments/appointments.types';
+import type {
+  AppointmentDraft,
+  RescheduleDraft,
+} from '../src/modules/appointments/appointments.types';
 import { createDisposableDatabase, type DisposableDatabase } from './utils/disposable-database';
 
 /**
@@ -493,11 +497,244 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
         'endsAt',
         'id',
         'price',
+        'rescheduledFromId',
         'serviceId',
         'staffId',
         'startsAt',
         'status',
       ].sort());
+    });
+  });
+
+  /**
+   * Le report contre un vrai moteur (#39).
+   *
+   * Trois choses ne se prouvent qu'ici, et aucune ne se simule :
+   *
+   * 1. **le nouveau créneau peut chevaucher l'ancien.** C'est la raison
+   *    technique du « annuler puis créer » : un `UPDATE` des bornes se serait
+   *    heurté à la contrainte, qui compare la ligne modifiée à elle-même ;
+   * 2. **un refus ne laisse aucune trace.** Le `ROLLBACK` emporte l'annulation
+   *    avec l'insertion — l'ancien rendez-vous est intact, au statut où il
+   *    était ;
+   * 3. **la clé composite tient la frontière.** Un rendez-vous ne peut pas
+   *    déclarer remplacer celui d'un autre établissement, quelle que soit
+   *    l'origine de l'écriture.
+   */
+  describe('le report — annulation et création liées', () => {
+    /** Un report vers ces bornes, chez le praticien indiqué. */
+    function move(
+      previousId: string,
+      startsAt: Date,
+      endsAt: Date,
+      staffId: string,
+    ): RescheduleDraft {
+      return { previousId, staffId, startsAt, endsAt };
+    }
+
+    it('a posé la colonne, son index préfixé et sa clé composite', async () => {
+      // eslint-disable-next-line tenant/raw-sql-tenant-filter -- catalogue système : `pg_constraint` et `pg_indexes` décrivent le schéma, pas des lignes d'établissement.
+      const keys = await prismaUnscoped.$queryRaw<{ definition: string }[]>`
+        SELECT pg_get_constraintdef(oid) AS definition
+        FROM pg_constraint
+        WHERE conrelid = 'appointments'::regclass AND contype = 'f'
+      `;
+      const definitions = keys.map((row) => row.definition);
+
+      // La clé mono-colonne est muette sur le tenant : celle qui tient la
+      // frontière est la composite (tenant-isolation §1).
+      expect(definitions).toContainEqual(
+        expect.stringContaining(
+          'FOREIGN KEY (tenant_id, rescheduled_from_id) REFERENCES appointments(tenant_id, id)',
+        ),
+      );
+
+      // eslint-disable-next-line tenant/raw-sql-tenant-filter -- catalogue système : `pg_indexes` décrit le schéma.
+      const indexes = await prismaUnscoped.$queryRaw<{ indexdef: string }[]>`
+        SELECT indexdef FROM pg_indexes
+        WHERE tablename = 'appointments' AND indexname = 'appointments_tenant_id_rescheduled_from_id_idx'
+      `;
+      expect(indexes[0]?.indexdef).toContain('(tenant_id, rescheduled_from_id)');
+    });
+
+    it('annule l’ancien rendez-vous et crée le nouveau qui le référence', async () => {
+      const start = new Date('2026-12-01T09:00:00.000Z');
+      const previous = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, new Date(start.getTime() + ONE_HOUR))),
+      );
+      const target = new Date('2026-12-01T14:00:00.000Z');
+
+      const outcome = await inTenant(salon.tenantId, () =>
+        repository.reschedule(
+          move(previous.id, target, new Date(target.getTime() + ONE_HOUR), salon.staffId),
+        ),
+      );
+
+      expect(outcome.created.rescheduledFromId).toBe(previous.id);
+      const rows = await prismaUnscoped.appointment.findMany({
+        where: { tenantId: salon.tenantId, id: { in: [previous.id, outcome.created.id] } },
+        select: { id: true, status: true, cancelledAt: true, rescheduledFromId: true },
+        orderBy: { createdAt: 'asc' },
+      });
+
+      // Deux lignes, et le lien entre elles : c'est l'historique que le
+      // quatrième critère de #39 demande.
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toMatchObject({ id: previous.id, status: 'CANCELLED' });
+      expect(rows[0]?.cancelledAt).toBeInstanceOf(Date);
+      expect(rows[1]).toMatchObject({ id: outcome.created.id, rescheduledFromId: previous.id });
+    });
+
+    it('accepte un créneau qui chevauche celui d’origine — ce qu’un UPDATE aurait refusé', async () => {
+      // Le cas le plus courant du comptoir : décaler d'une demi-heure un soin
+      // qui en dure une. La contrainte compare la ligne modifiée à elle-même :
+      // un `UPDATE` des bornes aurait rendu 409 sur un déplacement légitime.
+      const start = new Date('2026-12-02T09:00:00.000Z');
+      const previous = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, new Date(start.getTime() + ONE_HOUR))),
+      );
+      const target = new Date('2026-12-02T09:30:00.000Z');
+
+      await expect(
+        inTenant(salon.tenantId, () =>
+          repository.reschedule(
+            move(previous.id, target, new Date(target.getTime() + ONE_HOUR), salon.staffId),
+          ),
+        ),
+      ).resolves.toMatchObject({ created: { startsAt: target } });
+    });
+
+    it('laisse l’ancien rendez-vous intact quand le créneau d’arrivée est pris', async () => {
+      const start = new Date('2026-12-03T09:00:00.000Z');
+      const previous = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, new Date(start.getTime() + ONE_HOUR))),
+      );
+      const target = new Date('2026-12-03T14:00:00.000Z');
+      await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, target, new Date(target.getTime() + ONE_HOUR))),
+      );
+
+      await expect(
+        inTenant(salon.tenantId, () =>
+          repository.reschedule(
+            move(previous.id, target, new Date(target.getTime() + ONE_HOUR), salon.staffId),
+          ),
+        ),
+      ).rejects.toBeInstanceOf(SlotNoLongerAvailableError);
+
+      // Le `ROLLBACK` a emporté l'annulation avec l'insertion : la cliente garde
+      // son rendez-vous. C'est le troisième critère de #39, et il n'est tenu par
+      // aucun code applicatif.
+      const kept = await prismaUnscoped.appointment.findUnique({
+        where: { id: previous.id },
+        select: { status: true, cancelledAt: true },
+      });
+      expect(kept).toEqual({ status: 'PENDING', cancelledAt: null });
+      const successors = await prismaUnscoped.appointment.count({
+        where: { tenantId: salon.tenantId, rescheduledFromId: previous.id },
+      });
+      expect(successors).toBe(0);
+    });
+
+    it('ne laisse aboutir qu’un seul de plusieurs reports concurrents du même rendez-vous', async () => {
+      // Chacun vise un praticien et un créneau libres : rien ne les départage
+      // sinon l'écriture conditionnelle sur le statut de la ligne de départ.
+      // Deux succès donneraient deux rendez-vous à une cliente qui n'en a
+      // demandé qu'un, et deux successeurs à un seul prédécesseur.
+      const start = new Date('2026-12-04T09:00:00.000Z');
+      const previous = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, new Date(start.getTime() + ONE_HOUR))),
+      );
+
+      const base = Date.UTC(2026, 11, 4, 14, 0, 0);
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: CONCURRENT_ATTEMPTS }, (_unused, index) =>
+          inTenant(salon.tenantId, () =>
+            repository.reschedule(
+              move(
+                previous.id,
+                new Date(base + index * ONE_HOUR),
+                new Date(base + index * ONE_HOUR + ONE_HOUR),
+                index % 2 === 0 ? salon.staffId : salon.secondStaffId,
+              ),
+            ),
+          ),
+        ),
+      );
+
+      expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+      const successors = await prismaUnscoped.appointment.count({
+        where: { tenantId: salon.tenantId, rescheduledFromId: previous.id },
+      });
+      expect(successors).toBe(1);
+    });
+
+    it('refuse de reporter un rendez-vous qui n’occupe plus son créneau', async () => {
+      const start = new Date('2026-12-05T09:00:00.000Z');
+      const previous = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, new Date(start.getTime() + ONE_HOUR))),
+      );
+      await setStatus(previous.id, 'COMPLETED');
+      const target = new Date('2026-12-05T14:00:00.000Z');
+
+      await expect(
+        inTenant(salon.tenantId, () =>
+          repository.reschedule(
+            move(previous.id, target, new Date(target.getTime() + ONE_HOUR), salon.staffId),
+          ),
+        ),
+      ).rejects.toBeInstanceOf(InvalidStateTransitionError);
+    });
+
+    it('ne laisse pas le voisin reporter le rendez-vous du salon', async () => {
+      const start = new Date('2026-12-06T09:00:00.000Z');
+      const previous = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, new Date(start.getTime() + ONE_HOUR))),
+      );
+      const target = new Date('2026-12-06T14:00:00.000Z');
+
+      // 404 et non 403 : la ligne est invisible depuis l'autre portée, et le
+      // report est une **écriture** — un 403 aurait confirmé son existence à qui
+      // vient d'essayer de l'annuler.
+      await expect(
+        inTenant(voisin.tenantId, () =>
+          repository.reschedule(
+            move(previous.id, target, new Date(target.getTime() + ONE_HOUR), voisin.staffId),
+          ),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundError);
+
+      const kept = await prismaUnscoped.appointment.findUnique({
+        where: { id: previous.id },
+        select: { status: true },
+      });
+      expect(kept).toEqual({ status: 'PENDING' });
+    });
+
+    it('refuse en base un lien de report vers le rendez-vous d’un autre établissement', async () => {
+      // La garantie ne vient pas du code : la clé composite
+      // `(tenant_id, rescheduled_from_id) → (tenant_id, id)` la tient quelle que
+      // soit l'origine de l'écriture — API, script, psql.
+      const start = new Date('2026-12-07T09:00:00.000Z');
+      const chezSalon = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, new Date(start.getTime() + ONE_HOUR))),
+      );
+
+      await expect(
+        prismaUnscoped.appointment.create({
+          data: {
+            tenantId: voisin.tenantId,
+            clientId: voisin.clientId,
+            staffId: voisin.staffId,
+            serviceId: voisin.serviceId,
+            startsAt: new Date('2026-12-07T15:00:00.000Z'),
+            endsAt: new Date('2026-12-07T16:00:00.000Z'),
+            priceAmountMinor: 3500,
+            priceCurrency: 'EUR',
+            rescheduledFromId: chezSalon.id,
+          },
+        }),
+      ).rejects.toThrow();
     });
   });
 

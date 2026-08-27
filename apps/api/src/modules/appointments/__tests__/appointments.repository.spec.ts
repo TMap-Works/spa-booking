@@ -1,10 +1,11 @@
 import { Prisma } from '@prisma/client';
 
+import { ConflictError, InvalidStateTransitionError, NotFoundError } from '../../../common/errors';
 import { runWithTenant } from '../../../common/tenant/tenant-context';
 import type { ScopedPrismaClient } from '../../../infrastructure/database/prisma-clients';
 import { SlotNoLongerAvailableError } from '../appointments.errors';
 import { AppointmentsRepository } from '../appointments.repository';
-import type { AppointmentDraft } from '../appointments.types';
+import type { AppointmentDraft, RescheduleDraft } from '../appointments.types';
 
 /**
  * Conduite du repository **face à l'échec** — la seule partie de `create` qui se
@@ -43,6 +44,7 @@ const ROW = {
   priceAmountMinor: 3500,
   priceCurrency: 'EUR',
   clientNote: null,
+  rescheduledFromId: null,
 };
 
 function deadlock(): Error {
@@ -220,5 +222,229 @@ describe('AppointmentsRepository.create — conduite face à l’échec', () => 
 
     await expect(createAppointment(double.prisma)).rejects.toBe(boom);
     expect(double.calls()).toBe(1);
+  });
+});
+
+/**
+ * Le report, vu de la seule chose qui se teste sans base : **l'ordre des
+ * opérations et la forme des écritures** (#39).
+ *
+ * L'atomicité, elle, appartient à PostgreSQL — c'est le `ROLLBACK` qui rend
+ * l'échec inoffensif, et `test/appointments-exclusion.integration-spec.ts` le
+ * prouve contre un vrai moteur. Ce qui se prouve ici est ce qu'un test contre la
+ * base ne montrerait que par intermittence : que l'annulation **précède**
+ * l'insertion, que l'écriture est conditionnée au statut, et que rien de la
+ * demande ne franchit la frontière de ce qui doit être recopié.
+ */
+
+/** Le rendez-vous à déplacer, tel que la base le rend — confirmé, avec une note. */
+const PREVIOUS_ROW = {
+  ...ROW,
+  id: '66666666-6666-4666-8666-666666666666',
+  status: 'CONFIRMED' as const,
+  clientNote: 'allergie aux huiles essentielles',
+};
+
+/** Le nouveau créneau, chez un **autre** praticien. */
+const MOVE: RescheduleDraft = {
+  previousId: PREVIOUS_ROW.id,
+  staffId: '77777777-7777-4777-8777-777777777777',
+  startsAt: new Date('2026-09-02T09:00:00.000Z'),
+  endsAt: new Date('2026-09-02T10:00:00.000Z'),
+};
+
+interface MovingDouble {
+  readonly prisma: ScopedPrismaClient;
+  order(): string[];
+  rawValues(): unknown[];
+  updateArgs(): { where?: unknown; data?: unknown }[];
+  createData(): Record<string, unknown>[];
+}
+
+/**
+ * Le client scopé pour un report, réduit à ce que `reschedule` en appelle.
+ *
+ * `released` est le compte que rend l'écriture conditionnelle : `1` quand elle a
+ * bien annulé le rendez-vous, `0` quand la ligne n'était plus dans un statut
+ * occupant au moment où le moteur l'a relue — c'est-à-dire quand un autre report
+ * a gagné la course.
+ */
+function movingClient(
+  options: {
+    previous?: typeof PREVIOUS_ROW | null;
+    released?: number;
+    inserts?: (Error | typeof ROW)[];
+  } = {},
+): MovingDouble {
+  const order: string[] = [];
+  const values: unknown[] = [];
+  const updates: { where?: unknown; data?: unknown }[] = [];
+  const creates: Record<string, unknown>[] = [];
+  const inserts = options.inserts ?? [ROW];
+  let index = 0;
+
+  const tx = {
+    $executeRaw: jest.fn(async (strings: TemplateStringsArray, ...bound: unknown[]) => {
+      order.push('lock');
+      values.push(...bound);
+      return 1;
+    }),
+    appointment: {
+      findFirst: jest.fn(async () => {
+        order.push('read');
+        return options.previous === undefined ? PREVIOUS_ROW : options.previous;
+      }),
+      updateMany: jest.fn(async (args: { where?: unknown; data?: unknown }) => {
+        order.push('update');
+        updates.push(args);
+        return { count: options.released ?? 1 };
+      }),
+      create: jest.fn(async (args: { data: Record<string, unknown> }) => {
+        order.push('insert');
+        creates.push(args.data);
+        const answer = inserts[Math.min(index, inserts.length - 1)];
+        index += 1;
+        if (answer instanceof Error) {
+          throw answer;
+        }
+        return answer;
+      }),
+    },
+  };
+
+  const prisma = {
+    $transaction: jest.fn(async (run: (client: typeof tx) => Promise<unknown>) => run(tx)),
+  } as unknown as ScopedPrismaClient;
+
+  return {
+    prisma,
+    order: () => order,
+    rawValues: () => values,
+    updateArgs: () => updates,
+    createData: () => creates,
+  };
+}
+
+/** Le report, exercé dans une portée de tenant — comme en production. */
+async function reschedule(prisma: ScopedPrismaClient): Promise<unknown> {
+  return runWithTenant(TENANT_ID, async () => new AppointmentsRepository(prisma).reschedule(MOVE));
+}
+
+describe('AppointmentsRepository.reschedule — annulation puis création', () => {
+  it('lit, annule, puis insère — dans cet ordre, sous le verrou de l’agenda d’arrivée', async () => {
+    const double = movingClient();
+
+    await reschedule(double.prisma);
+
+    // L'ordre est tout : insérer avant d'annuler ferait juger le nouveau créneau
+    // contre l'ancien, et la contrainte refuserait un déplacement légitime.
+    expect(double.order()).toEqual(['lock', 'read', 'update', 'insert']);
+  });
+
+  it('sérialise sur l’agenda d’arrivée, pas sur celui de départ', async () => {
+    // C'est là que l'insertion aura lieu. Prendre les deux verrous dans un ordre
+    // dicté par les données reformerait le cycle d'attente qu'ils suppriment.
+    const double = movingClient();
+
+    await reschedule(double.prisma);
+
+    expect(double.rawValues()).toEqual([
+      `appointments:tenant_id=${TENANT_ID}:staff_id=${MOVE.staffId}`,
+    ]);
+  });
+
+  it('conditionne l’annulation au statut, plutôt que de vérifier avant d’écrire', async () => {
+    const double = movingClient();
+
+    await reschedule(double.prisma);
+
+    expect(double.updateArgs()).toEqual([
+      {
+        where: { id: PREVIOUS_ROW.id, status: { in: ['PENDING', 'CONFIRMED'] } },
+        data: { status: 'CANCELLED', cancelledAt: expect.any(Date) },
+      },
+    ]);
+  });
+
+  it('recopie cliente, prestation, prix, note et statut depuis la ligne relue', async () => {
+    const double = movingClient();
+
+    await reschedule(double.prisma);
+
+    expect(double.createData()[0]).toEqual({
+      clientId: PREVIOUS_ROW.clientId,
+      serviceId: PREVIOUS_ROW.serviceId,
+      priceAmountMinor: PREVIOUS_ROW.priceAmountMinor,
+      priceCurrency: PREVIOUS_ROW.priceCurrency,
+      clientNote: PREVIOUS_ROW.clientNote,
+      // Repris, et non remis à `PENDING` : déplacer un créneau n'annule pas une
+      // confirmation déjà obtenue.
+      status: 'CONFIRMED',
+      staffId: MOVE.staffId,
+      startsAt: MOVE.startsAt,
+      endsAt: MOVE.endsAt,
+      rescheduledFromId: PREVIOUS_ROW.id,
+    });
+  });
+
+  it('rend l’ancien rendez-vous tel qu’il était, et le nouveau tel qu’il est', async () => {
+    const double = movingClient();
+
+    await expect(reschedule(double.prisma)).resolves.toMatchObject({
+      previous: { id: PREVIOUS_ROW.id, status: 'CONFIRMED' },
+      created: { id: ROW.id, rescheduledFromId: null },
+    });
+  });
+
+  it('refuse en 404 un rendez-vous introuvable, sans rien écrire', async () => {
+    // `findFirst` est scopé par l'extension : le rendez-vous d'un autre
+    // établissement est introuvable, et rend donc 404 plutôt qu'un 403 qui
+    // confirmerait son existence.
+    const double = movingClient({ previous: null });
+
+    await expect(reschedule(double.prisma)).rejects.toBeInstanceOf(NotFoundError);
+    expect(double.order()).toEqual(['lock', 'read']);
+  });
+
+  it('refuse en 422 un rendez-vous qui n’occupe plus son créneau', async () => {
+    const double = movingClient({ previous: { ...PREVIOUS_ROW, status: 'COMPLETED' as never } });
+
+    await expect(reschedule(double.prisma)).rejects.toBeInstanceOf(InvalidStateTransitionError);
+    expect(double.order()).toEqual(['lock', 'read']);
+  });
+
+  it('refuse en 409 quand l’écriture conditionnelle ne touche aucune ligne', async () => {
+    // Deux reports concurrents du même rendez-vous : le second relit la ligne
+    // après la validation du premier, ne la reconnaît plus, et met à jour zéro
+    // ligne. Insérer quand même donnerait deux successeurs à un seul rendez-vous.
+    const double = movingClient({ released: 0 });
+
+    await expect(reschedule(double.prisma)).rejects.toBeInstanceOf(ConflictError);
+    expect(double.order()).toEqual(['lock', 'read', 'update']);
+  });
+
+  it('traduit un créneau d’arrivée pris en `SlotNoLongerAvailableError`', async () => {
+    const double = movingClient({ inserts: [slotTaken()] });
+
+    await expect(reschedule(double.prisma)).rejects.toBeInstanceOf(SlotNoLongerAvailableError);
+  });
+
+  it('rejoue la transaction entière sur interblocage', async () => {
+    // Le réessai reprend au verrou : la transaction a été annulée, donc la
+    // lecture aussi. Reprendre à l'insertion écrirait sur la foi d'une ligne lue
+    // dans une transaction qui n'existe plus.
+    const double = movingClient({ inserts: [deadlock(), ROW] });
+
+    await expect(reschedule(double.prisma)).resolves.toMatchObject({ created: { id: ROW.id } });
+    expect(double.order()).toEqual([
+      'lock',
+      'read',
+      'update',
+      'insert',
+      'lock',
+      'read',
+      'update',
+      'insert',
+    ]);
   });
 });

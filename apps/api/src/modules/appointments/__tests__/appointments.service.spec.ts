@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { NotFoundError } from '../../../common/errors';
+import { InvalidStateTransitionError, NotFoundError } from '../../../common/errors';
 import { runWithTenant } from '../../../common/tenant';
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
 import type { AvailabilityService } from '../../availability/availability.service';
@@ -11,6 +11,10 @@ import { SlotNoLongerAvailableError } from '../appointments.errors';
 import { AppointmentsService } from '../appointments.service';
 import type { BookAppointmentInput } from '../appointments.types';
 import { APPOINTMENT_CREATED, type AppointmentCreatedEvent } from '../events/appointment-created.event';
+import {
+  APPOINTMENT_RESCHEDULED,
+  type AppointmentRescheduledEvent,
+} from '../events/appointment-rescheduled.event';
 import { AppointmentEvents } from '../events/appointment-events';
 import { FakeAppointmentsRepository } from './appointments.doubles';
 
@@ -108,7 +112,12 @@ function fakeAvailability(offered: readonly Date[]): {
             slots: offered.map((startsAt) => ({
               startsAt: startsAt.toISOString(),
               endsAt: new Date(startsAt.getTime() + 3_600_000).toISOString(),
-              staffId: STAFF_ID,
+              // Le praticien demandé, et non une constante : le vrai moteur
+              // filtre sur `staffId`, et un double qui rendrait toujours le même
+              // ferait passer pour proposé le créneau d'un praticien qui n'a
+              // jamais été interrogé — exactement ce que le report vérifie quand
+              // il change de praticien en chemin.
+              staffId: query.staffId ?? STAFF_ID,
             })),
           },
         ],
@@ -413,5 +422,286 @@ describe('AppointmentsService.book', () => {
     const { service } = createHarness();
 
     await expect(service.book(bookingInput(), NOW)).rejects.toThrow(/tenant/i);
+  });
+});
+
+/**
+ * Le report — la décision, sans HTTP et sans base (#39).
+ *
+ * Ce que cette suite exerce, et qu'aucune autre ne voit : que le report est bien
+ * **une annulation suivie d'une création liée**, que ce qui ne se reporte pas est
+ * refusé sans que rien ne bouge, et qu'un créneau d'arrivée refusé laisse la
+ * cliente avec son rendez-vous d'origine plutôt qu'avec rien.
+ *
+ * L'atomicité elle-même appartient à PostgreSQL, et c'est
+ * `test/appointments-exclusion.integration-spec.ts` qui l'exerce contre un vrai
+ * moteur. Le double reproduit son **effet observable** — un refus ne laisse
+ * aucune trace — et rien de plus.
+ */
+describe('AppointmentsService.reschedule', () => {
+  /** Le nouveau créneau : le soin passerait de 10:00 à 14:00 UTC. */
+  const MOVED_START = new Date('2026-09-01T14:00:00.000Z');
+
+  /** L'intervalle **occupé** correspondant, tampons compris. */
+  const MOVED_OCCUPIED = {
+    startsAt: new Date('2026-09-01T13:50:00.000Z'),
+    endsAt: new Date('2026-09-01T15:10:00.000Z'),
+  } as const;
+
+  /** Un harnais où le calendrier propose l'ancien créneau **et** le nouveau. */
+  function movableHarness(): Harness {
+    return createHarness({ offered: [BILLED_START, MOVED_START] });
+  }
+
+  /**
+   * Un rendez-vous déjà pris à 10:00 chez `STAFF_ID`, dans son intervalle
+   * occupé — la forme que la base porte réellement.
+   */
+  function seedBooked(
+    repository: FakeAppointmentsRepository,
+    overrides: { status?: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'COMPLETED' | 'NO_SHOW' } = {},
+  ): { id: string } {
+    return repository.seedAppointment({
+      tenantId: TENANT,
+      staffId: STAFF_ID,
+      serviceId: SERVICE_ID,
+      startsAt: new Date('2026-09-01T09:50:00.000Z'),
+      endsAt: new Date('2026-09-01T11:10:00.000Z'),
+      ...overrides,
+    });
+  }
+
+  it('annule l’ancien rendez-vous et en crée un nouveau qui le référence', async () => {
+    const { service, repository } = movableHarness();
+    const previous = seedBooked(repository);
+
+    const view = await runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    // Deux lignes, pas une : l'historique montre les deux rendez-vous et leur
+    // lien, ce qu'un `UPDATE` des dates aurait effacé.
+    expect(repository.appointments).toHaveLength(2);
+    expect(repository.appointments[0]?.status).toBe('CANCELLED');
+    expect(view.id).not.toBe(previous.id);
+    expect(view.rescheduledFromId).toBe(previous.id);
+    expect(view.startsAt).toBe('2026-09-01T14:00:00.000Z');
+    expect(view.endsAt).toBe('2026-09-01T15:00:00.000Z');
+  });
+
+  it('enregistre pour le nouveau créneau une durée qui inclut les deux tampons', async () => {
+    const { service, repository } = movableHarness();
+    const previous = seedBooked(repository);
+
+    await runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    const created = repository.appointments[1];
+    expect(created?.startsAt.toISOString()).toBe(MOVED_OCCUPIED.startsAt.toISOString());
+    expect(created?.endsAt.toISOString()).toBe(MOVED_OCCUPIED.endsAt.toISOString());
+  });
+
+  it('reprend la cliente, la prestation et le prix figé du rendez-vous remplacé', async () => {
+    const { service, repository } = movableHarness();
+    // Réserver d'abord plutôt que semer : c'est la réservation qui fige le prix,
+    // et c'est ce prix-là que le report doit reconduire.
+    const booked = await runWithTenant(TENANT, () => service.book(bookingInput(), NOW));
+
+    const view = await runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: booked.id, startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    expect(view.clientId).toBe(booked.clientId);
+    expect(view.serviceId).toBe(booked.serviceId);
+    expect(view.price).toEqual({ amountMinor: 7500, currency: 'EUR' });
+    // Reporter ne crée pas une seconde fiche cliente.
+    expect(repository.clients).toHaveLength(1);
+  });
+
+  it('reprend le statut du rendez-vous remplacé : un confirmé le reste', async () => {
+    const { service, repository } = movableHarness();
+    const previous = seedBooked(repository, { status: 'CONFIRMED' });
+
+    const view = await runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    // Déplacer un créneau n'annule pas une confirmation déjà obtenue.
+    expect(view.status).toBe('CONFIRMED');
+  });
+
+  it('change de praticien quand la demande en désigne un autre', async () => {
+    const { service, repository } = movableHarness();
+    const previous = seedBooked(repository);
+    const other = randomUUID();
+
+    const view = await runWithTenant(TENANT, () =>
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: MOVED_START, staffId: other },
+        NOW,
+      ),
+    );
+
+    expect(view.staffId).toBe(other);
+    expect(repository.appointments[1]?.staffId).toBe(other);
+  });
+
+  it('laisse l’ancien rendez-vous intact quand le créneau d’arrivée est pris', async () => {
+    const { service, repository } = movableHarness();
+    const previous = seedBooked(repository);
+    repository.seedAppointment({
+      tenantId: TENANT,
+      staffId: STAFF_ID,
+      startsAt: MOVED_OCCUPIED.startsAt,
+      endsAt: MOVED_OCCUPIED.endsAt,
+    });
+
+    const rejected = runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    await expect(rejected).rejects.toThrow(SlotNoLongerAvailableError);
+    // Le troisième critère de #39 : un échec ne laisse jamais une cliente sans
+    // rendez-vous du tout.
+    const kept = repository.appointments.find((candidate) => candidate.id === previous.id);
+    expect(kept?.status).toBe('PENDING');
+    expect(repository.appointments).toHaveLength(2);
+  });
+
+  it('rend dans le 409 l’heure du soin demandée, pas l’heure occupée', async () => {
+    const { service, repository } = movableHarness();
+    const previous = seedBooked(repository);
+    repository.seedAppointment({
+      tenantId: TENANT,
+      staffId: STAFF_ID,
+      startsAt: MOVED_OCCUPIED.startsAt,
+      endsAt: MOVED_OCCUPIED.endsAt,
+    });
+
+    const rejected = runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    await expect(rejected).rejects.toMatchObject({
+      details: { staffId: STAFF_ID, startsAt: '2026-09-01T14:00:00.000Z' },
+    });
+  });
+
+  it('refuse en 409 un instant que le calendrier ne proposait pas', async () => {
+    const { service, repository } = movableHarness();
+    const previous = seedBooked(repository);
+
+    const rejected = runWithTenant(TENANT, () =>
+      service.reschedule(
+        { appointmentId: previous.id, startsAt: new Date('2026-09-01T14:07:00.000Z'), staffId: null },
+        NOW,
+      ),
+    );
+
+    await expect(rejected).rejects.toThrow(SlotNoLongerAvailableError);
+    expect(repository.appointments).toHaveLength(1);
+    expect(repository.appointments[0]?.status).toBe('PENDING');
+  });
+
+  it('refuse en 404 un rendez-vous inconnu de l’établissement', async () => {
+    const { service, repository } = movableHarness();
+
+    const rejected = runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: randomUUID(), startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    await expect(rejected).rejects.toThrow(NotFoundError);
+    expect(repository.appointments).toHaveLength(0);
+  });
+
+  it('refuse en 422 un rendez-vous qui n’occupe plus son créneau', async () => {
+    const { service, repository } = movableHarness();
+    const previous = seedBooked(repository, { status: 'CANCELLED' });
+
+    const rejected = runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    // Terminé, annulé ou no-show : il n'y a plus de créneau à déplacer, et en
+    // créer un à cette occasion serait une réservation déguisée.
+    await expect(rejected).rejects.toThrow(InvalidStateTransitionError);
+    expect(repository.appointments).toHaveLength(1);
+  });
+
+  it('émet appointment.rescheduled avec les deux créneaux facturés', async () => {
+    const { service, events, repository } = movableHarness();
+    const received: AppointmentRescheduledEvent[] = [];
+    events.onAppointmentRescheduled((event) => received.push(event));
+    const previous = seedBooked(repository);
+
+    const view = await runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    expect(received).toHaveLength(1);
+    const event = received[0];
+    expect(event?.name).toBe(APPOINTMENT_RESCHEDULED);
+    expect(event?.tenantId).toBe(TENANT);
+    expect(event?.appointmentId).toBe(view.id);
+    expect(event?.previousAppointmentId).toBe(previous.id);
+    expect(event?.serviceId).toBe(SERVICE_ID);
+    expect(event?.staffId).toBe(STAFF_ID);
+    expect(event?.previousStaffId).toBe(STAFF_ID);
+    // Les heures du soin des deux côtés : c'est ce qu'un avis de déplacement
+    // annonce — l'ancienne et la nouvelle, jamais les heures de cabine.
+    expect(event?.startsAt).toBe('2026-09-01T14:00:00.000Z');
+    expect(event?.endsAt).toBe('2026-09-01T15:00:00.000Z');
+    expect(event?.previousStartsAt).toBe('2026-09-01T10:00:00.000Z');
+    expect(event?.previousEndsAt).toBe('2026-09-01T11:00:00.000Z');
+    expect(event?.occurredAt).toMatch(/Z$/);
+  });
+
+  it('n’émet aucun `appointment.created` sur un report', async () => {
+    const { service, events, repository } = movableHarness();
+    const created: AppointmentCreatedEvent[] = [];
+    events.onAppointmentCreated((event) => created.push(event));
+    const previous = seedBooked(repository);
+
+    await runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    // L'aval n'enverrait pas la même chose : une création demande une
+    // confirmation, un report demande un avis de déplacement et l'annulation du
+    // rappel J-1 déjà planifié.
+    expect(created).toHaveLength(0);
+  });
+
+  it('n’émet rien quand le report échoue', async () => {
+    const { service, events, repository } = movableHarness();
+    const received: AppointmentRescheduledEvent[] = [];
+    events.onAppointmentRescheduled((event) => received.push(event));
+    const previous = seedBooked(repository);
+    repository.seedAppointment({
+      tenantId: TENANT,
+      staffId: STAFF_ID,
+      startsAt: MOVED_OCCUPIED.startsAt,
+      endsAt: MOVED_OCCUPIED.endsAt,
+    });
+
+    await expect(
+      runWithTenant(TENANT, () =>
+        service.reschedule(
+          { appointmentId: previous.id, startsAt: MOVED_START, staffId: null },
+          NOW,
+        ),
+      ),
+    ).rejects.toThrow(SlotNoLongerAvailableError);
+
+    expect(received).toHaveLength(0);
+  });
+
+  it('refuse de reporter hors de toute portée de tenant', async () => {
+    const { service } = movableHarness();
+
+    await expect(
+      service.reschedule({ appointmentId: randomUUID(), startsAt: MOVED_START, staffId: null }, NOW),
+    ).rejects.toThrow(/tenant/i);
   });
 });
