@@ -715,6 +715,32 @@ model Appointment {
   cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
   cancellationReason String?   @map("cancellation_reason") @db.VarChar(500)
 
+  /// Le rendez-vous que celui-ci **remplace** — la chaîne de report (#39,
+  /// booking-engine §5).
+  ///
+  /// Un report n'est pas un `UPDATE` des dates en place : c'est une annulation
+  /// suivie d'une création, et cette colonne est ce qui relie les deux. Sans
+  /// elle, l'historique de la cliente montrerait un rendez-vous annulé et un
+  /// rendez-vous sans passé, au lieu d'un déplacement.
+  ///
+  /// Elle porte aussi une raison technique : la contrainte d'exclusion refuse
+  /// une mise à jour de dates pourtant légitime dès que le nouvel intervalle
+  /// chevauche l'ancien. Annuler puis créer contourne le refus **sans
+  /// l'affaiblir** — la ligne annulée quitte l'index partiel, l'insertion est
+  /// jugée sur le reste de l'agenda.
+  ///
+  /// Nullable, et le restera : la grande majorité des rendez-vous ne sont le
+  /// report de rien. `null` se lit « pris directement », jamais « inconnu ».
+  rescheduledFromId String?      @map("rescheduled_from_id") @db.Uuid
+  rescheduledFrom   Appointment? @relation("AppointmentReschedule", fields: [rescheduledFromId], references: [id], onDelete: Restrict)
+
+  /// Les rendez-vous qui remplacent celui-ci. Une liste au sens de Prisma, au
+  /// plus un élément en pratique : un rendez-vous n'est reportable qu'une fois,
+  /// puisque le report le laisse `CANCELLED` et qu'un rendez-vous annulé n'est
+  /// plus reportable. C'est le service qui tient cet invariant, par une écriture
+  /// conditionnelle sur le statut — voir `AppointmentsRepository.reschedule`.
+  rescheduledTo Appointment[] @relation("AppointmentReschedule")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -729,6 +755,10 @@ model Appointment {
   @@index([tenantId, staffId, startsAt])
   @@index([tenantId, clientId, startsAt])
   @@index([tenantId, status, startsAt])
+  // Remonter la chaîne de report — « quel rendez-vous a remplacé celui-ci ? »,
+  // la question que pose l'historique client (#47). Préfixé de `tenant_id`
+  // comme tout index de ce schéma (tenant-isolation §1).
+  @@index([tenantId, rescheduledFromId])
   @@map("appointments")
 }
 

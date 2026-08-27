@@ -1,4 +1,4 @@
-import { Body, Controller, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
@@ -8,14 +8,17 @@ import {
   ApiParam,
   ApiTags,
   ApiTooManyRequestsResponse,
+  ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 
 import { AppointmentsService } from './appointments.service';
 import { AppointmentDto, BookAppointmentDto, toGuestContact } from './dto/book-appointment.dto';
+import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
 
 /**
- * La prise de rendez-vous du tunnel public — le point d'entrée du revenu (#37).
+ * Le tunnel public du rendez-vous — le point d'entrée du revenu (#37), et son
+ * report (#39).
  *
  * ## Le `:tenantSlug` du chemin n'est pas un paramètre de ce contrôleur
  *
@@ -112,6 +115,88 @@ export class PublicAppointmentsController {
       startsAt: new Date(body.startsAt),
       client: toGuestContact(body.client),
       clientNote: body.clientNote ?? null,
+    });
+  }
+
+  /**
+   * Reporte un rendez-vous : l'ancien est annulé, un nouveau le remplace (#39).
+   *
+   * **201**, et le corps porte le **nouveau** rendez-vous — identifiant compris.
+   * C'est bien une création : l'ancien identifiant ne désigne plus un
+   * rendez-vous à venir, et le front doit remplacer celui qu'il gardait.
+   * `rescheduledFromId` le relie à celui qu'il remplace.
+   *
+   * **404** couvre le rendez-vous inconnu **et** celui d'un autre établissement :
+   * les deux doivent être indiscernables, faute de quoi cette route devient une
+   * sonde d'existence (tenant-isolation §4).
+   *
+   * **422 `INVALID_STATE_TRANSITION`** quand le rendez-vous est terminé, déjà
+   * annulé ou marqué no-show : il n'y a plus de créneau à déplacer, et en créer
+   * un nouveau à cette occasion serait une réservation déguisée — sans les
+   * coordonnées ni le consentement que la réservation exige.
+   *
+   * **409 `SLOT_NO_LONGER_AVAILABLE`** couvre toutes les façons dont le créneau
+   * d'arrivée n'est pas réservable, exactement comme à la réservation. Il couvre
+   * en particulier un cas propre au report : **un créneau qui chevauche le
+   * rendez-vous en cours de déplacement**. Le calendrier ne le propose pas — il
+   * y voit un praticien occupé —, et le proposer demanderait au moteur de
+   * disponibilité d'exclure un rendez-vous nommé de son calcul.
+   *
+   * **429** au-delà de dix reports par minute et par adresse, même quota et même
+   * raison que la réservation : cette route écrit dans l'agenda du salon.
+   *
+   * ## Pourquoi aucune garde, ici non plus
+   *
+   * Pour la raison qui vaut sur toute cette surface : on réserve sans compte,
+   * donc on reporte sans compte. Ce qui autorise l'appel est la **connaissance
+   * de l'identifiant** du rendez-vous — un UUID v4, remis à la cliente sur son
+   * écran de confirmation et dans son e-mail, et à personne d'autre. C'est le
+   * même régime que le lien d'annulation d'une confirmation, et le même que
+   * celui de tout le tunnel.
+   *
+   * Ce que cette route ne permet donc pas, et c'est ce qui la borne : elle ne
+   * change ni la prestation, ni la cliente, ni le prix. Un identifiant deviné —
+   * ce qu'un UUID v4 rend impraticable — ne permettrait que de déplacer un
+   * rendez-vous vers un créneau que le calendrier propose déjà publiquement.
+   */
+  @Post(':appointmentId/reschedule')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: 'Reporter un rendez-vous vers un autre créneau' })
+  @ApiParam({
+    name: 'appointmentId',
+    format: 'uuid',
+    description: 'Le rendez-vous à déplacer, tel que l’écran de confirmation l’a rendu.',
+  })
+  @ApiCreatedResponse({ type: AppointmentDto })
+  @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
+  @ApiNotFoundResponse({
+    description: 'Établissement ou rendez-vous introuvable, ou prestation retirée du catalogue.',
+  })
+  @ApiConflictResponse({
+    description:
+      'Le créneau d’arrivée n’est pas — ou n’est plus — réservable (`SLOT_NO_LONGER_AVAILABLE`), ' +
+      'ou le rendez-vous vient d’être modifié par ailleurs (`CONFLICT`).',
+  })
+  @ApiUnprocessableEntityResponse({
+    description:
+      'Rendez-vous terminé, déjà annulé ou no-show — plus rien à déplacer ' +
+      '(`INVALID_STATE_TRANSITION`).',
+  })
+  @ApiTooManyRequestsResponse({ description: 'Quota de reports dépassé pour cette adresse.' })
+  public async reschedule(
+    // `ParseUUIDPipe` pour la raison qu'expose `ServicesController` : un
+    // identifiant mal formé est un 400 nommant le paramètre, jamais une requête
+    // qui descend jusqu'au pilote PostgreSQL pour en revenir en 500.
+    @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
+    @Body() body: RescheduleAppointmentDto,
+  ): Promise<AppointmentDto> {
+    return this.appointments.reschedule({
+      appointmentId,
+      // La chaîne a été validée comme instant à offset explicite par le DTO.
+      startsAt: new Date(body.startsAt),
+      // Le DTO distingue « absent » de « vide » ; le domaine ne connaît que
+      // `null`, qui se lit « le même praticien qu'avant ».
+      staffId: body.staffId ?? null,
     });
   }
 }

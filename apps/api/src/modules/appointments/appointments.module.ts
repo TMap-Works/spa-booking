@@ -17,10 +17,12 @@ import { PublicAppointmentsController } from './public-appointments.controller';
  * vérifier d'abord, convertir le refus de PostgreSQL en
  * `SlotNoLongerAvailableError`. #37 pose la surface qui s'en sert :
  * `AppointmentsService`, `PublicAppointmentsController` et l'événement de
- * domaine `appointment.created`.
+ * domaine `appointment.created`. #39 y ajoute le **report** — une annulation et
+ * une création liées par `rescheduled_from_id`, dans une seule transaction — et
+ * l'événement `appointment.rescheduled` qui l'annonce.
  *
- * Le report appartient à #39, l'annulation à #40, le verrou Redis de saisie à
- * #38, la création au comptoir à #50.
+ * L'annulation appartient à #40, le verrou Redis de saisie à #38, la création au
+ * comptoir à #50.
  *
  * ## Ce qu'il importe, et pourquoi ces deux-là seulement
  *

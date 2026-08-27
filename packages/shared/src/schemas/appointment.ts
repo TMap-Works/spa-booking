@@ -56,6 +56,16 @@ export const appointmentSchema = z.object({
   staffNote: longTextSchema.optional(),
   cancelledAt: utcInstantSchema.optional(),
   cancellationReason: reasonSchema.optional(),
+  /**
+   * Le rendez-vous que celui-ci **remplace**, s'il est né d'un report.
+   *
+   * Absent sur un rendez-vous pris directement, ce qui est le cas de la grande
+   * majorité. C'est ce champ, et lui seul, qui distingue un déplacement d'une
+   * réservation neuve : sans lui, l'historique de la cliente montrerait un
+   * rendez-vous annulé et un rendez-vous sans passé, au lieu d'un même
+   * rendez-vous déplacé. Voir `rescheduleAppointmentRequestSchema`.
+   */
+  rescheduledFromId: uuidSchema.optional(),
   createdAt: utcInstantSchema,
 });
 
@@ -82,11 +92,30 @@ export const createAppointmentRequestSchema = z
 export type CreateAppointmentRequest = z.infer<typeof createAppointmentRequestSchema>;
 
 /**
- * Report — un déplacement, pas une annulation suivie d'une création.
+ * Report — **une annulation suivie d'une création liée**, jamais une mise à jour
+ * des dates en place (booking-engine §5).
  *
- * Garder l'identité du rendez-vous préserve son historique, son encaissement
- * éventuel et la continuité de ses notifications. `staffId` permet de changer de
- * praticien au passage, ce que le comptoir fait couramment.
+ * C'est un déplacement pour la cliente, une paire de lignes pour la base, et la
+ * distinction n'est pas théorique :
+ *
+ * - **l'historique**. Réécrire les bornes de la ligne existante efface l'heure
+ *   d'origine : plus moyen de dire d'où le rendez-vous vient, ni de compter les
+ *   reports d'un salon. Le rendez-vous créé porte l'identifiant de celui qu'il
+ *   remplace dans `rescheduledFromId`, et celui-ci passe en `cancelled` ;
+ * - **la contrainte d'exclusion**. Elle compare la ligne modifiée aux autres,
+ *   elle-même comprise : avancer d'une demi-heure un soin d'une heure la ferait
+ *   chevaucher son propre état antérieur, et PostgreSQL refuserait un
+ *   déplacement pourtant légitime. Annuler puis créer sort la ligne de l'index
+ *   partiel avant que l'insertion ne soit jugée.
+ *
+ * Les deux écritures sont dans **une seule transaction** : un créneau d'arrivée
+ * refusé laisse le rendez-vous d'origine intact, jamais une cliente sans
+ * rendez-vous du tout.
+ *
+ * La réponse est donc un rendez-vous **neuf**, avec un nouvel identifiant : le
+ * front remplace celui qu'il gardait. `staffId` permet de changer de praticien
+ * au passage, ce que le comptoir fait couramment ; absent, le praticien reste le
+ * même.
  */
 export const rescheduleAppointmentRequestSchema = z
   .object({

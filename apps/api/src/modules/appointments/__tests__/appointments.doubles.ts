@@ -1,11 +1,18 @@
 import { randomUUID } from 'node:crypto';
 
+import { InvalidStateTransitionError, NotFoundError } from '../../../common/errors';
 import { getTenantId } from '../../../common/tenant';
 import type { AppointmentStatus } from '../appointment-status';
-import { OCCUPYING_STATUSES } from '../appointment-status';
+import { OCCUPYING_STATUSES, occupiesSlot } from '../appointment-status';
 import { SlotNoLongerAvailableError } from '../appointments.errors';
 import type { AppointmentsRepository } from '../appointments.repository';
-import type { AppointmentDraft, AppointmentRecord, GuestContact } from '../appointments.types';
+import type {
+  AppointmentDraft,
+  AppointmentRecord,
+  GuestContact,
+  RescheduleDraft,
+  RescheduleOutcome,
+} from '../appointments.types';
 
 /**
  * Doubles du module `appointments`, partagés par ses suites unitaires et par les
@@ -25,7 +32,12 @@ import type { AppointmentDraft, AppointmentRecord, GuestContact } from '../appoi
  *    même `SlotNoLongerAvailableError` que la traduction du refus de PostgreSQL.
  *    Bornes `[)` : deux rendez-vous adjacents restent légaux ;
  * 4. l'**unicité `(tenant_id, email)`** des fiches clientes, qui est ce qui rend
- *    `findOrCreateClient` idempotent.
+ *    `findOrCreateClient` idempotent ;
+ * 5. l'**atomicité du report** — l'annulation précède l'insertion, donc libère
+ *    l'intervalle d'origine ; et si l'insertion est refusée, l'ancien rendez-vous
+ *    retrouve son statut. C'est ce que le `ROLLBACK` fait en vrai, et un double
+ *    qui laisserait l'ancien annulé après un refus ferait passer pour vert le
+ *    seul scénario que #39 doit rendre impossible.
  *
  * ## Ce que ce double ne prouve pas, et ne prétend pas prouver
  *
@@ -49,6 +61,14 @@ interface StoredAppointment {
   priceAmountMinor: number;
   priceCurrency: string;
   clientNote: string | null;
+  rescheduledFromId: string | null;
+}
+
+/** L'intervalle **occupé** d'un praticien — ce que la contrainte compare. */
+interface OccupiedRange {
+  staffId: string;
+  startsAt: Date;
+  endsAt: Date;
 }
 
 interface StoredClient {
@@ -106,6 +126,7 @@ export class FakeAppointmentsRepository {
       priceAmountMinor: 0,
       priceCurrency: 'EUR',
       clientNote: null,
+      rescheduledFromId: null,
     };
     this.appointments.push(appointment);
     return appointment;
@@ -132,9 +153,67 @@ export class FakeAppointmentsRepository {
       priceAmountMinor: draft.price.amountMinor,
       priceCurrency: draft.price.currency,
       clientNote: draft.clientNote,
+      rescheduledFromId: null,
     };
     this.appointments.push(stored);
     return toRecord(stored);
+  }
+
+  /**
+   * Le report : annulation de l'ancien, création du nouveau, **ou rien**.
+   *
+   * Reproduit les trois propriétés du vrai qui comptent pour l'appelant :
+   *
+   * 1. l'annulation **précède** l'insertion, donc l'intervalle d'origine est
+   *    libre au moment où le chevauchement est jugé — c'est ce qui rend légal un
+   *    déplacement vers un créneau adjacent au sien ;
+   * 2. un refus de créneau **remet l'ancien rendez-vous dans son état** : c'est
+   *    le `ROLLBACK` de la transaction, et c'est le troisième critère de #39 ;
+   * 3. le nouveau rendez-vous **reprend** le statut, la cliente, la prestation,
+   *    le prix et la note de l'ancien — rien de tout cela ne vient de la demande.
+   */
+  public async reschedule(draft: RescheduleDraft): Promise<RescheduleOutcome> {
+    const tenantId = this.requireTenant();
+
+    const previous = this.appointments.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.id === draft.previousId,
+    );
+
+    if (previous === undefined) {
+      throw new NotFoundError('Rendez-vous introuvable.');
+    }
+
+    if (!occupiesSlot(previous.status)) {
+      throw new InvalidStateTransitionError(previous.status, 'CANCELLED');
+    }
+
+    const before = previous.status;
+    previous.status = 'CANCELLED';
+
+    if (this.overlaps(tenantId, draft)) {
+      // Le `ROLLBACK` : sans cette ligne, un créneau refusé laisserait la cliente
+      // sans rendez-vous du tout.
+      previous.status = before;
+      throw new SlotNoLongerAvailableError(draft.staffId, draft.startsAt);
+    }
+
+    const stored: StoredAppointment = {
+      tenantId,
+      id: randomUUID(),
+      clientId: previous.clientId,
+      staffId: draft.staffId,
+      serviceId: previous.serviceId,
+      startsAt: draft.startsAt,
+      endsAt: draft.endsAt,
+      status: before,
+      priceAmountMinor: previous.priceAmountMinor,
+      priceCurrency: previous.priceCurrency,
+      clientNote: previous.clientNote,
+      rescheduledFromId: previous.id,
+    };
+    this.appointments.push(stored);
+
+    return { previous: toRecord({ ...previous, status: before }), created: toRecord(stored) };
   }
 
   public async findById(id: string): Promise<AppointmentRecord | null> {
@@ -175,14 +254,14 @@ export class FakeAppointmentsRepository {
    * chevauchent. `startsAt < other.endsAt && endsAt > other.startsAt` — donc deux
    * rendez-vous qui se touchent ne se chevauchent pas.
    */
-  private overlaps(tenantId: string, draft: AppointmentDraft): boolean {
+  private overlaps(tenantId: string, wanted: OccupiedRange): boolean {
     return this.appointments.some(
       (candidate) =>
         candidate.tenantId === tenantId &&
-        candidate.staffId === draft.staffId &&
+        candidate.staffId === wanted.staffId &&
         (OCCUPYING_STATUSES as readonly AppointmentStatus[]).includes(candidate.status) &&
-        draft.startsAt < candidate.endsAt &&
-        draft.endsAt > candidate.startsAt,
+        wanted.startsAt < candidate.endsAt &&
+        wanted.endsAt > candidate.startsAt,
     );
   }
 
@@ -213,5 +292,6 @@ function toRecord(stored: StoredAppointment): AppointmentRecord {
     status: stored.status,
     price: { amountMinor: stored.priceAmountMinor, currency: stored.priceCurrency },
     clientNote: stored.clientNote,
+    rescheduledFromId: stored.rescheduledFromId,
   };
 }
