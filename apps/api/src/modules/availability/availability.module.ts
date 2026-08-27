@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { CatalogModule } from '../catalog/catalog.module';
 import { IdentityModule } from '../identity/identity.module';
 import {
   AVAILABILITY_CACHE_STORE,
@@ -7,6 +8,7 @@ import {
   UnwiredAvailabilityCacheStore,
 } from './availability-cache';
 import { AvailabilityRepository } from './availability.repository';
+import { AvailabilityService } from './availability.service';
 import { ClosingDaysController } from './closing-days.controller';
 import { ClosingDaysService } from './closing-days.service';
 import { StaffScheduleController } from './staff-schedule.controller';
@@ -30,13 +32,22 @@ import { TenantClockService } from './tenant-clock.service';
  *
  * Les deux se composent sans se connaître, et c'est voulu : `StaffTimeOff` ne
  * référence aucun horaire récurrent, si bien qu'une absence se pose sans avoir à
- * savoir si le praticien devait travailler ce jour-là. C'est le calcul de
- * créneaux (#34) qui les réunit — `StaffScheduleService.windowsFor` lui donne
- * les fenêtres, `StaffTimeOffService.busyRanges` les intervalles à en retrancher,
- * et `availability.intervals.ts` la soustraction elle-même.
+ * savoir si le praticien devait travailler ce jour-là. C'est le **calcul de
+ * créneaux** (#34) qui les réunit — `StaffScheduleService.windowsForMany` lui
+ * donne les fenêtres, `StaffTimeOffService.busyRanges` et
+ * `AvailabilityRepository.listBookedRanges` les intervalles à en retrancher,
+ * `availability.intervals.ts` la soustraction et `availability.slots.ts` le
+ * découpage.
  *
- * Le calcul de créneaux (#34) et l'option premier disponible (#36) ne sont pas
- * écrits, et rien ici ne les préempte.
+ * ## Ce que #34 pose, et ce qu'il laisse à ses voisins
+ *
+ * `AvailabilityService` calcule ; il n'expose rien. Aucune route n'est ajoutée
+ * ici, et `AVAILABILITY_CACHE_STORE` reste branché sur son entrepôt inerte :
+ * `GET /api/v1/availability`, la clé de cache et son invalidation sont les
+ * critères de **#35**, et l'option premier disponible ceux de **#36**. Découper
+ * ainsi suit le précédent de #31, qui a livré la contrainte anti-double-réservation
+ * sans l'endpoint qui s'en sert — la mécanique se relit et se prouve mieux seule
+ * que noyée dans le diff d'un contrôleur.
  *
  * ## Ce qu'il importe
  *
@@ -45,13 +56,22 @@ import { TenantClockService } from './tenant-clock.service';
  * voie prévue par api-module §3 — un appel de service, jamais un import du
  * repository d'un autre module. Rien ici n'atteint `IdentityRepository`.
  *
+ * `CatalogModule`, pour `ServicesService` : le calcul de créneaux a besoin de la
+ * durée d'une prestation et de ses deux tampons, et c'est la porte que le
+ * catalogue a explicitement ouverte pour lui. La liste de ses praticiens, elle,
+ * n'y passe pas — `ServiceStaffService` reste privé, et rendre publique la
+ * surface d'un autre module relève de ce module-là ; `AvailabilityRepository`
+ * lit donc `service_staff` comme il lit déjà `staff`, sans en être propriétaire.
+ *
  * ## Ce qu'il exporte, et pourquoi
  *
  * - `TenantClockService`, la frontière heure locale ↔ UTC, que tout module ayant
  *   à afficher une heure consommera (notifications, reporting).
- * - `StaffScheduleService`, pour sa seule méthode `windowsFor` : le calcul de
- *   créneaux (#34) a besoin des fenêtres de travail d'un praticien, et c'est un
- *   appel de service — la première des deux voies autorisées entre modules.
+ * - `AvailabilityService`, le calcul lui-même : #35 l'exposera derrière une
+ *   route et un cache, #36 y ajoutera sa règle d'affectation, et la création de
+ *   rendez-vous (#37) s'en sert pour placer un soin dans l'agenda.
+ * - `StaffScheduleService`, pour ses fenêtres de travail — un appel de service,
+ *   la première des deux voies autorisées entre modules.
  * - `StaffTimeOffService`, pour `busyRanges`, la lecture symétrique : les
  *   intervalles à retrancher de ces fenêtres. Sa projection ne charge **pas** le
  *   motif de l'absence — ce qui n'est pas lu ne peut pas fuiter jusqu'à une page
@@ -73,11 +93,12 @@ import { TenantClockService } from './tenant-clock.service';
  * ## L'entrepôt de cache
  *
  * `AVAILABILITY_CACHE_STORE` est lié à `UnwiredAvailabilityCacheStore` : il
- * n'existe aujourd'hui aucune clé `avail:*` en Redis, puisque rien ne calcule
- * encore de créneaux. Ce que #33 garantit, c'est que le chemin d'écriture des
- * absences **appelle** l'invalidation — le point qui s'oublie et qui ne se
- * rattrape pas une fois le calcul de créneaux écrit ailleurs. Le jour où #34
- * pose son adaptateur Redis, il remplace cette ligne et rien d'autre.
+ * n'existe aujourd'hui aucune clé `avail:*` en Redis. #34 calcule les créneaux
+ * mais ne les met pas en cache — la clé, son TTL et son invalidation sont trois
+ * des cinq critères de **#35**, avec l'endpoint qui les rend observables. Ce que
+ * #33 garantit reste vrai et sert d'accroche : le chemin d'écriture des absences
+ * **appelle** déjà l'invalidation, le point qui s'oublie et qui ne se rattrape
+ * pas. #35 remplace cette ligne, et rien d'autre.
  *
  * ## Pourquoi ce module apparaît dans `AppModule`
  *
@@ -89,10 +110,11 @@ import { TenantClockService } from './tenant-clock.service';
  * toucher `AppModule`.
  */
 @Module({
-  imports: [IdentityModule],
+  imports: [IdentityModule, CatalogModule],
   controllers: [StaffScheduleController, ClosingDaysController, StaffTimeOffController],
   providers: [
     TenantClockService,
+    AvailabilityService,
     StaffScheduleService,
     ClosingDaysService,
     AvailabilityRepository,
@@ -101,6 +123,6 @@ import { TenantClockService } from './tenant-clock.service';
     AvailabilityCacheService,
     { provide: AVAILABILITY_CACHE_STORE, useClass: UnwiredAvailabilityCacheStore },
   ],
-  exports: [TenantClockService, StaffScheduleService, StaffTimeOffService],
+  exports: [TenantClockService, AvailabilityService, StaffScheduleService, StaffTimeOffService],
 })
 export class AvailabilityModule {}

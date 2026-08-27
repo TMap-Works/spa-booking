@@ -140,6 +140,31 @@ model Tenant {
   contactEmail String? @map("contact_email") @db.VarChar(320)
   contactPhone String? @map("contact_phone") @db.VarChar(32)
 
+  /// Pas de découpage des créneaux proposés, en minutes — 15 par défaut
+  /// (CDC §2.3, booking-engine §3, étape 4).
+  ///
+  /// C'est un réglage d'établissement et non une constante : un barbershop qui
+  /// enchaîne des coupes de vingt minutes et un spa dont le moindre soin dure une
+  /// heure ne proposent pas la même grille. Le pas s'applique **à partir du début
+  /// de chaque fenêtre de travail**, jamais depuis minuit : une fenêtre qui ouvre
+  /// à 09:10 propose 09:10, 09:25, 09:40, et non 09:15.
+  ///
+  /// La borne basse est ce qui protège l'algorithme : un pas nul ou négatif
+  /// ferait boucler indéfiniment le découpage. La contrainte
+  /// `tenants_slot_interval_minutes_check` la porte en base, et le calcul la
+  /// revérifie — la base est la garantie, le contrôle applicatif est le message.
+  slotIntervalMinutes Int @default(15) @map("slot_interval_minutes")
+
+  /// Délai minimum entre l'instant présent et le début d'un créneau proposable,
+  /// en minutes — 60 par défaut (booking-engine §3, étape 6).
+  ///
+  /// Sans lui, la page publique propose un créneau qui commence dans deux
+  /// minutes : le praticien n'a pas vu passer la réservation, et personne
+  /// n'accueille la cliente. `0` est licite — c'est le salon qui accepte le
+  /// passage immédiat —, et le filtre « créneaux dans le passé » reste alors
+  /// actif de lui-même, `maintenant + 0` valant `maintenant`.
+  minBookingNoticeMinutes Int @default(60) @map("min_booking_notice_minutes")
+
   isActive Boolean @default(true) @map("is_active")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)

@@ -120,19 +120,78 @@ export class StaffScheduleService {
   ): Promise<readonly WorkingWindow[]> {
     await this.requireStaff(staffId);
 
+    const byStaff = await this.windowsForMany([staffId], from, to);
+
+    return byStaff.get(staffId) ?? [];
+  }
+
+  /**
+   * Les mêmes fenêtres, pour **plusieurs praticiens en trois requêtes** (#34).
+   *
+   * Le calcul de créneaux d'une prestation les demande pour tous ses praticiens
+   * candidats à la fois. Répéter `windowsFor` en aurait fait quatre par
+   * praticien — dont deux, le fuseau et les jours de fermeture, rendant chaque
+   * fois exactement la même chose. Ici le coût ne dépend plus du nombre de
+   * praticiens, ce dont dépend le temps de réponse que #35 doit tenir.
+   *
+   * ## Aucun contrôle d'existence, contrairement à `windowsFor`
+   *
+   * Un praticien inconnu n'y produit pas un 404 mais **une entrée absente de la
+   * carte**, ce qui se lit « aucune fenêtre de travail ». La raison est
+   * l'isolation : les identifiants viennent d'une lecture déjà scopée
+   * (`listServiceStaffIds`), donc ils existent ici par construction ; et
+   * distinguer, pour un identifiant fourni de l'extérieur, « inconnu » de « connu
+   * ailleurs » offrirait une sonde d'existence à qui interroge la disponibilité
+   * publique (tenant-isolation §4). `windowsFor`, qui sert un identifiant reçu
+   * d'un écran de back-office authentifié, garde son 404.
+   *
+   * Les praticiens **sans aucune plage** sont absents de la carte plutôt que
+   * présents avec une liste vide : c'est la même information, et l'appelant lit
+   * déjà l'absence comme « rien à proposer ».
+   *
+   * ## Le fuseau se donne quand on l'a déjà
+   *
+   * `knownTimeZone` évite au calcul de créneaux de relire `tenants` : il vient
+   * d'en lire la ligne pour son pas et son préavis, et la redemander ici ferait
+   * deux allers-retours pour deux colonnes de la même table, sur le chemin le
+   * plus chaud de l'API. Omis, le fuseau se lit comme avant — et le 404 sur
+   * l'établissement disparu reste alors à sa place.
+   */
+  public async windowsForMany(
+    staffIds: readonly string[],
+    from: string,
+    to: string,
+    knownTimeZone?: string,
+  ): Promise<Map<string, WorkingWindow[]>> {
+    const byStaff = new Map<string, WorkingWindow[]>();
+
+    if (staffIds.length === 0) {
+      return byStaff;
+    }
+
     const [timeZone, records, closed] = await Promise.all([
-      this.requireTimeZone(),
-      this.repository.listStaffSchedule(staffId),
+      knownTimeZone ?? this.requireTimeZone(),
+      this.repository.listSchedulesForStaff(staffIds),
       this.repository.listClosedWeekdays(),
     ]);
 
-    return workingWindows(this.clock, {
-      ranges: records.map((record) => toStoredRange(record)),
-      closedWeekdays: new Set(closed.filter(isIsoWeekday)),
-      timeZone,
-      from,
-      to,
-    });
+    const closedWeekdays = new Set(closed.filter(isIsoWeekday));
+    const rangesByStaff = new Map<string, ScheduleRange[]>();
+
+    for (const record of records) {
+      const ranges = rangesByStaff.get(record.staffId) ?? [];
+      ranges.push(toStoredRange(record));
+      rangesByStaff.set(record.staffId, ranges);
+    }
+
+    for (const [staffId, ranges] of rangesByStaff) {
+      byStaff.set(
+        staffId,
+        workingWindows(this.clock, { ranges, closedWeekdays, timeZone, from, to }),
+      );
+    }
+
+    return byStaff;
   }
 
   /**

@@ -14,6 +14,12 @@ import { z } from 'zod';
 import { displayNameSchema, emailSchema, phoneSchema, slugSchema, uuidSchema } from '../common/identifiers';
 import { currencyCodeSchema } from '../common/money';
 import { timeZoneSchema } from '../common/time';
+import {
+  MAX_MIN_BOOKING_NOTICE_MINUTES,
+  MAX_SLOT_INTERVAL_MINUTES,
+  MIN_BOOKING_NOTICE_MINUTES_FLOOR,
+  MIN_SLOT_INTERVAL_MINUTES,
+} from '../constants/limits';
 
 /**
  * Vitrine publique d'un établissement, servie **avant toute authentification**
@@ -65,3 +71,51 @@ export const updateTenantRequestSchema = z
   .partial();
 
 export type UpdateTenantRequest = z.infer<typeof updateTenantRequestSchema>;
+
+/**
+ * Les deux réglages qui gouvernent le calcul des créneaux libres (#34).
+ *
+ * Ils vivent sur l'établissement et non sur la prestation : un salon annonce une
+ * grille, il n'en annonce pas une par soin. Les poser par prestation produirait
+ * des grilles concurrentes sur un même agenda — deux soins aux pas différents
+ * proposant des créneaux qui se chevauchent à moitié.
+ *
+ * ## Ce qu'ils ne disent pas
+ *
+ * Ni les tampons de préparation et de remise en état — ils appartiennent à la
+ * prestation (`services.buffer_before_minutes` / `buffer_after_minutes`), parce
+ * qu'un massage aux pierres chaudes n'a pas le même temps de cabine qu'une
+ * coupe —, ni la fenêtre maximale interrogeable, qui est une borne de coût du
+ * serveur (`MAX_AVAILABILITY_RANGE_DAYS`) et non un choix du salon.
+ *
+ * Ce schéma décrit une forme, il n'ouvre pas d'endpoint : #34 pose les colonnes
+ * et l'algorithme qui les lit, #35 sert la disponibilité, et l'écran de réglages
+ * du back-office les rendra modifiables. Même précédent que
+ * `staffBusyIntervalSchema`, déclaré par #33 pour le moteur qui le consomme.
+ */
+export const tenantBookingSettingsSchema = z
+  .object({
+    /** Pas de découpage des créneaux proposés, en minutes. */
+    slotIntervalMinutes: z
+      .number()
+      .int({ message: 'un pas de créneau s’exprime en minutes entières' })
+      .min(MIN_SLOT_INTERVAL_MINUTES, {
+        message: `pas de créneau attendu entre ${String(MIN_SLOT_INTERVAL_MINUTES)} et ${String(MAX_SLOT_INTERVAL_MINUTES)} minutes`,
+      })
+      .max(MAX_SLOT_INTERVAL_MINUTES, {
+        message: `pas de créneau attendu entre ${String(MIN_SLOT_INTERVAL_MINUTES)} et ${String(MAX_SLOT_INTERVAL_MINUTES)} minutes`,
+      }),
+    /** Délai minimum avant le début d'un créneau proposable, en minutes. */
+    minBookingNoticeMinutes: z
+      .number()
+      .int({ message: 'un délai de réservation s’exprime en minutes entières' })
+      .min(MIN_BOOKING_NOTICE_MINUTES_FLOOR, {
+        message: `délai minimum attendu entre ${String(MIN_BOOKING_NOTICE_MINUTES_FLOOR)} et ${String(MAX_MIN_BOOKING_NOTICE_MINUTES)} minutes`,
+      })
+      .max(MAX_MIN_BOOKING_NOTICE_MINUTES, {
+        message: `délai minimum attendu entre ${String(MIN_BOOKING_NOTICE_MINUTES_FLOOR)} et ${String(MAX_MIN_BOOKING_NOTICE_MINUTES)} minutes`,
+      }),
+  })
+  .strict();
+
+export type TenantBookingSettings = z.infer<typeof tenantBookingSettingsSchema>;

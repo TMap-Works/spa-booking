@@ -448,10 +448,25 @@ export function formatOffsetDateTime(instant: Date, timeZone: string): string {
   const wall = utcToZonedWallTime(instant, timeZone);
   const offsetMinutes = offsetMinutesAt(instant, timeZone);
 
-  const date = `${String(wall.year).padStart(4, '0')}-${pad2(wall.month)}-${pad2(wall.day)}`;
   const time = `${pad2(wall.hour)}:${pad2(wall.minute)}:${pad2(wall.second)}`;
 
-  return `${date}T${time}${formatOffset(offsetMinutes)}`;
+  return `${formatCalendarDate(wall)}T${time}${formatOffset(offsetMinutes)}`;
+}
+
+/** `YYYY-MM-DD` d'une heure murale — la seule écriture d'une date civile du module. */
+export function formatCalendarDate(wall: ZonedWallTime): string {
+  return `${String(wall.year).padStart(4, '0')}-${pad2(wall.month)}-${pad2(wall.day)}`;
+}
+
+/**
+ * La **journée civile du tenant** à laquelle appartient un instant.
+ *
+ * Le regroupement des créneaux par journée du salon s'y ramène : « le 24 août »
+ * n'est pas la même tranche d'instants à Papeete et à Paris, et la lire dans le
+ * fuseau du serveur ferait basculer les créneaux du soir au lendemain.
+ */
+export function zonedCalendarDate(instant: Date, timeZone: string): string {
+  return formatCalendarDate(utcToZonedWallTime(instant, timeZone));
 }
 
 /** `+02:00`, `-09:30`, `Z` — la notation d'offset de la RFC 3339. */

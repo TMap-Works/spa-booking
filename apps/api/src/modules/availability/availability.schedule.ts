@@ -198,6 +198,32 @@ export function firstOverlap(
   return null;
 }
 
+/** Minuit UTC d'une date civile — le repère commun des deux fonctions qui suivent. */
+function utcMidnightOf(calendarDate: string): Date {
+  const { year, month, day } = calendarPartsOf(calendarDate);
+  const midnight = new Date(0);
+  midnight.setUTCFullYear(year, month - 1, day);
+  midnight.setUTCHours(0, 0, 0, 0);
+
+  return midnight;
+}
+
+/**
+ * Nombre de dates civiles de `from` à `to`, bornes comprises — `0` ou moins sur
+ * une plage inversée.
+ *
+ * Se **compte sans s'énumérer**, et c'est tout l'objet de cette fonction : le
+ * refus d'une plage trop large est une protection contre un déni de service, et
+ * la faire précéder de la construction de la liste qu'elle refuse ferait payer
+ * exactement le coût qu'elle existe pour éviter. Même définition que
+ * `calendarDaysBetween` du contrat partagé (TODO(#26)).
+ */
+export function calendarDaysBetween(from: string, to: string): number {
+  const span = utcMidnightOf(to).getTime() - utcMidnightOf(from).getTime();
+
+  return Math.round(span / DAY_MS) + 1;
+}
+
 /**
  * Les dates civiles de `from` à `to`, bornes comprises.
  *
@@ -206,16 +232,8 @@ export function firstOverlap(
  * fois par an, et l'addition ferait sauter — ou répéter — un jour.
  */
 export function eachCalendarDate(from: string, to: string): string[] {
-  const start = calendarPartsOf(from);
-  const end = calendarPartsOf(to);
-
-  const cursor = new Date(0);
-  cursor.setUTCFullYear(start.year, start.month - 1, start.day);
-  cursor.setUTCHours(0, 0, 0, 0);
-
-  const last = new Date(0);
-  last.setUTCFullYear(end.year, end.month - 1, end.day);
-  last.setUTCHours(0, 0, 0, 0);
+  const cursor = utcMidnightOf(from);
+  const last = utcMidnightOf(to);
 
   const dates: string[] = [];
 

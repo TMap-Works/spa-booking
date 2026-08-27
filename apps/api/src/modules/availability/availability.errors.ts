@@ -25,6 +25,7 @@ export const AVAILABILITY_ERROR_CODES = {
   UNKNOWN_TIME_ZONE: 'UNKNOWN_TIME_ZONE',
   OVERLAPPING_SCHEDULE_RANGES: 'OVERLAPPING_SCHEDULE_RANGES',
   TIME_OFF_RANGE_INVALID: 'TIME_OFF_RANGE_INVALID',
+  AVAILABILITY_RANGE_TOO_WIDE: 'AVAILABILITY_RANGE_TOO_WIDE',
 } as const;
 
 const UNPROCESSABLE_ENTITY = 422;
@@ -125,6 +126,48 @@ export class OverlappingScheduleRangesError extends DomainError {
 
   public constructor(weekday: number, left: string, right: string) {
     super('Deux plages du même jour se recouvrent.', { weekday, ranges: [left, right] });
+  }
+}
+
+/**
+ * Fenêtre maximale d'une interrogation de disponibilité, en jours (#34).
+ *
+ * Le calcul se fait **à la demande** et n'est jamais matérialisé (CDC §2.3) :
+ * une plage non bornée est donc un déni de service à une seule requête — un
+ * `from` en 1970 et un `to` en 2170 feraient parcourir soixante-treize mille
+ * journées civiles, chacune convertie par l'ICU. Trente et un jours couvrent le
+ * « mois suivant » du calendrier public, qui est le seul écran qui interroge.
+ *
+ * TODO(#26) : c'est `MAX_AVAILABILITY_RANGE_DAYS` de `@spa/shared`
+ * (`packages/shared/src/constants/limits.ts`), à importer le jour où `apps/api`
+ * dépendra du paquet. Le nom est celui du paquet partagé pour que la
+ * substitution ne change pas une borne en silence — même TODO que
+ * `MAX_TIME_OFF_RANGE_DAYS` ci-dessous.
+ */
+export const MAX_AVAILABILITY_RANGE_DAYS = 31;
+
+/**
+ * Plage de dates trop large, ou inversée, pour une interrogation de créneaux.
+ *
+ * **422 et non 400** : chaque date est bien écrite, c'est leur écart qui n'est
+ * pas servable. La distinction compte pour le front, qui n'affiche pas un défaut
+ * de format comme une limite de service — et le code est celui qu'annonce déjà
+ * `availabilityQuerySchema` du contrat partagé.
+ *
+ * Jugée dans le service et pas seulement dans le DTO, pour la même raison que
+ * les bornes d'une absence : la règle porte sur le **couple** de dates, et tout
+ * appelant du moteur doit s'y heurter — y compris celui qui n'est pas venu par
+ * HTTP. `details` ne rend que ce que l'appelant a envoyé, plus la borne.
+ */
+export class AvailabilityRangeTooWideError extends DomainError {
+  public override readonly code = AVAILABILITY_ERROR_CODES.AVAILABILITY_RANGE_TOO_WIDE;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor(from: string, to: string) {
+    super(
+      `La plage interrogée doit être ordonnée et ne pas excéder ${String(MAX_AVAILABILITY_RANGE_DAYS)} jours.`,
+      { from, to, maxRangeDays: MAX_AVAILABILITY_RANGE_DAYS },
+    );
   }
 }
 

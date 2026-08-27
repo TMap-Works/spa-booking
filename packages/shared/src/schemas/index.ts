@@ -159,7 +159,13 @@ export type {
 
 export {
   publicTenantSchema,
+  tenantBookingSettingsSchema,
   tenantSchema,
   updateTenantRequestSchema,
 } from './tenant';
-export type { PublicTenant, Tenant, UpdateTenantRequest } from './tenant';
+export type {
+  PublicTenant,
+  Tenant,
+  TenantBookingSettings,
+  UpdateTenantRequest,
+} from './tenant';

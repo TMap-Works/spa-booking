@@ -66,6 +66,21 @@ export type AvailabilityQuery = z.infer<typeof availabilityQuerySchema>;
  * réservation qui suit doit désigner un praticien précis, et le laisser choisir
  * au moment du `POST` rouvrirait la fenêtre de concurrence que le créneau
  * servait justement à fermer.
+ *
+ * ## Les bornes sont celles du **soin**, pas celles de l'agenda (#34)
+ *
+ * `startsAt` est l'instant où la cliente est prise en charge, `endsAt` celui où
+ * elle repart : `endsAt - startsAt` vaut exactement `service.durationMinutes`.
+ * Les tampons de préparation et de remise en état encadrent ce créneau et
+ * occupent le praticien plus longtemps, mais ils ne sont **ni facturés ni
+ * montrés** (CDC §2.3).
+ *
+ * Ce n'est pas une commodité d'affichage, c'est la seule forme calculable côté
+ * client : `PublicServiceView` ne porte délibérément pas les tampons, si bien
+ * qu'un front qui recevrait l'intervalle occupé n'aurait aucun moyen d'en
+ * déduire l'heure du rendez-vous. Le serveur, lui, a les deux — c'est le moteur
+ * de disponibilité qui place le soin dans l'agenda, et la création de rendez-vous
+ * (#37) qui réécrit l'intervalle occupé à partir de la prestation.
  */
 export const availabilitySlotSchema = z
   .object({
