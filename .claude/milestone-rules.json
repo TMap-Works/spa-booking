@@ -46,6 +46,7 @@
       "ci:workflows"
     ],
     "17": [
+      "infra/terraform/envs",
       "infra/terraform/modules/budgets"
     ],
     "18": [
@@ -136,6 +137,73 @@
     "208": [
       ".claude/settings",
       "scripts/milestone-rules"
+    ],
+    "186": [
+      ".claude/commands",
+      "scripts/milestone-run",
+      "scripts/milestone-supervise"
+    ],
+    "215": [
+      ".claude/hooks",
+      "scripts/permissions"
+    ],
+    "226": [
+      ".claude/commands",
+      ".claude/settings",
+      ".claude/skills/project-flow"
+    ],
+    "231": [
+      "scripts/tests"
+    ],
+    "200": [
+      "infra/terraform/envs"
+    ],
+    "213": [
+      "infra/terraform/envs"
+    ],
+    "220": [
+      "npm:verify"
+    ],
+    "169": [
+      "api/identity",
+      "npm:verify"
+    ],
+    "168": [
+      "api/identity/tests"
+    ],
+    "25": [
+      "api/catalog",
+      "contracts:shared"
+    ],
+    "233": [
+      "scripts/milestone-run"
+    ],
+    "212": [
+      "ci:workflows"
+    ],
+    "245": [
+      ".claude/commands",
+      "scripts/milestone-run"
+    ],
+    "249": [
+      "scripts/milestone-run",
+      "scripts/tests"
+    ],
+    "258": [
+      ".claude/commands"
+    ],
+    "262": [
+      "scripts/milestone-arbiter",
+      "scripts/milestone-run"
+    ],
+    "217": [
+      "api/core",
+      "api/identity",
+      "contracts:shared"
+    ],
+    "27": [
+      "api/identity/tests",
+      "ci:workflows"
     ]
   },
   "depends": {
