@@ -204,6 +204,37 @@
     "27": [
       "api/identity/tests",
       "ci:workflows"
+    ],
+    "31": [
+      "api/appointments",
+      "db:schema"
+    ],
+    "268": [
+      "api/eslint-rules",
+      "api/infrastructure/database",
+      "npm:verify"
+    ],
+    "32": [
+      "api/availability",
+      "contracts:shared",
+      "db:schema"
+    ],
+    "33": [
+      "api/availability",
+      "contracts:shared",
+      "db:schema"
+    ],
+    "39": [
+      "api/appointments",
+      "db:schema"
+    ],
+    "40": [
+      "api/appointments",
+      "db:schema"
+    ],
+    "34": [
+      "api/availability",
+      "db:schema"
     ]
   },
   "depends": {
@@ -240,6 +271,25 @@
     ],
     "21": [
       26
+    ],
+    "34": [
+      32,
+      33
+    ],
+    "35": [
+      34
+    ],
+    "36": [
+      34
+    ],
+    "39": [
+      37
+    ],
+    "40": [
+      37
+    ],
+    "37": [
+      31
     ]
   },
   "why": {
@@ -254,6 +304,12 @@
     "128": "le harnais teste les décisions de pr_gate.py que #129 réécrit — l'écrire avant figerait le comportement fautif",
     "21": "l'authentification consomme les DTO, l'enumeration de roles et les codes d'erreur de packages/shared",
     "22": "le role MANAGER doit exister dans l'enumeration Prisma UserRole avant d'etre attribuable",
-    "202": "la migration ADD VALUE 'MANAGER' ecrit l'enumeration UserRole du schema Prisma"
+    "202": "la migration ADD VALUE 'MANAGER' ecrit l'enumeration UserRole du schema Prisma",
+    "34": "les fenetres de travail se calculent par soustraction : horaires du personnel moins conges et plages bloquees",
+    "35": "l'endpoint GET /api/v1/availability expose l'algorithme de calcul des creneaux",
+    "36": "l'option premier disponible agrege les creneaux calcules par l'algorithme",
+    "39": "le report ecrit dans le service de rendez-vous et soumet le nouveau creneau a la contrainte d'exclusion",
+    "40": "l'annulation passe par la machine a etats du service de rendez-vous",
+    "37": "la contrainte d'exclusion doit etre en base avant que la creation puisse la violer et traduire le conflit en 409"
   }
 }
