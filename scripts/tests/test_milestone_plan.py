@@ -62,10 +62,25 @@ def issue(number, title=None, body="", labels=FULL, assignees=()):
     }
 
 
-def pull(number, closes):
-    """Une PR ouverte qui référence l'issue `closes`."""
-    return {"number": number, "body": f"Closes #{closes}",
-            "headRefName": f"chore/{closes}-un-travail"}
+def pull(number, closes, mentions=()):
+    """Une PR ouverte qui **ferme** `closes`, et qui en **mentionne** d'autres.
+
+    Les deux champs ne disent pas la même chose, et c'est tout l'objet de #308 :
+    `closingIssuesReferences` est le lien que GitHub résout à partir des
+    mots-clés de fermeture, le corps n'est que de la prose. Une PR bien écrite
+    cite ses voisines pour justifier sa frontière de périmètre — les compter
+    pour occupées gèle le jalon.
+    """
+    cites = " ".join(f"voir #{n}" for n in mentions)
+    return {
+        "number": number,
+        "body": f"Closes #{closes}\n\n{cites}",
+        "headRefName": f"chore/{closes}-un-travail",
+        "closingIssuesReferences": [
+            {"number": closes,
+             "repository": {"name": "spa-booking", "owner": {"login": "TMap-Works"}}}
+        ],
+    }
 
 
 class FakeHub:
@@ -452,6 +467,67 @@ class Invariants(unittest.TestCase):
         self.assertEqual(code, milestone_plan.OK)
         self.assertEqual(scheduled(plan), {10, 20})
         self.assertEqual(plan["withheld"], [])
+
+
+class MentionneeNestPasFermee(unittest.TestCase):
+    """#308 — une issue citée dans le corps d'une PR n'est pas traitée par elle.
+
+    Le cas réel : la PR #307 ne fermait que #34, mais son corps citait #24, #31,
+    #32, #33, #35, #36, #37, #304 et #305 pour justifier sa frontière de
+    périmètre. La lecture à la regex les a toutes rendues occupées ; les quatre
+    ouvertes du jalon sont sorties du plan, leurs dépendantes ont été retenues
+    derrière elles, et le run a conclu que S2 était déroulé sans avoir traité un
+    seul ticket.
+    """
+
+    def setUp(self):
+        self.hub = FakeHub(
+            [issue(10), issue(20), issue(30)],
+            [pull(157, closes=10, mentions=(20, 30))],
+        )
+
+    def test_seule_l_issue_fermee_est_occupee(self):
+        with mock.patch.object(milestone_plan, "gh_json", self.hub):
+            self.assertEqual(milestone_plan.fetch_busy(), {10: 157})
+
+    def test_les_citees_restent_dispatchables(self):
+        _, plan = plan_of(self.hub, DEUX)
+        self.assertNotIn(20, ecartees(plan))
+        self.assertNotIn(30, ecartees(plan))
+        self.assertIn(30, scheduled(plan))
+
+    def test_le_jalon_ne_se_fige_pas_sur_une_pr_bavarde(self):
+        """Le symptôme de #308 : zéro vague alors qu'une seule issue est en PR."""
+        _, plan = plan_of(self.hub, DEUX)
+        self.assertNotEqual(scheduled(plan), set())
+
+    def test_la_branche_designe_son_issue_meme_sans_fermeture(self):
+        """Repli : une PR sans mot-clé de fermeture, mais dont la branche nomme l'issue."""
+        sans_fermeture = {"number": 158, "body": "un corps qui cite #20 et #30",
+                          "headRefName": "bugfix/10-un-travail",
+                          "closingIssuesReferences": []}
+        with mock.patch.object(milestone_plan, "gh_json",
+                               FakeHub([issue(10)], [sans_fermeture])):
+            self.assertEqual(milestone_plan.fetch_busy(), {10: 158})
+
+    def test_la_casse_du_depot_ne_jette_pas_les_fermetures(self):
+        """`gh` accepte un `--repo` en minuscules, l'API répond en casse d'origine."""
+        with mock.patch.object(milestone_plan, "REPO", "tmap-works/spa-booking"):
+            with mock.patch.object(milestone_plan, "gh_json", self.hub):
+                self.assertEqual(milestone_plan.fetch_busy(), {10: 157})
+
+    def test_une_fermeture_dans_un_autre_depot_ne_compte_pas(self):
+        """Un numéro d'issue n'a de sens que dans son dépôt."""
+        ailleurs = {
+            "number": 159, "body": "", "headRefName": "chore/sans-numero",
+            "closingIssuesReferences": [
+                {"number": 20, "repository": {"name": "autre-projet",
+                                              "owner": {"login": "TMap-Works"}}}
+            ],
+        }
+        with mock.patch.object(milestone_plan, "gh_json",
+                               FakeHub([issue(20)], [ailleurs])):
+            self.assertEqual(milestone_plan.fetch_busy(), {})
 
 
 class WithheldBy(unittest.TestCase):
