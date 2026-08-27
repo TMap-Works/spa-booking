@@ -79,6 +79,27 @@ enum AppointmentStatus {
   NO_SHOW
 }
 
+/// Qui a annulé le rendez-vous — booking-engine §5, « consigner `cancelled_at`,
+/// `cancelled_by` (client / staff / système) et `cancellation_reason` ».
+///
+/// Ce n'est pas une redite de `UserRole` : la question posée n'est pas « quel
+/// droit avait l'auteur ? » mais « de quel côté du comptoir la décision
+/// vient-elle ? ». Le reporting no-show du CDC §1.4 distingue une cliente qui se
+/// décommande d'un salon qui ferme sa journée, et les deux se lisent tout
+/// autrement dans un taux d'annulation. Un `MANAGER` qui annule est un
+/// `STAFF` de ce point de vue-là.
+///
+/// `SYSTEM` n'est écrit par aucune surface HTTP aujourd'hui : il nomme d'avance
+/// l'annulation automatique — purge des `PENDING` jamais payés, fermeture
+/// exceptionnelle propagée. Le déclarer maintenant évite d'avoir à migrer un
+/// type d'énumération le jour où cette annulation-là existera ; l'y ajouter
+/// ensuite aurait coûté une migration de plus pour une valeur déjà prévue.
+enum AppointmentCancelledBy {
+  CLIENT
+  STAFF
+  SYSTEM
+}
+
 /// Moyen d'encaissement au comptoir — CDC §1.4 « carte/espèces ».
 enum PaymentMethod {
   CARD
@@ -712,8 +733,25 @@ model Appointment {
   clientNote String? @map("client_note") @db.VarChar(2000)
   staffNote  String? @map("staff_note") @db.VarChar(2000)
 
-  cancelledAt        DateTime? @map("cancelled_at") @db.Timestamptz(6)
-  cancellationReason String?   @map("cancellation_reason") @db.VarChar(500)
+  /// Traçabilité de l'annulation — #40, booking-engine §5.
+  ///
+  /// Les trois colonnes se lisent ensemble, et `cancelled_at` est celle qui les
+  /// gouverne : nulle, le rendez-vous n'a jamais été annulé et les deux autres
+  /// n'ont aucun sens. Le service d'annulation les écrit d'un seul geste.
+  ///
+  /// `cancelled_by` reste nullable après #40, et c'est délibéré : le report
+  /// (#39) annule lui aussi la ligne d'origine, sans qu'il y ait là d'auteur
+  /// d'annulation à nommer — ce n'est pas un abandon, et ce qui le dit est le
+  /// `rescheduled_from_id` que porte le successeur. Un `NOT NULL` aurait obligé
+  /// à ranger le report sous l'un des trois auteurs, et à fausser le taux
+  /// d'annulation d'autant.
+  ///
+  /// `cancellation_reason` est un **texte libre saisi par un humain** : il ne
+  /// part dans aucun événement de domaine ni dans aucun journal (RGPD, CDC
+  /// §5.1). Qui en a besoin relit la ligne.
+  cancelledAt        DateTime?               @map("cancelled_at") @db.Timestamptz(6)
+  cancelledBy        AppointmentCancelledBy? @map("cancelled_by")
+  cancellationReason String?                 @map("cancellation_reason") @db.VarChar(500)
 
   /// Le rendez-vous que celui-ci **remplace** — la chaîne de report (#39,
   /// booking-engine §5).
