@@ -113,9 +113,15 @@ propre : personne ne doit s'appuyer sur l'état de cette base. Et `perimetre` li
 des décorateurs, pas un arbre TypeScript — une route construite dynamiquement lui
 échappera, `api_openapi` restant alors le seul juge de ce qui est servi.
 
-**Ce qui reste à la charge de l'opérateur.** Le réglage
-`enableAllProjectMcpServers` doit être posé dans `.claude/settings.json` pour que
-les vagues `claude -p` chargent les serveurs sans invite de confiance. Tant qu'il
-ne l'est pas, la recette n'existe que dans les sessions interactives ayant
-approuvé le `.mcp.json`, et les tickets d'une vague journaliseront la phase comme
-sautée faute d'outils — ce qui est visible, mais silencieux.
+**Ce que l'activation autorise.** `enableAllProjectMcpServers` est posé dans
+`.claude/settings.json` (#292) : sans lui, un `.mcp.json` versionné demande une
+approbation de confiance à la première utilisation, et une session `claude -p`
+n'a personne pour la donner — les tickets d'une vague journaliseraient la phase
+comme sautée faute d'outils, ce qui est visible mais silencieux.
+
+Ce que ce réglage dit exactement : **tout** serveur déclaré dans `.mcp.json`
+démarre sans être approuvé un par un. La confiance ne porte donc plus sur les
+serveurs mais sur le fichier qui les déclare — c'est-à-dire sur la revue de la PR
+qui le modifie. Un serveur MCP est un processus local avec les droits de la
+session : ajouter une entrée à `.mcp.json` est un changement de la même gravité
+qu'ajouter un `postinstall` au `package.json`, et se relit comme tel.
