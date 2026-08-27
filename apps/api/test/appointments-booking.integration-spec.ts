@@ -1,0 +1,302 @@
+import request from 'supertest';
+
+import type { AppointmentCreatedEvent } from '../src/modules/appointments/events/appointment-created.event';
+import {
+  BUFFER_AFTER_MINUTES,
+  BUFFER_BEFORE_MINUTES,
+  bookableSlot,
+  createAppointmentsHarness,
+  SERVICE_PRICE_MINOR,
+  type AppointmentsHarness,
+} from './appointments.harness';
+
+/**
+ * `POST /api/v1/public/:tenantSlug/appointments` — la réservation du tunnel
+ * public, exercée en HTTP (#37).
+ *
+ * L'application est la **vraie** : préfixe, versionnement, `ValidationPipe`
+ * global, `DomainExceptionFilter`, et `TenantScopeMiddleware` qui résout le slug
+ * d'URL contre la table `tenants`. Ce qui est prouvé ici et nulle part ailleurs :
+ *
+ * 1. la route est **servie** — un contrôleur oublié dans les `controllers` de son
+ *    module compile, passe ses tests unitaires, et rend 404 en vrai ;
+ * 2. le corps invalide sort en 400 `{ code, message, details }`, la forme
+ *    d'erreur de toute l'API ;
+ * 3. la durée **enregistrée** inclut les deux tampons, alors que la réponse rend
+ *    l'intervalle facturé ;
+ * 4. un créneau déjà pris sort en 409 `SLOT_NO_LONGER_AVAILABLE` ;
+ * 5. réserver sans compte crée la fiche cliente, et une seule ;
+ * 6. l'événement `appointment.created` part réellement.
+ *
+ * L'isolation inter-tenant a sa suite propre — `appointments-tenant.isolation-spec.ts`.
+ */
+
+const BOOKING_PATH = (slug: string): string => `/api/v1/public/${slug}/appointments`;
+
+const MINUTE_MS = 60_000;
+
+function guest(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    firstName: 'Camille',
+    lastName: 'Rakoto',
+    email: 'camille@example.test',
+    phone: '+261 34 12 345 67',
+    ...overrides,
+  };
+}
+
+describe('POST /api/v1/public/:tenantSlug/appointments', () => {
+  let harness: AppointmentsHarness;
+  let slot: ReturnType<typeof bookableSlot>;
+
+  beforeEach(async () => {
+    harness = await createAppointmentsHarness();
+    slot = bookableSlot();
+  });
+
+  afterEach(async () => {
+    await harness.close();
+  });
+
+  const body = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
+    serviceId: harness.a.serviceId,
+    staffId: harness.a.staffId,
+    startsAt: slot.startsAt.toISOString(),
+    client: guest(),
+    ...overrides,
+  });
+
+  it('réserve un créneau proposé et rend 201 avec l’intervalle facturé', async () => {
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .send(body());
+
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({
+      status: 'PENDING',
+      serviceId: harness.a.serviceId,
+      staffId: harness.a.staffId,
+      startsAt: slot.startsAt.toISOString(),
+      endsAt: slot.endsAt.toISOString(),
+      price: { amountMinor: SERVICE_PRICE_MINOR, currency: 'EUR' },
+      clientNote: null,
+    });
+    // Ni `tenantId`, ni `staffNote` : ce que le `select` ne lit pas ne peut pas
+    // franchir la frontière du module par inadvertance.
+    expect(response.body).not.toHaveProperty('tenantId');
+    expect(response.body).not.toHaveProperty('staffNote');
+  });
+
+  it('enregistre l’intervalle occupé, tampons compris', async () => {
+    await request(harness.server()).post(BOOKING_PATH(harness.a.tenant.slug)).send(body());
+
+    const stored = harness.appointments.appointments[0];
+    expect(stored?.startsAt.getTime()).toBe(
+      slot.startsAt.getTime() - BUFFER_BEFORE_MINUTES * MINUTE_MS,
+    );
+    expect(stored?.endsAt.getTime()).toBe(slot.endsAt.getTime() + BUFFER_AFTER_MINUTES * MINUTE_MS);
+    expect(stored?.status).toBe('PENDING');
+    expect(stored?.tenantId).toBe(harness.a.tenant.id);
+  });
+
+  it('crée la fiche cliente depuis les seules coordonnées, sans compte', async () => {
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .send(body());
+
+    expect(harness.appointments.clients).toHaveLength(1);
+    const client = harness.appointments.clients[0];
+    expect(client?.email).toBe('camille@example.test');
+    expect(client?.tenantId).toBe(harness.a.tenant.id);
+    expect(response.body.clientId).toBe(client?.id);
+  });
+
+  it('ne crée qu’une fiche pour deux réservations de la même adresse', async () => {
+    const second = bookableSlot();
+    // Le créneau suivant sur la grille : quinze minutes plus loin, donc sans
+    // chevauchement avec l'intervalle occupé du premier (80 min à partir de
+    // 10:00 occupé) — on décale d'une heure et demie pour être net.
+    const later = new Date(second.startsAt.getTime() + 90 * MINUTE_MS).toISOString();
+
+    await request(harness.server()).post(BOOKING_PATH(harness.a.tenant.slug)).send(body());
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .send(body({ startsAt: later }));
+
+    expect(response.status).toBe(201);
+    expect(harness.appointments.clients).toHaveLength(1);
+    expect(harness.appointments.appointments).toHaveLength(2);
+  });
+
+  it('émet appointment.created', async () => {
+    const received: AppointmentCreatedEvent[] = [];
+    const off = harness.events.onAppointmentCreated((event) => received.push(event));
+
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .send(body());
+    off();
+
+    expect(received).toHaveLength(1);
+    expect(received[0]).toMatchObject({
+      name: 'appointment.created',
+      tenantId: harness.a.tenant.id,
+      appointmentId: response.body.id,
+      startsAt: slot.startsAt.toISOString(),
+      endsAt: slot.endsAt.toISOString(),
+    });
+  });
+
+  it('refuse en 409 SLOT_NO_LONGER_AVAILABLE un créneau déjà pris', async () => {
+    const first = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .send(body());
+    expect(first.status).toBe(201);
+
+    const second = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .send(body({ client: guest({ email: 'autre@example.test' }) }));
+
+    expect(second.status).toBe(409);
+    expect(second.body).toMatchObject({ code: 'SLOT_NO_LONGER_AVAILABLE' });
+    // `details` ne porte que ce que l'appelant a lui-même envoyé — rien du
+    // rendez-vous concurrent, sans quoi la réservation deviendrait une sonde
+    // d'agenda.
+    expect(second.body.details).toEqual({
+      staffId: harness.a.staffId,
+      startsAt: slot.startsAt.toISOString(),
+    });
+    expect(harness.appointments.appointments).toHaveLength(1);
+  });
+
+  it('refuse en 409 un instant que le calendrier ne propose pas', async () => {
+    const offGrid = new Date(slot.startsAt.getTime() + 7 * MINUTE_MS).toISOString();
+
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .send(body({ startsAt: offGrid }));
+
+    expect(response.status).toBe(409);
+    expect(harness.appointments.appointments).toHaveLength(0);
+    expect(harness.appointments.clients).toHaveLength(0);
+  });
+
+  it('refuse en 404 une prestation retirée du catalogue', async () => {
+    const service = harness.catalog.services.find(
+      (candidate) => candidate.id === harness.a.serviceId,
+    );
+    if (service !== undefined) {
+      service.isActive = false;
+    }
+
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .send(body());
+
+    expect(response.status).toBe(404);
+    expect(response.body).toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  it('borne le débit d’une même adresse, agenda et fichier clients compris', async () => {
+    // Onze tirs de suite : le premier réserve, les neuf suivants se heurtent au
+    // créneau qu'il vient de prendre — et le onzième ne va même pas jusque-là.
+    // Sans quota, ce même script prend tous les créneaux libres du salon en
+    // quelques secondes, avec des `PENDING` qui occupent l'agenda dès leur
+    // création.
+    let last: request.Response | undefined;
+    for (let attempt = 0; attempt < 11; attempt += 1) {
+      // Séquentiel, et non parallèle : la limitation de débit se compte requête
+      // après requête, et un tir groupé ne prouverait pas quel appel a franchi le
+      // seuil.
+      last = await request(harness.server()).post(BOOKING_PATH(harness.a.tenant.slug)).send(body());
+    }
+
+    expect(last?.status).toBe(429);
+    expect(harness.appointments.appointments).toHaveLength(1);
+  });
+
+  it('refuse en 404 un slug d’établissement inconnu, avant tout code métier', async () => {
+    const response = await request(harness.server())
+      .post(BOOKING_PATH('salon-qui-n-existe-pas'))
+      .send(body());
+
+    expect(response.status).toBe(404);
+    expect(harness.appointments.appointments).toHaveLength(0);
+  });
+
+  describe('validation du corps', () => {
+    it('refuse une date-heure sans offset explicite', async () => {
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body({ startsAt: '2026-09-01T10:00:00' }));
+
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({ code: expect.any(String), message: expect.any(String) });
+      expect(response.body).toHaveProperty('details');
+    });
+
+    it('refuse un corps sans coordonnées plutôt que de tomber en 500', async () => {
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send({
+          serviceId: harness.a.serviceId,
+          staffId: harness.a.staffId,
+          startsAt: slot.startsAt.toISOString(),
+        });
+
+      expect(response.status).toBe(400);
+    });
+
+    it('refuse une adresse e-mail invalide', async () => {
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body({ client: guest({ email: 'pas-une-adresse' }) }));
+
+      expect(response.status).toBe(400);
+    });
+
+    it('rejette un `tenantId` glissé dans le corps', async () => {
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body({ tenantId: harness.b.tenant.id }));
+
+      // `forbidNonWhitelisted` : le champ n'est pas ignoré, il fait échouer la
+      // requête. C'est ce qui rend visible une tentative plutôt que de la laisser
+      // passer sans effet.
+      expect(response.status).toBe(400);
+      expect(harness.appointments.appointments).toHaveLength(0);
+    });
+
+    it('rejette un `price` imposé par le client', async () => {
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body({ price: { amountMinor: 1, currency: 'EUR' } }));
+
+      expect(response.status).toBe(400);
+    });
+
+    it('rejette un `endsAt` imposé par le client', async () => {
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body({ endsAt: slot.endsAt.toISOString() }));
+
+      expect(response.status).toBe(400);
+    });
+
+    it('canonise l’adresse e-mail avant de chercher la fiche', async () => {
+      harness.appointments.seedClient({
+        tenantId: harness.a.tenant.id,
+        email: 'camille@example.test',
+      });
+
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body({ client: guest({ email: '  Camille@Example.TEST  ' }) }));
+
+      expect(response.status).toBe(201);
+      // Une seule fiche : sans canonisation, l'unicité `(tenant_id, email)`
+      // porterait sur les octets et une seconde fiche serait née.
+      expect(harness.appointments.clients).toHaveLength(1);
+    });
+  });
+});
