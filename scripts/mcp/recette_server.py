@@ -29,13 +29,20 @@ retrouver ce que la CI a déjà dit.
 | `arreter` | tue ce que ce serveur a démarré |
 | `rapport` | le tableau des appels, à coller sur la PR |
 
-## Trois propriétés que le dispositif doit tenir
+## Quatre propriétés que le dispositif doit tenir
 
 - **Aucun secret ne sort d'ici.** Les valeurs d'environnement servent à démarrer
   l'API, jamais à être rendues. Tout ce qui repart vers l'agent passe par
   `masquer()` : jetons JWT, mots de passe, valeurs de `.env`.
 - **Deux agents d'une même vague ne se gênent pas.** Le port est alloué libre, et
   le jeu d'essai est cloisonné par numéro de ticket.
+- **On recette le dépôt du ticket, pas celui du serveur.** Un agent travaille
+  dans son worktree ; le serveur stdio, lui, a été lancé par la session de la
+  vague depuis le dépôt principal, et il ne peut pas suivre l'agent qui entre
+  dans le sien. La racine se **dit** donc — `ticket`, ou `racine` — et à défaut
+  d'indication, quand des worktrees de ticket sont ouverts, les outils
+  **refusent** plutôt que de lire le mauvais dépôt (#304). Voir
+  `resoudre_racine`.
 - **Rien ne survit à la session.** `arreter` est rejoué à la sortie du serveur,
   quoi qu'il arrive.
 
@@ -63,10 +70,15 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+# La racine du dépôt d'où **ce serveur** a été lancé — pas forcément celle du
+# ticket en cours. Une vague de `/milestone` lance sa session `claude -p` depuis
+# le dépôt principal, et l'agent entre ensuite dans son worktree : un serveur
+# stdio déjà démarré ne peut pas suivre (#304). La racine de la recette se
+# **dit** donc, elle ne se devine pas — voir `resoudre_racine`.
 RACINE = Path(__file__).resolve().parents[2]
 
 NOM_SERVEUR = "recette"
-VERSION_SERVEUR = "1.0.0"
+VERSION_SERVEUR = "1.1.0"
 
 # Version du protocole annoncée si le client en demande une inconnue. On rend
 # toujours **celle du client** quand elle nous est connue : c'est ce que demande
@@ -75,8 +87,20 @@ VERSION_SERVEUR = "1.0.0"
 PROTOCOLE_DEFAUT = "2025-06-18"
 PROTOCOLES_CONNUS = {"2024-11-05", "2025-03-26", "2025-06-18"}
 
-# Journaux des processus démarrés. Ignoré par git, effaçable sans conséquence.
-TRAVAIL = RACINE / ".claude" / ".recette"
+# Le dépôt sur lequel porte la recette en cours : résolu par le premier outil qui
+# le nomme, puis servi à tous les suivants. Un outil qui lirait le worktree et un
+# autre le dépôt principal rendraient ensemble un verdict qui ne veut rien dire.
+RACINE_ACTIVE = {"chemin": None, "origine": None}
+
+
+def racine_active() -> Path:
+    """Le dépôt de la recette en cours, à défaut celui d'où le serveur a été lancé."""
+    return RACINE_ACTIVE["chemin"] or RACINE
+
+
+def travail(racine: Path | None = None) -> Path:
+    """Journaux des processus démarrés. Ignoré par git, effaçable sans conséquence."""
+    return (racine or racine_active()) / ".claude" / ".recette"
 
 # Les ports que publie `docker-compose.yml`, et non les ports standards : un
 # PostgreSQL natif ou le conteneur d'un autre projet peut tenir 5432 ou 6379
@@ -116,18 +140,26 @@ def charger_env(racine: Path | None = None, environnement=None) -> dict:
     `docker-compose.yml` — un port déjà pris par un PostgreSQL natif, par
     exemple, cas rencontré sur la machine de développement du projet.
     """
-    base = racine or RACINE
+    base = Path(racine or racine_active())
+    # Deux dépôts, dans cet ordre : celui d'où le serveur a été lancé, puis celui
+    # du ticket, qui l'emporte. `.env` et `.env.local` sont **gitignorés** — un
+    # worktree fraîchement créé ne les porte donc jamais, et n'y lire que lui
+    # laisserait la recette sans DATABASE_URL ni secret local (#304). Le dépôt
+    # principal reste la seule source de ces valeurs-là.
+    bases = [RACINE] if base != RACINE else []
+    bases.append(base)
     valeurs = {}
-    for nom in FICHIERS_ENV:
-        chemin = base / nom
-        if not chemin.is_file():
-            continue
-        for ligne in chemin.read_text(encoding="utf-8", errors="replace").splitlines():
-            ligne = ligne.strip()
-            if not ligne or ligne.startswith("#") or "=" not in ligne:
+    for socle in bases:
+        for nom in FICHIERS_ENV:
+            chemin = socle / nom
+            if not chemin.is_file():
                 continue
-            cle, _, valeur = ligne.partition("=")
-            valeurs[cle.strip()] = valeur.strip().strip('"').strip("'")
+            for ligne in chemin.read_text(encoding="utf-8", errors="replace").splitlines():
+                ligne = ligne.strip()
+                if not ligne or ligne.startswith("#") or "=" not in ligne:
+                    continue
+                cle, _, valeur = ligne.partition("=")
+                valeurs[cle.strip()] = valeur.strip().strip('"').strip("'")
 
     reel = os.environ if environnement is None else environnement
     for cle in list(valeurs):
@@ -527,7 +559,12 @@ def _git(args, racine: Path):
         return []
     if sortie.returncode != 0:
         return []
-    return [l.strip() for l in sortie.stdout.splitlines() if l.strip()]
+    # Les lignes sont rendues **telles quelles**, sans `strip()`. Le format
+    # porcelain de `git status` est à colonnes fixes : deux caractères d'état
+    # puis une espace. Un fichier modifié mais non indexé sort « ␣M chemin » —
+    # rogner l'espace de tête décalait tout d'un cran et rendait « cripts/… »,
+    # classé « autre », donc un faux « saut: true » (#304).
+    return [l for l in sortie.stdout.splitlines() if l.strip()]
 
 
 def fichiers_modifies(base: str, racine: Path):
@@ -536,7 +573,7 @@ def fichiers_modifies(base: str, racine: Path):
     Les deux, parce que la recette a lieu en phase 4bis : une partie du travail
     est déjà commitée (phase 3), le reste ne l'est pas encore (phase 6).
     """
-    chemins = set(_git(["diff", "--name-only", "%s...HEAD" % base], racine))
+    chemins = {l.strip() for l in _git(["diff", "--name-only", "%s...HEAD" % base], racine)}
     # `-uall` et non le défaut : sans lui, git rend « scripts/mcp/ » — le dossier
     # entier pour un seul fichier neuf — et le classement porterait sur un chemin
     # qui n'existe pas.
@@ -547,6 +584,124 @@ def fichiers_modifies(base: str, racine: Path):
         if chemin:
             chemins.add(chemin.strip('"'))
     return sorted(c.replace("\\", "/") for c in chemins if c)
+
+
+BRANCHE_TICKET = re.compile(r"^(?:feature|bugfix|hotfix|chore|docs)/(\d+)-")
+# La branche que `EnterWorktree` pose **avant** le renommage de la phase 1 de
+# `/ticket` : préfixe « worktree- », « / » remplacé par « + ». Un agent tué entre
+# les deux la garde, et son worktree porte pourtant bien son ticket. Mêmes deux
+# formes que `live_worktrees()` de `milestone_run.py`, pour la même raison.
+BRANCHE_WORKTREE = re.compile(r"^worktree-(?:feature|bugfix|hotfix|chore|docs)\+(\d+)-")
+
+
+def _inventaire_worktrees(racine: Path):
+    """Les dépôts liés visibles depuis `racine`, et le ticket que porte chacun.
+
+    `git worktree list` rend le dépôt principal en premier, puis les liés —
+    c'est ce qui distingue l'un des autres, le format porcelain ne le disant pas.
+    """
+    entrees, courante = [], None
+    for ligne in _git(["worktree", "list", "--porcelain"], racine):
+        cle, _, valeur = ligne.partition(" ")
+        if cle == "worktree":
+            # `resolve()` dès la lecture : git rend le chemin tel qu'il l'a
+            # enregistré — séparateurs et casse compris, sous Windows — et ce
+            # chemin est ensuite comparé à `RACINE`, qui est résolue, elle.
+            courante = {"chemin": Path(valeur).resolve(), "branche": "", "principal": not entrees}
+            entrees.append(courante)
+        elif cle == "branch" and courante is not None:
+            courante["branche"] = valeur.replace("refs/heads/", "")
+    for entree in entrees:
+        trouve = BRANCHE_TICKET.match(entree["branche"]) or BRANCHE_WORKTREE.match(entree["branche"])
+        entree["ticket"] = int(trouve.group(1)) if trouve else None
+    return entrees
+
+
+def _numero(valeur):
+    """« 304 », 304 ou « #304 » → 304 ; `None` si ce n'en est pas un."""
+    trouve = re.search(r"\d+", str(valeur if valeur is not None else ""))
+    return int(trouve.group()) if trouve else None
+
+
+def _retenir(chemin: Path, origine: str, memoriser: bool):
+    if memoriser:
+        RACINE_ACTIVE["chemin"], RACINE_ACTIVE["origine"] = chemin, origine
+    return chemin, origine, None
+
+
+def resoudre_racine(args=None, memoriser: bool = True):
+    """Le dépôt sur lequel porte la recette. Rend `(racine, origine, refus)`.
+
+    Trois façons de le savoir, dans cet ordre de préséance : le chemin donné, le
+    worktree que porte le numéro de ticket, la racine déjà résolue pour ce
+    ticket. À défaut, celle du serveur — **mais seulement si elle ne peut pas
+    tromper**.
+
+    Quand rien n'est dit et que des worktrees de ticket sont ouverts à côté, on
+    refuse au lieu de répondre à côté. C'est délibéré : le vrai danger de #304
+    n'était pas le ticket bloqué, c'était le « saut: true » silencieux rendu sur
+    le diff du dépôt principal — une phase de recette réputée bloquante qui
+    n'exerçait rien, sans que personne ne puisse s'en apercevoir.
+    """
+    args = args or {}
+
+    demande = args.get("racine")
+    if demande:
+        chemin = Path(demande)
+        if not chemin.is_absolute():
+            chemin = RACINE / chemin
+        chemin = chemin.resolve()
+        if not (chemin / ".git").exists():
+            return None, None, {
+                "erreur": "« %s » n'est pas un dépôt git — aucun périmètre ne peut en être tiré." % demande,
+                "racine_du_serveur": str(RACINE),
+            }
+        return _retenir(chemin, "argument « racine »", memoriser)
+
+    numero = _numero(args.get("ticket")) if args.get("ticket") not in (None, "") else None
+    if numero is not None:
+        for entree in _inventaire_worktrees(RACINE):
+            if entree["ticket"] == numero:
+                return _retenir(
+                    entree["chemin"],
+                    "worktree du ticket %d (%s)" % (numero, entree["branche"]),
+                    memoriser,
+                )
+        # Le ticket est nommé et aucun worktree ne le porte : c'est un `/ticket
+        # --no-worktree`, ou un run mené dans le dépôt lui-même. Sans ambiguïté.
+        return _retenir(RACINE, "racine du serveur — aucun worktree ne porte le ticket %d" % numero, memoriser)
+
+    if RACINE_ACTIVE["chemin"]:
+        return RACINE_ACTIVE["chemin"], RACINE_ACTIVE["origine"], None
+
+    inventaire = _inventaire_worktrees(RACINE)
+    ici = next((e for e in inventaire if not e["principal"] and e["chemin"] == RACINE), None)
+    if ici is not None:
+        # Le serveur a été lancé depuis un worktree : c'est lui, le dépôt du
+        # ticket, et le dire ne coûte rien à personne.
+        return _retenir(RACINE, "racine du serveur — lui-même worktree lié (%s)" % (ici["branche"] or "détaché"), memoriser)
+
+    candidats = [e for e in inventaire if e["ticket"] is not None and not e["principal"]]
+    if not candidats:
+        return _retenir(RACINE, "racine du serveur — aucun worktree de ticket ouvert", memoriser)
+
+    return None, None, {
+        "erreur": (
+            "impossible de savoir de quel dépôt il s'agit : %d worktree(s) de ticket sont ouverts "
+            "à côté du dépôt principal, et rien ne dit lequel ce ticket occupe. Ce serveur a été "
+            "lancé depuis « %s » — ce n'est pas forcément là que le travail se trouve (#304)."
+            % (len(candidats), RACINE)
+        ),
+        "remede": (
+            "rappeler l'outil avec le numéro d'issue — « ticket »: « 304 » — ou avec « racine » "
+            "pour désigner un dépôt par son chemin."
+        ),
+        "racine_du_serveur": str(RACINE),
+        "worktrees": [
+            {"ticket": e["ticket"], "branche": e["branche"], "chemin": str(e["chemin"])}
+            for e in candidats
+        ],
+    }
 
 
 def _symbole(nom_fichier: str) -> str:
@@ -615,7 +770,7 @@ def calculer_perimetre(base: str = "origin/develop", racine: Path | None = None,
     diff. Le verdict `saut` est motivé — un agent qui saute la recette doit
     pouvoir écrire **pourquoi** dans son journal.
     """
-    racine = racine or RACINE
+    racine = racine or racine_active()
     chemins = list(fichiers) if fichiers is not None else fichiers_modifies(base, racine)
 
     par_nature = {}
@@ -669,6 +824,9 @@ def calculer_perimetre(base: str = "origin/develop", racine: Path | None = None,
 
     return {
         "base": base,
+        # Le dépôt lu, toujours rendu : c'est ce qui permet à un agent — ou à un
+        # relecteur de journal — de voir d'un coup d'œil qu'on a inspecté le bon.
+        "racine": str(racine),
         "fichiers": {nature: sorted(liste) for nature, liste in sorted(par_nature.items())},
         "api": {"routes": routes},
         "web": {"cibles": cibles},
@@ -704,7 +862,7 @@ def _executable(nom: str) -> str:
 
 def _demarrer(commande, cwd: Path, env: dict, journal: Path):
     """Lance un processus détaché, sa sortie dans un fichier."""
-    TRAVAIL.mkdir(parents=True, exist_ok=True)
+    journal.parent.mkdir(parents=True, exist_ok=True)
     flux = open(journal, "w", encoding="utf-8", errors="replace")
     options = {}
     if sys.platform == "win32":
@@ -782,22 +940,23 @@ def _arreter_tout():
 atexit.register(_arreter_tout)
 
 
-def _horodatage_dist():
+def _horodatage_dist(racine: Path | None = None):
     """Date de la compilation servie, ou `None` si `dist/` est absent."""
-    dist = RACINE / "apps" / "api" / "dist" / "main.js"
+    dist = (racine or racine_active()) / "apps" / "api" / "dist" / "main.js"
     return dist.stat().st_mtime if dist.is_file() else None
 
 
-def _dist_perimee() -> bool:
+def _dist_perimee(racine: Path | None = None) -> bool:
     """La compilation est-elle en retard sur les sources ?
 
     Recetter un `dist/` périmé est pire que ne pas recetter : le verdict porte
     sur du code que le ticket a déjà remplacé.
     """
-    reference = _horodatage_dist()
+    racine = racine or racine_active()
+    reference = _horodatage_dist(racine)
     if reference is None:
         return True
-    src = RACINE / "apps" / "api" / "src"
+    src = racine / "apps" / "api" / "src"
     for fichier in src.rglob("*.ts"):
         if fichier.stat().st_mtime > reference:
             return True
@@ -805,22 +964,31 @@ def _dist_perimee() -> bool:
 
 
 def outil_api_demarrer(args: dict) -> dict:
+    racine, _, refus = resoudre_racine(args)
+    if refus:
+        return refus
     port_demande = args.get("port")
     attente = float(args.get("attente", 90))
     construire = args.get("construire", True)
 
-    env_fichiers = charger_env()
+    env_fichiers = charger_env(racine)
     secrets = secrets_de(env_fichiers)
 
     if ETAT.get("api"):
         base = ETAT["api"]["base"]
         # Réutiliser un processus lancé **avant** une recompilation ferait porter
         # la recette sur le code que le ticket vient justement de remplacer : la
-        # panne exacte que `_dist_perimee` existe pour éviter.
-        rejoue = _horodatage_dist() != ETAT["api"].get("dist") or _dist_perimee()
+        # panne exacte que `_dist_perimee` existe pour éviter. Un changement de
+        # dépôt vaut recompilation — c'est un autre code source.
+        rejoue = (
+            str(racine) != ETAT["api"].get("racine")
+            or _horodatage_dist(racine) != ETAT["api"].get("dist")
+            or _dist_perimee(racine)
+        )
         sante = http("GET", base + "/health", delai=5) if not rejoue else {}
         if sante.get("statut"):
-            return {"base_url": base, "port": ETAT["api"]["port"], "reutilise": True, "sante": sante.get("statut")}
+            return {"base_url": base, "port": ETAT["api"]["port"], "reutilise": True,
+                    "racine": ETAT["api"].get("racine"), "sante": sante.get("statut")}
         _arreter("api")
 
     # Les dépendances locales d'abord : une API qui démarre sans base rend 500
@@ -837,12 +1005,12 @@ def outil_api_demarrer(args: dict) -> dict:
             }
 
     construction = None
-    if _dist_perimee():
+    if _dist_perimee(racine):
         if not construire:
             return {"erreur": "apps/api/dist est absent ou périmé — relancer « npm run build » ou passer construire=true."}
         sortie = subprocess.run(
             [_executable("npm"), "run", "build", "-w", "@spa/api"],
-            cwd=str(RACINE),
+            cwd=str(racine),
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -863,10 +1031,10 @@ def outil_api_demarrer(args: dict) -> dict:
     env["NODE_ENV"] = "development"
     env["API_URL"] = "http://127.0.0.1:%d" % port
 
-    journal = TRAVAIL / ("api-%d.log" % port)
+    journal = travail(racine) / ("api-%d.log" % port)
     processus, flux = _demarrer(
         [_executable("node"), "dist/main.js"],
-        RACINE / "apps" / "api",
+        racine / "apps" / "api",
         env,
         journal,
     )
@@ -902,11 +1070,13 @@ def outil_api_demarrer(args: dict) -> dict:
         return resultat
 
     ETAT["api"] = {"proc": processus, "flux": flux, "port": port, "base": base,
-                   "journal": str(journal), "dist": _horodatage_dist()}
+                   "journal": str(journal), "dist": _horodatage_dist(racine),
+                   "racine": str(racine)}
     return {
         "base_url": base,
         "port": port,
         "pid": processus.pid,
+        "racine": str(racine),
         "sante": json.loads(sante.get("corps") or "{}") if sante.get("corps", "").startswith("{") else sante.get("statut"),
         "compilation": construction or "à jour",
         "journal": str(journal),
@@ -915,8 +1085,12 @@ def outil_api_demarrer(args: dict) -> dict:
 
 def outil_api_jeu_dessai(args: dict) -> dict:
     """Établissement, comptes des quatre rôles, établissement voisin — via Prisma."""
-    ticket = str(args.get("ticket") or "0")
-    env_fichiers = charger_env()
+    racine, _, refus = resoudre_racine(args)
+    if refus:
+        return refus
+    numero = _numero(args.get("ticket"))
+    ticket = str(numero) if numero is not None else str(args.get("ticket") or "0")
+    env_fichiers = charger_env(racine)
     secrets = secrets_de(env_fichiers)
 
     joignable, adresse = service_joignable(env_fichiers.get("DATABASE_URL", ""), PORT_POSTGRES)
@@ -927,8 +1101,8 @@ def outil_api_jeu_dessai(args: dict) -> dict:
     env.update(env_fichiers)
 
     sortie = subprocess.run(
-        [_executable("node"), str(RACINE / "scripts" / "mcp" / "recette_fixture.mjs"), "--ticket", ticket],
-        cwd=str(RACINE),
+        [_executable("node"), str(racine / "scripts" / "mcp" / "recette_fixture.mjs"), "--ticket", ticket],
+        cwd=str(racine),
         env=env,
         capture_output=True,
         text=True,
@@ -1073,15 +1247,22 @@ def outil_api_appel(args: dict) -> dict:
 
 def outil_web_demarrer(args: dict) -> dict:
     """Sert le front — l'application Next si elle existe, les maquettes sinon."""
+    racine, _, refus = resoudre_racine(args)
+    if refus:
+        return refus
     if ETAT.get("web"):
+        # Un changement de dépôt condamne l'instance en place au même titre
+        # qu'un front qui ne répond plus : elle sert d'autres sources.
         base = ETAT["web"]["base"]
-        if http("GET", base + "/", delai=5).get("statut"):
-            return {"base_url": base, "port": ETAT["web"]["port"], "reutilise": True, "mode": ETAT["web"]["mode"]}
+        meme_racine = str(racine) == ETAT["web"].get("racine")
+        if meme_racine and http("GET", base + "/", delai=5).get("statut"):
+            return {"base_url": base, "port": ETAT["web"]["port"], "reutilise": True,
+                    "racine": ETAT["web"].get("racine"), "mode": ETAT["web"]["mode"]}
         _arreter("web")
 
     port = port_libre(args.get("port"))
     attente = float(args.get("attente", 120))
-    paquet = RACINE / "apps" / "web" / "package.json"
+    paquet = racine / "apps" / "web" / "package.json"
     scripts = {}
     if paquet.is_file():
         try:
@@ -1089,23 +1270,23 @@ def outil_web_demarrer(args: dict) -> dict:
         except ValueError:
             scripts = {}
 
-    env_fichiers = charger_env()
+    env_fichiers = charger_env(racine)
     secrets = secrets_de(env_fichiers)
     env = os.environ.copy()
     env.update(env_fichiers)
     env["PORT"] = str(port)
 
-    journal = TRAVAIL / ("web-%d.log" % port)
+    journal = travail(racine) / ("web-%d.log" % port)
     if "dev" in scripts:
         mode = "next"
         commande = [_executable("npm"), "run", "dev", "-w", "@spa/web"]
-        cwd = RACINE
+        cwd = racine
     else:
         # Le front n'existe pas encore en Next : les maquettes HTML sont la seule
         # surface cliquable, et elles se recettent exactement de la même façon.
         mode = "statique"
-        commande = [sys.executable, "-m", "http.server", str(port), "--directory", str(RACINE / "apps" / "web")]
-        cwd = RACINE
+        commande = [sys.executable, "-m", "http.server", str(port), "--directory", str(racine / "apps" / "web")]
+        cwd = racine
 
     processus, flux = _demarrer(commande, cwd, env, journal)
     base = "http://127.0.0.1:%d" % port
@@ -1116,8 +1297,10 @@ def outil_web_demarrer(args: dict) -> dict:
         flux.close()
         return {"erreur": "le front n'a pas répondu sur %s en %ds" % (base, int(attente)), "journal": detail}
 
-    ETAT["web"] = {"proc": processus, "flux": flux, "port": port, "base": base, "mode": mode}
-    resultat = {"base_url": base, "port": port, "pid": processus.pid, "mode": mode, "journal": str(journal)}
+    ETAT["web"] = {"proc": processus, "flux": flux, "port": port, "base": base, "mode": mode,
+                   "racine": str(racine)}
+    resultat = {"base_url": base, "port": port, "pid": processus.pid, "mode": mode,
+                "racine": str(racine), "journal": str(journal)}
     if mode == "statique":
         resultat["maquettes"] = base + "/mockups/admin/index.html"
         resultat["note"] = "apps/web n'a pas de script « dev » : les maquettes statiques sont servies telles quelles."
@@ -1138,8 +1321,11 @@ def outil_arreter(args: dict) -> dict:
 def outil_rapport(args: dict) -> dict:
     """Le tableau des appels — ce qui se colle tel quel sur la PR."""
     appels = ETAT["appels"]
+    # La racine est rendue avec le tableau : c'est elle qui dit sur quel dépôt le
+    # verdict porte, et c'est ce tableau qui finit collé sur la PR.
     if not appels:
-        return {"markdown": "_Aucun appel de recette enregistré._", "total": 0, "echecs": 0}
+        return {"markdown": "_Aucun appel de recette enregistré._", "total": 0, "echecs": 0,
+                "racine": str(racine_active())}
 
     lignes = ["| Appel | Statut | Verdict | Durée |", "|---|---|---|---|"]
     echecs = 0
@@ -1157,17 +1343,45 @@ def outil_rapport(args: dict) -> dict:
         "markdown": "\n".join(lignes),
         "total": len(appels),
         "echecs": echecs,
+        "racine": str(racine_active()),
         "verdict": "rouge" if echecs else "vert",
     }
 
 
 def outil_perimetre(args: dict) -> dict:
-    return calculer_perimetre(base=args.get("base", "origin/develop"))
+    racine, origine, refus = resoudre_racine(args)
+    if refus:
+        return refus
+    verdict = calculer_perimetre(base=args.get("base", "origin/develop"), racine=racine)
+    verdict["racine_origine"] = origine
+    return verdict
 
 
 # --------------------------------------------------------------------------- #
 # Déclaration MCP
 # --------------------------------------------------------------------------- #
+
+# Les deux façons de désigner le dépôt sur lequel porte la recette. Communes à
+# tous les outils qui touchent au disque : sans elles, un agent qui travaille
+# dans un worktree recetterait le dépôt principal, où son diff n'existe pas
+# (#304). Le premier outil qui tranche fixe la racine pour tous les suivants.
+ARGS_RACINE = {
+    "ticket": {
+        "type": "string",
+        "description": (
+            "Numéro d'issue. Le worktree dont la branche porte ce numéro fait foi — "
+            "c'est la façon normale de désigner le dépôt, et la seule qui marche depuis "
+            "une vague de /milestone, dont le serveur a été lancé ailleurs."
+        ),
+    },
+    "racine": {
+        "type": "string",
+        "description": (
+            "Chemin du dépôt à inspecter, pour un dépôt sans branche de ticket. "
+            "L'emporte sur « ticket »."
+        ),
+    },
+}
 
 OUTILS = [
     {
@@ -1177,16 +1391,19 @@ OUTILS = [
             "routes API (méthode, chemin servi, rôle exigé, statut attendu) et pages web. "
             "Rend « saut: true » avec sa raison quand le diff ne touche ni API ni UI — "
             "dans ce cas la phase de recette se journalise « skipped » et s'arrête là. "
-            "À appeler EN PREMIER, avant tout démarrage."
+            "À appeler EN PREMIER, avant tout démarrage, et AVEC le numéro de ticket : "
+            "le dépôt lu est celui du ticket, pas celui d'où le serveur a été lancé. "
+            "Rend « racine » : vérifier que c'est bien le dépôt où le travail se trouve."
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {
-                "base": {
+            "properties": dict(
+                ARGS_RACINE,
+                base={
                     "type": "string",
                     "description": "Référence de comparaison. Par défaut « origin/develop ».",
-                }
-            },
+                },
+            ),
         },
         "fonction": outil_perimetre,
     },
@@ -1200,11 +1417,12 @@ OUTILS = [
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {
-                "port": {"type": "integer", "description": "Port souhaité ; un port libre est choisi s'il est pris."},
-                "attente": {"type": "number", "description": "Secondes d'attente de /health (90 par défaut)."},
-                "construire": {"type": "boolean", "description": "Compiler si dist/ est périmé (vrai par défaut)."},
-            },
+            "properties": dict(
+                ARGS_RACINE,
+                port={"type": "integer", "description": "Port souhaité ; un port libre est choisi s'il est pris."},
+                attente={"type": "number", "description": "Secondes d'attente de /health (90 par défaut)."},
+                construire={"type": "boolean", "description": "Compiler si dist/ est périmé (vrai par défaut)."},
+            ),
         },
         "fonction": outil_api_demarrer,
     },
@@ -1217,9 +1435,16 @@ OUTILS = [
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {
-                "ticket": {"type": "string", "description": "Numéro d'issue — cloisonne le jeu d'essai."}
-            },
+            "properties": dict(
+                ARGS_RACINE,
+                ticket={
+                    "type": "string",
+                    "description": (
+                        "Numéro d'issue — cloisonne le jeu d'essai, et désigne le dépôt : "
+                        "le worktree dont la branche porte ce numéro."
+                    ),
+                },
+            ),
             "required": ["ticket"],
         },
         "fonction": outil_api_jeu_dessai,
@@ -1276,10 +1501,11 @@ OUTILS = [
         ),
         "inputSchema": {
             "type": "object",
-            "properties": {
-                "port": {"type": "integer", "description": "Port souhaité ; un port libre est choisi s'il est pris."},
-                "attente": {"type": "number", "description": "Secondes d'attente (120 par défaut)."},
-            },
+            "properties": dict(
+                ARGS_RACINE,
+                port={"type": "integer", "description": "Port souhaité ; un port libre est choisi s'il est pris."},
+                attente={"type": "number", "description": "Secondes d'attente (120 par défaut)."},
+            ),
         },
         "fonction": outil_web_demarrer,
     },
