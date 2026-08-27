@@ -1,18 +1,10 @@
 import type { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
 
-import { AppModule } from '../src/app.module';
-import { configureApp } from '../src/bootstrap';
-import { AppConfigService } from '../src/config/app-config.service';
-import { CacheConnection } from '../src/infrastructure/cache/cache.connection';
-import { DatabaseConnection } from '../src/infrastructure/database/database.connection';
-import { IdentityRepository } from '../src/modules/identity/identity.repository';
-import { PasswordHasher } from '../src/modules/identity/password.hasher';
 import { REFRESH_COOKIE_NAME } from '../src/modules/identity/refresh-cookie';
 import { TokenService } from '../src/modules/identity/token.service';
-import { FakeIdentityRepository } from '../src/modules/identity/__tests__/identity.doubles';
-import { ProbeDouble } from './utils/test-app';
+import { expectCrossTenantNotFound } from './utils/tenant-assertions';
+import { createTenantHarness, TENANT_A, TENANT_B, type TenantHarness } from './utils/tenant-harness';
 
 /**
  * Isolation inter-tenant du module `identity` — obligatoire pour tout endpoint
@@ -25,80 +17,38 @@ import { ProbeDouble } from './utils/test-app';
  *
  * Deux établissements, la **même adresse e-mail** dans les deux — le cas que
  * `@@unique([tenantId, email])` autorise délibérément, et celui où une confusion
- * de tenant se voit.
+ * de tenant se voit. Les deux établissements, l'application et les jetons
+ * viennent du harnais partagé (`utils/tenant-harness.ts`, #27) ; cette suite ne
+ * décrit plus que ce qui lui est propre — deux comptes homonymes et leurs mots
+ * de passe.
  */
 
-const SALON_A = 'salon-des-lilas';
-const SALON_B = 'barbier-du-port';
+const SALON_A = TENANT_A.slug;
+const SALON_B = TENANT_B.slug;
 const EMAIL = 'alice@example.test';
 const PASSWORD_A = 'mot-de-passe-du-salon-a';
 const PASSWORD_B = 'mot-de-passe-du-barbier';
 
-interface Harness {
-  app: INestApplication;
-  repository: FakeIdentityRepository;
-  tenantA: string;
-  tenantB: string;
-  userA: string;
-  userB: string;
-  close(): Promise<void>;
-}
-
-async function createHarness(): Promise<Harness> {
-  const repository = new FakeIdentityRepository();
-  const tenantA = repository.addTenant(SALON_A);
-  const tenantB = repository.addTenant(SALON_B);
-
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(DatabaseConnection)
-    .useValue(new ProbeDouble())
-    .overrideProvider(CacheConnection)
-    .useValue(new ProbeDouble())
-    .overrideProvider(IdentityRepository)
-    .useValue(repository)
-    .compile();
-
-  const app = moduleRef.createNestApplication({ logger: false });
-  configureApp(app, app.get(AppConfigService));
-  await app.init();
-
-  const hasher = app.get(PasswordHasher);
-  const userA = repository.addUser({
-    tenantId: tenantA,
-    email: EMAIL,
-    passwordHash: await hasher.hash(PASSWORD_A),
-    role: 'CLIENT',
-  });
-  const userB = repository.addUser({
-    tenantId: tenantB,
-    email: EMAIL,
-    passwordHash: await hasher.hash(PASSWORD_B),
-    role: 'ADMIN',
-  });
-
-  return {
-    app,
-    repository,
-    tenantA,
-    tenantB,
-    userA: userA.id,
-    userB: userB.id,
-    close: () => app.close(),
-  };
-}
-
 describe('Isolation inter-tenant — module identity', () => {
-  let harness: Harness;
+  let harness: TenantHarness;
+  /** Le compte du salon A — `CLIENT`. */
+  let userA: string;
+  /** Le compte homonyme du barbier — `ADMIN`, pour que la traversée se voie. */
+  let userB: string;
 
   beforeEach(async () => {
-    harness = await createHarness();
+    harness = await createTenantHarness();
+    userA = (await harness.seedUser(harness.a, { email: EMAIL, password: PASSWORD_A })).id;
+    userB = (
+      await harness.seedUser(harness.b, { email: EMAIL, password: PASSWORD_B, role: 'ADMIN' })
+    ).id;
   });
 
   afterEach(async () => {
     await harness.close();
   });
 
-  const server = (): ReturnType<INestApplication['getHttpServer']> => harness.app.getHttpServer();
+  const server = (): ReturnType<INestApplication['getHttpServer']> => harness.server();
 
   const login = async (slug: string, password: string): Promise<request.Response> =>
     request(server())
@@ -110,8 +60,8 @@ describe('Isolation inter-tenant — module identity', () => {
     const a = await login(SALON_A, PASSWORD_A);
     const b = await login(SALON_B, PASSWORD_B);
 
-    expect(a.body.user.id).toBe(harness.userA);
-    expect(b.body.user.id).toBe(harness.userB);
+    expect(a.body.user.id).toBe(userA);
+    expect(b.body.user.id).toBe(userB);
     expect(a.body.user.id).not.toBe(b.body.user.id);
   });
 
@@ -134,8 +84,8 @@ describe('Isolation inter-tenant — module identity', () => {
       .set('Authorization', `Bearer ${a.body.accessToken}`)
       .expect(200);
 
-    expect(profile.body.id).toBe(harness.userA);
-    expect(profile.body.id).not.toBe(harness.userB);
+    expect(profile.body.id).toBe(userA);
+    expect(profile.body.id).not.toBe(userB);
     // Le rôle du compte B est ADMIN : le lire prouverait la traversée.
     expect(profile.body.role).toBe('CLIENT');
   });
@@ -148,19 +98,25 @@ describe('Isolation inter-tenant — module identity', () => {
     // la lecture doit échouer, pas retomber sur la ligne de A.
     const tokens = harness.app.get(TokenService);
     const croise = await tokens.signAccessToken({
-      userId: harness.userA,
-      tenantId: harness.tenantB,
+      userId: userA,
+      tenantId: harness.b.id,
       role: 'CLIENT',
     });
 
-    const response = await request(server())
-      .get('/api/v1/auth/me')
-      .set('Authorization', `Bearer ${croise}`)
-      .expect(404);
-
     // 404 et non 403 : un 403 confirmerait que ce compte existe quelque part.
-    expect(response.body.code).toBe('NOT_FOUND');
-    expect(JSON.stringify(response.body)).not.toContain(harness.userA);
+    // L'assertion partagée (#27) exige les deux à la fois — le code, et
+    // l'absence de l'identifiant dans le corps, qui sert de miroir à un
+    // attaquant.
+    await expectCrossTenantNotFound({
+      attempts: [
+        {
+          label: 'lecture du profil sous un jeton croisé',
+          send: () =>
+            request(server()).get('/api/v1/auth/me').set('Authorization', `Bearer ${croise}`),
+        },
+      ],
+      hidden: [userA, harness.a.id],
+    });
   });
 
   it('la déconnexion d’un établissement laisse la session de l’autre intacte', async () => {
@@ -188,7 +144,7 @@ describe('Isolation inter-tenant — module identity', () => {
       .set('Cookie', cookieB ?? '')
       .expect(200);
 
-    const sessions = harness.repository.sessions;
+    const sessions = harness.identity.sessions;
     expect(sessions.filter((session) => session.revokedAt !== null)).toHaveLength(1);
   });
 
@@ -202,8 +158,8 @@ describe('Isolation inter-tenant — module identity', () => {
       .expect(200);
 
     for (const body of [a.body, profile.body]) {
-      expect(JSON.stringify(body)).not.toContain(harness.tenantA);
-      expect(JSON.stringify(body)).not.toContain(harness.tenantB);
+      expect(JSON.stringify(body)).not.toContain(harness.a.id);
+      expect(JSON.stringify(body)).not.toContain(harness.b.id);
     }
 
     expect(Object.keys(profile.body).sort()).toEqual([

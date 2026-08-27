@@ -1,16 +1,9 @@
 import type { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
 
-import { AppModule } from '../src/app.module';
-import { configureApp } from '../src/bootstrap';
 import { AppConfigService } from '../src/config/app-config.service';
-import { CacheConnection } from '../src/infrastructure/cache/cache.connection';
-import { DatabaseConnection } from '../src/infrastructure/database/database.connection';
-import { IdentityRepository } from '../src/modules/identity/identity.repository';
-import { PasswordHasher } from '../src/modules/identity/password.hasher';
 import { FakeIdentityRepository } from '../src/modules/identity/__tests__/identity.doubles';
-import { ProbeDouble } from './utils/test-app';
+import { createTenantHarness, TENANT_A, TENANT_B, type TenantHarness } from './utils/tenant-harness';
 
 /**
  * Résolution du tenant sur les pages de réservation publiques (#23) — exercée
@@ -28,20 +21,12 @@ import { ProbeDouble } from './utils/test-app';
  *    public, et le back-office reste gardé.
  */
 
-const SALON = 'salon-des-lilas';
-const BARBIER = 'barbier-du-port';
+const SALON = TENANT_A.slug;
+const BARBIER = TENANT_B.slug;
 const FERME = 'salon-ferme';
 const SANS_CONTACT = 'salon-sans-contact';
 
 const CHEMIN_PUBLIC = (slug: string): string => `/api/v1/public/${slug}`;
-
-interface Harness {
-  app: INestApplication;
-  repository: FakeIdentityRepository;
-  tenantSalon: string;
-  tenantBarbier: string;
-  close(): Promise<void>;
-}
 
 /**
  * Sentinelle posée sur le contrôleur : si elle est appelée, c'est que la requête
@@ -51,63 +36,49 @@ interface Harness {
  */
 let controleurAtteint = 0;
 
-async function createHarness(): Promise<Harness> {
-  const repository = new FakeIdentityRepository();
-  const tenantSalon = repository.addTenant(SALON);
-  const tenantBarbier = repository.addTenant(BARBIER, undefined, { name: 'Barbier du Port' });
-  repository.addTenant(FERME, undefined, { isActive: false });
-  repository.addTenant(SANS_CONTACT, undefined, { contactEmail: null, contactPhone: null });
+/**
+ * Les deux établissements de référence viennent du harnais partagé (#27) ; cette
+ * suite y ajoute les deux cas qui lui sont propres — un salon désactivé, un
+ * salon sans coordonnées — et sa sentinelle. Le dépôt est donc préparé **avant**
+ * d'être remis au harnais : une sentinelle posée après la compilation du module
+ * arriverait après que Nest a résolu le fournisseur.
+ */
+function prepareIdentity(): FakeIdentityRepository {
+  const identity = new FakeIdentityRepository();
+  identity.addTenant(FERME, undefined, { isActive: false });
+  identity.addTenant(SANS_CONTACT, undefined, { contactEmail: null, contactPhone: null });
 
   controleurAtteint = 0;
-  const surveille = repository.findCurrentPublicTenant.bind(repository);
-  repository.findCurrentPublicTenant = async (): ReturnType<
+  const surveille = identity.findCurrentPublicTenant.bind(identity);
+  identity.findCurrentPublicTenant = async (): ReturnType<
     FakeIdentityRepository['findCurrentPublicTenant']
   > => {
     controleurAtteint += 1;
     return surveille();
   };
 
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(DatabaseConnection)
-    .useValue(new ProbeDouble())
-    .overrideProvider(CacheConnection)
-    .useValue(new ProbeDouble())
-    .overrideProvider(IdentityRepository)
-    .useValue(repository)
-    .compile();
-
-  const app = moduleRef.createNestApplication({ logger: false });
-  configureApp(app, app.get(AppConfigService));
-  await app.init();
-
-  return {
-    app,
-    repository,
-    tenantSalon,
-    tenantBarbier,
-    close: () => app.close(),
-  };
+  return identity;
 }
 
 describe('Isolation inter-tenant — résolution publique du tenant', () => {
-  let harness: Harness;
+  let harness: TenantHarness;
 
   beforeEach(async () => {
-    harness = await createHarness();
+    harness = await createTenantHarness({ identity: prepareIdentity() });
   });
 
   afterEach(async () => {
     await harness.close();
   });
 
-  const server = (): ReturnType<INestApplication['getHttpServer']> => harness.app.getHttpServer();
+  const server = (): ReturnType<INestApplication['getHttpServer']> => harness.server();
 
   describe('le slug d’URL résout l’établissement', () => {
     it('sert la vitrine de l’établissement demandé', async () => {
       const response = await request(server()).get(CHEMIN_PUBLIC(SALON)).expect(200);
 
       expect(response.body.slug).toBe(SALON);
-      expect(response.body.id).toBe(harness.tenantSalon);
+      expect(response.body.id).toBe(harness.a.id);
     });
 
     it('sert la même vitrine sur un chemin dont la casse diffère', async () => {
@@ -120,15 +91,15 @@ describe('Isolation inter-tenant — résolution publique du tenant', () => {
         .get(`/api/v1/PUBLIC/${SALON.toUpperCase()}`)
         .expect(200);
 
-      expect(response.body.id).toBe(harness.tenantSalon);
+      expect(response.body.id).toBe(harness.a.id);
     });
 
     it('deux slugs servent deux établissements distincts', async () => {
       const salon = await request(server()).get(CHEMIN_PUBLIC(SALON)).expect(200);
       const barbier = await request(server()).get(CHEMIN_PUBLIC(BARBIER)).expect(200);
 
-      expect(salon.body.id).toBe(harness.tenantSalon);
-      expect(barbier.body.id).toBe(harness.tenantBarbier);
+      expect(salon.body.id).toBe(harness.a.id);
+      expect(barbier.body.id).toBe(harness.b.id);
       expect(salon.body.id).not.toBe(barbier.body.id);
       expect(barbier.body.name).toBe('Barbier du Port');
     });
@@ -204,11 +175,9 @@ describe('Isolation inter-tenant — résolution publique du tenant', () => {
     });
 
     it('ne laisse filtrer aucune donnée de compte', async () => {
-      const hasher = harness.app.get(PasswordHasher);
-      harness.repository.addUser({
-        tenantId: harness.tenantSalon,
+      await harness.seedUser(harness.a, {
         email: 'alice@example.test',
-        passwordHash: await hasher.hash('mot-de-passe-du-salon'),
+        password: 'mot-de-passe-du-salon',
         role: 'ADMIN',
       });
 
@@ -261,7 +230,7 @@ describe('Isolation inter-tenant — résolution publique du tenant', () => {
         .set('Host', `${SALON}.${baseHost()}`)
         .expect(200);
 
-      expect(response.body.id).toBe(harness.tenantSalon);
+      expect(response.body.id).toBe(harness.a.id);
     });
 
     it('un `Host` arbitraire n’influence pas une route hors de l’espace public', async () => {

@@ -1,43 +1,26 @@
-import { randomUUID } from 'node:crypto';
-
 import type { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 
-import { AppModule } from '../src/app.module';
-import { configureApp } from '../src/bootstrap';
-import { AppConfigService } from '../src/config/app-config.service';
-import { CacheConnection } from '../src/infrastructure/cache/cache.connection';
-import { DatabaseConnection } from '../src/infrastructure/database/database.connection';
 import { FakeCatalogRepository } from '../src/modules/catalog/__tests__/catalog.doubles';
 import { CatalogRepository } from '../src/modules/catalog/catalog.repository';
-import { FakeIdentityRepository } from '../src/modules/identity/__tests__/identity.doubles';
-import { IdentityRepository } from '../src/modules/identity/identity.repository';
 import type { UserRole } from '../src/modules/identity/roles';
-import { TokenService } from '../src/modules/identity/token.service';
-import { ProbeDouble } from './utils/test-app';
+import { FakeIdentityRepository } from '../src/modules/identity/__tests__/identity.doubles';
+import { createTenantHarness, TENANT_A, TENANT_B, type TenantHarness } from './utils/tenant-harness';
 
 /**
  * Amorçage du module `catalog` pour ses suites d'intégration et d'isolation.
  *
- * L'application est la **vraie** — `AppModule` câblé par `configureApp`, la même
- * fonction que `main.ts` : préfixe, versionnement, `ValidationPipe` global,
- * filtre d'exceptions, gardes de #21 et #22. Un test qui reconstruirait ce
- * câblage validerait une application qui n'existe nulle part.
+ * Ce n'est plus qu'une **spécialisation** du harnais partagé
+ * (`utils/tenant-harness.ts`, #27) : deux établissements, l'application
+ * réellement câblée par `configureApp`, des jetons signés par le vrai
+ * `TokenService`. Tout cela est commun aux huit modules et vit là-bas. Il ne
+ * reste ici que ce qui est propre au catalogue — la substitution de
+ * `CatalogRepository` par son double en mémoire, et les noms sous lesquels les
+ * suites du module désignent les deux établissements.
  *
- * Trois substitutions seulement :
- *
- * - les connexions d'infrastructure, comme partout ailleurs dans cette suite ;
- * - `CatalogRepository`, remplacé par le double en mémoire. Ce double reproduit
- *   la propriété qui compte — le filtrage par le **vrai** contexte de tenant,
- *   celui que l'extension Prisma consulte — de sorte qu'une garde qui n'ouvrirait
- *   pas la portée, ou qui l'ouvrirait sur le mauvais établissement, fait rougir
- *   la suite ;
- * - `IdentityRepository`, pour la **table `tenants`** et elle seule. Le module
- *   `catalog` ne l'interroge jamais, mais `TenantScopeMiddleware` si : c'est par
- *   `PUBLIC_TENANT_RESOLVER` — déclaré `useExisting: IdentityRepository` — qu'un
- *   slug d'URL devient un établissement. Sans cette substitution, la route
- *   publique du catalogue irait chercher ses slugs dans un vrai client Prisma
- *   pendant que ses prestations viennent du double.
+ * Ce double reproduit la propriété qui compte — le filtrage par le **vrai**
+ * contexte de tenant, celui que l'extension Prisma consulte — de sorte qu'une
+ * garde qui n'ouvrirait pas la portée, ou qui l'ouvrirait sur le mauvais
+ * établissement, fait rougir la suite.
  *
  * ## Les deux façons dont l'établissement entre dans la requête
  *
@@ -52,21 +35,13 @@ import { ProbeDouble } from './utils/test-app';
  * D'où les deux paires exposées ici : `tenantId`/`otherTenantId` désignent les
  * établissements pour la première, `tenantSlug`/`otherTenantSlug` pour la
  * seconde — et ce sont **les mêmes** établissements, les slugs étant déclarés
- * sur les identifiants tirés au sort ci-dessous.
- *
- * ## Les jetons sont signés, pas simulés
- *
- * `tokenFor` passe par `TokenService`, donc par la même signature et les mêmes
- * revendications que la connexion réelle. C'est la seule façon d'exercer
- * `JwtAuthGuard` pour ce qu'il fait : lire le `tenantId` d'un jeton **vérifié**
- * et le poser dans le contexte de requête. Un jeton fabriqué à la main ne
- * prouverait rien de ce chemin.
+ * sur les identifiants par le harnais partagé.
  */
 
 /** Slug public de l'établissement de l'appelant. */
-export const TENANT_SLUG = 'salon-des-lilas';
+export const TENANT_SLUG = TENANT_A.slug;
 /** Slug public de l'établissement voisin. */
-export const OTHER_TENANT_SLUG = 'barbier-du-port';
+export const OTHER_TENANT_SLUG = TENANT_B.slug;
 
 export interface CatalogHarness {
   app: INestApplication;
@@ -92,47 +67,27 @@ export interface CatalogHarness {
 
 export async function createCatalogHarness(): Promise<CatalogHarness> {
   const repository = new FakeCatalogRepository();
-  const tenantId = randomUUID();
-  const otherTenantId = randomUUID();
 
-  const identity = new FakeIdentityRepository();
-  // Les slugs sont déclarés **sur les identifiants ci-dessus** : la route
-  // publique et les routes à jeton désignent ainsi les deux mêmes
-  // établissements, et un test peut semer chez l'un pour lire chez l'autre.
-  identity.addTenant(TENANT_SLUG, tenantId);
-  identity.addTenant(OTHER_TENANT_SLUG, otherTenantId, { name: 'Barbier du Port' });
-
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(DatabaseConnection)
-    .useValue(new ProbeDouble())
-    .overrideProvider(CacheConnection)
-    .useValue(new ProbeDouble())
-    .overrideProvider(CatalogRepository)
-    .useValue(repository)
-    .overrideProvider(IdentityRepository)
-    .useValue(identity)
-    .compile();
-
-  const app = moduleRef.createNestApplication({ logger: false });
-  configureApp(app, app.get(AppConfigService));
-  await app.init();
-
-  const tokens = app.get(TokenService);
+  // `IdentityRepository` est substitué par le harnais partagé, et il l'est pour
+  // le module `catalog` aussi : ce dernier ne l'interroge jamais, mais
+  // `TenantScopeMiddleware` si — c'est par `PUBLIC_TENANT_RESOLVER`, déclaré
+  // `useExisting: IdentityRepository`, qu'un slug d'URL devient un
+  // établissement. Sans cette substitution, la route publique du catalogue irait
+  // chercher ses slugs dans un vrai client Prisma pendant que ses prestations
+  // viennent du double.
+  const harness: TenantHarness = await createTenantHarness({
+    overrides: [{ provide: CatalogRepository, useValue: repository }],
+  });
 
   return {
-    app,
+    app: harness.app,
     repository,
-    identity,
-    tenantId,
-    otherTenantId,
-    tenantSlug: TENANT_SLUG,
-    otherTenantSlug: OTHER_TENANT_SLUG,
-    tokenFor: async (role, forTenant) =>
-      tokens.signAccessToken({
-        userId: randomUUID(),
-        tenantId: forTenant ?? tenantId,
-        role,
-      }),
-    close: () => app.close(),
+    identity: harness.identity,
+    tenantId: harness.a.id,
+    otherTenantId: harness.b.id,
+    tenantSlug: harness.a.slug,
+    otherTenantSlug: harness.b.slug,
+    tokenFor: (role, forTenant) => harness.tokenFor(role, forTenant),
+    close: () => harness.close(),
   };
 }

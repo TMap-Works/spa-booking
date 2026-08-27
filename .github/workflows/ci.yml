@@ -60,7 +60,28 @@ jobs:
       - run: npm ci
       - run: npm run db:migrate:deploy
       - run: npm run test:unit
-      - run: npm run test:integration
+      # Les deux étapes ci-dessous appellent les cibles **feuilles**, pas l'alias
+      # `test:integration` : celui-ci enchaîne les deux, et les rejouerait donc.
+      # Contrat pour tout workspace qui ajoutera des tests d'intégration :
+      # déclarer `test:integration:api` et, s'il a des tests de fuite,
+      # `test:isolation` — un workspace qui ne déclarerait que l'alias serait
+      # sauté ici en silence par `--if-present`.
+      - name: Tests d'intégration
+        run: npm run test:integration:api --workspaces --if-present
+
+      # Les tests de fuite inter-tenant ont leur propre étape, et non un
+      # sous-ensemble noyé dans la précédente : quand cette ligne rougit, elle
+      # nomme une traversée d'établissement, pas « un test d'intégration ». Ils
+      # sont exécutés par `npm run test:integration` en local — la cible
+      # `test:integration` d'`apps/api` enchaîne les deux — d'où l'appel aux deux
+      # feuilles ici, qui évite de les rejouer deux fois.
+      #
+      # Le harnais partagé qu'ils utilisent est décrit dans apps/api/README.md.
+      # Il exige le service `postgres` ci-dessus : il s'y crée une base jetable
+      # par suite, migrée puis détruite.
+      - name: Tests d'isolation inter-tenant
+        run: npm run test:isolation --workspaces --if-present
+
       # Le moteur de réservation est le risque n°1 du projet (CDC §6) :
       # les tests de concurrence ne sont jamais optionnels.
       - name: Tests de concurrence (anti-double-réservation)
