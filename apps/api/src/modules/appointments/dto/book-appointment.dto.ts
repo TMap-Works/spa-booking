@@ -192,7 +192,10 @@ export class AppointmentDto implements AppointmentView {
   public id!: string;
 
   @ApiProperty({
-    description: 'Toujours `PENDING` à la création : le rendez-vous occupe l’agenda avant même sa confirmation.',
+    description:
+      '`PENDING` à la création : le rendez-vous occupe l’agenda avant même sa ' +
+      'confirmation. Un report **reprend** le statut du rendez-vous remplacé — ' +
+      'déplacer un créneau n’annule pas une confirmation déjà obtenue.',
     example: 'PENDING',
   })
   public status!: AppointmentStatus;
@@ -217,6 +220,17 @@ export class AppointmentDto implements AppointmentView {
 
   @ApiProperty({ nullable: true, type: String })
   public clientNote!: string | null;
+
+  @ApiProperty({
+    format: 'uuid',
+    nullable: true,
+    type: String,
+    description:
+      'Le rendez-vous que celui-ci remplace, ou `null` s’il a été pris ' +
+      'directement. C’est ce qui permet à l’écran de confirmation d’un report ' +
+      'd’annoncer un déplacement plutôt qu’une réservation neuve.',
+  })
+  public rescheduledFromId!: string | null;
 }
 
 /** Les coordonnées validées, sous la forme que le service attend. */

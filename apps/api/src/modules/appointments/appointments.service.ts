@@ -1,10 +1,11 @@
 import { Injectable } from '@nestjs/common';
 
-import { NotFoundError } from '../../common/errors';
+import { InvalidStateTransitionError, NotFoundError } from '../../common/errors';
 import { requireTenantId } from '../../common/tenant';
 import { AvailabilityService } from '../availability/availability.service';
 import type { ServiceView } from '../catalog/catalog.types';
 import { ServicesService } from '../catalog/services.service';
+import { occupiesSlot } from './appointment-status';
 import { SlotNoLongerAvailableError } from './appointments.errors';
 import { AppointmentsRepository } from './appointments.repository';
 import type {
@@ -12,6 +13,9 @@ import type {
   AppointmentRecord,
   AppointmentView,
   BookAppointmentInput,
+  RescheduleAppointmentInput,
+  RescheduleDraft,
+  RescheduleOutcome,
 } from './appointments.types';
 import { AppointmentEvents } from './events/appointment-events';
 
@@ -47,11 +51,19 @@ import { AppointmentEvents } from './events/appointment-events';
  * créneau demandé **était proposable**, pas qu'il est encore libre. Le second
  * n'appartient qu'à la base.
  *
- * ## Ce que ce ticket ne pose pas
+ * ## Le report, ajouté par #39
  *
- * Ni report (#39), ni annulation (#40), ni verrou Redis de saisie (#38), ni
- * création au comptoir par le staff (#50) : la seule surface ouverte ici est la
- * réservation publique, celle du tunnel de #45.
+ * `reschedule` déplace un rendez-vous en l'**annulant** et en en créant un
+ * nouveau qui le référence, dans une seule transaction. Ce n'est pas un détail
+ * d'implémentation : c'est ce qui préserve l'historique de la cliente, et ce qui
+ * évite que la contrainte d'exclusion refuse un déplacement pourtant légitime.
+ * Le détail vit dans `AppointmentsRepository.reschedule`.
+ *
+ * ## Ce que ce module ne pose toujours pas
+ *
+ * Ni annulation avec motif et traçabilité (#40), ni verrou Redis de saisie
+ * (#38), ni création au comptoir par le staff (#50) : les seules surfaces
+ * ouvertes ici sont publiques, celles du tunnel de #45.
  */
 @Injectable()
 export class AppointmentsService {
@@ -120,6 +132,111 @@ export class AppointmentsService {
   }
 
   /**
+   * Déplace un rendez-vous existant : l'ancien est annulé, un nouveau est créé
+   * et le référence (#39, booking-engine §5).
+   *
+   * Reporter ne change ni la prestation, ni la cliente, ni le prix figé à la
+   * réservation d'origine : la demande ne porte qu'un instant et, facultatif, un
+   * praticien. Tout le reste est recopié par le repository depuis la ligne
+   * d'origine, **dans la transaction**.
+   *
+   * ## Le créneau d'arrivée passe par les mêmes deux contrôles qu'une réservation
+   *
+   * Le moteur de disponibilité — « ce créneau était-il proposable ? » — puis la
+   * contrainte d'exclusion, qui seule tranche l'unicité. Rien n'est relâché
+   * parce qu'il s'agit d'un client déjà connu : un report est une écriture dans
+   * l'agenda du salon, exactement comme une réservation.
+   *
+   * ## Une limite connue, et assumée : le nouveau créneau ne peut pas chevaucher l'ancien
+   *
+   * Le moteur voit le rendez-vous en cours de déplacement comme **occupant** son
+   * créneau — il l'est, tant que la transaction n'a pas eu lieu. Avancer d'un
+   * quart d'heure un soin d'une heure demande donc un créneau que le calendrier
+   * ne propose pas, et reçoit un 409.
+   *
+   * Ce n'est pas une incohérence : c'est exactement ce que la cliente voit. Le
+   * calendrier du tunnel affiche son propre rendez-vous comme pris, et ne lui
+   * offre aucun créneau chevauchant — l'agenda réservable et l'agenda affiché
+   * restent le même. Lever la limite demanderait au moteur d'exclure un
+   * rendez-vous nommé de son calcul, c'est-à-dire de modifier
+   * `availability.service.ts`, hors de l'empreinte de ce ticket ; une issue de
+   * suivi le porte.
+   *
+   * @throws {NotFoundError} rendez-vous inconnu ou d'un autre établissement ;
+   * prestation retirée du catalogue depuis la réservation.
+   * @throws {InvalidStateTransitionError} rendez-vous terminé, annulé ou no-show.
+   * @throws {SlotNoLongerAvailableError} le créneau d'arrivée n'est pas — ou
+   * n'est plus — proposable.
+   */
+  public async reschedule(
+    input: RescheduleAppointmentInput,
+    now: Date = new Date(),
+  ): Promise<AppointmentView> {
+    const previous = await this.repository.findById(input.appointmentId);
+
+    if (previous === null) {
+      // 404 et non 403 : le rendez-vous d'un autre établissement doit être
+      // indiscernable d'un identifiant qui n'existe pas (tenant-isolation §4).
+      throw new NotFoundError('Rendez-vous introuvable.');
+    }
+
+    // Avant le contrôle de disponibilité, et non après lui. Ce n'est pas la
+    // garde — celle-là est l'écriture conditionnelle du repository, dans la
+    // transaction —, c'est ce qui rend la **réponse** juste : sans elle, un
+    // rendez-vous déjà annulé dont le créneau d'arrivée vient d'être pris sort
+    // en 409 « choisissez un autre créneau », et la cliente réessaie
+    // indéfiniment sans jamais apprendre que son rendez-vous n'existe plus.
+    // Même conduite que le `isActive` de `book` : un pré-contrôle qui parle,
+    // doublé d'une garantie qui tranche.
+    if (!occupiesSlot(previous.status)) {
+      throw new InvalidStateTransitionError(previous.status, 'CANCELLED');
+    }
+
+    // La prestation ne change pas : c'est celle du rendez-vous d'origine qui
+    // donne la durée, les tampons et donc l'intervalle occupé d'arrivée. Si elle
+    // a été retirée du catalogue entre-temps, `slotsFor` rend le même 404 que
+    // pour une réservation — un soin qu'on ne vend plus ne se replanifie pas.
+    const service = await this.services.byId(previous.serviceId);
+    const staffId = input.staffId ?? previous.staffId;
+
+    await this.requireOfferedSlot(
+      { serviceId: previous.serviceId, staffId, startsAt: input.startsAt },
+      now,
+    );
+
+    const outcome = await this.move(
+      {
+        previousId: previous.id,
+        staffId,
+        ...occupiedRange(input.startsAt, service),
+      },
+      input.startsAt,
+    );
+
+    // Après la validation de la transaction, jamais dedans : un `ROLLBACK`
+    // laisserait l'ancien rendez-vous en place, et l'avis de déplacement aurait
+    // annoncé une heure à laquelle personne n'est attendu.
+    const view = billedView(outcome.created, service);
+    const before = billedView(outcome.previous, service);
+
+    this.events.appointmentRescheduled({
+      tenantId: requireTenantId('Appointment', 'appointment.rescheduled'),
+      appointmentId: view.id,
+      previousAppointmentId: before.id,
+      clientId: view.clientId,
+      serviceId: view.serviceId,
+      staffId: view.staffId,
+      previousStaffId: before.staffId,
+      startsAt: view.startsAt,
+      endsAt: view.endsAt,
+      previousStartsAt: before.startsAt,
+      previousEndsAt: before.endsAt,
+    });
+
+    return view;
+  }
+
+  /**
    * L'écriture, avec le refus de créneau **reformulé dans les termes de
    * l'appelant**.
    *
@@ -136,11 +253,32 @@ export class AppointmentsService {
    * lui de reconvertir.
    */
   private async insert(draft: AppointmentDraft, billedStart: Date): Promise<AppointmentRecord> {
+    return this.inBilledTerms(() => this.repository.create(draft), draft.staffId, billedStart);
+  }
+
+  /** Le report, avec le même retour à l'heure du soin que `insert`. */
+  private async move(draft: RescheduleDraft, billedStart: Date): Promise<RescheduleOutcome> {
+    return this.inBilledTerms(() => this.repository.reschedule(draft), draft.staffId, billedStart);
+  }
+
+  /**
+   * Rejoue un refus de créneau avec l'heure du **soin**, celle que l'appelant a
+   * soumise.
+   *
+   * Écrit une fois pour les deux écritures : dupliquer cette traduction, c'est
+   * en oublier une le jour où une troisième surface écrira dans l'agenda, et
+   * rendre à la cliente une heure qu'elle n'a jamais demandée.
+   */
+  private async inBilledTerms<T>(
+    operation: () => Promise<T>,
+    staffId: string,
+    billedStart: Date,
+  ): Promise<T> {
     try {
-      return await this.repository.create(draft);
+      return await operation();
     } catch (error: unknown) {
       if (error instanceof SlotNoLongerAvailableError) {
-        throw new SlotNoLongerAvailableError(draft.staffId, billedStart);
+        throw new SlotNoLongerAvailableError(staffId, billedStart);
       }
       throw error;
     }
@@ -186,7 +324,7 @@ export class AppointmentsService {
    * fuseau : aucun décalage réel ne dépasse ±14 h. C'est une borne, pas une
    * approximation — le créneau est ensuite reconnu à l'instant exact.
    */
-  private async requireOfferedSlot(input: BookAppointmentInput, now: Date): Promise<void> {
+  private async requireOfferedSlot(input: OfferedSlotQuery, now: Date): Promise<void> {
     const window = utcDaysAround(input.startsAt);
     const wanted = input.startsAt.toISOString();
 
@@ -207,6 +345,21 @@ export class AppointmentsService {
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
+
+/**
+ * Ce que le contrôle de disponibilité a besoin de savoir — et rien de plus.
+ *
+ * Réservation et report l'alimentent tous deux : la première depuis la demande
+ * de la cliente, le second depuis le rendez-vous d'origine augmenté du praticien
+ * choisi. Un paramètre typé `BookAppointmentInput` aurait obligé le report à
+ * fabriquer des coordonnées de cliente dont ce contrôle n'a que faire.
+ */
+interface OfferedSlotQuery {
+  readonly serviceId: string;
+  readonly staffId: string;
+  /** Instant du **soin**, tel que le calendrier l'a proposé. */
+  readonly startsAt: Date;
+}
 
 /**
  * L'intervalle **occupé** d'un soin qui commence à `billedStart` — celui que la
@@ -233,6 +386,17 @@ function occupiedRange(billedStart: Date, service: ServiceView): { startsAt: Dat
  * alors ce qui est réellement en base, et non ce qui avait été demandé. Les deux
  * coïncident aujourd'hui ; le jour où une règle ajusterait l'intervalle à
  * l'écriture, cette réponse suivrait au lieu de mentir.
+ *
+ * ## Les tampons sont ceux du catalogue **au moment de la lecture**
+ *
+ * L'intervalle occupé est en base, le facturé s'en déduit avec les tampons de la
+ * prestation. Appliqué au rendez-vous que #39 vient de créer, l'écart est nul —
+ * il vient d'être écrit avec ces tampons-là. Appliqué au rendez-vous
+ * **remplacé**, il ne l'est plus si le salon a modifié ses temps de cabine
+ * depuis : l'ancienne heure annoncée dans l'avis de déplacement dérive alors de
+ * la différence. Corriger cela demanderait de figer les tampons sur la ligne, au
+ * même titre que le prix — un changement de schéma qui sort du périmètre de ce
+ * ticket, pour un écart de quelques minutes sur une heure déjà passée.
  */
 function billedView(record: AppointmentRecord, service: ServiceView): AppointmentView {
   const billedStart = record.startsAt.getTime() + service.bufferBeforeMinutes * MINUTE_MS;
@@ -247,6 +411,7 @@ function billedView(record: AppointmentRecord, service: ServiceView): Appointmen
     endsAt: new Date(billedStart + service.durationMinutes * MINUTE_MS).toISOString(),
     price: record.price,
     clientNote: record.clientNote,
+    rescheduledFromId: record.rescheduledFromId,
   };
 }
 
