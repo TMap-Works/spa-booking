@@ -31,6 +31,17 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
+    # Pourquoi le service `postgres` reste, alors qu'aucun test ne s'en sert (#274).
+    #
+    # Les suites qui exigent un vrai moteur démarrent le leur depuis #274
+    # (`@testcontainers/postgresql`, apps/api/test/utils/disposable-database.ts) :
+    # elles ne lisent plus `DATABASE_URL` du tout. Le service ne sert donc plus
+    # qu'à l'étape `db:migrate:deploy` ci-dessous — et cette étape-là, elle, ne
+    # se remplace pas. Le harnais applique le SQL des migrations sans passer par
+    # la CLI Prisma, délibérément (#139) ; c'est pourtant `prisma migrate deploy`
+    # que la tâche ECS `spa-*-migrate` exécute au déploiement (deploy-*.yml).
+    # Sans cette étape, plus rien ne prouverait que la CLI s'applique sur une
+    # base vide, et la panne se découvrirait en production.
     services:
       postgres:
         image: postgres:16
@@ -51,6 +62,12 @@ jobs:
     env:
       DATABASE_URL: postgresql://spa:spa@localhost:5432/spa_test
       REDIS_URL: redis://localhost:6379
+      # Le réapeur de Testcontainers n'a rien à réclamer sur un runner jetable :
+      # la machine entière disparaît à la fin du job. Le désactiver épargne un
+      # tirage d'image et un démarrage de conteneur **à l'intérieur** du premier
+      # `beforeAll`, dont le délai est celui de Jest (30 s). Les conteneurs sont
+      # arrêtés explicitement par `drop()`, jamais laissés au réapeur.
+      TESTCONTAINERS_RYUK_DISABLED: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,13 +76,29 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run db:migrate:deploy
+
+      # L'image du moteur est tirée ici, et non dans le `beforeAll` de la
+      # première suite qui en démarre un : le tirage se compte sinon dans le
+      # délai de Jest, et c'est un délai de test qui rougirait pour un temps de
+      # réseau.
+      #
+      # La balise est **lue** dans `apps/api/test/utils/disposable-database.ts`
+      # plutôt que recopiée ici : recopiée, elle dérive au premier changement de
+      # `POSTGRES_IMAGE`, cette étape préchauffe alors une image que personne ne
+      # démarre, et le tirage retombe dans le `beforeAll` — où il se lit comme un
+      # test qui expire, pas comme un temps de réseau.
+      - name: Image du moteur de test
+        run: |
+          image="$(sed -n "s/^const POSTGRES_IMAGE = '\(.*\)';$/\1/p" apps/api/test/utils/disposable-database.ts)"
+          if [ -z "$image" ]; then
+            echo "::error file=apps/api/test/utils/disposable-database.ts::POSTGRES_IMAGE est introuvable : l'étape de préchauffe ne sait plus quelle image tirer, et le tirage retomberait dans le délai de Jest."
+            exit 1
+          fi
+          echo "Préchauffe de $image."
+          docker pull "$image"
+
       - run: npm run test:unit
-      # Les deux étapes ci-dessous appellent les cibles **feuilles**, pas l'alias
-      # `test:integration` : celui-ci enchaîne les deux, et les rejouerait donc.
-      # Contrat pour tout workspace qui ajoutera des tests d'intégration :
-      # déclarer `test:integration:api` et, s'il a des tests de fuite,
-      # `test:isolation` — un workspace qui ne déclarerait que l'alias serait
-      # sauté ici en silence par `--if-present`.
+
       - name: Tests d'intégration
         run: npm run test:integration:api --workspaces --if-present
 
@@ -77,8 +110,9 @@ jobs:
       # feuilles ici, qui évite de les rejouer deux fois.
       #
       # Le harnais partagé qu'ils utilisent est décrit dans apps/api/README.md.
-      # Il exige le service `postgres` ci-dessus : il s'y crée une base jetable
-      # par suite, migrée puis détruite.
+      # Il n'exige que le démon Docker du runner : chaque fichier de test démarre
+      # son propre PostgreSQL 16, s'y crée une base jetable par suite, migrée
+      # puis détruite, et arrête le conteneur derrière lui (#274).
       - name: Tests d'isolation inter-tenant
         run: npm run test:isolation --workspaces --if-present
 

@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
+import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { Client } from 'pg';
 
 import { readMigrationSql } from '../../src/infrastructure/database/__tests__/migration-sql';
 
 /**
  * Base PostgreSQL **jetable** — une base neuve et migrée par suite, détruite à
- * la fin (#27).
+ * la fin, dans un conteneur que la suite démarre elle-même (#27, #274).
  *
  * ## Pourquoi une base jetable
  *
@@ -24,16 +25,35 @@ import { readMigrationSql } from '../../src/infrastructure/database/__tests__/mi
  * ménager, et une suite qui laisse des lignes derrière elle ne laisse rien du
  * tout puisque la base disparaît.
  *
- * ## Ce qu'elle n'est pas encore
+ * ## Pourquoi Testcontainers
  *
- * Le critère d'acceptation de #27 dit « via Testcontainers ». Ce module
- * provisionne la base sur le serveur que `DATABASE_URL` désigne — le service
- * `postgres` du job `test` en CI, `docker compose` en local — et non dans un
- * conteneur démarré par la suite. Le paquet `@testcontainers/postgresql`
- * n'est pas installé, et l'ajouter touche `apps/api/package.json` et
- * `package-lock.json`, hors de l'empreinte de ce ticket. `DisposableDatabase`
- * est l'interface exacte qu'un fournisseur Testcontainers devra rendre : la
- * bascule se fera ici, sans toucher aux suites qui en dépendent.
+ * La base était jusqu'à #274 provisionnée sur le serveur que `DATABASE_URL`
+ * désigne. Elle était jetable, mais le **serveur** restait un prérequis
+ * extérieur : un poste sans `docker compose up -d`, ou une CI sans service
+ * `postgres`, faisait rougir les suites pour une raison qui n'était pas la
+ * leur, et la version du moteur dépendait de ce que la machine hébergeait.
+ *
+ * Le conteneur est désormais démarré par la suite, sur l'image
+ * {@link POSTGRES_IMAGE} — la même que `docker-compose.yml`. `DATABASE_URL`
+ * n'est plus lue ici : rien de ce que la machine héberge n'entre dans le
+ * résultat.
+ *
+ * ## Un conteneur, plusieurs bases
+ *
+ * Un conteneur **par module de test**, pas par base : il est démarré à la
+ * première base jetable du fichier et arrêté quand la dernière est détruite
+ * (Jest réinitialise le registre de modules entre fichiers de test, la portée de
+ * ce compteur est donc exactement celle d'un fichier).
+ *
+ * Ce n'est pas qu'une économie de quelques secondes. C'est ce qui garde leur
+ * sens aux suites qui comparent deux bases jetables entre elles : « deux bases
+ * ne se voient pas l'une l'autre » et « la base détruite a disparu de
+ * `pg_database` » ne prouvent quelque chose que si les deux bases vivent sur le
+ * **même** serveur. Un conteneur par base rendrait ces cas vrais par
+ * construction, donc vides.
+ *
+ * Le coût mesuré est écrit dans `apps/api/README.md` — l'arbitrage doit rester
+ * visible.
  *
  * ## Comment le schéma est posé
  *
@@ -52,11 +72,26 @@ export interface DisposableDatabase {
   /** L'URL de connexion, à passer telle quelle à Prisma ou à `pg`. */
   readonly url: string;
   /**
-   * Détruit la base. Idempotent : un second appel ne fait rien, ce qui permet de
+   * Détruit la base, et arrête le conteneur si c'était la dernière qu'il
+   * portait. Idempotent : un second appel ne fait rien, ce qui permet de
    * l'appeler dans un `afterAll` que l'échec du `beforeAll` a rendu incertain.
    */
   drop(): Promise<void>;
 }
+
+/**
+ * L'image du moteur, épinglée sur la même que `docker-compose.yml`.
+ *
+ * `16` parce que c'est la version de production (CDC §2.2, RDS PostgreSQL 16) :
+ * un harnais qui testerait sur une autre majeure prouverait autre chose que ce
+ * qui sera déployé. `-alpine` parce qu'elle est trois fois plus légère à tirer
+ * et embarque les mêmes modules contrib — `btree_gist`, dont dépend la
+ * contrainte d'exclusion anti-double-réservation.
+ *
+ * Une balise fixe, jamais `latest` : un test qui change de moteur sans qu'aucun
+ * commit ne le dise est un test dont le vert ne veut rien dire.
+ */
+const POSTGRES_IMAGE = 'postgres:16-alpine';
 
 /**
  * Les noms sont générés ici, jamais reçus : `CREATE DATABASE` n'accepte pas de
@@ -67,55 +102,84 @@ export interface DisposableDatabase {
 const SAFE_NAME = /^[a-z][a-z0-9_]{0,62}$/;
 
 /**
- * L'URL du serveur sur lequel la base est créée.
- *
- * `test/setup-env.ts` en pose une par défaut : son absence signale que le
- * fichier de setup n'a pas été chargé, pas qu'il n'y a pas de base.
- */
-function requireServerUrl(): string {
-  const url = process.env.DATABASE_URL;
-  if (url === undefined || url === '') {
-    throw new Error(
-      'DATABASE_URL est absent : une base jetable se crée sur un serveur ' +
-        'PostgreSQL existant. `test/setup-env.ts` en pose un par défaut — son ' +
-        'absence signale que le fichier de setup n’a pas été chargé.',
-    );
-  }
-  return url;
-}
-
-/**
  * La base de maintenance sur laquelle `CREATE DATABASE` et `DROP DATABASE` sont
  * émis.
  *
- * Ni l'une ni l'autre ne peut s'exécuter depuis la base concernée, et rien ne
- * garantit que celle nommée par `DATABASE_URL` existe : `docker-compose.yml`
- * crée `spa_dev`, la CI crée `spa_test`, et un poste fraîchement cloné n'a ni
- * l'une ni l'autre tant qu'aucune migration n'est passée. `postgres` est la base
- * de maintenance que tout cluster PostgreSQL possède.
+ * Ni l'une ni l'autre ne peut s'exécuter depuis la base concernée. `postgres`
+ * est la base de maintenance que tout cluster PostgreSQL possède, y compris
+ * celui du conteneur, qui n'ouvre par ailleurs que la sienne.
  */
 const MAINTENANCE_DATABASE = 'postgres';
+
+/**
+ * Le conteneur partagé par le fichier de test courant, et le nombre de bases
+ * jetables encore vivantes dessus.
+ *
+ * `startup` porte la **promesse** de démarrage et non le conteneur démarré :
+ * deux `createDisposableDatabase()` lancés de front — ce que fait
+ * `Promise.all` dans une suite — doivent attendre le même conteneur, pas en
+ * démarrer deux.
+ */
+let startup: Promise<StartedPostgreSqlContainer> | undefined;
+let live = 0;
+
+/** Démarre le moteur, ou explique ce qui manque plutôt que de laisser Docker le dire. */
+async function startContainer(): Promise<StartedPostgreSqlContainer> {
+  try {
+    return await new PostgreSqlContainer(POSTGRES_IMAGE).start();
+  } catch (error) {
+    throw new Error(
+      `démarrage du conteneur PostgreSQL (${POSTGRES_IMAGE}) impossible. Les suites ` +
+        'd’isolation provisionnent leur propre moteur : un démon Docker joignable ' +
+        'est leur seul prérequis.\n' +
+        'En local : Docker Desktop démarré. Le premier lancement tire l’image — ' +
+        `\`docker pull ${POSTGRES_IMAGE}\` une fois pour toutes évite de payer ce ` +
+        'tirage dans le délai d’un `beforeAll` (`docker compose up -d` l’a déjà ' +
+        'tirée : le compose utilise la même).\n' +
+        `Cause : ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/** Réserve le conteneur du fichier courant, en le démarrant s'il le faut. */
+async function acquireContainer(): Promise<StartedPostgreSqlContainer> {
+  startup ??= startContainer();
+  try {
+    const container = await startup;
+    live += 1;
+    return container;
+  } catch (error) {
+    // Un démarrage raté ne condamne pas les appels suivants : sans cette remise
+    // à zéro, la promesse rejetée resterait mémoïsée et chaque suite du fichier
+    // échouerait sur l'erreur de la première.
+    startup = undefined;
+    throw error;
+  }
+}
+
+/**
+ * Rend le conteneur, et l'arrête quand plus aucune base ne s'y trouve.
+ *
+ * C'est ce qui tient la promesse « aucun conteneur ne survit à la suite » sans
+ * exiger de `globalTeardown` : le dernier `drop()` d'un fichier de test emporte
+ * le moteur avec lui.
+ */
+async function releaseContainer(): Promise<void> {
+  live -= 1;
+  if (live > 0 || startup === undefined) {
+    return;
+  }
+  const pending = startup;
+  startup = undefined;
+  const container = await pending.catch(() => undefined);
+  await container?.stop();
+}
 
 /** La même URL, pointée sur une autre base du même serveur. */
 function urlForDatabase(serverUrl: string, name: string): string {
   const url = new URL(serverUrl);
   url.pathname = `/${name}`;
   return url.toString();
-}
-
-/**
- * Le port réellement visé par une URL de connexion.
- *
- * Sans port explicite, c'est le 5432 par défaut de PostgreSQL qui sera dialé —
- * et c'est précisément celui qu'un serveur natif peut tenir. Le message doit
- * donc nommer celui-là, pas celui du compose.
- */
-function portOf(url: string): string {
-  try {
-    return new URL(url).port || '5432';
-  } catch {
-    return '5432';
-  }
 }
 
 /** Ouvre une connexion, ou explique ce qui manque plutôt que de laisser `pg` le dire. */
@@ -126,18 +190,9 @@ async function connect(url: string, what: string): Promise<Client> {
   } catch (error) {
     await client.end().catch(() => undefined);
     throw new Error(
-      `PostgreSQL injoignable (${what}). Les suites d’isolation exigent une vraie ` +
-        'base : `docker compose up -d` en local, service `postgres` du job `test` ' +
-        'en CI.\n' +
-        // Le conseil « démarrer le conteneur » est sans effet quand le conteneur
-        // tourne déjà et qu'un **autre** serveur tient le port : deux processus
-        // peuvent lier `0.0.0.0:5432` sans erreur, et la connexion part alors
-        // vers celui qui n'a pas les identifiants du compose (#272). Le dire
-        // ici, parce que c'est le message que lit l'agent qui débogue.
-        'Si le conteneur tourne et que les identifiants sont pourtant refusés, ' +
-        `un autre serveur tient sans doute le port visé : \`netstat -ano | grep :${portOf(url)}\` ` +
-        'sous Windows. Le dépôt publie le sien sur **5433** — vérifier que ' +
-        '`DATABASE_URL` le vise, et non le 5432 qu’un PostgreSQL natif peut tenir.\n' +
+      `PostgreSQL injoignable dans le conteneur de test (${what}). Le conteneur a ` +
+        'démarré mais n’accepte pas la connexion : moteur arrêté entre-temps, ou ' +
+        'port republié.\n' +
         `Cause : ${error instanceof Error ? error.message : String(error)}`,
     );
   }
@@ -145,29 +200,48 @@ async function connect(url: string, what: string): Promise<Client> {
 }
 
 /**
- * Crée une base neuve, y applique toutes les migrations, et rend de quoi s'y
- * connecter et la détruire.
+ * Crée une base neuve dans un conteneur PostgreSQL démarré pour l'occasion, y
+ * applique toutes les migrations, et rend de quoi s'y connecter et la détruire.
  *
- * Le coût est celui d'un `CREATE DATABASE` depuis `template1` et de quatre
- * fichiers SQL : quelques centaines de millisecondes, payées une fois par suite.
+ * Le coût se lit en deux parts : le démarrage du conteneur, payé une fois par
+ * fichier de test, et la création plus migration de la base, payée à chaque
+ * appel. Les deux sont chiffrées dans `apps/api/README.md`.
  */
 export async function createDisposableDatabase(): Promise<DisposableDatabase> {
-  const serverUrl = requireServerUrl();
+  const container = await acquireContainer();
+
+  let released = false;
+  const release = async (): Promise<void> => {
+    if (released) {
+      return;
+    }
+    released = true;
+    await releaseContainer();
+  };
+
   const name = `spa_iso_${randomUUID().replace(/-/g, '')}`;
   if (!SAFE_NAME.test(name)) {
+    await release();
     throw new Error(`nom de base jetable inattendu : « ${name} »`);
   }
 
-  const maintenanceUrl = urlForDatabase(serverUrl, MAINTENANCE_DATABASE);
+  const maintenanceUrl = urlForDatabase(container.getConnectionUri(), MAINTENANCE_DATABASE);
 
-  const admin = await connect(maintenanceUrl, 'création de la base jetable');
   try {
-    await admin.query(`CREATE DATABASE "${name}"`);
-  } finally {
-    await admin.end();
+    const admin = await connect(maintenanceUrl, 'création de la base jetable');
+    try {
+      await admin.query(`CREATE DATABASE "${name}"`);
+    } finally {
+      await admin.end();
+    }
+  } catch (error) {
+    // La base n'existe pas : il n'y a rien à détruire, mais le conteneur a été
+    // réservé et doit l'être défait, sans quoi il survivrait à la suite.
+    await release();
+    throw error;
   }
 
-  const url = urlForDatabase(serverUrl, name);
+  const url = urlForDatabase(container.getConnectionUri(), name);
   let dropped = false;
 
   const drop = async (): Promise<void> => {
@@ -188,6 +262,9 @@ export async function createDisposableDatabase(): Promise<DisposableDatabase> {
     } finally {
       await closer.end();
     }
+    // Après le drapeau, et hors du `finally` : un `drop()` qui a échoué ne rend
+    // pas le conteneur, puisque la base y est peut-être encore.
+    await release();
   };
 
   // Tout ce qui suit la création se fait sous filet : la base existe déjà, et

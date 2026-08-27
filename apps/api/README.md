@@ -31,13 +31,17 @@ inter-tenant.
 | Cible | Ce qu'elle couvre | Infrastructure |
 |---|---|---|
 | `npm run test:unit` | logique pure, `src/**/__tests__/*.spec.ts` | aucune |
-| `npm run test:integration:api` | `test/*.integration-spec.ts` — l'API en HTTP | aucune |
-| `npm run test:isolation` | `test/*.isolation-spec.ts` — les tests de fuite | PostgreSQL pour deux d'entre elles |
+| `npm run test:integration:api` | `test/*.integration-spec.ts` — l'API en HTTP | Docker pour une d'entre elles |
+| `npm run test:isolation` | `test/*.isolation-spec.ts` — les tests de fuite | Docker pour deux d'entre elles |
 | `npm run test:integration` | les deux précédentes, dans cet ordre | idem |
 
 Les trois premières sont des étapes nommées du job `test` de
 [ci.yml](../../.github/workflows/ci.yml) : une ligne rouge y désigne la nature
 du problème sans qu'il faille ouvrir les logs.
+
+« Docker » et non « PostgreSQL » : les trois suites qui exigent un vrai moteur
+démarrent le leur (voir plus bas). Aucune ne lit `DATABASE_URL`, et les autres —
+l'immense majorité — n'ont toujours besoin de rien.
 
 ### Harnais de tests d'isolation inter-tenant
 
@@ -99,10 +103,11 @@ la ressource existe quelque part, ce qui est une sonde d'existence offerte à qu
 identifiant surveillé — vert sans rien avoir exercé est le pire résultat pour un
 test de fuite.
 
-**`disposable-database.ts` — une base PostgreSQL jetable.**
-`createDisposableDatabase()` crée une base neuve sur le serveur que
-`DATABASE_URL` désigne, y applique le SQL des migrations, et la détruit à la
-demande :
+**`disposable-database.ts` — une base PostgreSQL jetable, dans un conteneur à
+elle.** `createDisposableDatabase()` démarre un PostgreSQL 16
+(`@testcontainers/postgresql`, image `postgres:16-alpine` — la même que
+`docker-compose.yml`), y crée une base neuve, y applique le SQL des migrations,
+et détruit l'une comme l'autre à la demande :
 
 ```ts
 beforeAll(async () => { database = await createDisposableDatabase(); });
@@ -111,21 +116,48 @@ afterAll(async () => { await database?.drop(); });
 
 Rien n'est partagé entre suites : le ménage n'a plus à viser chaque ligne semée
 sous peine d'emporter celles d'une suite voisine, et plusieurs exécutions
-parallèles peuvent se servir du même serveur sans se marcher dessus. Le serveur,
-lui, reste un prérequis — `docker compose up -d` en local, service `postgres` du
-job `test` en CI. Une suite d'isolation ne se désactive jamais toute seule quand
-la base manque : elle annoncerait une garantie que rien n'a vérifiée.
+parallèles ne se marchent pas dessus. Le **serveur** non plus n'est plus partagé
+depuis [#274](https://github.com/TMap-Works/spa-booking/issues/274) : ni
+`docker compose up -d`, ni le service `postgres` de la CI, ni `DATABASE_URL`
+n'entrent dans le résultat. Un démon Docker joignable est le seul prérequis. Une
+suite d'isolation ne se désactive jamais toute seule quand il manque : elle
+annoncerait une garantie que rien n'a vérifiée.
 
-> Le critère d'acceptation de [#27](https://github.com/TMap-Works/spa-booking/issues/27)
-> disait « via Testcontainers ». La base est bien jetable, mais provisionnée sur
-> un serveur existant plutôt que dans un conteneur démarré par la suite :
-> `@testcontainers/postgresql` n'est pas installé, et l'ajouter sortait de
-> l'empreinte de fichiers du ticket. `DisposableDatabase` est l'interface qu'un
-> fournisseur Testcontainers aura à rendre — la bascule se fera dans ce seul
-> module.
+Le conteneur est démarré **par fichier de test**, pas par base : Jest
+réinitialise le registre de modules entre fichiers, et le compteur interne du
+harnais arrête le moteur quand la dernière base qu'il portait est détruite.
+Ce n'est pas qu'une économie : les cas « deux bases jetables ne se voient pas
+l'une l'autre » et « la base détruite a disparu de `pg_database` » ne prouvent
+quelque chose que si les deux bases vivent sur le même serveur. Un conteneur par
+base les rendrait vrais par construction, donc vides.
 
-Deux suites s'en servent : `tenant-scope.isolation-spec.ts`, qui prouve
-l'extension de scoping Prisma contre un vrai moteur, et
+**Le coût, mesuré.** Windows 11, Docker Desktop 29.6.1, cache ts-jest chaud,
+`--runInBand`, image déjà tirée :
+
+| Mesure | Avant #274 | Après #274 |
+|---|---|---|
+| `appointments-exclusion.integration-spec.ts` (1 fichier) | 1,5 s | 4,5 s |
+| `disposable-database` + `tenant-scope` (2 fichiers) | 4,0 s | 10,4 s |
+| démarrage d'un conteneur | — | 1,6 à 2,4 s |
+| arrêt d'un conteneur | — | ~0,6 s |
+| `CREATE DATABASE` + SQL des migrations | ~0,4 s | ~0,4 s |
+
+Soit **environ 3 secondes par fichier de test qui provisionne une base**, et
+~9 s sur `npm run verify` pour les trois fichiers d'aujourd'hui. C'est le prix
+de l'indépendance vis-à-vis de ce que la machine héberge — version du moteur
+comprise. Il croît avec le nombre de **fichiers**, pas de suites ni de bases :
+regrouper dans un même fichier les cas qui exigent un moteur reste la façon de
+ne pas le payer deux fois.
+
+Le tirage de l'image, lui, ne se paie qu'une fois par machine — mais il se paie
+dans le `beforeAll` de la première suite, dont le délai est celui de Jest (30 s).
+En local, `docker compose up -d` l'a déjà tirée ; en CI, une étape dédiée du job
+`test` la tire avant les tests.
+
+Trois suites s'en servent : `tenant-scope.isolation-spec.ts`, qui prouve
+l'extension de scoping Prisma contre un vrai moteur,
+`appointments-exclusion.integration-spec.ts`, qui prouve la contrainte
+d'exclusion anti-double-réservation, et
 `disposable-database.isolation-spec.ts`, qui prouve la base jetable elle-même.
 Le harnais et ses assertions, eux, sont exercés par
 `tenant-harness.isolation-spec.ts` — y compris **dans le sens négatif** : chaque
