@@ -15,17 +15,18 @@
 
 import { z } from 'zod';
 
-import { uuidSchema } from '../common/identifiers';
+import { reasonSchema, uuidSchema } from '../common/identifiers';
 import {
   calendarDateSchema,
   calendarDaysBetween,
   localTimeSchema,
   localTimeToMinutes,
+  offsetDateTimeSchema,
   timeZoneSchema,
   utcInstantSchema,
   type CalendarDate,
 } from '../common/time';
-import { MAX_AVAILABILITY_RANGE_DAYS } from '../constants/limits';
+import { MAX_AVAILABILITY_RANGE_DAYS, MAX_TIME_OFF_RANGE_DAYS } from '../constants/limits';
 
 /**
  * Interrogation des créneaux libres.
@@ -352,3 +353,154 @@ export const setClosingDaysRequestSchema = z
   .strict();
 
 export type SetClosingDaysRequest = z.infer<typeof setClosingDaysRequestSchema>;
+
+// ---------------------------------------------------------------------------
+// Plages bloquées et congés — #33
+// ---------------------------------------------------------------------------
+
+/**
+ * Une indisponibilité de praticien, telle que le back-office la manipule.
+ *
+ * Plage bloquée ponctuelle et congé sur plusieurs jours sont la **même** forme :
+ * un intervalle `[startsAt, endsAt[` en UTC. Seule leur durée les distingue, et
+ * aucun consommateur n'a de raison de les traiter différemment — le moteur de
+ * créneaux les soustrait des fenêtres de travail sans savoir laquelle il tient.
+ *
+ * `reason` est nullable et **ne sort jamais du back-office** : aucune projection
+ * publique ne le porte, et `staffBusyIntervalSchema` — la forme que consomme le
+ * calcul de créneaux — ne le déclare pas. Voir la note qui l'accompagne.
+ */
+export const staffTimeOffSchema = z
+  .object({
+    id: uuidSchema,
+    staffId: uuidSchema,
+    startsAt: utcInstantSchema,
+    endsAt: utcInstantSchema,
+    reason: reasonSchema.nullable(),
+  })
+  .strict();
+
+export type StaffTimeOff = z.infer<typeof staffTimeOffSchema>;
+
+/**
+ * Un intervalle d'occupation, tel que le calcul de créneaux le consomme.
+ *
+ * **Sans `reason`, et c'est tout l'objet de ce schéma.** Le motif d'une absence
+ * — « arrêt maladie », « rendez-vous médical » — est une donnée de gestion du
+ * personnel : elle regarde le back-office, jamais la page de réservation
+ * publique où le créneau manquant se manifeste. Une projection qui le
+ * transporterait jusqu'au moteur le rendrait disponible à tout ce qui vient
+ * après, et c'est ainsi qu'un motif finit dans une réponse publique.
+ *
+ * `id` en est également absent : le moteur soustrait des intervalles, il n'a
+ * aucune ligne à désigner.
+ */
+export const staffBusyIntervalSchema = z
+  .object({
+    staffId: uuidSchema,
+    startsAt: utcInstantSchema,
+    endsAt: utcInstantSchema,
+  })
+  .strict();
+
+export type StaffBusyInterval = z.infer<typeof staffBusyIntervalSchema>;
+
+/**
+ * `true` si l'intervalle est non vide et ne dépasse pas `MAX_TIME_OFF_RANGE_DAYS`.
+ *
+ * Les deux bornes sont vérifiées ensemble parce qu'elles décrivent la même
+ * propriété — « cet intervalle est plausible » — et qu'un appelant qui n'en
+ * vérifierait qu'une laisserait passer l'autre. Le refus sort en
+ * `TIME_OFF_RANGE_INVALID`, `details.rule` disant laquelle a cédé.
+ */
+function isPlausibleTimeOffRange(startsAt: string, endsAt: string): boolean {
+  const start = Date.parse(startsAt);
+  const end = Date.parse(endsAt);
+
+  return end > start && end - start <= MAX_TIME_OFF_RANGE_DAYS * 86_400_000;
+}
+
+/**
+ * Pose d'une plage bloquée ou d'un congé.
+ *
+ * Les bornes entrent en **date-heure à offset explicite** et non en date civile,
+ * ce qui n'est pas un détail de format : « le 3 août » n'est pas un instant, et
+ * un congé du 3 au 5 ne commence pas au même moment à Papeete et à Paris. C'est
+ * l'appelant — qui connaît le fuseau de l'établissement, l'API le lui rend — qui
+ * pose les bornes ; le serveur ne devine jamais un fuseau manquant.
+ *
+ * Le `refine` est le seul endroit du contrat où la règle vit : elle vaut à la
+ * création comme à la modification, et l'écrire deux fois la laisserait diverger.
+ */
+export const createStaffTimeOffRequestSchema = z
+  .object({
+    staffId: uuidSchema,
+    startsAt: offsetDateTimeSchema,
+    endsAt: offsetDateTimeSchema,
+    reason: reasonSchema.optional(),
+  })
+  .strict()
+  .refine((body) => isPlausibleTimeOffRange(body.startsAt, body.endsAt), {
+    message: `la fin doit suivre le début, et l’absence ne peut excéder ${String(MAX_TIME_OFF_RANGE_DAYS)} jours`,
+    path: ['endsAt'],
+  });
+
+export type CreateStaffTimeOffRequest = z.infer<typeof createStaffTimeOffRequestSchema>;
+
+/**
+ * Modification d'une absence — un **patch** : un champ absent n'est pas touché.
+ *
+ * `staffId` n'y figure pas, et c'est délibéré : déplacer une absence d'un
+ * praticien à un autre n'est pas une modification, c'est une absence retirée et
+ * une autre posée. L'autoriser ferait porter à une seule requête deux
+ * invalidations de cache et deux agendas rouverts, pour un geste que personne ne
+ * fait.
+ *
+ * `reason` accepte `null` — il vaut « efface ce motif ». Les bornes, elles,
+ * refusent `null` : une absence sans début n'existe pas.
+ */
+export const updateStaffTimeOffRequestSchema = z
+  .object({
+    startsAt: offsetDateTimeSchema.optional(),
+    endsAt: offsetDateTimeSchema.optional(),
+    reason: reasonSchema.nullable().optional(),
+  })
+  .strict()
+  .refine(
+    (patch) =>
+      patch.startsAt === undefined ||
+      patch.endsAt === undefined ||
+      isPlausibleTimeOffRange(patch.startsAt, patch.endsAt),
+    {
+      message: `la fin doit suivre le début, et l’absence ne peut excéder ${String(MAX_TIME_OFF_RANGE_DAYS)} jours`,
+      path: ['endsAt'],
+    },
+  );
+
+export type UpdateStaffTimeOffRequest = z.infer<typeof updateStaffTimeOffRequestSchema>;
+
+/**
+ * Interrogation du planning d'absences.
+ *
+ * La fenêtre est **obligatoire** et bornée, pour la même raison que celle de
+ * `availabilityQuerySchema` : sans elle, un établissement de dix ans d'historique
+ * rendrait dix ans d'absences à chaque ouverture du planning. Un intervalle est
+ * retenu dès qu'il **recoupe** la fenêtre, borne haute exclue — un congé commencé
+ * le mois dernier et courant toujours doit apparaître au planning de ce mois-ci.
+ *
+ * `staffId` absent signifie « tout l'établissement », ce qu'affiche la vue
+ * calendrier du back-office.
+ */
+export const staffTimeOffQuerySchema = z
+  .object({
+    staffId: uuidSchema.optional(),
+    from: offsetDateTimeSchema,
+    to: offsetDateTimeSchema,
+  })
+  .strict()
+  .refine((query) => isPlausibleTimeOffRange(query.from, query.to), {
+    message: `la fin de la fenêtre doit suivre son début, sans excéder ${String(MAX_TIME_OFF_RANGE_DAYS)} jours`,
+    path: ['to'],
+  });
+
+export type StaffTimeOffQuery = z.infer<typeof staffTimeOffQuerySchema>;

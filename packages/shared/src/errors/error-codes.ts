@@ -94,6 +94,16 @@ export const BOOKING_ERROR_CODES = {
   CANCELLATION_WINDOW_CLOSED: 'CANCELLATION_WINDOW_CLOSED',
   /** Plage de disponibilité trop large — voir `MAX_AVAILABILITY_RANGE_DAYS`. */
   AVAILABILITY_RANGE_TOO_WIDE: 'AVAILABILITY_RANGE_TOO_WIDE',
+  /**
+   * Plage bloquée ou congé dont les bornes ne tiennent pas : fin avant début,
+   * ou fenêtre au-delà de `MAX_TIME_OFF_RANGE_DAYS` (#33). **422**.
+   *
+   * Un seul code pour les deux refus, `details.rule` les distingue
+   * (`ends_before_starts` / `range_too_wide`) : le front affiche le même
+   * message sur le même champ, et un second code lui aurait fait écrire deux
+   * branches pour une seule correction à faire par l'utilisateur.
+   */
+  TIME_OFF_RANGE_INVALID: 'TIME_OFF_RANGE_INVALID',
 } as const;
 
 /** Encaissement — payments-stripe. */
