@@ -234,6 +234,7 @@
     ],
     "34": [
       "api/availability",
+      "contracts:shared",
       "db:schema"
     ]
   },
