@@ -72,3 +72,5 @@ Thumbs.db
 .claude/.permissions/
 # Worktrees créés par /ticket
 .claude/worktrees/
+# Journaux des processus et captures de la recette MCP (phase 4bis de /ticket)
+.claude/.recette/
