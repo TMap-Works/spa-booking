@@ -1,11 +1,19 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { ConflictError, InvalidStateTransitionError, NotFoundError } from '../../common/errors';
 import { requireTenantId } from '../../common/tenant/tenant-context';
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
+import { OCCUPYING_STATUSES, occupiesSlot } from './appointment-status';
 import { isSlotExclusionViolation, isTransientWriteConflict } from './appointments.conflicts';
 import { SlotNoLongerAvailableError } from './appointments.errors';
-import type { AppointmentDraft, AppointmentRecord, GuestContact } from './appointments.types';
+import type {
+  AppointmentDraft,
+  AppointmentRecord,
+  GuestContact,
+  RescheduleDraft,
+  RescheduleOutcome,
+} from './appointments.types';
 
 /**
  * Accès Prisma du module `appointments` — le seul endroit qui connaisse le
@@ -54,6 +62,7 @@ const APPOINTMENT_SELECT = {
   priceAmountMinor: true,
   priceCurrency: true,
   clientNote: true,
+  rescheduledFromId: true,
 } as const;
 
 type AppointmentRow = Prisma.AppointmentGetPayload<{ select: typeof APPOINTMENT_SELECT }>;
@@ -125,6 +134,7 @@ function toRecord(row: AppointmentRow): AppointmentRecord {
     status: row.status,
     price: { amountMinor: row.priceAmountMinor, currency: row.priceCurrency },
     clientNote: row.clientNote,
+    rescheduledFromId: row.rescheduledFromId,
   };
 }
 
@@ -156,14 +166,93 @@ export class AppointmentsRepository {
    * intervalle.
    */
   public async create(draft: AppointmentDraft): Promise<AppointmentRecord> {
+    return this.writingAgenda(
+      () => this.insert(draft),
+      () => new SlotNoLongerAvailableError(draft.staffId, draft.startsAt),
+    );
+  }
+
+  /**
+   * Déplace un rendez-vous : **annulation de l'ancien et création du nouveau**,
+   * liés par `rescheduled_from_id`, dans une seule transaction (#39,
+   * booking-engine §5).
+   *
+   * ## Pourquoi ce n'est pas un `UPDATE` des dates
+   *
+   * Deux raisons, et chacune suffirait.
+   *
+   * L'**historique** : déplacer les bornes de la ligne existante efface l'heure
+   * d'origine. La cliente ne peut plus voir d'où son rendez-vous vient, et le
+   * salon ne peut plus compter ses reports — un report qui se déguise en
+   * rendez-vous initial fausse le reporting du CDC §1.4.
+   *
+   * La **contrainte d'exclusion** : `appointments_no_overlap` compare la ligne
+   * modifiée aux autres, elle-même comprise. Avancer d'une demi-heure un soin
+   * qui dure une heure ferait chevaucher la ligne avec l'état qu'elle avait
+   * avant, et PostgreSQL refuserait un déplacement parfaitement légitime.
+   * Annuler **puis** créer sort la ligne de l'index partiel — `WHERE status IN
+   * ('PENDING','CONFIRMED')` — avant que l'insertion ne soit jugée. La garantie
+   * n'est pas contournée, elle est demandée dans l'ordre où elle a un sens.
+   *
+   * ## L'atomicité est ce qui rend l'échec inoffensif
+   *
+   * Tout est dans la même transaction. Si la contrainte refuse le nouveau
+   * créneau — quelqu'un vient de le prendre —, le `ROLLBACK` emporte
+   * l'annulation avec l'insertion : **l'ancien rendez-vous est intact**, au
+   * statut où il était. C'est le troisième critère de #39, et il n'est tenu par
+   * aucun code applicatif : il est tenu par la transaction.
+   *
+   * ## Le statut est **repris**, pas remis à `PENDING`
+   *
+   * Reporter déplace un créneau ; cela n'annule pas une confirmation déjà
+   * obtenue. Rétrograder un `CONFIRMED` en `PENDING` demanderait à une cliente
+   * qui a déjà confirmé de confirmer à nouveau, et exposerait le rendez-vous
+   * déplacé à toute purge future des réservations non confirmées. Les deux
+   * statuts occupent l'agenda de la même façon : la garantie
+   * anti-double-réservation est rigoureusement identique dans un cas comme dans
+   * l'autre.
+   *
+   * @throws {NotFoundError} rendez-vous inconnu, ou appartenant à un autre
+   * établissement — jamais 403, qui confirmerait son existence.
+   * @throws {InvalidStateTransitionError} rendez-vous terminé, annulé ou
+   * no-show : il n'y a plus de créneau à déplacer.
+   * @throws {ConflictError} le rendez-vous a changé d'état entre la lecture et
+   * l'écriture — deux reports concurrents, dont un seul aboutit.
+   * @throws {SlotNoLongerAvailableError} la contrainte d'exclusion a refusé le
+   * nouveau créneau.
+   */
+  public async reschedule(draft: RescheduleDraft): Promise<RescheduleOutcome> {
+    return this.writingAgenda(
+      () => this.move(draft),
+      () => new SlotNoLongerAvailableError(draft.staffId, draft.startsAt),
+    );
+  }
+
+  /**
+   * Une écriture d'agenda, **réessayée sur interblocage** et traduite sur refus
+   * de créneau.
+   *
+   * Facteur commun de `create` et de `reschedule` : les deux insèrent sous la
+   * contrainte d'exclusion, les deux prennent le verrou consultatif du
+   * praticien, et les deux doivent donc distinguer les deux issues concurrentes
+   * de la même façon. Deux copies de cette boucle divergeraient — et celle qui
+   * divergerait rendrait un 500 là où le contrat annonce un 409.
+   *
+   * `taken` est une fabrique et non une instance : construire l'erreur d'avance
+   * capturerait une pile d'appel qui ne désigne pas le site du refus.
+   */
+  private async writingAgenda<T>(
+    operation: () => Promise<T>,
+    taken: () => SlotNoLongerAvailableError,
+  ): Promise<T> {
     for (let attempt = 1; ; attempt += 1) {
       try {
-        return await this.insert(draft);
+        return await operation();
       } catch (error: unknown) {
         // Sans cette traduction, la perdante d'une course reçoit un 500 là où le
         // contrat annonce un 409 — et le front n'a plus rien à proposer au client.
         if (isSlotExclusionViolation(error)) {
-          throw new SlotNoLongerAvailableError(draft.staffId, draft.startsAt);
+          throw taken();
         }
         if (!isTransientWriteConflict(error) || attempt >= MAX_INSERT_ATTEMPTS) {
           throw error;
@@ -171,6 +260,99 @@ export class AppointmentsRepository {
         await backOff(attempt);
       }
     }
+  }
+
+  /**
+   * Le report proprement dit — une tentative, sans interprétation de l'échec.
+   *
+   * Le verrou consultatif porte sur l'agenda **d'arrivée** : c'est là que
+   * l'insertion aura lieu, donc là que les candidates doivent s'ordonner. Le
+   * départ n'en a pas besoin — une annulation ne peut entrer en conflit avec
+   * rien, elle ne fait que libérer.
+   *
+   * N'en prendre qu'un est délibéré : deux verrous prisonniers dans un ordre
+   * dépendant des données — l'ancien praticien, puis le nouveau — reformeraient
+   * exactement le cycle d'attente que ce verrou existe pour supprimer (ADR 0006).
+   *
+   * ## L'écriture conditionnelle sur le statut n'est pas une vérification
+   *
+   * `updateMany` filtre sur `status IN (…occupants)` et rend un **compte**. Deux
+   * reports concurrents du même rendez-vous se sérialisent sur le verrou de
+   * ligne : le second relit la ligne après la validation du premier, ne la
+   * reconnaît plus, et met à jour zéro ligne. C'est un test-et-pose atomique
+   * rendu par le moteur, et non un « est-ce encore reportable ? » suivi d'une
+   * écriture — la conduite que booking-engine §1 interdit.
+   *
+   * La lecture qui précède ne sert donc pas à décider : elle sert à **répondre**
+   * — distinguer un identifiant inconnu d'un rendez-vous déjà terminé, ce qu'un
+   * compte de lignes ne dit pas.
+   */
+  private async move(draft: RescheduleDraft): Promise<RescheduleOutcome> {
+    const tenantId = requireTenantId('Appointment', 'reschedule');
+    const agenda = `appointments:tenant_id=${tenantId}:staff_id=${draft.staffId}`;
+
+    return this.prisma.$transaction(async (tx) => {
+      // eslint-disable-next-line tenant/raw-sql-tenant-filter -- Ce SQL ne lit ni n'écrit aucune ligne : il prend un verrou consultatif dont la clé porte le tenant, transmis en paramètre lié (`agenda`). Il n'y a pas de `WHERE` à filtrer.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${agenda}::text, 0::bigint))`;
+
+      // `findFirst` et non `findUnique`, pour la raison de `findById` :
+      // l'extension injecte `tenantId` dans le `where`. Un rendez-vous d'un autre
+      // établissement est donc introuvable, et rend 404 plutôt qu'un 403 qui
+      // confirmerait son existence (tenant-isolation §4).
+      const previous = await tx.appointment.findFirst({
+        where: { id: draft.previousId },
+        select: APPOINTMENT_SELECT,
+      });
+
+      if (previous === null) {
+        throw new NotFoundError('Rendez-vous introuvable.');
+      }
+
+      if (!occupiesSlot(previous.status)) {
+        // Terminé, déjà annulé, ou no-show : il n'y a plus de créneau à
+        // déplacer, et en créer un nouveau à cette occasion serait une
+        // réservation déguisée.
+        throw new InvalidStateTransitionError(previous.status, 'CANCELLED');
+      }
+
+      const released = await tx.appointment.updateMany({
+        where: { id: previous.id, status: { in: [...OCCUPYING_STATUSES] } },
+        data: {
+          status: 'CANCELLED',
+          // Le motif et l'auteur de l'annulation appartiennent à #40 : ce qui
+          // dit ici qu'il s'agit d'un report et non d'un abandon, c'est le
+          // `rescheduled_from_id` que porte le successeur.
+          cancelledAt: new Date(),
+        },
+      });
+
+      if (released.count !== 1) {
+        throw new ConflictError('Ce rendez-vous vient d’être modifié. Rechargez-le avant de le reporter.', {
+          appointmentId: previous.id,
+        });
+      }
+
+      const row = await tx.appointment.create({
+        data: withScopedTenant<Prisma.AppointmentUncheckedCreateInput>({
+          // Recopiés de la ligne relue **dans la transaction**, jamais de la
+          // demande : reporter ne change ni la cliente, ni la prestation, ni le
+          // prix figé à la réservation d'origine.
+          clientId: previous.clientId,
+          serviceId: previous.serviceId,
+          priceAmountMinor: previous.priceAmountMinor,
+          priceCurrency: previous.priceCurrency,
+          clientNote: previous.clientNote,
+          status: previous.status,
+          staffId: draft.staffId,
+          startsAt: draft.startsAt,
+          endsAt: draft.endsAt,
+          rescheduledFromId: previous.id,
+        }),
+        select: APPOINTMENT_SELECT,
+      });
+
+      return { previous: toRecord(previous), created: toRecord(row) };
+    });
   }
 
   /**

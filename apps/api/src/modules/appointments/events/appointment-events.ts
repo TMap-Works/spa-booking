@@ -4,6 +4,21 @@ import { Injectable } from '@nestjs/common';
 
 import { StructuredLogger } from '../../../common/logging/structured-logger';
 import { APPOINTMENT_CREATED, type AppointmentCreatedEvent } from './appointment-created.event';
+import {
+  APPOINTMENT_RESCHEDULED,
+  type AppointmentRescheduledEvent,
+} from './appointment-rescheduled.event';
+
+/**
+ * Tout ce que ce bus publie.
+ *
+ * Une union plutôt qu'une interface commune : les deux événements ne partagent
+ * que leur enveloppe — nom, tenant, rendez-vous, instant d'émission — et une
+ * classe de base les ferait diverger par héritage plutôt que par contrat. Ce que
+ * la publication a besoin de savoir tient dans ces quatre champs, et c'est
+ * exactement ce que l'union garantit.
+ */
+export type AppointmentDomainEvent = AppointmentCreatedEvent | AppointmentRescheduledEvent;
 
 /**
  * Le bus d'événements du module `appointments` — publication en mémoire, dans le
@@ -66,12 +81,46 @@ export class AppointmentEvents {
   }
 
   /**
+   * Publie `appointment.rescheduled` (#39).
+   *
+   * Appelé **après** la validation de la transaction de report, jamais dedans :
+   * un `ROLLBACK` laisserait l'ancien rendez-vous en place, et l'avis de
+   * déplacement aurait annoncé une heure à laquelle personne n'est attendu.
+   */
+  public appointmentRescheduled(
+    event: Omit<AppointmentRescheduledEvent, 'name' | 'occurredAt'>,
+  ): void {
+    this.publish({
+      ...event,
+      name: APPOINTMENT_RESCHEDULED,
+      occurredAt: new Date().toISOString(),
+    });
+  }
+
+  /**
    * Abonne un écouteur à `appointment.created`.
    *
    * Rend la fonction de désabonnement plutôt que rien : un module qui s'abonne
    * dans `onModuleInit` doit pouvoir se retirer dans `onModuleDestroy`, faute de
    * quoi chaque application montée par la suite de tests laisse son écouteur sur
    * un émetteur qui, lui, vit aussi longtemps que son instance.
+   */
+  public onAppointmentCreated(listener: (event: AppointmentCreatedEvent) => void): () => void {
+    return this.subscribe(APPOINTMENT_CREATED, listener);
+  }
+
+  /**
+   * Abonne un écouteur à `appointment.rescheduled` — même contrat, même
+   * enveloppe.
+   */
+  public onAppointmentRescheduled(
+    listener: (event: AppointmentRescheduledEvent) => void,
+  ): () => void {
+    return this.subscribe(APPOINTMENT_RESCHEDULED, listener);
+  }
+
+  /**
+   * L'abonnement, quel que soit l'événement.
    *
    * ## L'écouteur est **enveloppé**, et il doit l'être
    *
@@ -87,10 +136,15 @@ export class AppointmentEvents {
    *    rattrape, et Node abat le processus sur une promesse non gérée.
    *
    * L'enveloppe isole donc chaque abonné, dans les deux temps : la levée
-   * synchrone et le rejet différé.
+   * synchrone et le rejet différé. Elle est écrite **une fois** : deux copies
+   * divergeraient, et celle qui perdrait le `catch` différé abattrait le
+   * processus sur un rejet d'abonné.
    */
-  public onAppointmentCreated(listener: (event: AppointmentCreatedEvent) => void): () => void {
-    const guarded = (event: AppointmentCreatedEvent): void => {
+  private subscribe<E extends AppointmentDomainEvent>(
+    name: E['name'],
+    listener: (event: E) => void,
+  ): () => void {
+    const guarded = (event: E): void => {
       try {
         const outcome: unknown = listener(event);
         if (outcome instanceof Promise) {
@@ -103,9 +157,9 @@ export class AppointmentEvents {
       }
     };
 
-    this.emitter.on(APPOINTMENT_CREATED, guarded);
+    this.emitter.on(name, guarded);
     return () => {
-      this.emitter.off(APPOINTMENT_CREATED, guarded);
+      this.emitter.off(name, guarded);
     };
   }
 
@@ -119,7 +173,7 @@ export class AppointmentEvents {
    * pas — un écouteur posé sur l'émetteur par un autre chemin — et garantit qu'un
    * module d'aval ne fera jamais échouer une réservation déjà validée en base.
    */
-  private publish(event: AppointmentCreatedEvent): void {
+  private publish(event: AppointmentDomainEvent): void {
     this.logger.log('domain event', {
       event: event.name,
       tenantId: event.tenantId,
@@ -134,7 +188,7 @@ export class AppointmentEvents {
   }
 
   /** Un abonné a échoué — journalisé, jamais propagé à l'appelant. */
-  private listenerFailed(event: AppointmentCreatedEvent, error: unknown): void {
+  private listenerFailed(event: AppointmentDomainEvent, error: unknown): void {
     this.logger.error('domain event listener failed', {
       event: event.name,
       appointmentId: event.appointmentId,

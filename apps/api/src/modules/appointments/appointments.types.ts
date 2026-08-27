@@ -63,6 +63,14 @@ export interface AppointmentRecord {
   readonly status: AppointmentStatus;
   readonly price: Money;
   readonly clientNote: string | null;
+  /**
+   * Le rendez-vous que celui-ci remplace, ou `null` s'il a été pris directement
+   * (#39).
+   *
+   * `null` se lit « pris directement », jamais « inconnu » : la colonne est
+   * nullable et sans défaut, et rien d'autre que le report ne l'écrit.
+   */
+  readonly rescheduledFromId: string | null;
 }
 
 /**
@@ -104,6 +112,56 @@ export interface BookAppointmentInput {
 }
 
 /**
+ * Ce qu'un report demande, tel que le **service** le reçoit (#39).
+ *
+ * Ni `serviceId`, ni coordonnées de cliente, ni prix : reporter ne change ni la
+ * prestation, ni la personne, ni le montant dû. Les laisser entrer par le corps
+ * de la requête ferait d'un déplacement d'heure une réécriture de commande, sur
+ * une surface publique de surcroît.
+ *
+ * `staffId` est facultatif : le salon change couramment de praticien à
+ * l'occasion d'un report, et son absence signifie « le même qu'avant ».
+ */
+export interface RescheduleAppointmentInput {
+  /** Le rendez-vous à déplacer, dans l'établissement courant. */
+  readonly appointmentId: string;
+  /** Instant du **soin** souhaité — jamais l'intervalle occupé. */
+  readonly startsAt: Date;
+  /** Nouveau praticien, ou `null` pour conserver celui du rendez-vous d'origine. */
+  readonly staffId: string | null;
+}
+
+/**
+ * Ce que le repository écrit lors d'un report — l'intervalle **occupé** du
+ * nouveau rendez-vous, et rien d'autre.
+ *
+ * Tout le reste — cliente, prestation, prix figé, note, statut — est recopié du
+ * rendez-vous d'origine **dans la transaction**, depuis la ligne que le
+ * repository vient de relire. Le faire passer par ce type l'exposerait à être
+ * modifié en chemin, et le rendrait dépendant d'une lecture faite avant que le
+ * verrou d'agenda ne soit pris.
+ */
+export interface RescheduleDraft {
+  readonly previousId: string;
+  readonly staffId: string;
+  readonly startsAt: Date;
+  readonly endsAt: Date;
+}
+
+/**
+ * Les deux rendez-vous d'un report, tels que le repository les rend.
+ *
+ * `previous` est la ligne **telle qu'elle était avant l'annulation** — son
+ * statut d'origine, son ancien créneau. C'est ce dont l'appelant a besoin :
+ * l'événement de domaine annonce d'où le rendez-vous part, et le statut d'avant
+ * est celui que le nouveau rendez-vous a repris.
+ */
+export interface RescheduleOutcome {
+  readonly previous: AppointmentRecord;
+  readonly created: AppointmentRecord;
+}
+
+/**
  * Le rendez-vous tel que l'API le rend.
  *
  * ## `startsAt` / `endsAt` sont l'intervalle **facturé**, pas l'intervalle occupé
@@ -131,4 +189,13 @@ export interface AppointmentView {
   /** Prix figé à la réservation. */
   readonly price: Money;
   readonly clientNote: string | null;
+  /**
+   * Le rendez-vous que celui-ci remplace, ou `null` (#39).
+   *
+   * Rendu au parcours public **à dessein** : c'est ce qui permet à l'écran de
+   * confirmation d'un report d'annoncer « votre rendez-vous du 3 mars a été
+   * déplacé » plutôt que d'afficher une réservation neuve. L'identifiant rendu
+   * est celui que l'appelant vient d'envoyer — il ne lui apprend rien.
+   */
+  readonly rescheduledFromId: string | null;
 }
