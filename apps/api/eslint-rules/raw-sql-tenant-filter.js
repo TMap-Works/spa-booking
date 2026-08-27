@@ -16,8 +16,11 @@
  *
  * La règle est donc **fermée par défaut**, exactement comme l'extension :
  *
- * - le SQL littéral du site d'appel mentionne `tenant_id` → accepté ;
- * - il ne le mentionne pas → refusé (`missingTenantFilter`) ;
+ * - le SQL littéral du site d'appel emploie `tenant_id` **en position
+ *   filtrante** → accepté ;
+ * - il ne mentionne pas du tout la colonne → refusé (`missingTenantFilter`) ;
+ * - il la mentionne, mais nulle part où elle contraigne la requête — projetée,
+ *   groupée, triée — → refusé (`tenantNotFiltering`) ;
  * - il n'y a **aucun** littéral à lire, parce que la requête est construite
  *   ailleurs → refusé aussi (`opaqueSql`). Une requête que la garde ne peut pas
  *   lire n'est pas une requête qu'elle peut déclarer sûre.
@@ -30,20 +33,27 @@
  *
  * Le même devoir de franchise que `tenant-scope.extension.ts` : une protection
  * dont on croit à tort qu'elle couvre tout est pire qu'une protection dont on
- * connaît les bords.
+ * connaît les bords. Les deux bords ouverts en suivi (#268) ont été tranchés ;
+ * ce qui reste ouvert est décrit ici et dans
+ * [l'ADR 0006](../../../docs/adr/0006-portee-des-gardes-de-scoping.md).
  *
- * **1. La position du `tenant_id`.** La garde vérifie que la colonne est
- * *mentionnée*, pas qu'elle *filtre*. `SELECT tenant_id, count(*) FROM
- * appointments GROUP BY tenant_id` — une lecture inter-tenant — la satisfait.
- * Distinguer une projection d'un prédicat demande d'analyser le SQL, pas de le
- * lire : c'est une décision de conception, ouverte en suivi. La garde force
- * aujourd'hui l'auteur à écrire la colonne au site d'appel, donc à y penser ;
- * elle ne dispense pas la revue de lire la requête.
+ * **1. La position est reconnue par motif, pas par analyse.** Depuis #268, la
+ * garde exige que `tenant_id` apparaisse dans une position qui *contraint* la
+ * requête — comparaison, `USING`, liste de colonnes d'`INSERT`. Elle ne
+ * construit pas d'arbre syntaxique SQL, et ne sait donc pas dire **à quelle
+ * table** ni **à quel niveau de sous-requête** le prédicat s'applique. Une
+ * requête dont la sous-requête porte le filtre et dont la table externe ne
+ * l'a pas — `… FROM appointments WHERE id IN (SELECT id FROM x WHERE
+ * tenant_id = $1)` — la satisfait toujours. De même, `UPDATE t SET tenant_id
+ * = $1 WHERE id = $2` écrit la colonne sans borner la ligne visée. Aller
+ * plus loin demanderait un analyseur SQL : le coût a été jugé disproportionné
+ * face à une revue qui lit la requête (ADR 0006).
  *
- * **2. Le pool `pg` de service.** `DatabaseConnection` expose PostgreSQL hors
- * de Prisma — `client.query(…)` n'est pas inspecté. `.query` est un nom trop
- * générique pour être intercepté sans faux positifs, et la sonde `/health`
- * (`SELECT 1`) demanderait une exemption. Également ouvert en suivi.
+ * **2. Le pool `pg` de service reste hors du champ de cette règle.** Elle ne
+ * connaît que les quatre portes de SQL brut de Prisma. `DatabaseConnection` et
+ * son `client.query(…)` sont couverts autrement — par confinement plutôt que
+ * par inspection : voir `tenant/service-pool-confinement` et la section
+ * « Ce que cette exemption suppose » de `database.connection.ts`.
  */
 
 /** Les quatre portes de SQL brut de Prisma, sûres et « unsafe » confondues. */
@@ -55,6 +65,73 @@ const RAW_METHODS = new Set(['$queryRaw', '$queryRawUnsafe', '$executeRaw', '$ex
  * PostgreSQL, pas au client.
  */
 const TENANT_COLUMN = /tenant_id/i;
+
+/**
+ * La colonne, telle qu'on l'écrit vraiment : éventuellement entre guillemets
+ * doubles (`"tenant_id"`) et éventuellement transtypée (`tenant_id::text`).
+ * Le qualificatif de table qui la précède — `a.`, `"a".` — n'a pas besoin
+ * d'être décrit ici : `\b` s'ancre après le point.
+ */
+const TENANT_REF = '\\btenant_id\\b"?(?:\\s*::\\s*"?\\w+"?)?';
+
+/** Qualificatif de table facultatif, pour la forme `$1 = a.tenant_id`. */
+const QUALIFIER = '(?:[\\w"]+\\s*\\.\\s*)?';
+
+/**
+ * Opérateurs de comparaison, symboles puis mots-clés.
+ *
+ * `IS` porte une exception : `tenant_id IS NULL` et `tenant_id IS NOT NULL` sont
+ * bien des prédicats, mais aucun des deux ne borne la lecture à un
+ * établissement — `IS NOT NULL` sur une colonne `NOT NULL` lit *tous* les
+ * tenants tout en satisfaisant la garde. La négation ne retire que ces deux
+ * formes : `tenant_id IS NOT DISTINCT FROM $1` reste accepté.
+ */
+const COMPARISON = '(?:=|<>|!=|>=|<=|>|<|!?~~?\\*?)';
+const COMPARISON_WORD =
+  '(?:IS(?!\\s+(?:NOT\\s+)?NULL\\b)|IN|ANY|ALL|BETWEEN|LIKE|ILIKE|SIMILAR|WITH)\\b';
+
+/**
+ * Les positions dans lesquelles `tenant_id` **contraint** la requête — par
+ * opposition à celles où il n'est que projeté, groupé ou trié (#268).
+ *
+ * L'ancienne version de la règle se contentait de la *mention* de la colonne.
+ * `SELECT tenant_id, count(*) FROM appointments GROUP BY tenant_id` — une
+ * lecture de tous les établissements — la satisfaisait.
+ *
+ * La liste est **délibérément généreuse** : le coût d'un faux positif tombe sur
+ * du SQL brut légitime, écrit par le moteur de disponibilité au moment même où
+ * cette garde se durcit (#31). Un cas oublié refuse une requête correcte et
+ * bloque la CI d'un tiers ; un cas accepté à tort laisse passer une requête que
+ * la revue lit de toute façon. On préfère donc accepter large et nommer les
+ * bords, plutôt que refuser serré et casser en aval.
+ *
+ * Cinq positions sont reconnues :
+ *
+ * - **a.** une comparaison, dans un sens ou dans l'autre : `tenant_id = $1`,
+ *   `a.tenant_id = b.tenant_id`, `tenant_id::text = $1`, `tenant_id IN (…)`,
+ *   et `tenant_id WITH =` — la forme qu'exige `EXCLUDE USING gist`, donc la
+ *   contrainte anti-double-réservation de l'ADR 0002 ;
+ * - **b.** la valeur à gauche : `$1 = a.tenant_id` ;
+ * - **c.** `JOIN … USING (tenant_id)` — la jointure porte l'égalité sans
+ *   l'écrire ;
+ * - **d.** `INSERT INTO … (tenant_id, …)` — l'écriture porte le tenant sans
+ *   jamais le comparer ;
+ * - **e.** la colonne parenthésée, seule ou en comparaison de n-uplet :
+ *   `(tenant_id) = $1` et `(tenant_id, staff_id) = ($1, $2)`. La seconde forme
+ *   n'a rien d'exotique ici : le schéma est bâti sur des clés composites
+ *   `(tenant_id, id)`, et une jointure ou un `WHERE` écrit à la main les
+ *   reprend telles quelles.
+ */
+const FILTERING_TENANT = new RegExp(
+  [
+    `${TENANT_REF}\\s*(?:${COMPARISON}|${COMPARISON_WORD})`,
+    `${COMPARISON}\\s*${QUALIFIER}"?${TENANT_REF}`,
+    '\\bUSING\\s*\\([^)]*\\btenant_id\\b',
+    '\\bINSERT\\s+INTO\\b[^(]*\\([^)]*\\btenant_id\\b',
+    `\\([^()]*\\btenant_id\\b[^()]*\\)\\s*(?:${COMPARISON}|${COMPARISON_WORD})`,
+  ].join('|'),
+  'i',
+);
 
 /**
  * Commentaires SQL : la forme ligne (deux tirets) et la forme bloc.
@@ -99,11 +176,21 @@ function rawMethodName(callee) {
  * la règle ne peut pas suivre, et prétendre le contraire donnerait une garantie
  * fausse. L'absence de littéral se traite comme un refus, pas comme un silence.
  *
+ * Les fragments sortent **dans l'ordre du source**. Ce n'était pas le cas
+ * jusqu'à #268 : le parcours les rendait dans l'ordre des clés de l'AST, ce qui
+ * était sans effet tant que la garde cherchait une sous-chaîne, mais fausse une
+ * lecture de position — `tenant_id` et l'opérateur qui le suit doivent rester
+ * voisins. L'ordre des clés ne suffit pas à le garantir : un `TemplateLiteral`
+ * de `typescript-eslint` porte `expressions` **avant** `quasis`, si bien qu'un
+ * littéral interpolé remonterait devant tout le gabarit. Les fragments sont donc
+ * triés sur leur position réelle dans le source (`range[0]`), seule information
+ * qui ne dépende ni de la forme du nœud ni de la version du parseur.
+ *
  * @param {any} node racine du sous-arbre à parcourir
- * @returns {string[]} fragments littéraux, dans un ordre non garanti
+ * @returns {string[]} fragments littéraux, dans l'ordre du source
  */
 function collectLiteralSql(node) {
-  /** @type {string[]} */
+  /** @type {{ start: number; text: string }[]} */
   const chunks = [];
   /** @type {any[]} */
   const stack = [node];
@@ -127,12 +214,13 @@ function collectLiteralSql(node) {
       continue;
     }
 
+    const start = Array.isArray(current.range) ? current.range[0] : 0;
     if (current.type === 'TemplateElement') {
-      chunks.push(current.value.cooked ?? current.value.raw);
+      chunks.push({ start, text: current.value.cooked ?? current.value.raw });
       continue;
     }
     if (current.type === 'Literal' && typeof current.value === 'string') {
-      chunks.push(current.value);
+      chunks.push({ start, text: current.value });
       continue;
     }
 
@@ -146,7 +234,7 @@ function collectLiteralSql(node) {
     }
   }
 
-  return chunks;
+  return chunks.sort((left, right) => left.start - right.start).map((chunk) => chunk.text);
 }
 
 /** @type {import('eslint').Rule.RuleModule} */
@@ -155,12 +243,14 @@ module.exports = {
     type: 'problem',
     docs: {
       description:
-        'Exige un filtre `tenant_id` explicite dans tout SQL brut Prisma — le scoping automatique ne couvre pas $queryRaw/$executeRaw.',
+        'Exige un filtre `tenant_id` en position contraignante dans tout SQL brut Prisma — le scoping automatique ne couvre pas $queryRaw/$executeRaw.',
     },
     schema: [],
     messages: {
       missingTenantFilter:
         "`{{method}}` ne passe pas par l'extension de scoping : aucun filtre tenant n'y est injecté. Ce SQL ne mentionne pas `tenant_id` — écrire le filtre à la main, ou justifier la dérogation par un `eslint-disable-next-line tenant/raw-sql-tenant-filter` commenté.",
+      tenantNotFiltering:
+        "`{{method}}` mentionne `tenant_id` sans jamais s'en servir pour contraindre la requête : projeter, grouper ou trier sur la colonne ne borne pas la lecture à un établissement. Écrire une comparaison (`tenant_id = $1`), une jointure (`USING (tenant_id)` ou `ON a.tenant_id = b.tenant_id`) ou une liste de colonnes d'`INSERT` — ou justifier la dérogation par un `eslint-disable-next-line tenant/raw-sql-tenant-filter` commenté.",
       opaqueSql:
         "`{{method}}` reçoit un SQL construit ailleurs : la garde ne peut pas vérifier qu'il porte `tenant_id`, et le SQL brut échappe à l'extension de scoping. Écrire la requête au site d'appel, ou justifier la dérogation par un `eslint-disable-next-line tenant/raw-sql-tenant-filter` commenté.",
     },
@@ -180,8 +270,16 @@ module.exports = {
         return;
       }
       // Les commentaires ne filtrent rien : ce qui est lu est le SQL exécuté.
-      if (!TENANT_COLUMN.test(sql.replace(SQL_COMMENT, ' '))) {
+      const statement = sql.replace(SQL_COMMENT, ' ');
+
+      // Deux diagnostics distincts, parce qu'ils appellent deux corrections
+      // distinctes : ajouter la colonne, ou la déplacer là où elle contraint.
+      if (!TENANT_COLUMN.test(statement)) {
         context.report({ node, messageId: 'missingTenantFilter', data: { method } });
+        return;
+      }
+      if (!FILTERING_TENANT.test(statement)) {
+        context.report({ node, messageId: 'tenantNotFiltering', data: { method } });
       }
     }
 
