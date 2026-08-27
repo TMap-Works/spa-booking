@@ -24,6 +24,7 @@ export const AVAILABILITY_ERROR_CODES = {
   AMBIGUOUS_LOCAL_TIME: 'AMBIGUOUS_LOCAL_TIME',
   UNKNOWN_TIME_ZONE: 'UNKNOWN_TIME_ZONE',
   OVERLAPPING_SCHEDULE_RANGES: 'OVERLAPPING_SCHEDULE_RANGES',
+  TIME_OFF_RANGE_INVALID: 'TIME_OFF_RANGE_INVALID',
 } as const;
 
 const UNPROCESSABLE_ENTITY = 422;
@@ -124,5 +125,71 @@ export class OverlappingScheduleRangesError extends DomainError {
 
   public constructor(weekday: number, left: string, right: string) {
     super('Deux plages du même jour se recouvrent.', { weekday, ranges: [left, right] });
+  }
+}
+
+/**
+ * Bornes d'une absence : la règle, en un seul endroit.
+ *
+ * Une plage bloquée ou un congé se pose et se modifie ; les deux chemins doivent
+ * juger les mêmes bornes de la même façon. Écrire la règle deux fois — une fois
+ * pour la création, une fois pour le patch — la laisserait diverger au premier
+ * ajustement, et la modification accepterait alors ce que la création refuse.
+ */
+export const TIME_OFF_RULES = {
+  ENDS_BEFORE_STARTS: 'ends_before_starts',
+  RANGE_TOO_WIDE: 'range_too_wide',
+} as const;
+
+export type TimeOffRule = (typeof TIME_OFF_RULES)[keyof typeof TIME_OFF_RULES];
+
+/**
+ * Fenêtre maximale d'une absence, en jours — et la même borne pour la fenêtre du
+ * planning qui les liste.
+ *
+ * Elle ne protège d'aucun abus : c'est une **borne de faute de frappe**. Une
+ * absence saisie au 20 **2**6 au lieu de 2026 blanchirait l'agenda du praticien
+ * pour deux siècles, et rien ne le signalerait — le moteur de créneaux cesserait
+ * simplement de rendre des disponibilités, sans erreur ni trace.
+ *
+ * TODO(#26) : c'est `MAX_TIME_OFF_RANGE_DAYS` de `@spa/shared`
+ * (`packages/shared/src/constants/limits.ts`), à importer le jour où `apps/api`
+ * dépendra du paquet. Le nom est celui du paquet partagé pour que la
+ * substitution ne change pas une borne en silence.
+ */
+export const MAX_TIME_OFF_RANGE_DAYS = 366;
+
+/**
+ * Bornes d'absence refusées — fin avant début, ou fenêtre déraisonnable.
+ *
+ * **422 et non 400** : la requête est bien formée, ce sont ses valeurs prises
+ * ensemble qui ne tiennent pas. La distinction compte pour le front, qui
+ * n'affiche pas un défaut de format comme une règle métier — et le cas ne se
+ * réduit pas à un décorateur de DTO, puisqu'une modification partielle ne
+ * fournit qu'une des deux bornes et doit être jugée contre celle déjà en base.
+ *
+ * `details.rule` distingue les deux refus sans multiplier les codes : le front
+ * affiche le même message sur le même champ, et deux codes lui auraient fait
+ * écrire deux branches pour une seule correction à faire par l'utilisateur.
+ *
+ * Ni l'un ni l'autre n'apprend quoi que ce soit sur un établissement voisin :
+ * `details` ne porte que les bornes que l'appelant vient d'envoyer.
+ */
+export class InvalidTimeOffRangeError extends DomainError {
+  public override readonly code = AVAILABILITY_ERROR_CODES.TIME_OFF_RANGE_INVALID;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor(rule: TimeOffRule, startsAt: Date, endsAt: Date) {
+    super(
+      rule === TIME_OFF_RULES.ENDS_BEFORE_STARTS
+        ? 'La fin de l’absence doit suivre son début.'
+        : `Une absence ne peut excéder ${String(MAX_TIME_OFF_RANGE_DAYS)} jours.`,
+      {
+        rule,
+        startsAt: startsAt.toISOString(),
+        endsAt: endsAt.toISOString(),
+        maxRangeDays: MAX_TIME_OFF_RANGE_DAYS,
+      },
+    );
   }
 }
