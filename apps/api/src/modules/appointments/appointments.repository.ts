@@ -10,6 +10,7 @@ import { SlotNoLongerAvailableError } from './appointments.errors';
 import type {
   AppointmentDraft,
   AppointmentRecord,
+  CancelDraft,
   GuestContact,
   RescheduleDraft,
   RescheduleOutcome,
@@ -63,6 +64,14 @@ const APPOINTMENT_SELECT = {
   priceCurrency: true,
   clientNote: true,
   rescheduledFromId: true,
+  // La trace d'annulation (#40). Elle est lue parce qu'elle est écrite ici : un
+  // `cancel` qui rendrait une ligne sans son horodatage obligerait l'appelant à
+  // recomposer ce qu'il vient de demander, et une relecture d'historique
+  // n'aurait aucun moyen de dire *quand* ni *par qui*. Le motif en fait partie —
+  // ce que le module en laisse sortir se décide dans `AppointmentView`, pas ici.
+  cancelledAt: true,
+  cancelledBy: true,
+  cancellationReason: true,
 } as const;
 
 type AppointmentRow = Prisma.AppointmentGetPayload<{ select: typeof APPOINTMENT_SELECT }>;
@@ -135,6 +144,9 @@ function toRecord(row: AppointmentRow): AppointmentRecord {
     price: { amountMinor: row.priceAmountMinor, currency: row.priceCurrency },
     clientNote: row.clientNote,
     rescheduledFromId: row.rescheduledFromId,
+    cancelledAt: row.cancelledAt,
+    cancelledBy: row.cancelledBy,
+    cancellationReason: row.cancellationReason,
   };
 }
 
@@ -229,6 +241,95 @@ export class AppointmentsRepository {
   }
 
   /**
+   * Annule un rendez-vous et **libère son créneau** (#40, booking-engine §5).
+   *
+   * ## Ce qui rend le créneau réservable, et ce qui ne le rend pas
+   *
+   * Rien dans cette méthode. Le créneau redevient réservable parce que la ligne
+   * quitte le filtre partiel de `appointments_no_overlap` —
+   * `WHERE status IN ('PENDING','CONFIRMED')` — au moment même où le `COMMIT` a
+   * lieu. C'est le troisième critère de #40, et il est tenu par l'index, pas par
+   * du code : aucune purge, aucune invalidation, aucun « libérer le créneau » à
+   * écrire, donc aucun oubli possible. La contrainte n'est pas relâchée d'un
+   * cran au passage — une réservation concurrente sur ce créneau reste jugée par
+   * elle, exactement comme avant.
+   *
+   * ## L'écriture conditionnelle sur le statut n'est pas une vérification
+   *
+   * Même conduite que `move`, et pour la même raison : `updateMany` filtre sur
+   * `status IN (…occupants)` et rend un **compte**. Deux annulations concurrentes
+   * du même rendez-vous se sérialisent sur le verrou de ligne ; la seconde relit
+   * après la validation de la première, ne reconnaît plus la ligne, et met à jour
+   * zéro ligne. C'est un test-et-pose atomique rendu par le moteur, jamais un
+   * « est-ce encore annulable ? » suivi d'une écriture (booking-engine §1).
+   *
+   * ## Pourquoi aucune transaction, alors que le report en ouvre une
+   *
+   * Parce qu'il n'y a **qu'une** écriture. Le report annule puis insère, et son
+   * atomicité est ce qui garantit qu'un créneau d'arrivée refusé laisse l'ancien
+   * rendez-vous intact. Ici, l'`UPDATE` conditionnel est déjà atomique à lui
+   * seul, et il porte l'entièreté de la garantie. La lecture qui le précède ne
+   * décide de rien : elle sert à **répondre** — distinguer un identifiant
+   * inconnu d'un rendez-vous déjà annulé, ce qu'un compte de lignes ne dit pas.
+   * L'envelopper d'une transaction n'aurait rien resserré sous `READ COMMITTED`,
+   * et aurait coûté deux allers-retours de plus par annulation.
+   *
+   * Aucun verrou consultatif non plus : celui de `insert` sérialise les
+   * **écritures qui se disputent un créneau**. Une annulation n'en dispute
+   * aucun ; elle en rend un.
+   *
+   * @throws {NotFoundError} rendez-vous inconnu, ou appartenant à un autre
+   * établissement — jamais 403, qui confirmerait son existence.
+   * @throws {InvalidStateTransitionError} rendez-vous terminé, déjà annulé ou
+   * no-show : il n'y a plus rien à annuler.
+   * @throws {ConflictError} le rendez-vous a changé d'état entre la lecture et
+   * l'écriture — deux annulations concurrentes, dont une seule inscrit son
+   * auteur et son motif.
+   */
+  public async cancel(draft: CancelDraft): Promise<AppointmentRecord> {
+    // `findFirst` et non `findUnique`, pour la raison de `findById` : c'est
+    // l'extension qui injecte `tenantId` dans le `where`. Le rendez-vous d'un
+    // autre établissement est donc introuvable ici, et rend 404 plutôt qu'un 403
+    // qui confirmerait son existence (tenant-isolation §4).
+    const previous = await this.prisma.appointment.findFirst({
+      where: { id: draft.appointmentId },
+      select: APPOINTMENT_SELECT,
+    });
+
+    if (previous === null) {
+      throw new NotFoundError('Rendez-vous introuvable.');
+    }
+
+    if (!occupiesSlot(previous.status)) {
+      throw new InvalidStateTransitionError(previous.status, 'CANCELLED');
+    }
+
+    const cancelled = {
+      status: 'CANCELLED',
+      cancelledAt: draft.cancelledAt,
+      cancelledBy: draft.cancelledBy,
+      cancellationReason: draft.reason,
+    } as const;
+
+    const released = await this.prisma.appointment.updateMany({
+      where: { id: previous.id, status: { in: [...OCCUPYING_STATUSES] } },
+      data: cancelled,
+    });
+
+    if (released.count !== 1) {
+      throw new ConflictError(
+        'Ce rendez-vous vient d’être modifié. Rechargez-le avant de l’annuler.',
+        { appointmentId: previous.id },
+      );
+    }
+
+    // Recomposé plutôt que relu : ces quatre champs sont les **seuls** que
+    // l'`UPDATE` vient de changer, et une seconde lecture ne ferait qu'ajouter
+    // un aller-retour pour retrouver ce qu'on sait déjà.
+    return toRecord({ ...previous, ...cancelled });
+  }
+
+  /**
    * Une écriture d'agenda, **réessayée sur interblocage** et traduite sur refus
    * de créneau.
    *
@@ -319,9 +420,12 @@ export class AppointmentsRepository {
         where: { id: previous.id, status: { in: [...OCCUPYING_STATUSES] } },
         data: {
           status: 'CANCELLED',
-          // Le motif et l'auteur de l'annulation appartiennent à #40 : ce qui
-          // dit ici qu'il s'agit d'un report et non d'un abandon, c'est le
-          // `rescheduled_from_id` que porte le successeur.
+          // Ni auteur, ni motif — et c'est délibéré depuis que #40 a posé les
+          // deux colonnes. Un report n'est pas un abandon : ce qui le dit est le
+          // `rescheduled_from_id` que porte le successeur. Lui inscrire un
+          // auteur d'annulation le ferait compter comme une annulation dans le
+          // reporting du CDC §1.4, alors que la cliente vient précisément de
+          // garder son rendez-vous.
           cancelledAt: new Date(),
         },
       });

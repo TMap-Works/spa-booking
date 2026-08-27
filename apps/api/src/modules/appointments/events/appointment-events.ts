@@ -3,6 +3,10 @@ import { EventEmitter } from 'node:events';
 import { Injectable } from '@nestjs/common';
 
 import { StructuredLogger } from '../../../common/logging/structured-logger';
+import {
+  APPOINTMENT_CANCELLED,
+  type AppointmentCancelledEvent,
+} from './appointment-cancelled.event';
 import { APPOINTMENT_CREATED, type AppointmentCreatedEvent } from './appointment-created.event';
 import {
   APPOINTMENT_RESCHEDULED,
@@ -12,13 +16,16 @@ import {
 /**
  * Tout ce que ce bus publie.
  *
- * Une union plutôt qu'une interface commune : les deux événements ne partagent
+ * Une union plutôt qu'une interface commune : les trois événements ne partagent
  * que leur enveloppe — nom, tenant, rendez-vous, instant d'émission — et une
  * classe de base les ferait diverger par héritage plutôt que par contrat. Ce que
  * la publication a besoin de savoir tient dans ces quatre champs, et c'est
  * exactement ce que l'union garantit.
  */
-export type AppointmentDomainEvent = AppointmentCreatedEvent | AppointmentRescheduledEvent;
+export type AppointmentDomainEvent =
+  | AppointmentCreatedEvent
+  | AppointmentRescheduledEvent
+  | AppointmentCancelledEvent;
 
 /**
  * Le bus d'événements du module `appointments` — publication en mémoire, dans le
@@ -98,6 +105,21 @@ export class AppointmentEvents {
   }
 
   /**
+   * Publie `appointment.cancelled` (#40).
+   *
+   * Appelé **après** la validation de l'annulation, jamais dedans : un
+   * `ROLLBACK` laisserait le rendez-vous debout, et l'avis d'annulation aurait
+   * décommandé une cliente qui est toujours attendue.
+   */
+  public appointmentCancelled(event: Omit<AppointmentCancelledEvent, 'name' | 'occurredAt'>): void {
+    this.publish({
+      ...event,
+      name: APPOINTMENT_CANCELLED,
+      occurredAt: new Date().toISOString(),
+    });
+  }
+
+  /**
    * Abonne un écouteur à `appointment.created`.
    *
    * Rend la fonction de désabonnement plutôt que rien : un module qui s'abonne
@@ -117,6 +139,13 @@ export class AppointmentEvents {
     listener: (event: AppointmentRescheduledEvent) => void,
   ): () => void {
     return this.subscribe(APPOINTMENT_RESCHEDULED, listener);
+  }
+
+  /**
+   * Abonne un écouteur à `appointment.cancelled` — même contrat, même enveloppe.
+   */
+  public onAppointmentCancelled(listener: (event: AppointmentCancelledEvent) => void): () => void {
+    return this.subscribe(APPOINTMENT_CANCELLED, listener);
   }
 
   /**

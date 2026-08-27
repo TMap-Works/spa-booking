@@ -11,9 +11,9 @@
  * ```
  *
  * Les règles de transition ne vivent pas ici : elles appartiennent au service
- * qui les fait respecter (#39, #40). Ce fichier ne porte qu'un vocabulaire et
- * **la liste des statuts qui occupent l'agenda** — la seule notion dont la
- * contrainte d'exclusion de #31 a besoin.
+ * qui les fait respecter — `AppointmentLifecycleService`, posé par #40. Ce
+ * fichier ne porte qu'un vocabulaire et **la liste des statuts qui occupent
+ * l'agenda** — la seule notion dont la contrainte d'exclusion de #31 a besoin.
  *
  * ## Pourquoi une liste locale plutôt que l'énumération générée par Prisma
  *
@@ -70,3 +70,19 @@ export function isAppointmentStatus(value: unknown): value is AppointmentStatus 
 export function occupiesSlot(status: AppointmentStatus): status is OccupyingStatus {
   return (OCCUPYING_STATUSES as readonly AppointmentStatus[]).includes(status);
 }
+
+/**
+ * De quel côté du comptoir vient la décision d'annuler — #40, booking-engine §5.
+ *
+ * Dans l'ordre de déclaration de `enum AppointmentCancelledBy`, et déclaré ici
+ * plutôt qu'importé de Prisma pour la raison qui vaut au-dessus : les couches
+ * qui lisent ce vocabulaire — DTO, contrôleurs, événements de domaine — ne
+ * doivent pas dépendre du client généré (api-module §2). Le témoin est dans
+ * `__tests__/appointment-status.spec.ts`.
+ *
+ * Ce n'est pas un rôle : un `MANAGER` qui annule est du côté du salon, comme un
+ * `STAFF`, et `SYSTEM` n'est le rôle de personne.
+ */
+export const CANCELLATION_AUTHORS = ['CLIENT', 'STAFF', 'SYSTEM'] as const;
+
+export type AppointmentCancelledBy = (typeof CANCELLATION_AUTHORS)[number];

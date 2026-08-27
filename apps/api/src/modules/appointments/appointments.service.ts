@@ -5,6 +5,7 @@ import { requireTenantId } from '../../common/tenant';
 import { AvailabilityService } from '../availability/availability.service';
 import type { ServiceView } from '../catalog/catalog.types';
 import { ServicesService } from '../catalog/services.service';
+import { AppointmentLifecycleService } from './appointment-lifecycle.service';
 import { occupiesSlot } from './appointment-status';
 import { SlotNoLongerAvailableError } from './appointments.errors';
 import { AppointmentsRepository } from './appointments.repository';
@@ -13,6 +14,7 @@ import type {
   AppointmentRecord,
   AppointmentView,
   BookAppointmentInput,
+  CancelAppointmentInput,
   RescheduleAppointmentInput,
   RescheduleDraft,
   RescheduleOutcome,
@@ -59,11 +61,24 @@ import { AppointmentEvents } from './events/appointment-events';
  * évite que la contrainte d'exclusion refuse un déplacement pourtant légitime.
  * Le détail vit dans `AppointmentsRepository.reschedule`.
  *
+ * ## L'annulation, ajoutée par #40
+ *
+ * `cancel` fait passer un rendez-vous à `CANCELLED` en consignant **qui, quand
+ * et pourquoi**, et libère son créneau du même geste — la ligne quitte le filtre
+ * partiel de la contrainte d'exclusion, sans qu'aucune purge n'ait à être
+ * écrite. Les transitions interdites sont refusées par
+ * `AppointmentLifecycleService`, un service dédié : ni ce service-ci, ni aucun
+ * contrôleur, ne connaît la table des transitions.
+ *
+ * Une seule méthode sert les deux côtés du comptoir. Ce qui distingue la cliente
+ * du salon n'est pas une règle, c'est une **porte** : le contrôleur public dit
+ * `CLIENT`, celui de back-office dit `STAFF`.
+ *
  * ## Ce que ce module ne pose toujours pas
  *
- * Ni annulation avec motif et traçabilité (#40), ni verrou Redis de saisie
- * (#38), ni création au comptoir par le staff (#50) : les seules surfaces
- * ouvertes ici sont publiques, celles du tunnel de #45.
+ * Ni verrou Redis de saisie (#38), ni création au comptoir par le staff (#50) :
+ * hors de l'annulation de back-office ouverte par #40, les surfaces de ce module
+ * sont celles, publiques, du tunnel de #45.
  */
 @Injectable()
 export class AppointmentsService {
@@ -72,6 +87,7 @@ export class AppointmentsService {
     private readonly services: ServicesService,
     private readonly availability: AvailabilityService,
     private readonly events: AppointmentEvents,
+    private readonly lifecycle: AppointmentLifecycleService,
   ) {}
 
   /**
@@ -231,6 +247,116 @@ export class AppointmentsService {
       endsAt: view.endsAt,
       previousStartsAt: before.startsAt,
       previousEndsAt: before.endsAt,
+    });
+
+    return view;
+  }
+
+  /**
+   * Annule un rendez-vous, en consignant **qui**, **quand** et **pourquoi**
+   * (#40, booking-engine §5).
+   *
+   * ## Une seule méthode pour les deux côtés du comptoir
+   *
+   * Le premier critère de #40 est « annulation possible par le client et par le
+   * salon ». Ce sont deux **surfaces** — la route publique du tunnel et celle du
+   * back-office, gardée —, ce n'est pas deux règles : le cycle de vie, la trace
+   * écrite et la libération du créneau sont rigoureusement les mêmes. Ce qui
+   * change tient dans un champ, `cancelledBy`, et c'est le contrôleur qui le
+   * fixe. Deux méthodes auraient divergé sur le jour où l'une aurait gagné un
+   * contrôle que l'autre n'aurait pas eu.
+   *
+   * `cancelledBy` n'est jamais lu du corps de la requête : il se déduit de la
+   * porte par laquelle on est entré. Sans cela, une cliente pourrait inscrire au
+   * registre du salon que le salon l'avait annulée — et fausser le seul chiffre
+   * que cette colonne existe pour établir.
+   *
+   * ## Deux refus, deux natures
+   *
+   * `AppointmentLifecycleService` refuse le passage que le cycle de vie
+   * n'autorise pas — un rendez-vous terminé, déjà annulé ou no-show sort en 422
+   * `INVALID_STATE_TRANSITION`. C'est le quatrième critère de #40, et c'est un
+   * **service dédié** qui le porte, jamais le contrôleur.
+   *
+   * Cette réponse est juste, elle n'est pas une garantie : entre elle et
+   * l'écriture, une autre requête peut annuler le même rendez-vous. Ce qui
+   * tranche est l'écriture conditionnelle du repository, qui rend un compte de
+   * lignes — même partage que pour le report (booking-engine §1).
+   *
+   * ## Le créneau redevient réservable, et personne n'a à s'en occuper
+   *
+   * Troisième critère de #40. La ligne passe `CANCELLED`, elle quitte le filtre
+   * partiel de `appointments_no_overlap`, le créneau est libre au `COMMIT` — sans
+   * purge ni invalidation à écrire, donc sans oubli possible. Et sans que la
+   * porte s'ouvre à une double réservation : la contrainte continue de juger
+   * toute insertion sur cet intervalle, exactement comme avant.
+   *
+   * @throws {NotFoundError} rendez-vous inconnu ou d'un autre établissement.
+   * @throws {InvalidStateTransitionError} rendez-vous terminé, déjà annulé ou
+   * no-show.
+   * @throws {ConflictError} deux annulations concurrentes, dont une seule
+   * inscrit son auteur et son motif.
+   */
+  public async cancel(
+    input: CancelAppointmentInput,
+    now: Date = new Date(),
+  ): Promise<AppointmentView> {
+    const previous = await this.repository.findById(input.appointmentId);
+
+    if (previous === null) {
+      // 404 et non 403 : le rendez-vous d'un autre établissement doit être
+      // indiscernable d'un identifiant qui n'existe pas (tenant-isolation §4).
+      throw new NotFoundError('Rendez-vous introuvable.');
+    }
+
+    // Le service dédié, avant toute écriture. Il ne protège pas la base — c'est
+    // l'`UPDATE` conditionnel qui le fait — il rend la **réponse** juste.
+    this.lifecycle.requireTransition(previous.status, 'CANCELLED');
+
+    // Le même refus, dit dans les termes de la contrainte d'exclusion. Il ne
+    // peut pas se déclencher : le témoin d'`appointment-lifecycle.spec.ts`
+    // prouve que « ce qui peut être annulé » et « ce qui occupe l'agenda » sont
+    // la même liste. Il est écrit parce que TypeScript ne sait pas déduire cette
+    // égalité d'un appel qui ne rend rien, et parce que l'événement de domaine
+    // annonce un statut d'origine **occupant** — le jour où les deux listes
+    // divergeraient, c'est ici que cela se verrait, et non dans un abonné qui
+    // recevrait `COMPLETED`.
+    if (!occupiesSlot(previous.status)) {
+      throw new InvalidStateTransitionError(previous.status, 'CANCELLED');
+    }
+
+    // Avant l'écriture, et pour la même raison qu'au report : la prestation
+    // donne les tampons dont la vue facturée se déduit. Une prestation retirée
+    // du catalogue reste lisible — `byId` ne refuse que ce qui n'existe pas ou
+    // qui est ailleurs — et il n'y aurait aucun sens à empêcher d'annuler un
+    // rendez-vous parce que le soin n'est plus vendu.
+    const service = await this.services.byId(previous.serviceId);
+
+    const record = await this.repository.cancel({
+      appointmentId: previous.id,
+      cancelledAt: now,
+      cancelledBy: input.cancelledBy,
+      reason: input.reason,
+    });
+
+    // Après l'écriture, jamais dedans : annoncer une annulation qu'un `ROLLBACK`
+    // effacerait ensuite décommanderait une cliente toujours attendue.
+    const view = billedView(record, service);
+
+    this.events.appointmentCancelled({
+      tenantId: requireTenantId('Appointment', 'appointment.cancelled'),
+      appointmentId: view.id,
+      clientId: view.clientId,
+      serviceId: view.serviceId,
+      staffId: view.staffId,
+      startsAt: view.startsAt,
+      endsAt: view.endsAt,
+      // Le statut d'**avant**, relu sur la ligne d'origine : c'est lui qui dit à
+      // l'aval s'il y avait un rappel J-1 à déprogrammer. Le statut d'après est
+      // toujours `CANCELLED`, et n'apprend donc rien.
+      previousStatus: previous.status,
+      cancelledBy: input.cancelledBy,
+      cancelledAt: now.toISOString(),
     });
 
     return view;
@@ -412,6 +538,12 @@ function billedView(record: AppointmentRecord, service: ServiceView): Appointmen
     price: record.price,
     clientNote: record.clientNote,
     rescheduledFromId: record.rescheduledFromId,
+    cancelledAt: record.cancelledAt === null ? null : record.cancelledAt.toISOString(),
+    cancelledBy: record.cancelledBy,
+    // `cancellationReason` n'est **pas** recopié, et son absence est le propos :
+    // la vue est la sortie unique du module, servie aussi bien à la cliente
+    // qu'au comptoir, et un motif écrit par un praticien est une note interne.
+    // Voir `AppointmentView` (#40).
   };
 }
 

@@ -35,6 +35,16 @@ export const PHONE_MAX_LENGTH = 32;
 export const LONG_TEXT_MAX_LENGTH = 2000;
 
 /**
+ * `appointments.cancellation_reason` — `VARCHAR(500)` (#40).
+ *
+ * Plus court que `LONG_TEXT_MAX_LENGTH` parce que la colonne l'est : un motif
+ * d'annulation est une phrase, pas un dossier. Une borne plus large que la
+ * colonne ferait sortir un 500 du pilote PostgreSQL là où le contrat annonce un
+ * 400 qui nomme le champ.
+ */
+export const CANCELLATION_REASON_MAX_LENGTH = 500;
+
+/**
  * Numéro de téléphone — format libre borné, celui de `phoneSchema`.
  *
  * Volontairement permissif : la validation stricte dépend du plan de numérotation
