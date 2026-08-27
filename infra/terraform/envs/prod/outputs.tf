@@ -65,11 +65,6 @@ output "budget_alert_email_subscription_arns" {
   value       = module.budgets.alert_email_subscription_arns
 }
 
-output "cost_allocation_tag_keys" {
-  description = "Étiquettes activées comme étiquettes de répartition de coûts. Cette activation vaut pour le **compte entier** et n'est portée que par cet environnement : c'est elle qui permet à Cost Explorer de ventiler la dépense par environnement, par projet et par propriétaire."
-  value       = module.budgets.cost_allocation_tag_keys
-}
-
 output "log_retention_days" {
   description = "Rétention des journaux CloudWatch de l'environnement, en jours. Contrat à passer à chaque module qui crée un groupe de journaux — 30 jours hors production, 90 en production (skill aws-infra §8)."
   value       = local.log_retention_days

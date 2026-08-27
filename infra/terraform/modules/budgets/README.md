@@ -1,8 +1,7 @@
-# budgets — plafond mensuel, alertes et ventilation de la facture
+# budgets — plafond mensuel et alertes
 
 Ce module pose le garde-fou budgétaire du CDC §4.16 : un budget mensuel par
-environnement, notifié à 80 % et 100 % de son plafond, et la ventilation de la
-facture par environnement dans Cost Explorer.
+environnement, notifié à 80 % et 100 % de son plafond.
 
 Il ne fait rien d'autre, et surtout il **n'arrête aucune dépense** — AWS Budgets
 observe et notifie. Toute sa valeur est dans le délai entre le moment où la
@@ -18,7 +17,6 @@ au premier jour plutôt qu'au premier relevé.
 | Topic SNS | `spa-{env}-budget-alerts` | Canal des alertes, réutilisable par les alarmes CloudWatch |
 | Politique de topic | — | Publication ouverte à `budgets.amazonaws.com`, gardée par `aws:SourceAccount` |
 | Abonnements SNS | un par adresse | Optionnels — voir « Confirmer un abonnement » |
-| Étiquettes de répartition | — | Uniquement là où `cost_allocation_tag_keys` est renseigné |
 
 ## Composition
 
@@ -32,12 +30,9 @@ module "budgets" {
 }
 ```
 
-Un seul environnement — `prod` — active en plus les étiquettes de répartition de
-coûts, parce que cette activation vaut pour le **compte entier** :
-
-```hcl
-  cost_allocation_tag_keys = ["Environment", "ManagedBy", "Owner", "Project"]
-```
+Rien de plus, et rien qui varie d'un environnement à l'autre en dehors du
+plafond : l'activation des étiquettes de répartition de coûts, dont ce filtre
+dépend, est un réglage de compte porté par `infra/terraform/bootstrap`.
 
 ## Pourquoi un filtre d'étiquette
 
@@ -101,32 +96,22 @@ crier, et le MVP n'a pas encore l'historique de facturation qui la rendrait
 fiable. Le jour où cet historique existera, un seuil prévisionnel se posera en
 ajoutant un type de notification, sans changer le reste du montage.
 
-## Cost Explorer et les étiquettes de répartition
+## Le filtre dépend d'une activation faite ailleurs
 
 Poser une étiquette ne suffit pas : tant qu'elle n'est pas **activée comme
 étiquette de répartition de coûts**, Cost Explorer la connaît mais refuse de
-regrouper la dépense dessus.
+regrouper la dépense dessus, et le filtre ci-dessus ne mesure rien.
 
-Cette activation est globale au compte. Si les trois environnements la
-déclaraient, le dernier `apply` gagnerait en écrasant les deux autres — le même
-raisonnement que celui qui tient le scan « enhanced » hors du module `ecr`. Un
-seul environnement la porte donc.
+Cette activation est globale au compte, pas propre à un environnement. Elle est
+donc portée par [`infra/terraform/bootstrap`](../../bootstrap/README.md), le seul
+état de ce dépôt à cette portée, qui active `Environment`, `ManagedBy`, `Owner` et
+`Project` — même raisonnement que celui qui tient le scan « enhanced » hors du
+module `ecr`.
 
-Elle ne vaut par ailleurs **que pour l'avenir** : AWS ne rétro-applique pas une
-étiquette aux mois déjà facturés, et les données mettent jusqu'à 24 heures à
-apparaître. C'est la raison d'activer au premier jour.
-
-> **Le premier `apply` sur un compte neuf peut échouer ici.** Une clé n'est
-> activable qu'une fois que la facturation l'a découverte — après qu'une
-> ressource l'a portée et que la journée de facturation a été traitée. Terraform
-> s'arrête alors sur une clé inconnue. Ce n'est pas une erreur de configuration :
-> le reste de l'environnement est créé, et relancer l'`apply` le lendemain
-> suffit. C'est aussi le principal argument pour que l'activation finisse dans
-> `bootstrap`, appliqué une fois et bien avant les environnements.
-
-> Sa place naturelle serait `infra/terraform/bootstrap`, le seul état déjà à
-> portée de compte. Elle est ici faute de pouvoir y toucher dans le périmètre de
-> cette itération — voir la note « Ce que ce module ne fait pas ».
+Un budget qui reste à zéro alors que l'environnement dépense a donc deux causes
+possibles : une ressource non étiquetée, ou un amorçage dont le bloc d'étiquettes
+n'a jamais été appliqué. La sortie `cost_allocation_tag_keys` de `bootstrap`
+tranche entre les deux.
 
 ## Variables
 
@@ -140,7 +125,6 @@ apparaître. C'est la raison d'activer au premier jour.
 | `alert_emails` | `[]` | Abonnements à confirmer par leur destinataire |
 | `environment_tag_key` | `Environment` | Doit correspondre aux `default_tags` |
 | `include_credits_and_refunds` | `false` | Non étiquetés, donc hors périmètre d'un budget filtré |
-| `cost_allocation_tag_keys` | `[]` | Global au compte — un seul environnement le renseigne |
 
 ## Sorties
 
@@ -153,14 +137,13 @@ apparaître. C'est la raison d'activer au premier jour.
 | `alerts_topic_arn` | Point de branchement des alarmes CloudWatch à venir |
 | `alerts_topic_name` | Nom du topic |
 | `alert_email_subscription_arns` | Repère les abonnements non confirmés |
-| `cost_allocation_tag_keys` | Étiquettes activées par cet environnement |
 
 ## Services globaux
 
-Budgets et Cost Explorer n'existent qu'une fois par compte et sont signés pour
-`us-east-1`, quelle que soit la région du provider. Rien à configurer — mais cela
-explique qu'un budget n'apparaisse pas dans la console régionale d'`eu-west-3` :
-il se consulte depuis la console Billing.
+Budgets n'existe qu'une fois par compte et est signé pour `us-east-1`, quelle que
+soit la région du provider. Rien à configurer — mais cela explique qu'un budget
+n'apparaisse pas dans la console régionale d'`eu-west-3` : il se consulte depuis
+la console Billing.
 
 ## Ce que ce module ne fait pas
 
@@ -178,8 +161,19 @@ il se consulte depuis la console Billing.
 - **Il ne détecte pas les anomalies de coût.** `aws_ce_anomaly_monitor` alerterait
   sur une dérive brutale sans plafond à atteindre. C'est un complément utile, pas
   un prérequis du MVP.
-- **Il n'appartient pas à `bootstrap`.** L'activation des étiquettes de
-  répartition y aurait sa place — c'est le seul état à portée de compte — mais
-  `bootstrap` est hors du périmètre de fichiers de cette itération. Le déplacement
-  fait l'objet d'une issue de suivi ; d'ici là, l'activation est portée par le
-  seul environnement `prod`.
+- **Il n'active pas les étiquettes de répartition de coûts.** Ce réglage vaut pour
+  le compte entier : composé une fois par environnement, ce module ferait gagner
+  le dernier `apply` en écrasant silencieusement les deux autres. Il appartient à
+  [`infra/terraform/bootstrap`](../../bootstrap/README.md), qui le porte — un seul
+  état, appliqué bien avant que les budgets d'environnement n'aient besoin du
+  filtre.
+
+  Ce module l'a porté un temps, et le déplacement laisse une trace dans l'état de
+  tout environnement déjà appliqué : `module.budgets.aws_ce_cost_allocation_tag`
+  y subsiste, et son prochain `apply` le **détruit**, ce qui repasse les clés en
+  `Inactive` pour le compte entier. Le sortir de l'état — sans le détruire —
+  avant tout autre `apply`, depuis le répertoire de l'environnement :
+
+  ```bash
+  terraform state rm 'module.budgets.aws_ce_cost_allocation_tag.this'
+  ```
