@@ -58,6 +58,12 @@ const TENANT_ROOT_TABLE = 'tenants';
  * méridienne — et que rien de tout cela ne tient dans une colonne. Elles sont
  * inscrites ici pour la même raison que les autres : que leur `tenant_id`, leurs
  * index et leurs clés composites soient relus par cette suite.
+ *
+ * `staff_time_off` complète les deux précédentes par leur envers : elles disent
+ * quand le praticien travaille, elle dit quand il est absent. #33 la pose à part
+ * plutôt qu'en colonne d'`appointments` — une absence n'a ni client, ni
+ * prestation, ni prix, et un statut d'annulation n'aurait rien voulu dire — et
+ * elle est soumise aux mêmes exigences que les autres.
  */
 const EXPECTED_TABLES = [
   'tenants',
@@ -68,6 +74,7 @@ const EXPECTED_TABLES = [
   'service_staff',
   'staff_schedules',
   'tenant_closing_days',
+  'staff_time_off',
   'appointments',
   'payments',
   'notifications',
