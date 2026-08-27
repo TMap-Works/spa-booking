@@ -309,7 +309,14 @@ export function zonedWallTimeToUtc(wall: ZonedWallTime, timeZone: string): Date 
   return resolveZonedWallTime(wall, timeZone).instant;
 }
 
-const CALENDAR_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+/**
+ * Date civile `YYYY-MM-DD` — la forme de `calendarDateSchema` du contrat.
+ *
+ * Exporté pour la même raison que `LOCAL_TIME_PATTERN` : les horaires récurrents
+ * (#32) découpent eux aussi des dates civiles, et deux copies de ce motif
+ * dériveraient l'une de l'autre sans que rien ne le signale.
+ */
+export const CALENDAR_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /**
  * Heure murale `HH:MM`, 00:00 à 23:59 — la forme que `zonedDateTimeToUtc` sait

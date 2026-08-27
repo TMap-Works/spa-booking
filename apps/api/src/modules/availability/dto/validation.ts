@@ -1,6 +1,7 @@
 import { Transform } from 'class-transformer';
 import { Matches, registerDecorator, ValidationArguments, ValidationOptions } from 'class-validator';
 
+import { localTimeToMinutes } from '../availability.schedule';
 import { LOCAL_TIME_PATTERN } from '../availability.time';
 
 /**
@@ -152,4 +153,106 @@ export function IsLocalTime(options?: ValidationOptions): PropertyDecorator {
     message: '$property : heure locale attendue au format HH:MM (00:00 à 23:59)',
     ...options,
   });
+}
+
+/**
+ * Borne **haute** d'une plage de travail : `HH:MM`, ou `24:00` pour minuit (#32).
+ *
+ * `LOCAL_TIME_PATTERN` s'arrête à `23:59`, et c'est juste pour une heure murale :
+ * `24:00` n'existe pas sur une horloge. Mais la borne haute d'une plage est
+ * **exclue** — elle ne désigne pas une heure vécue, elle désigne la fin de
+ * l'intervalle. Un salon qui ferme à minuit n'aurait sinon aucune façon exacte
+ * de le dire : `23:59` perdrait une minute et, à un pas de créneau de quinze
+ * minutes, le dernier créneau de la soirée avec elle.
+ *
+ * Le littéral n'est admis que pour la fin. Un début à `24:00` désignerait une
+ * plage vide, que le contrôle « fin > début » refuse de toute façon.
+ *
+ * Le motif est composé à partir de `LOCAL_TIME_PATTERN` plutôt que réécrit : deux
+ * copies de la même borne horaire dériveraient l'une de l'autre, et le DTO
+ * finirait par accepter en 400 ce que le moteur refuse en `RangeError`, donc en
+ * 500.
+ */
+export const SCHEDULE_END_TIME_PATTERN = new RegExp(
+  `^(?:${LOCAL_TIME_PATTERN.source.replace(/^\^|\$$/g, '')}|24:00)$`,
+);
+
+export function IsScheduleEndTime(options?: ValidationOptions): PropertyDecorator {
+  return Matches(SCHEDULE_END_TIME_PATTERN, {
+    message: '$property : heure locale attendue au format HH:MM, ou « 24:00 » pour minuit',
+    ...options,
+  });
+}
+
+/**
+ * Minutes depuis minuit local, ou `null` — la lecture **totale** d'une heure
+ * murale.
+ *
+ * `localTimeToMinutes` lève un `RangeError` sur une chaîne mal formée, et c'est
+ * juste : y arriver serait un défaut de programmation. Un validateur, lui, est
+ * précisément appelé sur ce qui n'a pas encore été validé — un `@IsLocalTime`
+ * frère a pu déjà échouer sur la même charge utile. Lever ici ferait sortir une
+ * exception brute du pipe de validation : le 400 attendu deviendrait un 500,
+ * exactement ce que ce contrôle est là pour empêcher.
+ *
+ * Même arbitrage, et même raison, que `wallMinutesOrNull` dans
+ * `packages/shared/src/schemas/availability.ts`.
+ */
+function wallMinutesOrNull(value: unknown): number | null {
+  if (typeof value !== 'string' || !SCHEDULE_END_TIME_PATTERN.test(value)) {
+    return null;
+  }
+
+  return localTimeToMinutes(value);
+}
+
+/**
+ * La borne haute d'une plage est strictement postérieure à sa borne basse (#32).
+ *
+ * Sans ce contrôle, `09:00 → 08:00` traverse le DTO — chaque borne est bien
+ * écrite —, ne déclenche aucun recouvrement — il n'y a qu'une plage —, et va
+ * heurter `staff_schedules_minutes_check` en base. La violation de contrainte
+ * remonte en `INTERNAL_ERROR` : **500 sur une saisie fautive**, là où le contrat
+ * annonce 400. La base reste la garantie ; ce contrôle est le message.
+ *
+ * Il vit dans le DTO et non dans le service, à la différence du recouvrement :
+ * une plage inversée est une faute de **forme** — elle se voit sur la plage
+ * seule, sans rien connaître des autres — et c'est la règle que porte déjà
+ * `staffScheduleEntrySchema` du contrat partagé, en 400 sur le champ `endsAt`.
+ *
+ * Une borne illisible ne fait **pas** échouer ce validateur : le décorateur de
+ * format du champ concerné la refuse déjà, et refuser deux fois la même chose
+ * ferait rendre à l'utilisateur deux messages pour une seule faute.
+ */
+export function IsAfterLocalTime(
+  startProperty: string,
+  options?: ValidationOptions,
+): PropertyDecorator {
+  return (target: object, propertyName: string | symbol): void => {
+    registerDecorator({
+      name: 'isAfterLocalTime',
+      target: target.constructor,
+      propertyName: propertyName.toString(),
+      constraints: [startProperty],
+      options: options ?? {},
+      validator: {
+        validate: (value: unknown, args?: ValidationArguments): boolean => {
+          const [start] = (args?.constraints ?? []) as [string];
+          const container = (args?.object ?? {}) as Record<string, unknown>;
+
+          const startMinutes = wallMinutesOrNull(container[start]);
+          const endMinutes = wallMinutesOrNull(value);
+
+          if (startMinutes === null || endMinutes === null) {
+            return true;
+          }
+
+          return endMinutes > startMinutes;
+        },
+        defaultMessage: (args?: ValidationArguments): string =>
+          `${args?.property ?? 'endsAt'} : la fin d’une plage doit être ` +
+          `strictement postérieure à son début (${String(args?.constraints?.[0] ?? 'startsAt')})`,
+      },
+    });
+  };
 }

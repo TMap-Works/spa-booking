@@ -23,6 +23,7 @@ export const AVAILABILITY_ERROR_CODES = {
   NON_EXISTENT_LOCAL_TIME: 'NON_EXISTENT_LOCAL_TIME',
   AMBIGUOUS_LOCAL_TIME: 'AMBIGUOUS_LOCAL_TIME',
   UNKNOWN_TIME_ZONE: 'UNKNOWN_TIME_ZONE',
+  OVERLAPPING_SCHEDULE_RANGES: 'OVERLAPPING_SCHEDULE_RANGES',
 } as const;
 
 const UNPROCESSABLE_ENTITY = 422;
@@ -98,5 +99,30 @@ export class UnknownTimeZoneError extends DomainError {
 
   public constructor(timeZone: string) {
     super('Fuseau horaire inconnu.', { timeZone });
+  }
+}
+
+/**
+ * Deux plages du même jour se recouvrent dans une semaine de travail (#32).
+ *
+ * Ce n'est pas une erreur de forme — chaque plage est bien écrite —, d'où le 422
+ * et non le 400 : c'est leur mise en présence qui ne veut rien dire. Le calcul
+ * de créneaux proposerait deux fois le même créneau, et le praticien
+ * apparaîtrait deux fois libre à la même heure.
+ *
+ * La base porte la même règle en `EXCLUDE USING gist` : ce contrôle applicatif
+ * ne la remplace pas, il **nomme** ce que la contrainte refuserait sinon en
+ * violation brute, donc en 500. L'adjacence (`12:00` puis `12:00`) n'en est pas
+ * un : la borne haute est exclue.
+ *
+ * `details` rend les deux plages fautives, jamais la semaine entière :
+ * l'utilisateur doit savoir lesquelles corriger sans relire sa saisie.
+ */
+export class OverlappingScheduleRangesError extends DomainError {
+  public override readonly code = AVAILABILITY_ERROR_CODES.OVERLAPPING_SCHEDULE_RANGES;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor(weekday: number, left: string, right: string) {
+    super('Deux plages du même jour se recouvrent.', { weekday, ranges: [left, right] });
   }
 }

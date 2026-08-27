@@ -15,6 +15,7 @@ import { AppConfigModule } from './config/app-config.module';
 import { HealthModule } from './health/health.module';
 import { CacheModule } from './infrastructure/cache/cache.module';
 import { DatabaseModule } from './infrastructure/database/database.module';
+import { AvailabilityModule } from './modules/availability/availability.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { IdentityModule } from './modules/identity/identity.module';
 
@@ -43,6 +44,10 @@ import { IdentityModule } from './modules/identity/identity.module';
     IdentityModule,
     // Après `IdentityModule`, dont il monte les gardes sur ses routes (#24).
     CatalogModule,
+    // Après `IdentityModule` pour la même raison (#32). #41 l'avait laissé hors
+    // du graphe faute de route à servir ; les horaires récurrents du personnel
+    // en apportent quatre.
+    AvailabilityModule,
   ],
   providers: [
     {
