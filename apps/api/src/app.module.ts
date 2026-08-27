@@ -15,6 +15,7 @@ import { AppConfigModule } from './config/app-config.module';
 import { HealthModule } from './health/health.module';
 import { CacheModule } from './infrastructure/cache/cache.module';
 import { DatabaseModule } from './infrastructure/database/database.module';
+import { AppointmentsModule } from './modules/appointments/appointments.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { IdentityModule } from './modules/identity/identity.module';
@@ -48,6 +49,11 @@ import { IdentityModule } from './modules/identity/identity.module';
     // du graphe faute de route à servir ; les horaires récurrents du personnel
     // en apportent quatre.
     AvailabilityModule,
+    // Après `CatalogModule` et `AvailabilityModule`, dont il consomme les
+    // services — la durée et les tampons d'une prestation pour l'un, le contrôle
+    // « ce créneau était-il proposable ? » pour l'autre (#37). #31 l'avait laissé
+    // hors du graphe faute de contrôleur ; la réservation publique en apporte un.
+    AppointmentsModule,
   ],
   providers: [
     {
