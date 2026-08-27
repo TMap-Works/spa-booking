@@ -42,16 +42,23 @@ export {
 export type { Paginated, PaginationMeta, PaginationQuery } from './pagination';
 
 export {
+  LOCAL_TIME_PATTERN,
+  OFFSET_DATE_TIME_PATTERN,
   addMinutes,
   calendarDateSchema,
   calendarDaysBetween,
   durationMinutesSchema,
   fromUtcInstant,
+  isOffsetDateTime,
   isRealCalendarDate,
   isValidTimeZone,
+  localTimeSchema,
+  localTimeToMinutes,
+  minutesToLocalTime,
+  offsetDateTimeSchema,
   timeZoneSchema,
   toUtcInstant,
   utcInstantSchema,
   utcIntervalSchema,
 } from './time';
-export type { CalendarDate, TimeZone, UtcInstant, UtcInterval } from './time';
+export type { CalendarDate, LocalTime, TimeZone, UtcInstant, UtcInterval } from './time';
