@@ -13,8 +13,18 @@
     "pourquoi @playwright/mcp est une devDependency versionnée plutôt qu'un",
     "« npx @latest » : la version du navigateur ne doit pas changer sous un run.",
     "",
-    "Les chemins sont relatifs à la racine du dépôt — donc au worktree quand un",
-    "ticket s'y traite, ce qui donne à chaque agent sa propre instance."
+    "Chaque agent a sa propre instance de serveur, mais PAS forcément dans son",
+    "dépôt : un serveur stdio est lancé depuis la racine de la session qui",
+    "l'ouvre, et les vagues de /milestone ouvrent la leur depuis le dépôt",
+    "principal avant que l'agent n'entre dans son worktree. Le serveur ne peut",
+    "pas suivre. C'est donc l'appelant qui dit sur quel dépôt il travaille —",
+    "« ticket »: « 304 » sur perimetre, api_demarrer, api_jeu_dessai et",
+    "web_demarrer — et le premier qui tranche fixe la racine pour tous les",
+    "autres. Sans indication, quand des worktrees de ticket sont ouverts, ces",
+    "outils refusent au lieu de lire le mauvais dépôt (#304).",
+    "",
+    "Playwright, lui, n'a pas cette notion : son --output-dir suit la racine de",
+    "la session. C'est sans conséquence, il n'y dépose que des captures."
   ],
   "mcpServers": {
     "recette": {
