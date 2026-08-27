@@ -79,8 +79,12 @@ module "budgets" {
   # s'abonner ne demande alors qu'un `-var`.
   alert_emails = var.budget_alert_emails
 
-  # Les étiquettes de répartition de coûts sont activées pour le compte entier,
-  # par le seul environnement `prod` — voir modules/budgets/README.md.
+  # Le filtre d'étiquette de ce budget suppose que `Environment` soit activée
+  # comme étiquette de répartition de coûts. Cette activation vaut pour le compte
+  # entier et n'est donc pas déclarée ici : elle est portée par
+  # ../../bootstrap, le seul état à cette portée. Renseignée par un
+  # environnement, elle ferait gagner le dernier `apply` en écrasant les deux
+  # autres.
 }
 
 # --- Registre d'images --------------------------------------------------------
