@@ -45,18 +45,21 @@ import { createDisposableDatabase, type DisposableDatabase } from './utils/dispo
  *
  * ## Prérequis
  *
- * Un serveur PostgreSQL joignable sur `DATABASE_URL`. La suite n'y travaille pas
- * : elle s'y crée une **base jetable**, migrée puis détruite
- * (`utils/disposable-database.ts`, #27). Rien n'est donc partagé avec les autres
- * suites, et le ménage n'a plus à viser chaque ligne semée sous peine
- * d'emporter les leurs.
+ * Un démon Docker joignable, et rien d'autre (#27, #274). La suite se crée une
+ * **base jetable**, migrée puis détruite, dans un PostgreSQL 16 qu'elle démarre
+ * elle-même (`utils/disposable-database.ts` — `postgres:16-alpine`,
+ * `@testcontainers/postgresql`). Rien n'est partagé avec les autres suites : ni
+ * la base, donc le ménage n'a plus à viser chaque ligne semée sous peine
+ * d'emporter les leurs ; ni le serveur, donc `DATABASE_URL` n'est plus lue et
+ * rien de ce que la machine héberge n'entre dans le résultat. La migration est
+ * faite par la suite : `npm run db:migrate:deploy` n'est pas non plus un
+ * prérequis.
  *
- * La CI garantit le serveur (services du job `test` de `ci.yml`) ; en local,
- * `docker compose up -d` suffit — la migration de la base jetable est faite par
- * la suite, `npm run db:migrate:deploy` n'est plus un prérequis de celle-ci.
- * L'absence de serveur fait échouer la suite, délibérément : un test d'isolation
- * qui se désactiverait tout seul quand la base manque annoncerait une garantie
- * que rien n'a vérifiée.
+ * L'absence de démon fait échouer la suite, délibérément : un test d'isolation
+ * qui se désactiverait tout seul quand le moteur manque annoncerait une garantie
+ * que rien n'a vérifiée. Le harnais nomme alors ce qui manque dans son message
+ * d'erreur — il n'y a rien à chercher du côté d'un serveur local ou d'un service
+ * de la CI, aucun des deux n'étant en cause.
  */
 
 /**

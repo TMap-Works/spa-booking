@@ -18,9 +18,17 @@ import { createDisposableDatabase, type DisposableDatabase } from './utils/dispo
  *
  * ## Prérequis
  *
- * Un serveur PostgreSQL joignable sur `DATABASE_URL` : service `postgres` du job
- * `test` en CI, `docker compose up -d` en local. La suite ne touche pas à la
- * base que cette URL désigne — elle s'en crée une, à côté.
+ * Un démon Docker joignable, et rien d'autre (#27, #274). La suite ne se
+ * connecte à aucun serveur préexistant : `createDisposableDatabase()` démarre
+ * son propre PostgreSQL 16 (`postgres:16-alpine`, `@testcontainers/postgresql`)
+ * et y crée la base qu'elle exerce. `DATABASE_URL` n'est plus lue depuis #274 —
+ * rien de ce que la machine héberge n'entre dans le résultat.
+ *
+ * Un échec ne se débogue donc ni du côté d'un serveur local, ni du côté des
+ * services de la CI : il vient du démon Docker, de l'image, ou de cette suite.
+ * En local, Docker Desktop démarré suffit ; le premier lancement tire l'image,
+ * et ce tirage se paie dans le délai du `beforeAll` de Jest —
+ * `docker pull postgres:16-alpine` une fois pour toutes l'évite.
  */
 
 /** Ouvre une connexion sur la base jetable, le temps d'une vérification. */
