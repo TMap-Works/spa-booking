@@ -1,0 +1,86 @@
+-- Chaîne de report du rendez-vous — #39, booking-engine §5.
+--
+-- Un report n'est pas un `UPDATE` des dates en place. C'est une **annulation
+-- suivie d'une création liée**, et cette migration pose le lien qui les
+-- rattache. Deux raisons, et chacune suffirait :
+--
+-- 1. l'historique. Déplacer les bornes de la ligne existante efface l'heure
+--    d'origine : la cliente qui demande « à quelle heure était-ce, avant ? » et
+--    le salon qui mesure ses reports n'ont plus rien à lire. Le CDC §1.4 compte
+--    les no-shows et les annulations ; un report qui se déguise en rendez-vous
+--    initial fausse les deux ;
+-- 2. la contrainte d'exclusion. `appointments_no_overlap` compare la ligne
+--    **modifiée** aux autres, elle-même comprise : déplacer un rendez-vous de
+--    10:00 à 10:30 alors qu'il dure une heure ferait chevaucher la ligne avec
+--    l'état qu'elle avait avant, et PostgreSQL refuserait un déplacement
+--    parfaitement légitime. Annuler puis créer sort la ligne de l'index partiel
+--    — `WHERE status IN ('PENDING','CONFIRMED')` — avant que l'insertion ne soit
+--    jugée. La garantie n'est pas affaiblie, elle est simplement demandée dans
+--    l'ordre où elle a un sens.
+--
+-- ## Purement additive, et réversible
+--
+-- Une colonne nullable, un index, deux clés étrangères. Aucune colonne n'est
+-- retypée, aucune ligne n'est réécrite, aucune valeur existante ne change de
+-- sens. L'inverse exact est le retrait des deux contraintes, de l'index, puis de
+-- la colonne — et il ne perd que le lien, jamais un rendez-vous.
+--
+-- Le retour arrière du **code** seul ne demande rien : la colonne est nullable
+-- et sans défaut, la version antérieure de l'application ne l'émet ni ne la lit,
+-- et les rendez-vous qu'elle écrit y laissent `NULL`. Aucune incompatibilité
+-- descendante n'est introduite.
+--
+-- ## Aucun verrou long
+--
+-- `ADD COLUMN` d'une colonne nullable **sans valeur par défaut** ne réécrit pas
+-- la table depuis PostgreSQL 11 : c'est une mise à jour du catalogue, prise et
+-- relâchée en quelques millisecondes. L'index et les deux clés étrangères se
+-- construisent sur une colonne entièrement `NULL`, donc sur zéro ligne à
+-- valider. Le `ACCESS EXCLUSIVE` de l'`ALTER TABLE` reste borné à cette durée —
+-- il n'y a pas de parcours de table à attendre.
+--
+-- Le jour où `appointments` sera volumineuse, un `CREATE INDEX CONCURRENTLY`
+-- serait à préférer ; il ne s'écrit pas ici, parce qu'il ne peut pas s'exécuter
+-- dans la transaction qui enveloppe une migration Prisma, et parce qu'il n'y a
+-- rien à concurrencer sur une colonne qui vient de naître.
+--
+-- ## Invariants
+--
+-- `src/infrastructure/database/__tests__/prisma-schema.spec.ts` relit ce texte :
+-- migration additive (aucun retrait), colonne de clé étrangère en UUID, index
+-- préfixé de `tenant_id`, et **clé composite obligatoire** — voir plus bas.
+
+-- AlterTable
+--
+-- Nullable et sans défaut : la grande majorité des rendez-vous ne sont le report
+-- de rien, et `NULL` se lit « pris directement », jamais « inconnu ».
+ALTER TABLE "appointments" ADD COLUMN "rescheduled_from_id" UUID;
+
+-- CreateIndex
+--
+-- Préfixé de `tenant_id` comme tout index de ce schéma (tenant-isolation §1) :
+-- la question posée est « quel rendez-vous **de cet établissement** a remplacé
+-- celui-ci ? », et une lecture de la chaîne ne doit pas se payer un parcours
+-- inter-tenant.
+CREATE INDEX "appointments_tenant_id_rescheduled_from_id_idx" ON "appointments"("tenant_id", "rescheduled_from_id");
+
+-- AddForeignKey
+--
+-- `RESTRICT` comme toutes les clés de ce schéma : un rendez-vous qui en remplace
+-- un autre interdit la suppression de son prédécesseur. C'est le régime voulu —
+-- un historique dont un maillon disparaît n'est plus un historique.
+ALTER TABLE "appointments" ADD CONSTRAINT "appointments_rescheduled_from_id_fkey" FOREIGN KEY ("rescheduled_from_id") REFERENCES "appointments"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddCompositeForeignKey
+--
+-- Ce que Prisma ne génère pas et que la migration pose à la main, comme les cinq
+-- clés composites de la migration initiale. La clé mono-colonne ci-dessus est
+-- **muette sur le tenant** : elle laisserait un rendez-vous du salon A déclarer
+-- qu'il remplace un rendez-vous du salon B, ce qui ferait franchir la frontière
+-- à une lecture d'historique parfaitement innocente. Porter `tenant_id` sur la
+-- table est nécessaire, il n'est pas suffisant (tenant-isolation §1).
+--
+-- La cible `("tenant_id", "id")` est couverte par `appointments_tenant_id_id_key`,
+-- posé par la migration initiale : sans cet unique, PostgreSQL refuserait la
+-- clé.
+ALTER TABLE "appointments" ADD CONSTRAINT "appointments_tenant_id_rescheduled_from_id_fkey" FOREIGN KEY ("tenant_id", "rescheduled_from_id") REFERENCES "appointments"("tenant_id", "id") ON DELETE RESTRICT ON UPDATE CASCADE;
