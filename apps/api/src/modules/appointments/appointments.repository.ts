@@ -5,7 +5,7 @@ import { requireTenantId } from '../../common/tenant/tenant-context';
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
 import { isSlotExclusionViolation, isTransientWriteConflict } from './appointments.conflicts';
 import { SlotNoLongerAvailableError } from './appointments.errors';
-import type { AppointmentDraft, AppointmentRecord } from './appointments.types';
+import type { AppointmentDraft, AppointmentRecord, GuestContact } from './appointments.types';
 
 /**
  * Accès Prisma du module `appointments` — le seul endroit qui connaisse le
@@ -92,6 +92,13 @@ function withScopedTenant<T>(data: Omit<T, 'tenantId' | 'tenant'>): T {
  * mérite d'être vu dans les journaux plutôt que maquillé en refus métier.
  */
 const MAX_INSERT_ATTEMPTS = 3;
+
+/**
+ * Code Prisma d'une violation de contrainte d'unicité — ici
+ * `@@unique([tenantId, email])` sur `users`, la seule que
+ * `findOrCreateClient` puisse rencontrer.
+ */
+const UNIQUE_EMAIL_VIOLATION = 'P2002';
 
 /**
  * Répit avant un réessai — quelques dizaines de millisecondes, avec une part
@@ -250,5 +257,93 @@ export class AppointmentsRepository {
       select: APPOINTMENT_SELECT,
     });
     return row === null ? null : toRecord(row);
+  }
+
+  /**
+   * La fiche cliente de ces coordonnées dans l'établissement courant — trouvée,
+   * ou créée sans compte.
+   *
+   * C'est ce qui rend vrai le quatrième critère de #37 : « un client peut
+   * réserver sans compte, avec seulement ses coordonnées ». La ligne écrite n'a
+   * **pas de `passwordHash`** — la colonne est nullable exactement pour cela — et
+   * n'ouvre donc aucune identité : rien à quoi se connecter, aucune session,
+   * aucun jeton. C'est une fiche de carnet d'adresses, pas un compte.
+   *
+   * ## Pourquoi l'adresse e-mail est la clé, et non un choix
+   *
+   * `@@unique([tenantId, email])` l'impose : deux fiches ne peuvent pas partager
+   * une adresse dans un même salon. Chercher avant d'écrire n'est donc pas une
+   * optimisation, c'est la seule conduite possible — et c'est aussi ce que le
+   * salon attend, une cliente qui revient devant garder un seul historique.
+   *
+   * ## Ce que cette méthode ne fait **pas** : mettre à jour
+   *
+   * Une fiche trouvée est rendue telle quelle. Le prénom, le nom et le téléphone
+   * envoyés par un visiteur non authentifié n'écrasent jamais ceux d'une fiche
+   * existante : sans cela, un appel public suffirait à réécrire le nom et le
+   * numéro de n'importe quelle cliente — ou d'un compte staff — dont on connaît
+   * l'adresse. La correction d'une fiche relève du back-office, sous garde.
+   *
+   * ## Pourquoi ce module écrit dans `users`
+   *
+   * Il ne le devrait pas : les fiches clientes appartiennent à `crm` (CDC §2.3),
+   * qui n'existe pas encore, et `identity` n'expose pas de porte pour cela —
+   * `IdentityModule` n'exporte ni son repository ni `UsersService`, délibérément.
+   * Ouvrir cette porte toucherait `identity.module.ts`, hors de l'empreinte de ce
+   * ticket. La résolution vit donc ici, isolée dans une seule méthode et derrière
+   * une seule signature, pour que `crm` la reprenne d'un déplacement plutôt que
+   * d'une réécriture. Voir l'issue de suivi ouverte par #37.
+   */
+  public async findOrCreateClient(contact: GuestContact): Promise<string> {
+    const existing = await this.findClientIdByEmail(contact.email);
+    if (existing !== null) {
+      return existing;
+    }
+
+    try {
+      const created = await this.prisma.user.create({
+        data: withScopedTenant<Prisma.UserUncheckedCreateInput>({
+          email: contact.email,
+          role: 'CLIENT',
+          // Aucun mot de passe : la fiche existe pour être jointe, pas pour se
+          // connecter. `AuthService` refuse déjà une identité sans empreinte.
+          passwordHash: null,
+          firstName: contact.firstName,
+          lastName: contact.lastName,
+          phone: contact.phone,
+        }),
+        select: { id: true },
+      });
+      return created.id;
+    } catch (error: unknown) {
+      // Deux réservations d'invité concurrentes sur la même adresse : la
+      // perdante relit la fiche que la gagnante vient d'écrire. Refuser ici
+      // rendrait un 500 sur un cas parfaitement normal — deux onglets, ou un
+      // double clic que le front n'a pas su désarmer.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === UNIQUE_EMAIL_VIOLATION
+      ) {
+        const raced = await this.findClientIdByEmail(contact.email);
+        if (raced !== null) {
+          return raced;
+        }
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * L'identifiant de la fiche portant cette adresse dans l'établissement
+   * courant, ou `null`.
+   *
+   * `findFirst` et non `findUnique`, pour la même raison que `findById` :
+   * l'extension injecte `tenantId` dans le `where`, et `findUnique` exige que le
+   * `where` désigne *exactement* une clé unique. Le filtre de tenant reste donc
+   * posé par l'extension, jamais recopié ici.
+   */
+  private async findClientIdByEmail(email: string): Promise<string | null> {
+    const row = await this.prisma.user.findFirst({ where: { email }, select: { id: true } });
+    return row?.id ?? null;
   }
 }
