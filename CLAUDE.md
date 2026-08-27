@@ -115,3 +115,10 @@ d'immobiliser le jalon. Ses décisions sont journalisées sous l'acteur `arbitre
 - Concurrence : le moteur de réservation a des tests de charge concurrente
   obligatoires — c'est le risque n°1 du projet.
 - E2E : le parcours « réserver → confirmer → encaisser » ne doit jamais casser.
+
+À quoi s'ajoute, **à chaque ticket**, une recette fonctionnelle : la phase 4bis
+de `/ticket` exerce par MCP les endpoints et les pages que le ticket vient
+d'écrire — et rien d'autre, le périmètre étant déduit du diff. Elle se saute
+d'elle-même quand le diff ne touche ni API ni UI, et son verdict est bloquant.
+Voir [.claude/skills/recette-mcp/SKILL.md](.claude/skills/recette-mcp/SKILL.md)
+et l'[ADR 0005](docs/adr/0005-recette-fonctionnelle-mcp.md).
