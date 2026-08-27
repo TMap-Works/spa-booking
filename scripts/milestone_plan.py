@@ -150,16 +150,63 @@ def fetch_issues(title, limit):
                     "--json", "number,title,body,labels,assignees,url"])
 
 
+def closing_refs(pr):
+    """Les issues que cette PR **ferme**, telles que GitHub les a résolues.
+
+    `closingIssuesReferences` est le lien que GitHub établit lui-même à partir
+    des mots-clés de fermeture. C'est la seule source qui distingue « cette PR
+    traite #34 » de « cette PR mentionne #34 » — et une regex du corps ne le
+    peut pas, parce que les deux s'écrivent pareil.
+
+    Les références d'un autre dépôt sont ignorées : un numéro d'issue n'a de
+    sens que dans le sien, et le confondre rendrait occupée une issue d'ici qui
+    porte le même numéro là-bas. La comparaison ignore la casse : `gh` accepte
+    `--repo tmap-works/spa-booking`, mais l'API répond `TMap-Works` — comparer
+    littéralement ferait rejeter *toutes* les fermetures dès que
+    `SPA_TRACKING_REPO` n'est pas écrit exactement comme GitHub l'affiche, et le
+    run relancerait un agent sur un ticket déjà en PR.
+    """
+    numeros = set()
+    for ref in pr.get("closingIssuesReferences") or []:
+        if not isinstance(ref, dict) or not isinstance(ref.get("number"), int):
+            continue
+        depot = ref.get("repository") or {}
+        nom = depot.get("name")
+        proprietaire = (depot.get("owner") or {}).get("login")
+        if nom and proprietaire and ("%s/%s" % (proprietaire, nom)).lower() != REPO.lower():
+            continue
+        numeros.add(ref["number"])
+    return numeros
+
+
 def fetch_busy():
-    """Numéros d'issue déjà couverts par une pull request ouverte."""
+    """Numéros d'issue déjà couverts par une pull request ouverte.
+
+    Deux sources, et **pas** le corps de la PR : les fermetures que GitHub a
+    résolues, et le numéro que porte le nom de la branche. Ni l'une ni l'autre
+    ne confond une référence avec un lien.
+
+    Lire le corps à la regex `#(\\d+)` a coûté un jalon entier (#308). Un bon
+    corps de PR nomme les tickets voisins pour justifier sa frontière de
+    périmètre — « #35 possède l'endpoint, #36 l'agrégation, donc #34 est
+    l'algorithme seul ». La PR #307 en citait neuf pour n'en fermer qu'une : les
+    quatre ouvertes du jalon sont sorties du plan « PR déjà ouverte », leurs
+    onze dépendantes ont été retenues derrière elles, `waves` est resté vide, et
+    le run a conclu que S2 était déroulé sans avoir traité un seul ticket.
+
+    Plus le corps de PR était soigné, plus il gelait de tickets : l'incitation
+    exactement inverse de celle qu'on veut. `milestone_run.py` avait déjà tiré
+    la leçon pour son propre appariement (`CLOSES_RE`) ; elle n'était jamais
+    remontée jusqu'ici.
+    """
     busy = {}
     prs = gh_json(["pr", "list", "--repo", REPO, "--state", "open", "--limit", "100",
-                   "--json", "number,body,headRefName"])
+                   "--json", "number,headRefName,closingIssuesReferences"])
     for pr in prs:
-        found = set(re.findall(r"(?:^|[/+-])(\d+)-", pr.get("headRefName") or ""))
-        found |= set(re.findall(r"#(\d+)", pr.get("body") or ""))
+        found = {int(n) for n in re.findall(r"(?:^|[/+-])(\d+)-", pr.get("headRefName") or "")}
+        found |= closing_refs(pr)
         for number in found:
-            busy.setdefault(int(number), pr["number"])
+            busy.setdefault(number, pr["number"])
     return busy
 
 
