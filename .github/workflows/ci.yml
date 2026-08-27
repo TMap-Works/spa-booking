@@ -31,6 +31,17 @@ jobs:
   test:
     name: Tests
     runs-on: ubuntu-latest
+    # Pourquoi le service `postgres` reste, alors qu'aucun test ne s'en sert (#274).
+    #
+    # Les suites qui exigent un vrai moteur démarrent le leur depuis #274
+    # (`@testcontainers/postgresql`, apps/api/test/utils/disposable-database.ts) :
+    # elles ne lisent plus `DATABASE_URL` du tout. Le service ne sert donc plus
+    # qu'à l'étape `db:migrate:deploy` ci-dessous — et cette étape-là, elle, ne
+    # se remplace pas. Le harnais applique le SQL des migrations sans passer par
+    # la CLI Prisma, délibérément (#139) ; c'est pourtant `prisma migrate deploy`
+    # que la tâche ECS `spa-*-migrate` exécute au déploiement (deploy-*.yml).
+    # Sans cette étape, plus rien ne prouverait que la CLI s'applique sur une
+    # base vide, et la panne se découvrirait en production.
     services:
       postgres:
         image: postgres:16
@@ -51,6 +62,12 @@ jobs:
     env:
       DATABASE_URL: postgresql://spa:spa@localhost:5432/spa_test
       REDIS_URL: redis://localhost:6379
+      # Le réapeur de Testcontainers n'a rien à réclamer sur un runner jetable :
+      # la machine entière disparaît à la fin du job. Le désactiver épargne un
+      # tirage d'image et un démarrage de conteneur **à l'intérieur** du premier
+      # `beforeAll`, dont le délai est celui de Jest (30 s). Les conteneurs sont
+      # arrêtés explicitement par `drop()`, jamais laissés au réapeur.
+      TESTCONTAINERS_RYUK_DISABLED: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,13 +76,122 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run db:migrate:deploy
+
+      # L'image du moteur est tirée ici, et non dans le `beforeAll` de la
+      # première suite qui en démarre un : le tirage se compte sinon dans le
+      # délai de Jest, et c'est un délai de test qui rougirait pour un temps de
+      # réseau.
+      #
+      # La balise est **lue** dans `apps/api/test/utils/disposable-database.ts`
+      # plutôt que recopiée ici : recopiée, elle dérive au premier changement de
+      # `POSTGRES_IMAGE`, cette étape préchauffe alors une image que personne ne
+      # démarre, et le tirage retombe dans le `beforeAll` — où il se lit comme un
+      # test qui expire, pas comme un temps de réseau.
+      - name: Image du moteur de test
+        run: |
+          image="$(sed -n "s/^const POSTGRES_IMAGE = '\(.*\)';$/\1/p" apps/api/test/utils/disposable-database.ts)"
+          if [ -z "$image" ]; then
+            echo "::error file=apps/api/test/utils/disposable-database.ts::POSTGRES_IMAGE est introuvable : l'étape de préchauffe ne sait plus quelle image tirer, et le tirage retomberait dans le délai de Jest."
+            exit 1
+          fi
+          echo "Préchauffe de $image."
+          docker pull "$image"
+
       - run: npm run test:unit
-      # Les deux étapes ci-dessous appellent les cibles **feuilles**, pas l'alias
-      # `test:integration` : celui-ci enchaîne les deux, et les rejouerait donc.
-      # Contrat pour tout workspace qui ajoutera des tests d'intégration :
-      # déclarer `test:integration:api` et, s'il a des tests de fuite,
-      # `test:isolation` — un workspace qui ne déclarerait que l'alias serait
-      # sauté ici en silence par `--if-present`.
+
+      # Contrat des cibles de test, tenu par une garde et non par un commentaire
+      # (#274). Les deux étapes suivantes appellent les cibles **feuilles**, pas
+      # l'alias `test:integration` : celui-ci enchaîne les deux, et les
+      # rejouerait donc. Deux chemins d'exécution pour un même contrat, donc
+      # quatre façons de perdre une suite en silence — que cette garde refuse :
+      #
+      # - un workspace qui déclarerait `test:integration` sans aucune feuille
+      #   serait sauté **ici** par `--if-present`, sans une ligne dans le log ;
+      # - un workspace qui déclarerait des feuilles sans l'alias serait sauté par
+      #   `npm run verify`, qui ne connaît que l'alias ;
+      # - un alias `test:integration` qui oublierait l'une de ses feuilles
+      #   sauterait celle-ci dans `npm run verify`, en local et avant la CI ;
+      # - et plus personne ne déclarant ni alias ni feuille, les deux étapes
+      #   d'intégration ci-dessous ne lanceraient plus rien tout en restant
+      #   vertes — c'est la garde elle-même qui deviendrait vide.
+      #
+      # `npm pkg get` lit les manifestes, pas le disque : aucune installation
+      # n'est nécessaire, et la garde vaut pour tout workspace à venir.
+      - name: Contrat des cibles de test d'intégration
+        run: |
+          npm pkg get scripts --workspaces --json > workspace-scripts.json
+          cat > check-test-targets.cjs <<'JS'
+          const { readFileSync } = require('node:fs');
+
+          const ALIAS = 'test:integration';
+          const LEAVES = ['test:integration:api', 'test:isolation'];
+
+          const workspaces = JSON.parse(readFileSync('workspace-scripts.json', 'utf8'));
+          const problems = [];
+          let covered = 0;
+
+          for (const [name, scripts] of Object.entries(workspaces)) {
+            const declared = scripts ?? {};
+            const alias = declared[ALIAS];
+            const leaves = LEAVES.filter((leaf) => declared[leaf] !== undefined);
+
+            if (alias === undefined && leaves.length === 0) {
+              continue;
+            }
+            covered += 1;
+
+            if (alias === undefined) {
+              problems.push(
+                `${name} declare « ${leaves.join(' », « ')} » sans l'alias « ${ALIAS} » : ` +
+                  '`npm run verify` ne connait que l\'alias, ces cibles y seraient sautees en silence.',
+              );
+              continue;
+            }
+
+            if (leaves.length === 0) {
+              problems.push(
+                `${name} declare « ${ALIAS} » sans aucune de ses feuilles (${LEAVES.join(', ')}) : ` +
+                  "le job `test` de ci.yml appelle les feuilles, ce workspace y serait saute en silence.",
+              );
+              continue;
+            }
+
+            for (const leaf of leaves) {
+              if (!alias.includes(leaf)) {
+                problems.push(
+                  `${name} declare « ${leaf} » mais son alias « ${ALIAS} » ne l'appelle pas : ` +
+                    '`npm run verify` passe par l\'alias, cette cible y serait sautee en silence.',
+                );
+              }
+            }
+          }
+
+          // Sans ce dernier controle, la garde passerait au vert en n'ayant rien
+          // regarde — manifestes vides, glob de workspaces qui ne resout plus,
+          // ou format de `npm pkg get` qui change. Une garde vide contre les
+          // suites sautees en silence serait elle-meme une suite sautee en silence.
+          if (covered === 0) {
+            problems.push(
+              `aucun workspace ne declare « ${ALIAS} » ni aucune de ses feuilles (${LEAVES.join(', ')}) : ` +
+                "les deux etapes d'integration de ci.yml ne lancent plus rien, et cette garde ne verifie plus rien.",
+            );
+          }
+
+          if (problems.length > 0) {
+            for (const problem of problems) {
+              console.log(`::error file=package.json::${problem}`);
+            }
+            process.exit(1);
+          }
+
+          console.log(
+            `Contrat des cibles de test respecte par ${covered} workspace(s) sur ` +
+              `${Object.keys(workspaces).length} lu(s).`,
+          );
+          JS
+          node check-test-targets.cjs
+          rm -f workspace-scripts.json check-test-targets.cjs
+
       - name: Tests d'intégration
         run: npm run test:integration:api --workspaces --if-present
 
@@ -77,8 +203,9 @@ jobs:
       # feuilles ici, qui évite de les rejouer deux fois.
       #
       # Le harnais partagé qu'ils utilisent est décrit dans apps/api/README.md.
-      # Il exige le service `postgres` ci-dessus : il s'y crée une base jetable
-      # par suite, migrée puis détruite.
+      # Il n'exige que le démon Docker du runner : chaque fichier de test démarre
+      # son propre PostgreSQL 16, s'y crée une base jetable par suite, migrée
+      # puis détruite, et arrête le conteneur derrière lui (#274).
       - name: Tests d'isolation inter-tenant
         run: npm run test:isolation --workspaces --if-present
 
