@@ -152,6 +152,7 @@ model Tenant {
   serviceStaff      ServiceStaff[]
   staffSchedules    StaffSchedule[]
   closingDays       TenantClosingDay[]
+  staffTimeOff      StaffTimeOff[]
   appointments      Appointment[]
   payments          Payment[]
   notifications     Notification[]
@@ -404,6 +405,7 @@ model Staff {
   assignedServices ServiceStaff[]
   appointments     Appointment[]
   schedules        StaffSchedule[]
+  timeOff          StaffTimeOff[]
 
   @@unique([tenantId, userId])
   // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
@@ -497,6 +499,85 @@ model TenantClosingDay {
   // comme tout unique métier : deux salons ferment chacun le lundi.
   @@unique([tenantId, weekday])
   @@map("tenant_closing_days")
+}
+
+/// Indisponibilité d'un praticien — plage bloquée ponctuelle ou congé sur
+/// plusieurs jours (CDC §2.3 « plages bloquées », #33).
+///
+/// ## Une seule table pour les deux
+///
+/// Un déjeuner de midi à treize heures et trois semaines de congés d'été ne
+/// diffèrent que par leur durée : ce sont, dans les deux cas, un intervalle
+/// pendant lequel le praticien ne prend pas de rendez-vous. Deux tables — l'une
+/// « ponctuelle », l'autre « congé » — auraient obligé le calcul de créneaux à
+/// lire les deux, à les fusionner, et à trancher les cas où une plage bloquée
+/// chevauche un congé. Une table, un intervalle, une soustraction.
+///
+/// ## Autonome, par conception
+///
+/// Ce modèle ne référence **aucun** horaire récurrent : il dit quand le
+/// praticien est absent, jamais quand il travaille. C'est ce qui permet de le
+/// poser avant que les horaires du personnel n'existent, et surtout ce qui
+/// rend la règle composable — le moteur de créneaux (#34) part des fenêtres de
+/// travail et leur **soustrait** ces intervalles. Une plage bloquée hors de
+/// tout horaire de travail est donc représentable et sans effet, ce qui est le
+/// comportement voulu : poser un congé ne demande pas de savoir si le
+/// praticien devait travailler ce jour-là.
+///
+/// ## Ce qui n'est pas contraint, et pourquoi
+///
+/// Deux indisponibilités du même praticien **peuvent** se chevaucher. Aucune
+/// contrainte d'exclusion ici, contrairement à `appointments` : deux
+/// rendez-vous simultanés sont une faute — deux clients devant une seule paire
+/// de mains —, deux absences simultanées ne sont que la même absence dite deux
+/// fois. Le moteur les fusionne avant de soustraire ; les interdire aurait fait
+/// échouer en 409 le geste anodin d'étendre un congé en en posant un second.
+model StaffTimeOff {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  staffId String @map("staff_id") @db.Uuid
+  staff   Staff  @relation(fields: [staffId], references: [id], onDelete: Restrict)
+
+  /// Bornes de l'absence, en UTC, borne haute **exclue** — la même convention
+  /// que `appointments`. Un congé « du 3 au 5 » se pose donc de minuit local le
+  /// 3 à minuit local le 6, et les deux instants se calculent avec le fuseau du
+  /// tenant : le client envoie des dates-heures à offset explicite, jamais une
+  /// date nue que le serveur aurait à interpréter.
+  ///
+  /// `CHECK ("ends_at" > "starts_at")` est posé en SQL brut dans la migration,
+  /// pour la même raison que sur `appointments` : un intervalle vide ne
+  /// soustrait rien et resterait invisible du moteur de créneaux, alors que
+  /// l'utilisateur croirait avoir bloqué son agenda.
+  startsAt DateTime @map("starts_at") @db.Timestamptz(6)
+  endsAt   DateTime @map("ends_at") @db.Timestamptz(6)
+
+  /// Motif, **facultatif et strictement interne** : « congé maternité »,
+  /// « formation », « rendez-vous médical ». Il ne sort jamais du back-office —
+  /// la projection que le moteur de disponibilité consomme ne le sélectionne
+  /// pas, et aucune route publique ne lit cette table. Nullable parce qu'une
+  /// absence n'a pas à se justifier pour être posée, et qu'un motif obligatoire
+  /// se remplirait de « x » au bout d'une semaine.
+  ///
+  /// `VARCHAR(500)` — la largeur des motifs du schéma (`cancellation_reason`,
+  /// `failure_reason`) : c'est une phrase, pas une note de dossier.
+  reason String? @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
+  @@unique([tenantId, id])
+  // La lecture du moteur de créneaux : « les absences de ces praticiens sur
+  // cette fenêtre ». `starts_at` en troisième position parce que la borne de
+  // fenêtre porte dessus (`starts_at < to`), et que `staff_id` est toujours
+  // connu quand on interroge — le moteur résout ses praticiens candidats avant.
+  @@index([tenantId, staffId, startsAt])
+  // La lecture du back-office : « toutes les absences de l'établissement sur ce
+  // mois », tous praticiens confondus, telle que l'affiche le planning.
+  @@index([tenantId, startsAt])
+  @@map("staff_time_off")
 }
 
 /// Affectation N–N « ce praticien pratique cette prestation ».

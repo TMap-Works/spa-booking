@@ -1,5 +1,11 @@
 import { Transform } from 'class-transformer';
-import { Matches, registerDecorator, ValidationArguments, ValidationOptions } from 'class-validator';
+import {
+  Matches,
+  registerDecorator,
+  ValidateIf,
+  ValidationArguments,
+  ValidationOptions,
+} from 'class-validator';
 
 import { localTimeToMinutes } from '../availability.schedule';
 import { LOCAL_TIME_PATTERN } from '../availability.time';
@@ -256,3 +262,47 @@ export function IsAfterLocalTime(
     });
   };
 }
+
+/**
+ * `VARCHAR(500)` — motif d'une plage bloquée ou d'un congé (#33).
+ *
+ * La même largeur que les autres motifs du schéma (`cancellation_reason`,
+ * `failure_reason`) : c'est une phrase, pas une note de dossier.
+ *
+ * TODO(#26) : c'est `REASON_MAX_LENGTH` de `@spa/shared`
+ * (`packages/shared/src/constants/limits.ts`), à importer le jour où `apps/api`
+ * dépendra du paquet — même TODO que dans `catalog/dto/validation.ts`, et même
+ * précaution de nommage : un homonyme local qui ne vaudrait pas la même chose
+ * ferait de la substitution un changement de borne silencieux.
+ */
+export const REASON_MAX_LENGTH = 500;
+
+/**
+ * Champ facultatif dont `null` n'est **pas** une valeur acceptée.
+ *
+ * `@IsOptional()` de class-validator confond les deux : il ignore les
+ * validateurs aussi bien sur `undefined` que sur `null`, si bien qu'un `null`
+ * explicite traverserait la validation et descendrait jusqu'à une colonne
+ * `NOT NULL`. Ce décorateur-ci ne laisse passer que l'absence — un `null`
+ * déclenche les validateurs, donc un 400 qui nomme le champ.
+ *
+ * Les champs réellement effaçables gardent `@IsOptional()` : c'est là que `null`
+ * a un sens, et il vaut « efface ce texte ». Jumeau de celui de
+ * `catalog/dto/validation.ts`, dupliqué plutôt qu'importé d'un module voisin —
+ * un module n'importe pas un fichier profond d'un autre (api-module §3), et sa
+ * place définitive est `@spa/shared` (#26).
+ */
+export const OptionalPresent = (): PropertyDecorator =>
+  ValidateIf((_object: unknown, value: unknown) => value !== undefined);
+
+/**
+ * Élague un libellé avant que les bornes ne le jugent.
+ *
+ * Sans lui, `"   "` passerait pour un motif — trois espaces font trois
+ * caractères — et le planning afficherait une absence motivée par du vide.
+ * Rend la valeur telle quelle si ce n'est pas une chaîne : un `null`
+ * d'effacement doit continuer à valoir « efface », et un type inattendu doit
+ * être refusé par son validateur, pas transformé ici.
+ */
+export const Trim = (): PropertyDecorator =>
+  Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value));

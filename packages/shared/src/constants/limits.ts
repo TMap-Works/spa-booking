@@ -65,3 +65,19 @@ export const MAX_PAGE_SIZE = 100;
  * couvrent le « mois suivant » du calendrier public.
  */
 export const MAX_AVAILABILITY_RANGE_DAYS = 31;
+
+/**
+ * Fenêtre maximale d'une plage bloquée ou d'un congé, en jours — et la même
+ * borne pour la fenêtre qu'en interroge le planning de back-office (#33).
+ *
+ * Elle ne protège d'aucun abus : c'est une **borne de faute de frappe**. Une
+ * absence saisie au 20 **2**6 au lieu de 2026 blanchirait l'agenda du praticien
+ * pour deux siècles, et rien ne le signalerait — le moteur de créneaux ne rendrait
+ * plus aucune disponibilité, sans erreur, sans trace, jusqu'à ce que quelqu'un
+ * remonte à la ligne fautive.
+ *
+ * Une année et un jour couvre le congé sabbatique comme le planning annuel, tout
+ * en rendant la faute de frappe impossible à confondre avec une saisie légitime.
+ * Au-delà, l'absence se pose en deux lignes — le moteur les fusionne.
+ */
+export const MAX_TIME_OFF_RANGE_DAYS = 366;
