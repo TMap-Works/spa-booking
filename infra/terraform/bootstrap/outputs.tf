@@ -22,6 +22,11 @@ output "state_kms_key_ids" {
   value       = { for env in var.environments : env => aws_kms_key.state[env].key_id }
 }
 
+output "cost_allocation_tag_keys" {
+  description = "Étiquettes activées comme étiquettes de répartition de coûts. L'activation vaut pour le compte entier et ne ventile la facture qu'à partir du mois de l'`apply` — une clé absente d'ici est une dimension que Cost Explorer refusera de regrouper."
+  value       = sort([for tag in aws_ce_cost_allocation_tag.this : tag.tag_key])
+}
+
 # Sert de contrôle après l'amorçage : ces valeurs doivent correspondre trait pour
 # trait aux blocs `backend` déjà versionnés dans envs/*. Un écart signifie qu'un
 # environnement pointe vers un état qui n'existe pas.
