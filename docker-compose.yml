@@ -9,7 +9,12 @@ services:
       POSTGRES_PASSWORD: spa
       POSTGRES_DB: spa_dev
     ports:
-      - "5432:5432"
+      # 5433 et non 5432 : un service PostgreSQL natif Windows peut tenir le
+      # port standard en même temps que le proxy Docker (#272). Les deux
+      # processus lient `0.0.0.0:5432` sans erreur, et la connexion part vers
+      # l'un ou l'autre — d'où des identifiants refusés sur un conteneur sain.
+      # Un port propre au dépôt supprime la question au lieu de la diagnostiquer.
+      - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -21,7 +26,11 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      # 6380, pour la même raison que le 5433 de Postgres (#272) : le 6379 était
+      # tenu par le conteneur d'un autre projet, et celui de ce dépôt démarrait
+      # sans port publié. L'API et les tests parlaient donc au cache d'à côté —
+      # or c'est ce cache qui portera les verrous de réservation.
+      - "6380:6379"
     volumes:
       - redis-data:/data
     healthcheck:

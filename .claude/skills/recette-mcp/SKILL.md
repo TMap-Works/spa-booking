@@ -58,11 +58,16 @@ sans shell ne trouve pas, et les vagues tournent sans shell.
 3. un navigateur Playwright (`npx playwright install chromium` dans un terminal —
    déjà présent sur la machine de développement du projet).
 
-**Si le port 5432 est déjà occupé par un PostgreSQL natif** — c'est le cas sur la
-machine de développement du projet, où `netstat -ano | findstr 5432` montre deux
-processus à l'écoute —, le conteneur est masqué et l'authentification échoue sans
-que rien ne le dise. Poser alors dans `.env.local` un `DATABASE_URL` sur un port
-distinct : ce que le processus porte l'emporte sur les fichiers `.env` versionnés.
+**Le dépôt publie son PostgreSQL sur 5433**, et non sur le 5432 standard : un
+service natif peut tenir ce dernier en même temps que le proxy Docker, sans que
+rien ne le signale (#272). Si l'authentification est refusée alors que le
+conteneur est sain, c'est de ce côté qu'il faut regarder — vérifier d'abord que
+`DATABASE_URL` vise bien 5433, puis `netstat -ano | grep :5433` — et non du côté
+du volume.
+
+Pointer la recette ailleurs reste possible sans toucher à un fichier versionné :
+un `DATABASE_URL` dans `.env.local`, ou dans l'environnement du processus, qui
+l'emporte sur les fichiers `.env`.
 
 ## 4. Les outils de `recette`, dans l'ordre où ils servent
 

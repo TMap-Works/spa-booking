@@ -103,6 +103,21 @@ function urlForDatabase(serverUrl: string, name: string): string {
   return url.toString();
 }
 
+/**
+ * Le port réellement visé par une URL de connexion.
+ *
+ * Sans port explicite, c'est le 5432 par défaut de PostgreSQL qui sera dialé —
+ * et c'est précisément celui qu'un serveur natif peut tenir. Le message doit
+ * donc nommer celui-là, pas celui du compose.
+ */
+function portOf(url: string): string {
+  try {
+    return new URL(url).port || '5432';
+  } catch {
+    return '5432';
+  }
+}
+
 /** Ouvre une connexion, ou explique ce qui manque plutôt que de laisser `pg` le dire. */
 async function connect(url: string, what: string): Promise<Client> {
   const client = new Client({ connectionString: url });
@@ -113,7 +128,17 @@ async function connect(url: string, what: string): Promise<Client> {
     throw new Error(
       `PostgreSQL injoignable (${what}). Les suites d’isolation exigent une vraie ` +
         'base : `docker compose up -d` en local, service `postgres` du job `test` ' +
-        `en CI. Cause : ${error instanceof Error ? error.message : String(error)}`,
+        'en CI.\n' +
+        // Le conseil « démarrer le conteneur » est sans effet quand le conteneur
+        // tourne déjà et qu'un **autre** serveur tient le port : deux processus
+        // peuvent lier `0.0.0.0:5432` sans erreur, et la connexion part alors
+        // vers celui qui n'a pas les identifiants du compose (#272). Le dire
+        // ici, parce que c'est le message que lit l'agent qui débogue.
+        'Si le conteneur tourne et que les identifiants sont pourtant refusés, ' +
+        `un autre serveur tient sans doute le port visé : \`netstat -ano | grep :${portOf(url)}\` ` +
+        'sous Windows. Le dépôt publie le sien sur **5433** — vérifier que ' +
+        '`DATABASE_URL` le vise, et non le 5432 qu’un PostgreSQL natif peut tenir.\n' +
+        `Cause : ${error instanceof Error ? error.message : String(error)}`,
     );
   }
   return client;

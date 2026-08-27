@@ -78,6 +78,13 @@ PROTOCOLES_CONNUS = {"2024-11-05", "2025-03-26", "2025-06-18"}
 # Journaux des processus démarrés. Ignoré par git, effaçable sans conséquence.
 TRAVAIL = RACINE / ".claude" / ".recette"
 
+# Les ports que publie `docker-compose.yml`, et non les ports standards : un
+# PostgreSQL natif ou le conteneur d'un autre projet peut tenir 5432 ou 6379
+# sans que rien ne le signale (#272). Ils ne servent que de repli, quand une URL
+# de connexion ne porte pas de port explicite.
+PORT_POSTGRES = 5433
+PORT_REDIS = 6380
+
 
 # --------------------------------------------------------------------------- #
 # Environnement et masquage
@@ -106,7 +113,7 @@ def charger_env(racine: Path | None = None, environnement=None) -> dict:
 
     Ce que le processus porte déjà l'emporte sur les fichiers : c'est ce qui
     permet de lancer la recette contre une autre base que celle du
-    `docker-compose.yml` — un port 5432 déjà pris par un PostgreSQL natif, par
+    `docker-compose.yml` — un port déjà pris par un PostgreSQL natif, par
     exemple, cas rencontré sur la machine de développement du projet.
     """
     base = racine or RACINE
@@ -819,8 +826,8 @@ def outil_api_demarrer(args: dict) -> dict:
     # Les dépendances locales d'abord : une API qui démarre sans base rend 500
     # sur tout, et le diagnostic coûte dix minutes à qui lit le journal.
     for nom, url, port_defaut in (
-        ("PostgreSQL", env_fichiers.get("DATABASE_URL", ""), 5432),
-        ("Redis", env_fichiers.get("REDIS_URL", ""), 6379),
+        ("PostgreSQL", env_fichiers.get("DATABASE_URL", ""), PORT_POSTGRES),
+        ("Redis", env_fichiers.get("REDIS_URL", ""), PORT_REDIS),
     ):
         joignable, adresse = service_joignable(url, port_defaut)
         if not joignable:
@@ -887,9 +894,10 @@ def outil_api_demarrer(args: dict) -> dict:
             # développement, c'est presque toujours un **autre** serveur qui
             # occupe le port du conteneur.
             resultat["piste"] = (
-                "le port de la base répond mais refuse les identifiants — vérifier qu'aucun "
-                "PostgreSQL natif n'occupe le port du conteneur (« netstat -ano | findstr 5432 » "
-                "sous Windows), et au besoin poser DATABASE_URL dans .env.local sur un autre port."
+                "le port de la base répond mais refuse les identifiants : un autre serveur le "
+                "tient probablement. Sous Windows, « netstat -ano | findstr 5432 » — deux PID à "
+                "l'écoute, c'est cela. Le dépôt publie le sien sur %d : vérifier que DATABASE_URL "
+                "le vise, dans .env.local comme dans le shell." % PORT_POSTGRES
             )
         return resultat
 
@@ -911,7 +919,7 @@ def outil_api_jeu_dessai(args: dict) -> dict:
     env_fichiers = charger_env()
     secrets = secrets_de(env_fichiers)
 
-    joignable, adresse = service_joignable(env_fichiers.get("DATABASE_URL", ""), 5432)
+    joignable, adresse = service_joignable(env_fichiers.get("DATABASE_URL", ""), PORT_POSTGRES)
     if not joignable:
         return {"erreur": "PostgreSQL injoignable sur %s — « docker compose up -d »." % adresse}
 

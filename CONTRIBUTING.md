@@ -66,7 +66,7 @@ le remède et poursuivre, sans traiter l'incident comme un échec du ticket.
 ```bash
 npm install
 cp .env.example .env.local        # renseigner les valeurs locales
-docker compose up -d              # Postgres + Redis
+docker compose up -d              # Postgres sur 5433, Redis sur 6380
 npm run db:migrate
 npm run dev                       # api + web en parallèle
 ```

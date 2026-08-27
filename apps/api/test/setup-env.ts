@@ -14,8 +14,13 @@ const DEFAULTS: Readonly<Record<string, string>> = {
   NODE_ENV: 'test',
   APP_URL: 'http://localhost:3000',
   API_URL: 'http://localhost:3001',
-  DATABASE_URL: 'postgresql://spa:spa@localhost:5432/spa_test',
-  REDIS_URL: 'redis://localhost:6379',
+  // 5433 : le port publié par `docker-compose.yml`, et non le 5432 standard
+  // qu'un PostgreSQL natif peut déjà tenir (#272). La CI pose `DATABASE_URL`
+  // elle-même, ce défaut ne la concerne donc pas.
+  DATABASE_URL: 'postgresql://spa:spa@localhost:5433/spa_test',
+  // 6380 : le port publié par `docker-compose.yml` (#272). Comme pour la base,
+  // la CI pose `REDIS_URL` elle-même.
+  REDIS_URL: 'redis://localhost:6380',
   // Les sondes en échec journalisent en `warn` : le palier `error` garde la
   // sortie de test lisible sans désactiver la journalisation, que la suite
   // d'isolation inspecte réellement.
