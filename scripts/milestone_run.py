@@ -179,8 +179,8 @@ CLOSES_RE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d
 WORKTREE_BRANCH_RE = re.compile(r"^worktree-(?:feature|bugfix|chore|docs)\+(\d+)-")
 
 PHASES = ["recevabilite", "isolation", "prise-en-charge", "implementation",
-          "validation", "commits", "pr", "ci", "revue", "merge", "cloture",
-          "nettoyage", "orchestration"]
+          "validation", "recette", "commits", "pr", "ci", "revue", "merge",
+          "cloture", "nettoyage", "orchestration"]
 
 MARK = {"pending": "·", "running": "▸", "pr_open": "◇", "ci_green": "◆",
         "reviewed": "◆", "merged": "✔", "failed": "✖", "blocked": "■",
