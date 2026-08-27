@@ -39,6 +39,8 @@ const EXPECTED_EXPORTS = [
   'moneySchema',
   'CurrencyMismatchError',
   'utcInstantSchema',
+  'offsetDateTimeSchema',
+  'localTimeSchema',
   'calendarDateSchema',
   'calendarDaysBetween',
   'uuidSchema',

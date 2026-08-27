@@ -12,6 +12,11 @@ import {
   calendarDaysBetween,
   durationMinutesSchema,
   fromUtcInstant,
+  isOffsetDateTime,
+  localTimeSchema,
+  localTimeToMinutes,
+  minutesToLocalTime,
+  offsetDateTimeSchema,
   timeZoneSchema,
   toUtcInstant,
   utcInstantSchema,
@@ -42,6 +47,93 @@ describe('instants UTC', () => {
     // 2026-03-29 02:00 Europe/Paris : le passage à l'heure d'été. En UTC, rien
     // ne se passe — c'est précisément la propriété qu'on veut préserver.
     expect(addMinutes('2026-03-29T00:30:00.000Z', 60)).toBe('2026-03-29T01:30:00.000Z');
+  });
+});
+
+describe('dates-heures entrantes', () => {
+  it('accepte un offset explicite et le normalise en UTC', () => {
+    // La dissymétrie voulue avec `utcInstantSchema` : en entrée l'API accepte
+    // un décalage, et le convertit à la frontière plutôt que de laisser le
+    // client le faire avec le fuseau de son navigateur.
+    expect(offsetDateTimeSchema.parse('2026-03-29T03:30:00+02:00')).toBe(
+      '2026-03-29T01:30:00.000Z',
+    );
+    expect(offsetDateTimeSchema.parse('2026-03-29T01:30:00Z')).toBe('2026-03-29T01:30:00.000Z');
+    expect(offsetDateTimeSchema.parse('2026-03-28T15:30:00-10:00')).toBe(
+      '2026-03-29T01:30:00.000Z',
+    );
+  });
+
+  it('refuse une date-heure nue — trois fuseaux possibles, donc aucun', () => {
+    expect(offsetDateTimeSchema.safeParse('2026-03-29T03:30:00').success).toBe(false);
+    expect(offsetDateTimeSchema.safeParse('2026-03-29').success).toBe(false);
+    expect(offsetDateTimeSchema.safeParse('1774743000').success).toBe(false);
+  });
+
+  it('refuse un offset syntaxiquement faux', () => {
+    expect(isOffsetDateTime('2026-03-29T03:30:00+2:00')).toBe(false);
+    expect(isOffsetDateTime('2026-03-29T03:30:00+0200')).toBe(false);
+    expect(isOffsetDateTime('2026-03-29 03:30:00Z')).toBe(false);
+    expect(isOffsetDateTime('2026-03-29T03:30:00+24:00')).toBe(false);
+  });
+
+  it('refuse une heure hors de la journée, plutôt que de la reporter au lendemain', () => {
+    // `24:00` n'est pas du RFC 3339, et `Date.parse` le ramènerait au 30 mars :
+    // un rendez-vous déplacé d'un jour sans qu'aucune erreur ne le dise.
+    expect(isOffsetDateTime('2026-03-29T24:00:00Z')).toBe(false);
+    expect(isOffsetDateTime('2026-03-29T24:00Z')).toBe(false);
+    expect(isOffsetDateTime('2026-03-29T19:60:00Z')).toBe(false);
+    expect(isOffsetDateTime('2026-03-29T19:30:60Z')).toBe(false);
+  });
+
+  it('refuse une date bien formée mais inexistante au calendrier', () => {
+    // `Date.parse` ramènerait le 31 février au 3 mars sans rien signaler.
+    expect(isOffsetDateTime('2026-02-31T10:00:00Z')).toBe(false);
+    expect(isOffsetDateTime('2026-02-29T10:00:00Z')).toBe(false);
+    expect(isOffsetDateTime('2028-02-29T10:00:00Z')).toBe(true);
+  });
+
+  it('tolère l’absence de secondes et une fraction, comme la RFC 3339', () => {
+    expect(offsetDateTimeSchema.parse('2026-03-29T01:30Z')).toBe('2026-03-29T01:30:00.000Z');
+    expect(offsetDateTimeSchema.parse('2026-03-29T01:30:00.500Z')).toBe(
+      '2026-03-29T01:30:00.500Z',
+    );
+  });
+});
+
+describe('heures murales', () => {
+  it('accepte HH:MM sur les vingt-quatre heures', () => {
+    expect(localTimeSchema.parse('00:00')).toBe('00:00');
+    expect(localTimeSchema.parse('23:59')).toBe('23:59');
+  });
+
+  it('refuse ce qui n’est pas une heure de la journée', () => {
+    expect(localTimeSchema.safeParse('9:00').success).toBe(false);
+    expect(localTimeSchema.safeParse('24:00').success).toBe(false);
+    expect(localTimeSchema.safeParse('09:60').success).toBe(false);
+    expect(localTimeSchema.safeParse('09:00:00').success).toBe(false);
+  });
+
+  it('fait l’aller-retour avec les minutes depuis minuit', () => {
+    expect(localTimeToMinutes('09:30')).toBe(570);
+    expect(minutesToLocalTime(570)).toBe('09:30');
+    expect(minutesToLocalTime(0)).toBe('00:00');
+    expect(minutesToLocalTime(1439)).toBe('23:59');
+  });
+
+  it('refuse de sortir de la journée civile', () => {
+    // Une fenêtre qui déborde sur le lendemain se décrit par deux plages, pas
+    // par un « 25:30 » que rien ne saurait afficher.
+    expect(() => minutesToLocalTime(1440)).toThrow(RangeError);
+    expect(() => minutesToLocalTime(-1)).toThrow(RangeError);
+    expect(() => minutesToLocalTime(90.5)).toThrow(RangeError);
+  });
+
+  it('n’est pas un instant : elle ne porte ni date ni fuseau', () => {
+    // La conversion en instant demande une date **et** un fuseau, et n'est pas
+    // toujours définie — c'est le moteur du module `availability` (#41) qui la
+    // fait, pas le contrat.
+    expect(utcInstantSchema.safeParse('09:00').success).toBe(false);
   });
 });
 
