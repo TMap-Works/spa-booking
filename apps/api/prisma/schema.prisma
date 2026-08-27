@@ -448,10 +448,11 @@ model ServiceStaff {
 /// honorer → encaisser → mesurer.
 ///
 /// `starts_at` et `ends_at` sont des instants UTC. La contrainte d'exclusion
-/// anti-double-réservation (`EXCLUDE USING gist`) porte sur ce couple ; elle
-/// n'est pas exprimable en Prisma et arrivera en SQL brut avec le moteur de
-/// réservation. Les index posés ici sont ceux dont ce moteur et le calendrier
-/// admin auront besoin.
+/// anti-double-réservation (`EXCLUDE USING gist`) porte sur ce couple. Elle
+/// n'est pas exprimable en Prisma et vit en SQL brut, dans la migration
+/// `20260827120000_add_appointment_exclusion` (#31, ADR 0002). Les index posés
+/// ici sont ceux dont le moteur de disponibilité et le calendrier admin ont
+/// besoin ; celui qui porte la contrainte est créé par la contrainte elle-même.
 ///
 /// `CHECK ("ends_at" > "starts_at")` est déjà en base, dans la migration : un
 /// intervalle vide (`ends_at = starts_at`) ne chevauche rien et passerait sous
@@ -473,6 +474,37 @@ model Appointment {
 
   startsAt DateTime @map("starts_at") @db.Timestamptz(6)
   endsAt   DateTime @map("ends_at") @db.Timestamptz(6)
+
+  /// L'intervalle occupé, `[starts_at, ends_at)` — **colonne générée**, écrite
+  /// par PostgreSQL et par personne d'autre. C'est elle que la contrainte
+  /// d'exclusion `appointments_no_overlap` compare avec `&&`.
+  ///
+  /// `Unsupported` parce que Prisma ne connaît pas les types intervalle : le
+  /// champ n'est ni lisible ni écrivable par le client, ce qui est exactement le
+  /// régime voulu — `GENERATED ALWAYS` refuserait de toute façon toute écriture.
+  /// Il est déclaré ici pour une seule raison, et elle est décisive : sans lui,
+  /// le prochain `prisma migrate dev` verrait une colonne inconnue en base et
+  /// produirait une migration qui la **retire**, emportant la contrainte avec
+  /// elle. Relevé, schéma en main :
+  /// `prisma migrate diff` sans ce champ écrit `ALTER TABLE "appointments" DROP
+  /// COLUMN "time_range";`.
+  ///
+  /// Le déclarer supprime ce retrait, mais **pas toute dérive** : Prisma ne sait
+  /// pas qu'une colonne est générée, lit son expression comme une valeur par
+  /// défaut, et écrit alors `ALTER TABLE "appointments" ALTER COLUMN
+  /// "time_range" DROP DEFAULT;` dans toute migration qu'il génère ensuite.
+  /// PostgreSQL refuse cette instruction — *column "time_range" of relation
+  /// "appointments" is a generated column* —, donc la migration produite par
+  /// `npm run db:migrate` ne s'applique pas telle quelle : **cette ligne-là est
+  /// à supprimer du fichier généré**, comme le sont déjà les `DROP CONSTRAINT`
+  /// des clés étrangères composites, invisibles à Prisma pour la même raison.
+  /// L'échec est bruyant et se corrige en une ligne ; le retrait silencieux de
+  /// la colonne, lui, emportait la garantie anti-double-réservation.
+  ///
+  /// Optionnel au sens de Prisma, non nullable en pratique : `starts_at` et
+  /// `ends_at` sont `NOT NULL`, donc l'intervalle l'est aussi. L'optionalité est
+  /// ce qui permet à Prisma d'omettre le champ des entrées de création.
+  timeRange Unsupported("tstzrange")? @map("time_range")
 
   status AppointmentStatus @default(PENDING)
 

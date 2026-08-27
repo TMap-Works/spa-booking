@@ -11,6 +11,10 @@ migrations/
   20260825120000_initial_schema/        les sept entités du CDC
   20260825140000_add_refresh_tokens/    sessions de rafraîchissement (#21)
   20260826100000_add_manager_user_role/ `MANAGER` dans `enum UserRole` (#202)
+  20260826150000_add_service_categories_and_buffers/
+                                        catégories et tampons de prestation
+  20260827120000_add_appointment_exclusion/
+                                        contrainte anti-double-réservation (#31)
 ```
 
 ## Les neuf tables
@@ -95,27 +99,49 @@ Une migration syntaxiquement fausse ne peut donc pas être mergée.
   cesser de la lire, puis la supprimer — pour ne pas casser la version en cours
   d'exécution pendant un déploiement progressif.
 - Ce que Prisma ne sait pas exprimer s'écrit en SQL brut dans le fichier de
-  migration, avec le commentaire qui dit pourquoi. C'est déjà le cas des clés
-  étrangères composites et des contraintes `CHECK` de la migration initiale ; ce
-  sera celui de la contrainte d'exclusion anti-double-réservation, qui arrivera
-  avec le moteur de réservation :
+  migration, avec le commentaire qui dit pourquoi. C'est le cas des clés
+  étrangères composites et des contraintes `CHECK` de la migration initiale, et
+  celui de la contrainte d'exclusion anti-double-réservation, posée par
+  `20260827120000_add_appointment_exclusion` (#31, [ADR 0002](../../../docs/adr/0002-anti-double-reservation.md)) :
 
   ```sql
-  CREATE EXTENSION IF NOT EXISTS btree_gist;
+  CREATE EXTENSION IF NOT EXISTS "btree_gist";
+
+  ALTER TABLE "appointments"
+      ADD COLUMN "time_range" tstzrange
+      GENERATED ALWAYS AS (tstzrange("starts_at", "ends_at", '[)')) STORED;
 
   ALTER TABLE "appointments" ADD CONSTRAINT "appointments_no_overlap"
     EXCLUDE USING gist (
-      "tenant_id" WITH =,
-      "staff_id"  WITH =,
-      tstzrange("starts_at", "ends_at") WITH &&
+      "tenant_id"  WITH =,
+      "staff_id"   WITH =,
+      "time_range" WITH &&
     )
     WHERE ("status" IN ('PENDING', 'CONFIRMED'));
   ```
 
-  Deux détails qui ne sont pas des détails : `btree_gist` est ce qui autorise
-  `=` sur un `uuid` à l'intérieur d'un index GiST, et le `WHERE` partiel n'est
-  pas une optimisation — sans lui, un rendez-vous annulé ou marqué no-show
-  bloquerait son créneau pour toujours (booking-engine §1).
+  Trois détails qui ne sont pas des détails : `btree_gist` est ce qui autorise
+  `=` sur un `uuid` à l'intérieur d'un index GiST ; la borne `[)` est ce qui rend
+  deux rendez-vous **adjacents** légaux, sans quoi l'agenda perdrait un créneau
+  sur deux ; et le `WHERE` partiel n'est pas une optimisation — sans lui, un
+  rendez-vous annulé ou marqué no-show bloquerait son créneau pour toujours
+  (booking-engine §1).
+- **`prisma migrate dev` ne rend pas un fichier applicable tel quel**, et c'est
+  la contrepartie du point précédent : ce qu'il ne sait pas exprimer, il ne sait
+  pas non plus le lire en base, et il écrit donc dans chaque migration générée de
+  quoi le défaire. Deux relevés, à retirer du fichier avant de le committer :
+
+  ```sql
+  -- les clés étrangères composites (tenant_id, id), invisibles à Prisma
+  ALTER TABLE "appointments" DROP CONSTRAINT "appointments_tenant_id_staff_id_fkey";
+  -- la colonne générée, dont Prisma lit l'expression comme une valeur par défaut
+  ALTER TABLE "appointments" ALTER COLUMN "time_range" DROP DEFAULT;
+  ```
+
+  La seconde échoue à l'application — *column "time_range" of relation
+  "appointments" is a generated column* —, ce qui la rend visible ; les premières
+  s'appliquent en silence et emporteraient la frontière de tenant. Relire le
+  fichier généré n'est donc pas une précaution, c'est l'étape.
 - Jamais de `prisma db push` ni de `prisma migrate reset` sur une base partagée.
 
 ## Ce qui n'est pas encore là
