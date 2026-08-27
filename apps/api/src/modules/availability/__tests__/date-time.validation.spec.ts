@@ -15,7 +15,14 @@ import { ValidationPipe } from '@nestjs/common';
 import { Type } from 'class-transformer';
 import { IsInt, ValidateNested } from 'class-validator';
 
-import { IsLocalTime, IsOffsetDateTime, ToUtcInstant, isOffsetDateTime } from '../dto/validation';
+import {
+  IsAfterLocalTime,
+  IsLocalTime,
+  IsOffsetDateTime,
+  IsScheduleEndTime,
+  ToUtcInstant,
+  isOffsetDateTime,
+} from '../dto/validation';
 
 /** Un DTO représentatif de ce que #31 et #32 déclareront. */
 class BookingWindowDto {
@@ -33,6 +40,16 @@ class StaffScheduleDto {
 
   @IsLocalTime()
   public closesAt!: string;
+}
+
+/** Les deux bornes d'une plage de travail, telles que #32 les déclare. */
+class ScheduleRangeDto {
+  @IsLocalTime()
+  public startsAt!: string;
+
+  @IsScheduleEndTime()
+  @IsAfterLocalTime('startsAt')
+  public endsAt!: string;
 }
 
 class NestedDto {
@@ -173,5 +190,47 @@ describe('heure murale entrante', () => {
         'HH:MM',
       );
     }
+  });
+});
+
+/**
+ * L'ordre des deux bornes d'une plage (#32).
+ *
+ * La règle est portée en base par `staff_schedules_minutes_check`, mais une
+ * violation de contrainte ressort en `INTERNAL_ERROR` : 500 sur une saisie
+ * fautive. Le contrôle au DTO est ce qui la nomme en 400 — la recette de #32 a
+ * trouvé le trou, ces cas le referment.
+ */
+describe('ordre des bornes d’une plage', () => {
+  it('accepte une plage dont la fin suit le début, `24:00` compris', async () => {
+    for (const [startsAt, endsAt] of [
+      ['09:00', '12:00'],
+      ['18:00', '24:00'],
+      ['00:00', '00:01'],
+    ]) {
+      await expect(run(ScheduleRangeDto, { startsAt, endsAt })).resolves.toMatchObject({
+        startsAt,
+        endsAt,
+      });
+    }
+  });
+
+  it('refuse une fin antérieure ou égale au début', async () => {
+    for (const [startsAt, endsAt] of [
+      ['12:00', '09:00'],
+      ['09:00', '09:00'],
+      ['24:00', '24:00'],
+    ]) {
+      expect(await reasonFor(ScheduleRangeDto, { startsAt, endsAt })).toContain('endsAt');
+    }
+  });
+
+  it('ne redouble pas le refus de format quand une borne est illisible', async () => {
+    // `startsAt` est déjà refusé pour sa forme : ajouter « fin > début » ferait
+    // rendre deux messages pour une seule faute.
+    const reason = await reasonFor(ScheduleRangeDto, { startsAt: '25:00', endsAt: '09:00' });
+
+    expect(reason).toContain('HH:MM');
+    expect(reason).not.toContain('strictement postérieure');
   });
 });
