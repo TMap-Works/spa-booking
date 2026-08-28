@@ -89,6 +89,13 @@ export class PublicAppointmentsController {
    * toutes — réafficher les créneaux (#46) — et les distinguer ferait de cette
    * route une sonde d'agenda.
    *
+   * **`staffId` est facultatif** : l'omettre, c'est l'option « premier
+   * disponible » du CDC §1.4 (#36). Le serveur affecte alors le praticien, et le
+   * rendez-vous rendu porte celui qu'il a retenu. Sans préférence, le 409 n'est
+   * prononcé qu'après avoir tenté **tous** les praticiens qui proposaient ce
+   * créneau, et son `details.staffId` vaut `null` — le corps ne nomme jamais un
+   * praticien que la cliente n'a pas désigné.
+   *
    * **429** au-delà de dix réservations par minute et par adresse. Le quota est
    * du même ordre que celui de `/auth/register` — cinq inscriptions par minute —
    * et pour la même raison : une cliente réserve un rendez-vous, pas dix, et le
@@ -110,7 +117,9 @@ export class PublicAppointmentsController {
   public async book(@Body() body: BookAppointmentDto): Promise<AppointmentDto> {
     return this.appointments.book({
       serviceId: body.serviceId,
-      staffId: body.staffId,
+      // Le DTO distingue « absent » de « vide » ; le domaine ne connaît que
+      // `null`, qui se lit ici « premier disponible » (#36).
+      staffId: body.staffId ?? null,
       // La chaîne a été validée comme instant à offset explicite par le DTO :
       // `new Date` ne peut plus produire ici de date invalide ni de date-heure
       // interprétée dans le fuseau de la machine.

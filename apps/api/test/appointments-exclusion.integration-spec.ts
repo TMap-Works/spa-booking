@@ -39,7 +39,10 @@ import { createDisposableDatabase, type DisposableDatabase } from './utils/dispo
  * 5. deux établissements réservent le même instant sans se gêner — la frontière
  *    du tenant est dans l'index, pas seulement dans les intentions ;
  * 6. deux rendez-vous **adjacents** restent légaux : la borne `[)` ne perd pas
- *    un créneau sur deux.
+ *    un créneau sur deux ;
+ * 7. le **repli** de l'option « premier disponible » (#36) ne peut pas produire
+ *    de double réservation : huit demandes sans préférence sur deux praticiens
+ *    donnent exactement deux rendez-vous, un par praticien.
  *
  * ## Prérequis
  *
@@ -431,6 +434,82 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
         if (outcome.status === 'rejected') {
           expect(outcome.reason).toBeInstanceOf(SlotNoLongerAvailableError);
         }
+      }
+    });
+
+    /**
+     * Le repli de l'option « premier disponible », sous concurrence réelle (#36,
+     * quatrième critère).
+     *
+     * La boucle est rejouée ici plutôt qu'appelée : `AppointmentsService` exige
+     * le catalogue, le moteur de disponibilité et un contexte HTTP, et sa
+     * **décision** — qui tenter, dans quel ordre, quand s'arrêter — est déjà
+     * exercée par `appointments.service.spec.ts`. Ce que seule une vraie base
+     * peut prouver est autre chose, et c'est le seul objet de ce test : que
+     * *tenter un autre praticien après un refus* ne peut pas produire une double
+     * réservation, parce que chaque tentative reste jugée par
+     * `appointments_no_overlap`.
+     *
+     * Huit clientes sans préférence se disputent le même créneau chez deux
+     * praticiens. Il doit en sortir **exactement deux** rendez-vous — un par
+     * praticien — et six 409. Un seul succès de trop, et le salon aurait deux
+     * clientes dans la même cabine.
+     */
+    it('affecte au plus un rendez-vous par praticien quand huit demandes sans préférence se répondent', async () => {
+      const start = new Date('2026-09-12T09:00:00.000Z');
+      const end = new Date('2026-09-12T10:00:00.000Z');
+      const candidates = [salon.staffId, salon.secondStaffId];
+
+      /** La boucle de `book` : le premier praticien que la base accepte. */
+      const firstFree = async (): Promise<string> => {
+        for (const staffId of candidates) {
+          try {
+            await repository.create(draft(salon, start, end, staffId));
+            return staffId;
+          } catch (error: unknown) {
+            if (!(error instanceof SlotNoLongerAvailableError)) {
+              throw error;
+            }
+          }
+        }
+        throw new SlotNoLongerAvailableError(null, start);
+      };
+
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: CONCURRENT_ATTEMPTS }, () =>
+          inTenant(salon.tenantId, () => firstFree()),
+        ),
+      );
+
+      const fulfilled = outcomes.filter(
+        (outcome): outcome is PromiseFulfilledResult<string> => outcome.status === 'fulfilled',
+      );
+      const rejected = outcomes.filter(
+        (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
+      );
+
+      expect(fulfilled).toHaveLength(candidates.length);
+      // Deux succès **chez deux praticiens différents** : deux succès chez le
+      // même seraient la double réservation que tout ce module existe pour
+      // rendre impossible.
+      expect(new Set(fulfilled.map((outcome) => outcome.value)).size).toBe(candidates.length);
+      expect(rejected).toHaveLength(CONCURRENT_ATTEMPTS - candidates.length);
+      for (const outcome of rejected) {
+        expect(outcome.reason).toBeInstanceOf(SlotNoLongerAvailableError);
+        // Le refus final d'une demande sans préférence ne nomme personne.
+        expect(outcome.reason).toMatchObject({ details: { staffId: null } });
+      }
+
+      // La preuve directe, sans passer par ce que les promesses ont bien voulu
+      // dire : deux lignes, une par praticien.
+      const stored = await prismaUnscoped.appointment.groupBy({
+        by: ['staffId'],
+        where: { tenantId: salon.tenantId, startsAt: start },
+        _count: { _all: true },
+      });
+      expect(stored).toHaveLength(candidates.length);
+      for (const row of stored) {
+        expect(row._count._all).toBe(1);
       }
     });
   });

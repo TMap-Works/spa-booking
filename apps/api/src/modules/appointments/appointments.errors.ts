@@ -58,6 +58,12 @@ const CONFLICT = DOMAIN_HTTP_STATUS.CONFLICT;
  * rendre ne lui apprend rien qu'il ne sache, et lui évite de deviner lequel de
  * ses choix a fauté quand il en a soumis plusieurs.
  *
+ * `staffId` vaut donc `null` quand la cliente n'a désigné personne — l'option
+ * « premier disponible » de #36. Y écrire le dernier praticien tenté par
+ * l'affectation apprendrait à un appelant anonyme l'identifiant d'un praticien
+ * qu'il n'a jamais nommé, et ferait de ce 409 une sonde d'agenda : c'est
+ * exactement ce que le paragraphe suivant interdit.
+ *
  * Rien du rendez-vous **concurrent** n'est rendu — ni son identifiant, ni son
  * client, ni ses bornes exactes. Le message d'erreur de PostgreSQL les contient
  * pourtant (`Key (tenant_id, staff_id, time_range)=(…) conflicts with existing
@@ -70,7 +76,7 @@ export class SlotNoLongerAvailableError extends DomainError {
   public override readonly code = APPOINTMENTS_ERROR_CODES.SLOT_NO_LONGER_AVAILABLE;
   public override readonly status = CONFLICT;
 
-  public constructor(staffId: string, startsAt: Date) {
+  public constructor(staffId: string | null, startsAt: Date) {
     super('Ce créneau vient d’être réservé. Choisissez-en un autre.', {
       staffId,
       // ISO 8601 avec offset explicite — le contrat n'emporte jamais une date

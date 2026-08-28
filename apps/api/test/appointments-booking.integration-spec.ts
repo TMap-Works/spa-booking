@@ -224,6 +224,97 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     expect(harness.appointments.appointments).toHaveLength(0);
   });
 
+  /**
+   * L'option « premier disponible » — en HTTP, avec le **vrai** moteur de
+   * disponibilité (#36).
+   *
+   * Ce que cette suite prouve et que la suite unitaire ne peut pas : que le corps
+   * est accepté **sans `staffId`** — la validation le refusait avant ce ticket —
+   * et que la liste de candidats vient du moteur réel, dont l'ordre est
+   * `(instant, praticien)`. Le double du service, lui, rend la liste qu'on lui
+   * donne.
+   */
+  describe('option « premier disponible » (#36)', () => {
+    /** Le corps d'une réservation sans préférence : `staffId` simplement absent. */
+    const withoutStaff = (overrides: Record<string, unknown> = {}): Record<string, unknown> => {
+      const { staffId: _ignored, ...rest } = body(overrides);
+      return rest;
+    };
+
+    /** Les deux praticiens du salon, dans l'ordre où le moteur les rend. */
+    function bothStaff(): [string, string] {
+      const second = harness.addStaff(harness.a);
+      const ordered = [harness.a.staffId, second].sort((left, right) => left.localeCompare(right));
+      return [ordered[0] as string, ordered[1] as string];
+    }
+
+    it('accepte un corps sans staffId et affecte le premier praticien de l’ordre du moteur', async () => {
+      const [first] = bothStaff();
+
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(withoutStaff());
+
+      expect(response.status).toBe(201);
+      // Le rendez-vous rendu **nomme** le praticien affecté : c'est par lui que
+      // la cliente apprend qui l'attend.
+      expect(response.body.staffId).toBe(first);
+    });
+
+    it('bascule sur l’autre praticien quand le premier vient d’être pris', async () => {
+      const [first, second] = bothStaff();
+
+      const taken = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body({ staffId: first }));
+      expect(taken.status).toBe(201);
+
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(withoutStaff({ client: guest({ email: 'autre@example.test' }) }));
+
+      expect(response.status).toBe(201);
+      expect(response.body.staffId).toBe(second);
+      expect(harness.appointments.appointments).toHaveLength(2);
+    });
+
+    it('refuse en 409 sans nommer de praticien quand tous sont pris', async () => {
+      const [first, second] = bothStaff();
+
+      for (const staffId of [first, second]) {
+        const taken = await request(harness.server())
+          .post(BOOKING_PATH(harness.a.tenant.slug))
+          .send(body({ staffId, client: guest({ email: `${staffId}@example.test` }) }));
+        expect(taken.status).toBe(201);
+      }
+
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(withoutStaff({ client: guest({ email: 'tard@example.test' }) }));
+
+      expect(response.status).toBe(409);
+      expect(response.body).toMatchObject({ code: 'SLOT_NO_LONGER_AVAILABLE' });
+      // `null`, et non le dernier praticien tenté : le corps ne nomme jamais un
+      // praticien que l'appelante n'a pas désigné.
+      expect(response.body.details).toEqual({
+        staffId: null,
+        startsAt: slot.startsAt.toISOString(),
+      });
+      expect(harness.appointments.appointments).toHaveLength(2);
+    });
+
+    it('refuse toujours un staffId mal formé plutôt que de le lire comme « pas de préférence »', async () => {
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send(body({ staffId: 'pas-un-uuid' }));
+
+      // Facultatif ne veut pas dire permissif : `OptionalPresent` ne saute la
+      // validation que sur un champ **absent**, jamais sur une valeur fautive.
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({ code: 'VALIDATION_ERROR' });
+    });
+  });
+
   describe('validation du corps', () => {
     it('refuse une date-heure sans offset explicite', async () => {
       const response = await request(harness.server())

@@ -85,7 +85,7 @@ import { AppointmentEvents } from './events/appointment-events';
  * une vente perdue (booking-engine §3).
  *
  * Ce que ce service ne fait **pas**, et qui est la garantie du cinquième critère
- * du même ticket : lire ce cache. `requireOfferedSlot` interroge
+ * du même ticket : lire ce cache. `offeredStaffAt` interroge
  * `AvailabilityService`, le moteur nu ; `AvailabilityQueryService`, qui est le
  * seul à lire le cache, n'est pas exporté par `AvailabilityModule` et ne peut
  * donc pas être injecté ici. Un cache périmé peut faire *proposer* un créneau
@@ -115,10 +115,58 @@ export class AppointmentsService {
    * que dans `AvailabilityService.slotsFor` : le filtrage du passé et du préavis
    * se teste en décalant l'horloge de l'appelant, jamais celle de la machine.
    *
+   * ## L'option « premier disponible », et la règle qui l'applique (#36)
+   *
+   * `input.staffId` vaut `null` quand la cliente n'a pas de préférence — le CDC
+   * §1.4 en fait une fonctionnalité explicite. Le moteur de disponibilité rend
+   * alors, pour l'instant demandé, **tous** les praticiens qui pratiquent la
+   * prestation et qui sont libres : c'est déjà ce que fait `slotsFor` sans
+   * `staffId` (#34), et rien n'est recalculé ici.
+   *
+   * La règle d'affectation est celle-ci, et elle tient en une phrase :
+   *
+   * > **le premier praticien libre dans l'ordre du moteur** — `(instant, puis
+   * > identifiant)` —, et le suivant si la base refuse son créneau.
+   *
+   * Trois propriétés en découlent, et ce sont elles qui l'ont fait retenir :
+   *
+   * - elle est **déterministe à agenda constant**. Deux requêtes identiques
+   *   posées sur le même état du calendrier désignent le même praticien, et le
+   *   calendrier ne change pas d'ordre d'un rafraîchissement à l'autre. Ce n'est
+   *   pas de l'idempotence, et il faut le dire : au second envoi d'un double
+   *   clic, le premier praticien est déjà pris, le repli affecte le suivant, et
+   *   la cliente repart avec **deux** rendez-vous plutôt qu'un 409. Rien ici ne
+   *   l'en empêche — la contrainte d'exclusion porte sur `(tenant, praticien,
+   *   intervalle)`, jamais sur la cliente. Désarmer le double envoi reste au
+   *   front (#45) ; une déduplication côté serveur est portée par une issue de
+   *   suivi ;
+   * - elle **remplit un agenda avant d'en ouvrir un autre**. Le salon garde ainsi
+   *   des plages libres continues chez les praticiens suivants, là où une
+   *   répartition tournante émietterait toutes les journées — et un agenda
+   *   émietté ne vend plus de soin long ;
+   * - elle ne propose **jamais** un praticien qui ne pratique pas la prestation :
+   *   la liste vient de `slotsFor`, dont les candidats sont l'intersection de
+   *   `service_staff` (booking-engine §6, troisième critère de #36).
+   *
+   * Sa contrepartie est assumée : à égalité de disponibilité, c'est toujours le
+   * même praticien qui prend la réservation sans préférence. Une répartition à la
+   * charge demanderait une lecture de plus par réservation et sortirait du
+   * périmètre figé ; une issue de suivi la porte.
+   *
+   * ## Ce que l'affectation ne court-circuite pas
+   *
+   * La contrainte d'exclusion reste **le seul** arbitre de l'unicité. La liste de
+   * candidats vient d'une lecture, donc d'un état déjà périmé quand l'insertion a
+   * lieu ; chaque tentative est une écriture complète, jugée par
+   * `appointments_no_overlap` (ADR 0002, booking-engine §1). Le repli sur le
+   * praticien suivant n'est pas un contournement du refus, c'est ce qu'on fait
+   * **après** l'avoir reçu — quatrième critère de #36.
+   *
    * @throws {NotFoundError} prestation inconnue, hors de l'établissement, ou
    * retirée du catalogue.
    * @throws {SlotNoLongerAvailableError} le créneau n'est pas — ou n'est plus —
-   * proposable, ou la contrainte d'exclusion vient de le refuser.
+   * proposable, ou la contrainte d'exclusion l'a refusé chez tous les praticiens
+   * qui le proposaient.
    */
   public async book(input: BookAppointmentInput, now: Date = new Date()): Promise<AppointmentView> {
     const service = await this.services.byId(input.serviceId);
@@ -129,21 +177,23 @@ export class AppointmentsService {
       throw new NotFoundError('Prestation introuvable.');
     }
 
-    await this.requireOfferedSlot(input, now);
+    const candidates = await this.offeredStaffAt(input, now);
 
     const clientId = await this.repository.findOrCreateClient(input.client);
 
-    const record = await this.insert({
+    const occupied = occupiedRange(input.startsAt, service);
+
+    const record = await this.insertWithFirstFree(candidates, input, (staffId) => ({
       clientId,
-      staffId: input.staffId,
+      staffId,
       serviceId: input.serviceId,
-      ...occupiedRange(input.startsAt, service),
+      ...occupied,
       // Le prix est **figé** ici, à la valeur du catalogue au moment de la
       // réservation : le tarif peut changer avant la venue, le montant dû par
       // cette cliente-là, non.
       price: service.price,
       clientNote: input.clientNote,
-    }, input.startsAt);
+    }));
 
     // Le créneau vient d'être pris : le cache qui le proposait encore doit
     // partir, sans attendre son TTL (#35).
@@ -237,7 +287,11 @@ export class AppointmentsService {
     const service = await this.services.byId(previous.serviceId);
     const staffId = input.staffId ?? previous.staffId;
 
-    await this.requireOfferedSlot(
+    // Le praticien est toujours nommé ici — celui de la demande, ou celui du
+    // rendez-vous d'origine. `offeredStaffAt` rend donc au plus un candidat, et
+    // le report n'a aucun repli à faire : l'option « premier disponible » (#36)
+    // est une façon de **choisir** un praticien, et un report en a déjà un.
+    await this.offeredStaffAt(
       { serviceId: previous.serviceId, staffId, startsAt: input.startsAt },
       now,
     );
@@ -400,8 +454,26 @@ export class AppointmentsService {
   }
 
   /**
-   * L'écriture, avec le refus de créneau **reformulé dans les termes de
-   * l'appelant**.
+   * L'insertion, tentée sur les candidats **dans l'ordre**, jusqu'à ce que la
+   * base en accepte un (#36, quatrième critère).
+   *
+   * ## Ce que la boucle fait, et ce qu'elle ne fait pas
+   *
+   * Elle ne juge rien : elle réagit à un refus que seule la contrainte
+   * d'exclusion a pu prononcer. Chaque tour est une écriture complète — verrou
+   * consultatif d'agenda compris —, et une insertion acceptée l'est parce que
+   * PostgreSQL l'a acceptée, jamais parce que ce code a estimé le créneau libre.
+   * Réordonner, filtrer ou mémoriser des candidats « probablement pris » entre
+   * deux tours réintroduirait exactement la vérification applicative que
+   * booking-engine §1 interdit.
+   *
+   * Le nombre de tours est borné par la liste que le moteur vient de rendre :
+   * les praticiens qui pratiquent cette prestation **et** qui sont libres à cet
+   * instant précis. Sur une réservation nominale il vaut un ; il ne croît que
+   * sous contention réelle, et jamais au-delà de l'effectif du salon affecté à
+   * ce soin.
+   *
+   * ## Le refus final est reformulé dans les termes de l'appelant
    *
    * Le repository ne connaît que l'intervalle occupé : le `SlotNoLongerAvailableError`
    * qu'il lève porte donc `09:50` là où la cliente a demandé `10:00`. Le contrat
@@ -411,44 +483,62 @@ export class AppointmentsService {
    * ne retrouverait pas le créneau à retirer de sa liste, et l'écart de dix
    * minutes se lirait comme un bug de fuseau.
    *
-   * Corrigé ici plutôt que dans le repository, qui n'a aucune raison d'apprendre
-   * ce qu'est un tampon : c'est le service qui a converti l'un en l'autre, donc à
-   * lui de reconvertir.
+   * Le `staffId` rendu est celui **demandé** — donc `null` sans préférence —, et
+   * non le dernier tenté : nommer un praticien que la cliente n'a jamais désigné
+   * ferait de ce 409 une sonde d'agenda.
    */
-  private async insert(draft: AppointmentDraft, billedStart: Date): Promise<AppointmentRecord> {
-    return this.inBilledTerms(() => this.repository.create(draft), draft.staffId, billedStart);
-  }
+  private async insertWithFirstFree(
+    candidates: readonly string[],
+    requested: { staffId: string | null; startsAt: Date },
+    draftFor: (staffId: string) => AppointmentDraft,
+  ): Promise<AppointmentRecord> {
+    for (const staffId of candidates) {
+      try {
+        return await this.repository.create(draftFor(staffId));
+      } catch (error: unknown) {
+        if (!(error instanceof SlotNoLongerAvailableError)) {
+          throw error;
+        }
+        // Ce praticien vient d'être pris. Le suivant, s'il y en a un.
+      }
+    }
 
-  /** Le report, avec le même retour à l'heure du soin que `insert`. */
-  private async move(draft: RescheduleDraft, billedStart: Date): Promise<RescheduleOutcome> {
-    return this.inBilledTerms(() => this.repository.reschedule(draft), draft.staffId, billedStart);
+    throw new SlotNoLongerAvailableError(requested.staffId, requested.startsAt);
   }
 
   /**
-   * Rejoue un refus de créneau avec l'heure du **soin**, celle que l'appelant a
-   * soumise.
+   * Le report, avec le même retour à l'heure du soin que l'insertion.
    *
-   * Écrit une fois pour les deux écritures : dupliquer cette traduction, c'est
-   * en oublier une le jour où une troisième surface écrira dans l'agenda, et
-   * rendre à la cliente une heure qu'elle n'a jamais demandée.
+   * Aucun repli sur un autre praticien ici : celui d'arrivée est nommé, par la
+   * demande ou par le rendez-vous d'origine. Un report qui changerait de
+   * praticien de lui-même déplacerait une cliente chez quelqu'un qu'elle n'a pas
+   * choisi, ce que ni #39 ni #36 ne demandent.
    */
-  private async inBilledTerms<T>(
-    operation: () => Promise<T>,
-    staffId: string,
-    billedStart: Date,
-  ): Promise<T> {
+  private async move(draft: RescheduleDraft, billedStart: Date): Promise<RescheduleOutcome> {
     try {
-      return await operation();
+      return await this.repository.reschedule(draft);
     } catch (error: unknown) {
       if (error instanceof SlotNoLongerAvailableError) {
-        throw new SlotNoLongerAvailableError(staffId, billedStart);
+        throw new SlotNoLongerAvailableError(draft.staffId, billedStart);
       }
       throw error;
     }
   }
 
   /**
-   * Refuse un créneau que le moteur de disponibilité ne proposait pas.
+   * Les praticiens que le moteur de disponibilité **propose à cet instant**,
+   * dans son ordre — ou le refus du créneau.
+   *
+   * Non vide par construction : une liste vide est le refus, et c'est ce qui
+   * remplace l'ancien contrôle « ce créneau était-il proposable ? ». Sans
+   * `staffId`, elle porte tous les candidats de l'option « premier disponible »
+   * (#36) ; avec, elle en porte au plus un — le moteur intersecte déjà la
+   * demande avec `service_staff`.
+   *
+   * L'ordre est celui de `computeSlots` : `(instant, puis identifiant de
+   * praticien)`. C'est un ordre **total et stable**, et c'est ce qui rend la
+   * règle d'affectation reproductible — `availability.slots.ts` le garantit
+   * explicitement, et son test le verrouille.
    *
    * ## Pourquoi ce contrôle, alors que la contrainte suffit à l'unicité
    *
@@ -487,22 +577,32 @@ export class AppointmentsService {
    * fuseau : aucun décalage réel ne dépasse ±14 h. C'est une borne, pas une
    * approximation — le créneau est ensuite reconnu à l'instant exact.
    */
-  private async requireOfferedSlot(input: OfferedSlotQuery, now: Date): Promise<void> {
+  private async offeredStaffAt(input: OfferedSlotQuery, now: Date): Promise<string[]> {
     const window = utcDaysAround(input.startsAt);
     const wanted = input.startsAt.toISOString();
 
     const view = await this.availability.slotsFor(
-      { serviceId: input.serviceId, staffId: input.staffId, from: window.from, to: window.to },
+      {
+        serviceId: input.serviceId,
+        // Omis plutôt que passé à `null` : c'est l'absence de la clé qui dit au
+        // moteur « tous les praticiens », et `exactOptionalPropertyTypes` refuse
+        // un `undefined` explicite sur une propriété facultative.
+        ...(input.staffId === null ? {} : { staffId: input.staffId }),
+        from: window.from,
+        to: window.to,
+      },
       now,
     );
 
-    const offered = view.days.some((day) =>
-      day.slots.some((slot) => slot.staffId === input.staffId && slot.startsAt === wanted),
+    const offered = view.days.flatMap((day) =>
+      day.slots.filter((slot) => slot.startsAt === wanted).map((slot) => slot.staffId),
     );
 
-    if (!offered) {
+    if (offered.length === 0) {
       throw new SlotNoLongerAvailableError(input.staffId, input.startsAt);
     }
+
+    return offered;
   }
 }
 
@@ -519,7 +619,8 @@ const DAY_MS = 86_400_000;
  */
 interface OfferedSlotQuery {
   readonly serviceId: string;
-  readonly staffId: string;
+  /** Praticien désigné, ou `null` pour « tous ceux qui pratiquent le soin ». */
+  readonly staffId: string | null;
   /** Instant du **soin**, tel que le calendrier l'a proposé. */
   readonly startsAt: Date;
 }
@@ -584,7 +685,7 @@ function billedView(record: AppointmentRecord, service: ServiceView): Appointmen
   };
 }
 
-/** Les dates civiles UTC de la veille et du lendemain — voir `requireOfferedSlot`. */
+/** Les dates civiles UTC de la veille et du lendemain — voir `offeredStaffAt`. */
 function utcDaysAround(instant: Date): { from: string; to: string } {
   return {
     from: new Date(instant.getTime() - DAY_MS).toISOString().slice(0, 10),
