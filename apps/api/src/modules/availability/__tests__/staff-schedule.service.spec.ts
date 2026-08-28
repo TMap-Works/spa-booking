@@ -6,6 +6,7 @@ import { OverlappingScheduleRangesError } from '../availability.errors';
 import { StaffScheduleService } from '../staff-schedule.service';
 import { TenantClockService } from '../tenant-clock.service';
 import { FakeAvailabilityRepository } from './availability.doubles';
+import { SpyAvailabilityCache } from './staff-time-off.doubles';
 
 /**
  * Règles métier des horaires récurrents — sans HTTP, sans base.
@@ -33,15 +34,21 @@ async function rejectionOf(promise: Promise<unknown>): Promise<unknown> {
 
 describe('StaffScheduleService', () => {
   let repository: FakeAvailabilityRepository;
+  let cache: SpyAvailabilityCache;
   let schedules: StaffScheduleService;
   let staffId: string;
 
   beforeEach(() => {
     repository = new FakeAvailabilityRepository();
+    cache = new SpyAvailabilityCache();
     repository.seedTenant({ id: TENANT_A, timezone: 'Europe/Paris' });
     repository.seedTenant({ id: TENANT_B, timezone: 'Indian/Antananarivo' });
     staffId = repository.seedStaff({ tenantId: TENANT_A }).id;
-    schedules = new StaffScheduleService(repository.asRepository(), new TenantClockService());
+    schedules = new StaffScheduleService(
+      repository.asRepository(),
+      new TenantClockService(),
+      cache.asService(),
+    );
   });
 
   const inTenantA = async <T>(fn: () => Promise<T>): Promise<T> => runWithTenant(TENANT_A, fn);
@@ -171,6 +178,31 @@ describe('StaffScheduleService', () => {
 
       expect(repository.schedules).toHaveLength(1);
       expect(repository.schedules[0]?.staffId).toBe(other.id);
+    });
+
+    it('chasse le cache de disponibilité après avoir écrit (#35)', async () => {
+      // Une semaine réécrite change les créneaux de tous les jours à venir.
+      // Attendre le TTL laisserait le calendrier public en proposer sur une
+      // plage que le praticien vient d'abandonner — et ce défaut-là ne se
+      // rattrape pas : la réservation passe, personne n'attend la cliente.
+      await inTenantA(async () => schedules.replace(staffId, []));
+
+      expect(cache.calls).toBe(1);
+    });
+
+    it('n’invalide rien quand l’écriture est refusée', async () => {
+      // Le recouvrement sort en 422 avant toute écriture : chasser le cache
+      // ferait payer un recalcul complet pour une saisie que rien n'a changée.
+      await inTenantA(async () =>
+        rejectionOf(
+          schedules.replace(staffId, [
+            { weekday: 1, startsAt: '09:00', endsAt: '12:00' },
+            { weekday: 1, startsAt: '11:00', endsAt: '15:00' },
+          ]),
+        ),
+      );
+
+      expect(cache.calls).toBe(0);
     });
   });
 

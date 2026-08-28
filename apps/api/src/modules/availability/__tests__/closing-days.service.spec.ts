@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { runWithTenant } from '../../../common/tenant';
 import { ClosingDaysService } from '../closing-days.service';
 import { FakeAvailabilityRepository } from './availability.doubles';
+import { SpyAvailabilityCache } from './staff-time-off.doubles';
 
 /**
  * Jours de fermeture récurrents de l'établissement — sans HTTP, sans base.
@@ -16,13 +17,15 @@ const TENANT_B = randomUUID();
 
 describe('ClosingDaysService', () => {
   let repository: FakeAvailabilityRepository;
+  let cache: SpyAvailabilityCache;
   let closingDays: ClosingDaysService;
 
   beforeEach(() => {
     repository = new FakeAvailabilityRepository();
+    cache = new SpyAvailabilityCache();
     repository.seedTenant({ id: TENANT_A });
     repository.seedTenant({ id: TENANT_B });
-    closingDays = new ClosingDaysService(repository.asRepository());
+    closingDays = new ClosingDaysService(repository.asRepository(), cache.asService());
   });
 
   const inTenantA = async <T>(fn: () => Promise<T>): Promise<T> => runWithTenant(TENANT_A, fn);
@@ -47,6 +50,22 @@ describe('ClosingDaysService', () => {
     // Rouvrir un jour, c'est renvoyer la liste sans lui : aucun `DELETE`
     // unitaire n'a de sens.
     expect(reopened).toEqual({ weekdays: [7] });
+  });
+
+  it('chasse le cache de disponibilité à chaque écriture (#35)', async () => {
+    // Une fermeture s'applique à tous les praticiens : c'est l'écriture qui
+    // change le plus de créneaux d'un seul geste, et celle dont un cache
+    // périmé coûte le plus cher — des rendez-vous que personne n'honorera.
+    await inTenantA(async () => closingDays.replace([1]));
+    await inTenantA(async () => closingDays.replace([]));
+
+    expect(cache.calls).toBe(2);
+  });
+
+  it('n’invalide rien sur une simple lecture', async () => {
+    await inTenantA(async () => closingDays.list());
+
+    expect(cache.calls).toBe(0);
   });
 
   it('rouvre toute la semaine sur une liste vide', async () => {

@@ -244,8 +244,14 @@ const MINUTE_MS = 60_000;
  *
  * Le pendant côté contrat est le double `refine` d'`availabilityQuerySchema`, et
  * la borne est la même des deux côtés.
+ *
+ * **Exportée depuis #35** : le chemin de lecture caché doit connaître les dates
+ * de la plage *avant* d'interroger le cache — une clé par journée — et il doit
+ * refuser la plage trop large **avant** d'y toucher, faute de quoi un `from` en
+ * 1970 ferait fabriquer soixante-treize mille clés pour une requête qui sort en
+ * 422. La règle reste écrite une fois, ici, à côté du moteur qui l'applique.
  */
-function requireServableRange(from: string, to: string): string[] {
+export function requireServableRange(from: string, to: string): string[] {
   const days = calendarDaysBetween(from, to);
 
   if (days < 1 || days > MAX_AVAILABILITY_RANGE_DAYS) {

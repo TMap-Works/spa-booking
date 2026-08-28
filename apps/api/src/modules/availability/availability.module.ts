@@ -2,14 +2,14 @@ import { Module } from '@nestjs/common';
 
 import { CatalogModule } from '../catalog/catalog.module';
 import { IdentityModule } from '../identity/identity.module';
-import {
-  AVAILABILITY_CACHE_STORE,
-  AvailabilityCacheService,
-  UnwiredAvailabilityCacheStore,
-} from './availability-cache';
+import { AVAILABILITY_CACHE_STORE, AvailabilityCacheService } from './availability-cache';
+import { RedisAvailabilityCacheStore } from './availability-cache.redis';
+import { AvailabilityController } from './availability.controller';
+import { AvailabilityQueryService } from './availability.query.service';
 import { AvailabilityRepository } from './availability.repository';
 import { AvailabilityService } from './availability.service';
 import { ClosingDaysController } from './closing-days.controller';
+import { PublicAvailabilityController } from './public-availability.controller';
 import { ClosingDaysService } from './closing-days.service';
 import { StaffScheduleController } from './staff-schedule.controller';
 import { StaffScheduleService } from './staff-schedule.service';
@@ -39,15 +39,13 @@ import { TenantClockService } from './tenant-clock.service';
  * `availability.intervals.ts` la soustraction et `availability.slots.ts` le
  * découpage.
  *
- * ## Ce que #34 pose, et ce qu'il laisse à ses voisins
+ * ## Ce que #35 pose, et ce qu'il laisse à ses voisins
  *
- * `AvailabilityService` calcule ; il n'expose rien. Aucune route n'est ajoutée
- * ici, et `AVAILABILITY_CACHE_STORE` reste branché sur son entrepôt inerte :
- * `GET /api/v1/availability`, la clé de cache et son invalidation sont les
- * critères de **#35**, et l'option premier disponible ceux de **#36**. Découper
- * ainsi suit le précédent de #31, qui a livré la contrainte anti-double-réservation
- * sans l'endpoint qui s'en sert — la mécanique se relit et se prouve mieux seule
- * que noyée dans le diff d'un contrôleur.
+ * #34 avait livré le calcul sans surface : il calculait, il n'exposait rien.
+ * #35 pose les deux routes qui le servent — celle du back-office et celle du
+ * tunnel —, branche `AVAILABILITY_CACHE_STORE` sur Redis et étend
+ * l'invalidation à toutes les écritures d'agenda. L'option premier disponible
+ * reste à **#36**, et le verrou de saisie à **#38**.
  *
  * ## Ce qu'il importe
  *
@@ -67,9 +65,13 @@ import { TenantClockService } from './tenant-clock.service';
  *
  * - `TenantClockService`, la frontière heure locale ↔ UTC, que tout module ayant
  *   à afficher une heure consommera (notifications, reporting).
- * - `AvailabilityService`, le calcul lui-même : #35 l'exposera derrière une
- *   route et un cache, #36 y ajoutera sa règle d'affectation, et la création de
- *   rendez-vous (#37) s'en sert pour placer un soin dans l'agenda.
+ * - `AvailabilityService`, le calcul lui-même, **sans cache** : #36 y ajoutera
+ *   sa règle d'affectation, et la création de rendez-vous (#37) s'en sert pour
+ *   placer un soin dans l'agenda. C'est délibérément le moteur nu qui sort
+ *   d'ici, jamais `AvailabilityQueryService` — voir la section sur le cache.
+ * - `AvailabilityCacheService`, pour son **invalidation** seule : `appointments`
+ *   écrit dans l'agenda, donc il doit chasser le cache du tenant. La lecture,
+ *   elle, ne l'intéresse pas.
  * - `StaffScheduleService`, pour ses fenêtres de travail — un appel de service,
  *   la première des deux voies autorisées entre modules.
  * - `StaffTimeOffService`, pour `busyRanges`, la lecture symétrique : les
@@ -90,15 +92,21 @@ import { TenantClockService } from './tenant-clock.service';
  * back-office d'un côté, le moteur de créneaux de l'autre. Les réunir
  * n'apporterait qu'un fichier plus long à relire.
  *
- * ## L'entrepôt de cache
+ * ## L'entrepôt de cache, et la frontière que ce module tient
  *
- * `AVAILABILITY_CACHE_STORE` est lié à `UnwiredAvailabilityCacheStore` : il
- * n'existe aujourd'hui aucune clé `avail:*` en Redis. #34 calcule les créneaux
- * mais ne les met pas en cache — la clé, son TTL et son invalidation sont trois
- * des cinq critères de **#35**, avec l'endpoint qui les rend observables. Ce que
- * #33 garantit reste vrai et sert d'accroche : le chemin d'écriture des absences
- * **appelle** déjà l'invalidation, le point qui s'oublie et qui ne se rattrape
- * pas. #35 remplace cette ligne, et rien d'autre.
+ * `AVAILABILITY_CACHE_STORE` est lié à `RedisAvailabilityCacheStore` depuis #35.
+ * #33 avait posé le port et fait appeler l'invalidation par le chemin d'écriture
+ * des absences — le point qui s'oublie et qui ne se rattrape pas ; #35 n'a eu
+ * qu'à remplacer la ligne, ce qui était l'objet du découpage.
+ *
+ * **Deux services de lecture, et un seul est caché.** `AvailabilityQueryService`
+ * lit le cache et sert les deux routes ; `AvailabilityService` calcule à froid
+ * et sert `appointments`. Ce module n'exporte que le second : c'est ce qui rend
+ * le cinquième critère de #35 vrai par construction — un cache périmé ne peut
+ * pas provoquer de double réservation, puisque le chemin d'écriture ne peut pas
+ * l'atteindre. Le jour où quelqu'un exporterait `AvailabilityQueryService`, la
+ * garantie tomberait ; c'est pourquoi elle est écrite ici et vérifiée par
+ * `availability.module.spec.ts`.
  *
  * ## Pourquoi ce module apparaît dans `AppModule`
  *
@@ -111,18 +119,31 @@ import { TenantClockService } from './tenant-clock.service';
  */
 @Module({
   imports: [IdentityModule, CatalogModule],
-  controllers: [StaffScheduleController, ClosingDaysController, StaffTimeOffController],
+  controllers: [
+    AvailabilityController,
+    PublicAvailabilityController,
+    StaffScheduleController,
+    ClosingDaysController,
+    StaffTimeOffController,
+  ],
   providers: [
     TenantClockService,
     AvailabilityService,
+    AvailabilityQueryService,
     StaffScheduleService,
     ClosingDaysService,
     AvailabilityRepository,
     StaffTimeOffService,
     StaffTimeOffRepository,
     AvailabilityCacheService,
-    { provide: AVAILABILITY_CACHE_STORE, useClass: UnwiredAvailabilityCacheStore },
+    { provide: AVAILABILITY_CACHE_STORE, useClass: RedisAvailabilityCacheStore },
   ],
-  exports: [TenantClockService, AvailabilityService, StaffScheduleService, StaffTimeOffService],
+  exports: [
+    TenantClockService,
+    AvailabilityService,
+    AvailabilityCacheService,
+    StaffScheduleService,
+    StaffTimeOffService,
+  ],
 })
 export class AvailabilityModule {}

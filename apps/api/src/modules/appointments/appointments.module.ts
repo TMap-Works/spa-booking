@@ -35,10 +35,19 @@ import { PublicAppointmentsController } from './public-appointments.controller';
  *   prix d'une prestation. C'est la porte que le catalogue a explicitement
  *   ouverte pour ce module — un **appel de service**, la première des deux voies
  *   autorisées entre modules (api-module §3), jamais un import de son repository.
- * - `AvailabilityModule`, pour `AvailabilityService` : le contrôle « ce créneau
- *   était-il proposable ? ». Rejouer le moteur plutôt que réécrire ses six règles
- *   est ce qui empêche l'agenda affiché et l'agenda réservable de diverger. Son
- *   en-tête annonce d'ailleurs cet usage depuis #34.
+ * - `AvailabilityModule`, pour deux services et deux seulement.
+ *   `AvailabilityService` sert le contrôle « ce créneau était-il proposable ? » ;
+ *   rejouer le moteur plutôt que réécrire ses six règles est ce qui empêche
+ *   l'agenda affiché et l'agenda réservable de diverger, et son en-tête annonce
+ *   cet usage depuis #34. `AvailabilityCacheService` sert l'**invalidation**
+ *   (#35) : ce module écrit dans l'agenda, il doit chasser le cache qui l'affiche.
+ *
+ *   Ce qu'il n'importe pas, et ne peut pas importer : `AvailabilityQueryService`,
+ *   le seul à **lire** le cache. `AvailabilityModule` ne l'exporte pas, si bien
+ *   que le chemin de réservation ne peut pas, même par accident, décider d'un
+ *   créneau sur une réponse cachée. C'est la forme que prend ici le cinquième
+ *   critère de #35 — « un cache périmé ne peut jamais provoquer une double
+ *   réservation ».
  *
  * - `IdentityModule`, et **seulement pour ses gardes** : `@AuthAtLeast('STAFF')`
  *   monte `JwtAuthGuard` et `RolesGuard`, qui ont des dépendances à injecter.

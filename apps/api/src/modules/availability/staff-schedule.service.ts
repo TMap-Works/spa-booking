@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { NotFoundError } from '../../common/errors';
+import { AvailabilityCacheService } from './availability-cache';
 import { OverlappingScheduleRangesError } from './availability.errors';
 import { AvailabilityRepository } from './availability.repository';
 import {
@@ -47,6 +48,7 @@ export class StaffScheduleService {
   public constructor(
     private readonly repository: AvailabilityRepository,
     private readonly clock: TenantClockService,
+    private readonly cache: AvailabilityCacheService,
   ) {}
 
   /**
@@ -74,6 +76,18 @@ export class StaffScheduleService {
    * contrainte d'exclusion en base porte la même règle, mais elle ne dirait que
    * « violation de contrainte », donc 500. Les deux ne font pas double emploi —
    * la base reste la garantie, ce contrôle est le message.
+   *
+   * ## Le cache est chassé après l'écriture (#35, troisième critère)
+   *
+   * Une semaine de travail réécrite change les créneaux de **tous** les jours à
+   * venir. Attendre le TTL de soixante secondes laisserait le calendrier public
+   * proposer des créneaux sur une plage que le praticien vient d'abandonner — et
+   * cette erreur-là ne se rattrape pas : la réservation passe, la contrainte
+   * d'exclusion n'a rien à y redire, et personne n'attend la cliente au salon.
+   * C'est l'asymétrie de booking-engine §3.
+   *
+   * Après l'écriture et non dedans : invalider d'abord laisserait le cache se
+   * reconstruire sur l'ancienne semaine si l'écriture échouait ensuite.
    */
   public async replace(
     staffId: string,
@@ -96,6 +110,8 @@ export class StaffScheduleService {
       this.requireTimeZone(),
       this.repository.replaceStaffSchedule(staffId, ranges),
     ]);
+
+    await this.cache.invalidateCurrentTenant();
 
     return { staffId, timezone, entries: records.map((record) => toEntryView(record)) };
   }
