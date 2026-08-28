@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
+import { AvailabilityCacheService } from './availability-cache';
 import { AvailabilityRepository } from './availability.repository';
 import { isIsoWeekday, type IsoWeekday } from './availability.schedule';
 import type { ClosingDaysView } from './availability.types';
@@ -30,7 +31,10 @@ import type { ClosingDaysView } from './availability.types';
  */
 @Injectable()
 export class ClosingDaysService {
-  public constructor(private readonly repository: AvailabilityRepository) {}
+  public constructor(
+    private readonly repository: AvailabilityRepository,
+    private readonly cache: AvailabilityCacheService,
+  ) {}
 
   public async list(): Promise<ClosingDaysView> {
     return { weekdays: await this.readWeekdays() };
@@ -43,12 +47,22 @@ export class ClosingDaysService {
    * ainsi qu'on rouvre un jour, et il n'y a donc pas de suppression unitaire à
    * écrire. Les doublons sont refusés par le DTO — et par l'unique
    * `(tenant_id, weekday)` en base, qui reste la garantie.
+   *
+   * ## Le cache est chassé après l'écriture (#35, troisième critère)
+   *
+   * Une fermeture s'applique à **tous** les praticiens : c'est l'écriture qui
+   * change le plus de créneaux d'un seul geste. Un salon qui ferme le lundi et
+   * dont le cache continue d'en proposer les créneaux prend des rendez-vous que
+   * personne n'honorera — et rien ne le rattrape en aval, la contrainte
+   * d'exclusion ne connaissant que les chevauchements.
    */
   public async replace(weekdays: readonly number[]): Promise<ClosingDaysView> {
     // `replaceClosedWeekdays` relit déjà la liste après écriture, et la rend
     // triée : la relire une seconde fois ne coûterait qu'un aller-retour de
     // plus, sur une réponse qui serait la même.
     const stored = await this.repository.replaceClosedWeekdays(weekdays);
+
+    await this.cache.invalidateCurrentTenant();
 
     return { weekdays: stored.filter(isIsoWeekday) };
   }

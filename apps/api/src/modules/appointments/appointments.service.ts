@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { InvalidStateTransitionError, NotFoundError } from '../../common/errors';
 import { requireTenantId } from '../../common/tenant';
+import { AvailabilityCacheService } from '../availability/availability-cache';
 import { AvailabilityService } from '../availability/availability.service';
 import type { ServiceView } from '../catalog/catalog.types';
 import { ServicesService } from '../catalog/services.service';
@@ -74,6 +75,22 @@ import { AppointmentEvents } from './events/appointment-events';
  * du salon n'est pas une règle, c'est une **porte** : le contrôleur public dit
  * `CLIENT`, celui de back-office dit `STAFF`.
  *
+ * ## Le cache de disponibilité, ajouté par #35
+ *
+ * Les trois écritures de ce service — réserver, reporter, annuler — chassent le
+ * cache de disponibilité du tenant, immédiatement après le `COMMIT`. C'est le
+ * troisième critère de #35 : « invalidation explicite à toute écriture sur
+ * appointments ». Sans elle, un créneau tout juste libéré par une annulation
+ * resterait invisible jusqu'à soixante secondes — et un créneau libre masqué est
+ * une vente perdue (booking-engine §3).
+ *
+ * Ce que ce service ne fait **pas**, et qui est la garantie du cinquième critère
+ * du même ticket : lire ce cache. `requireOfferedSlot` interroge
+ * `AvailabilityService`, le moteur nu ; `AvailabilityQueryService`, qui est le
+ * seul à lire le cache, n'est pas exporté par `AvailabilityModule` et ne peut
+ * donc pas être injecté ici. Un cache périmé peut faire *proposer* un créneau
+ * pris ; il ne peut pas en faire *réserver* un.
+ *
  * ## Ce que ce module ne pose toujours pas
  *
  * Ni verrou Redis de saisie (#38), ni création au comptoir par le staff (#50) :
@@ -88,6 +105,7 @@ export class AppointmentsService {
     private readonly availability: AvailabilityService,
     private readonly events: AppointmentEvents,
     private readonly lifecycle: AppointmentLifecycleService,
+    private readonly cache: AvailabilityCacheService,
   ) {}
 
   /**
@@ -126,6 +144,10 @@ export class AppointmentsService {
       price: service.price,
       clientNote: input.clientNote,
     }, input.startsAt);
+
+    // Le créneau vient d'être pris : le cache qui le proposait encore doit
+    // partir, sans attendre son TTL (#35).
+    await this.cache.invalidateCurrentTenant();
 
     // Après l'écriture, jamais dedans : annoncer un rendez-vous qu'un `ROLLBACK`
     // effacerait ensuite enverrait une confirmation pour un rendez-vous qui
@@ -229,6 +251,10 @@ export class AppointmentsService {
       input.startsAt,
     );
 
+    // Un report change **deux** créneaux d'un coup : celui qu'il libère et celui
+    // qu'il occupe. Le cache doit partir pour les deux (#35).
+    await this.cache.invalidateCurrentTenant();
+
     // Après la validation de la transaction, jamais dedans : un `ROLLBACK`
     // laisserait l'ancien rendez-vous en place, et l'avis de déplacement aurait
     // annoncé une heure à laquelle personne n'est attendu.
@@ -286,10 +312,16 @@ export class AppointmentsService {
    * ## Le créneau redevient réservable, et personne n'a à s'en occuper
    *
    * Troisième critère de #40. La ligne passe `CANCELLED`, elle quitte le filtre
-   * partiel de `appointments_no_overlap`, le créneau est libre au `COMMIT` — sans
-   * purge ni invalidation à écrire, donc sans oubli possible. Et sans que la
-   * porte s'ouvre à une double réservation : la contrainte continue de juger
-   * toute insertion sur cet intervalle, exactement comme avant.
+   * partiel de `appointments_no_overlap`, le créneau est **réservable** au
+   * `COMMIT` — sans purge à écrire. Et sans que la porte s'ouvre à une double
+   * réservation : la contrainte continue de juger toute insertion sur cet
+   * intervalle, exactement comme avant.
+   *
+   * Réservable ne veut pas dire *visible* : le calendrier lit un cache, que #35
+   * a branché sur Redis depuis. L'invalidation ajoutée ci-dessous est ce qui
+   * rend le créneau libéré visible tout de suite, plutôt qu'à l'expiration du
+   * TTL. Elle ne touche pas la garantie, qui reste celle de la base ; elle
+   * touche le chiffre d'affaires.
    *
    * @throws {NotFoundError} rendez-vous inconnu ou d'un autre établissement.
    * @throws {InvalidStateTransitionError} rendez-vous terminé, déjà annulé ou
@@ -338,6 +370,11 @@ export class AppointmentsService {
       cancelledBy: input.cancelledBy,
       reason: input.reason,
     });
+
+    // Le créneau est réservable depuis le `COMMIT` ; le cache, lui, l'ignore
+    // encore. C'est le cas où l'invalidation rapporte le plus : un créneau libre
+    // masqué soixante secondes est une vente perdue (#35, booking-engine §3).
+    await this.cache.invalidateCurrentTenant();
 
     // Après l'écriture, jamais dedans : annoncer une annulation qu'un `ROLLBACK`
     // effacerait ensuite décommanderait une cliente toujours attendue.

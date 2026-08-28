@@ -206,9 +206,14 @@ export class FakeStaffTimeOffRepository {
 /**
  * Compteur d'invalidations du cache de disponibilité.
  *
- * Ce que les tests en attendent n'est pas « le cache est vide » — il n'y a pas
- * encore de cache — mais « le chemin d'écriture a bien appelé l'invalidation ».
- * C'est la propriété qui s'oublie, et la seule que ce ticket puisse garantir.
+ * Ce que les tests en attendent n'est pas « le cache est vide » — le comportement
+ * de l'entrepôt a ses propres suites — mais « le chemin d'écriture a bien appelé
+ * l'invalidation ». C'est la propriété qui s'oublie : elle ne se manifeste
+ * qu'après coup, sur un calendrier public qui montre encore un praticien absent.
+ *
+ * Partagé par les quatre chemins d'écriture d'agenda depuis #35 — absences,
+ * horaires, jours de fermeture et rendez-vous —, ce qui est aussi ce qui les
+ * rend comparables : le même double, le même compteur, la même assertion.
  */
 export class SpyAvailabilityCache {
   public calls = 0;

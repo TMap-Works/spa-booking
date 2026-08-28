@@ -110,7 +110,11 @@ describe('AvailabilityService', () => {
 
     return new AvailabilityService(
       repository.asRepository(),
-      new StaffScheduleService(repository.asRepository(), clock),
+      new StaffScheduleService(
+        repository.asRepository(),
+        clock,
+        new SpyAvailabilityCache().asService(),
+      ),
       new StaffTimeOffService(timeOffRepository.asRepository(), new SpyAvailabilityCache().asService()),
       fakeCatalog(view),
       clock,

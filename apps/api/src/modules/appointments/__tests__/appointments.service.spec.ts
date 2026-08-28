@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { InvalidStateTransitionError, NotFoundError } from '../../../common/errors';
 import { runWithTenant } from '../../../common/tenant';
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
+import { SpyAvailabilityCache } from '../../availability/__tests__/staff-time-off.doubles';
 import type { AvailabilityService } from '../../availability/availability.service';
 import type { AvailabilityView } from '../../availability/availability.types';
 import type { ServiceView } from '../../catalog/catalog.types';
@@ -153,6 +154,8 @@ interface Harness {
   repository: FakeAppointmentsRepository;
   events: AppointmentEvents;
   availabilityCalls: { from: string; to: string; staffId?: string }[];
+  /** Compteur d'invalidations du cache de disponibilité — #35, critère 3. */
+  cache: SpyAvailabilityCache;
   loggedErrors: string[];
 }
 
@@ -164,6 +167,7 @@ function createHarness(
   const events = new AppointmentEvents(journal.logger);
   const availability = fakeAvailability(options.offered ?? [BILLED_START]);
   const view = options.view === undefined ? serviceView() : options.view;
+  const cache = new SpyAvailabilityCache();
 
   return {
     service: new AppointmentsService(
@@ -175,10 +179,12 @@ function createHarness(
       // pure, sans collaborateur, et la substituer ferait passer au vert un
       // service qui refuserait les mauvaises transitions (#40).
       new AppointmentLifecycleService(),
+      cache.asService(),
     ),
     repository,
     events,
     availabilityCalls: availability.calls,
+    cache,
     loggedErrors: journal.errors,
   };
 }
@@ -994,5 +1000,85 @@ describe('AppointmentsService.cancel', () => {
         CANCELLED_AT,
       ),
     ).rejects.toThrow(/tenant/i);
+  });
+});
+
+/**
+ * Invalidation du cache de disponibilité — #35, troisième critère.
+ *
+ * Ce qui se vérifie ici n'est pas qu'un cache est vide : le comportement de
+ * l'entrepôt a ses propres suites. C'est que **les trois écritures d'agenda de
+ * ce service appellent l'invalidation**. C'est la propriété qui s'oublie, parce
+ * qu'elle ne se manifeste nulle part dans la réponse : elle se voit une minute
+ * plus tard, sur un calendrier public qui propose encore un créneau pris — ou,
+ * ce qui coûte plus cher, qui masque encore un créneau qu'une annulation vient
+ * de libérer.
+ *
+ * Les trois autres écritures d'agenda ont la même vérification chez elles :
+ * absences (#33), horaires et jours de fermeture (#35).
+ */
+describe('AppointmentsService — invalidation du cache de disponibilité', () => {
+  const MOVED_START = new Date('2026-09-01T14:00:00.000Z');
+  const CANCELLED_AT = new Date('2026-08-31T09:15:00.000Z');
+
+  function seedBooked(repository: FakeAppointmentsRepository): { id: string } {
+    return repository.seedAppointment({
+      tenantId: TENANT,
+      staffId: STAFF_ID,
+      serviceId: SERVICE_ID,
+      startsAt: new Date('2026-09-01T09:50:00.000Z'),
+      endsAt: new Date('2026-09-01T11:10:00.000Z'),
+    });
+  }
+
+  it('chasse le cache après une réservation', async () => {
+    const { service, cache } = createHarness();
+
+    await runWithTenant(TENANT, () => service.book(bookingInput(), NOW));
+
+    expect(cache.calls).toBe(1);
+  });
+
+  it('chasse le cache après un report', async () => {
+    // Un report change deux créneaux d'un coup : celui qu'il libère et celui
+    // qu'il occupe. Une seule invalidation suffit — elle porte sur le tenant.
+    const { service, repository, cache } = createHarness({
+      offered: [BILLED_START, MOVED_START],
+    });
+    const previous = seedBooked(repository);
+
+    await runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    expect(cache.calls).toBe(1);
+  });
+
+  it('chasse le cache après une annulation', async () => {
+    // Le cas où l'invalidation rapporte le plus : le créneau est réservable dès
+    // le `COMMIT`, mais invisible tant que le cache ne l'a pas appris.
+    const { service, repository, cache } = createHarness();
+    const booked = seedBooked(repository);
+
+    await runWithTenant(TENANT, () =>
+      service.cancel(
+        { appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null },
+        CANCELLED_AT,
+      ),
+    );
+
+    expect(cache.calls).toBe(1);
+  });
+
+  it('n’invalide rien quand le créneau est refusé', async () => {
+    // Rien n'a été écrit : chasser le cache ferait payer un recalcul complet à
+    // tout l'établissement pour une réservation qui n'a pas eu lieu.
+    const { service, cache } = createHarness({ offered: [] });
+
+    await expect(runWithTenant(TENANT, () => service.book(bookingInput(), NOW))).rejects.toThrow(
+      SlotNoLongerAvailableError,
+    );
+
+    expect(cache.calls).toBe(0);
   });
 });
