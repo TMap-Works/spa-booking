@@ -16,14 +16,18 @@ import { bookableSlot, createAppointmentsHarness, type AppointmentsHarness } fro
  * dans l'agenda d'un autre » — en mêlant dans un même corps le slug d'un salon
  * et les identifiants d'un autre.
  *
- * Quatre croisements sont exercés, et chacun doit échouer sans rien apprendre :
+ * Cinq croisements sont exercés, et chacun doit échouer sans rien apprendre :
  *
  * 1. la prestation de A, demandée sous le slug de B → **404**, jamais 403 ;
  * 2. la prestation de B, demandée sous le slug de A → **404** ;
  * 3. le praticien de B, demandé sous le slug de A → **409**, indistinct d'un
  *    créneau pris ;
  * 4. la fiche cliente : la même adresse e-mail dans les deux salons donne
- *    **deux** fiches, jamais une partagée.
+ *    **deux** fiches, jamais une partagée ;
+ * 5. **sans praticien demandé** — l'option « premier disponible » (#36) : c'est
+ *    le serveur qui choisit, et son choix ne doit jamais tomber sur un praticien
+ *    du voisin. Aucun identifiant fautif ne traverse alors l'API : la fuite
+ *    serait dans la décision elle-même.
  *
  * S'y ajoute ce que le protocole exige toujours : aucune donnée du voisin n'a
  * bougé, et aucun corps de réponse ne porte son identifiant.
@@ -174,6 +178,60 @@ describe('Isolation inter-tenant — réservation publique', () => {
       harness.appointments.appointments.filter((row) => row.tenantId === harness.b.tenant.id),
     ).toHaveLength(0);
     expect(JSON.stringify(response.body)).not.toContain(harness.b.tenant.id);
+  });
+
+  /**
+   * L'option « premier disponible » ouvre une **cinquième** traversée possible, et
+   * c'est la seule que ce ticket ajoute (#36).
+   *
+   * Toutes les autres supposent un identifiant soumis par l'appelant, qu'on peut
+   * refuser. Ici, l'appelant n'en soumet aucun : c'est le **serveur** qui choisit
+   * le praticien. Un choix fait sur une liste mal filtrée affecterait un praticien
+   * du voisin sans qu'aucun `staffId` fautif n'ait jamais traversé l'API — la
+   * fuite serait dans notre propre décision, et aucun refus ne pourrait la
+   * rattraper.
+   */
+  describe('option « premier disponible » — le serveur choisit', () => {
+    it('n’affecte jamais un praticien du voisin quand aucun n’est désigné', async () => {
+      // Le voisin a lui aussi des praticiens libres à cet instant : c'est ce qui
+      // rend le test capable d'échouer. Une liste de candidats non scopée les
+      // ferait apparaître, et l'ordre `(instant, praticien)` pourrait en placer
+      // un en tête.
+      const neighbours = new Set([harness.b.staffId, harness.addStaff(harness.b)]);
+
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send({
+          serviceId: harness.a.serviceId,
+          startsAt: slot.startsAt.toISOString(),
+          client: GUEST,
+        });
+
+      expect(response.status).toBe(201);
+      expect(neighbours.has(response.body.staffId)).toBe(false);
+      expect(response.body.staffId).toBe(harness.a.staffId);
+
+      const written = harness.appointments.appointments;
+      expect(written).toHaveLength(1);
+      expect(written[0]?.tenantId).toBe(harness.a.tenant.id);
+      expect(JSON.stringify(response.body)).not.toContain(harness.b.tenant.id);
+    });
+
+    it('ne réserve rien chez A quand la prestation du voisin est demandée sans praticien', async () => {
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send({
+          serviceId: harness.b.serviceId,
+          startsAt: slot.startsAt.toISOString(),
+          client: GUEST,
+        });
+
+      // 404 : la prestation du voisin est introuvable d'ici. Sans `staffId` à
+      // refuser, c'est le seul contrôle qui reste — et il suffit.
+      expect(response.status).toBe(404);
+      expect(harness.appointments.appointments).toHaveLength(0);
+      expect(JSON.stringify(response.body)).not.toContain(harness.b.serviceId);
+    });
   });
 });
 

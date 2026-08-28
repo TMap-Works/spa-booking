@@ -90,7 +90,10 @@ function fakeCatalog(view: ServiceView | null): ServicesService {
  * bien l'instant demandé — c'est la seule partie du contrôle que ce service
  * décide lui-même.
  */
-function fakeAvailability(offered: readonly Date[]): {
+function fakeAvailability(
+  offered: readonly Date[],
+  candidates: readonly string[] = [STAFF_ID],
+): {
   service: AvailabilityService;
   calls: { from: string; to: string; staffId?: string }[];
 } {
@@ -109,22 +112,29 @@ function fakeAvailability(offered: readonly Date[]): {
         ...(query.staffId === undefined ? {} : { staffId: query.staffId }),
       });
 
+      // Le praticien demandé, et non une constante : le vrai moteur filtre sur
+      // `staffId`, et un double qui rendrait toujours le même ferait passer pour
+      // proposé le créneau d'un praticien qui n'a jamais été interrogé —
+      // exactement ce que le report vérifie quand il change de praticien en
+      // chemin. Sans `staffId`, il rend **tous** les candidats de la prestation,
+      // dans l'ordre du moteur : c'est la matière de l'option « premier
+      // disponible » (#36), et l'ordre `(instant, praticien)` est garanti — et
+      // testé — par `availability.slots.ts`, pas ici.
+      const staff = query.staffId === undefined ? candidates : [query.staffId];
+
       return Promise.resolve({
         serviceId: query.serviceId,
         timezone: 'Europe/Paris',
         days: [
           {
             date: '2026-09-01',
-            slots: offered.map((startsAt) => ({
-              startsAt: startsAt.toISOString(),
-              endsAt: new Date(startsAt.getTime() + 3_600_000).toISOString(),
-              // Le praticien demandé, et non une constante : le vrai moteur
-              // filtre sur `staffId`, et un double qui rendrait toujours le même
-              // ferait passer pour proposé le créneau d'un praticien qui n'a
-              // jamais été interrogé — exactement ce que le report vérifie quand
-              // il change de praticien en chemin.
-              staffId: query.staffId ?? STAFF_ID,
-            })),
+            slots: offered.flatMap((startsAt) =>
+              staff.map((staffId) => ({
+                startsAt: startsAt.toISOString(),
+                endsAt: new Date(startsAt.getTime() + 3_600_000).toISOString(),
+                staffId,
+              })),
+            ),
           },
         ],
       });
@@ -160,12 +170,17 @@ interface Harness {
 }
 
 function createHarness(
-  options: { view?: ServiceView | null; offered?: readonly Date[] } = {},
+  options: {
+    view?: ServiceView | null;
+    offered?: readonly Date[];
+    /** Les praticiens que le moteur propose quand la cliente n'en désigne aucun. */
+    candidates?: readonly string[];
+  } = {},
 ): Harness {
   const repository = new FakeAppointmentsRepository();
   const journal = recordingLogger();
   const events = new AppointmentEvents(journal.logger);
-  const availability = fakeAvailability(options.offered ?? [BILLED_START]);
+  const availability = fakeAvailability(options.offered ?? [BILLED_START], options.candidates);
   const view = options.view === undefined ? serviceView() : options.view;
   const cache = new SpyAvailabilityCache();
 
@@ -437,6 +452,196 @@ describe('AppointmentsService.book', () => {
     const { service } = createHarness();
 
     await expect(service.book(bookingInput(), NOW)).rejects.toThrow(/tenant/i);
+  });
+});
+
+/**
+ * L'option « premier disponible » — la **règle d'affectation** (#36).
+ *
+ * Ce que cette suite exerce est la seule partie du ticket qui soit une décision :
+ * quel praticien reçoit le rendez-vous quand la cliente n'en désigne aucun, et ce
+ * qui se passe quand la base refuse celui qu'on avait retenu.
+ *
+ * Ce qu'elle n'exerce **pas**, et qui est prouvé ailleurs :
+ *
+ * - l'agrégation des praticiens et l'ordre `(instant, praticien)` du moteur —
+ *   `availability.slots.spec.ts` et `availability.service.spec.ts` ;
+ * - qu'un praticien qui ne pratique pas la prestation n'apparaisse jamais dans
+ *   les candidats — `availability.service.spec.ts`, sur le vrai calcul ;
+ * - que le refus vienne réellement de la contrainte d'exclusion —
+ *   `test/appointments-exclusion.integration-spec.ts`, contre un vrai PostgreSQL.
+ */
+describe('AppointmentsService.book — option « premier disponible » (#36)', () => {
+  /** Les deux praticiens de la prestation, dans l'ordre où le moteur les rend. */
+  const FIRST_STAFF = '11111111-1111-4111-8111-111111111111';
+  const SECOND_STAFF = '22222222-2222-4222-8222-222222222222';
+  const THIRD_STAFF = '33333333-3333-4333-8333-333333333333';
+
+  /** Une réservation sans préférence de praticien. */
+  function withoutPreference(): BookAppointmentInput {
+    return bookingInput({ staffId: null });
+  }
+
+  /** L'intervalle **occupé** du créneau de 10:00 — celui que la base compare. */
+  const OCCUPIED = {
+    startsAt: new Date('2026-09-01T09:50:00.000Z'),
+    endsAt: new Date('2026-09-01T11:10:00.000Z'),
+  };
+
+  it('interroge le calendrier sans praticien quand la cliente n’en désigne aucun', async () => {
+    const { service, availabilityCalls } = createHarness({
+      candidates: [FIRST_STAFF, SECOND_STAFF],
+    });
+
+    await runWithTenant(TENANT, () => service.book(withoutPreference(), NOW));
+
+    // Pas de `staffId` dans la requête : c'est son absence qui fait rendre au
+    // moteur **tous** les candidats de la prestation. Le poser à `undefined`
+    // explicitement, ou à une valeur par défaut, amputerait la liste.
+    expect(availabilityCalls).toEqual([{ from: '2026-08-31', to: '2026-09-02' }]);
+  });
+
+  it('affecte le premier praticien de l’ordre du moteur', async () => {
+    const { service, repository } = createHarness({
+      candidates: [FIRST_STAFF, SECOND_STAFF, THIRD_STAFF],
+    });
+
+    const view = await runWithTenant(TENANT, () => service.book(withoutPreference(), NOW));
+
+    expect(view.staffId).toBe(FIRST_STAFF);
+    expect(repository.appointments).toHaveLength(1);
+  });
+
+  // « À agenda constant », et le double harnais est ce qui le dit : chacun part
+  // d'un agenda vierge. Ce n'est **pas** de l'idempotence — deux envois sur le
+  // *même* agenda donnent deux rendez-vous, ce que le cas de repli ci-dessous
+  // montre, et ce que le front désarme (#45).
+  it('est déterministe à agenda constant : deux demandes identiques désignent le même praticien', async () => {
+    const first = createHarness({ candidates: [FIRST_STAFF, SECOND_STAFF] });
+    const second = createHarness({ candidates: [FIRST_STAFF, SECOND_STAFF] });
+
+    const one = await runWithTenant(TENANT, () => first.service.book(withoutPreference(), NOW));
+    const two = await runWithTenant(TENANT, () => second.service.book(withoutPreference(), NOW));
+
+    expect(one.staffId).toBe(two.staffId);
+  });
+
+  it('tente le praticien suivant quand la base refuse le créneau du premier', async () => {
+    const { service, repository } = createHarness({
+      candidates: [FIRST_STAFF, SECOND_STAFF],
+    });
+    // Le créneau du premier praticien vient d'être pris — après le calcul du
+    // calendrier, avant l'insertion. C'est exactement la course que le quatrième
+    // critère du ticket décrit.
+    repository.seedAppointment({ tenantId: TENANT, staffId: FIRST_STAFF, ...OCCUPIED });
+
+    const view = await runWithTenant(TENANT, () => service.book(withoutPreference(), NOW));
+
+    expect(view.staffId).toBe(SECOND_STAFF);
+  });
+
+  it('descend la liste jusqu’au premier praticien que la base accepte', async () => {
+    const { service, repository } = createHarness({
+      candidates: [FIRST_STAFF, SECOND_STAFF, THIRD_STAFF],
+    });
+    repository.seedAppointment({ tenantId: TENANT, staffId: FIRST_STAFF, ...OCCUPIED });
+    repository.seedAppointment({ tenantId: TENANT, staffId: SECOND_STAFF, ...OCCUPIED });
+
+    const view = await runWithTenant(TENANT, () => service.book(withoutPreference(), NOW));
+
+    expect(view.staffId).toBe(THIRD_STAFF);
+  });
+
+  it('ne renvoie 409 qu’une fois tous les praticiens tentés', async () => {
+    const { service, repository } = createHarness({
+      candidates: [FIRST_STAFF, SECOND_STAFF],
+    });
+    repository.seedAppointment({ tenantId: TENANT, staffId: FIRST_STAFF, ...OCCUPIED });
+    repository.seedAppointment({ tenantId: TENANT, staffId: SECOND_STAFF, ...OCCUPIED });
+
+    const rejected = runWithTenant(TENANT, () => service.book(withoutPreference(), NOW));
+
+    await expect(rejected).rejects.toThrow(SlotNoLongerAvailableError);
+    // Aucun rendez-vous de plus que les deux semés : le repli tente, il ne force
+    // rien. La contrainte reste le seul arbitre.
+    expect(repository.appointments).toHaveLength(2);
+  });
+
+  it('ne nomme aucun praticien dans le 409 d’une demande sans préférence', async () => {
+    const { service, repository } = createHarness({
+      candidates: [FIRST_STAFF, SECOND_STAFF],
+    });
+    repository.seedAppointment({ tenantId: TENANT, staffId: FIRST_STAFF, ...OCCUPIED });
+    repository.seedAppointment({ tenantId: TENANT, staffId: SECOND_STAFF, ...OCCUPIED });
+
+    const rejected = runWithTenant(TENANT, () => service.book(withoutPreference(), NOW));
+
+    // `null`, et non le dernier praticien tenté : rendre un identifiant que
+    // l'appelant n'a jamais soumis ferait de ce 409 une sonde d'agenda.
+    await expect(rejected).rejects.toMatchObject({
+      details: { staffId: null, startsAt: '2026-09-01T10:00:00.000Z' },
+    });
+  });
+
+  it('refuse en 409 un instant qu’aucun praticien ne proposait, sans rien écrire', async () => {
+    const { service, repository } = createHarness({
+      candidates: [FIRST_STAFF, SECOND_STAFF],
+    });
+
+    const rejected = runWithTenant(TENANT, () =>
+      service.book(
+        bookingInput({ staffId: null, startsAt: new Date('2026-09-01T10:07:00.000Z') }),
+        NOW,
+      ),
+    );
+
+    await expect(rejected).rejects.toThrow(SlotNoLongerAvailableError);
+    expect(repository.appointments).toHaveLength(0);
+    // Le contrôle a lieu avant la résolution du client : un tir sur des créneaux
+    // impossibles ne remplit pas le fichier clients du salon.
+    expect(repository.clients).toHaveLength(0);
+  });
+
+  it('annonce dans l’événement de domaine le praticien réellement affecté', async () => {
+    const { service, events, repository } = createHarness({
+      candidates: [FIRST_STAFF, SECOND_STAFF],
+    });
+    repository.seedAppointment({ tenantId: TENANT, staffId: FIRST_STAFF, ...OCCUPIED });
+    const received: AppointmentCreatedEvent[] = [];
+    events.onAppointmentCreated((event) => received.push(event));
+
+    await runWithTenant(TENANT, () => service.book(withoutPreference(), NOW));
+
+    // Le second, pas le premier : la confirmation annonce à la cliente le
+    // praticien qui l'attend, pas celui qu'on avait d'abord retenu.
+    expect(received[0]?.staffId).toBe(SECOND_STAFF);
+  });
+
+  it('n’essaie personne d’autre quand la cliente a désigné un praticien', async () => {
+    const { service, repository } = createHarness({
+      candidates: [FIRST_STAFF, SECOND_STAFF],
+    });
+    repository.seedAppointment({ tenantId: TENANT, staffId: FIRST_STAFF, ...OCCUPIED });
+
+    const rejected = runWithTenant(TENANT, () =>
+      service.book(bookingInput({ staffId: FIRST_STAFF }), NOW),
+    );
+
+    // Désigner quelqu'un, c'est refuser les autres : basculer sur le second
+    // enverrait la cliente chez un praticien qu'elle n'a pas choisi.
+    await expect(rejected).rejects.toMatchObject({ details: { staffId: FIRST_STAFF } });
+    expect(repository.appointments).toHaveLength(1);
+  });
+
+  it('invalide le cache de disponibilité après un repli, comme après une réservation directe', async () => {
+    const { service, repository, cache } = createHarness({
+      candidates: [FIRST_STAFF, SECOND_STAFF],
+    });
+    repository.seedAppointment({ tenantId: TENANT, staffId: FIRST_STAFF, ...OCCUPIED });
+
+    await runWithTenant(TENANT, () => service.book(withoutPreference(), NOW));
+
+    expect(cache.calls).toBe(1);
   });
 });
 

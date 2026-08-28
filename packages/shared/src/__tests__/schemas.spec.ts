@@ -311,6 +311,25 @@ describe('appointments', () => {
     ).toBe(false);
   });
 
+  it('accepte une réservation sans praticien — l’option « premier disponible »', () => {
+    // Son absence n'est pas une donnée manquante : c'est le choix « pas de
+    // préférence » du CDC §1.4 (#36), et le serveur affecte le praticien.
+    expect(
+      createAppointmentRequestSchema.safeParse({
+        serviceId: UUID,
+        startsAt: '2026-03-03T10:00:00Z',
+      }).success,
+    ).toBe(true);
+    // Facultatif ne veut pas dire permissif : une valeur présente reste jugée.
+    expect(
+      createAppointmentRequestSchema.safeParse({
+        serviceId: UUID,
+        staffId: 'pas-un-uuid',
+        startsAt: '2026-03-03T10:00:00Z',
+      }).success,
+    ).toBe(false);
+  });
+
   it('refuse un prix imposé par le client à la réservation', () => {
     expect(
       createAppointmentRequestSchema.safeParse({
