@@ -15,8 +15,7 @@ ici.
 | #33 | Plages bloquées et congés, l'algèbre d'intervalles, et l'appel d'invalidation du cache |
 | #34 | **Le calcul des créneaux libres** — découpage, durée occupée, préavis, et les deux réglages qui les gouvernent |
 | #35 | **Les deux endpoints de disponibilité**, le cache Redis à TTL court et son invalidation à toute écriture d'agenda |
-
-Pas encore écrite, et rien ici ne la préempte : l'option premier disponible (#36).
+| #36 | L'option **premier disponible** — l'agrégation vit ici, la règle d'affectation vit dans `appointments` |
 
 ## Les trois natures de données, et pourquoi on ne les confond pas
 
@@ -200,11 +199,29 @@ SQL pour interdire qu'elles divergent.
 La borne basse du pas n'est pas une préférence d'ergonomie : un pas nul fait
 **boucler indéfiniment** le découpage, puisque le curseur n'avance plus.
 
-### Ce qui reste à #36
+### L'option « premier disponible » (#36)
 
-L'agrégation « premier disponible » et sa règle d'affectation. `slotsFor` rend
-d'ici là **tous** les créneaux de tous les candidats, triés par instant puis par
-praticien — la matière sur laquelle #36 décidera.
+Elle se dit en **omettant `staffId`**, et ce module en tient la moitié amont :
+`slotsFor` rend alors les créneaux de **tous** les praticiens qui pratiquent la
+prestation, triés par `(instant, praticien)`. Deux praticiens libres à 10:00
+produisent deux créneaux — aucun regroupement n'est fait ici.
+
+Deux propriétés de ce calcul sont ce sur quoi l'affectation s'appuie, et elles
+sont verrouillées par des tests :
+
+- **l'ordre est total et stable** — `computeSlots` trie par instant puis par
+  identifiant de praticien. Sans ce second critère, l'ordre suivrait celui de la
+  base, qui n'en garantit aucun : la règle d'affectation cesserait d'être
+  reproductible, et un calendrier changerait de forme d'un rafraîchissement à
+  l'autre ;
+- **un praticien qui ne pratique pas la prestation n'apparaît jamais** —
+  `candidates()` intersecte `service_staff`, y compris quand un praticien est
+  explicitement demandé (booking-engine §6).
+
+L'autre moitié — **quel** praticien reçoit le rendez-vous, et ce qui se passe
+quand la base refuse son créneau — appartient à `appointments` : c'est là que
+l'écriture a lieu, donc là que le refus arrive. La règle est documentée dans
+[le README d'`appointments`](../appointments/README.md).
 
 Lire les rendez-vous existants sert à **proposer**, jamais à garantir : entre ce
 `SELECT` et la validation de la cliente, une autre transaction peut insérer. La

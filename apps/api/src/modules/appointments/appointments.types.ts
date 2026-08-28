@@ -160,10 +160,17 @@ export interface GuestContact {
  * proposé et que la cliente a vu s'afficher — jamais l'instant occupé. La
  * conversion de l'un vers l'autre, tampons compris, appartient au service et à
  * lui seul : c'est ce que `AppointmentDraft` porte ensuite.
+ *
+ * `staffId` est `null` quand la cliente n'a **pas** de préférence : c'est
+ * l'option « premier disponible » du CDC §1.4 (#36). Le domaine ne connaît que
+ * `null` — le DTO, lui, distingue « absent » de « vide ». L'affectation du
+ * praticien revient alors au service, jamais à l'appelant : voir la règle
+ * documentée dans `AppointmentsService.book`.
  */
 export interface BookAppointmentInput {
   readonly serviceId: string;
-  readonly staffId: string;
+  /** Praticien désigné, ou `null` pour « premier disponible ». */
+  readonly staffId: string | null;
   readonly startsAt: Date;
   readonly client: GuestContact;
   readonly clientNote: string | null;

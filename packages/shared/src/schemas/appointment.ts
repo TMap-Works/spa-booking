@@ -78,11 +78,26 @@ export type Appointment = z.infer<typeof appointmentSchema>;
  * réserve pour quelqu'un d'autre. Sur le parcours public, le serveur ignore
  * cette possibilité et prend le client de la session — un client authentifié qui
  * poserait l'identifiant d'un autre ne doit pas pouvoir réserver en son nom.
+ *
+ * ## `staffId` est **facultatif** : c'est l'option « premier disponible » (#36)
+ *
+ * Le CDC §1.4 la nomme explicitement — « choix du praticien ou *premier
+ * disponible* ». Son absence n'est donc pas une donnée manquante, c'est un
+ * choix : la cliente dit qu'elle n'a pas de préférence, et le serveur affecte le
+ * praticien **à la réservation**, selon une règle documentée dans le README du
+ * module `appointments`.
+ *
+ * L'affectation est faite côté serveur, jamais côté client : un front qui
+ * choisirait lui-même un praticien parmi ceux qu'un calendrier lui a montrés
+ * décidera toujours sur un état périmé, et rouvrirait la fenêtre de concurrence
+ * que le créneau sert à fermer. Le champ reste donc là pour la cliente qui **a**
+ * une préférence, et pour elle seule.
  */
 export const createAppointmentRequestSchema = z
   .object({
     serviceId: uuidSchema,
-    staffId: uuidSchema,
+    /** Absent = « premier disponible ». Voir l'en-tête de ce schéma. */
+    staffId: uuidSchema.optional(),
     startsAt: utcInstantSchema,
     clientId: uuidSchema.optional(),
     clientNote: longTextSchema.optional(),

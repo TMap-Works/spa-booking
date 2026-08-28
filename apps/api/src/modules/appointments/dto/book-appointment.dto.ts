@@ -132,15 +132,18 @@ export class BookAppointmentDto {
   @IsUUID('4')
   public serviceId!: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     format: 'uuid',
     description:
-      'Le praticien qui tient le créneau. Il est **désigné**, jamais choisi au ' +
-      'moment du POST : le choisir ici rouvrirait la fenêtre de concurrence que ' +
-      'le créneau sert à fermer.',
+      'Le praticien souhaité. **Facultatif** : l’omettre, c’est choisir « premier ' +
+      'disponible » (CDC §1.4) — le serveur affecte alors le premier praticien ' +
+      'libre à cet instant, dans l’ordre du moteur de disponibilité, et tente le ' +
+      'suivant si la base refuse son créneau. Le choix est fait côté serveur : le ' +
+      'laisser au navigateur reviendrait à décider sur un calendrier déjà périmé.',
   })
+  @OptionalPresent()
   @IsUUID('4')
-  public staffId!: string;
+  public staffId?: string;
 
   @ApiProperty({
     description:
@@ -212,7 +215,13 @@ export class AppointmentDto implements AppointmentView {
   @ApiProperty({ format: 'uuid' })
   public serviceId!: string;
 
-  @ApiProperty({ format: 'uuid' })
+  @ApiProperty({
+    format: 'uuid',
+    description:
+      'Le praticien qui tient le rendez-vous. **Toujours renseigné**, y compris ' +
+      'quand la cliente n’en a désigné aucun : c’est par lui qu’elle apprend qui ' +
+      'l’affectation « premier disponible » lui a attribué (#36).',
+  })
   public staffId!: string;
 
   @ApiProperty({ format: 'uuid', description: 'La fiche cliente, créée si elle n’existait pas.' })
