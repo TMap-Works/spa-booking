@@ -8,7 +8,7 @@ import {
 } from 'class-validator';
 
 import { localTimeToMinutes } from '../availability.schedule';
-import { LOCAL_TIME_PATTERN } from '../availability.time';
+import { CALENDAR_DATE_PATTERN, LOCAL_TIME_PATTERN } from '../availability.time';
 
 /**
  * Briques de validation des dates qui traversent l'API (#41).
@@ -151,6 +151,63 @@ export function ToUtcInstant(): PropertyDecorator {
   return Transform(({ value }: { value: unknown }) =>
     isOffsetDateTime(value) ? new Date(value as string).toISOString() : value,
   );
+}
+
+/**
+ * `true` si la chaîne est une date civile `AAAA-MM-JJ` qui **existe** (#35).
+ *
+ * Le motif seul ne suffit pas, pour la même raison qu'en date-heure :
+ * `2026-02-31` le satisfait. Une date inexistante traverserait la frontière et
+ * irait produire, journée après journée, une plage décalée d'un ou deux jours —
+ * un calendrier qui affiche les créneaux du mauvais jour, sans qu'aucune erreur
+ * ne le dise.
+ */
+export function isCalendarDate(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const matched = CALENDAR_DATE_PATTERN.exec(value);
+
+  if (matched === null) {
+    return false;
+  }
+
+  const [year, month, day] = [Number(matched[1]), Number(matched[2]), Number(matched[3])];
+
+  const replayed = new Date(0);
+  replayed.setUTCFullYear(year, month - 1, day);
+
+  return (
+    replayed.getUTCFullYear() === year &&
+    replayed.getUTCMonth() === month - 1 &&
+    replayed.getUTCDate() === day
+  );
+}
+
+/**
+ * Date civile de l'établissement — la borne d'une interrogation de créneaux.
+ *
+ * Une date civile, et non un instant : « la semaine du 3 mars » n'a de sens que
+ * dans le calendrier du salon, et c'est ce calendrier-là qu'un écran affiche.
+ * C'est l'asymétrie qu'annonce déjà `availabilityQuerySchema` du contrat
+ * partagé — la requête raisonne en dates, la réponse en instants UTC.
+ */
+export function IsCalendarDate(options?: ValidationOptions): PropertyDecorator {
+  return (target: object, propertyName: string | symbol): void => {
+    registerDecorator({
+      name: 'isCalendarDate',
+      target: target.constructor,
+      propertyName: propertyName.toString(),
+      options: options ?? {},
+      validator: {
+        validate: (value: unknown): boolean => isCalendarDate(value),
+        defaultMessage: (args?: ValidationArguments): string =>
+          `${args?.property ?? 'date'} : date civile attendue au format AAAA-MM-JJ ` +
+          '(« 2026-03-03 »)',
+      },
+    });
+  };
 }
 
 /** Heure murale `HH:MM` — le format de saisie d'un horaire de personnel. */
