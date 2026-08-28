@@ -14,9 +14,9 @@ ici.
 | #32 | Horaires récurrents du personnel, jours de fermeture de l'établissement, fenêtres de travail |
 | #33 | Plages bloquées et congés, l'algèbre d'intervalles, et l'appel d'invalidation du cache |
 | #34 | **Le calcul des créneaux libres** — découpage, durée occupée, préavis, et les deux réglages qui les gouvernent |
+| #35 | **Les deux endpoints de disponibilité**, le cache Redis à TTL court et son invalidation à toute écriture d'agenda |
 
-Pas encore écrits, et rien ici ne les préempte : l'endpoint de disponibilité avec
-son cache Redis et son invalidation (#35), l'option premier disponible (#36).
+Pas encore écrite, et rien ici ne la préempte : l'option premier disponible (#36).
 
 ## Les trois natures de données, et pourquoi on ne les confond pas
 
@@ -46,7 +46,10 @@ considéré, depuis la tzdata IANA de l'ICU
 | `availability.intervals.ts` | Algèbre d'intervalles UTC : fusion, soustraction, recoupement |
 | `availability.slots.ts` | Découpage d'une fenêtre libre en créneaux — durée occupée, grille, préavis |
 | `availability.repository.ts` | Le seul point qui connaît le schéma — client Prisma **scopé**, aucune dérogation |
-| `availability.service.ts` | Assemble les entrées du calcul de créneaux et regroupe la sortie par journée |
+| `availability.service.ts` | Assemble les entrées du calcul de créneaux et regroupe la sortie par journée — **sans cache** |
+| `availability.query.service.ts` | Le même calcul, derrière le cache : le chemin de lecture des deux endpoints |
+| `availability-cache.ts` | Clé, durée de vie, lecture, écriture et invalidation du cache de disponibilité |
+| `availability-cache.redis.ts` | L'entrepôt Redis — `SCAN`/`UNLINK`, `MGET`, pipeline, et un mode dégradé qui ne rejette jamais |
 | `staff-schedule.service.ts` | Règles métier de la semaine de travail |
 | `staff-time-off.service.ts` | Plages bloquées et congés du personnel |
 | `closing-days.service.ts` | Jours de fermeture récurrents de l'établissement |
@@ -55,19 +58,39 @@ considéré, depuis la tzdata IANA de l'ICU
 
 ## Les routes
 
-Toutes se désignent par un **jeton** : le module n'a aucune surface publique, et
-il n'y a donc rien à résoudre par slug d'URL.
-
 | Méthode | Chemin | Rang |
 |---|---|---|
+| `GET` | `/api/v1/availability` | `STAFF` |
+| `GET` | `/api/v1/public/:tenantSlug/availability` | — (ouverte) |
 | `GET` | `/api/v1/staff/:staffId/schedule` | `STAFF` |
 | `PUT` | `/api/v1/staff/:staffId/schedule` | `MANAGER` |
 | `GET` | `/api/v1/closing-days` | `STAFF` |
 | `PUT` | `/api/v1/closing-days` | `MANAGER` |
+| `GET` `POST` `PATCH` `DELETE` | `/api/v1/staff-time-off` | `STAFF` / `MANAGER` |
 
 Lecture au rang `STAFF` — consulter le planning fait partie du travail de
 chacun ; écriture au rang `MANAGER` — fixer les heures de quelqu'un est une
 décision de gestion.
+
+### Pourquoi deux routes pour un seul calcul (#35)
+
+Le back-office cale un rendez-vous téléphoné : il a un jeton. Le tunnel de
+réservation, lui, n'en a pas — on réserve sans compte (#37), et l'établissement
+s'y désigne par un slug d'URL que `TenantScopeMiddleware` résout. Une route
+unique aurait dû distinguer ses deux appelants par la présence d'un en-tête,
+c'est-à-dire faire dépendre les droits d'une donnée fournie par le client. Le
+catalogue a tranché la même question de la même façon : `ServicesController` et
+`PublicServicesController`.
+
+Les deux servent **exactement la même charge utile** — des instants et des
+identifiants de praticiens, jamais un `tenantId`, jamais un motif d'absence,
+jamais une identité de cliente. C'est ce qui rend le partage sans risque, et
+`availability-endpoint.integration-spec.ts` le vérifie corps contre corps.
+
+La route publique porte un quota de 120 appels par minute et par adresse : elle
+**calcule**, sur une surface anonyme, et un appelant qui fait varier `from` d'un
+jour à chaque appel contourne le cache entièrement. Le quota laisse le calendrier
+se rafraîchir toutes les demi-secondes, bien au-delà de ce que #44 demande.
 
 ### Pourquoi des `PUT` et aucun `DELETE`
 
@@ -177,11 +200,9 @@ SQL pour interdire qu'elles divergent.
 La borne basse du pas n'est pas une préférence d'ergonomie : un pas nul fait
 **boucler indéfiniment** le découpage, puisque le curseur n'avance plus.
 
-### Ce que ce ticket ne pose pas
+### Ce qui reste à #36
 
-Aucune route, aucun cache. `GET /api/v1/availability`, la clé
-`avail:{tenantId}:…` et son invalidation sont les critères de #35 ; l'agrégation
-« premier disponible » et sa règle d'affectation, ceux de #36. `slotsFor` rend
+L'agrégation « premier disponible » et sa règle d'affectation. `slotsFor` rend
 d'ici là **tous** les créneaux de tous les candidats, triés par instant puis par
 praticien — la matière sur laquelle #36 décidera.
 
@@ -189,6 +210,129 @@ Lire les rendez-vous existants sert à **proposer**, jamais à garantir : entre 
 `SELECT` et la validation de la cliente, une autre transaction peut insérer. La
 garantie est la contrainte d'exclusion `appointments_no_overlap`, et elle seule
 (ADR 0002, booking-engine §1).
+
+## Le cache de disponibilité (#35)
+
+```
+avail:{tenantId}:{serviceId}:{staffId|any}:{date}   →   { timezone, slots }   TTL 60 s
+```
+
+Une clé par **journée**, et non par plage : une cliente qui fait glisser son
+calendrier d'un jour réutilise alors toutes les journées déjà connues, là où une
+clé portant la plage entière aurait forcé un recalcul complet à chaque pas. La
+lecture est **tout ou rien** sur la plage demandée — le manque d'une seule
+journée fait recalculer la plage entière, qui est ensuite écrite en entier.
+
+Le fuseau est répété dans chaque valeur : sans lui, servir une réponse
+entièrement issue du cache obligerait à relire `tenants` pour une seule colonne,
+sur le chemin le plus chaud de l'API.
+
+`{staffId}` vaut `any` quand la cliente n'en désigne aucun. Confondre les deux
+servirait à la requête générale les créneaux d'un seul praticien : une réponse
+amputée, donc des créneaux libres masqués.
+
+### Ce que le cache garantit, et ce qu'il ne garantit pas
+
+L'arbitrage de booking-engine §3 est **asymétrique**, et tout le reste en découle :
+
+| Défaut du cache | Coût | Verdict |
+|---|---|---|
+| montre un créneau déjà pris | un 409 et un reclic | **acceptable** |
+| masque un créneau libre | une vente | **inacceptable** |
+
+D'où le TTL court **et** l'invalidation explicite, qui ne font pas double emploi :
+le TTL borne la dérive, l'invalidation supprime l'attente sur les cas où elle
+coûte cher — une annulation qui libère un créneau, un congé qui en retire un.
+
+### Qui lit ce cache, et qui ne le lit jamais
+
+C'est la garantie du cinquième critère du ticket — « un cache périmé ne peut
+jamais provoquer une double réservation » — et elle tient à une seule ligne du
+module :
+
+| Chemin | Service | Voit le cache |
+|---|---|---|
+| `GET …/availability` | `AvailabilityQueryService` | oui |
+| `POST …/appointments` (réservation, report) | `AvailabilityService` | **non** |
+
+`AvailabilityModule` exporte le second et **pas** le premier : `appointments` ne
+peut donc pas, même par accident, décider d'un créneau sur une réponse cachée.
+`availability.module.spec.ts` verrouille cette décision — c'est un témoin, pas un
+test de comportement, parce que la propriété porte sur une absence.
+
+### L'invalidation, et les quatre écritures qui la déclenchent
+
+`AvailabilityCacheService.invalidateCurrentTenant()` chasse `avail:{tenantId}:*`
+par `SCAN` + `UNLINK` — jamais `KEYS`, qui bloquerait le Redis partagé par tous
+les établissements le temps du balayage.
+
+| Écriture | Où l'appel se fait |
+|---|---|
+| rendez-vous posé, reporté, annulé | `AppointmentsService` (#35) |
+| absence posée, déplacée, retirée | `StaffTimeOffService` (#33) |
+| semaine de travail remplacée | `StaffScheduleService` (#35) |
+| jours de fermeture remplacés | `ClosingDaysService` (#35) |
+
+Le tenant vient du **contexte de requête**, jamais d'un argument : un appelant
+qui pourrait le choisir pourrait invalider — donc sonder l'existence du — cache
+d'un autre établissement (tenant-isolation §2). Et le préfixe **commence** par le
+tenant, ce qui est la seule position qui rende l'invalidation possible sans
+balayer l'espace de clés entier.
+
+L'invalidation a lieu **après** l'écriture : la faire avant laisserait le cache
+se reconstruire sur l'ancien état si l'écriture échouait ensuite. Un refus —
+créneau non proposable, recouvrement d'horaires — n'invalide rien.
+
+### Une panne de Redis n'est jamais une panne de l'API
+
+Aucune méthode de `RedisAvailabilityCacheStore` ne rejette : un cache injoignable
+se comporte comme un cache vide, et l'endpoint recalcule. `commandTimeout` est
+posé à 200 ms, sous le budget de 300 ms du quatrième critère — le cache ne peut
+donc jamais rendre une réponse *plus lente* que s'il n'existait pas.
+
+Le corollaire vaut pour l'écriture : si l'invalidation échoue, le rendez-vous
+vient tout de même d'être posé. Refuser la réservation pour cette raison
+échangerait une vente contre au plus soixante secondes de cache périmé.
+
+### Trois limites connues, toutes bornées par le TTL
+
+Elles sont écrites ici parce qu'elles se ressemblent : aucune ne peut rendre le
+cache plus faux que ce que le TTL de soixante secondes autorise déjà, et aucune
+n'atteint la réservation, qui rejoue le moteur à froid.
+
+| Limite | Effet | Ce qui la refermerait |
+|---|---|---|
+| l'invalidation balaie l'espace de clés **partagé** (`SCAN` filtre après coup), et abandonne au-delà de ~100 000 clés vivantes | une écriture d'agenda paie le balayage des clés de ses voisins | un espace de clés versionné par tenant, invalidé par un `INCR` |
+| course « lire puis écrire » : une invalidation tombée entre le défaut et l'écriture est perdue | une absence posée pendant le calcul peut rester invisible 60 s | une écriture conditionnelle sur cette même génération |
+| une écriture du **catalogue** n'invalide rien | une prestation désactivée continue d'être servie 60 s | `CatalogModule` ne peut pas dépendre d'`AvailabilityModule`, qui dépend déjà de lui — il faudrait un événement de domaine |
+
+Les deux premières appellent le même changement de forme de clé, et une issue de
+suivi les porte ensemble.
+
+### Une dette assumée : une seconde connexion Redis
+
+`CacheConnection` (`infrastructure/cache`) tient le client Redis partagé de
+l'application mais n'expose que `ping()`. Ce module ouvre donc sa propre
+connexion, avec la même politique de connexion paresseuse et de réessai — et le
+client n'est créé qu'à la **première commande**, si bien qu'une application qui
+ne sert jamais de disponibilité n'ouvre jamais cette socket. L'unification des
+deux clients est portée par une issue de suivi ; le jour où elle aura lieu, c'est
+`availability-cache.redis.ts` qui disparaîtra, pas un appelant.
+
+### Le temps de réponse, et comment il est tenu plutôt que mesuré
+
+Le quatrième critère demande « sous 300 ms sur un mois de données ». Un test qui
+chronométrerait une requête dépendrait de la machine et deviendrait le premier
+test instable de la suite. Ce qui est vérifié à sa place est **structurel**, et
+vrai partout :
+
+- un succès de cache n'appelle pas le moteur du tout — donc aucune des six
+  lectures, sur aucun volume de données (`availability.query.service.spec.ts`) ;
+- une plage de trente et un jours coûte **un** aller-retour Redis (`MGET`), pas
+  trente et un ;
+- le calcul lui-même est borné à trente et un jours par
+  `AVAILABILITY_RANGE_TOO_WIDE`, et `windowsForMany` le tient en trois requêtes
+  quel que soit le nombre de praticiens.
 
 ## Fenêtres de travail
 
@@ -237,3 +381,13 @@ ne change aucun identifiant — elle décalerait silencieusement toutes les heur
 rendues. Les deux établissements du harnais de test sont donc dans deux fuseaux
 distincts (`Europe/Paris`, `Indian/Antananarivo`), et
 `test/availability-tenant.isolation-spec.ts` vérifie que chacun reçoit le sien.
+
+Le second cas propre à ce module depuis #35 : le **cache**. C'est une seconde
+source de vérité, donc un second endroit où l'isolation peut céder — et d'une
+façon qu'aucun filtre `tenant_id` ne verrait. Deux établissements peuvent poser
+la même question ; si la clé ne les distingue pas, le second reçoit la réponse du
+premier sans qu'aucune requête n'ait traversé de frontière. La fuite serait dans
+une chaîne de caractères. `test/availability-endpoint.isolation-spec.ts` couvre
+les trois propriétés qui l'empêchent : la clé commence par le tenant,
+l'invalidation ne porte que le préfixe du tenant courant, et la lecture prend le
+tenant du contexte et non d'un argument.
