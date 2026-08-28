@@ -48,6 +48,15 @@ const STARTS_AT = '2026-08-03T00:00:00Z';
 const ENDS_AT = '2026-08-06T00:00:00Z';
 const REASON = 'Formation interne';
 
+/**
+ * La borne de fin telle que l'API la **rend** — millisecondes comprises.
+ *
+ * `ToUtcInstant` normalise à la frontière par `Date.toISOString()`, qui écrit
+ * toujours les millisecondes. Comparer à la chaîne envoyée ferait échouer
+ * l'assertion « intacte » pour une raison qui n'a rien à voir avec l'isolation.
+ */
+const ENDS_AT_RENDERED = '2026-08-06T00:00:00.000Z';
+
 /** La fenêtre de planning qui le contient. */
 const WINDOW = { from: '2026-08-01T00:00:00Z', to: '2026-09-01T00:00:00Z' } as const;
 
@@ -140,7 +149,7 @@ describe('Isolation inter-tenant — plages bloquées et congés', () => {
 
       const untouched = await readAsOwner();
 
-      expect(untouched.body).toMatchObject({ endsAt: ENDS_AT, reason: REASON });
+      expect(untouched.body).toMatchObject({ endsAt: ENDS_AT_RENDERED, reason: REASON });
     });
 
     it('n’écrit rien du tout — pas même une ligne chez le voisin', async () => {
