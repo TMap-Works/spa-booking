@@ -43,16 +43,20 @@ import { createDisposableDatabase, type DisposableDatabase } from './utils/dispo
  *
  * ## Prérequis
  *
- * Un serveur PostgreSQL joignable sur `DATABASE_URL`. La suite n'y travaille
- * pas : elle s'y crée une **base jetable**, migrée puis détruite
- * (`utils/disposable-database.ts`, #27). Rien n'est partagé avec les suites
- * voisines — ce qui compte doublement ici, puisque plusieurs agents de jalon
- * partagent le même conteneur local.
+ * Un démon Docker joignable, et rien d'autre (#27, #274). La suite se crée une
+ * **base jetable**, migrée puis détruite, dans un PostgreSQL 16 qu'elle démarre
+ * elle-même (`utils/disposable-database.ts` — `postgres:16-alpine`,
+ * `@testcontainers/postgresql`). Rien n'est partagé avec les suites voisines,
+ * pas même le serveur — ce qui compte doublement ici, puisque plusieurs agents
+ * de jalon peuvent exercer cette suite de front sur la même machine.
+ * `DATABASE_URL` n'est plus lue depuis #274 : rien de ce que la machine héberge
+ * n'entre dans le résultat.
  *
- * La CI garantit le serveur (services du job `test` de `ci.yml`) ; en local,
- * `docker compose up -d` suffit. L'absence de serveur fait échouer la suite,
- * délibérément : une garantie anti-double-réservation qui se désactiverait toute
- * seule quand la base manque serait pire qu'absente.
+ * L'absence de démon fait échouer la suite, délibérément : une garantie
+ * anti-double-réservation qui se désactiverait toute seule quand le moteur
+ * manque serait pire qu'absente. Un échec se débogue alors du côté de Docker et
+ * de l'image, jamais d'un serveur local ou d'un service de la CI — aucun des
+ * deux n'étant en cause.
  */
 
 /**
