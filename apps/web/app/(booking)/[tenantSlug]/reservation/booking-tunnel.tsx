@@ -111,6 +111,20 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
     }));
   }, []);
 
+  /**
+   * Le praticien changé depuis l'étape créneau (#44).
+   *
+   * C'est le même champ du brouillon que celui posé à l'étape prestation : il
+   * n'y a qu'un praticien retenu, et le reprendre ici plutôt que d'obliger à
+   * remonter d'un écran ne lui donne pas une seconde vie. `null` vaut « premier
+   * disponible », pas « pas encore choisi ».
+   */
+  const chooseStaff = useCallback((staffId: string | null) => {
+    setNotice(null);
+    // Le créneau retenu tombe avec le praticien : il venait de son agenda.
+    setDraft((current) => ({ ...current, staffId, startsAt: null }));
+  }, []);
+
   const chooseSlot = useCallback((startsAt: UtcInstant) => {
     setNotice(null);
     setDraft((current) => ({ ...current, startsAt, step: 'coordonnees' }));
@@ -267,6 +281,7 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
           onBack={() => {
             goTo('prestation');
           }}
+          onStaffChange={chooseStaff}
           onChoose={chooseSlot}
         />
       ) : step === 'coordonnees' ? (
