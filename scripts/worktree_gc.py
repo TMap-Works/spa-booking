@@ -22,7 +22,10 @@ Des garde-fous priment sur ces signaux :
     lockfile réécrit par `npm install`), jamais pour du travail ;
   - un worktree dont les commits non poussés n'ont **pas pu être comptés** est
     conservé au même titre : une mesure impossible est une raison de garder,
-    jamais un zéro déguisé (#178).
+    jamais un zéro déguisé (#178) ;
+  - un worktree dont `git status` n'a **pas pu être lu** est conservé pour la
+    même raison : sans inspection, « rien de sale » n'est pas établi, et le tri
+    entre résidu d'outillage et travail non commité est impossible (#260).
 
 Second passage : les **branches de ticket orphelines**, que plus aucun worktree
 ne détient — ce que laisse derrière lui un répertoire supprimé à la main. Leur
@@ -334,14 +337,19 @@ def is_ancestor(root, branch, base):
 
 
 def dirt(path):
-    """Entrées de `git status --porcelain`, en (code, chemin).
+    """Entrées de `git status --porcelain`, en (code, chemin) — None si illisible.
 
     `-z` plutôt que la forme lisible : sinon un nom accentué ou espacé revient
     entre guillemets et échappé, et c'est sur ce nom que se décide la suite.
+
+    Une liste vide dit « rien de sale », `None` dit « je n'ai pas pu regarder ».
+    Les confondre faisait passer un dépôt dont le `.git` est abîmé pour un
+    worktree propre (#260). Aucun fichier sale n'est fabriqué pour autant :
+    l'ignorance se rend telle quelle, c'est à l'appelant d'en tirer un verdict.
     """
     proc = run(["git", "status", "--porcelain", "-z"], cwd=path)
     if proc.returncode != 0:
-        return []
+        return None
     fields = [field for field in proc.stdout.split(chr(0)) if field]
     changes, index = [], 0
     while index < len(fields):
@@ -452,6 +460,14 @@ def safety_hold(root, entry, reason, force):
     integrated = reason.startswith("PR ") or reason.startswith("branche déjà")
 
     changes = dirt(entry["path"])
+    # `None` n'est pas une liste vide : c'est « l'inspection n'a pas abouti ».
+    # Rien ne prouve alors que ce worktree ne porte pas de travail non commité,
+    # et une preuve d'intégration ne lève pas ce doute-ci — elle ne couvre que
+    # ce qui a été commité, jamais ce qui traîne dans l'arbre. Le tri
+    # résidu/travail lui-même suppose des noms de fichiers qu'on n'a pas (#260).
+    if changes is None:
+        return "modifications non commitées invérifiables (git status en échec)"
+
     if changes:
         # Le ticket est fini : ce qui traîne encore n'est passé par aucune revue
         # et n'ira nulle part. Ne s'y opposer que si c'est du travail — sinon un

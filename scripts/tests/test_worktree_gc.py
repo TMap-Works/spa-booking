@@ -122,7 +122,17 @@ class TestDirt(unittest.TestCase):
                          [("??", "docs/café été.md")])
 
     def test_git_muet_ne_fabrique_pas_de_salete(self):
-        self.assertEqual(self.read("fatal: not a git repository", returncode=128), [])
+        # L'intention d'origine tient : pas un seul fichier sale n'est inventé
+        # là où git n'a rien dit. Ce qui change (#260), c'est que l'ignorance ne
+        # se rend plus comme « rien à signaler » — `None` la dit pour ce qu'elle
+        # est, et `safety_hold` en fait une raison de conserver.
+        changes = self.read("fatal: not a git repository", returncode=128)
+        self.assertIsNone(changes)
+
+    def test_arbre_propre_reste_une_liste_vide(self):
+        # L'autre moitié du contrat : `[]` garde son sens de « rien de sale »,
+        # sans quoi plus aucun worktree ne serait jamais supprimé.
+        self.assertEqual(self.read(""), [])
 
 
 class TestUnpushed(unittest.TestCase):
@@ -224,12 +234,39 @@ class TestSafetyHold(unittest.TestCase):
             gc.safety_hold("/repo", entry(), self.MERGED, False)
         asked.assert_not_called()
 
+    def test_inspection_impossible_retient_hors_integration(self):
+        # `dirt` rend None quand `git status` n'a pas abouti — un `.git` abîmé,
+        # git indisponible. La confondre avec une liste vide supprimait le
+        # worktree en le déclarant propre sans l'avoir regardé (#260).
+        held = self.hold(self.CLOSED, None)
+        self.assertIsNotNone(held)
+        self.assertIn("invérifiables", held)
+
+    def test_inspection_impossible_retient_malgre_une_preuve_d_integration(self):
+        # Là où le doute sur les commits cède devant une PR mergée, celui-ci ne
+        # cède pas : l'intégration couvre ce qui a été commité, pas ce qui
+        # traîne encore dans l'arbre. Et sans noms de fichiers, on ne peut même
+        # pas savoir si ce qui traîne est un résidu d'outillage ou du travail.
+        for reason in (self.MERGED, "branche déjà intégrée dans origin/develop"):
+            held = self.hold(reason, None)
+            self.assertIsNotNone(held, reason)
+            self.assertIn("git status", held)
+
+    def test_inspection_impossible_n_est_pas_imputee_aux_commits(self):
+        # Deux ignorances distinctes, deux messages distincts : celui qui lit le
+        # rapport doit savoir laquelle des deux lectures a échoué.
+        held = self.hold(self.CLOSED, None, ahead=0)
+        self.assertNotIn("commits non poussés", held)
+
     def test_force_leve_tout(self):
         self.assertIsNone(
             self.hold(self.CLOSED, [(" M", "apps/api/src/x.ts")], ahead=9, force=True))
 
     def test_force_leve_aussi_une_mesure_impossible(self):
         self.assertIsNone(self.hold(self.CLOSED, [], ahead=None, force=True))
+
+    def test_force_leve_aussi_une_inspection_impossible(self):
+        self.assertIsNone(self.hold(self.CLOSED, None, ahead=None, force=True))
 
     def test_nomme_au_plus_trois_fichiers(self):
         changes = [(" M", "f{}.ts".format(i)) for i in range(7)]
