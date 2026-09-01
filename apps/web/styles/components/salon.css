@@ -1,0 +1,136 @@
+/*
+ * Composant — Page publique du salon
+ * =============================================================================
+ *
+ * Mise en page de la vitrine d'un établissement et de son catalogue (#43) :
+ * en-tête, sections, grille de prestations, informations pratiques.
+ *
+ * Les cartes de prestation réemploient `.spa-card` — elles n'ont pas de style
+ * propre, seulement une place dans une grille. Ce fichier ne redéclare donc ni
+ * bordure, ni fond, ni rayon : un salon qui substitue sa rampe de marque doit
+ * voir sa page changer avec le reste du système, pas à côté.
+ *
+ * États : le catalogue vide et les coordonnées absentes sont rendus par
+ * `.spa-card--empty` et `.spa-empty-state` du socle, jamais par une variante
+ * locale.
+ */
+
+.spa-salon {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-10);
+  /* La lecture d'une page de texte se dégrade au-delà d'une soixantaine de
+   * caractères par ligne ; la borne haute tient la mesure sur un grand écran
+   * sans brider la grille de prestations. */
+  max-inline-size: 64rem;
+  margin-inline: auto;
+  padding-block: var(--spa-space-10);
+  padding-inline: var(--spa-space-4);
+}
+
+/* --- En-tête --------------------------------------------------------------- */
+
+.spa-salon__header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+}
+
+.spa-salon__eyebrow {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-salon__title {
+  font-size: var(--spa-font-size-3xl);
+}
+
+.spa-salon__lede {
+  max-inline-size: 44rem;
+  font-size: var(--spa-font-size-lg);
+  line-height: var(--spa-line-height-relaxed);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Sections -------------------------------------------------------------- */
+
+.spa-salon__section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-5);
+}
+
+.spa-salon__section-title {
+  font-size: var(--spa-font-size-2xl);
+}
+
+.spa-salon__category {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+}
+
+.spa-salon__category-title {
+  font-size: var(--spa-font-size-lg);
+  color: var(--spa-color-text-subtle);
+}
+
+/* --- Grille de prestations -------------------------------------------------- */
+
+/*
+ * `auto-fill` et non `auto-fit` : une rubrique qui ne contient qu'une prestation
+ * garde une carte de largeur normale au lieu de l'étirer sur toute la page, et
+ * la lecture reste homogène d'une rubrique à l'autre.
+ */
+.spa-salon__services {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: var(--spa-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* La carte occupe toute la hauteur de sa cellule : les prix s'alignent d'une
+ * ligne à l'autre même quand les descriptions n'ont pas la même longueur. */
+.spa-salon__service {
+  block-size: 100%;
+}
+
+.spa-salon__service .spa-card__price {
+  margin-block-start: auto;
+}
+
+/* --- Informations pratiques ------------------------------------------------- */
+
+.spa-salon__info {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  margin: 0;
+}
+
+.spa-salon__info-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-1) var(--spa-space-3);
+}
+
+.spa-salon__info-term {
+  min-inline-size: 8rem;
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-salon__info-value {
+  margin: 0;
+}
+
+.spa-salon__hint {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
