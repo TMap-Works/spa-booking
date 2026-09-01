@@ -359,6 +359,81 @@ class IntentPersistence(unittest.TestCase):
                          "infra/terraform,prisma")
 
 
+
+class NatureRejouee(unittest.TestCase):
+    """La nature se rejoue comme la largeur — sinon la reprise change de file.
+
+    Un superviseur ressuscité par la veille sur un run d'outillage repartirait
+    sur le produit : non pas un run dégradé, mais un tout autre plan, avec des
+    agents lancés sur des tickets que personne n'a demandés.
+    """
+
+    def args(self, **fields):
+        base = dict(milestone="S1 — Fondations", width=1, waves_per_leg=1,
+                    no_merge=False, merge_sensitive=set(),
+                    permission_mode="acceptEdits", model=None, margin=90,
+                    patience=2, max_legs=40, leg_timeout=120, claude="claude",
+                    nature="outillage", yes=True)
+        base.update(fields)
+        return argparse.Namespace(**base)
+
+    def test_la_nature_traverse_le_disque_et_revient_en_ligne_de_commande(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        with mock.patch.object(sup, "INTENT", Path(tmp.name) / "supervisor.json"):
+            sup.save_intent(self.args())
+            reloaded = sup.load_intent()
+        self.assertEqual(reloaded["nature"], "outillage")
+        argv = sup.intent_argv(reloaded)
+        self.assertEqual(argv[argv.index("--nature") + 1], "outillage")
+
+    def test_une_intention_ancienne_sans_le_champ_vaut_produit(self):
+        """Un `supervisor.json` écrit avant ce ticket n'a pas le champ : il ne
+        doit ni lever, ni se mettre à dérouler l'outillage tout seul."""
+        argv = sup.intent_argv({"milestone": "S1", "width": 3})
+        self.assertEqual(argv[argv.index("--nature") + 1], "projet")
+
+    def test_la_vague_relancee_deroule_la_meme_nature(self):
+        """Sans cela, la vague relancée par le superviseur repartirait sur le
+        produit et ouvrirait un second run à côté du sien."""
+        self.assertIn("--nature outillage", sup.leg_prompt(self.args()))
+
+    def test_un_run_produit_ne_porte_pas_le_drapeau(self):
+        self.assertNotIn("--nature", sup.leg_prompt(self.args(nature="projet")))
+
+
+class ArmementQuiChangeDeNature(unittest.TestCase):
+    """Il n'y a qu'une intention, donc qu'une nature armée à la fois.
+
+    Ouvrir un run d'outillage remplace l'armement du run produit : c'est
+    tenable — les deux files ne se déroulent pas ensemble — mais le taire ferait
+    croire à un run produit qui repart tout seul alors que plus rien ne le
+    relance.
+    """
+
+    def test_changer_de_nature_previent_et_nomme_les_deux(self):
+        message = sup.nature_relayed(
+            {"nature": "projet", "milestone": "S2 — Réservation"}, "outillage")
+        self.assertIsNotNone(message)
+        self.assertIn("projet", message)
+        self.assertIn("outillage", message)
+        self.assertIn("S2 — Réservation", message)
+
+    def test_rearmer_la_meme_nature_ne_dit_rien(self):
+        self.assertIsNone(
+            sup.nature_relayed({"nature": "outillage"}, "outillage"))
+
+    def test_une_intention_ancienne_compte_pour_du_produit(self):
+        """Sans le champ, l'armement venait d'un dispositif qui ne savait
+        dérouler que le produit : passer à l'outillage relaie bien une file."""
+        self.assertIsNone(sup.nature_relayed({"milestone": "S1"}, "projet"))
+        self.assertIsNotNone(sup.nature_relayed({"milestone": "S1"}, "outillage"))
+
+    def test_un_premier_armement_ne_relaie_personne(self):
+        self.assertIsNone(sup.nature_relayed(None, "outillage"))
+        self.assertIsNone(sup.nature_relayed({}, "outillage"))
+
+
 class DescribeScopes(unittest.TestCase):
     """Ce que `--state` doit dire : les périmètres, nommés — jamais un décompte.
 

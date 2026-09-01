@@ -42,8 +42,9 @@
   filtrer. Voir
   [project-flow §12](../.claude/skills/project-flow/SKILL.md).
 - `post-mvp` — hors périmètre, sans milestone, non travaillé pendant le MVP.
-- `nature:projet` / `nature:outillage` — qui traite le ticket. Le run de jalon
-  ne dispatche que `nature:projet` ; l'outillage — `scripts/`, `.claude/`, le
+- `nature:projet` / `nature:outillage` — quelle file déroule le ticket. Un run
+  de jalon n'en déroule qu'une, `nature:projet` par défaut et `nature:outillage`
+  sur `--nature outillage` ; l'outillage — `scripts/`, `.claude/`, le
   harnais qui les teste — attend une session humaine, un ticket à la fois. Toute
   issue en porte un : sans lui, le plan l'écarte pour classement incomplet. Voir
   [project-flow §2](../.claude/skills/project-flow/SKILL.md).

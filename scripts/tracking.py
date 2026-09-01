@@ -20,9 +20,10 @@ un label nature, et une carte sur le GitHub Project — exactement l'anatomie
 exigée par `.claude/skills/project-flow/SKILL.md` §2. Sans ce rattachement, le
 ticket n'apparaît dans aucun suivi et ne documente donc rien.
 
-`nature:` dit qui traite le ticket : `projet` pour le produit MVP, que le run de
-jalon dispatche, `outillage` pour le dispositif de collaboration, qu'un humain
-prend une session à la fois. Un ticket de traçabilité, lui, n'est de toute façon
+`nature:` dit quelle file déroule le ticket : `projet` pour le produit MVP,
+`outillage` pour le dispositif de collaboration. Un run de jalon n'en déroule
+qu'une — le produit par défaut, l'outillage sur `--nature outillage`, un ticket
+à la fois. Un ticket de traçabilité, lui, n'est de toute façon
 jamais dispatché — sa nature ne sert qu'à savoir, en fin de sprint, où est passé
 le temps.
 
@@ -552,8 +553,8 @@ def main():
         target.add_argument("--priority", choices=PRIORITIES)
         target.add_argument("--nature", choices=NATURES,
                             help="produit MVP (projet) ou dispositif de "
-                                 "collaboration (outillage) — ce second n'est "
-                                 "jamais dispatché par un run de jalon")
+                                 "collaboration (outillage) — un run de jalon "
+                                 "ne déroule qu'une nature à la fois")
         target.add_argument("--milestone", metavar="TITRE",
                             help="titre du jalon, ex. « S1 — Fondations »")
         target.add_argument("--dry-run", action="store_true")

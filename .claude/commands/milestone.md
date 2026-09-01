@@ -1,6 +1,6 @@
 ---
 description: Déroule un jalon entier — ordonne ses issues, les regroupe en vagues parallélisables, lance un agent par ticket et intègre vague après vague
-argument-hint: [jalon] [--width N] [--waves N] [--plan] [--fresh] [--no-merge] [--yes]
+argument-hint: [jalon] [--nature projet|outillage] [--width N] [--waves N] [--plan] [--fresh] [--no-merge] [--yes]
 allowed-tools: Bash, Read, Write, Edit, Glob, Grep, Agent, Skill, AskUserQuestion
 ---
 
@@ -12,14 +12,42 @@ Conventions de référence : [.claude/skills/project-flow/SKILL.md](.claude/skil
 Le traitement d'un ticket isolé reste [/ticket](.claude/commands/ticket.md) —
 cette commande ne le réimplémente pas, elle l'orchestre.
 
-**Options** — `--width N` : nombre d'agents simultanés (défaut 3) ·
-`--waves N` : s'arrêter après N vagues · `--plan` : produire le plan et rendre
-la main · `--fresh` : ouvrir un run neuf au lieu de reprendre l'inachevé ·
-`--no-merge` : tout mener jusqu'à la PR sans rien merger · `--yes` : ne pas
-demander d'arbitrage sur les tickets sensibles — leurs PR sont alors **laissées
+**Options** — `--nature projet|outillage|toutes` : ce que le run déroule
+(défaut `projet`, voir la section suivante) · `--width N` : nombre d'agents
+simultanés (défaut 3 en `projet`, **1 en `outillage`**) · `--waves N` :
+s'arrêter après N vagues · `--plan` : produire le plan et rendre la main ·
+`--fresh` : ouvrir un run neuf au lieu de reprendre l'inachevé · `--no-merge` :
+tout mener jusqu'à la PR sans rien merger · `--yes` : ne pas demander
+d'arbitrage sur les tickets sensibles — leurs PR sont alors **laissées
 ouvertes** plutôt que mergées sans que personne les ait lues. `--resume` reste
 accepté mais ne sert plus à rien : **la reprise est le comportement par
 défaut**.
+
+## Produit ou outillage — une nature à la fois
+
+Par défaut la commande ne déroule que le produit : une issue `nature:outillage`
+— `scripts/`, `.claude/`, le harnais qui les teste — est écartée du plan, parce
+qu'elle modifie le dispositif au moment même où il tourne.
+
+`--nature outillage` retourne le filtre et déroule ce stock-là, **un ticket à la
+fois** : la largeur vaut 1 sauf `--width` explicite, et l'ordre reste le score
+d'importance. C'est ce qui rend la file tenable — chaque commande du run étant
+un processus neuf, elle repart du code que le ticket précédent vient de merger,
+là où deux agents simultanés se réécriraient l'un sous l'autre.
+
+Trois choses à savoir avant d'en lancer un :
+
+- **Les deux runs cohabitent.** Un run produit inachevé sur S1 n'est pas repris
+  par un `--nature outillage`, et réciproquement : `start` et `next` ne voient
+  que les runs de la nature demandée. L'identifiant d'un run d'outillage porte
+  son nom (`s1-fondations-outillage-…`).
+- **La reprise automatique hérite de la nature.** Elle est inscrite dans
+  l'intention du superviseur et rejouée à chaque redémarrage, comme la largeur
+  et `--no-merge`.
+- **`--nature toutes` ne filtre plus rien** — à n'employer qu'en connaissance de
+  cause : un agent produit et un agent outillage d'une même vague peuvent se
+  retrouver à réécrire l'orchestrateur l'un sous l'autre. Sa largeur par défaut
+  est 1 pour cette raison.
 
 ## Ce que cette commande ne fait pas
 
@@ -33,11 +61,12 @@ défaut**.
 - **Elle ne rattrape pas un backlog mal tenu.** Une issue sans milestone, sans
   label de classement ou sans critère d'acceptation est écartée du plan, pas
   devinée. Le plan dit lesquelles et pourquoi.
-- **Elle ne touche pas à l'outillage.** Une issue `nature:outillage` — `scripts/`,
-  `.claude/`, le harnais qui les teste — est écartée d'office : elle modifierait
-  le dispositif au moment même où il tourne. Ces tickets-là se prennent à la
-  main, un par session, et c'est l'arbitrage du run qui les ouvre. Le run, lui,
-  ne déroule que `nature:projet`.
+- **Elle ne mêle pas le produit et l'outillage.** Un run déroule une nature et
+  une seule. Par défaut c'est le produit ; l'outillage — `scripts/`, `.claude/`,
+  le harnais qui les teste — demande `--nature outillage`, qui le déroule en
+  séquentiel. Ce que la commande ne fera jamais, c'est les mêler d'elle-même :
+  un ticket d'outillage lancé au milieu d'une vague produit réécrirait le
+  dispositif pendant qu'il dispatche.
 - **Elle ne traite pas un jalon en une fois.** Chaque vague est un point d'arrêt
   net : rien n'est perdu si on s'arrête là, et la relance reprend d'elle-même.
 - **Elle ne survit pas à sa propre limite de quota.** La session qui orchestre
@@ -70,8 +99,11 @@ On prend alors la proposition et on l'annonce.
 Puis une seule commande, qu'il s'agisse d'un premier passage ou d'une reprise :
 
 ```bash
-python scripts/milestone_run.py start "$1" --width <N>
+python scripts/milestone_run.py start "$1" --width <N> --nature <nature>
 ```
+
+`--nature` ne se passe que s'il a été demandé : sans lui, `start` déroule le
+produit, et `--width` non passé prend la valeur qui va avec la nature.
 
 `start` sans jalon fait ce même choix tout seul — c'est ce qui rend le script
 utilisable à la main et depuis le superviseur. Passer `$1` quand il est connu
@@ -131,16 +163,16 @@ python scripts/milestone_run.py status
 Le plan lui-même se calcule à part quand on veut seulement le lire :
 
 ```bash
-python scripts/milestone_plan.py "$1" --width <N>     # l'ordre et les vagues
+python scripts/milestone_plan.py "$1" --width <N> --nature <nature>
 ```
 
 Le plan répond à trois questions :
 
-- **quoi** — le produit, et lui seul. `nature:projet` entre dans le plan,
-  `nature:outillage` en sort sous la rubrique « Écartées », et une issue sans
-  label `nature:*` sort en « classement incomplet ». L'en-tête du plan compte
-  les tickets d'outillage laissés de côté : c'est la liste des chantiers à
-  prendre à la main, une session à la fois ;
+- **quoi** — une nature, et une seule. Sous `--nature projet` (le défaut),
+  `nature:outillage` sort sous la rubrique « Écartées » ; sous
+  `--nature outillage`, c'est `nature:projet` qui en sort. Une issue sans label
+  `nature:*` sort en « classement incomplet » dans les deux sens. L'en-tête du
+  plan compte les tickets laissés de côté pour cause de nature ;
 - **l'ordre** — score d'importance : priorité, `risk`, `security`, et surtout le
   nombre d'issues que l'issue débloque. Ce qui ouvre la voie passe avant ce qui
   est seulement urgent ;
@@ -160,7 +192,7 @@ première vague et des deux suivantes**, et confronter :
 | les prérequis | deux issues d'une même vague dont l'une consomme visiblement le travail de l'autre |
 | les sérialisations | deux issues séparées alors qu'elles vivent dans des répertoires distincts |
 | les issues écartées | un classement incomplet qu'il suffit de corriger pour rendre l'issue traitable |
-| les issues d'outillage | une issue produit étiquetée `nature:outillage` par erreur — elle ne sera jamais dispatchée, et personne ne s'en apercevra |
+| les natures | une issue rangée dans la mauvaise — elle partira dans l'autre file, ou n'en verra aucune, et personne ne s'en apercevra |
 
 Toute correction s'écrit dans
 [.claude/milestone-rules.json](.claude/milestone-rules.json) — `resources` pour

@@ -4,6 +4,7 @@
     python scripts/milestone_plan.py                 # premier jalon ouvert qui a encore des issues
     python scripts/milestone_plan.py S1              # un préfixe de titre suffit
     python scripts/milestone_plan.py S1 --width 4    # largeur maximale d'une vague
+    python scripts/milestone_plan.py S1 --nature outillage   # le stock d'outillage
     python scripts/milestone_plan.py S1 --json       # sortie machine, consommée par /milestone
 
 Le plan répond à deux questions, et à elles seules :
@@ -26,12 +27,24 @@ Font exception les écartées de `NEVER_HOLDS` (hors périmètre, traçabilité,
 épique, outillage) : le run ne les fera jamais, les retenir gèlerait le jalon à
 vie.
 
-**Le plan ne dispatche que du produit.** Une issue `nature:outillage` — scripts,
-`.claude/`, CI du dépôt — est écartée d'office : cet outillage se traite à la
-main, une session à la fois, parce qu'il modifie le dispositif au moment même où
-le dispositif tourne. Le run, lui, ne traite que `nature:projet`. Une issue sans
-label `nature:*` n'est pas dispatchée non plus : elle sort en « classement
-incomplet », au même titre qu'un `ws:*` manquant.
+**Le plan ne dispatche qu'une nature à la fois.** Par défaut, le produit : une
+issue `nature:outillage` — scripts, `.claude/`, CI du dépôt — est écartée, parce
+qu'elle modifie le dispositif au moment même où le dispositif tourne.
+`--nature outillage` retourne le filtre et ne déroule que ce stock-là ; c'est
+alors le produit qui est écarté. `--nature toutes` ne filtre plus rien, et ne
+s'emploie qu'en connaissance de cause : un agent produit et un agent outillage
+d'une même vague peuvent se retrouver à réécrire l'orchestrateur l'un sous
+l'autre.
+
+Un plan d'outillage sort **en séquentiel** : sans `--width` explicite, la largeur
+vaut 1 plutôt que 3. Neuf des quinze tickets d'outillage du S1 touchent
+`scripts/milestone-run` ou `.claude/commands` ; les paralléliser reviendrait à
+faire réécrire l'orchestrateur par deux agents à la fois. L'ordre, lui, ne change
+pas : c'est le même score d'importance — priorité, risque, sécurité, et surtout
+ce que le ticket débloque.
+
+Une issue sans label `nature:*` n'est dispatchée dans aucun des deux sens : elle
+sort en « classement incomplet », au même titre qu'un `ws:*` manquant.
 
 Rien ici n'est deviné définitivement. `.claude/milestone-rules.json` fige les
 dépendances et les empreintes que l'heuristique ne peut pas connaître ; toute
@@ -72,6 +85,15 @@ OK, EMPTY, USAGE = 0, 1, 4
 PRIORITY_SCORE = {"P0": 100, "P1": 60, "P2": 25}
 LABEL_BONUS = {"risk": 15, "security": 10}
 UNBLOCK_WEIGHT = 4
+
+# Ce qu'un plan déroule. `projet` et `outillage` s'excluent — c'est tout l'objet
+# du filtre ; `toutes` le lève, et n'est pas le cas normal.
+NATURES = ("projet", "outillage", "toutes")
+
+# Largeur par défaut selon la nature déroulée. L'outillage réécrit `scripts/` et
+# `.claude/` pendant que ces fichiers-là orchestrent le run : une vague, un
+# ticket. Le produit, lui, se parallélise sans se marcher dessus.
+DEFAULT_WIDTH = {"projet": 3, "outillage": 1, "toutes": 1}
 
 WORKSTREAMS = {"ws:devops": "devops", "ws:backend": "backend",
                "ws:frontend": "frontend", "ws:design": "design", "ws:qa": "qa"}
@@ -235,10 +257,14 @@ OUT_OF_SCOPE = "hors périmètre MVP (post-mvp)"
 TRACKING = "ticket de traçabilité, pas du travail produit"
 EPIC = "épique — conteneur, ce sont ses sous-tâches qui portent le travail"
 TOOLING = "outillage — traité à la main, une session à la fois"
-NEVER_HOLDS = {OUT_OF_SCOPE, TRACKING, EPIC, TOOLING}
+# Le symétrique de `TOOLING` sous `--nature outillage`. Il ne retient personne
+# pour la même raison : ce run-là ne fera jamais le produit, et un ticket
+# d'outillage suspendu à une issue produit ne partirait plus jamais.
+PRODUCT = "produit — pas d'un run d'outillage"
+NEVER_HOLDS = {OUT_OF_SCOPE, TRACKING, EPIC, TOOLING, PRODUCT}
 
 
-def qualify(issue, busy, me):
+def qualify(issue, busy, me, nature="projet"):
     """(recevable, raison d'écarter).
 
     Ne voit que des issues **ouvertes** : `fetch_issues` filtre sur `--state open`.
@@ -255,8 +281,12 @@ def qualify(issue, busy, me):
         return False, TRACKING
     if "type:epic" in labels:
         return False, EPIC
-    if "nature:outillage" in labels:
+    # Une seule nature est déroulée à la fois : l'autre est écartée sans retenir
+    # personne — son travail se fera, mais dans un autre run.
+    if nature == "projet" and "nature:outillage" in labels:
         return False, TOOLING
+    if nature == "outillage" and "nature:projet" in labels:
+        return False, PRODUCT
 
     missing = []
     if not any(l.startswith("ws:") for l in labels):
@@ -582,14 +612,14 @@ def due_in(milestone):
 
 
 def render(milestone, waves, index, excluded, edges, cut, width, closure,
-           withheld, catalog, reasons):
+           withheld, catalog, reasons, nature="projet"):
     counted = f"{len(index)} traitables"
     if withheld:
         counted += f" · {len(withheld)} retenues"
-    tooling = sum(1 for item in excluded if item["reason"] == TOOLING)
-    if tooling:
-        counted += f" · {tooling} outillage"
-    print(f"Jalon {milestone['title']} · {due_in(milestone)}")
+    aside = sum(1 for item in excluded if item["reason"] in (TOOLING, PRODUCT))
+    if aside:
+        counted += f" · {aside} d'une autre nature"
+    print(f"Jalon {milestone['title']} · {due_in(milestone)} · nature {nature}")
     print(f"{milestone['open_issues']} ouvertes · {milestone['closed_issues']} fermées · "
           f"{counted} · {len(waves)} vagues · largeur max {width}")
     print()
@@ -673,14 +703,22 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("milestone", nargs="?",
                         help="titre du jalon ou un fragment (défaut : échéance la plus proche)")
-    parser.add_argument("--width", type=int, default=3,
-                        help="nombre maximal d'issues menées en parallèle (défaut 3)")
+    parser.add_argument("--width", type=int, default=None,
+                        help="nombre maximal d'issues menées en parallèle "
+                             "(défaut 3 en projet, 1 en outillage)")
+    parser.add_argument("--nature", choices=NATURES, default="projet",
+                        help="ce que le plan déroule : le produit (défaut), "
+                             "l'outillage — scripts/, .claude/ —, ou les deux")
     parser.add_argument("--limit", type=int, default=200, help="issues lues au maximum")
     parser.add_argument("--json", action="store_true", help="sortie machine")
     parser.add_argument("--include-busy", action="store_true",
                         help="ne pas écarter les issues déjà couvertes par une PR ouverte")
     args = parser.parse_args()
 
+    # `--width` non passé vaut ce que la nature demande : le produit se
+    # parallélise, l'outillage se déroule un ticket à la fois.
+    if args.width is None:
+        args.width = DEFAULT_WIDTH[args.nature]
     if args.width < 1:
         sys.exit("--width doit valoir au moins 1")
 
@@ -695,7 +733,7 @@ def main():
 
     nodes, excluded, held_nodes = [], [], []
     for issue in issues:
-        ok, reason = qualify(issue, busy, me)
+        ok, reason = qualify(issue, busy, me, args.nature)
         if ok:
             nodes.append(describe(issue))
         else:
@@ -709,8 +747,8 @@ def main():
                 held_nodes.append(describe(issue))
 
     if not nodes:
-        print(f"Jalon {milestone['title']} : rien de traitable "
-              f"({len(excluded)} issue(s) écartée(s)).")
+        print(f"Jalon {milestone['title']} · nature {args.nature} : rien de "
+              f"traitable ({len(excluded)} issue(s) écartée(s)).")
         for item in excluded:
             print(f"  #{item['number']:<4} {item['reason']}")
         return EMPTY
@@ -745,6 +783,7 @@ def main():
                           "open": milestone["open_issues"],
                           "closed": milestone["closed_issues"]},
             "width": args.width,
+            "nature": args.nature,
             "waves": [
                 {"index": position,
                  "issues": [{k: v for k, v in index[n].items() if k != "body"}
@@ -769,7 +808,7 @@ def main():
         return OK
 
     render(milestone, waves, index, excluded, edges, cut, args.width, closure,
-           withheld, catalog, reasons)
+           withheld, catalog, reasons, args.nature)
     return OK
 
 
