@@ -1511,5 +1511,158 @@ class LargeurParNature(unittest.TestCase):
         self.assertEqual(set(run_mod.NATURES), set(run_mod.DEFAULT_WIDTH))
 
 
+class EtapeDOrchestration(unittest.TestCase):
+    """`step` — les huit à vingt-cinq minutes que le journal ne portait pas.
+
+    Entre deux vagues, seul l'orchestrateur travaille, et lui ne journalisait
+    rien : `npm run verify` sur `develop`, puis la lecture des issues et la revue
+    du plan. Un run mort s'y lisait comme un run au travail (#186).
+
+    Ce qui est vérifié ici est ce sur quoi tout le reste repose : que la ligne de
+    **fin** existe toujours, quelle que soit la façon dont la commande encadrée
+    se termine, et que le code de sortie de cette commande traverse `step` sans
+    être avalé — sans quoi une barrière encadrée cesserait d'être une barrière.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "r1").mkdir()
+
+    def step(self, label, command=(), ouvert=True, **fields):
+        args = argparse.Namespace(label=label, eta=None, run=None, ticket=None,
+                                  wave=None, phase="orchestration",
+                                  actor="orchestrateur", exec=list(command))
+        for name, value in fields.items():
+            setattr(args, name, value)
+        with mock.patch.object(run_mod, "RUNS_DIR", self.root), \
+             mock.patch.object(run_mod, "LATEST_LOG", self.root / "latest.log"), \
+             mock.patch.object(run_mod, "resolve",
+                               return_value="r1" if ouvert else None), \
+             contextlib.redirect_stdout(io.StringIO()), \
+             contextlib.redirect_stderr(io.StringIO()):
+            code = run_mod.cmd_step(args)
+        path = self.root / "r1" / "journal.ndjson"
+        events = [json.loads(line) for line
+                  in path.read_text(encoding="utf-8").splitlines() if line.strip()] \
+            if path.exists() else []
+        return code, events
+
+    def test_une_etape_sans_commande_pose_une_seule_ligne(self):
+        code, events = self.step("lecture des issues des vagues 1 a 3", eta=10)
+        self.assertEqual(code, run_mod.GO)
+        self.assertEqual(len(events), 1)
+        self.assertIn("lecture des issues", events[0]["message"])
+        self.assertIn("~10 min attendues", events[0]["message"])
+        self.assertEqual(events[0]["kind"], "run")
+        self.assertEqual(events[0]["actor"], "orchestrateur")
+        self.assertEqual(events[0]["phase"], "orchestration")
+
+    def test_une_commande_encadree_pose_l_ouverture_et_la_fermeture(self):
+        code, events = self.step("verify de develop",
+                                 [sys.executable, "-c", "pass"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(events), 2)
+        self.assertIn("en cours", events[0]["message"])
+        self.assertIn("terminé en", events[1]["message"])
+
+    def test_un_echec_est_journalise_en_erreur_et_son_code_traverse(self):
+        """La ligne de fin existe aussi quand la commande tombe — et le code de
+        sortie n'est pas avalé : `step` encadre une barrière sans la relâcher."""
+        code, events = self.step("verify de develop",
+                                 [sys.executable, "-c", "raise SystemExit(2)"])
+        self.assertEqual(code, 2)
+        self.assertEqual(events[1]["level"], "ERROR")
+        self.assertIn("(code 2)", events[1]["message"])
+
+    def test_une_interruption_ferme_quand_meme_la_ligne(self):
+        """Sans reprise du Ctrl-C, `main()` l'attrape et sort en `GO` : la ligne
+        d'ouverture resterait seule — le silence même que #186 corrige — et une
+        barrière abandonnée se lirait comme une barrière franchie."""
+        with mock.patch.object(run_mod.subprocess, "run",
+                               side_effect=KeyboardInterrupt):
+            code, events = self.step("verify de develop", ["npm", "run", "verify"])
+        self.assertEqual(code, 130)
+        self.assertEqual(events[1]["level"], "ERROR")
+        self.assertIn("interrompu", events[1]["message"])
+
+    def test_une_commande_introuvable_ne_leve_pas(self):
+        code, events = self.step("étape impossible", ["binaire-qui-nexiste-pas"])
+        self.assertEqual(code, 127)
+        self.assertEqual(events[1]["level"], "ERROR")
+        self.assertIn("non lançable", events[1]["message"])
+
+    def test_hors_run_la_commande_est_lancee_quand_meme(self):
+        """`/milestone` déroulé à la main n'a pas de journal où écrire. Ce n'est
+        pas une raison pour ne pas lancer la commande : `step` reste transparent."""
+        code, events = self.step("verify de develop",
+                                 [sys.executable, "-c", "raise SystemExit(3)"],
+                                 ouvert=False)
+        self.assertEqual(code, 3)
+        self.assertEqual(events, [])
+
+
+class CoupureDeLaCommandeEncadree(unittest.TestCase):
+    """`step "…" --eta 8 -- npm run verify --silent` : ce qui est à `step` et ce
+    qui est à la commande.
+
+    `argparse.REMAINDER` avalerait `--eta` avec le reste — c'est pourquoi la
+    coupe se fait sur le premier « -- » avant que le parseur ne travaille, et
+    seulement pour ce sous-programme.
+    """
+
+    def coupe(self, argv):
+        with mock.patch.object(sys, "argv", ["milestone_run.py", *argv]), \
+             mock.patch.object(run_mod, "cmd_step") as step, \
+             mock.patch.object(run_mod.Path, "mkdir"):
+            run_mod.main()
+        return step.call_args[0][0]
+
+    def test_les_options_de_step_restent_a_step(self):
+        args = self.coupe(["step", "verify", "--eta", "8", "--",
+                           "npm", "run", "verify", "--silent"])
+        self.assertEqual(args.label, "verify")
+        self.assertEqual(args.eta, 8)
+        self.assertEqual(args.exec, ["npm", "run", "verify", "--silent"])
+
+    def test_sans_double_tiret_il_n_y_a_pas_de_commande(self):
+        args = self.coupe(["step", "revue du plan", "--eta", "10"])
+        self.assertEqual(args.exec, [])
+        self.assertEqual(args.eta, 10)
+
+
+class BattementMarque(unittest.TestCase):
+    """`--beat` distingue une preuve de présence d'un travail journalisé.
+
+    Le superviseur pose une ligne toutes les cinq minutes tant qu'une étape est
+    en vol (#186). Sans marque, son propre battement rendrait le journal
+    éternellement frais et son guetteur de silence ne couperait plus jamais une
+    étape morte debout — on aurait remplacé un silence illisible par un silence
+    invisible.
+    """
+
+    def event(self, **fields):
+        base = dict(run=None, ticket=None, wave=None, phase=None, status=None,
+                    message="battement", pr=None, branch=None, level=None,
+                    actor="superviseur", quiet=True, reset=False, beat=False)
+        base.update(fields)
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
+                 mock.patch.object(run_mod, "resolve", return_value="r1"):
+                (Path(tmp) / "r1").mkdir()
+                run_mod.cmd_event(argparse.Namespace(**base))
+                line = (Path(tmp) / "r1" / "journal.ndjson").read_text(
+                    encoding="utf-8").strip()
+        return json.loads(line)
+
+    def test_un_battement_porte_sa_marque(self):
+        self.assertTrue(self.event(beat=True).get("beat"))
+
+    def test_un_evenement_ordinaire_ne_la_porte_pas(self):
+        self.assertNotIn("beat", self.event())
+
+
 if __name__ == "__main__":
     unittest.main()

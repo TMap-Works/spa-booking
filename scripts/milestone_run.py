@@ -9,6 +9,8 @@
     python scripts/milestone_run.py ticket 19 --follow     # entrer dans un traitement
     python scripts/milestone_run.py event --ticket 19 --phase implementation \
                                           --status running --message "..."
+    python scripts/milestone_run.py step "verify de develop" --eta 8 \
+                                          -- npm run verify   # étape encadrée
     python scripts/milestone_run.py log --level WARN       # ce qui a mal tourné
     python scripts/milestone_run.py onerror pause          # un échec retient le run
     python scripts/milestone_run.py gate                   # continuer ? code de sortie
@@ -28,6 +30,14 @@ cours avec le temps passé dans chaque phase, ce qu'il y a à reprendre.
 Ce sont les agents eux-mêmes qui alimentent tout cela, via la section « Journal
 d'exécution » de `.claude/commands/ticket.md`. Hors run, `event` sort sans rien
 faire : la même commande sert donc au ticket isolé sans le perturber.
+
+Les agents ne couvrent cependant que le temps des vagues. **Entre deux vagues,
+personne n'écrivait** — huit minutes de `npm run verify` sur `develop`, puis cinq
+à quinze à lire les issues et revoir le plan (#186). `step` est ce qui manquait à
+l'orchestrateur : il pose une ligne avant l'étape et une après, avec sa durée
+réelle, et il sait encadrer la commande elle-même pour que la seconde ligne ne
+puisse pas être oubliée. Ce qui reste de silence est couvert par le battement
+périodique du superviseur (`event --beat`).
 
 ## Quatre fichiers, trois écrivains
 
@@ -1744,12 +1754,107 @@ def cmd_event(args):
             event[name] = value
     if getattr(args, "reset", False):
         event["reset"] = True
+    if getattr(args, "beat", False):
+        event["beat"] = True
     append_journal(run_id, event)
 
     if not args.quiet:
         label = f"#{args.ticket}" if args.ticket else "run"
         print(f"{label} {args.phase or ''} {args.status or ''}".strip())
     return GO
+
+
+# --------------------------------------------------------------------------- #
+# Les étapes d'orchestration — le silence qu'`event` ne couvrait pas
+# --------------------------------------------------------------------------- #
+
+def cmd_step(args):
+    """Journalise une étape d'orchestration longue — et, au besoin, l'exécute.
+
+    Entre deux vagues, le journal restait muet quinze à vingt-cinq minutes
+    (#186) : l'orchestrateur passe huit minutes à vérifier `develop` après le
+    dernier merge, puis cinq à quinze à lire les issues et revoir le plan avant
+    de lancer la suivante. Rien ne distinguait alors un run qui travaille d'un
+    run mort — c'est ce qui a rendu la nuit du 25/08 illisible.
+
+    Deux lignes lèvent le doute, à condition que la seconde existe **toujours**.
+    D'où la forme encadrante, qui ne laisse pas le choix de l'oublier :
+
+        milestone_run.py step "verify de develop apres la vague 2" --eta 8 \\
+            -- npm run verify
+
+    La commande est lancée telle quelle, sa sortie reste celle du terminal, sa
+    durée réelle et son code de sortie sont journalisés, et ce code devient
+    celui de `step` : la barrière garde toute sa valeur de barrière.
+
+    Sans commande, la ligne est posée seule — un jalon d'avancement au milieu
+    d'une étape que personne ne peut encadrer, comme la lecture des issues.
+
+    Ce que `step` **ne** fait pas : poser un `status`. Ses lignes racontent une
+    étape, elles ne déclarent pas un état du run — un échec sort en `ERROR`, pas
+    en `blocked`. Encadrer `npm run verify` ne dispense donc jamais du
+    `event --status blocked` de la phase 4 de `/milestone` : `broken_develop()`
+    dans `milestone_arbiter.py` ne retient que les `blocked` sans ticket dont le
+    message nomme la barrière, et un `develop` cassé qui ne serait porté que par
+    la ligne de `step` dormirait jusqu'au matin sans jamais atteindre l'arbitre.
+    """
+    command = list(getattr(args, "exec", None) or [])
+    horizon = f", ~{args.eta} min attendues" if args.eta else ""
+
+    def note(message, level=None):
+        # Le run est résolu à chaque ligne, et non une fois pour toutes : c'est
+        # ce qui permet d'encadrer `start` lui-même, dont l'étape la plus lente
+        # — `reconcile`, qui interroge GitHub — précède l'existence du run.
+        # Hors run — `/milestone` déroulé à la main, un essai au clavier — il n'y
+        # a pas de journal où écrire, et ce n'est pas une raison pour ne pas
+        # lancer la commande : `step` doit rester transparent.
+        run_id = resolve(args.run, required=False)
+        if run_id is None:
+            return
+        event = {"ts": now(), "kind": "ticket" if args.ticket else "run",
+                 "actor": args.actor, "phase": args.phase, "message": message}
+        for name in ("ticket", "wave"):
+            value = getattr(args, name, None)
+            if value is not None:
+                event[name] = value
+        if level:
+            event["level"] = level
+        append_journal(run_id, event)
+
+    if not command:
+        note(f"{args.label}{horizon}")
+        print(f"{args.label}{horizon}")
+        return GO
+
+    note(f"{args.label} — en cours{horizon}")
+    started = time.time()
+    try:
+        # `shutil.which` d'abord : sous Windows `npm` est un `npm.cmd` que
+        # `Popen` sans shell ne résout pas — c'est la même correction que
+        # `resolve_binary()` dans milestone_supervise.py.
+        code = subprocess.run([shutil.which(command[0]) or command[0],
+                               *command[1:]]).returncode
+    except (OSError, ValueError) as exc:
+        note(f"{args.label} — commande non lançable : {exc}", "ERROR")
+        print(f"« {command[0]} » : {exc}", file=sys.stderr)
+        return 127
+    except KeyboardInterrupt:
+        # Ctrl-C interrompt la commande encadrée *et* `step`. Sans cette reprise,
+        # `main()` l'attraperait et sortirait en `GO` : la ligne d'ouverture
+        # resterait seule dans le journal — le silence même que #186 corrige — et
+        # une barrière abandonnée se lirait comme une barrière franchie.
+        note(f"{args.label} — interrompu après "
+             f"{human_delta(time.time() - started)}", "ERROR")
+        print(f"{args.label} — interrompu", file=sys.stderr)
+        return 130
+    took = human_delta(time.time() - started)
+    if code == 0:
+        note(f"{args.label} — terminé en {took}")
+    else:
+        note(f"{args.label} — échec en {took} (code {code}) : "
+             f"{' '.join(command)}", "ERROR")
+    print(f"{args.label} — {'terminé' if code == 0 else 'échec'} en {took}")
+    return code
 
 
 def cmd_gate(args):
@@ -2709,6 +2814,23 @@ def main():
     eventer.add_argument("--quiet", action="store_true")
     eventer.add_argument("--reset", action="store_true",
                          help="autorise le statut à faire reculer le ticket")
+    eventer.add_argument("--beat", action="store_true",
+                         help="battement de présence, pas un travail : le "
+                              "guetteur de silence du superviseur l'ignore")
+
+    stepper = sub.add_parser(
+        "step", help="journalise une étape d'orchestration longue, et l'exécute",
+        description="Pose une ligne avant l'étape et une après, avec sa durée "
+                    "réelle. Tout ce qui suit « -- » est la commande à encadrer ; "
+                    "son code de sortie devient celui de `step`.")
+    stepper.add_argument("label", help="ce que fait l'étape, en clair")
+    stepper.add_argument("--eta", type=int, metavar="MINUTES",
+                         help="durée attendue — ce qui rend le silence lisible")
+    stepper.add_argument("--run")
+    stepper.add_argument("--ticket", type=int)
+    stepper.add_argument("--wave", type=int)
+    stepper.add_argument("--phase", choices=PHASES, default="orchestration")
+    stepper.add_argument("--actor", default="orchestrateur")
 
     for name, helptext in [("gate", "peut-on continuer ? code de sortie"),
                            ("shell", "piloter le run à la main"),
@@ -2814,11 +2936,23 @@ def main():
     nexter.add_argument("--nature", choices=NATURES, default="projet",
                         help="la nature dont on veut l'état (défaut : projet)")
 
-    args = parser.parse_args()
+    # `step` encadre une commande, et cette commande a ses propres options :
+    # `-- npm run verify --silent`. On coupe donc sur le premier « -- » avant de
+    # laisser argparse travailler, plutôt que d'employer `REMAINDER` — qui
+    # avalerait aussi les options de `step` lui-même. La coupe est réservée à ce
+    # sous-programme : ailleurs, un « -- » isolé garde le sens qu'argparse lui donne.
+    argv, wrapped = sys.argv[1:], []
+    if argv[:1] == ["step"] and "--" in argv:
+        cut = argv.index("--")
+        argv, wrapped = argv[:cut], argv[cut + 1:]
+
+    args = parser.parse_args(argv)
+    args.exec = wrapped
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
     handlers = {
         "start": cmd_start, "replan": cmd_replan, "event": cmd_event,
+        "step": cmd_step,
         "gate": cmd_gate, "status": cmd_status, "log": cmd_log,
         "resume": cmd_resume, "shell": cmd_shell, "list": cmd_list,
         "reconcile": cmd_reconcile, "quota": cmd_quota,
