@@ -25,7 +25,12 @@ interface SummaryStepProps {
   readonly contact: ContactDraft;
   readonly onBack: () => void;
   readonly onBooked: (appointment: BookedAppointment) => void;
-  readonly onSlotLost: (message: string) => void;
+  /**
+   * Sans argument, délibérément : le créneau perdu et son libellé sont connus de
+   * l'orchestrateur, et le message de l'API n'a pas à traverser cette frontière
+   * (#46 — voir `onSlotLost` dans `booking-tunnel.tsx`).
+   */
+  readonly onSlotLost: () => void;
 }
 
 /**
@@ -89,8 +94,15 @@ export function SummaryStep({
 
     // Le créneau parti pendant la saisie n'est pas une panne : c'est le cas
     // normal sous concurrence, et il se traite par un retour au calendrier.
+    //
+    // Le tri se fait sur le **code** et sur lui seul (#46) : c'est le seul champ
+    // du corps d'erreur que l'API s'engage à tenir. Trier sur le message ferait
+    // dépendre le parcours critique d'une chaîne de caractères qu'une
+    // reformulation côté serveur suffirait à casser — et le 409 retomberait
+    // alors dans la panne générique ci-dessous, qui laisse la cliente devant un
+    // créneau qu'elle ne pourra jamais obtenir.
     if (result.code === ERROR_CODES.SLOT_NO_LONGER_AVAILABLE) {
-      onSlotLost(result.message);
+      onSlotLost();
 
       return;
     }

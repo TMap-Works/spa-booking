@@ -1,7 +1,7 @@
 'use client';
 
 import type { BookedAppointment, PublicService, PublicTenant, UtcInstant } from '@spa/shared';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Notification, type NotificationTone } from '@/components/ui/notification';
 import {
@@ -14,7 +14,7 @@ import {
   type BookingStep,
   type ContactDraft,
 } from '@/lib/booking/draft';
-import { timeZoneMention } from '@/lib/format';
+import { formatDateTimeInTimeZone, timeZoneMention } from '@/lib/format';
 
 import { ConfirmationStep } from './steps/confirmation-step';
 import { ContactStep } from './steps/contact-step';
@@ -59,6 +59,7 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
   const [draft, setDraft] = useState<BookingDraft>(emptyBookingDraft);
   const [hydrated, setHydrated] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const noticeRef = useRef<HTMLDivElement | null>(null);
 
   // Relecture du brouillon. `sessionStorage` n'existe pas au rendu serveur :
   // l'état de départ est donc toujours vierge, et l'étape réelle n'apparaît
@@ -135,20 +136,55 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
   }, []);
 
   /**
-   * Le créneau a été pris pendant que la cliente saisissait ses coordonnées.
+   * Le créneau a été pris pendant que la cliente saisissait ses coordonnées (#46).
    *
    * Ce n'est pas une erreur exceptionnelle, c'est le cas normal sous
-   * concurrence (skill web-frontend §3) : on la ramène au choix du créneau **en
-   * conservant tout le reste**, et on le lui dit.
+   * concurrence (skill web-frontend §3). Trois choses en découlent, et ce sont
+   * les trois premiers critères de l'issue :
+   *
+   * - **les créneaux sont rechargés.** Revenir à l'étape `creneau` démonte le
+   *   récapitulatif et remonte `SlotStep`, qui interroge les disponibilités à
+   *   son montage : la cliente ne choisit jamais dans la liste périmée qui
+   *   vient de lui coûter sa réservation. Le test du tunnel l'exige
+   *   explicitement, pour qu'un remaniement qui garderait l'étape montée
+   *   échoue au lieu de laisser la liste figée ;
+   * - **tout le reste est conservé.** Seul `startsAt` tombe. Prestation,
+   *   praticien et coordonnées restent dans le brouillon — et donc dans
+   *   `sessionStorage` : la cliente n'a qu'un horaire à reprendre, pas un
+   *   formulaire ;
+   * - **l'explication est écrite ici**, à partir du créneau perdu, et non
+   *   reprise du corps d'erreur de l'API. Le `message` du contrat s'adresse à
+   *   un développeur, il est traduisible et peut changer sans préavis ; seul le
+   *   `code` engage l'API (skill web-frontend §2). Le rappel de l'horaire perdu
+   *   dans le fuseau du salon vaut mieux qu'un « ce créneau » : entre le clic et
+   *   l'écran, la cliente ne sait plus toujours lequel elle visait.
+   *
+   * La phrase ne nomme en revanche **aucune cause**. `SLOT_NO_LONGER_AVAILABLE`
+   * couvre, du côté de l'API, toutes les façons dont ce créneau n'est plus
+   * réservable — pris entre-temps, mais aussi sorti des horaires du praticien,
+   * tombé sous le préavis minimum pendant la saisie, ou couvert par un congé
+   * (`public-appointments.controller.ts`). Écrire « quelqu'un d'autre l'a
+   * réservé » serait faux dans la moitié de ces cas, et faux à l'écran d'une
+   * cliente qui n'a aucun moyen de vérifier.
    */
-  const onSlotLost = useCallback((message: string) => {
+  const onSlotLost = useCallback(() => {
+    const lost = draft.startsAt;
+    // `null` n'arrive pas depuis le récapitulatif, qui ne s'affiche pas sans
+    // créneau — c'est le type qui l'impose ici, et la phrase reste juste.
+    const perdu =
+      lost === null ? 'Ce créneau' : `Le ${formatDateTimeInTimeZone(lost, tenant.timezone)}`;
+
     setNotice({
       tone: 'warning',
-      title: 'Ce créneau vient d’être réservé',
-      body: `${message} Vos coordonnées sont conservées : choisissez un autre horaire.`,
+      title: 'Ce créneau n’est plus disponible',
+      body:
+        `${perdu} n’est plus réservable : il vient d’être pris, ou il est sorti ` +
+        'des horaires ouverts à la réservation. Votre prestation et vos ' +
+        'coordonnées sont conservées : il ne vous reste qu’à choisir un autre ' +
+        'horaire ci-dessous.',
     });
     setDraft((current) => ({ ...current, startsAt: null, step: 'creneau' }));
-  }, []);
+  }, [draft.startsAt, tenant.timezone]);
 
   const onCancelled = useCallback((appointment: BookedAppointment) => {
     setNotice(null);
@@ -159,6 +195,21 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
     setNotice(null);
     setDraft(emptyBookingDraft());
   }, []);
+
+  /**
+   * Le focus suit la notification quand elle apparaît.
+   *
+   * Le bouton qui vient d'être cliqué — « Confirmer la réservation » — disparaît
+   * avec son étape. Sans ce déplacement, le focus retomberait sur `<body>` et la
+   * navigation au clavier repartirait du haut du document, au moment précis où
+   * il faut lire ce qui s'est passé puis choisir un autre horaire. Le parcours
+   * de réservation doit rester praticable sans souris (skill web-frontend §7).
+   */
+  useEffect(() => {
+    if (notice !== null) {
+      noticeRef.current?.focus();
+    }
+  }, [notice]);
 
   const zoneMention = hydrated ? timeZoneMention(tenant.timezone) : null;
 
@@ -184,9 +235,14 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
       </ol>
 
       {notice === null ? null : (
-        <Notification tone={notice.tone} title={notice.title}>
-          <p>{notice.body}</p>
-        </Notification>
+        // `tabIndex={-1}` rend l'enveloppe focalisable par programme sans
+        // l'insérer dans l'ordre de tabulation : elle ne devient une étape du
+        // clavier ni avant ni après avoir reçu le focus.
+        <div ref={noticeRef} tabIndex={-1}>
+          <Notification tone={notice.tone} title={notice.title}>
+            <p>{notice.body}</p>
+          </Notification>
+        </div>
       )}
 
       {!hydrated ? (
