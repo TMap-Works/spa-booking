@@ -162,10 +162,11 @@ branch refs/heads/worktree-bugfix+134-reconcile-running-abandonne
         self.assertEqual(set(self.parse(porcelain)), {42})
 
 
-def digest(name, milestone, finished=False, signal="run", active=False):
+def digest(name, milestone, finished=False, signal="run", active=False,
+           nature="projet"):
     return {"id": name, "milestone": milestone, "created": "", "width": 3,
-            "done": 0, "total": 5, "wave": 1, "waves": 3, "signal": signal,
-            "finished": finished, "active": active}
+            "nature": nature, "done": 0, "total": 5, "wave": 1, "waves": 3,
+            "signal": signal, "finished": finished, "active": active}
 
 
 def row(title, due, open_issues=0, closed=0, state="open", run=None, todo=None):
@@ -255,7 +256,7 @@ class QuelJalon(unittest.TestCase):
         rows = [row("S1", "2026-08-28", open_issues=12, todo=0)]
         pick, why = run_mod.recommend(rows)
         self.assertIsNone(pick)
-        self.assertIn("produit", why)
+        self.assertIn("nature", why)
 
     def test_un_run_inacheve_se_reprend_meme_sans_ticket_produit(self):
         """La reprise passe avant tout décompte : le run a des worktrees vivants
@@ -339,13 +340,14 @@ class SansClavier(unittest.TestCase):
 class Tableau(unittest.TestCase):
     """`survey` — les jalons de GitHub et les runs du disque, sur une même ligne."""
 
-    def survey(self, milestones, digests=(), error=None, backlog=None):
+    def survey(self, milestones, digests=(), error=None, backlog=None,
+               nature="projet"):
         dirs = [Path(str(index)) for index in range(len(digests))]
         with mock.patch.object(run_mod, "gh_json", return_value=(milestones, error)), \
-             mock.patch.object(run_mod, "project_backlog", return_value=backlog), \
+             mock.patch.object(run_mod, "nature_backlog", return_value=backlog), \
              mock.patch.object(run_mod, "run_dirs", return_value=dirs), \
              mock.patch.object(run_mod, "run_digest", side_effect=list(digests)):
-            return run_mod.survey()
+            return run_mod.survey(nature)
 
     def milestone(self, title, due, state="open", opened=3, closed=1):
         return {"title": title, "state": state, "due_on": f"{due}T00:00:00Z",
@@ -390,6 +392,20 @@ class Tableau(unittest.TestCase):
         rows, _ = self.survey([self.milestone("S1", "2026-08-28")], [None])
         self.assertIsNone(rows[0]["run"])
 
+    def test_un_run_d_une_autre_nature_n_est_pas_rattache(self):
+        """Un run produit inachevé n'a rien à dire à `start --nature outillage` :
+        le lui montrer ferait recommander une reprise qui n'est pas la sienne."""
+        rows, _ = self.survey([self.milestone("S1", "2026-08-28")],
+                              [digest("s1-produit", "S1")], nature="outillage")
+        self.assertIsNone(rows[0]["run"])
+
+    def test_le_run_de_la_nature_demandee_est_rattache(self):
+        rows, _ = self.survey(
+            [self.milestone("S1", "2026-08-28")],
+            [digest("s1-outillage", "S1", nature="outillage"),
+             digest("s1-produit", "S1")], nature="outillage")
+        self.assertEqual(rows[0]["run"]["id"], "s1-outillage")
+
     def test_le_decompte_a_derouler_ne_compte_que_le_produit(self):
         rows, _ = self.survey([self.milestone("S1", "2026-08-28", opened=12)],
                               backlog={"S1 — Fondations": 3, "S1": 3})
@@ -411,12 +427,42 @@ class Tableau(unittest.TestCase):
         self.assertEqual(rows[0]["todo"], 12)
 
 
-class DecompteProduit(unittest.TestCase):
-    """`project_backlog` — combien d'issues `nature:projet` restent, par jalon."""
+class DecompteParNature(unittest.TestCase):
+    """`nature_backlog` — combien d'issues d'une nature restent, par jalon."""
 
-    def backlog(self, payload, error=None):
+    def backlog(self, payload, error=None, nature="projet"):
         with mock.patch.object(run_mod, "gh_json", return_value=(payload, error)):
-            return run_mod.project_backlog()
+            return run_mod.nature_backlog(nature)
+
+    def query(self, nature):
+        """La requête `gh` réellement émise — c'est le label qui fait le filtre."""
+        seen = []
+
+        def spy(args):
+            seen.append(args)
+            return [], None
+
+        with mock.patch.object(run_mod, "gh_json", side_effect=spy):
+            run_mod.nature_backlog(nature)
+        return seen[0]
+
+    def test_la_nature_demandee_devient_le_label_interroge(self):
+        self.assertIn("nature:outillage", self.query("outillage"))
+        self.assertIn("nature:projet", self.query("projet"))
+
+    def test_toutes_n_interroge_aucun_label(self):
+        self.assertNotIn("--label", self.query("toutes"))
+
+    def test_toutes_ne_compte_pas_une_issue_sans_nature(self):
+        """Sans label `nature:*`, le plan la sort en « classement incomplet » :
+        la compter ferait proposer un jalon dont le plan sort vide."""
+        counts = self.backlog([
+            {"number": 1, "milestone": {"title": "S1"},
+             "labels": [{"name": "type:chore"}]},
+            {"number": 2, "milestone": {"title": "S1"},
+             "labels": [{"name": "nature:outillage"}]},
+        ], nature="toutes")
+        self.assertEqual(counts, {"S1": 1})
 
     def test_les_issues_se_comptent_par_jalon(self):
         counts = self.backlog([
@@ -1382,6 +1428,87 @@ class LigneDArbitrage(unittest.TestCase):
                 "pas du json\n", encoding="utf-8")
             with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)):
                 self.assertIsNone(run_mod.arbitration_line("r1"))
+
+
+class DeuxRunsUnJalon(unittest.TestCase):
+    """Produit et outillage cohabitent sur un même jalon sans se confondre.
+
+    Le risque tient en une phrase : `start --nature outillage` qui « reprend »
+    le run produit inachevé du même jalon enchaînerait sur un plan qui n'est pas
+    le sien — quinze tickets d'outillage remplacés par les tickets produit en
+    vol, agents compris. La nature filtre donc autant que le jalon.
+    """
+
+    def run_dir(self, tmp, name, milestone, nature=None):
+        directory = Path(tmp) / name
+        directory.mkdir()
+        payload = {"id": name, "milestone": milestone, "width": 1,
+                   "plan": {"waves": [{"index": 1, "issues": []}]}}
+        if nature is not None:
+            payload["nature"] = nature
+        (directory / "run.json").write_text(json.dumps(payload), encoding="utf-8")
+        return directory
+
+    def unfinished(self, runs, milestone, nature="projet"):
+        """`unfinished_run` sur un disque fabriqué — tous les runs inachevés."""
+        with tempfile.TemporaryDirectory() as tmp:
+            dirs = [self.run_dir(tmp, *entry) for entry in runs]
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "run_dirs", return_value=dirs), \
+                 mock.patch.object(run_mod, "read_journal", return_value=[]), \
+                 mock.patch.object(run_mod, "load_control", return_value={}), \
+                 mock.patch.object(run_mod, "replay", return_value={}), \
+                 mock.patch.object(run_mod, "wave_state",
+                                   return_value=({"index": 1}, [{"index": 1}])):
+                return run_mod.unfinished_run(milestone, nature)
+
+    def test_un_run_produit_n_est_pas_repris_par_un_run_d_outillage(self):
+        found = self.unfinished([("s1-produit", "S1 — Fondations", "projet")],
+                                "S1", "outillage")
+        self.assertIsNone(found)
+
+    def test_un_run_d_outillage_se_reprend_de_lui_meme(self):
+        found = self.unfinished(
+            [("s1-outillage", "S1 — Fondations", "outillage")], "S1", "outillage")
+        self.assertEqual(found, "s1-outillage")
+
+    def test_le_run_produit_du_meme_jalon_reste_reprenable(self):
+        """Les deux files avancent en parallèle : ouvrir l'outillage ne doit pas
+        rendre le run produit irrattrapable."""
+        runs = [("s1-outillage", "S1 — Fondations", "outillage"),
+                ("s1-produit", "S1 — Fondations", "projet")]
+        self.assertEqual(self.unfinished(runs, "S1", "projet"), "s1-produit")
+        self.assertEqual(self.unfinished(runs, "S1", "outillage"), "s1-outillage")
+
+    def test_un_run_ouvert_avant_la_nature_compte_pour_du_produit(self):
+        """Rétrocompatibilité : un `run.json` sans champ `nature` vient d'un
+        dispositif qui ne savait dérouler que le produit. Le tenir pour tel est
+        la seule lecture qui ne perd pas un run en cours à la mise à jour."""
+        self.assertEqual(run_mod.run_nature({"id": "vieux"}), "projet")
+        found = self.unfinished([("s1-vieux", "S1 — Fondations", None)], "S1")
+        self.assertEqual(found, "s1-vieux")
+
+
+class LargeurParNature(unittest.TestCase):
+    """Le séquentiel de l'outillage est un défaut partagé, pas deux constantes.
+
+    `milestone_run` emprunte le registre au plan plutôt que d'en tenir une copie :
+    une seconde table finirait par diverger de ce que le plan filtre vraiment, et
+    le run ouvrirait des vagues d'une largeur que le plan ne calcule pas.
+    """
+
+    def test_le_registre_est_bien_celui_du_plan(self):
+        import milestone_plan
+        self.assertIs(run_mod.DEFAULT_WIDTH, milestone_plan.DEFAULT_WIDTH)
+        self.assertIs(run_mod.NATURES, milestone_plan.NATURES)
+
+    def test_l_outillage_est_sequentiel_et_le_produit_ne_l_est_pas(self):
+        self.assertEqual(run_mod.DEFAULT_WIDTH["outillage"], 1)
+        self.assertEqual(run_mod.DEFAULT_WIDTH["toutes"], 1)
+        self.assertEqual(run_mod.DEFAULT_WIDTH["projet"], 3)
+
+    def test_chaque_nature_a_une_largeur(self):
+        self.assertEqual(set(run_mod.NATURES), set(run_mod.DEFAULT_WIDTH))
 
 
 if __name__ == "__main__":

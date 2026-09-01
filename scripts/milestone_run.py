@@ -4,6 +4,7 @@
     python scripts/milestone_run.py next                   # où en est-on, que lancer
     python scripts/milestone_run.py start                  # ouvre — ou reprend — ce jalon-là
     python scripts/milestone_run.py start S1 --width 3     # ou le nommer soi-même
+    python scripts/milestone_run.py start S1 --nature outillage  # le stock d'outillage
     python scripts/milestone_run.py watch                  # tableau de bord continu
     python scripts/milestone_run.py ticket 19 --follow     # entrer dans un traitement
     python scripts/milestone_run.py event --ticket 19 --phase implementation \
@@ -51,6 +52,20 @@ Sur un terminal, la proposition peut être écartée d'un chiffre ; ailleurs —
 superviseur, la tâche planifiée, `claude -p` — elle est prise telle quelle,
 faute de clavier à qui demander.
 
+## Produit ou outillage
+
+Un run ne déroule qu'une nature à la fois. `--nature projet`, le défaut, ne
+dispatche que le produit. `--nature outillage` déroule le stock d'outillage du
+jalon — `scripts/`, `.claude/`, CI du dépôt — **un ticket à la fois** (largeur 1
+par défaut), dans l'ordre du score d'importance : ces tickets-là réécrivent le
+dispositif pendant qu'il tourne, et deux agents à la fois s'y écriraient l'un
+sous l'autre. Chaque commande du run étant un processus neuf, elle repart du
+code fraîchement mergé — c'est ce qui rend la file tenable.
+
+Les deux runs cohabitent sur un même jalon sans se confondre : `start`, `next`
+et la reprise automatique ne voient que les runs de la nature demandée, et
+l'identifiant d'un run d'outillage porte son nom.
+
 ## Reprendre, et survivre au quota
 
 `start` **reprend** le run inachevé du jalon au lieu d'en ouvrir un nouveau —
@@ -88,6 +103,17 @@ for _stream in (sys.stdout, sys.stderr):
         pass
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# Le registre des natures et les largeurs par défaut restent ceux du plan : on
+# les lui emprunte plutôt que d'en tenir une seconde copie, qui finirait par
+# diverger de ce que le plan filtre vraiment.
+try:
+    from milestone_plan import DEFAULT_WIDTH, NATURES
+except Exception:  # noqa: BLE001 — un plan illisible se dira à `plan_json`, pas
+    # à l'import : `status`, `log` et `watch` doivent rester utilisables même
+    # quand le planificateur est cassé, c'est là qu'on en a le plus besoin.
+    NATURES = ("projet", "outillage", "toutes")
+    DEFAULT_WIDTH = {"projet": 3, "outillage": 1, "toutes": 1}
 
 
 def main_root():
@@ -1164,10 +1190,10 @@ def cmd_reconcile(args):
 # Commandes
 # --------------------------------------------------------------------------- #
 
-def plan_json(milestone, width):
+def plan_json(milestone, width, nature="projet"):
     proc = subprocess.run(
         [sys.executable, str(PLANNER), *( [milestone] if milestone else [] ),
-         "--width", str(width), "--json"],
+         "--width", str(width), "--nature", nature, "--json"],
         cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
     if proc.returncode != 0:
         fail("le plan n'a pas pu être calculé :\n" + (proc.stderr or proc.stdout).strip())
@@ -1177,10 +1203,19 @@ def plan_json(milestone, width):
         fail("plan illisible — `milestone_plan.py --json` n'a pas rendu du JSON")
 
 
-def unfinished_run(milestone):
-    """Le run le plus récent sur ce jalon qui n'est pas allé au bout.
+def run_nature(run):
+    """La nature d'un run — `projet` pour un run ouvert avant que la question se
+    pose, puisque c'était alors la seule chose que le dispositif savait faire."""
+    return (run or {}).get("nature") or "projet"
+
+
+def unfinished_run(milestone, nature="projet"):
+    """Le run le plus récent sur ce jalon, de cette nature, non allé au bout.
 
     Un run arrêté à la main (`stop`) n'est pas repris : l'humain a tranché.
+    La nature filtre autant que le jalon : un run produit inachevé sur S1 ne doit
+    pas être « repris » par un `start --nature outillage`, qui enchaînerait alors
+    sur un plan qui n'est pas le sien.
     """
     needle = (milestone or "").strip().lower()
     for directory in run_dirs():
@@ -1189,6 +1224,8 @@ def unfinished_run(milestone):
         except (OSError, json.JSONDecodeError):
             continue
         if needle and needle not in run.get("milestone", "").lower():
+            continue
+        if run_nature(run) != nature:
             continue
         control = load_control(directory.name)
         if control.get("signal") == "stop":
@@ -1213,7 +1250,8 @@ def arm_supervision(milestone, args):
               "de quota devra être relancée à la main")
         return
     command = [sys.executable, str(ROOT / "scripts" / "milestone_supervise.py"),
-               "--arm", "--width", str(args.width)]
+               "--arm", "--width", str(args.width),
+               "--nature", getattr(args, "nature", "projet")]
     if milestone:
         command.append(milestone)
     if getattr(args, "no_merge", False):
@@ -1272,6 +1310,7 @@ def run_digest(name):
         "milestone": run.get("milestone", ""),
         "created": run.get("created", ""),
         "width": run.get("width"),
+        "nature": run_nature(run),
         "done": sum(1 for t in tickets.values() if t["status"] in TERMINAL),
         "total": len(tickets),
         "wave": current["index"] if current else None,
@@ -1282,21 +1321,22 @@ def run_digest(name):
     }
 
 
-PROJECT_LABEL = "nature:projet"
+NATURE_LABEL = {"projet": "nature:projet", "outillage": "nature:outillage"}
 # Portées avant même la nature par `milestone_plan.qualify()` : ces issues-là
-# portent bien `nature:projet` mais ne seront jamais dispatchées. Les compter
-# ferait proposer un jalon dont le plan sort vide.
+# portent bien un label `nature:*` mais ne seront jamais dispatchées. Les
+# compter ferait proposer un jalon dont le plan sort vide.
 NEVER_PLANNED = {"tracking", "post-mvp", "type:epic"}
 BACKLOG_LIMIT = 500
 
 
-def project_backlog():
-    """{jalon : issues produit encore ouvertes}, ou None si GitHub est muet.
+def nature_backlog(nature="projet"):
+    """{jalon : issues de cette nature encore ouvertes}, None si GitHub est muet.
 
-    Le run ne dispatche que `nature:projet` — voir `milestone_plan.qualify()`.
-    Un jalon dont il ne reste que de l'outillage n'a donc rien à dérouler, et le
-    proposer enverrait l'orchestrateur ouvrir un run sur un plan vide : c'est
-    exactement ce que `next` existe pour éviter.
+    Un run ne dispatche qu'une nature — voir `milestone_plan.qualify()`. Un jalon
+    dont il ne reste que de l'outillage n'a donc rien à dérouler *pour un run
+    produit*, et le proposer enverrait l'orchestrateur ouvrir un run sur un plan
+    vide : c'est exactement ce que `next` existe pour éviter. Le raisonnement est
+    symétrique sous `outillage`, où c'est le produit restant qui ne compte pas.
 
     Une seule requête pour tout le dépôt plutôt qu'une par jalon — le décompte
     ne vaut pas quatre allers-retours. GitHub muet rend `None` : l'appelant
@@ -1304,10 +1344,12 @@ def project_backlog():
     ne cache rien. Une page pleine rend `None` pour la même raison : tronquée,
     elle sous-estimerait, et un jalon caché à tort ne se voit jamais.
     """
-    issues, error = gh_json(["issue", "list", "--repo", REPO, "--state", "open",
-                             "--label", PROJECT_LABEL,
-                             "--limit", str(BACKLOG_LIMIT),
-                             "--json", "number,milestone,labels"])
+    wanted = NATURE_LABEL.get(nature)
+    query = ["issue", "list", "--repo", REPO, "--state", "open",
+             "--limit", str(BACKLOG_LIMIT), "--json", "number,milestone,labels"]
+    if wanted:
+        query += ["--label", wanted]
+    issues, error = gh_json(query)
     if error or issues is None or len(issues) >= BACKLOG_LIMIT:
         return None
     counts = {}
@@ -1315,26 +1357,35 @@ def project_backlog():
         labels = {label.get("name") for label in issue.get("labels") or []}
         if labels & NEVER_PLANNED:
             continue
+        # Sous `toutes`, la requête ne filtre plus : une issue sans label
+        # `nature:*` y entrerait, alors que le plan la sort en « classement
+        # incomplet ». La compter ferait proposer un jalon au plan vide.
+        if wanted is None and not any(l.startswith("nature:") for l in labels):
+            continue
         title = (issue.get("milestone") or {}).get("title")
         if title:
             counts[title] = counts.get(title, 0) + 1
     return counts
 
 
-def survey():
+def survey(nature="projet"):
     """(lignes, avertissement) — un jalon par ligne, GitHub et runs réunis.
+
+    Le tableau est celui d'une nature : un run d'outillage n'a rien à dire d'un
+    run produit inachevé, et le lui montrer ferait recommander une reprise qui ne
+    le concerne pas.
 
     GitHub muet ne rend pas la commande inutilisable : les runs présents sur le
     disque portent leur plan et suffisent à reprendre. Le tableau est alors
     réduit à ceux-là, et le dit plutôt que de laisser croire à un jalon vide.
     """
     digests = [d for d in (run_digest(directory.name) for directory in run_dirs())
-               if d]
+               if d and d.get("nature", "projet") == nature]
     milestones, error = gh_json(["api", f"repos/{REPO}/milestones", "--paginate",
                                  "-X", "GET", "-f", "state=all"])
     # Inutile de redemander le backlog si GitHub vient déjà de ne pas répondre :
     # le second appel échouerait de la même façon, en faisant attendre autant.
-    backlog = project_backlog() if milestones else None
+    backlog = nature_backlog(nature) if milestones else None
     rows = []
     for milestone in milestones or []:
         title = milestone.get("title", "")
@@ -1367,10 +1418,10 @@ def survey():
 def workable(row):
     """Un jalon sur lequel il reste quelque chose que le run sache faire.
 
-    « Quelque chose » se compte en issues `nature:projet` : l'outillage se
-    traite à la main, une session à la fois, et un jalon qui n'a plus que cela
-    n'est pas un jalon à dérouler. Un run inachevé, lui, passe avant tout
-    décompte — il a des worktrees vivants et des PR ouvertes derrière lui.
+    « Quelque chose » se compte dans la nature déroulée : un jalon qui n'a plus
+    que de l'outillage n'est pas un jalon à dérouler pour un run produit, et
+    réciproquement. Un run inachevé, lui, passe avant tout décompte — il a des
+    worktrees vivants et des PR ouvertes derrière lui.
     """
     if row["run"] and not row["run"]["finished"] and row["run"]["signal"] != "stop":
         return True
@@ -1404,7 +1455,7 @@ def recommend(rows):
     todo = [row for row in rows if row["state"] == "open" and (row["todo"] or 0) > 0]
     if todo:
         return todo[0], "jalon ouvert dont l'échéance est la plus proche"
-    return None, "aucun jalon ouvert n'a d'issue produit à traiter"
+    return None, "aucun jalon ouvert n'a d'issue de cette nature à traiter"
 
 
 def print_survey(rows, error=None):
@@ -1434,7 +1485,7 @@ def print_survey(rows, error=None):
             # chiffre est celui sur lequel `recommend` se prononce.
             todo = row.get("todo")
             if todo is not None and todo != row["open"]:
-                issues += f" · {todo} projet"
+                issues += f" · {todo} à dérouler"
         print(f" {'*' if digest and digest['active'] else ' '} "
               f"{row['title']:<{width}} {row['due'] or '—':<11} {issues:<26} "
               f"{state}")
@@ -1487,9 +1538,9 @@ def ask_milestone(rows, default):
     return default
 
 
-def choose_milestone():
+def choose_milestone(nature="projet"):
     """Le jalon sur lequel `start` va travailler quand personne ne l'a nommé."""
-    rows, error = survey()
+    rows, error = survey(nature)
     if not rows:
         fail("aucun jalon à proposer" + (f" — {error}" if error else "")
              + "\n`milestone_run.py start <jalon>` pour en nommer un à la main")
@@ -1506,19 +1557,24 @@ def choose_milestone():
 
 def cmd_next(args):
     """Où en est-on, et que lancer — sans rien ouvrir."""
-    rows, error = survey()
+    nature = getattr(args, "nature", "projet")
+    rows, error = survey(nature)
     proposed, why = recommend(rows)
     if args.json:
         print(json.dumps({"milestones": rows, "warning": error, "reason": why,
+                          "nature": nature,
                           "recommended": proposed["title"] if proposed else None},
                          ensure_ascii=False, indent=2))
         return GO if proposed else NO_RUN
+    print(f"nature {nature}\n")
     print_survey(rows, error)
     if proposed is None:
         print(f"\n{why}")
         return NO_RUN
     print(f"\n→ {proposed['title']} · {why}")
-    print("  python scripts/milestone_run.py start     # sans nommer le jalon")
+    aside = "" if nature == "projet" else f" --nature {nature}"
+    print(f"  python scripts/milestone_run.py start{aside}"
+          "     # sans nommer le jalon")
     return GO
 
 
@@ -1561,10 +1617,24 @@ def cmd_start(args):
         print(problem, file=sys.stderr)
         return NO_RUN
 
+    # `--width` non passé vaut ce que la nature demande. Un run d'outillage
+    # réécrit `scripts/` et `.claude/` pendant que ces fichiers-là orchestrent le
+    # run : deux agents à la fois s'y écriraient l'un sous l'autre.
+    if args.width is None:
+        args.width = DEFAULT_WIDTH.get(args.nature, 3)
+    if args.width < 1:
+        print("--width doit valoir au moins 1", file=sys.stderr)
+        return NO_RUN
+    if args.nature != "projet":
+        print(f"nature {args.nature} · largeur {args.width}")
+        print("ces tickets réécrivent scripts/ et .claude/ pendant que le run "
+              "s'en sert ; chaque commande")
+        print("repart du code fraîchement mergé.\n")
+
     # Sans jalon nommé, l'orchestrateur regarde où on en est et propose : savoir
     # qu'on en est au S1 est son travail, pas celui de qui tape la commande.
     if not args.milestone:
-        args.milestone = choose_milestone()
+        args.milestone = choose_milestone(args.nature)
         if args.milestone is None:
             return NO_RUN
         print()
@@ -1573,7 +1643,7 @@ def cmd_start(args):
     # et rouvrir un run repartirait de zéro sur des tickets déjà en PR. Il faut
     # dire `--fresh` pour en ouvrir un nouveau — jamais l'inverse.
     if not args.fresh:
-        existing = unfinished_run(args.milestone)
+        existing = unfinished_run(args.milestone, args.nature)
         if existing:
             CURRENT.write_text(existing, encoding="utf-8")
             run = load_run(existing)
@@ -1592,15 +1662,19 @@ def cmd_start(args):
             return cmd_resume(argparse.Namespace(
                 run=existing, no_reconcile=getattr(args, "no_reconcile", False)))
 
-    plan = plan_json(args.milestone, args.width)
+    plan = plan_json(args.milestone, args.width, args.nature)
     slug = re.sub(r"[^a-z0-9]+", "-", plan["milestone"]["title"].lower()).strip("-")[:24]
+    # La nature entre dans l'identifiant : deux runs peuvent vivre sur un même
+    # jalon, et `list` doit dire lequel est lequel sans ouvrir chaque run.json.
+    if args.nature != "projet":
+        slug = f"{slug}-{args.nature}"
     run_id = f"{slug}-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
     directory = run_dir(run_id)
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "run.json").write_text(json.dumps({
         "id": run_id, "milestone": plan["milestone"]["title"],
-        "width": args.width, "created": now(), "plan": plan,
+        "width": args.width, "nature": args.nature, "created": now(), "plan": plan,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     CURRENT.write_text(run_id, encoding="utf-8")
@@ -1610,16 +1684,18 @@ def cmd_start(args):
     # l'historique restant dans le run.log de chaque run.
     LATEST_LOG.write_text(
         f"# {plan['milestone']['title']} · run {run_id} · ouvert le {now()}\n"
-        f"# {total} tickets · {len(plan['waves'])} vagues · largeur {args.width}\n",
+        f"# {total} tickets · {len(plan['waves'])} vagues · largeur {args.width}"
+        f" · nature {args.nature}\n",
         encoding="utf-8")
     append_journal(run_id, {"ts": now(), "kind": "run", "status": "started",
                             "actor": "orchestrateur",
-                            "message": f"{len(plan['waves'])} vagues, largeur {args.width}"})
+                            "message": f"{len(plan['waves'])} vagues, largeur "
+                                       f"{args.width}, nature {args.nature}"})
     prune(args.keep)
 
     print(f"run {run_id}")
     print(f"{plan['milestone']['title']} · {total} tickets · {len(plan['waves'])} vagues "
-          f"· largeur {args.width}")
+          f"· largeur {args.width} · nature {args.nature}")
     print(f"log    {LATEST_LOG}")
     print(f"suivre python scripts/milestone_run.py watch")
     arm_supervision(plan["milestone"]["title"], args)
@@ -1638,7 +1714,8 @@ def prune(keep):
 def cmd_replan(args):
     run_id = resolve(args.run)
     run = load_run(run_id)
-    plan = plan_json(run["milestone"], args.width or run["width"])
+    # La nature ne se change pas en cours de route : c'est celle du run.
+    plan = plan_json(run["milestone"], args.width or run["width"], run_nature(run))
     run["plan"] = plan
     run["width"] = args.width or run["width"]
     (run_dir(run_id) / "run.json").write_text(
@@ -2592,7 +2669,12 @@ def main():
     starter = sub.add_parser("start", help="ouvre un run sur un jalon")
     starter.add_argument("milestone", nargs="?",
                          help="préfixe du titre ; à défaut, le jalon proposé")
-    starter.add_argument("--width", type=int, default=3)
+    starter.add_argument("--width", type=int, default=None,
+                         help="issues menées en parallèle "
+                              "(défaut 3 en projet, 1 en outillage)")
+    starter.add_argument("--nature", choices=NATURES, default="projet",
+                         help="ce que le run déroule : le produit (défaut), "
+                              "l'outillage — scripts/, .claude/ —, ou les deux")
     starter.add_argument("--keep", type=int, default=10,
                          help="nombre de runs conservés sur le disque")
     starter.add_argument("--fresh", action="store_true",
@@ -2729,6 +2811,8 @@ def main():
 
     nexter = sub.add_parser("next", help="où en est-on, et quel jalon lancer")
     nexter.add_argument("--json", action="store_true")
+    nexter.add_argument("--nature", choices=NATURES, default="projet",
+                        help="la nature dont on veut l'état (défaut : projet)")
 
     args = parser.parse_args()
     RUNS_DIR.mkdir(parents=True, exist_ok=True)

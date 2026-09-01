@@ -358,6 +358,10 @@ def save_intent(args):
     INTENT.parent.mkdir(parents=True, exist_ok=True)
     INTENT.write_text(json.dumps({
         "milestone": args.milestone, "width": args.width,
+        # La nature se rejoue comme la largeur : un superviseur ressuscité par la
+        # veille sur un run d'outillage repartirait sinon sur le produit, c'est-à-
+        # dire sur un tout autre plan que celui qu'il est censé reprendre.
+        "nature": getattr(args, "nature", "projet"),
         "waves_per_leg": args.waves_per_leg, "no_merge": args.no_merge,
         "merge_sensitive": sorted(args.merge_sensitive),
         "permission_mode": args.permission_mode, "model": args.model,
@@ -380,6 +384,26 @@ def save_intent(args):
         "claude": args.claude, "armed": now(),
         "expires": time.time() + INTENT_TTL,
     }, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def nature_relayed(previous, wanted):
+    """L'avertissement à dire quand l'armement change de nature — ou None.
+
+    Il n'y a qu'une intention sur le disque, donc **qu'une nature armée à la
+    fois** : ouvrir un run d'outillage remplace l'armement du run produit, dont
+    la reprise automatique s'arrête là. C'est tenable — les deux files ne se
+    déroulent pas ensemble — mais le taire ferait croire à un run produit qui
+    repart tout seul alors que plus rien ne le relance.
+    """
+    if not previous:
+        return None
+    armed = previous.get("nature") or "projet"
+    if armed == wanted:
+        return None
+    return (f"la veille était armée en nature {armed} sur "
+            f"« {previous.get('milestone') or 'le plus proche'} » : elle passe "
+            f"en {wanted}. La reprise automatique de l'autre file s'arrête — "
+            "la relancer, c'est rouvrir son run.")
 
 
 def load_intent():
@@ -427,6 +451,7 @@ def intent_argv(intent):
     # protection des périmètres sensibles ne passe donc pas par une question,
     # mais par `pr_gate.py`, qui refuse de les merger sans surveillance.
     argv += ["--width", str(intent.get("width", 3)),
+             "--nature", intent.get("nature") or "projet",
              "--waves-per-leg", str(intent.get("waves_per_leg", 1)),
              "--permission-mode", intent.get("permission_mode", "acceptEdits"),
              "--margin", str(intent.get("margin", 90)),
@@ -850,6 +875,7 @@ def cmd_state(args):
                    if age is not None else "éteint")))
     if intent:
         print(f"jalon armé         : {intent.get('milestone') or '(le plus proche)'}"
+              f" · nature {intent.get('nature') or 'projet'}"
               f" · largeur {intent.get('width')} · "
               f"{'PR seules' if intent.get('no_merge') else 'merge automatique'}")
         print("périmètres armés   : " + describe_scopes(intent))
@@ -976,6 +1002,11 @@ def leg_prompt(args):
     if args.milestone:
         parts.append(args.milestone)
     parts += ["--width", str(args.width), "--waves", str(args.waves_per_leg)]
+    # Sans cela, la vague relancée par le superviseur repartirait sur le produit
+    # et ouvrirait un second run à côté de celui qu'elle est censée poursuivre.
+    nature = getattr(args, "nature", "projet")
+    if nature != "projet":
+        parts += ["--nature", nature]
     if args.no_merge:
         parts.append("--no-merge")
     if args.yes:
@@ -1419,7 +1450,8 @@ def supervise(args):
     start_beating()
 
     say(f"superviseur ouvert · jalon {args.milestone or '(le plus proche)'} "
-        f"· largeur {args.width} · {'PR seules' if args.no_merge else 'merge automatique'}")
+        f"· nature {getattr(args, 'nature', 'projet')} · largeur {args.width} "
+        f"· {'PR seules' if args.no_merge else 'merge automatique'}")
     say(f"journal du superviseur : {SUPERVISOR_LOG}")
     say("suivre le run : python scripts/milestone_run.py watch")
 
@@ -1650,6 +1682,10 @@ def main():
                         help="jalon à dérouler (défaut : l'ouvert le plus proche)")
     parser.add_argument("--width", type=int, default=3,
                         help="agents simultanés dans une vague")
+    parser.add_argument("--nature", default="projet",
+                        choices=("projet", "outillage", "toutes"),
+                        help="ce que le run déroule : le produit (défaut), "
+                             "l'outillage — scripts/, .claude/ —, ou les deux")
     parser.add_argument("--waves-per-leg", type=int, default=1,
                         help="vagues traitées par appel à Claude Code")
     parser.add_argument("--no-merge", action="store_true",
@@ -1785,6 +1821,11 @@ def main():
                     "`--disarm` pour la retirer.", "WARN")
             return 2
         announce_merge_policy(args)
+        # Armer écrase l'intention précédente : si elle portait une autre
+        # nature, une file cesse d'être reprise, et il faut le dire.
+        relais = nature_relayed(load_intent(), getattr(args, "nature", "projet"))
+        if relais:
+            say(relais, "WARN")
         save_intent(args)
         # `--no-watchdog` était accepté puis ignoré sur ce chemin : l'intention
         # était inscrite et la veille armée quand même. Seul `arm_supervision()`

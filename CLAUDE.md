@@ -79,11 +79,13 @@ Pour dérouler ce flux, utiliser les commandes `/feature-start`, `/pr-open`,
 et `/ticket-close` le referme — historisation délibérée, jamais automatique.
 `/ticket <issue>` traite une issue de bout en bout ; `/milestone [jalon]` traite
 un sprint entier, en menant de front les tickets dont les empreintes de fichiers
-sont disjointes — et reprend d'elle-même le run inachevé. **Le run ne déroule
-que le produit** : toute issue porte un label `nature:projet` ou
-`nature:outillage`, et l'outillage — `scripts/`, `.claude/` — se traite à la
-main, un ticket par session, parce qu'on ne réécrit pas l'orchestrateur pendant
-qu'il orchestre. Ces tickets-là, c'est l'arbitrage du run qui les ouvre. Sans argument, elle
+sont disjointes — et reprend d'elle-même le run inachevé. **Un run ne déroule
+qu'une nature à la fois** : toute issue porte un label `nature:projet` ou
+`nature:outillage`, et un run produit n'ouvre jamais un ticket d'outillage, parce
+qu'on ne réécrit pas l'orchestrateur pendant qu'il orchestre. Pour écouler le
+stock d'outillage d'un jalon, `/milestone <jalon> --nature outillage` le déroule
+séparément et **en séquentiel** — largeur 1 par défaut, dans l'ordre du score
+d'importance. Ces tickets-là, c'est l'arbitrage du run qui les ouvre. Sans argument, elle
 propose le jalon à dérouler plutôt que de le demander
 (`scripts/milestone_run.py next` pour le même état, sans rien ouvrir). Ouvrir un run arme
 aussi la reprise automatique : coupure de quota, plantage ou redémarrage, le

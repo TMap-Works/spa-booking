@@ -41,17 +41,22 @@ doit pouvoir répondre seul.
 | | `nature:projet` | `nature:outillage` |
 |---|---|---|
 | Ce que ça couvre | le produit MVP : `apps/`, `packages/`, `infra/terraform`, les workflows de CI et de déploiement du produit, ses tests | le dispositif de collaboration : `scripts/milestone_*`, `scripts/tracking.py`, `scripts/pr_gate.py`, `.claude/` (commandes, skills, hooks, réglages), les workflows qui servent le run, le harnais qui teste tout cela |
-| Qui le traite | `/milestone` — un agent par ticket, en vagues | un humain, **une session à la fois**, par `/ticket <issue>` |
+| Qui le traite | `/milestone` — un agent par ticket, en vagues | `/milestone <jalon> --nature outillage` — **un ticket à la fois**, ou `/ticket <issue>` à la main |
 | Qui l'ouvre | le planning de sprint, une revue, un bug constaté | l'arbitrage du run (`/milestone-arbitrate`, phases `skip` et 7), ou une demande explicite |
 
-**Le run ne dispatche que `nature:projet`.** La raison n'est pas cosmétique : un
-agent de vague qui réécrit `milestone_run.py` modifie l'orchestrateur qui
-l'exécute, pendant qu'il l'exécute. Ces chantiers-là se prennent isolément, en
-sachant ce qu'on touche.
+**Un run ne déroule qu'une nature à la fois**, et par défaut c'est le produit.
+La raison n'est pas cosmétique : un agent de vague qui réécrit
+`milestone_run.py` modifie l'orchestrateur qui l'exécute, pendant qu'il
+l'exécute. Ces chantiers-là se prennent isolément, en sachant ce qu'on touche —
+c'est ce que fait `/milestone <jalon> --nature outillage`, qui déroule le stock
+d'outillage **en séquentiel** (largeur 1) et dans l'ordre du score d'importance,
+sans jamais le mêler à une vague produit.
 
-Un ticket `nature:outillage` **ne retient jamais ses dépendants** : le plan le
-range avec les hors-périmètre et les épiques, parce que le run ne le fermera
+Un ticket écarté pour sa nature **ne retient jamais ses dépendants** : le plan le
+range avec les hors-périmètre et les épiques, parce que *ce* run ne le fermera
 jamais et que le tenir pour un prérequis non satisfait gèlerait le jalon à vie.
+La règle vaut dans les deux sens — un ticket produit ne retient pas un ticket
+d'outillage sous `--nature outillage`.
 La contrepartie est explicite : si un ticket produit dépend réellement d'un
 chantier d'outillage, c'est à l'humain de le faire d'abord — le plan ne le saura
 pas.
@@ -380,7 +385,8 @@ n'ouvre plus rien.
 **Un ticket est une issue comme les autres** : anatomie complète du §2, carte
 `In progress` à l'ouverture, `Done` à la clôture. Le label `tracking` est ce qui
 permet de les exclure d'une vue du backlog produit. Il porte aussi une
-`nature:` — jamais dispatché de toute façon, mais c'est ce qui permet de dire,
+`nature:` — le label `tracking` le sort du plan de toute façon, mais c'est ce
+qui permet de dire,
 en fin de sprint, si les demandes ont porté sur le produit ou sur l'outillage.
 
 **Deux demandes du même travail, un seul ticket.** La seconde se rattache en

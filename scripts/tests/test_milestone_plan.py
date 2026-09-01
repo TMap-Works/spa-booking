@@ -128,9 +128,9 @@ def run_plan(hub, argv=(), rules=None):
     return code, buffer.getvalue()
 
 
-def plan_of(hub, rules=None):
+def plan_of(hub, rules=None, argv=()):
     """Le plan en JSON, tel que `/milestone` le consomme."""
-    code, out = run_plan(hub, ["--json"], rules)
+    code, out = run_plan(hub, ["--json", *argv], rules)
     return code, json.loads(out)
 
 
@@ -395,17 +395,21 @@ class EcarteeQuiNeSeraJamaisFaite(unittest.TestCase):
         self.assertIn("outillage", ecartees(plan)[10]["reason"])
 
 
-class OutillageHorsDuRun(unittest.TestCase):
-    """Le run ne déroule que le produit — et ne devine jamais de quel côté ranger.
+class UneNatureALaFois(unittest.TestCase):
+    """Un plan ne déroule qu'une nature — et ne devine jamais de quel côté ranger.
 
     Un agent de vague qui réécrit `milestone_run.py` modifie l'orchestrateur qui
-    l'exécute, pendant qu'il l'exécute. C'est la raison d'être de l'exclusion :
-    ces chantiers-là se prennent à la main, une session à la fois.
+    l'exécute, pendant qu'il l'exécute. C'est la raison d'être du filtre : le
+    produit par défaut, l'outillage sur demande explicite et en séquentiel,
+    jamais les deux mêlés sans qu'on l'ait dit.
     """
 
-    def outil(self, number, **kw):
-        return issue(number, labels=("ws:devops", "mod:infra", "type:chore",
-                                     "P1", "nature:outillage"), **kw)
+    OUTIL = ("ws:devops", "mod:infra", "type:chore", "nature:outillage")
+
+    def outil(self, number, priority="P1", **kw):
+        return issue(number, labels=(*self.OUTIL, priority), **kw)
+
+    # -- le défaut : le produit, et lui seul --------------------------------- #
 
     def test_un_ticket_d_outillage_n_est_jamais_dispatche(self):
         _, plan = plan_of(FakeHub([self.outil(10), issue(20)]), DEUX)
@@ -417,12 +421,79 @@ class OutillageHorsDuRun(unittest.TestCase):
         self.assertEqual(code, milestone_plan.EMPTY)
         self.assertIn("outillage", out)
 
-    def test_l_en_tete_compte_les_tickets_d_outillage(self):
-        """Le chiffre est la liste des chantiers qui attendent un humain : le
+    def test_l_en_tete_compte_les_tickets_ecartes_pour_leur_nature(self):
+        """Le chiffre est la liste des chantiers qui attendent l'autre run : le
         cacher ferait passer un jalon à moitié traité pour un jalon déroulé."""
         _, out = run_plan(FakeHub([self.outil(10), self.outil(30), issue(20)]),
                           rules=DEUX)
-        self.assertIn("2 outillage", out.splitlines()[1])
+        self.assertIn("2 d'une autre nature", out.splitlines()[1])
+
+    # -- `--nature outillage` : le filtre retourné --------------------------- #
+
+    def test_le_filtre_se_retourne_et_ecarte_le_produit(self):
+        _, plan = plan_of(FakeHub([self.outil(10), issue(20)]), DEUX,
+                          argv=["--nature", "outillage"])
+        self.assertEqual(scheduled(plan), {10})
+        self.assertIn("produit", ecartees(plan)[20]["reason"])
+
+    def test_le_produit_ecarte_ne_retient_pas_l_outillage(self):
+        """Symétrique exact de l'outillage sous un run produit : ce run-là ne
+        fera jamais le produit, et retenir son dépendant gèlerait la file pour
+        toujours plutôt que jusqu'au prochain passage."""
+        rules = {"resources": {"10": ["a"], "20": ["b"]}, "depends": {"10": [20]}}
+        _, plan = plan_of(FakeHub([self.outil(10), issue(20)]), rules,
+                          argv=["--nature", "outillage"])
+        self.assertIn(10, scheduled(plan))
+        self.assertEqual(retenues(plan), {})
+
+    def test_l_outillage_se_deroule_un_ticket_a_la_fois(self):
+        """Neuf des quinze tickets d'outillage du S1 touchent l'orchestrateur :
+        deux agents à la fois s'y réécriraient l'un sous l'autre. Les empreintes
+        sont ici disjointes — seule la largeur peut donc les séparer."""
+        rules = {"resources": {"10": ["a"], "20": ["b"], "30": ["c"]}}
+        hub = FakeHub([self.outil(10), self.outil(20), self.outil(30)])
+        _, plan = plan_of(hub, rules, argv=["--nature", "outillage"])
+        self.assertEqual(plan["width"], 1)
+        self.assertEqual([len(wave["issues"]) for wave in plan["waves"]], [1, 1, 1])
+
+    def test_une_largeur_explicite_reste_maitresse(self):
+        """Le séquentiel est un défaut, pas un verrou : qui le demande l'obtient."""
+        rules = {"resources": {"10": ["a"], "20": ["b"], "30": ["c"]}}
+        hub = FakeHub([self.outil(10), self.outil(20), self.outil(30)])
+        _, plan = plan_of(hub, rules, argv=["--nature", "outillage", "--width", "3"])
+        self.assertEqual(plan["width"], 3)
+        self.assertEqual([len(wave["issues"]) for wave in plan["waves"]], [3])
+
+    def test_l_ordre_reste_celui_du_score_d_importance(self):
+        """« Par ordre d'importance » n'est pas un tri à part : c'est le même
+        score que pour le produit, priorité comprise."""
+        rules = {"resources": {"10": ["a"], "20": ["b"], "30": ["c"]}}
+        hub = FakeHub([self.outil(10, "P2"), self.outil(20, "P0"),
+                       self.outil(30, "P1")])
+        _, plan = plan_of(hub, rules, argv=["--nature", "outillage"])
+        ordre = [node["number"] for wave in plan["waves"] for node in wave["issues"]]
+        self.assertEqual(ordre, [20, 30, 10])
+
+    def test_le_produit_seul_ne_donne_rien_a_derouler_a_l_outillage(self):
+        code, out = run_plan(FakeHub([issue(10), issue(20)]),
+                             ["--nature", "outillage"], DEUX)
+        self.assertEqual(code, milestone_plan.EMPTY)
+        self.assertIn("outillage", out)
+
+    def test_nature_toutes_ne_filtre_plus_rien(self):
+        _, plan = plan_of(FakeHub([self.outil(10), issue(20)]), DEUX,
+                          argv=["--nature", "toutes"])
+        self.assertEqual(scheduled(plan), {10, 20})
+
+    def test_nature_toutes_reste_sequentielle(self):
+        """Mêler les deux natures ne rend pas le parallélisme plus sûr : il le
+        rend pire, un agent produit et un agent outillage pouvant réécrire
+        l'orchestrateur l'un sous l'autre."""
+        _, plan = plan_of(FakeHub([self.outil(10), issue(30)]), DEUX,
+                          argv=["--nature", "toutes"])
+        self.assertEqual(plan["width"], 1)
+
+    # -- ce qu'aucune nature ne rattrape ------------------------------------- #
 
     def test_sans_nature_l_issue_sort_en_classement_incomplet(self):
         """Ni dispatchée ni oubliée : rien n'autorise à choisir à sa place."""
@@ -439,6 +510,15 @@ class OutillageHorsDuRun(unittest.TestCase):
         _, plan = plan_of(FakeHub([muette, issue(20)]), rules)
         self.assertNotIn(20, scheduled(plan))
         self.assertIn("classement incomplet", retenues(plan)[20]["held_by"][0]["reason"])
+
+    def test_sans_nature_l_issue_sort_aussi_d_un_plan_d_outillage(self):
+        """Le filtre ne se contente pas d'écarter l'autre nature : il exige
+        toujours qu'une nature soit déclarée."""
+        muette = issue(10, labels=("ws:devops", "mod:infra", "type:chore", "P1"))
+        _, plan = plan_of(FakeHub([muette, self.outil(20)]), DEUX,
+                          argv=["--nature", "outillage"])
+        self.assertNotIn(10, scheduled(plan))
+        self.assertIn("nature", ecartees(plan)[10]["reason"])
 
 
 class Invariants(unittest.TestCase):
