@@ -337,6 +337,43 @@ export class IdentityRepository {
     return count === 1;
   }
 
+  /**
+   * Met à jour les **coordonnées** d'un compte de l'établissement courant (#47).
+   *
+   * `updateMany` et non `update`, pour la raison d'`updateUserRole` : sous le
+   * scoping, le `where` porte `id` **et** `tenantId`, ce qui n'est pas une clé
+   * unique au sens de Prisma. Le compte de lignes est surtout la propriété
+   * utile — il vaut `0` pour l'identifiant d'un autre établissement, ce qui donne
+   * le 404 attendu plutôt qu'une exception « record not found » indistinguable
+   * d'un incident.
+   *
+   * `changes` ne porte que les champs **présents** : un `{ phone: null }` efface
+   * le numéro, un `changes` sans `phone` n'y touche pas. C'est le contrôleur qui
+   * fait cette distinction, et elle ne peut pas se faire ici — Prisma ignore un
+   * `undefined` et écrirait `null` sur un `null`, ce qui est précisément la
+   * différence à conserver.
+   *
+   * Aucun `email`, aucun `role`, aucun `isActive` : le type l'interdit, et c'est
+   * ce qui empêche cette méthode de devenir la porte par laquelle un compte se
+   * promeut lui-même.
+   */
+  public async updateOwnProfile(input: {
+    userId: string;
+    changes: { firstName?: string; lastName?: string; phone?: string | null };
+  }): Promise<boolean> {
+    // Une demande vide n'est pas une erreur — c'est une modification sans effet.
+    // L'écrire quand même ferait tourner `updated_at` pour rien.
+    if (Object.keys(input.changes).length === 0) {
+      return true;
+    }
+
+    const { count } = await this.prisma.user.updateMany({
+      where: { id: input.userId },
+      data: input.changes,
+    });
+    return count === 1;
+  }
+
   public async createSession(input: {
     userId: string;
     tokenHash: string;

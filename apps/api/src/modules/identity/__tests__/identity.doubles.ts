@@ -295,6 +295,51 @@ export class FakeIdentityRepository {
     return true;
   }
 
+  /**
+   * Met à jour les coordonnées d'un compte de l'établissement courant (#47).
+   *
+   * Reproduit les deux propriétés du vrai dont un test dépend : le filtre de
+   * tenant — un identifiant d'un autre établissement rend `false` et n'écrit
+   * rien, exactement comme le `updateMany` scopé rend `count: 0` — et la
+   * distinction entre « champ absent » et « champ à `null` », qui est ce qui
+   * permet d'effacer un numéro sans effacer aussi le prénom.
+   */
+  public async updateOwnProfile(input: {
+    userId: string;
+    changes: { firstName?: string; lastName?: string; phone?: string | null };
+  }): Promise<boolean> {
+    const tenantId = this.requireTenant();
+
+    // Comme le vrai : une demande vide est une modification sans effet, et non
+    // une erreur. Le dire ici plutôt que de laisser le double répondre `false`
+    // sur un compte inconnu est ce qui garde les deux implémentations
+    // indiscernables du point de vue du service.
+    if (Object.keys(input.changes).length === 0) {
+      return true;
+    }
+
+    const user = this.users.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.id === input.userId,
+    );
+    if (user === undefined) {
+      return false;
+    }
+
+    // Une par une, et seulement si présente : `Object.assign(user, changes)`
+    // recopierait aussi les clés à `undefined` d'un objet construit autrement,
+    // et effacerait des valeurs que l'appelant n'a pas voulu toucher.
+    if (input.changes.firstName !== undefined) {
+      user.firstName = input.changes.firstName;
+    }
+    if (input.changes.lastName !== undefined) {
+      user.lastName = input.changes.lastName;
+    }
+    if (input.changes.phone !== undefined) {
+      user.phone = input.changes.phone;
+    }
+    return true;
+  }
+
   public async createSession(input: {
     userId: string;
     tokenHash: string;

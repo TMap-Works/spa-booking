@@ -260,6 +260,112 @@ describe('UsersService', () => {
     });
   });
 
+  describe('updateOwnContactDetails — #47', () => {
+    it('n’écrit que les champs présents, et laisse les autres tels quels', async () => {
+      const f = fixture();
+      const updated = await runWithTenant(TENANT_A, () =>
+        f.service.updateOwnContactDetails({
+          userId: f.clientA,
+          changes: { firstName: 'Camille' },
+        }),
+      );
+
+      expect(updated).toMatchObject({ id: f.clientA, firstName: 'Camille', lastName: 'Durand' });
+      const written = f.repository.users.find((user) => user.id === f.clientA);
+      expect(written?.firstName).toBe('Camille');
+      // Le champ omis n'est pas effacé : `partial` veut dire « ce qui est
+      // envoyé », pas « ce qui reste ».
+      expect(written?.lastName).toBe('Durand');
+    });
+
+    it('efface le numéro sur un `phone` à `null`, et n’y touche pas s’il est absent', async () => {
+      const f = fixture();
+      const seeded = f.repository.users.find((user) => user.id === f.clientA);
+      expect(seeded).toBeDefined();
+      if (seeded !== undefined) {
+        seeded.phone = '+261340000000';
+      }
+
+      await runWithTenant(TENANT_A, () =>
+        f.service.updateOwnContactDetails({ userId: f.clientA, changes: { firstName: 'Camille' } }),
+      );
+      expect(f.repository.users.find((user) => user.id === f.clientA)?.phone).toBe(
+        '+261340000000',
+      );
+
+      const cleared = await runWithTenant(TENANT_A, () =>
+        f.service.updateOwnContactDetails({ userId: f.clientA, changes: { phone: null } }),
+      );
+      expect(cleared.phone).toBeNull();
+      expect(f.repository.users.find((user) => user.id === f.clientA)?.phone).toBeNull();
+    });
+
+    it('accepte une demande vide sans rien changer', async () => {
+      // Un formulaire renvoyé sans modification n'est pas une erreur ; l'écrire
+      // quand même ferait tourner `updated_at` pour rien.
+      const f = fixture();
+      const unchanged = await runWithTenant(TENANT_A, () =>
+        f.service.updateOwnContactDetails({ userId: f.clientA, changes: {} }),
+      );
+
+      expect(unchanged).toMatchObject({ firstName: 'Alice', lastName: 'Durand' });
+    });
+
+    it('ne rend ni empreinte de mot de passe ni établissement', async () => {
+      const f = fixture();
+      const updated = await runWithTenant(TENANT_A, () =>
+        f.service.updateOwnContactDetails({ userId: f.clientA, changes: { lastName: 'Rakoto' } }),
+      );
+
+      expect(Object.keys(updated).sort()).toEqual([
+        'email',
+        'firstName',
+        'id',
+        'lastName',
+        'phone',
+        'role',
+      ]);
+    });
+
+    it('lève `NotFoundError` pour un compte d’un autre établissement, et n’écrit rien', async () => {
+      const f = fixture();
+      const failure = await rejectionOf(
+        runWithTenant(TENANT_A, () =>
+          f.service.updateOwnContactDetails({
+            userId: f.adminB,
+            changes: { firstName: 'Intruse' },
+          }),
+        ),
+      );
+
+      expect(failure).toBeInstanceOf(NotFoundError);
+      // La ressource du tenant B est intacte — tenant-isolation §6, point 4.
+      expect(f.repository.users.find((user) => user.id === f.adminB)?.firstName).toBe('Alice');
+    });
+
+    it('rend le même refus pour « inconnu partout » et « connu ailleurs »', async () => {
+      // La différence entre les deux est précisément l'information à ne pas
+      // donner (tenant-isolation §4).
+      const f = fixture();
+      const inconnu = await rejectionOf(
+        runWithTenant(TENANT_A, () =>
+          f.service.updateOwnContactDetails({
+            userId: '99999999-9999-4999-8999-999999999999',
+            changes: { firstName: 'Camille' },
+          }),
+        ),
+      );
+      const ailleurs = await rejectionOf(
+        runWithTenant(TENANT_A, () =>
+          f.service.updateOwnContactDetails({ userId: f.adminB, changes: { firstName: 'Camille' } }),
+        ),
+      );
+
+      expect((inconnu as NotFoundError).message).toBe((ailleurs as NotFoundError).message);
+      expect((inconnu as NotFoundError).status).toBe((ailleurs as NotFoundError).status);
+    });
+  });
+
   describe('défaut fermé', () => {
     it('refuse de lire hors de toute portée de tenant', async () => {
       // Sans contexte, aucune donnée. Le mode ouvert par défaut est ce qui
@@ -267,6 +373,9 @@ describe('UsersService', () => {
       const f = fixture();
       await expect(f.service.byId(f.staffA)).rejects.toThrow(/tenant/i);
       await expect(f.service.listStaffAccounts()).rejects.toThrow(/tenant/i);
+      await expect(
+        f.service.updateOwnContactDetails({ userId: f.clientA, changes: { firstName: 'X' } }),
+      ).rejects.toThrow(/tenant/i);
     });
   });
 });

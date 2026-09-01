@@ -111,4 +111,62 @@ export class UsersService {
 
     return { ...toProfile(target), role: input.role };
   }
+
+  /**
+   * Met à jour les coordonnées du compte **authentifié** — le quatrième critère
+   * de #47.
+   *
+   * ## Pourquoi il n'y a pas d'`actor` à comparer
+   *
+   * Parce qu'il n'y a rien à comparer : le compte modifié **est** celui du jeton.
+   * Le contrôleur passe `@CurrentUser().userId`, il n'y a pas d'identifiant en
+   * chemin, et le client Prisma est déjà borné à l'établissement du jeton. Une
+   * signature qui aurait pris un `userId` de requête aurait exigé un `if` de
+   * plus, et ce `if` aurait eu à choisir entre 403 et 404 — le 403 étant
+   * précisément la fuite qu'on refuse (tenant-isolation §4).
+   *
+   * ## Pourquoi la relecture précède l'écriture
+   *
+   * Pour la raison de `changeRole` : `updateOwnProfile` rend `false` aussi bien
+   * pour « ce compte n'existe pas dans cet établissement » que pour « aucune
+   * ligne n'a changé ». Distinguer les deux demande de lire d'abord. Le cas n'est
+   * pas théorique — un jeton reste valide quinze minutes après la suppression du
+   * compte qu'il désigne, et un jeton signé sur le tenant voisin arrive ici avec
+   * un `userId` que la portée courante ne connaît pas.
+   *
+   * `findUserById` et non `findStaffAccountById` : la clientèle est justement
+   * l'appelante attendue de cette route, et le filtre sur les rôles internes la
+   * rendrait introuvable d'elle-même.
+   *
+   * ## Ce que cette méthode ne fait pas
+   *
+   * Elle ne révoque aucune session, contrairement à `changeRole`. Changer de nom
+   * ou de numéro ne change aucune revendication du jeton — ni `sub`, ni
+   * `tenantId`, ni `role` —, et déconnecter quelqu'un qui vient de corriger une
+   * faute de frappe dans son prénom serait gratuit.
+   */
+  public async updateOwnContactDetails(input: {
+    userId: string;
+    changes: { firstName?: string; lastName?: string; phone?: string | null };
+  }): Promise<UserProfile> {
+    const current = await this.repository.findUserById(input.userId);
+    if (current === null) {
+      throw new NotFoundError('Compte introuvable.');
+    }
+
+    const updated = await this.repository.updateOwnProfile({
+      userId: input.userId,
+      changes: input.changes,
+    });
+    if (!updated) {
+      // La ligne a disparu entre la lecture et l'écriture. Même réponse que si
+      // elle n'avait jamais été là : c'est ce qu'elle est maintenant.
+      throw new NotFoundError('Compte introuvable.');
+    }
+
+    // Recomposé plutôt que relu : les champs écrits sont exactement ceux que
+    // `changes` porte, et une seconde lecture ne ferait qu'ajouter un
+    // aller-retour pour retrouver ce qu'on vient d'envoyer.
+    return { ...toProfile(current), ...input.changes };
+  }
 }
