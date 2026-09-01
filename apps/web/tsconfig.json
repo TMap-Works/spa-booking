@@ -1,0 +1,34 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Next compile lui-même : `tsc` ne sert ici qu'à `npm run typecheck`.
+    "noEmit": true,
+    "declaration": false,
+    "incremental": true,
+
+    // Résolution du bundler, et non NodeNext : c'est celle qu'attend Next, et
+    // la seule qui suive les `exports` conditionnels de React 19 sans exiger
+    // d'extension explicite dans chaque import relatif.
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "preserve",
+    "allowJs": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"],
+    "plugins": [{ "name": "next" }],
+
+    // Redéclaré plutôt qu'hérité de `tsconfig.base.json` : sans `baseUrl`, les
+    // chemins d'un `paths` se résolvent depuis le fichier qui les déclare. Les
+    // écrire ici les rend lisibles depuis ce répertoire — et surtout, ils
+    // doivent désigner exactement la même source que l'alias webpack de
+    // `next.config.mjs`, sinon le compilateur et le bundler ne regardent pas le
+    // même fichier.
+    "paths": {
+      "@spa/shared": ["../../packages/shared/src/index.ts"],
+      "@spa/shared/*": ["../../packages/shared/src/*"],
+      "@/*": ["./*"]
+    }
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
+  "exclude": ["node_modules", ".next", "mockups"]
+}
