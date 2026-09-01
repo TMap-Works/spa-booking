@@ -684,6 +684,127 @@ class PauseSurErreur(unittest.TestCase):
         self.assertIn("achevées", output)
 
 
+class ActeurDuSignal(unittest.TestCase):
+    """#262 — qui a posé la pause, et comment on le sait.
+
+    `--actor` vaut `humain` **par défaut** sur `pause`, `stop` et `go` : le
+    recopier tel quel dans `control.json` aurait construit la distinction
+    « pause humaine / pause machine » sur l'ambiguïté même qu'elle doit lever.
+    Ce qui est couvert ici est donc l'établissement de l'acteur, pas sa
+    recopie — et le fait que l'absence de preuve n'en soit jamais une.
+    """
+
+    @staticmethod
+    def etabli(actor=None, env=None):
+        with mock.patch.dict(run_mod.os.environ, env or {}, clear=True):
+            return run_mod.real_actor(argparse.Namespace(actor=actor))
+
+    def test_un_acteur_nomme_est_retenu_tel_quel(self):
+        self.assertEqual(self.etabli("superviseur"), "superviseur")
+
+    def test_personne_ne_s_etant_nomme_hors_etape_c_est_un_humain(self):
+        """Le repli est délibérément le cas humain : se tromper dans ce sens ne
+        coûte qu'un arbitrage de moins."""
+        self.assertEqual(self.etabli(), "humain")
+
+    def test_sous_une_etape_de_jalon_personne_ne_tape_la_commande(self):
+        """C'est le point qui empêche de prendre un automate pour un humain —
+        l'erreur qui, elle, musellerait l'arbitre pour de bon."""
+        for name in ("SPA_LEG_START", "SPA_UNATTENDED"):
+            with self.subTest(variable=name):
+                self.assertEqual(self.etabli(env={name: "1"}),
+                                 run_mod.MACHINE_ACTOR)
+                self.assertNotIn(self.etabli(env={name: "1"}),
+                                 run_mod.HUMAN_ACTORS)
+
+    def test_un_acteur_nomme_prime_sur_l_environnement(self):
+        """Un humain qui tape `pause --actor humain` depuis un shell hérité
+        d'une étape reste un humain."""
+        self.assertEqual(self.etabli("humain", {"SPA_LEG_START": "1"}), "humain")
+
+    def test_une_variable_desarmee_ne_fait_pas_un_automate(self):
+        self.assertEqual(self.etabli(env={"SPA_LEG_START": "0"}), "humain")
+
+    def signal(self, verbe, actor=None, env=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, control={"signal": "run"})
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
+                 mock.patch.dict(run_mod.os.environ, env or {}, clear=True), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                run_mod.cmd_signal(argparse.Namespace(run="r1", actor=actor),
+                                   verbe)
+            control = json.loads((Path(tmp) / "r1" / "control.json").read_text(
+                encoding="utf-8"))
+            events = [json.loads(line) for line in
+                      (Path(tmp) / "r1" / "journal.ndjson").read_text(
+                          encoding="utf-8").splitlines() if line.strip()]
+        return control, events
+
+    def test_la_pause_emporte_son_acteur_dans_le_controle(self):
+        """C'est `control.json` que lit le gate — laisser l'acteur au seul
+        journal obligerait à le relire à l'envers, sans garantie de tomber sur
+        la pause en vigueur."""
+        control, events = self.signal("pause")
+        self.assertEqual(control["signal"], "pause")
+        self.assertEqual(control["signal_actor"], "humain")
+        self.assertEqual(events[-1]["actor"], "humain")
+
+    def test_une_pause_posee_sous_une_etape_n_est_pas_humaine(self):
+        control, events = self.signal("pause", env={"SPA_UNATTENDED": "1"})
+        self.assertEqual(control["signal_actor"], run_mod.MACHINE_ACTOR)
+        self.assertEqual(events[-1]["actor"], run_mod.MACHINE_ACTOR)
+        self.assertFalse(run_mod.human_pause(control))
+
+    def test_l_arbitre_qui_pose_un_arret_se_nomme(self):
+        control, _ = self.signal("stop", actor="arbitre")
+        self.assertEqual(control["signal_actor"], "arbitre")
+
+    def test_lever_la_pause_reprend_l_acteur_du_moment(self):
+        """`go` ne laisse pas derrière lui un « posée par humain » sur un
+        `control.json` qui ne porte plus de pause."""
+        control, _ = self.signal("run", env={"SPA_LEG_START": "1"})
+        self.assertEqual(control["signal"], "run")
+        self.assertEqual(control["signal_actor"], run_mod.MACHINE_ACTOR)
+
+    def test_une_pause_humaine_se_reconnait(self):
+        self.assertTrue(run_mod.human_pause(
+            {"signal": "pause", "signal_actor": "humain"}))
+
+    def test_l_acteur_humain_se_reconnait_quelle_qu_en_soit_la_casse(self):
+        """`--actor` est du texte libre : lire `Humain` comme une pièce du
+        dispositif rendrait l'arbitre libre de lever la pause."""
+        for value in ("Humain", "HUMAIN", " humain ", "Human"):
+            with self.subTest(actor=value):
+                self.assertTrue(run_mod.human_pause(
+                    {"signal": "pause", "signal_actor": value}))
+
+    def test_un_run_anterieur_au_correctif_ne_prouve_rien(self):
+        """Pas de `signal_actor`, pas de preuve : le motif se lève comme avant,
+        et c'est le filet de `milestone_arbiter.should` qui borne la casse à un
+        arbitrage au lieu de douze."""
+        self.assertFalse(run_mod.human_pause({"signal": "pause"}))
+
+    def test_sans_pause_il_n_y_a_pas_de_pause_humaine(self):
+        for control in ({"signal": "run", "signal_actor": "humain"},
+                        {"signal": "stop", "signal_actor": "humain"},
+                        {}, None):
+            with self.subTest(control=control):
+                self.assertFalse(run_mod.human_pause(control))
+
+    def test_le_gate_dit_par_qui_la_pause_a_ete_posee(self):
+        """Le code de sortie est le même pour une pause posée et une pause sur
+        erreur : cette ligne est ce qui les sépare à l'œil."""
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, control={"signal": "pause", "signal_actor": "humain"})
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 contextlib.redirect_stdout(output):
+                code = run_mod.cmd_gate(argparse.Namespace(run="r1"))
+        self.assertEqual(code, run_mod.PAUSE)
+        self.assertIn("par humain", output.getvalue())
+
+
 class SegmentsDePhases(unittest.TestCase):
     """La vue `ticket N` rejoue les phases dans l'ordre vécu, retours compris."""
 
