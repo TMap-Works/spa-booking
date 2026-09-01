@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
@@ -10,18 +10,30 @@ import {
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 
-import { AuthAtLeast } from '../identity/auth.decorator';
+import { Auth, AuthAtLeast } from '../identity/auth.decorator';
+import type { AuthenticatedUser } from '../identity/identity.types';
+import { CurrentUser } from '../identity/jwt-auth.guard';
 import { AppointmentsService } from './appointments.service';
 import { AppointmentDto } from './dto/book-appointment.dto';
 import { CancelAppointmentDto, toCancellationReason } from './dto/cancel-appointment.dto';
+import { MyAppointmentsQueryDto, toListInput } from './dto/my-appointments.dto';
 
 /**
- * L'agenda vu du **comptoir** — la première surface de back-office du module
- * `appointments` (#40).
+ * Les rendez-vous **derrière un jeton** — le comptoir (#40) et l'espace client
+ * (#47).
  *
  * | Route | Rôles |
  * |---|---|
+ * | `GET /appointments/mine` | toute identité vérifiée |
  * | `POST /appointments/:id/cancel` | staff et au-dessus |
+ *
+ * Les deux cohabitent parce qu'elles désignent l'établissement de la **même**
+ * façon — le jeton, et lui seul — ce qui est le critère qui a fait séparer ce
+ * contrôleur du tunnel public. Ce qui les distingue, le rang de l'appelant, se
+ * déclare par route : `@Auth()` pour la cliente qui lit son propre historique,
+ * `@AuthAtLeast('STAFF')` pour le comptoir qui écrit dans l'agenda du salon.
+ * C'est la même conduite que `UsersController`, où `PATCH /users/me` voisine avec
+ * des routes d'administration sans rien leur ouvrir.
  *
  * ## Pourquoi un second contrôleur plutôt qu'une route de plus sur le public
  *
@@ -65,6 +77,58 @@ import { CancelAppointmentDto, toCancellationReason } from './dto/cancel-appoint
 @Controller({ path: 'appointments', version: '1' })
 export class AppointmentsController {
   public constructor(private readonly appointments: AppointmentsService) {}
+
+  /**
+   * L'historique de la cliente connectée — « à venir » ou « passés » (#47,
+   * deuxième critère ; CDC §1.4 « compte client avec historique »).
+   *
+   * **200**, et le corps est une liste de rendez-vous sous la même forme que
+   * celle du tunnel public : le front n'a donc qu'un seul type de rendez-vous à
+   * savoir afficher, qu'il vienne d'une réservation, d'un report ou de cet
+   * historique.
+   *
+   * `mine` est un chemin **littéral**, déclaré avant toute route à segment
+   * dynamique : c'est l'ordre qui empêche un futur `GET /appointments/:id`
+   * d'absorber cette route et de tenter de lire un rendez-vous nommé « mine ».
+   *
+   * ## `@Auth()` sans argument, et pourquoi pas un rôle
+   *
+   * Toute identité vérifiée, `CLIENT` compris : c'est la clientèle qui est
+   * l'appelante attendue, et un seuil de rôle la priverait de la seule route par
+   * laquelle elle relit ses rendez-vous. Lire son propre historique n'est pas un
+   * privilège — il n'y a pas d'autre historique à atteindre depuis ici.
+   *
+   * ## Ce que cette route ne peut pas faire, par construction
+   *
+   * Lire l'historique de quelqu'un d'autre. La cliente vient de
+   * `@CurrentUser().userId`, donc d'un jeton dont la signature a été vérifiée, et
+   * `MyAppointmentsQueryDto` ne porte **aucun** `clientId` — il n'y a pas de
+   * champ par lequel en désigner une autre, et le `ValidationPipe` global
+   * refuserait celui qu'on glisserait dans la requête. L'établissement vient du
+   * même jeton et borne déjà le client Prisma : un rendez-vous d'un autre salon
+   * est introuvable, pas interdit (tenant-isolation §4).
+   *
+   * ## Pas de quota, pour la raison de l'annulation de back-office
+   *
+   * L'appelant a un jeton signé : le quota utile est l'authentification
+   * elle-même. Le plafond qui compte ici est celui du DTO — cent lignes au plus
+   * par appel — et il borne le coût de la réponse, pas la fréquence des appels.
+   */
+  @Get('mine')
+  @Auth()
+  @ApiOperation({ summary: 'Lister ses propres rendez-vous, à venir ou passés' })
+  @ApiOkResponse({ type: [AppointmentDto] })
+  @ApiBadRequestResponse({
+    description: 'Paramètre de requête invalide — le champ fautif est nommé.',
+  })
+  public async mine(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: MyAppointmentsQueryDto,
+  ): Promise<AppointmentDto[]> {
+    // La cliente vient du jeton, jamais de la requête (tenant-isolation §2) :
+    // c'est `toListInput` qui les réunit, et lui seul.
+    return this.appointments.listForClient(toListInput(query, user.userId));
+  }
 
   /**
    * Annule un rendez-vous — **côté salon** (#40).

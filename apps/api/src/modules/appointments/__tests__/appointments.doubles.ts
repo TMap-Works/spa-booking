@@ -13,6 +13,7 @@ import type {
   AppointmentDraft,
   AppointmentRecord,
   CancelDraft,
+  ClientAppointmentsQuery,
   GuestContact,
   RescheduleDraft,
   RescheduleOutcome,
@@ -287,6 +288,46 @@ export class FakeAppointmentsRepository {
       (candidate) => candidate.tenantId === tenantId && candidate.id === id,
     );
     return found === undefined ? null : toRecord(found);
+  }
+
+  /**
+   * L'historique d'une cliente — la moitié demandée, bornée (#47).
+   *
+   * Reproduit les quatre propriétés du vrai dont l'appelant dépend :
+   *
+   * 1. le **scoping par tenant** — une cliente du salon voisin ne ramène rien,
+   *    même identifiant, autre portée ;
+   * 2. les deux moitiés **disjointes et complémentaires** — « pas terminé et
+   *    occupant encore le créneau » d'un côté, le complément exact de l'autre.
+   *    Un double qui filtrerait « passé » sur la seule borne de temps laisserait
+   *    les annulations futures hors des deux, donc invisibles — exactement le
+   *    défaut que ce prédicat existe pour empêcher ;
+   * 3. l'**ordre** — croissant à venir, décroissant en historique, `id` pour
+   *    départager. Un double qui rendrait l'ordre d'insertion ferait passer une
+   *    assertion d'ordre pour de mauvaises raisons ;
+   * 4. le **plafond**, appliqué après le tri et non avant.
+   */
+  public async listForClient(query: ClientAppointmentsQuery): Promise<AppointmentRecord[]> {
+    const tenantId = this.requireTenant();
+    const upcoming = query.scope === 'upcoming';
+
+    return this.appointments
+      .filter((candidate) => {
+        if (candidate.tenantId !== tenantId || candidate.clientId !== query.clientId) {
+          return false;
+        }
+        const stillDue =
+          candidate.endsAt > query.now &&
+          (OCCUPYING_STATUSES as readonly AppointmentStatus[]).includes(candidate.status);
+        return upcoming ? stillDue : !stillDue;
+      })
+      .sort((left, right) => {
+        const byInstant = left.startsAt.getTime() - right.startsAt.getTime();
+        const byId = left.id.localeCompare(right.id);
+        return upcoming ? byInstant || byId : -byInstant || -byId;
+      })
+      .slice(0, query.limit)
+      .map(toRecord);
   }
 
   public async findOrCreateClient(contact: GuestContact): Promise<string> {

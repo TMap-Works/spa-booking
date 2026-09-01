@@ -227,6 +227,49 @@ export interface RescheduleOutcome {
 }
 
 /**
+ * Les deux moitiés de l'historique d'une cliente — `appointmentScopeSchema` de
+ * `@spa/shared`, côté domaine (#47).
+ *
+ * TODO(#26) : à importer du paquet partagé le jour où `apps/api` en dépendra.
+ */
+export type AppointmentScope = 'upcoming' | 'past';
+
+/**
+ * Ce qu'une lecture d'historique demande, telle que le **service** la reçoit
+ * (#47).
+ *
+ * `clientId` vient du jeton vérifié et de nulle part d'autre : ce type le porte
+ * parce que le service en a besoin, pas parce qu'un appelant a le droit de le
+ * choisir. Le contrôleur le prend dans `@CurrentUser()` ; il n'y a aucun DTO
+ * dans lequel il puisse entrer, ce qui est ce qui empêche une cliente de lire
+ * l'historique d'une autre.
+ *
+ * **Aucun `tenantId`**, pour la raison structurelle qui vaut partout dans ce
+ * module : c'est l'extension Prisma qui le pose depuis le contexte de requête.
+ */
+export interface ListClientAppointmentsInput {
+  readonly clientId: string;
+  readonly scope: AppointmentScope;
+  /** Nombre maximal de lignes rendues — borné par le DTO, jamais illimité. */
+  readonly limit: number;
+}
+
+/**
+ * Ce que le repository lit pour un historique — la moitié demandée, bornée
+ * (#47).
+ *
+ * `now` est un paramètre plutôt qu'un `new Date()` enfoui, pour la raison qui
+ * vaut dans tout ce module : la frontière entre « à venir » et « passé » se teste
+ * en décalant l'horloge de l'appelant, jamais celle de la machine.
+ */
+export interface ClientAppointmentsQuery {
+  readonly clientId: string;
+  readonly scope: AppointmentScope;
+  readonly now: Date;
+  readonly limit: number;
+}
+
+/**
  * Le rendez-vous tel que l'API le rend.
  *
  * ## `startsAt` / `endsAt` sont l'intervalle **facturé**, pas l'intervalle occupé

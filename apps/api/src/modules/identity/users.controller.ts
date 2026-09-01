@@ -1,25 +1,43 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch } from '@nestjs/common';
-import { ApiNotFoundResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBadRequestResponse,
+  ApiNotFoundResponse,
+  ApiOkResponse,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 
 import { Auth, AuthAtLeast } from './auth.decorator';
 import { UserProfileDto } from './dto/auth.dto';
-import { ChangeUserRoleDto } from './dto/users.dto';
+import { ChangeUserRoleDto, UpdateOwnProfileDto, toProfileChanges } from './dto/users.dto';
 import type { AuthenticatedUser } from './identity.types';
 import { CurrentUser } from './jwt-auth.guard';
 import { UsersService } from './users.service';
 
 /**
- * Administration des comptes de l'établissement — la surface qui exerce
- * réellement la garde de permissions.
- *
- * Trois endpoints, trois niveaux de droits, et rien qui ne serve les critères de
- * #22 :
+ * Les comptes de l'établissement — la surface qui exerce réellement la garde de
+ * permissions.
  *
  * | Route | Rôles | Ce qu'elle démontre |
  * |---|---|---|
  * | `GET /users` | staff et au-dessus | un client authentifié est refusé (403) |
  * | `GET /users/:id` | staff et au-dessus | un compte d'un autre tenant est **404** |
  * | `PATCH /users/:id/role` | admin | le seuil de rôle est déclaratif, par route |
+ * | `PATCH /users/me` | toute identité vérifiée | on modifie **son** compte, jamais celui d'un autre |
+ *
+ * Les trois premières viennent de #22 et servent l'administration des droits ; la
+ * quatrième vient de #47 et sert l'espace client. Elles cohabitent parce
+ * qu'elles portent sur la même ressource — un compte — et que le seuil de rôle
+ * est déclaré **par route**, jamais par contrôleur : c'est ce qui permet à un
+ * `CLIENT` d'entrer par `PATCH /users/me` sans rien ouvrir des trois autres.
+ *
+ * ## Pourquoi `/users/me` et non `/users/:id`
+ *
+ * Parce qu'un identifiant en chemin serait la première fuite à écrire : il
+ * faudrait alors comparer quelque part l'identifiant reçu à celui du jeton, et il
+ * suffirait d'un oubli pour qu'une cliente réécrive les coordonnées d'une autre.
+ * `me` n'a rien à comparer — le compte visé **est** celui du jeton. C'est la
+ * conduite que `GET /auth/me` a posée, et pour la même raison.
  *
  * ## Pourquoi aucun `:tenantId` nulle part
  *
@@ -40,6 +58,52 @@ import { UsersService } from './users.service';
 @Controller({ path: 'users', version: '1' })
 export class UsersController {
   public constructor(private readonly users: UsersService) {}
+
+  /**
+   * Modifie ses **propres** coordonnées — le quatrième critère de #47.
+   *
+   * Déclarée avant les routes à segment dynamique : un chemin littéral se
+   * déclare toujours avant le motif qui pourrait l'absorber. Aucune des deux
+   * autres ne le ferait ici — `:id/role` porte deux segments —, mais l'ordre
+   * inverse serait un piège posé pour la prochaine route qu'on ajoutera.
+   *
+   * `@Auth()` sans argument : **toute identité vérifiée**, `CLIENT` compris. Un
+   * seuil de rôle priverait la clientèle de la seule route par laquelle elle
+   * corrige son nom ou son numéro, ce qui est exactement l'objet du ticket. Ce
+   * n'est pas un privilège : c'est son propre compte, et il n'y a pas d'autre
+   * compte à atteindre depuis ici.
+   *
+   * **200**, et le corps rend le profil mis à jour — le front réaffiche sans
+   * relire.
+   *
+   * **400** sur un champ invalide, ou sur un champ non déclaré : le
+   * `ValidationPipe` global est en `forbidNonWhitelisted`, si bien qu'un `role`
+   * ou un `email` glissé dans le corps est refusé en nommant le champ, jamais
+   * ignoré en silence.
+   *
+   * **404** quand le jeton désigne un compte que l'établissement courant ne
+   * connaît pas — compte supprimé, ou jeton signé sur le tenant voisin. Jamais
+   * 403 : le distinguer confirmerait que le compte existe ailleurs
+   * (tenant-isolation §4).
+   */
+  @Patch('me')
+  @Auth()
+  @ApiOperation({ summary: 'Modifier ses propres coordonnées' })
+  @ApiOkResponse({ type: UserProfileDto })
+  @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
+  @ApiNotFoundResponse({ description: 'Le compte du jeton n’existe pas dans cet établissement.' })
+  public async updateOwnProfile(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() body: UpdateOwnProfileDto,
+  ): Promise<UserProfileDto> {
+    return this.users.updateOwnContactDetails({
+      // Du jeton vérifié, jamais du chemin ni du corps (tenant-isolation §2).
+      userId: user.userId,
+      // Les champs **présents**, et eux seuls : un `undefined` recopié effacerait
+      // une valeur que l'appelant n'a pas voulu toucher.
+      changes: toProfileChanges(body),
+    });
+  }
 
   /**
    * Les comptes **internes** de l'établissement : staff, manager, administrateurs.

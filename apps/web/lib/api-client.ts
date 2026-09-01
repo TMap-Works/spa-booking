@@ -30,17 +30,26 @@
 
 import {
   apiErrorSchema,
+  authSessionResponseSchema,
   availabilityResponseSchema,
   bookedAppointmentSchema,
   publicServiceSchema,
   publicTenantSchema,
+  sessionUserSchema,
+  type AuthSessionResponse,
   type AvailabilityQuery,
   type AvailabilityResponse,
   type BookGuestAppointmentRequest,
   type BookedAppointment,
   type CancelAppointmentRequest,
+  type LoginRequest,
+  type MyAppointmentsQuery,
   type PublicService,
   type PublicTenant,
+  type RegisterRequest,
+  type RescheduleAppointmentRequest,
+  type SessionUser,
+  type UpdateProfileRequest,
 } from '@spa/shared';
 import { z } from 'zod';
 
@@ -228,4 +237,308 @@ export function cancelAppointment(
     publicPath(tenantSlug, `/appointments/${encodeURIComponent(appointmentId)}/cancel`),
     { method: 'POST', body, schema: bookedAppointmentSchema },
   );
+}
+
+/**
+ * Report depuis le lien de l'écran de confirmation, ou depuis l'espace client.
+ *
+ * Même régime d'autorisation que l'annulation, et pour la même raison : on
+ * réserve sans compte, donc on reporte sans compte. Ce qui autorise l'appel est
+ * la connaissance de l'identifiant du rendez-vous.
+ *
+ * La réponse est un rendez-vous **neuf** — le report est une annulation suivie
+ * d'une création liée, jamais une mise à jour des dates en place. L'appelant
+ * remplace celui qu'il gardait ; `rescheduledFromId` le relie au précédent.
+ */
+export function rescheduleAppointment(
+  tenantSlug: string,
+  appointmentId: string,
+  body: RescheduleAppointmentRequest,
+): Promise<BookedAppointment> {
+  return request(
+    publicPath(tenantSlug, `/appointments/${encodeURIComponent(appointmentId)}/reschedule`),
+    { method: 'POST', body, schema: bookedAppointmentSchema },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// L'espace client authentifié — #47
+// ---------------------------------------------------------------------------
+
+/**
+ * Les appels **porteurs d'une session**, séparés de ceux du parcours public.
+ *
+ * ## Pourquoi une seconde fonction de transport plutôt qu'un paramètre de plus
+ *
+ * `request` ci-dessus sert le tunnel public : ni jeton, ni cookie, ni `PATCH`.
+ * L'élargir demanderait de reprendre la composition conditionnelle de son `init`
+ * — écrite telle quelle pour `exactOptionalPropertyTypes` — au milieu d'un
+ * fichier que deux autres branches du jalon modifient en parallèle (#43, #46).
+ * Le coût d'une fusion ratée sur le chemin critique de la réservation est sans
+ * commune mesure avec celui d'un second transport de trente lignes. La fusion
+ * des deux est portée par une issue de suivi, à faire quand ces branches seront
+ * intégrées.
+ *
+ * ## Ce qui ne change pas d'un transport à l'autre
+ *
+ * La forme d'erreur — `{ code, message, details }` traduit en `ApiClientError` —
+ * et le **rejeu de chaque réponse contre son schéma Zod**. Une réponse hors
+ * contrat échoue à la frontière, avec un message qui nomme le champ.
+ */
+interface AuthorizedRequestOptions<TSchema extends z.ZodTypeAny | null> {
+  readonly method: 'GET' | 'POST' | 'PATCH';
+  readonly path: string;
+  readonly schema: TSchema;
+  readonly body?: unknown;
+  /** Jeton d'accès, posé en `Authorization: Bearer`. */
+  readonly accessToken?: string;
+  /**
+   * Jeton de rafraîchissement, réémis vers l'API sous la forme du cookie qu'elle
+   * a elle-même posé. C'est la seule façon de le lui rendre : `/auth/refresh` le
+   * lit dans le cookie et **jamais** dans le corps, précisément pour qu'un jeton
+   * postable — donc lisible par JavaScript — n'existe pas.
+   */
+  readonly refreshToken?: string;
+}
+
+/** Une session ouverte par l'API, jetons compris. */
+export interface ApiSession {
+  readonly session: AuthSessionResponse;
+  /**
+   * Le jeton de rafraîchissement, extrait du cookie que l'API vient de poser.
+   *
+   * L'API l'émet sur **son** domaine et sur le chemin `/api/v1/auth` : ce
+   * cookie-là n'atteindrait jamais le navigateur, qui ne parle qu'au domaine du
+   * front. Il est donc relu ici et réémis par le front sur son propre domaine,
+   * `httpOnly` lui aussi — voir `session.ts` de l'espace client.
+   */
+  readonly refreshToken: string | null;
+  /** Durée de vie du jeton de rafraîchissement, en secondes, telle que l'API l'annonce. */
+  readonly refreshTokenMaxAge: number | null;
+}
+
+/** Le cookie de session tel que l'API le nomme — `identity/refresh-cookie.ts`. */
+const API_REFRESH_COOKIE_NAME = 'spa_refresh_token';
+
+async function authorizedRequest<TSchema extends z.ZodTypeAny | null>(
+  options: AuthorizedRequestOptions<TSchema>,
+): Promise<{ payload: TSchema extends z.ZodTypeAny ? z.infer<TSchema> : null; response: Response }> {
+  const headers: Record<string, string> = { accept: 'application/json' };
+
+  if (options.accessToken !== undefined) {
+    headers['authorization'] = `Bearer ${options.accessToken}`;
+  }
+  if (options.refreshToken !== undefined) {
+    headers['cookie'] = `${API_REFRESH_COOKIE_NAME}=${encodeURIComponent(options.refreshToken)}`;
+  }
+  if (options.body !== undefined) {
+    headers['content-type'] = 'application/json';
+  }
+
+  const init: RequestInit = {
+    method: options.method,
+    headers,
+    // Une session ne se met jamais en cache : deux visiteurs partageraient
+    // l'historique du premier arrivé.
+    cache: 'no-store',
+    ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+  };
+
+  let response: Response;
+  try {
+    response = await fetch(`${apiBaseUrl()}${options.path}`, init);
+  } catch (cause) {
+    throw new ApiClientError(
+      'SERVICE_UNAVAILABLE',
+      'Le service est momentanément injoignable. Merci de réessayer dans un instant.',
+      503,
+      { cause: cause instanceof Error ? cause.message : String(cause) },
+    );
+  }
+
+  const payload: unknown = response.status === 204 ? null : await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const failure = apiErrorSchema.safeParse(payload);
+
+    throw failure.success
+      ? new ApiClientError(
+          failure.data.code,
+          failure.data.message,
+          response.status,
+          failure.data.details,
+        )
+      : new ApiClientError(
+          `HTTP_${String(response.status)}`,
+          'Une erreur inattendue est survenue.',
+          response.status,
+        );
+  }
+
+  if (options.schema === null) {
+    return { payload: null as never, response };
+  }
+
+  const parsed = options.schema.safeParse(payload);
+
+  if (!parsed.success) {
+    throw new ApiClientError(
+      'INTERNAL_ERROR',
+      `La réponse de l’API ne respecte pas le contrat sur ${options.path}.`,
+      response.status,
+      { issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`) },
+    );
+  }
+
+  return { payload: parsed.data as never, response };
+}
+
+/**
+ * Extrait le jeton de rafraîchissement et sa durée de vie du `Set-Cookie` de
+ * l'API.
+ *
+ * `getSetCookie()` et non `headers.get('set-cookie')` : la seconde forme
+ * concatène plusieurs en-têtes en une seule chaîne, et le découpage naïf sur la
+ * virgule casse sur les dates `Expires=Wed, 09 Jun 2027 …`. La première rend un
+ * tableau, un en-tête par entrée.
+ */
+function readApiSessionCookie(response: Response): {
+  refreshToken: string | null;
+  refreshTokenMaxAge: number | null;
+} {
+  const prefix = `${API_REFRESH_COOKIE_NAME}=`;
+  const raw = response.headers.getSetCookie().find((cookie) => cookie.startsWith(prefix));
+
+  if (raw === undefined) {
+    return { refreshToken: null, refreshTokenMaxAge: null };
+  }
+
+  const [pair, ...attributes] = raw.split(';');
+  const value = (pair ?? '').slice(prefix.length).trim();
+  const maxAge = attributes
+    .map((attribute) => /^\s*max-age=(\d+)\s*$/i.exec(attribute))
+    .find((match) => match !== null);
+
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(value);
+  } catch {
+    // Une valeur qui ne se décode pas ne peut être aucun des jetons que l'API
+    // émet : c'est une absence, pas un jeton à moitié lisible.
+    return { refreshToken: null, refreshTokenMaxAge: null };
+  }
+
+  return {
+    refreshToken: decoded === '' ? null : decoded,
+    refreshTokenMaxAge: maxAge === undefined ? null : Number(maxAge[1]),
+  };
+}
+
+async function openSession(
+  path: string,
+  body: unknown,
+  refreshToken?: string,
+): Promise<ApiSession> {
+  const { payload, response } = await authorizedRequest({
+    method: 'POST',
+    path,
+    body,
+    schema: authSessionResponseSchema,
+    ...(refreshToken === undefined ? {} : { refreshToken }),
+  });
+
+  return { session: payload, ...readApiSessionCookie(response) };
+}
+
+/** Connexion d'une cliente à l'établissement désigné par son slug. */
+export function loginToAccount(
+  tenantSlug: string,
+  credentials: LoginRequest,
+): Promise<ApiSession> {
+  return openSession('/auth/login', { ...credentials, tenantSlug });
+}
+
+/** Inscription d'une cliente — la session s'ouvre dans la foulée. */
+export function registerAccount(
+  tenantSlug: string,
+  body: RegisterRequest,
+): Promise<ApiSession> {
+  return openSession('/auth/register', { ...body, tenantSlug });
+}
+
+/**
+ * Rotation du jeton de rafraîchissement.
+ *
+ * Le corps est vide, et il doit le rester : l'API lit le jeton dans le cookie
+ * qu'on lui réémet, et le `ValidationPipe` global refuserait tout champ qu'on
+ * glisserait dans le corps.
+ */
+export function refreshSession(refreshToken: string): Promise<ApiSession> {
+  return openSession('/auth/refresh', {}, refreshToken);
+}
+
+/**
+ * Déconnexion — révoque la session **en base**, pas seulement côté navigateur.
+ *
+ * Sans cet appel, effacer le cookie du front laisserait le jeton de
+ * rafraîchissement valide sept jours de plus : une session « fermée » qu'un vol
+ * de cookie antérieur pourrait encore rejouer.
+ */
+export async function logoutSession(refreshToken: string): Promise<void> {
+  await authorizedRequest({ method: 'POST', path: '/auth/logout', schema: null, refreshToken });
+}
+
+/** Le compte porté par le jeton d'accès. */
+export async function fetchOwnProfile(accessToken: string): Promise<SessionUser> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: '/auth/me',
+    schema: sessionUserSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/** Modification de ses propres coordonnées. */
+export async function updateOwnProfile(
+  accessToken: string,
+  body: UpdateProfileRequest,
+): Promise<SessionUser> {
+  const { payload } = await authorizedRequest({
+    method: 'PATCH',
+    path: '/users/me',
+    body,
+    schema: sessionUserSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * L'historique de la cliente connectée — une moitié à la fois.
+ *
+ * Aucun identifiant de cliente n'est envoyé, et il n'y a pas de champ pour le
+ * faire : l'API la lit dans le jeton.
+ */
+export async function fetchMyAppointments(
+  accessToken: string,
+  query: MyAppointmentsQuery = {},
+): Promise<BookedAppointment[]> {
+  const search = new URLSearchParams();
+
+  if (query.scope !== undefined) {
+    search.set('scope', query.scope);
+  }
+  if (query.limit !== undefined) {
+    search.set('limit', String(query.limit));
+  }
+
+  const suffix = search.size === 0 ? '' : `?${search.toString()}`;
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/appointments/mine${suffix}`,
+    schema: z.array(bookedAppointmentSchema),
+    accessToken,
+  });
+  return payload;
 }

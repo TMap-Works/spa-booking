@@ -103,6 +103,10 @@ describe('Rôles, permissions et isolation — #22', () => {
       ['GET', '/api/v1/users'],
       ['GET', '/api/v1/users/00000000-0000-4000-8000-000000000000'],
       ['PATCH', '/api/v1/users/00000000-0000-4000-8000-000000000000/role'],
+      // #47 : modifier ses coordonnées n'est pas plus ouvert que le reste. Le
+      // 401 vient de la garde, donc **avant** le `ValidationPipe` — un corps
+      // impropre à cette route ne change rien au refus.
+      ['PATCH', '/api/v1/users/me'],
     ])('%s %s', async (method, path) => {
       const response = await (method === 'GET'
         ? request(server()).get(path)
@@ -433,6 +437,166 @@ describe('Rôles, permissions et isolation — #22', () => {
       expect(harness.identity.users.find((user) => user.id === staffA)?.role).toBe(
         'STAFF',
       );
+    });
+  });
+
+  describe('PATCH /api/v1/users/me — `@Auth()`, ses propres coordonnées (#47)', () => {
+    it.each([...USER_ROLES])('laisse passer %s et n’écrit que son propre compte', async (role) => {
+      const token = await tokenFor(role);
+      const holder = HOLDERS[role]();
+
+      const response = await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ firstName: 'Camille', phone: '+261 34 12 345 67' })
+        .expect(200);
+
+      expect(response.body).toMatchObject({
+        id: holder,
+        firstName: 'Camille',
+        phone: '+261 34 12 345 67',
+      });
+
+      const written = harness.identity.users.find((user) => user.id === holder);
+      expect(written?.firstName).toBe('Camille');
+      // Le champ omis n'est pas effacé : `partial` veut dire « ce qui est
+      // envoyé », pas « ce qui reste ».
+      expect(written?.lastName).toBe('Durand');
+      // Et surtout : le rôle n'a pas bougé. C'est la route par laquelle un
+      // `CLIENT` écrit dans `users` — si un `role` pouvait y passer, elle serait
+      // une promotion en libre-service.
+      expect(written?.role).toBe(role);
+    });
+
+    it('efface le numéro quand `phone` vaut `null`', async () => {
+      const token = await tokenFor('CLIENT');
+      const seeded = harness.identity.users.find((user) => user.id === clientA);
+      expect(seeded).toBeDefined();
+      if (seeded !== undefined) {
+        seeded.phone = '+261340000000';
+      }
+
+      const response = await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ phone: null })
+        .expect(200);
+
+      expect(response.body.phone).toBeNull();
+      expect(harness.identity.users.find((user) => user.id === clientA)?.phone).toBeNull();
+    });
+
+    it('n’expose ni `tenantId` ni empreinte de mot de passe', async () => {
+      const token = await tokenFor('CLIENT');
+      const response = await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ firstName: 'Camille' })
+        .expect(200);
+
+      expect(Object.keys(response.body).sort()).toEqual([
+        'email',
+        'firstName',
+        'id',
+        'lastName',
+        'phone',
+        'role',
+      ]);
+      expect(JSON.stringify(response.body)).not.toContain(harness.a.id);
+      expect(JSON.stringify(response.body)).not.toContain(harness.b.id);
+    });
+
+    it.each([
+      ['role', { role: 'ADMIN' }],
+      ['email', { email: 'autre@lilas.test' }],
+      ['isActive', { isActive: false }],
+      ['tenantId', { tenantId: 'un-autre-salon' }],
+      ['id', { id: '00000000-0000-4000-8000-000000000000' }],
+    ])('rejette en 400 un `%s` glissé dans le corps, sans rien écrire', async (_field, body) => {
+      // `forbidNonWhitelisted` : ce qui n'est pas déclaré par le DTO est refusé
+      // en nommant le champ, jamais ignoré en silence. C'est ce qui rend
+      // exécutoire l'omission délibérée de ces cinq champs.
+      const token = await tokenFor('CLIENT');
+      const response = await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send(body)
+        .expect(400);
+
+      expect(response.body.code).toBe('VALIDATION_ERROR');
+      const kept = harness.identity.users.find((user) => user.id === clientA);
+      expect(kept?.role).toBe('CLIENT');
+      expect(kept?.email).toBe('cliente@lilas.test');
+    });
+
+    it('rejette en 400 un prénom réduit à des espaces', async () => {
+      const token = await tokenFor('CLIENT');
+      await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ firstName: '   ' })
+        .expect(400);
+
+      expect(harness.identity.users.find((user) => user.id === clientA)?.firstName).toBe('Alice');
+    });
+
+    it('rend 404 — et non 403 — sous un jeton signé sur l’autre établissement', async () => {
+      // Le scénario de traversée : un porteur légitime de A dont la revendication
+      // `tenantId` vise B. Le compte de A n'existe pas dans B — la lecture doit
+      // échouer, pas retomber sur la ligne de A. Et le compte de A doit ressortir
+      // intact : un `updateMany` sans filtre de tenant l'aurait réécrit.
+      const croise = await harness.app
+        .get(TokenService)
+        .signAccessToken({ userId: clientA, tenantId: harness.b.id, role: 'CLIENT' });
+
+      const response = await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${croise}`)
+        .send({ firstName: 'Intruse' })
+        .expect(404);
+
+      expect(response.body.code).toBe('NOT_FOUND');
+      expect(response.body.details).toEqual({});
+      expect(JSON.stringify(response.body)).not.toContain(clientA);
+      expect(harness.identity.users.find((user) => user.id === clientA)?.firstName).toBe('Alice');
+    });
+
+    it('rend le même 404 pour un compte qui n’existe nulle part', async () => {
+      const inconnu = await harness.app
+        .get(TokenService)
+        .signAccessToken({ userId: UNKNOWN_ID, tenantId: harness.a.id, role: 'CLIENT' });
+      const croise = await harness.app
+        .get(TokenService)
+        .signAccessToken({ userId: clientA, tenantId: harness.b.id, role: 'CLIENT' });
+
+      const absent = await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${inconnu}`)
+        .send({ firstName: 'Camille' })
+        .expect(404);
+      const ailleurs = await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${croise}`)
+        .send({ firstName: 'Camille' })
+        .expect(404);
+
+      // « Inconnu ici » et « connu ailleurs » doivent être indiscernables.
+      expect(absent.body).toEqual(ailleurs.body);
+    });
+
+    it('n’écrit rien chez le voisin quand la modification aboutit', async () => {
+      const token = await tokenFor('CLIENT');
+      await request(server())
+        .patch('/api/v1/users/me')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ firstName: 'Camille', lastName: 'Rakoto' })
+        .expect(200);
+
+      for (const foreign of [adminB, managerB]) {
+        const kept = harness.identity.users.find((user) => user.id === foreign);
+        expect(kept?.firstName).toBe('Alice');
+        expect(kept?.lastName).toBe('Durand');
+      }
     });
   });
 
