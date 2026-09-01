@@ -14,8 +14,14 @@ import { registerDecorator, ValidateIf, type ValidationOptions } from 'class-val
  * ajoutera la dépendance à `apps/api/package.json`. Les noms sont donc **ceux du
  * paquet partagé**, pour que la substitution ne change pas une borne en silence.
  *
- * #297 traite le même sujet côté contrat : adopter `offsetDateTimeSchema` dans
- * les schémas de requête de rendez-vous.
+ * #297 a fait la moitié contrat du même geste : `createAppointmentRequestSchema`
+ * et `rescheduleAppointmentRequestSchema` portent désormais
+ * `offsetDateTimeSchema` sur leur `startsAt`, si bien que le contrat et ce
+ * fichier décrivent exactement la même frontière — en deux endroits, en
+ * attendant #26. `appointments/__tests__/date-time.validation.spec.ts` et
+ * `packages/shared/src/__tests__/schemas.spec.ts` exercent les mêmes chaînes de
+ * part et d'autre : c'est ce qui rendra visible le jour où l'une des deux
+ * bougerait seule.
  */
 
 /**
