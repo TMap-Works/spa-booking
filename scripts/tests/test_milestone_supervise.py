@@ -27,6 +27,7 @@ import sys
 import tempfile
 import time
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -694,6 +695,128 @@ class DemandeDArbitrage(unittest.TestCase):
         argv = called.call_args[0][0]
         self.assertEqual(argv.count("--reason"), 2)
         self.assertIn("patience", argv)
+
+
+class BattementDansLeJournalDuRun(unittest.TestCase):
+    """Le second volet de #186 : couvrir le silence sans le combler.
+
+    Entre deux vagues, plus personne n'écrit dans le journal du run pendant
+    quinze à vingt-cinq minutes — un run mort s'y lit comme un run au travail.
+    Le superviseur y pose donc une ligne toutes les cinq minutes, et deux
+    exigences se tiennent en tension :
+
+    - elle doit **paraître** — sinon le silence reste illisible ;
+    - elle ne doit pas **compter** — sinon `journal_quiet()` la lirait comme une
+      activité, le guetteur des vingt-cinq minutes ne couperait plus jamais une
+      étape morte debout, et l'on aurait échangé un silence illisible contre un
+      silence invisible.
+
+    C'est la marque `beat` qui tient les deux, et c'est elle qu'on vérifie ici.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.directory = Path(self.tmp.name)
+        self.journal = self.directory / "journal.ndjson"
+
+    def write(self, *events):
+        stamp = None
+        with open(self.journal, "w", encoding="utf-8") as handle:
+            for age, beat in events:
+                stamp = time.time() - age
+                event = {"ts": datetime.fromtimestamp(stamp, timezone.utc)
+                         .isoformat(timespec="seconds"), "kind": "run",
+                         "message": "…"}
+                if beat:
+                    event["beat"] = True
+                handle.write(json.dumps(event) + "\n")
+        # Le mtime suit forcément la dernière écriture, comme sur un vrai run :
+        # c'est justement lui qui trompait la mesure avant la marque.
+        os.utime(self.journal, (stamp, stamp))
+
+    def quiet(self):
+        with mock.patch.object(sup, "current_run_dir", return_value=self.directory):
+            return sup.journal_quiet()
+
+    def test_le_silence_se_mesure_sur_le_dernier_evenement_reel(self):
+        """Trois battements posés depuis, et pourtant le journal est muet depuis
+        vingt minutes : c'est ce que le guetteur doit lire."""
+        self.write((1200, False), (900, True), (600, True), (300, True))
+        self.assertGreater(self.quiet(), 1100)
+
+    def test_un_evenement_ordinaire_rompt_bien_le_silence(self):
+        self.write((1200, False), (30, False))
+        self.assertLess(self.quiet(), 120)
+
+    def test_un_journal_sans_horodatage_retombe_sur_le_mtime(self):
+        """Le repli garde sa valeur : mieux vaut une mesure grossière qu'aucune."""
+        self.journal.write_text("{}\n", encoding="utf-8")
+        stamp = time.time() - 900
+        os.utime(self.journal, (stamp, stamp))
+        self.assertGreater(self.quiet(), 800)
+
+    def test_le_guetteur_coupe_malgre_les_battements(self):
+        """La régression qu'on ne verrait pas autrement : une étape morte debout
+        que le battement du superviseur ferait passer pour vivante."""
+        self.write((1800, False), (300, True))
+        with mock.patch.object(sup, "current_run_dir", return_value=self.directory):
+            # Le guetteur borne sa mesure au démarrage de l'appel : on le fait
+            # naître il y a une demi-heure, comme l'étape qu'il surveille.
+            with mock.patch.object(sup.time, "time",
+                                   return_value=time.time() - 1800):
+                look = sup.stall_watch(argparse.Namespace(stall_minutes=25))
+            self.assertIn("muet", look())
+
+    def test_un_battement_ne_fait_pas_croire_que_quelqu_un_orchestre(self):
+        """`supervisor_alive()` dit déjà la présence du superviseur. Compter son
+        battement ici retarderait de dix minutes la relance d'un superviseur tué
+        juste après avoir battu."""
+        self.write((sup.ORCHESTRATOR_QUIET + 300, False), (10, True))
+        with mock.patch.object(sup, "current_run_dir", return_value=self.directory):
+            self.assertFalse(sup.orchestrator_active())
+
+
+class CeQueLeBattementEcrit(unittest.TestCase):
+    """Quand il parle, et ce qu'il dit."""
+
+    def tick(self, quiet, age=0.0, stall_minutes=25):
+        posted = []
+        with mock.patch.object(sup, "journal_quiet", return_value=quiet), \
+             mock.patch.object(sup, "journal",
+                               side_effect=lambda *a, **k: posted.append((a, k))):
+            beat = sup.beat_watch("étape", time.time() - age, stall_minutes)
+            beat()
+            beat()          # deux tours de minute d'affilée
+        return posted
+
+    def test_un_journal_vivant_ne_declenche_aucun_battement(self):
+        """On ne double personne : tant que les agents journalisent leurs
+        phases, le battement se tait."""
+        self.assertEqual(self.tick(quiet=60), [])
+
+    def test_un_journal_muet_declenche_un_battement_et_un_seul(self):
+        posted = self.tick(quiet=sup.JOURNAL_BEAT + 60, age=900)
+        self.assertEqual(len(posted), 1)
+
+    def test_la_ligne_dit_l_age_du_silence_et_l_echeance(self):
+        (args, fields), = self.tick(quiet=900, age=900)
+        message = args[1]
+        self.assertIn("en vol depuis", message)
+        self.assertIn("muet depuis", message)
+        self.assertIn("coupure à 25 min", message)
+        self.assertIsNone(args[0])          # aucun statut : ce n'est pas un état
+        self.assertTrue(fields["beat"])
+        self.assertEqual(fields["level"], "DEBUG")
+
+    def test_sans_guetteur_aucune_echeance_n_est_annoncee(self):
+        """L'arbitrage n'a pas de coupure au silence : annoncer la sienne serait
+        annoncer celle d'une autre étape."""
+        (args, _), = self.tick(quiet=900, age=900, stall_minutes=None)
+        self.assertNotIn("coupure", args[1])
+
+    def test_un_journal_illisible_ne_fait_pas_battre(self):
+        self.assertEqual(self.tick(quiet=None), [])
 
 
 if __name__ == "__main__":
