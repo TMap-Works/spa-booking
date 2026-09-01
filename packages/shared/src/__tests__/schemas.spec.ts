@@ -10,7 +10,12 @@
  */
 
 import { MAX_AVAILABILITY_RANGE_DAYS, PASSWORD_MIN_LENGTH } from '../constants/limits';
-import { appointmentListQuerySchema, createAppointmentRequestSchema } from '../schemas/appointment';
+import {
+  appointmentListQuerySchema,
+  appointmentSchema,
+  createAppointmentRequestSchema,
+  rescheduleAppointmentRequestSchema,
+} from '../schemas/appointment';
 import { availabilityQuerySchema } from '../schemas/availability';
 import {
   assignServiceStaffRequestSchema,
@@ -339,6 +344,101 @@ describe('appointments', () => {
         price: { amountMinor: 0, currency: 'EUR' },
       }).success,
     ).toBe(false);
+  });
+
+  /**
+   * L'adoption d'`offsetDateTimeSchema` en entrée (#297).
+   *
+   * Ce qui se vérifie ici n'est pas qu'une regex accepte une chaîne de plus :
+   * c'est qu'un instant exprimé dans le fuseau du salon désigne **le même point
+   * sur la ligne du temps** que le `Z` correspondant, et que la normalisation a
+   * lieu au passage du schéma — pas trois couches plus bas.
+   */
+  it('accepte un début exprimé avec l’offset du salon et le normalise en UTC', () => {
+    const parsed = createAppointmentRequestSchema.parse({
+      serviceId: UUID,
+      staffId: OTHER_UUID,
+      // 11:30 à Paris le 3 mars, heure d'hiver : +01:00.
+      startsAt: '2026-03-03T11:30:00+01:00',
+    });
+
+    expect(parsed.startsAt).toBe('2026-03-03T10:30:00.000Z');
+    // Le report ouvre exactement la même frontière : les créneaux qu'un
+    // calendrier propose pour déplacer un rendez-vous sont ceux-là mêmes qu'il
+    // propose pour en prendre un.
+    expect(
+      rescheduleAppointmentRequestSchema.parse({ startsAt: '2026-03-03T11:30:00+01:00' }).startsAt,
+    ).toBe('2026-03-03T10:30:00.000Z');
+  });
+
+  it('lit au bon instant les deux nuits de changement d’heure', () => {
+    // Passage à l'heure d'été : l'horloge de Paris saute de 02:00 à 03:00, si
+    // bien que 03:30+02:00 est le tout premier instant de la nouvelle heure —
+    // 01:30Z. Une conversion faite avec l'offset d'hiver le placerait à 02:30Z,
+    // une heure trop tard : la cliente arriverait après son rendez-vous.
+    expect(
+      createAppointmentRequestSchema.parse({
+        serviceId: UUID,
+        startsAt: '2026-03-29T03:30:00+02:00',
+      }).startsAt,
+    ).toBe('2026-03-29T01:30:00.000Z');
+
+    // Passage à l'heure d'hiver : 02:30 sonne deux fois à Paris. C'est l'offset
+    // porté par la chaîne — et lui seul — qui dit laquelle des deux, ce qu'aucun
+    // fuseau ne saurait trancher à sa place. D'où l'exigence de l'offset
+    // explicite plutôt qu'une date-heure nue rapportée à `tenants.timezone`.
+    expect(
+      createAppointmentRequestSchema.parse({
+        serviceId: UUID,
+        startsAt: '2026-10-25T02:30:00+02:00',
+      }).startsAt,
+    ).toBe('2026-10-25T00:30:00.000Z');
+    expect(
+      createAppointmentRequestSchema.parse({
+        serviceId: UUID,
+        startsAt: '2026-10-25T02:30:00+01:00',
+      }).startsAt,
+    ).toBe('2026-10-25T01:30:00.000Z');
+  });
+
+  it('refuse toujours une date-heure nue, à la réservation comme au report', () => {
+    // Élargir l'entrée n'était pas la relâcher : c'est l'instant **nu** qui
+    // reste proscrit, parce que son fuseau ne peut être que deviné.
+    //
+    // La liste reprend **mot pour mot** celle qu'exerce le pendant côté API,
+    // `appointments/__tests__/date-time.validation.spec.ts` : c'est ce qui rend
+    // le double écriture de cette frontière vérifiable. Une liste plus courte
+    // d'un côté laisserait la copie d'en face bouger seule sans qu'aucune des
+    // deux suites ne rougisse — en particulier sur le 31 février, que le motif
+    // seul accepte et que `Date.parse` ramènerait au 3 mars sans un mot.
+    for (const startsAt of [
+      '2026-03-29T03:30:00',
+      '2026-03-29',
+      '2026-03-29T24:00:00Z',
+      '2026-02-31T10:00:00Z',
+      '1774743000',
+      '2026-03-29T03:30:00+0200',
+      '',
+    ]) {
+      expect(createAppointmentRequestSchema.safeParse({ serviceId: UUID, startsAt }).success).toBe(
+        false,
+      );
+      expect(rescheduleAppointmentRequestSchema.safeParse({ startsAt }).success).toBe(false);
+    }
+  });
+
+  it('n’émet en sortie que des instants UTC, jamais un offset de salon', () => {
+    // L'autre moitié de l'asymétrie : un agenda de back-office trie ses lignes
+    // par simple ordre lexicographique, ce qui n'a de sens que dans un
+    // référentiel unique.
+    const instantFields = ['startsAt', 'endsAt', 'cancelledAt', 'createdAt'] as const;
+
+    for (const field of instantFields) {
+      expect(appointmentSchema.shape[field].safeParse('2026-03-29T03:30:00+02:00').success).toBe(
+        false,
+      );
+      expect(appointmentSchema.shape[field].safeParse('2026-03-29T01:30:00Z').success).toBe(true);
+    }
   });
 
   it('filtre l’agenda sur des dates civiles et une liste de statuts non vide', () => {
