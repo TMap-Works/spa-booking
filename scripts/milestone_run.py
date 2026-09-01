@@ -576,6 +576,63 @@ def leg_start():
     return False
 
 
+# Les acteurs qui désignent quelqu'un derrière un clavier. Tout le reste —
+# `agent`, `orchestrateur`, `superviseur`, `arbitre`, `reconcile`, `automate` —
+# est une pièce du dispositif, et ce qu'elle pose se rattrape par le dispositif.
+HUMAN_ACTORS = {"humain", "human"}
+# Ce qu'on inscrit quand personne n'a nommé l'acteur mais que l'environnement
+# dit qu'il n'y a personne : le superviseur pose `SPA_LEG_START` sur chaque
+# étape, et `SPA_UNATTENDED` hors `--no-merge`.
+MACHINE_ACTOR = "automate"
+
+
+def real_actor(args, default="humain"):
+    """Qui pose vraiment ce signal — l'acteur établi, pas le défaut d'argparse.
+
+    `--actor` vaut `humain` **par défaut** sur `pause`, `stop` et `go` : le
+    recopier tel quel dans `control.json` construirait la distinction
+    « pause humaine / pause machine » sur la même ambiguïté qu'elle est censée
+    lever (#262). On l'établit donc en trois temps, du plus probant au moins :
+
+    1. `--actor` **explicitement passé** — c'est la convention de toutes les
+       pièces du dispositif, qui se nomment (`superviseur`, `arbitre`, `agent`) ;
+    2. sinon, l'environnement de reprise automatique (`leg_start()`) : sous une
+       étape de jalon, il n'y a par construction personne pour taper la commande ;
+    3. sinon seulement, le défaut — un humain à son terminal.
+
+    Le repli du 3 est délibérément le cas humain : c'est le seul qui rende la
+    main à quelqu'un, et se tromper dans ce sens ne coûte qu'un arbitrage de
+    moins. L'inverse — prendre un automate pour un humain — muselle l'arbitre,
+    et c'est ce que le point 2 empêche.
+    """
+    given = getattr(args, "actor", None)
+    if given:
+        return given
+    return MACHINE_ACTOR if leg_start() else default
+
+
+def human_pause(control):
+    """Vrai si la pause en cours a été posée par un humain, et prouvée telle.
+
+    Une pause posée à la main ne peut pas être levée par l'arbitre — sa doctrine
+    le lui interdit (`.claude/commands/milestone-arbitrate.md`). L'ouvrir comme
+    motif d'arbitrage revenait donc à payer un tour d'Opus 5 pour s'entendre dire
+    qu'il n'y avait rien à faire, et à recommencer trente secondes plus tard
+    jusqu'à épuisement du budget du run (#262).
+
+    L'absence de `signal_actor` — un run ouvert avant ce correctif — ne vaut
+    **pas** preuve : on rend `False`, et le motif se lève comme avant. C'est le
+    filet indépendant de `milestone_arbiter.should` qui borne alors la casse à un
+    seul arbitrage au lieu de douze.
+    """
+    if (control or {}).get("signal") != "pause":
+        return False
+    # `--actor` est du texte libre : `Humain`, ` humain ` ou `HUMAIN` désignent
+    # la même personne, et les lire comme une pièce du dispositif rendrait
+    # l'arbitre libre de lever une pause qu'on lui interdit de toucher.
+    return (control.get("signal_actor") or "").strip().lower() in HUMAN_ACTORS
+
+
 # Un événement écrit par `reconcile` n'atteste de rien : c'est son propre
 # verdict, pas le battement d'un agent. Le compter comme un signe de vie
 # rendrait le requeue auto-réfutant — `reconcile` requeue un ticket, puis relit
@@ -1995,7 +2052,12 @@ def cmd_gate(args):
         return QUOTA
 
     if signal == "pause":
-        print("pause demandée — terminer la vague en cours, ne pas en lancer d'autre")
+        # Dire par qui : le code de sortie est le même pour une pause posée et
+        # pour une pause sur erreur, et c'est cette ligne qui les sépare à
+        # l'œil — comme `signal_actor` les sépare pour l'arbitre (#262).
+        who = control.get("signal_actor")
+        print(f"pause demandée{f' par {who}' if who else ''} — terminer la vague "
+              "en cours, ne pas en lancer d'autre")
         return PAUSE
 
     if current is None:
@@ -2402,10 +2464,18 @@ def cmd_note(args):
 def cmd_signal(args, signal):
     run_id = resolve(args.run)
     control = load_control(run_id)
+    # L'acteur voyage avec le signal, et pas seulement dans le journal : c'est
+    # `control.json` que lit le gate, et c'est de là que l'arbitre doit pouvoir
+    # dire si la pause qui retient le run est de celles qu'il a le droit de
+    # lever (#262). Le journal, lui, ne dit que ce qui s'est passé — il faudrait
+    # le relire à l'envers pour retrouver la dernière pause, et rien ne
+    # garantirait qu'elle est bien celle qui est en vigueur.
+    actor = real_actor(args)
     control["signal"] = signal
+    control["signal_actor"] = actor
     save_control(run_id, control)
     append_journal(run_id, {"ts": now(), "kind": "run", "status": signal,
-                            "actor": getattr(args, "actor", None) or "humain"})
+                            "actor": actor})
     print({"pause": "pause demandée — prendra effet à la fin de la vague en cours",
            "stop": "arrêt demandé — aucun nouvel agent ne sera lancé",
            "run": "run relancé"}[signal])
@@ -2427,6 +2497,11 @@ def cmd_resume(args):
         print()
     control = load_control(run_id)
     control["signal"] = "run"
+    # `signal_actor` accompagne le signal **en cours**, pas celui qu'on vient de
+    # lever : l'écraser par qui reprend évite de laisser l'acteur d'une pause
+    # révolue dans un `control.json` qui n'en porte plus. Les deux lecteurs
+    # (`cmd_gate`, `human_pause`) exigent de toute façon `signal == "pause"`.
+    control["signal_actor"] = real_actor(args)
     save_control(run_id, control)
     run = load_run(run_id)
     tickets = replay(run, read_journal(run_id), control)
@@ -3019,7 +3094,12 @@ def main():
                            ("go", "lever la pause et reprendre")):
         node = sub.add_parser(name, help=helptext)
         node.add_argument("--run")
-        node.add_argument("--actor", default="humain")
+        # Pas de défaut : c'est l'absence d'argument qui distingue « personne ne
+        # s'est nommé » de « quelqu'un a dit qui il était ». `real_actor()`
+        # tranche ensuite, et retombe sur « humain » — mais en le sachant (#262).
+        node.add_argument("--actor", default=None,
+                          help="qui pose le signal (défaut : humain, ou "
+                               "« automate » sous une étape de jalon)")
 
     sub.add_parser("list", help="tous les runs connus").add_argument("--run")
 

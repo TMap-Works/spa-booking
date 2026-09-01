@@ -26,6 +26,8 @@ rend ces tests exécutables dans la CI, et c'est aussi ce qui a dicté la
 séparation entre ce fichier et le jugement, qui vit dans
 `.claude/commands/milestone-arbitrate.md`.
 """
+import contextlib
+import io
 import json
 import sys
 import tempfile
@@ -127,8 +129,9 @@ class Motifs(unittest.TestCase):
     déclenche aucun, sans quoi le dispositif coûterait plus qu'il ne sauve."""
 
     @staticmethod
-    def payload(code=run_mod.GO, tombes=(), prs=()):
-        return {"gate": {"code": code}, "tombes": list(tombes), "prs": list(prs)}
+    def payload(code=run_mod.GO, tombes=(), prs=(), pause_humaine=False):
+        return {"gate": {"code": code}, "tombes": list(tombes), "prs": list(prs),
+                "pause_humaine": pause_humaine}
 
     def test_une_etape_saine_ne_declenche_rien(self):
         self.assertEqual(arb.motifs(self.payload()), [])
@@ -191,6 +194,63 @@ class Motifs(unittest.TestCase):
     def test_aucun_motif_n_est_compte_deux_fois(self):
         found = arb.motifs(self.payload(code=run_mod.PAUSE), ["gate_pause"])
         self.assertEqual(found.count("gate_pause"), 1)
+
+
+class PauseHumaine(unittest.TestCase):
+    """#262 — la pause qu'un humain a posée n'est pas un motif d'arbitrage.
+
+    Le gate rend le même code de sortie pour deux situations opposées : la pause
+    sur erreur, que l'arbitre **doit** trancher, et la pause posée à la main,
+    qu'il n'a pas le droit de lever (« c'est une décision qui n'est pas la
+    tienne »). Confondues, elles produisaient un arbitrage qui rendait la main
+    sans rien changer, puis se faisait rappeler trente secondes plus tard sur le
+    même dossier — douze fois, jusqu'à ce que le budget du run soit vide et
+    qu'un incident réel ne trouve plus de quoi être arbitré.
+    """
+
+    @staticmethod
+    def payload(pause_humaine, tombes=()):
+        return {"gate": {"code": run_mod.PAUSE}, "tombes": list(tombes),
+                "prs": [], "pause_humaine": pause_humaine}
+
+    def test_une_pause_humaine_n_ouvre_pas_d_arbitrage(self):
+        self.assertNotIn("gate_pause", arb.motifs(self.payload(True)))
+
+    def test_une_pause_sur_erreur_en_ouvre_toujours_un(self):
+        """Le correctif ne doit pas museler l'arbitre sur le cas qui, lui,
+        demande vraiment une décision."""
+        self.assertIn("gate_pause", arb.motifs(self.payload(False)))
+
+    def test_le_motif_force_par_le_superviseur_est_retire_aussi(self):
+        """`milestone_supervise.py` appelle `rescue(["gate_pause"])` sur le seul
+        code de sortie du gate, sans plus de discernement que l'arbitre n'en
+        avait. Sans ce retrait, la boucle repartait par ce chemin-là."""
+        self.assertNotIn("gate_pause",
+                         arb.motifs(self.payload(True), ["gate_pause"]))
+
+    def test_une_pause_humaine_n_etouffe_pas_les_autres_motifs(self):
+        """Un ticket tombé pendant qu'un humain tient le run en pause reste un
+        motif : c'est le `gate_pause` qui est stérile, pas l'arbitrage."""
+        found = arb.motifs(self.payload(True, tombes=[21]))
+        self.assertEqual(found, ["tickets_tombes"])
+
+    def test_le_dossier_porte_la_lecture_faite_du_controle(self):
+        """La distinction se lit dans `control.json`, pas dans le journal :
+        c'est `control.json` que le gate consulte."""
+        control = {"signal": "pause", "signal_actor": "humain"}
+        self.assertTrue(run_mod.human_pause(control))
+        self.assertFalse(run_mod.human_pause(
+            {"signal": "pause", "signal_actor": "superviseur"}))
+
+    def test_la_pause_apparait_en_clair_dans_le_dossier_rendu(self):
+        payload = {"run": {"id": "r1", "jalon": "S1", "largeur": 2},
+                   "gate": {"code": run_mod.PAUSE, "sens": "pause demandée"},
+                   "motifs": [], "signal": "pause", "signal_acteur": "humain",
+                   "pause_humaine": True, "vague": None, "tickets": [],
+                   "prs": [], "arbitrages": arb.summary([])}
+        rendered = arb.render(payload)
+        self.assertIn("pause posée par humain", rendered)
+        self.assertIn("à ne pas lever", rendered)
 
 
 class DevelopCasse(unittest.TestCase):
@@ -406,6 +466,116 @@ class Verdict(unittest.TestCase):
         args = mock.Mock(run=None, reason=[], per_ticket=2, per_run=12)
         with mock.patch.object(arb.run_mod, "resolve", return_value=None):
             self.assertEqual(arb.cmd_should(args), 1)
+
+
+class DossierInchange(unittest.TestCase):
+    """#262 — on ne rappelle pas l'arbitre sur un dossier qu'il vient de juger.
+
+    Filet indépendant du discernement des motifs, et c'est sa raison d'être : il
+    couvre tout motif susceptible de se représenter à l'identique, pas seulement
+    celui qu'on a vu boucler. Rappelé sur un dossier inchangé, l'arbitre rendra
+    la même décision au prix d'un tour d'Opus 5, et recommencera jusqu'à ce que
+    le budget du run soit vide.
+
+    La seule écriture qui ne compte pas pour un mouvement est la trace que
+    l'arbitrage laisse lui-même au journal en s'inscrivant : `record` n'appelle
+    `now()` qu'une fois pour les deux fichiers, d'où l'horodatage commun.
+    """
+
+    LEG = {"ts": "2026-08-25T16:49:58+00:00", "kind": "run",
+           "status": "leg_ended", "message": "étape 4 rendue"}
+    RENDU = "2026-08-25T16:51:49+00:00"
+    # Ce que `record` écrit au journal, au même horodatage que la décision.
+    TRACE = {"ts": RENDU, "kind": "run", "actor": "arbitre",
+             "message": "arbitrage [gate_pause] — pause HUMAINE, je ne la lève pas"}
+
+    def test_sans_arbitrage_anterieur_rien_ne_bloque(self):
+        self.assertFalse(arb.already_arbitrated(["gate_pause"], [], [self.LEG]))
+
+    def test_sans_motif_il_n_y_a_rien_a_comparer(self):
+        history = [{"ts": self.RENDU, "motif": "gate_pause"}]
+        self.assertFalse(arb.already_arbitrated([], history, [self.LEG]))
+
+    def test_le_meme_motif_sans_rien_de_neuf_ne_rouvre_pas(self):
+        """Le cas exact du run S1 : arbitrage 1 rendu à 16:51:49, arbitrage 2
+        ouvert à 16:52:21 sur un dossier identique."""
+        history = [{"ts": self.RENDU, "motif": "gate_pause"}]
+        self.assertTrue(arb.already_arbitrated(
+            ["gate_pause"], history, [self.LEG, self.TRACE]))
+
+    def test_la_tenue_de_compte_du_superviseur_n_est_pas_un_mouvement(self):
+        """`milestone_supervise` journalise « arbitrage N rendu » **après** le
+        `record`, et un battement pendant l'appel. Comptées, ces écritures
+        prouvaient à chaque tour que le dossier avait bougé — et le filet ne se
+        serait jamais déclenché dans la boucle réelle."""
+        history = [{"ts": self.RENDU, "motif": "gate_pause"}]
+        rendu = {"ts": "2026-08-25T16:51:52+00:00", "kind": "run",
+                 "actor": "superviseur", "status": "arbitrage",
+                 "message": "arbitrage 1 rendu — terminé"}
+        beat = {"ts": "2026-08-25T16:52:10+00:00", "kind": "run",
+                "actor": "superviseur", "beat": True,
+                "message": "arbitrage en vol depuis 1 min"}
+        self.assertTrue(arb.already_arbitrated(
+            ["gate_pause"], history, [self.LEG, self.TRACE, rendu, beat]))
+
+    def test_un_evenement_posterieur_rouvre_le_dossier(self):
+        """Le journal du run est ce qui bouge quand quelque chose se passe :
+        une étape qui se termine remet l'arbitrage sur la table."""
+        history = [{"ts": self.RENDU, "motif": "gate_pause"}]
+        suite = dict(self.LEG, ts="2026-08-25T17:10:00+00:00")
+        self.assertFalse(arb.already_arbitrated(
+            ["gate_pause"], history, [self.LEG, self.TRACE, suite]))
+
+    def test_un_motif_neuf_rouvre_le_dossier(self):
+        """Une PR qui vient de virer au vert, un ticket qui vient de tomber :
+        le dossier n'est plus le même, même si le journal n'a pas bougé."""
+        history = [{"ts": self.RENDU, "motif": "gate_pause"}]
+        self.assertFalse(arb.already_arbitrated(
+            ["gate_pause", "tickets_tombes"], history, [self.LEG, self.TRACE]))
+
+    def test_deux_decisions_de_suite_couvrent_leurs_deux_motifs(self):
+        second = "2026-08-25T16:55:00+00:00"
+        history = [{"ts": self.RENDU, "motif": "gate_pause"},
+                   {"ts": second, "motif": "tickets_tombes"}]
+        events = [self.LEG, self.TRACE, dict(self.TRACE, ts=second)]
+        self.assertTrue(arb.already_arbitrated(
+            ["gate_pause", "tickets_tombes"], history, events))
+
+    def test_un_horodatage_manquant_ne_bloque_jamais(self):
+        """Un NDJSON abîmé doit laisser l'arbitrage possible, pas l'interdire :
+        se tromper ici coûte un tour, l'inverse coûte un incident non arbitré."""
+        self.assertFalse(arb.already_arbitrated(
+            ["gate_pause"], [{"motif": "gate_pause"}], [self.LEG]))
+
+    def should(self, motifs, history, events):
+        payload = {"motifs": motifs,
+                   "arbitrages": {"total": len(history), "budget_run": 12,
+                                  "reste_run": 12 - len(history),
+                                  "budget_ticket": 2, "par_ticket": {},
+                                  "derniers": []}}
+        args = mock.Mock(run=None, reason=[], per_ticket=2, per_run=12)
+        output = io.StringIO()
+        with mock.patch.object(arb.run_mod, "resolve", return_value="r1"), \
+             mock.patch.object(arb, "dossier", return_value=payload), \
+             mock.patch.object(arb, "arbitrations", return_value=history), \
+             mock.patch.object(arb.run_mod, "read_journal", return_value=events), \
+             contextlib.redirect_stdout(output):
+            return arb.cmd_should(args), output.getvalue()
+
+    def test_should_refuse_de_rappeler_l_arbitre(self):
+        history = [{"ts": self.RENDU, "motif": "gate_pause"}]
+        code, output = self.should(["gate_pause"], history,
+                                   [self.LEG, self.TRACE])
+        self.assertEqual(code, 1)
+        self.assertIn("dossier inchangé", output)
+        self.assertIn("gate_pause", output)
+
+    def test_should_rappelle_l_arbitre_des_que_le_journal_bouge(self):
+        history = [{"ts": self.RENDU, "motif": "gate_pause"}]
+        suite = dict(self.LEG, ts="2026-08-25T17:10:00+00:00")
+        code, _ = self.should(["gate_pause"], history,
+                              [self.LEG, self.TRACE, suite])
+        self.assertEqual(code, 0)
 
 
 class AppelExterne(unittest.TestCase):

@@ -29,9 +29,13 @@ le verdict de la barrière, état de `develop`, worktrees vivants. Sans lui,
 l'arbitre passerait ses premiers tours à chercher où regarder ; un tour d'Opus 5
 coûte trop cher pour être dépensé en fouille.
 
-**Il dit s'il y a matière.** `should` ne rend 0 que si un motif est constitué.
-Une étape saine n'en déclenche aucun : l'arbitrage est un recours, pas une
-routine, et chaque appel se paie.
+**Il dit s'il y a matière.** `should` ne rend 0 que si un motif est constitué —
+et, depuis #262, seulement si le dossier a bougé depuis la dernière décision.
+Une étape saine n'en déclenche aucun ; un dossier déjà jugé n'en rouvre pas :
+l'arbitrage est un recours, pas une routine, et chaque appel se paie. Une pause
+posée par un humain n'est pas davantage un motif — l'arbitre n'a pas le droit de
+la lever, et l'ouvrir revenait à payer un tour d'Opus 5 pour s'entendre dire
+qu'il n'y avait rien à faire, douze fois de suite.
 
 **Il tient les bornes.** Un arbitre sans limite retenterait le même ticket
 jusqu'à épuisement du quota. `escalation` donne le cran à appliquer — relancer,
@@ -103,7 +107,11 @@ PER_RUN = 12
 # lui-même se lisent dans le dossier ; ceux que seul le superviseur connaît — il a
 # vu l'étape mourir — lui sont passés par `--reason`.
 MOTIFS = {
-    "gate_pause": "le gate retient le run (pause sur erreur, ou pause posée)",
+    # Une pause posée par un humain n'entre pas ici : elle rend le même code de
+    # sortie, mais l'arbitre n'a pas le droit de la lever, et l'ouvrir comme
+    # motif ne faisait que boucler (#262).
+    "gate_pause": "le gate retient le run sans main humaine (pause sur erreur, "
+                  "ou pause posée par le dispositif)",
     "tickets_tombes": "un ou plusieurs tickets sont failed/blocked",
     "pr_en_souffrance": "une PR est ouverte sur un ticket qui n'avance plus",
     "leg_delai": "l'étape a été coupée au temps sans rendre la main",
@@ -398,6 +406,11 @@ def dossier(run_id, reasons=(), tail=12, with_barrier=True, per_ticket=PER_TICKE
                 "merge_sensitive": run.get("merge_sensitive")},
         "gate": gate_verdict(),
         "signal": control.get("signal", "run"),
+        "signal_acteur": control.get("signal_actor"),
+        # Ce que le code de sortie du gate ne dit pas : une pause posée par un
+        # humain et une pause sur erreur y rendent le même `PAUSE`, et l'arbitre
+        # n'a le droit d'en lever qu'une des deux (#262).
+        "pause_humaine": run_mod.human_pause(control),
         "pause_sur_erreur": bool(control.get("pause_on_error")),
         "ecartes": control.get("skip") or {},
         "a_relancer": control.get("retry") or [],
@@ -432,7 +445,17 @@ def motifs(payload, reasons=()):
     found = [name for name in reasons if name in MOTIFS]
 
     code = (payload.get("gate") or {}).get("code")
-    if code == run_mod.PAUSE and "gate_pause" not in found:
+    # Une pause posée à la main n'est pas un motif : la doctrine de l'arbitre lui
+    # interdit de la lever (« c'est une décision qui n'est pas la tienne »), si
+    # bien qu'il rendait la main sans rien changer — et se faisait rappeler
+    # trente secondes plus tard sur le même dossier, jusqu'à consumer les douze
+    # arbitrages du run (#262). Le retrait vaut aussi pour le motif **passé par
+    # le superviseur** : c'est lui qui appelle `rescue(["gate_pause"])` sur le
+    # seul code de sortie du gate, sans plus de discernement que l'arbitre n'en
+    # avait ici.
+    if payload.get("pause_humaine"):
+        found = [name for name in found if name != "gate_pause"]
+    elif code == run_mod.PAUSE and "gate_pause" not in found:
         found.append("gate_pause")
     if code == run_mod.NO_RUN and "fin_de_run" not in found:
         found.append("fin_de_run")
@@ -500,6 +523,69 @@ def arbitrations(run_id):
     la même chose que celui de l'écran.
     """
     return run_mod.read_arbitrations(run_id)
+
+
+def movement(events):
+    """Les événements du journal qui attestent qu'il s'est passé quelque chose.
+
+    Deux écritures n'en sont pas, et les retirer est ce qui rend le filet
+    ci-dessous opérant plutôt que décoratif :
+
+    - **le battement du superviseur** (`beat`) — il prouve une présence, pas un
+      travail. `milestone_supervise.journal_activity` l'écarte déjà pour la même
+      raison ;
+    - **sa tenue de compte d'arbitrage** (`status == "arbitrage"`) : « arbitrage
+      N ouvert » puis « arbitrage N rendu », cette dernière écrite **après** que
+      l'arbitre a inscrit sa décision. Comptée comme un mouvement, elle prouvait
+      au tour suivant que le dossier avait bougé — alors qu'elle ne dit rien
+      d'autre que « on vient de faire arbitrer ce dossier-là ». Le filet ne se
+      serait jamais déclenché dans la boucle réelle (#262).
+    """
+    return [event for event in events
+            if not event.get("beat") and event.get("status") != "arbitrage"]
+
+
+def already_arbitrated(found, history, events):
+    """Vrai si ces motifs ont déjà été instruits sur ce dossier-là, tel quel.
+
+    Filet indépendant du discernement des motifs, et c'est sa raison d'être : il
+    couvre tout motif susceptible de se représenter à l'identique, pas seulement
+    celui qu'on a vu boucler (#262). Un arbitre rappelé sur un dossier qu'il
+    vient de juger rendra la même décision — au prix d'un tour d'Opus 5 —, et
+    recommencera jusqu'à ce que le budget du run soit vide. Le vrai coût n'est
+    pas l'argent : c'est le motif suivant, réel celui-là, qui ne trouvera plus de
+    quoi être arbitré.
+
+    Deux conditions, et les deux :
+
+    - **rien n'est entré au journal depuis la dernière décision.** Le journal du
+      run est ce qui bouge quand quelque chose se passe — un agent qui avance,
+      une étape qui se termine, un humain qui tranche. Ce qu'on ne compte pas,
+      c'est l'arbitrage s'écrivant lui-même : la trace que `record` y laisse,
+      reconnaissable à son horodatage — le même que celui de la décision, au
+      caractère près, puisque `record` n'appelle `now()` qu'une fois pour les
+      deux fichiers —, et la tenue de compte du superviseur autour de l'appel,
+      que `movement()` écarte ;
+    - **les motifs levés maintenant ont tous déjà été jugés** depuis ce
+      dernier mouvement du journal. Un motif neuf — une PR qui vient de virer au
+      vert, un ticket qui vient de tomber — rouvre l'arbitrage, même si rien
+      d'autre n'a bougé.
+    """
+    if not found or not history:
+        return False
+    stamps = {row.get("ts") for row in history if row.get("ts")}
+    if not stamps:
+        return False
+    events = movement(events)
+    last = max(stamps)
+    if any((event.get("ts") or "") > last for event in events):
+        return False
+    # Le dernier événement qui n'est pas la trace d'un arbitrage : c'est lui qui
+    # date le dossier. Tous les arbitrages posés depuis ont jugé celui-là.
+    floor = max((event.get("ts") or "" for event in events
+                 if (event.get("ts") or "") not in stamps), default="")
+    judged = {row.get("motif") for row in history if (row.get("ts") or "") > floor}
+    return set(found) <= judged
 
 
 def spent(history, ticket=None):
@@ -590,6 +676,10 @@ def render(payload):
     lines = [f"run {run['id']} · {run['jalon']} · largeur {run['largeur']}",
              f"gate {payload['gate']['code']} — {payload['gate']['sens']}",
              "motifs : " + (", ".join(payload["motifs"]) or "aucun")]
+    if payload.get("signal") == "pause":
+        lines.append(f"pause posée par {payload.get('signal_acteur') or 'acteur inconnu'}"
+                     + (" — décision humaine, à ne pas lever"
+                        if payload.get("pause_humaine") else ""))
     if payload["vague"]:
         lines.append(f"vague {payload['vague']['index']} : "
                      + ", ".join(f"#{n}" for n in payload["vague"]["tickets"]))
@@ -636,6 +726,12 @@ def cmd_should(args):
     counts = payload["arbitrages"]
     if not found:
         print("rien à arbitrer")
+        return 1
+    history = arbitrations(run_id)
+    if already_arbitrated(found, history, run_mod.read_journal(run_id)):
+        rendered = (history[-1].get("ts") or "")[:19] or "la dernière décision"
+        print(f"dossier inchangé depuis {rendered} — "
+              f"{', '.join(found)} : déjà jugé, rien de neuf au journal")
         return 1
     if counts["reste_run"] <= 0:
         print(f"budget d'arbitrage épuisé ({counts['total']}/{counts['budget_run']}) "
