@@ -37,8 +37,10 @@ import {
  * 6. la route de back-office est gardée : 401 sans jeton, 403 sous le rang.
  *
  * L'isolation inter-tenant a sa suite propre —
- * `appointments-cancel.isolation-spec.ts` ; la trace en base et la concurrence,
- * la leur contre un vrai PostgreSQL — `appointments-exclusion.integration-spec.ts`.
+ * `appointments-cancel.isolation-spec.ts` ; la trace en base, la sienne contre un
+ * vrai PostgreSQL — `appointments-exclusion.integration-spec.ts` — et la
+ * concurrence, la sienne — `appointments-exclusion.concurrency-spec.ts`, jouée
+ * par la cible `npm run test:concurrency`.
  */
 
 const BOOKING_PATH = (slug: string): string => `/api/v1/public/${slug}/appointments`;
