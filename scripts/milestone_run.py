@@ -677,11 +677,14 @@ def orphaned(number, frontier, beats, fallback=False):
 
 
 def resume_context(number, worktrees):
-    """Où reprendre un ticket déjà entamé — worktree, branche, travail présent.
+    """Où reprendre un ticket déjà entamé — branche, travail présent, worktree.
 
     Rendue à l'orchestrateur par `gate`, cette ligne est ce qui empêche l'agent
     relancé de repartir d'un worktree vierge et de perdre le travail du
     précédent.
+
+    La **branche** est ce qui compte, et le chemin ne vient qu'après : voir
+    `resume_instruction()` pour pourquoi.
     """
     found = worktrees.get(number)
     if not found:
@@ -696,7 +699,95 @@ def resume_context(number, worktrees):
     if not detail:
         detail.append("rien encore posé")
     return {"path": found["path"], "branch": found["branch"],
-            "detail": ", ".join(detail)}
+            "detail": ", ".join(detail),
+            "commits": len(ahead), "dirty": len(dirty),
+            "dirty_files": porcelain_paths(dirty)}
+
+
+def porcelain_paths(lines):
+    """Chemins d'un `git status --porcelain`, sans les deux colonnes d'état.
+
+    Les **nommer** est ce qui rend l'instruction de reprise applicable : l'agent
+    à qui l'on dit de relire les fichiers en souffrance par `Read` ne peut pas
+    les énumérer lui-même, `Bash` lui étant refusé sur ce chemin. Un compte ne
+    lui sert à rien ; une liste, si.
+    """
+    paths = []
+    for line in lines:
+        path = line[3:] if len(line) > 3 else line.strip()
+        # Renommage : « R  ancien -> nouveau ». C'est le nouveau qui existe.
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        path = path.strip().strip('"')
+        if path:
+            paths.append(path)
+    return paths
+
+
+def resume_instruction(number, context):
+    """Comment reprendre un ticket entamé — dit à un agent qui ne peut pas bouger.
+
+    Ce message prescrivait `EnterWorktree(path=…)`, et c'était impraticable
+    (#245). Un sous-agent lancé avec `isolation: "worktree"` est **épinglé** par
+    la garde d'isolation sur *son* worktree : `EnterWorktree` déplace le
+    répertoire courant de la session mais pas l'épinglage, si bien qu'après
+    l'appel plus aucune commande `Bash` ne passe — ni sur place, ni par `cd`, ni
+    par `git -C` — et qu'`ExitWorktree` est refusé. L'agent était coincé sans
+    retour en arrière possible, dans le seul contexte où on l'invoquait.
+
+    Ce qu'on annonce donc, c'est la **branche**, que l'agent récupère sans
+    quitter son propre worktree :
+
+        git checkout --ignore-other-worktrees <branche>
+
+    `--ignore-other-worktrees` est le cœur de l'affaire. Sans lui, `git` refuse
+    une branche déjà tenue par un autre checkout — et c'est ce refus qui a
+    poussé un agent à en inventer une variante, livrant sa PR sous
+    `feature/25-affectation-services-aux-praticiens` là où le journal du run
+    portait `feature/25-affectation-services-praticiens`. Une branche renommée,
+    c'est le rapprochement branche ↔ ticket de `reconcile` qui casse. Le drapeau
+    lève le refus sans rien renommer : la branche reprise garde exactement le nom
+    que le journal porte.
+
+    Reste que le checkout n'emporte que ce qui est **commité**. Les fichiers
+    laissés non commités dans l'ancien worktree ne suivent pas, et c'est
+    précisément le cas #25. On dit alors où ils sont — **un par un** : `Read`
+    accepte un chemin absolu hors worktree là où `Bash` est refusé, ce qui en
+    fait le seul moyen de les récupérer, mais encore faut-il connaître leur nom.
+    Un agent qui ne peut pas lancer `git status` là-bas ne saurait rien faire
+    d'un simple décompte ; il recommite ensuite ces fichiers sur la branche
+    reprise.
+
+    Dernière réserve : « ne pas renommer » ne vaut que pour une branche déjà
+    conforme. Un agent mort **avant** le renommage de la phase 1 laisse la
+    branche que `EnterWorktree` a posée (`worktree-<type>+<n>-…`), que
+    `BRANCH_RE` ne reconnaît pas — la garder, c'est casser le rapprochement
+    branche ↔ ticket qu'on cherche justement à protéger. Là, on demande le
+    renommage.
+    """
+    branch = context["branch"]
+    if BRANCH_RE.match(branch):
+        nommage = "ne pas renommer la branche, ne pas en ouvrir une neuve"
+    else:
+        nommage = ("cette branche est celle d'avant le renommage de la phase 1 "
+                   "et n'est pas conforme : après le checkout, "
+                   "`git branch -m {type}/" + str(number) + "-{slug}` "
+                   "(^(feature|bugfix|chore|docs)/[0-9]+-[a-z0-9._-]+$), "
+                   "puis ne plus y toucher")
+    lines = [f"  #{number} À REPRENDRE sur la branche {branch} "
+             f"({context['detail']}) : depuis ton propre worktree, "
+             f"`git checkout --ignore-other-worktrees {branch}` — "
+             f"ne pas appeler EnterWorktree (tu es épinglé, il bloquerait tout "
+             f"Bash), {nommage}"]
+    if context.get("dirty"):
+        fichiers = context.get("dirty_files") or []
+        lines.append(f"       {context['dirty']} fichier(s) non commités ne "
+                     f"suivront pas le checkout : les relire un à un par "
+                     f"`Read` sous {context['path']} — Bash y est refusé — "
+                     f"puis les recommiter sur la branche reprise")
+        for path in fichiers:
+            lines.append(f"         Read {context['path']}/{path}")
+    return lines
 
 
 def git_lines(args, cwd=None):
@@ -1115,16 +1206,18 @@ def cmd_reconcile(args):
         elif worktree and abandonne(number):
             # Personne ne tient plus ce worktree : son agent n'a rien journalisé
             # depuis l'ouverture de l'étape, il est mort avec le `claude -p` qui
-            # le portait. Le ticket est donc à reprendre — **dans ce worktree-là**,
-            # que l'agent relancé rejoint par `EnterWorktree(path=…)` au lieu d'en
-            # ouvrir un neuf. Ne pas le faire figeait la vague : `gate` ne lance
-            # que des `pending`, et deux étapes de suite n'ont eu personne à
-            # lancer (#180). Le verdict est le même à chaque relecture, parce
-            # qu'il ne dépend que du journal : requeuer n'écrit aucun battement
-            # qui le contredirait au tour suivant (#233).
+            # le portait. Le ticket est donc à reprendre — **sur cette
+            # branche-là**, que l'agent relancé récupère depuis son propre
+            # worktree par `git checkout --ignore-other-worktrees` au lieu d'en
+            # ouvrir une neuve (#245 ; le worktree, lui, ne se rejoint pas :
+            # voir `resume_instruction()`). Ne pas requeuer figeait la vague :
+            # `gate` ne lance que des `pending`, et deux étapes de suite n'ont eu
+            # personne à lancer (#180). Le verdict est le même à chaque
+            # relecture, parce qu'il ne dépend que du journal : requeuer n'écrit
+            # aucun battement qui le contredirait au tour suivant (#233).
             target = "pending"
-            why = (f"agent mort avec son étape — reprendre dans {worktree['path']} "
-                   f"({worktree['branch']})")
+            why = (f"agent mort avec son étape — reprendre la branche "
+                   f"{worktree['branch']} (travail dans {worktree['path']})")
         elif worktree:
             # Avant le premier push, le dépôt distant ne sait rien dire. Le
             # worktree d'un agent qui journalise encore, lui, dit qu'un vivant
@@ -1927,17 +2020,16 @@ def cmd_gate(args):
     print(f"vague {current['index']} · {len(ready)} ticket(s) à lancer : "
           + (", ".join(f"#{n}" for n in ready) or "aucun"))
 
-    # Un ticket déjà entamé garde son worktree et son travail. Le dire ici est
-    # ce qui empêche l'agent relancé d'ouvrir un worktree vierge et de repartir
-    # de zéro — ou, pire, de prendre l'ancien pour un vestige et de l'effacer.
+    # Un ticket déjà entamé garde sa branche et son travail. Le dire ici est ce
+    # qui empêche l'agent relancé de repartir de zéro — ou, pire, de prendre
+    # l'ancien worktree pour un vestige et de l'effacer.
     if ready:
         worktrees = live_worktrees()
         for number in ready:
             context = resume_context(number, worktrees)
             if context:
-                print(f"  #{number} À REPRENDRE dans {context['path']} "
-                      f"({context['branch']} — {context['detail']}) : "
-                      f"EnterWorktree(path=…), ne pas en ouvrir un neuf")
+                for line in resume_instruction(number, context):
+                    print(line)
     return GO
 
 
