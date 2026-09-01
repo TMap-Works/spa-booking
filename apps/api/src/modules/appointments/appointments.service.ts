@@ -21,6 +21,7 @@ import type {
   RescheduleOutcome,
 } from './appointments.types';
 import { AppointmentEvents } from './events/appointment-events';
+import { SlotLockService } from './slot-lock.service';
 
 /**
  * Prise de rendez-vous — le point d'entrée du revenu (#37, CDC §2.3).
@@ -91,11 +92,31 @@ import { AppointmentEvents } from './events/appointment-events';
  * donc pas être injecté ici. Un cache périmé peut faire *proposer* un créneau
  * pris ; il ne peut pas en faire *réserver* un.
  *
+ * ## Le verrou Redis de créneau, ajouté par #38
+ *
+ * Les deux écritures qui **prennent** un créneau — réserver, reporter — passent
+ * désormais par `SlotLockService`, qui pose un `SET NX EX` court sur la clé du
+ * créneau, écrit, puis relâche dans un `finally`. C'est l'ordre de
+ * booking-engine §2 : verrou (UX), transaction et contrainte (vérité),
+ * libération.
+ *
+ * Ce que ce verrou ne change pas, et c'est l'essentiel : **rien de la garantie**.
+ * L'insertion reste jugée par `appointments_no_overlap` et par elle seule
+ * (ADR 0002). Le tenir n'autorise pas ; ne pas le tenir n'interdit qu'un seul
+ * cas, celui où quelqu'un d'autre écrit ce créneau à cet instant — et sans
+ * préférence de praticien, l'affectation passe alors au suivant plutôt que de
+ * refuser. Une panne de Redis, elle, ne refuse jamais : le détail est dans
+ * `slot-lock.service.ts`.
+ *
+ * L'annulation n'en prend aucun : elle **libère** un créneau, et deux
+ * annulations concurrentes ne peuvent pas se donner le même quoi que ce soit —
+ * c'est l'écriture conditionnelle du repository qui les départage.
+ *
  * ## Ce que ce module ne pose toujours pas
  *
- * Ni verrou Redis de saisie (#38), ni création au comptoir par le staff (#50) :
- * hors de l'annulation de back-office ouverte par #40, les surfaces de ce module
- * sont celles, publiques, du tunnel de #45.
+ * La création au comptoir par le staff (#50) : hors de l'annulation de
+ * back-office ouverte par #40, les surfaces de ce module sont celles, publiques,
+ * du tunnel de #45.
  */
 @Injectable()
 export class AppointmentsService {
@@ -106,6 +127,7 @@ export class AppointmentsService {
     private readonly events: AppointmentEvents,
     private readonly lifecycle: AppointmentLifecycleService,
     private readonly cache: AvailabilityCacheService,
+    private readonly slotLocks: SlotLockService,
   ) {}
 
   /**
@@ -467,6 +489,20 @@ export class AppointmentsService {
    * deux tours réintroduirait exactement la vérification applicative que
    * booking-engine §1 interdit.
    *
+   * ## Le verrou de créneau se glisse dans le tour, sans en changer la règle
+   *
+   * Chaque tentative est encadrée par `SlotLockService` (#38) : verrou sur
+   * `(praticien, heure du soin)`, écriture, libération dans un `finally`. Un
+   * candidat dont le créneau est **déjà verrouillé** par un autre appelant lève
+   * le même `SlotNoLongerAvailableError` que le refus de la contrainte, et le
+   * `catch` ci-dessous le traite donc à l'identique : on passe au praticien
+   * suivant. C'est ce qui fait que le verrou ne coûte jamais une réservation
+   * qu'un autre praticien pouvait honorer.
+   *
+   * Ce n'est pas un tri des candidats : rien n'est réordonné ni mémorisé, et le
+   * candidat verrouillé n'est pas « estimé pris » — il l'est, par quelqu'un qui
+   * est en train de l'écrire.
+   *
    * Le nombre de tours est borné par la liste que le moteur vient de rendre :
    * les praticiens qui pratiquent cette prestation **et** qui sont libres à cet
    * instant précis. Sur une réservation nominale il vaut un ; il ne croît que
@@ -494,12 +530,20 @@ export class AppointmentsService {
   ): Promise<AppointmentRecord> {
     for (const staffId of candidates) {
       try {
-        return await this.repository.create(draftFor(staffId));
+        // La clé du verrou porte l'heure **du soin** — celle que le calendrier a
+        // affichée —, pas la borne occupée que la base stocke. Voir
+        // `slot-lock.service.ts` : le verrou existe pour ne pas donner deux fois
+        // le créneau affiché.
+        return await this.slotLocks.aroundWrite(
+          { staffId, startsAt: requested.startsAt },
+          () => this.repository.create(draftFor(staffId)),
+        );
       } catch (error: unknown) {
         if (!(error instanceof SlotNoLongerAvailableError)) {
           throw error;
         }
-        // Ce praticien vient d'être pris. Le suivant, s'il y en a un.
+        // Ce praticien vient d'être pris — par la contrainte, ou par le verrou
+        // de quelqu'un qui est en train de l'écrire. Le suivant, s'il y en a un.
       }
     }
 
@@ -513,10 +557,17 @@ export class AppointmentsService {
    * demande ou par le rendez-vous d'origine. Un report qui changerait de
    * praticien de lui-même déplacerait une cliente chez quelqu'un qu'elle n'a pas
    * choisi, ce que ni #39 ni #36 ne demandent.
+   *
+   * Le verrou porte sur le créneau **d'arrivée**, et sur lui seul : c'est celui
+   * qu'on prend, donc celui que deux personnes peuvent se disputer. Le créneau de
+   * départ est libéré par la même transaction, et un créneau qu'on libère ne se
+   * dispute pas.
    */
   private async move(draft: RescheduleDraft, billedStart: Date): Promise<RescheduleOutcome> {
     try {
-      return await this.repository.reschedule(draft);
+      return await this.slotLocks.aroundWrite({ staffId: draft.staffId, startsAt: billedStart }, () =>
+        this.repository.reschedule(draft),
+      );
     } catch (error: unknown) {
       if (error instanceof SlotNoLongerAvailableError) {
         throw new SlotNoLongerAvailableError(draft.staffId, billedStart);

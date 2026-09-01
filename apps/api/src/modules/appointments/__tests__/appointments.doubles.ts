@@ -1,11 +1,14 @@
 import { randomUUID } from 'node:crypto';
 
 import { InvalidStateTransitionError, NotFoundError } from '../../../common/errors';
+import type { StructuredLogger } from '../../../common/logging/structured-logger';
 import { getTenantId } from '../../../common/tenant';
+import type { CacheConnection, CacheLockOutcome } from '../../../infrastructure/cache/cache.connection';
 import type { AppointmentCancelledBy, AppointmentStatus } from '../appointment-status';
 import { OCCUPYING_STATUSES, occupiesSlot } from '../appointment-status';
 import { SlotNoLongerAvailableError } from '../appointments.errors';
 import type { AppointmentsRepository } from '../appointments.repository';
+import { SlotLockService } from '../slot-lock.service';
 import type {
   AppointmentDraft,
   AppointmentRecord,
@@ -341,6 +344,88 @@ export class FakeAppointmentsRepository {
   public asRepository(): AppointmentsRepository {
     return this as unknown as AppointmentsRepository;
   }
+}
+
+/**
+ * Le cache Redis réduit à sa primitive de verrou (#38).
+ *
+ * Reproduit les trois propriétés du vrai dont dépend le chemin de réservation,
+ * et rien d'autre :
+ *
+ * 1. `SET NX` — la seconde prise d'une clé déjà tenue rend `taken` ;
+ * 2. la **libération conditionnée au jeton** — relâcher avec un jeton étranger
+ *    ne fait rien, comme le script Lua ;
+ * 3. la **panne**, qui rend `unavailable` et jamais `taken`. C'est ce que
+ *    `failWith` bascule, et c'est le seul moyen d'exercer « une panne Redis ne
+ *    casse pas la réservation » sans arrêter un conteneur.
+ *
+ * `held` et `releases` sont là pour ce qu'aucune assertion sur le résultat ne
+ * montrerait : que le verrou a bien été **relâché**, y compris quand l'écriture
+ * qu'il encadrait a échoué.
+ */
+export class FakeCacheLocks {
+  /** Les verrous vivants, par clé, avec le jeton de leur détenteur. */
+  public readonly held = new Map<string, string>();
+  /** Les clés relâchées, dans l'ordre. */
+  public readonly releases: string[] = [];
+  /** Les TTL demandés, par clé — le « court » du premier critère. */
+  public readonly ttls = new Map<string, number>();
+  /** Bascule l'ensemble en panne : toute commande rejette. */
+  public failWith: Error | null = null;
+
+  /** Pose un verrou tenu par quelqu'un d'autre — la contention. */
+  public seedHeld(key: string): void {
+    this.held.set(key, 'jeton-d-un-autre');
+  }
+
+  public acquireLock(key: string, ttlSeconds: number): Promise<CacheLockOutcome> {
+    if (this.failWith !== null) {
+      return Promise.reject(this.failWith);
+    }
+
+    if (this.held.has(key)) {
+      return Promise.resolve({ state: 'taken' });
+    }
+
+    const token = randomUUID();
+    this.held.set(key, token);
+    this.ttls.set(key, ttlSeconds);
+
+    return Promise.resolve({ state: 'acquired', token });
+  }
+
+  public releaseLock(key: string, token: string): Promise<void> {
+    if (this.failWith !== null) {
+      return Promise.reject(this.failWith);
+    }
+
+    // Conditionné au jeton, comme le script Lua : un appelant dont le verrou a
+    // expiré ne supprime pas celui de son successeur.
+    if (this.held.get(key) === token) {
+      this.held.delete(key);
+      this.releases.push(key);
+    }
+
+    return Promise.resolve();
+  }
+
+  /** Vue typée pour l'injection — le service n'utilise que ces deux méthodes. */
+  public asConnection(): CacheConnection {
+    return this as unknown as CacheConnection;
+  }
+
+  /** Le **vrai** service de verrou, branché sur ce double. */
+  public asService(): SlotLockService {
+    return new SlotLockService(this.asConnection(), silentLogger());
+  }
+}
+
+function silentLogger(): StructuredLogger {
+  return {
+    error: (): void => undefined,
+    warn: (): void => undefined,
+    debug: (): void => undefined,
+  } as unknown as StructuredLogger;
 }
 
 function toRecord(stored: StoredAppointment): AppointmentRecord {

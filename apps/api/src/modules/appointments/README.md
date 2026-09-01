@@ -13,6 +13,7 @@ réservation, est tenu.
 | #39 | Le report — annulation et création liées dans une seule transaction |
 | #40 | L'annulation des deux côtés du comptoir — trace écrite, créneau libéré |
 | #36 | **L'option « premier disponible »** — `staffId` facultatif, et la règle d'affectation |
+| #38 | **Le verrou Redis de créneau** — `SlotLockService`, un `SET NX EX` court autour des deux écritures qui prennent un créneau |
 
 ## Les routes
 
@@ -115,8 +116,58 @@ quelqu'un qu'elle n'a pas choisi.
 |---|---|
 | `appointments_no_overlap` | **La garantie.** Refuse tout chevauchement `(tenant, praticien, intervalle)` sur les statuts occupants |
 | verrou consultatif `pg_advisory_xact_lock` | Ordonne les candidates d'un même praticien — supprime les interblocages, ne décide de rien (ADR 0006) |
+| verrou Redis `slot:{tenant}:{staff}:{instant}` | **Confort d'interface.** Évite de donner à deux personnes le créneau affiché — ne garantit rien, et une panne de Redis le retire sans rien refuser (#38, ADR 0002) |
 | contrôle de disponibilité | Refuse un créneau que le calendrier ne proposait pas — jour de fermeture, congé, préavis. Ne dit rien de l'unicité |
 | cache de disponibilité | **Jamais lu ici.** `AvailabilityModule` n'exporte pas `AvailabilityQueryService` : un cache périmé ne peut pas faire réserver un créneau pris (#35) |
+
+## Le verrou Redis de créneau (#38)
+
+L'ADR 0002 le décrit en une phrase, et c'est exactement ce que le module en
+fait :
+
+> Un verrou Redis court est posé pendant la saisie du paiement pour éviter
+> d'afficher un créneau à deux personnes, mais il ne conditionne jamais la
+> validité de l'écriture.
+
+La primitive vit dans `infrastructure/cache` — `CacheConnection.acquireLock` /
+`releaseLock`, un `SET NX EX` et une libération par script conditionné au jeton.
+La **convention de clé** et l'usage vivent ici, dans `slot-lock.service.ts`.
+
+### La clé
+
+`slot:{tenantId}:{staffId}:{instant du soin en ISO 8601}` — la forme de
+booking-engine §2, bâtie comme celle du cache de disponibilité : racine, puis
+établissement, puis le reste. Le tenant en tête est ce qui empêche un
+établissement de verrouiller — ou d'observer — le créneau d'un autre
+(tenant-isolation §5). Il vient du contexte de requête, jamais d'un argument.
+
+L'instant est celui du **soin**, pas la borne occupée : le verrou existe pour ne
+pas donner deux fois le créneau *affiché*.
+
+### Ce qu'il ne fait pas
+
+| | |
+|---|---|
+| Tenir le verrou | **n'autorise rien.** L'insertion reste jugée par `appointments_no_overlap` |
+| Ne pas le tenir | n'interdit que le cas où un autre appelant écrit ce créneau **à cet instant** — et sans préférence de praticien, l'affectation passe au suivant |
+| Redis injoignable | **ne refuse jamais.** `CacheLockOutcome` distingue `taken` d'`unavailable` ; le second réserve sans verrou |
+| Une écriture en erreur | relâche quand même : le `finally` ne trie pas |
+| Annuler | ne prend aucun verrou — on ne se dispute pas un créneau qu'on libère |
+
+Le TTL est de dix secondes. Ce n'est pas la durée attendue — le verrou est tenu
+quelques dizaines de millisecondes et relâché dans un `finally` — mais la borne
+du seul cas où le `finally` ne s'exécute pas : un processus abattu entre la prise
+et la libération.
+
+### Ce qui reste à faire, et qui n'est pas dans ce module
+
+Le verrou est **posé** ici, il n'est **lu** nulle part. Faire qu'un créneau tenu
+apparaisse comme occupé sur le calendrier d'un second visiteur — le « pendant la
+saisie du paiement » du titre, avec la bannière d'expiration décrite par
+[docs/design/appointments/slot-unavailable.md](../../../../../docs/design/appointments/slot-unavailable.md)
+— demande deux choses hors de l'empreinte de ce ticket : que le moteur de
+disponibilité consulte cet espace de clés, et une surface qui tienne le verrou
+entre la sélection et la validation. Une issue de suivi les porte.
 
 ## Isolation
 
