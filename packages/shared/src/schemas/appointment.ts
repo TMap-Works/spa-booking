@@ -380,3 +380,60 @@ export const bookedAppointmentSchema = z.object({
 });
 
 export type BookedAppointment = z.infer<typeof bookedAppointmentSchema>;
+
+// ---------------------------------------------------------------------------
+// L'historique de l'espace client — #47
+// ---------------------------------------------------------------------------
+
+/**
+ * Les deux moitiés de l'historique d'une cliente connectée : « à venir » et
+ * « passés ».
+ *
+ * Ce n'est **pas** un filtre de statut, et les confondre serait une erreur
+ * d'affichage visible : un rendez-vous annulé pour demain n'est pas à venir —
+ * il n'y a plus rien à honorer —, et il n'est pas non plus perdu, il descend
+ * dans l'historique avec sa mention d'annulation. La frontière est donc « ce
+ * qu'il me reste à honorer » d'un côté, « tout le reste » de l'autre, et le
+ * serveur la trace parce qu'il est le seul à connaître l'heure de référence.
+ *
+ * Distinct d'`appointmentListQuerySchema`, qui est l'agenda du **comptoir** :
+ * celui-ci porte un `clientId` en filtre, ce que la surface cliente ne doit
+ * jamais accepter — le client d'une lecture « mes rendez-vous » vient du jeton
+ * vérifié, jamais de la requête (tenant-isolation §2).
+ */
+export const appointmentScopeSchema = z.enum(['upcoming', 'past']);
+
+export type AppointmentScope = z.infer<typeof appointmentScopeSchema>;
+
+/** Moitié servie quand la requête n'en désigne aucune — l'écran d'accueil du compte. */
+export const DEFAULT_APPOINTMENT_SCOPE = 'upcoming' satisfies AppointmentScope;
+
+/** Nombre de rendez-vous rendus quand la requête ne demande rien de particulier. */
+export const MY_APPOINTMENTS_DEFAULT_LIMIT = 20;
+
+/**
+ * Plafond dur du nombre de rendez-vous rendus en une fois.
+ *
+ * Il existe parce qu'une cliente fidèle d'un salon peut accumuler des centaines
+ * de lignes, et qu'une réponse non bornée finirait par coûter plus cher à
+ * construire qu'à lire. La pagination complète du CDC §1.4 relève du back-office
+ * et de `paginationQuerySchema` ; ici, un plafond suffit — l'espace client montre
+ * les prochains rendez-vous et les dernières visites, pas un registre.
+ */
+export const MY_APPOINTMENTS_MAX_LIMIT = 100;
+
+/**
+ * Filtres de l'historique de la cliente connectée.
+ *
+ * `z.coerce` sur `limit` parce que la valeur arrive d'une chaîne de requête :
+ * sans lui, `?limit=5` serait refusé pour cause de type, ce qui ferait passer
+ * une borne parfaitement valide pour une erreur de saisie.
+ */
+export const myAppointmentsQuerySchema = z
+  .object({
+    scope: appointmentScopeSchema.optional(),
+    limit: z.coerce.number().int().min(1).max(MY_APPOINTMENTS_MAX_LIMIT).optional(),
+  })
+  .strict();
+
+export type MyAppointmentsQuery = z.infer<typeof myAppointmentsQuerySchema>;

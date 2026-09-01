@@ -14,6 +14,8 @@ import {
   appointmentListQuerySchema,
   appointmentSchema,
   createAppointmentRequestSchema,
+  MY_APPOINTMENTS_MAX_LIMIT,
+  myAppointmentsQuerySchema,
   rescheduleAppointmentRequestSchema,
 } from '../schemas/appointment';
 import { availabilityQuerySchema } from '../schemas/availability';
@@ -27,7 +29,14 @@ import {
   updateServiceCategoryRequestSchema,
   updateServiceRequestSchema,
 } from '../schemas/catalog';
-import { registerRequestSchema, userSchema } from '../schemas/identity';
+import {
+  authSessionResponseSchema,
+  registerRequestSchema,
+  sessionUserSchema,
+  tenantScopedLoginRequestSchema,
+  updateProfileRequestSchema,
+  userSchema,
+} from '../schemas/identity';
 import { notificationSchema } from '../schemas/notification';
 import { recordCounterPaymentRequestSchema, refundPaymentRequestSchema } from '../schemas/payment';
 import { publicTenantSchema, updateTenantRequestSchema } from '../schemas/tenant';
@@ -545,6 +554,130 @@ describe('notifications', () => {
         attemptCount: 0,
         createdAt: '2026-03-03T10:00:00Z',
       }).success,
+    ).toBe(false);
+  });
+});
+
+describe('espace client — #47', () => {
+  it('la réponse de session ne porte jamais le jeton de rafraîchissement', () => {
+    // Il part en cookie `httpOnly` : l'annoncer dans ce schéma inviterait un
+    // client à le ranger quelque part, et ce quelque part est `localStorage`.
+    const parsed = authSessionResponseSchema.parse({
+      accessToken: 'jeton-opaque',
+      expiresIn: 900,
+      user: {
+        id: UUID,
+        email: 'alice@example.test',
+        role: 'client',
+        firstName: 'Alice',
+        lastName: 'Martin',
+        phone: null,
+      },
+      refreshToken: 'ne-doit-pas-ressortir',
+    });
+
+    expect(parsed).not.toHaveProperty('refreshToken');
+  });
+
+  it('le compte de session ne porte ni empreinte, ni établissement, ni activation', () => {
+    const parsed = sessionUserSchema.parse({
+      id: UUID,
+      email: 'alice@example.test',
+      role: 'client',
+      firstName: 'Alice',
+      lastName: 'Martin',
+      phone: '+261 34 12 345 67',
+      passwordHash: 'argon2id$…',
+      tenantId: OTHER_UUID,
+      isActive: false,
+    });
+
+    expect(parsed).not.toHaveProperty('passwordHash');
+    expect(parsed).not.toHaveProperty('tenantId');
+    expect(parsed).not.toHaveProperty('isActive');
+  });
+
+  it('ramène au vocabulaire du contrat le rôle que l’API émet en majuscules', () => {
+    // L'API rend `CLIENT` — la casse de l'énumération PostgreSQL — là où le
+    // contrat nomme `client`. Sans cette normalisation, **toute** réponse de
+    // session échouerait à la frontière et l'espace client serait inaccessible.
+    const parsed = sessionUserSchema.parse({
+      id: UUID,
+      email: 'alice@example.test',
+      role: 'CLIENT',
+      firstName: 'Alice',
+      lastName: 'Martin',
+      phone: null,
+    });
+
+    expect(parsed.role).toBe('client');
+    expect(
+      sessionUserSchema.safeParse({
+        id: UUID,
+        email: 'alice@example.test',
+        role: 'SUPERADMIN',
+        firstName: 'Alice',
+        lastName: 'Martin',
+        phone: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('le téléphone du compte de session est `null` et non absent quand il manque', () => {
+    // L'API émet toujours le champ, à `null` quand il n'est pas renseigné : un
+    // front qui aurait à distinguer « absent » de « vide » finirait par afficher
+    // `undefined`.
+    expect(
+      sessionUserSchema.safeParse({
+        id: UUID,
+        email: 'alice@example.test',
+        role: 'client',
+        firstName: 'Alice',
+        lastName: 'Martin',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('la connexion exige le slug de l’établissement, et refuse un tenantId', () => {
+    const base = { tenantSlug: 'salon-des-lilas', email: 'alice@example.test', password: 'x' };
+
+    expect(tenantScopedLoginRequestSchema.safeParse(base).success).toBe(true);
+    // Le slug **désigne** un établissement ; l'identifiant interne, lui, reste
+    // hors de portée d'une entrée (tenant-isolation §2).
+    expect(tenantScopedLoginRequestSchema.safeParse({ ...base, tenantId: UUID }).success).toBe(
+      false,
+    );
+    expect(
+      tenantScopedLoginRequestSchema.safeParse({ email: base.email, password: base.password })
+        .success,
+    ).toBe(false);
+  });
+
+  it('la modification de profil refuse `email` et `role`, et accepte un téléphone effacé', () => {
+    expect(updateProfileRequestSchema.safeParse({ phone: null }).success).toBe(true);
+    expect(updateProfileRequestSchema.safeParse({ firstName: 'Camille' }).success).toBe(true);
+    expect(updateProfileRequestSchema.safeParse({ email: 'autre@example.test' }).success).toBe(
+      false,
+    );
+    expect(updateProfileRequestSchema.safeParse({ role: 'admin' }).success).toBe(false);
+  });
+
+  it('l’historique ne se filtre ni par cliente ni par période', () => {
+    // La cliente vient du jeton. Un `clientId` accepté ici ferait de cette
+    // requête un moyen de lire l'historique de quelqu'un d'autre.
+    expect(myAppointmentsQuerySchema.safeParse({ scope: 'past', limit: 10 }).success).toBe(true);
+    expect(myAppointmentsQuerySchema.safeParse({ clientId: UUID }).success).toBe(false);
+    expect(myAppointmentsQuerySchema.safeParse({ from: '2026-03-01' }).success).toBe(false);
+    expect(myAppointmentsQuerySchema.safeParse({ scope: 'hier' }).success).toBe(false);
+  });
+
+  it('borne le nombre de rendez-vous rendus, et convertit la chaîne de requête', () => {
+    // `?limit=5` arrive en chaîne : sans conversion, une borne parfaitement
+    // valide passerait pour une erreur de saisie.
+    expect(myAppointmentsQuerySchema.parse({ limit: '5' }).limit).toBe(5);
+    expect(myAppointmentsQuerySchema.safeParse({ limit: 0 }).success).toBe(false);
+    expect(
+      myAppointmentsQuerySchema.safeParse({ limit: MY_APPOINTMENTS_MAX_LIMIT + 1 }).success,
     ).toBe(false);
   });
 });

@@ -1,6 +1,7 @@
 export {
   appointmentListQuerySchema,
   appointmentSchema,
+  appointmentScopeSchema,
   appointmentStatusSchema,
   bookGuestAppointmentRequestSchema,
   bookedAppointmentSchema,
@@ -8,7 +9,11 @@ export {
   cancellationActorSchema,
   changeAppointmentStatusRequestSchema,
   createAppointmentRequestSchema,
+  DEFAULT_APPOINTMENT_SCOPE,
   guestContactSchema,
+  MY_APPOINTMENTS_DEFAULT_LIMIT,
+  MY_APPOINTMENTS_MAX_LIMIT,
+  myAppointmentsQuerySchema,
   receivedAppointmentStatusSchema,
   receivedCancellationActorSchema,
   rescheduleAppointmentRequestSchema,
@@ -16,12 +21,14 @@ export {
 export type {
   Appointment,
   AppointmentListQuery,
+  AppointmentScope,
   BookGuestAppointmentRequest,
   BookedAppointment,
   CancelAppointmentRequest,
   ChangeAppointmentStatusRequest,
   CreateAppointmentRequest,
   GuestContact,
+  MyAppointmentsQuery,
   RescheduleAppointmentRequest,
 } from './appointment';
 
@@ -107,13 +114,18 @@ export type {
 } from './catalog';
 
 export {
+  authSessionResponseSchema,
   authSessionSchema,
   authTokensSchema,
   changePasswordRequestSchema,
   createStaffAccountRequestSchema,
   loginRequestSchema,
+  receivedUserRoleSchema,
   refreshTokenRequestSchema,
   registerRequestSchema,
+  sessionUserSchema,
+  tenantScopedLoginRequestSchema,
+  tenantScopedRegisterRequestSchema,
   updateProfileRequestSchema,
   userRoleSchema,
   userSchema,
@@ -121,12 +133,16 @@ export {
 } from './identity';
 export type {
   AuthSession,
+  AuthSessionResponse,
   AuthTokens,
   ChangePasswordRequest,
   CreateStaffAccountRequest,
   LoginRequest,
   RefreshTokenRequest,
   RegisterRequest,
+  SessionUser,
+  TenantScopedLoginRequest,
+  TenantScopedRegisterRequest,
   UpdateProfileRequest,
   User,
   UserSummary,
