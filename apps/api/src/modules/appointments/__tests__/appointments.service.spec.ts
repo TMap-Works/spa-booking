@@ -22,7 +22,8 @@ import {
   type AppointmentRescheduledEvent,
 } from '../events/appointment-rescheduled.event';
 import { AppointmentEvents } from '../events/appointment-events';
-import { FakeAppointmentsRepository } from './appointments.doubles';
+import { slotLockKey } from '../slot-lock.service';
+import { FakeAppointmentsRepository, FakeCacheLocks } from './appointments.doubles';
 
 /**
  * La prise de rendez-vous, assemblée — sans HTTP et sans base (#37).
@@ -166,6 +167,8 @@ interface Harness {
   availabilityCalls: { from: string; to: string; staffId?: string }[];
   /** Compteur d'invalidations du cache de disponibilité — #35, critère 3. */
   cache: SpyAvailabilityCache;
+  /** Les verrous de créneau posés et relâchés — #38. */
+  locks: FakeCacheLocks;
   loggedErrors: string[];
 }
 
@@ -175,6 +178,8 @@ function createHarness(
     offered?: readonly Date[];
     /** Les praticiens que le moteur propose quand la cliente n'en désigne aucun. */
     candidates?: readonly string[];
+    /** Le double du cache Redis, quand le test veut le pré-charger ou le casser. */
+    locks?: FakeCacheLocks;
   } = {},
 ): Harness {
   const repository = new FakeAppointmentsRepository();
@@ -183,6 +188,7 @@ function createHarness(
   const availability = fakeAvailability(options.offered ?? [BILLED_START], options.candidates);
   const view = options.view === undefined ? serviceView() : options.view;
   const cache = new SpyAvailabilityCache();
+  const locks = options.locks ?? new FakeCacheLocks();
 
   return {
     service: new AppointmentsService(
@@ -195,11 +201,16 @@ function createHarness(
       // service qui refuserait les mauvaises transitions (#40).
       new AppointmentLifecycleService(),
       cache.asService(),
+      // Le **vrai** service de verrou, branché sur un double du cache : ce qu'on
+      // veut exercer ici est ce que la réservation fait du verdict du verrou, et
+      // le substituer ferait passer au vert un chemin qui n'en poserait aucun.
+      locks.asService(),
     ),
     repository,
     events,
     availabilityCalls: availability.calls,
     cache,
+    locks,
     loggedErrors: journal.errors,
   };
 }
@@ -1285,5 +1296,146 @@ describe('AppointmentsService — invalidation du cache de disponibilité', () =
     );
 
     expect(cache.calls).toBe(0);
+  });
+});
+
+/**
+ * Le verrou Redis de créneau, vu du parcours de réservation — #38.
+ *
+ * `slot-lock.spec.ts` exerce le verrou lui-même ; ce bloc-ci exerce ce que la
+ * **réservation** en fait, et c'est là que les troisième et quatrième critères
+ * du ticket se jouent : un verrou qui refuserait une écriture valide, ou une
+ * panne de Redis qui refuserait un créneau libre, ne se verraient nulle part
+ * ailleurs.
+ */
+describe('AppointmentsService — verrou Redis de créneau (#38)', () => {
+  const FIRST_STAFF = '11111111-1111-4111-8111-111111111111';
+  const SECOND_STAFF = '22222222-2222-4222-8222-222222222222';
+  const MOVED_START = new Date('2026-09-01T14:00:00.000Z');
+
+  /** Le rendez-vous déjà posé de 10:00, bornes **occupées**. */
+  function seedBooked(repository: FakeAppointmentsRepository): { id: string } {
+    return repository.seedAppointment({
+      tenantId: TENANT,
+      staffId: STAFF_ID,
+      serviceId: SERVICE_ID,
+      startsAt: new Date('2026-09-01T09:50:00.000Z'),
+      endsAt: new Date('2026-09-01T11:10:00.000Z'),
+    });
+  }
+
+  it('verrouille le créneau à l’heure du soin, pas à l’heure occupée', async () => {
+    // La clé porte ce que le calendrier a **affiché** — 10:00 —, et non la borne
+    // occupée de 09:50 que la base stocke. C'est ce qui fait qu'elle verrouille
+    // le même créneau pour deux prestations aux tampons différents.
+    const { service, locks } = createHarness();
+
+    await runWithTenant(TENANT, () => service.book(bookingInput(), NOW));
+
+    expect(locks.releases).toEqual([slotLockKey(TENANT, STAFF_ID, BILLED_START)]);
+    expect(locks.held.size).toBe(0);
+  });
+
+  it('relâche le verrou quand la contrainte refuse le créneau', async () => {
+    // Sinon la cliente, invitée à réessayer, se verrait refuser le créneau
+    // qu'elle vient de perdre — par son propre verrou resté posé.
+    const { service, repository, locks } = createHarness();
+    seedBooked(repository);
+
+    await expect(runWithTenant(TENANT, () => service.book(bookingInput(), NOW))).rejects.toThrow(
+      SlotNoLongerAvailableError,
+    );
+
+    expect(locks.releases).toEqual([slotLockKey(TENANT, STAFF_ID, BILLED_START)]);
+    expect(locks.held.size).toBe(0);
+  });
+
+  it('réserve normalement quand Redis est tombé', async () => {
+    // Le troisième critère du ticket, et la propriété qui compte le plus : une
+    // panne de cache dégrade l'expérience — plus de verrou — sans jamais faire
+    // échouer une réservation valide.
+    const locks = new FakeCacheLocks();
+    locks.failWith = new Error('ECONNREFUSED 127.0.0.1:6379');
+    const { service } = createHarness({ locks });
+
+    const view = await runWithTenant(TENANT, () => service.book(bookingInput(), NOW));
+
+    expect(view.status).toBe('PENDING');
+  });
+
+  it('reporte normalement quand Redis est tombé', async () => {
+    const locks = new FakeCacheLocks();
+    locks.failWith = new Error('ECONNREFUSED 127.0.0.1:6379');
+    const { service, repository } = createHarness({
+      offered: [BILLED_START, MOVED_START],
+      locks,
+    });
+    const previous = seedBooked(repository);
+
+    const view = await runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    expect(view.startsAt).toBe('2026-09-01T14:00:00.000Z');
+  });
+
+  it('passe au praticien suivant quand le premier est verrouillé', async () => {
+    // Le verrou ne coûte jamais une réservation qu'un autre praticien pouvait
+    // honorer : c'est le repli de #36, et le verrou s'y glisse sans le changer.
+    const locks = new FakeCacheLocks();
+    locks.seedHeld(slotLockKey(TENANT, FIRST_STAFF, BILLED_START));
+    const { service } = createHarness({ candidates: [FIRST_STAFF, SECOND_STAFF], locks });
+
+    const view = await runWithTenant(TENANT, () =>
+      service.book(bookingInput({ staffId: null }), NOW),
+    );
+
+    expect(view.staffId).toBe(SECOND_STAFF);
+  });
+
+  it('ne nomme aucun praticien dans le 409 quand tous sont verrouillés', async () => {
+    // Le refus par verrou se dit exactement comme le refus par contrainte, y
+    // compris dans ce qu'il tait : nommer le dernier praticien tenté ferait de
+    // ce 409 une sonde d'agenda.
+    const locks = new FakeCacheLocks();
+    locks.seedHeld(slotLockKey(TENANT, FIRST_STAFF, BILLED_START));
+    locks.seedHeld(slotLockKey(TENANT, SECOND_STAFF, BILLED_START));
+    const { service } = createHarness({ candidates: [FIRST_STAFF, SECOND_STAFF], locks });
+
+    await expect(
+      runWithTenant(TENANT, () => service.book(bookingInput({ staffId: null }), NOW)),
+    ).rejects.toMatchObject({ details: { staffId: null } });
+  });
+
+  it('n’écrit rien et n’invalide rien quand le créneau est verrouillé', async () => {
+    // Le verrou ne fait qu'une chose : empêcher l'écriture concurrente sur le
+    // créneau affiché. Il ne doit pas laisser derrière lui un demi-effet — un
+    // rendez-vous posé, un cache chassé — pour une réservation qui n'a pas eu
+    // lieu.
+    const locks = new FakeCacheLocks();
+    locks.seedHeld(slotLockKey(TENANT, STAFF_ID, BILLED_START));
+    const { service, repository, cache } = createHarness({ locks });
+
+    await expect(runWithTenant(TENANT, () => service.book(bookingInput(), NOW))).rejects.toThrow(
+      SlotNoLongerAvailableError,
+    );
+
+    expect(repository.appointments).toHaveLength(0);
+    expect(cache.calls).toBe(0);
+  });
+
+  it('ne verrouille rien à l’annulation', async () => {
+    // Annuler **libère** un créneau, et deux annulations concurrentes ne peuvent
+    // pas se donner le même quoi que ce soit : c'est l'écriture conditionnelle du
+    // repository qui les départage, pas un verrou.
+    const { service, repository, locks } = createHarness();
+    const booked = seedBooked(repository);
+
+    await runWithTenant(TENANT, () =>
+      service.cancel({ appointmentId: booked.id, cancelledBy: 'CLIENT', reason: null }, NOW),
+    );
+
+    expect(locks.releases).toEqual([]);
+    expect(locks.held.size).toBe(0);
   });
 });

@@ -9,6 +9,7 @@ import { AppointmentsRepository } from './appointments.repository';
 import { AppointmentsService } from './appointments.service';
 import { AppointmentEvents } from './events/appointment-events';
 import { PublicAppointmentsController } from './public-appointments.controller';
+import { SlotLockService } from './slot-lock.service';
 
 /**
  * Module `appointments` — cycle de vie du rendez-vous (CDC §2.3).
@@ -27,7 +28,8 @@ import { PublicAppointmentsController } from './public-appointments.controller';
  * du cycle de vie, une route par côté du comptoir, et l'événement
  * `appointment.cancelled`.
  *
- * Le verrou Redis de saisie appartient à #38, la création au comptoir à #50.
+ * #38 pose le **verrou Redis de créneau** : `SlotLockService`, qui encadre les
+ * deux écritures qui prennent un créneau. La création au comptoir reste à #50.
  *
  * ## Ce qu'il importe, et pourquoi ces trois-là seulement
  *
@@ -60,7 +62,10 @@ import { PublicAppointmentsController } from './public-appointments.controller';
  * cliente qui téléphone, et cela ne peut pas être une route ouverte.
  *
  * `AppointmentLifecycleService` est un fournisseur et non un module : c'est une
- * règle du domaine de ce module, pas une porte pour les autres.
+ * règle du domaine de ce module, pas une porte pour les autres. `SlotLockService`
+ * l'est aussi, et pour la même raison — la clé de verrou est une convention de ce
+ * module. Aucun import n'est nécessaire pour lui : `CacheConnection` vient de
+ * `CacheModule`, qui est `@Global()`.
  *
  * ## Ce qu'il exporte, et ce qu'il a cessé d'exporter
  *
@@ -89,6 +94,7 @@ import { PublicAppointmentsController } from './public-appointments.controller';
     AppointmentsRepository,
     AppointmentEvents,
     AppointmentLifecycleService,
+    SlotLockService,
   ],
   exports: [AppointmentsService, AppointmentEvents],
 })
