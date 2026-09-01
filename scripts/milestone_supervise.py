@@ -33,6 +33,15 @@ Ensemble : la coupure est encaissée à la seconde près par la boucle courte, e
 tout ce qui pourrait tuer la boucle courte est rattrapé en cinq minutes par la
 longue.
 
+**Et un battement, parce qu'un run muet ne se lit pas.** Entre deux vagues,
+personne n'écrit dans le journal du run — l'orchestrateur vérifie `develop`, puis
+lit les issues et revoit son plan. Quinze à vingt-cinq minutes pendant lesquelles
+un run au travail et un run mort se ressemblent trait pour trait (#186). Tant
+qu'une étape est en vol, la boucle courte pose donc une ligne toutes les cinq
+minutes **dans le journal du run**, mais seulement quand il est réellement muet :
+elle dit l'âge du silence et l'échéance de la coupure. Le guetteur, lui, ne compte
+pas ces lignes — sans quoi il ne couperait plus jamais une étape morte debout.
+
 **La troisième — l'arbitre.** Les deux premières savent faire repartir un run ;
 aucune ne sait **décider**. Au premier ticket tombé, à la première PR verte
 laissée ouverte, à la première étape coupée au temps, le superviseur rendait la
@@ -215,6 +224,22 @@ DRY_LEGS_LIMIT = 2
 # Une phase de ticket dure quelques minutes, jamais dix : un journal muet depuis
 # dix minutes signifie que l'orchestrateur est parti, pas qu'il réfléchit.
 ORCHESTRATOR_QUIET = 600
+# Le battement du superviseur dans le journal du **run** — à ne pas confondre
+# avec `HEARTBEAT`, qui ne sert qu'à la veille et que personne ne lit.
+#
+# Entre deux vagues, plus personne n'écrit dans le journal : l'orchestrateur
+# vérifie `develop` (~8 min), puis lit les issues et revoit le plan (5 à 15 min).
+# Quinze à vingt-cinq minutes pendant lesquelles un run au travail et un run mort
+# se ressemblent trait pour trait — c'est ce qui a rendu la nuit du 25/08
+# illisible (#186). L'orchestrateur journalise désormais ces étapes lui-même
+# (`milestone_run.py step`) ; ce battement-ci couvre ce qui reste, y compris le
+# cas où c'est justement l'orchestrateur qui est mort.
+#
+# Cinq minutes : assez pour qu'aucun silence ne dépasse le quart du seuil de
+# coupure, assez peu pour qu'une nuit entière n'ajoute qu'une centaine de lignes.
+# Et seulement quand le silence est réel : une vague qui journalise ses phases
+# n'a pas besoin qu'on la double.
+JOURNAL_BEAT = 300
 # Ce que dit le `subtype` du message `result` de Claude Code, en clair. « success »
 # ne signifie pas « la vague est terminée » : il dit seulement que l'appel s'est
 # achevé sans erreur — y compris lorsque la boucle a rendu la main alors que ses
@@ -662,6 +687,54 @@ def current_run_milestone():
         return None
 
 
+def journal_activity():
+    """Instant du dernier événement du journal qui ne soit **pas** un battement.
+
+    Deux mesures reposent sur le journal — « quelqu'un orchestre-t-il ? » et
+    « cette étape avance-t-elle encore ? » — et les deux comptent le travail des
+    autres, pas la présence du superviseur. Depuis qu'il y écrit un battement
+    (#186), un `st_mtime` ne répond plus à ces questions : il resterait
+    éternellement frais, le guetteur des vingt-cinq minutes ne couperait plus
+    jamais une étape morte debout, et l'on aurait remplacé un silence illisible
+    par un silence invisible — le pire des deux.
+
+    D'où cette lecture du contenu : on remonte le journal jusqu'au dernier
+    événement dépourvu de `beat`. Le fichier est en ajout seul et reste petit —
+    quelques centaines de lignes pour un jalon entier.
+
+    Rend un epoch, ou None si aucun run n'est ouvert ou si le journal n'existe
+    pas encore. Le `st_mtime` reste le repli chaque fois que le contenu ne dit
+    rien d'exploitable : un journal sans horodatage vaut mieux qu'aucune mesure.
+    """
+    directory = current_run_dir()
+    if directory is None:
+        return None
+    path = directory / "journal.ndjson"
+    try:
+        touched = path.stat().st_mtime
+    except OSError:
+        return None
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return touched
+    for line in reversed(lines):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue          # ligne tronquée par une écriture concurrente
+        if event.get("beat"):
+            continue
+        try:
+            return datetime.fromisoformat(event["ts"]).timestamp()
+        except (KeyError, TypeError, ValueError):
+            break             # journal sans horodatage lisible : le mtime fait foi
+    return touched
+
+
 def orchestrator_active():
     """Quelqu'un orchestre-t-il déjà ce run, superviseur ou non ?
 
@@ -672,18 +745,15 @@ def orchestrator_active():
     worktrees du premier pour des vestiges et les supprimait (#130).
 
     Le journal du run fait office de battement : agents et orchestrateur y
-    écrivent à chaque phase. Un journal touché il y a moins de
+    écrivent à chaque phase. Un journal actif depuis moins de
     `ORCHESTRATOR_QUIET` secondes signifie que quelqu'un travaille, et la veille
-    n'a alors rien à faire.
+    n'a alors rien à faire. Le battement du superviseur ne compte pas pour cette
+    activité-là : il prouverait sa propre présence, ce que `supervisor_alive()`
+    dit déjà mieux, et retarderait de dix minutes la relance d'un superviseur
+    tué juste après avoir battu.
     """
-    directory = current_run_dir()
-    if directory is None:
-        return False
-    try:
-        age = time.time() - (directory / "journal.ndjson").stat().st_mtime
-    except OSError:
-        return False
-    return age < ORCHESTRATOR_QUIET
+    activity = journal_activity()
+    return activity is not None and time.time() - activity < ORCHESTRATOR_QUIET
 
 
 def sterile_streak(previous, fresh, issue):
@@ -702,11 +772,16 @@ def sterile_streak(previous, fresh, issue):
     return 0 if fresh else previous + 1
 
 
-def journal(status, message, level=None):
-    args = ["event", "--actor", "superviseur", "--status", status,
-            "--message", message, "--quiet"]
+def journal(status, message, level=None, beat=False):
+    args = ["event", "--actor", "superviseur", "--message", message, "--quiet"]
+    if status:
+        args += ["--status", status]
     if level:
         args += ["--level", level]
+    if beat:
+        # Marquée comme battement, la ligne se lit sans se compter : elle prouve
+        # une présence, elle ne prétend pas qu'un travail a eu lieu.
+        args.append("--beat")
     runner(*args)
 
 
@@ -1065,15 +1140,14 @@ def journal_quiet(since=None):
     qu'on ait de l'intérieur d'une étape. `since` borne la mesure au démarrage de
     l'appel — sans quoi une étape qui n'a jamais rien écrit hériterait du silence
     de la précédente et serait coupée dans la minute.
+
+    Le battement du superviseur en est exclu (`journal_activity`) : il couvre le
+    silence pour l'humain, il ne le comble pas pour le guetteur.
     """
-    directory = current_run_dir()
-    if directory is None:
+    activity = journal_activity()
+    if activity is None:
         return None
-    try:
-        touched = (directory / "journal.ndjson").stat().st_mtime
-    except OSError:
-        return None
-    return time.time() - max(touched, since or 0)
+    return time.time() - max(activity, since or 0)
 
 
 def stall_watch(args):
@@ -1098,6 +1172,42 @@ def stall_watch(args):
         return (f"journal muet depuis {human_delta(quiet)} — l'étape n'avance "
                 f"plus, arrêt de l'appel pour la faire arbitrer")
     return look
+
+
+def beat_watch(label, started, stall_minutes=None):
+    """Ce qui inscrit la présence du superviseur dans le journal du run.
+
+    Le guetteur ci-dessus lit le silence pour couper une étape morte ; celui-ci
+    lit le même silence pour le **rendre lisible** — c'est le second volet de
+    #186, et il vaut surtout quand rien ne va mal : une étape saine reste muette
+    quinze à vingt-cinq minutes entre deux vagues, et personne ne peut alors la
+    distinguer d'un run mort ni dans le journal ni dans `watch`.
+
+    Deux règles, pour que la ligne ne devienne pas du bruit :
+
+    - **on ne double personne.** Tant que les agents journalisent leurs phases,
+      le battement se tait. Il ne parle que du silence ;
+    - **il dit l'âge du silence et l'échéance de la coupure.** C'est ce qu'on
+      vient chercher dans le journal quand plus rien n'y bouge : depuis combien
+      de temps, et combien il reste avant que le dispositif tranche.
+
+    Rend l'appelable à jouer à chaque tour de minute.
+    """
+    last = [started]
+
+    def tick():
+        quiet = journal_quiet(started)
+        if quiet is None or quiet < JOURNAL_BEAT:
+            return
+        if time.time() - last[0] < JOURNAL_BEAT:
+            return
+        last[0] = time.time()
+        message = (f"{label} en vol depuis {human_delta(time.time() - started)}"
+                   f" — journal muet depuis {human_delta(quiet)}")
+        if stall_minutes:
+            message += f", coupure à {stall_minutes} min"
+        journal(None, message, level="DEBUG", beat=True)
+    return tick
 
 
 def run_leg(args, index):
@@ -1179,17 +1289,24 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
     timer.daemon = True
     timer.start()
 
-    # Le guetteur, quand il y en a un. Il ne juge pas davantage que la coupure au
-    # temps : il constate qu'il ne se passe plus rien, et rend la main au
-    # superviseur — qui, lui, fera arbitrer.
-    if stall:
-        def watching():
-            while not finished.wait(60):
+    # Le tour de minute, qui porte deux réponses au même fait — le journal ne dit
+    # plus rien. Le guetteur, quand il y en a un, ne juge pas davantage que la
+    # coupure au temps : il constate qu'il ne se passe plus rien et rend la main
+    # au superviseur, qui fera arbitrer. Le battement, lui, écrit ce silence dans
+    # le journal du run pour qu'on puisse le lire de l'extérieur (#186) — il n'a
+    # pas de seuil et ne coupe rien, il est là surtout quand tout va bien.
+    heartbeat = beat_watch(label, time.time(),
+                           getattr(args, "stall_minutes", None) if stall else None)
+
+    def watching():
+        while not finished.wait(60):
+            heartbeat()
+            if stall:
                 why = stall()
                 if why:
                     kill(why, stalled)
                     return
-        threading.Thread(target=watching, daemon=True).start()
+    threading.Thread(target=watching, daemon=True).start()
 
     limit_info, summary, issue = None, None, None
     with open(raw_path, "w", encoding="utf-8") as raw:
