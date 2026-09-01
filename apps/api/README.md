@@ -33,15 +33,24 @@ inter-tenant.
 | `npm run test:unit` | logique pure, `src/**/__tests__/*.spec.ts` | aucune |
 | `npm run test:integration:api` | `test/*.integration-spec.ts` — l'API en HTTP | Docker pour une d'entre elles |
 | `npm run test:isolation` | `test/*.isolation-spec.ts` — les tests de fuite | Docker pour deux d'entre elles |
-| `npm run test:integration` | les deux précédentes, dans cet ordre | idem |
+| `npm run test:concurrency` | `test/*.concurrency-spec.ts` — les courses du moteur de réservation | Docker |
+| `npm run test:integration` | les deux cibles d'intégration, dans cet ordre | idem |
 
-Les trois premières sont des étapes nommées du job `test` de
+Les quatre premières sont des étapes nommées du job `test` de
 [ci.yml](../../.github/workflows/ci.yml) : une ligne rouge y désigne la nature
 du problème sans qu'il faille ouvrir les logs.
 
-« Docker » et non « PostgreSQL » : les trois suites qui exigent un vrai moteur
+« Docker » et non « PostgreSQL » : les suites qui exigent un vrai moteur
 démarrent le leur (voir plus bas). Aucune ne lit `DATABASE_URL`, et les autres —
 l'immense majorité — n'ont toujours besoin de rien.
+
+`test:concurrency` a sa propre configuration Jest
+([jest.concurrency.config.js](jest.concurrency.config.js)) et son propre suffixe,
+disjoint de ceux de `jest.integration.config.js` : aucune suite n'est jouée deux
+fois, ni par `npm run verify` ni par le job `test`. `--passWithNoTests` n'y est
+délibérément pas posé — sans suite trouvée, la cible échoue. Jusqu'à #326, aucun
+workspace ne la déclarait : le fan-out `--if-present` sortait en 0, et l'étape
+qui annonce le garde-fou du risque n°1 (CDC §6) verdissait sans rien exercer.
 
 Le contrat entre ces cibles est tenu par une garde du job `test`, et non par une
 convention : la CI appelle les **feuilles** (`test:integration:api`,
@@ -49,7 +58,10 @@ convention : la CI appelle les **feuilles** (`test:integration:api`,
 que `npm run verify` passe par l'alias `test:integration`. Un workspace qui
 déclarerait l'alias sans ses feuilles serait sauté en silence par `--if-present`
 en CI ; un alias qui oublierait une feuille la sauterait en silence dans
-`verify`. L'étape « Contrat des cibles de test d'intégration » refuse les deux.
+`verify` ; et une cible appelée en `--if-present` que plus aucun workspace ne
+déclare — `test:integration:api`, `test:isolation` ou `test:concurrency` —
+laisserait son étape verte sans rien lancer. L'étape « Contrat des cibles de
+test » refuse les trois.
 
 ### Harnais de tests d'isolation inter-tenant
 
@@ -151,7 +163,11 @@ base les rendrait vrais par construction, donc vides.
 | `CREATE DATABASE` + SQL des migrations | ~0,4 s | ~0,4 s |
 
 Soit **environ 3 secondes par fichier de test qui provisionne une base**, et
-~9 s sur `npm run verify` pour les trois fichiers d'aujourd'hui. C'est le prix
+~12 s sur `npm run verify` pour les quatre fichiers d'aujourd'hui — le quatrième
+étant `appointments-exclusion.concurrency-spec.ts`, séparé de son voisin
+d'intégration par #326 pour que `test:concurrency` ait une suite à jouer. C'est
+un conteneur de plus, assumé : la cible qui garde le risque n°1 ne peut pas
+partager son fichier avec des cas qu'une autre cible exécute. C'est le prix
 de l'indépendance vis-à-vis de ce que la machine héberge — version du moteur
 comprise. Il croît avec le nombre de **fichiers**, pas de suites ni de bases :
 regrouper dans un même fichier les cas qui exigent un moteur reste la façon de
@@ -162,10 +178,12 @@ dans le `beforeAll` de la première suite, dont le délai est celui de Jest (30 
 En local, `docker compose up -d` l'a déjà tirée ; en CI, une étape dédiée du job
 `test` la tire avant les tests.
 
-Trois suites s'en servent : `tenant-scope.isolation-spec.ts`, qui prouve
+Quatre suites s'en servent : `tenant-scope.isolation-spec.ts`, qui prouve
 l'extension de scoping Prisma contre un vrai moteur,
 `appointments-exclusion.integration-spec.ts`, qui prouve la contrainte
-d'exclusion anti-double-réservation, et
+d'exclusion anti-double-réservation, `appointments-exclusion.concurrency-spec.ts`,
+qui prouve qu'elle tient sous des écritures parallèles — les deux partagent leur
+amorçage dans `appointments-exclusion.harness.ts` —, et
 `disposable-database.isolation-spec.ts`, qui prouve la base jetable elle-même.
 Le harnais et ses assertions, eux, sont exercés par
 `tenant-harness.isolation-spec.ts` — y compris **dans le sens négatif** : chaque

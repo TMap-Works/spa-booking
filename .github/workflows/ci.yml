@@ -100,10 +100,11 @@ jobs:
       - run: npm run test:unit
 
       # Contrat des cibles de test, tenu par une garde et non par un commentaire
-      # (#274). Les deux étapes suivantes appellent les cibles **feuilles**, pas
-      # l'alias `test:integration` : celui-ci enchaîne les deux, et les
-      # rejouerait donc. Deux chemins d'exécution pour un même contrat, donc
-      # quatre façons de perdre une suite en silence — que cette garde refuse :
+      # (#274, étendu par #326). Les deux étapes d'intégration appellent les
+      # cibles **feuilles**, pas l'alias `test:integration` : celui-ci enchaîne
+      # les deux, et les rejouerait donc. Deux chemins d'exécution pour un même
+      # contrat, donc quatre façons de perdre une suite en silence — que cette
+      # garde refuse :
       #
       # - un workspace qui déclarerait `test:integration` sans aucune feuille
       #   serait sauté **ici** par `--if-present`, sans une ligne dans le log ;
@@ -115,9 +116,17 @@ jobs:
       #   d'intégration ci-dessous ne lanceraient plus rien tout en restant
       #   vertes — c'est la garde elle-même qui deviendrait vide.
       #
+      # À quoi #326 ajoute la cinquième, celle qui s'était déjà produite :
+      # **toute cible que ce job appelle en fan-out `--if-present`** doit être
+      # servie par au moins un workspace. `test:concurrency` ne l'était plus par
+      # personne — l'étape « Tests de concurrence », qui annonce le garde-fou du
+      # risque n°1 (CDC §6), verdissait donc sans rien exercer. Le contrôle porte
+      # sur les trois cibles fanoutées, pas seulement sur celle qui a manqué :
+      # ce qui est en cause est la mécanique du fan-out, pas un nom.
+      #
       # `npm pkg get` lit les manifestes, pas le disque : aucune installation
       # n'est nécessaire, et la garde vaut pour tout workspace à venir.
-      - name: Contrat des cibles de test d'intégration
+      - name: Contrat des cibles de test
         run: |
           npm pkg get scripts --workspaces --json > workspace-scripts.json
           cat > check-test-targets.cjs <<'JS'
@@ -125,13 +134,26 @@ jobs:
 
           const ALIAS = 'test:integration';
           const LEAVES = ['test:integration:api', 'test:isolation'];
+          // Les cibles que ce job appelle en fan-out `--if-present` : les deux
+          // feuilles directement, `test:concurrency` via la cible racine du
+          // meme nom, qui fait elle-meme `--workspaces --if-present`.
+          const FANNED_OUT = [...LEAVES, 'test:concurrency'];
 
           const workspaces = JSON.parse(readFileSync('workspace-scripts.json', 'utf8'));
           const problems = [];
+          /** Pour chaque cible fanoutee, les workspaces qui la declarent. */
+          const declarers = new Map(FANNED_OUT.map((target) => [target, []]));
           let covered = 0;
 
           for (const [name, scripts] of Object.entries(workspaces)) {
             const declared = scripts ?? {};
+
+            for (const target of FANNED_OUT) {
+              if (declared[target] !== undefined) {
+                declarers.get(target).push(name);
+              }
+            }
+
             const alias = declared[ALIAS];
             const leaves = LEAVES.filter((leaf) => declared[leaf] !== undefined);
 
@@ -166,15 +188,18 @@ jobs:
             }
           }
 
-          // Sans ce dernier controle, la garde passerait au vert en n'ayant rien
-          // regarde — manifestes vides, glob de workspaces qui ne resout plus,
+          // Le controle qui manquait (#326), et sans lequel la garde passerait
+          // au vert en n'ayant rien regarde — cible abandonnee par son dernier
+          // workspace, manifestes vides, glob de workspaces qui ne resout plus,
           // ou format de `npm pkg get` qui change. Une garde vide contre les
           // suites sautees en silence serait elle-meme une suite sautee en silence.
-          if (covered === 0) {
-            problems.push(
-              `aucun workspace ne declare « ${ALIAS} » ni aucune de ses feuilles (${LEAVES.join(', ')}) : ` +
-                "les deux etapes d'integration de ci.yml ne lancent plus rien, et cette garde ne verifie plus rien.",
-            );
+          for (const target of FANNED_OUT) {
+            if (declarers.get(target).length === 0) {
+              problems.push(
+                `aucun workspace ne declare « ${target} », que le job \`test\` appelle en --if-present : ` +
+                  "l'etape correspondante ne lance plus rien tout en restant verte.",
+              );
+            }
           }
 
           if (problems.length > 0) {
@@ -184,9 +209,12 @@ jobs:
             process.exit(1);
           }
 
+          const served = FANNED_OUT.map(
+            (target) => `${target} → ${declarers.get(target).join(', ')}`,
+          ).join(' ; ');
           console.log(
             `Contrat des cibles de test respecte par ${covered} workspace(s) sur ` +
-              `${Object.keys(workspaces).length} lu(s).`,
+              `${Object.keys(workspaces).length} lu(s). Cibles en fan-out servies : ${served}.`,
           );
           JS
           node check-test-targets.cjs
@@ -211,6 +239,13 @@ jobs:
 
       # Le moteur de réservation est le risque n°1 du projet (CDC §6) :
       # les tests de concurrence ne sont jamais optionnels.
+      #
+      # La cible est servie par `apps/api` depuis #326 — `jest.concurrency.config.js`
+      # sur `test/*.concurrency-spec.ts`, sans `--passWithNoTests`. Auparavant,
+      # aucun workspace ne la déclarait : ce fan-out `--if-present` sortait en 0
+      # sans rien lancer, et cette étape annonçait une garantie qu'elle
+      # n'exerçait pas. C'est la garde ci-dessus qui interdit désormais ce
+      # retour en arrière.
       - name: Tests de concurrence (anti-double-réservation)
         run: npm run test:concurrency
 
