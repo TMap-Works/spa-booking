@@ -1283,11 +1283,18 @@ class FrontiereEtEmpreinteDuJournal(unittest.TestCase):
 
 class ContexteDeReprise(unittest.TestCase):
     """Ce que le `gate` doit dire à l'orchestrateur pour qu'il n'ouvre pas un
-    worktree vierge sur un ticket qui en a déjà un — et n'efface pas l'ancien."""
+    worktree vierge sur un ticket qui en a déjà un — et n'efface pas l'ancien.
 
-    def test_le_gate_annonce_ou_reprendre(self):
-        worktrees = {19: {"path": "/w/agent-a9e8", "branch": "feature/19-truc",
-                          "locked": True}}
+    Le cas couvert ici est « worktree existant + agent épinglé » (#245). Un
+    sous-agent lancé avec `isolation: "worktree"` ne peut pas rejoindre le
+    worktree annoncé : `EnterWorktree` déplace le répertoire courant sans
+    déplacer l'épinglage, et passé cet appel plus aucune commande `Bash` ne
+    s'exécute — `ExitWorktree` étant lui aussi refusé, l'agent reste coincé. Le
+    `gate` ne doit donc plus prescrire ce geste, mais la reprise de la
+    **branche** depuis le worktree où l'agent se trouve déjà.
+    """
+
+    def gate(self, worktrees, git_lines):
         with tempfile.TemporaryDirectory() as tmp:
             write_run(tmp, control={"signal": "run"})
             output = io.StringIO()
@@ -1295,15 +1302,98 @@ class ContexteDeReprise(unittest.TestCase):
                  mock.patch.object(run_mod, "live_worktrees",
                                    return_value=worktrees), \
                  mock.patch.object(run_mod, "git_lines",
-                                   side_effect=[["4ae5aed wip(19)"],
-                                                [" M apps/api/src/x.ts"]]), \
+                                   side_effect=git_lines), \
                  contextlib.redirect_stdout(output):
                 run_mod.cmd_gate(argparse.Namespace(run="r1"))
-        rendu = output.getvalue()
+        return output.getvalue()
+
+    def test_le_gate_annonce_la_branche_a_reprendre(self):
+        rendu = self.gate(
+            {19: {"path": "/w/agent-a9e8", "branch": "feature/19-truc",
+                  "locked": True}},
+            [["4ae5aed wip(19)"], [" M apps/api/src/x.ts"]])
         self.assertIn("À REPRENDRE", rendu)
-        self.assertIn("/w/agent-a9e8", rendu)
+        self.assertIn("feature/19-truc", rendu)
         self.assertIn("1 commit(s)", rendu)
-        self.assertIn("EnterWorktree", rendu)
+
+    def test_le_gate_ne_prescrit_plus_EnterWorktree(self):
+        """Le geste qui coince un agent épinglé ne doit plus être imprimé —
+        c'est lui que les trois agents de la vague ont tenté d'appliquer."""
+        rendu = self.gate(
+            {19: {"path": "/w/agent-a9e8", "branch": "feature/19-truc",
+                  "locked": True}},
+            [["4ae5aed wip(19)"], []])
+        self.assertNotIn("EnterWorktree(path", rendu)
+        self.assertIn("ne pas appeler EnterWorktree", rendu)
+
+    def test_la_reprise_passe_par_un_checkout_qui_ne_renomme_pas(self):
+        """« La branche est déjà prise par un autre checkout », sans changer son
+        nom. `--ignore-other-worktrees` lève le refus de `git` ; c'est ce refus,
+        contourné par un renommage, qui a produit
+        `feature/25-affectation-services-aux-praticiens` là où le journal du run
+        portait `feature/25-affectation-services-praticiens`."""
+        branche = "feature/25-affectation-services-praticiens"
+        lignes = run_mod.resume_instruction(
+            25, {"path": "/w/agent-a40c", "branch": branche,
+                 "detail": "3 fichier(s) non commités", "commits": 0,
+                 "dirty": 3})
+        rendu = "\n".join(lignes)
+        self.assertIn(f"git checkout --ignore-other-worktrees {branche}", rendu)
+        self.assertIn("ne pas renommer la branche", rendu)
+        self.assertNotIn("aux-praticiens", rendu)
+
+    def test_les_fichiers_non_commites_sont_annonces_avec_leur_chemin(self):
+        """Le checkout n'emporte que le commité. Les fichiers laissés en
+        souffrance dans l'ancien worktree ne suivent pas — et `Read`, qui
+        accepte un chemin absolu là où `Bash` est refusé à un agent épinglé,
+        est le seul moyen de les récupérer (c'est ce qu'a fait #25)."""
+        rendu = self.gate(
+            {19: {"path": "/w/agent-a9e8", "branch": "feature/19-truc",
+                  "locked": False}},
+            [["4ae5aed wip(19)"], [" M a.ts", " M b.ts", "?? c.ts"]])
+        self.assertIn("3 fichier(s) non commités", rendu)
+        self.assertIn("/w/agent-a9e8", rendu)
+        self.assertIn("Read", rendu)
+
+    def test_les_fichiers_en_souffrance_sont_nommes_un_par_un(self):
+        """Un décompte ne se relit pas. L'agent épinglé n'a aucun moyen
+        d'énumérer le contenu de l'ancien worktree — `Bash` y est refusé —, si
+        bien que dire « 3 fichiers » sans les nommer rend l'instruction
+        inapplicable et perd le travail qu'elle prétend sauver."""
+        rendu = self.gate(
+            {19: {"path": "/w/agent-a9e8", "branch": "feature/19-truc",
+                  "locked": False}},
+            [[], [" M apps/api/src/a.ts", "?? apps/web/b.tsx",
+                  "R  vieux.ts -> apps/api/src/c.ts"]])
+        self.assertIn("Read /w/agent-a9e8/apps/api/src/a.ts", rendu)
+        self.assertIn("Read /w/agent-a9e8/apps/web/b.tsx", rendu)
+        # Un renommage : c'est le nouveau nom qui existe sur le disque.
+        self.assertIn("Read /w/agent-a9e8/apps/api/src/c.ts", rendu)
+        self.assertNotIn("vieux.ts", rendu)
+
+    def test_une_branche_d_avant_le_renommage_est_a_renommer(self):
+        """`live_worktrees` reconnaît aussi la branche que `EnterWorktree` pose
+        avant la phase 1 (`worktree-feature+19-…`). Elle ne satisfait pas
+        `BRANCH_RE` : la garder casserait le rapprochement branche ↔ ticket que
+        l'instruction cherche justement à protéger."""
+        lignes = run_mod.resume_instruction(
+            19, {"path": "/w/agent-a9e8", "branch": "worktree-feature+19-truc",
+                 "detail": "1 commit(s)", "commits": 1, "dirty": 0})
+        rendu = "\n".join(lignes)
+        self.assertIn("git checkout --ignore-other-worktrees "
+                      "worktree-feature+19-truc", rendu)
+        self.assertIn("git branch -m", rendu)
+        self.assertNotIn("ne pas renommer la branche", rendu)
+
+    def test_sans_fichier_en_souffrance_le_chemin_ne_s_annonce_pas(self):
+        """Tout le travail est commité : le checkout suffit, et nommer un
+        chemin où l'agent ne peut de toute façon pas se rendre ne ferait que
+        l'inviter à essayer."""
+        rendu = self.gate(
+            {19: {"path": "/w/agent-a9e8", "branch": "feature/19-truc",
+                  "locked": False}},
+            [["4ae5aed wip(19)"], []])
+        self.assertNotIn("/w/agent-a9e8", rendu)
 
     def test_un_ticket_sans_worktree_n_a_rien_a_reprendre(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1314,6 +1404,18 @@ class ContexteDeReprise(unittest.TestCase):
                  contextlib.redirect_stdout(output):
                 run_mod.cmd_gate(argparse.Namespace(run="r1"))
         self.assertNotIn("À REPRENDRE", output.getvalue())
+
+    def test_le_contexte_compte_le_commite_et_le_non_commite(self):
+        """`resume_instruction` décide sur ces deux nombres : les rendre est ce
+        qui distingue « tout est commité » de « il reste à récupérer »."""
+        with mock.patch.object(run_mod, "git_lines",
+                               side_effect=[["a wip", "b wip"], [" M x.ts"]]):
+            context = run_mod.resume_context(
+                19, {19: {"path": "/w/agent-a9e8", "branch": "feature/19-truc",
+                          "locked": False}})
+        self.assertEqual(context["commits"], 2)
+        self.assertEqual(context["dirty"], 1)
+        self.assertEqual(context["branch"], "feature/19-truc")
 
 
 class DecisionsSansClavier(unittest.TestCase):
