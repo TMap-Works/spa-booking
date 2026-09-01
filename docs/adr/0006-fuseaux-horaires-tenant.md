@@ -137,15 +137,26 @@ encore. Les utilitaires de conversion sont écrits pour lui et testés sans lui 
 convertir. `AvailabilityModule` n'est délibérément pas enregistré dans
 `AppModule` tant qu'il n'a pas de consommateur.
 
-**L'adoption du format d'entrée n'est pas encore faite, et c'est voulu.**
-`offsetDateTimeSchema` existe dans le contrat, `@IsOffsetDateTime()` existe côté
-API, mais les schémas de requête déjà écrits — `createAppointmentRequestSchema`,
-`rescheduleAppointmentRequestSchema` — s'en tiennent à `utcInstantSchema`, donc
-refusent encore `+02:00`. Aucune route ne les consomme à ce jour : la divergence
-est latente, pas active. La basculer relève de #31 et #32, qui écriront les
-endpoints de rendez-vous et décideront champ par champ — l'élargissement d'un
-format d'entrée est un changement de contrat, et il n'a pas à être fait par un
-ticket qui n'ouvre aucune route. Une issue de suivi le porte.
+**L'adoption du format d'entrée est faite depuis #297.** `startsAt` de
+`createAppointmentRequestSchema` et de `rescheduleAppointmentRequestSchema` est
+en `offsetDateTimeSchema` ; les DTO NestJS correspondants portent
+`@IsOffsetDateTime()`, et le contrat et l'API décrivent donc la même frontière.
+Les champs de **sortie** restent en `utcInstantSchema` — c'est l'asymétrie
+décidée plus haut, pas un reste à traiter. Les bornes `from` / `to` de
+`appointmentListQuerySchema` restent en `calendarDateSchema` pour une raison
+d'une autre nature : ce ne sont pas des instants, mais des dates civiles du
+calendrier de l'établissement, dont le fuseau est `tenants.timezone` et non celui
+de l'appelant.
+
+Ce qui reste ouvert de ce côté est une **duplication**, pas une divergence :
+`IsOffsetDateTime` et `OFFSET_DATE_TIME_PATTERN` existent en deux copies —
+`availability` et `appointments` —, parce qu'un module n'importe pas un fichier
+profond d'un autre (api-module §3) et qu'`apps/api` ne dépend pas encore de
+`@spa/shared`. Les deux copies portent les noms du paquet partagé, pour que la
+substitution ne change pas une borne en silence, et deux suites les tiennent
+d'accord — `availability/__tests__/date-time.validation.spec.ts` et
+`appointments/__tests__/date-time.validation.spec.ts`. C'est #26 qui les
+résorbe.
 
 **Ce qu'on saura si on s'est trompé.** Un rendez-vous dont l'heure affichée au
 client diffère de celle du back-office, ou une journée de fin mars/fin octobre

@@ -13,13 +13,34 @@
  *    venue, le montant dû par ce client-là, non.
  * 3. **Aucun schéma ne porte `tenantId`.** Il est résolu depuis la requête. Voir
  *    l'en-tête de `./tenant`.
+ *
+ * ## L'asymétrie entrée / sortie sur les dates (#297)
+ *
+ * | Sens | Schéma | Raison |
+ * |---|---|---|
+ * | Entrée | `offsetDateTimeSchema` — `Z` **ou** `±HH:MM`, normalisé en UTC | ne pas faire porter la conversion au client, qui la ferait avec le fuseau de son navigateur |
+ * | Sortie | `utcInstantSchema` — `…Z` seulement | un seul référentiel : deux horodatages se comparent par simple ordre lexicographique |
+ *
+ * Elle n'est pas un relâchement d'un côté et une rigueur de l'autre : ce qui est
+ * proscrit dans les deux sens, c'est la date-heure **nue**, dont le serveur ne
+ * pourrait que deviner le fuseau. `Z` est un offset explicite, donc une entrée
+ * valable ; `+02:00` n'est pas une sortie valable, parce qu'il obligerait chaque
+ * lecteur à normaliser avant de comparer. Voir
+ * [ADR 0006](../../../../docs/adr/0006-fuseaux-horaires-tenant.md) et l'en-tête
+ * de `../common/time`.
+ *
+ * Une conséquence à connaître avant d'écrire un client : `offsetDateTimeSchema`
+ * **transforme**, si bien que le type inféré d'un champ entrant est déjà l'instant
+ * UTC normalisé, pas la chaîne envoyée. C'est voulu — passé le schéma, plus
+ * aucune couche n'a à se demander dans quel référentiel elle lit un horodatage —
+ * et c'est la même convention que les schémas d'absence de `./availability`.
  */
 
 import { z } from 'zod';
 
 import { longTextSchema, reasonSchema, uuidSchema } from '../common/identifiers';
 import { nonNegativeMoneySchema } from '../common/money';
-import { calendarDateSchema, utcInstantSchema } from '../common/time';
+import { calendarDateSchema, offsetDateTimeSchema, utcInstantSchema } from '../common/time';
 import { APPOINTMENT_STATUSES, CANCELLATION_ACTORS } from '../constants/appointment';
 
 import { serviceSummarySchema, staffMemberSummarySchema } from './catalog';
@@ -36,6 +57,12 @@ export const cancellationActorSchema = z.enum(CANCELLATION_ACTORS);
  * agenda affiche un nom, une prestation et une heure, et n'a besoin ni de
  * l'état d'activation du compte ni de la biographie du praticien. C'est aussi
  * ce qui borne la donnée personnelle diffusée à chaque ligne d'agenda.
+ *
+ * **Tous les instants de cette réponse restent en `utcInstantSchema`** (#297).
+ * C'est le côté « sortie » de l'asymétrie décrite en tête de fichier : émettre
+ * `startsAt` avec l'offset du salon obligerait l'agenda du back-office à
+ * normaliser chaque ligne avant de la trier, et deux salons de fuseaux
+ * différents ne se compareraient plus du tout.
  */
 export const appointmentSchema = z.object({
   id: uuidSchema,
@@ -98,7 +125,20 @@ export const createAppointmentRequestSchema = z
     serviceId: uuidSchema,
     /** Absent = « premier disponible ». Voir l'en-tête de ce schéma. */
     staffId: uuidSchema.optional(),
-    startsAt: utcInstantSchema,
+    /**
+     * Début du **soin**, ISO 8601 avec offset explicite — `Z` ou `±HH:MM` (#297).
+     *
+     * C'est l'instant que le calendrier a affiché à la cliente, tel qu'il s'est
+     * affiché. Le front n'a donc pas à le convertir avant de l'envoyer : il le
+     * ferait avec le fuseau du navigateur, qui n'est pas celui du salon dès
+     * qu'on réserve en voyage — et c'est exactement la conversion silencieuse
+     * que la frontière existe pour empêcher.
+     *
+     * La normalisation en UTC a lieu **ici**, si bien que le type inféré est
+     * déjà un `UtcInstant`. La date-heure nue reste refusée : son fuseau ne
+     * pourrait qu'être deviné.
+     */
+    startsAt: offsetDateTimeSchema,
     clientId: uuidSchema.optional(),
     clientNote: longTextSchema.optional(),
   })
@@ -134,7 +174,14 @@ export type CreateAppointmentRequest = z.infer<typeof createAppointmentRequestSc
  */
 export const rescheduleAppointmentRequestSchema = z
   .object({
-    startsAt: utcInstantSchema,
+    /**
+     * Nouveau début du soin, ISO 8601 avec offset explicite (#297) — même
+     * frontière qu'à la réservation, et ce n'est pas une coïncidence : les
+     * créneaux que le calendrier propose pour un report sont ceux-là mêmes qu'il
+     * propose pour une réservation neuve. Deux formats d'entrée différents
+     * feraient refuser au report un instant que la réservation accepte.
+     */
+    startsAt: offsetDateTimeSchema,
     staffId: uuidSchema.optional(),
   })
   .strict();
@@ -177,6 +224,14 @@ export type ChangeAppointmentStatusRequest = z.infer<typeof changeAppointmentSta
  * consulte « du 3 au 9 mars » dans le calendrier de l'établissement. La
  * conversion vers les instants UTC de la requête se fait côté serveur, avec le
  * fuseau du tenant — c'est le seul endroit qui le connaisse.
+ *
+ * C'est pourquoi `from` et `to` **ne basculent pas** sur `offsetDateTimeSchema`
+ * (#297), alors que ce sont bien des champs entrants : la question ne se pose
+ * pas pour eux. Une date civile n'est pas un instant mal formé, c'est une autre
+ * nature de donnée — « le 3 mars » ne commence pas au même moment à Papeete et à
+ * Paris. Leur adjoindre un offset laisserait l'appelant décider où commence la
+ * journée de l'établissement, qui est précisément ce que `tenants.timezone`
+ * tranche. Voir l'en-tête de `../common/time`.
  *
  * `statuses` accepte plusieurs valeurs pour la vue « à venir » (`pending` +
  * `confirmed`), qui est l'écran par défaut du comptoir.
