@@ -88,6 +88,80 @@ export const phoneSchema = z
 
 export type Phone = z.infer<typeof phoneSchema>;
 
+/**
+ * Motif E.164 — `+`, un indicatif de pays qui ne commence pas par zéro, et
+ * quinze chiffres significatifs au plus (recommandation UIT-T E.164).
+ */
+export const E164_PATTERN = /^\+[1-9]\d{1,14}$/;
+
+/**
+ * Ce qu'un humain intercale dans un numéro et qui ne porte aucune information :
+ * espaces, points, tirets, parenthèses d'indicatif régional.
+ */
+const PHONE_SEPARATORS = /[\s().-]/g;
+
+/**
+ * Ramène un numéro saisi à sa forme E.164, ou rend `null` s'il n'y a pas de
+ * forme E.164 déductible **sans deviner un pays**.
+ *
+ * Deux écritures internationales entrent : `+261341234567` et `00261341234567`
+ * — le préfixe `00` est la forme que composent la plupart des plans de
+ * numérotation, `+` celle qu'exige E.164. Les séparateurs sont retirés.
+ *
+ * Ce qui n'entre **pas**, et c'est le point : un numéro national comme
+ * `0341234567`. Le compléter demanderait de connaître le pays de la personne,
+ * que rien dans la requête ne dit — ni le fuseau du salon, qui n'est pas un
+ * pays, ni la langue du navigateur. Deviner produirait un numéro
+ * syntaxiquement valide et faux, c'est-à-dire un SMS de rappel envoyé à
+ * quelqu'un d'autre. Refuser laisse la correction à la seule personne qui
+ * connaisse la réponse, et le formulaire l'annonce dans son libellé d'aide.
+ */
+export function normalizeToE164(value: string): string | null {
+  const compact = value.trim().replace(PHONE_SEPARATORS, '');
+  const withPlus = compact.startsWith('00') ? `+${compact.slice(2)}` : compact;
+
+  return E164_PATTERN.test(withPlus) ? withPlus : null;
+}
+
+/**
+ * Numéro de téléphone **normalisé en E.164**, pour les surfaces où le numéro
+ * sert à joindre quelqu'un plutôt qu'à être affiché tel qu'il a été tapé.
+ *
+ * Distinct de `phoneSchema`, et la distinction n'est pas cosmétique :
+ *
+ * - `phoneSchema` est **permissif et conservateur** — il accepte la saisie d'un
+ *   comptoir, qui recopie ce qu'une cliente dicte, et la garde telle quelle ;
+ * - `e164PhoneSchema` **transforme** — passé la frontière, le numéro a une seule
+ *   écriture, celle qu'attend un opérateur SMS. `+261 34 12 345 67`,
+ *   `+261-34-12-345-67` et `00261341234567` y deviennent le même numéro, donc
+ *   le même destinataire et la même clé de déduplication d'envoi.
+ *
+ * Le plafond de longueur porte sur la saisie **avant** normalisation : c'est
+ * elle qui doit tenir dans `VARCHAR(32)` si un appelant la conserve, et la forme
+ * normalisée est de toute façon plus courte.
+ */
+export const e164PhoneSchema = z
+  .string()
+  .trim()
+  .max(PHONE_MAX_LENGTH)
+  .transform((value, ctx): string => {
+    const normalized = normalizeToE164(value);
+
+    if (normalized === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          'numéro attendu au format international, indicatif compris — par exemple +261 34 12 345 67',
+      });
+
+      return z.NEVER;
+    }
+
+    return normalized;
+  });
+
+export type E164Phone = z.infer<typeof e164PhoneSchema>;
+
 /** Prénom, nom, catégorie — `VARCHAR(80)`. */
 export const nameSchema = z.string().trim().min(1).max(NAME_MAX_LENGTH);
 

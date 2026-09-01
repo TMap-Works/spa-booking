@@ -2,18 +2,26 @@ export {
   appointmentListQuerySchema,
   appointmentSchema,
   appointmentStatusSchema,
+  bookGuestAppointmentRequestSchema,
+  bookedAppointmentSchema,
   cancelAppointmentRequestSchema,
   cancellationActorSchema,
   changeAppointmentStatusRequestSchema,
   createAppointmentRequestSchema,
+  guestContactSchema,
+  receivedAppointmentStatusSchema,
+  receivedCancellationActorSchema,
   rescheduleAppointmentRequestSchema,
 } from './appointment';
 export type {
   Appointment,
   AppointmentListQuery,
+  BookGuestAppointmentRequest,
+  BookedAppointment,
   CancelAppointmentRequest,
   ChangeAppointmentStatusRequest,
   CreateAppointmentRequest,
+  GuestContact,
   RescheduleAppointmentRequest,
 } from './appointment';
 

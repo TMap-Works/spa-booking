@@ -33,5 +33,8 @@
     "@commitlint/cli": "^19.0.0",
     "@commitlint/config-conventional": "^19.0.0",
     "@playwright/mcp": "0.0.79"
+  },
+  "overrides": {
+    "postcss": "^8.5.18"
   }
 }
