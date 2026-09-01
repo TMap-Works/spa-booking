@@ -14,6 +14,7 @@ réservation, est tenu.
 | #40 | L'annulation des deux côtés du comptoir — trace écrite, créneau libéré |
 | #36 | **L'option « premier disponible »** — `staffId` facultatif, et la règle d'affectation |
 | #38 | **Le verrou Redis de créneau** — `SlotLockService`, un `SET NX EX` court autour des deux écritures qui prennent un créneau |
+| #47 | **L'historique de la cliente connectée** — `GET /appointments/mine`, deux moitiés et un plafond |
 
 ## Les routes
 
@@ -22,11 +23,50 @@ réservation, est tenu.
 | `POST` | `/api/v1/public/:tenantSlug/appointments` | — (ouverte) |
 | `POST` | `/api/v1/public/:tenantSlug/appointments/:id/reschedule` | — (ouverte) |
 | `POST` | `/api/v1/public/:tenantSlug/appointments/:id/cancel` | — (ouverte) |
+| `GET` | `/api/v1/appointments/mine` | toute identité vérifiée |
 | `POST` | `/api/v1/appointments/:id/cancel` | `STAFF` |
 
 Les trois routes publiques ne sont pas gardées, et c'est le quatrième critère de
 #37 : on réserve sans compte. Ce qui les tient est le `ValidationPipe` global, le
 contrôle de disponibilité, la contrainte d'exclusion, et un quota par adresse.
+
+## L'historique de la cliente connectée (#47)
+
+Le CDC §1.4 demande « un compte client avec historique ». La route qui le sert
+est `GET /api/v1/appointments/mine`, et sa forme tient en trois décisions.
+
+### La cliente vient du jeton, et il n'y a aucun champ pour en désigner une autre
+
+`MyAppointmentsQueryDto` ne porte **ni `clientId`, ni `from`, ni `to`** : deux
+moitiés et un plafond, rien d'autre. L'agenda du back-office a bien un filtre par
+cliente (`appointmentListQuerySchema`), mais il vit derrière une garde `STAFF` et
+sur une autre surface. Ici, `clientId` vient de `@CurrentUser()`, et le
+`ValidationPipe` global — `forbidNonWhitelisted` — refuse en 400 celui qu'on
+glisserait dans la requête.
+
+### « À venir » n'est pas un filtre de temps
+
+| Moitié | Prédicat | Ordre |
+|---|---|---|
+| `upcoming` | l'intervalle n'est pas terminé **et** le statut occupe encore le créneau | croissant |
+| `past` | le complément exact | décroissant |
+
+Un rendez-vous annulé pour demain n'a plus rien à honorer : il descend dans
+l'historique, avec sa mention. Les deux moitiés sont **disjointes et
+complémentaires**, si bien qu'aucun rendez-vous ne peut disparaître de l'espace
+client — un simple `starts_at < now` aurait laissé les annulations futures hors
+des deux.
+
+### Une lecture du catalogue, pas N
+
+`billedView` a besoin des tampons de la prestation pour retrouver l'intervalle
+facturé. L'historique lit donc le catalogue **une fois** (`activeOnly: false` —
+un soin retiré de la vente reste dans l'historique de celles qui l'ont réservé)
+et le résout par une table. Une prestation introuvable retombe sur l'intervalle
+occupé plutôt que de vider l'écran.
+
+Aucune migration : `@@index([tenantId, clientId, startsAt])` sert exactement
+cette requête depuis #31, et `Appointment.clientId` référence déjà `User`.
 
 ## Les deux intervalles d'un rendez-vous
 
@@ -181,3 +221,9 @@ lecture déjà scopée, si bien qu'un praticien du voisin ne peut pas être affe
 et un `staffId` du voisin explicitement demandé rend le même 409 qu'un créneau
 pris, jamais un 404 qui distinguerait les deux.
 `test/appointments-tenant.isolation-spec.ts` couvre les deux.
+
+L'historique (#47) ajoute une **seconde** frontière à la première :
+`test/appointments-mine.isolation-spec.ts` sème deux rendez-vous portant le
+**même `clientId`** dans deux établissements, et une seconde cliente dans le
+même. Un filtre par cliente sans filtre par établissement ramènerait les deux, et
+aucune assertion sur « la liste n'est pas vide » ne le verrait.

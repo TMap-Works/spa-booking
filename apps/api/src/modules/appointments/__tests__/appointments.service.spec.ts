@@ -67,7 +67,13 @@ function serviceView(overrides: Partial<ServiceView> = {}): ServiceView {
   };
 }
 
-/** Le catalogue, réduit à la porte que la réservation emprunte. */
+/**
+ * Le catalogue, réduit aux deux portes que ce module emprunte.
+ *
+ * `byId` sert la réservation, le report et l'annulation — une prestation à la
+ * fois. `list` sert l'historique (#47), qui résout les tampons de plusieurs
+ * rendez-vous en une seule lecture plutôt qu'en N+1.
+ */
 function fakeCatalog(view: ServiceView | null): ServicesService {
   return {
     byId: (id: string): Promise<ServiceView> => {
@@ -76,6 +82,7 @@ function fakeCatalog(view: ServiceView | null): ServicesService {
       }
       return Promise.resolve(view);
     },
+    list: (): Promise<ServiceView[]> => Promise.resolve(view === null ? [] : [view]),
   } as unknown as ServicesService;
 }
 
@@ -1437,5 +1444,156 @@ describe('AppointmentsService — verrou Redis de créneau (#38)', () => {
 
     expect(locks.releases).toEqual([]);
     expect(locks.held.size).toBe(0);
+  });
+});
+
+describe('AppointmentsService.listForClient — #47', () => {
+  const CLIENT_ID = randomUUID();
+  const OTHER_CLIENT_ID = randomUUID();
+
+  /** L'intervalle **occupé** d'un soin qui commence à `billedStart`. */
+  function occupied(billedStart: Date): { startsAt: Date; endsAt: Date } {
+    return {
+      startsAt: new Date(billedStart.getTime() - 10 * 60_000),
+      endsAt: new Date(billedStart.getTime() + 70 * 60_000),
+    };
+  }
+
+  function seedFor(
+    repository: FakeAppointmentsRepository,
+    billedStart: Date,
+    overrides: { clientId?: string; status?: 'CANCELLED' | 'COMPLETED' } = {},
+  ): string {
+    return repository.seedAppointment({
+      tenantId: TENANT,
+      staffId: STAFF_ID,
+      serviceId: SERVICE_ID,
+      clientId: overrides.clientId ?? CLIENT_ID,
+      ...occupied(billedStart),
+      ...(overrides.status === undefined ? {} : { status: overrides.status }),
+    }).id;
+  }
+
+  it('rend l’intervalle **facturé**, tampons retirés', async () => {
+    const { service, repository } = createHarness();
+    seedFor(repository, BILLED_START);
+
+    const [view] = await runWithTenant(TENANT, () =>
+      service.listForClient({ clientId: CLIENT_ID, scope: 'upcoming', limit: 20 }, NOW),
+    );
+
+    // La base stocke 09:50–11:10 ; la cliente a réservé 10:00–11:00, et c'est ce
+    // que son historique doit lui rendre.
+    expect(view?.startsAt).toBe(BILLED_START.toISOString());
+    expect(view?.endsAt).toBe(new Date(BILLED_START.getTime() + 3_600_000).toISOString());
+  });
+
+  it('sépare « à venir » et « passés » sur ce qu’il reste à honorer, pas sur l’heure seule', async () => {
+    const { service, repository } = createHarness();
+    const aVenir = seedFor(repository, BILLED_START);
+    // Annulé, mais dans le futur : plus rien à honorer, donc dans l'historique.
+    const annuleFutur = seedFor(repository, new Date(BILLED_START.getTime() + 86_400_000), {
+      status: 'CANCELLED',
+    });
+    const passe = seedFor(repository, new Date(NOW.getTime() - 86_400_000), {
+      status: 'COMPLETED',
+    });
+
+    const upcoming = await runWithTenant(TENANT, () =>
+      service.listForClient({ clientId: CLIENT_ID, scope: 'upcoming', limit: 20 }, NOW),
+    );
+    const past = await runWithTenant(TENANT, () =>
+      service.listForClient({ clientId: CLIENT_ID, scope: 'past', limit: 20 }, NOW),
+    );
+
+    expect(upcoming.map((view) => view.id)).toEqual([aVenir]);
+    // Décroissant : l'annulé de demain avant celui d'hier.
+    expect(past.map((view) => view.id)).toEqual([annuleFutur, passe]);
+  });
+
+  it('ne rend jamais les rendez-vous d’une autre cliente', async () => {
+    const { service, repository } = createHarness();
+    const mine = seedFor(repository, BILLED_START);
+    const hers = seedFor(repository, new Date(BILLED_START.getTime() + 7_200_000), {
+      clientId: OTHER_CLIENT_ID,
+    });
+
+    const views = await runWithTenant(TENANT, () =>
+      service.listForClient({ clientId: CLIENT_ID, scope: 'upcoming', limit: 20 }, NOW),
+    );
+
+    expect(views.map((view) => view.id)).toEqual([mine]);
+    expect(JSON.stringify(views)).not.toContain(hers);
+  });
+
+  it('borne la liste au `limit` demandé', async () => {
+    const { service, repository } = createHarness();
+    seedFor(repository, BILLED_START);
+    seedFor(repository, new Date(BILLED_START.getTime() + 7_200_000));
+
+    const views = await runWithTenant(TENANT, () =>
+      service.listForClient({ clientId: CLIENT_ID, scope: 'upcoming', limit: 1 }, NOW),
+    );
+
+    expect(views).toHaveLength(1);
+  });
+
+  it('ne lit pas le catalogue quand l’historique est vide', async () => {
+    // Un compte qui vient d'être créé est le cas courant : aller chercher les
+    // prestations pour n'en nommer aucune serait une requête pour rien.
+    let listed = 0;
+    const repository = new FakeAppointmentsRepository();
+    const journal = recordingLogger();
+    const availability = fakeAvailability([BILLED_START]);
+    const view = serviceView();
+
+    const catalog = {
+      byId: (): Promise<ServiceView> => Promise.resolve(view),
+      list: (): Promise<ServiceView[]> => {
+        listed += 1;
+        return Promise.resolve([view]);
+      },
+    } as unknown as ServicesService;
+
+    const service = new AppointmentsService(
+      repository.asRepository(),
+      catalog,
+      availability.service,
+      new AppointmentEvents(journal.logger),
+      new AppointmentLifecycleService(),
+      new SpyAvailabilityCache().asService(),
+      new FakeCacheLocks().asService(),
+    );
+
+    const views = await runWithTenant(TENANT, () =>
+      service.listForClient({ clientId: CLIENT_ID, scope: 'upcoming', limit: 20 }, NOW),
+    );
+
+    expect(views).toEqual([]);
+    expect(listed).toBe(0);
+  });
+
+  it('affiche encore un rendez-vous dont la prestation a disparu du catalogue', async () => {
+    // Aucune clé étrangère ne le permet aujourd'hui, et c'est précisément
+    // pourquoi le repli doit être écrit : un historique amputé d'une visite
+    // serait plus grave que quelques minutes d'écart sur une date passée.
+    const { service, repository } = createHarness({ view: null });
+    const orphelin = seedFor(repository, BILLED_START);
+
+    const views = await runWithTenant(TENANT, () =>
+      service.listForClient({ clientId: CLIENT_ID, scope: 'upcoming', limit: 20 }, NOW),
+    );
+
+    expect(views.map((each) => each.id)).toEqual([orphelin]);
+    // Sans tampon connu, l'intervalle rendu est celui qui est en base.
+    expect(views[0]?.startsAt).toBe(occupied(BILLED_START).startsAt.toISOString());
+  });
+
+  it('refuse de lire hors de toute portée de tenant', async () => {
+    const { service } = createHarness();
+
+    await expect(
+      service.listForClient({ clientId: CLIENT_ID, scope: 'upcoming', limit: 20 }, NOW),
+    ).rejects.toThrow(/tenant/i);
   });
 });

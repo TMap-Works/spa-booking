@@ -16,6 +16,7 @@ import type {
   AppointmentView,
   BookAppointmentInput,
   CancelAppointmentInput,
+  ListClientAppointmentsInput,
   RescheduleAppointmentInput,
   RescheduleDraft,
   RescheduleOutcome,
@@ -476,6 +477,60 @@ export class AppointmentsService {
   }
 
   /**
+   * L'historique d'une cliente — « à venir » ou « passés » (#47, deuxième
+   * critère).
+   *
+   * ## D'où vient la cliente, et d'où elle ne vient jamais
+   *
+   * De `input.clientId`, que le contrôleur prend dans `@CurrentUser()`, donc
+   * d'un jeton dont la signature a été vérifiée. Aucun DTO de ce module ne porte
+   * de `clientId` en lecture, et c'est ce qui empêche une cliente de demander
+   * l'historique d'une autre : il n'y a pas de champ par lequel le lui demander.
+   * L'établissement, lui, vient du même jeton et est posé dans le contexte par
+   * `JwtAuthGuard` — le repository est donc déjà borné aux deux.
+   *
+   * ## Pourquoi une seule lecture du catalogue, et non une par rendez-vous
+   *
+   * `billedView` a besoin des tampons de la prestation pour retrouver
+   * l'intervalle **facturé** depuis l'intervalle occupé qui est en base. Appeler
+   * `ServicesService.byId` par ligne ferait N+1 requêtes sur un écran qui en
+   * affiche vingt ; le catalogue d'un salon se compte en dizaines de prestations
+   * et tient dans une seule lecture. `activeOnly: false` est indispensable : une
+   * prestation retirée de la vente reste dans l'historique des clientes qui l'ont
+   * réservée, et l'omettre ferait disparaître leurs rendez-vous passés.
+   *
+   * Une prestation introuvable — cas qu'aucune clé étrangère `Restrict` ne permet
+   * aujourd'hui — retombe sur des tampons nuls : la ligne s'affiche alors avec
+   * son intervalle occupé plutôt que de faire échouer tout l'écran. Un
+   * historique amputé d'une visite serait un défaut plus grave que quelques
+   * minutes d'écart sur une date passée.
+   */
+  public async listForClient(
+    input: ListClientAppointmentsInput,
+    now: Date = new Date(),
+  ): Promise<AppointmentView[]> {
+    const records = await this.repository.listForClient({
+      clientId: input.clientId,
+      scope: input.scope,
+      limit: input.limit,
+      now,
+    });
+
+    if (records.length === 0) {
+      // Un historique vide est le cas normal d'un compte qui vient d'être créé :
+      // il n'y a alors aucune raison d'aller lire le catalogue.
+      return [];
+    }
+
+    const services = await this.services.list({ activeOnly: false });
+    const byId = new Map(services.map((service) => [service.id, service]));
+
+    return records.map((record) =>
+      billedView(record, byId.get(record.serviceId) ?? occupiedAsBilled(record)),
+    );
+  }
+
+  /**
    * L'insertion, tentée sur les candidats **dans l'ordre**, jusqu'à ce que la
    * base en accepte un (#36, quatrième critère).
    *
@@ -694,6 +749,36 @@ function occupiedRange(billedStart: Date, service: ServiceView): { startsAt: Dat
 }
 
 /**
+ * Ce dont la vue facturée a besoin d'une prestation — et rien d'autre.
+ *
+ * `ServiceView` le satisfait structurellement, si bien que tous les appelants
+ * qui en ont un continuent de le passer tel quel. Le type existe pour le seul
+ * cas où l'on n'en a pas : l'historique (#47), qui résout les prestations par
+ * une lecture unique du catalogue et doit pouvoir se replier quand l'une d'elles
+ * manque, sans fabriquer une fausse fiche de prestation pour tromper le
+ * compilateur.
+ */
+interface BilledIntervalSource {
+  readonly durationMinutes: number;
+  readonly bufferBeforeMinutes: number;
+}
+
+/**
+ * Le repli de l'historique quand la prestation d'une ligne est introuvable —
+ * cas qu'aucune clé étrangère `Restrict` ne permet aujourd'hui.
+ *
+ * Sans tampon connu, l'intervalle facturé rendu est l'intervalle **occupé** :
+ * l'écart est de quelques minutes sur une visite déjà passée, là où lever
+ * viderait tout l'écran d'historique pour une seule ligne.
+ */
+function occupiedAsBilled(record: AppointmentRecord): BilledIntervalSource {
+  return {
+    bufferBeforeMinutes: 0,
+    durationMinutes: Math.round((record.endsAt.getTime() - record.startsAt.getTime()) / MINUTE_MS),
+  };
+}
+
+/**
  * Le rendez-vous tel que la cliente le lit — l'intervalle **facturé**, retrouvé
  * depuis la ligne écrite.
  *
@@ -713,7 +798,7 @@ function occupiedRange(billedStart: Date, service: ServiceView): { startsAt: Dat
  * même titre que le prix — un changement de schéma qui sort du périmètre de ce
  * ticket, pour un écart de quelques minutes sur une heure déjà passée.
  */
-function billedView(record: AppointmentRecord, service: ServiceView): AppointmentView {
+function billedView(record: AppointmentRecord, service: BilledIntervalSource): AppointmentView {
   const billedStart = record.startsAt.getTime() + service.bufferBeforeMinutes * MINUTE_MS;
 
   return {

@@ -11,6 +11,7 @@ import type {
   AppointmentDraft,
   AppointmentRecord,
   CancelDraft,
+  ClientAppointmentsQuery,
   GuestContact,
   RescheduleDraft,
   RescheduleOutcome,
@@ -543,6 +544,72 @@ export class AppointmentsRepository {
       select: APPOINTMENT_SELECT,
     });
     return row === null ? null : toRecord(row);
+  }
+
+  /**
+   * L'historique d'une cliente dans l'établissement courant — la moitié
+   * demandée, bornée (#47).
+   *
+   * ## Où passe la frontière entre « à venir » et « passé »
+   *
+   * | Moitié | Prédicat | Ordre |
+   * |---|---|---|
+   * | `upcoming` | l'intervalle n'est pas terminé **et** le statut occupe encore le créneau | du plus proche au plus lointain |
+   * | `past` | tout le reste | du plus récent au plus ancien |
+   *
+   * Ce n'est pas un filtre de statut, et les confondre produirait un écran faux :
+   * un rendez-vous annulé pour demain n'a plus rien à honorer, il n'a donc rien à
+   * faire dans « à venir » — mais il n'est pas perdu pour autant, il descend dans
+   * l'historique avec sa mention d'annulation. Les deux moitiés sont
+   * **complémentaires et disjointes** : toute ligne de la cliente tombe dans
+   * exactement une des deux, si bien qu'aucun rendez-vous ne peut disparaître de
+   * son espace client.
+   *
+   * `endsAt` est la borne **occupée** — celle qui est en base. L'écart avec la
+   * fin facturée est le tampon d'après-soin, quelques minutes : un rendez-vous
+   * qui vient de se terminer reste « à venir » le temps de ce tampon. Corriger
+   * cela demanderait de connaître les tampons de la prestation dans le `where`,
+   * donc une jointure sur le catalogue à chaque lecture d'historique, pour une
+   * différence que personne ne voit.
+   *
+   * ## Ce que cette méthode ne prend pas en paramètre
+   *
+   * Le tenant. Comme toutes les lectures de ce fichier, elle passe par le client
+   * **scopé** : l'extension ajoute `tenantId` au `where`, et
+   * `@@index([tenantId, clientId, startsAt])` sert exactement le couple obtenu.
+   * Une cliente d'un autre établissement — même identifiant, autre portée — ne
+   * ramène donc rien, sans qu'aucune comparaison n'ait à être écrite ici.
+   */
+  public async listForClient(query: ClientAppointmentsQuery): Promise<AppointmentRecord[]> {
+    const upcoming = query.scope === 'upcoming';
+
+    const rows = await this.prisma.appointment.findMany({
+      where: {
+        clientId: query.clientId,
+        ...(upcoming
+          ? { endsAt: { gt: query.now }, status: { in: [...OCCUPYING_STATUSES] } }
+          : {
+              // Le complément exact du prédicat ci-dessus, écrit comme tel :
+              // « terminé » **ou** « ne tient plus le créneau ». Un simple
+              // `endsAt: { lte: now }` laisserait les annulations futures hors
+              // des deux moitiés, donc invisibles.
+              OR: [
+                { endsAt: { lte: query.now } },
+                { status: { notIn: [...OCCUPYING_STATUSES] } },
+              ],
+            }),
+      },
+      select: APPOINTMENT_SELECT,
+      // `id` départage à égalité d'instant : sans lui, PostgreSQL ne garantit
+      // aucun ordre entre deux rendez-vous de même début, et la liste changerait
+      // d'un rafraîchissement à l'autre.
+      orderBy: upcoming
+        ? [{ startsAt: 'asc' }, { id: 'asc' }]
+        : [{ startsAt: 'desc' }, { id: 'desc' }],
+      take: query.limit,
+    });
+
+    return rows.map(toRecord);
   }
 
   /**
