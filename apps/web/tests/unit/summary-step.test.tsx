@@ -81,7 +81,28 @@ describe('le bouton de soumission se désactive dès le premier clic', () => {
     bookAppointmentAction.mockResolvedValue({
       ok: false,
       code: 'SLOT_NO_LONGER_AVAILABLE',
-      message: 'Ce créneau vient d’être pris.',
+      message: 'Slot lock 7f3a is already held by another transaction.',
+    });
+
+    const user = userEvent.setup();
+    const { onSlotLost } = renderSummary();
+
+    await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
+
+    expect(onSlotLost).toHaveBeenCalledTimes(1);
+    // Sans argument : le message du serveur ne franchit pas cette frontière,
+    // c'est le tunnel qui écrit l'explication (#46).
+    expect(onSlotLost).toHaveBeenCalledWith();
+    // Et rien n'est affiché ici — l'écran de panne dirait le contraire de ce
+    // qui se passe : la réservation est reprenable au créneau suivant.
+    expect(screen.queryByText('La réservation n’a pas abouti')).toBeNull();
+  });
+
+  it('traite un 409 sans message, que l’API a le droit de ne pas remplir', async () => {
+    bookAppointmentAction.mockResolvedValue({
+      ok: false,
+      code: 'SLOT_NO_LONGER_AVAILABLE',
+      message: '',
     });
 
     const user = userEvent.setup();
