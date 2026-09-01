@@ -362,8 +362,24 @@ python scripts/milestone_run.py event --ticket $1 --phase recette \
 
 Une revue complète, puis une correction complète. **Pas de seconde revue.**
 
-Invoquer la skill `code-review` sur le **diff local**, avec `--fix`, avant tout
-commit :
+### L'invocation, au mot près
+
+Trois gestes, dans cet ordre, avant tout commit :
+
+```bash
+python scripts/review_guard.py snapshot     # 1. empreinte du dépôt principal
+```
+
+**2.** Invoquer la skill `code-review` avec, pour arguments, **le niveau et
+`--fix`, et rien d'autre** :
+
+```
+code-review medium --fix        # ou : code-review high --fix
+```
+
+```bash
+python scripts/review_guard.py verify       # 3. post-condition, code de sortie
+```
 
 | Le diff touche | Niveau |
 |---|---|
@@ -372,6 +388,66 @@ commit :
 
 `high` élargit la couverture au prix de constats incertains — donc de corrections
 à instruire. Le réserver à ce qui casse cher.
+
+### Ne jamais passer de cible à la revue
+
+Sans argument de cible, `code-review` revoit **le diff courant du répertoire
+courant** — c'est-à-dire le travail de ce ticket, dans ce worktree. C'est ce
+qu'on veut, et c'est la seule forme autorisée ici.
+
+**N'ajouter jamais de numéro de PR, de SHA de commit, de nom de branche ni de
+chemin.** La skill les accepte tous — et c'est précisément ce qui a provoqué
+#167 : deux agents ont désigné une cible pour « aider » la revue à trouver leur
+travail, et `--fix` a corrigé les fichiers de cette cible.
+
+| L'agent a passé | La revue a corrigé | Où |
+|---|---|---|
+| `d77ba2b` — un commit déjà mergé, celui de #158 | `scripts/milestone_plan.py`, `scripts/tests/test_milestone_plan.py` | dépôt principal |
+| `#160` — la PR d'un autre ticket | `.claude/milestone-rules.json` | dépôt principal |
+
+Les fichiers salis sont **exactement** ceux du diff désigné. Deux dégâts d'un
+coup : des fichiers d'orchestration modifiés sans revue ni trace, et une revue
+qui n'a pas revu le travail qu'elle devait revoir.
+
+Le piège est d'autant plus facile qu'**à la phase 5 le ticket n'a pas encore de
+PR** — elle n'est créée qu'à la phase 7. Tout numéro de PR qu'on croit être le
+sien est donc forcément celui d'un autre. Et il existe sur les postes une
+commande de marketplace `/code-review` homonyme, orientée « review a pull
+request », qui en réclame une : si l'invocation demande une PR, c'est qu'elle
+n'est pas la bonne.
+
+### Le garde-fou, et ce qu'on en fait
+
+`review_guard.py verify` compare l'arbre de travail du dépôt principal à son
+empreinte d'avant la revue. Codes de sortie : `0` rien n'a bougé · `2` la revue
+a écrit hors du worktree · `3` pas d'instantané exploitable — jamais pris, déjà
+consommé par un `verify` précédent, illisible, ou périmé (12 h : un worktree
+réutilisé par une reprise de jalon) · `4` erreur d'appel ou d'environnement.
+Hors worktree (`--no-worktree`), il sort en `0` en se déclarant inactif : il n'y
+a rien à protéger.
+
+**Seul un `0` laisse continuer.** Le garde-fou est une post-condition : tout
+autre code veut dire que la revue n'est *pas* prouvée innocente, et la phase 5
+ne passe pas outre.
+
+**Sur un `2`, la phase 5 échoue.** Ne pas restaurer et poursuivre en silence :
+c'est ce qui a masqué #167 deux fois de suite, et un agent tué entre la
+modification et sa restauration ne laisse rien du tout. Journaliser
+`--status blocked` avec les chemins que le script nomme, restaurer le dépôt
+principal avec les commandes qu'il affiche, commenter l'issue, rendre la main.
+
+**Sur un `3` ou un `4`, la revue n'a pas été encadrée** — la corriger à
+l'aveugle serait rejouer #167. Ne pas relancer la revue (la règle du passage
+unique tient) : inspecter à la main l'arbre de travail du dépôt principal que le
+script nomme, `git -C "<dépôt principal>" status --porcelain`, puis reprendre à
+`snapshot` si l'environnement se répare, ou journaliser `--status blocked` avec
+le message du script et rendre la main si des fichiers d'orchestration ont
+bougé. Un `4` est presque toujours d'environnement (`git` absent, chemin hors
+dépôt) : le remède appliqué, reprendre les trois gestes depuis le premier.
+
+Il ne voit que le dépôt principal — les worktrees frères sont exclus, faute de
+pouvoir distinguer une écriture parasite du travail légitime des deux autres
+agents de la vague.
 
 Deux raisons de revoir **avant** de pousser plutôt qu'après :
 
