@@ -38,7 +38,14 @@
 
 import { z } from 'zod';
 
-import { longTextSchema, reasonSchema, uuidSchema } from '../common/identifiers';
+import {
+  e164PhoneSchema,
+  emailSchema,
+  longTextSchema,
+  nameSchema,
+  reasonSchema,
+  uuidSchema,
+} from '../common/identifiers';
 import { nonNegativeMoneySchema } from '../common/money';
 import { calendarDateSchema, offsetDateTimeSchema, utcInstantSchema } from '../common/time';
 import { APPOINTMENT_STATUSES, CANCELLATION_ACTORS } from '../constants/appointment';
@@ -147,6 +154,61 @@ export const createAppointmentRequestSchema = z
 export type CreateAppointmentRequest = z.infer<typeof createAppointmentRequestSchema>;
 
 /**
+ * Les coordonnées d'une cliente qui réserve **sans compte** (#45).
+ *
+ * Aucun mot de passe, et il n'y en aura pas : ce formulaire crée une fiche
+ * jointe au rendez-vous, pas une identité. Le visiteur qui veut un compte passe
+ * par `registerRequestSchema` ; le tunnel n'a pas à le lui imposer pour prendre
+ * un rendez-vous.
+ *
+ * `phone` est en **E.164** et non en `phoneSchema` : c'est le numéro qu'un
+ * opérateur SMS recevra pour le rappel J-1, et il n'a alors qu'une écriture
+ * possible. Le champ reste facultatif — le canal obligatoire est l'e-mail de
+ * confirmation, le SMS est un confort. Voir l'en-tête d'`e164PhoneSchema`.
+ *
+ * C'est ce schéma, et lui seul, que le formulaire de coordonnées du parcours
+ * public valide : le front ne redéclare pas la règle, il importe celle-ci.
+ */
+export const guestContactSchema = z
+  .object({
+    firstName: nameSchema,
+    lastName: nameSchema,
+    email: emailSchema,
+    phone: e164PhoneSchema.optional(),
+  })
+  .strict();
+
+export type GuestContact = z.infer<typeof guestContactSchema>;
+
+/**
+ * Prise de rendez-vous depuis le **parcours public**, par une cliente sans
+ * compte.
+ *
+ * C'est la variante « invité » de `createAppointmentRequestSchema`, et la
+ * différence tient en un champ : là où la forme de back-office désigne une
+ * fiche existante par `clientId`, celle-ci porte les `client` — coordonnées
+ * saisies au moment de réserver, à partir desquelles le serveur crée ou
+ * retrouve la fiche.
+ *
+ * Les deux ne se fondent pas en un seul schéma à `clientId` **ou** `client` :
+ * une union laisserait passer les deux à la fois, et un tunnel public qui
+ * poserait un `clientId` réserverait au nom de quelqu'un d'autre.
+ */
+export const bookGuestAppointmentRequestSchema = z
+  .object({
+    serviceId: uuidSchema,
+    /** Absent = « premier disponible ». Voir `createAppointmentRequestSchema`. */
+    staffId: uuidSchema.optional(),
+    /** Début du soin, ISO 8601 avec offset explicite — normalisé en UTC ici. */
+    startsAt: offsetDateTimeSchema,
+    client: guestContactSchema,
+    clientNote: longTextSchema.optional(),
+  })
+  .strict();
+
+export type BookGuestAppointmentRequest = z.infer<typeof bookGuestAppointmentRequestSchema>;
+
+/**
  * Report — **une annulation suivie d'une création liée**, jamais une mise à jour
  * des dates en place (booking-engine §5).
  *
@@ -248,3 +310,73 @@ export const appointmentListQuerySchema = z
   .strict();
 
 export type AppointmentListQuery = z.infer<typeof appointmentListQuerySchema>;
+
+// ---------------------------------------------------------------------------
+// Ce que le parcours public reçoit en retour d'une réservation — #45
+// ---------------------------------------------------------------------------
+
+/**
+ * Statut de rendez-vous **tel qu'il arrive du fil**, ramené au vocabulaire du
+ * contrat.
+ *
+ * L'API émet aujourd'hui `PENDING` — la casse de l'énumération PostgreSQL que
+ * Prisma génère — là où ce contrat nomme le même statut `pending`. La
+ * conversion se fait donc **une fois, à la frontière**, exactement comme
+ * `offsetDateTimeSchema` normalise un instant entrant : au-delà, plus aucun
+ * écran n'a à se demander dans quelle casse il compare un statut.
+ *
+ * Ce n'est pas la forme d'arrivée : le jour où `apps/api` importera ce paquet
+ * — le TODO(#26) que portent ses DTO —, les deux vocabulaires se rejoindront et
+ * ce schéma pourra redevenir `appointmentStatusSchema` tout court. Le laisser
+ * ici plutôt que d'écrire un `.toLowerCase()` dans un composant est ce qui rend
+ * cette suppression possible en un seul endroit.
+ */
+export const receivedAppointmentStatusSchema = z
+  .string()
+  .transform((value) => value.toLowerCase())
+  .pipe(appointmentStatusSchema);
+
+/** Auteur d'annulation reçu du fil (`CLIENT`), même normalisation que ci-dessus. */
+export const receivedCancellationActorSchema = z
+  .string()
+  .transform((value) => value.toLowerCase())
+  .pipe(cancellationActorSchema);
+
+/**
+ * Le rendez-vous que rendent les routes publiques de réservation, de report et
+ * d'annulation.
+ *
+ * Distinct d'`appointmentSchema`, qui décrit la ligne d'agenda du back-office :
+ * celle-ci imbrique les *summaries* de la cliente, du praticien et de la
+ * prestation, parce qu'un agenda affiche des noms. Le parcours public, lui,
+ * **connaît déjà** ces noms — c'est lui qui vient de les choisir dans le
+ * catalogue — et reçoit des identifiants. Servir les *summaries* ici
+ * diffuserait à un appelant non authentifié l'identité d'une cliente à partir
+ * du seul identifiant d'un rendez-vous.
+ *
+ * Non `.strict()`, comme les autres schémas de sortie du contrat : un champ que
+ * l'API ajouterait ne doit pas faire échouer un front qui ne s'en sert pas.
+ *
+ * `clientNote`, `rescheduledFromId`, `cancelledAt` et `cancelledBy` sont
+ * `nullable` et non `optional` : l'API les émet toujours, à `null` quand ils
+ * sont sans objet. Un `cancelledBy` à `null` **avec** un `cancelledAt` posé
+ * n'est pas une donnée manquante — c'est l'annulation qu'un report produit sur
+ * la ligne d'origine, où il n'y a pas d'auteur à nommer.
+ */
+export const bookedAppointmentSchema = z.object({
+  id: uuidSchema,
+  status: receivedAppointmentStatusSchema,
+  serviceId: uuidSchema,
+  staffId: uuidSchema,
+  clientId: uuidSchema,
+  startsAt: utcInstantSchema,
+  endsAt: utcInstantSchema,
+  /** Prix figé au moment de la réservation. */
+  price: nonNegativeMoneySchema,
+  clientNote: longTextSchema.nullable(),
+  rescheduledFromId: uuidSchema.nullable(),
+  cancelledAt: utcInstantSchema.nullable(),
+  cancelledBy: receivedCancellationActorSchema.nullable(),
+});
+
+export type BookedAppointment = z.infer<typeof bookedAppointmentSchema>;

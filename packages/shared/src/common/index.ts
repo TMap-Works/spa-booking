@@ -1,8 +1,11 @@
 export {
+  E164_PATTERN,
   displayNameSchema,
+  e164PhoneSchema,
   emailSchema,
   longTextSchema,
   nameSchema,
+  normalizeToE164,
   opaqueTokenSchema,
   passwordSchema,
   phoneSchema,
@@ -11,7 +14,7 @@ export {
   submittedPasswordSchema,
   uuidSchema,
 } from './identifiers';
-export type { Email, Phone, Slug, Uuid } from './identifiers';
+export type { E164Phone, Email, Phone, Slug, Uuid } from './identifiers';
 
 export {
   AMOUNT_MINOR_MAX,
