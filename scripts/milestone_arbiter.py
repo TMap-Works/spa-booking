@@ -42,7 +42,9 @@ jusqu'à épuisement du quota. `escalation` donne le cran à appliquer — relan
 corriger, écarter — et le budget d'un run comme celui d'un ticket est compté. Le
 dernier cran n'est **jamais** l'arrêt du jalon : c'est l'écartement du ticket
 avec une issue de suivi, parce qu'un ticket pourri ne doit pas figer les vingt
-autres.
+autres. Le cran se décide sur l'antériorité **du ticket**, pas sur celle du run :
+une cause déterministe déjà conclue ailleurs ne repart pas de « on relance »
+sous prétexte que le run est neuf (#359).
 
 ## Ce qu'il ne fait pas
 
@@ -525,6 +527,63 @@ def arbitrations(run_id):
     return run_mod.read_arbitrations(run_id)
 
 
+def prior_arbitrations(run_id, ticket=None):
+    """Ce que les **autres** runs ont déjà arbitré — l'antériorité d'un ticket.
+
+    Un numéro d'issue est stable là où un run ne l'est pas : le même ticket
+    traverse les runs, et sa cause d'échec avec lui. Borner l'escalade au run
+    courant faisait donc repartir de « jamais arbitré » un ticket dont la panne
+    avait déjà conclu quatre fois ailleurs — c'est #359, mesuré sur #226 : cran
+    rendu `retry`, étape suivante stérile à 24 tours et 3 $, cause inchangée.
+
+    Ce n'est pas un second compteur de budget : le budget reste celui du run, qui
+    seul dit ce que *cette* nuit a le droit de dépenser. C'est une mémoire de
+    cause, et elle ne sert qu'à `next_rung` et à ce que `escalation` donne à lire.
+
+    On lit tous les runs sauf celui-ci, jamais le seul jalon courant : #226 a été
+    arbitré sur des runs S1 **et** S2, et se restreindre au jalon aurait manqué
+    précisément le cas qui a motivé le correctif.
+    """
+    rows = []
+    for directory in run_mod.run_dirs():
+        if directory.name == run_id:
+            continue
+        for row in run_mod.read_arbitrations(directory.name):
+            if ticket is not None and row.get("ticket") != ticket:
+                continue
+            rows.append(dict(row, run=directory.name))
+    rows.sort(key=lambda row: row.get("ts") or "")
+    return rows
+
+
+def elsewhere(prior, sign=None):
+    """L'antériorité hors run, résumée — ce que `escalation` expose.
+
+    Sans elle, l'arbitre découvrait l'antériorité en lisant les commentaires de
+    l'issue, quand il y pensait. La donner à côté du cran est ce qui lui permet
+    de juger sur pièces : combien de fois ailleurs, combien sur la même cause,
+    et où cela s'était arrêté.
+
+    « Où cela s'était arrêté », c'est la dernière décision qui **porte un cran** —
+    pas la dernière ligne. Toutes n'en portent pas : `record` inscrit aussi la
+    tenue de compte d'un motif traité ailleurs (`rung: null`), et sur #226 c'est
+    précisément elle qui ferme le fichier, douze secondes après l'écartement.
+    Prendre la dernière ligne telle quelle rendait donc `dernier_cran: null` sur
+    un ticket qui venait d'être `skip` — l'arbitre lisait « jamais tranché » là où
+    on avait tranché le plus fort.
+    """
+    same = [row for row in prior if sign and row.get("signature") == sign]
+    decided = [row for row in prior if row.get("rung") in LADDER]
+    last = decided[-1] if decided else {}
+    return {
+        "arbitrages": len(prior),
+        "meme_cause": len(same),
+        "dernier_cran": last.get("rung"),
+        "dernier": last.get("ts"),
+        "runs": sorted({row.get("run") for row in prior if row.get("run")}),
+    }
+
+
 def movement(events):
     """Les événements du journal qui attestent qu'il s'est passé quelque chose.
 
@@ -594,28 +653,44 @@ def spent(history, ticket=None):
     return sum(1 for row in history if row.get("ticket") == ticket)
 
 
-def next_rung(history, ticket, sign=None, per_ticket=PER_TICKET):
+def next_rung(history, ticket, sign=None, per_ticket=PER_TICKET, prior=()):
     """Le cran à appliquer maintenant sur ce ticket.
 
     Trois règles, et elles se lisent dans cet ordre :
 
-    - jamais arbitré → on relance, c'est le geste le moins cher et il suffit
-      dans la plupart des cas (un agent tué par la fenêtre de quota reprend son
-      worktree et finit son ticket) ;
+    - jamais arbitré, **nulle part**, → on relance, c'est le geste le moins cher
+      et il suffit dans la plupart des cas (un agent tué par la fenêtre de quota
+      reprend son worktree et finit son ticket) ;
     - le budget du ticket est épuisé → `skip`, sans discuter. C'est ce qui
       garantit qu'un ticket ne peut pas retenir le jalon indéfiniment ;
     - sinon on monte d'un cran — et de **deux** si la cause est celle qu'on a
       déjà traitée. Réessayer une panne à l'identique est le seul comportement
       qu'un arbitre ne doit jamais avoir.
+
+    `prior` porte ce que les autres runs ont arbitré sur ce même ticket, et c'est
+    tout l'objet de #359 : la règle ci-dessus était juste, sa portée ne l'était
+    pas. Une cause déterministe — un classifieur de permissions qui refuse la
+    même écriture, une dépendance absente de l'image — ne guérit pas d'un run à
+    l'autre, et « jamais arbitré » y était faux tout en restant vrai du fichier
+    qu'on lisait. Seule l'antériorité **de même cause** compte : un ticket tombé
+    hier pour une autre raison mérite encore sa relance, c'est une panne neuve.
+
+    Le budget, lui, reste celui du run : `history` seule le décompte. L'ancienneté
+    d'une cause n'a pas à consommer les deux arbitrages que cette nuit peut
+    dépenser — elle dit seulement par quel cran les dépenser.
     """
     mine = [row for row in history if row.get("ticket") == ticket]
-    if not mine:
+    before = [row for row in prior
+              if row.get("ticket") == ticket
+              and bool(sign) and row.get("signature") == sign]
+    if not mine and not before:
         return LADDER[0]
     if len(mine) >= per_ticket:
         return LADDER[-1]
-    highest = max((LADDER.index(row["rung"]) for row in mine
+    highest = max((LADDER.index(row["rung"]) for row in mine + before
                    if row.get("rung") in LADDER), default=-1)
-    repeated = bool(sign) and any(row.get("signature") == sign for row in mine)
+    repeated = bool(before) or (bool(sign)
+                                and any(row.get("signature") == sign for row in mine))
     return LADDER[min(highest + (2 if repeated else 1), len(LADDER) - 1)]
 
 
@@ -745,13 +820,23 @@ def cmd_escalation(args):
     run_id = run_mod.resolve(args.run)
     history = arbitrations(run_id)
     sign = args.signature or (signature(args.cause) if args.cause else None)
-    rung = next_rung(history, args.ticket, sign, per_ticket=args.per_ticket)
+    prior = prior_arbitrations(run_id, args.ticket)
+    rung = next_rung(history, args.ticket, sign, per_ticket=args.per_ticket,
+                     prior=prior)
+    outside = elsewhere(prior, sign)
     payload = {"ticket": args.ticket, "cran": rung, "conduite": RUNGS[rung],
                "signature": sign, "arbitrages": spent(history, args.ticket),
-               "budget_ticket": args.per_ticket}
-    print(json.dumps(payload, ensure_ascii=False, indent=2) if args.json
-          else f"#{args.ticket} · cran « {rung} » — {RUNGS[rung]} "
-               f"({payload['arbitrages']}/{args.per_ticket} arbitrage(s) déjà posé(s))")
+               "budget_ticket": args.per_ticket, "hors_run": outside}
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+    line = (f"#{args.ticket} · cran « {rung} » — {RUNGS[rung]} "
+            f"({payload['arbitrages']}/{args.per_ticket} arbitrage(s) déjà posé(s))")
+    if outside["arbitrages"]:
+        line += (f" · {outside['arbitrages']} hors run"
+                 f" — {outside['meme_cause']} sur la même cause,"
+                 f" dernier cran « {outside['dernier_cran'] or '-'} »")
+    print(line)
     return 0
 
 
