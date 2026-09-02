@@ -42,9 +42,11 @@ jusqu'à épuisement du quota. `escalation` donne le cran à appliquer — relan
 corriger, écarter — et le budget d'un run comme celui d'un ticket est compté. Le
 dernier cran n'est **jamais** l'arrêt du jalon : c'est l'écartement du ticket
 avec une issue de suivi, parce qu'un ticket pourri ne doit pas figer les vingt
-autres. Le cran se décide sur l'antériorité **du ticket**, pas sur celle du run :
-une cause déterministe déjà conclue ailleurs ne repart pas de « on relance »
-sous prétexte que le run est neuf (#359).
+autres. Le cran se décide sur l'antériorité **de la cause**, pas sur celle du
+run : une cause déterministe déjà conclue ailleurs ne repart pas de « on
+relance » sous prétexte que le run est neuf (#359), ni sous prétexte que c'est
+un autre ticket qu'elle frappe cette fois-ci (#366) — un voisin pesant alors un
+cran là où une récidive en pèse deux.
 
 ## Ce qu'il ne fait pas
 
@@ -104,6 +106,26 @@ RUNGS = {
 # c'est le jalon qui ne tient pas, et c'est un humain qu'il faut.
 PER_TICKET = 2
 PER_RUN = 12
+
+# Le voisinage : la même cause, déjà conclue sur **d'autres** tickets que celui
+# qu'on arbitre. Deux réglages, et ils disent tous les deux la même prudence.
+#
+# `KIN_TICKETS` — combien d'autres tickets il faut pour que la concordance
+# compte. Un seul suffit, et c'est la mesure qui le permet : sur les six runs
+# déjà déroulés, 30 arbitrages inscrits, 19 portent une signature, et ces 19
+# signatures sont **toutes distinctes**. Aucune ne se répète, même sur un seul
+# ticket. Une empreinte partagée n'est donc pas un hasard statistique qu'il
+# faudrait confirmer par un second témoin : c'est un événement qui ne s'est
+# jamais produit, et qui ne se produira que sur une cause franchement identique.
+#
+# `KIN_RUNG` — jusqu'où le voisinage a le droit de porter, et c'est là qu'est la
+# vraie borne. Il **décolle** du `retry`, il ne va pas au-delà : le cran maximal
+# étant l'écartement, une fausse concordance coûterait sinon un ticket sain
+# écarté sur la foi de la panne d'un voisin. Plafonné ici, elle coûte une
+# tentative de correction — un geste qu'on aurait de toute façon posé au tour
+# suivant. C'est ce que demande #366 : un cran, pas deux.
+KIN_TICKETS = 1
+KIN_RUNG = "fix"
 
 # Un motif est ce qui justifie de dépenser un tour d'Opus 5. Ceux que le run porte
 # lui-même se lisent dans le dossier ; ceux que seul le superviseur connaît — il a
@@ -527,7 +549,22 @@ def arbitrations(run_id):
     return run_mod.read_arbitrations(run_id)
 
 
-def prior_arbitrations(run_id, ticket=None):
+def all_arbitrations():
+    """Toutes les décisions inscrites, tous runs confondus, chacune datée de son run.
+
+    Un seul parcours du disque pour les deux lectures qui suivent : `escalation`
+    interroge l'antériorité du ticket *et* celle de la cause, et relire les mêmes
+    NDJSON deux fois pour les filtrer différemment ne dirait rien de plus.
+    """
+    rows = []
+    for directory in run_mod.run_dirs():
+        for row in run_mod.read_arbitrations(directory.name):
+            rows.append(dict(row, run=directory.name))
+    rows.sort(key=lambda row: row.get("ts") or "")
+    return rows
+
+
+def prior_arbitrations(run_id, ticket=None, rows=None):
     """Ce que les **autres** runs ont déjà arbitré — l'antériorité d'un ticket.
 
     Un numéro d'issue est stable là où un run ne l'est pas : le même ticket
@@ -544,16 +581,47 @@ def prior_arbitrations(run_id, ticket=None):
     arbitré sur des runs S1 **et** S2, et se restreindre au jalon aurait manqué
     précisément le cas qui a motivé le correctif.
     """
-    rows = []
-    for directory in run_mod.run_dirs():
-        if directory.name == run_id:
-            continue
-        for row in run_mod.read_arbitrations(directory.name):
-            if ticket is not None and row.get("ticket") != ticket:
-                continue
-            rows.append(dict(row, run=directory.name))
-    rows.sort(key=lambda row: row.get("ts") or "")
-    return rows
+    rows = all_arbitrations() if rows is None else rows
+    return [row for row in rows
+            if row.get("run") != run_id
+            and (ticket is None or row.get("ticket") == ticket)]
+
+
+def kin_arbitrations(ticket, sign, rows=None):
+    """Ce que la même cause a déjà **conclu sur d'autres tickets** — le voisinage.
+
+    L'antériorité de `prior_arbitrations` est celle d'un numéro d'issue ; celle-ci
+    est celle d'une panne. Une cause structurelle ne frappe pas un ticket, elle
+    frappe tous ceux qui passent au même endroit : un classifieur qui refuse la
+    même écriture, une dépendance absente de l'image, un service éteint. Bornée
+    au ticket, l'escalade rendait donc `retry` à un ticket neuf sur une panne
+    conclue six fois — première occurrence pour lui, septième pour le dispositif
+    (#366).
+
+    Trois restrictions, et chacune retire un faux rapprochement :
+
+    - **le run courant compte**, contrairement à `prior_arbitrations`. Une cause
+      structurelle frappe volontiers deux tickets de la même vague, et l'exclure
+      aurait manqué le cas le plus fréquent au profit du plus rare ;
+    - **un autre ticket que celui-ci**, sans quoi le voisinage compterait sa
+      propre récidive une seconde fois et lui ferait sauter deux crans ;
+    - **une décision, pas une écriture** : seules les lignes qui portent un cran
+      de l'échelle. `record` en inscrit aussi qui n'en portent pas — la tenue de
+      compte d'un motif traité ailleurs —, et l'issue demande une cause « déjà
+      **conclue** », pas simplement rencontrée.
+
+    Sans empreinte, pas de voisinage : une cause qu'on ne sait pas nommer ne
+    prouve aucune concordance, et un `None` rapproché d'un autre `None` les
+    rapprocherait tous.
+    """
+    if not sign:
+        return []
+    rows = all_arbitrations() if rows is None else rows
+    return [row for row in rows
+            if row.get("signature") == sign
+            and row.get("ticket") is not None
+            and row.get("ticket") != ticket
+            and row.get("rung") in LADDER]
 
 
 def elsewhere(prior, sign=None):
@@ -581,6 +649,37 @@ def elsewhere(prior, sign=None):
         "dernier_cran": last.get("rung"),
         "dernier": last.get("ts"),
         "runs": sorted({row.get("run") for row in prior if row.get("run")}),
+    }
+
+
+def kinship(kin, kin_tickets=KIN_TICKETS):
+    """Le voisinage, résumé — l'antériorité de la **cause**, à côté de celle du ticket.
+
+    `escalation` expose les deux séparément parce qu'elles ne se valent pas et
+    n'appellent pas la même conduite. « Ce ticket-ci a déjà échoué là-dessus »
+    est une récidive et se paie deux crans ; « la même panne a été conclue sur
+    #117 et #208 » est un renseignement, et ne se paie qu'un cran. Les fondre en
+    un seul compteur ferait perdre à l'arbitre précisément ce qui distingue les
+    deux cas — et c'est sur cette distinction que le troisième critère de #366
+    porte.
+
+    `retenu` dit si la concordance atteint le seuil et pèse donc sur le cran :
+    l'arbitre a besoin de savoir qu'un voisinage existe *sans* compter, quand il
+    reste sous le seuil, pour ne pas croire que le cran l'ignore par erreur.
+    """
+    tickets = sorted({row["ticket"] for row in kin if row.get("ticket") is not None})
+    last = kin[-1] if kin else {}
+    return {
+        "tickets": tickets,
+        "arbitrages": len(kin),
+        "dernier_cran": last.get("rung"),
+        "dernier": last.get("ts"),
+        "runs": sorted({row.get("run") for row in kin if row.get("run")}),
+        "seuil": kin_tickets,
+        "retenu": bool(tickets) and len(tickets) >= kin_tickets,
+        # Ce que le voisinage peut faire au plus, dit ici plutôt que déduit :
+        # décoller du `retry`, jamais écarter.
+        "plafond": KIN_RUNG,
     }
 
 
@@ -653,19 +752,21 @@ def spent(history, ticket=None):
     return sum(1 for row in history if row.get("ticket") == ticket)
 
 
-def next_rung(history, ticket, sign=None, per_ticket=PER_TICKET, prior=()):
+def next_rung(history, ticket, sign=None, per_ticket=PER_TICKET, prior=(), kin=(),
+              kin_tickets=KIN_TICKETS):
     """Le cran à appliquer maintenant sur ce ticket.
 
-    Trois règles, et elles se lisent dans cet ordre :
+    Quatre règles, et elles se lisent dans cet ordre :
 
-    - jamais arbitré, **nulle part**, → on relance, c'est le geste le moins cher
-      et il suffit dans la plupart des cas (un agent tué par la fenêtre de quota
-      reprend son worktree et finit son ticket) ;
     - le budget du ticket est épuisé → `skip`, sans discuter. C'est ce qui
       garantit qu'un ticket ne peut pas retenir le jalon indéfiniment ;
+    - jamais arbitré, **nulle part**, et cause inconnue **ailleurs** → on relance,
+      c'est le geste le moins cher et il suffit dans la plupart des cas (un agent
+      tué par la fenêtre de quota reprend son worktree et finit son ticket) ;
     - sinon on monte d'un cran — et de **deux** si la cause est celle qu'on a
-      déjà traitée. Réessayer une panne à l'identique est le seul comportement
-      qu'un arbitre ne doit jamais avoir.
+      déjà traitée sur ce ticket. Réessayer une panne à l'identique est le seul
+      comportement qu'un arbitre ne doit jamais avoir ;
+    - et le voisinage pose un plancher, sans jamais rien ajouter au-dessus.
 
     `prior` porte ce que les autres runs ont arbitré sur ce même ticket, et c'est
     tout l'objet de #359 : la règle ci-dessus était juste, sa portée ne l'était
@@ -675,6 +776,21 @@ def next_rung(history, ticket, sign=None, per_ticket=PER_TICKET, prior=()):
     qu'on lisait. Seule l'antériorité **de même cause** compte : un ticket tombé
     hier pour une autre raison mérite encore sa relance, c'est une panne neuve.
 
+    `kin` porte la suite de ce raisonnement, et sa limite (#366). Une cause
+    structurelle ne guérit pas davantage de changer de ticket que de changer de
+    run : elle frappe tous ceux qui passent au même endroit. Mais l'inférence est
+    plus faible d'un cran, et le mot est à prendre au pied de la lettre — le
+    voisinage **relève le plancher à `KIN_RUNG`** et s'arrête là, il ne s'ajoute
+    pas à ce que le ticket a déjà accumulé. Deux conséquences, voulues :
+
+    - un ticket jamais arbitré dont la cause a conclu ailleurs se voit rendre
+      `fix` et non `retry` — on ne rejoue pas à l'identique une panne connue ;
+    - le voisinage **ne peut pas écarter**. C'est le risque que l'issue demande
+      de ne pas prendre : le cran maximal étant `skip`, une signature trop
+      grossière ferait perdre un ticket sain sur la panne d'un voisin. Plafonné,
+      elle fait perdre une tentative de correction. On n'écarte un ticket que sur
+      son propre dossier — son budget, ou sa propre récidive.
+
     Le budget, lui, reste celui du run : `history` seule le décompte. L'ancienneté
     d'une cause n'a pas à consommer les deux arbitrages que cette nuit peut
     dépenser — elle dit seulement par quel cran les dépenser.
@@ -683,15 +799,29 @@ def next_rung(history, ticket, sign=None, per_ticket=PER_TICKET, prior=()):
     before = [row for row in prior
               if row.get("ticket") == ticket
               and bool(sign) and row.get("signature") == sign]
-    if not mine and not before:
-        return LADDER[0]
     if len(mine) >= per_ticket:
         return LADDER[-1]
+    # Le plancher du voisinage, mesuré en tickets distincts et non en lignes :
+    # une cause conclue trois fois sur le même voisin reste un seul témoignage.
+    # Les mêmes restrictions que `kin_arbitrations`, redites ici parce que `kin`
+    # est un argument : une ligne sans cran n'a rien conclu, et un arbitrage de
+    # run (`ticket: null`) n'est le voisin de personne.
+    neighbours = {row.get("ticket") for row in kin
+                  if row.get("ticket") is not None
+                  and row.get("ticket") != ticket
+                  and row.get("rung") in LADDER}
+    # `neighbours` doit être non vide : un seuil nul ou négatif ne doit pas
+    # fabriquer un plancher là où aucune cause n'a jamais conclu ailleurs.
+    floor = (LADDER.index(KIN_RUNG)
+             if neighbours and len(neighbours) >= kin_tickets else -1)
+    if not mine and not before:
+        return LADDER[max(floor, 0)]
     highest = max((LADDER.index(row["rung"]) for row in mine + before
                    if row.get("rung") in LADDER), default=-1)
     repeated = bool(before) or (bool(sign)
                                 and any(row.get("signature") == sign for row in mine))
-    return LADDER[min(highest + (2 if repeated else 1), len(LADDER) - 1)]
+    step = max(highest + (2 if repeated else 1), floor)
+    return LADDER[min(step, len(LADDER) - 1)]
 
 
 def summary(history, per_ticket=PER_TICKET, per_run=PER_RUN):
@@ -820,13 +950,22 @@ def cmd_escalation(args):
     run_id = run_mod.resolve(args.run)
     history = arbitrations(run_id)
     sign = args.signature or (signature(args.cause) if args.cause else None)
-    prior = prior_arbitrations(run_id, args.ticket)
+    # Un seul parcours du disque pour les deux antériorités — celle du ticket,
+    # celle de la cause.
+    rows = all_arbitrations()
+    prior = prior_arbitrations(run_id, args.ticket, rows=rows)
+    kin = kin_arbitrations(args.ticket, sign, rows=rows)
     rung = next_rung(history, args.ticket, sign, per_ticket=args.per_ticket,
-                     prior=prior)
+                     prior=prior, kin=kin)
     outside = elsewhere(prior, sign)
+    neighbourhood = kinship(kin)
     payload = {"ticket": args.ticket, "cran": rung, "conduite": RUNGS[rung],
                "signature": sign, "arbitrages": spent(history, args.ticket),
-               "budget_ticket": args.per_ticket, "hors_run": outside}
+               "budget_ticket": args.per_ticket, "hors_run": outside,
+               # L'antériorité de la **cause**, tenue à part de celle du ticket :
+               # un voisin n'a pas le poids d'une récidive, et l'arbitre doit
+               # pouvoir le voir sans le déduire (#366).
+               "voisinage": neighbourhood}
     if args.json:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 0
@@ -836,6 +975,11 @@ def cmd_escalation(args):
         line += (f" · {outside['arbitrages']} hors run"
                  f" — {outside['meme_cause']} sur la même cause,"
                  f" dernier cran « {outside['dernier_cran'] or '-'} »")
+    if neighbourhood["arbitrages"]:
+        line += (" · même cause sur "
+                 + ", ".join(f"#{n}" for n in neighbourhood["tickets"])
+                 + (f" — plancher « {KIN_RUNG} »" if neighbourhood["retenu"]
+                    else f" — sous le seuil de {neighbourhood['seuil']}, sans effet"))
     print(line)
     return 0
 
