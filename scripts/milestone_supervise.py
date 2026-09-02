@@ -82,16 +82,28 @@ Nulle part ici. `milestone_run.py start` reprend de lui-même le run inachevé, 
 `reconcile` réaligne le journal sur l'état réel du dépôt avant chaque reprise.
 Le superviseur ne garde donc aucun état : on peut le tuer à tout moment.
 
-## Ce qu'il ne fait pas
+## Il se recharge tout seul
 
-**Il ne se recharge pas.** Il est le seul processus long du dispositif : la
-boucle des étapes vit en mémoire, et les fonctions qui mesurent la production
-d'une étape sont celles de *ce* module-là, chargées une fois au démarrage. Un
-correctif que le run merge lui-même sur `develop` ne prend donc effet qu'au
-prochain démarrage — les sous-processus (`milestone_run.py`,
-`milestone_arbiter.py`, `pr_gate.py`) n'ont pas ce défaut, ils repartent neufs à
-chaque appel. Ce qu'il fait, c'est le **voir** : l'empreinte de sa source est
-retenue au démarrage, relue en fin d'étape, et l'écart se dit en `WARN` (#369).
+Il est le seul processus long du dispositif : la boucle des étapes vit en
+mémoire, et les fonctions qui mesurent la production d'une étape sont celles de
+*ce* module-là, chargées une fois au démarrage. Les sous-processus
+(`milestone_run.py`, `milestone_arbiter.py`, `pr_gate.py`) n'ont pas ce défaut —
+ils repartent neufs à chaque appel. Un correctif que le run merge lui-même sur
+`develop` restait donc inerte pour le run qui venait de le merger, et c'est
+d'abord un faux signal : l'étape qui a mergé la correction du compteur se voyait
+compter par le compteur d'avant, se déclarait stérile, et faisait convoquer
+l'arbitre. Sept arbitrages sur douze sur le run du 1er septembre, alors que neuf
+tickets y avaient abouti — et le budget épuisé arrête le run.
+
+L'empreinte de la source est donc retenue au démarrage, relue en fin d'étape, et
+l'écart déclenche un `os.execv()` : le processus se remplace par un superviseur
+qui exécute le code d'aujourd'hui, sur la même intention (#373). Entre deux
+étapes seulement, jamais avec un `claude -p` en vol — le superviseur en est le
+parent. `--max-legs` est décompté dans l'intention, faute de quoi le
+rechargement rendrait au run un budget d'étapes entier. `--no-reload` débranche
+l'acte et rend au dispositif le simple `WARN` de #369.
+
+## Ce qu'il ne fait pas
 
 Lui-même ne relit aucun code. Sauf `--no-merge`, il enchaîne des merges
 automatiques sur `develop` sans relecture humaine — c'est le prix du « sans
@@ -390,9 +402,16 @@ def describe_scopes(intent):
     return "pré-autorisés : " + ", ".join(scopes)
 
 
-def save_intent(args):
-    INTENT.parent.mkdir(parents=True, exist_ok=True)
-    INTENT.write_text(json.dumps({
+def intent_of(args):
+    """L'intention que porte ce Namespace, sous la forme écrite sur le disque.
+
+    Détachée de `save_intent` parce qu'un rechargement (#373) a besoin de la
+    **composer** sans forcément l'écrire : un superviseur lancé `--no-watchdog`
+    n'a pas d'intention sur le disque, et se remplacer ne doit pas lui en armer
+    une. Une seule description des réglages qui survivent, quel qu'en soit
+    l'usage — deux copies finiraient par ne plus rejouer les mêmes.
+    """
+    return {
         "milestone": args.milestone, "width": args.width,
         # La nature se rejoue comme la largeur : un superviseur ressuscité par la
         # veille sur un run d'outillage repartirait sinon sur le produit, c'est-à-
@@ -413,13 +432,28 @@ def save_intent(args):
         # run armé perde sa capacité de décision au premier redémarrage — c'est
         # précisément le moment où elle sert.
         "no_arbiter": getattr(args, "no_arbiter", False),
+        # Débrancher le rechargement se rejoue comme le débranchement de
+        # l'arbitrage : c'est une consigne de l'opérateur, pas un détail du
+        # processus. Un superviseur ressuscité par la veille qui la perdrait se
+        # remettrait à se remplacer tout seul, sans que rien ne le dise.
+        "no_reload": getattr(args, "no_reload", False),
         "arbiter_model": getattr(args, "arbiter_model", ARBITER_MODEL),
         "arbiter_budget": getattr(args, "arbiter_budget", ARBITER_BUDGET),
         "arbiter_timeout": getattr(args, "arbiter_timeout", ARBITER_TIMEOUT),
         "stall_minutes": getattr(args, "stall_minutes", STALL_MINUTES),
         "claude": args.claude, "armed": now(),
         "expires": time.time() + INTENT_TTL,
-    }, ensure_ascii=False, indent=2), encoding="utf-8")
+    }
+
+
+def write_intent(intent):
+    INTENT.parent.mkdir(parents=True, exist_ok=True)
+    INTENT.write_text(json.dumps(intent, ensure_ascii=False, indent=2),
+                      encoding="utf-8")
+
+
+def save_intent(args):
+    write_intent(intent_of(args))
 
 
 def nature_relayed(previous, wanted):
@@ -503,6 +537,8 @@ def intent_argv(intent):
         argv.append("--no-merge")
     if intent.get("no_arbiter"):
         argv.append("--no-arbiter")
+    if intent.get("no_reload"):
+        argv.append("--no-reload")
     # La pré-autorisation se rejoue comme `no_merge`, et pour la même raison :
     # un superviseur ressuscité par la tâche planifiée n'a personne à qui la
     # redemander. L'oublier ferait qu'un run armé cesse de merger au premier
@@ -1327,6 +1363,41 @@ def run_leg(args, index):
                        args.leg_timeout, "étape", stall=stall_watch(args))
 
 
+# Les appels `claude -p` lancés par ce superviseur, tant qu'ils vivent. Un
+# registre plutôt qu'un booléen : une étape et un arbitrage ne se recouvrent pas
+# aujourd'hui, mais rien dans la boucle ne l'interdit, et le seul lecteur de ce
+# registre — le rechargement de #373 — remplace le processus. Se tromper dans ce
+# sens-là, c'est tuer un enfant vivant en écrivant dans son tube.
+_IN_FLIGHT = set()
+_IN_FLIGHT_LOCK = threading.Lock()
+
+
+def track_call(process):
+    with _IN_FLIGHT_LOCK:
+        _IN_FLIGHT.add(process)
+
+
+def untrack_call(process):
+    with _IN_FLIGHT_LOCK:
+        _IN_FLIGHT.discard(process)
+
+
+def calls_in_flight():
+    """Reste-t-il un `claude -p` vivant, lancé par ce superviseur ?
+
+    C'est `poll()` qui fait foi, pas l'appartenance au registre : une inscription
+    oubliée — exception entre le `Popen` et la fin de la lecture du flux — se
+    résorbe d'elle-même dès que le processus meurt, alors qu'un registre tenu
+    pour la vérité laisserait le superviseur refuser de se recharger jusqu'à la
+    fin du run. Les morts sont retirés au passage, pour que le registre ne grossisse
+    pas d'une entrée par étape sur un run de quarante.
+    """
+    with _IN_FLIGHT_LOCK:
+        done = {process for process in _IN_FLIGHT if process.poll() is not None}
+        _IN_FLIGHT.difference_update(done)
+        return bool(_IN_FLIGHT)
+
+
 def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
     """Lance l'appel et lit son flux `stream-json` — le corps commun.
 
@@ -1349,6 +1420,7 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
         say(f"impossible de lancer « {command[0]} » : {exc}", "ERROR")
         return "lancement", None, f"{type(exc).__name__} : {exc}"
 
+    track_call(process)
     errors = []
     pump = threading.Thread(target=drain, args=(process.stderr, errors), daemon=True)
     pump.start()
@@ -1456,6 +1528,7 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
         except subprocess.TimeoutExpired:
             process.kill()
     pump.join(timeout=5)
+    untrack_call(process)
 
     stderr = "".join(errors)
     if issue == "quota":
@@ -1642,11 +1715,37 @@ def wait_for_quota(args, info, stop_flag, source=None):
 # le mérite était de ne plus compter stérile une étape qui merge, s'est fait
 # déclarer stérile par l'étape même qui l'avait mergé, neuf minutes plus tard.
 #
-# Le remède retenu est le moins engageant : **voir**, avant de décider de
-# recharger. Un re-`execv()` entre deux étapes est une autre décision — il doit
-# garantir qu'aucun `claude -p` n'est en vol, et il remet à zéro `legs`,
-# `dry_legs`, `barren`, `rescued`, `seen_commits` et `seen_merges`, dont la
-# remise à zéro a ses propres effets sur les motifs d'arbitrage.
+# #369 en a livré la moitié la moins engageante : **voir**. Elle n'a servi à
+# personne — aucun run ne lit ce `WARN`, et son seul lecteur possible est
+# l'arbitre, qui n'arrive que sur un motif, `leg_sterile`, c'est-à-dire sur le
+# faux signal que la source périmée produit. Le dispositif savait dire qu'il
+# était périmé, mais uniquement à quelqu'un qui n'était là que parce qu'il
+# l'était déjà. Trois fois de suite sur le run du 1er septembre, sept arbitrages
+# sur douze consommés — et le budget épuisé appelle `retire()` : le jalon meurt
+# d'un compteur faux.
+#
+# #373 pose donc l'acte : un `os.execv()` entre deux étapes. Ce qu'il exige, et
+# qui est vérifié plus bas point par point — aucun `claude -p` en vol, le
+# superviseur étant le parent de l'enfant qu'il tuerait en se remplaçant ; le
+# battement réarmé, faute de quoi la veille lancerait un second superviseur
+# pendant la seconde de flottement ; l'intention rejouée telle quelle, moins les
+# étapes déjà faites.
+#
+# Ce qu'il coûte, assumé plutôt que découvert : `execv` remet à zéro `legs`,
+# `dry_legs`, `barren`, `rescued`, `seen_commits` et `seen_merges`. Les deux
+# derniers sont rebasés sur l'état réel du dépôt au redémarrage — ils en sont
+# donc plus justes, pas moins. Les trois du milieu comptaient un enlisement
+# mesuré avec le code périmé : les perdre, c'est perdre exactement ce que le
+# correctif vient corriger. Seul `legs` porte à conséquence, et c'est pourquoi
+# `--max-legs` voyage dans l'intention.
+#
+# `arbitrages` repart lui aussi à zéro, et il n'est pas reporté : ce compteur-là
+# n'est que le second verrou du budget d'arbitrage, celui qui tient même quand
+# l'arbitre meurt avant d'inscrire sa décision. Le premier — `--per-run`, compté
+# par `milestone_arbiter.py should` sur le dossier du run — survit à l'`execv` et
+# continue de borner la dépense. Le reporter demanderait de le faire voyager par
+# la ligne de commande, où il se confondrait avec `--arbiter-budget` que
+# l'opérateur pose ; la borne du dossier suffit.
 
 SOURCE = Path(__file__).resolve()
 SOURCE_DRIFT_NOTE = (
@@ -1705,6 +1804,174 @@ def announce_source_drift(before):
     say(SOURCE_DRIFT_NOTE, "WARN")
     journal(None, SOURCE_DRIFT_NOTE, level="WARN")
     return True
+
+
+def why_not_reload(args, before, after, legs, halting=False):
+    """Ce qui empêche de se recharger maintenant — ou None s'il faut le faire.
+
+    Séparée de l'acte, parce que c'est la moitié qui se teste : `execv` remplace
+    le processus, et un banc d'essai qui l'appelle pour de vrai ne rend jamais
+    son verdict. Toutes les conditions se lisent ici, dans l'ordre du moins cher
+    au plus cher, et le cas ordinaire — la source n'a pas bougé — est le premier.
+    """
+    if not source_drifted(before, after):
+        return "source inchangée"
+    if getattr(args, "no_reload", False):
+        return "rechargement débranché (--no-reload)"
+    if getattr(args, "dry_run", False):
+        # `--dry-run` montre l'appel qui serait fait ; se remplacer par un autre
+        # processus n'est pas montrer, c'est faire.
+        return "--dry-run"
+    if halting:
+        # Un Ctrl-C ne survit pas à `execv` : se recharger ici ressusciterait un
+        # superviseur dont on vient de demander l'arrêt, et rien ne le redirait.
+        return "arrêt demandé"
+    if calls_in_flight():
+        # La condition qui compte. Le superviseur est le parent du `claude -p` :
+        # se remplacer pendant qu'un enfant écrit dans son tube le tue, avec
+        # l'étape et les tickets qu'il portait.
+        return "un appel claude -p est encore en vol"
+    if legs >= getattr(args, "max_legs", 0):
+        # Plus une étape à donner : le processus neuf s'arrêterait au premier
+        # tour de boucle. Recharger pour cela coûterait la relance et écrirait
+        # dans le journal un rechargement qui n'a servi à rien.
+        return "plus d'étape autorisée (--max-legs)"
+    return None
+
+
+def reload_intent(args, legs):
+    """L'intention à rejouer après un rechargement — celle-ci, moins ce qui a servi.
+
+    `execv` repart à `legs = 0`. Sans report, chaque rechargement rendrait au run
+    un budget d'étapes entier : `--max-legs 40` ne bornerait plus le run mais la
+    vie d'un processus, et un jalon qui se recharge à chaque étape tournerait
+    sans borne. Le budget voyage donc dans l'intention, décompté de ce que ce
+    processus-ci a déjà consommé — et il repart aussi par la ligne de commande,
+    l'intention n'étant pas toujours sur le disque.
+
+    Le reste est l'intention de ce processus, telle quelle : `armed` et
+    `expires` sont refaits comme à n'importe quel démarrage, ce qu'un
+    rechargement est. La péremption à quinze jours protège d'une intention
+    *oubliée* ; ici, le superviseur vient de terminer une étape.
+    """
+    intent = dict(intent_of(args))
+    intent["max_legs"] = max(int(args.max_legs) - int(legs), 1)
+    return intent
+
+
+def exec_replace(argv):
+    """Remplacer ce processus par `argv`. Ne rend jamais la main, sauf échec.
+
+    Le détour par la citation n'est pas une précaution : sur Windows, `os.execv`
+    passe par `_wexecv`, qui **concatène les arguments séparés par des espaces
+    sans les citer**. Le chemin de ce dépôt en contient deux — et une esperluette
+    — si bien que le processus neuf mourrait sur
+
+        can't open file 'D:\\spyle\\Spa': [Errno 2] No such file or directory
+
+    et que le jalon « S1 — Fondations » arriverait découpé en deux arguments. Le
+    rechargement serait alors inerte de la façon la plus retorse qui soit : le
+    superviseur disparaîtrait à chaque correctif de sa source, et la veille le
+    relancerait cinq à onze minutes plus tard — c'est-à-dire exactement le
+    contournement manuel que ce ticket devait supprimer.
+
+    On cite donc chaque argument à l'avance, avec les règles de
+    `CommandLineToArgvW` que `list2cmdline` connaît : leur concaténation par le
+    CRT redonne la ligne attendue. Sur POSIX, `execv` reçoit un vrai tableau et
+    citer ferait entrer les guillemets dans la valeur.
+    """
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if os.name == "nt":
+        argv = [subprocess.list2cmdline([word]) for word in argv]
+    os.execv(sys.executable, argv)
+
+
+def reload_source(args, before, legs, halting=False):
+    """Se remplacer par un superviseur qui exécute la source d'aujourd'hui.
+
+    Rend False si le rechargement n'a pas eu lieu — un `execv` réussi, lui, ne
+    rend jamais la main, et tout ce qui suit son appel n'existe que pour le cas
+    où il échoue.
+    """
+    after = source_fingerprint()
+    why = why_not_reload(args, before, after, legs, halting)
+    if why is not None:
+        # Dit seulement quand l'écart est réel : sur une source stable, c'est le
+        # cas ordinaire de chaque étape et cela n'apprendrait rien. Sur un écart
+        # réel, en revanche, c'est la ligne qui explique pourquoi le dispositif
+        # n'a pas fait ce qu'il annonce savoir faire.
+        if source_drifted(before, after):
+            say(f"rechargement différé — {why}", "DEBUG")
+        return False
+
+    intent = reload_intent(args, legs)
+    # Réécrite seulement si elle existait déjà : un superviseur lancé
+    # `--no-watchdog` n'a rien armé, et lui poser une intention en se rechargeant
+    # lui donnerait une reprise automatique que personne n'a demandée. Le
+    # nouveau processus la reçoit de toute façon par sa ligne de commande — mais
+    # la veille peut se réveiller dans la seconde de flottement, et elle ne lit
+    # que le disque : sans cette écriture, elle y trouverait le budget d'étapes
+    # d'avant.
+    if INTENT.exists():
+        try:
+            write_intent(intent)
+        except OSError as exc:
+            # Un disque qui refuse l'écriture ne doit pas empêcher le
+            # rechargement : l'intention reste celle d'avant, `--max-legs` n'y
+            # est pas décompté, et c'est la seule conséquence.
+            say(f"intention non réécrite avant rechargement : {exc}", "WARN")
+
+    note = ("le code du superviseur a changé — rechargement de "
+            f"scripts/milestone_supervise.py : {before[:12]} → {after[:12]} "
+            f"· {legs} étape(s) faites, {intent['max_legs']} restante(s)")
+    say(note, "WARN")
+    journal(None, note, level="WARN")
+
+    # Le battement est réarmé **avant** de partir. `execv` n'exécute aucun
+    # `atexit` : le fil qui bat meurt avec l'image sans effacer le fichier — ce
+    # qui est voulu, la veille ne doit pas croire le superviseur mort — mais le
+    # processus neuf met une ou deux secondes à reprendre le battement. Un
+    # battement frais couvre cet intervalle.
+    beat()
+
+    # `--reloaded` n'est pas décoratif : sans lui, le processus neuf trouve le
+    # battement qu'on vient de rafraîchir et la ligne qu'on vient d'écrire dans
+    # le journal du run, se croit en double, et rend la main. Le rechargement
+    # tuerait alors le run à chaque correctif — la panne même qu'il corrige.
+    argv = [sys.executable, str(SOURCE), *intent_argv(intent), "--reloaded"]
+    # Ce qui est un choix de *ce* processus et ne vit pas dans l'intention : le
+    # perdre ferait qu'un superviseur lancé sans veille s'en arme une au premier
+    # rechargement, et qu'un `--echo` demandé pour regarder travailler se taise
+    # au moment où l'on regarde.
+    if getattr(args, "no_watchdog", False):
+        argv.append("--no-watchdog")
+    if getattr(args, "echo", False):
+        argv.append("--echo")
+    if getattr(args, "force", False):
+        # Le préflight que l'opérateur a explicitement décidé d'outrepasser —
+        # `gh auth status` en échec, `claude` hors du PATH d'un service. Le
+        # perdre ferait mourir le processus neuf là même où le premier avait
+        # reçu l'ordre de passer outre : `hold_off` de trente minutes, code 2, et
+        # un rechargement qui tue le run qu'il devait sauver. Le double
+        # superviseur, lui, reste couvert par `--reloaded`.
+        argv.append("--force")
+    if getattr(args, "max_hours", None):
+        # Le garde-fou de durée est compté depuis `START`, que `execv` remet à
+        # l'instant du redémarrage : le report exact demanderait de le persister
+        # aussi. On rejoue la borne telle quelle — elle reste une borne, moins
+        # serrée qu'annoncée, plutôt que de disparaître.
+        argv += ["--max-hours", str(args.max_hours)]
+
+    try:
+        exec_replace(argv)
+    except OSError as exc:
+        # `execv` qui échoue laisse le processus intact. On le dit et on
+        # poursuit avec l'ancien code : c'est exactement l'état d'avant ce
+        # correctif, pas une panne de plus.
+        say(f"rechargement impossible : {exc}", "ERROR")
+        return False
+    return True  # inatteignable — `execv` ne revient pas
 
 
 # --------------------------------------------------------------------------- #
@@ -1878,10 +2145,23 @@ def supervise(args):
             "WARN" if issue or sterile else "INFO")
 
         # L'étape vient peut-être de merger un correctif de ce fichier-ci. Le
-        # dire au moment où l'on lit son bilan, faute de quoi le dispositif
-        # s'entête sur une panne déjà corrigée sans que rien ne le trahisse
-        # (#369). On ne recharge rien : on le signale.
-        announce_source_drift(source_seen)
+        # point du cycle est celui-là et pas un autre : l'appel de l'étape est
+        # terminé, celui de l'arbitrage n'a pas commencé, aucun `claude -p` n'est
+        # en vol. On se recharge donc ici (#373) — et `reload_source` ne rend la
+        # main que s'il a refusé, auquel cas il reste à le dire à l'humain, ce
+        # que #369 avait posé.
+        #
+        # Sauf sur une étape coupée par le quota : la retenue n'est inscrite que
+        # plus bas, par `wait_for_quota`, et l'`info` qui porte `resetsAt` ne
+        # survit pas à l'`execv`. Se recharger ici ferait démarrer le processus
+        # neuf sans `quota.json` : il ne trouverait aucune retenue à respecter et
+        # brûlerait aussitôt une étape de son budget dans une fenêtre encore
+        # fermée. On inscrit la retenue et on attend d'abord ; on se recharge
+        # ensuite, juste avant l'étape suivante.
+        if issue != "quota":
+            if not reload_source(args, source_seen, legs,
+                                 halting=stop_flag.is_set()):
+                announce_source_drift(source_seen)
 
         if args.dry_run:
             say("--dry-run : une seule étape simulée")
@@ -1893,6 +2173,12 @@ def supervise(args):
             # que l'API s'est refermée.
             if not wait_for_quota(args, info or {}, stop_flag):
                 return 1
+            # La fenêtre est rouverte, la retenue levée, et l'étape suivante n'a
+            # pas commencé : c'est ici que se prend le correctif que cette
+            # étape-ci avait mergé avant de manquer de quota.
+            if not reload_source(args, source_seen, legs,
+                                 halting=stop_flag.is_set()):
+                announce_source_drift(source_seen)
             continue
 
         dry_legs = sterile_streak(dry_legs, fresh or merged, issue)
@@ -2024,6 +2310,14 @@ def main():
                         help="montrer l'appel qui serait fait, et s'arrêter")
     parser.add_argument("--force", action="store_true",
                         help="passer outre le préflight, ou un superviseur déjà vivant")
+    parser.add_argument("--no-reload", action="store_true",
+                        help="ne pas se recharger quand scripts/milestone_supervise.py "
+                             "change sous le processus — l'écart est alors seulement "
+                             "signalé, et la reprise du correctif redevient manuelle")
+    parser.add_argument("--reloaded", action="store_true",
+                        help="ce superviseur en remplace un autre par execv — "
+                             "usage interne, il ne se croit pas en double du "
+                             "processus dont il prend la place")
 
     arbitre = parser.add_argument_group(
         "arbitrage", "le modèle qui tranche à la place de l'humain")
@@ -2139,20 +2433,28 @@ def main():
             return 0
         return 0 if arm_watchdog(args.every) else 2
 
-    # Deux superviseurs sur le même run se marcheraient dessus : deux vagues
-    # lancées en même temps sur le même `develop`, et des merges concurrents.
-    if supervisor_alive() and not args.force:
-        say(f"un superviseur bat déjà (il y a {human_delta(heartbeat_age())}) "
-            "— rien à faire. `--state` pour le voir, `--force` pour passer outre.")
-        return 0
+    # Un rechargement (#373) n'est pas un second superviseur : c'est le même,
+    # avec le code d'aujourd'hui. Le battement qu'il trouve est le sien —
+    # rafraîchi juste avant l'`execv` pour que la veille ne le croie pas mort —
+    # et la dernière ligne du journal du run est celle qu'il vient d'y écrire.
+    # Lui opposer ces deux contrôles le ferait rendre la main à chaque
+    # correctif : le rechargement tuerait le run là où il devait le sauver.
+    if not args.reloaded:
+        # Deux superviseurs sur le même run se marcheraient dessus : deux vagues
+        # lancées en même temps sur le même `develop`, et des merges concurrents.
+        if supervisor_alive() and not args.force:
+            say(f"un superviseur bat déjà (il y a {human_delta(heartbeat_age())}) "
+                "— rien à faire. `--state` pour le voir, `--force` pour passer "
+                "outre.")
+            return 0
 
-    # Même règle pour un orchestrateur qui n'est pas un superviseur : deux
-    # orchestrateurs sur un run, c'est deux vagues sur le même `develop`.
-    if orchestrator_active() and not args.force:
-        say("le journal du run vient d'être écrit : quelqu'un orchestre déjà ce "
-            "run — rien à faire. `milestone_run.py watch` pour le voir, "
-            "`--force` pour passer outre.")
-        return 0
+        # Même règle pour un orchestrateur qui n'est pas un superviseur : deux
+        # orchestrateurs sur un run, c'est deux vagues sur le même `develop`.
+        if orchestrator_active() and not args.force:
+            say("le journal du run vient d'être écrit : quelqu'un orchestre déjà "
+                "ce run — rien à faire. `milestone_run.py watch` pour le voir, "
+                "`--force` pour passer outre.")
+            return 0
 
     # Un run ouvert désigne son jalon ; le redeviner peut en ouvrir un autre et
     # abandonner celui qui était en cours.
