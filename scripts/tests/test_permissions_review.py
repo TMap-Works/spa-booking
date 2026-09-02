@@ -49,6 +49,7 @@ harnais de `scripts/tests`.
 """
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -520,6 +521,204 @@ class RealCommandsSurvive(ReviewTestCase):
         """
         self.observe("where", "where pythonw 2>/dev/null", risk="read")
         self.assertTrue(self.report()["where"]["eligible"])
+
+
+class PathLookup(unittest.TestCase):
+    """#264 — trouver un nom sur le `PATH` sans le parcourir en entier.
+
+    `not_a_command` est importé par `.claude/hooks/permission_watch.py`, qui
+    s'exécute dans un processus neuf **à chaque commande Bash**. Le parcours
+    complet du `PATH` y était refait à chaque fois, sans qu'aucun cache lui
+    survive : 23 ms mesurées sur 81 ms de hook.
+
+    Deux choses se vérifient ici, et la première prime : **la réponse ne change
+    pas**. `on_path` doit rendre exactement ce que rend l'appartenance à
+    `path_executables()`, faute de quoi c'est la liste des motifs proposés à
+    l'allowlist qui bougerait — le seul effet que l'issue interdit. La seconde
+    est le gain : un nom à juger ne doit plus déclencher le moindre parcours.
+    """
+
+    # Des noms qui couvrent chaque branche : présent tel quel, présent par son
+    # extension, extension hors PATHEXT, répertoire homonyme, absent, un chemin
+    # déguisé en nom, et un nom que Windows réécrirait avant de répondre.
+    CORPUS = ("plain", "node", "node.exe", "tool", "tool.bat", "helper",
+              "helper.cmd", "with.dots", "with.dots.exe", "script", "script.py",
+              "notafile", "zzzabsent", "sub/tool", "node.com", "plain.",
+              "plain..", "node.exe.")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.bin = Path(self.tmp.name) / "bin"
+        self.opt = Path(self.tmp.name) / "opt"
+        for folder in (self.bin, self.opt):
+            folder.mkdir(parents=True)
+        self.put(self.bin, "plain", "node.exe", "tool.bat", "with.dots.exe",
+                 "script.py")
+        self.put(self.opt, "helper.cmd")
+        (self.bin / "notafile").mkdir()     # un répertoire n'est pas un exécutable
+        # Une entrée vide et une entrée inexistante : le PATH réel en a toujours.
+        self.path = os.pathsep.join(
+            [str(self.bin), str(Path(self.tmp.name) / "absent"), str(self.opt), ""])
+        self.addCleanup(review.reset_path_cache)
+        review.reset_path_cache()
+
+    def put(self, folder, *names):
+        for name in names:
+            (folder / name).write_text("", encoding="utf-8")
+
+    def env(self, pathext=(".COM", ".EXE", ".BAT", ".CMD")):
+        return mock.patch.dict(os.environ, {"PATH": self.path,
+                                            "PATHEXT": os.pathsep.join(pathext)})
+
+    def by_index(self, names):
+        """La réponse de référence : l'appartenance au parcours complet."""
+        review.reset_path_cache()
+        index = review.path_executables()
+        return {name: name in index for name in names}
+
+    def by_lookup(self, names):
+        """La réponse de `on_path`, caches remis à zéro."""
+        review.reset_path_cache()
+        return {name: review.on_path(name) for name in names}
+
+    def test_the_probe_answers_exactly_like_the_full_walk(self):
+        """L'invariant de l'issue : même verdict, quel que soit le chemin pris.
+
+        Les deux réglages de casse sont éprouvés, et non celui de la machine qui
+        passe le test : c'est sous Windows que la sonde tranche seule, sous POSIX
+        qu'elle se déclare non concluante et repasse la main au parcours.
+        """
+        with self.env():
+            reference = self.by_index(self.CORPUS)
+            self.assertTrue(any(reference.values()), reference)
+            for insensitive in (True, False):
+                with self.subTest(casse_insensible=insensitive), \
+                        mock.patch.object(review, "CASE_INSENSITIVE_FS", insensitive):
+                    self.assertEqual(self.by_lookup(self.CORPUS), reference)
+
+    def test_a_directory_is_not_an_executable(self):
+        """`notafile` est un répertoire du `PATH` — ni l'index ni la sonde n'en veulent."""
+        with self.env():
+            self.assertFalse(self.by_index(["notafile"])["notafile"])
+            self.assertFalse(self.by_lookup(["notafile"])["notafile"])
+
+    def test_an_extension_outside_pathext_gives_no_stem(self):
+        """`script.py` est bien là, mais `.py` n'est pas dans `PATHEXT` : pas de `script`."""
+        with self.env():
+            self.assertEqual(self.by_lookup(["script", "script.py"]),
+                             self.by_index(["script", "script.py"]))
+            self.assertFalse(self.by_lookup(["script"])["script"])
+
+    def test_a_mixed_case_executable_is_found_all_the_same(self):
+        """Un `Tool.EXE` du `PATH` répond au nom `tool`, comme avant #264.
+
+        C'est le seul point où la sonde ne peut pas trancher seule : sur un
+        système de fichiers sensible à la casse, elle se déclare non concluante
+        plutôt que de répondre non — et le parcours, qui replie les noms en
+        minuscules, rend la réponse d'avant.
+        """
+        self.put(self.opt, "Tool.EXE")
+        with self.env():
+            self.assertTrue(self.by_index(["tool"])["tool"])
+            self.assertTrue(self.by_lookup(["tool"])["tool"])
+
+    def test_a_name_the_filesystem_would_rewrite_is_left_to_the_walk(self):
+        """`plain.` n'est pas `plain` — même là où le système confond les deux.
+
+        Windows rogne les points et les espaces de fin de chaque segment : un
+        `os.path.isfile` sur `bin\\plain.` y ouvre le fichier `plain`, que
+        l'index ne connaît pourtant que sous ce nom-là. La sonde répondait donc
+        oui là où le parcours répond non, et `not_a_command` acceptait
+        `plain. suite` — un fragment de prose — comme une commande à proposer à
+        l'allowlist. Elle ne conclut plus sur ces noms.
+        """
+        with self.env(), mock.patch.object(review, "CASE_INSENSITIVE_FS", True):
+            self.assertIsNone(review.probe_path("plain."))
+            review.reset_path_cache()
+            self.assertFalse(review.on_path("plain."))
+            self.assertEqual(review.path_executables.cache_info().currsize, 1)
+            review.reset_path_cache()
+            self.assertIsNotNone(review.not_a_command("plain. suite"))
+
+    def test_not_a_command_gives_the_same_verdicts_as_the_full_walk(self):
+        """Le même invariant, là où il se voit : le verdict rendu à la revue.
+
+        `PROBE_BUDGET = 0` reproduit exactement le code d'avant #264 — toute
+        question de `PATH` part au parcours complet. Les deux colonnes doivent
+        être identiques, motif par motif et raison par raison.
+        """
+        patterns = ("git status", "npm run verify", "plain --flag", "tool build",
+                    "helper", "node script.js", "script", "zzzabsent thing",
+                    "for", "import", "##", "where pythonw")
+
+        def verdicts():
+            review.reset_path_cache()
+            return {pattern: review.not_a_command(pattern) for pattern in patterns}
+
+        with self.env():
+            for insensitive in (True, False):
+                with self.subTest(casse_insensible=insensitive), \
+                        mock.patch.object(review, "CASE_INSENSITIVE_FS", insensitive):
+                    with mock.patch.object(review, "PROBE_BUDGET", 0):
+                        reference = verdicts()
+                    self.assertEqual(verdicts(), reference)
+            # Et le corpus dit bien quelque chose : sans cela l'égalité serait vide.
+            self.assertIsNone(reference["git status"])
+            self.assertIsNone(reference["plain --flag"])
+            self.assertIsNotNone(reference["zzzabsent thing"])
+
+    def test_a_name_that_exists_never_walks_the_path(self):
+        """Le gain, sur la branche qui vaut partout : un `stat` au lieu du parcours."""
+        with self.env(), mock.patch("os.scandir") as scandir:
+            self.assertTrue(self.by_lookup(["plain"])["plain"])
+        scandir.assert_not_called()
+        self.assertEqual(review.path_executables.cache_info().currsize, 0)
+
+    def test_an_absent_name_never_walks_the_path_on_windows(self):
+        """Le cas de l'issue : un nom inconnu, sur le poste Windows du dépôt.
+
+        C'est celui qui coûtait, puisque c'est le seul que `plausible_command_name`
+        pousse jusqu'au `PATH` — et le seul où la sonde doit tout regarder avant
+        de conclure. Elle conclut quand même, sans construire l'index.
+        """
+        with self.env(), mock.patch.object(review, "CASE_INSENSITIVE_FS", True), \
+                mock.patch("os.scandir") as scandir:
+            self.assertFalse(self.by_lookup(["zzzabsent"])["zzzabsent"])
+        scandir.assert_not_called()
+        self.assertEqual(review.path_executables.cache_info().currsize, 0)
+
+    def test_the_walk_takes_over_once_the_probe_stops_paying(self):
+        """Au-delà de `PROBE_BUDGET` noms, le parcours redevient le moins cher.
+
+        C'est ce qui protège la revue, qui instruit des milliers de motifs dans
+        un seul processus : elle ne paie pas des centaines de sondes là où un
+        parcours suffit.
+        """
+        with self.env(), mock.patch.object(review, "CASE_INSENSITIVE_FS", True):
+            review.reset_path_cache()
+            for index in range(review.PROBE_BUDGET):
+                review.on_path(f"zzzabsent{index}")
+            self.assertEqual(review.path_executables.cache_info().currsize, 0)
+            review.on_path("zzzabsentdetrop")
+            self.assertEqual(review.path_executables.cache_info().currsize, 1)
+
+    def test_a_repeated_name_costs_nothing_and_spends_no_budget(self):
+        """Le même nom deux fois ne sonde qu'une fois — sans quoi le budget fondrait."""
+        with self.env(), mock.patch.object(review, "CASE_INSENSITIVE_FS", True):
+            review.reset_path_cache()
+            for _ in range(review.PROBE_BUDGET * 3):
+                self.assertFalse(review.on_path("zzzabsent"))
+            self.assertEqual(review.path_executables.cache_info().currsize, 0)
+
+    def test_reset_forgets_a_path_that_has_changed(self):
+        """Le cache ne voit pas `PATH` bouger : `reset_path_cache` est là pour ça."""
+        with self.env():
+            self.assertFalse(review.on_path("late"))
+            self.put(self.bin, "late")
+            self.assertFalse(review.on_path("late"))    # toujours la réponse retenue
+            review.reset_path_cache()
+            self.assertTrue(review.on_path("late"))
 
 
 if __name__ == "__main__":

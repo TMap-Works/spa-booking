@@ -209,16 +209,151 @@ KNOWN_COMMANDS = FILE_READERS | FILE_WRITERS | {
 }
 
 
+# ---------------------------------------------------------------------------
+# Chercher un nom sur le `PATH` : parcours complet, ou sonde ciblée (#264)
+#
+# `path_executables()` répertorie tout le `PATH` d'un coup. C'est le bon calcul
+# pour la revue, qui instruit des milliers de motifs dans un seul processus et
+# amortit le parcours sur tous. C'est le mauvais pour
+# `.claude/hooks/permission_watch.py`, qui importe `not_a_command` et n'a qu'un
+# nom à juger : son processus meurt aussitôt après, et le cache avec lui.
+#
+# Mesuré sur le poste Windows du dépôt — 56 entrées de `PATH` dont 46 existent,
+# 7 581 exécutables, 11 extensions dans `PATHEXT` :
+#
+#   parcours complet du PATH         18 ms à chaud · 36 ms à froid
+#   sonde ciblée, nom introuvable     3,7 ms
+#   sonde ciblée, nom trouvé          0,07 ms
+#   hook de bout en bout             81 ms avec parcours · 58 ms sans
+#
+# Le parcours ajoutait donc ~23 ms — 40 % — à chaque commande Bash dont le nom
+# n'est ni connu ni porteur d'extension d'exécutable. La sonde ramène cela à
+# ~4 ms au pire, et à presque rien quand le nom existe.
+#
+# **Ce qui est proposé à l'allowlist ne bouge pas d'un motif**, et ce n'est pas
+# une approximation qu'on espère bénigne : la sonde ne répond que lorsqu'elle
+# est concluante, et le parcours reste seul juge dans les autres cas.
+#
+#   - un `os.path.isfile` positif prouve le fichier, donc l'entrée d'index ;
+#   - un `isfile` négatif ne prouve l'absence que sur un système de fichiers
+#     insensible à la casse — l'index, lui, replie les noms en minuscules, si
+#     bien qu'un `Foo` du `PATH` y répond au nom `foo`. Sur un système sensible
+#     à la casse, la sonde se déclare donc non concluante, et on retombe sur le
+#     parcours.
+# ---------------------------------------------------------------------------
+
+# Cinq sondes infructueuses valent un parcours (3,7 ms contre 18 ms) : le budget
+# se tient sous ce seuil, sans quoi la revue paierait les sondes *en plus* de
+# l'index, qu'elle finit de toute façon par construire. Au pire elle y perd donc
+# quatre sondes vaines — ~15 ms, une fois pour tout le processus. Le hook, lui,
+# n'a qu'un nom à juger et n'approche jamais le seuil.
+PROBE_BUDGET = 4
+
+# Deux noms qui ne diffèrent que par la casse désignent-ils le même fichier ?
+# `os.path.normcase` replie sous Windows et laisse tel quel sous POSIX. Il se
+# trompe là où il ne peut pas savoir — un volume macOS est insensible à la casse
+# sans que POSIX le dise — mais il se trompe du bon côté : la sonde y sera moins
+# souvent concluante, jamais fausse.
+CASE_INSENSITIVE_FS = os.path.normcase("A") == "a"
+
+_probes_left = PROBE_BUDGET
+
+
+@functools.lru_cache(maxsize=1)
+def executable_suffixes():
+    """Les extensions de `PATHEXT` qui font d'un fichier un exécutable nommable.
+
+    Seules comptent celles qui s'écrivent « un point puis un seul segment » :
+    c'est la seule forme que `path_executables()` sait retirer d'un nom de
+    fichier, lui qui coupe sur le **dernier** point. Une entrée sans point
+    (`EXE`) ou à points multiples (`.tar.gz`) n'ajoute aucun nom à l'index — elle
+    n'a donc pas davantage à en faire trouver à la sonde.
+    """
+    return tuple(sorted({
+        ext.lower()
+        for ext in os.environ.get("PATHEXT", "").split(os.pathsep)
+        if ext.startswith(".") and "." not in ext[1:]
+    }))
+
+
+def probe_path(name):
+    """Ce nom désigne-t-il un exécutable du `PATH` ? `None` si l'on ne conclut pas.
+
+    Quelques `stat` ciblés au lieu du parcours de tous les répertoires : le nom
+    tel quel, puis le nom suivi de chaque extension de `PATHEXT`, dans chaque
+    entrée du `PATH`, en s'arrêtant au premier trouvé.
+
+    Un nom qui porte un séparateur n'est plus un nom mais un chemin : le
+    concaténer à une entrée du `PATH` sortirait du répertoire interrogé, et la
+    réponse ne vaudrait plus celle de l'index. On ne conclut pas.
+
+    Même refus pour un nom que le système de fichiers réécrirait avant de
+    répondre : Windows rogne les points et les espaces de fin de chaque segment,
+    si bien que `npm.` y ouvre le fichier `npm` — alors que l'index, qui prend
+    les noms tels que `scandir` les rend, ne connaît que `npm`. La sonde
+    répondrait oui là où le parcours répond non, et un fragment de prose
+    terminé par un point serait proposé à l'allowlist.
+    """
+    if os.sep in name or ":" in name or (os.altsep and os.altsep in name):
+        return None
+    if name != name.rstrip(". "):
+        return None
+    candidates = (name, *(name + suffix for suffix in executable_suffixes()))
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        for candidate in candidates:
+            # `os.path.isfile` avale lui-même l'OSError d'une entrée illisible,
+            # exactement comme le `try` du parcours complet.
+            if os.path.isfile(os.path.join(entry, candidate)):
+                return True
+    return False if CASE_INSENSITIVE_FS else None
+
+
+@functools.lru_cache(maxsize=None)
+def on_path(name):
+    """`name` figure-t-il parmi les exécutables du `PATH` ?
+
+    Rend exactement `name in path_executables()`, par le chemin le moins cher :
+    la sonde tant qu'il n'y a qu'une poignée de noms à juger, le parcours complet
+    dès qu'il y en a assez pour l'amortir — ou dès que la sonde ne conclut pas.
+    """
+    global _probes_left
+    if not path_executables.cache_info().currsize and _probes_left > 0:
+        _probes_left -= 1
+        verdict = probe_path(name)
+        if verdict is not None:
+            return verdict
+    return name in path_executables()
+
+
+def reset_path_cache():
+    """Oublie tout ce qui a été retenu du `PATH`.
+
+    Pour les tests, et pour tout appelant qui changerait `PATH` ou `PATHEXT` en
+    cours de route — les caches, eux, ne s'en apercevraient pas.
+    """
+    global _probes_left
+    _probes_left = PROBE_BUDGET
+    executable_suffixes.cache_clear()
+    path_executables.cache_clear()
+    on_path.cache_clear()
+
+
 @functools.lru_cache(maxsize=1)
 def path_executables():
     """Les noms d'exécutables présents sur le `PATH`, sans extension.
 
-    Un simple `shutil.which` par motif coûterait, sur les 4 549 motifs distincts
-    d'un run de jalon, des centaines de milliers d'appels système. Un seul
-    parcours du `PATH` suffit, et le résultat sert à toute la revue.
+    Un `os.path.isfile` par motif et par extension coûterait, sur les 4 549
+    motifs distincts d'un run de jalon, des centaines de milliers d'appels
+    système. Un seul parcours suffit, et le résultat sert à toute la revue.
+
+    C'est la référence, et le dernier mot : `on_path()` ne s'en dispense que
+    lorsqu'une sonde ciblée rend la même réponse pour moins cher (#264).
     """
-    suffixes = {ext.lower()
-                for ext in os.environ.get("PATHEXT", "").split(os.pathsep) if ext}
+    # En ensemble, pas en tuple : la sonde a besoin d'un ordre, le parcours
+    # d'un test d'appartenance par fichier — et il en fait des milliers.
+    suffixes = frozenset(executable_suffixes())
     names = set()
     for entry in os.environ.get("PATH", "").split(os.pathsep):
         if not entry:
@@ -249,6 +384,10 @@ def plausible_command_name(head):
     mot réservé du shell ou un mot-clé de langage est refusé d'abord, avant même
     le `PATH` — sans quoi la réponse dépendrait de ce qui est installé sur la
     machine, et `import` passerait là où ImageMagick traîne.
+
+    Les trois premiers critères répondent sans toucher au disque : le `PATH`
+    n'est interrogé que pour un nom qui a franchi tout le reste, ce qui est rare
+    — et cher, d'où `on_path()` (#264).
     """
     if not head or head in NEVER_COMMANDS:
         return False
@@ -258,7 +397,7 @@ def plausible_command_name(head):
     if dot and stem and ext in {"sh", "bash", "py", "rb", "pl", "js", "mjs",
                                 "cjs", "ts", "exe", "com", "bat", "cmd", "ps1"}:
         return True
-    return head in KNOWN_COMMANDS or head in path_executables()
+    return head in KNOWN_COMMANDS or on_path(head)
 
 
 def looks_like_invocation(example):
