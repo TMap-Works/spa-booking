@@ -419,12 +419,16 @@ conversation :
 >   après avoir corrigé la CI.
 >
 > **Reprise, le cas échéant.** Si le `gate` a annoncé « À REPRENDRE » pour ce
-> ticket, un worktree porte déjà du travail : appelle `EnterWorktree` avec
-> `path: <le chemin annoncé>` **avant toute autre chose**, et poursuis ce qui
-> s'y trouve. Ne l'efface pas, ne le prends pas pour un vestige, n'ouvre pas de
-> worktree neuf — ce sont des commits et des fichiers déjà gagnés. Commence par
-> `git status` et `git log --oneline origin/develop..HEAD` pour voir où le
-> précédent s'est arrêté, puis reprends à la phase de `ticket.md` qui suit.
+> ticket, du travail existe déjà et il est à toi. La ligne du `gate` porte la
+> commande `git` exacte qui te le rend : **exécute-la verbatim, depuis ton propre
+> worktree et avant toute autre chose.** N'appelle **jamais** `EnterWorktree` :
+> tu es épinglé sur ton worktree, et cet appel déplacerait le répertoire courant
+> sans déplacer l'épinglage — passé là, plus aucune commande `Bash` ne passe.
+> N'ouvre pas de branche neuve, n'efface rien, ne prends rien pour un vestige :
+> ce sont des commits et des fichiers déjà gagnés. Puis `git status` et
+> `git log --oneline origin/develop..HEAD` pour voir où le précédent s'est
+> arrêté, et reprends à la phase de `ticket.md` qui suit. Si la ligne nomme des
+> fichiers non commités, relis-les au `Read` avant d'y toucher.
 >
 > **Ton empreinte est `<ressources>`**, c'est-à-dire `<chemins>`. D'autres agents
 > travaillent en parallèle sur d'autres tickets, à partir du même `develop`. Si
