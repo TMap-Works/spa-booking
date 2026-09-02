@@ -1857,13 +1857,15 @@ class FrontiereEtapeLueDansLeJournal(unittest.TestCase):
                                branches={19: "feature/19-truc"})
         self.assertEqual(verdicts, ["pending", "pending"])
 
-    def test_sans_worktree_une_branche_poussee_reste_intouchee(self):
-        """Sans worktree où reprendre, requeuer ferait repartir un agent d'une
-        branche neuve et abandonnerait ce qui est déjà sur le distant."""
+    def test_sans_worktree_une_branche_poussee_repart_sur_le_distant(self):
+        """#249 — le ticket restait `running` faute d'endroit où reprendre, et
+        `gate` ne lançant que des `pending`, il était figé jusqu'à un `retry`
+        humain. La branche poussée **est** l'endroit où reprendre : le verdict
+        bascule, et il ne bascule qu'une fois."""
         self.assertEqual(
             self.rejoue([self.LEG, self.AVANT], [{}, {}],
                         branches={19: "feature/19-truc"}),
-            ["running", "running"])
+            ["pending", "pending"])
 
 
 class FrontiereEtEmpreinteDuJournal(unittest.TestCase):
@@ -1983,13 +1985,15 @@ class ContexteDeReprise(unittest.TestCase):
     **branche** depuis le worktree où l'agent se trouve déjà.
     """
 
-    def gate(self, worktrees, git_lines):
+    def gate(self, worktrees, git_lines, branches=None):
         with tempfile.TemporaryDirectory() as tmp:
             write_run(tmp, control={"signal": "run"})
             output = io.StringIO()
             with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
                  mock.patch.object(run_mod, "live_worktrees",
                                    return_value=worktrees), \
+                 mock.patch.object(run_mod, "remote_branches",
+                                   return_value=branches or {}), \
                  mock.patch.object(run_mod, "git_lines",
                                    side_effect=git_lines), \
                  contextlib.redirect_stdout(output):
@@ -2084,12 +2088,13 @@ class ContexteDeReprise(unittest.TestCase):
             [["4ae5aed wip(19)"], []])
         self.assertNotIn("/w/agent-a9e8", rendu)
 
-    def test_un_ticket_sans_worktree_n_a_rien_a_reprendre(self):
+    def test_un_ticket_sans_worktree_ni_branche_n_a_rien_a_reprendre(self):
         with tempfile.TemporaryDirectory() as tmp:
             write_run(tmp, control={"signal": "run"})
             output = io.StringIO()
             with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
                  mock.patch.object(run_mod, "live_worktrees", return_value={}), \
+                 mock.patch.object(run_mod, "remote_branches", return_value={}), \
                  contextlib.redirect_stdout(output):
                 run_mod.cmd_gate(argparse.Namespace(run="r1"))
         self.assertNotIn("À REPRENDRE", output.getvalue())
@@ -2105,6 +2110,207 @@ class ContexteDeReprise(unittest.TestCase):
         self.assertEqual(context["commits"], 2)
         self.assertEqual(context["dirty"], 1)
         self.assertEqual(context["branch"], "feature/19-truc")
+
+
+class ReprisSurLaBrancheDistante(unittest.TestCase):
+    """#249 — l'agent qui a poussé puis est mort sans ouvrir de PR, et dont le
+    worktree a disparu, laissait un ticket `running` que rien ne rattrapait.
+
+    `gate` ne lance que des `pending` : ce ticket-là attendait un `retry`
+    humain, c'est-à-dire le mode de panne de #180 réduit à la fenêtre étroite
+    qui sépare le `git push` du `gh pr create`.
+
+    #248 s'était arrêté là, et pour une raison juste : requeuer sans rien dire
+    faisait repartir l'agent relancé d'une branche neuve, en abandonnant ce qui
+    était déjà sur le distant. Entre figer un ticket et perdre du travail
+    poussé, figer était le moindre mal. La sortie est de **désigner la branche
+    poussée**, exactement comme le `gate` désigne déjà un worktree : le travail
+    est alors récupéré, et la vague repart.
+    """
+
+    LEG = {"ts": "2026-08-26T13:01:30+00:00", "kind": "run",
+           "status": "leg_started", "actor": "superviseur",
+           "message": "étape 3 — une vague, largeur 3"}
+    # Le dernier battement de l'agent : il a poussé, puis est mort avec son
+    # `claude -p` sans avoir ouvert de PR.
+    AVANT = {"ts": "2026-08-26T11:30:35+00:00", "kind": "ticket", "ticket": 19,
+             "phase": "commits", "status": "running", "actor": "agent",
+             "message": "3 commits poussés sur feature/19-truc"}
+    # Le battement d'après la frontière : un agent tient encore le ticket.
+    APRES = {"ts": "2026-08-26T13:09:05+00:00", "kind": "ticket", "ticket": 19,
+             "phase": "pr", "status": "running", "actor": "agent",
+             "message": "corps de PR en cours de rédaction"}
+    BRANCHES = {19: "feature/19-truc"}
+
+    def reconcile(self, journal, branches=None, worktrees=None, prs=(),
+                  tours=1):
+        """(statuts du ticket 19 tour par tour, sortie cumulée).
+
+        Les tours se rejouent sur le **même** dossier de run : chacun relit ce
+        que le précédent a écrit, seule façon de voir une oscillation ou un
+        statut blanchi de proche en proche.
+        """
+        verdicts = []
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, journal=journal)
+            output = io.StringIO()
+            reponses = [([], None), (list(prs), None)] * tours
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
+                 mock.patch.object(run_mod, "gh_json", side_effect=reponses), \
+                 mock.patch.object(run_mod, "remote_branches",
+                                   return_value=branches or {}), \
+                 mock.patch.object(run_mod, "live_worktrees",
+                                   return_value=worktrees or {}), \
+                 contextlib.redirect_stdout(output):
+                for _ in range(tours):
+                    run_mod.cmd_reconcile(argparse.Namespace(run="r1",
+                                                             leg_start=False))
+                    tickets = run_mod.replay(run_mod.load_run("r1"),
+                                             run_mod.read_journal("r1"),
+                                             run_mod.load_control("r1"))
+                    verdicts.append(tickets[19]["status"])
+            return verdicts, output.getvalue()
+
+    def gate(self, worktrees=None, branches=None, git_lines=()):
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, control={"signal": "run"})
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "live_worktrees",
+                                   return_value=worktrees or {}), \
+                 mock.patch.object(run_mod, "remote_branches",
+                                   return_value=branches or {}) as sonde, \
+                 mock.patch.object(run_mod, "git_lines",
+                                   side_effect=list(git_lines)), \
+                 contextlib.redirect_stdout(output):
+                run_mod.cmd_gate(argparse.Namespace(run="r1"))
+            return output.getvalue(), sonde
+
+    def test_le_ticket_fige_redevient_pending(self):
+        """Critère 1 — `running`, sans PR ni worktree, branche poussée, dernier
+        battement avant la frontière d'étape."""
+        verdicts, output = self.reconcile([self.LEG, self.AVANT],
+                                          branches=self.BRANCHES)
+        self.assertEqual(verdicts, ["pending"])
+        self.assertIn("agent mort avec son étape", output)
+        self.assertIn("origin/feature/19-truc", output)
+
+    def test_un_agent_qui_journalise_apres_l_etape_n_est_pas_touche(self):
+        """Critère 3 — la protection de #130 tient : un vivant est en train
+        d'ouvrir la PR, et le requeuer lancerait un second agent sur son
+        empreinte."""
+        verdicts, output = self.reconcile([self.AVANT, self.LEG, self.APRES],
+                                          branches=self.BRANCHES)
+        self.assertEqual(verdicts, ["running"])
+        self.assertNotIn("agent mort", output)
+
+    def test_le_verdict_ne_bascule_pas_a_chaque_relecture(self):
+        """#233 — `reconcile` ne doit pas relire sa propre écriture comme un
+        battement, sans quoi le ticket oscillerait `pending` → `running`."""
+        verdicts, _ = self.reconcile([self.LEG, self.AVANT],
+                                     branches=self.BRANCHES, tours=3)
+        self.assertEqual(verdicts, ["pending", "pending", "pending"])
+
+    def test_un_ticket_tombe_n_est_pas_blanchi_par_sa_branche(self):
+        """Un ticket jugé n'est pas un ticket abandonné : la pause sur erreur
+        doit continuer de le retenir, branche poussée ou non — c'est `retry N`
+        qui le remet en file, et lui seul.
+
+        Deux relectures, parce que c'est en deux temps que le blanchiment
+        opérait : la branche faisait passer le ticket `running`, puis le
+        requeue du cas précédent le prenait pour un `running` abandonné. La
+        vague aurait relancé un ticket que l'humain n'avait pas revu."""
+        journal = [self.AVANT,
+                   {"ts": "2026-08-26T11:40:00+00:00", "kind": "ticket",
+                    "ticket": 19, "phase": "validation", "status": "blocked",
+                    "actor": "agent", "message": "verify rouge"},
+                   self.LEG]
+        verdicts, output = self.reconcile(journal, branches=self.BRANCHES,
+                                          tours=2)
+        self.assertEqual(verdicts, ["blocked", "blocked"])
+        self.assertNotIn("agent mort", output)
+
+    def test_une_pr_ouverte_prime_sur_la_branche(self):
+        """L'agent a eu le temps d'ouvrir sa PR : il n'y a plus rien à
+        reprendre, le ticket est en vol."""
+        verdicts, _ = self.reconcile(
+            [self.LEG, self.AVANT], branches=self.BRANCHES,
+            prs=[{"number": 77, "state": "OPEN", "body": "Closes #19",
+                  "headRefName": "feature/19-truc"}])
+        self.assertEqual(verdicts, ["pr_open"])
+
+    def test_le_gate_annonce_la_branche_distante_et_sa_commande(self):
+        """Critère 2 — sans la commande, l'agent relancé repartirait d'une
+        branche neuve et abandonnerait les commits déjà sur `origin`."""
+        rendu, _ = self.gate(branches=self.BRANCHES,
+                             git_lines=[["a wip", "b wip", "c wip"]])
+        self.assertIn("#19 À REPRENDRE sur origin/feature/19-truc", rendu)
+        self.assertIn("3 commit(s) poussé(s), aucune PR", rendu)
+        self.assertIn("git fetch origin feature/19-truc", rendu)
+        self.assertIn("git checkout --ignore-other-worktrees -B feature/19-truc "
+                      "origin/feature/19-truc", rendu)
+        self.assertIn("ne pas ouvrir de branche neuve", rendu)
+
+    def test_la_commande_tient_sans_reference_de_suivi_locale(self):
+        """Le décompte se lit sur `origin/<branche>`, que le dépôt local ne
+        connaît que s'il a fetché depuis. Muet, il ne doit pas emporter
+        l'instruction — c'est elle qui porte le `git fetch`."""
+        rendu, _ = self.gate(branches=self.BRANCHES, git_lines=[[]])
+        self.assertIn("branche poussée, aucune PR", rendu)
+        self.assertIn("git fetch origin feature/19-truc", rendu)
+
+    def test_le_worktree_prime_sur_la_branche_distante(self):
+        """Un worktree vivant porte aussi le non commité : c'est là qu'on
+        renvoie l'agent, pas sur le distant qui n'en sait rien."""
+        rendu, _ = self.gate(
+            worktrees={19: {"path": "/w/agent-a9e8",
+                            "branch": "feature/19-truc", "locked": False},
+                       20: {"path": "/w/agent-b1c2",
+                            "branch": "feature/20-truc", "locked": False}},
+            branches=self.BRANCHES,
+            git_lines=[["a wip"], [" M x.ts"], ["b wip"], []])
+        self.assertIn("git checkout --ignore-other-worktrees feature/19-truc",
+                      rendu)
+        self.assertNotIn("git fetch origin", rendu)
+
+    def test_une_sonde_locale_muette_n_ouvre_pas_le_repli_distant(self):
+        """`live_worktrees` muette rend le même dictionnaire vide qu'un ticket
+        sans worktree — et chaque ticket à lancer s'entendrait alors dire « le
+        worktree a disparu, tout le travail est sur le distant ». Or un worktree
+        vivant porte aussi du non commité, que le distant ne connaît pas :
+        l'agent se recalerait sur `origin` en le perdant, quand il ne se
+        heurterait pas au refus de `checkout` sur une branche déjà sortie.
+
+        Même prudence que `reconcile` : une absence non constatée ne vaut pas
+        une absence."""
+        self.addCleanup(run_mod.PROBE_FAILURES.clear)
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, control={"signal": "run"})
+            output = io.StringIO()
+            with mock.patch.object(
+                    run_mod, "live_worktrees",
+                    side_effect=lambda *a, **k: run_mod.note_probe_failure(
+                        "git worktree list : en erreur")), \
+                 mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "remote_branches",
+                                   return_value=self.BRANCHES) as sonde, \
+                 contextlib.redirect_stdout(output):
+                run_mod.cmd_gate(argparse.Namespace(run="r1"))
+        self.assertNotIn("À REPRENDRE", output.getvalue())
+        sonde.assert_not_called()
+
+    def test_la_sonde_distante_ne_se_paie_pas_pour_rien(self):
+        """`git ls-remote` est un appel réseau, et le `gate` tourne à chaque
+        étape : tous les tickets à lancer ayant leur worktree, il n'y a aucune
+        branche à chercher."""
+        _, sonde = self.gate(
+            worktrees={19: {"path": "/w/a", "branch": "feature/19-truc",
+                            "locked": False},
+                       20: {"path": "/w/b", "branch": "feature/20-truc",
+                            "locked": False}},
+            git_lines=[[], [], [], []])
+        sonde.assert_not_called()
 
 
 class DecisionsSansClavier(unittest.TestCase):
