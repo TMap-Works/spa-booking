@@ -453,7 +453,13 @@ def dossier(run_id, reasons=(), tail=12, with_barrier=True, per_ticket=PER_TICKE
         "prs": prs,
         "develop": develop_state(),
         "develop_rouge": broken_develop(events, history),
-        "worktrees": run_mod.live_worktrees(),
+        # Les revendications du journal, sans quoi le worktree qu'un agent de
+        # jalon reçoit — `agent-<aléa>`, branche `worktree-agent-<aléa>`, aucun
+        # numéro d'issue nulle part — se lirait « aucun worktree » (#175). C'est
+        # précisément l'entrée sur laquelle l'arbitre décide d'écarter un ticket
+        # ou de le relancer : sans elle, il écarterait un ticket qu'un agent
+        # tient encore. `events` est déjà lu plus haut, la lecture est gratuite.
+        "worktrees": run_mod.live_worktrees(run_mod.worktree_claims(events)),
         "etape": leg_digest(latest_leg()),
         "arbitrages": summary(history, per_ticket=per_ticket, per_run=per_run),
     }
