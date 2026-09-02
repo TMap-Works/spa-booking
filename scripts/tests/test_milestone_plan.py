@@ -147,6 +147,16 @@ def ecartees(plan):
     return {item["number"]: item for item in plan["excluded"]}
 
 
+def interactives(plan):
+    """Les tickets renvoyés à une session humaine — empreinte `.claude/**` pure."""
+    return {item["number"]: item for item in plan["interactive"]}
+
+
+def a_scinder(plan):
+    """Les tickets programmés dont une part de l'empreinte n'est pas livrable."""
+    return {item["number"]: item for item in plan["split"]}
+
+
 # Deux ressources disjointes : ce qui sépare #10 et #20 dans ces tests ne peut
 # donc jamais être une collision d'empreinte, seulement la dépendance.
 DEUX = {"resources": {"10": ["infra/terraform/modules/a"],
@@ -519,6 +529,175 @@ class UneNatureALaFois(unittest.TestCase):
                           argv=["--nature", "outillage"])
         self.assertNotIn(10, scheduled(plan))
         self.assertIn("nature", ecartees(plan)[10]["reason"])
+
+
+class EmpreinteSousClaude(unittest.TestCase):
+    """#360 — `.claude/**` est en lecture seule pour un run, et le plan doit le savoir.
+
+    Le fait, établi par l'arbitre du run `s1-fondations-outillage-20260901-221219` :
+    le classifieur du harnais refuse `Edit`/`Write` sur tout chemin contenant
+    `.claude/`, en session non interactive — donc dans chaque vague. Ce n'est pas
+    réparable depuis `settings.json` : le refus ne vient ni de `permissions.allow`
+    ni d'un hook du dépôt.
+
+    Le plan continuait pourtant de programmer ces tickets. #226 a coûté 24 tours
+    et 3,03 $ pour zéro commit avant d'être écarté ; #356 était tombé de la même
+    façon au run précédent ; #258 et #179 étaient en file pour le même sort.
+
+    Deux cas, et deux traitements. Empreinte **entièrement** sous `.claude/**` :
+    hors du plan, avec un motif lisible — le ticket est recevable, c'est le run
+    qui n'a pas la main. Empreinte **mixte** (#245, #186) : programmée, avec la
+    consigne de scinder — c'est ce que #186 a fait à la main, et ça a marché.
+    """
+
+    OUTIL = ("ws:devops", "mod:infra", "type:chore", "P1", "nature:outillage")
+
+    def outil(self, number, **kw):
+        return issue(number, labels=self.OUTIL, **kw)
+
+    # `10` est le cas #226 : rien que du `.claude/`. `20` est le cas #245 :
+    # une moitié orchestrateur, livrable, et une moitié commande, non livrable.
+    # `30` ne touche pas `.claude/` du tout — le témoin.
+    RULES = {"resources": {
+        "10": [".claude/commands", ".claude/settings"],
+        "20": [".claude/commands", "scripts/milestone-run"],
+        "30": ["scripts/milestone-plan"],
+    }}
+
+    def plan(self, numbers=(10, 20, 30)):
+        hub = FakeHub([self.outil(n) for n in numbers])
+        return plan_of(hub, self.RULES, argv=["--nature", "outillage"])[1]
+
+    # -- empreinte pure : hors du plan --------------------------------------- #
+
+    def test_une_empreinte_pure_n_est_pas_programmee(self):
+        self.assertNotIn(10, scheduled(self.plan()))
+
+    def test_le_motif_est_lisible_dans_le_plan(self):
+        item = interactives(self.plan())[10]
+        self.assertIn(".claude/", item["reason"])
+        self.assertIn("session interactive", item["reason"])
+        self.assertEqual(item["resources"], [".claude/commands", ".claude/settings"])
+
+    def test_le_rendu_a_sa_rubrique_a_part(self):
+        _, out = run_plan(FakeHub([self.outil(10), self.outil(30)]),
+                          ["--nature", "outillage"], self.RULES)
+        self.assertIn("À reprendre en session interactive", out)
+        bloc = out.split("À reprendre en session interactive")[1]
+        self.assertIn("#10", bloc)
+        self.assertIn(".claude/commands", bloc)
+
+    def test_elle_n_est_pas_rangee_avec_les_ecartees(self):
+        """« Écartées » dit qu'il manque quelque chose au ticket. Ici, non : le
+        ticket est bon, c'est le run qui ne peut pas l'écrire."""
+        plan = self.plan()
+        self.assertNotIn(10, ecartees(plan))
+        self.assertNotIn(10, retenues(plan))
+
+    def test_elle_ne_retient_pas_ses_dependants(self):
+        """Même régime que l'outillage sous un run produit : le travail se fera,
+        mais hors run. Le retenir gèlerait le jalon sur un rendez-vous humain
+        que rien ne garantit."""
+        rules = dict(self.RULES, depends={"30": [10]})
+        hub = FakeHub([self.outil(10), self.outil(30)])
+        _, plan = plan_of(hub, rules, argv=["--nature", "outillage"])
+        self.assertIn(30, scheduled(plan))
+        self.assertEqual(plan["withheld"], [])
+
+    def test_le_motif_figure_dans_never_holds(self):
+        self.assertIn(milestone_plan.INTERACTIVE, milestone_plan.NEVER_HOLDS)
+
+    def test_un_jalon_qui_n_a_plus_que_du_claude_le_dit(self):
+        code, out = run_plan(FakeHub([self.outil(10)]), ["--nature", "outillage"],
+                             self.RULES)
+        self.assertEqual(code, milestone_plan.EMPTY)
+        self.assertIn("session interactive", out)
+
+    def test_l_en_tete_compte_les_renvois(self):
+        _, out = run_plan(FakeHub([self.outil(10), self.outil(30)]),
+                          ["--nature", "outillage"], self.RULES)
+        self.assertIn("1 en session interactive", out.splitlines()[1])
+
+    # -- empreinte mixte : programmée, avec consigne -------------------------- #
+
+    def test_une_empreinte_mixte_reste_programmee(self):
+        self.assertIn(20, scheduled(self.plan()))
+
+    def test_la_consigne_de_scinder_accompagne_le_ticket(self):
+        item = a_scinder(self.plan())[20]
+        self.assertEqual(item["readonly"], [".claude/commands"])
+        self.assertIn(".claude/", item["advice"])
+        self.assertIn("issue de suivi", item["advice"])
+
+    def test_le_ticket_porte_sa_part_non_livrable(self):
+        """La consigne doit voyager avec la vague : c'est elle que `/milestone`
+        relaie à l'agent, pas la rubrique de rendu."""
+        node = next(n for wave in self.plan()["waves"] for n in wave["issues"]
+                    if n["number"] == 20)
+        self.assertEqual(node["readonly"], [".claude/commands"])
+
+    def test_un_ticket_sans_part_claude_n_a_aucune_consigne(self):
+        plan = self.plan()
+        self.assertNotIn(30, a_scinder(plan))
+        node = next(n for wave in plan["waves"] for n in wave["issues"]
+                    if n["number"] == 30)
+        self.assertEqual(node["readonly"], [])
+
+    def test_le_rendu_nomme_la_part_a_scinder(self):
+        _, out = run_plan(FakeHub([self.outil(20), self.outil(30)]),
+                          ["--nature", "outillage"], self.RULES)
+        self.assertIn("À scinder", out)
+        bloc = out.split("À scinder")[1]
+        self.assertIn("#20", bloc)
+        self.assertIn(".claude/commands", bloc)
+
+    # -- les bords ------------------------------------------------------------ #
+
+    def test_une_empreinte_vide_ne_sort_pas_du_plan(self):
+        """Ne rien savoir d'une empreinte n'est pas savoir qu'elle est
+        `.claude/`. Écarter sur un silence sortirait du plan tout ticket que
+        l'heuristique n'a pas su classer."""
+        self.assertFalse(milestone_plan.undeliverable([]))
+        _, plan = plan_of(FakeHub([self.outil(40)]), {"resources": {"40": []}},
+                          argv=["--nature", "outillage"])
+        self.assertIn(40, scheduled(plan))
+        self.assertEqual(interactives(plan), {})
+
+    def test_le_filtre_vaut_aussi_pour_un_run_produit(self):
+        """Le refus d'écriture ne dépend pas de la nature du run : un ticket
+        produit dont l'empreinte serait `.claude/` seul tomberait pareil."""
+        produit = issue(10, labels=("ws:devops", "mod:infra", "type:chore", "P1",
+                                    "nature:projet"))
+        _, plan = plan_of(FakeHub([produit, issue(30)]), self.RULES)
+        self.assertNotIn(10, scheduled(plan))
+        self.assertIn(10, interactives(plan))
+
+    def test_un_ticket_hors_perimetre_garde_son_motif(self):
+        """Les motifs de `qualify()` passent avant l'empreinte : un `post-mvp`
+        n'est pas « à reprendre en session interactive », il ne sera jamais fait."""
+        hors = issue(10, labels=("post-mvp", "ws:devops", "mod:infra",
+                                 "type:chore", "P1", "nature:outillage"))
+        _, plan = plan_of(FakeHub([hors, self.outil(30)]), self.RULES,
+                          argv=["--nature", "outillage"])
+        self.assertIn(10, ecartees(plan))
+        self.assertNotIn(10, interactives(plan))
+
+    def test_le_cas_reel_du_run_s1(self):
+        """#226, #258, #179 hors du plan ; #245 et #186 programmées à scinder.
+
+        Les empreintes sont celles du vrai `.claude/milestone-rules.json` : c'est
+        le tableau de #360, rejoué tel quel.
+        """
+        titres = {226: "Autoriser l'écriture sous .claude/",
+                  258: "Câbler la commande de vague",
+                  179: "Réglages de permissions",
+                  245: "Reprise d'un ticket entamé",
+                  186: "Superviseur et commande de reprise"}
+        hub = FakeHub([self.outil(n, title=t) for n, t in titres.items()])
+        _, plan = plan_of(hub, argv=["--nature", "outillage"])
+        self.assertEqual(set(interactives(plan)), {226, 258, 179})
+        self.assertEqual(set(a_scinder(plan)), {245, 186})
+        self.assertEqual(scheduled(plan), {245, 186})
 
 
 class Invariants(unittest.TestCase):
