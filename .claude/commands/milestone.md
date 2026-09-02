@@ -354,6 +354,19 @@ imprime aussi les décisions prises à la main pendant le run : tickets écarté
 (`skip`), tickets à relancer (`retry`). **Les appliquer avant de composer la
 vague.**
 
+Il imprime enfin une troisième forme, qui n'est ni l'une ni l'autre :
+
+```
+session interactive #179 · <titre> — empreinte entièrement sous .claude/**
+```
+
+Ce n'est **pas** un ticket tombé, ni un ticket à reprendre : c'est une issue
+qu'aucune vague ne peut prendre, parce que le classifieur « fichier sensible »
+refuse l'écriture sous `.claude/**` à tout agent non interactif. Il n'y a rien à
+en faire pendant le run — ni la lancer, ni la relancer, ni ouvrir d'issue de
+suivi : elle est son propre suivi et attend un humain. La porter au compte rendu
+de vague, et passer.
+
 Puis un agent par issue, **tous lancés dans un seul message** — c'est ce qui les
 fait travailler en même temps plutôt qu'à la queue leu leu. Jamais plus que la
 largeur du plan. `Agent` avec `subagent_type: "general-purpose"`,
@@ -422,6 +435,29 @@ conversation :
 > Termine par un compte rendu factuel : numéro et URL de la PR, nom de branche,
 > verdict de `pr_gate.py`, constats de revue traités et laissés, fichiers touchés
 > hors empreinte, et ce qui n'a pas été fait.
+
+**Un paragraphe de plus, et seulement quand le nœud du plan porte un `readonly`
+non vide.** `milestone_plan.py --json` rend une clé `split` : un ticket dont
+l'empreinte est *mixte* y figure avec la part qui t'est interdite (`readonly`) et
+la conduite à tenir (`advice`). Sans ce paragraphe, l'agent découvre le refus au
+milieu de son ticket — ou pire, tente de le contourner. Le reprendre tel quel, en
+substituant `<readonly>` :
+
+> **Ticket à scinder.** Une part de ton empreinte est en **lecture seule** pour
+> toi : `<readonly>`. Le classifieur « fichier sensible » refuse l'écriture sous
+> `.claude/**` à tout agent non interactif — ce n'est pas contournable, et **il
+> ne faut pas essayer** de le contourner, ni par un heredoc `Bash`, ni par
+> `python -c`, ni par `sed`, ni par une copie de fichier. En conséquence : livre
+> le volet hors `.claude/**` ; **n'entreprends pas** le reste ; ouvre une issue
+> de suivi (`gh issue create`) rattachée au même jalon, avec les labels de
+> l'issue d'origine, décrivant précisément le patch attendu et disant qu'il
+> demande une session interactive ; dans le corps de la PR, coche les critères
+> livrés et renvoie explicitement les autres à cette issue de suivi, en la
+> nommant.
+
+C'est la consigne qui a été ajoutée à la main au prompt de l'agent de #371, et
+elle a marché : une PR partielle honnête et une issue de suivi, au lieu d'une
+étape vide ou d'un contournement.
 
 Pendant la vague, ne rien merger et ne rien modifier dans le dépôt principal :
 les agents rebasent sur `origin/develop`, le faire bouger sous eux les mettrait
