@@ -26,9 +26,17 @@ stérile, et deux de suite arrêtaient le dispositif.
 S'y ajoute depuis #369 la dérive de la source : le superviseur est le seul
 processus long du dispositif, et un correctif que le run merge lui-même reste
 inerte jusqu'au redémarrage. Le signal est faux tant que le processus vivant
-mesure avec l'ancien code — et c'est ce qui a consommé six des douze arbitrages
-du run du 1er septembre. Ce qui est vérifié est la détection et son annonce,
-pas un rechargement : il n'y en a pas.
+mesure avec l'ancien code — et c'est ce qui a consommé sept des douze arbitrages
+du run du 1er septembre, alors que neuf tickets y avaient abouti.
+
+#373 y ajoute l'acte : le superviseur se **recharge** par `os.execv()` au lieu
+de se contenter de le dire. Ce qui est vérifié ici est autant le rechargement
+que ses refus — un `execv` fait au mauvais moment tue le `claude -p` dont le
+superviseur est le parent, et un `execv` qui perd `--max-legs` rend au run un
+budget d'étapes entier à chaque correctif. `reload_source` n'est jamais appelée
+telle quelle par ces tests : c'est `why_not_reload`, sa moitié qui décide, qui
+porte les cas — un banc d'essai qui se remplace par un superviseur ne rend
+jamais son verdict.
 
 Aucune dépendance : `unittest` de la bibliothèque standard, comme
 `test_pr_gate.py`.
@@ -383,8 +391,11 @@ class SourceDrift(unittest.TestCase):
     merge, s'est déclarée stérile neuf minutes plus tard, en écrivant
     « 0 commit(s) », le format d'avant le correctif qu'elle venait de merger.
 
-    Rien ici ne recharge quoi que ce soit : le détecteur ne fait que **voir**,
-    et le re-`execv()` reste une décision à part.
+    Rien ici ne recharge quoi que ce soit : ce qui est vérifié est le détecteur
+    et son annonce. L'acte — le re-`execv()` de #373 — est couvert par
+    `RechargementDeLaSource`, plus bas. L'annonce lui survit et n'est pas
+    redondante : elle reste le seul recours quand le rechargement est refusé,
+    et elle dit alors quoi faire à la main.
     """
 
     def setUp(self):
@@ -512,6 +523,440 @@ class SourceDrift(unittest.TestCase):
         self.assertTrue(borne, indice)
         self.assertIn("source_seen = source_fingerprint()", avant, indice)
         self.assertIn("announce_source_drift(source_seen)", dedans, indice)
+
+
+class AppelsEnVol(unittest.TestCase):
+    """Le registre des `claude -p` vivants — la condition du rechargement (#373).
+
+    Le superviseur est le parent de l'appel qu'il lance : se remplacer par
+    `execv` pendant qu'un enfant écrit dans son tube le tue, avec l'étape et les
+    tickets qu'il portait. Le placement statique du rechargement suffit
+    aujourd'hui à ce qu'il n'y en ait aucun ; ce registre en fait une condition
+    vérifiée plutôt qu'une propriété du texte.
+    """
+
+    def setUp(self):
+        sup._IN_FLIGHT.clear()
+        self.addCleanup(sup._IN_FLIGHT.clear)
+
+    def process(self, code=None):
+        """Un faux processus : `poll()` est la seule chose qu'on lui demande."""
+        return mock.Mock(poll=mock.Mock(return_value=code))
+
+    def test_aucun_appel_lance_aucun_en_vol(self):
+        self.assertFalse(sup.calls_in_flight())
+
+    def test_un_appel_vivant_est_en_vol(self):
+        sup.track_call(self.process(None))
+        self.assertTrue(sup.calls_in_flight())
+
+    def test_un_appel_termine_n_est_plus_en_vol(self):
+        sup.track_call(self.process(0))
+        self.assertFalse(sup.calls_in_flight())
+
+    def test_un_appel_retire_n_est_plus_en_vol(self):
+        vivant = self.process(None)
+        sup.track_call(vivant)
+        sup.untrack_call(vivant)
+        self.assertFalse(sup.calls_in_flight())
+
+    def test_une_inscription_oubliee_se_resorbe_a_la_mort_du_processus(self):
+        """C'est `poll()` qui fait foi, pas l'appartenance au registre : une
+        exception entre le `Popen` et la fin de la lecture du flux laisserait
+        sinon le superviseur refuser de se recharger jusqu'à la fin du run."""
+        fantome = self.process(1)
+        sup.track_call(fantome)
+        self.assertFalse(sup.calls_in_flight())
+        self.assertNotIn(fantome, sup._IN_FLIGHT)
+
+    def test_un_vivant_parmi_des_morts_suffit(self):
+        for mort in (0, 1, 143):
+            sup.track_call(self.process(mort))
+        sup.track_call(self.process(None))
+        self.assertTrue(sup.calls_in_flight())
+
+    def test_l_appel_est_inscrit_et_retire_par_stream_call(self):
+        """Un registre que personne n'alimente ne protège de rien. Lu dans le
+        texte : le câbler pour de vrai demanderait de lancer un `claude -p`."""
+        code = inspect.getsource(sup.stream_call)
+        self.assertIn("track_call(process)", code)
+        self.assertIn("untrack_call(process)", code)
+
+
+class RechargementDeLaSource(unittest.TestCase):
+    """Le superviseur se recharge quand sa source a changé (#373).
+
+    #369 avait livré la moitié qui **voit**. Elle n'a servi à personne : aucun
+    run ne lit ce `WARN`, et son seul lecteur possible est l'arbitre, qui
+    n'arrive que sur le faux signal que la source périmée produit. Sept
+    arbitrages sur douze consommés sur le run du 1er septembre, alors que neuf
+    tickets y avaient abouti — et le budget épuisé appelle `retire()`.
+
+    L'acte est un `os.execv()`. Il n'est jamais exécuté ici : un banc d'essai
+    qui se remplace par un superviseur ne rend jamais son verdict. Ce qui est
+    couvert est donc la décision (`why_not_reload`), le report de budget
+    (`reload_intent`) et tout ce que `reload_source` fait **avant** de partir.
+    """
+
+    def args(self, **fields):
+        base = dict(milestone="S1 — Fondations", width=1, nature="outillage",
+                    waves_per_leg=1, no_merge=True, merge_sensitive=set(),
+                    permission_mode="acceptEdits", model=None, margin=90,
+                    patience=2, max_legs=40, leg_timeout=120, claude="claude",
+                    no_arbiter=False, arbiter_model=sup.ARBITER_MODEL,
+                    arbiter_budget=12, arbiter_timeout=45, stall_minutes=25,
+                    dry_run=False, no_reload=False, no_watchdog=False,
+                    echo=False, max_hours=None, force=False)
+        base.update(fields)
+        return argparse.Namespace(**base)
+
+    def setUp(self):
+        sup._IN_FLIGHT.clear()
+        self.addCleanup(sup._IN_FLIGHT.clear)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.intent_path = Path(self.tmp.name) / "supervisor.json"
+        patch = mock.patch.object(sup, "INTENT", self.intent_path)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def en_vol(self):
+        sup.track_call(mock.Mock(poll=mock.Mock(return_value=None)))
+
+    # -- la décision -------------------------------------------------------- #
+
+    def test_une_source_changee_se_recharge(self):
+        self.assertIsNone(
+            sup.why_not_reload(self.args(), "aaa", "bbb", legs=3))
+
+    def test_une_source_stable_ne_recharge_rien(self):
+        """Le cas ordinaire de chaque étape : il ne coûte que la relecture de
+        l'empreinte, et ne doit rien écrire nulle part."""
+        self.assertEqual(sup.why_not_reload(self.args(), "aaa", "aaa", legs=3),
+                         "source inchangée")
+
+    def test_une_empreinte_inconnue_ne_recharge_rien(self):
+        """Une source illisible d'un côté ou de l'autre ne prouve aucun
+        changement — se recharger là-dessus relancerait le processus sur rien."""
+        self.assertIsNotNone(sup.why_not_reload(self.args(), None, "bbb", legs=1))
+        self.assertIsNotNone(sup.why_not_reload(self.args(), "aaa", None, legs=1))
+
+    def test_un_appel_en_vol_interdit_le_rechargement(self):
+        """La condition qui compte : le superviseur est le parent du
+        `claude -p`, et se remplacer pendant qu'il écrit dans son tube le tue."""
+        self.en_vol()
+        why = sup.why_not_reload(self.args(), "aaa", "bbb", legs=3)
+        self.assertIsNotNone(why)
+        self.assertIn("claude -p", why)
+
+    def test_le_drapeau_debranche_le_rechargement(self):
+        why = sup.why_not_reload(self.args(no_reload=True), "aaa", "bbb", legs=3)
+        self.assertIn("--no-reload", why)
+
+    def test_dry_run_ne_se_remplace_pas(self):
+        """`--dry-run` montre l'appel qui serait fait ; se remplacer par un autre
+        processus n'est pas montrer."""
+        self.assertIsNotNone(
+            sup.why_not_reload(self.args(dry_run=True), "aaa", "bbb", legs=1))
+
+    def test_un_arret_demande_ne_ressuscite_personne(self):
+        """Un Ctrl-C ne survit pas à `execv` : recharger ici relancerait un
+        superviseur dont on vient de demander l'arrêt."""
+        self.assertIsNotNone(
+            sup.why_not_reload(self.args(), "aaa", "bbb", legs=1, halting=True))
+
+    def test_sans_etape_restante_on_ne_recharge_pas(self):
+        """Le processus neuf s'arrêterait au premier tour de boucle : la relance
+        ne servirait qu'à écrire un rechargement inutile dans le journal."""
+        why = sup.why_not_reload(self.args(max_legs=4), "aaa", "bbb", legs=4)
+        self.assertIn("--max-legs", why)
+
+    # -- le report du budget d'étapes --------------------------------------- #
+
+    def test_max_legs_est_decompte_de_ce_qui_a_servi(self):
+        """`execv` repart à `legs = 0`. Sans report, `--max-legs 40` ne bornerait
+        plus le run mais la vie d'un processus, et un jalon qui se recharge à
+        chaque étape tournerait sans borne."""
+        intent = sup.reload_intent(self.args(max_legs=40), legs=7)
+        self.assertEqual(intent["max_legs"], 33)
+
+    def test_le_budget_reporte_ne_descend_jamais_sous_une_etape(self):
+        intent = sup.reload_intent(self.args(max_legs=3), legs=9)
+        self.assertEqual(intent["max_legs"], 1)
+
+    def test_le_budget_reporte_revient_en_ligne_de_commande(self):
+        argv = sup.intent_argv(sup.reload_intent(self.args(max_legs=40), legs=7))
+        self.assertEqual(argv[argv.index("--max-legs") + 1], "33")
+
+    def test_le_reste_de_l_intention_est_celui_du_processus(self):
+        """Rejouer la même intention, c'est repartir sur le même plan : une
+        nature perdue ferait dérouler le produit à la place de l'outillage."""
+        argv = sup.intent_argv(sup.reload_intent(self.args(), legs=1))
+        self.assertEqual(argv[argv.index("--nature") + 1], "outillage")
+        self.assertIn("--no-merge", argv)
+        self.assertEqual(argv[0], "S1 — Fondations")
+
+    def test_seul_le_budget_d_etapes_distingue_l_intention_rechargee(self):
+        """Un rechargement est un démarrage : `armed` et `expires` s'y refont
+        comme partout ailleurs. La péremption à quinze jours protège d'une
+        intention *oubliée*, et celle-ci vient de terminer une étape."""
+        args = self.args(max_legs=40)
+        attendu = dict(sup.intent_of(args))
+        obtenu = dict(sup.reload_intent(args, legs=7))
+        self.assertEqual(obtenu.pop("max_legs"), 33)
+        self.assertEqual(attendu.pop("max_legs"), 40)
+        for champ in ("armed", "expires"):
+            attendu.pop(champ), obtenu.pop(champ)
+        self.assertEqual(obtenu, attendu)
+
+    # -- l'acte, jusqu'au seuil de `execv` ---------------------------------- #
+
+    def recharge(self, args=None, before="aaa", after="bbb", legs=3, **kw):
+        """Appelle `reload_source` avec le remplacement du processus neutralisé.
+
+        Rend (rendu, argv, lignes du journal du superviseur, lignes du run).
+        `beat` est neutralisé aussi : il écrirait dans le vrai
+        `.claude/.milestone/supervisor.alive`, et une veille qui passerait
+        pendant les tests y lirait un superviseur vivant.
+        """
+        posted, spoken = [], []
+        with mock.patch.object(sup, "source_fingerprint", return_value=after), \
+             mock.patch.object(sup, "exec_replace") as remplace, \
+             mock.patch.object(sup, "beat") as beat, \
+             mock.patch.object(sup, "say",
+                               side_effect=lambda *a, **k: spoken.append(a)), \
+             mock.patch.object(sup, "journal",
+                               side_effect=lambda *a, **k: posted.append((a, k))):
+            rendu = sup.reload_source(args or self.args(), before, legs, **kw)
+        self.remplace = remplace
+        self.beat = beat
+        argv = list(remplace.call_args.args[0]) if remplace.call_args else []
+        return rendu, argv, spoken, posted
+
+    def test_un_refus_ne_touche_a_rien(self):
+        """Ni journal du run, ni `execv`, ni intention réécrite : une étape sur
+        une source stable doit coûter exactement ce qu'elle coûtait avant."""
+        rendu, argv, _, posted = self.recharge(before="aaa", after="aaa")
+        self.assertFalse(rendu)
+        self.assertEqual(argv, [])
+        self.assertEqual(posted, [])
+        self.assertFalse(self.intent_path.exists())
+
+    def test_un_refus_sur_ecart_reel_se_dit_en_debug(self):
+        """C'est la ligne qui explique pourquoi le dispositif n'a pas fait ce
+        qu'il annonce savoir faire — sur une source stable, elle n'apprendrait
+        rien et n'est donc pas dite."""
+        self.en_vol()
+        _, _, spoken, posted = self.recharge()
+        self.assertTrue(any("rechargement différé" in ligne[0] and
+                            ligne[1] == "DEBUG" for ligne in spoken))
+        self.assertEqual(posted, [])
+
+    def test_le_rechargement_remplace_le_processus(self):
+        rendu, argv, _, _ = self.recharge()
+        self.assertTrue(rendu)
+        self.assertEqual(argv[0], sys.executable)
+        self.assertEqual(Path(argv[1]).name, "milestone_supervise.py")
+
+    def test_le_rechargement_rejoue_l_intention(self):
+        _, argv, _, _ = self.recharge(args=self.args(max_legs=40), legs=7)
+        self.assertEqual(argv[argv.index("--max-legs") + 1], "33")
+        self.assertEqual(argv[argv.index("--nature") + 1], "outillage")
+
+    def test_le_rechargement_est_journalise_dans_les_deux_journaux(self):
+        """Ils n'ont pas les mêmes lecteurs : celui du superviseur pour qui
+        regarde le dispositif, celui du run pour qui regarde le jalon."""
+        _, _, spoken, posted = self.recharge()
+        self.assertEqual(len(posted), 1)
+        (args_journal, fields), = posted
+        self.assertIsNone(args_journal[0])   # aucun statut : le run n'a pas bougé
+        self.assertEqual(fields["level"], "WARN")
+        self.assertTrue(any(ligne[1] == "WARN" and "rechargement" in ligne[0]
+                            for ligne in spoken))
+
+    def test_le_message_porte_les_deux_empreintes(self):
+        """Sans elles, la ligne dit qu'il s'est passé quelque chose sans dire
+        quoi — et c'est justement ce qu'on relit des mois plus tard pour savoir
+        quelle version tournait à quelle étape."""
+        _, _, _, posted = self.recharge(before="a" * 64, after="b" * 64)
+        message = posted[0][0][1]
+        self.assertIn("a" * 12, message)
+        self.assertIn("b" * 12, message)
+        self.assertIn("milestone_supervise.py", message)
+
+    def test_le_battement_est_rearme_avant_de_partir(self):
+        """`execv` n'exécute aucun `atexit` : le fil qui bat meurt avec l'image,
+        et le processus neuf met une seconde ou deux à reprendre. Sans battement
+        frais, une veille qui passe pile là lance un second superviseur."""
+        self.recharge()
+        self.beat.assert_called_once()
+
+    def test_sans_intention_armee_le_rechargement_n_en_arme_pas(self):
+        """Un superviseur lancé `--no-watchdog` n'a rien armé : lui poser une
+        intention en se rechargeant lui donnerait une reprise automatique que
+        personne n'a demandée."""
+        self.recharge(args=self.args(no_watchdog=True))
+        self.assertFalse(self.intent_path.exists())
+
+    def test_une_intention_armee_est_reecrite_avec_le_budget_restant(self):
+        """La veille ne lit que le disque, et elle peut se réveiller dans la
+        seconde de flottement de l'`execv` : sans réécriture, elle y trouverait
+        les 40 étapes d'avant."""
+        sup.write_intent({"milestone": "S1 — Fondations", "max_legs": 40})
+        self.recharge(args=self.args(max_legs=40), legs=7)
+        self.assertEqual(sup.load_intent()["max_legs"], 33)
+
+    def test_le_processus_neuf_sait_qu_il_en_remplace_un(self):
+        """Sans ce drapeau, il trouve le battement qu'on vient de rafraîchir et
+        la ligne qu'on vient d'écrire dans le journal du run, se croit en double
+        et rend la main : le rechargement tuerait le run à chaque correctif."""
+        _, argv, _, _ = self.recharge()
+        self.assertIn("--reloaded", argv)
+
+    def test_un_superviseur_recharge_ne_se_croit_pas_en_double(self):
+        """Le contrôle qui refuse un second superviseur doit être sauté par
+        celui qui prend la place du premier — c'est le même processus."""
+        code = inspect.getsource(sup.main)
+        avant, borne, apres = code.partition("if not args.reloaded:")
+        self.assertTrue(borne, "le garde-fou du double superviseur n'est plus "
+                               "conditionné à --reloaded")
+        self.assertIn("supervisor_alive()", apres)
+        self.assertIn("orchestrator_active()", apres)
+        self.assertNotIn("supervisor_alive()", avant)
+        self.assertNotIn("orchestrator_active()", avant)
+
+    def test_les_choix_du_processus_ne_se_perdent_pas(self):
+        """`--no-watchdog` et `--echo` ne vivent pas dans l'intention : les
+        oublier ferait qu'un superviseur lancé sans veille s'en arme une au
+        premier rechargement."""
+        _, argv, _, _ = self.recharge(
+            args=self.args(no_watchdog=True, echo=True, max_hours=6.0))
+        self.assertIn("--no-watchdog", argv)
+        self.assertIn("--echo", argv)
+        self.assertEqual(argv[argv.index("--max-hours") + 1], "6.0")
+
+    def test_le_passage_en_force_ne_se_perd_pas(self):
+        """Le processus neuf rejoue le préflight. Sans `--force`, il échoue là
+        où le premier avait reçu l'ordre de passer outre — `gh auth status` en
+        échec, `claude` hors du PATH d'un service —, pose une retenue de trente
+        minutes et rend 2 : le rechargement tuerait le run qu'il devait sauver.
+        """
+        _, argv, _, _ = self.recharge(args=self.args(force=True))
+        self.assertIn("--force", argv)
+        _, ordinaire, _, _ = self.recharge()
+        self.assertNotIn("--force", ordinaire)
+
+    def test_le_debranchement_du_rechargement_survit_a_la_veille(self):
+        """`--no-reload` est une consigne de l'opérateur, pas un détail du
+        processus : un superviseur ressuscité par la veille qui la perdrait se
+        remettrait à se remplacer tout seul, sans que rien ne le dise."""
+        sup.save_intent(self.args(no_reload=True))
+        self.assertIn("--no-reload", sup.intent_argv(sup.load_intent()))
+        self.assertNotIn("--no-reload",
+                         sup.intent_argv(sup.intent_of(self.args())))
+
+    def test_un_execv_qui_echoue_ne_tue_pas_le_superviseur(self):
+        """Il laisse le processus intact : on le dit, et on poursuit avec
+        l'ancien code — l'état d'avant ce correctif, pas une panne de plus."""
+        spoken = []
+        with mock.patch.object(sup, "source_fingerprint", return_value="bbb"), \
+             mock.patch.object(sup, "exec_replace",
+                               side_effect=OSError("Exec format error")), \
+             mock.patch.object(sup, "beat"), \
+             mock.patch.object(sup, "journal"), \
+             mock.patch.object(sup, "say",
+                               side_effect=lambda *a, **k: spoken.append(a)):
+            rendu = sup.reload_source(self.args(), "aaa", 3)
+        self.assertFalse(rendu)
+        self.assertTrue(any(ligne[1] == "ERROR" for ligne in spoken))
+
+    # -- la citation des arguments, sans quoi rien de tout cela ne part ------ #
+
+    def exec_argv(self, argv, systeme):
+        with mock.patch.object(sup.os, "name", systeme), \
+             mock.patch.object(sup.os, "execv") as execv, \
+             mock.patch.object(sup.sys.stdout, "flush"), \
+             mock.patch.object(sup.sys.stderr, "flush"):
+            sup.exec_replace(argv)
+        return list(execv.call_args.args[1])
+
+    def test_sous_windows_les_arguments_sont_cites_a_l_avance(self):
+        """`os.execv` y passe par `_wexecv`, qui concatène les arguments séparés
+        par des espaces **sans les citer**. Le chemin de ce dépôt en contient
+        deux : sans citation, le processus neuf meurt sur « can't open file
+        'D:\\spyle\\Spa' » et la veille le relance dix minutes plus tard — le
+        contournement manuel que ce ticket devait supprimer."""
+        argv = [sys.executable,
+                r"D:\spyle\Spa & Booking\scripts\milestone_supervise.py",
+                "S1 — Fondations", "--width", "3", "--reloaded"]
+        cite = self.exec_argv(argv, "nt")
+        # La concaténation que fera le CRT doit redonner la ligne canonique,
+        # celle que `CommandLineToArgvW` sait redécouper à l'identique.
+        self.assertEqual(" ".join(cite), subprocess.list2cmdline(argv))
+        self.assertEqual(cite[-1], "--reloaded")   # rien d'inutile n'est cité
+
+    def test_sous_posix_le_tableau_passe_tel_quel(self):
+        """`execv` y reçoit un vrai tableau : citer ferait entrer les guillemets
+        dans la valeur."""
+        argv = [sys.executable, "/opt/spa/scripts/milestone_supervise.py",
+                "S1 — Fondations"]
+        self.assertEqual(self.exec_argv(argv, "posix"), argv)
+
+    def test_le_rechargement_passe_par_la_citation(self):
+        """Un `os.execv` appelé en direct depuis `reload_source` contournerait
+        la citation — et ne se verrait pas, le chemin étant sans espace sur la
+        machine de celui qui écrirait le raccourci."""
+        self.assertNotIn("os.execv", inspect.getsource(sup.reload_source))
+        self.assertIn("exec_replace(argv)", inspect.getsource(sup.reload_source))
+
+    # -- le câblage --------------------------------------------------------- #
+
+    def test_la_boucle_recharge_et_retombe_sur_l_annonce(self):
+        """Un rechargement que personne n'appelle ne recharge rien, et l'annonce
+        de #369 doit rester le repli : elle dit quoi faire à la main quand le
+        rechargement a été refusé."""
+        code = inspect.getsource(sup.supervise)
+        _, borne, dedans = code.partition("while not stop_flag.is_set():")
+        indice = ("ce test lit le texte de supervise() : un renommage le casse "
+                  "sans que rien ne soit cassé — recoller le test au code")
+        self.assertTrue(borne, indice)
+        self.assertIn("reload_source(args, source_seen, legs", dedans, indice)
+        self.assertIn("announce_source_drift(source_seen)", dedans, indice)
+
+    def test_le_rechargement_est_place_entre_deux_appels(self):
+        """« Jamais avec un `claude -p` en vol » tient d'abord au placement :
+        après l'étape, avant l'arbitrage. `calls_in_flight()` n'est que la
+        vérification de ce que le texte garantit déjà."""
+        code = inspect.getsource(sup.supervise)
+        _, _, dedans = code.partition("while not stop_flag.is_set():")
+        self.assertLess(dedans.index("run_leg(args, legs)"),
+                        dedans.index("reload_source(args, source_seen, legs"))
+        self.assertLess(dedans.index("reload_source(args, source_seen, legs"),
+                        dedans.index("rescue(reasons)"))
+
+    def test_une_etape_coupee_par_le_quota_attend_avant_de_recharger(self):
+        """La retenue n'est inscrite que par `wait_for_quota`, et l'`info` qui
+        porte `resetsAt` ne survit pas à l'`execv`. Se recharger avant elle ferait
+        démarrer le processus neuf sans `quota.json` : ne trouvant aucune retenue
+        à respecter, il brûlerait aussitôt une étape de son budget dans une
+        fenêtre encore fermée. On attend, puis on se recharge."""
+        code = inspect.getsource(sup.supervise)
+        _, _, dedans = code.partition("while not stop_flag.is_set():")
+        self.assertIn('if issue != "quota":', dedans)
+        avant, borne, apres = dedans.partition(
+            "wait_for_quota(args, info or {}, stop_flag)")
+        self.assertTrue(borne, "l'attente du quota n'est plus reconnaissable — "
+                               "recoller le test au code")
+        self.assertIn("reload_source(args, source_seen, legs", avant,
+                      "l'étape ordinaire ne se recharge plus après son leg")
+        self.assertIn("reload_source(args, source_seen, legs", apres,
+                      "l'étape coupée par le quota ne se recharge jamais")
+
+    def test_l_arret_demande_est_transmis_a_la_decision(self):
+        """Sans cela, un Ctrl-C reçu pendant l'étape serait perdu par `execv` et
+        le superviseur repartirait pour un tour."""
+        code = inspect.getsource(sup.supervise)
+        self.assertIn("halting=stop_flag.is_set()", code)
 
 
 class GitLines(unittest.TestCase):
