@@ -110,6 +110,46 @@ Il rend `retry`, `fix` ou `skip`. Applique **celui-là**. Il tient compte de ce
 qui a déjà été tenté sur ce ticket et de la répétition de la même cause — deux
 choses qu'un appel neuf, qui repart d'un contexte vide, ne peut pas savoir.
 
+### Deux antériorités, qui ne pèsent pas pareil
+
+La sortie `--json` en tient **deux, séparées**, et la distinction est tout
+l'objet de la clé `voisinage` :
+
+| Clé | Ce qu'elle dit | Ce qu'elle vaut |
+|---|---|---|
+| `arbitrages` · `hors_run` | ce que **ce ticket-ci** a déjà coûté, dans ce run et dans les précédents | une **récidive** : deux crans, et elle peut aller jusqu'à `skip` |
+| `voisinage` | ce que la **même cause** a conclu sur d'**autres** tickets — `tickets`, `runs`, `dernier_cran` | un **renseignement** : un cran, et jamais plus |
+
+Les fondre serait perdre ce qui les sépare. « Ce ticket a déjà échoué là-dessus »
+se paie ; « la même panne a été conclue sur #117 et #208 » s'apprend.
+
+`voisinage.retenu` dit si la concordance atteint `seuil` et pèse donc sur le
+cran. C'est ce qui explique un `fix` rendu sur un ticket **jamais arbitré** :
+
+```json
+{
+  "ticket": 258, "cran": "fix",
+  "conduite": "intervenir soi-même sur la branche, puis rappeler la barrière",
+  "arbitrages": 0,
+  "hors_run": { "arbitrages": 0, "meme_cause": 0, "dernier_cran": null },
+  "voisinage": {
+    "tickets": [117, 208, 226], "arbitrages": 4, "dernier_cran": "skip",
+    "seuil": 1, "retenu": true, "plafond": "fix"
+  }
+}
+```
+
+Zéro arbitrage sur le ticket, et pourtant `fix` : ce n'est pas une anomalie, le
+voisinage a relevé le plancher. Un `retenu: false` avec des `tickets` non vides
+dit l'inverse — un voisinage existe mais reste sous le seuil, le cran l'ignore
+délibérément, il n'y a rien à corriger.
+
+**La borne, et elle est dure : `plafond` vaut `fix`.** Le voisinage relève un
+plancher, il ne s'ajoute jamais au-dessus et **ne peut pas écarter**. Un
+`dernier_cran: "skip"` chez un voisin ne t'autorise donc pas à écarter celui-ci :
+seule la récidive du ticket lui-même y mène. Écarter sur la foi d'un voisin
+reviendrait à condamner un ticket pour ce qu'un autre a fait.
+
 ### `retry` — le ticket repart
 
 Le geste le moins cher, et il suffit dans la plupart des cas : un agent tué par
