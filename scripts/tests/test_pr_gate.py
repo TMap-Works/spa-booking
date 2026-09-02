@@ -17,6 +17,15 @@ des PR de paiement ou d'infrastructure sur `develop` sans que personne ne le
 remarque. C'est le mode de défaillance que #111 dénonçait — un garde-fou qui ne
 se déclenche pas. D'où ce harnais, ouvert en #122.
 
+`sensitive()` décide *qui doit relire* ; `fitness()` et `assess()` décident *si
+l'on merge du tout*, et #122 avait laissé ces deux-là sans aucun test. #128 les
+couvre, avec les deux fonctions dont elles dépendent : `latest_only()`, qui
+choisit le passage à croire quand un workflow a été rejoué, et
+`check_entries()`, qui décide quelle conclusion vaut un vert. Leur mode de
+défaillance est le même que celui de `sensitive()` — non pas une erreur, mais un
+silence : une casse changée côté API, une conclusion oubliée, un passage périmé
+préféré au bon, et la barrière laisse merger sans un mot.
+
 Aucune dépendance : `unittest` de la bibliothèque standard. Le dépôt n'a pas de
 gestion de paquets Python, et la CI n'a ainsi qu'un interpréteur à poser.
 """
@@ -70,6 +79,38 @@ class FakeGh:
 def pr_stub(body="", labels=()):
     """La forme minimale d'une PR telle que `gh pr view --json` la rend."""
     return {"body": body, "labels": [{"name": name} for name in labels]}
+
+
+def check_run(workflow="CI", name="Tests", status="COMPLETED", conclusion="SUCCESS",
+              started="2026-08-25T10:00:00Z", completed="2026-08-25T10:01:00Z"):
+    """Une entrée `CheckRun` du rollup — la forme qu'ont nos workflows GitHub."""
+    return {"__typename": "CheckRun", "workflowName": workflow, "name": name,
+            "status": status, "conclusion": conclusion,
+            "startedAt": started, "completedAt": completed}
+
+
+def status_context(context="couverture", state="SUCCESS"):
+    """Une entrée `StatusContext` — l'autre forme, celle d'un statut externe.
+
+    Elle n'a ni `status`, ni `conclusion`, ni horodatage : c'est tout l'intérêt
+    de la normaliser, et toute la raison pour laquelle `latest_only()` et
+    `check_entries()` la traitent à part.
+    """
+    return {"__typename": "StatusContext", "context": context, "state": state}
+
+
+def rollup_pr(rollup, **overrides):
+    """Une PR par ailleurs irréprochable : seul le rollup — ou ce qu'on surcharge — varie.
+
+    Partir d'une PR apte est délibéré : `assess()` refuse sur l'inaptitude avant
+    de regarder le moindre check, si bien qu'un stub incomplet ferait passer
+    n'importe quel test de CI pour vert sans jamais lire son rollup.
+    """
+    pr = {"state": "OPEN", "isDraft": False, "baseRefName": "develop",
+          "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
+          "statusCheckRollup": rollup}
+    pr.update(overrides)
+    return pr
 
 
 class TestUnattended(unittest.TestCase):
@@ -335,6 +376,629 @@ class TestSensitive(unittest.TestCase):
         self.assertEqual(reasons, ["label mod:payments"])
 
 
+class TestFitness(unittest.TestCase):
+    """`fitness()` — ce qui rend une PR inapte au merge, CI mise à part.
+
+    Cinq refus, chacun suspendu à une valeur d'API précise. Une casse ou un nom
+    de champ qui changerait côté GitHub les rendrait muets **sans rien casser de
+    visible** : la barrière laisserait alors merger un brouillon ou une PR en
+    conflit, et le seul symptôme serait un merge qu'on n'attendait pas.
+    """
+
+    def fitness(self, base="develop", **overrides):
+        """`fitness()` sur une PR apte dont on ne change qu'un champ."""
+        return pr_gate.fitness(rollup_pr([], **overrides), base)
+
+    # --- les cinq refus, un par un ----------------------------------------
+
+    def test_pr_fermee(self):
+        self.assertEqual(self.fitness(state="CLOSED"),
+                         "la PR est closed, pas ouverte")
+
+    def test_pr_deja_mergee(self):
+        # Le cas d'une reprise de jalon qui rejoue la barrière sur une PR déjà
+        # partie : il doit refuser, pas re-merger.
+        self.assertEqual(self.fitness(state="MERGED"),
+                         "la PR est merged, pas ouverte")
+
+    def test_pr_en_brouillon(self):
+        self.assertEqual(self.fitness(isDraft=True), "la PR est en brouillon")
+
+    def test_mauvaise_base(self):
+        self.assertEqual(self.fitness(baseRefName="main"),
+                         "la PR cible main au lieu de develop")
+
+    def test_pr_en_conflit(self):
+        self.assertEqual(self.fitness(mergeable="CONFLICTING"),
+                         "la PR est en conflit avec sa base")
+
+    def test_base_divergee(self):
+        self.assertEqual(self.fitness(mergeStateStatus="DIRTY"),
+                         "la base a divergé, la PR doit être rebasée")
+
+    def test_les_cinq_motifs_sont_distincts(self):
+        """Cinq refus qui rendraient le même message n'en feraient qu'un.
+
+        C'est ce message que l'opérateur lit dans le journal du run : deux
+        motifs confondus, et le diagnostic désigne la mauvaise cause.
+        """
+        motifs = [self.fitness(state="CLOSED"),
+                  self.fitness(isDraft=True),
+                  self.fitness(baseRefName="main"),
+                  self.fitness(mergeable="CONFLICTING"),
+                  self.fitness(mergeStateStatus="DIRTY")]
+        self.assertEqual(len(set(motifs)), 5)
+        self.assertNotIn(None, motifs)
+
+    # --- le cas apte ------------------------------------------------------
+
+    def test_pr_apte(self):
+        self.assertIsNone(self.fitness())
+
+    def test_brouillon_absent_ou_faux(self):
+        for value in (None, False):
+            with self.subTest(isDraft=value):
+                self.assertIsNone(self.fitness(isDraft=value))
+
+    def test_la_base_attendue_decide_seule(self):
+        # `--base staging` existe : c'est l'attente passée en argument qui fait
+        # foi, pas le nom `develop` écrit en dur quelque part.
+        self.assertIsNone(self.fitness(base="staging", baseRefName="staging"))
+        self.assertEqual(self.fitness(base="staging"),
+                         "la PR cible develop au lieu de staging")
+
+    # --- ce qui ne doit PAS refuser ---------------------------------------
+
+    def test_fusion_en_calcul_n_est_pas_une_inaptitude(self):
+        # `UNKNOWN` dit que GitHub calcule encore : c'est une attente, et c'est
+        # `assess()` qui la tranche. La refuser ici rendrait 3 (« inapte »,
+        # définitif) là où la barrière doit rendre 1 (« en cours », réessayable).
+        self.assertIsNone(self.fitness(mergeable="UNKNOWN"))
+
+    def test_etats_de_fusion_transitoires(self):
+        # BLOCKED, BEHIND et UNSTABLE décrivent l'état des checks, pas celui de
+        # la fusion : les refuser doublerait le verdict de la CI, en pire — sans
+        # attente ni réessai.
+        for status in ("BLOCKED", "BEHIND", "UNSTABLE", "HAS_HOOKS", "UNKNOWN"):
+            with self.subTest(mergeStateStatus=status):
+                self.assertIsNone(self.fitness(mergeStateStatus=status))
+
+    def test_champs_de_fusion_absents_ou_vides(self):
+        # `gh` ne développe pas toujours ces champs. Absents, ils ne doivent
+        # rien refuser : c'est `assess()` qui exige des checks, et une PR sans
+        # check est déjà bloquée par ailleurs.
+        for value in (None, ""):
+            with self.subTest(valeur=value):
+                self.assertIsNone(self.fitness(mergeable=value,
+                                               mergeStateStatus=value))
+
+    # --- la casse et l'ordre ----------------------------------------------
+
+    def test_valeurs_en_minuscules_refusent_quand_meme(self):
+        """`.upper()` protège d'une casse changée côté API.
+
+        Sans lui, un `conflicting` en minuscules passerait la barrière sans un
+        mot — exactement le mode de défaillance que ce harnais surveille.
+        """
+        self.assertEqual(self.fitness(mergeable="conflicting"),
+                         "la PR est en conflit avec sa base")
+        self.assertEqual(self.fitness(mergeStateStatus="dirty"),
+                         "la base a divergé, la PR doit être rebasée")
+
+    def test_le_motif_le_plus_structurant_l_emporte(self):
+        # Une PR fermée l'est quels que soient ses conflits : annoncer le
+        # conflit enverrait rebaser une PR qu'il faut d'abord rouvrir.
+        self.assertEqual(
+            self.fitness(state="CLOSED", isDraft=True, baseRefName="main",
+                         mergeable="CONFLICTING", mergeStateStatus="DIRTY"),
+            "la PR est closed, pas ouverte")
+
+    def test_le_brouillon_passe_avant_la_base(self):
+        self.assertEqual(self.fitness(isDraft=True, baseRefName="main"),
+                         "la PR est en brouillon")
+
+
+class TestLatestOnly(unittest.TestCase):
+    """`latest_only()` — pour un même check, ne garder que son dernier passage.
+
+    C'est la fonction la plus subtile du fichier, et la seule dont une erreur
+    peut déclarer **vert sur un résultat périmé**. Un workflow rejoué — titre de
+    PR corrigé, `gh run rerun`, PR rouverte — attache au même commit un check
+    run de plus sans retirer le précédent. Compter l'ancien condamnerait la PR à
+    vie ; ne pas préférer le passage en cours la déclarerait verte pendant que
+    la nouvelle exécution tourne encore.
+    """
+
+    def kept(self, rollup):
+        """Les entrées retenues, réduites à ce qui les distingue."""
+        return sorted((item.get("name") or item.get("context"),
+                       item.get("conclusion") or item.get("state") or "")
+                      for item in pr_gate.latest_only(rollup))
+
+    # --- la déduplication -------------------------------------------------
+
+    def test_passage_rejoue_seul_le_dernier_compte(self):
+        vieux = check_run(conclusion="FAILURE", started="2026-08-25T10:00:00Z",
+                          completed="2026-08-25T10:05:00Z")
+        neuf = check_run(conclusion="SUCCESS", started="2026-08-25T11:00:00Z",
+                         completed="2026-08-25T11:05:00Z")
+        self.assertEqual(self.kept([vieux, neuf]), [("Tests", "SUCCESS")])
+
+    def test_l_ordre_d_arrivee_est_indifferent(self):
+        # Le rollup n'est pas trié : se fier à sa position rendrait le verdict
+        # dépendant de l'ordre où GitHub a écrit les entrées.
+        vieux = check_run(conclusion="FAILURE", started="2026-08-25T10:00:00Z")
+        neuf = check_run(conclusion="SUCCESS", started="2026-08-25T11:00:00Z")
+        self.assertEqual(self.kept([neuf, vieux]), [("Tests", "SUCCESS")])
+        self.assertEqual(self.kept([vieux, neuf]), [("Tests", "SUCCESS")])
+
+    def test_completedAt_departage_deux_passages_de_la_meme_seconde(self):
+        # Deux relances lancées dans la même seconde ont le même `startedAt` :
+        # sans second critère, le gagnant dépendrait de l'ordre du rollup.
+        vieux = check_run(conclusion="FAILURE", started="2026-08-25T10:00:00Z",
+                          completed="2026-08-25T10:04:00Z")
+        neuf = check_run(conclusion="SUCCESS", started="2026-08-25T10:00:00Z",
+                         completed="2026-08-25T10:09:00Z")
+        # Les deux ordres, sinon le test passerait tout autant sans ce second
+        # critère : à rangs égaux, c'est la première entrée vue qui est gardée.
+        self.assertEqual(self.kept([neuf, vieux]), [("Tests", "SUCCESS")])
+        self.assertEqual(self.kept([vieux, neuf]), [("Tests", "SUCCESS")])
+
+    def test_un_echec_perime_ne_condamne_plus_la_pr(self):
+        """L'effet recherché, vu du verdict.
+
+        Rien de ce qu'on pousse ne détache un échec déjà inscrit sur un commit :
+        sans déduplication, la seule issue serait de réécrire l'historique pour
+        obtenir un SHA neuf — tordre le dépôt pour satisfaire la barrière.
+        """
+        code, message, checks = pr_gate.assess(rollup_pr([
+            check_run(conclusion="FAILURE", started="2026-08-25T10:00:00Z"),
+            check_run(conclusion="SUCCESS", started="2026-08-25T11:00:00Z"),
+        ]), "develop", False)
+        self.assertEqual(code, pr_gate.GREEN)
+        self.assertEqual(message, "1 check(s) au vert")
+        self.assertEqual(checks, [("CI / Tests", "pass", "SUCCESS")])
+
+    # --- un passage en cours l'emporte toujours ---------------------------
+
+    def test_un_passage_en_cours_l_emporte_sur_un_termine_plus_recent(self):
+        """La règle qui protège du « vert sur résultat périmé ».
+
+        Un check run encore en file n'a pas forcément de `startedAt`
+        exploitable : le comparer par les dates ferait gagner l'ancien, et la
+        barrière déclarerait vert pendant que la nouvelle exécution tourne.
+        """
+        termine = check_run(conclusion="SUCCESS", started="2026-08-25T12:00:00Z",
+                            completed="2026-08-25T12:05:00Z")
+        en_cours = check_run(status="QUEUED", conclusion=None,
+                             started=None, completed=None)
+        self.assertEqual(self.kept([termine, en_cours]), [("Tests", "")])
+        self.assertEqual(self.kept([en_cours, termine]), [("Tests", "")])
+
+    def test_une_relance_en_cours_fait_attendre_malgre_un_succes_anterieur(self):
+        code, message, _ = pr_gate.assess(rollup_pr([
+            check_run(conclusion="SUCCESS", started="2026-08-25T12:00:00Z"),
+            check_run(status="IN_PROGRESS", conclusion=None,
+                      started=None, completed=None),
+        ]), "develop", False)
+        self.assertEqual(code, pr_gate.PENDING)
+        self.assertEqual(message, "1 check(s) en cours")
+
+    def test_termine_sans_conclusion_compte_comme_en_cours(self):
+        # `COMPLETED` sans conclusion est un état transitoire de l'API : le
+        # prendre pour un passage clos ferait gagner une entrée qui ne dit rien.
+        sans_verdict = check_run(status="COMPLETED", conclusion=None,
+                                 started="2026-08-25T09:00:00Z")
+        termine = check_run(conclusion="SUCCESS", started="2026-08-25T12:00:00Z")
+        self.assertEqual(self.kept([termine, sans_verdict]), [("Tests", "")])
+
+    def test_deux_passages_en_cours_se_departagent_par_la_date(self):
+        vieux = check_run(status="QUEUED", conclusion=None, name="Tests",
+                          started="2026-08-25T10:00:00Z", completed=None)
+        neuf = check_run(status="IN_PROGRESS", conclusion=None, name="Tests",
+                         started="2026-08-25T11:00:00Z", completed=None)
+        retenus = pr_gate.latest_only([vieux, neuf])
+        self.assertEqual([item["status"] for item in retenus], ["IN_PROGRESS"])
+
+    # --- ce qui ne doit PAS être dédupliqué -------------------------------
+
+    def test_deux_jobs_du_meme_workflow_coexistent(self):
+        self.assertEqual(
+            self.kept([check_run(name="Tests"), check_run(name="Lint")]),
+            [("Lint", "SUCCESS"), ("Tests", "SUCCESS")])
+
+    def test_deux_workflows_avec_le_meme_nom_de_job_coexistent(self):
+        # Dédupliquer sur le seul nom de job masquerait l'échec de l'un des deux.
+        retenus = pr_gate.latest_only([
+            check_run(workflow="CI", name="Tests", conclusion="SUCCESS"),
+            check_run(workflow="Terraform", name="Tests", conclusion="FAILURE"),
+        ])
+        self.assertEqual(
+            sorted((item["workflowName"], item["conclusion"]) for item in retenus),
+            [("CI", "SUCCESS"), ("Terraform", "FAILURE")])
+
+    def test_un_job_matriciel_garde_ses_variantes(self):
+        # Deux passages d'un même workflow ne coexistent pas dans un run : un
+        # job matriciel porte ses paramètres dans son nom, et reste distinct.
+        self.assertEqual(
+            self.kept([check_run(name="Tests (node 20)", conclusion="SUCCESS"),
+                       check_run(name="Tests (node 22)", conclusion="FAILURE")]),
+            [("Tests (node 20)", "SUCCESS"), ("Tests (node 22)", "FAILURE")])
+
+    def test_un_statut_externe_et_un_check_homonymes_ne_se_confondent_pas(self):
+        # Ils ne viennent pas de la même source : les confondre ferait taire le
+        # rouge de l'un au nom du vert de l'autre.
+        retenus = pr_gate.latest_only([
+            status_context(context="Tests", state="FAILURE"),
+            check_run(workflow="", name="Tests", conclusion="SUCCESS"),
+        ])
+        self.assertEqual(len(retenus), 2)
+
+    # --- les statuts externes ---------------------------------------------
+
+    def test_statuts_externes_dedupliques_par_contexte(self):
+        retenus = pr_gate.latest_only([
+            status_context(context="couverture", state="FAILURE"),
+            status_context(context="couverture", state="SUCCESS"),
+        ])
+        self.assertEqual(len(retenus), 1)
+
+    def test_un_statut_externe_en_attente_l_emporte(self):
+        # Un `StatusContext` n'a aucun horodatage : seule la règle « en cours
+        # l'emporte » peut le départager, dans un sens comme dans l'autre.
+        for etat in ("PENDING", "EXPECTED"):
+            with self.subTest(state=etat):
+                self.assertEqual(
+                    self.kept([status_context(state="SUCCESS"),
+                               status_context(state=etat)]),
+                    [("couverture", etat)])
+                self.assertEqual(
+                    self.kept([status_context(state=etat),
+                               status_context(state="SUCCESS")]),
+                    [("couverture", etat)])
+
+    def test_statut_externe_en_attente_reconnu_quelle_que_soit_la_casse(self):
+        self.assertEqual(
+            self.kept([status_context(state="SUCCESS"),
+                       status_context(state="pending")]),
+            [("couverture", "pending")])
+
+    # --- les cas dégénérés ------------------------------------------------
+
+    def test_rollup_vide_ou_absent(self):
+        for rollup in ([], None):
+            with self.subTest(rollup=rollup):
+                self.assertEqual(pr_gate.latest_only(rollup), [])
+
+    def test_entree_sans_le_moindre_champ(self):
+        # Une entrée nue reste une entrée : la perdre ferait disparaître un
+        # check du décompte, donc un vert de plus dans le verdict.
+        self.assertEqual(len(pr_gate.latest_only([{}])), 1)
+
+
+class TestCheckEntries(unittest.TestCase):
+    """`check_entries()` — la normalisation du rollup hétérogène de GitHub.
+
+    Deux formes (`CheckRun`, `StatusContext`), trois états (`pass`, `pending`,
+    `fail`). C'est ici que se décide ce qui passe : `SKIPPED` et `NEUTRAL`
+    passent — sans quoi `terraform.yml` filtré par chemin et
+    `project-automation.yml` sans `PROJECT_TOKEN` bloqueraient tous les merges —
+    tandis que `CANCELLED` et `TIMED_OUT` bloquent.
+    """
+
+    def entry(self, item):
+        entries = list(pr_gate.check_entries([item]))
+        self.assertEqual(len(entries), 1, "une entrée du rollup, une sortie")
+        return entries[0]
+
+    # --- ce qui passe -----------------------------------------------------
+
+    def test_conclusions_qui_passent(self):
+        for conclusion in ("SUCCESS", "SKIPPED", "NEUTRAL"):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(self.entry(check_run(conclusion=conclusion)),
+                                 ("CI / Tests", "pass", conclusion))
+
+    def test_skipped_et_neutral_ne_sont_pas_des_attentes(self):
+        # Les compter en attente serait pire qu'un refus franc : la barrière
+        # sonderait jusqu'au délai un workflow qui ne conclura jamais autrement.
+        for conclusion in ("SKIPPED", "NEUTRAL"):
+            with self.subTest(conclusion=conclusion):
+                self.assertNotEqual(
+                    self.entry(check_run(conclusion=conclusion))[1], "pending")
+
+    def test_la_liste_des_conclusions_passantes_est_close(self):
+        """Trois conclusions passent, et trois seulement.
+
+        En ajouter une ici — `CANCELLED` par mégarde — ouvrirait la barrière
+        sans qu'aucun autre test ne le remarque.
+        """
+        self.assertEqual(pr_gate.PASSING, {"SUCCESS", "SKIPPED", "NEUTRAL"})
+
+    # --- ce qui bloque ----------------------------------------------------
+
+    def test_conclusions_qui_bloquent(self):
+        for conclusion in ("FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED",
+                           "STARTUP_FAILURE", "STALE"):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(self.entry(check_run(conclusion=conclusion)),
+                                 ("CI / Tests", "fail", conclusion))
+
+    def test_cancelled_et_timed_out_ne_sont_ni_passants_ni_en_attente(self):
+        """Les deux conclusions que l'on serait tenté de tolérer.
+
+        Un run annulé n'a rien prouvé, un run expiré non plus. Les traiter en
+        attente ferait tourner la barrière jusqu'à son propre délai ; les
+        traiter en passants mergerait sur du vide.
+        """
+        for conclusion in ("CANCELLED", "TIMED_OUT"):
+            with self.subTest(conclusion=conclusion):
+                self.assertEqual(self.entry(check_run(conclusion=conclusion))[1],
+                                 "fail")
+
+    # --- ce qui fait attendre ---------------------------------------------
+
+    def test_statuts_en_cours(self):
+        for status in ("QUEUED", "IN_PROGRESS", "WAITING", "PENDING", "REQUESTED"):
+            with self.subTest(status=status):
+                self.assertEqual(
+                    self.entry(check_run(status=status, conclusion=None)),
+                    ("CI / Tests", "pending", status))
+
+    def test_un_passage_relance_peut_porter_l_ancienne_conclusion(self):
+        # Le statut prime sur la conclusion : une entrée non terminée qui traîne
+        # encore le verdict du passage précédent doit faire attendre, pas passer.
+        self.assertEqual(
+            self.entry(check_run(status="IN_PROGRESS", conclusion="SUCCESS")),
+            ("CI / Tests", "pending", "IN_PROGRESS"))
+
+    def test_termine_sans_conclusion_fait_attendre(self):
+        self.assertEqual(
+            self.entry(check_run(status="COMPLETED", conclusion=None)),
+            ("CI / Tests", "pending", "COMPLETED"))
+
+    def test_ni_statut_ni_conclusion(self):
+        self.assertEqual(self.entry({"__typename": "CheckRun", "name": "Tests"}),
+                         ("Tests", "pending", "PENDING"))
+
+    # --- la casse ---------------------------------------------------------
+
+    def test_casse_ignoree_sur_la_conclusion(self):
+        self.assertEqual(self.entry(check_run(conclusion="success"))[1], "pass")
+        self.assertEqual(self.entry(check_run(conclusion="failure")),
+                         ("CI / Tests", "fail", "FAILURE"))
+
+    def test_casse_ignoree_sur_le_statut(self):
+        self.assertEqual(
+            self.entry(check_run(status="in_progress", conclusion=None)),
+            ("CI / Tests", "pending", "IN_PROGRESS"))
+
+    # --- le nom rendu, celui que l'opérateur lit --------------------------
+
+    def test_nom_compose_du_workflow_et_du_job(self):
+        self.assertEqual(self.entry(check_run(workflow="CI", name="Lint"))[0],
+                         "CI / Lint")
+
+    def test_nom_non_redondant(self):
+        # Un workflow d'un seul job porte le même nom que lui : « CI / CI »
+        # n'apprendrait rien.
+        self.assertEqual(self.entry(check_run(workflow="CI", name="CI"))[0], "CI")
+
+    def test_nom_sans_workflow(self):
+        for workflow in (None, ""):
+            with self.subTest(workflowName=workflow):
+                self.assertEqual(self.entry(check_run(workflow=workflow,
+                                                      name="Tests"))[0], "Tests")
+
+    def test_nom_absent(self):
+        self.assertEqual(self.entry({"__typename": "CheckRun"})[0], "check")
+
+    # --- les statuts externes ---------------------------------------------
+
+    def test_statut_externe_reussi(self):
+        self.assertEqual(self.entry(status_context(state="SUCCESS")),
+                         ("couverture", "pass", "SUCCESS"))
+
+    def test_statut_externe_en_attente(self):
+        for state in ("PENDING", "EXPECTED"):
+            with self.subTest(state=state):
+                self.assertEqual(self.entry(status_context(state=state)),
+                                 ("couverture", "pending", state))
+
+    def test_statut_externe_en_echec(self):
+        for state in ("FAILURE", "ERROR"):
+            with self.subTest(state=state):
+                self.assertEqual(self.entry(status_context(state=state)),
+                                 ("couverture", "fail", state))
+
+    def test_statut_externe_sans_etat_bloque(self):
+        # Fail-closed : un statut externe qu'on ne sait pas lire n'est pas un
+        # statut vert.
+        self.assertEqual(self.entry(status_context(state="")),
+                         ("couverture", "fail", "INCONNU"))
+
+    def test_statut_externe_sans_contexte(self):
+        self.assertEqual(self.entry({"__typename": "StatusContext",
+                                     "state": "SUCCESS"})[0], "statut externe")
+
+    def test_statut_externe_casse_ignoree(self):
+        self.assertEqual(self.entry(status_context(state="success"))[1], "pass")
+        self.assertEqual(self.entry(status_context(state="pending"))[1], "pending")
+
+    # --- le rollup entier -------------------------------------------------
+
+    def test_rollup_vide_ou_absent(self):
+        for rollup in ([], None):
+            with self.subTest(rollup=rollup):
+                self.assertEqual(list(pr_gate.check_entries(rollup)), [])
+
+    def test_les_deux_formes_melangees(self):
+        entries = list(pr_gate.check_entries([
+            check_run(name="Tests", conclusion="SKIPPED"),
+            status_context(context="couverture", state="FAILURE"),
+        ]))
+        self.assertEqual(entries, [("CI / Tests", "pass", "SKIPPED"),
+                                   ("couverture", "fail", "FAILURE")])
+
+
+class TestAssess(unittest.TestCase):
+    """`assess()` — l'unique endroit qui décide, et l'ordre dans lequel il décide.
+
+    Cet ordre **est** la décision. Un échec doit l'emporter sur une attente,
+    sans quoi la barrière sonderait jusqu'à son délai une PR déjà perdue ; une
+    attente doit l'emporter sur un vert, sans quoi elle mergerait avant la fin ;
+    et l'absence de check doit bloquer, parce qu'elle signifie qu'aucun workflow
+    ne s'est déclenché, pas que tout va bien.
+    """
+
+    def assess(self, rollup, allow_no_checks=False, base="develop", **overrides):
+        return pr_gate.assess(rollup_pr(rollup, **overrides), base, allow_no_checks)
+
+    # --- l'inaptitude court-circuite la CI --------------------------------
+
+    def test_inaptitude_prioritaire_sur_tout(self):
+        # Diagnostiquer la CI d'un brouillon enverrait corriger des checks alors
+        # que la PR n'est pas même candidate.
+        code, message, checks = self.assess(
+            [check_run(conclusion="FAILURE")], isDraft=True)
+        self.assertEqual(code, pr_gate.UNFIT)
+        self.assertEqual(message, "la PR est en brouillon")
+        self.assertEqual(checks, [])
+
+    def test_inaptitude_meme_sans_le_moindre_check(self):
+        code, message, _ = self.assess(None, state="CLOSED")
+        self.assertEqual(code, pr_gate.UNFIT)
+        self.assertEqual(message, "la PR est closed, pas ouverte")
+
+    # --- l'ordre entre échec, attente et vert -----------------------------
+
+    def test_tout_au_vert(self):
+        code, message, _ = self.assess([check_run(name="Tests"),
+                                        check_run(name="Lint")])
+        self.assertEqual(code, pr_gate.GREEN)
+        self.assertEqual(message, "2 check(s) au vert")
+
+    def test_echec_prioritaire_sur_attente(self):
+        code, message, _ = self.assess([
+            check_run(name="Tests", conclusion="FAILURE"),
+            check_run(name="Build", status="QUEUED", conclusion=None),
+        ])
+        self.assertEqual(code, pr_gate.FAILED)
+        self.assertEqual(message, "1 check(s) en échec")
+
+    def test_attente_prioritaire_sur_le_vert(self):
+        code, message, _ = self.assess([
+            check_run(name="Tests"),
+            check_run(name="Build", status="IN_PROGRESS", conclusion=None),
+        ])
+        self.assertEqual(code, pr_gate.PENDING)
+        self.assertEqual(message, "1 check(s) en cours")
+
+    def test_les_echecs_sont_comptes(self):
+        code, message, _ = self.assess([
+            check_run(name="Tests", conclusion="FAILURE"),
+            check_run(name="Lint", conclusion="CANCELLED"),
+            check_run(name="Build"),
+        ])
+        self.assertEqual(code, pr_gate.FAILED)
+        self.assertEqual(message, "2 check(s) en échec")
+
+    # --- la fusion que GitHub calcule encore ------------------------------
+
+    def test_fusion_inconnue_fait_attendre(self):
+        # `mergeable: UNKNOWN` : GitHub calcule encore la fusion et refuserait
+        # le merge. Passer outre échouerait au moment d'agir, sans réessai.
+        code, message, checks = self.assess([check_run()], mergeable="UNKNOWN")
+        self.assertEqual(code, pr_gate.PENDING)
+        self.assertEqual(message, "GitHub calcule encore la fusion")
+        self.assertEqual([name for name, _, _ in checks], ["CI / Tests"])
+
+    def test_fusion_inconnue_quelle_que_soit_la_casse(self):
+        code, _, _ = self.assess([check_run()], mergeable="unknown")
+        self.assertEqual(code, pr_gate.PENDING)
+
+    def test_echec_prioritaire_sur_la_fusion_en_calcul(self):
+        # Un échec est définitif, la fusion en calcul ne l'est pas : rendre 1
+        # ferait sonder jusqu'au délai une PR qu'il faut réparer maintenant.
+        code, message, _ = self.assess([check_run(conclusion="FAILURE")],
+                                       mergeable="UNKNOWN")
+        self.assertEqual(code, pr_gate.FAILED)
+        self.assertEqual(message, "1 check(s) en échec")
+
+    def test_attente_de_check_annoncee_avant_la_fusion(self):
+        # Les deux rendent 1 ; c'est le message qui change, et c'est lui que
+        # l'opérateur lit pour savoir ce qu'on attend.
+        code, message, _ = self.assess(
+            [check_run(status="QUEUED", conclusion=None)], mergeable="UNKNOWN")
+        self.assertEqual(code, pr_gate.PENDING)
+        self.assertEqual(message, "1 check(s) en cours")
+
+    def test_fusion_absente_ou_vide_ne_fait_pas_attendre(self):
+        for value in (None, "", "MERGEABLE"):
+            with self.subTest(mergeable=value):
+                code, _, _ = self.assess([check_run()], mergeable=value)
+                self.assertEqual(code, pr_gate.GREEN)
+
+    # --- aucun check déclaré ----------------------------------------------
+
+    def test_aucun_check_bloque(self):
+        """Le cas qui doit bloquer, et qu'on prendrait volontiers pour un vert.
+
+        Une PR sans aucun check ne dit pas que tout va bien : elle dit
+        qu'aucun workflow ne s'est déclenché.
+        """
+        for rollup in ([], None):
+            with self.subTest(rollup=rollup):
+                code, message, checks = self.assess(rollup)
+                self.assertEqual(code, pr_gate.PENDING)
+                self.assertEqual(message, "aucun check déclaré pour l'instant")
+                self.assertEqual(checks, [])
+
+    def test_aucun_check_tolere_par_le_drapeau(self):
+        code, message, checks = self.assess([], allow_no_checks=True)
+        self.assertEqual(code, pr_gate.GREEN)
+        self.assertEqual(message, "aucun check déclaré (toléré)")
+        self.assertEqual(checks, [])
+
+    def test_le_drapeau_ne_tolere_que_l_absence(self):
+        # `--allow-no-checks` dit « aucun workflow ne tourne sur cette PR », pas
+        # « ignore les checks » : il ne doit rien excuser d'autre.
+        code, message, _ = self.assess([check_run(conclusion="FAILURE")],
+                                       allow_no_checks=True)
+        self.assertEqual(code, pr_gate.FAILED)
+        self.assertEqual(message, "1 check(s) en échec")
+
+    def test_le_drapeau_ne_raccourcit_pas_une_attente(self):
+        code, message, _ = self.assess(
+            [check_run(status="QUEUED", conclusion=None)], allow_no_checks=True)
+        self.assertEqual(code, pr_gate.PENDING)
+        self.assertEqual(message, "1 check(s) en cours")
+
+    # --- ce que le verdict rend à l'affichage -----------------------------
+
+    def test_les_checks_rendus_alimentent_l_affichage(self):
+        # `main()` les passe à `show()` : un verdict sans détail laisserait
+        # l'opérateur avec un code de sortie et rien pour le comprendre.
+        _, _, checks = self.assess([check_run(name="Tests", conclusion="FAILURE"),
+                                    check_run(name="Lint", conclusion="SKIPPED")])
+        self.assertEqual(sorted(checks), [("CI / Lint", "pass", "SKIPPED"),
+                                          ("CI / Tests", "fail", "FAILURE")])
+
+    def test_les_conclusions_tolerees_font_un_vert(self):
+        code, message, _ = self.assess([check_run(name="Terraform",
+                                                  conclusion="SKIPPED"),
+                                        check_run(name="Project",
+                                                  conclusion="NEUTRAL")])
+        self.assertEqual(code, pr_gate.GREEN)
+        self.assertEqual(message, "2 check(s) au vert")
+
+    def test_un_statut_externe_rouge_bloque(self):
+        code, message, _ = self.assess([check_run(),
+                                        status_context(state="FAILURE")])
+        self.assertEqual(code, pr_gate.FAILED)
+        self.assertEqual(message, "1 check(s) en échec")
+
+
 class TestSansLeWorkflowDAutoMerge(unittest.TestCase):
     """`assess()` — le workflow qui merge n'est pas un check qu'on attend.
 
@@ -349,18 +1013,14 @@ class TestSansLeWorkflowDAutoMerge(unittest.TestCase):
 
     JOB = "Merger les PR étiquetées et vertes"
 
-    def check(self, workflow, name, status="COMPLETED", conclusion="SUCCESS"):
-        return {"__typename": "CheckRun", "workflowName": workflow, "name": name,
-                "status": status, "conclusion": conclusion,
-                "startedAt": "2026-08-25T10:00:00Z",
-                "completedAt": "2026-08-25T10:01:00Z"}
+    # La fabrique partagée, sous le nom qu'utilisent les cas ci-dessous : deux
+    # stubs de check run qui divergeraient laisseraient un jour ces tests-ci
+    # passer sur une forme d'entrée que la barrière ne reçoit plus.
+    check = staticmethod(check_run)
 
     def assess(self, rollup):
         """`assess()` sur une PR par ailleurs irréprochable : seul le rollup varie."""
-        pr = {"state": "OPEN", "isDraft": False, "baseRefName": "develop",
-              "mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
-              "statusCheckRollup": rollup}
-        return pr_gate.assess(pr, "develop", False)
+        return pr_gate.assess(rollup_pr(rollup), "develop", False)
 
     # --- ce que la barrière ne doit plus voir -----------------------------
 
