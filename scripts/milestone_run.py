@@ -863,7 +863,7 @@ def orphaned(number, frontier, beats, fallback=False):
     return beat is None or iso_before(beat, frontier)
 
 
-def resume_context(number, worktrees):
+def resume_context(number, worktrees, branches=None):
     """Où reprendre un ticket déjà entamé — branche, travail présent, worktree.
 
     Rendue à l'orchestrateur par `gate`, cette ligne est ce qui empêche l'agent
@@ -871,11 +871,19 @@ def resume_context(number, worktrees):
     précédent.
 
     La **branche** est ce qui compte, et le chemin ne vient qu'après : voir
-    `resume_instruction()` pour pourquoi.
+    `resume_instruction()` pour pourquoi. C'est ce qui rend le second cas
+    possible (#249) : sans worktree, mais avec une branche **poussée**, il y a
+    encore tout à reprendre — le distant porte le travail, et il survit à la
+    disparition du worktree. Ne rien annoncer là faisait ouvrir une branche
+    neuve à l'agent relancé, qui abandonnait ce qui était déjà sur `origin`.
+
+    `branches` est le rendu de `remote_branches()`. Absent, la lecture est celle
+    d'avant : seuls les worktrees vivants donnent lieu à une reprise.
     """
     found = worktrees.get(number)
     if not found:
-        return None
+        branch = (branches or {}).get(number)
+        return remote_resume_context(branch) if branch else None
     detail = []
     ahead = git_lines(["log", "--oneline", f"origin/develop..{found['branch']}"])
     if ahead:
@@ -885,10 +893,33 @@ def resume_context(number, worktrees):
         detail.append(f"{len(dirty)} fichier(s) non commités")
     if not detail:
         detail.append("rien encore posé")
-    return {"path": found["path"], "branch": found["branch"],
+    return {"path": found["path"], "branch": found["branch"], "remote": False,
             "detail": ", ".join(detail),
             "commits": len(ahead), "dirty": len(dirty),
             "dirty_files": porcelain_paths(dirty)}
+
+
+def remote_resume_context(branch):
+    """Où reprendre un ticket dont il ne reste que la branche poussée (#249).
+
+    Le worktree a disparu — `worktree_gc` est passé, la machine a redémarré, un
+    `git worktree remove` l'a emporté — mais l'agent avait poussé. Tout ce qu'il
+    a fait est sur `origin`, et c'est là qu'on renvoie le suivant.
+
+    Rien de non commité à annoncer, par construction : ce qui n'était pas
+    commité est mort avec le worktree, et le distant ne porte que du commité.
+
+    Le décompte des commits est un **agrément**, pas une garantie : il se lit sur
+    la référence de suivi `origin/<branche>`, que le dépôt local ne connaît que
+    s'il a fetché depuis. Sans elle, `git_lines` rend une liste vide et on dit
+    simplement « branche poussée » — la commande de reprise, elle, commence par
+    `git fetch` et n'a besoin de rien de local.
+    """
+    ahead = git_lines(["log", "--oneline", f"origin/develop..origin/{branch}"])
+    posé = f"{len(ahead)} commit(s) poussé(s)" if ahead else "branche poussée"
+    return {"path": None, "branch": branch, "remote": True,
+            "detail": f"{posé}, aucune PR",
+            "commits": len(ahead), "dirty": 0, "dirty_files": []}
 
 
 def porcelain_paths(lines):
@@ -951,8 +982,33 @@ def resume_instruction(number, context):
     `BRANCH_RE` ne reconnaît pas — la garder, c'est casser le rapprochement
     branche ↔ ticket qu'on cherche justement à protéger. Là, on demande le
     renommage.
+
+    Le cas sans worktree (#249) suit la même logique, avec un geste de moins :
+    il n'y a aucun worktree à rejoindre ni aucun fichier en souffrance à relire,
+    seulement une branche distante à ramener. `checkout -B` la pose sur le suivi
+    d'`origin` qu'on vient de fetcher : si la branche locale du worktree disparu
+    traîne encore, `-B` la recale au lieu d'échouer.
+
+    `--ignore-other-worktrees` y reste nécessaire, pour la même raison que dans
+    le cas avec worktree : `-B` ne lève pas le refus de git quand la branche est
+    encore enregistrée comme sortie ailleurs — un worktree que `git worktree
+    prune` n'a pas encore ramassé suffit à faire échouer la commande, et un
+    agent bloqué là ouvre une branche neuve, c'est-à-dire exactement ce qu'on
+    cherche à empêcher.
     """
     branch = context["branch"]
+    if context.get("remote"):
+        # Une branche que `remote_branches()` a retenue satisfait BRANCH_RE par
+        # construction ; la mention est là pour l'appelant qui en forgerait une.
+        conforme = ("" if BRANCH_RE.match(branch)
+                    else f", puis `git branch -m {{type}}/{number}-{{slug}}` "
+                         "(nom non conforme)")
+        return [f"  #{number} À REPRENDRE sur origin/{branch} "
+                f"({context['detail']}) : depuis ton propre worktree, "
+                f"`git fetch origin {branch} && git checkout "
+                f"--ignore-other-worktrees -B {branch} "
+                f"origin/{branch}`{conforme} — le worktree a disparu, tout le "
+                f"travail est sur le distant ; ne pas ouvrir de branche neuve"]
     if BRANCH_RE.match(branch):
         nommage = "ne pas renommer la branche, ne pas en ouvrir une neuve"
     else:
@@ -1382,8 +1438,8 @@ def cmd_reconcile(args):
     # l'avertissement imprimé quatre lignes plus haut.
     if frontier and sondes_sures:
         print(f"dernière étape ouverte à {clock(frontier)} — les tickets restés "
-              "`running` sans rien journaliser depuis sont repris dans leur "
-              "worktree existant")
+              "`running` sans rien journaliser depuis sont repris sur leur "
+              "worktree existant, ou à défaut sur leur branche poussée")
 
     def abandonne(number):
         # Une sonde muette suspend ce raisonnement comme le reste : sans
@@ -1436,11 +1492,35 @@ def cmd_reconcile(args):
             why = (f"worktree vivant sur {worktree['branch']}"
                    + (", branche poussée" if branch else ", rien de poussé")
                    + (" (verrouillé)" if worktree["locked"] else ""))
+        elif branch and ticket["status"] in BAD:
+            # Le pendant du cas 3, sans worktree, et il devient indispensable
+            # avec le cas suivant : sans lui, un ticket tombé passait `running`
+            # sur la foi de sa branche, puis se faisait requeuer au tour d'après
+            # comme n'importe quel `running` abandonné. Deux relectures
+            # suffisaient à blanchir une décision qui n'appartient qu'à
+            # `retry N` — et à faire relancer par la vague un ticket que la
+            # pause sur erreur retenait.
+            target = ticket["status"]
+            why = f"ticket tombé — branche {branch} conservée"
+        elif branch and abandonne(number):
+            # Le travail est poussé et le worktree a disparu : personne ne tient
+            # plus ce ticket, et le laisser `running` le figeait jusqu'à un
+            # `retry` humain — `gate` ne lance que des `pending`. C'est le mode
+            # de panne de #180, réduit à cette fenêtre-là (#249).
+            #
+            # Requeuer était jusqu'ici jugé pire que figer, et pour une bonne
+            # raison : l'agent relancé serait reparti d'une branche neuve en
+            # abandonnant le distant. Ce n'est plus le cas — `resume_context`
+            # désigne la branche poussée exactement comme il désignait un
+            # worktree, et `gate` en donne la commande de récupération. Le
+            # travail est repris, pas perdu.
+            target = "pending"
+            why = (f"agent mort avec son étape — reprendre la branche poussée "
+                   f"origin/{branch}, aucune PR")
         elif branch:
-            # Le travail est poussé : il survit à tout, y compris à la
-            # suppression du worktree. Rien à reprendre en file — sans worktree,
-            # relancer un agent lui ferait repartir d'une branche neuve et
-            # abandonner ce qui est déjà sur le distant.
+            # Un agent journalise encore sur ce ticket : il est vivant, et sa
+            # branche poussée n'appelle rien de plus. C'est la protection de
+            # #130, transposée du worktree à la branche.
             target, why = "running", f"branche {branch} poussée, aucune PR"
         else:
             target, why = "pending", "ni branche ni PR ni worktree — jamais démarré"
@@ -2371,9 +2451,39 @@ def cmd_gate(args):
     # qui empêche l'agent relancé de repartir de zéro — ou, pire, de prendre
     # l'ancien worktree pour un vestige et de l'effacer.
     if ready:
+        # Les sondes se surveillent par marque plutôt que par `clear()` : `gate`
+        # peut être appelé plusieurs fois dans le même processus, et effacer la
+        # liste effacerait aussi ce qu'une sonde antérieure y a laissé.
+        marque = len(PROBE_FAILURES)
         worktrees = live_worktrees(worktree_claims(events))
+        locale_sure = len(PROBE_FAILURES) == marque
+        # Sans worktree, il reste la branche poussée — le seul endroit où le
+        # travail d'un agent mort après son push subsiste (#249). La sonde
+        # distante coûte un `git ls-remote` : ne la payer que si un ticket à
+        # lancer n'a effectivement pas de worktree où reprendre.
+        #
+        # Et seulement si la sonde **locale** a répondu : muette, elle rend le
+        # même dictionnaire vide qu'un ticket sans worktree, et chaque ticket à
+        # lancer se verrait annoncer « le worktree a disparu » alors qu'un
+        # worktree vivant porte peut-être du non commité — que le distant ne
+        # connaît pas. Même prudence que `reconcile` : une absence non constatée
+        # ne vaut pas une absence.
+        branches = {}
+        if not locale_sure:
+            print("sonde locale muette (" + " ; ".join(PROBE_FAILURES[marque:])
+                  + ") — aucune reprise annoncée : on ne sait pas si un "
+                    "worktree vivant porte le travail", file=sys.stderr)
+        elif not all(n in worktrees for n in ready):
+            marque = len(PROBE_FAILURES)
+            branches = remote_branches()
+            if len(PROBE_FAILURES) != marque:
+                print("sonde distante muette ("
+                      + " ; ".join(PROBE_FAILURES[marque:])
+                      + ") — une branche poussée peut rester non annoncée ; "
+                        "vérifier `git ls-remote` avant de lancer la vague",
+                      file=sys.stderr)
         for number in ready:
-            context = resume_context(number, worktrees)
+            context = resume_context(number, worktrees, branches)
             if context:
                 for line in resume_instruction(number, context):
                     print(line)
