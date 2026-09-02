@@ -584,6 +584,18 @@ class Motifs(unittest.TestCase):
         found = arb.motifs(self.payload(code=run_mod.PAUSE), ["gate_pause"])
         self.assertEqual(found.count("gate_pause"), 1)
 
+    def test_le_libelle_de_leg_sterile_nomme_le_commit_et_le_merge(self):
+        """Le libellé est ce que l'arbitre lit dans son dossier — il le briefe.
+
+        Depuis #278, le superviseur ne lève ce motif que si l'étape n'a produit
+        **ni commit ni merge** ; le dire « sans produire un commit » envoyait
+        chercher des commits manquants là où une étape peut n'avoir rien mergé
+        (#368). Les deux moitiés doivent être nommées.
+        """
+        libelle = arb.MOTIFS["leg_sterile"]
+        self.assertIn("commit", libelle)
+        self.assertIn("merge", libelle)
+
 
 class PauseHumaine(unittest.TestCase):
     """#262 — la pause qu'un humain a posée n'est pas un motif d'arbitrage.

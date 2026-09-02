@@ -139,7 +139,12 @@ MOTIFS = {
     "tickets_tombes": "un ou plusieurs tickets sont failed/blocked",
     "pr_en_souffrance": "une PR est ouverte sur un ticket qui n'avance plus",
     "leg_delai": "l'étape a été coupée au temps sans rendre la main",
-    "leg_sterile": "l'étape s'est terminée sans produire un commit",
+    # Les deux moitiés, et pas seulement le commit : depuis #278 le détecteur ne
+    # lève ce motif que si l'étape n'a rendu ni l'un ni l'autre. Une étape qui
+    # mène un ticket jusqu'au merge ne laisse aucune branche derrière elle, et la
+    # dire « sans commit » briefait l'arbitre à chercher ce qui n'a jamais manqué.
+    "leg_sterile": "l'étape s'est terminée sans rien rendre durable — ni commit "
+                   "sur une branche de ticket, ni merge imputé au run",
     "patience": "plusieurs étapes de suite sans un ticket de plus",
     "verify_rouge": "npm run verify est rouge sur develop",
     "fin_de_run": "le jalon est déroulé — passe d'anomalies",
