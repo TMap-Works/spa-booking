@@ -172,7 +172,9 @@ class AnterioriteHorsRun(unittest.TestCase):
         prior = [self.decision("retry", "abc")]
         self.assertEqual(arb.next_rung([], 226, None, prior=prior), "retry")
 
-    def test_l_anteriorite_d_un_autre_ticket_ne_compte_pas(self):
+    def test_l_anteriorite_d_un_autre_ticket_n_est_pas_une_recidive(self):
+        """Elle compte — c'est #366 — mais par le canal du voisinage, jamais par
+        celui du ticket : `prior` seul ne fait rien monter."""
         prior = [self.decision("retry", "abc", ticket=19)]
         self.assertEqual(arb.next_rung([], 226, "abc", prior=prior), "retry")
 
@@ -269,6 +271,228 @@ class AnterioriteHorsRun(unittest.TestCase):
 
         self.assertIn("hors run", out.getvalue())
         self.assertIn("même cause", out.getvalue())
+
+
+class AnterioriteDeLaCause(unittest.TestCase):
+    """#366 — la même panne sur deux tickets distincts, et ce qu'elle vaut.
+
+    #359 avait sorti l'antériorité des bornes du run, en la laissant bornée au
+    numéro d'issue. Or une cause structurelle ne frappe pas un ticket : elle
+    frappe tous ceux qui passent au même endroit — le classifieur qui refuse
+    l'écriture `.claude/**` a fait tomber #117, #137, #167, #208, #226 et #258.
+    Un ticket neuf portant la même empreinte se voyait donc encore rendre
+    `retry`, et produisait le même leg stérile.
+
+    Tout l'enjeu des tests ci-dessous est la **borne**, pas l'élargissement :
+    élargir sans plafonner ferait écarter un ticket sain sur la panne d'un
+    voisin, et le cran maximal étant `skip`, cela coûte un ticket. Le voisinage
+    relève donc le plancher à `fix` et s'arrête là.
+    """
+
+    @staticmethod
+    def decided(rung, sign, ticket, run="s1-fondations-20260826-221632",
+                ts="2026-08-26T23:04:11+00:00"):
+        return {"ts": ts, "motif": "leg_sterile", "ticket": ticket, "rung": rung,
+                "signature": sign, "run": run}
+
+    # -- le cran ---------------------------------------------------------- #
+
+    def test_deux_tickets_distincts_meme_signature(self):
+        """Le quatrième critère d'acceptation, mot pour mot : un ticket jamais
+        arbitré dont la cause a conclu sur un **autre** ticket ne repart pas en
+        `retry`."""
+        kin = [self.decided("retry", "abc", ticket=117)]
+        self.assertNotEqual(arb.next_rung([], 366, "abc", kin=kin), "retry")
+
+    def test_un_voisin_n_a_pas_le_poids_d_une_recidive(self):
+        """Le deuxième critère : la même antériorité vaut deux crans quand c'est
+        le ticket lui-même, un seul quand c'est son voisin."""
+        recidive = arb.next_rung([], 226, "abc",
+                                 prior=[self.decided("retry", "abc", ticket=226)])
+        voisin = arb.next_rung([], 366, "abc", kin=[self.decided("retry", "abc",
+                                                                 ticket=226)])
+        self.assertEqual(recidive, "skip")
+        self.assertEqual(voisin, "fix")
+
+    def test_le_voisinage_n_ecarte_jamais_a_lui_seul(self):
+        """Le risque que l'issue demande de ne pas prendre : une fausse
+        concordance coûte une correction, pas un ticket."""
+        for rung in arb.LADDER:
+            with self.subTest(cran_du_voisin=rung):
+                kin = [self.decided(rung, "abc", ticket=117)]
+                self.assertEqual(arb.next_rung([], 366, "abc", kin=kin), "fix")
+
+    def test_le_voisinage_ne_s_ajoute_pas_au_dossier_du_ticket(self):
+        """Il pose un plancher, il ne pousse pas : un ticket qui en serait déjà
+        à `fix` par son propre dossier n'est pas écarté parce qu'un voisin est
+        tombé sur la même panne."""
+        history = [{"ticket": 366, "rung": "retry", "signature": "zzz"}]
+        kin = [self.decided("skip", "abc", ticket=117)]
+        self.assertEqual(arb.next_rung(history, 366, "abc", kin=kin), "fix")
+
+    def test_une_cause_neuve_garde_sa_relance(self):
+        """Le voisinage ne vaut que par l'empreinte : un voisin tombé pour une
+        autre raison n'apprend rien sur ce ticket-ci."""
+        kin = arb.kin_arbitrations(366, "zzz",
+                                   rows=[self.decided("skip", "abc", ticket=117)])
+        self.assertEqual(kin, [])
+        self.assertEqual(arb.next_rung([], 366, "zzz", kin=kin), "retry")
+
+    def test_sans_empreinte_il_n_y_a_pas_de_voisinage(self):
+        """Un `None` rapproché d'un autre `None` les rapprocherait tous."""
+        rows = [self.decided("skip", None, ticket=117)]
+        self.assertEqual(arb.kin_arbitrations(366, None, rows=rows), [])
+
+    def test_le_ticket_ne_se_compte_pas_dans_son_propre_voisinage(self):
+        """Sans quoi sa récidive serait comptée deux fois, et le plancher du
+        voisinage viendrait s'ajouter aux deux crans qu'elle vaut déjà."""
+        rows = [self.decided("skip", "abc", ticket=366)]
+        self.assertEqual(arb.kin_arbitrations(366, "abc", rows=rows), [])
+
+    def test_une_ligne_sans_cran_n_est_pas_une_cause_conclue(self):
+        """`record` inscrit aussi la tenue de compte d'un motif traité ailleurs.
+        Rencontrer une panne n'est pas l'avoir conclue."""
+        rows = [self.decided(None, "abc", ticket=117)]
+        self.assertEqual(arb.kin_arbitrations(366, "abc", rows=rows), [])
+
+    def test_le_seuil_se_compte_en_tickets_distincts(self):
+        """Trois décisions sur un seul voisin restent un seul témoignage."""
+        kin = [self.decided("skip", "abc", ticket=117) for _ in range(3)]
+        self.assertEqual(arb.next_rung([], 366, "abc", kin=kin, kin_tickets=2),
+                         "retry")
+        kin.append(self.decided("skip", "abc", ticket=208))
+        self.assertEqual(arb.next_rung([], 366, "abc", kin=kin, kin_tickets=2),
+                         "fix")
+
+    def test_un_seuil_nul_ne_fabrique_pas_un_voisinage(self):
+        """Le plancher se lève sur des voisins, jamais sur un seuil : sans une
+        seule cause conclue ailleurs, un ticket neuf garde sa relance quel que
+        soit le seuil qu'on lui passe."""
+        self.assertEqual(arb.next_rung([], 366, "abc", kin=[], kin_tickets=0),
+                         "retry")
+        self.assertFalse(arb.kinship([], kin_tickets=0)["retenu"])
+
+    def test_le_plancher_ne_se_leve_que_sur_une_cause_conclue(self):
+        """`kin` est un argument : `next_rung` redit les restrictions plutôt que
+        de faire confiance à son appelant. Une ligne sans cran n'a rien conclu,
+        et un arbitrage de run (`ticket: null`) n'est le voisin de personne."""
+        for kin in ([self.decided(None, "abc", ticket=117)],
+                    [self.decided("retry", "abc", ticket=None)]):
+            with self.subTest(voisin=kin[0]):
+                self.assertEqual(arb.next_rung([], 366, "abc", kin=kin), "retry")
+
+    def test_le_budget_du_ticket_prime_sur_le_voisinage(self):
+        """Un ticket au bout de son budget s'écarte, et le plancher du voisinage
+        ne le retient pas à `fix`."""
+        history = [{"ticket": 366, "rung": "retry"}, {"ticket": 366, "rung": "fix"}]
+        kin = [self.decided("retry", "abc", ticket=117)]
+        self.assertEqual(arb.next_rung(history, 366, "abc", per_ticket=2, kin=kin),
+                         "skip")
+
+    # -- la lecture du disque --------------------------------------------- #
+
+    def test_le_voisinage_traverse_les_runs_y_compris_le_courant(self):
+        """Contrairement à l'antériorité du ticket : une cause structurelle
+        frappe volontiers deux tickets de la même vague."""
+        rows = [self.decided("retry", "abc", ticket=117, run="s1-a"),
+                self.decided("fix", "abc", ticket=208, run="s2-b")]
+        kin = arb.kin_arbitrations(366, "abc", rows=rows)
+        self.assertEqual([row["ticket"] for row in kin], [117, 208])
+
+    def test_l_index_de_tous_les_runs_date_chaque_decision_de_son_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)):
+                AnterioriteHorsRun.seed(
+                    tmp, "s1-x",
+                    [self.decided("skip", "abc", ticket=117,
+                                  ts="2026-08-26T23:04:11+00:00")],
+                    "2026-08-26T22:16:32+00:00")
+                AnterioriteHorsRun.seed(
+                    tmp, "s2-y",
+                    [self.decided("fix", "abc", ticket=208,
+                                  ts="2026-09-01T23:04:11+00:00")],
+                    "2026-09-01T22:12:19+00:00")
+                rows = arb.all_arbitrations()
+        self.assertEqual({row["run"] for row in rows}, {"s1-x", "s2-y"})
+        self.assertEqual([row["ticket"] for row in arb.kin_arbitrations(
+            366, "abc", rows=rows)], [117, 208])
+
+    # -- ce que l'arbitre lit --------------------------------------------- #
+
+    def test_le_resume_du_voisinage_nomme_les_tickets(self):
+        kin = [self.decided("retry", "abc", ticket=117, run="s1-x"),
+               self.decided("skip", "abc", ticket=208, run="s2-y",
+                            ts="2026-09-01T21:13:27+00:00")]
+        summary = arb.kinship(kin)
+        self.assertEqual(summary["tickets"], [117, 208])
+        self.assertEqual(summary["arbitrages"], 2)
+        self.assertEqual(summary["dernier_cran"], "skip")
+        self.assertEqual(summary["runs"], ["s1-x", "s2-y"])
+        self.assertTrue(summary["retenu"])
+        self.assertEqual(summary["plafond"], arb.KIN_RUNG)
+
+    def test_le_resume_dit_quand_le_voisinage_reste_sans_effet(self):
+        """L'arbitre doit voir qu'une concordance existe sans compter, plutôt
+        que de croire que le cran l'a oubliée."""
+        summary = arb.kinship([self.decided("skip", "abc", ticket=117)],
+                              kin_tickets=2)
+        self.assertEqual(summary["arbitrages"], 1)
+        self.assertFalse(summary["retenu"])
+
+    def test_sans_voisinage_le_resume_ne_ment_pas(self):
+        summary = arb.kinship([])
+        self.assertEqual(summary["arbitrages"], 0)
+        self.assertEqual(summary["tickets"], [])
+        self.assertIsNone(summary["dernier_cran"])
+        self.assertFalse(summary["retenu"])
+
+    def test_escalation_json_distingue_le_ticket_de_la_cause(self):
+        """Le troisième critère d'acceptation : les deux antériorités se lisent
+        séparément, parce qu'elles n'appellent pas la même conduite."""
+        args = mock.Mock(run=None, ticket=366,
+                         cause="permission refusée sur .claude/**",
+                         signature=None, per_ticket=2, per_run=12, json=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(arb.run_mod, "resolve", return_value="s2-y"):
+                sign = arb.signature(args.cause)
+                AnterioriteHorsRun.seed(
+                    tmp, "s1-x", [self.decided("retry", sign, ticket=117)],
+                    "2026-08-26T22:16:32+00:00")
+                AnterioriteHorsRun.seed(tmp, "s2-y", [], "2026-09-01T22:12:19+00:00")
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = arb.cmd_escalation(args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        # Rien sur ce ticket-ci, ni dans ce run ni ailleurs…
+        self.assertEqual(payload["arbitrages"], 0)
+        self.assertEqual(payload["hors_run"]["arbitrages"], 0)
+        # …et pourtant la cause a conclu, sur #117.
+        self.assertEqual(payload["voisinage"]["tickets"], [117])
+        self.assertEqual(payload["voisinage"]["dernier_cran"], "retry")
+        self.assertTrue(payload["voisinage"]["retenu"])
+        self.assertEqual(payload["cran"], "fix")
+
+    def test_escalation_en_clair_nomme_le_ticket_voisin(self):
+        args = mock.Mock(run=None, ticket=366, cause="permission refusée",
+                         signature=None, per_ticket=2, per_run=12, json=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(arb.run_mod, "resolve", return_value="s2-y"):
+                AnterioriteHorsRun.seed(
+                    tmp, "s1-x",
+                    [self.decided("retry", arb.signature(args.cause), ticket=117)],
+                    "2026-08-26T22:16:32+00:00")
+                AnterioriteHorsRun.seed(tmp, "s2-y", [], "2026-09-01T22:12:19+00:00")
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    arb.cmd_escalation(args)
+
+        rendered = out.getvalue()
+        self.assertIn("#117", rendered)
+        self.assertIn(arb.KIN_RUNG, rendered)
 
 
 class Budget(unittest.TestCase):
