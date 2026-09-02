@@ -23,10 +23,18 @@ ticket jusqu'au merge ne laisse aucune branche derrière elle — la mesurer sur
 seul `refs/heads` faisait passer la plus productive des étapes pour la plus
 stérile, et deux de suite arrêtaient le dispositif.
 
+S'y ajoute depuis #369 la dérive de la source : le superviseur est le seul
+processus long du dispositif, et un correctif que le run merge lui-même reste
+inerte jusqu'au redémarrage. Le signal est faux tant que le processus vivant
+mesure avec l'ancien code — et c'est ce qui a consommé six des douze arbitrages
+du run du 1er septembre. Ce qui est vérifié est la détection et son annonce,
+pas un rechargement : il n'y en a pas.
+
 Aucune dépendance : `unittest` de la bibliothèque standard, comme
 `test_pr_gate.py`.
 """
 import argparse
+import inspect
 import json
 import os
 import subprocess
@@ -362,6 +370,148 @@ class ProductionNote(unittest.TestCase):
     def test_une_etape_vide_le_dit_aussi(self):
         self.assertEqual(sup.production_note(set(), set()),
                          "0 commit(s), 0 merge(s)")
+
+
+class SourceDrift(unittest.TestCase):
+    """Le superviseur voit-il que son propre code a changé sous lui ? (#369)
+
+    Il est le seul processus long du dispositif : la boucle des étapes vit en
+    mémoire, et un correctif que le run merge lui-même sur `develop` reste
+    inerte jusqu'au redémarrage. C'est ainsi que l'étape 8 du run
+    `s1-fondations-outillage-20260901-221219`, qui venait de mener #278 — le
+    ticket qui corrige « une étape qui merge est comptée stérile » — jusqu'au
+    merge, s'est déclarée stérile neuf minutes plus tard, en écrivant
+    « 0 commit(s) », le format d'avant le correctif qu'elle venait de merger.
+
+    Rien ici ne recharge quoi que ce soit : le détecteur ne fait que **voir**,
+    et le re-`execv()` reste une décision à part.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.source = Path(self.tmp.name) / "milestone_supervise.py"
+        self.source.write_text("# version 1\n", encoding="utf-8")
+
+    # -- l'empreinte -------------------------------------------------------- #
+
+    def test_une_source_inchangee_rend_deux_fois_la_meme_empreinte(self):
+        self.assertEqual(sup.source_fingerprint(self.source),
+                         sup.source_fingerprint(self.source))
+
+    def test_un_contenu_modifie_change_l_empreinte(self):
+        avant = sup.source_fingerprint(self.source)
+        self.source.write_text("# version 2\n", encoding="utf-8")
+        self.assertNotEqual(sup.source_fingerprint(self.source), avant)
+
+    def test_un_contenu_reecrit_a_l_identique_ne_change_rien(self):
+        """`git pull` et `git checkout` réécrivent les fichiers qu'ils
+        traversent, même pour y remettre le même contenu. Une empreinte fondée
+        sur la date d'écriture annoncerait là un correctif qui n'existe pas —
+        et un `WARN` de trop est celui qui fait cesser de les lire."""
+        avant = sup.source_fingerprint(self.source)
+        plus_tard = time.time() + 120
+        self.source.write_text("# version 1\n", encoding="utf-8")
+        os.utime(self.source, (plus_tard, plus_tard))
+        self.assertEqual(sup.source_fingerprint(self.source), avant)
+
+    def test_une_source_illisible_rend_none(self):
+        self.assertIsNone(
+            sup.source_fingerprint(Path(self.tmp.name) / "absent.py"))
+
+    def test_le_superviseur_sait_lire_sa_propre_source(self):
+        """Sans argument, c'est bien ce fichier-ci qui est mesuré — pas le
+        répertoire courant, qui est celui du worktree d'un agent."""
+        self.assertEqual(sup.SOURCE.name, "milestone_supervise.py")
+        self.assertIsNotNone(sup.source_fingerprint())
+
+    # -- la comparaison ----------------------------------------------------- #
+
+    def test_deux_empreintes_egales_ne_derivent_pas(self):
+        self.assertFalse(sup.source_drifted("aaa", "aaa"))
+
+    def test_deux_empreintes_differentes_derivent(self):
+        self.assertTrue(sup.source_drifted("aaa", "bbb"))
+
+    def test_une_empreinte_inconnue_ne_derive_jamais(self):
+        """L'inconnu ne prouve aucun changement : un fichier illisible d'un côté
+        ou de l'autre ferait chercher un correctif jamais mergé."""
+        self.assertFalse(sup.source_drifted(None, "bbb"))
+        self.assertFalse(sup.source_drifted("aaa", None))
+        self.assertFalse(sup.source_drifted(None, None))
+
+    # -- l'annonce de fin d'étape ------------------------------------------- #
+
+    def announce(self, before, now):
+        """L'annonce, ses lignes de journal — et le journal du superviseur muet.
+
+        `say()` est neutralisé pour la même raison que `SUPERVISOR_LOG` l'est
+        pour tout le module : une alerte fabriquée par un test n'a rien à faire
+        sous les yeux de qui lit le déroulé d'un run.
+        """
+        posted = []
+        with mock.patch.object(sup, "source_fingerprint", return_value=now), \
+             mock.patch.object(sup, "say") as dit_tout_haut, \
+             mock.patch.object(sup, "journal",
+                               side_effect=lambda *a, **k: posted.append((a, k))):
+            dit = sup.announce_source_drift(before)
+        self.spoken = dit_tout_haut.call_args_list
+        return dit, posted
+
+    def test_une_source_stable_ne_journalise_rien(self):
+        dit, posted = self.announce("aaa", "aaa")
+        self.assertFalse(dit)
+        self.assertEqual(posted, [])
+
+    def test_une_source_changee_est_journalisee_en_warn(self):
+        dit, posted = self.announce("aaa", "bbb")
+        self.assertTrue(dit)
+        self.assertEqual(len(posted), 1)
+        (args, fields), = posted
+        self.assertIsNone(args[0])          # aucun statut : ce n'est pas un état
+        self.assertEqual(fields["level"], "WARN")
+        # Et dans le journal du superviseur aussi : les deux n'ont pas les mêmes
+        # lecteurs, celui qui regarde le dispositif n'ouvre pas celui du jalon.
+        self.assertEqual(len(self.spoken), 1)
+        self.assertEqual(self.spoken[0].args[1], "WARN")
+
+    def test_le_message_dit_qu_un_redemarrage_est_necessaire(self):
+        """C'est le seul contenu qui compte : l'humain venu comprendre pourquoi
+        le dispositif s'entêtait doit lire quoi faire, pas seulement qu'il se
+        passe quelque chose."""
+        _, posted = self.announce("aaa", "bbb")
+        message = posted[0][0][1]
+        self.assertIn("redémarrer", message.lower())
+        self.assertIn("milestone_supervise.py", message)
+        self.assertIn("depuis son démarrage", message)
+
+    def test_l_ecart_est_redit_a_chaque_etape(self):
+        """La phrase reste vraie jusqu'au redémarrage, et celui qui vient lire
+        le journal arrive rarement à l'étape où l'écart est apparu."""
+        for _ in range(3):
+            dit, posted = self.announce("aaa", "bbb")
+            self.assertTrue(dit)
+            self.assertEqual(len(posted), 1)
+
+    def test_une_source_devenue_illisible_ne_declenche_pas_d_alerte(self):
+        dit, posted = self.announce("aaa", None)
+        self.assertFalse(dit)
+        self.assertEqual(posted, [])
+
+    # -- le câblage --------------------------------------------------------- #
+
+    def test_la_boucle_retient_l_empreinte_et_la_compare_en_fin_d_etape(self):
+        """Un détecteur que personne n'appelle ne détecte rien — c'est la seule
+        façon dont ce correctif peut régresser sans qu'aucun autre test ne
+        bouge. L'empreinte est prise **avant** la boucle et comparée dedans."""
+        code = inspect.getsource(sup.supervise)
+        avant, borne, dedans = code.partition("while not stop_flag.is_set():")
+        indice = ("ce test lit le texte de supervise() : un renommage de la "
+                  "boucle ou de `source_seen` le casse sans que rien ne soit "
+                  "cassé — recoller le test au code, ou le remplacer")
+        self.assertTrue(borne, indice)
+        self.assertIn("source_seen = source_fingerprint()", avant, indice)
+        self.assertIn("announce_source_drift(source_seen)", dedans, indice)
 
 
 class GitLines(unittest.TestCase):
