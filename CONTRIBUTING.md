@@ -61,6 +61,35 @@ Un agent `/ticket` qui bute sur cette barrière trouve la conduite à tenir en
 phase 4 de [.claude/commands/ticket.md](.claude/commands/ticket.md) : appliquer
 le remède et poursuivre, sans traiter l'incident comme un échec du ticket.
 
+## Chaque worktree porte son propre `node_modules` — et c'est voulu
+
+Un worktree d'agent pèse 100 à 350 Mo, presque entièrement en dépendances. La
+tentation est de les mutualiser avec le dépôt principal, par un lien symbolique
+ou une jonction. **Ne pas le faire** : cela casserait silencieusement l'isolation
+entre agents.
+
+`node_modules/@spa/api`, `@spa/shared` et `@spa/web` ne sont pas du contenu
+tiers : ce sont les liens d'espaces de travail npm, et ils pointent vers des
+chemins **absolus**.
+
+| Emplacement | `@spa/shared` pointe vers |
+|---|---|
+| dépôt principal | `<dépôt>\packages\shared\` |
+| worktree d'un agent | `<dépôt>\.claude\worktrees\<agent>\packages\shared\` |
+
+C'est cette copie propre à chaque worktree qui fait qu'un agent compile et teste
+**sa** branche. Partager `node_modules` partagerait aussi `@spa` : trois agents
+d'une même vague résoudraient `@spa/shared` vers un seul arbre de sources — celui
+du dernier `npm install` — et typecheckeraient le code d'un autre sans que rien
+ne le signale. Un `npm install` lancé dans un worktree repointerait de surcroît
+le `@spa` du dépôt principal vers ce worktree.
+
+Le coût disque est donc le prix de l'isolation, pas un défaut de configuration.
+Ce qui le tient est le **nettoyage**, pas le partage :
+[scripts/worktree_gc.py](scripts/worktree_gc.py) supprime les worktrees dont la
+PR est mergée, et conserve d'office tout worktree sale ou porteur de commits non
+poussés.
+
 ## Démarrage
 
 ```bash
