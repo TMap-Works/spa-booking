@@ -11,10 +11,17 @@ et mourait au même endroit. Le détecteur d'enlisement d'alors comptait les
 *tickets aboutis* — un signal qui n'arrive qu'après le merge, donc bien trop
 tard pour interrompre une boucle qui ne commite jamais.
 
-Ce qui est vérifié ici est donc le nouveau signal et lui seul : le commit. Une
-régression sur `sterile_streak` ou `work_commits` ne casserait rien de visible —
-elle laisserait simplement le dispositif tourner à vide, ce qui est exactement le
-mode de défaillance que #138 décrit.
+Ce qui est vérifié ici est donc le nouveau signal et lui seul : le travail rendu
+durable. Une régression sur `sterile_streak`, `work_commits`, `merged_tickets` ou
+`leg_production` ne casserait rien de visible — elle laisserait simplement le
+dispositif tourner à vide, ce qui est exactement le mode de défaillance que #138
+décrit.
+
+Le signal a deux moitiés depuis #278, et il les faut toutes les deux : le commit
+sur une branche de ticket, et le merge que le run s'impute. Une étape qui mène un
+ticket jusqu'au merge ne laisse aucune branche derrière elle — la mesurer sur le
+seul `refs/heads` faisait passer la plus productive des étapes pour la plus
+stérile, et deux de suite arrêtaient le dispositif.
 
 Aucune dépendance : `unittest` de la bibliothèque standard, comme
 `test_pr_gate.py`.
@@ -74,10 +81,18 @@ def tearDownModule():
 
 
 class SterileStreak(unittest.TestCase):
-    """La règle d'arrêt de #138 : deux legs de suite sans un commit de plus."""
+    """La règle d'arrêt de #138 : deux legs de suite sans rien rendre durable.
+
+    « Rien » veut dire ni commit ni merge depuis #278 : la fonction ne juge que
+    la production qu'on lui passe, quelle qu'en soit la nature.
+    """
 
     def test_un_commit_remet_le_compteur_a_zero(self):
         self.assertEqual(sup.sterile_streak(1, {"abc123"}, None), 0)
+
+    def test_un_merge_seul_remet_le_compteur_a_zero(self):
+        """Aucun commit sur une branche, mais un ticket mergé : c'est produit."""
+        self.assertEqual(sup.sterile_streak(1, set() or {17}, None), 0)
 
     def test_aucun_commit_incremente(self):
         self.assertEqual(sup.sterile_streak(0, set(), None), 1)
@@ -143,6 +158,210 @@ class WorkCommits(unittest.TestCase):
     def test_aucune_branche_de_ticket_rend_un_ensemble_vide(self):
         with mock.patch.object(sup, "git_lines", return_value=["develop"]):
             self.assertEqual(sup.work_commits(), set())
+
+
+class RunJournalFixture(unittest.TestCase):
+    """De quoi fabriquer un dossier de run jetable et son journal NDJSON."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.directory = Path(self.tmp.name)
+
+    def journal(self, *events):
+        """Écrit le journal du run et fait pointer `current_run_dir()` dessus."""
+        (self.directory / "journal.ndjson").write_text(
+            "".join(json.dumps(event, ensure_ascii=False) + "\n"
+                    for event in events), encoding="utf-8")
+        return mock.patch.object(sup, "current_run_dir",
+                                 return_value=self.directory)
+
+    @staticmethod
+    def merged(ticket, message="mergée en squash"):
+        return {"ts": "2026-08-26T22:54:00+00:00", "ticket": ticket,
+                "status": "merged", "actor": "orchestrateur", "message": message}
+
+
+class JournalEvents(RunJournalFixture):
+    """La lecture tolérante du journal, partagée par les deux mesures qui le lisent.
+
+    Le fichier s'écrit en ajout, à plusieurs, sans verrou : une ligne tronquée
+    par une écriture concurrente doit se sauter, jamais faire mourir le
+    superviseur — la veille relancerait toutes les cinq minutes un superviseur
+    qui remourrait de la même façon.
+    """
+
+    def test_les_evenements_reviennent_dans_l_ordre(self):
+        with self.journal({"ts": "1", "status": "running"},
+                          {"ts": "2", "status": "merged", "ticket": 17}):
+            events = sup.journal_events(self.directory)
+        self.assertEqual([event["ts"] for event in events], ["1", "2"])
+
+    def test_ligne_tronquee_et_ligne_vide_se_sautent(self):
+        (self.directory / "journal.ndjson").write_text(
+            '{"ts": "1"}\n\n{"ts": "2", "sta\n{"ts": "3"}\n', encoding="utf-8")
+        self.assertEqual([e["ts"] for e in sup.journal_events(self.directory)],
+                         ["1", "3"])
+
+    def test_une_ligne_qui_n_est_pas_un_objet_est_ecartee(self):
+        """`json.loads("42")` réussit et rend un entier : sans ce filtre, le
+        `event.get(...)` de l'appelant lèverait sur une ligne malformée."""
+        (self.directory / "journal.ndjson").write_text(
+            '42\n"texte"\n{"ts": "1"}\n', encoding="utf-8")
+        self.assertEqual([e["ts"] for e in sup.journal_events(self.directory)],
+                         ["1"])
+
+    def test_journal_absent_rend_une_liste_vide(self):
+        self.assertEqual(sup.journal_events(self.directory), [])
+
+
+class MergedTickets(RunJournalFixture):
+    """Ce que le run s'impute comme mergé — l'autre moitié de la production (#278).
+
+    Rien de tout cela n'existe sur `refs/heads` au moment de la mesure : la
+    barrière squashe la PR, puis l'orchestrateur supprime la branche. Le journal
+    du run est la seule trace qui reste, et c'est la seule qui impute le merge à
+    un ticket plutôt qu'à une poussée venue de l'extérieur.
+    """
+
+    def test_seuls_les_statuts_merged_comptent(self):
+        with self.journal({"ticket": 17, "status": "running"},
+                          {"ticket": 17, "status": "pr_open", "pr": 275},
+                          {"ticket": 17, "status": "ci_green"},
+                          self.merged(17)):
+            self.assertEqual(sup.merged_tickets(), {17})
+
+    def test_deux_etapes_deux_tickets(self):
+        """Les étapes 3 et 4 du run `s1-fondations-20260826-221632`, celles que
+        le superviseur avait comptées stériles toutes les deux."""
+        with self.journal(self.merged(17), self.merged(213)):
+            self.assertEqual(sup.merged_tickets(), {17, 213})
+
+    def test_un_merge_reinscrit_ne_compte_qu_une_fois(self):
+        """`reconcile` peut réinscrire un merge déjà vu au début de la vague
+        suivante. Un ensemble de numéros l'absorbe ; un décompte, non."""
+        with self.journal(self.merged(213), self.merged(213, "issue close sur GitHub")):
+            self.assertEqual(sup.merged_tickets(), {213})
+
+    def test_un_evenement_de_run_sans_ticket_est_ignore(self):
+        with self.journal({"status": "merged", "message": "sans ticket"},
+                          self.merged(280)):
+            self.assertEqual(sup.merged_tickets(), {280})
+
+    def test_une_ligne_tronquee_n_emporte_pas_la_mesure(self):
+        """Le journal s'écrit sans verrou, à plusieurs : une ligne coupée par une
+        écriture concurrente se saute, elle ne fait pas mourir le superviseur."""
+        path = self.directory / "journal.ndjson"
+        path.write_text(json.dumps(self.merged(17)) + "\n{\"ticket\": 213, \"sta\n"
+                        + json.dumps(self.merged(220)) + "\n", encoding="utf-8")
+        with mock.patch.object(sup, "current_run_dir", return_value=self.directory):
+            self.assertEqual(sup.merged_tickets(), {17, 220})
+
+    def test_aucun_run_ouvert(self):
+        with mock.patch.object(sup, "current_run_dir", return_value=None):
+            self.assertEqual(sup.merged_tickets(), set())
+
+    def test_journal_absent(self):
+        with mock.patch.object(sup, "current_run_dir", return_value=self.directory):
+            self.assertEqual(sup.merged_tickets(), set())
+
+
+class LegProduction(RunJournalFixture):
+    """Ce qu'une étape a rendu durable, commits **et** merges réunis (#278)."""
+
+    def test_merge_en_squash_branche_supprimee_n_est_pas_sterile(self):
+        """La régression de #278, de bout en bout.
+
+        L'étape mène #17 jusqu'au merge : la barrière squashe, l'orchestrateur
+        supprime la branche et le worktree. Au moment de la mesure, `refs/heads`
+        ne porte plus que les branches d'intégration — `work_commits()` rend donc
+        l'ensemble vide, et c'est normal. C'est le journal du run qui témoigne.
+
+        Avant le correctif, l'étape la plus productive du run était comptée
+        stérile ; deux de suite ouvraient un arbitrage `leg_sterile` pour un
+        enlisement qui n'existait pas.
+        """
+        with mock.patch.object(sup, "git_lines",
+                               return_value=["develop", "staging", "main"]), \
+                self.journal(self.merged(17)):
+            commits, merges = sup.leg_production(set(), set())
+
+        self.assertEqual(commits, set())          # la branche a disparu
+        self.assertEqual(merges, {17})            # le merge, lui, reste imputable
+        self.assertEqual(sup.sterile_streak(1, commits or merges, None), 0)
+
+    def test_deux_etapes_qui_mergent_ne_declenchent_pas_l_arret(self):
+        """Les étapes 3 et 4 du run, rejouées : le compteur ne doit jamais
+        atteindre `DRY_LEGS_LIMIT`."""
+        streak, seen_commits, seen_merges = 0, set(), set()
+        for ticket in (17, 213):
+            with mock.patch.object(sup, "git_lines", return_value=["develop"]), \
+                    self.journal(*[self.merged(n) for n in (17, 213)
+                                   if n <= ticket]):
+                commits, merges = sup.leg_production(seen_commits, seen_merges)
+            seen_commits |= commits
+            seen_merges |= merges
+            streak = sup.sterile_streak(streak, commits or merges, None)
+            self.assertEqual(streak, 0)
+        self.assertLess(streak, sup.DRY_LEGS_LIMIT)
+
+    def test_un_merge_deja_vu_ne_rend_pas_l_etape_productive(self):
+        """Un merge inscrit avant l'étape n'est l'œuvre d'aucun leg : le
+        recompter ferait passer une étape vide pour une étape productive."""
+        with mock.patch.object(sup, "git_lines", return_value=["develop"]), \
+                self.journal(self.merged(17)):
+            commits, merges = sup.leg_production(set(), {17})
+
+        self.assertEqual((commits, merges), (set(), set()))
+        self.assertEqual(sup.sterile_streak(0, commits or merges, None), 1)
+
+    def test_ni_commit_ni_merge_reste_sterile(self):
+        """Le garde-fou de #138 tient : c'est bien l'absence des deux qui compte."""
+        with mock.patch.object(sup, "git_lines", return_value=["develop"]), \
+                self.journal({"ticket": 42, "status": "running"}):
+            commits, merges = sup.leg_production(set(), set())
+
+        self.assertEqual((commits, merges), (set(), set()))
+        streak = 0
+        for _ in range(2):
+            streak = sup.sterile_streak(streak, commits or merges, None)
+        self.assertGreaterEqual(streak, sup.DRY_LEGS_LIMIT)
+
+    def test_les_commits_neufs_restent_comptes(self):
+        """Une étape qui commite sans merger reste productive, comme avant."""
+        def fake(*argv):
+            if argv[0] == "for-each-ref":
+                return ["develop", "bugfix/278-mesure"]
+            return ["aaa111"]
+
+        with mock.patch.object(sup, "git_lines", side_effect=fake), \
+                self.journal({"ticket": 278, "status": "pr_open", "pr": 999}):
+            commits, merges = sup.leg_production(set(), set())
+
+        self.assertEqual((commits, merges), ({"aaa111"}, set()))
+        self.assertEqual(sup.sterile_streak(1, commits or merges, None), 0)
+
+
+class ProductionNote(unittest.TestCase):
+    """Ce que la ligne de fin d'étape donne à lire (#278).
+
+    « 32 tours · 5.87 $ · 0 commit(s) » sur une étape qui venait de merger #213
+    est ce qu'un humain avait sous les yeux en cherchant pourquoi le dispositif
+    s'était arrêté. La ligne doit dire les deux.
+    """
+
+    def test_les_deux_moities_sont_dites(self):
+        self.assertEqual(sup.production_note({"aaa111"}, {17}),
+                         "1 commit(s), 1 merge(s)")
+
+    def test_une_etape_qui_merge_sans_commiter_ne_dit_plus_zero_seul(self):
+        note = sup.production_note(set(), {17})
+        self.assertEqual(note, "0 commit(s), 1 merge(s)")
+        self.assertIn("merge", note)
+
+    def test_une_etape_vide_le_dit_aussi(self):
+        self.assertEqual(sup.production_note(set(), set()),
+                         "0 commit(s), 0 merge(s)")
 
 
 class GitLines(unittest.TestCase):

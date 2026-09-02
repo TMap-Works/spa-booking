@@ -212,13 +212,14 @@ INTENT_TTL = 14 * 86400
 
 # Les branches d'intégration ne portent pas de travail de ticket. `develop`
 # avance à chaque merge sans qu'un agent y soit pour rien : la compter ferait
-# passer un leg stérile pour un leg productif.
+# passer un leg stérile pour un leg productif. Les merges que le run s'impute,
+# eux, se lisent dans son journal (`merged_tickets`) et non sur `develop`.
 INTEGRATION_BRANCHES = {"develop", "staging", "main"}
-# Deux legs de suite sans un commit de plus, c'est la signature de #138 : la
-# boucle rend la main avant la phase de commit, le leg suivant refait le même
-# travail, et rien ne devient jamais durable. Deux et pas trois — chaque leg
-# stérile coûte une dizaine de dollars, et le troisième n'apprend rien de plus
-# que le deuxième.
+# Deux legs de suite sans un commit ni un merge de plus, c'est la signature de
+# #138 : la boucle rend la main avant la phase de commit, le leg suivant refait
+# le même travail, et rien ne devient jamais durable. Deux et pas trois — chaque
+# leg stérile coûte une dizaine de dollars, et le troisième n'apprend rien de
+# plus que le deuxième.
 DRY_LEGS_LIMIT = 2
 # Au-delà de ce silence dans le journal du run, plus personne ne l'orchestre.
 # Une phase de ticket dure quelques minutes, jamais dix : un journal muet depuis
@@ -647,6 +648,12 @@ def work_commits():
 
     Les branches d'intégration sont exclues : elles ne portent pas de travail de
     ticket, et `develop` avance à chaque merge sans qu'un agent y soit pour rien.
+
+    Cette mesure ne voit donc que le travail **inachevé** : un ticket mené
+    jusqu'au merge n'a plus de branche, et son contenu ne vit plus que dans le
+    commit de squash sur `develop`, exclu ici. Le complément est
+    `merged_tickets()` — les deux ensemble font la production d'une étape
+    (`leg_production`).
     """
     shas = set()
     for ref in git_lines("for-each-ref", "--format=%(refname:short)", "refs/heads"):
@@ -654,6 +661,58 @@ def work_commits():
             continue
         shas.update(git_lines("rev-list", f"origin/develop..{ref}"))
     return shas
+
+
+def merged_tickets():
+    """Les tickets que **ce run** a inscrits comme mergés dans son journal.
+
+    L'autre moitié de la production d'une étape, et celle qui manquait (#278) :
+    l'étape la plus productive — celle qui porte un ticket de la recevabilité au
+    merge — ne laisse rien sur `refs/heads`, puisque la barrière squashe puis
+    supprime la branche. `work_commits()` la mesurait à zéro, et deux étapes
+    pleinement réussies de suite déclenchaient `leg_sterile`.
+
+    On lit le journal du run, et non `develop` : l'exclusion que documente
+    `work_commits()` reste juste pour une poussée venue de l'extérieur du run.
+    Elle ne vaut pas pour un merge que le run vient lui-même de faire — c'est
+    précisément sa production, et lui seul sait l'imputer à un ticket.
+
+    Rend un **ensemble de numéros**, jamais un décompte, pour la même raison que
+    `work_commits()` : l'appelant accumule ce qu'il a vu, et le statut `merged`
+    étant terminal, un ticket n'y entre qu'une fois. Ensemble vide si aucun run
+    n'est ouvert ou si le journal est illisible — le superviseur ne doit jamais
+    mourir d'une mesure.
+    """
+    directory = current_run_dir()
+    if directory is None:
+        return set()
+    return {event["ticket"] for event in journal_events(directory)
+            if event.get("status") == "merged" and event.get("ticket") is not None}
+
+
+def leg_production(seen_commits, seen_merges):
+    """Ce qu'une étape vient de rendre durable — (commits neufs, merges neufs).
+
+    Mesuré sur le dépôt et sur le journal du run, jamais sur le compte rendu de
+    l'étape : un leg qui se termine « success » sans rien produire n'a rien
+    laissé qu'un `reconcile` ne puisse effacer.
+
+    Les deux moitiés sont rendues séparément parce qu'elles ne se disent pas de
+    la même façon en fin d'étape, et qu'elles se comptent dans des unités
+    différentes — des empreintes d'un côté, des numéros de ticket de l'autre.
+    """
+    return work_commits() - seen_commits, merged_tickets() - seen_merges
+
+
+def production_note(commits, merges):
+    """Ce que l'étape a produit, en une poignée de mots pour le journal.
+
+    Les deux moitiés sont dites, et les merges nommément : « 0 commit(s) » seul
+    laissait croire à une étape stérile celle qui venait de mener un ticket
+    jusqu'au bout, et c'est ce que lisait l'humain venu comprendre pourquoi le
+    dispositif s'était arrêté (#278).
+    """
+    return f"{len(commits)} commit(s), {len(merges)} merge(s)"
 
 
 def current_run_dir():
@@ -666,6 +725,37 @@ def current_run_dir():
         return None
     path = RUNS_DIR / run_id
     return path if path.is_dir() else None
+
+
+def journal_events(directory):
+    """Les événements du journal d'un run, dans l'ordre — liste vide si illisible.
+
+    Deux mesures le relisent : « qu'a rendu durable cette étape ? »
+    (`merged_tickets`) et « depuis quand ce run se tait-il ? »
+    (`journal_activity`). Une seule lecture pour les deux, parce que les deux
+    doivent tolérer exactement les mêmes accidents : un journal absent, et une
+    ligne tronquée par une écriture concurrente — le fichier s'écrit en ajout, à
+    plusieurs, sans verrou. Les lignes qui ne portent pas un objet JSON sont
+    écartées ici, faute de quoi un `event.get(...)` chez l'appelant ferait mourir
+    le superviseur sur une ligne malformée.
+    """
+    try:
+        lines = (directory / "journal.ndjson").read_text(
+            encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return []
+    events = []
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue          # ligne tronquée par une écriture concurrente
+        if isinstance(event, dict):
+            events.append(event)
+    return events
 
 
 def current_run_milestone():
@@ -714,18 +804,7 @@ def journal_activity():
         touched = path.stat().st_mtime
     except OSError:
         return None
-    try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return touched
-    for line in reversed(lines):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue          # ligne tronquée par une écriture concurrente
+    for event in reversed(journal_events(directory)):
         if event.get("beat"):
             continue
         try:
@@ -756,20 +835,25 @@ def orchestrator_active():
     return activity is not None and time.time() - activity < ORCHESTRATOR_QUIET
 
 
-def sterile_streak(previous, fresh, issue):
+def sterile_streak(previous, produced, issue):
     """Combien de legs de suite n'ont rien rendu durable, celui-ci compris.
 
-    Un leg est stérile quand il n'a produit aucun commit — quoi qu'en dise son
-    propre compte rendu. Le quota fait exception : un leg coupé par l'API n'a pas
-    démérité, il n'a pas eu le temps, et le compter stérile désarmerait le
-    dispositif pour la seule raison que la fenêtre s'est refermée.
+    Un leg est stérile quand il n'a produit **ni commit ni merge** — quoi qu'en
+    dise son propre compte rendu. Les deux comptent, et pas seulement le commit :
+    une étape qui mène un ticket jusqu'au merge ne laisse aucune branche
+    derrière elle, et la compter sur le seul `work_commits()` faisait passer la
+    plus productive des étapes pour la plus stérile (#278).
 
-    Toute autre panne compte, elle : un leg qui échoue sans rien commiter laisse
-    exactement le même dépôt qu'un leg qui rend la main trop tôt.
+    Le quota fait exception : un leg coupé par l'API n'a pas démérité, il n'a pas
+    eu le temps, et le compter stérile désarmerait le dispositif pour la seule
+    raison que la fenêtre s'est refermée.
+
+    Toute autre panne compte, elle : un leg qui échoue sans rien rendre durable
+    laisse exactement le même dépôt qu'un leg qui rend la main trop tôt.
     """
     if issue == "quota":
         return previous
-    return 0 if fresh else previous + 1
+    return 0 if produced else previous + 1
 
 
 def journal(status, message, level=None, beat=False):
@@ -1594,10 +1678,10 @@ def supervise(args):
     # ferait relancer un arbitrage par étape jusqu'à épuisement du budget, pour
     # le même verdict à chaque fois. Il retombe dès qu'un ticket avance.
     rescued = False
-    # Les commits déjà là en arrivant ne sont l'œuvre d'aucun leg de ce
-    # superviseur : on les tient pour vus, faute de quoi le premier leg
+    # Les commits et les merges déjà là en arrivant ne sont l'œuvre d'aucun leg
+    # de ce superviseur : on les tient pour vus, faute de quoi le premier leg
     # passerait pour productif sans avoir rien produit.
-    seen_commits = work_commits()
+    seen_commits, seen_merges = work_commits(), merged_tickets()
 
     def rescue(reasons):
         """Faire arbitrer, si le budget le permet — (lancé, panne, info_quota).
@@ -1684,15 +1768,20 @@ def supervise(args):
         issue, info, note = run_leg(args, legs)
         elapsed = human_delta(time.time() - started)
 
-        # Ce que le leg a rendu durable, mesuré sur le dépôt et non sur son
-        # propre compte rendu : un leg qui se termine « success » sans un commit
-        # de plus n'a rien produit qu'un `reconcile` ne puisse effacer.
-        fresh = set() if args.dry_run else work_commits() - seen_commits
-        seen_commits |= fresh
-        if not args.dry_run:
-            note = f"{note} · {len(fresh)} commit(s)"
+        # Ce que le leg a rendu durable — commits sur les branches de tickets
+        # **et** merges que le run s'est imputés. Les deux, parce qu'une étape
+        # qui va jusqu'au merge ne laisse plus de branche : ne compter que les
+        # commits ferait passer la plus productive des étapes pour la plus
+        # stérile (#278).
+        if args.dry_run:
+            fresh, merged = set(), set()
+        else:
+            fresh, merged = leg_production(seen_commits, seen_merges)
+            seen_commits |= fresh
+            seen_merges |= merged
+            note = f"{note} · {production_note(fresh, merged)}"
 
-        sterile = not args.dry_run and issue is None and not fresh
+        sterile = not args.dry_run and issue is None and not fresh and not merged
         journal("leg_ended", f"étape {legs} en {elapsed} — {note}",
                 level="WARN" if issue or sterile else "INFO")
         say(f"vague {legs} rendue en {elapsed} · {note}",
@@ -1710,7 +1799,7 @@ def supervise(args):
                 return 1
             continue
 
-        dry_legs = sterile_streak(dry_legs, fresh, issue)
+        dry_legs = sterile_streak(dry_legs, fresh or merged, issue)
         after = progress_count(args.no_merge)
         progressed = before is None or after is None or after > before
         barren = 0 if progressed else barren + 1
@@ -1756,17 +1845,17 @@ def supervise(args):
             say("enlisement arbitré — compteurs remis à zéro, on repart", "WARN")
 
         if dry_legs >= DRY_LEGS_LIMIT:
-            # Le travail existe peut-être dans les worktrees, mais il n'est pas
-            # commité : le leg suivant le refera à l'identique, pour le même
-            # prix. On s'arrête et on dit où regarder.
-            say(f"{dry_legs} legs de suite sans un commit de plus. Le travail "
-                "n'atteint pas la phase de commit — il ne survivra pas au "
-                "prochain `reconcile`. Arrêt et désarmement : regarder les "
-                "worktrees de `git worktree list`, commiter ce qui s'y trouve, "
-                "puis relancer. Voir #138.", "ERROR")
-            journal("blocked",
-                    f"{dry_legs} legs sans commit — superviseur arrêté (#138)")
-            retire(f"{dry_legs} legs sans commit")
+            # Le travail existe peut-être dans les worktrees, mais il n'est ni
+            # commité ni mergé : le leg suivant le refera à l'identique, pour le
+            # même prix. On s'arrête et on dit où regarder.
+            say(f"{dry_legs} legs de suite sans un commit ni un merge de plus. "
+                "Le travail n'atteint pas la phase de commit — il ne survivra "
+                "pas au prochain `reconcile`. Arrêt et désarmement : regarder "
+                "les worktrees de `git worktree list`, commiter ce qui s'y "
+                "trouve, puis relancer. Voir #138.", "ERROR")
+            journal("blocked", f"{dry_legs} legs sans commit ni merge — "
+                               "superviseur arrêté (#138)")
+            retire(f"{dry_legs} legs sans commit ni merge")
             return 1
 
         if barren >= args.patience:
