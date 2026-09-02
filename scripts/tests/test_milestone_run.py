@@ -95,10 +95,10 @@ def completed(returncode=0, stdout=""):
 class LiveWorktrees(unittest.TestCase):
     """Ce que `reconcile` doit voir en local, et qu'il ne voyait pas."""
 
-    def parse(self, porcelain, returncode=0):
+    def parse(self, porcelain, returncode=0, claims=None):
         with mock.patch.object(run_mod.subprocess, "run",
                                return_value=completed(returncode, porcelain)):
-            return run_mod.live_worktrees()
+            return run_mod.live_worktrees(claims)
 
     def test_les_worktrees_de_tickets_sont_indexes_par_numero(self):
         found = self.parse(PORCELAIN)
@@ -161,6 +161,168 @@ branch refs/heads/worktree-bugfix+134-reconcile-running-abandonne
                      "HEAD 000\n"
                      "branch refs/heads/bugfix/42-quelque-chose")
         self.assertEqual(set(self.parse(porcelain)), {42})
+
+
+ANONYME = """\
+worktree /w/agent-4f21ab
+HEAD df4ae3f00000000000000000000000000000000
+branch refs/heads/worktree-agent-4f21ab
+"""
+
+
+class WorktreeAnonyme(unittest.TestCase):
+    """#175 — le worktree qu'un agent de jalon reçoit ne se nomme pas.
+
+    L'outil `Agent` l'appelle `agent-<aléa>` et pose dessus une branche
+    `worktree-agent-<aléa>` : ni l'un ni l'autre ne porte de numéro d'issue,
+    contrairement à ce que `EnterWorktree` produisait. Aucune règle de nom ne
+    peut donc le rattacher à son ticket — seul le journal le peut, l'agent y
+    ayant écrit d'où il parle dès sa première ligne.
+    """
+
+    def parse(self, porcelain, claims=None):
+        return LiveWorktrees.parse(self, porcelain, claims=claims)
+
+    def test_sans_revendication_il_reste_invisible(self):
+        """L'état d'avant : c'est exactement le trou que le ticket décrit."""
+        self.assertEqual(self.parse(ANONYME), {})
+
+    def test_le_journal_le_rattache_a_son_ticket(self):
+        found = self.parse(ANONYME, {run_mod.path_key("/w/agent-4f21ab"): 19})
+        self.assertEqual(found[19]["branch"], "worktree-agent-4f21ab")
+        self.assertEqual(found[19]["path"], "/w/agent-4f21ab")
+
+    def test_le_nom_de_branche_prime_sur_la_revendication(self):
+        """Une revendication vit dans un journal en ajout seul, et peut donc
+        survivre au worktree qui l'a posée. Le nom de branche, lui, est ce que
+        git montre à l'instant : il tranche."""
+        found = self.parse(PORCELAIN,
+                           {run_mod.path_key("D:/spyle/Spa & Booking/.claude/"
+                                             "worktrees/agent-bbb"): 99})
+        self.assertEqual(set(found), {18, 10})
+
+    def test_une_head_detachee_revendiquee_reste_ignoree(self):
+        """Ce qu'on rend sert à renvoyer un agent sur une branche : une HEAD
+        détachée ne lui donnerait rien à reprendre."""
+        detachee = ("worktree /w/agent-orphelin\n"
+                    "HEAD 000\n"
+                    "detached\n")
+        self.assertEqual(
+            self.parse(detachee, {run_mod.path_key("/w/agent-orphelin"): 19}), {})
+
+    def test_les_separateurs_ne_font_pas_deux_worktrees(self):
+        """`git worktree list` rend des « / » là où `Path` rend des « \\ » sous
+        Windows : comparer les chaînes brutes ne rapprocherait jamais rien."""
+        natif = os.path.join("w", "agent-4f21ab")
+        self.assertEqual(run_mod.path_key(natif),
+                         run_mod.path_key(natif.replace(os.sep, "/")))
+
+    def test_un_chemin_illisible_ne_leve_pas(self):
+        self.assertEqual(run_mod.path_key(None), "")
+
+
+class RevendicationDeWorktree(unittest.TestCase):
+    """Ce que le journal porte, et ce qu'on en relit — les deux moitiés de #175."""
+
+    def claims(self, *events):
+        return run_mod.worktree_claims(list(events))
+
+    def ligne(self, ticket, ts, worktree=None):
+        event = {"ts": ts, "kind": "ticket", "ticket": ticket,
+                 "phase": "recevabilite", "message": "recevable"}
+        if worktree:
+            event["worktree"] = worktree
+        return event
+
+    def test_une_ligne_d_agent_revendique_son_worktree(self):
+        found = self.claims(self.ligne(19, "2026-08-25T20:05:00+00:00",
+                                       "/w/agent-4f21ab"))
+        self.assertEqual(found, {run_mod.path_key("/w/agent-4f21ab"): 19})
+
+    def test_une_ligne_sans_worktree_ne_revendique_rien(self):
+        self.assertEqual(self.claims(self.ligne(19, "2026-08-25T20:05:00+00:00")), {})
+
+    def test_une_ligne_de_run_ne_revendique_rien(self):
+        """Seul un ticket possède un worktree ; l'orchestrateur, lui, travaille
+        dans le dépôt principal."""
+        self.assertEqual(self.claims({"ts": "2026-08-25T20:05:00+00:00",
+                                      "kind": "run", "status": "leg_started",
+                                      "worktree": "/w/agent-4f21ab"}), {})
+
+    def test_la_revendication_la_plus_tardive_l_emporte(self):
+        """Le journal est en ajout seul et plusieurs processus y écrivent à la
+        fois : l'ordre des lignes n'est pas celui du temps — même lecture que
+        `ticket_heartbeats`."""
+        found = self.claims(
+            self.ligne(20, "2026-08-25T21:00:00+00:00", "/w/agent-4f21ab"),
+            self.ligne(19, "2026-08-25T20:05:00+00:00", "/w/agent-4f21ab"))
+        self.assertEqual(found, {run_mod.path_key("/w/agent-4f21ab"): 20})
+
+    def test_un_ticket_ne_garde_que_son_dernier_worktree(self):
+        """Un ticket repris en reçoit un neuf sans que l'ancien disparaisse — il
+        porte des modifications, donc l'outil `Agent` ne le récupère pas. Garder
+        les deux ferait rendre à `live_worktrees` celui que `git` énumère en
+        premier, c'est-à-dire l'abandonné, et `resume_context` renverrait l'agent
+        suivant sur le travail mort."""
+        found = self.claims(
+            self.ligne(19, "2026-08-25T20:05:00+00:00", "/w/agent-mort"),
+            self.ligne(19, "2026-08-25T21:30:00+00:00", "/w/agent-vivant"))
+        self.assertEqual(found, {run_mod.path_key("/w/agent-vivant"): 19})
+
+    def test_le_worktree_abandonne_ne_prend_pas_la_place_du_vivant(self):
+        """Le même, vu de bout en bout : `git` liste l'ancien en premier."""
+        porcelain = ("worktree /w/agent-mort\nHEAD 000\n"
+                     "branch refs/heads/worktree-agent-mort\n\n"
+                     "worktree /w/agent-vivant\nHEAD 111\n"
+                     "branch refs/heads/worktree-agent-vivant\n")
+        claims = self.claims(
+            self.ligne(19, "2026-08-25T20:05:00+00:00", "/w/agent-mort"),
+            self.ligne(19, "2026-08-25T21:30:00+00:00", "/w/agent-vivant"))
+        with mock.patch.object(run_mod.subprocess, "run",
+                               return_value=completed(0, porcelain)):
+            found = run_mod.live_worktrees(claims)
+        self.assertEqual(found[19]["branch"], "worktree-agent-vivant")
+
+    def test_un_agent_dans_un_worktree_lie_se_nomme(self):
+        with mock.patch.object(run_mod, "ROOT", Path("/w/agent-4f21ab")), \
+             mock.patch.object(run_mod, "STATE_ROOT", Path("/depot")):
+            self.assertEqual(run_mod.agent_worktree(), str(Path("/w/agent-4f21ab")))
+
+    def test_le_depot_principal_ne_revendique_rien(self):
+        """`--no-worktree` travaille dans l'arbre commun, qui n'appartient à
+        aucun ticket : l'y attacher ferait passer le dépôt pour un worktree."""
+        with mock.patch.object(run_mod, "ROOT", Path("/depot")), \
+             mock.patch.object(run_mod, "STATE_ROOT", Path("/depot")):
+            self.assertIsNone(run_mod.agent_worktree())
+
+    def event(self, ticket, root, state_root):
+        """La ligne que `cmd_event` écrit réellement, telle qu'elle atterrit."""
+        base = dict(run=None, ticket=ticket, wave=None, phase="recevabilite",
+                    status=None, message="recevable", pr=None, branch=None,
+                    level=None, actor="agent", quiet=True, reset=False, beat=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
+                 mock.patch.object(run_mod, "ROOT", Path(root)), \
+                 mock.patch.object(run_mod, "STATE_ROOT", Path(state_root)), \
+                 mock.patch.object(run_mod, "resolve", return_value="r1"):
+                (Path(tmp) / "r1").mkdir()
+                run_mod.cmd_event(argparse.Namespace(**base))
+                line = (Path(tmp) / "r1" / "journal.ndjson").read_text(
+                    encoding="utf-8").strip()
+        return json.loads(line)
+
+    def test_event_inscrit_le_worktree_de_l_agent(self):
+        """Sans cela, rien à croiser : c'est l'unique écriture qui alimente
+        `worktree_claims`, et elle doit avoir lieu dès la première phase."""
+        found = self.event(19, "/w/agent-4f21ab", "/depot")
+        self.assertEqual(found["worktree"], str(Path("/w/agent-4f21ab")))
+
+    def test_event_n_inscrit_rien_depuis_le_depot_principal(self):
+        self.assertNotIn("worktree", self.event(19, "/depot", "/depot"))
+
+    def test_une_ligne_de_run_n_est_pas_marquee(self):
+        self.assertNotIn("worktree", self.event(None, "/w/agent-4f21ab", "/depot"))
 
 
 def digest(name, milestone, finished=False, signal="run", active=False,
@@ -1419,7 +1581,7 @@ class AgentMortAvecSonEtape(unittest.TestCase):
     def test_une_sonde_muette_suspend_le_requeue_meme_au_demarrage(self):
         """Sans certitude sur l'état local, on ne fait reculer personne — sinon
         un `git worktree list` en erreur relancerait toute la vague."""
-        def muette():
+        def muette(claims=None):
             return run_mod.note_probe_failure("git worktree list : en erreur")
 
         tickets, _ = self.reconcile(journal=[self.RUNNING], worktrees=muette,
@@ -1450,6 +1612,110 @@ class AgentMortAvecSonEtape(unittest.TestCase):
         tickets, _ = self.reconcile(journal=journal, worktrees=self.WORKTREE,
                                     leg_start=True)
         self.assertEqual(tickets[19]["status"], "failed")
+
+
+class AgentAnonymeDeJalon(unittest.TestCase):
+    """#175, de bout en bout : le journal, la sonde locale, puis le verdict.
+
+    `live_worktrees` n'est pas doublé ici, contrairement aux classes voisines —
+    c'est précisément le chemin journal → revendication → `git worktree list`
+    qu'on veut voir jouer. Seul `git` l'est, par sa sortie.
+
+    Les deux critères du ticket sont les deux moitiés de la même règle : la
+    revendication rend le worktree **visible**, elle ne dit jamais que son agent
+    est vivant. C'est `orphaned()` qui en juge, sur la frontière d'étape, comme
+    pour n'importe quel worktree nommé.
+    """
+
+    PORCELAIN = ("worktree /depot\nHEAD 000\nbranch refs/heads/develop\n\n"
+                 + ANONYME)
+
+    def ligne(self, ts, **fields):
+        event = {"ts": ts, "kind": "ticket", "ticket": 19,
+                 "phase": "prise-en-charge", "status": "running",
+                 "message": "carte en In progress",
+                 "worktree": "/w/agent-4f21ab"}
+        event.update(fields)
+        if event.get("worktree") is None:      # `worktree=None` : l'agent muet
+            event.pop("worktree", None)
+        return event
+
+    def etape(self, ts):
+        return {"ts": ts, "kind": "run", "status": "leg_started",
+                "message": "étape ouverte"}
+
+    def reconcile(self, journal, porcelain=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, journal=journal)
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
+                 mock.patch.object(run_mod, "gh_json",
+                                   side_effect=[([], None), ([], None)]), \
+                 mock.patch.object(run_mod, "remote_branches", return_value={}), \
+                 mock.patch.object(run_mod.subprocess, "run",
+                                   return_value=completed(
+                                       0, self.PORCELAIN if porcelain is None
+                                       else porcelain)), \
+                 contextlib.redirect_stdout(output):
+                run_mod.cmd_reconcile(argparse.Namespace(run="r1", leg_start=False))
+                tickets = run_mod.replay(run_mod.load_run("r1"),
+                                         run_mod.read_journal("r1"),
+                                         run_mod.load_control("r1"))
+            return tickets, output.getvalue()
+
+    def test_un_agent_vivant_dans_un_worktree_anonyme_n_est_pas_requeue(self):
+        """Critère 1. L'agent a journalisé après l'ouverture de l'étape : il
+        tient son ticket, et sa branche ne le dit toujours pas. Le requeuer
+        lancerait un second agent sur son empreinte — c'est #130."""
+        tickets, output = self.reconcile(
+            [self.etape("2026-08-25T20:00:00+00:00"),
+             self.ligne("2026-08-25T20:05:00+00:00")])
+        self.assertEqual(tickets[19]["status"], "running")
+        self.assertIn("journal conforme au dépôt", output)
+
+    def test_sans_la_revendication_le_meme_agent_serait_double(self):
+        """Le contre-essai, qui dit ce que la revendication porte : même
+        journal, même sortie de `git`, mais l'agent n'a rien inscrit — et le
+        ticket repart alors qu'un vivant le tient. C'est l'état d'avant #175."""
+        tickets, output = self.reconcile(
+            [self.etape("2026-08-25T20:00:00+00:00"),
+             self.ligne("2026-08-25T20:05:00+00:00", worktree=None)])
+        self.assertEqual(tickets[19]["status"], "pending")
+        self.assertIn("jamais démarré", output)
+
+    def test_un_worktree_anonyme_abandonne_ne_retient_pas_son_ticket(self):
+        """Critère 2. L'étape qui portait l'agent est morte après son dernier
+        battement : le ticket repart, sur sa branche et dans son worktree."""
+        tickets, output = self.reconcile(
+            [self.ligne("2026-08-25T20:05:00+00:00"),
+             self.etape("2026-08-25T21:00:00+00:00")])
+        self.assertEqual(tickets[19]["status"], "pending")
+        self.assertIn("agent mort avec son étape", output)
+        self.assertIn("worktree-agent-4f21ab", output)
+        self.assertIn("/w/agent-4f21ab", output)
+
+    def test_un_worktree_anonyme_disparu_rend_le_ticket_a_la_file(self):
+        """La revendication survit au worktree — le journal est en ajout seul.
+        Elle ne vaut donc que confrontée à `git worktree list` : sans entrée en
+        face, le ticket n'a plus rien où reprendre."""
+        tickets, output = self.reconcile(
+            [self.etape("2026-08-25T20:00:00+00:00"),
+             self.ligne("2026-08-25T20:05:00+00:00")],
+            porcelain="worktree /depot\nHEAD 000\nbranch refs/heads/develop\n")
+        self.assertEqual(tickets[19]["status"], "pending")
+        self.assertIn("jamais démarré", output)
+
+    def test_le_ticket_tombe_garde_son_worktree_anonyme(self):
+        """Un ticket jugé n'est pas un ticket abandonné : la pause sur erreur
+        doit continuer de le retenir, worktree anonyme ou non."""
+        tickets, output = self.reconcile(
+            [self.ligne("2026-08-25T20:05:00+00:00"),
+             self.ligne("2026-08-25T20:40:00+00:00", status="blocked",
+                        phase="validation", message="verify rouge"),
+             self.etape("2026-08-25T21:00:00+00:00")])
+        self.assertEqual(tickets[19]["status"], "blocked")
+        self.assertNotIn("agent mort", output)
 
 
 class DemarrageEtape(unittest.TestCase):
