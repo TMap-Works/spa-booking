@@ -37,6 +37,7 @@ from unittest import mock
 # chemin plutôt que d'y semer des `__init__.py`.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+import milestone_rules as rules_mod  # noqa: E402 — idem
 import milestone_run as run_mod  # noqa: E402 — l'insertion de chemin la précède
 
 
@@ -169,14 +170,16 @@ def digest(name, milestone, finished=False, signal="run", active=False,
             "signal": signal, "finished": finished, "active": active}
 
 
-def row(title, due, open_issues=0, closed=0, state="open", run=None, todo=None):
+def row(title, due, open_issues=0, closed=0, state="open", run=None, todo=None,
+        interactive=None):
     """Une ligne de `survey`. `todo` — les issues produit — vaut `open` par
     défaut : c'est ce que fait `survey` quand GitHub ne répond pas sur les
     labels, et cela laisse les cas historiques dire exactement ce qu'ils
     disaient."""
     return {"title": title, "state": state, "due": due, "open": open_issues,
             "todo": open_issues if todo is None else todo,
-            "closed": closed, "run": run}
+            "closed": closed, "interactive": list(interactive or []),
+            "run": run}
 
 
 def tty(value):
@@ -341,10 +344,11 @@ class Tableau(unittest.TestCase):
     """`survey` — les jalons de GitHub et les runs du disque, sur une même ligne."""
 
     def survey(self, milestones, digests=(), error=None, backlog=None,
-               nature="projet"):
+               interactive=None, nature="projet"):
         dirs = [Path(str(index)) for index in range(len(digests))]
         with mock.patch.object(run_mod, "gh_json", return_value=(milestones, error)), \
-             mock.patch.object(run_mod, "nature_backlog", return_value=backlog), \
+             mock.patch.object(run_mod, "nature_census",
+                               return_value=(backlog, interactive or {})), \
              mock.patch.object(run_mod, "run_dirs", return_value=dirs), \
              mock.patch.object(run_mod, "run_digest", side_effect=list(digests)):
             return run_mod.survey(nature)
@@ -426,13 +430,37 @@ class Tableau(unittest.TestCase):
                               backlog=None)
         self.assertEqual(rows[0]["todo"], 12)
 
+    def test_la_rubrique_interactive_suit_son_jalon(self):
+        """Ce qu'aucun run ne prendra reste attaché au jalon où il se trouve :
+        c'est le jalon qu'un humain ouvre, pas une liste globale."""
+        rows, _ = self.survey(
+            [self.milestone("S1", "2026-08-28", opened=12)], backlog={"S1": 2},
+            interactive={"S1": [{"number": 226, "title": "aligner les commandes"}]})
+        self.assertEqual([n["number"] for n in rows[0]["interactive"]], [226])
+
+    def test_un_jalon_sans_rubrique_en_a_une_vide(self):
+        rows, _ = self.survey([self.milestone("S1", "2026-08-28")],
+                              backlog={"S1": 3}, interactive={"S2": [{"number": 1}]})
+        self.assertEqual(rows[0]["interactive"], [])
+
+    def test_un_run_dont_le_jalon_est_inconnu_a_une_rubrique_vide(self):
+        """GitHub muet : on ne sait rien des empreintes, et la ligne se construit
+        sans lui. Elle doit malgré tout porter la clé — `print_survey` la lit."""
+        rows, _ = self.survey(None, [digest("s9-x", "S9")], error="gh indisponible")
+        self.assertEqual(rows[0]["interactive"], [])
+
 
 class DecompteParNature(unittest.TestCase):
-    """`nature_backlog` — combien d'issues d'une nature restent, par jalon."""
+    """`nature_census` — combien d'issues d'une nature restent, par jalon."""
 
-    def backlog(self, payload, error=None, nature="projet"):
-        with mock.patch.object(run_mod, "gh_json", return_value=(payload, error)):
-            return run_mod.nature_backlog(nature)
+    def backlog(self, payload, error=None, nature="projet", frozen=()):
+        # Les empreintes figées sont neutralisées ici : ce décompte-là ne parle
+        # que des labels, et lire le vrai fichier de règles ferait dépendre ces
+        # tests du contenu du dépôt.
+        with mock.patch.object(run_mod, "gh_json", return_value=(payload, error)), \
+             mock.patch.object(run_mod, "frozen_interactive",
+                               return_value=set(frozen)):
+            return run_mod.nature_census(nature)[0]
 
     def query(self, nature):
         """La requête `gh` réellement émise — c'est le label qui fait le filtre."""
@@ -442,8 +470,9 @@ class DecompteParNature(unittest.TestCase):
             seen.append(args)
             return [], None
 
-        with mock.patch.object(run_mod, "gh_json", side_effect=spy):
-            run_mod.nature_backlog(nature)
+        with mock.patch.object(run_mod, "gh_json", side_effect=spy), \
+             mock.patch.object(run_mod, "frozen_interactive", return_value=set()):
+            run_mod.nature_census(nature)
         return seen[0]
 
     def test_la_nature_demandee_devient_le_label_interroge(self):
@@ -502,6 +531,179 @@ class DecompteParNature(unittest.TestCase):
         """Zéro voudrait dire « rien à dérouler » et arrêterait le jalon ;
         `None` dit « je ne sais pas », et l'appelant retombe sur GitHub."""
         self.assertIsNone(self.backlog(None, error="gh indisponible"))
+
+    def test_une_empreinte_entierement_sous_claude_ne_compte_plus(self):
+        """Le plan la sort déjà (#360) : la compter ferait recommander un jalon
+        dont `start` sortirait sur « rien de traitable »."""
+        counts = self.backlog([
+            {"number": 226, "milestone": {"title": "S1"},
+             "labels": [{"name": "nature:outillage"}]},
+            {"number": 371, "milestone": {"title": "S1"},
+             "labels": [{"name": "nature:outillage"}]},
+        ], frozen={226})
+        self.assertEqual(counts, {"S1": 1})
+
+
+class EmpreinteFigeeNonLivrable(unittest.TestCase):
+    """`frozen_interactive` — les issues dont l'empreinte figée est entièrement
+    sous `.claude/**`, qu'aucune vague ne peut donc écrire (#208, #360)."""
+
+    def frozen(self, payload):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "milestone-rules.json"
+            path.write_text(payload, encoding="utf-8")
+            with mock.patch.object(rules_mod, "RULES_FILE", path):
+                return run_mod.frozen_interactive()
+
+    def test_une_empreinte_entierement_sous_claude_est_retenue(self):
+        found = self.frozen(json.dumps({"resources": {
+            "179": [".claude/settings"],
+            "226": [".claude/commands", ".claude/skills/project-flow"]}}))
+        self.assertEqual(found, {179, 226})
+
+    def test_une_empreinte_mixte_ne_l_est_pas(self):
+        """Le volet hors `.claude/` reste livrable : le ticket se scinde, il ne
+        sort ni du plan ni du décompte."""
+        self.assertEqual(self.frozen(json.dumps({"resources": {
+            "186": [".claude/commands", "scripts/milestone-run"]}})), set())
+
+    def test_une_empreinte_vide_ne_dit_rien(self):
+        self.assertEqual(self.frozen(json.dumps({"resources": {"9": []}})), set())
+
+    def test_un_fichier_illisible_surestime_plutot_que_de_cacher(self):
+        """Un jalon proposé à tort se voit au premier plan vide ; un jalon caché
+        à tort ne se voit jamais."""
+        self.assertEqual(self.frozen("{ ceci n'est pas du json"), set())
+
+    def test_une_cle_qui_n_est_pas_un_numero_est_ignoree(self):
+        self.assertEqual(self.frozen(json.dumps({"resources": {
+            "$doc": [".claude/commands"]}})), set())
+
+    def test_une_valeur_qui_n_est_pas_une_liste_est_ignoree(self):
+        self.assertEqual(self.frozen(json.dumps({"resources": {
+            "179": ".claude/settings"}})), set())
+
+    def test_un_fichier_sans_section_resources_ne_retient_personne(self):
+        self.assertEqual(self.frozen(json.dumps({"depends": {}})), set())
+
+    def test_des_regles_absentes_ne_retiennent_personne(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(rules_mod, "RULES_FILE",
+                                   Path(tmp) / "absent.json"):
+                self.assertEqual(run_mod.frozen_interactive(), set())
+
+
+class RecensementParNature(unittest.TestCase):
+    """`nature_census` — d'un même passage, ce qui reste à dérouler et ce qui
+    attend une session interactive."""
+
+    def census(self, payload, error=None, nature="projet", frozen=()):
+        with mock.patch.object(run_mod, "gh_json", return_value=(payload, error)), \
+             mock.patch.object(run_mod, "frozen_interactive",
+                               return_value=set(frozen)):
+            return run_mod.nature_census(nature)
+
+    def issue(self, number, milestone="S1", labels=("nature:outillage",),
+              title=None):
+        return {"number": number, "title": title or f"issue {number}",
+                "milestone": {"title": milestone} if milestone else None,
+                "labels": [{"name": name} for name in labels]}
+
+    def test_l_issue_sort_du_decompte_et_entre_dans_la_rubrique(self):
+        counts, interactive = self.census(
+            [self.issue(226), self.issue(371)], frozen={226})
+        self.assertEqual(counts, {"S1": 1})
+        self.assertEqual([n["number"] for n in interactive["S1"]], [226])
+
+    def test_elle_est_rendue_avec_son_titre(self):
+        """Un numéro seul n'apprend rien : c'est le titre qui décide un humain à
+        y consacrer une session."""
+        _, interactive = self.census(
+            [self.issue(226, title="transmettre readonly au gabarit")],
+            frozen={226})
+        self.assertEqual(interactive["S1"][0]["title"],
+                         "transmettre readonly au gabarit")
+
+    def test_la_rubrique_se_range_par_jalon(self):
+        _, interactive = self.census(
+            [self.issue(226), self.issue(179, milestone="S2")],
+            frozen={226, 179})
+        self.assertEqual(sorted(interactive), ["S1", "S2"])
+
+    def test_sans_jalon_elle_n_apparait_nulle_part(self):
+        self.assertEqual(self.census([self.issue(226, milestone=None)],
+                                     frozen={226}), ({}, {}))
+
+    def test_ce_que_le_plan_ecarte_d_office_n_y_entre_pas_non_plus(self):
+        """`post-mvp` prime : l'issue ne sera pas faite, ni par un run ni à la
+        main, et l'annoncer chaque fois qu'on tape `next` serait du bruit."""
+        self.assertEqual(
+            self.census([self.issue(226, labels=("nature:outillage", "post-mvp"))],
+                        frozen={226}), ({}, {}))
+
+    def test_github_muet_ne_rend_aucune_rubrique(self):
+        self.assertEqual(self.census(None, error="gh indisponible"), (None, {}))
+
+    def test_une_page_pleine_ne_rend_aucune_rubrique(self):
+        page = [self.issue(n) for n in range(run_mod.BACKLOG_LIMIT)]
+        self.assertEqual(self.census(page), (None, {}))
+
+    def test_le_titre_est_demande_a_github(self):
+        seen = []
+
+        def spy(args):
+            seen.append(args)
+            return [], None
+
+        with mock.patch.object(run_mod, "gh_json", side_effect=spy), \
+             mock.patch.object(run_mod, "frozen_interactive", return_value=set()):
+            run_mod.nature_census("projet")
+        self.assertIn("number,title,milestone,labels", seen[0])
+
+
+class RubriqueInteractiveDuTableau(unittest.TestCase):
+    """Ce que `next` doit dire **avant** qu'un run ne s'ouvre — plutôt que de le
+    laisser découvrir dans le journal d'un run déjà lancé."""
+
+    def render(self, rows):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            run_mod.print_survey(rows)
+        return output.getvalue()
+
+    def test_la_rubrique_nomme_l_issue_et_son_jalon(self):
+        text = self.render([row(
+            "S1 — Fondations", "2026-08-28", open_issues=12, todo=0,
+            interactive=[{"number": 226, "title": "aligner les commandes"}])])
+        self.assertIn("session interactive", text)
+        self.assertIn("#226", text)
+        self.assertIn("aligner les commandes", text)
+        self.assertIn("S1 — Fondations", text)
+
+    def test_le_motif_est_dit(self):
+        text = self.render([row("S1", "2026-08-28",
+                                interactive=[{"number": 226, "title": "t"}])])
+        self.assertIn(".claude/**", text)
+
+    def test_un_noeud_sans_titre_ne_fait_pas_tomber_le_tableau(self):
+        """Même tolérance que `plan_interactive` : une ligne construite ailleurs
+        que par `survey` peut n'avoir que le numéro, et le tableau reste dû."""
+        text = self.render([row("S1", "2026-08-28",
+                                interactive=[{"number": 226}])])
+        self.assertIn("#226", text)
+
+    def test_sans_issue_concernee_rien_n_est_imprime(self):
+        self.assertNotIn("session interactive",
+                         self.render([row("S1", "2026-08-28", open_issues=3)]))
+
+    def test_une_ligne_d_avant_la_rubrique_ne_fait_pas_tomber_le_tableau(self):
+        """La clé est neuve : une ligne construite ailleurs ne l'a pas, et le
+        tableau doit rester imprimable."""
+        legacy = {"title": "S1", "state": "open", "due": "2026-08-28",
+                  "open": 3, "todo": 3, "closed": 1, "run": None}
+        text = self.render([legacy])
+        self.assertIn("S1", text)
+        self.assertNotIn("session interactive", text)
 
 
 class RunAbime(unittest.TestCase):
@@ -569,14 +771,20 @@ def plan_issue(number, resources=("scripts/x",)):
             "resources": list(resources)}
 
 
-def write_run(tmp, journal=(), control=None):
-    """Un run complet sur disque — deux vagues, trois tickets."""
+def write_run(tmp, journal=(), control=None, interactive=None):
+    """Un run complet sur disque — deux vagues, trois tickets.
+
+    `interactive` laissé à `None` reproduit un run ouvert avant #360 : la
+    rubrique n'est pas dans son plan, et rien ne doit s'en émouvoir.
+    """
     directory = Path(tmp) / "r1"
     directory.mkdir()
+    plan = {"waves": [{"index": 1, "issues": [plan_issue(19), plan_issue(20)]},
+                      {"index": 2, "issues": [plan_issue(21)]}]}
+    if interactive is not None:
+        plan["interactive"] = interactive
     run = {"id": "r1", "milestone": "S1", "created": "2026-08-01T00:00:00+00:00",
-           "width": 2, "plan": {"waves": [
-               {"index": 1, "issues": [plan_issue(19), plan_issue(20)]},
-               {"index": 2, "issues": [plan_issue(21)]}]}}
+           "width": 2, "plan": plan}
     (directory / "run.json").write_text(json.dumps(run), encoding="utf-8")
     if control is not None:
         (directory / "control.json").write_text(json.dumps(control),
@@ -682,6 +890,100 @@ class PauseSurErreur(unittest.TestCase):
                                  {"signal": "run", "pause_on_error": True})
         self.assertEqual(code, run_mod.NO_RUN)
         self.assertIn("achevées", output)
+
+
+class RestitutionInteractiveAuGate(unittest.TestCase):
+    """#371 — la rubrique que le plan produit doit se relire au `gate`.
+
+    `start` recopie le plan entier dans `run.json`, la rubrique y survit — mais
+    plus personne n'ouvre le plan une fois le run lancé. Sans cette restitution,
+    ces issues-là n'existent nulle part où quelqu'un regarde.
+    """
+
+    MOTIF = ("empreinte entièrement sous .claude/** — à reprendre en session "
+             "interactive")
+    NODES = [{"number": 226, "title": "aligner les commandes",
+              "url": "https://example.invalid/226",
+              "resources": [".claude/commands"], "reason": MOTIF}]
+
+    def gate(self, interactive=None, control=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            write_run(tmp, control=control or {"signal": "run"},
+                      interactive=interactive)
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 contextlib.redirect_stdout(output):
+                code = run_mod.cmd_gate(argparse.Namespace(run="r1"))
+            return code, output.getvalue()
+
+    def test_chaque_issue_est_nommee_avec_son_motif(self):
+        code, output = self.gate(self.NODES)
+        self.assertEqual(code, run_mod.GO)
+        self.assertIn("session interactive #226", output)
+        self.assertIn("aligner les commandes", output)
+        self.assertIn(".claude/**", output)
+
+    def test_la_ligne_est_distincte_d_un_ticket_ecarte(self):
+        """Un ticket écarté est tombé ; celui-ci n'a jamais pu être pris. Les
+        confondre ferait chercher une panne là où il n'y en a pas."""
+        _, output = self.gate(self.NODES, control={
+            "signal": "run", "skip": {"20": "hors sujet"}})
+        self.assertIn("écarter #20", output)
+        self.assertIn("session interactive #226", output)
+        self.assertNotIn("écarter #226", output)
+
+    def test_une_issue_deja_ecartee_nommement_ne_se_dit_pas_deux_fois(self):
+        """L'arbitre écarte lui aussi des empreintes non livrables, avec une
+        raison plus précise que le motif générique. Sur ce run, quatre des cinq
+        lignes faisaient doublon."""
+        _, output = self.gate(self.NODES, control={
+            "signal": "run",
+            "skip": {"226": "écriture .claude/** refusée à l'arbitre"}})
+        self.assertIn("écarter #226", output)
+        self.assertNotIn("session interactive #226", output)
+
+    def test_une_issue_ecartee_n_emporte_pas_les_autres(self):
+        nodes = self.NODES + [{"number": 179, "title": "symlinkDirectories",
+                               "reason": self.MOTIF}]
+        _, output = self.gate(nodes, control={"signal": "run",
+                                              "skip": {"226": "déjà dit"}})
+        self.assertNotIn("session interactive #226", output)
+        self.assertIn("session interactive #179", output)
+
+    def test_un_run_d_avant_la_rubrique_ne_dit_rien(self):
+        _, output = self.gate(None)
+        self.assertNotIn("session interactive", output)
+
+    def test_une_rubrique_vide_ne_dit_rien(self):
+        _, output = self.gate([])
+        self.assertNotIn("session interactive", output)
+
+    def test_un_noeud_sans_numero_est_ignore_sans_faire_tomber_la_barriere(self):
+        code, output = self.gate([{"title": "nœud abîmé"}])
+        self.assertEqual(code, run_mod.GO)
+        self.assertNotIn("session interactive", output)
+
+    def test_un_noeud_sans_motif_en_recoit_un(self):
+        _, output = self.gate([{"number": 226}])
+        self.assertIn("session interactive #226", output)
+        self.assertIn(".claude/**", output)
+
+    def test_un_plan_abime_ne_fait_pas_tomber_la_barriere(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "r1"
+            directory.mkdir()
+            (directory / "run.json").write_text(
+                json.dumps({"id": "r1", "milestone": "S1", "width": 2,
+                            "plan": {"waves": [], "interactive": "n'importe quoi"}}),
+                encoding="utf-8")
+            (directory / "control.json").write_text(json.dumps({"signal": "run"}),
+                                                    encoding="utf-8")
+            (directory / "journal.ndjson").write_text("", encoding="utf-8")
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 contextlib.redirect_stdout(output):
+                run_mod.cmd_gate(argparse.Namespace(run="r1"))
+        self.assertNotIn("session interactive", output.getvalue())
 
 
 class ActeurDuSignal(unittest.TestCase):

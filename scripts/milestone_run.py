@@ -62,6 +62,17 @@ Sur un terminal, la proposition peut être écartée d'un chiffre ; ailleurs —
 superviseur, la tâche planifiée, `claude -p` — elle est prise telle quelle,
 faute de clavier à qui demander.
 
+## Ce qu'aucun run ne prendra
+
+Une issue dont l'empreinte figée est entièrement sous `.claude/**` ne sera
+dispatchée par aucune vague : le classifieur « fichier sensible » du harnais y
+refuse `Edit`/`Write` en session non interactive. `next` ne la compte donc pas
+dans les issues « à dérouler » — la compter ferait proposer un jalon dont `start`
+sortirait sur « rien de traitable » — et la nomme sous le tableau, avec son
+jalon. `gate` fait de même à chaque vague, à partir de la rubrique que `start` a
+recopiée dans `run.json` : sans cela, ces issues n'existent nulle part où
+quelqu'un regarde une fois le run ouvert (#360, #371).
+
 ## Produit ou outillage
 
 Un run ne déroule qu'une nature à la fois. `--nature projet`, le défaut, ne
@@ -114,16 +125,25 @@ for _stream in (sys.stdout, sys.stderr):
 
 ROOT = Path(__file__).resolve().parents[1]
 
-# Le registre des natures et les largeurs par défaut restent ceux du plan : on
-# les lui emprunte plutôt que d'en tenir une seconde copie, qui finirait par
-# diverger de ce que le plan filtre vraiment.
+# Le registre des natures, les largeurs par défaut et la lecture d'une empreinte
+# non livrable restent ceux du plan : on les lui emprunte plutôt que d'en tenir
+# une seconde copie, qui finirait par diverger de ce que le plan filtre vraiment.
 try:
-    from milestone_plan import DEFAULT_WIDTH, NATURES
+    from milestone_plan import DEFAULT_WIDTH, NATURES, undeliverable
 except Exception:  # noqa: BLE001 — un plan illisible se dira à `plan_json`, pas
     # à l'import : `status`, `log` et `watch` doivent rester utilisables même
     # quand le planificateur est cassé, c'est là qu'on en a le plus besoin.
     NATURES = ("projet", "outillage", "toutes")
     DEFAULT_WIDTH = {"projet": 3, "outillage": 1, "toutes": 1}
+
+    def undeliverable(resources):
+        """Repli : sans le plan, on ne sait pas — donc on ne cache rien.
+
+        Le décompte qui s'en sert surestimerait alors le travail restant, ce qui
+        est le seul sens acceptable : un jalon proposé à tort se voit au premier
+        plan vide, un jalon caché à tort ne se voit jamais.
+        """
+        return False
 
 
 def main_root():
@@ -1487,10 +1507,55 @@ NATURE_LABEL = {"projet": "nature:projet", "outillage": "nature:outillage"}
 # compter ferait proposer un jalon dont le plan sort vide.
 NEVER_PLANNED = {"tracking", "post-mvp", "type:epic"}
 BACKLOG_LIMIT = 500
+# Ce que `milestone_plan` sort du plan sous cette rubrique, dit ici dans les
+# mêmes mots : `gate` et `next` en parlent, il ne doit y en avoir qu'une version.
+# Le motif seul sert de repli à `gate` quand un plan ancien n'en porte pas ; le
+# titre de rubrique s'en déduit, pour que les deux ne puissent pas diverger.
+INTERACTIVE_REASON = "empreinte entièrement sous .claude/**"
+INTERACTIVE_RUBRIC = f"À reprendre en session interactive · {INTERACTIVE_REASON}"
 
 
-def nature_backlog(nature="projet"):
-    """{jalon : issues de cette nature encore ouvertes}, None si GitHub est muet.
+def frozen_interactive():
+    """{numéros dont l'empreinte **figée** est entièrement sous `.claude/**`}.
+
+    Ces issues-là sont recevables et resteront pourtant hors de tout plan : le
+    classifieur « fichier sensible » du harnais refuse `Edit`/`Write` sous
+    `.claude/**` en session non interactive, c'est-à-dire dans toutes les vagues
+    d'un run (#208, #360). Les compter comme du travail à dérouler ferait
+    proposer un jalon dont `start` sortirait sur « rien de traitable ».
+
+    Seules les empreintes figées comptent : l'heuristique de
+    `milestone_plan.resources_of()` ne produit aucune ressource `.claude/`, ces
+    empreintes-là sont toujours posées à la main dans le fichier de règles.
+
+    **Un fichier de règles illisible rend un ensemble vide** — donc un décompte
+    qui surestime plutôt qu'un jalon caché : le premier se voit au premier plan
+    vide, le second ne se voit jamais.
+    """
+    try:
+        import milestone_rules
+        rules = milestone_rules.load()
+    except Exception:  # noqa: BLE001 — règles absentes, illisibles ou module
+        # introuvable : on ne sait pas, donc on ne cache rien.
+        return set()
+    resources = rules.get("resources")
+    if not isinstance(resources, dict):
+        return set()
+    numbers = set()
+    for key, pinned in resources.items():
+        if not isinstance(pinned, list):
+            continue
+        try:
+            number = int(key)
+        except (TypeError, ValueError):
+            continue
+        if undeliverable([str(item) for item in pinned]):
+            numbers.add(number)
+    return numbers
+
+
+def nature_census(nature="projet"):
+    """({jalon : à dérouler}, {jalon : issues en session interactive}).
 
     Un run ne dispatche qu'une nature — voir `milestone_plan.qualify()`. Un jalon
     dont il ne reste que de l'outillage n'a donc rien à dérouler *pour un run
@@ -1498,21 +1563,29 @@ def nature_backlog(nature="projet"):
     vide : c'est exactement ce que `next` existe pour éviter. Le raisonnement est
     symétrique sous `outillage`, où c'est le produit restant qui ne compte pas.
 
+    Le second membre est ce qui reste **à faire à la main** : les issues dont
+    l'empreinte figée est entièrement sous `.claude/**`. Elles ne comptent pas
+    dans le premier — aucun run ne les prendra — mais les taire ferait découvrir
+    dans un journal de run ce qu'un humain doit savoir avant d'en ouvrir un. Une
+    seule collecte pour les deux : c'est le même passage sur les mêmes issues.
+
     Une seule requête pour tout le dépôt plutôt qu'une par jalon — le décompte
-    ne vaut pas quatre allers-retours. GitHub muet rend `None` : l'appelant
+    ne vaut pas quatre allers-retours. GitHub muet rend `(None, {})` : l'appelant
     retombe alors sur le décompte du jalon, qui surestime, mais dans le sens qui
-    ne cache rien. Une page pleine rend `None` pour la même raison : tronquée,
-    elle sous-estimerait, et un jalon caché à tort ne se voit jamais.
+    ne cache rien. Une page pleine rend la même chose pour la même raison :
+    tronquée, elle sous-estimerait, et un jalon caché à tort ne se voit jamais.
     """
     wanted = NATURE_LABEL.get(nature)
     query = ["issue", "list", "--repo", REPO, "--state", "open",
-             "--limit", str(BACKLOG_LIMIT), "--json", "number,milestone,labels"]
+             "--limit", str(BACKLOG_LIMIT), "--json",
+             "number,title,milestone,labels"]
     if wanted:
         query += ["--label", wanted]
     issues, error = gh_json(query)
     if error or issues is None or len(issues) >= BACKLOG_LIMIT:
-        return None
-    counts = {}
+        return None, {}
+    interactive_numbers = frozen_interactive()
+    counts, interactive = {}, {}
     for issue in issues:
         labels = {label.get("name") for label in issue.get("labels") or []}
         if labels & NEVER_PLANNED:
@@ -1523,9 +1596,14 @@ def nature_backlog(nature="projet"):
         if wanted is None and not any(l.startswith("nature:") for l in labels):
             continue
         title = (issue.get("milestone") or {}).get("title")
-        if title:
-            counts[title] = counts.get(title, 0) + 1
-    return counts
+        if not title:
+            continue
+        if issue.get("number") in interactive_numbers:
+            interactive.setdefault(title, []).append(
+                {"number": issue.get("number"), "title": issue.get("title") or ""})
+            continue
+        counts[title] = counts.get(title, 0) + 1
+    return counts, interactive
 
 
 def survey(nature="projet"):
@@ -1545,7 +1623,7 @@ def survey(nature="projet"):
                                  "-X", "GET", "-f", "state=all"])
     # Inutile de redemander le backlog si GitHub vient déjà de ne pas répondre :
     # le second appel échouerait de la même façon, en faisant attendre autant.
-    backlog = nature_backlog(nature) if milestones else None
+    backlog, interactive = nature_census(nature) if milestones else (None, {})
     rows = []
     for milestone in milestones or []:
         title = milestone.get("title", "")
@@ -1561,6 +1639,9 @@ def survey(nature="projet"):
             "todo": (milestone.get("open_issues", 0) if backlog is None
                      else backlog.get(title, 0)),
             "closed": milestone.get("closed_issues", 0),
+            # Hors du décompte à dérouler, et pourtant à faire : c'est
+            # exactement ce qu'un humain doit voir avant d'ouvrir un run.
+            "interactive": interactive.get(title, []),
             "run": attached,
         })
     rows.sort(key=lambda row: (row["due"] or "9999", row["title"]))
@@ -1571,7 +1652,7 @@ def survey(nature="projet"):
         if not any(row["title"] == digest["milestone"] for row in rows):
             rows.append({"title": digest["milestone"], "state": "?", "due": "",
                          "open": None, "todo": None, "closed": None,
-                         "run": digest})
+                         "interactive": [], "run": digest})
     return rows, error
 
 
@@ -1649,6 +1730,29 @@ def print_survey(rows, error=None):
         print(f" {'*' if digest and digest['active'] else ' '} "
               f"{row['title']:<{width}} {row['due'] or '—':<11} {issues:<26} "
               f"{state}")
+    print_interactive(rows)
+
+
+def print_interactive(rows):
+    """La rubrique que le plan sort et que le tableau ne compte pas.
+
+    Une note sous le tableau plutôt qu'une colonne : ces issues-là ne se
+    comparent pas aux autres — elles ne sont pas « à dérouler moins vite », elles
+    ne se dérouleront pas du tout. Les découvrir dans un journal de run, une fois
+    le run ouvert, arrive trop tard pour qu'un humain leur consacre une session.
+    """
+    pending = [(row["title"], row.get("interactive") or []) for row in rows]
+    pending = [(title, items) for title, items in pending if items]
+    if not pending:
+        return
+    print(f"\n{INTERACTIVE_RUBRIC} — aucun run ne les prendra")
+    for title, items in pending:
+        for item in items:
+            # Lecture tolérante, comme `plan_interactive` : une ligne construite
+            # ailleurs que par `survey` — un run relu, un appelant tiers — ne
+            # doit pas faire tomber tout le tableau sur un titre manquant.
+            print(f"   {title} · #{item.get('number')} "
+                  f"{item.get('title') or ''}".rstrip())
 
 
 def ask_milestone(rows, default):
@@ -2007,6 +2111,26 @@ def cmd_step(args):
     return code
 
 
+def plan_interactive(run):
+    """Les issues que le plan a renvoyées en session interactive, normalisées.
+
+    Tolérante par construction : un run ouvert avant #360 n'a pas la rubrique,
+    et `gate` doit rester utilisable sur les runs déjà en vol. Un nœud sans
+    numéro exploitable est ignoré plutôt que de faire tomber la barrière — ce
+    n'est qu'une ligne d'information, elle ne vaut pas un run bloqué.
+    """
+    plan = run.get("plan")
+    nodes = plan.get("interactive") if isinstance(plan, dict) else None
+    found = []
+    for node in nodes or []:
+        if not isinstance(node, dict) or node.get("number") is None:
+            continue
+        found.append({"number": node["number"],
+                      "title": node.get("title") or "",
+                      "reason": node.get("reason") or INTERACTIVE_REASON})
+    return found
+
+
 def cmd_gate(args):
     run_id = resolve(args.run, required=False)
     if run_id is None:
@@ -2018,7 +2142,9 @@ def cmd_gate(args):
     tickets = replay(run, read_journal(run_id), control)
     current, waves = wave_state(run, tickets)
 
+    skipped = set()
     for number, reason in (control.get("skip") or {}).items():
+        skipped.add(str(number))
         print(f"écarter #{number} · {reason or 'décision humaine'}")
     # Une demande de reprise ne vaut que tant qu'elle n'a pas été honorée : le
     # `reset → pending` du shell la consomme, et la vague suivante la relance.
@@ -2035,6 +2161,22 @@ def cmd_gate(args):
         ticket = tickets.get(number)
         if ticket and ticket["status"] in BAD:
             print(f"reprendre #{number} ({ticket['status']})")
+
+    # Ni écartées, ni à reprendre : `milestone_plan` les a sorties du plan parce
+    # qu'aucune vague ne peut écrire leur empreinte, et `start` a recopié la
+    # rubrique dans `run.json`. Sans cette ligne, la seule trace qu'il en reste
+    # est le plan lui-même, que personne ne relit une fois le run ouvert — et le
+    # travail attendrait une session que rien ne réclame (#360).
+    #
+    # Sauf celles que l'arbitre a déjà écartées nommément : le cas est courant —
+    # une empreinte non livrable se découvre aussi en cours de run, et la raison
+    # qu'il a journalisée en dit plus que le motif générique. Deux lignes pour la
+    # même issue feraient chercher deux problèmes là où il n'y en a qu'un.
+    for node in plan_interactive(run):
+        if str(node["number"]) in skipped:
+            continue
+        print(f"session interactive #{node['number']} · {node['title']} — "
+              f"{node['reason']}")
 
     signal = control.get("signal", "run")
     if signal == "stop":
