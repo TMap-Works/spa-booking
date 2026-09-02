@@ -46,6 +46,22 @@ ce que le ticket débloque.
 Une issue sans label `nature:*` n'est dispatchée dans aucun des deux sens : elle
 sort en « classement incomplet », au même titre qu'un `ws:*` manquant.
 
+**`.claude/**` est en lecture seule pour un run.** Le classifieur du harnais
+refuse `Edit`/`Write` sur ces chemins en session non interactive — dans toutes
+les vagues, donc, et jusqu'à l'arbitre. Un ticket dont l'empreinte y est
+**entièrement** contenue ne peut produire aucun commit : le programmer coûte une
+leg entière pour rien (#360, constaté sur #226 puis #356). Il sort donc du plan
+sous la rubrique « À reprendre en session interactive », distincte des
+« Écartées » — le travail est recevable, c'est le run qui n'a pas la main. Une
+empreinte **mixte** (#245, #186) reste programmée : le volet hors `.claude/` se
+livre, et le reste part en issue de suivi. Le plan le prescrit ticket par
+ticket, sous « À scinder ».
+
+Ce n'est pas une contrainte à contourner par un heredoc `Bash` : écrire un
+`.claude/*.md` par ce biais contournerait le système de permissions, et #358 l'a
+refusé. La seule voie d'écriture légitime est un point d'entrée Python
+pré-autorisé, à l'image de `scripts/milestone_rules.py`.
+
 Rien ici n'est deviné définitivement. `.claude/milestone-rules.json` fige les
 dépendances et les empreintes que l'heuristique ne peut pas connaître ; toute
 correction faite en lisant une issue a vocation à y être écrite. Elle s'écrit par
@@ -103,6 +119,19 @@ WORKSTREAMS = {"ws:devops": "devops", "ws:backend": "backend",
 # ressources portant ce préfixe sont documentaires — deux maquettes ne se
 # marchent jamais dessus, elles ne sérialisent donc rien.
 FREE_PREFIXES = ("design/", "docs/")
+
+# Ce qu'un run ne peut pas écrire, quelle que soit sa nature : le classifieur du
+# harnais refuse `Edit`/`Write` sur `.claude/**` en session non interactive.
+# Le préfixe est celui des ressources figées dans `.claude/milestone-rules.json`
+# (`.claude/commands`, `.claude/settings`, `.claude/skills/project-flow`, …) ;
+# l'heuristique de `resources_of` n'en produit aucune, ces empreintes-là sont
+# toujours posées à la main.
+READONLY_PREFIX = ".claude/"
+
+# La consigne portée par le plan pour une empreinte mixte. C'est ce que #186 a
+# fait à la main, et ce qui a marché : livrer ce qui est livrable, tracer le
+# reste, plutôt que rendre une leg vide ou forcer l'écriture.
+SPLIT_ADVICE = "livrer le volet hors .claude/**, ouvrir l'issue de suivi du reste"
 
 # Ressources transverses, déduites du texte de l'issue. Ce sont les points chauds
 # du dépôt : un seul fichier, touché par des travaux de modules différents.
@@ -261,7 +290,12 @@ TOOLING = "outillage — traité à la main, une session à la fois"
 # pour la même raison : ce run-là ne fera jamais le produit, et un ticket
 # d'outillage suspendu à une issue produit ne partirait plus jamais.
 PRODUCT = "produit — pas d'un run d'outillage"
-NEVER_HOLDS = {OUT_OF_SCOPE, TRACKING, EPIC, TOOLING, PRODUCT}
+# Le cinquième, et le seul que `qualify()` ne sache pas voir : il se lit dans
+# l'empreinte, pas dans les labels. Même régime que `TOOLING` — un humain le
+# fera, en session interactive, et le retenir suspendrait le jalon à un
+# rendez-vous que le run ne peut pas prendre.
+INTERACTIVE = "empreinte entièrement sous .claude/** — à reprendre en session interactive"
+NEVER_HOLDS = {OUT_OF_SCOPE, TRACKING, EPIC, TOOLING, PRODUCT, INTERACTIVE}
 
 
 def qualify(issue, busy, me, nature="projet"):
@@ -357,6 +391,24 @@ def resources_of(node, rules):
 
 def blocking(resources):
     return {r for r in resources if not r.startswith(FREE_PREFIXES)}
+
+
+def readonly_part(resources):
+    """La part de l'empreinte qu'un run ne peut pas écrire, triée."""
+    return sorted(r for r in resources if r.startswith(READONLY_PREFIX))
+
+
+def undeliverable(resources):
+    """L'empreinte est-elle **entièrement** en lecture seule ?
+
+    Une empreinte vide ne l'est pas : elle ne dit rien, et écarter sur un silence
+    ferait sortir du plan tout ticket dont l'heuristique n'a rien su déduire.
+
+    Ressource par ressource, et non par comptage : une empreinte qui répéterait
+    deux fois la même ressource `.claude/` ferait coïncider les décomptes d'une
+    empreinte mixte, et sortirait du plan un ticket en partie livrable.
+    """
+    return bool(resources) and all(r.startswith(READONLY_PREFIX) for r in resources)
 
 
 # --------------------------------------------------------------------------- #
@@ -612,13 +664,15 @@ def due_in(milestone):
 
 
 def render(milestone, waves, index, excluded, edges, cut, width, closure,
-           withheld, catalog, reasons, nature="projet"):
+           withheld, catalog, reasons, nature="projet", interactive=()):
     counted = f"{len(index)} traitables"
     if withheld:
         counted += f" · {len(withheld)} retenues"
     aside = sum(1 for item in excluded if item["reason"] in (TOOLING, PRODUCT))
     if aside:
         counted += f" · {aside} d'une autre nature"
+    if interactive:
+        counted += f" · {len(interactive)} en session interactive"
     print(f"Jalon {milestone['title']} · {due_in(milestone)} · nature {nature}")
     print(f"{milestone['open_issues']} ouvertes · {milestone['closed_issues']} fermées · "
           f"{counted} · {len(waves)} vagues · largeur max {width}")
@@ -637,6 +691,16 @@ def render(milestone, waves, index, excluded, edges, cut, width, closure,
             print(f"  {rank:>2}. #{number:<4} {node['priority']} {node['score']:>4} pts  "
                   f"{node['workstream']:<8} {node['module']:<13} {title:<46} "
                   f"[{', '.join(node['resources'])}]")
+        print()
+
+    # Programmés, mais pas d'un bloc : ce qui suit dit à l'agent où s'arrêter.
+    split = [index[n] for group in waves for n in group if index[n]["readonly"]]
+    if split:
+        print("À scinder · une part de l'empreinte est sous .claude/**, "
+              "qu'un run ne peut pas écrire")
+        for node in split:
+            print(f"  #{node['number']:<4} {SPLIT_ADVICE} · "
+                  f"{', '.join(node['readonly'])}")
         print()
 
     # Une même raison vaut souvent pour plusieurs prérequis d'une même issue :
@@ -691,6 +755,20 @@ def render(milestone, waves, index, excluded, edges, cut, width, closure,
             print(f"  #{number:<4} {title:<46} retenue par {causes}")
         print()
 
+    # Ni « écartées » ni « retenues » : le ticket est recevable et son travail
+    # attend, mais personne dans un run ne peut l'écrire. Le sortir ici plutôt
+    # que dans une vague économise une leg entière par ticket (#360).
+    if interactive:
+        print("À reprendre en session interactive · empreinte entièrement sous "
+              ".claude/**, hors de portée d'un run")
+        for node in interactive:
+            title = node["title"]
+            if len(title) > 46:
+                title = title[:45] + "…"
+            print(f"  #{node['number']:<4} {title:<46} "
+                  f"{', '.join(node['resources'])}")
+        print()
+
     if excluded:
         print("Écartées · pas dispatchables — et celles dont la raison peut se "
               "résorber retiennent leurs dépendants")
@@ -730,34 +808,50 @@ def main():
 
     busy = {} if args.include_busy else fetch_busy()
     me = whoami()
+    # Les règles avant la qualification : l'empreinte en fait désormais partie,
+    # `qualify()` ne pouvant pas voir ce qui ne tient pas dans les labels.
+    rules = load_rules()
 
-    nodes, excluded, held_nodes = [], [], []
+    nodes, excluded, held_nodes, interactive = [], [], [], []
     for issue in issues:
         ok, reason = qualify(issue, busy, me, args.nature)
+        node = describe(issue)
+        node["resources"] = resources_of(node, rules)
+        node["readonly"] = readonly_part(node["resources"])
+        # Le seul motif qui se lit dans l'empreinte : un ticket par ailleurs
+        # recevable dont tout le travail est sous `.claude/**` ne produira aucun
+        # commit, faute pour un agent non interactif de pouvoir y écrire (#360).
+        if ok and undeliverable(node["resources"]):
+            ok, reason = False, INTERACTIVE
         if ok:
-            nodes.append(describe(issue))
-        else:
-            excluded.append({"number": issue["number"], "title": issue["title"],
-                             "reason": reason, "pr": busy.get(issue["number"])})
-            # Écartée du plan ne veut pas dire faite : aucune de ces issues n'a
-            # son travail sur `develop`. Elles restent donc des prérequis non
-            # satisfaits — sauf celles qui ne seront jamais faites du tout, qui
-            # ne retiendraient personne, seulement pour toujours.
-            if reason not in NEVER_HOLDS:
-                held_nodes.append(describe(issue))
+            nodes.append(node)
+            continue
+        if reason == INTERACTIVE:
+            # Rubrique à part, et non « écartée » : rien ne cloche dans le
+            # ticket, il attend seulement un humain devant son clavier.
+            interactive.append(node)
+            continue
+        excluded.append({"number": issue["number"], "title": issue["title"],
+                         "reason": reason, "pr": busy.get(issue["number"])})
+        # Écartée du plan ne veut pas dire faite : aucune de ces issues n'a
+        # son travail sur `develop`. Elles restent donc des prérequis non
+        # satisfaits — sauf celles qui ne seront jamais faites du tout, qui
+        # ne retiendraient personne, seulement pour toujours.
+        if reason not in NEVER_HOLDS:
+            held_nodes.append(node)
 
     if not nodes:
         print(f"Jalon {milestone['title']} · nature {args.nature} : rien de "
-              f"traitable ({len(excluded)} issue(s) écartée(s)).")
+              f"traitable ({len(excluded)} issue(s) écartée(s)"
+              + (f", {len(interactive)} en session interactive" if interactive else "")
+              + ").")
         for item in excluded:
             print(f"  #{item['number']:<4} {item['reason']}")
+        for node in interactive:
+            print(f"  #{node['number']:<4} {INTERACTIVE}")
         return EMPTY
 
     held = {n["number"] for n in held_nodes}
-
-    rules = load_rules()
-    for node in nodes + held_nodes:
-        node["resources"] = resources_of(node, rules)
 
     prereqs, edges = build_edges(nodes, rules, held_nodes)
     closure = reachable_pairs(prereqs)
@@ -792,6 +886,24 @@ def main():
             ],
             "edges": edges,
             "excluded": excluded,
+            # Distincte d'« excluded » à dessein : ces tickets-là sont
+            # recevables et attendent une session interactive. `/milestone`
+            # recopie le plan entier dans `run.json` : la rubrique y survit, à
+            # charge pour qui la relit de la restituer à l'humain — aucune
+            # commande ne la consomme aujourd'hui.
+            "interactive": [
+                {"number": node["number"], "title": node["title"],
+                 "url": node["url"], "resources": node["resources"],
+                 "reason": INTERACTIVE}
+                for node in interactive
+            ],
+            # Ce que le plan prescrit aux tickets qu'il programme malgré une part
+            # non livrable — l'agent doit scinder plutôt que forcer l'écriture.
+            "split": [
+                {"number": node["number"], "title": node["title"],
+                 "readonly": node["readonly"], "advice": SPLIT_ADVICE}
+                for node in planned if node["readonly"]
+            ],
             "withheld": [
                 {"number": number,
                  "title": catalog[number]["title"],
@@ -808,7 +920,7 @@ def main():
         return OK
 
     render(milestone, waves, index, excluded, edges, cut, args.width, closure,
-           withheld, catalog, reasons, args.nature)
+           withheld, catalog, reasons, args.nature, interactive)
     return OK
 
 
