@@ -31,6 +31,7 @@ séparation entre ce fichier et le jugement, qui vit dans
 import contextlib
 import io
 import json
+import subprocess
 import sys
 import tempfile
 import time
@@ -977,6 +978,74 @@ class DossierInchange(unittest.TestCase):
         code, _ = self.should(["gate_pause"], history,
                               [self.LEG, self.TRACE, suite])
         self.assertEqual(code, 0)
+
+
+ANONYME = """\
+worktree /w/agent-4f21ab
+HEAD df4ae3f00000000000000000000000000000000
+branch refs/heads/worktree-agent-4f21ab
+
+worktree /w/agent-9c07de
+HEAD 841a02400000000000000000000000000000000
+branch refs/heads/bugfix/21-nomme
+"""
+
+
+class DossierWorktrees(unittest.TestCase):
+    """#380 — la rubrique `worktrees` du dossier lit le journal, elle aussi.
+
+    #175 a fermé l'angle mort de `live_worktrees()` : le worktree qu'un agent de
+    jalon reçoit s'appelle `agent-<aléa>` et porte une branche
+    `worktree-agent-<aléa>`, sans numéro d'issue nulle part — seules les
+    revendications journalisées le rattachent à son ticket. Tous les appelants
+    les passent, sauf `dossier()`, qui appelait `live_worktrees()` à sec.
+
+    C'est pourtant l'entrée que l'arbitre regarde pour décider d'écarter un
+    ticket ou de le relancer : « aucun worktree » s'y lit « personne ne le
+    tient ». Le dispositif qui décide à la place de l'humain était donc le
+    dernier à garder le défaut que #175 corrige.
+    """
+
+    RUN = "r1"
+    EVENTS = [{"ts": "2026-09-02T10:00:00+00:00", "ticket": 19,
+               "worktree": "/w/agent-4f21ab", "phase": "recevabilite"}]
+
+    def dossier(self, porcelain=ANONYME, events=None):
+        events = self.EVENTS if events is None else events
+        with mock.patch.object(run_mod, "load_run", return_value={"milestone": "S1"}), \
+             mock.patch.object(run_mod, "load_control", return_value={}), \
+             mock.patch.object(run_mod, "read_journal", return_value=events), \
+             mock.patch.object(run_mod, "replay", return_value={}), \
+             mock.patch.object(run_mod, "wave_state", return_value=(None, [])), \
+             mock.patch.object(run_mod, "quota_hold", return_value=None), \
+             mock.patch.object(run_mod.subprocess, "run",
+                               return_value=subprocess.CompletedProcess(
+                                   [], 0, porcelain, "")), \
+             mock.patch.object(arb, "gate_verdict",
+                               return_value={"code": run_mod.GO}), \
+             mock.patch.object(arb, "milestone_prs", return_value=[]), \
+             mock.patch.object(arb, "develop_state", return_value={}), \
+             mock.patch.object(arb, "latest_leg", return_value=None), \
+             mock.patch.object(arb, "arbitrations", return_value=[]):
+            return arb.dossier(self.RUN, with_barrier=False)
+
+    def test_le_worktree_anonyme_est_rattache_a_son_ticket(self):
+        """Le critère du ticket : l'arbitre voit que #19 est tenu."""
+        worktrees = self.dossier()["worktrees"]
+        self.assertIn(19, worktrees)
+        self.assertEqual(worktrees[19]["branch"], "worktree-agent-4f21ab")
+        self.assertEqual(worktrees[19]["path"], "/w/agent-4f21ab")
+
+    def test_sans_revendication_il_reste_invisible(self):
+        """L'état d'avant le correctif — et ce qui empêche le test précédent de
+        passer pour de mauvaises raisons : c'est bien le journal qui rattache,
+        pas le nom de la branche."""
+        self.assertNotIn(19, self.dossier(events=[])["worktrees"])
+
+    def test_le_worktree_nomme_reste_lu_comme_avant(self):
+        """Les revendications s'ajoutent à la lecture par le nom, elles ne la
+        remplacent pas : un `bugfix/21-…` doit rester visible sans journal."""
+        self.assertIn(21, self.dossier(events=[])["worktrees"])
 
 
 class AppelExterne(unittest.TestCase):
