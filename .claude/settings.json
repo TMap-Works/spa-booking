@@ -43,6 +43,7 @@
       "Bash(python scripts/milestone_supervise.py:*)",
       "Bash(python scripts/milestone_arbiter.py:*)",
       "Bash(python scripts/pr_gate.py:*)",
+      "Bash(python scripts/review_guard.py:*)",
       "Bash(gh issue create:*)",
       "Bash(gh issue comment:*)",
       "Bash(gh issue edit:*)",
