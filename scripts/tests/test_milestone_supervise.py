@@ -1633,5 +1633,169 @@ class CeQueLeBattementEcrit(unittest.TestCase):
         self.assertEqual(self.tick(quiet=None), [])
 
 
+class DossierApprouve(unittest.TestCase):
+    """`workspace_trusted()` — le verdict dont dépend l'allowlist de tout le run.
+
+    Un faux « non approuvé » n'est pas cosmétique : l'avertissement qu'il déclenche
+    pousse l'opérateur vers `--permission-mode bypassPermissions`, c'est-à-dire à
+    désarmer toutes les invites de permission d'un run de plusieurs heures pour
+    contourner un défaut de lecture. C'est ce qui rend #131 plus lourd que son
+    diff.
+
+    Le défaut : `~/.claude.json` porte couramment **plusieurs entrées pour le même
+    dossier**, et le parcours retournait sur la première rencontrée — dans l'ordre
+    du dictionnaire, donc une fois sur deux sur l'entrée périmée.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name) / "home"
+        self.home.mkdir()
+        self.root = Path(self.tmp.name) / "depot"
+        self.root.mkdir()
+
+    def trusted(self, projects=None, raw=None):
+        """Le verdict, `~/.claude.json` et `ROOT` sous contrôle.
+
+        `raw` écrit le fichier tel quel — c'est ainsi qu'on fabrique un JSON
+        illisible ; `projects` passe par la forme normale. Ni l'un ni l'autre :
+        le fichier n'existe pas.
+        """
+        if raw is not None:
+            (self.home / ".claude.json").write_text(raw, encoding="utf-8")
+        elif projects is not None:
+            (self.home / ".claude.json").write_text(
+                json.dumps({"projects": projects}), encoding="utf-8")
+        with mock.patch.object(sup.Path, "home", return_value=self.home), \
+             mock.patch.object(sup, "ROOT", self.root):
+            return sup.workspace_trusted()
+
+    def deux_ecritures(self):
+        """Deux clés JSON distinctes qui désignent le même dossier.
+
+        Sous Windows, #131 les fabrique avec la casse de la lettre de lecteur,
+        que `PurePath.__eq__` ignore. Ailleurs la comparaison de chemins est
+        sensible à la casse : deux casses y seraient deux dossiers, et le test
+        deviendrait vert sans rien prouver. On prend donc partout une variante
+        que `Path()` ramène sur l'autre — le séparateur final — et la casse du
+        lecteur est couverte à part, là où elle a un sens.
+        """
+        native = str(self.root)
+        variante = native + os.sep
+        # Sans quoi le cas de régression pourrait devenir vide en silence : ce
+        # qu'on veut, ce sont bien deux entrées de dictionnaire pour un dossier.
+        self.assertNotEqual(native, variante)
+        self.assertEqual(Path(variante).resolve(), self.root.resolve())
+        return native, variante
+
+    def test_deux_ecritures_dont_une_approuvee_rendent_approuve(self):
+        """Le cas de #131, dans l'ordre qui le révèle : la périmée d'abord."""
+        perimee, approuvee = self.deux_ecritures()
+        self.assertIs(self.trusted({
+            perimee: {"hasTrustDialogAccepted": False},
+            approuvee: {"hasTrustDialogAccepted": True},
+        }), True)
+
+    def test_l_ordre_des_entrees_ne_change_pas_le_verdict(self):
+        """L'autre moitié du même défaut : le verdict ne doit plus rien devoir à
+        l'ordre d'insertion du dictionnaire."""
+        approuvee, perimee = self.deux_ecritures()
+        self.assertIs(self.trusted({
+            approuvee: {"hasTrustDialogAccepted": True},
+            perimee: {"hasTrustDialogAccepted": False},
+        }), True)
+
+    @unittest.skipUnless(os.name == "nt",
+                         "la casse ne désigne un même dossier que sous Windows")
+    def test_la_casse_du_lecteur_ne_masque_pas_l_approbation(self):
+        """Le cas tel qu'il a été constaté : `d:\\` et `D:\\` côte à côte."""
+        native = str(self.root)
+        autre_casse = native[0].swapcase() + native[1:]
+        self.assertNotEqual(native, autre_casse)
+        self.assertIs(self.trusted({
+            autre_casse: {"hasTrustDialogAccepted": False},
+            native: {"hasTrustDialogAccepted": True},
+        }), True)
+
+    def test_aucune_entree_correspondante_rend_non_approuve(self):
+        self.assertIs(self.trusted({
+            str(self.root.parent / "ailleurs"): {"hasTrustDialogAccepted": True},
+        }), False)
+
+    def test_une_seule_entree_non_approuvee_rend_non_approuve(self):
+        self.assertIs(self.trusted({
+            str(self.root): {"hasTrustDialogAccepted": False},
+        }), False)
+
+    def test_une_entree_sans_le_drapeau_rend_non_approuve(self):
+        """Absent vaut refusé : on n'approuve pas un dossier par omission."""
+        self.assertIs(self.trusted({str(self.root): {}}), False)
+
+    def test_sans_section_projects_rien_ne_correspond(self):
+        self.assertIs(self.trusted(raw=json.dumps({"projects": None})), False)
+
+    def test_une_section_projects_d_une_autre_forme_ne_correspond_pas(self):
+        """Un `projects` qui n'est pas un objet n'a pas d'entrées : `.items()`
+        y lèverait, et l'exception tuerait le préflight, donc le run."""
+        self.assertIs(self.trusted(raw=json.dumps({"projects": []})), False)
+
+    def test_une_entree_d_une_autre_forme_est_ignoree(self):
+        """Une entrée corrompue ne doit pas faire lever `project.get` : elle ne
+        vaut pas approbation, elle n'empêche pas de lire les suivantes.
+
+        Elle désigne `ROOT` — sinon le filtre de clé l'écarterait avant qu'on la
+        lise, et le test resterait vert sans rien éprouver.
+        """
+        corrompue, approuvee = self.deux_ecritures()
+        self.assertIs(self.trusted({
+            corrompue: None,
+            approuvee: {"hasTrustDialogAccepted": True},
+        }), True)
+
+    def test_une_cle_irresolvable_est_ignoree(self):
+        """Une entrée sans rapport avec ce dépôt — lecteur réseau tombé, chemin
+        invalide — ne désigne pas `ROOT` et ne doit pas faire lever la
+        fonction."""
+        self.assertIs(self.trusted({
+            "\0pas un chemin": {"hasTrustDialogAccepted": True},
+            str(self.root): {"hasTrustDialogAccepted": True},
+        }), True)
+
+    def test_un_fichier_absent_ne_conclut_rien(self):
+        self.assertIsNone(self.trusted())
+
+    def test_un_fichier_illisible_ne_conclut_rien(self):
+        self.assertIsNone(self.trusted(raw="{ceci n'est pas du JSON"))
+
+    # -- ce que le préflight en fait, et pourquoi `None` n'est pas `False` --
+
+    def preflight_warnings(self, trusted):
+        lines = []
+        with mock.patch.object(sup, "workspace_trusted", return_value=trusted), \
+             mock.patch.object(sup.shutil, "which", return_value="/bin/x"), \
+             mock.patch.object(sup.subprocess, "run",
+                               return_value=mock.Mock(returncode=0)), \
+             mock.patch.object(sup, "say",
+                               lambda message, level="INFO": lines.append(
+                                   (level, message))):
+            sup.preflight(argparse.Namespace(claude="claude",
+                                             permission_mode="default"))
+        return [message for level, message in lines if level == "WARN"]
+
+    def test_un_dossier_approuve_n_avertit_de_rien(self):
+        self.assertEqual(self.preflight_warnings(True), [])
+
+    def test_un_dossier_non_approuve_avertit(self):
+        self.assertIn("n'est pas approuvé",
+                      " | ".join(self.preflight_warnings(False)))
+
+    def test_un_verdict_indisponible_n_avertit_pas(self):
+        """`None` n'est pas `False` : sans `.claude.json` lisible, on ne sait
+        pas — et annoncer un dossier non approuvé serait le faux négatif que
+        #131 corrige, remis par une autre porte."""
+        self.assertEqual(self.preflight_warnings(None), [])
+
+
 if __name__ == "__main__":
     unittest.main()

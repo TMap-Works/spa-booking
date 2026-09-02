@@ -1114,10 +1114,36 @@ def workspace_trusted():
         config = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    for key, project in (config.get("projects") or {}).items():
-        if Path(key).resolve() == ROOT.resolve():
-            return bool(project.get("hasTrustDialogAccepted"))
-    return False
+    # Agréger, et non retourner au premier trouvé : `~/.claude.json` porte
+    # couramment **plusieurs entrées pour le même dossier**. Windows ouvre
+    # indifféremment `d:\` et `D:\`, Claude Code enregistre le chemin tel qu'il
+    # l'a reçu, et `PurePath.__eq__` y est insensible à la casse — les deux clés
+    # désignent donc `ROOT`. Un retour au premier match faisait dépendre le
+    # verdict de l'ordre du dictionnaire : une fois sur deux, « non approuvé »
+    # sur un dossier bel et bien approuvé (#131). Le faux négatif n'était pas
+    # cosmétique, il poussait l'opérateur à désarmer toutes les invites de
+    # permission par `--permission-mode bypassPermissions` pour le contourner.
+    #
+    # Approuvé l'emporte : Claude Code ne connaît qu'un dossier, pas deux
+    # orthographes, et une seule approbation vaut pour toutes.
+    projects = config.get("projects")
+    if not isinstance(projects, dict):
+        return False
+    root = ROOT.resolve()
+
+    def designe_root(key):
+        # `resolve()` touche le disque : une entrée pointant un lecteur réseau
+        # tombé lève `OSError`, une clé mal formée `ValueError`. Cette fonction
+        # a pour contrat de rendre un verdict, jamais de lever — sans quoi une
+        # entrée sans rapport avec ce dépôt tuerait le préflight, donc le run.
+        try:
+            return Path(key).resolve() == root
+        except (OSError, ValueError):
+            return False
+
+    return any(bool(project.get("hasTrustDialogAccepted"))
+               for key, project in projects.items()
+               if isinstance(project, dict) and designe_root(key))
 
 
 def announce_merge_policy(args):
