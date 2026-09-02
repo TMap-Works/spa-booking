@@ -254,8 +254,14 @@ Trois notions portent tout le reste :
 
 Ce que le script ne peut pas déduire des labels — l'empreinte réelle d'une issue,
 un prérequis qu'aucune règle générale ne donne — se fige dans
-[.claude/milestone-rules.json](../../milestone-rules.json). C'est là que se
-corrige un plan qui se trompe, jamais à la main dans le fil de la conversation.
+[.claude/milestone-rules.json](../../milestone-rules.json), et s'y écrit par
+`scripts/milestone_rules.py` : `set-resources <issue> <ressources…>` pour une
+empreinte, `add-depends <issue> <parents…> --why "<justification>"` pour un
+prérequis, `show` pour relire. Le fichier vit sous `.claude/`, que le classifieur
+« fichier sensible » interdit d'`Edit` en session non interactive — donc dans
+toutes les vagues d'un run : ce script est son seul point d'écriture. C'est là
+que se corrige un plan qui se trompe, jamais à la main dans le fil de la
+conversation.
 
 Trois points à connaître :
 

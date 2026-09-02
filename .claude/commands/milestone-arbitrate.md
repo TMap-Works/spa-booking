@@ -179,16 +179,25 @@ vague s'arrête et le journalise. Trois issues possibles, et le dossier te dit
 laquelle :
 
 - **L'autre ticket est mergé ou absent du plan** — l'empreinte était trop
-  étroite. Élargis-la dans
-  [.claude/milestone-rules.json](../../.claude/milestone-rules.json), et
-  `retry`. Corriger le fichier de règles est le geste utile : il sert au
-  prochain plan.
+  étroite. Élargis-la avec `python scripts/milestone_rules.py set-resources <N>
+  <ressource…>`, et `retry`. Corriger le fichier de règles est le geste utile :
+  il sert au prochain plan.
 - **L'autre ticket tourne encore** — c'est le plan qui est faux, deux issues
-  d'une même vague partagent une ressource. Corrige `milestone-rules.json` pour
-  que la paire ne se reproduise pas, puis `skip` celui qui est le moins avancé,
-  avec l'issue de suivi.
+  d'une même vague partagent une ressource. Disjoins leurs empreintes avec le
+  même `set-resources` pour que la paire ne se reproduise pas, puis `skip` celui
+  qui est le moins avancé, avec l'issue de suivi.
 - **Le fichier n'appartient à personne** (outillage, config partagée) — laisse
   l'agent le toucher : `retry` en le disant dans le message.
+
+**Tu n'écris jamais
+[.claude/milestone-rules.json](../../.claude/milestone-rules.json) par un
+`Edit`.** Tu tournes toujours en session non interactive : le classifieur
+« fichier sensible » refuse ce chemin, personne n'est là pour l'accorder, et les
+règles `Edit`/`Write` qu'on avait posées pour cela dans `settings.json` n'ont
+jamais rien autorisé — sept refus mesurés avant qu'on ne les retire.
+`scripts/milestone_rules.py` est le seul point d'écriture : `set-resources
+<issue> <ressources…>` pour une empreinte, `add-depends <issue> <parents…>
+--why "<justification>"` pour un prérequis, `show` pour relire.
 
 ### Après chaque décision, sans exception
 
@@ -298,8 +307,9 @@ npm run verify
 
 Rouge après une vague verte = une interaction entre deux tickets que le plan
 croyait indépendants. Trouve laquelle — les empreintes des tickets mergés dans
-la vague sont dans le dossier —, corrige, corrige aussi
-`.claude/milestone-rules.json` pour que la paire ne se reproduise pas, et ouvre
+la vague sont dans le dossier —, corrige, puis disjoins leurs empreintes avec
+`python scripts/milestone_rules.py set-resources` — le fichier de règles ne
+s'édite pas autrement — pour que la paire ne se reproduise pas, et ouvre
 une issue `type:bug` `P0` `nature:outillage` rattachée au jalon qui dit quelles
 empreintes se sont recouvertes — c'est le plan qui s'est trompé, pas le produit.
 Puis `record`.
