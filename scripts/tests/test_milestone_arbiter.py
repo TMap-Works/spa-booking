@@ -11,7 +11,9 @@ rien d'autre :
 **L'escalade.** Un arbitre qui relance indéfiniment le même ticket sur la même
 panne consomme le quota d'un jalon entier sans rien produire — c'est #138 avec un
 modèle en plus. `next_rung` est ce qui l'interdit, et l'empreinte de la cause est
-ce qui lui fait reconnaître « la même panne ».
+ce qui lui fait reconnaître « la même panne » — y compris quand elle a conclu sur
+un run antérieur, faute de quoi un run neuf remet le compteur à zéro et
+reproduit l'étape stérile à l'identique (#359).
 
 **Le budget.** Deux compteurs bornent l'arbitrage, et le second existe parce que
 le premier peut mentir : un arbitre mort avant d'avoir rien inscrit laisse le
@@ -104,6 +106,169 @@ class Escalade(unittest.TestCase):
     def test_aucun_cran_ne_s_appelle_arreter(self):
         """L'arrêt du jalon n'est pas une décision d'arbitrage."""
         self.assertEqual(arb.LADDER, ["retry", "fix", "skip"])
+
+
+class AnterioriteHorsRun(unittest.TestCase):
+    """#359 — l'escalade ne se remet pas à zéro parce que le run est neuf.
+
+    Le compteur vivait dans le dossier du run ; la panne, elle, vit dans le
+    ticket. Un ticket dont la cause est déterministe — le classifieur qui refuse
+    la même écriture, la dépendance qui manque toujours — repartait donc de
+    « jamais arbitré » à chaque run, et l'arbitre reproduisait à l'identique
+    l'étape stérile qu'il était censé empêcher : sur #226, 24 tours et 3,03 $
+    pour zéro commit.
+    """
+
+    RUNS = ("s1-fondations-20260826-221632", "s2-reservation-20260901-221219")
+
+    @staticmethod
+    def seed(tmp, run_id, rows, created):
+        """Un run sur le disque : son `run.json` — sans lui `run_dirs` l'ignore —
+        et les décisions qu'il a inscrites."""
+        directory = Path(tmp) / run_id
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / "run.json").write_text(
+            json.dumps({"id": run_id, "created": created}), encoding="utf-8")
+        with open(directory / arb.ARBITRATIONS, "a", encoding="utf-8") as handle:
+            for row in rows:
+                handle.write(json.dumps(row) + "\n")
+        return directory
+
+    def two_runs(self, tmp, first, second=()):
+        self.seed(tmp, self.RUNS[0], first, "2026-08-26T22:16:32+00:00")
+        self.seed(tmp, self.RUNS[1], second, "2026-09-01T22:12:19+00:00")
+
+    @staticmethod
+    def decision(rung, sign, ticket=226, ts="2026-08-26T23:04:11+00:00"):
+        return {"ts": ts, "motif": "leg_sterile", "ticket": ticket,
+                "rung": rung, "signature": sign}
+
+    def test_deux_runs_meme_ticket_meme_signature(self):
+        """Le critère d'acceptation, mot pour mot : le second run rend un cran
+        strictement supérieur à `retry`."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)):
+                self.two_runs(tmp, [self.decision("retry", "abc")])
+                courant = arb.arbitrations(self.RUNS[1])
+                prior = arb.prior_arbitrations(self.RUNS[1], 226)
+                rung = arb.next_rung(courant, 226, "abc", prior=prior)
+
+        self.assertEqual(courant, [])          # le run neuf n'a rien arbitré
+        self.assertEqual(len(prior), 1)
+        self.assertGreater(arb.LADDER.index(rung), arb.LADDER.index("retry"))
+
+    def test_une_cause_neuve_laisse_sa_chance_a_la_relance(self):
+        """L'antériorité ne vaut que par la cause : un ticket tombé hier pour
+        une autre raison mérite encore le geste le moins cher."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)):
+                self.two_runs(tmp, [self.decision("retry", "abc")])
+                prior = arb.prior_arbitrations(self.RUNS[1], 226)
+                rung = arb.next_rung([], 226, "zzz", prior=prior)
+        self.assertEqual(rung, "retry")
+
+    def test_sans_signature_l_anteriorite_ne_tranche_pas(self):
+        """Une cause qu'on ne sait pas nommer ne prouve pas la répétition."""
+        prior = [self.decision("retry", "abc")]
+        self.assertEqual(arb.next_rung([], 226, None, prior=prior), "retry")
+
+    def test_l_anteriorite_d_un_autre_ticket_ne_compte_pas(self):
+        prior = [self.decision("retry", "abc", ticket=19)]
+        self.assertEqual(arb.next_rung([], 226, "abc", prior=prior), "retry")
+
+    def test_l_index_ignore_le_run_courant(self):
+        """Sans quoi les décisions du run seraient comptées deux fois — une
+        relance d'aujourd'hui ferait sauter deux crans au lieu d'un."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)):
+                self.two_runs(tmp, [], [self.decision("retry", "abc")])
+                prior = arb.prior_arbitrations(self.RUNS[1], 226)
+        self.assertEqual(prior, [])
+
+    def test_l_index_nomme_le_run_d_ou_vient_la_decision(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)):
+                self.two_runs(tmp, [self.decision("fix", "abc")])
+                prior = arb.prior_arbitrations(self.RUNS[1], 226)
+        self.assertEqual(prior[0]["run"], self.RUNS[0])
+
+    def test_le_budget_du_ticket_reste_celui_du_run(self):
+        """L'antériorité dit par quel cran dépenser, pas combien il reste : deux
+        arbitrages anciens ne doivent pas priver ce run des siens."""
+        prior = [self.decision("retry", "abc"), self.decision("fix", "abc")]
+        self.assertEqual(arb.spent(prior, 226), 2)
+        self.assertEqual(arb.spent([], 226), 0)
+        self.assertNotEqual(arb.next_rung([], 226, "abc", per_ticket=2,
+                                          prior=prior), "retry")
+
+    def test_le_resume_hors_run_compte_la_cause_et_le_dernier_cran(self):
+        prior = [self.decision("retry", "abc", ts="2026-08-26T23:04:11+00:00"),
+                 self.decision("skip", "zzz", ts="2026-08-27T08:30:23+00:00")]
+        for row, name in zip(prior, self.RUNS):
+            row["run"] = name
+        outside = arb.elsewhere(prior, "abc")
+        self.assertEqual(outside["arbitrages"], 2)
+        self.assertEqual(outside["meme_cause"], 1)
+        self.assertEqual(outside["dernier_cran"], "skip")
+        self.assertEqual(outside["dernier"], "2026-08-27T08:30:23+00:00")
+        self.assertEqual(outside["runs"], sorted(self.RUNS))
+
+    def test_une_ligne_sans_cran_ne_masque_pas_la_decision(self):
+        """Le cas réel de #226 : l'écartement, puis douze secondes plus tard la
+        tenue de compte du même motif traité ailleurs, qui ne porte pas de cran.
+        Prendre la dernière ligne telle quelle disait « jamais tranché » d'un
+        ticket qu'on venait d'écarter."""
+        prior = [self.decision("skip", "abc", ts="2026-09-01T21:13:27+00:00"),
+                 dict(self.decision(None, None, ts="2026-09-01T21:13:39+00:00"),
+                      motif="tickets_tombes")]
+        outside = arb.elsewhere(prior, "abc")
+        self.assertEqual(outside["dernier_cran"], "skip")
+        self.assertEqual(outside["dernier"], "2026-09-01T21:13:27+00:00")
+
+    def test_sans_anteriorite_le_resume_ne_ment_pas(self):
+        outside = arb.elsewhere([], "abc")
+        self.assertEqual(outside["arbitrages"], 0)
+        self.assertIsNone(outside["dernier_cran"])
+
+    def test_escalation_json_expose_l_anteriorite(self):
+        """L'arbitre doit pouvoir juger sur pièces, et non découvrir
+        l'antériorité en lisant les commentaires de l'issue."""
+        args = mock.Mock(run=None, ticket=226, cause="permission refusée sur .claude/**",
+                         signature=None, per_ticket=2, per_run=12, json=True)
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(arb.run_mod, "resolve",
+                                   return_value=self.RUNS[1]):
+                sign = arb.signature(args.cause)
+                self.two_runs(tmp, [self.decision("retry", sign)])
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    code = arb.cmd_escalation(args)
+
+        payload = json.loads(out.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(payload["arbitrages"], 0)        # rien sur ce run
+        self.assertEqual(payload["hors_run"]["arbitrages"], 1)
+        self.assertEqual(payload["hors_run"]["meme_cause"], 1)
+        self.assertEqual(payload["hors_run"]["dernier_cran"], "retry")
+        self.assertNotEqual(payload["cran"], "retry")
+
+    def test_escalation_en_clair_dit_l_anteriorite(self):
+        """La même chose sans `--json` : c'est la sortie qu'un humain lit."""
+        args = mock.Mock(run=None, ticket=226, cause="permission refusée",
+                         signature=None, per_ticket=2, per_run=12, json=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(arb.run_mod, "resolve",
+                                   return_value=self.RUNS[1]):
+                self.two_runs(tmp, [self.decision("retry",
+                                                  arb.signature(args.cause))])
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    arb.cmd_escalation(args)
+
+        self.assertIn("hors run", out.getvalue())
+        self.assertIn("même cause", out.getvalue())
 
 
 class Budget(unittest.TestCase):
