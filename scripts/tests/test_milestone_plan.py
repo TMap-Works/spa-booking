@@ -663,6 +663,15 @@ class EmpreinteSousClaude(unittest.TestCase):
         self.assertIn(40, scheduled(plan))
         self.assertEqual(interactives(plan), {})
 
+    def test_une_ressource_repetee_ne_fait_pas_passer_une_mixte_pour_pure(self):
+        """Compter plutôt que regarder chaque ressource ferait coïncider les
+        totaux d'une empreinte mixte qui répète une ressource `.claude/`, et
+        sortirait du plan un ticket en partie livrable."""
+        self.assertFalse(milestone_plan.undeliverable(
+            [".claude/commands", ".claude/commands", "scripts/milestone-run"]))
+        self.assertTrue(milestone_plan.undeliverable(
+            [".claude/commands", ".claude/commands"]))
+
     def test_le_filtre_vaut_aussi_pour_un_run_produit(self):
         """Le refus d'écriture ne dépend pas de la nature du run : un ticket
         produit dont l'empreinte serait `.claude/` seul tomberait pareil."""
@@ -683,21 +692,39 @@ class EmpreinteSousClaude(unittest.TestCase):
         self.assertNotIn(10, interactives(plan))
 
     def test_le_cas_reel_du_run_s1(self):
-        """#226, #258, #179 hors du plan ; #245 et #186 programmées à scinder.
+        """Le tableau de #360, rejoué sur le vrai `.claude/milestone-rules.json`.
 
-        Les empreintes sont celles du vrai `.claude/milestone-rules.json` : c'est
-        le tableau de #360, rejoué tel quel.
+        Ce sont les cinq issues que l'arbitre a relevées : #226, #258 et #179
+        n'ont que du `.claude/`, #245 et #186 mêlent commande et orchestrateur.
+
+        L'attente se **déduit** du fichier de règles plutôt que d'y être recopiée.
+        Ce fichier est vivant — chaque ticket lu y corrige une empreinte —, et
+        figer ici la liste ferait rougir ce test au prochain `set-resources`,
+        pour une raison sans rapport avec le plan. Le garde-fou est plus bas :
+        les deux catégories doivent rester peuplées, faute de quoi le test ne
+        vérifierait plus rien.
         """
         titres = {226: "Autoriser l'écriture sous .claude/",
                   258: "Câbler la commande de vague",
                   179: "Réglages de permissions",
                   245: "Reprise d'un ticket entamé",
                   186: "Superviseur et commande de reprise"}
+        pinned = milestone_plan.load_rules().get("resources", {})
+        empreintes = {n: pinned.get(str(n)) or [] for n in titres}
+        pures = {n for n, r in empreintes.items() if milestone_plan.undeliverable(r)}
+        mixtes = {n for n, r in empreintes.items()
+                  if r and not milestone_plan.undeliverable(r)
+                  and any(x.startswith(".claude/") for x in r)}
+        self.assertTrue(pures and mixtes,
+                        "les règles du dépôt ne portent plus les deux cas — "
+                        f"empreintes lues : {empreintes}")
+
         hub = FakeHub([self.outil(n, title=t) for n, t in titres.items()])
         _, plan = plan_of(hub, argv=["--nature", "outillage"])
-        self.assertEqual(set(interactives(plan)), {226, 258, 179})
-        self.assertEqual(set(a_scinder(plan)), {245, 186})
-        self.assertEqual(scheduled(plan), {245, 186})
+        self.assertEqual(set(interactives(plan)), pures)
+        self.assertEqual(set(a_scinder(plan)), mixtes)
+        self.assertEqual(scheduled(plan) & pures, set())
+        self.assertTrue(mixtes <= scheduled(plan))
 
 
 class Invariants(unittest.TestCase):
