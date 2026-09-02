@@ -76,6 +76,42 @@ Trois choses à savoir avant d'en lancer un :
 
 ---
 
+## Ne jamais laisser le journal muet
+
+Un run est une boîte noire de plusieurs heures dont les comptes rendus d'agents
+ne sont montrés à personne. **Le journal est la seule preuve qu'il travaille**, et
+un silence n'a aucune signature : un orchestrateur qui lit vingt issues et un
+orchestrateur mort produisent exactement la même chose — rien.
+
+C'est ce qui a rendu la nuit du 25/08 illisible. Deux trous connus, quinze à
+vingt-cinq minutes chacun : après le dernier merge (`verify` sur `develop` puis
+`replan`) et après `leg_started` (phases 0 à 2 — `start`, `reconcile`, lecture
+des issues, revue du plan).
+
+**La règle : plus de quatre à cinq minutes sans une ligne, c'est une étape à
+encadrer.** Deux formes, selon qu'on peut ou non passer la commande à `step` :
+
+```bash
+# une commande longue : step l'encadre et rend son code de sortie
+python scripts/milestone_run.py step "verify de develop apres la vague N" \
+       --eta 8 --phase validation -- npm run verify
+
+# un travail qu'aucune commande ne représente : une ligne seule, avant de s'y mettre
+python scripts/milestone_run.py step "lecture des issues et revue du plan" --eta 10
+```
+
+`step` écrit au niveau du run, sous l'acteur `orchestrateur` et la phase
+`orchestration`. `--eta` est ce qui rend le silence lisible : dix minutes
+annoncées puis dix minutes sans rien, c'est normal ; sans annonce, c'est
+indistinguable d'une panne. Hors run, `step` se contente de lancer la commande —
+la même ligne sert donc au ticket isolé sans le perturber.
+
+Le battement périodique du superviseur couvre le reste, et il ne dispense de
+rien : **une suite de battements sans rien entre eux dit que l'orchestrateur ne
+parle plus, pas que le run avance.**
+
+---
+
 ## Phase 0 — Le jalon, le plan et le run
 
 **Sans `$1`, ne pas deviner et ne pas demander à sec.** Dresser d'abord le
@@ -96,7 +132,12 @@ Deux cas où l'on n'interroge personne : `recommended` est le seul jalon
 proposable, ou la commande tourne sous reprise automatique (`SPA_UNATTENDED`).
 On prend alors la proposition et on l'annonce.
 
-Puis une seule commande, qu'il s'agisse d'un premier passage ou d'une reprise :
+Puis une seule commande, qu'il s'agisse d'un premier passage ou d'une reprise —
+précédée du jalon d'avancement qui couvre la réconciliation, muette et longue :
+
+```bash
+python scripts/milestone_run.py step "ouverture du run et reconciliation" --eta 5
+```
 
 ```bash
 python scripts/milestone_run.py start "$1" --width <N> --nature <nature>
@@ -182,6 +223,13 @@ Le plan répond à trois questions :
   conflit coûte plus cher que le parallélisme ne rapporte.
 
 ## Phase 1 — Revue du plan
+
+C'est la plus longue des étapes muettes — cinq à quinze minutes de lecture sans
+qu'une seule ligne ne s'écrive. L'annoncer avant de s'y mettre :
+
+```bash
+python scripts/milestone_run.py step "lecture des issues et revue du plan" --eta 10
+```
 
 Le script déduit ; il ne sait pas lire une issue. **Lire les issues de la
 première vague et des deux suivantes**, et confronter :
@@ -446,8 +494,18 @@ vérifie :
 
 ```bash
 git -C <dépôt principal> fetch origin develop && git -C <dépôt principal> pull
-npm run verify
+python scripts/milestone_run.py step "verify de develop apres la vague N" \
+       --eta 8 --phase validation -- npm run verify
 ```
+
+`step` encadre l'appel d'une ligne avant et d'une après, avec sa durée réelle :
+c'est ce qui empêche ces huit minutes de passer pour un run mort. **Le code de
+sortie de `step` est celui de `npm run verify`** — la barrière garde sa valeur
+de barrière, on ne perd rien à l'encadrer.
+
+Sur un rouge, le `event --status blocked` prescrit plus bas reste **dû** :
+`step` ne pose aucun statut, et `broken_develop()` de `milestone_arbiter.py` ne
+verrait rien sans cette ligne-là. Un `develop` cassé dormirait jusqu'au matin.
 
 Rouge après une vague verte n'est pas toujours une interaction entre deux
 tickets. **Faire le tri d'abord** avec la table « Quand la barrière échoue
@@ -487,8 +545,12 @@ python scripts/worktree_gc.py
 les issues fermées en sortent, les PR restées ouvertes écartent leurs
 dépendantes, et l'arbitrage humain a pu changer la donne.
 
+Le recalcul interroge GitHub et relit toutes les issues du jalon : encadrer,
+c'est fermer le second des deux trous de la nuit du 25/08.
+
 ```bash
-python scripts/milestone_run.py replan
+python scripts/milestone_run.py step "replan apres la vague N" --eta 3 \
+       -- python scripts/milestone_run.py replan
 ```
 
 Reprendre en phase 3 jusqu'à épuisement du jalon, ou jusqu'à l'une de ces
