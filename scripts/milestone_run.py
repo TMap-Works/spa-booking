@@ -232,6 +232,12 @@ CLOSES_RE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s*:?\s*#(\d
 # séparent la création du worktree de `git branch -m`. La lire ici évite que le
 # requeue d'un `running` sans trace (#134) ne relance un agent sur l'empreinte
 # d'un autre (#130).
+#
+# Il existe une troisième forme, que ce module ne peut pas reconnaître : le
+# worktree qu'un agent de jalon reçoit de l'outil `Agent` s'appelle
+# `agent-<aléa>` et porte une branche `worktree-agent-<aléa>`, sans numéro
+# d'issue. C'est le journal qui la rattache à son ticket, pas son nom — voir
+# `worktree_claims()` (#175).
 WORKTREE_BRANCH_RE = re.compile(r"^worktree-(?:feature|bugfix|chore|docs)\+(\d+)-")
 
 PHASES = ["recevabilite", "isolation", "prise-en-charge", "implementation",
@@ -726,6 +732,110 @@ def iso_before(left, right):
         return str(left) < str(right)
 
 
+_PATH_KEYS = {}
+
+
+def path_key(path):
+    """La clé de comparaison d'un chemin de worktree, d'un système à l'autre.
+
+    `git worktree list --porcelain` rend le chemin **tel qu'il l'a enregistré**
+    au `git worktree add` : séparateurs « / » y compris sous Windows, casse
+    d'origine, et lien symbolique non suivi. La revendication, elle, vient de
+    `str(ROOT)`, que `Path.resolve()` a déjà réduit. Comparer les chaînes brutes
+    ferait passer les deux faces d'un même worktree pour deux worktrees
+    différents — et le rapprochement de `worktree_claims()` ne trouverait jamais
+    rien, c'est-à-dire que #175 serait silencieusement sans effet.
+
+    D'où `realpath` — la même réduction que `Path.resolve()`, et celle que
+    `_inventaire_worktrees()` applique déjà côté recette — puis `normcase`. Le
+    résultat est mémoïsé : `worktree_claims()` passe ici une fois par ligne de
+    journal, et un journal de jalon en compte des milliers pour une poignée de
+    chemins distincts.
+    """
+    if not path:
+        return ""
+    text = str(path)
+    if text not in _PATH_KEYS:
+        try:
+            _PATH_KEYS[text] = os.path.normcase(os.path.realpath(text))
+        except (TypeError, ValueError, OSError):
+            _PATH_KEYS[text] = ""
+    return _PATH_KEYS[text]
+
+
+def agent_worktree():
+    """Le worktree d'où cet appel est lancé, ou None si c'est le dépôt principal.
+
+    Ce que `event` inscrit dans chaque ligne portant un ticket, et qui rattache
+    à son ticket un worktree dont aucun nom ne le dit (#175). La résolution est
+    la même que celle de `main_root()`, à l'envers : `ROOT` suit le fichier
+    `scripts/milestone_run.py` réellement exécuté, donc le worktree depuis lequel
+    l'agent lance la commande — `python scripts/milestone_run.py`, chemin relatif,
+    comme le prescrit `.claude/commands/ticket.md` à chaque phase.
+
+    Le dépôt principal ne revendique rien : sous `--no-worktree`, `/ticket`
+    travaille dans l'arbre commun, qui n'appartient à aucun ticket. L'y attacher
+    ferait passer le dépôt lui-même pour le worktree d'un agent.
+    """
+    return None if ROOT == STATE_ROOT else str(ROOT)
+
+
+def worktree_claims(events):
+    """Chemin de worktree → numéro de ticket, tel que les agents l'ont journalisé.
+
+    Le pendant journalisé de `live_worktrees()`, et ce qui ferme sa dernière
+    fenêtre aveugle (#175). Un agent de jalon ne crée pas son worktree : il le
+    reçoit de l'outil `Agent` (`isolation: "worktree"`), qui le nomme
+    `agent-<aléa>` et pose dessus une branche `worktree-agent-<aléa>`. Ni l'un ni
+    l'autre ne porte de numéro d'issue, et aucune règle de nom ne peut l'en faire
+    sortir. Entre la création du worktree et le `git branch -m` de la phase 1,
+    l'agent était donc invisible pour `reconcile`, qui, ne trouvant aucune trace,
+    requeuait un vivant (#134 rouvrant #130).
+
+    Le rattachement que le nom ne donne pas, l'agent le donne lui-même sans avoir
+    à y penser : `event` inscrit son worktree dans chaque ligne portant un
+    ticket, et il en écrit une dès la phase `recevabilite`. La revendication
+    existe donc avant le renommage, c'est-à-dire pendant toute la fenêtre.
+
+    Elle ne dit que « ce worktree est à ce ticket », jamais « son agent est
+    vivant » : c'est `orphaned()` qui tranche cela, sur le journal et non sur
+    l'environnement (#233). Un `agent-<aléa>` rendu visible ici mais sans
+    battement depuis la frontière d'étape repart donc en file comme n'importe
+    quel worktree nommé — il ne retient pas son ticket.
+
+    La revendication la plus **tardive** l'emporte quand deux tickets nomment un
+    même chemin : le journal est en ajout seul et plusieurs processus y écrivent
+    à la fois, si bien que l'ordre des lignes n'est pas celui du temps — même
+    lecture que `ticket_heartbeats`.
+
+    Et symétriquement quand un même ticket nomme deux chemins, ce qui arrive dès
+    qu'il est repris : l'agent relancé reçoit un worktree neuf, l'ancien survit —
+    il porte des modifications, donc l'outil `Agent` ne le récupère pas — et les
+    deux revendiquent le même numéro. Sans arbitrage ici, `live_worktrees()`
+    rendrait celui que `git worktree list` énumère en premier, c'est-à-dire
+    l'abandonné : `resume_context` renverrait l'agent suivant sur le travail mort
+    et perdrait celui du vivant. On ne garde donc qu'un chemin par ticket, le
+    dernier revendiqué.
+    """
+    claims, seen = {}, {}
+    for event in events:
+        number, path = event.get("ticket"), event.get("worktree")
+        ts = event.get("ts")
+        if number is None or not path or not ts:
+            continue
+        key = path_key(path)
+        if not key:
+            continue
+        if key not in seen or not iso_before(ts, seen[key]):
+            claims[key], seen[key] = number, ts
+    latest = {}
+    for key, number in claims.items():
+        held = latest.get(number)
+        if held is None or iso_before(seen[held], seen[key]):
+            latest[number] = key
+    return {key: number for number, key in latest.items()}
+
+
 def orphaned(number, frontier, beats, fallback=False):
     """Le ticket a-t-il été abandonné par l'étape qui le portait ?
 
@@ -1095,7 +1205,7 @@ def remote_branches():
     return found
 
 
-def live_worktrees():
+def live_worktrees(claims=None):
     """Numéro d'issue → worktree vivant, verrouillé ou non.
 
     Le pendant local de `remote_branches()`, et il manquait. `reconcile` ne
@@ -1114,12 +1224,24 @@ def live_worktrees():
     trace redevient `pending` : ne pas lire la seconde forme rendrait invisible
     l'agent qui n'a pas encore eu le temps de renommer sa branche.
 
-    Reste une fenêtre irréductible, à connaître : le worktree qu'un agent de
-    jalon reçoit s'appelle d'abord `agent-<aléa>`, sans numéro d'issue. Un agent
-    mort là n'a rien posé et son ticket doit repartir ; un agent **vivant** là
-    n'est pas détectable — c'est pourquoi `reconcile` se lance entre deux
-    vagues, jamais pendant.
+    Restait la troisième forme, que le nom ne donne pas : le worktree qu'un
+    agent de jalon reçoit s'appelle `agent-<aléa>` et porte une branche
+    `worktree-agent-<aléa>`, sans numéro d'issue nulle part. La fenêtre était
+    réputée irréductible et couverte par une règle de conduite — `reconcile`
+    entre deux vagues, jamais pendant —, qui ne tenait que tant que personne ne
+    lançait `reconcile` ou `/milestone` à la main sur une vague en vol. C'est
+    `claims` qui la ferme (#175) : les revendications que les agents ont
+    journalisées, chemin normalisé → numéro de ticket, telles que
+    `worktree_claims()` les relit. Un chemin n'y est consulté que si son nom de
+    branche n'a rien dit — le nom, quand il existe, reste plus sûr qu'une
+    revendication que le journal peut avoir gardée d'un worktree recyclé.
+
+    Sans `claims`, la lecture est celle d'avant : les seuls noms de branche.
+    C'est le repli des appelants qui n'ont pas de journal sous la main, pas un
+    défaut à corriger — ne rien savoir d'un worktree le laisse simplement hors
+    du rapprochement.
     """
+    claims = claims or {}
     try:
         proc = subprocess.run(["git", "worktree", "list", "--porcelain"], cwd=ROOT,
                               capture_output=True, text=True, encoding="utf-8",
@@ -1135,10 +1257,16 @@ def live_worktrees():
         line = line.strip()
         if not line:                       # ligne vide : fin d'une entrée
             branch = current.get("branch", "")
+            path = current.get("path")
             match = BRANCH_RE.match(branch) or WORKTREE_BRANCH_RE.match(branch)
-            if match and current.get("path"):
-                found.setdefault(int(match.group(1)), {
-                    "path": current["path"], "branch": branch,
+            # Une revendication ne rattrape qu'un worktree **sur une branche** :
+            # ce qu'on rend sert à y renvoyer un agent par `git checkout`, et une
+            # HEAD détachée ne lui donnerait rien à reprendre.
+            number = (int(match.group(1)) if match
+                      else claims.get(path_key(path)) if path and branch else None)
+            if number is not None and path:
+                found.setdefault(number, {
+                    "path": path, "branch": branch,
                     "locked": current.get("locked", False)})
             current = {}
             continue
@@ -1228,7 +1356,10 @@ def cmd_reconcile(args):
     # elles rendent le même dictionnaire vide qu'un ticket jamais démarré.
     PROBE_FAILURES.clear()
     branches = remote_branches()
-    worktrees = live_worktrees()
+    # Les revendications viennent du journal déjà lu, et non d'une seconde
+    # lecture : c'est le même état qui décide de l'appartenance d'un worktree et
+    # du battement de son ticket, deux verdicts qui doivent se répondre.
+    worktrees = live_worktrees(worktree_claims(events))
     sondes_sures = not PROBE_FAILURES
     if not sondes_sures:
         print("sonde locale muette (" + " ; ".join(PROBE_FAILURES) + ") — les "
@@ -2010,6 +2141,12 @@ def cmd_event(args):
         event["reset"] = True
     if getattr(args, "beat", False):
         event["beat"] = True
+    # Le worktree d'où l'agent parle, quand il n'est pas le dépôt principal :
+    # c'est la seule chose qui rattache à son ticket un worktree `agent-<aléa>`,
+    # que ni son nom ni celui de sa branche ne désignent (#175).
+    claim = agent_worktree() if event.get("ticket") is not None else None
+    if claim:
+        event["worktree"] = claim
     append_journal(run_id, event)
 
     if not args.quiet:
@@ -2073,6 +2210,11 @@ def cmd_step(args):
                 event[name] = value
         if level:
             event["level"] = level
+        # Même revendication que dans `event` : une étape encadrée depuis le
+        # worktree d'un agent le rattache à son ticket aussi bien (#175).
+        claim = agent_worktree() if event.get("ticket") is not None else None
+        if claim:
+            event["worktree"] = claim
         append_journal(run_id, event)
 
     if not command:
@@ -2139,7 +2281,8 @@ def cmd_gate(args):
 
     control = load_control(run_id)
     run = load_run(run_id)
-    tickets = replay(run, read_journal(run_id), control)
+    events = read_journal(run_id)
+    tickets = replay(run, events, control)
     current, waves = wave_state(run, tickets)
 
     skipped = set()
@@ -2228,7 +2371,7 @@ def cmd_gate(args):
     # qui empêche l'agent relancé de repartir de zéro — ou, pire, de prendre
     # l'ancien worktree pour un vestige et de l'effacer.
     if ready:
-        worktrees = live_worktrees()
+        worktrees = live_worktrees(worktree_claims(events))
         for number in ready:
             context = resume_context(number, worktrees)
             if context:
@@ -2411,7 +2554,8 @@ def ticket_frame(run_id, number, tail, worktrees=None):
              "`milestone_run.py status` pour la liste")
     ticket = tickets[number]
     mine = [e for e in events if e.get("ticket") == number]
-    worktree = (live_worktrees() if worktrees is None else worktrees).get(number)
+    worktree = (live_worktrees(worktree_claims(events))
+                if worktrees is None else worktrees).get(number)
     columns = max(60, shutil.get_terminal_size((110, 30)).columns - 1)
 
     out = [""]
@@ -2491,12 +2635,15 @@ def cmd_ticket(args):
     # Le worktree bouge rarement ; le journal, tout le temps. Un `git worktree
     # list` par redessin serait un fork toutes les 2 s pour une donnée quasi
     # figée — on la rafraîchit toutes les 30 s.
-    worktrees, refreshed = live_worktrees(), time.monotonic()
+    def sonde():
+        return live_worktrees(worktree_claims(read_journal(run_id)))
+
+    worktrees, refreshed = sonde(), time.monotonic()
     clear = "\x1b[H\x1b[J" if COLOR else ""
     try:
         while True:
             if time.monotonic() - refreshed > 30:
-                worktrees, refreshed = live_worktrees(), time.monotonic()
+                worktrees, refreshed = sonde(), time.monotonic()
             frame = ticket_frame(run_id, args.number, args.tail,
                                  worktrees=worktrees)
             sys.stdout.write(clear + frame + "\n")
