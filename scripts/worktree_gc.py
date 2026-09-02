@@ -43,6 +43,16 @@ occupaient 1,0 Go (#173). Plus rien ne les rattache au dépôt — aucune branch
 ne les désigne, rien ne peut y être commité — et le balayage ne sort jamais de
 `.claude/worktrees/`. `--no-dirs` s'en tient aux deux premiers passages.
 
+C'est pourquoi le premier passage **ne conclut pas** sur un `git worktree remove`
+en échec : il diffère son verdict jusqu'au troisième, seul à savoir si l'entrée
+d'administration a survécu. Disparue, le répertoire est repris sur-le-champ par
+`remove_tree` — qui sait précisément faire ce que git a raté. Survivante, le
+répertoire reste revendiqué, donc hors du troisième passage, et l'échec de git
+est rapporté comme tel. Dans les deux cas, un seul enregistrement, un seul
+volume compté : conclure dès le premier passage annonçait le même répertoire
+« suppression impossible » puis « touché il y a moins de 10 min », et en
+différait la reprise d'autant (#177).
+
 Sans réseau ni `gh`, le script se rabat sur le seul signal local (l'ancestralité)
 au lieu d'échouer : le nettoyage ne doit jamais bloquer le travail.
 """
@@ -506,13 +516,23 @@ def remove(root, entry):
         details = (proc.stderr or proc.stdout).strip().splitlines()
         return details[-1] if details else "échec inconnu"
 
-    branch = entry["branch"]
-    if branch and branch not in PROTECTED:
-        # -D et non -d : un merge en squash laisse la branche non-ancêtre de
-        # develop, git refuserait de la supprimer alors que tout est intégré.
-        run(["git", "branch", "-D", branch], cwd=root)
+    drop_branch(root, entry["branch"])
     run(["git", "worktree", "prune"], cwd=root)
     return None
+
+
+def drop_branch(root, branch):
+    """Supprime la branche locale d'un worktree qui vient de disparaître.
+
+    `-D` et non `-d` : un merge en squash laisse la branche non-ancêtre de
+    develop, git refuserait de la supprimer alors que tout est intégré.
+
+    Appelée aussi par le troisième passage, quand c'est `remove_tree` et non git
+    qui a fini par emporter le répertoire : sans cela la branche survivrait à son
+    worktree, et le rapport annoncerait supprimé ce qui ne l'est qu'à moitié.
+    """
+    if branch and branch not in PROTECTED:
+        run(["git", "branch", "-D", branch], cwd=root)
 
 
 def orphan_branches(root, held):
@@ -636,8 +656,9 @@ def main():
     candidates = [e for e in entries[1:] if not same_path(e["path"], root)]
     held = {e["branch"] for e in entries if e.get("branch")}
     orphans = [] if args.no_branches else orphan_branches(root, held)
-    pending = [] if args.no_dirs else stray_dirs(root, [e["path"] for e in entries])
-    if not candidates and not orphans and not pending:
+    orphan_dirs = [] if args.no_dirs else stray_dirs(
+        root, [e["path"] for e in entries])
+    if not candidates and not orphans and not orphan_dirs:
         return report(args, [], [], [])
 
     here = Path.cwd().resolve()
@@ -651,7 +672,22 @@ def main():
     # tout le budget, et plus aucun volume ne serait mesuré.
     deadline = time.monotonic() + SIZE_BUDGET
     issues, removed, kept, errors = {}, [], [], []
-    released = set()
+    # Chemin normalisé -> ce que le premier passage a décidé. `released` : git a
+    # bien supprimé, le répertoire est déjà compté. `deferred` : git a échoué et
+    # le verdict attend le troisième passage.
+    released, deferred = set(), {}
+
+    def give_up(deferral, error):
+        """Un répertoire que ni git ni le script n'ont su supprimer.
+
+        Une seule ligne, sous le nom de la branche : c'est le rapport que le
+        premier passage aurait rendu s'il avait conclu tout de suite.
+        """
+        record = deferral["record"]
+        name = record["branch"] or os.path.basename(record["path"])
+        errors.append("{} : {}".format(name, error))
+        kept.append(dict(record, reason="suppression impossible ({})".format(error)))
+
     if prs is None:
         errors.append("GitHub injoignable — analyse limitée aux signaux locaux")
 
@@ -679,9 +715,12 @@ def main():
 
         error = remove(root, entry)
         if error:
-            errors.append("{} : {}".format(entry["branch"], error))
-            kept.append(dict(record, bytes=size,
-                             reason="suppression impossible ({})".format(error)))
+            # Ne pas conclure ici : git a pu supprimer l'entrée d'administration
+            # tout en ratant le répertoire, qui devient alors orphelin à
+            # l'instant même. Le troisième passage le dira, et lui seul (#177).
+            deferred[norm(entry["path"])] = {
+                "record": dict(record, bytes=size), "reason": reason,
+                "error": error}
         else:
             released.add(norm(entry["path"]))
             removed.append(dict(record, reason=reason, bytes=size))
@@ -711,32 +750,71 @@ def main():
     # ici évite d'attendre le passage suivant.
     strays = [] if args.no_dirs else stray_dirs(
         root, [e["path"] for e in list_worktrees(root)])
+    pending_any = bool(deferred)
     for path in strays:
+        key = norm(path)
         # Le premier passage a déjà compté et annoncé ce répertoire-là : finir
         # son ménage, mais sans le porter une seconde fois au total.
-        known = norm(path) in released
-        record = {"kind": "répertoire", "path": str(path),
-                  "branch": None, "issue": None}
-        action, reason = stray_verdict(root, path, here, now, known)
+        known = key in released
+        # Celui-là, git l'a relâché sans réussir à le supprimer : le premier
+        # passage a différé son verdict, il se rend ici — une seule fois, sous
+        # le nom de sa branche, et avec le volume déjà mesuré (#177).
+        pending = deferred.pop(key, None)
+        record = pending["record"] if pending else {
+            "kind": "répertoire", "path": str(path), "branch": None, "issue": None}
+        action, reason = stray_verdict(root, path, here, now,
+                                       known or pending is not None)
         if action == "keep":
-            kept.append(dict(record, reason=reason))
+            if pending:
+                give_up(pending, pending["error"])
+            else:
+                kept.append(dict(record, reason=reason))
             continue
 
-        size = None if known else dir_size(path, deadline)
+        if pending:
+            size = record.get("bytes")
+            reason = "{} — répertoire repris après l'échec de git".format(
+                pending["reason"])
+        else:
+            size = None if known else dir_size(path, deadline)
         if args.dry_run:
             removed.append(dict(record, reason=reason, bytes=size, dry_run=True))
             continue
 
         error = remove_tree(path)
         if error:
+            if pending:
+                give_up(pending, error)
+                continue
             errors.append("{} : {}".format(path.name, error))
             if not known:
                 kept.append(dict(record, bytes=dir_size(path, deadline),
                                  reason="suppression impossible ({})".format(error)))
+        elif pending:
+            # Git n'a pas eu l'occasion de supprimer la branche : il a rendu la
+            # main sur l'échec du répertoire.
+            drop_branch(root, record["branch"])
+            removed.append(dict(record, reason=reason, bytes=size))
         elif not known:
             removed.append(dict(record, reason=reason, bytes=size))
-    if strays and not args.dry_run:
+
+    # Avant de trancher sur ce qui reste différé : une entrée d'administration
+    # dont le répertoire a fini par disparaître retiendrait encore sa branche,
+    # et `git branch -D` refuse une branche qu'un worktree déclare occuper.
+    if (strays or pending_any) and not args.dry_run:
         run(["git", "worktree", "prune"], cwd=root)
+
+    # Ce qui reste différé n'est jamais passé par le troisième passage : entrée
+    # d'administration survivante — le répertoire est encore revendiqué —,
+    # répertoire hors de WORKTREE_DIR, ou `--no-dirs`. L'échec de git s'y
+    # rapporte donc ici, une fois et une seule.
+    for pending in deferred.values():
+        if os.path.exists(native(pending["record"]["path"])):
+            give_up(pending, pending["error"])
+        else:
+            # Git a fini par emporter le répertoire malgré son code de retour.
+            drop_branch(root, pending["record"]["branch"])
+            removed.append(dict(pending["record"], reason=pending["reason"]))
 
     # Le volume de ce qui est conservé se paie en temps d'inventaire : hors du
     # budget des suppressions, et seulement quand on l'a demandé.

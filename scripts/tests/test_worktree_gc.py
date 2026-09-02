@@ -25,6 +25,11 @@ Le troisième est le seul dont une régression coûterait plus cher que le bug
 d'origine — d'où un test qui manipule un vrai lien sur un vrai disque, et non
 un double.
 
+S'y ajoute le raccord entre le premier passage et le troisième (#177) : quand
+`git worktree remove` échoue, c'est le troisième qui tranche, et le premier ne
+doit rien conclure. Ce raccord ne se voit que depuis `main`, d'où la seule
+classe de ce fichier qui la fasse tourner de bout en bout.
+
 Aucune dépendance : `unittest` de la bibliothèque standard, comme les autres
 harnais de `scripts/tests`.
 """
@@ -491,6 +496,168 @@ class TestStrayVerdict(unittest.TestCase):
                 released=True)
         self.assertEqual(action, "remove")
         self.assertIn("tout juste supprimé", reason)
+
+
+class TestRemoveEnEchec(unittest.TestCase):
+    """#177 — `git worktree remove` relâche même le répertoire qu'il rate.
+
+    Il supprime l'entrée d'administration avant de rendre la main sur l'échec de
+    la suppression récursive. Le répertoire devient alors orphelin à l'instant
+    même : conclure dès le premier passage l'annonçait « suppression impossible »
+    puis, au troisième, « touché il y a moins de 10 min » — deux lignes
+    contradictoires pour le même répertoire, et une reprise différée d'un run.
+
+    Le raccord ne s'observe que depuis `main` : c'est elle qui passe le témoin
+    d'un passage à l'autre. Tout ce qui touche au réseau, à git et à la décision
+    de supprimer est doublé ; le système de fichiers, lui, est réel.
+    """
+
+    ERREUR_GIT = "fatal: failed to delete 'wt-134': Directory not empty"
+
+    def setUp(self):
+        # `resolve()` dès la création : `main` compare le répertoire courant aux
+        # chemins des worktrees, et sous Windows `Path.cwd().resolve()` développe
+        # les noms courts 8.3 que rend `tempfile`.
+        self.root = Path(tempfile.mkdtemp(prefix="wgc-")).resolve()
+        (self.root / ".git").mkdir()
+        self.path = self.root / gc.WORKTREE_DIR / "wt-134"
+        self.path.mkdir(parents=True)
+        (self.path / "node_modules.bin").write_bytes(b"x" * 2048)
+        self.entry = entry(path=str(self.path), branch="bugfix/134-x")
+        self.calls, self.trees = [], []
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def fake_run(self, args, cwd=None, timeout=30):
+        self.calls.append(list(args))
+        if args[:2] == ["git", "rev-parse"]:
+            # Ce que voit `attached` dans un répertoire détaché : il remonte
+            # jusqu'au dépôt principal, donc « plus rattaché ».
+            return completed(0, str(self.root / ".git"))
+        return completed(0)
+
+    def sweep(self, listed_after, tree_error=None, argv=()):
+        """Fait tourner `main` et rend ce qu'elle a passé à `report`.
+
+        `listed_after` dit si l'entrée d'administration a survécu à l'échec —
+        c'est-à-dire si le second `git worktree list` revendique encore le
+        répertoire.
+        """
+        main_entry = entry(path=str(self.root), branch="develop")
+        after = [main_entry] + ([self.entry] if listed_after else [])
+        seen = {}
+
+        def fake_remove_tree(path):
+            self.trees.append(str(path))
+            if tree_error:
+                return tree_error
+            shutil.rmtree(path, ignore_errors=True)
+            return None
+
+        def fake_report(args, removed, kept, errors):
+            seen.update(removed=removed, kept=kept, errors=errors)
+            return 0
+
+        with mock.patch.object(sys, "argv", ["worktree_gc.py", *argv]), \
+             mock.patch.object(gc.Path, "cwd", return_value=self.root), \
+             mock.patch.object(gc, "main_root", return_value=self.root), \
+             mock.patch.object(gc, "run", side_effect=self.fake_run), \
+             mock.patch.object(gc, "list_worktrees",
+                               side_effect=[[main_entry, self.entry], after]), \
+             mock.patch.object(gc, "orphan_branches", return_value=[]), \
+             mock.patch.object(gc, "pull_requests", return_value={
+                 "bugfix/134-x": {"number": 176, "state": "MERGED"}}), \
+             mock.patch.object(gc, "safety_hold", return_value=None), \
+             mock.patch.object(gc, "remove", return_value=self.ERREUR_GIT), \
+             mock.patch.object(gc, "remove_tree", side_effect=fake_remove_tree), \
+             mock.patch.object(gc, "report", side_effect=fake_report):
+            gc.main()
+        return seen
+
+    def records(self, seen):
+        """Les enregistrements qui désignent le répertoire du worktree raté."""
+        return [item for item in seen["removed"] + seen["kept"]
+                if item.get("path") and gc.same_path(item["path"], self.path)]
+
+    # --- L'entrée d'administration a disparu : reprise immédiate -------------
+
+    def test_repertoire_relache_est_repris_dans_le_meme_run(self):
+        seen = self.sweep(listed_after=False)
+        self.assertEqual(self.trees, [str(self.path)])
+        self.assertFalse(self.path.exists())
+        self.assertEqual(len(seen["removed"]), 1)
+        self.assertEqual(seen["removed"][0]["branch"], "bugfix/134-x")
+        self.assertIn("#176", seen["removed"][0]["reason"])
+        self.assertEqual(seen["kept"], [])
+        self.assertEqual(seen["errors"], [])
+
+    def test_le_delai_de_grace_ne_differe_plus_la_reprise(self):
+        # Le mtime du répertoire est celui de la suppression partielle, donc
+        # tout frais. C'est exactement ce qui le faisait renvoyer au passage
+        # suivant avec « touché il y a moins de 10 min ».
+        age = time.time() - os.stat(self.path).st_mtime
+        self.assertLess(age, gc.MIN_ORPHAN_AGE)
+        seen = self.sweep(listed_after=False)
+        self.assertEqual([item["reason"] for item in seen["kept"]], [])
+
+    def test_un_seul_enregistrement_et_un_seul_volume(self):
+        seen = self.sweep(listed_after=False)
+        self.assertEqual(len(self.records(seen)), 1)
+        # 2048 octets comptés une fois, et non deux : le premier passage les
+        # mesurait avant l'échec, le troisième les remesurait après.
+        self.assertEqual(gc.total_bytes(seen["removed"]), 2048)
+
+    def test_la_branche_ne_survit_pas_au_repertoire_repris(self):
+        # Git a rendu la main sur l'échec du répertoire, sans supprimer la
+        # branche : à défaut, elle resterait derrière un worktree disparu.
+        self.sweep(listed_after=False)
+        self.assertIn(["git", "branch", "-D", "bugfix/134-x"], self.calls)
+
+    def test_echec_des_deux_suppressions_ne_produit_qu_une_ligne(self):
+        seen = self.sweep(listed_after=False, tree_error="[WinError 5] accès refusé")
+        self.assertEqual(seen["removed"], [])
+        self.assertEqual(len(self.records(seen)), 1)
+        self.assertIn("WinError 5", seen["kept"][0]["reason"])
+        self.assertEqual(seen["kept"][0]["bytes"], 2048)
+        self.assertEqual(len(seen["errors"]), 1)
+        self.assertIn("bugfix/134-x", seen["errors"][0])
+
+    # --- L'entrée d'administration a survécu : rien ne change ---------------
+
+    def test_entree_survivante_reste_hors_du_troisieme_passage(self):
+        seen = self.sweep(listed_after=True)
+        self.assertEqual(self.trees, [])
+        self.assertTrue(self.path.exists())
+        self.assertEqual(seen["removed"], [])
+        self.assertEqual(len(self.records(seen)), 1)
+        self.assertIn("suppression impossible", seen["kept"][0]["reason"])
+        self.assertIn("Directory not empty", seen["kept"][0]["reason"])
+
+    def test_entree_survivante_rapporte_toujours_l_erreur(self):
+        seen = self.sweep(listed_after=True)
+        self.assertEqual(len(seen["errors"]), 1)
+        self.assertIn("bugfix/134-x", seen["errors"][0])
+        self.assertIn("Directory not empty", seen["errors"][0])
+
+    def test_no_dirs_s_en_tient_au_rapport_du_premier_passage(self):
+        # `--no-dirs` débranche le troisième passage : le verdict différé doit
+        # quand même se rendre, sans quoi l'échec disparaîtrait du rapport.
+        seen = self.sweep(listed_after=False, argv=("--no-dirs",))
+        self.assertEqual(self.trees, [])
+        self.assertEqual(len(self.records(seen)), 1)
+        self.assertIn("suppression impossible", seen["kept"][0]["reason"])
+        self.assertEqual(len(seen["errors"]), 1)
+
+    def test_repertoire_finalement_disparu_n_est_pas_compte_pour_un_echec(self):
+        # Git a bien supprimé le répertoire tout en rendant un code non nul.
+        # Rien à reprendre, et surtout rien à taire : l'enregistrement existe.
+        shutil.rmtree(self.path)
+        seen = self.sweep(listed_after=True)
+        self.assertEqual(seen["errors"], [])
+        self.assertEqual(len(seen["removed"]), 1)
+        self.assertEqual(seen["removed"][0]["branch"], "bugfix/134-x")
+        self.assertEqual(seen["kept"], [])
 
 
 class TestHuman(unittest.TestCase):
