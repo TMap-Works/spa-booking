@@ -84,6 +84,15 @@ Le superviseur ne garde donc aucun état : on peut le tuer à tout moment.
 
 ## Ce qu'il ne fait pas
 
+**Il ne se recharge pas.** Il est le seul processus long du dispositif : la
+boucle des étapes vit en mémoire, et les fonctions qui mesurent la production
+d'une étape sont celles de *ce* module-là, chargées une fois au démarrage. Un
+correctif que le run merge lui-même sur `develop` ne prend donc effet qu'au
+prochain démarrage — les sous-processus (`milestone_run.py`,
+`milestone_arbiter.py`, `pr_gate.py`) n'ont pas ce défaut, ils repartent neufs à
+chaque appel. Ce qu'il fait, c'est le **voir** : l'empreinte de sa source est
+retenue au démarrage, relue en fin d'étape, et l'écart se dit en `WARN` (#369).
+
 Lui-même ne relit aucun code. Sauf `--no-merge`, il enchaîne des merges
 automatiques sur `develop` sans relecture humaine — c'est le prix du « sans
 intervention ». Ce que l'arbitre y ajoute est une relecture *par un modèle*, pas
@@ -114,6 +123,7 @@ par l'appel, jamais exportée, et `all` lui est interdit.
 """
 import argparse
 import atexit
+import hashlib
 import json
 import os
 import re
@@ -1623,6 +1633,81 @@ def wait_for_quota(args, info, stop_flag, source=None):
 
 
 # --------------------------------------------------------------------------- #
+# Le code du superviseur lui-même
+# --------------------------------------------------------------------------- #
+#
+# Un run d'outillage corrige souvent, précisément, ce fichier-ci — et le
+# correctif reste inerte pour le run qui vient de le merger : le processus
+# vivant garde le module qu'il a chargé au démarrage. C'est ainsi que #278, dont
+# le mérite était de ne plus compter stérile une étape qui merge, s'est fait
+# déclarer stérile par l'étape même qui l'avait mergé, neuf minutes plus tard.
+#
+# Le remède retenu est le moins engageant : **voir**, avant de décider de
+# recharger. Un re-`execv()` entre deux étapes est une autre décision — il doit
+# garantir qu'aucun `claude -p` n'est en vol, et il remet à zéro `legs`,
+# `dry_legs`, `barren`, `rescued`, `seen_commits` et `seen_merges`, dont la
+# remise à zéro a ses propres effets sur les motifs d'arbitrage.
+
+SOURCE = Path(__file__).resolve()
+SOURCE_DRIFT_NOTE = (
+    "le code du superviseur a changé depuis son démarrage "
+    "(scripts/milestone_supervise.py) — le processus vivant exécute toujours "
+    "l'ancien : redémarrer le superviseur pour que le correctif prenne effet"
+)
+
+
+def source_fingerprint(path=None):
+    """L'empreinte de la source du superviseur, ou None si elle est illisible.
+
+    Un hachage du contenu plutôt que le couple (mtime, taille) : `git pull` et
+    `git checkout` réécrivent les fichiers qu'ils traversent, y compris pour y
+    remettre le même contenu — une empreinte fondée sur la date d'écriture
+    annoncerait alors un correctif qui n'existe pas, et le premier `WARN` de
+    trop est celui qui fait cesser de les lire. Une centaine de kilo-octets
+    relus une fois par étape ne coûtent rien.
+    """
+    try:
+        return hashlib.sha256(Path(path or SOURCE).read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def source_drifted(before, after):
+    """La source a-t-elle changé entre ces deux empreintes ?
+
+    L'inconnu ne déclenche rien : une empreinte manquante — fichier illisible au
+    démarrage, ou au moment de la comparaison — ne prouve aucun changement, et
+    un faux positif enverrait chercher un correctif qui n'a jamais été mergé.
+    """
+    if before is None or after is None:
+        return False
+    return before != after
+
+
+def announce_source_drift(before):
+    """Dire, en fin d'étape, que le code du superviseur a changé sous lui.
+
+    Dit à **chaque** étape tant que l'écart dure, et non une seule fois : la
+    phrase reste vraie jusqu'au redémarrage, et l'humain qui vient lire le
+    journal arrive rarement à l'étape où l'écart est apparu. Une ligne toutes
+    les quarante minutes n'est pas du bruit — c'est exactement ce qui manquait à
+    celui qui cherchait pourquoi le dispositif s'entêtait sur une panne déjà
+    corrigée.
+
+    Dans les deux journaux, parce qu'ils n'ont pas les mêmes lecteurs : celui du
+    superviseur pour qui regarde le dispositif, celui du run pour qui regarde le
+    jalon. Aucun statut : ce n'est pas un état du run qui change.
+
+    Rend True si l'écart a été annoncé.
+    """
+    if not source_drifted(before, source_fingerprint()):
+        return False
+    say(SOURCE_DRIFT_NOTE, "WARN")
+    journal(None, SOURCE_DRIFT_NOTE, level="WARN")
+    return True
+
+
+# --------------------------------------------------------------------------- #
 
 def retire(why):
     """Débranche le dispositif : plus de veille, plus d'intention à relancer.
@@ -1682,6 +1767,11 @@ def supervise(args):
     # de ce superviseur : on les tient pour vus, faute de quoi le premier leg
     # passerait pour productif sans avoir rien produit.
     seen_commits, seen_merges = work_commits(), merged_tickets()
+    # Le code que ce processus exécute, tel qu'il était à l'instant du
+    # chargement. Retenu une fois et jamais rafraîchi : c'est l'écart avec le
+    # **démarrage** qui compte, puisque c'est le module de ce démarrage-là qui
+    # tourne encore.
+    source_seen = source_fingerprint()
 
     def rescue(reasons):
         """Faire arbitrer, si le budget le permet — (lancé, panne, info_quota).
@@ -1786,6 +1876,12 @@ def supervise(args):
                 level="WARN" if issue or sterile else "INFO")
         say(f"vague {legs} rendue en {elapsed} · {note}",
             "WARN" if issue or sterile else "INFO")
+
+        # L'étape vient peut-être de merger un correctif de ce fichier-ci. Le
+        # dire au moment où l'on lit son bilan, faute de quoi le dispositif
+        # s'entête sur une panne déjà corrigée sans que rien ne le trahisse
+        # (#369). On ne recharge rien : on le signale.
+        announce_source_drift(source_seen)
 
         if args.dry_run:
             say("--dry-run : une seule étape simulée")
