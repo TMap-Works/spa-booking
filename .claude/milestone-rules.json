@@ -141,7 +141,8 @@
     "186": [
       ".claude/commands",
       "scripts/milestone-run",
-      "scripts/milestone-supervise"
+      "scripts/milestone-supervise",
+      "scripts/tests"
     ],
     "215": [
       ".claude/hooks",
@@ -183,7 +184,8 @@
     ],
     "245": [
       ".claude/commands",
-      "scripts/milestone-run"
+      "scripts/milestone-run",
+      "scripts/tests"
     ],
     "249": [
       "scripts/milestone-run",
@@ -236,6 +238,92 @@
       "api/availability",
       "contracts:shared",
       "db:schema"
+    ],
+    "35": [
+      "api/appointments",
+      "api/availability"
+    ],
+    "38": [
+      "api/appointments"
+    ],
+    "36": [
+      "api/availability",
+      "api/appointments",
+      "contracts:shared"
+    ],
+    "297": [
+      "api/appointments",
+      "contracts:shared",
+      "docs/adr"
+    ],
+    "44": [
+      "web/tunnel"
+    ],
+    "46": [
+      "web/tunnel"
+    ],
+    "43": [
+      "web/salon-public"
+    ],
+    "47": [
+      "web/compte-client"
+    ],
+    "326": [
+      "api/appointments",
+      "ci:workflows",
+      "npm:verify"
+    ],
+    "260": [
+      "scripts/tests",
+      "scripts/worktree-gc"
+    ],
+    "264": [
+      ".claude/hooks",
+      "scripts/permissions-review",
+      "scripts/tests"
+    ],
+    "271": [
+      ".claude/commands",
+      "scripts/tests"
+    ],
+    "358": [
+      ".claude/commands"
+    ],
+    "359": [
+      "scripts/milestone-arbiter",
+      "scripts/tests"
+    ],
+    "360": [
+      "scripts/milestone-plan",
+      "scripts/tests"
+    ],
+    "369": [
+      "scripts/milestone-supervise",
+      "scripts/tests"
+    ],
+    "366": [
+      "scripts/milestone-arbiter",
+      "scripts/tests"
+    ],
+    "368": [
+      "scripts/milestone-arbiter",
+      "scripts/milestone-supervise"
+    ],
+    "356": [
+      ".claude/settings"
+    ],
+    "371": [
+      ".claude/commands",
+      "scripts/milestone-run"
+    ],
+    "374": [
+      ".claude/commands"
+    ],
+    "383": [
+      ".claude/commands"
+    ],
+    "387": [
+      ".claude/commands"
     ]
   },
   "depends": {
@@ -291,6 +379,18 @@
     ],
     "37": [
       31
+    ],
+    "43": [
+      45
+    ],
+    "44": [
+      45
+    ],
+    "46": [
+      45
+    ],
+    "47": [
+      45
     ]
   },
   "why": {
@@ -311,6 +411,10 @@
     "36": "l'option premier disponible agrege les creneaux calcules par l'algorithme",
     "39": "le report ecrit dans le service de rendez-vous et soumet le nouveau creneau a la contrainte d'exclusion",
     "40": "l'annulation passe par la machine a etats du service de rendez-vous",
-    "37": "la contrainte d'exclusion doit etre en base avant que la creation puisse la violer et traduire le conflit en 409"
+    "37": "la contrainte d'exclusion doit etre en base avant que la creation puisse la violer et traduire le conflit en 409",
+    "43": "le socle Next.js d'apps/web n'existe pas encore (ni next, ni app/, ni tsconfig, ni lib/api-client) : #45 le pose, tout autre ecran le reecrirait en conflit",
+    "44": "le socle Next.js d'apps/web n'existe pas encore (ni next, ni app/, ni tsconfig, ni lib/api-client) : #45 le pose, tout autre ecran le reecrirait en conflit",
+    "46": "le socle Next.js d'apps/web n'existe pas encore (ni next, ni app/, ni tsconfig, ni lib/api-client) : #45 le pose, tout autre ecran le reecrirait en conflit",
+    "47": "le socle Next.js d'apps/web n'existe pas encore (ni next, ni app/, ni tsconfig, ni lib/api-client) : #45 le pose, tout autre ecran le reecrirait en conflit"
   }
 }
