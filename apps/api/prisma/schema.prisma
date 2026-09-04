@@ -241,6 +241,29 @@ model User {
   isActive    Boolean   @default(true) @map("is_active")
   lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(6)
 
+  /// Note interne du fichier client — #56, CDC §2.3 « notes » du module `crm`.
+  ///
+  /// « Notes internes **distinctes des informations visibles du client** » est
+  /// l'énoncé du critère, et cette colonne en est la moitié durable : elle
+  /// n'est écrite et lue que par le module `crm`, ne figure dans aucune
+  /// projection servie au parcours public, et n'apparaît dans aucun log — le
+  /// jeton `note` est dans la liste de rédaction de
+  /// `common/logging/redaction.ts` (RGPD, CDC §5.1).
+  ///
+  /// Portée par `users` plutôt que par une neuvième table : une fiche cliente
+  /// **est** une ligne `users` de rôle `CLIENT`, le CDC §1.4 borne le MVP à un
+  /// « CRM client de base », et une note par fiche est exactement ce que ce
+  /// périmètre demande. Un historique de notes horodatées — plusieurs lignes par
+  /// fiche, avec leur auteur — est une décision de conception à part entière :
+  /// elle se prendra en ADR, avec sa table, si le besoin se confirme.
+  ///
+  /// Nullable, et le restera : la grande majorité des fiches n'ont rien à noter.
+  /// `null` se lit « aucune note », jamais « note inconnue ». La colonne existe
+  /// aussi sur les comptes du personnel, faute d'une table à part — le module
+  /// `crm` ne l'écrit que sur des fiches de rôle `CLIENT`, et `identity` ne la
+  /// lit jamais.
+  internalNote String? @map("internal_note") @db.VarChar(2000)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -262,7 +285,22 @@ model User {
   // pour l'id d'un autre établissement, ce qui donne le 404 attendu plutôt qu'un
   // 403 (tenant-isolation §4).
   @@unique([tenantId, id])
+  // Sert « les comptes internes de l'établissement » (`listStaffAccounts`).
+  // Devenu le préfixe de l'index de recherche ci-dessous, donc redondant avec
+  // lui : le retirer demanderait un `DROP INDEX`, que l'additivité des
+  // migrations interdit (api-module §6). Son retrait fait l'objet d'une issue de
+  // suivi.
   @@index([tenantId, role])
+  // Le fichier client du back-office (#56) : filtré sur `role = 'CLIENT'`,
+  // ordonné par nom, et interrogé par préfixe de nom de famille. Les quatre
+  // colonnes sont dans l'ordre où la requête les consomme — le tenant d'abord,
+  // comme tout index de ce schéma (tenant-isolation §1), puis le rôle qui borne
+  // à la clientèle, puis le couple qui trie et discrimine.
+  @@index([tenantId, role, lastName, firstName])
+  // La recherche par téléphone — l'axe que ni `@@unique([tenantId, email])` ni
+  // l'index de nom ne couvrent. Un numéro se cherche à l'identique ou par
+  // préfixe : c'est ce qu'un B-tree sert le mieux.
+  @@index([tenantId, phone])
   @@map("users")
 }
 

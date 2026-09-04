@@ -1,0 +1,93 @@
+-- Fichier client du back-office — #56, CDC §2.3 « profils clients, coordonnées,
+-- notes, historique de visites ».
+--
+-- ## Pourquoi aucune table nouvelle
+--
+-- Une fiche cliente **est** une ligne `users` de rôle `CLIENT` : c'est le
+-- schéma initial qui en a décidé, et `users.password_hash` est nullable
+-- précisément pour qu'« un client puisse exister sans compte, saisi au comptoir
+-- par le staff ». Créer une table `customers` parallèle aurait dédoublé le nom,
+-- l'adresse et le téléphone à deux endroits, cassé la clé étrangère
+-- `appointments.client_id → users(id)` sur laquelle repose l'historique, et
+-- laissé la question « laquelle des deux fait foi ? » ouverte à chaque écriture.
+--
+-- La migration est donc une extension d'une table existante : une colonne, deux
+-- index. Le CDC §1.4 borne le MVP à un « CRM client de base », et ce périmètre
+-- ne réclame rien de plus.
+--
+-- ## `internal_note`
+--
+-- « Notes internes distinctes des informations visibles du client » est un
+-- critère d'acceptation. La colonne en est la moitié durable ; l'autre moitié
+-- vit dans les projections du module `crm`, qui ne la servent qu'aux rôles
+-- internes et jamais au parcours public.
+--
+-- Nullable et sans valeur par défaut : la grande majorité des fiches n'ont rien
+-- à noter, et `NULL` se lit « aucune note ». `VARCHAR(2000)`, la largeur des
+-- textes libres du schéma (`services.description`, `appointments.staff_note`),
+-- pour que la même borne vaille partout et que le contrat partagé n'ait qu'un
+-- `longTextSchema` à citer.
+--
+-- Elle existe aussi sur les comptes du personnel, faute de table à part. Ce
+-- n'est pas un effet indésirable qu'on tolère : c'est le prix de la colonne
+-- ajoutée à `users`, et il est borné par l'usage — `crm` ne l'écrit que sur des
+-- lignes de rôle `CLIENT`, et le module d'authentification ne la lit dans aucune
+-- de ses projections.
+--
+-- ## Les deux index, et ce que chacun sert
+--
+-- « Recherche par nom, téléphone et e-mail, avec index adaptés » est le
+-- quatrième critère. Trois axes, trois index — dont un existait déjà :
+--
+-- | Axe | Index | Requête servie |
+-- |---|---|---|
+-- | e-mail | `users_tenant_id_email_key` (schéma initial) | égalité sur l'adresse canonisée |
+-- | nom | `users_tenant_id_role_last_name_first_name_idx` | `role = 'CLIENT'` + préfixe de nom + tri |
+-- | téléphone | `users_tenant_id_phone_idx` | égalité ou préfixe de numéro |
+--
+-- Les deux nouveaux commencent par `tenant_id`, comme tout index de ce schéma
+-- (tenant-isolation §1) : c'est ce qui borne le balayage aux lignes d'un seul
+-- établissement avant même que le prédicat de recherche ne s'applique.
+--
+-- `role` en deuxième position sur l'index de nom n'est pas décoratif : le
+-- fichier client filtre toujours sur `CLIENT`, et sans lui l'index mêlerait la
+-- dizaine de comptes du personnel aux milliers de fiches clientes dans les mêmes
+-- pages. Il rend du même coup `users_tenant_id_role_idx` redondant — le nouvel
+-- index en est un sur-ensemble strict —, mais ce dernier n'est **pas** retiré
+-- ici : le supprimer rendrait la migration destructive (api-module §6), et le
+-- coût d'un index redondant sur une table de cette taille est celui d'une
+-- écriture, pas d'une lecture. Son retrait fait l'objet d'une issue de suivi.
+--
+-- (Ces deux paragraphes évitent délibérément les mots-clés SQL de suppression :
+-- `prisma-schema.spec.ts` relit le **texte** de la migration, commentaires
+-- compris, pour interdire toute instruction destructive. Décrire un retour
+-- arrière dans la langue de PostgreSQL ferait rougir ce garde à juste titre —
+-- il ne peut pas distinguer une phrase d'une instruction.)
+--
+-- Ce que ces index ne servent **pas**, et il faut le dire : une recherche
+-- « contient » insensible à la casse (`ILIKE '%dur%'`) ne peut utiliser aucun
+-- B-tree. Le module `crm` interroge donc par **préfixe** — ce que fait un
+-- front-desk qui tape les premières lettres d'un nom — et le passage à
+-- `pg_trgm` pour une recherche infixe est une décision à prendre sur volumétrie
+-- réelle, pas d'avance.
+--
+-- ## Purement additive, et réversible
+--
+-- Une colonne nullable ajoutée et deux index créés. `ADD COLUMN` d'une colonne
+-- nullable sans défaut ne réécrit aucune ligne sur PostgreSQL 11+ : le verrou
+-- est bref et le catalogue seul est touché. Aucune colonne n'est retypée, aucune
+-- n'est retirée, aucune donnée n'est réécrite.
+--
+-- L'inverse exact est la suppression des deux index, puis celle de la colonne
+-- `internal_note` : il ne perd que les notes saisies depuis le déploiement.
+-- Le retour arrière du **code** seul est sans effet de bord — la version
+-- antérieure ignore la colonne et n'écrit rien qui en dépende.
+
+-- AlterTable
+ALTER TABLE "users" ADD COLUMN     "internal_note" VARCHAR(2000);
+
+-- CreateIndex
+CREATE INDEX "users_tenant_id_role_last_name_first_name_idx" ON "users"("tenant_id", "role", "last_name", "first_name");
+
+-- CreateIndex
+CREATE INDEX "users_tenant_id_phone_idx" ON "users"("tenant_id", "phone");

@@ -18,6 +18,7 @@ import { DatabaseModule } from './infrastructure/database/database.module';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
+import { CrmModule } from './modules/crm/crm.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 
@@ -66,6 +67,12 @@ import { PaymentsModule } from './modules/payments/payments.module';
     // webhook répond 503 (`stripe/stripe-webhook.config.ts`) — les deux
     // n'exigent leur configuration qu'en déployé.
     PaymentsModule,
+    // Après `IdentityModule`, dont il monte les gardes sur ses six routes (#56).
+    // Il n'en importe rien d'autre : le fichier client se lit par son propre
+    // dépôt, avec sa propre projection et son propre filtre de rôle. Aucune de
+    // ses routes n'est publique — un module qui ne contient que des données
+    // personnelles n'a pas de surface anonyme (CDC §5.1).
+    CrmModule,
   ],
   providers: [
     {
