@@ -34,9 +34,20 @@ export interface UserRecord {
   isActive: boolean;
 }
 
+/** Une plage d'ouverture telle que la base la stocke — minutes locales (#343). */
+export interface OpeningHourRecord {
+  weekday: number;
+  startMinute: number;
+  endMinute: number;
+}
+
 /**
  * L'établissement tel qu'il sort vers une page publique. Aucun champ interne :
  * voir `PUBLIC_TENANT_SELECT`.
+ *
+ * Les cinq colonnes d'adresse sont nullables, comme les deux contacts : c'est le
+ * service qui décide de la forme qui sort (`toPublicTenant`), et cette
+ * interface décrit ce que la base rend, pas ce que l'API publie.
  */
 export interface PublicTenantRecord {
   id: string;
@@ -46,6 +57,42 @@ export interface PublicTenantRecord {
   defaultCurrency: string;
   contactEmail: string | null;
   contactPhone: string | null;
+  addressLine1: string | null;
+  addressLine2: string | null;
+  postalCode: string | null;
+  city: string | null;
+  countryCode: string | null;
+  openingHours: OpeningHourRecord[];
+}
+
+/** La vue back-office : la vitrine, plus l'état d'activation (#343). */
+export interface TenantRecord extends PublicTenantRecord {
+  isActive: boolean;
+}
+
+/**
+ * Les réglages qu'un écran de back-office peut poser sur l'établissement.
+ *
+ * Ne porte que les champs **présents** : un `{ contactPhone: null }` efface le
+ * numéro, un objet sans `contactPhone` n'y touche pas. La distinction est celle
+ * d'`updateContactDetails`, et elle ne peut pas se faire plus bas — Prisma
+ * ignore un `undefined` et écrirait `null` sur un `null`.
+ *
+ * Ni `slug`, ni `isActive`, ni `id` : le type l'interdit, et c'est ce qui
+ * empêche cette charge utile de devenir la porte par laquelle un établissement
+ * change d'adresse publique ou se réactive lui-même.
+ */
+export interface TenantSettingsChanges {
+  name?: string;
+  timezone?: string;
+  defaultCurrency?: string;
+  contactEmail?: string | null;
+  contactPhone?: string | null;
+  addressLine1?: string | null;
+  addressLine2?: string | null;
+  postalCode?: string | null;
+  city?: string | null;
+  countryCode?: string | null;
 }
 
 export interface SessionRecord {
@@ -107,6 +154,22 @@ const PROFILE_SELECT = {
  * révèle donc aucune frontière qu'il ne documente déjà. Le contrat partagé pose
  * la même exception, au même endroit et pour la même raison.
  */
+/**
+ * Ordre stable des plages d'ouverture : jour ISO croissant, puis heure
+ * d'ouverture.
+ *
+ * Rendu par la base plutôt que retrié à chaque écran — sans `orderBy`,
+ * PostgreSQL n'en garantit aucun, et la vitrine afficherait la semaine dans un
+ * ordre différent d'un appel à l'autre.
+ *
+ * Déclaré à part et typé, plutôt qu'écrit dans le `select` : `as const` rendrait
+ * le tableau `readonly`, que Prisma n'accepte pas dans un `orderBy`.
+ */
+const OPENING_HOURS_ORDER: Prisma.TenantOpeningHourOrderByWithRelationInput[] = [
+  { weekday: 'asc' },
+  { startMinute: 'asc' },
+];
+
 const PUBLIC_TENANT_SELECT = {
   id: true,
   slug: true,
@@ -115,7 +178,22 @@ const PUBLIC_TENANT_SELECT = {
   defaultCurrency: true,
   contactEmail: true,
   contactPhone: true,
+  // Adresse et horaires — #343. Publiés comme les contacts : facultatifs, omis
+  // quand ils manquent. Un salon sans adresse reste servi, et sa vitrine a la
+  // forme qu'elle avait avant l'existence de ces colonnes.
+  addressLine1: true,
+  addressLine2: true,
+  postalCode: true,
+  city: true,
+  countryCode: true,
+  openingHours: {
+    select: { weekday: true, startMinute: true, endMinute: true },
+    orderBy: OPENING_HOURS_ORDER,
+  },
 } as const;
+
+/** La vue back-office ajoute le seul champ que le public n'a pas à connaître. */
+const TENANT_SELECT = { ...PUBLIC_TENANT_SELECT, isActive: true } as const;
 
 /**
  * Charge utile de création **sans** le tenant, tel que le repository l'écrit.
@@ -201,6 +279,75 @@ export class IdentityRepository {
    */
   public async findCurrentPublicTenant(): Promise<PublicTenantRecord | null> {
     return this.prisma.tenant.findFirst({ select: PUBLIC_TENANT_SELECT });
+  }
+
+  /**
+   * L'établissement courant tel que le back-office le règle — la vitrine, plus
+   * `isActive` (#343).
+   *
+   * Même lecture que `findCurrentPublicTenant`, même client scopé, même absence
+   * de `where` : l'extension borne le modèle racine sur son `id`. Ce qui les
+   * distingue est la **projection**, et c'est le seul endroit où cela doit se
+   * décider — un champ ajouté à `TENANT_SELECT` n'atteint jamais la vitrine.
+   */
+  public async findCurrentTenant(): Promise<TenantRecord | null> {
+    return this.prisma.tenant.findFirst({ select: TENANT_SELECT });
+  }
+
+  /**
+   * Applique des réglages à l'établissement courant (#343).
+   *
+   * `updateMany` et non `update`, pour la raison qui vaut partout dans ce
+   * fichier : sous le scoping, le `where` du modèle racine porte son `id`, et le
+   * compte de lignes est la propriété utile. Il vaut `0` si l'établissement a
+   * disparu entre la résolution et l'écriture, ce qui donne le 404 attendu
+   * plutôt qu'une exception « record not found » indistinguable d'un incident.
+   *
+   * Une demande vide n'est pas une erreur — c'est une modification sans effet.
+   * L'écrire quand même ferait tourner `updated_at` pour rien.
+   */
+  public async updateTenantSettings(changes: TenantSettingsChanges): Promise<boolean> {
+    if (Object.keys(changes).length === 0) {
+      return true;
+    }
+
+    const { count } = await this.prisma.tenant.updateMany({ data: changes });
+
+    return count === 1;
+  }
+
+  /**
+   * Remplace **intégralement** la semaine d'ouverture de l'établissement
+   * courant (#343).
+   *
+   * Une transaction, et pas deux appels : entre le `deleteMany` et le
+   * `createMany`, la vitrine servirait des horaires vides à qui la charge à cet
+   * instant. La transaction rend le remplacement atomique pour les lecteurs.
+   *
+   * Aucun `tenantId` n'est fourni ni sur l'un ni sur l'autre : l'extension pose
+   * le filtre sur la suppression et la colonne sur la création, et elle
+   * **écrase** ce qui s'y trouverait. Un `tenantId` qui aurait traversé la
+   * validation n'aurait donc aucun effet — c'est ce qui rend impossible de vider
+   * les horaires d'un établissement voisin.
+   */
+  public async replaceOpeningHours(entries: readonly OpeningHourRecord[]): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      await tx.tenantOpeningHour.deleteMany({});
+
+      if (entries.length === 0) {
+        return;
+      }
+
+      await tx.tenantOpeningHour.createMany({
+        data: entries.map((entry) =>
+          withScopedTenant<Prisma.TenantOpeningHourUncheckedCreateInput>({
+            weekday: entry.weekday,
+            startMinute: entry.startMinute,
+            endMinute: entry.endMinute,
+          }),
+        ),
+      });
+    });
   }
 
   /**

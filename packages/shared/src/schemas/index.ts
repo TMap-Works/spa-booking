@@ -212,12 +212,19 @@ export type {
 } from './payment';
 
 export {
+  openingHoursEntrySchema,
+  openingHoursOverlap,
+  openingHoursSchema,
+  postalAddressSchema,
   publicTenantSchema,
+  sortOpeningHours,
   tenantBookingSettingsSchema,
   tenantSchema,
   updateTenantRequestSchema,
 } from './tenant';
 export type {
+  OpeningHoursEntry,
+  PostalAddress,
   PublicTenant,
   Tenant,
   TenantBookingSettings,

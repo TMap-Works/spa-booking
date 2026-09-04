@@ -54,6 +54,37 @@ export const REASON_MAX_LENGTH = 500;
 export const TIMEZONE_MAX_LENGTH = 64;
 
 /**
+ * `VARCHAR(160)` — une ligne d'adresse postale (#343).
+ *
+ * Même largeur qu'un nom d'établissement, et pour la même raison : c'est une
+ * ligne saisie à la main, pas un identifiant. Deux lignes suffisent au format
+ * postal international — numéro et voie, puis complément (bâtiment, étage).
+ */
+export const ADDRESS_LINE_MAX_LENGTH = 160;
+
+/**
+ * `VARCHAR(16)` — code postal.
+ *
+ * Seize caractères couvrent tous les formats en usage, y compris ceux qui
+ * portent des espaces ou des tirets (`SW1A 1AA`, `K1A 0B1`). Aucun format n'est
+ * imposé : il varie d'un pays à l'autre, et un motif trop strict refuserait
+ * l'adresse d'un salon parfaitement réelle.
+ */
+export const POSTAL_CODE_MAX_LENGTH = 16;
+
+/** `VARCHAR(120)` — nom de commune. */
+export const CITY_MAX_LENGTH = 120;
+
+/**
+ * Nombre maximal de plages d'ouverture dans une semaine (#343).
+ *
+ * Quatre coupures par jour, comme `MAX_STAFF_SCHEDULE_ENTRIES` : la coupure
+ * méridienne, la réouverture en soirée, et de la marge. Au-delà, la borne est
+ * une borne de faute de saisie — pas un plafond fonctionnel.
+ */
+export const MAX_OPENING_HOURS_ENTRIES = 28;
+
+/**
  * Politique de mot de passe (#21).
  *
  * Le plancher est une **longueur**, pas une composition : imposer majuscule +

@@ -14,6 +14,8 @@ import { PasswordHasher } from './password.hasher';
 import { PublicTenantController } from './public-tenant.controller';
 import { PublicTenantService } from './public-tenant.service';
 import { RolesGuard } from './roles.guard';
+import { TenantSettingsController } from './tenant-settings.controller';
+import { TenantSettingsService } from './tenant-settings.service';
 import { TokenService } from './token.service';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
@@ -85,11 +87,17 @@ const publicTenantResolver: PublicTenantResolverProvider = {
       ],
     }),
   ],
-  controllers: [AuthController, UsersController, PublicTenantController],
+  controllers: [
+    AuthController,
+    UsersController,
+    PublicTenantController,
+    TenantSettingsController,
+  ],
   providers: [
     AuthService,
     UsersService,
     PublicTenantService,
+    TenantSettingsService,
     IdentityRepository,
     PasswordHasher,
     TokenService,

@@ -36,6 +36,7 @@ import {
   publicServiceSchema,
   publicTenantSchema,
   sessionUserSchema,
+  tenantSchema,
   type AuthSessionResponse,
   type AvailabilityQuery,
   type AvailabilityResponse,
@@ -49,7 +50,9 @@ import {
   type RegisterRequest,
   type RescheduleAppointmentRequest,
   type SessionUser,
+  type Tenant,
   type UpdateProfileRequest,
+  type UpdateTenantRequest,
 } from '@spa/shared';
 import { z } from 'zod';
 
@@ -509,6 +512,50 @@ export async function updateOwnProfile(
     path: '/users/me',
     body,
     schema: sessionUserSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+// ---------------------------------------------------------------------------
+// Réglages de l'établissement — #343
+// ---------------------------------------------------------------------------
+
+/**
+ * Les réglages de l'établissement, tels que le back-office les lit.
+ *
+ * Aucun slug ni identifiant d'établissement n'est envoyé, et il n'y a pas de
+ * paramètre pour le faire : l'API lit l'établissement dans le jeton. C'est la
+ * même propriété que `fetchMyAppointments`, et pour la même raison — une
+ * signature qui accepterait un établissement obligerait chaque appelant à se
+ * demander d'où il vient.
+ */
+export async function fetchTenantSettings(accessToken: string): Promise<Tenant> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: '/tenant',
+    schema: tenantSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Modification partielle des réglages de l'établissement.
+ *
+ * `PATCH` : **absent** vaut « ne touche pas », `null` vaut « efface ». Un écran
+ * qui n'affiche qu'une partie des réglages n'a donc pas à renvoyer le reste — et
+ * ne risque pas de l'effacer en l'oubliant.
+ */
+export async function updateTenantSettings(
+  accessToken: string,
+  body: UpdateTenantRequest,
+): Promise<Tenant> {
+  const { payload } = await authorizedRequest({
+    method: 'PATCH',
+    path: '/tenant',
+    body,
+    schema: tenantSchema,
     accessToken,
   });
   return payload;

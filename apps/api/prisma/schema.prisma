@@ -161,6 +161,36 @@ model Tenant {
   contactEmail String? @map("contact_email") @db.VarChar(320)
   contactPhone String? @map("contact_phone") @db.VarChar(32)
 
+  /// Adresse postale de l'établissement — CDC §1.4, « page vitrine du salon »
+  /// (#343).
+  ///
+  /// Les cinq colonnes sont **nullables** : un salon fraîchement inscrit n'a pas
+  /// encore saisi son adresse, et sa vitrine doit rester servie. C'est ce qui
+  /// rend la migration purement additive — aucune ligne existante n'a de valeur
+  /// à fournir.
+  ///
+  /// Nullables *chacune*, mais pas indépendamment : la contrainte
+  /// `tenants_address_completeness_check` exige que `address_line1`, `city` et
+  /// `country_code` soient les trois nulles ou les trois renseignées. Une
+  /// adresse sans ville n'oriente personne, et le `PostalAddress` du JSON-LD
+  /// qu'elle produirait serait une donnée structurée incomplète — ce que la
+  /// page publique refuse par principe d'inventer.
+  ///
+  /// `address_line2` et `postal_code` restent libres : le premier est un
+  /// complément, le second n'existe pas dans tous les pays.
+  addressLine1 String? @map("address_line1") @db.VarChar(160)
+  addressLine2 String? @map("address_line2") @db.VarChar(160)
+  postalCode   String? @map("postal_code") @db.VarChar(16)
+  city         String? @map("city") @db.VarChar(120)
+
+  /// Pays en ISO 3166-1 alpha-2, majuscules — « FR », « MG ».
+  ///
+  /// Un code et non un nom, pour la même raison que `default_currency` est un
+  /// code ISO 4217 : « France », « france » et « FRANCE » sont trois chaînes
+  /// pour un seul pays, et `schema.org/addressCountry` accepte explicitement le
+  /// code à deux lettres.
+  countryCode String? @map("country_code") @db.Char(2)
+
   /// Pas de découpage des créneaux proposés, en minutes — 15 par défaut
   /// (CDC §2.3, booking-engine §3, étape 4).
   ///
@@ -198,6 +228,7 @@ model Tenant {
   serviceStaff      ServiceStaff[]
   staffSchedules    StaffSchedule[]
   closingDays       TenantClosingDay[]
+  openingHours      TenantOpeningHour[]
   staffTimeOff      StaffTimeOff[]
   appointments      Appointment[]
   payments          Payment[]
@@ -585,6 +616,53 @@ model TenantClosingDay {
   // comme tout unique métier : deux salons ferment chacun le lundi.
   @@unique([tenantId, weekday])
   @@map("tenant_closing_days")
+}
+
+/// Plage d'ouverture **annoncée** de l'établissement — « le mardi, 09:00–12:00 »
+/// (#343, CDC §1.4 « page vitrine du salon : adresse, horaires, contact »).
+///
+/// ## Ce qu'elle n'est pas
+///
+/// Ni un horaire de praticien (`StaffSchedule`), ni une règle de disponibilité.
+/// Le moteur de créneaux ne lit pas cette table : il part des horaires du
+/// personnel et leur soustrait les absences et les jours de fermeture. Celle-ci
+/// dit ce que le salon **affiche** à ses clientes, et c'est tout. Les confondre
+/// ferait d'un texte de vitrine une contrainte d'agenda — un salon qui corrige
+/// son affichage fermerait son planning sans l'avoir demandé.
+///
+/// La forme, en revanche, est délibérément celle de `StaffSchedule` : jour ISO,
+/// minutes depuis minuit local, borne haute exclue. Deux représentations de la
+/// même chose auraient obligé chaque écran à savoir laquelle il tient.
+///
+/// ## Une table, et non des colonnes
+///
+/// Une semaine d'ouverture n'est pas une valeur : un salon ferme entre midi et
+/// deux, et rouvre parfois le soir. Il faut plusieurs plages par jour — ce qui
+/// est exactement ce qu'une table exprime et qu'une colonne ne peut pas. Le
+/// non-recouvrement de deux plages d'un même jour est tenu en base par une
+/// contrainte d'exclusion, comme pour `staff_schedules`.
+model TenantOpeningHour {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  /// Jour de semaine ISO — même numérotation que `StaffSchedule.weekday` :
+  /// 1 lundi … 7 dimanche. Pas le `0`-dimanche *falsy* de `Date.getDay`.
+  weekday Int @db.SmallInt
+
+  /// Minutes depuis minuit **local**, 0 à 1440. `540` = 09:00 à l'horloge du
+  /// salon, quel que soit l'offset du jour. La borne haute est **exclue**, et
+  /// `1440` est la seule façon exacte de dire « ferme à minuit ».
+  startMinute Int @map("start_minute")
+  endMinute   Int @map("end_minute")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // La seule lecture : « les plages de cet établissement », rendues avec la
+  // vitrine. L'index est préfixé du tenant comme tout index métier.
+  @@index([tenantId, weekday])
+  @@map("tenant_opening_hours")
 }
 
 /// Indisponibilité d'un praticien — plage bloquée ponctuelle ou congé sur

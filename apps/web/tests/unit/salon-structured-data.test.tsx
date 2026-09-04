@@ -84,9 +84,84 @@ describe('graphe schema.org', () => {
   });
 
   it('n’invente ni adresse ni horaires que l’API ne sert pas', () => {
+    // La règle qui n'a pas changé avec #343 : les deux champs sont facultatifs,
+    // et un `PostalAddress` inventé coûterait plus cher en référencement qu'une
+    // donnée absente.
     const graph = graphOf([service]);
 
     expect(graph['address']).toBeUndefined();
+    expect(graph['openingHoursSpecification']).toBeUndefined();
+  });
+
+  it('publie l’adresse en `PostalAddress` quand l’API la sert (#343)', () => {
+    const graph = buildSalonGraph(
+      {
+        ...tenant,
+        address: {
+          line1: '12 rue des Lilas',
+          line2: 'Bâtiment B',
+          postalCode: '75011',
+          city: 'Paris',
+          country: 'FR',
+        },
+      },
+      [service],
+      URL_SALON,
+      URL_RESERVATION,
+    ) as Record<string, unknown>;
+
+    expect(graph['address']).toEqual({
+      '@type': 'PostalAddress',
+      // Le complément rejoint `streetAddress` : schema.org n'a pas de propriété
+      // pour lui, et le loger ailleurs produirait un graphe illisible.
+      streetAddress: '12 rue des Lilas\nBâtiment B',
+      postalCode: '75011',
+      addressLocality: 'Paris',
+      // Le code ISO tel quel, comme schema.org le recommande.
+      addressCountry: 'FR',
+    });
+  });
+
+  it('publie les horaires en `openingHoursSpecification`, minuit compris (#343)', () => {
+    const graph = buildSalonGraph(
+      {
+        ...tenant,
+        openingHours: [
+          { weekday: 2, opensAt: '09:00', closesAt: '12:00' },
+          { weekday: 7, opensAt: '10:00', closesAt: '24:00' },
+        ],
+      },
+      [service],
+      URL_SALON,
+      URL_RESERVATION,
+    ) as Record<string, unknown>;
+
+    expect(graph['openingHoursSpecification']).toEqual([
+      {
+        '@type': 'OpeningHoursSpecification',
+        dayOfWeek: 'https://schema.org/Tuesday',
+        opens: '09:00',
+        closes: '12:00',
+      },
+      {
+        '@type': 'OpeningHoursSpecification',
+        dayOfWeek: 'https://schema.org/Sunday',
+        opens: '10:00',
+        // `24:00` est une heure ISO 8601 valide et la seule façon exacte de dire
+        // « ferme à minuit » : `23:59` retirerait une minute non fermée.
+        closes: '24:00',
+      },
+    ]);
+  });
+
+  it('omet les horaires quand la semaine est vide', () => {
+    const graph = buildSalonGraph(
+      { ...tenant, openingHours: [] },
+      [service],
+      URL_SALON,
+      URL_RESERVATION,
+    ) as Record<string, unknown>;
+
     expect(graph['openingHoursSpecification']).toBeUndefined();
   });
 
