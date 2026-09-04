@@ -144,10 +144,56 @@ describe('informations du salon', () => {
     expect(screen.getByText(/Indian\/Antananarivo/)).toBeDefined();
   });
 
-  it('dit l’absence de coordonnées plutôt que de rendre une section vide', () => {
+  it('dit l’absence d’informations plutôt que de rendre une section vide', () => {
     render(<SalonInfo tenant={tenant} />);
 
-    expect(screen.getByText('Coordonnées non communiquées')).toBeDefined();
+    expect(screen.getByText('Informations non communiquées')).toBeDefined();
     expect(screen.queryByRole('link')).toBeNull();
+  });
+
+  it('rend l’adresse en lignes et les horaires jour par jour (#343)', () => {
+    render(
+      <SalonInfo
+        tenant={{
+          ...tenant,
+          address: {
+            line1: '12 rue des Lilas',
+            line2: 'Bâtiment B',
+            postalCode: '75011',
+            city: 'Paris',
+            country: 'FR',
+          },
+          openingHours: [
+            { weekday: 2, opensAt: '09:00', closesAt: '12:00' },
+            { weekday: 2, opensAt: '14:00', closesAt: '19:00' },
+            { weekday: 6, opensAt: '10:00', closesAt: '24:00' },
+          ],
+        }}
+      />,
+    );
+
+    expect(screen.getByText('12 rue des Lilas')).toBeDefined();
+    expect(screen.getByText('75011 Paris')).toBeDefined();
+    // Le pays est rendu en toutes lettres, pas en code : « FR » ne se lit pas.
+    expect(screen.getByText('France')).toBeDefined();
+
+    // Une journée à coupure tient sur **une** ligne, ses deux plages ensemble.
+    expect(screen.getByText(/09:00.*12:00.*14:00.*19:00/)).toBeDefined();
+    expect(screen.getByText('Mardi')).toBeDefined();
+    // Les jours fermés n'apparaissent pas : l'API ne distingue pas « fermé » de
+    // « pas encore saisi », et l'inventer enverrait une cliente devant une porte
+    // close.
+    expect(screen.queryByText('Lundi')).toBeNull();
+  });
+
+  it('sert un salon sans adresse ni horaires, section comprise', () => {
+    // Le critère de #343 : les deux champs sont facultatifs, et la page d'un
+    // salon qui n'a rien saisi doit rester servie — c'est le cas le plus courant
+    // à l'inscription.
+    render(<SalonInfo tenant={{ ...tenant, contactPhone: '+261341234567' }} />);
+
+    expect(screen.getByText('+261341234567')).toBeDefined();
+    expect(screen.queryByText('Adresse')).toBeNull();
+    expect(screen.queryByText('Horaires d’ouverture')).toBeNull();
   });
 });

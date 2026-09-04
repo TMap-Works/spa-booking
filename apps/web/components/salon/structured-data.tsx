@@ -1,6 +1,7 @@
-import type { Money, PublicService, PublicTenant } from '@spa/shared';
+import type { Money, OpeningHoursEntry, PostalAddress, PublicService, PublicTenant } from '@spa/shared';
 
 import { groupServicesByCategory } from './group-services';
+import { SCHEMA_ORG_WEEKDAYS } from './opening-hours';
 
 /**
  * Données structurées de la page publique d'un salon (#43).
@@ -31,12 +32,15 @@ import { groupServicesByCategory } from './group-services';
  * pour que les deux implémentations ne puissent pas diverger sur une devise à
  * zéro décimale.
  *
+ * `address` et `openingHoursSpecification` s'y ajoutent depuis #343, **quand
+ * l'API les sert**. Ils restent absents autrement, et c'est la même règle qu'au
+ * premier jour : un `PostalAddress` inventé serait une donnée structurée fausse,
+ * ce qui coûte plus cher en référencement qu'une donnée absente. La condition
+ * n'est pas décorative — `publicTenantSchema` déclare les deux `.optional()`, et
+ * un salon fraîchement inscrit n'a rien saisi.
+ *
  * Ce qu'il ne porte **pas**, et c'est délibéré :
  *
- * - `address` et `openingHoursSpecification` — l'API ne sert ni l'un ni l'autre
- *   (voir `salon-info.tsx`). Un `PostalAddress` inventé serait une donnée
- *   structurée fausse, ce qui coûte plus cher en référencement qu'une donnée
- *   absente ;
  * - la durée des prestations — `schema.org/Service` n'a aucune propriété de
  *   durée, et la loger dans une propriété voisine produirait un graphe invalide.
  *   Elle reste dans le HTML, où elle est lisible.
@@ -75,6 +79,53 @@ function priceInMajorUnits(price: Money): string {
   return (price.amountMinor / 10 ** digits).toFixed(digits);
 }
 
+/**
+ * L'adresse en `schema.org/PostalAddress` (#343).
+ *
+ * Les noms de propriétés sont ceux de schema.org et non ceux du contrat :
+ * `streetAddress`, `addressLocality`, `addressCountry`. Le complément d'adresse
+ * rejoint `streetAddress` sur une seconde ligne — schema.org n'a pas de
+ * propriété pour lui, et le loger ailleurs produirait un graphe qu'aucun
+ * analyseur ne saurait lire.
+ *
+ * `addressCountry` reçoit le code ISO 3166-1 alpha-2 tel quel : la
+ * documentation de schema.org le recommande explicitement, et un nom de pays
+ * traduit serait moins exploitable qu'un code.
+ */
+function toPostalAddressGraph(address: PostalAddress): JsonValue {
+  return {
+    '@type': 'PostalAddress',
+    streetAddress:
+      address.line2 === undefined ? address.line1 : `${address.line1}\n${address.line2}`,
+    ...(address.postalCode === undefined ? {} : { postalCode: address.postalCode }),
+    addressLocality: address.city,
+    addressCountry: address.country,
+  };
+}
+
+/**
+ * Les horaires en `openingHoursSpecification` (#343).
+ *
+ * Une entrée par plage, chacune avec **un seul** `dayOfWeek` : schema.org
+ * accepte un tableau de jours pour factoriser, mais cela obligerait à regrouper
+ * les jours aux horaires identiques, et un regroupement raté produit un graphe
+ * faux là où une entrée par plage ne peut qu'être verbeuse.
+ *
+ * `closes: "24:00"` est conservé tel quel. C'est une heure ISO 8601 valide — la
+ * borne de fin d'une journée civile — et la seule façon exacte de dire « ferme à
+ * minuit ». Lui substituer `23:59` retirerait une minute que le salon n'a pas
+ * dit fermer, ce qui est précisément le genre d'approximation que ce module
+ * refuse ailleurs.
+ */
+function toOpeningHoursGraph(entries: readonly OpeningHoursEntry[]): readonly JsonValue[] {
+  return entries.map((entry) => ({
+    '@type': 'OpeningHoursSpecification',
+    dayOfWeek: SCHEMA_ORG_WEEKDAYS[entry.weekday] ?? String(entry.weekday),
+    opens: entry.opensAt,
+    closes: entry.closesAt,
+  }));
+}
+
 /** Le graphe schema.org de la page — exporté pour être vérifié en test. */
 export function buildSalonGraph(
   tenant: PublicTenant,
@@ -93,6 +144,10 @@ export function buildSalonGraph(
     currenciesAccepted: tenant.defaultCurrency,
     ...(tenant.contactEmail === undefined ? {} : { email: tenant.contactEmail }),
     ...(tenant.contactPhone === undefined ? {} : { telephone: tenant.contactPhone }),
+    ...(tenant.address === undefined ? {} : { address: toPostalAddressGraph(tenant.address) }),
+    ...(tenant.openingHours === undefined || tenant.openingHours.length === 0
+      ? {}
+      : { openingHoursSpecification: toOpeningHoursGraph(tenant.openingHours) }),
     ...(sections.length === 0
       ? {}
       : {

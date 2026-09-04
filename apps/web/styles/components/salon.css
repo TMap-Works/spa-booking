@@ -134,3 +134,32 @@
   font-size: var(--spa-font-size-sm);
   color: var(--spa-color-text-muted);
 }
+
+/* Adresse postale — une ligne par ligne d'enveloppe (#343). `<address>` hérite
+   de l'italique dans plusieurs navigateurs : on le neutralise, l'élément est ici
+   pour sa sémantique, pas pour son style. */
+.spa-salon__address {
+  display: flex;
+  flex-direction: column;
+  font-style: normal;
+}
+
+.spa-salon__hours {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-salon__hours-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-1) var(--spa-space-2);
+}
+
+.spa-salon__hours-day {
+  min-inline-size: 6rem;
+  color: var(--spa-color-text-muted);
+}

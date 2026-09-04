@@ -1,4 +1,6 @@
-import type { PublicTenant } from '@spa/shared';
+import type { PostalAddress, PublicTenant } from '@spa/shared';
+
+import { formatOpeningRange, groupOpeningHoursByDay } from './opening-hours';
 
 /** Identifiant du titre de section, repris par `aria-labelledby`. */
 export const INFO_HEADING_ID = 'informations-pratiques';
@@ -17,25 +19,67 @@ function humanTimeZone(timezone: string): string {
 }
 
 /**
- * Informations pratiques du salon (#43).
+ * L'adresse en lignes d'affichage.
  *
- * ## Ce que l'API expose, et ce qu'elle n'expose pas
+ * Ni virgules ni format national : une adresse postale se lit en lignes, et
+ * c'est ce que rend une pile de `<span>`. Le code postal et la ville partagent
+ * la leur, comme sur une enveloppe ; le pays reste à part.
  *
- * Le critère d'acceptation demande « adresse, horaires, contact ». Seul le
- * **contact** est servi : `publicTenantSchema` porte `contactEmail` et
- * `contactPhone`, et rien d'autre de cette nature. L'adresse postale n'existe
- * ni dans le contrat partagé ni dans le modèle Prisma `Tenant` ; les horaires
- * d'ouverture ne sont exposés par aucune route publique — `closing-days` et
- * `staff/{id}/schedule` sont derrière authentification et décrivent des agendas
- * de praticiens, pas les heures d'ouverture d'un établissement.
+ * Le pays est rendu **en toutes lettres** quand l'environnement sait le
+ * traduire, et en code sinon. `Intl.DisplayNames` fait partie d'ECMA-402 et est
+ * disponible dans Node comme dans tous les navigateurs visés ; le repli existe
+ * pour ne jamais rendre une chaîne vide si un code inconnu passait.
+ */
+function addressLines(address: PostalAddress): readonly string[] {
+  const locality = [address.postalCode, address.city].filter((part) => part !== undefined);
+
+  return [
+    address.line1,
+    ...(address.line2 === undefined ? [] : [address.line2]),
+    locality.join(' '),
+    countryName(address.country),
+  ];
+}
+
+function countryName(code: string): string {
+  try {
+    return new Intl.DisplayNames(['fr'], { type: 'region' }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+/**
+ * Informations pratiques du salon (#43, complété par #343).
  *
- * Les inventer côté front serait pire que de les taire. La section rend donc ce
- * qui existe et renvoie vers le salon pour le reste ; le jour où l'API portera
- * ces champs, ce sont deux lignes de `<dl>` à ajouter ici, et le renvoi
- * disparaît.
+ * ## Ce que l'API expose
+ *
+ * Le critère d'acceptation demande « adresse, horaires, contact ». Les trois
+ * sont désormais servis : `publicTenantSchema` porte `contactEmail`,
+ * `contactPhone`, `address` et `openingHours` (#343). Les trois sont
+ * **facultatifs** — un salon fraîchement inscrit n'a rien saisi, et sa page doit
+ * rester servie.
+ *
+ * ## Ce qui ne s'invente pas
+ *
+ * Une ligne n'apparaît que si l'API a rendu la donnée. Un jour de la semaine
+ * absent des horaires n'affiche pas « fermé » : l'API omet les horaires plutôt
+ * que de rendre une semaine vide, et rien ne permet donc de distinguer « le
+ * salon ferme le lundi » de « le salon n'a pas encore saisi ses horaires ».
+ * Afficher le premier quand c'est le second enverrait une cliente devant une
+ * porte ouverte.
+ *
+ * Quand rien n'est renseigné, la section rend son état vide plutôt que de
+ * disparaître : une page sans « informations pratiques » se lit comme une page
+ * incomplète, là où un état vide explicite dit ce qu'il en est.
  */
 export function SalonInfo({ tenant }: { readonly tenant: PublicTenant }) {
-  const hasContact = tenant.contactEmail !== undefined || tenant.contactPhone !== undefined;
+  const openingDays = groupOpeningHoursByDay(tenant.openingHours ?? []);
+  const hasInfo =
+    tenant.contactEmail !== undefined ||
+    tenant.contactPhone !== undefined ||
+    tenant.address !== undefined ||
+    openingDays.length > 0;
 
   return (
     <section className="spa-salon__section" aria-labelledby={INFO_HEADING_ID}>
@@ -43,8 +87,49 @@ export function SalonInfo({ tenant }: { readonly tenant: PublicTenant }) {
         Informations pratiques
       </h2>
 
-      {hasContact ? (
+      {hasInfo ? (
         <dl className="spa-salon__info">
+          {tenant.address === undefined ? null : (
+            <div className="spa-salon__info-row">
+              <dt className="spa-salon__info-term">Adresse</dt>
+              <dd className="spa-salon__info-value">
+                <address className="spa-salon__address">
+                  {/* Clé positionnelle, et non le texte de la ligne : deux
+                      lignes d'une même adresse peuvent coïncider — un
+                      complément qui reprend la voie —, et React n'admet pas
+                      deux clés identiques entre frères. La liste est de longueur
+                      fixe et sans réordonnancement, l'index y est stable. */}
+                  {addressLines(tenant.address).map((line, index) => (
+                    <span className="spa-salon__address-line" key={index}>
+                      {line}
+                    </span>
+                  ))}
+                </address>
+              </dd>
+            </div>
+          )}
+
+          {openingDays.length === 0 ? null : (
+            <div className="spa-salon__info-row">
+              <dt className="spa-salon__info-term">Horaires d’ouverture</dt>
+              <dd className="spa-salon__info-value">
+                <ul className="spa-salon__hours">
+                  {openingDays.map((day) => (
+                    <li className="spa-salon__hours-row" key={day.weekday}>
+                      <span className="spa-salon__hours-day">{day.label}</span>
+                      <span className="spa-salon__hours-ranges">
+                        {day.ranges.map((range) => formatOpeningRange(range)).join(', ')}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+                <span className="spa-salon__hint">
+                  Horaires donnés dans le fuseau du salon.
+                </span>
+              </dd>
+            </div>
+          )}
+
           {tenant.contactEmail === undefined ? null : (
             <div className="spa-salon__info-row">
               <dt className="spa-salon__info-term">E-mail</dt>
@@ -78,18 +163,13 @@ export function SalonInfo({ tenant }: { readonly tenant: PublicTenant }) {
         </dl>
       ) : (
         <div className="spa-card spa-card--empty">
-          <p className="spa-empty-state__title">Coordonnées non communiquées</p>
+          <p className="spa-empty-state__title">Informations non communiquées</p>
           <p className="spa-empty-state__description">
-            Ce salon n’a pas encore publié ses coordonnées. La réservation en ligne reste ouverte.
+            Ce salon n’a pas encore publié ses coordonnées, son adresse ni ses horaires. La
+            réservation en ligne reste ouverte.
           </p>
         </div>
       )}
-
-      {hasContact ? (
-        <p className="spa-salon__hint">
-          Adresse et horaires d’ouverture : contactez directement le salon.
-        </p>
-      ) : null}
     </section>
   );
 }
