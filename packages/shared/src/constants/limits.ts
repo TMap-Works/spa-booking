@@ -8,8 +8,20 @@
  * ensemble, et ce fichier est l'endroit où le front les lit.
  */
 
-/** `VARCHAR(320)` — longueur maximale d'une adresse e-mail (RFC 5321). */
+/** `VARCHAR(320)` — largeur de la colonne `users.email`. */
 export const EMAIL_MAX_LENGTH = 320;
+
+/**
+ * Longueur maximale d'une **adresse** e-mail — 254 octets, RFC 5321 §4.5.3.1.3.
+ *
+ * Plus étroite que `EMAIL_MAX_LENGTH`, qui est la largeur de la colonne, et le
+ * sens du décalage compte comme pour `SLUG_MAX_LENGTH` : c'est cette borne-ci
+ * que `@IsEmail()` applique côté API (validator.js la porte en dur), si bien
+ * qu'un contrat borné à 320 déclarerait bonne une adresse que la route refuse en
+ * 400. Une borne de contrat plus étroite ne coûte qu'un refus plus tôt, du bon
+ * côté de l'écran.
+ */
+export const EMAIL_ADDRESS_MAX_LENGTH = 254;
 
 /** `VARCHAR(32)` — numéro de téléphone, format libre à ce stade du MVP. */
 export const PHONE_MAX_LENGTH = 32;
