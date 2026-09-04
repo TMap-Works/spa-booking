@@ -65,6 +65,15 @@ const TENANT_ROOT_TABLE = 'tenants';
  * prestation, ni prix, et un statut d'annulation n'aurait rien voulu dire — et
  * elle est soumise aux mêmes exigences que les autres.
  */
+/*
+ * `processed_webhook_events` n'est pas non plus une entité neuve du CDC : c'est
+ * l'état qui rend le rejeu d'un webhook Stripe inoffensif (#58,
+ * payments-stripe §3). Elle est inscrite ici pour la même raison que
+ * `refresh_tokens` — que son `tenant_id`, ses index et son unique composite
+ * soient relus par cette suite comme ceux de n'importe quelle table métier.
+ * Le skill la décrit sans tenant ; ce schéma lui en donne un, parce que
+ * tenant-isolation §1 n'admet d'exception que par ADR.
+ */
 const EXPECTED_TABLES = [
   'tenants',
   'users',
@@ -79,6 +88,7 @@ const EXPECTED_TABLES = [
   'payments',
   'notifications',
   'refresh_tokens',
+  'processed_webhook_events',
 ] as const;
 
 interface Column {

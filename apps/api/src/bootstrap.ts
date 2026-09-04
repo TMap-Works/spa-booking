@@ -2,6 +2,10 @@ import { type INestApplication, RequestMethod, VersioningType } from '@nestjs/co
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 import { AppConfigService } from './config/app-config.service';
+import {
+  STRIPE_WEBHOOK_PATH,
+  stripeWebhookRawBody,
+} from './modules/payments/stripe-webhook.raw-body';
 
 /**
  * Câblage transverse de l'application, partagé par `main.ts` et par les tests
@@ -19,6 +23,19 @@ export const OPENAPI_PATH = 'api/docs';
 const PREFIX_EXCLUSIONS = [{ path: 'health', method: RequestMethod.GET }];
 
 export function configureApp(app: INestApplication, config: AppConfigService): void {
+  // **Avant tout le reste, et ce n'est pas cosmétique.** Nest enregistre
+  // `express.json()` dans `init()` — c'est-à-dire après tout ce qui est monté
+  // ici. Ce lecteur est donc en amont du parseur global et le prive du seul
+  // chemin qui a besoin d'octets non retouchés : la signature d'un webhook
+  // Stripe porte sur le corps **brut**, et un aller-retour par `JSON.parse`
+  // suffit à la faire échouer systématiquement (payments-stripe §3).
+  //
+  // Il vit dans `configureApp` plutôt que dans `main.ts` pour la raison qui
+  // vaut pour tout ce fichier : les tests d'intégration câblent l'application
+  // par cette même fonction, et une exclusion qu'ils n'auraient pas verraient
+  // passer au vert une vérification de signature qui n'existe pas en vrai.
+  app.use(STRIPE_WEBHOOK_PATH, stripeWebhookRawBody());
+
   app.setGlobalPrefix(API_PREFIX, { exclude: PREFIX_EXCLUSIONS });
 
   // Versionnement par URI (api-module §4) : `/api/v1/...`. Un changement cassant

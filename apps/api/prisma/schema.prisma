@@ -204,6 +204,8 @@ model Tenant {
   notifications     Notification[]
   refreshTokens     RefreshToken[]
 
+  processedWebhookEvents ProcessedWebhookEvent[]
+
   @@map("tenants")
 }
 
@@ -894,4 +896,75 @@ model Notification {
   @@index([tenantId, status, scheduledFor])
   @@index([tenantId, appointmentId])
   @@map("notifications")
+}
+
+/// Un événement de webhook Stripe déjà traité — la table qui rend le traitement
+/// **idempotent** (payments-stripe §3).
+///
+/// Stripe rejoue ses événements : à chaque réponse non-2xx, à chaque délai
+/// dépassé, et parfois sans raison visible. Sans elle, un rejeu de
+/// `charge.refunded` rembourserait deux fois dans notre comptabilité, et un
+/// rejeu de `payment_intent.succeeded` réémettrait la confirmation d'un
+/// rendez-vous déjà confirmé.
+///
+/// ## L'insertion *est* le verrou
+///
+/// La ligne s'insère **dans la même transaction** que l'effet métier. Deux
+/// livraisons concurrentes du même événement — Stripe n'en exclut aucune — se
+/// sérialisent sur l'unique : la première valide, la seconde échoue en `P2002`
+/// et son `ROLLBACK` annule l'effet qu'elle avait commencé à écrire. Ce n'est
+/// donc pas un « ai-je déjà vu cet événement ? » suivi d'une écriture, conduite
+/// que deux requêtes simultanées rendraient vaine — la même que celle que
+/// booking-engine §1 interdit au moteur de réservation, pour la même raison.
+///
+/// ## Pourquoi elle porte `tenant_id`
+///
+/// payments-stripe §3 la décrit `processed_webhook_events(event_id PRIMARY KEY,
+/// processed_at)`, sans tenant. Elle en porte un ici, et ce n'est pas un excès
+/// de zèle : tenant-isolation §1 n'exempte que `tenants`, les tables de
+/// référence globales et les tables techniques, et toute autre exception se
+/// documente en ADR. Une table sans `tenant_id` serait de toute façon refusée
+/// par l'extension de scoping (`UnscopedModelNotAllowedError`) tant qu'elle
+/// n'est pas inscrite dans `GLOBAL_MODELS` — c'est-à-dire rendue lisible par
+/// tous les établissements à la fois.
+///
+/// L'unique est donc `(tenant_id, event_id)` et non `event_id` seul. La
+/// garantie ne s'en trouve pas affaiblie : le tenant est résolu depuis les
+/// métadonnées de l'intention, écrites par nous à la création et authentifiées
+/// par la signature du corps, si bien qu'un même `evt_…` retombe toujours sur
+/// le même établissement. Un événement dont le tenant ne se résout pas n'est
+/// jamais traité, et n'a donc aucun effet à rendre idempotent.
+///
+/// ## Ce qu'elle ne contient pas
+///
+/// Pas de corps d'événement, pas de charge utile Stripe, pas de dernier quatuor
+/// de chiffres : rien qui ressemble à une donnée de carte n'y entre, et un
+/// corps d'événement complet en base serait très exactement le journal que
+/// payments-stripe §1 interdit. `event_type` suffit à la réconciliation du CDC
+/// §4.9 — le reste se relit chez Stripe, qui en est la source de vérité.
+///
+/// Pas de `processed_at` non plus, et c'est la même économie : la ligne
+/// n'existe que si la transaction de traitement a validé, donc `created_at`
+/// **est** l'instant de traitement.
+model ProcessedWebhookEvent {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  /// L'identifiant Stripe de l'événement — `evt_…`. Opaque, non personnel.
+  eventId String @map("event_id") @db.VarChar(255)
+
+  /// `payment_intent.succeeded`, `charge.refunded`… Conservé pour la
+  /// réconciliation : sans lui, la table dirait « déjà vu » sans dire de quoi.
+  eventType String @map("event_type") @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // La contrainte qui porte toute l'idempotence de la chaîne de webhooks.
+  @@unique([tenantId, eventId])
+  // Purge par ancienneté et audit de réconciliation — les deux seules lectures
+  // prévues, et toutes deux bornées à un établissement.
+  @@index([tenantId, createdAt])
+  @@map("processed_webhook_events")
 }
