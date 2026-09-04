@@ -55,13 +55,16 @@ import { PaymentsModule } from './modules/payments/payments.module';
     // « ce créneau était-il proposable ? » pour l'autre (#37). #31 l'avait laissé
     // hors du graphe faute de contrôleur ; la réservation publique en apporte un.
     AppointmentsModule,
-    // N'importe aucun module métier (#57) : la route du tunnel public n'est pas
-    // gardée — on paie sans compte comme on réserve sans compte —, et ses deux
-    // seules dépendances, le client Prisma scopé et le contexte de tenant,
-    // viennent de modules `@Global()`. Il ne demande **aucune** variable
-    // d'environnement supplémentaire pour démarrer : sans clés Stripe, le
-    // module se monte et toute tentative d'encaissement répond 503 — voir
-    // `stripe.config.ts`, qui exige les clés en déployé et là seulement.
+    // N'importe aucun module métier (#57, #58) : aucune de ses deux routes n'est
+    // gardée — on paie sans compte comme on réserve sans compte, et Stripe ne
+    // présente aucun jeton, c'est la signature du corps brut qui l'authentifie.
+    // Ses dépendances (client Prisma scopé et non scopé, contexte de tenant,
+    // journal structuré) viennent toutes de modules `@Global()`. Il ne demande
+    // **aucune** variable d'environnement supplémentaire pour démarrer en
+    // local : sans clés Stripe, toute tentative d'encaissement répond 503
+    // (`stripe/stripe.config.ts`) et sans `STRIPE_WEBHOOK_SECRET`, la route de
+    // webhook répond 503 (`stripe/stripe-webhook.config.ts`) — les deux
+    // n'exigent leur configuration qu'en déployé.
     PaymentsModule,
   ],
   providers: [

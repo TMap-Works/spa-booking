@@ -10,9 +10,10 @@ notre périmètre PCI en SAQ A.
 | Ticket | Ce qu'il pose |
 |---|---|
 | #57 | L'intention de paiement Stripe, la clé publiable, et la frontière qui les sépare de la clé secrète |
+| #58 | La réception des webhooks Stripe — signature sur corps brut, idempotence en base, et le passage du rendez-vous en `CONFIRMED` |
 
-À venir : les webhooks signés et idempotents (#58), le POS et ses lignes de
-vente (#60, #62), les remboursements (#63).
+À venir : le montage d’Elements côté tunnel (#59), le POS et ses lignes
+de vente (#60, #62), les remboursements initiés au comptoir (#63).
 
 ## Les routes
 
@@ -118,10 +119,170 @@ La relecture chez Stripe ne sert d'ailleurs pas qu'à récupérer le
 ligne dit encore `PENDING` — un webhook en retard —, c'est Stripe qui fait foi et
 la reprise est refusée.
 
+
+## La route de webhook
+
+```
+POST /api/v1/payments/webhooks/stripe
+```
+
+Non gardée, et c'est voulu : Stripe ne présente ni jeton, ni cookie, ni slug
+d'établissement. **La signature du corps est la seule authentification**, et
+tout le reste du module en découle.
+
+| En-tête | |
+|---|---|
+| `Stripe-Signature` | `t=<horodatage>,v1=<hmac-sha256>` — obligatoire |
+
+| Réponse | Quand |
+|---|---|
+| `200 {"received":true}` | livraison signée — traitée ou volontairement ignorée |
+| `400 INVALID_WEBHOOK_SIGNATURE` | en-tête absent, illisible, hors tolérance, ou condensat qui ne correspond pas |
+| `413 WEBHOOK_PAYLOAD_TOO_LARGE` | corps au-delà de 1 Mio |
+| `503 WEBHOOK_NOT_CONFIGURED` | `STRIPE_WEBHOOK_SECRET` absent — impossible en déployé, l'application refuse alors de démarrer |
+
+Le corps de réponse est **le même pour les quatre refus de signature**. La
+différence ne renseignerait que celui qui sonde ; le motif exact part au journal.
+
+## Les quatre points qui tiennent ce module
+
+### 1. Le corps brut, donc l'exclusion du parseur JSON global
+
+La signature porte sur les **octets**, pas sur l'objet qu'ils décrivent. Un
+aller-retour par `JSON.parse` suffit à la faire échouer systématiquement.
+
+`stripeWebhookRawBody()` est monté par `configureApp` — donc avant que Nest
+n'enregistre `express.json()` dans `init()` — et borné à ce seul chemin. Il lit
+la requête jusqu'à `end` ; `body-parser` sort alors sur son propre garde-fou
+« body already parsed ». C'est la voie par laquelle body-parser cède la place à
+un lecteur amont, pas un contournement.
+
+Le montage vit dans `configureApp` et non dans `main.ts` parce que les tests
+d'intégration câblent l'application par la même fonction : une exclusion qu'ils
+n'auraient pas ferait passer au vert une vérification de signature qui n'existe
+pas en production.
+
+### 2. L'idempotence est une contrainte d'unicité
+
+`processed_webhook_events(tenant_id, event_id)` est inséré **dans la même
+transaction** que l'effet métier, et **avant** lui. Deux livraisons concurrentes
+— Stripe n'en exclut aucune — se sérialisent sur l'unique : la première valide,
+la seconde repart sans rien appliquer.
+
+Ce n'est donc pas « ai-je déjà vu cet événement ? » suivi d'une écriture : entre
+la lecture et l'écriture, l'autre livraison passe. Même conduite qu'ADR 0002
+impose au moteur de réservation, et pour la même raison.
+
+La table porte `tenant_id` là où payments-stripe §3 décrit `event_id PRIMARY
+KEY` : tenant-isolation §1 n'admet d'exception que par ADR, et une table sans
+colonne discriminante serait de toute façon refusée par l'extension de scoping.
+
+### 3. La résolution de l'établissement
+
+Un webhook n'a ni jeton ni slug : ni `JwtAuthGuard` ni `TenantScopeMiddleware`
+n'ont de quoi travailler. L'établissement se résout donc en deux temps :
+
+1. **la base d'abord** — `payments.provider_payment_intent_id` ou
+   `provider_charge_id`, par `prismaUnscoped`, projection réduite au seul
+   `tenant_id`. C'est la seule lecture légitimement inter-tenant du module ;
+2. **la métadonnée ensuite**, et seulement si aucune ligne ne porte la
+   référence. Elle a été écrite par nous et la signature l'authentifie, mais
+   elle ne prime jamais sur une ligne réelle : la suivre laisserait la marque
+   d'idempotence dans un établissement et l'encaissement dans un autre.
+
+Le traitement s'exécute ensuite dans `runWithTenant`, la porte que
+`tenant-context.ts` prévoit pour les traitements hors requête HTTP.
+
+### 4. Le 200 ne dépend pas du traitement
+
+Le traitement part dans `WEBHOOK_QUEUE`. « Un webhook qui dépasse le délai est
+rejoué et amplifie la charge » : la file coupe ce couplage. Son implémentation
+est en mémoire — la chaîne EventBridge → SQS → Lambda du CDC §2.2 n'est pas
+posée.
+
+La contrepartie est à connaître, et elle n'est pas gratuite : **le 200 étant
+déjà parti, Stripe ne rejoue rien.** Il ne redélivre que ce qu'il a vu échouer
+— un non-2xx ou un délai dépassé. Un traitement qui échoue en base, ou un arrêt
+brutal du processus, laisse donc l'encaissement `PENDING` et le rendez-vous non
+confirmé, sans aucune nouvelle livraison. `processed_webhook_events` rend un
+renvoi manuel depuis le tableau de bord Stripe inoffensif — c'est ce qui rend la
+reprise possible —, mais elle ne la déclenche pas.
+
+Deux garde-fous en attendant la file durable : `onApplicationShutdown` attend
+les traitements en vol à chaque déploiement, et tout échec est journalisé en
+`error` sous `InProcessWebhookQueue` — c'est une **alerte à traiter**, pas une
+trace.
+
+## Ce que le module fait de chaque événement
+
+| Événement | Effet |
+|---|---|
+| `payment_intent.succeeded` | `payments` → `SUCCEEDED`, `captured_at`, `provider_charge_id` ; le rendez-vous `PENDING` → `CONFIRMED` |
+| `payment_intent.payment_failed` | `payments` → `FAILED` si encore `PENDING`. **Le rendez-vous ne bouge pas** : une carte refusée ne prend pas son créneau à la cliente |
+| `charge.refunded` | `refunded_amount_minor`, statut `REFUNDED` ou `PARTIALLY_REFUNDED` |
+| `charge.dispute.created` | Alerte de niveau `error` vers l'équipe. Aucune écriture : le litige n'est pas traité automatiquement au MVP |
+| tout autre type | Acquitté sans traitement — un refus le ferait rejouer indéfiniment |
+
+Les transitions de `payment_intent.succeeded` sont des `updateMany` **filtrés
+par statut** : c'est un test-et-pose atomique. Un rendez-vous annulé ne
+ressuscite pas parce que le paiement aboutit, et un encaissement remboursé ne
+redevient pas abouti parce qu'une livraison arrive en retard — auquel cas le
+rendez-vous **n'est pas confirmé non plus** : confirmer un créneau sur un
+paiement déjà rendu le bloquerait pour rien.
+
+Le montant d'un remboursement vient de Stripe, qui fait foi, et n'est pas
+plafonné par le code : `payments_refunded_amount_minor_check` le refuse en base.
+La transaction est alors annulée et l'événement n'est pas marqué traité — rien
+de faux n'est écrit. La reprise est en revanche **manuelle** : voir « Le 200 ne
+dépend pas du traitement » ci-dessus.
+
+## Aucune donnée de carte, nulle part
+
+`stripe-webhook.types.ts` réduit l'objet Stripe à quatre faits typés dès la
+lecture. La garantie n'est pas qu'on efface `last4`, `brand` ou `exp_month` :
+c'est qu'**il n'existe nulle part où les mettre**. Un test le vérifie sur un
+corps qui en porte.
+
+Le secret de terminaison ne quitte pas `StripeWebhookConfig`, et aucun message
+d'erreur ne cite jamais sa valeur.
+
+## Configuration
+
+| Variable | Absente en `development` / `test` | Absente en `staging` / `production` |
+|---|---|---|
+| `STRIPE_WEBHOOK_SECRET` | l'API démarre, la route répond 503 | **l'API refuse de démarrer** |
+
+Un secret présent mais non préfixé `whsec_` empêche le démarrage dans **tous**
+les environnements : c'est le symptôme de deux variables interverties, et
+l'inversion la plus probable place ici une clé `sk_…`.
+
+## Tests
+
+| Suite | Ce qu'elle prouve |
+|---|---|
+| `__tests__/stripe-signature.spec.ts` | Le schéma de signature, la tolérance, la rotation de secret, le refus en temps constant |
+| `__tests__/stripe-webhook.raw-body.spec.ts` | Le lecteur d'octets, sa borne, son indifférence aux non-`POST` |
+| `__tests__/stripe-webhook.types.spec.ts` | La réduction des événements — et qu'aucune donnée de carte n'en ressort |
+| `__tests__/stripe-webhook.config.spec.ts` | La table « refuser de démarrer » |
+| `__tests__/stripe-webhook.queue.spec.ts` | Le différé, l'absence de propagation d'erreur, l'attente à l'arrêt |
+| `__tests__/stripe-webhook.service.spec.ts` | La résolution d'établissement et l'alerte de litige |
+| `test/payments-webhook.integration-spec.ts` | La route servie, le corps **brut**, le 400 sans traitement, le 200 rendu avant le traitement |
+| `test/payments-webhook.isolation-spec.ts` | Contre un vrai PostgreSQL : la frontière entre établissements, l'unicité qui tranche, la transaction qui fait bloc |
+
 ## Dette connue
 
-`PaymentsRepository` lit la table `appointments` directement, pour le prix figé
-à la réservation. Le chemin conforme serait un appel de service
-(`AppointmentsService`, api-module §3), mais ce module n'expose aujourd'hui
-aucune lecture par identifiant. La lecture est bornée à trois colonnes non
-personnelles et n'écrit rien ; une issue de suivi porte la reprise.
+- **`PaymentsRepository` lit la table `appointments` directement**, pour le prix
+  figé à la réservation. Le chemin conforme serait un appel de service
+  (`AppointmentsService`, api-module §3), mais ce module n'expose aujourd'hui
+  aucune lecture par identifiant. La lecture est bornée à trois colonnes non
+  personnelles et n'écrit rien ; une issue de suivi porte la reprise.
+- **`AppointmentsModule` n'est pas importé.** La confirmation du rendez-vous est
+  écrite dans la même transaction que l'encaissement ; passer par un service
+  d'un autre module l'en sortirait, et un paiement abouti pourrait coexister
+  avec un rendez-vous resté `PENDING`. Dette assumée vis-à-vis d'api-module §3,
+  portée par une issue de suivi.
+- **La file est en mémoire, et sans reprise.** Un traitement qui échoue après le
+  200 n'est rejoué par personne : ni par la file, ni par Stripe. Seul un renvoi
+  manuel depuis le tableau de bord le rattrape. La chaîne durable du CDC §2.2
+  (SQS, accusé de consommation, file d'attente morte) est ce qui referme ce
+  trou ; elle est hors de l'empreinte de #58 et porte sa propre issue de suivi.
