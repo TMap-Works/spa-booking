@@ -35,23 +35,34 @@ import {
   bookedAppointmentSchema,
   publicServiceSchema,
   publicTenantSchema,
+  serviceCategorySchema,
+  serviceSchema,
+  serviceStaffMemberSchema,
   sessionUserSchema,
   tenantSchema,
+  type AssignServiceStaffRequest,
   type AuthSessionResponse,
   type AvailabilityQuery,
   type AvailabilityResponse,
   type BookGuestAppointmentRequest,
   type BookedAppointment,
   type CancelAppointmentRequest,
+  type CreateServiceCategoryRequest,
+  type CreateServiceRequest,
   type LoginRequest,
   type MyAppointmentsQuery,
   type PublicService,
   type PublicTenant,
   type RegisterRequest,
   type RescheduleAppointmentRequest,
+  type Service,
+  type ServiceCategory,
+  type ServiceStaffMember,
   type SessionUser,
   type Tenant,
   type UpdateProfileRequest,
+  type UpdateServiceCategoryRequest,
+  type UpdateServiceRequest,
   type UpdateTenantRequest,
 } from '@spa/shared';
 import { z } from 'zod';
@@ -289,7 +300,13 @@ export function rescheduleAppointment(
  * contrat échoue à la frontière, avec un message qui nomme le champ.
  */
 interface AuthorizedRequestOptions<TSchema extends z.ZodTypeAny | null> {
-  readonly method: 'GET' | 'POST' | 'PATCH';
+  /**
+   * `DELETE` n'a d'appelant que le retrait d'une affectation praticien →
+   * prestation (#52) : c'est le seul geste du back-office qui supprime vraiment
+   * une ligne, tout le reste se désactive. Sa réponse est un 204 sans corps,
+   * d'où le `schema: null` que ce transport sait déjà porter.
+   */
+  readonly method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   readonly path: string;
   readonly schema: TSchema;
   readonly body?: unknown;
@@ -559,6 +576,182 @@ export async function updateTenantSettings(
     accessToken,
   });
   return payload;
+}
+
+// ---------------------------------------------------------------------------
+// Catalogue de services, côté back-office — #52
+// ---------------------------------------------------------------------------
+
+/**
+ * Les prestations de l'établissement.
+ *
+ * `activeOnly` n'est **pas** posé par défaut : le back-office est justement
+ * l'écran où l'on vient rechercher une prestation retirée du catalogue pour la
+ * remettre en ligne. Le parcours public a son propre point d'entrée, qui ne
+ * rend que les actives.
+ */
+export async function fetchServices(
+  accessToken: string,
+  query: { readonly activeOnly?: boolean; readonly categoryId?: string } = {},
+): Promise<Service[]> {
+  const search = new URLSearchParams();
+
+  if (query.activeOnly === true) {
+    search.set('activeOnly', 'true');
+  }
+  if (query.categoryId !== undefined) {
+    search.set('categoryId', query.categoryId);
+  }
+
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/services${search.size === 0 ? '' : `?${search.toString()}`}`,
+    schema: z.array(serviceSchema),
+    accessToken,
+  });
+  return payload;
+}
+
+/** Une prestation, par identifiant. 404 si elle est d'un autre établissement. */
+export async function fetchService(accessToken: string, serviceId: string): Promise<Service> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/services/${encodeURIComponent(serviceId)}`,
+    schema: serviceSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+export async function createService(
+  accessToken: string,
+  body: CreateServiceRequest,
+): Promise<Service> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/services',
+    body,
+    schema: serviceSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Modifie une prestation — **et c'est aussi ainsi qu'on la désactive**.
+ *
+ * L'API n'expose aucun `DELETE` sur cette ressource : les rendez-vous passés la
+ * référencent et le reporting doit continuer à savoir ce qui a été vendu. Le
+ * front n'a donc rien à proposer de tel.
+ */
+export async function updateService(
+  accessToken: string,
+  serviceId: string,
+  body: UpdateServiceRequest,
+): Promise<Service> {
+  const { payload } = await authorizedRequest({
+    method: 'PATCH',
+    path: `/services/${encodeURIComponent(serviceId)}`,
+    body,
+    schema: serviceSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/** Les rubriques du catalogue, désactivées comprises. */
+export async function fetchServiceCategories(
+  accessToken: string,
+  query: { readonly activeOnly?: boolean } = {},
+): Promise<ServiceCategory[]> {
+  const suffix = query.activeOnly === true ? '?activeOnly=true' : '';
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/service-categories${suffix}`,
+    schema: z.array(serviceCategorySchema),
+    accessToken,
+  });
+  return payload;
+}
+
+export async function createServiceCategory(
+  accessToken: string,
+  body: CreateServiceCategoryRequest,
+): Promise<ServiceCategory> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/service-categories',
+    body,
+    schema: serviceCategorySchema,
+    accessToken,
+  });
+  return payload;
+}
+
+export async function updateServiceCategory(
+  accessToken: string,
+  categoryId: string,
+  body: UpdateServiceCategoryRequest,
+): Promise<ServiceCategory> {
+  const { payload } = await authorizedRequest({
+    method: 'PATCH',
+    path: `/service-categories/${encodeURIComponent(categoryId)}`,
+    body,
+    schema: serviceCategorySchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Les praticiens affectés à une prestation, **désactivés compris**.
+ *
+ * C'est le contrat de l'API (`serviceStaffMemberSchema` porte `isActive`), et
+ * l'écran d'affectation doit le montrer : masquer un praticien désactivé
+ * ferait croire à une affectation perdue et inviterait à la recréer, pour se
+ * heurter au conflit d'unicité de `service_staff`.
+ */
+export async function fetchServiceStaff(
+  accessToken: string,
+  serviceId: string,
+): Promise<ServiceStaffMember[]> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/services/${encodeURIComponent(serviceId)}/staff`,
+    schema: z.array(serviceStaffMemberSchema),
+    accessToken,
+  });
+  return payload;
+}
+
+/** Affecte **un** praticien à une prestation. 409 si l'affectation existe déjà. */
+export async function assignServiceStaff(
+  accessToken: string,
+  serviceId: string,
+  body: AssignServiceStaffRequest,
+): Promise<ServiceStaffMember> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: `/services/${encodeURIComponent(serviceId)}/staff`,
+    body,
+    schema: serviceStaffMemberSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/** Retire l'affectation — 204 sans corps, d'où le `schema: null`. */
+export async function removeServiceStaff(
+  accessToken: string,
+  serviceId: string,
+  staffId: string,
+): Promise<void> {
+  await authorizedRequest({
+    method: 'DELETE',
+    path: `/services/${encodeURIComponent(serviceId)}/staff/${encodeURIComponent(staffId)}`,
+    schema: null,
+    accessToken,
+  });
 }
 
 /**

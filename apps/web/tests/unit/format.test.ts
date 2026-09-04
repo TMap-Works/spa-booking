@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import { addCalendarDays, calendarDateInTimeZone } from '@/lib/booking/calendar';
 import {
+  formatAmountInput,
   formatCalendarDate,
   formatDuration,
   formatMoney,
   formatTimeInTimeZone,
+  parseAmountInput,
 } from '@/lib/format';
 
 /**
@@ -56,6 +58,67 @@ describe('formatMoney', () => {
 
     expect(formatted).toContain('3');
     expect(formatted).not.toContain('35,00');
+  });
+});
+
+describe('saisie d’un montant — jamais de flottant', () => {
+  it('convertit une saisie en entier de plus petite unité', () => {
+    expect(parseAmountInput('35,00', 'EUR')).toEqual({ amountMinor: 3500, currency: 'EUR' });
+    expect(parseAmountInput('35', 'EUR')).toEqual({ amountMinor: 3500, currency: 'EUR' });
+    expect(parseAmountInput('0', 'EUR')).toEqual({ amountMinor: 0, currency: 'EUR' });
+  });
+
+  it('n’arrondit jamais par un flottant', () => {
+    // `Number('1.15') * 100` vaut 114.99999999999999 : arrondi au plus proche il
+    // retombe sur 115, mais tronqué il donne 114 — un centime perdu, sur chaque
+    // prestation, à chaque enregistrement. La conversion se fait donc en chaîne.
+    for (const [text, minor] of [
+      ['1,15', 115],
+      ['8,29', 829],
+      ['1234,56', 123456],
+    ] as const) {
+      expect(parseAmountInput(text, 'EUR')?.amountMinor).toBe(minor);
+    }
+  });
+
+  it('suit la précision de la devise, et non celle de l’euro', () => {
+    // L'ariary n'a pas de décimale : « 3500 » vaut 3500 ariary, pas 350 000.
+    expect(parseAmountInput('3500', 'MGA')).toEqual({ amountMinor: 3500, currency: 'MGA' });
+  });
+
+  it('accepte le point, la virgule et les espaces de groupement', () => {
+    // Un montant recopié depuis l'écran arrive avec l'espace fine insécable
+    // qu'`Intl` y a mise.
+    expect(parseAmountInput('1 200.50', 'EUR')?.amountMinor).toBe(120050);
+    expect(parseAmountInput(' 12,5 ', 'EUR')?.amountMinor).toBe(1250);
+  });
+
+  it('refuse plutôt que d’arrondir en silence', () => {
+    // Arrondir déciderait à la place de la gérante du prix qu'elle vend.
+    expect(parseAmountInput('35,005', 'EUR')).toBeNull();
+    expect(parseAmountInput('3,5', 'MGA')).toBeNull();
+    expect(parseAmountInput('-1', 'EUR')).toBeNull();
+    expect(parseAmountInput('gratuit', 'EUR')).toBeNull();
+    expect(parseAmountInput('', 'EUR')).toBeNull();
+    // Au-delà de la largeur de la colonne `integer` qui l'accueille.
+    expect(parseAmountInput('99999999999', 'EUR')).toBeNull();
+  });
+
+  it('fait l’aller-retour sans perte, pour que la modification ne change pas le prix', () => {
+    for (const amount of [
+      { amountMinor: 3500, currency: 'EUR' },
+      { amountMinor: 5, currency: 'EUR' },
+      { amountMinor: 0, currency: 'EUR' },
+      { amountMinor: 3500, currency: 'MGA' },
+    ] as const) {
+      expect(parseAmountInput(formatAmountInput(amount), amount.currency)).toEqual(amount);
+    }
+  });
+
+  it('pré-remplit un champ sans symbole ni séparateur de milliers', () => {
+    expect(formatAmountInput({ amountMinor: 3500, currency: 'EUR' })).toBe('35,00');
+    expect(formatAmountInput({ amountMinor: 5, currency: 'EUR' })).toBe('0,05');
+    expect(formatAmountInput({ amountMinor: 3500, currency: 'MGA' })).toBe('3500');
   });
 });
 
