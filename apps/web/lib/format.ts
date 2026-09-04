@@ -12,7 +12,7 @@
  *   montant lui-même.
  */
 
-import type { CalendarDate, Money, TimeZone, UtcInstant } from '@spa/shared';
+import { AMOUNT_MINOR_MAX, type CalendarDate, type Money, type TimeZone, type UtcInstant } from '@spa/shared';
 
 /** Locale d'affichage du MVP — une seule, l'internationalisation est hors périmètre. */
 const LOCALE = 'fr-FR';
@@ -91,6 +91,62 @@ export function formatMoney(amount: Money): string {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   }).format(amount.amountMinor / 10 ** digits);
+}
+
+/**
+ * Le montant tel qu'un champ de saisie le pré-remplit — « 35,00 », sans devise.
+ *
+ * Aucune division : l'entier est découpé **en chaîne**, partie entière d'un
+ * côté, décimales de l'autre. Le formatage d'affichage (`formatMoney`) peut se
+ * permettre le flottant parce que rien n'en dépend ; ici la valeur est
+ * réinjectée dans un formulaire puis renvoyée à l'API, et un centième perdu à
+ * l'aller reviendrait modifier le prix au retour.
+ */
+export function formatAmountInput(amount: Money): string {
+  const digits = fractionDigitsOf(amount.currency);
+  const sign = amount.amountMinor < 0 ? '-' : '';
+  const raw = String(Math.abs(amount.amountMinor)).padStart(digits + 1, '0');
+  const units = raw.slice(0, raw.length - digits);
+
+  return digits === 0 ? `${sign}${units}` : `${sign}${units},${raw.slice(raw.length - digits)}`;
+}
+
+/**
+ * « 35,00 » → `{ amountMinor: 3500, currency: 'EUR' }`, ou `null` si la saisie
+ * n'est pas un montant de cette devise.
+ *
+ * **Aucun flottant nulle part** : `Number('35.00') * 100` rend `3499.9999…` sur
+ * certaines valeurs, et un prix faux d'un centime est un prix faux. Les chiffres
+ * sont donc concaténés en chaîne puis convertis une seule fois, en entier.
+ *
+ * Le nombre de décimales est celui de la devise — deux pour l'euro, zéro pour
+ * l'ariary. Une saisie plus précise que la devise (« 35,005 » en euros) est
+ * **refusée** plutôt qu'arrondie en silence : arrondir déciderait à la place de
+ * la gérante du prix qu'elle vend.
+ */
+export function parseAmountInput(text: string, currency: string): Money | null {
+  const digits = fractionDigitsOf(currency);
+  // Espaces de groupement compris : la classe `\s` de JavaScript couvre
+  // l'insécable (U+00A0) et l'espace fine insécable (U+202F), celles qu'`Intl`
+  // insère dans « 1 200,00 € » et qui reviennent telles quelles quand on
+  // recopie un montant affiché.
+  const cleaned = text.replace(/\s/g, '').replace(',', '.');
+  const match = /^(\d+)(?:\.(\d*))?$/.exec(cleaned);
+
+  if (match === null) {
+    return null;
+  }
+
+  const units = match[1] ?? '';
+  const fraction = match[2] ?? '';
+
+  if (fraction.length > digits) {
+    return null;
+  }
+
+  const amountMinor = Number(`${units}${fraction.padEnd(digits, '0')}`);
+
+  return amountMinor > AMOUNT_MINOR_MAX ? null : { amountMinor, currency };
 }
 
 /** « 1 h 15 » à partir d'une durée en minutes. */
