@@ -324,6 +324,27 @@
     ],
     "387": [
       ".claude/commands"
+    ],
+    "58": [
+      "api/core",
+      "api/payments",
+      "db:schema"
+    ],
+    "56": [
+      "api/crm",
+      "contracts:shared",
+      "db:schema"
+    ],
+    "343": [
+      "api/identity",
+      "contracts:shared",
+      "db:schema",
+      "web/identity",
+      "web/salon-public"
+    ],
+    "60": [
+      "api/payments",
+      "db:schema"
     ]
   },
   "depends": {
