@@ -16,7 +16,13 @@ import type { Request, Response } from 'express';
 import { AppConfigService } from '../../config/app-config.service';
 import { Auth } from './auth.decorator';
 import { AuthService } from './auth.service';
-import { AuthTokensDto, LoginDto, RegisterDto, UserProfileDto } from './dto/auth.dto';
+import {
+  AcceptInvitationDto,
+  AuthTokensDto,
+  LoginDto,
+  RegisterDto,
+  UserProfileDto,
+} from './dto/auth.dto';
 import type { AuthenticationResult } from './identity.types';
 import { CurrentUser } from './jwt-auth.guard';
 import type { AuthenticatedUser } from './identity.types';
@@ -94,6 +100,43 @@ export class AuthController {
     const result = await this.auth.login({
       tenantSlug: body.tenantSlug,
       email: body.email,
+      password: body.password,
+    });
+
+    return this.respondWithSession(response, result);
+  }
+
+  /**
+   * Première connexion d'un membre du personnel invité — #55.
+   *
+   * Publique, et elle ne peut pas être autrement : la personne invitée n'a pas
+   * encore de mot de passe, donc pas de jeton d'accès. Ce qui l'autorise est
+   * l'invitation elle-même — un jeton signé, à usage unique, qui ne vaut que pour
+   * poser le **premier** mot de passe du compte qu'il désigne.
+   *
+   * Cinq tentatives par minute et par IP, comme l'inscription : le jeton porte
+   * 256 bits de signature, il ne se devine pas, et cette limite borne surtout le
+   * coût du bcrypt qu'un corps valide nous ferait payer.
+   *
+   * **200** et non 201 : rien n'est créé — le compte existait déjà, il est
+   * activé. La réponse est celle d'une connexion, cookie de rafraîchissement
+   * compris, pour que la personne n'ait pas à ressaisir le mot de passe qu'elle
+   * vient de choisir.
+   *
+   * **401** sur tout refus, sans jamais dire lequel : jeton contrefait, expiré,
+   * compte inconnu, désactivé, ou déjà activé.
+   */
+  @Post('invitations/accept')
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Activer un compte invité et ouvrir sa session' })
+  @ApiOkResponse({ type: AuthTokensDto })
+  public async acceptInvitation(
+    @Body() body: AcceptInvitationDto,
+    @Res({ passthrough: true }) response: Response,
+  ): Promise<AuthTokensDto> {
+    const result = await this.auth.acceptInvitation({
+      token: body.token,
       password: body.password,
     });
 

@@ -95,6 +95,45 @@ export class RegisterDto extends TenantScopedRequest {
 }
 
 /**
+ * Première connexion d'un membre du personnel invité — #55.
+ *
+ * ## Aucun `tenantSlug`, contrairement à `LoginDto` et `RegisterDto`
+ *
+ * L'établissement est une revendication **signée** du jeton d'invitation, comme
+ * il l'est du jeton de rafraîchissement. Le demander en plus donnerait deux
+ * sources pour la même information — donc un désaccord possible, qu'il faudrait
+ * arbitrer sur la foi d'une entrée utilisateur. Ce DTO n'étend donc pas
+ * `TenantScopedRequest`, et ce n'est pas un oubli.
+ *
+ * ## Le mot de passe est borné comme à l'inscription
+ *
+ * Mêmes seuils que `RegisterDto`, et pour les mêmes raisons : douze caractères au
+ * minimum parce qu'en deçà une attaque hors ligne redevient triviale, soixante-
+ * douze au maximum parce que bcrypt ignore ce qui suit. Un compte du personnel
+ * n'a aucune raison d'être moins bien protégé qu'un compte client — il en voit
+ * les fiches.
+ */
+export class AcceptInvitationDto {
+  @ApiProperty({
+    description:
+      'Jeton d’invitation reçu de l’établissement. À usage unique : il cesse ' +
+      'd’ouvrir quoi que ce soit dès que le mot de passe est posé.',
+  })
+  @IsString()
+  // Borné comme tout ce qui traverse : un jeton légitime tient en quelques
+  // centaines d'octets, et la borne évite qu'un corps arbitrairement long
+  // atteigne la vérification de signature.
+  @MaxLength(4096)
+  public token!: string;
+
+  @ApiProperty({ minLength: 12, description: 'Douze caractères au minimum.' })
+  @IsString()
+  @MinLength(12, { message: 'password : 12 caractères au minimum' })
+  @MaxLength(72, { message: 'password : 72 caractères au maximum' })
+  public password!: string;
+}
+
+/**
  * Le compte tel qu'il sort de l'API.
  *
  * **Ni `tenantId`, ni `passwordHash`.** Une entité Prisma renvoyée telle quelle

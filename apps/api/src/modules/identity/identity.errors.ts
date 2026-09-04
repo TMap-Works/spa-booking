@@ -19,6 +19,8 @@ export const IDENTITY_ERROR_CODES = {
   INVALID_CREDENTIALS: 'INVALID_CREDENTIALS',
   EMAIL_ALREADY_REGISTERED: 'EMAIL_ALREADY_REGISTERED',
   INVALID_REFRESH_TOKEN: 'INVALID_REFRESH_TOKEN',
+  INVALID_INVITATION: 'INVALID_INVITATION',
+  INVITATION_ALREADY_ACCEPTED: 'INVITATION_ALREADY_ACCEPTED',
 } as const;
 
 /** 401 — absent de `DOMAIN_HTTP_STATUS`, qui ne connaît pas encore l'authentification. */
@@ -75,5 +77,47 @@ export class InvalidRefreshTokenError extends DomainError {
 
   public constructor(details: DomainErrorDetails = {}) {
     super('Session invalide ou expirée.', details);
+  }
+}
+
+/**
+ * Invitation de personnel refusée — #55.
+ *
+ * **Un seul message pour cinq causes** : jeton contrefait, expiré, désignant un
+ * compte supprimé, désignant un compte désactivé, ou déjà accepté. Le point
+ * d'entrée qui la lève n'est pas authentifié : distinguer les cas en ferait un
+ * oracle qui dit, à qui présente un jeton ramassé, si le compte existe encore et
+ * s'il est actif. Le détail part dans le journal, pas dans la réponse.
+ *
+ * 401 et non 422 : ce qui est refusé est une **preuve de qualité**, pas une
+ * règle métier. C'est le régime d'`InvalidRefreshTokenError`, pour la même
+ * raison.
+ */
+export class InvalidInvitationError extends DomainError {
+  public override readonly code = IDENTITY_ERROR_CODES.INVALID_INVITATION;
+  public override readonly status = UNAUTHORIZED;
+
+  public constructor(details: DomainErrorDetails = {}) {
+    super('Invitation invalide ou expirée.', details);
+  }
+}
+
+/**
+ * Réémission demandée sur un compte **déjà activé** — #55.
+ *
+ * Distincte d'`InvalidInvitationError`, et sans contradiction avec elle : la
+ * réémission est demandée par un administrateur **authentifié** de
+ * l'établissement, qui a déjà le droit de lire ce compte et de savoir qu'il a
+ * été activé. Il n'y a donc rien à taire, et lui répondre « invitation
+ * invalide » le laisserait réessayer sans comprendre. 409 : l'état du monde
+ * s'oppose à l'opération, il ne s'agit ni d'un droit manquant ni d'une
+ * ressource absente.
+ */
+export class InvitationAlreadyAcceptedError extends DomainError {
+  public override readonly code = IDENTITY_ERROR_CODES.INVITATION_ALREADY_ACCEPTED;
+  public override readonly status = CONFLICT;
+
+  public constructor() {
+    super('Ce compte a déjà été activé : son invitation ne peut plus être réémise.');
   }
 }
