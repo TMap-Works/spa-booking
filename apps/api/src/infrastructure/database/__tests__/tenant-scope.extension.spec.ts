@@ -43,13 +43,20 @@ describe('Extension de scoping tenant', () => {
     it('déduit du schéma les modèles métier, sans liste écrite à la main', () => {
       // Le point de la déduction : `RefreshToken`, ajouté par #21 bien après ce
       // fichier, puis `ServiceCategory` par #24, puis `StaffSchedule` et
-      // `TenantClosingDay` par #32, puis `StaffTimeOff` par #33, sont couverts
-      // sans que personne ait eu à les inscrire dans l'extension — seule cette
-      // attente-ci a bougé.
+      // `TenantClosingDay` par #32, puis `StaffTimeOff` par #33, puis
+      // `ProcessedWebhookEvent` par #58, sont couverts sans que personne ait eu
+      // à les inscrire dans l'extension — seule cette attente-ci a bougé.
+      //
+      // `ProcessedWebhookEvent` mérite une mention : payments-stripe §3 la
+      // décrit sans tenant, et une table technique aurait pu prétendre à
+      // `GLOBAL_MODELS`. Elle porte `tenant_id`, elle est donc scopée comme les
+      // autres — c'est ce que tenant-isolation §1 impose faute d'ADR contraire,
+      // et c'est ce que cette ligne consigne.
       expect([...TENANT_SCOPED_MODELS].sort()).toEqual([
         'Appointment',
         'Notification',
         'Payment',
+        'ProcessedWebhookEvent',
         'RefreshToken',
         'Service',
         'ServiceCategory',
