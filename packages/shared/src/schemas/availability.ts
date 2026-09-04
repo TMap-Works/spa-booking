@@ -204,8 +204,14 @@ export function scheduleEndToMinutes(time: ScheduleEndTime): number {
  * validation. Un `refine` qui lèverait alors ferait sortir une exception brute
  * de `safeParse`, là où l'appelant attend un verdict : le 400 attendu
  * deviendrait un 500.
+ *
+ * Exportée parce que les plages d'ouverture de l'établissement
+ * (`openingHoursEntrySchema`, #343) partagent exactement cette forme d'heure
+ * murale et ont le même `refine` à écrire. Une seconde copie aurait fini par
+ * lire `24:00` autrement que celle-ci, et deux plages identiques auraient été
+ * jugées différemment selon la table où elles sont saisies.
  */
-function wallMinutesOrNull(value: unknown): number | null {
+export function wallMinutesOrNull(value: unknown): number | null {
   if (typeof value !== 'string') {
     return null;
   }

@@ -39,7 +39,14 @@ import {
 } from '../schemas/identity';
 import { notificationSchema } from '../schemas/notification';
 import { recordCounterPaymentRequestSchema, refundPaymentRequestSchema } from '../schemas/payment';
-import { publicTenantSchema, updateTenantRequestSchema } from '../schemas/tenant';
+import {
+  openingHoursOverlap,
+  openingHoursSchema,
+  postalAddressSchema,
+  publicTenantSchema,
+  sortOpeningHours,
+  updateTenantRequestSchema,
+} from '../schemas/tenant';
 
 const UUID = '3f7c1f4e-2a9d-4c53-8f0e-1b2c3d4e5f60';
 const OTHER_UUID = '9a8b7c6d-5e4f-4a3b-9c8d-7e6f5a4b3c2d';
@@ -132,6 +139,118 @@ describe('tenant', () => {
   it('refuse un champ hors contrat dans la mise à jour', () => {
     expect(updateTenantRequestSchema.safeParse({ name: 'Nouveau nom' }).success).toBe(true);
     expect(updateTenantRequestSchema.safeParse({ isActive: false }).success).toBe(false);
+  });
+
+  // --- Adresse et horaires d'ouverture — #343 -------------------------------
+
+  const VITRINE = {
+    id: UUID,
+    slug: 'salon-lumiere',
+    name: 'Salon Lumière',
+    timezone: 'Europe/Paris',
+    defaultCurrency: 'EUR',
+  };
+
+  it('sert une vitrine sans adresse ni horaires', () => {
+    // Le critère de #343 : les deux sont facultatifs, et un salon fraîchement
+    // inscrit n'a rien saisi. Sa vitrine doit rester valide — sans quoi la page
+    // publique rendrait une erreur de contrat pour un salon parfaitement normal.
+    const parsed = publicTenantSchema.parse(VITRINE);
+
+    expect(parsed.address).toBeUndefined();
+    expect(parsed.openingHours).toBeUndefined();
+  });
+
+  it('normalise le code pays en majuscules et refuse ce qui n’est pas un code', () => {
+    const parsed = postalAddressSchema.parse({
+      line1: '12 rue des Lilas',
+      city: 'Paris',
+      country: 'fr',
+    });
+
+    expect(parsed.country).toBe('FR');
+    expect(parsed.postalCode).toBeUndefined();
+    expect(postalAddressSchema.safeParse({ line1: 'a', city: 'b', country: 'France' }).success).toBe(
+      false,
+    );
+  });
+
+  it('exige le triplet minimal de l’adresse', () => {
+    // Une adresse sans ville n'oriente personne et produirait un `PostalAddress`
+    // incomplet : elle se publie en entier, ou pas du tout.
+    expect(postalAddressSchema.safeParse({ line1: '12 rue des Lilas', country: 'FR' }).success).toBe(
+      false,
+    );
+    expect(postalAddressSchema.safeParse({ city: 'Paris', country: 'FR' }).success).toBe(false);
+    expect(postalAddressSchema.safeParse({ line1: '12 rue', city: 'Paris' }).success).toBe(false);
+  });
+
+  it('accepte une fermeture à minuit et refuse une plage inversée', () => {
+    // `24:00` est la seule façon exacte de dire « ferme à minuit » : la borne
+    // haute est exclue, et `23:59` perdrait une minute.
+    expect(
+      openingHoursSchema.safeParse([{ weekday: 6, opensAt: '18:00', closesAt: '24:00' }]).success,
+    ).toBe(true);
+    expect(
+      openingHoursSchema.safeParse([{ weekday: 2, opensAt: '19:00', closesAt: '09:00' }]).success,
+    ).toBe(false);
+  });
+
+  it('refuse deux plages du même jour qui se recouvrent, mais accepte l’adjacence', () => {
+    const recouvrement = [
+      { weekday: 2, opensAt: '09:00', closesAt: '13:00' },
+      { weekday: 2, opensAt: '12:00', closesAt: '19:00' },
+    ];
+    const adjacentes = [
+      { weekday: 2, opensAt: '09:00', closesAt: '12:00' },
+      { weekday: 2, opensAt: '12:00', closesAt: '19:00' },
+    ];
+
+    expect(openingHoursSchema.safeParse(recouvrement).success).toBe(false);
+    expect(openingHoursSchema.safeParse(adjacentes).success).toBe(true);
+    // Les mêmes heures sur deux jours différents ne se recouvrent pas.
+    expect(
+      openingHoursOverlap([
+        { weekday: 2, opensAt: '09:00', closesAt: '19:00' },
+        { weekday: 3, opensAt: '09:00', closesAt: '19:00' },
+      ]),
+    ).toBe(false);
+  });
+
+  it('refuse le 0-dimanche de `Date.getDay`', () => {
+    // `0` est *falsy* : un jour de semaine qui vaut zéro disparaît au premier
+    // `weekday ?? défaut`. La numérotation est celle d'ISO 8601, 1 à 7.
+    expect(
+      openingHoursSchema.safeParse([{ weekday: 0, opensAt: '09:00', closesAt: '19:00' }]).success,
+    ).toBe(false);
+    expect(
+      openingHoursSchema.safeParse([{ weekday: 7, opensAt: '09:00', closesAt: '19:00' }]).success,
+    ).toBe(true);
+  });
+
+  it('trie la semaine par jour puis par heure d’ouverture, sans muter l’entrée', () => {
+    const desordre = [
+      { weekday: 3, opensAt: '09:00', closesAt: '12:00' },
+      { weekday: 2, opensAt: '14:00', closesAt: '19:00' },
+      { weekday: 2, opensAt: '09:00', closesAt: '12:00' },
+    ];
+    const trie = sortOpeningHours(desordre);
+
+    expect(trie.map((entry) => `${String(entry.weekday)}-${entry.opensAt}`)).toEqual([
+      '2-09:00',
+      '2-14:00',
+      '3-09:00',
+    ]);
+    // Une réponse d'API ne se réordonne pas sous les pieds de son appelant.
+    expect(desordre[0]?.weekday).toBe(3);
+  });
+
+  it('efface l’adresse par `null` et la semaine par un tableau vide', () => {
+    expect(updateTenantRequestSchema.safeParse({ address: null }).success).toBe(true);
+    expect(updateTenantRequestSchema.safeParse({ openingHours: [] }).success).toBe(true);
+    // Absent ≠ `null` : un formulaire partiel ne doit pas effacer ce qu'il
+    // n'affiche pas. Les deux formes sont donc distinctes dans le type.
+    expect(Object.keys(updateTenantRequestSchema.parse({ name: 'Salon' }))).toEqual(['name']);
   });
 });
 
