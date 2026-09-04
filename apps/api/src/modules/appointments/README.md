@@ -30,6 +30,65 @@ Les trois routes publiques ne sont pas gardées, et c'est le quatrième critère
 #37 : on réserve sans compte. Ce qui les tient est le `ValidationPipe` global, le
 contrôle de disponibilité, la contrainte d'exclusion, et un quota par adresse.
 
+## Le contrat partagé, et le doublon qui l'accompagne (#314)
+
+`packages/shared` est la source de vérité du contrat d'API (CLAUDE.md) : le front
+ne redéclare jamais un type que l'API expose. Ce module y a ses contreparties, et
+elles sont **nommées** — se tromper de schéma, ici, se paie en fuite de donnée
+personnelle ou en réservation au nom d'un autre.
+
+| Ce module | `packages/shared/src/schemas/appointment.ts` |
+|---|---|
+| `BookAppointmentDto` | `bookGuestAppointmentRequestSchema` |
+| `GuestContactDto` | `guestContactSchema` |
+| `AppointmentDto` | `bookedAppointmentSchema` |
+| `RescheduleAppointmentDto` | `rescheduleAppointmentRequestSchema` |
+| `CancelAppointmentDto` | `cancelAppointmentRequestSchema` |
+| `MyAppointmentsQueryDto` | `myAppointmentsQuerySchema` |
+
+Deux contreparties qu'on croirait bonnes et qui ne le sont pas :
+
+- **`createAppointmentRequestSchema`** est la demande du **back-office** (#50) —
+  un `clientId`, pas de coordonnées. Le tunnel public qui l'accepterait
+  réserverait au nom de quelqu'un d'autre ;
+- **`appointmentSchema`** est la ligne d'**agenda** — elle imbrique les
+  *summaries* de la cliente, du praticien et de la prestation. La servir sur une
+  route ouverte diffuserait l'identité d'une cliente à qui connaît un
+  identifiant de rendez-vous. Les routes publiques rendent des identifiants,
+  c'est `bookedAppointmentSchema`.
+
+Ces formes sont donc écrites **deux fois** — ici en `class-validator`, là-bas en
+Zod — parce que `apps/api` ne dépend pas encore de `@spa/shared` : c'est ce
+qu'attend le quatrième critère de #314, et la dépendance manque toujours à
+`apps/api/package.json`. Le doublon n'est tenable qu'à une condition, et deux
+suites s'en chargent :
+
+- `__tests__/guest-contract.spec.ts` — la **requête**, champ par champ et borne
+  par borne, sur les fixtures littérales de
+  `packages/shared/src/__tests__/guest-booking.spec.ts` ;
+- `test/appointments-booking.integration-spec.ts` — la **réponse**, dont le jeu
+  de clés servi est comparé à celui de `bookedAppointmentSchema`.
+
+Deux écarts de comportement subsistent, tous deux assumés :
+
+- **`phone`** — le contrat le veut en E.164 et le normalise ; le DTO accepte un
+  format libre borné et conserve la saisie. L'écart est orienté dans le **sens
+  sûr** : le contrat étant le plus strict, un formulaire qui valide avec lui ne
+  produit jamais une requête que la route refuse. Le refermer demande de décider
+  si `users.phone` est en E.164 pour **tous** ses écrivains, `identity` compris,
+  ce qui déborde ce module ;
+- **la version d'UUID** — `uuidSchema` accepte n'importe quelle version, les DTO
+  exigent `@IsUUID('4')`. Celui-là penche dans le sens **inverse**, et donc moins
+  confortable : le contrat est le plus permissif. Il reste théorique tant que
+  tous les identifiants proposés à un formulaire viennent de l'API, qui n'émet
+  que des v4 — mais c'est un « tant que », pas une garantie, et il porte sur
+  toute la surface du contrat et non sur ce module.
+
+Ces deux-là et le découpage en labels du domaine d'une adresse (que
+`@IsEmail()` borne à 63 octets et que le contrat ne rejoue pas) sont l'inventaire
+complet au terme de #314. Les bornes de longueur d'adresse, elles, ont été
+alignées : voir l'en-tête d'`emailSchema`.
+
 ## L'historique de la cliente connectée (#47)
 
 Le CDC §1.4 demande « un compte client avec historique ». La route qui le sert

@@ -11,7 +11,7 @@ import { z } from 'zod';
 
 import {
   DISPLAY_NAME_MAX_LENGTH,
-  EMAIL_MAX_LENGTH,
+  EMAIL_ADDRESS_MAX_LENGTH,
   LONG_TEXT_MAX_LENGTH,
   NAME_MAX_LENGTH,
   PASSWORD_MAX_LENGTH,
@@ -61,13 +61,43 @@ export type Slug = z.infer<typeof slugSchema>;
  * `alice@example.test` cohabiteraient dans le même salon et la recherche à la
  * connexion n'en trouverait qu'une — l'autre compte deviendrait inatteignable
  * sans jamais avoir déclenché la moindre erreur.
+ *
+ * ## Les deux bornes de longueur de la RFC 5321 — #314
+ *
+ * `.email()` de Zod ne juge aucune longueur : il accepte une partie locale de
+ * trois cents caractères, et une adresse aussi longue que la chaîne le permet.
+ * Les DTO de l'API, eux, valident avec `@IsEmail()`, dont validator.js porte les
+ * deux bornes de la RFC en dur — **254 octets** pour l'adresse entière
+ * (§4.5.3.1.3), **64** pour la partie locale (§4.5.3.1.1).
+ *
+ * Sans elles, le contrat serait **plus permissif que l'API qu'il décrit**, et
+ * c'est le sens dangereux de l'écart : un formulaire qui valide avec ce schéma
+ * déclarerait l'adresse bonne, l'enverrait, et récolterait un 400 qu'il vient
+ * lui-même d'annoncer impossible. Le sens inverse — un contrat plus strict — ne
+ * coûte qu'un refus plus tôt, du bon côté de l'écran. C'est pourquoi la borne
+ * appliquée ici est `EMAIL_ADDRESS_MAX_LENGTH` (254) et non `EMAIL_MAX_LENGTH`
+ * (320), qui est la largeur de la colonne.
+ *
+ * Le motif n'est pas une seconde validation d'adresse : il ne juge que la
+ * position du premier `@`, `.email()` gardant tout le reste. Son alternative
+ * `[^@]*$` est ce qui l'empêche de **doubler** le refus de `.email()` sur une
+ * chaîne sans `@` : deux checks qui échouent produisent deux `issues` de même
+ * message, et un formulaire qui les rend toutes affiche « adresse e-mail
+ * invalide » deux fois sous le même champ.
+ *
+ * Ce que ces bornes ne couvrent **pas**, et qui reste à l'avantage de l'API :
+ * validator.js refuse aussi un label de domaine de plus de 63 octets. Le
+ * reproduire ici demanderait de redécouper le domaine, c'est-à-dire de valider
+ * l'adresse une seconde fois — l'écart est laissé en l'état, un tel domaine
+ * n'étant pas enregistrable.
  */
 export const emailSchema = z
   .string()
   .trim()
   .toLowerCase()
-  .max(EMAIL_MAX_LENGTH)
-  .email({ message: 'adresse e-mail invalide' });
+  .max(EMAIL_ADDRESS_MAX_LENGTH)
+  .email({ message: 'adresse e-mail invalide' })
+  .regex(/^(?:[^@]{0,64}@|[^@]*$)/, { message: 'adresse e-mail invalide' });
 
 export type Email = z.infer<typeof emailSchema>;
 

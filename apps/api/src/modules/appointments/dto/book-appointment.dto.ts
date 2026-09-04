@@ -36,17 +36,53 @@ import {
  * (tenant-isolation §2). Sur une route publique, c'est la seule barrière avant le
  * service : il n'y a pas de garde à franchir.
  *
- * TODO(#26) : ces formes appartiennent au contrat d'API. `appointmentSchema` et
- * `createAppointmentRequestSchema` de `packages/shared/src/schemas/appointment.ts`
- * les décrivent déjà et devront être importés le jour où `apps/api` dépendra du
- * paquet — même TODO que dans `catalog/dto/service.dto.ts`.
+ * ## TODO(#26) — ce que ces classes deviendront, et à quoi elles répondent
  *
- * Un écart est à reprendre ce jour-là, et il est délibéré :
- * `createAppointmentRequestSchema` est `.strict()` et ne porte **pas** les
- * coordonnées d'une cliente sans compte — il suppose une session d'où tirer le
- * client. C'est la forme de la route de back-office (#50), pas celle du tunnel
- * public. Le contrat partagé devra donc gagner une variante « invité » ; l'issue
- * de suivi ouverte par #37 la porte.
+ * Ces formes appartiennent au contrat d'API, et `packages/shared` les décrit
+ * **déjà**, chacune sous son nom propre (#314) :
+ *
+ * | Classe d'ici | Schéma de `packages/shared/src/schemas/appointment.ts` |
+ * |---|---|
+ * | `BookAppointmentDto` | `bookGuestAppointmentRequestSchema` |
+ * | `GuestContactDto` | `guestContactSchema` |
+ * | `AppointmentDto` | `bookedAppointmentSchema` |
+ *
+ * Ce n'est **pas** `createAppointmentRequestSchema` : celui-là est `.strict()`,
+ * porte un `clientId` et pas de coordonnées, et décrit la route de back-office
+ * (#50) — un tunnel public qui l'accepterait réserverait au nom d'un autre. Ce
+ * n'est pas non plus `appointmentSchema`, qui imbrique les *summaries* de la
+ * cliente, du praticien et de la prestation : les servir ici diffuserait
+ * l'identité d'une cliente à qui connaît un identifiant de rendez-vous.
+ *
+ * La substitution attend la seule chose qui manque : la dépendance `@spa/shared`
+ * dans `apps/api/package.json` — même TODO que dans `catalog/dto/service.dto.ts`.
+ *
+ * ## Les écarts de comportement que la substitution changerait
+ *
+ * Il en reste deux au terme de #314, l'un et l'autre assumés. Le second est
+ * `uuidSchema`, qui accepte n'importe quelle version d'UUID là où `@IsUUID('4')`
+ * exige la v4 : celui-là penche du côté inconfortable — le contrat est le plus
+ * permissif — mais il porte sur toute la surface du contrat, pas sur ce module,
+ * et reste théorique tant que les identifiants proposés à un formulaire viennent
+ * de l'API, qui n'émet que des v4.
+ *
+ * Le premier, propre à ce module :
+ *
+ * `guestContactSchema` valide `phone` avec `e164PhoneSchema`, qui **normalise**
+ * (`+261 34 12 345 67` → `+261341234567`) et **refuse un numéro national**
+ * (`0341234567`), dont le pays n'est déductible ni du fuseau du salon ni de la
+ * langue du navigateur. `GuestContactDto` valide avec `PHONE_PATTERN`, format
+ * libre borné, et conserve la saisie telle quelle.
+ *
+ * L'écart est **orienté** : le contrat est le plus strict des deux, si bien
+ * qu'un formulaire qui valide avec lui ne produit jamais une requête que cette
+ * route refuse — c'est ce que fait le tunnel de #45, qui envoie donc toujours de
+ * l'E.164. Ce qui reste ouvert est l'autre sens : un appelant qui n'est pas ce
+ * front peut poser un numéro que la chaîne SMS ne saura pas composer. Le
+ * trancher demande de décider si `users.phone` est en E.164 pour **tous** ses
+ * écrivains — `identity` y écrit aussi, avec `phoneSchema` —, ce qui déborde ce
+ * module ; #314 laisse donc l'écart en l'état, documenté des deux côtés et tenu
+ * par `__tests__/guest-contract.spec.ts`.
  */
 
 /**
