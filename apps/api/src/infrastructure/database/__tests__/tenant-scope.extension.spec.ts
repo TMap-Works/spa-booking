@@ -52,12 +52,19 @@ describe('Extension de scoping tenant', () => {
       // `GLOBAL_MODELS`. Elle porte `tenant_id`, elle est donc scopée comme les
       // autres — c'est ce que tenant-isolation §1 impose faute d'ADR contraire,
       // et c'est ce que cette ligne consigne.
+      // Puis `Product`, `Sale` et `SaleItem` par #60 : le POS de base du CDC
+      // §1.4. Trois tables qui portent de l'argent, donc trois tables qu'une
+      // fuite de portée rendrait capables de facturer chez le voisin — et
+      // couvertes, elles aussi, sans qu'aucune ligne de l'extension ne bouge.
       expect([...TENANT_SCOPED_MODELS].sort()).toEqual([
         'Appointment',
         'Notification',
         'Payment',
         'ProcessedWebhookEvent',
+        'Product',
         'RefreshToken',
+        'Sale',
+        'SaleItem',
         'Service',
         'ServiceCategory',
         'ServiceStaff',

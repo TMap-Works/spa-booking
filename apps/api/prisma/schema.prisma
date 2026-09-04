@@ -114,6 +114,31 @@ enum PaymentStatus {
   PARTIALLY_REFUNDED
 }
 
+/// Nature d'une ligne de ticket au comptoir — CDC §1.4 « POS de base :
+/// services + produits retail », #60.
+///
+/// Les quatre valeurs se répartissent en deux familles, et c'est cette
+/// répartition qui porte la règle « le total est recalculé côté serveur » :
+///
+/// - `SERVICE` et `PRODUCT` **référencent une ligne du catalogue**, dont le
+///   prix fait autorité. Le comptoir désigne l'article et sa quantité ; il
+///   n'envoie aucun montant, et le serveur ne lui en accepterait aucun ;
+/// - `TAX` et `TIP` n'ont pas d'article derrière elles. La taxe est calculée
+///   par le serveur à partir de `tenants.tax_rate_bps` ; le pourboire est la
+///   seule valeur qu'un humain choisit, et il n'existe nulle part ailleurs
+///   pour être relu.
+///
+/// Elles sont des **lignes**, jamais des colonnes fondues dans un prix :
+/// payments-stripe §5 l'exige, et un ticket dont la taxe serait incorporée au
+/// prix de la prestation deviendrait irréconciliable avec la comptabilité du
+/// salon.
+enum SaleItemKind {
+  SERVICE
+  PRODUCT
+  TAX
+  TIP
+}
+
 enum NotificationChannel {
   EMAIL
   SMS
@@ -216,6 +241,28 @@ model Tenant {
   /// actif de lui-même, `maintenant + 0` valant `maintenant`.
   minBookingNoticeMinutes Int @default(60) @map("min_booking_notice_minutes")
 
+  /// Taux de taxe appliqué aux ventes au comptoir, en **points de base** —
+  /// `2000` vaut 20 % (#60).
+  ///
+  /// En points de base, et non en pourcentage fractionnaire, pour une raison
+  /// qui n'est pas de commodité : un taux à virgule serait un flottant, et le
+  /// projet n'en accepte aucun sur le chemin de l'argent. Le calcul de la ligne
+  /// de taxe reste alors une multiplication d'entiers suivie d'une division
+  /// entière, exacte et reproductible — deux tickets identiques produisent le
+  /// même centime, aujourd'hui et au prochain rapprochement.
+  ///
+  /// `0` par défaut, ce qui rend l'ajout de cette colonne sans effet sur les
+  /// établissements déjà en base : aucune ligne de taxe n'est alors composée, et
+  /// le ticket est exactement celui qu'il aurait été sans elle. La borne haute
+  /// est portée par `tenants_tax_rate_bps_check` : un taux hors de `[0, 10000]`
+  /// n'est pas un taux.
+  ///
+  /// Le MVP n'expose **aucune route** pour le régler — le paramétrage fiscal du
+  /// salon relève du back-office, pas du POS. La colonne existe pour que le
+  /// total soit calculable côté serveur ; sa saisie viendra avec l'écran qui la
+  /// porte.
+  taxRateBps Int @default(0) @map("tax_rate_bps")
+
   isActive Boolean @default(true) @map("is_active")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -232,6 +279,9 @@ model Tenant {
   staffTimeOff      StaffTimeOff[]
   appointments      Appointment[]
   payments          Payment[]
+  products          Product[]
+  sales             Sale[]
+  saleItems         SaleItem[]
   notifications     Notification[]
   refreshTokens     RefreshToken[]
 
@@ -307,6 +357,10 @@ model User {
   clientAppointments    Appointment[]  @relation("AppointmentClient")
   receivedNotifications Notification[] @relation("NotificationRecipient")
   refreshTokens         RefreshToken[]
+  /// Les tickets composés par ce compte au comptoir — #60. Nommée, comme
+  /// `clientAppointments`, parce que `User` porte déjà plusieurs relations et
+  /// que Prisma exige de les distinguer.
+  cashedSales           Sale[]         @relation("SaleCashier")
 
   @@unique([tenantId, email])
   // Cible des clés étrangères composites `(tenant_id, id)` posées en SQL brut
@@ -488,6 +542,8 @@ model Service {
 
   assignedStaff ServiceStaff[]
   appointments  Appointment[]
+  /// Les lignes de ticket qui ont vendu cette prestation au comptoir (#60).
+  saleItems     SaleItem[]
 
   @@unique([tenantId, slug])
   // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
@@ -904,6 +960,14 @@ model Appointment {
   /// sur `Payment`, pour la même raison que `User.staffProfiles`.
   payments      Payment[]
   notifications Notification[]
+  /// Les tickets de comptoir rattachés à ce rendez-vous (#60).
+  ///
+  /// Une liste, et **sans unique** en regard : le CDC autorise expressément la
+  /// vente autonome, et rien n'interdit qu'une cliente reparte avec un flacon
+  /// facturé sur un second ticket après le soin. Un `@@unique` aurait interdit
+  /// ce geste ordinaire pour ne protéger d'aucun risque — c'est `payments` qui
+  /// porte l'unicité de l'**encaissement**, laquelle est une autre question.
+  sales         Sale[]
 
   // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
   @@unique([tenantId, id])
@@ -967,6 +1031,200 @@ model Payment {
   @@index([tenantId, status, createdAt])
   @@index([tenantId, createdAt])
   @@map("payments")
+}
+
+/// Article revendu au comptoir — CDC §1.4, « POS de base : services et produits
+/// retail » (#60).
+///
+/// ## Pourquoi une table, et pas un libellé libre sur la ligne de ticket
+///
+/// Parce que le prix doit avoir une source côté serveur. Un produit saisi au
+/// comptoir sous forme de « nom + montant » ferait du front l'autorité sur le
+/// montant encaissé, ce que le troisième critère de #60 interdit en toutes
+/// lettres. Le comptoir désigne un article ; c'est cette ligne-ci qui dit ce
+/// qu'il coûte.
+///
+/// ## Pourquoi elle vit dans `payments` et non dans `catalog`
+///
+/// api-module §1 range explicitement les « ventes retail » dans `payments`, et
+/// `catalog` dans « services, catégories, durée, prix, affectation aux
+/// praticiens ». Un produit n'a ni durée, ni praticien, ni créneau : il
+/// n'entrerait dans aucune des lectures que `catalog` sert, et le moteur de
+/// disponibilité n'a rien à en faire.
+model Product {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  /// Référence interne du salon — le code qu'on lit sur l'étiquette.
+  ///
+  /// Unique **par établissement** et non globalement : deux salons ont le droit
+  /// de coder chacun son shampoing `SH-01`, exactement comme ils ont chacun leur
+  /// « Massage 60 min » (tenant-isolation §1).
+  sku String @db.VarChar(64)
+
+  name String @db.VarChar(160)
+
+  /// Prix de vente affiché : entier dans la plus petite unité, code devise
+  /// explicite. Même forme que `services.price_amount_minor`, et pour la même
+  /// raison — les deux se retrouvent côte à côte sur un ticket, et deux
+  /// représentations de l'argent sur une même addition finissent par diverger.
+  priceAmountMinor Int    @map("price_amount_minor")
+  priceCurrency    String @map("price_currency") @db.Char(3)
+
+  /// Sortie du rayon — jamais une suppression : les tickets passés référencent
+  /// l'article, et le reporting doit continuer à savoir ce qui a été vendu.
+  isActive Boolean @default(true) @map("is_active")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  saleItems SaleItem[]
+
+  @@unique([tenantId, sku])
+  // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
+  @@unique([tenantId, id])
+  // La seule lecture de liste prévue : le rayon vendable, trié pour l'écran de
+  // saisie. `is_active` en deuxième position parce que le filtre précède le tri.
+  @@index([tenantId, isActive, name])
+  @@map("products")
+}
+
+/// Ticket de caisse — l'addition composée au comptoir (#60).
+///
+/// ## Les quatre montants, et pourquoi ils sont stockés
+///
+/// `subtotal`, `tax`, `tip` et `total` sont **dérivés** des lignes : ils
+/// pourraient se recalculer à chaque lecture. Ils sont écrits quand même, parce
+/// qu'un ticket est une pièce comptable — ce qui a été présenté à la cliente ne
+/// doit pas changer parce qu'un taux de taxe a été modifié depuis, ni parce
+/// qu'un article a changé de prix. Les recalculer à la lecture ferait varier
+/// l'histoire.
+///
+/// La cohérence entre les quatre est portée en base par
+/// `sales_total_amount_minor_check` : `total = subtotal + tax + tip`,
+/// vérifié par PostgreSQL et pas seulement par le service qui les compose.
+///
+/// ## Une devise, une seule
+///
+/// `currency` est celle de l'établissement au moment de la vente, et toutes les
+/// lignes la portent à l'identique. Le service refuse la vente d'un article
+/// libellé dans une autre devise plutôt que de convertir : une conversion sans
+/// taux daté n'est pas une conversion, c'est une approximation dans une pièce
+/// comptable.
+model Sale {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  /// Le rendez-vous honoré que ce ticket facture, ou `null` pour une vente
+  /// autonome — le deuxième critère de #60, « une vente peut être liée à un
+  /// rendez-vous ou autonome ».
+  ///
+  /// Nullable dès le départ, et non ajouté après coup : la vente retail au
+  /// comptoir n'est pas un cas dégradé de la prestation, c'est la moitié du POS.
+  appointmentId String?      @map("appointment_id") @db.Uuid
+  appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+
+  /// Le compte qui a composé le ticket — la traçabilité que payments-stripe §4
+  /// exige de l'encaissement au comptoir.
+  ///
+  /// `NOT NULL` : un ticket sans opérateur ne se rapproche de rien. Il vient du
+  /// jeton vérifié, jamais du corps de la requête (tenant-isolation §2).
+  cashierUserId String @map("cashier_user_id") @db.Uuid
+  cashier       User   @relation("SaleCashier", fields: [cashierUserId], references: [id], onDelete: Restrict)
+
+  /// Somme des lignes `SERVICE` et `PRODUCT`, hors taxe et hors pourboire.
+  subtotalAmountMinor Int @map("subtotal_amount_minor")
+
+  /// Somme des lignes `TAX`. `0` quand l'établissement n'a pas de taux.
+  taxAmountMinor Int @map("tax_amount_minor")
+
+  /// Somme des lignes `TIP`. `0` quand la cliente n'a rien laissé.
+  tipAmountMinor Int @map("tip_amount_minor")
+
+  /// `subtotal + tax + tip`, écrit et vérifié en base.
+  totalAmountMinor Int @map("total_amount_minor")
+
+  currency String @db.Char(3)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  items SaleItem[]
+
+  // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
+  @@unique([tenantId, id])
+  // L'historique des ventes, du plus récent au plus ancien (#62).
+  @@index([tenantId, createdAt])
+  // « Qu'a-t-on facturé sur ce rendez-vous ? » — la lecture de la fiche client
+  // et du rapprochement.
+  @@index([tenantId, appointmentId])
+  @@map("sales")
+}
+
+/// Une ligne du ticket — le premier critère de #60, « un ticket regroupe
+/// plusieurs lignes : services rendus et produits ».
+///
+/// ## Le libellé est figé, la référence est conservée
+///
+/// `label` recopie le nom de l'article **au moment de la vente**, et
+/// `service_id` / `product_id` continuent de pointer la ligne de catalogue. Les
+/// deux sont nécessaires et ne font pas double emploi : la référence sert au
+/// reporting (« combien de shampoings vendus ce mois-ci »), le libellé sert au
+/// ticket (« ce que la cliente a lu sur son reçu »). Un renommage d'article ne
+/// doit pas réécrire les tickets passés.
+///
+/// ## Ce que la ligne ne porte pas
+///
+/// Aucun taux, aucune remise, aucun praticien bénéficiaire du pourboire : les
+/// forfaits, les cartes cadeaux et le partage de pourboire entre praticiens sont
+/// **hors périmètre MVP** (payments-stripe §8). Le modèle reste simple tant que
+/// le besoin n'est pas remonté.
+model SaleItem {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  saleId String @map("sale_id") @db.Uuid
+  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Restrict)
+
+  kind SaleItemKind
+
+  /// L'article vendu, selon `kind`. Les deux sont nuls sur une ligne `TAX` ou
+  /// `TIP`, qui ne référencent rien — et `sale_items_reference_check` impose
+  /// qu'une ligne porte exactement la référence de sa nature, ni plus ni moins.
+  serviceId String?  @map("service_id") @db.Uuid
+  service   Service? @relation(fields: [serviceId], references: [id], onDelete: Restrict)
+
+  productId String?  @map("product_id") @db.Uuid
+  product   Product? @relation(fields: [productId], references: [id], onDelete: Restrict)
+
+  /// Ce que la cliente lit sur son reçu, figé à la vente.
+  label String @db.VarChar(160)
+
+  /// Toujours `1` sur une ligne `TAX` ou `TIP` : elles n'ont pas de quantité, et
+  /// un `0` ferait une ligne à zéro que rien ne distinguerait d'une erreur.
+  quantity Int
+
+  /// Prix unitaire retenu, et `unit × quantity`. Les deux sont écrits parce que
+  /// le reçu montre le premier et que la somme porte sur le second ; leur
+  /// cohérence est vérifiée en base par `sale_items_line_amount_minor_check`.
+  unitAmountMinor Int    @map("unit_amount_minor")
+  lineAmountMinor Int    @map("line_amount_minor")
+  currency        String @db.Char(3)
+
+  /// Rang de la ligne sur le ticket, à partir de `0` — l'ordre dans lequel le
+  /// comptoir l'a composée. Sans lui, deux lignes créées dans la même
+  /// milliseconde se réordonneraient d'une lecture à l'autre.
+  position Int
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Un rang par ticket — c'est ce qui rend l'ordre du reçu stable.
+  @@unique([tenantId, saleId, position])
+  @@map("sale_items")
 }
 
 // ---------------------------------------------------------------------------
