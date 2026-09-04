@@ -19,6 +19,7 @@ import { AppointmentsModule } from './modules/appointments/appointments.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { IdentityModule } from './modules/identity/identity.module';
+import { PaymentsModule } from './modules/payments/payments.module';
 
 /**
  * Racine du monolithe modulaire. Les huit modules métier du CDC §2.3
@@ -54,6 +55,14 @@ import { IdentityModule } from './modules/identity/identity.module';
     // « ce créneau était-il proposable ? » pour l'autre (#37). #31 l'avait laissé
     // hors du graphe faute de contrôleur ; la réservation publique en apporte un.
     AppointmentsModule,
+    // N'importe aucun module métier (#57) : la route du tunnel public n'est pas
+    // gardée — on paie sans compte comme on réserve sans compte —, et ses deux
+    // seules dépendances, le client Prisma scopé et le contexte de tenant,
+    // viennent de modules `@Global()`. Il ne demande **aucune** variable
+    // d'environnement supplémentaire pour démarrer : sans clés Stripe, le
+    // module se monte et toute tentative d'encaissement répond 503 — voir
+    // `stripe.config.ts`, qui exige les clés en déployé et là seulement.
+    PaymentsModule,
   ],
   providers: [
     {
