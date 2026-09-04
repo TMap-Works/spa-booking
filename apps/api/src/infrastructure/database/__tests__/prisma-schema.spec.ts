@@ -59,6 +59,13 @@ const TENANT_ROOT_TABLE = 'tenants';
  * inscrites ici pour la même raison que les autres : que leur `tenant_id`, leurs
  * index et leurs clés composites soient relus par cette suite.
  *
+ * `tenant_opening_hours` est de la même famille que `tenant_closing_days` : le
+ * CDC §1.4 range les horaires d'ouverture dans le paramétrage de
+ * l'établissement, et #343 les pose en table parce qu'un salon ferme entre midi
+ * et deux — il faut plusieurs plages par jour, ce qu'une colonne ne sait pas
+ * dire. Elle n'entre pas dans le calcul des créneaux : elle décrit ce que la
+ * vitrine publique affiche. Inscrite ici pour la même raison que les autres.
+ *
  * `staff_time_off` complète les deux précédentes par leur envers : elles disent
  * quand le praticien travaille, elle dit quand il est absent. #33 la pose à part
  * plutôt qu'en colonne d'`appointments` — une absence n'a ni client, ni
@@ -83,6 +90,7 @@ const EXPECTED_TABLES = [
   'service_staff',
   'staff_schedules',
   'tenant_closing_days',
+  'tenant_opening_hours',
   'staff_time_off',
   'appointments',
   'payments',
