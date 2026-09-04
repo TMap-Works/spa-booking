@@ -66,6 +66,8 @@ const EXPECTED_EXPORTS = [
   'availabilityQuerySchema',
   'serviceSchema',
   'serviceCategorySchema',
+  'customerSchema',
+  'customerVisitHistorySchema',
   'userSchema',
   'notificationSchema',
   'paymentSchema',

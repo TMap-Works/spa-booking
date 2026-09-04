@@ -114,6 +114,36 @@ export type {
 } from './catalog';
 
 export {
+  createCustomerRequestSchema,
+  customerHistoryQuerySchema,
+  customerPageSchema,
+  customerSchema,
+  customerSearchQuerySchema,
+  customerSummarySchema,
+  customerVisitHistorySchema,
+  customerVisitSchema,
+  customerVisitSummarySchema,
+  CUSTOMER_HISTORY_MAX_VISITS,
+  CUSTOMER_SEARCH_MAX_LENGTH,
+  CUSTOMER_SEARCH_MIN_LENGTH,
+  setCustomerStatusRequestSchema,
+  updateCustomerRequestSchema,
+} from './crm';
+export type {
+  CreateCustomerRequest,
+  Customer,
+  CustomerHistoryQuery,
+  CustomerPage,
+  CustomerSearchQuery,
+  CustomerSummary,
+  CustomerVisit,
+  CustomerVisitHistory,
+  CustomerVisitSummary,
+  SetCustomerStatusRequest,
+  UpdateCustomerRequest,
+} from './crm';
+
+export {
   authSessionResponseSchema,
   authSessionSchema,
   authTokensSchema,
