@@ -1,8 +1,20 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsIn, IsString, Matches, MaxLength, MinLength, ValidateIf } from 'class-validator';
+import {
+  IsBoolean,
+  IsEmail,
+  IsIn,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
+  ValidateIf,
+} from 'class-validator';
 
-import { USER_ROLES, type UserRole } from '../roles';
+import type { StaffAccountState, StaffInvitation } from '../identity.types';
+import { STAFF_ROLES, USER_ROLES, type StaffRole, type UserRole } from '../roles';
+import { UserProfileDto } from './auth.dto';
 
 /**
  * DTO d'administration des comptes.
@@ -54,7 +66,147 @@ const Trim = (): PropertyDecorator =>
   Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value));
 
 /**
- * Modification de ses **propres** coordonnées (#47).
+ * Invitation d'un membre du personnel — #55, `POST /api/v1/users`.
+ *
+ * ## Aucun mot de passe
+ *
+ * Le champ n'existe pas, et son absence est la décision principale de ce DTO :
+ * un administrateur qui choisirait le mot de passe d'un tiers créerait un secret
+ * partagé dès sa naissance, qu'il faudrait ensuite transmettre par un canal que
+ * personne ne maîtrise. Le compte naît avec `password_hash` nul et c'est la
+ * personne invitée qui le pose, par `POST /api/v1/auth/invitations/accept`.
+ *
+ * ## Le rôle est borné aux rôles **internes**
+ *
+ * `STAFF_ROLES` et non `USER_ROLES` : `CLIENT` n'est pas invitable. Une cliente
+ * s'inscrit d'elle-même ou est saisie au comptoir par le module `crm`, et un
+ * compte `CLIENT` créé ici serait aussitôt invisible — `GET /users` ne liste que
+ * le personnel. Le refus est un 400 qui nomme les valeurs acceptées, pas une
+ * ligne créée pour rien.
+ *
+ * ## Ni `isActive`, ni `tenantId`
+ *
+ * Le premier est l'objet de `PATCH /users/:id/status` ; le second vient du jeton
+ * vérifié (tenant-isolation §2). `forbidNonWhitelisted` rend les deux omissions
+ * exécutoires plutôt que déclaratives — un `tenantId` glissé dans le corps est
+ * refusé en 400, il ne « passe » pas silencieusement.
+ */
+export class InviteStaffMemberDto {
+  @ApiProperty({ example: 'praticienne@salon-des-lilas.test', maxLength: 320 })
+  @IsEmail({}, { message: 'email : adresse invalide' })
+  @MaxLength(320)
+  public email!: string;
+
+  @ApiProperty({
+    enum: STAFF_ROLES,
+    description: 'Rôle interne du membre invité — `CLIENT` n’est pas invitable.',
+  })
+  @IsIn(STAFF_ROLES as readonly string[], {
+    message: `role : valeurs acceptées — ${STAFF_ROLES.join(', ')}`,
+  })
+  public role!: StaffRole;
+
+  @ApiProperty({ example: 'Alice', maxLength: NAME_MAX_LENGTH })
+  @IsString()
+  @Trim()
+  @MinLength(1, { message: 'firstName : au moins un caractère' })
+  @MaxLength(NAME_MAX_LENGTH)
+  public firstName!: string;
+
+  @ApiProperty({ example: 'Durand', maxLength: NAME_MAX_LENGTH })
+  @IsString()
+  @Trim()
+  @MinLength(1, { message: 'lastName : au moins un caractère' })
+  @MaxLength(NAME_MAX_LENGTH)
+  public lastName!: string;
+
+  @ApiPropertyOptional({ example: '+261 34 12 345 67', maxLength: PHONE_MAX_LENGTH })
+  // `@IsOptional()` et non le `@ValidateIf` des coordonnées : à la création il
+  // n'y a pas de valeur antérieure à effacer, « absent » et « null » disent donc
+  // la même chose — pas de numéro.
+  @IsOptional()
+  @IsString()
+  @Trim()
+  @MaxLength(PHONE_MAX_LENGTH)
+  @Matches(PHONE_PATTERN, { message: 'phone : numéro de téléphone invalide' })
+  public phone?: string;
+}
+
+/**
+ * Activation ou désactivation d'un compte du personnel — #55,
+ * `PATCH /api/v1/users/:id/status`.
+ *
+ * Un booléen et non deux routes `/deactivate` et `/reactivate` : la réactivation
+ * est le même geste, et deux points d'entrée auraient deux jeux de gardes à tenir
+ * en accord. Le champ est **obligatoire** — un corps vide qui « bascule » l'état
+ * rendrait l'opération non idempotente, donc dangereuse à rejouer.
+ */
+export class SetAccountStatusDto {
+  @ApiProperty({
+    description:
+      '`false` ferme la connexion du compte et révoque ses sessions. Le compte, ' +
+      'ses affectations et ses rendez-vous passés restent intacts.',
+  })
+  @IsBoolean({ message: 'isActive : booléen attendu' })
+  public isActive!: boolean;
+}
+
+/**
+ * Le compte du personnel **avec** son état d'activation — réponse de
+ * `PATCH /api/v1/users/:id/status`.
+ *
+ * Forme propre à cette route : `UserProfileDto` est la charge utile de
+ * `GET /users`, `GET /users/:id` et `/auth/me`, et y ajouter `isActive`
+ * élargirait trois contrats pour le besoin d'un seul — en disant au passage à la
+ * clientèle qu'un compte a été fermé, ce qui ne la regarde pas.
+ */
+export class StaffAccountStateDto extends UserProfileDto implements StaffAccountState {
+  @ApiProperty({ description: 'État du compte **après** l’appel.' })
+  public isActive!: boolean;
+}
+
+/**
+ * Ce que rend l'émission d'une invitation — `POST /api/v1/users` et
+ * `POST /api/v1/users/:id/invitation`.
+ *
+ * ## Pourquoi le jeton est dans le corps
+ *
+ * Parce que le module `notifications` (CDC §2.3) n'existe pas encore dans
+ * `apps/api/src/modules/` : aucune chaîne d'envoi ne peut porter le lien, et la
+ * créer sortirait de l'empreinte de #55. Le jeton part donc à l'administrateur
+ * qui invite — lequel vient de créer ce compte et peut de toute façon réémettre
+ * l'invitation à volonté. Il ne franchit aucune frontière que le rôle `ADMIN` ne
+ * franchisse déjà, et il ne vaut que pour poser le **premier** mot de passe d'un
+ * compte qui n'en a pas.
+ *
+ * Ce champ est écrit pour disparaître : quand `notifications` expédiera le lien,
+ * il quitte la réponse et l'invitation ne transite plus que par la boîte mail de
+ * la personne invitée. Une issue de suivi le porte.
+ */
+export class StaffInvitationDto implements StaffInvitation {
+  @ApiProperty({ type: UserProfileDto })
+  public user!: UserProfileDto;
+
+  @ApiProperty({
+    description:
+      'Jeton d’invitation, à usage unique. À transmettre à la personne invitée, ' +
+      'qui l’échange contre son mot de passe sur `POST /api/v1/auth/invitations/accept`.',
+  })
+  public invitationToken!: string;
+
+  @ApiProperty({ description: 'Validité du jeton, en secondes.', example: 604_800 })
+  public expiresIn!: number;
+}
+
+/**
+ * Modification des coordonnées d'un compte — `PATCH /users/me` (#47) et
+ * `PATCH /users/:id` (#55).
+ *
+ * Le même DTO pour les deux routes, et ce n'est pas une économie : les champs
+ * modifiables sont exactement les mêmes — c'est *qui* peut les modifier et *sur
+ * quel compte* qui diffère, et cela se décide par la garde et par l'identifiant
+ * passé au service, pas par la validation du corps. Deux DTO jumeaux auraient
+ * surtout offert deux endroits où les bornes divergent.
  *
  * Reprend champ pour champ `updateProfileRequestSchema` de `@spa/shared` —
  * `.strict().partial()`, `phone` nullable. Ce que ce DTO **ne porte pas** est ce
@@ -84,7 +236,7 @@ const Trim = (): PropertyDecorator =>
  * exactement ce que `@IsOptional()` autorise. La différence est délibérée et
  * suit la nullabilité des colonnes.
  */
-export class UpdateOwnProfileDto {
+export class UpdateContactDetailsDto {
   @ApiPropertyOptional({ example: 'Alice', maxLength: NAME_MAX_LENGTH })
   @ValidateIf((_object: unknown, value: unknown) => value !== undefined)
   @IsString()
@@ -127,7 +279,7 @@ export class UpdateOwnProfileDto {
  * seulement de ne pas y toucher. L'étalement conditionnel est écrit ici, une
  * fois, plutôt que dans le contrôleur.
  */
-export function toProfileChanges(dto: UpdateOwnProfileDto): {
+export function toProfileChanges(dto: UpdateContactDetailsDto): {
   firstName?: string;
   lastName?: string;
   phone?: string | null;
