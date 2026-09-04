@@ -80,6 +80,18 @@ const TENANT_ROOT_TABLE = 'tenants';
  * soient relus par cette suite comme ceux de n'importe quelle table métier.
  * Le skill la décrit sans tenant ; ce schéma lui en donne un, parce que
  * tenant-isolation §1 n'admet d'exception que par ADR.
+ *
+ * `products`, `sales` et `sale_items` sont le POS de base du CDC §1.4
+ * (« services + produits retail »), posé par #60. `sales` et `sale_items` sont
+ * la « transaction » que le CDC §2.4 nomme déjà, éclatée en un en-tête et ses
+ * lignes parce qu'un ticket regroupe plusieurs articles — ce qu'une ligne
+ * unique ne sait pas dire. `products` est le rayon revendable : il donne au
+ * prix d'un article une source côté serveur, sans laquelle « le total est
+ * recalculé côté serveur » n'aurait rien à recalculer.
+ *
+ * Elles sont inscrites ici pour la même raison que les autres — que leur
+ * `tenant_id`, leurs index, leurs uniques composites et les `CHECK` de leurs
+ * montants soient relus par cette suite.
  */
 const EXPECTED_TABLES = [
   'tenants',
@@ -94,6 +106,9 @@ const EXPECTED_TABLES = [
   'staff_time_off',
   'appointments',
   'payments',
+  'products',
+  'sales',
+  'sale_items',
   'notifications',
   'refresh_tokens',
   'processed_webhook_events',

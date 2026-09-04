@@ -1,8 +1,15 @@
 import { Module } from '@nestjs/common';
 
+import { CatalogModule } from '../catalog/catalog.module';
+import { IdentityModule } from '../identity/identity.module';
 import { PaymentsRepository } from './payments.repository';
 import { PaymentsService } from './payments.service';
+import { PosRepository } from './pos.repository';
+import { ProductsController } from './products.controller';
+import { ProductsService } from './products.service';
 import { PublicPaymentsController } from './public-payments.controller';
+import { SalesController } from './sales.controller';
+import { SalesService } from './sales.service';
 import { StripeWebhookController } from './stripe-webhook.controller';
 import { InProcessWebhookQueue, WEBHOOK_QUEUE } from './stripe-webhook.queue';
 import { StripeWebhookRepository } from './stripe-webhook.repository';
@@ -21,25 +28,37 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
  * |---|---|
  * | #57 | L'intention de paiement Stripe et la clé publiable — la tokenisation côté client, donc le périmètre SAQ A |
  * | #58 | La réception des webhooks Stripe : signature sur corps brut, idempotence, et le passage du rendez-vous en `CONFIRMED` |
+ * | #60 | Le POS de base : le rayon retail, le ticket de caisse et ses lignes, le total recalculé côté serveur |
  *
- * Les deux moitiés se répondent : #57 crée une intention et ne confirme rien,
- * #58 est le seul à faire passer un encaissement en `SUCCEEDED` et le
- * rendez-vous en `CONFIRMED` (payments-stripe §2).
+ * Les deux premières moitiés se répondent : #57 crée une intention et ne
+ * confirme rien, #58 est le seul à faire passer un encaissement en `SUCCEEDED`
+ * et le rendez-vous en `CONFIRMED` (payments-stripe §2).
  *
- * Restent à venir : le montage d'Elements côté tunnel (#59), le POS et ses
- * lignes de vente (#60, #62), les remboursements initiés au comptoir (#63).
+ * #60 est d'une autre nature : il **compose une addition, il n'encaisse rien**.
+ * Un ticket existe avant d'être réglé, ce qui est exactement ce qu'un comptoir
+ * fait — et le règlement, espèces comprises, est l'affaire de #62.
  *
- * ## Ce qu'il n'importe pas, et pourquoi
+ * Restent à venir : le montage d'Elements côté tunnel (#59), le paiement en
+ * espèces et l'historique des ventes (#62), les remboursements initiés au
+ * comptoir (#63).
  *
- * **Aucun autre module métier.** Ni la route du tunnel public — on paie sans
- * compte, comme on réserve sans compte — ni la route de webhook — Stripe ne
- * présente aucun jeton, c'est la signature qui l'authentifie — ne sont gardées,
- * si bien qu'`IdentityModule` n'a rien à y monter. Le jour où le POS ouvrira sa
- * surface de back-office (#60), l'import viendra avec elle et pas avant :
- * importer un module pour des gardes qu'aucune route n'utilise serait un
- * couplage gratuit.
+ * ## Ce qu'il importe, et pourquoi
  *
- * `AppointmentsModule` n'est pas importé non plus, et c'est une dette assumée
+ * `IdentityModule`, et seulement pour ses **gardes** : les cinq routes du POS
+ * sont gardées par `@AuthAtLeast(...)`, qui monte `JwtAuthGuard` et
+ * `RolesGuard` — deux gardes qui ont des dépendances à injecter. C'est ce que
+ * l'en-tête de ce fichier annonçait avant #60 : « le jour où le POS ouvrira sa
+ * surface de back-office, l'import viendra avec elle et pas avant ». Les deux
+ * routes de #57 et #58 restent, elles, sans garde — on paie sans compte comme
+ * on réserve sans compte, et Stripe s'authentifie par sa signature.
+ *
+ * `CatalogModule`, pour `ServicesService` : c'est lui qui dit ce que coûte une
+ * prestation, et le ticket a besoin de ce prix. C'est la voie prévue par
+ * api-module §3 — un appel de service, jamais l'import du dépôt d'un autre
+ * module. Un second avis sur le prix d'une prestation aurait fini par diverger
+ * du premier.
+ *
+ * `AppointmentsModule` n'est pas importé, et c'est une dette assumée
  * vis-à-vis d'api-module §3, pour deux raisons distinctes :
  *
  * - à la création de l'intention, le montant à encaisser est le prix figé à la
@@ -69,20 +88,35 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
  *
  * ## Ce qu'il exporte
  *
- * `PaymentsService`, la porte du module — c'est par elle que #60 ouvrira une
- * vente au comptoir. `StripeConfig`, parce qu'il vaut mieux une seule porte de
- * configuration Stripe que deux. `WEBHOOK_QUEUE`, pour la seule raison qui
- * vaille : les suites d'intégration doivent pouvoir attendre que la file se
- * vide avant d'asserter sur la base.
+ * `PaymentsService`, la porte de l'encaissement en ligne. `SalesService`, celle
+ * de la caisse — c'est par elle que #62 réglera un ticket en espèces, et que
+ * `reporting` lira le chiffre d'affaires du comptoir. `StripeConfig`, parce
+ * qu'il vaut mieux une seule porte de configuration Stripe que deux.
+ * `WEBHOOK_QUEUE`, pour la seule raison qui vaille : les suites d'intégration
+ * doivent pouvoir attendre que la file se vide avant d'asserter sur la base.
  *
- * `PaymentsRepository` et `StripeWebhookRepository` ne sont **pas** exportés :
- * un module n'importe jamais le repository d'un autre (api-module §3).
+ * `ProductsService` n'est **pas** exporté : le rayon retail n'intéresse aucun
+ * autre module du périmètre MVP, et un `exports` posé « au cas où » ouvrirait
+ * une porte que personne ne franchit et qu'il faudrait pourtant maintenir.
+ *
+ * `PaymentsRepository`, `StripeWebhookRepository` et `PosRepository` ne sont
+ * pas exportés non plus : un module n'importe jamais le repository d'un autre
+ * (api-module §3).
  */
 @Module({
-  controllers: [PublicPaymentsController, StripeWebhookController],
+  imports: [IdentityModule, CatalogModule],
+  controllers: [
+    PublicPaymentsController,
+    StripeWebhookController,
+    ProductsController,
+    SalesController,
+  ],
   providers: [
     PaymentsService,
     PaymentsRepository,
+    ProductsService,
+    SalesService,
+    PosRepository,
     StripeWebhookService,
     StripeWebhookRepository,
     // `useFactory` et non `useClass` : le paramètre de ces deux fournisseurs de
@@ -96,6 +130,6 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
     { provide: STRIPE_GATEWAY, useClass: StripeHttpGateway },
     { provide: WEBHOOK_QUEUE, useClass: InProcessWebhookQueue },
   ],
-  exports: [PaymentsService, StripeConfig, WEBHOOK_QUEUE],
+  exports: [PaymentsService, SalesService, StripeConfig, WEBHOOK_QUEUE],
 })
 export class PaymentsModule {}

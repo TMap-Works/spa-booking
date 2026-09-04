@@ -11,17 +11,30 @@ notre périmètre PCI en SAQ A.
 |---|---|
 | #57 | L'intention de paiement Stripe, la clé publiable, et la frontière qui les sépare de la clé secrète |
 | #58 | La réception des webhooks Stripe — signature sur corps brut, idempotence en base, et le passage du rendez-vous en `CONFIRMED` |
+| #60 | Le POS de base — rayon retail, ticket de caisse et ses lignes, total recalculé côté serveur |
 
-À venir : le montage d’Elements côté tunnel (#59), le POS et ses lignes
-de vente (#60, #62), les remboursements initiés au comptoir (#63).
+À venir : le montage d’Elements côté tunnel (#59), le paiement en espèces et
+l’historique des ventes (#62), les remboursements initiés au comptoir (#63).
 
 ## Les routes
 
 | Méthode | Chemin | Rang |
 |---|---|---|
 | `POST` | `/api/v1/public/:tenantSlug/payments/intents` | — (ouverte) |
+| `POST` | `/api/v1/stripe/webhook` | — (signature Stripe) |
+| `GET` | `/api/v1/products` | `STAFF` |
+| `POST` | `/api/v1/products` | `MANAGER` |
+| `PATCH` | `/api/v1/products/:id` | `MANAGER` |
+| `POST` | `/api/v1/sales` | `STAFF` |
+| `GET` | `/api/v1/sales/:id` | `STAFF` |
 
-La route n'est pas gardée, et c'est délibéré : on réserve sans compte (#37),
+Les cinq routes du POS sont gardées et **n'ont aucune surface publique** : un
+ticket de caisse est une pièce comptable du salon, son rayon une donnée
+commerciale. La ligne entre `STAFF` et `MANAGER` passe où le CDC la met —
+composer une addition et lire le rayon sont des gestes de comptoir, fixer un
+prix de vente est une décision.
+
+La route du tunnel n'est pas gardée, et c'est délibéré : on réserve sans compte (#37),
 donc on paie sans compte. Ce qui autorise l'appel est la **connaissance de
 l'identifiant** du rendez-vous — un UUID v4 remis à la cliente sur son écran de
 confirmation et dans son e-mail. C'est exactement le régime du report et de
@@ -268,6 +281,36 @@ l'inversion la plus probable place ici une clé `sk_…`.
 | `__tests__/stripe-webhook.service.spec.ts` | La résolution d'établissement et l'alerte de litige |
 | `test/payments-webhook.integration-spec.ts` | La route servie, le corps **brut**, le 400 sans traitement, le 200 rendu avant le traitement |
 | `test/payments-webhook.isolation-spec.ts` | Contre un vrai PostgreSQL : la frontière entre établissements, l'unicité qui tranche, la transaction qui fait bloc |
+| `__tests__/pos.types.spec.ts` | Le témoin du vocabulaire du POS contre `enum SaleItemKind` |
+| `__tests__/pos.totals.spec.ts` | Le calcul du ticket, centime par centime : sous-total, taxe en points de base, pourboire, bornes |
+| `__tests__/products.service.spec.ts` | La devise imposée par l'établissement, l'unicité du code par tenant, l'absence de suppression |
+| `__tests__/sales.service.spec.ts` | D'où vient chaque montant, les refus qui protègent la pièce comptable, la frontière du tenant sur les deux sources de prix |
+| `test/pos.integration-spec.ts` | Les cinq routes servies, les gardes montées, `forbidNonWhitelisted` qui refuse un montant glissé dans un ticket |
+| `test/pos-tenant.isolation-spec.ts` | Les cinq routes traversées : rien du voisin n'est lisible, modifiable ni facturable |
+| `test/pos.isolation-spec.ts` | Contre un vrai PostgreSQL : la transaction du ticket, le scoping par l'extension, les `CHECK` de montant et les clés composites |
+
+## Le POS — ce qui tient le total (#60)
+
+Le troisième critère de #60 — « le total est recalculé côté serveur ; le montant
+envoyé par le front ne fait jamais autorité » — ne repose sur aucun contrôle
+défensif. Il tient par **quatre propriétés de forme**, chacune vérifiable :
+
+| Où | Ce qui l'empêche |
+|---|---|
+| `dto/sale.dto.ts` | il n'existe aucun champ de montant sur une ligne `SERVICE` ou `PRODUCT`, ni de total sur le ticket ; `forbidNonWhitelisted` refuse en 400 celui qu'on y glisserait |
+| `pos.types.ts` | `SaleLineRequest` est une union où seul `TIP` porte un montant — le domaine n'a pas de place pour les autres |
+| `sales.service.ts` | chaque prix unitaire est relu à sa source : `ServicesService.byId` pour une prestation, le rayon pour un article |
+| `sales_total_amount_minor_check` | PostgreSQL refuse un ticket dont le total ne somme pas ses trois parts |
+
+Le **pourboire** est la seule valeur acceptée de l'appelant, et il l'est parce
+qu'il n'existe dans aucune table à relire : une personne le décide au comptoir.
+Le serveur le borne, refuse un flottant, et le porte en ligne distincte — jamais
+fondu dans un prix (payments-stripe §5).
+
+La **taxe** est composée à partir de `tenants.tax_rate_bps`, un entier en points
+de base. Un taux fractionnaire aurait introduit un type inexact sur le chemin de
+l'argent ; le calcul reste une multiplication d'entiers suivie d'une division
+entière, exacte et reproductible.
 
 ## Dette connue
 
@@ -286,3 +329,16 @@ l'inversion la plus probable place ici une clé `sk_…`.
   manuel depuis le tableau de bord le rattrape. La chaîne durable du CDC §2.2
   (SQS, accusé de consommation, file d'attente morte) est ce qui referme ce
   trou ; elle est hors de l'empreinte de #58 et porte sa propre issue de suivi.
+- **`PosRepository` lit `appointments` et `tenants` directement**, pour une
+  existence et pour deux colonnes de paramétrage. Même dette, et même
+  justification, que la lecture d'`appointments` par `PaymentsRepository` :
+  aucune écriture, aucune colonne personnelle, et pas de lecture par identifiant
+  à appeler chez le voisin. Les prestations, elles, passent bien par
+  `ServicesService` — la voie conforme.
+- **`tenants.tax_rate_bps` n'a aucune route pour être réglé.** Le paramétrage
+  fiscal du salon relève du back-office, pas du POS : la colonne existe pour que
+  le total soit calculable côté serveur, sa saisie viendra avec l'écran qui la
+  porte. À `0` — la valeur par défaut — aucun ticket ne porte de ligne de taxe.
+- **Un ticket ne s'encaisse pas encore.** #60 compose l'addition ; le règlement
+  en espèces, l'historique filtrable et le rapprochement sont l'objet de #62, et
+  les remboursements de #63.
