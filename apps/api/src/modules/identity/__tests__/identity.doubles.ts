@@ -6,8 +6,10 @@ import type { AppConfigService } from '../../../config/app-config.service';
 import { toProfile } from '../identity.repository';
 import type {
   IdentityRepository,
+  OpeningHourRecord,
   PublicTenantRecord,
   SessionRecord,
+  TenantSettingsChanges,
   UserRecord,
 } from '../identity.repository';
 import type { UserProfile } from '../identity.types';
@@ -117,6 +119,18 @@ export class FakeIdentityRepository {
       defaultCurrency: 'EUR',
       contactEmail: `contact@${slug}.test`,
       contactPhone: '+33100000000',
+      // Adresse et horaires **absents** par défaut (#343) : c'est l'état d'un
+      // salon fraîchement inscrit, et celui de tous les établissements déjà en
+      // base au moment de la migration. Les poser par défaut aurait fait passer
+      // au vert une vitrine qui ne se sert jamais sans eux — alors que le
+      // critère est justement qu'un salon sans adresse reste servi. Les tests
+      // qui les veulent les déclarent en `overrides`.
+      addressLine1: null,
+      addressLine2: null,
+      postalCode: null,
+      city: null,
+      countryCode: null,
+      openingHours: [],
       isActive: true,
       ...overrides,
     });
@@ -195,6 +209,54 @@ export class FakeIdentityRepository {
     }
     const { isActive: _isActive, ...vitrine } = stored;
     return vitrine;
+  }
+
+  /**
+   * La vue back-office du même établissement — la vitrine, plus `isActive`
+   * (#343).
+   *
+   * Même `requireTenant()` que la lecture publique, et c'est le point : elle
+   * n'accepte aucun identifiant en paramètre, donc aucun appelant ne peut en
+   * désigner un autre. Le vrai dépôt tient la même propriété par le client
+   * scopé, qui borne le modèle racine sur son `id`.
+   */
+  public async findCurrentTenant(): Promise<StoredTenant | null> {
+    const tenantId = this.requireTenant();
+    return this.tenantRecords.get(tenantId) ?? null;
+  }
+
+  /**
+   * Écrit les réglages de l'établissement **de la portée** (#343).
+   *
+   * Rend `false` quand la portée ne désigne aucun établissement connu — le
+   * pendant du `count === 0` d'`updateMany` sous le client scopé, que le service
+   * traduit en 404.
+   */
+  public async updateTenantSettings(changes: TenantSettingsChanges): Promise<boolean> {
+    const tenantId = this.requireTenant();
+    const stored = this.tenantRecords.get(tenantId);
+    if (stored === undefined) {
+      return false;
+    }
+    this.tenantRecords.set(tenantId, { ...stored, ...changes });
+    return true;
+  }
+
+  /**
+   * Remplace la semaine d'ouverture de l'établissement **de la portée** (#343).
+   *
+   * Ne touche que `tenantRecords.get(tenantId)` : c'est ce qui rend observable,
+   * en test, qu'une écriture du voisin ne vide pas les horaires de l'appelant.
+   * Le vrai dépôt tient la même garantie par l'extension, qui pose `tenant_id`
+   * sur le `deleteMany` comme sur le `createMany`.
+   */
+  public async replaceOpeningHours(entries: readonly OpeningHourRecord[]): Promise<void> {
+    const tenantId = this.requireTenant();
+    const stored = this.tenantRecords.get(tenantId);
+    if (stored === undefined) {
+      return;
+    }
+    this.tenantRecords.set(tenantId, { ...stored, openingHours: [...entries] });
   }
 
   public async findUserByEmail(email: string): Promise<UserRecord | null> {
