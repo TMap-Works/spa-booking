@@ -1,0 +1,320 @@
+import { randomUUID } from 'node:crypto';
+
+import { getTenantId } from '../../../common/tenant';
+import type { PaymentsRepository } from '../payments.repository';
+import type {
+  CardPaymentDraft,
+  PayableAppointment,
+  PaymentMethod,
+  PaymentRecord,
+  PaymentStatus,
+} from '../payments.types';
+import { StripeConfig } from '../stripe/stripe.config';
+import type {
+  CreatePaymentIntentCommand,
+  StripeGateway,
+  StripePaymentIntent,
+} from '../stripe/stripe.gateway';
+
+/**
+ * Doubles du module `payments`, partagés par ses suites unitaires et par ses
+ * suites d'intégration et d'isolation.
+ *
+ * Le dépôt en mémoire reproduit **quatre propriétés précises** du vrai, et
+ * chacune porte un test :
+ *
+ * 1. le **scoping par tenant** — chaque ligne porte son `tenantId`, et toute
+ *    lecture comme toute écriture le filtrent, exactement comme l'extension
+ *    Prisma le fait en vrai. Un double qui ignorerait le tenant ferait passer
+ *    les tests d'isolation pour de mauvaises raisons, ce qui est pire que de ne
+ *    pas les écrire ;
+ * 2. le **défaut fermé** — sans portée de tenant résolue, aucune opération. Le
+ *    mode ouvert par défaut est ce qui produit les fuites ;
+ * 3. l'**unicité `(tenantId, appointmentId)`**, rendue par un `null` de
+ *    `recordCardIntent` comme le vrai traduit le code Prisma `P2002` — c'est ce
+ *    qui rend la course de deux requêtes concurrentes exerçable ;
+ * 4. la **projection** — `findPayableAppointment` ne rend que l'identifiant, le
+ *    statut et le prix. Ce que le vrai ne lit pas, le double ne le connaît pas
+ *    non plus, faute de quoi un test pourrait s'appuyer sur une donnée que le
+ *    module n'a jamais eue.
+ *
+ * La passerelle Stripe, elle, ne parle **jamais** au réseau : aucun test de ce
+ * dépôt n'atteint l'environnement Stripe, live ou test (payments-stripe §7).
+ */
+
+interface StoredAppointment {
+  tenantId: string;
+  id: string;
+  status: string;
+  amountMinor: number;
+  currency: string;
+}
+
+interface StoredPayment {
+  tenantId: string;
+  id: string;
+  appointmentId: string | null;
+  amountMinor: number;
+  currency: string;
+  method: PaymentMethod;
+  status: PaymentStatus;
+  providerPaymentIntentId: string | null;
+}
+
+/** Sans portée résolue, rien ne passe — c'est la propriété 2. */
+function requireTenant(): string {
+  const tenantId = getTenantId();
+
+  if (tenantId === undefined) {
+    throw new Error(
+      'FakePaymentsRepository : aucune portée de tenant ouverte. Le vrai dépôt ' +
+        'lèverait `MissingTenantContextError` — un double qui rendrait « toutes ' +
+        'les lignes » ferait verdir la fuite qu’on cherche.',
+    );
+  }
+
+  return tenantId;
+}
+
+/**
+ * La surface publique du vrai dépôt, et rien d'autre.
+ *
+ * `Pick` plutôt qu'`implements PaymentsRepository` directement : le vrai porte
+ * un champ privé (`prisma`), et TypeScript n'autorise à implémenter un type à
+ * membres privés que par héritage. Le témoin qu'on veut ici n'est pas la
+ * parenté, c'est la **substituabilité** — une méthode renommée dans le vrai
+ * fait échouer la compilation de ce fichier, ce qui est exactement le moment où
+ * il faut l'apprendre.
+ */
+type PaymentsRepositoryPort = Pick<
+  PaymentsRepository,
+  'findPayableAppointment' | 'findPaymentByAppointment' | 'recordCardIntent'
+>;
+
+export class FakePaymentsRepository implements PaymentsRepositoryPort {
+  private readonly appointments: StoredAppointment[] = [];
+  private readonly payments: StoredPayment[] = [];
+
+  /**
+   * Sème un rendez-vous payable dans un établissement.
+   *
+   * Le `tenantId` est **explicite** et non pris dans le contexte : une suite de
+   * fuite sème chez A pour lire chez B, ce qu'un ensemencement scopé rendrait
+   * impossible à écrire.
+   */
+  public seedAppointment(input: {
+    tenantId: string;
+    id?: string;
+    status?: string;
+    amountMinor?: number;
+    currency?: string;
+  }): StoredAppointment {
+    const row: StoredAppointment = {
+      tenantId: input.tenantId,
+      id: input.id ?? randomUUID(),
+      status: input.status ?? 'PENDING',
+      amountMinor: input.amountMinor ?? 7000,
+      currency: input.currency ?? 'EUR',
+    };
+    this.appointments.push(row);
+    return row;
+  }
+
+  /** Sème un encaissement déjà inscrit — reprise, vente en espèces, remboursement. */
+  public seedPayment(input: {
+    tenantId: string;
+    appointmentId: string;
+    id?: string;
+    amountMinor?: number;
+    currency?: string;
+    method?: PaymentMethod;
+    status?: PaymentStatus;
+    providerPaymentIntentId?: string | null;
+  }): StoredPayment {
+    const row: StoredPayment = {
+      tenantId: input.tenantId,
+      id: input.id ?? randomUUID(),
+      appointmentId: input.appointmentId,
+      amountMinor: input.amountMinor ?? 7000,
+      currency: input.currency ?? 'EUR',
+      method: input.method ?? 'CARD',
+      status: input.status ?? 'PENDING',
+      providerPaymentIntentId:
+        input.providerPaymentIntentId === undefined
+          ? `pi_${randomUUID()}`
+          : input.providerPaymentIntentId,
+    };
+    this.payments.push(row);
+    return row;
+  }
+
+  /** Toutes les lignes, tous établissements confondus — pour l'assertion « intact ». */
+  public allPayments(): readonly StoredPayment[] {
+    return this.payments;
+  }
+
+  public findPayableAppointment(appointmentId: string): Promise<PayableAppointment | null> {
+    const tenantId = requireTenant();
+    const row = this.appointments.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.id === appointmentId,
+    );
+
+    return Promise.resolve(
+      row === undefined
+        ? null
+        : {
+            id: row.id,
+            status: row.status,
+            price: { amountMinor: row.amountMinor, currency: row.currency },
+          },
+    );
+  }
+
+  public findPaymentByAppointment(appointmentId: string): Promise<PaymentRecord | null> {
+    const tenantId = requireTenant();
+    const row = this.payments.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.appointmentId === appointmentId,
+    );
+
+    return Promise.resolve(row === undefined ? null : toRecord(row));
+  }
+
+  public recordCardIntent(draft: CardPaymentDraft): Promise<PaymentRecord | null> {
+    const tenantId = requireTenant();
+    const taken = this.payments.some(
+      (candidate) =>
+        candidate.tenantId === tenantId && candidate.appointmentId === draft.appointmentId,
+    );
+
+    // Propriété 3 : l'unicité est tranchée ici, comme la base la tranche.
+    if (taken) {
+      return Promise.resolve(null);
+    }
+
+    const row: StoredPayment = {
+      tenantId,
+      id: randomUUID(),
+      appointmentId: draft.appointmentId,
+      amountMinor: draft.amount.amountMinor,
+      currency: draft.amount.currency,
+      method: 'CARD',
+      status: 'PENDING',
+      providerPaymentIntentId: draft.providerPaymentIntentId,
+    };
+    this.payments.push(row);
+
+    return Promise.resolve(toRecord(row));
+  }
+}
+
+function toRecord(row: StoredPayment): PaymentRecord {
+  return {
+    id: row.id,
+    appointmentId: row.appointmentId,
+    amount: { amountMinor: row.amountMinor, currency: row.currency },
+    method: row.method,
+    status: row.status,
+    providerPaymentIntentId: row.providerPaymentIntentId,
+  };
+}
+
+/**
+ * Passerelle Stripe en mémoire — **aucun appel réseau**.
+ *
+ * Elle reproduit la seule propriété du vrai dont le service dépende :
+ * l'**idempotence par clé**. Deux créations avec la même `idempotencyKey`
+ * rendent la même intention, comme Stripe le fait pendant 24 heures. C'est ce
+ * qui rend exerçable la course de deux requêtes concurrentes sans avoir à
+ * simuler un verrou.
+ */
+export class FakeStripeGateway implements StripeGateway {
+  private readonly byKey = new Map<string, StripePaymentIntent>();
+  private readonly byId = new Map<string, StripePaymentIntent>();
+
+  /** Les commandes reçues, dans l'ordre — pour vérifier montant et métadonnées. */
+  public readonly commands: CreatePaymentIntentCommand[] = [];
+  /** Les identifiants relus, dans l'ordre — pour prouver qu'une reprise ne crée rien. */
+  public readonly retrieved: string[] = [];
+
+  /** Pose l'échec du prestataire sur le prochain appel, quel qu'il soit. */
+  public failWith: Error | null = null;
+
+  /**
+   * Le statut que rendra la **relecture**, quand une suite veut simuler un
+   * webhook en retard — Stripe dit « payé » pendant que la ligne dit encore
+   * `PENDING`. Sans lui, aucune suite ne pourrait exercer le cas où la source
+   * de vérité contredit notre copie.
+   */
+  public retrievedStatus: string | null = null;
+
+  public createPaymentIntent(
+    command: CreatePaymentIntentCommand,
+  ): Promise<StripePaymentIntent> {
+    this.commands.push(command);
+
+    if (this.failWith !== null) {
+      return Promise.reject(this.failWith);
+    }
+
+    const known = this.byKey.get(command.idempotencyKey);
+
+    if (known !== undefined) {
+      return Promise.resolve(known);
+    }
+
+    const id = `pi_${randomUUID()}`;
+    const intent: StripePaymentIntent = {
+      id,
+      clientSecret: `${id}_secret_${randomUUID()}`,
+      status: 'requires_payment_method',
+      amountMinor: command.amountMinor,
+      currency: command.currency.toLowerCase(),
+    };
+
+    this.byKey.set(command.idempotencyKey, intent);
+    this.byId.set(id, intent);
+
+    return Promise.resolve(intent);
+  }
+
+  public retrievePaymentIntent(id: string): Promise<StripePaymentIntent> {
+    this.retrieved.push(id);
+
+    if (this.failWith !== null) {
+      return Promise.reject(this.failWith);
+    }
+
+    const known = this.byId.get(id);
+
+    if (known !== undefined) {
+      return Promise.resolve(
+        this.retrievedStatus === null ? known : { ...known, status: this.retrievedStatus },
+      );
+    }
+
+    // Une intention semée par une suite sans être passée par `create` : rendue
+    // telle quelle plutôt qu'en erreur, le service n'ayant à en connaître que
+    // le secret.
+    const intent: StripePaymentIntent = {
+      id,
+      clientSecret: `${id}_secret_${randomUUID()}`,
+      status: this.retrievedStatus ?? 'requires_payment_method',
+      amountMinor: 0,
+      currency: 'eur',
+    };
+    this.byId.set(id, intent);
+
+    return Promise.resolve(intent);
+  }
+}
+
+/** Les deux clés de test — des chaînes de remplissage, jamais des secrets. */
+export const TEST_STRIPE_ENV = {
+  STRIPE_SECRET_KEY: 'sk_test_notasecret_0000000000',
+  STRIPE_PUBLISHABLE_KEY: 'pk_test_notasecret_0000000000',
+} as const;
+
+/** Une configuration Stripe complète, pour les suites qui n'en testent pas l'absence. */
+export function testStripeConfig(): StripeConfig {
+  return new StripeConfig({ NODE_ENV: 'test', ...TEST_STRIPE_ENV });
+}
