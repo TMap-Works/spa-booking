@@ -3,14 +3,17 @@ import { Injectable } from '@nestjs/common';
 import { ConflictError, NotFoundError } from '../../common/errors';
 import { getTenantId, setRequestTenantId } from '../../common/tenant';
 import { StructuredLogger } from '../../common/logging/structured-logger';
+import { normalizeEmail } from './email';
 import {
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
+  InvalidInvitationError,
   InvalidRefreshTokenError,
 } from './identity.errors';
 import { IdentityRepository, toProfile, type UserRecord } from './identity.repository';
 import type { AuthenticationResult, UserProfile } from './identity.types';
 import { PasswordHasher } from './password.hasher';
+import { isStaffRole } from './roles';
 import { hashJti, TokenService } from './token.service';
 
 /**
@@ -39,19 +42,6 @@ export class AuthService {
     private readonly tokens: TokenService,
     private readonly logger: StructuredLogger,
   ) {}
-
-  /**
-   * Forme canonique d'une adresse : minuscules, sans espaces de bord.
-   *
-   * L'unique du schéma porte sur les octets — `Alice@Example.test` et
-   * `alice@example.test` cohabiteraient dans le même salon, et la connexion n'en
-   * retrouverait qu'une. La normalisation appartient au module, pas à la base :
-   * c'est ici qu'elle se décide, et elle s'applique à l'écriture **comme** à la
-   * lecture, sans quoi elle ne servirait à rien.
-   */
-  private static normalizeEmail(email: string): string {
-    return email.trim().toLowerCase();
-  }
 
   /**
    * Renseigne la portée de tenant, ou vérifie qu'elle désigne déjà le même
@@ -110,7 +100,7 @@ export class AuthService {
     phone?: string | undefined;
   }): Promise<AuthenticationResult> {
     const tenantId = await this.openTenantScope(input.tenantSlug);
-    const email = AuthService.normalizeEmail(input.email);
+    const email = normalizeEmail(input.email);
 
     const existing = await this.repository.findUserByEmail(email);
     if (existing !== null) {
@@ -145,7 +135,7 @@ export class AuthService {
     password: string;
   }): Promise<AuthenticationResult> {
     const tenantId = await this.openTenantScope(input.tenantSlug);
-    const email = AuthService.normalizeEmail(input.email);
+    const email = normalizeEmail(input.email);
 
     const user = await this.repository.findUserByEmail(email);
 
@@ -170,6 +160,85 @@ export class AuthService {
     await this.repository.touchLastLogin(user.id);
 
     return this.openSession(tenantId, user);
+  }
+
+  /**
+   * Première connexion d'un membre du personnel invité — troisième critère de
+   * #55.
+   *
+   * ## Pourquoi il n'y a pas de `tenantSlug` ici
+   *
+   * Contrairement à `login` et `register`, l'établissement n'a pas à être
+   * demandé : il est une revendication **signée** de l'invitation, comme il l'est
+   * du jeton de rafraîchissement. Le réclamer en plus donnerait au client une
+   * seconde source pour la même information, donc un désaccord possible à
+   * arbitrer — et l'arbitrer serait choisir entre deux établissements sur la foi
+   * d'une entrée utilisateur.
+   *
+   * ## Le déroulé, et l'ordre des refus
+   *
+   * 1. le jeton est vérifié cryptographiquement — sinon rien de ce qui suit n'a
+   *    de sens ;
+   * 2. son `tenantId`, désormais une donnée serveur, ouvre la portée ;
+   * 3. le compte est relu **dans cette portée** : un `sub` d'un autre
+   *    établissement ne s'y trouve pas ;
+   * 4. quatre conditions valent refus, et **toutes rendent le même 401** :
+   *    compte inconnu, compte désactivé, compte déjà activé, compte qui n'est pas
+   *    du personnel. Le point d'entrée n'est pas authentifié — distinguer les cas
+   *    dirait à qui présente un jeton ramassé si le compte existe encore, et dans
+   *    quel état ;
+   * 5. l'écriture elle-même est conditionnée à `password_hash IS NULL`, ce qui
+   *    la rend atomique : deux acceptations concurrentes du même jeton se
+   *    disputent la ligne, une seule gagne, la perdante reçoit le même 401 que
+   *    les autres refus.
+   *
+   * Le pas 5 est ce qui fait l'**usage unique** de l'invitation sans qu'aucune
+   * colonne ne la gage : le jeton reste cryptographiquement valide jusqu'à son
+   * expiration, mais il n'ouvre plus rien.
+   *
+   * ## Pourquoi la session s'ouvre dans la foulée
+   *
+   * Parce que le critère dit « invitation par e-mail **et première connexion** » :
+   * renvoyer la personne vers `/auth/login` juste après lui avoir fait choisir son
+   * mot de passe la lui ferait ressaisir, et exigerait du front qu'il connaisse le
+   * slug de l'établissement — que l'invitation, elle, porte déjà.
+   */
+  public async acceptInvitation(input: {
+    token: string;
+    password: string;
+  }): Promise<AuthenticationResult> {
+    const claims = await this.tokens.verifyInvitationToken(input.token);
+
+    if (!AuthService.adoptTenantScope(claims.tenantId)) {
+      // La requête est déjà bornée à un autre établissement : le jeton n'est pas
+      // celui de cette requête, et il est hors de question de choisir l'un des
+      // deux.
+      throw new InvalidInvitationError();
+    }
+
+    const user = await this.repository.findUserById(claims.sub);
+    if (user === null || !user.isActive || user.passwordHash !== null || !isStaffRole(user.role)) {
+      // Un seul refus pour quatre causes — voir `InvalidInvitationError`.
+      throw new InvalidInvitationError();
+    }
+
+    const passwordHash = await this.passwords.hash(input.password);
+    const accepted = await this.repository.setInitialPassword({
+      userId: user.id,
+      passwordHash,
+    });
+    if (!accepted) {
+      // Une autre acceptation a gagné la course, ou le compte a disparu entre la
+      // lecture et l'écriture. Même réponse que tous les autres refus.
+      throw new InvalidInvitationError();
+    }
+
+    await this.repository.touchLastLogin(user.id);
+
+    // L'empreinte fraîchement posée est recopiée dans l'enregistrement en
+    // mémoire : `openSession` n'en fait rien, mais rendre un `UserRecord` qui se
+    // dit encore sans mot de passe serait faux pour le prochain lecteur.
+    return this.openSession(claims.tenantId, { ...user, passwordHash });
   }
 
   /**

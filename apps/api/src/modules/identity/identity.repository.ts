@@ -265,7 +265,15 @@ export class IdentityRepository {
   public async createUser(input: {
     email: string;
     role: UserRole;
-    passwordHash: string;
+    /**
+     * `null` crée un compte **en attente d'activation** : c'est ainsi qu'une
+     * invitation de personnel se matérialise (#55), sans colonne nouvelle. La
+     * colonne est déjà nullable au schéma — « un client peut exister sans
+     * compte, saisi au comptoir par le staff » — et un compte sans empreinte est
+     * inconnectable, `PasswordHasher.verify` refusant un `null` avant toute
+     * comparaison.
+     */
+    passwordHash: string | null;
     firstName: string;
     lastName: string;
     phone: string | null;
@@ -338,7 +346,68 @@ export class IdentityRepository {
   }
 
   /**
-   * Met à jour les **coordonnées** d'un compte de l'établissement courant (#47).
+   * Active ou désactive un **compte interne** de l'établissement courant (#55).
+   *
+   * `is_active` et non un `DELETE` : le CDC réclame la désactivation « sans
+   * suppression des rendez-vous passés », et les clés étrangères d'`Appointment`
+   * et de `Staff` vers `users` sont en `Restrict` — un `DELETE` échouerait de
+   * toute façon dès la première visite honorée. Le compte reste donc lisible,
+   * l'historique reste comptable au reporting, et seule la connexion se ferme
+   * (`AuthService.login` refuse un compte inactif, `refresh` éteint sa session).
+   *
+   * Le filtre sur le rôle borne l'opération au **personnel** : la clientèle
+   * relève du module `crm`, et un identifiant de cliente rend ici `false`, donc
+   * 404 — la même réponse qu'un identifiant d'un autre établissement, sans avoir
+   * à choisir entre deux motifs de refus.
+   */
+  public async setStaffAccountActive(input: {
+    userId: string;
+    isActive: boolean;
+  }): Promise<boolean> {
+    const { count } = await this.prisma.user.updateMany({
+      where: { id: input.userId, role: { in: [...STAFF_ROLES] } },
+      data: { isActive: input.isActive },
+    });
+    return count === 1;
+  }
+
+  /**
+   * Pose le **premier** mot de passe d'un compte invité — #55.
+   *
+   * `passwordHash: null` est dans le `where`, pas seulement vérifié en amont, et
+   * c'est ce qui rend l'acceptation d'une invitation à usage unique **sans
+   * colonne dédiée** : la première acceptation renseigne la colonne, toute autre
+   * ne trouve plus de ligne à mettre à jour et reçoit `false`. Deux acceptations
+   * concurrentes du même jeton se disputent la même ligne ; une seule gagne.
+   *
+   * C'est l'exacte transposition de la rotation atomique de `rotateSession`, et
+   * ce qui permet de livrer l'invitation sans toucher au schéma — hors empreinte.
+   *
+   * Ne peut jamais **remplacer** un mot de passe existant : le `where` l'interdit.
+   * Une réinitialisation de mot de passe est une autre procédure, avec sa propre
+   * preuve de possession de l'adresse.
+   */
+  public async setInitialPassword(input: {
+    userId: string;
+    passwordHash: string;
+  }): Promise<boolean> {
+    const { count } = await this.prisma.user.updateMany({
+      where: { id: input.userId, passwordHash: null },
+      data: { passwordHash: input.passwordHash },
+    });
+    return count === 1;
+  }
+
+  /**
+   * Met à jour les **coordonnées** d'un compte de l'établissement courant (#47,
+   * étendu par #55).
+   *
+   * Nommée d'après ce qu'elle fait et non d'après son premier appelant : elle
+   * n'a jamais rien su de « son propre compte » — c'est le service qui décide
+   * quel identifiant lui passer, celui du jeton pour `PATCH /users/me`, celui du
+   * chemin pour `PATCH /users/:id`. Le nom `updateOwnProfile` promettait ici une
+   * garantie que cette couche ne peut pas tenir, et l'aurait fait croire acquise
+   * au second appelant.
    *
    * `updateMany` et non `update`, pour la raison d'`updateUserRole` : sous le
    * scoping, le `where` porte `id` **et** `tenantId`, ce qui n'est pas une clé
@@ -357,7 +426,7 @@ export class IdentityRepository {
    * ce qui empêche cette méthode de devenir la porte par laquelle un compte se
    * promeut lui-même.
    */
-  public async updateOwnProfile(input: {
+  public async updateContactDetails(input: {
     userId: string;
     changes: { firstName?: string; lastName?: string; phone?: string | null };
   }): Promise<boolean> {

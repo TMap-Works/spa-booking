@@ -1,6 +1,6 @@
 import { JwtService } from '@nestjs/jwt';
 
-import { InvalidRefreshTokenError } from '../identity.errors';
+import { InvalidInvitationError, InvalidRefreshTokenError } from '../identity.errors';
 import { durationToSeconds, hashJti, TokenService } from '../token.service';
 import { fakeConfig } from './identity.doubles';
 
@@ -210,6 +210,85 @@ describe('TokenService', () => {
       await expect(service.verifyRefreshToken(token)).rejects.toBeInstanceOf(
         InvalidRefreshTokenError,
       );
+    });
+  });
+
+  describe('jeton d’invitation — #55', () => {
+    const INVITE = { userId: 'user-1', tenantId: 'tenant-1' };
+
+    it('transporte le compte et son établissement, et rien d’autre', async () => {
+      const { token, expiresIn } = await service.signInvitationToken(INVITE);
+      const claims = await service.verifyInvitationToken(token);
+
+      expect(claims.sub).toBe('user-1');
+      expect(claims.tenantId).toBe('tenant-1');
+      expect(claims.typ).toBe('invitation');
+      expect(expiresIn).toBe(7 * 24 * 3600);
+      // Pas de `role` : le rang est relu sur le compte à l'acceptation, sinon une
+      // rétrogradation décidée entre-temps resterait sans effet.
+      expect(Object.keys(claims).sort()).toEqual(['sub', 'tenantId', 'typ']);
+    });
+
+    it('est signé avec une clé qui n’est **aucun** des deux secrets configurés', async () => {
+      const { token } = await service.signInvitationToken(INVITE);
+
+      // La clé est dérivée par HMAC du secret de rafraîchissement : la connaître
+      // ne se déduit pas de lui, et un jeton d'invitation ne passe donc aucune
+      // des deux autres vérifications. Sans cette séparation, `typ` serait la
+      // seule barrière — et une convention applicative n'en est pas une.
+      expect(await service.verifyAccessToken(token)).toBeNull();
+      await expect(service.verifyRefreshToken(token)).rejects.toBeInstanceOf(
+        InvalidRefreshTokenError,
+      );
+    });
+
+    it('refuse un jeton d’un autre usage', async () => {
+      const access = await service.signAccessToken({ ...INVITE, role: 'STAFF' });
+      const refresh = await service.signRefreshToken({ ...INVITE, sessionId: 'session-1' });
+
+      for (const token of [access, refresh.token]) {
+        await expect(service.verifyInvitationToken(token)).rejects.toBeInstanceOf(
+          InvalidInvitationError,
+        );
+      }
+    });
+
+    it.each(['', 'pas-un-jeton', 'a.b.c'])('refuse « %s »', async (token) => {
+      await expect(service.verifyInvitationToken(token)).rejects.toBeInstanceOf(
+        InvalidInvitationError,
+      );
+    });
+
+    it('refuse un jeton signé avec une autre clé — la dérivation est ce qui l’isole', async () => {
+      // La clé racine est **dérivée** de celle de la configuration de test plutôt
+      // qu'écrite en littéral : une chaîne de haute entropie affectée à un champ
+      // nommé `…Secret` est exactement ce que gitleaks refuse en CI, et un
+      // suffixe suffit à obtenir un déploiement distinct.
+      const autreSecret = `${fakeConfig().jwtRefreshSecret}-bis`;
+      const autre = new TokenService(
+        new JwtService(),
+        fakeConfig({ jwtRefreshSecret: autreSecret }),
+      );
+      const { token } = await autre.signInvitationToken(INVITE);
+
+      await expect(service.verifyInvitationToken(token)).rejects.toBeInstanceOf(
+        InvalidInvitationError,
+      );
+    });
+
+    it('refuse une invitation expirée', async () => {
+      const { token } = await service.signInvitationToken(INVITE);
+
+      // Sept jours plus une seconde : l'expiration est ce qui borne la valeur
+      // d'un lien oublié dans une boîte mail.
+      jest.useFakeTimers().setSystemTime(Date.now() + (7 * 24 * 3600 + 1) * 1000);
+      try {
+        await expect(service.verifyInvitationToken(token)).rejects.toBeInstanceOf(
+          InvalidInvitationError,
+        );
+      } finally {
+        jest.useRealTimers();
+      }
     });
   });
 });

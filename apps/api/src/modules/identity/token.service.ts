@@ -1,10 +1,10 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 
 import { AppConfigService } from '../../config/app-config.service';
-import { InvalidRefreshTokenError } from './identity.errors';
+import { InvalidInvitationError, InvalidRefreshTokenError } from './identity.errors';
 import { isUserRole, type UserRole } from './roles';
 
 /**
@@ -31,7 +31,26 @@ import { isUserRole, type UserRole } from './roles';
 export const TOKEN_TYPES = {
   ACCESS: 'access',
   REFRESH: 'refresh',
+  INVITATION: 'invitation',
 } as const;
+
+/**
+ * Étiquette de dérivation de la clé d'invitation — **la valeur fait partie du
+ * contrat cryptographique**. La changer invalide toutes les invitations en
+ * circulation ; le `-v1` est là pour qu'une rotation délibérée s'écrive.
+ */
+const INVITATION_KEY_LABEL = 'spa-booking/staff-invitation-v1';
+
+/**
+ * Durée de vie d'une invitation — sept jours.
+ *
+ * Une constante de module et non une variable d'environnement : ajouter une
+ * variable toucherait `config/env.schema.ts`, hors de l'empreinte de #55, et
+ * cette durée n'a aucune raison de varier d'un environnement à l'autre. Assez
+ * longue pour couvrir des congés, assez courte pour qu'un lien oublié dans une
+ * boîte mail cesse d'ouvrir un compte.
+ */
+export const INVITATION_TOKEN_TTL_SECONDS = 7 * 24 * 3600;
 
 export interface AccessTokenClaims {
   /** Identifiant du compte — `sub`, comme le veut la RFC 7519. */
@@ -53,6 +72,27 @@ export interface RefreshTokenClaims {
    */
   jti: string;
   typ: typeof TOKEN_TYPES.REFRESH;
+}
+
+/**
+ * Invitation d'un membre du personnel (#55) — le porteur de ce jeton peut poser
+ * le **premier** mot de passe du compte qu'il désigne, et rien d'autre.
+ *
+ * Trois revendications seulement, et surtout **pas de `role`** : le rang est lu
+ * sur le compte au moment de l'acceptation. Un rôle porté par le jeton se
+ * figerait à l'émission, et une rétrogradation décidée entre l'invitation et la
+ * première connexion resterait sans effet.
+ */
+export interface InvitationTokenClaims {
+  sub: string;
+  tenantId: string;
+  typ: typeof TOKEN_TYPES.INVITATION;
+}
+
+export interface IssuedInvitationToken {
+  token: string;
+  /** Secondes — ce que le contrôleur annonce à l'administrateur qui invite. */
+  expiresIn: number;
 }
 
 export interface IssuedRefreshToken {
@@ -115,6 +155,43 @@ export class TokenService {
 
   public get refreshTokenTtlSeconds(): number {
     return durationToSeconds(this.config.refreshTokenExpiresIn);
+  }
+
+  public get invitationTokenTtlSeconds(): number {
+    return INVITATION_TOKEN_TTL_SECONDS;
+  }
+
+  /**
+   * La clé des invitations — **dérivée**, jamais configurée.
+   *
+   * Le troisième usage exigerait normalement un troisième secret, pour la raison
+   * qui sépare déjà les deux autres : sans séparation, un jeton d'un usage passe
+   * la vérification cryptographique de l'autre, et seule la revendication `typ`
+   * l'en distingue — « une convention applicative n'est pas une barrière ».
+   *
+   * Déclarer `JWT_INVITATION_SECRET` toucherait `config/env.schema.ts`,
+   * `config/app-config.service.ts` et `.env.example`, tous hors de l'empreinte
+   * de #55. Une dérivation HMAC donne la même propriété **sans** configuration
+   * nouvelle : `HMAC-SHA256(secret de rafraîchissement, étiquette)` est une clé
+   * de 256 bits dont la connaissance ne se déduit pas de l'autre à moins de
+   * casser HMAC, et deux étiquettes distinctes donnent deux clés indépendantes.
+   * C'est la séparation de domaine cryptographique, exactement l'usage prévu de
+   * HKDF, en un cran de moins.
+   *
+   * Le secret de **rafraîchissement** est choisi comme racine plutôt que celui
+   * d'accès : il ne voyage que vers `/auth/refresh`, il est donc le moins exposé
+   * des deux. Le jour où une variable dédiée sera déclarée, seule cette méthode
+   * change — aucun autre appelant ne connaît la clé.
+   *
+   * Recalculée à chaque appel : un HMAC-SHA256 sur quelques dizaines d'octets se
+   * compte en microsecondes, et les émissions comme les acceptations
+   * d'invitation sont rares. Mémoriser la valeur ferait vivre une clé dans le
+   * champ d'une instance pour rien.
+   */
+  private get invitationSecret(): string {
+    return createHmac('sha256', this.config.jwtRefreshSecret)
+      .update(INVITATION_KEY_LABEL)
+      .digest('hex');
   }
 
   /**
@@ -181,6 +258,78 @@ export class TokenService {
       // contrediraient sur la fin de la session.
       expiresAt: new Date(Date.now() + ttlSeconds * 1000),
     };
+  }
+
+  /**
+   * Émet l'invitation d'un membre du personnel (#55).
+   *
+   * **Rien n'est écrit en base.** L'unicité d'usage ne vient pas d'une ligne
+   * qu'on marquerait consommée, mais de l'état du compte : accepter renseigne
+   * `password_hash`, et l'acceptation exige que cette colonne soit encore nulle
+   * (`setInitialPassword`). Un jeton rejoué se heurte donc au mot de passe qu'il
+   * vient lui-même de poser. C'est ce qui permet de livrer l'invitation sans
+   * migration — `apps/api/prisma/schema.prisma` est hors de l'empreinte de #55 —
+   * et c'est aussi ce qui rend deux invitations successives inoffensives : elles
+   * meurent ensemble, à la première acceptée.
+   */
+  public async signInvitationToken(claims: {
+    userId: string;
+    tenantId: string;
+  }): Promise<IssuedInvitationToken> {
+    const payload: InvitationTokenClaims = {
+      sub: claims.userId,
+      tenantId: claims.tenantId,
+      typ: TOKEN_TYPES.INVITATION,
+    };
+
+    const token = await this.jwt.signAsync(payload, {
+      secret: this.invitationSecret,
+      expiresIn: INVITATION_TOKEN_TTL_SECONDS,
+    });
+
+    return { token, expiresIn: INVITATION_TOKEN_TTL_SECONDS };
+  }
+
+  /**
+   * Vérifie une invitation.
+   *
+   * Lève plutôt que de rendre `null`, comme `verifyRefreshToken` : une invitation
+   * illisible n'a qu'une issue, et le message ne distingue jamais « expirée » de
+   * « contrefaite » — la nuance dirait au porteur d'un jeton ramassé si le compte
+   * qu'il désigne existe encore.
+   */
+  public async verifyInvitationToken(token: string): Promise<InvitationTokenClaims> {
+    let payload: unknown;
+    try {
+      payload = await this.jwt.verifyAsync<Record<string, unknown>>(token, {
+        secret: this.invitationSecret,
+      });
+    } catch {
+      throw new InvalidInvitationError();
+    }
+
+    if (payload === null || typeof payload !== 'object') {
+      throw new InvalidInvitationError();
+    }
+
+    const record = payload as Record<string, unknown>;
+    if (record['typ'] !== TOKEN_TYPES.INVITATION) {
+      throw new InvalidInvitationError();
+    }
+    const sub = record['sub'];
+    const tenantId = record['tenantId'];
+    if (
+      typeof sub !== 'string' ||
+      typeof tenantId !== 'string' ||
+      sub.trim() === '' ||
+      // Un `tenantId` vide passerait `typeof === 'string'` et ouvrirait une
+      // portée de tenant sur la chaîne vide.
+      tenantId.trim() === ''
+    ) {
+      throw new InvalidInvitationError();
+    }
+
+    return { sub, tenantId, typ: TOKEN_TYPES.INVITATION };
   }
 
   /**

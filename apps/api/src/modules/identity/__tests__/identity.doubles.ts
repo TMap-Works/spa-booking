@@ -221,7 +221,8 @@ export class FakeIdentityRepository {
   public async createUser(input: {
     email: string;
     role: UserRole;
-    passwordHash: string;
+    /** `null` = compte invité, en attente d'activation (#55) — comme le vrai. */
+    passwordHash: string | null;
     firstName: string;
     lastName: string;
     phone: string | null;
@@ -296,7 +297,63 @@ export class FakeIdentityRepository {
   }
 
   /**
-   * Met à jour les coordonnées d'un compte de l'établissement courant (#47).
+   * Active ou désactive un compte **du personnel** de l'établissement courant
+   * (#55).
+   *
+   * Reproduit les deux filtres du vrai — le tenant et les rôles internes — parce
+   * qu'un test dépend des deux : un identifiant d'un autre établissement rend
+   * `false`, et un identifiant de cliente aussi. Un double qui ne filtrerait que
+   * le tenant ferait passer au vert la désactivation d'une fiche cliente depuis
+   * l'administration du personnel.
+   */
+  public async setStaffAccountActive(input: {
+    userId: string;
+    isActive: boolean;
+  }): Promise<boolean> {
+    const tenantId = this.requireTenant();
+    const staffRoles: readonly string[] = STAFF_ROLES;
+    const user = this.users.find(
+      (candidate) =>
+        candidate.tenantId === tenantId &&
+        candidate.id === input.userId &&
+        staffRoles.includes(candidate.role),
+    );
+    if (user === undefined) {
+      return false;
+    }
+    user.isActive = input.isActive;
+    return true;
+  }
+
+  /**
+   * Pose le **premier** mot de passe d'un compte invité (#55).
+   *
+   * La condition `passwordHash === null` est reproduite ici parce qu'elle **est**
+   * la propriété testée : c'est elle qui rend l'invitation à usage unique, et un
+   * double qui écrirait par-dessus une empreinte existante ferait passer au vert
+   * un rejeu que la base refuse.
+   */
+  public async setInitialPassword(input: {
+    userId: string;
+    passwordHash: string;
+  }): Promise<boolean> {
+    const tenantId = this.requireTenant();
+    const user = this.users.find(
+      (candidate) =>
+        candidate.tenantId === tenantId &&
+        candidate.id === input.userId &&
+        candidate.passwordHash === null,
+    );
+    if (user === undefined) {
+      return false;
+    }
+    user.passwordHash = input.passwordHash;
+    return true;
+  }
+
+  /**
+   * Met à jour les coordonnées d'un compte de l'établissement courant (#47,
+   * étendu par #55).
    *
    * Reproduit les deux propriétés du vrai dont un test dépend : le filtre de
    * tenant — un identifiant d'un autre établissement rend `false` et n'écrit
@@ -304,7 +361,7 @@ export class FakeIdentityRepository {
    * distinction entre « champ absent » et « champ à `null` », qui est ce qui
    * permet d'effacer un numéro sans effacer aussi le prénom.
    */
-  public async updateOwnProfile(input: {
+  public async updateContactDetails(input: {
     userId: string;
     changes: { firstName?: string; lastName?: string; phone?: string | null };
   }): Promise<boolean> {

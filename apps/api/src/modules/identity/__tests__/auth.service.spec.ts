@@ -6,11 +6,12 @@ import { AuthService } from '../auth.service';
 import {
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
+  InvalidInvitationError,
   InvalidRefreshTokenError,
 } from '../identity.errors';
 import { PasswordHasher } from '../password.hasher';
 import { hashJti, TokenService } from '../token.service';
-import { FakeIdentityRepository, fakeConfig, silentLogger } from './identity.doubles';
+import { FakeIdentityRepository, fakeConfig, rejectionOf, silentLogger } from './identity.doubles';
 
 /**
  * Règles d'authentification, exercées sans HTTP et sans base.
@@ -461,6 +462,201 @@ describe('AuthService', () => {
         runWithTenant(autre, async () => service.logout(result.refreshToken)),
       ).resolves.toBeUndefined();
       expect(repository.sessions[0]?.revokedAt).toBeNull();
+    });
+  });
+
+  /**
+   * Première connexion d'un membre du personnel invité — #55.
+   *
+   * Ce qui se prouve ici n'est pas seulement « la session s'ouvre », mais que
+   * l'invitation **cesse d'ouvrir quoi que ce soit** dès qu'elle a servi, sans
+   * qu'aucune colonne ne la gage. L'usage unique vient de `password_hash IS NULL`
+   * dans le `where` de l'écriture, et c'est cette propriété-là que les cas de
+   * rejeu exercent.
+   */
+  describe('acceptation d’une invitation — #55', () => {
+    const NEW_PASSWORD = 'invitation-mot-de-passe';
+
+    /** Un compte du personnel invité : rôle interne, aucune empreinte. */
+    const seedInvitee = (tenant = tenantId): string =>
+      repository.addUser({ tenantId: tenant, email: 'praticienne@lilas.test', passwordHash: null, role: 'STAFF' }).id;
+
+    it('pose le premier mot de passe et ouvre la session', async () => {
+      const userId = seedInvitee();
+      const { token } = await tokens.signInvitationToken({ userId, tenantId });
+
+      const result = await inRequest(() =>
+        service.acceptInvitation({ token, password: NEW_PASSWORD }),
+      );
+
+      expect(result.accessToken).not.toBe('');
+      expect(result.user.id).toBe(userId);
+      expect(result.user.role).toBe('STAFF');
+      // Le profil reste clos : ni empreinte, ni tenant (tenant-isolation §4).
+      expect(JSON.stringify(result.user)).not.toContain(NEW_PASSWORD);
+      expect(JSON.stringify(result.user)).not.toContain(tenantId);
+    });
+
+    it('stocke une empreinte, jamais le mot de passe en clair', async () => {
+      const userId = seedInvitee();
+      const { token } = await tokens.signInvitationToken({ userId, tenantId });
+
+      await inRequest(() => service.acceptInvitation({ token, password: NEW_PASSWORD }));
+
+      const stored = repository.users.find((user) => user.id === userId);
+      expect(stored?.passwordHash).not.toBeNull();
+      expect(stored?.passwordHash).not.toBe(NEW_PASSWORD);
+    });
+
+    it('rend le compte connectable — c’est tout l’objet de la première connexion', async () => {
+      const userId = seedInvitee();
+      const { token } = await tokens.signInvitationToken({ userId, tenantId });
+      await inRequest(() => service.acceptInvitation({ token, password: NEW_PASSWORD }));
+
+      const session = await inRequest(() =>
+        service.login({ tenantSlug: SLUG, email: 'praticienne@lilas.test', password: NEW_PASSWORD }),
+      );
+      expect(session.user.id).toBe(userId);
+    });
+
+    it('n’ouvre rien deux fois — le rejeu du même jeton est refusé', async () => {
+      const userId = seedInvitee();
+      const { token } = await tokens.signInvitationToken({ userId, tenantId });
+      await inRequest(() => service.acceptInvitation({ token, password: NEW_PASSWORD }));
+
+      // Le jeton reste cryptographiquement valide : c'est l'état du compte qui
+      // le périme. C'est ce qui rend l'invitation à usage unique sans migration.
+      await expect(
+        inRequest(() => service.acceptInvitation({ token, password: 'un-autre-mot-de-passe' })),
+      ).rejects.toBeInstanceOf(InvalidInvitationError);
+
+      const stored = repository.users.find((user) => user.id === userId);
+      expect(await new PasswordHasher(fakeConfig()).verify(NEW_PASSWORD, stored?.passwordHash ?? null)).toBe(
+        true,
+      );
+    });
+
+    it('refuse un compte déjà doté d’un mot de passe', async () => {
+      const hasher = new PasswordHasher(fakeConfig());
+      const userId = repository.addUser({
+        tenantId,
+        email: 'deja@lilas.test',
+        passwordHash: await hasher.hash(PASSWORD),
+        role: 'STAFF',
+      }).id;
+      const { token } = await tokens.signInvitationToken({ userId, tenantId });
+
+      // Sans quoi l'invitation serait une réinitialisation de mot de passe
+      // déguisée, sans la moindre preuve de possession de l'adresse.
+      await expect(
+        inRequest(() => service.acceptInvitation({ token, password: NEW_PASSWORD })),
+      ).rejects.toBeInstanceOf(InvalidInvitationError);
+    });
+
+    it('refuse un compte désactivé', async () => {
+      const userId = repository.addUser({
+        tenantId,
+        email: 'partie@lilas.test',
+        passwordHash: null,
+        role: 'STAFF',
+        isActive: false,
+      }).id;
+      const { token } = await tokens.signInvitationToken({ userId, tenantId });
+
+      await expect(
+        inRequest(() => service.acceptInvitation({ token, password: NEW_PASSWORD })),
+      ).rejects.toBeInstanceOf(InvalidInvitationError);
+    });
+
+    it('refuse une fiche cliente — l’invitation ne concerne que le personnel', async () => {
+      const userId = repository.addUser({
+        tenantId,
+        email: 'cliente@lilas.test',
+        passwordHash: null,
+        role: 'CLIENT',
+      }).id;
+      const { token } = await tokens.signInvitationToken({ userId, tenantId });
+
+      await expect(
+        inRequest(() => service.acceptInvitation({ token, password: NEW_PASSWORD })),
+      ).rejects.toBeInstanceOf(InvalidInvitationError);
+    });
+
+    it('refuse un jeton d’un autre usage — jeton d’accès ou de rafraîchissement', async () => {
+      const userId = seedInvitee();
+      const access = await tokens.signAccessToken({ userId, tenantId, role: 'STAFF' });
+      const refresh = await tokens.signRefreshToken({ userId, tenantId, sessionId: 'session-1' });
+
+      // Les clés sont distinctes — celle des invitations est dérivée du secret de
+      // rafraîchissement par HMAC — et `typ` est vérifié par-dessus.
+      for (const token of [access, refresh.token]) {
+        await expect(
+          inRequest(() => service.acceptInvitation({ token, password: NEW_PASSWORD })),
+        ).rejects.toBeInstanceOf(InvalidInvitationError);
+      }
+    });
+
+    it('refuse un compte de l’établissement voisin, et n’écrit rien chez lui', async () => {
+      const autre = repository.addTenant('barbier-du-port');
+      const userId = seedInvitee(autre);
+      const { token } = await tokens.signInvitationToken({ userId, tenantId: autre });
+
+      // La portée est déjà celle d'un autre établissement : le jeton n'est pas
+      // celui de cette requête, et il est hors de question de choisir.
+      await expect(
+        runWithTenant(tenantId, async () =>
+          service.acceptInvitation({ token, password: NEW_PASSWORD }),
+        ),
+      ).rejects.toBeInstanceOf(InvalidInvitationError);
+
+      expect(repository.users.find((user) => user.id === userId)?.passwordHash).toBeNull();
+    });
+
+    it('rend le même refus quelle qu’en soit la cause', async () => {
+      const actif = seedInvitee();
+      const inactif = repository.addUser({
+        tenantId,
+        email: 'partie@lilas.test',
+        passwordHash: null,
+        role: 'STAFF',
+        isActive: false,
+      }).id;
+
+      const inconnu = await rejectionOf(
+        inRequest(async () =>
+          service.acceptInvitation({
+            token: (
+              await tokens.signInvitationToken({
+                userId: '99999999-9999-4999-8999-999999999999',
+                tenantId,
+              })
+            ).token,
+            password: NEW_PASSWORD,
+          }),
+        ),
+      );
+      const desactive = await rejectionOf(
+        inRequest(async () =>
+          service.acceptInvitation({
+            token: (await tokens.signInvitationToken({ userId: inactif, tenantId })).token,
+            password: NEW_PASSWORD,
+          }),
+        ),
+      );
+      const contrefait = await rejectionOf(
+        inRequest(() => service.acceptInvitation({ token: 'pas-un-jeton', password: NEW_PASSWORD })),
+      );
+
+      // Le point d'entrée n'est pas authentifié : distinguer les causes dirait à
+      // qui présente un jeton ramassé si le compte existe encore, et dans quel
+      // état.
+      const messages = [inconnu, desactive, contrefait].map(
+        (error) => (error as InvalidInvitationError).message,
+      );
+      expect(new Set(messages).size).toBe(1);
+      expect((inconnu as InvalidInvitationError).status).toBe(401);
+      // Le compte encore invitable n'a pas bougé.
+      expect(repository.users.find((user) => user.id === actif)?.passwordHash).toBeNull();
     });
   });
 });
