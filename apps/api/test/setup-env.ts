@@ -36,6 +36,12 @@ const DEFAULTS: Readonly<Record<string, string>> = {
   // soit des dizaines de secondes sur la suite. Le coût réel est validé par le
   // test unitaire du hacheur, pas par le temps que met la suite d'intégration.
   BCRYPT_COST: '4',
+  // Secret de terminaison des webhooks Stripe. Ce n'en est pas un : c'est une
+  // chaîne de remplissage, jamais déployée, dont la seule propriété utile est
+  // le préfixe `whsec_` qu'exige `StripeWebhookConfig`. Sans elle, la route de
+  // webhook répondrait 503 en test — ce qui est le comportement voulu sur un
+  // poste sans compte Stripe, mais rendrait sa recette impossible.
+  STRIPE_WEBHOOK_SECRET: 'whsec_test_not_a_secret_0003',
 };
 
 for (const [name, value] of Object.entries(DEFAULTS)) {
