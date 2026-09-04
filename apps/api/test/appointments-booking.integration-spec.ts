@@ -26,7 +26,10 @@ import {
  *    l'intervalle facturé ;
  * 4. un créneau déjà pris sort en 409 `SLOT_NO_LONGER_AVAILABLE` ;
  * 5. réserver sans compte crée la fiche cliente, et une seule ;
- * 6. l'événement `appointment.created` part réellement.
+ * 6. l'événement `appointment.created` part réellement ;
+ * 7. le corps rendu porte **exactement** les champs de `bookedAppointmentSchema`
+ *    — le contrat partagé décrit ce que cette route sert, et le doublon des deux
+ *    descriptions ne dérive pas en silence (#314).
  *
  * L'isolation inter-tenant a sa suite propre — `appointments-tenant.isolation-spec.ts`.
  */
@@ -85,6 +88,56 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     // franchir la frontière du module par inadvertance.
     expect(response.body).not.toHaveProperty('tenantId');
     expect(response.body).not.toHaveProperty('staffNote');
+  });
+
+  /**
+   * Le corps servi porte **exactement** les champs de `bookedAppointmentSchema`
+   * — `packages/shared/src/schemas/appointment.ts` (#314).
+   *
+   * C'est le deuxième critère de #314, et le `toMatchObject` ci-dessus ne le
+   * prouve pas : il vérifie que les champs attendus sont là, jamais qu'aucun
+   * autre ne les accompagne. Or c'est un champ **en trop** qui coûte cher ici —
+   * `staffNote`, `tenantId`, l'entité Prisma recopiée d'un geste — et les deux
+   * `not.toHaveProperty` ne nomment que les deux fuites déjà connues. La liste
+   * exhaustive, elle, rattrape aussi celle que personne n'a encore imaginée.
+   *
+   * Elle est recopiée du contrat plutôt qu'importée, `apps/api` n'en dépendant
+   * pas encore (#26) : c'est le doublon assumé qu'exerce aussi
+   * `src/modules/appointments/__tests__/guest-contract.spec.ts`, côté requête.
+   */
+  it('rend exactement les champs de `bookedAppointmentSchema`, ni plus ni moins', async () => {
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .send(body());
+
+    expect(response.status).toBe(201);
+    expect(Object.keys(response.body as Record<string, unknown>).sort()).toEqual([
+      'cancelledAt',
+      'cancelledBy',
+      'clientId',
+      'clientNote',
+      'endsAt',
+      'id',
+      'price',
+      'rescheduledFromId',
+      'serviceId',
+      'staffId',
+      'startsAt',
+      'status',
+    ]);
+    // `price` est le seul champ composé, et le contrat le veut entier + devise :
+    // un flottant nu passerait la liste de clés sans passer le contrat.
+    expect(Object.keys(response.body.price as Record<string, unknown>).sort()).toEqual([
+      'amountMinor',
+      'currency',
+    ]);
+    expect(Number.isInteger(response.body.price.amountMinor)).toBe(true);
+    // `null` et non l'absence : le contrat les déclare `nullable`, et un front
+    // qui lit `body.cancelledAt` doit trouver la clé, posée à `null`.
+    expect(response.body.clientNote).toBeNull();
+    expect(response.body.rescheduledFromId).toBeNull();
+    expect(response.body.cancelledAt).toBeNull();
+    expect(response.body.cancelledBy).toBeNull();
   });
 
   it('enregistre l’intervalle occupé, tampons compris', async () => {
