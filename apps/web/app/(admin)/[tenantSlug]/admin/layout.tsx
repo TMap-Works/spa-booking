@@ -19,9 +19,20 @@ import '../../../../styles/admin/index.css';
  *
  * Ce layout n'est pas le shell du tableau de bord : navigation latérale,
  * calendrier, indicateurs et fil d'Ariane relèvent de #48. Il porte ici le
- * minimum dont l'écran de réglages (#343) a besoin — un titre, un cadre, et le
- * `robots: noindex` qui compte vraiment. Le remplacer par le vrai shell ne
- * demandera pas de toucher aux pages.
+ * minimum dont les écrans livrés ont besoin — un cadre et le `robots: noindex`
+ * qui compte vraiment. Le remplacer par le vrai shell ne demandera pas de
+ * toucher aux pages.
+ *
+ * ## Pourquoi `spa-admin__main` et non `spa-admin`
+ *
+ * `.spa-admin` est une grille à **deux** colonnes — la barre latérale, puis le
+ * contenu — et la barre latérale n'existera qu'avec #48. Employée seule, elle
+ * range donc l'unique enfant dans la première colonne, large de
+ * `--spa-admin-rail-width` : le tableau du catalogue s'y retrouvait comprimé sur
+ * deux cents pixels, une colonne de mots par ligne. `.spa-admin__main` est la
+ * moitié droite de cette grille et se suffit à elle-même — la même classe que
+ * les maquettes emploient, sans une ligne de CSS ajoutée. Quand le shell
+ * arrivera, il rétablira la grille **et** son rail d'un même geste.
  *
  * ## Ce que ce layout ne fait pas : garder la session
  *
@@ -42,7 +53,7 @@ export const metadata: Metadata = {
 
 export default function AdminLayout({ children }: { readonly children: ReactNode }) {
   return (
-    <div className="spa-admin">
+    <div className="spa-admin__main">
       <main className="spa-admin__content" id="contenu">
         {children}
       </main>

@@ -16,7 +16,6 @@
  */
 
 import {
-  ERROR_CODES,
   loginRequestSchema,
   slugSchema,
   updateTenantRequestSchema,
@@ -25,40 +24,15 @@ import {
 } from '@spa/shared';
 import { cookies } from 'next/headers';
 
-import {
-  ApiClientError,
-  loginToAccount,
-  logoutSession,
-  updateTenantSettings,
-} from '@/lib/api-client';
+import { loginToAccount, logoutSession, updateTenantSettings } from '@/lib/api-client';
 
+import { expired, failure, invalid, type AdminActionResult } from './action-result';
 import {
   clearAdminSession,
   readAdminAccessToken,
   readAdminRefreshToken,
   writeAdminSession,
 } from './session';
-
-export type AdminActionResult<TData> =
-  | { readonly ok: true; readonly data: TData }
-  | { readonly ok: false; readonly code: string; readonly message: string };
-
-function failure(error: unknown): { ok: false; code: string; message: string } {
-  if (error instanceof ApiClientError) {
-    return { ok: false, code: error.code, message: error.message };
-  }
-
-  return {
-    ok: false,
-    code: ERROR_CODES.INTERNAL_ERROR,
-    message: 'Une erreur inattendue est survenue. Merci de réessayer.',
-  };
-}
-
-/** Refus de validation : l'appel n'a même pas atteint l'API. */
-function invalid(message: string): { ok: false; code: string; message: string } {
-  return { ok: false, code: ERROR_CODES.VALIDATION_ERROR, message };
-}
 
 /**
  * Ouvre une session de back-office et la range dans les cookies.
@@ -147,11 +121,7 @@ export async function updateTenantSettingsAction(
   const accessToken = await readAdminAccessToken();
 
   if (accessToken === null) {
-    return {
-      ok: false,
-      code: ERROR_CODES.UNAUTHORIZED,
-      message: 'Votre session a expiré. Reconnectez-vous pour continuer.',
-    };
+    return expired();
   }
 
   try {
