@@ -168,6 +168,24 @@ export type CreateAppointmentRequest = z.infer<typeof createAppointmentRequestSc
  *
  * C'est ce schéma, et lui seul, que le formulaire de coordonnées du parcours
  * public valide : le front ne redéclare pas la règle, il importe celle-ci.
+ *
+ * ## L'écart avec ce que l'API accepte, et son sens (#314)
+ *
+ * `GuestContactDto` — `apps/api/src/modules/appointments/dto/book-appointment.dto.ts`,
+ * la même forme écrite une seconde fois en attendant que `apps/api` dépende de
+ * ce paquet — valide `phone` avec un motif **libre borné** et conserve la saisie
+ * telle quelle. Ce schéma-ci normalise et refuse un numéro national.
+ *
+ * L'écart est donc **orienté, et dans le sens sûr** : ce contrat est le plus
+ * strict des deux, si bien qu'un formulaire qui valide avec lui ne produit
+ * jamais une requête que l'API refuse. Le lecteur à qui cela importe est celui
+ * qui écrit un formulaire de coordonnées : le message à afficher n'est pas
+ * « l'API a refusé », c'est « ce numéro doit porter son indicatif ».
+ *
+ * Tous les autres champs concordent exactement, bornes comprises, et
+ * `apps/api/src/modules/appointments/__tests__/guest-contract.spec.ts` le tient
+ * champ par champ — c'est ce qui rendra visible le jour où l'un des deux
+ * bougerait seul.
  */
 export const guestContactSchema = z
   .object({
@@ -193,6 +211,13 @@ export type GuestContact = z.infer<typeof guestContactSchema>;
  * Les deux ne se fondent pas en un seul schéma à `clientId` **ou** `client` :
  * une union laisserait passer les deux à la fois, et un tunnel public qui
  * poserait un `clientId` réserverait au nom de quelqu'un d'autre.
+ *
+ * C'est le `.strict()` des deux schémas qui rend la séparation effective, et il
+ * y faut les **deux sens** : celui-ci refuse un `clientId`, et
+ * `createAppointmentRequestSchema` refuse un `client`. Un seul des deux suffit à
+ * fermer la porte qu'on regarde, et laisse l'autre ouverte — un `client` glissé
+ * dans une demande de back-office ferait créer une fiche là où le comptoir en
+ * avait désigné une. `guest-booking.spec.ts` exerce les deux (#314).
  */
 export const bookGuestAppointmentRequestSchema = z
   .object({
