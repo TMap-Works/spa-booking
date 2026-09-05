@@ -29,9 +29,9 @@ import { createTenantHarness, type TenantHarness } from './utils/tenant-harness'
  *    jetons, deux réponses distinctes ;
  * 2. **l'écriture ne franchit pas la frontière** — le voisin enregistre, et les
  *    horaires comme l'adresse de l'appelant sont intacts. C'est le point le plus
- *    coûteux à rater : `replaceOpeningHours` commence par un `deleteMany({})`
- *    sans `where`, et c'est l'extension de scoping — pas l'appelant — qui y pose
- *    `tenant_id` ;
+ *    coûteux à rater : la part « horaires » d'`updateTenantSettings` commence par
+ *    un `deleteMany({})` sans `where`, et c'est l'extension de scoping — pas
+ *    l'appelant — qui y pose `tenant_id` ;
  * 3. **la vitrine publique du voisin ne montre pas l'adresse de l'appelant**,
  *    l'inverse du même risque, du côté non authentifié ;
  * 4. **le seuil de rôle tient** — sans jeton 401, au rang `MANAGER` 403.
@@ -138,9 +138,10 @@ describe('Réglages de l’établissement — #343', () => {
 
   describe('l’écriture ne franchit pas la frontière', () => {
     it('l’enregistrement du voisin laisse intacts l’adresse et les horaires de l’appelant', async () => {
-      // Le risque exact : `replaceOpeningHours` ouvre sur un `deleteMany({})`
-      // sans `where`. Si le scoping ne l'attrapait pas, l'enregistrement du
-      // voisin viderait la semaine de tout le monde — sans erreur, sans trace.
+      // Le risque exact : la part « horaires » d'`updateTenantSettings` ouvre
+      // sur un `deleteMany({})` sans `where`. Si le scoping ne l'attrapait pas,
+      // l'enregistrement du voisin viderait la semaine de tout le monde — sans
+      // erreur, sans trace.
       await request(server())
         .patch(CHEMIN)
         .set('Authorization', await harness.bearer('ADMIN'))
