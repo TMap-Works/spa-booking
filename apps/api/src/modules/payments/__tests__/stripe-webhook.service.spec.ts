@@ -227,6 +227,91 @@ describe('StripeWebhookService — idempotence et journal', () => {
     expect(repository.processed.size).toBe(1);
   });
 
+  it('marque un refus arrivé après le succès — la ligne existe, le garde décline (#447)', async () => {
+    // L'autre moitié de la règle de #410, et la borne symétrique du cas
+    // ci-dessus : ici la ligne **est** là, c'est le filtre de statut qui refuse
+    // d'écrire. Annuler la marque ferait rejouer sans fin un événement dont la
+    // conduite juste est précisément de ne rien écrire. La différence entre les
+    // deux zéros se lit dans le journal — « appliqué » d'un côté, l'alerte de
+    // renvoi de l'autre. Le double ne savait pas la montrer avant #447 : il
+    // écrasait le succès, et seul `payments-webhook.isolation-spec.ts`, qui
+    // exige Docker, en témoignait.
+    const { service, repository, log } = subject();
+    repository.seed({
+      tenantId: 'tenant-a',
+      paymentIntentId: 'pi_1',
+      chargeId: 'ch_1',
+      status: 'SUCCEEDED',
+      refundedAmountMinor: 0,
+      appointmentStatus: 'CONFIRMED',
+    });
+
+    await service.process({
+      eventId: 'evt_failed_tardif',
+      eventType: 'payment_intent.payment_failed',
+      tenantHint: null,
+      fact: { kind: 'payment-failed', paymentIntentId: 'pi_1' },
+    });
+
+    expect(repository.payments.get('pi_1')).toMatchObject({ status: 'SUCCEEDED' });
+    expect(repository.processed.size).toBe(1);
+    expect(log.warnings).toEqual([]);
+    expect(log.entries.at(-1)).toMatchObject({
+      message: 'stripe webhook: événement appliqué',
+      meta: { paymentsTouched: 0 },
+    });
+  });
+
+  it('n’écrase pas un encaissement remboursé, et ne confirme rien (#447)', async () => {
+    // Stripe ne garantit ni l'ordre des livraisons ni leur traitement
+    // séquentiel : un `charge.refunded` appliqué avant le
+    // `payment_intent.succeeded` correspondant laisse la ligne remboursée.
+    // Confirmer le rendez-vous à ce moment-là bloquerait le créneau sur un
+    // paiement qui a été rendu — le filtre de statut vaut donc pour les deux
+    // écritures, pas pour la première seulement.
+    const { service, repository } = subject();
+    repository.seed({
+      tenantId: 'tenant-a',
+      paymentIntentId: 'pi_1',
+      chargeId: 'ch_1',
+      status: 'REFUNDED',
+      refundedAmountMinor: 7000,
+      appointmentStatus: 'PENDING',
+    });
+
+    await service.process(succeeded({ eventId: 'evt_succes_tardif' }));
+
+    expect(repository.payments.get('pi_1')).toMatchObject({
+      status: 'REFUNDED',
+      appointmentStatus: 'PENDING',
+    });
+    expect(repository.processed.size).toBe(1);
+  });
+
+  it('encaisse après un refus : `FAILED` reste rattrapable (#447)', async () => {
+    // La borne haute du garde, sans quoi il serait trop strict : le filtre
+    // accepte `PENDING` **et** `FAILED`, parce que la cliente présente une
+    // seconde carte après un refus de banque. C'est un parcours ordinaire, et
+    // un double qui n'aurait retenu que `PENDING` l'aurait fait passer pour un
+    // cas décliné.
+    const { service, repository } = subject();
+    repository.seed({
+      tenantId: 'tenant-a',
+      paymentIntentId: 'pi_1',
+      chargeId: null,
+      status: 'FAILED',
+      refundedAmountMinor: 0,
+      appointmentStatus: 'PENDING',
+    });
+
+    await service.process(succeeded());
+
+    expect(repository.payments.get('pi_1')).toMatchObject({
+      status: 'SUCCEEDED',
+      appointmentStatus: 'CONFIRMED',
+    });
+  });
+
   it('laisse remonter une panne : c’est ce qui fait rejouer Stripe', async () => {
     const { service, repository } = subject();
     repository.seed({

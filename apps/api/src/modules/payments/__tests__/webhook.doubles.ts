@@ -56,21 +56,52 @@ export interface FakePayment {
 }
 
 /**
+ * Les seuls états depuis lesquels un encaissement devient `SUCCEEDED` — la copie
+ * du `status: { in: [...] }` de `StripeWebhookRepository.settle`.
+ */
+const SETTLEABLE: ReadonlySet<string> = new Set(['PENDING', 'FAILED']);
+
+/**
+ * L'effet d'un fait dont le garde de statut a décliné : **la ligne existe**,
+ * rien n'a été écrit, et l'appelant marquera tout de même l'événement traité.
+ *
+ * À ne pas confondre avec `null`, qui dit « aucune ligne ne porte cette
+ * référence » et annule jusqu'à la marque (#410).
+ */
+const DECLINED: Omit<WebhookApplication, 'outcome'> = {
+  paymentsTouched: 0,
+  appointmentsConfirmed: 0,
+};
+
+/**
  * Repository en mémoire.
  *
- * Il reproduit les trois propriétés dont les suites ont besoin, et rien d'autre :
+ * Il reproduit les propriétés dont les suites ont besoin, et rien d'autre :
  * l'idempotence par `(tenant, event)`, le fait qu'un événement ne touche que les
- * lignes de l'établissement résolu, et — depuis #410 — le fait qu'un événement
- * sans encaissement correspondant **ne retient aucune marque**.
+ * lignes de l'établissement résolu, le fait qu'un événement sans encaissement
+ * correspondant **ne retient aucune marque** (#410), et — depuis #447 — les
+ * **gardes de statut** du vrai dépôt, branche par branche :
  *
- * Ce qu'il **ne** modélise pas, et qu'il ne faut donc pas lui demander : les
- * gardes de statut du vrai dépôt. `payment-succeeded` y écrit `SUCCEEDED` même
- * sur une ligne déjà remboursée, et `payment-failed` écrit `FAILED` même sur un
- * succès. L'autre moitié de la règle de #410 — « la ligne existe, le garde
- * décline, la marque reste » — ne se prouve donc **pas** ici : elle se prouve
- * contre un vrai moteur, comme la frontière tenue par l'extension Prisma et
- * l'annulation de la marque quand l'effet échoue, dans
- * `test/payments-webhook.isolation-spec.ts`. Un double ne peut pas témoigner
+ * | Fait | Filtre de `StripeWebhookRepository` | Ce que le double en fait |
+ * |---|---|---|
+ * | `payment-succeeded` | `status ∈ {PENDING, FAILED}` | n'écrit `SUCCEEDED` que depuis ces deux états, et ne confirme le rendez-vous que si l'encaissement a transité |
+ * | `payment-failed` | `status = PENDING` | n'écrase jamais un succès ni un remboursement |
+ * | `charge-refunded` | aucun — la borne est en base | écrit toujours, comme le vrai |
+ *
+ * C'est ce qui rend l'autre moitié de la règle de #410 — « la ligne existe, le
+ * garde décline, **la marque reste** » — observable ici : un `paymentsTouched`
+ * à zéro sur une issue `applied`, là où un événement sans destinataire rend
+ * `unmatched` sans rien marquer. La distinction entre ces deux zéros est très
+ * exactement ce que le ticket avait à trancher, et un double qui écrivait sans
+ * garde ne pouvait pas la montrer.
+ *
+ * Ce qu'il **ne** modélise pas, et qu'il ne faut donc pas lui demander : la
+ * transaction — donc l'annulation de la marque quand l'effet échoue —, la
+ * contrainte d'unicité qui sérialise deux livraisons concurrentes, la frontière
+ * tenue par l'extension Prisma, la borne
+ * `payments_refunded_amount_minor_check`, et l'horodatage `capturedAt`. Tout
+ * cela se prouve contre un vrai moteur, dans
+ * `test/payments-webhook.isolation-spec.ts` : un double ne peut pas témoigner
  * pour la base.
  */
 export class FakeStripeWebhookRepository {
@@ -142,8 +173,16 @@ export class FakeStripeWebhookRepository {
 
     switch (fact.kind) {
       case 'payment-succeeded': {
+        // `where: { id, status: { in: ['PENDING', 'FAILED'] } }`. Un
+        // encaissement déjà remboursé ne redevient pas abouti parce qu'une
+        // livraison arrive en retard — Stripe ne garantit pas l'ordre.
+        if (!SETTLEABLE.has(payment.status)) {
+          return DECLINED;
+        }
         payment.status = 'SUCCEEDED';
         payment.chargeId = fact.chargeId ?? payment.chargeId;
+        // Le filtre de statut vaut pour les **deux** écritures : un rendez-vous
+        // ne se confirme pas sur un encaissement qui n'a pas transité.
         const confirmed = payment.appointmentStatus === 'PENDING' ? 1 : 0;
         if (confirmed === 1) {
           payment.appointmentStatus = 'CONFIRMED';
@@ -151,11 +190,22 @@ export class FakeStripeWebhookRepository {
         return { paymentsTouched: 1, appointmentsConfirmed: confirmed };
       }
       case 'payment-failed':
+        // `where: { id, status: 'PENDING' }`. Une carte refusée livrée après le
+        // succès n'annule pas un paiement abouti.
+        if (payment.status !== 'PENDING') {
+          return DECLINED;
+        }
         payment.status = 'FAILED';
         return { paymentsTouched: 1, appointmentsConfirmed: 0 };
       case 'charge-refunded':
+        // Aucun garde de statut dans le vrai dépôt : le montant vient de Stripe,
+        // qui fait foi, et c'est la contrainte de base — pas une branche de code
+        // — qui refuse un remboursement supérieur à l'encaissement.
         payment.status = fact.fullyRefunded ? 'REFUNDED' : 'PARTIALLY_REFUNDED';
         payment.refundedAmountMinor = fact.refundedAmountMinor;
+        if (fact.chargeId !== null) {
+          payment.chargeId = fact.chargeId;
+        }
         return { paymentsTouched: 1, appointmentsConfirmed: 0 };
     }
   }
