@@ -8,7 +8,7 @@ import { createCatalogHarness, type CatalogHarness } from './catalog.harness';
  * Isolation inter-tenant du module `catalog` — obligatoire pour tout endpoint
  * nouveau (tenant-isolation §6, DoD de #24).
  *
- * La suite couvre les **onze** routes de back-office du module, pas un
+ * La suite couvre les **douze** routes de back-office du module, pas un
  * échantillon :
  *
  * | Route | Ce qui est vérifié |
@@ -24,9 +24,10 @@ import { createCatalogHarness, type CatalogHarness } from './catalog.harness';
  * | `GET /services/:id/staff` | 404 sur la prestation du voisin ; l'affectation croisée reste invisible |
  * | `POST /services/:id/staff` | 404 des deux côtés — prestation ou praticien d'ailleurs — et rien d'écrit |
  * | `DELETE /services/:id/staff/:staffId` | 404, et l'affectation du voisin intacte |
+ * | `GET /staff` | la liste ne contient aucune fiche du voisin |
  *
- * La **douzième** route du module, `GET /public/:tenantSlug/services`, n'est pas
- * ici : elle ne se désigne pas par un jeton mais par un slug d'URL, et sa
+ * La **treizième** route du module, `GET /public/:tenantSlug/services`, n'est
+ * pas ici : elle ne se désigne pas par un jeton mais par un slug d'URL, et sa
  * traversée se prouve donc autrement — dans `public-catalog.isolation-spec.ts`.
  *
  * Le protocole est celui de tenant-isolation §6 : créer chez A, s'authentifier
@@ -455,6 +456,102 @@ describe('Isolation inter-tenant — module catalog', () => {
     });
   });
 
+  /**
+   * L'annuaire des fiches praticien — `GET /staff` (#421).
+   *
+   * La route rend une **liste**, jamais une ressource par identifiant : la
+   * traversée s'y prouve donc par ce que la liste ne contient pas, et non par un
+   * 404. C'est le complément que tenant-isolation §6 réclame explicitement —
+   * « un test qui liste et vérifie que le résultat ne contient aucun id du
+   * tenant A ».
+   *
+   * Le cas qui compte particulièrement ici : cette route est la **première** du
+   * module à lire la table `staff` sans passer par une prestation. Les autres
+   * lectures de praticien étaient bornées deux fois — par la prestation d'abord,
+   * par l'affectation ensuite —, et une portée défaillante s'y serait heurtée à
+   * la seconde barrière. Ici il n'y en a qu'une.
+   */
+  describe('annuaire des praticiens', () => {
+    it('la liste ne laisse voir aucune fiche du voisin', async () => {
+      const chezA = harness.repository.seedStaff({ tenantId: a, displayName: 'Chez A' });
+      const chezB = harness.repository.seedStaff({ tenantId: b, displayName: 'Chez B' });
+
+      const response = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${await asA()}`)
+        .expect(200);
+
+      expect(response.body).toHaveLength(1);
+      expect(response.body[0].id).toBe(chezA.id);
+      // Ni l'identifiant du voisin, ni son nom, ni son établissement.
+      expect(JSON.stringify(response.body)).not.toContain(chezB.id);
+      expect(JSON.stringify(response.body)).not.toContain('Chez B');
+      expect(JSON.stringify(response.body)).not.toContain(b);
+    });
+
+    it('le filtre d’activité ne rouvre pas la frontière', async () => {
+      // `?activeOnly=true` change le `where` : le vérifier séparément est ce qui
+      // attraperait un filtre qui remplacerait la clause scopée au lieu de s'y
+      // ajouter.
+      const chezA = harness.repository.seedStaff({ tenantId: a, displayName: 'Chez A' });
+      const chezB = harness.repository.seedStaff({ tenantId: b, displayName: 'Chez B' });
+
+      const response = await request(server())
+        .get('/api/v1/staff?activeOnly=true')
+        .set('Authorization', `Bearer ${await asA()}`)
+        .expect(200);
+
+      expect(response.body).toHaveLength(1);
+      expect(response.body[0].id).toBe(chezA.id);
+      expect(JSON.stringify(response.body)).not.toContain(chezB.id);
+    });
+
+    it('un salon sans fiche voit une liste vide, pas celles du voisin', async () => {
+      // Le scénario d'amorçage, précisément celui que le ticket ouvre — et donc
+      // celui où une portée défaillante serait la plus tentante à ne pas voir :
+      // la liste attendue est vide, et une fuite y ressemblerait à un succès.
+      harness.repository.seedStaff({ tenantId: b, displayName: 'Chez B' });
+      harness.repository.seedStaff({ tenantId: b, displayName: 'Aussi chez B' });
+
+      const response = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${await asA()}`)
+        .expect(200);
+
+      expect(response.body).toEqual([]);
+    });
+
+    it('un jeton émis sur le voisin ne lit que les fiches du voisin', async () => {
+      const chezA = harness.repository.seedStaff({ tenantId: a, displayName: 'Chez A' });
+      const chezB = harness.repository.seedStaff({ tenantId: b, displayName: 'Chez B' });
+
+      const vuDeB = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${await harness.tokenFor('ADMIN', b)}`)
+        .expect(200);
+
+      expect(vuDeB.body).toHaveLength(1);
+      expect(vuDeB.body[0].id).toBe(chezB.id);
+      expect(JSON.stringify(vuDeB.body)).not.toContain(chezA.id);
+    });
+
+    it('la fiche du voisin listée ici reste inaffectable', async () => {
+      // La boucle complète : ce que l'annuaire ne montre pas, l'affectation ne
+      // l'accepte pas davantage. Un écran qui devinerait l'identifiant du voisin
+      // — ou le recevrait d'ailleurs — se heurte au même 404.
+      const chezA = harness.repository.seedService({ tenantId: a });
+      const praticienB = harness.repository.seedStaff({ tenantId: b });
+
+      await request(server())
+        .post(`/api/v1/services/${chezA.id}/staff`)
+        .set('Authorization', `Bearer ${await asA()}`)
+        .send({ staffId: praticienB.id })
+        .expect(404);
+
+      expect(harness.repository.assignments).toHaveLength(0);
+    });
+  });
+
   describe('le tenant ne vient que du jeton', () => {
     it('un `tenantId` dans le corps ne déplace rien', async () => {
       // `forbidNonWhitelisted` **rejette** au lieu d'ignorer : la tentative
@@ -501,6 +598,28 @@ describe('Isolation inter-tenant — module catalog', () => {
       // certainement pas une portée.
       await request(server())
         .get(`/api/v1/services?tenantId=${b}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(400);
+    });
+
+    it('l’annuaire des praticiens n’écoute ni en-tête ni paramètre', async () => {
+      // Le même refus sur la route de #421 : c'est la seule du module dont la
+      // réponse est une liste de fiches, donc celle où un paramètre de portée
+      // ferait le plus de dégâts s'il était lu.
+      const chezB = harness.repository.seedStaff({ tenantId: b, displayName: 'Chez B' });
+      const token = await asA();
+
+      const avecEnTete = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${token}`)
+        .set('X-Tenant-Id', b)
+        .expect(200);
+
+      expect(avecEnTete.body).toEqual([]);
+      expect(JSON.stringify(avecEnTete.body)).not.toContain(chezB.id);
+
+      await request(server())
+        .get(`/api/v1/staff?tenantId=${b}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(400);
     });
