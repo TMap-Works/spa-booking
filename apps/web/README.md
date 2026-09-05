@@ -14,6 +14,7 @@ components/
   ui/            design system partagé
 lib/
   api-client.ts  seul point d'accès à l'API, types importés de @spa/shared
+  admin/         période et grille du planning — fonctions pures, sans React
   booking/       état du tunnel et dates civiles de l'établissement
   format.ts      heures dans le fuseau du salon, montants entiers
 styles/          jetons et composants de base — voir styles/README.md
@@ -69,6 +70,37 @@ livrés en CSS piloté par jetons et en contrats de balisage documentés :
 
 Les maquettes s'ouvrent telles quelles dans un navigateur, sans serveur et sans
 build : `mockups/admin/index.html`.
+
+### Le planning — `/{slug}/admin/calendrier` (#49)
+
+L'écran le plus regardé du back-office, et le seul dont la logique vit **hors des
+composants** : `lib/admin/calendar-range.ts` calcule la période, et
+`lib/admin/calendar-grid.ts` la transforme en colonnes de cellules. Aucun des
+deux n'importe React, ce qui rend testable sans navigateur ce qui casserait le
+plus cher — un rendez-vous placé une demi-heure trop bas, ou un bloc qui en
+recouvre un autre.
+
+| Trait | Où il se tient |
+|---|---|
+| Vue jour, une colonne par praticien ; vue semaine, une par journée | `buildCalendarBoard` |
+| Plage visible seule, périodes voisines préchargées | `calendrier/page.tsx` amorce, `CalendarBoard` poursuit |
+| Rendu virtualisé sur l'axe des heures | `computeSlotWindow` et `cellsInWindow` |
+| Codes couleur par statut, doublés d'un texte (WCAG 1.4.1) | `statusModifier` et `STATUS_LABELS` |
+| Période précédente / suivante / aujourd'hui, dans l'URL | `shiftAnchor`, `adminCalendarPath` |
+
+La vue et la date sont des paramètres d'URL (`?vue=semaine&date=2026-08-26`) : un
+planning se partage et survit à un rafraîchissement. Le composant les y réécrit
+avec `history.replaceState`, sans repasser par le serveur — seul le contenu des
+colonnes change d'une période à l'autre.
+
+**Ce que cet écran attend encore de l'API.** `packages/shared` publie
+`appointmentListQuerySchema` et `appointmentSchema`, mais `apps/api` n'expose que
+`GET /appointments/mine` : la route d'agenda du comptoir — `GET /appointments`,
+bornée par dates civiles — reste à livrer. La grille, la navigation et la
+virtualisation sont complètes ; le chargement des rendez-vous dégrade en un
+bandeau qui nomme le manque. Faute de `GET /staff` (#421), les colonnes de la vue
+jour sont **déduites des rendez-vous** : un praticien sans rendez-vous ce jour-là
+n'a pas de colonne.
 
 ## Vérifications
 
