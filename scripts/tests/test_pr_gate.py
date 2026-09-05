@@ -1292,17 +1292,32 @@ class TestConfrontationDeLIntention(unittest.TestCase):
     automatique cesserait de merger sans que rien ne le dise.
     """
 
+    #: Le run ouvert de tous ces cas — celui que l'intention doit désigner pour
+    #: être confrontée (#426).
+    RUN_VIVANT = "s3-back-office-paiements-20260825-101849"
+
     def setUp(self):
         self.dossier = tempfile.TemporaryDirectory()
         self.addCleanup(self.dossier.cleanup)
-        self.intention = Path(self.dossier.name) / "supervisor.json"
-        patch = mock.patch.object(pr_gate, "INTENT", self.intention)
-        patch.start()
-        self.addCleanup(patch.stop)
+        etat = Path(self.dossier.name)
+        self.intention = etat / "supervisor.json"
+        self.current = etat / "current"
+        (etat / self.RUN_VIVANT).mkdir()
+        self.current.write_text(self.RUN_VIVANT, encoding="utf-8")
+        for cible, valeur in (("INTENT", self.intention),
+                              ("CURRENT", self.current)):
+            patch = mock.patch.object(pr_gate, cible, valeur)
+            patch.start()
+            self.addCleanup(patch.stop)
 
     def arme(self, scopes, **reste):
-        """Écrit une intention de run, comme `milestone_supervise` l'écrit."""
+        """Écrit une intention de run, comme `milestone_supervise` l'écrit.
+
+        Avec son identifiant de run : c'est ce qui la rattache au run ouvert, et
+        sans quoi elle n'est plus confrontée du tout depuis #426.
+        """
         intent = {"milestone": "S3", "no_merge": False,
+                  pr_gate.INTENT_RUN_KEY: self.RUN_VIVANT,
                   pr_gate.INTENT_KEY: list(scopes)}
         intent.update(reste)
         self.intention.write_text(json.dumps(intent, ensure_ascii=False),
@@ -1479,6 +1494,120 @@ class TestConfrontationDeLIntention(unittest.TestCase):
         contexte où `SPA_UNATTENDED` est posée.
         """
         self.assertEqual((pr_gate.main_root() / ".claude").is_dir(), True)
+
+
+class TestIntentionRattacheeAuRun(unittest.TestCase):
+    """#426 — l'intention d'un run mort ne se confronte pas comme vivante.
+
+    La confrontation de #414 suppose que `supervisor.json` décrive le run en
+    cours. Rien ne le garantissait : `cmd_watchdog` désarmait la veille sur
+    `stop` / `pause` en laissant le fichier sur le disque, et un superviseur
+    lancé `--no-watchdog` n'en écrivait aucun tout en armant ses vagues.
+
+    Les deux se combinaient : un run armé `--merge-sensitive prisma` était
+    confronté au `"merge_sensitive": []` d'un jalon mort et perdait
+    l'autorisation vivante de son opérateur. Le défaut échouait en fermeture —
+    des PR restaient ouvertes au lieu d'être mergées sans relecture — mais il
+    arrêtait le jalon.
+    """
+
+    VIVANT = "s3-back-office-paiements-20260905-030300"
+    MORT = "s2-r-servation-20260827-195102"
+
+    def setUp(self):
+        self.dossier = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dossier.cleanup)
+        self.etat = Path(self.dossier.name)
+        self.intention = self.etat / "supervisor.json"
+        self.current = self.etat / "current"
+        for cible, valeur in (("INTENT", self.intention),
+                              ("CURRENT", self.current)):
+            patch = mock.patch.object(pr_gate, cible, valeur)
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def ouvre(self, run):
+        (self.etat / run).mkdir(exist_ok=True)
+        self.current.write_text(run, encoding="utf-8")
+
+    def arme(self, scopes, **reste):
+        intent = {"milestone": "S3", pr_gate.INTENT_KEY: list(scopes)}
+        intent.update(reste)
+        self.intention.write_text(json.dumps(intent), encoding="utf-8")
+
+    def scopes(self, variable):
+        erreurs = io.StringIO()
+        with mock.patch.dict(os.environ, {pr_gate.AUTHORISED_ENV: variable},
+                             clear=True):
+            with contextlib.redirect_stderr(erreurs):
+                return pr_gate.authorised_scopes(), erreurs.getvalue()
+
+    # --- le cas de l'issue --------------------------------------------------
+
+    def test_l_autorisation_vivante_survit_a_l_intention_d_un_run_mort(self):
+        """Le scénario exact de #426, de bout en bout.
+
+        Un run mort a laissé son `"merge_sensitive": []` sur le disque ; le run
+        vivant est armé `--merge-sensitive prisma` et ses vagues portent la
+        variable. L'autorisation de l'opérateur doit survivre — et sans un
+        `ERROR`, puisqu'il n'y a aucun désaccord, seulement un vestige.
+        """
+        self.ouvre(self.VIVANT)
+        self.arme([], run=self.MORT)
+        self.assertEqual(self.scopes("prisma"), ({"prisma"}, ""))
+
+    def test_l_intention_du_run_vivant_est_bien_confrontee(self):
+        """Le correctif ne doit pas éteindre #414 : sur le run en cours, le
+        désaccord se tranche toujours pour la plus restrictive."""
+        self.ouvre(self.VIVANT)
+        self.arme([], run=self.VIVANT)
+        retenus, erreurs = self.scopes("prisma,mod:payments")
+        self.assertEqual(retenus, set())
+        self.assertIn("ERROR", erreurs)
+
+    def test_intention_sans_identifiant_de_run_n_est_pas_confrontee(self):
+        """Écrite avant #323, donc antérieure au run en cours par construction.
+
+        Ne pas la confronter est le sens prudent de l'ignorance : le même que
+        pour le fichier absent, et le seul qui ne retire rien à un opérateur
+        vivant sur la foi d'un fichier dont on ignore l'âge.
+        """
+        self.ouvre(self.VIVANT)
+        self.arme([])
+        self.assertIsNone(pr_gate.intent_scopes())
+        self.assertEqual(self.scopes("prisma"), ({"prisma"}, ""))
+
+    def test_sans_run_ouvert_rien_n_est_confronte(self):
+        """`current` absent : plus aucun run ne tourne, l'intention est un
+        vestige quoi qu'elle nomme."""
+        self.arme([], run=self.VIVANT)
+        self.assertIsNone(pr_gate.intent_scopes())
+
+    def test_un_run_dont_le_dossier_a_ete_emporte_ne_compte_pas(self):
+        """`prune()` ne garde que les derniers runs : `current` peut nommer un
+        dossier qui n'existe plus, et ce nom-là ne désigne aucun run vivant."""
+        self.current.write_text(self.VIVANT, encoding="utf-8")
+        self.arme(["prisma"], run=self.VIVANT)
+        self.assertIsNone(pr_gate.current_run())
+        self.assertIsNone(pr_gate.intent_scopes())
+
+    # --- la clé lue est bien celle que l'armement écrit ---------------------
+
+    def test_la_cle_de_run_est_celle_qu_ecrit_le_superviseur(self):
+        """Un champ renommé d'un seul côté rendrait la confrontation muette —
+        et cette fois sans que rien ne le dise, puisque « rien à confronter »
+        est un état légitime."""
+        chemin = str(Path(pr_gate.__file__).resolve().parent)
+        sys.path.insert(0, chemin)
+        self.addCleanup(lambda: chemin in sys.path and sys.path.remove(chemin))
+        import milestone_supervise  # noqa: E402 — après l'insertion de chemin
+
+        source = inspect.getsource(milestone_supervise.intent_of)
+        self.assertIn(f'"{pr_gate.INTENT_RUN_KEY}"', source)
+        self.assertEqual(pr_gate.CURRENT_RELPATH[-1],
+                         milestone_supervise.CURRENT.name)
+        self.assertEqual(pr_gate.CURRENT_RELPATH[-2],
+                         milestone_supervise.CURRENT.parent.name)
 
 
 class TestBlocking(unittest.TestCase):
