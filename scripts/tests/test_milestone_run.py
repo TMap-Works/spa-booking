@@ -1148,6 +1148,83 @@ class RestitutionInteractiveAuGate(unittest.TestCase):
         self.assertNotIn("session interactive", output.getvalue())
 
 
+class GateApresUnArbitrage(unittest.TestCase):
+    """#422 — le gate lit le plan **stocké**, et l'arbitrage écrit après lui.
+
+    La séquence de la nuit du 4 au 5 septembre, rejouée bout à bout. Le replan de
+    21:17 avait rendu « 0 tickets restants », et il avait raison : la PR de #60
+    était ouverte sur un périmètre sensible non pré-autorisé, le ticket sortait du
+    plan et ses dépendants restaient gelés. L'arbitrage de `fin_de_run` a ensuite
+    mergé cette PR et fermé #60 — mais `gate`, à 21:33, relisait toujours le plan
+    de 21:17 : `NO_RUN`, la veille s'est désarmée, et vingt issues plannables sont
+    restées au matin.
+
+    Ce test ne juge pas le superviseur (c'est `VeilleDevantUnPlanPerime`, dans
+    `test_milestone_supervise.py`) : il fixe ce dont le superviseur dépend — que
+    le gate change d'avis quand, et seulement quand, le plan a été recalculé.
+    """
+
+    VAGUE = {"waves": [{"index": 1, "issues": [plan_issue(62), plan_issue(317),
+                                               plan_issue(316)]}]}
+
+    def test_le_plan_vide_rend_no_run_le_plan_recalcule_nomme_la_vague(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "r1"
+            directory.mkdir()
+            (directory / "run.json").write_text(json.dumps(
+                {"id": "r1", "milestone": "S3", "width": 3,
+                 "created": "2026-09-04T10:18:49+00:00",
+                 "plan": {"waves": []}}), encoding="utf-8")
+            (directory / "control.json").write_text(
+                json.dumps({"signal": "run"}), encoding="utf-8")
+            # Le journal tel que l'arbitrage l'a laissé : #60 mergé, donc clos.
+            (directory / "journal.ndjson").write_text(
+                json.dumps({"ts": "2026-09-04T21:26:27+00:00", "kind": "ticket",
+                            "ticket": 60, "status": "merged", "actor": "arbitre",
+                            "message": "PR #419 lue, revue publiée, mergée"})
+                + "\n", encoding="utf-8")
+
+            output = io.StringIO()
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
+                 mock.patch.object(run_mod, "live_worktrees", return_value={}), \
+                 mock.patch.object(run_mod, "remote_branches", return_value={}), \
+                 contextlib.redirect_stdout(output):
+                avant = run_mod.cmd_gate(argparse.Namespace(run="r1"))
+                with mock.patch.object(run_mod, "plan_json",
+                                       return_value=self.VAGUE):
+                    run_mod.cmd_replan(argparse.Namespace(run="r1", width=None))
+                apres = run_mod.cmd_gate(argparse.Namespace(run="r1"))
+            texte = output.getvalue()
+
+        self.assertEqual(avant, run_mod.NO_RUN)         # « toutes les vagues… »
+        self.assertEqual(apres, run_mod.GO)             # …alors qu'il en reste 7
+        self.assertIn("vague 1 · 3 ticket(s) à lancer", texte)
+        for number in (62, 317, 316):
+            self.assertIn(f"#{number}", texte)
+
+    def test_le_replan_laisse_dans_le_journal_de_quoi_relire_la_sequence(self):
+        """Critère 4 de #422 : sans cette ligne, la séquence « plan vide →
+        arbitrage → plan rouvert » ne se relit nulle part."""
+        with tempfile.TemporaryDirectory() as tmp:
+            directory = Path(tmp) / "r1"
+            directory.mkdir()
+            (directory / "run.json").write_text(json.dumps(
+                {"id": "r1", "milestone": "S3", "width": 3,
+                 "plan": {"waves": []}}), encoding="utf-8")
+            (directory / "journal.ndjson").write_text("", encoding="utf-8")
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
+                 mock.patch.object(run_mod, "plan_json", return_value=self.VAGUE), \
+                 contextlib.redirect_stdout(io.StringIO()):
+                run_mod.cmd_replan(argparse.Namespace(run="r1", width=None))
+            events = [json.loads(line) for line
+                      in (directory / "journal.ndjson").read_text(
+                          encoding="utf-8").splitlines() if line.strip()]
+        self.assertEqual([e["status"] for e in events], ["replanned"])
+        self.assertIn("3 tickets restants", events[0]["message"])
+
+
 class ActeurDuSignal(unittest.TestCase):
     """#262 — qui a posé la pause, et comment on le sait.
 

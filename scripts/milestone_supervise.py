@@ -76,6 +76,11 @@ planifiée se supprime au réveil suivant : jalon déroulé, `stop` ou `pause`
 demandé dans le run, run effacé, et — garde-fou de dernier recours — intention
 vieille de plus de quinze jours.
 
+« Jalon déroulé » se vérifie deux fois plutôt qu'une. `gate` ne recalcule pas le
+plan : il relit celui de `run.json`, et l'arbitrage de fin de run merge des PR et
+ouvre des issues **après** son écriture. Avant de se débrancher sur un NO_RUN, le
+dispositif intercale donc un `replan` et relit le verdict (#422).
+
 ## Où reprendre
 
 Nulle part ici. `milestone_run.py start` reprend de lui-même le run inachevé, et
@@ -761,6 +766,107 @@ def production_note(commits, merges):
     return f"{len(commits)} commit(s), {len(merges)} merge(s)"
 
 
+# --------------------------------------------------------------------------- #
+# Le plan périmé — ce que l'arbitre change sous le gate
+# --------------------------------------------------------------------------- #
+#
+# `gate` ne recalcule rien : il relit le plan **stocké** dans `run.json`, celui
+# qu'a écrit le dernier `replan`. C'est ce qui a perdu la nuit du 4 au 5
+# septembre (#422). Le replan de 21:17 avait rendu « 0 tickets restants », et il
+# avait raison : la PR de #60 était ouverte sur un périmètre sensible non
+# pré-autorisé, le ticket sortait du plan et ses dépendants restaient gelés.
+# L'arbitrage de `fin_de_run` a ensuite mergé cette PR, fermé #60 et libéré ses
+# dépendants — vingt issues plannables au matin. Mais `gate`, à 21:33, lisait
+# toujours le plan de 21:17 : NO_RUN, `cmd_watchdog` a désarmé la veille, et le
+# jalon a dormi avec sept vagues devant lui.
+#
+# La règle qui en sort : **ne jamais conclure « jalon déroulé » sur un plan
+# antérieur à la dernière action de l'arbitre.** Un arbitrage sur motif
+# `fin_de_run` existe précisément pour rattraper ce que le dossier n'a pas vu ;
+# se débrancher derrière lui sur le plan d'avant annule tout ce qu'il vient de
+# faire. Le replan intercalé coûte une interrogation de GitHub, une fois, à la
+# toute fin d'un run — contre une nuit perdue.
+
+# Les statuts qui périment un plan : un ticket clos quitte le plan **et libère
+# ses dépendants**, qui n'y étaient pas.
+PLAN_STALERS = ("merged", "skipped")
+
+
+def plan_outdated_since_replan():
+    """Ce qui a bougé sous le plan depuis le dernier `replan` — sinon rien.
+
+    Rend les raisons en clair, prêtes pour le journal ; liste vide quand le plan
+    stocké dit encore la vérité, et c'est le cas courant : chaque vague se
+    termine par un `replan`, si bien qu'un run qui se déroule normalement n'a
+    rien ici à recalculer.
+
+    Deux choses le périment, et l'arbitre fait les deux au même tour :
+
+    - un ticket qui se **clôt** — mergé, ou écarté — puisque son issue quitte le
+      plan et libère ce qui dépendait d'elle ;
+    - une **décision de l'arbitre**, quelle qu'elle soit : la phase 7 de
+      `/milestone-arbitrate` ouvre des issues de suivi sur le jalon, et une issue
+      neuve est un ticket que le plan d'avant ne pouvait pas connaître.
+
+    On lit le journal du run plutôt que GitHub : c'est gratuit, c'est là que
+    l'arbitre inscrit ses décisions (`milestone_arbiter.py record`, sous l'acteur
+    `arbitre`), et la mesure doit rester sans réseau — elle est prise aussi par
+    la veille, qui se réveille toutes les cinq minutes.
+    """
+    directory = current_run_dir()
+    if directory is None:
+        return []
+    events = journal_events(directory)
+    # Le dernier `replan` du journal fait la frontière : tout ce qui le précède
+    # est, par construction, déjà pris en compte dans le plan stocké.
+    start = 0
+    for index, event in enumerate(events):
+        if event.get("status") == "replanned":
+            start = index + 1
+    closed, decisions = set(), 0
+    for event in events[start:]:
+        if event.get("status") in PLAN_STALERS and event.get("ticket") is not None:
+            closed.add(str(event["ticket"]))
+        if event.get("actor") == "arbitre":
+            decisions += 1
+    reasons = []
+    if closed:
+        reasons.append(", ".join("#" + n for n in sorted(closed)) + " clos")
+    if decisions:
+        reasons.append(f"{decisions} décision(s) de l'arbitre")
+    return reasons
+
+
+def replan_before_concluding(where):
+    """Recalculer le plan avant de conclure — rend True si c'est arrivé.
+
+    Appelée aux deux seuls endroits où le dispositif se débranche sur un NO_RUN :
+    la boucle du superviseur, après l'arbitrage de fin de run, et la veille.
+    Quand elle rend True, le verdict du gate qui vient d'être lu est périmé et
+    doit être relu avant qu'on en tire quoi que ce soit.
+
+    Un replan qui échoue ne fait rien échouer : on le dit, dans le journal du run
+    et non seulement dans celui du superviseur, et l'appelant conclut sur le plan
+    qu'il a — c'est exactement ce qu'il faisait avant #422.
+    """
+    reasons = plan_outdated_since_replan()
+    if not reasons:
+        return False
+    note = " ; ".join(reasons)
+    say(f"plan antérieur à {note} — replan avant de conclure ({where})", "WARN")
+    proc = runner("replan")
+    for line in (proc.stdout or "").strip().splitlines():
+        say("  replan · " + line, "DEBUG")
+    if proc.returncode != GO:
+        say("replan refusé — le plan stocké reste celui d'avant l'arbitrage",
+            "WARN")
+        journal(None, f"replan intercalé refusé (code {proc.returncode}) — "
+                      f"{where} conclut sur le plan d'avant {note}", level="WARN")
+        return False
+    journal(None, f"replan intercalé avant de conclure ({where}) — {note}")
+    return True
+
+
 def current_run_dir():
     """Le dossier du run courant, ou None si aucun n'est ouvert."""
     try:
@@ -1043,7 +1149,15 @@ def cmd_watchdog(args):
     if held_off():
         return 0                    # panne récente, on laisse le temps passer
 
+    # `gate` ne recalcule pas le plan : il relit celui de `run.json`. Sur un
+    # NO_RUN, on vérifie donc qu'aucune action de l'arbitre ne l'a périmé depuis
+    # — sinon la veille se désarme sur un jalon qu'un arbitrage vient de rouvrir,
+    # et le run dort jusqu'au matin (#422). Un seul replan, un seul verdict relu :
+    # le plan recalculé porte sa propre ligne `replanned`, qui referme la
+    # frontière et interdit à ce tour-ci de recommencer.
     verdict = runner("gate").returncode
+    if verdict == NO_RUN and replan_before_concluding("la veille"):
+        verdict = runner("gate").returncode
     if verdict in (STOP, PAUSE):
         say("veille : pause ou arrêt demandé dans le run — désarmement", "WARN")
         disarm_watchdog(quiet=True)
@@ -2056,6 +2170,14 @@ def supervise(args):
     # ferait relancer un arbitrage par étape jusqu'à épuisement du budget, pour
     # le même verdict à chaque fois. Il retombe dès qu'un ticket avance.
     rescued = False
+    # Le pendant du précédent pour la conclusion : le replan intercalé de #422
+    # ne se redonne pas tant qu'aucune étape n'a tourné entre-temps. Sans lui,
+    # l'arbitrage de fin de run se rappelle lui-même — sa phase 7 inscrit une
+    # décision (acteur `arbitre`), qui périme le plan, qui fait `continue`, qui
+    # retombe sur NO_RUN puisque les issues d'outillage qu'il vient d'ouvrir ne
+    # sont pas plannables par un run projet — et le cycle consomme tout le budget
+    # d'arbitrage, sans qu'aucun leg ne s'incrémente pour le borner.
+    reconclu = False
     # Les commits et les merges déjà là en arrivant ne sont l'œuvre d'aucun leg
     # de ce superviseur : on les tient pour vus, faute de quoi le premier leg
     # passerait pour productif sans avoir rien produit.
@@ -2094,13 +2216,27 @@ def supervise(args):
             say("  gate · " + line, "DEBUG")
 
         if verdict == NO_RUN and legs > 0:
-            say("plus rien à traiter — jalon déroulé")
+            say("plus rien à traiter — dernier contrôle avant de conclure")
             # Un dernier tour, et il n'a rien de cérémonial : les anomalies d'un
             # run ne se lisent qu'une fois le jalon déroulé, quand on peut
             # comparer ce qui a coincé d'un ticket à l'autre. C'est là que
             # l'arbitre ouvre les issues d'amélioration ; passé cet instant,
             # personne ne relira ces logs.
             rescue(["fin_de_run"])
+            # Et c'est ce tour-là qui peut rouvrir le jalon : l'arbitre merge la
+            # PR qui retenait un ticket, ferme son issue, libère ses dépendants,
+            # ouvre les issues de suivi des anomalies du run. Le plan lu quelques
+            # lignes plus haut ne connaît rien de tout cela. Se débrancher ici sur
+            # ce plan-là, c'est le défaut de #422 — on recalcule, et on relit le
+            # gate plutôt que de conclure. Une seule fois par étape, cependant :
+            # l'arbitrage de fin de run inscrit une décision à chaque tour, ce
+            # qui périmerait le plan indéfiniment et rappellerait l'arbitre
+            # jusqu'à vider son budget sans qu'aucun leg ne borne le cycle. Le
+            # verrou retombe dès qu'une étape a vraiment tourné, si bien qu'une
+            # seconde fin de run, plus loin, sera protégée comme la première.
+            if not reconclu and replan_before_concluding("le superviseur"):
+                reconclu = True
+                continue
             retire("jalon déroulé")
             return 0
         if verdict == STOP:
@@ -2145,6 +2281,9 @@ def supervise(args):
 
         before = progress_count(args.no_merge)
         legs += 1
+        # Une étape va tourner : la prochaine conclusion aura droit, elle aussi,
+        # à son replan intercalé.
+        reconclu = False
         started = time.time()
         journal("leg_started", f"étape {legs} — une vague, largeur {args.width}")
 
