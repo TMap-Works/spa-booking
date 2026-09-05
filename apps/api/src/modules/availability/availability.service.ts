@@ -9,7 +9,11 @@ import {
 import { AvailabilityRepository } from './availability.repository';
 import { calendarDaysBetween, eachCalendarDate } from './availability.schedule';
 import { computeSlots, type SlotShape, type StaffFreeTime } from './availability.slots';
-import type { AvailabilityView, DayAvailabilityView } from './availability.types';
+import type {
+  AvailabilityView,
+  DayAvailabilityView,
+  EngineAvailabilityQuery,
+} from './availability.types';
 import { StaffScheduleService } from './staff-schedule.service';
 import { StaffTimeOffService } from './staff-time-off.service';
 import { TenantClockService } from './tenant-clock.service';
@@ -86,13 +90,20 @@ export class AvailabilityService {
    * doit décaler l'horloge de la machine pour l'exercer ne s'écrit pas — il se
    * saute.
    *
+   * `excludeAppointmentId` retire de l'étape 3 le rendez-vous qu'un report est
+   * en train de déplacer (#316). **Facultatif, et seul le report le renseigne** :
+   * la réservation publique n'en passe aucun, et son calcul est rigoureusement
+   * celui d'avant. Ce qu'il change tient à une lecture qui sert à *proposer* ;
+   * l'unicité reste jugée par `appointments_no_overlap`, et par elle seule —
+   * `AvailabilityRepository.listBookedRanges` le détaille.
+   *
    * @throws {NotFoundError} prestation inconnue, hors de l'établissement, ou
    * retirée du catalogue.
    * @throws {AvailabilityRangeTooWideError} plage inversée ou de plus de
    * `MAX_AVAILABILITY_RANGE_DAYS` jours.
    */
   public async slotsFor(
-    query: { serviceId: string; staffId?: string; from: string; to: string },
+    query: EngineAvailabilityQuery,
     now: Date = new Date(),
   ): Promise<AvailabilityView> {
     const dates = requireServableRange(query.from, query.to);
@@ -144,7 +155,7 @@ export class AvailabilityService {
       // le rendre avec les deux réglages, sur la même ligne de `tenants`.
       this.schedules.windowsForMany(staffIds, query.from, query.to, settings.timezone),
       this.timeOff.busyRanges(staffIds, window),
-      this.repository.listBookedRanges(staffIds, window),
+      this.repository.listBookedRanges(staffIds, window, query.excludeAppointmentId),
     ]);
 
     // Congés et rendez-vous se soustraient de la même façon : ce sont deux

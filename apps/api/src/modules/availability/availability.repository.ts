@@ -258,10 +258,38 @@ export class AvailabilityRepository {
    * proposerait un créneau déjà pris.
    *
    * `@@index([tenantId, staffId, startsAt])` sert cette lecture.
+   *
+   * ## `excludeAppointmentId` — le rendez-vous que le report est en train de déplacer (#316)
+   *
+   * Un report soumet son créneau d'arrivée au même contrôle qu'une réservation :
+   * le moteur doit l'avoir proposé. Or le rendez-vous **en cours de déplacement**
+   * occupe encore son créneau — il l'occupe, tant que la transaction n'a pas eu
+   * lieu. Sans ce paramètre, avancer d'un quart d'heure un soin d'une heure
+   * demande un créneau que le calcul ne propose pas, et le geste le plus courant
+   * du comptoir reçoit un 409.
+   *
+   * Ce que ce paramètre ne fait **pas**, et c'est le seul point qui compte :
+   * relâcher quoi que ce soit de l'unicité. Il n'agit que sur la lecture qui sert
+   * à *proposer*, laquelle ne garantissait déjà rien (voir ci-dessus).
+   * L'insertion du report reste jugée par `appointments_no_overlap`, dans la même
+   * transaction qui annule la ligne de départ — et c'est cette annulation, pas ce
+   * paramètre, qui sort la ligne de l'index partiel avant que la nouvelle ne soit
+   * jugée. Deux reports concurrents vers des créneaux chevauchants continuent
+   * donc de n'en voir aboutir qu'un, et le test de concurrence le vérifie.
+   *
+   * ## Un identifiant d'un autre établissement est sans effet, jamais une fuite
+   *
+   * Le `where` entier est scopé par l'extension : `id: { not: … }` ne peut que
+   * **retirer** une ligne d'un ensemble déjà borné à l'établissement courant.
+   * L'identifiant d'un rendez-vous voisin n'y désigne rien, la lecture rend
+   * exactement ce qu'elle aurait rendu sans lui, et rien de ce voisin n'entre
+   * dans le résultat — il n'y a ni chemin de lecture, ni différence observable
+   * qui ferait de ce paramètre une sonde d'existence (tenant-isolation §4).
    */
   public async listBookedRanges(
     staffIds: readonly string[],
     window: TimeOffWindow,
+    excludeAppointmentId?: string,
   ): Promise<StaffBusyRange[]> {
     if (staffIds.length === 0) {
       return [];
@@ -273,6 +301,10 @@ export class AvailabilityRepository {
         status: { in: [...OCCUPYING_STATUSES] },
         startsAt: { lt: window.to },
         endsAt: { gt: window.from },
+        // Étalé plutôt que posé à `undefined` : Prisma traite bien un `id`
+        // absent et un `id: undefined` de la même façon, mais l'écrire ainsi
+        // rend le cas « aucune exclusion » lisible sans avoir à le savoir.
+        ...(excludeAppointmentId === undefined ? {} : { id: { not: excludeAppointmentId } }),
       },
       select: BOOKED_SELECT,
       orderBy: [{ startsAt: 'asc' }],

@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { AvailabilityCacheService } from './availability-cache';
 import { AvailabilityService, requireServableRange } from './availability.service';
-import type { AvailabilityView } from './availability.types';
+import type { AvailabilityQuery, AvailabilityView } from './availability.types';
 
 /**
  * Le chemin de **lecture** de la disponibilité : le moteur, derrière son cache
@@ -96,10 +96,7 @@ export class AvailabilityQueryService {
    * retirée du catalogue.
    * @throws {AvailabilityRangeTooWideError} plage inversée ou trop large.
    */
-  public async slotsFor(
-    query: { serviceId: string; staffId?: string; from: string; to: string },
-    now: Date = new Date(),
-  ): Promise<AvailabilityView> {
+  public async slotsFor(query: AvailabilityQuery, now: Date = new Date()): Promise<AvailabilityView> {
     const dates = requireServableRange(query.from, query.to);
     const key = { serviceId: query.serviceId, ...(query.staffId !== undefined && { staffId: query.staffId }) };
 
@@ -109,7 +106,23 @@ export class AvailabilityQueryService {
       return cached;
     }
 
-    const view = await this.engine.slotsFor(query, now);
+    // Recomposée champ par champ plutôt que transmise telle quelle : le moteur
+    // accepte un champ de plus que ce type — l'exclusion du report (#316) — et
+    // le typage structurel laisserait un objet qui le porte se faire passer pour
+    // une `AvailabilityQuery`. La vue serait alors calculée en ignorant un
+    // rendez-vous, puis **écrite sous une clé qui ne dit rien de cette
+    // exclusion** : tous les lecteurs de la minute suivante verraient un créneau
+    // pris comme libre. La recomposition rend ce chemin inexistant plutôt
+    // qu'improbable.
+    const view = await this.engine.slotsFor(
+      {
+        serviceId: query.serviceId,
+        ...(query.staffId !== undefined && { staffId: query.staffId }),
+        from: query.from,
+        to: query.to,
+      },
+      now,
+    );
 
     await this.cache.writeRange(key, view);
 

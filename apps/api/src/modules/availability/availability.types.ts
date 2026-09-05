@@ -59,6 +59,55 @@ export interface ClosingDaysView {
 }
 
 /**
+ * Ce qu'on demande au moteur de disponibilité — la forme **servie**, celle que
+ * le cache sait indexer.
+ *
+ * `from` et `to` sont des dates civiles de l'établissement, bornes comprises.
+ * `staffId` restreint à un praticien ; son absence vaut « tous ceux qui
+ * pratiquent le soin ».
+ *
+ * TODO(#26) : cette forme appartient au contrat d'API — `packages/shared`
+ * l'expose déjà, au même nom et aux mêmes quatre champs
+ * (`availabilityQuerySchema`). Elle devra en être importée le jour où `apps/api`
+ * dépendra du paquet partagé, sans quoi les deux déclarations homonymes
+ * deviendront ambiguës à l'import — même TODO que les trois formes ci-dessus.
+ */
+export interface AvailabilityQuery {
+  readonly serviceId: string;
+  readonly staffId?: string;
+  readonly from: string;
+  readonly to: string;
+}
+
+/**
+ * La même demande, **augmentée de ce que seul le report renseigne** (#316).
+ *
+ * ## Pourquoi deux types plutôt qu'un champ de plus sur le premier
+ *
+ * Parce que ce champ ne doit jamais atteindre le chemin caché. La clé de cache
+ * est `(serviceId, staffId, journée)` : une vue calculée en ignorant un
+ * rendez-vous, écrite sous cette clé, ferait voir son créneau libre à **tous**
+ * les lecteurs suivants pendant le TTL. Le défaut serait borné — la réservation
+ * rejoue le moteur à froid, et la contrainte tranche —, mais il n'a aucune
+ * raison d'exister.
+ *
+ * `AvailabilityQueryService` accepte donc `AvailabilityQuery` et rien d'autre,
+ * `AvailabilityService` accepte celle-ci. La séparation est la même, et pour la
+ * même raison, que celle des deux services : une garantie qu'on lit sur le
+ * graphe d'injection plutôt que dans un argument par défaut.
+ */
+export interface EngineAvailabilityQuery extends AvailabilityQuery {
+  /**
+   * Le rendez-vous à ne **pas** compter comme occupant — celui qu'un report est
+   * en train de déplacer, et lui seul.
+   *
+   * Sans effet s'il désigne un rendez-vous d'un autre établissement : la lecture
+   * est scopée, et cet identifiant n'y retire rien (tenant-isolation §4).
+   */
+  readonly excludeAppointmentId?: string;
+}
+
+/**
  * Un créneau proposable, tel que le moteur de disponibilité le rend (#34).
  *
  * Les instants sortent en **chaînes ISO 8601 suffixées `Z`** et non en `Date` —
