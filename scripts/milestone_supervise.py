@@ -131,6 +131,12 @@ séparément vers les vagues : `SPA_UNATTENDED` dit que personne ne peut répond
 `SPA_MERGE_SENSITIVE` dit ce qui a déjà été répondu. Le choix est inscrit dans
 `supervisor.json` et rejoué à chaque reprise, comme l'est `--no-merge`.
 
+Et il n'est **repris**, jamais effacé : un ré-armement du même run — c'est ce
+qu'est un `milestone_run.py start` de reprise, qui ne retape aucun drapeau —
+garde les réglages de l'armement d'origine et le dit. Seul un drapeau retapé, ou
+un run neuf (`start --fresh`), en change. Sans cela, une commande dont tout le
+propos est de ne rien changer effaçait en silence un accord humain daté (#323).
+
 Pour un jalon sensible de bout en bout, armer plutôt avec `--no-merge`.
 
 L'arbitre peut lever ce refus lui-même, PR par PR et périmètre par périmètre,
@@ -185,6 +191,44 @@ except Exception:  # noqa: BLE001 — un pr_gate.py à demi écrit ne doit pas
     # n'a personne pour corriger. Il mourrait à chaque relance, toutes les cinq
     # minutes, et le jalon s'arrêterait là.
     SCOPES_KNOWN = False
+
+# Les réglages que porte un armement, et le drapeau par lequel on les pose. Ce
+# ne sont pas tous les arguments du superviseur : `--state`, `--disarm`, `--arm`
+# ou `--force` décrivent l'action demandée, pas l'intention à faire survivre.
+#
+# La table sert à une seule chose, et c'est la correction de #323 : distinguer
+# « le drapeau n'a pas été retapé » de « il a été retapé avec sa valeur par
+# défaut ». Argparse ne le sait pas — `--merge-sensitive` absent et
+# `--merge-sensitive ""` rendent tous deux la même chaîne vide —, si bien qu'un
+# `milestone_run.py start` de **reprise**, qui ne retape aucun de ces drapeaux,
+# réécrivait `supervisor.json` avec les défauts et effaçait en silence le geste
+# humain daté de l'armement d'origine.
+ARMING_FLAGS = {
+    "merge_sensitive": "--merge-sensitive",
+    "no_merge": "--no-merge",
+    "width": "--width",
+    "nature": "--nature",
+    "waves_per_leg": "--waves-per-leg",
+    "permission_mode": "--permission-mode",
+    "model": "--model",
+    "margin": "--margin",
+    "patience": "--patience",
+    # `max_legs` n'y est **pas**, et c'est délibéré : ce n'est pas un réglage
+    # d'armement mais un budget que le superviseur consomme. `reload_intent()`
+    # écrit dans l'intention ce qu'il en **reste**, borné à 1 — un run qui s'est
+    # rechargé près de l'épuisement porte donc `max_legs: 1` sur le disque. Le
+    # reprendre ferait qu'à chaque reprise le jalon déroule une étape et s'arrête,
+    # indéfiniment. Ce que #323 demande de préserver est un accord humain, pas un
+    # compteur à demi consommé.
+    "leg_timeout": "--leg-timeout",
+    "no_arbiter": "--no-arbiter",
+    "no_reload": "--no-reload",
+    "arbiter_model": "--arbiter-model",
+    "arbiter_budget": "--arbiter-budget",
+    "arbiter_timeout": "--arbiter-timeout",
+    "stall_minutes": "--stall-minutes",
+    "claude": "--claude",
+}
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNS_DIR = ROOT / ".claude" / ".milestone"
@@ -417,6 +461,14 @@ def intent_of(args):
     l'usage — deux copies finiraient par ne plus rejouer les mêmes.
     """
     return {
+        # Le run que cet armement sert. C'est lui qui autorise un ré-armement à
+        # **reprendre** les réglages du précédent au lieu de les écraser (#323) :
+        # hors du même run, une intention d'avant est celle d'un autre jalon, et
+        # en hériter ouvrirait au merge des périmètres que personne n'a ouverts
+        # pour celui-ci. Une intention écrite par une version antérieure n'a pas
+        # le champ — elle vaudra donc « pas le même run », c'est-à-dire le sens
+        # prudent de l'ignorance.
+        "run": current_run(),
         "milestone": args.milestone, "width": args.width,
         # La nature se rejoue comme la largeur : un superviseur ressuscité par la
         # veille sur un run d'outillage repartirait sinon sur le produit, c'est-à-
@@ -491,6 +543,204 @@ def nature_relayed(previous, wanted):
             f"« {previous.get('milestone') or 'le plus proche'} » : elle passe "
             f"en {wanted}. La reprise automatique de l'autre file s'arrête — "
             "la relancer, c'est rouvrir son run.")
+
+
+def flag_typed(flag, argv):
+    """Ce drapeau a-t-il été écrit sur cette ligne de commande ?
+
+    Les deux formes qu'accepte argparse : `--width 3` et `--width=3`. Il n'y en
+    a que deux parce que `main()` construit son parseur en `allow_abbrev=False`,
+    et c'est ce qui rend cette comparaison littérale suffisante : avec
+    l'abréviation de préfixe qu'argparse active par défaut, `--merge-sensi ""`
+    aurait été accepté par le parseur *et* invisible ici — `carried_arming()`
+    aurait alors réarmé le périmètre que l'opérateur venait de fermer, c'est-à-
+    dire #323 exactement, dans le sens qui coûte cher.
+    """
+    prefix = f"{flag}="
+    return any(token == flag or token.startswith(prefix)
+               for token in (argv or []))
+
+
+def carried_arming(args, previous, argv):
+    """Ce qu'un ré-armement du **même run** reprend de l'armement précédent.
+
+    Le défaut que cela corrige (#323) : `milestone_run.py start` sans `--fresh`
+    *reprend* un run inachevé, puis ré-arme la veille avec le Namespace de cet
+    appel-là. Or une reprise ne retape aucun drapeau d'armement — ni
+    `--merge-sensitive`, ni `--no-merge` — si bien que `save_intent()` écrivait
+    les défauts d'argparse par-dessus le geste humain daté du premier armement.
+    Le run `s2-r-servation-20260827-195102` a ainsi perdu son `prisma`
+    pré-autorisé sans qu'une ligne le dise, et `--state` a annoncé pendant des
+    heures « aucun pré-autorisé » pendant que le superviseur vivant posait
+    toujours `SPA_MERGE_SENSITIVE=prisma` dans l'environnement de ses vagues.
+
+    Dans le sens rencontré, le défaut était bénin — l'annonce était plus stricte
+    que la réalité. Dans l'autre il ne l'est pas : hériter de l'intention d'un
+    run *plus permissif* ferait merger sans relecture un périmètre que personne
+    n'a ouvert pour celui-ci. La reprise est donc bornée au **même run** :
+    `intent_of()` y inscrit son identifiant, et une intention qui en désigne un
+    autre — ou aucun, comme celles d'avant ce ticket — n'est jamais reprise.
+    C'est ce qui fait qu'un `start --fresh`, dont le run est neuf par
+    construction, repart bien des défauts sans avoir à le dire.
+
+    Un drapeau retapé l'emporte toujours : c'est un geste de maintenant, contre
+    le souvenir d'un armement passé.
+
+    Rend {dest: valeur} — vide s'il n'y a rien à reprendre.
+    """
+    if not isinstance(previous, dict):
+        return {}
+    run = current_run()
+    if not run or previous.get("run") != run:
+        return {}
+
+    carried = {}
+    for dest, flag in ARMING_FLAGS.items():
+        if dest not in previous or flag_typed(flag, argv):
+            continue
+        value = previous[dest]
+        if dest == "merge_sensitive":
+            scopes = ([str(scope) for scope in value] if isinstance(value, list)
+                      else [str(value)])
+            if SCOPES_KNOWN:
+                # Relu comme `--merge-sensitive` le serait : l'intention porte
+                # normalement des clés déjà développées, mais une intention
+                # écrite à la main — ou par une version qui cesserait de
+                # développer `all` — doit s'entendre de la même façon des deux
+                # côtés. Une clé devenue inconnue depuis (registre de
+                # `pr_gate.py` remanié) tombe ici, ce qui est le bon sens de
+                # l'échec : elle n'ouvre rien.
+                value, _ = parse_scopes(" ".join(scopes))
+            else:
+                # Registre illisible — `pr_gate.py` à demi écrit, ce qui arrive
+                # précisément pendant un run d'outillage qui réécrit `scripts/`.
+                # La relire à travers un registre vide la viderait, `save_intent`
+                # écrirait cet effacement, et l'accord humain serait perdu pour
+                # de bon : le défaut même de #323, commis par le geste censé le
+                # corriger. On la reconduit telle quelle — préserver un accord
+                # ne demande pas de savoir l'interpréter, et c'est `pr_gate.py`,
+                # qui détient le registre, qui la lira le moment venu.
+                value = set(scopes)
+        if value == getattr(args, dest, None):
+            continue
+        carried[dest] = value
+
+    # Deux réglages ne peuvent pas coexister — `main()` refuse déjà de les voir
+    # tapés ensemble. Ils peuvent en revanche se rencontrer ici, l'un venant du
+    # disque et l'autre de la ligne : c'est alors le geste de maintenant qui
+    # tranche, jamais le souvenir.
+    if carried.get("no_merge") and getattr(args, "merge_sensitive", None):
+        carried.pop("no_merge")
+    if carried.get("merge_sensitive") and getattr(args, "no_merge", False):
+        carried.pop("merge_sensitive")
+    return carried
+
+
+def dropped_scopes(args, previous):
+    """Les périmètres qu'un lancement laisse tomber de l'armement du même run.
+
+    `--arm` **reprend** ce qui n'a pas été retapé ; un lancement ordinaire —
+    `python scripts/milestone_supervise.py "S2 — Réservation"`, la relance à la
+    main que documente `milestone.md` — ne le peut pas. Ses arguments ne sont
+    pas seulement écrits sur le disque : ils sont ce que *ce processus* posera
+    dans `SPA_MERGE_SENSITIVE` à chaque vague. Lui reconduire une
+    pré-autorisation qu'il n'a pas reçue ouvrirait au merge sans relecture des
+    périmètres que personne n'a rouverts pour ce lancement-ci.
+
+    Ce qui est donc rendu ici n'est pas une reprise, c'est une **perte à
+    annoncer**. Le disque et le processus resteront d'accord — plus restrictifs
+    qu'avant — et l'opérateur qui croyait « relancer » saura ce qu'il vient de
+    refermer. C'est le silence, et lui seul, qui a rendu #323 invisible tout un
+    run.
+    """
+    if not isinstance(previous, dict):
+        return []
+    run = current_run()
+    if not run or previous.get("run") != run:
+        return []
+    armed = previous.get("merge_sensitive")
+    if not isinstance(armed, list):
+        return []
+    return sorted({str(scope) for scope in armed}
+                  - {str(scope) for scope in (args.merge_sensitive or ())})
+
+
+def describe_carried(carried, previous):
+    """La ligne qui dit ce qu'un ré-armement vient de reprendre — ou None.
+
+    Nommée réglage par réglage, et pas comptée : la question à laquelle elle
+    doit répondre après coup est « qui a autorisé quoi, et quand », et c'est
+    précisément parce que rien ne le disait que #323 est passé inaperçu.
+    """
+    if not carried:
+        return None
+    said = []
+    for dest in sorted(carried):
+        value = carried[dest]
+        if isinstance(value, (set, frozenset, list, tuple)):
+            value = ", ".join(sorted(str(item) for item in value)) or "aucun"
+        said.append(f"{ARMING_FLAGS.get(dest, dest)} {value}")
+    return ("réglages repris de l'armement du {} sur ce même run — {} ; "
+            "les retaper, ou `start --fresh`, pour en changer."
+            .format((previous or {}).get("armed") or "?", " · ".join(said)))
+
+
+def env_divergence(intent, raw):
+    """Le désaccord entre `SPA_MERGE_SENSITIVE` et l'armement sur le disque.
+
+    Les deux sources ne disent pas la même chose : le disque porte le geste
+    humain daté, la variable est le souvenir qu'en a gardé un `claude -p` né
+    plus tôt. Elles ne peuvent donc diverger que dans un sens — le disque a
+    changé depuis — et c'est exactement ce qui est arrivé sous #323, sans qu'une
+    seule ligne le dise.
+
+    `pr_gate.py` tranche déjà à la place la plus prudente : il retient
+    l'intersection des deux (#414). Ce qui manquait était de le **voir** : rendu
+    ici, `--state` cesse d'afficher la seule valeur disque comme si elle faisait
+    foi partout.
+
+    Rend un message, ou None quand il n'y a rien à signaler — variable absente
+    (le cas courant : elle n'est posée que dans l'environnement des vagues) ou
+    parfaitement concordante.
+    """
+    if raw is None:
+        return None
+    from_env, _ = parse_scopes(raw)
+    armed = (intent or {}).get("merge_sensitive")
+    if intent is None or not isinstance(armed, list):
+        # Sans intention lisible il n'y a **rien à confronter**, et `pr_gate.py`
+        # croit alors la variable telle quelle : c'est délibéré chez lui (#414),
+        # pour le superviseur armé `--no-watchdog`, qui pose la variable sans
+        # rien écrire sur le disque. Annoncer ici une intersection serait donc
+        # faux — c'est bien la variable seule qui décidera.
+        return ("{} annonce {}, et aucun armement lisible dans {} ne vient le "
+                "confirmer — rien à confronter : pr_gate.py la croira telle "
+                "quelle."
+                .format(AUTHORISED_ENV, ", ".join(sorted(from_env)) or "rien",
+                        INTENT.name))
+    armed_scopes, _ = parse_scopes(" ".join(str(scope) for scope in armed))
+    if armed_scopes == from_env:
+        return None
+    return ("{} annonce {} et l'armement {} — les deux divergent ; pr_gate.py "
+            "retient leur intersection : {}."
+            .format(AUTHORISED_ENV, ", ".join(sorted(from_env)) or "rien",
+                    ", ".join(sorted(armed_scopes)) or "rien",
+                    ", ".join(sorted(from_env & armed_scopes)) or "rien"))
+
+
+def describe_env(intent, raw):
+    """Ce que `--state` doit dire de `SPA_MERGE_SENSITIVE`, dans tous les cas.
+
+    La variable est nommée dans chacune des trois branches : la ligne est lue
+    hors de son contexte — recopiée dans une issue, citée dans un compte rendu —
+    et « concorde avec l'armement » ne dit pas de quoi on parle.
+    """
+    if raw is None:
+        return (f"{AUTHORISED_ENV} absente de cet environnement — elle n'est "
+                "posée que dans celui des vagues")
+    return env_divergence(intent, raw) or (
+        "{} annonce {} — concorde avec l'armement".format(
+            AUTHORISED_ENV, ", ".join(sorted(parse_scopes(raw)[0])) or "rien"))
 
 
 def load_intent():
@@ -1210,9 +1460,17 @@ def cmd_state(args):
               f" · largeur {intent.get('width')} · "
               f"{'PR seules' if intent.get('no_merge') else 'merge automatique'}")
         print("périmètres armés   : " + describe_scopes(intent))
-        print(f"armé le            : {intent.get('armed')}")
+        print(f"armé le            : {intent.get('armed')}"
+              + (f" · run {intent['run']}" if intent.get("run") else ""))
     else:
         print("jalon armé         : aucun")
+    # Le disque n'est pas la seule source : un `claude -p` né plus tôt porte
+    # encore la liste de l'armement qui l'a lancé. N'afficher que le disque
+    # laissait croire à une valeur unique — et c'est ce qui a rendu #323
+    # invisible pendant tout un run. La confrontation appartient à `pr_gate.py`,
+    # qui retient l'intersection ; ce qui manquait était de pouvoir la voir.
+    print("environnement      : "
+          + describe_env(intent, os.environ.get(AUTHORISED_ENV)))
     hold = quota_file_hold()
     print("quota              : "
           + (f"épuisé, reprise à {hm(hold['until'])} dans "
@@ -2163,6 +2421,17 @@ def supervise(args):
     # S'armer soi-même : un superviseur lancé à la main doit laisser derrière lui
     # de quoi le ressusciter. C'est idempotent, donc sans effet s'il l'est déjà.
     if not args.dry_run and not args.no_watchdog:
+        # L'intention écrite ici est celle de *ce* processus, et c'est juste :
+        # c'est lui qui travaillera. Mais une relance tapée à la main ne retape
+        # pas `--merge-sensitive`, et l'opérateur qui croit relancer refermerait
+        # sa pré-autorisation sans un mot. On ne la lui rend pas — elle
+        # ouvrirait au merge ce que ce lancement n'a pas reçu — on la lui dit.
+        dropped = dropped_scopes(args, load_intent())
+        if dropped:
+            say("ce lancement ne reprend pas {} de l'armement précédent de ce "
+                "run : ces périmètres repassent sous relecture humaine. Les "
+                "retaper avec --merge-sensitive pour les rouvrir."
+                .format(", ".join(dropped)), "WARN")
         save_intent(args)
         if not watchdog_armed():
             arm_watchdog(args.every)
@@ -2441,8 +2710,18 @@ START = time.time()
 
 
 def main():
+    # `allow_abbrev=False` n'est pas une coquetterie : `flag_typed()` distingue
+    # « le drapeau n'a pas été retapé » de « il a été retapé » en lisant la ligne
+    # de commande telle quelle. L'abréviation de préfixe qu'argparse active par
+    # défaut ferait passer `--merge-sensi ""` — accepté par le parseur — pour une
+    # absence, et `carried_arming()` réarmerait alors le périmètre que
+    # l'opérateur venait de fermer. Refuser l'abréviation fait échouer la
+    # commande au lieu de la trahir, et c'est le bon sens de l'échec : tous les
+    # appelants internes (`arm_supervision()`, `intent_argv()`) écrivent les
+    # drapeaux en toutes lettres.
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False)
     parser.add_argument("milestone", nargs="?",
                         help="jalon à dérouler (défaut : l'ouvert le plus proche)")
     parser.add_argument("--width", type=int, default=3,
@@ -2575,6 +2854,20 @@ def main():
         retire("désarmement demandé")
         return 0
     if args.arm:
+        # Avant tout le reste — préflight compris, qui lit `--claude` et
+        # `--permission-mode` : ce que ce ré-armement reprend du précédent.
+        # Appliqué sur `args`, donc vrai pour la bannière, pour l'intention
+        # écrite et pour tout ce qui s'en sert ensuite. Sans cela, l'annonce
+        # aurait décrit un armement que le disque n'aurait pas porté — le
+        # défaut #323 déplacé d'un cran, pas corrigé.
+        previous = load_intent()
+        carried = carried_arming(args, previous, sys.argv[1:])
+        for dest, value in carried.items():
+            setattr(args, dest, value)
+        told = describe_carried(carried, previous)
+        if told:
+            say(told, "WARN")
+
         # Le préflight et l'annonce de la politique de merge étaient jusqu'ici
         # hors d'atteinte de ce chemin : `--arm` rendait la main avant eux,
         # alors que c'est précisément lui qu'appelle `/milestone`. Armer était
@@ -2596,7 +2889,7 @@ def main():
         announce_merge_policy(args)
         # Armer écrase l'intention précédente : si elle portait une autre
         # nature, une file cesse d'être reprise, et il faut le dire.
-        relais = nature_relayed(load_intent(), getattr(args, "nature", "projet"))
+        relais = nature_relayed(previous, getattr(args, "nature", "projet"))
         if relais:
             say(relais, "WARN")
         save_intent(args)

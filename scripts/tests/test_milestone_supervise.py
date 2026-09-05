@@ -42,7 +42,9 @@ Aucune dépendance : `unittest` de la bibliothèque standard, comme
 `test_pr_gate.py`.
 """
 import argparse
+import contextlib
 import inspect
+import io
 import json
 import os
 import subprocess
@@ -1173,6 +1175,389 @@ class IntentPersistence(unittest.TestCase):
         self.assertEqual(argv[argv.index("--merge-sensitive") + 1],
                          "infra/terraform,prisma")
 
+
+class ReArmementDuMemeRun(unittest.TestCase):
+    """#323 — une reprise ne doit rien effacer de ce qu'un humain a armé.
+
+    `milestone_run.py start` sans `--fresh` *reprend* un run inachevé, puis
+    ré-arme la veille avec le Namespace de cet appel-là. Une reprise ne retape
+    aucun drapeau d'armement : le run `s2-r-servation-20260827-195102`, armé le
+    27/08 avec `--merge-sensitive prisma`, s'est ainsi retrouvé avec
+    `"merge_sensitive": []` sur le disque pendant que le superviseur vivant
+    posait toujours `SPA_MERGE_SENSITIVE=prisma` dans l'environnement de ses
+    vagues — et `--state` annonçait « aucun pré-autorisé » à un opérateur dont
+    les PR Prisma se mergeaient sans relecture.
+
+    Ce qui est vérifié ici est la borne autant que la reprise : hériter d'une
+    intention d'un **autre** run ouvrirait au merge des périmètres que personne
+    n'a ouverts pour celui-ci — le même défaut, dans le sens qui coûte cher.
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.runs = Path(tmp.name)
+        (self.runs / "run-a").mkdir()
+        (self.runs / "run-b").mkdir()
+        for patched, value in (("RUNS_DIR", self.runs),
+                               ("INTENT", self.runs / "supervisor.json"),
+                               ("CURRENT", self.runs / "current")):
+            self.enterContext(mock.patch.object(sup, patched, value))
+        self.sur_le_run("run-a")
+
+    def sur_le_run(self, name):
+        sup.CURRENT.write_text(name, encoding="utf-8")
+
+    def args(self, **fields):
+        base = dict(milestone="S2 — Réservation", width=3, nature="projet",
+                    waves_per_leg=1, no_merge=False, merge_sensitive=set(),
+                    permission_mode="acceptEdits", model=None, margin=90,
+                    patience=3, max_legs=40, leg_timeout=120, no_arbiter=False,
+                    no_reload=False, arbiter_model=sup.ARBITER_MODEL,
+                    arbiter_budget=sup.ARBITER_BUDGET,
+                    arbiter_timeout=sup.ARBITER_TIMEOUT,
+                    stall_minutes=sup.STALL_MINUTES, claude="claude")
+        base.update(fields)
+        return argparse.Namespace(**base)
+
+    def arme(self, **fields):
+        """L'armement d'origine, écrit comme `--arm` l'écrit."""
+        sup.save_intent(self.args(**fields))
+        return sup.load_intent()
+
+    # --- l'identité du run, ce qui borne la reprise ------------------------
+
+    def test_l_intention_porte_le_run_qu_elle_sert(self):
+        self.assertEqual(self.arme()["run"], "run-a")
+
+    # --- le critère d'acceptation, mot pour mot ----------------------------
+
+    def test_une_reprise_nue_conserve_les_perimetres_pre_autorises(self):
+        """Armer avec `--merge-sensitive prisma`, faire un `start` de reprise
+        nu : `prisma` doit toujours être là."""
+        previous = self.arme(merge_sensitive={"prisma"})
+        # La ligne exacte que `arm_supervision()` compose pour une reprise nue.
+        argv = ["--arm", "--width", "3", "--nature", "projet", "S2 — Réservation"]
+        carried = sup.carried_arming(self.args(), previous, argv)
+        self.assertEqual(carried["merge_sensitive"], {"prisma"})
+
+    def test_le_reglage_repris_est_celui_qui_finit_sur_le_disque(self):
+        """La reprise ne vaut que si elle est *écrite* : c'est `supervisor.json`
+        que relisent `--state` et `pr_gate.py`."""
+        previous = self.arme(merge_sensitive={"prisma"})
+        args = self.args()
+        for dest, value in sup.carried_arming(args, previous, ["--arm"]).items():
+            setattr(args, dest, value)
+        sup.save_intent(args)
+        self.assertEqual(sup.load_intent()["merge_sensitive"], ["prisma"])
+
+    def test_no_merge_survit_aussi_a_la_reprise(self):
+        previous = self.arme(no_merge=True)
+        self.assertIs(
+            sup.carried_arming(self.args(), previous, ["--arm"])["no_merge"],
+            True)
+
+    def test_les_autres_reglages_d_armement_survivent(self):
+        previous = self.arme(model="opus", patience=5, no_arbiter=True)
+        carried = sup.carried_arming(self.args(), previous, ["--arm"])
+        self.assertEqual(carried["model"], "opus")
+        self.assertEqual(carried["patience"], 5)
+        self.assertIs(carried["no_arbiter"], True)
+
+    def test_le_budget_d_etapes_n_est_pas_un_reglage_d_armement(self):
+        """`reload_intent()` écrit dans l'intention ce qu'il **reste** du budget,
+        borné à 1. Le reprendre ferait qu'à chaque reprise le jalon déroule une
+        étape et s'arrête — indéfiniment."""
+        previous = self.arme(max_legs=40)
+        previous["max_legs"] = 1          # ce qu'un run très rechargé y laisse
+        sup.write_intent(previous)
+        self.assertNotIn("max_legs",
+                         sup.carried_arming(self.args(), previous, ["--arm"]))
+        self.assertNotIn("max_legs", sup.ARMING_FLAGS)
+
+    def test_un_registre_illisible_ne_detruit_pas_l_accord_arme(self):
+        """`pr_gate.py` à demi écrit — ce qui arrive pendant un run d'outillage
+        qui réécrit `scripts/`. Relire la liste armée à travers un registre vide
+        la viderait, et `save_intent()` écrirait cet effacement pour de bon."""
+        previous = self.arme(merge_sensitive={"prisma"})
+        with mock.patch.object(sup, "SCOPES_KNOWN", False), \
+             mock.patch.object(sup, "SCOPE_KEYS", frozenset()):
+            carried = sup.carried_arming(self.args(), previous, ["--arm"])
+        self.assertEqual(carried["merge_sensitive"], {"prisma"})
+
+    # --- ce qui change les réglages, et rien d'autre ------------------------
+
+    def test_un_drapeau_retape_l_emporte(self):
+        """Un geste de maintenant contre le souvenir d'un armement passé."""
+        previous = self.arme(merge_sensitive={"prisma"})
+        argv = ["--arm", "--merge-sensitive", "infra/terraform"]
+        carried = sup.carried_arming(
+            self.args(merge_sensitive={"infra/terraform"}), previous, argv)
+        self.assertNotIn("merge_sensitive", carried)
+
+    def test_un_drapeau_retape_a_zero_l_emporte_aussi(self):
+        """`--merge-sensitive ""` est une consigne, pas une absence : c'est la
+        seule façon de *fermer* un périmètre sans rouvrir un run."""
+        previous = self.arme(merge_sensitive={"prisma"})
+        carried = sup.carried_arming(
+            self.args(), previous, ["--arm", "--merge-sensitive="])
+        self.assertNotIn("merge_sensitive", carried)
+
+    def test_un_run_neuf_ne_reprend_rien(self):
+        """`start --fresh` ouvre un run neuf : l'intention d'avant n'est pas la
+        sienne, et personne n'a pré-autorisé quoi que ce soit pour lui."""
+        previous = self.arme(merge_sensitive={"prisma"})
+        self.sur_le_run("run-b")
+        self.assertEqual(sup.carried_arming(self.args(), previous, ["--arm"]), {})
+
+    def test_une_intention_d_avant_ce_ticket_n_est_pas_reprise(self):
+        """Sans le champ `run`, on ne sait pas quel run elle servait — et le sens
+        prudent de l'ignorance est de ne rien hériter."""
+        previous = dict(self.arme(merge_sensitive={"prisma"}))
+        del previous["run"]
+        self.assertEqual(sup.carried_arming(self.args(), previous, ["--arm"]), {})
+
+    def test_sans_run_ouvert_rien_n_est_repris(self):
+        previous = self.arme(merge_sensitive={"prisma"})
+        sup.CURRENT.unlink()
+        self.assertEqual(sup.carried_arming(self.args(), previous, ["--arm"]), {})
+
+    def test_sans_intention_precedente_rien_n_est_repris(self):
+        self.assertEqual(sup.carried_arming(self.args(), None, ["--arm"]), {})
+
+    # --- les deux réglages qui ne peuvent pas coexister ---------------------
+
+    def test_un_no_merge_arme_ne_contredit_pas_une_pre_autorisation_tapee(self):
+        """`main()` refuse les deux *tapés* ensemble ; ils peuvent en revanche se
+        rencontrer ici, l'un venant du disque et l'autre de la ligne. C'est alors
+        le geste de maintenant qui tranche."""
+        previous = self.arme(no_merge=True)
+        carried = sup.carried_arming(
+            self.args(merge_sensitive={"prisma"}), previous,
+            ["--arm", "--merge-sensitive", "prisma"])
+        self.assertNotIn("no_merge", carried)
+
+    def test_une_pre_autorisation_armee_ne_survit_pas_a_un_no_merge_tape(self):
+        previous = self.arme(merge_sensitive={"prisma"})
+        carried = sup.carried_arming(self.args(no_merge=True), previous,
+                                     ["--arm", "--no-merge"])
+        self.assertNotIn("merge_sensitive", carried)
+
+    # --- et ce que l'opérateur en lit --------------------------------------
+
+    def test_ce_qui_est_repris_est_nomme_reglage_par_reglage(self):
+        """« 3 réglages repris » ne répond pas à « qui a autorisé quoi »."""
+        previous = self.arme(merge_sensitive={"prisma"}, no_merge=False)
+        said = sup.describe_carried(
+            sup.carried_arming(self.args(), previous, ["--arm"]), previous)
+        self.assertIn("--merge-sensitive", said)
+        self.assertIn("prisma", said)
+        self.assertIn(previous["armed"], said)
+
+    def test_rien_de_repris_ne_dit_rien(self):
+        self.assertIsNone(sup.describe_carried({}, None))
+
+    # --- ce qu'un lancement ordinaire referme, et doit dire -----------------
+
+    def test_un_lancement_qui_ne_reprend_pas_nomme_ce_qu_il_referme(self):
+        """`--arm` reprend ; un lancement ordinaire ne le peut pas — ses
+        arguments sont ce que le processus posera dans `SPA_MERGE_SENSITIVE`.
+        Il ne rend donc rien, mais il ne se tait pas."""
+        previous = self.arme(merge_sensitive={"prisma", "infra/terraform"})
+        self.assertEqual(sup.dropped_scopes(self.args(), previous),
+                         ["infra/terraform", "prisma"])
+
+    def test_un_lancement_qui_reprend_tout_ne_referme_rien(self):
+        """Le superviseur ressuscité par la veille : `intent_argv()` rejoue
+        `--merge-sensitive`, il n'y a rien à annoncer."""
+        previous = self.arme(merge_sensitive={"prisma"})
+        self.assertEqual(
+            sup.dropped_scopes(self.args(merge_sensitive={"prisma"}), previous),
+            [])
+
+    def test_l_armement_d_un_autre_run_n_est_jamais_dit_referme(self):
+        previous = self.arme(merge_sensitive={"prisma"})
+        self.sur_le_run("run-b")
+        self.assertEqual(sup.dropped_scopes(self.args(), previous), [])
+
+
+class ReArmementParLaLigneDeCommande(unittest.TestCase):
+    """Le même parcours, mais par `main()` — ce que `start` appelle vraiment.
+
+    `carried_arming()` peut être juste et rester inerte : c'est le branchement
+    dans `--arm` qui fait la correction, et c'est lui qu'un remaniement peut
+    perdre sans qu'un seul test unitaire ne bronche.
+    """
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.runs = Path(tmp.name)
+        (self.runs / "run-a").mkdir()
+        for patched, value in (("RUNS_DIR", self.runs),
+                               ("INTENT", self.runs / "supervisor.json"),
+                               ("CURRENT", self.runs / "current")):
+            self.enterContext(mock.patch.object(sup, patched, value))
+        (self.runs / "current").write_text("run-a", encoding="utf-8")
+        # Ni préflight (il exige `gh` authentifié), ni tâche planifiée : ce qui
+        # est mesuré est l'intention écrite, pas l'environnement de la machine.
+        self.enterContext(mock.patch.object(sup, "preflight", return_value=True))
+        self.enterContext(mock.patch.object(sup, "arm_watchdog",
+                                            return_value=True))
+        self.dit = []
+        self.enterContext(mock.patch.object(
+            sup, "say",
+            lambda message, level="INFO": self.dit.append((level, message))))
+
+    def arm(self, *argv):
+        with mock.patch.object(sys, "argv",
+                               ["milestone_supervise.py", "--arm", *argv]):
+            return sup.main()
+
+    def test_une_reprise_nue_garde_le_perimetre_arme(self):
+        self.assertEqual(self.arm("S2 — Réservation", "--width", "3",
+                                  "--merge-sensitive", "prisma"), 0)
+        self.assertEqual(sup.load_intent()["merge_sensitive"], ["prisma"])
+        # La reprise : exactement ce que compose `arm_supervision()`, sans
+        # `--merge-sensitive` puisque l'opérateur ne l'a pas retapé.
+        self.assertEqual(self.arm("S2 — Réservation", "--width", "3",
+                                  "--nature", "projet"), 0)
+        self.assertEqual(sup.load_intent()["merge_sensitive"], ["prisma"])
+
+    def test_la_reprise_le_dit_en_warn(self):
+        self.arm("S2 — Réservation", "--merge-sensitive", "prisma")
+        self.dit.clear()
+        self.arm("S2 — Réservation")
+        warned = " | ".join(message for level, message in self.dit
+                            if level == "WARN")
+        self.assertIn("réglages repris", warned)
+        self.assertIn("prisma", warned)
+
+    def test_la_banniere_annonce_le_perimetre_repris(self):
+        """La bannière est lue à l'instant où l'opérateur cesse de regarder :
+        elle doit décrire l'armement qui sera écrit, pas celui de la ligne."""
+        self.arm("S2 — Réservation", "--merge-sensitive", "prisma")
+        self.dit.clear()
+        self.arm("S2 — Réservation")
+        annonce = " | ".join(message for level, message in self.dit
+                             if "SERONT mergés" in message)
+        self.assertIn("prisma", annonce)
+
+    def test_un_run_neuf_repart_des_defauts(self):
+        self.arm("S2 — Réservation", "--merge-sensitive", "prisma")
+        (self.runs / "run-b").mkdir()
+        (self.runs / "current").write_text("run-b", encoding="utf-8")
+        self.arm("S3 — Back-office")
+        self.assertEqual(sup.load_intent()["merge_sensitive"], [])
+
+    def test_un_drapeau_abrege_est_refuse_plutot_qu_ignore(self):
+        """L'abréviation de préfixe d'argparse contre `flag_typed()`.
+
+        `flag_typed()` lit la ligne de commande telle quelle : `--merge-sensi ""`
+        — qu'argparse accepterait par défaut — y serait invisible, et la reprise
+        réarmerait le périmètre que l'opérateur vient précisément de fermer.
+        C'est #323 dans le sens qui coûte cher, et par le geste censé le
+        corriger. Le parseur refuse donc l'abréviation : échouer bruyamment
+        plutôt que trahir la consigne en silence.
+        """
+        self.assertEqual(self.arm("S2 — Réservation",
+                                  "--merge-sensitive", "prisma"), 0)
+        with contextlib.redirect_stderr(io.StringIO()), \
+             self.assertRaises(SystemExit):
+            self.arm("S2 — Réservation", "--merge-sensi", "")
+        self.assertEqual(sup.load_intent()["merge_sensitive"], ["prisma"])
+
+
+class DivergenceAvecLEnvironnement(unittest.TestCase):
+    """#323 — `--state` ne peut plus afficher le disque comme s'il faisait foi.
+
+    Deux sources disent ce qui est pré-autorisé : `supervisor.json`, le geste
+    humain daté, et `SPA_MERGE_SENSITIVE`, le souvenir qu'en a gardé un
+    `claude -p` né plus tôt. Elles ont divergé tout un run sans qu'une ligne le
+    dise. `pr_gate.py` tranche déjà pour la plus restrictive (#414) ; ce qui
+    manquait était de pouvoir le voir.
+    """
+
+    def intent(self, scopes):
+        return {"merge_sensitive": scopes, "run": "run-a"}
+
+    def test_variable_absente_n_est_pas_une_divergence(self):
+        """Le cas courant : elle n'est posée que dans l'environnement des vagues."""
+        self.assertIsNone(sup.env_divergence(self.intent(["prisma"]), None))
+        self.assertIn("absente", sup.describe_env(self.intent([]), None))
+
+    def test_la_variable_est_nommee_dans_les_trois_branches(self):
+        """La ligne est lue hors de son contexte — recopiée dans une issue, citée
+        dans un compte rendu."""
+        for raw in (None, "prisma", ""):
+            with self.subTest(variable=repr(raw)):
+                self.assertIn(sup.AUTHORISED_ENV,
+                              sup.describe_env(self.intent(["prisma"]), raw))
+
+    def test_sans_intention_lisible_l_intersection_n_est_pas_annoncee(self):
+        """`pr_gate.py` ne confronte que deux valeurs lisibles : sans intention,
+        il croit la variable telle quelle (#414). Annoncer une intersection
+        décrirait une protection qui n'a pas lieu."""
+        message = sup.env_divergence(None, "prisma")
+        self.assertIn("rien à confronter", message)
+        self.assertNotIn("intersection", message)
+
+    def test_concordance_ne_signale_rien(self):
+        self.assertIsNone(sup.env_divergence(self.intent(["prisma"]), "prisma"))
+        self.assertIn("concorde",
+                      sup.describe_env(self.intent(["prisma"]), "prisma"))
+
+    def test_le_cas_du_defaut_est_nomme_des_deux_cotes(self):
+        """L'environnement plus large que le disque — le run du 27/08."""
+        message = sup.env_divergence(self.intent([]), "prisma")
+        self.assertIsNotNone(message)
+        self.assertIn("prisma", message)
+        self.assertIn("divergent", message)
+
+    def test_l_intersection_retenue_est_dite(self):
+        message = sup.env_divergence(self.intent(["prisma"]),
+                                     "prisma,infra/terraform")
+        self.assertIn("intersection : prisma", message)
+
+    def test_le_disque_plus_large_diverge_aussi(self):
+        message = sup.env_divergence(self.intent(["prisma"]), "")
+        self.assertIsNotNone(message)
+        self.assertIn("intersection : rien", message)
+
+    def test_sans_intention_lisible_la_variable_est_signalee(self):
+        for intent in (None, {}, {"merge_sensitive": "prisma"}):
+            with self.subTest(intention=intent):
+                message = sup.env_divergence(intent, "prisma")
+                self.assertIsNotNone(message)
+                self.assertIn("prisma", message)
+
+    def test_all_s_entend_pareil_des_deux_cotes(self):
+        """Intersecter `["all"]` tel quel révoquerait *tout* au lieu de tout
+        ouvrir — le contresens exact du raccourci."""
+        self.assertIsNone(sup.env_divergence(
+            self.intent(sorted(sup.SCOPE_KEYS)), sup.ALL_SCOPES))
+
+    def test_state_imprime_la_ligne(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        runs = Path(tmp.name)
+        (runs / "run-a").mkdir()
+        (runs / "current").write_text("run-a", encoding="utf-8")
+        (runs / "supervisor.json").write_text(
+            json.dumps({"milestone": "S2", "width": 3, "merge_sensitive": [],
+                        "run": "run-a", "armed": "2026-08-27T16:51:03+00:00",
+                        "expires": time.time() + 3600}),
+            encoding="utf-8")
+        sortie = io.StringIO()
+        with mock.patch.object(sup, "RUNS_DIR", runs), \
+             mock.patch.object(sup, "INTENT", runs / "supervisor.json"), \
+             mock.patch.object(sup, "CURRENT", runs / "current"), \
+             mock.patch.dict(os.environ, {sup.AUTHORISED_ENV: "prisma"}), \
+             mock.patch.object(sup, "watchdog_armed", return_value=True), \
+             contextlib.redirect_stdout(sortie):
+            sup.cmd_state(argparse.Namespace())
+        self.assertIn(sup.AUTHORISED_ENV, sortie.getvalue())
+        self.assertIn("divergent", sortie.getvalue())
 
 
 class NatureRejouee(unittest.TestCase):

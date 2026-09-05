@@ -1076,6 +1076,80 @@ class PreAutorisationFautive(unittest.TestCase):
             self.assertIsNone(run_mod.check_merge_sensitive("nimportequoi"))
 
 
+class ReArmementDUneReprise(unittest.TestCase):
+    """#323 — ce qu'une reprise relaie au superviseur, et ce qu'elle tait.
+
+    `start` sans `--fresh` reprend un run inachevé puis ré-arme la veille. Tout
+    drapeau relayé ici compte, côté superviseur, pour un geste de l'opérateur et
+    écrase l'armement d'origine : ce qui n'a pas été tapé ne doit donc pas être
+    relayé, et ce qui l'est doit être juste.
+
+    `--width` est le cas qui ne se rattrape pas de l'autre côté :
+    `arm_supervision()` le passe toujours, si bien qu'une reprise nue ré-armait
+    à 3 — le défaut de la nature — un run ouvert à 5.
+    """
+
+    def start(self, run, **fields):
+        """`cmd_start` sur sa branche de reprise. Rend le Namespace armé."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        args = argparse.Namespace(
+            milestone="S3 — Back-office", width=None, nature="projet",
+            keep=10, fresh=False, no_reconcile=False, no_merge=False,
+            merge_sensitive="", no_watchdog=False)
+        for key, value in fields.items():
+            setattr(args, key, value)
+        armed = []
+        with mock.patch.object(run_mod, "unfinished_run", return_value="run-x"), \
+             mock.patch.object(run_mod, "load_run", return_value=run), \
+             mock.patch.object(run_mod, "CURRENT", Path(tmp.name) / "current"), \
+             mock.patch.object(run_mod, "LATEST_LOG", Path(tmp.name) / "latest.log"), \
+             mock.patch.object(run_mod, "append_journal"), \
+             mock.patch.object(run_mod, "cmd_resume", return_value=run_mod.GO), \
+             mock.patch.object(run_mod, "arm_supervision",
+                               side_effect=lambda _m, a: armed.append(a)), \
+             contextlib.redirect_stdout(io.StringIO()):
+            run_mod.cmd_start(args)
+        self.assertEqual(len(armed), 1)
+        return armed[0]
+
+    def run_json(self, width=5):
+        return {"id": "run-x", "milestone": "S3 — Back-office", "width": width,
+                "nature": "projet"}
+
+    def test_la_largeur_relayee_est_celle_du_run_repris(self):
+        self.assertEqual(self.start(self.run_json(width=5)).width, 5)
+
+    def test_une_largeur_tapee_l_emporte_sur_celle_du_run(self):
+        """C'est un geste de maintenant : la reprise n'a pas à le rogner."""
+        self.assertEqual(self.start(self.run_json(width=5), width=2).width, 2)
+
+    def test_un_run_sans_largeur_lisible_retombe_sur_le_defaut(self):
+        for width in (None, 0, "trois"):
+            with self.subTest(largeur=repr(width)):
+                self.assertEqual(self.start(self.run_json(width=width)).width, 3)
+
+    def test_la_pre_autorisation_non_tapee_n_est_pas_relayee(self):
+        """Relayer `--merge-sensitive ""` « pour faire bon poids » compterait
+        pour une consigne et effacerait l'armement — le défaut lui-même."""
+        self.assertEqual(self.start(self.run_json()).merge_sensitive, "")
+
+    def test_arm_supervision_ne_relaie_que_ce_qui_est_tape(self):
+        """Le contrat que le superviseur suppose : un drapeau absent de la ligne
+        est une absence, jamais un réglage à zéro."""
+        commands = []
+        args = argparse.Namespace(width=3, nature="projet", no_merge=False,
+                                  merge_sensitive="", no_watchdog=False)
+        with mock.patch.object(run_mod.subprocess, "run",
+                               side_effect=lambda cmd, **kw: commands.append(cmd)
+                               or mock.Mock(returncode=0, stdout="", stderr="")), \
+             contextlib.redirect_stdout(io.StringIO()):
+            run_mod.arm_supervision("S3 — Back-office", args)
+        self.assertEqual(len(commands), 1)
+        self.assertNotIn("--merge-sensitive", commands[0])
+        self.assertNotIn("--no-merge", commands[0])
+
+
 def plan_issue(number, resources=("scripts/x",)):
     return {"number": number, "title": f"issue {number}", "priority": "P1",
             "workstream": "devops", "module": "infra",
