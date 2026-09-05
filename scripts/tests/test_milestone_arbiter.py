@@ -1048,6 +1048,138 @@ class DossierWorktrees(unittest.TestCase):
         self.assertIn(21, self.dossier(events=[])["worktrees"])
 
 
+class DossierPrHorsPlan(unittest.TestCase):
+    """#411 — le dossier voit les PR du **jalon**, pas celles du plan.
+
+    `milestone_plan.py` écarte de tout plan les issues qui portent déjà une pull
+    request ouverte. Croiser les PR ouvertes avec les tickets du plan rejoué
+    revenait donc à ne jamais voir celles qui n'attendent plus personne : le
+    04/09/2026, sur le run S3, le dossier rendait `prs: []` et `gate 0` pendant
+    que #405 (sur #57) et #408 (sur #58) — deux P0 de paiement, vertes, laissées
+    ouvertes pour périmètre sensible — dormaient depuis des heures. Le motif
+    `pr_en_souffrance` existe exactement pour ça et ne pouvait pas se lever.
+    """
+
+    RUN = "s3-back-office-paiements-20260825-101849"
+    JALON = "S3 — Back-office & paiements"
+    # Le plan recalculé de l'arbitrage réel : #57 et #58 en sont absents.
+    PLAN = {56: {"number": 56, "status": "running", "phase": "implementation",
+                 "note": None}}
+    VIEUX = "2026-09-04T09:18:00Z"
+
+    def pr(self, number=405, ticket=57, branch=None):
+        return {"number": number, "title": "feat(payments): POS",
+                "headRefName": branch or f"feature/{ticket}-pos",
+                "isDraft": False, "mergeable": "MERGEABLE",
+                "body": f"Closes #{ticket}", "labels": [],
+                "updatedAt": self.VIEUX,
+                "statusCheckRollup": [{"name": "lint", "conclusion": "SUCCESS"}]}
+
+    def dossier(self, issues=(), prs=(), nature=None, worktrees=None, seen=None):
+        """Le dossier, avec `gh` bouchonné sur ses deux appels."""
+        def shell(argv, timeout=180):
+            if seen is not None:
+                seen.append(list(argv))
+            if len(argv) > 1 and argv[1] == "issue":
+                return 0, json.dumps([{"number": n} for n in issues]), ""
+            if len(argv) > 1 and argv[1] == "pr":
+                return 0, json.dumps(list(prs)), ""
+            return 0, "", ""
+
+        run = {"milestone": self.JALON, "width": 3}
+        if nature:
+            run["nature"] = nature
+        with mock.patch.object(run_mod, "load_run", return_value=run), \
+             mock.patch.object(run_mod, "load_control", return_value={}), \
+             mock.patch.object(run_mod, "read_journal", return_value=[]), \
+             mock.patch.object(run_mod, "replay", return_value=dict(self.PLAN)), \
+             mock.patch.object(run_mod, "wave_state", return_value=(None, [])), \
+             mock.patch.object(run_mod, "quota_hold", return_value=None), \
+             mock.patch.object(run_mod, "live_worktrees",
+                               return_value=dict(worktrees or {})), \
+             mock.patch.object(arb, "shell", side_effect=shell), \
+             mock.patch.object(arb, "gate_verdict",
+                               return_value={"code": run_mod.GO, "lignes": [],
+                                             "sens": "continuer"}), \
+             mock.patch.object(arb, "develop_state", return_value={}), \
+             mock.patch.object(arb, "latest_leg", return_value=None), \
+             mock.patch.object(arb, "arbitrations", return_value=[]):
+            return arb.dossier(self.RUN, tail=0, with_barrier=False)
+
+    def test_la_pr_dont_le_ticket_a_quitte_le_plan_entre_au_dossier(self):
+        """Le critère du ticket : #57 n'est plus au plan, sa PR est vue quand même."""
+        payload = self.dossier(issues=[56, 57, 58], prs=[self.pr()])
+        self.assertEqual([row["pr"] for row in payload["prs"]], [405])
+        self.assertEqual(payload["prs"][0]["tickets"], [57])
+
+    def test_elle_est_signalee_hors_plan(self):
+        """Ce que l'arbitre ne peut pas déduire seul : plus aucun agent dessus."""
+        payload = self.dossier(issues=[56, 57, 58], prs=[self.pr()])
+        self.assertTrue(payload["prs"][0]["hors_plan"])
+
+    def test_elle_leve_pr_en_souffrance(self):
+        """Le motif que le défaut rendait inatteignable."""
+        payload = self.dossier(issues=[56, 57, 58], prs=[self.pr()])
+        self.assertIn("pr_en_souffrance", payload["motifs"])
+
+    def test_une_pr_du_plan_n_est_pas_dite_hors_plan(self):
+        """Sans quoi le marqueur ne distinguerait plus rien."""
+        payload = self.dossier(issues=[56, 57], prs=[self.pr(number=400, ticket=56)])
+        self.assertEqual(payload["prs"][0]["tickets"], [56])
+        self.assertFalse(payload["prs"][0]["hors_plan"])
+
+    def test_une_pr_d_un_autre_jalon_reste_ecartee(self):
+        """Le crible s'élargit au jalon, il ne disparaît pas."""
+        payload = self.dossier(issues=[56, 57], prs=[self.pr(number=410, ticket=99)])
+        self.assertEqual(payload["prs"], [])
+
+    def test_le_jalon_muet_retombe_sur_les_tickets_du_plan(self):
+        """`gh issue list` sans réponse ne doit pas vider le dossier : on rend
+        ce qu'on rendait avant le correctif, jamais rien du tout."""
+        payload = self.dossier(issues=[], prs=[self.pr(), self.pr(number=400,
+                                                                 ticket=56)])
+        self.assertEqual([row["pr"] for row in payload["prs"]], [400])
+
+    def test_le_rendu_en_clair_nomme_la_pr_hors_plan(self):
+        """L'arbitre lit `render()` aussi souvent que le JSON."""
+        payload = self.dossier(issues=[56, 57], prs=[self.pr()])
+        self.assertIn("hors plan", arb.render(payload))
+
+    def test_un_worktree_vivant_interdit_de_la_dire_abandonnee(self):
+        """`replan` retire du plan tout ticket portant une PR ouverte, agent en
+        vol compris : sans ce garde-fou, l'arbitre s'entend dire « personne ne la
+        reprendra » d'un ticket qu'un agent tient encore (#175)."""
+        payload = self.dossier(issues=[56, 57], prs=[self.pr()],
+                               worktrees={57: "agent-3f2a"})
+        self.assertEqual([row["pr"] for row in payload["prs"]], [405])
+        self.assertFalse(payload["prs"][0]["hors_plan"])
+        self.assertNotIn("hors plan", arb.render(payload))
+
+    def test_le_crible_du_jalon_est_borne_a_la_nature_du_run(self):
+        """Deux runs vivent sur un même jalon, et un run ne déroule qu'une
+        nature : les PR de l'autre stock ne sont pas les siennes à arbitrer."""
+        seen = []
+        self.dossier(issues=[56, 57], prs=[], nature="outillage", seen=seen)
+        issue_call = next(a for a in seen if len(a) > 1 and a[1] == "issue")
+        self.assertIn("--label", issue_call)
+        self.assertEqual(issue_call[issue_call.index("--label") + 1],
+                         "nature:outillage")
+
+    def test_un_run_sans_nature_deroule_du_projet(self):
+        """Les runs ouverts avant que la question se pose n'en portent pas."""
+        seen = []
+        self.dossier(issues=[56, 57], prs=[], seen=seen)
+        issue_call = next(a for a in seen if len(a) > 1 and a[1] == "issue")
+        self.assertEqual(issue_call[issue_call.index("--label") + 1],
+                         "nature:projet")
+
+    def test_la_nature_toutes_ne_filtre_rien(self):
+        seen = []
+        self.dossier(issues=[56, 57], prs=[], nature="toutes", seen=seen)
+        issue_call = next(a for a in seen if len(a) > 1 and a[1] == "issue")
+        self.assertNotIn("--label", issue_call)
+
+
 class AppelExterne(unittest.TestCase):
     """Le dossier se constitue de ce qui répond. Ce qui ne répond pas laisse un
     trou, jamais une exception : un dossier partiel reste utile à l'arbitre."""
@@ -1085,6 +1217,26 @@ class AppelExterne(unittest.TestCase):
                  "body": "Closes #99", "labels": [], "statusCheckRollup": []}]
         with mock.patch.object(arb, "shell", return_value=(0, json.dumps(rows), "")):
             self.assertEqual(arb.milestone_prs([21]), [])
+
+    def test_les_issues_du_jalon_illisibles_rendent_un_ensemble_vide(self):
+        with mock.patch.object(arb, "shell", return_value=(0, "pas du json", "")):
+            self.assertEqual(arb.milestone_issues("S3"), set())
+
+    def test_un_gh_en_erreur_ne_leve_rien_sur_les_issues_du_jalon(self):
+        with mock.patch.object(arb, "shell", return_value=(1, "", "no milestone")):
+            self.assertEqual(arb.milestone_issues("S3"), set())
+
+    def test_un_jalon_sans_titre_n_interroge_pas_github(self):
+        """Un run sans jalon nommé ne doit pas dépenser un appel réseau pour
+        s'entendre dire que le jalon `""` n'existe pas."""
+        with mock.patch.object(arb, "shell") as shell:
+            self.assertEqual(arb.milestone_issues(""), set())
+        shell.assert_not_called()
+
+    def test_les_numeros_du_jalon_sont_lus_en_entiers(self):
+        rows = [{"number": 57}, {"number": 58}, {"sans": "numero"}]
+        with mock.patch.object(arb, "shell", return_value=(0, json.dumps(rows), "")):
+            self.assertEqual(arb.milestone_issues("S3"), {57, 58})
 
 
 if __name__ == "__main__":

@@ -137,7 +137,12 @@ MOTIFS = {
     "gate_pause": "le gate retient le run sans main humaine (pause sur erreur, "
                   "ou pause posée par le dispositif)",
     "tickets_tombes": "un ou plusieurs tickets sont failed/blocked",
-    "pr_en_souffrance": "une PR est ouverte sur un ticket qui n'avance plus",
+    # « du jalon », et non « du plan » : depuis #411 le dossier voit aussi les PR
+    # dont le ticket a quitté le plan, et ce sont les plus urgentes — plus aucun
+    # agent ne leur est attaché.
+    "pr_en_souffrance": "une PR ouverte du jalon n'avance plus — y compris quand "
+                        "son ticket a quitté le plan, et alors personne ne la "
+                        "reprendra",
     "leg_delai": "l'étape a été coupée au temps sans rendre la main",
     # Les deux moitiés, et pas seulement le commit : depuis #278 le détecteur ne
     # lève ce motif que si l'étape n'a rendu ni l'un ni l'autre. Une étape qui
@@ -306,8 +311,66 @@ def leg_digest(path, errors=6):
     return digest
 
 
+def milestone_issues(milestone, nature="projet"):
+    """Les numéros d'issue rattachés au jalon — dans le plan du run ou non.
+
+    C'est la moitié manquante de #411. `replay()` ne rend que les tickets du
+    plan, et `milestone_plan.py` **écarte de tout plan** les issues qui portent
+    déjà une pull request ouverte (sa liste `busy`). Croiser les PR avec les
+    seuls tickets du run revenait donc à ne jamais voir celles qui n'attendent
+    plus qu'un humain : le 04/09/2026, sur le run S3, deux PR vertes de
+    paiement — #405 sur #57, #408 sur #58, toutes deux P0, laissées ouvertes
+    pour périmètre sensible — étaient absentes du dossier, `prs: []`, alors
+    qu'elles étaient précisément le seul état dont on soit sûr que rien
+    d'automatique ne le reprendra.
+
+    L'appartenance au jalon est donc le bon crible, et non l'appartenance au
+    plan. `--state all` comme dans `milestone_run.cmd_reconcile` : une issue
+    fermée à la main sous une PR encore ouverte laisse justement une PR
+    orpheline, c'est-à-dire le cas qu'on cherche.
+
+    **La nature du run borne le crible autant que le jalon.** Deux runs vivent
+    volontiers sur un même jalon — `cmd_start` le prévoit jusque dans
+    l'identifiant —, et un run ne déroule qu'une nature. Prendre le jalon entier
+    faisait donc entrer au dossier d'un run produit les PR de l'agent d'outillage
+    en vol d'à côté : marquées « hors plan — personne ne la reprendra » alors
+    qu'un agent les tient, elles levaient `pr_en_souffrance` et dépensaient les
+    arbitrages Opus 5 du run sur le travail d'un autre. `toutes` ne filtre rien,
+    comme partout ailleurs dans le dispositif.
+
+    Muette — `gh` absent, réseau coupé, jalon inconnu —, elle rend un ensemble
+    vide plutôt qu'une exception : le dossier retombe alors sur les tickets du
+    plan, c'est-à-dire sur le comportement d'avant, jamais sur rien du tout.
+    """
+    if not (milestone or "").strip():
+        return set()
+    argv = ["gh", "issue", "list", "--repo", REPO, "--milestone", milestone,
+            "--state", "all", "--limit", "300", "--json", "number"]
+    if nature and nature != "toutes":
+        argv += ["--label", f"nature:{nature}"]
+    code, stdout, _ = shell(argv)
+    if code != 0:
+        return set()
+    try:
+        rows = json.loads(stdout or "[]")
+    except json.JSONDecodeError:
+        return set()
+    found = set()
+    for row in rows:
+        try:
+            found.add(int(row["number"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return found
+
+
 def milestone_prs(numbers):
-    """Les PR ouvertes qui referment un ticket du run, avec l'état de leur CI."""
+    """Les PR ouvertes qui referment une des issues données, avec l'état de leur CI.
+
+    `numbers` est la réunion des tickets du plan et des issues du jalon (#411) :
+    une PR ouverte compte dès qu'elle referme une issue du jalon, que son ticket
+    figure encore au plan ou non.
+    """
     code, stdout, _ = shell([
         "gh", "pr", "list", "--repo", REPO, "--state", "open", "--limit", "60",
         "--json", "number,title,headRefName,isDraft,mergeable,body,labels,"
@@ -422,7 +485,27 @@ def dossier(run_id, reasons=(), tail=12, with_barrier=True, per_ticket=PER_TICKE
         rows.append(ticket)
 
     tombes = [t["number"] for t in rows if t["status"] in run_mod.BAD]
-    prs = milestone_prs(list(tickets))
+    # Les revendications du journal, lues ici plutôt qu'au moment de composer le
+    # payload : elles servent deux fois, et `events` est déjà en mémoire.
+    worktrees = run_mod.live_worktrees(run_mod.worktree_claims(events))
+    # Le jalon, pas le plan (#411). Une issue qui porte déjà une PR ouverte est
+    # écartée du plan recalculé : la chercher parmi les tickets du run, c'est
+    # garantir de ne jamais voir la PR qui l'attend. La nature, elle, borne
+    # toujours : un run ne déroule qu'un stock, et les PR de l'autre ne sont pas
+    # les siennes à arbitrer.
+    plan_tickets = set(tickets)
+    prs = milestone_prs(sorted(plan_tickets | milestone_issues(
+        run.get("milestone"), run_mod.run_nature(run))))
+    for row in prs:
+        # Dit à l'arbitre ce qu'il ne peut pas déduire du dossier : cette PR-là
+        # n'a plus de ticket au plan, donc plus personne pour la reprendre.
+        #
+        # « Plus personne » se vérifie, il ne se déduit pas de l'absence au plan :
+        # un `replan` retire du plan tout ticket portant une PR ouverte, agent en
+        # vol compris, et le worktree est justement la trace qu'un agent le tient
+        # encore (#175). L'annoncer abandonné ferait arbitrer un vivant.
+        row["hors_plan"] = not (set(row["tickets"]) & plan_tickets) and not (
+            set(row["tickets"]) & set(worktrees))
     if with_barrier:
         for row in prs:
             row["barriere"] = barrier_verdict(row["pr"])
@@ -459,7 +542,7 @@ def dossier(run_id, reasons=(), tail=12, with_barrier=True, per_ticket=PER_TICKE
         # précisément l'entrée sur laquelle l'arbitre décide d'écarter un ticket
         # ou de le relancer : sans elle, il écarterait un ticket qu'un agent
         # tient encore. `events` est déjà lu plus haut, la lecture est gratuite.
-        "worktrees": run_mod.live_worktrees(run_mod.worktree_claims(events)),
+        "worktrees": worktrees,
         "etape": leg_digest(latest_leg()),
         "arbitrages": summary(history, per_ticket=per_ticket, per_run=per_run),
     }
@@ -908,7 +991,12 @@ def render(payload):
     for row in payload["prs"]:
         verdict = (row.get("barriere") or {}).get("sens", "non interrogée")
         lines.append(f"  PR #{row['pr']} ({', '.join(f'#{n}' for n in row['tickets'])}) "
-                     f"— {verdict} · {row['checks']['verts']}/{row['checks']['total']} verts")
+                     f"— {verdict} · {row['checks']['verts']}/{row['checks']['total']} verts"
+                     # Sans cette mention, une PR qu'aucun ticket du plan ne
+                     # porte se lit comme les autres — alors que c'est la seule
+                     # dont on sache que rien d'automatique ne la reprendra.
+                     + (" · hors plan — personne ne la reprendra"
+                        if row.get("hors_plan") else ""))
     counts = payload["arbitrages"]
     lines.append(f"arbitrages : {counts['total']} — reste {counts['reste_run']} "
                  f"sur le run, {counts['budget_ticket']} par ticket")
