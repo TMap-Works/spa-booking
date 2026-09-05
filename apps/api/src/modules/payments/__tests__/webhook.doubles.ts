@@ -58,11 +58,18 @@ export interface FakePayment {
 /**
  * Repository en mémoire.
  *
- * Il reproduit les deux propriétés dont les suites ont besoin, et rien d'autre :
- * l'idempotence par `(tenant, event)`, et le fait qu'un événement ne touche que
- * les lignes de l'établissement résolu. Ce qu'il **ne** prouve pas — que
- * l'extension Prisma tient réellement la frontière, que la transaction annule
- * bien la marque quand l'effet échoue — se prouve contre un vrai moteur, dans
+ * Il reproduit les trois propriétés dont les suites ont besoin, et rien d'autre :
+ * l'idempotence par `(tenant, event)`, le fait qu'un événement ne touche que les
+ * lignes de l'établissement résolu, et — depuis #410 — le fait qu'un événement
+ * sans encaissement correspondant **ne retient aucune marque**.
+ *
+ * Ce qu'il **ne** modélise pas, et qu'il ne faut donc pas lui demander : les
+ * gardes de statut du vrai dépôt. `payment-succeeded` y écrit `SUCCEEDED` même
+ * sur une ligne déjà remboursée, et `payment-failed` écrit `FAILED` même sur un
+ * succès. L'autre moitié de la règle de #410 — « la ligne existe, le garde
+ * décline, la marque reste » — ne se prouve donc **pas** ici : elle se prouve
+ * contre un vrai moteur, comme la frontière tenue par l'extension Prisma et
+ * l'annulation de la marque quand l'effet échoue, dans
  * `test/payments-webhook.isolation-spec.ts`. Un double ne peut pas témoigner
  * pour la base.
  */
@@ -102,21 +109,35 @@ export class FakeStripeWebhookRepository {
     const tenantId = await this.findTenantIdByProviderReference(referenceOf(event.fact));
     const key = `${tenantId ?? event.tenantHint ?? '?'}:${event.eventId}`;
     if (this.processed.has(key)) {
-      return { applied: false, paymentsTouched: 0, appointmentsConfirmed: 0 };
+      return { outcome: 'replayed', paymentsTouched: 0, appointmentsConfirmed: 0 };
     }
+
+    const effect = this.mutate(event.fact);
+
+    if (effect === null) {
+      // Le double reproduit l'annulation du vrai (#410) : aucune ligne ne porte
+      // la référence, donc **aucune marque n'est retenue**. Sans cela, une suite
+      // en mémoire verrait un renvoi passer pour un rejeu là où la base, elle,
+      // l'appliquerait — le double mentirait sur la seule propriété que ce
+      // ticket a ajoutée.
+      return { outcome: 'unmatched', paymentsTouched: 0, appointmentsConfirmed: 0 };
+    }
+
     this.processed.add(key);
 
-    return { applied: true, ...this.mutate(event.fact) };
+    return { outcome: 'applied', ...effect };
   }
 
-  private mutate(fact: WebhookFact): Omit<WebhookApplication, 'applied'> {
+  /** L'effet du fait, ou `null` quand aucune ligne ne porte sa référence. */
+  private mutate(fact: WebhookFact): Omit<WebhookApplication, 'outcome'> | null {
     if (fact.kind === 'dispute-opened') {
+      // L'alerte **est** l'effet : appliqué, et marqué, même sans ligne.
       return { paymentsTouched: 0, appointmentsConfirmed: 0 };
     }
 
     const payment = this.payments.get(fact.paymentIntentId);
     if (payment === undefined) {
-      return { paymentsTouched: 0, appointmentsConfirmed: 0 };
+      return null;
     }
 
     switch (fact.kind) {

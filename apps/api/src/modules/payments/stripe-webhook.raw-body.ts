@@ -1,7 +1,7 @@
 import type { RawBodyRequest } from '@nestjs/common';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
-import { WebhookPayloadTooLargeError } from './stripe-webhook.errors';
+import { WebhookPayloadTooLargeError } from './payments.errors';
 
 /**
  * Le lecteur de corps **brut** de la route de webhook — ce qui exclut cette

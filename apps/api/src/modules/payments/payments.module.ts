@@ -20,7 +20,6 @@ import { InProcessWebhookQueue, WEBHOOK_QUEUE } from './stripe-webhook.queue';
 import { StripeWebhookRepository } from './stripe-webhook.repository';
 import { StripeWebhookService } from './stripe-webhook.service';
 import { StripeHttpGateway } from './stripe/stripe-http.gateway';
-import { StripeWebhookConfig } from './stripe/stripe-webhook.config';
 import { StripeConfig } from './stripe/stripe.config';
 import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
 
@@ -36,6 +35,7 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
  * | #60 | Le POS de base : le rayon retail, le ticket de caisse et ses lignes, le total recalculé côté serveur |
  * | #62 | Le règlement en espèces, l'historique des ventes et celui des transactions — la matière du rapprochement |
  * | #63 | Le remboursement total et partiel : l'ordre au prestataire, le cumul borné côté serveur, et la trace « qui, quand, pourquoi » |
+ * | #410 | La consolidation : une seule `StripeConfig`, un seul fichier d'erreurs, et un critère de découpage des dépôts |
  *
  * Les deux premières moitiés se répondent : #57 crée une intention et ne
  * confirme rien, #58 est le seul à faire passer un encaissement **carte** en
@@ -59,6 +59,31 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
  * aurait laissé croire qu'une lecture hors transaction suffisait.
  *
  * Reste à venir : le montage d'Elements côté tunnel (#59).
+ *
+ * ## Ce qui décide du découpage — un critère, pas un ordre de merge (#410)
+ *
+ * #57 et #58 ont été écrites en parallèle et ont laissé le module en deux
+ * moitiés qui ne se connaissaient pas : deux fournisseurs de configuration
+ * Stripe, deux fichiers d'erreurs, deux dépôts. Deux de ces trois duplications
+ * n'avaient aucune raison d'être et ont été fondues — il n'y a plus qu'une
+ * `StripeConfig`, portant les trois valeurs, et qu'un `payments.errors.ts`.
+ *
+ * Le découpage des **dépôts**, lui, survit à la consolidation, parce qu'un
+ * critère le porte et non l'historique :
+ *
+ * | Dépôt | Ce qui le sépare des autres |
+ * |---|---|
+ * | `StripeWebhookRepository` | le **seul** à recevoir `PRISMA_UNSCOPED` — l'unique dérogation inter-tenant du module (tenant-isolation §3) |
+ * | `RefundsRepository` | un « lire, décider, écrire » qui doit se sérialiser : le loger avec des lectures ordinaires laisserait croire qu'une lecture hors transaction suffit |
+ * | `PosRepository` | le ticket et ses lignes, écrits d'un seul geste transactionnel |
+ * | `PaymentsRepository` | tout le reste, et **rien qui ne soit scopé** |
+ *
+ * La première ligne est celle qui compte. Fondre le dépôt du webhook dans
+ * `PaymentsRepository` mettrait le client non scopé dans le constructeur qui
+ * sert le tunnel public et le comptoir — c'est-à-dire exactement ce que
+ * tenant-isolation §3 demande de garder nommé, justifié et confiné. Le confinement
+ * est vérifié plutôt qu'espéré : `__tests__/payments.boundaries.spec.ts` échoue
+ * si un second fichier du module cite `PRISMA_UNSCOPED`.
  *
  * ## Ce qu'il importe, et pourquoi
  *
@@ -145,14 +170,13 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
     PosRepository,
     StripeWebhookService,
     StripeWebhookRepository,
-    // `useFactory` et non `useClass` : le paramètre de ces deux fournisseurs de
+    // `useFactory` et non `useClass` : le paramètre de ce fournisseur de
     // configuration est un `NodeJS.ProcessEnv`, une interface.
     // `emitDecoratorMetadata` ne peut en émettre que `Object`, que Nest
     // chercherait alors — en vain — parmi ses fournisseurs. La fabrique nomme la
     // source explicitement et laisse le constructeur exerçable avec un
     // environnement fabriqué.
     { provide: StripeConfig, useFactory: () => new StripeConfig(process.env) },
-    { provide: StripeWebhookConfig, useFactory: () => new StripeWebhookConfig(process.env) },
     { provide: STRIPE_GATEWAY, useClass: StripeHttpGateway },
     { provide: WEBHOOK_QUEUE, useClass: InProcessWebhookQueue },
   ],

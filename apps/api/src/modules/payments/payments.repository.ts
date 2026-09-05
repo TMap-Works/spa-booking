@@ -13,13 +13,23 @@ import type {
 } from './payments.types';
 
 /**
- * Seul point du module qui connaît le schéma (api-module §2).
+ * L'accès au schéma de l'encaissement — en ligne et au comptoir (api-module §2).
  *
- * Il injecte le client **scopé** : l'extension pose `tenant_id` sur chaque
- * écriture et l'ajoute au `where` de chaque lecture, sans qu'une requête d'ici
- * ait à le répéter — donc sans qu'aucune puisse l'oublier. Le module n'a
- * **aucune** dérogation : rien ici n'est légitimement inter-tenant, et
- * `prismaUnscoped` n'y est donc pas injecté du tout.
+ * ## Sa place parmi les dépôts du module (#410)
+ *
+ * Le module en compte quatre, et ce n'est pas un accident d'historique : chacun
+ * porte une propriété que les autres n'ont pas (voir `payments.module.ts`).
+ * Celui-ci est **le dépôt ordinaire** — celui qui n'a rien de particulier, et
+ * c'est justement ce qui le définit : tout ce qu'il fait est scopé, rien de ce
+ * qu'il fait n'exige de sérialisation propre.
+ *
+ * Il injecte le client **scopé**, et lui seul : l'extension pose `tenant_id` sur
+ * chaque écriture et l'ajoute au `where` de chaque lecture, sans qu'une requête
+ * d'ici ait à le répéter — donc sans qu'aucune puisse l'oublier. **Aucune
+ * dérogation** : rien ici n'est légitimement inter-tenant, et `prismaUnscoped`
+ * n'y est donc pas injecté du tout. La seule dérogation du module vit dans
+ * `stripe-webhook.repository.ts`, et `__tests__/payments.boundaries.spec.ts`
+ * échoue si elle en sort.
  *
  * C'est ce scoping, et lui seul, qui fait qu'un rendez-vous du salon voisin est
  * introuvable plutôt qu'interdit : `findPayableAppointment` rend `null`, le

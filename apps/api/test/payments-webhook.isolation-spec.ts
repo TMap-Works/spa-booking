@@ -28,7 +28,11 @@ import { createDisposableDatabase, type DisposableDatabase } from './utils/dispo
  *    atteint ;
  * 3. **la transaction annule la marque quand l'effet échoue.** Sans cela, un
  *    incident laisserait un événement marqué traité et jamais appliqué — le
- *    pire des états, puisque Stripe ne le rejouerait plus.
+ *    pire des états, puisque Stripe ne le rejouerait plus ;
+ * 4. **la marque enregistre ce qui a été appliqué, pas ce qui a été reçu**
+ *    (#410). Un événement dont aucune ligne `payments` ne porte la référence
+ *    n'en laisse aucune, et son renvoi manuel s'applique — ce qui ne se voit
+ *    qu'en comptant les lignes réellement inscrites.
  *
  * ## Le scénario de traversée
  *
@@ -293,6 +297,101 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
         await prismaUnscoped.processedWebhookEvent.count({ where: { eventId: event.eventId } }),
       ).toBe(0);
       expect(await paymentOf(a)).toMatchObject({ refundedAmountMinor: 0 });
+    });
+
+    it('ne marque rien quand aucun encaissement ne porte la référence (#410)', async () => {
+      // Le point de conception que #58 avait laissé en suspens. `PaymentsService`
+      // crée l'intention chez Stripe **avant** d'inscrire la ligne `payments` :
+      // une livraison peut donc citer un `pi_…` dont nous n'avons encore aucune
+      // trace. La métadonnée résout tout de même l'établissement, si bien que le
+      // traitement va jusqu'au bout — et marquait l'événement traité pour rien.
+      const before = await prismaUnscoped.processedWebhookEvent.count();
+      const event = succeeded(`pi_${randomUUID()}`, { tenantHint: a.id });
+
+      await service.process(event);
+
+      expect(
+        await prismaUnscoped.processedWebhookEvent.count({ where: { eventId: event.eventId } }),
+      ).toBe(0);
+      expect(await prismaUnscoped.processedWebhookEvent.count()).toBe(before);
+      expect(log.warnings).toContain(
+        'stripe webhook: aucun encaissement ne porte cette référence — rien écrit, renvoi possible',
+      );
+    });
+
+    it('applique le renvoi de cet événement une fois la ligne inscrite (#410)', async () => {
+      // La conséquence utile, et la seule qui compte pour l'exploitation : le
+      // renvoi depuis le tableau de bord Stripe — unique recours, la file en
+      // mémoire n'ayant aucune reprise automatique — encaisse pour de bon.
+      // Marquer la première livraison l'aurait avalé comme un rejeu, et le
+      // rendez-vous ne serait jamais passé en `CONFIRMED`.
+      const late = await seedTenant('tardif');
+      const reference = `pi_${randomUUID()}`;
+      const event = succeeded(reference, { tenantHint: late.id });
+
+      await service.process(event);
+      expect(await paymentOf(late)).toMatchObject({ status: 'PENDING' });
+
+      // La ligne arrive après coup : c'est ce que fait `recordCardIntent` quand
+      // l'écriture a été retardée, ou reprise à la main après un incident.
+      await prismaUnscoped.payment.update({
+        where: { id: late.paymentId },
+        data: { providerPaymentIntentId: reference },
+      });
+
+      await service.process(event);
+
+      expect(await paymentOf(late)).toMatchObject({ status: 'SUCCEEDED' });
+      expect(await appointmentOf(late)).toMatchObject({ status: 'CONFIRMED' });
+      expect(
+        await prismaUnscoped.processedWebhookEvent.count({ where: { eventId: event.eventId } }),
+      ).toBe(1);
+    });
+
+    it('marque un litige orphelin — son effet est l’alerte, pas une écriture (#410)', async () => {
+      // La borne de la règle : un litige n'a par nature aucune ligne à toucher
+      // (payments-stripe §6). Le priver de marque ferait ré-alerter l'équipe à
+      // chaque livraison.
+      const event: StripeWebhookEvent = {
+        eventId: `evt_${randomUUID()}`,
+        eventType: 'charge.dispute.created',
+        tenantHint: a.id,
+        fact: {
+          kind: 'dispute-opened',
+          paymentIntentId: `pi_${randomUUID()}`,
+          chargeId: null,
+          disputeId: `dp_${randomUUID()}`,
+        },
+      };
+
+      await service.process(event);
+
+      expect(
+        await prismaUnscoped.processedWebhookEvent.count({ where: { eventId: event.eventId } }),
+      ).toBe(1);
+    });
+
+    it('marque un refus arrivé après le succès — la ligne existe, le garde décline (#410)', async () => {
+      // L'autre borne, symétrique. `paymentsTouched` vaut zéro parce que le
+      // filtre de statut a refusé d'écrire, pas parce que l'événement n'a pas de
+      // destinataire. Annuler ici ferait rejouer sans fin un événement dont la
+      // conduite juste est précisément de ne rien écrire.
+      const settled = await seedTenant('refus-tardif');
+      await service.process(succeeded(settled.paymentIntentId));
+
+      const event: StripeWebhookEvent = {
+        eventId: `evt_${randomUUID()}`,
+        eventType: 'payment_intent.payment_failed',
+        tenantHint: null,
+        fact: { kind: 'payment-failed', paymentIntentId: settled.paymentIntentId },
+      };
+
+      await service.process(event);
+
+      expect(await paymentOf(settled)).toMatchObject({ status: 'SUCCEEDED' });
+      expect(
+        await prismaUnscoped.processedWebhookEvent.count({ where: { eventId: event.eventId } }),
+      ).toBe(1);
     });
 
     it('sérialise deux livraisons concurrentes du même événement', async () => {

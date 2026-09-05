@@ -1,6 +1,6 @@
 import { NotFoundError } from '../../../common/errors';
 import { runWithTenant } from '../../../common/tenant';
-import { ProductSkuTakenError } from '../pos.errors';
+import { ProductSkuTakenError } from '../payments.errors';
 import type { PosRepository } from '../pos.repository';
 import { ProductsService } from '../products.service';
 import { FakePosRepository } from './pos.doubles';

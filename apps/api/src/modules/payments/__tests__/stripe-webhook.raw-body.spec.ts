@@ -3,7 +3,7 @@ import { Readable } from 'node:stream';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { NextFunction, Request, Response } from 'express';
 
-import { WebhookPayloadTooLargeError } from '../stripe-webhook.errors';
+import { WebhookPayloadTooLargeError } from '../payments.errors';
 import {
   MAX_WEBHOOK_BODY_BYTES,
   STRIPE_WEBHOOK_PATH,

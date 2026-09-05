@@ -5,7 +5,7 @@ import {
   SaleAmountOutOfRangeError,
   SaleCurrencyMismatchError,
   SaleItemUnavailableError,
-} from '../pos.errors';
+} from '../payments.errors';
 import type { PosRepository } from '../pos.repository';
 import { SalesService } from '../sales.service';
 import { FakePosRepository, FakeServicesService } from './pos.doubles';

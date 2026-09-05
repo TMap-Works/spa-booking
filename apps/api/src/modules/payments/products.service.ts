@@ -5,7 +5,7 @@ import { NotFoundError } from '../../common/errors';
 // constructeur dans les métadonnées émises par TypeScript, et un `import type`
 // s'efface à la compilation — l'injection échouerait alors au démarrage.
 import { PosRepository } from './pos.repository';
-import { ProductSkuTakenError } from './pos.errors';
+import { ProductSkuTakenError } from './payments.errors';
 import type { Product, ProductDraft, ProductPatch, TenantSaleSettings } from './pos.types';
 
 /**
