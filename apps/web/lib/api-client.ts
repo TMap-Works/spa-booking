@@ -30,6 +30,7 @@
 
 import {
   apiErrorSchema,
+  appointmentSchema,
   authSessionResponseSchema,
   availabilityResponseSchema,
   bookedAppointmentSchema,
@@ -40,6 +41,8 @@ import {
   serviceStaffMemberSchema,
   sessionUserSchema,
   tenantSchema,
+  type Appointment,
+  type AppointmentListQuery,
   type AssignServiceStaffRequest,
   type AuthSessionResponse,
   type AvailabilityQuery,
@@ -778,6 +781,70 @@ export async function fetchMyAppointments(
     method: 'GET',
     path: `/appointments/mine${suffix}`,
     schema: z.array(bookedAppointmentSchema),
+    accessToken,
+  });
+  return payload;
+}
+
+// ---------------------------------------------------------------------------
+// L'agenda du back-office — #49
+// ---------------------------------------------------------------------------
+
+/**
+ * Les rendez-vous d'une période, tels que le planning du comptoir les affiche.
+ *
+ * ## L'établissement ne circule pas
+ *
+ * Comme `fetchMyAppointments` et `fetchTenantSettings` : aucun slug, aucun
+ * `tenantId`, et il n'y a pas de paramètre pour en poser un. L'API lit
+ * l'établissement dans le jeton (tenant-isolation §2), et un appelant qui
+ * viserait le voisin reçoit ses propres rendez-vous — jamais les siens.
+ *
+ * ## Les bornes sont des dates civiles
+ *
+ * `from` et `to` sont des journées de l'établissement, pas des instants : c'est
+ * le contrat d'`appointmentListQuerySchema`, et son en-tête dit pourquoi — « le
+ * 3 mars » ne commence pas au même moment à Papeete et à Paris, et seul le
+ * serveur connaît `tenants.timezone`. Le front ne convertit donc rien avant
+ * d'appeler ; il convertit à l'**affichage**, une fois, dans `lib/admin/`.
+ *
+ * ## Ce que cette route attend encore
+ *
+ * `apps/api` ne sert aujourd'hui que `GET /appointments/mine` et
+ * `POST /appointments/:id/cancel` : l'agenda du back-office est décrit par le
+ * contrat partagé mais **pas encore exposé**. Cette fonction est écrite contre le
+ * contrat, et les écrans qui l'appellent traitent son échec comme un état
+ * d'indisponibilité plutôt que comme une panne — voir la page du planning.
+ */
+export async function fetchAppointments(
+  accessToken: string,
+  query: AppointmentListQuery = {},
+): Promise<Appointment[]> {
+  const search = new URLSearchParams();
+
+  for (const [name, value] of [
+    ['from', query.from],
+    ['to', query.to],
+    ['staffId', query.staffId],
+    ['clientId', query.clientId],
+    ['serviceId', query.serviceId],
+  ] as const) {
+    if (value !== undefined) {
+      search.set(name, value);
+    }
+  }
+
+  // Répété plutôt que joint par des virgules : c'est la forme qu'un tableau
+  // prend dans une chaîne de requête, et la seule qu'un `ParseArrayPipe` lise
+  // sans convention supplémentaire.
+  for (const status of query.statuses ?? []) {
+    search.append('statuses', status);
+  }
+
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/appointments${search.size === 0 ? '' : `?${search.toString()}`}`,
+    schema: z.array(appointmentSchema),
     accessToken,
   });
   return payload;
