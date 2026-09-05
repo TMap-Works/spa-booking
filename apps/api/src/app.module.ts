@@ -62,10 +62,11 @@ import { PaymentsModule } from './modules/payments/payments.module';
     // Ses dépendances (client Prisma scopé et non scopé, contexte de tenant,
     // journal structuré) viennent toutes de modules `@Global()`. Il ne demande
     // **aucune** variable d'environnement supplémentaire pour démarrer en
-    // local : sans clés Stripe, toute tentative d'encaissement répond 503
-    // (`stripe/stripe.config.ts`) et sans `STRIPE_WEBHOOK_SECRET`, la route de
-    // webhook répond 503 (`stripe/stripe-webhook.config.ts`) — les deux
-    // n'exigent leur configuration qu'en déployé.
+    // local : les deux capacités se jugent séparément dans
+    // `stripe/stripe.config.ts` (#410) — sans clés Stripe, toute tentative
+    // d'encaissement répond 503, et sans `STRIPE_WEBHOOK_SECRET`, la route de
+    // webhook répond 503. Ni l'une ni l'autre n'exige sa configuration ailleurs
+    // qu'en déployé, où c'est l'amorçage qui refuse de démarrer.
     PaymentsModule,
     // Après `IdentityModule`, dont il monte les gardes sur ses six routes (#56).
     // Il n'en importe rien d'autre : le fichier client se lit par son propre

@@ -38,7 +38,8 @@ const DEFAULTS: Readonly<Record<string, string>> = {
   BCRYPT_COST: '4',
   // Secret de terminaison des webhooks Stripe. Ce n'en est pas un : c'est une
   // chaîne de remplissage, jamais déployée, dont la seule propriété utile est
-  // le préfixe `whsec_` qu'exige `StripeWebhookConfig`. Sans elle, la route de
+  // le préfixe `whsec_` qu'exige `StripeConfig` — `resolveWebhookSecret`, dans
+  // `modules/payments/stripe/stripe.config.ts` (#410). Sans elle, la route de
   // webhook répondrait 503 en test — ce qui est le comportement voulu sur un
   // poste sans compte Stripe, mais rendrait sa recette impossible.
   STRIPE_WEBHOOK_SECRET: 'whsec_test_not_a_secret_0003',
