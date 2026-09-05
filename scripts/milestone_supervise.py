@@ -455,10 +455,10 @@ def intent_of(args):
     """L'intention que porte ce Namespace, sous la forme écrite sur le disque.
 
     Détachée de `save_intent` parce qu'un rechargement (#373) a besoin de la
-    **composer** sans forcément l'écrire : un superviseur lancé `--no-watchdog`
-    n'a pas d'intention sur le disque, et se remplacer ne doit pas lui en armer
-    une. Une seule description des réglages qui survivent, quel qu'en soit
-    l'usage — deux copies finiraient par ne plus rejouer les mêmes.
+    **composer** sans forcément l'écrire : un `--dry-run` n'a rien sur le disque,
+    et se remplacer ne doit pas lui en poser une. Une seule description des
+    réglages qui survivent, quel qu'en soit l'usage — deux copies finiraient par
+    ne plus rejouer les mêmes.
     """
     return {
         # Le run que cet armement sert. C'est lui qui autorise un ré-armement à
@@ -498,6 +498,13 @@ def intent_of(args):
         "arbiter_budget": getattr(args, "arbiter_budget", ARBITER_BUDGET),
         "arbiter_timeout": getattr(args, "arbiter_timeout", ARBITER_TIMEOUT),
         "stall_minutes": getattr(args, "stall_minutes", STALL_MINUTES),
+        # Non pour être rejoué — `intent_argv()` ne l'émet pas, `--no-watchdog`
+        # restant un choix de chaque processus — mais pour être **lu**. Depuis
+        # #426 l'intention est écrite même sans veille, afin que `pr_gate.py`
+        # ait de quoi confronter la variable des vagues de ce run-là ; ce champ
+        # dit alors à une tâche planifiée héritée d'un run précédent que ce
+        # fichier n'est pas une consigne de relance qui lui serait adressée.
+        "watchdog": not getattr(args, "no_watchdog", False),
         "claude": args.claude, "armed": now(),
         "expires": time.time() + INTENT_TTL,
     }
@@ -523,6 +530,50 @@ def write_intent(intent):
 
 def save_intent(args):
     write_intent(intent_of(args))
+
+
+def forget_intent():
+    """Efface l'intention du disque — le geste seul, sans toucher au reste.
+
+    `retire()` fait cela **et** le battement **et** la retenue ; la veille, qui
+    n'a jamais battu, n'a que l'intention à effacer. Nommer le geste évite de
+    le recopier à chaque endroit qui débranche, ce qui est exactement la façon
+    dont le chemin `STOP` / `PAUSE` a fini par l'oublier (#426).
+    """
+    try:
+        INTENT.unlink()
+    except OSError:
+        pass
+
+
+def stamp_intent_run():
+    """Rattacher l'intention au run qu'elle sert, dès que celui-ci existe.
+
+    Un superviseur lancé à la main écrit son intention **avant** que le run
+    n'existe — c'est sa première étape qui l'ouvre — si bien que `run` y vaut
+    None. Or c'est ce champ que `pr_gate.py` compare à `current` pour distinguer
+    un armement vivant d'un vestige (#426) : le laisser vide ferait ignorer
+    l'armement de ce run-là, et la protection de #414 ne s'exercerait plus sur
+    les vagues qu'il lance. `--arm`, lui, n'a rien à rattraper : `milestone_run`
+    ouvre le run avant de l'appeler.
+
+    Ne rattache que ce qui n'était rattaché à rien. Réécrire un identifiant déjà
+    posé reviendrait à s'approprier l'armement d'un autre run — précisément ce
+    que ce champ existe pour empêcher.
+    """
+    run = current_run()
+    if run is None:
+        return
+    intent = load_intent()
+    if not isinstance(intent, dict) or intent.get("run"):
+        return
+    intent["run"] = run
+    try:
+        write_intent(intent)
+    except OSError as exc:
+        # Sans conséquence sur le travail en cours : l'intention reste celle
+        # d'avant, et la barrière se contentera de ne rien confronter.
+        say(f"intention non rattachée au run {run} : {exc}", "WARN")
 
 
 def nature_relayed(previous, wanted):
@@ -706,13 +757,31 @@ def env_divergence(intent, raw):
     if raw is None:
         return None
     from_env, _ = parse_scopes(raw)
-    armed = (intent or {}).get("merge_sensitive")
+    # `isinstance` et pas `intent or {}` : le fichier peut porter n'importe quel
+    # JSON — un `[]` écrit à la main, une troncature d'un autre outil — et
+    # `--state` est précisément la commande qu'on tape quand l'état sur le
+    # disque semble faux. Y mourir sur une `AttributeError` retirerait le
+    # diagnostic à l'instant où il sert.
+    armed = intent.get("merge_sensitive") if isinstance(intent, dict) else None
+    # Une intention qui ne désigne pas le run ouvert n'est pas confrontée par
+    # `pr_gate.py` (#426) : la donner ici pour l'armement de référence ferait
+    # annoncer une intersection qui n'aura pas lieu, et laisserait croire à une
+    # protection là où la variable décidera seule. La même règle des deux côtés,
+    # sans quoi `--state` décrirait une barrière qui n'est pas celle qui tourne.
+    #
+    # « Ne désigne pas » couvre aussi l'intention qui ne désigne **rien** :
+    # `intent_scopes()` s'arrête sur `not run` avant même de comparer, si bien
+    # qu'un `run: null` sans run ouvert — les deux valant None — serait tenu
+    # pour concordant ici et pour muet là-bas.
+    run = intent.get("run") if isinstance(intent, dict) else None
+    if not run or run != current_run():
+        armed = None
     if intent is None or not isinstance(armed, list):
         # Sans intention lisible il n'y a **rien à confronter**, et `pr_gate.py`
         # croit alors la variable telle quelle : c'est délibéré chez lui (#414),
-        # pour le superviseur armé `--no-watchdog`, qui pose la variable sans
-        # rien écrire sur le disque. Annoncer ici une intersection serait donc
-        # faux — c'est bien la variable seule qui décidera.
+        # pour l'armement qu'il ne peut pas rattacher au run vivant. Annoncer
+        # ici une intersection serait donc faux — c'est bien la variable seule
+        # qui décidera.
         return ("{} annonce {}, et aucun armement lisible dans {} ne vient le "
                 "confirmer — rien à confronter : pr_gate.py la croira telle "
                 "quelle."
@@ -1394,6 +1463,30 @@ def cmd_watchdog(args):
     if orchestrator_active():
         return 0
 
+    intent = load_intent()
+
+    # Une intention écrite sans veille n'est pas une consigne de relance (#426) :
+    # elle n'est là que pour donner à `pr_gate.py` de quoi confronter la variable
+    # des vagues de ce run. On ne relance donc rien devant elle, et on ne touche
+    # surtout pas à un fichier qui décrit un run vivant.
+    #
+    # La tâche planifiée, elle, n'est retirée que si l'intention ne décrit
+    # **pas** le run ouvert : alors seulement on sait qu'elle a survécu à un
+    # armement précédent. Sur le run en cours, la tâche peut au contraire avoir
+    # été armée pour lui par `--arm` — `/milestone` le fait à chaque `start` —
+    # et un superviseur de passage lancé `--no-watchdog` n'a pas à emporter la
+    # reprise automatique que l'opérateur a demandée pour ce run-là : ce drapeau
+    # dit « ce processus n'en arme pas », jamais « désarmez ce qui l'est ».
+    # `--disarm` reste le geste qui débranche.
+    if isinstance(intent, dict) and intent.get("watchdog") is False:
+        run = intent.get("run")
+        if watchdog_armed() and (not run or run != current_run()):
+            say("veille : intention armée --no-watchdog et étrangère au run "
+                "ouvert — la tâche planifiée est un vestige d'un armement "
+                "précédent, désarmement", "WARN")
+            disarm_watchdog(quiet=True)
+        return 0
+
     # L'autorisation ensuite, avant toute relance : sans run ouvert, la veille
     # n'a plus de raison d'être et se supprime elle-même.
     allowed, refusal = authorised()
@@ -1402,8 +1495,6 @@ def cmd_watchdog(args):
             say(f"veille : {refusal} — désarmement")
             retire(refusal)
         return 0
-
-    intent = load_intent()
 
     if quota_file_hold() is not None:
         return 0                    # quota encore fermé : ne pas brûler un appel
@@ -1421,16 +1512,21 @@ def cmd_watchdog(args):
     if verdict == NO_RUN and replan_before_concluding("la veille"):
         verdict = runner("gate").returncode
     if verdict in (STOP, PAUSE):
+        # L'intention part avec la veille, comme sur le chemin `NO_RUN` et comme
+        # dans `supervise()`, dont les deux mêmes verdicts appellent `retire()`.
+        # Ne désarmer que la tâche laissait sur le disque l'armement d'un run
+        # qui ne tourne plus, et `pr_gate.py` le relit à chaque décision de merge
+        # depuis #414 : un run suivant, armé `--merge-sensitive prisma`, se
+        # voyait confronté au `"merge_sensitive": []` du mort et perdait
+        # l'autorisation vivante de son opérateur (#426).
         say("veille : pause ou arrêt demandé dans le run — désarmement", "WARN")
         disarm_watchdog(quiet=True)
+        forget_intent()
         return 0
     if verdict == NO_RUN:
         say("veille : plus rien à traiter — jalon déroulé, désarmement")
         disarm_watchdog(quiet=True)
-        try:
-            INTENT.unlink()
-        except OSError:
-            pass
+        forget_intent()
         return 0
     if verdict == QUOTA:
         return 0                    # une retenue vient d'être posée
@@ -2316,13 +2412,15 @@ def reload_source(args, before, legs, halting=False):
         return False
 
     intent = reload_intent(args, legs)
-    # Réécrite seulement si elle existait déjà : un superviseur lancé
-    # `--no-watchdog` n'a rien armé, et lui poser une intention en se rechargeant
-    # lui donnerait une reprise automatique que personne n'a demandée. Le
-    # nouveau processus la reçoit de toute façon par sa ligne de commande — mais
-    # la veille peut se réveiller dans la seconde de flottement, et elle ne lit
-    # que le disque : sans cette écriture, elle y trouverait le budget d'étapes
-    # d'avant.
+    # Réécrite seulement si elle existait déjà : un `--dry-run` n'a rien écrit,
+    # et lui poser une intention en se rechargeant lui donnerait une existence
+    # sur le disque que personne n'a demandée. Le nouveau processus la reçoit de
+    # toute façon par sa ligne de commande — mais la veille peut se réveiller
+    # dans la seconde de flottement, et elle ne lit que le disque : sans cette
+    # écriture, elle y trouverait le budget d'étapes d'avant. Sous
+    # `--no-watchdog`, l'intention existe depuis #426 et se réécrit donc comme
+    # les autres, `watchdog: false` compris — elle continue de ne relancer
+    # personne.
     if INTENT.exists():
         try:
             write_intent(intent)
@@ -2420,7 +2518,7 @@ def supervise(args):
 
     # S'armer soi-même : un superviseur lancé à la main doit laisser derrière lui
     # de quoi le ressusciter. C'est idempotent, donc sans effet s'il l'est déjà.
-    if not args.dry_run and not args.no_watchdog:
+    if not args.dry_run:
         # L'intention écrite ici est celle de *ce* processus, et c'est juste :
         # c'est lui qui travaillera. Mais une relance tapée à la main ne retape
         # pas `--merge-sensitive`, et l'opérateur qui croit relancer refermerait
@@ -2432,8 +2530,20 @@ def supervise(args):
                 "run : ces périmètres repassent sous relecture humaine. Les "
                 "retaper avec --merge-sensitive pour les rouvrir."
                 .format(", ".join(dropped)), "WARN")
+        # Écrite même sous `--no-watchdog` (#426), et c'est le choix qu'a
+        # tranché ce ticket. Ce processus pose `SPA_MERGE_SENSITIVE` dans
+        # l'environnement de chacune de ses vagues : sans intention en regard,
+        # `pr_gate.py` n'avait rien à quoi confronter cette variable — au mieux
+        # il la croyait telle quelle, au pire il la confrontait à l'armement
+        # d'un run mort resté sur le disque. Le champ `watchdog` dit à qui la
+        # lira que personne n'a demandé de relance automatique ; il n'y a donc
+        # aucune reprise offerte au passage, seulement de quoi juger.
         save_intent(args)
-        if not watchdog_armed():
+        if args.no_watchdog:
+            say("veille non armée (--no-watchdog) : la reprise après une "
+                "coupure devra être relancée à la main — l'intention est "
+                "écrite pour la barrière de merge, pas pour relancer", "WARN")
+        elif not watchdog_armed():
             arm_watchdog(args.every)
 
     # Une retenue héritée d'un plantage précédent : on la purge avant de juger.
@@ -2490,6 +2600,20 @@ def supervise(args):
         if legs >= args.max_legs:
             say(f"{legs} étapes atteintes (--max-legs) — arrêt", "WARN")
             return 1
+
+        # Le run que ce superviseur sert n'existe qu'une fois sa première étape
+        # passée : c'est ici, et pas à l'armement, qu'on peut lui rattacher
+        # l'intention. Sans effet dès qu'elle l'est — c'est-à-dire à partir du
+        # deuxième tour, et dès le premier pour un `--arm`.
+        #
+        # Jamais sous `--dry-run` : il n'a rien écrit à l'armement, et
+        # l'intention qu'il trouverait sur le disque est celle de quelqu'un
+        # d'autre. Lui apposer l'identifiant du run vivant ferait confronter
+        # par `pr_gate.py` les périmètres d'un vestige aux vagues d'aujourd'hui
+        # — le défaut même de #426, recréé par un simulacre. Simuler, c'est ne
+        # rien poser sur le disque.
+        if not args.dry_run:
+            stamp_intent_run()
 
         gate = runner("gate")
         verdict = gate.returncode
