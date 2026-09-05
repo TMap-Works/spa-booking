@@ -70,6 +70,15 @@ interface StoredAppointment {
   priceAmountMinor: number;
   priceCurrency: string;
   clientNote: string | null;
+  /**
+   * La note interne du praticien (#317).
+   *
+   * Portée par le stock et **jamais par `toRecord`** : c'est exactement la
+   * conduite du vrai repository, dont le `select` de sortie ne la demande pas.
+   * Un double qui la ferait ressortir rendrait vert le seul scénario que ce
+   * ticket doit rendre impossible — la note interne servie au parcours public.
+   */
+  staffNote: string | null;
   rescheduledFromId: string | null;
   cancelledAt: Date | null;
   cancelledBy: AppointmentCancelledBy | null;
@@ -125,6 +134,8 @@ export class FakeAppointmentsRepository {
     status?: AppointmentStatus;
     clientId?: string;
     serviceId?: string;
+    /** La note interne du praticien — de quoi exercer sa reprise au report (#317). */
+    staffNote?: string | null;
   }): StoredAppointment {
     const appointment: StoredAppointment = {
       tenantId: input.tenantId,
@@ -138,6 +149,7 @@ export class FakeAppointmentsRepository {
       priceAmountMinor: 0,
       priceCurrency: 'EUR',
       clientNote: null,
+      staffNote: input.staffNote ?? null,
       rescheduledFromId: null,
       // Semé sans trace d'annulation, y compris quand le statut est `CANCELLED` :
       // une suite qui veut la trace passe par `cancel`, qui est ce qui l'écrit.
@@ -170,6 +182,9 @@ export class FakeAppointmentsRepository {
       priceAmountMinor: draft.price.amountMinor,
       priceCurrency: draft.price.currency,
       clientNote: draft.clientNote,
+      // Une réservation ne peut pas porter de note interne : `AppointmentDraft`
+      // n'en a pas de champ, et c'est délibéré — la note s'écrit au back-office.
+      staffNote: null,
       rescheduledFromId: null,
       cancelledAt: null,
       cancelledBy: null,
@@ -190,7 +205,10 @@ export class FakeAppointmentsRepository {
    * 2. un refus de créneau **remet l'ancien rendez-vous dans son état** : c'est
    *    le `ROLLBACK` de la transaction, et c'est le troisième critère de #39 ;
    * 3. le nouveau rendez-vous **reprend** le statut, la cliente, la prestation,
-   *    le prix et la note de l'ancien — rien de tout cela ne vient de la demande.
+   *    le prix et les deux notes de l'ancien — rien de tout cela ne vient de la
+   *    demande. La note interne (#317) est reprise dans le stock et **absente**
+   *    du `AppointmentRecord` rendu, comme dans le vrai : c'est ce qui permet
+   *    d'exercer les deux moitiés du ticket depuis le service.
    */
   public async reschedule(draft: RescheduleDraft): Promise<RescheduleOutcome> {
     const tenantId = this.requireTenant();
@@ -233,6 +251,8 @@ export class FakeAppointmentsRepository {
       priceAmountMinor: previous.priceAmountMinor,
       priceCurrency: previous.priceCurrency,
       clientNote: previous.clientNote,
+      // La note suit le rendez-vous, pas le créneau (#317).
+      staffNote: previous.staffNote,
       rescheduledFromId: previous.id,
       cancelledAt: null,
       cancelledBy: null,

@@ -244,12 +244,21 @@ describe('AppointmentsRepository.create — conduite face à l’échec', () => 
  * demande ne franchit la frontière de ce qui doit être recopié.
  */
 
-/** Le rendez-vous à déplacer, tel que la base le rend — confirmé, avec une note. */
+/**
+ * Le rendez-vous à déplacer, tel que la base le rend — confirmé, avec ses deux
+ * notes.
+ *
+ * `staffNote` n'est pas dans `ROW` et ne doit pas y être : la seule lecture du
+ * module qui demande cette colonne est celle du report (#317). Une ligne mimée
+ * qui la porterait partout laisserait passer un `APPOINTMENT_SELECT` élargi par
+ * mégarde.
+ */
 const PREVIOUS_ROW = {
   ...ROW,
   id: '66666666-6666-4666-8666-666666666666',
   status: 'CONFIRMED' as const,
   clientNote: 'allergie aux huiles essentielles',
+  staffNote: 'cliente très sensible au bruit — cabine du fond',
 };
 
 /** Le nouveau créneau, chez un **autre** praticien. */
@@ -266,6 +275,10 @@ interface MovingDouble {
   rawValues(): unknown[];
   updateArgs(): { where?: unknown; data?: unknown }[];
   createData(): Record<string, unknown>[];
+  /** Les colonnes que la lecture de la ligne d'origine demande (#317). */
+  readSelect(): Record<string, unknown>[];
+  /** Les colonnes que l'insertion **relit** — la frontière de sortie (#317). */
+  createSelect(): Record<string, unknown>[];
 }
 
 /**
@@ -287,6 +300,8 @@ function movingClient(
   const values: unknown[] = [];
   const updates: { where?: unknown; data?: unknown }[] = [];
   const creates: Record<string, unknown>[] = [];
+  const readSelects: Record<string, unknown>[] = [];
+  const createSelects: Record<string, unknown>[] = [];
   const inserts = options.inserts ?? [ROW];
   let index = 0;
 
@@ -297,8 +312,9 @@ function movingClient(
       return 1;
     }),
     appointment: {
-      findFirst: jest.fn(async () => {
+      findFirst: jest.fn(async (args: { select: Record<string, unknown> }) => {
         order.push('read');
+        readSelects.push(args.select);
         return options.previous === undefined ? PREVIOUS_ROW : options.previous;
       }),
       updateMany: jest.fn(async (args: { where?: unknown; data?: unknown }) => {
@@ -306,9 +322,10 @@ function movingClient(
         updates.push(args);
         return { count: options.released ?? 1 };
       }),
-      create: jest.fn(async (args: { data: Record<string, unknown> }) => {
+      create: jest.fn(async (args: { data: Record<string, unknown>; select: Record<string, unknown> }) => {
         order.push('insert');
         creates.push(args.data);
+        createSelects.push(args.select);
         const answer = inserts[Math.min(index, inserts.length - 1)];
         index += 1;
         if (answer instanceof Error) {
@@ -329,6 +346,8 @@ function movingClient(
     rawValues: () => values,
     updateArgs: () => updates,
     createData: () => creates,
+    readSelect: () => readSelects,
+    createSelect: () => createSelects,
   };
 }
 
@@ -373,7 +392,7 @@ describe('AppointmentsRepository.reschedule — annulation puis création', () =
     ]);
   });
 
-  it('recopie cliente, prestation, prix, note et statut depuis la ligne relue', async () => {
+  it('recopie cliente, prestation, prix, notes et statut depuis la ligne relue', async () => {
     const double = movingClient();
 
     await reschedule(double.prisma);
@@ -384,6 +403,7 @@ describe('AppointmentsRepository.reschedule — annulation puis création', () =
       priceAmountMinor: PREVIOUS_ROW.priceAmountMinor,
       priceCurrency: PREVIOUS_ROW.priceCurrency,
       clientNote: PREVIOUS_ROW.clientNote,
+      staffNote: PREVIOUS_ROW.staffNote,
       // Repris, et non remis à `PENDING` : déplacer un créneau n'annule pas une
       // confirmation déjà obtenue.
       status: 'CONFIRMED',
@@ -392,6 +412,40 @@ describe('AppointmentsRepository.reschedule — annulation puis création', () =
       endsAt: MOVE.endsAt,
       rescheduledFromId: PREVIOUS_ROW.id,
     });
+  });
+
+  it('conserve la note interne du staff sur le successeur (#317)', async () => {
+    // La note appartient au rendez-vous, pas au créneau : sans cette reprise,
+    // « cliente très sensible au bruit » restait orpheline sur la ligne annulée
+    // et le praticien retrouvait un rendez-vous nu au report.
+    const double = movingClient();
+
+    await reschedule(double.prisma);
+
+    // Lue là où elle est recopiée — et c'est la seule lecture du module qui la
+    // demande.
+    expect(double.readSelect()[0]).toMatchObject({ staffNote: true });
+    expect(double.createData()[0]?.staffNote).toBe(PREVIOUS_ROW.staffNote);
+  });
+
+  it('n’ouvre pas pour autant la frontière de sortie du module (#317)', async () => {
+    // L'autre moitié du ticket, et celle qui coûte cher si elle cède : la note
+    // est **écrite** sans jamais être relue. Le `select` de l'insertion ne la
+    // demande pas, donc aucune valeur de `staff_note` n'atteint un
+    // `AppointmentRecord` — ni, en aval, `AppointmentView` et `AppointmentDto`,
+    // qui servent le parcours public.
+    const double = movingClient();
+
+    const outcome = (await reschedule(double.prisma)) as {
+      previous: Record<string, unknown>;
+      created: Record<string, unknown>;
+    };
+
+    expect(double.createSelect()[0]).not.toHaveProperty('staffNote');
+    expect(outcome.created).not.toHaveProperty('staffNote');
+    // Et pas davantage sur la ligne d'origine, que le repository rend depuis la
+    // lecture élargie : c'est `toRecord` qui la laisse tomber.
+    expect(outcome.previous).not.toHaveProperty('staffNote');
   });
 
   it('rend l’ancien rendez-vous tel qu’il était, et le nouveau tel qu’il est', async () => {

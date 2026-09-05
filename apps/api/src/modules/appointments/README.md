@@ -15,6 +15,7 @@ réservation, est tenu.
 | #36 | **L'option « premier disponible »** — `staffId` facultatif, et la règle d'affectation |
 | #38 | **Le verrou Redis de créneau** — `SlotLockService`, un `SET NX EX` court autour des deux écritures qui prennent un créneau |
 | #47 | **L'historique de la cliente connectée** — `GET /appointments/mine`, deux moitiés et un plafond |
+| #317 | **La note interne suit le report** — recopiée par le repository, jamais relue ni servie |
 
 ## Les routes
 
@@ -208,6 +209,29 @@ une sonde d'agenda.
 `reschedule` garde le praticien de la demande, ou celui du rendez-vous d'origine.
 Un report qui changerait de praticien de lui-même déplacerait une cliente chez
 quelqu'un qu'elle n'a pas choisi.
+
+### Ce que le report emporte, et ce qu'il ne rend pas (#317)
+
+Le successeur reprend de la ligne d'origine la cliente, la prestation, le prix
+figé, le statut, la note de la cliente et la **note interne du praticien**. Cette
+dernière appartient au rendez-vous, pas au créneau : la laisser sur la ligne
+annulée ferait perdre au salon, à chaque déplacement d'heure, ce qu'un praticien
+avait écrit.
+
+Elle est pour autant la seule à ne **jamais** ressortir. Deux voies existaient ;
+celle qui n'a pas été retenue élargissait `APPOINTMENT_SELECT` — la frontière de
+sortie du module, commune aux six lectures — pour exclure ensuite la note de
+`AppointmentView`. Elle aurait remplacé une garantie structurelle par une
+discipline, sur une vue qui sert aussi le parcours public.
+
+La voie retenue lit `staff_note` **là où elle est recopiée** et nulle part
+ailleurs : `RESCHEDULE_SOURCE_SELECT`, local au report, alimente le `create` ; le
+`select` de ce `create` reste `APPOINTMENT_SELECT`, si bien que la ligne écrite
+est relue sans sa note. Aucune valeur de `staff_note` n'atteint donc un
+`AppointmentRecord`, ni `AppointmentView`, ni `AppointmentDto`.
+
+Le back-office de #50 aura besoin de la lire : ce sera une sortie distincte,
+gardée par un rôle — jamais un champ de plus sur la vue publique.
 
 ## Ce qui garantit l'unicité, et ce qui ne la garantit pas
 

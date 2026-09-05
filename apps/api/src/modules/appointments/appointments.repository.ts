@@ -78,6 +78,47 @@ const APPOINTMENT_SELECT = {
 type AppointmentRow = Prisma.AppointmentGetPayload<{ select: typeof APPOINTMENT_SELECT }>;
 
 /**
+ * Ce que le **report** lit de la ligne d'origine : la frontière ci-dessus, plus
+ * la note interne du staff — qu'il recopie sans jamais la rendre (#317).
+ *
+ * ## Pourquoi une seconde liste plutôt qu'un `APPOINTMENT_SELECT` élargi
+ *
+ * Les deux voies rendaient le critère « un report conserve `staff_note` ». Celle
+ * qui n'a pas été retenue — ajouter `staffNote: true` à `APPOINTMENT_SELECT` et
+ * l'exclure ensuite de `AppointmentView` — déplaçait la garantie d'un endroit où
+ * elle est **structurelle** vers un endroit où elle devient une discipline :
+ * `APPOINTMENT_SELECT` sert les six lectures du module, dont l'historique public
+ * de #47 et la réservation d'invité. La note se serait mise à charger sur chacune
+ * d'elles, et rien n'aurait plus empêché un futur champ de `AppointmentView`, ou
+ * un `toRecord` étendu d'un geste, de la laisser sortir. « Ce qui n'est pas listé
+ * ici ne peut pas franchir la frontière par inadvertance » aurait cessé d'être
+ * vrai — pour un besoin qui ne concerne qu'une seule méthode.
+ *
+ * La voie retenue est donc la seconde : la colonne est lue **là où elle est
+ * recopiée**, et nulle part ailleurs. Elle alimente le `create` de `move` et rien
+ * d'autre — le `select` de ce `create` reste `APPOINTMENT_SELECT`, si bien que la
+ * ligne écrite est relue **sans** sa note. Aucune valeur de `staff_note` n'existe
+ * donc jamais dans un `AppointmentRecord`, ni a fortiori dans un
+ * `AppointmentView` : la note traverse la transaction sans laisser de trace dans
+ * ce que le module rend.
+ *
+ * Le coût est nul : c'est la même requête, avec une colonne de plus. Aucun
+ * aller-retour supplémentaire, aucune lecture ajoutée ailleurs.
+ *
+ * ## Ce que le back-office en fera
+ *
+ * #50 et la surface de back-office auront besoin de **lire** cette note pour
+ * l'afficher au comptoir. Ce sera une sortie distincte — une vue de back-office,
+ * gardée par un rôle —, jamais un champ de plus sur `AppointmentView`, qui sert
+ * aussi le parcours public. Le contrat partagé le documente déjà : `staffNote`
+ * y est « jamais servie au parcours public ».
+ */
+const RESCHEDULE_SOURCE_SELECT = {
+  ...APPOINTMENT_SELECT,
+  staffNote: true,
+} as const;
+
+/**
  * Charge utile de création **sans** le tenant, tel que le repository l'écrit.
  *
  * Même conversion, et pour la même raison, que dans `catalog.repository.ts` : le
@@ -403,7 +444,9 @@ export class AppointmentsRepository {
       // confirmerait son existence (tenant-isolation §4).
       const previous = await tx.appointment.findFirst({
         where: { id: draft.previousId },
-        select: APPOINTMENT_SELECT,
+        // La seule lecture du module qui demande `staff_note` — parce que c'est
+        // la seule qui la recopie (#317). Voir `RESCHEDULE_SOURCE_SELECT`.
+        select: RESCHEDULE_SOURCE_SELECT,
       });
 
       if (previous === null) {
@@ -447,12 +490,22 @@ export class AppointmentsRepository {
           priceAmountMinor: previous.priceAmountMinor,
           priceCurrency: previous.priceCurrency,
           clientNote: previous.clientNote,
+          // La note interne du praticien suit le rendez-vous, elle n'appartient
+          // pas au créneau (#317). Sans cette ligne, « cliente sourde de
+          // l'oreille droite » ou « prévoir une cabine sans musique » restait sur
+          // la ligne annulée, et le salon perdait au report ce qu'un praticien
+          // avait pris la peine d'écrire. Recopiée à l'aveugle : elle est écrite
+          // ici, jamais relue — le `select` ci-dessous ne la demande pas.
+          staffNote: previous.staffNote,
           status: previous.status,
           staffId: draft.staffId,
           startsAt: draft.startsAt,
           endsAt: draft.endsAt,
           rescheduledFromId: previous.id,
         }),
+        // `APPOINTMENT_SELECT`, et non `RESCHEDULE_SOURCE_SELECT` : la note vient
+        // d'être écrite, elle n'a aucune raison d'être relue. C'est ce qui rend
+        // impossible sa présence dans le `AppointmentRecord` rendu.
         select: APPOINTMENT_SELECT,
       });
 
