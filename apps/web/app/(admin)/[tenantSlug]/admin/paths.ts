@@ -84,3 +84,35 @@ export function adminCalendarPath(
 
   return `${adminPath(tenantSlug)}/calendrier${search.size === 0 ? '' : `?${search.toString()}`}`;
 }
+
+/**
+ * L'encaissement au comptoir (#59).
+ *
+ * La journée **et** le rendez-vous en cours de règlement sont dans l'URL, pour
+ * la raison qui les y met dans le planning : l'écran est ouvert des heures
+ * durant, et un rafraîchissement ne doit pas ramener l'opérateur à la liste
+ * alors qu'il a une cliente devant lui. C'est aussi ce qui rend le lien
+ * partageable d'un poste à l'autre du comptoir.
+ *
+ * `rdv` et non `appointmentId` : les paramètres visibles de ce back-office sont
+ * en français, comme `vue` et `date` ci-dessus.
+ *
+ * Les deux paramètres sont omis quand ils sont absents : l'URL nue
+ * `/{slug}/admin/encaissement` est celle qu'on tape, et elle ouvre la journée
+ * courante du salon, sans rendez-vous sélectionné.
+ */
+export function adminCheckoutPath(
+  tenantSlug: string,
+  options: { readonly date?: CalendarDate; readonly appointmentId?: string } = {},
+): string {
+  const search = new URLSearchParams();
+
+  if (options.date !== undefined) {
+    search.set('date', options.date);
+  }
+  if (options.appointmentId !== undefined) {
+    search.set('rdv', options.appointmentId);
+  }
+
+  return `${adminPath(tenantSlug)}/encaissement${search.size === 0 ? '' : `?${search.toString()}`}`;
+}
