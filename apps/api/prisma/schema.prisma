@@ -114,6 +114,30 @@ enum PaymentStatus {
   PARTIALLY_REFUNDED
 }
 
+/// Sort d'une **demande** de remboursement, telle que le comptoir l'a formulée
+/// — #63.
+///
+/// À ne pas confondre avec `PaymentStatus`, qui dit où en est l'encaissement :
+/// celui-là est écrit par le webhook `charge.refunded` et par lui seul
+/// (payments-stripe §6). Cette énumération-ci ne décrit que le cheminement de
+/// l'ordre donné au prestataire.
+///
+/// - `PENDING` — la demande est inscrite, l'appel au prestataire n'a pas encore
+///   abouti. Elle **réserve déjà son montant** dans le cumul : deux comptoirs
+///   qui remboursent en même temps ne peuvent pas rendre deux fois la même
+///   somme parce que le premier appel est encore en vol.
+/// - `SUCCEEDED` — le prestataire a accepté et rendu sa référence `re_…`.
+/// - `FAILED` — le prestataire a refusé ou n'a pas répondu. Le montant est
+///   relâché : il ne compte plus dans le cumul, et la somme reste remboursable.
+///
+/// `SUCCEEDED` ne veut pas dire que l'argent est arrivé sur la carte : cela,
+/// c'est `charge.refunded` qui le dira, et c'est lui qui met `payments` à jour.
+enum RefundStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+}
+
 /// Nature d'une ligne de ticket au comptoir — CDC §1.4 « POS de base :
 /// services + produits retail », #60.
 ///
@@ -279,6 +303,7 @@ model Tenant {
   staffTimeOff      StaffTimeOff[]
   appointments      Appointment[]
   payments          Payment[]
+  paymentRefunds    PaymentRefund[]
   products          Product[]
   sales             Sale[]
   saleItems         SaleItem[]
@@ -361,6 +386,10 @@ model User {
   /// `clientAppointments`, parce que `User` porte déjà plusieurs relations et
   /// que Prisma exige de les distinguer.
   cashedSales           Sale[]         @relation("SaleCashier")
+  /// Les remboursements ordonnés par ce compte — #63. Nommée pour la même
+  /// raison que `cashedSales` : `User` porte plusieurs relations et Prisma
+  /// exige de les distinguer.
+  requestedRefunds      PaymentRefund[] @relation("PaymentRefundRequestedBy")
 
   @@unique([tenantId, email])
   // Cible des clés étrangères composites `(tenant_id, id)` posées en SQL brut
@@ -1026,11 +1055,102 @@ model Payment {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
+  /// Les remboursements demandés sur cet encaissement — #63. Leur somme borne
+  /// ce qui reste remboursable ; `refunded_amount_minor` ci-dessus, lui, est ce
+  /// que le prestataire a confirmé par webhook.
+  refunds PaymentRefund[]
+
   @@unique([tenantId, appointmentId])
   @@unique([tenantId, providerPaymentIntentId])
+  // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
+  // Posé par #63 : `payment_refunds` référence l'encaissement, et la référence
+  // doit embarquer le tenant pour qu'un remboursement d'un salon ne puisse pas
+  // se rattacher à l'encaissement d'un autre.
+  @@unique([tenantId, id])
   @@index([tenantId, status, createdAt])
   @@index([tenantId, createdAt])
   @@map("payments")
+}
+
+/// Un remboursement demandé au comptoir — #63, CDC §4.9 et payments-stripe §6.
+///
+/// ## Une table, et non trois colonnes sur `payments`
+///
+/// Parce que le remboursement **partiel** est explicitement au périmètre : un
+/// encaissement peut en recevoir plusieurs, et trois colonnes n'en garderaient
+/// que le dernier. Or le critère de #63 est « qui, quand, pourquoi » — au
+/// pluriel, sans quoi la trace du premier geste se perdrait au deuxième.
+///
+/// ## Ce qu'elle porte, et pourquoi chaque colonne
+///
+/// | Colonne | Le critère qu'elle sert |
+/// |---|---|
+/// | `requested_by_user_id` | **qui** — le compte du jeton vérifié, jamais un identifiant du corps |
+/// | `created_at` | **quand** — l'instant de la demande, en UTC |
+/// | `reason` | **pourquoi** — texte libre du comptoir, qui ne quitte jamais notre base |
+/// | `amount_minor`, `currency` | de quoi rapprocher, en entiers et devise explicite |
+/// | `provider_refund_id` | `re_…`, la ligne du relevé du prestataire |
+///
+/// ## Le motif ne part pas chez le prestataire
+///
+/// `reason` est saisi par une personne et peut nommer la cliente. Les
+/// métadonnées envoyées avec l'ordre ne portent donc que des identifiants
+/// opaques (CDC §5.1) : le texte reste ici, où le rapprochement le lit.
+///
+/// ## Aucune donnée de carte, ici non plus
+///
+/// Ni marque, ni quatre derniers chiffres, ni date d'expiration : il n'y a
+/// nulle part où en ranger (payments-stripe §1). On rembourse une **intention**
+/// désignée par sa référence opaque, pas une carte.
+model PaymentRefund {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  paymentId String  @map("payment_id") @db.Uuid
+  payment   Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+
+  /// Montant rendu, entier dans la plus petite unité, jamais un type à virgule.
+  ///
+  /// Il est le seul montant du module que l'appelant ait le droit de fixer, et
+  /// c'est assumé : contrairement au prix d'une prestation, un remboursement
+  /// partiel n'existe dans aucune table à relire — une personne le décide au
+  /// comptoir, comme le pourboire du ticket (#60). Il est donc **borné côté
+  /// serveur** : `payment_refunds_amount_minor_check` interdit le zéro et le
+  /// négatif, et le service refuse tout ce qui ferait dépasser le cumul.
+  amountMinor Int    @map("amount_minor")
+  currency    String @db.Char(3)
+
+  /// Le motif, tel que le comptoir l'a écrit. `NOT NULL` : un remboursement
+  /// sans raison n'est pas rapprochable, et le critère de #63 le nomme.
+  reason String @db.VarChar(500)
+
+  /// Le compte qui a ordonné le remboursement — le « qui » du critère.
+  ///
+  /// `NOT NULL`, et il vient du jeton vérifié : l'accepter du corps aurait
+  /// laissé n'importe quel poste rembourser sous le nom d'un autre, ce qui est
+  /// exactement ce que la traçabilité cherche à établir.
+  requestedByUserId String @map("requested_by_user_id") @db.Uuid
+  requestedBy       User   @relation("PaymentRefundRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+
+  status RefundStatus @default(PENDING)
+
+  /// `re_…` — la référence du prestataire, une fois l'ordre accepté.
+  ///
+  /// Nulle tant que la demande est `PENDING` ou `FAILED` : elle n'existe pas
+  /// avant que le prestataire ne l'ait rendue. Unique par établissement, ce qui
+  /// interdit d'inscrire deux fois le même remboursement.
+  providerRefundId String? @map("provider_refund_id") @db.VarChar(255)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([tenantId, providerRefundId])
+  // L'axe de lecture unique de cette table : « qu'a-t-on déjà rendu sur cet
+  // encaissement ? », du plus ancien au plus récent. C'est la somme que le
+  // service compare au montant capturé avant d'ordonner quoi que ce soit.
+  @@index([tenantId, paymentId, createdAt])
+  @@map("payment_refunds")
 }
 
 /// Article revendu au comptoir — CDC §1.4, « POS de base : services et produits

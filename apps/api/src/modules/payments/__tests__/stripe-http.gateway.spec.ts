@@ -1,5 +1,5 @@
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
-import { PaymentProviderUnavailableError } from '../payments.errors';
+import { PaymentProviderRefusedError, PaymentProviderUnavailableError } from '../payments.errors';
 import { StripeHttpGateway } from '../stripe/stripe-http.gateway';
 import { StripeConfig, STRIPE_API_VERSION } from '../stripe/stripe.config';
 import { TEST_STRIPE_ENV } from './payments.doubles';
@@ -179,6 +179,159 @@ describe('StripeHttpGateway', () => {
 
       const [url] = fetchMock.mock.calls[0] as [string];
       expect(url).toBe('https://api.stripe.com/v1/payment_intents/pi%2F..%2Fcharges');
+    });
+  });
+
+  describe('ordre de remboursement — #63', () => {
+    const REFUND_BODY = { id: 're_1ABC', status: 'succeeded', amount: 2500, currency: 'eur' };
+
+    it('poste l’intention, le montant et des métadonnées opaques — jamais le motif', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(REFUND_BODY));
+      const { logger } = fakeLogger();
+
+      await new StripeHttpGateway(configured(), logger).createRefund({
+        paymentIntentId: 'pi_3ABC',
+        amountMinor: 2500,
+        idempotencyKey: 'refund-row-id',
+        metadata: { tenantId: 't', paymentId: 'p', refundId: 'r' },
+      });
+
+      const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('https://api.stripe.com/v1/refunds');
+      expect(init.method).toBe('POST');
+
+      const body = init.body as URLSearchParams;
+      expect(body.get('payment_intent')).toBe('pi_3ABC');
+      // Le montant passe tel quel, dans la plus petite unité — comme à la
+      // création d'intention, et pour la même raison.
+      expect(body.get('amount')).toBe('2500');
+      expect(body.get('metadata[refundId]')).toBe('r');
+      // `reason` de Stripe n'accepte que trois valeurs énumérées, et le motif du
+      // comptoir est un texte libre susceptible de nommer la cliente : il ne
+      // part pas (CDC §5.1).
+      expect(body.get('reason')).toBeNull();
+      expect([...body.keys()].join(' ')).not.toMatch(/card|number|cvc|exp_/i);
+    });
+
+    it('pose la clé d’idempotence — un remboursement en double sort de l’argent', async () => {
+      fetchMock.mockResolvedValue(jsonResponse(REFUND_BODY));
+      const { logger } = fakeLogger();
+
+      await new StripeHttpGateway(configured(), logger).createRefund({
+        paymentIntentId: 'pi_3ABC',
+        amountMinor: 2500,
+        idempotencyKey: 'refund-row-id',
+        metadata: {},
+      });
+
+      const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+      expect((init.headers as Record<string, string>)['Idempotency-Key']).toBe('refund-row-id');
+    });
+
+    it('réduit la réponse à quatre faits, sans rien qui décrive une carte', async () => {
+      fetchMock.mockResolvedValue(
+        jsonResponse({
+          ...REFUND_BODY,
+          charge: 'ch_1',
+          payment_method_details: { card: { last4: '4242', brand: 'visa', exp_month: 12 } },
+        }),
+      );
+      const { logger } = fakeLogger();
+
+      const refund = await new StripeHttpGateway(configured(), logger).createRefund({
+        paymentIntentId: 'pi_3ABC',
+        amountMinor: 2500,
+        idempotencyKey: 'k',
+        metadata: {},
+      });
+
+      // La garantie n'est pas qu'on efface `last4` : c'est qu'il n'existe nulle
+      // part où le mettre (payments-stripe §1).
+      expect(refund).toEqual({
+        id: 're_1ABC',
+        status: 'succeeded',
+        amountMinor: 2500,
+        currency: 'eur',
+      });
+      expect(JSON.stringify(refund)).not.toContain('4242');
+    });
+
+    it('refuse un montant à virgule plutôt que de le laisser entrer', async () => {
+      // Un montant fractionnaire ici serait le signe d'un corps mal lu ;
+      // l'accepter ferait entrer un flottant sur le chemin de l'argent.
+      fetchMock.mockResolvedValue(jsonResponse({ ...REFUND_BODY, amount: 25.5 }));
+      const { logger, errors } = fakeLogger();
+
+      await expect(
+        new StripeHttpGateway(configured(), logger).createRefund({
+          paymentIntentId: 'pi_3ABC',
+          amountMinor: 2500,
+          idempotencyKey: 'k',
+          metadata: {},
+        }),
+      ).rejects.toThrow(PaymentProviderUnavailableError);
+
+      expect(errors).toHaveLength(1);
+      expect(JSON.stringify(errors[0])).not.toContain('25.5');
+    });
+  });
+
+  describe('refus définitif ou sort inconnu — la distinction que le remboursement exige', () => {
+    /**
+     * Elle ne change rien au corps de réponse : même code, même 503. Elle sert
+     * au serveur, qui n'a le droit de relâcher une réservation de remboursement
+     * que lorsqu'il est **certain** que rien n'est sorti (#63).
+     */
+    const refuse = async (status: number): Promise<unknown> => {
+      fetchMock.mockResolvedValue(jsonResponse({ error: { type: 'invalid_request_error' } }, status));
+      const { logger } = fakeLogger();
+
+      return new StripeHttpGateway(configured(), logger)
+        .createRefund({
+          paymentIntentId: 'pi_3ABC',
+          amountMinor: 100,
+          idempotencyKey: 'k',
+          metadata: {},
+        })
+        .catch((error: unknown) => error);
+    };
+
+    it.each([400, 402, 404])('classe un %s en refus définitif', async (status) => {
+      // Reçue, comprise, rejetée : rien n'a bougé chez le prestataire.
+      expect(await refuse(status)).toBeInstanceOf(PaymentProviderRefusedError);
+    });
+
+    it.each([429, 500, 503])('laisse un %s au sort inconnu', async (status) => {
+      const error = await refuse(status);
+
+      // `429` y figure délibérément : un quota dépassé n'est pas un refus de
+      // l'opération, c'est un « plus tard ».
+      expect(error).toBeInstanceOf(PaymentProviderUnavailableError);
+      expect(error).not.toBeInstanceOf(PaymentProviderRefusedError);
+    });
+
+    it('laisse une coupure réseau au sort inconnu', async () => {
+      fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+      const { logger } = fakeLogger();
+
+      const error = await new StripeHttpGateway(configured(), logger)
+        .createRefund({ paymentIntentId: 'pi_3ABC', amountMinor: 100, idempotencyKey: 'k', metadata: {} })
+        .catch((cause: unknown) => cause);
+
+      expect(error).not.toBeInstanceOf(PaymentProviderRefusedError);
+    });
+
+    it('garde le même corps de réponse pour les deux — jamais une sonde', () => {
+      // Distinguer les deux dans la réponse ferait de cette route une sonde de
+      // l'état de notre compte chez le prestataire.
+      const refused = new PaymentProviderRefusedError();
+      const unavailable = new PaymentProviderUnavailableError();
+
+      expect({ code: refused.code, status: refused.status, details: refused.details }).toEqual({
+        code: unavailable.code,
+        status: unavailable.status,
+        details: unavailable.details,
+      });
     });
   });
 

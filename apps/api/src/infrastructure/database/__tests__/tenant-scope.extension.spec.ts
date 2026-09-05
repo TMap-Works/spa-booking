@@ -56,10 +56,16 @@ describe('Extension de scoping tenant', () => {
       // §1.4. Trois tables qui portent de l'argent, donc trois tables qu'une
       // fuite de portée rendrait capables de facturer chez le voisin — et
       // couvertes, elles aussi, sans qu'aucune ligne de l'extension ne bouge.
+      // Puis `PaymentRefund` par #63 : la trace des remboursements. Une
+      // quatrième table qui porte de l'argent, et celle dont une fuite de
+      // portée coûterait le plus — elle borne ce qui reste remboursable, si
+      // bien qu'un cumul lu chez le voisin ferait rendre deux fois la même
+      // somme.
       expect([...TENANT_SCOPED_MODELS].sort()).toEqual([
         'Appointment',
         'Notification',
         'Payment',
+        'PaymentRefund',
         'ProcessedWebhookEvent',
         'Product',
         'RefreshToken',

@@ -1,12 +1,14 @@
 import { Injectable } from '@nestjs/common';
 
 import { StructuredLogger } from '../../../common/logging/structured-logger';
-import { PaymentProviderUnavailableError } from '../payments.errors';
+import { PaymentProviderRefusedError, PaymentProviderUnavailableError } from '../payments.errors';
 import { STRIPE_API_VERSION, StripeConfig } from './stripe.config';
 import type {
   CreatePaymentIntentCommand,
+  CreateRefundCommand,
   StripeGateway,
   StripePaymentIntent,
+  StripeRefund,
 } from './stripe.gateway';
 
 /**
@@ -67,6 +69,14 @@ interface StripePaymentIntentPayload {
   currency?: unknown;
 }
 
+/** Ce que nous lisons d'une réponse `refund`, et rien de plus (#63). */
+interface StripeRefundPayload {
+  id?: unknown;
+  status?: unknown;
+  amount?: unknown;
+  currency?: unknown;
+}
+
 /** L'enveloppe d'erreur de Stripe, réduite à ce qui est journalisable. */
 interface StripeErrorPayload {
   error?: { type?: unknown; code?: unknown };
@@ -90,6 +100,45 @@ function asStripeIntent(payload: unknown): StripePaymentIntent | null {
   }
 
   return { id, clientSecret: client_secret, status, amountMinor: amount, currency };
+}
+
+function asStripeRefund(payload: unknown): StripeRefund | null {
+  if (payload === null || typeof payload !== 'object') {
+    return null;
+  }
+
+  const { id, status, amount, currency } = payload as StripeRefundPayload;
+
+  if (
+    typeof id !== 'string' ||
+    typeof status !== 'string' ||
+    // Entier, jamais un flottant : un montant à virgule ici serait le signe
+    // d'un corps mal lu, et l'accepter ferait entrer un `float` sur le chemin
+    // de l'argent (payments-stripe §5).
+    typeof amount !== 'number' ||
+    !Number.isInteger(amount) ||
+    typeof currency !== 'string'
+  ) {
+    return null;
+  }
+
+  return { id, status, amountMinor: amount, currency };
+}
+
+/**
+ * `true` si ce statut HTTP dit « je n'ai rien fait », de façon définitive.
+ *
+ * Un 4xx a été reçu, compris et rejeté : aucune opération n'a été engagée chez
+ * le prestataire. `429` est la seule exception — un quota dépassé n'est pas un
+ * refus de l'opération, c'est un « plus tard », et le traiter comme définitif
+ * ferait relâcher une réservation qu'une reprise réémettrait.
+ *
+ * Tout le reste — 5xx, et par extension une absence de réponse — laisse le sort
+ * de l'opération **inconnu**. C'est cette distinction, et elle seule, qui
+ * autorise le remboursement à relâcher sa réservation (#63).
+ */
+function isDefinitiveRefusal(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 429;
 }
 
 /**
@@ -164,6 +213,58 @@ export class StripeHttpGateway implements StripeGateway {
   }
 
   /**
+   * Ordonne un remboursement — total ou partiel (#63).
+   *
+   * ## Ce qui part, et ce qui ne part pas
+   *
+   * `payment_intent` et `amount`, plus des métadonnées d'identifiants opaques.
+   * **Pas de `reason`** : le champ homonyme de Stripe n'accepte que trois
+   * valeurs énumérées (`duplicate`, `fraudulent`, `requested_by_customer`), là
+   * où le motif du comptoir est un texte libre susceptible de nommer la
+   * cliente. Il reste dans notre base, où le rapprochement le lit — l'envoyer
+   * chez le prestataire aurait exporté une donnée personnelle sans nécessité
+   * (CDC §5.1).
+   *
+   * `amount` est toujours envoyé, y compris pour un remboursement total :
+   * l'omettre laisserait Stripe décider d'un montant que notre vérification de
+   * cumul n'a pas examiné.
+   */
+  public async createRefund(command: CreateRefundCommand): Promise<StripeRefund> {
+    const form = new URLSearchParams();
+    form.set('payment_intent', command.paymentIntentId);
+    // Déjà dans la plus petite unité de la devise, comme `amount_minor` en
+    // base : la valeur passe telle quelle, sans multiplication par cent — ce
+    // qui la rend juste aussi pour les devises sans sous-unité.
+    form.set('amount', String(command.amountMinor));
+
+    for (const [key, value] of Object.entries(command.metadata)) {
+      form.set(`metadata[${key}]`, value);
+    }
+
+    const payload = await this.call('/refunds', {
+      method: 'POST',
+      body: form,
+      // La clé est l'identifiant de notre ligne `payment_refunds`, posée avant
+      // l'appel : un renvoi après coupure réseau rend le remboursement déjà
+      // créé plutôt que d'en émettre un second. Un remboursement en double sort
+      // de l'argent — c'est le seul appel du module où l'idempotence protège
+      // une sortie de trésorerie et non une entrée.
+      idempotencyKey: command.idempotencyKey,
+    });
+
+    const refund = asStripeRefund(payload);
+
+    if (refund === null) {
+      // Le corps n'est pas journalisé : une réponse inattendue est justement
+      // celle dont on ne sait pas ce qu'elle contient.
+      this.logger.error('Réponse Stripe inexploitable', { operation: 'refund' });
+      throw new PaymentProviderUnavailableError();
+    }
+
+    return refund;
+  }
+
+  /**
    * Un appel à l'API Stripe, borné dans le temps, dont l'échec ne fuit rien.
    *
    * Toute issue non nominale — statut non-2xx, coupure réseau, délai dépassé,
@@ -225,7 +326,15 @@ export class StripeHttpGateway implements StripeGateway {
       // Trois valeurs énumérées, et pas le corps : payments-stripe §1 interdit
       // d'écrire une réponse Stripe complète dans les journaux.
       this.logger.error('Stripe a refusé l’appel', { path, status: response.status, type, code });
-      throw new PaymentProviderUnavailableError();
+      // Un 4xx est un refus **définitif** : la requête a été reçue, comprise, et
+      // rejetée — rien n'a bougé chez le prestataire. Un 5xx, lui, ne dit rien
+      // du sort de l'opération. La distinction n'apparaît pas dans la réponse
+      // HTTP (même code, même 503) : elle sert au serveur, qui n'a le droit de
+      // relâcher une réservation de remboursement que sur un refus définitif
+      // (#63). `429` en est exclu — un quota dépassé se retente.
+      throw isDefinitiveRefusal(response.status)
+        ? new PaymentProviderRefusedError()
+        : new PaymentProviderUnavailableError();
     }
 
     return payload;

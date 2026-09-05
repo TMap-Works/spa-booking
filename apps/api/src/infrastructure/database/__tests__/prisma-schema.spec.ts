@@ -92,6 +92,13 @@ const TENANT_ROOT_TABLE = 'tenants';
  * Elles sont inscrites ici pour la même raison que les autres — que leur
  * `tenant_id`, leurs index, leurs uniques composites et les `CHECK` de leurs
  * montants soient relus par cette suite.
+ *
+ * `payment_refunds` est la trace des remboursements du CDC §4.9 (#63) — « qui,
+ * quand, pourquoi », que payments-stripe §6 exige de chaque geste. Une table et
+ * non trois colonnes sur `payments` : le remboursement **partiel** étant au
+ * périmètre, un encaissement peut en recevoir plusieurs, et des colonnes
+ * n'auraient gardé que le dernier. Elle est soumise aux mêmes exigences que les
+ * autres.
  */
 const EXPECTED_TABLES = [
   'tenants',
@@ -106,6 +113,7 @@ const EXPECTED_TABLES = [
   'staff_time_off',
   'appointments',
   'payments',
+  'payment_refunds',
   'products',
   'sales',
   'sale_items',

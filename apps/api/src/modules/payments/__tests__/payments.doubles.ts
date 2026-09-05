@@ -15,8 +15,10 @@ import type {
 import { StripeConfig } from '../stripe/stripe.config';
 import type {
   CreatePaymentIntentCommand,
+  CreateRefundCommand,
   StripeGateway,
   StripePaymentIntent,
+  StripeRefund,
 } from '../stripe/stripe.gateway';
 
 /**
@@ -349,10 +351,23 @@ export class FakeStripeGateway implements StripeGateway {
   private readonly byKey = new Map<string, StripePaymentIntent>();
   private readonly byId = new Map<string, StripePaymentIntent>();
 
+  private readonly refundsByKey = new Map<string, StripeRefund>();
+
   /** Les commandes reçues, dans l'ordre — pour vérifier montant et métadonnées. */
   public readonly commands: CreatePaymentIntentCommand[] = [];
   /** Les identifiants relus, dans l'ordre — pour prouver qu'une reprise ne crée rien. */
   public readonly retrieved: string[] = [];
+  /** Les ordres de remboursement reçus, dans l'ordre — #63. */
+  public readonly refundCommands: CreateRefundCommand[] = [];
+
+  /**
+   * Le statut que portera le remboursement créé (#63).
+   *
+   * Un 2xx de Stripe n'est pas une acceptation : le remboursement peut naître
+   * `failed` ou `canceled`. Sans ce réglage, aucune suite ne pourrait exercer le
+   * cas où le prestataire répond « créé » et « non abouti » du même geste.
+   */
+  public refundStatus = 'succeeded';
 
   /** Pose l'échec du prestataire sur le prochain appel, quel qu'il soit. */
   public failWith: Error | null = null;
@@ -423,6 +438,39 @@ export class FakeStripeGateway implements StripeGateway {
     this.byId.set(id, intent);
 
     return Promise.resolve(intent);
+  }
+
+  /**
+   * L'ordre de remboursement — #63.
+   *
+   * Même propriété que la création d'intention, et elle compte davantage ici :
+   * rejoué avec la même clé, il rend le **même** remboursement au lieu d'en
+   * émettre un second. Un remboursement en double sort de l'argent, là où une
+   * intention en double n'en fait qu'entrer une fois de trop.
+   */
+  public createRefund(command: CreateRefundCommand): Promise<StripeRefund> {
+    this.refundCommands.push(command);
+
+    if (this.failWith !== null) {
+      return Promise.reject(this.failWith);
+    }
+
+    const known = this.refundsByKey.get(command.idempotencyKey);
+
+    if (known !== undefined) {
+      return Promise.resolve(known);
+    }
+
+    const refund: StripeRefund = {
+      id: `re_${randomUUID()}`,
+      status: this.refundStatus,
+      amountMinor: command.amountMinor,
+      currency: 'eur',
+    };
+
+    this.refundsByKey.set(command.idempotencyKey, refund);
+
+    return Promise.resolve(refund);
   }
 }
 

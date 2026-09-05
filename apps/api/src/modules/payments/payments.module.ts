@@ -11,6 +11,8 @@ import { PosRepository } from './pos.repository';
 import { ProductsController } from './products.controller';
 import { ProductsService } from './products.service';
 import { PublicPaymentsController } from './public-payments.controller';
+import { RefundsRepository } from './refunds.repository';
+import { RefundsService } from './refunds.service';
 import { SalesController } from './sales.controller';
 import { SalesService } from './sales.service';
 import { StripeWebhookController } from './stripe-webhook.controller';
@@ -33,6 +35,7 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
  * | #58 | La réception des webhooks Stripe : signature sur corps brut, idempotence, et le passage du rendez-vous en `CONFIRMED` |
  * | #60 | Le POS de base : le rayon retail, le ticket de caisse et ses lignes, le total recalculé côté serveur |
  * | #62 | Le règlement en espèces, l'historique des ventes et celui des transactions — la matière du rapprochement |
+ * | #63 | Le remboursement total et partiel : l'ordre au prestataire, le cumul borné côté serveur, et la trace « qui, quand, pourquoi » |
  *
  * Les deux premières moitiés se répondent : #57 crée une intention et ne
  * confirme rien, #58 est le seul à faire passer un encaissement **carte** en
@@ -48,8 +51,14 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
  * à appeler depuis ce chemin-là. C'est aussi pourquoi il est un service à part
  * plutôt qu'une méthode de `PaymentsService`, qui les injecte tous deux.
  *
- * Restent à venir : le montage d'Elements côté tunnel (#59), les remboursements
- * initiés au comptoir (#63).
+ * #63 est le pendant exact de #57 : il **sort** de l'argent là où l'autre en
+ * fait entrer. `RefundsService` et `RefundsRepository` sont donc à part de
+ * `PaymentsService` et `PaymentsRepository`, pour une raison de forme et non de
+ * taille — le contrôle du cumul est un « lire, décider, écrire » qui doit se
+ * sérialiser, et le loger dans un dépôt qui sert aussi des lectures ordinaires
+ * aurait laissé croire qu'une lecture hors transaction suffisait.
+ *
+ * Reste à venir : le montage d'Elements côté tunnel (#59).
  *
  * ## Ce qu'il importe, et pourquoi
  *
@@ -104,15 +113,15 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
  * `WEBHOOK_QUEUE`, pour la seule raison qui vaille : les suites d'intégration
  * doivent pouvoir attendre que la file se vide avant d'asserter sur la base.
  *
- * `ProductsService`, `CashPaymentsService` et `PaymentsHistoryService` ne sont
- * **pas** exportés : le rayon retail, l'encaissement au comptoir et la lecture
+ * `ProductsService`, `CashPaymentsService`, `PaymentsHistoryService` et
+ * `RefundsService` ne sont **pas** exportés : le rayon retail, l'encaissement au comptoir et la lecture
  * de rapprochement n'intéressent aucun autre module du périmètre MVP, et un
  * `exports` posé « au cas où » ouvrirait une porte que personne ne franchit et
  * qu'il faudrait pourtant maintenir. Le jour où `reporting` lira le chiffre
  * d'affaires, c'est `SalesService` — déjà exporté — qui le sert.
  *
- * `PaymentsRepository`, `StripeWebhookRepository` et `PosRepository` ne sont
- * pas exportés non plus : un module n'importe jamais le repository d'un autre
+ * `PaymentsRepository`, `StripeWebhookRepository`, `PosRepository` et
+ * `RefundsRepository` ne sont pas exportés non plus : un module n'importe jamais le repository d'un autre
  * (api-module §3).
  */
 @Module({
@@ -128,6 +137,8 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
     PaymentsService,
     CashPaymentsService,
     PaymentsHistoryService,
+    RefundsService,
+    RefundsRepository,
     PaymentsRepository,
     ProductsService,
     SalesService,
