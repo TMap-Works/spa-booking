@@ -78,6 +78,29 @@
 }
 
 /*
+ * Une section annoncée mais pas encore servie (#48).
+ *
+ * Le sommaire du back-office est complet dès le premier jour — le tronquer
+ * donnerait à croire que le produit s'arrête au planning — mais une entrée dont
+ * l'écran n'existe pas ne se clique pas : elle est rendue en `<span>`, hors de
+ * l'ordre de tabulation et sans rôle « lien », et porte `aria-disabled`.
+ *
+ * Le sélecteur s'appuie sur l'attribut plutôt que sur une classe `--disabled`,
+ * pour la même raison que celui d'`aria-current` juste au-dessus : l'état visuel
+ * ne peut alors pas diverger de l'état annoncé au lecteur d'écran, puisqu'il n'y
+ * a qu'une source. Le survol est explicitement neutralisé — sans quoi la règle
+ * générique ci-dessus rallumerait l'entrée au passage de la souris et la ferait
+ * passer pour cliquable.
+ */
+.spa-admin__nav-link[aria-disabled='true'],
+.spa-admin__nav-link[aria-disabled='true']:hover {
+  background-color: transparent;
+  color: var(--spa-color-text-inverse-muted);
+  cursor: default;
+  opacity: 0.6;
+}
+
+/*
  * Pied de barre : le salon courant et son fuseau. Le fuseau est affiché en
  * permanence et non au survol — toutes les heures du back-office sont écrites
  * dans le fuseau du salon, et un opérateur qui consulte depuis ailleurs doit
@@ -98,6 +121,28 @@
   color: var(--spa-color-text-inverse);
   font-weight: var(--spa-font-weight-medium);
   font-size: var(--spa-font-size-sm);
+}
+
+/*
+ * La déconnexion, dans ce pied de rail (#48).
+ *
+ * `.spa-button--quiet` peint son libellé en `--spa-color-accent-text`, une
+ * couleur calculée pour les surfaces claires : sur le fond sombre du rail, elle
+ * tombe sous le seuil AA. Les deux jetons employés ici sont, eux, des paires que
+ * `contrast.test.mjs` vérifie déjà contre la surface inversée — les substituer
+ * ne rouvre donc aucun trou de contraste, y compris pour un salon qui remplace
+ * sa rampe de marque.
+ *
+ * `align-self` empêche le bouton de s'étirer sur toute la largeur du rail :
+ * le pied est une colonne flex, dont les enfants s'étirent par défaut.
+ */
+.spa-admin__rail-footer .spa-button--quiet {
+  align-self: flex-start;
+  color: var(--spa-color-accent-inverse);
+}
+
+.spa-admin__rail-footer .spa-button--quiet:hover:not(:disabled, [aria-disabled='true']) {
+  background-color: var(--spa-color-surface-inverse-raised);
 }
 
 /* --- Zone principale ------------------------------------------------------- */
