@@ -697,7 +697,11 @@ describe('AppointmentsService.reschedule', () => {
    */
   function seedBooked(
     repository: FakeAppointmentsRepository,
-    overrides: { status?: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'COMPLETED' | 'NO_SHOW' } = {},
+    overrides: {
+      status?: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'COMPLETED' | 'NO_SHOW';
+      /** La note interne du praticien — voir le cas de #317 plus bas. */
+      staffNote?: string | null;
+    } = {},
   ): { id: string } {
     return repository.seedAppointment({
       tenantId: TENANT,
@@ -725,6 +729,26 @@ describe('AppointmentsService.reschedule', () => {
     expect(view.rescheduledFromId).toBe(previous.id);
     expect(view.startsAt).toBe('2026-09-01T14:00:00.000Z');
     expect(view.endsAt).toBe('2026-09-01T15:00:00.000Z');
+  });
+
+  it('emporte la note interne du staff sur le successeur, sans jamais la servir (#317)', async () => {
+    const STAFF_NOTE = 'cliente sourde de l’oreille droite — se placer à gauche';
+    const { service, repository } = movableHarness();
+    const previous = seedBooked(repository, { staffNote: STAFF_NOTE });
+
+    const view = await runWithTenant(TENANT, () =>
+      service.reschedule({ appointmentId: previous.id, startsAt: MOVED_START, staffId: null }, NOW),
+    );
+
+    // Un côté : la note suit le rendez-vous. Elle est ce qu'un praticien a pris
+    // la peine d'écrire, et un déplacement d'heure n'a aucune raison de l'effacer.
+    expect(repository.appointments[1]?.staffNote).toBe(STAFF_NOTE);
+    // L'autre côté, et celui qui coûte cher : elle ne sort pas. `AppointmentView`
+    // est la sortie **unique** du module — servie au parcours public comme au
+    // comptoir —, et le contrat partagé documente `staffNote` comme « jamais
+    // servie au parcours public ».
+    expect(view).not.toHaveProperty('staffNote');
+    expect(JSON.stringify(view)).not.toContain(STAFF_NOTE);
   });
 
   it('enregistre pour le nouveau créneau une durée qui inclut les deux tampons', async () => {
