@@ -61,9 +61,17 @@ barrière refuse de merger *elle-même* une PR sensible, elle ne révoque pas la
 décision de quelqu'un d'autre. Elle ne peut d'ailleurs pas l'avoir posé sur une
 telle PR, le refus étant évalué avant la pose.
 
+Une PR verte peut encore **effacer ce que la base vient d'acquérir** (#423). La
+CI passe très bien sans un module écrit après le départ de la branche : #415
+était verte sur treize checks, `mergeable`, `CLEAN` — et supprimait les vingt et
+un fichiers du module CRM que #413 venait de merger sur `develop`. Aucun check ne
+pouvait le voir, et seul un jugement d'agent l'a arrêtée. `diverged()` en fait
+une décision de la barrière : voir cette fonction pour la règle exacte.
+
 Codes de sortie — 0 vert · 1 en attente ou délai dépassé · 2 check en échec ·
-3 PR inapte au merge (brouillon, conflit, mauvaise base) · 4 erreur d'appel ·
-5 périmètre sensible non pré-autorisé, PR laissée ouverte pour relecture humaine.
+3 PR inapte au merge (brouillon, conflit, mauvaise base, ou effacement d'un
+apport de la base) · 4 erreur d'appel · 5 périmètre sensible non pré-autorisé,
+PR laissée ouverte pour relecture humaine.
 """
 import argparse
 import json
@@ -99,7 +107,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PASSING = {"SUCCESS", "SKIPPED", "NEUTRAL"}
 PENDING_STATUS = {"QUEUED", "IN_PROGRESS", "PENDING", "WAITING", "REQUESTED"}
 
-FIELDS = ("number,state,isDraft,baseRefName,headRefName,mergeable,"
+FIELDS = ("number,state,isDraft,baseRefName,headRefName,headRefOid,mergeable,"
           "mergeStateStatus,statusCheckRollup,url,title,labels,body")
 
 GREEN, PENDING, FAILED, UNFIT, USAGE, SENSITIVE = 0, 1, 2, 3, 4, 5
@@ -118,6 +126,43 @@ PRISMA = re.compile(r"(^|/)prisma/(migrations/|schema\.prisma$)")
 # #42 » — pourtant fermant — sans aucune lecture de labels, donc sans garde-fou.
 CLOSES = re.compile(
     r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)", re.IGNORECASE)
+
+# --- Base divergée (#423) ---------------------------------------------------
+#
+# Ce que l'API de comparaison doit rendre, et rien de plus : le point de départ
+# de la branche, ce que la base a acquis depuis, et les commits qui l'ont fait.
+# Filtrer côté `gh` plutôt que côté Python garde la sortie petite — la charge
+# complète d'un `compare` porte le diff entier de la base.
+#
+# `renamed` compte comme une acquisition : le chemin d'arrivée n'existait pas au
+# point de départ, et une PR qui le supprime efface bien un apport de la base.
+#
+# `tronque` est la seule chose que ce filtre ajoute au constat. L'endpoint plafonne
+# à 300 fichiers et 250 commits **sans pagination possible**, et une liste
+# amputée ferait disparaître des acquisitions : la barrière conclurait « rien à
+# refuser » là où elle n'a simplement pas tout vu. Même doctrine que partout
+# ailleurs ici — ne pas savoir vaut refus.
+COMPARE_FILES_CAP = 300
+COMPARE_JQ = ('{"base": .merge_base_commit.sha,'
+              ' "acquis": [.files[]?'
+              ' | select(.status == "added" or .status == "renamed")'
+              ' | .filename],'
+              ' "commits": [.commits[]?.sha],'
+              ' "tronque": ((.files | length) >= ' + str(COMPARE_FILES_CAP) +
+              ' or (.total_commits // 0) > (.commits | length))}')
+# De quoi attribuer un fichier à la PR qui l'a introduit, commit par commit.
+COMMIT_JQ = '{"message": .commit.message, "files": [.files[]?.filename]}'
+# Le numéro que le squash inscrit en fin de sujet : « feat(crm): … (#413) ».
+# C'est le seul lien entre un commit de `develop` et la PR dont il vient, et il
+# est posé par GitHub lui-même — le dépôt ne merge qu'en squash.
+SQUASHED_PR = re.compile(r"\(#(\d+)\)\s*$")
+# Combien de commits de la base on remonte pour attribuer les fichiers. Le cas
+# courant en demande un seul : un squash porte tout le module d'un coup. La
+# borne protège d'une divergence pathologique — au-delà, le fichier est nommé
+# sans sa PR, ce qui suffit à refuser.
+ATTRIBUTION_MAX = 20
+# Combien de fichiers en cause le message détaille avant de compter le reste.
+CLASH_SHOWN = 15
 
 # Ce que l'armement annonce à l'opérateur, **dérivé** des règles ci-dessus et non
 # recopié : une liste écrite à la main finit par décrire autre chose que ce que
@@ -461,22 +506,235 @@ def blocking(reasons, allowed):
             if SENSITIVE_KEYS.get(reason) not in allowed]
 
 
-def changed_paths(number):
-    """Les chemins touchés par la PR — pagination comprise. None si indisponible.
+def pr_files(number):
+    """Les fichiers de la PR, `(statut, chemin)` — pagination comprise.
+
+    None si la liste est indisponible : deux décisions en dépendent, et l'une
+    comme l'autre traite l'ignorance comme un refus.
 
     `--json files` s'arrête à une centaine d'entrées : le fichier sensible d'une
     grosse PR y passait inaperçu. La liste n'est demandée qu'au moment de
     décider, et non à chaque sondage de la CI.
+
+    Une seule marche paginée sert le périmètre sensible (`sensitive`, qui ne veut
+    que les chemins) et la divergence de base (`diverged`, qui ne veut que les
+    suppressions). Les demander séparément parcourait deux fois les mêmes pages,
+    et doublait les chances d'atteindre le délai sur une grosse PR — un délai qui
+    vaut refus.
     """
     # `per_page=100` plutôt que les 30 par défaut : trois fois moins d'allers-
     # retours, donc trois fois moins de chances d'atteindre le délai — qui vaut
     # refus et bloquerait une grosse PR pourtant anodine.
+    #
+    # La tabulation sépare : aucun chemin git n'en contient, là où l'espace est
+    # parfaitement légal dans un nom de fichier.
     proc = run(["gh", "api", "--paginate",
                 "repos/{}/pulls/{}/files?per_page=100".format(REPO, number),
-                "--jq", ".[].filename"], timeout=120)
+                "--jq", '.[] | .status + "\t" + .filename'], timeout=120)
     if proc.returncode != 0:
         return None
-    return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    files = []
+    for line in proc.stdout.splitlines():
+        status, _, path = line.partition("\t")
+        if path.strip():
+            files.append((status.strip(), path.strip()))
+    return files
+
+
+def changed_paths(files):
+    """Les chemins d'une liste rendue par `pr_files()`. None si elle l'est."""
+    return None if files is None else [path for _, path in files]
+
+
+def removed_paths(files):
+    """Les seuls fichiers que la PR **supprime**. None si la liste l'est.
+
+    Le statut `removed` est celui de l'API des fichiers d'une PR : c'est ce que
+    l'onglet « Files changed » compte en suppressions, et donc ce dont un
+    relecteur humain se serait alarmé sur #415 — vingt et un fichiers en rouge.
+    """
+    return (None if files is None
+            else [path for status, path in files if status == "removed"])
+
+
+def base_acquisitions(head, base):
+    """Ce que la base a acquis depuis le point de départ de la branche.
+
+    Rend `(merge_base, acquis, commits, tronque)`, ou None si la comparaison est
+    indisponible.
+
+    `compare/{head}...{base}` — trois points — diffe depuis
+    `merge-base(head, base)` jusqu'à la base : c'est la définition même du
+    « point de départ de la branche » que demande #423, et GitHub le **recalcule
+    à chaque appel**, là où la liste des fichiers d'une PR est servie depuis son
+    diff mis en cache. C'est tout l'intérêt de croiser les deux — voir
+    `diverged()`.
+
+    Le sens des deux bornes compte : inversées, on lirait ce que la *branche* a
+    produit, ce qui ne dit rien de ce qu'elle effacerait.
+
+    Trois points, et pas deux : `compare/{base}..{head}` répond `404` sur
+    l'API REST, vérifié sur ce dépôt — la forme à deux points n'existe que dans
+    l'interface web.
+
+    La tête est désignée par son SHA (`headRefOid`) et non par son nom de
+    branche : un nom ne se résout pas dans le dépôt de base quand la PR vient
+    d'un fork, et un SHA reste valable même si la branche bouge sous nous.
+    """
+    proc = run(["gh", "api", "repos/{}/compare/{}...{}".format(REPO, head, base),
+                "--jq", COMPARE_JQ], timeout=120)
+    if proc.returncode != 0:
+        return None
+    try:
+        payload = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    acquis = payload.get("acquis")
+    commits = payload.get("commits")
+    return (payload.get("base"),
+            [str(path) for path in acquis or []],
+            [str(sha) for sha in commits or []],
+            bool(payload.get("tronque")))
+
+
+def introducers(commits, wanted):
+    """Pour chaque fichier attendu, la PR de la base qui l'a introduit.
+
+    Le dépôt ne merge qu'en squash : chaque commit de `develop` est une PR, et
+    son sujet se termine par `(#N)`. On remonte donc du plus récent au plus
+    ancien, en s'arrêtant dès que tous les fichiers sont attribués — un module
+    entier arrive d'un seul squash, si bien que le cas de #423 se résout en un
+    appel.
+
+    Un fichier qu'aucun commit lu ne revendique reste sans attribution : le
+    message le nommera quand même. Savoir *quoi* est effacé suffit à refuser ;
+    savoir *par qui* c'est arrivé n'est qu'un confort de diagnostic, et ne doit
+    pas pouvoir faire échouer le refus.
+    """
+    remaining = set(wanted)
+    found = {}
+    for sha in list(reversed(commits or []))[:ATTRIBUTION_MAX]:
+        if not remaining:
+            break
+        proc = run(["gh", "api", "repos/{}/commits/{}".format(REPO, sha),
+                    "--jq", COMMIT_JQ], timeout=120)
+        if proc.returncode != 0:
+            continue
+        try:
+            payload = json.loads(proc.stdout)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        touched = remaining & {str(path) for path in payload.get("files") or []}
+        if not touched:
+            continue
+        subject = (payload.get("message") or "").splitlines()
+        match = SQUASHED_PR.search(subject[0]) if subject else None
+        origin = "#" + match.group(1) if match else sha[:7]
+        for path in touched:
+            found[path] = origin
+        remaining -= touched
+    return found
+
+
+def diverged(pr, base, files):
+    """Ce que cette PR effacerait des apports que la base a faits depuis son départ.
+
+    Rend le motif du refus, ou None s'il n'y a rien à refuser. `files` est la
+    liste rendue par `pr_files()` — déjà lue par l'appelant, qui s'en sert aussi
+    pour le périmètre sensible.
+
+    La règle, telle que #423 la pose : sont interdits les fichiers que la PR
+    **supprime** et que la base a **acquis** depuis `merge-base(branche, base)`.
+    Les deux conditions comptent autant l'une que l'autre.
+
+    - Sans la première, on refuserait toute PR simplement en retard sur sa base,
+      c'est-à-dire la quasi-totalité de celles qu'une vague à largeur 3 ouvre.
+      La barrière deviendrait « rebaser avant tout merge », ce que #423 ne
+      demande pas.
+    - Sans la seconde, on refuserait un ticket de suppression légitime : un
+      fichier déjà présent au point de départ de la branche a été supprimé
+      **sciemment**, par quelqu'un qui l'avait sous les yeux. Seul un apport
+      postérieur à ce départ n'a jamais pu être vu par l'auteur de la PR, et
+      c'est celui-là seul que la barrière protège. C'est le troisième critère
+      d'acceptation de #423, et il interdit la version large ci-dessus.
+
+    **Pourquoi ce recoupement n'est pas vide par construction.** L'objection est
+    la bonne question à poser : si les deux listes se lisaient depuis la *même*
+    merge-base, un chemin ne pourrait pas être à la fois `removed` (donc présent
+    au point de départ) et `added` (donc absent). Elles ne s'y lisent pas.
+    `pulls/{n}/files` est servi depuis le diff **mis en cache** de la PR, calculé
+    contre la base telle qu'elle était, et GitHub ne le recalcule qu'à
+    l'occasion ; `compare/{head}...{base}` est recalculé **à chaque appel**. Le
+    recoupement est donc exactement la contradiction entre les deux lectures, et
+    elle n'apparaît que dans une fenêtre précise : celle où la base vient de
+    bouger sous une PR ouverte. C'est le constat de #423 mot pour mot — « GitHub,
+    en diffant contre `develop` à 6806528, lisait ça comme 21 suppressions »,
+    alors que la branche partait de 5728f17. Deux bases, deux verdicts.
+
+    Hors de cette fenêtre les deux lectures s'accordent, le recoupement est vide,
+    et la barrière ne dit rien : c'est ce qui la distingue d'un refus
+    systématique, et c'est pourquoi elle ne coûte rien au cas courant.
+
+    Ni la CI ni `fitness()` ne voient ce cas : les tests passent très bien sans
+    un module écrit après la branche, et GitHub annonce `CLEAN` — un fichier
+    ajouté d'un côté et absent de l'autre n'est pas un conflit. Le refus sort en
+    `UNFIT`, avec les conflits et les brouillons : la PR n'est pas mergeable en
+    l'état, et un rebase la rend acceptable. Surtout, ce n'est pas un `SENSITIVE` —
+    celui-là dit « verte, en attente d'un relecteur » et se pré-autorise à
+    l'armement du run. Aucun armement ne doit pouvoir ouvrir celui-ci.
+
+    Ne pas savoir vaut refus, comme pour `sensitive()` : une barrière qui
+    s'ouvre dès qu'elle n'y voit plus rien ne protège que les jours où tout va
+    bien. Le coût est nul sur une PR qui ne supprime rien — on n'appelle alors
+    même pas la comparaison.
+    """
+    removed = removed_paths(files)
+    if removed is None:
+        return ("liste des fichiers de la PR indisponible — impossible de "
+                "vérifier qu'elle n'efface pas un apport de la base")
+    if not removed:
+        return None
+
+    head = pr.get("headRefOid") or pr.get("headRefName")
+    if not head:
+        return ("tête de la PR inconnue — impossible de vérifier qu'elle "
+                "n'efface pas un apport de la base")
+
+    compared = base_acquisitions(head, base)
+    if compared is None:
+        return ("comparaison {}…{} indisponible — impossible de vérifier que "
+                "la PR n'efface pas un apport de la base".format(head, base))
+
+    merge_base, acquis, commits, tronque = compared
+    if tronque:
+        return ("comparaison {}…{} tronquée par GitHub (plafond de {} fichiers, "
+                "sans pagination) — les apports de la base ne sont pas tous "
+                "lisibles, impossible de vérifier que la PR n'en efface "
+                "aucun".format(head, base, COMPARE_FILES_CAP))
+
+    clash = sorted(set(removed) & set(acquis))
+    if not clash:
+        return None
+
+    origins = introducers(commits, clash)
+    shown = ["{} (introduit par {})".format(path, origins[path])
+             if path in origins else path
+             for path in clash[:CLASH_SHOWN]]
+    if len(clash) > CLASH_SHOWN:
+        shown.append("… et {} autre(s)".format(len(clash) - CLASH_SHOWN))
+    culprits = sorted({origin for origin in origins.values()
+                       if origin.startswith("#")},
+                      key=lambda name: int(name[1:]))
+    return ("la PR supprime {} fichier(s) que {} a acquis depuis le point de "
+            "départ de la branche ({}){} — rebaser sur {} avant de merger :\n"
+            "  {}".format(
+                len(clash), base, (merge_base or "?")[:7],
+                ", apportés par " + ", ".join(culprits) if culprits else "",
+                base, "\n  ".join(shown)))
 
 
 def issue_labels(pr):
@@ -758,11 +1016,23 @@ def main():
                   file=sys.stderr)
         return code
 
+    # Une PR verte peut encore effacer ce que la base vient d'acquérir (#423).
+    # Évalué avant le périmètre sensible, et sans égard pour `unattended()` :
+    # celui-ci demande une relecture, celui-là refuse une perte de données —
+    # aucune pré-autorisation d'armement ne l'ouvre, et un opérateur présent n'y
+    # change rien non plus.
+    # Une seule marche paginée pour les deux décisions qui suivent.
+    files = pr_files(args.pr)
+    divergence = diverged(pr, args.base, files)
+    if divergence:
+        print("BLOQUÉ : base divergée — {}".format(divergence), file=sys.stderr)
+        return UNFIT
+
     # Évalué avant de savoir si l'on merge : `/ticket` documente ce code de
     # sortie sur l'appel de verdict seul, et un agent qui lirait « VERT » sur une
     # PR sensible en conclurait qu'il peut la merger lui-même.
     if unattended():
-        reasons = sensitive(pr, changed_paths(args.pr))
+        reasons = sensitive(pr, changed_paths(files))
         allowed = authorised_scopes(getattr(args, "merge_sensitive", ""))
         refused = blocking(reasons, allowed)
         if refused:
@@ -794,6 +1064,19 @@ def main():
         print("BLOQUÉ : l'état a changé avant le merge — " + remessage,
               file=sys.stderr)
         return recheck
+
+    # La base a pu avancer entre le verdict et maintenant — c'est le scénario
+    # même de #423, où une vague merge ses PR en séquence. `--request-merge`
+    # serait rattrapé côté GitHub, auto-merge.yml rejouant toute la barrière ;
+    # `--merge`, lui, agit ici et n'a aucun filet derrière lui.
+    # Relue, et non réutilisée : la fraîcheur est tout l'objet de ce second
+    # passage, et une liste mémorisée un instant plus tôt dirait le contraire de
+    # ce qu'on vient de vérifier.
+    divergence = diverged(fresh, args.base, pr_files(args.pr))
+    if divergence:
+        print("BLOQUÉ : la base a divergé avant le merge — " + divergence,
+              file=sys.stderr)
+        return UNFIT
 
     code, message = (request_merge if args.request_merge else merge)(
         args.pr, fresh, args)
