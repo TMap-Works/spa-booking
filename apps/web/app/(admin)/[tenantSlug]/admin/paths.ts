@@ -7,6 +7,10 @@
  * et effacé sur un autre survit, et la déconnexion ne déconnecte plus.
  */
 
+import type { CalendarDate } from '@spa/shared';
+
+import { DEFAULT_CALENDAR_VIEW, type CalendarView } from '@/lib/admin/calendar-range';
+
 /** Racine du back-office d'un établissement. */
 export function adminPath(tenantSlug: string): string {
   return `/${encodeURIComponent(tenantSlug)}/admin`;
@@ -51,4 +55,32 @@ export function adminServiceCategoriesPath(tenantSlug: string): string {
 /** Aperçu du catalogue tel que la cliente le voit. */
 export function adminCatalogPreviewPath(tenantSlug: string): string {
   return `${adminCatalogPath(tenantSlug)}/apercu`;
+}
+
+/**
+ * Le planning — vues jour et semaine (#49).
+ *
+ * La vue et la date sont dans l'URL et non dans un état local : un planning se
+ * partage (« regarde jeudi »), se met en favori, et surtout survit à un
+ * rafraîchissement. Un état local ramènerait l'opérateur à aujourd'hui à chaque
+ * rechargement, sur l'écran qui reste ouvert toute la journée.
+ *
+ * Les deux paramètres sont omis quand ils valent le défaut : l'URL nue
+ * `/{slug}/admin/calendrier` est celle qu'on tape, et elle ouvre la journée
+ * courante.
+ */
+export function adminCalendarPath(
+  tenantSlug: string,
+  options: { readonly view?: CalendarView; readonly date?: CalendarDate } = {},
+): string {
+  const search = new URLSearchParams();
+
+  if (options.view !== undefined && options.view !== DEFAULT_CALENDAR_VIEW) {
+    search.set('vue', options.view);
+  }
+  if (options.date !== undefined) {
+    search.set('date', options.date);
+  }
+
+  return `${adminPath(tenantSlug)}/calendrier${search.size === 0 ? '' : `?${search.toString()}`}`;
 }
