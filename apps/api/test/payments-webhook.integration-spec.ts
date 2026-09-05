@@ -153,7 +153,7 @@ describe('Webhook Stripe — API', () => {
       });
       jest.spyOn(repository, 'apply').mockImplementation(async () => {
         await held;
-        return { applied: true, paymentsTouched: 1, appointmentsConfirmed: 1 };
+        return { outcome: 'applied' as const, paymentsTouched: 1, appointmentsConfirmed: 1 };
       });
 
       await post(SUCCESS_BODY, sign(SUCCESS_BODY)).expect(200);

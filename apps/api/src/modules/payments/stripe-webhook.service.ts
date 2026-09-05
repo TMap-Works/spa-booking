@@ -37,11 +37,19 @@ export class StripeWebhookService {
   /**
    * Traite un événement. **Ne lève que sur une panne** — base injoignable,
    * contrainte violée : ce sont les cas où l'on veut précisément que la
-   * transaction soit annulée et que Stripe rejoue.
+   * transaction soit annulée, pour que rien de faux ne s'écrive et que le renvoi
+   * manuel de l'événement s'applique pour de bon. Stripe, lui, ne rejoue pas :
+   * le 200 est parti avant le traitement (`stripe-webhook.queue.ts`), et c'est
+   * le journal de niveau `error` de la file qui est l'alerte.
    *
    * Tout le reste — établissement introuvable, encaissement inconnu — se
-   * journalise et s'arrête là. Rejouer ne ferait pas apparaître une ligne qui
-   * n'existe pas.
+   * journalise et s'arrête là, en `warn`. Ces deux cas ne sont pas des pannes,
+   * mais ils ne sont pas anodins non plus : depuis #410, un encaissement inconnu
+   * laisse la base **rigoureusement intacte**, marque d'idempotence comprise, si
+   * bien qu'un renvoi de l'événement depuis le tableau de bord Stripe
+   * l'appliquera une fois la ligne présente. Le journal est ce qui déclenche ce
+   * renvoi ; il n'y a pas d'autre reprise tant que la file durable du CDC §2.2
+   * n'est pas posée.
    */
   public async process(event: StripeWebhookEvent): Promise<void> {
     const tenantId = await this.resolveTenant(event);
@@ -55,23 +63,42 @@ export class StripeWebhookService {
       return;
     }
 
-    const outcome = await this.tenants.runWithTenant(tenantId, async () =>
+    const application = await this.tenants.runWithTenant(tenantId, async () =>
       this.repository.apply(event),
     );
 
+    const meta = {
+      eventId: event.eventId,
+      eventType: event.eventType,
+      tenantId,
+      paymentsTouched: application.paymentsTouched,
+      appointmentsConfirmed: application.appointmentsConfirmed,
+    };
+
+    if (application.outcome === 'unmatched') {
+      // `warn` et non `log` : rien n'a été écrit, marque comprise (#410), et
+      // c'est **l'unique signal** qu'un encaissement attendu n'est jamais
+      // arrivé jusqu'à nous. La conduite à tenir est écrite dans le message,
+      // parce que celui qui lira ce journal ne lira pas ce fichier : renvoyer
+      // l'événement depuis le tableau de bord Stripe une fois la ligne
+      // présente, ce qui l'appliquera pour de bon.
+      this.logger.warn(
+        'stripe webhook: aucun encaissement ne porte cette référence — rien écrit, renvoi possible',
+        meta,
+        StripeWebhookService.name,
+      );
+      return;
+    }
+
     this.logger.log(
-      outcome.applied ? 'stripe webhook: événement appliqué' : 'stripe webhook: rejeu ignoré',
-      {
-        eventId: event.eventId,
-        eventType: event.eventType,
-        tenantId,
-        paymentsTouched: outcome.paymentsTouched,
-        appointmentsConfirmed: outcome.appointmentsConfirmed,
-      },
+      application.outcome === 'applied'
+        ? 'stripe webhook: événement appliqué'
+        : 'stripe webhook: rejeu ignoré',
+      meta,
       StripeWebhookService.name,
     );
 
-    if (outcome.applied && event.fact.kind === 'dispute-opened') {
+    if (application.outcome === 'applied' && event.fact.kind === 'dispute-opened') {
       this.alertOnDispute(tenantId, event.fact);
     }
   }

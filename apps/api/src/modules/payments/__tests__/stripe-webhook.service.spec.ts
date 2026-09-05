@@ -81,7 +81,7 @@ describe('StripeWebhookService — résolution de l’établissement', () => {
       .spyOn(repository, 'apply')
       .mockImplementation(async () => {
         observed.push(getTenantId());
-        return { applied: true, paymentsTouched: 1, appointmentsConfirmed: 1 };
+        return { outcome: 'applied' as const, paymentsTouched: 1, appointmentsConfirmed: 1 };
       });
 
     await service.process(succeeded({ tenantHint: 'tenant-b' }));
@@ -98,7 +98,7 @@ describe('StripeWebhookService — résolution de l’établissement', () => {
     const observed: (string | undefined)[] = [];
     jest.spyOn(repository, 'apply').mockImplementation(async () => {
       observed.push(getTenantId());
-      return { applied: true, paymentsTouched: 0, appointmentsConfirmed: 0 };
+      return { outcome: 'applied' as const, paymentsTouched: 0, appointmentsConfirmed: 0 };
     });
 
     await service.process(succeeded({ tenantHint: 'tenant-b' }));
@@ -133,7 +133,7 @@ describe('StripeWebhookService — résolution de l’établissement', () => {
     let scoped: string | undefined;
     jest.spyOn(repository, 'apply').mockImplementation(async () => {
       scoped = getTenantId();
-      return { applied: true, paymentsTouched: 1, appointmentsConfirmed: 0 };
+      return { outcome: 'applied' as const, paymentsTouched: 1, appointmentsConfirmed: 0 };
     });
 
     await service.process(succeeded());
@@ -164,6 +164,67 @@ describe('StripeWebhookService — idempotence et journal', () => {
       'stripe webhook: événement appliqué',
       'stripe webhook: rejeu ignoré',
     ]);
+  });
+
+  it('ne marque rien quand aucun encaissement ne porte la référence (#410)', async () => {
+    // Le cas laissé en suspens par #58, et tranché ici. `PaymentsService` crée
+    // l'intention chez Stripe **avant** d'inscrire la ligne `payments` : une
+    // livraison peut donc arriver alors que la ligne n'existe pas encore. La
+    // marquer traitée ferait avaler le renvoi manuel — qui est le seul recours,
+    // la file en mémoire n'ayant aucune reprise automatique.
+    const { service, repository, log } = subject();
+
+    // La métadonnée résout l'établissement ; c'est ce qui rend le cas atteignable
+    // — sans elle, le traitement s'arrêterait plus tôt, sur « établissement non
+    // résolu », et la question ne se poserait pas.
+    await service.process(succeeded({ tenantHint: 'tenant-a' }));
+
+    expect(repository.processed.size).toBe(0);
+    expect(log.warnings).toEqual([
+      'stripe webhook: aucun encaissement ne porte cette référence — rien écrit, renvoi possible',
+    ]);
+  });
+
+  it('applique le renvoi d’un événement resté sans destinataire', async () => {
+    // La conséquence utile de la règle : la même livraison, rejouée une fois la
+    // ligne inscrite, encaisse pour de bon. Avant #410, elle repartait en
+    // « rejeu ignoré » et le rendez-vous n'était jamais confirmé.
+    const { service, repository } = subject();
+    const event = succeeded({ tenantHint: 'tenant-a' });
+
+    await service.process(event);
+
+    repository.seed({
+      tenantId: 'tenant-a',
+      paymentIntentId: 'pi_1',
+      chargeId: null,
+      status: 'PENDING',
+      refundedAmountMinor: 0,
+      appointmentStatus: 'PENDING',
+    });
+
+    await service.process(event);
+
+    expect(repository.payments.get('pi_1')).toMatchObject({
+      status: 'SUCCEEDED',
+      appointmentStatus: 'CONFIRMED',
+    });
+  });
+
+  it('marque un litige sans ligne, lui : l’alerte est son effet', async () => {
+    // La borne de la règle. Un litige n'a par nature aucune ligne à toucher, et
+    // son effet est l'alerte elle-même : le priver de marque ferait ré-alerter
+    // l'équipe à chaque livraison.
+    const { service, repository } = subject();
+
+    await service.process({
+      eventId: 'evt_dp_orphelin',
+      eventType: 'charge.dispute.created',
+      tenantHint: 'tenant-a',
+      fact: { kind: 'dispute-opened', disputeId: 'dp_9', chargeId: null, paymentIntentId: null },
+    });
+
+    expect(repository.processed.size).toBe(1);
   });
 
   it('laisse remonter une panne : c’est ce qui fait rejouer Stripe', async () => {
