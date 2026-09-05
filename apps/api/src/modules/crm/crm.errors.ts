@@ -12,6 +12,16 @@ import { DomainError } from '../../common/errors';
  * le précédent des modules voisins — `apps/api` ne dépend pas encore du paquet
  * partagé — et l'import se substituera à ces constantes sans changer une valeur.
  *
+ * `CLIENT_EMAIL_NOT_BOOKABLE` y est **déjà** déclaré, dans `DOMAIN_ERROR_CODES`
+ * de `packages/shared/src/errors/error-codes.ts` : le front en a besoin pour trier
+ * ce refus définitif du 409 passager qu'est un créneau perdu (#452). La constante
+ * ci-dessous en est donc la copie, à la valeur près, et non une seconde source de
+ * vérité — c'est le paquet partagé qui fait foi. Elle subsiste parce que le
+ * `paths` hérité de `tsconfig.base.json` pointe vers `packages/shared/src`, hors
+ * du `rootDir` d'`apps/api` : tout import de `@spa/shared` sort ici en TS6059
+ * tant que #26 n'a pas tranché la forme de la dépendance. **Changer une valeur
+ * d'un côté sans l'autre casse le tri du parcours public.**
+ *
  * **Aucune de ces erreurs ne parle d'un autre établissement**, et aucune ne
  * recopie une donnée personnelle. Une fiche d'un autre tenant est introuvable,
  * point : c'est `NotFoundError` du tronc commun qui répond, en 404. Un code

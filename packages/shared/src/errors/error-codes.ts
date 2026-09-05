@@ -54,6 +54,39 @@ export const TRANSPORT_ERROR_CODES = {
 export const DOMAIN_ERROR_CODES = {
   BUSINESS_RULE_VIOLATION: 'BUSINESS_RULE_VIOLATION',
   INVALID_STATE_TRANSITION: 'INVALID_STATE_TRANSITION',
+  /**
+   * L'adresse envoyée ne peut pas porter une réservation **en ligne** dans cet
+   * établissement (#313). **409**.
+   *
+   * ## Pourquoi le front doit le distinguer
+   *
+   * C'est l'autre 409 du parcours public, et il n'a de commun avec
+   * `SLOT_NO_LONGER_AVAILABLE` que son statut. Le créneau perdu est **passager** :
+   * un autre horaire le lève. Celui-ci est **définitif pour cette adresse** —
+   * aucun créneau ne le lèvera jamais. Un front qui les confondrait renverrait la
+   * visiteuse au calendrier pour se heurter au même refus à chaque essai (#452).
+   *
+   * ## Pourquoi ici, et non dans une famille `crm`
+   *
+   * Il est levé par `crm`, qui résout la fiche cliente, mais il sort par une
+   * route d'`appointments` — la réservation publique. C'est précisément un code
+   * transverse au sens de cette famille : une règle métier qu'un module oppose au
+   * nom d'un autre. Sa place définitive suivra la migration des codes de modules
+   * vers `@spa/shared` (TODO #26), qui les regroupera tous par domaine d'un coup.
+   *
+   * ## Ce que le message affiché n'a pas le droit de dire
+   *
+   * *Pourquoi* l'adresse est refusée. La cause, côté serveur, est qu'elle porte
+   * un compte non client de l'établissement ; l'écrire à l'écran ferait de ce
+   * refus un **oracle sur l'annuaire du personnel**, interrogeable adresse par
+   * adresse depuis une route publique et non authentifiée. Le front constate le
+   * refus et invite à en saisir une autre, sans qualifier celle-ci.
+   *
+   * `details` est vide, et le reste : une adresse e-mail est une donnée
+   * personnelle (CDC §5.1), et le corps d'erreur est justement ce qui repart vers
+   * un journal d'accès ou une capture d'écran de ticket.
+   */
+  CLIENT_EMAIL_NOT_BOOKABLE: 'CLIENT_EMAIL_NOT_BOOKABLE',
 } as const;
 
 /** Authentification et autorisation — #21, #22. */
