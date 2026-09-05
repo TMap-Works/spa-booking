@@ -116,3 +116,73 @@ export function adminCheckoutPath(
 
   return `${adminPath(tenantSlug)}/encaissement${search.size === 0 ? '' : `?${search.toString()}`}`;
 }
+
+/**
+ * Renouvellement silencieux de la session du back-office (#48).
+ *
+ * Le chemin est **sous** `adminPath` — donc sous le `path` des deux cookies de
+ * session, qui n'atteindraient pas une route posée ailleurs. C'est la seule
+ * contrainte réelle sur l'emplacement de cette route, et elle est facile à
+ * rompre sans s'en apercevoir : le renouvellement échouerait alors toujours,
+ * faute de jeton de rafraîchissement.
+ *
+ * `next` est la page où revenir, et il est facultatif : la route retombe alors
+ * sur le planning. Il est de toute façon **revérifié par la route**, qui ne
+ * redirige que vers le back-office de cet établissement — un paramètre d'URL
+ * est fourni par l'appelant, et le suivre sur parole ferait de ce chemin un
+ * tremplin vers un site tiers, sous notre domaine.
+ */
+export function adminSessionRefreshPath(tenantSlug: string, next?: string): string {
+  const refresh = `${adminSessionPath(tenantSlug)}/refresh`;
+
+  return next === undefined ? refresh : `${refresh}?next=${encodeURIComponent(next)}`;
+}
+
+/** Racine des routes de session du back-office — jamais une destination. */
+function adminSessionPath(tenantSlug: string): string {
+  return `${adminPath(tenantSlug)}/session`;
+}
+
+/**
+ * Ramène un `next` d'URL à une destination sûre du back-office (#48).
+ *
+ * Écrit ici plutôt que dans la route de renouvellement pour deux raisons : un
+ * fichier `route.ts` n'expose que ses verbes HTTP et sa configuration, si bien
+ * qu'une fonction exportée à côté n'y a pas sa place ; et c'est de l'arithmétique
+ * de chemins, qui est exactement le sujet de ce module — donc testable sans
+ * requête.
+ *
+ * Trois refus, et chacun ferme quelque chose :
+ *
+ * 1. **hors du back-office de cet établissement.** Un `next` non vérifié est une
+ *    redirection ouverte : `?next=https://exemple.test` ferait de la route de
+ *    renouvellement un tremplin vers un site tiers, sous notre domaine et avec
+ *    notre crédibilité. `//exemple.test` est vérifié aussi — protocole-relative,
+ *    elle commence par `/` et mène pourtant ailleurs ;
+ * 2. **les routes de session elles-mêmes.** Renvoyer le renouvellement sur le
+ *    renouvellement boucle sans fin, et chaque tour réussit — rien ne
+ *    l'arrêterait ;
+ * 3. **la racine `/{slug}/admin`**, qui ne sert aucune page : y renvoyer
+ *    transformerait un renouvellement réussi en 404.
+ *
+ * Le repli est le planning : l'écran qu'un comptoir garde ouvert, et le seul
+ * qu'on puisse ouvrir sans rien savoir de l'intention initiale.
+ */
+export function safeAdminNext(candidate: string | null, tenantSlug: string): string {
+  const fallback = adminCalendarPath(tenantSlug);
+  const root = adminPath(tenantSlug);
+  const session = adminSessionPath(tenantSlug);
+
+  if (candidate === null || !candidate.startsWith('/') || candidate.startsWith('//')) {
+    return fallback;
+  }
+
+  if (candidate === session || candidate.startsWith(`${session}/`) || candidate.startsWith(`${session}?`)) {
+    return fallback;
+  }
+
+  // Seuls les **descendants** de la racine passent : `/{slug}/admin` et
+  // `/{slug}/admin?quoi-que-ce-soit` désignent le même segment sans page, et
+  // les accepter ferait finir un renouvellement réussi sur un 404.
+  return candidate.startsWith(`${root}/`) ? candidate : fallback;
+}

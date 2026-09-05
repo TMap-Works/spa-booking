@@ -28,15 +28,27 @@ import { adminPath } from './paths';
  * `localStorage`. Une XSS sur ce front ne peut ni le lire ni l'exfiltrer
  * (web-frontend §2).
  *
- * ## Portée volontairement réduite
+ * ## Le renouvellement, arrivé avec le shell (#48)
  *
- * Ce module ne porte que ce dont l'écran de réglages (#343) a besoin : ouvrir
- * une session, la lire, la fermer. Il n'y a ni rotation du jeton de
- * rafraîchissement, ni redirection de renouvellement — l'espace client les a
- * (`(account)/…/session.ts`), et les reprendre ici avant que le shell du
- * back-office n'existe (#48) reviendrait à écrire deux fois la même mécanique
- * pour la déplacer ensuite. Un jeton d'accès expiré renvoie donc à la
- * connexion : c'est le comportement le plus simple qui reste correct.
+ * Ce module portait d'abord le strict nécessaire de l'écran de réglages
+ * (#343) : ouvrir une session, la lire, la fermer. Un jeton d'accès expiré
+ * renvoyait à la connexion — le comportement le plus simple qui reste correct,
+ * et qui devient intenable sur l'écran que le comptoir garde ouvert huit heures
+ * d'affilée : la durée de vie d'un jeton d'accès se compte en minutes, et
+ * retaper son mot de passe vingt fois par jour n'est pas une session gérée.
+ *
+ * Les cookies sont donc **rendus** (`adminSessionCookies`) plutôt que posés,
+ * pour que deux chemins les écrivent aux mêmes attributs : une action serveur
+ * sur le magasin de `cookies()`, la route de renouvellement sur sa
+ * `NextResponse`. Un `path` qui divergerait de l'un à l'autre produirait deux
+ * cookies homonymes que le navigateur enverrait tous les deux — et la
+ * déconnexion n'en effacerait qu'un.
+ *
+ * La mécanique est celle de l'espace client (`(account)/…/session.ts`), écrite
+ * une seconde fois plutôt que partagée : les deux surfaces ne portent ni les
+ * mêmes noms de cookie ni le même `path`, et le facteur commun se réduirait à
+ * la moitié de ce fichier. La fusion des deux est une issue de suivi, pas une
+ * condition de ce ticket.
  */
 
 /** Le jeton d'accès du back-office. Sa durée de vie est celle du jeton. */
@@ -86,25 +98,59 @@ function adminCookieOptions(tenantSlug: string, maxAge: number): SessionCookieOp
   };
 }
 
+/** Un cookie de session, avant qu'un magasin ne le reçoive. */
+interface SessionCookie {
+  readonly name: string;
+  readonly value: string;
+  readonly maxAge: number;
+}
+
+/**
+ * Les cookies à poser après une connexion ou un renouvellement.
+ *
+ * Rendus plutôt que posés : c'est ce qui permet à l'action serveur et à la route
+ * de renouvellement d'écrire exactement les mêmes valeurs, sur deux magasins
+ * différents.
+ *
+ * L'API n'émet pas toujours un jeton de rafraîchissement — le cookie n'est alors
+ * pas réécrit, et **surtout pas effacé** : celui de la connexion précédente
+ * reste valide, et l'écraser par une valeur vide fermerait la session au premier
+ * renouvellement.
+ */
+export function adminSessionCookies(opened: ApiSession): readonly SessionCookie[] {
+  const access: SessionCookie = {
+    name: ADMIN_ACCESS_COOKIE,
+    value: opened.session.accessToken,
+    maxAge: Math.max(opened.session.expiresIn - ACCESS_COOKIE_SAFETY_MARGIN_SECONDS, 1),
+  };
+
+  if (opened.refreshToken === null) {
+    return [access];
+  }
+
+  return [
+    access,
+    {
+      name: ADMIN_REFRESH_COOKIE,
+      value: opened.refreshToken,
+      maxAge: opened.refreshTokenMaxAge ?? DEFAULT_REFRESH_MAX_AGE_SECONDS,
+    },
+  ];
+}
+
 /** Pose la session dans le magasin de cookies — depuis une action serveur. */
 export async function writeAdminSession(tenantSlug: string, opened: ApiSession): Promise<void> {
-  const store = await cookies();
+  attachAdminSession(await cookies(), tenantSlug, opened);
+}
 
-  store.set(
-    ADMIN_ACCESS_COOKIE,
-    opened.session.accessToken,
-    adminCookieOptions(
-      tenantSlug,
-      Math.max(opened.session.expiresIn - ACCESS_COOKIE_SAFETY_MARGIN_SECONDS, 1),
-    ),
-  );
-
-  if (opened.refreshToken !== null) {
-    store.set(
-      ADMIN_REFRESH_COOKIE,
-      opened.refreshToken,
-      adminCookieOptions(tenantSlug, opened.refreshTokenMaxAge ?? DEFAULT_REFRESH_MAX_AGE_SECONDS),
-    );
+/** Pose la session sur une réponse — depuis la route de renouvellement. */
+export function attachAdminSession(
+  target: WritableCookies,
+  tenantSlug: string,
+  opened: ApiSession,
+): void {
+  for (const cookie of adminSessionCookies(opened)) {
+    target.set(cookie.name, cookie.value, adminCookieOptions(tenantSlug, cookie.maxAge));
   }
 }
 
