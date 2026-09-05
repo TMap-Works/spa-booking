@@ -1,6 +1,11 @@
-import type { Appointment, Tenant } from '@spa/shared';
+import type { Appointment, Service, Tenant } from '@spa/shared';
 
-import { ApiClientError, fetchAppointments, fetchTenantSettings } from '@/lib/api-client';
+import {
+  ApiClientError,
+  fetchAppointments,
+  fetchServices,
+  fetchTenantSettings,
+} from '@/lib/api-client';
 import { calendarFailureMessage } from '@/lib/admin/calendar-failure';
 import {
   anchorOf,
@@ -35,14 +40,26 @@ import { adminLoadFailure, requireAdminAccessToken } from '../guard';
  * `force-dynamic` parce que la page lit un cookie de session : la mettre en
  * cache servirait le planning du premier arrivé à tout le monde.
  *
- * ## L'agenda que l'API ne sert pas encore
+ * ## Le catalogue voyage avec le planning (#50)
  *
- * `packages/shared` publie le contrat de l'agenda du comptoir —
- * `appointmentListQuerySchema` et `appointmentSchema` — mais `apps/api` n'expose
- * que `GET /appointments/mine` et `POST /appointments/:id/cancel`. La grille, la
- * navigation et la virtualisation sont donc complètes et exercées, et le
- * chargement des rendez-vous **dégrade** : l'écran s'affiche, dit ce qui manque,
- * et se remplira le jour où la route existera, sans une ligne à changer ici.
+ * Les prestations sont lues **ici**, une fois, et non à chaque ouverture du
+ * tiroir de rendez-vous : elles ne changent pas entre deux clics, et les
+ * charger au clic ferait attendre l'opérateur au moment précis où ce chemin doit
+ * être plus rapide que le tunnel client. Leur échec ne casse pas le planning —
+ * consulter l'agenda et poser un rendez-vous sont deux gestes, et le premier
+ * n'a pas à tomber parce que le second est indisponible.
+ *
+ * ## Les écritures que l'API ne sert pas encore
+ *
+ * `GET /appointments` existe depuis #444, et cette page la consomme. Les
+ * **écritures** du comptoir, elles, sont décrites par le contrat partagé —
+ * `createAppointmentRequestSchema.clientId` est annoté « réservé au back-office »,
+ * `changeAppointmentStatusRequestSchema` dit « changement de statut par le
+ * back-office » — mais `apps/api` n'expose ni `POST /appointments`, ni
+ * `/:id/reschedule`, ni `/:id/status`. Le tiroir est donc complet et **dégrade**,
+ * exactement comme la grille l'a fait avant #444 : il s'affiche, il valide, il
+ * dit ce qui manque, et il enregistrera le jour où les routes existeront sans
+ * une ligne à changer ici. Voir `lib/admin/appointment-desk.ts`.
  */
 
 export const dynamic = 'force-dynamic';
@@ -75,18 +92,30 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
   // équipe travaille.
   const anchor = anchorOf(view, parseCalendarDate(date) ?? todayInTimeZone(tenant.timezone));
 
-  const loaded = await Promise.all(
-    [anchor, shiftAnchor(view, anchor, -1), shiftAnchor(view, anchor, 1)].map(async (target) => {
-      try {
-        return {
-          key: rangeKey(view, target),
-          appointments: await fetchAppointments(accessToken, rangeOf(view, target)),
-        };
-      } catch (error) {
-        return { key: rangeKey(view, target), error };
-      }
-    }),
-  );
+  // Les prestations actives seules : le tiroir sert à **poser** un rendez-vous,
+  // et une prestation retirée du catalogue n'est plus vendable. Un échec ne
+  // remonte pas — le planning se consulte très bien sans catalogue, et le tiroir
+  // dira lui-même qu'il n'a rien à proposer.
+  //
+  // Menée **de front** avec les trois périodes : le catalogue et l'agenda ne se
+  // conditionnent pas, et les enchaîner ferait payer la somme des deux
+  // allers-retours à l'écran dont le ticket demande justement qu'il soit plus
+  // rapide que le tunnel public.
+  const [services, loaded] = await Promise.all([
+    fetchServices(accessToken, { activeOnly: true }).catch((): readonly Service[] => []),
+    Promise.all(
+      [anchor, shiftAnchor(view, anchor, -1), shiftAnchor(view, anchor, 1)].map(async (target) => {
+        try {
+          return {
+            key: rangeKey(view, target),
+            appointments: await fetchAppointments(accessToken, rangeOf(view, target)),
+          };
+        } catch (error) {
+          return { key: rangeKey(view, target), error };
+        }
+      }),
+    ),
+  ]);
 
   const periods: Record<string, readonly Appointment[]> = {};
   let loadError: string | null = null;
@@ -114,6 +143,7 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
         date={anchor}
         initialPeriods={periods}
         loadError={loadError}
+        services={services}
         tenantSlug={tenantSlug}
         timeZone={tenant.timezone}
         view={view}
