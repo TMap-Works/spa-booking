@@ -47,8 +47,14 @@ import {
   uuidSchema,
 } from '../common/identifiers';
 import { nonNegativeMoneySchema } from '../common/money';
-import { calendarDateSchema, offsetDateTimeSchema, utcInstantSchema } from '../common/time';
+import {
+  calendarDateSchema,
+  calendarDaysBetween,
+  offsetDateTimeSchema,
+  utcInstantSchema,
+} from '../common/time';
 import { APPOINTMENT_STATUSES, CANCELLATION_ACTORS } from '../constants/appointment';
+import { MAX_APPOINTMENT_RANGE_DAYS } from '../constants/limits';
 
 import { serviceSummarySchema, staffMemberSummarySchema } from './catalog';
 import { userSummarySchema } from './identity';
@@ -56,6 +62,40 @@ import { userSummarySchema } from './identity';
 export const appointmentStatusSchema = z.enum(APPOINTMENT_STATUSES);
 
 export const cancellationActorSchema = z.enum(CANCELLATION_ACTORS);
+
+/**
+ * Statut de rendez-vous **tel qu'il arrive du fil**, ramené au vocabulaire du
+ * contrat.
+ *
+ * L'API émet aujourd'hui `PENDING` — la casse de l'énumération PostgreSQL que
+ * Prisma génère — là où ce contrat nomme le même statut `pending`. La
+ * conversion se fait donc **une fois, à la frontière**, exactement comme
+ * `offsetDateTimeSchema` normalise un instant entrant : au-delà, plus aucun
+ * écran n'a à se demander dans quelle casse il compare un statut.
+ *
+ * Ce n'est pas la forme d'arrivée : le jour où `apps/api` importera ce paquet
+ * — le TODO(#26) que portent ses DTO —, les deux vocabulaires se rejoindront et
+ * ce schéma pourra redevenir `appointmentStatusSchema` tout court. Le laisser
+ * ici plutôt que d'écrire un `.toLowerCase()` dans un composant est ce qui rend
+ * cette suppression possible en un seul endroit.
+ *
+ * Déclaré **avant** `appointmentSchema` et non plus à côté des schémas du
+ * parcours public : les deux formes de sortie du contrat s'en servent
+ * désormais, la ligne d'agenda du back-office comme le rendez-vous que rend une
+ * réservation (#444). Une seule des deux qui l'aurait porté aurait fait échouer
+ * la lecture de l'autre sur la casse d'une chaîne — sans qu'aucun type ne le
+ * signale, les deux inférant le même `AppointmentStatus`.
+ */
+export const receivedAppointmentStatusSchema = z
+  .string()
+  .transform((value) => value.toLowerCase())
+  .pipe(appointmentStatusSchema);
+
+/** Auteur d'annulation reçu du fil (`CLIENT`), même normalisation que ci-dessus. */
+export const receivedCancellationActorSchema = z
+  .string()
+  .transform((value) => value.toLowerCase())
+  .pipe(cancellationActorSchema);
 
 /**
  * Rendez-vous tel que l'API le renvoie.
@@ -70,10 +110,20 @@ export const cancellationActorSchema = z.enum(CANCELLATION_ACTORS);
  * `startsAt` avec l'offset du salon obligerait l'agenda du back-office à
  * normaliser chaque ligne avant de la trier, et deux salons de fuseaux
  * différents ne se compareraient plus du tout.
+ *
+ * ## Le statut est normalisé à la réception, comme celui du parcours public (#444)
+ *
+ * `receivedAppointmentStatusSchema` et non `appointmentStatusSchema` : l'API
+ * émet la casse de l'énumération PostgreSQL (`PENDING`), et
+ * `bookedAppointmentSchema` absorbe déjà cet écart depuis #45. Ce schéma-ci ne
+ * le faisait pas — sans conséquence tant qu'aucune route ne le servait, mais
+ * `GET /api/v1/appointments` le sert désormais, et un agenda entier échouait à
+ * se lire sur la casse d'une chaîne. Le champ inféré reste `AppointmentStatus`,
+ * en minuscules : rien ne change pour qui consomme ce type.
  */
 export const appointmentSchema = z.object({
   id: uuidSchema,
-  status: appointmentStatusSchema,
+  status: receivedAppointmentStatusSchema,
   client: userSummarySchema,
   staff: staffMemberSummarySchema,
   service: serviceSummarySchema,
@@ -322,6 +372,21 @@ export type ChangeAppointmentStatusRequest = z.infer<typeof changeAppointmentSta
  *
  * `statuses` accepte plusieurs valeurs pour la vue « à venir » (`pending` +
  * `confirmed`), qui est l'écran par défaut du comptoir.
+ *
+ * ## Les deux bornes, et pourquoi elles sont dans le contrat (#444)
+ *
+ * Les `refine` bornent la fenêtre à `MAX_APPOINTMENT_RANGE_DAYS`, exactement
+ * comme `availabilityQuerySchema` borne la sienne. La raison n'est pas la même :
+ * l'agenda ne calcule rien, il lit — mais une semaine de back-office porte
+ * plusieurs centaines de lignes, chacune avec sa cliente, son praticien et sa
+ * prestation imbriqués. Une plage non bornée est donc une réponse dont la taille
+ * ne dépend que de l'appelant, et le refus sort en
+ * `APPOINTMENT_RANGE_TOO_WIDE` plutôt qu'en temps de réponse qui s'allonge.
+ *
+ * Les deux bornes sont **facultatives**, et la garde ne s'applique qu'au couple
+ * effectivement fourni : c'est le serveur qui complète l'autre — la journée
+ * courante de l'établissement —, parce que lui seul connaît le fuseau dans
+ * lequel « aujourd'hui » veut dire quelque chose.
  */
 export const appointmentListQuerySchema = z
   .object({
@@ -332,40 +397,27 @@ export const appointmentListQuerySchema = z
     serviceId: uuidSchema.optional(),
     statuses: z.array(appointmentStatusSchema).nonempty().optional(),
   })
-  .strict();
+  .strict()
+  .refine((query) => query.from === undefined || query.to === undefined || query.to >= query.from, {
+    message: 'la fin de la plage ne peut pas précéder son début',
+    path: ['to'],
+  })
+  .refine(
+    (query) =>
+      query.from === undefined ||
+      query.to === undefined ||
+      calendarDaysBetween(query.from, query.to) <= MAX_APPOINTMENT_RANGE_DAYS,
+    {
+      message: `la plage demandée dépasse ${String(MAX_APPOINTMENT_RANGE_DAYS)} jours`,
+      path: ['to'],
+    },
+  );
 
 export type AppointmentListQuery = z.infer<typeof appointmentListQuerySchema>;
 
 // ---------------------------------------------------------------------------
 // Ce que le parcours public reçoit en retour d'une réservation — #45
 // ---------------------------------------------------------------------------
-
-/**
- * Statut de rendez-vous **tel qu'il arrive du fil**, ramené au vocabulaire du
- * contrat.
- *
- * L'API émet aujourd'hui `PENDING` — la casse de l'énumération PostgreSQL que
- * Prisma génère — là où ce contrat nomme le même statut `pending`. La
- * conversion se fait donc **une fois, à la frontière**, exactement comme
- * `offsetDateTimeSchema` normalise un instant entrant : au-delà, plus aucun
- * écran n'a à se demander dans quelle casse il compare un statut.
- *
- * Ce n'est pas la forme d'arrivée : le jour où `apps/api` importera ce paquet
- * — le TODO(#26) que portent ses DTO —, les deux vocabulaires se rejoindront et
- * ce schéma pourra redevenir `appointmentStatusSchema` tout court. Le laisser
- * ici plutôt que d'écrire un `.toLowerCase()` dans un composant est ce qui rend
- * cette suppression possible en un seul endroit.
- */
-export const receivedAppointmentStatusSchema = z
-  .string()
-  .transform((value) => value.toLowerCase())
-  .pipe(appointmentStatusSchema);
-
-/** Auteur d'annulation reçu du fil (`CLIENT`), même normalisation que ci-dessus. */
-export const receivedCancellationActorSchema = z
-  .string()
-  .transform((value) => value.toLowerCase())
-  .pipe(cancellationActorSchema);
 
 /**
  * Le rendez-vous que rendent les routes publiques de réservation, de report et
