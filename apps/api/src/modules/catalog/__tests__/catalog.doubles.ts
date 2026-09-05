@@ -398,6 +398,23 @@ export class FakeCatalogRepository {
   }
 
   /**
+   * L'annuaire des fiches de l'établissement courant (#421), **désactivées
+   * comprises** par défaut.
+   *
+   * Le filtre porte sur le tenant de la **fiche** — c'est ce que le `where`
+   * scopé du vrai fait —, et non sur une affectation : c'est toute la différence
+   * avec `listServiceStaff`, et c'est ce qui permet d'amorcer un salon où rien
+   * n'est encore affecté.
+   */
+  public async listStaff(activeOnly: boolean): Promise<StaffRecord[]> {
+    const tenantId = this.requireTenant();
+    return this.staff
+      .filter((member) => member.tenantId === tenantId && (!activeOnly || member.isActive))
+      .sort((left, right) => left.displayName.localeCompare(right.displayName))
+      .map((member) => this.toStaffRecord(member));
+  }
+
+  /**
    * Les praticiens affectés, **désactivés compris** — c'est ce que le vrai rend,
    * et ce que l'écran d'affectation doit montrer.
    *

@@ -30,13 +30,23 @@ import { adminCatalogPath, adminCatalogPreviewPath } from '../../paths';
  * ## D'où vient la liste des praticiens affectables
  *
  * Du catalogue public (`GET /public/{slug}/services`), qui porte pour chaque
- * prestation active les fiches praticien qui la tiennent. L'API du back-office
- * n'expose à ce jour aucun « tous les praticiens de l'établissement » :
- * `GET /v1/users` rend des **comptes**, dont l'identifiant n'est pas celui d'une
- * fiche praticien, et `POST …/staff` attend le second. Composer les candidats
- * ainsi est ce que le contrat permet sans en inventer un ; la limite — un
- * praticien qui ne pratique encore aucune prestation n'apparaît pas — est écrite
- * sur l'écran et fait l'objet d'une issue de suivi.
+ * prestation active les fiches praticien qui la tiennent. La limite est connue
+ * et visible à l'écran : un praticien qui ne pratique encore aucune prestation
+ * n'apparaît pas, si bien qu'un salon qui démarre — aucune affectation nulle
+ * part — ne peut pas faire sa toute première affectation d'ici.
+ *
+ * **Le point d'entrée qui manquait existe désormais** : `GET /v1/staff` (#421)
+ * rend les fiches praticien de l'établissement, avec l'identifiant qu'attend
+ * `POST /services/{serviceId}/staff`. Cet écran ne le consomme pas encore — le
+ * brancher demande d'ajouter un `fetchStaff` à `apps/web/lib/api-client.ts`,
+ * dont le transport authentifié n'est pas exporté, et de reprendre le libellé
+ * d'aide de `ServiceStaffPanel` qui décrit encore l'ancienne composition. Les
+ * deux fichiers sont hors de l'empreinte du ticket qui a ouvert la route, et le
+ * branchement fait donc l'objet d'une issue de suivi.
+ *
+ * Tant qu'il n'est pas fait, `knownStaff` ci-dessous reste la seule source de
+ * candidats, et le quatrième critère de #52 n'est satisfait qu'à l'usage
+ * courant — pas à l'amorçage.
  */
 
 export const dynamic = 'force-dynamic';

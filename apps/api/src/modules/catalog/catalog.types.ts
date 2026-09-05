@@ -80,21 +80,45 @@ export interface ServiceView {
 }
 
 /**
- * Un praticien affecté à une prestation, tel que le back-office le liste.
+ * Une **fiche praticien** de l'établissement, telle que le back-office la liste.
  *
- * `isActive` y figure parce qu'une affectation survit à la désactivation du
- * praticien : la masquer ferait croire à une affectation perdue et inviterait à
- * la recréer, pour se heurter au conflit d'unicité de `service_staff`.
+ * `id` est celui de la fiche — de la table `staff` —, et non celui du compte qui
+ * la porte. C'est la distinction que #421 vient corriger : `GET /v1/users` rend
+ * des comptes, dont l'identifiant n'est pas celui qu'attend
+ * `POST /services/:serviceId/staff`. Cet identifiant-ci l'est.
+ *
+ * `isActive` y figure parce qu'un praticien désactivé reste une fiche de
+ * l'établissement : c'est à l'écran de décider s'il le propose, pas à l'API de
+ * le lui cacher — et un praticien déjà affecté qu'on masquerait ferait croire à
+ * une affectation perdue.
  *
  * Ni `userId`, ni `bio` : le premier révélerait le compte derrière la fiche, le
- * second ferait transiter deux mille caractères par ligne dans une liste
- * d'affectations.
+ * second ferait transiter deux mille caractères par ligne dans une liste de
+ * choix. `staffMemberSchema` de `@spa/shared` déclare d'ailleurs `bio`
+ * facultatif, précisément pour qu'une liste puisse s'en passer.
  */
-export interface ServiceStaffMemberView {
+export interface StaffMemberView {
   readonly id: string;
   readonly displayName: string;
   readonly isActive: boolean;
 }
+
+/**
+ * Un praticien affecté à une prestation, tel que le back-office le liste.
+ *
+ * Même forme que `StaffMemberView`, et c'est un alias plutôt qu'une seconde
+ * déclaration : les deux sorties portent la même fiche, vue depuis deux routes.
+ * En dupliquer les champs laisserait les deux diverger à la première colonne
+ * ajoutée d'un seul côté. Le contrat partagé fait le même choix —
+ * `serviceStaffMemberSchema` y est `staffMemberSummarySchema.extend({ isActive })`,
+ * soit `staffMemberSchema` sans `bio`.
+ *
+ * `isActive` compte ici pour une raison propre : une affectation survit à la
+ * désactivation du praticien, et la masquer ferait croire à une affectation
+ * perdue — pour se heurter au conflit d'unicité de `service_staff` en tentant de
+ * la recréer.
+ */
+export type ServiceStaffMemberView = StaffMemberView;
 
 /** Forme réduite d'un praticien, telle que la page publique la reçoit. */
 export interface StaffMemberSummaryView {

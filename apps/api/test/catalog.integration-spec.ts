@@ -375,4 +375,172 @@ describe('Catalogue — API', () => {
         .expect(400);
     });
   });
+
+  /**
+   * L'annuaire des fiches praticien (#421).
+   *
+   * Ce que cette suite prouve, et que le test unitaire ne peut pas : la route
+   * est **servie** — un contrôleur oublié dans les `controllers` de son module
+   * compile, passe ses tests unitaires et rend 404 en vrai —, son seuil de rôle,
+   * et la forme exacte de ce qu'elle rend.
+   */
+  describe('annuaire des praticiens', () => {
+    it('liste les fiches de l’établissement même sans aucune affectation', async () => {
+      // Le cas d'amorçage, celui qui motive le ticket : c'est ici que
+      // `GET /services/:id/staff` et le catalogue public rendaient tous deux une
+      // liste vide, et qu'aucune première affectation n'était possible.
+      const camille = repository.seedStaff({
+        tenantId: harness.tenantId,
+        displayName: 'Camille Rousseau',
+      });
+
+      const response = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${await harness.tokenFor('STAFF')}`)
+        .expect(200);
+
+      expect(repository.assignments).toHaveLength(0);
+      expect(response.body).toEqual([
+        { id: camille.id, displayName: 'Camille Rousseau', isActive: true },
+      ]);
+    });
+
+    it('rend un identifiant que l’affectation accepte', async () => {
+      // Le deuxième critère du ticket, prouvé de bout en bout : l'identifiant
+      // sorti de la liste part tel quel dans `POST …/staff` et aboutit. C'est
+      // exactement ce que l'identifiant d'un **compte** ne ferait pas.
+      repository.seedStaff({ tenantId: harness.tenantId });
+      const service = repository.seedService({ tenantId: harness.tenantId });
+      const manager = await harness.tokenFor('MANAGER');
+
+      const annuaire = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${manager}`)
+        .expect(200);
+
+      await request(server())
+        .post(`/api/v1/services/${service.id}/staff`)
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ staffId: annuaire.body[0].id })
+        .expect(201);
+
+      expect(repository.assignments).toHaveLength(1);
+    });
+
+    it('n’expose ni le `tenantId`, ni le compte, ni la biographie', async () => {
+      repository.seedStaff({ tenantId: harness.tenantId, displayName: 'Camille' });
+
+      const response = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${await harness.tokenFor('STAFF')}`)
+        .expect(200);
+
+      // Trois champs, et pas un de plus : `userId` révélerait le compte derrière
+      // la fiche, `bio` ferait transiter deux mille caractères par ligne, et le
+      // `tenantId` est une information interne (tenant-isolation §4).
+      expect(Object.keys(response.body[0]).sort()).toEqual(['displayName', 'id', 'isActive']);
+      expect(JSON.stringify(response.body)).not.toContain(harness.tenantId);
+    });
+
+    it('filtre sur l’activité, et refuse une valeur qui n’est pas booléenne', async () => {
+      repository.seedStaff({ tenantId: harness.tenantId, displayName: 'Active' });
+      repository.seedStaff({
+        tenantId: harness.tenantId,
+        displayName: 'Partie',
+        isActive: false,
+      });
+      const token = await harness.tokenFor('STAFF');
+
+      const tout = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(tout.body).toHaveLength(2);
+
+      const actives = await request(server())
+        .get('/api/v1/staff?activeOnly=true')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(actives.body).toHaveLength(1);
+
+      // `activeOnly=false` doit valoir **faux**, et non la chaîne `"false"` —
+      // qui serait vraie et filtrerait une liste que personne n'a restreinte.
+      // C'est `BooleanQuery` qui fait la conversion ; sans elle, ce cas-ci
+      // rendrait une fiche au lieu de deux.
+      const explicitementTout = await request(server())
+        .get('/api/v1/staff?activeOnly=false')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      expect(explicitementTout.body).toHaveLength(2);
+
+      await request(server())
+        .get('/api/v1/staff?activeOnly=peut-etre')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(400);
+    });
+
+    it('rend une liste vide, et non un 404, pour un salon sans aucune fiche', async () => {
+      // Un salon qui vient d'ouvrir n'est pas une erreur : c'est l'état de
+      // départ, et l'écran doit pouvoir le dire plutôt que d'afficher une panne.
+      const response = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${await harness.tokenFor('STAFF')}`)
+        .expect(200);
+
+      expect(response.body).toEqual([]);
+    });
+
+    it('refuse la lecture à un client, l’accorde à un praticien', async () => {
+      await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${await harness.tokenFor('CLIENT')}`)
+        .expect(403);
+
+      await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${await harness.tokenFor('STAFF')}`)
+        .expect(200);
+    });
+
+    it('exige une identité vérifiée', async () => {
+      await request(server()).get('/api/v1/staff').expect(401);
+    });
+
+    it('n’expose aucune route d’écriture — la fiche n’appartient à aucun module', async () => {
+      const seeded = repository.seedStaff({ tenantId: harness.tenantId });
+      const admin = await harness.tokenFor('ADMIN');
+
+      // 404 « route inconnue » : le cycle de vie de la fiche praticien n'est
+      // attribué à aucun module par le CDC §2.3, et `catalog` ne fait que la
+      // lire pour ses affectations.
+      await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${admin}`)
+        .send({ displayName: 'Nouvelle' })
+        .expect(404);
+
+      await request(server())
+        .patch(`/api/v1/staff/${seeded.id}`)
+        .set('Authorization', `Bearer ${admin}`)
+        .send({ displayName: 'Renommée' })
+        .expect(404);
+
+      await request(server())
+        .delete(`/api/v1/staff/${seeded.id}`)
+        .set('Authorization', `Bearer ${admin}`)
+        .expect(404);
+
+      expect(repository.staff).toHaveLength(1);
+    });
+
+    it('rejette un paramètre non déclaré plutôt que de l’ignorer', async () => {
+      // `forbidNonWhitelisted` : `tenantId` est le paramètre par lequel un
+      // appelant tenterait de choisir son établissement. Il n'est pas ignoré,
+      // il est refusé.
+      await request(server())
+        .get(`/api/v1/staff?tenantId=${randomUUID()}`)
+        .set('Authorization', `Bearer ${await harness.tokenFor('STAFF')}`)
+        .expect(400);
+    });
+  });
 });
