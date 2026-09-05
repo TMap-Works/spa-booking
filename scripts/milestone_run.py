@@ -62,6 +62,20 @@ Sur un terminal, la proposition peut être écartée d'un chiffre ; ailleurs —
 superviseur, la tâche planifiée, `claude -p` — elle est prise telle quelle,
 faute de clavier à qui demander.
 
+## Quand l'isolation n'a pas eu lieu
+
+Chaque ligne portant un ticket inscrit le worktree d'où l'agent parle. Ce champ
+dit aussi, quand il est nul, que l'agent **n'a pas reçu son worktree** et écrit
+dans le dépôt principal — ce qui est arrivé à #414 sans que personne ne le lise
+ainsi (#427). `event` le crie désormais pour lui : une bannière sur `stderr` à
+chaque appel, pour l'agent, et une seule ligne `WARN` au journal, pour
+l'orchestrateur. La conduite à tenir — poursuivre avec précaution, ou refuser de
+commiter parce que d'autres agents de vague tournent en parallèle — se demande à
+[isolation_guard.py](isolation_guard.py), qui sert aussi de barrière à commit.
+`--allow-main` couvre le `/ticket --no-worktree` délibéré, et seul `--actor agent`
+déclenche le constat : l'orchestrateur et l'arbitre journalisent aussi des lignes
+portant un ticket, depuis le dépôt principal, et par construction.
+
 ## Ce qu'aucun run ne prendra
 
 Une issue dont l'empreinte figée est entièrement sous `.claude/**` ne sera
@@ -144,6 +158,17 @@ except Exception:  # noqa: BLE001 — un plan illisible se dira à `plan_json`, 
         plan vide, un jalon caché à tort ne se voit jamais.
         """
         return False
+
+
+# Le constat d'isolation vit dans son propre script (#427), qui sert aussi de
+# barrière à commit. `event` s'en sert pour crier à la place de l'agent : sans
+# cela, le défaut n'est visible que dans un champ `worktree` nul que personne ne
+# lit. Import optionnel, comme celui du plan : une ligne de journal doit
+# continuer de s'écrire même si le garde-fou est cassé ou absent.
+try:
+    from isolation_guard import alert as isolation_alert, survey as isolation_survey
+except Exception:  # noqa: BLE001 — voir ci-dessus
+    isolation_alert = isolation_survey = None
 
 
 def main_root():
@@ -778,6 +803,74 @@ def agent_worktree():
     ferait passer le dépôt lui-même pour le worktree d'un agent.
     """
     return None if ROOT == STATE_ROOT else str(ROOT)
+
+
+# Marqueur des lignes de constat d'isolation, et clé de leur dédoublonnage : une
+# ligne par ticket suffit à rendre le défaut visible dans `log --level WARN` et
+# dans le tableau de bord ; quatorze — une par phase — le noieraient.
+ISOLATION_ALERT = "isolation"
+
+
+def already_alerted(run_id, number):
+    """Vrai si le défaut d'isolation de ce ticket est déjà au journal."""
+    return any(event.get("alert") == ISOLATION_ALERT
+               and event.get("ticket") == number
+               for event in read_journal(run_id))
+
+
+def warn_if_not_isolated(run_id, event):
+    """Crie, à la place de l'agent, quand il parle depuis le dépôt principal (#427).
+
+    L'agent de #414 a bien vu qu'il n'avait pas reçu son worktree — au
+    `git worktree list` de la phase 1, après coup, et il a improvisé. Le journal,
+    lui, portait déjà la réponse quatorze fois : `agent_worktree()` inscrit le
+    worktree de l'agent dans chaque ligne, et les quatorze de #414 portaient
+    `null` quand celles de ses voisins de vague nommaient le leur. Le champ
+    existait, personne ne le lisait comme un défaut.
+
+    Deux sorties, et c'est délibéré qu'elles ne soient pas symétriques :
+
+      - **stderr, à chaque appel** : c'est l'agent lui-même qu'il faut atteindre,
+        et il ne relit pas le journal. Le constat arrive donc dès sa toute
+        première ligne — phase `recevabilite`, avant la première écriture — puis
+        à chacune, tant qu'il n'a rien changé ;
+      - **le journal, une seule fois** : c'est l'orchestrateur et l'humain qu'il
+        faut atteindre, en `WARN`, là où `log --level WARN` et `watch` regardent.
+
+    La ligne ne porte **pas** de `status` : le défaut n'est pas un état du ticket,
+    et un `blocked` posé ici déciderait à la place de l'agent d'une conduite qui
+    dépend du nombre d'agents concurrents — c'est `isolation_guard.py check` qui
+    la lui dit, et lui qui la tient.
+    """
+    number = event.get("ticket")
+    message = None
+    if isolation_alert is not None and isolation_survey is not None:
+        try:
+            message = isolation_alert(isolation_survey(ROOT), number)
+        except Exception:  # noqa: BLE001 — un garde-fou en panne ne fait pas
+            # échouer la journalisation : on retombe sur le constat minimal, que
+            # `agent_worktree()` suffit à établir.
+            message = None
+        else:
+            # Le garde-fou lit le dépôt, `agent_worktree()` compare deux chemins.
+            # Quand ils divergent — `main_root()` a pu retomber sur `ROOT` faute
+            # de `.claude/` —, c'est le dépôt qui fait foi : pas d'alerte.
+            if message is None:
+                return
+    if message is None:
+        message = (f"isolation NON obtenue : l'agent #{number} écrit dans le "
+                   f"dépôt principal {STATE_ROOT}, pas dans un worktree isolé "
+                   f"(#427). `python scripts/isolation_guard.py check` pour la "
+                   f"conduite à tenir")
+
+    print(f"ATTENTION : {message}", file=sys.stderr)
+    if already_alerted(run_id, number):
+        return
+    append_journal(run_id, {
+        "ts": now(), "kind": "ticket", "ticket": number,
+        "actor": event.get("actor"), "phase": event.get("phase"),
+        "level": "WARN", "alert": ISOLATION_ALERT, "message": message,
+    })
 
 
 def worktree_claims(events):
@@ -2227,6 +2320,21 @@ def cmd_event(args):
     claim = agent_worktree() if event.get("ticket") is not None else None
     if claim:
         event["worktree"] = claim
+    elif (event.get("ticket") is not None
+          and event.get("actor") == "agent"
+          and not getattr(args, "allow_main", False)):
+        # Pas de worktree revendiqué pour un ticket : l'agent écrit dans l'arbre
+        # commun. C'est le défaut de #427, et c'est ici qu'il devient bruyant —
+        # avant l'écriture de la ligne, pour qu'il précède au journal la phase
+        # qu'il concerne.
+        #
+        # `--actor agent` seulement : l'orchestrateur et l'arbitre journalisent
+        # eux aussi des lignes portant un ticket — la phase 4 de /milestone écrit
+        # `--ticket <n> --phase merge --status merged --actor orchestrateur` pour
+        # chaque PR mergée —, et ils le font depuis le dépôt principal par
+        # construction. Crier là serait une fausse alerte par ticket et par
+        # vague, y compris quand l'agent, lui, a bien reçu son worktree.
+        warn_if_not_isolated(run_id, event)
     append_journal(run_id, event)
 
     if not args.quiet:
@@ -3383,6 +3491,10 @@ def main():
     eventer.add_argument("--beat", action="store_true",
                          help="battement de présence, pas un travail : le "
                               "guetteur de silence du superviseur l'ignore")
+    eventer.add_argument("--allow-main", action="store_true",
+                         help="le dépôt principal est attendu (/ticket "
+                              "--no-worktree) : ne pas crier au défaut "
+                              "d'isolation (#427)")
 
     stepper = sub.add_parser(
         "step", help="journalise une étape d'orchestration longue, et l'exécute",

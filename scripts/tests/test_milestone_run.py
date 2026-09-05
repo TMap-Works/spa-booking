@@ -296,10 +296,17 @@ class RevendicationDeWorktree(unittest.TestCase):
             self.assertIsNone(run_mod.agent_worktree())
 
     def event(self, ticket, root, state_root):
-        """La ligne que `cmd_event` écrit réellement, telle qu'elle atterrit."""
+        """La ligne que `cmd_event` écrit réellement, telle qu'elle atterrit.
+
+        `allow_main` est posé ici : ces tests-ci étudient la revendication de
+        worktree, pas le constat d'isolation de #427, et le laisser courir
+        ajouterait au journal une seconde ligne — l'alerte — qui ferait échouer
+        la lecture d'une ligne unique.
+        """
         base = dict(run=None, ticket=ticket, wave=None, phase="recevabilite",
                     status=None, message="recevable", pr=None, branch=None,
-                    level=None, actor="agent", quiet=True, reset=False, beat=False)
+                    level=None, actor="agent", quiet=True, reset=False, beat=False,
+                    allow_main=True)
         with tempfile.TemporaryDirectory() as tmp:
             with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
                  mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
@@ -323,6 +330,148 @@ class RevendicationDeWorktree(unittest.TestCase):
 
     def test_une_ligne_de_run_n_est_pas_marquee(self):
         self.assertNotIn("worktree", self.event(None, "/w/agent-4f21ab", "/depot"))
+
+
+class IsolationNonObtenue(unittest.TestCase):
+    """Ce que `event` dit quand l'agent d'un ticket parle du dépôt principal (#427).
+
+    Le champ `worktree` portait déjà la réponse : les quatorze lignes de #414 le
+    laissaient nul quand celles de ses voisins de vague nommaient le leur.
+    Personne ne le lisait comme un défaut — ces tests fixent le moment où il le
+    devient, et la forme sous laquelle il se voit.
+    """
+
+    def run_event(self, ticket, root, state_root, phases=("recevabilite",),
+                  allow_main=False, actor="agent"):
+        """Rend (journal complet, ce qui a été crié sur stderr).
+
+        Plusieurs phases d'affilée, parce que c'est le régime réel — un ticket en
+        écrit une douzaine — et que le dédoublonnage ne se voit qu'à la seconde.
+        `stderr` est capturé : le laisser courir noierait la sortie de
+        `npm run test:scripts` sous les bannières, et c'est précisément la moitié
+        du dispositif qu'on veut vérifier.
+        """
+        cri = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(run_mod, "RUNS_DIR", Path(tmp)), \
+                 mock.patch.object(run_mod, "LATEST_LOG", Path(tmp) / "latest.log"), \
+                 mock.patch.object(run_mod, "ROOT", Path(root)), \
+                 mock.patch.object(run_mod, "STATE_ROOT", Path(state_root)), \
+                 mock.patch.object(run_mod, "resolve", return_value="r1"), \
+                 contextlib.redirect_stderr(cri):
+                (Path(tmp) / "r1").mkdir()
+                for phase in phases:
+                    run_mod.cmd_event(argparse.Namespace(
+                        run=None, ticket=ticket, wave=None, phase=phase,
+                        status=None, message=phase, pr=None, branch=None,
+                        level=None, actor=actor, quiet=True, reset=False,
+                        beat=False, allow_main=allow_main))
+                raw = (Path(tmp) / "r1" / "journal.ndjson").read_text(
+                    encoding="utf-8")
+        events = [json.loads(line) for line in raw.splitlines() if line.strip()]
+        return events, cri.getvalue()
+
+    def journal(self, *args, **kwargs):
+        return self.run_event(*args, **kwargs)[0]
+
+    def alerts(self, events):
+        return [event for event in events
+                if event.get("alert") == run_mod.ISOLATION_ALERT]
+
+    def test_le_defaut_est_journalise_en_warn(self):
+        """`log --level WARN` et le tableau de bord ne regardent que là : une
+        ligne INFO noyée parmi quatorze est ce qui a rendu #414 invisible."""
+        events = self.journal(414, "/depot", "/depot")
+        found = self.alerts(events)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]["level"], "WARN")
+        self.assertIn("isolation NON obtenue", found[0]["message"])
+        self.assertEqual(found[0]["ticket"], 414)
+
+    def test_le_constat_precede_la_ligne_qu_il_concerne(self):
+        """Il vaut comme précondition de la phase, pas comme commentaire après
+        coup : le journal doit se lire dans cet ordre."""
+        events = self.journal(414, "/depot", "/depot")
+        self.assertEqual(events[0].get("alert"), run_mod.ISOLATION_ALERT)
+        self.assertEqual(events[1].get("message"), "recevabilite")
+
+    def test_le_constat_ne_se_repete_pas_dans_le_journal(self):
+        """Une par ticket suffit à le rendre visible ; une par phase noierait le
+        journal du run sous les alertes d'un seul agent."""
+        events = self.journal(414, "/depot", "/depot",
+                              phases=("recevabilite", "isolation", "implementation"))
+        self.assertEqual(len(self.alerts(events)), 1)
+        # Les lignes de l'agent, elles, sont toutes là : dédoublonner l'alerte ne
+        # doit rien retrancher au travail journalisé.
+        self.assertEqual(len(events), 4)
+
+    def test_le_constat_est_crie_a_chaque_appel(self):
+        """L'asymétrie est délibérée : le journal vise l'orchestrateur et n'a
+        besoin que d'une ligne, `stderr` vise l'agent — qui ne relit pas le
+        journal, et qu'il faut atteindre tant qu'il n'a rien changé."""
+        _events, cri = self.run_event(
+            414, "/depot", "/depot",
+            phases=("recevabilite", "isolation", "implementation"))
+        self.assertEqual(cri.count("isolation NON obtenue"), 3)
+        self.assertIn("isolation_guard.py", cri)
+
+    def test_le_constat_ne_pose_aucun_statut(self):
+        """La conduite à tenir dépend du nombre d'agents concurrents, que `event`
+        ne connaît pas. Poser `blocked` ici trancherait à la place de l'agent —
+        et ferait reculer un ticket déjà avancé."""
+        found = self.alerts(self.journal(414, "/depot", "/depot"))
+        self.assertNotIn("status", found[0])
+
+    def test_un_agent_isole_ne_declenche_rien(self):
+        """Le cas nominal d'une vague : aucune alerte, aucun bruit."""
+        events = self.journal(414, "/w/agent-4f21ab", "/depot")
+        self.assertEqual(self.alerts(events), [])
+        self.assertEqual(len(events), 1)
+
+    def test_allow_main_couvre_le_no_worktree_delibere(self):
+        """`/ticket --no-worktree` travaille dans l'arbre commun exprès : crier à
+        chaque ligne ferait débrancher le garde-fou."""
+        events = self.journal(414, "/depot", "/depot", allow_main=True)
+        self.assertEqual(self.alerts(events), [])
+
+    def test_une_ligne_de_run_ne_declenche_rien(self):
+        """L'orchestrateur travaille dans le dépôt principal par construction."""
+        events = self.journal(None, "/depot", "/depot")
+        self.assertEqual(self.alerts(events), [])
+
+    def test_une_ligne_de_ticket_non_agent_ne_declenche_rien(self):
+        """L'orchestrateur et l'arbitre journalisent eux aussi des lignes portant
+        un ticket — la phase 4 de /milestone écrit `--ticket <n> --phase merge
+        --status merged --actor orchestrateur` pour chaque PR mergée —, et ils le
+        font depuis le dépôt principal par construction. Crier là accolerait à
+        chaque ticket de chaque vague une alerte fausse, y compris quand l'agent
+        a bien reçu son worktree : c'est le bruit qui fait débrancher un
+        garde-fou."""
+        for actor in ("orchestrateur", "arbitre", "humain", "superviseur"):
+            with self.subTest(actor=actor):
+                events, cri = self.run_event(414, "/depot", "/depot", actor=actor)
+                self.assertEqual(self.alerts(events), [])
+                self.assertEqual(cri, "")
+
+    def test_un_garde_fou_absent_n_empeche_pas_le_constat(self):
+        """L'import d'`isolation_guard` est optionnel — comme celui du plan. Sans
+        lui, la ligne de journal doit continuer de s'écrire, et dire le défaut :
+        `agent_worktree()` suffit à l'établir."""
+        with mock.patch.object(run_mod, "isolation_alert", None), \
+             mock.patch.object(run_mod, "isolation_survey", None):
+            found = self.alerts(self.journal(414, "/depot", "/depot"))
+        self.assertEqual(len(found), 1)
+        self.assertIn("isolation NON obtenue", found[0]["message"])
+
+    def test_le_depot_fait_foi_contre_les_chemins(self):
+        """`agent_worktree()` compare deux chemins, le garde-fou lit le dépôt.
+        Quand ils divergent — `main_root()` a pu retomber sur `ROOT` faute de
+        `.claude/` —, c'est le dépôt qui tranche : pas de fausse alerte."""
+        with mock.patch.object(run_mod, "isolation_survey",
+                               return_value={"isolated": True}), \
+             mock.patch.object(run_mod, "isolation_alert", return_value=None):
+            events = self.journal(414, "/depot", "/depot")
+        self.assertEqual(self.alerts(events), [])
 
 
 def digest(name, milestone, finished=False, signal="run", active=False,
