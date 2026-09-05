@@ -70,6 +70,16 @@ import {
 } from '@spa/shared';
 import { z } from 'zod';
 
+// Les deux formes d'encaissement que l'API sert et que `@spa/shared` ne décrit
+// pas encore telles quelles. La raison — et le TODO(#26) qui les y ramènera —
+// est dans l'en-tête de `lib/admin/payment-contract.ts`.
+import {
+  appointmentPaymentIntentSchema,
+  paymentTransactionSchema,
+  type AppointmentPaymentIntent,
+  type PaymentTransaction,
+} from '@/lib/admin/payment-contract';
+
 /**
  * Erreur d'API, telle que les écrans la lisent.
  *
@@ -853,6 +863,74 @@ export async function fetchAppointments(
     method: 'GET',
     path: `/appointments${search.size === 0 ? '' : `?${search.toString()}`}`,
     schema: z.array(appointmentSchema),
+    accessToken,
+  });
+  return payload;
+}
+
+// ---------------------------------------------------------------------------
+// L'encaissement au comptoir — #59
+// ---------------------------------------------------------------------------
+
+/**
+ * Ouvre — ou reprend — le paiement par carte d'un rendez-vous, et rend de quoi
+ * monter Stripe Elements.
+ *
+ * ## Pourquoi la route **publique**, depuis le back-office
+ *
+ * Parce que c'est la seule que l'API sert : `POST /public/{slug}/payments/intents`
+ * n'a pas d'équivalent gardé, et ouvrir celui-ci relèverait d'`apps/api`, hors
+ * de l'empreinte de ce ticket. Ce n'est pas un contournement de garde — la route
+ * est publique **par conception** (on réserve sans compte, donc on paie sans
+ * compte), et ce qui l'autorise est la connaissance de l'identifiant du
+ * rendez-vous, que le comptoir a légitimement.
+ *
+ * Deux conséquences à connaître, portées par l'issue de suivi de #59 :
+ * l'ouverture est plafonnée à dix par minute **et par adresse** — et toutes les
+ * demandes du back-office sortent par l'adresse du serveur Next, non par celle
+ * du poste ; et un rendez-vous `completed` ou `no_show` y est refusé en 422,
+ * alors que le comptoir devrait précisément pouvoir l'encaisser.
+ *
+ * ## Ce que le corps ne porte pas
+ *
+ * Ni montant, ni devise, ni donnée de carte : le prix est celui figé à la
+ * réservation, relu en base, et les champs carte n'existent nulle part dans
+ * cette pile — ils sont saisis dans une iframe servie par Stripe
+ * (payments-stripe §1 et §2).
+ */
+export function openAppointmentPaymentIntent(
+  tenantSlug: string,
+  appointmentId: string,
+): Promise<AppointmentPaymentIntent> {
+  return request(publicPath(tenantSlug, '/payments/intents'), {
+    method: 'POST',
+    body: { appointmentId },
+    schema: appointmentPaymentIntentSchema,
+  });
+}
+
+/**
+ * Règle un rendez-vous en espèces — aucun appel au prestataire sur ce chemin.
+ *
+ * Le corps ne porte **que** l'identifiant du rendez-vous : le montant est celui
+ * figé à la réservation, l'opérateur vient du jeton vérifié, l'établissement de
+ * la revendication signée. Il n'y a donc rien à envoyer qui puisse être faux.
+ *
+ * La route est **rejouable** : appelée deux fois, elle rend deux fois le même
+ * encaissement, et la caisse n'est créditée qu'une fois — d'où son `200` et non
+ * un `201`. Le front s'en protège de son côté en désactivant son bouton dès le
+ * premier clic (web-frontend §3), mais l'invariant tient en base, pas dans
+ * l'écran.
+ */
+export async function settleAppointmentInCash(
+  accessToken: string,
+  appointmentId: string,
+): Promise<PaymentTransaction> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/payments/cash',
+    body: { appointmentId },
+    schema: paymentTransactionSchema,
     accessToken,
   });
   return payload;
