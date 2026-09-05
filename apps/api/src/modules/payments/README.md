@@ -14,8 +14,43 @@ notre périmètre PCI en SAQ A.
 | #60 | Le POS de base — rayon retail, ticket de caisse et ses lignes, total recalculé côté serveur |
 | #62 | Le règlement en espèces, l’historique des ventes et celui des transactions — la matière du rapprochement |
 | #63 | Le remboursement total et partiel : l’ordre au prestataire, le cumul borné côté serveur, la trace « qui, quand, pourquoi » |
+| #410 | La consolidation de #57 et #58 : une seule `StripeConfig`, un seul fichier d’erreurs, un critère de découpage des dépôts, et la marque d’idempotence conditionnée à l’effet |
 
 À venir : le montage d’Elements côté tunnel (#59).
+
+## Ce qui décide du découpage interne (#410)
+
+#57 et #58 ont été écrites en parallèle, à partir du même `develop`, et aucune
+n’était mergée quand l’autre a été ouverte. Elles ont laissé le module en deux
+moitiés qui ne se connaissaient pas : deux fournisseurs de configuration Stripe,
+deux fichiers d’erreurs, deux dépôts. Ce n’était pas une conception, c’était un
+ordre de merge.
+
+Deux de ces trois duplications ont été fondues, parce que rien ne les portait :
+
+- **une seule `StripeConfig`**, portant les trois valeurs — les deux clés et le
+  secret de terminaison. #57 l’avait déjà annoncé en l’exportant, « parce que #58
+  aura besoin du secret de webhook au même endroit » ;
+- **un seul `payments.errors.ts`**, qui absorbe `stripe-webhook.errors.ts` et
+  `pos.errors.ts`. Le coût de la séparation était réel : `const
+  SERVICE_UNAVAILABLE = 503` était écrit deux fois, et deux tables de statuts qui
+  dérivent, c’est un module qui répond autre chose que ce que son contrat annonce.
+
+Le découpage des **dépôts**, lui, survit — mais adossé à un critère, et non à
+l’historique des branches :
+
+| Dépôt | Ce qui le sépare des autres |
+|---|---|
+| `stripe-webhook.repository.ts` | le **seul** à recevoir `PRISMA_UNSCOPED` — l’unique dérogation inter-tenant du module (tenant-isolation §3) |
+| `refunds.repository.ts` | un « lire, décider, écrire » qui doit se sérialiser |
+| `pos.repository.ts` | le ticket et ses lignes, écrits d’un seul geste transactionnel |
+| `payments.repository.ts` | tout le reste, et **rien qui ne soit scopé** |
+
+La première ligne est celle qui compte : fondre le dépôt du webhook dans
+`PaymentsRepository` mettrait le client non scopé dans le constructeur qui sert
+le tunnel public et le comptoir. `__tests__/payments.boundaries.spec.ts` échoue
+si un second fichier du module cite ce jeton — le critère est vérifié, pas
+seulement écrit.
 
 ## Les routes
 
@@ -198,6 +233,31 @@ La table porte `tenant_id` là où payments-stripe §3 décrit `event_id PRIMARY
 KEY` : tenant-isolation §1 n'admet d'exception que par ADR, et une table sans
 colonne discriminante serait de toute façon refusée par l'extension de scoping.
 
+**La marque enregistre ce qui a été appliqué, pas ce qui a été reçu** (#410).
+C'est le point que #58 avait laissé en suspens, faute de connaître l'ordre
+d'écriture que #57 allait fixer. Cet ordre est maintenant établi :
+`PaymentsService.createIntentForAppointment` **crée l'intention chez Stripe
+avant** d'inscrire la ligne `payments`. Il existe donc un état où Stripe connaît
+un `pi_…` dont nous n'avons aucune trace — par une panne entre les deux
+écritures, par une intention créée hors de notre tunnel (tableau de bord, lien de
+paiement, Terminal), ou par un `charge.refunded` émis à la main.
+
+Marquer un tel événement traité serait la perte silencieuse d'une confirmation
+d'encaissement : le 200 est déjà parti, Stripe ne rejoue rien de lui-même, et le
+renvoi manuel — seul recours — serait avalé comme un rejeu. La règle est donc :
+
+| Cas | Marque | Pourquoi |
+|---|---|---|
+| aucune ligne `payments` ne porte la référence | **annulée avec la transaction** | l'événement reste applicable ; un renvoi l'appliquera |
+| la ligne existe, le garde de statut décline | **posée** | ce n'est pas un événement sans destinataire, c'est une décision |
+| `charge.dispute.created` sans ligne | **posée** | l'alerte *est* l'effet ; l'annuler ferait ré-alerter à chaque rejeu |
+
+L'ordre d'écriture ne change pas : la marque s'insère toujours **avant** l'effet,
+parce que c'est ce qui sérialise deux livraisons concurrentes. C'est l'annulation
+de la transaction qui la retire, jamais un test préalable — un test préalable
+aurait relâché le verrou et laissé l'effet s'appliquer deux fois. Le cas non
+rattaché se journalise en `warn` : c'est le seul signal qu'un renvoi est à faire.
+
 ### 3. La résolution de l'établissement
 
 Un webhook n'a ni jeton ni slug : ni `JwtAuthGuard` ni `TenantScopeMiddleware`
@@ -264,18 +324,29 @@ lecture. La garantie n'est pas qu'on efface `last4`, `brand` ou `exp_month` :
 c'est qu'**il n'existe nulle part où les mettre**. Un test le vérifie sur un
 corps qui en porte.
 
-Le secret de terminaison ne quitte pas `StripeWebhookConfig`, et aucun message
-d'erreur ne cite jamais sa valeur.
+Le secret de terminaison ne quitte pas `StripeConfig`, et aucun message d'erreur
+ne cite jamais sa valeur.
 
 ## Configuration
 
+Les trois valeurs vivent dans **une seule** `StripeConfig` (#410), lue au
+démarrage et nulle part ailleurs.
+
 | Variable | Absente en `development` / `test` | Absente en `staging` / `production` |
 |---|---|---|
+| `STRIPE_SECRET_KEY` | l'API démarre, l'encaissement répond 503 | **l'API refuse de démarrer** |
+| `STRIPE_PUBLISHABLE_KEY` | l'API démarre, l'encaissement répond 503 | **l'API refuse de démarrer** |
 | `STRIPE_WEBHOOK_SECRET` | l'API démarre, la route répond 503 | **l'API refuse de démarrer** |
 
-Un secret présent mais non préfixé `whsec_` empêche le démarrage dans **tous**
-les environnements : c'est le symptôme de deux variables interverties, et
-l'inversion la plus probable place ici une clé `sk_…`.
+Une valeur présente mais mal préfixée — `sk_`, `pk_`, `whsec_` — empêche le
+démarrage dans **tous** les environnements : c'est le symptôme de deux variables
+interverties, et l'inversion la plus probable place une clé `sk_…` là où on la
+croit inoffensive.
+
+Les deux capacités se jugent séparément : `isConfigured` parle des clés,
+`isWebhookConfigured` du secret de terminaison. Un poste qui détient les clés de
+test sans avoir lancé `stripe listen` est un cas ordinaire, et il doit pouvoir
+créer une intention.
 
 ## Tests
 
@@ -284,11 +355,12 @@ l'inversion la plus probable place ici une clé `sk_…`.
 | `__tests__/stripe-signature.spec.ts` | Le schéma de signature, la tolérance, la rotation de secret, le refus en temps constant |
 | `__tests__/stripe-webhook.raw-body.spec.ts` | Le lecteur d'octets, sa borne, son indifférence aux non-`POST` |
 | `__tests__/stripe-webhook.types.spec.ts` | La réduction des événements — et qu'aucune donnée de carte n'en ressort |
-| `__tests__/stripe-webhook.config.spec.ts` | La table « refuser de démarrer » |
+| `__tests__/stripe.config.spec.ts` | Les trois valeurs, la frontière entre elles, et la table « refuser de démarrer » |
+| `__tests__/payments.boundaries.spec.ts` | Le confinement de `PRISMA_UNSCOPED`, l'unicité du fichier d'erreurs et de la porte de configuration |
 | `__tests__/stripe-webhook.queue.spec.ts` | Le différé, l'absence de propagation d'erreur, l'attente à l'arrêt |
 | `__tests__/stripe-webhook.service.spec.ts` | La résolution d'établissement et l'alerte de litige |
 | `test/payments-webhook.integration-spec.ts` | La route servie, le corps **brut**, le 400 sans traitement, le 200 rendu avant le traitement |
-| `test/payments-webhook.isolation-spec.ts` | Contre un vrai PostgreSQL : la frontière entre établissements, l'unicité qui tranche, la transaction qui fait bloc |
+| `test/payments-webhook.isolation-spec.ts` | Contre un vrai PostgreSQL : la frontière entre établissements, l'unicité qui tranche, la transaction qui fait bloc, et la marque qui n'est **pas** posée quand aucun encaissement ne porte la référence (#410) |
 | `__tests__/pos.types.spec.ts` | Le témoin du vocabulaire du POS contre `enum SaleItemKind` |
 | `__tests__/pos.totals.spec.ts` | Le calcul du ticket, centime par centime : sous-total, taxe en points de base, pourboire, bornes |
 | `__tests__/products.service.spec.ts` | La devise imposée par l'établissement, l'unicité du code par tenant, l'absence de suppression |
