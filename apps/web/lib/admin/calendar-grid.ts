@@ -161,6 +161,17 @@ export interface CalendarFreeCell {
   /** Heure civile du créneau — « 10 h 30 », pour le nom accessible du bouton. */
   readonly timeLabel: string;
   /**
+   * La journée du salon où tombe ce créneau, et son heure civile « HH:MM ».
+   *
+   * Les deux sont portées par la cellule et non recalculées au clic (#50) : la
+   * rangée seule ne dit pas la date en vue semaine, où chaque colonne est un
+   * jour différent, et refaire la conversion dans le gestionnaire d'événement
+   * la referait avec le fuseau du navigateur. Ici, elle a déjà été faite une
+   * fois, avec celui de l'établissement.
+   */
+  readonly day: CalendarDate;
+  readonly time: string;
+  /**
    * Position du trait d'heure courante dans la rangée, en pourcentage, ou `null`
    * quand l'heure qu'il est n'y tombe pas.
    */
@@ -174,6 +185,15 @@ export interface CalendarColumn {
   readonly id: string;
   readonly name: string;
   readonly meta: string;
+  /**
+   * Le praticien de la colonne en vue jour, `null` en vue semaine — où une
+   * colonne est une journée de toute l'équipe.
+   *
+   * C'est ce qui permet au clic sur un créneau libre de proposer d'emblée le bon
+   * praticien (#50, premier critère). En vue semaine il n'y en a pas à proposer,
+   * et le tiroir laisse choisir plutôt que de deviner.
+   */
+  readonly staffId: string | null;
   /** Nombre de couloirs occupés, `1` dans le cas courant. */
   readonly laneCount: number;
   readonly cells: readonly CalendarCell[];
@@ -253,6 +273,8 @@ interface ColumnInput {
   readonly appointments: readonly Appointment[];
   /** Journée de la colonne — la même pour toutes en vue jour. */
   readonly day: CalendarDate;
+  /** Praticien de la colonne en vue jour, `null` en vue semaine. */
+  readonly staffId: string | null;
 }
 
 interface BuildOptions {
@@ -334,6 +356,7 @@ function columnInputs(
       id: `col-${day}`,
       name: weekdayLabel(day),
       day,
+      staffId: null,
       appointments: appointments.filter((item) => spans.get(item.id)?.day === day),
     }));
   }
@@ -371,6 +394,7 @@ function columnInputs(
       id: `col-${id}`,
       name: staff.name,
       day: range.from,
+      staffId: id,
       appointments: staff.appointments,
     }));
 }
@@ -442,6 +466,8 @@ function buildColumn(
       slot: slot - context.firstSlot,
       span: 1,
       timeLabel: spokenClock(slot),
+      day: input.day,
+      time: slotClock(slot),
       nowOffset: nowSlot !== null && nowSlot.slot === slot ? nowSlot.offset : null,
     });
   }
@@ -456,6 +482,7 @@ function buildColumn(
     id: input.id,
     name: input.name,
     meta: countLabel(input.appointments.length),
+    staffId: input.staffId,
     laneCount,
     cells,
   };

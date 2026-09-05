@@ -359,9 +359,9 @@ describe('virtualisation — troisième critère', () => {
     // Un soin de trois heures commencé avant le haut de l'écran doit rester
     // monté : sinon il disparaît en cours de défilement.
     const cells: CalendarCell[] = [
-      { kind: 'free', key: 'a', slot: 0, span: 1, timeLabel: '08 h 00', nowOffset: null },
-      { kind: 'free', key: 'b', slot: 4, span: 1, timeLabel: '10 h 00', nowOffset: null },
-      { kind: 'free', key: 'c', slot: 20, span: 1, timeLabel: '18 h 00', nowOffset: null },
+      { kind: 'free', key: 'a', slot: 0, span: 1, timeLabel: '08 h 00', day: '2026-08-26', time: '08:00', nowOffset: null },
+      { kind: 'free', key: 'b', slot: 4, span: 1, timeLabel: '10 h 00', day: '2026-08-26', time: '10:00', nowOffset: null },
+      { kind: 'free', key: 'c', slot: 20, span: 1, timeLabel: '18 h 00', day: '2026-08-26', time: '18:00', nowOffset: null },
     ];
 
     expect(cellsInWindow(cells, { first: 3, last: 10 }).map((cell) => cell.key)).toEqual(['b']);
