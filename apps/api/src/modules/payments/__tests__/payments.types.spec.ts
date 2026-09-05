@@ -1,9 +1,15 @@
 import {
   PaymentMethod as PrismaPaymentMethod,
   PaymentStatus as PrismaPaymentStatus,
+  RefundStatus as PrismaRefundStatus,
 } from '@prisma/client';
 
-import { PAYMENT_METHODS, PAYMENT_STATUSES } from '../payments.types';
+import {
+  PAYMENT_METHODS,
+  PAYMENT_STATUSES,
+  REFUND_STATUSES,
+  RESERVING_REFUND_STATUSES,
+} from '../payments.types';
 
 /**
  * Le **témoin** du vocabulaire d'encaissement : les listes que le service et le
@@ -45,5 +51,22 @@ describe('payments — vocabulaire et colonnes', () => {
     // lisible en base avant même que #63 ne l'exploite.
     expect(PAYMENT_STATUSES).toContain('REFUNDED');
     expect(PAYMENT_STATUSES).toContain('PARTIALLY_REFUNDED');
+  });
+
+  it('reprend `enum RefundStatus` du schéma, dans l’ordre de déclaration', () => {
+    expect([...REFUND_STATUSES]).toEqual(Object.values(PrismaRefundStatus));
+  });
+
+  it('réserve son montant dès la demande inscrite, et le relâche au refus', () => {
+    // C'est ce partage qui tient le deuxième critère de #63 en présence de
+    // concurrence : `PENDING` engage la somme pendant que l'ordre est en vol,
+    // `FAILED` la rend de nouveau remboursable. Une liste qui n'inclurait pas
+    // `PENDING` laisserait deux comptoirs rendre deux fois le même argent.
+    expect(RESERVING_REFUND_STATUSES).toEqual(['PENDING', 'SUCCEEDED']);
+    expect(RESERVING_REFUND_STATUSES).not.toContain('FAILED');
+    // Et chaque valeur réservante est bien un statut du schéma.
+    for (const status of RESERVING_REFUND_STATUSES) {
+      expect(REFUND_STATUSES).toContain(status);
+    }
   });
 });

@@ -53,6 +53,27 @@ export const PAYMENT_STATUSES = [
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
 
 /**
+ * Sort d'une **demande** de remboursement — `enum RefundStatus` du schéma (#63).
+ *
+ * À ne pas confondre avec `PAYMENT_STATUSES`, qui dit où en est l'encaissement.
+ * Celui-là est écrit par le webhook `charge.refunded` et par lui seul ; ceux-ci
+ * ne décrivent que le cheminement de l'ordre donné au prestataire.
+ */
+export const REFUND_STATUSES = ['PENDING', 'SUCCEEDED', 'FAILED'] as const;
+export type RefundStatus = (typeof REFUND_STATUSES)[number];
+
+/**
+ * Les statuts de demande qui **réservent** leur montant dans le cumul.
+ *
+ * `PENDING` en fait partie, et c'est le point : entre l'inscription de la ligne
+ * et la réponse du prestataire, le montant est déjà engagé. Deux comptoirs qui
+ * remboursent en même temps ne peuvent donc pas rendre deux fois la même somme
+ * parce que le premier appel est encore en vol. `FAILED` en est exclu — l'ordre
+ * n'a pas abouti, la somme reste remboursable.
+ */
+export const RESERVING_REFUND_STATUSES = ['PENDING', 'SUCCEEDED'] as const;
+
+/**
  * Le rendez-vous, réduit à ce dont l'encaissement a besoin.
  *
  * `price` est le prix **figé à la réservation**, relu en base : c'est lui qui
@@ -204,6 +225,72 @@ export interface PaymentHistoryFilter {
   readonly status?: PaymentStatus;
   readonly page: number;
   readonly pageSize: number;
+}
+
+/**
+ * L'encaissement tel que le remboursement a besoin de le connaître (#63).
+ *
+ * Deux montants, et il faut les deux :
+ *
+ * - `amount` est ce qui a été **capturé** — le plafond que le cumul des
+ *   remboursements ne peut jamais dépasser (payments-stripe §6) ;
+ * - `alreadyRefundedMinor` est ce qui est **déjà engagé**, c'est-à-dire le plus
+ *   grand des deux comptes qui existent : la somme de nos demandes actives, et
+ *   le cumul que le webhook a inscrit sur la ligne.
+ *
+ * Prendre le plus grand des deux n'est pas une précaution de style. Ils
+ * divergent dans les deux sens, et chacun couvre l'angle mort de l'autre :
+ *
+ * | Situation | Le compte qui dit vrai |
+ * |---|---|
+ * | notre demande vient de partir, `charge.refunded` n'est pas encore arrivé | **nos lignes** |
+ * | un remboursement a été fait à la main dans le tableau de bord du prestataire | **le webhook** |
+ */
+export interface RefundablePayment {
+  readonly id: string;
+  readonly amount: Money;
+  readonly method: PaymentMethod;
+  readonly status: PaymentStatus;
+  readonly providerPaymentIntentId: string | null;
+  readonly alreadyRefundedMinor: number;
+}
+
+/**
+ * Ce que le repository inscrit quand le comptoir ordonne un remboursement.
+ *
+ * Les trois champs de traçabilité du critère de #63 y sont, et aucun ne vient
+ * du corps de la requête sans être vérifié : `requestedByUserId` vient du jeton
+ * (tenant-isolation §2), l'instant est posé par la base, et `reason` est le
+ * seul texte que l'appelant fournisse.
+ *
+ * Pas de `providerRefundId` : il n'existe pas encore au moment de l'écriture.
+ * La ligne naît `PENDING`, l'ordre part ensuite, et c'est ce qui rend la
+ * réservation du montant antérieure à la sortie d'argent.
+ */
+export interface RefundDraft {
+  readonly paymentId: string;
+  readonly amount: Money;
+  readonly reason: string;
+  readonly requestedByUserId: string;
+}
+
+/**
+ * Un remboursement tel que ce module le manipule et le rend — la ligne de
+ * traçabilité du CDC §4.9.
+ *
+ * `requestedByUserId` est **le seul identifiant de personne** qui en sorte, et
+ * c'est un identifiant opaque : ni nom, ni adresse électronique. « Qui » se
+ * résout sur la fiche du compte, par le module qui en a le droit.
+ */
+export interface RefundRecord {
+  readonly id: string;
+  readonly paymentId: string;
+  readonly amount: Money;
+  readonly reason: string;
+  readonly requestedByUserId: string;
+  readonly status: RefundStatus;
+  readonly providerRefundId: string | null;
+  readonly createdAt: Date;
 }
 
 /** Une page de transactions, avec de quoi afficher un sélecteur de page. */
