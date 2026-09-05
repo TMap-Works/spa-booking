@@ -146,7 +146,13 @@ describe('AvailabilityService', () => {
   const inTenantA = async <T>(fn: () => Promise<T>): Promise<T> => runWithTenant(TENANT_A, fn);
 
   const slotsFor = async (
-    query: Partial<{ serviceId: string; staffId: string; from: string; to: string }> = {},
+    query: Partial<{
+      serviceId: string;
+      staffId: string;
+      from: string;
+      to: string;
+      excludeAppointmentId: string;
+    }> = {},
     now: Date = BEFORE_OPENING,
   ): Promise<AvailabilityView> =>
     inTenantA(async () =>
@@ -364,6 +370,103 @@ describe('AvailabilityService', () => {
       });
 
       expect(startTimesOn(await slotsFor(), MONDAY)[0]).toBe('07:00');
+    });
+  });
+
+  /**
+   * L'exclusion du rendez-vous qu'un report est en train de déplacer (#316).
+   *
+   * Ce qui est vérifié ici est **le paramètre**, pas le report : que le moteur
+   * sache écarter un rendez-vous nommé de l'étape 3, qu'il n'écarte que
+   * celui-là, qu'il ne change rien quand on ne lui en donne aucun, et qu'un
+   * identifiant de l'établissement voisin n'y puisse rien. Que le report le
+   * renseigne est l'affaire d'`appointments.service.spec.ts`.
+   */
+  describe('exclusion d’un rendez-vous nommé', () => {
+    /** Le rendez-vous du matin : 07:00Z–08:00Z, soit 09:00–10:00 murales. */
+    const seedMorning = (tenantId: string, staff: string): string =>
+      repository.seedAppointment({
+        tenantId,
+        staffId: staff,
+        startsAt: new Date('2026-08-24T07:00:00.000Z'),
+        endsAt: new Date('2026-08-24T08:00:00.000Z'),
+        status: 'CONFIRMED',
+      }).id;
+
+    it('rend proposables les créneaux du rendez-vous exclu', async () => {
+      const morning = seedMorning(TENANT_A, staffId);
+
+      // Sans exclusion, le rendez-vous occupe : c'est le comportement de #34, et
+      // il doit rester celui du calendrier public.
+      expect(startTimesOn(await slotsFor(), MONDAY)[0]).toBe('08:00');
+
+      // Avec, la journée redevient exactement celle d'un agenda vide — c'est ce
+      // qui permet d'avancer d'un quart d'heure un soin déjà posé.
+      expect(startTimesOn(await slotsFor({ excludeAppointmentId: morning }), MONDAY)).toEqual([
+        '07:00',
+        '07:15',
+        '07:30',
+        '07:45',
+        '08:00',
+        '08:15',
+        '08:30',
+        '08:45',
+        '09:00',
+        '09:15',
+        '09:30',
+      ]);
+    });
+
+    it('n’écarte que le rendez-vous nommé, et laisse les autres occuper', async () => {
+      const morning = seedMorning(TENANT_A, staffId);
+      repository.seedAppointment({
+        tenantId: TENANT_A,
+        staffId,
+        startsAt: new Date('2026-08-24T08:00:00.000Z'),
+        endsAt: new Date('2026-08-24T09:00:00.000Z'),
+        status: 'CONFIRMED',
+      });
+
+      const slots = startTimesOn(await slotsFor({ excludeAppointmentId: morning }), MONDAY);
+
+      expect(slots).toContain('07:00');
+      // Le second reste debout : une exclusion qui viderait l'agenda ferait
+      // proposer des créneaux que la contrainte refuserait ensuite en 409.
+      expect(slots).not.toContain('08:00');
+      expect(slots).not.toContain('08:30');
+      expect(slots).toContain('09:00');
+    });
+
+    it('ne change rien quand l’identifiant ne désigne aucun rendez-vous', async () => {
+      seedMorning(TENANT_A, staffId);
+
+      const slots = startTimesOn(await slotsFor({ excludeAppointmentId: randomUUID() }), MONDAY);
+
+      expect(slots[0]).toBe('08:00');
+    });
+
+    it('n’écarte rien avec l’identifiant d’un rendez-vous de l’établissement voisin', async () => {
+      // Le protocole de tenant-isolation §6, appliqué au paramètre lui-même :
+      // la ressource est créée chez B, l'appel est fait chez A. L'identifiant
+      // est **vrai**, et c'est ce qui rend le cas probant — il ne retire rien
+      // ici, et rien de B n'entre dans la réponse.
+      const neighbourStaff = repository.seedStaff({ tenantId: TENANT_B }).id;
+      const neighbourAppointment = seedMorning(TENANT_B, neighbourStaff);
+      seedMorning(TENANT_A, staffId);
+
+      const slots = startTimesOn(
+        await slotsFor({ excludeAppointmentId: neighbourAppointment }),
+        MONDAY,
+      );
+
+      // Exactement la réponse d'un appel sans exclusion : le créneau du matin de
+      // A reste pris, et aucun créneau de B n'apparaît.
+      expect(slots).toEqual(startTimesOn(await slotsFor(), MONDAY));
+      expect(slots[0]).toBe('08:00');
+      const view = await slotsFor({ excludeAppointmentId: neighbourAppointment });
+      expect(view.days.every((day) => day.slots.every((slot) => slot.staffId === staffId))).toBe(
+        true,
+      );
     });
   });
 

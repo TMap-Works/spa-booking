@@ -29,7 +29,10 @@ import {
  *    `INVALID_STATE_TRANSITION` ;
  * 5. un identifiant mal formé sort en 400, un identifiant inconnu en 404 ;
  * 6. l'événement `appointment.rescheduled` part réellement — et
- *    `appointment.created` **ne part pas**.
+ *    `appointment.created` **ne part pas** ;
+ * 7. un créneau d'arrivée qui **chevauche** celui d'origine aboutit (#316), sans
+ *    que l'agenda s'ouvre pour autant : un rendez-vous voisin qui recouvre
+ *    l'arrivée rend toujours 409.
  *
  * L'isolation inter-tenant a sa suite propre —
  * `appointments-tenant.isolation-spec.ts` ; l'atomicité de la transaction, la
@@ -186,6 +189,110 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
       .send({ startsAt: to.startsAt.toISOString() });
 
     expect(response.status).toBe(404);
+  });
+
+  /**
+   * Le report vers un créneau qui **chevauche** celui d'origine (#316).
+   *
+   * ## Ce que ces cas exigent du décor, et pourquoi
+   *
+   * Le moteur de disponibilité lit la table `appointments` ; les deux doubles du
+   * harnais, eux, sont deux stocks distincts, et une réservation écrite dans
+   * celui des rendez-vous n'apparaît pas dans celui de la disponibilité. Sans
+   * `occupy`, le calendrier proposerait le créneau chevauchant **même sans
+   * l'exclusion**, et ces cas verdiraient sans rien prouver. Le reflet est donc
+   * la condition du test, pas une commodité : il remet le décor dans l'état où
+   * la base le mettrait d'elle-même.
+   */
+  describe('report vers un créneau qui chevauche celui d’origine (#316)', () => {
+    /** Soin de soixante minutes, plus les deux tampons de dix. */
+    const OCCUPIED_MS = 80 * 60_000;
+
+    /**
+     * Le créneau visé : un quart d'heure **plus tard** que celui d'origine.
+     *
+     * Le sens du décalage n'importe pas au moteur — d'un côté comme de l'autre,
+     * l'intervalle d'arrivée recouvre celui de départ, et c'est ce recouvrement
+     * que l'exclusion existe pour lever. Le décalage vers l'avant est retenu
+     * parce qu'il laisse de la place au rendez-vous voisin du second cas, qui
+     * doit occuper l'arrivée sans avoir jamais gêné la réservation d'origine.
+     */
+    const nudged = (): Date => new Date(from.startsAt.getTime() + 15 * 60_000);
+
+    /**
+     * Reflète dans le moteur de disponibilité un rendez-vous du stock des
+     * rendez-vous — ce que la base fait d'elle-même, les deux doubles non.
+     */
+    const occupy = (id: string, occupiedStartsAt: Date): void => {
+      harness.availability.seedAppointment({
+        tenantId: harness.a.tenant.id,
+        staffId: harness.a.staffId,
+        id,
+        startsAt: occupiedStartsAt,
+        endsAt: new Date(occupiedStartsAt.getTime() + OCCUPIED_MS),
+      });
+    };
+
+    it('décale d’un quart d’heure un soin d’une heure chez le même praticien', async () => {
+      const booked = await book();
+      occupy(booked.id, from.occupiedStartsAt);
+
+      const response = await request(harness.server())
+        .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .send({ startsAt: nudged().toISOString() });
+
+      // Le geste le plus courant du comptoir, et un 409 jusqu'à #316.
+      expect(response.status).toBe(201);
+      expect(response.body).toMatchObject({
+        staffId: harness.a.staffId,
+        startsAt: nudged().toISOString(),
+        rescheduledFromId: booked.id,
+      });
+    });
+
+    it('refuse encore le même décalage quand un autre rendez-vous occupe l’arrivée', async () => {
+      const booked = await book();
+      occupy(booked.id, from.occupiedStartsAt);
+      // Le rendez-vous suivant, adossé au premier : il ne gênait pas la
+      // réservation d'origine, il recouvre l'intervalle d'arrivée. L'exclusion
+      // ne porte que sur le rendez-vous déplacé, et lui seul.
+      occupy(randomUUID(), new Date(from.occupiedStartsAt.getTime() + OCCUPIED_MS));
+
+      const response = await request(harness.server())
+        .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .send({ startsAt: nudged().toISOString() });
+
+      expect(response.status).toBe(409);
+      expect(response.body).toMatchObject({ code: 'SLOT_NO_LONGER_AVAILABLE' });
+    });
+
+    it('ne réécrit rien quand l’instant demandé est celui que le rendez-vous occupe déjà', async () => {
+      const booked = await book();
+      occupy(booked.id, from.occupiedStartsAt);
+      // Après la réservation : c'est le report seul qu'on observe.
+      const moved: AppointmentRescheduledEvent[] = [];
+      const off = harness.events.onAppointmentRescheduled((event) => moved.push(event));
+
+      const response = await request(harness.server())
+        .post(RESCHEDULE_PATH(harness.a.tenant.slug, booked.id))
+        .send({ startsAt: from.startsAt.toISOString() });
+      off();
+
+      // L'exclusion rend ce créneau proposable ; sans garde, le report
+      // aboutirait — et la cliente perdrait l'identifiant de sa confirmation
+      // pour un geste qui ne la déplace pas.
+      expect(response.status).toBe(201);
+      expect(response.body).toMatchObject({
+        id: booked.id,
+        startsAt: from.startsAt.toISOString(),
+        rescheduledFromId: null,
+      });
+      // Une seule ligne, toujours occupante : rien n'a été annulé, rien n'a été
+      // créé, et aucun report n'entre dans le reporting du CDC §1.4.
+      expect(harness.appointments.appointments).toHaveLength(1);
+      expect(harness.appointments.appointments[0]?.status).toBe('PENDING');
+      expect(moved).toHaveLength(0);
+    });
   });
 
   describe('validation du corps et du chemin', () => {

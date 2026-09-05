@@ -10,6 +10,7 @@ import type {
   CancelDraft,
   RescheduleDraft,
 } from '../src/modules/appointments/appointments.types';
+import { AvailabilityRepository } from '../src/modules/availability/availability.repository';
 import { createDisposableDatabase, type DisposableDatabase } from './utils/disposable-database';
 
 /**
@@ -89,6 +90,16 @@ export interface ExclusionHarness {
   readonly prismaUnscoped: PrismaClient;
   /** Le dépôt sous test, branché sur le client **scopé**. */
   readonly repository: AppointmentsRepository;
+  /**
+   * La **lecture** que le moteur de disponibilité fait de cette même table.
+   *
+   * Elle est ici, et non dans un harnais à elle, parce qu'elle porte sur les
+   * lignes que celui-ci sème : depuis #316, `listBookedRanges` sait écarter un
+   * rendez-vous nommé, et ce que cela fait — ou ne fait pas — de la frontière du
+   * tenant ne se prouve que contre un vrai `where` scopé. Un second harnais
+   * aurait démarré un second PostgreSQL pour observer la même table.
+   */
+  readonly availability: AvailabilityRepository;
   /** Sème un établissement complet et rend de quoi y réserver. */
   seed(label: string): Promise<Fixture>;
   /** Déconnecte Prisma puis détruit la base jetable — et son conteneur. */
@@ -189,6 +200,7 @@ export async function createExclusionHarness(): Promise<ExclusionHarness> {
   return {
     prismaUnscoped,
     repository: new AppointmentsRepository(createScopedPrismaClient(prismaUnscoped)),
+    availability: new AvailabilityRepository(createScopedPrismaClient(prismaUnscoped)),
     seed: (label: string) => seedTenant(prismaUnscoped, label),
     close: async () => {
       // Le ménage tient en une ligne : la base entière disparaît. La déconnexion

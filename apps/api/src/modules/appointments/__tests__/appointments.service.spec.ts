@@ -96,16 +96,23 @@ function fakeCatalog(view: ServiceView | null): ServicesService {
  *
  * `calls` retient les requêtes pour vérifier que la fenêtre interrogée encadre
  * bien l'instant demandé — c'est la seule partie du contrôle que ce service
- * décide lui-même.
+ * décide lui-même. Depuis #316, elle retient aussi le rendez-vous que le report
+ * demande d'écarter : c'est ce service qui décide de le nommer, le moteur ne
+ * fait qu'obéir, et sa propre suite vérifie qu'il obéit bien.
  */
 function fakeAvailability(
   offered: readonly Date[],
   candidates: readonly string[] = [STAFF_ID],
 ): {
   service: AvailabilityService;
-  calls: { from: string; to: string; staffId?: string }[];
+  calls: { from: string; to: string; staffId?: string; excludeAppointmentId?: string }[];
 } {
-  const calls: { from: string; to: string; staffId?: string }[] = [];
+  const calls: {
+    from: string;
+    to: string;
+    staffId?: string;
+    excludeAppointmentId?: string;
+  }[] = [];
 
   const service = {
     slotsFor: (query: {
@@ -113,11 +120,15 @@ function fakeAvailability(
       staffId?: string;
       from: string;
       to: string;
+      excludeAppointmentId?: string;
     }): Promise<AvailabilityView> => {
       calls.push({
         from: query.from,
         to: query.to,
         ...(query.staffId === undefined ? {} : { staffId: query.staffId }),
+        ...(query.excludeAppointmentId === undefined
+          ? {}
+          : { excludeAppointmentId: query.excludeAppointmentId }),
       });
 
       // Le praticien demandé, et non une constante : le vrai moteur filtre sur
@@ -171,7 +182,12 @@ interface Harness {
   service: AppointmentsService;
   repository: FakeAppointmentsRepository;
   events: AppointmentEvents;
-  availabilityCalls: { from: string; to: string; staffId?: string }[];
+  availabilityCalls: {
+    from: string;
+    to: string;
+    staffId?: string;
+    excludeAppointmentId?: string;
+  }[];
   /** Compteur d'invalidations du cache de disponibilité — #35, critère 3. */
   cache: SpyAvailabilityCache;
   /** Les verrous de créneau posés et relâchés — #38. */
@@ -762,6 +778,75 @@ describe('AppointmentsService.reschedule', () => {
     const created = repository.appointments[1];
     expect(created?.startsAt.toISOString()).toBe(MOVED_OCCUPIED.startsAt.toISOString());
     expect(created?.endsAt.toISOString()).toBe(MOVED_OCCUPIED.endsAt.toISOString());
+  });
+
+  /**
+   * Le rendez-vous déplacé ne se barre pas la route à lui-même (#316).
+   *
+   * Ce que ces trois cas prouvent est la **décision** de ce service : nommer au
+   * moteur le rendez-vous d'origine, et lui seul. Que le moteur sache alors
+   * écarter ce rendez-vous de son calcul est vérifié chez lui
+   * (`availability.service.spec.ts`), et que le chemin complet aboutisse en HTTP
+   * l'est par `appointments-reschedule.integration-spec.ts`.
+   */
+  describe('l’exclusion du rendez-vous en cours de déplacement (#316)', () => {
+    it('nomme au moteur le rendez-vous d’origine, et lui seul', async () => {
+      const { service, repository, availabilityCalls } = movableHarness();
+      const previous = seedBooked(repository);
+
+      await runWithTenant(TENANT, () =>
+        service.reschedule(
+          { appointmentId: previous.id, startsAt: MOVED_START, staffId: null },
+          NOW,
+        ),
+      );
+
+      expect(availabilityCalls).toEqual([
+        {
+          from: '2026-08-31',
+          to: '2026-09-02',
+          staffId: STAFF_ID,
+          excludeAppointmentId: previous.id,
+        },
+      ]);
+    });
+
+    it('aboutit sur un créneau qui chevauche celui d’origine', async () => {
+      // Le geste du comptoir : avancer d'un quart d'heure un soin d'une heure,
+      // chez le même praticien. L'intervalle occupé d'arrivée — 10:05–11:25 —
+      // recouvre celui de départ — 09:50–11:10.
+      const NUDGED_START = new Date('2026-09-01T10:15:00.000Z');
+      const { service, repository } = createHarness({ offered: [BILLED_START, NUDGED_START] });
+      const previous = seedBooked(repository);
+
+      const view = await runWithTenant(TENANT, () =>
+        service.reschedule(
+          { appointmentId: previous.id, startsAt: NUDGED_START, staffId: null },
+          NOW,
+        ),
+      );
+
+      expect(view.startsAt).toBe('2026-09-01T10:15:00.000Z');
+      expect(view.rescheduledFromId).toBe(previous.id);
+      expect(repository.appointments[0]?.status).toBe('CANCELLED');
+    });
+
+    it('refuse encore un créneau que le moteur ne propose pas', async () => {
+      // L'exclusion n'ouvre pas l'agenda : ce qui n'était pas proposable ne le
+      // devient pas parce qu'on reporte. Sans ce refus, le report deviendrait
+      // une écriture libre dans l'agenda du salon.
+      const { service, repository } = createHarness({ offered: [BILLED_START] });
+      const previous = seedBooked(repository);
+
+      await expect(
+        runWithTenant(TENANT, () =>
+          service.reschedule(
+            { appointmentId: previous.id, startsAt: MOVED_START, staffId: null },
+            NOW,
+          ),
+        ),
+      ).rejects.toBeInstanceOf(SlotNoLongerAvailableError);
+    });
   });
 
   it('reprend la cliente, la prestation et le prix figé du rendez-vous remplacé', async () => {

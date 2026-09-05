@@ -45,7 +45,9 @@ import {
  * 3. le **repli** de l'option « premier disponible » (#36) ne peut pas produire
  *    de double réservation ;
  * 4. plusieurs **reports** concurrents du même rendez-vous n'en laissent aboutir
- *    qu'un (#39) ;
+ *    qu'un (#39), et deux reports de rendez-vous **distincts** vers des créneaux
+ *    chevauchants non plus (#316) — l'exclusion du rendez-vous déplacé du calcul
+ *    de disponibilité n'ouvre aucun chemin autour de la contrainte ;
  * 5. plusieurs **annulations** concurrentes du même rendez-vous n'en laissent
  *    aboutir qu'une (#40).
  *
@@ -241,6 +243,89 @@ describe('Courses sur la contrainte d’exclusion — contre un vrai PostgreSQL'
         where: { tenantId: salon.tenantId, rescheduledFromId: previous.id },
       });
       expect(successors).toBe(1);
+    });
+
+    /**
+     * Deux reports **distincts** vers des créneaux qui se chevauchent (#316).
+     *
+     * C'est la course que le paramètre d'exclusion aurait pu ouvrir, et la
+     * raison pour laquelle ce ticket a un test de concurrence. Chaque report
+     * écarte *son* rendez-vous du calcul de disponibilité : les deux voient donc
+     * l'arrivée libre, et les deux la demandent. Rien, côté lecture, ne les
+     * départage.
+     *
+     * Ce qui les départage est ce qui les départageait déjà :
+     * `appointments_no_overlap`, jugée à l'insertion, dans la transaction qui
+     * annule la ligne de départ. Un second succès voudrait dire que l'exclusion
+     * a ouvert un chemin autour d'elle — deux clientes dans la même cabine.
+     *
+     * Le test porte sur le **dépôt**, comme ses voisins : c'est là que la
+     * transaction et la contrainte se jouent. La décision d'exclure, elle, est
+     * exercée par `appointments.service.spec.ts`, et le calcul par
+     * `availability.service.spec.ts`.
+     */
+    it('n’en laisse aboutir qu’un quand deux rendez-vous distincts visent des créneaux chevauchants', async () => {
+      const morning = new Date('2027-02-01T09:00:00.000Z');
+      const noon = new Date('2027-02-01T12:00:00.000Z');
+
+      const [first, second] = await Promise.all([
+        inTenant(salon.tenantId, () =>
+          repository.create(draft(salon, morning, new Date(morning.getTime() + ONE_HOUR))),
+        ),
+        inTenant(salon.tenantId, () =>
+          repository.create(draft(salon, noon, new Date(noon.getTime() + ONE_HOUR))),
+        ),
+      ]);
+
+      // Deux arrivées décalées d'un quart d'heure : elles se chevauchent sans
+      // partager une seule borne, ce qu'aucune contrainte d'unicité ne
+      // rattraperait.
+      const arrival = Date.UTC(2027, 1, 1, 15, 0, 0);
+      const outcomes = await Promise.allSettled([
+        inTenant(salon.tenantId, () =>
+          repository.reschedule(
+            move(first.id, new Date(arrival), new Date(arrival + ONE_HOUR), salon.staffId),
+          ),
+        ),
+        inTenant(salon.tenantId, () =>
+          repository.reschedule(
+            move(
+              second.id,
+              new Date(arrival + 900_000),
+              new Date(arrival + 900_000 + ONE_HOUR),
+              salon.staffId,
+            ),
+          ),
+        ),
+      ]);
+
+      expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+      for (const outcome of outcomes) {
+        if (outcome.status === 'rejected') {
+          expect(outcome.reason).toBeInstanceOf(SlotNoLongerAvailableError);
+        }
+      }
+
+      // La preuve directe : une seule ligne occupe l'après-midi, et le report
+      // perdant a laissé le sien intact — le `ROLLBACK` a emporté l'annulation.
+      const afternoon = await prismaUnscoped.appointment.count({
+        where: {
+          tenantId: salon.tenantId,
+          staffId: salon.staffId,
+          status: { in: ['PENDING', 'CONFIRMED'] },
+          startsAt: { gte: new Date(arrival), lt: new Date(arrival + 2 * ONE_HOUR) },
+        },
+      });
+      expect(afternoon).toBe(1);
+
+      const survivors = await prismaUnscoped.appointment.count({
+        where: {
+          tenantId: salon.tenantId,
+          id: { in: [first.id, second.id] },
+          status: { in: ['PENDING', 'CONFIRMED'] },
+        },
+      });
+      expect(survivors).toBe(1);
     });
   });
 

@@ -5,6 +5,7 @@ import { SLOT_EXCLUSION_CONSTRAINT } from '../src/modules/appointments/appointme
 import { SlotNoLongerAvailableError } from '../src/modules/appointments/appointments.errors';
 import type { AppointmentsRepository } from '../src/modules/appointments/appointments.repository';
 import type { AppointmentDraft } from '../src/modules/appointments/appointments.types';
+import type { AvailabilityRepository } from '../src/modules/availability/availability.repository';
 import {
   ONE_HOUR,
   cancellation,
@@ -38,7 +39,10 @@ import {
  *    du tenant est dans l'index, pas seulement dans les intentions ;
  * 5. deux rendez-vous **adjacents** restent légaux : la borne `[)` ne perd pas
  *    un créneau sur deux ;
- * 6. le report et l'annulation écrivent en base ce que #39 et #40 décrivent.
+ * 6. le report et l'annulation écrivent en base ce que #39 et #40 décrivent ;
+ * 7. la lecture qui **propose** sait écarter un rendez-vous nommé — celui qu'un
+ *    report déplace (#316) — et un identifiant de l'établissement voisin n'y
+ *    écarte rien, le `where` étant scopé.
  *
  * ## Ce qui n'est plus ici
  *
@@ -81,6 +85,8 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
    */
   let prismaUnscoped: PrismaClient;
   let repository: AppointmentsRepository;
+  /** La lecture que le moteur de disponibilité fait de cette table (#316). */
+  let availability: AvailabilityRepository;
 
   let salon: Fixture;
   let voisin: Fixture;
@@ -100,7 +106,7 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
 
   beforeAll(async () => {
     harness = await createExclusionHarness();
-    ({ prismaUnscoped, repository } = harness);
+    ({ prismaUnscoped, repository, availability } = harness);
 
     salon = await harness.seed('salon');
     voisin = await harness.seed('voisin');
@@ -627,6 +633,75 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
         select: { status: true, cancelledAt: true, cancelledBy: true },
       });
       expect(kept).toEqual({ status: 'PENDING', cancelledAt: null, cancelledBy: null });
+    });
+  });
+
+  /**
+   * L'exclusion d'un rendez-vous nommé de la lecture qui **propose** (#316).
+   *
+   * Le paramètre vit dans `AvailabilityRepository.listBookedRanges`, mais ce
+   * qu'il faut prouver porte sur cette table-ci et sur son `where` scopé : que
+   * l'identifiant retire bien la ligne visée, et qu'un identifiant de
+   * l'établissement voisin n'en retire aucune. Un double en mémoire ne prouverait
+   * ici que sa propre complaisance.
+   *
+   * Ce que cette lecture ne décide pas, et qui est le point du ticket :
+   * l'unicité. Elle sert à proposer ; `appointments_no_overlap` tranche —
+   * `appointments-exclusion.concurrency-spec.ts` le vérifie sous course.
+   */
+  describe('l’exclusion d’un rendez-vous nommé de la lecture qui propose', () => {
+    /** Une journée à elle, pour que les cas ne se marchent pas dessus. */
+    const MORNING = new Date('2027-03-08T09:00:00.000Z');
+    const NOON = new Date('2027-03-08T12:00:00.000Z');
+    const DAY = { from: new Date('2027-03-08T00:00:00.000Z'), to: new Date('2027-03-09T00:00:00.000Z') };
+
+    it('retire la ligne nommée, et ne retire qu’elle', async () => {
+      const first = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, MORNING, new Date(MORNING.getTime() + ONE_HOUR))),
+      );
+      const second = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, NOON, new Date(NOON.getTime() + ONE_HOUR))),
+      );
+
+      const withoutExclusion = await inTenant(salon.tenantId, () =>
+        availability.listBookedRanges([salon.staffId], DAY),
+      );
+      expect(withoutExclusion.map((range) => range.startsAt.toISOString())).toEqual([
+        MORNING.toISOString(),
+        NOON.toISOString(),
+      ]);
+
+      const excluded = await inTenant(salon.tenantId, () =>
+        availability.listBookedRanges([salon.staffId], DAY, first.id),
+      );
+      // Le créneau du matin redevient proposable ; celui de midi reste pris.
+      expect(excluded.map((range) => range.startsAt.toISOString())).toEqual([NOON.toISOString()]);
+      expect(second.id).not.toBe(first.id);
+    });
+
+    it('ne retire rien avec l’identifiant d’un rendez-vous de l’établissement voisin', async () => {
+      // Le protocole de tenant-isolation §6 appliqué au paramètre : la ligne
+      // existe, chez le voisin, et son identifiant est vrai. Le `where` scopé
+      // fait qu'il ne désigne rien ici — ni retrait, ni lecture, ni différence
+      // observable qui ferait de ce paramètre une sonde d'existence (§4).
+      const start = new Date('2027-03-09T09:00:00.000Z');
+      const end = new Date(start.getTime() + ONE_HOUR);
+      const window = {
+        from: new Date('2027-03-09T00:00:00.000Z'),
+        to: new Date('2027-03-10T00:00:00.000Z'),
+      };
+
+      await inTenant(salon.tenantId, () => repository.create(draft(salon, start, end)));
+      const neighbour = await inTenant(voisin.tenantId, () =>
+        repository.create(draft(voisin, start, end)),
+      );
+
+      const ranges = await inTenant(salon.tenantId, () =>
+        availability.listBookedRanges([salon.staffId], window, neighbour.id),
+      );
+
+      expect(ranges.map((range) => range.startsAt.toISOString())).toEqual([start.toISOString()]);
+      expect(ranges.every((range) => range.staffId === salon.staffId)).toBe(true);
     });
   });
 
