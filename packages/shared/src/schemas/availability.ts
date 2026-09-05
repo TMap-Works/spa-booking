@@ -39,6 +39,30 @@ import { MAX_AVAILABILITY_RANGE_DAYS, MAX_TIME_OFF_RANGE_DAYS } from '../constan
  * créneaux se fait à la demande : une plage non bornée est un déni de service à
  * une requête. Le refus sort en `AVAILABILITY_RANGE_TOO_WIDE` plutôt qu'en
  * temps de réponse qui s'allonge.
+ *
+ * ## `excludeAppointmentId` — le rendez-vous qu'un report déplace (#442)
+ *
+ * Un report d'un quart d'heure sur un soin d'une heure vise nécessairement un
+ * créneau qui **chevauche le rendez-vous en cours de déplacement**. Le
+ * calendrier n'y voyait qu'un praticien occupé, et ne le proposait donc jamais :
+ * la cliente ne pouvait pas atteindre le geste que la route de report accepte
+ * pourtant depuis #316.
+ *
+ * Ce champ nomme le rendez-vous à ne pas compter comme occupant, et lui seul. Il
+ * est **facultatif** : la réservation ne le renseigne jamais, et son calcul est
+ * rigoureusement celui d'avant.
+ *
+ * Trois bornes le tiennent, et elles sont écrites dans le README du module
+ * `availability` :
+ *
+ * - il sert à **proposer**, jamais à garantir : l'unicité reste jugée par la
+ *   contrainte d'exclusion `appointments_no_overlap` (booking-engine §1) ;
+ * - il est **sans effet hors de l'établissement** : la lecture des rendez-vous
+ *   est scopée, et l'identifiant d'un voisin n'y retire rien ;
+ * - une requête qui le porte **ne voit pas le cache**, ni en lecture ni en
+ *   écriture : la clé est `(serviceId, staffId, journée)` et ne dit rien d'une
+ *   exclusion, si bien qu'une vue ainsi calculée se servirait ensuite à tous les
+ *   lecteurs.
  */
 export const availabilityQuerySchema = z
   .object({
@@ -46,6 +70,7 @@ export const availabilityQuerySchema = z
     staffId: uuidSchema.optional(),
     from: calendarDateSchema,
     to: calendarDateSchema,
+    excludeAppointmentId: uuidSchema.optional(),
   })
   .strict()
   .refine((query) => query.to >= query.from, {

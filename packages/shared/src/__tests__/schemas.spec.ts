@@ -646,6 +646,32 @@ describe('availability', () => {
     ).toBe(false);
     expect(MAX_AVAILABILITY_RANGE_DAYS).toBe(31);
   });
+
+  describe('excludeAppointmentId (#442)', () => {
+    it('est facultatif — la réservation ne le renseigne jamais', () => {
+      // Le seul appelant qui l'envoie est l'écran de report. Le rendre
+      // obligatoire aurait fait porter au tunnel un champ qui n'a de sens que
+      // lorsqu'un rendez-vous existe déjà.
+      expect(availabilityQuerySchema.safeParse(base).success).toBe(true);
+    });
+
+    it('accepte un identifiant de rendez-vous', () => {
+      expect(
+        availabilityQuerySchema.safeParse({ ...base, excludeAppointmentId: UUID }).success,
+      ).toBe(true);
+    });
+
+    it('refuse ce qui n’est pas un identifiant', () => {
+      // Un champ libre ici descendrait jusqu'au `where` d'une lecture d'agenda.
+      // Le refus est de forme, et il a lieu au contrat.
+      expect(
+        availabilityQuerySchema.safeParse({ ...base, excludeAppointmentId: 'le-mien' }).success,
+      ).toBe(false);
+      expect(
+        availabilityQuerySchema.safeParse({ ...base, excludeAppointmentId: '' }).success,
+      ).toBe(false);
+    });
+  });
 });
 
 describe('payments', () => {
