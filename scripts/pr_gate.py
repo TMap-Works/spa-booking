@@ -38,6 +38,16 @@ refus ne tombe que sur ce qui n'a pas été pré-autorisé. Déduire l'interdict
 l'absence de l'opérateur revenait à interdire précisément quand la reprise
 automatique doit travailler — c'est-à-dire à ne jamais s'en servir.
 
+La seconde n'est pas crue sur parole (#414) : elle est confrontée à l'intention
+du run, lue dans `.claude/.milestone/supervisor.json`, et c'est **la plus
+restrictive des deux** qui vaut. La variable est figée dans l'environnement du
+`claude -p` à sa naissance, l'intention se réarme sur le disque à tout moment :
+une vague ouverte sous `--merge-sensitive all` a continué d'annoncer les cinq
+périmètres après un réarmement à zéro survenu une minute plus tard, ouvrant
+`mod:payments` et `security` au merge non relu. Tout périmètre révoqué par cette
+confrontation est journalisé en `ERROR` sur stderr, que `--quiet` soit posé ou
+non — une contradiction que l'on peut faire taire n'est pas un garde-fou.
+
 Les deux labels sont lus sur **l'issue que la PR referme**, pas sur la PR : nos
 PR n'en portent aucun (`gh pr create` est appelé sans `--label`, et
 `tracking.py` n'étiquette que des issues). Les lire sur la PR seule laisserait
@@ -156,7 +166,21 @@ UNATTENDED_ENV = "SPA_UNATTENDED"
 # quand il est absent que la reprise automatique doit travailler. `SPA_UNATTENDED`
 # dit « personne ne peut répondre » ; celle-ci dit « voici ce qui a déjà été
 # répondu ».
+#
+# Mais elle ne fait que **convoyer** la réponse, et un convoyeur peut porter une
+# valeur périmée : elle est figée dans l'environnement du `claude -p` à sa
+# naissance, alors que l'intention du run, elle, se réarme sur le disque à tout
+# moment. C'est le défaut #414 — une vague lancée sous un armement `all` a
+# continué d'annoncer les cinq périmètres après un réarmement à zéro survenu une
+# minute plus tard. Le geste humain daté est dans `supervisor.json` ; la variable
+# lui est désormais confrontée par `authorised_scopes()`.
 AUTHORISED_ENV = "SPA_MERGE_SENSITIVE"
+# Le nom du fichier où le superviseur écrit cette intention. Il est relu ici
+# plutôt que cru sur parole — c'est tout l'objet de #414.
+INTENT_RELPATH = (".claude", ".milestone", "supervisor.json")
+# La clé qui y porte les périmètres pré-autorisés, telle que
+# `milestone_supervise.intent_of()` l'écrit.
+INTENT_KEY = "merge_sensitive"
 
 
 def run(args, cwd=None, timeout=120):
@@ -167,6 +191,33 @@ def run(args, cwd=None, timeout=120):
         )
     except (OSError, subprocess.SubprocessError):
         return subprocess.CompletedProcess(args, 1, "", "commande indisponible")
+
+
+def main_root():
+    """La racine du dépôt principal, même appelée depuis le worktree d'un agent.
+
+    `.claude/.milestone/` est ignoré par git : il n'existe que dans le dépôt
+    principal, jamais dans le worktree où `/ticket` fait tourner cette barrière.
+    Chercher l'intention sous `ROOT` n'y trouverait donc que l'absence, et la
+    confrontation de #414 serait muette précisément là où elle sert — sous
+    `/milestone`, qui est le seul contexte où `SPA_UNATTENDED` est posée.
+
+    Même résolution que `milestone_run.main_root()`, et pour la même raison.
+    Recopiée plutôt qu'importée : `milestone_run` importe `milestone_supervise`,
+    qui importe ce fichier — l'importer ici fermerait le cycle.
+    """
+    proc = run(["git", "rev-parse", "--git-common-dir"], timeout=30)
+    if proc.returncode != 0 or not proc.stdout.strip():
+        return ROOT
+    common = Path(proc.stdout.strip())
+    if not common.is_absolute():
+        common = (ROOT / common).resolve()
+    candidate = common.parent
+    return candidate if (candidate / ".claude").is_dir() else ROOT
+
+
+# Résolu une fois : un appel à `git` par processus, jamais un par décision.
+INTENT = main_root().joinpath(*INTENT_RELPATH)
 
 
 def fetch_pr(number):
@@ -299,6 +350,56 @@ def unattended():
         "", "0", "false", "no")
 
 
+def scope_tokens(raw):
+    """Une liste de périmètres — virgules ou espaces — en ensemble de clés.
+
+    `all` s'y développe en toutes les clés connues. Une clé inconnue n'est pas
+    rejetée, elle est simplement inerte : elle ne correspond à aucun motif, donc
+    elle n'ouvre rien. C'est le bon sens de l'échec — une faute de frappe rend la
+    barrière plus stricte, jamais plus permissive. Le refus franc d'une clé
+    inconnue se fait à l'armement, là où quelqu'un est encore là pour la corriger.
+    """
+    tokens = {token.strip().lower()
+              for token in (raw or "").replace(",", " ").split() if token.strip()}
+    return set(SCOPE_KEYS) if ALL_SCOPES in tokens else tokens
+
+
+def intent_scopes():
+    """Les périmètres que l'armement du run a réellement pré-autorisés.
+
+    Lus sur le disque, dans `supervisor.json` : c'est là que vit le geste humain
+    daté, et c'est lui qui fait foi. Rend `None` quand il n'y a **rien à
+    confronter** — fichier absent, illisible, ou dépourvu de liste exploitable.
+
+    `None` dit « on ne sait pas », jamais « rien n'est autorisé ». La nuance
+    porte le cas d'un superviseur armé `--no-watchdog` : il n'écrit aucune
+    intention sur le disque tout en posant `SPA_MERGE_SENSITIVE` dans
+    l'environnement de ses vagues. Durcir sur cette absence lui retirerait des
+    pré-autorisations qu'un humain a bel et bien données, et transformerait la
+    correction de #414 en panne. Le désaccord que #414 corrige suppose deux
+    valeurs lisibles, pas une seule.
+
+    Une liste vide, elle, est une valeur lisible : `"merge_sensitive": []` dit
+    « rien n'est pré-autorisé », et c'est exactement le cas du run qui a révélé
+    le défaut.
+
+    Lue avec `scope_tokens()`, comme la variable : les deux côtés de la
+    confrontation doivent entendre `all` de la même façon. `milestone_supervise`
+    développe le raccourci avant d'écrire, mais une intention posée à la main —
+    ou par une version qui cesserait de le développer — porterait `["all"]`, et
+    l'intersecter tel quel révoquerait *tous* les périmètres au lieu de les
+    ouvrir tous : le contresens exact du raccourci.
+    """
+    try:
+        intent = json.loads(INTENT.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    scopes = intent.get(INTENT_KEY) if isinstance(intent, dict) else None
+    if not isinstance(scopes, list):
+        return None
+    return scope_tokens(" ".join(str(scope) for scope in scopes))
+
+
 def authorised_scopes(extra=""):
     """Les périmètres pré-autorisés — par l'armement du run, ou par cet appel.
 
@@ -307,6 +408,16 @@ def authorised_scopes(extra=""):
     absente, illisible : aucun périmètre autorisé, ce qui est le comportement
     d'avant #156.
 
+    La variable est **confrontée à l'intention du run** avant d'être crue
+    (#414). Elle est figée dans l'environnement du `claude -p` au moment où il
+    naît, alors que `supervisor.json` se réécrit à chaque réarmement : une vague
+    lancée sous `--merge-sensitive all` a continué d'annoncer les cinq
+    périmètres après un réarmement à zéro survenu une minute plus tard, ouvrant
+    `mod:payments` et `security` au merge non relu. La plus restrictive des deux
+    est donc retenue — leur intersection — et tout périmètre ainsi révoqué est
+    journalisé en `ERROR`. Une pré-autorisation est un geste humain daté ; une
+    variable d'environnement sans intention correspondante n'en est pas un.
+
     `extra` porte la même liste, mais donnée par `--merge-sensitive` sur cet
     appel-là. Elle existe pour l'arbitre du run, qui autorise **une PR à la
     fois**, après avoir lu son diff et publié sa revue. Passer par
@@ -314,18 +425,30 @@ def authorised_scopes(extra=""):
     une forme que l'allowlist de `.claude/settings.json` ne reconnaît pas, si
     bien que son mandat de merge aurait été refusé en silence sous `claude -p`.
 
-    Une clé inconnue n'est pas rejetée ici, elle est simplement inerte : elle ne
-    correspond à aucun motif, donc elle n'ouvre rien. C'est le bon sens de
-    l'échec — une faute de frappe rend la barrière plus stricte, jamais plus
-    permissive. Le refus franc d'une clé inconnue se fait à l'armement, là où
-    quelqu'un est encore là pour la corriger.
+    Elle n'est **pas** confrontée à l'intention, et c'est délibéré : c'est un
+    mandat donné maintenant, sur une PR dont le diff vient d'être lu, là où la
+    variable n'est qu'un souvenir d'un armement passé. Le rogner reviendrait à
+    retirer à l'arbitre le pouvoir que l'opérateur lui a explicitement confié.
     """
-    raw = os.environ.get(AUTHORISED_ENV, "") + " " + (extra or "")
-    tokens = {token.strip().lower()
-              for token in raw.replace(",", " ").split() if token.strip()}
-    if ALL_SCOPES in tokens:
-        return set(SCOPE_KEYS)
-    return tokens
+    from_env = scope_tokens(os.environ.get(AUTHORISED_ENV, ""))
+    armed = intent_scopes()
+    if armed is not None:
+        # Nommer ce qui est révoqué, pas seulement le compter : la question à
+        # laquelle cette ligne doit répondre après coup est « qu'est-ce qui a
+        # failli être mergé sans relecture ». Sur stderr et sans égard pour
+        # `--quiet` — une contradiction que l'on peut faire taire n'est pas un
+        # garde-fou, et c'est tout ce que #414 reproche à l'état d'avant.
+        revoked = from_env - armed
+        if revoked:
+            print("ERROR : {} annonce {} que l'armement du run n'a pas "
+                  "pré-autorisé — intention lue dans {} : {}. La plus "
+                  "restrictive des deux est retenue : ces périmètres restent "
+                  "sous relecture humaine.".format(
+                      AUTHORISED_ENV, ", ".join(sorted(revoked)), INTENT,
+                      ", ".join(sorted(armed)) or "aucun périmètre"),
+                  file=sys.stderr)
+        from_env &= armed
+    return from_env | scope_tokens(extra)
 
 
 def blocking(reasons, allowed):

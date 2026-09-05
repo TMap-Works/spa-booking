@@ -452,9 +452,21 @@ def intent_of(args):
 
 
 def write_intent(intent):
+    """Écrite d'un bloc : un lecteur ne doit jamais tomber sur un fichier tronqué.
+
+    Depuis #414, `pr_gate.py` relit ce fichier à chaque décision de merge et
+    traite un JSON illisible comme « rien à confronter » — c'est-à-dire qu'il
+    refait confiance à la variable d'environnement, y compris périmée. Or
+    `write_text` tronque d'abord et écrit ensuite : sa fenêtre de troncature
+    tombe exactement sur le réarmement, le seul instant où le désaccord que
+    #414 corrige existe. Un remplacement atomique la referme — le lecteur voit
+    l'ancienne intention ou la nouvelle, jamais un fichier à moitié écrit.
+    """
     INTENT.parent.mkdir(parents=True, exist_ok=True)
-    INTENT.write_text(json.dumps(intent, ensure_ascii=False, indent=2),
-                      encoding="utf-8")
+    tmp = INTENT.with_name(INTENT.name + ".tmp")
+    tmp.write_text(json.dumps(intent, ensure_ascii=False, indent=2),
+                   encoding="utf-8")
+    os.replace(tmp, INTENT)
 
 
 def save_intent(args):
