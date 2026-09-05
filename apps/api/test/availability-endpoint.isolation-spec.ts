@@ -4,6 +4,7 @@ import {
   createAvailabilityEndpointHarness,
   servedDay,
   type AvailabilityEndpointHarness,
+  type ServedTenant,
 } from './availability-endpoint.harness';
 import { UNKNOWN_ID } from './utils/tenant-harness';
 
@@ -124,6 +125,108 @@ describe('Isolation inter-tenant — endpoint de disponibilité (#35)', () => {
 
       expect(first.body.days[0].slots[0].staffId).toBe(harness.a.staffId);
       expect(second.body.days[0].slots[0].staffId).toBe(harness.b.staffId);
+    });
+  });
+
+  /**
+   * `excludeAppointmentId` — la frontière du paramètre ouvert par #442.
+   *
+   * C'est le quatrième critère du ticket : « si la route publique est retenue,
+   * un identifiant d'un autre établissement reste sans effet, et un test
+   * d'isolation le prouve sur l'endpoint ». Elle a été retenue — voir le README
+   * du module —, et voici la preuve.
+   *
+   * Le risque nommé est celui d'une exclusion appliquée **avant** le filtre de
+   * tenant : un appelant nommerait alors un rendez-vous du voisin et le verrait
+   * disparaître de… rien du tout, puisque le calendrier interrogé n'est pas le
+   * sien. Ce qui se prouve donc ici est la propriété utile : nommer
+   * l'identifiant d'ailleurs **ne retire rien**, là où nommer le sien retire
+   * exactement une chose.
+   */
+  describe('excludeAppointmentId (#442)', () => {
+    const BUFFER_BEFORE_MS = 10 * 60_000;
+    const OCCUPIED_MS = 80 * 60_000;
+
+    const publicSlots = async (
+      tenant: ServedTenant,
+      overrides: Record<string, string> = {},
+    ): Promise<string[]> => {
+      const response = await request(harness.server())
+        .get(PUBLIC_PATH(tenant.tenant.slug))
+        .query({ ...range(tenant.serviceId), ...overrides })
+        .expect(200);
+
+      return (response.body.days as { slots: { startsAt: string }[] }[]).flatMap((day) =>
+        day.slots.map((slot) => slot.startsAt),
+      );
+    };
+
+    /** Occupe le créneau de mi-journée de cet établissement, et rend son identifiant. */
+    const occupy = async (
+      tenant: ServedTenant,
+    ): Promise<{ id: string; billedStart: string }> => {
+      const times = await publicSlots(tenant);
+      const billedStart = times[Math.floor(times.length / 2)] as string;
+      const occupiedStart = new Date(Date.parse(billedStart) - BUFFER_BEFORE_MS);
+
+      const appointment = harness.availability.seedAppointment({
+        tenantId: tenant.tenant.id,
+        staffId: tenant.staffId,
+        startsAt: occupiedStart,
+        endsAt: new Date(occupiedStart.getTime() + OCCUPIED_MS),
+      });
+
+      // Le jeu d'essai est posé dans le double, pas par HTTP : rien n'a chassé
+      // le cache, et on le vide pour que la question suivante soit recalculée.
+      harness.cache.entries.clear();
+
+      return { id: appointment.id, billedStart };
+    };
+
+    it('un identifiant du voisin ne retire rien du calendrier', async () => {
+      const mine = await occupy(harness.a);
+      const theirs = await occupy(harness.b);
+
+      const withNeighbour = await publicSlots(harness.a, { excludeAppointmentId: theirs.id });
+
+      // La lecture des rendez-vous est scopée, et `id: { not: … }` s'applique
+      // après le filtre de tenant : l'identifiant d'ailleurs ne désigne rien
+      // d'ici, et le créneau reste pris.
+      expect(withNeighbour).not.toContain(mine.billedStart);
+    });
+
+    it('le sien, en revanche, retire exactement le sien', async () => {
+      const mine = await occupy(harness.a);
+
+      expect(await publicSlots(harness.a, { excludeAppointmentId: mine.id })).toContain(
+        mine.billedStart,
+      );
+    });
+
+    it('rend la même réponse pour « inconnu » et « connu chez le voisin »', async () => {
+      await occupy(harness.a);
+      const theirs = await occupy(harness.b);
+
+      // La différence entre les deux est précisément l'information à ne pas
+      // donner : sans cela, le paramètre devient une sonde d'existence de
+      // rendez-vous (tenant-isolation §4).
+      const neighbour = await publicSlots(harness.a, { excludeAppointmentId: theirs.id });
+      const nowhere = await publicSlots(harness.a, { excludeAppointmentId: UNKNOWN_ID });
+
+      expect(neighbour).toEqual(nowhere);
+    });
+
+    it('ne laisse derrière elle aucune clé de cache, pour aucun des deux', async () => {
+      const mine = await occupy(harness.a);
+
+      await publicSlots(harness.a, { excludeAppointmentId: mine.id });
+
+      // Une vue calculée avec une exclusion rangée sous une clé qui n'en dit
+      // rien serait servie à tous les lecteurs suivants du même établissement —
+      // une fuite qui ne traverse aucune frontière de tenant, mais qui montre à
+      // chacun un créneau qu'un autre occupe.
+      expect(harness.cache.keysOf(harness.a.tenant.id)).toEqual([]);
+      expect(harness.cache.keysOf(harness.b.tenant.id)).toEqual([]);
     });
   });
 

@@ -27,6 +27,10 @@ import type { AvailabilityView } from '../availability.types';
  *   teste pas dans ce fichier, elle se lit dans `availability.module.ts` : ce
  *   service n'est pas exporté, donc `appointments` ne peut pas l'injecter. Le
  *   témoin est `availability.module.spec.ts`.
+ *
+ * #442 y ajoute une quatrième phrase : **une requête portant une exclusion ne
+ * touche pas au cache**, ni en lecture ni en écriture. C'est ce qui remplace la
+ * garantie que #316 tenait en refusant `EngineAvailabilityQuery` à ce service.
  */
 
 const TENANT = randomUUID();
@@ -67,13 +71,23 @@ class MemoryStore implements AvailabilityCacheStore {
 /** Le moteur, réduit à ce que ce service en attend : un calcul, et son compte. */
 function fakeEngine(view: AvailabilityView): {
   engine: AvailabilityService;
-  calls: { from: string; to: string }[];
+  calls: { from: string; to: string; excludeAppointmentId?: string }[];
 } {
-  const calls: { from: string; to: string }[] = [];
+  const calls: { from: string; to: string; excludeAppointmentId?: string }[] = [];
 
   const engine = {
-    slotsFor: (query: { from: string; to: string }): Promise<AvailabilityView> => {
-      calls.push({ from: query.from, to: query.to });
+    slotsFor: (query: {
+      from: string;
+      to: string;
+      excludeAppointmentId?: string;
+    }): Promise<AvailabilityView> => {
+      calls.push({
+        from: query.from,
+        to: query.to,
+        ...(query.excludeAppointmentId === undefined
+          ? {}
+          : { excludeAppointmentId: query.excludeAppointmentId }),
+      });
 
       return Promise.resolve(view);
     },
@@ -187,6 +201,75 @@ describe('AvailabilityQueryService', () => {
     expect(calls).toHaveLength(1);
     expect(narrowed.days).toHaveLength(1);
     expect(narrowed.timezone).toBe('Europe/Paris');
+  });
+
+  describe('excludeAppointmentId — le contournement du cache (#442)', () => {
+    const EXCLUDED = randomUUID();
+
+    it('n’écrit aucune clé, et n’en lit aucune', async () => {
+      const { engine, calls } = fakeEngine(viewOf());
+      const service = new AvailabilityQueryService(engine, cache);
+
+      const view = await inTenant(async () =>
+        service.slotsFor({ ...RANGE, excludeAppointmentId: EXCLUDED }),
+      );
+
+      expect(view).toEqual(viewOf());
+      // Le troisième critère de #442, dans sa forme la plus directe : rien de ce
+      // qui a été calculé avec une exclusion ne se range sous une clé qui n'en
+      // dit rien. Et rien n'a été lu non plus — une vue *sans* exclusion aurait
+      // masqué le créneau que la requête cherchait précisément à rendre.
+      expect(store.entries.size).toBe(0);
+      expect(store.readCalls).toBe(0);
+      expect(calls).toEqual([{ from: RANGE.from, to: RANGE.to, excludeAppointmentId: EXCLUDED }]);
+    });
+
+    it('ne se sert pas d’une journée déjà en cache', async () => {
+      const { engine, calls } = fakeEngine(viewOf());
+      const service = new AvailabilityQueryService(engine, cache);
+
+      // La même plage, d'abord sans exclusion : le cache est chaud.
+      await inTenant(async () => service.slotsFor({ ...RANGE }));
+      expect(store.entries.size).toBe(2);
+
+      await inTenant(async () => service.slotsFor({ ...RANGE, excludeAppointmentId: EXCLUDED }));
+
+      // Deux calculs, donc : la seconde question n'est pas la première. La
+      // servir depuis le cache rendrait un calendrier où le rendez-vous à
+      // déplacer s'occupe encore lui-même — précisément le défaut de #442.
+      expect(calls).toHaveLength(2);
+      expect(calls[1]?.excludeAppointmentId).toBe(EXCLUDED);
+    });
+
+    it('ne remplace pas le cache ordinaire par sa propre vue', async () => {
+      const { engine } = fakeEngine(viewOf());
+      const service = new AvailabilityQueryService(engine, cache);
+
+      await inTenant(async () => service.slotsFor({ ...RANGE }));
+      const before = new Map(store.entries);
+
+      await inTenant(async () => service.slotsFor({ ...RANGE, excludeAppointmentId: EXCLUDED }));
+
+      // Le cache est laissé exactement dans l'état où la requête l'a trouvé.
+      // Sans cela, tous les lecteurs de la minute suivante verraient libre le
+      // créneau d'un rendez-vous qui, lui, n'a pas bougé.
+      expect(new Map(store.entries)).toEqual(before);
+    });
+
+    it('refuse une plage trop large avant même de choisir son chemin', async () => {
+      const { engine, calls } = fakeEngine(viewOf());
+      const service = new AvailabilityQueryService(engine, cache);
+
+      await expect(
+        inTenant(async () =>
+          service.slotsFor({ ...RANGE, to: '2026-12-31', excludeAppointmentId: EXCLUDED }),
+        ),
+      ).rejects.toBeInstanceOf(AvailabilityRangeTooWideError);
+
+      // Le contournement ne relâche pas la borne : une plage non servable n'est
+      // pas plus servable parce qu'elle porte une exclusion.
+      expect(calls).toHaveLength(0);
+    });
   });
 
   it('ne met pas en cache le refus du moteur', async () => {
