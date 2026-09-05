@@ -71,6 +71,20 @@ export class AvailabilityQueryDto {
   })
   @IsCalendarDate()
   public to!: string;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description:
+      'Le rendez-vous que l’appelant s’apprête à **déplacer**, à ne pas compter ' +
+      'comme occupant. C’est ce qui rend proposable un créneau qui chevauche le ' +
+      'rendez-vous en cours de report — un décalage d’un quart d’heure sur un soin ' +
+      'd’une heure, par exemple. Un identifiant inconnu ou d’un autre établissement ' +
+      'est sans effet : la lecture est scopée, et il n’y retire rien. Une requête ' +
+      'qui porte ce paramètre n’est ni servie depuis le cache, ni écrite dedans.',
+  })
+  @OptionalPresent()
+  @IsUUID('4')
+  public excludeAppointmentId?: string;
 }
 
 /**

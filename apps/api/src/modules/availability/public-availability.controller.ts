@@ -54,6 +54,31 @@ import { AvailabilityDto, AvailabilityQueryDto } from './dto/availability.dto';
  * intervalle court et au retour de focus » — et bornent l'abus. Le quota est
  * douze fois plus large que celui des routes d'écriture du tunnel : celles-ci
  * posent des rendez-vous, celle-ci n'écrit rien.
+ *
+ * ## `excludeAppointmentId` est servi **ici aussi**, et c'est la décision de #442
+ *
+ * La question posée était de savoir si l'exclusion du rendez-vous déplacé devait
+ * rester au back-office gardé. Elle ne le pouvait pas : l'écran de report vit
+ * dans l'espace client, où le jeton est de rang `CLIENT` — sous le seuil `STAFF`
+ * de `AvailabilityController`. Réserver l'exclusion à la route gardée aurait
+ * laissé le geste hors de portée de la seule personne qui le demande.
+ *
+ * Ce que la surface ajoute, elle l'ajoute à un appelant qui **détient déjà
+ * l'identifiant du rendez-vous** — et cet identifiant, sur cette même surface
+ * publique, autorise déjà à le reporter et à l'annuler sans aucun jeton
+ * (`PublicAppointmentsController`). Un porteur d'identifiant peut donc déjà
+ * libérer ce créneau pour de bon ; apprendre qu'il serait libre sans ce
+ * rendez-vous lui découvre strictement moins. Et un identifiant qu'on ne détient
+ * pas ne se devine pas : c'est un UUID v4, et le paramètre n'ouvre aucune
+ * énumération — un identifiant inconnu **ou d'un autre établissement** rend
+ * exactement la réponse qu'il aurait rendue sans lui, la lecture des rendez-vous
+ * étant scopée (tenant-isolation §4). C'est ce que vérifie
+ * `test/availability-endpoint.isolation-spec.ts`.
+ *
+ * Reste que le paramètre ne réserve rien : il sert à **proposer**. Le créneau
+ * ainsi rendu passe, à la réservation comme au report, sous
+ * `appointments_no_overlap` — qui, elle, ne connaît aucune exclusion
+ * (booking-engine §1).
  */
 @ApiTags('public')
 @Controller({ path: 'public/:tenantSlug/availability', version: '1' })
@@ -104,6 +129,9 @@ export class PublicAvailabilityController {
       ...(query.staffId !== undefined && { staffId: query.staffId }),
       from: query.from,
       to: query.to,
+      ...(query.excludeAppointmentId !== undefined && {
+        excludeAppointmentId: query.excludeAppointmentId,
+      }),
     });
   }
 }

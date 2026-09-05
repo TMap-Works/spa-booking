@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { AvailabilityCacheService } from './availability-cache';
 import { AvailabilityService, requireServableRange } from './availability.service';
-import type { AvailabilityQuery, AvailabilityView } from './availability.types';
+import type { AvailabilityView, EngineAvailabilityQuery } from './availability.types';
 
 /**
  * Le chemin de **lecture** de la disponibilité : le moteur, derrière son cache
@@ -16,7 +16,8 @@ import type { AvailabilityQuery, AvailabilityView } from './availability.types';
  *
  * | Chemin | Ce qu'il appelle | Voit le cache |
  * |---|---|---|
- * | `GET /api/v1/availability` | `AvailabilityQueryService` | oui |
+ * | `GET …/availability` | `AvailabilityQueryService` | oui |
+ * | `GET …/availability?excludeAppointmentId=…` | `AvailabilityQueryService` | **non** (#442) |
  * | `POST …/appointments` (réservation, report) | `AvailabilityService` | **non** |
  *
  * Un drapeau `useCache` sur une méthode unique aurait mis cette garantie à la
@@ -31,12 +32,14 @@ import type { AvailabilityQuery, AvailabilityView } from './availability.types';
  * partage de booking-engine §1 : le cache sert l'affichage, la base garantit
  * l'unicité.
  *
- * ## L'ordre des trois étapes, et ce qui n'est jamais mis en cache
+ * ## L'ordre des quatre étapes, et ce qui n'est jamais mis en cache
  *
  * 1. La plage est **jugée d'abord** : une plage inversée ou de plus de trente et
  *    un jours sort en 422 sans qu'aucune clé ne soit ni lue ni fabriquée.
- * 2. Le cache est interrogé pour toutes les journées de la plage — tout ou rien.
- * 3. Sur défaut, le moteur calcule la plage entière et le résultat est écrit.
+ * 2. Une requête portant une **exclusion** est servie par le moteur nu, sans
+ *    toucher au cache (#442) — voir `slotsFor`.
+ * 3. Le cache est interrogé pour toutes les journées de la plage — tout ou rien.
+ * 4. Sur défaut, le moteur calcule la plage entière et le résultat est écrit.
  *
  * Les **refus** ne sont jamais mis en cache : rien n'est écrit quand le moteur
  * lève. Un 404 caché survivrait à la réactivation de la prestation, et le salon
@@ -92,12 +95,44 @@ export class AvailabilityQueryService {
    * Ce qu'elle ne met pas en cause : la réservation, qui rejoue le moteur à
    * froid et ne lit jamais ce cache.
    *
+   * ## `excludeAppointmentId` contourne le cache, entièrement (#442)
+   *
+   * La clé est `(serviceId, staffId, journée)` et ne dit **rien** d'une
+   * exclusion. Deux conduites étaient possibles : la faire entrer dans la clé,
+   * ou écarter ces requêtes du cache. La seconde est retenue, et pour deux
+   * raisons qui vont dans le même sens :
+   *
+   * - **la sûreté.** Une clé enrichie fonctionnerait, mais la moindre erreur d'y
+   *   inscrire l'exclusion — un champ ajouté plus tard, un segment oublié —
+   *   servirait une vue amputée d'un rendez-vous à tous les lecteurs de la
+   *   minute suivante. Le contournement n'a pas d'état à tenir juste ;
+   * - **le coût, qui est nul.** Ces requêtes sont rares : une par écran de
+   *   report, sur une fenêtre de quatorze jours. Les mettre en cache
+   *   n'économiserait rien, puisque personne ne repose deux fois la même
+   *   question avec la même exclusion ; cela ne ferait qu'évincer les journées
+   *   du calendrier ordinaire, qui, elles, sont demandées en boucle.
+   *
+   * Ni lecture ni écriture, donc : le cache est laissé exactement dans l'état où
+   * la requête l'a trouvé.
+   *
    * @throws {NotFoundError} prestation inconnue, hors de l'établissement, ou
    * retirée du catalogue.
    * @throws {AvailabilityRangeTooWideError} plage inversée ou trop large.
    */
-  public async slotsFor(query: AvailabilityQuery, now: Date = new Date()): Promise<AvailabilityView> {
+  public async slotsFor(
+    query: EngineAvailabilityQuery,
+    now: Date = new Date(),
+  ): Promise<AvailabilityView> {
     const dates = requireServableRange(query.from, query.to);
+
+    if (query.excludeAppointmentId !== undefined) {
+      // Le moteur nu, et rien d'autre : aucune clé n'est lue, aucune n'est
+      // écrite. C'est ce qui rend vrai le troisième critère de #442 — « aucune
+      // vue calculée avec une exclusion ne s'écrit dans le cache sous une clé
+      // qui n'en dit rien ».
+      return this.engine.slotsFor(query, now);
+    }
+
     const key = { serviceId: query.serviceId, ...(query.staffId !== undefined && { staffId: query.staffId }) };
 
     const cached = await this.cache.readRange(key, dates);
@@ -106,14 +141,14 @@ export class AvailabilityQueryService {
       return cached;
     }
 
-    // Recomposée champ par champ plutôt que transmise telle quelle : le moteur
-    // accepte un champ de plus que ce type — l'exclusion du report (#316) — et
-    // le typage structurel laisserait un objet qui le porte se faire passer pour
-    // une `AvailabilityQuery`. La vue serait alors calculée en ignorant un
-    // rendez-vous, puis **écrite sous une clé qui ne dit rien de cette
-    // exclusion** : tous les lecteurs de la minute suivante verraient un créneau
-    // pris comme libre. La recomposition rend ce chemin inexistant plutôt
-    // qu'improbable.
+    // Recomposée champ par champ plutôt que transmise telle quelle. La garde
+    // ci-dessus suffit à écarter l'exclusion d'aujourd'hui ; la recomposition
+    // dit la règle sur le type entier, et non sur un champ : ce qui descend ici
+    // est **exactement** ce que la clé indexe. Un champ ajouté demain à
+    // `EngineAvailabilityQuery` sans que la garde en soit informée ne pourra
+    // donc pas se faire ranger sous une clé qui ne le mentionne pas — au pire il
+    // sera ignoré sur ce chemin, ce qui est un manque, jamais une vue fausse
+    // servie à tous les lecteurs de la minute suivante.
     const view = await this.engine.slotsFor(
       {
         serviceId: query.serviceId,
