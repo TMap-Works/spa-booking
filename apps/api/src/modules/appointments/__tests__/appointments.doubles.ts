@@ -10,6 +10,8 @@ import { SlotNoLongerAvailableError } from '../appointments.errors';
 import type { AppointmentsRepository } from '../appointments.repository';
 import { SlotLockService } from '../slot-lock.service';
 import type {
+  AgendaAppointmentRecord,
+  AgendaQuery,
   AppointmentDraft,
   AppointmentRecord,
   CancelDraft,
@@ -83,7 +85,46 @@ interface StoredAppointment {
   cancelledAt: Date | null;
   cancelledBy: AppointmentCancelledBy | null;
   cancellationReason: string | null;
+  /** Obligatoire dans `appointmentSchema`, donc lu par l'agenda (#444). */
+  createdAt: Date;
+  /** Ce que la jointure de `listAgenda` rend — voir `AgendaDisplay`. */
+  display: AgendaDisplay;
 }
+
+/**
+ * Ce que le vrai dépôt lit **par jointure** sur la requête d'agenda (#444) :
+ * le nom public du praticien et la fiche de la prestation.
+ *
+ * Dénormalisé sur la ligne, exactement comme `StoredVisit` du double du CRM
+ * porte `serviceName` et `staffName` : le double reproduit le **contrat du
+ * repository vu du service**, pas le schéma relationnel. Ce qu'il ne prouve pas
+ * — que la jointure ne sort pas du tenant — n'est pas de son ressort : ce sont
+ * les clés étrangères composites du schéma qui le tiennent, et
+ * `prisma-schema.spec.ts` qui les vérifie.
+ *
+ * La cliente, elle, n'est **pas** dénormalisée : `listAgenda` la résout dans
+ * `this.clients`, à `(tenantId, id)`. C'est la seule des trois dont ce double
+ * ait le stock, et c'est ce qui lui permet de reproduire la propriété qui compte
+ * ici — une fiche du salon voisin n'est jamais jointe.
+ */
+interface AgendaDisplay {
+  staffDisplayName: string;
+  serviceName: string;
+  serviceDurationMinutes: number;
+  serviceBufferBeforeMinutes: number;
+  servicePriceAmountMinor: number;
+  servicePriceCurrency: string;
+}
+
+/** Ce qu'une ligne semée affiche à l'agenda quand la suite ne le précise pas. */
+const DEFAULT_DISPLAY: AgendaDisplay = {
+  staffDisplayName: 'Camille',
+  serviceName: 'Massage 60 min',
+  serviceDurationMinutes: 60,
+  serviceBufferBeforeMinutes: 0,
+  servicePriceAmountMinor: 7500,
+  servicePriceCurrency: 'EUR',
+};
 
 /** L'intervalle **occupé** d'un praticien — ce que la contrainte compare. */
 interface OccupiedRange {
@@ -104,6 +145,8 @@ interface StoredClient {
 export class FakeAppointmentsRepository {
   public readonly appointments: StoredAppointment[] = [];
   public readonly clients: StoredClient[] = [];
+  /** Fuseau par établissement — `UTC` par défaut, voir `seedTimeZone`. */
+  private readonly timeZones = new Map<string, string | null>();
 
   /** Une fiche cliente déjà présente — la cliente qui revient. */
   public seedClient(input: {
@@ -136,6 +179,13 @@ export class FakeAppointmentsRepository {
     serviceId?: string;
     /** La note interne du praticien — de quoi exercer sa reprise au report (#317). */
     staffNote?: string | null;
+    /** Le mot de la cliente, servi par l'agenda du back-office (#444). */
+    clientNote?: string | null;
+    /** Prix **figé** sur la ligne, à distinguer du tarif courant du catalogue. */
+    priceAmountMinor?: number;
+    createdAt?: Date;
+    /** Ce que la jointure de l'agenda rendrait — voir `AgendaDisplay` (#444). */
+    display?: Partial<AgendaDisplay>;
   }): StoredAppointment {
     const appointment: StoredAppointment = {
       tenantId: input.tenantId,
@@ -146,9 +196,9 @@ export class FakeAppointmentsRepository {
       startsAt: input.startsAt,
       endsAt: input.endsAt,
       status: input.status ?? 'PENDING',
-      priceAmountMinor: 0,
+      priceAmountMinor: input.priceAmountMinor ?? 0,
       priceCurrency: 'EUR',
-      clientNote: null,
+      clientNote: input.clientNote ?? null,
       staffNote: input.staffNote ?? null,
       rescheduledFromId: null,
       // Semé sans trace d'annulation, y compris quand le statut est `CANCELLED` :
@@ -156,9 +206,27 @@ export class FakeAppointmentsRepository {
       cancelledAt: null,
       cancelledBy: null,
       cancellationReason: null,
+      createdAt: input.createdAt ?? new Date(),
+      display: { ...DEFAULT_DISPLAY, ...input.display },
     };
     this.appointments.push(appointment);
     return appointment;
+  }
+
+  /**
+   * Le fuseau d'un établissement, quand la suite en veut un autre qu'`UTC`.
+   *
+   * Le défaut n'est pas un raccourci : `currentTimeZone` retombe sur `UTC`
+   * précisément pour que les suites qui ne parlent pas de fuseau n'aient pas à
+   * en semer un. Celles qui l'exercent — l'agenda d'un salon à l'autre bout du
+   * monde — le posent ici.
+   *
+   * `null` sème l'établissement **absent** : `tenants.timezone` est `NOT NULL`,
+   * donc c'est la ligne entière qui manque — un jeton signé sur une portée
+   * disparue. C'est le seul moyen d'exercer le 404 que le service rend alors.
+   */
+  public seedTimeZone(tenantId: string, timeZone: string | null): void {
+    this.timeZones.set(tenantId, timeZone);
   }
 
   public async create(draft: AppointmentDraft): Promise<AppointmentRecord> {
@@ -189,6 +257,8 @@ export class FakeAppointmentsRepository {
       cancelledAt: null,
       cancelledBy: null,
       cancellationReason: null,
+      createdAt: new Date(),
+      display: DEFAULT_DISPLAY,
     };
     this.appointments.push(stored);
     return toRecord(stored);
@@ -257,6 +327,11 @@ export class FakeAppointmentsRepository {
       cancelledAt: null,
       cancelledBy: null,
       cancellationReason: null,
+      createdAt: new Date(),
+      // La prestation ne change pas au report ; le praticien, si. Le double
+      // recopie l'affichage de la ligne d'origine — le vrai relit la jointure,
+      // et c'est une différence sans effet sur ce que le report prouve.
+      display: previous.display,
     };
     this.appointments.push(stored);
 
@@ -348,6 +423,101 @@ export class FakeAppointmentsRepository {
       })
       .slice(0, query.limit)
       .map(toRecord);
+  }
+
+  /**
+   * L'agenda de l'établissement sur une fenêtre d'instants (#444).
+   *
+   * Reproduit les cinq propriétés du vrai dont l'appelant dépend :
+   *
+   * 1. le **scoping par tenant** — une ligne du salon voisin ne ramène rien,
+   *    quels que soient ses identifiants ;
+   * 2. l'**intersection** `[)` et non un « commence dans la plage » : la base
+   *    stocke l'intervalle occupé, tampons compris, et un soin de 00:05 occupe
+   *    l'agenda depuis 23:55 la veille. Un double qui filtrerait sur le seul
+   *    début ferait passer pour vert un agenda qui perd une ligne par jour ;
+   * 3. les **filtres facultatifs**, qui restreignent à l'intérieur du tenant et
+   *    ne lèvent jamais : un identifiant du voisin rend une liste vide, jamais
+   *    une erreur ;
+   * 4. l'**ordre total** `(startsAt, id)` — sans le second critère, deux
+   *    praticiens à 10 h se rendraient dans un ordre arbitraire ;
+   * 5. la **jointure sur la cliente**, résolue à `(tenantId, clientId)` : c'est
+   *    ce que les clés étrangères composites garantissent en vrai.
+   */
+  public async listAgenda(query: AgendaQuery): Promise<AgendaAppointmentRecord[]> {
+    const tenantId = this.requireTenant();
+
+    return this.appointments
+      .filter((candidate) => {
+        if (candidate.tenantId !== tenantId) {
+          return false;
+        }
+        if (!(candidate.startsAt < query.to && candidate.endsAt > query.from)) {
+          return false;
+        }
+        if (query.staffId !== null && candidate.staffId !== query.staffId) {
+          return false;
+        }
+        if (query.clientId !== null && candidate.clientId !== query.clientId) {
+          return false;
+        }
+        if (query.serviceId !== null && candidate.serviceId !== query.serviceId) {
+          return false;
+        }
+        return query.statuses === null || query.statuses.includes(candidate.status);
+      })
+      .sort(
+        (left, right) =>
+          left.startsAt.getTime() - right.startsAt.getTime() || left.id.localeCompare(right.id),
+      )
+      .map((stored) => this.toAgendaRecord(stored));
+  }
+
+  /**
+   * Le fuseau de l'établissement courant — `UTC` faute de valeur semée.
+   *
+   * Rend `null` **sans portée de tenant** serait faux : le vrai lève, parce que
+   * l'extension refuse toute opération hors contexte. C'est `requireTenant` qui
+   * le reproduit, ici comme partout ailleurs dans ce double.
+   */
+  public async currentTimeZone(): Promise<string | null> {
+    const tenantId = this.requireTenant();
+
+    // `has` et non `??` : une valeur semée à `null` est une **absence
+    // d'établissement**, et l'écraser par le défaut priverait la suite du seul
+    // chemin qui mène au 404.
+    return this.timeZones.has(tenantId) ? (this.timeZones.get(tenantId) ?? null) : 'UTC';
+  }
+
+  /** Une ligne d'agenda, cliente jointe et affichage dénormalisé (#444). */
+  private toAgendaRecord(stored: StoredAppointment): AgendaAppointmentRecord {
+    // Résolue dans le même établissement, jamais par identifiant seul : c'est ce
+    // que la clé étrangère composite `(tenant_id, client_id)` impose au vrai.
+    const client = this.clients.find(
+      (candidate) => candidate.tenantId === stored.tenantId && candidate.id === stored.clientId,
+    );
+
+    return {
+      ...toRecord(stored),
+      client: {
+        id: stored.clientId,
+        firstName: client?.firstName ?? 'Cliente',
+        lastName: client?.lastName ?? 'Anonyme',
+      },
+      staff: { id: stored.staffId, displayName: stored.display.staffDisplayName },
+      service: {
+        id: stored.serviceId,
+        name: stored.display.serviceName,
+        durationMinutes: stored.display.serviceDurationMinutes,
+        bufferBeforeMinutes: stored.display.serviceBufferBeforeMinutes,
+        price: {
+          amountMinor: stored.display.servicePriceAmountMinor,
+          currency: stored.display.servicePriceCurrency,
+        },
+      },
+      staffNote: stored.staffNote,
+      createdAt: stored.createdAt,
+    };
   }
 
   public async findOrCreateClient(contact: GuestContact): Promise<string> {

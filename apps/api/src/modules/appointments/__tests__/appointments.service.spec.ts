@@ -6,6 +6,7 @@ import type { StructuredLogger } from '../../../common/logging/structured-logger
 import { SpyAvailabilityCache } from '../../availability/__tests__/staff-time-off.doubles';
 import type { AvailabilityService } from '../../availability/availability.service';
 import type { AvailabilityView } from '../../availability/availability.types';
+import { TenantClockService } from '../../availability/tenant-clock.service';
 import type { ServiceView } from '../../catalog/catalog.types';
 import type { ServicesService } from '../../catalog/services.service';
 import { AppointmentLifecycleService } from '../appointment-lifecycle.service';
@@ -228,6 +229,10 @@ function createHarness(
       // veut exercer ici est ce que la réservation fait du verdict du verrou, et
       // le substituer ferait passer au vert un chemin qui n'en poserait aucun.
       locks.asService(),
+      // Le **vrai** horloger : c'est une conversion pure, sans collaborateur ni
+      // état, et un double aurait fait passer au vert un agenda qui se trompe de
+      // journée — précisément ce que ce service existe pour empêcher (#444).
+      new TenantClockService(),
     ),
     repository,
     events,
@@ -1672,6 +1677,7 @@ describe('AppointmentsService.listForClient — #47', () => {
       new AppointmentLifecycleService(),
       new SpyAvailabilityCache().asService(),
       new FakeCacheLocks().asService(),
+      new TenantClockService(),
     );
 
     const views = await runWithTenant(TENANT, () =>
