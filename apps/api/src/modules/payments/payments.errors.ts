@@ -30,6 +30,8 @@ export const PAYMENT_ERROR_CODES = {
   PAYMENT_ALREADY_SETTLED: 'PAYMENT_ALREADY_SETTLED',
   PAYMENT_PROVIDER_UNAVAILABLE: 'PAYMENT_PROVIDER_UNAVAILABLE',
   HISTORY_WINDOW_INVALID: 'HISTORY_WINDOW_INVALID',
+  PAYMENT_NOT_REFUNDABLE: 'PAYMENT_NOT_REFUNDABLE',
+  REFUND_EXCEEDS_CAPTURED: 'REFUND_EXCEEDS_CAPTURED',
 } as const;
 
 // Les valeurs viennent de `DOMAIN_HTTP_STATUS`, la table de correspondance
@@ -154,6 +156,67 @@ export class PaymentAlreadySettledError extends DomainError {
 }
 
 /**
+ * Cet encaissement ne peut pas être remboursé par le prestataire (#63).
+ *
+ * Trois situations, un seul code parce que le comptoir n'a qu'une conduite —
+ * traiter le geste hors de cette route :
+ *
+ * - **encaissement en espèces** : il n'y a pas d'ordre à envoyer, et il ne doit
+ *   pas y en avoir. Rendre un billet est un geste de caisse, pas un appel au
+ *   prestataire ; le prétendre ici ferait apparaître un remboursement au relevé
+ *   Stripe pour de l'argent qui n'y est jamais entré ;
+ * - **rien n'a été capturé** : un encaissement `PENDING` ou `FAILED` n'a pas
+ *   sorti d'argent. Le remède est l'annulation de l'intention, pas son
+ *   remboursement ;
+ * - **aucune référence d'intention** : la ligne existe sans `pi_…`, donc sans
+ *   rien à désigner au prestataire.
+ *
+ * **422 et non 404** : l'encaissement existe et l'appelant en connaît déjà
+ * l'identifiant — c'est lui qui vient de l'envoyer. `details.status` et
+ * `details.method` sont ce dont l'écran a besoin pour choisir entre « ce
+ * paiement n'a pas abouti » et « celui-ci s'est fait en espèces ». Ni l'un ni
+ * l'autre n'est une donnée personnelle.
+ */
+export class PaymentNotRefundableError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.PAYMENT_NOT_REFUNDABLE;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor(method: string, status: string) {
+    super('Cet encaissement ne peut pas être remboursé par le prestataire.', { method, status });
+  }
+}
+
+/**
+ * Le remboursement demandé ferait dépasser ce qui a été capturé (#63).
+ *
+ * C'est le deuxième critère du ticket, rendu à l'appelant : « le cumul des
+ * remboursements ne peut jamais dépasser le montant capturé, vérifié côté
+ * serveur ». Le refus tombe **avant** tout appel au prestataire — Stripe le
+ * refuserait aussi, mais en faire un incident de prestataire aurait rendu 503
+ * là où le comptoir a simplement demandé trop.
+ *
+ * `details.remainingAmountMinor` dit combien il restait, et `details.currency`
+ * dans quelle monnaie. Sans ces deux valeurs, l'écran ne peut que faire
+ * retâtonner l'opérateur montant après montant. Un entier et un code ISO 4217 :
+ * aucune donnée personnelle, et jamais un flottant.
+ *
+ * **422 et non 400** : le montant est individuellement bien formé — le
+ * `ValidationPipe` l'a déjà accepté. C'est sa relation à ce qui a été capturé
+ * qui est refusée, et api-module §5 range cela dans la règle métier.
+ */
+export class RefundExceedsCapturedError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.REFUND_EXCEEDS_CAPTURED;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor(remainingAmountMinor: number, currency: string) {
+    super('Le cumul des remboursements dépasserait le montant encaissé.', {
+      remainingAmountMinor,
+      currency,
+    });
+  }
+}
+
+/**
  * Stripe a refusé l'appel, ou n'a pas répondu.
  *
  * **503 et non 500** : ce n'est pas un défaut de notre code, c'est une
@@ -171,3 +234,36 @@ export class PaymentProviderUnavailableError extends DomainError {
     super('Le prestataire de paiement est momentanément indisponible.');
   }
 }
+
+/**
+ * Le prestataire a **refusé** l'appel — et son refus est définitif (#63).
+ *
+ * ## Ce qu'elle ajoute, et pourquoi elle n'ajoute rien au contrat
+ *
+ * Le corps de réponse est **identique** à celui de sa classe mère : même code,
+ * même 503, même absence de détail. C'est délibéré — distinguer les deux dans la
+ * réponse ferait de cette route une sonde de l'état de notre compte chez le
+ * prestataire, et l'appelant n'a de toute façon qu'une conduite pour les deux.
+ * La sous-classe existe pour le **serveur**, pas pour le client.
+ *
+ * ## Ce que le serveur en fait, lui
+ *
+ * Elle porte la seule distinction qui compte sur le chemin d'un remboursement :
+ * savoir si de l'argent a pu bouger.
+ *
+ * | Issue de l'appel | Erreur | La réservation |
+ * |---|---|---|
+ * | refus explicite du prestataire (4xx avec corps d'erreur) | celle-ci | **relâchée** — rien n'est sorti, la somme reste remboursable |
+ * | délai dépassé, coupure, 5xx, corps illisible | la mère | **conservée** — le sort de l'ordre est inconnu |
+ *
+ * Relâcher une réservation dont on ignore le sort est ce qui rendrait l'argent
+ * deux fois : la reprise repartirait avec une **autre** clé d'idempotence, et le
+ * prestataire n'aurait aucun moyen de reconnaître le doublon. Conserver la
+ * réservation immobilise la somme jusqu'à un rapprochement manuel — coûteux,
+ * mais réparable, là où un double remboursement ne l'est pas.
+ *
+ * Elle **hérite** de `PaymentProviderUnavailableError` plutôt que d'en être la
+ * sœur : tout code qui attrape la mère continue de l'attraper, y compris le
+ * tunnel public de #57, qui n'a pas à connaître la nuance.
+ */
+export class PaymentProviderRefusedError extends PaymentProviderUnavailableError {}
