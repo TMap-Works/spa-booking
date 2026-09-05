@@ -12,9 +12,10 @@ notre périmètre PCI en SAQ A.
 | #57 | L'intention de paiement Stripe, la clé publiable, et la frontière qui les sépare de la clé secrète |
 | #58 | La réception des webhooks Stripe — signature sur corps brut, idempotence en base, et le passage du rendez-vous en `CONFIRMED` |
 | #60 | Le POS de base — rayon retail, ticket de caisse et ses lignes, total recalculé côté serveur |
+| #62 | Le règlement en espèces, l’historique des ventes et celui des transactions — la matière du rapprochement |
 
-À venir : le montage d’Elements côté tunnel (#59), le paiement en espèces et
-l’historique des ventes (#62), les remboursements initiés au comptoir (#63).
+À venir : le montage d’Elements côté tunnel (#59), les remboursements initiés au
+comptoir (#63).
 
 ## Les routes
 
@@ -26,13 +27,17 @@ l’historique des ventes (#62), les remboursements initiés au comptoir (#63).
 | `POST` | `/api/v1/products` | `MANAGER` |
 | `PATCH` | `/api/v1/products/:id` | `MANAGER` |
 | `POST` | `/api/v1/sales` | `STAFF` |
+| `GET` | `/api/v1/sales` | `STAFF` |
 | `GET` | `/api/v1/sales/:id` | `STAFF` |
+| `POST` | `/api/v1/payments/cash` | `STAFF` |
+| `GET` | `/api/v1/payments` | `MANAGER` |
 
-Les cinq routes du POS sont gardées et **n'ont aucune surface publique** : un
+Les routes du comptoir sont gardées et **n'ont aucune surface publique** : un
 ticket de caisse est une pièce comptable du salon, son rayon une donnée
 commerciale. La ligne entre `STAFF` et `MANAGER` passe où le CDC la met —
-composer une addition et lire le rayon sont des gestes de comptoir, fixer un
-prix de vente est une décision.
+composer une addition, lire le rayon, encaisser un billet et faire la relève de
+caisse sont des gestes de comptoir ; fixer un prix de vente et rapprocher les
+relevés du prestataire sont des décisions de gestion.
 
 La route du tunnel n'est pas gardée, et c'est délibéré : on réserve sans compte (#37),
 donc on paie sans compte. Ce qui autorise l'appel est la **connaissance de
@@ -90,12 +95,12 @@ les sept autres modules, `AppModule` les montant tous.
 
 ## Ce que ce module ne fait pas
 
-- **Il ne confirme rien.** Il crée une intention et rend de quoi la payer. Le
-  passage du rendez-vous en `CONFIRMED` et du paiement en `SUCCEEDED` est
-  l'affaire du webhook signé (#58) : la source de vérité du paiement est Stripe
-  reçue côté serveur, jamais la réponse du navigateur (payments-stripe §2).
-- **Il n'encaisse pas au comptoir.** Espèces, produits retail et lignes de vente
-  sont #60 et #62, sur une surface gardée.
+- **Il ne confirme pas un paiement carte.** Il crée une intention et rend de quoi
+  la payer. Le passage du rendez-vous en `CONFIRMED` et du paiement en
+  `SUCCEEDED` est l'affaire du webhook signé (#58) : la source de vérité du
+  paiement par carte est Stripe reçue côté serveur, jamais la réponse du
+  navigateur (payments-stripe §2). L'encaissement en **espèces**, lui, naît
+  abouti — voir plus bas, il n'a pas de tiers à attendre.
 - **Il ne rembourse pas.** #63.
 
 ## Idempotence — trois mécanismes, du plus rapide au plus sûr
@@ -288,6 +293,19 @@ l'inversion la plus probable place ici une clé `sk_…`.
 | `test/pos.integration-spec.ts` | Les cinq routes servies, les gardes montées, `forbidNonWhitelisted` qui refuse un montant glissé dans un ticket |
 | `test/pos-tenant.isolation-spec.ts` | Les cinq routes traversées : rien du voisin n'est lisible, modifiable ni facturable |
 | `test/pos.isolation-spec.ts` | Contre un vrai PostgreSQL : la transaction du ticket, le scoping par l'extension, les `CHECK` de montant et les clés composites |
+| `__tests__/cash-payments.service.spec.ts` | Le chemin espèces : l'absence d'import Stripe, d'où vient le montant, la rejouabilité, les refus, la frontière du tenant |
+| `__tests__/payments-history.service.spec.ts` | Le tri, la fenêtre semi-ouverte, les filtres du rapprochement, la pagination |
+| `__tests__/sales-history.service.spec.ts` | L'historique des ventes : opérateur, horodatage, montants — et l'absence des lignes |
+| `__tests__/history-filters.spec.ts` | La frontière HTTP des deux historiques : bornes à offset explicite, critères absents, plafonds de pagination |
+
+Les trois routes de #62 n'ont pas de suite d'**intégration** ni d'**isolation**
+propre : `apps/api/test/` est hors de l'empreinte de fichiers du ticket, et une
+issue de suivi porte leur ajout à `pos.integration-spec.ts`,
+`pos-tenant.isolation-spec.ts` et `payments-tenant.isolation-spec.ts`. La
+frontière du tenant est en attendant exercée à deux endroits : au niveau du
+service, par les doubles qui reproduisent le scoping de l'extension Prisma, et
+en bout de chaîne par la recette fonctionnelle de la PR — jeton du salon voisin,
+404 attendu.
 
 ## Le POS — ce qui tient le total (#60)
 
@@ -311,6 +329,78 @@ La **taxe** est composée à partir de `tenants.tax_rate_bps`, un entier en poin
 de base. Un taux fractionnaire aurait introduit un type inexact sur le chemin de
 l'argent ; le calcul reste une multiplication d'entiers suivie d'une division
 entière, exacte et reproductible.
+
+## L'encaissement en espèces (#62)
+
+`POST /api/v1/payments/cash` règle un rendez-vous au comptoir. Le corps ne porte
+qu'un `appointmentId` : le montant est le prix figé à la réservation, l'opérateur
+vient du jeton, l'établissement de la revendication signée.
+
+### Ce qui tient le quatrième critère — « aucun appel Stripe »
+
+Il ne tient pas à la vigilance d'une relecture, mais à la forme du module :
+
+| Où | Ce qui l'empêche |
+|---|---|
+| `cash-payments.service.ts` | le fichier **n'importe rien** de `stripe/` — un test le vérifie sur ses spécificateurs d'import |
+| son constructeur | deux dépendances, le dépôt et le journal. Ni `StripeConfig`, ni `STRIPE_GATEWAY` |
+| `CashPaymentDraft` | pas de champ pour une référence de prestataire : il n'y en a aucune à écrire |
+
+C'est pourquoi c'est un service **à part** et non une méthode de
+`PaymentsService`, qui injecte les deux : y ajouter le chemin espèces aurait
+laissé la passerelle à un `this.stripe.` près.
+
+### Ce que la ligne porte, et en quoi elle diffère d'une carte
+
+| | Carte | Espèces |
+|---|---|---|
+| Statut à l'écriture | `PENDING` — le webhook conclut | `SUCCEEDED` — la caisse fait foi |
+| `captured_at` | posé par le webhook | posé à l'écriture |
+| `provider_payment_intent_id` | `pi_…` | **`null`**, par construction |
+
+### Rejouable, jamais deux fois
+
+`@@unique([tenantId, appointmentId])` tranche : un deuxième clic rend le
+**même** reçu — d'où un `200` et non un `201`, annoncer une création à chaque
+fois aurait laissé croire à deux recettes. Un encaissement *autre* — intention
+carte en cours, aboutie, remboursée — est refusé en `409` plutôt qu'écrasé : une
+pièce comptable ne se remplace pas en silence. Le cas d'une carte `FAILED` que le
+comptoir voudrait reprendre en espèces relève de #63, qui annulera l'intention.
+
+### Statuts de rendez-vous acceptés
+
+`CANCELLED` seul est refusé, en `422` : le créneau a été rendu, il n'y a pas de
+prestation à vendre. `COMPLETED` et `NO_SHOW` sont au contraire le cas nominal du
+comptoir — alors que le tunnel public les refuse, parce que rouvrir un débit en
+ligne sur un dossier clos n'est surveillé par personne.
+
+## Les deux historiques (#62)
+
+| Route | Ce qu'elle lit | Rang |
+|---|---|---|
+| `GET /api/v1/sales` | ce qui a été **vendu** — tickets, opérateur, horodatage, montants | `STAFF` |
+| `GET /api/v1/payments` | ce qui a été **encaissé** — moyen, statut, remboursements, références Stripe | `MANAGER` |
+
+Deux lectures et non une : la relève de fin de journée est un geste de comptoir,
+le rapprochement une décision de gestion. `GET /sales` rend les en-têtes **sans
+leurs lignes** — une page de cinquante tickets n'a pas à charger cinq cents
+lignes qu'aucun tableau n'affiche ; le détail se demande par `GET /sales/:id`.
+
+**Fenêtre** : `from` inclus, `to` **exclu**, à offset explicite. C'est la seule
+convention qui permette de poser deux journées de caisse bout à bout sans compter
+deux fois l'encaissement de minuit. Une fenêtre à l'envers est refusée en `422`
+plutôt que rendue en page vide : « aucune transaction ce jour-là » et « la
+fenêtre est à l'envers » appellent deux conduites différentes.
+
+### Le rapprochement, en deux ensembles
+
+| Lignes | Ce qui en fait foi |
+|---|---|
+| `?method=CARD` | le relevé Stripe, par `providerChargeId` puis `providerPaymentIntentId` |
+| `?method=CASH` | la caisse du salon — aucune référence de prestataire, par construction |
+
+`refunded` accompagne chaque ligne : une transaction remboursée reste au relevé,
+et un total qui l'ignorerait ne tomberait jamais juste.
 
 ## Dette connue
 
@@ -339,6 +429,23 @@ entière, exacte et reproductible.
   fiscal du salon relève du back-office, pas du POS : la colonne existe pour que
   le total soit calculable côté serveur, sa saisie viendra avec l'écran qui la
   porte. À `0` — la valeur par défaut — aucun ticket ne porte de ligne de taxe.
-- **Un ticket ne s'encaisse pas encore.** #60 compose l'addition ; le règlement
-  en espèces, l'historique filtrable et le rapprochement sont l'objet de #62, et
-  les remboursements de #63.
+- **`payments` n'a pas de colonne d'opérateur.** payments-stripe §4 demande
+  d'enregistrer une vente en espèces « avec `method: 'cash'`, l'opérateur,
+  l'horodatage et le montant ». Trois des quatre sont écrits en base ; l'opérateur
+  part au **journal structuré**, faute de colonne où l'écrire. L'ajouter —
+  `payments.operator_user_id`, `NOT NULL` sur les lignes `CASH` — est une
+  migration, hors de l'empreinte de #62 ; une issue de suivi la porte. Ce n'est
+  pas l'équivalent d'une écriture : un journal se purge, une colonne se
+  rapproche.
+- **`payments` n'a pas de lien vers `sales`.** Un règlement se rattache à un
+  **rendez-vous**, pas à un ticket : `POST /payments/cash` prend un
+  `appointmentId`, et `@@unique([tenantId, appointmentId])` en tire son
+  idempotence. Une vente retail autonome — ticket sans rendez-vous — n'a donc
+  aujourd'hui aucun moyen d'être réglée par cette route : il n'y a rien à quoi
+  rattacher sa ligne, et deux ventes autonomes réglées en espèces porteraient
+  toutes deux `appointment_id = NULL`, indiscernables. `payments.sale_id` est la
+  colonne qui ferme ce trou, même migration et même issue de suivi que
+  ci-dessus.
+- **Un ticket ne s'encaisse toujours pas.** #60 compose l'addition, #62 règle le
+  rendez-vous ; régler le **ticket** attend la colonne ci-dessus. Les
+  remboursements sont l'objet de #63.
