@@ -478,6 +478,32 @@ export class CatalogRepository {
   }
 
   /**
+   * Les fiches praticien de l'établissement courant (#421).
+   *
+   * La lecture qui manquait pour amorcer un salon : `listServiceStaff` ne rend
+   * que les praticiens **déjà affectés**, et la page publique n'en montre pas
+   * davantage. Tant que rien n'est affecté nulle part, les deux rendent une
+   * liste vide, et il n'existait aucun moyen de composer la première
+   * affectation — c'est une lecture de l'ensemble, pas d'une projection, qui la
+   * débloque.
+   *
+   * `@@index([tenantId, isActive])` sert les deux formes : le filtre d'activité
+   * par son second terme, la liste complète par son préfixe.
+   *
+   * Ordre stable par `displayName` : sans `orderBy`, PostgreSQL n'en garantit
+   * aucun et une liste de choix se réordonnerait d'un rendu à l'autre. Pas de
+   * pagination — l'effectif d'un salon est borné par nature, comme le nombre de
+   * rubriques de son catalogue.
+   */
+  public async listStaff(activeOnly: boolean): Promise<StaffRecord[]> {
+    return this.prisma.staff.findMany({
+      where: activeOnly ? { isActive: true } : {},
+      select: STAFF_SELECT,
+      orderBy: [{ displayName: 'asc' }],
+    });
+  }
+
+  /**
    * Les praticiens affectés à une prestation de l'établissement courant.
    *
    * `@@index([tenantId, staffId])` ne sert pas cette lecture-ci ; c'est l'unicité

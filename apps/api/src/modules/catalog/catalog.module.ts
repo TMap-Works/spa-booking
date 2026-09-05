@@ -10,6 +10,8 @@ import { ServiceStaffController } from './service-staff.controller';
 import { ServiceStaffService } from './service-staff.service';
 import { ServicesController } from './services.controller';
 import { ServicesService } from './services.service';
+import { StaffController } from './staff.controller';
+import { StaffService } from './staff.service';
 
 /**
  * Module `catalog` — prestations, rubriques, durées, tampons et prix (CDC §2.3).
@@ -38,6 +40,12 @@ import { ServicesService } from './services.service';
  * aura besoin de « quels praticiens pratiquent cette prestation », passera par
  * `ServicesService` — un module n'a pas à choisir entre plusieurs portes.
  *
+ * `StaffService` (#421) reste privé pour une raison de plus : il **lit** la
+ * fiche praticien sans en être propriétaire — le CDC §2.3 n'attribue cette
+ * entité à aucun module. L'exporter reviendrait à faire de `catalog` la porte
+ * d'entrée d'une donnée qui n'est pas la sienne, et à figer par l'usage un choix
+ * qui mérite d'être fait explicitement.
+ *
  * ## Un contrôleur public dans un module de back-office
  *
  * `PublicServicesController` sert `/api/v1/public/:tenantSlug/services`, sans
@@ -51,12 +59,14 @@ import { ServicesService } from './services.service';
   controllers: [
     ServicesController,
     ServiceStaffController,
+    StaffController,
     ServiceCategoriesController,
     PublicServicesController,
   ],
   providers: [
     ServicesService,
     ServiceStaffService,
+    StaffService,
     ServiceCategoriesService,
     PublicServicesService,
     CatalogRepository,
