@@ -72,6 +72,56 @@ export interface CreatePaymentIntentCommand {
   readonly metadata: Readonly<Record<string, string>>;
 }
 
+/**
+ * Un remboursement, réduit à ce que nous avons le droit de connaître — #63.
+ *
+ * Même discipline que `StripePaymentIntent` : aucune marque, aucun quatuor de
+ * chiffres, aucune date d'expiration. On rembourse une **intention** désignée
+ * par sa référence opaque, jamais une carte (payments-stripe §1).
+ */
+export interface StripeRefund {
+  /** `re_…` — la référence que la ligne `payment_refunds` conserve. */
+  readonly id: string;
+  /** Statut Stripe brut (`succeeded`, `pending`, `failed`, `canceled`). */
+  readonly status: string;
+  /** Montant rendu, dans la plus petite unité de la devise — jamais un flottant. */
+  readonly amountMinor: number;
+  /** Code ISO 4217, tel que Stripe le rend (minuscules). */
+  readonly currency: string;
+}
+
+/**
+ * Ce qu'il faut pour ordonner un remboursement — et rien de plus.
+ *
+ * ## Le montant est obligatoire, même pour un remboursement total
+ *
+ * Stripe rembourse la totalité quand on omet `amount`. Nous ne l'omettons
+ * jamais : le « total » se calcule côté serveur — ce qui a été capturé moins ce
+ * qui a déjà été rendu — et l'envoyer explicitement fait que notre cumul et
+ * celui du prestataire décrivent le même geste. Laisser Stripe décider aurait
+ * rendu un montant que notre vérification n'avait pas examiné.
+ *
+ * ## `idempotencyKey` est l'identifiant de notre propre ligne
+ *
+ * Stable, opaque, et posé **avant** l'appel : un renvoi après coupure réseau
+ * rend le remboursement déjà créé au lieu d'en créer un second. C'est la seule
+ * protection qui vaille ici — contrairement à une intention de paiement, un
+ * remboursement en double sort de l'argent.
+ *
+ * ## Ce que `metadata` ne porte pas
+ *
+ * Le motif du remboursement. Il est saisi par une personne et peut nommer la
+ * cliente ; il reste dans notre base, où le rapprochement le lit (CDC §5.1).
+ * Seuls des identifiants opaques partent chez le prestataire.
+ */
+export interface CreateRefundCommand {
+  /** `pi_…` — l'intention à rembourser. */
+  readonly paymentIntentId: string;
+  readonly amountMinor: number;
+  readonly idempotencyKey: string;
+  readonly metadata: Readonly<Record<string, string>>;
+}
+
 export interface StripeGateway {
   /**
    * Crée une intention de paiement.
@@ -90,4 +140,18 @@ export interface StripeGateway {
    * seconde intention pour le même rendez-vous.
    */
   retrievePaymentIntent(id: string): Promise<StripePaymentIntent>;
+
+  /**
+   * Ordonne un remboursement, total ou partiel (#63).
+   *
+   * L'appel est **idempotent** : rejoué avec la même `idempotencyKey`, il rend
+   * le remboursement déjà créé au lieu d'en émettre un second. Le montant
+   * accepté par Stripe est celui envoyé ; le cumul, lui, est vérifié côté
+   * serveur avant l'appel — Stripe refuserait un dépassement, mais le refuser
+   * nous-mêmes évite d'en faire un incident de prestataire.
+   *
+   * Le statut de l'encaissement n'est **pas** écrit ici, ni par l'appelant : il
+   * l'est par le webhook `charge.refunded`, et par lui seul (payments-stripe §6).
+   */
+  createRefund(command: CreateRefundCommand): Promise<StripeRefund>;
 }
