@@ -10,6 +10,7 @@ import {
   ONE_HOUR,
   cancellation,
   createExclusionHarness,
+  deskDraft,
   draft,
   inTenant,
   move,
@@ -882,6 +883,80 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
 
       expect(outcome.created.clientId).toBe(booked.clientId);
       expect(await filesFor(salon, email)).toHaveLength(1);
+    });
+  });
+
+  /**
+   * La fiche **désignée** du comptoir, jugée par les clés étrangères (#461).
+   *
+   * Ce que seule une vraie base peut établir : que `{ clientId }` n'ouvre aucun
+   * chemin autour de la frontière du tenant. Aucune comparaison n'est écrite
+   * dans `AppointmentsRepository` — ce sont
+   * `appointments_client_id_fkey` et `appointments_tenant_id_client_id_fkey` qui
+   * refusent la ligne, et le repository qui traduit leur refus en 404.
+   *
+   * Un double en mémoire ne prouverait rien ici : il reproduirait la conclusion
+   * qu'on cherche à vérifier.
+   */
+  describe('la fiche cliente désignée par le comptoir', () => {
+    it('pose le rendez-vous sans créer aucune fiche quand elle est du salon', async () => {
+      const start = new Date('2027-02-03T09:00:00.000Z');
+      const avant = await prismaUnscoped.user.count({ where: { tenantId: salon.tenantId } });
+
+      const created = await inTenant(salon.tenantId, () =>
+        repository.create(deskDraft(salon, start, new Date(start.getTime() + ONE_HOUR))),
+      );
+
+      expect(created.clientId).toBe(salon.clientId);
+      // Le comptoir désigne, il ne crée pas : la porte `crm` n'est pas
+      // traversée, et l'annuaire du salon ne bouge pas d'une ligne.
+      expect(await prismaUnscoped.user.count({ where: { tenantId: salon.tenantId } })).toBe(avant);
+    });
+
+    it('rend 404 pour une fiche qui n’existe nulle part', async () => {
+      const start = new Date('2027-02-04T09:00:00.000Z');
+
+      await expect(
+        inTenant(salon.tenantId, () =>
+          repository.create(
+            deskDraft(
+              salon,
+              start,
+              new Date(start.getTime() + ONE_HOUR),
+              salon.staffId,
+              '99999999-9999-4999-8999-999999999999',
+            ),
+          ),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it('rend le même 404 pour la fiche du salon voisin, et n’écrit rien', async () => {
+      const start = new Date('2027-02-05T09:00:00.000Z');
+
+      await expect(
+        inTenant(salon.tenantId, () =>
+          repository.create(
+            deskDraft(
+              salon,
+              start,
+              new Date(start.getTime() + ONE_HOUR),
+              salon.staffId,
+              // Tout est du salon, sauf la cliente : c'est le seul champ qui
+              // tente la traversée, et la clé étrangère composite le refuse.
+              voisin.clientId,
+            ),
+          ),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundError);
+
+      // 404 et non 403 : les deux refus doivent être indiscernables, faute de
+      // quoi la différence sert de sonde d'annuaire (tenant-isolation §4). Et
+      // rien n'a été écrit — un `ROLLBACK`, pas une ligne orpheline.
+      const posées = await prismaUnscoped.appointment.count({
+        where: { tenantId: salon.tenantId, startsAt: start },
+      });
+      expect(posées).toBe(0);
     });
   });
 

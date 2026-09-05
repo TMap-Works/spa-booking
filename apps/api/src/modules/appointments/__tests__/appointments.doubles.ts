@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { InvalidStateTransitionError, NotFoundError } from '../../../common/errors';
+import { ConflictError, InvalidStateTransitionError, NotFoundError } from '../../../common/errors';
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
 import { getTenantId } from '../../../common/tenant';
 import type { CacheConnection, CacheLockOutcome } from '../../../infrastructure/cache/cache.connection';
@@ -18,9 +18,10 @@ import type {
   AppointmentRecord,
   CancelDraft,
   ClientAppointmentsQuery,
-  GuestContact,
+  ClientReference,
   RescheduleDraft,
   RescheduleOutcome,
+  StatusChangeDraft,
 } from '../appointments.types';
 
 /**
@@ -159,6 +160,23 @@ export class FakeAppointmentsRepository {
   public readonly clients: StoredClient[] = [];
   /** Fuseau par établissement — `UTC` par défaut, voir `seedTimeZone`. */
   private readonly timeZones = new Map<string, string | null>();
+  /** Affichage d'agenda par prestation — voir `seedServiceDisplay`. */
+  private readonly displays = new Map<string, AgendaDisplay>();
+
+  /**
+   * Ce que la jointure d'agenda rendrait pour cette prestation (#461).
+   *
+   * `seedAppointment` laisse chaque suite décrire l'affichage des lignes
+   * qu'elle sème ; les lignes que `create` et `reschedule` **écrivent**, elles,
+   * n'ont personne pour le faire — et le vrai les relit par jointure. Sans ce
+   * stock, elles retomberaient sur `DEFAULT_DISPLAY`, dont le tampon avant vaut
+   * zéro : la ligne rendue par une prise de rendez-vous au comptoir aurait
+   * annoncé l'heure **occupée** au lieu de l'heure du soin, et la suite aurait
+   * verdi sur une réponse fausse de dix minutes.
+   */
+  public seedServiceDisplay(serviceId: string, display: Partial<AgendaDisplay>): void {
+    this.displays.set(serviceId, { ...DEFAULT_DISPLAY, ...display });
+  }
 
   /**
    * Une ligne `users` déjà présente — la cliente qui revient, ou le compte du
@@ -300,7 +318,8 @@ export class FakeAppointmentsRepository {
       cancelledBy: null,
       cancellationReason: null,
       createdAt: new Date(),
-      display: DEFAULT_DISPLAY,
+      // Ce que la jointure rendrait, et non un défaut : voir `seedServiceDisplay`.
+      display: this.displayOf(draft.serviceId),
     };
     this.appointments.push(stored);
     return toRecord(stored);
@@ -419,12 +438,62 @@ export class FakeAppointmentsRepository {
     return toRecord(found);
   }
 
+  /**
+   * La transition de statut : atomique, ou rien (#461).
+   *
+   * Reproduit les deux propriétés du vrai dont l'appelant dépend :
+   *
+   * 1. l'écriture est **conditionnée au statut attendu** — c'est le test-et-pose
+   *    que l'`updateMany` filtré rend en base. Une ligne qui n'est plus dans
+   *    l'état lu rend `ConflictError`, jamais une écriture silencieuse ;
+   * 2. un rendez-vous d'un autre établissement est **invisible**, donc il ne
+   *    compte pas : `where` porte le tenant courant, comme l'extension.
+   *
+   * Ce qu'il ne reproduit pas, et n'a pas à reproduire : la validité de la
+   * transition. Elle est jugée par `AppointmentLifecycleService`, avant l'appel.
+   */
+  public async changeStatus(draft: StatusChangeDraft): Promise<void> {
+    const tenantId = this.requireTenant();
+
+    const found = this.appointments.find(
+      (candidate) =>
+        candidate.tenantId === tenantId &&
+        candidate.id === draft.appointmentId &&
+        candidate.status === draft.from,
+    );
+
+    if (found === undefined) {
+      throw new ConflictError(
+        'Ce rendez-vous vient d’être modifié. Rechargez-le avant de changer son statut.',
+        { appointmentId: draft.appointmentId },
+      );
+    }
+
+    found.status = draft.to;
+  }
+
   public async findById(id: string): Promise<AppointmentRecord | null> {
     const tenantId = this.requireTenant();
     const found = this.appointments.find(
       (candidate) => candidate.tenantId === tenantId && candidate.id === id,
     );
     return found === undefined ? null : toRecord(found);
+  }
+
+  /**
+   * Une ligne d'agenda par identifiant (#461).
+   *
+   * Le même `toAgendaRecord` que `listAgenda`, sur une ligne au lieu d'une
+   * fenêtre : c'est ce qui fait que la réponse d'une écriture de comptoir est
+   * indiscernable de la case que la grille affiche déjà. Scopée au tenant, donc
+   * `null` — et 404 — pour un rendez-vous du salon voisin.
+   */
+  public async findAgendaById(id: string): Promise<AgendaAppointmentRecord | null> {
+    const tenantId = this.requireTenant();
+    const found = this.appointments.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.id === id,
+    );
+    return found === undefined ? null : this.toAgendaRecord(found);
   }
 
   /**
@@ -531,6 +600,11 @@ export class FakeAppointmentsRepository {
     return this.timeZones.has(tenantId) ? (this.timeZones.get(tenantId) ?? null) : 'UTC';
   }
 
+  /** Ce que la jointure rendrait pour cette prestation — le défaut à défaut. */
+  private displayOf(serviceId: string): AgendaDisplay {
+    return this.displays.get(serviceId) ?? DEFAULT_DISPLAY;
+  }
+
   /** Une ligne d'agenda, cliente jointe et affichage dénormalisé (#444). */
   private toAgendaRecord(stored: StoredAppointment): AgendaAppointmentRecord {
     // Résolue dans le même établissement, jamais par identifiant seul : c'est ce
@@ -580,8 +654,28 @@ export class FakeAppointmentsRepository {
    */
   private resolveClient(
     tenantId: string,
-    contact: GuestContact,
+    client: ClientReference,
   ): { id: string; created: boolean } {
+    if ('clientId' in client) {
+      // La forme du comptoir (#461) : la fiche est **désignée**, pas résolue.
+      // Le vrai la laisse descendre jusqu'aux clés étrangères composites
+      // `(tenant_id, client_id)`, et `AppointmentsRepository.create` traduit
+      // leur refus en 404. Ce double reproduit la seule chose dont l'appelant
+      // dépend : une fiche inconnue de **cet** établissement est introuvable,
+      // jamais interdite — un 403 confirmerait son existence ailleurs.
+      const known = this.clients.some(
+        (candidate) => candidate.tenantId === tenantId && candidate.id === client.clientId,
+      );
+
+      if (!known) {
+        throw new NotFoundError('Cliente introuvable.');
+      }
+
+      return { id: client.clientId, created: false };
+    }
+
+    const contact = client.contact;
+
     const existing = this.clients.find(
       (candidate) => candidate.tenantId === tenantId && candidate.email === contact.email,
     );
