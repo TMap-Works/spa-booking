@@ -57,7 +57,7 @@ seulement écrit.
 | Méthode | Chemin | Rang |
 |---|---|---|
 | `POST` | `/api/v1/public/:tenantSlug/payments/intents` | — (ouverte) |
-| `POST` | `/api/v1/stripe/webhook` | — (signature Stripe) |
+| `POST` | `/api/v1/payments/webhooks/stripe` | — (signature Stripe) |
 | `GET` | `/api/v1/products` | `STAFF` |
 | `POST` | `/api/v1/products` | `MANAGER` |
 | `PATCH` | `/api/v1/products/:id` | `MANAGER` |
@@ -358,7 +358,7 @@ créer une intention.
 | `__tests__/stripe.config.spec.ts` | Les trois valeurs, la frontière entre elles, et la table « refuser de démarrer » |
 | `__tests__/payments.boundaries.spec.ts` | Le confinement de `PRISMA_UNSCOPED`, l'unicité du fichier d'erreurs et de la porte de configuration |
 | `__tests__/stripe-webhook.queue.spec.ts` | Le différé, l'absence de propagation d'erreur, l'attente à l'arrêt |
-| `__tests__/stripe-webhook.service.spec.ts` | La résolution d'établissement et l'alerte de litige |
+| `__tests__/stripe-webhook.service.spec.ts` | La résolution d'établissement, l'alerte de litige, et — depuis que le double applique les gardes de statut (#447) — la ligne « la ligne existe, le garde de statut décline → marque **posée** » de la table du §2 ci-dessus, sans Docker |
 | `test/payments-webhook.integration-spec.ts` | La route servie, le corps **brut**, le 400 sans traitement, le 200 rendu avant le traitement |
 | `test/payments-webhook.isolation-spec.ts` | Contre un vrai PostgreSQL : la frontière entre établissements, l'unicité qui tranche, la transaction qui fait bloc, et la marque qui n'est **pas** posée quand aucun encaissement ne porte la référence (#410) |
 | `__tests__/pos.types.spec.ts` | Le témoin du vocabulaire du POS contre `enum SaleItemKind` |
