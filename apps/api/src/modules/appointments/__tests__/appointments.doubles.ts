@@ -4,6 +4,8 @@ import { InvalidStateTransitionError, NotFoundError } from '../../../common/erro
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
 import { getTenantId } from '../../../common/tenant';
 import type { CacheConnection, CacheLockOutcome } from '../../../infrastructure/cache/cache.connection';
+import { ClientEmailNotBookableError } from '../../crm/crm.errors';
+import type { UserRole } from '../../identity/roles';
 import type { AppointmentCancelledBy, AppointmentStatus } from '../appointment-status';
 import { OCCUPYING_STATUSES, occupiesSlot } from '../appointment-status';
 import { SlotNoLongerAvailableError } from '../appointments.errors';
@@ -38,8 +40,9 @@ import type {
  *    le même établissement, parmi les statuts qui occupent le créneau, lève la
  *    même `SlotNoLongerAvailableError` que la traduction du refus de PostgreSQL.
  *    Bornes `[)` : deux rendez-vous adjacents restent légaux ;
- * 4. l'**unicité `(tenant_id, email)`** des fiches clientes, qui est ce qui rend
- *    `findOrCreateClient` idempotent ;
+ * 4. l'**unicité `(tenant_id, email)`** des fiches clientes, et le refus d'une
+ *    adresse portée par un compte du personnel — c'est la décision de la porte
+ *    `crm` (#313), reproduite ici parce que `create` la traverse désormais ;
  * 5. l'**atomicité du report** — l'annulation précède l'insertion, donc libère
  *    l'intervalle d'origine ; et si l'insertion est refusée, l'ancien rendez-vous
  *    retrouve son statut. C'est ce que le `ROLLBACK` fait en vrai, et un double
@@ -140,6 +143,15 @@ interface StoredClient {
   firstName: string;
   lastName: string;
   phone: string | null;
+  /**
+   * Le rôle de la ligne `users` (#313).
+   *
+   * Porté par le stock parce que la résolution le **juge** : une adresse tenue
+   * par un `MANAGER` ou un `ADMIN` fait refuser la réservation plutôt que
+   * d'accrocher un rendez-vous public à un compte du salon. Un double qui
+   * l'ignorerait ferait passer pour vert exactement le cas que #313 tranche.
+   */
+  role: UserRole;
 }
 
 export class FakeAppointmentsRepository {
@@ -148,13 +160,20 @@ export class FakeAppointmentsRepository {
   /** Fuseau par établissement — `UTC` par défaut, voir `seedTimeZone`. */
   private readonly timeZones = new Map<string, string | null>();
 
-  /** Une fiche cliente déjà présente — la cliente qui revient. */
+  /**
+   * Une ligne `users` déjà présente — la cliente qui revient, ou le compte du
+   * personnel qui porte l'adresse qu'on veut réserver (#313).
+   *
+   * `role` vaut `CLIENT` par défaut : c'est le cas dominant, et les suites qui
+   * exercent le refus le posent explicitement.
+   */
   public seedClient(input: {
     tenantId: string;
     email: string;
     firstName?: string;
     lastName?: string;
     phone?: string | null;
+    role?: UserRole;
   }): StoredClient {
     const client: StoredClient = {
       tenantId: input.tenantId,
@@ -163,6 +182,7 @@ export class FakeAppointmentsRepository {
       firstName: input.firstName ?? 'Cliente',
       lastName: input.lastName ?? 'Fidèle',
       phone: input.phone ?? null,
+      role: input.role ?? 'CLIENT',
     };
     this.clients.push(client);
     return client;
@@ -229,17 +249,39 @@ export class FakeAppointmentsRepository {
     this.timeZones.set(tenantId, timeZone);
   }
 
+  /**
+   * La réservation : fiche cliente et rendez-vous, **ou rien** (#313).
+   *
+   * L'ordre reproduit celui du vrai, à l'intérieur de sa transaction : la fiche
+   * est résolue — donc éventuellement écrite — **avant** que le créneau ne soit
+   * jugé, puisque c'est l'insertion du rendez-vous que la contrainte d'exclusion
+   * refuse. Ce qui la fait disparaître d'un refus n'est donc pas un ordre habile,
+   * c'est le `ROLLBACK`, reproduit ci-dessous comme `reschedule` le fait déjà.
+   *
+   * L'écrire dans l'autre sens — juger le créneau, puis écrire la fiche — aurait
+   * rendu le même résultat sur le cas nominal et menti sur un autre : une adresse
+   * de compte du personnel sur un créneau déjà pris sortirait en
+   * `SLOT_NO_LONGER_AVAILABLE` ici et en `CLIENT_EMAIL_NOT_BOOKABLE` en vrai.
+   */
   public async create(draft: AppointmentDraft): Promise<AppointmentRecord> {
     const tenantId = this.requireTenant();
 
+    const resolved = this.resolveClient(tenantId, draft.client);
+
     if (this.overlaps(tenantId, draft)) {
+      // Le `ROLLBACK` : sans ces deux lignes, chaque course perdue laisserait une
+      // fiche publique sans rendez-vous au fichier du salon — le défaut même que
+      // #313 supprime.
+      if (resolved.created) {
+        this.clients.pop();
+      }
       throw new SlotNoLongerAvailableError(draft.staffId, draft.startsAt);
     }
 
     const stored: StoredAppointment = {
       tenantId,
       id: randomUUID(),
-      clientId: draft.clientId,
+      clientId: resolved.id,
       staffId: draft.staffId,
       serviceId: draft.serviceId,
       startsAt: draft.startsAt,
@@ -520,16 +562,35 @@ export class FakeAppointmentsRepository {
     };
   }
 
-  public async findOrCreateClient(contact: GuestContact): Promise<string> {
-    const tenantId = this.requireTenant();
-
+  /**
+   * La porte `crm` reproduite : la fiche de ces coordonnées, trouvée ou créée
+   * (#313).
+   *
+   * Trois propriétés du vrai, et rien de plus :
+   *
+   * 1. la clé est `(tenant_id, email)` — une cliente qui revient garde une seule
+   *    fiche, et le salon voisin n'en partage aucune ;
+   * 2. une fiche trouvée n'est **pas** mise à jour : un appel public ne réécrit
+   *    ni le nom ni le numéro d'une cliente existante ;
+   * 3. une adresse portée par un compte **non client** est refusée, jamais
+   *    réutilisée — `ClientEmailNotBookableError`, donc 409.
+   *
+   * `created` dit à l'appelant s'il y a une écriture à défaire : c'est ce qui
+   * tient le `ROLLBACK` de `create`.
+   */
+  private resolveClient(
+    tenantId: string,
+    contact: GuestContact,
+  ): { id: string; created: boolean } {
     const existing = this.clients.find(
       (candidate) => candidate.tenantId === tenantId && candidate.email === contact.email,
     );
+
     if (existing !== undefined) {
-      // Comme le vrai : une fiche trouvée n'est **pas** mise à jour. Un appel
-      // public ne réécrit pas le nom ni le numéro d'une cliente existante.
-      return existing.id;
+      if (existing.role !== 'CLIENT') {
+        throw new ClientEmailNotBookableError();
+      }
+      return { id: existing.id, created: false };
     }
 
     const created: StoredClient = {
@@ -539,9 +600,10 @@ export class FakeAppointmentsRepository {
       firstName: contact.firstName,
       lastName: contact.lastName,
       phone: contact.phone,
+      role: 'CLIENT',
     };
     this.clients.push(created);
-    return created.id;
+    return { id: created.id, created: true };
   }
 
   /**

@@ -96,11 +96,28 @@ export class PublicAppointmentsController {
    * créneau, et son `details.staffId` vaut `null` — le corps ne nomme jamais un
    * praticien que la cliente n'a pas désigné.
    *
+   * **409 `CLIENT_EMAIL_NOT_BOOKABLE`** est l'autre conflit, et il n'a rien à
+   * voir avec l'agenda (#313) : l'adresse envoyée est celle d'un compte du
+   * personnel de cet établissement, à laquelle une réservation en ligne ne se
+   * rattache jamais. Le front ne doit pas le traiter comme le précédent —
+   * réafficher les créneaux n'y changerait rien —, mais demander une autre
+   * adresse. C'est ce que le `code` distinct existe pour dire.
+   *
+   * Une adresse **déjà cliente** du salon, elle, rend 201 comme une adresse
+   * inconnue : le refus ne dit donc rien du fichier client, seulement de
+   * l'annuaire du personnel.
+   *
    * **429** au-delà de dix réservations par minute et par adresse. Le quota est
    * du même ordre que celui de `/auth/register` — cinq inscriptions par minute —
    * et pour la même raison : une cliente réserve un rendez-vous, pas dix, et le
    * seul appelant que cette borne dérange est celui qui remplit l'agenda d'un
    * salon pour l'empêcher de vendre.
+   *
+   * ## Ce que cette route écrit, et où
+   *
+   * Un rendez-vous, et — si l'adresse est nouvelle — une fiche cliente. Les deux
+   * dans **une seule transaction** depuis #313 : un 409 de créneau ne laisse plus
+   * de fiche derrière lui. La fiche est écrite par `crm`, jamais par ce module.
    */
   @Post()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
@@ -111,7 +128,13 @@ export class PublicAppointmentsController {
     description: 'Établissement ou prestation introuvable, ou prestation retirée du catalogue.',
   })
   @ApiConflictResponse({
-    description: 'Le créneau n’est pas — ou n’est plus — réservable (`SLOT_NO_LONGER_AVAILABLE`).',
+    description:
+      'Deux refus distincts, que le champ `code` sépare. ' +
+      '`SLOT_NO_LONGER_AVAILABLE` : le créneau n’est pas — ou n’est plus — réservable. ' +
+      '`CLIENT_EMAIL_NOT_BOOKABLE` : l’adresse envoyée est celle d’un compte du personnel ' +
+      'de cet établissement, à laquelle une réservation en ligne ne se rattache jamais ' +
+      '(#313). Le second est définitif : réessayer avec le même corps rendra le même refus, ' +
+      'et c’est une autre adresse qu’il faut proposer à la cliente.',
   })
   @ApiTooManyRequestsResponse({ description: 'Quota de réservations dépassé pour cette adresse.' })
   public async book(@Body() body: BookAppointmentDto): Promise<AppointmentDto> {

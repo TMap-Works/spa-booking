@@ -2,7 +2,12 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
-import { CustomerEmailTakenError } from './crm.errors';
+import type { ClientContact, ClientDirectoryScope } from './client-directory.service';
+import {
+  ClientEmailNotBookableError,
+  ClientRecordRaceError,
+  CustomerEmailTakenError,
+} from './crm.errors';
 import type { Customer, CustomerSummary, CustomerVisit } from './crm.types';
 
 /**
@@ -41,6 +46,17 @@ import type { Customer, CustomerSummary, CustomerVisit } from './crm.types';
  *
  * Ce que le module n'écrit **jamais** : aucune ligne d'`appointments`. La
  * lecture est la seule opération de ce dépôt sur cette table.
+ *
+ * ## Une méthode écrit dans la transaction d'un autre module
+ *
+ * `resolveClientWithin` prend une portée de transaction en paramètre au lieu
+ * d'utiliser `this.prisma` (#313). C'est la seule de ce fichier, et sa raison est
+ * un critère d'atomicité qui traverse deux modules : la fiche cliente d'une
+ * réservation d'invité et le rendez-vous doivent être écrits ou abandonnés
+ * **ensemble**, faute de quoi chaque course perdue sur un créneau laisse une
+ * fiche publique sans rendez-vous. Le client reçu est le même client scopé, si
+ * bien que l'extension de tenant continue de s'appliquer mot pour mot. Le détail
+ * de l'arbitrage est dans `client-directory.service.ts`, la porte qui l'expose.
  */
 
 /** Le compte tel que le fichier client le lit — jamais l'empreinte, jamais le tenant. */
@@ -300,6 +316,100 @@ export class CrmRepository {
     } catch (error: unknown) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === UNIQUE_VIOLATION) {
         throw new CustomerEmailTakenError();
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * La fiche cliente de ces coordonnées — trouvée, ou créée sans compte —
+   * **dans la transaction de l'appelant** (#313).
+   *
+   * C'est l'écriture que `AppointmentsRepository.findOrCreateClient` faisait
+   * jusqu'ici, déplacée dans le module qui possède la table (api-module §3).
+   *
+   * ## Pourquoi `scope` et non `this.prisma`
+   *
+   * Parce que le critère à tenir est une propriété de **transaction** : « un 409
+   * de créneau ne laisse aucune fiche derrière lui ». Écrire par `this.prisma`
+   * ouvrirait une transaction implicite distincte de celle qui pose le
+   * rendez-vous, et la fiche survivrait au `ROLLBACK` de l'insertion. Le client
+   * reçu est le scopé, dérivé du même : l'extension y injecte `tenantId` sur la
+   * lecture comme sur la création, et rien ici ne le nomme.
+   *
+   * ## La lecture ne filtre **pas** sur le rôle, et c'est le propos
+   *
+   * `findFirst({ where: { email } })` sans `role`, puis une décision explicite sur
+   * ce qu'elle trouve. L'inverse — filtrer sur `role: 'CLIENT'` dans le `where` —
+   * aurait rendu `null` pour une adresse portée par un compte du personnel, donc
+   * conduit à une création que `@@unique([tenantId, email])` refuse en `P2002`
+   * nu : un 500 sur un cas parfaitement prévisible. Lire le rôle et le juger ici
+   * est ce qui transforme cette collision en un refus choisi
+   * (`ClientEmailNotBookableError`, 409).
+   *
+   * ## Ce que le prédicat ne regarde pas : `is_active`
+   *
+   * Une fiche désactivée est réutilisée telle quelle. Elle désigne la **même
+   * personne**, et la désactivation gouverne les écrans du back-office — la
+   * recherche du fichier client l'exclut par défaut —, pas l'identité de qui
+   * réserve. L'écarter n'aurait laissé que deux issues, l'une impossible et
+   * l'autre nuisible : créer une seconde fiche, ce que l'unicité interdit, ou
+   * refuser — c'est-à-dire faire de cette route publique un oracle sur le fichier
+   * client du salon, précisément la donnée que ce module protège.
+   *
+   * ## Ce que cette méthode ne fait **pas** : mettre à jour
+   *
+   * Une fiche trouvée est rendue telle quelle. Le prénom, le nom et le téléphone
+   * envoyés par un visiteur non authentifié n'écrasent jamais ceux d'une fiche
+   * existante : sans cela, un appel public suffirait à réécrire le nom et le
+   * numéro de n'importe quelle cliente dont on connaît l'adresse. La correction
+   * d'une fiche relève du back-office, sous garde (`PATCH /customers/:id`).
+   *
+   * @throws {ClientEmailNotBookableError} l'adresse porte un compte du personnel.
+   * @throws {ClientRecordRaceError} deux créations concurrentes, dont celle-ci a
+   * perdu — l'appelant rejoue sa transaction.
+   */
+  public async resolveClientWithin(
+    scope: ClientDirectoryScope,
+    contact: ClientContact,
+  ): Promise<string> {
+    const existing = await scope.user.findFirst({
+      where: { email: contact.email },
+      // Le rôle est lu **pour être jugé**, jamais rendu : c'est la seule
+      // information dont la décision a besoin, et elle ne quitte pas ce fichier.
+      select: { id: true, role: true },
+    });
+
+    if (existing !== null) {
+      if (existing.role !== CUSTOMER_ROLE) {
+        throw new ClientEmailNotBookableError();
+      }
+      return existing.id;
+    }
+
+    try {
+      const created = await scope.user.create({
+        data: withScopedTenant<Prisma.UserUncheckedCreateInput>({
+          email: contact.email,
+          role: CUSTOMER_ROLE,
+          // Aucun mot de passe : la fiche existe pour être jointe, pas pour se
+          // connecter. `AuthService` refuse déjà une identité sans empreinte.
+          passwordHash: null,
+          firstName: contact.firstName,
+          lastName: contact.lastName,
+          phone: contact.phone,
+          // Aucune note interne : le dossier du salon ne s'écrit pas depuis une
+          // surface publique. `ClientContact` n'a d'ailleurs pas de champ pour.
+        }),
+        select: { id: true },
+      });
+      return created.id;
+    } catch (error: unknown) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === UNIQUE_VIOLATION) {
+        // Relire l'adresse ici serait vain : la violation a abandonné la
+        // transaction, et toute instruction suivante échouerait en `25P02`. Le
+        // réessai appartient à celui qui a ouvert la transaction.
+        throw new ClientRecordRaceError();
       }
       throw error;
     }

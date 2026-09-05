@@ -11,6 +11,8 @@ import type {
   RescheduleDraft,
 } from '../src/modules/appointments/appointments.types';
 import { AvailabilityRepository } from '../src/modules/availability/availability.repository';
+import { ClientDirectoryService } from '../src/modules/crm/client-directory.service';
+import { CrmRepository } from '../src/modules/crm/crm.repository';
 import { createDisposableDatabase, type DisposableDatabase } from './utils/disposable-database';
 
 /**
@@ -75,6 +77,23 @@ export const ONE_HOUR = 3_600_000;
 export interface Fixture {
   readonly tenantId: string;
   readonly clientId: string;
+  /**
+   * L'adresse de la fiche cliente semée (#313).
+   *
+   * C'est par elle que `draft()` désigne la cliente désormais : depuis que la
+   * résolution vit dans la transaction d'insertion, un brouillon porte des
+   * **coordonnées** et non un identifiant. Elle est rendue pour que les suites
+   * puissent réserver au nom de la fiche déjà semée — donc sans en créer une
+   * seconde à chaque appel — et pour qu'elles puissent l'observer en base.
+   */
+  readonly clientEmail: string;
+  /**
+   * Un compte `MANAGER` de cet établissement, avec son adresse (#313).
+   *
+   * Il existe pour un seul cas : réserver sous une adresse portée par un compte
+   * du personnel doit être **refusé**, jamais accroché à ce compte.
+   */
+  readonly managerEmail: string;
   readonly staffId: string;
   readonly secondStaffId: string;
   readonly serviceId: string;
@@ -123,13 +142,28 @@ async function seedTenant(prismaUnscoped: PrismaClient, label: string): Promise<
   // Le client non scopé est le bon outil pour semer : ces lignes précèdent
   // toute requête HTTP, donc tout contexte de tenant. Le `tenantId` est écrit
   // explicitement — c'est ce que tenant-isolation §3 exige d'un accès non scopé.
+  const clientEmail = `client-${randomUUID()}@example.test`;
   const client = await prismaUnscoped.user.create({
     data: {
       tenantId,
-      email: `client-${randomUUID()}@example.test`,
+      email: clientEmail,
       role: 'CLIENT',
       firstName: 'Alice',
       lastName: 'Martin',
+    },
+  });
+
+  // Le compte du personnel qui porte une adresse « réservable » (#313) : c'est
+  // lui qui rend exerçable le refus, et il est semé d'office parce qu'il ne coûte
+  // rien et qu'aucune suite ne peut le fabriquer sans le client non scopé.
+  const managerEmail = `manager-${randomUUID()}@example.test`;
+  await prismaUnscoped.user.create({
+    data: {
+      tenantId,
+      email: managerEmail,
+      role: 'MANAGER',
+      firstName: 'Manon',
+      lastName: 'Gérante',
     },
   });
 
@@ -163,6 +197,8 @@ async function seedTenant(prismaUnscoped: PrismaClient, label: string): Promise<
   return {
     tenantId,
     clientId: client.id,
+    clientEmail,
+    managerEmail,
     staffId: await staffOf('Camille'),
     secondStaffId: await staffOf('Dominique'),
     serviceId: service.id,
@@ -197,9 +233,16 @@ export async function createExclusionHarness(): Promise<ExclusionHarness> {
     throw error;
   }
 
+  // La **vraie** porte de `crm`, câblée à la main comme le ferait Nest (#313) :
+  // c'est ici, et nulle part ailleurs, que la résolution de la fiche cliente est
+  // exercée contre un vrai PostgreSQL — donc que « un 409 ne laisse aucune fiche
+  // derrière lui » se prouve par un `ROLLBACK` réel plutôt que par un double.
+  const scopedForClients = createScopedPrismaClient(prismaUnscoped);
+  const clients = new ClientDirectoryService(new CrmRepository(scopedForClients));
+
   return {
     prismaUnscoped,
-    repository: new AppointmentsRepository(createScopedPrismaClient(prismaUnscoped)),
+    repository: new AppointmentsRepository(createScopedPrismaClient(prismaUnscoped), clients),
     availability: new AvailabilityRepository(createScopedPrismaClient(prismaUnscoped)),
     seed: (label: string) => seedTenant(prismaUnscoped, label),
     close: async () => {
@@ -233,15 +276,24 @@ export async function inTenant<T>(tenantId: string, fn: () => Promise<T>): Promi
   });
 }
 
-/** Un brouillon de rendez-vous pour cet établissement, sur ces bornes. */
+/**
+ * Un brouillon de rendez-vous pour cet établissement, sur ces bornes.
+ *
+ * Il porte des **coordonnées** et non un `clientId` depuis #313 : la fiche est
+ * résolue par `crm` dans la transaction d'insertion. `email` vaut par défaut
+ * l'adresse de la fiche déjà semée, si bien qu'un brouillon nominal se rattache à
+ * elle sans en créer une seconde — et qu'une suite qui veut exercer la création,
+ * la course ou le refus passe l'adresse qui l'intéresse.
+ */
 export function draft(
   fixture: Fixture,
   startsAt: Date,
   endsAt: Date,
   staffId = fixture.staffId,
+  email = fixture.clientEmail,
 ): AppointmentDraft {
   return {
-    clientId: fixture.clientId,
+    client: { firstName: 'Alice', lastName: 'Martin', email, phone: null },
     staffId,
     serviceId: fixture.serviceId,
     startsAt,

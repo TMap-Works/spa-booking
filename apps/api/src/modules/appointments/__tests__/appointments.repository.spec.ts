@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { ConflictError, InvalidStateTransitionError, NotFoundError } from '../../../common/errors';
 import { runWithTenant } from '../../../common/tenant/tenant-context';
 import type { ScopedPrismaClient } from '../../../infrastructure/database/prisma-clients';
+import type { ClientDirectoryService } from '../../crm/client-directory.service';
+import { ClientEmailNotBookableError, ClientRecordRaceError } from '../../crm/crm.errors';
 import { SlotNoLongerAvailableError } from '../appointments.errors';
 import { AppointmentsRepository } from '../appointments.repository';
 import type { AppointmentDraft, RescheduleDraft } from '../appointments.types';
@@ -23,8 +25,18 @@ import type { AppointmentDraft, RescheduleDraft } from '../appointments.types';
  * l'ordonnancement.
  */
 
+/** La fiche que la porte `crm` rend — celle que l'insertion doit désigner (#313). */
+const CLIENT_ID = '11111111-1111-4111-8111-111111111111';
+
 const DRAFT: AppointmentDraft = {
-  clientId: '11111111-1111-4111-8111-111111111111',
+  // Des coordonnées, et non un identifiant : la résolution a lieu **dans** la
+  // transaction depuis #313.
+  client: {
+    firstName: 'Camille',
+    lastName: 'Rakoto',
+    email: 'camille@example.test',
+    phone: null,
+  },
   staffId: '22222222-2222-4222-8222-222222222222',
   serviceId: '33333333-3333-4333-8333-333333333333',
   startsAt: new Date('2026-09-01T09:00:00.000Z'),
@@ -35,7 +47,7 @@ const DRAFT: AppointmentDraft = {
 
 const ROW = {
   id: '44444444-4444-4444-8444-444444444444',
-  clientId: DRAFT.clientId,
+  clientId: CLIENT_ID,
   staffId: DRAFT.staffId,
   serviceId: DRAFT.serviceId,
   startsAt: DRAFT.startsAt,
@@ -80,8 +92,59 @@ interface Double {
   rawSql(): string[];
   /** Les paramètres liés du SQL brut, dans l'ordre. */
   rawValues(): unknown[];
-  /** L'ordre des opérations, verrou et insertion confondus. */
+  /** L'ordre des opérations — verrou, résolution de la fiche, insertion. */
   order(): string[];
+  /** Les charges utiles d'insertion, pour lire le `clientId` effectivement écrit. */
+  createData(): Record<string, unknown>[];
+}
+
+/**
+ * La porte `crm`, réduite à ce que le repository en appelle (#313).
+ *
+ * Un double et non le vrai service : ce qui se prouve ici est la **place** de la
+ * résolution dans la transaction et la conduite face à ses deux refus, jamais le
+ * SQL qu'elle émet — celui-là s'exerce contre un vrai PostgreSQL
+ * (`test/appointments-exclusion.integration-spec.ts`).
+ *
+ * `scopes` retient la portée reçue à chaque appel : c'est ce qui prouve que la
+ * résolution est faite **dans** la transaction, et non par un client à part.
+ */
+function directoryAnswering(
+  options: {
+    /** Les réponses successives — un identifiant, ou l'échec à lever. */
+    answers?: (Error | string)[];
+    /** Le journal d'ordre du double Prisma, quand la suite veut la place exacte. */
+    order?: string[];
+  } = {},
+): {
+  service: ClientDirectoryService;
+  scopes(): unknown[];
+  contacts(): unknown[];
+  calls(): number;
+} {
+  const answers = options.answers ?? [];
+  let index = 0;
+  const scopes: unknown[] = [];
+  const contacts: unknown[] = [];
+
+  const resolveWithin = jest.fn(async (scope: unknown, contact: unknown) => {
+    options.order?.push('resolve');
+    scopes.push(scope);
+    contacts.push(contact);
+    const answer = answers[Math.min(index, answers.length - 1)] ?? CLIENT_ID;
+    index += 1;
+    if (answer instanceof Error) {
+      throw answer;
+    }
+    return answer;
+  });
+
+  return {
+    service: { resolveWithin } as unknown as ClientDirectoryService,
+    scopes: () => scopes,
+    contacts: () => contacts,
+    calls: () => resolveWithin.mock.calls.length,
+  };
 }
 
 /**
@@ -96,9 +159,11 @@ function clientAnswering(...answers: (Error | typeof ROW)[]): Double {
   const order: string[] = [];
   const sql: string[] = [];
   const values: unknown[] = [];
+  const creates: Record<string, unknown>[] = [];
 
-  const create = jest.fn(async () => {
+  const create = jest.fn(async (args: { data: Record<string, unknown> }) => {
     order.push('insert');
+    creates.push(args.data);
     const answer = answers[Math.min(index, answers.length - 1)];
     index += 1;
     if (answer instanceof Error) {
@@ -125,23 +190,38 @@ function clientAnswering(...answers: (Error | typeof ROW)[]): Double {
     rawSql: () => sql,
     rawValues: () => values,
     order: () => order,
+    createData: () => creates,
   };
 }
 
-/** Le repository, exercé dans une portée de tenant — comme en production. */
-async function createAppointment(prisma: ScopedPrismaClient): Promise<unknown> {
-  return runWithTenant(TENANT_ID, async () => new AppointmentsRepository(prisma).create(DRAFT));
+/**
+ * Le repository, exercé dans une portée de tenant — comme en production.
+ *
+ * La porte `crm` est passée en second : sans argument, elle rend toujours
+ * `CLIENT_ID`, ce qui laisse les suites d'origine parler du seul créneau.
+ */
+async function createAppointment(
+  prisma: ScopedPrismaClient,
+  clients: ClientDirectoryService = directoryAnswering().service,
+): Promise<unknown> {
+  return runWithTenant(TENANT_ID, async () =>
+    new AppointmentsRepository(prisma, clients).create(DRAFT),
+  );
 }
 
 describe('AppointmentsRepository.create — sérialisation par praticien', () => {
   it('prend un verrou consultatif de transaction avant d’insérer', async () => {
     // L'ordre est tout : un verrou pris après l'insertion ne sérialise rien, et
-    // le cycle d'attente qui produit les interblocages se reformerait.
+    // le cycle d'attente qui produit les interblocages se reformerait. La fiche
+    // cliente se résout entre les deux (#313) : après le verrou, parce qu'il
+    // ordonne les candidates au créneau ; avant l'insertion, parce que
+    // `appointments.client_id` est `NOT NULL`.
     const double = clientAnswering(ROW);
+    const directory = directoryAnswering({ order: double.order() });
 
-    await createAppointment(double.prisma);
+    await createAppointment(double.prisma, directory.service);
 
-    expect(double.order()).toEqual(['lock', 'insert']);
+    expect(double.order()).toEqual(['lock', 'resolve', 'insert']);
     expect(double.rawSql()[0]).toContain('pg_advisory_xact_lock');
   });
 
@@ -229,6 +309,94 @@ describe('AppointmentsRepository.create — conduite face à l’échec', () => 
 
     await expect(createAppointment(double.prisma)).rejects.toBe(boom);
     expect(double.calls()).toBe(1);
+  });
+});
+
+/**
+ * La fiche cliente, résolue **dans la transaction** de l'insertion (#313).
+ *
+ * Ce que cette suite prouve, et que le test d'intégration ne montre pas aussi
+ * nettement : la **place** de l'appel — dans la portée transactionnelle, entre le
+ * verrou et l'insertion —, l'identifiant effectivement écrit, et la conduite face
+ * aux deux refus que la porte `crm` peut opposer.
+ *
+ * Ce qu'elle ne prouve pas, et ne peut pas prouver : que le `ROLLBACK` emporte
+ * réellement la fiche. C'est de l'atomicité de PostgreSQL, et cela se prouve
+ * contre lui seul — `test/appointments-exclusion.integration-spec.ts`.
+ */
+describe('AppointmentsRepository.create — la fiche cliente vient de `crm`', () => {
+  it('résout la fiche dans la portée de la transaction, jamais par un client à part', async () => {
+    // C'est **toute** la garantie d'atomicité : une résolution faite hors de la
+    // transaction survivrait au `ROLLBACK` d'un créneau refusé, ce qui est
+    // exactement le défaut que ce ticket supprime.
+    const double = clientAnswering(ROW);
+    const directory = directoryAnswering();
+
+    await createAppointment(double.prisma, directory.service);
+
+    expect(directory.calls()).toBe(1);
+    // La portée reçue est bien celle que `$transaction` a fabriquée — celle qui
+    // porte le `$executeRaw` du verrou et l'`appointment.create` qui suit —, et
+    // non le client de premier niveau, qui n'a ni l'un ni l'autre.
+    const [scope] = directory.scopes();
+    expect(scope).toHaveProperty('appointment');
+    expect(scope).toHaveProperty('$executeRaw');
+    expect(scope).not.toBe(double.prisma);
+  });
+
+  it('passe les coordonnées reçues, et écrit l’identifiant que la porte rend', async () => {
+    const double = clientAnswering(ROW);
+    const directory = directoryAnswering();
+
+    await createAppointment(double.prisma, directory.service);
+
+    expect(directory.contacts()).toEqual([DRAFT.client]);
+    expect(double.createData()[0]).toMatchObject({ clientId: CLIENT_ID });
+  });
+
+  it('rejoue la transaction entière quand deux résolutions se sont disputé la fiche', async () => {
+    // `ClientRecordRaceError` dit que l'unicité `(tenant_id, email)` a tranché en
+    // faveur d'une autre transaction. Relire dans le `catch` serait vain — la
+    // violation a abandonné la transaction —, et refuser rendrait un 500 sur un
+    // cas parfaitement normal : deux onglets, ou un double clic mal désarmé.
+    const double = clientAnswering(ROW);
+    const directory = directoryAnswering({
+      answers: [new ClientRecordRaceError(), CLIENT_ID],
+    });
+
+    await expect(createAppointment(double.prisma, directory.service)).resolves.toMatchObject({
+      id: ROW.id,
+    });
+    expect(directory.calls()).toBe(2);
+    // La première tentative n'a rien inséré : elle n'a pas dépassé la résolution.
+    expect(double.calls()).toBe(1);
+  });
+
+  it('cesse de rejouer au bout de trois tentatives, et ne maquille pas l’échec', async () => {
+    // Trois courses d'affilée sur la même adresse ne sont plus une course, c'est
+    // une contention : la dire en 500 vaut mieux que de boucler — même arbitrage
+    // que pour l'interblocage.
+    const double = clientAnswering(ROW);
+    const directory = directoryAnswering({ answers: [new ClientRecordRaceError()] });
+
+    await expect(createAppointment(double.prisma, directory.service)).rejects.toBeInstanceOf(
+      ClientRecordRaceError,
+    );
+    expect(directory.calls()).toBe(3);
+    expect(double.calls()).toBe(0);
+  });
+
+  it('ne rejoue pas un refus d’adresse, et le laisse remonter tel quel', async () => {
+    // `ClientEmailNotBookableError` est une **décision**, pas une course : la
+    // réessayer rendrait trois fois le même refus en tenant une connexion de plus
+    // à chaque tour, et retarderait un 409 que le front sait déjà traiter.
+    const refusal = new ClientEmailNotBookableError();
+    const double = clientAnswering(ROW);
+    const directory = directoryAnswering({ answers: [refusal] });
+
+    await expect(createAppointment(double.prisma, directory.service)).rejects.toBe(refusal);
+    expect(directory.calls()).toBe(1);
+    expect(double.calls()).toBe(0);
   });
 });
 
@@ -351,9 +519,21 @@ function movingClient(
   };
 }
 
-/** Le report, exercé dans une portée de tenant — comme en production. */
-async function reschedule(prisma: ScopedPrismaClient): Promise<unknown> {
-  return runWithTenant(TENANT_ID, async () => new AppointmentsRepository(prisma).reschedule(MOVE));
+/**
+ * Le report, exercé dans une portée de tenant — comme en production.
+ *
+ * La porte `crm` est fournie parce que le constructeur l'exige, et elle n'est
+ * **jamais appelée** : reporter recopie la cliente de la ligne d'origine, jamais
+ * des coordonnées. C'est ce que vérifie la suite « le report ne résout aucune
+ * fiche ».
+ */
+async function reschedule(
+  prisma: ScopedPrismaClient,
+  clients: ClientDirectoryService = directoryAnswering().service,
+): Promise<unknown> {
+  return runWithTenant(TENANT_ID, async () =>
+    new AppointmentsRepository(prisma, clients).reschedule(MOVE),
+  );
 }
 
 describe('AppointmentsRepository.reschedule — annulation puis création', () => {
@@ -507,5 +687,19 @@ describe('AppointmentsRepository.reschedule — annulation puis création', () =
       'update',
       'insert',
     ]);
+  });
+
+  it('ne résout aucune fiche cliente : elle est recopiée de la ligne relue', async () => {
+    // Reporter ne change pas la cliente (#39), et la porte `crm` n'a donc rien à
+    // faire sur ce chemin. L'y appeler aurait créé une fiche depuis un
+    // rendez-vous qui en a déjà une — et l'aurait créée depuis des coordonnées
+    // que la demande de report ne porte même pas.
+    const double = movingClient();
+    const directory = directoryAnswering();
+
+    await reschedule(double.prisma, directory.service);
+
+    expect(directory.calls()).toBe(0);
+    expect(double.createData()[0]).toMatchObject({ clientId: PREVIOUS_ROW.clientId });
   });
 });

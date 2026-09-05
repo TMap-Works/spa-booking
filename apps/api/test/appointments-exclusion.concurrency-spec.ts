@@ -49,7 +49,10 @@ import {
  *    chevauchants non plus (#316) — l'exclusion du rendez-vous déplacé du calcul
  *    de disponibilité n'ouvre aucun chemin autour de la contrainte ;
  * 5. plusieurs **annulations** concurrentes du même rendez-vous n'en laissent
- *    aboutir qu'une (#40).
+ *    aboutir qu'une (#40) ;
+ * 6. deux réservations d'invité concurrentes sur la **même adresse inconnue**
+ *    n'écrivent qu'une fiche et aboutissent toutes les deux (#313) — la perdante
+ *    de `@@unique([tenant_id, email])` est rejouée, jamais refusée.
  *
  * Le décor — base jetable, dépôt scopé, établissement complet — est celui de
  * `appointments-exclusion.harness.ts`, partagé avec la suite d'intégration
@@ -208,6 +211,62 @@ describe('Courses sur la contrainte d’exclusion — contre un vrai PostgreSQL'
       for (const row of stored) {
         expect(row._count._all).toBe(1);
       }
+    });
+  });
+
+  /**
+   * La course sur la **fiche cliente**, ouverte par #313.
+   *
+   * Depuis que la résolution vit dans la transaction d'insertion, une réservation
+   * d'invité écrit dans `users` sous `@@unique([tenant_id, email])`. Deux
+   * réservations concurrentes sur une adresse **inconnue** se disputent donc cet
+   * index : la perdante reçoit `P2002`, que `crm` traduit en
+   * `ClientRecordRaceError` et que `AppointmentsRepository.writingAgenda` rejoue.
+   *
+   * Ce chemin ne s'exerce que contre un vrai PostgreSQL, et il ne s'exerce que
+   * **sur deux praticiens distincts** : le verrou consultatif d'agenda porte le
+   * `staff_id`, si bien que deux candidates au même praticien sont sérialisées
+   * avant d'atteindre `users` et ne peuvent pas se disputer l'adresse. C'est
+   * précisément pour cela que ce cas manquait — les suites voisines réservent
+   * toutes sous l'adresse déjà semée par le harnais, qui ne provoque aucune
+   * écriture.
+   *
+   * Le double clic de la cliente, ou ses deux onglets, sont exactement cela.
+   */
+  describe('la course sur la fiche cliente (#313)', () => {
+    it('rejoue la perdante et n’écrit qu’une seule fiche pour deux réservations concurrentes', async () => {
+      const start = new Date('2026-10-02T09:00:00.000Z');
+      const end = new Date(start.getTime() + ONE_HOUR);
+      const email = `course-${start.getTime()}@example.test`;
+
+      // Deux praticiens : deux clés de verrou d'agenda, donc deux transactions
+      // réellement parallèles au moment d'insérer la fiche.
+      const outcomes = await Promise.allSettled(
+        [salon.staffId, salon.secondStaffId].map((staffId) =>
+          inTenant(salon.tenantId, () => repository.create(draft(salon, start, end, staffId, email))),
+        ),
+      );
+
+      const fulfilled = outcomes.filter(
+        (outcome): outcome is PromiseFulfilledResult<Awaited<ReturnType<typeof repository.create>>> =>
+          outcome.status === 'fulfilled',
+      );
+      // Aucune des deux ne doit échouer : la course sur l'adresse n'est pas un
+      // refus de créneau, et la traduire en 409 — ou la laisser remonter en 500 —
+      // ferait perdre une réservation sur un créneau libre.
+      expect(fulfilled).toHaveLength(2);
+
+      // Une seule fiche, partagée : c'est ce que le réessai obtient, la seconde
+      // tentative trouvant la ligne que la gagnante vient de valider.
+      const files = await prismaUnscoped.user.findMany({
+        where: { tenantId: salon.tenantId, email },
+        select: { id: true, role: true },
+      });
+      expect(files).toHaveLength(1);
+      expect(files[0]?.role).toBe('CLIENT');
+      expect(new Set(fulfilled.map((outcome) => outcome.value.clientId))).toEqual(
+        new Set([files[0]?.id]),
+      );
     });
   });
 

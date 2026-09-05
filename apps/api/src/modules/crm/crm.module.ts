@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { IdentityModule } from '../identity/identity.module';
+import { ClientDirectoryService } from './client-directory.service';
 import { CrmRepository } from './crm.repository';
 import { CustomerHistoryService } from './customer-history.service';
 import { CustomersController } from './customers.controller';
@@ -25,15 +26,26 @@ import { CustomersService } from './customers.service';
  * règle de cycle de vie, et importer le module aurait couplé `crm` au cycle de
  * vie du rendez-vous pour n'en tirer qu'une somme et un compteur.
  *
- * ## Ce qu'il n'exporte pas, et pourquoi
+ * ## Ce qu'il exporte, et ce qu'il continue de garder
  *
- * Rien. Aucun autre module du périmètre MVP n'a de décision à prendre sur une
- * fiche cliente : `appointments` désigne son client par un identifiant que
- * l'authentification lui donne, `notifications` joindra un destinataire par la
- * ligne `users` que `identity` connaît déjà, et `reporting` agrège des
- * rendez-vous et des paiements, pas des fiches. Un `exports` posé « au cas où »
- * ouvrirait une porte que personne ne franchit et qu'il faudrait pourtant
- * maintenir.
+ * `ClientDirectoryService`, et **rien d'autre** (#313).
+ *
+ * C'est la porte par laquelle `appointments` obtient la fiche d'une cliente qui
+ * réserve sans compte. Elle a été ouverte parce que la table des fiches est celle
+ * de ce module : jusqu'à #313, `AppointmentsRepository` écrivait lui-même dans
+ * `users`, faute de porte — la table d'un autre domaine écrite par un module qui
+ * ne la possède pas, ce qu'api-module §3 n'admet pas.
+ *
+ * Ce qu'elle laisse passer est étroit à dessein : un identifiant de fiche, jamais
+ * une fiche. Pas de nom, pas d'adresse, pas de téléphone, pas de note interne, et
+ * aucune lecture du fichier client. `CustomersService`, `CustomerHistoryService`
+ * et `CrmRepository` restent hors du graphe des autres modules : un module qui
+ * voudrait **afficher** une cliente n'a toujours aucun chemin pour cela, et c'est
+ * la propriété que ce module tient depuis #56.
+ *
+ * `notifications` joindra un destinataire par la ligne `users` que `identity`
+ * connaît déjà, et `reporting` agrège des rendez-vous et des paiements, pas des
+ * fiches : aucun des deux n'a de raison d'emprunter cette porte.
  *
  * ## Aucun contrôleur public
  *
@@ -45,6 +57,7 @@ import { CustomersService } from './customers.service';
 @Module({
   imports: [IdentityModule],
   controllers: [CustomersController],
-  providers: [CustomersService, CustomerHistoryService, CrmRepository],
+  providers: [CustomersService, CustomerHistoryService, ClientDirectoryService, CrmRepository],
+  exports: [ClientDirectoryService],
 })
 export class CrmModule {}

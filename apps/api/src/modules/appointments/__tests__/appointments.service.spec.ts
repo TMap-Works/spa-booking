@@ -339,6 +339,74 @@ describe('AppointmentsService.book', () => {
     );
   });
 
+  it('ne laisse aucune fiche cliente derrière un 409 de créneau', async () => {
+    // Le second critère de #313. Le créneau est proposé par le calendrier — le
+    // pré-contrôle passe donc —, et c'est la contrainte d'exclusion qui refuse,
+    // **après** que la fiche a été résolue dans la transaction. Ce qui la fait
+    // disparaître est le `ROLLBACK`, jamais un ordre habile : avant, la
+    // résolution était validée dans une transaction à part et la perdante d'une
+    // course repartait avec un refus et une fiche au fichier du salon.
+    const { service, repository } = createHarness();
+    repository.seedAppointment({
+      tenantId: TENANT,
+      staffId: STAFF_ID,
+      startsAt: new Date('2026-09-01T10:00:00.000Z'),
+      endsAt: new Date('2026-09-01T11:00:00.000Z'),
+    });
+
+    await expect(runWithTenant(TENANT, () => service.book(bookingInput(), NOW))).rejects.toThrow(
+      SlotNoLongerAvailableError,
+    );
+
+    expect(repository.appointments).toHaveLength(1);
+    expect(repository.clients).toHaveLength(0);
+  });
+
+  it('laisse intacte la fiche d’une cliente déjà connue quand le créneau est refusé', async () => {
+    // Le pendant du cas précédent : le `ROLLBACK` ne défait que ce que **cette**
+    // transaction a écrit. Une fiche qui préexiste n'est pas une écriture de la
+    // réservation, et l'effacer priverait la cliente de son historique pour une
+    // course qu'elle vient de perdre.
+    const { service, repository } = createHarness();
+    const known = repository.seedClient({ tenantId: TENANT, email: 'camille@example.test' });
+    repository.seedAppointment({
+      tenantId: TENANT,
+      staffId: STAFF_ID,
+      startsAt: new Date('2026-09-01T10:00:00.000Z'),
+      endsAt: new Date('2026-09-01T11:00:00.000Z'),
+    });
+
+    await expect(runWithTenant(TENANT, () => service.book(bookingInput(), NOW))).rejects.toThrow(
+      SlotNoLongerAvailableError,
+    );
+
+    expect(repository.clients).toHaveLength(1);
+    expect(repository.clients[0]?.id).toBe(known.id);
+  });
+
+  it('refuse une adresse portée par un compte du personnel, sans rien écrire', async () => {
+    // La décision produit de #313 : la réservation publique ne s'accroche jamais
+    // à un compte `MANAGER`/`ADMIN`. Le refus est un 409 choisi
+    // (`CLIENT_EMAIL_NOT_BOOKABLE`), et non le `P2002` nu — donc le 500 — que
+    // produirait une création sur une adresse déjà prise.
+    const { service, repository } = createHarness();
+    repository.seedClient({
+      tenantId: TENANT,
+      email: 'camille@example.test',
+      role: 'MANAGER',
+    });
+
+    const rejected = runWithTenant(TENANT, () => service.book(bookingInput(), NOW));
+
+    await expect(rejected).rejects.toMatchObject({
+      code: 'CLIENT_EMAIL_NOT_BOOKABLE',
+      status: 409,
+    });
+    // Ni rendez-vous, ni seconde fiche : le compte du personnel reste seul.
+    expect(repository.appointments).toHaveLength(0);
+    expect(repository.clients).toHaveLength(1);
+  });
+
   it('rend dans le 409 l’heure que l’appelant a envoyée, pas l’heure occupée', async () => {
     const { service, repository } = createHarness();
     repository.seedAppointment({

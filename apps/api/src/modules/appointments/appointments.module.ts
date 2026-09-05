@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { AvailabilityModule } from '../availability/availability.module';
 import { CatalogModule } from '../catalog/catalog.module';
+import { CrmModule } from '../crm/crm.module';
 import { IdentityModule } from '../identity/identity.module';
 import { AppointmentLifecycleService } from './appointment-lifecycle.service';
 import { AppointmentsController } from './appointments.controller';
@@ -31,7 +32,7 @@ import { SlotLockService } from './slot-lock.service';
  * #38 pose le **verrou Redis de créneau** : `SlotLockService`, qui encadre les
  * deux écritures qui prennent un créneau. La création au comptoir reste à #50.
  *
- * ## Ce qu'il importe, et pourquoi ces trois-là seulement
+ * ## Ce qu'il importe, et pourquoi ces quatre-là seulement
  *
  * - `CatalogModule`, pour `ServicesService` : la durée, les deux tampons et le
  *   prix d'une prestation. C'est la porte que le catalogue a explicitement
@@ -61,6 +62,20 @@ import { SlotLockService } from './slot-lock.service';
  * a ouvert la première surface de back-office — le comptoir annule pour une
  * cliente qui téléphone, et cela ne peut pas être une route ouverte.
  *
+ * - `CrmModule`, pour `ClientDirectoryService` et rien d'autre (#313) : la fiche
+ *   de la cliente qui réserve sans compte. C'est la porte que le fichier client a
+ *   ouverte pour ce module — un **appel de service**, comme pour le catalogue —,
+ *   et elle ne rend qu'un identifiant. Rien ici n'atteint `CrmRepository`, et
+ *   `CrmModule` ne l'exporte pas.
+ *
+ *   Ce que cet import ne fait pas : donner à ce module un moyen de **lire** la
+ *   clientèle. `CustomersService` et `CustomerHistoryService` restent hors du
+ *   graphe, et le fichier client ne se lit que par ses propres routes gardées.
+ *
+ *   Cet import est arrivé avec #313, quand `AppointmentsRepository` a cessé
+ *   d'écrire lui-même dans `users` — ce qu'il faisait faute de porte, `crm`
+ *   n'existant pas encore au moment de #37.
+ *
  * `AppointmentLifecycleService` est un fournisseur et non un module : c'est une
  * règle du domaine de ce module, pas une porte pour les autres. `SlotLockService`
  * l'est aussi, et pour la même raison — la clé de verrou est une convention de ce
@@ -87,7 +102,7 @@ import { SlotLockService } from './slot-lock.service';
  * `POST /api/v1/public/:tenantSlug/appointments` est la raison qui manquait.
  */
 @Module({
-  imports: [CatalogModule, AvailabilityModule, IdentityModule],
+  imports: [CatalogModule, AvailabilityModule, IdentityModule, CrmModule],
   controllers: [PublicAppointmentsController, AppointmentsController],
   providers: [
     AppointmentsService,

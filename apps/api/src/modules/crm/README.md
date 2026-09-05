@@ -10,6 +10,7 @@ ce fait.
 | Ticket | Ce qu'il pose |
 |---|---|
 | #56 | Le CRUD des fiches, la note interne, la recherche indexée et l'historique agrégé |
+| #313 | `ClientDirectoryService`, la porte par laquelle `appointments` obtient la fiche d'une cliente qui réserve sans compte |
 
 Hors périmètre MVP, et donc non livré : fusion de doublons, segmentation,
 export RGPD, campagnes. Le CDC §1.4 borne le module à un « CRM client de
@@ -154,14 +155,84 @@ l'historique est une projection en lecture seule qui ne décide d'aucune règle 
 cycle de vie. Le module **n'écrit jamais** dans `appointments`.
 
 `CrmModule` n'importe qu'`IdentityModule`, et seulement pour ses gardes. Il
-n'exporte rien : aucun autre module du périmètre MVP n'a de décision à prendre
-sur une fiche cliente.
+n'exporte que `ClientDirectoryService` — voir ci-dessous.
+
+## La porte de la réservation sans compte (#313)
+
+`appointments.client_id` est `NOT NULL` : poser un rendez-vous d'invité suppose
+une ligne `users`. Jusqu'à #313, `AppointmentsRepository` l'écrivait lui-même,
+faute de porte — la table d'un autre domaine écrite par un module qui ne la
+possède pas. `CrmModule` exporte désormais `ClientDirectoryService`, et lui seul.
+
+Ce qu'elle laisse passer est étroit à dessein : **un identifiant de fiche, jamais
+une fiche**. Pas de nom, pas d'adresse, pas de note interne, aucune lecture du
+fichier client. Un module qui voudrait *afficher* une cliente n'a toujours aucun
+chemin pour cela.
+
+### Elle prend une transaction, et c'est une entorse assumée
+
+`resolveWithin(scope, contact)` reçoit la portée transactionnelle de l'appelant,
+là où api-module §2 veut qu'un service ignore Prisma. C'est le prix d'un critère
+qui ne se satisfait pas autrement : **un 409 de créneau ne doit laisser aucune
+fiche derrière lui**. Résoudre la cliente dans une transaction et poser le
+rendez-vous dans une autre laisse, à chaque course perdue, une fiche publique
+sans rendez-vous au fichier du salon.
+
+L'entorse est bornée : la portée est opaque pour le service — il la transmet, ne
+l'ouvre ni ne la referme —, le SQL reste dans `CrmRepository`, et le client reçu
+est le **scopé**, si bien que l'extension de tenant continue de s'appliquer mot
+pour mot.
+
+### Deux décisions produit, et ce qu'elles coûtent
+
+**Une adresse portée par un compte `STAFF`/`MANAGER`/`ADMIN` est refusée**
+(`CLIENT_EMAIL_NOT_BOOKABLE`, 409). La résolution lit sur la seule adresse — sans
+filtre de rôle — puis **juge** ce qu'elle trouve : c'est ce qui transforme la
+collision `@@unique([tenantId, email])` en un refus choisi, là où un filtre
+`role: 'CLIENT'` dans le `where` aurait mené à une création refusée en `P2002`
+nu, donc à un 500.
+
+| | Ce que la route rend |
+|---|---|
+| adresse inconnue | 201, fiche créée |
+| adresse déjà cliente | 201, fiche réutilisée telle quelle |
+| adresse d'un compte du personnel | 409 `CLIENT_EMAIL_NOT_BOOKABLE` |
+
+Ce que ce refus laisse deviner : qu'une adresse porte un compte **non client**
+dans cet établissement. C'est le coût assumé, et il est borné — les deux premières
+lignes du tableau sont indiscernables, si bien que la route ne dit rien du fichier
+client. Il est par ailleurs le même refus que le comptoir reçoit déjà :
+`POST /customers` sur cette adresse rend `CUSTOMER_EMAIL_TAKEN`, l'unicité ne
+distinguant pas les rôles. Le parcours public ne peut pas réussir en silence là où
+le back-office, authentifié, est refusé.
+
+Sa contrepartie : un membre du personnel client de son propre salon ne réserve pas
+en ligne avec son adresse professionnelle. Il en utilise une autre, ou le comptoir
+réserve pour lui (#50). L'alternative — réutiliser son compte — aurait accroché un
+rendez-vous à une fiche que le fichier client ne montre jamais (`role = CLIENT`),
+donc un rendez-vous dont le comptoir ne peut pas ouvrir la cliente.
+
+**Une fiche désactivée est réutilisée telle quelle.** `is_active` gouverne les
+écrans du back-office — la recherche l'exclut par défaut —, pas l'identité de qui
+réserve. L'écarter n'aurait laissé que deux issues : créer une seconde fiche, ce
+que l'unicité interdit, ou refuser — c'est-à-dire faire de cette route publique un
+oracle sur le fichier client, la donnée même que ce module protège.
+
+### La course sur l'adresse se rejoue chez l'appelant
+
+Deux réservations d'invité concurrentes sur la même adresse : la perdante reçoit
+`P2002`, que la porte traduit en `ClientRecordRaceError`. Elle n'est **pas**
+rattrapée sur place — une violation de contrainte abandonne la transaction côté
+PostgreSQL, et Prisma n'ouvre aucun point de sauvegarde : relire échouerait en
+`25P02`. C'est `AppointmentsRepository.writingAgenda` qui rejoue la transaction
+entière, au même titre qu'un interblocage, trois fois au plus.
 
 ## Tests
 
 | Suite | Ce qu'elle couvre |
 |---|---|
 | `__tests__/customers.service.spec.ts` | CRUD, recherche, pagination, portée fermée par défaut |
+| `__tests__/client-directory.service.spec.ts` | la porte de #313 : lecture sans filtre de rôle, refus d'une adresse du personnel, fiche désactivée réutilisée, course traduite en réessai |
 | `__tests__/customer-history.service.spec.ts` | agrégat vs fenêtre, bornes, devises multiples |
 | `__tests__/crm.logging.spec.ts` | le module ne journalise rien ; la rédaction couvrirait ses champs |
 | `apps/api/test/crm.integration-spec.ts` | les six routes servies, gardes, validation, sérialisation |
