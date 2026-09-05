@@ -1,18 +1,18 @@
 import { BusinessRuleError, NotFoundError } from '../../../common/errors';
 import { runWithTenant } from '../../../common/tenant';
 import type { UpdateTenantDto } from '../dto/tenant-settings.dto';
-import type {
+import {
   IdentityRepository,
-  OpeningHourRecord,
-  TenantRecord,
-  TenantSettingsChanges,
+  type OpeningHourRecord,
+  type TenantRecord,
+  type TenantSettingsChanges,
 } from '../identity.repository';
 import { TenantSettingsService } from '../tenant-settings.service';
 
 /**
- * Le paramétrage de l'établissement (#343).
+ * Le paramétrage de l'établissement (#343, complété par #416).
  *
- * Trois décisions se prennent dans ce service, et elles sont toutes ici :
+ * Quatre décisions se prennent dans ce service, et elles sont toutes ici :
  *
  * 1. **la traduction charge utile → colonnes**, avec la distinction « absent =
  *    ne touche pas » / « `null` = efface » qui, mal tenue, effacerait les
@@ -20,7 +20,10 @@ import { TenantSettingsService } from '../tenant-settings.service';
  * 2. **l'adresse tout ou rien** — pas de mise à jour partielle, donc pas
  *    d'ancienne rue sous une nouvelle ville ;
  * 3. **le refus des plages incohérentes avant la base**, pour que la saisie
- *    fautive sorte en 422 nommé et non en violation de contrainte, donc en 500.
+ *    fautive sorte en 422 nommé et non en violation de contrainte, donc en 500 ;
+ * 4. **une seule écriture** pour les colonnes et la semaine (#416) : deux appels
+ *    successifs laissaient l'adresse commitée quand le remplacement des horaires
+ *    échouait.
  */
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
@@ -42,31 +45,88 @@ const FICHE: TenantRecord = {
   isActive: true,
 };
 
+/**
+ * Le dépôt tel que ce service s'en sert — deux méthodes, pas une de plus.
+ *
+ * `Pick` sur le **vrai** type plutôt qu'un objet libre transtypé : le double est
+ * alors vérifié méthode par méthode à la compilation. Un changement de signature
+ * côté dépôt — celui de #416 en est un — fait rougir cette suite au lieu de la
+ * laisser exercer, en vert, un contrat qui n'existe plus.
+ */
+type TenantSettingsPort = Pick<IdentityRepository, 'findCurrentTenant' | 'updateTenantSettings'>;
+
 interface Harness {
   service: TenantSettingsService;
+  /** Les colonnes de la dernière écriture reçue — `undefined` si aucune. */
   changes: () => TenantSettingsChanges | undefined;
+  /** Ses horaires — `undefined` si l'écriture n'en portait pas. */
   hours: () => readonly OpeningHourRecord[] | undefined;
+  /** Combien d'écritures le dépôt a reçues. Une seule est attendue (#416). */
+  writes: () => number;
+  /** L'établissement tel que le dépôt le porte **après** écriture. */
+  stored: () => TenantRecord | null;
 }
 
-function harnessOver(tenant: TenantRecord | null, applied = true): Harness {
+interface HarnessOptions {
+  /** `false` : l'écriture ne touche aucune ligne — l'établissement a disparu. */
+  applied?: boolean;
+  /**
+   * Panne sur la part « horaires » de l'écriture, les colonnes déjà préparées.
+   *
+   * C'est la transposition en mémoire de ce que la base ferait sur une violation
+   * de contrainte ou une coupure — et la seule façon d'exercer ici le défaut que
+   * #416 corrige, puisque le service refuse en amont les plages incohérentes.
+   */
+  failOpeningHours?: Error;
+}
+
+function harnessOver(tenant: TenantRecord | null, options: HarnessOptions = {}): Harness {
+  const applied = options.applied ?? true;
+  let stored = tenant;
   let lastChanges: TenantSettingsChanges | undefined;
   let lastHours: readonly OpeningHourRecord[] | undefined;
+  let writes = 0;
 
-  const repository = {
-    findCurrentTenant: jest.fn(async () => tenant),
-    updateTenantSettings: jest.fn(async (changes: TenantSettingsChanges) => {
-      lastChanges = changes;
-      return applied;
-    }),
-    replaceOpeningHours: jest.fn(async (entries: readonly OpeningHourRecord[]) => {
-      lastHours = entries;
-    }),
-  } as unknown as IdentityRepository;
+  const port: TenantSettingsPort = {
+    findCurrentTenant: jest.fn(async () => stored),
+    updateTenantSettings: jest.fn(
+      async (input: {
+        changes: TenantSettingsChanges;
+        openingHours?: readonly OpeningHourRecord[];
+      }): Promise<boolean> => {
+        writes += 1;
+        lastChanges = input.changes;
+        lastHours = input.openingHours;
+
+        if (!applied || stored === null) {
+          return false;
+        }
+
+        // La transaction du vrai dépôt, transposée : l'état suivant se construit
+        // à part et ne remplace l'état courant qu'une fois **toutes** les parts
+        // de l'écriture passées. Un double qui poserait les colonnes puis les
+        // horaires reproduirait le défaut au lieu de l'exposer.
+        const next: TenantRecord = { ...stored, ...input.changes };
+
+        if (input.openingHours !== undefined) {
+          if (options.failOpeningHours !== undefined) {
+            throw options.failOpeningHours;
+          }
+          next.openingHours = [...input.openingHours];
+        }
+
+        stored = next;
+        return true;
+      },
+    ),
+  };
 
   return {
-    service: new TenantSettingsService(repository),
+    service: new TenantSettingsService(port as unknown as IdentityRepository),
     changes: () => lastChanges,
     hours: () => lastHours,
+    writes: () => writes,
+    stored: () => stored,
   };
 }
 
@@ -241,9 +301,58 @@ describe('TenantSettingsService', () => {
   it('rend un 404 si l’écriture ne touche aucune ligne', async () => {
     // Un établissement supprimé entre la résolution du jeton et l'écriture :
     // sans ce contrôle, la réponse serait un 200 sur une mise à jour sans effet.
-    const harness = harnessOver(FICHE, false);
+    const harness = harnessOver(FICHE, { applied: false });
 
     await expect(update(harness, { name: 'Salon' })).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('n’écrit qu’une fois, colonnes et horaires ensemble', async () => {
+    // Le défaut de #416 : `updateTenantSettings` posait les colonnes, puis
+    // `replaceOpeningHours` remplaçait la semaine dans sa propre transaction.
+    // Deux écritures, donc une fenêtre entre les deux. Une seule demande, c'est
+    // zéro fenêtre — l'atomicité de cette demande-là étant tenue par la
+    // transaction du dépôt, et non par ce service.
+    const harness = harnessOver(FICHE);
+
+    await update(harness, {
+      address: { line1: '3 place du Marché', city: 'Lyon', country: 'FR' },
+      openingHours: [{ weekday: 2, opensAt: '09:00', closesAt: '19:00' }],
+    });
+
+    expect(harness.writes()).toBe(1);
+    expect(harness.changes()).toMatchObject({ addressLine1: '3 place du Marché', city: 'Lyon' });
+    expect(harness.hours()).toEqual([{ weekday: 2, startMinute: 540, endMinute: 1140 }]);
+  });
+
+  it('laisse l’adresse inchangée quand le remplacement des horaires échoue', async () => {
+    // Le critère de #416, et ce que l'ancien code ne tenait pas : l'adresse
+    // était commitée par la première écriture, la semaine échouait dans la
+    // seconde, et la réponse n'était jamais rendue. Le salon se retrouvait avec
+    // une adresse qu'il n'avait pas vue s'enregistrer.
+    const panne = new Error('remplacement des horaires refusé par la base');
+    const harness = harnessOver(FICHE, { failOpeningHours: panne });
+
+    await expect(
+      update(harness, {
+        address: { line1: '3 place du Marché', city: 'Lyon', country: 'FR' },
+        openingHours: [{ weekday: 2, opensAt: '09:00', closesAt: '19:00' }],
+      }),
+    ).rejects.toBe(panne);
+
+    expect(harness.stored()).toMatchObject({
+      addressLine1: null,
+      city: null,
+      openingHours: [],
+    });
+  });
+
+  it('n’offre plus d’écriture séparée des horaires', () => {
+    // La surface **est** la garantie : tant qu'une méthode publique écrit la
+    // semaine seule, un second appelant peut refaire les deux allers-retours de
+    // #416 sans que rien ne le signale. La refermer est le correctif ; ce test
+    // est ce qui empêche de la rouvrir par commodité.
+    expect(IdentityRepository.prototype).not.toHaveProperty('replaceOpeningHours');
+    expect(IdentityRepository.prototype.updateTenantSettings).toHaveLength(1);
   });
 
   it('ne prend aucun établissement en paramètre', () => {

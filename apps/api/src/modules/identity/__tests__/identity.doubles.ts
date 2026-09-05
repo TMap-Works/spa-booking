@@ -226,37 +226,44 @@ export class FakeIdentityRepository {
   }
 
   /**
-   * Écrit les réglages de l'établissement **de la portée** (#343).
+   * Écrit les réglages de l'établissement **de la portée** — colonnes et semaine
+   * d'ouverture ensemble (#343, remodelé par #416).
    *
-   * Rend `false` quand la portée ne désigne aucun établissement connu — le
-   * pendant du `count === 0` d'`updateMany` sous le client scopé, que le service
-   * traduit en 404.
+   * Trois propriétés du vrai dépôt sont reproduites, et chacune parce qu'un test
+   * en dépend :
+   *
+   * 1. **Une seule écriture, tout ou rien.** L'état suivant se construit à part
+   *    et ne remplace l'état courant qu'une fois la dernière part appliquée. Le
+   *    double n'offre donc, comme le vrai, aucune porte par laquelle poser les
+   *    colonnes sans la semaine — c'est le défaut que #416 supprime, et un
+   *    double qui garderait les deux méthodes le laisserait réapparaître sans
+   *    qu'aucune suite ne rougisse.
+   * 2. **Le `false` de la portée vide** — le pendant du `count === 0`
+   *    d'`updateMany` sous le client scopé, que le service traduit en 404.
+   * 3. **Le scoping** : seul `tenantRecords.get(tenantId)` est touché, ce qui
+   *    rend observable en test qu'une écriture du voisin ne vide pas les
+   *    horaires de l'appelant. Le vrai dépôt le tient par l'extension, qui pose
+   *    `tenant_id` sur le `deleteMany` comme sur le `createMany`.
+   *
+   * `openingHours` absent ne touche pas à la semaine ; un tableau vide l'efface.
    */
-  public async updateTenantSettings(changes: TenantSettingsChanges): Promise<boolean> {
+  public async updateTenantSettings(input: {
+    changes: TenantSettingsChanges;
+    openingHours?: readonly OpeningHourRecord[];
+  }): Promise<boolean> {
     const tenantId = this.requireTenant();
     const stored = this.tenantRecords.get(tenantId);
     if (stored === undefined) {
       return false;
     }
-    this.tenantRecords.set(tenantId, { ...stored, ...changes });
-    return true;
-  }
 
-  /**
-   * Remplace la semaine d'ouverture de l'établissement **de la portée** (#343).
-   *
-   * Ne touche que `tenantRecords.get(tenantId)` : c'est ce qui rend observable,
-   * en test, qu'une écriture du voisin ne vide pas les horaires de l'appelant.
-   * Le vrai dépôt tient la même garantie par l'extension, qui pose `tenant_id`
-   * sur le `deleteMany` comme sur le `createMany`.
-   */
-  public async replaceOpeningHours(entries: readonly OpeningHourRecord[]): Promise<void> {
-    const tenantId = this.requireTenant();
-    const stored = this.tenantRecords.get(tenantId);
-    if (stored === undefined) {
-      return;
+    const next: StoredTenant = { ...stored, ...input.changes };
+    if (input.openingHours !== undefined) {
+      next.openingHours = [...input.openingHours];
     }
-    this.tenantRecords.set(tenantId, { ...stored, openingHours: [...entries] });
+
+    this.tenantRecords.set(tenantId, next);
+    return true;
   }
 
   public async findUserByEmail(email: string): Promise<UserRecord | null> {
