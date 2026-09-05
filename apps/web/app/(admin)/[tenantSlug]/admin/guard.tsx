@@ -4,8 +4,8 @@ import { redirect } from 'next/navigation';
 import { Notification } from '@/components/ui/notification';
 import { ApiClientError } from '@/lib/api-client';
 
-import { adminLoginPath } from './paths';
-import { readAdminAccessToken } from './session';
+import { adminLoginPath, adminSessionRefreshPath } from './paths';
+import { readAdminAccessToken, readAdminRefreshToken } from './session';
 
 /**
  * La garde des pages du back-office, écrite une fois.
@@ -16,27 +16,53 @@ import { readAdminAccessToken } from './session';
  * rejoué à chaque navigation, et une page peut être servie sans que son parent
  * ait été réévalué. La garde vit donc **dans la page**, et l'écran de connexion
  * s'en passe délibérément plutôt que d'être exempté par une liste tenue
- * ailleurs. Ce module ne change pas cette règle : il en factorise le contenu, de
- * sorte que les cinq écrans du catalogue ne réécrivent pas cinq fois la même
- * cascade de statuts — et ne divergent pas sur le sixième.
+ * ailleurs. Le shell (#48) ne change pas cette règle : il peint la navigation,
+ * il ne garde rien. Ce module en factorise le contenu, de sorte que les écrans
+ * du back-office ne réécrivent pas chacun la même cascade de statuts — et ne
+ * divergent pas sur le suivant.
  */
 
 /**
- * Le jeton d'accès, ou une redirection vers la connexion.
+ * Le jeton d'accès, ou une redirection — vers le renouvellement, ou vers la
+ * connexion.
  *
  * Le type de retour est `string` et non `string | null` : `redirect()` lève, si
  * bien que la suite de l'appelant ne s'exécute jamais sans jeton. C'est ce qui
  * évite un `if (token === null)` de plus dans chaque page — donc l'oubli d'un
  * seul.
+ *
+ * Trois issues, et aucune ne boucle :
+ *
+ * 1. **le cookie d'accès est là** — on le rend. C'est le cas courant ;
+ * 2. **il a expiré, le cookie de rafraîchissement est là** — on part vers la
+ *    route de renouvellement, qui pose une session neuve et renvoie ici. Elle ne
+ *    peut pas y renvoyer deux fois de suite : au retour, le cookie d'accès
+ *    existe forcément, sans quoi c'est le cas 3 ;
+ * 3. **les deux ont disparu** — écran de connexion.
+ *
+ * `returnTo` est la page où revenir après un renouvellement. Il est
+ * **facultatif**, et c'est délibéré : les écrans déjà livrés appellent cette
+ * garde avec le seul slug, et le shell ne demande pas de les rouvrir. Sans lui,
+ * le renouvellement rend la main sur le planning — un écran de moins que prévu,
+ * jamais une session perdue. Une page qui tient à son retour exact le passe.
  */
-export async function requireAdminAccessToken(tenantSlug: string): Promise<string> {
+export async function requireAdminAccessToken(
+  tenantSlug: string,
+  returnTo?: string,
+): Promise<string> {
   const accessToken = await readAdminAccessToken();
 
-  if (accessToken === null) {
-    redirect(adminLoginPath(tenantSlug));
+  if (accessToken !== null) {
+    return accessToken;
   }
 
-  return accessToken;
+  const refreshToken = await readAdminRefreshToken();
+
+  redirect(
+    refreshToken === null
+      ? adminLoginPath(tenantSlug)
+      : adminSessionRefreshPath(tenantSlug, returnTo),
+  );
 }
 
 /**
