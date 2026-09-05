@@ -4,10 +4,13 @@ import { getTenantId } from '../../../common/tenant';
 import type { PaymentsRepository } from '../payments.repository';
 import type {
   CardPaymentDraft,
+  CashPaymentDraft,
   PayableAppointment,
+  PaymentHistoryFilter,
   PaymentMethod,
   PaymentRecord,
   PaymentStatus,
+  PaymentTransaction,
 } from '../payments.types';
 import { StripeConfig } from '../stripe/stripe.config';
 import type {
@@ -55,10 +58,14 @@ interface StoredPayment {
   id: string;
   appointmentId: string | null;
   amountMinor: number;
+  refundedAmountMinor: number;
   currency: string;
   method: PaymentMethod;
   status: PaymentStatus;
   providerPaymentIntentId: string | null;
+  providerChargeId: string | null;
+  capturedAt: Date | null;
+  createdAt: Date;
 }
 
 /** Sans portée résolue, rien ne passe — c'est la propriété 2. */
@@ -88,7 +95,12 @@ function requireTenant(): string {
  */
 type PaymentsRepositoryPort = Pick<
   PaymentsRepository,
-  'findPayableAppointment' | 'findPaymentByAppointment' | 'recordCardIntent'
+  | 'findPayableAppointment'
+  | 'findPaymentByAppointment'
+  | 'findTransactionByAppointment'
+  | 'recordCardIntent'
+  | 'recordCashPayment'
+  | 'listTransactions'
 >;
 
 export class FakePaymentsRepository implements PaymentsRepositoryPort {
@@ -123,19 +135,24 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
   /** Sème un encaissement déjà inscrit — reprise, vente en espèces, remboursement. */
   public seedPayment(input: {
     tenantId: string;
-    appointmentId: string;
+    appointmentId: string | null;
     id?: string;
     amountMinor?: number;
+    refundedAmountMinor?: number;
     currency?: string;
     method?: PaymentMethod;
     status?: PaymentStatus;
     providerPaymentIntentId?: string | null;
+    providerChargeId?: string | null;
+    capturedAt?: Date | null;
+    createdAt?: Date;
   }): StoredPayment {
     const row: StoredPayment = {
       tenantId: input.tenantId,
       id: input.id ?? randomUUID(),
       appointmentId: input.appointmentId,
       amountMinor: input.amountMinor ?? 7000,
+      refundedAmountMinor: input.refundedAmountMinor ?? 0,
       currency: input.currency ?? 'EUR',
       method: input.method ?? 'CARD',
       status: input.status ?? 'PENDING',
@@ -143,6 +160,9 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
         input.providerPaymentIntentId === undefined
           ? `pi_${randomUUID()}`
           : input.providerPaymentIntentId,
+      providerChargeId: input.providerChargeId ?? null,
+      capturedAt: input.capturedAt ?? null,
+      createdAt: input.createdAt ?? new Date(),
     };
     this.payments.push(row);
     return row;
@@ -181,13 +201,9 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
 
   public recordCardIntent(draft: CardPaymentDraft): Promise<PaymentRecord | null> {
     const tenantId = requireTenant();
-    const taken = this.payments.some(
-      (candidate) =>
-        candidate.tenantId === tenantId && candidate.appointmentId === draft.appointmentId,
-    );
 
     // Propriété 3 : l'unicité est tranchée ici, comme la base la tranche.
-    if (taken) {
+    if (this.isTaken(tenantId, draft.appointmentId)) {
       return Promise.resolve(null);
     }
 
@@ -196,15 +212,107 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
       id: randomUUID(),
       appointmentId: draft.appointmentId,
       amountMinor: draft.amount.amountMinor,
+      refundedAmountMinor: 0,
       currency: draft.amount.currency,
       method: 'CARD',
       status: 'PENDING',
       providerPaymentIntentId: draft.providerPaymentIntentId,
+      providerChargeId: null,
+      capturedAt: null,
+      createdAt: new Date(),
     };
     this.payments.push(row);
 
     return Promise.resolve(toRecord(row));
   }
+
+  public findTransactionByAppointment(appointmentId: string): Promise<PaymentTransaction | null> {
+    const tenantId = requireTenant();
+    const row = this.payments.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.appointmentId === appointmentId,
+    );
+
+    return Promise.resolve(row === undefined ? null : toTransaction(row));
+  }
+
+  /**
+   * L'écriture du chemin espèces — `CASH`, `SUCCEEDED`, `captured_at` posé,
+   * **aucune référence de prestataire**.
+   *
+   * Le double reproduit ces quatre faits parce qu'ils sont exactement ce qui
+   * distingue ce chemin de celui de la carte : un double qui écrirait `PENDING`
+   * ferait passer pour vraie une caisse qui attend une confirmation qui ne
+   * viendra jamais.
+   */
+  public recordCashPayment(draft: CashPaymentDraft): Promise<PaymentTransaction | null> {
+    const tenantId = requireTenant();
+
+    if (this.isTaken(tenantId, draft.appointmentId)) {
+      return Promise.resolve(null);
+    }
+
+    const row: StoredPayment = {
+      tenantId,
+      id: randomUUID(),
+      appointmentId: draft.appointmentId,
+      amountMinor: draft.amount.amountMinor,
+      refundedAmountMinor: 0,
+      currency: draft.amount.currency,
+      method: 'CASH',
+      status: 'SUCCEEDED',
+      providerPaymentIntentId: null,
+      providerChargeId: null,
+      capturedAt: new Date(),
+      createdAt: new Date(),
+    };
+    this.payments.push(row);
+
+    return Promise.resolve(toTransaction(row));
+  }
+
+  /**
+   * L'historique, trié et paginé comme le vrai le fait.
+   *
+   * Le tri décroissant sur `createdAt` puis sur l'identifiant reproduit
+   * l'`orderBy` du dépôt : sans le second critère, deux encaissements du même
+   * instant changeraient de page d'un appel à l'autre, et une suite qui
+   * l'ignorerait rendrait le bogue invisible.
+   */
+  public listTransactions(
+    filter: PaymentHistoryFilter,
+  ): Promise<{ items: PaymentTransaction[]; totalItems: number }> {
+    const tenantId = requireTenant();
+
+    const matching = this.payments
+      .filter((candidate) => candidate.tenantId === tenantId)
+      .filter((candidate) => filter.method === undefined || candidate.method === filter.method)
+      .filter((candidate) => filter.status === undefined || candidate.status === filter.status)
+      .filter((candidate) => filter.from === undefined || candidate.createdAt >= filter.from)
+      // Borne haute **exclue**, comme le `lt` du vrai.
+      .filter((candidate) => filter.to === undefined || candidate.createdAt < filter.to)
+      .sort((left, right) => compareDesc(left, right));
+
+    const skip = (filter.page - 1) * filter.pageSize;
+
+    return Promise.resolve({
+      items: matching.slice(skip, skip + filter.pageSize).map((row) => toTransaction(row)),
+      totalItems: matching.length,
+    });
+  }
+
+  /** L'unicité `(tenantId, appointmentId)` — `null` ne se gêne pas lui-même. */
+  private isTaken(tenantId: string, appointmentId: string): boolean {
+    return this.payments.some(
+      (candidate) => candidate.tenantId === tenantId && candidate.appointmentId === appointmentId,
+    );
+  }
+}
+
+/** Du plus récent au plus ancien, l'identifiant départageant les ex æquo. */
+function compareDesc(left: StoredPayment, right: StoredPayment): number {
+  const byInstant = right.createdAt.getTime() - left.createdAt.getTime();
+
+  return byInstant === 0 ? right.id.localeCompare(left.id) : byInstant;
 }
 
 function toRecord(row: StoredPayment): PaymentRecord {
@@ -215,6 +323,16 @@ function toRecord(row: StoredPayment): PaymentRecord {
     method: row.method,
     status: row.status,
     providerPaymentIntentId: row.providerPaymentIntentId,
+  };
+}
+
+function toTransaction(row: StoredPayment): PaymentTransaction {
+  return {
+    ...toRecord(row),
+    refunded: { amountMinor: row.refundedAmountMinor, currency: row.currency },
+    providerChargeId: row.providerChargeId,
+    capturedAt: row.capturedAt,
+    createdAt: row.createdAt,
   };
 }
 

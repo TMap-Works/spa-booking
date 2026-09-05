@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiCreatedResponse,
@@ -12,7 +12,16 @@ import {
 import { AuthAtLeast } from '../identity/auth.decorator';
 import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
-import { CreateSaleDto, SaleDto, toSaleDto, toSaleRequest } from './dto/sale.dto';
+import {
+  CreateSaleDto,
+  ListSalesQueryDto,
+  SaleDto,
+  SalePageDto,
+  toSaleDto,
+  toSaleHistoryFilter,
+  toSaleRequest,
+  toSaleSummaryDto,
+} from './dto/sale.dto';
 import { SalesService } from './sales.service';
 
 /**
@@ -21,6 +30,7 @@ import { SalesService } from './sales.service';
  * | Route | Rôles | Ce qu'elle sert |
  * |---|---|---|
  * | `POST /sales` | staff et au-dessus | compose un ticket et l'inscrit |
+ * | `GET /sales` | staff et au-dessus | l'historique, filtrable (#62) |
  * | `GET /sales/:id` | staff et au-dessus | relit un ticket, lignes comprises |
  *
  * ## Le seuil, et pourquoi il est à `STAFF`
@@ -34,11 +44,19 @@ import { SalesService } from './sales.service';
  * une pièce comptable du salon ; le parcours public paie une réservation par
  * `PublicPaymentsController`, il ne compose pas d'addition.
  *
- * ## L'historique des ventes n'est pas ici
+ * ## L'historique, ouvert par #62
  *
- * `GET /sales` — la liste filtrable — appartient à #62, avec le paiement en
- * espèces qu'elle sert à rapprocher. L'ouvrir ici aurait été une route sans le
- * filtrage que son ticket lui destine.
+ * `GET /sales` était laissé à ce ticket-là par #60 — « l'ouvrir ici aurait été
+ * une route sans le filtrage que son ticket lui destine ». Il l'a. Il rend les
+ * en-têtes de tickets, **sans leurs lignes** : le détail se demande par
+ * `GET /sales/:id`, et une page de cinquante tickets de dix lignes en aurait
+ * fait transiter cinq cents qu'aucun tableau n'affiche.
+ *
+ * Il reste au seuil `STAFF`, comme le reste de la caisse : la relève de fin de
+ * journée est un geste de comptoir. L'historique des **transactions** — celui
+ * qui porte les références Stripe et sert le rapprochement — est chez
+ * `CounterPaymentsController`, au seuil `MANAGER` : ce sont deux lectures
+ * distinctes, l'une sur ce qui a été vendu, l'autre sur ce qui a été encaissé.
  *
  * ## Ce que la route ne reçoit pas
  *
@@ -89,6 +107,35 @@ export class SalesController {
     @CurrentUser() cashier: AuthenticatedUser,
   ): Promise<SaleDto> {
     return toSaleDto(await this.sales.open(toSaleRequest(body), cashier.userId));
+  }
+
+  /**
+   * L'historique des ventes, du plus récent au plus ancien (#62).
+   *
+   * Chaque élément porte les trois faits que le premier critère de #62 demande
+   * d'une vente : l'**opérateur** qui l'a composée, son **horodatage** et ses
+   * **montants**. Les lignes, elles, ne sont pas rendues ici.
+   *
+   * **422** si la fenêtre est à l'envers (`from` postérieur ou égal à `to`) : la
+   * borne haute étant exclue, elle ne contiendrait aucun instant, et rendre une
+   * page vide ferait conclure à une journée sans vente.
+   */
+  @Get()
+  @AuthAtLeast('STAFF')
+  @ApiOperation({ summary: 'Lister les tickets de caisse' })
+  @ApiOkResponse({ type: SalePageDto })
+  @ApiBadRequestResponse({ description: 'Paramètre invalide — le champ fautif est nommé.' })
+  @ApiUnprocessableEntityResponse({ description: 'Fenêtre vide — `to` doit suivre `from`.' })
+  public async history(@Query() query: ListSalesQueryDto): Promise<SalePageDto> {
+    const page = await this.sales.history(toSaleHistoryFilter(query));
+
+    return {
+      items: page.items.map((sale) => toSaleSummaryDto(sale)),
+      page: page.page,
+      pageSize: page.pageSize,
+      totalItems: page.totalItems,
+      totalPages: page.totalPages,
+    };
   }
 
   /**

@@ -167,6 +167,52 @@ export interface Sale {
 }
 
 /**
+ * Le ticket **sans ses lignes** — l'élément de l'historique des ventes (#62).
+ *
+ * Les lignes sont écartées à dessein, et ce n'est pas une économie d'octets de
+ * confort : une page de cinquante tickets de dix lignes en ferait transiter cinq
+ * cents qu'aucun tableau n'affiche, lues une par une à la base. L'historique
+ * répond « qui a vendu quoi, quand, pour combien » ; le détail d'un ticket se
+ * demande par `GET /sales/:id`, qui existe pour cela depuis #60.
+ *
+ * `Omit` plutôt qu'une interface recopiée : les huit autres champs doivent rester
+ * exactement ceux de `Sale`, et un champ ajouté au ticket doit apparaître ici
+ * sans qu'on ait à y penser.
+ */
+export type SaleSummary = Omit<Sale, 'items'>;
+
+/**
+ * La fenêtre et les critères de l'historique des ventes (#62).
+ *
+ * `from` est inclus, `to` **exclu** — même convention que l'historique des
+ * transactions, et pour la même raison : c'est ce qui permet de poser deux
+ * journées de caisse bout à bout sans compter deux fois le ticket de minuit.
+ *
+ * Les deux filtres d'identifiant répondent aux deux questions que le back-office
+ * pose réellement : « qu'a vendu cette personne aujourd'hui ? » — la relève de
+ * caisse — et « qu'a-t-on facturé sur ce rendez-vous ? » — le rapprochement de
+ * la fiche cliente. `@@index([tenantId, appointmentId])` a été posé pour la
+ * seconde dès #60.
+ */
+export interface SaleHistoryFilter {
+  readonly from?: Date;
+  readonly to?: Date;
+  readonly cashierUserId?: string;
+  readonly appointmentId?: string;
+  readonly page: number;
+  readonly pageSize: number;
+}
+
+/** Une page de tickets, avec de quoi afficher un sélecteur de page. */
+export interface SalePage {
+  readonly items: readonly SaleSummary[];
+  readonly page: number;
+  readonly pageSize: number;
+  readonly totalItems: number;
+  readonly totalPages: number;
+}
+
+/**
  * Le paramétrage de l'établissement dont la composition d'un ticket dépend.
  *
  * Les deux valeurs viennent de la ligne `tenants`, donc du serveur. Le taux est

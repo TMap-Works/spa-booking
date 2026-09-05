@@ -11,7 +11,9 @@ import type {
   ProductPatch,
   Sale,
   SaleDraft,
+  SaleHistoryFilter,
   SaleItem,
+  SaleSummary,
   TenantSaleSettings,
 } from '../pos.types';
 
@@ -104,6 +106,7 @@ type PosRepositoryPort = Pick<
   | 'appointmentExists'
   | 'createSale'
   | 'findSaleById'
+  | 'listSales'
 >;
 
 export class FakePosRepository implements PosRepositoryPort {
@@ -162,6 +165,42 @@ export class FakePosRepository implements PosRepositoryPort {
   public seedAppointment(input: { tenantId: string; id?: string }): StoredAppointment {
     const row: StoredAppointment = { tenantId: input.tenantId, id: input.id ?? randomUUID() };
     this.appointments.push(row);
+    return row;
+  }
+
+  /**
+   * Sème un ticket déjà inscrit — l'ensemencement de l'historique (#62).
+   *
+   * Le `tenantId`, l'opérateur et l'instant sont **explicites** : une suite de
+   * fuite sème chez A pour lire chez B, et une suite de filtre a besoin de poser
+   * deux tickets de part et d'autre d'une borne à la milliseconde près. Aucun ne
+   * pourrait s'écrire en passant par `createSale`, qui les prend du contexte et
+   * de l'horloge.
+   */
+  public seedSale(input: {
+    tenantId: string;
+    id?: string;
+    appointmentId?: string | null;
+    cashierUserId?: string;
+    totalAmountMinor?: number;
+    currency?: string;
+    createdAt?: Date;
+  }): StoredSale {
+    const currency = input.currency ?? this.currencyOf(input.tenantId);
+    const total = input.totalAmountMinor ?? 1850;
+    const row: StoredSale = {
+      tenantId: input.tenantId,
+      id: input.id ?? randomUUID(),
+      appointmentId: input.appointmentId ?? null,
+      cashierUserId: input.cashierUserId ?? randomUUID(),
+      subtotal: { amountMinor: total, currency },
+      tax: { amountMinor: 0, currency },
+      tip: { amountMinor: 0, currency },
+      total: { amountMinor: total, currency },
+      items: [],
+      createdAt: input.createdAt ?? new Date(),
+    };
+    this.sales.push(row);
     return row;
   }
 
@@ -287,6 +326,48 @@ export class FakePosRepository implements PosRepositoryPort {
     return Promise.resolve(row === undefined ? null : toSale(row));
   }
 
+  /**
+   * L'historique, trié et paginé comme le vrai le fait — et **sans les lignes**.
+   *
+   * Les deux propriétés comptent. Le tri décroissant sur `createdAt` puis sur
+   * l'identifiant reproduit l'`orderBy` du dépôt : sans le second critère, deux
+   * tickets du même instant changeraient de page d'un appel à l'autre. Et
+   * l'absence de lignes est ce que la projection du vrai garantit — un double
+   * qui les rendrait quand même laisserait une suite s'appuyer sur une donnée
+   * que la route n'a jamais servie.
+   */
+  public listSales(
+    filter: SaleHistoryFilter,
+  ): Promise<{ items: SaleSummary[]; totalItems: number }> {
+    const tenantId = requireTenant();
+
+    const matching = this.sales
+      .filter((candidate) => candidate.tenantId === tenantId)
+      .filter(
+        (candidate) =>
+          filter.cashierUserId === undefined || candidate.cashierUserId === filter.cashierUserId,
+      )
+      .filter(
+        (candidate) =>
+          filter.appointmentId === undefined || candidate.appointmentId === filter.appointmentId,
+      )
+      .filter((candidate) => filter.from === undefined || candidate.createdAt >= filter.from)
+      // Borne haute **exclue**, comme le `lt` du vrai.
+      .filter((candidate) => filter.to === undefined || candidate.createdAt < filter.to)
+      .sort((left, right) => {
+        const byInstant = right.createdAt.getTime() - left.createdAt.getTime();
+
+        return byInstant === 0 ? right.id.localeCompare(left.id) : byInstant;
+      });
+
+    const skip = (filter.page - 1) * filter.pageSize;
+
+    return Promise.resolve({
+      items: matching.slice(skip, skip + filter.pageSize).map((row) => toSaleSummary(row)),
+      totalItems: matching.length,
+    });
+  }
+
   /** La ligne mutable, bornée à l'établissement courant. */
   private locateProduct(id: string): StoredProduct | undefined {
     const tenantId = requireTenant();
@@ -311,7 +392,7 @@ function toProduct(row: StoredProduct): Product {
   };
 }
 
-function toSale(row: StoredSale): Sale {
+function toSaleSummary(row: StoredSale): SaleSummary {
   return {
     id: row.id,
     appointmentId: row.appointmentId,
@@ -320,9 +401,12 @@ function toSale(row: StoredSale): Sale {
     tax: { ...row.tax },
     tip: { ...row.tip },
     total: { ...row.total },
-    items: row.items.map((item) => ({ ...item })),
     createdAt: row.createdAt,
   };
+}
+
+function toSale(row: StoredSale): Sale {
+  return { ...toSaleSummary(row), items: row.items.map((item) => ({ ...item })) };
 }
 
 /**

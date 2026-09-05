@@ -26,8 +26,10 @@ import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
 /** Codes d'erreur du module, tels qu'ils partent au client. */
 export const PAYMENT_ERROR_CODES = {
   APPOINTMENT_NOT_PAYABLE: 'APPOINTMENT_NOT_PAYABLE',
+  APPOINTMENT_NOT_SETTLEABLE: 'APPOINTMENT_NOT_SETTLEABLE',
   PAYMENT_ALREADY_SETTLED: 'PAYMENT_ALREADY_SETTLED',
   PAYMENT_PROVIDER_UNAVAILABLE: 'PAYMENT_PROVIDER_UNAVAILABLE',
+  HISTORY_WINDOW_INVALID: 'HISTORY_WINDOW_INVALID',
 } as const;
 
 // Les valeurs viennent de `DOMAIN_HTTP_STATUS`, la table de correspondance
@@ -62,6 +64,57 @@ export class AppointmentNotPayableError extends DomainError {
 
   public constructor(status: string) {
     super('Ce rendez-vous n’attend plus de paiement en ligne.', { status });
+  }
+}
+
+/**
+ * Ce rendez-vous n'a plus rien à encaisser **au comptoir** (#62).
+ *
+ * Un seul statut le déclenche : `CANCELLED`. Le créneau a été rendu, la
+ * prestation n'a pas été vendue — encaisser dessus créerait une recette sans
+ * contrepartie, que rien ne viendrait justifier au rapprochement.
+ *
+ * ## Pourquoi le comptoir accepte ce que le tunnel refuse
+ *
+ * `AppointmentNotPayableError` exclut aussi `COMPLETED` et `NO_SHOW`, et c'est
+ * juste **pour le tunnel public** : rouvrir un débit en ligne sur un dossier
+ * clos est une opération que personne ne surveille. Au comptoir, ces deux
+ * statuts sont au contraire le cas nominal — on encaisse un soin qui vient
+ * d'être rendu, ou les frais d'un rendez-vous non honoré, devant la personne
+ * concernée et sous l'identité d'un opérateur connu. Les refuser ici aurait
+ * rendu la caisse inutilisable pour ce qu'elle sert le plus souvent.
+ *
+ * **422 et non 404** : le rendez-vous existe et l'appelant en connaît déjà
+ * l'identifiant. `details.status` est le statut, jamais une donnée personnelle.
+ */
+export class AppointmentNotSettleableError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.APPOINTMENT_NOT_SETTLEABLE;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor(status: string) {
+    super('Ce rendez-vous annulé ne peut plus être encaissé.', { status });
+  }
+}
+
+/**
+ * La fenêtre demandée à un historique ne contient aucun instant (#62).
+ *
+ * `from` est inclus et `to` **exclu** : `from >= to` décrit donc un intervalle
+ * vide. Rendre une page vide aurait été défendable, mais trompeur — « aucune
+ * transaction ce jour-là » et « la fenêtre est à l'envers » appellent deux
+ * conduites différentes, et une caisse qui croit la première alors que c'est la
+ * seconde conclut à une journée sans recette.
+ *
+ * **422 et non 400** : les deux bornes sont individuellement bien formées — le
+ * `ValidationPipe` les a déjà acceptées. C'est leur *relation* qui est refusée,
+ * et api-module §5 range cela dans la règle métier.
+ */
+export class HistoryWindowInvalidError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.HISTORY_WINDOW_INVALID;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor() {
+    super('La fin de la fenêtre doit suivre son début.');
   }
 }
 

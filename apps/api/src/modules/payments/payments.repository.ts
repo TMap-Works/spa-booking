@@ -2,7 +2,15 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
-import type { CardPaymentDraft, PayableAppointment, PaymentRecord } from './payments.types';
+import { createdAtWithin } from './history';
+import type {
+  CardPaymentDraft,
+  CashPaymentDraft,
+  PayableAppointment,
+  PaymentHistoryFilter,
+  PaymentRecord,
+  PaymentTransaction,
+} from './payments.types';
 
 /**
  * Seul point du module qui connaît le schéma (api-module §2).
@@ -64,6 +72,26 @@ const PAYMENT_SELECT = {
   providerPaymentIntentId: true,
 } as const;
 
+/**
+ * Ce que l'historique de rapprochement lit d'un encaissement (#62).
+ *
+ * Quatre colonnes de plus que `PAYMENT_SELECT`, et chacune sert le rapprochement
+ * plutôt que le tunnel : la référence de charge, qui est ce qui figure sur un
+ * relevé Stripe ; l'instant de capture, qui décide du jour de caisse ; le cumul
+ * remboursé, sans lequel aucun total ne tombe juste ; et l'instant d'ouverture,
+ * qui est la clé de tri.
+ *
+ * Toujours une projection explicite, jamais la ligne entière : ce qu'on ne lit
+ * pas ne peut pas fuiter.
+ */
+const PAYMENT_TRANSACTION_SELECT = {
+  ...PAYMENT_SELECT,
+  refundedAmountMinor: true,
+  providerChargeId: true,
+  capturedAt: true,
+  createdAt: true,
+} as const;
+
 type PaymentRow = {
   id: string;
   appointmentId: string | null;
@@ -72,6 +100,13 @@ type PaymentRow = {
   method: string;
   status: string;
   providerPaymentIntentId: string | null;
+};
+
+type PaymentTransactionRow = PaymentRow & {
+  refundedAmountMinor: number;
+  providerChargeId: string | null;
+  capturedAt: Date | null;
+  createdAt: Date;
 };
 
 /**
@@ -102,6 +137,19 @@ function toPaymentRecord(row: PaymentRow): PaymentRecord {
     method: row.method as PaymentRecord['method'],
     status: row.status as PaymentRecord['status'],
     providerPaymentIntentId: row.providerPaymentIntentId,
+  };
+}
+
+function toPaymentTransaction(row: PaymentTransactionRow): PaymentTransaction {
+  return {
+    ...toPaymentRecord(row),
+    // Le remboursement porte **la devise de l'encaissement** : il n'y en a
+    // qu'une par ligne, et en inventer une seconde ouvrirait la porte à un total
+    // qui additionne deux monnaies.
+    refunded: { amountMinor: row.refundedAmountMinor, currency: row.currency },
+    providerChargeId: row.providerChargeId,
+    capturedAt: row.capturedAt,
+    createdAt: row.createdAt,
   };
 }
 
@@ -179,4 +227,138 @@ export class PaymentsRepository {
       throw error;
     }
   }
+
+  /**
+   * L'encaissement de ce rendez-vous, sous sa forme de rapprochement.
+   *
+   * Le pendant de `findPaymentByAppointment` pour le comptoir : c'est cette
+   * forme-là que la caisse rend, et la relire ainsi évite qu'un deuxième clic
+   * reçoive une réponse de forme différente du premier.
+   */
+  public async findTransactionByAppointment(
+    appointmentId: string,
+  ): Promise<PaymentTransaction | null> {
+    const row = await this.prisma.payment.findFirst({
+      where: { appointmentId },
+      select: PAYMENT_TRANSACTION_SELECT,
+    });
+
+    return row === null ? null : toPaymentTransaction(row);
+  }
+
+  /**
+   * Inscrit un règlement en espèces au comptoir (#62).
+   *
+   * **Aucun appel Stripe n'a précédé cette écriture, et aucun ne la suivra** :
+   * il n'y a pas de paramètre pour une référence de prestataire, et
+   * `provider_payment_intent_id` reste donc `null` — ce `null` est exactement ce
+   * qui distingue, à la reprise comme au rapprochement, un billet d'une carte.
+   *
+   * `method` et `status` ne sont pas des paramètres, pour la même raison que
+   * dans `recordCardIntent` : cette écriture n'a qu'un sens. Mais le statut y est
+   * l'inverse — `SUCCEEDED` **dès l'écriture**, là où la carte naît `PENDING`.
+   * Il n'y a aucun tiers dont on attendrait la confirmation : l'argent est sur
+   * le comptoir au moment où la requête part, et c'est la caisse qui fait foi
+   * (payments-stripe §4). `captured_at` est posé du même geste, parce qu'un
+   * encaissement abouti sans instant de capture serait irréconciliable.
+   *
+   * Rend `null` — et non une erreur — quand la ligne existe déjà, comme
+   * `recordCardIntent` : `@@unique([tenantId, appointmentId])` tranche la course
+   * de deux comptoirs, ou le double clic d'un seul, et le service relit alors la
+   * ligne gagnante. Un rendez-vous n'a qu'un encaissement, et ce n'est pas la
+   * vigilance de ce fichier qui le garantit.
+   */
+  public async recordCashPayment(draft: CashPaymentDraft): Promise<PaymentTransaction | null> {
+    try {
+      const row = await this.prisma.payment.create({
+        data: withScopedTenant<Prisma.PaymentUncheckedCreateInput>({
+          appointmentId: draft.appointmentId,
+          amountMinor: draft.amount.amountMinor,
+          currency: draft.amount.currency,
+          method: 'CASH',
+          status: 'SUCCEEDED',
+          capturedAt: new Date(),
+        }),
+        select: PAYMENT_TRANSACTION_SELECT,
+      });
+
+      return toPaymentTransaction(row);
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Une page de l'historique des transactions de l'établissement courant (#62).
+   *
+   * ## Ce que l'index sert, et ce qu'il ne sert pas
+   *
+   * `@@index([tenantId, status, createdAt])` et `@@index([tenantId, createdAt])`
+   * existent tous deux sur `payments`. Le tri par `created_at` décroissant, dans
+   * un établissement, avec ou sans filtre de statut, tombe donc sur un B-tree —
+   * ce qui est le cas dominant : l'écran de caisse ouvre sur les dernières
+   * transactions. Un filtre par **moyen** seul, lui, n'a pas d'index dédié ; il
+   * filtre à l'intérieur de l'ensemble déjà borné à l'établissement et à sa
+   * fenêtre, et non de la table.
+   *
+   * ## Pourquoi `$transaction` autour des deux requêtes
+   *
+   * La page et son total sont lus dans la même transaction, **en lecture
+   * répétable** — même raison que dans `crm.repository.ts` : sans elle, un
+   * encaissement concurrent entre les deux donnerait un `totalItems` qui ne
+   * correspond à aucune des pages rendues, et une caisse qui ne se referme
+   * jamais tout à fait. Le défaut de PostgreSQL, `READ COMMITTED`, prend un
+   * instantané **par instruction** : la transaction seule ne suffirait pas.
+   *
+   * L'identifiant départage deux encaissements du même instant. Sans ce second
+   * critère, deux lignes créées dans la même milliseconde peuvent changer de
+   * page d'un appel à l'autre — l'une disparaît de la pagination pendant que
+   * l'autre s'y répète.
+   */
+  public async listTransactions(
+    filter: PaymentHistoryFilter,
+  ): Promise<{ items: PaymentTransaction[]; totalItems: number }> {
+    const where = transactionWhere(filter);
+
+    const [rows, totalItems] = await this.prisma.$transaction(
+      [
+        this.prisma.payment.findMany({
+          where,
+          select: PAYMENT_TRANSACTION_SELECT,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip: (filter.page - 1) * filter.pageSize,
+          take: filter.pageSize,
+        }),
+        this.prisma.payment.count({ where }),
+      ],
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+
+    return { items: rows.map((row) => toPaymentTransaction(row)), totalItems };
+  }
+}
+
+/**
+ * Le `where` de l'historique — **sans `tenantId`**, que l'extension ajoute.
+ *
+ * La fenêtre vient de `createdAtWithin`, partagée avec `saleWhere` : la borne
+ * haute y est exclue, ce qui permet de poser deux journées de caisse bout à bout
+ * sans compter deux fois l'encaissement de minuit — et les deux historiques du
+ * même ticket ne peuvent pas avoir deux idées d'un jour de caisse.
+ *
+ * Chaque critère absent n'ajoute **rien** au `where` plutôt qu'un `undefined` :
+ * Prisma traite les deux pareil, mais un objet qui ne porte que ce qui filtre
+ * réellement se lit — et se journalise — sans avoir à déduire ce qui est actif.
+ */
+function transactionWhere(filter: PaymentHistoryFilter): Prisma.PaymentWhereInput {
+  const createdAt = createdAtWithin(filter);
+
+  return {
+    ...(filter.method === undefined ? {} : { method: filter.method }),
+    ...(filter.status === undefined ? {} : { status: filter.status }),
+    ...(createdAt === undefined ? {} : { createdAt }),
+  };
 }
