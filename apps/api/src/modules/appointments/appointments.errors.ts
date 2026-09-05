@@ -19,6 +19,7 @@ import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
 /** Codes d'erreur du module, tels qu'ils partent au client. */
 export const APPOINTMENTS_ERROR_CODES = {
   SLOT_NO_LONGER_AVAILABLE: 'SLOT_NO_LONGER_AVAILABLE',
+  APPOINTMENT_RANGE_TOO_WIDE: 'APPOINTMENT_RANGE_TOO_WIDE',
 } as const;
 
 /**
@@ -30,6 +31,63 @@ export const APPOINTMENTS_ERROR_CODES = {
  * dérivent, c'est un module qui répond autre chose que ce que le contrat annonce.
  */
 const CONFLICT = DOMAIN_HTTP_STATUS.CONFLICT;
+
+/**
+ * 422 : la requête est bien formée, ce sont ses valeurs prises **ensemble** qui
+ * ne tiennent pas. Même table que ci-dessus, jamais un nombre recopié.
+ */
+const UNPROCESSABLE_ENTITY = DOMAIN_HTTP_STATUS.UNPROCESSABLE_ENTITY;
+
+/**
+ * Fenêtre maximale de l'agenda de back-office, en jours (#444).
+ *
+ * Elle ne borne pas un calcul — l'agenda ne fait que lire — mais le **volume de
+ * la réponse** : une semaine de comptoir porte plusieurs centaines de lignes,
+ * chacune servie avec sa cliente, son praticien et sa prestation imbriqués
+ * (CDC §1.4). Sans borne, la taille de la réponse ne dépendrait que de
+ * l'appelant, et une plage saisie au 20**2**6 au lieu de 2026 ferait parcourir
+ * deux siècles d'agenda pour une faute de frappe.
+ *
+ * Trente et un jours couvrent la vue mois d'un calendrier, la plus large qu'un
+ * back-office affiche ; les vues jour et semaine de #49 tiennent largement
+ * dessous.
+ *
+ * TODO(#26) : c'est `MAX_APPOINTMENT_RANGE_DAYS` de `@spa/shared`
+ * (`packages/shared/src/constants/limits.ts`), à importer le jour où `apps/api`
+ * dépendra du paquet. Le nom est celui du paquet partagé pour que la
+ * substitution ne change pas une borne en silence.
+ */
+export const MAX_APPOINTMENT_RANGE_DAYS = 31;
+
+/**
+ * Plage d'agenda inversée, ou plus large que `MAX_APPOINTMENT_RANGE_DAYS`.
+ *
+ * **422 et non 400** : chaque date est bien écrite — le DTO l'a déjà vérifié
+ * caractère par caractère —, c'est leur écart qui n'est pas servable. La
+ * distinction compte pour le front, qui n'affiche pas un défaut de format comme
+ * une limite de service, et le code est celui qu'annonce déjà
+ * `appointmentListQuerySchema` du contrat partagé.
+ *
+ * Jugée dans le service et pas seulement dans le DTO, pour la raison qui vaut
+ * déjà pour la disponibilité : la règle porte sur le **couple** de dates, et les
+ * deux bornes sont facultatives — c'est le service qui complète celle qui
+ * manque, avec la journée courante du salon. Un décorateur de champ n'aurait vu
+ * ni le couple, ni la valeur qu'il ne reçoit pas.
+ *
+ * `details` ne rend que ce que l'appelant a envoyé, plus la borne : rien de cet
+ * établissement, rien d'un autre.
+ */
+export class AppointmentRangeTooWideError extends DomainError {
+  public override readonly code = APPOINTMENTS_ERROR_CODES.APPOINTMENT_RANGE_TOO_WIDE;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor(from: string, to: string) {
+    super(
+      `La plage demandée doit être ordonnée et ne pas excéder ${String(MAX_APPOINTMENT_RANGE_DAYS)} jours.`,
+      { from, to, maxRangeDays: MAX_APPOINTMENT_RANGE_DAYS },
+    );
+  }
+}
 
 /**
  * Le créneau a été pris entre l'affichage et la validation.

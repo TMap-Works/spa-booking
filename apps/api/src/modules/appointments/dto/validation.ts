@@ -108,6 +108,70 @@ export function isOffsetDateTime(value: unknown): boolean {
 }
 
 /**
+ * Date civile `AAAA-MM-JJ` — la forme de `calendarDateSchema` du contrat (#444).
+ *
+ * Jumeau de `CALENDAR_DATE_PATTERN` d'`availability/availability.time.ts`, et il
+ * doit le rester : les bornes de l'agenda du back-office et celles d'une
+ * interrogation de créneaux décrivent le même calendrier — celui du salon.
+ */
+export const CALENDAR_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/**
+ * `true` si la chaîne est une date civile `AAAA-MM-JJ` qui **existe**.
+ *
+ * Le motif seul ne suffit pas, pour la même raison qu'en date-heure :
+ * `2026-02-31` le satisfait. Une date inexistante traverserait la frontière et
+ * ferait afficher au comptoir l'agenda du 3 mars sous l'étiquette du 31 février,
+ * sans qu'aucune erreur ne le dise.
+ */
+export function isCalendarDate(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const matched = CALENDAR_DATE_PATTERN.exec(value);
+
+  if (matched === null) {
+    return false;
+  }
+
+  const [year, month, day] = [Number(matched[1]), Number(matched[2]), Number(matched[3])];
+
+  const replayed = new Date(0);
+  replayed.setUTCFullYear(year, month - 1, day);
+
+  return (
+    replayed.getUTCFullYear() === year &&
+    replayed.getUTCMonth() === month - 1 &&
+    replayed.getUTCDate() === day
+  );
+}
+
+/**
+ * Date civile de l'établissement — la borne d'une plage d'agenda (#444).
+ *
+ * Une date civile, et non un instant : « la semaine du 3 mars » n'a de sens que
+ * dans le calendrier du salon, et c'est ce calendrier-là qu'un écran affiche.
+ * C'est l'asymétrie qu'annonce `appointmentListQuerySchema` du contrat partagé —
+ * la requête raisonne en dates, la réponse en instants UTC.
+ */
+export function IsCalendarDate(options?: ValidationOptions): PropertyDecorator {
+  return (target: object, propertyName: string | symbol): void => {
+    registerDecorator({
+      name: 'isCalendarDate',
+      target: target.constructor,
+      propertyName: propertyName as string,
+      ...(options === undefined ? {} : { options }),
+      validator: {
+        validate: (value: unknown) => isCalendarDate(value),
+        defaultMessage: () =>
+          `${String(propertyName)} : date civile attendue au format AAAA-MM-JJ (« 2026-03-03 »)`,
+      },
+    });
+  };
+}
+
+/**
  * Refuse toute date-heure sans offset explicite, en 400 nommant le champ.
  *
  * Une date-heure nue (`2026-03-29T03:30:00`) n'a de sens que rapportée à un

@@ -4,18 +4,26 @@ import { InvalidStateTransitionError, NotFoundError } from '../../common/errors'
 import { requireTenantId } from '../../common/tenant';
 import { AvailabilityCacheService } from '../availability/availability-cache';
 import { AvailabilityService } from '../availability/availability.service';
+import { TenantClockService } from '../availability/tenant-clock.service';
 import type { ServiceView } from '../catalog/catalog.types';
 import { ServicesService } from '../catalog/services.service';
 import { AppointmentLifecycleService } from './appointment-lifecycle.service';
 import { occupiesSlot } from './appointment-status';
-import { SlotNoLongerAvailableError } from './appointments.errors';
+import {
+  AppointmentRangeTooWideError,
+  MAX_APPOINTMENT_RANGE_DAYS,
+  SlotNoLongerAvailableError,
+} from './appointments.errors';
 import { AppointmentsRepository } from './appointments.repository';
 import type {
+  AgendaAppointmentRecord,
+  AgendaAppointmentView,
   AppointmentDraft,
   AppointmentRecord,
   AppointmentView,
   BookAppointmentInput,
   CancelAppointmentInput,
+  ListAgendaInput,
   ListClientAppointmentsInput,
   RescheduleAppointmentInput,
   RescheduleDraft,
@@ -129,6 +137,11 @@ export class AppointmentsService {
     private readonly lifecycle: AppointmentLifecycleService,
     private readonly cache: AvailabilityCacheService,
     private readonly slotLocks: SlotLockService,
+    // Le seul service de `availability` que l'agenda du back-office (#444)
+    // emprunte : il convertit une date civile du salon en fenêtre d'instants, ce
+    // qu'aucune arithmétique locale ne saurait faire un jour de changement
+    // d'heure. Il ne lit rien — le fuseau vient du repository de ce module.
+    private readonly clock: TenantClockService,
   ) {}
 
   /**
@@ -568,6 +581,107 @@ export class AppointmentsService {
   }
 
   /**
+   * L'agenda de l'établissement, sur la plage demandée — la lecture du comptoir
+   * (#444, CDC §1.4 « calendrier jour / semaine »).
+   *
+   * ## Trois étapes, et l'ordre compte
+   *
+   * 1. **le fuseau** de l'établissement. Sans lui, « du 3 au 9 mars » ne désigne
+   *    aucune fenêtre : le 3 mars ne commence pas au même instant à Papeete et à
+   *    Paris. C'est aussi ce qui rend le 404 possible — un jeton signé sur une
+   *    portée disparue n'a pas d'établissement à interroger ;
+   * 2. **les bornes**, complétées puis jugées. Absentes, elles valent la journée
+   *    courante du salon — ce que le comptoir ouvre le matin. Jugées ensuite :
+   *    une plage inversée ou trop large sort en 422 avant toute lecture, faute de
+   *    quoi la taille de la réponse ne dépendrait que de l'appelant ;
+   * 3. **la fenêtre en instants**, par `TenantClockService.dayRange`. Elle va du
+   *    premier minuit du salon au dernier, borne haute exclue — et la journée
+   *    dure 23, 24 ou 25 heures selon la date, ce qu'une addition de 24 heures
+   *    n'aurait pas su.
+   *
+   * ## D'où vient l'établissement, et d'où il ne vient jamais
+   *
+   * Du jeton vérifié, posé dans le contexte par `JwtAuthGuard` : le client Prisma
+   * est déjà borné, et aucun DTO de cette route ne porte de `tenantId`. Un
+   * `staffId`, un `clientId` ou un `serviceId` d'un autre établissement ne
+   * traverse donc rien — il ne correspond simplement à aucune ligne, et la
+   * réponse est vide. C'est voulu : une erreur distincte confirmerait l'existence
+   * de la ressource visée (tenant-isolation §4).
+   *
+   * ## Pourquoi aucune lecture du catalogue ici, à la différence de `listForClient`
+   *
+   * Parce que la prestation arrive **par jointure**, sur la requête d'agenda
+   * elle-même : le repository rend le nom, la durée, le tarif courant et le
+   * tampon avant de chaque ligne. `listForClient` n'a pas ce luxe — elle sert
+   * `AppointmentView`, qui ne porte pas de *summary* — et doit donc résoudre le
+   * catalogue à part. Ici, une seule requête suffit, et c'est ce qui rend tenable
+   * un écran de plusieurs centaines de lignes.
+   *
+   * ## Ce que cette route ne fait pas : paginer
+   *
+   * `appointmentListQuerySchema` ne porte pas de curseur, et c'est délibéré : un
+   * calendrier affiche une période entière ou rien — une demi-semaine paginée
+   * n'est pas un agenda. Ce qui borne la réponse est donc la **plage**, pas un
+   * plafond de lignes : tronquer silencieusement ferait disparaître des
+   * rendez-vous de la grille sans que personne ne le sache, ce qui est
+   * strictement pire qu'un refus.
+   *
+   * @throws {NotFoundError} établissement introuvable — jeton signé sur une
+   * portée disparue.
+   * @throws {AppointmentRangeTooWideError} plage inversée ou de plus de
+   * `MAX_APPOINTMENT_RANGE_DAYS` jours.
+   */
+  public async listAgenda(
+    input: ListAgendaInput,
+    now: Date = new Date(),
+  ): Promise<AgendaAppointmentView[]> {
+    const timeZone = await this.repository.currentTimeZone();
+
+    if (timeZone === null) {
+      // `tenants.timezone` est `NOT NULL` : l'absence ne peut venir que d'un
+      // établissement qui n'existe pas. Le 404 est la seule réponse qui
+      // n'apprenne rien.
+      throw new NotFoundError('Établissement introuvable.');
+    }
+
+    // Les deux bornes se complètent **l'une l'autre**, et la journée du salon ne
+    // sert que lorsqu'aucune n'est donnée : `appointmentListQuerySchema` déclare
+    // valide une borne seule, des deux côtés. Retomber sur « aujourd'hui » pour
+    // un `?to=` isolé aurait rendu 422 une requête que le contrat annonce —
+    // toute borne haute passée aurait donné une plage inversée.
+    //
+    // `calendarDateOf` et non la date du serveur : c'est le seul endroit qui
+    // sache quel jour il est à Papeete quand il est déjà demain à Paris.
+    const from = input.from ?? input.to ?? this.clock.calendarDateOf(now, timeZone);
+    const to = input.to ?? from;
+
+    if (to < from || calendarDaysBetween(from, to) > MAX_APPOINTMENT_RANGE_DAYS) {
+      throw new AppointmentRangeTooWideError(from, to);
+    }
+
+    const records = await this.repository.listAgenda({
+      from: this.clock.dayRange(from, timeZone).startsAt,
+      to: this.clock.dayRange(to, timeZone).endsAt,
+      staffId: input.staffId,
+      clientId: input.clientId,
+      serviceId: input.serviceId,
+      statuses: input.statuses,
+    });
+
+    // Trié sur l'instant **facturé**, celui que la réponse porte — et non sur
+    // l'occupé, celui que la base indexe. Les deux ne coïncident que si toutes
+    // les prestations ont le même tampon avant : un soin de 10:30 précédé de
+    // trente minutes de cabine occupe l'agenda dès 10:00, donc avant un soin de
+    // 10:15 sans tampon, et l'ordre de la base rendait alors 10:30 puis 10:15.
+    // L'ordre de la base reste le bon départage — il est total, `(startsAt, id)`
+    // —, et `sort` étant stable, il survit intact partout où les instants
+    // facturés sont égaux.
+    return records
+      .map(agendaView)
+      .sort((left, right) => left.startsAt.localeCompare(right.startsAt));
+  }
+
+  /**
    * L'insertion, tentée sur les candidats **dans l'ordre**, jusqu'à ce que la
    * base en accepte un (#36, quatrième critère).
    *
@@ -886,6 +1000,88 @@ function billedView(record: AppointmentRecord, service: BilledIntervalSource): A
     // la vue est la sortie unique du module, servie aussi bien à la cliente
     // qu'au comptoir, et un motif écrit par un praticien est une note interne.
     // Voir `AppointmentView` (#40).
+  };
+}
+
+/**
+ * Nombre de jours civils entre deux dates, **bornes comprises** (#444).
+ *
+ * Le calcul passe par `Date.parse` sur des minuits UTC et non par une
+ * soustraction de minuits locaux : une différence en millisecondes entre deux
+ * minuits d'un fuseau à heure d'été vaut 23 ou 25 heures les jours de bascule, et
+ * l'arrondi qui en découle fait perdre ou gagner un jour à la fenêtre. Les dates
+ * sont ici des étiquettes de calendrier — leur écart ne dépend d'aucun fuseau.
+ *
+ * TODO(#26) : c'est `calendarDaysBetween` de `@spa/shared`
+ * (`packages/shared/src/common/time.ts`), écrit à l'identique — même nom, même
+ * corps — en attendant que `apps/api` dépende du paquet. `availability` en
+ * porte une troisième copie, pour la même raison et sous le même TODO.
+ */
+function calendarDaysBetween(from: string, to: string): number {
+  const start = Date.parse(`${from}T00:00:00Z`);
+  const end = Date.parse(`${to}T00:00:00Z`);
+
+  return Math.round((end - start) / DAY_MS) + 1;
+}
+
+/**
+ * Une ligne d'agenda telle que le comptoir la lit — `appointmentSchema` du
+ * contrat, champ pour champ (#444).
+ *
+ * ## Les champs facultatifs sont **omis**, jamais posés à `null`
+ *
+ * `appointmentSchema` les déclare `.optional()` : un `null` explicite y
+ * échouerait, et c'est tout l'agenda qui cesserait de se lire pour une note
+ * absente. Les étalements conditionnels ci-dessous produisent donc une clé
+ * **absente** — que `JSON.stringify` omet — plutôt qu'une valeur nulle. C'est
+ * l'inverse exact de `billedView`, et l'asymétrie vient du contrat : la sortie
+ * publique est `nullable`, celle-ci est `optional`.
+ *
+ * ## L'intervalle rendu est le **facturé**, dérivé comme partout ailleurs
+ *
+ * Depuis l'intervalle occupé qui est en base et le tampon avant de la prestation,
+ * lu sur la même requête. Un agenda qui afficherait l'occupé ferait apparaître
+ * la cadence interne du salon à la place de l'heure du rendez-vous — et le
+ * comptoir annoncerait à la cliente dix minutes trop tôt.
+ */
+function agendaView(record: AgendaAppointmentRecord): AgendaAppointmentView {
+  const billedStart = billedStartOf(record, record.service);
+
+  return {
+    id: record.id,
+    status: record.status,
+    client: record.client,
+    staff: record.staff,
+    service: {
+      id: record.service.id,
+      name: record.service.name,
+      durationMinutes: record.service.durationMinutes,
+      // Le tarif **courant** du catalogue. `price` ci-dessous est celui figé à la
+      // réservation, et c'est lui que la cliente doit : les deux diffèrent dès
+      // que le salon a changé ses tarifs depuis, et le comptoir a besoin des
+      // deux pour le dire.
+      price: record.service.price,
+    },
+    startsAt: new Date(billedStart).toISOString(),
+    endsAt: new Date(billedStart + record.service.durationMinutes * MINUTE_MS).toISOString(),
+    price: record.price,
+    ...(record.clientNote === null ? {} : { clientNote: record.clientNote }),
+    // Servie ici et **nulle part ailleurs** : cette route vit derrière
+    // `@AuthAtLeast('STAFF')`, et le contrat partagé documente `staffNote` comme
+    // « jamais servie au parcours public » (#317).
+    ...(record.staffNote === null ? {} : { staffNote: record.staffNote }),
+    ...(record.cancelledAt === null ? {} : { cancelledAt: record.cancelledAt.toISOString() }),
+    // Même régime que la note interne : un motif d'annulation est un texte libre
+    // écrit par un humain, que `AppointmentView` refuse délibérément de rendre au
+    // parcours public. Le comptoir, lui, en a l'usage — c'est ce que #40
+    // annonçait par « se relit depuis la ligne par qui a le droit de le voir ».
+    ...(record.cancellationReason === null
+      ? {}
+      : { cancellationReason: record.cancellationReason }),
+    ...(record.rescheduledFromId === null
+      ? {}
+      : { rescheduledFromId: record.rescheduledFromId }),
+    createdAt: record.createdAt.toISOString(),
   };
 }
 

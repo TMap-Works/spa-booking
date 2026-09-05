@@ -16,6 +16,11 @@ import { CurrentUser } from '../identity/jwt-auth.guard';
 import { AppointmentsService } from './appointments.service';
 import { AppointmentDto } from './dto/book-appointment.dto';
 import { CancelAppointmentDto, toCancellationReason } from './dto/cancel-appointment.dto';
+import {
+  AgendaAppointmentDto,
+  AppointmentListQueryDto,
+  toAgendaInput,
+} from './dto/list-appointments.dto';
 import { MyAppointmentsQueryDto, toListInput } from './dto/my-appointments.dto';
 
 /**
@@ -24,16 +29,28 @@ import { MyAppointmentsQueryDto, toListInput } from './dto/my-appointments.dto';
  *
  * | Route | Rôles |
  * |---|---|
+ * | `GET /appointments` | staff et au-dessus |
  * | `GET /appointments/mine` | toute identité vérifiée |
  * | `POST /appointments/:id/cancel` | staff et au-dessus |
  *
- * Les deux cohabitent parce qu'elles désignent l'établissement de la **même**
+ * Les trois cohabitent parce qu'elles désignent l'établissement de la **même**
  * façon — le jeton, et lui seul — ce qui est le critère qui a fait séparer ce
  * contrôleur du tunnel public. Ce qui les distingue, le rang de l'appelant, se
  * déclare par route : `@Auth()` pour la cliente qui lit son propre historique,
- * `@AuthAtLeast('STAFF')` pour le comptoir qui écrit dans l'agenda du salon.
- * C'est la même conduite que `UsersController`, où `PATCH /users/me` voisine avec
- * des routes d'administration sans rien leur ouvrir.
+ * `@AuthAtLeast('STAFF')` pour le comptoir qui lit et écrit dans l'agenda du
+ * salon. C'est la même conduite que `UsersController`, où `PATCH /users/me`
+ * voisine avec des routes d'administration sans rien leur ouvrir.
+ *
+ * ## Deux lectures de rendez-vous, et pourquoi elles ne fusionnent pas (#444)
+ *
+ * `GET /appointments` sert l'agenda du comptoir, `GET /appointments/mine`
+ * l'historique de la cliente. Elles ne diffèrent pas par un filtre mais par leur
+ * **nature** : la première laisse choisir la période et la fiche cliente, et rend
+ * des noms, la note interne du praticien et le motif d'annulation ; la seconde ne
+ * connaît qu'un porteur, celui du jeton, et ne rend que ce qu'une cliente peut
+ * voir. Les fondre aurait fait dépendre d'un `if` sur le rôle ce qui dépend
+ * aujourd'hui de la porte — la façon la plus sûre de servir un jour une note
+ * interne à la cliente qu'elle décrit.
  *
  * ## Pourquoi un second contrôleur plutôt qu'une route de plus sur le public
  *
@@ -77,6 +94,72 @@ import { MyAppointmentsQueryDto, toListInput } from './dto/my-appointments.dto';
 @Controller({ path: 'appointments', version: '1' })
 export class AppointmentsController {
   public constructor(private readonly appointments: AppointmentsService) {}
+
+  /**
+   * L'agenda de l'établissement sur une plage de jours — le calendrier du
+   * comptoir (#444, CDC §1.4 « calendrier jour / semaine »).
+   *
+   * **200**, et le corps est la liste des rendez-vous de la plage, ordonnée par
+   * instant de début. Chaque ligne porte la cliente, le praticien et la
+   * prestation **imbriqués** : c'est ce qui permet à une grille d'afficher
+   * « Camille — Massage 60 min » sans une requête par cellule.
+   *
+   * ## `@AuthAtLeast('STAFF')`, et pourquoi pas `MANAGER`
+   *
+   * Parce que consulter l'agenda est le geste d'ouverture de la journée, pas un
+   * acte de gestion : le praticien qui regarde ce qui l'attend, la personne
+   * d'accueil qui cherche le rendez-vous de 14 h. Exiger un manager rendrait
+   * l'écran principal du back-office inaccessible à ceux qui l'utilisent toute la
+   * journée. Le CDC §1.4 réserve à l'encadrement la **configuration** de
+   * l'établissement, pas la conduite de la journée — même partage que
+   * l'annulation ci-dessous.
+   *
+   * Ce que la garde interdit, en revanche, est net : **le parcours client n'y
+   * accède pas**. Un jeton `CLIENT` reçoit 403, et la cliente qui veut ses
+   * rendez-vous a `/appointments/mine`, qui ne lui montre que les siens.
+   *
+   * ## Ce que cette route ne peut pas faire, par construction
+   *
+   * Lire l'agenda d'un autre établissement. Il n'y a aucun `tenantId` dans le
+   * chemin ni dans le DTO, et le `ValidationPipe` global refuserait celui qu'on
+   * glisserait dans la chaîne de requête : l'établissement vient du jeton
+   * vérifié, et le client Prisma est déjà borné (tenant-isolation §2). Un
+   * `staffId`, un `clientId` ou un `serviceId` du voisin ne rend donc ni 403 ni
+   * 404 — il ne correspond à aucune ligne, et la réponse est vide. C'est la seule
+   * réponse qui n'apprenne rien : une erreur distincte aurait fait de cette route
+   * une sonde d'annuaire (tenant-isolation §4).
+   *
+   * **422 `APPOINTMENT_RANGE_TOO_WIDE`** quand la plage est inversée ou dépasse
+   * `MAX_APPOINTMENT_RANGE_DAYS`. Ce n'est pas un défaut de format — chaque date
+   * est bien écrite —, c'est leur écart qui n'est pas servable.
+   *
+   * ## Pas de quota, comme les autres routes de ce contrôleur
+   *
+   * L'appelant a un jeton signé : le quota utile est l'authentification
+   * elle-même. Ce qui borne le coût de la réponse est la **plage**, jugée avant
+   * toute lecture — et un salon qui feuillette son calendrier toute la matinée
+   * enchaîne légitimement les appels.
+   */
+  @Get()
+  @AuthAtLeast('STAFF')
+  @ApiOperation({ summary: 'Lister les rendez-vous de l’établissement sur une plage de jours' })
+  @ApiOkResponse({ type: [AgendaAppointmentDto] })
+  @ApiBadRequestResponse({
+    description: 'Paramètre de requête invalide — le champ fautif est nommé.',
+  })
+  @ApiNotFoundResponse({ description: 'Établissement introuvable.' })
+  @ApiUnprocessableEntityResponse({
+    description:
+      'Plage inversée ou trop large — `APPOINTMENT_RANGE_TOO_WIDE`. ' +
+      '`details` porte les bornes envoyées et le maximum.',
+  })
+  public async list(@Query() query: AppointmentListQueryDto): Promise<AgendaAppointmentDto[]> {
+    // Aucun `@CurrentUser()` : à la différence de `mine`, cette route ne
+    // s'intéresse pas à qui appelle mais à l'établissement du jeton, et celui-ci
+    // est déjà dans le contexte de requête. Le rang de l'appelant a été jugé par
+    // la porte.
+    return this.appointments.listAgenda(toAgendaInput(query));
+  }
 
   /**
    * L'historique de la cliente connectée — « à venir » ou « passés » (#47,
