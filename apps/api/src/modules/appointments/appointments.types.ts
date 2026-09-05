@@ -200,11 +200,16 @@ export interface RescheduleAppointmentInput {
  * Ce que le repository écrit lors d'un report — l'intervalle **occupé** du
  * nouveau rendez-vous, et rien d'autre.
  *
- * Tout le reste — cliente, prestation, prix figé, note, statut — est recopié du
- * rendez-vous d'origine **dans la transaction**, depuis la ligne que le
- * repository vient de relire. Le faire passer par ce type l'exposerait à être
- * modifié en chemin, et le rendrait dépendant d'une lecture faite avant que le
- * verrou d'agenda ne soit pris.
+ * Tout le reste — cliente, prestation, prix figé, note de la cliente, note
+ * interne du staff, statut — est recopié du rendez-vous d'origine **dans la
+ * transaction**, depuis la ligne que le repository vient de relire. Le faire
+ * passer par ce type l'exposerait à être modifié en chemin, et le rendrait
+ * dépendant d'une lecture faite avant que le verrou d'agenda ne soit pris.
+ *
+ * La note interne (`staff_note`) est le cas limite qui montre pourquoi ce type
+ * ne porte rien (#317) : elle est recopiée sans jamais ressortir. Un champ ici
+ * l'aurait fait entrer par la demande — donc, à terme, par un corps de requête —
+ * une note de back-office qu'aucune surface publique ne doit pouvoir écrire.
  */
 export interface RescheduleDraft {
   readonly previousId: string;
