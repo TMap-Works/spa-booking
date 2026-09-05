@@ -221,6 +221,14 @@ export function fetchAvailability(
     search.set('staffId', query.staffId);
   }
 
+  // Le rendez-vous que l'appelant s'apprête à déplacer, et qui ne doit donc pas
+  // s'occuper lui-même (#442). Facultatif de la même façon que `staffId` : seul
+  // l'écran de report le renseigne, et sa présence suffit à faire contourner le
+  // cache côté serveur.
+  if (query.excludeAppointmentId !== undefined) {
+    search.set('excludeAppointmentId', query.excludeAppointmentId);
+  }
+
   return request(publicPath(tenantSlug, `/availability?${search.toString()}`), {
     schema: availabilityResponseSchema,
   });

@@ -27,6 +27,16 @@ import { accountTenant } from '../../../tenant';
  * Une date civile n'est pas un instant : « aujourd'hui » n'est pas la même
  * journée à Antananarivo et à Papeete. La borne se calcule donc avec le fuseau de
  * l'établissement, comme dans le tunnel.
+ *
+ * ## Le rendez-vous déplacé ne s'occupe pas lui-même (#442)
+ *
+ * C'est le seul écran du produit qui interroge le calendrier **en sachant qu'un
+ * rendez-vous va disparaître**. Sans le dire, il se voit refuser tous les
+ * créneaux qui chevauchent celui qu'il déplace : un soin d'une heure ne peut plus
+ * bouger de moins d'une heure, alors que c'est le report le plus courant. La
+ * réponse à cette question-là n'est vraie que pour cette cliente et pour ce
+ * geste, et l'API l'écarte donc de son cache — voir le README du module
+ * `availability`.
  */
 
 export const dynamic = 'force-dynamic';
@@ -82,6 +92,10 @@ export default async function ReschedulePage({ params }: ReschedulePageProps) {
     staffId: appointment.staffId,
     from,
     to: addCalendarDays(from, RESCHEDULE_WINDOW_DAYS),
+    // Le rendez-vous en cours de déplacement n'a pas à se barrer la route : c'est
+    // lui qu'on libère. Sans cette exclusion, un soin d'une heure ne pourrait
+    // jamais être décalé de moins d'une heure.
+    excludeAppointmentId: appointment.id,
   });
 
   return (
