@@ -29,10 +29,15 @@ préféré au bon, et la barrière laisse merger sans un mot.
 Aucune dépendance : `unittest` de la bibliothèque standard. Le dépôt n'a pas de
 gestion de paquets Python, et la CI n'a ainsi qu'un interpréteur à poser.
 """
+import contextlib
+import inspect
+import io
+import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -1121,7 +1126,25 @@ class TestSansLeWorkflowDAutoMerge(unittest.TestCase):
         self.assertEqual(declared.group(1), pr_gate.MERGE_WORKFLOW)
 
 
-class TestAuthorisedScopes(unittest.TestCase):
+class SansIntention(unittest.TestCase):
+    """Socle des classes qui n'éprouvent que la lecture de la variable.
+
+    Sans cela, ces tests liraient le `supervisor.json` **réel** du poste qui les
+    exécute : leurs attentes dépendraient de l'armement du moment, et la suite
+    passerait ou non selon le jalon en cours. On les place donc là où il n'y a
+    aucune intention à confronter — ce que `intent_scopes()` traite comme « on ne
+    sait pas », c'est-à-dire le comportement d'avant #414.
+    """
+
+    def setUp(self):
+        absente = Path(__file__).resolve().parent / "intention-qui-n-existe-pas.json"
+        self.assertFalse(absente.exists())
+        patch = mock.patch.object(pr_gate, "INTENT", absente)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+
+class TestAuthorisedScopes(SansIntention):
     """`authorised_scopes()` — ce que l'opérateur a autorisé avant de partir.
 
     La variable dit ce qui a **déjà été répondu**, là où `SPA_UNATTENDED` dit
@@ -1166,7 +1189,7 @@ class TestAuthorisedScopes(unittest.TestCase):
             ["infra/terraform"])
 
 
-class TestScopesDeLAppel(unittest.TestCase):
+class TestScopesDeLAppel(SansIntention):
     """`--merge-sensitive` : la même autorisation, mais donnée PR par PR.
 
     Elle existe pour l'arbitre du run, qui n'autorise qu'après avoir lu le diff
@@ -1202,6 +1225,218 @@ class TestScopesDeLAppel(unittest.TestCase):
         """La barrière l'accepte — c'est la commande d'arbitrage qui interdit à
         l'arbitre de l'écrire. Le vérifier ici documente où vit la limite."""
         self.assertEqual(self.scopes(pr_gate.ALL_SCOPES), set(pr_gate.SCOPE_KEYS))
+
+
+class TestConfrontationDeLIntention(unittest.TestCase):
+    """`authorised_scopes()` face à `supervisor.json` — le défaut #414.
+
+    La variable est figée dans l'environnement du `claude -p` au moment où il
+    naît ; l'intention du run, elle, se réécrit sur le disque à chaque
+    réarmement. Les deux divergent donc dès qu'on réarme pendant qu'une vague
+    vole — ce qui est arrivé le 5 septembre 2026 à une minute d'intervalle : la
+    vague ouverte sous `--merge-sensitive all` a continué d'annoncer les cinq
+    périmètres alors que `supervisor.json` portait déjà `"merge_sensitive": []`.
+
+    `pr_gate.py` ne décidait qu'à partir de la variable. Il annonçait donc
+    « périmètre sensible pré-autorisé à l'armement du run — merge poursuivi »
+    sur une PR que personne n'avait autorisée, et `mod:payments` comme `security`
+    — la frontière PCI SAQ A du CDC — passaient au merge non relu.
+
+    Ce qui est vérifié ici est la confrontation dans **les deux sens** : le
+    désaccord doit retenir la plus restrictive et le dire en `ERROR`, l'accord
+    ne doit strictement rien changer. Une régression sur le second serait tout
+    aussi grave que sur le premier : elle rendrait inerte le
+    `--merge-sensitive infra/terraform,prisma` d'un opérateur, et la reprise
+    automatique cesserait de merger sans que rien ne le dise.
+    """
+
+    def setUp(self):
+        self.dossier = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dossier.cleanup)
+        self.intention = Path(self.dossier.name) / "supervisor.json"
+        patch = mock.patch.object(pr_gate, "INTENT", self.intention)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def arme(self, scopes, **reste):
+        """Écrit une intention de run, comme `milestone_supervise` l'écrit."""
+        intent = {"milestone": "S3", "no_merge": False,
+                  pr_gate.INTENT_KEY: list(scopes)}
+        intent.update(reste)
+        self.intention.write_text(json.dumps(intent, ensure_ascii=False),
+                                  encoding="utf-8")
+
+    def scopes(self, variable, extra=""):
+        """Rend (périmètres retenus, ce qui a été écrit sur stderr)."""
+        erreurs = io.StringIO()
+        with mock.patch.dict(os.environ, {pr_gate.AUTHORISED_ENV: variable},
+                             clear=True):
+            with contextlib.redirect_stderr(erreurs):
+                return pr_gate.authorised_scopes(extra), erreurs.getvalue()
+
+    # --- désaccord : on retient la plus restrictive, et on le dit ----------
+
+    def test_le_cas_de_414_referme_le_paiement_et_la_securite(self):
+        """Le désaccord exact du run `s3-back-office-paiements-20260825-101849`.
+
+        La variable portait la liste des périmètres **retenus** exportée comme
+        celle des périmètres **autorisés** — une inversion de sens qui ouvrait
+        tout. L'intention, elle, n'en armait aucun.
+        """
+        self.arme([])
+        retenus, erreurs = self.scopes(",".join(sorted(pr_gate.SCOPE_KEYS)))
+        self.assertEqual(retenus, set())
+        # Et le refus tombe bien là où il compte : sur la frontière PCI.
+        self.assertEqual(
+            pr_gate.blocking(["label mod:payments", "label security"], retenus),
+            ["label mod:payments", "label security"])
+        self.assertIn("ERROR", erreurs)
+
+    def test_le_desaccord_nomme_les_perimetres_revoques(self):
+        """« 2 périmètres » ne répond pas à « qu'est-ce qui a failli passer »."""
+        self.arme(["prisma"])
+        retenus, erreurs = self.scopes("prisma,mod:payments,security")
+        self.assertEqual(retenus, {"prisma"})
+        self.assertIn("mod:payments", erreurs)
+        self.assertIn("security", erreurs)
+        # Ce que l'armement a réellement donné est nommé lui aussi : sans cela,
+        # le journal dit ce qui a été refusé sans dire au nom de quoi.
+        self.assertIn("prisma", erreurs)
+
+    def test_le_desaccord_est_journalise_en_error(self):
+        self.arme([])
+        _, erreurs = self.scopes("prisma")
+        self.assertTrue(erreurs.lstrip().startswith("ERROR"),
+                        "le désaccord doit se lire comme une erreur : " + erreurs)
+
+    def test_all_dans_la_variable_ne_force_plus_rien(self):
+        """`all` est un raccourci de saisie, pas un passe-droit.
+
+        C'est la forme par laquelle le défaut est né : l'armement de 03h03 avait
+        `--merge-sensitive all`, et sa vague a survécu au réarmement de 03h48.
+        """
+        self.arme(["infra/terraform"])
+        retenus, erreurs = self.scopes(pr_gate.ALL_SCOPES)
+        self.assertEqual(retenus, {"infra/terraform"})
+        self.assertIn("ERROR", erreurs)
+
+    # --- accord : rien ne change ------------------------------------------
+
+    def test_l_armement_legitime_continue_de_merger(self):
+        """`--merge-sensitive infra/terraform,prisma` armé et concordant.
+
+        Le cas que la correction ne doit surtout pas casser : l'opérateur a
+        donné son accord, l'intention et la variable disent la même chose, le
+        merge se poursuit et personne n'est averti de rien.
+        """
+        self.arme(["infra/terraform", "prisma"])
+        retenus, erreurs = self.scopes("infra/terraform,prisma")
+        self.assertEqual(retenus, {"infra/terraform", "prisma"})
+        self.assertEqual(erreurs, "")
+        self.assertEqual(pr_gate.blocking(
+            ["infra/terraform", "schéma ou migration Prisma"], retenus), [])
+
+    def test_all_dans_l_intention_ouvre_tout_au_lieu_de_tout_fermer(self):
+        """Les deux côtés doivent entendre `all` de la même façon.
+
+        `milestone_supervise` développe le raccourci avant d'écrire, mais une
+        intention posée à la main en porterait la forme brute. L'intersecter
+        telle quelle ne garderait aucun périmètre — le contresens exact d'un
+        raccourci qui les prend tous.
+        """
+        self.arme([pr_gate.ALL_SCOPES])
+        retenus, erreurs = self.scopes("prisma")
+        self.assertEqual(retenus, {"prisma"})
+        self.assertEqual(erreurs, "")
+
+    def test_accord_sur_aucun_perimetre(self):
+        """Le cas le plus courant : rien d'armé, rien dans la variable."""
+        self.arme([])
+        self.assertEqual(self.scopes(""), (set(), ""))
+
+    def test_la_variable_plus_stricte_que_l_intention_ne_declenche_rien(self):
+        """Réarmer *plus large* pendant qu'une vague vole n'ouvre rien de neuf.
+
+        C'est le sens inverse du défaut, et il est sans danger : la vague reste
+        sur le périmètre étroit qu'elle a reçu. Rien n'est révoqué, donc rien
+        n'est à signaler — un `ERROR` ici ne serait que du bruit.
+        """
+        self.arme(["infra/terraform", "prisma", "mod:payments"])
+        self.assertEqual(self.scopes("prisma"), ({"prisma"}, ""))
+
+    # --- ce qui n'est pas une intention -----------------------------------
+
+    def test_intention_absente_laisse_la_variable_intacte(self):
+        """`--no-watchdog` n'écrit aucune intention mais arme bien ses vagues.
+
+        Durcir sur cette absence retirerait à l'opérateur une autorisation qu'il
+        a réellement donnée : la correction deviendrait la panne.
+        """
+        self.assertFalse(self.intention.exists())
+        self.assertEqual(self.scopes("infra/terraform"),
+                         ({"infra/terraform"}, ""))
+
+    def test_intention_illisible_laisse_la_variable_intacte(self):
+        for contenu in ("{ pas du json", "[]", '{"merge_sensitive": "prisma"}'):
+            with self.subTest(contenu=contenu):
+                self.intention.write_text(contenu, encoding="utf-8")
+                self.assertEqual(self.scopes("prisma"), ({"prisma"}, ""))
+
+    # --- le mandat de l'arbitre n'est pas rogné ---------------------------
+
+    def test_le_drapeau_de_l_arbitre_survit_a_l_intention(self):
+        """`--merge-sensitive` sur l'appel est un mandat donné **maintenant**.
+
+        L'arbitre l'a posé après avoir lu le diff et publié sa revue ; la
+        variable, elle, n'est qu'un souvenir d'un armement passé. Confronter le
+        drapeau à l'intention retirerait à l'arbitre le pouvoir que l'opérateur
+        lui a explicitement confié.
+        """
+        self.arme([])
+        retenus, _ = self.scopes("", extra="infra/terraform")
+        self.assertEqual(retenus, {"infra/terraform"})
+
+    def test_le_drapeau_ne_rattrape_que_ce_qu_il_nomme(self):
+        self.arme([])
+        retenus, erreurs = self.scopes("mod:payments,prisma", extra="prisma")
+        self.assertEqual(retenus, {"prisma"})
+        self.assertIn("mod:payments", erreurs)
+
+    # --- la lecture doit viser le bon fichier ------------------------------
+
+    def test_le_chemin_est_celui_qu_ecrit_le_superviseur(self):
+        """Un fichier d'intention renommé rendrait la confrontation muette.
+
+        `intent_scopes()` ne peut pas distinguer « le superviseur n'a rien armé »
+        de « je ne lis pas le bon fichier » : les deux rendent `None`, et la
+        barrière retomberait alors dans le défaut #414 sans un mot. Ce que le
+        superviseur écrit fait foi, et c'est relu chez lui plutôt que recopié.
+        """
+        chemin = str(Path(pr_gate.__file__).resolve().parent)
+        sys.path.insert(0, chemin)
+        # Retiré derrière soi : laisser `scripts/` en tête de `sys.path` ferait
+        # que les tests suivants importent depuis le dépôt plutôt que depuis ce
+        # qu'ils ont préparé — une contagion qui ne se voit qu'à l'ordre des
+        # tests.
+        self.addCleanup(lambda: chemin in sys.path and sys.path.remove(chemin))
+        import milestone_supervise  # noqa: E402 — après l'insertion de chemin
+
+        self.assertEqual(pr_gate.INTENT_RELPATH[-1], milestone_supervise.INTENT.name)
+        self.assertEqual(pr_gate.INTENT_RELPATH[-2],
+                         milestone_supervise.INTENT.parent.name)
+        # Et la clé lue est bien celle que l'armement écrit.
+        self.assertIn(pr_gate.INTENT_KEY,
+                      inspect.getsource(milestone_supervise.intent_of))
+
+    def test_l_intention_est_cherchee_dans_le_depot_principal(self):
+        """Les agents tournent en worktree, où `.claude/.milestone/` n'existe pas.
+
+        Le dossier est ignoré par git : le chercher sous la racine du worktree
+        n'y trouverait que l'absence, donc « rien à confronter » — et la
+        confrontation serait muette précisément sous `/milestone`, le seul
+        contexte où `SPA_UNATTENDED` est posée.
+        """
+        self.assertEqual((pr_gate.main_root() / ".claude").is_dir(), True)
 
 
 class TestBlocking(unittest.TestCase):
