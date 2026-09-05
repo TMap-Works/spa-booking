@@ -1728,6 +1728,13 @@ def arm_supervision(milestone, args):
     session qui l'orchestre meurt avec elle. Armer ici plutôt que de compter sur
     un lancement à la main est le seul moyen d'y survivre : à partir de cet
     instant, plus rien n'est à relancer, quoi qu'il arrive.
+
+    **Seul ce que l'opérateur a tapé est relayé.** Un drapeau absent d'ici n'est
+    pas un drapeau à zéro : le superviseur reconnaît un ré-armement du même run
+    et lui reprend ses réglages (`carried_arming`, #323). Y ajouter un drapeau
+    « par défaut, pour faire bon poids » le ferait au contraire compter pour un
+    geste de l'opérateur, et écraserait l'armement d'origine — c'est exactement
+    la façon dont un `start` de reprise a effacé un `--merge-sensitive prisma`.
     """
     if getattr(args, "no_watchdog", False):
         print("veille non armée (--no-watchdog) : la reprise après une coupure "
@@ -2188,6 +2195,11 @@ def cmd_start(args):
     # `--width` non passé vaut ce que la nature demande. Un run d'outillage
     # réécrit `scripts/` et `.claude/` pendant que ces fichiers-là orchestrent le
     # run : deux agents à la fois s'y écriraient l'un sous l'autre.
+    #
+    # Retenu avant d'être comblé : le défaut de la nature n'est *pas* un choix de
+    # l'opérateur, et une reprise doit reprendre la largeur du run plutôt que
+    # celle-là (voir plus bas, #323).
+    width_typed = args.width is not None
     if args.width is None:
         args.width = DEFAULT_WIDTH.get(args.nature, 3)
     if args.width < 1:
@@ -2223,6 +2235,14 @@ def cmd_start(args):
             append_journal(existing, {"ts": now(), "kind": "run", "status": "resumed",
                                       "actor": "orchestrateur",
                                       "message": "run inachevé repris automatiquement"})
+            # La largeur d'un run repris est la sienne, pas le défaut de sa
+            # nature : `arm_supervision()` relaie toujours `--width`, si bien
+            # qu'une reprise nue ré-armait à 3 un run ouvert à 5 — un réglage
+            # d'armement perdu de plus, du même geste que #323. Le superviseur
+            # ne peut pas le rattraper : un drapeau relayé compte pour tapé.
+            width = run.get("width")
+            if not width_typed and isinstance(width, int) and width >= 1:
+                args.width = width
             print(f"run {existing} repris · {run['milestone']}")
             print("(`start --fresh` pour en ouvrir un nouveau à la place)\n")
             arm_supervision(run["milestone"], args)
