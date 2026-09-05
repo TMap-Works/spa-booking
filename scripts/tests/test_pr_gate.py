@@ -231,22 +231,47 @@ class TestIssueLabels(unittest.TestCase):
             self.assertEqual(pr_gate.issue_labels({}), set())
 
 
-class TestChangedPaths(unittest.TestCase):
-    """`changed_paths()` — les fichiers de la PR, pagination comprise."""
+class TestPrFiles(unittest.TestCase):
+    """`pr_files()` — les fichiers de la PR, statut compris, pagination comprise.
 
-    def test_liste_normalisee(self):
-        fake = FakeGh([("pulls/7/files",
-                        completed(stdout="a.ts\n\n  infra/terraform/main.tf  \n"))])
+    Une seule marche paginée sert les deux décisions qui en dépendent : le
+    périmètre sensible, qui ne veut que les chemins, et la divergence de base,
+    qui ne veut que les suppressions. Les demander séparément parcourait deux
+    fois les mêmes pages — donc deux fois plus de chances d'atteindre le délai
+    sur une grosse PR, un délai qui vaut refus.
+    """
+
+    def test_statut_et_chemin(self):
+        fake = FakeGh([("pulls/7/files", completed(
+            stdout="modified\ta.ts\nremoved\tb.ts\nadded\tc.ts\n"))])
         with mock.patch.object(pr_gate, "run", fake):
-            paths = pr_gate.changed_paths(7)
-        self.assertEqual(paths, ["a.ts", "infra/terraform/main.tf"])
+            files = pr_gate.pr_files(7)
+        self.assertEqual(files, [("modified", "a.ts"), ("removed", "b.ts"),
+                                 ("added", "c.ts")])
+
+    def test_lignes_vides_ignorees(self):
+        fake = FakeGh([("pulls/7/files", completed(
+            stdout="modified\ta.ts\n\n  \nmodified\t  infra/terraform/main.tf  \n"))])
+        with mock.patch.object(pr_gate, "run", fake):
+            files = pr_gate.pr_files(7)
+        self.assertEqual(files, [("modified", "a.ts"),
+                                 ("modified", "infra/terraform/main.tf")])
+
+    def test_le_separateur_est_une_tabulation(self):
+        # Un espace serait ambigu : il est parfaitement légal dans un nom de
+        # fichier git, une tabulation ne l'est pas.
+        fake = FakeGh([("pulls/7/files", completed(
+            stdout="modified\tapps/web/mon fichier.ts\n"))])
+        with mock.patch.object(pr_gate, "run", fake):
+            files = pr_gate.pr_files(7)
+        self.assertEqual(files, [("modified", "apps/web/mon fichier.ts")])
 
     def test_appel_pagine(self):
         # `--json files` s'arrêtait à une centaine d'entrées : le fichier sensible
         # d'une grosse PR y passait inaperçu.
         fake = FakeGh([("pulls/7/files", completed(stdout=""))])
         with mock.patch.object(pr_gate, "run", fake):
-            pr_gate.changed_paths(7)
+            pr_gate.pr_files(7)
         command = " ".join(fake.calls[0])
         self.assertIn("--paginate", command)
         self.assertIn("per_page=100", command)
@@ -254,7 +279,24 @@ class TestChangedPaths(unittest.TestCase):
     def test_echec_rend_none(self):
         fake = FakeGh([("pulls/7/files", completed(returncode=1, stderr="boom"))])
         with mock.patch.object(pr_gate, "run", fake):
-            self.assertIsNone(pr_gate.changed_paths(7))
+            self.assertIsNone(pr_gate.pr_files(7))
+
+
+class TestChangedPaths(unittest.TestCase):
+    """`changed_paths()` — les chemins, dérivés sans un appel de plus."""
+
+    def test_les_chemins_dans_l_ordre(self):
+        self.assertEqual(
+            pr_gate.changed_paths([("modified", "a.ts"), ("removed", "b.ts")]),
+            ["a.ts", "b.ts"])
+
+    def test_l_ignorance_se_propage(self):
+        # `sensitive()` refuse sur None : le dériver en liste vide ouvrirait le
+        # garde-fou précisément quand on ne voit plus rien.
+        self.assertIsNone(pr_gate.changed_paths(None))
+
+    def test_liste_vide(self):
+        self.assertEqual(pr_gate.changed_paths([]), [])
 
 
 class TestSensitive(unittest.TestCase):
@@ -1554,6 +1596,519 @@ class TestSensitiveScopes(unittest.TestCase):
         self.assertEqual(
             len(annonces),
             len(pr_gate.SENSITIVE_LABELS) + len(pr_gate.SENSITIVE_PREFIXES) + 1)
+
+
+# --- Base divergée (#423) ---------------------------------------------------
+#
+# Le mode de défaillance que ces classes surveillent n'est plus « la barrière
+# laisse merger sans relire », mais « la barrière laisse merger une PR qui
+# efface du travail déjà mergé ». La CI ne peut structurellement pas le voir :
+# elle passe très bien sans un module écrit après le départ de la branche.
+#
+# Une régression ici serait donc, elle aussi, un silence — et le plus cher de
+# tous, puisqu'il se solde par du code perdu sur `develop`.
+
+MERGE_BASE = "5728f17ab0c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5"   # d'où partait #343
+DEVELOP_413 = "6806528cba9f8e7d6c5b4a3928170f6e5d4c3b2a"  # develop après #413
+HEAD_415 = "21557de0f1e2d3c4b5a6978869504132435465768"    # la tête de #415
+
+# Les vingt et un fichiers du module CRM que #413 a apportés à `develop` et que
+# #415 supprimait — la liste du constat de l'issue, remise dans sa forme.
+CRM_FILES = (
+    ["apps/api/prisma/migrations/20260904150000_add_customer_crm_fields/"
+     "migration.sql"]
+    + ["apps/api/src/modules/crm/{}".format(name) for name in (
+        "crm.module.ts", "crm.controller.ts", "crm.service.ts",
+        "crm.repository.ts", "crm.controller.spec.ts", "crm.service.spec.ts",
+        "dto/create-customer.dto.ts", "dto/update-customer.dto.ts",
+        "dto/list-customers.query.ts", "dto/customer.response.ts",
+        "dto/index.ts", "entities/customer.entity.ts",
+        "mappers/customer.mapper.ts", "mappers/customer.mapper.spec.ts",
+        "crm.constants.ts")]
+    + ["apps/api/test/crm-tenant.isolation-spec.ts",
+       "apps/api/test/crm.harness.ts",
+       "apps/api/test/crm.integration-spec.ts",
+       "packages/shared/src/schemas/crm.ts",
+       "packages/shared/src/schemas/__tests__/crm.spec.ts"])
+
+
+def compare_stdout(base=MERGE_BASE, acquis=(), commits=(), tronque=False):
+    """Ce que rend `gh api …/compare/… --jq COMPARE_JQ`."""
+    return json.dumps({"base": base, "acquis": list(acquis),
+                       "commits": list(commits), "tronque": tronque})
+
+
+def pr_files_stdout(files):
+    """Ce que rend `gh api …/pulls/N/files --jq` : « statut<TAB>chemin » par ligne."""
+    return "".join("{}\t{}\n".format(status, path) for status, path in files)
+
+
+def removals(paths):
+    """Une PR qui ne fait que supprimer ces chemins."""
+    return [("removed", path) for path in paths]
+
+
+#: « déduis la liste des fichiers de la PR depuis les suppressions attendues ».
+DEDUIT = object()
+
+
+def commit_stdout(message, files):
+    """Ce que rend `gh api …/commits/{sha} --jq COMMIT_JQ`."""
+    return json.dumps({"message": message, "files": list(files)})
+
+
+class TestRemovedPaths(unittest.TestCase):
+    """`removed_paths()` — ce que la PR efface, et rien d'autre."""
+
+    def test_seules_les_suppressions(self):
+        files = [("modified", "a.ts"), ("removed", "b.ts"),
+                 ("added", "c.ts"), ("renamed", "d.ts"), ("removed", "e.ts")]
+        self.assertEqual(pr_gate.removed_paths(files), ["b.ts", "e.ts"])
+
+    def test_l_ignorance_se_propage(self):
+        # `diverged()` refuse sur None ; le dériver en liste vide dirait « cette
+        # PR ne supprime rien » alors qu'on n'en sait rien.
+        self.assertIsNone(pr_gate.removed_paths(None))
+
+    def test_aucune_suppression_rend_une_liste_vide(self):
+        # Distinct de None : « rien n'est supprimé » n'est pas « on ne sait pas ».
+        self.assertEqual(pr_gate.removed_paths([("modified", "a.ts")]), [])
+
+
+class TestBaseAcquisitions(unittest.TestCase):
+    """`base_acquisitions()` — ce que la base a gagné depuis le départ de la branche."""
+
+    def test_comparaison_en_trois_points_de_la_tete_vers_la_base(self):
+        # L'ordre des bornes fait tout : `head...base` diffe depuis
+        # merge-base(head, base) jusqu'à la base — ce que la base a acquis.
+        # Inversées, on lirait ce que la branche a produit, qui ne dit rien de
+        # ce qu'elle effacerait.
+        fake = FakeGh([("compare/", completed(stdout=compare_stdout()))])
+        with mock.patch.object(pr_gate, "run", fake):
+            pr_gate.base_acquisitions(HEAD_415, "develop")
+        command = " ".join(fake.calls[0])
+        self.assertIn("compare/{}...develop".format(HEAD_415), command)
+
+    def test_charge_lue(self):
+        fake = FakeGh([("compare/", completed(stdout=compare_stdout(
+            acquis=["a.ts", "b.ts"], commits=[DEVELOP_413])))])
+        with mock.patch.object(pr_gate, "run", fake):
+            base, acquis, commits, tronque = pr_gate.base_acquisitions(
+                HEAD_415, "develop")
+        self.assertEqual(base, MERGE_BASE)
+        self.assertEqual(acquis, ["a.ts", "b.ts"])
+        self.assertEqual(commits, [DEVELOP_413])
+        self.assertFalse(tronque)
+
+    def test_la_troncature_est_remontee(self):
+        fake = FakeGh([("compare/", completed(stdout=compare_stdout(
+            acquis=["a.ts"], tronque=True)))])
+        with mock.patch.object(pr_gate, "run", fake):
+            self.assertTrue(pr_gate.base_acquisitions(HEAD_415, "develop")[3])
+
+    def test_le_plafond_de_github_est_celui_qu_on_surveille(self):
+        # 300 fichiers et 250 commits, sans pagination possible sur cet
+        # endpoint : au-delà, la liste des acquisitions est amputée et la
+        # barrière conclurait « rien à refuser » faute d'avoir tout vu.
+        self.assertEqual(pr_gate.COMPARE_FILES_CAP, 300)
+        self.assertIn(str(pr_gate.COMPARE_FILES_CAP), pr_gate.COMPARE_JQ)
+        self.assertIn("total_commits", pr_gate.COMPARE_JQ)
+
+    def test_l_api_rest_ne_connait_pas_les_deux_points(self):
+        # `compare/{base}..{head}` répond 404 — vérifié sur ce dépôt. La forme à
+        # deux points n'existe que dans l'interface web, et l'écrire ici rendrait
+        # la barrière muette sur un `gh` en échec.
+        fake = FakeGh([("compare/", completed(stdout=compare_stdout()))])
+        with mock.patch.object(pr_gate, "run", fake):
+            pr_gate.base_acquisitions(HEAD_415, "develop")
+        self.assertIn("...", " ".join(fake.calls[0]))
+
+    def test_un_renommage_compte_comme_une_acquisition(self):
+        # Le chemin d'arrivée n'existait pas au point de départ : le supprimer
+        # efface bien un apport de la base.
+        self.assertIn('"renamed"', pr_gate.COMPARE_JQ)
+        self.assertIn('"added"', pr_gate.COMPARE_JQ)
+
+    def test_une_modification_n_est_pas_une_acquisition(self):
+        # Un fichier déjà présent au départ de la branche, seulement modifié
+        # depuis, reste supprimable : c'est ce que le troisième critère de #423
+        # protège. Git refuserait de son côté (conflit modification/suppression),
+        # et `fitness()` le verrait en CONFLICTING.
+        self.assertNotIn('"modified"', pr_gate.COMPARE_JQ)
+
+    def test_echec_rend_none(self):
+        fake = FakeGh([("compare/", completed(returncode=1, stderr="boom"))])
+        with mock.patch.object(pr_gate, "run", fake):
+            self.assertIsNone(pr_gate.base_acquisitions(HEAD_415, "develop"))
+
+    def test_reponse_illisible_rend_none(self):
+        for stdout in ("", "pas du json", "[]", "null"):
+            fake = FakeGh([("compare/", completed(stdout=stdout))])
+            with self.subTest(stdout=stdout), mock.patch.object(pr_gate, "run", fake):
+                self.assertIsNone(pr_gate.base_acquisitions(HEAD_415, "develop"))
+
+    def test_listes_absentes_valent_listes_vides(self):
+        fake = FakeGh([("compare/", completed(stdout=json.dumps({"base": None})))])
+        with mock.patch.object(pr_gate, "run", fake):
+            base, acquis, commits, tronque = pr_gate.base_acquisitions(
+                HEAD_415, "develop")
+        self.assertIsNone(base)
+        self.assertEqual((acquis, commits, tronque), ([], [], False))
+
+
+class TestIntroducers(unittest.TestCase):
+    """`introducers()` — quelle PR de la base a introduit ces fichiers."""
+
+    def test_le_squash_nomme_sa_pr(self):
+        fake = FakeGh([("commits/" + DEVELOP_413, completed(stdout=commit_stdout(
+            "feat(crm): fiches clients (#413)\n\nRefs #56", ["a.ts", "b.ts"])))])
+        with mock.patch.object(pr_gate, "run", fake):
+            found = pr_gate.introducers([DEVELOP_413], ["a.ts", "b.ts"])
+        self.assertEqual(found, {"a.ts": "#413", "b.ts": "#413"})
+
+    def test_on_remonte_du_plus_recent_au_plus_ancien(self):
+        # `compare` rend ses commits du plus ancien au plus récent ; c'est le
+        # dernier qui a introduit le fichier, donc celui qu'il faut lire d'abord.
+        fake = FakeGh([
+            ("commits/bbb", completed(stdout=commit_stdout(
+                "feat: récent (#415)", ["a.ts"]))),
+            ("commits/aaa", completed(stdout=commit_stdout(
+                "feat: ancien (#413)", ["a.ts"]))),
+        ])
+        with mock.patch.object(pr_gate, "run", fake):
+            found = pr_gate.introducers(["aaa", "bbb"], ["a.ts"])
+        self.assertEqual(found, {"a.ts": "#415"})
+
+    def test_arret_des_que_tout_est_attribue(self):
+        # Un module entier arrive d'un seul squash : le cas de #423 se résout en
+        # un appel, et le second commit n'est jamais lu.
+        fake = FakeGh([
+            ("commits/bbb", completed(stdout=commit_stdout(
+                "feat(crm): (#413)", ["a.ts", "b.ts"]))),
+            ("commits/aaa", completed(stdout=commit_stdout("x (#1)", ["a.ts"]))),
+        ])
+        with mock.patch.object(pr_gate, "run", fake):
+            pr_gate.introducers(["aaa", "bbb"], ["a.ts", "b.ts"])
+        self.assertEqual(len(fake.calls), 1)
+
+    def test_commit_sans_numero_de_pr_rend_le_sha_court(self):
+        fake = FakeGh([("commits/", completed(stdout=commit_stdout(
+            "chore: commit posé à la main", ["a.ts"])))])
+        with mock.patch.object(pr_gate, "run", fake):
+            found = pr_gate.introducers([DEVELOP_413], ["a.ts"])
+        self.assertEqual(found, {"a.ts": DEVELOP_413[:7]})
+
+    def test_un_numero_au_milieu_du_sujet_ne_compte_pas(self):
+        # Le squash inscrit `(#N)` **en fin de sujet** ; « corrige (#12) puis
+        # relit » n'est pas une PR de fusion.
+        fake = FakeGh([("commits/", completed(stdout=commit_stdout(
+            "fix: corrige (#12) puis relit", ["a.ts"])))])
+        with mock.patch.object(pr_gate, "run", fake):
+            found = pr_gate.introducers([DEVELOP_413], ["a.ts"])
+        self.assertEqual(found, {"a.ts": DEVELOP_413[:7]})
+
+    def test_un_commit_illisible_n_empeche_pas_les_autres(self):
+        # L'attribution est un confort de diagnostic : elle ne doit jamais
+        # pouvoir faire échouer le refus qu'elle décore.
+        fake = FakeGh([
+            ("commits/ccc", completed(returncode=1, stderr="boom")),
+            ("commits/bbb", completed(stdout="pas du json")),
+            ("commits/aaa", completed(stdout=commit_stdout("feat: (#413)", ["a.ts"]))),
+        ])
+        with mock.patch.object(pr_gate, "run", fake):
+            found = pr_gate.introducers(["aaa", "bbb", "ccc"], ["a.ts"])
+        self.assertEqual(found, {"a.ts": "#413"})
+
+    def test_fichier_non_revendique_reste_sans_attribution(self):
+        fake = FakeGh([("commits/", completed(stdout=commit_stdout(
+            "feat: (#413)", ["a.ts"])))])
+        with mock.patch.object(pr_gate, "run", fake):
+            found = pr_gate.introducers([DEVELOP_413], ["a.ts", "b.ts"])
+        self.assertEqual(found, {"a.ts": "#413"})
+
+    def test_la_remontee_est_bornee(self):
+        shas = ["{:040x}".format(n) for n in range(pr_gate.ATTRIBUTION_MAX + 5)]
+        fake = FakeGh([("commits/", completed(stdout=commit_stdout("x", [])))])
+        with mock.patch.object(pr_gate, "run", fake):
+            pr_gate.introducers(shas, ["jamais-trouve.ts"])
+        self.assertEqual(len(fake.calls), pr_gate.ATTRIBUTION_MAX)
+
+    def test_aucun_fichier_attendu_aucun_appel_reseau(self):
+        fake = FakeGh([])
+        with mock.patch.object(pr_gate, "run", fake):
+            self.assertEqual(pr_gate.introducers([DEVELOP_413], []), {})
+        self.assertEqual(fake.calls, [])
+
+
+class TestDiverged(unittest.TestCase):
+    """`diverged()` — la PR efface-t-elle un apport postérieur à son départ ?"""
+
+    def verdict(self, removed=(), acquis=(), commits=(), pr=None, files=DEDUIT,
+                compare_ok=True, tronque=False, commit_files=None,
+                message="feat: (#413)"):
+        """`diverged()` sur un dépôt joué — rend `(motif, double de gh)`.
+
+        `files` vaut par défaut « une PR qui ne fait que supprimer `removed` » ;
+        le passer explicitement sert les cas où la liste dit autre chose, ou
+        n'est pas lisible du tout (None).
+        """
+        rules = []
+        if compare_ok:
+            rules.append(("compare/", completed(stdout=compare_stdout(
+                acquis=acquis, commits=commits, tronque=tronque))))
+        else:
+            rules.append(("compare/", completed(returncode=1, stderr="boom")))
+        rules.append(("commits/", completed(stdout=commit_stdout(
+            message, commit_files if commit_files is not None else acquis))))
+        fake = FakeGh(rules)
+        with mock.patch.object(pr_gate, "run", fake):
+            return pr_gate.diverged(
+                pr if pr is not None else {"headRefOid": HEAD_415}, "develop",
+                removals(removed) if files is DEDUIT else files), fake
+
+    def test_pr_sans_suppression_ne_compare_rien(self):
+        # Le cas de l'immense majorité des PR : la liste des fichiers est déjà
+        # lue par l'appelant, et aucun appel de plus n'est fait.
+        motif, fake = self.verdict(removed=[], acquis=["a.ts"],
+                                   files=[("modified", "a.ts")])
+        self.assertIsNone(motif)
+        self.assertEqual(fake.calls, [])
+
+    def test_suppression_d_un_apport_posterieur_refusee(self):
+        motif, _ = self.verdict(removed=["a.ts"], acquis=["a.ts"],
+                                commits=[DEVELOP_413])
+        self.assertIsNotNone(motif)
+        self.assertIn("a.ts", motif)
+
+    def test_suppression_legitime_non_refusee(self):
+        # Troisième critère de #423 : un ticket de suppression supprime des
+        # fichiers qu'il avait sous les yeux au départ de sa branche. Ils ne
+        # figurent donc pas dans ce que la base a acquis **depuis**, et rien ne
+        # doit le refuser — même quand la base a acquis autre chose entre-temps.
+        motif, _ = self.verdict(
+            removed=["apps/api/src/modules/legacy/legacy.service.ts",
+                     "apps/api/src/modules/legacy/legacy.module.ts"],
+            acquis=["apps/api/src/modules/crm/crm.module.ts"],
+            commits=[DEVELOP_413])
+        self.assertIsNone(motif)
+
+    def test_seul_le_recoupement_declenche_le_refus(self):
+        # La base a acquis, la PR a supprimé, mais pas les mêmes fichiers.
+        motif, _ = self.verdict(removed=["vieux.ts"], acquis=["neuf.ts"],
+                                commits=[DEVELOP_413])
+        self.assertIsNone(motif)
+
+    def test_le_message_nomme_les_fichiers_et_la_pr(self):
+        # Deuxième critère de #423, mot pour mot.
+        motif, _ = self.verdict(
+            removed=["apps/api/src/modules/crm/crm.module.ts", "autre.ts"],
+            acquis=["apps/api/src/modules/crm/crm.module.ts"],
+            commits=[DEVELOP_413],
+            commit_files=["apps/api/src/modules/crm/crm.module.ts"])
+        self.assertIn("apps/api/src/modules/crm/crm.module.ts", motif)
+        self.assertIn("#413", motif)
+        # Le fichier légitimement supprimé n'a pas à figurer dans le refus.
+        self.assertNotIn("autre.ts", motif)
+
+    def test_le_message_nomme_le_point_de_depart(self):
+        motif, _ = self.verdict(removed=["a.ts"], acquis=["a.ts"],
+                                commits=[DEVELOP_413])
+        self.assertIn(MERGE_BASE[:7], motif)
+
+    def test_le_message_borne_ce_qu_il_detaille(self):
+        beaucoup = ["f{}.ts".format(n) for n in range(pr_gate.CLASH_SHOWN + 6)]
+        motif, _ = self.verdict(removed=beaucoup, acquis=beaucoup,
+                                commits=[DEVELOP_413], commit_files=beaucoup)
+        self.assertIn(str(len(beaucoup)), motif)
+        self.assertIn("et 6 autre(s)", motif)
+
+    def test_liste_des_fichiers_indisponible_vaut_refus(self):
+        # Même doctrine que `sensitive()` : une barrière qui s'ouvre dès qu'elle
+        # n'y voit plus rien ne protège que les jours où tout va bien.
+        motif, fake = self.verdict(files=None)
+        self.assertIsNotNone(motif)
+        self.assertIn("indisponible", motif)
+        self.assertEqual(fake.calls, [])
+
+    def test_comparaison_indisponible_vaut_refus(self):
+        motif, _ = self.verdict(removed=["a.ts"], compare_ok=False)
+        self.assertIsNotNone(motif)
+        self.assertIn("indisponible", motif)
+
+    def test_comparaison_tronquee_vaut_refus(self):
+        # 300 fichiers, sans pagination : une acquisition au-delà du plafond
+        # ferait conclure « rien à refuser » faute de l'avoir vue.
+        motif, _ = self.verdict(removed=["a.ts"], acquis=["b.ts"], tronque=True)
+        self.assertIsNotNone(motif)
+        self.assertIn("tronquée", motif)
+
+    def test_tete_inconnue_vaut_refus(self):
+        motif, _ = self.verdict(removed=["a.ts"], pr={})
+        self.assertIsNotNone(motif)
+        self.assertIn("tête de la PR inconnue", motif)
+
+    def test_la_tete_est_designee_par_son_sha(self):
+        # Un nom de branche ne se résout pas dans le dépôt de base quand la PR
+        # vient d'un fork, et il bouge sous nous ; le SHA, non.
+        _, fake = self.verdict(removed=["a.ts"],
+                               pr={"headRefOid": HEAD_415,
+                                   "headRefName": "bugfix/343-crm"})
+        compare = " ".join([c for c in fake.calls if "compare/" in " ".join(c)][0])
+        self.assertIn(HEAD_415, compare)
+        self.assertNotIn("bugfix/343-crm", compare)
+
+    def test_le_nom_de_branche_sert_de_repli(self):
+        _, fake = self.verdict(removed=["a.ts"],
+                               pr={"headRefName": "bugfix/343-crm"})
+        compare = " ".join([c for c in fake.calls if "compare/" in " ".join(c)][0])
+        self.assertIn("bugfix/343-crm", compare)
+
+    def test_les_deux_lectures_de_github_peuvent_diverger(self):
+        # Le cœur de #423, et l'objection qu'il faut pouvoir écarter : si les
+        # deux listes se lisaient depuis la même merge-base, un chemin ne
+        # pourrait pas être à la fois `removed` (présent au départ) et `added`
+        # (absent au départ), et le recoupement serait vide par construction.
+        #
+        # Elles ne s'y lisent pas. `pulls/{n}/files` est servi depuis le diff mis
+        # en cache de la PR ; `compare/{head}...{base}` est recalculé à chaque
+        # appel. Le recoupement **est** cette contradiction — et c'est exactement
+        # ce que #423 rapporte : « GitHub, en diffant contre develop à 6806528,
+        # lisait ça comme 21 suppressions », alors que la branche partait de
+        # 5728f17.
+        motif, _ = self.verdict(
+            removed=["apps/api/src/modules/crm/crm.module.ts"],
+            acquis=["apps/api/src/modules/crm/crm.module.ts"],
+            commits=[DEVELOP_413])
+        self.assertIsNotNone(motif)
+
+    def test_les_deux_lectures_d_accord_ne_refusent_rien(self):
+        # Hors de cette fenêtre, les deux lectures s'accordent : ce que la PR
+        # supprime existait au point de départ, donc ne figure pas dans les
+        # acquisitions. La barrière se tait, et ne coûte rien au cas courant.
+        motif, _ = self.verdict(removed=["vieux.ts"], acquis=["neuf.ts"],
+                                commits=[DEVELOP_413])
+        self.assertIsNone(motif)
+
+    def test_une_pr_seulement_en_retard_n_est_pas_refusee(self):
+        # Une PR qui ne supprime rien mais dont la base a avancé : c'est le cas
+        # de presque toutes celles d'une vague à largeur 3. La refuser
+        # transformerait la barrière en « rebaser avant tout merge », ce que
+        # #423 ne demande pas et que son troisième critère interdit.
+        motif, _ = self.verdict(
+            files=[("modified", "a.ts"), ("added", "b.ts")],
+            acquis=["apps/api/src/modules/crm/crm.module.ts"],
+            commits=[DEVELOP_413])
+        self.assertIsNone(motif)
+
+
+class TestRegression413Puis415(unittest.TestCase):
+    """#413 puis #415, dans cet ordre — le scénario que la barrière a laissé passer.
+
+    Quatrième critère de #423. Rejoué de bout en bout par `main()`, et non sur
+    `diverged()` seule : ce qui a manqué, ce n'est pas une fonction, c'est un
+    **verdict**. `pr_gate.py 415` rendait `0` et un « VERT : 13 check(s) au
+    vert » sur une PR qui effaçait vingt et un fichiers de `develop`.
+
+    L'ordre est tout le sujet : la même #415, ouverte avant que #413 ne merge,
+    est parfaitement mergeable — c'est le troisième test de cette classe.
+    """
+
+    def setUp(self):
+        # `unattended()` et l'intention du run n'ont rien à faire ici : ce refus
+        # ne dépend d'aucun des deux, et les laisser flotter ferait dépendre ces
+        # tests de l'armement du poste qui les exécute.
+        patch = mock.patch.dict(
+            os.environ, {pr_gate.UNATTENDED_ENV: "", pr_gate.AUTHORISED_ENV: ""})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def pr_415(self):
+        """#415 telle que GitHub la donnait : verte sur 13 checks, mergeable, CLEAN."""
+        return rollup_pr(
+            [check_run(workflow="CI", name="job {}".format(n)) for n in range(13)],
+            number=415, title="feat(crm): fiches clients", headRefOid=HEAD_415,
+            headRefName="feature/343-crm-fiches-clients", body="Closes #343")
+
+    def barrier(self, rules, env=None, argv=("pr_gate.py", "415", "--no-wait")):
+        fake = FakeGh(rules)
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(pr_gate, "run", fake), \
+                mock.patch.dict(os.environ, env or {}), \
+                mock.patch.object(sys, "argv", list(argv)), \
+                contextlib.redirect_stdout(out), \
+                contextlib.redirect_stderr(err):
+            code = pr_gate.main()
+        return code, out.getvalue() + err.getvalue(), fake
+
+    def apres_413(self):
+        """L'état du dépôt après que #413 a été mergée sur `develop`."""
+        return [
+            ("pr view 415", completed(stdout=json.dumps(self.pr_415()))),
+            ("pulls/415/files",
+             completed(stdout=pr_files_stdout(removals(CRM_FILES)))),
+            ("compare/{}...develop".format(HEAD_415),
+             completed(stdout=compare_stdout(base=MERGE_BASE, acquis=CRM_FILES,
+                                             commits=[DEVELOP_413]))),
+            ("commits/" + DEVELOP_413,
+             completed(stdout=commit_stdout(
+                 "feat(crm): module CRM et fiches clients (#413)\n\nRefs #56",
+                 CRM_FILES))),
+        ]
+
+    def test_la_barriere_refuse_415_apres_413(self):
+        code, sortie, _ = self.barrier(self.apres_413())
+        self.assertEqual(code, pr_gate.UNFIT)
+        self.assertNotIn("VERT", sortie)
+
+    def test_le_refus_nomme_les_fichiers_et_la_pr_qui_les_a_introduits(self):
+        code, sortie, _ = self.barrier(self.apres_413())
+        self.assertEqual(code, pr_gate.UNFIT)
+        self.assertIn("#413", sortie)
+        self.assertIn(str(len(CRM_FILES)), sortie)
+        self.assertIn("apps/api/src/modules/crm/crm.module.ts", sortie)
+        self.assertIn("apps/api/src/modules/crm/crm.controller.ts", sortie)
+
+    def test_avant_413_la_meme_pr_est_mergeable(self):
+        # L'ordre fait tout : sans l'apport de #413, `develop` n'a rien acquis
+        # depuis le départ de la branche, et #415 ne recoupe rien. Sans ce cas,
+        # la correction pourrait n'être qu'un refus systématique déguisé.
+        avant = list(self.apres_413())
+        avant[2] = ("compare/{}...develop".format(HEAD_415),
+                    completed(stdout=compare_stdout(base=MERGE_BASE)))
+        code, sortie, _ = self.barrier(avant)
+        self.assertEqual(code, pr_gate.GREEN)
+        self.assertIn("VERT", sortie)
+
+    def test_le_refus_n_est_pas_un_perimetre_sensible(self):
+        # Deuxième critère de #423 : un code distinct de `5`. La nuance n'est
+        # pas cosmétique — `5` dit « verte, en attente d'un relecteur » et se
+        # pré-autorise à l'armement du run. Ici, sous `SPA_UNATTENDED=1` et
+        # `SPA_MERGE_SENSITIVE=all`, la PR reste refusée : aucun armement ne
+        # peut ouvrir une perte de données. Les fichiers de #413 portent une
+        # migration Prisma, donc un vrai périmètre sensible — c'est bien le
+        # refus de divergence qui l'emporte, et il tombe avant.
+        code, sortie, fake = self.barrier(
+            self.apres_413(),
+            env={pr_gate.UNATTENDED_ENV: "1", pr_gate.AUTHORISED_ENV: "all"})
+        self.assertEqual(code, pr_gate.UNFIT)
+        self.assertNotEqual(code, pr_gate.SENSITIVE)
+        self.assertIn("base divergée", sortie)
+        # Aucune lecture de label : `sensitive()` n'a jamais été atteinte.
+        self.assertFalse([c for c in fake.calls if "issue view" in " ".join(c)])
+
+    def test_le_refus_n_est_pas_un_check_en_echec(self):
+        # Ni `2` ni `1` : la CI de #415 était irréprochable, et le dire
+        # autrement enverrait chercher une correction là où il n'y a rien.
+        code, _, _ = self.barrier(self.apres_413())
+        self.assertNotIn(code, (pr_gate.PENDING, pr_gate.FAILED))
+
+    def test_aucun_merge_n_est_demande(self):
+        code, _, fake = self.barrier(
+            self.apres_413(),
+            argv=("pr_gate.py", "415", "--no-wait", "--request-merge"))
+        self.assertEqual(code, pr_gate.UNFIT)
+        self.assertFalse([c for c in fake.calls
+                          if "pr edit" in " ".join(c) or "pr merge" in " ".join(c)])
 
 
 if __name__ == "__main__":
