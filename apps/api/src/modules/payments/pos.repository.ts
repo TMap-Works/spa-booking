@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
+import { createdAtWithin } from './history';
 import { isUniqueViolation } from './payments.repository';
 import type {
   Product,
@@ -9,7 +10,9 @@ import type {
   ProductPatch,
   Sale,
   SaleDraft,
+  SaleHistoryFilter,
   SaleItem,
+  SaleSummary,
   TenantSaleSettings,
 } from './pos.types';
 
@@ -71,7 +74,14 @@ const SALE_ITEM_SELECT = {
   position: true,
 } as const;
 
-const SALE_SELECT = {
+/**
+ * L'en-tête d'un ticket, **sans ses lignes** — ce que l'historique lit (#62).
+ *
+ * Une page de cinquante tickets de dix lignes en aurait chargé cinq cents pour
+ * n'en afficher aucune. Le détail se demande par `GET /sales/:id`, qui existe
+ * pour cela.
+ */
+const SALE_SUMMARY_SELECT = {
   id: true,
   appointmentId: true,
   cashierUserId: true,
@@ -81,6 +91,10 @@ const SALE_SELECT = {
   totalAmountMinor: true,
   currency: true,
   createdAt: true,
+} as const;
+
+const SALE_SELECT = {
+  ...SALE_SUMMARY_SELECT,
   items: { select: SALE_ITEM_SELECT, orderBy: { position: 'asc' } },
 } as const;
 
@@ -106,7 +120,7 @@ interface SaleItemRow {
   position: number;
 }
 
-interface SaleRow {
+interface SaleSummaryRow {
   id: string;
   appointmentId: string | null;
   cashierUserId: string;
@@ -116,6 +130,9 @@ interface SaleRow {
   totalAmountMinor: number;
   currency: string;
   createdAt: Date;
+}
+
+interface SaleRow extends SaleSummaryRow {
   items: SaleItemRow[];
 }
 
@@ -157,7 +174,7 @@ function toSaleItem(row: SaleItemRow): SaleItem {
   };
 }
 
-function toSale(row: SaleRow): Sale {
+function toSaleSummary(row: SaleSummaryRow): SaleSummary {
   return {
     id: row.id,
     appointmentId: row.appointmentId,
@@ -166,8 +183,32 @@ function toSale(row: SaleRow): Sale {
     tax: { amountMinor: row.taxAmountMinor, currency: row.currency },
     tip: { amountMinor: row.tipAmountMinor, currency: row.currency },
     total: { amountMinor: row.totalAmountMinor, currency: row.currency },
-    items: row.items.map((item) => toSaleItem(item)),
     createdAt: row.createdAt,
+  };
+}
+
+function toSale(row: SaleRow): Sale {
+  return { ...toSaleSummary(row), items: row.items.map((item) => toSaleItem(item)) };
+}
+
+/**
+ * Le `where` de l'historique des ventes — **sans `tenantId`**, que l'extension
+ * ajoute.
+ *
+ * La fenêtre vient de `createdAtWithin` — la **même fonction** que
+ * `transactionWhere` de `payments.repository.ts`, et non une copie qu'il
+ * faudrait tenir en regard : la borne haute y est exclue, ce qui permet de poser
+ * deux journées de caisse bout à bout sans compter deux fois le ticket de
+ * minuit, et les deux historiques du même ticket ne peuvent pas avoir deux idées
+ * d'un jour de caisse.
+ */
+function saleWhere(filter: SaleHistoryFilter): Prisma.SaleWhereInput {
+  const createdAt = createdAtWithin(filter);
+
+  return {
+    ...(filter.cashierUserId === undefined ? {} : { cashierUserId: filter.cashierUserId }),
+    ...(filter.appointmentId === undefined ? {} : { appointmentId: filter.appointmentId }),
+    ...(createdAt === undefined ? {} : { createdAt }),
   };
 }
 
@@ -340,5 +381,44 @@ export class PosRepository {
     const row = await this.prisma.sale.findFirst({ where: { id }, select: SALE_SELECT });
 
     return row === null ? null : toSale(row);
+  }
+
+  /**
+   * Une page de l'historique des ventes de l'établissement courant (#62).
+   *
+   * `@@index([tenantId, createdAt])` a été posé pour cette lecture dès #60 — le
+   * commentaire du schéma le dit en toutes lettres, « l'historique des ventes,
+   * du plus récent au plus ancien (#62) ». Le tri décroissant dans un
+   * établissement tombe donc sur un B-tree, et le filtre par opérateur, qui n'a
+   * pas d'index dédié, s'applique à l'intérieur de cet ensemble et non de la
+   * table.
+   *
+   * La page et son total sont lus dans la même transaction, **en lecture
+   * répétable** — même raison que dans `listTransactions` et dans
+   * `crm.repository.ts` : une vente concurrente entre les deux requêtes donnerait
+   * un `totalItems` qui ne correspond à aucune des pages rendues. L'identifiant
+   * départage deux tickets du même instant, sans quoi l'un peut changer de page
+   * d'un appel à l'autre.
+   */
+  public async listSales(
+    filter: SaleHistoryFilter,
+  ): Promise<{ items: SaleSummary[]; totalItems: number }> {
+    const where = saleWhere(filter);
+
+    const [rows, totalItems] = await this.prisma.$transaction(
+      [
+        this.prisma.sale.findMany({
+          where,
+          select: SALE_SUMMARY_SELECT,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip: (filter.page - 1) * filter.pageSize,
+          take: filter.pageSize,
+        }),
+        this.prisma.sale.count({ where }),
+      ],
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
+
+    return { items: rows.map((row) => toSaleSummary(row)), totalItems };
   }
 }

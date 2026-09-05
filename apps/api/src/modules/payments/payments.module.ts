@@ -2,6 +2,9 @@ import { Module } from '@nestjs/common';
 
 import { CatalogModule } from '../catalog/catalog.module';
 import { IdentityModule } from '../identity/identity.module';
+import { CashPaymentsService } from './cash-payments.service';
+import { CounterPaymentsController } from './counter-payments.controller';
+import { PaymentsHistoryService } from './payments-history.service';
 import { PaymentsRepository } from './payments.repository';
 import { PaymentsService } from './payments.service';
 import { PosRepository } from './pos.repository';
@@ -29,23 +32,29 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
  * | #57 | L'intention de paiement Stripe et la clé publiable — la tokenisation côté client, donc le périmètre SAQ A |
  * | #58 | La réception des webhooks Stripe : signature sur corps brut, idempotence, et le passage du rendez-vous en `CONFIRMED` |
  * | #60 | Le POS de base : le rayon retail, le ticket de caisse et ses lignes, le total recalculé côté serveur |
+ * | #62 | Le règlement en espèces, l'historique des ventes et celui des transactions — la matière du rapprochement |
  *
  * Les deux premières moitiés se répondent : #57 crée une intention et ne
- * confirme rien, #58 est le seul à faire passer un encaissement en `SUCCEEDED`
- * et le rendez-vous en `CONFIRMED` (payments-stripe §2).
+ * confirme rien, #58 est le seul à faire passer un encaissement **carte** en
+ * `SUCCEEDED` et le rendez-vous en `CONFIRMED` (payments-stripe §2).
  *
  * #60 est d'une autre nature : il **compose une addition, il n'encaisse rien**.
  * Un ticket existe avant d'être réglé, ce qui est exactement ce qu'un comptoir
- * fait — et le règlement, espèces comprises, est l'affaire de #62.
+ * fait.
  *
- * Restent à venir : le montage d'Elements côté tunnel (#59), le paiement en
- * espèces et l'historique des ventes (#62), les remboursements initiés au
- * comptoir (#63).
+ * #62 referme la boucle par l'autre bout : il encaisse **sans prestataire**.
+ * `CashPaymentsService` n'injecte ni `StripeConfig` ni `STRIPE_GATEWAY`, et
+ * c'est ce qui rend son quatrième critère vrai par construction — il n'y a rien
+ * à appeler depuis ce chemin-là. C'est aussi pourquoi il est un service à part
+ * plutôt qu'une méthode de `PaymentsService`, qui les injecte tous deux.
+ *
+ * Restent à venir : le montage d'Elements côté tunnel (#59), les remboursements
+ * initiés au comptoir (#63).
  *
  * ## Ce qu'il importe, et pourquoi
  *
- * `IdentityModule`, et seulement pour ses **gardes** : les cinq routes du POS
- * sont gardées par `@AuthAtLeast(...)`, qui monte `JwtAuthGuard` et
+ * `IdentityModule`, et seulement pour ses **gardes** : les routes du POS et du
+ * comptoir sont gardées par `@AuthAtLeast(...)`, qui monte `JwtAuthGuard` et
  * `RolesGuard` — deux gardes qui ont des dépendances à injecter. C'est ce que
  * l'en-tête de ce fichier annonçait avant #60 : « le jour où le POS ouvrira sa
  * surface de back-office, l'import viendra avec elle et pas avant ». Les deux
@@ -95,9 +104,12 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
  * `WEBHOOK_QUEUE`, pour la seule raison qui vaille : les suites d'intégration
  * doivent pouvoir attendre que la file se vide avant d'asserter sur la base.
  *
- * `ProductsService` n'est **pas** exporté : le rayon retail n'intéresse aucun
- * autre module du périmètre MVP, et un `exports` posé « au cas où » ouvrirait
- * une porte que personne ne franchit et qu'il faudrait pourtant maintenir.
+ * `ProductsService`, `CashPaymentsService` et `PaymentsHistoryService` ne sont
+ * **pas** exportés : le rayon retail, l'encaissement au comptoir et la lecture
+ * de rapprochement n'intéressent aucun autre module du périmètre MVP, et un
+ * `exports` posé « au cas où » ouvrirait une porte que personne ne franchit et
+ * qu'il faudrait pourtant maintenir. Le jour où `reporting` lira le chiffre
+ * d'affaires, c'est `SalesService` — déjà exporté — qui le sert.
  *
  * `PaymentsRepository`, `StripeWebhookRepository` et `PosRepository` ne sont
  * pas exportés non plus : un module n'importe jamais le repository d'un autre
@@ -110,9 +122,12 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
     StripeWebhookController,
     ProductsController,
     SalesController,
+    CounterPaymentsController,
   ],
   providers: [
     PaymentsService,
+    CashPaymentsService,
+    PaymentsHistoryService,
     PaymentsRepository,
     ProductsService,
     SalesService,

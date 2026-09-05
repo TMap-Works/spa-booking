@@ -98,6 +98,25 @@ export interface CardPaymentDraft {
 }
 
 /**
+ * Ce que le repository écrit lorsqu'un rendez-vous est réglé en espèces (#62).
+ *
+ * **Il n'y a pas de champ pour une référence de prestataire**, et c'est la forme
+ * du quatrième critère : le chemin espèces n'a nulle part où ranger un
+ * `pi_…`, parce qu'aucun appel Stripe n'a eu lieu pour en produire un. Le
+ * montant, lui, n'est pas non plus dans le corps de la requête — il est relu au
+ * rendez-vous, comme sur le chemin carte (payments-stripe §4).
+ *
+ * Ni `method` ni `status` : cette écriture n'a qu'un sens — un billet posé sur
+ * le comptoir, donc `CASH` et `SUCCEEDED`, dès l'écriture. Contrairement à la
+ * carte, il n'y a aucun tiers dont on attendrait la confirmation : la caisse
+ * fait foi (payments-stripe §4).
+ */
+export interface CashPaymentDraft {
+  readonly appointmentId: string;
+  readonly amount: Money;
+}
+
+/**
  * L'intention de paiement telle que l'API la rend — le premier critère de #57.
  *
  * ## Les deux valeurs qui partent au navigateur, et pourquoi elles peuvent
@@ -126,4 +145,72 @@ export interface PaymentIntentView {
   readonly status: PaymentStatus;
   readonly clientSecret: string;
   readonly publishableKey: string;
+}
+
+/**
+ * Une transaction telle que l'historique la rend — la **ligne de
+ * rapprochement** du troisième critère de #62.
+ *
+ * Elle porte trois choses de plus que `PaymentRecord`, et chacune sert le
+ * rapprochement avec les relevés Stripe (CDC §4.9) :
+ *
+ * - `providerChargeId`, parce qu'un relevé Stripe est un relevé de **charges**,
+ *   pas d'intentions : c'est `ch_…` qui figure sur la ligne de virement, et
+ *   `pi_…` qui figure dans le tableau de bord. Les deux sont nécessaires pour
+ *   partir de l'un ou de l'autre ;
+ * - `capturedAt`, l'instant où l'argent a été pris — celui qui décide du jour de
+ *   caisse, là où `createdAt` ne date que l'ouverture de l'encaissement ;
+ * - `refunded`, parce qu'une ligne remboursée reste au relevé et qu'un total qui
+ *   l'ignorerait ne tomberait jamais juste.
+ *
+ * Une vente en espèces porte `null` aux deux références et se distingue donc
+ * **par construction** de ce qui doit se retrouver chez Stripe : le
+ * rapprochement se fait sur les lignes qui en ont une, la caisse fait foi pour
+ * les autres.
+ *
+ * Pas de `tenantId` : information interne, qui n'apporte rien au consommateur et
+ * invite aux essais (tenant-isolation §4). Pas de coordonnées de cliente non
+ * plus — le module `payments` n'en lit aucune.
+ */
+export interface PaymentTransaction {
+  readonly id: string;
+  readonly appointmentId: string | null;
+  readonly amount: Money;
+  readonly refunded: Money;
+  readonly method: PaymentMethod;
+  readonly status: PaymentStatus;
+  readonly providerPaymentIntentId: string | null;
+  readonly providerChargeId: string | null;
+  readonly capturedAt: Date | null;
+  readonly createdAt: Date;
+}
+
+/**
+ * La fenêtre et les critères de l'historique des transactions (#62).
+ *
+ * `from` est inclus, `to` **exclu** : c'est la seule convention qui permette de
+ * poser deux journées de caisse bout à bout sans compter deux fois
+ * l'encaissement de minuit, ni l'oublier. Les deux sont facultatifs — un
+ * comptoir qui ouvre l'écran veut les dernières transactions, pas une fenêtre à
+ * saisir avant de voir quoi que ce soit.
+ *
+ * `page` et `pageSize` sont **résolus** — leurs valeurs par défaut sont
+ * appliquées une fois, à la frontière HTTP, et pas redevinées par chaque couche.
+ */
+export interface PaymentHistoryFilter {
+  readonly from?: Date;
+  readonly to?: Date;
+  readonly method?: PaymentMethod;
+  readonly status?: PaymentStatus;
+  readonly page: number;
+  readonly pageSize: number;
+}
+
+/** Une page de transactions, avec de quoi afficher un sélecteur de page. */
+export interface PaymentTransactionPage {
+  readonly items: readonly PaymentTransaction[];
+  readonly page: number;
+  readonly pageSize: number;
+  readonly totalItems: number;
+  readonly totalPages: number;
 }

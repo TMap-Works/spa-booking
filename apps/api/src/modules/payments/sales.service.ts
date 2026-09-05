@@ -5,6 +5,7 @@ import { NotFoundError } from '../../common/errors';
 // constructeur dans les métadonnées émises par TypeScript, et un `import type`
 // s'efface à la compilation — l'injection échouerait alors au démarrage.
 import { ServicesService } from '../catalog/services.service';
+import { assertOrderedWindow, toHistoryPage } from './history';
 import {
   SaleAmountOutOfRangeError,
   SaleCurrencyMismatchError,
@@ -15,7 +16,9 @@ import { composeSale, fitsInAmountColumn } from './pos.totals';
 import type {
   PricedCatalogItem,
   Sale,
+  SaleHistoryFilter,
   SaleLineRequest,
+  SalePage,
   SaleRequest,
   TenantSaleSettings,
 } from './pos.types';
@@ -139,6 +142,24 @@ export class SalesService {
     }
 
     return sale;
+  }
+
+  /**
+   * L'historique des ventes, du plus récent au plus ancien (#62).
+   *
+   * Chaque élément porte les trois faits que le premier critère de #62 demande
+   * d'une vente : l'**opérateur** (`cashierUserId`, `NOT NULL` depuis #60),
+   * l'**horodatage** (`createdAt`) et le **montant** (les quatre montants, en
+   * fait — sous-total, taxe, pourboire, total). Sans ses lignes : le détail d'un
+   * ticket se demande par `byId`.
+   *
+   * @throws {HistoryWindowInvalidError} `from` postérieur ou égal à `to` — la
+   * borne haute étant exclue, une telle fenêtre ne contient aucun instant.
+   */
+  public async history(filter: SaleHistoryFilter): Promise<SalePage> {
+    assertOrderedWindow(filter);
+
+    return toHistoryPage(filter, await this.repository.listSales(filter));
   }
 
   /**

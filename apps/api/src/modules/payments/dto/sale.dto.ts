@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -18,7 +18,15 @@ import {
 } from 'class-validator';
 
 import { SALE_ITEM_KINDS } from '../pos.types';
-import type { Sale, SaleItem, SaleLineRequest, SaleRequest } from '../pos.types';
+import type {
+  Sale,
+  SaleHistoryFilter,
+  SaleItem,
+  SaleLineRequest,
+  SaleRequest,
+  SaleSummary,
+} from '../pos.types';
+import { IsOffsetDateTime, PageQueryDto, toPageBounds, toWindowBound } from './validation';
 
 /**
  * DTO du ticket de caisse — #60.
@@ -296,6 +304,110 @@ export class SaleDto {
 }
 
 /**
+ * Le ticket **sans ses lignes** — l'élément de l'historique des ventes (#62).
+ *
+ * `Omit` du DTO complet plutôt qu'une classe recopiée : les huit autres champs
+ * doivent rester exactement ceux de `SaleDto`, description comprise. `OmitType`
+ * de `@nestjs/swagger` reprend au passage les métadonnées OpenAPI, si bien que
+ * le contrat publié ne diverge pas de la forme rendue.
+ *
+ * Les lignes sont écartées à dessein : une page de cinquante tickets de dix
+ * lignes en ferait transiter cinq cents qu'aucun tableau n'affiche. Le détail
+ * d'un ticket se demande par `GET /sales/:id`.
+ */
+export class SaleSummaryDto extends OmitType(SaleDto, ['items'] as const) {}
+
+/** Une page de tickets, avec de quoi afficher un sélecteur de page. */
+export class SalePageDto {
+  @ApiProperty({ type: [SaleSummaryDto] })
+  public items!: SaleSummaryDto[];
+
+  @ApiProperty({ minimum: 1, example: 1 })
+  public page!: number;
+
+  @ApiProperty({ minimum: 1 })
+  public pageSize!: number;
+
+  @ApiProperty({ minimum: 0, description: 'Nombre total de tickets correspondant au filtre.' })
+  public totalItems!: number;
+
+  @ApiProperty({
+    minimum: 0,
+    description: '`0` sur un ensemble vide — « page 1 sur 0 » et non « page 1 sur 1 ».',
+  })
+  public totalPages!: number;
+}
+
+/**
+ * Filtre de l'historique des ventes — `GET /sales`.
+ *
+ * Les quatre critères sont facultatifs : l'écran de caisse ouvre sur les
+ * derniers tickets, pas sur un formulaire à remplir. `from` est **inclus**, `to`
+ * **exclu** — même convention que l'historique des transactions, et pour la même
+ * raison : deux journées de caisse bout à bout ne doivent compter le ticket de
+ * minuit qu'une fois.
+ *
+ * `cashierUserId` et `appointmentId` répondent aux deux questions que le
+ * back-office pose réellement : « qu'a vendu cette personne aujourd'hui ? » — la
+ * relève de caisse — et « qu'a-t-on facturé sur ce rendez-vous ? » — le
+ * rapprochement de la fiche cliente.
+ */
+export class ListSalesQueryDto extends PageQueryDto {
+  @ApiPropertyOptional({
+    example: '2026-09-01T00:00:00+02:00',
+    description: 'Borne basse **incluse**, à offset explicite.',
+  })
+  @IsOptional()
+  @IsOffsetDateTime()
+  public from?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-09-02T00:00:00+02:00',
+    description: 'Borne haute **exclue**, à offset explicite.',
+  })
+  @IsOptional()
+  @IsOffsetDateTime()
+  public to?: string;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Restreindre à l’opérateur qui a composé les tickets — la relève de caisse.',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'cashierUserId : identifiant d’opérateur attendu' })
+  public cashierUserId?: string;
+
+  @ApiPropertyOptional({
+    format: 'uuid',
+    description: 'Restreindre au rendez-vous facturé.',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'appointmentId : identifiant de rendez-vous attendu' })
+  public appointmentId?: string;
+}
+
+/**
+ * Le filtre ramené à ce que le domaine connaît, valeurs par défaut appliquées.
+ *
+ * Les critères absents ne sont **pas** recopiés en `undefined` :
+ * `exactOptionalPropertyTypes` distingue « absent » de « présent et indéfini »,
+ * et un `cashierUserId: undefined` porté jusqu'au `where` de Prisma s'y lirait
+ * comme un filtre à composer plutôt que comme l'absence de filtre.
+ */
+export function toSaleHistoryFilter(dto: ListSalesQueryDto): SaleHistoryFilter {
+  const from = toWindowBound(dto.from);
+  const to = toWindowBound(dto.to);
+
+  return {
+    ...(from === undefined ? {} : { from }),
+    ...(to === undefined ? {} : { to }),
+    ...(dto.cashierUserId === undefined ? {} : { cashierUserId: dto.cashierUserId }),
+    ...(dto.appointmentId === undefined ? {} : { appointmentId: dto.appointmentId }),
+    ...toPageBounds(dto),
+  };
+}
+
+/**
  * Le DTO ramené à ce que le domaine connaît.
  *
  * De chaque ligne, seuls les champs que son `kind` autorise sont lus : un
@@ -320,7 +432,14 @@ export function toSaleRequest(dto: CreateSaleDto): SaleRequest {
   };
 }
 
-function toMoneyDto(money: { amountMinor: number; currency: string }): MoneyDto {
+/**
+ * Un montant du domaine, tel qu'il franchit la frontière HTTP.
+ *
+ * Exportée parce que `cash-payment.dto.ts` rend les mêmes montants et importe
+ * déjà `MoneyDto` d'ici : deux copies de cette conversion, c'est deux endroits
+ * où la devise pourrait cesser d'accompagner l'entier.
+ */
+export function toMoneyDto(money: { amountMinor: number; currency: string }): MoneyDto {
   return { amountMinor: money.amountMinor, currency: money.currency };
 }
 
@@ -338,8 +457,8 @@ function toSaleItemDto(item: SaleItem): SaleItemDto {
   };
 }
 
-/** Le ticket tel qu'il franchit la frontière HTTP — les instants en UTC. */
-export function toSaleDto(sale: Sale): SaleDto {
+/** L'en-tête du ticket tel qu'il franchit la frontière HTTP — l'instant en UTC. */
+export function toSaleSummaryDto(sale: SaleSummary): SaleSummaryDto {
   return {
     id: sale.id,
     appointmentId: sale.appointmentId,
@@ -348,9 +467,13 @@ export function toSaleDto(sale: Sale): SaleDto {
     tax: toMoneyDto(sale.tax),
     tip: toMoneyDto(sale.tip),
     total: toMoneyDto(sale.total),
-    items: sale.items.map((item) => toSaleItemDto(item)),
     // `…Z` et rien d'autre : un seul référentiel, deux horodatages se comparent
     // alors par simple ordre lexicographique (ADR 0006).
     createdAt: sale.createdAt.toISOString(),
   };
+}
+
+/** Le ticket tel qu'il franchit la frontière HTTP, lignes comprises. */
+export function toSaleDto(sale: Sale): SaleDto {
+  return { ...toSaleSummaryDto(sale), items: sale.items.map((item) => toSaleItemDto(item)) };
 }
