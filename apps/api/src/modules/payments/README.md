@@ -13,9 +13,9 @@ notre périmètre PCI en SAQ A.
 | #58 | La réception des webhooks Stripe — signature sur corps brut, idempotence en base, et le passage du rendez-vous en `CONFIRMED` |
 | #60 | Le POS de base — rayon retail, ticket de caisse et ses lignes, total recalculé côté serveur |
 | #62 | Le règlement en espèces, l’historique des ventes et celui des transactions — la matière du rapprochement |
+| #63 | Le remboursement total et partiel : l’ordre au prestataire, le cumul borné côté serveur, la trace « qui, quand, pourquoi » |
 
-À venir : le montage d’Elements côté tunnel (#59), les remboursements initiés au
-comptoir (#63).
+À venir : le montage d’Elements côté tunnel (#59).
 
 ## Les routes
 
@@ -31,6 +31,7 @@ comptoir (#63).
 | `GET` | `/api/v1/sales/:id` | `STAFF` |
 | `POST` | `/api/v1/payments/cash` | `STAFF` |
 | `GET` | `/api/v1/payments` | `MANAGER` |
+| `POST` | `/api/v1/payments/:paymentId/refunds` | `MANAGER` |
 
 Les routes du comptoir sont gardées et **n'ont aucune surface publique** : un
 ticket de caisse est une pièce comptable du salon, son rayon une donnée
@@ -101,7 +102,9 @@ les sept autres modules, `AppModule` les montant tous.
   paiement par carte est Stripe reçue côté serveur, jamais la réponse du
   navigateur (payments-stripe §2). L'encaissement en **espèces**, lui, naît
   abouti — voir plus bas, il n'a pas de tiers à attendre.
-- **Il ne rembourse pas.** #63.
+- **Il ne passe pas un encaissement en `REFUNDED` non plus.** Il *ordonne* le
+  remboursement (#63) et inscrit la trace du geste ; le statut et le cumul de la
+  ligne `payments` restent écrits par `charge.refunded`, et par lui seul.
 
 ## Idempotence — trois mécanismes, du plus rapide au plus sûr
 
@@ -297,8 +300,10 @@ l'inversion la plus probable place ici une clé `sk_…`.
 | `__tests__/payments-history.service.spec.ts` | Le tri, la fenêtre semi-ouverte, les filtres du rapprochement, la pagination |
 | `__tests__/sales-history.service.spec.ts` | L'historique des ventes : opérateur, horodatage, montants — et l'absence des lignes |
 | `__tests__/history-filters.spec.ts` | La frontière HTTP des deux historiques : bornes à offset explicite, critères absents, plafonds de pagination |
+| `__tests__/refunds.service.spec.ts` | Les trois critères de #63 : total et partiel, le cumul borné dans les deux sens, la trace — et que le service n'écrit pas le statut de l'encaissement |
 
-Les trois routes de #62 n'ont pas de suite d'**intégration** ni d'**isolation**
+Les trois routes de #62 et celle de #63 n'ont pas de suite d'**intégration** ni
+d'**isolation**
 propre : `apps/api/test/` est hors de l'empreinte de fichiers du ticket, et une
 issue de suivi porte leur ajout à `pos.integration-spec.ts`,
 `pos-tenant.isolation-spec.ts` et `payments-tenant.isolation-spec.ts`. La
@@ -402,6 +407,121 @@ fenêtre est à l'envers » appellent deux conduites différentes.
 `refunded` accompagne chaque ligne : une transaction remboursée reste au relevé,
 et un total qui l'ignorerait ne tomberait jamais juste.
 
+## Le remboursement (#63)
+
+`POST /api/v1/payments/:paymentId/refunds` rend l'argent, en totalité ou en
+partie. Le corps porte un `reason` obligatoire et un `amountMinor` facultatif —
+omis, c'est **tout le solde restant**, calculé côté serveur.
+
+### `MANAGER`, et pas `STAFF`
+
+Encaisser et rembourser ne sont pas symétriques. Le premier constate une vente
+qui a lieu devant soi ; le second **sort de l'argent** de l'établissement, sans
+contrepartie immédiate et sans que la caisse en garde trace. C'est une décision
+de gestion, au même rang que fixer un prix de vente — et c'est le geste dont le
+rang trop bas coûterait le plus cher, un remboursement parti chez le prestataire
+ne se reprenant pas.
+
+### Les trois temps, et pourquoi cet ordre-là
+
+```
+1. réserver   — transaction sérialisable : contrôle du cumul + ligne PENDING
+2. ordonner   — appel au prestataire, clé d'idempotence = identifiant de la ligne
+3. conclure   — SUCCEEDED + re_… si accepté, FAILED si refusé
+```
+
+Réserver **avant** d'ordonner est ce qui rend le deuxième critère vrai en
+présence de pannes. L'inverse laisserait, sur un arrêt du processus entre les
+deux, un remboursement sorti que notre cumul ignore — donc rendu une seconde
+fois au clic suivant. Réservé d'abord, le pire cas est une somme momentanément
+non remboursable : l'erreur du bon côté.
+
+C'est aussi ce qui donne sa valeur à la clé d'idempotence — elle est
+l'identifiant de la ligne, posé avant l'appel. Un renvoi après coupure réseau
+porte la même clé et rend le remboursement déjà créé.
+
+### Le seul échec qui relâche la réservation
+
+Une reprise repart avec une **autre** ligne, donc une autre clé d'idempotence —
+que le prestataire n'a aucun moyen de reconnaître comme un doublon. Relâcher une
+réservation dont on ignore le sort rendrait donc l'argent deux fois. Le partage :
+
+| Issue de l'appel | La réservation | Pourquoi |
+|---|---|---|
+| 4xx du prestataire, hors `429` | **relâchée** (`FAILED`) | reçue, comprise, rejetée : rien n'est sorti |
+| remboursement créé `failed` ou `canceled` | **relâchée** (`FAILED`) | un 2xx n'est pas une acceptation ; l'objet existe et dit qu'il n'aboutira pas |
+| `429`, 5xx, délai dépassé, coupure, corps illisible | **conservée** (`PENDING`) | le sort de l'ordre est inconnu |
+
+`pending` chez le prestataire vaut `SUCCEEDED` chez nous : le mouvement est
+engagé, seule sa confirmation tarde — et c'est `charge.refunded` qui la portera.
+
+La distinction n'apparaît **pas** dans la réponse HTTP : `PaymentProviderRefusedError`
+hérite de `PaymentProviderUnavailableError` et rend le même corps, le même 503.
+La différencier ferait de cette route une sonde de l'état de notre compte.
+
+Une réservation conservée immobilise sa somme jusqu'à un rapprochement manuel,
+et l'alerte de niveau `error` est ce qui doit y amener quelqu'un. Coûteux, mais
+réparable — là où un double remboursement ne l'est pas.
+
+### Le perdant d'une course recommence
+
+Un échec de sérialisation (`40001`, `P2034`) sur la transaction de réservation
+est **réessayé**, trois fois, avec une attente croissante et dispersée. C'est la
+conduite que `SERIALIZABLE` appelle, et elle est sans danger : la transaction
+n'écrit qu'en base et ne fait bouger aucun argent — une tentative avortée n'a,
+par définition d'un `ROLLBACK`, rien laissé derrière elle. La perdante relit
+alors la réservation de la gagnante, donc le bon cumul.
+
+### Ce qui tient « le cumul ne dépasse jamais le montant capturé »
+
+| Où | Ce qui l'empêche |
+|---|---|
+| `refunds.repository.ts` | le contrôle et la réservation sont dans **une** transaction `Serializable` : deux comptoirs simultanés ne peuvent pas conclure tous deux que le geste est possible |
+| `refunds.service.ts` | l'encaissement doit être `SUCCEEDED` ou `PARTIALLY_REFUNDED`, en `CARD`, avec une référence d'intention |
+| `payment_refunds_amount_minor_check` | PostgreSQL refuse un montant nul ou négatif |
+
+`Serializable` et non le défaut : la borne porte sur une **somme de lignes**, pas
+sur une colonne, donc aucun `CHECK` ne peut l'exprimer. `READ COMMITTED` prend un
+instantané par instruction et les deux transactions ne se voient jamais. Même
+conduite qu'ADR 0002 impose au moteur de réservation, et pour la même raison.
+
+Le cumul retenu est le **plus grand des deux comptes** qui existent, et chacun
+couvre l'angle mort de l'autre :
+
+| Situation | Le compte qui dit vrai |
+|---|---|
+| notre demande vient de partir, `charge.refunded` n'est pas arrivé | nos lignes `PENDING` et `SUCCEEDED` |
+| un remboursement fait à la main dans le tableau de bord du prestataire | `payments.refunded_amount_minor` |
+
+### La trace — qui, quand, pourquoi
+
+| Colonne de `payment_refunds` | Le critère |
+|---|---|
+| `requested_by_user_id` | **qui** — du jeton vérifié, jamais du corps |
+| `created_at` | **quand** — en UTC |
+| `reason` | **pourquoi** — obligatoire, 3 à 500 caractères |
+
+Une table et non trois colonnes sur `payments` : le remboursement partiel étant
+au périmètre, un encaissement peut en recevoir plusieurs, et des colonnes
+n'auraient gardé que le dernier.
+
+**Le motif ne part pas chez le prestataire.** Il est saisi par une personne et
+peut nommer la cliente ; le champ `reason` de Stripe n'accepte de toute façon que
+trois valeurs énumérées. Les métadonnées de l'ordre ne portent que
+`tenantId`, `paymentId` et `refundId` — des identifiants opaques (CDC §5.1). Il
+ne part pas non plus au journal structuré, pour la même raison.
+
+### Ce que la route ne fait pas
+
+Elle **n'écrit ni `payments.status` ni `payments.refunded_amount_minor`**. Ils
+sont l'affaire de `charge.refunded`, et de lui seul (payments-stripe §6) : la
+réponse rend la *demande*, pas son effet. `RefundsRepository` n'expose d'ailleurs
+aucune écriture sur `payments` — un test le vérifie sur sa surface.
+
+Elle n'annule pas non plus une intention `FAILED` — le cas que #62 renvoyait
+ici. Une annulation n'est pas un remboursement : rien n'a été capturé, et
+`PaymentNotRefundableError` le dit en 422. Une issue de suivi porte ce geste.
+
 ## Dette connue
 
 - **`PaymentsRepository` lit la table `appointments` directement**, pour le prix
@@ -447,5 +567,23 @@ et un total qui l'ignorerait ne tomberait jamais juste.
   colonne qui ferme ce trou, même migration et même issue de suivi que
   ci-dessus.
 - **Un ticket ne s'encaisse toujours pas.** #60 compose l'addition, #62 règle le
-  rendez-vous ; régler le **ticket** attend la colonne ci-dessus. Les
-  remboursements sont l'objet de #63.
+  rendez-vous ; régler le **ticket** attend la colonne ci-dessus. Un
+  remboursement se rattache donc à un encaissement de rendez-vous, jamais à une
+  vente retail autonome — qui n'a aujourd'hui pas d'encaissement à rembourser.
+- **Une réservation `PENDING` orpheline immobilise sa somme.** Deux causes : un
+  arrêt du processus entre l'inscription de la ligne et la réponse du
+  prestataire, ou une issue ambiguë de l'appel — voir « Le seul échec qui
+  relâche la réservation ». Le montant reste réservé, donc non remboursable,
+  jusqu'à ce qu'une reprise la tranche. C'est délibérément l'erreur du bon côté
+  — l'inverse rendrait l'argent deux fois — mais la reprise est **manuelle** au
+  MVP : relire les remboursements du prestataire et conclure les lignes qui leur
+  correspondent. Une issue de suivi porte le travail périodique qui le ferait
+  seul.
+- **Aucune route ne lit les remboursements d'un encaissement.** La trace existe
+  en base et `GET /payments` rend le cumul par ligne, mais le détail — qui,
+  quand, pourquoi, geste par geste — n'a pas de lecture HTTP. L'écran qui la
+  demandera viendra avec sa route ; une issue de suivi la porte.
+- **Une intention `FAILED` ne s'annule pas.** #62 renvoyait à #63 pour
+  transformer une carte refusée en règlement espèces ; c'est une *annulation*
+  d'intention, pas un remboursement — rien n'a été capturé, et la route de
+  remboursement le refuse en 422. Même issue de suivi.
