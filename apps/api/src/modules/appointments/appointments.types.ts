@@ -48,8 +48,8 @@ export interface Money {
  * dans `AppointmentRecord`.
  */
 export interface AppointmentDraft {
-  /** Les coordonnées de la cliente — résolues en fiche dans la transaction. */
-  readonly client: GuestContact;
+  /** La cliente — coordonnées à résoudre, ou fiche déjà désignée (#461). */
+  readonly client: ClientReference;
   readonly staffId: string;
   readonly serviceId: string;
   readonly startsAt: Date;
@@ -58,6 +58,33 @@ export interface AppointmentDraft {
   readonly price: Money;
   readonly clientNote: string | null;
 }
+
+/**
+ * De qui est le rendez-vous — les deux seules façons de le dire, et elles ne se
+ * mélangent pas (#461).
+ *
+ * | Forme | Surface | Ce que le repository en fait |
+ * |---|---|---|
+ * | `{ contact }` | tunnel public (#37) | demande la fiche à `crm`, qui la crée si elle manque |
+ * | `{ clientId }` | comptoir (#461) | l'écrit telle quelle, et laisse la clé étrangère la juger |
+ *
+ * C'est la même frontière que `packages/shared` tient par le `.strict()` de ses
+ * deux schémas — `bookGuestAppointmentRequestSchema` refuse un `clientId`,
+ * `createAppointmentRequestSchema` refuse un `client`. Une union, et non deux
+ * champs facultatifs : deux champs auraient laissé passer les deux à la fois,
+ * c'est-à-dire un tunnel public capable de réserver au nom d'une fiche qu'il
+ * aurait désignée.
+ *
+ * La forme `{ clientId }` ne relâche rien sur la frontière du tenant, et ce
+ * n'est pas ce fichier qui le tient : `appointments.client_id` porte la clé
+ * étrangère composite `(tenant_id, client_id)`, si bien qu'une fiche du salon
+ * voisin fait échouer l'insertion en base. `AppointmentsRepository` traduit ce
+ * refus en 404 — jamais 403, qui confirmerait l'existence de la fiche
+ * (tenant-isolation §4).
+ */
+export type ClientReference =
+  | { readonly contact: GuestContact }
+  | { readonly clientId: string };
 
 /**
  * Un rendez-vous, sous la forme que le module manipule.
@@ -188,6 +215,74 @@ export interface BookAppointmentInput {
   readonly startsAt: Date;
   readonly client: GuestContact;
   readonly clientNote: string | null;
+}
+
+/**
+ * Ce qu'une prise de rendez-vous **au comptoir** demande, telle que le service
+ * la reçoit (#461, `createAppointmentRequestSchema`).
+ *
+ * La jumelle de `BookAppointmentInput`, et l'unique différence est la cliente :
+ * ici une **fiche déjà au fichier du salon**, là-bas des coordonnées saisies par
+ * une visiteuse. Tout le reste — l'instant du soin, le praticien facultatif, le
+ * mot de la cliente — est rigoureusement le même, et c'est voulu : un créneau
+ * proposé par le calendrier doit se réserver de la même façon des deux côtés du
+ * comptoir.
+ *
+ * `clientId` n'est **pas** facultatif, là où le contrat partagé le déclare
+ * `.optional()`. L'écart est délibéré et va dans le sens strict : le contrat
+ * décrit une forme que le parcours client pourrait servir un jour — « le serveur
+ * prend le client de la session » —, et cette route-ci n'a pas de cliente dans
+ * son jeton, qui est celui d'un membre du personnel. L'omettre est donc une
+ * saisie incomplète, et un 400 nommant le champ vaut mieux qu'un rendez-vous
+ * posé au nom de personne.
+ *
+ * **Aucun `tenantId`**, pour la raison structurelle qui vaut partout dans ce
+ * module : c'est l'extension Prisma qui le pose depuis le contexte de requête.
+ */
+export interface CreateAppointmentInput {
+  readonly serviceId: string;
+  /** Praticien désigné, ou `null` pour « premier disponible » (#36). */
+  readonly staffId: string | null;
+  /** Instant du **soin**, tel que le calendrier l'a proposé. */
+  readonly startsAt: Date;
+  /** La fiche cliente, dans l'établissement du jeton. */
+  readonly clientId: string;
+  readonly clientNote: string | null;
+}
+
+/**
+ * Ce qu'un changement de statut demande, tel que le **service** le reçoit
+ * (#461, `changeAppointmentStatusRequestSchema`).
+ *
+ * `reason` n'a de destination que sur `CANCELLED` : c'est la colonne
+ * `cancellation_reason`, et il n'y a pas de colonne pour motiver un no-show ou
+ * un soin honoré. Le contrat partagé le porte tout de même sur toutes les
+ * transitions, et cette forme le suit plutôt que d'en refuser la moitié — un
+ * corps que le contrat annonce ne doit pas sortir en 400.
+ */
+export interface ChangeAppointmentStatusInput {
+  /** Le rendez-vous à faire avancer, dans l'établissement courant. */
+  readonly appointmentId: string;
+  /** Statut visé — jugé par `AppointmentLifecycleService`, jamais ici. */
+  readonly status: AppointmentStatus;
+  /** Motif saisi, ou `null`. Consigné sur une annulation, ignoré ailleurs. */
+  readonly reason: string | null;
+}
+
+/**
+ * Ce que le repository écrit lors d'un changement de statut — le statut
+ * **attendu** et le statut visé, et rien d'autre (#461).
+ *
+ * `from` n'est pas une commodité : c'est ce qui fait de l'écriture un
+ * test-et-pose atomique. L'`UPDATE` filtre dessus et rend un compte, si bien que
+ * deux transitions concurrentes du même rendez-vous se sérialisent sur le verrou
+ * de ligne et qu'une seule aboutit — même conduite que `CancelDraft`, et pour la
+ * raison de booking-engine §1 : ce n'est jamais une lecture qui décide.
+ */
+export interface StatusChangeDraft {
+  readonly appointmentId: string;
+  readonly from: AppointmentStatus;
+  readonly to: AppointmentStatus;
 }
 
 /**

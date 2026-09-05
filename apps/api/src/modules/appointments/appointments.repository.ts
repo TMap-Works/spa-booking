@@ -7,10 +7,14 @@ import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/p
 // La **porte de service** du module `crm`, jamais son repository (api-module §3).
 // Elle est importée de valeur — Nest lit le type du paramètre de constructeur
 // dans les métadonnées émises par TypeScript, qu'un `import type` effacerait.
-import { ClientDirectoryService } from '../crm/client-directory.service';
+import { ClientDirectoryService, type ClientDirectoryScope } from '../crm/client-directory.service';
 import { ClientRecordRaceError } from '../crm/crm.errors';
 import { OCCUPYING_STATUSES, occupiesSlot } from './appointment-status';
-import { isSlotExclusionViolation, isTransientWriteConflict } from './appointments.conflicts';
+import {
+  isSlotExclusionViolation,
+  isTransientWriteConflict,
+  isUnknownClientReference,
+} from './appointments.conflicts';
 import { SlotNoLongerAvailableError } from './appointments.errors';
 import type {
   AgendaAppointmentRecord,
@@ -19,8 +23,10 @@ import type {
   AppointmentRecord,
   CancelDraft,
   ClientAppointmentsQuery,
+  ClientReference,
   RescheduleDraft,
   RescheduleOutcome,
+  StatusChangeDraft,
 } from './appointments.types';
 
 /**
@@ -312,15 +318,35 @@ export class AppointmentsRepository {
    *   appris** de l'agenda. Son créneau peut être libre. La bonne réponse n'est
    *   pas de lui dire non, c'est de recommencer.
    *
+   * ## Une troisième issue depuis #461 : la fiche cliente désignée n'existe pas
+   *
+   * Le comptoir réserve pour une fiche **déjà au fichier**, qu'il désigne par
+   * son identifiant. Un identifiant inconnu — ou celui d'une fiche du salon
+   * voisin — fait échouer l'insertion sur les clés étrangères du client, ce que
+   * `isUnknownClientReference` reconnaît et que ce `catch` traduit en 404. Sans
+   * lui, une saisie erronée sortait en 500, et une fiche du voisin se
+   * distinguait d'une fiche inconnue par la façon dont le serveur s'écroulait.
+   *
    * @throws {SlotNoLongerAvailableError} si ce praticien a déjà, dans cet
    * établissement, un rendez-vous `PENDING` ou `CONFIRMED` qui chevauche cet
    * intervalle.
+   * @throws {NotFoundError} la fiche cliente désignée n'existe pas dans cet
+   * établissement — jamais 403, qui confirmerait son existence ailleurs.
    */
   public async create(draft: AppointmentDraft): Promise<AppointmentRecord> {
-    return this.writingAgenda(
-      () => this.insert(draft),
-      () => new SlotNoLongerAvailableError(draft.staffId, draft.startsAt),
-    );
+    try {
+      return await this.writingAgenda(
+        () => this.insert(draft),
+        () => new SlotNoLongerAvailableError(draft.staffId, draft.startsAt),
+      );
+    } catch (error: unknown) {
+      if (isUnknownClientReference(error)) {
+        // 404 et non 403 : une fiche du salon voisin doit être indiscernable
+        // d'un identifiant qui n'existe pas (tenant-isolation §4).
+        throw new NotFoundError('Cliente introuvable.');
+      }
+      throw error;
+    }
   }
 
   /**
@@ -705,7 +731,11 @@ export class AppointmentsRepository {
       // L'écriture dans `users` appartient à `crm` (#313) : ce module la demande,
       // il ne la fait plus. La portée passée est celle de cette transaction — la
       // fiche et le rendez-vous sont donc validés, ou abandonnés, ensemble.
-      const clientId = await this.clients.resolveWithin(tx, draft.client);
+      //
+      // Le comptoir, lui, désigne une fiche existante (#461) : il n'y a alors
+      // rien à résoudre ni à écrire, et l'identifiant descend tel quel jusqu'aux
+      // clés étrangères, qui le jugent.
+      const clientId = await this.resolveClient(tx, draft.client);
 
       const row = await tx.appointment.create({
         data: withScopedTenant<Prisma.AppointmentUncheckedCreateInput>({
@@ -722,6 +752,96 @@ export class AppointmentsRepository {
       });
       return toRecord(row);
     });
+  }
+
+  /**
+   * L'identifiant de la fiche cliente à écrire sur la ligne — résolu depuis les
+   * coordonnées, ou repris tel quel (#461).
+   *
+   * ## Pourquoi la forme `{ clientId }` ne vérifie rien ici
+   *
+   * Parce qu'une vérification serait fausse **et** hors sujet. Fausse : entre le
+   * `SELECT` et l'`INSERT`, la fiche peut disparaître, et la seule garantie qui
+   * tienne est celle des clés étrangères composites — même raisonnement que pour
+   * le créneau (booking-engine §1). Hors sujet : lire `users` depuis ce module
+   * reviendrait à lui donner un moyen de parcourir la clientèle, ce que `crm`
+   * refuse explicitement d'ouvrir (api-module §3, en-tête de
+   * `ClientDirectoryService`).
+   *
+   * L'insertion qui suit tranche donc les deux questions d'un coup : la fiche
+   * existe-t-elle, et est-elle de cet établissement. `create` traduit son refus.
+   */
+  private async resolveClient(
+    tx: ClientDirectoryScope,
+    client: ClientReference,
+  ): Promise<string> {
+    return 'clientId' in client ? client.clientId : this.clients.resolveWithin(tx, client.contact);
+  }
+
+  /**
+   * Fait avancer un rendez-vous d'un statut à un autre — la transition de
+   * back-office (#461, cinquième critère de #50).
+   *
+   * ## Ce que cette méthode ne juge pas
+   *
+   * La **validité** de la transition. C'est `AppointmentLifecycleService` qui la
+   * juge, avant l'appel, et lui seul porte la table du cycle de vie
+   * (booking-engine §5). Ici, `from` ne sert qu'à rendre l'écriture atomique.
+   *
+   * ## L'écriture conditionnelle sur le statut n'est pas une vérification
+   *
+   * Même conduite que `cancel` et `move` : `updateMany` filtre sur le statut
+   * attendu et rend un **compte**. Deux transitions concurrentes du même
+   * rendez-vous se sérialisent sur le verrou de ligne, la seconde ne reconnaît
+   * plus la ligne et met à jour zéro ligne. C'est un test-et-pose atomique rendu
+   * par le moteur, jamais un « est-ce encore dans cet état ? » suivi d'une
+   * écriture (booking-engine §1).
+   *
+   * ## Aucune transaction, aucun verrou d'agenda
+   *
+   * Il n'y a qu'une écriture, et elle ne **prend** aucun créneau : elle en
+   * libère un, ou n'en change pas l'occupation. Le verrou consultatif de
+   * `insert` sérialise les écritures qui se disputent un créneau ; il n'y a rien
+   * à disputer ici — pour la raison exacte qui dispense `cancel` du sien.
+   *
+   * @throws {ConflictError} le rendez-vous a changé d'état entre la lecture et
+   * l'écriture — deux transitions concurrentes, dont une seule aboutit.
+   */
+  public async changeStatus(draft: StatusChangeDraft): Promise<void> {
+    const moved = await this.prisma.appointment.updateMany({
+      where: { id: draft.appointmentId, status: draft.from },
+      data: { status: draft.to },
+    });
+
+    if (moved.count !== 1) {
+      throw new ConflictError(
+        'Ce rendez-vous vient d’être modifié. Rechargez-le avant de changer son statut.',
+        { appointmentId: draft.appointmentId },
+      );
+    }
+  }
+
+  /**
+   * Un rendez-vous de l'établissement courant sous sa forme d'**agenda** —
+   * *summaries* jointes, note interne et instant de création (#461).
+   *
+   * La même lecture que `listAgenda`, sur une ligne au lieu d'une fenêtre :
+   * `AGENDA_SELECT` et lui seul, pour que la ligne qu'une écriture de comptoir
+   * rend soit indiscernable de celle que la grille affiche déjà. Deux `select`
+   * distincts auraient fini par diverger d'un champ, et le tiroir aurait affiché
+   * autre chose que la case qu'il vient de remplir.
+   *
+   * `findFirst` et non `findUnique`, pour la raison de `findById` : c'est
+   * l'extension qui injecte `tenantId` dans le `where`. Rend `null` pour un
+   * rendez-vous d'un autre établissement, ce qui donne le 404 attendu plutôt
+   * qu'un 403 qui confirmerait son existence.
+   */
+  public async findAgendaById(id: string): Promise<AgendaAppointmentRecord | null> {
+    const row = await this.prisma.appointment.findFirst({
+      where: { id },
+      select: AGENDA_SELECT,
+    });
+    return row === null ? null : toAgendaRecord(row);
   }
 
   /**

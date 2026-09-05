@@ -50,8 +50,13 @@ export const APPOINTMENT_STATUS_FILTERS = APPOINTMENT_STATUSES.map((status) =>
  * conversion vit **ici**, à la frontière HTTP, pour la raison qui vaut pour
  * `NormalizeEmail` juste à côté : passé ce point, aucune couche n'a plus à se
  * demander dans quelle casse elle compare un statut.
+ *
+ * Exportée depuis #461 : `ChangeAppointmentStatusDto` traverse exactement la
+ * même frontière, dans le même sens, avec la même liste de mots. Deux
+ * conversions auraient pu diverger, et la divergence se serait vue en
+ * production plutôt qu'à la compilation — les deux inférant `AppointmentStatus`.
  */
-function toDomainStatus(filter: string): AppointmentStatus {
+export function toDomainStatus(filter: string): AppointmentStatus {
   return filter.toUpperCase() as AppointmentStatus;
 }
 

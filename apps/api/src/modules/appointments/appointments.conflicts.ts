@@ -50,6 +50,30 @@ import { Prisma } from '@prisma/client';
 export const SLOT_EXCLUSION_CONSTRAINT = 'appointments_no_overlap';
 
 /**
+ * Les deux clés étrangères que `appointments.client_id` traverse — celles que la
+ * migration initiale déclare.
+ *
+ * Elles se complètent, et il faut les deux : `appointments_client_id_fkey` juge
+ * l'existence de la fiche, `appointments_tenant_id_client_id_fkey` juge son
+ * **établissement**. Une fiche inconnue trébuche sur la première, une fiche du
+ * salon voisin sur la seconde — et les deux doivent rendre le même 404, faute de
+ * quoi la route de comptoir deviendrait une sonde d'annuaire (tenant-isolation
+ * §4).
+ *
+ * Comme `SLOT_EXCLUSION_CONSTRAINT`, ce sont des noms SQL recopiés, donc un
+ * couplage assumé entre ce fichier et la migration :
+ * `__tests__/appointments.conflicts.spec.ts` relit le SQL pour vérifier qu'ils
+ * y figurent bien.
+ */
+export const CLIENT_FOREIGN_KEYS = [
+  'appointments_client_id_fkey',
+  'appointments_tenant_id_client_id_fkey',
+] as const;
+
+/** Code Prisma d'une violation de clé étrangère. */
+const FOREIGN_KEY_VIOLATION_CODE = 'P2003';
+
+/**
  * SQLSTATE des échecs **transitoires** d'écriture concurrente.
  *
  * - `40P01` *deadlock_detected* — le cas réellement observé, et il n'a rien
@@ -79,23 +103,6 @@ const TRANSIENT_SQLSTATES: readonly string[] = ['40P01', '40001'];
  */
 const WRITE_CONFLICT_CODE = 'P2034';
 
-/** Les valeurs de `meta` que Prisma remplirait s'il venait à mapper `23P01`. */
-function metaMentionsConstraint(meta: Record<string, unknown> | undefined): boolean {
-  if (meta === undefined) {
-    return false;
-  }
-
-  return Object.values(meta).some((value) => {
-    if (typeof value === 'string') {
-      return value.includes(SLOT_EXCLUSION_CONSTRAINT);
-    }
-    return (
-      Array.isArray(value) &&
-      value.some((item) => typeof item === 'string' && item.includes(SLOT_EXCLUSION_CONSTRAINT))
-    );
-  });
-}
-
 /**
  * `true` si l'erreur est le refus de `appointments_no_overlap` par PostgreSQL.
  *
@@ -109,11 +116,67 @@ export function isSlotExclusionViolation(error: unknown): boolean {
     return false;
   }
 
-  if (error instanceof Prisma.PrismaClientKnownRequestError && metaMentionsConstraint(error.meta)) {
+  if (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    metaMentions(error.meta, SLOT_EXCLUSION_CONSTRAINT)
+  ) {
     return true;
   }
 
   return error.message.includes(SLOT_EXCLUSION_CONSTRAINT);
+}
+
+/**
+ * `true` si l'erreur est le refus, par une clé étrangère, de la **fiche cliente**
+ * désignée par une prise de rendez-vous au comptoir (#461).
+ *
+ * ## Pourquoi une traduction plutôt qu'une lecture préalable
+ *
+ * Parce que c'est la doctrine de ce module, et elle vaut ici comme pour le
+ * créneau : « la base tranche, le code traduit » (booking-engine §1). Un
+ * `SELECT` sur `users` avant l'insertion serait une vérification applicative de
+ * plus — donc une course de plus, la fiche pouvant disparaître entre les deux —
+ * et ferait lire à `appointments` une table qu'il ne possède pas, alors que
+ * `crm` n'ouvre de porte que pour en **résoudre** une depuis des coordonnées
+ * (api-module §3).
+ *
+ * ## Ce que la reconnaissance exige, et ce qu'elle refuse de deviner
+ *
+ * Le code `P2003` **et** le nom d'une des deux clés du client. Le premier seul
+ * ne suffirait pas : la même insertion traverse aussi les clés du praticien et
+ * de la prestation, et traduire l'une d'elles en « cliente introuvable »
+ * enverrait le comptoir chercher au mauvais endroit. Prisma range le nom dans
+ * `meta.field_name` — parfois suffixé `(index)` —, d'où l'inspection tolérante
+ * du `meta` puis du message.
+ */
+export function isUnknownClientReference(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+
+  if (error.code !== FOREIGN_KEY_VIOLATION_CODE) {
+    return false;
+  }
+
+  return CLIENT_FOREIGN_KEYS.some(
+    (constraint) => metaMentions(error.meta, constraint) || error.message.includes(constraint),
+  );
+}
+
+/** `true` si l'une des valeurs de `meta` cite cette chaîne. */
+function metaMentions(meta: Record<string, unknown> | undefined, needle: string): boolean {
+  if (meta === undefined) {
+    return false;
+  }
+
+  return Object.values(meta).some((value) => {
+    if (typeof value === 'string') {
+      return value.includes(needle);
+    }
+    return (
+      Array.isArray(value) && value.some((item) => typeof item === 'string' && item.includes(needle))
+    );
+  });
 }
 
 /**
