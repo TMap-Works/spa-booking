@@ -258,20 +258,41 @@ export class AppointmentsService {
    * parce qu'il s'agit d'un client déjà connu : un report est une écriture dans
    * l'agenda du salon, exactement comme une réservation.
    *
-   * ## Une limite connue, et assumée : le nouveau créneau ne peut pas chevaucher l'ancien
+   * ## Le nouveau créneau peut chevaucher l'ancien — levée par #316
    *
-   * Le moteur voit le rendez-vous en cours de déplacement comme **occupant** son
-   * créneau — il l'est, tant que la transaction n'a pas eu lieu. Avancer d'un
-   * quart d'heure un soin d'une heure demande donc un créneau que le calendrier
-   * ne propose pas, et reçoit un 409.
+   * Le moteur voyait le rendez-vous en cours de déplacement comme **occupant**
+   * son créneau — il l'est, tant que la transaction n'a pas eu lieu. Avancer
+   * d'un quart d'heure un soin d'une heure, le geste le plus courant du
+   * comptoir, demandait donc un créneau que le calendrier ne proposait pas, et
+   * recevait un 409.
    *
-   * Ce n'est pas une incohérence : c'est exactement ce que la cliente voit. Le
-   * calendrier du tunnel affiche son propre rendez-vous comme pris, et ne lui
-   * offre aucun créneau chevauchant — l'agenda réservable et l'agenda affiché
-   * restent le même. Lever la limite demanderait au moteur d'exclure un
-   * rendez-vous nommé de son calcul, c'est-à-dire de modifier
-   * `availability.service.ts`, hors de l'empreinte de ce ticket ; une issue de
-   * suivi le porte.
+   * Le contrôle passe désormais au moteur l'identifiant du rendez-vous déplacé,
+   * qui l'écarte de l'étape « rendez-vous occupants » — et de celle-là seulement.
+   * Ce que cela ne relâche pas : l'unicité, qui reste jugée par
+   * `appointments_no_overlap` à l'insertion, dans la transaction qui annule la
+   * ligne de départ. La cliente ne peut donc pas se replier sur un créneau que
+   * quelqu'un d'autre vient de prendre, et deux reports concurrents vers des
+   * créneaux chevauchants n'en font aboutir qu'un.
+   *
+   * Ce que cela n'ouvre pas non plus : un identifiant d'un autre établissement
+   * n'écarte rien, la lecture étant scopée — et de toute façon `previous` vient
+   * d'être lu ici, donc de l'établissement courant.
+   *
+   * ## Le report qui ne déplace rien est un **non-événement**
+   *
+   * L'exclusion rend proposable le créneau d'origine lui-même : demander à
+   * reporter un rendez-vous vers l'instant qu'il occupe déjà, chez le même
+   * praticien, traversait le contrôle et **réécrivait l'agenda** — ligne de
+   * départ annulée, ligne d'arrivée neuve, donc identifiant neuf. Trois dégâts,
+   * pour un geste qui ne déplace rien : la cliente perd l'identifiant reçu dans
+   * sa confirmation — le seul par lequel elle peut encore annuler ou reporter —,
+   * `appointment.rescheduled` lui annonce un déplacement vers l'heure où elle
+   * était déjà, et le reporting du CDC §1.4 compte un report qui n'a pas eu lieu.
+   *
+   * Le créneau d'origine n'était pas proposable avant #316, et ce refus tenait
+   * lieu de garde par accident. La garde est donc écrite, plutôt que rendue à
+   * l'accident : la demande sans effet rend le rendez-vous **tel qu'il est**,
+   * sans écriture, sans événement et sans invalidation de cache.
    *
    * @throws {NotFoundError} rendez-vous inconnu ou d'un autre établissement ;
    * prestation retirée du catalogue depuis la réservation.
@@ -310,12 +331,28 @@ export class AppointmentsService {
     const service = await this.services.byId(previous.serviceId);
     const staffId = input.staffId ?? previous.staffId;
 
+    // Rien à déplacer : même praticien, même instant de soin. Comparé sur
+    // l'intervalle **facturé** — celui que la cliente a sous les yeux et qu'elle
+    // vient de renvoyer —, reconstitué depuis l'occupé de la même façon que
+    // `billedView`, faute de quoi les deux ne parleraient pas de la même heure.
+    if (staffId === previous.staffId && input.startsAt.getTime() === billedStartOf(previous, service)) {
+      return billedView(previous, service);
+    }
+
     // Le praticien est toujours nommé ici — celui de la demande, ou celui du
     // rendez-vous d'origine. `offeredStaffAt` rend donc au plus un candidat, et
     // le report n'a aucun repli à faire : l'option « premier disponible » (#36)
     // est une façon de **choisir** un praticien, et un report en a déjà un.
     await this.offeredStaffAt(
-      { serviceId: previous.serviceId, staffId, startsAt: input.startsAt },
+      {
+        serviceId: previous.serviceId,
+        staffId,
+        startsAt: input.startsAt,
+        // Le rendez-vous d'origine ne doit pas se barrer la route à lui-même
+        // (#316). `previous.id` et non l'identifiant reçu : c'est la ligne
+        // effectivement lue dans l'établissement courant, jamais une entrée.
+        excludeAppointmentId: previous.id,
+      },
       now,
     );
 
@@ -660,6 +697,13 @@ export class AppointmentsService {
    * occupants, préavis minimum. Une règle qui changerait là-bas et pas ici
    * laisserait réserver ce que le calendrier ne propose plus.
    *
+   * `excludeAppointmentId` est la **seule** dérogation, et elle ne porte que sur
+   * la cinquième de ces règles : le rendez-vous qu'un report déplace ne se compte
+   * pas comme occupant son propre créneau de départ (#316). Les cinq autres
+   * continuent de s'appliquer au créneau d'arrivée — un report reste refusé hors
+   * des heures d'ouverture, un jour de fermeture, pendant un congé, chez un
+   * praticien qui ne pratique pas le soin, ou sous le préavis minimum.
+   *
    * ## Pourquoi un 409 et non un 422
    *
    * Parce que c'est ce dont le front a besoin, et parce que la cause écrasante
@@ -694,6 +738,11 @@ export class AppointmentsService {
         // moteur « tous les praticiens », et `exactOptionalPropertyTypes` refuse
         // un `undefined` explicite sur une propriété facultative.
         ...(input.staffId === null ? {} : { staffId: input.staffId }),
+        // Même raison d'être étalé : absent, le moteur compte tous les
+        // rendez-vous occupants — ce que la réservation attend de lui.
+        ...(input.excludeAppointmentId === undefined
+          ? {}
+          : { excludeAppointmentId: input.excludeAppointmentId }),
         from: window.from,
         to: window.to,
       },
@@ -729,6 +778,13 @@ interface OfferedSlotQuery {
   readonly staffId: string | null;
   /** Instant du **soin**, tel que le calendrier l'a proposé. */
   readonly startsAt: Date;
+  /**
+   * Le rendez-vous qu'un report déplace, à ne pas compter comme occupant (#316).
+   *
+   * Absent pour une réservation : elle ne déplace rien, et le moteur doit voir
+   * l'agenda tel qu'il est.
+   */
+  readonly excludeAppointmentId?: string;
 }
 
 /**
@@ -779,6 +835,18 @@ function occupiedAsBilled(record: AppointmentRecord): BilledIntervalSource {
 }
 
 /**
+ * L'instant du **soin** d'une ligne écrite — l'inverse d'`occupiedRange`.
+ *
+ * Extrait de `billedView` parce que le report en a besoin sans avoir besoin de
+ * la vue : deux dérivations séparées auraient pu diverger, et le jour où elles
+ * auraient divergé, une demande sans effet aurait recommencé à réécrire
+ * l'agenda.
+ */
+function billedStartOf(record: AppointmentRecord, service: BilledIntervalSource): number {
+  return record.startsAt.getTime() + service.bufferBeforeMinutes * MINUTE_MS;
+}
+
+/**
  * Le rendez-vous tel que la cliente le lit — l'intervalle **facturé**, retrouvé
  * depuis la ligne écrite.
  *
@@ -799,7 +867,7 @@ function occupiedAsBilled(record: AppointmentRecord): BilledIntervalSource {
  * ticket, pour un écart de quelques minutes sur une heure déjà passée.
  */
 function billedView(record: AppointmentRecord, service: BilledIntervalSource): AppointmentView {
-  const billedStart = record.startsAt.getTime() + service.bufferBeforeMinutes * MINUTE_MS;
+  const billedStart = billedStartOf(record, service);
 
   return {
     id: record.id,
