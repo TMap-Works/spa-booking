@@ -84,6 +84,13 @@ export class AvailabilityController {
       ...(query.staffId !== undefined && { staffId: query.staffId }),
       from: query.from,
       to: query.to,
+      // Le report au comptoir vise nécessairement un créneau qui chevauche le
+      // rendez-vous qu'il déplace (#442). L'étalement est celui du `staffId`
+      // ci-dessus, et pour la même raison : c'est la présence du champ, et non
+      // sa valeur, qui décide du contournement du cache.
+      ...(query.excludeAppointmentId !== undefined && {
+        excludeAppointmentId: query.excludeAppointmentId,
+      }),
     });
   }
 }

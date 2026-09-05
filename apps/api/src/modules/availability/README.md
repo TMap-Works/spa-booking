@@ -16,6 +16,8 @@ ici.
 | #34 | **Le calcul des créneaux libres** — découpage, durée occupée, préavis, et les deux réglages qui les gouvernent |
 | #35 | **Les deux endpoints de disponibilité**, le cache Redis à TTL court et son invalidation à toute écriture d'agenda |
 | #36 | L'option **premier disponible** — l'agrégation vit ici, la règle d'affectation vit dans `appointments` |
+| #316 | `excludeAppointmentId` sur le **moteur nu** — le report cesse de se heurter au rendez-vous qu'il déplace |
+| #442 | Le même paramètre porté jusqu'aux **deux endpoints**, cache contourné — le calendrier de report le propose enfin |
 
 ## Les trois natures de données, et pourquoi on ne les confond pas
 
@@ -90,6 +92,68 @@ La route publique porte un quota de 120 appels par minute et par adresse : elle
 **calcule**, sur une surface anonyme, et un appelant qui fait varier `from` d'un
 jour à chaque appel contourne le cache entièrement. Le quota laisse le calendrier
 se rafraîchir toutes les demi-secondes, bien au-delà de ce que #44 demande.
+
+### `excludeAppointmentId` : la décision de surface (#442)
+
+**Les deux routes le servent, la publique comprise.** C'est la décision, et voici
+ce qui l'a emportée.
+
+Le moteur sait écarter de son calcul le rendez-vous qu'un report déplace depuis
+#316 — sans quoi un décalage d'un quart d'heure sur un soin d'une heure est
+refusé, le calendrier voyant un praticien occupé par le rendez-vous qu'on est
+justement en train de déménager. Mais la capacité n'existait que sur le moteur
+nu, donc sur le seul chemin d'écriture : aucun calendrier ne pouvait la demander.
+
+| Option | Verdict |
+|---|---|
+| back-office gardé seul (`GET /api/v1/availability`) | **insuffisant** |
+| les deux routes | **retenu** |
+| route publique seule | sans objet — le back-office en a l'usage au comptoir (#50) |
+
+Le back-office seul ne suffit pas parce que l'écran qui en a besoin **n'est pas
+dans le back-office** : le report d'une cliente se fait dans son espace personnel
+(`apps/web/app/(account)/…/rendez-vous/[appointmentId]/report`), avec un jeton de
+rang `CLIENT` — sous le seuil `STAFF` de la route gardée. Réserver l'exclusion à
+celle-ci aurait laissé le geste hors de portée de la seule personne qui le
+demande, ce qui est exactement l'état que #442 constate.
+
+#### Ce que la surface publique ajoute réellement
+
+Rien qu'un porteur d'identifiant ne puisse déjà faire, et c'est ce qui tranche.
+Sur cette même surface publique, connaître l'identifiant d'un rendez-vous suffit
+déjà à le **reporter** et à l'**annuler** sans aucun jeton — c'est le régime
+assumé de tout le tunnel, « on réserve sans compte, donc on reporte sans compte »
+(`PublicAppointmentsController`). Celui qui détient l'identifiant peut donc
+libérer ce créneau pour de bon ; apprendre qu'il *serait* libre sans ce
+rendez-vous lui découvre strictement moins que ce qu'il peut provoquer.
+
+Et celui qui ne le détient pas ne le devine pas : un UUID v4 n'est pas
+énumérable, et le paramètre n'offre aucune sonde — un identifiant inconnu **ou
+d'un autre établissement** rend exactement la réponse qu'il aurait rendue sans
+lui. La lecture des rendez-vous est scopée par l'extension Prisma, et
+`id: { not: … }` s'applique **après** le filtre de tenant : l'identifiant d'un
+voisin ne retire rien. `test/availability-endpoint.isolation-spec.ts` le prouve
+sur l'endpoint, `availability.service.spec.ts` sur le moteur.
+
+Enfin, le paramètre ne réserve rien : il sert à **proposer**. Le créneau ainsi
+rendu passe, à la réservation comme au report, sous `appointments_no_overlap` —
+qui, elle, ne connaît aucune exclusion (ADR 0002, booking-engine §1). Le pire
+qu'une exclusion mal placée puisse produire est un 409.
+
+#### Le cache est contourné, pas enrichi
+
+La clé est `(serviceId, staffId, journée)` et ne dit rien d'une exclusion. Une
+vue calculée en ignorant un rendez-vous, écrite sous cette clé, montrerait son
+créneau libre à **tous** les lecteurs de la minute suivante.
+
+`AvailabilityQueryService.slotsFor` écarte donc ces requêtes du cache : ni
+lecture, ni écriture, le moteur nu et rien d'autre. Faire entrer l'exclusion dans
+la clé aurait marché aussi, mais c'est un état de plus à tenir juste — un segment
+oublié, un champ ajouté plus tard, et la fuite est silencieuse. Le contournement,
+lui, n'a rien à tenir. Il ne coûte rien non plus : ces requêtes sont rares — une
+par écran de report —, personne ne repose deux fois la même question avec la même
+exclusion, et les mettre en cache n'aurait fait qu'évincer les journées du
+calendrier ordinaire, qui, elles, sont demandées en boucle.
 
 ### Pourquoi des `PUT` et aucun `DELETE`
 
@@ -270,6 +334,7 @@ module :
 | Chemin | Service | Voit le cache |
 |---|---|---|
 | `GET …/availability` | `AvailabilityQueryService` | oui |
+| `GET …/availability?excludeAppointmentId=…` | `AvailabilityQueryService` | **non** (#442) |
 | `POST …/appointments` (réservation, report) | `AvailabilityService` | **non** |
 
 `AvailabilityModule` exporte le second et **pas** le premier : `appointments` ne

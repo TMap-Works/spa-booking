@@ -234,4 +234,140 @@ describe('Endpoint de disponibilité', () => {
       expect(harness.cache.entries.size).toBe(0);
     });
   });
+
+  /**
+   * L'exclusion du rendez-vous qu'un report déplace — #442.
+   *
+   * Ce qui se prouve ici est le deuxième critère du ticket, dans sa forme
+   * servie : **le créneau qu'occupe le rendez-vous en cours de déplacement
+   * redevient proposable dès qu'on le nomme**, et rien d'autre ne bouge. Les
+   * tests unitaires du moteur (`availability.service.spec.ts`) le prouvent déjà
+   * sur le calcul ; ce qui ne s'y prouve pas, c'est que le paramètre traverse le
+   * DTO, le contrôleur et le service de lecture jusqu'à lui.
+   */
+  describe('exclusion du rendez-vous reporté (#442)', () => {
+    /** Les tampons du harnais : 10 minutes avant, 60 de soin, 10 après. */
+    const BUFFER_BEFORE_MS = 10 * 60_000;
+    const OCCUPIED_MS = 80 * 60_000;
+
+    const startTimes = (body: {
+      days: { slots: { startsAt: string }[] }[];
+    }): string[] => body.days.flatMap((day) => day.slots.map((slot) => slot.startsAt));
+
+    const publicSlots = async (overrides: Record<string, string> = {}): Promise<string[]> =>
+      startTimes(
+        (
+          await request(harness.server())
+            .get(PUBLIC_PATH(harness.a.tenant.slug))
+            .query(query(overrides))
+            .expect(200)
+        ).body,
+      );
+
+    /**
+     * Occupe un créneau du milieu de la journée par un rendez-vous, et rend son
+     * identifiant avec l'heure **facturée** qu'il fait disparaître.
+     *
+     * L'intervalle posé est l'intervalle **occupé** — `startsAt` moins le tampon
+     * de préparation, quatre-vingts minutes de large. C'est ce que l'agenda
+     * stocke, et confondre les deux ferait chevaucher autre chose que le créneau
+     * visé.
+     */
+    const occupyMiddleSlot = async (): Promise<{ id: string; billedStart: string }> => {
+      const times = await publicSlots();
+      const billedStart = times[Math.floor(times.length / 2)] as string;
+      const occupiedStart = new Date(Date.parse(billedStart) - BUFFER_BEFORE_MS);
+
+      const appointment = harness.availability.seedAppointment({
+        tenantId: harness.a.tenant.id,
+        staffId: harness.a.staffId,
+        startsAt: occupiedStart,
+        endsAt: new Date(occupiedStart.getTime() + OCCUPIED_MS),
+      });
+
+      // Le jeu d'essai est posé dans le double et non par HTTP : aucune écriture
+      // d'agenda n'a donc chassé le cache. On le vide à la main, faute de quoi
+      // la question suivante serait servie par la réponse d'avant le rendez-vous.
+      harness.cache.entries.clear();
+
+      return { id: appointment.id, billedStart };
+    };
+
+    it('sans le paramètre, le créneau du rendez-vous n’est plus proposé', async () => {
+      const { billedStart } = await occupyMiddleSlot();
+
+      // L'état que #442 constate : le calendrier voit un praticien occupé, et la
+      // cliente ne peut pas déplacer son rendez-vous d'un quart d'heure.
+      expect(await publicSlots()).not.toContain(billedStart);
+    });
+
+    it('avec le paramètre, il redevient proposable — et rien d’autre ne change', async () => {
+      const before = await publicSlots();
+      const { id, billedStart } = await occupyMiddleSlot();
+
+      const excluding = await publicSlots({ excludeAppointmentId: id });
+
+      expect(excluding).toContain(billedStart);
+      // Strictement le calendrier d'avant le rendez-vous : l'exclusion retire ce
+      // rendez-vous du calcul, elle n'ouvre rien d'autre.
+      expect(excluding).toEqual(before);
+    });
+
+    it('la route gardée le sert de la même façon', async () => {
+      const { id, billedStart } = await occupyMiddleSlot();
+
+      const response = await request(harness.server())
+        .get(BACK_OFFICE_PATH)
+        .set('Authorization', await harness.bearer('STAFF'))
+        .query(query({ excludeAppointmentId: id }))
+        .expect(200);
+
+      // Le comptoir déplace des rendez-vous, lui aussi (#50).
+      expect(startTimes(response.body)).toContain(billedStart);
+    });
+
+    it('n’écrit aucune clé de cache, et n’en consomme aucune', async () => {
+      const { id, billedStart } = await occupyMiddleSlot();
+
+      await publicSlots({ excludeAppointmentId: id });
+
+      // Le troisième critère du ticket : la vue calculée avec une exclusion ne
+      // se range nulle part. Sinon le créneau du rendez-vous apparaîtrait libre
+      // à tous les lecteurs de la minute suivante.
+      expect(harness.cache.keysOf(harness.a.tenant.id)).toEqual([]);
+
+      // Et la question ordinaire, posée juste après, retrouve bien son
+      // calendrier à elle — celui où le rendez-vous occupe son créneau.
+      expect(await publicSlots()).not.toContain(billedStart);
+    });
+
+    it('ne consomme pas une journée déjà en cache', async () => {
+      const { id, billedStart } = await occupyMiddleSlot();
+
+      // La journée est mise en cache par une question ordinaire…
+      await publicSlots();
+      expect(harness.cache.keysOf(harness.a.tenant.id)).toHaveLength(1);
+
+      // …et la question portant l'exclusion ne s'en sert pas : elle rendrait
+      // sinon le calendrier où le rendez-vous s'occupe encore lui-même.
+      expect(await publicSlots({ excludeAppointmentId: id })).toContain(billedStart);
+    });
+
+    it('refuse en 400 un identifiant mal formé', async () => {
+      // Un champ libre ici descendrait dans le `where` d'une lecture d'agenda :
+      // le refus est de forme, et il a lieu au DTO.
+      await request(harness.server())
+        .get(PUBLIC_PATH(harness.a.tenant.slug))
+        .query(query({ excludeAppointmentId: 'le-mien' }))
+        .expect(400);
+    });
+
+    it('reste sans effet sur un identifiant inconnu', async () => {
+      const { billedStart } = await occupyMiddleSlot();
+
+      // Ni erreur ni sonde d'existence : un identifiant qui ne désigne rien
+      // n'apprend rien, et le calendrier est celui de tout le monde.
+      expect(await publicSlots({ excludeAppointmentId: UNKNOWN_ID })).not.toContain(billedStart);
+    });
+  });
 });

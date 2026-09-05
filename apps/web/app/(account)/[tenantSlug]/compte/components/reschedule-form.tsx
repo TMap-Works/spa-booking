@@ -30,6 +30,19 @@ import { accountPath } from '../paths';
  * celui-là : les créneaux que le calendrier propose pour **cette** prestation
  * chez **ce** praticien.
  *
+ * ## Le créneau actuel se montre, il ne se choisit pas (#442)
+ *
+ * Depuis que le calendrier écarte de son calcul le rendez-vous en cours de
+ * déplacement, la liste contient les créneaux qui le **chevauchent** — c'est
+ * l'objet du ticket : un soin d'une heure doit pouvoir bouger d'un quart
+ * d'heure. Elle contient donc aussi, nécessairement, l'heure actuelle du
+ * rendez-vous.
+ *
+ * Ce créneau-là est rendu, mais inerte, et porte le mot « actuel ». Le retirer
+ * ferait un trou inexplicable dans la journée ; le laisser cliquable ferait
+ * proposer « déplacer au samedi 14:00 » un rendez-vous déjà fixé au samedi
+ * 14:00 — un aller-retour en base pour rien, et une phrase qui se contredit.
+ *
  * ## Le 409 n'est pas une erreur exceptionnelle
  *
  * Entre l'affichage et le clic, le créneau a pu être pris. C'est un cas normal
@@ -62,6 +75,11 @@ export function RescheduleForm({
 
   const mention = timeZoneMention(timeZone);
   const openDays = availability.days.filter((day) => day.slots.length > 0);
+
+  // Comparaison d'instants et non de chaînes : rien ne garantit que le
+  // calendrier et l'historique écrivent le même moment avec la même précision,
+  // et « …T14:00:00Z » ne s'égale pas à « …T14:00:00.000Z ».
+  const currentInstant = Date.parse(currentStartsAt);
 
   const confirm = async (): Promise<void> => {
     // Deux verrous : celui-ci et le `disabled` du bouton. Un double clic ne doit
@@ -133,21 +151,26 @@ export function RescheduleForm({
             <div className="spa-reschedule__day" key={day.date}>
               <h3 className="spa-reschedule__date">{formatCalendarDate(day.date)}</h3>
               <ul className="spa-reschedule__slots">
-                {day.slots.map((slot) => (
-                  <li key={slot.startsAt}>
-                    <button
-                      type="button"
-                      className={`spa-reschedule__slot${
-                        chosen === slot.startsAt ? ' spa-reschedule__slot--chosen' : ''
-                      }`}
-                      aria-pressed={chosen === slot.startsAt}
-                      disabled={submitting}
-                      onClick={() => setChosen(slot.startsAt)}
-                    >
-                      {formatTimeInTimeZone(slot.startsAt, timeZone)}
-                    </button>
-                  </li>
-                ))}
+                {day.slots.map((slot) => {
+                  const isCurrent = Date.parse(slot.startsAt) === currentInstant;
+
+                  return (
+                    <li key={slot.startsAt}>
+                      <button
+                        type="button"
+                        className={`spa-reschedule__slot${
+                          chosen === slot.startsAt ? ' spa-reschedule__slot--chosen' : ''
+                        }`}
+                        aria-pressed={chosen === slot.startsAt}
+                        disabled={submitting || isCurrent}
+                        onClick={() => setChosen(slot.startsAt)}
+                      >
+                        {formatTimeInTimeZone(slot.startsAt, timeZone)}
+                        {isCurrent ? ' (actuel)' : null}
+                      </button>
+                    </li>
+                  );
+                })}
               </ul>
             </div>
           ))}

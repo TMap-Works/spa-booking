@@ -67,10 +67,20 @@ export interface ClosingDaysView {
  * pratiquent le soin ».
  *
  * TODO(#26) : cette forme appartient au contrat d'API — `packages/shared`
- * l'expose déjà, au même nom et aux mêmes quatre champs
- * (`availabilityQuerySchema`). Elle devra en être importée le jour où `apps/api`
- * dépendra du paquet partagé, sans quoi les deux déclarations homonymes
- * deviendront ambiguës à l'import — même TODO que les trois formes ci-dessus.
+ * expose déjà l'homonyme `availabilityQuerySchema`, et le jour où `apps/api`
+ * dépendra du paquet partagé les deux déclarations deviendront ambiguës à
+ * l'import. **Attention à ce que la substitution vise** : depuis #442 le schéma
+ * partagé porte **cinq** champs — il décrit la chaîne de requête, exclusion
+ * comprise —, et c'est donc `EngineAvailabilityQuery` ci-dessous qu'il faut lui
+ * faire correspondre, jamais celle-ci. Remplacer `AvailabilityQuery` par le type
+ * inféré du schéma lui ferait gagner `excludeAppointmentId` et la rendrait
+ * identique à `EngineAvailabilityQuery` : la recomposition champ par champ de
+ * `AvailabilityQueryService.slotsFor` — « ce qui descend ici est exactement ce
+ * que la clé indexe » — cesserait d'être adossée à un type qui exclut ce champ,
+ * et le premier qui la « simplifierait » en étalement écrirait une vue calculée
+ * avec une exclusion sous une clé qui n'en dit rien. Cette forme-ci garde donc
+ * ses quatre champs, parce que ce sont ceux que la clé de cache indexe — même
+ * TODO que les trois formes ci-dessus.
  */
 export interface AvailabilityQuery {
   readonly serviceId: string;
@@ -80,21 +90,35 @@ export interface AvailabilityQuery {
 }
 
 /**
- * La même demande, **augmentée de ce que seul le report renseigne** (#316).
+ * La même demande, **augmentée de ce que seul le report renseigne** (#316, puis
+ * #442).
  *
  * ## Pourquoi deux types plutôt qu'un champ de plus sur le premier
  *
- * Parce que ce champ ne doit jamais atteindre le chemin caché. La clé de cache
- * est `(serviceId, staffId, journée)` : une vue calculée en ignorant un
- * rendez-vous, écrite sous cette clé, ferait voir son créneau libre à **tous**
- * les lecteurs suivants pendant le TTL. Le défaut serait borné — la réservation
- * rejoue le moteur à froid, et la contrainte tranche —, mais il n'a aucune
- * raison d'exister.
+ * Parce que ce champ ne doit jamais être **indexé** par le cache. La clé est
+ * `(serviceId, staffId, journée)` : une vue calculée en ignorant un rendez-vous,
+ * écrite sous cette clé, ferait voir son créneau libre à **tous** les lecteurs
+ * suivants pendant le TTL. Le défaut serait borné — la réservation rejoue le
+ * moteur à froid, et la contrainte tranche —, mais il n'a aucune raison
+ * d'exister.
  *
- * `AvailabilityQueryService` accepte donc `AvailabilityQuery` et rien d'autre,
- * `AvailabilityService` accepte celle-ci. La séparation est la même, et pour la
- * même raison, que celle des deux services : une garantie qu'on lit sur le
- * graphe d'injection plutôt que dans un argument par défaut.
+ * `AvailabilityQuery` est donc la forme **que le cache sait indexer**, et
+ * celle-ci la forme **que le moteur accepte**. La distinction n'a pas bougé ;
+ * ce que #442 change est l'endroit où elle est tenue.
+ *
+ * ## Ce que #442 déplace, et ce qu'il ne déplace pas
+ *
+ * #316 tenait la garantie en refusant ce type à `AvailabilityQueryService` :
+ * l'exclusion n'existait que sur le moteur nu, donc sur le seul chemin de la
+ * réservation. La conséquence était qu'aucun **calendrier** ne pouvait la
+ * demander, et que le report d'un quart d'heure restait hors de portée d'une
+ * cliente.
+ *
+ * Le service de lecture accepte désormais cette forme, et tient la même garantie
+ * autrement : une requête qui porte une exclusion **contourne le cache** — elle
+ * ne le lit pas et ne l'écrit pas. Aucune vue portant une exclusion ne peut donc
+ * être rangée sous une clé qui n'en dit rien, ce qui est exactement la propriété
+ * que la séparation protégeait. Voir `AvailabilityQueryService.slotsFor`.
  */
 export interface EngineAvailabilityQuery extends AvailabilityQuery {
   /**
