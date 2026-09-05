@@ -295,58 +295,98 @@ export class IdentityRepository {
   }
 
   /**
-   * Applique des réglages à l'établissement courant (#343).
+   * Écrit les réglages de l'établissement courant — colonnes **et** semaine
+   * d'ouverture — dans **une seule transaction** (#343, corrigé par #416).
+   *
+   * ## Pourquoi une seule méthode plutôt que deux
+   *
+   * Les deux écritures étaient exposées séparément, et l'appelant les enchaînait :
+   * les colonnes d'abord, la semaine ensuite, dans sa propre transaction.
+   * L'échec de la seconde laissait la première commitée — l'adresse enregistrée,
+   * les horaires non, et aucune réponse rendue. Une surface qui offre les deux
+   * portes séparément *invite* à cette séquence ; la refermer est le correctif,
+   * pas une commodité de nommage. C'est aussi pour cela que l'écriture des
+   * horaires n'est plus appelable seule : un `openingHours` absent n'y touche
+   * pas, un tableau vide efface la semaine.
+   *
+   * ## Ce que la transaction garantit, et à qui
+   *
+   * Deux propriétés distinctes, souvent confondues :
+   *
+   * - pour l'**écrivain**, tout ou rien — c'est ce que #416 ajoute ;
+   * - pour le **lecteur**, aucune fenêtre entre le `deleteMany` et le
+   *   `createMany` où la vitrine servirait une semaine vide — c'est ce que la
+   *   transaction de `replaceOpeningHours` tenait déjà, et qui est conservé.
+   *
+   * ## Le reste, inchangé
    *
    * `updateMany` et non `update`, pour la raison qui vaut partout dans ce
    * fichier : sous le scoping, le `where` du modèle racine porte son `id`, et le
    * compte de lignes est la propriété utile. Il vaut `0` si l'établissement a
    * disparu entre la résolution et l'écriture, ce qui donne le 404 attendu
    * plutôt qu'une exception « record not found » indistinguable d'un incident.
+   * Ce `false` sort **avant** que la semaine ne soit touchée : un établissement
+   * disparu ne voit pas ses horaires réécrits.
+   *
+   * Une demande qui ne porte **que** la semaine n'a pas de `updateMany` dont
+   * lire le compte : l'existence s'y vérifie par un `count` scopé, dans la même
+   * transaction. Sans lui, ce cas-là seul rendrait 200 — ou une violation de
+   * clé étrangère, donc 500 — là où les autres rendent 404. Le contrat ne peut
+   * pas dépendre des champs que le formulaire a envoyés.
    *
    * Une demande vide n'est pas une erreur — c'est une modification sans effet.
-   * L'écrire quand même ferait tourner `updated_at` pour rien.
-   */
-  public async updateTenantSettings(changes: TenantSettingsChanges): Promise<boolean> {
-    if (Object.keys(changes).length === 0) {
-      return true;
-    }
-
-    const { count } = await this.prisma.tenant.updateMany({ data: changes });
-
-    return count === 1;
-  }
-
-  /**
-   * Remplace **intégralement** la semaine d'ouverture de l'établissement
-   * courant (#343).
+   * L'écrire quand même ferait tourner `updated_at` pour rien, et ouvrir une
+   * transaction pour n'y rien faire coûterait un aller-retour de plus.
    *
-   * Une transaction, et pas deux appels : entre le `deleteMany` et le
-   * `createMany`, la vitrine servirait des horaires vides à qui la charge à cet
-   * instant. La transaction rend le remplacement atomique pour les lecteurs.
-   *
-   * Aucun `tenantId` n'est fourni ni sur l'un ni sur l'autre : l'extension pose
-   * le filtre sur la suppression et la colonne sur la création, et elle
+   * Aucun `tenantId` n'est fourni nulle part : l'extension pose le filtre sur la
+   * mise à jour et la suppression, la colonne sur la création, et elle
    * **écrase** ce qui s'y trouverait. Un `tenantId` qui aurait traversé la
    * validation n'aurait donc aucun effet — c'est ce qui rend impossible de vider
    * les horaires d'un établissement voisin.
    */
-  public async replaceOpeningHours(entries: readonly OpeningHourRecord[]): Promise<void> {
-    await this.prisma.$transaction(async (tx) => {
-      await tx.tenantOpeningHour.deleteMany({});
+  public async updateTenantSettings(input: {
+    changes: TenantSettingsChanges;
+    /** Absent : la semaine n'est pas touchée. Vide : elle est effacée. */
+    openingHours?: readonly OpeningHourRecord[];
+  }): Promise<boolean> {
+    const writesColumns = Object.keys(input.changes).length > 0;
 
-      if (entries.length === 0) {
-        return;
+    if (!writesColumns && input.openingHours === undefined) {
+      return true;
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      if (writesColumns) {
+        const { count } = await tx.tenant.updateMany({ data: input.changes });
+
+        if (count !== 1) {
+          return false;
+        }
+      } else if ((await tx.tenant.count({})) !== 1) {
+        // Ici, `openingHours` est nécessairement fourni — le cas « rien à
+        // écrire » est sorti plus haut. Le `count` scopé tient le même rôle que
+        // celui de l'`updateMany` : l'établissement a disparu, on ne réécrit
+        // pas sa semaine et l'appelant obtient son 404.
+        return false;
       }
 
-      await tx.tenantOpeningHour.createMany({
-        data: entries.map((entry) =>
-          withScopedTenant<Prisma.TenantOpeningHourUncheckedCreateInput>({
-            weekday: entry.weekday,
-            startMinute: entry.startMinute,
-            endMinute: entry.endMinute,
-          }),
-        ),
-      });
+      if (input.openingHours !== undefined) {
+        await tx.tenantOpeningHour.deleteMany({});
+
+        if (input.openingHours.length > 0) {
+          await tx.tenantOpeningHour.createMany({
+            data: input.openingHours.map((entry) =>
+              withScopedTenant<Prisma.TenantOpeningHourUncheckedCreateInput>({
+                weekday: entry.weekday,
+                startMinute: entry.startMinute,
+                endMinute: entry.endMinute,
+              }),
+            ),
+          });
+        }
+      }
+
+      return true;
     });
   }
 

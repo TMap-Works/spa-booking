@@ -33,19 +33,21 @@ export class TenantSettingsService {
   /**
    * Applique une modification partielle, puis rend l'état résultant.
    *
-   * L'ordre compte, et de deux façons.
+   * **Une seule écriture**, colonnes et horaires ensemble (#416). Deux appels
+   * successifs laissaient le premier commité quand le second échouait :
+   * l'adresse enregistrée, la semaine non, et aucune réponse rendue. Le service
+   * n'a aucun moyen de rattraper cela depuis ici — annuler demanderait de
+   * réécrire l'état d'avant, donc de le relire et d'espérer que personne
+   * n'écrive entre-temps. C'est le dépôt qui tient l'atomicité, dans une
+   * transaction ; ce qui se décide ici est de ne lui faire qu'une demande.
    *
-   * Les horaires sont **convertis et contrôlés avant la première écriture**.
+   * Les horaires sont **convertis et contrôlés avant** cette écriture.
    * `toOpeningHourRecords` refuse une plage inversée ou deux plages qui se
    * recouvrent, et le DTO ne porte ni l'une ni l'autre de ces règles — elles
    * demandent de lire deux champs ensemble, ou l'ensemble de la semaine. Les
-   * contrôler après `updateTenantSettings` aurait rendu un 422 sur une requête
-   * qui a **déjà** posé le nom et l'adresse de la même charge utile : l'écran
-   * annonce un refus, et la moitié de la saisie est passée quand même.
-   *
-   * Ils sont en revanche remplacés **avant la relecture**, sans quoi la réponse
-   * rendrait la semaine d'avant et l'écran afficherait une saisie qui semblerait
-   * n'avoir rien fait.
+   * contrôler après l'écriture aurait rendu un 422 sur une requête qui a
+   * **déjà** posé le nom et l'adresse de la même charge utile : l'écran annonce
+   * un refus, et la moitié de la saisie est passée quand même.
    *
    * La lecture préalable n'est pas une vérification d'autorisation — le scoping
    * s'en charge — mais une distinction de codes : sans elle, un établissement
@@ -60,16 +62,16 @@ export class TenantSettingsService {
         ? undefined
         : TenantSettingsService.toOpeningHourRecords(changes.openingHours);
 
-    const applied = await this.repository.updateTenantSettings(
-      TenantSettingsService.toSettingsChanges(changes),
-    );
+    // Propriété **omise** et non posée à `undefined` : sous
+    // `exactOptionalPropertyTypes`, les deux ne sont pas la même chose, et
+    // c'est l'absence qui signifie « ne touche pas à la semaine ».
+    const applied = await this.repository.updateTenantSettings({
+      changes: TenantSettingsService.toSettingsChanges(changes),
+      ...(openingHours === undefined ? {} : { openingHours }),
+    });
 
     if (!applied) {
       throw new NotFoundError('Établissement introuvable.');
-    }
-
-    if (openingHours !== undefined) {
-      await this.repository.replaceOpeningHours(openingHours);
     }
 
     return TenantSettingsService.toTenant(await this.read());
