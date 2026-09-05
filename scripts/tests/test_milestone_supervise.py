@@ -1797,5 +1797,266 @@ class DossierApprouve(unittest.TestCase):
         self.assertEqual(self.preflight_warnings(None), [])
 
 
+class PlanPerimeDepuisLeReplan(RunJournalFixture):
+    """#422 — ce qui périme le plan stocké, et ce qui ne le périme pas.
+
+    `gate` ne recalcule rien : il relit le plan de `run.json`. La question posée
+    ici est donc la seule qui compte avant de se débrancher — « ce plan-là
+    a-t-il été écrit avant ou après la dernière action de l'arbitre ? » — et elle
+    se répond sur le journal du run, sans réseau : la veille la pose toutes les
+    cinq minutes.
+    """
+
+    REPLAN = {"ts": "2026-09-04T21:17:41+00:00", "kind": "run",
+              "status": "replanned", "actor": "orchestrateur",
+              "message": "0 tickets restants, 0 vagues"}
+
+    @staticmethod
+    def decision(ticket=60, message="arbitrage [fin_de_run] · fix — PR #419 mergée"):
+        """Une décision de l'arbitre telle que `milestone_arbiter.py record`
+        l'inscrit : l'acteur la désigne, elle ne porte aucun statut."""
+        return {"ts": "2026-09-04T21:26:27+00:00", "kind": "ticket",
+                "ticket": ticket, "phase": "orchestration", "actor": "arbitre",
+                "level": "WARN", "message": message}
+
+    def reasons(self, *events):
+        with self.journal(*events):
+            return sup.plan_outdated_since_replan()
+
+    def test_un_run_qui_se_deroule_normalement_n_a_rien_a_recalculer(self):
+        """Chaque vague se termine par un `replan` : le plan stocké connaît déjà
+        les merges de la vague, et il n'y a rien à repayer."""
+        self.assertEqual(self.reasons(self.merged(17), self.REPLAN), [])
+
+    def test_un_merge_posterieur_au_replan_perime_le_plan(self):
+        """La nuit du 4 au 5 septembre : l'arbitrage merge la PR de #60 après le
+        replan de 21:17, et c'est ce merge qui libère ses dépendants."""
+        self.assertEqual(self.reasons(self.REPLAN, self.merged(60)),
+                         ["#60 clos"])
+
+    def test_un_ticket_ecarte_perime_le_plan_autant_qu_un_merge(self):
+        """`skip` est terminal lui aussi : l'issue quitte le plan, et ce qui
+        dépendait d'elle n'y est plus retenu."""
+        with self.journal(self.REPLAN,
+                          {"ticket": 71, "status": "skipped", "actor": "arbitre"}):
+            reasons = sup.plan_outdated_since_replan()
+        self.assertIn("#71 clos", reasons)
+
+    def test_une_decision_de_l_arbitre_suffit_sans_aucun_merge(self):
+        """Phase 7 de `/milestone-arbitrate` : les anomalies du run deviennent
+        des issues, rattachées au jalon. Une issue neuve est un ticket que le
+        plan d'avant ne pouvait pas connaître — et il n'y a eu aucun merge."""
+        self.assertEqual(self.reasons(self.REPLAN, self.decision()),
+                         ["1 décision(s) de l'arbitre"])
+
+    def test_le_merge_et_la_decision_se_disent_tous_les_deux(self):
+        self.assertEqual(self.reasons(self.REPLAN, self.merged(60), self.decision()),
+                         ["#60 clos", "1 décision(s) de l'arbitre"])
+
+    def test_seul_le_dernier_replan_fait_la_frontiere(self):
+        """Un merge repris entre deux replans est déjà dans le plan courant."""
+        self.assertEqual(self.reasons(self.REPLAN, self.merged(60), self.REPLAN),
+                         [])
+
+    def test_l_ouverture_d_un_arbitrage_par_le_superviseur_ne_compte_pas(self):
+        """`journal("arbitrage", …)` est une ligne du superviseur, pas une
+        décision : l'arbitre n'a encore rien fait quand elle s'écrit. La compter
+        ferait replanifier à chaque fin de run, y compris quand l'arbitre a
+        conclu qu'il n'y avait rien à faire."""
+        self.assertEqual(self.reasons(
+            self.REPLAN,
+            {"kind": "run", "status": "arbitrage", "actor": "superviseur",
+             "message": "arbitrage 1 ouvert — fin_de_run"}), [])
+
+    def test_un_merge_de_run_sans_ticket_ne_nomme_rien(self):
+        with self.journal(self.REPLAN,
+                          {"status": "merged", "actor": "orchestrateur",
+                           "message": "sans ticket"}):
+            self.assertEqual(sup.plan_outdated_since_replan(), [])
+
+    def test_un_journal_sans_replan_prend_tout_ce_qu_il_porte(self):
+        """Un run dont aucune vague n'a encore replanifié : le plan stocké est
+        celui de `start`, et tout ce qui s'est clos depuis le périme."""
+        self.assertEqual(self.reasons(self.merged(60)), ["#60 clos"])
+
+    def test_aucun_run_ouvert(self):
+        with mock.patch.object(sup, "current_run_dir", return_value=None):
+            self.assertEqual(sup.plan_outdated_since_replan(), [])
+
+
+class ReplanIntercale(unittest.TestCase):
+    """#422 — le replan qui s'intercale entre l'arbitrage et la conclusion."""
+
+    def call(self, reasons, replan_code=0):
+        calls = []
+
+        def runner(*args, **kwargs):
+            calls.append(list(args))
+            if args and args[0] == "replan":
+                return mock.Mock(returncode=replan_code,
+                                 stdout="plan recalculé : 20 tickets restants, "
+                                        "7 vagues")
+            return mock.Mock(returncode=0, stdout="")
+
+        with mock.patch.object(sup, "plan_outdated_since_replan",
+                               return_value=reasons), \
+             mock.patch.object(sup, "runner", side_effect=runner):
+            done = sup.replan_before_concluding("la veille")
+        return done, calls
+
+    def test_un_plan_a_jour_ne_coute_aucun_appel(self):
+        done, calls = self.call([])
+        self.assertFalse(done)
+        self.assertEqual(calls, [])
+
+    def test_un_plan_perime_est_recalcule(self):
+        done, calls = self.call(["#60 clos"])
+        self.assertTrue(done)
+        self.assertIn(["replan"], calls)
+
+    def test_le_replan_intercale_se_relit_dans_le_journal_du_run(self):
+        """Critère 4 de #422 : la séquence doit se relire après coup, dans le
+        journal que l'humain ouvre — pas seulement dans `supervisor.log`."""
+        _, calls = self.call(["#60 clos"])
+        lines = [" ".join(call) for call in calls if call and call[0] == "event"]
+        self.assertTrue(any("replan intercalé" in line and "#60 clos" in line
+                            for line in lines), lines)
+
+    def test_un_replan_refuse_ne_pretend_pas_avoir_recalcule(self):
+        """Le plan qu'on ne sait pas recalculer ne vaut pas mieux que l'ancien :
+        l'appelant conclut sur ce qu'il a, comme avant #422 — mais la ligne de
+        journal dit sur quoi il a conclu."""
+        done, calls = self.call(["#60 clos"], replan_code=1)
+        self.assertFalse(done)
+        lines = [" ".join(call) for call in calls if call and call[0] == "event"]
+        self.assertTrue(any("refusé" in line for line in lines), lines)
+
+
+class VeilleDevantUnPlanPerime(unittest.TestCase):
+    """#422 — la veille ne se désarme jamais sur un plan antérieur à l'arbitrage.
+
+    La séquence de la nuit du 4 au 5 septembre, rejouée telle qu'elle : le plan
+    stocké est vide, l'arbitrage de fin de run merge la PR #419 et ferme #60, et
+    `cmd_watchdog` se réveille derrière lui. Avant le correctif, il lisait
+    `NO_RUN`, supprimait la tâche planifiée et l'intention — vingt issues
+    plannables restaient au matin.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.intent = Path(self.tmp.name) / "supervisor.json"
+        self.intent.write_text("{}", encoding="utf-8")
+
+    def watchdog(self, verdicts, reasons):
+        gates = list(verdicts)
+        calls = []
+
+        def runner(*args, **kwargs):
+            calls.append(args[0] if args else "")
+            if args and args[0] == "gate":
+                return mock.Mock(returncode=gates.pop(0), stdout="")
+            return mock.Mock(returncode=0, stdout="")
+
+        with mock.patch.object(sup, "INTENT", self.intent), \
+             mock.patch.object(sup, "supervisor_alive", return_value=False), \
+             mock.patch.object(sup, "orchestrator_active", return_value=False), \
+             mock.patch.object(sup, "authorised", return_value=(True, None)), \
+             mock.patch.object(sup, "load_intent", return_value={"argv": []}), \
+             mock.patch.object(sup, "quota_file_hold", return_value=None), \
+             mock.patch.object(sup, "held_off", return_value=False), \
+             mock.patch.object(sup, "plan_outdated_since_replan",
+                               return_value=reasons), \
+             mock.patch.object(sup, "disarm_watchdog") as disarm, \
+             mock.patch.object(sup, "spawn_supervisor") as spawn, \
+             mock.patch.object(sup, "runner", side_effect=runner):
+            sup.cmd_watchdog(argparse.Namespace())
+        return [c for c in calls if c in ("gate", "replan")], disarm, spawn
+
+    def test_un_jalon_reellement_deroule_se_desarme_sans_rien_repayer(self):
+        seen, disarm, spawn = self.watchdog([sup.NO_RUN], [])
+        self.assertEqual(seen, ["gate"])
+        disarm.assert_called_once()
+        spawn.assert_not_called()
+        self.assertFalse(self.intent.exists())
+
+    def test_un_arbitrage_qui_rouvre_le_jalon_relance_au_lieu_de_desarmer(self):
+        """Le défaut de #422, de bout en bout : le gate rendait NO_RUN sur le
+        plan de 21:17, alors que 20 issues étaient plannables."""
+        seen, disarm, spawn = self.watchdog([sup.NO_RUN, sup.GO], ["#60 clos"])
+        self.assertEqual(seen, ["gate", "replan", "gate"])
+        disarm.assert_not_called()
+        spawn.assert_called_once()
+        self.assertTrue(self.intent.exists())
+
+    def test_un_replan_qui_ne_rouvre_rien_desarme_quand_meme(self):
+        """Le correctif ne peut pas immobiliser la veille : un seul replan, un
+        seul verdict relu, et le jalon se conclut."""
+        seen, disarm, spawn = self.watchdog([sup.NO_RUN, sup.NO_RUN], ["#60 clos"])
+        self.assertEqual(seen, ["gate", "replan", "gate"])
+        disarm.assert_called_once()
+        spawn.assert_not_called()
+
+    def test_une_pause_decouverte_apres_le_replan_reste_une_pause(self):
+        """Le verdict relu retraverse toutes les branches, pas seulement NO_RUN :
+        un `pause` posé pendant le replan ne doit pas se lire comme un jalon
+        déroulé — et il désarme sans supprimer l'intention."""
+        seen, disarm, spawn = self.watchdog([sup.NO_RUN, sup.PAUSE], ["#60 clos"])
+        self.assertEqual(seen, ["gate", "replan", "gate"])
+        disarm.assert_called_once()
+        spawn.assert_not_called()
+        self.assertTrue(self.intent.exists())
+
+    def test_un_gate_vert_ne_paie_aucun_replan(self):
+        seen, _, spawn = self.watchdog([sup.GO], ["#60 clos"])
+        self.assertEqual(seen, ["gate"])
+        spawn.assert_called_once()
+
+
+class FinDeRunDansLaBoucleCourte(unittest.TestCase):
+    """#422 — le même correctif, du côté de la boucle du superviseur.
+
+    `supervise()` ne se pilote pas depuis un banc d'essai : elle lance des
+    `claude -p`. On lit donc son texte, comme le fait déjà le câblage de
+    l'empreinte de la source — et pour la même raison : un correctif que personne
+    n'appelle ne corrige rien, et c'est la seule façon dont celui-ci peut
+    régresser sans qu'aucun autre test ne bouge.
+
+    Ce qui compte est l'ordre : l'arbitrage de fin de run, **puis** le replan,
+    **puis** seulement le débranchement — et un `continue` entre les deux, qui
+    fait relire le gate au lieu de conclure.
+    """
+
+    def test_le_replan_s_intercale_entre_l_arbitrage_et_le_debranchement(self):
+        code = inspect.getsource(sup.supervise)
+        _, borne, apres = code.partition('rescue(["fin_de_run"])')
+        indice = ("ce test lit le texte de supervise() : un renommage de "
+                  "`rescue`, de `replan_before_concluding` ou de `retire` le "
+                  "casse sans que rien ne soit cassé — recoller le test au "
+                  "code, ou le remplacer")
+        self.assertTrue(borne, indice)
+        replan = apres.find("replan_before_concluding")
+        debranchement = apres.find('retire("jalon déroulé")')
+        self.assertNotEqual(replan, -1, indice)
+        self.assertNotEqual(debranchement, -1, indice)
+        self.assertLess(replan, debranchement, indice)
+        self.assertIn("continue", apres[replan:debranchement], indice)
+
+    def test_le_replan_de_conclusion_ne_se_redonne_pas_sans_etape(self):
+        """Le `continue` doit être à un coup : l'arbitrage de fin de run inscrit
+        une décision à chaque tour, ce qui périme le plan à chaque tour. Sans
+        verrou, le cycle « arbitrage → replan → continue → NO_RUN » se rappelle
+        lui-même jusqu'à vider le budget d'arbitrage, et aucun leg ne
+        s'incrémente pour le borner."""
+        code = inspect.getsource(sup.supervise)
+        _, borne, apres = code.partition('rescue(["fin_de_run"])')
+        self.assertTrue(borne)
+        self.assertIn("not reconclu and replan_before_concluding", apres,
+                      "le replan de conclusion doit être gardé par un verrou "
+                      "à un coup, retombant dès qu'une étape a tourné")
+        self.assertIn("reconclu = False", apres.split('retire("jalon déroulé")')[-1],
+                      "le verrou doit retomber quand une étape démarre")
+
+
 if __name__ == "__main__":
     unittest.main()
