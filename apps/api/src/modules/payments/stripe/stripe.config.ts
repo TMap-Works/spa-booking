@@ -1,10 +1,36 @@
 import { Injectable } from '@nestjs/common';
 import { z } from 'zod';
 
-import { PaymentProviderUnavailableError } from '../payments.errors';
+import { PaymentProviderUnavailableError, WebhookNotConfiguredError } from '../payments.errors';
 
 /**
- * Les deux clés Stripe, validées **au démarrage** et jamais ailleurs.
+ * **La** porte de configuration Stripe du module — les trois valeurs, validées
+ * au démarrage et jamais ailleurs (#410).
+ *
+ * ## Pourquoi une seule porte, et non deux
+ *
+ * #57 apportait les deux clés, #58 le secret de terminaison, sur des branches
+ * parallèles qui ne se voyaient pas. #57 l'avait pourtant annoncé en exportant
+ * déjà `StripeConfig` : « #58 aura besoin du secret de webhook au même endroit ».
+ * Deux fournisseurs pour un compte Stripe, ce n'était pas une conception, c'était
+ * un ordre de merge — avec un coût concret : deux tables « refuser de démarrer »
+ * à tenir d'accord, deux copies de la liste des environnements déployés, et deux
+ * endroits où relire la question « que se passe-t-il si cette variable manque ».
+ *
+ * ## La frontière PCI passe entre les champs de ce fichier
+ *
+ * | Clé | Où elle vit | Qui la voit |
+ * |---|---|---|
+ * | `STRIPE_SECRET_KEY` | AWS Secrets Manager → variable de tâche ECS | le conteneur d'API, et rien d'autre |
+ * | `STRIPE_WEBHOOK_SECRET` | la même source | le conteneur d'API, et rien d'autre |
+ * | `STRIPE_PUBLISHABLE_KEY` | la même source, mais **publiable par nature** | le navigateur, pour monter Stripe Elements |
+ *
+ * Les deux premières ne sortent d'ici que vers l'en-tête `Authorization` de la
+ * passerelle HTTP et vers la vérification de signature. Elles n'entrent dans
+ * aucune réponse, aucun journal, aucun message d'erreur — les messages de
+ * validation ci-dessous ne citent **jamais** la valeur reçue, exactement comme
+ * ceux de `signingSecret` dans `env.schema.ts`, sans quoi une clé live finirait
+ * en clair dans les journaux de démarrage de la tâche ECS.
  *
  * ## Pourquoi ici et non dans `config/env.schema.ts`
  *
@@ -12,29 +38,18 @@ import { PaymentProviderUnavailableError } from '../payments.errors';
  * propres clés (JWT, Stripe, SES…) au moment où il les lit réellement ». Ce
  * fournisseur est cette lecture. La garder dans le module la met là où elle se
  * relit — à côté du seul code qui s'en sert — et évite d'imposer une variable
- * Stripe à chaque suite de test des sept autres modules.
- *
- * ## La frontière PCI passe entre les deux champs de ce fichier
- *
- * | Clé | Où elle vit | Qui la voit |
- * |---|---|---|
- * | `STRIPE_SECRET_KEY` | AWS Secrets Manager → variable de tâche ECS | le conteneur d'API, et rien d'autre |
- * | `STRIPE_PUBLISHABLE_KEY` | la même source, mais **publiable par nature** | le navigateur, pour monter Stripe Elements |
- *
- * La secrète ne sort d'ici que vers l'en-tête `Authorization` de la passerelle
- * HTTP. Elle n'entre dans aucune réponse, aucun journal, aucun message
- * d'erreur — les messages de validation ci-dessous ne citent jamais la valeur
- * reçue, exactement comme ceux de `signingSecret` dans `env.schema.ts`, sans
- * quoi une clé live finirait en clair dans les journaux de démarrage de la
- * tâche ECS.
+ * Stripe à chaque suite de test des sept autres modules : `AppModule` monte les
+ * huit modules, donc **toutes** les suites d'intégration du dépôt, y compris
+ * celles qui ne parlent que de créneaux.
  *
  * ## Les préfixes sont vérifiés, et ce n'est pas cosmétique
  *
- * Intervertir les deux clés est l'erreur de déploiement la plus banale, et la
- * plus chère : la clé **secrète** partirait alors au navigateur dans la réponse
- * de création d'intention, ce qui donne à quiconque ouvre la page un accès
- * complet au compte Stripe du salon. `sk_` et `pk_` sont ce qui rend cette
- * inversion incapable de démarrer.
+ * Intervertir deux variables est l'erreur de déploiement la plus banale, et la
+ * plus chère : la clé **secrète** posée dans la variable publiable partirait au
+ * navigateur dans la réponse de création d'intention, ce qui donne à quiconque
+ * ouvre la page un accès complet au compte Stripe du salon. Une `sk_…` posée
+ * dans `STRIPE_WEBHOOK_SECRET` est la même faute vue de l'autre bout. `sk_`,
+ * `pk_` et `whsec_` sont ce qui rend ces inversions incapables de démarrer.
  *
  * ## Ce que « refuser de démarrer » veut dire ici, exactement
  *
@@ -43,28 +58,37 @@ import { PaymentProviderUnavailableError } from '../payments.errors';
  * requête client ». C'est ce que fait ce fournisseur, et il distingue deux
  * fautes de nature différente :
  *
- * | | Une clé mal préfixée | Configuration incomplète | Aucune clé |
+ * | | Une valeur mal préfixée | Configuration incomplète | Aucune valeur |
  * |---|---|---|---|
  * | `staging`, `production` | **refus de démarrer** | **refus de démarrer** | **refus de démarrer** |
- * | `development`, `test` | **refus de démarrer** | démarre, paiements hors service | démarre, paiements hors service |
+ * | `development`, `test` | **refus de démarrer** | démarre, capacité hors service | démarre, capacité hors service |
  *
  * La colonne de gauche est **dangereuse partout** : une clé secrète posée dans
- * la variable publiable partirait au navigateur. Elle est donc refusée quel que
- * soit l'environnement, et c'est la seule faute qui empêche un poste de
+ * une variable qu'on croit inoffensive finit par sortir. Elle est donc refusée
+ * quel que soit l'environnement, et c'est la seule faute qui empêche un poste de
  * développement de démarrer.
  *
- * Les deux autres colonnes ne sont dangereuses qu'en déployé, où elles disent
- * « ce salon ne peut pas encaisser ». En local, elles décrivent l'état ordinaire
- * d'un poste qui travaille sur l'agenda et n'a aucune raison de détenir les clés
- * d'un compte Stripe — ou dont l'environnement porte une variable `STRIPE_*`
- * héritée d'un autre projet. Refuser de démarrer pour cela immobiliserait
- * **toute** l'API, alors que la seule capacité perdue est l'encaissement : les
- * tentatives y répondent 503, bruyamment et par requête.
+ * Les deux autres colonnes ne sont dangereuses qu'en déployé. Pour les clés,
+ * elles disent « ce salon ne peut pas encaisser » ; pour le secret de
+ * terminaison, c'est pire et plus sournois — la route existe, elle répond, et
+ * rien dans l'API ne va mal, mais aucun paiement n'est plus confirmé, puisque
+ * c'est le webhook et lui seul qui fait passer un rendez-vous en `CONFIRMED`
+ * (payments-stripe §2). Refuser de démarrer transforme cette panne silencieuse
+ * et différée en un échec de déploiement immédiat.
  *
- * Exiger les clés en `test` aurait par ailleurs un coût sans contrepartie :
- * `AppModule` monte les huit modules, donc **toutes** les suites d'intégration
- * du dépôt — y compris celles qui ne parlent que de créneaux — auraient refusé
- * de démarrer sans une variable Stripe.
+ * En local, ces colonnes décrivent l'état ordinaire d'un poste qui travaille sur
+ * l'agenda et n'a aucune raison de détenir les clés d'un compte Stripe — ou dont
+ * l'environnement porte une variable `STRIPE_*` héritée d'un autre projet.
+ * Refuser de démarrer pour cela immobiliserait **toute** l'API, alors que la
+ * seule capacité perdue est l'encaissement : les tentatives y répondent 503,
+ * bruyamment et par requête.
+ *
+ * ## Les deux capacités se jugent séparément
+ *
+ * `isConfigured` parle des clés, `isWebhookConfigured` du secret de terminaison.
+ * Les fondre en un seul drapeau aurait couplé deux capacités qui tombent
+ * indépendamment : un poste qui détient les clés de test sans avoir lancé
+ * `stripe listen` est un cas ordinaire, et il doit pouvoir créer une intention.
  */
 
 /** Préfixe de toute clé secrète Stripe — `sk_test_…` en recette, `sk_live_…` en production. */
@@ -73,7 +97,10 @@ const SECRET_KEY_PREFIX = 'sk_';
 /** Préfixe de toute clé publiable Stripe — la seule qui ait le droit d'atteindre un navigateur. */
 const PUBLISHABLE_KEY_PREFIX = 'pk_';
 
-/** Les environnements où l'absence de clés est une faute de déploiement. */
+/** Préfixe de tout secret de terminaison Stripe. */
+const WEBHOOK_SECRET_PREFIX = 'whsec_';
+
+/** Les environnements où l'absence d'une valeur est une faute de déploiement. */
 const DEPLOYED_ENVS: ReadonlySet<string> = new Set(['staging', 'production']);
 
 /**
@@ -102,23 +129,32 @@ const stripeEnvSchema = z.object({
     }),
 });
 
-/** L'environnement dont ce module a besoin, une fois validé. */
+/** Les clés dont ce module a besoin, une fois validées. */
 export type StripeEnv = z.infer<typeof stripeEnvSchema>;
+
+/** `true` pour une variable absente ou vide — `""` est ce qu'ECS produit pour une variable déclarée sans valeur. */
+function isUnset(value: string | undefined): value is undefined | '' {
+  return value === undefined || value === '';
+}
 
 /**
  * Refuse une valeur **présente** mais mal préfixée — dangereux dans tout
  * environnement.
  *
- * Une variable absente ou vide n'est pas jugée ici : `""` est ce qu'une
- * définition de tâche ECS produit pour une variable déclarée sans valeur, et
- * cela veut dire « pas posée », pas « mal posée ». La complétude, elle, se juge
- * plus bas et seulement en déployé.
+ * Une variable absente ou vide n'est pas jugée ici : cela veut dire « pas
+ * posée », pas « mal posée ». La complétude, elle, se juge plus bas et seulement
+ * en déployé.
  */
 function assertPrefix(name: string, value: string | undefined, prefix: string, why: string): void {
-  if (value !== undefined && value !== '' && !value.startsWith(prefix)) {
+  if (!isUnset(value) && !value.startsWith(prefix)) {
     // Le message ne cite jamais la valeur reçue : c'est une clé.
     throw new Error(`Configuration Stripe invalide : ${name} doit commencer par « ${prefix} » — ${why}`);
   }
+}
+
+/** `true` si l'absence d'une valeur doit empêcher le démarrage sur cet environnement. */
+function isDeployed(source: NodeJS.ProcessEnv): boolean {
+  return DEPLOYED_ENVS.has(source['NODE_ENV'] ?? '');
 }
 
 /**
@@ -158,7 +194,7 @@ export function resolveStripeKeys(source: NodeJS.ProcessEnv): StripeEnv | null {
     return parsed.data;
   }
 
-  if (!DEPLOYED_ENVS.has(source['NODE_ENV'] ?? '')) {
+  if (!isDeployed(source)) {
     return null;
   }
 
@@ -169,12 +205,49 @@ export function resolveStripeKeys(source: NodeJS.ProcessEnv): StripeEnv | null {
   throw new Error(`Configuration Stripe invalide : ${detail}`);
 }
 
+/**
+ * Résout le secret de terminaison des webhooks.
+ *
+ * Même régime que les clés, et pour les mêmes raisons — à une nuance près, qui
+ * justifie le message distinct : son absence en déployé ne se voit nulle part
+ * avant la première réservation non confirmée.
+ *
+ * @throws {Error} si le secret présent porte le mauvais préfixe — quel que soit
+ * l'environnement —, ou s'il manque en déployé.
+ */
+export function resolveWebhookSecret(source: NodeJS.ProcessEnv): string | null {
+  const raw = source['STRIPE_WEBHOOK_SECRET'];
+
+  assertPrefix(
+    'STRIPE_WEBHOOK_SECRET',
+    raw,
+    WEBHOOK_SECRET_PREFIX,
+    'une clé secrète de compte placée ici signalerait deux variables interverties',
+  );
+
+  if (!isUnset(raw)) {
+    return raw;
+  }
+
+  if (isDeployed(source)) {
+    throw new Error(
+      'Configuration Stripe invalide : STRIPE_WEBHOOK_SECRET est obligatoire en déployé — ' +
+        'sans lui aucun paiement ne peut être confirmé, et rien ne le signalerait avant la première réservation.',
+    );
+  }
+
+  return null;
+}
+
 @Injectable()
 export class StripeConfig {
   private readonly keys: StripeEnv | null;
+  /** `null` quand la variable est absente — jamais quand elle est mal formée : ce cas a fait échouer l'amorçage. */
+  private readonly webhookSecret: string | null;
 
   public constructor(source: NodeJS.ProcessEnv = process.env) {
     this.keys = resolveStripeKeys(source);
+    this.webhookSecret = resolveWebhookSecret(source);
   }
 
   /**
@@ -189,13 +262,18 @@ export class StripeConfig {
     return this.keys !== null;
   }
 
+  /** `true` si la route de webhook est en mesure de vérifier une signature. */
+  public get isWebhookConfigured(): boolean {
+    return this.webhookSecret !== null;
+  }
+
   /**
    * La clé secrète — **usage unique** : l'en-tête `Authorization` de
    * `StripeHttpGateway`. Aucun autre appelant n'a de raison de la lire, et un
    * second serait le signe qu'une clé s'apprête à sortir du serveur.
    */
   public get secretKey(): string {
-    return this.require().STRIPE_SECRET_KEY;
+    return this.requireKeys().STRIPE_SECRET_KEY;
   }
 
   /**
@@ -209,7 +287,22 @@ export class StripeConfig {
    * lui soit propre.
    */
   public get publishableKey(): string {
-    return this.require().STRIPE_PUBLISHABLE_KEY;
+    return this.requireKeys().STRIPE_PUBLISHABLE_KEY;
+  }
+
+  /**
+   * Le secret de terminaison, ou un 503.
+   *
+   * Une méthode plutôt qu'un champ public : c'est ce qui garantit qu'aucun
+   * appelant ne vérifie une signature contre `null` — une comparaison qui, avec
+   * un secret vide, aurait accepté tout corps accompagné du bon condensat de
+   * chaîne vide.
+   */
+  public requireWebhookSecret(): string {
+    if (this.webhookSecret === null) {
+      throw new WebhookNotConfiguredError();
+    }
+    return this.webhookSecret;
   }
 
   /**
@@ -219,7 +312,7 @@ export class StripeConfig {
    * clés est un prestataire indisponible du point de vue de l'appelant, et son
    * corps de réponse ne doit rien dire de notre configuration.
    */
-  private require(): StripeEnv {
+  private requireKeys(): StripeEnv {
     if (this.keys === null) {
       throw new PaymentProviderUnavailableError();
     }

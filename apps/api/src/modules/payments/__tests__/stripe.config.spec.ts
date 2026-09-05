@@ -1,18 +1,29 @@
-import { PaymentProviderUnavailableError } from '../payments.errors';
-import { resolveStripeKeys, StripeConfig, STRIPE_API_VERSION } from '../stripe/stripe.config';
+import { PaymentProviderUnavailableError, WebhookNotConfiguredError } from '../payments.errors';
+import {
+  resolveStripeKeys,
+  resolveWebhookSecret,
+  StripeConfig,
+  STRIPE_API_VERSION,
+} from '../stripe/stripe.config';
 import { TEST_STRIPE_ENV } from './payments.doubles';
 
 /**
  * La configuration Stripe — **le troisième critère de #57**, « la clé secrète
- * vit dans Secrets Manager et n'atteint jamais le navigateur ».
+ * vit dans Secrets Manager et n'atteint jamais le navigateur », et le premier
+ * critère de #410, « une seule `StripeConfig`, portant les trois valeurs ».
  *
  * Ce que cette suite protège n'est pas un format de chaîne : c'est la frontière
- * entre les deux clés. L'inversion `sk_`/`pk_` est l'erreur de déploiement la
- * plus banale, et la seule qui envoie un accès complet au compte Stripe du
- * salon dans le corps d'une réponse HTTP publique. Le préfixe est ce qui la
- * rend incapable de démarrer.
+ * entre ce qui a le droit d'atteindre un navigateur et ce qui ne l'a pas.
+ * L'inversion `sk_`/`pk_`, comme la `sk_…` logée dans `STRIPE_WEBHOOK_SECRET`,
+ * est l'erreur de déploiement la plus banale, et la seule qui envoie un accès
+ * complet au compte Stripe du salon là où il ne doit jamais aller. Le préfixe
+ * est ce qui la rend incapable de démarrer.
+ *
+ * Les deux capacités — encaisser, et vérifier une signature — se jugent
+ * **séparément** : un poste qui détient les clés de test sans avoir lancé
+ * `stripe listen` est un cas ordinaire.
  */
-describe('StripeConfig — les deux clés et la frontière entre elles', () => {
+describe('StripeConfig — les trois valeurs et les frontières entre elles', () => {
   describe('resolveStripeKeys', () => {
     it('accepte deux clés bien préfixées et les rend telles quelles', () => {
       expect(resolveStripeKeys({ NODE_ENV: 'production', ...TEST_STRIPE_ENV })).toEqual(
@@ -125,13 +136,78 @@ describe('StripeConfig — les deux clés et la frontière entre elles', () => {
     });
   });
 
+  /**
+   * Le secret de terminaison : ce qui empêche de démarrer, et ce qui ne
+   * l'empêche pas.
+   *
+   * La table de `stripe.config.ts` est le contrat exercé ici. Elle a deux
+   * colonnes parce que les deux fautes n'ont pas la même gravité : un secret
+   * absent en local est l'état ordinaire d'un poste, un secret absent en
+   * production est une panne d'encaissement qui ne se verrait qu'à la première
+   * réservation non confirmée.
+   */
+  describe('resolveWebhookSecret', () => {
+    /** Même valeur pauvre en entropie qu'ailleurs, et pour la même raison — voir `stripe-signature.spec.ts`. */
+    const VALID = 'whsec_test_not_a_secret_0005';
+
+    it('accepte un secret bien préfixé et le rend', () => {
+      expect(resolveWebhookSecret({ NODE_ENV: 'production', STRIPE_WEBHOOK_SECRET: VALID })).toBe(
+        VALID,
+      );
+    });
+
+    it.each(['development', 'test'])('laisse démarrer sans secret en %s', (nodeEnv) => {
+      expect(resolveWebhookSecret({ NODE_ENV: nodeEnv })).toBeNull();
+    });
+
+    it.each(['staging', 'production'])('refuse de démarrer sans secret en %s', (nodeEnv) => {
+      expect(() => resolveWebhookSecret({ NODE_ENV: nodeEnv })).toThrow(/obligatoire en déployé/);
+    });
+
+    it('traite une variable vide comme absente', () => {
+      // `""` est ce qu'une définition de tâche ECS produit pour une variable
+      // déclarée sans valeur : « pas posée », pas « mal posée ».
+      expect(resolveWebhookSecret({ NODE_ENV: 'test', STRIPE_WEBHOOK_SECRET: '' })).toBeNull();
+      expect(() =>
+        resolveWebhookSecret({ NODE_ENV: 'production', STRIPE_WEBHOOK_SECRET: '' }),
+      ).toThrow(/obligatoire en déployé/);
+    });
+
+    it.each(['development', 'test', 'staging', 'production'])(
+      'refuse de démarrer en %s sur un secret mal préfixé',
+      (nodeEnv) => {
+        // L'inversion des variables est l'erreur de déploiement la plus banale,
+        // et la plus chère : ce qui atterrit ici est une clé `sk_…`, c'est-à-dire
+        // un accès complet au compte Stripe du salon.
+        expect(() =>
+          resolveWebhookSecret({ NODE_ENV: nodeEnv, STRIPE_WEBHOOK_SECRET: 'sk_live_deadbeef' }),
+        ).toThrow(/doit commencer par/);
+      },
+    );
+
+    it('ne cite jamais la valeur reçue dans ses messages', () => {
+      // Un message d'erreur de démarrage part dans les journaux de la tâche ECS.
+      const secret = 'sk_live_tres_secret_a_ne_pas_journaliser';
+
+      expect(() =>
+        resolveWebhookSecret({ NODE_ENV: 'production', STRIPE_WEBHOOK_SECRET: secret }),
+      ).toThrow(expect.objectContaining({ message: expect.not.stringContaining(secret) }) as Error);
+    });
+  });
+
   describe('la façade injectée', () => {
-    it('rend les deux clés quand elles sont posées', () => {
-      const config = new StripeConfig({ NODE_ENV: 'test', ...TEST_STRIPE_ENV });
+    it('rend les trois valeurs quand elles sont posées', () => {
+      const config = new StripeConfig({
+        NODE_ENV: 'test',
+        ...TEST_STRIPE_ENV,
+        STRIPE_WEBHOOK_SECRET: 'whsec_test_not_a_secret_0006',
+      });
 
       expect(config.isConfigured).toBe(true);
+      expect(config.isWebhookConfigured).toBe(true);
       expect(config.secretKey).toBe(TEST_STRIPE_ENV.STRIPE_SECRET_KEY);
       expect(config.publishableKey).toBe(TEST_STRIPE_ENV.STRIPE_PUBLISHABLE_KEY);
+      expect(config.requireWebhookSecret()).toBe('whsec_test_not_a_secret_0006');
     });
 
     it('signale un prestataire indisponible plutôt qu’une clé absente', () => {
@@ -142,6 +218,37 @@ describe('StripeConfig — les deux clés et la frontière entre elles', () => {
       // rien dire de notre configuration.
       expect(() => config.secretKey).toThrow(PaymentProviderUnavailableError);
       expect(() => config.publishableKey).toThrow(PaymentProviderUnavailableError);
+    });
+
+    it('rend un 503 plutôt qu’un secret vide quand la terminaison n’est pas configurée', () => {
+      // Le point n'est pas le code de statut : c'est qu'aucun appelant ne puisse
+      // vérifier une signature contre `null`. Un secret vide accepterait tout
+      // corps accompagné du condensat de la chaîne vide.
+      const config = new StripeConfig({ NODE_ENV: 'test', ...TEST_STRIPE_ENV });
+
+      expect(config.isWebhookConfigured).toBe(false);
+      expect(() => config.requireWebhookSecret()).toThrow(WebhookNotConfiguredError);
+
+      const error = new WebhookNotConfiguredError();
+      expect(error.status).toBe(503);
+      expect(error.code).toBe('WEBHOOK_NOT_CONFIGURED');
+    });
+
+    it('juge les deux capacités séparément — encaisser n’est pas vérifier une signature', () => {
+      // Le cas ordinaire d'un poste : les clés de test sont posées, `stripe
+      // listen` n'a jamais été lancé. Un drapeau unique aurait couplé deux
+      // capacités qui tombent indépendamment, et refusé de créer une intention
+      // sous prétexte qu'aucun webhook ne peut être vérifié.
+      const withKeysOnly = new StripeConfig({ NODE_ENV: 'test', ...TEST_STRIPE_ENV });
+      expect(withKeysOnly.isConfigured).toBe(true);
+      expect(withKeysOnly.isWebhookConfigured).toBe(false);
+
+      const withSecretOnly = new StripeConfig({
+        NODE_ENV: 'test',
+        STRIPE_WEBHOOK_SECRET: 'whsec_test_not_a_secret_0007',
+      });
+      expect(withSecretOnly.isConfigured).toBe(false);
+      expect(withSecretOnly.isWebhookConfigured).toBe(true);
     });
   });
 

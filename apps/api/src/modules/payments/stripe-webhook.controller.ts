@@ -13,12 +13,12 @@ import type { Request } from 'express';
 
 import { StructuredLogger } from '../../common/logging/structured-logger';
 import { WebhookAckDto } from './dto/webhook-ack.dto';
-import { InvalidWebhookSignatureError } from './stripe-webhook.errors';
+import { InvalidWebhookSignatureError } from './payments.errors';
 import { WEBHOOK_QUEUE, type WebhookQueue } from './stripe-webhook.queue';
 import { STRIPE_WEBHOOK_ROUTE } from './stripe-webhook.raw-body';
 import { readWebhookEvent } from './stripe-webhook.types';
-import { StripeWebhookConfig } from './stripe/stripe-webhook.config';
 import { verifyStripeSignature } from './stripe/stripe-signature';
+import { StripeConfig } from './stripe/stripe.config';
 
 /**
  * Le point d'entrée des webhooks Stripe — `POST /api/v1/payments/webhooks/stripe`.
@@ -58,7 +58,7 @@ import { verifyStripeSignature } from './stripe/stripe-signature';
 @Controller(STRIPE_WEBHOOK_ROUTE)
 export class StripeWebhookController {
   public constructor(
-    private readonly config: StripeWebhookConfig,
+    private readonly config: StripeConfig,
     @Inject(WEBHOOK_QUEUE) private readonly queue: WebhookQueue,
     private readonly logger: StructuredLogger,
   ) {}
@@ -84,7 +84,7 @@ export class StripeWebhookController {
     @Req() request: RawBodyRequest<Request>,
     @Headers('stripe-signature') signature?: string,
   ): WebhookAckDto {
-    const secret = this.config.requireSecret();
+    const secret = this.config.requireWebhookSecret();
     const payload = this.requireRawBody(request);
 
     const verdict = verifyStripeSignature({ payload, header: signature, secret, now: Date.now() });
