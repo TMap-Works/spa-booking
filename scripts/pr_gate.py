@@ -48,6 +48,12 @@ périmètres après un réarmement à zéro survenu une minute plus tard, ouvran
 confrontation est journalisé en `ERROR` sur stderr, que `--quiet` soit posé ou
 non — une contradiction que l'on peut faire taire n'est pas un garde-fou.
 
+Encore faut-il que l'intention trouvée décrive **le run en cours** (#426) : elle
+porte son identifiant, comparé à celui de `current`, et une intention qui en
+désigne un autre est le vestige d'un jalon mort. La confronter reviendrait à
+retirer à l'opérateur vivant une autorisation qu'il vient de donner — un défaut
+qui échoue en fermeture, mais qui immobilise le jalon.
+
 Les deux labels sont lus sur **l'issue que la PR referme**, pas sur la PR : nos
 PR n'en portent aucun (`gh pr create` est appelé sans `--label`, et
 `tracking.py` n'étiquette que des issues). Les lire sur la PR seule laisserait
@@ -226,6 +232,18 @@ INTENT_RELPATH = (".claude", ".milestone", "supervisor.json")
 # La clé qui y porte les périmètres pré-autorisés, telle que
 # `milestone_supervise.intent_of()` l'écrit.
 INTENT_KEY = "merge_sensitive"
+# La clé qui dit **quel run** cet armement sert. Sans elle, la confrontation de
+# #414 suppose que le fichier trouvé décrive le run en cours — ce que rien ne
+# garantit : le désarmement sur `stop` / `pause` laissait l'intention sur le
+# disque, et un superviseur lancé `--no-watchdog` n'en écrivait aucune tout en
+# armant bien ses vagues (#426). Une intention qui désigne un autre run est le
+# souvenir d'un jalon mort ; la confronter reviendrait à retirer à l'opérateur
+# vivant une autorisation qu'il vient de donner.
+INTENT_RUN_KEY = "run"
+# Le fichier qui nomme le run ouvert — le seul qui distingue une intention
+# vivante d'un vestige. Écrit par `milestone_run.py start`, effacé quand il n'y
+# a plus de run.
+CURRENT_RELPATH = (".claude", ".milestone", "current")
 
 
 def run(args, cwd=None, timeout=120):
@@ -262,7 +280,29 @@ def main_root():
 
 
 # Résolu une fois : un appel à `git` par processus, jamais un par décision.
-INTENT = main_root().joinpath(*INTENT_RELPATH)
+MAIN_ROOT = main_root()
+INTENT = MAIN_ROOT.joinpath(*INTENT_RELPATH)
+CURRENT = MAIN_ROOT.joinpath(*CURRENT_RELPATH)
+
+
+def current_run():
+    """L'identifiant du run ouvert, ou None quand il n'y en a aucun.
+
+    Même lecture que `milestone_supervise.current_run()`, et recopiée pour la
+    même raison que `main_root()` : `milestone_run` importe `milestone_supervise`
+    qui importe ce fichier — l'importer ici fermerait le cycle.
+
+    Le dossier du run est vérifié, et pas seulement le nom : `current` peut
+    désigner un run que `prune()` a emporté, et un nom sans dossier ne
+    correspond alors à aucun run vivant.
+    """
+    try:
+        run_id = CURRENT.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not run_id or not (CURRENT.parent / run_id).is_dir():
+        return None
+    return run_id
 
 
 def fetch_pr(number):
@@ -414,14 +454,14 @@ def intent_scopes():
 
     Lus sur le disque, dans `supervisor.json` : c'est là que vit le geste humain
     daté, et c'est lui qui fait foi. Rend `None` quand il n'y a **rien à
-    confronter** — fichier absent, illisible, ou dépourvu de liste exploitable.
+    confronter** — fichier absent, illisible, dépourvu de liste exploitable, ou
+    qui ne désigne pas le run en cours.
 
-    `None` dit « on ne sait pas », jamais « rien n'est autorisé ». La nuance
-    porte le cas d'un superviseur armé `--no-watchdog` : il n'écrit aucune
-    intention sur le disque tout en posant `SPA_MERGE_SENSITIVE` dans
-    l'environnement de ses vagues. Durcir sur cette absence lui retirerait des
-    pré-autorisations qu'un humain a bel et bien données, et transformerait la
-    correction de #414 en panne. Le désaccord que #414 corrige suppose deux
+    `None` dit « on ne sait pas », jamais « rien n'est autorisé ». Durcir sur
+    l'absence retirerait des pré-autorisations qu'un humain a bel et bien
+    données — un superviseur qui n'a pas encore écrit son intention pose déjà
+    `SPA_MERGE_SENSITIVE` dans l'environnement de ses vagues — et transformerait
+    la correction de #414 en panne. Le désaccord que #414 corrige suppose deux
     valeurs lisibles, pas une seule.
 
     Une liste vide, elle, est une valeur lisible : `"merge_sensitive": []` dit
@@ -434,12 +474,28 @@ def intent_scopes():
     ou par une version qui cesserait de le développer — porterait `["all"]`, et
     l'intersecter tel quel révoquerait *tous* les périmètres au lieu de les
     ouvrir tous : le contresens exact du raccourci.
+
+    **L'intention doit désigner le run en cours** (#426). Le fichier n'est pas
+    toujours effacé quand un run s'arrête, et un superviseur peut tourner sans
+    en écrire aucun : sans ce contrôle, l'armement d'un jalon mort —
+    `"merge_sensitive": []`, le plus courant — révoquait l'autorisation qu'un
+    opérateur venait de donner au run vivant. Une intention qui nomme un autre
+    run, ou qui n'en nomme aucun, n'est pas un désaccord : c'est une valeur qui
+    ne parle pas de ce qui se merge ici, et il n'y a rien à confronter.
     """
     try:
         intent = json.loads(INTENT.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
-    scopes = intent.get(INTENT_KEY) if isinstance(intent, dict) else None
+    if not isinstance(intent, dict):
+        return None
+    # Une intention écrite avant #323 n'a pas le champ : elle est donc, par
+    # construction, antérieure au run en cours. Ne pas la confronter est le sens
+    # prudent de l'ignorance — le même que pour le fichier absent.
+    run = intent.get(INTENT_RUN_KEY)
+    if not run or run != current_run():
+        return None
+    scopes = intent.get(INTENT_KEY)
     if not isinstance(scopes, list):
         return None
     return scope_tokens(" ".join(str(scope) for scope in scopes))

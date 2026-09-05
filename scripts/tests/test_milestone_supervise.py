@@ -1478,8 +1478,50 @@ class DivergenceAvecLEnvironnement(unittest.TestCase):
     manquait était de pouvoir le voir.
     """
 
+    def setUp(self):
+        # L'intention n'est confrontée que si elle désigne le run ouvert (#426) :
+        # sans run vivant sous la main, `--state` dirait « rien à confronter »
+        # de tous ces cas, et la classe ne vérifierait plus rien.
+        patch = mock.patch.object(sup, "current_run", return_value="run-a")
+        patch.start()
+        self.addCleanup(patch.stop)
+
     def intent(self, scopes):
         return {"merge_sensitive": scopes, "run": "run-a"}
+
+    def test_l_armement_d_un_autre_run_n_est_pas_une_divergence(self):
+        """#426 — `pr_gate.py` ne le confronte pas ; l'annoncer comme une
+        intersection décrirait une protection qui n'aura pas lieu."""
+        message = sup.env_divergence({"merge_sensitive": [], "run": "run-mort"},
+                                     "prisma")
+        self.assertIn("rien à confronter", message)
+        self.assertNotIn("intersection", message)
+
+    def test_une_intention_sans_run_inscrit_n_est_pas_une_divergence(self):
+        """La même règle des deux côtés, jusqu'au bout.
+
+        `pr_gate.intent_scopes()` s'arrête sur `not run` avant même de comparer :
+        un `run: null` sans run ouvert — les deux valant None — y est muet.
+        L'annoncer ici comme une intersection décrirait une barrière qui ne
+        tourne pas.
+        """
+        with mock.patch.object(sup, "current_run", return_value=None):
+            message = sup.env_divergence({"merge_sensitive": [], "run": None},
+                                         "prisma")
+        self.assertIn("rien à confronter", message)
+        self.assertNotIn("intersection", message)
+
+    def test_une_intention_illisible_ne_fait_pas_tomber_l_etat(self):
+        """`--state` est la commande qu'on tape quand le disque semble faux.
+
+        `supervisor.json` peut porter n'importe quel JSON — un `[]` écrit à la
+        main, la troncature d'un autre outil. Y mourir sur une `AttributeError`
+        retirerait le diagnostic à l'instant précis où il sert.
+        """
+        for illisible in ([], False, 0, "prisma", ["prisma"]):
+            with self.subTest(intention=illisible):
+                self.assertIn("rien à confronter",
+                              sup.env_divergence(illisible, "prisma"))
 
     def test_variable_absente_n_est_pas_une_divergence(self):
         """Le cas courant : elle n'est posée que dans l'environnement des vagues."""
@@ -2385,17 +2427,258 @@ class VeilleDevantUnPlanPerime(unittest.TestCase):
     def test_une_pause_decouverte_apres_le_replan_reste_une_pause(self):
         """Le verdict relu retraverse toutes les branches, pas seulement NO_RUN :
         un `pause` posé pendant le replan ne doit pas se lire comme un jalon
-        déroulé — et il désarme sans supprimer l'intention."""
+        déroulé.
+
+        L'intention part avec la veille depuis #426 : la laisser sur le disque
+        la faisait confronter par `pr_gate.py` comme si elle décrivait le run
+        suivant.
+        """
         seen, disarm, spawn = self.watchdog([sup.NO_RUN, sup.PAUSE], ["#60 clos"])
         self.assertEqual(seen, ["gate", "replan", "gate"])
         disarm.assert_called_once()
         spawn.assert_not_called()
-        self.assertTrue(self.intent.exists())
+        self.assertFalse(self.intent.exists())
 
     def test_un_gate_vert_ne_paie_aucun_replan(self):
         seen, _, spawn = self.watchdog([sup.GO], ["#60 clos"])
         self.assertEqual(seen, ["gate"])
         spawn.assert_called_once()
+
+
+class IntentionDelieeAuDesarmement(unittest.TestCase):
+    """#426 — aucun chemin de désarmement ne laisse l'intention sur le disque.
+
+    `pr_gate.py` relit ce fichier à chaque décision de merge depuis #414 et
+    suppose qu'il décrit le run en cours. Le chemin `STOP` / `PAUSE` de
+    `cmd_watchdog` désarmait la veille sans le délier : le run suivant, armé
+    `--merge-sensitive prisma`, se voyait confronté au `"merge_sensitive": []`
+    du mort et perdait l'autorisation vivante de son opérateur.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.intent = Path(self.tmp.name) / "supervisor.json"
+
+    def watchdog(self, verdict, intent=None, run="run-vivant"):
+        self.intent.write_text(json.dumps(intent if intent is not None else {}),
+                               encoding="utf-8")
+        with mock.patch.object(sup, "INTENT", self.intent), \
+             mock.patch.object(sup, "supervisor_alive", return_value=False), \
+             mock.patch.object(sup, "orchestrator_active", return_value=False), \
+             mock.patch.object(sup, "current_run", return_value=run), \
+             mock.patch.object(sup, "authorised", return_value=(True, None)), \
+             mock.patch.object(sup, "load_intent",
+                               return_value=intent if intent is not None else {}), \
+             mock.patch.object(sup, "quota_file_hold", return_value=None), \
+             mock.patch.object(sup, "held_off", return_value=False), \
+             mock.patch.object(sup, "watchdog_armed", return_value=True), \
+             mock.patch.object(sup, "plan_outdated_since_replan", return_value=[]), \
+             mock.patch.object(sup, "disarm_watchdog") as disarm, \
+             mock.patch.object(sup, "spawn_supervisor") as spawn, \
+             mock.patch.object(sup, "runner",
+                               return_value=mock.Mock(returncode=verdict,
+                                                      stdout="")):
+            sup.cmd_watchdog(argparse.Namespace())
+        return disarm, spawn
+
+    def test_un_arret_delie_l_intention(self):
+        disarm, spawn = self.watchdog(sup.STOP)
+        disarm.assert_called_once()
+        spawn.assert_not_called()
+        self.assertFalse(self.intent.exists())
+
+    def test_une_pause_delie_l_intention(self):
+        """Même traitement que l'arrêt, et pour la même raison qu'ailleurs :
+        `supervise()` appelle déjà `retire()` sur ses deux verdicts. Reprendre
+        après une pause passe par `milestone_run.py go` puis un `/milestone`
+        neuf, qui réarme — et retape ses périmètres."""
+        disarm, spawn = self.watchdog(sup.PAUSE)
+        disarm.assert_called_once()
+        spawn.assert_not_called()
+        self.assertFalse(self.intent.exists())
+
+    def test_un_jalon_deroule_delie_l_intention(self):
+        """Le chemin qui le faisait déjà — vérifié ici pour qu'un remaniement
+        du désarmement ne le perde pas en chemin."""
+        disarm, _ = self.watchdog(sup.NO_RUN)
+        disarm.assert_called_once()
+        self.assertFalse(self.intent.exists())
+
+    def test_un_verdict_qui_laisse_travailler_garde_l_intention(self):
+        _, spawn = self.watchdog(sup.GO)
+        spawn.assert_called_once()
+        self.assertTrue(self.intent.exists())
+
+    # --- l'intention d'un run sans veille n'est pas une consigne de relance ---
+
+    def test_une_intention_sans_veille_retire_la_tache_sans_l_effacer(self):
+        """#426 — `--no-watchdog` écrit désormais son intention pour la barrière.
+
+        Une tâche planifiée qui se réveille devant une intention étrangère au
+        run ouvert est un vestige d'un armement précédent : elle se retire, mais
+        toucher au fichier reviendrait à retirer au run vivant l'armement que
+        `pr_gate.py` doit confronter à la variable de ses vagues.
+        """
+        disarm, spawn = self.watchdog(sup.GO, intent={"watchdog": False,
+                                                      "run": "run-mort"})
+        disarm.assert_called_once()
+        spawn.assert_not_called()
+        self.assertTrue(self.intent.exists())
+
+    def test_une_intention_sans_run_inscrit_est_tenue_pour_un_vestige(self):
+        """Elle ne peut pas prouver qu'elle décrit le run ouvert : le sens
+        prudent est le même que pour un identifiant qui en désigne un autre."""
+        disarm, _ = self.watchdog(sup.GO, intent={"watchdog": False})
+        disarm.assert_called_once()
+
+    def test_la_veille_du_run_ouvert_survit_a_un_superviseur_sans_veille(self):
+        """`--no-watchdog` dit « ce processus n'arme rien », jamais « désarmez
+        ce qui l'est ».
+
+        `/milestone` arme la tâche à chaque `start` ; un superviseur de passage
+        lancé `--no-watchdog` sur le même run réécrit l'intention en
+        `watchdog: false`. Désarmer devant elle emporterait la reprise
+        automatique que l'opérateur a demandée pour ce run-là — et le run ne
+        repartirait plus après le plantage de ce superviseur-ci. `--disarm`
+        reste le geste qui débranche.
+        """
+        disarm, spawn = self.watchdog(sup.GO, intent={"watchdog": False,
+                                                      "run": "run-vivant"})
+        disarm.assert_not_called()
+        # Sans relancer pour autant : le drapeau vaut toujours pour la relance.
+        spawn.assert_not_called()
+
+    def test_une_intention_avec_veille_relance_normalement(self):
+        _, spawn = self.watchdog(sup.GO, intent={"watchdog": True})
+        spawn.assert_called_once()
+
+
+class IntentionRattacheeAuRunVivant(unittest.TestCase):
+    """#426 — le champ qui distingue un armement vivant d'un vestige.
+
+    C'est lui que `pr_gate.py` compare à `current`. Écrit par `intent_of()`
+    depuis #323, il vaut None quand le superviseur s'arme avant que sa première
+    étape n'ouvre le run : `stamp_intent_run()` le rattrape, sans jamais
+    réécrire un identifiant déjà posé — ce serait s'approprier l'armement d'un
+    autre run, précisément ce que ce champ empêche.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.intent = Path(self.tmp.name) / "supervisor.json"
+        patch = mock.patch.object(sup, "INTENT", self.intent)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def ecrit(self, **fields):
+        self.intent.write_text(json.dumps(fields), encoding="utf-8")
+
+    def stamp(self, run):
+        with mock.patch.object(sup, "current_run", return_value=run):
+            sup.stamp_intent_run()
+        return sup.load_intent()
+
+    def test_une_intention_sans_run_est_rattachee_des_qu_il_existe(self):
+        self.ecrit(merge_sensitive=["prisma"], run=None)
+        self.assertEqual(self.stamp("run-vivant")["run"], "run-vivant")
+
+    def test_un_run_deja_inscrit_n_est_jamais_reecrit(self):
+        """Le rattachement ne doit pas devenir un moyen de s'approprier
+        l'armement d'un run mort en le rebaptisant."""
+        self.ecrit(merge_sensitive=["prisma"], run="run-mort")
+        self.assertEqual(self.stamp("run-vivant")["run"], "run-mort")
+
+    def test_sans_run_ouvert_rien_n_est_ecrit(self):
+        self.ecrit(merge_sensitive=[], run=None)
+        avant = self.intent.read_text(encoding="utf-8")
+        self.stamp(None)
+        self.assertEqual(self.intent.read_text(encoding="utf-8"), avant)
+
+    def test_sans_intention_sur_le_disque_rien_ne_leve(self):
+        self.stamp("run-vivant")
+        self.assertFalse(self.intent.exists())
+
+    def test_le_reste_de_l_armement_survit_au_rattachement(self):
+        self.ecrit(merge_sensitive=["prisma"], no_merge=False, width=5)
+        rattachee = self.stamp("run-vivant")
+        self.assertEqual(rattachee["merge_sensitive"], ["prisma"])
+        self.assertEqual(rattachee["width"], 5)
+
+    def test_un_dry_run_ne_rattache_rien(self):
+        """Simuler, c'est ne rien poser sur le disque.
+
+        `--dry-run` n'écrit aucune intention à l'armement : celle qu'il trouve
+        est celle de quelqu'un d'autre. Lui apposer l'identifiant du run vivant
+        la ferait confronter par `pr_gate.py` aux vagues d'aujourd'hui — le
+        `"merge_sensitive": []` d'un vestige révoquant l'autorisation de
+        l'opérateur, c'est-à-dire #426 recréé par un simulacre.
+        """
+        source = inspect.getsource(sup.supervise)
+        avant = source[:source.index("stamp_intent_run()")]
+        self.assertTrue(avant.rstrip().endswith("if not args.dry_run:"),
+                        "le seul appel de la boucle doit être gardé par "
+                        "`if not args.dry_run:`")
+        self.assertEqual(source.count("stamp_intent_run()"), 1)
+
+
+class VeilleNonArmeeEcritSonIntention(unittest.TestCase):
+    """#426 — `--no-watchdog` écrit son intention, et dit qu'il ne relance rien.
+
+    Le sort de ce drapeau est tranché ici : il pose `SPA_MERGE_SENSITIVE` dans
+    l'environnement de chacune de ses vagues, donc la barrière doit avoir de quoi
+    la confronter. Sans intention, elle croyait la variable telle quelle — ou,
+    pire, la confrontait à l'armement d'un run mort resté sur le disque.
+    """
+
+    def args(self, **fields):
+        base = dict(milestone="S3", width=3, nature="projet", waves_per_leg=1,
+                    no_merge=False, merge_sensitive={"prisma"},
+                    permission_mode="acceptEdits", model=None, margin=90,
+                    patience=2, max_legs=40, leg_timeout=120, claude="claude",
+                    no_watchdog=False, dry_run=False, every=5)
+        base.update(fields)
+        return argparse.Namespace(**base)
+
+    def test_le_champ_dit_si_une_veille_a_ete_demandee(self):
+        self.assertIs(sup.intent_of(self.args(no_watchdog=True))["watchdog"],
+                      False)
+        self.assertIs(sup.intent_of(self.args())["watchdog"], True)
+
+    def test_le_champ_ne_se_rejoue_pas_dans_la_ligne_de_commande(self):
+        """`--no-watchdog` reste un choix de chaque processus : `reload_source`
+        le relaie lui-même, et un superviseur ressuscité doit pouvoir s'armer."""
+        argv = sup.intent_argv(sup.intent_of(self.args(no_watchdog=True)))
+        self.assertNotIn("--no-watchdog", argv)
+        self.assertNotIn("--watchdog", argv)
+
+    def test_l_intention_est_ecrite_meme_sans_veille(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        intent = Path(tmp.name) / "supervisor.json"
+        with mock.patch.object(sup, "INTENT", intent), \
+             mock.patch.object(sup, "arm_watchdog") as arme, \
+             mock.patch.object(sup, "watchdog_armed", return_value=False), \
+             mock.patch.object(sup, "dropped_scopes", return_value=[]):
+            sup.save_intent(self.args(no_watchdog=True))
+            ecrite = sup.load_intent()
+        # Écrite, avec les périmètres que ce lancement a reçus…
+        self.assertEqual(ecrite["merge_sensitive"], ["prisma"])
+        # …et sans avoir armé quoi que ce soit.
+        arme.assert_not_called()
+        self.assertIs(ecrite["watchdog"], False)
+
+    def test_supervise_n_arme_pas_mais_ecrit(self):
+        """La branche de `supervise()` elle-même : le garde-fou du drapeau y est
+        passé de « ne rien écrire » à « écrire sans armer »."""
+        source = inspect.getsource(sup.supervise)
+        debut = source.index("if not args.dry_run")
+        fin = source.index("held = quota_file_hold()", debut)
+        branche = source[debut:fin]
+        self.assertNotIn("not args.no_watchdog", branche.split("\n")[0])
+        self.assertIn("save_intent(args)", branche)
+        self.assertIn("arm_watchdog", branche)
 
 
 class FinDeRunDansLaBoucleCourte(unittest.TestCase):
