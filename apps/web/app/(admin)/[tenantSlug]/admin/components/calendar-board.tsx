@@ -1,6 +1,6 @@
 'use client';
 
-import type { Appointment, TimeZone } from '@spa/shared';
+import type { Appointment, Service, TimeZone } from '@spa/shared';
 import { ERROR_CODES } from '@spa/shared';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -31,6 +31,8 @@ import {
 import type { AdminActionResult } from '../action-result';
 import { loadCalendarRangeAction } from '../calendrier/actions';
 import { adminCalendarPath, adminLoginPath } from '../paths';
+
+import { AppointmentPanel, type DeskTarget } from './appointment-panel';
 
 /**
  * Le planning du back-office — vues jour et semaine (#49).
@@ -77,6 +79,15 @@ interface CalendarBoardProps {
   readonly initialPeriods: CalendarCache;
   /** Message d'indisponibilité du premier chargement, s'il a échoué. */
   readonly loadError: string | null;
+  /**
+   * Le catalogue de l'établissement, pour le tiroir de rendez-vous (#50).
+   *
+   * Chargé une fois par la page plutôt qu'à chaque ouverture du tiroir : il ne
+   * change pas entre deux clics, et le faire attendre l'opérateur qui vient de
+   * cliquer sur un créneau serait exactement la lenteur que ce chemin doit
+   * éviter. Vide, le tiroir bascule sur son état « catalogue vide ».
+   */
+  readonly services: readonly Service[];
 }
 
 /** Rafraîchissement du trait d'heure courante — sa résolution est la minute. */
@@ -92,6 +103,7 @@ export function CalendarBoard({
   date: initialDate,
   initialPeriods,
   loadError,
+  services,
 }: CalendarBoardProps) {
   const router = useRouter();
   const [view, setView] = useState<CalendarView>(initialView);
@@ -103,6 +115,8 @@ export function CalendarBoard({
   const [failure, setFailure] = useState<string | null>(loadError);
   const [now, setNow] = useState<Date | null>(null);
   const [visible, setVisible] = useState<SlotWindow>({ first: 0, last: 0 });
+  /** Ce que le tiroir de rendez-vous est en train de montrer, s'il est ouvert (#50). */
+  const [target, setTarget] = useState<DeskTarget | null>(null);
 
   const columnsRef = useRef<HTMLDivElement | null>(null);
   // La requête en cours, et non seulement sa clé : un second appel sur la même
@@ -111,6 +125,12 @@ export function CalendarBoard({
   // Combien de chargements de premier plan attendent — le dernier éteint
   // l'indicateur, sinon la réponse la plus rapide l'éteindrait pour les autres.
   const foreground = useRef(0);
+  // Le numéro du cache courant. Une écriture du tiroir le vide et l'incrémente ;
+  // une réponse partie **avant** cette écriture ne s'y range plus. Sans ce
+  // compteur, un chargement en vol au moment où l'on pose un rendez-vous
+  // rerangerait dans le cache une période sans lui, et le rendez-vous qu'on
+  // vient de créer disparaîtrait de l'écran (#50).
+  const cacheAge = useRef(0);
 
   const currentKey = rangeKey(view, date);
   const appointments = periods.get(currentKey);
@@ -147,6 +167,7 @@ export function CalendarBoard({
   const load = useCallback(
     async (nextView: CalendarView, anchor: string, background: boolean): Promise<void> => {
       const key = rangeKey(nextView, anchor);
+      const age = cacheAge.current;
       // Une période déjà demandée ne repart pas — mais l'appel se **greffe** sur
       // la requête en cours au lieu d'abandonner. Abandonner laissait un clic
       // tombé pendant le préchargement de la même période sans indicateur, et
@@ -169,7 +190,11 @@ export function CalendarBoard({
       try {
         received = await pending;
       } finally {
-        if (owned) {
+        // Seulement si l'entrée est encore la sienne : `reloadPeriods` vide la
+        // table et une nouvelle requête peut déjà s'y être inscrite sous la même
+        // clé. L'effacer aveuglément la rendrait injoignable, et la période
+        // repartirait une troisième fois.
+        if (owned && inFlight.current.get(key) === pending) {
           inFlight.current.delete(key);
         }
         if (!background) {
@@ -186,9 +211,13 @@ export function CalendarBoard({
       // et une réponse arrivée après qu'on a changé de jour parlerait par-dessus
       // un planning qui, lui, s'affiche très bien.
       const speaks = !background && currentKeyRef.current === key;
+      // Une réponse d'avant la dernière écriture décrit un agenda périmé.
+      const stale = cacheAge.current !== age;
 
       if (result.ok) {
-        setPeriods((known) => new Map(known).set(key, result.data.appointments));
+        if (!stale) {
+          setPeriods((known) => new Map(known).set(key, result.data.appointments));
+        }
 
         if (speaks) {
           setFailure(null);
@@ -232,6 +261,26 @@ export function CalendarBoard({
     },
     [load, periods],
   );
+
+  /**
+   * Vide le cache et relit la période affichée — après une écriture du tiroir,
+   * ou après un créneau perdu (#50, quatrième critère).
+   *
+   * Tout le cache et non la seule période ouverte : le tiroir laisse changer la
+   * date, si bien qu'un rendez-vous peut être né dans une période **voisine**,
+   * qui est justement celle que le préchargement a déjà rangée. Ne relire que la
+   * période visible la laisserait périmée jusqu'au prochain rechargement de page.
+   */
+  const reloadPeriods = useCallback((): void => {
+    cacheAge.current += 1;
+    inFlight.current.clear();
+    setPeriods(new Map());
+    void load(view, date, false);
+  }, [load, view, date]);
+
+  const backToLogin = useCallback((): void => {
+    router.push(adminLoginPath(tenantSlug));
+  }, [router, tenantSlug]);
 
   // L'URL suit la période affichée, sans repasser par le serveur : le planning
   // se partage et survit à un rafraîchissement, mais changer de jour ne rejoue
@@ -464,6 +513,7 @@ export function CalendarBoard({
                   <CalendarColumnView
                     column={column}
                     key={column.id}
+                    onOpen={setTarget}
                     slotCount={board.slotCount}
                     visible={visible}
                   />
@@ -473,6 +523,31 @@ export function CalendarBoard({
           )}
         </div>
       </div>
+
+      {target === null ? null : (
+        // La `key` est ce qui remonte le tiroir quand on clique un autre créneau
+        // sans l'avoir refermé : sa saisie vit dans des `useState` amorcés au
+        // montage, et sans elle React réutiliserait l'instance — le titre
+        // suivrait la nouvelle cible, mais la date, l'heure, le praticien et la
+        // note resteraient ceux de l'ancienne. « Enregistrer » déplacerait alors
+        // le rendez-vous qu'on vient d'ouvrir à l'heure de celui d'avant.
+        <AppointmentPanel
+          key={
+            target.kind === 'create'
+              ? `create:${target.day}:${target.time}:${target.staffId ?? ''}`
+              : `edit:${target.appointment.id}`
+          }
+          onClose={() => {
+            setTarget(null);
+          }}
+          onExpired={backToLogin}
+          onReload={reloadPeriods}
+          services={services}
+          target={target}
+          tenantSlug={tenantSlug}
+          timeZone={timeZone}
+        />
+      )}
     </>
   );
 }
@@ -488,10 +563,12 @@ export function CalendarBoard({
  */
 function CalendarColumnView({
   column,
+  onOpen,
   slotCount,
   visible,
 }: {
   readonly column: CalendarColumn;
+  readonly onOpen: (target: DeskTarget) => void;
   readonly slotCount: number;
   readonly visible: SlotWindow;
 }) {
@@ -506,7 +583,13 @@ function CalendarColumnView({
         : {})}
     >
       {mounted.map((cell) => (
-        <CalendarCellView cell={cell} key={cell.key} laneCount={column.laneCount} />
+        <CalendarCellView
+          cell={cell}
+          key={cell.key}
+          laneCount={column.laneCount}
+          onOpen={onOpen}
+          staffId={column.staffId}
+        />
       ))}
       {/* Sentinelle : elle tient la hauteur de la journée entière quoi que la
           virtualisation ait monté. Sans elle, la grille se replierait sur les
@@ -523,9 +606,14 @@ function CalendarColumnView({
 function CalendarCellView({
   cell,
   laneCount,
+  onOpen,
+  staffId,
 }: {
   readonly cell: CalendarCell;
   readonly laneCount: number;
+  readonly onOpen: (target: DeskTarget) => void;
+  /** Praticien de la colonne — `null` en vue semaine, où elle vaut pour l'équipe. */
+  readonly staffId: string | null;
 }) {
   const placement = {
     gridRow: `${String(cell.slot + 1)} / span ${String(cell.span)}`,
@@ -538,6 +626,13 @@ function CalendarCellView({
         <button
           className={`spa-admin-calendar__slot${cell.nowOffset === null ? '' : ' spa-admin-calendar__slot--now'}`}
           type="button"
+          onClick={() => {
+            // Le créneau porte déjà sa journée et son heure civiles, converties
+            // une fois avec le fuseau du salon (`calendar-grid.ts`) : le tiroir
+            // n'a rien à recalculer, et surtout rien à reconvertir avec celui du
+            // navigateur.
+            onOpen({ kind: 'create', day: cell.day, time: cell.time, staffId });
+          }}
           {...(cell.nowOffset === null
             ? {}
             : { style: { '--now-offset': cell.nowOffset } as Record<string, string> })}
@@ -545,6 +640,7 @@ function CalendarCellView({
           <span className="spa-visually-hidden">
             {cell.timeLabel}
             {cell.nowOffset === null ? ', libre' : ', libre, heure courante'}
+            {' — poser un rendez-vous'}
           </span>
         </button>
       </li>
@@ -558,6 +654,9 @@ function CalendarCellView({
       <button
         className={`spa-admin-calendar__event spa-admin-calendar__event--${statusModifier(status)}`}
         type="button"
+        onClick={() => {
+          onOpen({ kind: 'edit', appointment: cell.appointment });
+        }}
       >
         <span className="spa-admin-calendar__event-time">{cell.timeLabel}</span>
         <span className="spa-admin-calendar__event-client">{cell.clientLabel}</span>

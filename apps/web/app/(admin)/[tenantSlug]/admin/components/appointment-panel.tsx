@@ -1,0 +1,562 @@
+'use client';
+
+import {
+  ERROR_CODES,
+  type Appointment,
+  type AppointmentStatus,
+  type CalendarDate,
+  type CustomerSummary,
+  type Service,
+  type ServiceStaffMember,
+  type TimeZone,
+} from '@spa/shared';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+
+import { Button } from '@/components/ui/button';
+import { Field } from '@/components/ui/field';
+import { Notification } from '@/components/ui/notification';
+import { Select } from '@/components/ui/select';
+import { TextArea } from '@/components/ui/textarea';
+import {
+  deskFailureMessage,
+  deskStatusActions,
+  isReschedulable,
+  isSlotConflict,
+  offsetDateTimeInTenant,
+  summarize,
+  tenantFields,
+} from '@/lib/admin/appointment-desk';
+import { STATUS_LABELS, statusModifier } from '@/lib/admin/calendar-grid';
+import { formatMoney } from '@/lib/format';
+
+import {
+  createDeskAppointmentAction,
+  loadDeskServiceStaffAction,
+  markDeskAppointmentStatusAction,
+  rescheduleDeskAppointmentAction,
+} from '../calendrier/actions';
+
+import { ClientPicker } from './client-picker';
+
+/**
+ * Le tiroir de rendez-vous du comptoir — création et édition (#50).
+ *
+ * ## Un seul écran pour les deux
+ *
+ * Création et édition ne diffèrent que par trois choses : le titre, le libellé du
+ * bouton de validation, et la présence des actions de fin de course. Le reste —
+ * la prestation, le praticien, la date, l'heure, le récapitulatif calculé — est
+ * identique, et deux gabarits auraient divergé à la première correction. C'est
+ * ce que `styles/admin/appointment.css` et la maquette
+ * `mockups/admin/rendez-vous.html` posent, et ce composant s'y tient.
+ *
+ * ## Ce qui ne se saisit pas, et pourquoi
+ *
+ * Fin, durée, tampon et montant découlent de la prestation. Les rendre
+ * saisissables laisserait poser une fin incohérente avec le début, donc un
+ * chevauchement que la contrainte d'exclusion refuserait **après** la saisie —
+ * trop tard pour l'opérateur qui a la cliente au téléphone.
+ *
+ * ## Le créneau perdu n'est pas une panne
+ *
+ * Sous concurrence, un autre poste peut avoir pris le créneau pendant la saisie.
+ * C'est le cas normal du quatrième critère (web-frontend §3) : le tiroir affiche
+ * un avertissement, **demande le rechargement de la période** au planning, et ne
+ * touche à aucune autre saisie. L'opérateur change l'heure et renvoie.
+ *
+ * ## La prestation ne se change pas en édition
+ *
+ * `rescheduleAppointmentRequestSchema` n'accepte que `startsAt` et `staffId`, et
+ * ce n'est pas un manque : le prix est **figé à la réservation**
+ * (`appointmentSchema.price`), et la durée avec lui. Changer la prestation d'un
+ * rendez-vous existant est donc une annulation suivie d'une nouvelle prise, pas
+ * une modification — le champ reste visible, désactivé, avec sa raison.
+ */
+
+/** Ce qu'un clic sur le planning ouvre. */
+export type DeskTarget =
+  | {
+      readonly kind: 'create';
+      readonly day: CalendarDate;
+      readonly time: string;
+      /** Le praticien de la colonne cliquée — `null` en vue semaine. */
+      readonly staffId: string | null;
+    }
+  | { readonly kind: 'edit'; readonly appointment: Appointment };
+
+interface AppointmentPanelProps {
+  readonly tenantSlug: string;
+  readonly timeZone: TimeZone;
+  /** Le catalogue, chargé une fois par la page — il ne change pas d'un clic à l'autre. */
+  readonly services: readonly Service[];
+  readonly target: DeskTarget;
+  readonly onClose: () => void;
+  /** Une écriture a abouti, ou un créneau a été perdu : la période est à relire. */
+  readonly onReload: () => void;
+  /** Session expirée — le planning renvoie à la connexion. */
+  readonly onExpired: () => void;
+}
+
+export function AppointmentPanel({
+  tenantSlug,
+  timeZone,
+  services,
+  target,
+  onClose,
+  onReload,
+  onExpired,
+}: AppointmentPanelProps) {
+  const formId = useId();
+  const editing = target.kind === 'edit' ? target.appointment : null;
+
+  // La fiche cliente n'est saisie qu'à la création : un report ne change pas de
+  // cliente, et fabriquer ici un `CustomerSummary` à partir du résumé imbriqué du
+  // rendez-vous — qui ne porte ni téléphone ni état d'activation — inventerait
+  // deux champs que rien ne connaît.
+  const [client, setClient] = useState<CustomerSummary | null>(null);
+  const [serviceId, setServiceId] = useState<string>(
+    editing?.service.id ?? services[0]?.id ?? '',
+  );
+  const [staffId, setStaffId] = useState<string>(
+    editing?.staff.id ?? (target.kind === 'create' ? (target.staffId ?? '') : ''),
+  );
+  // L'amorce du formulaire : le créneau cliqué à la création, l'heure du
+  // rendez-vous à l'édition — ramenée du stockage UTC au fuseau du salon, et
+  // jamais à celui du navigateur.
+  const opening =
+    target.kind === 'create'
+      ? { date: target.day, time: target.time }
+      : tenantFields(target.appointment.startsAt, timeZone);
+  const [day, setDay] = useState<CalendarDate>(opening.date);
+  const [time, setTime] = useState<string>(opening.time);
+  const [note, setNote] = useState<string>(editing?.clientNote ?? '');
+
+  const [staff, setStaff] = useState<readonly ServiceStaffMember[] | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [conflict, setConflict] = useState<string | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const service = services.find((candidate) => candidate.id === serviceId) ?? null;
+  // La prestation d'un rendez-vous **posé** peut avoir quitté le catalogue actif
+  // depuis : la page ne charge que les prestations vendables, et une prestation
+  // retirée n'y est plus. Le rendez-vous, lui, porte son nom, sa durée et son
+  // prix figés — c'est cette copie-là qui prend le relais, sans quoi l'écran
+  // afficherait le nom d'une autre prestation dans le sélecteur désactivé et
+  // escamoterait le montant dû.
+  const booked = editing === null || service !== null ? null : editing.service;
+  const summary =
+    service !== null
+      ? summarize(service, time)
+      : booked === null
+        ? null
+        : summarize({ durationMinutes: booked.durationMinutes, bufferAfterMinutes: 0 }, time);
+  // Le montant d'un rendez-vous **posé** est celui qui a été figé à la
+  // réservation, pas celui du catalogue d'aujourd'hui : le tarif a pu changer
+  // entre les deux, le montant dû par cette cliente-là, non
+  // (`appointmentSchema.price`).
+  const price = editing?.price ?? service?.price ?? null;
+
+  // Les praticiens proposés sont **ceux qui tiennent la prestation choisie**, et
+  // non l'équipe entière : en proposer d'autres ferait refuser la réservation
+  // après la saisie. La liste se recharge donc à chaque changement de prestation.
+  useEffect(() => {
+    if (serviceId === '') {
+      setStaff(null);
+      return undefined;
+    }
+
+    let current = true;
+
+    void loadDeskServiceStaffAction(tenantSlug, serviceId).then((result) => {
+      if (!current) {
+        return;
+      }
+      if (result.ok) {
+        setStaff(result.data.staff.filter((member) => member.isActive));
+        return;
+      }
+      if (result.code === ERROR_CODES.UNAUTHORIZED) {
+        onExpired();
+        return;
+      }
+      // L'affectation illisible ne bloque pas la saisie : le sélecteur retombe
+      // sur « premier disponible », que le contrat autorise explicitement
+      // (`createAppointmentRequestSchema.staffId` est facultatif).
+      setStaff([]);
+    });
+
+    return () => {
+      current = false;
+    };
+  }, [tenantSlug, serviceId, onExpired]);
+
+  // Les praticiens réellement offerts par le sélecteur : ceux qui tiennent la
+  // prestation, plus — en édition — celui déjà affecté au rendez-vous même s'il
+  // n'y figure plus. Le retirer ferait retomber le sélecteur sur « premier
+  // disponible » et changerait le praticien d'un rendez-vous qu'on venait
+  // seulement déplacer.
+  const offered: readonly ServiceStaffMember[] = useMemo(() => {
+    const loaded = staff ?? [];
+
+    if (editing === null || loaded.some((member) => member.id === editing.staff.id)) {
+      return loaded;
+    }
+
+    return [
+      { id: editing.staff.id, displayName: editing.staff.displayName, isActive: true },
+      ...loaded,
+    ];
+  }, [staff, editing]);
+
+  // Un praticien amorcé — la colonne cliquée, ou celui du rendez-vous — ne tient
+  // pas forcément la prestation retenue. Sans cette remise à zéro, le sélecteur
+  // n'aurait aucune option correspondante et afficherait « premier disponible »
+  // pendant que l'état, lui, garde l'identifiant : l'opérateur enverrait un
+  // praticien qu'il croit ne pas avoir choisi, et l'API refuserait après coup.
+  useEffect(() => {
+    if (staff === null || staffId === '') {
+      return;
+    }
+
+    if (!offered.some((member) => member.id === staffId)) {
+      setStaffId('');
+    }
+  }, [staff, offered, staffId]);
+
+  /** Traite le refus d'une écriture — conflit, session, ou message de l'API. */
+  const refuse = useCallback(
+    (code: string, message: string): void => {
+      if (code === ERROR_CODES.UNAUTHORIZED) {
+        onExpired();
+        return;
+      }
+
+      if (isSlotConflict(code)) {
+        // Le planning est relu : le créneau perdu doit se voir occupé. Aucune
+        // saisie n'est touchée — c'est tout l'objet du quatrième critère.
+        setConflict(deskFailureMessage(code, message));
+        setFailure(null);
+        onReload();
+        return;
+      }
+
+      setConflict(null);
+      setFailure(deskFailureMessage(code, message));
+    },
+    [onExpired, onReload],
+  );
+
+  const submit = useCallback(async (): Promise<void> => {
+    setSaving(true);
+    const startsAt = offsetDateTimeInTenant(day, time, timeZone);
+
+    const result =
+      editing === null
+        ? await createDeskAppointmentAction(tenantSlug, {
+            serviceId,
+            startsAt,
+            ...(staffId === '' ? {} : { staffId }),
+            ...(client === null ? {} : { clientId: client.id }),
+            ...(note.trim() === '' ? {} : { clientNote: note.trim() }),
+          })
+        : await rescheduleDeskAppointmentAction(tenantSlug, editing.id, {
+            startsAt,
+            ...(staffId === '' ? {} : { staffId }),
+          });
+
+    setSaving(false);
+
+    if (result.ok) {
+      onReload();
+      onClose();
+      return;
+    }
+
+    refuse(result.code, result.message);
+  }, [
+    day,
+    time,
+    timeZone,
+    editing,
+    tenantSlug,
+    serviceId,
+    staffId,
+    client,
+    note,
+    onReload,
+    onClose,
+    refuse,
+  ]);
+
+  const mark = useCallback(
+    async (status: AppointmentStatus): Promise<void> => {
+      if (editing === null) {
+        return;
+      }
+
+      setSaving(true);
+      const result = await markDeskAppointmentStatusAction(tenantSlug, editing.id, { status });
+      setSaving(false);
+
+      if (result.ok) {
+        onReload();
+        onClose();
+        return;
+      }
+
+      refuse(result.code, result.message);
+    },
+    [editing, tenantSlug, onReload, onClose, refuse],
+  );
+
+  const title =
+    editing === null
+      ? 'Nouveau rendez-vous'
+      : `${editing.client.firstName} ${editing.client.lastName}`;
+
+  // Le catalogue vide est un état à part entière : un rendez-vous se pose sur une
+  // prestation, et un sélecteur vide laisserait l'opérateur chercher son erreur.
+  // …à la création seulement : un rendez-vous **déjà posé** porte sa prestation
+  // avec lui, et refuser de l'ouvrir parce que le catalogue actif s'est vidé
+  // interdirait de le marquer honoré ou non présenté.
+  if (services.length === 0 && editing === null) {
+    return (
+      <aside aria-labelledby={`${formId}-titre`} className="spa-admin-panel">
+        <div className="spa-admin-panel__header">
+          <h2 className="spa-admin-panel__title" id={`${formId}-titre`}>
+            {title}
+          </h2>
+          <Button variant="quiet" onClick={onClose}>
+            <span aria-hidden="true">×</span>
+            <span className="spa-visually-hidden">Fermer le tiroir</span>
+          </Button>
+        </div>
+        <div className="spa-admin-panel__body">
+          <div className="spa-admin-appointment spa-admin-appointment--empty">
+            <div className="spa-empty-state spa-empty-state--inline">
+              <p className="spa-empty-state__title">Le catalogue est vide</p>
+              <p className="spa-empty-state__description">
+                Un rendez-vous se pose sur une prestation. Créez-en au moins une — durée et prix
+                compris — avant de planifier.
+              </p>
+            </div>
+          </div>
+        </div>
+      </aside>
+    );
+  }
+
+  return (
+    <aside aria-labelledby={`${formId}-titre`} className="spa-admin-panel">
+      <div className="spa-admin-panel__header">
+        <h2 className="spa-admin-panel__title" id={`${formId}-titre`}>
+          {title}
+        </h2>
+        {editing === null ? null : (
+          <span
+            className={`spa-admin-badge spa-admin-badge--${statusModifier(editing.status)}`}
+          >
+            {STATUS_LABELS[editing.status]}
+          </span>
+        )}
+        <Button variant="quiet" onClick={onClose}>
+          <span aria-hidden="true">×</span>
+          <span className="spa-visually-hidden">Fermer le tiroir</span>
+        </Button>
+      </div>
+
+      <div className="spa-admin-panel__body">
+        {conflict === null ? null : (
+          <div className="spa-admin-appointment__conflict">
+            <Notification tone="warning" title="Ce créneau vient d’être réservé">
+              <p>{conflict}</p>
+            </Notification>
+          </div>
+        )}
+
+        {failure === null ? null : (
+          <div className="spa-admin-appointment__conflict">
+            <Notification tone="danger" title="Enregistrement impossible">
+              <p>{failure}</p>
+            </Notification>
+          </div>
+        )}
+
+        <form
+          className="spa-admin-appointment"
+          id={formId}
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submit();
+          }}
+        >
+          <div className="spa-admin-appointment__grid">
+            {editing === null ? (
+              <ClientPicker
+                tenantSlug={tenantSlug}
+                selected={client}
+                onSelect={setClient}
+                onExpired={onExpired}
+              />
+            ) : null}
+
+            <Select
+              id={`${formId}-prestation`}
+              label="Prestation"
+              value={serviceId}
+              disabled={editing !== null}
+              {...(editing === null
+                ? {}
+                : {
+                    hint: 'La prestation d’un rendez-vous posé ne se change pas : son prix et sa durée sont figés à la réservation. Annulez et reposez le rendez-vous.',
+                  })}
+              onChange={(event) => {
+                setServiceId(event.target.value);
+                // Le praticien retenu ne tient pas forcément la nouvelle
+                // prestation : le remettre à « premier disponible » vaut mieux
+                // que de laisser un choix que l'API refusera.
+                setStaffId('');
+              }}
+            >
+              {/* La prestation réservée d'abord, quand elle a quitté le
+                  catalogue actif : sans son option, le sélecteur désactivé
+                  afficherait le nom d'une autre prestation. */}
+              {booked === null ? null : (
+                <option value={booked.id}>
+                  {booked.name} — {String(booked.durationMinutes)} min
+                </option>
+              )}
+              {services.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.name} — {String(candidate.durationMinutes)} min
+                </option>
+              ))}
+            </Select>
+
+            <Select
+              id={`${formId}-praticien`}
+              label="Praticien"
+              value={staffId}
+              hint="Sans choix, le serveur affecte le premier disponible."
+              onChange={(event) => {
+                setStaffId(event.target.value);
+              }}
+            >
+              <option value="">Premier disponible</option>
+              {offered.map((member) => (
+                <option key={member.id} value={member.id}>
+                  {member.displayName}
+                </option>
+              ))}
+            </Select>
+
+            <Field
+              id={`${formId}-date`}
+              label="Date"
+              required
+              type="date"
+              value={day}
+              onChange={(event) => {
+                setDay(event.target.value as CalendarDate);
+              }}
+            />
+
+            <Field
+              id={`${formId}-heure`}
+              label="Heure de début"
+              required
+              type="time"
+              value={time}
+              onChange={(event) => {
+                setTime(event.target.value);
+              }}
+            />
+
+            <p className="spa-admin-appointment__timezone">
+              Heures saisies et affichées dans le fuseau du salon — {timeZone}. Le stockage se fait
+              en UTC.
+            </p>
+
+            {editing === null ? (
+              <div className="spa-admin-appointment__span">
+                <TextArea
+                  id={`${formId}-note`}
+                  label="Note jointe au rendez-vous"
+                  rows={2}
+                  value={note}
+                  hint="Reprise dans la confirmation : elle est visible de la cliente."
+                  onChange={(event) => {
+                    setNote(event.target.value);
+                  }}
+                />
+              </div>
+            ) : null}
+          </div>
+
+          {summary === null ? null : (
+            <div className="spa-admin-appointment__summary">
+              <div className="spa-admin-appointment__summary-row">
+                <span className="spa-admin-appointment__summary-label">Début</span>
+                <span className="spa-admin-appointment__summary-value">{summary.startTime}</span>
+              </div>
+              <div className="spa-admin-appointment__summary-row">
+                <span className="spa-admin-appointment__summary-label">Fin (calculée)</span>
+                <span className="spa-admin-appointment__summary-value">{summary.endTime}</span>
+              </div>
+              {summary.bufferMinutes === 0 ? null : (
+                <div className="spa-admin-appointment__summary-row spa-admin-appointment__summary-row--buffer">
+                  <span className="spa-admin-appointment__summary-label">
+                    Tampon de remise en état
+                  </span>
+                  <span className="spa-admin-appointment__summary-value">
+                    {String(summary.bufferMinutes)} min — libre à {summary.freeAtTime}
+                  </span>
+                </div>
+              )}
+              {price === null ? null : (
+                <div className="spa-admin-appointment__summary-row spa-admin-appointment__summary-row--total">
+                  <span className="spa-admin-appointment__summary-label">Montant</span>
+                  <span className="spa-admin-appointment__summary-value">{formatMoney(price)}</span>
+                </div>
+              )}
+            </div>
+          )}
+        </form>
+      </div>
+
+      <div className="spa-admin-panel__footer">
+        {editing === null
+          ? null
+          : deskStatusActions(editing.status).map((action) => (
+              <Button
+                key={action.status}
+                variant={action.variant}
+                loading={saving}
+                onClick={() => {
+                  void mark(action.status);
+                }}
+              >
+                {action.label}
+              </Button>
+            ))}
+
+        <Button variant="neutral" onClick={onClose}>
+          Fermer
+        </Button>
+
+        {/* Le pied est hors du `<form>` : le bouton doit désigner son formulaire
+            par `form=`, sans quoi il ne soumet rien. C'est le contrat que la
+            maquette a posé, et il est repris tel quel. */}
+        <Button
+          form={formId}
+          type="submit"
+          variant="accent"
+          loading={saving}
+          disabled={editing === null ? client === null : !isReschedulable(editing.status)}
+        >
+          {editing === null ? 'Créer le rendez-vous' : 'Enregistrer'}
+        </Button>
+      </div>
+    </aside>
+  );
+}

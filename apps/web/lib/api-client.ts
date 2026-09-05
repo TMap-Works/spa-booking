@@ -34,6 +34,8 @@ import {
   authSessionResponseSchema,
   availabilityResponseSchema,
   bookedAppointmentSchema,
+  customerPageSchema,
+  customerSchema,
   publicServiceSchema,
   publicTenantSchema,
   serviceCategorySchema,
@@ -50,8 +52,14 @@ import {
   type BookGuestAppointmentRequest,
   type BookedAppointment,
   type CancelAppointmentRequest,
+  type ChangeAppointmentStatusRequest,
+  type CreateAppointmentRequest,
+  type CreateCustomerRequest,
   type CreateServiceCategoryRequest,
   type CreateServiceRequest,
+  type Customer,
+  type CustomerPage,
+  type CustomerSearchQuery,
   type LoginRequest,
   type MyAppointmentsQuery,
   type PublicService,
@@ -931,6 +939,161 @@ export async function settleAppointmentInCash(
     path: '/payments/cash',
     body: { appointmentId },
     schema: paymentTransactionSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+// ---------------------------------------------------------------------------
+// Le comptoir : poser, déplacer et solder un rendez-vous — #50
+// ---------------------------------------------------------------------------
+
+/**
+ * Le fichier client, cherché d'un seul terme — nom, téléphone ou e-mail.
+ *
+ * C'est `GET /customers` (#56), et le terme unique est une propriété du contrat
+ * et non une simplification d'ici : au téléphone, l'opérateur tape ce qu'il a
+ * sous la main sans choisir un champ d'abord. Voir l'en-tête de
+ * `customerSearchQuerySchema`.
+ *
+ * `includeInactive` n'est jamais posé : une fiche désactivée n'a rien à faire
+ * dans l'écran de prise de rendez-vous.
+ *
+ * `Partial<…>` et non le type nu : `page` et `pageSize` portent un `.default()`
+ * dans le contrat, donc le type **inféré en sortie** les donne pour toujours
+ * présents. Un appelant qui s'en remet aux défauts du serveur n'aurait alors pas
+ * le droit de les omettre, et cette fonction testerait une absence impossible.
+ */
+export async function searchCustomers(
+  accessToken: string,
+  query: Partial<CustomerSearchQuery>,
+): Promise<CustomerPage> {
+  const search = new URLSearchParams();
+
+  if (query.q !== undefined) {
+    search.set('q', query.q);
+  }
+  if (query.page !== undefined) {
+    search.set('page', String(query.page));
+  }
+  if (query.pageSize !== undefined) {
+    search.set('pageSize', String(query.pageSize));
+  }
+
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/customers${search.size === 0 ? '' : `?${search.toString()}`}`,
+    schema: customerPageSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Crée une fiche cliente au comptoir — `POST /customers` (#56).
+ *
+ * Aucun mot de passe : la fiche naît pour être réservée et rappelée, pas pour se
+ * connecter. C'est le « ou création rapide » du deuxième critère de #50, et
+ * c'est ce qui évite d'envoyer l'opérateur sur un autre écran pendant que la
+ * cliente est au bout du fil.
+ */
+export async function createCustomer(
+  accessToken: string,
+  body: CreateCustomerRequest,
+): Promise<Customer> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/customers',
+    body,
+    schema: customerSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Pose un rendez-vous **depuis le back-office** — `POST /appointments`.
+ *
+ * Distincte de `bookGuestAppointment`, et pour la raison qui a fait séparer les
+ * deux contrôleurs de l'API : là-bas l'établissement vient du slug d'URL et la
+ * cliente de ses coordonnées saisies ; ici l'établissement vient du **jeton**, et
+ * la cliente est une fiche déjà résolue, désignée par `clientId`. C'est
+ * exactement la frontière que `createAppointmentRequestSchema.strict()` tient —
+ * il refuse un `client`, quand la forme invitée refuse un `clientId`.
+ *
+ * ## Ce que cette route attend encore (même régime que `fetchAppointments`)
+ *
+ * `apps/api` ne sert aujourd'hui, derrière un jeton, que `GET /appointments`,
+ * `GET /appointments/mine` et `POST /appointments/:id/cancel` : la prise de
+ * rendez-vous au comptoir est décrite par le contrat partagé mais **pas encore
+ * exposée**. Cette fonction est écrite contre le contrat, comme l'agenda l'a été
+ * avant #444, et l'écran qui l'appelle traite son 404 comme une indisponibilité
+ * annoncée plutôt que comme une panne — voir `lib/admin/appointment-desk.ts`.
+ */
+export async function createAppointment(
+  accessToken: string,
+  body: CreateAppointmentRequest,
+): Promise<Appointment> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/appointments',
+    body,
+    schema: appointmentSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Déplace un rendez-vous depuis le back-office — `POST /appointments/:id/reschedule`.
+ *
+ * Le nom porte `Desk` parce que `rescheduleAppointment` existe déjà pour le
+ * tunnel public : ce ne sont pas deux façons d'appeler la même route, mais deux
+ * routes, sur deux surfaces, avec deux régimes de garde. Les confondre ferait
+ * déplacer un rendez-vous de back-office par un chemin qui n'exige aucun jeton.
+ *
+ * La réponse est un rendez-vous **neuf**, avec un nouvel identifiant : un report
+ * est une annulation suivie d'une création liée, jamais une réécriture des
+ * bornes en place (booking-engine §5, `rescheduleAppointmentRequestSchema`).
+ *
+ * Route pas encore servie — voir `createAppointment`.
+ */
+export async function rescheduleDeskAppointment(
+  accessToken: string,
+  appointmentId: string,
+  body: RescheduleAppointmentRequest,
+): Promise<Appointment> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: `/appointments/${encodeURIComponent(appointmentId)}/reschedule`,
+    body,
+    schema: appointmentSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Solde un rendez-vous — `POST /appointments/:id/status`, `completed` ou
+ * `no_show` (cinquième critère de #50).
+ *
+ * Ce n'est pas une suppression et cela ne peut pas l'être : le reporting du CDC
+ * §1.4 compte les no-shows, et une ligne effacée ne se compte pas. La transition
+ * elle-même est jugée par le serveur — `canTransitionAppointment` — et un refus
+ * sort en `INVALID_STATE_TRANSITION`, jamais en 400.
+ *
+ * Route pas encore servie — voir `createAppointment`.
+ */
+export async function changeAppointmentStatus(
+  accessToken: string,
+  appointmentId: string,
+  body: ChangeAppointmentStatusRequest,
+): Promise<Appointment> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: `/appointments/${encodeURIComponent(appointmentId)}/status`,
+    body,
+    schema: appointmentSchema,
     accessToken,
   });
   return payload;

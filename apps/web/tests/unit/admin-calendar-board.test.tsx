@@ -1,4 +1,4 @@
-import type { Appointment, AppointmentStatus } from '@spa/shared';
+import type { Appointment, AppointmentStatus, Service } from '@spa/shared';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,10 +14,27 @@ import { CalendarBoard } from '@/app/(admin)/[tenantSlug]/admin/components/calen
  */
 
 const loadCalendarRangeAction = vi.fn();
+const loadDeskServiceStaffAction = vi.fn();
+const createDeskAppointmentAction = vi.fn();
+const rescheduleDeskAppointmentAction = vi.fn();
+const markDeskAppointmentStatusAction = vi.fn();
+const searchDeskClientsAction = vi.fn();
+const createDeskClientAction = vi.fn();
 const push = vi.fn();
 
+// Le module d'actions est doublé **en entier** : le tiroir de #50 en importe six
+// autres, et un module simulé qui ne les porte pas fait échouer l'import bien
+// avant le premier rendu.
 vi.mock('@/app/(admin)/[tenantSlug]/admin/calendrier/actions', () => ({
   loadCalendarRangeAction: (...args: unknown[]) => loadCalendarRangeAction(...args),
+  loadDeskServiceStaffAction: (...args: unknown[]) => loadDeskServiceStaffAction(...args),
+  createDeskAppointmentAction: (...args: unknown[]) => createDeskAppointmentAction(...args),
+  rescheduleDeskAppointmentAction: (...args: unknown[]) =>
+    rescheduleDeskAppointmentAction(...args),
+  markDeskAppointmentStatusAction: (...args: unknown[]) =>
+    markDeskAppointmentStatusAction(...args),
+  searchDeskClientsAction: (...args: unknown[]) => searchDeskClientsAction(...args),
+  createDeskClientAction: (...args: unknown[]) => createDeskClientAction(...args),
 }));
 
 vi.mock('next/navigation', () => ({
@@ -26,6 +43,23 @@ vi.mock('next/navigation', () => ({
 
 const TIMEZONE = 'Indian/Antananarivo';
 const SLUG = 'maison-lotus';
+
+/** Le catalogue que la page passe au planning — de quoi ouvrir le tiroir de #50. */
+const CATALOGUE: readonly Service[] = [
+  {
+    id: 'cccccccc-0000-4000-8000-000000000001',
+    slug: 'massage-suedois',
+    name: 'Massage suédois',
+    description: null,
+    category: null,
+    durationMinutes: 60,
+    bufferBeforeMinutes: 0,
+    bufferAfterMinutes: 15,
+    occupiedMinutes: 75,
+    price: { amountMinor: 3500, currency: 'EUR' },
+    isActive: true,
+  },
+];
 
 let sequence = 0;
 
@@ -101,6 +135,7 @@ function renderBoard(
     readonly date?: string;
     readonly view?: 'jour' | 'semaine';
     readonly loadError?: string | null;
+    readonly services?: readonly Service[];
   } = {},
 ): void {
   render(
@@ -108,6 +143,7 @@ function renderBoard(
       date={overrides.date ?? '2026-08-26'}
       initialPeriods={overrides.periods ?? amorce}
       loadError={overrides.loadError ?? null}
+      services={overrides.services ?? CATALOGUE}
       tenantSlug={SLUG}
       timeZone={TIMEZONE}
       view={overrides.view ?? 'jour'}
@@ -153,10 +189,14 @@ describe('vue jour — ce que l’écran montre', () => {
 
   it('propose chaque créneau libre comme un bouton nommé', () => {
     // Le geste le plus fréquent du comptoir : « le client est devant moi, je le
-    // pose à 10 h 30 ». Une case morte ne le permettrait pas.
+    // pose à 10 h 30 ». Une case morte ne le permettrait pas — et depuis #50 le
+    // nom accessible dit aussi **ce que le clic fait**, le bouton ouvrant le
+    // tiroir de prise de rendez-vous.
     renderBoard({ periods: { 'jour:2026-08-26': [matin] } });
 
-    expect(screen.getByRole('button', { name: '08 h 00, libre' })).toBeDefined();
+    expect(
+      screen.getByRole('button', { name: '08 h 00, libre — poser un rendez-vous' }),
+    ).toBeDefined();
   });
 });
 
@@ -260,12 +300,16 @@ describe('virtualisation — troisième critère', () => {
     renderBoard({ periods: { 'jour:2026-08-26': [matin] } });
 
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: '08 h 00, libre' })).toBeDefined();
+      expect(
+        screen.getByRole('button', { name: '08 h 00, libre — poser un rendez-vous' }),
+      ).toBeDefined();
     });
 
     // 24 rangées affichées, une fenêtre de repli de 12 : la fin de journée n'est
     // pas dans le DOM tant qu'on n'y a pas défilé.
-    expect(screen.queryByRole('button', { name: '18 h 00, libre' })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: '18 h 00, libre — poser un rendez-vous' }),
+    ).toBeNull();
     expect(screen.getAllByRole('listitem').length).toBeLessThan(24);
   });
 
@@ -282,7 +326,9 @@ describe('virtualisation — troisième critère', () => {
     await user.click(screen.getByRole('radio', { name: 'Semaine' }));
 
     await waitFor(() => {
-      expect(screen.getAllByRole('button', { name: /, libre$/ }).length).toBeGreaterThan(0);
+      expect(
+        screen.getAllByRole('button', { name: /, libre — poser un rendez-vous$/ }).length,
+      ).toBeGreaterThan(0);
     });
   });
 });
