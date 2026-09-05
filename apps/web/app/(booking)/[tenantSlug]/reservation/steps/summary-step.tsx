@@ -10,7 +10,7 @@ import {
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { Notification } from '@/components/ui/notification';
+import { Notification, type NotificationTone } from '@/components/ui/notification';
 import type { ContactDraft } from '@/lib/booking/draft';
 
 import { bookAppointmentAction } from '../actions';
@@ -32,6 +32,52 @@ interface SummaryStepProps {
    */
   readonly onSlotLost: () => void;
 }
+
+/** Ce qui s'affiche au-dessus du récapitulatif quand la réservation est refusée. */
+interface Refusal {
+  readonly tone: NotificationTone;
+  readonly title: string;
+  readonly body: string;
+}
+
+/**
+ * Le refus qu'aucun autre créneau ne lèvera — `CLIENT_EMAIL_NOT_BOOKABLE` (#452).
+ *
+ * ## Pourquoi il ne renvoie pas au calendrier
+ *
+ * C'est un 409 comme `SLOT_NO_LONGER_AVAILABLE`, et c'est tout ce que les deux
+ * ont en commun. Le créneau perdu est **passager** : un autre horaire le résout,
+ * d'où le retour à l'étape `creneau`. Celui-ci est **définitif pour cette
+ * adresse** — la faire choisir un autre horaire lui ferait reparcourir le tunnel
+ * pour se heurter au même mur. La seule action utile est à un écran d'ici :
+ * « Corriger mes coordonnées », que ce composant affiche déjà.
+ *
+ * ## Pourquoi la phrase est écrite ici et ne dit pas la cause
+ *
+ * Écrite ici, parce que seul le `code` engage l'API : le `message` du contrat
+ * s'adresse à un développeur, il est traduisible et peut changer sans préavis
+ * (skill web-frontend §2) — même arbitrage que pour `onSlotLost` dans
+ * `booking-tunnel.tsx`.
+ *
+ * Sans la cause, parce que la route est **publique et non authentifiée**. Côté
+ * serveur, l'adresse est refusée parce qu'elle porte un compte non client de
+ * l'établissement ; l'écrire à l'écran ferait de ce formulaire un oracle sur
+ * l'annuaire du personnel, que n'importe qui pourrait interroger adresse par
+ * adresse. La phrase constate donc le refus et propose la suite, sans qualifier
+ * l'adresse ni confirmer qu'elle appartient à quelqu'un.
+ */
+const EMAIL_NOT_BOOKABLE: Refusal = {
+  // `warning` et non `danger` : rien n'est cassé, et l'action à mener est claire.
+  // Le ton porte aussi `role="alert"`, donc l'annonce reste immédiate au lecteur
+  // d'écran — le visiteur vient de cliquer, il attend une réponse.
+  tone: 'warning',
+  title: 'Cette adresse e-mail ne peut pas être utilisée ici',
+  body:
+    'La réservation en ligne n’accepte pas cette adresse pour cet établissement. ' +
+    'Reprenez vos coordonnées pour en saisir une autre : votre prestation et ' +
+    'votre créneau sont conservés. Si vous tenez à cette adresse, contactez ' +
+    'directement l’établissement.',
+};
 
 /**
  * Récapitulatif et validation — quatrième critère d'acceptation de #45.
@@ -61,7 +107,7 @@ export function SummaryStep({
   onSlotLost,
 }: SummaryStepProps) {
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<Refusal | null>(null);
 
   const staffName = service.staff.find((member) => member.id === staffId)?.displayName ?? null;
 
@@ -71,7 +117,7 @@ export function SummaryStep({
     }
 
     setSubmitting(true);
-    setError(null);
+    setRefusal(null);
 
     const result = await bookAppointmentAction(tenant.slug, {
       serviceId: service.id,
@@ -107,9 +153,18 @@ export function SummaryStep({
       return;
     }
 
-    setError(result.message);
-    // Le bouton se réarme : l'erreur est peut-être passagère, et la cliente doit
-    // pouvoir réessayer sans recharger la page.
+    // L'autre 409 du parcours, et le seul que le calendrier ne résout pas —
+    // voir `EMAIL_NOT_BOOKABLE`. Il reste **sur cette étape** : la correction
+    // est à un écran d'ici, pas cinq.
+    setRefusal(
+      result.code === ERROR_CODES.CLIENT_EMAIL_NOT_BOOKABLE
+        ? EMAIL_NOT_BOOKABLE
+        : { tone: 'danger', title: 'La réservation n’a pas abouti', body: result.message },
+    );
+    // Le bouton se réarme, dans les deux cas : la panne est peut-être passagère,
+    // et sur le refus d'adresse c'est ce qui rend « Corriger mes coordonnées »
+    // — désactivé tant que la soumission court — de nouveau cliquable. Sans
+    // cela, la seule issue offerte serait le rechargement de la page.
     setSubmitting(false);
   };
 
@@ -117,9 +172,9 @@ export function SummaryStep({
     <section aria-label="Récapitulatif de votre réservation">
       <h2 className="spa-card__title">Vérifiez votre réservation</h2>
 
-      {error === null ? null : (
-        <Notification tone="danger" title="La réservation n’a pas abouti">
-          <p>{error}</p>
+      {refusal === null ? null : (
+        <Notification tone={refusal.tone} title={refusal.title}>
+          <p>{refusal.body}</p>
         </Notification>
       )}
 
