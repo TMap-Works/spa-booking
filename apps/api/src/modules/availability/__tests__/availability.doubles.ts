@@ -43,6 +43,13 @@ import type { StaffBusyRange, TimeOffWindow } from '../staff-time-off.types';
  * 8. le **recoupement** de fenêtre, `startsAt < to AND endsAt > from`, et non
  *    l'inclusion : un rendez-vous commencé avant la fenêtre et courant encore
  *    occupe bien le praticien pendant celle-ci.
+ *
+ * #316 en ajoute une neuvième :
+ *
+ * 9. l'**exclusion d'un rendez-vous nommé**, celui qu'un report déplace — et
+ *    appliquée après le filtre de tenant, comme le `where` scopé du vrai. Un
+ *    double qui l'appliquerait avant laisserait passer une exclusion
+ *    inter-tenant que la base refuse.
  */
 
 interface StoredSchedule {
@@ -88,6 +95,14 @@ interface StoredServiceStaff {
  */
 interface StoredAppointment {
   tenantId: string;
+  /**
+   * L'identifiant de la ligne — ce que le report demande d'exclure (#316).
+   *
+   * Le double le porte parce que le vrai le porte : sans lui, `listBookedRanges`
+   * n'aurait rien à comparer, et la suite unitaire prouverait l'exclusion contre
+   * un dépôt incapable de la refuser.
+   */
+  id: string;
   staffId: string;
   startsAt: Date;
   endsAt: Date;
@@ -148,15 +163,26 @@ export class FakeAvailabilityRepository {
     return assignment;
   }
 
-  /** Pose un rendez-vous sur l'agenda d'un praticien. `PENDING` par défaut. */
+  /**
+   * Pose un rendez-vous sur l'agenda d'un praticien. `PENDING` par défaut.
+   *
+   * L'identifiant est fourni quand le test a besoin de le désigner — c'est le
+   * cas du report, qui exclut le sien —, et tiré au sort sinon : deux
+   * rendez-vous semés sans identifiant ne doivent pas se confondre.
+   */
   public seedAppointment(input: {
     tenantId: string;
     staffId: string;
     startsAt: Date;
     endsAt: Date;
     status?: string;
+    id?: string;
   }): StoredAppointment {
-    const appointment: StoredAppointment = { ...input, status: input.status ?? 'PENDING' };
+    const appointment: StoredAppointment = {
+      ...input,
+      id: input.id ?? randomUUID(),
+      status: input.status ?? 'PENDING',
+    };
     this.appointments.push(appointment);
     return appointment;
   }
@@ -293,10 +319,17 @@ export class FakeAvailabilityRepository {
    * Le prédicat est celui du vrai : un rendez-vous commencé avant la fenêtre et
    * courant encore occupe bien le praticien pendant celle-ci. Le double le
    * reproduit pour que le test le constate plutôt que de le supposer.
+   *
+   * `excludeAppointmentId` est écarté **après** le filtre de tenant, et non
+   * avant : c'est l'ordre du vrai, où l'extension Prisma pose `tenant_id` sur le
+   * même `where`. Un identifiant de l'établissement voisin ne peut donc rien
+   * retirer ici non plus, et le test d'isolation le constate sur le double comme
+   * la suite d'intégration le constate sur la base (#316).
    */
   public async listBookedRanges(
     staffIds: readonly string[],
     window: TimeOffWindow,
+    excludeAppointmentId?: string,
   ): Promise<StaffBusyRange[]> {
     const tenantId = this.requireTenant();
 
@@ -312,6 +345,7 @@ export class FakeAvailabilityRepository {
           candidate.tenantId === tenantId &&
           wanted.has(candidate.staffId) &&
           OCCUPYING.has(candidate.status) &&
+          candidate.id !== excludeAppointmentId &&
           candidate.startsAt.getTime() < window.to.getTime() &&
           candidate.endsAt.getTime() > window.from.getTime(),
       )
