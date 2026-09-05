@@ -1,30 +1,51 @@
 import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
 
 /**
- * Erreurs du module `payments`.
+ * Erreurs du module `payments` — **le seul fichier d'erreurs du module** (#410).
  *
  * Un service ne lève jamais d'`HttpException` (api-module §5) : il lève une de
- * ces classes, et `DomainExceptionFilter` la traduit. Le front réagit sur
- * `code`, jamais sur `message`.
+ * ces classes, et `DomainExceptionFilter` la traduit en
+ * `{ code, message, details }`. Le front réagit sur `code`, jamais sur `message`.
+ *
+ * ## Pourquoi un seul fichier, et non trois
+ *
+ * Le tunnel public (#57), la réception des webhooks (#58) et le POS (#60) ont
+ * chacun apporté le leur, parce qu'ils ont été écrits en parallèle sur des
+ * branches qui ne se voyaient pas. Trois fichiers pour un module, ce n'était pas
+ * une conception : c'était la trace d'un ordre de merge. Le coût était réel et
+ * mesurable — `const SERVICE_UNAVAILABLE = 503` était écrit deux fois, et deux
+ * tables de statuts qui dérivent, c'est un module qui répond autre chose que ce
+ * que son contrat annonce.
+ *
+ * Le découpage qui vaut pour ce module est celui de la **surface** — un
+ * repository par client Prisma, un service par règle métier —, pas celui du
+ * catalogue d'erreurs, qui est un contrat unique et se lit d'un seul tenant.
+ *
+ * ## Ce qu'aucune de ces erreurs ne dit
+ *
+ * **Aucune ne parle d'un autre établissement.** Un rendez-vous, une prestation
+ * ou un article du salon voisin est *introuvable*, point : c'est `NotFoundError`
+ * du tronc commun qui répond, en 404. Un code dédié — ou un 403 — confirmerait
+ * son existence (tenant-isolation §4).
+ *
+ * **Aucune ne cite Stripe.** Un message d'erreur de prestataire cite volontiers
+ * un identifiant de compte, une clé tronquée ou la requête fautive. Le détail
+ * part au journal ; le corps de réponse ne porte qu'un code stable et une phrase
+ * que l'écran peut afficher.
+ *
+ * **Aucune ne porte de donnée de carte** — ni PAN, ni CVC, ni les quatre
+ * derniers chiffres. Un `details` d'erreur est journalisé et traverse le réseau
+ * public ; c'est exactement l'endroit où la frontière SAQ A se perd
+ * (payments-stripe §1).
  *
  * TODO(#26) : ces codes appartiennent au contrat d'API et devront vivre dans
- * `@spa/shared`, comme ceux d'`identity`, de `catalog` et d'`appointments`.
- * `apps/api` ne dépend pas encore du paquet partagé ; l'import se substituera à
- * ces constantes sans changer une seule valeur.
- *
- * **Aucune de ces erreurs ne parle d'un autre établissement.** Un rendez-vous
- * d'un autre tenant est introuvable, point : c'est `NotFoundError` du tronc
- * commun qui répond, en 404. Un code dédié — ou un 403 — confirmerait son
- * existence (tenant-isolation §4).
- *
- * **Aucune ne cite Stripe non plus**, et c'est délibéré : un message d'erreur
- * de prestataire cite volontiers un identifiant de compte, une clé tronquée ou
- * la requête fautive. Le détail part au journal ; le corps de réponse ne porte
- * qu'un code stable et une phrase que le tunnel peut afficher.
+ * `@spa/shared` quand `apps/api` en dépendra, comme ceux d'`identity`, de
+ * `catalog` et d'`appointments`.
  */
 
 /** Codes d'erreur du module, tels qu'ils partent au client. */
 export const PAYMENT_ERROR_CODES = {
+  // Encaissement en ligne et au comptoir (#57, #62, #63).
   APPOINTMENT_NOT_PAYABLE: 'APPOINTMENT_NOT_PAYABLE',
   APPOINTMENT_NOT_SETTLEABLE: 'APPOINTMENT_NOT_SETTLEABLE',
   PAYMENT_ALREADY_SETTLED: 'PAYMENT_ALREADY_SETTLED',
@@ -32,6 +53,17 @@ export const PAYMENT_ERROR_CODES = {
   HISTORY_WINDOW_INVALID: 'HISTORY_WINDOW_INVALID',
   PAYMENT_NOT_REFUNDABLE: 'PAYMENT_NOT_REFUNDABLE',
   REFUND_EXCEEDS_CAPTURED: 'REFUND_EXCEEDS_CAPTURED',
+
+  // Réception des webhooks Stripe (#58).
+  INVALID_WEBHOOK_SIGNATURE: 'INVALID_WEBHOOK_SIGNATURE',
+  WEBHOOK_NOT_CONFIGURED: 'WEBHOOK_NOT_CONFIGURED',
+  WEBHOOK_PAYLOAD_TOO_LARGE: 'WEBHOOK_PAYLOAD_TOO_LARGE',
+
+  // Rayon retail et ticket de caisse (#60).
+  PRODUCT_SKU_TAKEN: 'PRODUCT_SKU_TAKEN',
+  SALE_ITEM_UNAVAILABLE: 'SALE_ITEM_UNAVAILABLE',
+  SALE_CURRENCY_MISMATCH: 'SALE_CURRENCY_MISMATCH',
+  SALE_AMOUNT_OUT_OF_RANGE: 'SALE_AMOUNT_OUT_OF_RANGE',
 } as const;
 
 // Les valeurs viennent de `DOMAIN_HTTP_STATUS`, la table de correspondance
@@ -40,8 +72,23 @@ export const PAYMENT_ERROR_CODES = {
 const CONFLICT = DOMAIN_HTTP_STATUS.CONFLICT;
 const UNPROCESSABLE_ENTITY = DOMAIN_HTTP_STATUS.UNPROCESSABLE_ENTITY;
 
-/** 503 — absent de `DOMAIN_HTTP_STATUS`, qui ne connaît pas encore les dépendances externes. */
+/**
+ * 400 — absent de `DOMAIN_HTTP_STATUS`, qui ne décrit que les refus métier :
+ * une requête bien formée dont la règle refuse le contenu. Sur la route de
+ * webhook, la requête elle-même n'est pas recevable, ce qui est la définition du
+ * 400.
+ */
+const BAD_REQUEST = 400;
+
+/** 413 — la borne du lecteur de corps brut, hors du parseur global et de sa limite. */
+const PAYLOAD_TOO_LARGE = 413;
+
+/** 503 — absent pour la même raison : `DOMAIN_HTTP_STATUS` ne connaît pas les dépendances externes. */
 const SERVICE_UNAVAILABLE = 503;
+
+/* -------------------------------------------------------------------------- */
+/*  Encaissement en ligne et au comptoir                                      */
+/* -------------------------------------------------------------------------- */
 
 /**
  * Ce rendez-vous n'a plus rien à encaisser en ligne.
@@ -225,6 +272,10 @@ export class RefundExceedsCapturedError extends DomainError {
  * prestataire : ni message Stripe, ni identifiant de requête, ni fragment de
  * clé. Ces éléments-là partent au journal, où ils servent au diagnostic sans
  * traverser le réseau public.
+ *
+ * C'est aussi ce que lève `StripeConfig` quand les clés manquent : une API sans
+ * clés est un prestataire indisponible du point de vue de l'appelant, et son
+ * corps de réponse ne doit rien dire de notre configuration.
  */
 export class PaymentProviderUnavailableError extends DomainError {
   public override readonly code = PAYMENT_ERROR_CODES.PAYMENT_PROVIDER_UNAVAILABLE;
@@ -267,3 +318,166 @@ export class PaymentProviderUnavailableError extends DomainError {
  * tunnel public de #57, qui n'a pas à connaître la nuance.
  */
 export class PaymentProviderRefusedError extends PaymentProviderUnavailableError {}
+
+/* -------------------------------------------------------------------------- */
+/*  Réception des webhooks Stripe                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Le corps dépasse la borne du lecteur brut.
+ *
+ * En sortant du parseur JSON global, la route sort de sa limite par défaut
+ * (100 Kio) : cette erreur est ce qui la remplace. Elle est levée **avant**
+ * toute vérification de signature — accumuler des octets non authentifiés est
+ * précisément ce qu'il ne faut pas faire sur le seul point d'entrée public non
+ * gardé de l'API.
+ */
+export class WebhookPayloadTooLargeError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.WEBHOOK_PAYLOAD_TOO_LARGE;
+  public override readonly status = PAYLOAD_TOO_LARGE;
+
+  public constructor() {
+    super('Corps de webhook trop volumineux.');
+  }
+}
+
+/**
+ * Le corps reçu n'est pas signé par Stripe, ou ne l'est plus.
+ *
+ * **400 immédiat, aucun traitement** (payments-stripe §3). C'est la propriété
+ * la plus importante de cette route : elle est ouverte sur l'internet, sans
+ * jeton, et la signature est la seule chose qui distingue Stripe de n'importe
+ * qui. Un corps non vérifié ne doit donc franchir aucune ligne de code métier —
+ * ni être désérialisé en événement, ni être journalisé, ni toucher la base.
+ *
+ * **400 et non 401** : un 401 invite à réessayer avec d'autres informations
+ * d'authentification, et Stripe n'en a pas d'autres à présenter. Un 400 dit ce
+ * qui est vrai — cette livraison-là est irrecevable — et Stripe la marquera en
+ * échec dans son tableau de bord, ce qui est exactement le signal attendu.
+ *
+ * Le message ne dit jamais **ce qui** a échoué — l'en-tête, l'horodatage ou le
+ * condensat. Le seul appelant légitime de cette route est Stripe, qui n'a que
+ * faire du détail ; le seul autre appelant possible est quelqu'un qui sonde, et
+ * lui apprendre où cela a cassé lui donnerait le fil à tirer.
+ */
+export class InvalidWebhookSignatureError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.INVALID_WEBHOOK_SIGNATURE;
+  public override readonly status = BAD_REQUEST;
+
+  public constructor() {
+    super('Signature de webhook invalide.');
+  }
+}
+
+/**
+ * Le secret de terminaison n'est pas configuré sur ce déploiement.
+ *
+ * **503 et non 400** : le corps est peut-être parfaitement valide, c'est nous
+ * qui ne savons pas le vérifier. Le distinguer a une conséquence pratique —
+ * Stripe **rejoue** les 5xx, et rejouera donc les livraisons reçues pendant la
+ * fenêtre de mauvaise configuration une fois le secret posé. Un 400 les aurait
+ * perdues définitivement.
+ *
+ * Ce cas ne peut se produire qu'en `development` et en `test` : en déployé,
+ * `StripeConfig` refuse de démarrer sans secret plutôt que de servir une route
+ * qui ne vérifie rien (api-module §7).
+ */
+export class WebhookNotConfiguredError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.WEBHOOK_NOT_CONFIGURED;
+  public override readonly status = SERVICE_UNAVAILABLE;
+
+  public constructor() {
+    super('La réception des webhooks de paiement n’est pas configurée.');
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Rayon retail et ticket de caisse                                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Ce code d'article est déjà pris dans cet établissement.
+ *
+ * **409 et non 400** : le corps est valide, c'est l'état du rayon qui s'y
+ * oppose. L'unicité est portée par `@@unique([tenantId, sku])`, donc par la
+ * base — deux salons gardent le droit de coder chacun son `SH-01`.
+ *
+ * `details` ne porte **pas** le code en cause. Il n'apprendrait rien à
+ * l'appelant, qui vient de l'envoyer, et un corps de conflit qui recopie la
+ * valeur rend le refus distinguable d'un autre — de quoi sonder, code par code,
+ * le rayon d'un salon dont on connaîtrait un jeton.
+ */
+export class ProductSkuTakenError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.PRODUCT_SKU_TAKEN;
+  public override readonly status = CONFLICT;
+
+  public constructor() {
+    super('Ce code article est déjà utilisé dans cet établissement.');
+  }
+}
+
+/**
+ * Un article du ticket existe mais n'est plus vendable — prestation ou produit
+ * retiré du catalogue.
+ *
+ * **422 et non 404** : l'appelant a le droit de savoir que la référence existe,
+ * puisqu'il vient de la lire dans une liste de son propre établissement. Ce qui
+ * ne va pas n'est pas l'identifiant, c'est l'état de l'article — et l'écran de
+ * caisse a une conduite à tenir, celle de retirer la ligne.
+ *
+ * `details.position` désigne **le rang de la ligne** sur le ticket, jamais
+ * l'identifiant de l'article : c'est ce dont l'écran a besoin pour surligner la
+ * ligne fautive, et cela ne dit rien de plus que ce que l'appelant a envoyé.
+ */
+export class SaleItemUnavailableError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.SALE_ITEM_UNAVAILABLE;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor(position: number) {
+    super('Cet article n’est plus vendable.', { position });
+  }
+}
+
+/**
+ * Un article du ticket est libellé dans une autre devise que celle de
+ * l'établissement.
+ *
+ * Le serveur **refuse** plutôt que de convertir. Une conversion sans taux daté
+ * n'est pas une conversion, c'est une approximation — et elle se figerait dans
+ * une pièce comptable que le rapprochement relira des mois plus tard.
+ *
+ * Le cas est rare et signale presque toujours une donnée de catalogue à
+ * corriger : un article importé avec la devise d'un autre établissement, ou un
+ * salon dont la devise par défaut a changé après coup.
+ */
+export class SaleCurrencyMismatchError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.SALE_CURRENCY_MISMATCH;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor(position: number) {
+    super('Cet article n’est pas libellé dans la devise de l’établissement.', { position });
+  }
+}
+
+/**
+ * Le ticket dépasse ce qu'un montant du schéma peut porter.
+ *
+ * Les colonnes de montant sont des entiers 32 bits signés — le choix du schéma,
+ * et il tient pour tout ticket réel. Un total qui les dépasse ne se tronque pas
+ * en silence : PostgreSQL refuserait l'écriture par une erreur de type, remontée
+ * en 500 là où le contrat annonce autre chose. La borne est donc vérifiée par le
+ * service, **avant** l'écriture, pour que le refus soit celui que le front sait
+ * lire.
+ *
+ * Ce n'est pas une précaution théorique : cent lignes de mille unités à un prix
+ * quelconque y suffisent, et rien dans le corps de la requête ne coûte cher à
+ * fabriquer.
+ */
+export class SaleAmountOutOfRangeError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.SALE_AMOUNT_OUT_OF_RANGE;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor() {
+    super('Le total de ce ticket dépasse le montant maximal admis.');
+  }
+}

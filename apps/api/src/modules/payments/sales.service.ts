@@ -10,7 +10,7 @@ import {
   SaleAmountOutOfRangeError,
   SaleCurrencyMismatchError,
   SaleItemUnavailableError,
-} from './pos.errors';
+} from './payments.errors';
 import { PosRepository } from './pos.repository';
 import { composeSale, fitsInAmountColumn } from './pos.totals';
 import type {
