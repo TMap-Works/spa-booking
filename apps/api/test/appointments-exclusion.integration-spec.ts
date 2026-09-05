@@ -42,7 +42,11 @@ import {
  * 6. le report et l'annulation écrivent en base ce que #39 et #40 décrivent ;
  * 7. la lecture qui **propose** sait écarter un rendez-vous nommé — celui qu'un
  *    report déplace (#316) — et un identifiant de l'établissement voisin n'y
- *    écarte rien, le `where` étant scopé.
+ *    écarte rien, le `where` étant scopé ;
+ * 8. la **fiche cliente** résolue par `crm` vit dans la même transaction que le
+ *    rendez-vous (#313) : un créneau refusé n'en laisse aucune derrière lui, et
+ *    c'est le `ROLLBACK` qui le garantit — rien qu'un double en mémoire ne
+ *    saurait prouver.
  *
  * ## Ce qui n'est plus ici
  *
@@ -702,6 +706,182 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
 
       expect(ranges.map((range) => range.startsAt.toISOString())).toEqual([start.toISOString()]);
       expect(ranges.every((range) => range.staffId === salon.staffId)).toBe(true);
+    });
+  });
+
+  /**
+   * La fiche cliente, écrite par `crm` **dans la transaction du rendez-vous**
+   * (#313).
+   *
+   * Trois choses ne se prouvent qu'ici, contre un vrai moteur :
+   *
+   * 1. le `ROLLBACK` d'un créneau refusé **emporte la fiche**. C'est le deuxième
+   *    critère du ticket, et il n'est tenu par aucun code applicatif : il est tenu
+   *    par la transaction ;
+   * 2. une adresse portée par un compte du personnel est refusée par un 409
+   *    choisi, jamais par le `P2002` nu que `@@unique([tenantId, email])`
+   *    produirait — donc jamais par un 500 ;
+   * 3. la frontière du tenant tient sur cette écriture aussi : deux salons qui
+   *    reçoivent la **même** adresse obtiennent deux fiches distinctes, et aucun
+   *    ne voit celle de l'autre.
+   */
+  describe('la fiche cliente et la transaction du rendez-vous (#313)', () => {
+    /** Les lignes `users` de cet établissement portant cette adresse. */
+    async function filesFor(fixture: Fixture, email: string): Promise<{ id: string }[]> {
+      return prismaUnscoped.user.findMany({
+        where: { tenantId: fixture.tenantId, email },
+        select: { id: true },
+      });
+    }
+
+    it('écrit la fiche et le rendez-vous d’un même `COMMIT`', async () => {
+      const start = new Date('2027-01-11T09:00:00.000Z');
+      const email = `nouvelle-${start.getTime()}@example.test`;
+
+      const created = await inTenant(salon.tenantId, () =>
+        repository.create(
+          draft(salon, start, new Date(start.getTime() + ONE_HOUR), salon.staffId, email),
+        ),
+      );
+
+      const [file] = await filesFor(salon, email);
+      expect(file).toBeDefined();
+      expect(created.clientId).toBe(file?.id);
+    });
+
+    it('n’en laisse aucune derrière un créneau refusé — le `ROLLBACK` l’emporte', async () => {
+      // Le scénario exact du ticket : la course est perdue **après** que la fiche
+      // a été écrite, puisque c'est l'insertion du rendez-vous que la contrainte
+      // refuse. Avant #313, la fiche était validée dans une transaction à part et
+      // survivait au refus — une écriture publique laissée au fichier du salon.
+      const start = new Date('2027-01-12T09:00:00.000Z');
+      const end = new Date(start.getTime() + ONE_HOUR);
+      const email = `perdante-${start.getTime()}@example.test`;
+
+      await inTenant(salon.tenantId, () => repository.create(draft(salon, start, end)));
+
+      await expect(
+        inTenant(salon.tenantId, () =>
+          repository.create(draft(salon, start, end, salon.staffId, email)),
+        ),
+      ).rejects.toBeInstanceOf(SlotNoLongerAvailableError);
+
+      expect(await filesFor(salon, email)).toEqual([]);
+    });
+
+    it('laisse intacte une fiche préexistante quand le créneau est refusé', async () => {
+      // Le `ROLLBACK` ne défait que ce que **cette** transaction a écrit : une
+      // cliente déjà fichée ne perd pas son historique parce qu'elle vient de
+      // perdre une course.
+      const start = new Date('2027-01-13T09:00:00.000Z');
+      const end = new Date(start.getTime() + ONE_HOUR);
+
+      await inTenant(salon.tenantId, () => repository.create(draft(salon, start, end)));
+
+      await expect(
+        inTenant(salon.tenantId, () => repository.create(draft(salon, start, end))),
+      ).rejects.toBeInstanceOf(SlotNoLongerAvailableError);
+
+      expect(await filesFor(salon, salon.clientEmail)).toHaveLength(1);
+    });
+
+    it('refuse une adresse portée par un compte du personnel, et sans 500', async () => {
+      // `@@unique([tenantId, email])` interdit une seconde ligne sous cette
+      // adresse : sans la décision explicite de #313, cette réservation sortait en
+      // `P2002` nu. Elle sort en 409 nommé, et rien n'est écrit.
+      const start = new Date('2027-01-14T09:00:00.000Z');
+
+      const refused = await inTenant(salon.tenantId, () =>
+        repository
+          .create(
+            draft(
+              salon,
+              start,
+              new Date(start.getTime() + ONE_HOUR),
+              salon.staffId,
+              salon.managerEmail,
+            ),
+          )
+          .catch((error: unknown) => error),
+      );
+
+      expect(refused).toMatchObject({ code: 'CLIENT_EMAIL_NOT_BOOKABLE', status: 409 });
+      expect(
+        await prismaUnscoped.appointment.count({
+          where: { tenantId: salon.tenantId, startsAt: start },
+        }),
+      ).toBe(0);
+      // Le compte de la gérante est resté seul, et son rôle n'a pas bougé.
+      expect(
+        await prismaUnscoped.user.findMany({
+          where: { tenantId: salon.tenantId, email: salon.managerEmail },
+          select: { role: true },
+        }),
+      ).toEqual([{ role: 'MANAGER' }]);
+    });
+
+    it('ne partage jamais une fiche entre deux établissements', async () => {
+      // Le cinquième critère du ticket. L'unicité de l'adresse est
+      // `(tenant_id, email)` : la même personne cliente de deux salons a deux
+      // fiches, et un historique par salon. Le `where` de la résolution ne porte
+      // que l'adresse — c'est l'extension qui y ajoute le tenant, et c'est elle
+      // qu'on exerce ici.
+      const start = new Date('2027-01-15T09:00:00.000Z');
+      const end = new Date(start.getTime() + ONE_HOUR);
+      const email = `partagee-${start.getTime()}@example.test`;
+
+      const chezSalon = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, end, salon.staffId, email)),
+      );
+      const chezVoisin = await inTenant(voisin.tenantId, () =>
+        repository.create(draft(voisin, start, end, voisin.staffId, email)),
+      );
+
+      expect(chezSalon.clientId).not.toBe(chezVoisin.clientId);
+      expect(await filesFor(salon, email)).toEqual([{ id: chezSalon.clientId }]);
+      expect(await filesFor(voisin, email)).toEqual([{ id: chezVoisin.clientId }]);
+    });
+
+    it('ne réutilise pas la fiche du voisin, même adresse et même instant', async () => {
+      // Le pendant écrit du cas précédent : semée **chez le voisin uniquement**,
+      // l'adresse doit rester introuvable depuis le salon — donc donner lieu à une
+      // création, jamais à une réutilisation par-dessus la frontière.
+      const start = new Date('2027-01-16T09:00:00.000Z');
+      const end = new Date(start.getTime() + ONE_HOUR);
+      const email = `voisine-${start.getTime()}@example.test`;
+
+      const chezVoisin = await inTenant(voisin.tenantId, () =>
+        repository.create(draft(voisin, start, end, voisin.staffId, email)),
+      );
+      const chezSalon = await inTenant(salon.tenantId, () =>
+        repository.create(draft(salon, start, end, salon.staffId, email)),
+      );
+
+      expect(chezSalon.clientId).not.toBe(chezVoisin.clientId);
+    });
+
+    it('un report ne résout aucune fiche : il recopie celle du rendez-vous d’origine', async () => {
+      // Reporter ne change pas la cliente (#39). Un report qui repasserait par la
+      // porte `crm` créerait une fiche depuis des coordonnées que la demande ne
+      // porte même pas.
+      const start = new Date('2027-01-17T09:00:00.000Z');
+      const target = new Date('2027-01-17T14:00:00.000Z');
+      const email = `reportee-${start.getTime()}@example.test`;
+
+      const booked = await inTenant(salon.tenantId, () =>
+        repository.create(
+          draft(salon, start, new Date(start.getTime() + ONE_HOUR), salon.staffId, email),
+        ),
+      );
+
+      const outcome = await inTenant(salon.tenantId, () =>
+        repository.reschedule(
+          move(booked.id, target, new Date(target.getTime() + ONE_HOUR), salon.staffId),
+        ),
+      );
+
+      expect(outcome.created.clientId).toBe(booked.clientId);
+      expect(await filesFor(salon, email)).toHaveLength(1);
     });
   });
 

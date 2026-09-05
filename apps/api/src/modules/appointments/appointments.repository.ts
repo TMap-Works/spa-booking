@@ -4,6 +4,11 @@ import { Prisma } from '@prisma/client';
 import { ConflictError, InvalidStateTransitionError, NotFoundError } from '../../common/errors';
 import { requireTenantId } from '../../common/tenant/tenant-context';
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
+// La **porte de service** du module `crm`, jamais son repository (api-module §3).
+// Elle est importée de valeur — Nest lit le type du paramètre de constructeur
+// dans les métadonnées émises par TypeScript, qu'un `import type` effacerait.
+import { ClientDirectoryService } from '../crm/client-directory.service';
+import { ClientRecordRaceError } from '../crm/crm.errors';
 import { OCCUPYING_STATUSES, occupiesSlot } from './appointment-status';
 import { isSlotExclusionViolation, isTransientWriteConflict } from './appointments.conflicts';
 import { SlotNoLongerAvailableError } from './appointments.errors';
@@ -14,7 +19,6 @@ import type {
   AppointmentRecord,
   CancelDraft,
   ClientAppointmentsQuery,
-  GuestContact,
   RescheduleDraft,
   RescheduleOutcome,
 } from './appointments.types';
@@ -45,6 +49,20 @@ import type {
  * **réessayer les interblocages**. Écrire sans vérifier expose à un mode de
  * défaillance que la vérification préalable masquait — plusieurs insertions
  * concurrentes s'attendent en cycle, et PostgreSQL en abat une. Voir `create`.
+ *
+ * ## Ce que ce fichier a cessé d'écrire : `users` (#313)
+ *
+ * `findOrCreateClient` vivait ici faute de porte ailleurs — la table d'un autre
+ * domaine écrite par un module qui ne la possède pas, ce qu'api-module §3
+ * n'admet pas. Elle est passée dans `crm`, derrière
+ * `ClientDirectoryService.resolveWithin`, et ce fichier l'appelle **depuis
+ * l'intérieur de sa propre transaction**.
+ *
+ * Ce n'est pas un déplacement gratuit : c'est ce qui rend vrai « un 409 ne laisse
+ * aucune fiche derrière lui ». L'ancienne conduite validait la fiche dans une
+ * transaction, puis tentait l'insertion dans une autre ; la perdante d'une course
+ * repartait avec un refus et une fiche publique au fichier du salon. Les deux
+ * écritures partagent désormais un `COMMIT` — et un `ROLLBACK`.
  */
 
 /**
@@ -206,13 +224,6 @@ function withScopedTenant<T>(data: Omit<T, 'tenantId' | 'tenant'>): T {
 const MAX_INSERT_ATTEMPTS = 3;
 
 /**
- * Code Prisma d'une violation de contrainte d'unicité — ici
- * `@@unique([tenantId, email])` sur `users`, la seule que
- * `findOrCreateClient` puisse rencontrer.
- */
-const UNIQUE_EMAIL_VIOLATION = 'P2002';
-
-/**
  * Répit avant un réessai — quelques dizaines de millisecondes, avec une part
  * aléatoire.
  *
@@ -267,7 +278,20 @@ function toRecord(row: AppointmentRow): AppointmentRecord {
 
 @Injectable()
 export class AppointmentsRepository {
-  public constructor(@Inject(PRISMA) private readonly prisma: ScopedPrismaClient) {}
+  public constructor(
+    @Inject(PRISMA) private readonly prisma: ScopedPrismaClient,
+    /**
+     * La porte du fichier client (#313) — la seule chose que ce module sache de
+     * `crm`, et la seule qu'il lui demande : un identifiant de fiche.
+     *
+     * Injectée dans le **repository** et non dans le service, parce que le seul
+     * moment où la résolution peut avoir lieu est à l'intérieur de la transaction
+     * — et que c'est ce fichier qui l'ouvre. La faire descendre depuis le service
+     * aurait exigé qu'il manipule une portée Prisma, ce qu'api-module §2 lui
+     * interdit précisément.
+     */
+    private readonly clients: ClientDirectoryService,
+  ) {}
 
   /**
    * Pose un rendez-vous dans l'établissement courant, ou refuse le créneau.
@@ -456,6 +480,19 @@ export class AppointmentsRepository {
    *
    * `taken` est une fabrique et non une instance : construire l'erreur d'avance
    * capturerait une pile d'appel qui ne désigne pas le site du refus.
+   *
+   * ## Un troisième cas de réessai, depuis #313 : la course sur la fiche cliente
+   *
+   * `ClientRecordRaceError` dit que deux réservations d'invité concurrentes ont
+   * créé la même fiche et que celle-ci a perdu. C'est le même genre d'échec qu'un
+   * interblocage — une course d'ordonnancement, jamais un refus métier — et il se
+   * traite de la même façon : recommencer, la tentative suivante trouvant la fiche
+   * que la gagnante vient d'écrire.
+   *
+   * Le réessai est **ici** et non dans `crm`, et il ne peut pas être ailleurs :
+   * une violation de contrainte abandonne la transaction côté PostgreSQL, si bien
+   * que rien ne peut plus être lu ni écrit dedans. Seul celui qui l'a ouverte peut
+   * la rejouer.
    */
   private async writingAgenda<T>(
     operation: () => Promise<T>,
@@ -470,12 +507,25 @@ export class AppointmentsRepository {
         if (isSlotExclusionViolation(error)) {
           throw taken();
         }
-        if (!isTransientWriteConflict(error) || attempt >= MAX_INSERT_ATTEMPTS) {
+        if (!this.worthRetrying(error) || attempt >= MAX_INSERT_ATTEMPTS) {
           throw error;
         }
         await backOff(attempt);
       }
     }
+  }
+
+  /**
+   * `true` si l'échec est une course d'ordonnancement que rejouer résout.
+   *
+   * Deux origines, une seule conduite : PostgreSQL a abattu la transaction
+   * (interblocage, échec de sérialisation), ou la fiche cliente a été créée
+   * ailleurs entre la lecture et l'écriture. Aucune des deux n'apprend quoi que ce
+   * soit sur l'agenda, et les traduire en 409 ferait perdre une réservation sur un
+   * créneau peut-être libre.
+   */
+  private worthRetrying(error: unknown): boolean {
+    return isTransientWriteConflict(error) || error instanceof ClientRecordRaceError;
   }
 
   /**
@@ -620,7 +670,21 @@ export class AppointmentsRepository {
    * dure une insertion et sert l'ordonnancement. Aucun des deux ne remplace la
    * contrainte (booking-engine §2).
    *
-   * Décision, mesures et conséquences : ADR 0006.
+   * ## La fiche cliente est résolue **dans cette transaction**, après le verrou
+   *
+   * C'est le second critère de #313 : « un 409 ne laisse aucune fiche derrière
+   * lui ». `ClientDirectoryService.resolveWithin` reçoit la portée `tx` et écrit
+   * dedans ; si la contrainte d'exclusion refuse l'insertion qui suit, le
+   * `ROLLBACK` emporte la fiche avec elle. Rien de tout cela n'est du code : c'est
+   * la transaction, exactement comme pour le report (`move`).
+   *
+   * L'ordre — verrou, puis fiche, puis rendez-vous — n'est pas indifférent. Le
+   * verrou d'abord, parce qu'il est ce qui sérialise les candidates à ce créneau
+   * et supprime le cycle d'attente (ADR 0006) ; une résolution posée avant lui
+   * ferait attendre sur l'index unique de `users` une transaction qui ne tient pas
+   * encore l'agenda, c'est-à-dire recréerait un ordre d'acquisition dépendant des
+   * données. La fiche ensuite, parce que `appointments.client_id` est `NOT NULL` :
+   * il faut la ligne avant de pouvoir la désigner.
    */
   private async insert(draft: AppointmentDraft): Promise<AppointmentRecord> {
     // La clé nomme les colonnes qu'elle sérialise. `staff_id` suffirait — un
@@ -638,9 +702,14 @@ export class AppointmentsRepository {
       // eslint-disable-next-line tenant/raw-sql-tenant-filter -- Ce SQL ne lit ni n'écrit aucune ligne : il prend un verrou consultatif dont la clé porte le tenant, transmis en paramètre lié (`agenda`). Il n'y a pas de `WHERE` à filtrer.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${agenda}::text, 0::bigint))`;
 
+      // L'écriture dans `users` appartient à `crm` (#313) : ce module la demande,
+      // il ne la fait plus. La portée passée est celle de cette transaction — la
+      // fiche et le rendez-vous sont donc validés, ou abandonnés, ensemble.
+      const clientId = await this.clients.resolveWithin(tx, draft.client);
+
       const row = await tx.appointment.create({
         data: withScopedTenant<Prisma.AppointmentUncheckedCreateInput>({
-          clientId: draft.clientId,
+          clientId,
           staffId: draft.staffId,
           serviceId: draft.serviceId,
           startsAt: draft.startsAt,
@@ -820,93 +889,5 @@ export class AppointmentsRepository {
     const tenant = await this.prisma.tenant.findFirst({ select: { timezone: true } });
 
     return tenant?.timezone ?? null;
-  }
-
-  /**
-   * La fiche cliente de ces coordonnées dans l'établissement courant — trouvée,
-   * ou créée sans compte.
-   *
-   * C'est ce qui rend vrai le quatrième critère de #37 : « un client peut
-   * réserver sans compte, avec seulement ses coordonnées ». La ligne écrite n'a
-   * **pas de `passwordHash`** — la colonne est nullable exactement pour cela — et
-   * n'ouvre donc aucune identité : rien à quoi se connecter, aucune session,
-   * aucun jeton. C'est une fiche de carnet d'adresses, pas un compte.
-   *
-   * ## Pourquoi l'adresse e-mail est la clé, et non un choix
-   *
-   * `@@unique([tenantId, email])` l'impose : deux fiches ne peuvent pas partager
-   * une adresse dans un même salon. Chercher avant d'écrire n'est donc pas une
-   * optimisation, c'est la seule conduite possible — et c'est aussi ce que le
-   * salon attend, une cliente qui revient devant garder un seul historique.
-   *
-   * ## Ce que cette méthode ne fait **pas** : mettre à jour
-   *
-   * Une fiche trouvée est rendue telle quelle. Le prénom, le nom et le téléphone
-   * envoyés par un visiteur non authentifié n'écrasent jamais ceux d'une fiche
-   * existante : sans cela, un appel public suffirait à réécrire le nom et le
-   * numéro de n'importe quelle cliente — ou d'un compte staff — dont on connaît
-   * l'adresse. La correction d'une fiche relève du back-office, sous garde.
-   *
-   * ## Pourquoi ce module écrit dans `users`
-   *
-   * Il ne le devrait pas : les fiches clientes appartiennent à `crm` (CDC §2.3),
-   * qui n'existe pas encore, et `identity` n'expose pas de porte pour cela —
-   * `IdentityModule` n'exporte ni son repository ni `UsersService`, délibérément.
-   * Ouvrir cette porte toucherait `identity.module.ts`, hors de l'empreinte de ce
-   * ticket. La résolution vit donc ici, isolée dans une seule méthode et derrière
-   * une seule signature, pour que `crm` la reprenne d'un déplacement plutôt que
-   * d'une réécriture. Voir l'issue de suivi ouverte par #37.
-   */
-  public async findOrCreateClient(contact: GuestContact): Promise<string> {
-    const existing = await this.findClientIdByEmail(contact.email);
-    if (existing !== null) {
-      return existing;
-    }
-
-    try {
-      const created = await this.prisma.user.create({
-        data: withScopedTenant<Prisma.UserUncheckedCreateInput>({
-          email: contact.email,
-          role: 'CLIENT',
-          // Aucun mot de passe : la fiche existe pour être jointe, pas pour se
-          // connecter. `AuthService` refuse déjà une identité sans empreinte.
-          passwordHash: null,
-          firstName: contact.firstName,
-          lastName: contact.lastName,
-          phone: contact.phone,
-        }),
-        select: { id: true },
-      });
-      return created.id;
-    } catch (error: unknown) {
-      // Deux réservations d'invité concurrentes sur la même adresse : la
-      // perdante relit la fiche que la gagnante vient d'écrire. Refuser ici
-      // rendrait un 500 sur un cas parfaitement normal — deux onglets, ou un
-      // double clic que le front n'a pas su désarmer.
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === UNIQUE_EMAIL_VIOLATION
-      ) {
-        const raced = await this.findClientIdByEmail(contact.email);
-        if (raced !== null) {
-          return raced;
-        }
-      }
-      throw error;
-    }
-  }
-
-  /**
-   * L'identifiant de la fiche portant cette adresse dans l'établissement
-   * courant, ou `null`.
-   *
-   * `findFirst` et non `findUnique`, pour la même raison que `findById` :
-   * l'extension injecte `tenantId` dans le `where`, et `findUnique` exige que le
-   * `where` désigne *exactement* une clé unique. Le filtre de tenant reste donc
-   * posé par l'extension, jamais recopié ici.
-   */
-  private async findClientIdByEmail(email: string): Promise<string | null> {
-    const row = await this.prisma.user.findFirst({ where: { email }, select: { id: true } });
-    return row?.id ?? null;
   }
 }

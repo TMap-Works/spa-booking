@@ -23,7 +23,9 @@ import { bookableSlot, createAppointmentsHarness, type AppointmentsHarness } fro
  * 3. le praticien de B, demandé sous le slug de A → **409**, indistinct d'un
  *    créneau pris ;
  * 4. la fiche cliente : la même adresse e-mail dans les deux salons donne
- *    **deux** fiches, jamais une partagée ;
+ *    **deux** fiches, jamais une partagée — et le refus d'une adresse de compte
+ *    du personnel (#313) est borné à l'établissement, faute de quoi il dirait qui
+ *    travaille chez le voisin ;
  * 5. **sans praticien demandé** — l'option « premier disponible » (#36) : c'est
  *    le serveur qui choisit, et son choix ne doit jamais tomber sur un praticien
  *    du voisin. Aucun identifiant fautif ne traverse alors l'API : la fuite
@@ -133,6 +135,36 @@ describe('Isolation inter-tenant — réservation publique', () => {
     expect(harness.appointments.clients.map((client) => client.tenantId).sort()).toEqual(
       [harness.a.tenant.id, harness.b.tenant.id].sort(),
     );
+  });
+
+  it('ne laisse pas le compte du personnel d’un voisin bloquer une réservation ici', async () => {
+    // Le refus de #313 est **borné à l'établissement** : il vient d'une lecture
+    // que l'extension Prisma scope au tenant courant. Une gérante du salon voisin
+    // qui porte cette adresse n'a donc aucun effet ici — et la déduire d'un refus
+    // rendu chez le voisin serait une fuite inter-tenant.
+    harness.appointments.seedClient({
+      tenantId: harness.b.tenant.id,
+      email: GUEST.email,
+      role: 'MANAGER',
+    });
+
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .send({
+        serviceId: harness.a.serviceId,
+        staffId: harness.a.staffId,
+        startsAt: slot.startsAt.toISOString(),
+        client: GUEST,
+      });
+
+    expect(response.status).toBe(201);
+    // Une fiche neuve chez A, et le compte du voisin intact.
+    const here = harness.appointments.clients.filter(
+      (client) => client.tenantId === harness.a.tenant.id,
+    );
+    expect(here).toHaveLength(1);
+    expect(here[0]?.id).toBe(response.body.clientId);
+    expect(here[0]?.role).toBe('CLIENT');
   });
 
   it('laisse deux établissements réserver le même instant sans se gêner', async () => {

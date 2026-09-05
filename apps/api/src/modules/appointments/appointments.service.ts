@@ -121,6 +121,24 @@ import { SlotLockService } from './slot-lock.service';
  * annulations concurrentes ne peuvent pas se donner le même quoi que ce soit —
  * c'est l'écriture conditionnelle du repository qui les départage.
  *
+ * ## La fiche cliente ne se résout plus ici — #313
+ *
+ * `book` appelait `AppointmentsRepository.findOrCreateClient` avant de composer
+ * son brouillon, et repartait avec un identifiant. Deux défauts en découlaient, et
+ * ils se corrigeaient au même endroit : ce module écrivait dans `users`, table
+ * d'un autre domaine (api-module §3), et il l'écrivait dans une **transaction
+ * distincte** de celle qui pose le rendez-vous — si bien qu'un 409 de créneau
+ * laissait la fiche derrière lui.
+ *
+ * Le brouillon porte désormais les coordonnées, et c'est le repository qui
+ * demande la fiche à `crm`, à l'intérieur de sa propre transaction. Ce service
+ * n'a plus rien à savoir de la clientèle : ni sa table, ni son rôle, ni son
+ * unicité.
+ *
+ * Une conséquence visible dans le contrat : une adresse portée par un compte du
+ * personnel sort en 409 `CLIENT_EMAIL_NOT_BOOKABLE`, décision de `crm` que ce
+ * service laisse passer telle quelle.
+ *
  * ## Ce que ce module ne pose toujours pas
  *
  * La création au comptoir par le staff (#50) : hors de l'annulation de
@@ -215,12 +233,13 @@ export class AppointmentsService {
 
     const candidates = await this.offeredStaffAt(input, now);
 
-    const clientId = await this.repository.findOrCreateClient(input.client);
-
     const occupied = occupiedRange(input.startsAt, service);
 
     const record = await this.insertWithFirstFree(candidates, input, (staffId) => ({
-      clientId,
+      // Les coordonnées, et non un identifiant de fiche : la résolution a lieu
+      // dans la transaction d'insertion, chez `crm` (#313). C'est ce qui fait
+      // qu'un créneau refusé ne laisse aucune fiche au fichier du salon.
+      client: input.client,
       staffId,
       serviceId: input.serviceId,
       ...occupied,

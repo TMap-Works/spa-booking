@@ -33,9 +33,23 @@ export interface Money {
  * `startsAt` et `endsAt` sont des instants UTC. La durée réellement occupée —
  * soin plus tampons de part et d'autre — est calculée en amont par le moteur de
  * disponibilité (#34) : ce module reçoit l'intervalle, il ne le devine pas.
+ *
+ * ## Des **coordonnées**, et non un `clientId` (#313)
+ *
+ * Jusqu'à #313, le service résolvait la fiche cliente avant de composer ce
+ * brouillon, et n'y posait qu'un identifiant. C'était une écriture publique dans
+ * `users` **validée avant** l'insertion du rendez-vous : la perdante d'une course
+ * pour un créneau repartait avec un 409 et laissait sa fiche au fichier du salon.
+ *
+ * Porter les coordonnées jusqu'ici est ce qui permet au repository de résoudre la
+ * cliente **dans la transaction** qui pose le rendez-vous — donc de tout perdre
+ * d'un même `ROLLBACK`. Le prix est que ce type transporte une donnée personnelle
+ * de plus ; il ne quitte jamais le module, et rien de ce qu'il porte ne ressort
+ * dans `AppointmentRecord`.
  */
 export interface AppointmentDraft {
-  readonly clientId: string;
+  /** Les coordonnées de la cliente — résolues en fiche dans la transaction. */
+  readonly client: GuestContact;
   readonly staffId: string;
   readonly serviceId: string;
   readonly startsAt: Date;

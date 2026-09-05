@@ -16,6 +16,7 @@ réservation, est tenu.
 | #38 | **Le verrou Redis de créneau** — `SlotLockService`, un `SET NX EX` court autour des deux écritures qui prennent un créneau |
 | #47 | **L'historique de la cliente connectée** — `GET /appointments/mine`, deux moitiés et un plafond |
 | #317 | **La note interne suit le report** — recopiée par le repository, jamais relue ni servie |
+| #313 | **La fiche cliente vient de `crm`** — ce module n'écrit plus dans `users`, et la résolution partage la transaction de l'insertion |
 
 ## Les routes
 
@@ -242,6 +243,57 @@ gardée par un rôle — jamais un champ de plus sur la vue publique.
 | verrou Redis `slot:{tenant}:{staff}:{instant}` | **Confort d'interface.** Évite de donner à deux personnes le créneau affiché — ne garantit rien, et une panne de Redis le retire sans rien refuser (#38, ADR 0002) |
 | contrôle de disponibilité | Refuse un créneau que le calendrier ne proposait pas — jour de fermeture, congé, préavis. Ne dit rien de l'unicité |
 | cache de disponibilité | **Jamais lu ici.** `AvailabilityModule` n'exporte pas `AvailabilityQueryService` : un cache périmé ne peut pas faire réserver un créneau pris (#35) |
+
+## La fiche cliente ne s'écrit plus ici (#313)
+
+Réserver sans compte suppose une ligne `users` — `appointments.client_id` est
+`NOT NULL`. `AppointmentsRepository.findOrCreateClient` l'écrivait lui-même
+depuis #37, faute de porte : `crm` n'existait pas, et `identity` n'exporte ni son
+repository ni `UsersService`. C'était la table d'un autre domaine écrite par un
+module qui ne la possède pas (api-module §3).
+
+`CrmModule` exporte désormais `ClientDirectoryService`, et c'est le **repository**
+de ce module qui l'appelle — pas le service. La raison est l'atomicité : le seul
+moment où la résolution peut avoir lieu est à l'intérieur de la transaction
+d'insertion, et c'est le repository qui l'ouvre. La faire descendre depuis le
+service aurait exigé qu'il manipule une portée Prisma, ce qu'api-module §2 lui
+interdit.
+
+### L'ordre dans la transaction, et pourquoi il est celui-là
+
+```
+BEGIN
+  pg_advisory_xact_lock(agenda du praticien)     ← ordonne les candidates (ADR 0006)
+  crm.resolveWithin(tx, coordonnées)             ← la fiche, trouvée ou créée
+  INSERT INTO appointments …                     ← jugé par appointments_no_overlap
+COMMIT   -- ou ROLLBACK, qui emporte les deux
+```
+
+Le verrou d'abord : il supprime le cycle d'attente, et une résolution posée avant
+lui ferait attendre sur l'index unique de `users` une transaction qui ne tient pas
+encore l'agenda — un ordre d'acquisition dicté par les données, c'est-à-dire ce
+que le verrou existe pour supprimer. La fiche ensuite, parce qu'il faut la ligne
+avant de pouvoir la désigner.
+
+**Ce que cela change pour l'appelant** : un 409 de créneau ne laisse plus de fiche
+derrière lui. Ce n'est pas du code, c'est le `ROLLBACK` — exactement comme
+l'atomicité du report. `test/appointments-exclusion.integration-spec.ts` le prouve
+contre un vrai PostgreSQL ; aucun double en mémoire ne le pourrait.
+
+### Deux refus nouveaux sur la route publique
+
+| Situation | Réponse |
+|---|---|
+| l'adresse porte un compte `STAFF`/`MANAGER`/`ADMIN` | 409 `CLIENT_EMAIL_NOT_BOOKABLE` — décision de `crm`, laissée passer telle quelle |
+| deux réservations concurrentes créent la même fiche | rejouée par `writingAgenda`, trois tentatives au plus ; épuisées, un 500 |
+
+La seconde ligne suit l'arbitrage de l'interblocage : une course d'ordonnancement
+se rejoue, elle ne se maquille pas en refus métier. Elle ne peut pas être rattrapée
+dans `crm` — une violation de contrainte abandonne la transaction côté PostgreSQL,
+et seul celui qui l'a ouverte peut la rejouer.
+
+Le détail des deux décisions produit, et ce qu'elles coûtent, est dans le
+[README de `crm`](../crm/README.md).
 
 ## Le verrou Redis de créneau (#38)
 

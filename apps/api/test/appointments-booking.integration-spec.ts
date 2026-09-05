@@ -25,7 +25,9 @@ import {
  * 3. la durée **enregistrée** inclut les deux tampons, alors que la réponse rend
  *    l'intervalle facturé ;
  * 4. un créneau déjà pris sort en 409 `SLOT_NO_LONGER_AVAILABLE` ;
- * 5. réserver sans compte crée la fiche cliente, et une seule ;
+ * 5. réserver sans compte crée la fiche cliente, et une seule — et un créneau
+ *    refusé n'en laisse aucune derrière lui, tandis qu'une adresse portée par un
+ *    compte du personnel sort en 409 nommé plutôt qu'en 500 (#313) ;
  * 6. l'événement `appointment.created` part réellement ;
  * 7. le corps rendu porte **exactement** les champs de `bookedAppointmentSchema`
  *    — le contrat partagé décrit ce que cette route sert, et le doublon des deux
@@ -220,6 +222,57 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
       startsAt: slot.startsAt.toISOString(),
     });
     expect(harness.appointments.appointments).toHaveLength(1);
+    // La perdante n'a laissé **aucune** fiche : la seule au fichier est celle de
+    // la réservation qui a abouti (#313). Avant, la résolution était validée
+    // avant l'insertion, et chaque course perdue déposait une fiche publique sans
+    // rendez-vous.
+    expect(harness.appointments.clients).toHaveLength(1);
+    expect(harness.appointments.clients[0]?.email).toBe('camille@example.test');
+  });
+
+  it('refuse en 409 CLIENT_EMAIL_NOT_BOOKABLE une adresse de compte du personnel', async () => {
+    // La décision produit de #313, vue de l'extérieur : la réservation publique ne
+    // s'accroche jamais à un compte `MANAGER`/`ADMIN`, et le refus est un 409
+    // nommé — jamais le 500 qu'un `P2002` nu produirait.
+    harness.appointments.seedClient({
+      tenantId: harness.a.tenant.id,
+      email: 'gerante@example.test',
+      role: 'MANAGER',
+    });
+
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .send(body({ client: guest({ email: 'gerante@example.test' }) }));
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      code: 'CLIENT_EMAIL_NOT_BOOKABLE',
+      details: {},
+    });
+    // Le corps d'erreur ne renvoie pas l'adresse : c'est une donnée personnelle,
+    // et celui qui vient de la saisir la connaît déjà (CDC §5.1).
+    expect(JSON.stringify(response.body)).not.toContain('gerante@example.test');
+    expect(harness.appointments.appointments).toHaveLength(0);
+    // Aucune seconde fiche : le compte de la gérante reste seul.
+    expect(harness.appointments.clients).toHaveLength(1);
+  });
+
+  it('réserve normalement sous une adresse déjà cliente — le refus ne vise que le personnel', async () => {
+    // Le pendant du cas précédent, et ce qui borne l'information que le refus
+    // laisse deviner : une adresse **cliente** rend 201, exactement comme une
+    // adresse inconnue. La route ne dit donc rien du fichier client du salon.
+    const known = harness.appointments.seedClient({
+      tenantId: harness.a.tenant.id,
+      email: 'camille@example.test',
+    });
+
+    const response = await request(harness.server())
+      .post(BOOKING_PATH(harness.a.tenant.slug))
+      .send(body());
+
+    expect(response.status).toBe(201);
+    expect(response.body.clientId).toBe(known.id);
+    expect(harness.appointments.clients).toHaveLength(1);
   });
 
   it('refuse en 409 un instant que le calendrier ne propose pas', async () => {
