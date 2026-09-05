@@ -110,6 +110,25 @@ export const MAX_PAGE_SIZE = 100;
 export const MAX_AVAILABILITY_RANGE_DAYS = 31;
 
 /**
+ * Fenêtre maximale de l'agenda du back-office, en jours (#444).
+ *
+ * Même valeur que `MAX_AVAILABILITY_RANGE_DAYS`, et une raison différente : là
+ * où la disponibilité borne un **calcul**, celle-ci borne une **réponse**. Une
+ * semaine de comptoir porte plusieurs centaines de rendez-vous, chacun servi
+ * avec sa cliente, son praticien et sa prestation ; une plage non bornée
+ * laisserait donc l'appelant décider seul du volume qu'on lui renvoie.
+ *
+ * Trente et un jours couvrent la vue mois d'un calendrier, qui est la plus large
+ * qu'un back-office affiche — les vues jour et semaine du CDC §1.4 tiennent
+ * largement dessous. Au-delà, la plage se demande en deux appels.
+ *
+ * Elle est déclarée séparément plutôt que réutilisée : les deux bornes ne
+ * protègent pas la même chose, et le jour où l'une bougera, l'autre n'aura
+ * aucune raison de la suivre.
+ */
+export const MAX_APPOINTMENT_RANGE_DAYS = 31;
+
+/**
  * Pas de découpage des créneaux proposés, en minutes (#34).
  *
  * `tenants.slot_interval_minutes` porte la valeur, ces trois constantes portent

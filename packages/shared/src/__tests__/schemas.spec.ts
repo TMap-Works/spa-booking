@@ -580,6 +580,47 @@ describe('appointments', () => {
     expect(appointmentListQuerySchema.safeParse({ statuses: [] }).success).toBe(false);
     expect(appointmentListQuerySchema.safeParse({ from: '2026-02-31' }).success).toBe(false);
   });
+
+  it('borne la plage de l’agenda à MAX_APPOINTMENT_RANGE_DAYS, bornes comprises', () => {
+    // 1er mars + 30 jours = 31 mars : exactement trente et une journées (#444).
+    expect(
+      appointmentListQuerySchema.safeParse({ from: '2026-03-01', to: '2026-03-31' }).success,
+    ).toBe(true);
+    expect(
+      appointmentListQuerySchema.safeParse({ from: '2026-03-01', to: '2026-04-01' }).success,
+    ).toBe(false);
+  });
+
+  it('refuse une plage d’agenda inversée', () => {
+    expect(
+      appointmentListQuerySchema.safeParse({ from: '2026-03-09', to: '2026-03-03' }).success,
+    ).toBe(false);
+  });
+
+  it('laisse passer une borne d’agenda seule — c’est le serveur qui complète', () => {
+    // « Aujourd'hui » n'a de sens que dans le fuseau de l'établissement, que le
+    // contrat ne connaît pas : la garde ne porte donc que sur le couple
+    // effectivement fourni.
+    expect(appointmentListQuerySchema.safeParse({ from: '2026-03-03' }).success).toBe(true);
+    expect(appointmentListQuerySchema.safeParse({ to: '2026-03-03' }).success).toBe(true);
+    expect(appointmentListQuerySchema.safeParse({}).success).toBe(true);
+  });
+
+  it('lit la ligne d’agenda quelle que soit la casse du statut émis', () => {
+    // L'API émet `PENDING`, la casse de l'énumération PostgreSQL ; le contrat
+    // nomme le même statut `pending` (#444). La normalisation se fait ici, une
+    // fois, exactement comme pour `bookedAppointmentSchema` — sans quoi tout un
+    // agenda cesserait de se lire sur la casse d'une chaîne.
+    const parsed = appointmentSchema.shape.status.safeParse('PENDING');
+
+    expect(parsed.success).toBe(true);
+    expect(parsed.success && parsed.data).toBe('pending');
+    // Le vocabulaire du contrat reste accepté tel quel : les deux formes
+    // convergent sur la même valeur.
+    expect(appointmentSchema.shape.status.safeParse('pending').success).toBe(true);
+    // Ce qui n'est pas un statut reste refusé, casse ou pas.
+    expect(appointmentSchema.shape.status.safeParse('ARCHIVED').success).toBe(false);
+  });
 });
 
 describe('availability', () => {

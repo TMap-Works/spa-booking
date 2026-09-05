@@ -8,6 +8,8 @@ import { OCCUPYING_STATUSES, occupiesSlot } from './appointment-status';
 import { isSlotExclusionViolation, isTransientWriteConflict } from './appointments.conflicts';
 import { SlotNoLongerAvailableError } from './appointments.errors';
 import type {
+  AgendaAppointmentRecord,
+  AgendaQuery,
   AppointmentDraft,
   AppointmentRecord,
   CancelDraft,
@@ -119,6 +121,56 @@ const RESCHEDULE_SOURCE_SELECT = {
 } as const;
 
 /**
+ * Ce que l'**agenda du back-office** lit d'une ligne — la frontière commune,
+ * plus ce qu'un comptoir affiche et que le parcours public ne doit pas voir
+ * (#444).
+ *
+ * Trois ajouts, et chacun a sa raison :
+ *
+ * - les trois *summaries*, par **jointure sur la même requête**. C'est la
+ *   conduite de `VISIT_SELECT` du CRM, et pour le même motif : un agenda affiche
+ *   « Camille — Massage 60 min », et résoudre les noms ligne par ligne ferait
+ *   N+1 lectures sur un écran qui en montre plusieurs centaines. Le tampon avant
+ *   de la prestation voyage avec elle — il ne sort jamais, il sert à retrouver
+ *   l'intervalle facturé depuis l'occupé ;
+ * - `staffNote`, la note interne du praticien. C'est la « sortie distincte,
+ *   gardée par un rôle » qu'annonce l'en-tête de `RESCHEDULE_SOURCE_SELECT`
+ *   (#317), et c'est exactement pourquoi elle n'entre pas dans
+ *   `APPOINTMENT_SELECT` : celui-là sert six lectures, dont l'historique public
+ *   de #47 ;
+ * - `createdAt`, obligatoire dans `appointmentSchema` du contrat.
+ *
+ * ## L'isolation de la jointure ne tient pas à ce `select`
+ *
+ * Elle tient au schéma. `$allOperations` n'intercepte que l'opération de premier
+ * niveau : les relations lues ici ne repassent pas par l'extension. Ce sont les
+ * clés étrangères composites `(tenant_id, client_id)`, `(tenant_id, staff_id)` et
+ * `(tenant_id, service_id)` de la migration initiale qui interdisent qu'une
+ * ligne d'un salon en désigne une d'un autre — donc que le parcours sorte du
+ * tenant. La même dépendance explicite que celle du CRM, et
+ * `prisma-schema.spec.ts` la tient.
+ */
+const AGENDA_SELECT = {
+  ...APPOINTMENT_SELECT,
+  staffNote: true,
+  createdAt: true,
+  client: { select: { id: true, firstName: true, lastName: true } },
+  staff: { select: { id: true, displayName: true } },
+  service: {
+    select: {
+      id: true,
+      name: true,
+      durationMinutes: true,
+      bufferBeforeMinutes: true,
+      priceAmountMinor: true,
+      priceCurrency: true,
+    },
+  },
+} as const;
+
+type AgendaRow = Prisma.AppointmentGetPayload<{ select: typeof AGENDA_SELECT }>;
+
+/**
  * Charge utile de création **sans** le tenant, tel que le repository l'écrit.
  *
  * Même conversion, et pour la même raison, que dans `catalog.repository.ts` : le
@@ -171,6 +223,27 @@ const UNIQUE_EMAIL_VIOLATION = 'P2002';
 async function backOff(attempt: number): Promise<void> {
   const base = 20 * attempt;
   await new Promise((resolve) => setTimeout(resolve, base + Math.random() * base));
+}
+
+/** Une ligne d'agenda, *summaries* et note interne comprises (#444). */
+function toAgendaRecord(row: AgendaRow): AgendaAppointmentRecord {
+  return {
+    ...toRecord(row),
+    client: row.client,
+    staff: row.staff,
+    service: {
+      id: row.service.id,
+      name: row.service.name,
+      durationMinutes: row.service.durationMinutes,
+      bufferBeforeMinutes: row.service.bufferBeforeMinutes,
+      // Le tarif **courant** du catalogue, à ne pas confondre avec le prix figé
+      // que `toRecord` vient de poser sur la ligne : les deux voyagent côte à
+      // côte, et le second seul est ce que la cliente doit.
+      price: { amountMinor: row.service.priceAmountMinor, currency: row.service.priceCurrency },
+    },
+    staffNote: row.staffNote,
+    createdAt: row.createdAt,
+  };
 }
 
 /** Une ligne, sous la forme que le module manipule. */
@@ -663,6 +736,90 @@ export class AppointmentsRepository {
     });
 
     return rows.map(toRecord);
+  }
+
+  /**
+   * L'agenda de l'établissement courant sur une fenêtre d'instants (#444).
+   *
+   * ## Le prédicat est une **intersection**, pas un « commence dans la plage »
+   *
+   * `startsAt < window.to && endsAt > window.from` — bornes `[)`, le même
+   * prédicat que la contrainte d'exclusion. Ce n'est pas un raffinement : la base
+   * stocke l'intervalle **occupé**, tampons compris, et la réponse rend
+   * l'intervalle facturé. Un soin de 00:05 occupe donc l'agenda depuis 23:55 la
+   * veille, et un filtre sur le seul début de ligne l'aurait fait disparaître de
+   * la journée où le comptoir l'attend. Une réservation à cheval sur deux jours
+   * apparaît, pour la même raison, dans les deux.
+   *
+   * ## Les filtres sont posés tels quels, et aucun n'est un `if` de sécurité
+   *
+   * `staffId`, `clientId`, `serviceId` et `statuses` ne restreignent qu'à
+   * l'intérieur de ce qui est **déjà** borné au tenant par l'extension. Un
+   * identifiant d'un autre établissement ne rend donc pas une erreur : il ne
+   * correspond à aucune ligne, et la réponse est vide. C'est le comportement
+   * voulu — un 403 ou un 404 sur un filtre confirmerait l'existence de la
+   * ressource visée (tenant-isolation §4), et ferait de cette route une sonde
+   * d'annuaire.
+   *
+   * `undefined` plutôt qu'une clé posée à `null` : sur `staffId`, Prisma lirait
+   * un `null` comme « les lignes dont le praticien est nul », qui n'existent pas
+   * — la colonne est `NOT NULL`. La différence entre « pas de filtre » et « aucun
+   * résultat » se joue là.
+   *
+   * ## L'ordre est total, et il l'est délibérément
+   *
+   * `(startsAt, id)`. Sans le second critère, PostgreSQL ne garantit aucun ordre
+   * entre deux rendez-vous qui commencent au même instant — deux praticiens à
+   * 10:00, le cas le plus banal d'un salon —, et la grille du calendrier
+   * réordonnerait ses colonnes d'un rafraîchissement à l'autre.
+   *
+   * ## Ce que cette méthode ne prend pas en paramètre
+   *
+   * Le tenant, comme toutes les lectures de ce fichier :
+   * `@@index([tenantId, startsAt])` sert exactement le couple que l'extension
+   * produit.
+   */
+  public async listAgenda(query: AgendaQuery): Promise<AgendaAppointmentRecord[]> {
+    const rows = await this.prisma.appointment.findMany({
+      where: {
+        startsAt: { lt: query.to },
+        endsAt: { gt: query.from },
+        ...(query.staffId === null ? {} : { staffId: query.staffId }),
+        ...(query.clientId === null ? {} : { clientId: query.clientId }),
+        ...(query.serviceId === null ? {} : { serviceId: query.serviceId }),
+        ...(query.statuses === null ? {} : { status: { in: [...query.statuses] } }),
+      },
+      select: AGENDA_SELECT,
+      orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
+    });
+
+    return rows.map(toAgendaRecord);
+  }
+
+  /**
+   * Le fuseau de l'établissement courant — `null` s'il n'existe pas.
+   *
+   * `Tenant` est scopé par l'extension **sur son `id`** : cette lecture ne peut
+   * rendre que l'établissement de la requête, et il n'y a aucun paramètre par
+   * lequel en désigner un autre.
+   *
+   * ## Pourquoi cette lecture est ici et non derrière un appel de service
+   *
+   * Parce qu'aucun module n'ouvre la porte. `IdentityModule` n'exporte pas
+   * `TenantSettingsService`, `AvailabilityModule` n'exporte pas son repository —
+   * seul `TenantClockService` en sort, et il **convertit** un fuseau, il ne le
+   * lit pas. Le rendre public relève du module qui le possède, pas de celui-ci.
+   *
+   * Ce qui reste est une **lecture** d'une table que ce module ne possède pas,
+   * exactement comme `AvailabilityRepository.currentTimeZone` en fait une :
+   * elle ne crée ni ne modifie rien, et ne porte sur qu'une seule colonne. Le
+   * jour où `identity` exposera « le fuseau de l'établissement courant », cette
+   * lecture deviendra cet appel, et rien d'autre ne bougera.
+   */
+  public async currentTimeZone(): Promise<string | null> {
+    const tenant = await this.prisma.tenant.findFirst({ select: { timezone: true } });
+
+    return tenant?.timezone ?? null;
   }
 
   /**

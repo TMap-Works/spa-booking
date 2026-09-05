@@ -95,6 +95,18 @@ export const BOOKING_ERROR_CODES = {
   /** Plage de disponibilité trop large — voir `MAX_AVAILABILITY_RANGE_DAYS`. */
   AVAILABILITY_RANGE_TOO_WIDE: 'AVAILABILITY_RANGE_TOO_WIDE',
   /**
+   * Plage de l'agenda de back-office trop large, ou inversée — voir
+   * `MAX_APPOINTMENT_RANGE_DAYS` (#444). **422** : chaque date est bien écrite,
+   * c'est leur écart qui n'est pas servable.
+   *
+   * Distinct d'`AVAILABILITY_RANGE_TOO_WIDE` parce que les deux plages ne
+   * bornent pas la même chose — un calcul de créneaux d'un côté, le volume d'une
+   * liste de rendez-vous de l'autre — et qu'un front qui les confondrait
+   * afficherait « aucun créneau disponible » là où il faut réduire la fenêtre du
+   * calendrier.
+   */
+  APPOINTMENT_RANGE_TOO_WIDE: 'APPOINTMENT_RANGE_TOO_WIDE',
+  /**
    * Plage bloquée ou congé dont les bornes ne tiennent pas : fin avant début,
    * ou fenêtre au-delà de `MAX_TIME_OFF_RANGE_DAYS` (#33). **422**.
    *

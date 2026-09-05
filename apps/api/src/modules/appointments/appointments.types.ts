@@ -274,6 +274,187 @@ export interface ClientAppointmentsQuery {
   readonly limit: number;
 }
 
+// ---------------------------------------------------------------------------
+// L'agenda du back-office — #444
+// ---------------------------------------------------------------------------
+
+/**
+ * Ce que l'agenda du comptoir demande, tel que le **service** le reçoit (#444).
+ *
+ * Les bornes sont des **dates civiles de l'établissement** et non des instants :
+ * un agenda se consulte « du 3 au 9 mars » dans le calendrier du salon. La
+ * conversion vers les instants UTC de la lecture se fait dans le service, avec
+ * `tenants.timezone` — c'est le seul endroit qui le connaisse, et laisser
+ * l'appelant envoyer des instants reviendrait à le laisser décider où commence
+ * la journée du salon (`appointmentListQuerySchema` de `@spa/shared`).
+ *
+ * Les deux sont **facultatives** : absentes, le service sert la journée courante
+ * de l'établissement. C'est lui qui complète, parce que « aujourd'hui » n'a de
+ * sens que dans un fuseau.
+ *
+ * **Aucun `tenantId`**, pour la raison structurelle qui vaut partout dans ce
+ * module : c'est l'extension Prisma qui le pose depuis le contexte de requête.
+ * Un `clientId` figure en revanche parmi les filtres, et c'est délibéré — cette
+ * surface vit derrière `@AuthAtLeast('STAFF')`, à la différence de l'historique
+ * de #47 où le client vient du jeton et de nulle part d'autre.
+ */
+export interface ListAgendaInput {
+  /** Premier jour de la plage, borne comprise, ou `null` pour aujourd'hui. */
+  readonly from: string | null;
+  /** Dernier jour de la plage, borne comprise, ou `null` pour `from`. */
+  readonly to: string | null;
+  readonly staffId: string | null;
+  readonly clientId: string | null;
+  readonly serviceId: string | null;
+  /** Statuts retenus, ou `null` pour tous — jamais une liste vide. */
+  readonly statuses: readonly AppointmentStatus[] | null;
+}
+
+/**
+ * Ce que le repository lit pour un agenda — la fenêtre **en instants**, et les
+ * filtres tels quels (#444).
+ *
+ * La fenêtre est déjà résolue : les dates civiles ont été converties par le
+ * service, qui seul connaît le fuseau. Le repository ne fait donc aucune
+ * arithmétique de calendrier, ce qui est ce qui empêche un jour de changement
+ * d'heure de perdre une heure d'agenda.
+ *
+ * `to` est la borne **haute exclue** — le minuit du salon qui suit le dernier
+ * jour demandé, tel que `TenantClockService.dayRange` le rend.
+ */
+export interface AgendaQuery {
+  readonly from: Date;
+  readonly to: Date;
+  readonly staffId: string | null;
+  readonly clientId: string | null;
+  readonly serviceId: string | null;
+  readonly statuses: readonly AppointmentStatus[] | null;
+}
+
+/** La cliente d'une ligne d'agenda — `userSummarySchema` de `@spa/shared`. */
+export interface AgendaClientSummary {
+  readonly id: string;
+  readonly firstName: string;
+  readonly lastName: string;
+}
+
+/** Le praticien d'une ligne d'agenda — `staffMemberSummarySchema`. */
+export interface AgendaStaffSummary {
+  readonly id: string;
+  readonly displayName: string;
+}
+
+/**
+ * La prestation d'une ligne d'agenda — `serviceSummarySchema`, plus le tampon
+ * avant.
+ *
+ * `bufferBeforeMinutes` n'appartient pas au *summary* du contrat et n'est jamais
+ * rendu : il sert à retrouver l'intervalle **facturé** depuis l'intervalle
+ * occupé qui est en base, exactement comme `billedView` le fait ailleurs dans ce
+ * module. Le lire sur la même requête est ce qui évite une lecture du catalogue
+ * par ligne d'agenda.
+ *
+ * `price` est le tarif **courant** du catalogue, pas celui figé sur le
+ * rendez-vous : les deux voyagent côte à côte dans la réponse, et les confondre
+ * ferait afficher au comptoir un montant que la cliente ne doit pas.
+ */
+export interface AgendaServiceSummary {
+  readonly id: string;
+  readonly name: string;
+  readonly durationMinutes: number;
+  readonly bufferBeforeMinutes: number;
+  readonly price: Money;
+}
+
+/**
+ * Une ligne d'agenda, telle que le repository la rend (#444).
+ *
+ * Élargit `AppointmentRecord` de ce que seule cette lecture demande, et de rien
+ * d'autre :
+ *
+ * - les trois *summaries*, lues par jointure sur la même requête. Un agenda
+ *   affiche des noms, et les résoudre ligne par ligne ferait N+1 requêtes sur un
+ *   écran qui en montre plusieurs centaines ;
+ * - `staffNote`, la note interne du praticien. C'est la « sortie distincte,
+ *   gardée par un rôle » qu'annonçait déjà `RESCHEDULE_SOURCE_SELECT` (#317) :
+ *   elle ne peut pas entrer dans `AppointmentRecord`, qui sert aussi le parcours
+ *   public ;
+ * - `createdAt`, que `appointmentSchema` du contrat rend obligatoire — c'est ce
+ *   qui permet au comptoir de distinguer une réservation de la veille d'une
+ *   ligne posée à l'instant.
+ *
+ * Toujours pas de `tenantId` : il n'apporte rien à l'appelant et invite aux
+ * essais (tenant-isolation §4).
+ */
+export interface AgendaAppointmentRecord extends AppointmentRecord {
+  readonly client: AgendaClientSummary;
+  readonly staff: AgendaStaffSummary;
+  readonly service: AgendaServiceSummary;
+  /** Note interne du praticien, `null` quand il n'y en a pas. */
+  readonly staffNote: string | null;
+  readonly createdAt: Date;
+}
+
+/**
+ * Une ligne d'agenda telle que l'API la rend — `appointmentSchema` de
+ * `@spa/shared`, champ pour champ (#444).
+ *
+ * ## Pourquoi une seconde vue, alors qu'`AppointmentView` existe
+ *
+ * Parce qu'elles ne servent pas les mêmes appelants, et que le contrat partagé
+ * les distingue déjà : `AppointmentView` est ce que le **parcours public**
+ * reçoit — des identifiants, jamais des noms, jamais de note interne, jamais le
+ * motif d'annulation. Celle-ci est la ligne de comptoir : elle imbrique les
+ * *summaries* parce qu'un agenda affiche « Camille — Massage 60 min », et elle
+ * porte la note interne et le motif parce que la route vit derrière
+ * `@AuthAtLeast('STAFF')`.
+ *
+ * Fondre les deux aurait fait sortir la note interne du praticien sur la route
+ * publique de réservation le jour où quelqu'un l'aurait ajoutée à la vue
+ * commune — précisément ce que l'en-tête d'`AppointmentView` interdit.
+ *
+ * ## Les champs facultatifs sont **absents**, jamais `null`
+ *
+ * `appointmentSchema` les déclare `.optional()` et non `.nullable()` : un `null`
+ * explicite y échouerait. C'est pourquoi cette forme les déclare `?` — la
+ * sérialisation JSON omet alors la clé, ce qui est exactement ce que le contrat
+ * décrit. La sortie publique fait l'inverse, `nullable`, et c'est le contrat qui
+ * en décide, pas ce module.
+ *
+ * ## `startsAt` / `endsAt` sont l'intervalle **facturé**
+ *
+ * Comme partout ailleurs dans ce module : la base stocke l'intervalle occupé —
+ * tampons compris, parce que c'est cela que la contrainte d'exclusion doit
+ * comparer —, la réponse rend le soin. Un agenda qui afficherait 09:50–11:10
+ * pour un massage de 10:00 à 11:00 ferait apparaître la cadence interne du salon
+ * comme si c'était l'heure du rendez-vous.
+ */
+export interface AgendaAppointmentView {
+  readonly id: string;
+  readonly status: AppointmentStatus;
+  readonly client: AgendaClientSummary;
+  readonly staff: AgendaStaffSummary;
+  readonly service: {
+    readonly id: string;
+    readonly name: string;
+    readonly durationMinutes: number;
+    readonly price: Money;
+  };
+  /** Début du **soin**, en ISO 8601 UTC. */
+  readonly startsAt: string;
+  /** Fin du **soin**, en ISO 8601 UTC. */
+  readonly endsAt: string;
+  /** Prix figé à la réservation — jamais relu du catalogue. */
+  readonly price: Money;
+  readonly clientNote?: string;
+  /** Note interne du praticien — **jamais** servie au parcours public (#317). */
+  readonly staffNote?: string;
+  readonly cancelledAt?: string;
+  readonly cancellationReason?: string;
+  readonly rescheduledFromId?: string;
+  readonly createdAt: string;
+}
+
 /**
  * Le rendez-vous tel que l'API le rend.
  *
