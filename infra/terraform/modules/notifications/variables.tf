@@ -298,3 +298,226 @@ variable "kms_deletion_window_in_days" {
     error_message = "kms_deletion_window_in_days doit être compris entre 7 et 30 jours."
   }
 }
+
+variable "kms_data_key_reuse_period_seconds" {
+  description = "Durée pendant laquelle SQS réemploie une clé de données avant d'en redemander une à KMS. Cinq minutes par défaut : au minimum d'une minute, chaque message ou presque déclencherait un appel KMS facturé ; au maximum de vingt-quatre heures, une clé compromise resterait utilisable trop longtemps."
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = var.kms_data_key_reuse_period_seconds >= 60 && var.kms_data_key_reuse_period_seconds <= 86400
+    error_message = "kms_data_key_reuse_period_seconds doit être compris entre 60 et 86400 secondes."
+  }
+}
+
+# --- File de découplage -------------------------------------------------------
+
+variable "dispatch_max_receive_count" {
+  description = <<-EOT
+    Nombre de réceptions infructueuses au bout desquelles un message part en file
+    d'attente morte.
+
+    Cinq par défaut. C'est le seul compteur de reprise de toute la chaîne : la
+    Lambda ne boucle pas, ne compte pas et n'espace pas ses essais — SQS le fait,
+    avec son propre report. Une valeur de 1 supprimerait toute reprise ; une
+    valeur élevée retiendrait un message plusieurs heures avant qu'il ne devienne
+    visible en DLQ, ce qui repousse d'autant le moment où quelqu'un l'apprend.
+  EOT
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.dispatch_max_receive_count >= 1 && var.dispatch_max_receive_count <= 20 && floor(var.dispatch_max_receive_count) == var.dispatch_max_receive_count
+    error_message = "dispatch_max_receive_count doit être un entier compris entre 1 et 20."
+  }
+}
+
+variable "dispatch_message_retention_seconds" {
+  description = "Durée de conservation d'un message dans la file principale. Quatre jours par défaut — assez pour traverser un week-end de panne, et bien au-delà de la fenêtre utile d'un rappel J-1, qui n'a plus de sens passé l'heure du rendez-vous."
+  type        = number
+  default     = 345600
+
+  validation {
+    condition     = var.dispatch_message_retention_seconds >= 60 && var.dispatch_message_retention_seconds <= 1209600
+    error_message = "dispatch_message_retention_seconds doit être compris entre 60 et 1209600 secondes (14 jours, le maximum SQS)."
+  }
+}
+
+variable "dlq_message_retention_seconds" {
+  description = "Durée de conservation d'un message en file d'attente morte. Le maximum SQS — 14 jours — par défaut : un message n'arrive ici qu'après avoir épuisé ses tentatives, il est la preuve d'une panne, et cette preuve doit survivre au délai qu'il faut pour qu'un humain la lise."
+  type        = number
+  default     = 1209600
+
+  validation {
+    condition     = var.dlq_message_retention_seconds >= 3600 && var.dlq_message_retention_seconds <= 1209600
+    error_message = "dlq_message_retention_seconds doit être compris entre 3600 et 1209600 secondes."
+  }
+}
+
+# --- Lambda d'envoi -----------------------------------------------------------
+
+variable "dispatcher_timeout_seconds" {
+  description = "Délai maximal d'une invocation de la Lambda d'envoi. Il borne aussi le délai de visibilité de la file, fixé à six fois cette valeur. Doit laisser tenir un lot entier : `dispatcher_batch_size × dispatch_timeout_ms`, plus deux secondes de marge — une précondition le vérifie au plan."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.dispatcher_timeout_seconds >= 3 && var.dispatcher_timeout_seconds <= 900
+    error_message = "dispatcher_timeout_seconds doit être compris entre 3 et 900 secondes."
+  }
+}
+
+variable "dispatcher_memory_mb" {
+  description = "Mémoire allouée à la Lambda d'envoi, en Mio. 256 par défaut : la fonction ne fait qu'un appel HTTP par message, et la mémoire fixe aussi la part de vCPU — descendre à 128 rallongerait le démarrage à froid pour économiser une fraction de centime."
+  type        = number
+  default     = 256
+
+  validation {
+    condition     = var.dispatcher_memory_mb >= 128 && var.dispatcher_memory_mb <= 10240
+    error_message = "dispatcher_memory_mb doit être compris entre 128 et 10240 Mio."
+  }
+}
+
+variable "dispatcher_batch_size" {
+  description = "Nombre de messages remis à la fonction par invocation. Cinq par défaut : la fonction les traite en séquence, et le lot entier doit tenir dans `dispatcher_timeout_seconds`. Un lot plus large amortirait mieux le démarrage à froid, au prix d'un délai de visibilité plus long pour tout le monde."
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.dispatcher_batch_size >= 1 && var.dispatcher_batch_size <= 10 && floor(var.dispatcher_batch_size) == var.dispatcher_batch_size
+    error_message = "dispatcher_batch_size doit être un entier compris entre 1 et 10 : au-delà de 10, SQS exige une fenêtre de regroupement non nulle."
+  }
+}
+
+variable "dispatcher_maximum_concurrency" {
+  description = "Nombre maximal d'invocations simultanées de la source d'événements SQS. Cinq par défaut, soit vingt-cinq messages de front : c'est la seule chose qui empêche un pic de réservations de se transformer en pic d'appels vers l'API. Le minimum imposé par AWS est 2."
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.dispatcher_maximum_concurrency >= 2 && var.dispatcher_maximum_concurrency <= 1000 && floor(var.dispatcher_maximum_concurrency) == var.dispatcher_maximum_concurrency
+    error_message = "dispatcher_maximum_concurrency doit être un entier compris entre 2 et 1000 — AWS refuse une concurrence maximale inférieure à 2."
+  }
+}
+
+variable "dispatch_url" {
+  description = <<-EOT
+    URL de la route d'envoi servie par l'API, appelée par la Lambda pour chaque
+    message. `null` — le défaut — laisse la fonction en **défaut fermé** : elle
+    journalise `notification.unconfigured`, rend le message à SQS, et la chaîne
+    devient visible en supervision au lieu d'avaler silencieusement les envois.
+
+    Pas de valeur déduite de l'ALB : en développement, la terminaison TLS est un
+    certificat auto-signé qu'aucun client ne vérifie sans y être forcé, et la
+    fonction refuse — à juste titre — de désactiver la vérification. Cette URL est
+    donc une entrée d'environnement, renseignée le jour où un nom de domaine et
+    un certificat réels existent.
+
+    Contrat attendu de la route, côté API : `POST` d'un corps
+    `{ messageId, message }`, réponse `2xx` envoyé · `204`/`409` déjà envoyé ·
+    `408`/`425`/`429`/`5xx` à rejouer · tout autre `4xx` échec permanent, jamais
+    rejoué.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.dispatch_url == null || can(regex("^https://", var.dispatch_url))
+    error_message = "dispatch_url doit être `null` ou une URL en `https://` — un appel en clair porterait le jeton d'appel et les identifiants de rendez-vous sur le réseau."
+  }
+}
+
+variable "dispatch_token_secret_arn" {
+  description = "Secret Manager contenant le jeton partagé que la Lambda présente à l'API dans l'en-tête `x-internal-token`. `null` — le défaut — n'envoie aucun en-tête et n'accorde aucun droit de lecture de secret à la fonction. La valeur du secret n'est jamais lue par Terraform : la fonction la lit au démarrage à froid."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.dispatch_token_secret_arn == null || can(regex("^arn:aws[a-z-]*:secretsmanager:", var.dispatch_token_secret_arn))
+    error_message = "dispatch_token_secret_arn doit être `null` ou un ARN Secrets Manager (`arn:aws:secretsmanager:…`)."
+  }
+}
+
+variable "dispatch_timeout_ms" {
+  description = "Délai maximal d'un appel à `dispatch_url`, en millisecondes. Un dépassement est traité comme un échec **transitoire** : le message revient à SQS. Cinq secondes par défaut, à multiplier par `dispatcher_batch_size` pour vérifier que le lot tient dans le délai de la fonction."
+  type        = number
+  default     = 5000
+
+  validation {
+    condition     = var.dispatch_timeout_ms >= 500 && var.dispatch_timeout_ms <= 60000
+    error_message = "dispatch_timeout_ms doit être compris entre 500 et 60000 millisecondes."
+  }
+}
+
+# --- Supervision --------------------------------------------------------------
+
+variable "log_retention_days" {
+  description = "Rétention du groupe de journaux de la Lambda d'envoi. 30 jours hors production, 90 en production (skill aws-infra §8). Le groupe est créé explicitement pour cette seule raison : celui que Lambda crée de lui-même conserve indéfiniment."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = contains([1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653], var.log_retention_days)
+    error_message = "log_retention_days doit être une des durées acceptées par CloudWatch Logs — 1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288 ou 3653 jours."
+  }
+}
+
+variable "metric_namespace" {
+  description = "Espace de noms CloudWatch des métriques que la Lambda publie au format EMF — `Sent`, `Skipped`, `TransientFailures`, `PermanentFailures`, dimensionnées par `Environment`. Le changer ici et nulle part ailleurs suffit : les alarmes et le tableau de bord le lisent."
+  type        = string
+  default     = "Spa/Notifications"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9._/#:-]{1,255}$", var.metric_namespace))
+    error_message = "metric_namespace doit être un espace de noms CloudWatch valide, de 1 à 255 caractères, par exemple `Spa/Notifications`."
+  }
+}
+
+variable "alarm_topic_arns" {
+  description = <<-EOT
+    Topics SNS notifiés à l'entrée **et à la sortie** de chaque alarme de la
+    chaîne. Vide par défaut : les alarmes existent alors et restent consultables,
+    mais ne préviennent personne.
+
+    Le topic attendu est celui du module `budgets` — `alerts_topic_arn` —, dont le
+    commentaire prévoit explicitement que les alarmes d'observabilité s'y
+    branchent plutôt que d'en créer un second. Sa politique nomme
+    `cloudwatch.amazonaws.com` depuis #67 ; un topic fourni ici doit en faire
+    autant, sans quoi l'alarme change bien d'état mais aucune notification ne part.
+  EOT
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for arn in var.alarm_topic_arns : can(regex("^arn:aws[a-z-]*:sns:", arn))])
+    error_message = "Chaque entrée de alarm_topic_arns doit être un ARN de topic SNS (`arn:aws:sns:…`)."
+  }
+}
+
+variable "alarm_period_seconds" {
+  description = "Période d'évaluation des alarmes de la chaîne, en secondes. Cinq minutes par défaut : assez court pour qu'un message en DLQ se sache dans le quart d'heure, assez long pour ne pas transformer un incident d'une minute en salve de notifications."
+  type        = number
+  default     = 300
+
+  validation {
+    condition     = contains([60, 300, 900, 3600], var.alarm_period_seconds)
+    error_message = "alarm_period_seconds doit valoir 60, 300, 900 ou 3600 secondes."
+  }
+}
+
+variable "backlog_age_alarm_seconds" {
+  description = "Âge, en secondes, à partir duquel le plus vieux message en attente déclenche l'alarme. Une heure par défaut, soit la période du balayage du rappel J-1 : au-delà, le retard n'est plus rattrapable dans la fenêtre du rappel (skill notifications §3)."
+  type        = number
+  default     = 3600
+
+  validation {
+    condition     = var.backlog_age_alarm_seconds >= 60 && var.backlog_age_alarm_seconds <= 86400
+    error_message = "backlog_age_alarm_seconds doit être compris entre 60 et 86400 secondes."
+  }
+}
+
+variable "create_dashboard" {
+  description = "Crée le tableau de bord CloudWatch de la chaîne de notifications. Vrai par défaut. Les trois premiers tableaux de bord d'un compte sont gratuits, soit exactement un par environnement ; passer à faux le jour où un tableau de bord transverse (#78) prend le relais."
+  type        = bool
+  default     = true
+}

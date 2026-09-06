@@ -15,6 +15,21 @@ locals {
 
   configuration_set_name = "${local.name_prefix}-email"
 
+  dispatcher_function_name = "${local.name_prefix}-notification-dispatcher"
+
+  # Six fois le délai de la fonction, comme AWS le recommande pour une source
+  # SQS. La règle n'est pas arbitraire : si la fonction est tuée sur un délai
+  # dépassé, le message ne doit redevenir visible qu'une fois l'invocation
+  # réellement terminée. Un délai de visibilité **inférieur** au délai de la
+  # fonction ferait traiter le même message par deux exécutions concurrentes —
+  # l'idempotence de #68 le rattraperait, mais après un appel fournisseur de
+  # trop.
+  #
+  # Déduit plutôt que pris en variable : deux réglages indépendants dont l'un
+  # doit rester supérieur à l'autre finissent toujours par diverger, et la
+  # divergence ne se voit qu'en production.
+  dispatch_visibility_timeout_seconds = 6 * var.dispatcher_timeout_seconds
+
   # La clé effectivement utilisée par le topic : celle fournie par
   # l'environnement, sinon celle que le module vient de créer.
   kms_key_arn = var.kms_key_arn != null ? var.kms_key_arn : one(aws_kms_key.events[*].arn)
