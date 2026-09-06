@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { addCalendarDays, calendarDateInTimeZone } from '@/lib/booking/calendar';
 import {
   formatAmountInput,
+  formatAmountMachine,
   formatCalendarDate,
   formatDuration,
   formatMoney,
@@ -58,6 +59,64 @@ describe('formatMoney', () => {
 
     expect(formatted).toContain('3');
     expect(formatted).not.toContain('35,00');
+  });
+});
+
+describe('forme machine d’un montant', () => {
+  /**
+   * Les chiffres d'un montant affiché, débarrassés de tout ce qui n'appartient
+   * qu'à l'humain : symbole, espaces de groupement, et la virgule décimale
+   * ramenée au point. Ce qui reste doit être, caractère pour caractère, la forme
+   * machine du même montant.
+   */
+  const humanDigitsOf = (formatted: string): string =>
+    formatted.replace(/[^\d,.-]/g, '').replace(',', '.');
+
+  it('rend l’unité principale avec un point décimal et sans symbole', () => {
+    expect(formatAmountMachine({ amountMinor: 3500, currency: 'EUR' })).toBe('35.00');
+    expect(formatAmountMachine({ amountMinor: 5, currency: 'EUR' })).toBe('0.05');
+    expect(formatAmountMachine({ amountMinor: 0, currency: 'EUR' })).toBe('0.00');
+  });
+
+  it('n’invente pas de décimales sur une devise qui n’en a pas', () => {
+    // 3500 ariary sont « 3500 », pas « 35.00 » : c'est exactement la divergence
+    // que #344 vient fermer — un `10 ** 2` codé en dur côté schema.org aurait
+    // publié un prix cent fois trop petit.
+    expect(formatAmountMachine({ amountMinor: 3500, currency: 'MGA' })).toBe('3500');
+    expect(formatAmountMachine({ amountMinor: 1200, currency: 'JPY' })).toBe('1200');
+  });
+
+  it('dit le même montant que l’affichage humain, décimales de la devise comprises', () => {
+    // Le point dur du ticket : les deux formes lisent leurs décimales au même
+    // endroit, donc elles ne peuvent pas annoncer deux prix différents — ni sur
+    // une devise à deux décimales, ni sur une devise à zéro décimale.
+    for (const amount of [
+      { amountMinor: 3500, currency: 'EUR' },
+      { amountMinor: 5, currency: 'EUR' },
+      { amountMinor: 123456, currency: 'EUR' },
+      { amountMinor: 3500, currency: 'MGA' },
+      { amountMinor: 1, currency: 'MGA' },
+      { amountMinor: 1200, currency: 'JPY' },
+    ] as const) {
+      expect(humanDigitsOf(formatMoney(amount))).toBe(formatAmountMachine(amount));
+    }
+  });
+
+  it('ne perd pas un centième, là où un flottant en perdrait un', () => {
+    // `(115 / 100).toFixed(2)` s'en tire, mais la conversion se fait en chaîne
+    // pour la même raison que `parseAmountInput` : un prix faux d'un centime
+    // reste un prix faux, et un analyseur schema.org le republiera tel quel.
+    expect(formatAmountMachine({ amountMinor: 115, currency: 'EUR' })).toBe('1.15');
+    expect(formatAmountMachine({ amountMinor: 829, currency: 'EUR' })).toBe('8.29');
+  });
+
+  it('se relit par l’analyseur de saisie, qui accepte le point', () => {
+    for (const amount of [
+      { amountMinor: 3500, currency: 'EUR' },
+      { amountMinor: 3500, currency: 'MGA' },
+    ] as const) {
+      expect(parseAmountInput(formatAmountMachine(amount), amount.currency)).toEqual(amount);
+    }
   });
 });
 

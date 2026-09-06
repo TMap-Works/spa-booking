@@ -198,6 +198,25 @@ describe('graphe schema.org', () => {
     expect(offer?.['itemOffered']).toMatchObject({ '@type': 'Service', name: 'Massage suédois' });
   });
 
+  it('publie une devise à zéro décimale sans la diviser par cent', () => {
+    // Le graphe passe désormais par `formatAmountMachine` (#344), qui lit les
+    // décimales de la devise là où `formatMoney` les lit. Une conversion locale
+    // qui supposerait l'euro publierait « 35.00 » là où le salon vend 3500
+    // ariary — un prix cent fois trop petit, dans le seul endroit de la page
+    // qu'un moteur de recherche lit vraiment.
+    const catalog = graphOf([
+      { ...service, price: { amountMinor: 3500, currency: 'MGA' } },
+    ]).hasOfferCatalog as {
+      readonly itemListElement: readonly {
+        readonly itemListElement: readonly Record<string, unknown>[];
+      }[];
+    };
+    const offer = catalog.itemListElement[0]?.itemListElement[0];
+
+    expect(offer?.['price']).toBe('3500');
+    expect(offer?.['priceCurrency']).toBe('MGA');
+  });
+
   it('omet le catalogue plutôt que d’en publier un vide', () => {
     expect(graphOf([])['hasOfferCatalog']).toBeUndefined();
   });
