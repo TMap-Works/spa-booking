@@ -13,9 +13,9 @@
 # Quatre étapes, dont **deux seulement finissent dans l'image** :
 #
 #   deps       arbre npm complet (dev incluses) + client Prisma engendré
-#   build      compilation TypeScript → apps/api/dist
+#   build      compilation TypeScript → apps/api/dist et packages/shared/dist
 #   prod-deps  arbre npm de production, installé à part et jamais compilé
-#   runtime    base + prod-deps + dist — ni compilateur, ni tests, ni sources
+#   runtime    base + prod-deps + les deux dist — ni compilateur, ni tests, ni sources
 #
 # `prod-deps` est installé depuis le même lockfile plutôt que dérivé de `deps`
 # par `npm prune` : le pruning laisse derrière lui les répertoires que npm ne
@@ -79,20 +79,31 @@ FROM deps AS build
 # `apps/api/tsconfig.json` étend `../../tsconfig.base.json` : la configuration
 # TypeScript commune vit à la racine du monorepo et fait partie des sources.
 #
-# `packages/shared` est copié par anticipation : l'API ne l'importe encore nulle
-# part (issue #26). **Le jour où elle l'importera, cette image ne suffira plus** —
-# `@spa/shared` expose `src/index.ts` en `main`, c'est-à-dire du TypeScript que
-# `node` ne sait pas charger, et l'étape `runtime` ne copie que le `package.json`
-# du workspace. Il faudra alors que `packages/shared` se compile et publie un
-# `dist`, et que ce `dist` soit copié ici. Le sujet appartient à #26 ; ce
-# commentaire est là pour qu'il ne se découvre pas en production.
+# `packages/shared` est copié parce que l'API en **dépend** : `@spa/shared` est
+# déclaré dans les `dependencies` d'`apps/api/package.json`, et `crm.errors.ts`
+# en importe une **valeur** (`DOMAIN_ERROR_CODES`), pas seulement un type. La
+# compilation d'`apps/api` n'a pourtant besoin d'aucun `dist` du paquet : ses
+# `paths` visent les sources (`node_modules/@spa/shared/src/index.ts`, cf.
+# apps/api/tsconfig.json). C'est l'**exécution** qui en a besoin.
 COPY tsconfig.base.json ./
 COPY packages/shared packages/shared
 COPY apps/api apps/api
 
-# `tsconfig.build.json` exclut `test/`, `__tests__/` et `*.spec.ts` : `dist` ne
-# contient que du code d'exécution.
-RUN npm run build --workspace @spa/api
+# Les deux compilations, dans cet ordre, et pas `--workspaces` : le fan-out suit
+# l'ordre du glob (`apps/api`, `apps/web`, `packages/shared`) et non celui des
+# dépendances. Nommer les deux workspaces rend l'ordre explicite et n'entraîne
+# pas `apps/web` — qui n'a rien à faire dans l'image de l'API.
+#
+# **Compiler `packages/shared` n'est pas facultatif.** Le `require('@spa/shared')`
+# qu'émet `tsc` pour `apps/api/dist` se résout par le lien de workspace npm, donc
+# par le `main` du paquet — `./dist/index.js`. Sans ce `dist`, l'API démarre sur
+# un `MODULE_NOT_FOUND` (#463). L'étape `runtime` le copie plus bas, et la garde
+# « L'image API démarre » de ci.yml le prouve en lançant réellement l'image.
+#
+# `tsconfig.build.json` exclut `test/`, `__tests__/` et `*.spec.ts` des deux
+# côtés : les `dist` ne contiennent que du code d'exécution.
+RUN npm run build --workspace @spa/shared \
+    && npm run build --workspace @spa/api
 
 # ------------------------------------------------------------------------------
 # Étape 3 — dépendances de production
@@ -169,8 +180,15 @@ EXPOSE 3001
 # `spa-{env}-migrate` relit à chaque migration. Une seule copie suffit.
 COPY --from=prod-deps --chown=node:node /app/ /app/
 
-# Ne reste que le produit de la compilation.
+# Ne reste que le produit des compilations.
 COPY --from=build --chown=node:node /app/apps/api/dist /app/apps/api/dist
+
+# Le `dist` du contrat partagé, sans lequel le `require('@spa/shared')` de
+# `apps/api/dist` n'a rien à charger : `prod-deps` n'apporte du workspace que son
+# `package.json` et le lien symbolique `node_modules/@spa/shared` qui y mène —
+# et ce `package.json` déclare `main: ./dist/index.js`. La panne serait un
+# `MODULE_NOT_FOUND` au démarrage de la tâche ECS, pas à la construction (#463).
+COPY --from=build --chown=node:node /app/packages/shared/dist /app/packages/shared/dist
 
 USER node
 

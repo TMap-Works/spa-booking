@@ -19,9 +19,9 @@ import {
  * explicite. Elle est **dupliquée** plutôt qu'importée, et ce n'est pas un
  * oubli : un module n'importe pas un fichier profond d'un autre (api-module §3),
  * et la place définitive de ces primitives est `@spa/shared` — c'est l'objet de
- * #26, qui ajoutera la dépendance à `apps/api/package.json`. Les noms sont donc
- * **ceux du paquet partagé**, pour que la substitution ne change pas une borne
- * en silence.
+ * #26. La dépendance qu'il fallait pour cela est déclarée depuis #463 ; ce qui
+ * reste est la reprise elle-même. Les noms sont donc **ceux du paquet partagé**,
+ * pour que la substitution ne change pas une borne en silence.
  *
  * Ce fichier-ci n'en reprend que ce dont l'historique des ventes et des
  * transactions a besoin : les bornes `from` et `to` de sa fenêtre. Recopier les

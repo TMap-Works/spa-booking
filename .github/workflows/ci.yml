@@ -339,6 +339,104 @@ jobs:
           fi
           echo "Aucun compilateur TypeScript dans l'image API."
 
+      # `apps/api` dépend de `@spa/shared` et en importe une **valeur**
+      # (`crm.errors.ts`) : `apps/api/dist` porte donc un `require('@spa/shared')`
+      # que `node` résout par le `main` du workspace, `./dist/index.js`. Tant que
+      # l'étape `runtime` n'emportait du paquet que son `package.json`, ce
+      # `require` n'avait rien à charger (#463).
+      #
+      # Charger le paquet plutôt que le seul `require.resolve` : le résoudre
+      # prouve que le chemin existe, le charger prouve qu'il s'exécute.
+      - name: L'image API porte le contrat partagé
+        run: |
+          if ! docker run --rm spa-api:ci node -e "require('@spa/shared')"; then
+            echo "::error file=apps/api/Dockerfile::@spa/shared ne se charge pas depuis l'image d'exécution. L'étape runtime doit copier packages/shared/dist, et l'étape build doit le produire."
+            exit 1
+          fi
+          echo "@spa/shared se charge depuis l'image API."
+
+      # **La garde qui manquait, et le vrai défaut que #463 corrige** : ce job
+      # construisait l'image sans jamais la lancer. Un `MODULE_NOT_FOUND` au
+      # premier `require` de `main.js` passait donc la CI au vert et ne se
+      # découvrait qu'au déploiement, sur une tâche ECS en boucle de redémarrage.
+      #
+      # Démarrer réellement le conteneur est ce qui prouve que le graphe de
+      # modules de Nest se charge **en entier** — `main.js`, `AppModule`, et par
+      # lui chaque module métier et chacun de leurs imports. Aucun contrôle
+      # statique du Dockerfile ne le remplace : c'est la résolution de `node` à
+      # l'exécution qui est en cause, pas une ligne de recette.
+      #
+      # Ni Postgres ni Redis ne sont nécessaires, et c'est délibéré :
+      # `PrismaService` et `CacheConnection` sont en connexion **paresseuse**
+      # pour que le conteneur démarre même quand ses dépendances sont tombées
+      # (c'est `/health` qui le signale, ce qui laisse l'ALB retirer la tâche au
+      # lieu de la voir redémarrer en boucle). Un 503 est donc une réponse
+      # **servie par l'application** : elle a démarré, écouté et routé. Ce qui se
+      # cherche ici est l'absence de réponse, pas le statut.
+      #
+      # `NODE_ENV` n'est **pas** forcé : l'image le pose à `production`, et c'est
+      # cette configuration-là qu'il faut éprouver. Elle est la plus exigeante —
+      # `StripeConfig` refuse d'amorcer sans ses clés dès que l'environnement est
+      # déployé, là où un `NODE_ENV=test` les rendrait facultatives et laisserait
+      # passer une image qui ne démarrerait pas sur ECS.
+      #
+      # Les valeurs sensibles sont engendrées à la volée plutôt qu'écrites en
+      # clair : les deux secrets JWT doivent faire 32 caractères et différer l'un
+      # de l'autre (apps/api/src/config/env.schema.ts), les clés Stripe doivent
+      # porter leur préfixe (apps/api/src/modules/payments/stripe/stripe.config.ts),
+      # et un littéral de cette forme dans un workflow versionné est un secret
+      # publié — même s'il ne signe rien de réel.
+      - name: L'image API démarre
+        run: |
+          trap 'docker rm --force spa-api-smoke > /dev/null 2>&1 || true' EXIT
+
+          docker run --detach --name spa-api-smoke \
+            --publish 3001:3001 \
+            --env APP_URL=http://localhost:3000 \
+            --env API_URL=http://localhost:3001 \
+            --env DATABASE_URL=postgresql://spa:spa@127.0.0.1:5432/spa_smoke \
+            --env REDIS_URL=redis://127.0.0.1:6379 \
+            --env "JWT_SECRET=$(openssl rand -hex 32)" \
+            --env "JWT_REFRESH_SECRET=$(openssl rand -hex 32)" \
+            --env "STRIPE_SECRET_KEY=sk_test_$(openssl rand -hex 12)" \
+            --env "STRIPE_PUBLISHABLE_KEY=pk_test_$(openssl rand -hex 12)" \
+            --env "STRIPE_WEBHOOK_SECRET=whsec_$(openssl rand -hex 12)" \
+            spa-api:ci
+
+          code=''
+          for _ in $(seq 1 60); do
+            # Les deux délais de garde ne sont pas décoratifs : sans eux, un
+            # conteneur qui accepte la connexion sans jamais répondre tiendrait
+            # `curl` ouvert indéfiniment. Aucun `timeout-minutes` n'est posé sur
+            # ce job, si bien que l'étape ne rougirait qu'au délai par défaut de
+            # GitHub — six heures de runner pour une image en panne. La sonde,
+            # elle, borne ses propres appels à 2 s (HEALTH_PROBE_TIMEOUT_MS) :
+            # 10 s laissent une marge large sans laisser d'attente infinie.
+            code="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+                    --connect-timeout 2 --max-time 10 \
+                    http://localhost:3001/health || true)"
+            case "$code" in
+              200 | 503) break ;;
+            esac
+            # Le conteneur a rendu la main : inutile d'attendre les 60 s, le
+            # journal dira pourquoi.
+            if [ -z "$(docker ps --quiet --filter name=spa-api-smoke)" ]; then
+              break
+            fi
+            sleep 1
+          done
+
+          case "$code" in
+            200 | 503)
+              echo "L'image API a démarré et servi /health (HTTP $code)."
+              ;;
+            *)
+              echo "::error file=apps/api/Dockerfile::L'image API n'a pas servi /health (dernier code HTTP « ${code:-aucun} »). Journal du conteneur ci-dessous."
+              docker logs spa-api-smoke || true
+              exit 1
+              ;;
+          esac
+
       # `apps/web` n'est pas encore initialisé : le workspace ne porte qu'un
       # `package.json` sans script, et `next build` n'a rien à compiler. Le
       # Dockerfile décrit la cible et se construira le jour où un `next.config.*`

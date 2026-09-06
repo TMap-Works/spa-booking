@@ -33,6 +33,12 @@ module.exports = {
   // `process.env` pendant son initialisation, trop tard pour qu'un test le
   // complète lui-même.
   setupFiles: ['<rootDir>/test/setup-env.ts'],
+  // Même résolution du contrat partagé que dans `jest.unit.config.js`, et pour
+  // la même raison : les suites ne doivent dépendre d'aucune compilation
+  // préalable de `packages/shared`.
+  moduleNameMapper: {
+    '^@spa/shared$': '<rootDir>/../../packages/shared/src/index.ts',
+  },
   transform: {
     '^.+\\.ts$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.json' }],
   },

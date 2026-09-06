@@ -41,7 +41,8 @@ import { IsOffsetDateTime, LONG_TEXT_MAX_LENGTH, OptionalPresent, Trim } from '.
  *
  * TODO(#26) : `createAppointmentRequestSchema` de
  * `packages/shared/src/schemas/appointment.ts` décrit cette forme et devra être
- * importé le jour où `apps/api` dépendra du paquet — même TODO que dans
+ * importé lors de la reprise groupée de ce TODO — la dépendance vers le paquet
+ * existe depuis #463. Même TODO que dans
  * `book-appointment.dto.ts`. Le `clientId` obligatoire est le seul écart à
  * reporter alors, et il est documenté des deux côtés.
  */

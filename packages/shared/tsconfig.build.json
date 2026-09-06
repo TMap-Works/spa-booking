@@ -6,14 +6,18 @@
     "types": ["node"],
 
     // `composite` fait de ce paquet une **cible de référence de projet**
-    // TypeScript. C'est ce qui permettra à `apps/api` — qui compile avec
-    // `rootDir: src` — de consommer `@spa/shared` sans que le compilateur tente
-    // d'aspirer nos sources dans son propre programme : avec
-    // `"references": [{ "path": "../../packages/shared/tsconfig.build.json" }]`,
-    // tsc redirige de lui-même le chemin `packages/shared/src/index.ts` du
-    // `paths` racine vers le `.d.ts` produit ici. Sans cela, la compilation de
-    // l'API échouerait en TS6059 (« file is not under rootDir ») au premier
-    // import du contrat.
+    // TypeScript, et c'est à ce titre qu'il produit les `.d.ts` et leurs cartes —
+    // ainsi que le `dist` dont l'exécution a besoin (README.md).
+    //
+    // Ce n'est en revanche **pas** par une `references` que les applications le
+    // consomment : cette voie a été essayée et écartée (#462, #463). Elle exige
+    // que ce paquet soit compilé **avant** l'application — or `tsc -p` ne
+    // construit pas ses références (seul `tsc -b` le fait) et
+    // `npm run <cible> --workspaces` suit l'ordre du glob, pas celui des
+    // dépendances. `apps/api` pointe donc `@spa/shared` à travers le lien de
+    // workspace npm (`node_modules/@spa/shared/src/index.ts`), ce qui évite le
+    // TS6059 (« file is not under rootDir ») sans rien exiger d'un `dist`
+    // préalable à la compilation. Voir README.md et apps/api/tsconfig.json.
     "composite": true,
     "declaration": true,
     "declarationMap": true

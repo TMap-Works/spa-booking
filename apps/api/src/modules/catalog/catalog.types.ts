@@ -6,9 +6,9 @@
  * contrat d'API et devront être importés de `@spa/shared` — le front ne
  * redéclare jamais un type que l'API expose (CLAUDE.md). Le paquet décrit déjà
  * ces formes (`packages/shared/src/schemas/catalog.ts`, tenu à jour par ce même
- * ticket) ; la substitution demandera d'ajouter la dépendance à
- * `apps/api/package.json`, ce qu'aucun module de l'API ne fait encore — voir le
- * même TODO dans `identity.types.ts`.
+ * ticket) ; la dépendance que la substitution demandait est déclarée dans
+ * `apps/api/package.json` depuis #463, et `crm.errors.ts` consomme déjà une
+ * valeur du contrat — voir le même TODO dans `identity.types.ts`.
  *
  * ## Aucune de ces formes ne porte de `tenantId`
  *

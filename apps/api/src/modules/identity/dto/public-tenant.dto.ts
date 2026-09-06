@@ -118,8 +118,9 @@ export class OpeningHoursEntryDto {
  * front consomme.
  *
  * TODO(#26) : `@spa/shared` porte déjà cette forme (`publicTenantSchema`,
- * `PublicTenant`), mais `apps/api` ne dépend pas encore du paquet — c'est ce que
- * #26 câble. La classe subsistera de toute façon : `@nestjs/swagger` documente
+ * `PublicTenant`), et `apps/api` en dépend depuis #463 — ce qui reste à câbler
+ * est la reprise groupée de #26. La classe subsistera de toute façon :
+ * `@nestjs/swagger` documente
  * une réponse par une classe décorée, pas par un schéma Zod. Ce qu'apportera le
  * câblage, c'est de pouvoir la contraindre au contrat
  * (`PublicTenantDto implements PublicTenant`) au lieu de la maintenir identique

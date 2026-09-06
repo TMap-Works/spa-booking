@@ -14,8 +14,8 @@ import type { Money } from './payments.types';
  * l'argent dans un module qui n'en manipule que ça.
  *
  * TODO(#26) : `Product`, `Sale` et `SaleItem` appartiennent au contrat d'API et
- * seront importés de `@spa/shared` le jour où `apps/api` dépendra du paquet —
- * même TODO que dans `payments.types.ts`.
+ * seront importés de `@spa/shared` lors de la reprise groupée de ce TODO — la
+ * dépendance existe depuis #463. Même TODO que dans `payments.types.ts`.
  */
 
 /**

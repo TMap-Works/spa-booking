@@ -21,9 +21,9 @@ import type { Customer, CustomerPage, CustomerSummary } from '../crm.types';
  * DTO du fichier client — #56.
  *
  * TODO(#26) : ces bornes reprennent `@spa/shared` (`crm.ts`). Les recopier ici
- * suit le précédent des modules voisins — `apps/api` ne dépend pas encore du
- * paquet partagé — et l'import se substituera à ces constantes sans changer une
- * valeur.
+ * suit le précédent des modules voisins ; l'import se substituera à ces
+ * constantes sans changer une valeur, lors de la reprise groupée de ce TODO — la
+ * dépendance vers le paquet partagé est posée depuis #463.
  *
  * ## Ce qu'aucun DTO d'entrée ne porte
  *

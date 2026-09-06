@@ -66,6 +66,42 @@ export default tseslint.config(
     },
   },
   {
+    // Le contrat partagé ne se consomme que par son **baril** (#463).
+    //
+    // `apps/api/tsconfig.json` déclare `@spa/shared/*` dans ses `paths` : un
+    // import profond — `@spa/shared/errors/error-codes` — compile donc sans
+    // broncher, et `npm run typecheck` le laisse passer. Il ne se **charge**
+    // pourtant jamais : le champ `exports` de `packages/shared/package.json`
+    // n'expose que `.` et `./package.json`, et `node` refuse tout autre
+    // sous-chemin en `ERR_PACKAGE_PATH_NOT_EXPORTED` — au démarrage du
+    // conteneur, pas à la compilation. C'est exactement la classe de panne que
+    // #463 corrige par ailleurs, et le lint est le seul endroit où elle se voit
+    // avant le déploiement.
+    //
+    // **Ce que devient la règle que #463 prévoyait.** L'issue demandait un
+    // `no-restricted-imports` avec `allowTypeImports: true` interdisant l'import
+    // de *valeur* de `@spa/shared` — filet explicitement posé « tant que le
+    // volet Dockerfile n'est pas fait ». Il l'est, et la garde « L'image API
+    // démarre » de ci.yml le prouve à chaque PR : cette forme-là interdirait
+    // aujourd'hui l'import que le ticket demande. Elle est donc **restreinte**
+    // aux sous-chemins, où le risque, lui, subsiste entier.
+    files: ['src/**/*.ts', 'test/**/*.ts', 'eslint-rules/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@spa/shared/*'],
+              message:
+                "Importer @spa/shared par son baril racine : le champ `exports` du paquet n'expose aucun sous-chemin, et node refuse un import profond à l'exécution (ERR_PACKAGE_PATH_NOT_EXPORTED) alors que tsc l'accepte.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: ['**/*.mjs'],
     languageOptions: { sourceType: 'module' },
   },

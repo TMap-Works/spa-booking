@@ -7,11 +7,13 @@
  * `bookGuestAppointmentRequestSchema` / `guestContactSchema` dans
  * `packages/shared/src/schemas/appointment.ts`, que le formulaire de #45
  * applique, et par `BookAppointmentDto` / `GuestContactDto` ici, que le
- * `ValidationPipe` applique. Ce doublon est délibéré et temporaire — `apps/api`
- * ne dépend pas encore de `@spa/shared`, c'est ce que le quatrième critère de
- * #314 attend de #26 — mais tant qu'il dure, **rien n'empêche les deux moitiés
- * de diverger en silence**, et une divergence ne se manifesterait que chez la
- * cliente : un formulaire qui laisse passer ce que l'API refuse, ou l'inverse.
+ * `ValidationPipe` applique. Ce doublon est délibéré et temporaire — c'est ce
+ * que le quatrième critère de #314 attend de #26, qui reprendra les DTO d'un
+ * seul tenant ; rien ne l'empêche plus techniquement, `apps/api` dépendant de
+ * `@spa/shared` depuis #463 — mais tant qu'il dure, **rien n'empêche les deux
+ * moitiés de diverger en silence**, et une divergence ne se manifesterait que
+ * chez la cliente : un formulaire qui laisse passer ce que l'API refuse, ou
+ * l'inverse.
  *
  * Les fixtures sont donc **littéralement celles** de
  * `packages/shared/src/__tests__/guest-booking.spec.ts`, recopiées et non

@@ -7,8 +7,9 @@ import type { UserRole } from './roles';
  * contrat d'API et devront être réexportés depuis `@spa/shared` — le front ne
  * redéclare jamais un type que l'API expose (CLAUDE.md). Le paquet expose déjà
  * ces rôles (`packages/shared/src/constants/roles.ts`) ; l'import se substituera
- * à la déclaration locale le jour où `apps/api` dépendra du paquet partagé, ce
- * qui touche `apps/api/package.json` — hors du périmètre de fichiers de #22.
+ * à la déclaration locale lors de la reprise groupée de ce TODO. Ce qui l'en
+ * séparait — la dépendance vers le paquet partagé, hors du périmètre de fichiers
+ * de #22 — a été posé par #463.
  *
  * Le vocabulaire des rôles et leur hiérarchie vivent dans `roles.ts` : ils sont
  * consommés par la garde de permissions autant que par ces formes de données, et

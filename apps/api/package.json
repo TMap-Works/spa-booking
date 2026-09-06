@@ -7,6 +7,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/main.js",
+    "prestart:dev": "npm run build --workspace @spa/shared",
     "start:dev": "node --watch --require ts-node/register src/main.ts",
     "lint": "eslint .",
     "pretypecheck": "prisma generate",
@@ -32,6 +33,7 @@
     "@nestjs/swagger": "^11.4.7",
     "@nestjs/throttler": "^6.5.0",
     "@prisma/client": "~6.12.0",
+    "@spa/shared": "*",
     "bcryptjs": "^3.0.3",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.14.4",

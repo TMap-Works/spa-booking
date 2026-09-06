@@ -40,8 +40,9 @@ import { CALENDAR_DATE_PATTERN, LOCAL_TIME_PATTERN } from '../availability.time'
  * `tenants.timezone` — c'est le rôle de `TenantClockService`.
  *
  * TODO(#26) : `OFFSET_DATE_TIME_PATTERN` est le motif de `@spa/shared`
- * (`packages/shared/src/common/time.ts`) et devra en être importé le jour où
- * `apps/api` dépendra du paquet — même TODO que dans `catalog/dto/validation.ts`.
+ * (`packages/shared/src/common/time.ts`) et devra en être importé lors de la
+ * reprise groupée de ce TODO — la dépendance existe depuis #463. Même TODO que
+ * dans `catalog/dto/validation.ts`.
  * Le nom est donc **celui du paquet partagé**, pour que la substitution ne change
  * pas une borne en silence. `LOCAL_TIME_PATTERN`, lui, vient déjà d'une source
  * unique : le moteur de conversion du module, qui est ce qui lira l'heure.
@@ -327,8 +328,9 @@ export function IsAfterLocalTime(
  * `failure_reason`) : c'est une phrase, pas une note de dossier.
  *
  * TODO(#26) : c'est `REASON_MAX_LENGTH` de `@spa/shared`
- * (`packages/shared/src/constants/limits.ts`), à importer le jour où `apps/api`
- * dépendra du paquet — même TODO que dans `catalog/dto/validation.ts`, et même
+ * (`packages/shared/src/constants/limits.ts`), à importer lors de la reprise
+ * groupée de ce TODO — la dépendance existe depuis #463. Même TODO que dans
+ * `catalog/dto/validation.ts`, et même
  * précaution de nommage : un homonyme local qui ne vaudrait pas la même chose
  * ferait de la substitution un changement de borne silencieux.
  */

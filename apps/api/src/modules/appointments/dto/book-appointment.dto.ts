@@ -54,8 +54,10 @@ import {
  * cliente, du praticien et de la prestation : les servir ici diffuserait
  * l'identité d'une cliente à qui connaît un identifiant de rendez-vous.
  *
- * La substitution attend la seule chose qui manque : la dépendance `@spa/shared`
- * dans `apps/api/package.json` — même TODO que dans `catalog/dto/service.dto.ts`.
+ * Cette dépendance-là est posée depuis #463 — `apps/api/package.json` déclare
+ * `@spa/shared`, et l'image d'exécution en porte le `dist`. La substitution
+ * n'attend plus que la reprise groupée de #26, qui migre les DTO d'un seul
+ * tenant — même TODO que dans `catalog/dto/service.dto.ts`.
  *
  * ## Les écarts de comportement que la substitution changerait
  *

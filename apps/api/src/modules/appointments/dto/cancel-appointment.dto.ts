@@ -23,8 +23,9 @@ import { CANCELLATION_REASON_MAX_LENGTH, OptionalPresent, Trim } from './validat
  * - **`status`.** L'annulation a une destination, elle ne la choisit pas.
  *
  * TODO(#26) : cette forme appartient au contrat d'API et devra venir de
- * `@spa/shared` le jour où `apps/api` dépendra du paquet — même TODO que dans
- * `book-appointment.dto.ts` et `reschedule-appointment.dto.ts`.
+ * `@spa/shared` lors de la reprise groupée de ce TODO — la dépendance vers le
+ * paquet existe depuis #463. Même TODO que dans `book-appointment.dto.ts` et
+ * `reschedule-appointment.dto.ts`.
  */
 export class CancelAppointmentDto {
   @ApiPropertyOptional({
