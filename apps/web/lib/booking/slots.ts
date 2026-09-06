@@ -62,20 +62,22 @@ export function openDays(days: readonly SelectableDay[]): readonly SelectableDay
 }
 
 /**
- * La journée effectivement affichée.
+ * La journée effectivement affichée, choisie **parmi les journées ouvertes**.
  *
- * Elle est cherchée **dans le rechargement en cours**, jamais conservée telle
+ * Elle est cherchée dans le rechargement en cours, jamais conservée telle
  * quelle : entre deux passages, la dernière place de la journée choisie a pu
  * partir. S'y tenir laisserait un sélecteur pointant une option qui n'existe
  * plus au-dessus d'une liste vide, sans un mot. On retombe sur la première
  * journée encore ouverte.
+ *
+ * L'appelant passe les journées **déjà filtrées** par `openDays`. Refiltrer ici
+ * referait, à chaque rendu, un travail que le composant mémoïse déjà — et,
+ * surtout, laisserait planer un doute sur laquelle des deux listes fait foi.
  */
 export function resolveActiveDay(
-  days: readonly SelectableDay[],
+  open: readonly SelectableDay[],
   selectedDate: CalendarDate | null,
 ): SelectableDay | null {
-  const open = openDays(days);
-
   return open.find((day) => day.date === selectedDate) ?? open[0] ?? null;
 }
 
@@ -244,5 +246,152 @@ export function moveInGrid(
       return { row: 0, column: 0 };
     case 'gridEnd':
       return { row: lastRow, column: (rowLengths[lastRow] ?? 1) - 1 };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// La barre de dates — keyboard-navigation.md, « Barre de dates »
+// ---------------------------------------------------------------------------
+
+/**
+ * Une journée de la barre de dates.
+ *
+ * `slotCount` vaut `null` tant que la réponse n'est pas là. Ce n'est pas un
+ * zéro déguisé : « on ne sait pas encore » et « c'est complet » ne se rendent
+ * ni ne se parcourent pareil, et c'est exactement ce qui permet à la barre de
+ * rester opérable pendant le chargement — `states.md` étape 3, *« en gardant la
+ * barre de dates interactive pour changer de jour sans attendre »*.
+ */
+export interface DateBarDay {
+  readonly date: CalendarDate;
+  readonly slotCount: number | null;
+}
+
+/**
+ * Les journées de la barre, dans l'ordre.
+ *
+ * Deux sources, et une seule à la fois : tant que la réponse manque, la fenêtre
+ * civile calculée par `calendarWindow` — des dates, que le navigateur sait
+ * poser sans personne ; dès qu'elle est là, la réponse elle-même, qui rend une
+ * entrée par jour demandé, journées complètes comprises (`slots: []`). Prendre
+ * la fenêtre dans les deux cas obligerait à inventer un compte pour une date
+ * dont le serveur n'a rien dit.
+ */
+export function dateBarDays(
+  dates: readonly CalendarDate[],
+  days: readonly SelectableDay[] | null,
+): readonly DateBarDay[] {
+  return days === null
+    ? dates.map((date) => ({ date, slotCount: null }))
+    : days.map((day) => ({ date: day.date, slotCount: day.slots.length }));
+}
+
+/**
+ * Une journée sur laquelle le clavier peut se poser.
+ *
+ * Une journée complète reste **affichée** — le serveur la rend vide plutôt que
+ * de l'omettre précisément pour qu'on puisse écrire « complet » plutôt que de
+ * laisser un trou —, mais elle est hors du parcours des flèches, comme
+ * `keyboard-navigation.md` le prescrit pour tout élément inactif.
+ */
+export function canSelectDay(day: DateBarDay): boolean {
+  return day.slotCount === null || day.slotCount > 0;
+}
+
+/** Déplacement demandé par une touche dans la barre de dates. */
+export type DateBarMove = 'previous' | 'next' | 'weekBefore' | 'weekAfter';
+
+/** Le tableau « Barre de dates » de `keyboard-navigation.md`, et rien de plus. */
+export function dateBarMoveForKey(key: string): DateBarMove | null {
+  switch (key) {
+    case 'ArrowLeft':
+      return 'previous';
+    case 'ArrowRight':
+      return 'next';
+    case 'PageUp':
+      return 'weekBefore';
+    case 'PageDown':
+      return 'weekAfter';
+    default:
+      return null;
+  }
+}
+
+/** Sept jours — le pas de `PagePréc` / `PageSuiv`. */
+const DAYS_IN_WEEK = 7;
+
+/**
+ * Le premier rang sélectionnable en partant de `start` dans le sens `step`,
+ * sans dépasser `bound` (inclus). `null` s'il n'y en a aucun.
+ */
+function nearestSelectableDay(
+  days: readonly DateBarDay[],
+  start: number,
+  step: -1 | 1,
+  bound: number,
+): number | null {
+  for (
+    let index = start;
+    index >= 0 && index < days.length && (step < 0 ? index >= bound : index <= bound);
+    index += step
+  ) {
+    const day = days[index];
+
+    if (day !== undefined && canSelectDay(day)) {
+      return index;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Le rang visé par un déplacement dans la barre de dates.
+ *
+ * **Pas d'enroulement**, comme dans la grille et pour la même raison : une
+ * flèche droite qui ramènerait du 14 septembre au 1er ferait réserver dans
+ * treize jours ce qu'on croyait réserver demain. En bord de barre, le rang ne
+ * bouge pas.
+ *
+ * Une semaine tombant sur une journée complète ne fait pas échouer le saut : on
+ * prend la journée ouverte la plus proche, d'abord dans le sens du déplacement,
+ * puis en revenant vers le point de départ. Sans ce repli, `PageSuiv` serait
+ * muette une semaine sur deux sur un agenda chargé.
+ */
+export function moveInDateBar(
+  days: readonly DateBarDay[],
+  from: number,
+  move: DateBarMove,
+): number {
+  if (days.length === 0) {
+    return from;
+  }
+
+  const current = Math.min(Math.max(from, 0), days.length - 1);
+  const last = days.length - 1;
+
+  switch (move) {
+    case 'previous':
+      return nearestSelectableDay(days, current - 1, -1, 0) ?? current;
+    case 'next':
+      return nearestSelectableDay(days, current + 1, 1, last) ?? current;
+    case 'weekBefore': {
+      const target = Math.max(current - DAYS_IN_WEEK, 0);
+
+      return (
+        nearestSelectableDay(days, target, -1, 0) ??
+        nearestSelectableDay(days, target + 1, 1, current - 1) ??
+        current
+      );
+    }
+    case 'weekAfter': {
+      const target = Math.min(current + DAYS_IN_WEEK, last);
+
+      return (
+        nearestSelectableDay(days, target, 1, last) ??
+        nearestSelectableDay(days, target - 1, -1, current + 1) ??
+        current
+      );
+    }
   }
 }

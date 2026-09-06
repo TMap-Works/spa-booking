@@ -17,13 +17,18 @@ import type {
 import { describe, expect, it } from 'vitest';
 
 import {
+  canSelectDay,
+  dateBarDays,
+  dateBarMoveForKey,
   distinctSlotTimes,
   gridMoveForKey,
+  moveInDateBar,
   moveInGrid,
   openDays,
   resolveActiveDay,
   selectableDays,
   slotRows,
+  type DateBarDay,
 } from '@/lib/booking/slots';
 
 const HERY = '44444444-4444-4444-8444-444444444444';
@@ -89,20 +94,26 @@ describe('openDays', () => {
 });
 
 describe('resolveActiveDay', () => {
-  const days = selectableDays([
-    day('2026-09-01', [slot('2026-09-01T06:00:00.000Z', HERY)]),
-    day('2026-09-02', [slot('2026-09-02T06:00:00.000Z', HERY)]),
-  ]);
+  // Les journées lui arrivent **déjà filtrées** : c'est l'appelant qui mémoïse
+  // `openDays`, et refiltrer ici referait ce travail à chaque rendu.
+  const days = openDays(
+    selectableDays([
+      day('2026-09-01', [slot('2026-09-01T06:00:00.000Z', HERY)]),
+      day('2026-09-02', [slot('2026-09-02T06:00:00.000Z', HERY)]),
+    ]),
+  );
 
   it('retient la journée choisie', () => {
     expect(resolveActiveDay(days, '2026-09-02' as CalendarDate)?.date).toBe('2026-09-02');
   });
 
   it('retombe sur la première journée ouverte quand la journée choisie s’est remplie', () => {
-    const remplie = selectableDays([
-      day('2026-09-01', []),
-      day('2026-09-02', [slot('2026-09-02T06:00:00.000Z', HERY)]),
-    ]);
+    const remplie = openDays(
+      selectableDays([
+        day('2026-09-01', []),
+        day('2026-09-02', [slot('2026-09-02T06:00:00.000Z', HERY)]),
+      ]),
+    );
 
     // Sans ce repli, le sélecteur pointerait une option qui n'existe plus
     // au-dessus d'une liste vide, sans un mot.
@@ -110,7 +121,7 @@ describe('resolveActiveDay', () => {
   });
 
   it('rend null quand plus rien n’est ouvert', () => {
-    expect(resolveActiveDay(selectableDays([day('2026-09-01', [])]), null)).toBeNull();
+    expect(resolveActiveDay(openDays(selectableDays([day('2026-09-01', [])])), null)).toBeNull();
   });
 });
 
@@ -199,6 +210,107 @@ describe('moveInGrid', () => {
 
   it('ne sort pas d’une grille vide', () => {
     expect(moveInGrid([], { row: 0, column: 0 }, 'next')).toEqual({ row: 0, column: 0 });
+  });
+});
+
+describe('dateBarDays', () => {
+  const fenetre = ['2026-09-01', '2026-09-02'] as readonly CalendarDate[];
+
+  it('rend la fenêtre civile, comptes inconnus, tant que la réponse manque', () => {
+    // C'est ce qui met la barre de dates à l'écran pendant le chargement
+    // (`states.md` étape 3) : des dates, que le navigateur pose sans personne.
+    expect(dateBarDays(fenetre, null)).toEqual([
+      { date: '2026-09-01', slotCount: null },
+      { date: '2026-09-02', slotCount: null },
+    ]);
+  });
+
+  it('rend la réponse, journées complètes comprises, dès qu’elle est là', () => {
+    const days = selectableDays([
+      day('2026-09-01', []),
+      day('2026-09-02', [slot('2026-09-02T06:00:00.000Z', HERY)]),
+    ]);
+
+    expect(dateBarDays(fenetre, days)).toEqual([
+      { date: '2026-09-01', slotCount: 0 },
+      { date: '2026-09-02', slotCount: 1 },
+    ]);
+  });
+});
+
+describe('canSelectDay', () => {
+  it('distingue « on ne sait pas encore » de « complet »', () => {
+    // Le premier reste opérable — la barre sert justement à changer de jour
+    // avant la fin du chargement ; le second est hors du parcours des flèches.
+    expect(canSelectDay({ date: '2026-09-01' as CalendarDate, slotCount: null })).toBe(true);
+    expect(canSelectDay({ date: '2026-09-01' as CalendarDate, slotCount: 0 })).toBe(false);
+    expect(canSelectDay({ date: '2026-09-01' as CalendarDate, slotCount: 3 })).toBe(true);
+  });
+});
+
+describe('dateBarMoveForKey', () => {
+  it('reprend le tableau « Barre de dates » du document de conception', () => {
+    expect(dateBarMoveForKey('ArrowLeft')).toBe('previous');
+    expect(dateBarMoveForKey('ArrowRight')).toBe('next');
+    expect(dateBarMoveForKey('PageUp')).toBe('weekBefore');
+    expect(dateBarMoveForKey('PageDown')).toBe('weekAfter');
+  });
+
+  it('laisse au navigateur ce qui ne la regarde pas', () => {
+    expect(dateBarMoveForKey('Tab')).toBeNull();
+    expect(dateBarMoveForKey('Enter')).toBeNull();
+    expect(dateBarMoveForKey('Home')).toBeNull();
+  });
+});
+
+describe('moveInDateBar', () => {
+  /** Une quinzaine où le 3e et le 10e jour sont complets. */
+  const bar: readonly DateBarDay[] = Array.from({ length: 14 }, (_unused, index) => ({
+    date: `2026-09-${String(index + 1).padStart(2, '0')}` as CalendarDate,
+    slotCount: index === 2 || index === 9 ? 0 : 4,
+  }));
+
+  it('ne boucle pas aux bords de la barre', () => {
+    // Une flèche droite qui ramènerait du 14 septembre au 1er ferait réserver
+    // dans treize jours ce qu'on croyait réserver demain.
+    expect(moveInDateBar(bar, 13, 'next')).toBe(13);
+    expect(moveInDateBar(bar, 0, 'previous')).toBe(0);
+  });
+
+  it('saute les journées complètes', () => {
+    expect(moveInDateBar(bar, 1, 'next')).toBe(3);
+    expect(moveInDateBar(bar, 3, 'previous')).toBe(1);
+  });
+
+  it('avance et recule d’une semaine', () => {
+    expect(moveInDateBar(bar, 0, 'weekAfter')).toBe(7);
+    expect(moveInDateBar(bar, 7, 'weekBefore')).toBe(0);
+  });
+
+  it('prend la journée ouverte la plus proche quand la semaine tombe sur un complet', () => {
+    // Sans ce repli, `PageSuiv` serait muette une semaine sur deux sur un
+    // agenda chargé — le 2 + 7 = 9e rang est complet.
+    expect(moveInDateBar(bar, 2, 'weekAfter')).toBe(10);
+    expect(moveInDateBar(bar, 9, 'weekBefore')).toBe(1);
+  });
+
+  it('bute sur les bords plutôt que de déborder', () => {
+    expect(moveInDateBar(bar, 12, 'weekAfter')).toBe(13);
+    expect(moveInDateBar(bar, 1, 'weekBefore')).toBe(0);
+  });
+
+  it('ne sort pas d’une barre vide', () => {
+    expect(moveInDateBar([], 0, 'next')).toBe(0);
+  });
+
+  it('ne bouge pas quand plus rien n’est ouvert autour', () => {
+    const complet: readonly DateBarDay[] = [
+      { date: '2026-09-01' as CalendarDate, slotCount: 2 },
+      { date: '2026-09-02' as CalendarDate, slotCount: 0 },
+      { date: '2026-09-03' as CalendarDate, slotCount: 0 },
+    ];
+
+    expect(moveInDateBar(complet, 0, 'next')).toBe(0);
   });
 });
 
