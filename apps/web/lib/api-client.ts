@@ -42,6 +42,9 @@ import {
   serviceSchema,
   serviceStaffMemberSchema,
   sessionUserSchema,
+  staffMemberSchema,
+  staffScheduleSchema,
+  staffTimeOffSchema,
   tenantSchema,
   type Appointment,
   type AppointmentListQuery,
@@ -57,6 +60,7 @@ import {
   type CreateCustomerRequest,
   type CreateServiceCategoryRequest,
   type CreateServiceRequest,
+  type CreateStaffTimeOffRequest,
   type Customer,
   type CustomerPage,
   type CustomerSearchQuery,
@@ -70,6 +74,10 @@ import {
   type ServiceCategory,
   type ServiceStaffMember,
   type SessionUser,
+  type SetStaffScheduleRequest,
+  type StaffMember,
+  type StaffSchedule,
+  type StaffTimeOff,
   type Tenant,
   type UpdateProfileRequest,
   type UpdateServiceCategoryRequest,
@@ -87,6 +95,22 @@ import {
   type AppointmentPaymentIntent,
   type PaymentTransaction,
 } from '@/lib/admin/payment-contract';
+
+// Les formes de l'administration du personnel que `@spa/shared` ne décrit pas
+// encore telles quelles, pour la même raison et avec le même TODO(#26) : voir
+// l'en-tête de `lib/admin/staff-contract.ts`.
+import {
+  staffAccountSchema,
+  staffAccountStateSchema,
+  staffInvitationSchema,
+  toApiRole,
+  type ChangeStaffRoleRequest,
+  type InviteStaffAccountRequest,
+  type SetStaffAccountStatusRequest,
+  type StaffAccount,
+  type StaffAccountState,
+  type StaffInvitation,
+} from '@/lib/admin/staff-contract';
 
 /**
  * Erreur d'API, telle que les écrans la lisent.
@@ -330,12 +354,18 @@ export function rescheduleAppointment(
  */
 interface AuthorizedRequestOptions<TSchema extends z.ZodTypeAny | null> {
   /**
-   * `DELETE` n'a d'appelant que le retrait d'une affectation praticien →
-   * prestation (#52) : c'est le seul geste du back-office qui supprime vraiment
-   * une ligne, tout le reste se désactive. Sa réponse est un 204 sans corps,
-   * d'où le `schema: null` que ce transport sait déjà porter.
+   * `DELETE` n'a que deux appelants — le retrait d'une affectation praticien →
+   * prestation (#52) et celui d'une absence (#53) : ce sont les deux seuls
+   * gestes du back-office qui suppriment vraiment une ligne, tout le reste se
+   * désactive. Leurs réponses sont des 204 sans corps, d'où le `schema: null`
+   * que ce transport sait déjà porter.
+   *
+   * `PUT` n'a d'appelant que le remplacement **intégral** de la semaine de
+   * travail d'un praticien (#53) : l'API l'a choisi parce que la seule invariante
+   * qui compte — aucune plage ne se recouvre — porte sur l'ensemble, et qu'un
+   * CRUD plage par plage ferait dépendre le verdict de l'ordre des appels.
    */
-  readonly method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  readonly method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   readonly path: string;
   readonly schema: TSchema;
   readonly body?: unknown;
@@ -1097,4 +1127,247 @@ export async function changeAppointmentStatus(
     accessToken,
   });
   return payload;
+}
+
+// ---------------------------------------------------------------------------
+// Le personnel et ses horaires — #53
+// ---------------------------------------------------------------------------
+
+/**
+ * Les **comptes** internes de l'établissement — `GET /v1/users`.
+ *
+ * Ce sont des comptes, pas des fiches praticien : l'identifiant rendu ici n'est
+ * pas celui qu'attendent `PUT /v1/staff/{id}/schedule` ni
+ * `POST /v1/services/{id}/staff`. Les deux notions cohabitent dans le schéma —
+ * `Staff.userId` les relie — et l'API ne publie pas ce lien : `StaffMemberDto`
+ * masque délibérément `userId`. C'est pourquoi l'écran du personnel montre les
+ * deux listes côte à côte sans prétendre les apparier ; les apparier par le nom
+ * serait une devinette, et une devinette qui se trompe attribue les horaires
+ * d'une collègue.
+ *
+ * La clientèle n'y figure pas — elle relève du module `crm` et de sa pagination.
+ */
+export async function fetchStaffAccounts(accessToken: string): Promise<StaffAccount[]> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: '/users',
+    schema: z.array(staffAccountSchema),
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Les **fiches praticien** de l'établissement — `GET /v1/staff`.
+ *
+ * `activeOnly` n'est pas posé par défaut : le back-office est justement l'écran
+ * où l'on vient retrouver un praticien suspendu. Une fiche désactivée reste une
+ * fiche de l'établissement, et c'est à l'écran de décider s'il la propose.
+ */
+export async function fetchStaffMembers(
+  accessToken: string,
+  query: { readonly activeOnly?: boolean } = {},
+): Promise<StaffMember[]> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/staff${query.activeOnly === true ? '?activeOnly=true' : ''}`,
+    schema: z.array(staffMemberSchema),
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Invite un membre du personnel — `POST /v1/users`, réservé aux administrateurs.
+ *
+ * Aucun mot de passe ne circule : le compte naît sans secret et la réponse porte
+ * un jeton d'invitation à transmettre. Le rôle part en majuscules, la casse que
+ * l'API attend en entrée — voir `toApiRole`.
+ */
+export async function inviteStaffAccount(
+  accessToken: string,
+  body: InviteStaffAccountRequest,
+): Promise<StaffInvitation> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/users',
+    body: { ...body, role: toApiRole(body.role) },
+    schema: staffInvitationSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/** Réémet l'invitation d'un compte jamais activé — `POST /v1/users/:id/invitation`. */
+export async function reissueStaffInvitation(
+  accessToken: string,
+  userId: string,
+): Promise<StaffInvitation> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: `/users/${encodeURIComponent(userId)}/invitation`,
+    schema: staffInvitationSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/*
+ * `PATCH /v1/users/:id` — corriger les coordonnées d'une collègue — est servi par
+ * l'API mais n'a pas de fonction ici : aucun écran ne les modifie encore, et ce
+ * module ne porte que ce qui est appelé. Il s'ajoutera avec le formulaire qui en
+ * aura besoin.
+ */
+
+/** Attribue un rôle — `PATCH /v1/users/:id/role`, réservé aux administrateurs. */
+export async function changeStaffAccountRole(
+  accessToken: string,
+  userId: string,
+  body: ChangeStaffRoleRequest,
+): Promise<StaffAccount> {
+  const { payload } = await authorizedRequest({
+    method: 'PATCH',
+    path: `/users/${encodeURIComponent(userId)}/role`,
+    body: { role: toApiRole(body.role) },
+    schema: staffAccountSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Désactive — ou réactive — un compte : `PATCH /v1/users/:id/status`.
+ *
+ * **Ce n'est pas une suppression**, et l'API n'expose aucun `DELETE` ici : le
+ * compte, ses affectations et ses rendez-vous passés restent intacts. C'est la
+ * seule route du personnel dont la réponse porte `isActive`.
+ */
+export async function setStaffAccountStatus(
+  accessToken: string,
+  userId: string,
+  body: SetStaffAccountStatusRequest,
+): Promise<StaffAccountState> {
+  const { payload } = await authorizedRequest({
+    method: 'PATCH',
+    path: `/users/${encodeURIComponent(userId)}/status`,
+    body,
+    schema: staffAccountStateSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * La semaine de travail d'un praticien — `GET /v1/staff/:staffId/schedule`.
+ *
+ * La réponse porte le **fuseau de l'établissement** avec les heures murales :
+ * sans lui elles ne veulent rien dire, et l'écran n'a aucun autre moyen fiable
+ * de savoir dans quel référentiel les lire.
+ */
+export async function fetchStaffSchedule(
+  accessToken: string,
+  staffId: string,
+): Promise<StaffSchedule> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/staff/${encodeURIComponent(staffId)}/schedule`,
+    schema: staffScheduleSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Remplace **intégralement** la semaine de travail — `PUT`.
+ *
+ * Un `PUT` de l'ensemble, et non un CRUD plage par plage : la seule invariante
+ * qui compte — aucune plage ne se recouvre — porte sur la semaine entière, et la
+ * vérifier à chaque ajout ferait dépendre le résultat de l'ordre des appels. Un
+ * tableau vide est licite : c'est ainsi qu'un praticien cesse d'être proposable
+ * sans être désactivé.
+ */
+export async function setStaffSchedule(
+  accessToken: string,
+  staffId: string,
+  body: SetStaffScheduleRequest,
+): Promise<StaffSchedule> {
+  const { payload } = await authorizedRequest({
+    method: 'PUT',
+    path: `/staff/${encodeURIComponent(staffId)}/schedule`,
+    body,
+    schema: staffScheduleSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/** La fenêtre du planning d'absences — bornes à offset explicite, obligatoires. */
+export interface StaffTimeOffWindow {
+  readonly staffId?: string;
+  readonly from: string;
+  readonly to: string;
+}
+
+/**
+ * Les plages bloquées et congés d'une fenêtre — `GET /v1/staff-time-off`.
+ *
+ * `from` et `to` sont obligatoires et bornés à un an côté API : sans eux, un
+ * salon de dix ans d'historique rendrait dix ans d'absences à chaque ouverture
+ * de la fiche. Une absence est retenue dès qu'elle **recoupe** la fenêtre.
+ */
+export async function fetchStaffTimeOff(
+  accessToken: string,
+  window: StaffTimeOffWindow,
+): Promise<StaffTimeOff[]> {
+  const search = new URLSearchParams({ from: window.from, to: window.to });
+
+  if (window.staffId !== undefined) {
+    search.set('staffId', window.staffId);
+  }
+
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/staff-time-off?${search.toString()}`,
+    schema: z.array(staffTimeOffSchema),
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Pose une plage bloquée ou un congé — `POST /v1/staff-time-off`.
+ *
+ * Les bornes partent en date-heure à **offset explicite** : « le 3 août » n'est
+ * pas un instant, et le serveur ne devine jamais un fuseau manquant. C'est
+ * `lib/admin/staff-time-off.ts` qui compose ces bornes à partir du fuseau que
+ * l'API rend avec la semaine de travail.
+ */
+export async function createStaffTimeOff(
+  accessToken: string,
+  body: CreateStaffTimeOffRequest,
+): Promise<StaffTimeOff> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/staff-time-off',
+    body,
+    schema: staffTimeOffSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Retire une absence — `DELETE /v1/staff-time-off/:id`, 204 sans corps.
+ *
+ * C'est l'une des rares suppressions réelles de cette API, et elle se justifie :
+ * une absence retirée rouvre un agenda, elle ne raconte rien d'historique. Les
+ * rendez-vous déjà pris, eux, portent leurs propres bornes.
+ */
+export async function deleteStaffTimeOff(accessToken: string, timeOffId: string): Promise<void> {
+  await authorizedRequest({
+    method: 'DELETE',
+    path: `/staff-time-off/${encodeURIComponent(timeOffId)}`,
+    schema: null,
+    accessToken,
+  });
 }
