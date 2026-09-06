@@ -219,6 +219,37 @@ réserve. L'écarter n'aurait laissé que deux issues : créer une seconde fiche
 que l'unicité interdit, ou refuser — c'est-à-dire faire de cette route publique un
 oracle sur le fichier client, la donnée même que ce module protège.
 
+### Le rôle est jugé sous verrou de ligne (#468)
+
+La lecture qui porte ce refus est un `SELECT … FOR SHARE`, dans la transaction de
+l'appelant — la même conduite que le second battant, pour la même raison. Elle
+était nue jusqu'à #468, et le refus n'était donc **pas atomique** par rapport à
+l'insertion qu'il garde : sous `READ COMMITTED`, chaque instruction prend son
+propre instantané, si bien qu'une lecture pouvait voir `CLIENT` pendant qu'une
+transaction concurrente promouvait la fiche au personnel et validait. Les deux
+clés étrangères de `appointments.client_id` prouvent l'existence de la ligne et
+son établissement, jamais son rôle : le rendez-vous passait.
+
+Le verrou est **partagé** : deux réservations d'invité pour la même personne chez
+deux praticiens différents avancent de front, et seuls les écrivains de la ligne
+attendent — ceux, précisément, qui pourraient la promouvoir. Comme au comptoir,
+le SQL brut ne repasse pas par l'extension de scoping (ADR 0006), et `tenant_id`
+est donc écrit à la main dans la requête, depuis le contexte de requête.
+
+L'ordre d'acquisition ne change pas : `AppointmentsRepository.insert` prend
+d'abord le verrou consultatif d'agenda, puis appelle la porte. Aucun chemin ne
+détient un verrou de ligne `users` avant l'agenda, donc aucun cycle d'attente
+nouveau.
+
+**Ce que ce verrou ne ferme pas**, et il faut le dire : la fenêtre de l'adresse
+**libre**. `FOR SHARE` verrouille les lignes rendues, et une lecture qui n'en rend
+aucune ne verrouille rien — deux transactions peuvent constater ensemble que
+l'adresse est libre. Cette course-là n'est pas laissée ouverte pour autant :
+c'est celle que l'unicité arbitre, ci-dessous. La fermer par un verrou
+demanderait un verrou de prédicat, c'est-à-dire `SERIALIZABLE` sur la transaction
+d'agenda — des échecs de sérialisation sur des réservations sans rapport entre
+elles, pour remplacer un arbitrage que la contrainte rend déjà gratuitement.
+
 ### La course sur l'adresse se rejoue chez l'appelant
 
 Deux réservations d'invité concurrentes sur la même adresse : la perdante reçoit
@@ -226,7 +257,10 @@ Deux réservations d'invité concurrentes sur la même adresse : la perdante re�
 rattrapée sur place — une violation de contrainte abandonne la transaction côté
 PostgreSQL, et Prisma n'ouvre aucun point de sauvegarde : relire échouerait en
 `25P02`. C'est `AppointmentsRepository.writingAgenda` qui rejoue la transaction
-entière, au même titre qu'un interblocage, trois fois au plus.
+entière, au même titre qu'un interblocage, trois fois au plus. La tentative
+suivante relit alors **sous verrou** la fiche que la gagnante vient d'écrire, et
+la juge : les deux fenêtres sont donc couvertes, chacune par le mécanisme qui lui
+convient.
 
 ## Le second battant : la fiche désignée par le comptoir (#465)
 
@@ -250,7 +284,7 @@ Une contrainte de schéma aurait été plus forte, et c'est la première voie qu
 été regardée : `users` ne porte aucune colonne dérivée sur laquelle une clé
 étrangère partielle pourrait s'appuyer. La porte est donc applicative.
 
-### Elle est la seule méthode du module à écrire du SQL brut
+### Les deux lectures qui jugent un rôle sont les seules à écrire du SQL brut
 
 Pour le `FOR SHARE`, que le client Prisma n'exprime pas — et sans lequel ce
 contrôle serait exactement la « vérification applicative suivie d'un `INSERT` »
@@ -258,6 +292,12 @@ que booking-engine §1 interdit. Sous `READ COMMITTED`, une lecture nue verrait
 `CLIENT`, une transaction concurrente promouvrait la fiche et validerait, et
 l'insertion passerait : les clés étrangères, elles, ne regardent pas le rôle. Le
 verrou de ligne ferme la fenêtre jusqu'au `COMMIT` de l'appelant.
+
+Ce battant a porté le verrou seul de #465 à #468, où il a été étendu à
+`resolveWithin`. Le module compte donc désormais **deux** lectures en SQL — celles
+qui jugent un rôle avant une insertion qui en dépend, et elles seules. Tout le
+reste (recherche, projections, historique, et les deux créations) passe par le
+client scopé, qui pose `tenant_id` sans qu'aucune requête ait à le nommer.
 
 Il est **partagé** et non exclusif : deux réservations pour la même cliente chez
 deux praticiens différents doivent pouvoir avancer de front. Seuls les écrivains
@@ -301,11 +341,13 @@ surface prévue. « Introuvable au fichier client » est vrai et actionnable ;
 | Suite | Ce qu'elle couvre |
 |---|---|
 | `__tests__/customers.service.spec.ts` | CRUD, recherche, pagination, portée fermée par défaut |
-| `__tests__/client-directory.service.spec.ts` | la porte de #313 : lecture sans filtre de rôle, refus d'une adresse du personnel, fiche désactivée réutilisée, course traduite en réessai — et celle de #465 : `FOR SHARE`, filtre `tenant_id` écrit à la main, quatre rôles, refus muet sur le rôle |
+| `__tests__/client-directory.service.spec.ts` | la porte de #313 : lecture sans filtre de rôle, refus d'une adresse du personnel, fiche désactivée réutilisée, course traduite en réessai — son verrou de #468 : `FOR SHARE`, filtre `tenant_id` écrit à la main, refus sans portée de tenant — et celle de #465 : mêmes garanties, quatre rôles, refus muet sur le rôle |
 | `__tests__/customer-history.service.spec.ts` | agrégat vs fenêtre, bornes, devises multiples |
 | `__tests__/crm.logging.spec.ts` | le module ne journalise rien ; la rédaction couvrirait ses champs |
 | `apps/api/test/crm.integration-spec.ts` | les six routes servies, gardes, validation, sérialisation |
 | `apps/api/test/crm-tenant.isolation-spec.ts` | le protocole de fuite sur les six routes |
+| `apps/api/test/appointments-exclusion.integration-spec.ts` | la porte exercée contre un vrai PostgreSQL : le `ROLLBACK` qui emporte la fiche, le refus d'une adresse du personnel sans 500, la frontière du tenant sur cette écriture, et le rôle jugé à l'instant de l'insertion (#468) |
+| `apps/api/test/appointments-exclusion.concurrency-spec.ts` | les courses : deux réservations d'invité sur la même adresse inconnue (#313), et la **promotion concurrente** qui prouve que le `FOR SHARE` de #468 verrouille vraiment — la suite unitaire ne vérifie que ce que la requête demande |
 
 Le scénario délibéré des suites d'isolation est **la même personne dans les deux
 salons** : `@@unique([tenantId, email])` l'autorise expressément, et c'est là
