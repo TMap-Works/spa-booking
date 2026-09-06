@@ -51,20 +51,77 @@ if (errorCodeOf(await response.json()) === ERROR_CODES.SLOT_NO_LONGER_AVAILABLE)
 }
 ```
 
-Le paquet est lié par les workspaces npm : rien à installer dans `apps/api` ni
-dans `apps/web`. Le chemin `@spa/shared` est déjà déclaré dans les `paths` de
-`tsconfig.base.json`, et `src/__tests__/contract-surface.spec.ts` vérifie que la
-résolution fonctionne depuis les deux applications.
+Le paquet est lié par les workspaces npm, et déclaré en dépendance des deux
+applications (`"@spa/shared": "*"`). `src/__tests__/contract-surface.spec.ts`
+vérifie que la résolution fonctionne depuis chacune d'elles.
 
-Consommer le paquet depuis un `tsconfig` qui compile avec `rootDir: src` demande
-une référence de projet :
+## Le consommer depuis un `tsconfig` qui compile avec `rootDir: src`
+
+C'est le cas d'`apps/api`. Le pointer par le `paths` de `tsconfig.base.json`
+(`./packages/shared/src/index.ts`, un chemin **direct**) fait échouer chaque
+fichier du contrat en TS6059 — « file is not under rootDir » : `tsc` tente
+d'absorber nos sources dans le programme de l'application.
+
+**Ce qui marche** — la voie retenue par #462, et qu'`apps/api/tsconfig.json`
+documente en détail : pointer le paquet **à travers le lien de workspace npm**.
+
+```jsonc
+// apps/api/tsconfig.json
+"paths": {
+  "@spa/shared": ["../../node_modules/@spa/shared/src/index.ts"],
+  "@spa/shared/*": ["../../node_modules/@spa/shared/src/*"]
+}
+```
+
+Cela change la *nature* de la résolution et pas seulement son chemin : ce que
+`tsc` trouve sous `node_modules` est marqué comme bibliothèque externe, donc ni
+vérifié contre `rootDir` ni écrit dans le `dist` de l'application. Le pointage
+vise les **sources**, ce qui affranchit la compilation de tout `dist` préalable
+du contrat.
+
+**Ce qui ne marche pas, et qui a été mesuré** — la référence de projet :
 
 ```jsonc
 { "references": [{ "path": "../../packages/shared/tsconfig.build.json" }] }
 ```
 
-sans quoi `tsc` tente d'absorber les sources du contrat dans son propre programme
-et échoue en TS6059.
+Elle exige que `packages/shared` soit **compilé avant** l'application, sinon
+TS6305. Or `tsc -p` ne construit pas ses références (seul `tsc -b` le fait), et
+`npm run <cible> --workspaces` s'exécute dans l'ordre du glob — `apps/api`,
+`apps/web`, `packages/shared` — et non dans celui des dépendances : `@spa/api`
+compile toujours en premier. Même remarque pour la consommation par le `dist`
+(`paths: {}`, résolution par `types: ./dist/index.d.ts`), qui bute sur TS2307.
+Le `composite: true` de `tsconfig.build.json` reste utile — c'est lui qui produit
+les `.d.ts` — mais ce n'est pas par une `references` qu'on consomme ce paquet.
+
+## Ce que l'exécution exige en plus de la compilation
+
+Compiler contre les sources ne dispense pas d'un `dist` **à l'exécution** : un
+import de *valeur* — et non de type — émet un `require('@spa/shared')` que `node`
+résout par le `main` du paquet, `./dist/index.js`. Tout ce qui exécute du code
+d'une application doit donc voir ce `dist` :
+
+| Exécutant | Ce qui le sert |
+|---|---|
+| `npm run verify` | `npm run build` compile les deux workspaces avant les tests |
+| Jest (`apps/api`) | `moduleNameMapper` renvoie `@spa/shared` sur les sources — aucune compilation préalable |
+| `start:dev` (`apps/api`) | `prestart:dev` compile le paquet — `ts-node/register` n'applique **pas** les `paths` du `tsconfig`, la résolution passe donc par le lien de workspace et exige le `dist` |
+| Image `apps/api` | l'étape `build` du Dockerfile compile le paquet, `runtime` copie son `dist` |
+
+`dist/` n'est pas versionné et aucun `prepare` ne le construit à l'installation :
+après un clone neuf, `npm ci` **seul** ne le produit pas. Tout ce qui exécute du
+code hors des trois voies ci-dessus doit donc lancer
+`npm run build --workspace @spa/shared` au préalable.
+
+La garde « L'image API démarre » de `.github/workflows/ci.yml` lance réellement
+l'image à chaque PR : c'est elle, et non la construction seule, qui rend visible
+un `MODULE_NOT_FOUND` avant le déploiement (#463).
+
+**Le baril racine est la seule porte d'entrée.** Le champ `exports` du paquet
+n'expose que `.` et `./package.json` : un import profond
+(`@spa/shared/errors/error-codes`) compile — les `paths` déclarent `@spa/shared/*` —
+mais échoue à l'exécution en `ERR_PACKAGE_PATH_NOT_EXPORTED`. Une règle ESLint
+d'`apps/api` le refuse au lint.
 
 ## Faire évoluer le contrat
 
