@@ -92,3 +92,8 @@ output "log_group_names" {
   description = "Groupe de journaux CloudWatch, par clé de `services`."
   value       = { for name, group in aws_cloudwatch_log_group.service : name => group.name }
 }
+
+output "xray_traced_services" {
+  description = "Clés des services dont la tâche porte le sidecar `aws-xray-daemon` et dont le rôle peut publier ses segments. Liste vide = aucune trace ne remontera, quoi que fasse le code applicatif."
+  value       = sort(keys(local.xray_services))
+}

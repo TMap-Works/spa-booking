@@ -124,6 +124,13 @@ variable "services" {
     # Politiques attachées au rôle de tâche. Vide par défaut : une application
     # qui n'appelle aucune API AWS n'a besoin d'aucun droit.
     task_role_policy_arns = optional(list(string), [])
+
+    # Traçage distribué X-Ray (CDC §4.11). À vrai, le module ajoute à la tâche
+    # le sidecar `aws-xray-daemon` — le relais UDP sans lequel le SDK écrit dans
+    # le vide — et accorde au rôle de tâche le droit de publier ses segments.
+    # Faux par défaut : le démon consomme du CPU et de la mémoire de la tâche, et
+    # une application non instrumentée n'en tirerait rien.
+    xray_tracing_enabled = optional(bool, false)
   }))
 
   validation {
@@ -207,6 +214,22 @@ variable "container_insights_enabled" {
   description = "Container Insights sur le cluster. Facturé à la métrique : à réserver à la production et à staging, où le diagnostic vaut son prix."
   type        = bool
   default     = false
+}
+
+variable "xray_daemon_image" {
+  description = <<-EOT
+    Image du sidecar de traçage, ajoutée aux tâches dont le service porte
+    `xray_tracing_enabled`. Le registre public d'AWS ne demande aucune
+    authentification : le rôle d'exécution n'a donc pas à recevoir de droit de
+    tirage supplémentaire, contrairement à l'image applicative.
+
+    Étiquette flottante `3.x` et non `latest` : le démon est un binaire
+    autonome dont AWS publie les correctifs sur cette branche, et l'épingler à
+    une version exacte obligerait à un `apply` pour chaque correctif d'un
+    composant qui ne sert qu'à relayer des paquets UDP.
+  EOT
+  type        = string
+  default     = "public.ecr.aws/xray/aws-xray-daemon:3.x"
 }
 
 # --- Sécurité et cycle de vie -------------------------------------------------
