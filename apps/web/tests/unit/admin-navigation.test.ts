@@ -6,11 +6,16 @@ import {
   isCurrentEntry,
   roleLabel,
 } from '@/app/(admin)/[tenantSlug]/admin/components/navigation';
+import { adminClientsPath } from '@/app/(admin)/[tenantSlug]/admin/clients/paths';
 import {
   adminCatalogPath,
   adminSessionRefreshPath,
   safeAdminNext,
 } from '@/app/(admin)/[tenantSlug]/admin/paths';
+import {
+  adminStaffMemberPath,
+  adminStaffPath,
+} from '@/app/(admin)/[tenantSlug]/admin/personnel/paths';
 
 /*
  * Le sommaire du back-office et l'arithmétique de chemins qui l'entoure (#48).
@@ -26,12 +31,30 @@ const SLUG = 'maison-lotus';
 const labels = (role: UserRole): readonly string[] =>
   adminNavigation(SLUG, role).map((entry) => entry.label);
 
+/** L'entrée d'une clé, ou l'échec du test — jamais un `undefined` silencieux. */
+const navEntry = (key: string, role: UserRole = 'admin') => {
+  const found = adminNavigation(SLUG, role).find((candidate) => candidate.key === key);
+
+  if (found === undefined) {
+    throw new Error(`Aucune entrée « ${key} » au rang ${role}.`);
+  }
+  return found;
+};
+
 describe('sommaire du back-office — ce que chaque rôle voit', () => {
-  it('ouvre au rang praticien le planning, les clients, les prestations et l’encaissement', () => {
-    expect(labels('staff')).toEqual(['Planning', 'Clients', 'Prestations', 'Encaissement']);
+  it('ouvre au rang praticien tout ce que les routes au seuil STAFF servent', () => {
+    // Le personnel en fait partie depuis #480 : ses lectures sont au seuil
+    // `STAFF`, et l'écran masque de lui-même les écritures de gestion.
+    expect(labels('staff')).toEqual([
+      'Planning',
+      'Clients',
+      'Prestations',
+      'Personnel',
+      'Encaissement',
+    ]);
   });
 
-  it('ajoute au rang gérant le personnel et le reporting, sans les réglages', () => {
+  it('ajoute au rang gérant le reporting, sans les réglages', () => {
     // `GET /v1/tenant` est `@AuthAtLeast('ADMIN')` : proposer les réglages ici
     // mènerait à un 403, sur un écran qu'on ne peut pas déverrouiller.
     expect(labels('manager')).toEqual([
@@ -86,10 +109,27 @@ describe('sommaire du back-office — aucun lien mort', () => {
 
   it('laisse sans chemin les écrans que la vague n’a pas encore livrés', () => {
     const pending = adminNavigation(SLUG, 'admin')
-      .filter((entry) => entry.href === null)
-      .map((entry) => entry.key);
+      .filter((candidate) => candidate.href === null)
+      .map((candidate) => candidate.key);
 
-    expect(pending).toEqual(['clients', 'personnel', 'encaissement', 'reporting']);
+    expect(pending).toEqual(['encaissement', 'reporting']);
+  });
+
+  it('mène au fichier client, entier et sans recherche figée', () => {
+    // Le rail ouvre le fichier nu : y figer un terme, une page ou une fiche
+    // ferait du sommaire le favori de quelqu'un d'autre.
+    expect(navEntry('clients').href).toBe(adminClientsPath(SLUG));
+    expect(navEntry('clients').href).toBe(`/${SLUG}/admin/clients`);
+    expect(navEntry('clients').upcoming).toBeNull();
+  });
+
+  it('mène au personnel dès le rang praticien', () => {
+    // Toutes les lectures de la section sont au seuil `STAFF` ; les écritures
+    // de gestion sont masquées par les écrans eux-mêmes.
+    expect(navEntry('personnel', 'staff').href).toBe(adminStaffPath(SLUG));
+    expect(navEntry('personnel', 'staff').href).toBe(`/${SLUG}/admin/personnel`);
+    expect(navEntry('personnel', 'staff').upcoming).toBeNull();
+    expect(navEntry('personnel').minimumRole).toBe('staff');
   });
 
   it('encode le slug dans chaque chemin servi', () => {
@@ -125,6 +165,28 @@ describe('l’entrée courante', () => {
 
   it('ne marque pas une autre section', () => {
     expect(isCurrentEntry(`/${SLUG}/admin/reglages`, planning)).toBe(false);
+  });
+
+  it('reste marquée sur une recherche et une fiche du fichier client', () => {
+    // Le fichier client met sa vue dans la **chaîne de requête** —
+    // `?recherche=…&fiche=…&page=…` — et jamais dans un segment de chemin.
+    // C'est ce qui fait tenir le repère : `usePathname` rend le chemin nu, celui
+    // que le rail compare.
+    const clients = navEntry('clients').href ?? '';
+    const searched = adminClientsPath(SLUG, { term: 'rako', customerId: 'abc', page: 2 });
+
+    expect(searched.startsWith(`${clients}?`)).toBe(true);
+    expect(isCurrentEntry(`/${SLUG}/admin/clients`, clients)).toBe(true);
+
+    // Et symétriquement, une entrée dont le `href` porterait déjà une vue —
+    // `?actives=1` du catalogue — reste comparée sur son seul chemin.
+    expect(isCurrentEntry(`/${SLUG}/admin/clients`, searched)).toBe(true);
+  });
+
+  it('reste marquée sur la fiche d’un praticien', () => {
+    expect(
+      isCurrentEntry(adminStaffMemberPath(SLUG, 'a1b2'), navEntry('personnel').href ?? ''),
+    ).toBe(true);
   });
 });
 
