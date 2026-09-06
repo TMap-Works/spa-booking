@@ -130,7 +130,7 @@ describe('un créneau pris pendant la saisie', () => {
     });
 
     const user = renderTunnel();
-    await allerJusquAuRecapitulatif(user, '09:00');
+    await allerJusquAuRecapitulatif(user, '09 h 00');
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
 
     const avis = await screen.findByRole('alert');
@@ -159,12 +159,12 @@ describe('un créneau pris pendant la saisie', () => {
     });
 
     const user = renderTunnel();
-    await allerJusquAuRecapitulatif(user, '09:00');
+    await allerJusquAuRecapitulatif(user, '09 h 00');
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
 
-    expect(await screen.findByRole('button', { name: '14:00' })).toBeDefined();
+    expect(await screen.findByRole('button', { name: '14 h 00' })).toBeDefined();
     expect(loadAvailabilityAction).toHaveBeenCalledTimes(2);
-    expect(screen.queryByRole('button', { name: '09:00' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '09 h 00' })).toBeNull();
   });
 
   it('conserve la prestation et les coordonnées déjà saisies', async () => {
@@ -178,11 +178,11 @@ describe('un créneau pris pendant la saisie', () => {
     });
 
     const user = renderTunnel();
-    await allerJusquAuRecapitulatif(user, '09:00');
+    await allerJusquAuRecapitulatif(user, '09 h 00');
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
 
     // Un seul geste sépare la cliente de sa réservation : reprendre un horaire.
-    await user.click(await screen.findByRole('button', { name: '14:00' }));
+    await user.click(await screen.findByRole('button', { name: '14 h 00' }));
 
     expect(screen.getByLabelText(/Prénom/)).toHaveProperty('value', 'Camille');
     expect(screen.getByLabelText(/^Nom/)).toHaveProperty('value', 'Rakoto');
@@ -216,7 +216,7 @@ describe('un créneau pris pendant la saisie', () => {
     });
 
     const user = renderTunnel();
-    await allerJusquAuRecapitulatif(user, '09:00');
+    await allerJusquAuRecapitulatif(user, '09 h 00');
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
 
     const avis = await screen.findByRole('alert');
@@ -246,7 +246,7 @@ describe('le tunnel trie sur le code d’erreur, jamais sur le message', () => {
     });
 
     const user = renderTunnel();
-    await allerJusquAuRecapitulatif(user, '09:00');
+    await allerJusquAuRecapitulatif(user, '09 h 00');
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
 
     expect(await screen.findByText('La réservation n’a pas abouti')).toBeDefined();
@@ -255,7 +255,7 @@ describe('le tunnel trie sur le code d’erreur, jamais sur le message', () => {
       'disabled',
       false,
     );
-    expect(screen.queryByRole('button', { name: '14:00' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '14 h 00' })).toBeNull();
     expect(loadAvailabilityAction).toHaveBeenCalledTimes(1);
   });
 });

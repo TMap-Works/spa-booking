@@ -75,6 +75,30 @@ function slotCountLabel(count: number): string {
 }
 
 /**
+ * L'heure telle qu'elle **s'énonce** — « 14 h 00 » quand la grille affiche
+ * « 14:00 » (`keyboard-navigation.md`, « États et attributs par créneau »).
+ *
+ * Les deux formes ne disent pas la même chose parce qu'elles ne sont pas lues
+ * dans le même contexte. Dans sa colonne, sous l'en-tête « Après-midi », « 14:00 »
+ * se comprend d'un coup d'œil et tient sur un téléphone. Énoncé seul par un
+ * lecteur d'écran, il s'entend « un quatre deux points zéro zéro » — ou passe
+ * pour un score. L'heure en toutes lettres, elle, se suffit.
+ *
+ * Elle est **composée ici**, chiffre à chiffre, plutôt que demandée à une locale
+ * qui la rend déjà : `fr-CA` écrit « 14 h 00 » avec une espace fine insécable
+ * dont la présence et la forme dépendent de la version d'ICU du moteur, si bien
+ * que le libellé différerait entre la CI et le poste — et avec lui les requêtes
+ * par nom accessible qui éprouvent tout le tunnel.
+ *
+ * La dériver du texte affiché plutôt que d'un second formateur garantit en outre
+ * que les deux formes ne peuvent pas diverger : mêmes chiffres, même fuseau,
+ * seul le séparateur change.
+ */
+function spokenTime(shortTime: string): string {
+  return shortTime.replace(':', ' h ');
+}
+
+/**
  * Choix du praticien et du créneau (#44, #351).
  *
  * ## Le praticien se change **ici**, pas un écran plus haut
@@ -118,21 +142,13 @@ function slotCountLabel(count: number): string {
  * restée opérable**, état vide qui offre d'élargir la fenêtre au-delà des
  * quatorze jours, état d'erreur qui offre de réessayer.
  *
- * Deux points de ces documents restent à faire, et chacun pour une raison qui
- * lui est propre.
+ * Le **libellé accessible complet** de chaque créneau — « 14 h 00 » là où la
+ * grille montre « 14:00 » — est posé par `spokenTime` (#481).
  *
- * Le **rendu barré des créneaux indisponibles** est sans objet en l'état :
- * `availabilityResponse` ne rend que les créneaux libres, un créneau pris est
- * simplement absent, et il n'y a rien à barrer. À reprendre si l'API se met un
- * jour à rendre l'agenda complet.
- *
- * Le **libellé accessible complet** — « 14 h 00 » plutôt que « 14:00 » pour un
- * créneau lu hors de sa colonne — se pose en une ligne, mais il change le nom
- * accessible de chaque créneau. Or le tunnel entier est éprouvé au travers de
- * ces noms-là (`tests/unit/booking-tunnel.test.tsx`), qui sortent de l'empreinte
- * de fichiers de ce ticket, mené en parallèle d'autres sur la même base. Le
- * changement et la reprise de ces requêtes vont ensemble ; les séparer laisserait
- * la suite rouge.
+ * Un seul point de ces documents reste à faire : le **rendu barré des créneaux
+ * indisponibles** est sans objet en l'état — `availabilityResponse` ne rend que
+ * les créneaux libres, un créneau pris est simplement absent, et il n'y a rien à
+ * barrer. À reprendre si l'API se met un jour à rendre l'agenda complet.
  */
 export function SlotStep({
   tenant,
@@ -769,23 +785,31 @@ export function SlotStep({
                 <span role="rowheader" className="spa-slot-grid__rowheader spa-card__meta">
                   {row.label}
                 </span>
-                {row.slots.map((slot) => (
-                  <span role="gridcell" className="spa-slot-grid__cell" key={slot.startsAt}>
-                    <Button
-                      variant="neutral"
-                      tabIndex={slot.startsAt === tabbableSlot ? 0 : -1}
-                      onFocus={() => {
-                        gridHasFocus.current = true;
-                        setActiveSlot(slot.startsAt);
-                      }}
-                      onClick={() => {
-                        onChoose(slot.startsAt);
-                      }}
-                    >
-                      {formatTimeInTimeZone(slot.startsAt, tenant.timezone)}
-                    </Button>
-                  </span>
-                ))}
+                {row.slots.map((slot) => {
+                  const time = formatTimeInTimeZone(slot.startsAt, tenant.timezone);
+
+                  return (
+                    <span role="gridcell" className="spa-slot-grid__cell" key={slot.startsAt}>
+                      <Button
+                        variant="neutral"
+                        // Le nom accessible dit l'heure en toutes lettres, le
+                        // texte visible garde la forme courte : hors de sa
+                        // colonne, un créneau est lu seul.
+                        aria-label={spokenTime(time)}
+                        tabIndex={slot.startsAt === tabbableSlot ? 0 : -1}
+                        onFocus={() => {
+                          gridHasFocus.current = true;
+                          setActiveSlot(slot.startsAt);
+                        }}
+                        onClick={() => {
+                          onChoose(slot.startsAt);
+                        }}
+                      >
+                        {time}
+                      </Button>
+                    </span>
+                  );
+                })}
               </div>
             ))}
           </div>
