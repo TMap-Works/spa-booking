@@ -11,6 +11,7 @@ ce fait.
 |---|---|
 | #56 | Le CRUD des fiches, la note interne, la recherche indexée et l'historique agrégé |
 | #313 | `ClientDirectoryService`, la porte par laquelle `appointments` obtient la fiche d'une cliente qui réserve sans compte |
+| #465 | `assertBookableWithin`, le second battant de cette porte : confirmer qu'une fiche **désignée** par le comptoir est bien du fichier client |
 
 Hors périmètre MVP, et donc non livré : fusion de doublons, segmentation,
 export RGPD, campagnes. Le CDC §1.4 borne le module à un « CRM client de
@@ -227,12 +228,80 @@ PostgreSQL, et Prisma n'ouvre aucun point de sauvegarde : relire échouerait en
 `25P02`. C'est `AppointmentsRepository.writingAgenda` qui rejoue la transaction
 entière, au même titre qu'un interblocage, trois fois au plus.
 
+## Le second battant : la fiche désignée par le comptoir (#465)
+
+`resolveWithin` part de coordonnées et crée au besoin ; `assertBookableWithin`
+part d'une fiche que le comptoir a **désignée** et ne crée jamais rien. Même
+porte, même signature — une portée de transaction, un identifiant en retour, rien
+de la fiche —, et la même question : « cette réservation peut-elle se rattacher à
+cette ligne `users` ? ».
+
+### Ce qu'elle referme
+
+`appointments.client_id` référence `users`, où vivent aussi les comptes du
+personnel. Les deux clés étrangères composites que traverse une insertion prouvent
+que la ligne existe et qu'elle est du bon établissement — jamais qu'elle est du
+**fichier client**. Le tunnel public refusait déjà ce cas depuis #313 ; le
+comptoir désigne au lieu de résoudre, et ne traversait donc pas cette porte. Un
+`STAFF` qui posait l'identifiant d'un collègue obtenait un rendez-vous valide dont
+la cliente était un employé.
+
+Une contrainte de schéma aurait été plus forte, et c'est la première voie qui a
+été regardée : `users` ne porte aucune colonne dérivée sur laquelle une clé
+étrangère partielle pourrait s'appuyer. La porte est donc applicative.
+
+### Elle est la seule méthode du module à écrire du SQL brut
+
+Pour le `FOR SHARE`, que le client Prisma n'exprime pas — et sans lequel ce
+contrôle serait exactement la « vérification applicative suivie d'un `INSERT` »
+que booking-engine §1 interdit. Sous `READ COMMITTED`, une lecture nue verrait
+`CLIENT`, une transaction concurrente promouvrait la fiche et validerait, et
+l'insertion passerait : les clés étrangères, elles, ne regardent pas le rôle. Le
+verrou de ligne ferme la fenêtre jusqu'au `COMMIT` de l'appelant.
+
+Il est **partagé** et non exclusif : deux réservations pour la même cliente chez
+deux praticiens différents doivent pouvoir avancer de front. Seuls les écrivains
+de la ligne attendent — ceux dont il faut se prémunir.
+
+Le SQL brut ne repasse pas par l'extension de scoping (ADR 0006) : `tenant_id`
+est donc écrit à la main dans la requête, depuis le contexte de requête et de
+nulle part d'autre. C'est ce qui rend une fiche du salon voisin **absente** plutôt
+que refusée pour un autre motif.
+
+### Le refus est un 404, et c'est un arbitrage
+
+| Ce que l'identifiant désigne | Ce que la porte rend |
+|---|---|
+| une fiche `CLIENT` de l'établissement | l'identifiant, tel quel |
+| rien du tout | `NotFoundError` — 404 |
+| une fiche du salon voisin | `NotFoundError` — 404 |
+| un compte `STAFF`, `MANAGER` ou `ADMIN` | `NotFoundError` — 404 |
+
+Les trois refus sont **littéralement** le même : même classe, même message. Aucun
+code neuf dans `@spa/shared`, et c'est délibéré.
+
+C'est d'abord la conduite que ce module tient déjà partout : `findById`, `update`
+et `setActive` replient « inconnu ici », « d'un autre établissement » et « c'est
+un compte du personnel » sur un seul `null` — *« distinguer la troisième dirait
+qui travaille au salon à qui n'a que le droit de lire des fiches »*. Un 409
+`CLIENT_NOT_BOOKABLE` aurait dit exactement cela, et aurait fait de
+`POST /appointments` une sonde de l'annuaire du personnel.
+
+La symétrie avec `CLIENT_EMAIL_NOT_BOOKABLE` est par ailleurs trompeuse. Ce
+409-là existe parce que `@@unique([tenantId, email])` ne laisse **aucune**
+troisième voie : la visiteuse ne réservera jamais sous cette adresse, et le front
+doit le savoir pour ne pas la renvoyer au calendrier (#452). Ici la voie existe et
+elle est triviale — le comptoir a désigné la mauvaise ligne, et le tiroir de #50
+ne montre que des `CLIENT`, si bien que ce corps ne se produit jamais par la
+surface prévue. « Introuvable au fichier client » est vrai et actionnable ;
+« définitivement non réservable » ne le serait pas.
+
 ## Tests
 
 | Suite | Ce qu'elle couvre |
 |---|---|
 | `__tests__/customers.service.spec.ts` | CRUD, recherche, pagination, portée fermée par défaut |
-| `__tests__/client-directory.service.spec.ts` | la porte de #313 : lecture sans filtre de rôle, refus d'une adresse du personnel, fiche désactivée réutilisée, course traduite en réessai |
+| `__tests__/client-directory.service.spec.ts` | la porte de #313 : lecture sans filtre de rôle, refus d'une adresse du personnel, fiche désactivée réutilisée, course traduite en réessai — et celle de #465 : `FOR SHARE`, filtre `tenant_id` écrit à la main, quatre rôles, refus muet sur le rôle |
 | `__tests__/customer-history.service.spec.ts` | agrégat vs fenêtre, bornes, devises multiples |
 | `__tests__/crm.logging.spec.ts` | le module ne journalise rien ; la rédaction couvrirait ses champs |
 | `apps/api/test/crm.integration-spec.ts` | les six routes servies, gardes, validation, sérialisation |
