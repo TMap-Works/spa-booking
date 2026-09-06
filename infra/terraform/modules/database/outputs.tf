@@ -28,6 +28,21 @@ output "database_name" {
   value       = aws_db_instance.this.db_name
 }
 
+output "instance_class" {
+  description = "Classe d'instance effectivement provisionnée. C'est elle qui détermine le `max_connections` du moteur — que RDS calcule à partir de la mémoire et n'expose par aucune métrique : la changer oblige à revoir le seuil de l'alarme de saturation des connexions (module `observability`)."
+  value       = aws_db_instance.this.instance_class
+}
+
+output "allocated_storage" {
+  description = "Stockage provisionné, en gibioctets. Base du seuil de l'alarme d'espace disque libre — `FreeStorageSpace` est en octets, le critère du CDC en pourcentage, et la conversion a besoin de cette valeur."
+  value       = aws_db_instance.this.allocated_storage
+}
+
+output "max_allocated_storage" {
+  description = "Plafond de l'extension automatique du stockage, en gibioctets. `0` = extension désactivée, auquel cas une base pleine cesse d'accepter les écritures au lieu de grandir."
+  value       = aws_db_instance.this.max_allocated_storage
+}
+
 output "master_username" {
   description = "Nom du compte maître. Son mot de passe se lit dans le secret `master_user_secret_arn`, jamais ici."
   value       = aws_db_instance.this.username
