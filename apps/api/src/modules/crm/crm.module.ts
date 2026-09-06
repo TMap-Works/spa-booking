@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { IdentityModule } from '../identity/identity.module';
 import { ClientDirectoryService } from './client-directory.service';
 import { CrmRepository } from './crm.repository';
+import { CustomerExportService } from './customer-export.service';
 import { CustomerHistoryService } from './customer-history.service';
 import { CustomersController } from './customers.controller';
 import { CustomersService } from './customers.service';
@@ -38,10 +39,15 @@ import { CustomersService } from './customers.service';
  *
  * Ce qu'elle laisse passer est étroit à dessein : un identifiant de fiche, jamais
  * une fiche. Pas de nom, pas d'adresse, pas de téléphone, pas de note interne, et
- * aucune lecture du fichier client. `CustomersService`, `CustomerHistoryService`
- * et `CrmRepository` restent hors du graphe des autres modules : un module qui
- * voudrait **afficher** une cliente n'a toujours aucun chemin pour cela, et c'est
- * la propriété que ce module tient depuis #56.
+ * aucune lecture du fichier client. `CustomersService`, `CustomerHistoryService`,
+ * `CustomerExportService` et `CrmRepository` restent hors du graphe des autres
+ * modules : un module qui voudrait **afficher** une cliente n'a toujours aucun
+ * chemin pour cela, et c'est la propriété que ce module tient depuis #56.
+ *
+ * `CustomerExportService` (#81) est celui qu'il importe le plus de garder ici :
+ * il rend en un seul objet la totalité de ce que le salon détient sur une
+ * personne. L'exporter aurait offert à n'importe quel module une porte plus large
+ * que toutes celles que ce fichier prend soin de fermer.
  *
  * `notifications` joindra un destinataire par la ligne `users` que `identity`
  * connaît déjà, et `reporting` agrège des rendez-vous et des paiements, pas des
@@ -57,7 +63,13 @@ import { CustomersService } from './customers.service';
 @Module({
   imports: [IdentityModule],
   controllers: [CustomersController],
-  providers: [CustomersService, CustomerHistoryService, ClientDirectoryService, CrmRepository],
+  providers: [
+    CustomersService,
+    CustomerHistoryService,
+    CustomerExportService,
+    ClientDirectoryService,
+    CrmRepository,
+  ],
   exports: [ClientDirectoryService],
 })
 export class CrmModule {}

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { NotFoundError } from '../../common/errors';
+import { CustomerHasUpcomingAppointmentsError } from './crm.errors';
 // Import **de valeur** et non `import type` : Nest lit le type du paramètre de
 // constructeur dans les métadonnées émises par TypeScript, et un `import type`
 // s'efface à la compilation — l'injection échouerait alors au démarrage.
@@ -123,6 +124,12 @@ export class CustomersService {
     lastName: string;
     phone: string | null;
     internalNote: string | null;
+    /**
+     * `undefined` — personne n'a posé la question ; `true`/`false` — quelqu'un
+     * l'a posée et voici la réponse. Les deux se distinguent, et c'est ce qui
+     * donne sa valeur à l'instant enregistré (#81).
+     */
+    marketingConsent?: boolean;
   }): Promise<Customer> {
     return this.repository.create({
       email: normalizeEmail(input.email),
@@ -134,6 +141,12 @@ export class CustomersService {
       // la colonne, elle, est nullable précisément pour dire cette absence-là.
       phone: emptyToNull(input.phone),
       internalNote: emptyToNull(input.internalNote),
+      // Le défaut est le refus, jamais l'acceptation : le consentement est un
+      // acte positif (RGPD art. 4.11). Sa date n'est posée que si quelqu'un
+      // s'est prononcé — « jamais demandé » et « refusé le 6 septembre » ne
+      // sont pas le même fait, et seul le second se démontre (art. 7.1).
+      marketingConsent: input.marketingConsent ?? false,
+      marketingConsentAt: input.marketingConsent === undefined ? null : this.now(),
     });
   }
 
@@ -167,7 +180,10 @@ export class CustomersService {
       throw new NotFoundError('Fiche cliente introuvable.');
     }
 
-    const normalized = normalizePatch(changes);
+    const normalized = {
+      ...normalizePatch(changes),
+      ...this.consentChange(current, changes.marketingConsent),
+    };
 
     const updated = await this.repository.update(id, normalized);
     if (!updated) {
@@ -206,6 +222,148 @@ export class CustomersService {
 
     return { ...current, isActive };
   }
+
+  /**
+   * Anonymise une fiche — le droit à l'oubli du CDC §5.1, deuxième critère
+   * de #81.
+   *
+   * ## Anonymiser plutôt que supprimer, et ce que ça préserve
+   *
+   * La ligne reste, vidée de ce qui identifie. C'est ce que le critère demande
+   * — « sans casser l'intégrité comptable des ventes passées » — et ce que le
+   * schéma impose de toute façon : `appointments.client_id` référence `users`
+   * en `Restrict`, et les encaissements comme les tickets de comptoir
+   * s'accrochent à ces rendez-vous. Ce qui reste après le geste est une suite
+   * de montants et de dates rattachés à un identifiant opaque ; ce qui part est
+   * la personne.
+   *
+   * ## Le refus, et pourquoi il n'est pas définitif
+   *
+   * Une fiche qui a des rendez-vous **à venir** n'est pas anonymisable : le
+   * salon ne peut ni préparer, ni confirmer, ni décommander une visite dont la
+   * cliente n'a plus de nom. Le RGPD prévoit exactement ce cas — l'effacement
+   * ne s'impose pas tant que le traitement reste nécessaire à l'exécution du
+   * contrat (art. 17.1.b). La voie reste ouverte : honorer ou annuler, puis
+   * redemander.
+   *
+   * ## Idempotence
+   *
+   * Une seconde demande sur une fiche déjà anonymisée la rend **telle quelle**,
+   * sans lui attribuer un second pseudonyme ni décaler sa date. C'est
+   * l'écriture conditionnelle du dépôt (`anonymized_at IS NULL`) qui le tient :
+   * deux demandes concurrentes obtiennent la même réponse, la seconde sans rien
+   * réécrire.
+   *
+   * ## Aucune décision n'est prise hors de la transaction
+   *
+   * Ce service ne relit pas la fiche avant d'appeler le dépôt, et ne compte pas
+   * lui-même les rendez-vous : les quatre issues — anonymisée, déjà anonymisée,
+   * rendez-vous à venir, introuvable — se tranchent **dedans**, la ligne étant
+   * verrouillée. Une lecture faite ici aurait été périmée avant d'avoir servi,
+   * et c'est exactement la vérification applicative que booking-engine §1
+   * interdit. Ce qui reste ici est la traduction de l'issue en erreur de
+   * domaine, qui est bien le travail d'un service (api-module §5).
+   *
+   * ## Le pseudonyme est calculé ici, pas dans le dépôt
+   *
+   * Parce que c'est une décision sur ce qu'on garde d'une personne, et non sur
+   * la façon de l'écrire. Il est **dérivé de l'identifiant de la fiche** : c'est
+   * ce qui le rend unique par construction, sans rien devoir tirer au sort ni
+   * relire — `@@unique([tenantId, email])` refuserait un second « anonyme ».
+   * Le calculer avant de savoir si la fiche existe ne coûte rien : c'est une
+   * concaténation, et une fiche absente n'en reçoit rien.
+   */
+  public async anonymize(id: string): Promise<Customer> {
+    const result = await this.repository.anonymize(
+      id,
+      {
+        firstName: ANONYMIZED_FIRST_NAME,
+        lastName: ANONYMIZED_LAST_NAME,
+        email: anonymizedEmail(id),
+        anonymizedAt: this.now(),
+      },
+      this.now(),
+    );
+
+    switch (result.outcome) {
+      case 'not-found':
+        // Inconnue, du salon voisin, ou compte du personnel : le même 404 dans
+        // les trois cas, délibérément (tenant-isolation §4).
+        throw new NotFoundError('Fiche cliente introuvable.');
+      case 'upcoming-appointments':
+        throw new CustomerHasUpcomingAppointmentsError(result.upcomingAppointments);
+      default:
+        return result.customer;
+    }
+  }
+
+  /**
+   * Le consentement à écrire, **avec sa date**, ou rien du tout.
+   *
+   * Trois cas, et le troisième est celui qui mérite d'être argumenté :
+   *
+   * - le champ est absent → rien n'est écrit, pas même la date ;
+   * - la valeur **change** → elle est écrite, et l'instant avec elle. C'est cet
+   *   instant qui rend le consentement démontrable (RGPD art. 7.1) ;
+   * - la valeur est renvoyée **identique** → rien n'est écrit. La date répond à
+   *   « depuis quand est-ce l'état », et un `PATCH` qui corrige un numéro de
+   *   téléphone en recopiant le consentement au passage ne doit pas la décaler.
+   *   Sans ce départage, l'écran qui renvoie le formulaire entier réécrirait la
+   *   preuve à chaque enregistrement, et elle finirait par dater du dernier
+   *   changement d'adresse.
+   */
+  private consentChange(current: Customer, requested: boolean | undefined): CustomerPatch {
+    if (requested === undefined || requested === current.marketingConsent) {
+      return {};
+    }
+    return { marketingConsent: requested, marketingConsentAt: this.now() };
+  }
+
+  /**
+   * L'instant courant, lu en un seul endroit.
+   *
+   * Regroupé ici pour que les dates du consentement et de l'anonymisation aient
+   * la même source, et pour qu'une suite puisse la remplacer sans avoir à
+   * geler l'horloge du processus entier.
+   */
+  private now(): Date {
+    return new Date();
+  }
+}
+
+/**
+ * Le prénom et le nom d'une fiche anonymisée.
+ *
+ * Lisibles plutôt qu'illisibles : le back-office continuera de croiser ces
+ * lignes dans un historique ou un état comptable, et « Client anonymisé » y dit
+ * ce qui s'est passé là où une suite de caractères aléatoires aurait fait
+ * craindre une corruption de données.
+ */
+const ANONYMIZED_FIRST_NAME = 'Client';
+const ANONYMIZED_LAST_NAME = 'anonymisé';
+
+/**
+ * Le domaine du pseudonyme — `.invalid` est **réservé** par la RFC 2606 et ne
+ * peut être délégué à personne.
+ *
+ * Ce n'est pas de la coquetterie : la colonne `email` est `NOT NULL`, il faut
+ * donc y écrire quelque chose, et ce quelque chose ne doit jamais désigner une
+ * boîte réelle. Un domaine d'exemple ordinaire pourrait un jour être enregistré
+ * et recevoir ce qu'un traitement mal réglé lui enverrait.
+ */
+const ANONYMIZED_EMAIL_DOMAIN = 'anonymise.invalid';
+
+/**
+ * L'adresse de remplacement d'une fiche anonymisée, **dérivée de son
+ * identifiant**.
+ *
+ * `@@unique([tenantId, email])` interdit deux fiches sous la même adresse dans
+ * un établissement : un « anonyme@… » constant aurait fait échouer la deuxième
+ * anonymisation du salon. L'identifiant est déjà unique et déjà dans la ligne,
+ * il n'y a donc rien à tirer au sort ni à relire pour s'en assurer.
+ */
+export function anonymizedEmail(id: string): string {
+  return `anonymise-${id}@${ANONYMIZED_EMAIL_DOMAIN}`;
 }
 
 /**

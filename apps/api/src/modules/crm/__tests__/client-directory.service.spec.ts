@@ -62,6 +62,8 @@ const TENANT_ID = '55555555-5555-4555-8555-555555555555';
 interface UserRow {
   id: string;
   role: string;
+  /** `anonymized_at IS NOT NULL`, tel que le `SELECT` le réduit (#81). */
+  anonymized?: boolean;
 }
 
 interface Scope {
@@ -267,6 +269,29 @@ describe('ClientDirectoryService.resolveWithin', () => {
     await expect(resolveWithin(target)).rejects.toBeInstanceOf(ClientEmailNotBookableError);
   });
 
+  it('refuse une fiche anonymisée, comme le comptoir (#81)', async () => {
+    // La jumelle `assertBookableWithin` écarte la fiche anonymisée dans son SQL ;
+    // celle-ci cherche par adresse et doit la juger sur la ligne rendue. Le
+    // pseudonyme étant dérivé de l'`id` — donc reconstructible par quiconque tient
+    // l'export remis à la personne —, sans ce refus une réservation publique
+    // rattachait un rendez-vous à qui venait d'exercer son droit à l'oubli.
+    const target = scopeWith({ found: { id: 'fiche-oubliee', role: 'CLIENT', anonymized: true } });
+
+    await expect(resolveWithin(target)).rejects.toBeInstanceOf(ClientEmailNotBookableError);
+    // Et surtout : aucune fiche créée en repli, qui aurait heurté
+    // `@@unique([tenantId, email])` et fait boucler le réessai de `writingAgenda`.
+    expect(target.writes()).toEqual([]);
+  });
+
+  it('projette l’anonymisation dans le SELECT, sans paramètre lié de plus (#81)', async () => {
+    const target = scopeWith({ found: { id: 'fiche-connue', role: 'CLIENT', anonymized: false } });
+
+    await expect(resolveWithin(target)).resolves.toBe('fiche-connue');
+
+    expect(target.sql()[0]).toMatch(/"anonymized_at"\s+IS\s+NOT\s+NULL/i);
+    expect(target.values()).toEqual(['camille@example.test', TENANT_ID]);
+  });
+
   it('ne dit pas l’adresse dans le refus', async () => {
     // Une adresse e-mail est une donnée personnelle (CDC §5.1), et le corps
     // d'erreur est précisément ce qui repart vers un journal ou une capture
@@ -397,6 +422,23 @@ describe('ClientDirectoryService.assertBookableWithin', () => {
     await assertWithin(target);
 
     expect(target.sql()[0]).toContain('tenant_id');
+    expect(target.values()).toEqual([CLIENT_ID, TENANT_ID]);
+  });
+
+  it('écarte une fiche anonymisée dans le SQL même (#81)', async () => {
+    // Une fiche anonymisée reste de rôle `CLIENT` — elle doit le rester, sinon
+    // elle disparaîtrait du fichier client et de son propre export —, si bien
+    // que le seul filtre de rôle la laissait passer. Sans ce prédicat, le
+    // comptoir pouvait rattacher un nouveau rendez-vous à une personne qui
+    // venait d'exercer son droit à l'oubli, et la réinscrire au fichier par la
+    // bande.
+    const target = scopeReturning({ role: 'CLIENT' });
+
+    await assertWithin(target);
+
+    expect(target.sql()[0]).toMatch(/"anonymized_at"\s+IS\s+NULL/i);
+    // Le prédicat est constant : il n'ajoute aucun paramètre lié, et ne change
+    // donc ni le plan de la requête ni la portée du verrou.
     expect(target.values()).toEqual([CLIENT_ID, TENANT_ID]);
   });
 

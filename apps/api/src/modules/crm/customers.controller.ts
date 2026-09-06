@@ -1,4 +1,15 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiConflictResponse,
@@ -7,11 +18,14 @@ import {
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 
 import { AuthAtLeast } from '../identity/auth.decorator';
+import { CustomerExportService } from './customer-export.service';
 import { CustomerHistoryService } from './customer-history.service';
 import { CustomersService } from './customers.service';
+import { CustomerDataExportDto, toCustomerDataExportDto } from './dto/customer-export.dto';
 import {
   CustomerHistoryQueryDto,
   CustomerVisitHistoryDto,
@@ -39,8 +53,10 @@ import {
  * | `GET /customers` | staff et au-dessus | le fichier, recherché et paginé |
  * | `GET /customers/:id` | staff et au-dessus | la fiche, note interne comprise |
  * | `GET /customers/:id/history` | staff et au-dessus | l'historique agrégé |
+ * | `GET /customers/:id/export` | manager et au-dessus | le dossier complet, à remettre |
  * | `POST /customers` | staff et au-dessus | la saisie au comptoir |
- * | `PATCH /customers/:id` | staff et au-dessus | coordonnées et note |
+ * | `POST /customers/:id/anonymize` | admin | le droit à l'oubli |
+ * | `PATCH /customers/:id` | staff et au-dessus | coordonnées, note et consentement |
  * | `PATCH /customers/:id/status` | manager et au-dessus | désactive **sans supprimer** |
  *
  * ## Deux seuils, et pourquoi la ligne passe là
@@ -57,6 +73,23 @@ import {
  * même partage que `PATCH /users/:id` (coordonnées, `MANAGER`) et
  * `PATCH /users/:id/status` (activation, `ADMIN`) chez `identity`.
  *
+ * ## Les deux seuils que #81 ajoute
+ *
+ * `MANAGER` pour l'**export**. Il ne modifie rien, mais il produit en un seul
+ * appel la totalité de ce que le salon détient sur une personne — notes internes
+ * et textes libres compris. Le laisser à `STAFF` aurait mis à portée d'un clic,
+ * sur chaque poste du comptoir, un dossier complet exportable ; le sortir du
+ * périmètre du back-office aurait rendu le droit d'accès impraticable. La
+ * minimisation du CDC §5.1 se joue autant sur qui peut lire que sur ce qui est
+ * lu.
+ *
+ * `ADMIN` pour l'**anonymisation**. C'est la seule opération de tout le module
+ * qui **détruise** irréversiblement une donnée : ni la désactivation, ni la
+ * modification, ni rien d'autre ne perd quoi que ce soit. Il n'y a pas de
+ * retour arrière — c'est le propos —, et une opération sans retour arrière
+ * appartient au rang le plus élevé de l'établissement. Même seuil que
+ * `PATCH /users/:id/role` chez `identity`, pour la même raison.
+ *
  * **Aucune route n'est ouverte au rôle `CLIENT`.** Une cliente lit et corrige
  * son propre profil par `PATCH /users/me` et `GET /auth/me` — des routes sans
  * identifiant en chemin, donc sans rien à comparer. Ouvrir ici la moindre route
@@ -69,6 +102,11 @@ import {
  * Pas de `DELETE` : `appointments.client_id` référence `users` en `Restrict`, si
  * bien qu'une fiche ayant honoré une seule visite ne se supprime pas, et le
  * reporting doit continuer à la compter. Un verbe qui n'efface rien mentirait.
+ * #81 n'en ajoute pas davantage : le droit à l'oubli passe par
+ * `POST /customers/:id/anonymize`, parce que ce qui se produit n'est pas la
+ * disparition d'une ressource — elle reste, et se relit — mais une
+ * transformation irréversible de son contenu. Un `DELETE` qui rendrait ensuite
+ * 200 sur la même URL aurait menti deux fois.
  *
  * Pas de `:tenantId` : l'établissement vient du jeton vérifié, jamais du chemin
  * (tenant-isolation §2). Une route `/tenants/:tenantId/customers/:id` laisserait
@@ -88,6 +126,7 @@ export class CustomersController {
   public constructor(
     private readonly customers: CustomersService,
     private readonly history: CustomerHistoryService,
+    private readonly dataExport: CustomerExportService,
   ) {}
 
   /**
@@ -152,6 +191,31 @@ export class CustomersController {
   }
 
   /**
+   * Le dossier complet d'une fiche — ce qui se remet à une personne qui exerce
+   * son droit d'accès et de portabilité (#81, CDC §5.1, RGPD art. 15 et 20).
+   *
+   * Un document JSON unique et daté, non paginé : ce qui se remet doit être
+   * complet, et une pagination rendrait la complétude tributaire de l'appelant.
+   * Il porte les textes libres que l'historique écarte — ce que la cliente a
+   * écrit en réservant, ce que le salon a noté sur elle — parce que le droit
+   * d'accès ne connaît pas d'exception pour ce qu'on aurait préféré garder.
+   *
+   * **404** dans les mêmes trois cas que la lecture d'une fiche. Sans la
+   * relecture qui le produit, l'export d'un identifiant inconnu rendrait un
+   * document bien formé et vide en 200 — un document qui a l'apparence d'une
+   * réponse au titre de l'art. 15 sans en être une, et qui se remettrait sans
+   * que personne ne s'aperçoive de l'erreur.
+   */
+  @Get(':id/export')
+  @AuthAtLeast('MANAGER')
+  @ApiOperation({ summary: 'Exporter les données personnelles d’une cliente (RGPD)' })
+  @ApiOkResponse({ type: CustomerDataExportDto })
+  @ApiNotFoundResponse({ description: 'Aucune fiche de cet établissement ne porte cet identifiant.' })
+  public async exportOf(@Param('id', ParseUUIDPipe) id: string): Promise<CustomerDataExportDto> {
+    return toCustomerDataExportDto(await this.dataExport.byCustomerId(id));
+  }
+
+  /**
    * Crée une fiche cliente au comptoir.
    *
    * **201** : une ressource est créée. **409** si l'adresse est déjà prise dans
@@ -179,8 +243,53 @@ export class CustomersController {
         // « un numéro » ou « pas de numéro ».
         phone: body.phone ?? null,
         internalNote: body.internalNote ?? null,
+        // `undefined` traverse **intact**, contrairement aux deux précédents :
+        // « personne n'a posé la question » et « la réponse est non » ne sont
+        // pas le même fait, et seul le second se date (#81).
+        ...(body.marketingConsent === undefined
+          ? {}
+          : { marketingConsent: body.marketingConsent }),
       }),
     );
+  }
+
+  /**
+   * Anonymise une fiche — le droit à l'oubli (#81, CDC §5.1).
+   *
+   * **`POST` et non `DELETE`** : la ressource ne disparaît pas. Elle reste
+   * lisible à la même URL, vidée de ce qui identifie — nom et adresse remplacés
+   * par un pseudonyme, téléphone, note interne et empreinte de mot de passe
+   * effacés, et les textes libres de ses rendez-vous avec. Ce qui subsiste est
+   * ce que la comptabilité exige : des montants, des dates, un identifiant
+   * opaque. `appointments.client_id` référence `users` en `Restrict` — une
+   * suppression était de toute façon impossible sans emporter les ventes
+   * passées, ce que le critère d'acceptation interdit.
+   *
+   * **200 et non 202** : le geste est fait quand la réponse part, et le corps
+   * porte la fiche telle qu'elle est désormais. C'est ce qui permet à l'écran de
+   * montrer le résultat plutôt que de le promettre.
+   *
+   * **Idempotente** : une seconde demande rend la fiche déjà anonymisée telle
+   * quelle, sans second pseudonyme ni date décalée.
+   *
+   * **422** si la fiche a encore des rendez-vous à venir : le RGPD n'impose pas
+   * d'effacer tant que le traitement reste nécessaire à l'exécution du contrat
+   * (art. 17.1.b), et un rendez-vous de jeudi est ce contrat. Le refus est
+   * temporaire et actionnable — honorer, ou annuler.
+   *
+   * **404** dans les mêmes trois cas que la lecture d'une fiche.
+   */
+  @Post(':id/anonymize')
+  @HttpCode(HttpStatus.OK)
+  @AuthAtLeast('ADMIN')
+  @ApiOperation({ summary: 'Anonymiser une fiche cliente (droit à l’oubli)' })
+  @ApiOkResponse({ type: CustomerDto })
+  @ApiNotFoundResponse({ description: 'Aucune fiche de cet établissement ne porte cet identifiant.' })
+  @ApiUnprocessableEntityResponse({
+    description: 'La fiche a encore des rendez-vous à venir : les honorer ou les annuler d’abord.',
+  })
+  public async anonymize(@Param('id', ParseUUIDPipe) id: string): Promise<CustomerDto> {
+    return toCustomerDto(await this.customers.anonymize(id));
   }
 
   /**
