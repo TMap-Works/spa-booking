@@ -1,14 +1,15 @@
-import type { PublicService, Service, ServiceCategory, ServiceStaffMember, StaffMemberSummary } from '@spa/shared';
+import type { Service, ServiceCategory, ServiceStaffMember, StaffMember } from '@spa/shared';
 import Link from 'next/link';
 
 import { Notification } from '@/components/ui/notification';
 import {
   ApiClientError,
-  fetchPublicServices,
   fetchService,
   fetchServiceCategories,
   fetchServiceStaff,
+  fetchStaffMembers,
 } from '@/lib/api-client';
+import { sortStaffMembers } from '@/lib/admin/staff-directory';
 import { formatDuration } from '@/lib/format';
 
 import { CatalogStatusBadge } from '../../components/catalog-status-badge';
@@ -29,50 +30,26 @@ import { adminCatalogPath, adminCatalogPreviewPath, adminServicePath } from '../
  *
  * ## D'où vient la liste des praticiens affectables
  *
- * Du catalogue public (`GET /public/{slug}/services`), qui porte pour chaque
- * prestation active les fiches praticien qui la tiennent. La limite est connue
- * et visible à l'écran : un praticien qui ne pratique encore aucune prestation
- * n'apparaît pas, si bien qu'un salon qui démarre — aucune affectation nulle
- * part — ne peut pas faire sa toute première affectation d'ici.
+ * De `GET /v1/staff` (#421, branché ici par #455), l'annuaire des fiches
+ * praticien de l'établissement — l'identifiant qu'il rend est celui qu'attend
+ * `POST /services/{serviceId}/staff`. C'est ce qui rend possible la **toute
+ * première** affectation d'un salon qui démarre.
  *
- * **Le point d'entrée qui manquait existe désormais** : `GET /v1/staff` (#421)
- * rend les fiches praticien de l'établissement, avec l'identifiant qu'attend
- * `POST /services/{serviceId}/staff`. Cet écran ne le consomme pas encore — le
- * brancher demande d'ajouter un `fetchStaff` à `apps/web/lib/api-client.ts`,
- * dont le transport authentifié n'est pas exporté, et de reprendre le libellé
- * d'aide de `ServiceStaffPanel` qui décrit encore l'ancienne composition. Les
- * deux fichiers sont hors de l'empreinte du ticket qui a ouvert la route, et le
- * branchement fait donc l'objet d'une issue de suivi.
+ * Le catalogue public ne sert plus à composer ces candidats, et n'est plus lu :
+ * il ne portait que les fiches **déjà affectées** à une prestation active, si
+ * bien qu'un salon sans aucune affectation nulle part ne voyait aucun candidat —
+ * exactement l'écran dont il fallait sortir.
  *
- * Tant qu'il n'est pas fait, `knownStaff` ci-dessous reste la seule source de
- * candidats, et le quatrième critère de #52 n'est satisfait qu'à l'usage
- * courant — pas à l'amorçage.
+ * La liste n'est pas filtrée sur l'activité : une fiche suspendue reste une
+ * fiche de l'établissement, le back-office est justement l'endroit où on la
+ * retrouve, et l'API accepte de l'affecter. Le panneau la propose donc, en
+ * disant qu'elle est désactivée plutôt qu'en la masquant.
  */
 
 export const dynamic = 'force-dynamic';
 
 interface ServicePageProps {
   readonly params: Promise<{ readonly tenantSlug: string; readonly serviceId: string }>;
-}
-
-/**
- * Les praticiens que le catalogue public connaît, dédoublonnés.
- *
- * Une même fiche tient plusieurs prestations : sans ce dédoublonnage, la liste
- * de choix répéterait le même nom autant de fois qu'il pratique de soins.
- */
-function knownStaff(catalog: readonly PublicService[]): StaffMemberSummary[] {
-  const byId = new Map<string, StaffMemberSummary>();
-
-  for (const service of catalog) {
-    for (const member of service.staff) {
-      byId.set(member.id, member);
-    }
-  }
-
-  return [...byId.values()].sort((left, right) =>
-    left.displayName.localeCompare(right.displayName, 'fr'),
-  );
 }
 
 export default async function ServicePage({ params }: ServicePageProps) {
@@ -85,11 +62,13 @@ export default async function ServicePage({ params }: ServicePageProps) {
   let service: Service;
   let categories: ServiceCategory[];
   let assigned: ServiceStaffMember[];
+  let staff: StaffMember[];
   try {
-    [service, categories, assigned] = await Promise.all([
+    [service, categories, assigned, staff] = await Promise.all([
       fetchService(accessToken, serviceId),
       fetchServiceCategories(accessToken, { activeOnly: true }),
       fetchServiceStaff(accessToken, serviceId),
+      fetchStaffMembers(accessToken),
     ]);
   } catch (error) {
     // Un 404 est le cas d'une prestation d'un autre établissement autant que
@@ -114,23 +93,19 @@ export default async function ServicePage({ params }: ServicePageProps) {
     });
   }
 
-  // Le catalogue **public** est lu à part, et son échec ne fait pas échouer la
-  // page : il ne sert qu'à composer la liste des praticiens affectables. Réuni
-  // aux trois lectures ci-dessus, son 404 — celui d'un salon désactivé, dont la
-  // vitrine n'est plus servie — aurait été rendu comme « prestation
-  // introuvable », sur une prestation qui existe et que l'écran affiche
-  // parfaitement. Sans candidats, le panneau dit déjà ce qu'il en est.
-  const catalog: PublicService[] = await fetchPublicServices(tenantSlug).catch(
-    (error: unknown): PublicService[] => {
-      if (error instanceof ApiClientError) {
-        return [];
-      }
-      throw error;
-    },
-  );
-
+  // `GET /v1/staff` rejoint les trois autres lectures dans le `Promise.all` :
+  // il ne rend pas de 404 — une liste vide est la réponse juste pour un salon
+  // sans aucune fiche —, et il lit au rang `STAFF`, sous le seuil que la page
+  // exige déjà. Aucun échec propre à traiter à part, contrairement au catalogue
+  // public qu'il remplace : celui-là rendait 404 pour un salon désactivé, sur
+  // une prestation qui existe et que l'écran affiche parfaitement.
+  //
+  // L'ordre de l'API (`orderBy: displayName`) est celui de la collation de la
+  // base, et non celui du français : « Émilie » s'y range après « Zoé ». C'est
+  // `sortStaffMembers` qui donne l'ordre d'affichage — le même que sur l'écran
+  // Personnel —, actives d'abord puis `localeCompare` en `fr-FR`.
   const affected = new Set(assigned.map((member) => member.id));
-  const candidates = knownStaff(catalog).filter((member) => !affected.has(member.id));
+  const candidates = sortStaffMembers(staff.filter((member) => !affected.has(member.id)));
 
   return (
     <section aria-labelledby="prestation-titre">

@@ -1,4 +1,4 @@
-import type { ServiceStaffMember, StaffMemberSummary } from '@spa/shared';
+import type { ServiceStaffMember, StaffMember } from '@spa/shared';
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -25,7 +25,7 @@ const RINA = '22222222-2222-4222-8222-222222222222';
 const assigned: ServiceStaffMember[] = [
   { id: HASINA, displayName: 'Hasina', isActive: true },
 ];
-const candidates: StaffMemberSummary[] = [{ id: RINA, displayName: 'Rina' }];
+const candidates: StaffMember[] = [{ id: RINA, displayName: 'Rina', isActive: true }];
 
 afterEach(() => {
   cleanup();
@@ -37,7 +37,7 @@ afterEach(() => {
 function renderPanel(
   overrides: {
     readonly assigned?: ServiceStaffMember[];
-    readonly candidates?: StaffMemberSummary[];
+    readonly candidates?: StaffMember[];
   } = {},
 ): void {
   render(
@@ -75,8 +75,33 @@ describe('affectation des praticiens — ce que l’écran montre', () => {
   it('désactive le choix quand il ne reste personne à affecter, et dit pourquoi', () => {
     renderPanel({ candidates: [] });
 
+    // Le libellé de liste vide, et non le `hint` du sélecteur — qui parle lui
+    // aussi des praticiens déjà affectés, en les annonçant comme retirés.
     expect(screen.getByLabelText(/Ajouter un praticien/).hasAttribute('disabled')).toBe(true);
-    expect(screen.getByText(/pratiquent déjà cette prestation/i)).toBeDefined();
+    expect(
+      screen.getByText(/pratiquent déjà cette prestation/i, { selector: '.spa-select__empty' }),
+    ).toBeDefined();
+  });
+
+  it('distingue « aucune fiche dans le salon » de « tous déjà affectés »', () => {
+    // Les deux listes vides ne décrivent pas le même écran : ici c'est
+    // l'établissement qui n'a aucune fiche praticien — un état d'amorçage réel
+    // depuis que les candidats viennent de `GET /v1/staff` et non plus du
+    // catalogue, où « inconnu du catalogue » n'était qu'un artefact.
+    renderPanel({ assigned: [], candidates: [] });
+
+    expect(screen.getByText(/Aucune fiche praticien dans cet établissement/i)).toBeDefined();
+    expect(screen.queryByText(/catalogue/i)).toBeNull();
+  });
+
+  it('propose une fiche désactivée, en le disant plutôt qu’en la masquant', () => {
+    // L'API accepte de l'affecter et le back-office est l'écran où on la
+    // retrouve : la masquer la rendrait introuvable, la proposer muette ferait
+    // créer une affectation dont aucun créneau ne sortira.
+    renderPanel({ candidates: [{ id: RINA, displayName: 'Rina', isActive: false }] });
+
+    expect(screen.getByRole('option', { name: 'Rina (désactivé)' })).toBeDefined();
+    expect(screen.getByLabelText(/Ajouter un praticien/).hasAttribute('disabled')).toBe(false);
   });
 });
 

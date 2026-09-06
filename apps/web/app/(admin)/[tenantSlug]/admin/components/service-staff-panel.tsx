@@ -1,6 +1,6 @@
 'use client';
 
-import { ERROR_CODES, type ServiceStaffMember, type StaffMemberSummary } from '@spa/shared';
+import { ERROR_CODES, type ServiceStaffMember, type StaffMember } from '@spa/shared';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -30,23 +30,34 @@ import { assignServiceStaffAction, removeServiceStaffAction } from '../catalogue
  *
  * ## D'où vient la liste des praticiens qu'on peut ajouter
  *
- * De ce que le catalogue publie : l'API du back-office n'expose à ce jour aucun
- * point d'entrée « tous les praticiens de l'établissement » — `GET /v1/users`
- * rend des **comptes**, dont l'identifiant n'est pas celui d'une fiche
- * praticien, et l'affectation attend le second. La page compose donc les
- * candidats à partir des fiches déjà citées par le catalogue. Conséquence
- * assumée et écrite sur l'écran : un praticien qui ne pratique encore aucune
- * prestation n'y apparaît pas. Le point d'entrée manquant fait l'objet d'une
- * issue de suivi ; l'inventer côté front reviendrait à deviner un contrat.
+ * De `GET /v1/staff` — l'annuaire des fiches praticien de l'établissement, dont
+ * l'identifiant est bien celui qu'attend l'affectation (`GET /v1/users`, lui,
+ * rend des **comptes**, et son identifiant n'irait nulle part ici). La page
+ * retire de cette liste les praticiens déjà affectés et passe le reste.
+ *
+ * Ce n'est plus le catalogue public qui la compose : il ne citait que les fiches
+ * **déjà affectées** à une prestation active, et un salon qui démarre n'y
+ * trouvait donc aucun candidat pour sa toute première affectation (#455).
+ *
+ * ## Les fiches désactivées sont proposées, en le disant
+ *
+ * L'API accepte de les affecter, et le back-office est l'écran où l'on vient
+ * retrouver une praticienne suspendue. Les masquer les rendrait introuvables
+ * ici ; les proposer sans rien dire ferait créer une affectation dont le moteur
+ * de disponibilité ne tirera aucun créneau. L'option porte donc la mention.
  */
 /**
  * Pourquoi la liste de choix est vide — les deux cas ne sont pas le même écran.
  *
  * « Tous déjà affectés » est une bonne nouvelle : il n'y a rien à faire.
- * « Aucune fiche connue » est un état de démarrage dont on ne sort pas depuis
- * cet écran, et le taire laisserait une gérante cliquer sur un sélecteur muet en
- * cherchant ce qu'elle a mal fait. Rendu `undefined` quand il y a des candidats :
- * `Select` réserve `emptyLabel` à la liste chargée **et** vide.
+ * « Aucune fiche dans l'établissement » est un état de démarrage dont on ne sort
+ * pas depuis cet écran, et le taire laisserait une gérante cliquer sur un
+ * sélecteur muet en cherchant ce qu'elle a mal fait. Rendu `undefined` quand il y
+ * a des candidats : `Select` réserve `emptyLabel` à la liste chargée **et** vide.
+ *
+ * Les deux messages décrivent maintenant l'état réel de l'établissement, et non
+ * plus l'ancienne composition depuis le catalogue : la liste est celle des
+ * fiches du salon, la seconde branche veut donc bien dire qu'il n'y en a aucune.
  */
 function emptyChoiceLabel(assignedCount: number, candidateCount: number): string | undefined {
   if (candidateCount > 0) {
@@ -54,8 +65,8 @@ function emptyChoiceLabel(assignedCount: number, candidateCount: number): string
   }
 
   return assignedCount === 0
-    ? 'Aucune fiche praticien n’est encore rattachée au catalogue de ce salon. Affectez d’abord un praticien depuis sa fiche, ou créez-en une.'
-    : 'Tous les praticiens connus du catalogue pratiquent déjà cette prestation.';
+    ? 'Aucune fiche praticien dans cet établissement — il n’y a personne à affecter. La création d’une fiche n’est pas encore servie par l’API.'
+    : 'Tous les praticiens de l’établissement pratiquent déjà cette prestation.';
 }
 
 export function ServiceStaffPanel({
@@ -67,8 +78,12 @@ export function ServiceStaffPanel({
   readonly tenantSlug: string;
   readonly serviceId: string;
   readonly assigned: readonly ServiceStaffMember[];
-  /** Praticiens connus du catalogue, déjà privés de ceux qui sont affectés. */
-  readonly candidates: readonly StaffMemberSummary[];
+  /**
+   * Les fiches praticien de l'établissement, déjà privées de celles qui sont
+   * affectées — et déjà ordonnées par la page (`sortStaffMembers`) : actives
+   * d'abord, puis par nom en français.
+   */
+  readonly candidates: readonly StaffMember[];
 }) {
   const router = useRouter();
   const [choice, setChoice] = useState('');
@@ -183,13 +198,13 @@ export function ServiceStaffPanel({
         label="Ajouter un praticien"
         value={choice}
         onChange={(event) => setChoice(event.target.value)}
-        hint="Praticiens connus du catalogue. Un praticien qui ne pratique encore aucune prestation n’apparaît pas ici."
+        hint="Toutes les fiches praticien de l’établissement, celles qui pratiquent déjà cette prestation en moins."
         emptyLabel={emptyChoiceLabel(assigned.length, candidates.length)}
       >
         <option value="">Choisir un praticien…</option>
         {candidates.map((member) => (
           <option key={member.id} value={member.id}>
-            {member.displayName}
+            {member.isActive ? member.displayName : `${member.displayName} (désactivé)`}
           </option>
         ))}
       </Select>
