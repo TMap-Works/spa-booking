@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { PrismaClient } from '@prisma/client';
 
 import { InvalidStateTransitionError, NotFoundError } from '../src/common/errors';
@@ -47,7 +49,12 @@ import {
  * 8. la **fiche cliente** résolue par `crm` vit dans la même transaction que le
  *    rendez-vous (#313) : un créneau refusé n'en laisse aucune derrière lui, et
  *    c'est le `ROLLBACK` qui le garantit — rien qu'un double en mémoire ne
- *    saurait prouver.
+ *    saurait prouver ;
+ * 9. la fiche **désignée** par le comptoir est jugée sur son **rôle** dans cette
+ *    même transaction (#465). Les clés étrangères prouvent l'existence et
+ *    l'établissement de la ligne, jamais qu'elle est au fichier client : c'est
+ *    la porte de `crm` qui lit `users.role`, et il faut une vraie base pour
+ *    l'exercer sur les quatre rôles.
  *
  * ## Ce qui n'est plus ici
  *
@@ -887,13 +894,15 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
   });
 
   /**
-   * La fiche **désignée** du comptoir, jugée par les clés étrangères (#461).
+   * La fiche **désignée** du comptoir, et la frontière du tenant (#461, #465).
    *
    * Ce que seule une vraie base peut établir : que `{ clientId }` n'ouvre aucun
    * chemin autour de la frontière du tenant. Aucune comparaison n'est écrite
-   * dans `AppointmentsRepository` — ce sont
-   * `appointments_client_id_fkey` et `appointments_tenant_id_client_id_fkey` qui
-   * refusent la ligne, et le repository qui traduit leur refus en 404.
+   * dans `AppointmentsRepository` : depuis #465, c'est la porte de `crm`
+   * (`assertBookableWithin`) qui refuse la ligne, sous son propre filtre
+   * `tenant_id`, et `appointments_client_id_fkey` /
+   * `appointments_tenant_id_client_id_fkey` restent le filet en dessous — le
+   * repository traduisant les deux refus dans le même 404.
    *
    * Un double en mémoire ne prouverait rien ici : il reproduirait la conclusion
    * qu'on cherche à vérifier.
@@ -908,8 +917,9 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
       );
 
       expect(created.clientId).toBe(salon.clientId);
-      // Le comptoir désigne, il ne crée pas : la porte `crm` n'est pas
-      // traversée, et l'annuaire du salon ne bouge pas d'une ligne.
+      // Le comptoir désigne, il ne crée pas : la porte `crm` ne fait que
+      // confirmer la fiche (#465), et l'annuaire du salon ne bouge pas d'une
+      // ligne.
       expect(await prismaUnscoped.user.count({ where: { tenantId: salon.tenantId } })).toBe(avant);
     });
 
@@ -943,7 +953,8 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
               new Date(start.getTime() + ONE_HOUR),
               salon.staffId,
               // Tout est du salon, sauf la cliente : c'est le seul champ qui
-              // tente la traversée, et la clé étrangère composite le refuse.
+              // tente la traversée, et le `tenant_id` du contrôle de `crm` le
+              // refuse — la clé étrangère composite restant le filet dessous.
               voisin.clientId,
             ),
           ),
@@ -957,6 +968,165 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
         where: { tenantId: salon.tenantId, startsAt: start },
       });
       expect(posées).toBe(0);
+    });
+  });
+
+  /**
+   * Le **rôle** de la fiche désignée, que les clés étrangères ne savent pas
+   * juger (#465).
+   *
+   * `appointments.client_id` référence `users`, où vivent aussi les comptes
+   * `STAFF`, `MANAGER` et `ADMIN` : les deux clés composites prouvent que la
+   * ligne existe et qu'elle est du bon établissement, jamais qu'elle est au
+   * **fichier client**. Un membre du personnel qui posait l'identifiant d'un
+   * collègue obtenait donc un rendez-vous parfaitement valide, invisible dans
+   * l'annuaire CRM — qui filtre sur `role = CLIENT` — et pourtant compté comme
+   * cliente par le reporting.
+   *
+   * Ce que seule une vraie base peut établir ici : que la porte de `crm` lit bien
+   * la colonne `role` de la ligne visée, sous le filtre `tenant_id` qu'elle écrit
+   * elle-même — le SQL brut ne repassant pas par l'extension de scoping —, et que
+   * son refus s'inscrit dans la transaction d'insertion : un `ROLLBACK`, pas une
+   * ligne à défaire.
+   */
+  describe('le rôle de la fiche désignée par le comptoir', () => {
+    /** Un compte de ce rôle dans le salon, et son identifiant `users`. */
+    async function accountOf(role: 'CLIENT' | 'STAFF' | 'MANAGER' | 'ADMIN'): Promise<string> {
+      const account = await prismaUnscoped.user.create({
+        data: {
+          tenantId: salon.tenantId,
+          email: `role-${role.toLowerCase()}-${randomUUID()}@example.test`,
+          role,
+          firstName: 'Alix',
+          lastName: role,
+        },
+      });
+      return account.id;
+    }
+
+    /**
+     * Un instant libre, propre à chaque cas — les créneaux ne se marchent pas
+     * dessus.
+     *
+     * Juin 2027 parce que le reste de la suite s'étale sur janvier, février et
+     * mars : un compteur qui empiéterait sur une journée déjà réservée par un
+     * autre cas rendrait un 409 de créneau là où on attend un refus de fiche,
+     * c'est-à-dire un échec qui ne parle pas de ce qu'il teste.
+     */
+    let next = new Date('2027-06-01T09:00:00.000Z').getTime();
+    function freeSlot(): { startsAt: Date; endsAt: Date } {
+      next += 24 * 60 * 60 * 1000;
+      return { startsAt: new Date(next), endsAt: new Date(next + ONE_HOUR) };
+    }
+
+    it('accepte une fiche de rôle CLIENT', async () => {
+      const clientId = await accountOf('CLIENT');
+      const { startsAt, endsAt } = freeSlot();
+
+      const created = await inTenant(salon.tenantId, () =>
+        repository.create(deskDraft(salon, startsAt, endsAt, salon.staffId, clientId)),
+      );
+
+      expect(created.clientId).toBe(clientId);
+    });
+
+    it.each(['STAFF', 'MANAGER', 'ADMIN'] as const)(
+      'refuse en 404 un compte %s de l’établissement, et n’écrit rien',
+      async (role) => {
+        const compte = await accountOf(role);
+        const { startsAt, endsAt } = freeSlot();
+
+        await expect(
+          inTenant(salon.tenantId, () =>
+            repository.create(deskDraft(salon, startsAt, endsAt, salon.staffId, compte)),
+          ),
+        ).rejects.toBeInstanceOf(NotFoundError);
+
+        // Le refus est prononcé **dans** la transaction : il n'y a rien à
+        // défaire, et surtout rien à oublier de défaire.
+        const posées = await prismaUnscoped.appointment.count({
+          where: { tenantId: salon.tenantId, startsAt },
+        });
+        expect(posées).toBe(0);
+      },
+    );
+
+    it('rend le même refus qu’une fiche inconnue — même classe, même message', async () => {
+      // L'arbitrage du ticket : « inconnu ici », « du salon voisin » et « compte
+      // du personnel » sont indistinctement 404. Un code dédié aurait fait de
+      // cette route une sonde de l'annuaire du personnel, interrogeable
+      // identifiant par identifiant par n'importe quel porteur de jeton `STAFF`.
+      const compte = await accountOf('MANAGER');
+
+      const refusDuRôle = await inTenant(salon.tenantId, () => {
+        const { startsAt, endsAt } = freeSlot();
+        return repository.create(deskDraft(salon, startsAt, endsAt, salon.staffId, compte));
+      }).catch((error: unknown) => error);
+
+      const refusInconnu = await inTenant(salon.tenantId, () => {
+        const { startsAt, endsAt } = freeSlot();
+        return repository.create(
+          deskDraft(
+            salon,
+            startsAt,
+            endsAt,
+            salon.staffId,
+            '99999999-9999-4999-8999-999999999999',
+          ),
+        );
+      }).catch((error: unknown) => error);
+
+      expect(refusDuRôle).toBeInstanceOf(NotFoundError);
+      expect(refusInconnu).toBeInstanceOf(NotFoundError);
+      expect((refusDuRôle as NotFoundError).message).toBe((refusInconnu as NotFoundError).message);
+    });
+
+    it('ne laisse pas le compte du personnel **du voisin** franchir la frontière', async () => {
+      // Deux raisons de refuser cumulées — mauvais établissement, mauvais rôle —
+      // et un seul refus : le `where` du contrôle porte `tenant_id`, la ligne ne
+      // remonte donc pas du tout, et le rôle n'a même pas à être jugé.
+      const compteVoisin = await prismaUnscoped.user.create({
+        data: {
+          tenantId: voisin.tenantId,
+          email: `manager-voisin-${randomUUID()}@example.test`,
+          role: 'MANAGER',
+          firstName: 'Manon',
+          lastName: 'Voisine',
+        },
+      });
+      const { startsAt, endsAt } = freeSlot();
+
+      await expect(
+        inTenant(salon.tenantId, () =>
+          repository.create(deskDraft(salon, startsAt, endsAt, salon.staffId, compteVoisin.id)),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it('juge le rôle **au moment de l’insertion**, pas celui d’avant', async () => {
+      // Le second critère du ticket. Une fiche cliente promue au personnel avant
+      // l'appel ne doit plus passer, même si elle était parfaitement réservable
+      // la seconde d'avant : le contrôle relit la ligne dans la transaction, il
+      // ne s'appuie sur rien qui ait été lu ailleurs.
+      const fiche = await accountOf('CLIENT');
+      const première = freeSlot();
+
+      await inTenant(salon.tenantId, () =>
+        repository.create(
+          deskDraft(salon, première.startsAt, première.endsAt, salon.staffId, fiche),
+        ),
+      );
+
+      await prismaUnscoped.user.update({ where: { id: fiche }, data: { role: 'STAFF' } });
+
+      const seconde = freeSlot();
+      await expect(
+        inTenant(salon.tenantId, () =>
+          repository.create(
+            deskDraft(salon, seconde.startsAt, seconde.endsAt, salon.staffId, fiche),
+          ),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundError);
     });
   });
 
