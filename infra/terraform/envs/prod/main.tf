@@ -95,4 +95,23 @@ module "notifications" {
   # source qui dira quand la politique peut passer à `quarantine` puis `reject` :
   # renseigner cette adresse est le premier pas du resserrement, pas une option.
   dmarc_report_uri = var.notification_dmarc_report_uri
+
+  # --- Chaîne d'envoi : file, Lambda, DLQ, alarmes (#67) ---
+
+  # 90 jours en production, contre 30 ailleurs : un rappel non parti se découvre
+  # parfois par la réclamation d'une cliente, des semaines après.
+  log_retention_days = local.log_retention_days
+
+  # Le topic du module `budgets`, dont l'en-tête prévoit que les alarmes
+  # d'observabilité s'y branchent plutôt que d'en créer un second. En production,
+  # c'est la seule chose qui transforme les quatre alarmes de la chaîne en
+  # supervision plutôt qu'en tableau qu'il faut penser à ouvrir.
+  alarm_topic_arns = [module.budgets.alerts_topic_arn]
+
+  # À poser avant le go-live (#83), en même temps que le domaine : sans route
+  # d'envoi, la Lambda est en défaut fermé et aucun message ne part — la sortie
+  # `notification_dispatch_configured` le dit, et elle fait partie de la liste de
+  # vérification de la mise en production.
+  dispatch_url              = var.notification_dispatch_url
+  dispatch_token_secret_arn = var.notification_dispatch_token_secret_arn
 }

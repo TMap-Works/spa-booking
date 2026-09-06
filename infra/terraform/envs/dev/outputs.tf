@@ -173,3 +173,48 @@ output "log_retention_days" {
   description = "Rétention des journaux CloudWatch de l'environnement, en jours. Contrat passé explicitement à chaque module qui crée un groupe de journaux — 30 jours hors production, 90 en production (skill aws-infra §8)."
   value       = local.log_retention_days
 }
+
+# --- Chaîne d'envoi des notifications (#67) -----------------------------------
+
+# Toutes nulles tant que `notification_domain` n'est pas fourni : le module n'est
+# alors pas composé, et il n'y a ni file, ni Lambda, ni alarme.
+
+output "notification_dispatch_queue_url" {
+  description = "File sur laquelle l'API publie au lieu d'appeler SES depuis le chemin de requête HTTP (CDC §4.8). C'est aussi la cible de la règle EventBridge du rappel J-1 (#71)."
+  value       = one(module.notifications[*].dispatch_queue_url)
+}
+
+output "notification_dispatch_dlq_name" {
+  description = "File d'attente morte de la chaîne d'envoi. Un message ici a épuisé ses tentatives : l'alarme de profondeur s'en déclenche, et c'est d'ici qu'on rejoue une fois la panne corrigée."
+  value       = one(module.notifications[*].dispatch_dlq_name)
+}
+
+output "notification_dispatch_producer_policy_arn" {
+  description = "Politique IAM du droit de publier sur la file — à attacher au rôle de tâche de l'API et, plus tard, au rôle d'EventBridge Scheduler. Elle n'accorde jamais `ReceiveMessage`."
+  value       = one(module.notifications[*].dispatch_producer_policy_arn)
+}
+
+output "notification_dispatcher_function_name" {
+  description = "Lambda d'envoi. `aws logs tail /aws/lambda/<ce nom> --follow` montre les événements structurés `notification.sent`, `notification.skipped` et `notification.permanent_failure`."
+  value       = one(module.notifications[*].dispatcher_function_name)
+}
+
+output "notification_dispatch_configured" {
+  description = "Vrai quand la route d'envoi est renseignée. Faux, la Lambda est en **défaut fermé** : elle rend chaque message à SQS, la file vieillit et la DLQ finit par se remplir. À vérifier en premier quand rien ne part."
+  value       = one(module.notifications[*].dispatch_configured)
+}
+
+output "notification_alarm_names" {
+  description = "Les quatre alarmes de la chaîne — refus définitifs, retard, plantage, bout de course — dans l'ordre où elles se déclenchent quand la chaîne se dégrade."
+  value       = one(module.notifications[*].alarm_names)
+}
+
+output "notification_alarms_notify" {
+  description = "Vrai quand les alarmes de la chaîne sont branchées sur un topic SNS. Faux, elles changent d'état sans prévenir personne."
+  value       = one(module.notifications[*].alarms_notify)
+}
+
+output "notification_dashboard_name" {
+  description = "Tableau de bord CloudWatch de la chaîne d'envoi : issue des livraisons, profondeur et âge des files, invocations et durée de la Lambda."
+  value       = one(module.notifications[*].dashboard_name)
+}

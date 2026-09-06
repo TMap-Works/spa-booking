@@ -15,7 +15,7 @@ au premier jour plutôt qu'au premier relevé.
 | Budget AWS | `spa-{env}-monthly` | Plafond mensuel filtré sur l'étiquette `Environment` |
 | Notifications | une par seuil | 80 % et 100 % de la dépense constatée |
 | Topic SNS | `spa-{env}-budget-alerts` | Canal des alertes, réutilisable par les alarmes CloudWatch |
-| Politique de topic | — | Publication ouverte à `budgets.amazonaws.com`, gardée par `aws:SourceAccount` |
+| Politique de topic | — | Publication ouverte à `budgets.amazonaws.com` **et à `cloudwatch.amazonaws.com`**, gardée par `aws:SourceAccount` |
 | Abonnements SNS | un par adresse | Optionnels — voir « Confirmer un abonnement » |
 
 ## Composition
@@ -152,9 +152,17 @@ la console Billing.
   environnement hors heures ouvrées, réduire un dimensionnement — que personne ne
   déclenche automatiquement au MVP.
 - **Il ne pose pas d'alarme CloudWatch.** Les seuils techniques du skill
-  aws-infra §8 — 5xx de l'ALB, latence p99, CPU ECS, connexions RDS, profondeur
-  de DLQ — relèvent du module `observability`, qui n'existe pas encore. Le topic
-  créé ici est fait pour les accueillir.
+  aws-infra §8 — 5xx de l'ALB, latence p99, CPU ECS, connexions RDS — relèvent du
+  module qui crée la ressource surveillée, ou d'un module d'observabilité
+  transverse (#78). Le topic créé ici est fait pour les accueillir, et le module
+  `notifications` s'en sert déjà pour ses quatre alarmes de chaîne d'envoi (#67).
+
+  Une précision qui a coûté un piège : les alarmes CloudWatch publient sous le
+  principal de service `cloudwatch.amazonaws.com`, que l'énoncé `AllowAccountOwner`
+  de la politique de topic **ne couvre pas**. La politique par défaut d'SNS
+  l'autorisait ; l'écrire l'a effacée. Sans l'énoncé `AllowCloudWatchAlarms`
+  ajouté par #67, une alarme passerait au rouge dans la console sans qu'aucune
+  notification ne parte — on se croirait prévenu sans l'être.
 - **Il ne fixe pas la rétention des journaux CloudWatch.** Elle appartient au
   module qui crée chaque groupe de journaux ; les environnements la passent
   explicitement (30 jours hors production, 90 en production).

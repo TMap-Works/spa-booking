@@ -11,6 +11,7 @@ modules/          modules réutilisables, sans valeur spécifique à un environn
   cache/          ElastiCache Redis
   storage/        S3, CloudFront, ACM
   notifications/  SES — domaine, DKIM, SPF, DMARC, rebonds vers SNS
+                  Chaîne d'envoi — file SQS, DLQ, Lambda, alarmes
                   (SQS, EventBridge et Lambda d'envoi : #67)
   observability/  CloudWatch, alarmes, tableaux de bord
 envs/

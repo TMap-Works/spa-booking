@@ -90,4 +90,21 @@ module "notifications" {
   # par défaut — n'apprend rien à personne : elle n'existe que pour faire remonter
   # qui écrit au nom du domaine.
   dmarc_report_uri = var.notification_dmarc_report_uri
+
+  # --- Chaîne d'envoi : file, Lambda, DLQ, alarmes (#67) ---
+
+  # Le premier groupe de journaux CloudWatch que cet environnement crée : la
+  # valeur posée plus haut cesse d'être une simple intention.
+  log_retention_days = local.log_retention_days
+
+  # Le topic du module `budgets`, dont l'en-tête prévoit que les alarmes
+  # d'observabilité s'y branchent plutôt que d'en créer un second.
+  alarm_topic_arns = [module.budgets.alerts_topic_arn]
+
+  # Nulles tant que la route d'envoi n'existe pas : la Lambda reste alors en
+  # défaut fermé, ce que dit la sortie `notification_dispatch_configured`. C'est
+  # sur cet environnement que la chaîne se branche en premier — la recette est
+  # faite pour cela.
+  dispatch_url              = var.notification_dispatch_url
+  dispatch_token_secret_arn = var.notification_dispatch_token_secret_arn
 }

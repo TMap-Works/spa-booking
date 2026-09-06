@@ -32,6 +32,17 @@ locals {
   # Certificat porté par le listener 443. À défaut d'ARN fourni, l'environnement
   # en fabrique un lui-même — voir le bloc « Terminaison TLS » plus bas.
   certificate_arn = var.certificate_arn != null ? var.certificate_arn : one(aws_acm_certificate.alb[*].arn)
+
+  # Ce que l'API doit connaître de la chaîne de notifications, et le droit d'y
+  # publier. Les deux sont vides tant que `notification_domain` n'est pas fourni,
+  # le module n'étant alors pas composé.
+  #
+  # Splat sur le module plutôt qu'un index : `count` peut valoir zéro, et
+  # `module.notifications[0]` ferait alors échouer l'évaluation au lieu de rendre
+  # une liste vide. La compréhension à clé constante produit une map d'une entrée
+  # ou d'aucune, jamais de doublon.
+  notification_queue_env            = { for url in module.notifications[*].dispatch_queue_url : "NOTIFICATION_QUEUE_URL" => url }
+  notification_producer_policy_arns = module.notifications[*].dispatch_producer_policy_arn
 }
 
 data "aws_region" "current" {}
@@ -200,6 +211,28 @@ module "notifications" {
   # par défaut — n'apprend rien à personne : elle n'existe que pour faire remonter
   # qui écrit au nom du domaine.
   dmarc_report_uri = var.notification_dmarc_report_uri
+
+  # --- Chaîne d'envoi : file, Lambda, DLQ, alarmes (#67) ---
+
+  # Même contrat de rétention que les autres groupes de journaux de
+  # l'environnement, pour la même raison : celui que Lambda crée de lui-même
+  # conserve indéfiniment.
+  log_retention_days = local.log_retention_days
+
+  # Le topic du module `budgets`, dont l'en-tête prévoit explicitement que les
+  # alarmes d'observabilité s'y branchent plutôt que d'en créer un second. Sans
+  # cela, les quatre alarmes de la chaîne changeraient d'état sans prévenir
+  # personne.
+  alarm_topic_arns = [module.budgets.alerts_topic_arn]
+
+  # Non déduit de l'ALB, délibérément : la terminaison TLS de cet environnement
+  # est un certificat auto-signé (voir « Terminaison TLS » plus bas), qu'aucun
+  # client ne vérifie sans y être forcé — et la Lambda refuse de désactiver la
+  # vérification. Tant que la valeur est nulle, la fonction est en défaut fermé :
+  # elle rend chaque message à SQS, ce que la sortie `notification_dispatch_configured`
+  # dit sans détour.
+  dispatch_url              = var.notification_dispatch_url
+  dispatch_token_secret_arn = var.notification_dispatch_token_secret_arn
 }
 
 # --- Configuration d'exécution de l'API ---------------------------------------
@@ -369,10 +402,20 @@ module "ecs_service" {
       # `NODE_ENV` n'est pas repris ici : l'image le pose déjà à `production`, et
       # le contredire depuis la définition de tâche ferait diverger le
       # comportement de l'application de celui de l'image qu'on déploie ailleurs.
-      environment = {
+      #
+      # `NOTIFICATION_QUEUE_URL` s'y ajoute quand la chaîne est composée : c'est
+      # la file sur laquelle l'API publie au lieu d'appeler SES depuis le chemin
+      # de requête HTTP (CDC §4.8). Une URL de file n'est pas un secret — elle ne
+      # donne aucun droit à qui la connaît sans la politique qui va avec.
+      environment = merge(local.notification_queue_env, {
         LOG_LEVEL = "debug"
         PORT      = "3001"
-      }
+      })
+
+      # Le droit de publier sur cette file, et rien d'autre : la politique
+      # n'accorde pas `ReceiveMessage`, un producteur qui pourrait dépiler
+      # pouvant faire disparaître un rappel.
+      task_role_policy_arns = local.notification_producer_policy_arns
 
       # Résolus par l'agent ECS au démarrage, à partir des clés JSON du secret
       # d'exécution. Aucune valeur ne transite par l'état ni par la console ECS.

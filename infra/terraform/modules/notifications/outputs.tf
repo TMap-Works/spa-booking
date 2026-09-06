@@ -85,6 +85,109 @@ output "event_types" {
 }
 
 output "kms_key_arn" {
-  description = "Clé KMS qui chiffre le topic d'événements. Tout consommateur du topic — file SQS, Lambda — doit obtenir `kms:Decrypt` sur cette clé, sans quoi il recevra des messages qu'il ne saura pas lire."
+  description = "Clé KMS qui chiffre le topic d'événements et les deux files de la chaîne d'envoi. Tout consommateur — file SQS, Lambda — doit obtenir `kms:Decrypt` sur cette clé, sans quoi il recevra des messages qu'il ne saura pas lire."
   value       = local.kms_key_arn
+}
+
+# --- File de découplage -------------------------------------------------------
+
+output "dispatch_queue_url" {
+  description = "URL de la file de découplage. C'est la valeur à donner au producteur — `NOTIFICATION_QUEUE_URL` sur le conteneur de l'API, cible de la règle EventBridge du rappel J-1."
+  value       = aws_sqs_queue.dispatch.url
+}
+
+output "dispatch_queue_arn" {
+  description = "ARN de la file de découplage, pour les politiques qui la nomment."
+  value       = aws_sqs_queue.dispatch.arn
+}
+
+output "dispatch_queue_name" {
+  description = "Nom de la file de découplage — la dimension `QueueName` des métriques CloudWatch de SQS."
+  value       = aws_sqs_queue.dispatch.name
+}
+
+output "dispatch_dlq_url" {
+  description = "URL de la file d'attente morte. C'est d'ici que se rejouent les messages une fois la panne corrigée — `aws sqs start-message-move-task`, voir le README."
+  value       = aws_sqs_queue.dispatch_dlq.url
+}
+
+output "dispatch_dlq_arn" {
+  description = "ARN de la file d'attente morte."
+  value       = aws_sqs_queue.dispatch_dlq.arn
+}
+
+output "dispatch_dlq_name" {
+  description = "Nom de la file d'attente morte — la dimension `QueueName` de l'alarme de profondeur."
+  value       = aws_sqs_queue.dispatch_dlq.name
+}
+
+output "dispatch_producer_policy_arn" {
+  description = <<-EOT
+    Politique IAM à attacher à tout rôle qui **publie** sur la file : le rôle de
+    tâche de l'API (`task_role_policy_arns` du module `ecs-service`), puis le rôle
+    qu'EventBridge Scheduler endossera pour le rappel J-1.
+
+    Elle accorde `SendMessage` et le chiffrement, jamais `ReceiveMessage` : un
+    producteur qui pourrait dépiler pourrait faire disparaître un rappel.
+  EOT
+  value       = aws_iam_policy.dispatch_producer.arn
+}
+
+output "dispatch_max_receive_count" {
+  description = "Nombre de réceptions au bout desquelles un message part en DLQ. Le seul compteur de reprise de la chaîne — la Lambda n'en tient aucun."
+  value       = var.dispatch_max_receive_count
+}
+
+# --- Lambda d'envoi -----------------------------------------------------------
+
+output "dispatcher_function_name" {
+  description = "Nom de la Lambda d'envoi — la dimension `FunctionName` de ses métriques, et le nom à donner à `aws logs tail`."
+  value       = aws_lambda_function.dispatcher.function_name
+}
+
+output "dispatcher_function_arn" {
+  description = "ARN de la Lambda d'envoi."
+  value       = aws_lambda_function.dispatcher.arn
+}
+
+output "dispatcher_role_arn" {
+  description = "ARN du rôle d'exécution de la Lambda d'envoi. C'est le principal à autoriser sur toute ressource que la fonction devra joindre plus tard."
+  value       = aws_iam_role.dispatcher.arn
+}
+
+output "dispatcher_log_group_name" {
+  description = "Groupe de journaux de la Lambda d'envoi. Les événements structurés y portent `notification.sent`, `notification.skipped`, `notification.permanent_failure` et `notification.rejected`."
+  value       = aws_cloudwatch_log_group.dispatcher.name
+}
+
+output "dispatch_configured" {
+  description = "Vrai quand `dispatch_url` est renseignée. Faux, la fonction est en défaut fermé : elle rend chaque message à SQS, la file vieillit et la DLQ finit par se remplir — ce qui est le comportement voulu, mais qu'il vaut mieux savoir avant de chercher la panne ailleurs."
+  value       = var.dispatch_url != null
+}
+
+# --- Supervision --------------------------------------------------------------
+
+output "alarm_names" {
+  description = "Les quatre alarmes de la chaîne, dans l'ordre où elles se déclenchent quand la chaîne se dégrade : refus définitifs, retard, plantage, bout de course."
+  value = {
+    permanent_failures = aws_cloudwatch_metric_alarm.permanent_failures.alarm_name
+    backlog_age        = aws_cloudwatch_metric_alarm.backlog_age.alarm_name
+    dispatcher_errors  = aws_cloudwatch_metric_alarm.dispatcher_errors.alarm_name
+    dlq_depth          = aws_cloudwatch_metric_alarm.dlq_depth.alarm_name
+  }
+}
+
+output "alarms_notify" {
+  description = "Vrai quand au moins un topic SNS est branché sur les alarmes. Faux, elles changent d'état sans prévenir personne — un tableau de bord, pas une supervision."
+  value       = length(var.alarm_topic_arns) > 0
+}
+
+output "dashboard_name" {
+  description = "Nom du tableau de bord CloudWatch de la chaîne, ou `null` si `create_dashboard` vaut faux."
+  value       = one(aws_cloudwatch_dashboard.notifications[*].dashboard_name)
+}
+
+output "metric_namespace" {
+  description = "Espace de noms des métriques publiées par la Lambda au format EMF."
+  value       = var.metric_namespace
 }

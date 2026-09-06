@@ -19,6 +19,7 @@ Internet → ALB (443, certificat auto-signé)
 | Cluster, ALB, service `api`, auto-scaling | `spa-dev-cluster` | `ecs-service` |
 | Budget mensuel 250 USD, alertes 80 % et 100 % | `spa-dev-monthly` | `budgets` |
 | Domaine SES, DKIM/SPF/DMARC, topic des rebonds | `spa-dev-email`, `spa-dev-ses-events` | `notifications` — **rien sans `notification_domain`** |
+| File de découplage, DLQ, Lambda d'envoi, 4 alarmes | `spa-dev-notifications`, `spa-dev-notification-dispatcher` | `notifications` — idem |
 | Définition de tâche de migration | `spa-dev-migrate` | déclarée ici |
 | Secret d'exécution de l'API | `spa-dev/api/runtime-…` | déclarée ici |
 | Certificat de terminaison TLS | `spa-dev-alb` | déclarée ici |
@@ -128,6 +129,34 @@ Deux points ne sont pas dans Terraform parce qu'ils n'y sont pas exprimables —
 **sortie du bac à sable SES** (une demande instruite par le support AWS) et le
 **test d'envoi réel** vers Gmail, Outlook et Yahoo. Les deux procédures, commandes
 comprises, sont dans
+[modules/notifications/README.md](../../modules/notifications/README.md).
+
+## Chaîne d'envoi des notifications
+
+Le même `notification_domain` compose aussi la file de découplage, sa file
+d'attente morte, la Lambda d'envoi et les quatre alarmes qui les surveillent.
+L'API reçoit alors `NOTIFICATION_QUEUE_URL` dans son environnement de conteneur
+et la politique `spa-dev-notifications-producer` sur son rôle de tâche : elle
+publie et rend la main, elle n'appelle jamais SES depuis le chemin de requête
+HTTP (CDC §4.8).
+
+**La Lambda reste en défaut fermé tant que `notification_dispatch_url` n'est pas
+posée.** Ce n'est pas un oubli : la route d'envoi côté API est le périmètre de
+#70, et la terminaison TLS de cet environnement est un certificat auto-signé
+qu'aucun client ne vérifie sans y être forcé — la fonction refuse de désactiver
+la vérification. En attendant, chaque message est rendu à SQS, y épuise ses cinq
+réceptions — un quart d'heure au plus, SQS n'espaçant pas les tentatives — puis
+part en DLQ, où l'alarme de profondeur le signale : c'est ce qu'on veut voir
+d'une chaîne non branchée.
+
+```bash
+terraform output notification_dispatch_configured   # false tant que la route manque
+terraform output notification_alarms_notify         # true : alarmes sur le topic budgets
+terraform output notification_alarm_names
+```
+
+Le rejeu de la file d'attente morte, la lecture des journaux structurés et le
+contrat exact que la route doit servir sont dans
 [modules/notifications/README.md](../../modules/notifications/README.md).
 
 ## Coût et rétention
