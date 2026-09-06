@@ -17,20 +17,111 @@ réservation, est tenu.
 | #47 | **L'historique de la cliente connectée** — `GET /appointments/mine`, deux moitiés et un plafond |
 | #317 | **La note interne suit le report** — recopiée par le repository, jamais relue ni servie |
 | #313 | **La fiche cliente vient de `crm`** — ce module n'écrit plus dans `users`, et la résolution partage la transaction de l'insertion |
+| #444 | L'agenda du back-office — `GET /appointments`, une plage de jours et les trois *summaries* imbriquées |
+| #461 | **Les trois écritures de comptoir** — poser, déplacer et solder un rendez-vous depuis le planning (#50) |
 
 ## Les routes
 
-| Méthode | Chemin | Rang |
-|---|---|---|
-| `POST` | `/api/v1/public/:tenantSlug/appointments` | — (ouverte) |
-| `POST` | `/api/v1/public/:tenantSlug/appointments/:id/reschedule` | — (ouverte) |
-| `POST` | `/api/v1/public/:tenantSlug/appointments/:id/cancel` | — (ouverte) |
-| `GET` | `/api/v1/appointments/mine` | toute identité vérifiée |
-| `POST` | `/api/v1/appointments/:id/cancel` | `STAFF` |
+| Méthode | Chemin | Rang | Rend |
+|---|---|---|---|
+| `POST` | `/api/v1/public/:tenantSlug/appointments` | — (ouverte) | `bookedAppointmentSchema` |
+| `POST` | `/api/v1/public/:tenantSlug/appointments/:id/reschedule` | — (ouverte) | `bookedAppointmentSchema` |
+| `POST` | `/api/v1/public/:tenantSlug/appointments/:id/cancel` | — (ouverte) | `bookedAppointmentSchema` |
+| `GET` | `/api/v1/appointments/mine` | toute identité vérifiée | `bookedAppointmentSchema[]` |
+| `GET` | `/api/v1/appointments` | `STAFF` | `appointmentSchema[]` |
+| `POST` | `/api/v1/appointments` | `STAFF` | `appointmentSchema` |
+| `POST` | `/api/v1/appointments/:id/reschedule` | `STAFF` | `appointmentSchema` |
+| `POST` | `/api/v1/appointments/:id/status` | `STAFF` | `appointmentSchema` |
+| `POST` | `/api/v1/appointments/:id/cancel` | `STAFF` | `bookedAppointmentSchema` |
 
 Les trois routes publiques ne sont pas gardées, et c'est le quatrième critère de
 #37 : on réserve sans compte. Ce qui les tient est le `ValidationPipe` global, le
 contrôle de disponibilité, la contrainte d'exclusion, et un quota par adresse.
+
+Aucune route de back-office n'a de quota, et c'est délibéré : l'appelant a un
+jeton signé, un établissement et un rôle — le quota utile est l'authentification
+elle-même. Un comptoir qui traite une matinée d'appels enchaîne légitimement les
+écritures, et un plafond par adresse pénaliserait le salon dont tout le personnel
+partage la même sortie réseau.
+
+### Pourquoi `STAFF` et non `MANAGER` sur les cinq routes de back-office
+
+Poser, déplacer, solder, annuler et consulter sont des gestes de **tenue
+d'agenda**, pas de configuration de l'établissement. Le CDC §1.4 réserve à
+l'encadrement la seconde, jamais la conduite de la journée : exiger un manager
+rendrait l'écran principal du back-office inutilisable par ceux qui l'utilisent
+toute la journée, et laisserait des créneaux fantômes bloqués jusqu'à ce que
+quelqu'un d'autre soit disponible.
+
+## Les écritures de comptoir (#461)
+
+Trois routes, et deux d'entre elles ne portent **aucune règle nouvelle** :
+`createAtDesk` délègue au corps commun de la réservation, `rescheduleAtDesk` à
+`reschedule`. Ce qui change tient en deux points.
+
+### La cliente est **désignée**, jamais créée
+
+| Surface | Forme | Ce que le repository en fait |
+|---|---|---|
+| tunnel public | `client` — des coordonnées | demande la fiche à `crm`, qui la crée si elle manque |
+| comptoir | `clientId` — une fiche | l'écrit telle quelle, et laisse les clés étrangères la juger |
+
+C'est `ClientReference` qui porte la distinction côté domaine, et le
+`.strict()` des deux schémas de `packages/shared` qui la tient côté contrat :
+`bookGuestAppointmentRequestSchema` refuse un `clientId`,
+`createAppointmentRequestSchema` refuse un `client`. Les deux sens sont
+nécessaires — un seul laisse ouverte la porte qu'on ne regarde pas, et un
+`client` glissé dans une demande de back-office ferait naître un second dossier
+pour une cliente déjà fichée.
+
+Rien ne vérifie l'existence de la fiche avant d'écrire, et c'est la doctrine du
+module : une lecture préalable serait une course de plus, et ferait lire à
+`appointments` une table qu'il ne possède pas. Ce sont
+`appointments_client_id_fkey` et `appointments_tenant_id_client_id_fkey` qui
+refusent la ligne — une fiche inconnue sur la première, une fiche du salon voisin
+sur la seconde —, et `AppointmentsRepository.create` qui traduit les deux refus
+en **404**, indistinctement. Un 403 aurait confirmé l'existence de la fiche
+ailleurs (tenant-isolation §4).
+
+`clientId` est **obligatoire** sur cette route, là où le contrat le déclare
+facultatif : le jeton est celui d'un membre du personnel, il n'y a pas de cliente
+à en déduire. L'écart va dans le sens strict, et un 400 nommant le champ vaut
+mieux qu'un rendez-vous posé au nom de personne.
+
+### La réponse est la ligne d'**agenda**, pas la forme publique
+
+Les trois routes rendent `appointmentSchema` — cliente, praticien et prestation
+imbriqués. L'appelant est un calendrier : il doit pouvoir replacer le bloc qu'il
+vient de toucher sans une requête de plus, et `bookedAppointmentSchema` ne porte
+que des identifiants.
+
+Cela coûte une lecture de plus par écriture (`findAgendaById`), et c'est le bon
+prix : la seule autre voie était de recomposer la ligne depuis le catalogue et
+l'annuaire du personnel, ce qui aurait fait **deux** façons de fabriquer la même
+ligne — celle de `listAgenda` et une autre. Le jour où elles auraient divergé
+d'un champ, le tiroir aurait affiché autre chose que la case qu'il venait de
+remplir.
+
+### Le changement de statut, et le seul cas qu'il ne traite pas lui-même
+
+`POST /:id/status` fait avancer un rendez-vous sous le contrôle
+d'`AppointmentLifecycleService`, qui porte la table du cycle de vie et lui seul :
+`pending → completed` sort en **422 `INVALID_STATE_TRANSITION`**, comme tout
+retour en arrière depuis un statut terminal et comme un statut vers lui-même.
+
+Le corps accepte les cinq statuts du vocabulaire, `cancelled` compris — c'est ce
+que `changeAppointmentStatusRequestSchema` déclare. Cette transition-là est
+**déléguée à l'annulation** : une ligne passée `CANCELLED` par un simple
+changement de statut n'aurait ni `cancelled_at`, ni `cancelled_by`, ni motif, et
+le reporting du CDC §1.4 compterait une annulation dont il ne saurait dire ni
+quand ni de quel côté du comptoir elle vient. C'est aussi ce qui donne une
+destination au `reason` du contrat ; sur toute autre transition, il n'a pas de
+colonne où aller et n'est pas consigné.
+
+L'écriture elle-même est un `updateMany` filtré sur le statut **relu**, qui rend
+un compte : deux transitions concurrentes du même rendez-vous se sérialisent sur
+le verrou de ligne, et la seconde sort en 409. Même conduite que l'annulation et
+le report — le service parle, la base décide (booking-engine §1).
 
 ## Le contrat partagé, et le doublon qui l'accompagne (#314)
 
@@ -47,17 +138,31 @@ personnelle ou en réservation au nom d'un autre.
 | `RescheduleAppointmentDto` | `rescheduleAppointmentRequestSchema` |
 | `CancelAppointmentDto` | `cancelAppointmentRequestSchema` |
 | `MyAppointmentsQueryDto` | `myAppointmentsQuerySchema` |
+| `CreateAppointmentDto` | `createAppointmentRequestSchema` |
+| `ChangeAppointmentStatusDto` | `changeAppointmentStatusRequestSchema` |
+| `AppointmentListQueryDto` | `appointmentListQuerySchema` |
+| `AgendaAppointmentDto` | `appointmentSchema` |
 
-Deux contreparties qu'on croirait bonnes et qui ne le sont pas :
+Deux appariements qu'on croirait interchangeables et qui ne le sont pas — ce sont
+les deux que #461 a servis, et s'en tromper reste aussi coûteux :
 
-- **`createAppointmentRequestSchema`** est la demande du **back-office** (#50) —
-  un `clientId`, pas de coordonnées. Le tunnel public qui l'accepterait
-  réserverait au nom de quelqu'un d'autre ;
+- **`createAppointmentRequestSchema`** est la demande du **back-office** — un
+  `clientId`, pas de coordonnées. Le tunnel public qui l'accepterait réserverait
+  au nom de quelqu'un d'autre. `BookAppointmentDto` reste sa jumelle publique,
+  et les deux se refusent mutuellement leur champ distinctif ;
 - **`appointmentSchema`** est la ligne d'**agenda** — elle imbrique les
   *summaries* de la cliente, du praticien et de la prestation. La servir sur une
   route ouverte diffuserait l'identité d'une cliente à qui connaît un
   identifiant de rendez-vous. Les routes publiques rendent des identifiants,
-  c'est `bookedAppointmentSchema`.
+  c'est `bookedAppointmentSchema` ; les routes de comptoir rendent la ligne
+  d'agenda, derrière `@AuthAtLeast('STAFF')`.
+
+Un troisième écart, propre à `CreateAppointmentDto` : `clientId` y est
+**obligatoire** alors que le contrat le déclare facultatif. Il va dans le sens
+strict — le DTO refuse ce que le contrat tolère —, donc un front qui valide avec
+le contrat peut produire une requête que la route refuse en 400. C'est le cas
+qu'aucun appelant réel ne produit : le tiroir de #50 désactive son bouton
+d'enregistrement tant qu'aucune fiche n'est choisie.
 
 Ces formes sont donc écrites **deux fois** — ici en `class-validator`, là-bas en
 Zod — parce que `apps/api` ne dépend pas encore de `@spa/shared` : c'est ce

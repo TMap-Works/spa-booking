@@ -8,6 +8,7 @@ import {
   ONE_HOUR,
   cancellation,
   createExclusionHarness,
+  deskDraft,
   draft,
   inTenant,
   move,
@@ -105,6 +106,52 @@ describe('Courses sur la contrainte d’exclusion — contre un vrai PostgreSQL'
 
       // Et la base ne porte bien qu'une ligne — la preuve directe, sans passer
       // par ce que les promesses ont bien voulu dire.
+      const stored = await prismaUnscoped.appointment.count({
+        where: { tenantId: salon.tenantId, staffId: salon.staffId, startsAt: start },
+      });
+      expect(stored).toBe(1);
+    });
+
+    /**
+     * La même course, mais **au comptoir** — sixième critère de #461.
+     *
+     * Elle n'est pas la répétition de la précédente, et c'est ce qui la rend
+     * nécessaire : le brouillon du comptoir ne traverse pas la porte `crm`, la
+     * fiche étant déjà désignée. Il n'y a donc ni écriture dans `users`, ni
+     * `ClientRecordRaceError` à rejouer — le seul arbitre restant est
+     * `appointments_no_overlap`. Si la boucle de réessai avait pris l'habitude
+     * de rattraper les perdantes par le chemin de la fiche, ce test le
+     * montrerait : huit écritures qui **ne peuvent pas** être rejouées doivent
+     * produire un succès et sept refus définitifs, pas huit rendez-vous.
+     *
+     * C'est aussi le seul endroit où la garantie du comptoir se prouve : le
+     * double en mémoire des suites d'intégration ne simule pas une course, et
+     * un tiroir qui laisse deux postes du salon cliquer sur le même créneau à la
+     * même seconde est exactement le scénario que le CDC §6 classe risque n°1.
+     */
+    it(`produit un succès et ${CONCURRENT_ATTEMPTS - 1} conflits sur une fiche cliente désignée`, async () => {
+      const start = new Date('2026-09-15T09:00:00.000Z');
+      const end = new Date('2026-09-15T10:00:00.000Z');
+
+      const outcomes = await Promise.allSettled(
+        Array.from({ length: CONCURRENT_ATTEMPTS }, () =>
+          inTenant(salon.tenantId, () => repository.create(deskDraft(salon, start, end))),
+        ),
+      );
+
+      expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
+      for (const outcome of outcomes) {
+        if (outcome.status === 'rejected') {
+          // Toutes les perdantes en 409 : une seule qui remonterait brute
+          // rendrait un 500 au comptoir, et le tiroir l'afficherait comme une
+          // panne au lieu du créneau perdu qu'il traite déjà.
+          expect(outcome.reason).toBeInstanceOf(SlotNoLongerAvailableError);
+        }
+      }
+
+      // La preuve directe, sans passer par ce que les promesses ont bien voulu
+      // dire — et sans fiche cliente créée en chemin, puisqu'il n'y en avait
+      // aucune à résoudre.
       const stored = await prismaUnscoped.appointment.count({
         where: { tenantId: salon.tenantId, staffId: salon.staffId, startsAt: start },
       });

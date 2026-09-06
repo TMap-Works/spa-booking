@@ -293,7 +293,38 @@ export function draft(
   email = fixture.clientEmail,
 ): AppointmentDraft {
   return {
-    client: { firstName: 'Alice', lastName: 'Martin', email, phone: null },
+    client: { contact: { firstName: 'Alice', lastName: 'Martin', email, phone: null } },
+    staffId,
+    serviceId: fixture.serviceId,
+    startsAt,
+    endsAt,
+    price: { amountMinor: 3500, currency: 'EUR' },
+    clientNote: null,
+  };
+}
+
+/**
+ * Le même brouillon, mais **du comptoir** : une fiche cliente désignée par son
+ * identifiant plutôt que par des coordonnées (#461).
+ *
+ * Il ne traverse pas la porte `crm` — il n'y a rien à résoudre —, si bien que
+ * les seules issues d'une insertion sont celles de l'agenda : la contrainte
+ * d'exclusion, l'interblocage, ou la clé étrangère de la fiche. C'est ce qui en
+ * fait le bon véhicule pour prouver que la course du comptoir se joue au même
+ * endroit que celle du tunnel public, et par le même arbitre.
+ *
+ * `clientId` vaut par défaut la fiche déjà semée ; les suites qui exercent le
+ * refus passent l'identifiant qui les intéresse — inconnu, ou du salon voisin.
+ */
+export function deskDraft(
+  fixture: Fixture,
+  startsAt: Date,
+  endsAt: Date,
+  staffId = fixture.staffId,
+  clientId = fixture.clientId,
+): AppointmentDraft {
+  return {
+    client: { clientId },
     staffId,
     serviceId: fixture.serviceId,
     startsAt,

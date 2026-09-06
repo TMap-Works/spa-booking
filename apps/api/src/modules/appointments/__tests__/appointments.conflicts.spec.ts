@@ -3,8 +3,10 @@ import { Prisma } from '@prisma/client';
 // Voir `appointment-status.spec.ts` : lecteur unique du SQL de migration (#217).
 import { readMigrationSql } from '../../../infrastructure/database/__tests__/migration-sql';
 import {
+  CLIENT_FOREIGN_KEYS,
   isSlotExclusionViolation,
   isTransientWriteConflict,
+  isUnknownClientReference,
   SLOT_EXCLUSION_CONSTRAINT,
 } from '../appointments.conflicts';
 
@@ -167,5 +169,65 @@ describe('SLOT_EXCLUSION_CONSTRAINT', () => {
     // Le couplage entre ce fichier et le SQL est réel : le vérifier ici est ce
     // qui fait qu'un renommage côté migration ne peut pas passer inaperçu.
     expect(readMigrationSql()).toContain(`ADD CONSTRAINT "${SLOT_EXCLUSION_CONSTRAINT}"`);
+  });
+});
+
+/**
+ * Reconnaissance du refus de la **fiche cliente** désignée au comptoir (#461).
+ *
+ * Mêmes deux modes de défaillance asymétriques que ci-dessus, et les mêmes
+ * conséquences :
+ *
+ * - **trop strict** — un `clientId` inconnu ou du salon voisin sort en 500 au
+ *   lieu de 404, et le tiroir affiche une panne là où il devait dire « cette
+ *   fiche n'existe pas ici » ;
+ * - **trop laxiste** — le refus d'une **autre** clé étrangère, celle du
+ *   praticien ou de la prestation, serait annoncé comme « cliente introuvable »,
+ *   et enverrait le comptoir corriger le champ qui n'est pas en cause.
+ */
+
+/** L'erreur telle que Prisma la lève sur une violation de clé étrangère. */
+function foreignKeyViolation(constraint: string): Error {
+  return new Prisma.PrismaClientKnownRequestError(
+    'Foreign key constraint violated on the constraint: `' + constraint + '`',
+    { code: 'P2003', clientVersion: '6.12.0', meta: { modelName: 'Appointment', field_name: constraint } },
+  );
+}
+
+describe('isUnknownClientReference', () => {
+  it.each(CLIENT_FOREIGN_KEYS)('reconnaît le refus de %s', (constraint) => {
+    // Les deux clés se complètent : la première juge l'existence de la fiche,
+    // la seconde son établissement. Les deux doivent rendre le même 404.
+    expect(isUnknownClientReference(foreignKeyViolation(constraint))).toBe(true);
+  });
+
+  it.each([
+    { what: 'la clé du praticien', error: foreignKeyViolation('appointments_staff_id_fkey') },
+    { what: 'la clé de la prestation', error: foreignKeyViolation('appointments_service_id_fkey') },
+    { what: 'un refus de créneau', error: realExclusionViolation() },
+    { what: 'une erreur quelconque', error: new Error('boom') },
+  ])('ne reconnaît pas $what', ({ error }) => {
+    expect(isUnknownClientReference(error)).toBe(false);
+  });
+
+  it('ne reconnaît pas un autre code Prisma citant la même clé', () => {
+    // Le code **et** le nom, jamais l'un des deux : un `P2002` qui nommerait la
+    // même contrainte n'est pas une fiche manquante.
+    const autre = new Prisma.PrismaClientKnownRequestError('…', {
+      code: 'P2002',
+      clientVersion: '6.12.0',
+      meta: { target: [CLIENT_FOREIGN_KEYS[0]] },
+    });
+
+    expect(isUnknownClientReference(autre)).toBe(false);
+  });
+});
+
+describe('CLIENT_FOREIGN_KEYS', () => {
+  it.each(CLIENT_FOREIGN_KEYS)('%s est bien déclarée par la migration', (constraint) => {
+    // Même couplage assumé que pour la contrainte d'exclusion : un renommage
+    // côté SQL sans son pendant ici ferait retomber en 500 toute désignation de
+    // fiche erronée, sans qu'aucun cas nominal ne rougisse.
+    expect(readMigrationSql()).toContain(`ADD CONSTRAINT "${constraint}"`);
   });
 });

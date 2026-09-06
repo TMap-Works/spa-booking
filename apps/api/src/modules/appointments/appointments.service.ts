@@ -23,6 +23,9 @@ import type {
   AppointmentView,
   BookAppointmentInput,
   CancelAppointmentInput,
+  ChangeAppointmentStatusInput,
+  ClientReference,
+  CreateAppointmentInput,
   ListAgendaInput,
   ListClientAppointmentsInput,
   RescheduleAppointmentInput,
@@ -139,11 +142,24 @@ import { SlotLockService } from './slot-lock.service';
  * personnel sort en 409 `CLIENT_EMAIL_NOT_BOOKABLE`, décision de `crm` que ce
  * service laisse passer telle quelle.
  *
- * ## Ce que ce module ne pose toujours pas
+ * ## Les trois écritures de comptoir, ajoutées par #461
  *
- * La création au comptoir par le staff (#50) : hors de l'annulation de
- * back-office ouverte par #40, les surfaces de ce module sont celles, publiques,
- * du tunnel de #45.
+ * `createAtDesk`, `rescheduleAtDesk` et `changeStatus` servent le tiroir de #50.
+ * Deux d'entre elles ne sont **pas** de nouvelles règles : elles délèguent à
+ * `place` et à `reschedule`, et ne changent que la façon de désigner la cliente
+ * et la forme rendue. C'est le même partage que pour l'annulation (#40) — une
+ * seule méthode pour les deux côtés du comptoir, et une **porte** pour les
+ * distinguer.
+ *
+ * La troisième, `changeStatus`, est la seule règle nouvelle : elle fait avancer
+ * un rendez-vous dans son cycle de vie, sous le contrôle
+ * d'`AppointmentLifecycleService`, et délègue le passage à `CANCELLED` à
+ * `cancel` — la seule écriture qui pose la trace d'annulation.
+ *
+ * Les trois rendent la **ligne d'agenda** (`AgendaAppointmentView`) et non
+ * `AppointmentView` : l'appelant est un calendrier, il doit pouvoir replacer le
+ * bloc qu'il vient de toucher sans une requête de plus. C'est ce que
+ * `appointmentSchema` du contrat partagé décrit.
  */
 @Injectable()
 export class AppointmentsService {
@@ -223,6 +239,71 @@ export class AppointmentsService {
    * qui le proposaient.
    */
   public async book(input: BookAppointmentInput, now: Date = new Date()): Promise<AppointmentView> {
+    const { view } = await this.place(
+      // Les coordonnées, et non un identifiant de fiche : la résolution a lieu
+      // dans la transaction d'insertion, chez `crm` (#313). C'est ce qui fait
+      // qu'un créneau refusé ne laisse aucune fiche au fichier du salon.
+      { ...input, client: { contact: input.client } },
+      now,
+    );
+
+    return view;
+  }
+
+  /**
+   * Pose un rendez-vous **au comptoir**, pour une fiche cliente déjà au fichier
+   * du salon (#461, premier critère de #50).
+   *
+   * ## Une seule méthode d'écriture pour les deux côtés du comptoir
+   *
+   * Comme pour l'annulation (#40) : ce qui distingue la visiteuse du salon n'est
+   * pas une règle, c'est une **porte** et une façon de désigner la cliente. Le
+   * créneau demandé passe donc par les mêmes deux contrôles qu'une réservation
+   * publique — le moteur de disponibilité, puis la contrainte d'exclusion —, et
+   * rien n'est relâché parce que l'appelant porte un jeton : un rendez-vous posé
+   * au comptoir hors des heures du praticien serait tout aussi impossible à
+   * honorer qu'un autre.
+   *
+   * L'option « premier disponible » (#36) vaut ici aussi : `staffId` à `null`
+   * laisse le serveur affecter le praticien, ce que le tiroir de #50 utilise
+   * quand l'opérateur n'en désigne aucun.
+   *
+   * ## Pourquoi la réponse est la **ligne d'agenda** et non `AppointmentView`
+   *
+   * Parce que l'appelant est un calendrier, et qu'il doit pouvoir replacer le
+   * bloc qu'il vient de créer sans une requête de plus : il lui faut le nom de
+   * la cliente, celui du praticien et celui de la prestation, que
+   * `AppointmentView` ne porte pas. C'est ce que `appointmentSchema` du contrat
+   * partagé décrit, et ce que `apps/web/lib/api-client.ts` attend déjà.
+   *
+   * @throws {NotFoundError} prestation inconnue, retirée du catalogue, ou fiche
+   * cliente inconnue dans cet établissement.
+   * @throws {SlotNoLongerAvailableError} le créneau n'est pas — ou n'est plus —
+   * proposable, ou la contrainte d'exclusion l'a refusé chez tous les praticiens
+   * qui le proposaient.
+   */
+  public async createAtDesk(
+    input: CreateAppointmentInput,
+    now: Date = new Date(),
+  ): Promise<AgendaAppointmentView> {
+    const { record } = await this.place({ ...input, client: { clientId: input.clientId } }, now);
+
+    return this.agendaById(record.id);
+  }
+
+  /**
+   * Le corps commun des deux prises de rendez-vous — publique et de comptoir.
+   *
+   * Tout y est identique sauf la façon de désigner la cliente, que
+   * `ClientReference` porte : contrôle de disponibilité, affectation du
+   * praticien, figeage du prix, invalidation du cache et événement de domaine.
+   * Deux copies auraient divergé, et celle qui aurait divergé aurait fini par
+   * laisser réserver au comptoir ce que le calendrier ne propose pas.
+   */
+  private async place(
+    input: PlacementInput,
+    now: Date,
+  ): Promise<{ record: AppointmentRecord; view: AppointmentView }> {
     const service = await this.services.byId(input.serviceId);
 
     if (!service.isActive) {
@@ -236,9 +317,6 @@ export class AppointmentsService {
     const occupied = occupiedRange(input.startsAt, service);
 
     const record = await this.insertWithFirstFree(candidates, input, (staffId) => ({
-      // Les coordonnées, et non un identifiant de fiche : la résolution a lieu
-      // dans la transaction d'insertion, chez `crm` (#313). C'est ce qui fait
-      // qu'un créneau refusé ne laisse aucune fiche au fichier du salon.
       client: input.client,
       staffId,
       serviceId: input.serviceId,
@@ -256,7 +334,8 @@ export class AppointmentsService {
 
     // Après l'écriture, jamais dedans : annoncer un rendez-vous qu'un `ROLLBACK`
     // effacerait ensuite enverrait une confirmation pour un rendez-vous qui
-    // n'existe pas.
+    // n'existe pas. L'événement porte l'intervalle **facturé**, celui que la
+    // cliente lit sur sa confirmation — jamais l'occupé qui est en base.
     const view = billedView(record, service);
     this.events.appointmentCreated({
       // Le tenant courant est celui que l'extension Prisma vient d'écrire dans la
@@ -271,7 +350,12 @@ export class AppointmentsService {
       endsAt: view.endsAt,
     });
 
-    return view;
+    // La vue facturée est rendue plutôt que refabriquée par l'appelant : c'est
+    // celle que l'événement vient d'annoncer, et deux constructions du même
+    // objet finiraient par ne plus dire la même heure. La ligne écrite
+    // l'accompagne, parce que le comptoir n'en veut que l'identifiant — il relit
+    // la ligne d'agenda, qui est une autre forme.
+    return { record, view };
   }
 
   /**
@@ -422,6 +506,135 @@ export class AppointmentsService {
     });
 
     return view;
+  }
+
+  /**
+   * Déplace un rendez-vous **depuis le comptoir** (#461, troisième critère de
+   * #50).
+   *
+   * Le report lui-même est celui de `reschedule`, sans une règle de plus : le
+   * mécanisme — annulation de l'ancien, création liée, une seule transaction —
+   * ne dépend pas de la porte par laquelle on est entré (booking-engine §5).
+   * Seule la forme rendue change, pour la raison qui vaut sur les trois routes
+   * du comptoir : le calendrier doit pouvoir replacer le bloc déplacé sans une
+   * requête de plus.
+   *
+   * La réponse porte donc un **nouvel** identifiant, et `rescheduledFromId`
+   * désigne celui qu'elle remplace — le tiroir remplace ce qu'il gardait.
+   *
+   * @throws {NotFoundError} rendez-vous inconnu ou d'un autre établissement.
+   * @throws {InvalidStateTransitionError} rendez-vous terminé, annulé ou no-show.
+   * @throws {SlotNoLongerAvailableError} le créneau d'arrivée n'est pas — ou
+   * n'est plus — proposable.
+   */
+  public async rescheduleAtDesk(
+    input: RescheduleAppointmentInput,
+    now: Date = new Date(),
+  ): Promise<AgendaAppointmentView> {
+    const moved = await this.reschedule(input, now);
+
+    return this.agendaById(moved.id);
+  }
+
+  /**
+   * Fait avancer un rendez-vous dans son cycle de vie — confirmé, honoré, non
+   * présenté (#461, cinquième critère de #50).
+   *
+   * ## La transition est jugée par le service dédié, jamais ici
+   *
+   * `AppointmentLifecycleService` porte la table, et lui seul (booking-engine
+   * §5). `pending → completed` en sort donc en 422 `INVALID_STATE_TRANSITION`,
+   * comme tout retour en arrière depuis un statut terminal — et comme un statut
+   * vers lui-même, qui n'est une transition d'aucune sorte.
+   *
+   * Cette réponse est juste, elle n'est pas une garantie : entre elle et
+   * l'écriture, une autre requête peut avoir fait avancer le même rendez-vous.
+   * Ce qui tranche est l'écriture conditionnelle du repository, qui rend un
+   * compte de lignes — même répartition que pour l'annulation et le report.
+   *
+   * ## `cancelled` passe par l'annulation, et ne peut pas faire autrement
+   *
+   * `changeAppointmentStatusRequestSchema` accepte les cinq statuts du
+   * vocabulaire, `cancelled` compris, et le cycle de vie autorise bien d'y
+   * arriver. Mais une ligne qui passerait `CANCELLED` par un simple changement
+   * de statut n'aurait ni `cancelled_at`, ni `cancelled_by`, ni motif : le
+   * reporting du CDC §1.4 compterait une annulation dont il ne saurait dire ni
+   * quand ni de quel côté du comptoir elle vient. Cette transition-là est donc
+   * déléguée à `cancel`, qui est ce qui écrit la trace — `cancelledBy` valant
+   * `STAFF`, puisque c'est le comptoir qui appelle.
+   *
+   * C'est aussi ce qui donne une destination au `reason` du contrat : il devient
+   * le motif d'annulation. Sur toute autre transition, il n'a pas de colonne où
+   * aller et n'est pas consigné — il n'y a pas de champ pour motiver un no-show,
+   * et en inventer un déborderait le périmètre de ce ticket.
+   *
+   * ## Le cache de disponibilité est chassé — quand le créneau est libéré
+   *
+   * `COMPLETED` et `NO_SHOW` sortent la ligne du filtre partiel de
+   * `appointments_no_overlap` : le créneau redevient **réservable** au `COMMIT`,
+   * et un créneau libre masqué jusqu'à l'expiration du TTL est une vente perdue
+   * (#35, booking-engine §3).
+   *
+   * `PENDING → CONFIRMED`, lui, ne libère rien — les deux statuts occupent
+   * l'agenda —, et le moteur rendrait exactement les mêmes créneaux après qu'avant.
+   * Chasser tout le cache de l'établissement à chaque confirmation ferait donc
+   * recalculer l'agenda entier pour une écriture qui ne change aucune réponse.
+   *
+   * @throws {NotFoundError} rendez-vous inconnu ou d'un autre établissement.
+   * @throws {InvalidStateTransitionError} le cycle de vie n'autorise pas ce
+   * passage — 422.
+   * @throws {ConflictError} deux transitions concurrentes, dont une seule
+   * aboutit.
+   */
+  public async changeStatus(
+    input: ChangeAppointmentStatusInput,
+    now: Date = new Date(),
+  ): Promise<AgendaAppointmentView> {
+    const previous = await this.repository.findById(input.appointmentId);
+
+    if (previous === null) {
+      // 404 et non 403 : le rendez-vous d'un autre établissement doit être
+      // indiscernable d'un identifiant qui n'existe pas (tenant-isolation §4).
+      throw new NotFoundError('Rendez-vous introuvable.');
+    }
+
+    // Avant toute écriture, et par le service dédié : ce n'est pas la garde —
+    // celle-là est l'écriture conditionnelle du repository —, c'est ce qui rend
+    // la **réponse** juste.
+    this.lifecycle.requireTransition(previous.status, input.status);
+
+    if (input.status === 'CANCELLED') {
+      // La trace d'annulation ne se contourne pas. `cancel` invalide le cache et
+      // émet `appointment.cancelled` ; il n'y a rien à refaire ici.
+      await this.cancel(
+        { appointmentId: previous.id, cancelledBy: 'STAFF', reason: input.reason },
+        now,
+      );
+
+      return this.agendaById(previous.id);
+    }
+
+    await this.repository.changeStatus({
+      appointmentId: previous.id,
+      // Le statut **relu**, jamais celui qu'un appelant aurait pu annoncer :
+      // c'est lui qui fait de l'`UPDATE` un test-et-pose atomique.
+      from: previous.status,
+      to: input.status,
+    });
+
+    // Seulement quand la ligne **quitte** le filtre partiel de
+    // `appointments_no_overlap` — `COMPLETED` et `NO_SHOW`. `PENDING →
+    // CONFIRMED` ne change rien à l'occupation : les deux statuts sont dans
+    // `OCCUPYING_STATUSES`, le moteur rendrait exactement les mêmes créneaux, et
+    // chasser tout le cache de l'établissement à chaque confirmation ferait
+    // recalculer l'agenda entier pour une écriture qui ne libère rien. La
+    // condition se lit sur `occupiesSlot`, c'est-à-dire sur la même liste que
+    // le filtre en base — elle ne peut donc pas diverger de lui.
+    if (occupiesSlot(previous.status) && !occupiesSlot(input.status)) {
+      await this.cache.invalidateCurrentTenant();
+    }
+
+    return this.agendaById(previous.id);
   }
 
   /**
@@ -701,6 +914,34 @@ export class AppointmentsService {
   }
 
   /**
+   * La ligne d'agenda d'un rendez-vous que ce service vient d'écrire (#461).
+   *
+   * ## Une lecture de plus, et pourquoi elle est le bon prix
+   *
+   * Les trois écritures du comptoir rendent `appointmentSchema` — la ligne
+   * d'agenda, *summaries* imbriquées. Aucune des trois n'a ces noms sous la main
+   * : le repository écrit et relit avec `APPOINTMENT_SELECT`, la frontière
+   * étroite qui sert aussi le parcours public et qui ne joint rien. Les
+   * recomposer depuis le catalogue et l'annuaire du personnel aurait fait deux
+   * lectures au lieu d'une, et **deux façons** de fabriquer la même ligne — celle
+   * de `listAgenda` et celle-ci. Le jour où elles auraient divergé d'un champ, le
+   * tiroir aurait affiché autre chose que la case qu'il venait de remplir.
+   *
+   * Le `null` est impossible en pratique — la ligne vient d'être validée dans
+   * l'établissement courant — mais il se traite, parce qu'un `!` aurait rendu un
+   * 500 illisible pour ce qui reste une lecture scopée.
+   */
+  private async agendaById(appointmentId: string): Promise<AgendaAppointmentView> {
+    const record = await this.repository.findAgendaById(appointmentId);
+
+    if (record === null) {
+      throw new NotFoundError('Rendez-vous introuvable.');
+    }
+
+    return agendaView(record);
+  }
+
+  /**
    * L'insertion, tentée sur les candidats **dans l'ordre**, jusqu'à ce que la
    * base en accepte un (#36, quatrième critère).
    *
@@ -896,6 +1137,24 @@ export class AppointmentsService {
 
 const MINUTE_MS = 60_000;
 const DAY_MS = 86_400_000;
+
+/**
+ * Ce que `place` a besoin de savoir pour poser un rendez-vous — la réunion des
+ * deux surfaces, à un champ près (#461).
+ *
+ * `BookAppointmentInput` et `CreateAppointmentInput` s'y ramènent tous deux :
+ * seule la façon de désigner la cliente les sépare, et c'est `ClientReference`
+ * qui la porte. Ce type existe pour que le corps commun n'ait pas à connaître
+ * laquelle des deux surfaces l'appelle — c'est précisément ce qui empêche une
+ * règle de s'appliquer d'un côté et pas de l'autre.
+ */
+interface PlacementInput {
+  readonly serviceId: string;
+  readonly staffId: string | null;
+  readonly startsAt: Date;
+  readonly client: ClientReference;
+  readonly clientNote: string | null;
+}
 
 /**
  * Ce que le contrôle de disponibilité a besoin de savoir — et rien de plus.

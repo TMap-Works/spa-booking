@@ -28,15 +28,20 @@ import type { AppointmentDraft, RescheduleDraft } from '../appointments.types';
 /** La fiche que la porte `crm` rend — celle que l'insertion doit désigner (#313). */
 const CLIENT_ID = '11111111-1111-4111-8111-111111111111';
 
+/** Les coordonnées que la porte `crm` doit recevoir, telles quelles. */
+const CONTACT = {
+  firstName: 'Camille',
+  lastName: 'Rakoto',
+  email: 'camille@example.test',
+  phone: null,
+} as const;
+
 const DRAFT: AppointmentDraft = {
   // Des coordonnées, et non un identifiant : la résolution a lieu **dans** la
-  // transaction depuis #313.
-  client: {
-    firstName: 'Camille',
-    lastName: 'Rakoto',
-    email: 'camille@example.test',
-    phone: null,
-  },
+  // transaction depuis #313, et c'est la forme du tunnel public — celle qui
+  // exerce la porte `crm`, donc la boucle de réessai que cette suite observe. La
+  // forme du comptoir (`{ clientId }`, #461) ne la traverse pas.
+  client: { contact: CONTACT },
   staffId: '22222222-2222-4222-8222-222222222222',
   serviceId: '33333333-3333-4333-8333-333333333333',
   startsAt: new Date('2026-09-01T09:00:00.000Z'),
@@ -350,7 +355,11 @@ describe('AppointmentsRepository.create — la fiche cliente vient de `crm`', ()
 
     await createAppointment(double.prisma, directory.service);
 
-    expect(directory.contacts()).toEqual([DRAFT.client]);
+    // Les coordonnées **déballées** de la référence, et non la référence
+    // elle-même : la porte `crm` ne connaît que `ClientContact` — lui passer
+    // l'enveloppe de `ClientReference` ferait chercher l'adresse un cran trop
+    // bas et créerait une fiche vide à chaque réservation (#461).
+    expect(directory.contacts()).toEqual([CONTACT]);
     expect(double.createData()[0]).toMatchObject({ clientId: CLIENT_ID });
   });
 
