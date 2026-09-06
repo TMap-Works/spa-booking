@@ -38,9 +38,14 @@
  *
  * Ce que la maquette ne montre pas, et qui devra suivre (skill web-frontend §5) :
  * la vue semaine se virtualise — plusieurs centaines de blocs y sont possibles,
- * et ils ne peuvent pas tous être montés ; le glisser-déposer d'un bloc déclenche
- * un REPORT et non un `UPDATE` (skill booking-engine), avec état optimiste puis
- * retour en arrière visible sur 409.
+ * et ils ne peuvent pas tous être montés.
+ *
+ * Le glisser-déposer, lui, est posé (#51). Un bloc se saisit à la souris
+ * (`draggable`, API HTML5 native, aucune dépendance) ou à la poignée au clavier,
+ * et se lâche sur un créneau libre. Ce que cela déclenche est un REPORT et non un
+ * `UPDATE` (skill booking-engine) : l'état optimiste s'applique au lâcher, et un
+ * 409 replace visiblement le bloc à son heure d'origine — `--reverted` clignote,
+ * la bannière dit pourquoi.
  */
 
 .spa-admin-calendar {
@@ -171,8 +176,14 @@
   border-inline-end: 0;
 }
 
+/*
+ * `position: relative` porte la poignée de déplacement, qui est un frère du bloc
+ * et non son enfant — un bouton dans un bouton n'est pas du HTML valide. Voir
+ * `.spa-admin-calendar__grip`.
+ */
 .spa-admin-calendar__cell {
   display: flex;
+  position: relative;
   min-inline-size: 0;
   padding: 1px;
 }
@@ -220,6 +231,20 @@
 
 .spa-admin-calendar__slot:hover {
   background-color: var(--spa-color-accent-soft);
+}
+
+/*
+ * Cible de dépôt — un rendez-vous est saisi et cherche où se poser (#51).
+ *
+ * Tous les créneaux libres se marquent, pas seulement celui que le curseur
+ * survole : c'est la seule façon de dire au clavier — qui n'a pas de curseur —
+ * où le rendez-vous saisi peut aller. Le survol reste distinct par la règle
+ * ci-dessus, plus appuyée.
+ */
+.spa-admin-calendar__slot--drop {
+  background-color: var(--spa-color-accent-soft);
+  outline: 1px dashed var(--spa-color-accent);
+  outline-offset: -2px;
 }
 
 /*
@@ -329,6 +354,144 @@
 .spa-admin-calendar__event--no-show {
   background-color: var(--spa-color-status-no-show-surface);
   border-inline-start-color: var(--spa-color-status-no-show);
+}
+
+/* --- Report par glisser-déposer -------------------------------------------- */
+
+/*
+ * Poignée de déplacement (#51).
+ *
+ * Elle existe pour le clavier avant tout : `draggable` ne s'atteint pas à la
+ * tabulation, et le glisser-déposer serait sinon une fonction réservée à la
+ * souris (web-frontend §7). Pressée, elle saisit le rendez-vous ; les créneaux
+ * libres deviennent alors des cibles nommées, et Échap repose.
+ *
+ * Elle reste discrète tant qu'on ne s'y intéresse pas — un planning chargé porte
+ * des dizaines de blocs — et se révèle au survol du bloc, au focus, ou dès
+ * qu'elle est enfoncée. Jamais masquée en `display: none` : un lecteur d'écran
+ * doit pouvoir l'annoncer, et un doigt la trouver.
+ */
+.spa-admin-calendar__grip {
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-end: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--spa-space-5);
+  min-block-size: var(--spa-space-5);
+  padding: 0;
+  background-color: transparent;
+  border: 0;
+  border-radius: var(--spa-radius-xs);
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-xs);
+  line-height: 1;
+  cursor: grab;
+  opacity: 0.35;
+  transition: opacity var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-admin-calendar__cell:hover .spa-admin-calendar__grip,
+.spa-admin-calendar__grip:focus-visible {
+  opacity: 1;
+}
+
+.spa-admin-calendar__grip[aria-pressed='true'] {
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+  cursor: grabbing;
+  opacity: 1;
+}
+
+/* Le bloc saisi : il reste lisible et à sa place, mais se distingue de ceux qui
+ * ne bougeront pas. */
+.spa-admin-calendar__event--picked {
+  outline: var(--spa-focus-ring-width) solid var(--spa-color-accent);
+  outline-offset: calc(-1 * var(--spa-focus-ring-width));
+}
+
+/*
+ * État optimiste en vol : le bloc est déjà à sa nouvelle place, le serveur n'a
+ * pas encore répondu. Estompé plutôt que remplacé par un squelette — c'est bien
+ * ce rendez-vous-là qu'on regarde, et le perdre de vue une demi-seconde
+ * suffirait à faire douter du déplacement qu'on vient de faire. `aria-busy` porte
+ * l'annonce.
+ */
+.spa-admin-calendar__event--moving {
+  opacity: 0.55;
+  cursor: progress;
+}
+
+/*
+ * Retour arrière — le cœur du ticket, et la seule animation de cet écran.
+ *
+ * Un bloc qui reprend sa place sans un mot passe pour un bug d'affichage :
+ * l'opérateur refait le même geste et se heurte au même refus. Le clignotement
+ * dit « ceci vient de revenir », la bannière dit pourquoi. Les deux ensemble, et
+ * jamais l'un sans l'autre — l'animation seule ne se lit pas au clavier, et est
+ * de toute façon coupée par `prefers-reduced-motion`.
+ */
+@keyframes spa-admin-calendar-revert {
+  0%,
+  100% {
+    background-color: var(--spa-color-warning-surface);
+  }
+
+  50% {
+    background-color: var(--spa-color-surface);
+  }
+}
+
+/*
+ * Le liseré du statut est **épargné** : `border-color` en raccourci écraserait
+ * le `border-inline-start-color` que chaque statut pose au-dessus, et un
+ * rendez-vous revenu perdrait la seule couleur qui dit s'il est confirmé ou en
+ * attente. Le retour arrière se marque donc sur les trois autres côtés.
+ */
+.spa-admin-calendar__event--reverted {
+  animation: spa-admin-calendar-revert 0.4s var(--spa-easing-standard) 3;
+  border-block-color: var(--spa-color-warning);
+  border-inline-end-color: var(--spa-color-warning);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spa-admin-calendar__event--reverted {
+    animation: none;
+    background-color: var(--spa-color-warning-surface);
+  }
+}
+
+/*
+ * La confirmation d'un changement de praticien — quatrième critère.
+ *
+ * Un bandeau au fil de la page et non une fenêtre modale : le bloc vient de
+ * bouger sous les yeux de l'opérateur, et le recouvrir d'un voile lui cacherait
+ * précisément ce sur quoi on lui demande de se prononcer.
+ */
+.spa-admin-calendar__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-3) var(--spa-space-4);
+  background-color: var(--spa-color-accent-soft);
+  border: 1px solid var(--spa-color-accent);
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-admin-calendar__confirm-text {
+  flex: 1 1 20ch;
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text);
+}
+
+.spa-admin-calendar__confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
 }
 
 /* --- Temps indisponible ---------------------------------------------------- */

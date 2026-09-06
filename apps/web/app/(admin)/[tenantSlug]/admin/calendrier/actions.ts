@@ -24,8 +24,10 @@
  * sert qu'à retrouver le cookie de session, et le corps est **revalidé ici**
  * avec le schéma de `@spa/shared` avant d'atteindre l'API (web-frontend §4).
  *
- * Le report par glisser-déposer reste à #51 : la même action serveur le servira,
- * il n'y a que le geste qui change.
+ * Le report par glisser-déposer (#51) passe par la même action que le tiroir —
+ * `rescheduleDeskAppointmentAction` —, et c'était le pari de #50 : il n'y a que
+ * le geste qui change, jamais le mécanisme. Une écriture de plus ici aurait
+ * signifié qu'on avait laissé le glissement contourner le report.
  */
 
 import {

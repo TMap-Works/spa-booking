@@ -85,6 +85,34 @@
           <section class="spa-admin__section" aria-labelledby="titre-jour">
             <h2 class="spa-admin__section-title" id="titre-jour">Vue jour — 4 praticiens en poste</h2>
 
+            <!--
+              REPORT PAR GLISSER-DÉPOSER (#51) — l'état montré ici est celui du
+              milieu du geste : un rendez-vous est saisi (Naina Rabe, `--picked`,
+              poignée `aria-pressed="true"`), les créneaux libres sont devenus des
+              cibles (`--drop`), un report est en vol (Ravaka Mamy, `--moving`), et
+              un autre vient d'être refusé puis remis à son heure d'origine (Fara
+              Rakotoson, `--reverted`). Le bandeau ci-dessous est la confirmation
+              qu'un changement de praticien réclame, et lui seul.
+
+              Les quatre états ne coexistent évidemment pas dans l'écran réel : la
+              maquette les montre ensemble pour que chaque règle de la feuille ait
+              un exercice.
+            -->
+            <div class="spa-admin-calendar__confirm" role="alertdialog" aria-labelledby="confirm-report">
+              <p class="spa-admin-calendar__confirm-text" id="confirm-report">
+                Changer de praticien ? Le rendez-vous de Naina Rabe passerait de Tiana à Njara, le
+                mercredi 26 août à 11:00.
+              </p>
+              <div class="spa-admin-calendar__confirm-actions">
+                <button class="spa-button spa-button--neutral" type="button">
+                  <span class="spa-button__label">Annuler</span>
+                </button>
+                <button class="spa-button spa-button--accent" type="button">
+                  <span class="spa-button__label">Confirmer le changement</span>
+                </button>
+              </div>
+            </div>
+
             <div class="spa-admin-calendar">
               <div class="spa-admin-calendar__legend">
                 <span class="spa-admin-badge spa-admin-badge--confirmed">Confirmé</span>
@@ -125,11 +153,21 @@
                 <div class="spa-admin-calendar__columns">
                   <ul class="spa-admin-calendar__column" aria-labelledby="col-hasina">
                     <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
-                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed" type="button">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed" type="button" draggable="true">
                         <span class="spa-admin-calendar__event-time">09:00 – 10:00</span>
                         <span class="spa-admin-calendar__event-client">Rina Andriamana</span>
                         <span class="spa-admin-calendar__event-service">Massage suédois · 60 min</span>
                         <span class="spa-visually-hidden">Statut : confirmé. Ouvrir la fiche.</span>
+                      </button>
+                      <!--
+                        La poignée est un FRÈRE du bloc, jamais son enfant : un
+                        bouton dans un bouton n'est pas du HTML valide, et le
+                        clavier n'atteindrait pas le second. C'est elle qui rend le
+                        déplacement possible sans souris.
+                      -->
+                      <button class="spa-admin-calendar__grip" type="button" aria-pressed="false">
+                        <span aria-hidden="true">⠿</span>
+                        <span class="spa-visually-hidden">Déplacer Rina Andriamana</span>
                       </button>
                     </li>
                     <li class="spa-admin-calendar__cell">
@@ -142,8 +180,9 @@
                         <span class="spa-visually-hidden">10 h 30, libre — créer un rendez-vous avec Hasina</span>
                       </button>
                     </li>
+                    <!-- Report refusé : le bloc est revenu à son heure d'origine. -->
                     <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-3">
-                      <button class="spa-admin-calendar__event spa-admin-calendar__event--pending" type="button">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--pending spa-admin-calendar__event--reverted" type="button" draggable="true">
                         <span class="spa-admin-calendar__event-time">11:00 – 12:30</span>
                         <span class="spa-admin-calendar__event-client">Fara Rakotoson</span>
                         <span class="spa-admin-calendar__event-service">Soin visage · 90 min</span>
@@ -158,17 +197,27 @@
                   </ul>
 
                   <ul class="spa-admin-calendar__column" aria-labelledby="col-tiana">
+                    <!--
+                      Un rendez-vous est saisi : tous les créneaux libres se
+                      marquent, pas seulement celui que la souris survole. C'est
+                      la seule façon de dire au clavier — qui n'a pas de curseur —
+                      où le bloc saisi peut se poser.
+                    -->
                     <li class="spa-admin-calendar__cell">
-                      <button class="spa-admin-calendar__slot" type="button">
-                        <span class="spa-visually-hidden">09 h 00, libre — créer un rendez-vous avec Tiana</span>
+                      <button class="spa-admin-calendar__slot spa-admin-calendar__slot--drop" type="button">
+                        <span class="spa-visually-hidden">09 h 00, libre — déplacer ici le rendez-vous de Naina Rabe</span>
                       </button>
                     </li>
                     <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
-                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed" type="button">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed spa-admin-calendar__event--picked" type="button" draggable="true">
                         <span class="spa-admin-calendar__event-time">09:30 – 10:30</span>
                         <span class="spa-admin-calendar__event-client">Naina Rabe</span>
                         <span class="spa-admin-calendar__event-service">Coupe + brushing</span>
                         <span class="spa-visually-hidden">Statut : confirmé. Ouvrir la fiche.</span>
+                      </button>
+                      <button class="spa-admin-calendar__grip" type="button" aria-pressed="true">
+                        <span aria-hidden="true">⠿</span>
+                        <span class="spa-visually-hidden">Déplacer Naina Rabe</span>
                       </button>
                     </li>
                     <li class="spa-admin-calendar__cell">
@@ -231,8 +280,10 @@
                         <span class="spa-admin-calendar__blocked-label">Hors horaires</span>
                       </div>
                     </li>
+                    <!-- État optimiste en vol : le bloc est déjà à sa nouvelle
+                         place, le serveur n'a pas encore tranché. -->
                     <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-4">
-                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed" type="button">
+                      <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed spa-admin-calendar__event--moving" type="button" draggable="true" aria-busy="true">
                         <span class="spa-admin-calendar__event-time">10:00 – 12:00</span>
                         <span class="spa-admin-calendar__event-client">Ravaka Mamy</span>
                         <span class="spa-admin-calendar__event-service">Rituel corps · 120 min</span>
