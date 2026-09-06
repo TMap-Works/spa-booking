@@ -1,4 +1,6 @@
-import type { Money, OpeningHoursEntry, PostalAddress, PublicService, PublicTenant } from '@spa/shared';
+import type { OpeningHoursEntry, PostalAddress, PublicService, PublicTenant } from '@spa/shared';
+
+import { formatAmountMachine } from '@/lib/format';
 
 import { groupServicesByCategory } from './group-services';
 import { SCHEMA_ORG_WEEKDAYS } from './opening-hours';
@@ -22,15 +24,13 @@ import { SCHEMA_ORG_WEEKDAYS } from './opening-hours';
  * schema.org l'exige — un crawler ne sait pas lire « 35,00 € » mais lit
  * `"price": "35.00"`.
  *
- * La conversion est faite ici et non par `formatMoney` de `lib/format.ts` :
- * celle-ci rend une chaîne localisée (virgule décimale, symbole, espace
- * insécable) qu'aucun analyseur n'accepte. Sa place naturelle serait tout de
- * même ce module — c'est le seul du front autorisé à diviser un montant — mais
- * `lib/format.ts` est hors de l'empreinte de fichiers de ce ticket, que deux
- * autres branches se partagent. La remontée est suivie par une issue dédiée ;
- * d'ici là, les décimales sont lues d'`Intl` comme là-bas, et non codées en dur,
- * pour que les deux implémentations ne puissent pas diverger sur une devise à
- * zéro décimale.
+ * La conversion vient de `formatAmountMachine`, dans `lib/format.ts` (#344) :
+ * c'est le seul module du front autorisé à convertir un montant, et il lit les
+ * décimales de la devise là où `formatMoney` les lit. Une seconde lecture ici
+ * aurait pu diverger de celle-là sur une devise à zéro décimale (ariary, yen),
+ * et le prix affiché aurait alors cessé d'être celui du graphe. `formatMoney`
+ * lui-même ne convient pas : sa sortie est localisée — virgule décimale,
+ * symbole, espace insécable — et aucun analyseur ne l'accepte.
  *
  * `address` et `openingHoursSpecification` s'y ajoutent depuis #343, **quand
  * l'API les sert**. Ils restent absents autrement, et c'est la même règle qu'au
@@ -56,27 +56,6 @@ interface SalonStructuredDataProps {
   readonly url: string;
   /** Adresse absolue du tunnel de réservation. */
   readonly reservationUrl: string;
-}
-
-/**
- * Décimales de la devise, lues d'`Intl` plutôt que codées en dur — deux pour
- * l'euro, zéro pour l'ariary ou le yen.
- *
- * La locale est `en-US` et non `fr-FR` : ce nombre n'est pas destiné à un
- * humain mais à un analyseur, et schema.org attend le point décimal.
- */
-function fractionDigitsOf(currency: string): number {
-  return (
-    new Intl.NumberFormat('en-US', { style: 'currency', currency }).resolvedOptions()
-      .maximumFractionDigits ?? 2
-  );
-}
-
-/** « 3500 EUR » (entier, plus petite unité) → « 35.00 », comme schema.org l'attend. */
-function priceInMajorUnits(price: Money): string {
-  const digits = fractionDigitsOf(price.currency);
-
-  return (price.amountMinor / 10 ** digits).toFixed(digits);
 }
 
 /**
@@ -159,7 +138,7 @@ export function buildSalonGraph(
               name: section.title,
               itemListElement: section.services.map((service) => ({
                 '@type': 'Offer',
-                price: priceInMajorUnits(service.price),
+                price: formatAmountMachine(service.price),
                 priceCurrency: service.price.currency,
                 url: `${url}#${service.slug}`,
                 itemOffered: {

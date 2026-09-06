@@ -94,21 +94,60 @@ export function formatMoney(amount: Money): string {
 }
 
 /**
- * Le montant tel qu'un champ de saisie le pré-remplit — « 35,00 », sans devise.
+ * Le montant en unité principale, **sans flottant**, avec le séparateur décimal
+ * demandé — « 35,00 » ou « 35.00 » selon qui va le lire.
  *
  * Aucune division : l'entier est découpé **en chaîne**, partie entière d'un
  * côté, décimales de l'autre. Le formatage d'affichage (`formatMoney`) peut se
- * permettre le flottant parce que rien n'en dépend ; ici la valeur est
- * réinjectée dans un formulaire puis renvoyée à l'API, et un centième perdu à
- * l'aller reviendrait modifier le prix au retour.
+ * permettre le flottant parce que rien n'en dépend ; les deux formes construites
+ * ici sont relues — par l'API après un aller-retour de formulaire, par un
+ * analyseur schema.org —, et un centième perdu au passage reviendrait annoncer
+ * un autre prix que celui que la gérante a saisi.
+ *
+ * Le nombre de décimales vient de `fractionDigitsOf`, donc d'`Intl` : c'est ce
+ * qui garantit qu'une devise à zéro décimale (ariary, yen) ne gagne pas deux
+ * décimales inventées sur l'une des formes et pas sur l'autre.
  */
-export function formatAmountInput(amount: Money): string {
+function formatMajorUnits(amount: Money, decimalSeparator: string): string {
   const digits = fractionDigitsOf(amount.currency);
   const sign = amount.amountMinor < 0 ? '-' : '';
   const raw = String(Math.abs(amount.amountMinor)).padStart(digits + 1, '0');
   const units = raw.slice(0, raw.length - digits);
 
-  return digits === 0 ? `${sign}${units}` : `${sign}${units},${raw.slice(raw.length - digits)}`;
+  return digits === 0
+    ? `${sign}${units}`
+    : `${sign}${units}${decimalSeparator}${raw.slice(raw.length - digits)}`;
+}
+
+/**
+ * Le montant tel qu'un champ de saisie le pré-remplit — « 35,00 », sans devise.
+ *
+ * Virgule décimale : c'est ce que la locale `fr-FR` affiche, donc ce que la
+ * gérante s'attend à relire dans le champ. `parseAmountInput` accepte de toute
+ * façon les deux séparateurs au retour.
+ */
+export function formatAmountInput(amount: Money): string {
+  return formatMajorUnits(amount, ',');
+}
+
+/**
+ * Le montant en forme **machine** — « 35.00 », unité principale, point décimal,
+ * sans symbole ni séparateur de milliers.
+ *
+ * C'est ce qu'attendent les consommateurs non humains d'un prix : le `price`
+ * d'une `Offer` schema.org (`components/salon/structured-data.tsx`), et tout ce
+ * qui viendra ensuite du même genre. `formatMoney` ne peut pas les servir — sa
+ * sortie localisée porte une virgule décimale, un symbole et une espace
+ * insécable, qu'aucun analyseur n'accepte.
+ *
+ * Elle vit ici, et non chez son appelant, parce que c'est la règle en tête de ce
+ * module : **aucun composant ne divise un montant lui-même**. Une seconde
+ * lecture des décimales ailleurs dans le front pourrait diverger de celle-ci sur
+ * une devise à zéro décimale, et l'affichage humain et le graphe schema.org
+ * annonceraient alors deux prix différents (#344).
+ */
+export function formatAmountMachine(amount: Money): string {
+  return formatMajorUnits(amount, '.');
 }
 
 /**
