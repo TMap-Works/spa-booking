@@ -1,12 +1,19 @@
-# notifications — délivrabilité e-mail (SES)
+# notifications — délivrabilité e-mail (SES) et chaîne d'envoi
 
 Ce module pose la moitié « infrastructure » de la chaîne de notifications du
-CDC §4.8 : le domaine d'envoi, sa signature, sa politique d'authentification, et
-le canal par lequel remontent les rebonds et les plaintes.
+CDC §4.8 : le domaine d'envoi, sa signature, sa politique d'authentification, le
+canal par lequel remontent les rebonds et les plaintes — et, depuis #67, la
+**file de découplage, la Lambda d'envoi, la file d'attente morte et la
+supervision** qui les relient à l'API.
 
-Il existe pour un risque nommé au CDC §6 : **une délivrabilité insuffisante vide
-le rappel J-1 de son sens**. Un rappel qui arrive dans les indésirables ne réduit
-aucun no-show ; il coûte le même envoi et ne rapporte rien.
+Il existe pour deux raisons, chacune nommée dans le CDC :
+
+- **Une délivrabilité insuffisante vide le rappel J-1 de son sens** (CDC §6). Un
+  rappel qui arrive dans les indésirables ne réduit aucun no-show ; il coûte le
+  même envoi et ne rapporte rien.
+- **Une réservation ne doit jamais échouer parce qu'un e-mail n'est pas parti**
+  (CDC §4.8). C'est ce que garantit la file : l'API publie et rend la main, elle
+  n'appelle jamais SES depuis le chemin de requête HTTP.
 
 Périmètre volontairement resserré, et complémentaire d'autres tickets :
 
@@ -15,9 +22,10 @@ Périmètre volontairement resserré, et complémentaire d'autres tickets :
 | Identité de domaine, DKIM, SPF, DMARC | — |
 | Jeu de configuration, liste de suppression | — |
 | Topic SNS des événements de remise | Son traitement applicatif : #73 |
-| — | File SQS, Lambda d'envoi, DLQ : #67 |
+| File SQS, Lambda d'envoi, DLQ, alarmes | La route d'envoi côté API : #70 |
 | — | SMS (SNS, plafond, sender ID) : #66 |
 | — | Modèles de messages par tenant : #69 |
+| — | Publication du rappel J-1 par EventBridge : #71 |
 
 ## Ce qu'il crée
 
@@ -28,8 +36,16 @@ Périmètre volontairement resserré, et complémentaire d'autres tickets :
 | Jeu de configuration | `spa-{env}-email` | TLS exigé, métriques de réputation, liste de suppression |
 | Destination d'événements | `spa-{env}-delivery-events` | Rebonds, plaintes, refus, échecs de rendu → SNS |
 | Topic SNS | `spa-{env}-ses-events` | Canal des événements, chiffré |
-| Clé KMS + alias | `alias/spa-{env}-ses-events` | Chiffre le topic — un rebond porte une adresse |
+| Clé KMS + alias | `alias/spa-{env}-ses-events` | Chiffre le topic **et les deux files** |
 | Enregistrements Route 53 | 6 | **Seulement si `route53_zone_id` est fourni** |
+| File SQS | `spa-{env}-notifications` | Découplage — l'API y publie et rend la main |
+| File SQS | `spa-{env}-notifications-dlq` | Bout de course, rétention 14 jours |
+| Politique IAM | `spa-{env}-notifications-producer` | Droit de publier, jamais de dépiler |
+| Lambda | `spa-{env}-notification-dispatcher` | Consomme la file et fait envoyer |
+| Rôle + politique IAM | `spa-{env}-notification-dispatcher` | Au moindre privilège, ARN par ARN |
+| Groupe de journaux | `/aws/lambda/spa-{env}-notification-dispatcher` | Rétention explicite |
+| Alarmes CloudWatch | 4 | DLQ, erreurs, retard, refus définitifs |
+| Tableau de bord | `spa-{env}-notifications` | **Seulement si `create_dashboard`** |
 
 ## Composition
 
@@ -46,6 +62,18 @@ module "notifications" {
 
   # Sans destinataire de rapports, une politique `none` n'apprend rien.
   dmarc_report_uri = "rapports-dmarc@exemple.fr"
+
+  # Chaîne d'envoi. Les alarmes se branchent sur le topic du module `budgets`
+  # plutôt que d'en créer un second ; sans topic, elles changent d'état sans
+  # prévenir personne.
+  log_retention_days = 30
+  alarm_topic_arns   = [module.budgets.alerts_topic_arn]
+
+  # La route que la Lambda appelle. Nulle, la fonction est en défaut fermé —
+  # voir « Défaut fermé » plus bas. Les deux se posent ensemble : une route
+  # joignable sans jeton laisserait n'importe qui déclencher des envois.
+  dispatch_url              = "https://api.exemple.fr/api/v1/interne/notifications/dispatch"
+  dispatch_token_secret_arn = aws_secretsmanager_secret.dispatch_token.arn
 }
 ```
 
@@ -250,23 +278,211 @@ Le topic est chiffré par une clé KMS gérée par le compte. Tout abonné doit 
 déchiffrer — panne silencieuse, et la plus longue à diagnostiquer de cette
 chaîne.
 
+## La chaîne d'envoi — file, Lambda, DLQ, supervision
+
+```
+API (POST /appointments)                EventBridge Scheduler (#71)
+        │ publie, puis rend la main              │ balayage horaire
+        └───────────────┬────────────────────────┘
+                        ▼
+        spa-{env}-notifications  ── 5 réceptions ──►  spa-{env}-notifications-dlq
+                        │                                        │
+                        ▼                                        ▼
+        spa-{env}-notification-dispatcher                  alarme de profondeur
+                        │
+                        ▼
+        POST dispatch_url  →  l'API écrit PENDING, appelle SES/SNS, écrit SENT
+```
+
+### Pourquoi la Lambda n'appelle pas SES elle-même
+
+Parce que l'ordre d'écriture `PENDING → fournisseur → SENT` et l'index
+d'idempotence qui le porte appartiennent au module `notifications` de l'API,
+posés et testés par #68. Les réécrire en JavaScript dans la fonction donnerait
+deux implémentations de la même règle, dans deux exécutables, avec un seul jeu
+de tests — c'est-à-dire une divergence garantie, sur la règle la plus coûteuse à
+casser de toute la chaîne.
+
+La Lambda est donc le **transport** : elle dépile, valide l'enveloppe, appelle
+l'API, et traduit la réponse en une décision de rejeu. Rien de plus.
+
+### Le contrat de `dispatch_url`
+
+`POST` d'un corps `{ messageId, message }`, où `message` est l'enveloppe
+`NotificationMessage` telle que le producteur l'a publiée — des identifiants,
+**jamais de coordonnée** (CDC §5.1). La réponse décide du sort du message :
+
+| Réponse | Sort | Pourquoi |
+|---|---|---|
+| `2xx` | acquitté, compté `Sent` | parti |
+| `204`, `409` | acquitté, compté `Skipped` | une autre livraison l'avait déjà pris — le rejeu fait son travail |
+| `401`, `403`, `408`, `425`, `429`, `5xx` | **rendu à SQS**, compté `TransientFailures` | l'appel a raté, pas le message |
+| coupure réseau, délai dépassé | **rendu à SQS** | idem |
+| tout autre `4xx` | acquitté, compté `PermanentFailures` | adresse morte, désinscription, requête mal formée : le répéter ne le rendra pas vrai |
+| enveloppe illisible ou non conforme | acquitté, compté `PermanentFailures` | un JSON invalide ne se répare pas en le relisant |
+
+Un `401` ou un `403` compte comme **transitoire**, et il faut s'y arrêter : un
+refus d'authentification ne dit rien du message, il dit que la fonction ne s'est
+pas fait reconnaître — jeton tourné, secret vide, politique mal posée. Ce
+refus-là frappe *tous* les messages à la fois. Les compter permanents les
+acquitterait, donc les supprimerait de la file sans qu'aucun passe par la DLQ :
+il n'y aurait plus rien à rejouer le jour où le jeton est corrigé. Transitoires,
+ils épuisent leurs tentatives, atterrissent en DLQ, et s'y rejouent.
+
+### Les deux règles de reprise
+
+**Aucune boucle maison.** Un enregistrement, un appel, une décision. Le rejeu est
+le métier de SQS, qui compte jusqu'à `dispatch_max_receive_count`. Boucler dans
+la fonction doublerait la file, masquerait la profondeur de DLQ sur laquelle
+repose l'alarme, et retiendrait le lot entier pendant qu'un fournisseur est en
+panne.
+
+À savoir avant de régler quoi que ce soit : **SQS n'espace pas les tentatives**.
+Il n'a pas de report exponentiel. Un message rendu redevient visible au plus tard
+au bout du délai de visibilité — `6 × dispatcher_timeout_seconds`, soit 180 s par
+défaut — et plus tôt encore, la source d'événements le rendant immédiatement par
+`ChangeMessageVisibility`. Cinq réceptions consomment donc **au plus un quart
+d'heure**, pas une nuit : une panne d'API qui dure davantage envoie en DLQ tout ce
+qui est en vol. C'est la DLQ, pas l'alarme d'âge, qui parle en premier — et c'est
+`dispatch_max_receive_count` × le délai de visibilité, non `backlog_age_alarm_seconds`,
+qu'il faut relever pour tenir une panne plus longue.
+
+**Les échecs permanents ne sont pas rejoués.** C'est
+`function_response_types = ["ReportBatchItemFailures"]` qui le rend possible : la
+fonction rend la liste des seuls enregistrements à rejouer, et SQS supprime tous
+les autres. Sans ce réglage, une erreur dans un lot de cinq ferait rejouer les
+cinq — quatre messages sains verraient leur compteur de réception avancer, et
+finiraient en DLQ sans avoir jamais échoué.
+
+### Défaut fermé
+
+Sans `dispatch_url`, la fonction ne prétend pas envoyer : elle journalise
+`notification.unconfigured` et **rend le message à SQS**. Le message épuise ses
+cinq réceptions — un quart d'heure au plus, voir ci-dessus — puis part en DLQ, et
+l'alarme de profondeur parle. C'est voulu : une chaîne non branchée doit se voir.
+Une fonction qui acquitterait sans envoyer serait, elle, strictement invisible.
+
+L'alarme d'âge, elle, ne dira rien de ce cas-là : un message qui échoue vite
+n'atteint jamais une heure d'attente. Elle couvre l'autre panne — la source
+d'événements arrêtée ou bridée, où plus personne ne dépile du tout.
+
+`terraform output notification_dispatch_configured` répond à cette question sans
+ouvrir la console. C'est la première chose à regarder quand rien ne part.
+
+### Supervision — quatre façons de ne rien envoyer
+
+| Ce qui se passe | Ce qui le dit | Alarme |
+|---|---|---|
+| Le message a épuisé ses tentatives | profondeur de la DLQ | `…-notifications-dlq-depth` |
+| La fonction plante avant de décider | erreurs Lambda | `…-notifications-dispatcher-errors` |
+| Plus personne ne consomme, l'API ne répond plus | âge du plus vieux message | `…-notifications-backlog-age` |
+| Le message est refusé pour de bon | métrique `PermanentFailures` | `…-notifications-permanent-failures` |
+
+La quatrième est la moins évidente et la plus importante. Un échec permanent est
+**acquitté** : il ne remplit ni la file, ni la DLQ. Sans compteur dédié, une
+adresse invalide serait rigoureusement invisible — la file resterait vide, et
+personne ne saurait que la cliente n'a rien reçu.
+
+Les quatre métriques `Sent`, `Skipped`, `TransientFailures` et
+`PermanentFailures` sont publiées par la fonction au format **EMF** : CloudWatch
+les extrait du journal, ce qui évite un appel `PutMetricData` dans le chemin
+d'envoi et le droit IAM qui va avec. Elles sont publiées à chaque invocation, y
+compris à zéro — c'est ce qui distingue « rien à envoyer » de « plus personne ne
+consomme ».
+
+Les alarmes ne préviennent que si `alarm_topic_arns` est renseigné :
+`terraform output notification_alarms_notify` le dit.
+
+### Rejouer la file d'attente morte
+
+Une fois la panne corrigée — jeton remis, route rétablie, quota SES relevé :
+
+```bash
+QUEUE=$(terraform output -raw notification_dispatch_queue_url)
+DLQ=$(aws sqs get-queue-url --queue-name "$(terraform output -raw notification_dispatch_dlq_name)" --query QueueUrl --output text)
+
+aws sqs start-message-move-task \
+  --source-arn "$(aws sqs get-queue-attributes --queue-url "$DLQ" \
+       --attribute-names QueueArn --query 'Attributes.QueueArn' --output text)" \
+  --destination-arn "$(aws sqs get-queue-attributes --queue-url "$QUEUE" \
+       --attribute-names QueueArn --query 'Attributes.QueueArn' --output text)"
+```
+
+L'idempotence de #68 rend l'opération sans danger : un message déjà envoyé est
+reconnu et ignoré. Ce qui ne l'est pas, c'est de rejouer **avant** d'avoir
+corrigé la cause — les messages reprendraient le même chemin et reviendraient en
+DLQ, cinq réceptions plus tard.
+
+Avant de rejouer, lire ce que la fonction a dit d'eux :
+
+```bash
+aws logs tail "/aws/lambda/$(terraform output -raw notification_dispatcher_function_name)" \
+  --since 24h --filter-pattern '{ $.event = "notification.*" }'
+```
+
+### Éprouver le handler sans déployer
+
+Les deux règles de reprise sont des affirmations sur ce que la fonction **rend**,
+que ni `terraform validate` ni la lecture du code ne prouvent :
+
+```bash
+cd infra/terraform/modules/notifications/lambda && node dispatcher.smoke.mjs
+```
+
+Trois vérifications : le tri des issues (seuls les transitoires sont rendus à
+SQS), la garde de fin de temps imparti, et le défaut fermé. Ce script n'est
+**pas** joué par `npm run verify` — ce dossier n'appartient à aucun espace de
+travail npm, et l'y rattacher demanderait de toucher le `package.json` de la
+racine. Une issue de suivi porte ce câblage.
+
+### Ce qui reste à faire ailleurs
+
+- **La route d'envoi côté API** (#70) : c'est elle que `dispatch_url` désigne,
+  et le contrat ci-dessus est ce qu'elle doit servir. Tant qu'elle n'existe pas,
+  la chaîne est posée et inerte — visiblement inerte.
+- **Le jeton partagé** : Terraform crée le droit de le lire, pas sa valeur. Le
+  secret se dépose hors code, comme celui d'exécution de l'API.
+
+  **À éprouver en développement avant staging.** La fonction lit ce secret avec
+  `@aws-sdk/client-secrets-manager`, qu'elle attend du runtime `nodejs20.x` —
+  l'archive ne transporte aucune dépendance, c'est ce qui lui évite une étape de
+  construction. Si le runtime ne le fournissait pas, l'import échouerait, tous
+  les messages deviendraient transitoires et la file entière partirait en DLQ. Le
+  journal distingue ce cas des autres : un `notification.token_unavailable` avec
+  `code: "ERR_MODULE_NOT_FOUND"` désigne le runtime, un refus IAM ou une panne
+  réseau porte un autre code. Le remède, si le cas se présente, est de vendre le
+  client dans l'archive ou de passer par l'extension Lambda de Secrets Manager —
+  hors du périmètre de #67, une issue de suivi le porte.
+- **La publication du rappel J-1** (#71) : la règle EventBridge cible cette file,
+  avec la politique `dispatch_producer_policy_arn` sur son rôle.
+
 ## Coût
 
 Négligeable devant le reste de l'environnement, mais non nul :
 
 | Poste | Ordre de grandeur |
 |---|---|
-| Clé KMS | 1 USD / mois / environnement |
+| Clé KMS | 1 USD / mois / environnement — partagée par le topic et les deux files |
 | SES | 0,10 USD / 1000 messages hors Free Tier |
 | SNS (événements) | quelques centimes — seuls les échecs publient |
 | Route 53 | aucun coût propre, la zone préexiste |
+| SQS | premier million de requêtes gratuit ; l'interrogation longue divise le reste par vingt |
+| Lambda | quelques centimes — arm64, 256 Mio, un appel HTTP par message |
+| Métriques EMF | 4 métriques × 0,30 USD / mois / environnement |
+| Tableau de bord | gratuit jusqu'à trois par compte, soit un par environnement |
 
 Le choix de ne publier ni `SEND` ni `DELIVERY` est aussi un choix de coût : ces
 deux types produisent un message SNS **par envoi réussi**, pour une information
-que la table `notifications` porte déjà (skill notifications §2).
+que la table `notifications` porte déjà (skill notifications §2). Le même
+raisonnement vaut pour la Lambda, laissée **hors VPC** : elle n'appelle que
+l'API et CloudWatch, et la placer dans les sous-réseaux applicatifs lui
+imposerait des interfaces réseau et une sortie facturée au gigaoctet par la NAT
+Gateway, pour aucun accès qu'elle n'ait déjà.
 
 ## Références
 
 - CDC §4.8 (chaîne de notifications), §6 (risque de délivrabilité), §5.1 (RGPD)
-- [.claude/skills/notifications/SKILL.md](../../../../.claude/skills/notifications/SKILL.md) §5
-- [.claude/skills/aws-infra/SKILL.md](../../../../.claude/skills/aws-infra/SKILL.md) §2, §7
+- [.claude/skills/notifications/SKILL.md](../../../../.claude/skills/notifications/SKILL.md) §1 (architecture), §4 (échecs et reprises), §5 (délivrabilité), §7 (RGPD)
+- [.claude/skills/aws-infra/SKILL.md](../../../../.claude/skills/aws-infra/SKILL.md) §2, §5 (moindre privilège), §7, §8 (alarmes et rétention), §9 (coûts)
+- `apps/api/src/modules/notifications/README.md` — l'ordre d'écriture et
+  l'idempotence dont ce module est le transport
