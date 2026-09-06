@@ -115,3 +115,50 @@ variable "notification_dmarc_report_uri" {
   type        = string
   default     = null
 }
+
+# --- Chaîne d'envoi des notifications (#67) -----------------------------------
+
+variable "notification_dispatch_url" {
+  description = <<-EOT
+    URL de la route d'envoi servie par l'API, que la Lambda appelle pour chaque
+    message de la file de notifications.
+
+    `null` — le défaut — laisse la fonction en **défaut fermé** : elle rend chaque
+    message à SQS, qui l'épuise en cinq réceptions — un quart d'heure au plus —
+    puis le verse en DLQ, où l'alarme de profondeur le signale. C'est délibéré. Une chaîne non branchée doit se voir ; une chaîne qui
+    acquitterait les messages sans rien envoyer serait invisible.
+
+    Elle n'est pas déduite de l'ALB. En développement, la terminaison TLS est un
+    certificat auto-signé qu'aucun client ne vérifie sans y être forcé — et la
+    fonction refuse de désactiver la vérification. Ailleurs, l'URL dépend du nom
+    de domaine réel du produit. Cette valeur se pose donc le jour où la route
+    existe (#70) et où un certificat vérifiable la sert.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.notification_dispatch_url == null || can(regex("^https://", var.notification_dispatch_url))
+    error_message = "notification_dispatch_url doit être `null` ou une URL en `https://` — un appel en clair porterait le jeton et les identifiants de rendez-vous sur le réseau."
+  }
+}
+
+variable "notification_dispatch_token_secret_arn" {
+  description = <<-EOT
+    Secret Manager portant le jeton partagé que la Lambda présente à l'API dans
+    l'en-tête `x-internal-token`. La valeur n'est jamais lue par Terraform : la
+    fonction la lit elle-même à son démarrage à froid.
+
+    `null` — le défaut — n'envoie aucun en-tête et n'accorde à la fonction aucun
+    droit de lecture de secret. À poser **en même temps** que
+    `notification_dispatch_url` : une route d'envoi joignable sans jeton laisserait
+    n'importe qui déclencher des messages au nom d'un établissement.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.notification_dispatch_token_secret_arn == null || can(regex("^arn:aws[a-z-]*:secretsmanager:", var.notification_dispatch_token_secret_arn))
+    error_message = "notification_dispatch_token_secret_arn doit être `null` ou un ARN Secrets Manager (`arn:aws:secretsmanager:…`)."
+  }
+}
