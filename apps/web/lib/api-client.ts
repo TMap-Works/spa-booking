@@ -36,6 +36,7 @@ import {
   bookedAppointmentSchema,
   customerPageSchema,
   customerSchema,
+  customerVisitHistorySchema,
   publicServiceSchema,
   publicTenantSchema,
   serviceCategorySchema,
@@ -62,8 +63,10 @@ import {
   type CreateServiceRequest,
   type CreateStaffTimeOffRequest,
   type Customer,
+  type CustomerHistoryQuery,
   type CustomerPage,
   type CustomerSearchQuery,
+  type CustomerVisitHistory,
   type LoginRequest,
   type MyAppointmentsQuery,
   type PublicService,
@@ -79,6 +82,7 @@ import {
   type StaffSchedule,
   type StaffTimeOff,
   type Tenant,
+  type UpdateCustomerRequest,
   type UpdateProfileRequest,
   type UpdateServiceCategoryRequest,
   type UpdateServiceRequest,
@@ -1034,6 +1038,112 @@ export async function createCustomer(
   const { payload } = await authorizedRequest({
     method: 'POST',
     path: '/customers',
+    body,
+    schema: customerSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+// ---------------------------------------------------------------------------
+// Le fichier client, ouvert fiche par fiche — #54
+// ---------------------------------------------------------------------------
+
+/*
+ * Les trois lectures et l'écriture qui suivent complètent la recherche du
+ * comptoir. Elles partagent une propriété qu'il faut lire une fois pour toutes,
+ * parce qu'elle porte le cinquième critère d'acceptation de #54 — *« aucune
+ * donnée client d'un autre tenant n'est atteignable »* :
+ *
+ * **aucune de ces signatures n'accepte d'établissement, et aucun de ces chemins
+ * n'en nomme un.** Le seul paramètre qui désigne quoi que ce soit est
+ * `customerId`, et l'API le résout dans l'établissement du **jeton vérifié**
+ * (tenant-isolation §2). Un identifiant du salon voisin n'est donc pas
+ * « refusé » : il est **introuvable**, et l'API répond 404 — le même 404 qu'un
+ * identifiant qui n'existe nulle part, qu'une fiche du salon d'à côté et qu'un
+ * compte du personnel (`crm/README.md`). Le front n'a rien à filtrer, et surtout
+ * rien à ajouter : passer ici un `tenantSlug` « pour être sûr » serait
+ * exactement le paramètre contrôlé par l'appelant que la règle interdit.
+ *
+ * Le jeton, lui, vient du cookie `httpOnly` posé sur `/{slug}/admin` — borné à
+ * ce back-office-là. Une session ouverte chez un autre salon ne l'atteint pas.
+ */
+
+/**
+ * Une fiche cliente — `GET /customers/:id`, rang `STAFF`.
+ *
+ * C'est la seule lecture qui porte `internalNote` : la liste ne la transporte
+ * pas, et aucun schéma du parcours public ne la référence. Une note interne ne
+ * sort donc de l'API que sur ce chemin-ci, et sous session.
+ *
+ * **404** est un cas nominal ici, pas une panne : l'écran l'affiche comme une
+ * fiche introuvable. Voir le bloc ci-dessus pour ce que ce 404 recouvre.
+ */
+export async function fetchCustomer(accessToken: string, customerId: string): Promise<Customer> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/customers/${encodeURIComponent(customerId)}`,
+    schema: customerSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * L'historique de visites **agrégé** d'une fiche — `GET /customers/:id/history`.
+ *
+ * `summary` compte, borne et somme sur la **totalité** des rendez-vous ;
+ * `visits` n'en rend que les plus récents, plafonnés côté serveur. L'écran
+ * affiche donc les compteurs tels quels et n'en recalcule aucun : un total
+ * dérivé de la fenêtre mentirait dès la cinquante et unième visite.
+ *
+ * `limit` est `Partial` pour la raison qui rend `Partial` la recherche : le
+ * champ porte un `.default()` dans le contrat, si bien que le type inféré en
+ * sortie le donne pour toujours présent. Un appelant qui s'en remet au plafond
+ * du serveur n'aurait alors pas le droit de l'omettre.
+ */
+export async function fetchCustomerHistory(
+  accessToken: string,
+  customerId: string,
+  query: Partial<CustomerHistoryQuery> = {},
+): Promise<CustomerVisitHistory> {
+  const search = new URLSearchParams();
+
+  if (query.limit !== undefined) {
+    search.set('limit', String(query.limit));
+  }
+
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/customers/${encodeURIComponent(customerId)}/history${
+      search.size === 0 ? '' : `?${search.toString()}`
+    }`,
+    schema: customerVisitHistorySchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Corrige les coordonnées ou la note interne d'une fiche — `PATCH /customers/:id`.
+ *
+ * `PATCH` : un champ **absent** vaut « ne touche pas », `null` vaut « efface ».
+ * Un écran qui ne montre qu'une partie de la fiche n'a donc pas à renvoyer le
+ * reste — et ne risque pas de l'effacer en l'oubliant.
+ *
+ * Ni l'adresse, ni l'activation : le contrat ne les porte pas, et l'API refuse
+ * en 400 le corps qui les y glisserait. Changer une adresse demanderait de
+ * vérifier la nouvelle, ce que le MVP ne prévoit pas ; désactiver une fiche a sa
+ * propre route, au rang `MANAGER`.
+ */
+export async function updateCustomer(
+  accessToken: string,
+  customerId: string,
+  body: UpdateCustomerRequest,
+): Promise<Customer> {
+  const { payload } = await authorizedRequest({
+    method: 'PATCH',
+    path: `/customers/${encodeURIComponent(customerId)}`,
     body,
     schema: customerSchema,
     accessToken,
