@@ -115,3 +115,20 @@ module "notifications" {
   dispatch_url              = var.notification_dispatch_url
   dispatch_token_secret_arn = var.notification_dispatch_token_secret_arn
 }
+
+# --- Observabilité ------------------------------------------------------------
+
+# `../../modules/observability` n'est pas composé ici, et c'est temporaire : les
+# cinq alarmes qu'il pose — 5xx de l'ALB, latence p99, CPU des services,
+# connexions et espace disque de la base — décrivent des ressources que cet
+# environnement ne crée pas encore. Le composer aujourd'hui produirait un tableau
+# de bord vide et pas une alarme.
+#
+# Il se compose en même temps que `ecs-service` et `database`, comme le fait déjà
+# `envs/dev` : c'est un **prérequis de go-live** du CDC §4.11, pas une amélioration
+# à programmer ensuite. Une plateforme mise en production sans ces alarmes
+# apprend ses pannes par ses clientes.
+#
+# Le traçage X-Ray suit le même chemin : `xray_tracing_enabled` sur le service
+# `api` du module `ecs-service`, et la règle d'échantillonnage vient avec le
+# module. Voir infra/terraform/modules/observability/README.md.

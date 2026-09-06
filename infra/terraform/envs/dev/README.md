@@ -20,6 +20,7 @@ Internet → ALB (443, certificat auto-signé)
 | Budget mensuel 250 USD, alertes 80 % et 100 % | `spa-dev-monthly` | `budgets` |
 | Domaine SES, DKIM/SPF/DMARC, topic des rebonds | `spa-dev-email`, `spa-dev-ses-events` | `notifications` — **rien sans `notification_domain`** |
 | File de découplage, DLQ, Lambda d'envoi, 4 alarmes | `spa-dev-notifications`, `spa-dev-notification-dispatcher` | `notifications` — idem |
+| 5 alarmes, tableau de bord, règle d'échantillonnage X-Ray | `spa-dev-supervision`, `spa-dev-api` | `observability` |
 | Définition de tâche de migration | `spa-dev-migrate` | déclarée ici |
 | Secret d'exécution de l'API | `spa-dev/api/runtime-…` | déclarée ici |
 | Certificat de terminaison TLS | `spa-dev-alb` | déclarée ici |
@@ -159,6 +160,50 @@ Le rejeu de la file d'attente morte, la lecture des journaux structurés et le
 contrat exact que la route doit servir sont dans
 [modules/notifications/README.md](../../modules/notifications/README.md).
 
+## Supervision
+
+Le module `observability` pose les cinq alarmes du CDC §4.11 que cet
+environnement peut effectivement porter, toutes branchées sur
+`spa-dev-budget-alerts` — le topic du module `budgets`, réemployé plutôt que
+doublé :
+
+| Alarme | Se déclenche quand |
+|---|---|
+| `spa-dev-alb-5xx-rate` | plus de 1 % de 5xx, au-delà de 20 requêtes sur cinq minutes |
+| `spa-dev-alb-latency-p99` | une requête sur cent met plus de 2 s |
+| `spa-dev-ecs-api-cpu` | le service dépasse 80 % de CPU pendant dix minutes |
+| `spa-dev-rds-connections` | plus de 360 connexions ouvertes, soit 80 % des ~450 d'un `db.t4g.medium` |
+| `spa-dev-rds-free-storage` | moins de 20 % des 20 Gio provisionnés restent libres |
+
+Les deux alarmes restantes du tableau du CDC — profondeur de DLQ et erreurs
+Lambda — sont posées par le module `notifications` sur sa propre chaîne, et ne
+sont donc pas reposées ici : deux alarmes sur le même message enverraient deux
+notifications.
+
+Le tableau de bord `spa-dev-supervision` regroupe les mêmes indicateurs en
+courbes, avec les seuils d'alarme en annotation.
+
+```bash
+terraform output observability_alarm_names
+terraform output observability_alarms_notify              # true : alarmes sur le topic budgets
+terraform output observability_rds_connections_threshold  # 360
+
+# Une alarme se vérifie en la forçant, jamais en attendant la panne
+aws cloudwatch set-alarm-state --alarm-name spa-dev-rds-connections \
+  --state-value ALARM --state-reason "test de la chaine de notification"
+```
+
+**Le seuil de connexions est saisi à la main** (`rds_max_connections` dans
+main.tf) : RDS calcule le maximum du moteur à partir de la mémoire de l'instance
+et ne le publie sous aucune métrique. Changer `instance_class` oblige à revoir
+cette valeur, faute de quoi le seuil cesse de valoir 80 %.
+
+Le traçage X-Ray est activé côté infrastructure — sidecar `aws-xray-daemon` dans
+la tâche, droit de publier sur le rôle de tâche, règle d'échantillonnage
+`spa-dev-api` à 5 % avec un réservoir d'une requête par seconde. Il manque
+l'instrumentation d'`apps/api` : tant qu'aucun segment n'est ouvert, la console
+X-Ray reste vide.
+
 ## Coût et rétention
 
 Le module `budgets` pose un budget mensuel de **250 USD** sur cet environnement,
@@ -222,10 +267,10 @@ déploiement saura publier une révision de définition de tâche, ou le module
   sont déclarés ici faute de module. Ils ont vocation à en devenir un —
   `modules/ecs-service` pour la tâche de migration, un module `dns` pour le
   certificat.
-- Aucune alarme CloudWatch n'est posée : le module `observability` n'existe pas
-  encore (skill aws-infra §8). Le topic `spa-dev-budget-alerts` créé par
-  `budgets` est fait pour les accueillir — les alarmes n'ont pas à créer un
-  second canal.
+- Le traçage X-Ray est **collecté mais pas produit** : la tâche porte le sidecar
+  `aws-xray-daemon` et son rôle peut publier des segments, mais `apps/api`
+  n'ouvre encore aucun segment. La console X-Ray reste donc vide, et ce n'est pas
+  une panne d'infrastructure.
 - `terraform fmt -check` et `terraform validate` sont joués à chaque pull request
   par le job « Format et validation » de `terraform.yml`. En revanche **aucun
   `apply` réel n'a eu lieu** et aucun appel AWS n'a été fait : la machine du run

@@ -108,3 +108,13 @@ module "notifications" {
   dispatch_url              = var.notification_dispatch_url
   dispatch_token_secret_arn = var.notification_dispatch_token_secret_arn
 }
+
+# --- Observabilité ------------------------------------------------------------
+
+# `../../modules/observability` n'est pas composé ici : ses alarmes décrivent un
+# ALB, des services ECS et une base que cet environnement ne crée pas encore. Il
+# se composera en même temps qu'eux, comme le fait déjà `envs/dev` — et avant la
+# production, la recette étant l'endroit où l'on découvre qu'une alarme se
+# déclenche en fonctionnement nominal.
+#
+# Voir infra/terraform/modules/observability/README.md.

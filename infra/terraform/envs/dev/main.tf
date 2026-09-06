@@ -33,6 +33,17 @@ locals {
   # en fabrique un lui-même — voir le bloc « Terminaison TLS » plus bas.
   certificate_arn = var.certificate_arn != null ? var.certificate_arn : one(aws_acm_certificate.alb[*].arn)
 
+  # Nombre maximal de connexions accepté par le moteur, dont l'alarme de
+  # saturation surveille les 80 %. Il se dit ici parce qu'il ne se déduit de
+  # rien : RDS le calcule par `LEAST({DBInstanceClassMemory/9531392}, 5000)` et
+  # ne le publie sous aucune métrique. Sur le `db.t4g.medium` par défaut du
+  # module `database` — 4 Gio —, cela fait 4 294 967 296 / 9 531 392 ≈ 450.
+  #
+  # **Changer `instance_class` oblige à revoir cette valeur** : le seuil de
+  # l'alarme cesserait sinon de valoir 80 %. La sortie `instance_class` du module
+  # `database` dit ce qui est réellement provisionné.
+  rds_max_connections = 450
+
   # Ce que l'API doit connaître de la chaîne de notifications, et le droit d'y
   # publier. Les deux sont vides tant que `notification_domain` n'est pas fourni,
   # le module n'étant alors pas composé.
@@ -392,6 +403,13 @@ module "ecs_service" {
       min_capacity  = 1
       max_capacity  = 4
 
+      # Sidecar `aws-xray-daemon` dans la tâche, et droit de publier des segments
+      # sur le rôle de tâche (CDC §4.11). Le chemin de collecte existe donc et
+      # s'éprouve avant que le code de l'API n'ouvre son premier segment — c'est
+      # l'ordre voulu : instrumenter d'abord, puis découvrir que rien ne remonte,
+      # laisse chercher la panne dans le code alors qu'elle est dans la tâche.
+      xray_tracing_enabled = true
+
       # `/health` est servi hors préfixe `/api` et hors versionnement
       # (apps/api/src/bootstrap.ts) : il exécute `SELECT 1` sur PostgreSQL et
       # `PING` sur Redis, et répond 503 dès qu'une dépendance est tombée. C'est
@@ -429,6 +447,56 @@ module "ecs_service" {
       }
     }
   }
+}
+
+# --- Observabilité ------------------------------------------------------------
+
+# Les alarmes que le CDC §4.11 exige avant tout go-live, le tableau de bord qui
+# les regarde venir, et la règle d'échantillonnage X-Ray de l'environnement.
+#
+# Composé après `ecs_service` et `database` dans la lecture parce qu'il en
+# dépend, et pas l'inverse : le sidecar de traçage et le droit de publier des
+# segments vivent dans `ecs-service`, où est le rôle de tâche. Les faire
+# remonter ici ferait dépendre chacun des deux modules de l'autre — un cycle que
+# Terraform refuse.
+module "observability" {
+  source = "../../modules/observability"
+
+  environment = local.environment
+
+  # Le topic du module `budgets`, dont l'en-tête prévoit explicitement que les
+  # alarmes d'observabilité s'y branchent plutôt que d'en créer un second. Sans
+  # cela, les alarmes changent d'état sans prévenir personne — ce qui est pire
+  # que pas d'alarme du tout, puisqu'on se croit couvert.
+  alarm_topic_arns = [module.budgets.alerts_topic_arn]
+
+  alb = {
+    # Le suffixe d'ARN, et non l'ARN : c'est la forme qu'attendent les dimensions
+    # de métriques CloudWatch.
+    arn_suffix = module.ecs_service.alb_arn_suffix
+  }
+
+  ecs = {
+    cluster_name = module.ecs_service.cluster_name
+
+    # Une alarme par service, pas une pour le cluster : la moyenne de deux
+    # services dont l'un sature et l'autre dort ne franchit jamais le seuil.
+    service_names = module.ecs_service.service_names
+  }
+
+  rds = {
+    instance_id           = module.database.instance_id
+    allocated_storage_gib = module.database.allocated_storage
+    max_connections       = local.rds_max_connections
+  }
+
+  # Volontairement vides. La seule chaîne asynchrone de cet environnement est
+  # celle des notifications, et son module pose déjà les alarmes de sa DLQ et de
+  # sa Lambda (#67), avec les descriptions qui nomment ses pannes à elle. Les
+  # reposer ici enverrait deux notifications pour le même message. Ces entrées
+  # attendent la file suivante, celle qui n'aura pas de module à elle.
+  dead_letter_queues = {}
+  lambda_functions   = {}
 }
 
 # --- Migrations de schéma -----------------------------------------------------

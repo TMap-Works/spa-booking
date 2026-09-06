@@ -174,6 +174,38 @@ output "log_retention_days" {
   value       = local.log_retention_days
 }
 
+# --- Supervision (#78) --------------------------------------------------------
+
+output "observability_alarm_names" {
+  description = "Alarmes CloudWatch de l'environnement, dans l'ordre où elles se lisent : entrée publique, calcul, données. C'est la liste à confronter au tableau du CDC §4.11 avant un go-live."
+  value       = module.observability.alarm_names
+}
+
+output "observability_alarms_notify" {
+  description = "Vrai quand les alarmes sont branchées sur un topic SNS. Faux, elles changent d'état dans la console sans prévenir personne — ce qui est pire que pas d'alarme du tout, puisqu'on se croit couvert."
+  value       = module.observability.alarms_notify
+}
+
+output "observability_rds_connections_threshold" {
+  description = "Nombre de connexions à partir duquel l'alarme se déclenche. À revérifier après tout changement de `instance_class` : le maximum du moteur dépend de la mémoire de l'instance, et il est saisi à la main dans main.tf faute d'être exposé par une métrique."
+  value       = module.observability.rds_connections_threshold
+}
+
+output "observability_dashboard_name" {
+  description = "Tableau de bord transverse de l'environnement — trafic et 5xx de l'ALB, latence, CPU et mémoire des services, connexions et espace disque de la base."
+  value       = module.observability.dashboard_name
+}
+
+output "xray_traced_services" {
+  description = "Services dont la tâche porte le sidecar `aws-xray-daemon` et dont le rôle peut publier ses segments. Le code de l'API n'ouvrant pas encore de segment, la console X-Ray reste vide : c'est attendu, pas une panne d'infrastructure."
+  value       = module.ecs_service.xray_traced_services
+}
+
+output "xray_sampling_rule_name" {
+  description = "Règle d'échantillonnage X-Ray de l'environnement. Elle filtre sur `spa-dev-*` : les trois environnements partagent un compte, donc un jeu de règles."
+  value       = module.observability.xray_sampling_rule_name
+}
+
 # --- Chaîne d'envoi des notifications (#67) -----------------------------------
 
 # Toutes nulles tant que `notification_domain` n'est pas fourni : le module n'est
