@@ -66,3 +66,28 @@ module "network" {
   # qui se vérifie, lui, en production.
   nat_gateway_count = 1
 }
+
+# --- Délivrabilité e-mail -----------------------------------------------------
+
+# Rien tant qu'aucun domaine d'envoi n'est fourni. Ce n'est pas de la prudence
+# gratuite : une identité de domaine SES est unique par compte et par région, et
+# un défaut en dur ferait vérifier le même nom depuis les trois états
+# d'environnement. La recette prend son propre sous-domaine —
+# `-var notification_domain=staging.mail.<domaine>` — pour que ses envois
+# d'essai n'entament pas la réputation du domaine de production.
+module "notifications" {
+  count  = var.notification_domain == null ? 0 : 1
+  source = "../../modules/notifications"
+
+  environment = local.environment
+  domain      = var.notification_domain
+
+  # Renseigné, le module publie DKIM, SPF et DMARC lui-même. Sinon il expose la
+  # liste exacte à publier chez le registraire — sortie `notification_dns_records`.
+  route53_zone_id = var.notification_route53_zone_id
+
+  # Sans destinataire de rapports, une politique DMARC `none` — celle du module
+  # par défaut — n'apprend rien à personne : elle n'existe que pour faire remonter
+  # qui écrit au nom du domaine.
+  dmarc_report_uri = var.notification_dmarc_report_uri
+}

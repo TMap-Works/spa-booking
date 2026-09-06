@@ -38,6 +38,42 @@ output "vpc_endpoint_security_group_id" {
   value       = module.network.vpc_endpoint_security_group_id
 }
 
+# --- Délivrabilité e-mail -----------------------------------------------------
+
+# Toutes nulles tant que `notification_domain` n'est pas fourni : le module n'est
+# alors pas composé. `one()` plutôt que `[0]` — l'index n'existe pas dans ce cas,
+# et `terraform output` échouerait au lieu de rendre `null`.
+
+output "notification_domain" {
+  description = "Domaine d'envoi vérifié dans SES, ou `null` tant qu'aucun n'est fourni à l'environnement."
+  value       = one(module.notifications[*].domain)
+}
+
+output "notification_verified_for_sending_status" {
+  description = "Vrai quand SES a lu les enregistrements DKIM et considère le domaine comme vérifié. Faux juste après le premier `apply` — la vérification est asynchrone. Faux durablement, comparer `notification_dns_records` à ce que rend un `dig`."
+  value       = one(module.notifications[*].verified_for_sending_status)
+}
+
+output "notification_dns_records" {
+  description = "Enregistrements DKIM, SPF et DMARC de la délivrabilité, avec leur nom, leur type et leur valeur. Posés par le module quand la zone est dans Route 53 ; à publier chez le registraire sinon — sans eux, aucun message ne part."
+  value       = one(module.notifications[*].dns_records)
+}
+
+output "notification_configuration_set_name" {
+  description = "Jeu de configuration SES à passer en `ConfigurationSetName` de chaque envoi, y compris pour le test d'envoi réel décrit dans le README du module."
+  value       = one(module.notifications[*].configuration_set_name)
+}
+
+output "notification_events_topic_arn" {
+  description = "Topic SNS des rebonds, plaintes, refus et échecs de rendu. Point d'entrée du traitement applicatif des rebonds (#73), auquel on s'abonne par une file SQS et non par HTTP."
+  value       = one(module.notifications[*].events_topic_arn)
+}
+
+output "notification_events_kms_key_arn" {
+  description = "Clé KMS chiffrant le topic d'événements. Tout consommateur du topic doit obtenir `kms:Decrypt` dessus, faute de quoi il recevra des messages illisibles."
+  value       = one(module.notifications[*].kms_key_arn)
+}
+
 # --- Coûts et observabilité ---------------------------------------------------
 
 output "budget_name" {
