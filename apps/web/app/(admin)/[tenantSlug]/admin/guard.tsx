@@ -40,15 +40,23 @@ import { readAdminAccessToken, readAdminRefreshToken } from './session';
  *    existe forcément, sans quoi c'est le cas 3 ;
  * 3. **les deux ont disparu** — écran de connexion.
  *
- * `returnTo` est la page où revenir après un renouvellement. Il est
- * **facultatif**, et c'est délibéré : les écrans déjà livrés appellent cette
- * garde avec le seul slug, et le shell ne demande pas de les rouvrir. Sans lui,
- * le renouvellement rend la main sur le planning — un écran de moins que prévu,
- * jamais une session perdue. Une page qui tient à son retour exact le passe.
+ * `returnTo` est la page où revenir après un renouvellement, et il est
+ * **obligatoire** (#458). Facultatif, il n'était passé par aucune page : un
+ * renouvellement déposait l'opérateur sur le planning et perdait la vue et la
+ * date du calendrier, ou le filtre du catalogue — sur les écrans mêmes dont les
+ * huit heures d'ouverture d'affilée justifient le renouvellement silencieux. Le
+ * type l'exige donc désormais, comme l'espace client l'exige de `readAccountData`
+ * depuis toujours : c'est la seule forme de rappel qu'un écran neuf ne puisse pas
+ * ignorer.
+ *
+ * Ce que la page passe est **son chemin courant**, chaîne de requête comprise,
+ * construit par les fonctions de `paths.ts` — jamais concaténé sur place. La
+ * route de renouvellement le revalide de toute façon (`safeAdminNext`) : une
+ * destination hors de ce back-office retombe sur le planning.
  */
 export async function requireAdminAccessToken(
   tenantSlug: string,
-  returnTo?: string,
+  returnTo: string,
 ): Promise<string> {
   const accessToken = await readAdminAccessToken();
 

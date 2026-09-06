@@ -5,7 +5,7 @@ import { fetchPublicTenant, fetchServiceCategories } from '@/lib/api-client';
 
 import { ServiceForm } from '../../components/service-form';
 import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
-import { adminCatalogPath } from '../../paths';
+import { adminCatalogPath, adminNewServicePath } from '../../paths';
 
 /**
  * Création d'une prestation (#52, premier et troisième critères).
@@ -34,7 +34,7 @@ interface NewServicePageProps {
 
 export default async function NewServicePage({ params }: NewServicePageProps) {
   const { tenantSlug } = await params;
-  const accessToken = await requireAdminAccessToken(tenantSlug);
+  const accessToken = await requireAdminAccessToken(tenantSlug, adminNewServicePath(tenantSlug));
 
   let categories: ServiceCategory[];
   let tenant: PublicTenant;

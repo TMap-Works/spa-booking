@@ -30,7 +30,7 @@ import {
 
 import type { AdminActionResult } from '../action-result';
 import { loadCalendarRangeAction } from '../calendrier/actions';
-import { adminCalendarPath, adminLoginPath } from '../paths';
+import { adminCalendarPath, adminSessionRefreshPath } from '../paths';
 
 import { AppointmentPanel, type DeskTarget } from './appointment-panel';
 
@@ -134,12 +134,42 @@ export function CalendarBoard({
 
   const currentKey = rangeKey(view, date);
   const appointments = periods.get(currentKey);
+  /** L'URL de la période affichée — celle que l'effet d'historique y écrit. */
+  const currentPath = adminCalendarPath(tenantSlug, { view, date });
 
   // Lue par `load` **après** son aller-retour : une réponse qui arrive alors que
   // l'opérateur a déjà changé de période ne doit ni allumer sa bannière, ni
   // effacer celle de la période qu'il regarde maintenant.
   const currentKeyRef = useRef(currentKey);
   currentKeyRef.current = currentKey;
+
+  // Même raison, pour le retour après renouvellement : c'est la période que
+  // l'opérateur **regarde** qui doit lui être rendue, jamais celle dont le
+  // préchargement a découvert que la session avait expiré.
+  const currentPathRef = useRef(currentPath);
+  currentPathRef.current = currentPath;
+
+  /**
+   * Renouvelle la session, puis revient sur la période affichée (#458).
+   *
+   * L'écran poussait jusqu'ici vers la connexion, au motif qu'il n'y avait « pas
+   * de rotation du jeton dans le back-office ». Ce n'est plus vrai depuis #48 :
+   * la route `admin/session/refresh` pose une session neuve et renvoie d'où l'on
+   * vient. Le planning était le seul écran à ne pas en profiter — celui-là même
+   * dont les huit heures d'ouverture d'affilée justifient toute la mécanique.
+   *
+   * `replace` et non `push` : un renouvellement n'est pas une destination, et le
+   * laisser dans l'historique ferait renouveler une seconde fois au premier
+   * retour arrière.
+   *
+   * Ce chemin ne boucle pas. La route repart vers la connexion quand le jeton de
+   * rafraîchissement manque lui aussi, et efface les deux cookies quand l'API le
+   * refuse — un `UNAUTHORIZED` né d'une session révoquée finit donc sur l'écran
+   * de connexion, en un aller-retour de plus et sans jamais revenir ici.
+   */
+  const renewSession = useCallback((): void => {
+    router.replace(adminSessionRefreshPath(tenantSlug, currentPathRef.current));
+  }, [router, tenantSlug]);
 
   const board = useMemo(
     () =>
@@ -225,10 +255,11 @@ export function CalendarBoard({
         return;
       }
 
-      // Une session expirée ne se répare pas en réessayant : c'est la seule
-      // issue qui ne boucle pas, faute de rotation du jeton dans le back-office.
+      // Une session expirée ne se répare pas en réessayant — mais elle se
+      // renouvelle : on part vers la route de renouvellement, qui rend la main
+      // sur la période affichée.
       if (result.code === ERROR_CODES.UNAUTHORIZED) {
-        router.push(adminLoginPath(tenantSlug));
+        renewSession();
         return;
       }
 
@@ -239,7 +270,7 @@ export function CalendarBoard({
         setFailure(calendarFailureMessage(result.code, result.message));
       }
     },
-    [router, tenantSlug],
+    [renewSession, tenantSlug],
   );
 
   /** Ouvre une période — depuis le cache si elle y est, sinon par l'action. */
@@ -278,16 +309,16 @@ export function CalendarBoard({
     void load(view, date, false);
   }, [load, view, date]);
 
-  const backToLogin = useCallback((): void => {
-    router.push(adminLoginPath(tenantSlug));
-  }, [router, tenantSlug]);
-
   // L'URL suit la période affichée, sans repasser par le serveur : le planning
   // se partage et survit à un rafraîchissement, mais changer de jour ne rejoue
   // pas le rendu d'un écran dont seul le contenu des colonnes change.
+  //
+  // C'est aussi ce qui rend le retour de renouvellement exact : la barre
+  // d'adresse porte déjà la vue et la date, et `renewSession` n'a qu'à les
+  // reprendre.
   useEffect(() => {
-    globalThis.history.replaceState(null, '', adminCalendarPath(tenantSlug, { view, date }));
-  }, [tenantSlug, view, date]);
+    globalThis.history.replaceState(null, '', currentPath);
+  }, [currentPath]);
 
   // Préchargement des deux périodes voisines — deuxième critère du ticket.
   useEffect(() => {
@@ -540,7 +571,7 @@ export function CalendarBoard({
           onClose={() => {
             setTarget(null);
           }}
-          onExpired={backToLogin}
+          onExpired={renewSession}
           onReload={reloadPeriods}
           services={services}
           target={target}

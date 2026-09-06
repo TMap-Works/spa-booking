@@ -26,9 +26,23 @@ export function adminSettingsPath(tenantSlug: string): string {
   return `${adminPath(tenantSlug)}/reglages`;
 }
 
-/** Catalogue des prestations — la liste, point d'entrée de #52. */
-export function adminCatalogPath(tenantSlug: string): string {
-  return `${adminPath(tenantSlug)}/catalogue`;
+/**
+ * Catalogue des prestations — la liste, point d'entrée de #52.
+ *
+ * Le filtre « actives seulement » est dans l'URL et non dans un état local, pour
+ * la raison qui y met la vue du planning : la liste filtrée se partage et survit
+ * à un rafraîchissement. Il est donc **construit ici** plutôt que concaténé par
+ * la page, sans quoi le chemin que la garde de session mémorise ne serait pas
+ * celui que l'écran affiche — et un renouvellement rendrait la main sur le
+ * catalogue entier alors qu'on regardait les seules prestations en ligne.
+ */
+export function adminCatalogPath(
+  tenantSlug: string,
+  options: { readonly activeOnly?: boolean } = {},
+): string {
+  const catalog = `${adminPath(tenantSlug)}/catalogue`;
+
+  return options.activeOnly === true ? `${catalog}?actives=1` : catalog;
 }
 
 /** Création d'une prestation. */
@@ -126,16 +140,21 @@ export function adminCheckoutPath(
  * rompre sans s'en apercevoir : le renouvellement échouerait alors toujours,
  * faute de jeton de rafraîchissement.
  *
- * `next` est la page où revenir, et il est facultatif : la route retombe alors
- * sur le planning. Il est de toute façon **revérifié par la route**, qui ne
- * redirige que vers le back-office de cet établissement — un paramètre d'URL
- * est fourni par l'appelant, et le suivre sur parole ferait de ce chemin un
- * tremplin vers un site tiers, sous notre domaine.
+ * `next` est la page où revenir, et il est **obligatoire** (#458) : l'omettre
+ * déposait l'opérateur sur le planning à chaque renouvellement, en perdant la
+ * vue et la date du calendrier ou le filtre du catalogue. Le paramètre facultatif
+ * ne servait qu'à laisser oublier de le passer, et c'est exactement ce qui est
+ * arrivé aux sept écrans du back-office. La même discipline que l'espace client,
+ * dont le `refreshPath` l'exige depuis toujours.
+ *
+ * Il est de toute façon **revérifié par la route**, qui ne redirige que vers le
+ * back-office de cet établissement — un paramètre d'URL est fourni par
+ * l'appelant, et le suivre sur parole ferait de ce chemin un tremplin vers un
+ * site tiers, sous notre domaine. Voir `safeAdminNext`, dont le repli reste le
+ * planning : le rendre obligatoire ici ne dispense de rien là-bas.
  */
-export function adminSessionRefreshPath(tenantSlug: string, next?: string): string {
-  const refresh = `${adminSessionPath(tenantSlug)}/refresh`;
-
-  return next === undefined ? refresh : `${refresh}?next=${encodeURIComponent(next)}`;
+export function adminSessionRefreshPath(tenantSlug: string, next: string): string {
+  return `${adminSessionPath(tenantSlug)}/refresh?next=${encodeURIComponent(next)}`;
 }
 
 /** Racine des routes de session du back-office — jamais une destination. */

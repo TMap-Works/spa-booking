@@ -1,12 +1,10 @@
 import type { Tenant } from '@spa/shared';
-import { redirect } from 'next/navigation';
 
-import { Notification } from '@/components/ui/notification';
-import { ApiClientError, fetchTenantSettings } from '@/lib/api-client';
+import { fetchTenantSettings } from '@/lib/api-client';
 
 import { TenantSettingsForm } from '../components/tenant-settings-form';
-import { adminLoginPath } from '../paths';
-import { readAdminAccessToken } from '../session';
+import { adminLoadFailure, requireAdminAccessToken } from '../guard';
+import { adminSettingsPath } from '../paths';
 
 /**
  * Réglages de l'établissement — adresse, horaires d'ouverture, coordonnées
@@ -16,11 +14,20 @@ import { readAdminAccessToken } from '../session';
  *
  * Un layout n'est pas rejoué à chaque navigation dans l'App Router : une page
  * peut être servie sans que son parent ait été réévalué. La lecture du jeton et
- * la redirection vivent donc dans la page, comme dans l'espace client.
+ * la redirection vivent donc dans la page — mais par `requireAdminAccessToken`,
+ * comme les sept autres écrans du back-office, et non par une cascade réécrite
+ * ici. Cette page était la dernière à la réécrire, et elle avait divergé sur le
+ * point qui compte : un cookie d'accès expiré la renvoyait à la connexion au
+ * lieu de renouveler la session, alors qu'elle est l'écran où la connexion
+ * dépose (#48, #458). Huit heures d'ouverture d'affilée et une reconnexion à
+ * chaque quart d'heure : c'est exactement ce que le renouvellement silencieux
+ * existe pour éviter.
  *
  * ## Trois issues, et aucune ne boucle
  *
- * 1. **pas de cookie d'accès** — écran de connexion ;
+ * 1. **pas de cookie d'accès** — renouvellement de session, qui rend la main
+ *    ici ; l'écran de connexion seulement si le jeton de rafraîchissement manque
+ *    lui aussi ;
  * 2. **un 401 malgré un cookie** — la session a été révoquée en base ou l'API a
  *    changé de secret. On ne tente pas de renouveler, ce qui échouerait pour la
  *    même raison : on renvoie à la connexion ;
@@ -38,37 +45,18 @@ interface SettingsPageProps {
 
 export default async function TenantSettingsPage({ params }: SettingsPageProps) {
   const { tenantSlug } = await params;
-  const accessToken = await readAdminAccessToken();
-
-  if (accessToken === null) {
-    redirect(adminLoginPath(tenantSlug));
-  }
+  const accessToken = await requireAdminAccessToken(tenantSlug, adminSettingsPath(tenantSlug));
 
   let tenant: Tenant;
   try {
     tenant = await fetchTenantSettings(accessToken);
   } catch (error) {
-    if (error instanceof ApiClientError && error.status === 401) {
-      redirect(adminLoginPath(tenantSlug));
-    }
-    if (error instanceof ApiClientError && error.status === 403) {
-      return (
-        <Notification tone="warning" title="Accès réservé">
-          <p>
-            Le paramétrage de l’établissement est réservé aux comptes administrateurs. Demandez
-            l’accès à l’administrateur du salon.
-          </p>
-        </Notification>
-      );
-    }
-    if (error instanceof ApiClientError) {
-      return (
-        <Notification tone="danger" title="Réglages indisponibles">
-          <p>{error.message}</p>
-        </Notification>
-      );
-    }
-    throw error;
+    return adminLoadFailure(error, tenantSlug, {
+      deniedTitle: 'Accès réservé',
+      deniedHint:
+        'Le paramétrage de l’établissement est réservé aux comptes administrateurs. Demandez l’accès à l’administrateur du salon.',
+      failedTitle: 'Réglages indisponibles',
+    });
   }
 
   return <TenantSettingsForm tenantSlug={tenantSlug} tenant={tenant} />;

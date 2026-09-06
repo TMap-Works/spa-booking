@@ -6,7 +6,7 @@ import { Notification } from '@/components/ui/notification';
 import { fetchPublicServices } from '@/lib/api-client';
 
 import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
-import { adminCatalogPath } from '../../paths';
+import { adminCatalogPath, adminCatalogPreviewPath } from '../../paths';
 
 /**
  * Aperçu du rendu public (#52, cinquième critère).
@@ -43,7 +43,7 @@ interface CatalogPreviewPageProps {
 
 export default async function CatalogPreviewPage({ params }: CatalogPreviewPageProps) {
   const { tenantSlug } = await params;
-  await requireAdminAccessToken(tenantSlug);
+  await requireAdminAccessToken(tenantSlug, adminCatalogPreviewPath(tenantSlug));
 
   let services: PublicService[];
   try {

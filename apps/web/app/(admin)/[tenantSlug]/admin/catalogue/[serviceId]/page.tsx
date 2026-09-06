@@ -15,7 +15,7 @@ import { CatalogStatusBadge } from '../../components/catalog-status-badge';
 import { ServiceForm } from '../../components/service-form';
 import { ServiceStaffPanel } from '../../components/service-staff-panel';
 import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
-import { adminCatalogPath, adminCatalogPreviewPath } from '../../paths';
+import { adminCatalogPath, adminCatalogPreviewPath, adminServicePath } from '../../paths';
 
 /**
  * Fiche d'une prestation — modification et affectation des praticiens (#52,
@@ -77,7 +77,10 @@ function knownStaff(catalog: readonly PublicService[]): StaffMemberSummary[] {
 
 export default async function ServicePage({ params }: ServicePageProps) {
   const { tenantSlug, serviceId } = await params;
-  const accessToken = await requireAdminAccessToken(tenantSlug);
+  const accessToken = await requireAdminAccessToken(
+    tenantSlug,
+    adminServicePath(tenantSlug, serviceId),
+  );
 
   let service: Service;
   let categories: ServiceCategory[];

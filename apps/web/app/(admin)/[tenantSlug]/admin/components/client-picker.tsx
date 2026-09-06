@@ -39,7 +39,7 @@ interface ClientPickerProps {
   readonly tenantSlug: string;
   readonly selected: CustomerSummary | null;
   readonly onSelect: (client: CustomerSummary | null) => void;
-  /** Remonté au tiroir : une session expirée le fait renvoyer à la connexion. */
+  /** Remonté au tiroir : une session expirée le fait renouveler la session. */
   readonly onExpired: () => void;
 }
 

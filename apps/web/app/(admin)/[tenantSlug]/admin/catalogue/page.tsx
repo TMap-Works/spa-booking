@@ -47,7 +47,12 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
   const { tenantSlug } = await params;
   const { actives } = await searchParams;
   const activeOnly = actives === '1';
-  const accessToken = await requireAdminAccessToken(tenantSlug);
+  // Le filtre voyage avec la garde : un renouvellement de session doit rendre la
+  // main sur la liste qu'on regardait, pas sur le catalogue entier (#458).
+  const accessToken = await requireAdminAccessToken(
+    tenantSlug,
+    adminCatalogPath(tenantSlug, { activeOnly }),
+  );
 
   let services: Service[];
   try {
@@ -78,7 +83,7 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
           </Link>
           <Link
             className="spa-button spa-button--quiet"
-            href={`${adminCatalogPath(tenantSlug)}?actives=1`}
+            href={adminCatalogPath(tenantSlug, { activeOnly: true })}
             aria-current={activeOnly ? 'page' : undefined}
           >
             Actives seulement
