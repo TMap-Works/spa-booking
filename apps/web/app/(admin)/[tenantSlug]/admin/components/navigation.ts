@@ -4,6 +4,7 @@ import { adminClientsPath } from '../clients/paths';
 import {
   adminCalendarPath,
   adminCatalogPath,
+  adminCheckoutPath,
   adminSettingsPath,
 } from '../paths';
 import { adminStaffPath } from '../personnel/paths';
@@ -152,10 +153,33 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
     {
       key: 'encaissement',
       label: 'Encaissement',
-      href: null,
-      // `POST /v1/payments/counter` et `GET /v1/sales` — @AuthAtLeast('STAFF').
+      /*
+       * L'encaissement au comptoir est servi depuis #59 (PR #460, `e7008b5`) :
+       * l'entrée porte donc son chemin, et l'écran cesse de n'être atteignable
+       * qu'en tapant son URL ou depuis le planning (#484). Troisième et dernière
+       * entrée du défaut que #480 a corrigé sur « Clients » et « Personnel ».
+       *
+       * `adminCheckoutPath(tenantSlug)` **nu** : ni `date`, ni `rdv`. L'écran
+       * ouvre alors la journée courante du salon, sans rendez-vous sélectionné —
+       * ce que fait déjà l'URL qu'on tape. Y figer une date rendrait le sommaire
+       * périmé dès le lendemain ; y figer un rendez-vous en ferait le règlement
+       * de quelqu'un d'autre.
+       */
+      href: adminCheckoutPath(tenantSlug),
+      /*
+       * `staff`, inchangé — c'est bien le rang de l'`@AuthAtLeast` des routes
+       * **gardées** que l'écran appelle : `GET /v1/appointments` pour la journée
+       * et `POST /v1/payments/cash` pour le règlement en espèces, toutes deux au
+       * seuil `STAFF`, comme `GET /v1/sales` que l'historique du comptoir
+       * ouvrira. Le fuseau vient de la vitrine publique (`GET /public/{slug}`)
+       * et l'intention carte de `POST /public/{slug}/payments/intents` : ni
+       * l'une ni l'autre ne demande de jeton, et rien ici n'appelle
+       * `GET /v1/tenant`, qui aurait refermé l'écran au rang staff. Encaisser
+       * est le geste de comptoir par excellence — le réserver à la gestion
+       * cacherait l'écran à ceux qui s'en servent.
+       */
       minimumRole: 'staff',
-      upcoming: 'Encaissement au comptoir — écran en cours de livraison (#59).',
+      upcoming: null,
     },
     {
       key: 'reporting',
