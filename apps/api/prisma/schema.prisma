@@ -1358,6 +1358,39 @@ model SaleItem {
 /// fois le même SMS. Aucune coordonnée n'est recopiée ici — l'adresse de
 /// destination se relit sur le compte au moment de l'envoi, pour ne pas
 /// dupliquer de donnée personnelle (CDC §5.1).
+///
+/// ## Deux uniques, et ils ne disent pas la même chose (#68)
+///
+/// `@@unique([tenantId, dedupeKey])` est l'identité du **message** : « cette
+/// livraison-là, une fois ». Elle couvre tous les statuts, `FAILED` compris.
+///
+/// L'autre est un **index unique partiel**, que Prisma n'exprime pas et qui vit
+/// donc en SQL brut dans `20260906120000_add_notification_idempotency`
+/// (api-module §6) :
+///
+/// ```sql
+/// CREATE UNIQUE INDEX "notifications_live_once"
+///   ON "notifications" ("tenant_id", "appointment_id", "type", "channel")
+///   WHERE "status" IN ('PENDING', 'SENT');
+/// ```
+///
+/// Elle est l'invariant sur la **donnée** : au plus un message vivant par
+/// établissement, rendez-vous, type et canal — quelle qu'ait été la clé de
+/// déduplication qui l'a produit. C'est elle que notifications §2 nomme, et
+/// c'est elle qui tient quand deux producteurs composent leur `dedupe_key`
+/// différemment : le balayage horaire du rappel J-1 et l'événement de domaine
+/// ne se coordonnent pas, et rien ne les y oblige puisque la base tranche.
+///
+/// Le `WHERE` est le cœur du dispositif : un envoi `FAILED` **libère** la place,
+/// exactement comme un rendez-vous annulé libère son créneau dans
+/// `appointments_no_overlap`. Sans lui, un échec transitoire — un throttling SES
+/// — condamnerait définitivement le rappel, et SQS rejouerait dans le vide.
+///
+/// Ce que l'index ne couvre pas, et qui est voulu : `appointment_id` étant
+/// nullable, PostgreSQL tient deux `NULL` pour distincts. Un message sans
+/// rendez-vous n'est donc dédupliqué que par `dedupe_key`. Les trois types du
+/// périmètre MVP (CDC §1.4) portent tous un rendez-vous ; le jour où un message
+/// hors rendez-vous apparaîtra, il faudra le dire ici.
 model Notification {
   id       String @id @default(uuid()) @db.Uuid
   tenantId String @map("tenant_id") @db.Uuid
@@ -1379,6 +1412,18 @@ model Notification {
   /// Instant d'envoi voulu — le rappel J-1 est planifié, pas immédiat.
   scheduledFor DateTime? @map("scheduled_for") @db.Timestamptz(6)
   sentAt       DateTime? @map("sent_at") @db.Timestamptz(6)
+
+  /// L'accusé du fournisseur — `MessageId` de SES ou de SNS (#68).
+  ///
+  /// Renseigné en même temps que le passage à `SENT`, et par lui seul : il est
+  /// la preuve que l'appel a abouti, pas qu'il a été tenté. C'est la seule
+  /// référence qui permette de retrouver une livraison chez AWS depuis un
+  /// incident client, et notifications §7 en fait le **seul** identifiant que le
+  /// journal ait le droit de porter — ni destinataire, ni contenu.
+  ///
+  /// Opaque et non personnel, comme `provider_payment_intent_id` l'est pour
+  /// `payments`.
+  providerMessageId String? @map("provider_message_id") @db.VarChar(255)
 
   attemptCount  Int     @default(0) @map("attempt_count")
   failureReason String? @map("failure_reason") @db.VarChar(500)

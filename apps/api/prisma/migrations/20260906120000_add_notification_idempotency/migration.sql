@@ -1,0 +1,166 @@
+-- Idempotence des envois de notification — #68, notifications §2.
+--
+-- SQS garantit **au-moins-une-fois**, jamais exactement-une-fois. Une livraison
+-- se répète parce que la Lambda a dépassé son délai de visibilité, parce que le
+-- balayage horaire du rappel J-1 se chevauche, ou sans raison visible. Envoyer
+-- deux fois le même SMS à une cliente n'est pas un incident technique anodin :
+-- c'est un message payant, reçu deux fois, sur un canal qu'elle n'a pas choisi.
+--
+-- L'idempotence est donc notre responsabilité, pas celle de la file. Et comme
+-- partout ailleurs dans ce schéma, elle est portée par le moteur et non par le
+-- code : la base tranche, le code traduit (ADR 0002, booking-engine §1).
+--
+-- Deux objets, et un seul est vraiment le sujet.
+--
+-- ## 1. `provider_message_id` — l'accusé du fournisseur
+--
+-- Le `MessageId` que rend SES ou SNS. Il s'écrit **avec** le passage à `SENT`,
+-- dans la même écriture, parce qu'il est la preuve que l'appel a abouti — pas
+-- qu'il a été tenté. C'est la seule référence qui permette de retrouver une
+-- livraison chez AWS depuis une réclamation cliente, et notifications §7 en
+-- fait le seul identifiant que le journal ait le droit de porter : ni
+-- destinataire, ni contenu du message.
+--
+-- Nullable, et il doit l'être : une ligne `PENDING` n'en a pas encore, une ligne
+-- `FAILED` n'en aura jamais.
+--
+-- ## 2. `notifications_live_once` — l'index unique partiel
+--
+-- C'est le cœur du ticket.
+--
+-- ```
+-- UNIQUE (tenant_id, appointment_id, type, channel) WHERE status IN ('PENDING','SENT')
+-- ```
+--
+-- Il se lit : « il ne peut pas exister deux messages **vivants** du même type,
+-- sur le même canal, pour le même rendez-vous, dans le même établissement ».
+--
+-- ### Pourquoi il ne fait pas double emploi avec `dedupe_key`
+--
+-- La table porte déjà `notifications_tenant_id_dedupe_key_key`, posée par la
+-- migration initiale. Les deux uniques ne disent pas la même chose, et aucun ne
+-- remplace l'autre :
+--
+-- | Unique | Ce qu'il identifie | Portée |
+-- |---|---|---|
+-- | `(tenant_id, dedupe_key)` | **la livraison** — « ce message SQS-là, une fois » | tous les statuts |
+-- | `(tenant_id, appointment_id, type, channel)` | **la donnée** — « ce rappel-là, une fois » | `PENDING` et `SENT` |
+--
+-- Le premier dépend de la façon dont le producteur compose sa clé. Le second
+-- n'en dépend pas : deux producteurs qui ne se coordonnent pas — l'événement de
+-- domaine `appointment.confirmed` d'un côté, le balayage horaire d'EventBridge
+-- de l'autre (notifications §1) — composeraient deux clés différentes pour un
+-- même rappel. Le premier laisserait passer les deux insertions ; le second les
+-- sérialise. C'est celui-là que notifications §2 nomme, et c'est celui-là que le
+-- critère d'acceptation demande.
+--
+-- ### Pourquoi le filtre sur les statuts, et pourquoi ces deux-là
+--
+-- Le `WHERE` est ce qui distingue un index d'idempotence d'un index de blocage.
+--
+-- `PENDING` **occupe** la place : la ligne est inscrite avant l'appel au
+-- fournisseur, et c'est précisément cette inscription qui sérialise deux
+-- livraisons concurrentes. Sans `PENDING` dans le filtre, deux consommateurs
+-- SQS simultanés inséreraient tous les deux, appelleraient tous les deux, et
+-- n'entreraient en conflit qu'au moment de passer à `SENT` — c'est-à-dire une
+-- fois les deux messages partis. L'unicité doit valoir **avant** l'effet, pas
+-- après.
+--
+-- `SENT` l'occupe aussi, définitivement : le message est parti, aucun rejeu ne
+-- doit le refaire partir.
+--
+-- `FAILED` **libère** la place, et c'est tout aussi délibéré. Un échec
+-- transitoire — throttling SES, panne fournisseur — se réessaie, et SQS s'en
+-- charge avec son backoff natif (notifications §4). Si `FAILED` occupait la
+-- place, la première erreur réseau condamnerait le rappel pour de bon : la file
+-- rejouerait dans le vide jusqu'à la DLQ, et la cliente ne recevrait rien. C'est
+-- exactement le raisonnement que `appointments_no_overlap` tient sur les statuts
+-- de rendez-vous — un rendez-vous annulé libère son créneau — appliqué ici aux
+-- statuts d'envoi.
+--
+-- La reprise après échec est donc une **mise à jour** de la ligne existante,
+-- `FAILED → PENDING` avec `attempt_count` incrémenté, et non une seconde
+-- insertion : `(tenant_id, dedupe_key)` l'interdirait, et le compteur de
+-- tentatives n'aurait plus rien à compter s'il repartait de zéro à chaque essai.
+-- La transition est un test-et-pose atomique (`WHERE status = 'FAILED'`) ; deux
+-- reprises concurrentes ne peuvent donc pas ranimer deux fois la même ligne, et
+-- une reprise qui entrerait en concurrence avec un envoi neuf est arrêtée par
+-- cet index-ci.
+--
+-- ### Pourquoi `tenant_id` en tête
+--
+-- Pour la raison qui vaut partout (tenant-isolation §1) : la frontière se lit
+-- dans l'index, pas dans les intentions. `appointment_id` seul suffirait en
+-- théorie — un rendez-vous appartient à un établissement — mais l'index serait
+-- le seul de la table à ne pas commencer par `tenant_id`, et toute lecture
+-- « où en sont les envois de ce salon ? » se paierait un parcours inter-tenant.
+--
+-- ### Ce que l'index ne couvre pas
+--
+-- `appointment_id` est nullable, et PostgreSQL tient deux `NULL` pour distincts
+-- dans un index unique. Un message qui ne se rattache à aucun rendez-vous n'est
+-- donc dédupliqué que par `dedupe_key`. Ce n'est pas un trou dans le MVP : les
+-- trois messages du CDC §1.4 — confirmation, rappel J-1, avis d'annulation —
+-- portent tous un rendez-vous. Le jour où un message hors rendez-vous existera,
+-- il faudra soit rendre la colonne non nullable, soit lui donner son propre
+-- index — et ce commentaire est là pour que la question se pose à ce moment-là
+-- plutôt qu'après un doublon en production.
+--
+-- ## Ce que Prisma n'exprime pas
+--
+-- Ni index partiel, ni `WHERE` sur un index unique : `@@unique` produit toujours
+-- un index total. Le SQL est donc écrit à la main (api-module §6), et
+-- `schema.prisma` le documente en tête du modèle `Notification` pour qu'un
+-- lecteur du schéma ne croie pas la table couverte par le seul `dedupe_key`.
+--
+-- Conséquence à connaître : `prisma migrate dev` ne voit pas cet index et
+-- proposera de le retirer si on le laisse régénérer la migration. La règle du
+-- dépôt vaut ici comme pour `appointments_no_overlap` — on n'exécute pas
+-- `migrate dev` sur une base partagée, et cette migration-ci s'écrit à la main.
+--
+-- ## Purement additive, et réversible
+--
+-- Une colonne nullable, un index. Aucune colonne n'est retypée, aucune ligne
+-- n'est réécrite. `ADD COLUMN` d'une colonne nullable sans valeur par défaut ne
+-- réécrit pas la table depuis PostgreSQL 11 : le verrou est bref.
+--
+-- L'inverse exact est le retrait de l'index puis de la colonne, et il ne perd
+-- que les accusés du fournisseur déjà collectés. Le retour arrière du **code**
+-- seul est sans effet de bord : la version antérieure ignore la colonne et
+-- n'écrit rien qui l'attende. L'index, lui, refuserait un doublon vivant qu'elle
+-- croyait légal — c'est le propos du ticket, et cela se manifeste par une
+-- violation d'unicité traduite en « déjà traité », jamais par une donnée perdue.
+--
+-- La création de l'index échouerait si la table portait déjà deux messages
+-- vivants identiques. C'est voulu : le déploiement s'arrête plutôt que
+-- d'entériner le doublon en silence. Aucun environnement du MVP n'a encore de
+-- notification.
+--
+-- `CONCURRENTLY` n'est **pas** employé : PostgreSQL l'interdit dans un bloc
+-- transactionnel, et Prisma joue chaque migration dans une transaction. Sur une
+-- table vide — l'état de tous les environnements du MVP — le verrou est de
+-- l'ordre de la milliseconde.
+--
+-- ## Invariants
+--
+-- `src/infrastructure/database/__tests__/prisma-schema.spec.ts` relit ce texte :
+-- migration sans retrait, aucun instant sans fuseau, aucune colonne susceptible
+-- de porter une donnée de carte. L'index partiel lui-même — sa présence, ses
+-- colonnes, son filtre — est vérifié par
+-- `src/modules/notifications/__tests__/notifications.migration.spec.ts`, parce
+-- que le lecteur d'index de la première suite ne reconnaît que les index totaux.
+
+-- AlterTable
+ALTER TABLE "notifications" ADD COLUMN "provider_message_id" VARCHAR(255);
+
+-- CreateIndex
+--
+-- Ce que Prisma n'exprime pas, et qui vit donc en SQL brut (api-module §6).
+--
+-- La lecture : « il ne peut pas exister deux notifications qui, toutes deux
+-- dans un statut vivant, portent le même établissement, le même rendez-vous, le
+-- même type et le même canal ». PostgreSQL le refuse au niveau de la ligne,
+-- quelle que soit l'origine de l'écriture — Lambda d'envoi, API, psql.
+CREATE UNIQUE INDEX "notifications_live_once"
+    ON "notifications" ("tenant_id", "appointment_id", "type", "channel")
+    WHERE "status" IN ('PENDING', 'SENT');
