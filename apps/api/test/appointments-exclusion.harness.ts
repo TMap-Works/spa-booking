@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto';
 
 import { Prisma, PrismaClient } from '@prisma/client';
 
-import { runWithTenant } from '../src/common/tenant/tenant-context';
 import { createScopedPrismaClient } from '../src/infrastructure/database/prisma-clients';
 import { AppointmentsRepository } from '../src/modules/appointments/appointments.repository';
 import type {
@@ -14,6 +13,7 @@ import { AvailabilityRepository } from '../src/modules/availability/availability
 import { ClientDirectoryService } from '../src/modules/crm/client-directory.service';
 import { CrmRepository } from '../src/modules/crm/crm.repository';
 import { createDisposableDatabase, type DisposableDatabase } from './utils/disposable-database';
+import { inTenant } from './utils/tenant-scope';
 
 /**
  * Amorçage commun des deux suites qui exercent la contrainte d'exclusion
@@ -261,20 +261,11 @@ export async function createExclusionHarness(): Promise<ExclusionHarness> {
 }
 
 /**
- * Ouvre la portée du tenant **et y attend le résultat**.
- *
- * Sans l'`await` intérieur, la promesse Prisma serait construite dans la portée
- * et exécutée dehors : `AsyncLocalStorage` se referme dès que la fonction rend
- * la main, l'extension ne trouverait aucun tenant, et la suite rougirait sur une
- * `MissingTenantContextError` au lieu de prouver quoi que ce soit. Même détour,
- * et même raison, que dans `tenant-scope.isolation-spec.ts`.
+ * Réexporté pour les suites qui n'importent que ce harnais : la définition, et
+ * l'explication de l'`await` intérieur dont tout dépend, vivent dans
+ * `utils/tenant-scope.ts`.
  */
-export async function inTenant<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
-  return runWithTenant(tenantId, async () => {
-    const result = await fn();
-    return result;
-  });
-}
+export { inTenant };
 
 /**
  * Un brouillon de rendez-vous pour cet établissement, sur ces bornes.

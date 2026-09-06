@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 
 import { Prisma, PrismaClient } from '@prisma/client';
 
-import { runInTenantScope, runWithTenant } from '../src/common/tenant/tenant-context';
+import { runInTenantScope } from '../src/common/tenant/tenant-context';
 import { MissingTenantContextError } from '../src/common/tenant/tenant-context.errors';
 import { createScopedPrismaClient } from '../src/infrastructure/database/prisma-clients';
 import { createDisposableDatabase, type DisposableDatabase } from './utils/disposable-database';
+import { inTenant } from './utils/tenant-scope';
 
 /**
  * Isolation inter-tenant de l'extension Prisma — **contre un vrai moteur
@@ -95,36 +96,6 @@ type QueryLoggingOptions = {
  */
 function withScopedTenant<T>(data: Omit<T, 'tenantId' | 'tenant'>): T {
   return data as T;
-}
-
-/**
- * Ouvre la portée du tenant **et y attend le résultat**.
- *
- * Ce détour n'est pas une commodité : sans lui, la moitié de cette suite passe
- * ou échoue pour de mauvaises raisons. `runWithTenant` s'appuie sur
- * `AsyncLocalStorage`, dont la portée se referme dès que la fonction rend la
- * main — or une opération Prisma est une **promesse paresseuse** : rien n'est
- * exécuté à sa construction, tout l'est au premier `.then()`. Écrire
- *
- * ```ts
- * runWithTenant(autreTenant, () => scoped.user.findUnique({ where: { id } }))
- * ```
- *
- * construit donc la promesse dans la portée et l'exécute **dehors** : l'extension
- * ne trouve aucun tenant et lève `MissingTenantContextError`. Le test rougit là
- * où il devrait prouver un filtrage — ou, pire pour un test qui attend justement
- * cette erreur, il verdit sans avoir rien exercé.
- *
- * En attendant à l'intérieur, la continuation est planifiée dans la portée, et
- * `AsyncLocalStorage` la lui restitue. C'est exactement ce que fait le code de
- * production : `TenantScopeMiddleware` ouvre la portée sur une fonction `async`,
- * et un repository `await` toujours dans la sienne.
- */
-async function inTenant<T>(tenantId: string, fn: () => Promise<T>): Promise<T> {
-  return runWithTenant(tenantId, async () => {
-    const result = await fn();
-    return result;
-  });
 }
 
 /** Le tenant, tel que cette suite le crée — le strict nécessaire du schéma. */
