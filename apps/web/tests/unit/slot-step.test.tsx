@@ -125,8 +125,28 @@ describe('créneaux par journée, dans le fuseau du salon', () => {
 
     // 06:00 UTC vaut 09:00 à Antananarivo. Un affichage qui aurait oublié le
     // fuseau du salon rendrait « 06:00 » — ou l'heure de la machine de test.
-    expect(await screen.findByRole('button', { name: '09:00' })).toBeDefined();
-    expect(screen.getByRole('button', { name: '14:00' })).toBeDefined();
+    expect(await screen.findByRole('button', { name: '09 h 00' })).toBeDefined();
+    expect(screen.getByRole('button', { name: '14 h 00' })).toBeDefined();
+  });
+
+  it('énonce l’heure en toutes lettres tout en affichant la forme courte', async () => {
+    // `keyboard-navigation.md`, « États et attributs par créneau ». Les deux
+    // formes ne disent pas la même chose parce qu'elles ne sont pas lues dans le
+    // même contexte : dans sa colonne, sous « Après-midi », « 14:00 » se comprend
+    // d'un coup d'œil et tient sur un téléphone ; énoncé seul par un lecteur
+    // d'écran, il s'entend « un quatre deux points zéro zéro ».
+    //
+    // Les deux assertions tiennent ensemble : c'est le même bouton, trouvé par
+    // son nom accessible, dont on relit le texte visible. Verrouiller l'une sans
+    // l'autre laisserait passer la correction paresseuse — écrire « 14 h 00 »
+    // dans la grille — qui rendrait ce test vert en cassant la lisibilité.
+    renderStep();
+
+    const apresMidi = await screen.findByRole('button', { name: '14 h 00' });
+
+    expect(apresMidi.textContent).toBe('14:00');
+    expect(apresMidi.getAttribute('aria-label')).toBe('14 h 00');
+    expect(screen.getByRole('button', { name: '09 h 00' }).textContent).toBe('09:00');
   });
 
   it('mentionne le fuseau du salon quand le visiteur est ailleurs', async () => {
@@ -158,8 +178,8 @@ describe('créneaux par journée, dans le fuseau du salon', () => {
     });
     renderStep({ service: deuxPraticiens });
 
-    expect(await screen.findByRole('button', { name: '09:00' })).toBeDefined();
-    expect(screen.getAllByRole('button', { name: '09:00' })).toHaveLength(1);
+    expect(await screen.findByRole('button', { name: '09 h 00' })).toBeDefined();
+    expect(screen.getAllByRole('button', { name: '09 h 00' })).toHaveLength(1);
   });
 
   it('garde les journées complètes dans la barre de dates, inertes', async () => {
@@ -188,7 +208,7 @@ describe('créneaux par journée, dans le fuseau du salon', () => {
 describe('choix du praticien', () => {
   it('propose « premier disponible » et chaque praticien de la prestation', async () => {
     renderStep({ service: deuxPraticiens });
-    await screen.findByRole('button', { name: '09:00' });
+    await screen.findByRole('button', { name: '09 h 00' });
 
     expect(screen.getByRole('option', { name: 'Premier disponible' })).toBeDefined();
     expect(screen.getByRole('option', { name: 'Hery' })).toBeDefined();
@@ -199,7 +219,7 @@ describe('choix du praticien', () => {
 
   it('remonte le praticien choisi au brouillon plutôt que de le garder pour lui', async () => {
     const user = renderStep({ service: deuxPraticiens });
-    await screen.findByRole('button', { name: '09:00' });
+    await screen.findByRole('button', { name: '09 h 00' });
 
     await user.selectOptions(screen.getByLabelText('Praticien'), NIVO);
 
@@ -210,7 +230,7 @@ describe('choix du praticien', () => {
 
   it('n’interroge l’agenda d’un praticien que lorsqu’il est demandé', async () => {
     renderStep({ service: deuxPraticiens, staffId: NIVO });
-    await screen.findByRole('button', { name: '09:00' });
+    await screen.findByRole('button', { name: '09 h 00' });
 
     expect(loadAvailabilityAction.mock.calls[0]?.[1]).toMatchObject({
       serviceId: service.id,
@@ -220,7 +240,7 @@ describe('choix du praticien', () => {
     cleanup();
     loadAvailabilityAction.mockClear();
     renderStep({ service: deuxPraticiens });
-    await screen.findByRole('button', { name: '09:00' });
+    await screen.findByRole('button', { name: '09 h 00' });
 
     // « Premier disponible » n'est pas un praticien : la requête ne porte alors
     // aucun `staffId`, et c'est le serveur qui affecte.
@@ -239,7 +259,7 @@ describe('choix du praticien', () => {
       />,
     );
 
-    await screen.findByRole('button', { name: '09:00' });
+    await screen.findByRole('button', { name: '09 h 00' });
 
     let libere: (value: unknown) => void = () => undefined;
 
@@ -262,14 +282,14 @@ describe('choix du praticien', () => {
 
     // Les créneaux affichés répondaient à une autre question : les garder à
     // l'écran le temps de l'aller-retour proposerait l'agenda de quelqu'un d'autre.
-    expect(screen.queryByRole('button', { name: '09:00' })).toBeNull();
+    expect(screen.queryByRole('button', { name: '09 h 00' })).toBeNull();
     expect(screen.getByText('Chargement des disponibilités…')).toBeDefined();
 
     await act(async () => {
       libere({ ok: true, data: availability([{ date: LUNDI, slots: [slot(APRES_MIDI, NIVO)] }]) });
     });
 
-    expect(screen.getByRole('button', { name: '14:00' })).toBeDefined();
+    expect(screen.getByRole('button', { name: '14 h 00' })).toBeDefined();
   });
 });
 
@@ -292,7 +312,7 @@ describe('états de chargement et état vide', () => {
       libere({ ok: true, data: journeeOrdinaire });
     });
 
-    expect(screen.getByRole('button', { name: '09:00' })).toBeDefined();
+    expect(screen.getByRole('button', { name: '09 h 00' })).toBeDefined();
   });
 
   it('explique l’agenda vide et propose de lever la préférence de praticien', async () => {
@@ -392,7 +412,7 @@ describe('états de chargement et état vide', () => {
     loadAvailabilityAction.mockResolvedValue({ ok: true, data: journeeOrdinaire });
     await user.click(screen.getByRole('button', { name: 'Réessayer' }));
 
-    expect(await screen.findByRole('button', { name: '09:00' })).toBeDefined();
+    expect(await screen.findByRole('button', { name: '09 h 00' })).toBeDefined();
     expect(screen.queryByText('Service indisponible.')).toBeNull();
   });
 
@@ -465,7 +485,7 @@ describe('états de chargement et état vide', () => {
 describe('rafraîchissement des disponibilités', () => {
   it('recharge au retour sur l’onglet', async () => {
     renderStep();
-    await screen.findByRole('button', { name: '09:00' });
+    await screen.findByRole('button', { name: '09 h 00' });
 
     await act(async () => {
       document.dispatchEvent(new Event('visibilitychange'));
@@ -480,7 +500,7 @@ describe('rafraîchissement des disponibilités', () => {
     try {
       renderStep();
       await vi.waitFor(() => {
-        expect(screen.getByRole('button', { name: '09:00' })).toBeDefined();
+        expect(screen.getByRole('button', { name: '09 h 00' })).toBeDefined();
       });
 
       await act(async () => {
@@ -497,7 +517,7 @@ describe('rafraîchissement des disponibilités', () => {
 
   it('ne vide pas une liste déjà affichée quand la revalidation échoue', async () => {
     renderStep();
-    await screen.findByRole('button', { name: '09:00' });
+    await screen.findByRole('button', { name: '09 h 00' });
 
     loadAvailabilityAction.mockResolvedValue({
       ok: false,
@@ -511,7 +531,7 @@ describe('rafraîchissement des disponibilités', () => {
 
     // La panne est passagère ; les créneaux affichés restent la meilleure
     // information disponible, et l'avis dit qu'ils peuvent avoir vieilli.
-    expect(screen.getByRole('button', { name: '09:00' })).toBeDefined();
+    expect(screen.getByRole('button', { name: '09 h 00' })).toBeDefined();
     expect(screen.getByText('Service indisponible.')).toBeDefined();
   });
 });
@@ -558,7 +578,7 @@ describe('barre de dates', () => {
       libere({ ok: true, data: journeeOrdinaire });
     });
 
-    expect(screen.getByRole('button', { name: '09:00' })).toBeDefined();
+    expect(screen.getByRole('button', { name: '09 h 00' })).toBeDefined();
   });
 
   it('ne met qu’une journée dans l’ordre de tabulation', async () => {
@@ -589,8 +609,8 @@ describe('barre de dates', () => {
     // « Changer de jour recharge la grille » — le créneau du lundi a cédé la
     // place à celui du mardi, sans nouvel appel au serveur : la fenêtre entière
     // tient dans une seule réponse.
-    expect(screen.getByRole('button', { name: '15:00' })).toBeDefined();
-    expect(screen.queryByRole('button', { name: '09:00' })).toBeNull();
+    expect(screen.getByRole('button', { name: '15 h 00' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: '09 h 00' })).toBeNull();
   });
 
   it('ne boucle pas aux bords de la barre', async () => {
@@ -642,7 +662,7 @@ describe('barre de dates', () => {
 describe('navigation au clavier', () => {
   it('présente les créneaux en grille, une ligne par moment de la journée', async () => {
     renderStep();
-    await screen.findByRole('button', { name: '09:00' });
+    await screen.findByRole('button', { name: '09 h 00' });
 
     expect(screen.getByRole('grid')).toBeDefined();
     expect(screen.getAllByRole('row')).toHaveLength(2);
@@ -652,31 +672,31 @@ describe('navigation au clavier', () => {
 
   it('ne met qu’un créneau dans l’ordre de tabulation', async () => {
     renderStep();
-    await screen.findByRole('button', { name: '09:00' });
+    await screen.findByRole('button', { name: '09 h 00' });
 
     // Le roving tabindex du document de conception : sans lui, une journée de
     // trente créneaux imposerait trente tabulations pour atteindre le bouton
     // d'après.
-    expect(screen.getByRole('button', { name: '09:00' })).toHaveProperty('tabIndex', 0);
-    expect(screen.getByRole('button', { name: '14:00' })).toHaveProperty('tabIndex', -1);
+    expect(screen.getByRole('button', { name: '09 h 00' })).toHaveProperty('tabIndex', 0);
+    expect(screen.getByRole('button', { name: '14 h 00' })).toHaveProperty('tabIndex', -1);
   });
 
   it('déplace l’arrêt de tabulation sur le dernier créneau visité', async () => {
     renderStep();
-    const apresMidi = await screen.findByRole('button', { name: '14:00' });
+    const apresMidi = await screen.findByRole('button', { name: '14 h 00' });
 
     await act(async () => {
       apresMidi.focus();
     });
 
     expect(apresMidi).toHaveProperty('tabIndex', 0);
-    expect(screen.getByRole('button', { name: '09:00' })).toHaveProperty('tabIndex', -1);
+    expect(screen.getByRole('button', { name: '09 h 00' })).toHaveProperty('tabIndex', -1);
   });
 
   it('circule dans la grille sans jamais boucler', async () => {
     const user = renderStep();
-    const matin = await screen.findByRole('button', { name: '09:00' });
-    const apresMidi = screen.getByRole('button', { name: '14:00' });
+    const matin = await screen.findByRole('button', { name: '09 h 00' });
+    const apresMidi = screen.getByRole('button', { name: '14 h 00' });
 
     matin.focus();
 
@@ -697,8 +717,8 @@ describe('navigation au clavier', () => {
 
   it('va aux bornes de la ligne, et à celles de la grille avec Ctrl', async () => {
     const user = renderStep();
-    const matin = await screen.findByRole('button', { name: '09:00' });
-    const apresMidi = screen.getByRole('button', { name: '14:00' });
+    const matin = await screen.findByRole('button', { name: '09 h 00' });
+    const apresMidi = screen.getByRole('button', { name: '14 h 00' });
 
     matin.focus();
 
@@ -715,7 +735,7 @@ describe('navigation au clavier', () => {
 
   it('rattrape le focus quand une revalidation emporte le créneau focalisé', async () => {
     const user = renderStep();
-    const apresMidi = await screen.findByRole('button', { name: '14:00' });
+    const apresMidi = await screen.findByRole('button', { name: '14 h 00' });
 
     await act(async () => {
       apresMidi.focus();
@@ -733,8 +753,8 @@ describe('navigation au clavier', () => {
     // Sans ce rattrapage, le focus retomberait sur `<body>` et la navigation au
     // clavier repartirait du haut du document, au moment précis où l'on
     // choisissait son heure.
-    expect(screen.queryByRole('button', { name: '14:00' })).toBeNull();
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: '09:00' }));
+    expect(screen.queryByRole('button', { name: '14 h 00' })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '09 h 00' }));
 
     // La touche laissée au navigateur n'est pas volée pour autant.
     await user.keyboard('{Enter}');
@@ -743,7 +763,7 @@ describe('navigation au clavier', () => {
 
   it('retient le créneau activé au clavier', async () => {
     const user = renderStep();
-    const matin = await screen.findByRole('button', { name: '09:00' });
+    const matin = await screen.findByRole('button', { name: '09 h 00' });
 
     matin.focus();
     await user.keyboard('{Enter}');
