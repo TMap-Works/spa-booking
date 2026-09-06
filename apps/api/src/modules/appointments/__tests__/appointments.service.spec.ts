@@ -576,7 +576,11 @@ describe('AppointmentsService.book', () => {
  * - qu'un praticien qui ne pratique pas la prestation n'apparaisse jamais dans
  *   les candidats — `availability.service.spec.ts`, sur le vrai calcul ;
  * - que le refus vienne réellement de la contrainte d'exclusion —
- *   `test/appointments-exclusion.integration-spec.ts`, contre un vrai PostgreSQL.
+ *   `test/appointments-exclusion.integration-spec.ts`, contre un vrai PostgreSQL ;
+ * - que le repli n'affecte au plus qu'un rendez-vous par praticien quand
+ *   plusieurs demandes sans préférence se répondent —
+ *   `test/appointments-exclusion.concurrency-spec.ts`, jouée par la cible
+ *   `npm run test:concurrency` (#326).
  */
 describe('AppointmentsService.book — option « premier disponible » (#36)', () => {
   /** Les deux praticiens de la prestation, dans l'ordre où le moteur les rend. */
@@ -762,8 +766,12 @@ describe('AppointmentsService.book — option « premier disponible » (#36)', (
  *
  * L'atomicité elle-même appartient à PostgreSQL, et c'est
  * `test/appointments-exclusion.integration-spec.ts` qui l'exerce contre un vrai
- * moteur. Le double reproduit son **effet observable** — un refus ne laisse
- * aucune trace — et rien de plus.
+ * moteur ; que plusieurs reports concurrents du même rendez-vous n'en laissent
+ * aboutir qu'un est prouvé par
+ * `test/appointments-exclusion.concurrency-spec.ts`, jouée par la cible
+ * `npm run test:concurrency` (#326). Le double, lui, ne reproduit que l'**effet
+ * observable** de l'atomicité — un refus ne laisse aucune trace — et rien de
+ * plus : aucun double en mémoire ne simule la course.
  */
 describe('AppointmentsService.reschedule', () => {
   /** Le nouveau créneau : le soin passerait de 10:00 à 14:00 UTC. */

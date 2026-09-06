@@ -58,8 +58,10 @@ import type {
  *
  * La contrainte elle-même. `appointments_no_overlap` vit en base, et c'est
  * `test/appointments-exclusion.integration-spec.ts` qui l'exerce contre un vrai
- * PostgreSQL — y compris sous concurrence, ce qu'aucun double en mémoire ne peut
- * simuler (booking-engine §6). Ce que ce double reproduit, c'est le **contrat du
+ * PostgreSQL. La **concurrence**, elle, a sa suite propre depuis #326 —
+ * `test/appointments-exclusion.concurrency-spec.ts`, jouée par la cible
+ * `npm run test:concurrency` —, et aucun double en mémoire ne peut la simuler
+ * (booking-engine §6). Ce que ce double reproduit, c'est le **contrat du
  * repository** vu du service : quand un chevauchement existe, l'appelant reçoit
  * `SlotNoLongerAvailableError` et non une erreur brute.
  */
