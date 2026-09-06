@@ -9,8 +9,9 @@ import { DomainError } from '../../common/errors';
  *
  * TODO(#26) : ces codes appartiennent au contrat d'API et devront vivre dans
  * `@spa/shared`, comme ceux d'`identity`. Les déclarer ici suit le précédent du
- * module voisin — `apps/api` ne dépend pas encore du paquet partagé — et
- * l'import se substituera à ces constantes sans changer une seule valeur.
+ * module voisin ; l'import se substituera à ces constantes sans changer une
+ * seule valeur, lors de la reprise groupée de ce TODO — la dépendance vers le
+ * paquet partagé, elle, est posée depuis #463.
  *
  * **Aucune de ces erreurs ne parle d'un autre établissement.** Une prestation ou
  * une catégorie d'un autre tenant est introuvable, point : c'est `NotFoundError`

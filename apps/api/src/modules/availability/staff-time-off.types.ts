@@ -5,8 +5,8 @@
  * TODO(#26) : ces formes appartiennent au contrat d'API et sont décrites par
  * `packages/shared/src/schemas/availability.ts` (`staffTimeOffSchema`,
  * `staffBusyIntervalSchema`, tenus à jour par ce même ticket) ; elles devront en
- * être importées le jour où `apps/api` dépendra du paquet. Même TODO que dans
- * `catalog.types.ts` et `identity.types.ts`.
+ * être importées lors de la reprise groupée de ce TODO — la dépendance existe
+ * depuis #463. Même TODO que dans `catalog.types.ts` et `identity.types.ts`.
  *
  * ## Aucune de ces formes ne porte de `tenantId`
  *

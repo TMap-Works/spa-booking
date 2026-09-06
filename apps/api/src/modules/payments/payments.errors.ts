@@ -39,8 +39,8 @@ import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
  * (payments-stripe §1).
  *
  * TODO(#26) : ces codes appartiennent au contrat d'API et devront vivre dans
- * `@spa/shared` quand `apps/api` en dépendra, comme ceux d'`identity`, de
- * `catalog` et d'`appointments`.
+ * `@spa/shared` lors de la reprise groupée de ce TODO — la dépendance existe
+ * depuis #463 —, comme ceux d'`identity`, de `catalog` et d'`appointments`.
  */
 
 /** Codes d'erreur du module, tels qu'ils partent au client. */

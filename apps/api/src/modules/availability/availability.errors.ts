@@ -9,8 +9,9 @@ import { DomainError } from '../../common/errors';
  *
  * TODO(#26) : ces codes appartiennent au contrat d'API et devront vivre dans
  * `@spa/shared`, à côté de `BOOKING_ERROR_CODES`. Les déclarer ici suit le
- * précédent des modules voisins — `apps/api` ne dépend pas encore du paquet
- * partagé — et l'import se substituera à ces constantes sans changer une valeur.
+ * précédent des modules voisins ; l'import se substituera à ces constantes sans
+ * changer une valeur, lors de la reprise groupée de ce TODO — la dépendance vers
+ * le paquet, elle, est posée depuis #463.
  *
  * **Aucune de ces erreurs ne parle d'un autre établissement.** Elles ne portent
  * que ce que l'appelant vient d'envoyer — une heure, un fuseau —, jamais
@@ -139,10 +140,10 @@ export class OverlappingScheduleRangesError extends DomainError {
  * « mois suivant » du calendrier public, qui est le seul écran qui interroge.
  *
  * TODO(#26) : c'est `MAX_AVAILABILITY_RANGE_DAYS` de `@spa/shared`
- * (`packages/shared/src/constants/limits.ts`), à importer le jour où `apps/api`
- * dépendra du paquet. Le nom est celui du paquet partagé pour que la
- * substitution ne change pas une borne en silence — même TODO que
- * `MAX_TIME_OFF_RANGE_DAYS` ci-dessous.
+ * (`packages/shared/src/constants/limits.ts`), à importer lors de la reprise
+ * groupée de ce TODO — la dépendance existe depuis #463. Le nom est celui du
+ * paquet partagé pour que la substitution ne change pas une borne en silence —
+ * même TODO que `MAX_TIME_OFF_RANGE_DAYS` ci-dessous.
  */
 export const MAX_AVAILABILITY_RANGE_DAYS = 31;
 
@@ -196,9 +197,9 @@ export type TimeOffRule = (typeof TIME_OFF_RULES)[keyof typeof TIME_OFF_RULES];
  * simplement de rendre des disponibilités, sans erreur ni trace.
  *
  * TODO(#26) : c'est `MAX_TIME_OFF_RANGE_DAYS` de `@spa/shared`
- * (`packages/shared/src/constants/limits.ts`), à importer le jour où `apps/api`
- * dépendra du paquet. Le nom est celui du paquet partagé pour que la
- * substitution ne change pas une borne en silence.
+ * (`packages/shared/src/constants/limits.ts`), à importer lors de la reprise
+ * groupée de ce TODO — la dépendance existe depuis #463. Le nom est celui du
+ * paquet partagé pour que la substitution ne change pas une borne en silence.
  */
 export const MAX_TIME_OFF_RANGE_DAYS = 366;
 

@@ -25,8 +25,8 @@ import type { Money, PaymentIntentView, PaymentStatus } from '../payments.types'
  *   de nulle part ailleurs (tenant-isolation §2).
  *
  * TODO(#26) : cette forme appartient au contrat d'API et devra venir de
- * `@spa/shared` le jour où `apps/api` dépendra du paquet — même TODO que dans
- * les DTO d'`appointments`.
+ * `@spa/shared` lors de la reprise groupée de ce TODO — la dépendance existe
+ * depuis #463. Même TODO que dans les DTO d'`appointments`.
  */
 export class CreatePaymentIntentDto {
   @ApiProperty({

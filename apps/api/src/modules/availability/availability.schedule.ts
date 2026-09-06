@@ -43,8 +43,9 @@ import {
  * verrait son horaire disparaître sans qu'aucun test de forme ne rougisse.
  *
  * TODO(#26) : cette numérotation est celle d'`isoWeekdaySchema` dans
- * `@spa/shared`. Elle en sera importée le jour où `apps/api` dépendra du paquet
- * — même TODO que `LOCAL_TIME_PATTERN` et `AVAILABILITY_ERROR_CODES`.
+ * `@spa/shared`. Elle en sera importée lors de la reprise groupée de ce TODO — la
+ * dépendance existe depuis #463 — même TODO que `LOCAL_TIME_PATTERN` et
+ * `AVAILABILITY_ERROR_CODES`.
  */
 export const ISO_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 

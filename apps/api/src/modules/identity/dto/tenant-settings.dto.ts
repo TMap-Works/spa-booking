@@ -29,9 +29,10 @@ import { OpeningHoursEntryDto, PostalAddressDto, PublicTenantDto } from './publi
  * de la charge utile (tenant-isolation §2).
  *
  * TODO(#26) : ces formes sont celles de `updateTenantRequestSchema` et
- * `tenantSchema` de `packages/shared`, et devront en être importées le jour où
- * `apps/api` dépendra du paquet. Les bornes sont donc **les mêmes valeurs**, aux
- * mêmes noms, pour que la substitution ne change pas une borne en silence.
+ * `tenantSchema` de `packages/shared`, et devront en être importées lors de la
+ * reprise groupée de ce TODO — la dépendance existe depuis #463. Les bornes sont
+ * donc **les mêmes valeurs**, aux mêmes noms, pour que la substitution ne change
+ * pas une borne en silence.
  */
 
 /** `VARCHAR(160)` — nom d'établissement, ligne d'adresse. */

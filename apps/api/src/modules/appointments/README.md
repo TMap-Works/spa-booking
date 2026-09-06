@@ -226,10 +226,11 @@ qu'aucun appelant réel ne produit : le tiroir de #50 désactive son bouton
 d'enregistrement tant qu'aucune fiche n'est choisie.
 
 Ces formes sont donc écrites **deux fois** — ici en `class-validator`, là-bas en
-Zod — parce que `apps/api` ne dépend pas encore de `@spa/shared` : c'est ce
-qu'attend le quatrième critère de #314, et la dépendance manque toujours à
-`apps/api/package.json`. Le doublon n'est tenable qu'à une condition, et deux
-suites s'en chargent :
+Zod : c'est ce qu'attend le quatrième critère de #314, et la reprise des DTO est
+celle de #26, qui les migre d'un seul tenant. Ce qui la bloquait ne la bloque
+plus — `apps/api` déclare `@spa/shared` en dépendance depuis #463, et l'image
+d'exécution en porte le `dist`. Le doublon n'est tenable qu'à une condition, et
+deux suites s'en chargent :
 
 - `__tests__/guest-contract.spec.ts` — la **requête**, champ par champ et borne
   par borne, sur les fixtures littérales de

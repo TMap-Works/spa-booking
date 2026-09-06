@@ -10,9 +10,10 @@ import { ValidateIf } from 'class-validator';
  * champ. Les deux se corrigent ensemble.
  *
  * TODO(#26) : ces valeurs sont celles de `@spa/shared`
- * (`packages/shared/src/constants/limits.ts`) et devront en être importées le
- * jour où `apps/api` dépendra du paquet — voir le même TODO dans
- * `catalog.types.ts`. Les noms sont donc **ceux du paquet partagé**, et pas
+ * (`packages/shared/src/constants/limits.ts`) et devront en être importées lors
+ * de la reprise groupée de ce TODO — la dépendance existe depuis #463 — voir le
+ * même TODO dans `catalog.types.ts`. Les noms sont donc **ceux du paquet
+ * partagé**, et pas
  * seulement les valeurs : un homonyme local qui ne vaudrait pas la même chose
  * que celui de `@spa/shared` ferait de la substitution un changement de borne
  * silencieux. C'est le cas de `NAME_MAX_LENGTH` là-bas — 80, pour un prénom ou

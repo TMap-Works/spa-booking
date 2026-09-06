@@ -10,10 +10,13 @@ import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
  *
  * TODO(#26) : ces codes appartiennent au contrat d'API et devront venir de
  * `@spa/shared`, où `BOOKING_ERROR_CODES.SLOT_NO_LONGER_AVAILABLE` porte déjà la
- * **même valeur**. Les déclarer ici suit le précédent des modules voisins —
- * `apps/api` ne dépend pas encore du paquet partagé, et l'y ajouter touche
- * `apps/api/package.json`, hors de l'empreinte de ce ticket. L'import se
- * substituera à cette constante sans changer un seul caractère.
+ * **même valeur**. L'import se substituera à cette constante sans changer un
+ * seul caractère.
+ *
+ * Ce qui l'en séparait a été levé par #463 : `apps/api` déclare `@spa/shared` en
+ * dépendance, l'image d'exécution porte le `dist` du paquet, et `crm.errors.ts`
+ * en consomme déjà une **valeur**. Ce qui reste est la reprise groupée de #26 —
+ * tous les codes de modules d'un seul tenant, plutôt qu'un par ticket.
  */
 
 /** Codes d'erreur du module, tels qu'ils partent au client. */
@@ -53,9 +56,9 @@ const UNPROCESSABLE_ENTITY = DOMAIN_HTTP_STATUS.UNPROCESSABLE_ENTITY;
  * dessous.
  *
  * TODO(#26) : c'est `MAX_APPOINTMENT_RANGE_DAYS` de `@spa/shared`
- * (`packages/shared/src/constants/limits.ts`), à importer le jour où `apps/api`
- * dépendra du paquet. Le nom est celui du paquet partagé pour que la
- * substitution ne change pas une borne en silence.
+ * (`packages/shared/src/constants/limits.ts`), à importer lors de la reprise
+ * groupée de ce TODO — la dépendance, elle, existe depuis #463. Le nom est celui
+ * du paquet partagé pour que la substitution ne change pas une borne en silence.
  */
 export const MAX_APPOINTMENT_RANGE_DAYS = 31;
 

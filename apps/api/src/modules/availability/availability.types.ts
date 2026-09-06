@@ -6,8 +6,9 @@
  * appartiennent au contrat d'API et sont décrites par
  * `packages/shared/src/schemas/availability.ts` (`staffScheduleSchema`,
  * `staffScheduleEntrySchema`, `closingDaysSchema`). Elles devront en être
- * importées le jour où `apps/api` dépendra du paquet partagé — même TODO que
- * `catalog.types.ts` et `identity.types.ts`.
+ * importées lors de la reprise groupée de ce TODO — la dépendance vers le paquet
+ * partagé existe depuis #463 — même TODO que `catalog.types.ts` et
+ * `identity.types.ts`.
  *
  * ## Aucune de ces formes ne porte de `tenantId`
  *
@@ -67,9 +68,10 @@ export interface ClosingDaysView {
  * pratiquent le soin ».
  *
  * TODO(#26) : cette forme appartient au contrat d'API — `packages/shared`
- * expose déjà l'homonyme `availabilityQuerySchema`, et le jour où `apps/api`
- * dépendra du paquet partagé les deux déclarations deviendront ambiguës à
- * l'import. **Attention à ce que la substitution vise** : depuis #442 le schéma
+ * expose déjà l'homonyme `availabilityQuerySchema`, et les deux déclarations
+ * deviendront ambiguës à l'import dès que ce module consommera le paquet — dont
+ * `apps/api` dépend depuis #463.
+ * **Attention à ce que la substitution vise** : depuis #442 le schéma
  * partagé porte **cinq** champs — il décrit la chaîne de requête, exclusion
  * comprise —, et c'est donc `EngineAvailabilityQuery` ci-dessous qu'il faut lui
  * faire correspondre, jamais celle-ci. Remplacer `AvailabilityQuery` par le type
@@ -179,8 +181,8 @@ export interface DayAvailabilityView {
  * TODO(#26) : ces trois formes appartiennent au contrat d'API et sont décrites
  * par `packages/shared/src/schemas/availability.ts` (`availabilitySlotSchema`,
  * `dayAvailabilitySchema`, `availabilityResponseSchema`). Elles devront en être
- * importées le jour où `apps/api` dépendra du paquet — même TODO que
- * `StaffScheduleView` ci-dessus.
+ * importées lors de la reprise groupée de ce TODO — la dépendance existe depuis
+ * #463 — même TODO que `StaffScheduleView` ci-dessus.
  */
 export interface AvailabilityView {
   readonly serviceId: string;

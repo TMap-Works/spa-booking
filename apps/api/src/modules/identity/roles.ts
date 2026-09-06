@@ -50,10 +50,10 @@
  *
  * Le stockage PostgreSQL et les revendications de jeton émises par #21 utilisent
  * les libellés en majuscules ; `@spa/shared` expose les mêmes rôles en
- * minuscules. La traduction appartiendra au jour où `apps/api` dépendra du
- * paquet partagé — ce qui touche `apps/api/package.json`, hors périmètre de ce
- * ticket. Changer la casse des revendications maintenant invaliderait par
- * ailleurs tous les jetons en circulation.
+ * minuscules. La traduction appartient à la reprise groupée de #26 — la
+ * dépendance vers le paquet partagé, elle, est posée depuis #463. Changer la
+ * casse des revendications maintenant invaliderait par ailleurs tous les jetons
+ * en circulation.
  */
 
 /**

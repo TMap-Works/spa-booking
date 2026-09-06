@@ -6,10 +6,11 @@ import type { AppointmentStatus } from '../appointments/appointment-status';
  *
  * TODO(#26) : ces formes reprennent `customerSchema`, `customerVisitSchema` et
  * `customerVisitSummarySchema` de `@spa/shared`. Les redéclarer ici suit le
- * précédent des modules voisins — `apps/api` ne dépend pas encore du paquet
- * partagé —, et l'import se substituera à ces interfaces sans changer un champ.
- * La casse des statuts est le seul écart connu et il est documenté sur
- * `CustomerVisit.status`.
+ * précédent des modules voisins ; l'import se substituera à ces interfaces sans
+ * changer un champ, lors de la reprise groupée de ce TODO — la dépendance vers
+ * le paquet partagé est posée depuis #463, et `crm.errors.ts` en consomme déjà
+ * une valeur. La casse des statuts est le seul écart connu et il est documenté
+ * sur `CustomerVisit.status`.
  */
 
 /**

@@ -45,8 +45,8 @@ import { CANCELLATION_REASON_MAX_LENGTH, OptionalPresent, Trim } from './validat
  *
  * TODO(#26) : `changeAppointmentStatusRequestSchema` de
  * `packages/shared/src/schemas/appointment.ts` décrit la même forme et devra
- * être importé le jour où `apps/api` dépendra du paquet — même TODO que dans
- * `book-appointment.dto.ts`.
+ * être importé lors de la reprise groupée de ce TODO — la dépendance vers le
+ * paquet existe depuis #463. Même TODO que dans `book-appointment.dto.ts`.
  */
 export class ChangeAppointmentStatusDto {
   @ApiProperty({
