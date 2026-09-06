@@ -1053,6 +1053,12 @@ model Appointment {
   // la question que pose l'historique client (#47). Préfixé de `tenant_id`
   // comme tout index de ce schéma (tenant-isolation §1).
   @@index([tenantId, rescheduledFromId])
+  // Volume de rendez-vous **par prestation** sur une fenêtre — le troisième axe
+  // du reporting de base (#74, CDC §1.4). Les deux autres étaient déjà servis :
+  // par praticien par `(tenant_id, staff_id, starts_at)`, par période par
+  // `(tenant_id, starts_at)`. Celui-ci manquait, et sans lui l'agrégat par
+  // service parcourait toute la fenêtre du salon pour la regrouper ensuite.
+  @@index([tenantId, serviceId, startsAt])
   @@map("appointments")
 }
 
@@ -1114,6 +1120,13 @@ model Payment {
   @@unique([tenantId, id])
   @@index([tenantId, status, createdAt])
   @@index([tenantId, createdAt])
+  // La journée de caisse du reporting (#74) se lit sur `captured_at`, l'instant
+  // où l'argent a été pris — jamais sur `created_at`, qui ne date que
+  // l'ouverture de l'encaissement. Un règlement ouvert à 23 h 58 et capturé à
+  // 00 h 03 appartient au lendemain, et les deux index ci-dessus le rangeraient
+  // la veille. Le statut précède la date parce que l'agrégat ne somme que les
+  // encaissements aboutis : `SUCCEEDED`, `PARTIALLY_REFUNDED`, `REFUNDED`.
+  @@index([tenantId, status, capturedAt])
   @@map("payments")
 }
 
