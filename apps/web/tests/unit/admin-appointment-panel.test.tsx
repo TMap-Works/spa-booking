@@ -167,7 +167,10 @@ describe('premier critère — le tiroir s’ouvre sur le créneau cliqué', () 
       />,
     );
 
-    await user.click(screen.getByRole('button', { name: /Rina Andriamana/ }));
+    // Le bloc lui-même, désigné par son heure : depuis #51 il a une poignée pour
+    // sœur — « Déplacer Rina Andriamana » —, et le seul nom du client ne suffit
+    // plus à les distinguer.
+    await user.click(screen.getByRole('button', { name: /^09:00 – 10:00 Rina Andriamana/ }));
 
     expect(screen.getByRole('heading', { name: 'Rina Andriamana' })).toBeDefined();
     // 06:00 UTC = 09:00 au salon : c'est l'heure du salon qui doit s'afficher.
