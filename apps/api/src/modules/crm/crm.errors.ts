@@ -1,3 +1,5 @@
+import type { DOMAIN_ERROR_CODES } from '@spa/shared';
+
 import { DomainError } from '../../common/errors';
 
 /**
@@ -9,18 +11,28 @@ import { DomainError } from '../../common/errors';
  *
  * TODO(#26) : ces codes appartiennent au contrat d'API et devront vivre dans
  * `@spa/shared`, comme ceux d'`identity` et de `catalog`. Les déclarer ici suit
- * le précédent des modules voisins — `apps/api` ne dépend pas encore du paquet
- * partagé — et l'import se substituera à ces constantes sans changer une valeur.
+ * le précédent des modules voisins, et l'import se substituera à ces constantes
+ * sans changer une valeur.
  *
- * `CLIENT_EMAIL_NOT_BOOKABLE` y est **déjà** déclaré, dans `DOMAIN_ERROR_CODES`
- * de `packages/shared/src/errors/error-codes.ts` : le front en a besoin pour trier
- * ce refus définitif du 409 passager qu'est un créneau perdu (#452). La constante
- * ci-dessous en est donc la copie, à la valeur près, et non une seconde source de
- * vérité — c'est le paquet partagé qui fait foi. Elle subsiste parce que le
- * `paths` hérité de `tsconfig.base.json` pointe vers `packages/shared/src`, hors
- * du `rootDir` d'`apps/api` : tout import de `@spa/shared` sort ici en TS6059
- * tant que #26 n'a pas tranché la forme de la dépendance. **Changer une valeur
- * d'un côté sans l'autre casse le tri du parcours public.**
+ * `CLIENT_EMAIL_NOT_BOOKABLE`, lui, y est **déjà** déclaré — dans
+ * `DOMAIN_ERROR_CODES` de `packages/shared/src/errors/error-codes.ts`, parce que
+ * le front en a besoin pour trier ce refus définitif du 409 passager qu'est un
+ * créneau perdu (#452). Le `satisfies` ci-dessous **arrime** la constante locale
+ * à cette déclaration : le type attendu n'est pas `string` mais le littéral que
+ * le contrat partagé porte. Renommer ou retirer le code dans `@spa/shared` ne
+ * laisse plus les deux versions diverger en silence — cela casse la compilation
+ * d'`apps/api`, ici, à la ligne qui recopie la valeur (#456).
+ *
+ * **Ce qui reste à faire, et pourquoi ce n'est pas fait ici.** L'arrimage est de
+ * type ; la valeur est encore écrite en toutes lettres. L'importer vraiment —
+ * `CLIENT_EMAIL_NOT_BOOKABLE: DOMAIN_ERROR_CODES.CLIENT_EMAIL_NOT_BOOKABLE` —
+ * émettrait un `require('@spa/shared')` dans `dist/`, que l'image d'exécution ne
+ * sait pas satisfaire : `apps/api/Dockerfile` ne copie `packages/shared/dist`
+ * nulle part, et son étape `runtime` n'emporte du paquet que son `package.json`.
+ * L'API démarrerait sur un `MODULE_NOT_FOUND`, sans qu'aucun job de la CI ne le
+ * voie — le job `docker` construit l'image, il ne la démarre pas. Le Dockerfile
+ * l'annonce lui-même : « le jour où elle l'importera, cette image ne suffira
+ * plus ». Ce volet appartient au suivi ouvert par #456.
  *
  * **Aucune de ces erreurs ne parle d'un autre établissement**, et aucune ne
  * recopie une donnée personnelle. Une fiche d'un autre tenant est introuvable,
@@ -28,11 +40,21 @@ import { DomainError } from '../../common/errors';
  * dédié — ou un 403 — confirmerait son existence (tenant-isolation §4).
  */
 
-/** Codes d'erreur du module, tels qu'ils partent au client. */
+/**
+ * Codes d'erreur du module, tels qu'ils partent au client.
+ *
+ * `CUSTOMER_EMAIL_TAKEN` n'a pas d'équivalent dans `@spa/shared` — ni dans
+ * `DOMAIN_ERROR_CODES`, ni ailleurs dans `ERROR_CODES` — et reste donc déclaré
+ * ici seul. C'est le seul autre code de ce fichier, et la réponse au troisième
+ * critère de #456 : il n'y avait qu'un doublon à résorber.
+ */
 export const CRM_ERROR_CODES = {
   CUSTOMER_EMAIL_TAKEN: 'CUSTOMER_EMAIL_TAKEN',
   CLIENT_EMAIL_NOT_BOOKABLE: 'CLIENT_EMAIL_NOT_BOOKABLE',
-} as const;
+} as const satisfies {
+  CUSTOMER_EMAIL_TAKEN: string;
+  CLIENT_EMAIL_NOT_BOOKABLE: (typeof DOMAIN_ERROR_CODES)['CLIENT_EMAIL_NOT_BOOKABLE'];
+};
 
 const CONFLICT = 409;
 

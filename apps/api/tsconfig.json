@@ -13,7 +13,45 @@
     // DTO, et les métadonnées de décorateurs de Nest.
     "useDefineForClassFields": false,
     "declaration": false,
-    "types": ["node", "jest"]
+    "types": ["node", "jest"],
+
+    // `@spa/shared` se résout **par le lien de workspace npm**, et non par le
+    // `paths` de `tsconfig.base.json` — qui vise `packages/shared/src` en
+    // chemin direct, hors du `rootDir` déclaré ici. Tout import du contrat
+    // sortait alors en TS6059 (« file is not under rootDir »), sur chaque
+    // fichier du paquet, ce qui interdisait à l'API de consommer ses propres
+    // codes d'erreur (#456).
+    //
+    // Passer par `node_modules/@spa/shared` change la **nature** de la
+    // résolution, pas seulement son chemin : `tsc` marque ce qu'il y trouve
+    // comme import de bibliothèque externe. Ces fichiers-là n'appartiennent pas
+    // au programme émis — ils ne sont ni vérifiés contre `rootDir`, ni écrits
+    // dans `dist` — et `apps/api/dist` conserve donc exactement la forme que
+    // `main`, le `CMD` du Dockerfile et `deploy-*.yml` attendent (`dist/main.js`).
+    //
+    // Pourquoi pas les deux autres voies que l'issue proposait :
+    //
+    //   * **référence de projet** (`references` vers
+    //     `packages/shared/tsconfig.build.json`, ce que suggère le commentaire
+    //     `composite` de ce fichier) et **consommation par le `dist`**
+    //     (`paths: {}`, résolution par `types: ./dist/index.d.ts`) exigent
+    //     toutes deux que `packages/shared` soit **compilé avant** `apps/api` —
+    //     sans quoi TS6305 ou TS2307 ;
+    //   * or `npm run <cible> --workspaces` s'exécute dans l'ordre du glob
+    //     (`apps/api`, `apps/web`, `packages/shared`) et **non** dans l'ordre
+    //     des dépendances : `@spa/api` compile toujours en premier. Les jobs
+    //     `lint` et `test` de ci.yml ne lancent d'ailleurs aucun build du tout.
+    //     Garantir l'ordre demanderait un `tsc -b` dans `apps/api/package.json`
+    //     ou un préalable dans le `package.json` racine.
+    //
+    // Le pointage vise les **sources** : c'est ce qui affranchit la compilation
+    // de tout `dist` préalable. La contrepartie est qu'un import de **valeur**
+    // (et non de type) émettrait un `require('@spa/shared')` que l'image
+    // d'exécution ne sait pas encore satisfaire — voir la note de `crm.errors.ts`.
+    "paths": {
+      "@spa/shared": ["../../node_modules/@spa/shared/src/index.ts"],
+      "@spa/shared/*": ["../../node_modules/@spa/shared/src/*"]
+    }
   },
   // `eslint-rules` porte le plugin ESLint local : ses règles sont en CommonJS
   // (ESLint charge sa configuration avant tout compilateur TypeScript), mais
