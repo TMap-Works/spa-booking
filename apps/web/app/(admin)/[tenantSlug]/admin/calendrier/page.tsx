@@ -1,10 +1,11 @@
-import type { Appointment, Service, Tenant } from '@spa/shared';
+import type { Appointment, PublicTenant, Service } from '@spa/shared';
+import { redirect } from 'next/navigation';
 
 import {
   ApiClientError,
   fetchAppointments,
+  fetchPublicTenant,
   fetchServices,
-  fetchTenantSettings,
 } from '@/lib/api-client';
 import { calendarFailureMessage } from '@/lib/admin/calendar-failure';
 import {
@@ -20,11 +21,24 @@ import {
 
 import { CalendarBoard } from '../components/calendar-board';
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
+import { adminCalendarPath, adminLoginPath } from '../paths';
 
 /**
  * Le planning du salon — l'écran le plus regardé du back-office (#49, CDC §1.4).
  *
  * ## Ce que la page fait, et ce qu'elle laisse au planning
+ *
+ * ## Le fuseau vient de la vitrine publique, et c'est ce qui ouvre l'écran
+ *
+ * `GET /public/{slug}` sert le nom et le fuseau du salon **sans jeton** ; c'est
+ * ce que fait déjà le shell de ce back-office, et c'est ce que fait
+ * l'encaissement. La page lisait auparavant `GET /v1/tenant`, qui est au seuil
+ * `ADMIN` : tout rang inférieur recevait « Accès réservé » sur l'écran que le CDC
+ * destine au front-desk, alors que l'agenda lui-même — `GET /v1/appointments` —
+ * s'ouvre dès le rang `staff`, et que le rail annonce « Planning » à ce rang-là
+ * (#458). Demander les réglages de l'établissement pour n'y lire que le fuseau
+ * fermait donc l'écran à ceux qui l'utilisent, et le fuseau est de toute façon
+ * public : il est affiché sur la page de réservation.
  *
  * Elle garde la session, lit le fuseau de l'établissement, et **amorce le
  * cache** : la période demandée par l'URL, plus les deux périodes voisines. Le
@@ -72,25 +86,33 @@ interface CalendarPageProps {
 export default async function CalendarPage({ params, searchParams }: CalendarPageProps) {
   const { tenantSlug } = await params;
   const { vue, date } = await searchParams;
-  const accessToken = await requireAdminAccessToken(tenantSlug);
 
-  let tenant: Tenant;
+  // La vue et la date sont lues **avant** la garde : elles ne demandent aucun
+  // jeton, et c'est ce qui permet de dire à la garde où revenir après un
+  // renouvellement de session. Sans elles, l'opérateur repartait de la journée
+  // courante en vue jour, quelle que soit la période qu'il regardait (#458).
+  const view: CalendarView = parseCalendarView(vue);
+  const requested = parseCalendarDate(date);
+  const accessToken = await requireAdminAccessToken(
+    tenantSlug,
+    adminCalendarPath(tenantSlug, { view, ...(requested === null ? {} : { date: requested }) }),
+  );
+
+  let tenant: PublicTenant;
   try {
-    tenant = await fetchTenantSettings(accessToken);
+    tenant = await fetchPublicTenant(tenantSlug);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, {
       deniedTitle: 'Accès réservé',
-      deniedHint:
-        'Le planning est réservé aux comptes du salon. Demandez l’accès à l’administrateur.',
+      deniedHint: 'La vitrine publique de ce salon n’a pas pu être lue avec ce compte.',
       failedTitle: 'Planning indisponible',
     });
   }
 
-  const view: CalendarView = parseCalendarView(vue);
   // La journée par défaut est celle du **salon**, pas celle du navigateur : une
   // gérante qui consulte depuis un autre fuseau doit ouvrir sur le jour que son
   // équipe travaille.
-  const anchor = anchorOf(view, parseCalendarDate(date) ?? todayInTimeZone(tenant.timezone));
+  const anchor = anchorOf(view, requested ?? todayInTimeZone(tenant.timezone));
 
   // Les prestations actives seules : le tiroir sert à **poser** un rendez-vous,
   // et une prestation retirée du catalogue n'est plus vendable. Un échec ne
@@ -124,6 +146,17 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
     if ('appointments' in result) {
       periods[result.key] = result.appointments;
       continue;
+    }
+
+    // Un 401 ne se raconte pas dans une bannière : le cookie d'accès est là,
+    // mais l'API refuse le jeton — session révoquée en base, ou secret changé.
+    // Le renouvellement échouerait pour la même raison, et laisser l'écran se
+    // peindre autour du refus donnerait un planning vide sans dire pourquoi.
+    // C'est `fetchTenantSettings` qui rendait ce verdict jusqu'à ce que le
+    // fuseau vienne de la vitrine publique : l'appel qui reste est le premier à
+    // porter le jeton, et c'est à lui de le rendre (voir `adminLoadFailure`).
+    if (result.error instanceof ApiClientError && result.error.status === 401) {
+      redirect(adminLoginPath(tenantSlug));
     }
 
     // L'échec d'un **préchargement** ne se montre pas : personne ne l'a demandé,

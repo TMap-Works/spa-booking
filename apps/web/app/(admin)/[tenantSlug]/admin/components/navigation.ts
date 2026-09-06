@@ -84,16 +84,13 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
        * `GET /v1/appointments` — l'agenda du comptoir se lit dès le rang staff,
        * et c'est bien l'écran que le CDC destine au front-desk.
        *
-       * **Écart connu, et il n'est pas ici.** `calendrier/page.tsx` charge
-       * aujourd'hui le fuseau du salon par `fetchTenantSettings`
-       * (`GET /v1/tenant`, `@AuthAtLeast('ADMIN')`), si bien qu'un rang staff ou
-       * manager qui ouvre le planning reçoit « Accès réservé ». Le rang annoncé
-       * ci-dessous est celui du produit ; le durcir à `admin` pour coller au
-       * symptôme reviendrait à graver dans la navigation un défaut de la page —
-       * et à cacher au comptoir l'écran qu'il regarde toute la journée. La page
-       * a de quoi s'en passer : le fuseau est aussi servi par
-       * `GET /public/{slug}`, sans jeton, comme le fait le layout de ce shell.
-       * Le correctif appartient à cette page, hors de l'empreinte de #48.
+       * L'écart que cette entrée signalait est corrigé (#458) :
+       * `calendrier/page.tsx` lisait le fuseau du salon par
+       * `fetchTenantSettings` (`GET /v1/tenant`, `@AuthAtLeast('ADMIN')`), si
+       * bien qu'un rang staff ou manager recevait « Accès réservé » sur l'écran
+       * que le rail lui annonçait. Elle le lit désormais de la vitrine publique
+       * (`GET /public/{slug}`, sans jeton), comme le layout de ce shell et comme
+       * l'encaissement. Le rang annoncé ici est donc exact.
        */
       minimumRole: 'staff',
       upcoming: null,
