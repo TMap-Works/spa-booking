@@ -125,9 +125,41 @@ bien que la tabulation parcourt la journée dans l'ordre des heures.
   `--now-offset` injectée par le composant ; elle est délibérément **hors du
   préfixe `--spa-`**, parce que c'est une donnée d'exécution et non un jeton.
 
-Reste à la charge du composant React (skill web-frontend §5) : virtualiser la vue
-semaine, et traiter le glisser-déposer comme un **report** — pas un `UPDATE` —
-avec état optimiste puis retour en arrière visible sur 409.
+#### Le report par glisser-déposer (#51)
+
+Le bloc déplaçable porte `draggable` et une **poignée**, qui en est le
+`<button>` frère — jamais son enfant : un bouton dans un bouton n'est pas du HTML
+valide, et le clavier n'atteindrait pas le second. C'est le CSS qui la pose dans
+le coin du bloc.
+
+```html
+<li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
+  <button class="spa-admin-calendar__event spa-admin-calendar__event--confirmed"
+          type="button" draggable="true">…</button>
+  <button class="spa-admin-calendar__grip" type="button" aria-pressed="false">
+    <span aria-hidden="true">⠿</span>
+    <span class="spa-visually-hidden">Déplacer Rina Andriamana</span>
+  </button>
+</li>
+```
+
+- **Bloc saisi** — `__event--picked`, et la poignée passe à `aria-pressed="true"`.
+- **Cible de dépôt** — `__slot--drop` sur **tous** les créneaux libres, pas
+  seulement celui que le curseur survole : c'est la seule façon de dire au
+  clavier, qui n'a pas de curseur, où le rendez-vous peut aller.
+- **Report en vol** — `__event--moving`, estompé, avec `aria-busy`. Estompé et non
+  remplacé par un squelette : c'est bien ce rendez-vous-là qu'on regarde.
+- **Retour arrière** — `__event--reverted` clignote trois fois. L'animation
+  marque `border-block-color` et `border-inline-end-color` seulement, pour
+  **épargner le liseré de statut** que porte le bord de départ ; elle est coupée
+  par `prefers-reduced-motion`. Jamais seule : la bannière dit pourquoi.
+- **Confirmation de changement de praticien** — `__confirm`, un bandeau au fil de
+  la page en `role="alertdialog"`, et non une fenêtre modale : le bloc vient de
+  bouger sous les yeux de l'opérateur, le recouvrir d'un voile lui cacherait
+  précisément ce sur quoi on lui demande de se prononcer.
+
+Un rendez-vous soldé — honoré, annulé, non présenté — ne porte ni `draggable` ni
+poignée : le serveur refuserait son report.
 
 ### 3.2 Rendez-vous — `appointment.css`
 
