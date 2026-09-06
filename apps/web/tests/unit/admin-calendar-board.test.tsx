@@ -21,6 +21,7 @@ const markDeskAppointmentStatusAction = vi.fn();
 const searchDeskClientsAction = vi.fn();
 const createDeskClientAction = vi.fn();
 const push = vi.fn();
+const replace = vi.fn();
 
 // Le module d'actions est doublé **en entier** : le tiroir de #50 en importe six
 // autres, et un module simulé qui ne les porte pas fait échouer l'import bien
@@ -38,7 +39,7 @@ vi.mock('@/app/(admin)/[tenantSlug]/admin/calendrier/actions', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push, refresh: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push, refresh: vi.fn(), replace }),
 }));
 
 const TIMEZONE = 'Indian/Antananarivo';
@@ -127,6 +128,7 @@ afterEach(() => {
   cleanup();
   loadCalendarRangeAction.mockReset();
   push.mockReset();
+  replace.mockReset();
 });
 
 function renderBoard(
@@ -278,7 +280,11 @@ describe('chargement de la seule plage visible — deuxième critère', () => {
     expect(loadCalendarRangeAction).not.toHaveBeenCalled();
   });
 
-  it('renvoie à la connexion quand la session a expiré', async () => {
+  it('renouvelle la session au lieu de renvoyer à la connexion', async () => {
+    // #458, deuxième critère : la route `admin/session/refresh` existe depuis
+    // #48, et le planning était le seul écran à ne pas en profiter. Il ne renvoie
+    // donc plus à la connexion — c'est la route qui décidera, si le jeton de
+    // rafraîchissement manque lui aussi.
     const user = userEvent.setup();
     loadCalendarRangeAction.mockResolvedValue({
       ok: false,
@@ -290,7 +296,35 @@ describe('chargement de la seule plage visible — deuxième critère', () => {
     await user.click(screen.getByRole('button', { name: 'Jour suivant' }));
 
     await waitFor(() => {
-      expect(push).toHaveBeenCalledWith('/maison-lotus/admin/connexion');
+      expect(replace).toHaveBeenCalled();
+    });
+    expect(push).not.toHaveBeenCalled();
+    // Et c'est la **journée affichée** qui est rendue au retour, pas le planning
+    // du jour — troisième critère.
+    expect(replace).toHaveBeenLastCalledWith(
+      `/${SLUG}/admin/session/refresh?next=${encodeURIComponent(
+        `/${SLUG}/admin/calendrier?date=2026-08-27`,
+      )}`,
+    );
+  });
+
+  it('rend la vue semaine et sa date au retour du renouvellement', async () => {
+    // La vue est dans l'URL (`paths.ts`) : un renouvellement qui la perdrait
+    // ramènerait l'opérateur à la journée courante, sur l'écran qu'un comptoir
+    // garde ouvert huit heures d'affilée.
+    loadCalendarRangeAction.mockResolvedValue({
+      ok: false,
+      code: 'UNAUTHORIZED',
+      message: 'Votre session a expiré.',
+    });
+    renderBoard({ view: 'semaine', date: '2026-08-24' });
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith(
+        `/${SLUG}/admin/session/refresh?next=${encodeURIComponent(
+          `/${SLUG}/admin/calendrier?vue=semaine&date=2026-08-24`,
+        )}`,
+      );
     });
   });
 });

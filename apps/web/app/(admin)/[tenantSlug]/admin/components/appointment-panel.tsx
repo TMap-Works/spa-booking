@@ -93,7 +93,7 @@ interface AppointmentPanelProps {
   readonly onClose: () => void;
   /** Une écriture a abouti, ou un créneau a été perdu : la période est à relire. */
   readonly onReload: () => void;
-  /** Session expirée — le planning renvoie à la connexion. */
+  /** Session expirée — le planning la renouvelle et revient sur la période affichée. */
   readonly onExpired: () => void;
 }
 
