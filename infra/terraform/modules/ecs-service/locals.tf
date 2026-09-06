@@ -45,4 +45,45 @@ locals {
   target_group_names = {
     for name in keys(var.services) : name => "${local.name_prefix}-${name}"
   }
+
+  # --- Traçage distribué ------------------------------------------------------
+
+  # Les services à tracer, sous une forme directement utilisable en `for_each` :
+  # c'est la même sélection pour le sidecar et pour la politique du rôle de
+  # tâche, et les faire diverger donnerait soit un démon sans droit de publier,
+  # soit un droit sans démon pour s'en servir.
+  xray_services = {
+    for name, service in var.services : name => service if service.xray_tracing_enabled
+  }
+
+  # Le SDK X-Ray vise 127.0.0.1:2000 par défaut ; le poser explicitement rend la
+  # dépendance visible dans la console ECS, là où on cherche pourquoi aucun
+  # segment n'arrive. `LOG_ERROR` plutôt que le défaut `RUNTIME_ERROR` : une
+  # requête hors contexte de trace — un travail de fond, un appel au démarrage —
+  # ne doit pas faire lever l'application. Le traçage observe, il n'arbitre pas.
+  xray_environment = {
+    AWS_XRAY_CONTEXT_MISSING = "LOG_ERROR"
+    AWS_XRAY_DAEMON_ADDRESS  = "127.0.0.1:2000"
+  }
+
+  # Variables d'environnement effectives du conteneur applicatif. La map fournie
+  # par l'appelant reste la source de vérité de la précondition anti-secret :
+  # ce qui est ajouté ici sont des adresses et un nom, pas des valeurs d'appelant.
+  #
+  # `AWS_XRAY_TRACING_NAME` n'est pas décoratif : c'est le **nom de service** que
+  # le SDK déclare, et c'est sur lui que la règle d'échantillonnage du module
+  # `observability` filtre (`spa-{env}-*`). Sans lui, le SDK nomme le segment
+  # comme le veut le code applicatif, la règle ne trouve rien à gouverner, et
+  # X-Ray retombe silencieusement sur sa règle `Default` — commune aux trois
+  # environnements, qui partagent un compte. La panne est muette : des traces
+  # arrivent, simplement pas à l'échantillonnage qu'on croit avoir posé.
+  service_environment = {
+    for name, service in var.services :
+    name => merge(
+      service.environment,
+      service.xray_tracing_enabled ? merge(local.xray_environment, {
+        AWS_XRAY_TRACING_NAME = "${local.name_prefix}-${name}"
+      }) : {},
+    )
+  }
 }

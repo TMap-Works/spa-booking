@@ -152,9 +152,46 @@ resource "aws_iam_role" "task" {
   }
 }
 
-# Aucune politique en ligne : les droits applicatifs sont apportés par
-# l'environnement, sous forme de politiques gérées qu'il a lui-même écrites. Ce
-# qui n'est pas demandé n'est pas accordé.
+# Le traçage est la seule exception à la règle de la ligne suivante, et elle est
+# volontaire : le sidecar publie sous le rôle de tâche, et c'est ce module qui
+# décide de l'ajouter. Faire remonter ce droit à l'environnement le séparerait de
+# l'interrupteur qui l'exige — un démon sans droit de publier, ou l'inverse, se
+# diagnostique dans les journaux du sidecar et nulle part ailleurs.
+data "aws_iam_policy_document" "task_xray" {
+  for_each = local.xray_services
+
+  statement {
+    sid    = "XRayPublishTraces"
+    effect = "Allow"
+
+    actions = [
+      "xray:GetSamplingRules",
+      "xray:GetSamplingStatisticSummaries",
+      "xray:GetSamplingTargets",
+      "xray:PutTelemetryRecords",
+      "xray:PutTraceSegments",
+    ]
+
+    # `Resource: "*"` assumé : aucune de ces cinq actions ne porte sur une
+    # ressource nommable. X-Ray n'a d'ARN ni pour un segment, ni pour une règle
+    # d'échantillonnage — les restreindre est impossible, pas seulement
+    # fastidieux. Le périmètre réel est celui du rôle : seules les tâches de ce
+    # service peuvent l'endosser.
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "task_xray" {
+  for_each = local.xray_services
+
+  name   = "${local.name_prefix}-${each.key}-task-xray"
+  role   = aws_iam_role.task[each.key].id
+  policy = data.aws_iam_policy_document.task_xray[each.key].json
+}
+
+# En dehors du traçage, aucune politique en ligne : les droits applicatifs sont
+# apportés par l'environnement, sous forme de politiques gérées qu'il a lui-même
+# écrites. Ce qui n'est pas demandé n'est pas accordé.
 #
 # La clé est « {service}:{rang} » et non « {service}:{arn} ». C'est ce qui rend
 # le module utilisable dans son cas d'usage normal : l'environnement passe une

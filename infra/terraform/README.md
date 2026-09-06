@@ -13,7 +13,8 @@ modules/          modules réutilisables, sans valeur spécifique à un environn
   notifications/  SES — domaine, DKIM, SPF, DMARC, rebonds vers SNS
                   Chaîne d'envoi — file SQS, DLQ, Lambda, alarmes
                   (SQS, EventBridge et Lambda d'envoi : #67)
-  observability/  CloudWatch, alarmes, tableaux de bord
+  observability/  Alarmes CloudWatch (5xx, latence, CPU, connexions, disque),
+                  tableau de bord transverse, échantillonnage X-Ray
 envs/
   dev/ staging/ prod/    composition de modules + terraform.tfvars
 ```

@@ -21,8 +21,8 @@ resource "aws_ecs_task_definition" "this" {
     cpu_architecture        = each.value.cpu_architecture
   }
 
-  container_definitions = jsonencode([
-    merge(
+  container_definitions = jsonencode(concat(
+    [merge(
       {
         name      = each.key
         image     = each.value.image
@@ -36,9 +36,9 @@ resource "aws_ecs_task_definition" "this" {
         # `sort` sur les clés : sans ordre stable, chaque plan réécrirait la
         # définition de tâche et déclencherait un déploiement pour rien.
         environment = [
-          for name in sort(keys(each.value.environment)) : {
+          for name in sort(keys(local.service_environment[each.key])) : {
             name  = name
-            value = each.value.environment[name]
+            value = local.service_environment[each.key][name]
           }
         ]
 
@@ -67,8 +67,47 @@ resource "aws_ecs_task_definition" "this" {
         stopTimeout = 30
       },
       each.value.command == null ? {} : { command = each.value.command },
-    )
-  ])
+    )],
+
+    # --- Sidecar de traçage (CDC §4.11) ---
+    #
+    # Le SDK X-Ray n'appelle pas l'API : il envoie ses segments en UDP sur
+    # 127.0.0.1:2000, où ce démon les agrège et les publie. Sans lui, le code
+    # instrumenté écrit dans le vide sans jamais lever d'erreur — la panne la
+    # plus silencieuse de la chaîne.
+    #
+    # `essential = false` est le point qui compte : un démon qui meurt ne doit
+    # pas emporter la tâche applicative avec lui. Perdre des traces dégrade le
+    # diagnostic ; perdre le service coupe les réservations.
+    #
+    # Aucune réservation de CPU ni de mémoire : en Fargate, un conteneur sans
+    # réservation puise dans l'allocation de la tâche. Fixer ici 32 unités et
+    # 256 Mio les retirerait à l'application sur les plus petits gabarits, où
+    # `cpu = 256` ne laisse pas cette marge.
+    [for _ in range(each.value.xray_tracing_enabled ? 1 : 0) : {
+      name      = "xray-daemon"
+      image     = var.xray_daemon_image
+      essential = false
+
+      portMappings = [{
+        containerPort = 2000
+        protocol      = "udp"
+      }]
+
+      logConfiguration = {
+        logDriver = "awslogs"
+        options = {
+          "awslogs-group"         = aws_cloudwatch_log_group.service[each.key].name
+          "awslogs-region"        = data.aws_region.current.name
+          "awslogs-stream-prefix" = "xray"
+        }
+      }
+
+      # Le démon vide sa mémoire tampon à l'arrêt ; il n'a rien à finir de
+      # servir. Un délai long ne ferait qu'allonger chaque déploiement.
+      stopTimeout = 5
+    }],
+  ))
 
   tags = {
     Name = "${local.name_prefix}-${each.key}"

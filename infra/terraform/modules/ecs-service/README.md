@@ -25,7 +25,8 @@ d'exécution que rien ne garantit.
 | Règle d'écoute | 1 par service | Routage par `host_headers` et/ou `path_patterns` |
 | Groupe de journaux | 1 par service | `/ecs/spa-{env}/{service}`, rétention explicite |
 | Rôle IAM | 2 par service | Exécution **et** tâche, jamais un seul |
-| Définition de tâche | 1 par service | Un conteneur, secrets par ARN |
+| Définition de tâche | 1 par service | Un conteneur, secrets par ARN — plus le sidecar `xray-daemon` si le traçage est activé |
+| Politique de rôle de tâche | 1 par service tracé | `xray:PutTraceSegments` et les quatre actions qui l'accompagnent |
 | Service ECS | 1 par service | Rolling à 100 %, disjoncteur de déploiement armé |
 | Cible + politique d'auto-scaling | 1 par service | Suivi de cible sur le CPU |
 
@@ -147,6 +148,45 @@ n'accepte que les sept premiers champs. Le module tronque de lui-même avant
 d'écrire la politique — accorder le droit sur l'ARN suffixé produirait une
 politique qui n'autorise rien, et un démarrage de tâche en échec.
 
+## Traçage X-Ray
+
+`xray_tracing_enabled = true` sur un service ajoute à sa tâche un second
+conteneur, `xray-daemon`, et accorde à son **rôle de tâche** le droit de publier
+des segments. C'est tout ce que l'infrastructure peut faire : X-Ray ne s'active
+pas sur un service comme une case à cocher, il se collecte.
+
+Le SDK X-Ray n'appelle pas l'API AWS. Il envoie ses segments en **UDP sur
+127.0.0.1:2000**, où ce démon les agrège avant de les publier. Trois
+conséquences :
+
+- sans le sidecar, le code instrumenté écrit dans le vide et ne lève jamais
+  d'erreur — la panne la plus silencieuse de la chaîne ;
+- le démon est déclaré `essential = false` : s'il meurt, la tâche applicative
+  continue. Perdre des traces dégrade le diagnostic, perdre le service coupe les
+  réservations ;
+- il ne réserve ni CPU ni mémoire. En Fargate, un conteneur sans réservation
+  puise dans l'allocation de la tâche ; en fixer une les retirerait à
+  l'application sur les gabarits où `cpu = 256` ne laisse pas cette marge.
+
+Le module pose aussi trois variables dans l'environnement du conteneur
+applicatif :
+
+- `AWS_XRAY_DAEMON_ADDRESS=127.0.0.1:2000` — où le SDK émet ses segments ;
+- `AWS_XRAY_CONTEXT_MISSING=LOG_ERROR` — au défaut `RUNTIME_ERROR`, une
+  opération hors contexte de trace (un travail de fond, un appel au démarrage)
+  ferait **lever l'application**. Le traçage observe, il n'arbitre pas ;
+- `AWS_XRAY_TRACING_NAME=spa-{env}-{service}` — le **nom de service** déclaré
+  par le SDK. C'est sur lui que la règle d'échantillonnage du module
+  `observability` filtre (`spa-{env}-*`) : sans lui, la règle ne gouverne rien
+  et X-Ray retombe sans bruit sur sa règle `Default`, commune aux trois
+  environnements qui partagent le compte.
+
+Ce que le module ne fait pas : la règle d'échantillonnage, qui est une ressource
+de compte et vit dans le module `observability` ; et l'ouverture des segments par
+le code, qui appartient à `apps/api`. Tant que l'API n'est pas instrumentée, la
+sortie `xray_traced_services` liste bien le service, et la console X-Ray reste
+vide — ce n'est pas une panne d'infrastructure.
+
 ## Variables
 
 | Variable | Type | Défaut | Rôle |
@@ -167,6 +207,7 @@ politique qui n'autorise rien, et un démarrage de tâche en échec.
 | `alb_deletion_protection` | `bool` | `false` | `true` en production |
 | `alb_idle_timeout_seconds` | `number` | `60` | Doit rester sous le keep-alive applicatif |
 | `task_egress_rules` | `map(object)` | `{}` | Sorties vers PostgreSQL, Redis |
+| `xray_daemon_image` | `string` | `public.ecr.aws/xray/aws-xray-daemon:3.x` | Sidecar de traçage ; registre public, aucun droit de tirage à accorder |
 
 La clé de `services` sert de nom de conteneur, de famille de définition de tâche
 et de suffixe à toutes les ressources du service. Trois attributs sont
@@ -185,7 +226,7 @@ dit au plan.
 `tasks_security_group_id`, `service_names`, `service_arns`,
 `task_definition_arns`, `task_role_arns`, `task_role_names`,
 `execution_role_arns`, `target_group_arns`, `target_group_arn_suffixes`,
-`log_group_names`.
+`log_group_names`, `xray_traced_services`.
 
 Les sorties par service sont des maps indexées sur la clé de `services`. Cinq
 d'entre elles servent aux modules voisins, en trois usages :
