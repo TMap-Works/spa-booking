@@ -79,7 +79,10 @@
 -- migration additive (aucun retrait), aucun type flottant, aucun instant sans
 -- fuseau. La contrainte d'exclusion elle-même et la borne de l'intervalle sont
 -- vérifiées contre un vrai moteur par
--- `test/appointments-exclusion.integration-spec.ts`.
+-- `test/appointments-exclusion.integration-spec.ts` ; qu'elle sérialise bien les
+-- écritures concurrentes sur un même créneau l'est par
+-- `test/appointments-exclusion.concurrency-spec.ts`, jouée par la cible
+-- `npm run test:concurrency` (#326).
 
 -- CreateExtension
 --

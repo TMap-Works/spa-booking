@@ -16,7 +16,9 @@ import type { AppointmentDraft, RescheduleDraft } from '../appointments.types';
  * Ce que cette suite ne prouve pas, et ne peut pas prouver : que la contrainte
  * existe, qu'elle refuse un chevauchement, qu'une course produit exactement un
  * gagnant. Tout cela est de l'atomicité de PostgreSQL, et se prouve contre lui
- * seul — `test/appointments-exclusion.integration-spec.ts`.
+ * seul : `test/appointments-exclusion.integration-spec.ts` pour la contrainte et
+ * son refus, `test/appointments-exclusion.concurrency-spec.ts` — jouée par la
+ * cible `npm run test:concurrency` (#326) — pour la course.
  *
  * Ce qu'elle prouve, et que le test d'intégration ne montrerait que par
  * intermittence : le **nombre** de tentatives et la classe d'erreur finale. Un
