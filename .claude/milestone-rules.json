@@ -345,6 +345,130 @@
     "60": [
       "api/payments",
       "db:schema"
+    ],
+    "422": [
+      "scripts/milestone-run",
+      "scripts/milestone-supervise",
+      "scripts/tests"
+    ],
+    "423": [
+      "scripts/pr-gate",
+      "scripts/tests"
+    ],
+    "323": [
+      "scripts/milestone-run",
+      "scripts/milestone-supervise",
+      "scripts/tests"
+    ],
+    "411": [
+      "scripts/milestone-arbiter",
+      "scripts/tests"
+    ],
+    "414": [
+      "scripts/milestone-supervise",
+      "scripts/pr-gate",
+      "scripts/tests"
+    ],
+    "427": [
+      ".claude/commands",
+      "scripts/milestone-run",
+      "scripts/tests"
+    ],
+    "426": [
+      "scripts/milestone-supervise",
+      "scripts/pr-gate",
+      "scripts/tests"
+    ],
+    "429": [
+      ".claude/commands",
+      ".claude/skills"
+    ],
+    "430": [
+      ".claude/commands"
+    ],
+    "316": [
+      "api/appointments",
+      "api/availability"
+    ],
+    "442": [
+      "api/availability",
+      "contracts:shared",
+      "web/availability"
+    ],
+    "313": [
+      "api/appointments",
+      "api/crm"
+    ],
+    "447": [
+      "api/core",
+      "api/payments"
+    ],
+    "452": [
+      "api/crm",
+      "contracts:shared",
+      "web/crm"
+    ],
+    "421": [
+      "api/catalog",
+      "web/catalog"
+    ],
+    "456": [
+      "api/core",
+      "api/crm"
+    ],
+    "463": [
+      "api/appointments",
+      "api/availability",
+      "api/catalog",
+      "api/crm",
+      "api/identity",
+      "api/payments",
+      "ci:workflows",
+      "contracts:shared",
+      "docker",
+      "root:deps"
+    ],
+    "465": [
+      "api/appointments",
+      "api/crm",
+      "packages/shared/src/errors"
+    ],
+    "458": [
+      "web/appointments",
+      "web/catalog",
+      "web/identity",
+      "web/payments"
+    ],
+    "54": [
+      "web/api-client",
+      "web/crm",
+      "web/styles-admin"
+    ],
+    "455": [
+      "web/api-client",
+      "web/catalog"
+    ],
+    "351": [
+      "web/styles-components",
+      "web/tunnel"
+    ],
+    "417": [
+      "api/identity/tests"
+    ],
+    "478": [
+      "docs/api-readme"
+    ],
+    "481": [
+      "web/availability",
+      "web/tunnel"
+    ],
+    "484": [
+      "web/admin-rail"
+    ],
+    "489": [
+      "scripts/milestone-run",
+      "scripts/milestone-supervise",
+      "scripts/tests"
     ]
   },
   "depends": {
