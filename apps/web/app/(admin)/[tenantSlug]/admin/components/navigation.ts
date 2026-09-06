@@ -1,10 +1,12 @@
 import { hasAtLeastRole, type UserRole } from '@spa/shared';
 
+import { adminClientsPath } from '../clients/paths';
 import {
   adminCalendarPath,
   adminCatalogPath,
   adminSettingsPath,
 } from '../paths';
+import { adminStaffPath } from '../personnel/paths';
 
 /**
  * Le sommaire du back-office — **la liste, pas son rendu** (#48, deuxième et
@@ -98,10 +100,20 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
     {
       key: 'clients',
       label: 'Clients',
-      href: null,
-      // `GET /v1/customers` — @AuthAtLeast('STAFF').
+      /*
+       * Le fichier client est servi depuis #54 : l'entrée porte donc son chemin,
+       * et l'écran cesse de n'être atteignable qu'en tapant son URL (#480).
+       *
+       * `adminClientsPath(tenantSlug)` sans vue : le rail ouvre le fichier
+       * entier, sans terme, sans page et sans fiche. Y figer une recherche
+       * ferait du sommaire un favori de quelqu'un d'autre.
+       */
+      href: adminClientsPath(tenantSlug),
+      // `GET /v1/customers` — @AuthAtLeast('STAFF'). Le fuseau vient de la
+      // vitrine publique, comme sur le planning : rien sur cet écran ne demande
+      // `GET /v1/tenant`, qui l'aurait refermé au rang staff.
       minimumRole: 'staff',
-      upcoming: 'Fiches clients — écran en cours de livraison (#54).',
+      upcoming: null,
     },
     {
       key: 'prestations',
@@ -114,10 +126,28 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
     {
       key: 'personnel',
       label: 'Personnel',
-      href: null,
-      // Créer et modifier un compte praticien — @AuthAtLeast('MANAGER').
-      minimumRole: 'manager',
-      upcoming: 'Personnel et horaires — écran en cours de livraison (#53).',
+      // Le personnel et les fiches praticien sont servis depuis #53 (#480).
+      href: adminStaffPath(tenantSlug),
+      /*
+       * `staff`, et non le `manager` que cette entrée annonçait avant d'avoir un
+       * écran à désigner.
+       *
+       * Le rang annoncé est celui de l'`@AuthAtLeast` des routes que l'écran
+       * **appelle**, et toutes les lectures de cette section sont au seuil
+       * `STAFF` : `GET /v1/users` et `GET /v1/staff` pour la liste,
+       * `GET /v1/staff-schedule`, `GET /v1/staff-time-off` et
+       * `GET /v1/services/{id}/staff` pour la fiche d'un praticien. Les
+       * écritures — inviter, changer un rôle, enregistrer des horaires, poser un
+       * congé — sont au seuil `MANAGER` ou `ADMIN`, et les deux écrans les
+       * masquent déjà à qui ne les a pas (`canManage`, `canAdminister`) : un
+       * praticien ouvre la section en lecture, sans jamais rencontrer un 403.
+       *
+       * Annoncer `manager` cachait donc un écran qui fonctionne — la variante
+       * exacte du défaut que ce ticket corrige, et celle que #458 avait déjà
+       * corrigée sur le planning.
+       */
+      minimumRole: 'staff',
+      upcoming: null,
     },
     {
       key: 'encaissement',

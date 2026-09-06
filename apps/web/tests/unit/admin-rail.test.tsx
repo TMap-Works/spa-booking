@@ -62,6 +62,14 @@ describe('rail — la navigation', () => {
     expect(screen.getByRole('link', { name: 'Prestations' }).getAttribute('href')).toBe(
       '/maison-lotus/admin/catalogue',
     );
+    // Branchés depuis #480 : les deux écrans existaient et n'étaient
+    // atteignables qu'en tapant leur URL.
+    expect(screen.getByRole('link', { name: 'Clients' }).getAttribute('href')).toBe(
+      '/maison-lotus/admin/clients',
+    );
+    expect(screen.getByRole('link', { name: 'Personnel' }).getAttribute('href')).toBe(
+      '/maison-lotus/admin/personnel',
+    );
   });
 
   it('annonce les sections non livrées sans en faire des liens', () => {
@@ -69,12 +77,12 @@ describe('rail — la navigation', () => {
 
     // Le nom accessible porte la raison : sans elle, un lecteur d'écran
     // n'annoncerait qu'un mot inerte.
-    expect(screen.queryByRole('link', { name: /Clients/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Reporting/ })).toBeNull();
 
-    const clients = screen.getByText('Clients');
+    const reporting = screen.getByText('Reporting');
 
-    expect(clients.getAttribute('aria-disabled')).toBe('true');
-    expect(clients.textContent).toMatch(/#54/);
+    expect(reporting.getAttribute('aria-disabled')).toBe('true');
+    expect(reporting.textContent).toMatch(/à venir/);
   });
 
   it('marque la section courante, paramètres d’URL compris', () => {
