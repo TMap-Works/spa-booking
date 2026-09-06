@@ -17,11 +17,12 @@ import type {
   PublicService,
   UtcInstant,
 } from '@spa/shared';
-import { act, cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SlotStep } from '@/app/(booking)/[tenantSlug]/reservation/steps/slot-step';
+import { addCalendarDays } from '@/lib/booking/calendar';
 
 import { service, tenant } from './fixtures';
 
@@ -52,8 +53,10 @@ vi.mock('@/lib/format', async (importActual) => {
 /** Le salon est à Antananarivo (UTC+3) : 06:00 UTC s'affiche « 09:00 ». */
 const MATIN = '2026-09-01T06:00:00.000Z' as UtcInstant;
 const APRES_MIDI = '2026-09-01T11:00:00.000Z' as UtcInstant;
+const MARDI_APRES_MIDI = '2026-09-02T12:00:00.000Z' as UtcInstant;
 const LUNDI = '2026-09-01' as CalendarDate;
 const MARDI = '2026-09-02' as CalendarDate;
+const MERCREDI = '2026-09-03' as CalendarDate;
 
 const HERY = service.staff[0]?.id ?? '';
 const NIVO = '55555555-5555-4555-8555-555555555555';
@@ -159,7 +162,7 @@ describe('créneaux par journée, dans le fuseau du salon', () => {
     expect(screen.getAllByRole('button', { name: '09:00' })).toHaveLength(1);
   });
 
-  it('garde les journées complètes dans le sélecteur, inertes', async () => {
+  it('garde les journées complètes dans la barre de dates, inertes', async () => {
     // Le serveur les renvoie avec `slots: []` plutôt que de les omettre : les
     // retirer ferait croire à un salon fermé ce jour-là.
     loadAvailabilityAction.mockResolvedValue({
@@ -171,12 +174,14 @@ describe('créneaux par journée, dans le fuseau du salon', () => {
     });
     renderStep();
 
-    const journees = await screen.findByLabelText('Journée');
-    const complet = screen.getByRole('option', { name: /1 septembre 2026 — complet/ });
+    const complet = await screen.findByRole('radio', { name: /1 septembre 2026 — complet/ });
+    const ouverte = screen.getByRole('radio', { name: /2 septembre 2026 — 1 créneau/ });
 
-    // La journée ouverte est retenue d'office, la journée pleine reste lisible.
-    expect(journees).toHaveProperty('value', MARDI);
-    expect(complet).toHaveProperty('disabled', true);
+    // La journée ouverte est retenue d'office, la journée pleine reste lisible
+    // mais hors du parcours du clavier — `keyboard-navigation.md`.
+    expect(ouverte.getAttribute('aria-checked')).toBe('true');
+    expect(complet.getAttribute('aria-disabled')).toBe('true');
+    expect(complet).toHaveProperty('tabIndex', -1);
   });
 });
 
@@ -370,6 +375,91 @@ describe('états de chargement et état vide', () => {
     expect(screen.getByRole('button', { name: 'Voir tous les praticiens' })).toBeDefined();
     expect(screen.getByText('Service indisponible.')).toBeDefined();
   });
+
+  it('offre de réessayer sans attendre la revalidation', async () => {
+    // `states.md` étape 3. La revalidation périodique rattrape déjà seule, mais
+    // une minute devant un écran en panne est très longue, et rien n'y dit que
+    // quelque chose est en train de se faire.
+    loadAvailabilityAction.mockResolvedValue({
+      ok: false,
+      code: 'INTERNAL_ERROR',
+      message: 'Service indisponible.',
+    });
+    const user = renderStep();
+
+    expect(await screen.findByText('Service indisponible.')).toBeDefined();
+
+    loadAvailabilityAction.mockResolvedValue({ ok: true, data: journeeOrdinaire });
+    await user.click(screen.getByRole('button', { name: 'Réessayer' }));
+
+    expect(await screen.findByRole('button', { name: '09:00' })).toBeDefined();
+    expect(screen.queryByText('Service indisponible.')).toBeNull();
+  });
+
+  it('élargit la fenêtre au-delà des quatorze jours sur demande', async () => {
+    // `states.md` étape 3 : « Vide (aucune dispo sur toute la plage) : proposer
+    // d'élargir la plage ». Le contrat en autorise trente et un.
+    loadAvailabilityAction.mockResolvedValue({
+      ok: true,
+      data: availability([{ date: LUNDI, slots: [] }]),
+    });
+    const user = renderStep();
+
+    expect(await screen.findByText(/^Aucun créneau sur les 14 prochains jours$/)).toBeDefined();
+
+    await user.click(screen.getByRole('button', { name: 'Voir plus de jours' }));
+
+    expect(await screen.findByText(/^Aucun créneau sur les 31 prochains jours$/)).toBeDefined();
+
+    const query = loadAvailabilityAction.mock.calls.at(-1)?.[1] as {
+      from: CalendarDate;
+      to: CalendarDate;
+    };
+
+    // Trente et une journées, bornes comprises — la borne du contrat, pas une
+    // de plus : `availabilityQuerySchema` refuserait la requête.
+    expect(addCalendarDays(query.from, 30)).toBe(query.to);
+    // Une fois la fenêtre élargie, le bouton n'a plus rien à élargir.
+    expect(screen.queryByRole('button', { name: 'Voir plus de jours' })).toBeNull();
+  });
+
+  it('rattrape le focus que le bouton emporte en disparaissant', async () => {
+    // Le clic efface l'état vide qui portait le bouton : sans rattrapage, le
+    // focus retombe sur `<body>` et le clavier repart du haut du document juste
+    // après un geste délibéré.
+    loadAvailabilityAction.mockResolvedValue({
+      ok: true,
+      data: availability([{ date: LUNDI, slots: [] }]),
+    });
+    const user = renderStep();
+
+    await screen.findByRole('button', { name: 'Voir plus de jours' });
+    await user.click(screen.getByRole('button', { name: 'Voir plus de jours' }));
+
+    const vide = await screen.findByText(/^Aucun créneau sur les 31 prochains jours$/);
+
+    // Le focus se pose sur l'état vide lui-même, qui dit en `role="status"` ce
+    // que l'élargissement a donné — et non sur le squelette d'attente, qu'un
+    // second rendu emporterait aussitôt.
+    expect(document.activeElement).not.toBe(document.body);
+    expect((document.activeElement as HTMLElement).contains(vide)).toBe(true);
+  });
+
+  it('rattrape le focus sur la barre de dates quand l’élargissement rend des créneaux', async () => {
+    loadAvailabilityAction.mockResolvedValue({
+      ok: true,
+      data: availability([{ date: LUNDI, slots: [] }]),
+    });
+    const user = renderStep();
+
+    await screen.findByRole('button', { name: 'Voir plus de jours' });
+    loadAvailabilityAction.mockResolvedValue({ ok: true, data: journeeOrdinaire });
+    await user.click(screen.getByRole('button', { name: 'Voir plus de jours' }));
+
+    await screen.findByRole('grid');
+
+    expect(document.activeElement).toBe(screen.getByRole('radio', { checked: true }));
+  });
 });
 
 describe('rafraîchissement des disponibilités', () => {
@@ -423,6 +513,123 @@ describe('rafraîchissement des disponibilités', () => {
     // information disponible, et l'avis dit qu'ils peuvent avoir vieilli.
     expect(screen.getByRole('button', { name: '09:00' })).toBeDefined();
     expect(screen.getByText('Service indisponible.')).toBeDefined();
+  });
+});
+
+/**
+ * La barre de dates — `keyboard-navigation.md`, « Barre de dates », et
+ * `states.md` étape 3 pour son maintien pendant le chargement.
+ */
+describe('barre de dates', () => {
+  /**
+   * La barre est là **avant** la réponse — c'est tout l'objet de `states.md`
+   * étape 3 —, et elle porte alors la fenêtre civile calculée depuis
+   * *aujourd'hui*. Interroger une journée du jeu d'essai sans attendre la
+   * réponse tomberait donc sur une pastille de cette fenêtre-là, et le test
+   * dépendrait du jour où la suite tourne. La grille, elle, n'existe qu'une fois
+   * la réponse reçue : elle fait un point d'attente sûr.
+   */
+  const chargee = async (): Promise<HTMLElement> => screen.findByRole('grid');
+
+  const deuxJournees = availability([
+    { date: LUNDI, slots: [slot(MATIN, HERY)] },
+    { date: MARDI, slots: [slot(MARDI_APRES_MIDI, HERY)] },
+  ]);
+
+  it('reste à l’écran et opérable pendant le chargement', async () => {
+    // `states.md` : « grille de créneaux en squelette, **en gardant la barre de
+    // dates interactive** pour changer de jour sans attendre ». La fenêtre est
+    // une suite de dates civiles : le navigateur la pose sans le serveur.
+    let libere: (value: unknown) => void = () => undefined;
+
+    loadAvailabilityAction.mockReturnValue(
+      new Promise((resolve) => {
+        libere = resolve;
+      }),
+    );
+    renderStep();
+
+    const barre = screen.getByRole('radiogroup', { name: 'Journée' });
+
+    expect(within(barre).getAllByRole('radio')).toHaveLength(14);
+    expect(screen.getByText('Chargement des disponibilités…')).toBeDefined();
+
+    await act(async () => {
+      libere({ ok: true, data: journeeOrdinaire });
+    });
+
+    expect(screen.getByRole('button', { name: '09:00' })).toBeDefined();
+  });
+
+  it('ne met qu’une journée dans l’ordre de tabulation', async () => {
+    loadAvailabilityAction.mockResolvedValue({ ok: true, data: deuxJournees });
+    renderStep();
+    await chargee();
+
+    const lundi = screen.getByRole('radio', { name: /1 septembre 2026/ });
+    const mardi = screen.getByRole('radio', { name: /2 septembre 2026/ });
+
+    expect(lundi).toHaveProperty('tabIndex', 0);
+    expect(mardi).toHaveProperty('tabIndex', -1);
+  });
+
+  it('change de journée aux flèches, et la grille suit', async () => {
+    loadAvailabilityAction.mockResolvedValue({ ok: true, data: deuxJournees });
+    const user = renderStep();
+    await chargee();
+
+    const lundi = screen.getByRole('radio', { name: /1 septembre 2026/ });
+    const mardi = screen.getByRole('radio', { name: /2 septembre 2026/ });
+
+    lundi.focus();
+    await user.keyboard('{ArrowRight}');
+
+    expect(document.activeElement).toBe(mardi);
+    expect(mardi.getAttribute('aria-checked')).toBe('true');
+    // « Changer de jour recharge la grille » — le créneau du lundi a cédé la
+    // place à celui du mardi, sans nouvel appel au serveur : la fenêtre entière
+    // tient dans une seule réponse.
+    expect(screen.getByRole('button', { name: '15:00' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: '09:00' })).toBeNull();
+  });
+
+  it('ne boucle pas aux bords de la barre', async () => {
+    loadAvailabilityAction.mockResolvedValue({ ok: true, data: deuxJournees });
+    const user = renderStep();
+    await chargee();
+
+    const lundi = screen.getByRole('radio', { name: /1 septembre 2026/ });
+    const mardi = screen.getByRole('radio', { name: /2 septembre 2026/ });
+
+    lundi.focus();
+    await user.keyboard('{ArrowLeft}');
+    expect(document.activeElement).toBe(lundi);
+
+    await user.keyboard('{ArrowRight}{ArrowRight}');
+    expect(document.activeElement).toBe(mardi);
+  });
+
+  it('saute les journées complètes', async () => {
+    // Elles restent affichées — le serveur les rend vides pour qu'on écrive
+    // « complet » plutôt que de laisser un trou —, mais le clavier ne s'y pose
+    // jamais : `keyboard-navigation.md`, « jamais focus, jamais sélectionnables ».
+    loadAvailabilityAction.mockResolvedValue({
+      ok: true,
+      data: availability([
+        { date: LUNDI, slots: [slot(MATIN, HERY)] },
+        { date: MARDI, slots: [] },
+        { date: MERCREDI, slots: [slot('2026-09-03T12:00:00.000Z' as UtcInstant, HERY)] },
+      ]),
+    });
+    const user = renderStep();
+    await chargee();
+
+    const lundi = screen.getByRole('radio', { name: /1 septembre 2026/ });
+
+    lundi.focus();
+    await user.keyboard('{ArrowRight}');
+
+    expect(document.activeElement).toBe(screen.getByRole('radio', { name: /3 septembre 2026/ }));
   });
 });
 
