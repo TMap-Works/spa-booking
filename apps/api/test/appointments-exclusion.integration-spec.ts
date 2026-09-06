@@ -721,7 +721,7 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
    * La fiche cliente, écrite par `crm` **dans la transaction du rendez-vous**
    * (#313).
    *
-   * Trois choses ne se prouvent qu'ici, contre un vrai moteur :
+   * Quatre choses ne se prouvent qu'ici, contre un vrai moteur :
    *
    * 1. le `ROLLBACK` d'un créneau refusé **emporte la fiche**. C'est le deuxième
    *    critère du ticket, et il n'est tenu par aucun code applicatif : il est tenu
@@ -731,7 +731,11 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
    *    produirait — donc jamais par un 500 ;
    * 3. la frontière du tenant tient sur cette écriture aussi : deux salons qui
    *    reçoivent la **même** adresse obtiennent deux fiches distinctes, et aucun
-   *    ne voit celle de l'autre.
+   *    ne voit celle de l'autre ;
+   * 4. le rôle jugé est celui de l'instant de l'insertion, et non celui d'un
+   *    instantané antérieur (#468) — la lecture est descendue au SQL brut, sous
+   *    `FOR SHARE` et sous son propre filtre `tenant_id`, et un double en mémoire
+   *    ne dit que ce que la requête *demande*, jamais ce que le moteur en fait.
    */
   describe('la fiche cliente et la transaction du rendez-vous (#313)', () => {
     /** Les lignes `users` de cet établissement portant cette adresse. */
@@ -828,12 +832,56 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
       ).toEqual([{ role: 'MANAGER' }]);
     });
 
+    it('juge le rôle **au moment de l’insertion**, pas celui d’avant (#468)', async () => {
+      // Le pendant, côté tunnel public, du cas que #465 a écrit pour le comptoir
+      // — et ce que #468 est venu tenir. La résolution relit le rôle **dans** la
+      // transaction, sous `FOR SHARE`, et ne s'appuie sur rien qui ait été lu
+      // ailleurs : une fiche promue au personnel entre deux réservations ne passe
+      // plus, alors que les deux clés étrangères de `appointments.client_id` —
+      // existence et établissement — resteraient parfaitement satisfaites.
+      //
+      // Un double en mémoire ne prouverait rien ici : il ne dirait que ce que la
+      // requête *demande*, jamais ce que le moteur en fait.
+      const première = new Date('2027-01-18T09:00:00.000Z');
+      const seconde = new Date('2027-01-18T14:00:00.000Z');
+      const email = `promue-${première.getTime()}@example.test`;
+
+      const booked = await inTenant(salon.tenantId, () =>
+        repository.create(
+          draft(salon, première, new Date(première.getTime() + ONE_HOUR), salon.staffId, email),
+        ),
+      );
+
+      await prismaUnscoped.user.update({
+        where: { id: booked.clientId },
+        data: { role: 'STAFF' },
+      });
+
+      const refused = await inTenant(salon.tenantId, () =>
+        repository
+          .create(
+            draft(salon, seconde, new Date(seconde.getTime() + ONE_HOUR), salon.staffId, email),
+          )
+          .catch((error: unknown) => error),
+      );
+
+      expect(refused).toMatchObject({ code: 'CLIENT_EMAIL_NOT_BOOKABLE', status: 409 });
+      // Le refus est prononcé **dans** la transaction : il n'y a rien à défaire.
+      expect(
+        await prismaUnscoped.appointment.count({
+          where: { tenantId: salon.tenantId, startsAt: seconde },
+        }),
+      ).toBe(0);
+    });
+
     it('ne partage jamais une fiche entre deux établissements', async () => {
       // Le cinquième critère du ticket. L'unicité de l'adresse est
       // `(tenant_id, email)` : la même personne cliente de deux salons a deux
-      // fiches, et un historique par salon. Le `where` de la résolution ne porte
-      // que l'adresse — c'est l'extension qui y ajoute le tenant, et c'est elle
-      // qu'on exerce ici.
+      // fiches, et un historique par salon. Depuis #468 la résolution lit en SQL
+      // brut, sous `FOR SHARE` : ce n'est donc plus l'extension de scoping qui
+      // borne cette lecture — elle ne couvre pas le SQL brut (ADR 0006) — mais le
+      // `tenant_id = …` que `resolveClientWithin` écrit lui-même depuis le
+      // contexte de requête. C'est ce filtre-là qu'on exerce ici.
       const start = new Date('2027-01-15T09:00:00.000Z');
       const end = new Date(start.getTime() + ONE_HOUR);
       const email = `partagee-${start.getTime()}@example.test`;

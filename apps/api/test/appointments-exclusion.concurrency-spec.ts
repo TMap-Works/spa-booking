@@ -53,7 +53,11 @@ import {
  *    aboutir qu'une (#40) ;
  * 6. deux réservations d'invité concurrentes sur la **même adresse inconnue**
  *    n'écrivent qu'une fiche et aboutissent toutes les deux (#313) — la perdante
- *    de `@@unique([tenant_id, email])` est rejouée, jamais refusée.
+ *    de `@@unique([tenant_id, email])` est rejouée, jamais refusée ;
+ * 7. une réservation d'invité **attend** une promotion de la fiche en cours au
+ *    lieu d'en lire l'ancien rôle (#468) — c'est le seul cas qui établisse que le
+ *    `FOR SHARE` de `resolveClientWithin` verrouille vraiment, la suite unitaire
+ *    ne vérifiant que ce que la requête *demande*.
  *
  * Le décor — base jetable, dépôt scopé, établissement complet — est celui de
  * `appointments-exclusion.harness.ts`, partagé avec la suite d'intégration
@@ -314,6 +318,100 @@ describe('Courses sur la contrainte d’exclusion — contre un vrai PostgreSQL'
       expect(new Set(fulfilled.map((outcome) => outcome.value.clientId))).toEqual(
         new Set([files[0]?.id]),
       );
+    });
+  });
+
+  /**
+   * La course sur le **rôle** de la fiche, refermée par #468.
+   *
+   * `resolveClientWithin` lisait le rôle sans verrou jusque-là. Sous `READ
+   * COMMITTED` chaque instruction prend son propre instantané : la lecture voyait
+   * `CLIENT`, une transaction concurrente promouvait la fiche au personnel et
+   * validait, et l'insertion passait — les deux clés étrangères de
+   * `appointments.client_id` prouvent l'existence de la ligne et son
+   * établissement, jamais son rôle. C'était la « vérification applicative suivie
+   * d'un `INSERT` » que booking-engine §1 interdit.
+   *
+   * Ce cas est le seul du dépôt à établir que le `FOR SHARE` **verrouille
+   * vraiment**, et non seulement que la requête le demande : la suite unitaire
+   * lit une chaîne dans un double, ce qui ne dit rien du moteur. Le protocole est
+   * donc celui d'une vraie course, ordonnée par un verrou de ligne réel :
+   *
+   * 1. une seconde connexion ouvre une transaction et promeut la fiche, sans
+   *    valider — la ligne est alors verrouillée en exclusif ;
+   * 2. la réservation d'invité démarre et **attend** sur ce verrou. Sans
+   *    `FOR SHARE` elle ne l'attendrait pas : elle lirait l'ancienne version,
+   *    encore `CLIENT`, et poserait le rendez-vous ;
+   * 3. la promotion valide, la réservation suit la chaîne de mise à jour, relit
+   *    `STAFF`, et refuse.
+   */
+  describe('la promotion concurrente de la fiche (#468)', () => {
+    it('attend la promotion en cours au lieu de lire l’ancien rôle', async () => {
+      const start = new Date('2026-10-06T09:00:00.000Z');
+      const end = new Date(start.getTime() + ONE_HOUR);
+      const email = `promotion-${start.getTime()}@example.test`;
+
+      const fiche = await prismaUnscoped.user.create({
+        data: {
+          tenantId: salon.tenantId,
+          email,
+          role: 'CLIENT',
+          firstName: 'Alice',
+          lastName: 'Martin',
+        },
+      });
+
+      // Le verrou est relâché **par le test**, pas par une horloge : une
+      // temporisation dans la transaction qui promeut rendrait le cas dépendant
+      // de la charge de la machine.
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+
+      // Et il est **pris** avant que la réservation ne démarre. Sans ce second
+      // signal, les deux transactions partent ensemble et c'est l'ordonnanceur
+      // qui décide laquelle atteint la ligne en premier : la réservation gagne
+      // dès que le pool de connexions est chaud, lit `CLIENT` sans que rien ne
+      // la bloque, et le cas passe pour la mauvaise raison — vert isolé, rouge
+      // en suite. Ce que ce test doit prouver, c'est l'attente sur un verrou
+      // déjà posé ; il faut donc qu'il le soit.
+      let promoted!: () => void;
+      const locked = new Promise<void>((resolve) => {
+        promoted = resolve;
+      });
+
+      const promotion = prismaUnscoped.$transaction(
+        async (tx) => {
+          await tx.user.update({ where: { id: fiche.id }, data: { role: 'STAFF' } });
+          promoted();
+          await held;
+        },
+        { maxWait: 10_000, timeout: 20_000 },
+      );
+
+      await locked;
+
+      const booking = inTenant(salon.tenantId, () =>
+        repository
+          .create(draft(salon, start, end, salon.staffId, email))
+          .catch((error: unknown) => error),
+      );
+
+      // De quoi laisser la réservation atteindre la lecture verrouillée et s'y
+      // bloquer. Si elle ne s'y bloquait pas — `FOR SHARE` retiré — elle aurait
+      // déjà lu `CLIENT` et posé le rendez-vous avant ce relâchement.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      release();
+      await promotion;
+
+      expect(await booking).toMatchObject({ code: 'CLIENT_EMAIL_NOT_BOOKABLE', status: 409 });
+      // Et rien n'a été posé : le refus tombe dans la transaction d'insertion.
+      expect(
+        await prismaUnscoped.appointment.count({
+          where: { tenantId: salon.tenantId, startsAt: start },
+        }),
+      ).toBe(0);
     });
   });
 
