@@ -4,6 +4,8 @@ import { getTenantId } from '../../../common/tenant';
 import type { AppointmentStatus } from '../../appointments/appointment-status';
 import { CustomerEmailTakenError } from '../crm.errors';
 import type {
+  AnonymizationOutcome,
+  AnonymizedIdentity,
   CrmRepository,
   CustomerPatch,
   CustomerSearchCriteria,
@@ -12,7 +14,12 @@ import type {
   VisitBounds,
   VisitCountByStatus,
 } from '../crm.repository';
-import type { Customer, CustomerSummary, CustomerVisit } from '../crm.types';
+import type {
+  Customer,
+  CustomerSummary,
+  CustomerVisit,
+  ExportedAppointment,
+} from '../crm.types';
 
 /**
  * Doubles du module `crm`, partagés par ses suites unitaires et par les suites
@@ -35,7 +42,11 @@ import type { Customer, CustomerSummary, CustomerVisit } from '../crm.types';
  *    la traduction du code Prisma `P2002` ;
  * 5. la **valeur de retour d'un `updateMany` scopé** — `false` pour un
  *    identifiant inconnu, d'un autre établissement *ou* d'un compte du
- *    personnel, indistinctement. C'est cette valeur-là qui devient le 404.
+ *    personnel, indistinctement. C'est cette valeur-là qui devient le 404 ;
+ * 6. l'**écriture conditionnelle de l'anonymisation** (#81) — une fiche déjà
+ *    anonymisée n'est pas réécrite, et les textes libres de ses rendez-vous
+ *    sont vidés du même geste que sa fiche. Un double qui n'anonymiserait que
+ *    la fiche laisserait passer la moitié du droit à l'oubli.
  */
 
 /** Une ligne `users`, telle que le double la stocke. */
@@ -50,9 +61,22 @@ export interface StoredCustomer {
   internalNote: string | null;
   isActive: boolean;
   createdAt: Date;
+  /** Les trois colonnes de #81 — le consentement et sa preuve, l'anonymisation. */
+  marketingConsent: boolean;
+  marketingConsentAt: Date | null;
+  anonymizedAt: Date | null;
+  /**
+   * L'empreinte de mot de passe, que le double ne sert à personne mais que
+   * l'anonymisation doit pouvoir vider (#81).
+   *
+   * Aucune projection ne la lit : elle n'est là que pour qu'une suite puisse
+   * vérifier qu'elle a bien été effacée, ce qui est précisément ce que le vrai
+   * dépôt écrit et que rien d'autre ne prouverait.
+   */
+  passwordHash: string | null;
 }
 
-/** Une ligne `appointments`, réduite à ce que l'historique en lit. */
+/** Une ligne `appointments`, réduite à ce que l'historique et l'export en lisent. */
 export interface StoredVisit {
   tenantId: string;
   id: string;
@@ -64,6 +88,12 @@ export interface StoredVisit {
   staffName: string;
   priceAmountMinor: number;
   priceCurrency: string;
+  /** Les trois textes libres que l'export restitue et que l'anonymisation vide. */
+  clientNote: string | null;
+  staffNote: string | null;
+  cancellationReason: string | null;
+  cancelledAt: Date | null;
+  createdAt: Date;
 }
 
 const HONORED: AppointmentStatus = 'COMPLETED';
@@ -88,6 +118,10 @@ export class FakeCrmRepository {
     internalNote?: string | null;
     isActive?: boolean;
     role?: string;
+    marketingConsent?: boolean;
+    marketingConsentAt?: Date | null;
+    anonymizedAt?: Date | null;
+    passwordHash?: string | null;
   }): StoredCustomer {
     const stored: StoredCustomer = {
       tenantId: input.tenantId,
@@ -100,6 +134,12 @@ export class FakeCrmRepository {
       internalNote: input.internalNote ?? null,
       isActive: input.isActive ?? true,
       createdAt: new Date('2026-09-01T08:00:00.000Z'),
+      // Le défaut est celui de la colonne : `false`, jamais `true` — le
+      // consentement est un acte positif (#81).
+      marketingConsent: input.marketingConsent ?? false,
+      marketingConsentAt: input.marketingConsentAt ?? null,
+      anonymizedAt: input.anonymizedAt ?? null,
+      passwordHash: input.passwordHash ?? null,
     };
     this.customers.push(stored);
     return stored;
@@ -115,6 +155,10 @@ export class FakeCrmRepository {
     staffName?: string;
     priceAmountMinor?: number;
     priceCurrency?: string;
+    clientNote?: string | null;
+    staffNote?: string | null;
+    cancellationReason?: string | null;
+    cancelledAt?: Date | null;
   }): StoredVisit {
     const startsAt = input.startsAt ?? new Date('2026-08-01T09:00:00.000Z');
     const stored: StoredVisit = {
@@ -128,6 +172,11 @@ export class FakeCrmRepository {
       staffName: input.staffName ?? 'Camille',
       priceAmountMinor: input.priceAmountMinor ?? 3500,
       priceCurrency: input.priceCurrency ?? 'EUR',
+      clientNote: input.clientNote ?? null,
+      staffNote: input.staffNote ?? null,
+      cancellationReason: input.cancellationReason ?? null,
+      cancelledAt: input.cancelledAt ?? null,
+      createdAt: new Date(startsAt.getTime() - 86_400_000),
     };
     this.visits.push(stored);
     return stored;
@@ -167,6 +216,8 @@ export class FakeCrmRepository {
     lastName: string;
     phone: string | null;
     internalNote: string | null;
+    marketingConsent: boolean;
+    marketingConsentAt: Date | null;
   }): Promise<Customer> {
     const tenantId = this.requireTenant();
 
@@ -196,6 +247,100 @@ export class FakeCrmRepository {
     }
     row.isActive = isActive;
     return true;
+  }
+
+  /**
+   * Tous les rendez-vous de la fiche, du plus ancien au plus récent — la
+   * matière de l'export (#81).
+   *
+   * Non borné, comme le vrai : un export tronqué n'est pas un export. Le
+   * `visitsOf` privé conserve le filtre de tenant, sans lequel un export
+   * franchirait la frontière que ce module protège.
+   */
+  public async allAppointmentsForExport(customerId: string): Promise<ExportedAppointment[]> {
+    return this.visitsOf(customerId)
+      .sort(
+        (left, right) =>
+          left.startsAt.getTime() - right.startsAt.getTime() || left.id.localeCompare(right.id),
+      )
+      .map((row) => ({
+        id: row.id,
+        status: row.status,
+        startsAt: row.startsAt,
+        endsAt: row.endsAt,
+        serviceName: row.serviceName,
+        staffName: row.staffName,
+        priceAmountMinor: row.priceAmountMinor,
+        priceCurrency: row.priceCurrency,
+        clientNote: row.clientNote,
+        staffNote: row.staffNote,
+        cancelledAt: row.cancelledAt,
+        cancellationReason: row.cancellationReason,
+        createdAt: row.createdAt,
+      }));
+  }
+
+  /**
+   * Anonymise une fiche — les mêmes propriétés que le vrai, et elles comptent
+   * toutes les cinq (#81) :
+   *
+   * 1. le **scoping** et le filtre de rôle, par `find` — une fiche du voisin ou
+   *    un compte du personnel rend `not-found` ;
+   * 2. l'écriture **conditionnelle** à `anonymizedAt === null`, qui rend
+   *    l'opération idempotente et distingue `already-anonymized` ;
+   * 3. la **règle des rendez-vous à venir**, tranchée ici et non par
+   *    l'appelant : c'est la propriété que le vrai tient par sa transaction, et
+   *    un double qui la laisserait au service ferait passer une vérification
+   *    applicative pour un contrôle atomique ;
+   * 4. le **geste unique** — la fiche et les textes libres de ses rendez-vous
+   *    sont vidés ensemble, ou pas du tout ;
+   * 5. le **refus qui n'écrit rien** : sur `upcoming-appointments`, la fiche
+   *    ressort intacte, comme après le `ROLLBACK` du vrai.
+   */
+  public async anonymize(
+    id: string,
+    identity: AnonymizedIdentity,
+    upcomingFrom: Date,
+  ): Promise<AnonymizationOutcome> {
+    const row = this.find(id);
+    if (row === undefined) {
+      return { outcome: 'not-found' };
+    }
+
+    if (row.anonymizedAt !== null) {
+      return { outcome: 'already-anonymized', customer: toCustomer(row) };
+    }
+
+    // Borné par `endsAt`, comme le vrai : un rendez-vous commencé et non terminé
+    // est un contrat en cours d'exécution, pas un rendez-vous passé.
+    const upcoming = this.visitsOf(id).filter(
+      (visit) =>
+        (visit.status === 'PENDING' || visit.status === 'CONFIRMED') &&
+        visit.endsAt.getTime() > upcomingFrom.getTime(),
+    ).length;
+
+    if (upcoming > 0) {
+      return { outcome: 'upcoming-appointments', upcomingAppointments: upcoming };
+    }
+
+    row.firstName = identity.firstName;
+    row.lastName = identity.lastName;
+    row.email = identity.email;
+    row.phone = null;
+    row.internalNote = null;
+    row.passwordHash = null;
+    row.isActive = false;
+    row.marketingConsent = false;
+    row.marketingConsentAt = null;
+    row.anonymizedAt = identity.anonymizedAt;
+
+    for (const visit of this.visitsOf(id)) {
+      visit.clientNote = null;
+      visit.staffNote = null;
+      visit.cancellationReason = null;
+    }
+
+    return { outcome: 'anonymized', customer: toCustomer(row) };
   }
 
   public async recentVisits(customerId: string, take: number): Promise<CustomerVisit[]> {
@@ -314,6 +459,9 @@ function toCustomer(row: StoredCustomer): Customer {
     ...toSummary(row),
     internalNote: row.internalNote,
     createdAt: row.createdAt,
+    marketingConsent: row.marketingConsent,
+    marketingConsentAt: row.marketingConsentAt,
+    anonymizedAt: row.anonymizedAt,
   };
 }
 

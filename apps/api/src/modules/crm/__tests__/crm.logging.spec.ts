@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import { redact } from '../../../common/logging/redaction';
 import { CustomerEmailTakenError } from '../crm.errors';
+import { toCustomerDataExportDto } from '../dto/customer-export.dto';
 import { toCustomerDto } from '../dto/customer.dto';
 
 /**
@@ -75,6 +76,9 @@ describe('la rédaction couvrirait les champs du module', () => {
       isActive: true,
       internalNote: 'allergique au monoï',
       createdAt: new Date('2026-09-01T08:00:00.000Z'),
+      marketingConsent: true,
+      marketingConsentAt: new Date('2026-09-01T08:00:00.000Z'),
+      anonymizedAt: null,
     });
 
     const serialise = JSON.stringify(redact(fiche));
@@ -86,6 +90,59 @@ describe('la rédaction couvrirait les champs du module', () => {
     // L'identifiant et l'état, eux, restent lisibles : ce sont eux qui rendent
     // un journal diagnostiquable, et ni l'un ni l'autre n'est personnel.
     expect(serialise).toContain('11111111-1111-4111-8111-111111111111');
+  });
+
+  it('masque aussi le dossier d’export, qui est le plus large de tous (#81)', () => {
+    // L'export rend en un seul objet la totalité de ce que le salon détient sur
+    // une personne — note interne du salon et textes libres des rendez-vous
+    // compris. C'est la charge utile qu'il importe le plus de ne jamais voir
+    // passer dans un journal, et donc celle dont la rédaction doit être
+    // vérifiée, même si rien du module ne l'y envoie.
+    const dossier = toCustomerDataExportDto({
+      generatedAt: new Date('2026-09-06T10:00:00.000Z'),
+      identity: {
+        id: '11111111-1111-4111-8111-111111111111',
+        firstName: 'Alice',
+        lastName: 'Durand',
+        email: 'alice@example.test',
+        phone: '+261341234567',
+        isActive: true,
+        createdAt: new Date('2026-09-01T08:00:00.000Z'),
+        anonymizedAt: null,
+      },
+      consents: { marketing: false, marketingRecordedAt: null },
+      internalNote: 'allergique au monoï',
+      appointments: [
+        {
+          id: '22222222-2222-4222-8222-222222222222',
+          status: 'COMPLETED',
+          startsAt: new Date('2026-08-01T09:00:00.000Z'),
+          endsAt: new Date('2026-08-01T10:00:00.000Z'),
+          serviceName: 'Massage 60 min',
+          staffName: 'Camille',
+          priceAmountMinor: 3500,
+          priceCurrency: 'EUR',
+          clientNote: 'monoï svp',
+          staffNote: 'habite au-dessus de la pharmacie',
+          cancelledAt: null,
+          cancellationReason: null,
+          createdAt: new Date('2026-07-25T08:00:00.000Z'),
+        },
+      ],
+    });
+
+    const serialise = JSON.stringify(redact(dossier));
+
+    for (const secret of [
+      'Alice',
+      'Durand',
+      'alice@example.test',
+      '+261341234567',
+      'monoï',
+      'pharmacie',
+    ]) {
+      expect({ secret, present: serialise.includes(secret) }).toEqual({ secret, present: false });
+    }
   });
 
   it('n’a aucune donnée personnelle à masquer dans l’erreur de conflit', () => {

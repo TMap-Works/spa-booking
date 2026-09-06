@@ -9,11 +9,12 @@ import { createCrmHarness, type CrmHarness } from './crm.harness';
  *
  * Ce que cette suite prouve et que les tests unitaires ne peuvent pas :
  *
- * - **les six routes sont servies** — un contrôleur oublié dans les
+ * - **les huit routes sont servies** — un contrôleur oublié dans les
  *   `controllers` de son module compile, passe ses tests unitaires, et rend 404
  *   en vrai ;
  * - **les gardes sont montées** — `@AuthAtLeast('STAFF')` sans jeton rend 401,
- *   avec un jeton `CLIENT` rend 403, et la désactivation exige `MANAGER` ;
+ *   avec un jeton `CLIENT` rend 403, la désactivation et l'export exigent
+ *   `MANAGER`, et l'anonymisation `ADMIN` (#81) ;
  * - **le `ValidationPipe` global mord** — `forbidNonWhitelisted` refuse en 400
  *   un `tenantId`, un `role` ou un `isActive` glissés dans un corps ;
  * - **la sérialisation est celle du contrat** — instants en UTC suffixés `Z`,
@@ -105,6 +106,22 @@ describe('CRM — fichier client', () => {
 
       expect(response.body).toMatchObject({ code: expect.any(String) });
       expect(JSON.stringify(response.body)).toContain('email');
+    });
+
+    it('refuse en 400 un `marketingConsent` à `null` (#81)', async () => {
+      // `null` n'est pas une réponse : la colonne est `NOT NULL`, et l'accepter
+      // reviendrait à dater une preuve de refus que personne n'a donnée. Le champ
+      // absent est la seule façon de dire « la question n'a pas été posée ».
+      await request(server())
+        .post(BASE)
+        .set('Authorization', await harness.bearer('STAFF'))
+        .send({
+          email: 'bob@example.test',
+          firstName: 'Bob',
+          lastName: 'Martin',
+          marketingConsent: null,
+        })
+        .expect(400);
     });
 
     it.each([
@@ -432,12 +449,145 @@ describe('CRM — fichier client', () => {
     });
   });
 
+  describe('GET /customers/:id/export', () => {
+    it('rend un dossier daté, complet, avec les textes libres des rendez-vous', async () => {
+      const fiche = harness.repository.addCustomer({
+        tenantId: harness.tenantId,
+        firstName: 'Alice',
+        lastName: 'Durand',
+        email: 'alice@example.test',
+        internalNote: 'allergique au monoï',
+        marketingConsent: true,
+        marketingConsentAt: new Date('2026-09-01T08:00:00.000Z'),
+      });
+      harness.repository.addVisit({
+        tenantId: harness.tenantId,
+        clientId: fiche.id,
+        startsAt: new Date('2026-01-15T09:00:00.000Z'),
+        clientNote: 'plutôt en fin de journée',
+        staffNote: 'habite au-dessus de la pharmacie',
+      });
+
+      const response = await request(server())
+        .get(`${BASE}/${fiche.id}/export`)
+        .set('Authorization', await harness.bearer('MANAGER'))
+        .expect(200);
+
+      const dossier = response.body as {
+        generatedAt: string;
+        identity: Record<string, unknown>;
+        consents: Record<string, unknown>;
+        internalNote: string | null;
+        appointments: Record<string, unknown>[];
+      };
+
+      // Instants en UTC suffixés `Z` — un seul référentiel (ADR 0006).
+      expect(dossier.generatedAt).toMatch(/Z$/);
+      expect(dossier.identity).toMatchObject({ lastName: 'Durand', email: 'alice@example.test' });
+      expect(dossier.consents).toEqual({
+        marketing: true,
+        marketingRecordedAt: '2026-09-01T08:00:00.000Z',
+      });
+      expect(dossier.internalNote).toBe('allergique au monoï');
+      // Les deux textes libres que l'historique n'expose pas : c'est ce qui
+      // distingue l'export d'une seconde vue du back-office.
+      expect(dossier.appointments[0]).toMatchObject({
+        clientNote: 'plutôt en fin de journée',
+        staffNote: 'habite au-dessus de la pharmacie',
+        priceCurrency: 'EUR',
+      });
+    });
+
+    it('ne laisse échapper aucun identifiant d’établissement', async () => {
+      const fiche = harness.repository.addCustomer({ tenantId: harness.tenantId });
+      harness.repository.addVisit({ tenantId: harness.tenantId, clientId: fiche.id });
+
+      const response = await request(server())
+        .get(`${BASE}/${fiche.id}/export`)
+        .set('Authorization', await harness.bearer('MANAGER'))
+        .expect(200);
+
+      // Le destinataire du document est la personne, pas l'établissement : son
+      // identifiant ne lui apprend rien (tenant-isolation §4).
+      expect(JSON.stringify(response.body)).not.toContain(harness.tenantId);
+    });
+
+    it('rend 404 plutôt qu’un dossier vide sur un identifiant inconnu', async () => {
+      await request(server())
+        .get(`${BASE}/99999999-9999-4999-8999-999999999999/export`)
+        .set('Authorization', await harness.bearer('MANAGER'))
+        .expect(404);
+    });
+  });
+
+  describe('POST /customers/:id/anonymize', () => {
+    it('anonymise la fiche, garde la ligne, et reste idempotent', async () => {
+      const creee = await creerFiche({ internalNote: 'allergique au monoï' });
+      const bearer = await harness.bearer('ADMIN');
+
+      const premiere = await request(server())
+        .post(`${BASE}/${String(creee['id'])}/anonymize`)
+        .set('Authorization', bearer)
+        .expect(200);
+
+      expect(premiere.body).toMatchObject({
+        phone: null,
+        internalNote: null,
+        isActive: false,
+        marketingConsent: false,
+      });
+      expect(String((premiere.body as Record<string, unknown>)['anonymizedAt'])).toMatch(/Z$/);
+      expect(JSON.stringify(premiere.body)).not.toContain('alice@example.test');
+
+      const seconde = await request(server())
+        .post(`${BASE}/${String(creee['id'])}/anonymize`)
+        .set('Authorization', bearer)
+        .expect(200);
+      expect((seconde.body as Record<string, unknown>)['anonymizedAt']).toBe(
+        (premiere.body as Record<string, unknown>)['anonymizedAt'],
+      );
+
+      // La ligne est toujours là : c'est ce que la clé étrangère `Restrict` de
+      // `appointments.client_id` exige, et c'est le deuxième critère de #81.
+      expect(harness.repository.customers).toHaveLength(1);
+    });
+
+    it('refuse en 422 tant qu’un rendez-vous à venir occupe l’agenda', async () => {
+      const fiche = harness.repository.addCustomer({ tenantId: harness.tenantId });
+      harness.repository.addVisit({
+        tenantId: harness.tenantId,
+        clientId: fiche.id,
+        status: 'CONFIRMED',
+        startsAt: new Date('2099-01-15T09:00:00.000Z'),
+      });
+
+      const response = await request(server())
+        .post(`${BASE}/${fiche.id}/anonymize`)
+        .set('Authorization', await harness.bearer('ADMIN'))
+        .expect(422);
+
+      expect(response.body).toMatchObject({
+        code: 'CUSTOMER_HAS_UPCOMING_APPOINTMENTS',
+        details: { upcomingAppointments: 1 },
+      });
+    });
+
+    it('rend 404 sur un identifiant inconnu', async () => {
+      await request(server())
+        .post(`${BASE}/99999999-9999-4999-8999-999999999999/anonymize`)
+        .set('Authorization', await harness.bearer('ADMIN'))
+        .expect(404);
+    });
+  });
+
   describe('gardes', () => {
     const routes: readonly [string, string][] = [
       ['get', BASE],
       ['get', `${BASE}/99999999-9999-4999-8999-999999999999`],
       ['get', `${BASE}/99999999-9999-4999-8999-999999999999/history`],
+      ['get', `${BASE}/99999999-9999-4999-8999-999999999999/export`],
       ['post', BASE],
+      ['post', `${BASE}/99999999-9999-4999-8999-999999999999/anonymize`],
       ['patch', `${BASE}/99999999-9999-4999-8999-999999999999`],
       ['patch', `${BASE}/99999999-9999-4999-8999-999999999999/status`],
     ];
@@ -470,6 +620,40 @@ describe('CRM — fichier client', () => {
         .patch(`${BASE}/${String(creee['id'])}/status`)
         .set('Authorization', await harness.bearer('MANAGER'))
         .send({ isActive: false })
+        .expect(200);
+    });
+
+    it('réserve l’export au rang MANAGER', async () => {
+      const creee = await creerFiche();
+
+      // Un dossier complet exportable à portée de chaque poste du comptoir
+      // n'aurait pas été de la minimisation (CDC §5.1).
+      await request(server())
+        .get(`${BASE}/${String(creee['id'])}/export`)
+        .set('Authorization', await harness.bearer('STAFF'))
+        .expect(403);
+
+      await request(server())
+        .get(`${BASE}/${String(creee['id'])}/export`)
+        .set('Authorization', await harness.bearer('MANAGER'))
+        .expect(200);
+    });
+
+    it('réserve l’anonymisation au rang ADMIN', async () => {
+      const creee = await creerFiche();
+
+      // La seule opération du module qui détruise irréversiblement une donnée :
+      // elle appartient au rang le plus élevé de l'établissement.
+      for (const role of ['STAFF', 'MANAGER'] as const) {
+        await request(server())
+          .post(`${BASE}/${String(creee['id'])}/anonymize`)
+          .set('Authorization', await harness.bearer(role))
+          .expect(403);
+      }
+
+      await request(server())
+        .post(`${BASE}/${String(creee['id'])}/anonymize`)
+        .set('Authorization', await harness.bearer('ADMIN'))
         .expect(200);
     });
   });

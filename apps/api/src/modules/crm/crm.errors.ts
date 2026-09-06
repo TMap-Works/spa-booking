@@ -50,9 +50,11 @@ import { DomainError } from '../../common/errors';
 export const CRM_ERROR_CODES = {
   CUSTOMER_EMAIL_TAKEN: 'CUSTOMER_EMAIL_TAKEN',
   CLIENT_EMAIL_NOT_BOOKABLE: DOMAIN_ERROR_CODES.CLIENT_EMAIL_NOT_BOOKABLE,
+  CUSTOMER_HAS_UPCOMING_APPOINTMENTS: 'CUSTOMER_HAS_UPCOMING_APPOINTMENTS',
 } as const;
 
 const CONFLICT = 409;
+const UNPROCESSABLE_ENTITY = 422;
 
 /**
  * Une fiche de cet établissement porte déjà cette adresse.
@@ -132,6 +134,46 @@ export class ClientEmailNotBookableError extends DomainError {
     super(
       'Cette adresse e-mail ne peut pas être utilisée pour une réservation en ligne ' +
         'dans cet établissement.',
+    );
+  }
+}
+
+/**
+ * La fiche a encore des rendez-vous qui occupent l'agenda : elle ne peut pas
+ * être anonymisée maintenant (#81).
+ *
+ * ## Ce que ce refus protège
+ *
+ * Anonymiser, c'est rendre la personne non identifiable. Une cliente attendue
+ * jeudi dont la fiche ne porte plus qu'un pseudonyme est un rendez-vous que le
+ * salon ne peut plus ni préparer, ni confirmer, ni décommander — et la personne
+ * qui se présente n'a plus rien pour prouver qu'elle est attendue.
+ *
+ * Le RGPD prévoit exactement ce cas : l'effacement ne s'impose pas tant que le
+ * traitement reste **nécessaire à l'exécution du contrat** (art. 17.1.b lu avec
+ * l'art. 6.1.b). Un rendez-vous à venir *est* ce contrat en cours.
+ *
+ * ## Pourquoi ce n'est pas un refus définitif
+ *
+ * La voie est ouverte et tient en un geste : honorer le rendez-vous, ou
+ * l'annuler. C'est ce qui distingue ce 422 d'un 403 — la demande est recevable,
+ * c'est l'état du monde qui la retient — et c'est pourquoi `details` porte le
+ * **nombre** de rendez-vous concernés : l'écran qui l'affiche sait alors quoi
+ * dire, sans avoir à redemander.
+ *
+ * `details` ne porte que ce nombre : ni date, ni prestation, ni praticien. Un
+ * corps d'erreur repart vers un journal d'accès ou une capture d'écran, et rien
+ * de ce qui décrit un rendez-vous n'a à y voyager (CDC §5.1).
+ */
+export class CustomerHasUpcomingAppointmentsError extends DomainError {
+  public override readonly code = CRM_ERROR_CODES.CUSTOMER_HAS_UPCOMING_APPOINTMENTS;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor(upcomingAppointments: number) {
+    super(
+      'Cette fiche a encore des rendez-vous à venir : les honorer ou les annuler ' +
+        'avant de l’anonymiser.',
+      { upcomingAppointments },
     );
   }
 }

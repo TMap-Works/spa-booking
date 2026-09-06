@@ -125,7 +125,10 @@ export class CustomerSummaryDto implements CustomerSummary {
  * `internalNote` n'apparaît que sur cette forme, servie au rang `STAFF` et
  * au-dessus. Aucune route du parcours public ne la référence.
  */
-export class CustomerDto extends CustomerSummaryDto implements Omit<Customer, 'createdAt'> {
+export class CustomerDto
+  extends CustomerSummaryDto
+  implements Omit<Customer, 'createdAt' | 'marketingConsentAt' | 'anonymizedAt'>
+{
   @ApiProperty({
     nullable: true,
     type: String,
@@ -138,6 +141,36 @@ export class CustomerDto extends CustomerSummaryDto implements Omit<Customer, 'c
 
   @ApiProperty({ format: 'date-time', description: 'Instant UTC de création de la fiche.' })
   public createdAt!: string;
+
+  @ApiProperty({
+    description:
+      'Consentement au démarchage commercial (RGPD, CDC §5.1). Ne gouverne **pas** ' +
+      'les notifications transactionnelles — confirmation, rappel, annulation —, qui ' +
+      'relèvent de l’exécution du contrat et non du consentement.',
+  })
+  public marketingConsent!: boolean;
+
+  @ApiProperty({
+    format: 'date-time',
+    nullable: true,
+    type: String,
+    description:
+      'Instant du dernier changement du consentement — la preuve exigée par ' +
+      'l’art. 7.1. `null` tant que personne ne s’est prononcé : « jamais demandé » ' +
+      'n’est pas « refusé à telle date ».',
+  })
+  public marketingConsentAt!: string | null;
+
+  @ApiProperty({
+    format: 'date-time',
+    nullable: true,
+    type: String,
+    description:
+      'Instant de l’anonymisation, ou `null` sur une fiche vivante. Daté, la fiche ' +
+      'ne porte plus qu’un pseudonyme ; ses rendez-vous et ses encaissements restent ' +
+      'comptés.',
+  })
+  public anonymizedAt!: string | null;
 }
 
 /** Une page de fiches, avec de quoi afficher un sélecteur de page. */
@@ -313,6 +346,22 @@ export class CreateCustomerDto {
   @Trim()
   @MaxLength(NOTE_MAX_LENGTH)
   public internalNote?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Consentement au démarchage commercial. **Absent, il vaut refus** et aucune ' +
+      'date n’est enregistrée : le consentement est un acte positif (RGPD art. 4.11), ' +
+      'et « jamais demandé » n’est pas « refusé à telle date ». Présent — à `true` ' +
+      'comme à `false` —, il date la réponse.',
+  })
+  // `@ValidateIf` et non `@IsOptional()`, contrairement à `phone` et
+  // `internalNote` : `@IsOptional()` laisse aussi passer un `null` explicite,
+  // et sur un booléen `null` n'est pas une valeur — `marketing_consent` est
+  // `NOT NULL`. Un `null` accepté ici serait lu comme « quelqu'un s'est
+  // prononcé », et daterait une preuve de refus que personne n'a donnée.
+  @ValidateIf((_object: unknown, value: unknown) => value !== undefined)
+  @IsBoolean({ message: 'marketingConsent : booléen attendu' })
+  public marketingConsent?: boolean;
 }
 
 /**
@@ -373,6 +422,17 @@ export class UpdateCustomerDto {
   @Trim()
   @MaxLength(NOTE_MAX_LENGTH)
   public internalNote?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Consentement au démarchage commercial. Le champ absent le laisse tel quel ; ' +
+      'une valeur **différente** de l’actuelle l’écrit et le date. Renvoyer la valeur ' +
+      'en place ne décale pas la date — elle répond à « depuis quand », pas à ' +
+      '« quand a-t-on enregistré pour la dernière fois ».',
+  })
+  @ValidateIf((_object: unknown, value: unknown) => value !== undefined)
+  @IsBoolean({ message: 'marketingConsent : booléen attendu' })
+  public marketingConsent?: boolean;
 }
 
 /**
@@ -390,6 +450,10 @@ export function toCustomerPatch(dto: UpdateCustomerDto): CustomerPatch {
     ...(dto.lastName === undefined ? {} : { lastName: dto.lastName }),
     ...(dto.phone === undefined ? {} : { phone: dto.phone }),
     ...(dto.internalNote === undefined ? {} : { internalNote: dto.internalNote }),
+    // La **date** du consentement n'est pas dans le correctif : c'est le service
+    // qui l'appose, et seulement s'il constate un changement. Un client qui la
+    // choisirait choisirait sa propre preuve.
+    ...(dto.marketingConsent === undefined ? {} : { marketingConsent: dto.marketingConsent }),
   };
 }
 
@@ -425,5 +489,10 @@ export function toCustomerDto(customer: Customer): CustomerDto {
     // `…Z` et rien d'autre : un seul référentiel, deux horodatages se comparent
     // alors par simple ordre lexicographique (ADR 0006).
     createdAt: customer.createdAt.toISOString(),
+    marketingConsent: customer.marketingConsent,
+    // `null` traverse tel quel : « jamais prononcé » et « jamais anonymisée »
+    // sont des faits, pas des dates manquantes.
+    marketingConsentAt: customer.marketingConsentAt?.toISOString() ?? null,
+    anonymizedAt: customer.anonymizedAt?.toISOString() ?? null,
   };
 }

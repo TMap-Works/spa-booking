@@ -12,10 +12,18 @@ ce fait.
 | #56 | Le CRUD des fiches, la note interne, la recherche indexée et l'historique agrégé |
 | #313 | `ClientDirectoryService`, la porte par laquelle `appointments` obtient la fiche d'une cliente qui réserve sans compte |
 | #465 | `assertBookableWithin`, le second battant de cette porte : confirmer qu'une fiche **désignée** par le comptoir est bien du fichier client |
+| #81 | Les droits des personnes : export, anonymisation, consentement marketing — et le [registre des traitements](../../../../../docs/registre-des-traitements.md) |
 
 Hors périmètre MVP, et donc non livré : fusion de doublons, segmentation,
-export RGPD, campagnes. Le CDC §1.4 borne le module à un « CRM client de
-base » ; chacun de ces besoins est une décision de produit à part entière.
+campagnes. Le CDC §1.4 borne le module à un « CRM client de base » ; chacun de
+ces besoins est une décision de produit à part entière.
+
+L'export RGPD figurait sur cette liste jusqu'à #81, et il en est sorti pour une
+raison qui n'est pas un élargissement de périmètre : le CDC §5.1 range les
+« mécanismes d'accès, de rectification, d'export et de suppression » dans les
+exigences transverses, au même rang que le chiffrement et le cloisonnement
+multi-tenant. Ce n'est pas une fonctionnalité de CRM, c'est une obligation
+légale sur les données que ce module détient.
 
 ## Les routes
 
@@ -24,7 +32,9 @@ base » ; chacun de ces besoins est une décision de produit à part entière.
 | `GET` | `/api/v1/customers` | `STAFF` |
 | `GET` | `/api/v1/customers/:id` | `STAFF` |
 | `GET` | `/api/v1/customers/:id/history` | `STAFF` |
+| `GET` | `/api/v1/customers/:id/export` | `MANAGER` |
 | `POST` | `/api/v1/customers` | `STAFF` |
+| `POST` | `/api/v1/customers/:id/anonymize` | `ADMIN` |
 | `PATCH` | `/api/v1/customers/:id` | `STAFF` |
 | `PATCH` | `/api/v1/customers/:id/status` | `MANAGER` |
 
@@ -44,6 +54,12 @@ Pas de `DELETE` : `appointments.client_id` référence `users` en `Restrict`, si
 bien qu'une fiche ayant honoré une seule visite ne se supprime pas, et le
 reporting doit continuer à la compter. Un verbe qui n'efface rien mentirait au
 client autant qu'au relecteur.
+
+#81 n'en ajoute pas davantage. Le droit à l'oubli passe par
+`POST /customers/:id/anonymize`, parce que ce qui se produit n'est pas la
+disparition d'une ressource — elle reste, et se relit à la même URL — mais une
+transformation irréversible de son contenu. Un `DELETE` qui rendrait ensuite 200
+sur la même URL aurait menti deux fois.
 
 ## Une fiche cliente **est** une ligne `users`
 
@@ -146,6 +162,131 @@ découle n'est pas une politesse : sans lui, l'historique d'un identifiant
 inconnu — ou d'une fiche du salon voisin — rendrait un agrégat vide en **200**,
 indiscernable de celui d'une cliente jamais venue.
 
+## Les droits des personnes (#81)
+
+Le CDC §5.1 les range dans les exigences transverses : « mécanismes d'accès, de
+rectification, d'export et de suppression (droit à l'oubli) ». La rectification
+existait depuis #56 (`PATCH /customers/:id`) ; #81 pose les trois autres, et le
+consentement qui va avec. Le détail des traitements, de leurs bases légales et
+de leurs durées de conservation vit dans le
+[registre des traitements](../../../../../docs/registre-des-traitements.md).
+
+### L'export — `GET /customers/:id/export`, rang `MANAGER`
+
+Un document JSON unique et **daté**, qui porte tout ce que le salon détient sur
+une personne : identité, coordonnées, consentements avec leur date, note interne
+du salon, et la totalité de ses rendez-vous — textes libres compris.
+
+Trois propriétés le distinguent de l'historique, et aucune n'est cosmétique :
+
+| | `GET /:id/history` | `GET /:id/export` |
+|---|---|---|
+| Ce qu'il sert | décider, sur un écran | rendre des comptes, à une personne |
+| Les visites | les cinquante plus récentes | **toutes**, du plus ancien au plus récent |
+| Les textes libres | aucun | `client_note`, `staff_note`, motif d'annulation |
+| Les agrégats | compteurs, bornes, total dépensé | aucun — un agrégat est une interprétation |
+
+L'absence de borne est délibérée : un export tronqué a l'apparence d'une réponse
+au titre de l'art. 15 sans en être une, et le tronquer **en silence** serait le
+pire des deux mondes. La borne existe dans la nature des données — ce sont les
+rendez-vous d'une personne dans un établissement.
+
+La note interne du salon y figure. Ce n'est pas une négligence : le droit
+d'accès porte sur les données *concernant* la personne, sans exception pour
+celles qu'on aurait préféré garder pour soi.
+
+Le rang est `MANAGER` et non `STAFF` : la route ne modifie rien, mais elle
+produit en un appel un dossier complet exportable. Le laisser au comptoir
+n'aurait pas été de la minimisation ; le monter à `ADMIN` aurait rendu le droit
+d'accès impraticable.
+
+### L'anonymisation — `POST /customers/:id/anonymize`, rang `ADMIN`
+
+**Anonymiser, pas supprimer.** `appointments.client_id` référence `users` en
+`Restrict`, et `payments` comme `sales` s'accrochent à ces rendez-vous :
+retirer la ligne emporterait l'historique comptable des ventes passées, ce que
+le critère d'acceptation interdit et que la base refuserait de toute façon. Ce
+qui reste après le geste est une suite de montants et de dates rattachés à un
+identifiant opaque ; ce qui part est la personne.
+
+| Colonne | Ce qu'elle devient |
+|---|---|
+| `first_name`, `last_name` | `Client anonymisé` |
+| `email` | `anonymise-{id}@anonymise.invalid` — `.invalid` est réservé par la RFC 2606 |
+| `phone`, `internal_note`, `password_hash` | `NULL` |
+| `is_active` | `false` |
+| `marketing_consent` | `false`, sa date remise à `NULL` |
+| `anonymized_at` | l'instant du geste |
+| `appointments.client_note`, `staff_note`, `cancellation_reason` | `NULL` |
+
+Le pseudonyme est **dérivé de l'identifiant** de la fiche, et il le faut :
+`@@unique([tenantId, email])` aurait fait échouer la deuxième anonymisation du
+salon sur un pseudonyme constant.
+
+Trois propriétés à connaître :
+
+- **elle est idempotente.** L'écriture est conditionnée à `anonymized_at IS
+  NULL` : une seconde demande rend la fiche telle quelle, sans second pseudonyme
+  ni date décalée. Deux demandes concurrentes obtiennent la même réponse ;
+- **elle refuse tant qu'un rendez-vous à venir occupe l'agenda** (422,
+  `CUSTOMER_HAS_UPCOMING_APPOINTMENTS`). Le salon ne peut ni préparer, ni
+  confirmer, ni décommander une visite dont la cliente n'a plus de nom, et le
+  RGPD n'impose pas d'effacer tant que le traitement reste nécessaire à
+  l'exécution du contrat (art. 17.1.b). Le refus est temporaire et actionnable :
+  honorer, ou annuler. La borne porte sur `ends_at` et non sur `starts_at` : un
+  rendez-vous **commencé et non terminé** est un contrat en cours d'exécution au
+  même titre qu'un rendez-vous de jeudi, et le borner par son début aurait laissé
+  anonymiser la cliente installée dans le fauteuil ;
+- **elle décide dans sa transaction, jamais avant.** L'`UPDATE` de la ligne
+  `users` précède le compte des rendez-vous à venir, et le refus annule la
+  transaction. L'ordre inverse aurait été la « vérification applicative suivie
+  d'une écriture » que booking-engine §1 interdit : sous `READ COMMITTED`, un
+  compte fait avant toute prise de verrou manque la réservation en cours de
+  validation. C'est l'`UPDATE` qui entre en conflit avec le `FOR SHARE` que
+  `AppointmentsRepository.insert` pose sur cette même ligne (#465, #468), et
+  c'est donc lui qui rend le compte fiable. Symétriquement, **les deux battants
+  de la porte de réservation** écartent désormais une fiche anonymisée :
+  `assertBookableWithin` par le prédicat `anonymized_at IS NULL` de son SQL, et
+  `resolveWithin` en jugeant la ligne rendue (409, comme pour un compte du
+  personnel). Une réservation qui démarre pendant l'anonymisation attend le
+  `COMMIT`, relit la ligne sous verrou, et la trouve anonymisée ;
+- **elle est la seule écriture du module dans `appointments`**, et une entorse
+  assumée à ce que ce README annonçait. Elle est bornée à trois colonnes de
+  texte libre — ni statut, ni créneau, ni prix, ni auteur d'annulation. Une
+  anonymisation qui ne toucherait que `users` laisserait « allergique au monoï,
+  habite au-dessus de la pharmacie » dans une note de rendez-vous, et n'aurait
+  effacé que ce qui était le plus facile à effacer.
+
+Le rang est `ADMIN` : c'est la seule opération de tout le module qui détruise
+irréversiblement une donnée. Même seuil que `PATCH /users/:id/role` chez
+`identity`, pour la même raison.
+
+### Le consentement marketing
+
+`users.marketing_consent` et `users.marketing_consent_at`, posées alors que le
+marketing est **hors périmètre MVP** (CDC §1.4). Ce n'est pas de l'anticipation
+gratuite : le consentement se recueille au moment où la fiche se crée. Une base
+constituée sans lui serait inexploitable a posteriori, puisqu'il faudrait
+recontacter chacun pour le demander — précisément ce qu'aucune base légale
+n'autorise à faire.
+
+Trois règles le gouvernent :
+
+1. **le défaut est le refus**, jamais l'acceptation — le consentement est un
+   acte positif (RGPD art. 4.11) ;
+2. **la date accompagne toute prise de position**, y compris un refus : c'est la
+   preuve que l'art. 7.1 met à la charge du responsable de traitement. Elle
+   reste nulle tant que personne ne s'est prononcé — « jamais demandé » n'est
+   pas « refusé le 6 septembre » ;
+3. **elle ne bouge que sur un changement de valeur.** Un `PATCH` qui corrige un
+   numéro en recopiant le formulaire entier ne doit pas réécrire la preuve ; sans
+   ce départage, elle finirait par dater du dernier changement d'adresse.
+
+Ce que ce consentement **ne gouverne pas** : les notifications
+transactionnelles — confirmation, rappel J-1, avis d'annulation. Celles-là
+relèvent de l'exécution du contrat, et les subordonner à cette colonne aurait
+rompu le service demandé par la cliente elle-même.
+
 ## Ce que le module lit, et ce qu'il n'importe pas
 
 `CrmRepository` lit `users` et `appointments`. Il n'importe **aucun repository
@@ -153,7 +294,8 @@ voisin** : ce qu'api-module §3 interdit est un `../../identity/identity.reposit
 et il n'y en a pas. Les deux lectures sont argumentées en tête du fichier —
 la première parce que la fiche *est* la ligne `users`, la seconde parce que
 l'historique est une projection en lecture seule qui ne décide d'aucune règle de
-cycle de vie. Le module **n'écrit jamais** dans `appointments`.
+cycle de vie. La seule écriture du module dans `appointments` est celle de
+l'anonymisation (#81), bornée à trois colonnes de texte libre.
 
 `CrmModule` n'importe qu'`IdentityModule`, et seulement pour ses gardes. Il
 n'exporte que `ClientDirectoryService` — voir ci-dessous.
@@ -198,6 +340,17 @@ nu, donc à un 500.
 | adresse inconnue | 201, fiche créée |
 | adresse déjà cliente | 201, fiche réutilisée telle quelle |
 | adresse d'un compte du personnel | 409 `CLIENT_EMAIL_NOT_BOOKABLE` |
+| adresse d'une fiche **anonymisée** (#81) | 409 `CLIENT_EMAIL_NOT_BOOKABLE` |
+
+La dernière ligne est le pendant public du prédicat `anonymized_at IS NULL`
+d'`assertBookableWithin`. Elle compte : le pseudonyme est
+`anonymise-{id}@anonymise.invalid`, donc reconstructible par quiconque tient
+l'identifiant de la fiche — qui figure dans l'export remis à la personne. Sans ce
+refus, une réservation publique rattachait un rendez-vous à quelqu'un qui venait
+d'exercer son droit à l'oubli, et le réinscrivait au fichier client par la bande.
+Le refus est un 409 et non un silence : écarter la ligne du prédicat aurait mené à
+une création que `@@unique([tenantId, email])` refuse, c'est-à-dire à la boucle de
+réessais de `writingAgenda`.
 
 Ce que ce refus laisse deviner : qu'une adresse porte un compte **non client**
 dans cet établissement. C'est le coût assumé, et il est borné — les deux premières
@@ -316,6 +469,7 @@ que refusée pour un autre motif.
 | rien du tout | `NotFoundError` — 404 |
 | une fiche du salon voisin | `NotFoundError` — 404 |
 | un compte `STAFF`, `MANAGER` ou `ADMIN` | `NotFoundError` — 404 |
+| une fiche **anonymisée** (#81) | `NotFoundError` — 404 |
 
 Les trois refus sont **littéralement** le même : même classe, même message. Aucun
 code neuf dans `@spa/shared`, et c'est délibéré.
@@ -341,11 +495,12 @@ surface prévue. « Introuvable au fichier client » est vrai et actionnable ;
 | Suite | Ce qu'elle couvre |
 |---|---|
 | `__tests__/customers.service.spec.ts` | CRUD, recherche, pagination, portée fermée par défaut |
+| `__tests__/customer-privacy.spec.ts` | #81 : l'export complet et non borné, l'anonymisation qui vide aussi les textes libres des rendez-vous sans toucher aux montants, son idempotence, son refus sur un rendez-vous à venir, et la date de consentement qui ne bouge que sur un changement |
 | `__tests__/client-directory.service.spec.ts` | la porte de #313 : lecture sans filtre de rôle, refus d'une adresse du personnel, fiche désactivée réutilisée, course traduite en réessai — son verrou de #468 : `FOR SHARE`, filtre `tenant_id` écrit à la main, refus sans portée de tenant — et celle de #465 : mêmes garanties, quatre rôles, refus muet sur le rôle |
 | `__tests__/customer-history.service.spec.ts` | agrégat vs fenêtre, bornes, devises multiples |
 | `__tests__/crm.logging.spec.ts` | le module ne journalise rien ; la rédaction couvrirait ses champs |
-| `apps/api/test/crm.integration-spec.ts` | les six routes servies, gardes, validation, sérialisation |
-| `apps/api/test/crm-tenant.isolation-spec.ts` | le protocole de fuite sur les six routes |
+| `apps/api/test/crm.integration-spec.ts` | les huit routes servies, gardes, validation, sérialisation |
+| `apps/api/test/crm-tenant.isolation-spec.ts` | le protocole de fuite sur les huit routes — dont la lecture la plus large du système (l'export) et sa seule écriture irréversible (l'anonymisation) |
 | `apps/api/test/appointments-exclusion.integration-spec.ts` | la porte exercée contre un vrai PostgreSQL : le `ROLLBACK` qui emporte la fiche, le refus d'une adresse du personnel sans 500, la frontière du tenant sur cette écriture, et le rôle jugé à l'instant de l'insertion (#468) |
 | `apps/api/test/appointments-exclusion.concurrency-spec.ts` | les courses : deux réservations d'invité sur la même adresse inconnue (#313), et la **promotion concurrente** qui prouve que le `FOR SHARE` de #468 verrouille vraiment — la suite unitaire ne vérifie que ce que la requête demande |
 

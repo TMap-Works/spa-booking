@@ -10,7 +10,12 @@ import {
   ClientRecordRaceError,
   CustomerEmailTakenError,
 } from './crm.errors';
-import type { Customer, CustomerSummary, CustomerVisit } from './crm.types';
+import type {
+  Customer,
+  CustomerSummary,
+  CustomerVisit,
+  ExportedAppointment,
+} from './crm.types';
 
 /**
  * Seul point du module qui connaît le schéma (api-module §2).
@@ -46,8 +51,14 @@ import type { Customer, CustomerSummary, CustomerVisit } from './crm.types';
  *   requête d'agrégation CRM aurait mis la question de `crm` dans le module
  *   `appointments`.
  *
- * Ce que le module n'écrit **jamais** : aucune ligne d'`appointments`. La
- * lecture est la seule opération de ce dépôt sur cette table.
+ * Ce que le module écrit dans `appointments` : **trois colonnes de texte
+ * libre**, et seulement à l'anonymisation (#81). La lecture a été la seule
+ * opération de ce dépôt sur cette table jusqu'à ce ticket ; `anonymize` y met à
+ * `NULL` `client_note`, `staff_note` et `cancellation_reason`, parce que le
+ * droit à l'oubli ne s'arrête pas à la fiche — c'est dans ces trois textes-là
+ * qu'un humain a écrit ce qu'il savait de la personne. Rien du cycle de vie du
+ * rendez-vous n'est touché : ni statut, ni créneau, ni prix, ni auteur
+ * d'annulation. Le détail de l'arbitrage est sur la méthode.
  *
  * ## Deux méthodes travaillent dans la transaction d'un autre module
  *
@@ -107,7 +118,55 @@ const CUSTOMER_SELECT = {
   ...CUSTOMER_SUMMARY_SELECT,
   internalNote: true,
   createdAt: true,
+  // Les trois colonnes de #81. Elles sont sur la fiche complète et non sur le
+  // résumé : la liste du back-office n'affiche ni consentement ni date
+  // d'anonymisation, et une projection qui les lirait quand même les ferait
+  // transiter deux cents fois pour rien.
+  marketingConsent: true,
+  marketingConsentAt: true,
+  anonymizedAt: true,
 } as const;
+
+/**
+ * Un rendez-vous **tel que l'export le lit** — plus large que `VISIT_SELECT`,
+ * parce que le droit d'accès n'a pas le même périmètre qu'un écran (#81).
+ *
+ * Les trois champs de texte libre que l'historique ne montre pas sont ici :
+ * `client_note`, ce que la cliente a écrit en réservant ; `staff_note`, ce que
+ * le salon a noté sur ce rendez-vous ; et le motif d'annulation. Tous les trois
+ * sont des données **la concernant**, et l'art. 15 du RGPD ne connaît pas
+ * d'exception pour celles qu'on aurait préféré garder pour soi.
+ *
+ * Ce qui n'y est **pas** : `tenant_id`, `staff_id`, `service_id`. Le nom du
+ * praticien et celui de la prestation sont lus par relation — ils décrivent la
+ * visite —, mais les identifiants internes de l'établissement n'ont rien à faire
+ * dans un document remis à une personne (tenant-isolation §4).
+ */
+const EXPORT_APPOINTMENT_SELECT = {
+  id: true,
+  status: true,
+  startsAt: true,
+  endsAt: true,
+  priceAmountMinor: true,
+  priceCurrency: true,
+  clientNote: true,
+  staffNote: true,
+  cancelledAt: true,
+  cancellationReason: true,
+  createdAt: true,
+  service: { select: { name: true } },
+  staff: { select: { displayName: true } },
+} as const;
+
+/**
+ * Les statuts qui occupent encore l'agenda — les mêmes que le prédicat partiel
+ * de la contrainte d'exclusion, et que l'`upcomingVisits` de l'historique.
+ *
+ * Ce sont eux qui retiennent l'anonymisation : un rendez-vous à venir est un
+ * contrat en cours d'exécution, et le RGPD n'impose pas d'effacer tant qu'il
+ * l'est (art. 17.1.b).
+ */
+const OCCUPYING_STATUSES = ['PENDING', 'CONFIRMED'] as const;
 
 /**
  * Une visite, réduite à ce que l'historique en montre.
@@ -169,17 +228,21 @@ function withScopedTenant<T>(data: Omit<T, 'tenantId' | 'tenant'>): T {
 const UNIQUE_VIOLATION = 'P2002';
 
 /**
- * Ce qu'une lecture verrouillée de fiche rend — l'identifiant, et le rôle à juger.
+ * Ce qu'une lecture verrouillée de fiche rend — l'identifiant, le rôle à juger,
+ * et l'état d'anonymisation (#81).
  *
- * Les deux colonnes sont transtypées en `text` dans la requête : `role` parce
- * que c'est une énumération PostgreSQL, dont le driver rendrait autrement une
- * valeur dépendante du catalogue, et `id` par symétrie de lecture. Rien d'autre
- * n'est projeté — ni nom, ni adresse, ni note interne : une lecture qui décide
- * n'a pas à ramener ce dont la décision n'a pas besoin.
+ * Les deux premières colonnes sont transtypées en `text` dans la requête :
+ * `role` parce que c'est une énumération PostgreSQL, dont le driver rendrait
+ * autrement une valeur dépendante du catalogue, et `id` par symétrie de lecture.
+ * La troisième est réduite à un booléen dans le `SELECT` : la décision a besoin
+ * du **fait**, pas de l'instant. Rien d'autre n'est projeté — ni nom, ni
+ * adresse, ni note interne : une lecture qui décide n'a pas à ramener ce dont la
+ * décision n'a pas besoin.
  */
 interface LockedClientRow {
   id: string;
   role: string;
+  anonymized: boolean;
 }
 
 /** Champs modifiables d'une fiche — tous facultatifs, aucun ne l'est tous. */
@@ -188,6 +251,67 @@ export interface CustomerPatch {
   lastName?: string;
   phone?: string | null;
   internalNote?: string | null;
+  /**
+   * Consentement au démarchage — #81.
+   *
+   * Il voyage **toujours** avec sa date : c'est le service qui les apparie, et
+   * un consentement écrit sans instant serait un consentement que l'art. 7.1 du
+   * RGPD ne permet pas de démontrer.
+   */
+  marketingConsent?: boolean;
+  marketingConsentAt?: Date | null;
+}
+
+/**
+ * Ce que l'anonymisation écrit à la place de l'identité — #81.
+ *
+ * Le pseudonyme est calculé par le service et non ici : c'est une décision sur
+ * ce qu'on garde d'une personne, pas sur la façon de l'écrire. Le dépôt, lui,
+ * sait ce qu'il faut vider en même temps — et cette liste-là est une propriété
+ * du schéma, donc de ce fichier.
+ */
+export interface AnonymizedIdentity {
+  firstName: string;
+  lastName: string;
+  email: string;
+  anonymizedAt: Date;
+}
+
+/**
+ * Ce qu'une demande d'anonymisation a produit — quatre issues, et aucune n'est
+ * une erreur d'exécution.
+ *
+ * Un type somme plutôt qu'un `Customer | null` doublé d'un compteur lu à part :
+ * les trois refus se décident **dans la transaction**, et les faire remonter
+ * autrement aurait obligé le service à reposer au dehors une question déjà
+ * tranchée dedans — c'est-à-dire à rouvrir la fenêtre que cette transaction
+ * ferme. C'est le service qui traduit chaque issue en réponse HTTP ; le dépôt
+ * ne connaît aucune erreur de domaine.
+ */
+export type AnonymizationOutcome =
+  /** La fiche vient d'être anonymisée. */
+  | { outcome: 'anonymized'; customer: Customer }
+  /** Elle l'était déjà : rien n'a été réécrit, et c'est ce qui rend l'appel idempotent. */
+  | { outcome: 'already-anonymized'; customer: Customer }
+  /** Des rendez-vous occupent encore l'agenda — la transaction a été annulée. */
+  | { outcome: 'upcoming-appointments'; upcomingAppointments: number }
+  /** Inconnue, d'un autre établissement, ou compte du personnel — indistinctement. */
+  | { outcome: 'not-found' };
+
+/**
+ * Le signal qui annule la transaction d'anonymisation quand la règle métier
+ * tombe — interne à ce fichier, et jamais visible d'un appelant.
+ *
+ * Ce n'est pas une erreur de domaine : `anonymize` la rattrape et la traduit en
+ * issue. Elle existe parce qu'une transaction Prisma interactive ne s'annule
+ * que par une levée, et qu'il faut ici écrire avant de pouvoir décider.
+ */
+class UpcomingAppointmentsAbort extends Error {
+  public constructor(public readonly upcomingAppointments: number) {
+    super("Rendez-vous à venir : l'anonymisation est annulée.");
+    this.name = 'UpcomingAppointmentsAbort';
+    Error.captureStackTrace?.(this, UpcomingAppointmentsAbort);
+  }
 }
 
 /** Critères de `GET /customers`, tels que le service les a normalisés. */
@@ -338,6 +462,8 @@ export class CrmRepository {
     lastName: string;
     phone: string | null;
     internalNote: string | null;
+    marketingConsent: boolean;
+    marketingConsentAt: Date | null;
   }): Promise<Customer> {
     try {
       return await this.prisma.user.create({
@@ -349,6 +475,8 @@ export class CrmRepository {
           lastName: input.lastName,
           phone: input.phone,
           internalNote: input.internalNote,
+          marketingConsent: input.marketingConsent,
+          marketingConsentAt: input.marketingConsentAt,
         }),
         select: CUSTOMER_SELECT,
       });
@@ -447,7 +575,8 @@ export class CrmRepository {
    * d'une fiche relève du back-office, sous garde (`PATCH /customers/:id`).
    *
    * @throws {ClientEmailNotBookableError} l'adresse porte un compte du personnel
-   * de cet établissement — jugé sous verrou, donc encore vrai à l'insertion.
+   * de cet établissement, ou une fiche anonymisée (#81) — jugé sous verrou, donc
+   * encore vrai à l'insertion.
    * @throws {ClientRecordRaceError} deux créations concurrentes, dont celle-ci a
    * perdu — l'appelant rejoue sa transaction.
    * @throws {MissingTenantContextError} aucune portée de tenant n'est ouverte :
@@ -467,7 +596,7 @@ export class CrmRepository {
     // `(tenant_id, email)` est l'index unique du schéma : ce couple de prédicats
     // le sert tel quel, et rend au plus une ligne.
     const rows = await scope.$queryRaw<LockedClientRow[]>`
-      SELECT "id"::text AS id, "role"::text AS role
+      SELECT "id"::text AS id, "role"::text AS role, "anonymized_at" IS NOT NULL AS anonymized
       FROM "users"
       WHERE "email" = ${contact.email} AND "tenant_id" = ${tenantId}::uuid
       FOR SHARE
@@ -477,7 +606,16 @@ export class CrmRepository {
     // information dont la décision a besoin, et elle ne quitte pas ce fichier.
     const existing = rows[0];
     if (existing !== undefined) {
-      if (existing.role !== CUSTOMER_ROLE) {
+      // L'anonymisation pèse ici exactement comme dans `assertClientBookableWithin`
+      // (#81) : une fiche anonymisée reste de rôle `CLIENT`, si bien que le seul
+      // filtre de rôle la laissait passer. Le pseudonyme est **dérivé de l'`id`**
+      // et figure dans l'export remis à la personne : rattacher une réservation
+      // publique à cette adresse-là aurait réinscrit au fichier client quelqu'un
+      // qui venait d'en sortir. Le refus est le même que pour un compte du
+      // personnel — l'adresse existe et n'est pas réservable — et non un silence,
+      // parce qu'écarter la ligne du prédicat conduirait à une création que
+      // `@@unique([tenantId, email])` refuse, donc à une boucle de réessais.
+      if (existing.role !== CUSTOMER_ROLE || existing.anonymized) {
         throw new ClientEmailNotBookableError();
       }
       return existing.id;
@@ -583,9 +721,22 @@ export class CrmRepository {
    * est à un choix de tiroir. « Introuvable au fichier client » est à la fois vrai
    * et actionnable ; « définitivement non réservable » ne le serait pas.
    *
-   * @throws {NotFoundError} l'identifiant ne désigne aucune fiche cliente de cet
-   * établissement — inconnu, du salon voisin, ou compte du personnel,
-   * indistinctement.
+   * ## Une fiche anonymisée n'est plus réservable (#81)
+   *
+   * Elle reste de rôle `CLIENT` — elle doit le rester, sinon elle disparaîtrait
+   * du fichier client et de son propre export —, si bien que le seul filtre de
+   * rôle la laissait passer. Rattacher un nouveau rendez-vous à une personne
+   * qui vient d'exercer son droit à l'oubli l'aurait réinscrite au fichier par
+   * la bande, et le refus muet est le même que pour les trois autres cas.
+   *
+   * C'est aussi ce qui referme la course inverse : `anonymize` verrouille la
+   * ligne par son `UPDATE` et compte les rendez-vous après, donc une
+   * réservation qui démarre pendant l'anonymisation attend son `COMMIT`, relit
+   * la ligne sous ce verrou — et la trouve anonymisée.
+   *
+   * @throws {NotFoundError} l'identifiant ne désigne aucune fiche cliente
+   * réservable de cet établissement — inconnu, du salon voisin, compte du
+   * personnel, ou fiche anonymisée, indistinctement.
    */
   public async assertClientBookableWithin(
     scope: ClientDirectoryScope,
@@ -593,10 +744,18 @@ export class CrmRepository {
   ): Promise<string> {
     const tenantId = requireTenantId('User', 'assertClientBookableWithin');
 
+    // `anonymized_at IS NULL` ferme la quatrième porte, celle que #81 ouvrait :
+    // une fiche anonymisée reste de rôle `CLIENT` — elle doit le rester, sans
+    // quoi elle disparaîtrait du fichier client et de son propre export — et
+    // les clés étrangères ne regardent pas davantage l'anonymisation que le
+    // rôle. Sans ce prédicat, le comptoir pouvait rattacher un rendez-vous à
+    // une personne qui venait d'exercer son droit à l'oubli. Le prédicat est
+    // constant : il n'ajoute aucun paramètre lié, et le verrou reste le même.
     const rows = await scope.$queryRaw<{ role: string }[]>`
       SELECT "role"::text AS role
       FROM "users"
       WHERE "id" = ${clientId}::uuid AND "tenant_id" = ${tenantId}::uuid
+        AND "anonymized_at" IS NULL
       FOR SHARE
     `;
 
@@ -638,6 +797,212 @@ export class CrmRepository {
       data: { isActive },
     });
     return result.count > 0;
+  }
+
+  /**
+   * **Tous** les rendez-vous d'une fiche, du plus ancien au plus récent — la
+   * matière de l'export de portabilité (#81).
+   *
+   * ## Pourquoi aucune borne, contrairement à `recentVisits`
+   *
+   * Parce que les deux lectures ne servent pas la même chose. `recentVisits`
+   * alimente un écran, et un écran affiche une fenêtre. Celle-ci alimente un
+   * document remis à une personne au titre de l'art. 20 du RGPD : un export
+   * tronqué n'est pas un export, et le tronquer **en silence** serait le pire
+   * des deux mondes — un document qui a l'air complet et ne l'est pas.
+   *
+   * La borne existe quand même, elle est simplement dans la nature des données :
+   * ce sont les rendez-vous d'**une** personne dans **un** établissement. Une
+   * cliente hebdomadaire depuis dix ans en compte cinq cents. Le jour où ce
+   * raisonnement cesserait d'être vrai, la réponse ne serait pas une pagination
+   * — elle rendrait le document non conforme — mais une remise en pièce jointe,
+   * c'est-à-dire une autre décision de conception.
+   *
+   * ## L'ordre est chronologique, et pas celui de l'historique
+   *
+   * `recentVisits` va du plus récent au plus ancien : c'est ce qu'un écran de
+   * back-office veut voir en premier. Un dossier se lit dans l'autre sens, du
+   * début à la fin. L'index `(tenant_id, client_id, starts_at)` sert les deux.
+   */
+  public async allAppointmentsForExport(customerId: string): Promise<ExportedAppointment[]> {
+    const rows = await this.prisma.appointment.findMany({
+      where: { clientId: customerId },
+      select: EXPORT_APPOINTMENT_SELECT,
+      orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      status: row.status,
+      startsAt: row.startsAt,
+      endsAt: row.endsAt,
+      serviceName: row.service.name,
+      staffName: row.staff.displayName,
+      priceAmountMinor: row.priceAmountMinor,
+      priceCurrency: row.priceCurrency,
+      clientNote: row.clientNote,
+      staffNote: row.staffNote,
+      cancelledAt: row.cancelledAt,
+      cancellationReason: row.cancellationReason,
+      createdAt: row.createdAt,
+    }));
+  }
+
+  /**
+   * Anonymise une fiche cliente **sans supprimer sa ligne** — le droit à l'oubli
+   * du CDC §5.1, deuxième critère de #81.
+   *
+   * ## Pourquoi une anonymisation et non une suppression
+   *
+   * `appointments.client_id` référence `users` en `Restrict`, et `payments`
+   * comme `sales` s'accrochent à ces rendez-vous. Retirer la ligne emporterait
+   * l'historique comptable des ventes passées — ce que le critère interdit
+   * expressément, et ce que la base refuserait de toute façon. Ce qui part,
+   * c'est **la personne** : ce qui reste, c'est un identifiant opaque, des
+   * montants et des dates, que plus rien ne rattache à quelqu'un.
+   *
+   * ## Ce qui est vidé, et pourquoi cette liste-là
+   *
+   * | Colonne | Ce qu'elle devient | Pourquoi |
+   * |---|---|---|
+   * | `first_name`, `last_name`, `email` | le pseudonyme calculé par le service | `NOT NULL` : elles ne peuvent pas être vidées, seulement remplacées |
+   * | `phone`, `internal_note` | `NULL` | nullables, et rien n'oblige à en garder une trace |
+   * | `password_hash` | `NULL` | une identité anonymisée ne doit plus ouvrir de session |
+   * | `is_active` | `false` | la fiche quitte les écrans de saisie ; il n'y a plus personne à y désigner |
+   * | `marketing_consent` | `false`, sa date remise à `NULL` | un consentement sans personne pour l'avoir donné n'est plus un consentement |
+   * | `appointments.client_note`, `staff_note`, `cancellation_reason` | `NULL` | trois textes libres saisis par des humains, où se retrouvent les données que ce geste doit effacer |
+   *
+   * Les trois dernières sont la raison d'être de la transaction. Une
+   * anonymisation qui ne toucherait que `users` laisserait « allergique au
+   * monoï, habite au-dessus de la pharmacie » dans une note de rendez-vous, et
+   * le geste n'aurait alors effacé que ce qui était le plus facile à effacer.
+   *
+   * ## Le seul endroit du module qui écrive dans `appointments`
+   *
+   * Et c'est une entorse assumée à ce que le dépôt annonce plus haut. Elle est
+   * bornée à trois colonnes de **texte libre** : ni statut, ni créneau, ni prix,
+   * ni auteur d'annulation. Rien de ce qui relève du cycle de vie du rendez-vous
+   * n'est touché, donc rien de ce qu'`AppointmentsService` décide. Passer par ce
+   * module-là aurait demandé de lui apprendre ce qu'est une donnée personnelle,
+   * et d'ouvrir dans `crm` une porte pour la lui réclamer — pour trois `NULL`.
+   *
+   * ## L'écriture est conditionnelle, et c'est ce qui la rend idempotente
+   *
+   * `anonymized_at: null` dans le `where` : une fiche déjà anonymisée n'est pas
+   * réécrite, donc ne reçoit pas un second pseudonyme ni une seconde date. Le
+   * `count` à zéro ne distingue pas ce cas de « cette fiche n'est pas ici » —
+   * c'est la relecture qui tranche, et elle rend `already-anonymized` ou
+   * `not-found`. Deux demandes concurrentes obtiennent ainsi la même réponse,
+   * la seconde sans rien réécrire.
+   *
+   * ## L'écriture précède la règle, et il le faut (booking-engine §1)
+   *
+   * Le refus « des rendez-vous à venir occupent encore l'agenda » est compté
+   * **après** l'`UPDATE` de la fiche, à l'intérieur de la même transaction, et
+   * il annule la transaction quand il tombe. L'ordre inverse — compter puis
+   * écrire — aurait été exactement la « vérification applicative suivie d'une
+   * écriture » que le projet refuse :
+   *
+   * - `AppointmentsRepository.insert` lit la ligne `users` sous `FOR SHARE`
+   *   avant d'insérer (#465, #468). Un compte fait **avant** toute prise de
+   *   verrou aurait pris son propre instantané sous `READ COMMITTED`, aurait
+   *   manqué la réservation en cours de validation, et l'anonymisation serait
+   *   passée sur une cliente attendue jeudi ;
+   * - l'`UPDATE` de la ligne `users`, lui, **entre en conflit** avec ce
+   *   `FOR SHARE`. Il attend donc la validation de toute réservation en vol, et
+   *   le compte qui le suit voit le rendez-vous qu'elle vient d'écrire. Une
+   *   réservation qui démarre ensuite attend, elle, notre `COMMIT`.
+   *
+   * Écrire d'abord et laisser la transaction arbitrer coûte un `ROLLBACK` sur le
+   * chemin de refus, ce qui est le prix d'une décision juste. Aucun verrou
+   * d'agenda n'est pris ici, et aucun cycle d'attente n'est donc créé : la
+   * réservation prend l'agenda puis la ligne, celle-ci ne prend que la ligne
+   * (ADR 0006).
+   *
+   * Le tenant n'est nommé nulle part : toutes les opérations passent par le
+   * client scopé, à l'intérieur d'une transaction dérivée de lui. La fiche du
+   * salon voisin est donc invisible à l'`updateMany`, et ses rendez-vous au
+   * compte comme au nettoyage.
+   */
+  public async anonymize(
+    id: string,
+    identity: AnonymizedIdentity,
+    upcomingFrom: Date,
+  ): Promise<AnonymizationOutcome> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const scrubbed = await tx.user.updateMany({
+          where: { id, role: CUSTOMER_ROLE, anonymizedAt: null },
+          data: {
+            firstName: identity.firstName,
+            lastName: identity.lastName,
+            email: identity.email,
+            phone: null,
+            internalNote: null,
+            passwordHash: null,
+            isActive: false,
+            marketingConsent: false,
+            marketingConsentAt: null,
+            anonymizedAt: identity.anonymizedAt,
+          },
+        });
+
+        if (scrubbed.count === 0) {
+          const existing = await tx.user.findFirst({
+            where: { id, role: CUSTOMER_ROLE },
+            select: CUSTOMER_SELECT,
+          });
+          return existing === null
+            ? { outcome: 'not-found' as const }
+            : { outcome: 'already-anonymized' as const, customer: existing };
+        }
+
+        // La ligne est désormais verrouillée par l'`UPDATE` ci-dessus : ce
+        // compte-ci voit toute réservation validée, et bloque celles qui
+        // suivent jusqu'à l'issue de cette transaction.
+        //
+        // La borne porte sur `ends_at` et non sur `starts_at` : un rendez-vous
+        // **commencé et non terminé** est un contrat en cours d'exécution au
+        // même titre qu'un rendez-vous de jeudi (art. 17.1.b). Le borner par
+        // `starts_at` aurait laissé anonymiser la cliente installée dans le
+        // fauteuil, et effacé au passage les notes du rendez-vous en cours.
+        const upcoming = await tx.appointment.count({
+          where: {
+            clientId: id,
+            status: { in: [...OCCUPYING_STATUSES] },
+            endsAt: { gt: upcomingFrom },
+          },
+        });
+
+        if (upcoming > 0) {
+          // Lever annule la transaction : l'anonymisation écrite quelques
+          // lignes plus haut n'a jamais eu lieu.
+          throw new UpcomingAppointmentsAbort(upcoming);
+        }
+
+        await tx.appointment.updateMany({
+          where: { clientId: id },
+          data: { clientNote: null, staffNote: null, cancellationReason: null },
+        });
+
+        const anonymized = await tx.user.findFirst({
+          where: { id, role: CUSTOMER_ROLE },
+          select: CUSTOMER_SELECT,
+        });
+
+        // `null` est impossible ici — l'`UPDATE` vient de toucher la ligne, et
+        // la transaction la tient — mais le type de Prisma ne le sait pas, et
+        // un `!` mentirait sur ce qui est garanti par quoi.
+        return anonymized === null
+          ? { outcome: 'not-found' as const }
+          : { outcome: 'anonymized' as const, customer: anonymized };
+      });
+    } catch (error: unknown) {
+      if (error instanceof UpcomingAppointmentsAbort) {
+        return { outcome: 'upcoming-appointments', upcomingAppointments: error.upcomingAppointments };
+      }
+      throw error;
+    }
   }
 
   /**

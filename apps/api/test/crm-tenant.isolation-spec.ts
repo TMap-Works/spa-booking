@@ -13,16 +13,25 @@ import { UNKNOWN_ID } from './utils/tenant-harness';
  * Isolation inter-tenant du module `crm` — obligatoire pour tout endpoint
  * nouveau (tenant-isolation §6, DoD de #56).
  *
- * La suite couvre les **six** routes du module, pas un échantillon :
+ * La suite couvre les **huit** routes du module, pas un échantillon :
  *
  * | Route | Ce qui est vérifié |
  * |---|---|
  * | `GET /customers` | la liste ne contient rien du voisin, même à nom et adresse identiques |
  * | `GET /customers/:id` | 404 sur la fiche du voisin |
  * | `GET /customers/:id/history` | 404, et aucune visite du voisin ne fuit |
+ * | `GET /customers/:id/export` | 404, et aucun fragment du dossier du voisin ne sort |
  * | `POST /customers` | l'adresse du voisin reste libre — l'unicité est par tenant |
+ * | `POST /customers/:id/anonymize` | 404, et la fiche du voisin **non anonymisée** |
  * | `PATCH /customers/:id` | 404, et la fiche du voisin intacte |
  * | `PATCH /customers/:id/status` | 404, et la fiche du voisin toujours active |
+ *
+ * Les deux routes de #81 méritent une attention particulière, et pour deux
+ * raisons opposées : l'export est la **lecture la plus large** du système —
+ * elle rend en un objet tout ce qu'un salon détient sur une personne —, et
+ * l'anonymisation est la seule **écriture irréversible**. Une fuite sur la
+ * première livrerait le dossier du voisin ; une fuite sur la seconde
+ * détruirait sa clientèle.
  *
  * Le module n'a **aucune** route publique : toutes se désignent par un jeton, il
  * n'y a donc pas de suite `public-*` en pendant. C'est délibéré — un module qui
@@ -97,7 +106,14 @@ describe('Isolation inter-tenant — module crm', () => {
     const row = harness.repository.customers.find((candidate) => candidate.id === id);
     return row === undefined
       ? null
-      : { lastName: row.lastName, internalNote: row.internalNote, isActive: row.isActive };
+      : {
+          lastName: row.lastName,
+          internalNote: row.internalNote,
+          isActive: row.isActive,
+          // L'anonymisation est irréversible : c'est la propriété qu'il importe
+          // le plus de retrouver intacte après une tentative de traversée (#81).
+          anonymizedAt: row.anonymizedAt,
+        };
   }
 
   it('la liste ne laisse voir aucune fiche du voisin, même à nom et adresse identiques', async () => {
@@ -122,6 +138,7 @@ describe('Isolation inter-tenant — module crm', () => {
     const { chezB } = semerDesDeuxCotes();
     const bearer = await harness.bearer('STAFF');
     const bearerManager = await harness.bearer('MANAGER');
+    const bearerAdmin = await harness.bearer('ADMIN');
 
     await expectCrossTenantNotFound({
       attempts: [
@@ -149,6 +166,18 @@ describe('Isolation inter-tenant — module crm', () => {
               .patch(`${BASE}/${chezB}/status`)
               .set('Authorization', bearerManager)
               .send({ isActive: false }),
+        },
+        {
+          label: 'export',
+          send: () =>
+            request(server()).get(`${BASE}/${chezB}/export`).set('Authorization', bearerManager),
+        },
+        {
+          label: 'anonymisation',
+          send: () =>
+            request(server())
+              .post(`${BASE}/${chezB}/anonymize`)
+              .set('Authorization', bearerAdmin),
         },
       ],
       hidden: [chezB, b, 'note du salon B'],
@@ -234,5 +263,74 @@ describe('Isolation inter-tenant — module crm', () => {
       .get(`${BASE}/${chezA}`)
       .set('Authorization', bearerVoisin)
       .expect(404);
+  });
+
+  it('l’export ne ramasse aucun rendez-vous du voisin, pas même un croisé (#81)', async () => {
+    const { chezA, chezB } = semerDesDeuxCotes();
+    harness.repository.addVisit({
+      tenantId: a,
+      clientId: chezA,
+      serviceName: 'soin chez A',
+      staffNote: 'note de rendez-vous du salon A',
+    });
+    harness.repository.addVisit({
+      tenantId: b,
+      clientId: chezB,
+      serviceName: 'soin chez B',
+      staffNote: 'note de rendez-vous du salon B',
+    });
+    // La ligne croisée que les clés étrangères composites `(tenant_id,
+    // client_id)` interdisent en base — fabriquée ici pour vérifier que la
+    // projection la plus large du module ne la ramasse pas même si elle existait.
+    harness.repository.addVisit({ tenantId: b, clientId: chezA, serviceName: 'soin croisé' });
+
+    const response = await request(server())
+      .get(`${BASE}/${chezA}/export`)
+      .set('Authorization', await harness.bearer('MANAGER'))
+      .expect(200);
+
+    const serialise = JSON.stringify(response.body);
+    expect((response.body as { appointments: unknown[] }).appointments).toHaveLength(1);
+    expect(serialise).toContain('soin chez A');
+    for (const secret of [
+      'soin chez B',
+      'soin croisé',
+      'note de rendez-vous du salon B',
+      'note du salon B',
+      chezB,
+      b,
+    ]) {
+      expect({ secret, present: serialise.includes(secret) }).toEqual({ secret, present: false });
+    }
+  });
+
+  it('anonymiser chez soi ne touche ni la fiche ni les rendez-vous du voisin (#81)', async () => {
+    const { chezA, chezB } = semerDesDeuxCotes();
+    const visiteVoisine = harness.repository.addVisit({
+      tenantId: b,
+      clientId: chezB,
+      serviceName: 'soin chez B',
+      clientNote: 'note de la cliente du salon B',
+      staffNote: 'note du praticien du salon B',
+    });
+
+    await request(server())
+      .post(`${BASE}/${chezA}/anonymize`)
+      .set('Authorization', await harness.bearer('ADMIN'))
+      .expect(200);
+
+    // L'écriture la plus destructrice du module reste bornée à son
+    // établissement — y compris sur `appointments`, qu'elle est la seule à
+    // toucher.
+    const ficheB = harness.repository.customers.find((row) => row.id === chezB);
+    expect({ nom: ficheB?.lastName, note: ficheB?.internalNote, anonymisee: ficheB?.anonymizedAt }).toEqual(
+      { nom: NOM, note: 'note du salon B', anonymisee: null },
+    );
+
+    const visiteB = harness.repository.visits.find((row) => row.id === visiteVoisine.id);
+    expect({ cliente: visiteB?.clientNote, salon: visiteB?.staffNote }).toEqual({
+      cliente: 'note de la cliente du salon B',
+      salon: 'note du praticien du salon B',
+    });
   });
 });

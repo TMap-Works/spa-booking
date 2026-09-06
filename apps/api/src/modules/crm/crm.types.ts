@@ -40,6 +40,28 @@ export interface CustomerSummary {
 export interface Customer extends CustomerSummary {
   internalNote: string | null;
   createdAt: Date;
+  /**
+   * Consentement au démarchage commercial — #81, CDC §5.1.
+   *
+   * Ne gouverne **pas** les notifications transactionnelles (confirmation,
+   * rappel J-1, annulation) : celles-là relèvent de l'exécution du contrat.
+   */
+  marketingConsent: boolean;
+  /**
+   * Instant du dernier changement de `marketingConsent` — la preuve que
+   * l'art. 7.1 du RGPD met à la charge du responsable de traitement.
+   *
+   * `null` tant que personne ne s'est prononcé : « jamais demandé » n'est pas
+   * « refusé à telle date ».
+   */
+  marketingConsentAt: Date | null;
+  /**
+   * Instant de l'anonymisation, ou `null` sur une fiche vivante — #81.
+   *
+   * Daté, la fiche ne porte plus qu'un pseudonyme : ses rendez-vous, ses
+   * encaissements et ses tickets restent comptés, sans personne au bout.
+   */
+  anonymizedAt: Date | null;
 }
 
 /** Une page de fiches, avec de quoi afficher un sélecteur de page. */
@@ -97,4 +119,91 @@ export interface CustomerVisitSummary {
 export interface CustomerVisitHistory {
   summary: CustomerVisitSummary;
   visits: CustomerVisit[];
+}
+
+/**
+ * Un rendez-vous **tel que l'export le rend** — plus large que `CustomerVisit`,
+ * et pour une raison de droit et non de confort (#81).
+ *
+ * L'historique du back-office sert à décider : il montre ce qu'un écran affiche.
+ * L'export sert le droit d'accès (RGPD art. 15), qui porte sur **toutes** les
+ * données concernant la personne — y compris les textes libres qu'un humain a
+ * saisis à son sujet, et y compris ce qu'elle a elle-même écrit en réservant.
+ * D'où les trois champs que l'historique ne montre pas : `clientNote`,
+ * `staffNote` et le motif d'annulation.
+ *
+ * Ce qu'il ne porte pas, en revanche : ni `tenantId`, ni `staffId`, ni
+ * `serviceId`. Ce sont des identifiants internes de l'établissement, et le
+ * destinataire de l'export n'est pas l'établissement (tenant-isolation §4).
+ */
+export interface ExportedAppointment {
+  id: string;
+  status: AppointmentStatus;
+  startsAt: Date;
+  endsAt: Date;
+  serviceName: string;
+  /** `null` si le praticien a été retiré — une visite sans praticien reste une visite. */
+  staffName: string | null;
+  priceAmountMinor: number;
+  priceCurrency: string;
+  /** Ce que la cliente a écrit en réservant — sa donnée, donc dans son export. */
+  clientNote: string | null;
+  /** Ce que le salon a noté sur ce rendez-vous — sa donnée à elle aussi (art. 15). */
+  staffNote: string | null;
+  cancelledAt: Date | null;
+  cancellationReason: string | null;
+  createdAt: Date;
+}
+
+/**
+ * Le dossier complet d'une personne — ce que rend `GET /customers/:id/export`.
+ *
+ * Premier critère de #81, et réponse au « mécanismes d'accès […] et d'export »
+ * du CDC §5.1. La forme est un objet JSON unique, daté, et non un assemblage
+ * d'appels que le destinataire aurait à recomposer : un export de portabilité
+ * (RGPD art. 20) doit être « structuré, couramment utilisé et lisible par
+ * machine », et un document se remet, une pagination non.
+ *
+ * `generatedAt` n'est pas décoratif : un export est une photographie, et sans sa
+ * date on ne sait pas de quand. C'est aussi ce qui permet à une personne qui en
+ * demande deux de les distinguer.
+ */
+export interface CustomerDataExport {
+  /** Instant UTC auquel la photographie a été prise. */
+  generatedAt: Date;
+  /** L'identité et les coordonnées — la fiche telle que le salon la détient. */
+  identity: {
+    id: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    phone: string | null;
+    isActive: boolean;
+    createdAt: Date;
+    anonymizedAt: Date | null;
+  };
+  /**
+   * L'état des consentements, avec sa date.
+   *
+   * Un seul pour l'instant, et c'est exact : les notifications
+   * transactionnelles ne reposent pas sur le consentement mais sur l'exécution
+   * du contrat, et les faire figurer ici aurait laissé croire qu'elles se
+   * retirent.
+   */
+  consents: {
+    marketing: boolean;
+    marketingRecordedAt: Date | null;
+  };
+  /**
+   * La note interne du salon sur cette personne.
+   *
+   * Elle est dans l'export, et ce n'est pas une négligence : le droit d'accès
+   * porte sur les données **concernant** la personne, sans exception pour celles
+   * qu'on aurait préféré garder pour soi. C'est aussi ce qui donne son sens à
+   * son autre propriété — elle ne sort par aucune autre porte que celle-ci et
+   * `GET /customers/:id`, toutes deux gardées.
+   */
+  internalNote: string | null;
+  /** Tous les rendez-vous, du plus ancien au plus récent. */
+  appointments: ExportedAppointment[];
 }
