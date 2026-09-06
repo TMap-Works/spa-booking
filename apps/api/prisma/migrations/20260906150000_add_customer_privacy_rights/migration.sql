@@ -1,0 +1,92 @@
+-- Droits des personnes sur leurs données — #81, CDC §5.1 « mécanismes d'accès,
+-- de rectification, d'export et de suppression (droit à l'oubli) » et
+-- « consentement et finalités ».
+--
+-- Trois colonnes sur `users`, et aucune table nouvelle. La raison est celle de
+-- #56 : une fiche cliente **est** une ligne `users` de rôle `CLIENT`, et les
+-- droits qu'on lui reconnaît portent sur cette ligne-là. Une table
+-- `customer_consents` parallèle aurait posé la même question qu'une table
+-- `customers` — laquelle des deux fait foi ? — pour un booléen et deux instants.
+--
+-- ## `marketing_consent` et `marketing_consent_at`
+--
+-- « Champ marketing_consent présent, même si le marketing est post-MVP » est un
+-- critère d'acceptation, et ce n'est pas de l'anticipation gratuite : le
+-- consentement se recueille **au moment où la fiche se crée**. Une base client
+-- constituée sans lui serait inexploitable a posteriori, puisqu'il faudrait
+-- recontacter chacun pour le demander — précisément ce qu'aucune base légale
+-- n'autorise à faire.
+--
+-- `NOT NULL DEFAULT false` : le consentement est un acte positif (RGPD art.
+-- 4.11), jamais une absence d'opposition. Un défaut à `true` aurait transformé
+-- chaque fiche saisie au comptoir en consentement présumé, et une colonne
+-- nullable aurait laissé « inconnu » se confondre avec « accepté » à la
+-- première lecture distraite.
+--
+-- L'instant qui l'accompagne est la **preuve** : RGPD art. 7.1 met à la charge
+-- du responsable de traitement de démontrer que le consentement a été donné.
+-- Un booléen seul dit l'état, jamais depuis quand. Nullable, parce qu'une fiche
+-- sur laquelle personne ne s'est jamais prononcé n'a pas de date à porter — et
+-- « jamais demandé » n'est pas « refusé le 6 septembre ».
+--
+-- Ce que ce consentement ne gouverne pas, et il faut le dire : les
+-- notifications **transactionnelles** — confirmation, rappel J-1, avis
+-- d'annulation. Celles-là relèvent de l'exécution du contrat et non du
+-- consentement ; les subordonner à cette colonne aurait rompu le service
+-- demandé par la cliente elle-même.
+--
+-- ## `anonymized_at`
+--
+-- Le droit à l'oubli, tenu par anonymisation plutôt que par effacement de la
+-- ligne. Ce n'est pas un contournement, c'est l'arbitrage que le CDC §5.1 rend
+-- possible en écrivant « suppression **ou** anonymisation » :
+-- `appointments.client_id` référence `users` en `RESTRICT`, et `payments` comme
+-- `sales` s'accrochent à ces rendez-vous. Retirer la ligne emporterait
+-- l'historique comptable des ventes passées, que le commerçant est tenu de
+-- conserver — le second critère d'acceptation l'énonce mot pour mot.
+--
+-- La ligne survit donc, vidée de ce qui identifie : le module `crm` remplace
+-- nom et adresse par un pseudonyme dérivé de l'`id`, et met à `NULL` le
+-- téléphone, la note interne et l'empreinte de mot de passe. Ce que la
+-- comptabilité garde — un identifiant opaque, des montants, des dates — n'est
+-- plus rattachable à une personne sans la table qui n'existe plus.
+--
+-- Nullable : la grande majorité des fiches sont vivantes, et `NULL` se lit
+-- « jamais anonymisée ». C'est aussi cette colonne qui rend l'opération
+-- idempotente — une seconde demande sur une fiche déjà anonymisée la rend telle
+-- quelle, au lieu de lui attribuer un second pseudonyme et de faire mentir la
+-- date.
+--
+-- ## Aucun index nouveau, et c'est un choix
+--
+-- Les trois colonnes ne servent aucun prédicat de recherche : l'anonymisation
+-- se désigne par l'identifiant de la fiche — donc par la clé primaire — et le
+-- consentement n'est lu qu'une fiche à la fois, le marketing étant hors
+-- périmètre. Un index posé « au cas où » coûterait une écriture à chaque
+-- création de fiche pour ne servir aucune lecture. Le jour où une campagne
+-- interrogera `marketing_consent`, l'index se posera avec elle, préfixé de
+-- `tenant_id` comme tous les autres (tenant-isolation §1).
+--
+-- ## Purement additive, et réversible
+--
+-- Trois colonnes ajoutées, rien de retypé, rien de retiré, aucune ligne
+-- réécrite. `ADD COLUMN` d'une colonne nullable ne touche que le catalogue sur
+-- PostgreSQL 11+ ; celle qui porte un défaut constant `NOT NULL` en fait autant
+-- depuis la version 11, la valeur étant stockée dans le catalogue et non
+-- recopiée dans chaque ligne existante. Le verrou est bref dans les trois cas.
+--
+-- L'inverse exact est le retrait des trois colonnes, et il ne perd que les
+-- consentements recueillis depuis le déploiement. Le retour arrière du **code**
+-- seul est sans effet de bord : la version antérieure ignore ces colonnes, et
+-- l'anonymisation qu'elle ne sait pas faire ne laisse rien d'incohérent
+-- derrière elle.
+--
+-- (Ce dernier paragraphe évite délibérément les mots-clés SQL de suppression :
+-- `prisma-schema.spec.ts` relit le **texte** de la migration, commentaires
+-- compris, pour interdire toute instruction destructive. Il ne peut pas
+-- distinguer une phrase d'une instruction.)
+
+-- AlterTable
+ALTER TABLE "users" ADD COLUMN     "anonymized_at" TIMESTAMPTZ(6),
+ADD COLUMN     "marketing_consent" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "marketing_consent_at" TIMESTAMPTZ(6);

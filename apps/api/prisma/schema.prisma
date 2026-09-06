@@ -370,6 +370,51 @@ model User {
   /// lit jamais.
   internalNote String? @map("internal_note") @db.VarChar(2000)
 
+  /// Consentement au démarchage commercial — #81, CDC §5.1 « base légale
+  /// explicite pour chaque traitement (notifications, marketing ultérieur) ».
+  ///
+  /// La colonne existe alors que le marketing est **hors périmètre MVP**
+  /// (CDC §1.4), et c'est délibéré : le consentement se recueille au moment où
+  /// la fiche se crée, pas le jour où l'on décide d'envoyer une campagne. Une
+  /// base client constituée sans lui serait inexploitable a posteriori — il
+  /// faudrait recontacter chacun pour le demander, ce qu'aucune base légale
+  /// n'autorise justement à faire.
+  ///
+  /// `false` par défaut, et jamais autrement : le consentement est un acte
+  /// positif (RGPD art. 4.11). Une valeur par défaut à `true` transformerait
+  /// chaque fiche saisie au comptoir en consentement présumé.
+  ///
+  /// Ce qu'elle ne gouverne **pas** : les notifications transactionnelles —
+  /// confirmation, rappel J-1, annulation. Celles-là relèvent de l'exécution du
+  /// contrat, pas du consentement, et les couper romprait le service demandé.
+  marketingConsent Boolean @default(false) @map("marketing_consent")
+
+  /// Instant du dernier changement de `marketing_consent` — la **preuve** que
+  /// le consentement exige (RGPD art. 7.1 : « le responsable démontre »).
+  ///
+  /// Un booléen seul dit l'état, jamais depuis quand ni s'il a été recueilli.
+  /// Nul tant que personne ne s'est prononcé, ce qui n'est pas la même chose
+  /// qu'un refus daté.
+  marketingConsentAt DateTime? @map("marketing_consent_at") @db.Timestamptz(6)
+
+  /// Instant de l'anonymisation de la fiche — #81, CDC §5.1 « droit à l'oubli ».
+  ///
+  /// Nul sur toute fiche vivante ; daté, la ligne ne porte plus aucune donnée
+  /// identifiante : nom et adresse remplacés par un pseudonyme dérivé de l'`id`,
+  /// téléphone, note interne et empreinte de mot de passe vidés.
+  ///
+  /// **La ligne survit, et c'est le point.** `appointments.client_id` et, à
+  /// travers lui, `payments` et `sales` la référencent en `Restrict` : la
+  /// supprimer emporterait l'historique comptable des ventes passées, que le
+  /// commerçant doit conserver. L'anonymisation retire la personne des données
+  /// sans retirer les données de la comptabilité — c'est l'arbitrage que le
+  /// CDC §5.1 rend possible en parlant de « suppression **ou** anonymisation ».
+  ///
+  /// C'est aussi cette colonne qui rend l'opération idempotente : une seconde
+  /// demande sur une fiche déjà anonymisée la rend telle quelle, au lieu de lui
+  /// attribuer un second pseudonyme.
+  anonymizedAt DateTime? @map("anonymized_at") @db.Timestamptz(6)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
