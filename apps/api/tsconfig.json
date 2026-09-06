@@ -46,8 +46,12 @@
     //
     // Le pointage vise les **sources** : c'est ce qui affranchit la compilation
     // de tout `dist` préalable. La contrepartie est qu'un import de **valeur**
-    // (et non de type) émettrait un `require('@spa/shared')` que l'image
-    // d'exécution ne sait pas encore satisfaire — voir la note de `crm.errors.ts`.
+    // (et non de type) émet un `require('@spa/shared')` que l'exécution, elle,
+    // résout par le `main` du paquet — `packages/shared/dist/index.js`. #463 a
+    // posé ce qu'il fallait pour l'honorer partout : le `dist` compilé et copié
+    // dans l'image (apps/api/Dockerfile), le `moduleNameMapper` des
+    // configurations Jest, et la garde « L'image API démarre » de ci.yml qui
+    // lance réellement le conteneur. Voir la note de `crm.errors.ts`.
     "paths": {
       "@spa/shared": ["../../node_modules/@spa/shared/src/index.ts"],
       "@spa/shared/*": ["../../node_modules/@spa/shared/src/*"]

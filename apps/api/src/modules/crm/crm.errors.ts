@@ -1,4 +1,4 @@
-import type { DOMAIN_ERROR_CODES } from '@spa/shared';
+import { DOMAIN_ERROR_CODES } from '@spa/shared';
 
 import { DomainError } from '../../common/errors';
 
@@ -17,22 +17,21 @@ import { DomainError } from '../../common/errors';
  * `CLIENT_EMAIL_NOT_BOOKABLE`, lui, y est **déjà** déclaré — dans
  * `DOMAIN_ERROR_CODES` de `packages/shared/src/errors/error-codes.ts`, parce que
  * le front en a besoin pour trier ce refus définitif du 409 passager qu'est un
- * créneau perdu (#452). Le `satisfies` ci-dessous **arrime** la constante locale
- * à cette déclaration : le type attendu n'est pas `string` mais le littéral que
- * le contrat partagé porte. Renommer ou retirer le code dans `@spa/shared` ne
- * laisse plus les deux versions diverger en silence — cela casse la compilation
- * d'`apps/api`, ici, à la ligne qui recopie la valeur (#456).
+ * créneau perdu (#452). Il n'est plus recopié ici : la constante ci-dessous
+ * **consomme la valeur du contrat** (#463). Il n'y a donc plus deux versions à
+ * faire diverger — renommer ou retirer le code dans `@spa/shared` casse la
+ * compilation d'`apps/api`, ici, et le changerait des deux côtés d'un seul geste.
  *
- * **Ce qui reste à faire, et pourquoi ce n'est pas fait ici.** L'arrimage est de
- * type ; la valeur est encore écrite en toutes lettres. L'importer vraiment —
- * `CLIENT_EMAIL_NOT_BOOKABLE: DOMAIN_ERROR_CODES.CLIENT_EMAIL_NOT_BOOKABLE` —
- * émettrait un `require('@spa/shared')` dans `dist/`, que l'image d'exécution ne
- * sait pas satisfaire : `apps/api/Dockerfile` ne copie `packages/shared/dist`
- * nulle part, et son étape `runtime` n'emporte du paquet que son `package.json`.
- * L'API démarrerait sur un `MODULE_NOT_FOUND`, sans qu'aucun job de la CI ne le
- * voie — le job `docker` construit l'image, il ne la démarre pas. Le Dockerfile
- * l'annonce lui-même : « le jour où elle l'importera, cette image ne suffira
- * plus ». Ce volet appartient au suivi ouvert par #456.
+ * **Ce que cet import de valeur a exigé, et qui le garde.** Il émet un
+ * `require('@spa/shared')` dans `apps/api/dist`, que `node` résout par le `main`
+ * du workspace — `packages/shared/dist/index.js`. Trois choses le rendent
+ * possible, et aucune n'est décorative : `@spa/shared` est déclaré dans les
+ * `dependencies` d'`apps/api/package.json` ; l'étape `build` du Dockerfile
+ * compile le paquet et son étape `runtime` en copie le `dist` ; et la garde
+ * « L'image API démarre » de `.github/workflows/ci.yml` **lance** l'image à
+ * chaque PR, là où le job `docker` se contentait de la construire. C'est cette
+ * dernière qui empêche le `MODULE_NOT_FOUND` de ne se découvrir qu'au
+ * déploiement (#463).
  *
  * **Aucune de ces erreurs ne parle d'un autre établissement**, et aucune ne
  * recopie une donnée personnelle. Une fiche d'un autre tenant est introuvable,
@@ -50,11 +49,8 @@ import { DomainError } from '../../common/errors';
  */
 export const CRM_ERROR_CODES = {
   CUSTOMER_EMAIL_TAKEN: 'CUSTOMER_EMAIL_TAKEN',
-  CLIENT_EMAIL_NOT_BOOKABLE: 'CLIENT_EMAIL_NOT_BOOKABLE',
-} as const satisfies {
-  CUSTOMER_EMAIL_TAKEN: string;
-  CLIENT_EMAIL_NOT_BOOKABLE: (typeof DOMAIN_ERROR_CODES)['CLIENT_EMAIL_NOT_BOOKABLE'];
-};
+  CLIENT_EMAIL_NOT_BOOKABLE: DOMAIN_ERROR_CODES.CLIENT_EMAIL_NOT_BOOKABLE,
+} as const;
 
 const CONFLICT = 409;
 
