@@ -21,6 +21,7 @@ import { CatalogModule } from './modules/catalog/catalog.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { PaymentsModule } from './modules/payments/payments.module';
+import { ReportingModule } from './modules/reporting/reporting.module';
 
 /**
  * Racine du monolithe modulaire. Les huit modules métier du CDC §2.3
@@ -74,6 +75,14 @@ import { PaymentsModule } from './modules/payments/payments.module';
     // ses routes n'est publique — un module qui ne contient que des données
     // personnelles n'a pas de surface anonyme (CDC §5.1).
     CrmModule,
+    // Après `IdentityModule`, dont il monte les gardes sur ses trois routes
+    // (#74). Il n'importe **aucun** module métier, alors qu'il agrège les tables
+    // de `payments` et d'`appointments` : un rapport est une projection en
+    // lecture seule qui ne décide d'aucune règle de cycle de vie, et un agrégat
+    // sur un an de rendez-vous ne se compose pas d'appels de service. Sa place
+    // ici est donc indifférente à l'ordre des trois précédents — seul
+    // `IdentityModule` doit le précéder.
+    ReportingModule,
   ],
   providers: [
     {
