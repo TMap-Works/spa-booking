@@ -5,7 +5,7 @@ import { fetchServiceCategories } from '@/lib/api-client';
 
 import { CategoryManager } from '../../components/category-manager';
 import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
-import { adminCatalogPath } from '../../paths';
+import { adminCatalogPath, adminServiceCategoriesPath } from '../../paths';
 
 /**
  * Rubriques du catalogue (#52, deuxième critère).
@@ -23,7 +23,10 @@ interface CategoriesPageProps {
 
 export default async function ServiceCategoriesPage({ params }: CategoriesPageProps) {
   const { tenantSlug } = await params;
-  const accessToken = await requireAdminAccessToken(tenantSlug);
+  const accessToken = await requireAdminAccessToken(
+    tenantSlug,
+    adminServiceCategoriesPath(tenantSlug),
+  );
 
   let categories: ServiceCategory[];
   try {

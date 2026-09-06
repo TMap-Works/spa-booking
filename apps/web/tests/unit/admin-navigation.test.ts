@@ -7,6 +7,7 @@ import {
   roleLabel,
 } from '@/app/(admin)/[tenantSlug]/admin/components/navigation';
 import {
+  adminCatalogPath,
   adminSessionRefreshPath,
   safeAdminNext,
 } from '@/app/(admin)/[tenantSlug]/admin/paths';
@@ -179,7 +180,20 @@ describe('retour après renouvellement de session', () => {
     );
   });
 
-  it('omet le paramètre quand l’appelant ne dit pas d’où il vient', () => {
-    expect(adminSessionRefreshPath(SLUG)).toBe(`/${SLUG}/admin/session/refresh`);
+  it('rend au catalogue filtré le chemin que la garde mémorise', () => {
+    // Le filtre du catalogue est dans l'URL : un renouvellement de session doit
+    // rendre la main sur la liste qu'on regardait, pas sur le catalogue entier
+    // (#458, troisième critère).
+    expect(adminCatalogPath(SLUG)).toBe(`/${SLUG}/admin/catalogue`);
+    expect(adminCatalogPath(SLUG, {})).toBe(`/${SLUG}/admin/catalogue`);
+    expect(adminCatalogPath(SLUG, { activeOnly: false })).toBe(`/${SLUG}/admin/catalogue`);
+    expect(adminCatalogPath(SLUG, { activeOnly: true })).toBe(
+      `/${SLUG}/admin/catalogue?actives=1`,
+    );
+
+    // Et il traverse le renouvellement intact.
+    expect(
+      safeAdminNext(adminCatalogPath(SLUG, { activeOnly: true }), SLUG),
+    ).toBe(`/${SLUG}/admin/catalogue?actives=1`);
   });
 });

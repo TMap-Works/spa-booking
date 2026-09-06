@@ -63,7 +63,19 @@ interface CheckoutPageProps {
 export default async function CheckoutPage({ params, searchParams }: CheckoutPageProps) {
   const { tenantSlug } = await params;
   const { date, rdv } = await searchParams;
-  const accessToken = await requireAdminAccessToken(tenantSlug);
+
+  // La journée et le rendez-vous en cours de règlement sont lus **avant** la
+  // garde : ils ne demandent aucun jeton, et c'est ce qui permet de dire à la
+  // garde où revenir après un renouvellement de session. Sans eux, l'opérateur
+  // repartait de la liste du jour avec une cliente devant lui (#458).
+  const requested = parseCalendarDate(date);
+  const accessToken = await requireAdminAccessToken(
+    tenantSlug,
+    adminCheckoutPath(tenantSlug, {
+      ...(requested === null ? {} : { date: requested }),
+      ...(rdv === undefined ? {} : { appointmentId: rdv }),
+    }),
+  );
 
   const denial = {
     deniedTitle: 'Accès réservé',
@@ -87,7 +99,7 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
 
   // La journée par défaut est celle du **salon**, pas celle du navigateur : on
   // encaisse la journée que l'équipe travaille.
-  const anchor = parseCalendarDate(date) ?? todayInTimeZone(tenant.timezone);
+  const anchor = requested ?? todayInTimeZone(tenant.timezone);
 
   let appointments: Appointment[];
   try {
