@@ -70,6 +70,24 @@ describe('rail — la navigation', () => {
     expect(screen.getByRole('link', { name: 'Personnel' }).getAttribute('href')).toBe(
       '/maison-lotus/admin/personnel',
     );
+    // Troisième et dernière entrée du même défaut (#484) : l'écran est servi
+    // depuis #59, et le rail l'ouvre sur la journée courante — l'URL est nue,
+    // sans `?date=` ni `?rdv=`.
+    expect(screen.getByRole('link', { name: 'Encaissement' }).getAttribute('href')).toBe(
+      '/maison-lotus/admin/encaissement',
+    );
+  });
+
+  it('marque l’encaissement pendant qu’une cliente règle', () => {
+    // L'écran porte sa journée et son rendez-vous dans la chaîne de requête, que
+    // `usePathname` ne rend pas : le repère tient donc sur le seul chemin.
+    pathname = '/maison-lotus/admin/encaissement';
+    renderRail();
+
+    expect(screen.getByRole('link', { name: 'Encaissement' }).getAttribute('aria-current')).toBe(
+      'page',
+    );
+    expect(screen.getByRole('link', { name: 'Planning' }).getAttribute('aria-current')).toBeNull();
   });
 
   it('annonce les sections non livrées sans en faire des liens', () => {

@@ -9,6 +9,7 @@ import {
 import { adminClientsPath } from '@/app/(admin)/[tenantSlug]/admin/clients/paths';
 import {
   adminCatalogPath,
+  adminCheckoutPath,
   adminSessionRefreshPath,
   safeAdminNext,
 } from '@/app/(admin)/[tenantSlug]/admin/paths';
@@ -108,11 +109,14 @@ describe('sommaire du back-office — aucun lien mort', () => {
   });
 
   it('laisse sans chemin les écrans que la vague n’a pas encore livrés', () => {
+    // Le reporting est désormais **seul** dans cet état : le fichier client et
+    // le personnel ont été branchés par #480, l'encaissement par #484. Une
+    // entrée qui rejoint cette liste est une régression, pas un oubli.
     const pending = adminNavigation(SLUG, 'admin')
       .filter((candidate) => candidate.href === null)
       .map((candidate) => candidate.key);
 
-    expect(pending).toEqual(['encaissement', 'reporting']);
+    expect(pending).toEqual(['reporting']);
   });
 
   it('mène au fichier client, entier et sans recherche figée', () => {
@@ -130,6 +134,26 @@ describe('sommaire du back-office — aucun lien mort', () => {
     expect(navEntry('personnel', 'staff').href).toBe(`/${SLUG}/admin/personnel`);
     expect(navEntry('personnel', 'staff').upcoming).toBeNull();
     expect(navEntry('personnel').minimumRole).toBe('staff');
+  });
+
+  it('mène à l’encaissement du jour, sans date ni rendez-vous figés', () => {
+    // L'écran est servi depuis #59 : l'entrée porte son chemin, et l'URL est
+    // **nue**. Une date figée périmerait le sommaire dès le lendemain ; un `rdv`
+    // figé en ferait le règlement de quelqu'un d'autre — c'est la journée
+    // courante du salon que l'écran ouvre alors de lui-même.
+    expect(navEntry('encaissement').href).toBe(adminCheckoutPath(SLUG));
+    expect(navEntry('encaissement').href).toBe(`/${SLUG}/admin/encaissement`);
+    expect(navEntry('encaissement').href).not.toContain('?');
+    expect(navEntry('encaissement').upcoming).toBeNull();
+  });
+
+  it('ouvre l’encaissement dès le rang praticien', () => {
+    // Le rang annoncé est celui de l'`@AuthAtLeast` des routes gardées que
+    // l'écran appelle — `GET /v1/appointments` et `POST /v1/payments/cash` sont
+    // au seuil `STAFF`, comme `GET /v1/sales`. Encaisser est un geste de
+    // comptoir : l'annoncer `manager` cacherait un écran qui fonctionne.
+    expect(navEntry('encaissement', 'staff').href).toBe(adminCheckoutPath(SLUG));
+    expect(navEntry('encaissement').minimumRole).toBe('staff');
   });
 
   it('encode le slug dans chaque chemin servi', () => {
@@ -181,6 +205,23 @@ describe('l’entrée courante', () => {
     // Et symétriquement, une entrée dont le `href` porterait déjà une vue —
     // `?actives=1` du catalogue — reste comparée sur son seul chemin.
     expect(isCurrentEntry(`/${SLUG}/admin/clients`, searched)).toBe(true);
+  });
+
+  it('reste marquée pendant qu’on encaisse un rendez-vous', () => {
+    // L'écran d'encaissement met sa journée et le rendez-vous en cours de
+    // règlement dans la **chaîne de requête** — `?date=…&rdv=…` — et l'opérateur
+    // y navigue toute la journée. Le repère de section doit y survivre : c'est
+    // exactement le défaut que `isCurrentEntry` corrige pour le planning.
+    const checkout = navEntry('encaissement').href ?? '';
+    const settling = adminCheckoutPath(SLUG, { date: '2026-09-06', appointmentId: 'a1b2' });
+
+    expect(settling.startsWith(`${checkout}?`)).toBe(true);
+    expect(isCurrentEntry(`/${SLUG}/admin/encaissement`, checkout)).toBe(true);
+    expect(isCurrentEntry(`/${SLUG}/admin/encaissement`, settling)).toBe(true);
+
+    // Et le planning ne se marque pas parce qu'on encaisse : les deux écrans
+    // partagent la journée, pas la section.
+    expect(isCurrentEntry(`/${SLUG}/admin/encaissement`, planning)).toBe(false);
   });
 
   it('reste marquée sur la fiche d’un praticien', () => {
