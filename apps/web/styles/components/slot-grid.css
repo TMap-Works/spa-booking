@@ -1,0 +1,194 @@
+/*
+ * Composant — Barre de dates et grille de créneaux
+ * =============================================================================
+ *
+ * Le sélecteur de l'étape 3 du tunnel de réservation, tel que
+ * `docs/design/appointments/keyboard-navigation.md` et `states.md` le décrivent.
+ *
+ *   .spa-date-bar     une ligne de journées, role="radiogroup"
+ *   .spa-slot-grid    la grille de créneaux, role="grid" › row › gridcell
+ *
+ * ## Pourquoi une feuille, alors que le composant tenait sans
+ *
+ * Il tenait sur les primitives (`.spa-button`, `.spa-card`, `.spa-empty-state`)
+ * et sur la mise en page naturelle des rôles ARIA. C'était lisible, mais deux
+ * choses lui manquaient et ne se règlent qu'ici :
+ *
+ * - le **retour à la ligne** de la grille sur mobile. Une journée de salon fait
+ *   facilement trente créneaux ; alignés par le flux normal, ils débordent ou
+ *   s'étirent selon la largeur du texte, et l'axe vertical des flèches cesse de
+ *   correspondre à ce que l'œil voit. Une piste de colonnes fixe rend les deux
+ *   cohérents ;
+ * - le `scroll-margin` que le document de conception exige : *« Le focus n'est
+ *   jamais masqué par la barre de résumé collante »*. C'est une propriété CSS,
+ *   elle n'a pas d'équivalent en JSX.
+ *
+ * ## Aucune classe sur les boutons
+ *
+ * `Button` n'accepte pas de `className` — c'est délibéré, le design system
+ * décide de l'allure d'un bouton. Les états se lisent donc sur les attributs
+ * ARIA que le composant pose déjà (`aria-checked`, `aria-disabled`) : la règle
+ * CSS et le lecteur d'écran s'appuient alors sur la même source, et un état
+ * peint sans être annoncé devient impossible.
+ */
+
+/* --- Barre de dates -------------------------------------------------------- */
+
+/*
+ * Une ligne qui défile plutôt qu'une grille qui se replie : les journées sont
+ * ordonnées, et un retour à la ligne au milieu d'une quinzaine ferait chercher
+ * « le lendemain » en début de ligne suivante. `scroll-snap` cale la pastille
+ * sur le bord, pour qu'un défilement au doigt ne s'arrête jamais à cheval.
+ */
+.spa-date-bar {
+  display: flex;
+  gap: var(--spa-space-2);
+  padding-block: var(--spa-space-2);
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  /* Le clavier fait défiler la barre en même temps qu'il la parcourt : sans
+   * cela, la journée focalisée reste hors champ dès la huitième flèche. */
+  scroll-padding-inline: var(--spa-space-4);
+}
+
+.spa-date-bar .spa-button {
+  flex: 0 0 auto;
+  min-inline-size: var(--spa-target-min-size);
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-3);
+  scroll-snap-align: start;
+}
+
+/*
+ * L'empilement se joue sur `.spa-button__label` et non sur le bouton : `Button`
+ * enveloppe **tous** ses enfants dans ce span, si bien qu'un bouton n'a jamais
+ * qu'un seul enfant de flux. Un `flex-direction: column` posé sur le bouton
+ * n'aurait donc rien à empiler, et le jour et le compte se suivraient sur une
+ * même ligne — « mar. 1 » suivi de « 4 » se lit « mar. 14 ».
+ */
+.spa-date-bar .spa-button__label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spa-space-1);
+}
+
+.spa-date-bar__day {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  white-space: nowrap;
+}
+
+/*
+ * Le nombre de créneaux, en second registre : c'est l'information qui fait
+ * choisir une journée plutôt qu'une autre, mais ce n'est pas son nom.
+ */
+.spa-date-bar__count {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+  white-space: nowrap;
+}
+
+/*
+ * La journée retenue. `aria-checked` et non une classe : c'est l'attribut que le
+ * lecteur d'écran annonce, et le faire porter aussi la peinture garantit que les
+ * deux ne peuvent pas diverger.
+ */
+.spa-date-bar .spa-button[aria-checked='true'] {
+  background-color: var(--spa-color-accent-soft);
+  border-color: var(--spa-color-accent);
+  color: var(--spa-color-accent-text);
+}
+
+.spa-date-bar .spa-button[aria-checked='true'] .spa-date-bar__count {
+  color: var(--spa-color-accent-text);
+}
+
+/*
+ * Journée complète : rendue, lisible, hors du parcours des flèches. Le serveur
+ * la renvoie vide plutôt que de l'omettre pour qu'on puisse écrire « complet »
+ * plutôt que de laisser un trou dans la quinzaine.
+ *
+ * L'atténuation ne porte pas seule l'information — le libellé dit « complet »,
+ * et l'`aria-label` de la pastille aussi (WCAG 1.4.1).
+ */
+.spa-date-bar .spa-button[aria-disabled='true'] {
+  background-color: var(--spa-color-disabled-surface);
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  cursor: not-allowed;
+}
+
+.spa-date-bar .spa-button[aria-disabled='true'] .spa-date-bar__count {
+  color: var(--spa-color-disabled-text);
+}
+
+/* --- Grille de créneaux ---------------------------------------------------- */
+
+.spa-slot-grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  margin-block: var(--spa-space-4);
+}
+
+/*
+ * Une ligne = un moment de la journée. L'en-tête occupe toute la largeur, les
+ * créneaux se rangent sous lui en colonnes de largeur fixe : la grille visuelle
+ * coïncide alors avec la grille que les flèches parcourent, ce qui est la seule
+ * façon pour `↓` de tomber là où l'œil l'attend.
+ *
+ * `auto-fill` et non `auto-fit` : `auto-fit` étirerait trois créneaux du soir
+ * sur toute la largeur, et deux journées de suite n'auraient pas la même trame.
+ */
+.spa-slot-grid__row {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+  gap: var(--spa-space-2);
+}
+
+.spa-slot-grid__rowheader {
+  grid-column: 1 / -1;
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-slot-grid__cell {
+  display: block;
+}
+
+.spa-slot-grid__cell .spa-button {
+  inline-size: 100%;
+  min-block-size: var(--spa-target-min-size);
+}
+
+/*
+ * `scroll-margin` — la dernière ligne de « Focus visible » du document de
+ * conception : *« la grille défile pour garder le créneau focalisé dans le
+ * viewport (scroll-margin sous l'en-tête et au-dessus de la barre collante) »*.
+ *
+ * Sans elle, `scrollIntoView` — celui du navigateur quand le focus entre dans un
+ * élément hors champ — cale le bouton pile au bord, c'est-à-dire sous l'en-tête
+ * ou sous la barre de résumé. Le clavier a bien le focus, et le créneau focalisé
+ * est invisible : la pire des deux situations.
+ *
+ * Posée sur les boutons et non sur la grille : c'est l'élément qui reçoit le
+ * focus qui doit garder sa marge, et une marge sur le conteneur ne protégerait
+ * que le premier créneau.
+ */
+.spa-slot-grid__cell .spa-button,
+.spa-date-bar .spa-button {
+  scroll-margin-block: var(--spa-space-16) var(--spa-space-16);
+}
+
+/* --- Écrans étroits -------------------------------------------------------- */
+
+/*
+ * Sous 30rem, la trame passe à des colonnes plus serrées : « 14:00 » tient dans
+ * moins de place que la cible tactile minimale, qui reste le vrai plancher.
+ */
+@media (max-width: 30rem) {
+  .spa-slot-grid__row {
+    grid-template-columns: repeat(auto-fill, minmax(4.5rem, 1fr));
+  }
+}
