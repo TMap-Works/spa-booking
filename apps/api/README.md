@@ -31,8 +31,8 @@ inter-tenant.
 | Cible | Ce qu'elle couvre | Infrastructure |
 |---|---|---|
 | `npm run test:unit` | logique pure, `src/**/__tests__/*.spec.ts` | aucune |
-| `npm run test:integration:api` | `test/*.integration-spec.ts` — l'API en HTTP | Docker pour une d'entre elles |
-| `npm run test:isolation` | `test/*.isolation-spec.ts` — les tests de fuite | Docker pour deux d'entre elles |
+| `npm run test:integration:api` | `test/*.integration-spec.ts` — l'API en HTTP | Docker pour deux d'entre elles |
+| `npm run test:isolation` | `test/*.isolation-spec.ts` — les tests de fuite | Docker pour quatre d'entre elles |
 | `npm run test:concurrency` | `test/*.concurrency-spec.ts` — les courses du moteur de réservation | Docker |
 | `npm run test:integration` | les deux cibles d'intégration, dans cet ordre | idem |
 
@@ -163,13 +163,14 @@ base les rendrait vrais par construction, donc vides.
 | `CREATE DATABASE` + SQL des migrations | ~0,4 s | ~0,4 s |
 
 Soit **environ 3 secondes par fichier de test qui provisionne une base**, et
-~12 s sur `npm run verify` pour les quatre fichiers d'aujourd'hui — le quatrième
-étant `appointments-exclusion.concurrency-spec.ts`, séparé de son voisin
-d'intégration par #326 pour que `test:concurrency` ait une suite à jouer. C'est
-un conteneur de plus, assumé : la cible qui garde le risque n°1 ne peut pas
+~21 s sur `npm run verify` pour les **sept fichiers d'aujourd'hui** — ils sont
+nommés plus bas, avec la façon de les recompter sans se tromper. L'un d'eux,
+`appointments-exclusion.concurrency-spec.ts`, a été séparé de son voisin
+d'intégration par #326 pour que `test:concurrency` ait une suite à jouer : c'est
+un conteneur de plus, assumé — la cible qui garde le risque n°1 ne peut pas
 partager son fichier avec des cas qu'une autre cible exécute. C'est le prix
 de l'indépendance vis-à-vis de ce que la machine héberge — version du moteur
-comprise. Il croît avec le nombre de **fichiers**, pas de suites ni de bases :
+comprise. Il croît avec le nombre de **fichiers**, pas de `describe` ni de bases :
 regrouper dans un même fichier les cas qui exigent un moteur reste la façon de
 ne pas le payer deux fois.
 
@@ -178,14 +179,52 @@ dans le `beforeAll` de la première suite, dont le délai est celui de Jest (30 
 En local, `docker compose up -d` l'a déjà tirée ; en CI, une étape dédiée du job
 `test` la tire avant les tests.
 
-Quatre suites s'en servent : `tenant-scope.isolation-spec.ts`, qui prouve
-l'extension de scoping Prisma contre un vrai moteur,
-`appointments-exclusion.integration-spec.ts`, qui prouve la contrainte
-d'exclusion anti-double-réservation, `appointments-exclusion.concurrency-spec.ts`,
-qui prouve qu'elle tient sous des écritures parallèles — les deux partagent leur
-amorçage dans `appointments-exclusion.harness.ts` —, et
-`disposable-database.isolation-spec.ts`, qui prouve la base jetable elle-même.
-Le harnais et ses assertions, eux, sont exercés par
+**Sept fichiers de test provisionnent une base**, donc sept conteneurs :
+
+| Fichier | Ce qu'il prouve, et que rien d'autre ne prouve |
+|---|---|
+| `tenant-scope.isolation-spec.ts` | l'extension de scoping Prisma, contre un vrai moteur |
+| `appointments-exclusion.integration-spec.ts` | la contrainte d'exclusion anti-double-réservation |
+| `appointments-exclusion.concurrency-spec.ts` | qu'elle tient sous des écritures parallèles |
+| `disposable-database.isolation-spec.ts` | la base jetable elle-même — neuve, migrée, détruite |
+| `payments-webhook.isolation-spec.ts` | que l'idempotence du webhook Stripe est une contrainte d'unicité et non une condition écrite dans le service, et qu'un événement dont les métadonnées désignent le voisin s'applique quand même chez le propriétaire réel de l'encaissement |
+| `pos.isolation-spec.ts` | la transaction de `createSale`, les `CHECK` de montants posés par la migration, et les clés étrangères composites `(tenant_id, …)` qui interdisent de facturer sur le ticket d'un salon l'article d'un autre |
+| `tenant-settings-constraints.integration-spec.ts` | les cinq bornes de `20260904150000_add_tenant_address_and_opening_hours` — complétude de l'adresse, code pays, jour ISO 8601, plage dans sa journée civile, non-recouvrement de deux plages du même jour — et que le `deleteMany({})` **sans `where`** de la réécriture d'horaires s'arrête à la frontière du tenant |
+
+Ventilés par cible : **deux** sous `test:integration:api`, **quatre** sous
+`test:isolation`, **un** sous `test:concurrency`. La colonne « Infrastructure »
+du tableau des cibles de test, plus haut dans ce README, porte ces trois nombres
+et se met à jour du même geste que ce décompte — les deux avaient dérivé
+ensemble.
+
+Les deux suites `appointments-exclusion` partagent leur amorçage dans
+`appointments-exclusion.harness.ts` : un seul fichier de harnais, mais **deux**
+conteneurs — chacune l'appelle dans son propre `beforeAll`, et Jest réinitialise
+le registre de modules entre fichiers.
+
+**Comment recompter.** La liste qui fait foi vient de :
+
+```bash
+grep -rl createDisposableDatabase apps/api/test
+```
+
+Elle ne se lit pas au nombre de lignes. Deux corrections, dans cet ordre :
+
+1. **retirer ce qui n'est pas une suite** — `utils/disposable-database.ts`, qui
+   est l'utilitaire lui-même, et `appointments-exclusion.harness.ts`, qui est un
+   harnais ;
+2. **ajouter les fichiers qui appellent ces harnais** — un harnais partagé coûte
+   autant de conteneurs qu'il a de suites appelantes, jamais un seul.
+
+Aujourd'hui le `grep` rend sept chemins et le décompte tombe sur sept conteneurs :
+les deux corrections se compensent exactement (−2 puis +2). Cette coïncidence est
+un piège, et elle ne survivra pas au prochain fichier ajouté. C'est faute de
+l'avoir défaite que
+[#478](https://github.com/TMap-Works/spa-booking/issues/478) annonçait « cinq » :
+`payments-webhook.isolation-spec.ts` et `pos.isolation-spec.ts` n'avaient jamais
+été inscrites ici.
+
+Le harnais d'isolation et ses assertions, eux, sont exercés par
 `tenant-harness.isolation-spec.ts` — y compris **dans le sens négatif** : chaque
 assertion y est mise devant la situation qu'elle doit attraper, et vérifiée pour
 sa capacité à rougir.
