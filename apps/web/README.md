@@ -102,6 +102,38 @@ bandeau qui nomme le manque. Faute de `GET /staff` (#421), les colonnes de la vu
 jour sont **déduites des rendez-vous** : un praticien sans rendez-vous ce jour-là
 n'a pas de colonne.
 
+### Le report par glisser-déposer (#51)
+
+Un bloc se saisit et se lâche sur un créneau libre. Ce que cela déclenche est un
+**report** — `POST /appointments/:id/reschedule`, donc une annulation suivie
+d'une création liée par `rescheduled_from_id` dans une seule transaction
+(booking-engine §5) — et jamais une mise à jour des dates en place. Le geste
+change, le mécanisme non : c'est la même action serveur que le tiroir de #50.
+
+Le calcul vit dans `lib/admin/appointment-desk.ts`, en fonctions pures :
+`planDeskMove` projette le report, `moveRefusal` rédige le retour arrière. Le
+composant n'en tient que l'état.
+
+| Trait | Où il se tient |
+|---|---|
+| État optimiste au lâcher, remplacement ciblé du seul bloc déplacé | `replaceAppointment` |
+| Retour arrière annoncé — le bloc revient **et** dit pourquoi | `moveRefusal`, `--reverted` |
+| Confirmation du seul changement de praticien | `CalendarMoveConfirm` |
+| Un report en vol bloque le suivant | `dropOn`, garde `busy` |
+| Chemin clavier : poignée, cibles nommées, Échap repose | `__grip`, `aria-live` |
+
+Trois choses expliquent la forme retenue. **Aucune bibliothèque de
+glisser-déposer** : l'API HTML5 native suffit à ce geste-là, et une dépendance de
+plus sur l'écran le plus chargé du back-office se paierait à chaque ouverture.
+**La poignée est un frère du bloc**, jamais son enfant — un bouton dans un bouton
+n'est pas du HTML valide, et le clavier n'atteindrait pas le second. **Un
+rendez-vous soldé n'a pas de poignée** et n'est pas `draggable` : le serveur le
+refuserait en `INVALID_STATE_TRANSITION`, et une poignée qui mène à un refus est
+une poignée qui ment.
+
+En vue semaine, une colonne est une journée de toute l'équipe et ne désigne donc
+aucun praticien : le report garde celui du rendez-vous et ne demande rien.
+
 ## Vérifications
 
 ```bash

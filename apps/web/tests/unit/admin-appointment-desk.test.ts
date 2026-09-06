@@ -1,16 +1,21 @@
-import type { Service } from '@spa/shared';
+import type { Appointment, AppointmentStatus, Service } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
   DESK_ROUTE_MISSING_MESSAGE,
+  MOVE_CONFLICT_MESSAGE,
+  MOVE_GONE_MESSAGE,
   SLOT_CONFLICT_MESSAGE,
   deskFailureMessage,
+  deskMoment,
   deskStatusActions,
   isReschedulable,
   isSlotConflict,
   minutesOfClock,
+  moveRefusal,
   offsetDateTimeInTenant,
   offsetInTenant,
+  planDeskMove,
   summarize,
   tenantFields,
 } from '@/lib/admin/appointment-desk';
@@ -159,5 +164,180 @@ describe('les refus, et ce qu’ils veulent dire à l’opérateur', () => {
     expect(deskFailureMessage('SLOT_OUTSIDE_WORKING_HOURS', 'Le salon est fermé.')).toBe(
       'Le salon est fermé.',
     );
+  });
+});
+
+/**
+ * Le report par glisser-déposer (#51), côté calcul.
+ *
+ * Ce qui se joue ici et nulle part ailleurs : le lâcher est une **journée civile
+ * et une heure civile du salon**, l'API attend un instant à offset explicite, et
+ * l'écran doit afficher le bloc à sa nouvelle place sans attendre la réponse.
+ * Trois conversions à ne pas rater, dont deux qui ne se verraient pas à l'œil.
+ */
+describe('le report par glisser-déposer', () => {
+  const HASINA = { id: 'staff-hasina', displayName: 'Hasina' };
+  const TIANA = { id: 'staff-tiana', displayName: 'Tiana' };
+
+  /** 09:00 – 10:00 au salon d'Antananarivo, le mercredi 26 août 2026. */
+  function moved(status: AppointmentStatus = 'confirmed'): Appointment {
+    return {
+      id: 'aaaaaaaa-0000-4000-8000-000000000001',
+      status,
+      client: { id: 'client-1', firstName: 'Rina', lastName: 'Andriamana' },
+      staff: HASINA,
+      service: {
+        id: 'service-1',
+        name: 'Massage suédois',
+        durationMinutes: 60,
+        price: { amountMinor: 3500, currency: 'EUR' },
+      },
+      startsAt: '2026-08-26T06:00:00.000Z',
+      endsAt: '2026-08-26T07:00:00.000Z',
+      price: { amountMinor: 3500, currency: 'EUR' },
+      createdAt: '2026-08-01T08:00:00.000Z',
+    };
+  }
+
+  it('convertit le créneau visé avec le fuseau du salon, jamais celui du navigateur', () => {
+    const move = planDeskMove(
+      moved(),
+      { day: '2026-08-26', time: '14:30', staff: HASINA },
+      ANTANANARIVO,
+    );
+
+    // Le corps part en ISO 8601 avec l'offset de l'établissement, comme
+    // `offsetDateTimeSchema` l'exige.
+    expect(move?.request.startsAt).toBe('2026-08-26T14:30:00+03:00');
+    expect(move?.request.staffId).toBe(HASINA.id);
+    // Et l'état optimiste est stocké en UTC, comme tout instant du produit.
+    expect(move?.optimistic.startsAt).toBe('2026-08-26T11:30:00.000Z');
+  });
+
+  it('conserve la durée du rendez-vous déplacé', () => {
+    const move = planDeskMove(
+      moved(),
+      { day: '2026-08-26', time: '14:30', staff: HASINA },
+      ANTANANARIVO,
+    );
+
+    // Un report ne change pas la prestation, donc ne change pas sa durée : une
+    // heure avant, une heure après.
+    expect(move?.optimistic.endsAt).toBe('2026-08-26T12:30:00.000Z');
+    expect(move?.optimistic.id).toBe(moved().id);
+  });
+
+  it('signale le changement de praticien, et lui seul', () => {
+    const sameStaff = planDeskMove(
+      moved(),
+      { day: '2026-08-26', time: '14:30', staff: HASINA },
+      ANTANANARIVO,
+    );
+    const otherStaff = planDeskMove(
+      moved(),
+      { day: '2026-08-26', time: '14:30', staff: TIANA },
+      ANTANANARIVO,
+    );
+
+    expect(sameStaff?.changesStaff).toBe(false);
+    expect(otherStaff?.changesStaff).toBe(true);
+    expect(otherStaff?.optimistic.staff).toEqual(TIANA);
+  });
+
+  it('garde le praticien du rendez-vous quand la colonne n’en désigne aucun', () => {
+    // Vue semaine : une colonne est une journée de toute l'équipe. Rien à
+    // confirmer, et rien à envoyer — le serveur garde le praticien d'origine.
+    const move = planDeskMove(
+      moved(),
+      { day: '2026-08-28', time: '09:00', staff: null },
+      ANTANANARIVO,
+    );
+
+    expect(move?.changesStaff).toBe(false);
+    expect(move?.optimistic.staff).toEqual(HASINA);
+    expect(move?.request).toEqual({ startsAt: '2026-08-28T09:00:00+03:00' });
+  });
+
+  it('ne déplace pas ce qui est soldé', () => {
+    for (const status of ['completed', 'cancelled', 'no_show'] as const) {
+      expect(
+        planDeskMove(
+          moved(status),
+          { day: '2026-08-26', time: '14:30', staff: HASINA },
+          ANTANANARIVO,
+        ),
+      ).toBeNull();
+    }
+  });
+
+  it('ne rend rien d’un lâcher qui ne déplace rien', () => {
+    // Même praticien, même heure : envoyer le report réécrirait l'agenda —
+    // identifiant neuf, avis de déplacement — pour un geste sans effet.
+    expect(
+      planDeskMove(moved(), { day: '2026-08-26', time: '09:00', staff: HASINA }, ANTANANARIVO),
+    ).toBeNull();
+  });
+});
+
+describe('le retour arrière, et ce qu’il annonce', () => {
+  const previous: Appointment = {
+    id: 'aaaaaaaa-0000-4000-8000-000000000001',
+    status: 'confirmed',
+    client: { id: 'client-1', firstName: 'Rina', lastName: 'Andriamana' },
+    staff: { id: 'staff-hasina', displayName: 'Hasina' },
+    service: {
+      id: 'service-1',
+      name: 'Massage suédois',
+      durationMinutes: 60,
+      price: { amountMinor: 3500, currency: 'EUR' },
+    },
+    startsAt: '2026-08-26T06:00:00.000Z',
+    endsAt: '2026-08-26T07:00:00.000Z',
+    price: { amountMinor: 3500, currency: 'EUR' },
+    createdAt: '2026-08-01T08:00:00.000Z',
+  };
+
+  it('dit l’heure d’origine à l’heure du salon', () => {
+    expect(deskMoment(previous.startsAt, ANTANANARIVO)).toBe('mercredi 26 août à 09:00');
+  });
+
+  it('traite le créneau perdu comme un cas normal, pas comme une panne', () => {
+    const refusal = moveRefusal(previous, ANTANANARIVO, 'SLOT_NO_LONGER_AVAILABLE', 'peu importe');
+
+    expect(refusal.tone).toBe('warning');
+    expect(refusal.title).toContain('remis en place');
+    // Les deux choses que l'opérateur doit lire : où le rendez-vous est revenu,
+    // et pourquoi il n'a pas pu aller ailleurs.
+    expect(refusal.body).toContain(
+      'Le rendez-vous de Rina Andriamana est resté le mercredi 26 août à 09:00',
+    );
+    expect(refusal.body).toContain('chez Hasina');
+    expect(refusal.body).toContain(MOVE_CONFLICT_MESSAGE);
+  });
+
+  it('reprend le refus de l’API quand il n’est pas passager', () => {
+    const refusal = moveRefusal(
+      previous,
+      ANTANANARIVO,
+      'SLOT_OUTSIDE_WORKING_HOURS',
+      'Hasina ne travaille pas à cette heure-là.',
+    );
+
+    expect(refusal.tone).toBe('danger');
+    expect(refusal.body).toContain('Hasina ne travaille pas à cette heure-là.');
+  });
+
+  it('lit un 404 comme un rendez-vous disparu, jamais comme une route absente', () => {
+    // `POST /appointments/:id/reschedule` est servie depuis #464 : sur un
+    // report, `NOT_FOUND` ne peut plus vouloir dire que l'API ne sait pas
+    // déplacer. Annoncer « le formulaire est complet, l'enregistrement suivra »
+    // sur un glisser-déposer promettrait un enregistrement qui ne viendra pas.
+    for (const code of ['NOT_FOUND', 'HTTP_404']) {
+      const refusal = moveRefusal(previous, ANTANANARIVO, code, 'Cannot POST …');
+
+      expect(refusal.tone).toBe('danger');
+      expect(refusal.body).toContain(MOVE_GONE_MESSAGE);
+      expect(refusal.body).not.toContain(DESK_ROUTE_MISSING_MESSAGE);
+    }
   });
 });

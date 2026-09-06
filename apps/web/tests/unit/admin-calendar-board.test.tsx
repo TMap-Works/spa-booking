@@ -170,7 +170,15 @@ describe('vue jour — ce que l’écran montre', () => {
     // Le nom accessible est celui de l'en-tête entier — nom et compte de RDV.
     const colonne = screen.getByRole('list', { name: /^Hasina/ });
 
-    expect(within(colonne).getByRole('button', { name: /Rina Andriamana/ })).toBeDefined();
+    // Le bloc, désigné par son heure : sa poignée de déplacement (#51) porte
+    // aussi le nom de la cliente, et c'est voulu — un lecteur d'écran doit savoir
+    // quel rendez-vous elle saisit.
+    expect(
+      within(colonne).getByRole('button', { name: /^09:00 – 10:00 Rina Andriamana/ }),
+    ).toBeDefined();
+    expect(
+      within(colonne).getByRole('button', { name: 'Déplacer Rina Andriamana' }),
+    ).toBeDefined();
   });
 
   it('porte le statut par la classe **et** par le texte, jamais par la seule couleur', () => {

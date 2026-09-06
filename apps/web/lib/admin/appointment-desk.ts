@@ -29,6 +29,7 @@ import {
   APPOINTMENT_STATUS_TRANSITIONS,
   ERROR_CODES,
   canTransitionAppointment,
+  type Appointment,
   type AppointmentStatus,
   type CalendarDate,
   type Service,
@@ -315,4 +316,204 @@ export function deskStatusActions(status: AppointmentStatus): readonly DeskStatu
 /** `true` si le rendez-vous peut encore être déplacé — un soldé ne bouge plus. */
 export function isReschedulable(status: AppointmentStatus): boolean {
   return canTransitionAppointment(status, 'cancelled');
+}
+
+// ---------------------------------------------------------------------------
+// Le report par glisser-déposer — #51
+// ---------------------------------------------------------------------------
+
+/**
+ * La colonne et la rangée où le bloc vient d'être lâché.
+ *
+ * Ce sont les champs que porte déjà la cellule libre du planning
+ * (`CalendarFreeCell`) : une journée et une heure **civiles du salon**, converties
+ * une seule fois par `calendar-grid.ts`. Les recalculer au moment du lâcher les
+ * referait avec le fuseau du navigateur — l'erreur exacte que l'en-tête de ce
+ * module met en garde de commettre.
+ */
+export interface DeskMoveTarget {
+  readonly day: CalendarDate;
+  /** Heure civile de la rangée visée, « HH:MM ». */
+  readonly time: string;
+  /**
+   * Praticien de la colonne visée, `null` en vue semaine — où une colonne est une
+   * journée de toute l'équipe et ne désigne donc personne. Le report garde alors
+   * le praticien du rendez-vous, et ne demande aucune confirmation.
+   */
+  readonly staff: Appointment['staff'] | null;
+}
+
+/** Un report projeté : ce qu'on affiche, ce qu'on envoie, ce qu'on remet en place. */
+export interface DeskMove {
+  /** Le rendez-vous tel qu'il était — c'est lui qu'un refus replace. */
+  readonly previous: Appointment;
+  /**
+   * Le même, à sa nouvelle heure. C'est l'état optimiste du deuxième critère :
+   * l'écran l'affiche sans attendre l'API, et il porte **l'identifiant d'origine**
+   * — le report en rendra un neuf, qui prendra sa place au succès.
+   */
+  readonly optimistic: Appointment;
+  /**
+   * Le corps de `POST /appointments/:id/reschedule`.
+   *
+   * Un report passe par cette route et jamais par une mise à jour des dates en
+   * place : côté serveur c'est une annulation suivie d'une création liée par
+   * `rescheduled_from_id`, dans une seule transaction (booking-engine §5). C'est
+   * le premier critère du ticket, et il se joue ici — le geste change, le
+   * mécanisme non.
+   */
+  readonly request: { readonly startsAt: string; readonly staffId?: string };
+  /** `true` quand le report change de praticien — la confirmation du 4e critère. */
+  readonly changesStaff: boolean;
+}
+
+/**
+ * Le report que ce lâcher décrit, ou `null` s'il n'y a rien à déplacer.
+ *
+ * Rend `null` dans trois cas, et c'est ce qui évite d'écrire l'agenda pour rien :
+ * un rendez-vous soldé — honoré, annulé, non présenté — ne bouge plus ; un
+ * lâcher sur sa propre heure chez son propre praticien ne déplace rien ; une
+ * heure illisible ne se convertit pas. Le troisième cas ne devrait pas arriver,
+ * les cellules portant des heures qu'on a écrites, mais une conversion muette qui
+ * rendrait `Invalid Date` partirait sinon jusqu'à l'API.
+ *
+ * La durée est **conservée** : c'est celle du rendez-vous d'origine, prestation
+ * figée comprise (`appointmentSchema.service`). Un report ne change pas le soin,
+ * donc ne change pas sa durée — et le serveur recalculera de toute façon
+ * l'intervalle occupé à partir de la prestation, tampons compris.
+ */
+export function planDeskMove(
+  appointment: Appointment,
+  target: DeskMoveTarget,
+  timeZone: TimeZone,
+): DeskMove | null {
+  if (!isReschedulable(appointment.status)) {
+    return null;
+  }
+
+  const startsAt = offsetDateTimeInTenant(target.day, target.time, timeZone);
+  const start = Date.parse(startsAt);
+  const previousStart = Date.parse(appointment.startsAt);
+
+  if (Number.isNaN(start) || Number.isNaN(previousStart)) {
+    return null;
+  }
+
+  const staff = target.staff ?? appointment.staff;
+  const changesStaff = staff.id !== appointment.staff.id;
+
+  if (!changesStaff && start === previousStart) {
+    return null;
+  }
+
+  const duration = Date.parse(appointment.endsAt) - previousStart;
+
+  return {
+    previous: appointment,
+    optimistic: {
+      ...appointment,
+      staff,
+      startsAt: new Date(start).toISOString(),
+      endsAt: new Date(start + (Number.isNaN(duration) ? 0 : duration)).toISOString(),
+    },
+    request: {
+      startsAt,
+      // Le praticien n'est nommé que quand la colonne en désigne un. En vue
+      // semaine il n'y en a pas, et l'omettre laisse le serveur garder celui du
+      // rendez-vous — ce que `reschedule` fait explicitement (`input.staffId ??
+      // previous.staffId`).
+      ...(target.staff === null ? {} : { staffId: target.staff.id }),
+    },
+    changesStaff,
+  };
+}
+
+/** « mercredi 26 août à 09:00 » — un instant UTC dit à l'heure du salon. */
+export function deskMoment(instant: string, timeZone: TimeZone): string {
+  const { date, time } = tenantFields(instant, timeZone);
+  // La date civile est mise en forme **en UTC** : elle est déjà celle du salon,
+  // et la reprojeter dans son fuseau la décalerait d'un jour à l'est de
+  // Greenwich. Même raison que `rangeLabel` de `calendar-range.ts`.
+  const day = new Intl.DateTimeFormat('fr-FR', {
+    timeZone: 'UTC',
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  }).format(new Date(`${date}T00:00:00Z`));
+
+  return `${day} à ${time}`;
+}
+
+/**
+ * Le créneau perdu, dit pour un **report** et non pour une saisie.
+ *
+ * `SLOT_CONFLICT_MESSAGE` promet que « vos autres saisies sont conservées » : vrai
+ * dans le tiroir, où un formulaire attend ; hors sujet sur un glisser-déposer, où
+ * il n'y a rien de saisi et où la seule chose à dire est qu'il faut viser
+ * ailleurs.
+ */
+export const MOVE_CONFLICT_MESSAGE =
+  'Ce créneau vient d’être pris depuis un autre poste : visez-en un autre.';
+
+/**
+ * Le rendez-vous a disparu sous le geste.
+ *
+ * `deskFailureMessage` lit encore `NOT_FOUND` comme « la route n'existe pas » —
+ * c'était vrai du tiroir de #50, écrit avant que l'API serve les écritures du
+ * comptoir. Elle les sert depuis #464, et sur un report ce code ne peut plus
+ * dire qu'une chose : le rendez-vous qu'on vient de saisir n'est plus là. Le
+ * message d'absence de route parlerait ici d'un formulaire qui n'existe pas et
+ * promettrait un enregistrement qui ne viendra jamais.
+ */
+export const MOVE_GONE_MESSAGE =
+  'Ce rendez-vous n’existe plus : il vient d’être déplacé ou annulé depuis un autre poste. Rechargez le planning.';
+
+/** Ce que la bannière de retour arrière annonce. */
+export interface DeskMoveRefusal {
+  readonly title: string;
+  readonly body: string;
+  /** `warning` pour un créneau perdu, `danger` pour un refus qui ne se rejoue pas. */
+  readonly tone: 'warning' | 'danger';
+}
+
+/**
+ * Le retour arrière rendu lisible — troisième critère, et le cœur du ticket.
+ *
+ * Replacer le bloc ne suffit pas : un rendez-vous qui saute à sa place d'origine
+ * sans un mot passe pour un bug de l'écran, et l'opérateur recommence le même
+ * geste. La bannière dit donc **les deux** choses qu'il lui faut — où le
+ * rendez-vous est revenu, et pourquoi il n'a pas pu aller ailleurs.
+ *
+ * Le ton distingue le passager du définitif, comme le fait le tiroir : un créneau
+ * pris depuis un autre poste est le cas normal de la concurrence (web-frontend
+ * §3), un autre horaire le lève. Un praticien qui ne pratique pas la prestation,
+ * un rendez-vous déjà soldé ou une session expirée, non.
+ */
+export function moveRefusal(
+  previous: Appointment,
+  timeZone: TimeZone,
+  code: string,
+  message: string,
+): DeskMoveRefusal {
+  const transient = isSlotConflict(code);
+  const client = `${previous.client.firstName} ${previous.client.lastName}`;
+  // « Le rendez-vous de X est resté le … » plutôt que « X est resté au … » : la
+  // phrase s'accorde alors sur le rendez-vous, et non sur une cliente dont le
+  // contrat ne porte pas le genre — `userSummarySchema` n'a qu'un nom.
+  const restored = `Le rendez-vous de ${client} est resté le ${deskMoment(previous.startsAt, timeZone)}, chez ${previous.staff.displayName}.`;
+  // `MISSING_ROUTE_CODES` porte les deux façons dont un 404 remonte. Sur un
+  // report, il ne dit plus l'absence de route mais l'absence du rendez-vous.
+  const reason = transient
+    ? MOVE_CONFLICT_MESSAGE
+    : MISSING_ROUTE_CODES.includes(code)
+      ? MOVE_GONE_MESSAGE
+      : deskFailureMessage(code, message);
+
+  return {
+    title: transient
+      ? 'Créneau déjà pris — rendez-vous remis en place'
+      : 'Report refusé — rendez-vous remis en place',
+    body: `${restored} ${reason}`,
+    tone: transient ? 'warning' : 'danger',
+  };
 }
