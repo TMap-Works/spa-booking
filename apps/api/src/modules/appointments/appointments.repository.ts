@@ -318,20 +318,32 @@ export class AppointmentsRepository {
    *   appris** de l'agenda. Son créneau peut être libre. La bonne réponse n'est
    *   pas de lui dire non, c'est de recommencer.
    *
-   * ## Une troisième issue depuis #461 : la fiche cliente désignée n'existe pas
+   * ## Une troisième issue depuis #461 : la fiche cliente désignée ne convient pas
    *
    * Le comptoir réserve pour une fiche **déjà au fichier**, qu'il désigne par
-   * son identifiant. Un identifiant inconnu — ou celui d'une fiche du salon
-   * voisin — fait échouer l'insertion sur les clés étrangères du client, ce que
-   * `isUnknownClientReference` reconnaît et que ce `catch` traduit en 404. Sans
-   * lui, une saisie erronée sortait en 500, et une fiche du voisin se
-   * distinguait d'une fiche inconnue par la façon dont le serveur s'écroulait.
+   * son identifiant. Trois façons de se tromper, un seul refus :
+   *
+   * | Ce que l'identifiant désigne | Qui le refuse |
+   * |---|---|
+   * | rien du tout | `assertBookableWithin`, dans la transaction (#465) |
+   * | une fiche du salon voisin | idem — le `where` du contrôle porte le tenant |
+   * | un compte `STAFF`, `MANAGER` ou `ADMIN` | idem — les clés étrangères, elles, ne voient pas le rôle (#465) |
+   *
+   * Toutes trois rendent le **même** 404 : les distinguer ferait de cette route
+   * une sonde d'annuaire (tenant-isolation §4), et dirait au passage qui
+   * travaille au salon.
+   *
+   * Les clés étrangères restent le filet en dessous. Le contrôle les précède, il
+   * ne les remplace pas : si une écriture atteignait l'insertion sans être passée
+   * par lui, `isUnknownClientReference` reconnaîtrait leur refus et ce `catch` le
+   * traduirait dans le même 404 — jamais en 500.
    *
    * @throws {SlotNoLongerAvailableError} si ce praticien a déjà, dans cet
    * établissement, un rendez-vous `PENDING` ou `CONFIRMED` qui chevauche cet
    * intervalle.
-   * @throws {NotFoundError} la fiche cliente désignée n'existe pas dans cet
-   * établissement — jamais 403, qui confirmerait son existence ailleurs.
+   * @throws {NotFoundError} la fiche cliente désignée n'est pas une fiche du
+   * fichier client de cet établissement — jamais 403, qui confirmerait son
+   * existence ailleurs.
    */
   public async create(draft: AppointmentDraft): Promise<AppointmentRecord> {
     try {
@@ -711,6 +723,13 @@ export class AppointmentsRepository {
    * encore l'agenda, c'est-à-dire recréerait un ordre d'acquisition dépendant des
    * données. La fiche ensuite, parce que `appointments.client_id` est `NOT NULL` :
    * il faut la ligne avant de pouvoir la désigner.
+   *
+   * Le même ordre vaut pour le contrôle de rôle du comptoir (#465), qui prend au
+   * même moment un `FOR SHARE` sur la ligne `users`. Ce verrou-là est **partagé**
+   * : deux réservations pour la même cliente chez deux praticiens différents le
+   * détiennent ensemble, et aucune n'attend l'autre. Il ne bloque que les
+   * écrivains de cette ligne — ceux, précisément, qui pourraient la promouvoir au
+   * personnel entre le contrôle et l'insertion.
    */
   private async insert(draft: AppointmentDraft): Promise<AppointmentRecord> {
     // La clé nomme les colonnes qu'elle sérialise. `staff_id` suffirait — un
@@ -732,9 +751,12 @@ export class AppointmentsRepository {
       // il ne la fait plus. La portée passée est celle de cette transaction — la
       // fiche et le rendez-vous sont donc validés, ou abandonnés, ensemble.
       //
-      // Le comptoir, lui, désigne une fiche existante (#461) : il n'y a alors
-      // rien à résoudre ni à écrire, et l'identifiant descend tel quel jusqu'aux
-      // clés étrangères, qui le jugent.
+      // Le comptoir, lui, désigne une fiche existante (#461) : il n'y a rien à
+      // créer, mais il y a une chose à confirmer, que les clés étrangères ne
+      // savent pas juger — que la ligne désignée est bien du **fichier client**
+      // et non un compte du personnel (#465). Ce contrôle est ici, après le
+      // verrou et sous `FOR SHARE`, pour la raison qui a fait descendre la
+      // résolution d'invitée jusqu'ici : jugé ailleurs, il serait périmé.
       const clientId = await this.resolveClient(tx, draft.client);
 
       const row = await tx.appointment.create({
@@ -756,26 +778,48 @@ export class AppointmentsRepository {
 
   /**
    * L'identifiant de la fiche cliente à écrire sur la ligne — résolu depuis les
-   * coordonnées, ou repris tel quel (#461).
+   * coordonnées, ou confirmé tel quel (#461, #465).
    *
-   * ## Pourquoi la forme `{ clientId }` ne vérifie rien ici
+   * Les deux branches passent par une porte de `crm`, et c'est le propos : ce
+   * module ne lit jamais `users` lui-même — il ne saurait pas ce qu'est une fiche
+   * cliente, et lui donner ce savoir reviendrait à lui donner un moyen de
+   * parcourir la clientèle, ce que `crm` refuse explicitement d'ouvrir
+   * (api-module §3, en-tête de `ClientDirectoryService`).
    *
-   * Parce qu'une vérification serait fausse **et** hors sujet. Fausse : entre le
-   * `SELECT` et l'`INSERT`, la fiche peut disparaître, et la seule garantie qui
-   * tienne est celle des clés étrangères composites — même raisonnement que pour
-   * le créneau (booking-engine §1). Hors sujet : lire `users` depuis ce module
-   * reviendrait à lui donner un moyen de parcourir la clientèle, ce que `crm`
-   * refuse explicitement d'ouvrir (api-module §3, en-tête de
-   * `ClientDirectoryService`).
+   * ## Pourquoi la forme `{ clientId }` est désormais **confirmée**, et pas
+   * seulement écrite (#465)
    *
-   * L'insertion qui suit tranche donc les deux questions d'un coup : la fiche
-   * existe-t-elle, et est-elle de cet établissement. `create` traduit son refus.
+   * Jusqu'ici elle descendait telle quelle jusqu'aux clés étrangères, à qui on
+   * laissait juger. Elles jugent bien deux choses — la fiche existe, elle est de
+   * cet établissement — mais jamais la troisième : son **rôle**. Or
+   * `appointments.client_id` référence `users`, où vivent aussi les comptes
+   * `STAFF`, `MANAGER` et `ADMIN` : un membre du personnel qui posait
+   * l'identifiant d'un collègue obtenait un rendez-vous parfaitement valide dont
+   * la cliente était un employé — invisible dans l'annuaire CRM, servi à
+   * l'employé par `/appointments/mine`, et compté comme cliente par le reporting.
+   *
+   * ## L'objection d'hier reste vraie, et c'est ce qui dicte l'endroit
+   *
+   * « Une vérification serait fausse : entre le `SELECT` et l'`INSERT`, la fiche
+   * peut changer. » Elle le serait en effet **hors transaction**, ou lue sans
+   * verrou. `assertBookableWithin` est appelée d'ici, c'est-à-dire depuis
+   * l'intérieur de la transaction et après le verrou consultatif d'agenda, et
+   * elle pose un `FOR SHARE` sur la ligne : le rôle jugé est celui que
+   * l'insertion désignera, et un refus n'a rien à défaire — le `ROLLBACK` s'en
+   * charge. C'est le même déplacement que #313 a fait pour la fiche d'invitée,
+   * et pour le même motif.
+   *
+   * Les clés étrangères ne deviennent pas décoratives pour autant : elles restent
+   * l'arbitre qui ne peut pas être contourné, et `create` continue de traduire
+   * leur refus en 404 — le même 404 que celui-ci.
    */
   private async resolveClient(
     tx: ClientDirectoryScope,
     client: ClientReference,
   ): Promise<string> {
-    return 'clientId' in client ? client.clientId : this.clients.resolveWithin(tx, client.contact);
+    return 'clientId' in client
+      ? this.clients.assertBookableWithin(tx, client.clientId)
+      : this.clients.resolveWithin(tx, client.contact);
   }
 
   /**

@@ -1,6 +1,8 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { NotFoundError } from '../../common/errors';
+import { requireTenantId } from '../../common/tenant/tenant-context';
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
 import type { ClientContact, ClientDirectoryScope } from './client-directory.service';
 import {
@@ -47,16 +49,23 @@ import type { Customer, CustomerSummary, CustomerVisit } from './crm.types';
  * Ce que le module n'écrit **jamais** : aucune ligne d'`appointments`. La
  * lecture est la seule opération de ce dépôt sur cette table.
  *
- * ## Une méthode écrit dans la transaction d'un autre module
+ * ## Deux méthodes travaillent dans la transaction d'un autre module
  *
  * `resolveClientWithin` prend une portée de transaction en paramètre au lieu
- * d'utiliser `this.prisma` (#313). C'est la seule de ce fichier, et sa raison est
- * un critère d'atomicité qui traverse deux modules : la fiche cliente d'une
- * réservation d'invité et le rendez-vous doivent être écrits ou abandonnés
- * **ensemble**, faute de quoi chaque course perdue sur un créneau laisse une
- * fiche publique sans rendez-vous. Le client reçu est le même client scopé, si
- * bien que l'extension de tenant continue de s'appliquer mot pour mot. Le détail
- * de l'arbitrage est dans `client-directory.service.ts`, la porte qui l'expose.
+ * d'utiliser `this.prisma` (#313), et sa raison est un critère d'atomicité qui
+ * traverse deux modules : la fiche cliente d'une réservation d'invité et le
+ * rendez-vous doivent être écrits ou abandonnés **ensemble**, faute de quoi
+ * chaque course perdue sur un créneau laisse une fiche publique sans
+ * rendez-vous. Le client reçu est le même client scopé, si bien que l'extension
+ * de tenant continue de s'appliquer mot pour mot. Le détail de l'arbitrage est
+ * dans `client-directory.service.ts`, la porte qui l'expose.
+ *
+ * `assertClientBookableWithin` la rejoint pour l'autre façon de désigner une
+ * cliente — un `clientId` posé par le comptoir (#465) — et pour une raison
+ * voisine mais distincte : elle ne lit pas pour informer, elle lit pour
+ * **décider**, et une décision prise hors de la transaction d'insertion serait
+ * périmée avant d'avoir servi. Elle est la seule de ce fichier à écrire du SQL
+ * brut : le verrou de ligne qui la rend juste ne s'exprime pas autrement.
  */
 
 /** Le compte tel que le fichier client le lit — jamais l'empreinte, jamais le tenant. */
@@ -413,6 +422,98 @@ export class CrmRepository {
       }
       throw error;
     }
+  }
+
+  /**
+   * Vérifie qu'un identifiant désigne bien une **fiche du fichier client** de
+   * l'établissement courant, **dans la transaction de l'appelant** (#465).
+   *
+   * La jumelle de `resolveClientWithin`, pour l'autre façon de désigner une
+   * cliente : là-bas des coordonnées à résoudre, ici une fiche déjà désignée par
+   * le comptoir. Les deux répondent à la même question — « cette réservation
+   * peut-elle se rattacher à cette ligne `users` ? » — et les deux la posent au
+   * même endroit, à l'intérieur de la transaction qui pose le rendez-vous.
+   *
+   * ## Ce que les clés étrangères ne savaient pas juger
+   *
+   * `appointments_client_id_fkey` prouve que la ligne `users` existe,
+   * `appointments_tenant_id_client_id_fkey` qu'elle est du bon établissement.
+   * Ni l'une ni l'autre ne regarde le **rôle** : un membre du personnel qui
+   * posait l'identifiant d'un collègue obtenait un rendez-vous parfaitement
+   * valide dont la cliente était un employé — invisible dans l'annuaire CRM, qui
+   * filtre sur `role = CLIENT`, et pourtant compté comme cliente par le
+   * reporting (#465). Une contrainte de schéma aurait été plus forte, mais
+   * `users` ne porte aucune colonne dérivée sur laquelle une clé étrangère
+   * partielle pourrait s'appuyer.
+   *
+   * ## Pourquoi du SQL brut, alors que tout le reste du dépôt passe par Prisma
+   *
+   * Pour le `FOR SHARE`, que le client Prisma n'exprime pas — et sans lequel
+   * cette méthode serait exactement la « vérification applicative suivie d'un
+   * `INSERT` » que booking-engine §1 interdit. Sous `READ COMMITTED`, chaque
+   * instruction prend son propre instantané : une lecture nue verrait `CLIENT`,
+   * une transaction concurrente promouvrait la fiche en `STAFF` et validerait,
+   * et l'insertion qui suit passerait — les clés étrangères, elles, restent
+   * satisfaites. Le verrou partagé ferme cette fenêtre : la ligne ne peut plus
+   * être modifiée ni supprimée jusqu'au `COMMIT` de l'appelant, si bien que le
+   * rôle jugé ici est celui que le rendez-vous désignera. C'est le second
+   * critère de #465 — « une fiche qui changerait de rôle entre-temps ne passe
+   * pas ».
+   *
+   * `FOR SHARE` et non `FOR UPDATE` : deux réservations de comptoir pour la même
+   * cliente chez deux praticiens différents doivent pouvoir avancer de front. Le
+   * verrou partagé les laisse cohabiter et ne bloque que les écrivains de cette
+   * ligne, qui sont précisément ceux dont il faut se prémunir.
+   *
+   * ## Le tenant est écrit à la main, et il le faut
+   *
+   * Le SQL brut ne repasse pas par l'extension de scoping (tenant-isolation §3,
+   * ADR 0006) : `tenant_id = …` est donc écrit ici, depuis le contexte de
+   * requête et de nulle part d'autre. C'est ce qui fait qu'une fiche du salon
+   * voisin ne rend aucune ligne — donc le même refus qu'un identifiant inventé.
+   *
+   * ## Le refus est un 404, et c'est un arbitrage (#465)
+   *
+   * `NotFoundError`, exactement celle que `AppointmentsRepository.create` lève
+   * déjà pour une fiche inconnue ou celle d'un autre établissement — même classe,
+   * même message. Les trois causes deviennent ainsi **littéralement**
+   * indiscernables, ce qu'aucune classe d'erreur distincte remappée plus haut ne
+   * garantirait aussi solidement. C'est la conduite que ce dépôt tient déjà
+   * partout ailleurs : `findById`, `update` et `setActive` replient « c'est un
+   * compte du personnel » sur « introuvable », pour ne pas dire qui travaille au
+   * salon à qui n'a que le droit de lire des fiches.
+   *
+   * Un 409 `CLIENT_NOT_BOOKABLE`, symétrique du `CLIENT_EMAIL_NOT_BOOKABLE` du
+   * tunnel public, a été écarté : la symétrie est trompeuse. Ce 409-là existe
+   * parce que `@@unique([tenantId, email])` ne laisse **aucune** troisième voie —
+   * la visiteuse ne pourra jamais réserver sous cette adresse, et un front qui la
+   * renverrait au calendrier la ferait tourner en rond (#452). Ici la voie existe
+   * et elle est triviale : le comptoir a désigné la mauvaise ligne, et la bonne
+   * est à un choix de tiroir. « Introuvable au fichier client » est à la fois vrai
+   * et actionnable ; « définitivement non réservable » ne le serait pas.
+   *
+   * @throws {NotFoundError} l'identifiant ne désigne aucune fiche cliente de cet
+   * établissement — inconnu, du salon voisin, ou compte du personnel,
+   * indistinctement.
+   */
+  public async assertClientBookableWithin(
+    scope: ClientDirectoryScope,
+    clientId: string,
+  ): Promise<string> {
+    const tenantId = requireTenantId('User', 'assertClientBookableWithin');
+
+    const rows = await scope.$queryRaw<{ role: string }[]>`
+      SELECT "role"::text AS role
+      FROM "users"
+      WHERE "id" = ${clientId}::uuid AND "tenant_id" = ${tenantId}::uuid
+      FOR SHARE
+    `;
+
+    if (rows[0]?.role !== CUSTOMER_ROLE) {
+      throw new NotFoundError('Cliente introuvable.');
+    }
+
+    return clientId;
   }
 
   /**

@@ -307,14 +307,18 @@ export function draft(
  * Le même brouillon, mais **du comptoir** : une fiche cliente désignée par son
  * identifiant plutôt que par des coordonnées (#461).
  *
- * Il ne traverse pas la porte `crm` — il n'y a rien à résoudre —, si bien que
- * les seules issues d'une insertion sont celles de l'agenda : la contrainte
- * d'exclusion, l'interblocage, ou la clé étrangère de la fiche. C'est ce qui en
- * fait le bon véhicule pour prouver que la course du comptoir se joue au même
- * endroit que celle du tunnel public, et par le même arbitre.
+ * Il ne **crée** aucune fiche — il n'y a rien à résoudre —, mais il traverse la
+ * porte `crm` depuis #465 : `assertBookableWithin` confirme, sous `FOR SHARE` et
+ * dans la transaction d'insertion, que la ligne désignée est bien du fichier
+ * client. Les issues d'une insertion de comptoir sont donc celles de l'agenda —
+ * contrainte d'exclusion, interblocage — plus ce refus-là, et les clés
+ * étrangères en filet dessous. C'est ce qui en fait le bon véhicule pour prouver
+ * que la course du comptoir se joue au même endroit que celle du tunnel public,
+ * et par le même arbitre.
  *
  * `clientId` vaut par défaut la fiche déjà semée ; les suites qui exercent le
- * refus passent l'identifiant qui les intéresse — inconnu, ou du salon voisin.
+ * refus passent l'identifiant qui les intéresse — inconnu, du salon voisin, ou
+ * porté par un compte du personnel.
  */
 export function deskDraft(
   fixture: Fixture,

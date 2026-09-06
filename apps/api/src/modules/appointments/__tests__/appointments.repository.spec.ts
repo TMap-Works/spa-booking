@@ -126,29 +126,47 @@ function directoryAnswering(
   scopes(): unknown[];
   contacts(): unknown[];
   calls(): number;
+  /** Les identifiants soumis au contrôle du comptoir, dans l'ordre (#465). */
+  asserted(): string[];
 } {
   const answers = options.answers ?? [];
   let index = 0;
   const scopes: unknown[] = [];
   const contacts: unknown[] = [];
+  const asserted: string[] = [];
 
-  const resolveWithin = jest.fn(async (scope: unknown, contact: unknown) => {
-    options.order?.push('resolve');
-    scopes.push(scope);
-    contacts.push(contact);
-    const answer = answers[Math.min(index, answers.length - 1)] ?? CLIENT_ID;
+  const nextAnswer = (fallback: string): string => {
+    const answer = answers[Math.min(index, answers.length - 1)] ?? fallback;
     index += 1;
     if (answer instanceof Error) {
       throw answer;
     }
     return answer;
+  };
+
+  const resolveWithin = jest.fn(async (scope: unknown, contact: unknown) => {
+    options.order?.push('resolve');
+    scopes.push(scope);
+    contacts.push(contact);
+    return nextAnswer(CLIENT_ID);
+  });
+
+  // Le second battant de la porte (#465). Il partage la file de réponses de
+  // `resolveWithin` : les deux formes de `ClientReference` s'excluent, une seule
+  // des deux est appelée par un `create` donné.
+  const assertBookableWithin = jest.fn(async (scope: unknown, clientId: string) => {
+    options.order?.push('resolve');
+    scopes.push(scope);
+    asserted.push(clientId);
+    return nextAnswer(clientId);
   });
 
   return {
-    service: { resolveWithin } as unknown as ClientDirectoryService,
+    service: { resolveWithin, assertBookableWithin } as unknown as ClientDirectoryService,
     scopes: () => scopes,
     contacts: () => contacts,
-    calls: () => resolveWithin.mock.calls.length,
+    calls: () => resolveWithin.mock.calls.length + assertBookableWithin.mock.calls.length,
+    asserted: () => asserted,
   };
 }
 
@@ -406,6 +424,95 @@ describe('AppointmentsRepository.create — la fiche cliente vient de `crm`', ()
     await expect(createAppointment(double.prisma, directory.service)).rejects.toBe(refusal);
     expect(directory.calls()).toBe(1);
     expect(double.calls()).toBe(0);
+  });
+});
+
+/**
+ * La fiche **désignée** par le comptoir passe elle aussi par `crm` (#465).
+ *
+ * Jusqu'ici la forme `{ clientId }` descendait telle quelle jusqu'aux clés
+ * étrangères. Elles jugent l'existence de la ligne et son établissement, jamais
+ * son **rôle** : un identifiant de collègue produisait un rendez-vous valide
+ * dont la cliente était un employé.
+ *
+ * Ce que cette suite prouve, et que le test d'intégration ne montrerait qu'au
+ * travers du moteur : la **place** du contrôle — dans la transaction, après le
+ * verrou, avant l'insertion — et le fait qu'un refus n'insère rien et ne se
+ * rejoue pas.
+ */
+describe('AppointmentsRepository.create — la fiche désignée au comptoir', () => {
+  /** Le brouillon du comptoir : une fiche désignée, aucune coordonnée (#461). */
+  const DESK_DRAFT: AppointmentDraft = { ...DRAFT, client: { clientId: CLIENT_ID } };
+
+  async function createAtDesk(
+    prisma: ScopedPrismaClient,
+    clients: ClientDirectoryService,
+  ): Promise<unknown> {
+    return runWithTenant(TENANT_ID, async () =>
+      new AppointmentsRepository(prisma, clients).create(DESK_DRAFT),
+    );
+  }
+
+  it('soumet l’identifiant à la porte `crm` avant d’insérer', async () => {
+    const double = clientAnswering(ROW);
+    const directory = directoryAnswering({ order: double.order() });
+
+    await createAtDesk(double.prisma, directory.service);
+
+    expect(directory.asserted()).toEqual([CLIENT_ID]);
+    // L'ordre est ce qui rend le contrôle juste : après le verrou, qui ordonne
+    // les candidates au créneau ; avant l'insertion, qu'il doit pouvoir empêcher.
+    expect(double.order()).toEqual(['lock', 'resolve', 'insert']);
+  });
+
+  it('contrôle dans la portée de la transaction, jamais par un client à part', async () => {
+    // Même garantie que pour la résolution d'invitée (#313) : un contrôle fait
+    // hors de la transaction jugerait un état que le `COMMIT` n'engage pas.
+    const double = clientAnswering(ROW);
+    const directory = directoryAnswering();
+
+    await createAtDesk(double.prisma, directory.service);
+
+    const [scope] = directory.scopes();
+    expect(scope).toHaveProperty('appointment');
+    expect(scope).not.toBe(double.prisma);
+  });
+
+  it('écrit l’identifiant que la porte rend, jamais celui du brouillon', async () => {
+    // La porte est la source : si elle rendait un jour autre chose que ce qu'on
+    // lui a soumis, c'est cela qui devrait être écrit. Rien ici ne court-circuite.
+    const autre = '99999999-9999-4999-8999-999999999999';
+    const double = clientAnswering(ROW);
+    const directory = directoryAnswering({ answers: [autre] });
+
+    await createAtDesk(double.prisma, directory.service);
+
+    expect(double.createData()[0]).toMatchObject({ clientId: autre });
+  });
+
+  it('n’insère rien quand la porte refuse la fiche, et ne rejoue pas', async () => {
+    // Un compte du personnel, une fiche du salon voisin, un identifiant inventé :
+    // le même 404, et aucune de ces trois causes n'est une course. Les rejouer
+    // rendrait trois fois le même refus.
+    const refus = new NotFoundError('Cliente introuvable.');
+    const double = clientAnswering(ROW);
+    const directory = directoryAnswering({ answers: [refus] });
+
+    await expect(createAtDesk(double.prisma, directory.service)).rejects.toBe(refus);
+    expect(directory.calls()).toBe(1);
+    expect(double.calls()).toBe(0);
+  });
+
+  it('ne demande aucune résolution de coordonnées pour cette forme', async () => {
+    // Les deux branches de `ClientReference` s'excluent : le comptoir désigne, il
+    // ne crée pas. Une réservation de comptoir qui traverserait `resolveWithin`
+    // écrirait dans `users` à chaque appel.
+    const double = clientAnswering(ROW);
+    const directory = directoryAnswering();
+
+    await createAtDesk(double.prisma, directory.service);
+
+    expect(directory.contacts()).toEqual([]);
   });
 });
 

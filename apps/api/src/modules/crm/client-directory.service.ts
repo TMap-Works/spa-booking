@@ -50,6 +50,12 @@ export interface ClientContact {
 /**
  * La porte du fichier client pour les **autres modules** — la seule (#313).
  *
+ * Elle a deux battants depuis #465, et un seul propos : `resolveWithin` obtient
+ * une fiche à partir de coordonnées, `assertBookableWithin` confirme qu'une
+ * fiche désignée en est bien une. Les deux ne rendent qu'un identifiant, les
+ * deux travaillent dans la transaction de l'appelant, et les deux existent pour
+ * qu'aucun module voisin n'ait à connaître `users.role`.
+ *
  * ## Ce qu'elle existe pour supprimer
  *
  * `AppointmentsRepository.findOrCreateClient` écrivait lui-même dans `users` :
@@ -125,5 +131,51 @@ export class ClientDirectoryService {
       ...contact,
       email: normalizeEmail(contact.email),
     });
+  }
+
+  /**
+   * Confirme qu'un identifiant désigne une fiche **du fichier client** de
+   * l'établissement courant, **dans la transaction donnée**, et le rend (#465).
+   *
+   * La seconde porte de ce service, et la jumelle de `resolveWithin` : celle-là
+   * part de coordonnées et crée au besoin, celle-ci part d'une fiche que le
+   * comptoir a désignée et ne crée jamais rien. Toutes deux répondent à la même
+   * question — « cette réservation peut-elle se rattacher à cette ligne ? » —,
+   * toutes deux la posent dans la transaction d'insertion, et toutes deux ne
+   * laissent sortir qu'un identifiant.
+   *
+   * ## Ce que cette porte referme
+   *
+   * `appointments.client_id` référence `users`, dont les comptes `STAFF`,
+   * `MANAGER` et `ADMIN` font partie. Les deux clés étrangères composites jugent
+   * l'existence de la fiche et son établissement, jamais son **rôle** : un membre
+   * du personnel qui posait l'identifiant d'un collègue obtenait un rendez-vous
+   * valide dont la cliente était un employé. Le tunnel public refusait déjà ce
+   * cas depuis #313 (`resolveWithin` ne résout que des `CLIENT`) ; le comptoir
+   * **désigne** au lieu de résoudre, et ne traversait donc pas cette porte.
+   *
+   * ## Pourquoi elle rend l'identifiant plutôt que `void`
+   *
+   * Pour que l'appelant ait la même forme des deux côtés de sa `ClientReference`
+   * — un identifiant vérifié, obtenu d'une porte de `crm` — et qu'aucune branche
+   * ne puisse repartir avec un identifiant qui n'aurait pas traversé le contrôle.
+   * Un `void` aurait laissé `appointments` réutiliser sa propre variable, et un
+   * refactor futur aurait pu perdre l'appel sans que rien ne change de type.
+   *
+   * ## Ce qu'elle n'ouvre toujours pas
+   *
+   * La **lecture** du fichier client. Elle rend un identifiant que l'appelant
+   * détenait déjà, ou lève. Elle n'apprend rien de la fiche — ni nom, ni adresse,
+   * ni note interne — et ne peut donc pas servir à parcourir la clientèle.
+   *
+   * @throws {NotFoundError} l'identifiant ne désigne aucune fiche cliente de cet
+   * établissement — inconnu, du salon voisin, ou compte du personnel. Le même
+   * 404 dans les trois cas, délibérément : voir `assertClientBookableWithin`.
+   */
+  public async assertBookableWithin(
+    scope: ClientDirectoryScope,
+    clientId: string,
+  ): Promise<string> {
+    return this.repository.assertClientBookableWithin(scope, clientId);
   }
 }

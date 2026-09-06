@@ -19,6 +19,7 @@ réservation, est tenu.
 | #313 | **La fiche cliente vient de `crm`** — ce module n'écrit plus dans `users`, et la résolution partage la transaction de l'insertion |
 | #444 | L'agenda du back-office — `GET /appointments`, une plage de jours et les trois *summaries* imbriquées |
 | #461 | **Les trois écritures de comptoir** — poser, déplacer et solder un rendez-vous depuis le planning (#50) |
+| #465 | **Le `clientId` du comptoir est jugé sur son rôle** — la porte `crm` refuse un compte du personnel, dans la transaction d'insertion |
 
 ## Les routes
 
@@ -64,7 +65,7 @@ Trois routes, et deux d'entre elles ne portent **aucune règle nouvelle** :
 | Surface | Forme | Ce que le repository en fait |
 |---|---|---|
 | tunnel public | `client` — des coordonnées | demande la fiche à `crm`, qui la crée si elle manque |
-| comptoir | `clientId` — une fiche | l'écrit telle quelle, et laisse les clés étrangères la juger |
+| comptoir | `clientId` — une fiche | demande à `crm` de la **confirmer**, et l'écrit telle quelle |
 
 C'est `ClientReference` qui porte la distinction côté domaine, et le
 `.strict()` des deux schémas de `packages/shared` qui la tient côté contrat :
@@ -74,19 +75,79 @@ nécessaires — un seul laisse ouverte la porte qu'on ne regarde pas, et un
 `client` glissé dans une demande de back-office ferait naître un second dossier
 pour une cliente déjà fichée.
 
-Rien ne vérifie l'existence de la fiche avant d'écrire, et c'est la doctrine du
-module : une lecture préalable serait une course de plus, et ferait lire à
-`appointments` une table qu'il ne possède pas. Ce sont
-`appointments_client_id_fkey` et `appointments_tenant_id_client_id_fkey` qui
-refusent la ligne — une fiche inconnue sur la première, une fiche du salon voisin
-sur la seconde —, et `AppointmentsRepository.create` qui traduit les deux refus
-en **404**, indistinctement. Un 403 aurait confirmé l'existence de la fiche
-ailleurs (tenant-isolation §4).
+Les deux branches passent par une porte de `crm`, et aucune ne lit `users` depuis
+ce module — il ne saurait pas ce qu'est une fiche cliente, et le lui apprendre
+reviendrait à lui donner un moyen de parcourir la clientèle (api-module §3).
 
 `clientId` est **obligatoire** sur cette route, là où le contrat le déclare
 facultatif : le jeton est celui d'un membre du personnel, il n'y a pas de cliente
 à en déduire. L'écart va dans le sens strict, et un 400 nommant le champ vaut
 mieux qu'un rendez-vous posé au nom de personne.
+
+### Trois façons de désigner la mauvaise fiche, un seul refus (#465)
+
+| Ce que le `clientId` désigne | Qui le refuse |
+|---|---|
+| rien du tout | `ClientDirectoryService.assertBookableWithin` |
+| une fiche du salon voisin | idem — le contrôle porte `tenant_id` dans son propre SQL |
+| un compte `STAFF`, `MANAGER` ou `ADMIN` | idem — les clés étrangères, elles, ne voient pas le rôle |
+
+Jusqu'à #465, l'identifiant descendait tel quel jusqu'aux clés étrangères, et
+c'était la doctrine du module : la base tranche, le code traduit.
+`appointments_client_id_fkey` jugeait l'existence de la ligne,
+`appointments_tenant_id_client_id_fkey` son établissement. Aucune des deux ne
+juge son **rôle** — or `appointments.client_id` référence `users`, où vivent
+aussi les comptes du personnel. Un membre du personnel qui posait l'identifiant
+d'un collègue obtenait un rendez-vous parfaitement valide dont la cliente était
+un employé : invisible dans l'annuaire CRM (qui filtre sur `role = CLIENT`),
+servi à l'employé par `/appointments/mine`, et compté comme cliente par le
+reporting du CDC §1.4.
+
+Une contrainte de schéma aurait été plus forte, et c'est la première voie qui a
+été regardée. Elle n'existe pas : `users` ne porte aucune colonne dérivée sur
+laquelle une clé étrangère partielle pourrait s'appuyer. La porte est donc
+applicative — mais elle n'est pas pour autant une « vérification préalable » :
+
+- elle est appelée **depuis la transaction d'insertion**, après le verrou
+  consultatif d'agenda et avant l'`INSERT`. Un refus n'a rien à défaire, le
+  `ROLLBACK` s'en charge — la même propriété que #313 a obtenue pour la fiche
+  d'invitée ;
+- elle lit sous `FOR SHARE`. Sans ce verrou de ligne, une transaction concurrente
+  pourrait promouvoir la fiche au personnel entre la lecture et l'insertion, et
+  les clés étrangères — qui ne regardent pas le rôle — la laisseraient passer.
+  C'est ce qui distingue ce contrôle de celui que booking-engine §1 interdit.
+
+Les clés étrangères restent le filet en dessous : `AppointmentsRepository.create`
+continue de traduire leur refus dans le même 404.
+
+#### Pourquoi 404 et non un 409 `CLIENT_NOT_BOOKABLE`
+
+L'issue laissait l'arbitrage ouvert. **404**, le même que pour une fiche inconnue
+et pour celle du salon voisin — même classe `NotFoundError`, même message —, et
+donc aucun code neuf dans `@spa/shared`.
+
+Trois raisons, et la troisième est décisive.
+
+1. **C'est la conduite que `crm` tient déjà partout.** `findById`, `update` et
+   `setActive` replient « inconnu ici », « d'un autre établissement » et « c'est
+   un compte du personnel » sur un seul `null`, que le service traduit en 404 —
+   « distinguer la troisième dirait qui travaille au salon à qui n'a que le droit
+   de lire des fiches ». Un 409 ici aurait dit exactement cela, et aurait fait de
+   `POST /appointments` une sonde de l'annuaire du personnel, interrogeable
+   identifiant par identifiant par n'importe quel porteur de jeton `STAFF`.
+2. **La symétrie avec `CLIENT_EMAIL_NOT_BOOKABLE` est trompeuse.** Ce 409-là
+   existe parce que `@@unique([tenantId, email])` ne laisse **aucune** troisième
+   voie : la visiteuse ne pourra jamais réserver sous cette adresse, et un front
+   qui la renverrait au calendrier la ferait se heurter au même refus à chaque
+   essai (#452). Ici la voie existe et elle est triviale — le comptoir a désigné
+   la mauvaise ligne, la bonne est à un choix de tiroir. « Introuvable au fichier
+   client » est à la fois vrai et actionnable ; « définitivement non réservable »
+   ne le serait pas.
+3. **Aucun écran n'aurait affiché ce 409.** Le tiroir de #50 choisit la fiche
+   dans l'annuaire client, qui ne contient que des `CLIENT` : ce corps ne se
+   produit jamais par la surface prévue. Un code distinct qu'aucun front ne rend
+   n'est pas une information utile au comptoir, c'est une information rendue à qui
+   fabrique la requête à la main.
 
 ### La réponse est la ligne d'**agenda**, pas la forme publique
 
@@ -369,16 +430,26 @@ interdit.
 ```
 BEGIN
   pg_advisory_xact_lock(agenda du praticien)     ← ordonne les candidates (ADR 0006)
-  crm.resolveWithin(tx, coordonnées)             ← la fiche, trouvée ou créée
+  crm.resolveWithin(tx, coordonnées)             ← tunnel public : la fiche, trouvée ou créée
+  crm.assertBookableWithin(tx, clientId)         ← comptoir : la fiche, confirmée sous FOR SHARE (#465)
   INSERT INTO appointments …                     ← jugé par appointments_no_overlap
 COMMIT   -- ou ROLLBACK, qui emporte les deux
 ```
+
+Les deux lignes du milieu s'excluent : une réservation emprunte l'une ou l'autre,
+selon la forme de sa `ClientReference`.
 
 Le verrou d'abord : il supprime le cycle d'attente, et une résolution posée avant
 lui ferait attendre sur l'index unique de `users` une transaction qui ne tient pas
 encore l'agenda — un ordre d'acquisition dicté par les données, c'est-à-dire ce
 que le verrou existe pour supprimer. La fiche ensuite, parce qu'il faut la ligne
 avant de pouvoir la désigner.
+
+Le `FOR SHARE` du contrôle de comptoir est **partagé**, délibérément : deux
+réservations pour la même cliente chez deux praticiens différents le détiennent
+ensemble et n'attendent pas l'une l'autre. Il ne bloque que les écrivains de la
+ligne `users` — ceux, précisément, qui pourraient la promouvoir au personnel entre
+le contrôle et l'insertion.
 
 **Ce que cela change pour l'appelant** : un 409 de créneau ne laisse plus de fiche
 derrière lui. Ce n'est pas du code, c'est le `ROLLBACK` — exactement comme
@@ -391,6 +462,12 @@ contre un vrai PostgreSQL ; aucun double en mémoire ne le pourrait.
 |---|---|
 | l'adresse porte un compte `STAFF`/`MANAGER`/`ADMIN` | 409 `CLIENT_EMAIL_NOT_BOOKABLE` — décision de `crm`, laissée passer telle quelle |
 | deux réservations concurrentes créent la même fiche | rejouée par `writingAgenda`, trois tentatives au plus ; épuisées, un 500 |
+
+La route de comptoir a son symétrique depuis #465 — un `clientId` qui désigne un
+compte du personnel —, et il ne rend **pas** le même code : 404, indistinctement
+d'une fiche inconnue. Les deux surfaces ne sont pas dans la même situation, et
+l'arbitrage est détaillé plus haut, « Trois façons de désigner la mauvaise
+fiche ».
 
 La seconde ligne suit l'arbitrage de l'interblocage : une course d'ordonnancement
 se rejoue, elle ne se maquille pas en refus métier. Elle ne peut pas être rattrapée
