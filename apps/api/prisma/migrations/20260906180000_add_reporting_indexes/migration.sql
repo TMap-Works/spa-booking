@@ -1,0 +1,73 @@
+-- Index du reporting de base — #74, CDC §1.4 « revenu, volume, no-shows ».
+--
+-- Migration **purement additive** : deux `CREATE INDEX`, aucune colonne, aucune
+-- contrainte, aucune donnée touchée. Elle se renverse en retirant les deux
+-- index, et ne casse aucune version en cours d'exécution — un index ne change
+-- ni le résultat d'une requête ni la forme d'une ligne, il n'en change que le
+-- coût.
+--
+-- (Le verbe de suppression n'est pas écrit ici, même en commentaire :
+-- `prisma-schema.spec.ts` interdit sa présence dans le texte des migrations,
+-- et il a raison de ne pas essayer de distinguer une prose d'une instruction.)
+--
+-- Elle existe parce que le quatrième critère du ticket le demande — « agrégats
+-- scopés au tenant, **avec index adaptés** » — et le cinquième le mesure :
+-- « temps de réponse acceptable sur un an de données ». Un an de données, pour
+-- un salon de taille moyenne, c'est de l'ordre de 10 000 rendez-vous et autant
+-- de lignes d'encaissement. Sans les deux index ci-dessous, chacune des trois
+-- requêtes d'agrégation parcourt la totalité de la table du salon avant de
+-- regrouper.
+--
+-- ## 1. `appointments (tenant_id, service_id, starts_at)`
+--
+-- Le troisième axe du volume de rendez-vous. Les deux autres étaient déjà
+-- servis par la migration initiale :
+--
+-- | Axe demandé par #74 | Index qui le sert |
+-- |---|---|
+-- | par période | `appointments_tenant_id_starts_at_idx` |
+-- | par praticien | `appointments_tenant_id_staff_id_starts_at_idx` |
+-- | par prestation | **celui-ci** |
+--
+-- L'ordre des colonnes n'est pas indifférent. `tenant_id` d'abord, comme tout
+-- index de ce schéma (tenant-isolation §1) : c'est le prédicat que porte
+-- *toute* requête de l'application. `service_id` ensuite, `starts_at` en
+-- dernier — c'est l'ordre qui permet à PostgreSQL de parcourir la fenêtre d'une
+-- prestation d'un seul balayage. L'ordre inverse aurait obligé à lire la
+-- fenêtre entière du salon pour n'en garder qu'une prestation.
+--
+-- ## 2. `payments (tenant_id, status, captured_at)`
+--
+-- La journée de caisse se lit sur `captured_at`, l'instant où l'argent a été
+-- pris — jamais sur `created_at`, qui ne date que l'ouverture de
+-- l'encaissement. Un règlement ouvert à 23 h 58 et capturé à 00 h 03 appartient
+-- au lendemain ; `payments_tenant_id_status_created_at_idx`, déjà là, le
+-- rangerait la veille. Les deux index ne servent donc pas la même question, et
+-- le second ne remplace pas le premier : l'historique de rapprochement de #62
+-- trie bien par `created_at`.
+--
+-- `status` avant la date parce que l'agrégat de revenu ne somme que les
+-- encaissements aboutis — `SUCCEEDED`, `PARTIALLY_REFUNDED`, `REFUNDED`. Une
+-- intention restée `PENDING` ou refusée (`FAILED`) n'est pas une recette, et
+-- porter le statut en tête de l'index laisse le moteur écarter ces lignes-là
+-- avant de lire la moindre date.
+--
+-- ## Ce que cette migration ne fait pas : `CONCURRENTLY`
+--
+-- `CREATE INDEX` prend un `SHARE LOCK` sur la table : les lectures passent, les
+-- écritures attendent. Sur les volumes du MVP — deux tables neuves, quelques
+-- milliers de lignes — la construction se compte en dizaines de millisecondes,
+-- et un déploiement l'absorbe sans que personne ne le voie. Le même choix, et
+-- la même réserve, que `20260827200000_add_appointment_reschedule_link` : le
+-- jour où ces tables seront volumineuses, la pose se fera en
+-- `CREATE INDEX CONCURRENTLY`, hors transaction, dans une migration à part.
+-- Prisma enveloppe chaque migration dans une transaction, ce que
+-- `CONCURRENTLY` refuse — ce n'est donc pas un mot-clé à ajouter ici, c'est une
+-- procédure de déploiement à écrire le jour où elle devient nécessaire.
+
+-- Volume de rendez-vous par prestation sur une fenêtre.
+CREATE INDEX "appointments_tenant_id_service_id_starts_at_idx" ON "appointments"("tenant_id", "service_id", "starts_at");
+
+-- Revenu quotidien : les encaissements aboutis, datés du jour où l'argent est
+-- entré en caisse.
+CREATE INDEX "payments_tenant_id_status_captured_at_idx" ON "payments"("tenant_id", "status", "captured_at");
