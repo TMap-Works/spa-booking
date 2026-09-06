@@ -22,3 +22,55 @@ variable "budget_alert_emails" {
   type        = list(string)
   default     = []
 }
+
+variable "notification_domain" {
+  description = <<-EOT
+    Domaine d'envoi des notifications, vérifié dans SES — celui qui apparaît à
+    droite du `@` dans l'en-tête `From`. `null` — le défaut — ne compose pas du
+    tout le module `notifications` : l'environnement reste applicable sans qu'un
+    domaine existe.
+
+    Une identité de domaine SES est unique **par compte et par région** : la
+    recette prend un sous-domaine qui lui est propre — `staging.mail.<domaine>` —
+    et la production garde le nom d'envoi réel. Deux environnements qui
+    déclareraient le même nom se disputeraient la même ressource AWS depuis deux
+    états distincts, et un envoi d'essai de recette entamerait la réputation du
+    domaine de production.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.notification_domain == null || can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$", var.notification_domain))
+    error_message = "notification_domain doit être `null` ou un nom de domaine pleinement qualifié en minuscules, par exemple `staging.mail.exemple.fr`."
+  }
+}
+
+variable "notification_route53_zone_id" {
+  description = <<-EOT
+    Zone hébergée Route 53 servant `notification_domain`. Renseignée, le module
+    publie lui-même les six enregistrements de délivrabilité — trois CNAME DKIM,
+    un MX et un TXT SPF sur le `MAIL FROM`, un TXT DMARC — et la vérification du
+    domaine aboutit sans intervention.
+
+    `null` quand le DNS est servi ailleurs : la sortie `notification_dns_records`
+    donne alors la liste exacte à publier chez le registraire. Tant qu'elle ne
+    l'est pas, l'identité reste en attente et aucun message ne part.
+  EOT
+  type        = string
+  default     = null
+}
+
+variable "notification_dmarc_report_uri" {
+  description = <<-EOT
+    Adresse destinataire des rapports agrégés DMARC (`rua`). `null` publie un
+    enregistrement DMARC sans `rua`.
+
+    La politique par défaut du module est `p=none` : elle n'existe que pour
+    observer qui écrit au nom du domaine. Sans destinataire de rapports, elle
+    n'apprend rien — et il n'y a donc jamais de quoi la resserrer vers
+    `quarantine` puis `reject`.
+  EOT
+  type        = string
+  default     = null
+}

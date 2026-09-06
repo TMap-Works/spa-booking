@@ -68,3 +68,31 @@ module "network" {
   # et SNS. C'est le poste de coût qu'on accepte de doubler, et le seul.
   nat_gateway_count = 2
 }
+
+# --- Délivrabilité e-mail -----------------------------------------------------
+
+# C'est ici que le risque du CDC §6 se joue : les rappels J-1 de production
+# partent de ce domaine, et un rappel classé en indésirable ne réduit aucun
+# no-show. Le module reste inerte tant qu'aucun domaine n'est fourni — une
+# identité SES est unique par compte et par région, un défaut en dur ferait
+# vérifier le même nom depuis les trois états d'environnement — mais la
+# production, elle, ne peut pas rester sans : `notification_domain` doit être
+# posé avant le go-live (#83), et la sortie du bac à sable SES demandée bien
+# avant, le délai AWS n'étant pas instantané. Procédure dans le README du module.
+module "notifications" {
+  count  = var.notification_domain == null ? 0 : 1
+  source = "../../modules/notifications"
+
+  environment = local.environment
+  domain      = var.notification_domain
+
+  # Renseigné, le module publie DKIM, SPF et DMARC lui-même. Sinon il expose la
+  # liste exacte à publier chez le registraire — sortie `notification_dns_records`.
+  route53_zone_id = var.notification_route53_zone_id
+
+  # Sans destinataire de rapports, une politique DMARC `none` — celle du module
+  # par défaut — n'apprend rien à personne. En production, c'est aussi la seule
+  # source qui dira quand la politique peut passer à `quarantine` puis `reject` :
+  # renseigner cette adresse est le premier pas du resserrement, pas une option.
+  dmarc_report_uri = var.notification_dmarc_report_uri
+}

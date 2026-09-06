@@ -18,6 +18,7 @@ Internet → ALB (443, certificat auto-signé)
 | Redis 7.1, un nœud, chiffré en transit | `spa-dev-redis` | `cache` |
 | Cluster, ALB, service `api`, auto-scaling | `spa-dev-cluster` | `ecs-service` |
 | Budget mensuel 250 USD, alertes 80 % et 100 % | `spa-dev-monthly` | `budgets` |
+| Domaine SES, DKIM/SPF/DMARC, topic des rebonds | `spa-dev-email`, `spa-dev-ses-events` | `notifications` — **rien sans `notification_domain`** |
 | Définition de tâche de migration | `spa-dev-migrate` | déclarée ici |
 | Secret d'exécution de l'API | `spa-dev/api/runtime-…` | déclarée ici |
 | Certificat de terminaison TLS | `spa-dev-alb` | déclarée ici |
@@ -94,6 +95,40 @@ vérification TLS (`curl --insecure`, ce que fait le contrôle de santé du
 workflow), et la clé privée est écrite dans l'état — chiffré, à accès restreint.
 
 Fournir `certificate_arn` remplace ce montage par un vrai certificat ACM.
+
+## Délivrabilité e-mail
+
+Le module `notifications` n'est composé que si `notification_domain` est fourni.
+Sans lui, l'environnement s'applique exactement comme avant : aucune identité SES,
+aucun topic, aucune clé KMS — donc aucune dépense et aucun conflit.
+
+C'est délibéré. Une identité de domaine SES est unique **par compte et par
+région** : un défaut en dur ferait vérifier le même nom depuis les trois états
+d'environnement, qui se le disputeraient. Le développement prend son propre
+sous-domaine le jour où il en a un :
+
+```bash
+terraform apply \
+  -var 'notification_domain=dev.mail.exemple.fr' \
+  -var 'notification_route53_zone_id=Z0123456789ABCDEFGHIJ' \
+  -var 'notification_dmarc_report_uri=rapports-dmarc@exemple.fr'
+```
+
+L'adresse de rapport ci-dessus est hors du domaine surveillé : elle exige une
+autorisation de destination externe dans la zone de `exemple.fr`, faute de quoi
+aucun rapport DMARC n'arrive jamais — l'enregistrement exact est dans
+[modules/notifications/README.md](../../modules/notifications/README.md).
+
+Sans `notification_route53_zone_id` — DNS servi ailleurs —, le module publie
+quand même tout ce qui est dans AWS et rend la liste des enregistrements à poser
+chez le registraire : `terraform output -json notification_dns_records`. Tant
+qu'ils ne le sont pas, l'identité reste en attente et **aucun message ne part**.
+
+Deux points ne sont pas dans Terraform parce qu'ils n'y sont pas exprimables — la
+**sortie du bac à sable SES** (une demande instruite par le support AWS) et le
+**test d'envoi réel** vers Gmail, Outlook et Yahoo. Les deux procédures, commandes
+comprises, sont dans
+[modules/notifications/README.md](../../modules/notifications/README.md).
 
 ## Coût et rétention
 
