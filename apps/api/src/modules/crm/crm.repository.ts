@@ -64,8 +64,24 @@ import type { Customer, CustomerSummary, CustomerVisit } from './crm.types';
  * cliente — un `clientId` posé par le comptoir (#465) — et pour une raison
  * voisine mais distincte : elle ne lit pas pour informer, elle lit pour
  * **décider**, et une décision prise hors de la transaction d'insertion serait
- * périmée avant d'avoir servi. Elle est la seule de ce fichier à écrire du SQL
- * brut : le verrou de ligne qui la rend juste ne s'exprime pas autrement.
+ * périmée avant d'avoir servi.
+ *
+ * ## Les deux lisent le rôle sous verrou, et sont les seules à écrire du SQL brut
+ *
+ * `assertClientBookableWithin` a porté seule le `SELECT … FOR SHARE` de #465
+ * pendant que sa jumelle publique s'en passait ; #468 a refermé l'écart. Les
+ * deux décident du même fait — « cette ligne `users` est-elle une fiche du
+ * fichier client ? » — juste avant une insertion qui en dépend, et une décision
+ * de ce genre lue sans verrou est périmée par construction sous `READ
+ * COMMITTED`. Le verrou de ligne ne s'exprimant pas dans le client Prisma, ces
+ * deux lectures — et elles seules — sont écrites en SQL.
+ *
+ * Elles écrivent donc aussi leur filtre `tenant_id` à la main : le SQL brut ne
+ * repasse pas par l'extension de scoping (tenant-isolation §3, ADR 0006), et
+ * `requireTenantId` est la seule source de cette valeur. C'est toute la
+ * dérogation du module — la recherche, les projections, l'historique et les
+ * **deux créations** continuent de passer par le client scopé, qui pose le
+ * tenant sans qu'aucune requête ait à le nommer.
  */
 
 /** Le compte tel que le fichier client le lit — jamais l'empreinte, jamais le tenant. */
@@ -151,6 +167,20 @@ function withScopedTenant<T>(data: Omit<T, 'tenantId' | 'tenant'>): T {
 
 /** Code Prisma d'une violation de contrainte d'unicité. */
 const UNIQUE_VIOLATION = 'P2002';
+
+/**
+ * Ce qu'une lecture verrouillée de fiche rend — l'identifiant, et le rôle à juger.
+ *
+ * Les deux colonnes sont transtypées en `text` dans la requête : `role` parce
+ * que c'est une énumération PostgreSQL, dont le driver rendrait autrement une
+ * valeur dépendante du catalogue, et `id` par symétrie de lecture. Rien d'autre
+ * n'est projeté — ni nom, ni adresse, ni note interne : une lecture qui décide
+ * n'a pas à ramener ce dont la décision n'a pas besoin.
+ */
+interface LockedClientRow {
+  id: string;
+  role: string;
+}
 
 /** Champs modifiables d'une fiche — tous facultatifs, aucun ne l'est tous. */
 export interface CustomerPatch {
@@ -348,13 +378,55 @@ export class CrmRepository {
    *
    * ## La lecture ne filtre **pas** sur le rôle, et c'est le propos
    *
-   * `findFirst({ where: { email } })` sans `role`, puis une décision explicite sur
-   * ce qu'elle trouve. L'inverse — filtrer sur `role: 'CLIENT'` dans le `where` —
-   * aurait rendu `null` pour une adresse portée par un compte du personnel, donc
-   * conduit à une création que `@@unique([tenantId, email])` refuse en `P2002`
-   * nu : un 500 sur un cas parfaitement prévisible. Lire le rôle et le juger ici
-   * est ce qui transforme cette collision en un refus choisi
+   * Un `WHERE "email" = …` sans `role`, puis une décision explicite sur ce qu'il
+   * trouve. L'inverse — filtrer sur `role = 'CLIENT'` — aurait rendu zéro ligne
+   * pour une adresse portée par un compte du personnel, donc conduit à une
+   * création que `@@unique([tenantId, email])` refuse en `P2002` nu : un 500 sur
+   * un cas parfaitement prévisible. Lire le rôle et le juger ici est ce qui
+   * transforme cette collision en un refus choisi
    * (`ClientEmailNotBookableError`, 409).
+   *
+   * ## Le rôle est lu sous `FOR SHARE`, comme au comptoir (#468)
+   *
+   * Cette lecture était nue jusqu'à #468, et le refus qu'elle porte n'était donc
+   * pas atomique par rapport à l'insertion qu'il garde. Sous `READ COMMITTED`,
+   * chaque instruction prend son propre instantané : la lecture voyait `CLIENT`,
+   * une transaction concurrente promouvait la fiche au personnel et validait, et
+   * l'insertion passait — les deux clés étrangères de `appointments.client_id`
+   * prouvent l'existence de la ligne et son établissement, jamais son rôle.
+   * C'était exactement la « vérification applicative suivie d'un `INSERT` » que
+   * booking-engine §1 interdit, et c'est ce que sa jumelle
+   * `assertClientBookableWithin` refermait déjà pour la route de comptoir.
+   *
+   * Le verrou est **partagé** et non exclusif, pour la même raison que là-bas :
+   * deux réservations d'invité sur la même adresse chez deux praticiens
+   * différents doivent pouvoir avancer de front. Seuls les écrivains de la
+   * ligne attendent — ceux, précisément, qui pourraient la promouvoir.
+   *
+   * ## Ce que ce verrou ne ferme pas, et ce qui le ferme à sa place
+   *
+   * La fenêtre de l'adresse **libre**. `FOR SHARE` verrouille les lignes rendues,
+   * et une lecture qui n'en rend aucune ne verrouille rien : deux transactions
+   * concurrentes peuvent toutes deux constater l'adresse libre et tenter la
+   * création. Ce n'est pas un trou laissé ouvert, c'est la course que
+   * `@@unique([tenantId, email])` arbitre déjà — la perdante reçoit `P2002`,
+   * traduit plus bas en `ClientRecordRaceError`, et `writingAgenda` rejoue la
+   * transaction entière (#313). La tentative suivante lit alors, sous verrou, la
+   * fiche que la gagnante vient d'écrire, et la juge.
+   *
+   * Fermer cette seconde fenêtre par un verrou demanderait de verrouiller une
+   * ligne qui n'existe pas — un verrou de prédicat, c'est-à-dire `SERIALIZABLE`
+   * sur la transaction de l'agenda. Le prix serait des échecs de sérialisation
+   * sur des réservations sans rapport entre elles, pour remplacer un arbitrage
+   * que la contrainte d'unicité rend déjà, gratuitement et sans faux positif.
+   *
+   * ## L'ordre des verrous, et pourquoi il n'ajoute aucun cycle d'attente
+   *
+   * `AppointmentsRepository.insert` prend d'abord le verrou consultatif
+   * d'agenda, **puis** appelle cette porte : le `FOR SHARE` arrive donc toujours
+   * après lui, exactement comme celui du comptoir. Les deux chemins acquièrent
+   * dans le même ordre, et aucun ne détient de verrou de ligne `users` avant
+   * l'agenda (ADR 0006).
    *
    * ## Ce que le prédicat ne regarde pas : `is_active`
    *
@@ -374,22 +446,37 @@ export class CrmRepository {
    * numéro de n'importe quelle cliente dont on connaît l'adresse. La correction
    * d'une fiche relève du back-office, sous garde (`PATCH /customers/:id`).
    *
-   * @throws {ClientEmailNotBookableError} l'adresse porte un compte du personnel.
+   * @throws {ClientEmailNotBookableError} l'adresse porte un compte du personnel
+   * de cet établissement — jugé sous verrou, donc encore vrai à l'insertion.
    * @throws {ClientRecordRaceError} deux créations concurrentes, dont celle-ci a
    * perdu — l'appelant rejoue sa transaction.
+   * @throws {MissingTenantContextError} aucune portée de tenant n'est ouverte :
+   * le filtre écrit à la main n'aurait aucune valeur à porter.
    */
   public async resolveClientWithin(
     scope: ClientDirectoryScope,
     contact: ClientContact,
   ): Promise<string> {
-    const existing = await scope.user.findFirst({
-      where: { email: contact.email },
-      // Le rôle est lu **pour être jugé**, jamais rendu : c'est la seule
-      // information dont la décision a besoin, et elle ne quitte pas ce fichier.
-      select: { id: true, role: true },
-    });
+    // Le SQL brut ne repasse pas par l'extension de scoping (ADR 0006) : le
+    // filtre d'établissement est écrit dans la requête, et il vient du contexte
+    // de requête — jamais d'un paramètre que l'appelant choisirait. Sans
+    // contexte ouvert, la lecture échoue ici plutôt que de traverser les
+    // établissements (tenant-isolation §3).
+    const tenantId = requireTenantId('User', 'resolveClientWithin');
 
-    if (existing !== null) {
+    // `(tenant_id, email)` est l'index unique du schéma : ce couple de prédicats
+    // le sert tel quel, et rend au plus une ligne.
+    const rows = await scope.$queryRaw<LockedClientRow[]>`
+      SELECT "id"::text AS id, "role"::text AS role
+      FROM "users"
+      WHERE "email" = ${contact.email} AND "tenant_id" = ${tenantId}::uuid
+      FOR SHARE
+    `;
+
+    // Le rôle est lu **pour être jugé**, jamais rendu : c'est la seule
+    // information dont la décision a besoin, et elle ne quitte pas ce fichier.
+    const existing = rows[0];
+    if (existing !== undefined) {
       if (existing.role !== CUSTOMER_ROLE) {
         throw new ClientEmailNotBookableError();
       }
@@ -446,11 +533,15 @@ export class CrmRepository {
    * `users` ne porte aucune colonne dérivée sur laquelle une clé étrangère
    * partielle pourrait s'appuyer.
    *
-   * ## Pourquoi du SQL brut, alors que tout le reste du dépôt passe par Prisma
+   * ## Pourquoi du SQL brut, comme sa jumelle et pour la même raison
    *
    * Pour le `FOR SHARE`, que le client Prisma n'exprime pas — et sans lequel
    * cette méthode serait exactement la « vérification applicative suivie d'un
-   * `INSERT` » que booking-engine §1 interdit. Sous `READ COMMITTED`, chaque
+   * `INSERT` » que booking-engine §1 interdit. Elle a porté ce verrou seule
+   * jusqu'à #468, qui l'a étendu à `resolveClientWithin` : les deux lectures qui
+   * jugent un rôle avant d'insérer sont désormais les deux seules du module à
+   * descendre au SQL, et les deux seules à écrire leur `tenant_id` à la main.
+   * Sous `READ COMMITTED`, chaque
    * instruction prend son propre instantané : une lecture nue verrait `CLIENT`,
    * une transaction concurrente promouvrait la fiche en `STAFF` et validerait,
    * et l'insertion qui suit passerait — les clés étrangères, elles, restent

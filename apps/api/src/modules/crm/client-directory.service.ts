@@ -26,6 +26,14 @@ import { CrmRepository } from './crm.repository';
  * d'une transaction comme à celles d'un client nu. C'est ce qui fait qu'aucune
  * ligne écrite ou lue ici ne peut sortir de l'établissement courant, sans qu'un
  * `tenantId` ait à traverser cette signature (tenant-isolation §3).
+ *
+ * Avec une réserve, et il faut la dire : l'extension ne couvre pas le SQL brut
+ * (ADR 0006). Les deux lectures qui jugent un rôle sous `FOR SHARE` — celle de
+ * `resolveWithin` depuis #468, celle d'`assertBookableWithin` depuis #465 —
+ * descendent au `$queryRaw` de cette portée et écrivent donc leur propre
+ * `tenant_id = …`, lu du contexte de requête. La frontière tient toujours, mais
+ * pour ces deux requêtes elle tient par `requireTenantId` et non par
+ * l'extension ; le détail est dans `CrmRepository`.
  */
 export type ClientDirectoryScope = Omit<
   ScopedPrismaClient,
@@ -118,10 +126,19 @@ export class ClientDirectoryService {
    * numéro sont validés et élagués par la surface qui les reçoit, et cette porte
    * n'a pas de règle de saisie propre à imposer.
    *
+   * ## Le rôle est jugé sous verrou de ligne (#468)
+   *
+   * Comme `assertBookableWithin`, et pour la même raison : le refus qu'elle porte
+   * garde une insertion, et une décision lue sans verrou serait périmée avant
+   * d'avoir servi. Le détail — pourquoi `FOR SHARE` plutôt qu'exclusif, et ce que
+   * ce verrou ne ferme pas — est dans `CrmRepository.resolveClientWithin`, seul
+   * endroit du module qui écrive la requête.
+   *
    * @throws {ClientEmailNotBookableError} l'adresse porte un compte du personnel
    * de cet établissement — 409, jamais un `P2002` nu en 500.
    * @throws {ClientRecordRaceError} deux résolutions concurrentes ont créé la même
    * fiche : à l'appelant de rejouer sa transaction.
+   * @throws {MissingTenantContextError} aucune portée de tenant n'est ouverte.
    */
   public async resolveWithin(
     scope: ClientDirectoryScope,
