@@ -60,6 +60,37 @@ data "aws_iam_policy_document" "alerts" {
     }
   }
 
+  # Les alarmes CloudWatch de l'observabilité, que l'en-tête de ce fichier
+  # annonce comme le second usage du topic. Elles ne publient **pas** sous
+  # l'identité du compte : le service CloudWatch publie sous son propre principal,
+  # et l'énoncé `AllowAccountOwner` ci-dessous ne le couvre donc pas.
+  #
+  # C'est un piège discret : sans cette autorisation, l'alarme change bel et bien
+  # d'état — elle passe au rouge dans la console, son historique le montre — mais
+  # aucune notification ne part. On croit être prévenu, et on ne l'est pas. La
+  # politique par défaut d'SNS l'autorisait ; l'écrire l'a effacée, et il faut la
+  # réaffirmer (#67).
+  statement {
+    sid    = "AllowCloudWatchAlarms"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["cloudwatch.amazonaws.com"]
+    }
+
+    actions   = ["SNS:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+
+    # Même garde contre l'adjoint confus que pour Budgets : seules les alarmes de
+    # ce compte-ci publient ici.
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+
   statement {
     sid    = "AllowAccountOwner"
     effect = "Allow"
