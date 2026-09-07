@@ -152,3 +152,52 @@ output "notification_dashboard_name" {
   description = "Tableau de bord CloudWatch de la chaîne d'envoi : issue des livraisons, profondeur et âge des files, invocations et durée de la Lambda."
   value       = one(module.notifications[*].dashboard_name)
 }
+
+# --- Canal SMS (#66) ----------------------------------------------------------
+
+# La production est le seul environnement qui **détient** ces réglages : SNS n'a
+# qu'un jeu de préférences SMS par compte et par région. Dev et staging en
+# héritent, et leurs sorties homonymes n'existent pas.
+
+output "notification_sms_default_type" {
+  description = "Type de message SMS posé sur le compte. Doit valoir `Transactional` : `Promotional` est routé en priorité basse et refusé par certains opérateurs sur un contenu transactionnel — un rappel classé promotionnel se perd sans erreur."
+  value       = one(module.notifications[*].sms_default_type)
+}
+
+output "notification_sms_monthly_spend_limit_usd" {
+  description = "Plafond de dépense SMS du mois civil, en dollars, tel qu'AWS l'enregistre. **Arrêt dur** : au plafond, SNS refuse la publication et les rappels J-1 s'arrêtent sans erreur applicative."
+  value       = one(module.notifications[*].sms_monthly_spend_limit_usd)
+}
+
+output "notification_sms_spend_alarm_name" {
+  description = "Alarme de dépense SMS, sur `AWS/SNS`/`SMSMonthToDateSpentUSD`. Une métrique de compte, donc une seule alarme pour les trois environnements — c'est pourquoi elle n'existe qu'ici."
+  value       = one(module.notifications[*].sms_spend_alarm_name)
+}
+
+output "notification_sms_spend_alarm_threshold_usd" {
+  description = "Dépense, en dollars, à partir de laquelle l'alarme se déclenche — 80 % du plafond par défaut. Déduite du plafond et non réglée à part : un seuil ne peut pas passer au-dessus de ce qu'il surveille."
+  value       = one(module.notifications[*].sms_spend_alarm_threshold_usd)
+}
+
+output "notification_sms_sender_id" {
+  description = "Nom d'expéditeur posé sur le compte, ou `null`. Le poser ne l'enregistre nulle part — voir `notification_sms_sender_id_registration`."
+  value       = one(module.notifications[*].sms_sender_id)
+}
+
+output "notification_sms_sender_id_registration" {
+  description = <<-EOT
+    Démarches d'enregistrement d'expéditeur restant à mener, pays par pays.
+    Chaque entrée porte `pays`, `statut` et `exigence`.
+
+    Aucune ressource Terraform ne couvre cet enregistrement, chez aucun
+    fournisseur : c'est un dossier instruit par un humain, au même titre que la
+    sortie du bac à sable SES. Un `statut` valant `a-verifier` ou `a-reconfirmer`
+    n'est pas un critère de go-live coché.
+  EOT
+  value       = one(module.notifications[*].sms_sender_id_registration)
+}
+
+output "notification_sms_publisher_policy_arn" {
+  description = "Politique IAM du droit d'émettre un SMS, à attacher au rôle de tâche de l'API. Elle n'accorde aucun droit sur les réglages SMS du compte : une application capable de relever son propre plafond rendrait le plafond décoratif."
+  value       = one(module.notifications[*].sms_publisher_policy_arn)
+}

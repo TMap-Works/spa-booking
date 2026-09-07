@@ -191,3 +191,72 @@ output "metric_namespace" {
   description = "Espace de noms des métriques publiées par la Lambda au format EMF."
   value       = var.metric_namespace
 }
+
+# --- Canal SMS ----------------------------------------------------------------
+
+output "sms_publisher_policy_arn" {
+  description = <<-EOT
+    Politique IAM à attacher au rôle de tâche de l'API — `task_role_policy_arns`
+    du module `ecs-service` — pour qu'elle puisse émettre un SMS.
+
+    Elle accorde `sns:Publish` et **aucun droit sur les réglages SMS du compte** :
+    une application capable de relever son propre plafond de dépense rendrait le
+    plafond décoratif.
+  EOT
+  value       = aws_iam_policy.sms_publisher.arn
+}
+
+output "sms_account_preferences_managed" {
+  description = <<-EOT
+    Vrai quand cet environnement détient les préférences SMS du compte — type de
+    message, plafond, sender ID — et l'alarme de dépense.
+
+    Faux dans les autres : ils **héritent** du réglage, ils ne le posent pas.
+    Deux environnements à vrai sur un même compte et une même région est une
+    erreur de composition que Terraform ne signalera pas, chacun s'écrasant à son
+    tour.
+  EOT
+  value       = var.manage_sms_account_preferences
+}
+
+output "sms_default_type" {
+  description = "Type de message effectivement posé, ou `null` quand cet environnement ne détient pas le réglage. `Transactional` est le seul acceptable pour un rappel de rendez-vous : `Promotional` est routé en priorité basse, et refusé par certains opérateurs."
+  value       = one(aws_sns_sms_preferences.this[*].default_sms_type)
+}
+
+output "sms_monthly_spend_limit_usd" {
+  description = "Plafond de dépense mensuel effectivement posé, en dollars, ou `null` quand cet environnement ne détient pas le réglage. Rappel : c'est un arrêt dur, pas une alerte — au plafond, SNS cesse d'envoyer."
+  value       = one(aws_sns_sms_preferences.this[*].monthly_spend_limit)
+}
+
+output "sms_spend_alarm_name" {
+  description = "Nom de l'alarme de dépense SMS, ou `null` quand cet environnement ne détient pas le réglage. Elle porte sur `AWS/SNS`/`SMSMonthToDateSpentUSD`, une métrique **de compte** : c'est pourquoi elle n'existe qu'une fois."
+  value       = one(aws_cloudwatch_metric_alarm.sms_spend[*].alarm_name)
+}
+
+output "sms_spend_alarm_threshold_usd" {
+  description = "Dépense, en dollars, à partir de laquelle l'alarme se déclenche — le plafond multiplié par `sms_spend_alarm_threshold_percent`. Déduit et non réglé séparément, pour qu'un seuil ne puisse pas passer au-dessus du plafond qu'il surveille."
+  value       = local.sms_spend_alarm_threshold_usd
+}
+
+output "sms_sender_id" {
+  description = "Nom d'expéditeur posé sur le compte, ou `null`. Le poser ne l'enregistre nulle part : voir `sms_sender_id_registration`."
+  value       = one(aws_sns_sms_preferences.this[*].default_sender_id)
+}
+
+output "sms_sender_id_registration" {
+  description = <<-EOT
+    Ce qui reste à faire, pays par pays, pour que le sender ID soit accepté.
+    Chaque entrée porte `pays`, `statut` et `exigence`.
+
+    Aucun fournisseur Terraform n'expose de ressource d'enregistrement de sender
+    ID : c'est une démarche administrative, instruite par un humain, au même titre
+    que la sortie du bac à sable SES. Cette sortie existe pour qu'elle ne se
+    redécouvre pas la veille du go-live.
+
+    `terraform output -json sms_sender_id_registration` en donne une forme
+    lisible. Un `statut` valant `a-verifier` ou `a-reconfirmer` n'est pas un
+    critère coché.
+  EOT
+  value       = local.sms_sender_id_registration
+}

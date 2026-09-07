@@ -226,6 +226,11 @@ output "notification_dispatch_producer_policy_arn" {
   value       = one(module.notifications[*].dispatch_producer_policy_arn)
 }
 
+output "notification_sms_publisher_policy_arn" {
+  description = "Politique IAM du droit d'émettre un SMS, déjà attachée au rôle de tâche de l'API. Elle n'accorde aucun droit sur les réglages SMS du compte — plafond de dépense compris — que seule la production détient (#66)."
+  value       = one(module.notifications[*].sms_publisher_policy_arn)
+}
+
 output "notification_dispatcher_function_name" {
   description = "Lambda d'envoi. `aws logs tail /aws/lambda/<ce nom> --follow` montre les événements structurés `notification.sent`, `notification.skipped` et `notification.permanent_failure`."
   value       = one(module.notifications[*].dispatcher_function_name)

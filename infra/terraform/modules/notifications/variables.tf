@@ -521,3 +521,148 @@ variable "create_dashboard" {
   type        = bool
   default     = true
 }
+
+# --- Canal SMS (#66) ----------------------------------------------------------
+
+variable "manage_sms_account_preferences" {
+  description = <<-EOT
+    Confie à cet environnement les préférences SMS d'SNS — type de message,
+    plafond de dépense, sender ID — et l'alarme de dépense qui va avec.
+
+    **Faux par défaut, et il ne doit être vrai que dans un environnement à la
+    fois.** `aws_sns_sms_preferences` n'a pas de nom : il y en a exactement un par
+    compte et par région, comme il n'y a qu'un jeu de préférences dans la console.
+    Deux environnements qui le déclareraient l'écraseraient tour à tour depuis
+    deux états Terraform, sans que ni l'un ni l'autre ne voie de conflit dans son
+    plan — le dernier `apply` gagnerait, et le plafond de la production pourrait
+    être celui du développement.
+
+    Le laisser à faux ne prive de rien : le réglage étant celui du compte, tous
+    les environnements en héritent. Un envoi en boucle depuis le développement
+    est plafonné par la valeur de la production, ce qui est exactement la
+    protection recherchée.
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "sms_monthly_spend_limit_usd" {
+  description = <<-EOT
+    Plafond de dépense SMS du mois civil, en dollars US. Sans effet quand
+    `manage_sms_account_preferences` vaut faux.
+
+    C'est un **arrêt dur**, pas un seuil d'alerte : SNS cesse d'envoyer dès que la
+    dépense l'atteint, et la publication est refusée côté service — aucune erreur
+    applicative ne le dit. Le CDC §4.16 sort le SMS de l'estimation budgétaire
+    précisément parce que son coût varie fortement selon le pays ; ce plafond est
+    ce qui borne l'inconnue.
+
+    Dix dollars par défaut : de quoi couvrir plusieurs centaines de rappels vers
+    l'Europe, largement moins vers une destination chère. Le dimensionner
+    réellement demande un mois de métriques — le relever est une pull request,
+    l'atteindre est une panne de rappels.
+
+    **Le quota du compte plafonne cette valeur, et il vaut 1 USD sur un compte
+    neuf.** Un `apply` qui demande davantage échoue tant que la demande de quota
+    n'est pas accordée par le support AWS. À faire tôt : le délai n'est pas
+    instantané.
+  EOT
+  type        = number
+  default     = 10
+
+  validation {
+    condition     = var.sms_monthly_spend_limit_usd >= 1 && var.sms_monthly_spend_limit_usd <= 10000 && floor(var.sms_monthly_spend_limit_usd) == var.sms_monthly_spend_limit_usd
+    error_message = "sms_monthly_spend_limit_usd doit être un entier compris entre 1 et 10000 dollars — SNS n'accepte pas de plafond fractionnaire, et un plafond à zéro couperait le canal au premier message."
+  }
+}
+
+variable "sms_spend_alarm_threshold_percent" {
+  description = <<-EOT
+    Part du plafond, en pourcentage, à partir de laquelle l'alarme de dépense se
+    déclenche. 80 % par défaut, le même seuil que la première alerte du module
+    `budgets` (CDC §4.16).
+
+    Pourquoi pas 100 % : à 100 %, il n'y a plus rien à prévenir. Le plafond est
+    atteint, SNS a cessé d'envoyer, et l'alarme ne fait que constater des rappels
+    déjà perdus. Le seul moment où l'information sert est celui où il reste de la
+    marge pour relever le plafond ou couper le canal.
+  EOT
+  type        = number
+  default     = 80
+
+  validation {
+    condition     = var.sms_spend_alarm_threshold_percent >= 1 && var.sms_spend_alarm_threshold_percent <= 100 && floor(var.sms_spend_alarm_threshold_percent) == var.sms_spend_alarm_threshold_percent
+    error_message = "sms_spend_alarm_threshold_percent doit être un entier compris entre 1 et 100."
+  }
+}
+
+variable "sms_spend_alarm_period_seconds" {
+  description = <<-EOT
+    Période d'évaluation de l'alarme de dépense SMS, en secondes. Une heure par
+    défaut, contre cinq minutes pour les alarmes de la chaîne d'envoi.
+
+    L'écart est voulu : `SMSMonthToDateSpentUSD` est un cumul mensuel, pas un
+    débit. Il ne bouge qu'au rythme des envois, et l'échantillonner toutes les
+    cinq minutes ne ferait qu'ajouter des périodes sans point — donc du bruit —
+    sans avancer d'une minute le moment où le seuil est franchi.
+  EOT
+  type        = number
+  default     = 3600
+
+  validation {
+    condition     = contains([300, 900, 3600, 21600, 86400], var.sms_spend_alarm_period_seconds)
+    error_message = "sms_spend_alarm_period_seconds doit valoir 300, 900, 3600, 21600 ou 86400 secondes."
+  }
+}
+
+variable "sms_sender_id" {
+  description = <<-EOT
+    Nom d'expéditeur affiché à la place d'un numéro, là où l'opérateur du pays
+    destinataire l'accepte. `null` — le défaut — laisse SNS émettre depuis un
+    numéro partagé, et le message n'a alors l'air de venir de personne : sur un
+    rappel de rendez-vous, c'est la première raison de ne pas le lire.
+
+    Onze caractères au plus, lettres et chiffres uniquement, et **au moins une
+    lettre** : un sender ID purement numérique est refusé par les opérateurs, qui
+    y voient une usurpation de numéro court. Ni espace, ni accent, ni ponctuation.
+
+    Poser cette valeur ne l'enregistre nulle part — voir la sortie
+    `sms_sender_id_registration`.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.sms_sender_id == null || can(regex("^[A-Za-z0-9]{1,11}$", var.sms_sender_id))
+    error_message = "sms_sender_id doit être `null` ou une chaîne de 1 à 11 caractères alphanumériques sans espace ni accent."
+  }
+
+  validation {
+    condition     = var.sms_sender_id == null || can(regex("[A-Za-z]", var.sms_sender_id))
+    error_message = "sms_sender_id doit comporter au moins une lettre : un expéditeur purement numérique est refusé par les opérateurs, qui y voient une usurpation de numéro court."
+  }
+}
+
+variable "sms_target_countries" {
+  description = <<-EOT
+    Pays vers lesquels des SMS seront émis, en code ISO 3166-1 alpha-2. Sert
+    uniquement à composer la sortie `sms_sender_id_registration` : la liste des
+    démarches d'enregistrement d'expéditeur à mener avant le go-live.
+
+    `["MG", "FR"]` par défaut — les deux que la skill notifications §5 nomme.
+    Aucune ressource AWS n'en découle : l'enregistrement d'un sender ID n'a pas de
+    ressource Terraform, chez aucun fournisseur.
+  EOT
+  type        = list(string)
+  default     = ["MG", "FR"]
+
+  validation {
+    condition     = alltrue([for country in var.sms_target_countries : can(regex("^[A-Z]{2}$", country))])
+    error_message = "Chaque entrée de sms_target_countries doit être un code pays ISO 3166-1 alpha-2 en deux majuscules, par exemple `MG` ou `FR`."
+  }
+
+  validation {
+    condition     = length(distinct(var.sms_target_countries)) == length(var.sms_target_countries)
+    error_message = "sms_target_countries ne doit pas comporter de doublon."
+  }
+}

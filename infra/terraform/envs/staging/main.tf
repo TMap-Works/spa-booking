@@ -107,6 +107,15 @@ module "notifications" {
   # faite pour cela.
   dispatch_url              = var.notification_dispatch_url
   dispatch_token_secret_arn = var.notification_dispatch_token_secret_arn
+
+  # --- Canal SMS (#66) ---
+
+  # `manage_sms_account_preferences` reste au défaut — faux, comme en
+  # développement et pour la même raison : le réglage SMS d'SNS est unique par
+  # compte et par région, et la production le détient. La recette en hérite,
+  # plafond compris, ce qui est le comportement voulu — un essai d'envoi en
+  # recette consomme le même budget que la production, et doit donc être borné
+  # par le même plafond.
 }
 
 # --- Observabilité ------------------------------------------------------------

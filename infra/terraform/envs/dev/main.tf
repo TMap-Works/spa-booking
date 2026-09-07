@@ -52,8 +52,16 @@ locals {
   # `module.notifications[0]` ferait alors échouer l'évaluation au lieu de rendre
   # une liste vide. La compréhension à clé constante produit une map d'une entrée
   # ou d'aucune, jamais de doublon.
-  notification_queue_env            = { for url in module.notifications[*].dispatch_queue_url : "NOTIFICATION_QUEUE_URL" => url }
-  notification_producer_policy_arns = module.notifications[*].dispatch_producer_policy_arn
+  notification_queue_env = { for url in module.notifications[*].dispatch_queue_url : "NOTIFICATION_QUEUE_URL" => url }
+
+  # Les deux politiques que le rôle de tâche de l'API réclame de la chaîne de
+  # notifications : publier sur la file, et émettre un SMS. Concaténées ici plutôt
+  # qu'à l'appel — les deux listes sont vides ou pleines ensemble, et le `count`
+  # du module est leur seule condition d'existence.
+  notification_api_policy_arns = concat(
+    module.notifications[*].dispatch_producer_policy_arn,
+    module.notifications[*].sms_publisher_policy_arn,
+  )
 }
 
 data "aws_region" "current" {}
@@ -244,6 +252,18 @@ module "notifications" {
   # dit sans détour.
   dispatch_url              = var.notification_dispatch_url
   dispatch_token_secret_arn = var.notification_dispatch_token_secret_arn
+
+  # --- Canal SMS (#66) ---
+
+  # `manage_sms_account_preferences` reste au défaut — faux. Le réglage SMS d'SNS
+  # est unique **par compte et par région** : le développement ne peut pas le
+  # détenir sans écraser celui de la production au premier `apply`. Il en hérite,
+  # ce qui est exactement la protection recherchée — une boucle d'envoi en
+  # développement est plafonnée par la valeur de la production.
+  #
+  # Ce que cet environnement crée quand même : la politique de publication, que
+  # le rôle de tâche de l'API reçoit ci-dessous. Le droit d'envoyer est propre à
+  # l'environnement, le plafond ne l'est pas.
 }
 
 # --- Configuration d'exécution de l'API ---------------------------------------
@@ -430,10 +450,12 @@ module "ecs_service" {
         PORT      = "3001"
       })
 
-      # Le droit de publier sur cette file, et rien d'autre : la politique
-      # n'accorde pas `ReceiveMessage`, un producteur qui pourrait dépiler
-      # pouvant faire disparaître un rappel.
-      task_role_policy_arns = local.notification_producer_policy_arns
+      # Le droit de publier sur cette file, et celui d'émettre un SMS — rien
+      # d'autre. La première n'accorde pas `ReceiveMessage`, un producteur qui
+      # pourrait dépiler pouvant faire disparaître un rappel ; la seconde
+      # n'accorde aucun droit sur les réglages SMS du compte, une application qui
+      # pourrait relever son propre plafond de dépense le rendant décoratif (#66).
+      task_role_policy_arns = local.notification_api_policy_arns
 
       # Résolus par l'agent ECS au démarrage, à partir des clés JSON du secret
       # d'exécution. Aucune valeur ne transite par l'état ni par la console ECS.
