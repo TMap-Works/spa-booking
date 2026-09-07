@@ -399,3 +399,89 @@ describe('notifications — le rappel J-1 se revérifie au moment de l’envoi',
     expect(sender.calls).toHaveLength(1);
   });
 });
+
+/**
+ * La suppression relue **au moment de l'envoi** — #73, deuxième critère
+ * d'acceptation : « une adresse en hard bounce passe en supprimé et n'est plus
+ * jamais sollicitée ».
+ *
+ * Les producteurs consultent bien la suppression, mais au moment de **composer**.
+ * Entre cette composition et l'appel à SES il y a une file, une Lambda, un appel
+ * HTTP et jusqu'à cinq réceptions : c'est cet intervalle-là que cette suite
+ * couvre, et lui seul donne son sens au mot « jamais ».
+ */
+describe('notifications — une adresse supprimée n’est plus sollicitée', () => {
+  it('n’appelle pas le fournisseur pour un e-mail vers une adresse supprimée', async () => {
+    const { service, sender, repository } = build();
+    repository.emailSuppressed = true;
+
+    await expect(
+      service.dispatch(message('BOOKING_CONFIRMATION', { channel: 'EMAIL' })),
+    ).resolves.toBe('skipped');
+
+    expect(sender.calls).toEqual([]);
+  });
+
+  it('n’inscrit aucune ligne — ce n’est pas un échec d’envoi', async () => {
+    // La placer après la prise de droit aurait inscrit un `PENDING` qu'il aurait
+    // ensuite fallu défaire, et le seul statut disponible pour cela est
+    // `FAILED` : le comptoir lirait « échec » pour une décision qui n'en est
+    // pas un.
+    const { service, repository } = build();
+    repository.emailSuppressed = true;
+
+    await service.dispatch(message('REMINDER_24H', { channel: 'EMAIL' }));
+
+    expect(repository.rows).toEqual([]);
+  });
+
+  it('vaut pour les trois types de message, pas seulement le rappel', async () => {
+    const { service, sender, repository } = build();
+    repository.emailSuppressed = true;
+
+    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION'] as const) {
+      await expect(service.dispatch(message(type, { channel: 'EMAIL' }))).resolves.toBe('skipped');
+    }
+
+    expect(sender.calls).toEqual([]);
+  });
+
+  it('laisse partir le SMS vers la même personne', async () => {
+    // SES ne dit rien d'un numéro de téléphone, et SNS n'expose aucun équivalent
+    // au périmètre du MVP : couper le SMS priverait la cliente de son rappel
+    // sans qu'aucun fait ne le justifie.
+    const { service, sender, repository } = build();
+    repository.emailSuppressed = true;
+
+    await expect(service.dispatch(message('REMINDER_24H', { channel: 'SMS' }))).resolves.toBe(
+      'sent',
+    );
+
+    expect(sender.calls.map((call) => call.channel)).toEqual(['SMS']);
+  });
+
+  it('laisse partir l’e-mail vers une adresse vivante', async () => {
+    const { service, sender } = build();
+
+    await expect(
+      service.dispatch(message('BOOKING_CONFIRMATION', { channel: 'EMAIL' })),
+    ).resolves.toBe('sent');
+
+    expect(sender.calls).toHaveLength(1);
+  });
+
+  it('ne journalise aucune adresse en écartant l’envoi', async () => {
+    const { service, repository, logger } = build();
+    repository.emailSuppressed = true;
+
+    await service.dispatch(message('BOOKING_CONFIRMATION', { channel: 'EMAIL' }));
+
+    const entry = logger.entries.find((line) => line.message.includes('liste de suppression'));
+
+    expect(entry).toBeDefined();
+    // L'identifiant du compte suffit à retrouver la fiche, et il ne dit rien à
+    // qui lit le journal sans accès à la base (notifications §7).
+    expect(entry?.meta).toMatchObject({ recipientUserId: RECIPIENT_ID });
+    expect(JSON.stringify(entry)).not.toContain('@');
+  });
+});

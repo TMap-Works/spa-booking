@@ -323,7 +323,7 @@ export class NotificationsRepository {
   ): Promise<{ hasEmail: boolean; hasSms: boolean } | null> {
     const user = await this.prisma.user.findFirst({
       where: { id: userId },
-      select: { email: true, phone: true },
+      select: { email: true, phone: true, emailSuppressedAt: true },
     });
 
     if (user === null) {
@@ -331,9 +331,63 @@ export class NotificationsRepository {
     }
 
     return {
-      hasEmail: user.email.length > 0,
+      // Une adresse supprimée n'est **pas** un canal (#73). C'est le premier des
+      // trois endroits où la suppression agit, et le plus en amont : le
+      // producteur ne compose alors aucune enveloppe e-mail, si bien qu'aucun
+      // message n'est publié, aucune ligne n'est écrite, et rien n'apparaît au
+      // journal du back-office comme un envoi qui aurait échoué. Rien ne s'est
+      // passé, ce qui est exactement la vérité.
+      //
+      // `email` reste lu et compté : la colonne est `NOT NULL`, mais une chaîne
+      // vide n'est pas une adresse, et les deux refus ne se disent pas
+      // autrement l'un que l'autre du point de vue de l'appelant.
+      hasEmail: user.email.length > 0 && user.emailSuppressedAt === null,
       hasSms: isDialableNumber(user.phone),
     };
+  }
+
+  /**
+   * Cette adresse a-t-elle cessé d'être sollicitée — **au moment d'envoyer** ?
+   * (#73)
+   *
+   * ## Pourquoi une lecture de plus, alors que `findRecipientContact` le dit déjà
+   *
+   * Parce que ce n'est pas le même instant. `findRecipientContact` sert le
+   * **producteur** : il décide des canaux au moment de composer les enveloppes.
+   * Entre cette décision et l'appel à SES il y a une publication SQS, une
+   * invocation de Lambda, un appel HTTP, et jusqu'à cinq réceptions avant la file
+   * d'attente morte — le rappel J-1 chiffre le même écart à une heure. Un rebond
+   * peut tomber pendant cet intervalle, et c'est même le cas le plus probable :
+   * un rebond arrive toujours après un envoi, donc en pleine activité de la
+   * chaîne.
+   *
+   * Le critère du ticket dit « n'est plus **jamais** sollicitée ». Un contrôle
+   * qui ne serait fait qu'à la publication ne le tiendrait pas — c'est la même
+   * raison qui a fait déplacer la revérification du rappel J-1 du producteur vers
+   * l'expédition (#71) : une décision d'envoi se prend à l'envoi.
+   *
+   * ## Ce qu'elle coûte, et à qui
+   *
+   * Une lecture indexée sur la clé primaire, une colonne, et **seulement sur le
+   * canal e-mail** : le SMS n'a pas de suppression à consulter, SES ne dit rien
+   * d'un numéro. C'est le même ordre de grandeur que
+   * `findReminderEligibility`, et pour un enjeu du même ordre.
+   *
+   * ## Rend `false` sur un compte introuvable, délibérément
+   *
+   * Ni `true`, ni une erreur. Un compte disparu — anonymisé, ou d'un autre
+   * établissement, ce que le client scopé traite de la même façon — n'est pas une
+   * adresse supprimée : c'est un message dont l'objet a disparu, et c'est au
+   * rendu d'en décider (`NotificationContextGoneError`). Répondre `true` ici
+   * aurait fait acquitter en silence un message que le rendu aurait su nommer.
+   */
+  public async isEmailSuppressed(userId: string): Promise<boolean> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId },
+      select: { emailSuppressedAt: true },
+    });
+
+    return user !== null && user.emailSuppressedAt !== null;
   }
 
   /**
