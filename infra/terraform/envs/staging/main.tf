@@ -116,6 +116,20 @@ module "notifications" {
   # frontière de confiance, une seule rotation.
   reminder_sweep_url = var.notification_reminder_sweep_url
 
+  # --- Rebonds et plaintes (#73) ---
+  #
+  # La file, la Lambda de relais et leurs deux alarmes existent dès que le module
+  # est composé ; seule la destination manque. Nulle, la fonction est en défaut
+  # fermé — elle rend chaque événement à SQS plutôt que de l'acquitter, la DLQ se
+  # remplit et son alarme parle. Ce que la sortie
+  # `notification_delivery_events_configured` dit sans avoir à chercher.
+  #
+  # C'est ici que la chaîne se prouve avant la production : la recette est le
+  # seul endroit où l'on peut faire rebondir une adresse pour de vrai — la boîte
+  # à rebonds d'SES, `bounce@simulator.amazonses.com` — sans toucher une vraie
+  # cliente. Même jeton que les deux autres fonctions de la chaîne.
+  delivery_events_url = var.notification_delivery_events_url
+
   # --- Canal SMS (#66) ---
 
   # `manage_sms_account_preferences` reste au défaut — faux, comme en

@@ -150,6 +150,45 @@ variable "notification_reminder_sweep_url" {
   }
 }
 
+# --- Rebonds et plaintes (#73) ------------------------------------------------
+
+variable "notification_delivery_events_url" {
+  description = <<-EOT
+    URL de la route **interne** d'ingestion des rebonds et des plaintes servie
+    par l'API — `https://…/api/v1/notifications/delivery-events`. La Lambda de
+    relais l'appelle pour chaque événement de remise dépilé de la file, et
+    présente `notification_dispatch_token_secret_arn` dans l'en-tête
+    `x-internal-token`.
+
+    `null` — le défaut — laisse la fonction en **défaut fermé**, comme
+    `notification_dispatch_url` et pour la même raison : elle rend chaque
+    événement à SQS, la file vieillit, la DLQ se remplit et son alarme de
+    profondeur parle. Une chaîne non branchée doit se voir. Rien ne se perd —
+    la DLQ retient un événement quatorze jours —, mais rien ne se rattrape tout
+    seul : au bout de cinq réceptions infructueuses, soit une douzaine de
+    minutes, l'événement n'est plus dans la file mais dans sa DLQ, et un câblage
+    posé ensuite ne le rejouera qu'une fois la DLQ vidée à la main
+    (`aws sqs start-message-move-task`).
+
+    **En production, une valeur nulle est une anomalie**, et pas du même ordre
+    qu'un `notification_dispatch_url` nul. Sans route d'envoi, rien ne part et
+    cela se voit tout de suite ; sans route d'ingestion, tout part — y compris
+    vers les adresses que SES vient de signaler comme mortes. Aucune n'est
+    supprimée, on continue de leur écrire, et la réputation d'envoi du domaine,
+    partagée par tous les établissements, se dégrade sans que rien d'autre ne le
+    dise (CDC §6). À poser en même temps que `notification_dispatch_url`, avant
+    le go-live ; la sortie `notification_delivery_events_configured` est dans la
+    liste de vérification de la mise en production.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.notification_delivery_events_url == null || can(regex("^https://", var.notification_delivery_events_url))
+    error_message = "notification_delivery_events_url doit être `null` ou une URL en `https://` — un appel en clair porterait le jeton d'appel interne et l'adresse du destinataire sur le réseau."
+  }
+}
+
 # --- Canal SMS (#66) ----------------------------------------------------------
 
 variable "notification_sms_monthly_spend_limit_usd" {

@@ -78,19 +78,23 @@ démarre donc pas tant que le JSON suivant n'y a pas été déposé :
 - le jeton AUTH se lit dans `redis_auth_token_secret_arn` ;
 - `JWT_SECRET` et `JWT_REFRESH_SECRET` doivent **différer** — l'API refuse de
   démarrer sinon (`apps/api/src/config/env.schema.ts`) ;
-- `NOTIFICATIONS_INTERNAL_TOKEN` n'est exigé qu'à partir du moment où
-  `notification_reminder_sweep_url` est renseignée : la définition de tâche ne
-  résout cette clé que dans ce cas, et une clé absente du JSON empêcherait
-  sinon la tâche de démarrer pour une capacité inutilisée. **À déposer avant
-  l'`apply` qui pose l'URL**, jamais après. C'est le **même** jeton que celui
+- `NOTIFICATIONS_INTERNAL_TOKEN` n'est exigé qu'à partir du moment où l'une des
+  routes internes est branchée — `notification_dispatch_url`,
+  `notification_reminder_sweep_url` ou `notification_delivery_events_url` : la
+  définition de tâche ne résout cette clé que dans ce cas, et une clé absente du
+  JSON empêcherait sinon la tâche de démarrer pour une capacité inutilisée. **À
+  déposer avant l'`apply` qui pose la première des trois URL**, jamais après.
+  C'est le **même** jeton que celui
   déposé dans
-  `notification_dispatch_token_secret_arn` : les deux fonctions Lambda de la
+  `notification_dispatch_token_secret_arn` : les trois fonctions Lambda de la
   chaîne le présentent à l'API dans l'en-tête `x-internal-token`, et l'API le
   compare à cette valeur. Absent, la route de balayage du rappel J-1 répond 503
-  et **aucun rappel ne part** — c'est un défaut fermé, pas une panne silencieuse,
-  et l'alarme d'erreurs de la fonction de balayage le dit. L'API démarre quand
-  même : une variable de notifications ne conditionne pas les sept autres modules
-  (`apps/api/src/modules/notifications/notifications.config.ts`).
+  et **aucun rappel ne part** ; la route d'ingestion des rebonds répond 503 elle
+  aussi, chaque événement est traité en échec transitoire et **aucune adresse
+  morte n'est supprimée**. C'est un défaut fermé, pas une panne silencieuse : les
+  alarmes d'erreurs et de profondeur de DLQ des deux fonctions le disent. L'API
+  démarre quand même : une variable de notifications ne conditionne pas les sept
+  autres modules (`apps/api/src/modules/notifications/notifications.config.ts`).
 
 `APP_URL` et `API_URL` passent par le secret bien qu'elles ne soient pas
 sensibles : elles valent l'URL de l'ALB, que seul le module `ecs-service` connaît.
@@ -173,6 +177,34 @@ terraform output notification_alarm_names
 Le rejeu de la file d'attente morte, la lecture des journaux structurés et le
 contrat exact que la route doit servir sont dans
 [modules/notifications/README.md](../../modules/notifications/README.md).
+
+## Rebonds et plaintes
+
+Le chemin de retour de la même chaîne : SES publie ses événements de remise sur
+un topic SNS, une file SQS les découple, et une Lambda de relais les fait traiter
+par l'API — `notification_delivery_events_url`. C'est ce qui supprime une adresse
+morte au lieu de continuer à lui écrire.
+
+**Même défaut fermé que la route d'envoi, et la même façon de le voir.** Tant que
+l'URL est nulle, la fonction rend chaque événement à SQS, la DLQ se remplit et
+son alarme de profondeur parle. La conséquence, elle, n'est pas symétrique : une
+chaîne d'envoi non branchée n'envoie rien, ce qui se remarque tout de suite ; une
+chaîne de rebonds non branchée laisse tout partir, y compris vers les adresses
+que SES vient de signaler comme mortes — et la réputation d'envoi du domaine,
+partagée par tous les établissements, se dégrade sans bruit (CDC §6).
+
+```bash
+terraform output notification_delivery_events_configured   # false tant que l'URL manque
+terraform output notification_delivery_events_dlq_name     # ce qui se remplit en attendant
+terraform output notification_delivery_events_function_name
+```
+
+**`NOTIFICATIONS_INTERNAL_TOKEN` est exigé dès que l'une des routes internes est
+branchée** — celle-ci, l'envoi ou le balayage du rappel J-1 : la définition de
+tâche ne résout cette clé que dans ce cas. Le déposer **avant** l'`apply` qui pose l'URL,
+jamais après : sans lui la route répond 503, la Lambda traite chaque événement en
+échec transitoire, et la file entière finit en DLQ sans qu'aucune adresse ne soit
+supprimée.
 
 ## Supervision
 

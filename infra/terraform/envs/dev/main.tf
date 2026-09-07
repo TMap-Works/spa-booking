@@ -62,6 +62,17 @@ locals {
     module.notifications[*].dispatch_producer_policy_arn,
     module.notifications[*].sms_publisher_policy_arn,
   )
+
+  # Vrai dès qu'une des routes **internes** de la chaîne a une destination. Les
+  # trois fonctions Lambda présentent le même jeton dans `x-internal-token` : il
+  # suffit qu'une seule soit branchée pour que la clé
+  # `NOTIFICATIONS_INTERNAL_TOKEN` doive être résolue dans la définition de
+  # tâche — voir le commentaire de `secret_arns`, plus bas.
+  notification_internal_route_wired = anytrue([
+    var.notification_dispatch_url != null,
+    var.notification_reminder_sweep_url != null,
+    var.notification_delivery_events_url != null,
+  ])
 }
 
 data "aws_region" "current" {}
@@ -308,6 +319,19 @@ module "notifications" {
   # frontière de confiance, une seule rotation.
   reminder_sweep_url = var.notification_reminder_sweep_url
 
+  # --- Rebonds et plaintes (#73) ---
+  #
+  # La file, la Lambda de relais et leurs deux alarmes existent dès que le module
+  # est composé ; seule la destination manque. Nulle, la fonction est en défaut
+  # fermé — elle rend chaque événement à SQS plutôt que de l'acquitter, la DLQ se
+  # remplit et son alarme parle. Ce que la sortie
+  # `notification_delivery_events_configured` dit sans avoir à chercher.
+  #
+  # Même contrainte de TLS que `dispatch_url`, et même jeton : la fonction
+  # présente `notification_dispatch_token_secret_arn` dans `x-internal-token`,
+  # comme les deux autres de la chaîne.
+  delivery_events_url = var.notification_delivery_events_url
+
   # --- Canal SMS (#66) ---
 
   # `manage_sms_account_preferences` reste au défaut — faux. Le réglage SMS d'SNS
@@ -523,20 +547,26 @@ module "ecs_service" {
           JWT_SECRET         = "${aws_secretsmanager_secret.api_runtime.arn}:JWT_SECRET::"
           REDIS_URL          = "${aws_secretsmanager_secret.api_runtime.arn}:REDIS_URL::"
         },
-        # Le jeton que les deux fonctions Lambda de la chaîne présentent dans
-        # `x-internal-token` (#71). Sans cette clé résolue dans la tâche, la garde
-        # d'appel interne ne connaît aucun jeton attendu et refuse chaque balayage
-        # en 503 — aucun rappel J-1 ne part.
+        # Le jeton que les trois fonctions Lambda de la chaîne présentent dans
+        # `x-internal-token` (#71, #73). Sans cette clé résolue dans la tâche, la
+        # garde d'appel interne ne connaît aucun jeton attendu et refuse chaque
+        # appel en 503 — aucun rappel J-1 ne part, et aucun rebond n'est traité.
         #
-        # Exigée **seulement** quand la chaîne du rappel est branchée, et c'est ce
-        # que la condition protège : une clé absente du JSON du secret empêche la
-        # tâche ECS de démarrer, et l'API entière tomberait pour une capacité que
-        # cet environnement n'utilise pas encore. La poser en même temps que
-        # `notification_reminder_sweep_url` couple l'exigence au geste qui la crée
-        # — l'opérateur qui renseigne l'URL est celui qui dépose le jeton.
-        var.notification_reminder_sweep_url == null ? {} : {
+        # Exigée **seulement** quand l'une des routes internes est branchée, et
+        # c'est ce que la condition protège : une clé absente du JSON du secret
+        # empêche la tâche ECS de démarrer, et l'API entière tomberait pour une
+        # capacité que cet environnement n'utilise pas encore. La poser en même
+        # temps que la première des trois URL couple l'exigence au geste qui la
+        # crée — l'opérateur qui renseigne l'URL est celui qui dépose le jeton.
+        #
+        # Les trois URL sont dans la condition, pas seulement celle du balayage :
+        # chaque fonction de la chaîne présente ce jeton, et en brancher une sans
+        # lui ferait répondre 503 à chaque appel — aucun message envoyé pour
+        # l'une, et pour l'autre chaque événement de remise traité en échec
+        # transitoire, la file entière en DLQ, aucune adresse morte supprimée.
+        local.notification_internal_route_wired ? {
           NOTIFICATIONS_INTERNAL_TOKEN = "${aws_secretsmanager_secret.api_runtime.arn}:NOTIFICATIONS_INTERNAL_TOKEN::"
-        },
+        } : {},
       )
     }
   }

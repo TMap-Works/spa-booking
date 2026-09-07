@@ -99,6 +99,11 @@ module "notifications" {
   # rotation.
   reminder_sweep_url = "https://api.exemple.fr/api/v1/notifications/reminders/sweep"
 
+  # Rebonds et plaintes (#73). Nulle, la Lambda de relais est en défaut fermé et
+  # aucune adresse morte n'est supprimée — voir « Rebonds et plaintes » plus bas.
+  # Même jeton que les deux autres fonctions de la chaîne.
+  delivery_events_url = "https://api.exemple.fr/api/v1/notifications/delivery-events"
+
   # Canal SMS. `manage_sms_account_preferences` ne doit être vrai que dans **un**
   # environnement — voir « Le réglage SMS est celui du compte » plus bas. Les
   # autres héritent du réglage sans le poser.
@@ -364,6 +369,37 @@ plus rejoué du tout, et l'adresse reste sollicitée). Aucune sur `Suppressions`
 un seuil y serait arbitraire, et c'est la **forme** de la courbe qui parle — une
 montée lente est une base client qui vieillit, un pic est un incident d'envoi.
 Elle est au tableau de bord pour cette raison.
+
+### Le câblage par environnement (#524)
+
+Les trois environnements portent la variable et la passent au module, comme ils
+le font pour `dispatch_url` :
+
+| Environnement | Variable d'entrée | Sortie |
+|---|---|---|
+| `envs/dev` | `notification_delivery_events_url` | `notification_delivery_events_configured` |
+| `envs/staging` | `notification_delivery_events_url` | `notification_delivery_events_configured` |
+| `envs/prod` | `notification_delivery_events_url` | `notification_delivery_events_configured` |
+
+Il n'y a donc **plus rien à écrire en Terraform** pour brancher cette chaîne : il
+reste une valeur à poser, le jour où un certificat vérifiable sert l'API. Les
+deux gestes vont ensemble, et dans cet ordre :
+
+1. déposer `NOTIFICATIONS_INTERNAL_TOKEN` dans le secret d'exécution de l'API,
+   avec la **même valeur** que le secret `dispatch_token_secret_arn` — sinon la
+   route d'ingestion répond 503, la Lambda traite chaque événement en échec
+   transitoire, et la file entière part en DLQ ;
+2. renseigner `notification_delivery_events_url`, puis `terraform apply`.
+
+```bash
+terraform output notification_delivery_events_configured   # false tant que l'URL manque
+terraform output notification_delivery_events_dlq_name     # ce qui se remplit en attendant
+```
+
+En développement, la définition de tâche ECS ne résout `NOTIFICATIONS_INTERNAL_TOKEN`
+que si l'une des routes internes est branchée — l'envoi, le balayage du rappel
+J-1 ou cette ingestion. C'est ce qui couple l'exigence au geste qui la crée, sans
+empêcher la tâche de démarrer pour une capacité inutilisée.
 
 ## La chaîne d'envoi — file, Lambda, DLQ, supervision
 
