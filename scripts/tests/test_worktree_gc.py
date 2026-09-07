@@ -683,5 +683,79 @@ class TestHuman(unittest.TestCase):
         self.assertEqual(gc.measured([{"bytes": 10}, {"bytes": None}]), "10 o")
 
 
+class TestPurgeDesCaches(unittest.TestCase):
+    """Rendre les gigaoctets d'un worktree qu'on garde (#509).
+
+    Le nettoyage raisonnait worktree entier : un worktree dont la PR est mergée
+    mais qui porte trois fichiers non commités était conservé **avec ses 6 Go**.
+    Sur le run S4, 23 répertoires `.terraform` occupaient 15,75 Go et le disque
+    est tombé à 0,33 Go sur 477 — une étape y a brûlé 120 min et 183 $ en ENOSPC.
+
+    Ce qui est vérifié ici est la frontière : on ne purge que des répertoires
+    régénérables, et seulement quand le verdict prouve que le code est dans la
+    base. Le travail non commité qui retient le worktree n'est jamais touché.
+    """
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="wgc-purge-"))
+
+    def tearDown(self):
+        shutil.rmtree(self.root, ignore_errors=True)
+
+    def worktree(self):
+        tree = self.root / "worktree"
+        (tree / "node_modules" / "react").mkdir(parents=True)
+        (tree / "node_modules" / "react" / "index.js").write_text(
+            "x" * 100, encoding="utf-8")
+        (tree / "infra" / "terraform" / "modules" / "waf" / ".terraform").mkdir(
+            parents=True)
+        (tree / "infra" / "terraform" / "modules" / "waf" / ".terraform"
+         / "provider.bin").write_text("y" * 500, encoding="utf-8")
+        (tree / "travail.tf").write_text("non commité", encoding="utf-8")
+        return tree
+
+    def test_trouve_les_caches_meme_imbriques(self):
+        tree = self.worktree()
+        found = {Path(p).name for p in gc.find_caches(tree)}
+        self.assertEqual(found, {"node_modules", ".terraform"})
+
+    def test_ne_descend_pas_dans_un_cache_trouve(self):
+        """Un `node_modules` en contient des centaines : les énumérer coûterait
+        plus cher que la purge elle-même."""
+        tree = self.worktree()
+        (tree / "node_modules" / "react" / "node_modules").mkdir()
+        found = gc.find_caches(tree)
+        self.assertEqual(len(found), 2)
+
+    def test_la_purge_rend_les_octets_et_epargne_le_travail(self):
+        tree = self.worktree()
+        freed, errors = gc.purge_caches(tree, time.monotonic() + 30)
+        self.assertEqual(errors, [])
+        self.assertGreaterEqual(freed, 600)
+        self.assertFalse((tree / "node_modules").exists())
+        self.assertFalse((tree / "infra" / "terraform" / "modules" / "waf"
+                          / ".terraform").exists())
+        # Ce qui retenait le worktree est toujours là — c'est toute la raison
+        # d'être de la purge : pouvoir nettoyer sans avoir à supprimer.
+        self.assertTrue((tree / "travail.tf").exists())
+        self.assertEqual((tree / "travail.tf").read_text(encoding="utf-8"),
+                         "non commité")
+        self.assertTrue(tree.exists())
+
+    def test_une_preuve_d_integration_est_exigee(self):
+        """Un worktree encore au travail garde ses caches : les lui retirer le
+        forcerait à réinstaller au milieu de son ticket."""
+        self.assertTrue(gc.integrated("PR #500 mergée"))
+        self.assertTrue(gc.integrated("branche déjà intégrée dans origin/develop"))
+        self.assertFalse(gc.integrated("ticket encore en cours"))
+        self.assertFalse(gc.integrated("issue #42 fermée"))
+        self.assertFalse(gc.integrated("worktree verrouillé — un agent le tient"))
+
+    def test_un_cache_absent_ne_rend_rien_et_n_echoue_pas(self):
+        tree = self.root / "vide"
+        tree.mkdir()
+        self.assertEqual(gc.purge_caches(tree, time.monotonic() + 30), (0, []))
+
+
 if __name__ == "__main__":
     unittest.main()

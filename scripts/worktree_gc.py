@@ -105,6 +105,22 @@ RESIDUE = (
     "*.tsbuildinfo",
 )
 
+# Les répertoires qu'un outil fabrique et qu'aucun humain n'écrit : gitignorés,
+# régénérables par une commande, et de très loin le poids d'un worktree. Ils sont
+# purgés d'un worktree **conservé** dès que son contenu est prouvé intégré — ce
+# que le nettoyage entier ne savait pas faire, et qui laissait un worktree sale
+# retenir ses gigaoctets indéfiniment.
+#
+# Mesuré sur le run S4 : 23 répertoires `.terraform` pour 15,75 Go, à raison
+# d'une copie complète du provider AWS (~670 Mo) par racine Terraform *et* par
+# worktree — le worktree de #78, PR mergée depuis des heures, en portait neuf à
+# lui seul, soit 6,09 Go. Le disque est tombé à 0,33 Go sur 477, et une étape a
+# brûlé ses 120 minutes et 183 $ en ENOSPC sans que rien ne le voie (#509).
+#
+# `node_modules` y est pour la même raison (#173, #179) : sous Windows, git ne
+# sait pas le lier d'un worktree à l'autre et chaque isolation en recopie ~530 Mo.
+CACHES = ("node_modules", ".terraform")
+
 # feature/42-slug (nom conforme) ou worktree-feature+42-slug (nom brut
 # d'EnterWorktree, quand le renommage de la phase 1 de /ticket n'a pas eu lieu).
 ISSUE_IN_BRANCH = re.compile(r"(?:^|[/+-])(\d+)-")
@@ -459,15 +475,68 @@ def verdict(root, entry, prs, issues):
     return "keep", "ticket encore en cours", number
 
 
+def integrated(reason):
+    """Le verdict prouve-t-il que le contenu du worktree est dans la base ?
+
+    Une PR mergée ou une branche déjà intégrée le garantissent : un merge en
+    squash laisse des commits locaux sans jumeau dans develop, les compter
+    ailleurs bloquerait tous les nettoyages légitimes.
+    """
+    return reason.startswith("PR ") or reason.startswith("branche déjà")
+
+
+def find_caches(path):
+    """Les répertoires de `CACHES` que porte ce worktree, sans y descendre.
+
+    Ne descend pas dans un cache trouvé — un `node_modules` en contient des
+    centaines d'autres, et les énumérer coûterait plus que la purge. Ne suit
+    ni lien ni jonction : le `node_modules` d'un worktree peut être une ferme
+    de jonctions vers celui du dépôt principal, et le traverser ferait sortir
+    la recherche du worktree.
+    """
+    found = []
+    for current, dirs, _ in os.walk(native(path)):
+        keep = []
+        for name in dirs:
+            child = os.path.join(current, name)
+            if name in CACHES:
+                found.append(child)
+            elif not is_reparse(child):
+                keep.append(name)
+        dirs[:] = keep
+    return found
+
+
+def purge_caches(path, deadline):
+    """Supprime les caches régénérables d'un worktree conservé.
+
+    Rend (octets rendus, erreurs). Ne touche qu'à des répertoires gitignorés et
+    reconstructibles — `npm install`, `terraform init` —, jamais à un fichier
+    suivi ni à du travail non commité : c'est ce qui permet de le faire sur un
+    worktree que `safety_hold` retient précisément parce qu'il porte du travail.
+
+    Le volume est mesuré **avant** la suppression, et une mesure hors budget
+    (`None`) ne l'empêche pas : rendre le disque prime sur savoir combien.
+    """
+    freed, errors = 0, []
+    for cache in find_caches(path):
+        size = dir_size(cache, deadline)
+        error = remove_tree(cache)
+        if error:
+            errors.append("{} : {}".format(cache, error))
+        else:
+            freed += size or 0
+    return freed, errors
+
+
 def safety_hold(root, entry, reason, force):
     """Raison de conserver malgré un verdict de suppression, sinon None."""
     if force:
         return None
 
-    # Une PR mergée ou une branche déjà intégrée garantissent que le contenu est
-    # dans develop : un merge en squash laisse des commits locaux sans jumeau
-    # dans develop, les compter ici bloquerait tous les nettoyages légitimes.
-    integrated = reason.startswith("PR ") or reason.startswith("branche déjà")
+    # Le verdict prouve-t-il que le contenu est dans la base ? Nommé à part
+    # (`integrated`) parce que la purge des caches pose la même question.
+    proven = integrated(reason)
 
     changes = dirt(entry["path"])
     # `None` n'est pas une liste vide : c'est « l'inspection n'a pas abouti ».
@@ -484,11 +553,11 @@ def safety_hold(root, entry, reason, force):
         # vidage de crash ou un lockfile réécrit par `npm install` retient le
         # worktree à vie, ce qui a laissé 484 Mo derrière deux PR mergées (#173).
         blocking = [name for code, name in changes
-                    if not integrated or not residue(name)]
+                    if not proven or not residue(name)]
         if blocking:
             return "modifications non commitées ({})".format(preview(blocking))
 
-    if integrated:
+    if proven:
         return None
     ahead = unpushed(root, entry["path"])
     # `None` n'est pas zéro : c'est « je n'ai pas pu compter ». Les confondre
@@ -638,6 +707,10 @@ def parse_args():
                              + WORKTREE_DIR)
     parser.add_argument("--size", action="store_true",
                         help="chiffre aussi le volume des worktrees conservés")
+    parser.add_argument("--no-purge", action="store_true",
+                        help="ne purge pas les caches régénérables "
+                             "(node_modules, .terraform) des worktrees "
+                             "conservés dont le contenu est déjà intégré")
     parser.add_argument("--json", action="store_true",
                         help="sortie machine, pour les hooks")
     parser.add_argument("--quiet", action="store_true",
@@ -705,7 +778,24 @@ def main():
 
         hold = safety_hold(root, entry, reason, args.force)
         if hold:
-            kept.append(dict(record, reason="{}, mais {}".format(reason, hold)))
+            held = dict(record, reason="{}, mais {}".format(reason, hold))
+            # Le worktree reste — il porte du travail —, mais ses caches n'ont
+            # aucune raison de rester avec lui : le verdict prouve que son code
+            # est dans la base, et `node_modules` comme `.terraform` se
+            # reconstruisent d'une commande. Sans ce geste, un seul worktree
+            # retenu par trois fichiers non commités garde 6 Go à vie, et c'est
+            # le disque entier qui finit par arrêter le run (#509).
+            if integrated(reason) and not args.no_purge:
+                if args.dry_run:
+                    caches = find_caches(entry["path"])
+                    if caches:
+                        held["purgeable"] = len(caches)
+                else:
+                    freed, failures = purge_caches(entry["path"], deadline)
+                    errors.extend(failures)
+                    if freed:
+                        held["purged"] = freed
+            kept.append(held)
             continue
 
         size = dir_size(entry["path"], deadline)
@@ -857,9 +947,16 @@ def report(args, removed, kept, errors):
     def line(item):
         kind = item.get("kind", "worktree")
         size = human(item.get("bytes"))
-        return "  - [{}] {} — {}{}".format(
+        # Un worktree conservé dont on a rendu les caches : le dire, sinon la
+        # seule trace d'un gigaoctet récupéré serait l'espace disque libre.
+        purge = ""
+        if item.get("purged"):
+            purge = " — caches purgés, {} rendus".format(human(item["purged"]))
+        elif item.get("purgeable"):
+            purge = " — {} cache(s) à purger".format(item["purgeable"])
+        return "  - [{}] {} — {}{}{}".format(
             kind, item["branch"] or item["path"], item["reason"],
-            " ({})".format(size) if size else "")
+            " ({})".format(size) if size else "", purge)
 
     def volume(items, wording):
         size = measured(items)
