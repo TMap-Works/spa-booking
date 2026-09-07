@@ -146,3 +146,77 @@
 .spa-admin-appointment--empty {
   align-items: stretch;
 }
+
+/* --- Journal d'envois ------------------------------------------------------ */
+
+/*
+ * Le statut des messages émis pour ce rendez-vous (#70). Un bloc en lecture
+ * seule, posé après le formulaire : il rend compte de ce qui s'est passé, il ne
+ * se saisit pas.
+ *
+ * La teinte de fond est celle du récapitulatif — même famille visuelle, « ce qui
+ * ne se saisit pas » — et les badges reprennent les modificateurs existants de
+ * `shell.css` plutôt que d'en introduire de nouveaux, chaque teinte devant
+ * repasser le test de contraste.
+ */
+.spa-admin-notifications {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-3);
+  background-color: var(--spa-color-surface-sunken);
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-admin-notifications__title {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-admin-notifications__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/*
+ * Le libellé prend la place restante, le badge et l'instant se rangent à droite.
+ * `flex-wrap` plutôt qu'une grille : le motif d'échec est une phrase entière, et
+ * il doit pouvoir passer à la ligne sans écraser les deux autres colonnes.
+ */
+.spa-admin-notifications__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--spa-space-2);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-admin-notifications__label {
+  flex: 1 1 auto;
+}
+
+.spa-admin-notifications__moment {
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-xs);
+}
+
+/*
+ * Le motif d'échec occupe sa propre ligne — `flex-basis: 100%` — parce qu'il est
+ * la seule information de ce bloc qu'on lit vraiment quand elle est là.
+ */
+.spa-admin-notifications__reason {
+  flex: 1 0 100%;
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-xs);
+}
+
+.spa-admin-notifications__empty {
+  margin: 0;
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-xs);
+}

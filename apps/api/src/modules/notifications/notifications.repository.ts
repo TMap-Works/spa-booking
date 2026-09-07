@@ -4,9 +4,13 @@ import { Prisma } from '@prisma/client';
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
 import {
   LIVE_NOTIFICATION_STATUSES,
+  isDialableNumber,
+  type AppointmentMessageContext,
   type NotificationClaim,
+  type NotificationListQuery,
   type NotificationMessage,
   type NotificationRecord,
+  type NotificationTrace,
 } from './notifications.types';
 
 /**
@@ -75,6 +79,9 @@ const UNIQUE_VIOLATION = 'P2002';
 /** Largeur de `notifications.failure_reason`, telle que le schéma la déclare. */
 const FAILURE_REASON_MAX_LENGTH = 500;
 
+/** Une minute en millisecondes — les tampons d'une prestation sont en minutes. */
+const MINUTE_MS = 60_000;
+
 /**
  * `true` si l'écriture a été refusée par un des deux uniques de la table.
  *
@@ -133,6 +140,62 @@ interface NotificationRow {
   attemptCount: number;
 }
 
+/**
+ * La projection du journal d'envois — ce que le back-office lit.
+ *
+ * Plus large que `NOTIFICATION_SELECT` de trois colonnes (`scheduled_for`,
+ * `failure_reason`, `created_at`) et plus étroite de deux (`dedupe_key`,
+ * `provider_message_id`) : ce sont deux besoins différents, et une projection
+ * unique aurait servi au domaine des colonnes dont il n'a que faire, ou à
+ * l'écran une mécanique d'idempotence qu'il n'a pas à connaître.
+ *
+ * `tenant_id` n'y est pas davantage : ce qui ne sort pas ne peut pas fuiter
+ * (tenant-isolation §4).
+ */
+const NOTIFICATION_TRACE_SELECT = {
+  id: true,
+  appointmentId: true,
+  recipientUserId: true,
+  type: true,
+  channel: true,
+  status: true,
+  scheduledFor: true,
+  sentAt: true,
+  attemptCount: true,
+  failureReason: true,
+  createdAt: true,
+} as const;
+
+interface NotificationTraceRow {
+  id: string;
+  appointmentId: string | null;
+  recipientUserId: string | null;
+  type: string;
+  channel: string;
+  status: string;
+  scheduledFor: Date | null;
+  sentAt: Date | null;
+  attemptCount: number;
+  failureReason: string | null;
+  createdAt: Date;
+}
+
+function toNotificationTrace(row: NotificationTraceRow): NotificationTrace {
+  return {
+    id: row.id,
+    appointmentId: row.appointmentId,
+    recipientUserId: row.recipientUserId,
+    type: row.type as NotificationTrace['type'],
+    channel: row.channel as NotificationTrace['channel'],
+    status: row.status as NotificationTrace['status'],
+    scheduledFor: row.scheduledFor,
+    sentAt: row.sentAt,
+    attemptCount: row.attemptCount,
+    failureReason: row.failureReason,
+    createdAt: row.createdAt,
+  };
+}
+
 function toNotificationRecord(row: NotificationRow): NotificationRecord {
   return {
     id: row.id,
@@ -147,6 +210,28 @@ function toNotificationRecord(row: NotificationRow): NotificationRecord {
     providerMessageId: row.providerMessageId,
     attemptCount: row.attemptCount,
   };
+}
+
+/**
+ * L'adresse postale du salon, sur une ligne — ou `null` si elle est incomplète.
+ *
+ * Les quatre champs sont facultatifs au schéma. Une adresse partielle est
+ * rendue telle quelle : « 12 rue des Lilas, Paris » vaut mieux qu'aucune adresse
+ * du tout dans une confirmation, et le code postal manquant se voit.
+ */
+function postalAddress(tenant: {
+  addressLine1: string | null;
+  addressLine2: string | null;
+  postalCode: string | null;
+  city: string | null;
+}): string | null {
+  const parts = [
+    tenant.addressLine1,
+    tenant.addressLine2,
+    [tenant.postalCode, tenant.city].filter((part) => part !== null).join(' '),
+  ].filter((part): part is string => part !== null && part.length > 0);
+
+  return parts.length === 0 ? null : parts.join(', ');
 }
 
 @Injectable()
@@ -190,6 +275,160 @@ export class NotificationsRepository {
     // Hors du `try` : ce qui suit ne doit pas voir ses propres erreurs avalées
     // par le filtre d'unicité posé pour l'insertion.
     return this.resolveRefusal(message);
+  }
+
+  /**
+   * Le journal d'envois de l'établissement, filtré — la lecture du back-office.
+   *
+   * Trié du plus récent au plus ancien : la question qu'un comptoir se pose est
+   * « qu'est-ce qui vient de partir ? », jamais « qu'est-ce qui est parti en
+   * premier ». `id` départage à égalité de `created_at`, faute de quoi deux
+   * lignes créées dans la même milliseconde — les deux canaux d'une même
+   * confirmation, précisément — s'ordonneraient au gré du planificateur.
+   *
+   * Le plafond vient du service et n'a pas de défaut ici : une lecture non
+   * bornée est un déni de service à une requête sur un établissement actif.
+   */
+  public async list(query: NotificationListQuery): Promise<readonly NotificationTrace[]> {
+    const rows = await this.prisma.notification.findMany({
+      where: {
+        ...(query.appointmentId === undefined ? {} : { appointmentId: query.appointmentId }),
+        ...(query.type === undefined ? {} : { type: query.type }),
+        ...(query.channel === undefined ? {} : { channel: query.channel }),
+        ...(query.statuses === undefined ? {} : { status: { in: [...query.statuses] } }),
+      },
+      select: NOTIFICATION_TRACE_SELECT,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: query.limit,
+    });
+
+    return rows.map(toNotificationTrace);
+  }
+
+  /**
+   * Sur quels canaux ce compte est joignable — sans rendre la moindre
+   * coordonnée.
+   *
+   * Deux booléens, pas une adresse ni un numéro. L'appelant décide des canaux, il
+   * n'a besoin de rien d'autre, et ce qui ne sort pas ne peut ni fuiter dans un
+   * journal ni finir dans un message de file (notifications §7).
+   *
+   * Rend `null` si le compte n'existe pas ou appartient à un autre
+   * établissement — le client scopé ne fait pas la différence, et c'est bien
+   * ainsi.
+   */
+  public async findRecipientContact(
+    userId: string,
+  ): Promise<{ hasEmail: boolean; hasSms: boolean } | null> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId },
+      select: { email: true, phone: true },
+    });
+
+    if (user === null) {
+      return null;
+    }
+
+    return {
+      hasEmail: user.email.length > 0,
+      hasSms: isDialableNumber(user.phone),
+    };
+  }
+
+  /**
+   * Tout ce qu'un message rattaché à un rendez-vous a besoin de dire.
+   *
+   * ## Pourquoi `notifications` lit `appointments` et `users` ici
+   *
+   * api-module §3 interdit d'importer le **repository** d'un autre module, pas
+   * de lire une table. La distinction tient : ce qui est proscrit, c'est de
+   * dépendre des décisions d'un autre module — ses projections, ses règles de
+   * cycle de vie —, et rien de tel n'est en jeu dans une lecture de rendu.
+   * `crm.module.ts` le prévoit d'ailleurs explicitement : « `notifications`
+   * joindra un destinataire par la ligne `users` que `identity` connaît déjà ».
+   *
+   * Passer par un appel de service aurait fait dépendre l'expédition d'un
+   * message de la disponibilité d'`AppointmentsModule` **et** de `CrmModule`
+   * **et** de `CatalogModule`, pour une lecture que le client scopé fait en une
+   * requête.
+   *
+   * ## Rendre `null` plutôt que lever
+   *
+   * Un rendez-vous introuvable n'est pas une anomalie de ce dépôt : c'est un
+   * message dont l'objet a disparu — anonymisation RGPD, suppression — et c'est
+   * au renderer d'en décider. Le client scopé rend `null` de la même façon pour
+   * un rendez-vous d'un **autre** établissement, ce qui est la bonne conduite :
+   * il n'y a rien à annoncer, et rien à divulguer.
+   *
+   * ## L'intervalle rendu est le **facturé**, jamais l'occupé
+   *
+   * `appointments.starts_at` et `ends_at` portent l'intervalle **occupé** —
+   * tampons compris — parce que c'est lui que la contrainte d'exclusion
+   * compare. Le soin, lui, commence `buffer_before_minutes` plus tard et dure
+   * `duration_minutes`. Annoncer la ligne telle quelle avancerait le
+   * rendez-vous de la cliente du temps de préparation de la cabine, et lui
+   * donnerait une fin qui inclut le ménage : c'est exactement ce que
+   * `appointment-created.event.ts` interdit d'écrire dans une confirmation.
+   * `AppointmentsService.billedView` fait la même dérivation pour l'API.
+   */
+  public async loadAppointmentContext(
+    appointmentId: string,
+  ): Promise<AppointmentMessageContext | null> {
+    const [appointment, tenant] = await Promise.all([
+      this.prisma.appointment.findFirst({
+        where: { id: appointmentId },
+        select: {
+          startsAt: true,
+          priceAmountMinor: true,
+          priceCurrency: true,
+          client: { select: { firstName: true, lastName: true } },
+          service: {
+            select: { name: true, durationMinutes: true, bufferBeforeMinutes: true },
+          },
+          staff: { select: { displayName: true } },
+        },
+      }),
+      // Le seul enregistrement que l'extension de scoping puisse rendre : elle
+      // borne `tenants` sur l'identifiant du contexte.
+      this.prisma.tenant.findFirst({
+        select: {
+          name: true,
+          slug: true,
+          timezone: true,
+          addressLine1: true,
+          addressLine2: true,
+          postalCode: true,
+          city: true,
+          contactPhone: true,
+        },
+      }),
+    ]);
+
+    if (appointment === null || tenant === null) {
+      return null;
+    }
+
+    const billedStart = new Date(
+      appointment.startsAt.getTime() + appointment.service.bufferBeforeMinutes * MINUTE_MS,
+    );
+
+    return {
+      tenantName: tenant.name,
+      tenantSlug: tenant.slug,
+      tenantTimeZone: tenant.timezone,
+      tenantAddress: postalAddress(tenant),
+      tenantPhone: tenant.contactPhone,
+      clientFirstName: appointment.client.firstName,
+      clientLastName: appointment.client.lastName,
+      serviceName: appointment.service.name,
+      staffName: appointment.staff.displayName,
+      startsAt: billedStart,
+      endsAt: new Date(
+        billedStart.getTime() + appointment.service.durationMinutes * MINUTE_MS,
+      ),
+      priceAmountMinor: appointment.priceAmountMinor,
+      priceCurrency: appointment.priceCurrency,
+    };
   }
 
   /**

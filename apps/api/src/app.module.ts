@@ -20,6 +20,7 @@ import { AvailabilityModule } from './modules/availability/availability.module';
 import { CatalogModule } from './modules/catalog/catalog.module';
 import { CrmModule } from './modules/crm/crm.module';
 import { IdentityModule } from './modules/identity/identity.module';
+import { NotificationsModule } from './modules/notifications/notifications.module';
 import { PaymentsModule } from './modules/payments/payments.module';
 import { ReportingModule } from './modules/reporting/reporting.module';
 
@@ -83,6 +84,14 @@ import { ReportingModule } from './modules/reporting/reporting.module';
     // ici est donc indifférente à l'ordre des trois précédents — seul
     // `IdentityModule` doit le précéder.
     ReportingModule,
+    // Après `AppointmentsModule`, dont il importe le bus d'événements pour s'y
+    // abonner (#70) — le sens de la dépendance est celui-là et pas l'inverse :
+    // `appointments` annonce un fait, `notifications` décide qu'il mérite un
+    // message. Après `IdentityModule` aussi, dont il monte les gardes sur son
+    // unique route. #68 l'avait laissé hors du graphe faute de route à servir ;
+    // le journal d'envois du back-office en apporte une, et l'abonnement au bus
+    // a de toute façon besoin que le module soit instancié.
+    NotificationsModule,
   ],
   providers: [
     {

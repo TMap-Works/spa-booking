@@ -221,6 +221,42 @@
                     </p>
                   </div>
                 </form>
+
+                <!--
+                  JOURNAL D'ENVOIS (#70) — hors du <form>, et délibérément : un
+                  bloc en lecture seule. Il répond à « ma cliente dit n'avoir rien
+                  reçu », la question qu'on pose au comptoir pendant qu'elle
+                  attend. Ni destinataire ni contenu : l'API n'en rend pas, la
+                  table n'en porte pas. Aucun bouton « renvoyer » non plus — la
+                  reprise appartient à SQS, pas au comptoir.
+
+                  L'heure est celle du salon, comme partout ailleurs ici : un
+                  statut daté en UTC décalerait le journal de deux heures l'été à
+                  Paris.
+                -->
+                <section class="spa-admin-notifications">
+                  <h3 class="spa-admin-notifications__title">Messages envoyés</h3>
+                  <ul class="spa-admin-notifications__list">
+                    <li class="spa-admin-notifications__item">
+                      <span class="spa-admin-notifications__label">Confirmation · E-mail</span>
+                      <span class="spa-admin-badge spa-admin-badge--confirmed">Envoyé</span>
+                      <span class="spa-admin-notifications__moment">Envoyé le 24 août 2026 à 09:12</span>
+                    </li>
+                    <li class="spa-admin-notifications__item">
+                      <span class="spa-admin-notifications__label">Confirmation · SMS</span>
+                      <span class="spa-admin-badge spa-admin-badge--cancelled">Échec</span>
+                      <span class="spa-admin-notifications__moment">Inscrit le 24 août 2026 à 09:12</span>
+                      <span class="spa-admin-notifications__reason">
+                        Aucun expéditeur n’est configuré pour ce canal de notification.
+                      </span>
+                    </li>
+                    <li class="spa-admin-notifications__item">
+                      <span class="spa-admin-notifications__label">Rappel J-1 · E-mail</span>
+                      <span class="spa-admin-badge spa-admin-badge--pending">En attente</span>
+                      <span class="spa-admin-notifications__moment">Inscrit le 24 août 2026 à 09:12</span>
+                    </li>
+                  </ul>
+                </section>
               </div>
 
               <div class="spa-admin-panel__footer">
@@ -267,6 +303,20 @@
                     </div>
                   </div>
                 </div>
+
+                <!--
+                  Le journal d'envois a ses propres états, et il ne les confond
+                  pas : « la lecture est en vol », « aucun message » et « le
+                  journal n'a pas pu être lu » se ressemblent à l'écran et ne
+                  veulent pas du tout dire la même chose pour la personne qui a la
+                  cliente au téléphone.
+                -->
+                <section class="spa-admin-notifications">
+                  <h3 class="spa-admin-notifications__title">Messages envoyés</h3>
+                  <p class="spa-admin-notifications__empty" aria-live="polite">
+                    Lecture du journal d’envois…
+                  </p>
+                </section>
               </div>
               <div class="spa-admin-panel__footer">
                 <button class="spa-button spa-button--accent spa-button--loading" type="button" disabled>

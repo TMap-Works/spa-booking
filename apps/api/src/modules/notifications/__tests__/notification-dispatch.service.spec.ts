@@ -5,9 +5,11 @@ import {
   type NotificationType,
 } from '../notifications.types';
 import {
+  RENDERED,
   countingSender,
   fakeNotificationsRepository,
   recordingLogger,
+  stubRenderer,
   type SendBehaviour,
 } from './notifications.doubles';
 
@@ -48,14 +50,21 @@ function message(
 
 function build(behaviour: readonly SendBehaviour[] = []) {
   const repository = fakeNotificationsRepository();
+  const renderer = stubRenderer();
   const sender = countingSender(behaviour);
   const logger = recordingLogger();
 
   return {
     repository,
+    renderer,
     sender,
     logger,
-    service: new NotificationDispatchService(repository.repository, sender.sender, logger.logger),
+    service: new NotificationDispatchService(
+      repository.repository,
+      renderer.renderer,
+      sender.sender,
+      logger.logger,
+    ),
   };
 }
 
@@ -77,6 +86,7 @@ describe("notifications — l'ordre d'écriture", () => {
 
     const service = new NotificationDispatchService(
       repository.repository,
+      stubRenderer().renderer,
       sender,
       logger.logger,
     );
@@ -114,7 +124,80 @@ describe("notifications — l'ordre d'écriture", () => {
       channel: 'SMS',
       recipientUserId: RECIPIENT_ID,
       appointmentId: APPOINTMENT_ID,
+      // Le contenu rendu, en revanche, y est bien : il ne quitte jamais le
+      // processus, et l'expéditeur n'a rien à composer lui-même (#70).
+      content: RENDERED,
     });
+  });
+
+  it('rend le message entre la prise de droit et l’appel au fournisseur', async () => {
+    // L'ordre de #70 : rendre avant la prise de droit ferait lire la base à
+    // chaque rejeu, rendre après l'appel n'aurait rien à envoyer.
+    const { service, renderer, sender } = build();
+    const sqsMessage = message();
+
+    await service.dispatch(sqsMessage);
+
+    expect(renderer.calls).toEqual([sqsMessage]);
+    expect(sender.calls[0]?.content).toEqual(RENDERED);
+  });
+
+  it('ne rend rien du tout quand le message est un rejeu', async () => {
+    // Le rejeu nominal ne doit toucher ni la base au-delà de la prise de droit,
+    // ni le fournisseur. Rendre coûterait quatre lectures pour rien.
+    const { service, renderer } = build();
+    const sqsMessage = message();
+
+    await service.dispatch(sqsMessage);
+    await expect(service.dispatch(sqsMessage)).resolves.toBe('skipped');
+
+    expect(renderer.calls).toHaveLength(1);
+  });
+});
+
+describe('notifications — l’échec de rendu', () => {
+  function buildWithBrokenRenderer(error: Error) {
+    const repository = fakeNotificationsRepository();
+    const sender = countingSender();
+    const logger = recordingLogger();
+
+    return {
+      repository,
+      sender,
+      service: new NotificationDispatchService(
+        repository.repository,
+        stubRenderer(error).renderer,
+        sender.sender,
+        logger.logger,
+      ),
+    };
+  }
+
+  it('inscrit `FAILED` puis relève, sans jamais appeler le fournisseur', async () => {
+    // Le point dur : si le rendu échouait en laissant la ligne `PENDING`, elle
+    // resterait vivante dans `notifications_live_once` et le rejeu que SQS
+    // s'apprête à faire serait pris pour un doublon. Le message ne repartirait
+    // jamais.
+    const panne = new Error('aucun modèle pour REMINDER_24H');
+    const { service, repository, sender } = buildWithBrokenRenderer(panne);
+
+    await expect(service.dispatch(message())).rejects.toThrow(panne);
+
+    expect(sender.calls).toHaveLength(0);
+    expect(repository.rows[0]).toMatchObject({
+      status: 'FAILED',
+      failureReason: 'aucun modèle pour REMINDER_24H',
+      providerMessageId: null,
+    });
+  });
+
+  it('rend la place : le rejeu qui suit un échec de rendu peut repartir', async () => {
+    const { service, repository } = buildWithBrokenRenderer(new Error('rendez-vous disparu'));
+
+    await expect(service.dispatch(message())).rejects.toBeDefined();
+
+    // `FAILED` n'occupe pas la place — c'est ce que le filtre partiel garantit.
+    expect(repository.rows[0]?.status).toBe('FAILED');
   });
 });
 

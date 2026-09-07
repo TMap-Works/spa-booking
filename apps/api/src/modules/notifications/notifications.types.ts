@@ -107,6 +107,41 @@ export interface NotificationRecord {
 }
 
 /**
+ * Ce que le back-office lit d'un envoi — la trace, jamais le message.
+ *
+ * Ni `dedupeKey` ni `providerMessageId` : la première est une mécanique interne
+ * d'idempotence, la seconde une référence AWS qui n'apprend rien à l'écran du
+ * salon. Ce qu'une personne au comptoir a besoin de savoir tient dans « quel
+ * message, sur quel canal, parti ou non, quand, et sinon pourquoi ».
+ *
+ * Aucune coordonnée non plus, pour la raison qui vaut dans tout ce fichier : la
+ * table n'en contient pas, et cette projection ne pourrait donc pas en produire.
+ */
+export interface NotificationTrace {
+  readonly id: string;
+  readonly appointmentId: string | null;
+  readonly recipientUserId: string | null;
+  readonly type: NotificationType;
+  readonly channel: NotificationChannel;
+  readonly status: NotificationStatus;
+  readonly scheduledFor: Date | null;
+  readonly sentAt: Date | null;
+  readonly attemptCount: number;
+  readonly failureReason: string | null;
+  readonly createdAt: Date;
+}
+
+/** Les filtres du journal d'envois du back-office — tous facultatifs. */
+export interface NotificationListQuery {
+  readonly appointmentId?: string;
+  readonly type?: NotificationType;
+  readonly channel?: NotificationChannel;
+  readonly statuses?: readonly NotificationStatus[];
+  /** Plafond de lignes rendues. Le service en impose un ; il n'est pas optionnel ici. */
+  readonly limit: number;
+}
+
+/**
  * Le résultat d'une tentative de réservation de l'envoi.
  *
  * Deux issues, et la distinction est tout le ticket : ou bien cette livraison-ci
@@ -155,4 +190,107 @@ export function appointmentDedupeKey(
   channel: NotificationChannel,
 ): string {
   return `appointment:${appointmentId}:${type}:${channel}`;
+}
+
+/**
+ * `true` si ce numéro est composable par SNS — donc si le canal SMS existe.
+ *
+ * ## Pourquoi E.164 strict, et pourquoi ici
+ *
+ * notifications §5 l'impose : « numéros au format E.164 strict (`+261...`).
+ * Normaliser à la saisie, refuser ce qui n'est pas normalisable ». Un `06 12 34
+ * 56 78` n'a pas de sens pour SNS, qui ne connaît pas le pays d'où il est
+ * composé ; l'envoyer tel quel produit un échec permanent, facturé, et une
+ * ligne `FAILED` qui laisse croire à une panne.
+ *
+ * La colonne `users.phone` est une chaîne libre de 32 caractères : rien au
+ * schéma ne garantit la forme. C'est donc au moment de choisir le canal qu'on
+ * tranche, et le refus est silencieux — la cliente reçoit son e-mail, qui porte
+ * la confirmation complète.
+ *
+ * Les espaces, points et tirets sont tolérés à la lecture puis retirés : ils
+ * sont fréquents à la saisie et n'altèrent pas le numéro. Tout le reste — les
+ * préfixes `00`, les parenthèses d'indicatif, un numéro national nu — est
+ * refusé, faute de savoir de quel pays le compléter.
+ *
+ * `null` et chaîne vide rendent `false` : il n'y a pas de numéro.
+ */
+export function isDialableNumber(phone: string | null): boolean {
+  if (phone === null) {
+    return false;
+  }
+
+  return /^\+[1-9][0-9]{7,14}$/.test(phone.replaceAll(/[\s.-]/g, ''));
+}
+
+/**
+ * Tout ce qu'un message rattaché à un rendez-vous a besoin de dire.
+ *
+ * C'est la **seule** structure du module qui porte des données personnelles, et
+ * c'est assumé : un e-mail de confirmation qui n'aurait ni le nom de la cliente
+ * ni celui de sa prestation ne serait pas une confirmation. La règle du module
+ * n'est pas « aucune donnée personnelle nulle part », elle est « aucune donnée
+ * personnelle **qui persiste** » — ni en base, ni dans un message de file, ni
+ * dans un journal (CDC §5.1, notifications §7). Celle-ci ne fait que traverser :
+ * elle est relue à chaque tentative, juste avant l'appel au fournisseur, et rien
+ * n'en est conservé.
+ *
+ * D'où le fait qu'elle soit **relue** et non transportée : une confirmation
+ * rejouée une heure plus tard par SQS doit annoncer le rendez-vous tel qu'il est
+ * alors, pas tel qu'il était à la publication.
+ */
+export interface AppointmentMessageContext {
+  /** Nom commercial de l'établissement, tel qu'il signe le message. */
+  readonly tenantName: string;
+  /** Le slug, qui compose le lien d'annulation. */
+  readonly tenantSlug: string;
+  /** Fuseau IANA de l'établissement — l'heure s'affiche dedans, jamais en UTC. */
+  readonly tenantTimeZone: string;
+  readonly tenantAddress: string | null;
+  readonly tenantPhone: string | null;
+
+  readonly clientFirstName: string;
+  readonly clientLastName: string;
+
+  /**
+   * Ni adresse ni numéro : le contexte sert à **composer** un message, pas à
+   * l'adresser. C'est l'expéditeur qui relit la coordonnée sur le compte
+   * désigné, au moment d'appeler le fournisseur (`NotificationSendRequest`,
+   * notifications §7) — la faire transiter ici la sortirait de la base pour
+   * rien, et une donnée personnelle qu'on ne lit pas est une donnée qu'on
+   * finit par recopier.
+   */
+
+  readonly serviceName: string;
+  readonly staffName: string;
+
+  /**
+   * Début du **soin**, en UTC — l'intervalle facturé, tampons exclus, et non la
+   * ligne d'agenda. Converti au fuseau du salon pour l'affichage.
+   */
+  readonly startsAt: Date;
+  /** Fin du soin, en UTC — début + durée de la prestation, ménage exclu. */
+  readonly endsAt: Date;
+
+  /** Prix, entier dans la plus petite unité — jamais un flottant. */
+  readonly priceAmountMinor: number;
+  readonly priceCurrency: string;
+}
+
+/**
+ * Un message rendu, prêt à partir — la sortie des modèles.
+ *
+ * Trois représentations plutôt que deux : `subject` et `html` ne servent qu'à
+ * l'e-mail, `text` sert de version texte brut à côté du HTML **et** de corps de
+ * SMS. Fournir systématiquement le texte n'est pas une commodité : un e-mail
+ * qui n'a que du HTML est pénalisé par les filtres anti-spam (notifications §6),
+ * et le rappel J-1 perd son intérêt s'il finit en indésirables.
+ */
+export interface RenderedNotification {
+  /** Objet de l'e-mail. Ignoré sur le canal SMS. */
+  readonly subject: string;
+  /** Corps HTML, variables échappées. Ignoré sur le canal SMS. */
+  readonly html: string;
+  /** Version texte brut — doublon de l'e-mail, corps du SMS. */
+  readonly text: string;
 }

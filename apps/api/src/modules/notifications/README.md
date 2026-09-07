@@ -8,10 +8,99 @@ canaux, rien de plus — le marketing et les campagnes sont hors périmètre MVP
 | Ticket | Ce qu'il pose |
 |---|---|
 | #68 | La table `notifications` complétée, l'**index unique partiel** qui porte l'idempotence, l'ordre d'écriture `PENDING → fournisseur → SENT`, et la reprise d'un envoi échoué |
+| #70 | La **confirmation de réservation** — abonnement à `appointment.created`, rendu du message (récapitulatif, lien d'annulation, heure dans le fuseau du salon), choix des canaux, et `GET /notifications` pour le back-office |
 
 À venir : les passerelles SES et SNS, la Lambda d'envoi, les modèles de message
-par établissement, le balayage horaire du rappel J-1, et l'abonnement aux
-événements de domaine d'`appointments`.
+par établissement, et le balayage horaire du rappel J-1.
+
+## La confirmation, de bout en bout (#70)
+
+```
+appointments.service           notifications
+       │                             │
+   COMMIT                            │
+       │                             │
+       ├─ appointmentCreated() ──────┤ BookingConfirmationListener
+       │   (bus en mémoire, #37)     │   runWithTenant(event.tenantId)
+       │                             │   canaux = f(coordonnées du compte)
+       │                             │
+       │                             ├─ dispatch(EMAIL) ─┐
+       │                             └─ dispatch(SMS) ───┤ NotificationDispatchService
+       │                                                 │   1. claim()   → PENDING
+       │                                                 │   2. render()  → contenu
+       │                                                 │   3. send()    → SES/SNS
+       │                                                 │   4. markSent()→ SENT
+```
+
+### Ce que l'abonnement garantit
+
+**Aucune réservation n'échoue parce qu'un message n'est pas parti.** Trois
+barrières, et chacune ferme un mode de défaillance distinct :
+
+| Barrière | Ce qu'elle rattrape |
+|---|---|
+| `AppointmentEvents.subscribe` | la levée synchrone **et** le rejet différé d'un abonné `async` |
+| `BookingConfirmationListener.handle` | tout ce que la portée de tenant englobe |
+| `dispatchOne` | l'échec d'un canal, qui ne doit pas priver le suivant de son tour |
+
+La troisième n'est pas redondante : sans elle, un SMS en échec interromprait la
+boucle et l'e-mail — celui qui porte la preuve du rendez-vous — ne partirait
+jamais.
+
+### Le choix des canaux
+
+L'e-mail part **toujours** : `notificationPreferencesSchema` du contrat partagé
+pose la règle — « le SMS se désactive, l'e-mail non » — et elle tient à ce que la
+confirmation est la preuve du rendez-vous.
+
+Le SMS ne part que si `users.phone` porte un numéro **E.164 exploitable**
+(`isDialableNumber`). C'est la seule préférence que le schéma sache exprimer :
+`users.sms_enabled` n'existe pas, et l'ajouter demanderait une migration. Un
+`06 12 34 56 78` n'a pas de sens pour SNS, qui ne connaît pas le pays d'où il est
+composé ; l'envoyer produirait un échec permanent, facturé.
+
+`marketing_consent` **n'entre pas** dans la décision : une confirmation relève de
+l'exécution du contrat (CDC §5.1), pas de la prospection.
+
+### Le rendu, et pourquoi il a lieu si tard
+
+Le contenu est composé **entre** la prise de droit et l'appel au fournisseur, par
+`NOTIFICATION_RENDERER`. Ni avant — un rejeu nominal ne doit rien lire — ni
+ailleurs : un message de file survit à sa file, et un contenu figé à la
+publication annoncerait une heure plus tard un rendez-vous qui n'existe plus.
+
+Un échec de rendu est traité exactement comme un échec d'expédition : inscrit
+`FAILED`, puis relevé. Sans cela la ligne resterait `PENDING`, donc vivante dans
+`notifications_live_once`, et le rejeu serait pris pour un doublon.
+
+### Les données personnelles ne persistent nulle part
+
+La règle du module n'est pas « aucune donnée personnelle nulle part » — un e-mail
+de confirmation sans nom ni prestation ne serait pas une confirmation. Elle est
+**aucune donnée personnelle qui persiste** :
+
+| Où | Ce qu'on y trouve |
+|---|---|
+| `notifications` (table) | des identifiants, un statut, un motif d'échec |
+| `NotificationMessage` (file) | des identifiants |
+| journal structuré | l'identifiant de notification et celui du fournisseur |
+| `AppointmentMessageContext` | tout le reste — **relu à chaque tentative, jamais conservé** |
+
+## `GET /api/v1/notifications`
+
+Le journal d'envois du back-office, derrière `@AuthAtLeast('STAFF')` : la
+question « ma cliente dit n'avoir rien reçu » se pose au comptoir, pendant que la
+cliente attend.
+
+Filtres : `appointmentId`, `type`, `channel`, `statuses` — exactement ceux de
+`notificationListQuerySchema`, et pas un de plus. Le vocabulaire de la route est
+celui du contrat partagé, en minuscules ; la conversion vers l'énumération
+PostgreSQL vit dans `dto/list-notifications.dto.ts`.
+
+**Aucun verbe d'écriture**, et notamment aucun « renvoyer » : la reprise
+appartient à SQS et à son backoff natif (notifications §4). Un bouton au comptoir
+doublerait la file et masquerait la profondeur de DLQ sur laquelle repose
+l'alarme de supervision.
 
 ## Le problème que ce module résout
 
@@ -98,10 +187,15 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
 
 | Fichier | Rôle |
 |---|---|
-| `notifications.types.ts` | Le vocabulaire du domaine — aucune coordonnée n'y figure |
+| `notifications.types.ts` | Le vocabulaire du domaine |
 | `notifications.repository.ts` | Le seul fichier qui connaisse le schéma ; porte `claim()` |
 | `notification-dispatch.service.ts` | L'ordre d'écriture, et rien d'autre |
 | `notification-sender.ts` | Le **port** vers SES/SNS, et son implémentation par défaut qui refuse |
+| `notification-renderer.ts` | Le **port** de rendu, et son implémentation pour les messages de rendez-vous |
+| `notification-content.ts` | Les modèles — des fonctions pures, sans Nest ni Prisma |
+| `booking-confirmation.listener.ts` | L'abonné à `appointment.created` |
+| `notifications.service.ts` | La lecture du journal, et son plafond |
+| `notifications.controller.ts` | `GET /notifications`, et rien d'autre |
 | `notifications.errors.ts` | Le catalogue d'erreurs du module |
 
 ## Ce que ce module ne fait pas, délibérément
@@ -115,13 +209,20 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
 - **Aucune coordonnée en base ni dans les messages de file.** Le destinataire est
   désigné par l'identifiant de son compte ; l'adresse se relit dessus au moment
   de l'envoi (CDC §5.1, notifications §7).
-- **Aucune revérification du rendez-vous.** Un rappel ne doit pas partir si le
-  rendez-vous a été annulé entre la sélection et l'envoi (notifications §3) —
-  c'est une règle du **producteur**, et la poser ici ferait lire `appointments` à
-  un module qui ne le possède pas (api-module §3).
-- **Aucun contrôleur.** Le module n'est donc pas encore inscrit dans
-  `app.module.ts`, comme `availability` (#41) et `appointments` (#31) avant leur
-  premier endpoint.
+- **Aucune revérification du statut du rendez-vous.** Un rappel ne doit pas
+  partir si le rendez-vous a été annulé entre la sélection et l'envoi
+  (notifications §3) — c'est une règle du **producteur**, et elle appartient au
+  ticket de la Lambda de rappel. Le rendu lit bien le rendez-vous depuis #70 — il
+  faut son heure et sa prestation pour composer le message — mais il ne juge pas
+  de son statut : c'est une lecture d'affichage, pas une décision d'envoi.
+- **Aucun lien d'annulation signé.** Le lien de la confirmation pointe l'espace
+  client (`/{slug}/compte`), où chaque rendez-vous à venir porte son bouton
+  « Annuler ». Une URL signée qui annulerait en un clic ajouterait un secret à
+  faire tourner, une durée de validité à choisir et une route publique de plus :
+  c'est une décision de conception à part entière, qui appartient à son issue.
+- **Aucun envoi réel.** `UnconfiguredNotificationSender` refuse tout en 503 tant
+  que les passerelles SES et SNS ne sont pas branchées. Le refus laisse la ligne
+  `FAILED`, donc reprenable — ce qu'un faux `SENT` aurait rendu impossible.
 
 ## Ce que les tests prouvent
 

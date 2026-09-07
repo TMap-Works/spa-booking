@@ -37,6 +37,7 @@ import {
   customerPageSchema,
   customerSchema,
   customerVisitHistorySchema,
+  notificationSchema,
   publicServiceSchema,
   publicTenantSchema,
   serviceCategorySchema,
@@ -69,6 +70,7 @@ import {
   type CustomerVisitHistory,
   type LoginRequest,
   type MyAppointmentsQuery,
+  type Notification as NotificationTrace,
   type PublicService,
   type PublicTenant,
   type RegisterRequest,
@@ -1122,6 +1124,39 @@ export async function fetchCustomerHistory(
     accessToken,
   });
   return payload;
+}
+
+/**
+ * Le journal d'envois d'un rendez-vous — `GET /notifications?appointmentId=…` (#70).
+ *
+ * ## Pourquoi la route se filtre plutôt que de s'imbriquer
+ *
+ * `GET /appointments/:id/notifications` aurait promis un 404 sur un rendez-vous
+ * inconnu, donc obligé le module `notifications` à lire `appointments`. Ici, un
+ * rendez-vous sans envoi — ou d'un autre salon — rend une liste vide, ce qui est
+ * la vérité : ce module n'a aucune trace pour lui.
+ *
+ * ## Ce que la réponse ne porte pas
+ *
+ * Ni l'adresse à laquelle le message est parti, ni ce qu'il disait. La table
+ * n'en contient pas (CDC §5.1) : l'écran montre un statut, pas un e-mail.
+ *
+ * L'enveloppe rendue par l'API porte aussi le plafond appliqué ; il n'est pas
+ * repris ici, faute d'écran qui en fasse quelque chose — un rendez-vous ne porte
+ * au plus que six lignes, trois messages fois deux canaux.
+ */
+export async function fetchAppointmentNotifications(
+  accessToken: string,
+  appointmentId: string,
+): Promise<readonly NotificationTrace[]> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/notifications?appointmentId=${encodeURIComponent(appointmentId)}`,
+    schema: z.object({ items: z.array(notificationSchema) }),
+    accessToken,
+  });
+
+  return payload.items;
 }
 
 /**

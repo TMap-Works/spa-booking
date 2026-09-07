@@ -24,6 +24,7 @@ import { DESK_ROUTE_MISSING_MESSAGE } from '@/lib/admin/appointment-desk';
 
 const loadCalendarRangeAction = vi.fn();
 const loadDeskServiceStaffAction = vi.fn();
+const loadAppointmentNotificationsAction = vi.fn();
 const createDeskAppointmentAction = vi.fn();
 const rescheduleDeskAppointmentAction = vi.fn();
 const markDeskAppointmentStatusAction = vi.fn();
@@ -34,6 +35,8 @@ const push = vi.fn();
 vi.mock('@/app/(admin)/[tenantSlug]/admin/calendrier/actions', () => ({
   loadCalendarRangeAction: (...args: unknown[]) => loadCalendarRangeAction(...args),
   loadDeskServiceStaffAction: (...args: unknown[]) => loadDeskServiceStaffAction(...args),
+  loadAppointmentNotificationsAction: (...args: unknown[]) =>
+    loadAppointmentNotificationsAction(...args),
   createDeskAppointmentAction: (...args: unknown[]) => createDeskAppointmentAction(...args),
   rescheduleDeskAppointmentAction: (...args: unknown[]) =>
     rescheduleDeskAppointmentAction(...args),
@@ -120,6 +123,7 @@ beforeEach(() => {
     data: { staff: [{ id: 'staff-hasina', displayName: 'Hasina', isActive: true }] },
   });
   searchDeskClientsAction.mockResolvedValue({ ok: true, data: { clients: [RINA] } });
+  loadAppointmentNotificationsAction.mockResolvedValue({ ok: true, data: { notifications: [] } });
 });
 
 afterEach(() => {

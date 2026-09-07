@@ -15,6 +15,7 @@ import { CalendarBoard } from '@/app/(admin)/[tenantSlug]/admin/components/calen
 
 const loadCalendarRangeAction = vi.fn();
 const loadDeskServiceStaffAction = vi.fn();
+const loadAppointmentNotificationsAction = vi.fn();
 const createDeskAppointmentAction = vi.fn();
 const rescheduleDeskAppointmentAction = vi.fn();
 const markDeskAppointmentStatusAction = vi.fn();
@@ -29,6 +30,8 @@ const replace = vi.fn();
 vi.mock('@/app/(admin)/[tenantSlug]/admin/calendrier/actions', () => ({
   loadCalendarRangeAction: (...args: unknown[]) => loadCalendarRangeAction(...args),
   loadDeskServiceStaffAction: (...args: unknown[]) => loadDeskServiceStaffAction(...args),
+  loadAppointmentNotificationsAction: (...args: unknown[]) =>
+    loadAppointmentNotificationsAction(...args),
   createDeskAppointmentAction: (...args: unknown[]) => createDeskAppointmentAction(...args),
   rescheduleDeskAppointmentAction: (...args: unknown[]) =>
     rescheduleDeskAppointmentAction(...args),
