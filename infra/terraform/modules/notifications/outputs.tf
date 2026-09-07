@@ -225,17 +225,76 @@ output "dispatch_configured" {
   value       = var.dispatch_url != null
 }
 
+# --- Rebonds et plaintes (#73) ------------------------------------------------
+
+output "delivery_events_queue_url" {
+  description = "URL de la file abonnée au topic d'événements de remise. Utile pour purger ou rejouer à la main pendant un incident de délivrabilité ; aucun producteur n'a à la connaître — c'est SNS qui dépose."
+  value       = aws_sqs_queue.delivery_events.url
+}
+
+output "delivery_events_queue_arn" {
+  description = "ARN de la file des événements de remise."
+  value       = aws_sqs_queue.delivery_events.arn
+}
+
+output "delivery_events_queue_name" {
+  description = "Nom de la file des événements de remise — la dimension `QueueName` des métriques SQS."
+  value       = aws_sqs_queue.delivery_events.name
+}
+
+output "delivery_events_dlq_url" {
+  description = "URL de la file d'attente morte des événements de remise. C'est là que se trouvent les rebonds qu'aucune adresse n'a suivis : les relire est le premier geste du diagnostic."
+  value       = aws_sqs_queue.delivery_events_dlq.url
+}
+
+output "delivery_events_dlq_arn" {
+  description = "ARN de la file d'attente morte des événements de remise."
+  value       = aws_sqs_queue.delivery_events_dlq.arn
+}
+
+output "delivery_events_dlq_name" {
+  description = "Nom de la file d'attente morte des événements de remise — la dimension `QueueName` de son alarme de profondeur."
+  value       = aws_sqs_queue.delivery_events_dlq.name
+}
+
+output "delivery_events_function_name" {
+  description = "Nom de la Lambda de traitement des rebonds — la dimension `FunctionName` de son alarme d'erreurs."
+  value       = aws_lambda_function.delivery_events.function_name
+}
+
+output "delivery_events_function_arn" {
+  description = "ARN de la Lambda de traitement des rebonds."
+  value       = aws_lambda_function.delivery_events.arn
+}
+
+output "delivery_events_role_arn" {
+  description = "ARN du rôle d'exécution de la Lambda de traitement des rebonds. Distinct de celui de la Lambda d'envoi : les deux ne consomment pas la même file, et un rôle partagé aurait donné à chacune l'accès à la file de l'autre."
+  value       = aws_iam_role.delivery_events.arn
+}
+
+output "delivery_events_log_group_name" {
+  description = "Groupe de journaux de la Lambda de traitement des rebonds. Il ne contient **aucune adresse** — la fonction ne journalise que des compteurs et l'accusé opaque de SES (CDC §5.1)."
+  value       = aws_cloudwatch_log_group.delivery_events.name
+}
+
+output "delivery_events_configured" {
+  description = "Vrai quand `delivery_events_url` est renseignée. Faux, la fonction est en défaut fermé : les rebonds s'accumulent dans la file puis en DLQ, aucune adresse morte n'est supprimée, et la réputation d'envoi du domaine se dégrade sans que rien d'autre ne le dise."
+  value       = var.delivery_events_url != null
+}
+
 # --- Supervision --------------------------------------------------------------
 
 output "alarm_names" {
-  description = "Les six alarmes de la chaîne, dans l'ordre du trajet d'un message : balayage jamais fait, balayage incomplet, refus définitifs, retard, plantage de l'envoi, bout de course."
+  description = "Les huit alarmes de la chaîne, dans l'ordre du trajet d'un message : balayage jamais fait, balayage incomplet, refus définitifs, retard, plantage de l'envoi, bout de course — puis, sur le chemin de retour, plantage du traitement des rebonds et rebonds en bout de course."
   value = {
-    reminder_sweeper_errors  = aws_cloudwatch_metric_alarm.reminder_sweeper_errors.alarm_name
-    reminder_sweep_truncated = aws_cloudwatch_metric_alarm.reminder_sweep_truncated.alarm_name
-    permanent_failures       = aws_cloudwatch_metric_alarm.permanent_failures.alarm_name
-    backlog_age              = aws_cloudwatch_metric_alarm.backlog_age.alarm_name
-    dispatcher_errors        = aws_cloudwatch_metric_alarm.dispatcher_errors.alarm_name
-    dlq_depth                = aws_cloudwatch_metric_alarm.dlq_depth.alarm_name
+    reminder_sweeper_errors   = aws_cloudwatch_metric_alarm.reminder_sweeper_errors.alarm_name
+    reminder_sweep_truncated  = aws_cloudwatch_metric_alarm.reminder_sweep_truncated.alarm_name
+    permanent_failures        = aws_cloudwatch_metric_alarm.permanent_failures.alarm_name
+    backlog_age               = aws_cloudwatch_metric_alarm.backlog_age.alarm_name
+    dispatcher_errors         = aws_cloudwatch_metric_alarm.dispatcher_errors.alarm_name
+    dlq_depth                 = aws_cloudwatch_metric_alarm.dlq_depth.alarm_name
+    delivery_events_errors    = aws_cloudwatch_metric_alarm.delivery_events_errors.alarm_name
+    delivery_events_dlq_depth = aws_cloudwatch_metric_alarm.delivery_events_dlq_depth.alarm_name
   }
 }
 

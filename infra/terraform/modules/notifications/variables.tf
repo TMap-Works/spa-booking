@@ -563,6 +563,82 @@ variable "reminder_max_event_age_seconds" {
   }
 }
 
+# --- Rebonds et plaintes (#73) ------------------------------------------------
+
+variable "delivery_events_url" {
+  description = <<-EOT
+    URL de la route **interne** d'ingestion servie par l'API —
+    `https://…/api/v1/notifications/delivery-events` —, appelée pour chaque
+    événement de remise dépilé de la file.
+
+    `null` — le défaut — laisse la fonction en **défaut fermé** : elle journalise
+    `delivery.unconfigured`, rend le message à SQS, et la chaîne devient visible
+    en supervision au lieu d'avaler silencieusement les rebonds. Le message est
+    conservé pendant `dispatch_message_retention_seconds`, si bien qu'une chaîne
+    branchée en cours de journée rattrape ce qui l'attendait.
+
+    Pas de valeur déduite de l'ALB, pour la raison qui vaut sur `dispatch_url` :
+    en développement, la terminaison TLS est un certificat auto-signé qu'aucun
+    client ne vérifie sans y être forcé.
+
+    Contrat attendu de la route, côté API : `POST` du JSON de SES tel quel,
+    réponse `2xx` traité — y compris pour un événement illisible, que rien ne
+    réparerait — - `408`/`425`/`429`/`5xx` à rejouer · tout autre `4xx` échec
+    permanent, jamais rejoué.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.delivery_events_url == null || can(regex("^https://", var.delivery_events_url))
+    error_message = "delivery_events_url doit être `null` ou une URL en `https://` — un appel en clair porterait le jeton d'appel et l'adresse du destinataire sur le réseau."
+  }
+}
+
+variable "delivery_events_timeout_seconds" {
+  description = "Délai maximal d'une invocation de la Lambda de traitement des rebonds. Il borne aussi le délai de visibilité de sa file, fixé à six fois cette valeur. Doit laisser tenir un lot entier : `delivery_events_batch_size × dispatch_timeout_ms`, plus deux secondes de marge — une précondition le vérifie au plan."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = var.delivery_events_timeout_seconds >= 3 && var.delivery_events_timeout_seconds <= 900
+    error_message = "delivery_events_timeout_seconds doit être compris entre 3 et 900 secondes."
+  }
+}
+
+variable "delivery_events_memory_mb" {
+  description = "Mémoire allouée à la Lambda de traitement des rebonds, en Mio. 256 par défaut, comme la Lambda d'envoi : la fonction ne fait qu'un appel HTTP par message, et la mémoire fixe aussi la part de vCPU."
+  type        = number
+  default     = 256
+
+  validation {
+    condition     = var.delivery_events_memory_mb >= 128 && var.delivery_events_memory_mb <= 10240
+    error_message = "delivery_events_memory_mb doit être compris entre 128 et 10240 Mio."
+  }
+}
+
+variable "delivery_events_batch_size" {
+  description = "Nombre d'événements de remise remis à la fonction par invocation. Cinq par défaut : la fonction les traite en séquence, et le lot entier doit tenir dans `delivery_events_timeout_seconds`."
+  type        = number
+  default     = 5
+
+  validation {
+    condition     = var.delivery_events_batch_size >= 1 && var.delivery_events_batch_size <= 10 && floor(var.delivery_events_batch_size) == var.delivery_events_batch_size
+    error_message = "delivery_events_batch_size doit être un entier compris entre 1 et 10 : au-delà de 10, SQS exige une fenêtre de regroupement non nulle."
+  }
+}
+
+variable "delivery_events_maximum_concurrency" {
+  description = "Nombre maximal d'invocations simultanées de la source d'événements SQS des rebonds. Deux par défaut — le minimum imposé par AWS —, et c'est délibérément moins que la file d'envoi : un incident de délivrabilité produit des rebonds par milliers, au moment précis où l'API a le plus besoin d'air. Aucun rebond n'est urgent à la minute près."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.delivery_events_maximum_concurrency >= 2 && var.delivery_events_maximum_concurrency <= 1000 && floor(var.delivery_events_maximum_concurrency) == var.delivery_events_maximum_concurrency
+    error_message = "delivery_events_maximum_concurrency doit être un entier compris entre 2 et 1000 — AWS refuse une concurrence maximale inférieure à 2."
+  }
+}
+
 # --- Supervision --------------------------------------------------------------
 
 variable "log_retention_days" {

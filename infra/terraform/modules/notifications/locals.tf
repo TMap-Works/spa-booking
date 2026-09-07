@@ -19,6 +19,15 @@ locals {
 
   reminder_sweeper_function_name = "${local.name_prefix}-reminder-sweeper"
 
+  delivery_events_function_name = "${local.name_prefix}-delivery-events"
+
+  # Six fois le délai de la fonction, pour la raison exacte qui vaut sur la file
+  # d'envoi ci-dessous — et déduit plutôt que pris en variable, pour la même :
+  # deux réglages indépendants dont l'un doit rester supérieur à l'autre
+  # finissent toujours par diverger, et la divergence ne se voit qu'en
+  # production.
+  delivery_events_visibility_timeout_seconds = 6 * var.delivery_events_timeout_seconds
+
   # Six fois le délai de la fonction, comme AWS le recommande pour une source
   # SQS. La règle n'est pas arbitraire : si la fonction est tuée sur un délai
   # dépassé, le message ne doit redevenir visible qu'une fois l'invocation
