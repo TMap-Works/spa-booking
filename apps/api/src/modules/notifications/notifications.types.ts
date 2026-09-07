@@ -14,6 +14,16 @@
  */
 
 /**
+ * Import **de type seul**, et il compte : `delivery-event.ts` importe en retour
+ * `EmailSuppressionReason` d'ici. Un import de valeur formerait un cycle à
+ * l'exécution ; un `import type` est effacé à la compilation et n'en forme
+ * aucun. La classification des événements reste ainsi là où elle est exercée —
+ * un fichier de fonctions pures — sans que le vocabulaire du module se scinde en
+ * deux.
+ */
+import type { DeliveryEventOutcome } from './delivery-event';
+
+/**
  * Les trois messages du périmètre MVP — CDC §1.4, `enum NotificationType` du
  * schéma.
  *
@@ -40,6 +50,48 @@ export type NotificationChannel = (typeof NOTIFICATION_CHANNELS)[number];
 export const NOTIFICATION_STATUSES = ['PENDING', 'SENT', 'FAILED'] as const;
 
 export type NotificationStatus = (typeof NOTIFICATION_STATUSES)[number];
+
+/**
+ * Pourquoi une adresse a cessé d'être sollicitée — `enum EmailSuppressionReason`
+ * du schéma, même régime que les trois précédentes (#73).
+ *
+ * Deux valeurs, et la frontière entre elles n'est pas celle qu'on croit : elles
+ * ne distinguent pas deux gravités, elles nomment les deux seules issues **que
+ * SES tient pour définitives**. Un rebond transitoire n'a pas de valeur ici, et
+ * c'est le troisième critère d'acceptation du ticket — « distinction entre
+ * échecs permanents et transitoires » — porté par le type plutôt que par une
+ * comparaison de chaînes disséminée dans le code.
+ */
+export const EMAIL_SUPPRESSION_REASONS = ['HARD_BOUNCE', 'COMPLAINT'] as const;
+
+export type EmailSuppressionReason = (typeof EMAIL_SUPPRESSION_REASONS)[number];
+
+/**
+ * Ce qu'une ingestion d'événement de remise a produit — #73.
+ *
+ * Des compteurs, jamais une adresse. `suppressed` compte les **lignes `users`**
+ * effectivement passées en supprimé, tous établissements confondus : une même
+ * adresse cliente de trois salons en produit trois, et zéro veut dire que
+ * l'adresse rebondie n'est connue de personne — ce qui arrive pour une adresse
+ * saisie puis corrigée, et n'est pas une anomalie.
+ */
+export interface DeliveryEventIngestion {
+  readonly outcome: DeliveryEventOutcome;
+  /** Le type d'événement reconnu, ou `null` quand la charge était illisible. */
+  readonly eventType: string | null;
+  /** Sous-type SES retenu (`General`, `abuse`…), filtré et borné. */
+  readonly detail: string | null;
+  /** `mail.messageId` — l'accusé opaque de SES, journalisable. */
+  readonly messageId: string | null;
+  /** Le motif inscrit, quand il y a eu suppression. */
+  readonly reason: EmailSuppressionReason | null;
+  /** Nombre d'adresses distinctes que l'événement désignait. */
+  readonly recipientCount: number;
+  /** Nombre d'établissements visités. */
+  readonly tenantCount: number;
+  /** Nombre de lignes `users` passées en supprimé par cette ingestion. */
+  readonly suppressed: number;
+}
 
 /**
  * Les statuts qui **occupent** la place dans `notifications_live_once`.
