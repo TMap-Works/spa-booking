@@ -6,6 +6,8 @@ import {
   formatMoney,
   renderBookingConfirmationEmail,
   renderBookingConfirmationSms,
+  renderReminderEmail,
+  renderReminderSms,
 } from '../notification-content';
 import type { AppointmentMessageContext } from '../notifications.types';
 
@@ -214,6 +216,88 @@ describe('notifications — le SMS de confirmation', () => {
     // SMS existe pour dire.
     const { text } = renderBookingConfirmationSms({ ...PARIS, tenantName: 'Le '.repeat(50) });
 
+    expect(text).toContain('14:30');
+    expect(text).toContain('(Europe/Paris)');
+  });
+});
+
+/**
+ * Les modèles du rappel J-1 — #71.
+ *
+ * Ils partagent le récapitulatif de la confirmation, et affirment autre chose :
+ * la confirmation dit « c'est enregistré », le rappel dit « voici comment vous
+ * décommander ». C'est ce second membre de phrase qui réduit le no-show, donc la
+ * perte de chiffre d'affaires (CDC §1.4).
+ */
+describe('notifications — le rappel J-1', () => {
+  it('n’annonce pas un rendez-vous « confirmé » — ce n’est pas ce message-là', () => {
+    const { subject, text } = renderReminderEmail(PARIS, CANCEL_URL);
+
+    expect(subject).toContain('Rappel');
+    expect(subject).not.toContain('confirmé');
+    expect(text).not.toContain('est confirmé');
+  });
+
+  it('donne la date complète plutôt que « demain »', () => {
+    // Le rappel part entre 24 et 25 heures à l'avance : « demain » est vrai
+    // presque toujours, et « presque toujours » n'est pas une garantie qu'un
+    // modèle a le droit de prendre.
+    const { text, html } = renderReminderEmail(PARIS, CANCEL_URL);
+
+    expect(text).not.toContain('demain');
+    expect(html).not.toContain('demain');
+    expect(text).toContain('14:30');
+  });
+
+  it('affiche l’heure dans le fuseau du salon, et le dit', () => {
+    const { text } = renderReminderEmail(PARIS, CANCEL_URL);
+
+    // 12:30 UTC = 14:30 à Paris en septembre. Sans mention du fuseau, « 14:30 »
+    // est ambigu pour une cliente qui voyage.
+    expect(text).toContain('14:30');
+    expect(text).toContain('Europe/Paris');
+    expect(text).not.toContain('12:30');
+  });
+
+  it('porte le récapitulatif et le lien d’annulation', () => {
+    const { text, html } = renderReminderEmail(PARIS, CANCEL_URL);
+
+    expect(text).toContain('Massage suédois');
+    expect(text).toContain('Claire D.');
+    expect(text).toContain(CANCEL_URL);
+    expect(html).toContain(`href="${CANCEL_URL}"`);
+  });
+
+  it('échappe les variables dans le corps HTML, et seulement là', () => {
+    const hostile = { ...PARIS, clientFirstName: '<script>alert(1)</script>' };
+
+    const { html, text } = renderReminderEmail(hostile, CANCEL_URL);
+
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+    // Le corps texte n'échappe rien : des `&amp;` y seraient visibles.
+    expect(text).toContain('<script>');
+  });
+
+  it('rend une version texte à côté du HTML — un e-mail sans texte finit en indésirables', () => {
+    const { html, text } = renderReminderEmail(PARIS, CANCEL_URL);
+
+    expect(html.length).toBeGreaterThan(0);
+    expect(text.length).toBeGreaterThan(0);
+  });
+
+  it('reste un avis en SMS : ni objet, ni HTML, et sous trois segments UCS-2', () => {
+    const { subject, html, text } = renderReminderSms({ ...PARIS, tenantName: 'é'.repeat(400) });
+
+    expect(subject).toBe('');
+    expect(html).toBe('');
+    expect(text.length).toBeLessThanOrEqual(SMS_SINGLE_SEGMENT_UCS2 * 3);
+  });
+
+  it('dit en SMS que c’est un rappel, avec l’heure du salon', () => {
+    const { text } = renderReminderSms(PARIS);
+
+    expect(text).toContain('rappel');
     expect(text).toContain('14:30');
     expect(text).toContain('(Europe/Paris)');
   });

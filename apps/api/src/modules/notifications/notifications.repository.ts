@@ -11,6 +11,7 @@ import {
   type NotificationMessage,
   type NotificationRecord,
   type NotificationTrace,
+  type ReminderEligibility,
 } from './notifications.types';
 
 /**
@@ -429,6 +430,48 @@ export class NotificationsRepository {
       priceAmountMinor: appointment.priceAmountMinor,
       priceCurrency: appointment.priceCurrency,
     };
+  }
+
+  /**
+   * L'état du rendez-vous **au moment d'envoyer** son rappel — #71.
+   *
+   * Deux colonnes, pas une de plus : le statut et l'heure de début. C'est ce
+   * qu'il faut, et exactement ce qu'il faut, pour répondre aux deux questions
+   * que notifications §3 pose avant tout envoi de rappel — « le rendez-vous
+   * existe-t-il encore ? » et « le rappel est-il encore à l'heure ? ». Le
+   * verdict, lui, n'est pas ici : il appartient à `reminder-window.ts` et à
+   * `appointment-status.ts`, qui sont des fonctions pures.
+   *
+   * ## Ce n'est pas une redite de `loadAppointmentContext`
+   *
+   * Celui-là compose un **message** : il joint la cliente, la prestation, le
+   * praticien et l'établissement, et il dérive l'intervalle facturé. Celui-ci
+   * prend une **décision d'envoi** : il lit deux colonnes de la seule table
+   * `appointments`, avant même la prise de droit, et il doit rester bon marché —
+   * il s'exécute sur chaque rappel, y compris ceux qui ne partiront pas.
+   *
+   * L'heure rendue est celle de la **ligne d'agenda** — tampons compris —, la
+   * même que celle sur laquelle le balayage sélectionne. Les deux bouts de la
+   * chaîne comparent ainsi la même valeur : dériver l'intervalle facturé d'un
+   * côté et pas de l'autre aurait fait diverger la fenêtre de quelques minutes,
+   * juste assez pour que les rendez-vous du bas de la fenêtre soient tenus pour
+   * en retard.
+   *
+   * Rend `null` si le rendez-vous n'existe plus — ou s'il appartient à un autre
+   * établissement, ce que le client scopé traite de la même façon. Dans les deux
+   * cas il n'y a rien à annoncer, et rien à divulguer.
+   */
+  public async findReminderEligibility(
+    appointmentId: string,
+  ): Promise<ReminderEligibility | null> {
+    const appointment = await this.prisma.appointment.findFirst({
+      where: { id: appointmentId },
+      select: { status: true, startsAt: true },
+    });
+
+    return appointment === null
+      ? null
+      : { status: appointment.status, startsAt: appointment.startsAt };
   }
 
   /**

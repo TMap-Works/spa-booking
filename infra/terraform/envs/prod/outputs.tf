@@ -138,8 +138,23 @@ output "notification_dispatch_configured" {
   value       = one(module.notifications[*].dispatch_configured)
 }
 
+output "notification_reminder_sweeper_function_name" {
+  description = "Lambda de balayage du rappel J-1 (#71). `aws logs tail /aws/lambda/<ce nom> --follow` montre `reminder.swept`, `reminder.rejected`, `reminder.sweep_truncated` et `reminder.sweep_failed`."
+  value       = one(module.notifications[*].reminder_sweeper_function_name)
+}
+
+output "notification_reminder_schedule_state" {
+  description = "`ENABLED` quand la chaîne du rappel J-1 est branchée, `DISABLED` tant que `notification_reminder_sweep_url` est nulle. En production, un `DISABLED` est une anomalie : le rappel J-1 est ce qui réduit le no-show (CDC §1.4)."
+  value       = one(module.notifications[*].reminder_schedule_state)
+}
+
+output "notification_reminder_sweep_configured" {
+  description = "Vrai quand la route de balayage est renseignée. Faux, aucun rappel J-1 n'est produit — à vérifier en premier quand la file reste vide alors que des rendez-vous approchent."
+  value       = one(module.notifications[*].reminder_sweep_configured)
+}
+
 output "notification_alarm_names" {
-  description = "Les quatre alarmes de la chaîne — refus définitifs, retard, plantage, bout de course — dans l'ordre où elles se déclenchent quand la chaîne se dégrade."
+  description = "Les six alarmes de la chaîne — balayage jamais fait, balayage incomplet, refus définitifs, retard, plantage de l'envoi, bout de course — dans l'ordre du trajet d'un message."
   value       = one(module.notifications[*].alarm_names)
 }
 

@@ -1,7 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
 
 import { StructuredLogger } from '../../common/logging/structured-logger';
+import { isAppointmentStatus, occupiesSlot } from '../appointments/appointment-status';
 import { NOTIFICATION_RENDERER, type NotificationRenderer } from './notification-renderer';
+import { reminderTiming } from './reminder-window';
 import {
   NOTIFICATION_SENDER,
   type NotificationReceipt,
@@ -76,13 +78,21 @@ import type {
  * consommateur de file, pas à un contrôleur. Une réservation ne doit pas échouer
  * parce qu'un e-mail n'est pas parti.
  *
- * **Aucune revérification du statut du rendez-vous.** Le rappel J-1 doit ne pas
- * partir si le rendez-vous a été annulé entre la sélection et l'envoi
- * (notifications §3) : c'est une règle du **producteur** de messages, et elle a
- * sa place dans le ticket de la Lambda de rappel. Le rendu lit bien le
- * rendez-vous depuis #70 — il faut son heure et sa prestation pour composer le
- * message — mais il ne juge pas de son statut : c'est une lecture d'affichage,
- * pas une décision d'envoi.
+ * ## Ce que #71 y a ajouté, et pour ce seul type de message
+ *
+ * Une **revérification du rendez-vous au moment de l'envoi**, et uniquement pour
+ * `REMINDER_24H` — voir `reminderStillDue`. #68 la renvoyait au « producteur » et
+ * au ticket de la Lambda de rappel ; l'instruire là-bas se serait révélé faux,
+ * parce que le producteur, c'est le balayage horaire, et que l'écart entre sa
+ * sélection et l'envoi est précisément ce que notifications §3 demande de
+ * couvrir. Une décision d'envoi se prend à l'envoi.
+ *
+ * Elle ne concerne ni la confirmation — émise dans la seconde qui suit la
+ * réservation — ni l'avis d'annulation, dont l'objet même est un rendez-vous qui
+ * n'occupe plus rien.
+ *
+ * Le rendu, lui, ne juge toujours pas du statut : il lit le rendez-vous pour son
+ * heure et sa prestation, c'est une lecture d'affichage.
  */
 @Injectable()
 export class NotificationDispatchService {
@@ -99,7 +109,11 @@ export class NotificationDispatchService {
    * @throws ce que l'expéditeur a levé, une fois l'échec inscrit — c'est ce qui
    * rend la main à SQS pour qu'il réessaie.
    */
-  public async dispatch(message: NotificationMessage): Promise<DispatchOutcome> {
+  public async dispatch(message: NotificationMessage, now: Date = new Date()): Promise<DispatchOutcome> {
+    if (message.type === 'REMINDER_24H' && !(await this.reminderStillDue(message, now))) {
+      return 'skipped';
+    }
+
     const claim = await this.repository.claim(message);
 
     if (claim.outcome === 'already-live') {
@@ -142,6 +156,80 @@ export class NotificationDispatchService {
     });
 
     return 'sent';
+  }
+
+  /**
+   * Ce rappel J-1 a-t-il encore lieu d'être — **au moment de l'envoi** ? (#71)
+   *
+   * ## Pourquoi cette relecture existe
+   *
+   * Parce que la sélection et l'envoi ne sont pas le même instant. Entre le
+   * balayage horaire et l'appel au fournisseur il y a une publication SQS, une
+   * invocation de Lambda, un appel HTTP, et jusqu'à cinq réceptions avant la file
+   * d'attente morte : notifications §3 chiffre l'écart à une heure, et exige que
+   * la décision se prenne ici plutôt que là-bas. Un rendez-vous annulé entre les
+   * deux ne doit rien recevoir — un rappel pour un rendez-vous qui n'existe plus
+   * fait rater une matinée à une cliente et un appel au comptoir au salon.
+   *
+   * ## Elle passe **avant** la prise de droit, et c'est délibéré
+   *
+   * Un rappel supprimé n'a pas à laisser de ligne. La placer après `claim()`
+   * aurait inscrit un `PENDING` qu'il aurait ensuite fallu défaire — et le seul
+   * statut disponible pour cela est `FAILED`, qui affiche « échec » au comptoir
+   * pour une décision qui n'en est pas un. Le schéma ne connaît pas de
+   * `SUPPRESSED` (l'ajouter serait une migration, hors du périmètre de #71), et
+   * mentir sur le statut d'un envoi coûte plus cher que la lecture qu'on évite.
+   *
+   * Elle ne rouvre aucune fenêtre d'idempotence : la prise de droit précède
+   * toujours l'appel au fournisseur, qui reste le seul effet irréversible. Ce
+   * que cet ordre coûte, c'est une lecture indexée de plus sur le rejeu d'un
+   * rappel déjà parti — le rejeu est rare, et la lecture porte sur deux colonnes.
+   *
+   * ## Les trois refus, et ce qu'ils veulent dire
+   *
+   * | Ce que la relecture trouve | Pourquoi rien ne part |
+   * |---|---|
+   * | plus de rendez-vous | il a été supprimé ou anonymisé ; il n'y a rien à annoncer |
+   * | un statut qui n'occupe plus le créneau | annulé, honoré ou no-show — `appointment-status.ts` en tient la liste, celle-là même que la contrainte d'exclusion emploie |
+   * | une échéance hors fenêtre | trop tard (le rappel serait « en retard », ce que notifications §3 interdit) ou trop tôt (le rendez-vous a été repoussé : un balayage à venir le reprendra) |
+   *
+   * Aucun n'est une erreur : rien n'est levé, rien n'est inscrit, et l'appelant
+   * reçoit `skipped` — donc, pour la Lambda, un acquittement. Lever aurait fait
+   * rejouer le message jusqu'à la file d'attente morte, et l'alarme de
+   * profondeur aurait signalé une panne là où il n'y a qu'une annulation.
+   */
+  private async reminderStillDue(message: NotificationMessage, now: Date): Promise<boolean> {
+    const eligibility = await this.repository.findReminderEligibility(message.appointmentId);
+
+    if (eligibility === null) {
+      this.logger.log('rappel J-1 sans objet, rendez-vous introuvable', {
+        appointmentId: message.appointmentId,
+        channel: message.channel,
+      });
+      return false;
+    }
+
+    if (!isAppointmentStatus(eligibility.status) || !occupiesSlot(eligibility.status)) {
+      this.logger.log('rappel J-1 supprimé, le rendez-vous ne tient plus le créneau', {
+        appointmentId: message.appointmentId,
+        channel: message.channel,
+        status: eligibility.status,
+      });
+      return false;
+    }
+
+    const timing = reminderTiming(eligibility.startsAt, now);
+
+    if (timing !== 'due') {
+      this.logger.warn('rappel J-1 supprimé, hors de sa fenêtre', {
+        appointmentId: message.appointmentId,
+        channel: message.channel,
+        timing,
+      });
+      return false;
+    }
+
+    return true;
   }
 
   /**

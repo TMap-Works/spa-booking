@@ -90,6 +90,93 @@ resource "aws_cloudwatch_metric_alarm" "dispatcher_errors" {
   }
 }
 
+# --- 2 bis. Le balayage du rappel J-1 ne s'est pas fait -----------------------
+
+# La seule alarme qui voie un rappel **jamais publié** (#71).
+#
+# Les quatre autres surveillent ce qui se passe *après* la publication : la file,
+# la fonction d'envoi, la DLQ. Aucune ne dirait rien d'un balayage qui n'a pas
+# eu lieu — la file resterait simplement vide, ce qui est indiscernable d'une
+# heure sans rendez-vous. Et un rappel non envoyé se traduit en no-show, donc en
+# perte de chiffre d'affaires (skill notifications §4).
+#
+# Seuil à zéro : le balayage a lieu une fois par heure et n'a aucune raison de
+# lever. La fonction ne boucle pas et ne rattrape rien — elle lève, EventBridge
+# Scheduler réessaie selon `reminder_max_retry_attempts`, et cette alarme le dit.
+#
+# `notBreaching` sur la donnée absente : le planning est **désactivé** tant que
+# `reminder_sweep_url` n'est pas renseignée, et une alarme en `INSUFFICIENT_DATA`
+# permanente sur les environnements non branchés apprendrait à l'équipe à ne plus
+# la regarder.
+resource "aws_cloudwatch_metric_alarm" "reminder_sweeper_errors" {
+  alarm_name        = "${local.alarm_prefix}-reminder-sweeper-errors"
+  alarm_description = "Le balayage des rappels J-1 (${local.reminder_sweeper_function_name}) a levé : aucun rappel n'a été publié pour l'heure concernée, et la fenêtre `[+24 h, +25 h)` ne repassera pas."
+
+  namespace   = "AWS/Lambda"
+  metric_name = "Errors"
+  dimensions = {
+    FunctionName = aws_lambda_function.reminder_sweeper.function_name
+  }
+
+  statistic           = "Sum"
+  period              = var.alarm_period_seconds
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = var.alarm_topic_arns
+  ok_actions    = var.alarm_topic_arns
+
+  tags = {
+    Name = "${local.alarm_prefix}-reminder-sweeper-errors"
+  }
+}
+
+# --- 2 ter. Le balayage s'est fait, mais incomplet ----------------------------
+
+# Le plafond serveur a arrêté la sélection avant la fin (#71).
+#
+# L'alarme précédente ne voit **que** les invocations en échec : la métrique
+# `AWS/Lambda Errors` ne compte pas une ligne de journal, fût-elle de niveau
+# `error`. Or un balayage tronqué réussit — il rend un lot, le publie, et sort
+# en 200. Sans cette alarme-ci, le plafond serait exactement ce que
+# `reminder-sweep.service.ts` dit vouloir éviter : « un plafond qu'on atteint
+# sans le savoir ».
+#
+# Ce qui se perd alors ne se rattrape pas : la fenêtre `[+24 h, +25 h)` avance
+# d'une heure au balayage suivant, et les rendez-vous laissés de côté n'y sont
+# plus. Chacun est un rappel jamais envoyé, donc un no-show probable (CDC §1.4).
+#
+# `notBreaching` sur la donnée absente, pour la même raison que l'alarme
+# d'erreurs : le planning est désactivé tant que `reminder_sweep_url` est nulle,
+# et une alarme en `INSUFFICIENT_DATA` permanente s'apprend à ne plus se
+# regarder.
+resource "aws_cloudwatch_metric_alarm" "reminder_sweep_truncated" {
+  alarm_name        = "${local.alarm_prefix}-reminder-sweep-truncated"
+  alarm_description = "Le balayage des rappels J-1 a atteint son plafond : des rendez-vous de la fenêtre `[+24 h, +25 h)` n'ont pas été sélectionnés, et cette fenêtre ne repassera pas."
+
+  namespace   = var.metric_namespace
+  metric_name = "SweepTruncated"
+  dimensions = {
+    Environment = var.environment
+  }
+
+  statistic           = "Sum"
+  period              = var.alarm_period_seconds
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = var.alarm_topic_arns
+  ok_actions    = var.alarm_topic_arns
+
+  tags = {
+    Name = "${local.alarm_prefix}-reminder-sweep-truncated"
+  }
+}
+
 # --- 3. Âge du plus vieux message ---------------------------------------------
 
 # La seule alarme qui voie une chaîne **arrêtée**. La profondeur de file ne suffit
@@ -247,6 +334,49 @@ resource "aws_cloudwatch_dashboard" "notifications" {
           stat   = "p99"
           metrics = [
             ["AWS/Lambda", "Duration", "FunctionName", aws_lambda_function.dispatcher.function_name],
+          ]
+        }
+      },
+      # Le balayage du rappel J-1 (#71) — l'amont de toute la chaîne. Une courbe
+      # plate à zéro sur `RemindersPublished` pendant que les autres bougent est
+      # le signe qu'aucun rappel n'est produit, ce qu'aucun autre panneau ne
+      # dirait : la file resterait simplement vide.
+      {
+        type   = "metric"
+        x      = 0
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Balayage du rappel J-1"
+          region = data.aws_region.current.name
+          view   = "timeSeries"
+          period = var.alarm_period_seconds
+          stat   = "Sum"
+          metrics = [
+            [var.metric_namespace, "RemindersSelected", "Environment", var.environment],
+            [".", "RemindersPublished", ".", "."],
+            [".", "RemindersRejected", ".", "."],
+            [".", "SweepTruncated", ".", "."],
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        x      = 12
+        y      = 12
+        width  = 12
+        height = 6
+        properties = {
+          title  = "Fonction de balayage"
+          region = data.aws_region.current.name
+          view   = "timeSeries"
+          period = var.alarm_period_seconds
+          stat   = "Sum"
+          metrics = [
+            ["AWS/Lambda", "Invocations", "FunctionName", aws_lambda_function.reminder_sweeper.function_name],
+            [".", "Errors", ".", "."],
+            [".", "Throttles", ".", "."],
           ]
         }
       },

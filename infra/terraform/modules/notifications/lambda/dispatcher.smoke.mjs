@@ -45,6 +45,7 @@ const { handler } = await import('./dispatcher/index.mjs');
 const record = (dedupeKey, overrides = {}) => ({
   messageId: dedupeKey,
   body: JSON.stringify({
+    tenantId: 'tenant-1',
     dedupeKey,
     appointmentId: 'rdv-1',
     recipientUserId: 'compte-1',
@@ -79,6 +80,10 @@ const trie = await handler(
       record('reseau-coupe'),
       { messageId: 'illisible', body: '{ pas du json' },
       record('type-inconnu', { type: 'MARKETING' }),
+      // Depuis #71, une enveloppe sans tenant est un échec permanent : le
+      // consommateur ouvre sa portée dessus, et la traiter sans lui serait la
+      // traiter hors portée.
+      record('sans-tenant', { tenantId: '' }),
     ],
   },
   { getRemainingTimeInMillis: () => 30_000 },

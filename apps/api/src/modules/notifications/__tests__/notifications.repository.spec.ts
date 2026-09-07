@@ -210,6 +210,10 @@ function message(overrides: Partial<NotificationMessage> = {}): NotificationMess
   const appointmentId = overrides.appointmentId ?? APPOINTMENT_ID;
 
   return {
+    // Jamais écrit par le dépôt — c'est l'extension de scoping qui pose la
+    // colonne —, mais l'enveloppe le porte depuis #71 pour que le consommateur
+    // de file sache quelle portée ouvrir.
+    tenantId: 'tenant-1',
     dedupeKey: appointmentDedupeKey(appointmentId, type, channel),
     appointmentId,
     recipientUserId: RECIPIENT_ID,

@@ -5,6 +5,8 @@ import {
   cancellationUrl,
   renderBookingConfirmationEmail,
   renderBookingConfirmationSms,
+  renderReminderEmail,
+  renderReminderSms,
 } from './notification-content';
 import { NotificationContextGoneError, UnrenderableNotificationError } from './notifications.errors';
 import { NotificationsRepository } from './notifications.repository';
@@ -53,15 +55,19 @@ export const NOTIFICATION_RENDERER = Symbol('NOTIFICATION_RENDERER');
 /**
  * Le rendu des messages rattachés à un rendez-vous.
  *
- * ## Ce qu'il couvre au périmètre de #70, et ce qu'il refuse
+ * ## Ce qu'il couvre, et ce qu'il refuse
  *
- * `BOOKING_CONFIRMATION` seulement. `REMINDER_24H` et `CANCELLATION` sont les
- * deux autres messages du MVP (CDC §1.4) et ont leurs propres issues ; ce
- * renderer **lève** plutôt que de leur servir la confirmation, parce qu'un
- * rappel J-1 qui dirait « votre rendez-vous est confirmé » serait pire qu'un
- * rappel absent. Le refus laisse la ligne en `FAILED`, donc reprenable dès que
- * le modèle manquant existe (notifications §4) — c'est exactement le régime de
+ * `BOOKING_CONFIRMATION` (#70) et `REMINDER_24H` (#71). `CANCELLATION` est le
+ * troisième message du MVP (CDC §1.4) et a son issue (#72) ; ce renderer **lève**
+ * plutôt que de lui servir un autre modèle, parce qu'un avis d'annulation qui
+ * dirait « nous vous attendons » serait pire qu'un avis absent. Le refus laisse
+ * la ligne en `FAILED`, donc reprenable dès que le modèle manquant existe
+ * (notifications §4) — c'est exactement le régime de
  * `UnconfiguredNotificationSender`.
+ *
+ * Le rappel a son propre modèle et ne réemploie pas celui de la confirmation :
+ * ils affirment deux choses différentes, et un rappel qui annoncerait « votre
+ * rendez-vous est confirmé » ne dirait pas à la cliente ce qu'on attend d'elle.
  *
  * ## Le lien d'annulation vient de la configuration, jamais d'une requête
  *
@@ -79,7 +85,9 @@ export class AppointmentNotificationRenderer implements NotificationRenderer {
   ) {}
 
   public async render(message: NotificationMessage): Promise<RenderedNotification> {
-    if (message.type !== 'BOOKING_CONFIRMATION') {
+    // `CANCELLATION` reste refusé : c'est #72, et lui servir le modèle du rappel
+    // annoncerait un rendez-vous à qui vient de l'annuler.
+    if (message.type !== 'BOOKING_CONFIRMATION' && message.type !== 'REMINDER_24H') {
       throw new UnrenderableNotificationError(message.type);
     }
 
@@ -87,6 +95,12 @@ export class AppointmentNotificationRenderer implements NotificationRenderer {
 
     if (context === null) {
       throw new NotificationContextGoneError(message.appointmentId);
+    }
+
+    if (message.type === 'REMINDER_24H') {
+      return message.channel === 'SMS'
+        ? renderReminderSms(context)
+        : renderReminderEmail(context, cancellationUrl(this.config.appUrl, context.tenantSlug));
     }
 
     if (message.channel === 'SMS') {

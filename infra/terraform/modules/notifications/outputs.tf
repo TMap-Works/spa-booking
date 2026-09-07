@@ -160,6 +160,66 @@ output "dispatcher_log_group_name" {
   value       = aws_cloudwatch_log_group.dispatcher.name
 }
 
+# --- Rappel J-1 ---------------------------------------------------------------
+
+output "reminder_sweeper_function_name" {
+  description = "Nom de la Lambda de balayage — la dimension `FunctionName` de ses métriques, et le nom à donner à `aws logs tail`."
+  value       = aws_lambda_function.reminder_sweeper.function_name
+}
+
+output "reminder_sweeper_function_arn" {
+  description = "ARN de la Lambda de balayage."
+  value       = aws_lambda_function.reminder_sweeper.arn
+}
+
+output "reminder_sweeper_role_arn" {
+  description = "ARN du rôle d'exécution de la Lambda de balayage. C'est lui qui porte la politique de production de la file — jamais celui du planning, qui ne fait qu'invoquer."
+  value       = aws_iam_role.reminder_sweeper.arn
+}
+
+output "reminder_sweeper_log_group_name" {
+  description = "Groupe de journaux du balayage. Les événements structurés y portent `reminder.swept`, `reminder.rejected`, `reminder.sweep_truncated` et `reminder.sweep_failed`."
+  value       = aws_cloudwatch_log_group.reminder_sweeper.name
+}
+
+output "reminder_schedule_name" {
+  description = "Nom du planning EventBridge Scheduler du rappel J-1."
+  value       = aws_scheduler_schedule.reminder.name
+}
+
+output "reminder_schedule_expression" {
+  description = "Expression de planification effectivement posée, évaluée en UTC. Sa période et la largeur de la fenêtre de sélection côté API sont la **même durée** : les faire diverger laisse des rendez-vous sans rappel."
+  value       = aws_scheduler_schedule.reminder.schedule_expression
+}
+
+output "reminder_schedule_state" {
+  description = "`ENABLED` quand la chaîne est branchée, `DISABLED` tant que `reminder_sweep_url` est nulle. Un planning désactivé n'est pas une panne : c'est un environnement où il n'y a rien à rappeler."
+  value       = aws_scheduler_schedule.reminder.state
+}
+
+output "reminder_window_hours" {
+  description = <<-EOT
+    La fenêtre de sélection du rappel, en heures : `[+24 h, +25 h)`, bornes basse
+    incluse et haute exclue, **en UTC**.
+
+    Cette sortie ne configure rien — la fenêtre est écrite dans
+    `apps/api/src/modules/notifications/reminder-window.ts`, où elle est testée.
+    Elle est ici pour que l'écart se voie : la largeur de la fenêtre et la
+    période de `reminder_schedule_expression` sont la même durée vue de deux
+    côtés, et les faire diverger laisse des rendez-vous sans rappel (fenêtre plus
+    étroite que la période) ou en sélectionne deux fois (fenêtre plus large).
+  EOT
+  value = {
+    lead_hours  = 24
+    width_hours = 1
+  }
+}
+
+output "reminder_sweep_configured" {
+  description = "Vrai quand `reminder_sweep_url` est renseignée. Faux, le planning est désactivé et aucun rappel n'est produit — ce qui est le comportement voulu sur un environnement non branché, mais qu'il vaut mieux savoir avant de chercher la panne ailleurs."
+  value       = var.reminder_sweep_url != null
+}
+
 output "dispatch_configured" {
   description = "Vrai quand `dispatch_url` est renseignée. Faux, la fonction est en défaut fermé : elle rend chaque message à SQS, la file vieillit et la DLQ finit par se remplir — ce qui est le comportement voulu, mais qu'il vaut mieux savoir avant de chercher la panne ailleurs."
   value       = var.dispatch_url != null
@@ -168,12 +228,14 @@ output "dispatch_configured" {
 # --- Supervision --------------------------------------------------------------
 
 output "alarm_names" {
-  description = "Les quatre alarmes de la chaîne, dans l'ordre où elles se déclenchent quand la chaîne se dégrade : refus définitifs, retard, plantage, bout de course."
+  description = "Les six alarmes de la chaîne, dans l'ordre du trajet d'un message : balayage jamais fait, balayage incomplet, refus définitifs, retard, plantage de l'envoi, bout de course."
   value = {
-    permanent_failures = aws_cloudwatch_metric_alarm.permanent_failures.alarm_name
-    backlog_age        = aws_cloudwatch_metric_alarm.backlog_age.alarm_name
-    dispatcher_errors  = aws_cloudwatch_metric_alarm.dispatcher_errors.alarm_name
-    dlq_depth          = aws_cloudwatch_metric_alarm.dlq_depth.alarm_name
+    reminder_sweeper_errors  = aws_cloudwatch_metric_alarm.reminder_sweeper_errors.alarm_name
+    reminder_sweep_truncated = aws_cloudwatch_metric_alarm.reminder_sweep_truncated.alarm_name
+    permanent_failures       = aws_cloudwatch_metric_alarm.permanent_failures.alarm_name
+    backlog_age              = aws_cloudwatch_metric_alarm.backlog_age.alarm_name
+    dispatcher_errors        = aws_cloudwatch_metric_alarm.dispatcher_errors.alarm_name
+    dlq_depth                = aws_cloudwatch_metric_alarm.dlq_depth.alarm_name
   }
 }
 

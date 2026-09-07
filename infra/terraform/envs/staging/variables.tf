@@ -121,3 +121,29 @@ variable "notification_dispatch_token_secret_arn" {
     error_message = "notification_dispatch_token_secret_arn doit être `null` ou un ARN Secrets Manager (`arn:aws:secretsmanager:…`)."
   }
 }
+
+variable "notification_reminder_sweep_url" {
+  description = <<-EOT
+    URL de la route **interne** de balayage du rappel J-1 servie par l'API —
+    `https://…/api/v1/notifications/reminders/sweep`. La Lambda de balayage
+    l'appelle une fois par heure, présente `notification_dispatch_token_secret_arn`
+    dans l'en-tête `x-internal-token`, et publie sur la file ce que l'API lui rend.
+
+    `null` — le défaut — laisse le **planning désactivé**. Le contraste avec
+    `notification_dispatch_url` est voulu : là-bas, le défaut fermé se voit dans
+    la profondeur de la DLQ, ce qui est exactement ce qu'on veut d'une chaîne
+    non branchée. Ici, un balayage sans destination lèverait à chaque heure et
+    ferait sonner son alarme d'erreurs indéfiniment sur un environnement où il
+    n'y a rien à rappeler — c'est-à-dire qu'il apprendrait à l'équipe à ne plus
+    la regarder. Le planning existe quand même, écrit en IaC ; il ne déclenche
+    rien tant que cette valeur n'est pas posée, et la sortie
+    `notification_reminder_sweep_configured` le dit.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.notification_reminder_sweep_url == null || can(regex("^https://", var.notification_reminder_sweep_url))
+    error_message = "notification_reminder_sweep_url doit être `null` ou une URL en `https://` — un appel en clair porterait le jeton d'appel interne sur le réseau."
+  }
+}

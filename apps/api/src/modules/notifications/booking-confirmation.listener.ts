@@ -179,6 +179,10 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
     channel: NotificationChannel,
   ): Promise<void> {
     const message: NotificationMessage = {
+      // Le même identifiant que celui dont `handle` ouvre la portée. Il ne sert
+      // à rien tant que la publication est en mémoire ; il sert à tout le jour où
+      // elle passe par SQS, et c'est justement ce que #71 met en service.
+      tenantId: event.tenantId,
       dedupeKey: appointmentDedupeKey(event.appointmentId, 'BOOKING_CONFIRMATION', channel),
       appointmentId: event.appointmentId,
       recipientUserId: event.clientId,

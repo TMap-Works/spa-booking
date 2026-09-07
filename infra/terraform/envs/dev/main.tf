@@ -253,6 +253,14 @@ module "notifications" {
   dispatch_url              = var.notification_dispatch_url
   dispatch_token_secret_arn = var.notification_dispatch_token_secret_arn
 
+  # --- Rappel J-1 : balayage horaire (#71) ---
+  #
+  # Le planning EventBridge Scheduler existe dans tous les cas ; il reste
+  # désactivé tant que cette URL est nulle. Les deux fonctions de la chaîne
+  # présentent le même jeton à la même API — un seul secret, une seule
+  # frontière de confiance, une seule rotation.
+  reminder_sweep_url = var.notification_reminder_sweep_url
+
   # --- Canal SMS (#66) ---
 
   # `manage_sms_account_preferences` reste au défaut — faux. Le réglage SMS d'SNS
@@ -459,14 +467,30 @@ module "ecs_service" {
 
       # Résolus par l'agent ECS au démarrage, à partir des clés JSON du secret
       # d'exécution. Aucune valeur ne transite par l'état ni par la console ECS.
-      secret_arns = {
-        API_URL            = "${aws_secretsmanager_secret.api_runtime.arn}:API_URL::"
-        APP_URL            = "${aws_secretsmanager_secret.api_runtime.arn}:APP_URL::"
-        DATABASE_URL       = "${aws_secretsmanager_secret.api_runtime.arn}:DATABASE_URL::"
-        JWT_REFRESH_SECRET = "${aws_secretsmanager_secret.api_runtime.arn}:JWT_REFRESH_SECRET::"
-        JWT_SECRET         = "${aws_secretsmanager_secret.api_runtime.arn}:JWT_SECRET::"
-        REDIS_URL          = "${aws_secretsmanager_secret.api_runtime.arn}:REDIS_URL::"
-      }
+      secret_arns = merge(
+        {
+          API_URL            = "${aws_secretsmanager_secret.api_runtime.arn}:API_URL::"
+          APP_URL            = "${aws_secretsmanager_secret.api_runtime.arn}:APP_URL::"
+          DATABASE_URL       = "${aws_secretsmanager_secret.api_runtime.arn}:DATABASE_URL::"
+          JWT_REFRESH_SECRET = "${aws_secretsmanager_secret.api_runtime.arn}:JWT_REFRESH_SECRET::"
+          JWT_SECRET         = "${aws_secretsmanager_secret.api_runtime.arn}:JWT_SECRET::"
+          REDIS_URL          = "${aws_secretsmanager_secret.api_runtime.arn}:REDIS_URL::"
+        },
+        # Le jeton que les deux fonctions Lambda de la chaîne présentent dans
+        # `x-internal-token` (#71). Sans cette clé résolue dans la tâche, la garde
+        # d'appel interne ne connaît aucun jeton attendu et refuse chaque balayage
+        # en 503 — aucun rappel J-1 ne part.
+        #
+        # Exigée **seulement** quand la chaîne du rappel est branchée, et c'est ce
+        # que la condition protège : une clé absente du JSON du secret empêche la
+        # tâche ECS de démarrer, et l'API entière tomberait pour une capacité que
+        # cet environnement n'utilise pas encore. La poser en même temps que
+        # `notification_reminder_sweep_url` couple l'exigence au geste qui la crée
+        # — l'opérateur qui renseigne l'URL est celui qui dépose le jeton.
+        var.notification_reminder_sweep_url == null ? {} : {
+          NOTIFICATIONS_INTERNAL_TOKEN = "${aws_secretsmanager_secret.api_runtime.arn}:NOTIFICATIONS_INTERNAL_TOKEN::"
+        },
+      )
     }
   }
 }

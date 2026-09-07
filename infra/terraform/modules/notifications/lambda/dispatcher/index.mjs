@@ -158,6 +158,11 @@ function envelopeRejection(message) {
   if (typeof message !== 'object' || message === null || Array.isArray(message)) {
     return 'payload-not-an-object';
   }
+  // `tenantId` depuis #71 : c'est la seule chose de l'enveloppe qui ne se relise
+  // pas côté API. Le consommateur ouvre sa portée de tenant dessus, et une
+  // enveloppe qui en manquerait ferait ou bien échouer la lecture, ou bien —
+  // beaucoup plus grave — la faire hors portée.
+  if (!isNonEmptyString(message.tenantId)) return 'missing-tenant-id';
   if (!isNonEmptyString(message.dedupeKey)) return 'missing-dedupe-key';
   if (!isNonEmptyString(message.appointmentId)) return 'missing-appointment-id';
   if (!isNonEmptyString(message.recipientUserId)) return 'missing-recipient-user-id';
@@ -238,6 +243,7 @@ async function handleRecord(record) {
   // coordonnée, c'est la règle du contrat côté API.
   const context = {
     messageId: record.messageId,
+    tenantId: message.tenantId,
     dedupeKey: message.dedupeKey,
     appointmentId: message.appointmentId,
     type: message.type,

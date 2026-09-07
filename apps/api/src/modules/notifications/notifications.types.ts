@@ -69,6 +69,29 @@ export type LiveNotificationStatus = (typeof LIVE_NOTIFICATION_STATUSES)[number]
  */
 export interface NotificationMessage {
   /**
+   * L'établissement concerné — la **seule** chose qui ne se relit pas.
+   *
+   * Tout le reste de ce module lit la base par le client scopé, lequel exige une
+   * portée de tenant ouverte. Un message de file n'en hérite d'aucune : il est
+   * consommé hors de toute requête HTTP, par une Lambda qui n'a ni jeton ni
+   * `AsyncLocalStorage` à reprendre. Sans ce champ, le consommateur n'aurait
+   * qu'un choix — deviner le tenant par une lecture **non scopée** du
+   * rendez-vous —, c'est-à-dire ouvrir dans la chaîne d'envoi exactement le genre
+   * de chemin que tenant-isolation §3 cherche à supprimer.
+   *
+   * C'est le raisonnement que `AppointmentCreatedEvent` tient déjà mot pour mot :
+   * il porte `tenantId` « précisément » parce que « le jour où l'événement
+   * viendra d'une file, il n'y aura plus aucune requête ni aucun
+   * `AsyncLocalStorage` à hériter ». Ce jour-là est celui du rappel J-1 (#71),
+   * qui est le premier message réellement publié sur SQS.
+   *
+   * Il n'entre pas dans `dedupeKey` pour autant : la colonne `tenant_id` est déjà
+   * dans les deux uniques de la table, et l'y recopier n'ajouterait qu'une
+   * occasion de divergence.
+   */
+  readonly tenantId: string;
+
+  /**
    * L'identité de la livraison, telle que le producteur la compose.
    *
    * Portée par `(tenant_id, dedupe_key)` en base. Distincte de l'invariant
@@ -91,6 +114,56 @@ export interface NotificationMessage {
    * `null` pour un message immédiat.
    */
   readonly scheduledFor: Date | null;
+}
+
+/**
+ * Un rendez-vous que le balayage horaire a retenu pour son rappel J-1 (#71).
+ *
+ * C'est la **vue du producteur**, et elle ne ressemble pas par hasard à
+ * `AppointmentCreatedEvent` : les deux désignent un rendez-vous et sa cliente
+ * sans rien porter qui puisse dériver. Ni nom, ni adresse, ni numéro —
+ * `hasEmail` et `hasSms` sont ce qui reste d'une coordonnée une fois qu'on lui a
+ * demandé la seule chose dont le choix des canaux ait besoin : existe-t-elle, et
+ * est-elle composable (notifications §7).
+ *
+ * `tenantId` y figure — contrairement à tout le reste du module — parce que le
+ * balayage est le seul traitement inter-tenant de la chaîne : il ouvre une
+ * portée de tenant par établissement, et il lui faut donc le nommer.
+ */
+export interface DueReminder {
+  readonly tenantId: string;
+  readonly appointmentId: string;
+  /** Le compte destinataire du rappel — la cliente du rendez-vous. */
+  readonly clientId: string;
+  /** Début de la ligne d'agenda, en UTC. Sert à composer `scheduledFor`. */
+  readonly startsAt: Date;
+  readonly hasEmail: boolean;
+  readonly hasSms: boolean;
+  /**
+   * Les canaux qu'un rappel **vivant** couvre déjà — vide au premier balayage.
+   *
+   * La couverture se compte par canal, jamais par rendez-vous : un balayage
+   * rejoué après une publication partielle trouverait sinon le rappel e-mail
+   * déjà pris et en conclurait, à tort, que le SMS l'est aussi. Le canal
+   * manquant ne serait alors republié par personne — la fenêtre suivante ne
+   * couvre plus ce rendez-vous.
+   */
+  readonly liveChannels: readonly NotificationChannel[];
+}
+
+/**
+ * Ce qu'il faut savoir d'un rendez-vous **au moment d'envoyer** son rappel.
+ *
+ * Deux champs, et deux critères d'acceptation de #71 : le statut répond à « ce
+ * rendez-vous existe-t-il encore ? », l'heure de début à « le rappel est-il
+ * encore à l'heure ? ». Le verdict, lui, appartient à `reminder-window.ts` et à
+ * `appointment-status.ts` — cette structure ne fait que porter la lecture.
+ */
+export interface ReminderEligibility {
+  /** Statut du rendez-vous, tel que `AppointmentStatus` le nomme. */
+  readonly status: string;
+  /** Début de la ligne d'agenda, en UTC — jamais une heure locale. */
+  readonly startsAt: Date;
 }
 
 /** Une ligne de `notifications`, réduite à ce dont le domaine a besoin. */

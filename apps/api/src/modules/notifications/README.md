@@ -9,9 +9,85 @@ canaux, rien de plus — le marketing et les campagnes sont hors périmètre MVP
 |---|---|
 | #68 | La table `notifications` complétée, l'**index unique partiel** qui porte l'idempotence, l'ordre d'écriture `PENDING → fournisseur → SENT`, et la reprise d'un envoi échoué |
 | #70 | La **confirmation de réservation** — abonnement à `appointment.created`, rendu du message (récapitulatif, lien d'annulation, heure dans le fuseau du salon), choix des canaux, et `GET /notifications` pour le back-office |
+| #71 | Le **rappel J-1** — la fenêtre `[+24 h, +25 h)` en UTC, le balayage inter-tenant, la revérification du rendez-vous au moment de l'envoi, le modèle de rappel, et la route interne que le planning EventBridge appelle |
 
-À venir : les passerelles SES et SNS, la Lambda d'envoi, les modèles de message
-par établissement, et le balayage horaire du rappel J-1.
+À venir : les passerelles SES et SNS, les modèles de message par établissement
+(#69), l'avis d'annulation (#72) et le traitement des rebonds (#73).
+
+## Le rappel J-1, de bout en bout (#71)
+
+```
+EventBridge Scheduler        Lambda de balayage              ce module
+ cron(0 * * * ? *) UTC              │                            │
+        │                           │                            │
+        └──── invoke ───────────────┤                            │
+                                    ├── POST /notifications/reminders/sweep ──┐
+                                    │                            │            │
+                                    │                    ReminderSweepService │
+                                    │                    · fenêtre [+24, +25) │
+                                    │                    · une portée par salon
+                                    │                    · une enveloppe par canal
+                                    │                            │            │
+                                    ◄──────── enveloppes ────────┘◄───────────┘
+                                    │
+                                    └── SendMessageBatch ──► SQS ──► Lambda d'envoi
+                                                                          │
+                                                                 NotificationDispatchService
+                                                                 · revérifie le rendez-vous
+                                                                 · claim → render → send → SENT
+```
+
+### Les quatre critères, et où chacun se décide
+
+| Critère | Où | Ce qui le prouve |
+|---|---|---|
+| fenêtre `now+24h → now+25h` **en UTC** | `reminder-window.ts` | `__tests__/reminder-window.spec.ts` |
+| un rendez-vous pris à moins de 24 h n'a jamais de rappel | `reminder-window.ts` | la même suite : l'écart ne fait que décroître, et vingt-quatre balayages successifs sont éprouvés |
+| revérification du statut **au moment de l'envoi** | `NotificationDispatchService.reminderStillDue` | `__tests__/notification-dispatch.service.spec.ts` |
+| aucun rappel envoyé en retard | `reminderTiming` | la même suite, et l'écart de tolérance y est nommé |
+
+### La fenêtre est en UTC, et il n'y a rien à convertir
+
+`reminder-window.ts` ne manipule que des `Date`, c'est-à-dire des **instants**.
+Il n'appelle ni `getHours()`, ni `Intl` : « dans 24 heures » vaut 24 heures
+partout, y compris la nuit où le salon en vit 23 ou 25. C'est le rendu du
+message, et lui seul, qui passe par le fuseau de l'établissement.
+
+### Le balayage est inter-tenant ; ses lectures ne le sont pas
+
+`ReminderSweepRepository` est le seul fichier du module qui injecte le client non
+scopé — et il ne s'en sert que pour lire **la liste des identifiants de salons**.
+Les rendez-vous, eux, se lisent salon par salon, dans une portée ouverte par
+`ReminderSweepService`, exactement comme dans une requête HTTP.
+
+Deux raisons, et la seconde n'est pas la moindre : une requête inter-tenant sur
+`starts_at` aurait été un parcours complet de table — tous les index
+d'`appointments` sont préfixés de `tenant_id` — et elle aurait mis dans la chaîne
+d'envoi un `where` écrit à la main dont l'oubli serait une fuite.
+
+### La revérification à l'envoi passe avant la prise de droit
+
+Un rappel supprimé ne laisse **aucune ligne**. La placer après `claim()` aurait
+inscrit un `PENDING` qu'il aurait fallu défaire, et le seul statut disponible
+pour cela est `FAILED` — qui affiche « échec » au comptoir pour une décision qui
+n'en est pas un. Le schéma ne connaît pas de `SUPPRESSED`, et l'ajouter serait
+une migration.
+
+Elle ne rouvre aucune fenêtre d'idempotence : la prise de droit précède toujours
+l'appel au fournisseur.
+
+### Ce que la route interne n'est pas
+
+`POST /api/v1/notifications/reminders/sweep` n'écrit rien, n'envoie rien, et
+n'est pas une route de back-office. Elle est gardée par un **jeton partagé**
+(`x-internal-token`), pas par un rôle : l'appelant est une fonction Lambda sans
+compte, sans rôle et sans établissement, et le balayage les traverse tous. Voir
+`internal-caller.guard.ts`, qui explique aussi pourquoi la comparaison se fait à
+temps constant sur des condensats.
+
+Sans jeton configuré, elle répond **503** — défaut fermé. C'est le même régime
+que `UnconfiguredNotificationSender`, et non un refus de démarrer : une variable
+de notifications n'a pas à conditionner le démarrage des sept autres modules.
 
 ## La confirmation, de bout en bout (#70)
 
@@ -189,13 +265,18 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
 |---|---|
 | `notifications.types.ts` | Le vocabulaire du domaine |
 | `notifications.repository.ts` | Le seul fichier qui connaisse le schéma ; porte `claim()` |
-| `notification-dispatch.service.ts` | L'ordre d'écriture, et rien d'autre |
+| `notification-dispatch.service.ts` | L'ordre d'écriture, et la revérification du rappel à l'envoi |
+| `reminder-window.ts` | La règle horaire du rappel J-1 — fonctions pures, UTC |
+| `reminder-sweep.repository.ts` | Le balayage : la **seule** injection du client non scopé du module |
+| `reminder-sweep.service.ts` | Une portée par salon, une enveloppe par canal |
+| `internal-caller.guard.ts` | La garde à jeton partagé des routes internes |
+| `notifications.config.ts` | Le jeton d'appel interne, résolu et validé |
 | `notification-sender.ts` | Le **port** vers SES/SNS, et son implémentation par défaut qui refuse |
 | `notification-renderer.ts` | Le **port** de rendu, et son implémentation pour les messages de rendez-vous |
 | `notification-content.ts` | Les modèles — des fonctions pures, sans Nest ni Prisma |
 | `booking-confirmation.listener.ts` | L'abonné à `appointment.created` |
 | `notifications.service.ts` | La lecture du journal, et son plafond |
-| `notifications.controller.ts` | `GET /notifications`, et rien d'autre |
+| `notifications.controller.ts` | `GET /notifications` et la route interne de balayage |
 | `notifications.errors.ts` | Le catalogue d'erreurs du module |
 
 ## Ce que ce module ne fait pas, délibérément
@@ -209,12 +290,13 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
 - **Aucune coordonnée en base ni dans les messages de file.** Le destinataire est
   désigné par l'identifiant de son compte ; l'adresse se relit dessus au moment
   de l'envoi (CDC §5.1, notifications §7).
-- **Aucune revérification du statut du rendez-vous.** Un rappel ne doit pas
-  partir si le rendez-vous a été annulé entre la sélection et l'envoi
-  (notifications §3) — c'est une règle du **producteur**, et elle appartient au
-  ticket de la Lambda de rappel. Le rendu lit bien le rendez-vous depuis #70 — il
-  faut son heure et sa prestation pour composer le message — mais il ne juge pas
-  de son statut : c'est une lecture d'affichage, pas une décision d'envoi.
+- **Aucune revérification du statut hors du rappel J-1.** #68 renvoyait cette
+  règle au « producteur » ; #71 l'a instruite là où elle se décide — à l'envoi,
+  dans `NotificationDispatchService`, et pour le seul type `REMINDER_24H`. Une
+  confirmation part même si le rendez-vous vient d'être annulé : elle est la
+  preuve d'une réservation qui a bien eu lieu. Le rendu, lui, ne juge toujours
+  pas du statut : il lit le rendez-vous pour son heure et sa prestation, c'est
+  une lecture d'affichage.
 - **Aucun lien d'annulation signé.** Le lien de la confirmation pointe l'espace
   client (`/{slug}/compte`), où chaque rendez-vous à venir porte son bouton
   « Annuler ». Une URL signée qui annulerait en un clic ajouterait un secret à
