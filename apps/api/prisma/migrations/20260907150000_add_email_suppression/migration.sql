@@ -1,0 +1,93 @@
+-- Suppression des adresses mortes — #73, notifications §5, CDC §6.
+--
+-- « Continuer à écrire à une adresse morte dégrade la réputation d'envoi de tout
+-- le domaine. » C'est l'énoncé du ticket, et c'est aussi la raison pour laquelle
+-- cette migration ne concerne pas seulement les clientes d'un salon : la
+-- réputation SES est celle du domaine d'envoi, partagée par tous les
+-- établissements. Un salon qui écrit à une boîte inexistante fait finir en spam
+-- les rappels J-1 de tous les autres.
+--
+-- ## Ce que la migration ajoute, et pourquoi si peu
+--
+-- Un type et deux colonnes nullables sur `users`. Rien d'autre — ni table, ni
+-- index, ni contrainte.
+--
+-- ### Pourquoi pas une table `email_suppressions`
+--
+-- Parce qu'elle aurait dû **recopier l'adresse** pour être utile. Une liste de
+-- suppression se consulte par adresse : sans la colonne `email`, la table
+-- n'aurait su répondre qu'« ce compte-ci est supprimé », ce que deux colonnes sur
+-- `users` disent déjà, sans dupliquer une donnée personnelle dans une seconde
+-- table à faire vivre au même rythme que la première (RGPD, CDC §5.1).
+--
+-- C'est le raisonnement qui a déjà porté `internal_note` (#56) et
+-- `marketing_consent` (#81) sur `users` plutôt que sur une table dédiée : le CDC
+-- §1.4 borne le MVP à un « CRM client de base », et une fiche cliente **est** une
+-- ligne `users`.
+--
+-- Porter la suppression sur `users` la rend aussi **par établissement** sans rien
+-- ajouter : la ligne a déjà son `tenant_id` non nullable et sa clé étrangère vers
+-- `tenants`, et l'unique `(tenant_id, email)` de la migration initiale est
+-- exactement la clé de lecture dont l'ingestion a besoin (tenant-isolation §1).
+--
+-- ### Pourquoi aucun index
+--
+-- Les deux seules lectures passent par la clé : l'expédition relit le compte
+-- destinataire par son `id`, l'ingestion d'un rebond cherche l'adresse par
+-- `(tenant_id, email)` — l'unique que la migration initiale a déjà posé. Un index
+-- sur `email_suppressed_at` ne servirait qu'à lister les adresses supprimées d'un
+-- salon, ce qu'aucun écran ne demande, et il coûterait une écriture de plus à
+-- chaque mise à jour de compte.
+--
+-- ## Pourquoi le type est un `ENUM` et non une chaîne libre
+--
+-- Deux valeurs, et la frontière entre elles est le troisième critère
+-- d'acceptation du ticket : « distinction entre échecs permanents et
+-- transitoires ». Une chaîne libre aurait laissé le sous-type SES du jour
+-- (`General`, `NoEmail`, `Suppressed`, `OnAccountSuppressionList`, `abuse`,
+-- `not-spam`…) s'écrire tel quel en base, et la question « cette adresse est-elle
+-- définitivement morte ? » se serait alors répondue par une comparaison de
+-- chaînes disséminée dans le code.
+--
+-- Un rebond `Transient` — boîte pleine, serveur momentanément indisponible — ne
+-- produit **aucune** ligne ici : il n'a pas de valeur dans ce type, et c'est
+-- délibéré. Priver une cliente de ses confirmations parce que sa boîte a été
+-- pleine deux jours serait plus coûteux que le rebond lui-même.
+--
+-- ## Purement additive, et réversible
+--
+-- Un `CREATE TYPE` et deux `ADD COLUMN` nullables sans valeur par défaut :
+-- PostgreSQL ne réécrit pas la table depuis la version 11, le verrou est bref, et
+-- aucune ligne existante ne change de sens — `NULL` se lit « adresse vivante »,
+-- qui est l'état de toutes.
+--
+-- L'inverse exact est le retrait des deux colonnes puis du type, et il ne perd
+-- que les suppressions déjà collectées. Le retour arrière du **code** seul est
+-- sans effet de bord : la version antérieure ignore les colonnes, et le pire qui
+-- puisse en découler est qu'elle réécrive à une adresse morte — c'est-à-dire
+-- exactement ce qu'elle faisait avant ce ticket.
+--
+-- ## Ce qui reste vrai du reste du schéma
+--
+-- Aucune table n'est créée : `prisma-schema.spec.ts` continue de compter les
+-- tables qu'il connaît, et son contrôle « tout index commence par `tenant_id` »
+-- n'a rien de neuf à examiner. Les deux colonnes, elles, passent sous son
+-- contrôle des instants — `email_suppressed_at` est un `TIMESTAMPTZ`, jamais un
+-- `TIMESTAMP` : une suppression datée en heure murale se lirait à deux instants
+-- différents selon le fuseau du salon qui la relit.
+
+-- CreateEnum
+CREATE TYPE "EmailSuppressionReason" AS ENUM ('HARD_BOUNCE', 'COMPLAINT');
+
+-- AlterTable
+--
+-- Les deux colonnes sont nulles ou renseignées **ensemble** : une adresse
+-- supprimée sans motif ne dirait pas au comptoir ce qu'il faut expliquer à la
+-- cliente, et un motif sans date ne dirait pas depuis quand. L'invariant est tenu
+-- par l'unique écriture qui les pose (`DeliveryEventRepository.suppressEmails`) et
+-- par la suite qui l'exerce ; il n'est pas porté par un `CHECK`, parce qu'une
+-- contrainte de plus sur `users` se paierait sur chaque écriture de fiche pour
+-- garder d'un chemin d'écriture qui n'existe qu'une fois.
+ALTER TABLE "users"
+    ADD COLUMN "email_suppressed_at" TIMESTAMPTZ(6),
+    ADD COLUMN "email_suppression_reason" "EmailSuppressionReason";
