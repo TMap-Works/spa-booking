@@ -96,10 +96,18 @@ journaux, monitoring renforcé, paramètres additionnels — est documenté dans
 
 ## Sorties
 
-`instance_id`, `instance_arn`, `address`, `port`, `endpoint`, `database_name`,
+`instance_id`, `instance_arn`, `resource_id`, `address`, `port`, `endpoint`,
+`database_name`, `instance_class`, `allocated_storage`, `max_allocated_storage`,
 `master_username`, `master_user_secret_arn`, `security_group_id`, `kms_key_arn`,
 `subnet_group_name`, `parameter_group_name`, `allowed_extensions`,
 `cloudwatch_log_group_names`.
+
+Trois de plus servent la reprise d'activité, et se lisent avant l'incident et non
+pendant : `backup_retention_period` — jusqu'où la restauration à un instant donné
+peut remonter —, `multi_az` — bascule automatique ou restauration complète — et
+`availability_zone` — la zone de départ, dont une bascule change la valeur. Le
+runbook [pra-restauration-rds.md](../../../../docs/runbooks/pra-restauration-rds.md)
+les prend pour vérification préalable.
 
 Aucune sortie ne porte de secret. `master_user_secret_arn` désigne où le lire.
 

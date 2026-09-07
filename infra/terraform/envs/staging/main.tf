@@ -135,3 +135,33 @@ module "notifications" {
 # déclenche en fonctionnement nominal.
 #
 # Voir infra/terraform/modules/observability/README.md.
+
+# --- Sauvegarde et reprise d'activité (#82) -----------------------------------
+
+# `../../modules/backup` n'est pas composé ici : il n'y a pas encore de base à
+# protéger dans cet environnement. Le bloc arrive avec `module "database"`, dans
+# le même `apply` — un coffre sans sélection ne sauvegarde rien tout en ayant
+# l'air en place.
+#
+#   module "backup" {
+#     source = "../../modules/backup"
+#
+#     environment          = local.environment
+#     resource_arns        = [module.database.instance_arn]
+#     restore_kms_key_arns = [module.database.kms_key_arn]
+#
+#     # Rétentions de recette : la forme de la production — les quatre cadences —
+#     # à une échelle qui ne se paie pas au gibioctet-mois pendant un an. C'est
+#     # ici que le runbook de restauration se répète avant d'être joué en
+#     # production, et pour cela deux semaines de points suffisent.
+#     continuous_backup_retention_days = 14
+#     daily_retention_days             = 14
+#     weekly_retention_days            = 35
+#     monthly_retention_days           = 0
+#
+#     alarm_topic_arns = [module.budgets.alerts_topic_arn]
+#   }
+#
+# La recette est l'environnement où la procédure se répète : elle porte de vraies
+# données de recette, et elle n'a pas de client au bout. Voir
+# docs/runbooks/pra-restauration-rds.md.

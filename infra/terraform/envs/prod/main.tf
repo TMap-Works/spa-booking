@@ -168,3 +168,50 @@ module "notifications" {
 # Le traçage X-Ray suit le même chemin : `xray_tracing_enabled` sur le service
 # `api` du module `ecs-service`, et la règle d'échantillonnage vient avec le
 # module. Voir infra/terraform/modules/observability/README.md.
+
+# --- Sauvegarde et reprise d'activité (#82) -----------------------------------
+
+# `../../modules/backup` n'est pas composé ici pour la même raison que
+# l'observabilité : il n'y a pas encore de base à protéger dans cet
+# environnement. Et le module refuserait de l'être — une précondition rejette un
+# plan de production sans sélection, parce qu'un coffre vide passe tous les
+# contrôles et ne restaure rien.
+#
+# Le bloc à coller **dans le même `apply` que `module "database"`**, et non après :
+#
+#   module "backup" {
+#     source = "../../modules/backup"
+#
+#     environment          = local.environment
+#     resource_arns        = [module.database.instance_arn]
+#     restore_kms_key_arns = [module.database.kms_key_arn]
+#
+#     # Politique de rétention unifiée de la production (CDC §4.14). La règle
+#     # continue est la seule qui tienne le RPO ≤ 1 h ; les préconditions du
+#     # module refusent de la désactiver ici, et refusent une rétention
+#     # quotidienne sous 30 jours.
+#     continuous_backup_retention_days = 35
+#     daily_retention_days             = 35
+#     weekly_retention_days            = 90
+#     monthly_retention_days           = 365
+#
+#     # Verrou de gouvernance : plus personne ne raccourcit une rétention ni ne
+#     # supprime un point avant son terme sans lever le verrou d'abord. Le mode
+#     # conformité, lui, n'est pas exposé par le module — il est irréversible.
+#     vault_lock = {
+#       min_retention_days = 30
+#       max_retention_days = 400
+#     }
+#
+#     alarm_topic_arns = [module.budgets.alerts_topic_arn]
+#   }
+#
+# `force_destroy` reste au défaut — faux —, et une précondition l'y tient.
+#
+# Ce n'est pas une amélioration à programmer ensuite : la restauration est un
+# **prérequis de go-live** du CDC §4.14, au même titre que les alarmes. Les
+# procédures qui s'appuient sur ce coffre sont écrites et prêtes :
+# docs/runbooks/pra-restauration-rds.md et docs/runbooks/pra-bascule-az.md.
+# Elles restent à exercer réellement sur cet environnement — c'est le critère
+# « restauration effectivement testée » de #82, que ce dépôt ne peut pas tenir
+# sans accès AWS.

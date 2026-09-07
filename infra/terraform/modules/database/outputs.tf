@@ -4,8 +4,13 @@ output "instance_id" {
 }
 
 output "instance_arn" {
-  description = "ARN de l'instance, à cibler dans une politique IAM ou une alarme CloudWatch."
+  description = "ARN de l'instance, à cibler dans une politique IAM, une alarme CloudWatch ou une sélection AWS Backup."
   value       = aws_db_instance.this.arn
+}
+
+output "resource_id" {
+  description = "Identifiant de ressource — `db-XXXX…`, stable même si l'instance est renommée. C'est cette forme, et non l'identifiant, qu'attend l'ARN d'une politique d'authentification IAM et que porte un point de restauration AWS Backup."
+  value       = aws_db_instance.this.resource_id
 }
 
 output "address" {
@@ -81,4 +86,26 @@ output "allowed_extensions" {
 output "cloudwatch_log_group_names" {
   description = "Groupes de journaux CloudWatch alimentés par l'instance, par type de journal."
   value       = { for type, group in aws_cloudwatch_log_group.this : type => group.name }
+}
+
+# --- Reprise d'activité (CDC §4.14) -------------------------------------------
+#
+# Ces trois sorties existent pour la vérification préalable du runbook de
+# restauration : elles disent, sans ouvrir la console AWS et sans lire le code du
+# module, jusqu'où la base peut être ramenée en arrière et ce qui se passe à la
+# perte d'une zone. Voir docs/runbooks/pra-restauration-rds.md.
+
+output "backup_retention_period" {
+  description = "Rétention des sauvegardes automatiques, en jours. C'est **elle** qui borne la restauration à un instant donné : au-delà, il ne reste que les instantanés manuels et le coffre AWS Backup. Zéro désactiverait la restauration à un instant donné — la validation de la variable l'interdit."
+  value       = aws_db_instance.this.backup_retention_period
+}
+
+output "multi_az" {
+  description = "Vrai quand une instance de secours veille dans une seconde zone. C'est ce qui fait la différence entre une bascule automatique de quelques minutes et une restauration complète en cas de panne de zone (CDC §4.14)."
+  value       = aws_db_instance.this.multi_az
+}
+
+output "availability_zone" {
+  description = "Zone où siège l'instance primaire. À relever **avant** un incident : après une bascule, cette valeur a changé, et savoir d'où l'on est parti est ce qui permet de dire si la bascule a bien eu lieu."
+  value       = aws_db_instance.this.availability_zone
 }
