@@ -17,6 +17,8 @@ locals {
 
   dispatcher_function_name = "${local.name_prefix}-notification-dispatcher"
 
+  reminder_sweeper_function_name = "${local.name_prefix}-reminder-sweeper"
+
   # Six fois le délai de la fonction, comme AWS le recommande pour une source
   # SQS. La règle n'est pas arbitraire : si la fonction est tuée sur un délai
   # dépassé, le message ne doit redevenir visible qu'une fois l'invocation

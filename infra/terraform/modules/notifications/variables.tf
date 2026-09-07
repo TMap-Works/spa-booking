@@ -449,6 +449,120 @@ variable "dispatch_timeout_ms" {
   }
 }
 
+# --- Rappel J-1 (#71) ---------------------------------------------------------
+
+variable "reminder_sweep_url" {
+  description = <<-EOT
+    URL de la route **interne** de balayage servie par l'API —
+    `https://…/api/v1/notifications/reminders/sweep` —, appelée une fois par
+    heure par la Lambda de balayage.
+
+    `null` — le défaut — laisse le planning **désactivé**. Ce n'est pas un défaut
+    ouvert : la fonction lèverait à chaque heure sans destination, et son alarme
+    d'erreurs sonnerait indéfiniment sur un environnement où il n'y a rien à
+    rappeler. Le planning existe quand même, écrit en IaC ; il ne déclenche rien
+    tant que la chaîne n'est pas branchée, et la sortie
+    `reminder_sweep_configured` le dit.
+
+    Pas de valeur déduite de l'ALB, pour la raison qui vaut sur `dispatch_url` :
+    en développement, la terminaison TLS est un certificat auto-signé qu'aucun
+    client ne vérifie sans y être forcé.
+
+    Contrat attendu de la route, côté API : `POST` sans corps, en-tête
+    `x-internal-token`, réponse `200` portant `{ from, to, tenantCount,
+    appointmentCount, truncated, messages[] }` — chaque message étant une
+    enveloppe `NotificationMessage` prête à publier.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.reminder_sweep_url == null || can(regex("^https://", var.reminder_sweep_url))
+    error_message = "reminder_sweep_url doit être `null` ou une URL en `https://` — un appel en clair porterait le jeton d'appel interne sur le réseau."
+  }
+}
+
+variable "reminder_schedule_expression" {
+  description = <<-EOT
+    Expression de planification du balayage, au format EventBridge Scheduler.
+    Évaluée en **UTC**, comme la sélection.
+
+    `cron(0 * * * ? *)` par défaut — la minute zéro de chaque heure. `cron` et
+    non `rate(1 hour)`, et la différence n'est pas cosmétique : `rate` compte à
+    partir de la création du planning, si bien qu'un redéploiement en décale la
+    phase. Or les fenêtres de sélection pavent le temps — `[T+24h, T+25h)`, puis
+    `[T+25h, T+26h)` — et un décalage de phase se paie en rendez-vous jamais
+    rappelés.
+
+    **Changer la période oblige à changer `REMINDER_WINDOW_MS` côté API**, et
+    réciproquement : la largeur de la fenêtre et l'intervalle du balayage sont
+    la même durée vue de deux côtés. La sortie `reminder_window_hours` existe
+    pour que l'écart se voie.
+  EOT
+  type        = string
+  default     = "cron(0 * * * ? *)"
+
+  validation {
+    condition     = can(regex("^(cron|rate|at)\\(", var.reminder_schedule_expression))
+    error_message = "reminder_schedule_expression doit être une expression `cron(…)`, `rate(…)` ou `at(…)` reconnue par EventBridge Scheduler."
+  }
+}
+
+variable "reminder_sweeper_timeout_seconds" {
+  description = "Délai maximal d'une invocation de la Lambda de balayage. Doit laisser tenir l'appel à l'API — `reminder_sweep_timeout_ms` — **plus** la publication du lot rendu, cinq secondes de marge ; une précondition le vérifie au plan."
+  type        = number
+  default     = 60
+
+  validation {
+    condition     = var.reminder_sweeper_timeout_seconds >= 10 && var.reminder_sweeper_timeout_seconds <= 900
+    error_message = "reminder_sweeper_timeout_seconds doit être compris entre 10 et 900 secondes."
+  }
+}
+
+variable "reminder_sweeper_memory_mb" {
+  description = "Mémoire allouée à la Lambda de balayage, en Mio. 256 par défaut : elle fait un appel HTTP et quelques `SendMessageBatch`, et la mémoire fixe aussi la part de vCPU — descendre à 128 rallongerait le démarrage à froid pour économiser une fraction de centime par heure."
+  type        = number
+  default     = 256
+
+  validation {
+    condition     = var.reminder_sweeper_memory_mb >= 128 && var.reminder_sweeper_memory_mb <= 10240
+    error_message = "reminder_sweeper_memory_mb doit être compris entre 128 et 10240 Mio."
+  }
+}
+
+variable "reminder_sweep_timeout_ms" {
+  description = "Délai maximal de l'appel à `reminder_sweep_url`, en millisecondes. Dix secondes par défaut, contre cinq pour un envoi unitaire : ce n'est pas un message, c'est la sélection d'une heure entière de rendez-vous sur tous les établissements. Un dépassement fait lever, et EventBridge Scheduler réessaie."
+  type        = number
+  default     = 10000
+
+  validation {
+    condition     = var.reminder_sweep_timeout_ms >= 1000 && var.reminder_sweep_timeout_ms <= 120000
+    error_message = "reminder_sweep_timeout_ms doit être compris entre 1000 et 120000 millisecondes."
+  }
+}
+
+variable "reminder_max_retry_attempts" {
+  description = "Nombre de reprises d'un déclenchement en échec. Deux par défaut. Le défaut du service — 185 — est le pire réglage possible ici : il ferait rejouer pendant vingt-quatre heures un balayage dont la fenêtre est morte, pour produire des rappels que l'API refuserait d'envoyer parce qu'ils seraient en retard."
+  type        = number
+  default     = 2
+
+  validation {
+    condition     = var.reminder_max_retry_attempts >= 0 && var.reminder_max_retry_attempts <= 185 && floor(var.reminder_max_retry_attempts) == var.reminder_max_retry_attempts
+    error_message = "reminder_max_retry_attempts doit être un entier compris entre 0 et 185."
+  }
+}
+
+variable "reminder_max_event_age_seconds" {
+  description = "Âge au-delà duquel un déclenchement en échec cesse d'être rejoué, en secondes. Une heure par défaut, soit la fenêtre elle-même : passé ce délai, les rendez-vous du balayage en cause en sont sortis, et leur rappel serait « en retard » (skill notifications §3)."
+  type        = number
+  default     = 3600
+
+  validation {
+    condition     = var.reminder_max_event_age_seconds >= 60 && var.reminder_max_event_age_seconds <= 86400
+    error_message = "reminder_max_event_age_seconds doit être compris entre 60 et 86400 secondes."
+  }
+}
+
 # --- Supervision --------------------------------------------------------------
 
 variable "log_retention_days" {

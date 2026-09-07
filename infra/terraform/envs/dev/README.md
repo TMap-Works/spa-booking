@@ -68,7 +68,8 @@ démarre donc pas tant que le JSON suivant n'y a pas été déposé :
   "DATABASE_URL": "postgresql://spa_admin:<mot de passe>@<sortie database_endpoint>/spa?sslmode=require",
   "REDIS_URL": "rediss://:<jeton AUTH>@<sortie redis_primary_endpoint>:6379",
   "JWT_SECRET": "<32 caractères au moins>",
-  "JWT_REFRESH_SECRET": "<32 caractères au moins, différent du précédent>"
+  "JWT_REFRESH_SECRET": "<32 caractères au moins, différent du précédent>",
+  "NOTIFICATIONS_INTERNAL_TOKEN": "<32 caractères au moins — la même valeur que le secret notification_dispatch_token_secret_arn>"
 }
 ```
 
@@ -76,7 +77,20 @@ démarre donc pas tant que le JSON suivant n'y a pas été déposé :
   par RDS lui-même ;
 - le jeton AUTH se lit dans `redis_auth_token_secret_arn` ;
 - `JWT_SECRET` et `JWT_REFRESH_SECRET` doivent **différer** — l'API refuse de
-  démarrer sinon (`apps/api/src/config/env.schema.ts`).
+  démarrer sinon (`apps/api/src/config/env.schema.ts`) ;
+- `NOTIFICATIONS_INTERNAL_TOKEN` n'est exigé qu'à partir du moment où
+  `notification_reminder_sweep_url` est renseignée : la définition de tâche ne
+  résout cette clé que dans ce cas, et une clé absente du JSON empêcherait
+  sinon la tâche de démarrer pour une capacité inutilisée. **À déposer avant
+  l'`apply` qui pose l'URL**, jamais après. C'est le **même** jeton que celui
+  déposé dans
+  `notification_dispatch_token_secret_arn` : les deux fonctions Lambda de la
+  chaîne le présentent à l'API dans l'en-tête `x-internal-token`, et l'API le
+  compare à cette valeur. Absent, la route de balayage du rappel J-1 répond 503
+  et **aucun rappel ne part** — c'est un défaut fermé, pas une panne silencieuse,
+  et l'alarme d'erreurs de la fonction de balayage le dit. L'API démarre quand
+  même : une variable de notifications ne conditionne pas les sept autres modules
+  (`apps/api/src/modules/notifications/notifications.config.ts`).
 
 `APP_URL` et `API_URL` passent par le secret bien qu'elles ne soient pas
 sensibles : elles valent l'URL de l'ALB, que seul le module `ecs-service` connaît.

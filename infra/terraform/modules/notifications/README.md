@@ -48,7 +48,12 @@ Périmètre volontairement resserré, et complémentaire d'autres tickets :
 | Lambda | `spa-{env}-notification-dispatcher` | Consomme la file et fait envoyer |
 | Rôle + politique IAM | `spa-{env}-notification-dispatcher` | Au moindre privilège, ARN par ARN |
 | Groupe de journaux | `/aws/lambda/spa-{env}-notification-dispatcher` | Rétention explicite |
-| Alarmes CloudWatch | 4 | DLQ, erreurs, retard, refus définitifs |
+| Lambda | `spa-{env}-reminder-sweeper` | Balaie les rappels J-1 auprès de l'API et les publie |
+| Rôle + politique IAM | `spa-{env}-reminder-sweeper` | Journaux, jeton, **et** la politique de production de la file |
+| Groupe de journaux | `/aws/lambda/spa-{env}-reminder-sweeper` | Rétention explicite |
+| Planning EventBridge Scheduler | `spa-{env}-reminder-sweep` | `cron(0 * * * ? *)` en UTC — **désactivé** sans `reminder_sweep_url` |
+| Rôle + politique IAM | `spa-{env}-reminder-schedule` | `lambda:InvokeFunction`, et rien d'autre |
+| Alarmes CloudWatch | 5 | Balayage, DLQ, erreurs, retard, refus définitifs |
 | Tableau de bord | `spa-{env}-notifications` | **Seulement si `create_dashboard`** |
 | Politique IAM | `spa-{env}-notifications-sms-publisher` | Émettre un SMS ; aucun droit sur les réglages du compte |
 | Préférences SMS d'SNS | *sans nom — une par compte et par région* | **Seulement si `manage_sms_account_preferences`** |
@@ -81,6 +86,12 @@ module "notifications" {
   # joignable sans jeton laisserait n'importe qui déclencher des envois.
   dispatch_url              = "https://api.exemple.fr/api/v1/interne/notifications/dispatch"
   dispatch_token_secret_arn = aws_secretsmanager_secret.dispatch_token.arn
+
+  # Rappel J-1 (#71). Nulle, le planning EventBridge Scheduler existe mais reste
+  # **désactivé** — voir « Le rappel J-1 » plus bas. Le jeton est le même que
+  # celui de la Lambda d'envoi : une seule frontière de confiance, une seule
+  # rotation.
+  reminder_sweep_url = "https://api.exemple.fr/api/v1/notifications/reminders/sweep"
 
   # Canal SMS. `manage_sms_account_preferences` ne doit être vrai que dans **un**
   # environnement — voir « Le réglage SMS est celui du compte » plus bas. Les
@@ -467,8 +478,112 @@ racine. Une issue de suivi porte ce câblage.
   réseau porte un autre code. Le remède, si le cas se présente, est de vendre le
   client dans l'archive ou de passer par l'extension Lambda de Secrets Manager —
   hors du périmètre de #67, une issue de suivi le porte.
-- **La publication du rappel J-1** (#71) : la règle EventBridge cible cette file,
-  avec la politique `dispatch_producer_policy_arn` sur son rôle.
+## Le rappel J-1 — planning horaire et balayage (#71)
+
+```
+EventBridge Scheduler ──► spa-{env}-reminder-sweeper ──► POST {reminder_sweep_url}
+  cron(0 * * * ? *) UTC              │                              │
+                                     ◄────────── enveloppes ────────┘
+                                     │
+                                     └──► SendMessageBatch ──► spa-{env}-notifications
+```
+
+Le CDC §4.8 et la skill notifications §1 décrivent exactement cette chaîne :
+« une règle EventBridge s'exécute toutes les heures, sélectionne les rendez-vous
+qui commencent dans 24 à 25 h et dont le rappel n'est pas encore envoyé, et
+publie un message SQS par rendez-vous ».
+
+### Pourquoi une fonction entre le planning et la file
+
+EventBridge Scheduler sait appeler une API AWS ; il ne sait pas interroger une
+base. La sélection, elle, a besoin du schéma, du client Prisma **scopé par
+tenant** et de la définition de « rendez-vous vivant » — tout cela vit dans
+`apps/api/src/modules/notifications`, avec ses tests. La réécrire en JavaScript
+dans une fonction Lambda donnerait deux implémentations de la même règle, dans
+deux exécutables, avec un seul jeu de tests.
+
+La fonction est donc le **transport** : elle demande, elle publie. Même division
+du travail que pour la Lambda d'envoi.
+
+### La fenêtre est écrite dans l'API, pas ici
+
+`[+24 h, +25 h)` en UTC, borne basse incluse et haute exclue —
+`apps/api/src/modules/notifications/reminder-window.ts`. La sortie
+`reminder_window_hours` la rappelle sans la configurer.
+
+**La largeur de la fenêtre et la période du planning sont la même durée**, vue de
+deux côtés : c'est ce qui fait que les fenêtres successives pavent le temps sans
+trou ni recouvrement. Changer `reminder_schedule_expression` sans changer
+`REMINDER_WINDOW_MS` — ou l'inverse — laisse des rendez-vous sans rappel (période
+plus longue que la fenêtre) ou en sélectionne deux fois (période plus courte).
+
+### Trois réglages qui ne sont pas des défauts de confort
+
+| Réglage | Valeur | Pourquoi pas le défaut du service |
+|---|---|---|
+| `flexible_time_window` | `OFF` | une fenêtre de souplesse répartirait les déclenchements dans un intervalle, et le pavage perdrait son alignement |
+| `schedule_expression` | `cron(…)` | `rate(1 hour)` compte depuis la **création** du planning : un redéploiement en décale la phase, et le décalage se paie en rendez-vous non rappelés |
+| `retry_policy` | 2 essais, 1 h | le défaut — 185 tentatives sur 24 h — ferait rejouer un balayage dont la fenêtre est morte, pour produire des rappels que l'API refuserait d'envoyer parce qu'ils seraient en retard |
+
+### Pas de file d'attente morte sur le planning
+
+La seule candidate serait la DLQ des notifications — or un événement de
+planification n'est pas une enveloppe de notification. Un opérateur qui rejouerait
+la DLQ vers la file d'envoi y déverserait une charge utile que la Lambda d'envoi
+rejetterait, et la profondeur de DLQ cesserait de vouloir dire « des rappels
+n'ont pas été remis ». L'échec du balayage se voit à sa place :
+`spa-{env}-notifications-reminder-sweeper-errors`, sur la métrique `Errors` de la
+fonction.
+
+### Les deux alarmes qui manquaient
+
+Ce sont les seules qui voient un rappel **jamais publié**. Les quatre autres
+surveillent ce qui se passe *après* la publication ; aucune ne dirait rien d'un
+balayage qui n'a pas eu lieu — la file resterait simplement vide, ce qui est
+indiscernable d'une heure sans rendez-vous.
+
+| Alarme | Ce qu'elle voit |
+|---|---|
+| `…-reminder-sweeper-errors` | le balayage **ne s'est pas fait** — `AWS/Lambda`/`Errors` |
+| `…-reminder-sweep-truncated` | le balayage s'est fait **incomplet** — la métrique EMF `SweepTruncated` |
+
+La seconde n'est pas redondante : un balayage tronqué **réussit**. Il rend un
+lot, le publie, et sort en 200 ; `AWS/Lambda`/`Errors` ne compte pas une ligne de
+journal, fût-elle de niveau `error`. Sans elle, le plafond serveur serait
+exactement ce qu'il prétend éviter — un plafond qu'on atteint sans le savoir —,
+et les rendez-vous laissés de côté ne repasseraient jamais : la fenêtre
+`[+24 h, +25 h)` avance d'une heure au balayage suivant.
+
+### Le planning est désactivé tant que la chaîne n'est pas branchée
+
+`reminder_sweep_url` nulle ⇒ `state = "DISABLED"`. Le contraste avec
+`dispatch_url` est voulu : le défaut fermé de la Lambda d'envoi se **voit** dans
+la profondeur de la DLQ, ce qui est exactement ce qu'on attend d'une chaîne non
+branchée. Un balayage sans destination, lui, lèverait à chaque heure et ferait
+sonner son alarme indéfiniment sur un environnement où il n'y a rien à rappeler —
+c'est-à-dire qu'il apprendrait à l'équipe à ne plus la regarder.
+
+`reminder_sweep_configured` et `reminder_schedule_state` disent l'état sans
+détour.
+
+### Fumigation
+
+```bash
+cd infra/terraform/modules/notifications/lambda && node reminder-sweeper.smoke.mjs
+```
+
+Onze vérifications : la publication par lots de dix, le rejet d'une enveloppe
+malformée avant publication, la levée sur lot partiellement refusé, la levée sur
+refus de l'API, l'heure creuse qui n'appelle pas SQS, et le défaut fermé. Comme
+celle de la Lambda d'envoi, ce script n'est pas joué par `npm run verify` (#496).
+
+### Ce qui reste à faire ailleurs
+
+- **Déposer `NOTIFICATIONS_INTERNAL_TOKEN`** dans le secret d'exécution de l'API,
+  avec la **même valeur** que le secret `dispatch_token_secret_arn`. Sans lui, la
+  route de balayage répond 503 et aucun rappel ne part.
+- **Renseigner `reminder_sweep_url`** le jour où un certificat vérifiable sert
+  l'API — c'est ce qui active le planning.
 
 ## Le canal SMS — plafond, type de message, sender ID
 

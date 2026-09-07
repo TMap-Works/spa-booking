@@ -115,6 +115,14 @@ module "notifications" {
   dispatch_url              = var.notification_dispatch_url
   dispatch_token_secret_arn = var.notification_dispatch_token_secret_arn
 
+  # --- Rappel J-1 : balayage horaire (#71) ---
+  #
+  # Le planning EventBridge Scheduler existe dans tous les cas ; il reste
+  # désactivé tant que cette URL est nulle. Les deux fonctions de la chaîne
+  # présentent le même jeton à la même API — un seul secret, une seule
+  # frontière de confiance, une seule rotation.
+  reminder_sweep_url = var.notification_reminder_sweep_url
+
   # --- Canal SMS (#66) ---
 
   # C'est ici, et **seulement ici**, que les préférences SMS d'SNS se posent.
