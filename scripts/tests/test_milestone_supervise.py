@@ -2726,5 +2726,47 @@ class FinDeRunDansLaBoucleCourte(unittest.TestCase):
                       "le verrou doit retomber quand une étape démarre")
 
 
+class CoupureEffectiveOuNon(unittest.TestCase):
+    """Une étape qui rend la main sur `success` n'est pas en retard (#353).
+
+    Le Timer de `--leg-timeout` tire à la seconde près, mais `terminate()` ne
+    descend pas dans l'arbre de processus sous Windows : l'appel survit à son
+    ordre d'arrêt et finit son travail. Confondre « l'ordre a été émis » et « la
+    coupure a eu lieu » posait `issue="délai"` sur des étapes saines, et chaque
+    faux `leg_delai` dépense un des douze arbitrages du run.
+
+    Mesuré sur S4 : étapes 6, 8 et 10 coupées au plafond, toutes trois arrivées
+    au merge, trois arbitrages sur quatre brûlés à constater que tout allait
+    bien. Le budget est l'assurance du jalon — la dépenser sur des fausses
+    alarmes laisse le premier incident réel sans arbitre.
+    """
+
+    def test_le_timer_seul_ne_suffit_pas_a_dire_la_coupure(self):
+        rendu = {"subtype": "success", "num_turns": 64, "is_error": False}
+        self.assertFalse(sup.was_cut(True, rendu))
+
+    def test_coupure_reelle_quand_l_appel_n_a_rien_rendu(self):
+        """Le cas que la coupure est censée traiter : plus personne ne répond."""
+        self.assertTrue(sup.was_cut(True, None))
+
+    def test_coupure_reelle_quand_l_appel_rend_une_erreur(self):
+        """Un `result` en erreur n'est pas une main rendue de bon gré."""
+        self.assertTrue(sup.was_cut(True, {"subtype": "error", "is_error": True}))
+
+    def test_sans_timer_jamais_de_delai(self):
+        for summary in (None, {"is_error": False}, {"is_error": True}):
+            with self.subTest(summary=summary):
+                self.assertFalse(sup.was_cut(False, summary))
+
+    def test_le_plafond_par_defaut_couvre_une_vague_pleine(self):
+        """Trois vagues pleines mesurées à 145,8 / 148,2 / 150,1 min sur S4.
+
+        Un plafond sous cette durée fait de toute étape aboutie une étape
+        coupée — et réparer `terminate()` sans l'avoir relevé d'abord ferait
+        d'un défaut inoffensif un tueur de vagues saines.
+        """
+        self.assertGreaterEqual(sup.LEG_TIMEOUT, 151)
+
+
 if __name__ == "__main__":
     unittest.main()
