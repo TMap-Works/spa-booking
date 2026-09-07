@@ -19,6 +19,8 @@ const SERVICE_UNAVAILABLE = 503;
 /** Codes d'erreur du module, tels qu'ils partiraient au client. */
 export const NOTIFICATION_ERROR_CODES = {
   NOTIFICATION_SENDER_NOT_CONFIGURED: 'NOTIFICATION_SENDER_NOT_CONFIGURED',
+  NOTIFICATION_NOT_RENDERABLE: 'NOTIFICATION_NOT_RENDERABLE',
+  NOTIFICATION_CONTEXT_GONE: 'NOTIFICATION_CONTEXT_GONE',
 } as const;
 
 /**
@@ -42,5 +44,47 @@ export class NotificationSenderNotConfiguredError extends DomainError {
 
   public constructor(channel: string) {
     super("Aucun expéditeur n'est configuré pour ce canal de notification.", { channel });
+  }
+}
+
+/**
+ * Aucun modèle n'existe pour ce type de message.
+ *
+ * **503 comme l'expéditeur absent**, et pour la même raison : ce n'est pas une
+ * requête fautive, c'est une capacité qui n'est pas encore livrée. #70 rend la
+ * confirmation ; le rappel J-1 et l'avis d'annulation ont leurs issues.
+ *
+ * Le refus vaut mieux qu'un repli sur le modèle de confirmation : un rappel qui
+ * annoncerait « votre rendez-vous est confirmé » serait pire qu'un rappel
+ * absent, et l'échec laisse la ligne `FAILED`, donc reprenable le jour où le
+ * modèle existe.
+ */
+export class UnrenderableNotificationError extends DomainError {
+  public override readonly code = NOTIFICATION_ERROR_CODES.NOTIFICATION_NOT_RENDERABLE;
+  public override readonly status = SERVICE_UNAVAILABLE;
+
+  public constructor(type: string) {
+    super("Aucun modèle de message n'est défini pour ce type de notification.", { type });
+  }
+}
+
+/**
+ * Le rendez-vous que ce message annonce n'existe plus.
+ *
+ * **404 et non 503** : rien ne se répare en réessayant, la donnée a disparu. Le
+ * `DomainExceptionFilter` la traduirait en 404 si une route la laissait passer,
+ * mais son vrai destinataire est le consommateur de file — pour qui elle signifie
+ * « ce message n'a plus d'objet, cesse de le rejouer ».
+ *
+ * Le cas est réel et non théorique : une livraison SQS peut arriver après une
+ * anonymisation RGPD ou une suppression de rendez-vous, et la fenêtre entre la
+ * publication et la consommation n'est bornée par rien.
+ */
+export class NotificationContextGoneError extends DomainError {
+  public override readonly code = NOTIFICATION_ERROR_CODES.NOTIFICATION_CONTEXT_GONE;
+  public override readonly status = 404;
+
+  public constructor(appointmentId: string) {
+    super("Le rendez-vous que ce message annonce n'existe plus.", { appointmentId });
   }
 }

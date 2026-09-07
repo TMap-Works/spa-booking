@@ -1,7 +1,11 @@
 import { Injectable } from '@nestjs/common';
 
 import { NotificationSenderNotConfiguredError } from './notifications.errors';
-import type { NotificationChannel, NotificationType } from './notifications.types';
+import type {
+  NotificationChannel,
+  NotificationType,
+  RenderedNotification,
+} from './notifications.types';
 
 /**
  * Le **port** d'expédition — la frontière entre ce module et AWS.
@@ -20,14 +24,31 @@ import type { NotificationChannel, NotificationType } from './notifications.type
  *
  * ## Ce qu'il ne fait pas
  *
- * Il ne rend pas le message. Le contenu, les modèles par tenant, le rendu HTML
- * et son doublon texte brut (notifications §6) sont d'un autre ticket ; ce
- * port-ci ne transporte que la **désignation** de ce qu'il y a à envoyer. C'est
- * aussi ce qui le garde vide de donnée personnelle : l'implémentation SES relira
- * l'adresse sur le compte désigné, elle ne la recevra pas d'une file.
+ * Il ne **compose** pas le message : il le reçoit rendu. Les modèles vivent dans
+ * `notification-content.ts` et le rendu dans `NOTIFICATION_RENDERER` ; une
+ * passerelle SES n'a pas à savoir ce qu'est une confirmation de réservation, et
+ * la garder ignorante est ce qui permettra d'en écrire une seule pour les trois
+ * messages du MVP.
+ *
+ * Il ne connaît pas davantage l'**adresse** de destination : il reçoit
+ * l'identifiant du compte et relit dessus l'adresse ou le numéro au moment
+ * d'envoyer. C'est la règle de notifications §7 — une coordonnée ne se recopie
+ * pas, sans quoi une demande RGPD devrait l'effacer à deux endroits, et c'est
+ * toujours la seconde copie qu'on oublie.
  */
 
-/** Ce que l'expéditeur reçoit — des identifiants, jamais des coordonnées. */
+/**
+ * Ce que l'expéditeur reçoit — la désignation, plus le contenu rendu.
+ *
+ * ## Pourquoi le contenu est ici et pas dans `NotificationMessage`
+ *
+ * `NotificationMessage` est ce qui transite par SQS, et il ne porte rien qui
+ * puisse dériver : un message de file peut être rejoué une heure plus tard, et
+ * un contenu figé à la publication annoncerait un rendez-vous qui n'existe plus.
+ * `NotificationSendRequest`, lui, ne quitte jamais le processus — il est
+ * composé après la prise de droit, à l'instant d'appeler le fournisseur. Le
+ * contenu y est donc frais par construction, et il n'a nulle part où persister.
+ */
 export interface NotificationSendRequest {
   /** La ligne réservée, en `PENDING`. Sert de corrélation dans les journaux. */
   readonly notificationId: string;
@@ -36,6 +57,8 @@ export interface NotificationSendRequest {
   /** Le compte destinataire ; l'expéditeur y relit l'adresse ou le numéro. */
   readonly recipientUserId: string | null;
   readonly appointmentId: string | null;
+  /** Le message, rendu à l'instant, dans le fuseau de l'établissement. */
+  readonly content: RenderedNotification;
 }
 
 /** Ce que l'expéditeur rend quand l'appel a abouti. */
