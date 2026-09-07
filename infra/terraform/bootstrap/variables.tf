@@ -132,6 +132,26 @@ variable "cloudtrail_enabled" {
   default     = true
 }
 
+variable "cloudtrail_cloudwatch_retention_days" {
+  description = <<-EOT
+    Rétention du groupe de journaux CloudWatch qui reçoit la trace, en jours.
+
+    Trente jours, **délibérément beaucoup plus court** que la rétention S3 : les
+    deux destinations ne servent pas la même chose. Le bucket archive à bas coût
+    et porte la preuve d'intégrité ; le groupe de journaux sert à chercher tout
+    de suite et à porter des filtres de métrique. Conserver un an des deux côtés
+    multiplierait le coût d'ingestion sans rien ajouter — une investigation qui
+    remonte à plus d'un mois se mène sur S3, avec Athena.
+  EOT
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = contains([1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653], var.cloudtrail_cloudwatch_retention_days)
+    error_message = "cloudtrail_cloudwatch_retention_days doit être une des durées admises par CloudWatch Logs."
+  }
+}
+
 # --- AWS Config ---------------------------------------------------------------
 
 variable "config_enabled" {

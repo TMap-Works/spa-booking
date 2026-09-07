@@ -270,6 +270,7 @@ du nombre de ressources du compte.
 |---|---|---|
 | CloudTrail, événements de gestion | 0 USD | Le premier trail du compte est gratuit |
 | CloudTrail, événements de données | 1 à 3 USD | Restreints aux objets des buckets d'état |
+| CloudTrail → CloudWatch Logs | 1 à 3 USD | Ingestion ; rétention volontairement courte (30 j) |
 | Clé KMS d'audit | 1 USD | Plancher fixe |
 | Stockage S3 des journaux | 1 à 3 USD | Cycle de vie : `GLACIER_IR` à 90 jours, expiration à 365 |
 | AWS Config, éléments enregistrés | 3 à 10 USD | `all_supported` — chaque changement de ressource |

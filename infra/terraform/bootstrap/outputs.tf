@@ -39,6 +39,11 @@ output "cloudtrail_arn" {
   value       = one(aws_cloudtrail.account[*].arn)
 }
 
+output "cloudtrail_log_group_name" {
+  description = "Groupe de journaux CloudWatch recevant la trace en parallèle du bucket. C'est sur lui que se posent les filtres de métrique — connexion du compte racine, modification d'une politique IAM, arrêt du trail — que l'archive S3 ne permet pas d'alarmer."
+  value       = one(aws_cloudwatch_log_group.cloudtrail[*].name)
+}
+
 output "guardduty_detector_id" {
   description = "Identifiant du détecteur GuardDuty, ou null si `guardduty_enabled` est faux."
   value       = one(aws_guardduty_detector.this[*].id)
