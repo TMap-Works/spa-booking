@@ -23,14 +23,57 @@ import {
 } from '../constants/limits';
 
 /**
- * Identifiant de ressource — UUID v4 généré côté application.
+ * Motif d'un UUID **version 4** — quatrième groupe préfixé de `4`, cinquième
+ * groupe dont le premier caractère porte la variante RFC 4122 (`8`, `9`, `a` ou
+ * `b`).
+ *
+ * Il exclut au passage l'UUID nil (`00000000-…`), que `z.string().uuid()`
+ * acceptait : ce n'est l'identifiant d'aucune ressource, et le laisser traverser
+ * la frontière transforme une valeur par défaut oubliée en requête légitime.
+ */
+export const UUID_V4_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Identifiant de ressource — UUID **v4**, généré côté application.
  *
  * Le choix de l'UUID sur un entier séquentiel n'est pas esthétique : un
  * identifiant énumérable est un vecteur de fuite inter-tenant à part entière.
  * Avec `/appointments/1`, `/appointments/2`, il suffit d'incrémenter pour
  * sonder l'existence des rendez-vous des autres établissements.
+ *
+ * ## Pourquoi la v4 et pas « n'importe quelle version » — #403, tranché par #404
+ *
+ * Ce schéma était `z.string().uuid()`, qui accepte **toutes** les versions, là
+ * où tous les DTO de l'API validaient avec `@IsUUID('4')`. C'était la même
+ * classe de défaut que celui que #401 a refermé sur `emailSchema` : **le contrat
+ * plus permissif que l'API qu'il décrit**, donc un formulaire qui déclare bon un
+ * identifiant que la route refuse en 400.
+ *
+ * #404 substitue ce schéma aux décorateurs sur le tunnel public
+ * ([ADR 0008](../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)),
+ * ce qui rend l'écart immédiatement effectif : le laisser permissif aurait
+ * **relâché** la frontière de l'API, plutôt que de la laisser où elle est. Des
+ * deux corrections que #403 proposait, c'est donc le resserrement qui est
+ * retenu — le seul des deux qui ne change le comportement d'aucune route.
+ *
+ * Il est sans risque sur le stock : les dix-neuf identifiants du schéma Prisma
+ * viennent tous de `@default(uuid())`, qui produit une v4, et aucun littéral
+ * d'une autre version ne subsiste dans `apps/` ni `packages/`. Le sens de
+ * lecture compte, ici comme sur les bornes d'adresse : un contrat plus strict
+ * que l'API ne coûte qu'un refus plus tôt, du bon côté de l'écran ; un contrat
+ * plus permissif coûte un 400 qu'il venait d'annoncer impossible.
+ *
+ * Le motif remplace `.uuid()` au lieu de s'y ajouter, pour la raison qui a
+ * dicté l'alternative `[^@]*$` d'`emailSchema` : deux vérifications qui échouent
+ * ensemble produisent deux `issues` de même message, et un formulaire qui les
+ * rend toutes afficherait « identifiant attendu au format UUID v4 » deux fois
+ * sous le même champ. Le motif de la v4 est de toute façon plus strict que celui
+ * de `.uuid()` — il n'y a rien qu'il laisserait passer.
  */
-export const uuidSchema = z.string().uuid({ message: 'identifiant attendu au format UUID' });
+export const uuidSchema = z
+  .string()
+  .regex(UUID_V4_PATTERN, { message: 'identifiant attendu au format UUID v4' });
 
 export type Uuid = z.infer<typeof uuidSchema>;
 
