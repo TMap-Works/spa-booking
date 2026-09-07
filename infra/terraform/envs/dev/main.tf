@@ -495,6 +495,56 @@ module "ecs_service" {
   }
 }
 
+# --- Pare-feu applicatif ------------------------------------------------------
+
+# Le WAF du CDC §4.10, en amont de la seule frontière publique de cet
+# environnement (#79).
+#
+# Portée `REGIONAL` et non `CLOUDFRONT` : le critère dit « en amont de
+# CloudFront », et aucune distribution n'existe encore dans ce dépôt. L'ALB est
+# donc ce qu'il y a à couvrir, et le module bascule de portée le jour où une
+# distribution apparaît — voir la variable `scope`.
+#
+# Composé **après** `ecs_service` dans la lecture parce qu'il consomme son ARN.
+# La clé `alb` du map est écrite ici plutôt que déduite : l'ARN n'est pas connu
+# au plan, et un `for_each` sur `toset([...])` d'ARN inconnus échouerait avant
+# même de commencer.
+module "waf" {
+  source = "../../modules/waf"
+
+  environment = local.environment
+
+  associated_resource_arns = {
+    alb = module.ecs_service.alb_arn
+  }
+
+  # Le topic du module `budgets`, comme les autres alarmes de l'environnement :
+  # une alarme qui ne prévient personne est un tableau qu'il faut penser à
+  # ouvrir.
+  alarm_topic_arns = [module.budgets.alerts_topic_arn]
+
+  # Même contrat de rétention que les autres groupes de journaux de
+  # l'environnement.
+  log_retention_days = local.log_retention_days
+
+  # Bot Control retiré du développement, et non laissé en observation : c'est le
+  # seul groupe facturé des cinq — environ 10 USD par mois et par Web ACL, plus
+  # l'analyse au million de requêtes — et le trafic de cet environnement est
+  # celui de l'équipe, pas celui de robots. La production le composera, elle.
+  #
+  # Conséquence à connaître : les quatre autres groupes restent en **blocage**
+  # dès le premier `apply`, `count_only_rule_groups` ne nommant plus que Bot
+  # Control, qui n'est pas composé. C'est voulu ici — un faux positif se découvre
+  # en développement, ce qui est précisément la raison d'y avoir le WAF.
+  bot_control_inspection_level = null
+
+  # Seuil de débit relevé : le parcours d'un développeur qui recharge, rejoue un
+  # jeu d'essai et lance la recette MCP ressemble beaucoup, vu du WAF, à un
+  # script d'énumération. Le bloquer n'apprendrait rien sur la sécurité et
+  # coûterait des heures de diagnostic.
+  rate_limit = 10000
+}
+
 # --- Observabilité ------------------------------------------------------------
 
 # Les alarmes que le CDC §4.11 exige avant tout go-live, le tableau de bord qui
