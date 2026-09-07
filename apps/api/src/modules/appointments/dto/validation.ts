@@ -1,111 +1,78 @@
+import {
+  LONG_TEXT_MAX_LENGTH,
+  REASON_MAX_LENGTH,
+  isOffsetDateTime as isSharedOffsetDateTime,
+} from '@spa/shared';
 import { Transform } from 'class-transformer';
 import { registerDecorator, ValidateIf, type ValidationOptions } from 'class-validator';
 
 /**
  * Briques de validation du module `appointments` (#37).
  *
+ * ## Ce que ce fichier ne redéclare plus (#404)
+ *
+ * Les bornes et le motif de date-heure **viennent du contrat partagé**, ils n'y
+ * sont plus alignés à la main. C'était l'objet du marqueur `#26` que portait ce
+ * fichier, et le troisième critère de #404 : une borne écrite à deux endroits
+ * finit par diverger, et l'écart entre la borne du DTO et celle du contrat est
+ * exactement ce que #401 a trouvé sur `emailSchema`.
+ *
+ * Ce qui reste écrit ici est ce que le contrat **ne porte pas** : les
+ * décorateurs `class-validator` eux-mêmes. Ils n'ont plus vocation à durer non
+ * plus — l'[ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)
+ * décide que le schéma Zod valide et que la classe documente, et
+ * `book-appointment.dto.ts` est la première route substituée. Les DTO de
+ * back-office de ce module suivront avec le reste de la reprise.
+ *
  * ## Pourquoi ce fichier existe alors que ses voisins en ont un identique
  *
- * `catalog/dto/validation.ts` et `availability/dto/validation.ts` portent déjà
+ * `catalog/dto/validation.ts` et `availability/dto/validation.ts` portent aussi
  * `OptionalPresent`, `Trim` et la lecture d'une date-heure à offset explicite.
  * Ils sont **dupliqués** plutôt qu'importés, et ce n'est pas un oubli : un module
- * n'importe pas un fichier profond d'un autre (api-module §3), et la place
- * définitive de ces primitives est `@spa/shared` — c'est l'objet de #26. La
- * dépendance qu'il fallait pour cela est déclarée depuis #463 ; ce qui reste est
- * la reprise elle-même. Les noms sont donc **ceux du paquet partagé**, pour que
- * la substitution ne change pas une borne en silence.
+ * n'importe pas un fichier profond d'un autre (api-module §3). Leur place
+ * définitive est du côté des schémas du contrat, à mesure que les DTO qui les
+ * emploient sont substitués.
  *
- * #297 a fait la moitié contrat du même geste : `createAppointmentRequestSchema`
- * et `rescheduleAppointmentRequestSchema` portent désormais
- * `offsetDateTimeSchema` sur leur `startsAt`, si bien que le contrat et ce
- * fichier décrivent exactement la même frontière — en deux endroits, en
- * attendant #26. `appointments/__tests__/date-time.validation.spec.ts` et
+ * `appointments/__tests__/date-time.validation.spec.ts` et
  * `packages/shared/src/__tests__/schemas.spec.ts` exercent les mêmes chaînes de
- * part et d'autre : c'est ce qui rendra visible le jour où l'une des deux
- * bougerait seule.
+ * part et d'autre. Elles ne gardent plus deux motifs contre un troisième : elles
+ * gardent le **trajet**, du corps HTTP jusqu'à l'instant remis au service.
  */
 
 /**
- * Longueurs, alignées sur le schéma Prisma **et** sur `@spa/shared`.
+ * `appointments.client_note` — `VARCHAR(2000)`, la borne du contrat partagé.
  *
- * TODO(#26) : ce sont `EMAIL_MAX_LENGTH`, `NAME_MAX_LENGTH`, `PHONE_MAX_LENGTH`
- * et `LONG_TEXT_MAX_LENGTH` de `packages/shared/src/constants/limits.ts`. Une
- * borne plus large que la colonne ferait sortir un 500 du pilote PostgreSQL là
- * où le contrat annonce un 400 qui nomme le champ.
+ * Seule longueur encore relayée par ce fichier : les autres (`EMAIL_MAX_LENGTH`,
+ * `NAME_MAX_LENGTH`, `PHONE_MAX_LENGTH`) ne servaient qu'à `book-appointment.dto.ts`,
+ * qui les prend désormais directement de `@spa/shared`. Un relais que personne
+ * n'emprunte n'est pas un point de substitution, c'est un nom de plus à tenir
+ * d'accord — les DTO qui suivront importeront du contrat, comme celui-là.
  */
-export const EMAIL_MAX_LENGTH = 320;
-/** `users.first_name` / `users.last_name` — `VARCHAR(80)`. */
-export const NAME_MAX_LENGTH = 80;
-/** `users.phone` — `VARCHAR(32)`. */
-export const PHONE_MAX_LENGTH = 32;
-/** `appointments.client_note` — `VARCHAR(2000)`. */
-export const LONG_TEXT_MAX_LENGTH = 2000;
+export { LONG_TEXT_MAX_LENGTH };
 
 /**
  * `appointments.cancellation_reason` — `VARCHAR(500)` (#40).
  *
- * Plus court que `LONG_TEXT_MAX_LENGTH` parce que la colonne l'est : un motif
+ * C'est `REASON_MAX_LENGTH` du contrat, sous le nom que ce module lui donne :
+ * plus court que `LONG_TEXT_MAX_LENGTH` parce que la colonne l'est — un motif
  * d'annulation est une phrase, pas un dossier. Une borne plus large que la
  * colonne ferait sortir un 500 du pilote PostgreSQL là où le contrat annonce un
  * 400 qui nomme le champ.
  */
-export const CANCELLATION_REASON_MAX_LENGTH = 500;
+export const CANCELLATION_REASON_MAX_LENGTH = REASON_MAX_LENGTH;
 
 /**
- * Numéro de téléphone — format libre borné, celui de `phoneSchema`.
- *
- * Volontairement permissif : la validation stricte dépend du plan de numérotation
- * du pays. Refuser un numéro pourtant valide **empêche une réservation** ; en
- * accepter un douteux ne coûte qu'un SMS non délivré, que la chaîne de
- * notifications sait déjà journaliser.
- */
-export const PHONE_PATTERN = /^[+0-9][0-9\s().-]*$/;
-
-/**
- * ISO 8601 avec offset explicite — `Z` ou `±HH:MM`, secondes et fraction
- * facultatives.
- *
- * Jumeau de `OFFSET_DATE_TIME_PATTERN` d'`availability/dto/validation.ts`, et il
- * doit le rester : les créneaux proposés par le moteur de disponibilité sont
- * exactement les instants que ce module accepte en réservation. L'heure est
- * bornée à `00`-`23` — le profil RFC 3339 ne connaît pas `24:00`, et un `\d{2}`
- * complaisant laisserait `2026-03-29T24:00:00Z` franchir la frontière pour être
- * normalisé, sans un mot, au 30 mars.
- */
-export const OFFSET_DATE_TIME_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,9})?)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$/;
-
-/**
- * `true` si la chaîne est une date-heure ISO 8601 à offset explicite **et**
+ * `true` si la valeur est une date-heure ISO 8601 à offset explicite **et**
  * désigne un instant réel.
  *
- * Le motif seul ne suffit pas : `2026-02-31T10:00:00Z` le satisfait, et
+ * L'implémentation est celle du contrat ; ce qui est ajouté ici est la garde de
+ * type, `class-validator` remettant à ses validateurs une valeur `unknown`.
+ * Le motif seul ne suffirait pas : `2026-02-31T10:00:00Z` le satisfait, et
  * `Date.parse` le ramènerait au 3 mars sans rien signaler — un rendez-vous
- * déplacé de deux jours par une faute de frappe. La date civile est donc rejouée
- * composant par composant.
+ * déplacé de deux jours par une faute de frappe.
  */
 export function isOffsetDateTime(value: unknown): boolean {
-  if (typeof value !== 'string' || !OFFSET_DATE_TIME_PATTERN.test(value)) {
-    return false;
-  }
-
-  const parsed = Date.parse(value);
-  if (Number.isNaN(parsed)) {
-    return false;
-  }
-
-  const year = Number(value.slice(0, 4));
-  const month = Number(value.slice(5, 7));
-  const day = Number(value.slice(8, 10));
-
-  const replayed = new Date(0);
-  replayed.setUTCFullYear(year, month - 1, day);
-
-  return (
-    replayed.getUTCFullYear() === year &&
-    replayed.getUTCMonth() === month - 1 &&
-    replayed.getUTCDate() === day
-  );
+  return typeof value === 'string' && isSharedOffsetDateTime(value);
 }
 
 /**
@@ -227,6 +194,15 @@ export const Trim = (): PropertyDecorator =>
  * `Alice@Example.test` et `alice@example.test` cohabiteraient dans le même salon,
  * et la réservation d'invité créerait une seconde fiche cliente au lieu de
  * retrouver la première.
+ *
+ * **Sans application depuis #404**, et c'est un état de transition et non un
+ * oubli : son unique porteur était `GuestContactDto`, dont la validation est
+ * passée à `emailSchema` du contrat — qui canonise de la même façon, dans le
+ * schéma plutôt que dans un décorateur. Il est conservé tant que les DTO de
+ * back-office de ce module ne sont pas substitués à leur tour (#510), et
+ * `crm/client-directory.service.ts` le cite encore comme la raison pour laquelle
+ * il n'a pas à normaliser une seconde fois — ce qui reste vrai, la
+ * normalisation ayant seulement changé d'écriture.
  */
 export const NormalizeEmail = (): PropertyDecorator =>
   Transform(({ value }: { value: unknown }) =>

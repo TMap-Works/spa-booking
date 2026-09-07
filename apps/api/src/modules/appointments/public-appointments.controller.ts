@@ -1,6 +1,7 @@
 import { Body, Controller, HttpCode, Param, ParseUUIDPipe, Post, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNotFoundResponse,
@@ -14,7 +15,13 @@ import {
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 
 import { AppointmentsService } from './appointments.service';
-import { AppointmentDto, BookAppointmentDto, toGuestContact } from './dto/book-appointment.dto';
+import {
+  AppointmentDto,
+  type BookAppointmentBody,
+  BookAppointmentDto,
+  bookAppointmentBody,
+  toGuestContact,
+} from './dto/book-appointment.dto';
 import { CancelAppointmentDto, toCancellationReason } from './dto/cancel-appointment.dto';
 import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
 
@@ -41,9 +48,13 @@ import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
  * seulement ses coordonnées » : exiger un jeton le contredirait mot pour mot.
  * Ce qui tient cette route n'est donc pas une garde, mais trois choses :
  *
- * 1. le `ValidationPipe` global, `whitelist` et `forbidNonWhitelisted` — aucun
- *    champ non déclaré, donc aucun `tenantId`, `clientId` ni `price` glissé dans
- *    le corps ;
+ * 1. la validation de la frontière — aucun champ non déclaré, donc aucun
+ *    `tenantId`, `clientId` ni `price` glissé dans le corps. Sur `book`, c'est
+ *    le `.strict()` du contrat partagé, monté par `bookAppointmentBody`
+ *    ([ADR 0008](../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)) ;
+ *    sur `reschedule` et `cancel`, c'est encore le `ValidationPipe` global avec
+ *    `whitelist` et `forbidNonWhitelisted`. Les deux refusent la même chose et
+ *    rendent le même corps d'erreur ;
  * 2. le contrôle de disponibilité du service — on ne réserve que ce que le
  *    calendrier proposait, chez un praticien qui pratique le soin, dans ses
  *    heures, hors congés et hors préavis ;
@@ -122,6 +133,10 @@ export class PublicAppointmentsController {
   @Post()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Réserver un créneau, sans compte' })
+  // Déclaré explicitement : le corps est validé par le contrat partagé et le
+  // paramètre est typé par un alias de type, dont `@nestjs/swagger` ne peut plus
+  // rien déduire. `BookAppointmentDto` ne sert plus qu'à cela (ADR 0008).
+  @ApiBody({ type: BookAppointmentDto })
   @ApiCreatedResponse({ type: AppointmentDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
   @ApiNotFoundResponse({
@@ -137,13 +152,19 @@ export class PublicAppointmentsController {
       'et c’est une autre adresse qu’il faut proposer à la cliente.',
   })
   @ApiTooManyRequestsResponse({ description: 'Quota de réservations dépassé pour cette adresse.' })
-  public async book(@Body() body: BookAppointmentDto): Promise<AppointmentDto> {
+  public async book(
+    // Le type est celui **du contrat**, jamais `BookAppointmentDto` : la classe
+    // n'a plus de décorateur `class-validator`, et la typer ici ferait rejouer
+    // le `ValidationPipe` global, dont le `whitelist` viderait le corps de tous
+    // ses champs (ADR 0008).
+    @Body(bookAppointmentBody) body: BookAppointmentBody,
+  ): Promise<AppointmentDto> {
     return this.appointments.book({
       serviceId: body.serviceId,
-      // Le DTO distingue « absent » de « vide » ; le domaine ne connaît que
+      // Le contrat distingue « absent » de « vide » ; le domaine ne connaît que
       // `null`, qui se lit ici « premier disponible » (#36).
       staffId: body.staffId ?? null,
-      // La chaîne a été validée comme instant à offset explicite par le DTO :
+      // `offsetDateTimeSchema` a déjà normalisé la chaîne en instant UTC :
       // `new Date` ne peut plus produire ici de date invalide ni de date-heure
       // interprétée dans le fuseau de la machine.
       startsAt: new Date(body.startsAt),

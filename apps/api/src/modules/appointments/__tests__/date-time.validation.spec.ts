@@ -8,9 +8,9 @@
  * composent, et un test qui n'en regarderait qu'un laisserait les deux autres
  * libres de diverger :
  *
- * 1. le **DTO** accepte l'offset — `@IsOffsetDateTime()` ;
- * 2. le `ValidationPipe` réellement monté dans `app.module.ts` le laisse passer,
- *    avec `whitelist` et `forbidNonWhitelisted` ;
+ * 1. la **frontière** accepte l'offset ;
+ * 2. elle l'accepte sous le pipe réellement monté, `whitelist` et
+ *    `forbidNonWhitelisted` compris ;
  * 3. le **contrôleur** en dérive le `Date` qui descend au service, puis à
  *    `@db.Timestamptz(6)`. C'est ce `Date`-là qui est « l'instant stocké », et
  *    c'est le seul endroit où une conversion peut encore se tromper de fuseau.
@@ -19,10 +19,23 @@
  * ce qu'on regarde n'est pas ce que la réservation produit — `appointments.service.spec.ts`
  * s'en charge —, c'est ce que la frontière lui transmet.
  *
- * Le pendant côté contrat vit dans `packages/shared/src/__tests__/schemas.spec.ts` :
- * `createAppointmentRequestSchema` et `rescheduleAppointmentRequestSchema` y
- * normalisent les mêmes chaînes. Les deux suites doivent rester d'accord — c'est
- * la seule frontière, écrite deux fois en attendant #26.
+ * ## Les deux frontières que cette suite traverse (#404)
+ *
+ * Elles ne sont plus de même nature, et c'est voulu :
+ *
+ * - **`book`** est validée par `bookGuestAppointmentRequestSchema`, le schéma du
+ *   contrat partagé, monté par `bookAppointmentBody`
+ *   ([ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
+ *   `offsetDateTimeSchema` y **normalise** l'instant dès la frontière ;
+ * - **`reschedule`** est encore validée par `RescheduleAppointmentDto` et
+ *   `@IsOffsetDateTime()`, sous le `ValidationPipe` global. La chaîne descend
+ *   telle quelle et c'est `new Date` qui la convertit, dans le contrôleur.
+ *
+ * Les deux doivent produire **le même instant** pour la même chaîne : c'est ce
+ * que cette suite vérifie cas par cas, et c'est la propriété qui rendra la
+ * substitution du second sans effet visible. Le pendant côté contrat vit dans
+ * `packages/shared/src/__tests__/schemas.spec.ts`, sur la même liste de chaînes
+ * refusées.
  */
 
 import { ValidationPipe } from '@nestjs/common';
@@ -33,7 +46,7 @@ import type {
   BookAppointmentInput,
   RescheduleAppointmentInput,
 } from '../appointments.types';
-import { BookAppointmentDto } from '../dto/book-appointment.dto';
+import { type BookAppointmentBody, bookAppointmentBody } from '../dto/book-appointment.dto';
 import { RescheduleAppointmentDto } from '../dto/reschedule-appointment.dto';
 import { PublicAppointmentsController } from '../public-appointments.controller';
 
@@ -118,6 +131,17 @@ async function validate<T>(type: new () => T, body: unknown): Promise<T> {
   return (await pipe.transform(body, { type: 'body', metatype: type })) as T;
 }
 
+/** Le corps d'erreur sérialisé, ou la chaîne vide si la frontière a laissé passer. */
+function refusalOf(attempt: () => unknown): string {
+  try {
+    attempt();
+
+    return '';
+  } catch (error) {
+    return JSON.stringify((error as { getResponse: () => unknown }).getResponse());
+  }
+}
+
 async function refusalFor(type: new () => unknown, body: unknown): Promise<string> {
   try {
     await validate(type, body);
@@ -133,11 +157,16 @@ function bookingBody(startsAt: string): Record<string, unknown> {
   return { serviceId: SERVICE_ID, startsAt, client: { ...CLIENT } };
 }
 
+/** Le refus que la frontière de `book` oppose à ce `startsAt`. */
+function bookingRefusal(startsAt: string): string {
+  return refusalOf(() => bookAppointmentBody.transform(bookingBody(startsAt)));
+}
+
 /** L'instant que le service recevrait pour ce corps de réservation. */
 async function bookedInstant(startsAt: string): Promise<string> {
   const { controller, captured } = capturingService();
 
-  await controller.book(await validate(BookAppointmentDto, bookingBody(startsAt)));
+  await controller.book(bookAppointmentBody.transform(bookingBody(startsAt)) as BookAppointmentBody);
 
   return instantOf(captured.book, 'book');
 }
@@ -189,9 +218,7 @@ describe('début de rendez-vous entrant', () => {
   });
 
   it('refuse une date-heure nue — le serveur n’a pas à deviner le fuseau', async () => {
-    expect(await refusalFor(BookAppointmentDto, bookingBody('2026-03-29T03:30:00'))).toContain(
-      'offset explicite',
-    );
+    expect(bookingRefusal('2026-03-29T03:30:00')).toContain('offset explicite');
     expect(await refusalFor(RescheduleAppointmentDto, { startsAt: '2026-03-29T03:30:00' })).toContain(
       'offset explicite',
     );
@@ -219,9 +246,7 @@ describe('début de rendez-vous entrant', () => {
     ];
 
     for (const startsAt of refused) {
-      expect(await refusalFor(BookAppointmentDto, bookingBody(startsAt))).toContain(
-        'offset explicite',
-      );
+      expect(bookingRefusal(startsAt)).toContain('offset explicite');
       expect(await refusalFor(RescheduleAppointmentDto, { startsAt })).toContain(
         'offset explicite',
       );
