@@ -258,9 +258,21 @@ ARBITER_BUDGET = 12
 # Le silence qui dit qu'une étape est morte debout. Une phase de ticket dure
 # quelques minutes ; un journal muet depuis vingt-cinq minutes, alors que des
 # agents sont censés y écrire, signifie qu'ils attendent tous quelque chose que
-# personne ne leur donnera. La coupure au temps (`--leg-timeout`, deux heures)
-# finirait par les libérer — mais deux heures plus tard.
+# personne ne leur donnera. La coupure au temps (`--leg-timeout`, trois heures)
+# finirait par les libérer — mais trois heures plus tard.
 STALL_MINUTES = 25
+
+# Le plafond d'une étape. Trois heures et non deux : à deux, le plafond passait
+# *sous* le travail assigné. Une étape porte une vague entière — jusqu'à trois
+# tickets menés de l'implémentation au merge — puis un `npm run verify` sur
+# `develop` qui coûte à lui seul dix minutes. Les trois vagues pleines mesurées
+# sur S4 ont pris 145,8, 148,2 et 150,1 minutes : le dépassement était le régime
+# nominal, pas l'exception, et toute étape qui allait au bout recevait un ordre
+# d'arrêt. Elle n'y survivait que parce que `terminate()` échoue sous Windows —
+# le dispositif n'avançait que grâce à un défaut. Réparer la coupure sans relever
+# d'abord ce plafond ferait de ce défaut inoffensif un tueur de vagues saines,
+# coupant chaque étape ~50 min avant sa fin, deux ou trois tickets à demi faits.
+LEG_TIMEOUT = 180
 
 # Ce que le chien de garde doit relancer, et avec quels réglages. Écrit une fois
 # à l'armement ; c'est la mémoire du dispositif entre deux vies du superviseur.
@@ -483,7 +495,7 @@ def intent_of(args):
         # champ — et l'armement ne doit pas mourir sur un réglage ajouté après
         # coup, sous peine d'emporter toute la reprise automatique.
         "max_legs": args.max_legs,
-        "leg_timeout": getattr(args, "leg_timeout", 120),
+        "leg_timeout": getattr(args, "leg_timeout", LEG_TIMEOUT),
         # L'arbitrage se rejoue comme le reste : un superviseur ressuscité par la
         # veille doit trancher comme celui qu'il remplace. L'oublier ferait qu'un
         # run armé perde sa capacité de décision au premier redémarrage — c'est
@@ -863,7 +875,7 @@ def intent_argv(intent):
              "--margin", str(intent.get("margin", 90)),
              "--patience", str(intent.get("patience", 2)),
              "--max-legs", str(intent.get("max_legs", 40)),
-             "--leg-timeout", str(intent.get("leg_timeout", 120)),
+             "--leg-timeout", str(intent.get("leg_timeout", LEG_TIMEOUT)),
              "--arbiter-model", intent.get("arbiter_model") or ARBITER_MODEL,
              "--arbiter-budget", str(intent.get("arbiter_budget", ARBITER_BUDGET)),
              "--arbiter-timeout", str(intent.get("arbiter_timeout", ARBITER_TIMEOUT)),
@@ -1904,6 +1916,29 @@ def calls_in_flight():
         return bool(_IN_FLIGHT)
 
 
+def was_cut(expired, summary):
+    """L'ordre d'arrêt a-t-il **abouti**, ou l'appel a-t-il fini quand même ?
+
+    Nommer la panne, et ne pas la confondre avec un échec de l'appel : une étape
+    coupée au temps n'a pas démérité, elle a été retenue. Le compteur de
+    stérilité la compte comme les autres — trois de suite disent bien que
+    quelque chose ne passe plus.
+
+    Mais le Timer qui tire ne prouve pas que la coupure a eu lieu. `terminate()`
+    ne descend pas dans l'arbre de processus sous Windows : l'appel survit à son
+    propre ordre d'arrêt et va au bout de son travail. Un `result` sans erreur
+    est la preuve qu'il a rendu la main de lui-même — il n'est pas en retard, et
+    le dire tel ouvre un arbitrage pour rien.
+
+    Sur le run S4 du 6 septembre, les étapes 6, 8 et 10 ont toutes trois reçu
+    leur ordre d'arrêt, l'ont toutes trois ignoré et ont merge leurs PR : trois
+    des quatre arbitrages du run dépensés à faire constater par Opus 5 que tout
+    allait bien. Le budget d'arbitrage est l'assurance du jalon contre le premier
+    incident réel ; une fausse alarme récurrente la dépense avant l'incendie.
+    """
+    return bool(expired) and not (summary and not summary.get("is_error"))
+
+
 def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
     """Lance l'appel et lit son flux `stream-json` — le corps commun.
 
@@ -2043,7 +2078,7 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
         pass
     elif stalled.is_set():
         # Distinguée du délai, et ce n'est pas une nuance : un appel coupé au
-        # temps a peut-être travaillé jusqu'au bout de ses deux heures, tandis
+        # temps a peut-être travaillé jusqu'au bout de ses trois heures, tandis
         # qu'un appel coupé sur le silence n'écrivait plus rien depuis vingt-cinq
         # minutes. Le second est un motif d'arbitrage à lui seul ; le premier ne
         # l'est que parce qu'il laisse des tickets en plan.
@@ -2053,11 +2088,7 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
         # dire « stérile » ferait s'arrêter et se désarmer le dispositif après
         # deux étapes — au moment précis où il devait attendre.
         issue = "quota" if LIMIT_TEXT.search(stderr) else "silence"
-    elif expired.is_set():
-        # Nommer la panne, et ne pas la confondre avec un échec de l'appel : une
-        # étape coupée au temps n'a pas démérité, elle a été retenue. Le compteur
-        # de stérilité la compte comme les autres — trois de suite disent bien
-        # que quelque chose ne passe plus.
+    elif was_cut(expired.is_set(), summary):
         issue = "délai"
     elif issue is None and process.returncode not in (0, None):
         issue = "quota" if LIMIT_TEXT.search(stderr) else "échec"
@@ -2878,10 +2909,11 @@ def main():
                         help="garde-fou : nombre d'appels à Claude Code")
     parser.add_argument("--max-hours", type=float,
                         help="garde-fou : durée totale du superviseur")
-    parser.add_argument("--leg-timeout", type=float, default=120,
+    parser.add_argument("--leg-timeout", type=float, default=LEG_TIMEOUT,
                         metavar="MINUTES",
                         help="au-delà, l'appel d'une étape est coupé et ses "
-                             "tickets repris à l'étape suivante (défaut 120)")
+                             f"tickets repris à l'étape suivante (défaut "
+                             f"{LEG_TIMEOUT})")
     parser.add_argument("--patience", type=int, default=3,
                         help="étapes sans avancement tolérées avant l'arrêt")
     parser.add_argument("--echo", action="store_true",
