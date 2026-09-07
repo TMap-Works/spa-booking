@@ -250,3 +250,140 @@ export function readWebhookEvent(payload: Buffer): WebhookReadOutcome {
     event: { eventId, eventType, tenantHint: readTenantHint(object), fact },
   };
 }
+
+/** Les références Stripe que porte un fait, quelle que soit sa nature. */
+export function referenceOf(fact: WebhookFact): {
+  readonly paymentIntentId: string | null;
+  readonly chargeId: string | null;
+} {
+  switch (fact.kind) {
+    case 'payment-succeeded':
+      return { paymentIntentId: fact.paymentIntentId, chargeId: fact.chargeId };
+    case 'payment-failed':
+      return { paymentIntentId: fact.paymentIntentId, chargeId: null };
+    case 'charge-refunded':
+      return { paymentIntentId: fact.paymentIntentId, chargeId: fact.chargeId };
+    case 'dispute-opened':
+      return { paymentIntentId: fact.paymentIntentId, chargeId: fact.chargeId };
+  }
+}
+
+/**
+ * La clé de **sérialisation** d'un événement — l'encaissement qu'il concerne
+ * (#409).
+ *
+ * C'est le second constat du ticket, tranché : deux livraisons portant sur le
+ * même encaissement ne doivent pas s'appliquer en parallèle. Aucun état
+ * incohérent n'en découlait — les transitions sont des `updateMany` filtrés par
+ * statut, dans une transaction —, mais l'ordre d'application n'était pas
+ * garanti, et « pas garanti » est ce qui devient faux le jour où une branche
+ * cesse d'être un simple filtre.
+ *
+ * L'intention prime sur la charge : c'est elle que porte `payments`, et c'est
+ * donc elle qui désigne la ligne que deux livraisons se disputeraient. Un
+ * litige ouvert sans aucune référence — Stripe l'autorise — se sérialise sur
+ * son propre identifiant d'événement : il ne partage rien avec personne, ce qui
+ * est la bonne réponse pour une alerte sans écriture.
+ *
+ * Cette clé n'est pas calculée à la volée au moment de traiter : elle est
+ * **persistée** avec la livraison, pour qu'une reprise après redémarrage
+ * retrouve la chaîne quittée, et pour qu'elle devienne le `MessageGroupId`
+ * d'une file FIFO le jour du passage à SQS (CDC §2.2) sans rien réécrire.
+ */
+export function serializationKeyOf(event: StripeWebhookEvent): string {
+  const reference = referenceOf(event.fact);
+  return reference.paymentIntentId ?? reference.chargeId ?? event.eventId;
+}
+
+/**
+ * Relit un événement **écrit par nous** dans `stripe_webhook_deliveries`.
+ *
+ * Ce n'est pas de la défiance envers la base : c'est que `payload` est du JSON,
+ * donc `unknown` pour le compilateur, et qu'un `as StripeWebhookEvent` ferait
+ * entrer dans le traitement une forme que personne n'a vérifiée. Le seul
+ * scénario réaliste où la relecture échoue est une ligne écrite par une version
+ * antérieure du code dont la forme a changé depuis — et alors, rendre `null`
+ * est très exactement ce qu'il faut : la livraison part en file d'attente
+ * morte avec une alerte, au lieu de faire tomber le balayage à chaque tour.
+ *
+ * La vérification porte sur ce que le traitement va réellement lire : le
+ * discriminant du fait, et les champs que ce discriminant rend obligatoires.
+ * C'est la seule façon d'être sûr qu'un `as` n'introduit pas un `undefined` là
+ * où le compilateur promet une chaîne — un `charge-refunded` sans montant
+ * écrirait `null` dans une colonne `NOT NULL`, à des heures de distance de la
+ * ligne fautive.
+ */
+export function reviveWebhookEvent(value: unknown): StripeWebhookEvent | null {
+  const record = asRecord(value);
+  if (record === null) {
+    return null;
+  }
+
+  const eventId = readString(record, 'eventId');
+  const eventType = readString(record, 'eventType');
+  const fact = reviveFact(asRecord(record['fact']));
+  if (eventId === null || eventType === null || fact === null || !isHandled(eventType)) {
+    return null;
+  }
+
+  return { eventId, eventType, tenantHint: readString(record, 'tenantHint'), fact };
+}
+
+/**
+ * Le fait relu depuis la colonne `payload`, ou `null` si sa forme n'est pas
+ * celle que `WebhookFact` déclare.
+ *
+ * Chaque branche exige exactement ce que le type exige, ni plus ni moins — les
+ * champs facultatifs restent facultatifs, et un booléen absent vaut `false`
+ * plutôt que d'invalider la ligne : `fullyRefunded` est une conclusion, pas une
+ * donnée de Stripe.
+ */
+function reviveFact(fact: Record<string, unknown> | null): WebhookFact | null {
+  if (fact === null) {
+    return null;
+  }
+
+  switch (readString(fact, 'kind')) {
+    case 'payment-succeeded': {
+      const paymentIntentId = readString(fact, 'paymentIntentId');
+      return paymentIntentId === null
+        ? null
+        : { kind: 'payment-succeeded', paymentIntentId, chargeId: readString(fact, 'chargeId') };
+    }
+
+    case 'payment-failed': {
+      const paymentIntentId = readString(fact, 'paymentIntentId');
+      return paymentIntentId === null ? null : { kind: 'payment-failed', paymentIntentId };
+    }
+
+    case 'charge-refunded': {
+      const paymentIntentId = readString(fact, 'paymentIntentId');
+      const refundedAmountMinor = readAmountMinor(fact, 'refundedAmountMinor');
+      if (paymentIntentId === null || refundedAmountMinor === null) {
+        return null;
+      }
+      return {
+        kind: 'charge-refunded',
+        paymentIntentId,
+        chargeId: readString(fact, 'chargeId'),
+        refundedAmountMinor,
+        fullyRefunded: fact['fullyRefunded'] === true,
+      };
+    }
+
+    case 'dispute-opened': {
+      const disputeId = readString(fact, 'disputeId');
+      return disputeId === null
+        ? null
+        : {
+            kind: 'dispute-opened',
+            paymentIntentId: readString(fact, 'paymentIntentId'),
+            chargeId: readString(fact, 'chargeId'),
+            disputeId,
+          };
+    }
+
+    default:
+      return null;
+  }
+}

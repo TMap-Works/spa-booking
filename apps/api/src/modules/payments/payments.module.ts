@@ -16,12 +16,18 @@ import { RefundsService } from './refunds.service';
 import { SalesController } from './sales.controller';
 import { SalesService } from './sales.service';
 import { StripeWebhookController } from './stripe-webhook.controller';
-import { InProcessWebhookQueue, WEBHOOK_QUEUE } from './stripe-webhook.queue';
+import { DurableWebhookQueue, WEBHOOK_QUEUE } from './stripe-webhook.queue';
 import { StripeWebhookRepository } from './stripe-webhook.repository';
 import { StripeWebhookService } from './stripe-webhook.service';
 import { StripeHttpGateway } from './stripe/stripe-http.gateway';
 import { StripeConfig } from './stripe/stripe.config';
 import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
+import {
+  DEFAULT_RETRY_SCHEDULE,
+  DEFAULT_SWEEP_SCHEDULE,
+  WEBHOOK_RETRY_SCHEDULE,
+  WEBHOOK_SWEEP_SCHEDULE,
+} from './webhook-retry.policy';
 
 /**
  * Module `payments` — encaissement et tokenisation (CDC §2.3).
@@ -36,6 +42,7 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
  * | #62 | Le règlement en espèces, l'historique des ventes et celui des transactions — la matière du rapprochement |
  * | #63 | Le remboursement total et partiel : l'ordre au prestataire, le cumul borné côté serveur, et la trace « qui, quand, pourquoi » |
  * | #410 | La consolidation : une seule `StripeConfig`, un seul fichier d'erreurs, et un critère de découpage des dépôts |
+ * | #409 | La file **durable** des webhooks : la livraison est inscrite en base avant le 200, réessayée un nombre borné de fois, enterrée avec alerte, et reprise après un arrêt brutal |
  *
  * Les deux premières moitiés se répondent : #57 crée une intention et ne
  * confirme rien, #58 est le seul à faire passer un encaissement **carte** en
@@ -122,12 +129,25 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
  * ## Pourquoi la passerelle et la file passent par un jeton
  *
  * `STRIPE_GATEWAY` et `WEBHOOK_QUEUE` sont des `Symbol`, et `StripeHttpGateway`
- * comme `InProcessWebhookQueue` n'en sont que des implémentations. C'est ce qui
+ * comme `DurableWebhookQueue` n'en sont que des implémentations. C'est ce qui
  * permet aux suites de substituer un double en mémoire — aucun test n'atteint
  * l'environnement live (payments-stripe §7) —, ce qui laissera `stripe-node`
  * entrer derrière la première frontière le jour où Terminal le rendra
  * nécessaire, et la chaîne EventBridge → SQS → Lambda du CDC §2.2 derrière la
  * seconde, sans qu'une ligne du service ni du contrôleur ne bouge.
+ *
+ * Le jeton a d'ailleurs déjà servi à cela : #409 a remplacé la file en mémoire
+ * par une file durable en base — réessai borné, file d'attente morte, reprise
+ * après un arrêt brutal — sans qu'une ligne de `StripeWebhookController` ne
+ * change autre chose qu'un `await`.
+ *
+ * ## Pourquoi les deux calendriers passent, eux aussi, par un jeton
+ *
+ * `WEBHOOK_RETRY_SCHEDULE` et `WEBHOOK_SWEEP_SCHEDULE` sont des valeurs, pas des
+ * classes : les injecter par `useValue` est ce qui permet à une suite de
+ * substituer un calendrier instantané — zéro réessai pour observer la file
+ * d'attente morte, un bail d'une milliseconde pour observer la reprise — sans
+ * qu'aucun test n'ait à attendre les secondes du calendrier de production.
  *
  * ## Ce qu'il exporte
  *
@@ -178,7 +198,9 @@ import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
     // environnement fabriqué.
     { provide: StripeConfig, useFactory: () => new StripeConfig(process.env) },
     { provide: STRIPE_GATEWAY, useClass: StripeHttpGateway },
-    { provide: WEBHOOK_QUEUE, useClass: InProcessWebhookQueue },
+    { provide: WEBHOOK_RETRY_SCHEDULE, useValue: DEFAULT_RETRY_SCHEDULE },
+    { provide: WEBHOOK_SWEEP_SCHEDULE, useValue: DEFAULT_SWEEP_SCHEDULE },
+    { provide: WEBHOOK_QUEUE, useClass: DurableWebhookQueue },
   ],
   exports: [PaymentsService, SalesService, StripeConfig, WEBHOOK_QUEUE],
 })

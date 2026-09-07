@@ -91,6 +91,7 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
   let prismaUnscoped: PrismaClient;
   let repository: StripeWebhookRepository;
   let service: StripeWebhookService;
+  let tenants: TenantContextService;
   let log: ReturnType<typeof recordingLogger>;
 
   let a: SeededTenant;
@@ -189,7 +190,8 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
     const scoped = createScopedPrismaClient(prismaUnscoped);
     repository = new StripeWebhookRepository(scoped, prismaUnscoped);
     log = recordingLogger();
-    service = new StripeWebhookService(repository, new TenantContextService(), log.logger);
+    tenants = new TenantContextService();
+    service = new StripeWebhookService(repository, tenants, log.logger);
 
     a = await seedTenant('a');
     b = await seedTenant('b');
@@ -248,6 +250,39 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
       expect(log.warnings).toContain(
         'stripe webhook: établissement non résolu, événement ignoré',
       );
+    });
+
+    it('ne résout pas une indication qui ne désigne aucun établissement', async () => {
+      // La confrontation que `tenantHint` annonce depuis le premier jour. Elle
+      // ne coûtait rien tant que le tenant résolu n'ouvrait qu'une portée de
+      // lecture ; depuis #409 il sert à **écrire** la livraison, et un
+      // établissement inexistant ferait violer la clé étrangère pendant la
+      // requête HTTP — 500 rendu, et Stripe redélivrant trois jours durant un
+      // événement que rien ne rendra jamais inscriptible.
+      const absent = randomUUID();
+
+      await expect(
+        service.resolveTenant(succeeded(`pi_${randomUUID()}`, { tenantHint: absent })),
+      ).resolves.toBeNull();
+    });
+
+    it('ne résout pas une indication qui n’est même pas un identifiant', async () => {
+      // La métadonnée est recopiée telle quelle depuis une intention que
+      // n'importe qui peut créer dans le tableau de bord Stripe. PostgreSQL
+      // refuse la comparaison avec un `uuid` — ce refus vaut « introuvable », il
+      // ne doit pas remonter comme une panne.
+      await expect(
+        service.resolveTenant(succeeded(`pi_${randomUUID()}`, { tenantHint: 'pas-un-uuid' })),
+      ).resolves.toBeNull();
+    });
+
+    it('résout une indication qui désigne un établissement réel', async () => {
+      // L'autre moitié : la confrontation ne doit pas rejeter ce qui est
+      // légitime. C'est ce cas-là qui rattrape un `pi_…` créé chez Stripe avant
+      // que sa ligne `payments` n'existe.
+      await expect(
+        service.resolveTenant(succeeded(`pi_${randomUUID()}`, { tenantHint: a.id })),
+      ).resolves.toBe(a.id);
     });
   });
 
@@ -468,6 +503,294 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
         refundedAmountMinor: PRICE.amountMinor,
         providerChargeId: 'ch_total',
       });
+    });
+  });
+
+  /**
+   * La file durable, contre le moteur — #409.
+   *
+   * Les cas en mémoire de `__tests__/stripe-webhook.queue.spec.ts` prouvent
+   * l'ordonnancement : le réessai borné, la file d'attente morte, la chaîne par
+   * encaissement. Ils ne peuvent rien prouver de ce qui suit, parce que ce sont
+   * des propriétés de la **base** :
+   *
+   * 1. **la ligne est écrite sous l'établissement de la portée**, par
+   *    l'extension Prisma — le dépôt ne fournit jamais `tenant_id` ;
+   * 2. **l'unique `(tenant_id, event_id)`** est ce qui distingue une
+   *    redélivrance d'un second travail. Un double le simulerait ; seule la
+   *    contrainte le décide sous concurrence ;
+   * 3. **la prise est un `UPDATE` conditionnel** : de deux instances qui
+   *    reprennent la même livraison orpheline, une seule voit `count = 1`.
+   *    C'est la base qui tranche, pas une fenêtre de code (ADR 0002).
+   */
+  describe('file durable des livraisons (#409)', () => {
+    const spool = async (tenant: SeededTenant, event: StripeWebhookEvent) =>
+      tenants.runWithTenant(tenant.id, async () =>
+        repository.spool({ event, serializationKey: `pi_${event.eventId}` }),
+      );
+
+    /** Vieillit le bail d'une livraison — ce qu'un `SIGKILL` laisse derrière lui. */
+    const abandon = async (deliveryId: string) => {
+      await prismaUnscoped.stripeWebhookDelivery.update({
+        where: { id: deliveryId },
+        data: { claimedAt: new Date(Date.now() - 60_000) },
+      });
+    };
+
+    const claimNow = async (leaseMs = 1_000) =>
+      repository.claimAbandonedDeliveries({ now: new Date(), leaseMs, batchSize: 20 });
+
+    it('inscrit la livraison sous l’établissement de la portée, jamais sous un autre', async () => {
+      // Le dépôt ne fournit pas `tenant_id` — c'est l'extension qui le pose
+      // depuis le contexte. Un événement dont la métadonnée désignerait le
+      // voisin n'y changerait rien : c'est la portée ouverte qui décide.
+      const event = succeeded(a.paymentIntentId, { tenantHint: b.id });
+
+      const delivery = await spool(a, event);
+
+      expect(delivery).not.toBeNull();
+      expect(
+        await prismaUnscoped.stripeWebhookDelivery.findUniqueOrThrow({
+          where: { id: delivery?.id ?? '' },
+          select: { tenantId: true, status: true, attempts: true, serializationKey: true },
+        }),
+      ).toMatchObject({ tenantId: a.id, status: 'PENDING', attempts: 0 });
+    });
+
+    it('ne conserve du payload que l’événement réduit — aucune donnée de carte', async () => {
+      // La colonne porte ce que `readWebhookEvent` a produit, et ce type ne
+      // déclare aucun champ de carte (payments-stripe §1). Ce qui n'est pas
+      // déclaré n'est pas recopié, et ce qui n'est pas recopié ne peut pas être
+      // conservé.
+      const event = succeeded(a.paymentIntentId);
+      const delivery = await spool(a, event);
+
+      const row = await prismaUnscoped.stripeWebhookDelivery.findUniqueOrThrow({
+        where: { id: delivery?.id ?? '' },
+        select: { payload: true },
+      });
+
+      expect(Object.keys(row.payload as object).sort()).toEqual([
+        'eventId',
+        'eventType',
+        'fact',
+        'tenantHint',
+      ]);
+    });
+
+    it('rend null sur une redélivrance — l’unique tranche', async () => {
+      const event = succeeded(a.paymentIntentId);
+
+      const first = await spool(a, event);
+      const second = await spool(a, event);
+
+      expect(first).not.toBeNull();
+      expect(second).toBeNull();
+      expect(
+        await prismaUnscoped.stripeWebhookDelivery.count({ where: { eventId: event.eventId } }),
+      ).toBe(1);
+    });
+
+    it('laisse deux établissements inscrire le même identifiant d’événement', async () => {
+      // L'unique est composite. Deux établissements ne se bloquent pas l'un
+      // l'autre sur un `evt_…` que Stripe n'attribuerait de toute façon jamais
+      // deux fois — mais la frontière doit valoir même sur l'improbable.
+      const event = succeeded(a.paymentIntentId);
+
+      expect(await spool(a, event)).not.toBeNull();
+      expect(await spool(b, event)).not.toBeNull();
+    });
+
+    it('ne reprend pas une livraison dont le bail est frais', async () => {
+      // L'instance qui a inscrit la livraison la traite : la reprendre ferait
+      // partir deux traitements de front.
+      const event = succeeded(a.paymentIntentId);
+      const delivery = await spool(a, event);
+
+      expect((await claimNow()).map((taken) => taken.id)).not.toContain(delivery?.id);
+    });
+
+    it('reprend une livraison dont le bail est périmé, et la relit intacte', async () => {
+      // Le troisième critère du ticket, contre le moteur : le processus est
+      // mort, la ligne est restée `PENDING`, son bail a vieilli — et n'importe
+      // quelle instance la reprend sans savoir qu'une autre est morte.
+      const event = succeeded(a.paymentIntentId);
+      const delivery = await spool(a, event);
+      await abandon(delivery?.id ?? '');
+
+      const claimed = await claimNow();
+      const taken = claimed.find((candidate) => candidate.id === delivery?.id);
+
+      expect(taken).toBeDefined();
+      expect(taken?.tenantId).toBe(a.id);
+      // Le `payload` a fait l'aller-retour par JSON : l'événement relu est
+      // exactement celui qui a été inscrit.
+      expect(taken?.event).toEqual(event);
+    });
+
+    it('ne laisse qu’une seule prise gagner sur deux balayages concurrents', async () => {
+      // Deux instances ECS balaient en même temps. Sous `READ COMMITTED`,
+      // PostgreSQL réévalue le prédicat après avoir pris le verrou de ligne :
+      // une seule voit `count = 1`.
+      const event = succeeded(a.paymentIntentId);
+      const delivery = await spool(a, event);
+      await abandon(delivery?.id ?? '');
+
+      const [left, right] = await Promise.all([claimNow(), claimNow()]);
+      const winners = [...left, ...right].filter((taken) => taken.id === delivery?.id);
+
+      expect(winners).toHaveLength(1);
+    });
+
+    it('exclut du balayage une livraison enterrée', async () => {
+      const event = succeeded(a.paymentIntentId);
+      const delivery = await spool(a, event);
+      await tenants.runWithTenant(a.id, async () =>
+        repository.deadLetterDelivery(delivery?.id ?? '', {
+          attempts: 4,
+          lastError: 'Error: base injoignable',
+        }),
+      );
+
+      expect(
+        await prismaUnscoped.stripeWebhookDelivery.findUniqueOrThrow({
+          where: { id: delivery?.id ?? '' },
+          select: { status: true, claimedAt: true, lastError: true },
+        }),
+      ).toMatchObject({ status: 'DEAD', claimedAt: null });
+      expect((await claimNow()).map((taken) => taken.id)).not.toContain(delivery?.id);
+    });
+
+    it('ressuscite une livraison enterrée quand Stripe la redélivre', async () => {
+      // La file d'attente morte alerte « intervention humaine requise », et le
+      // seul geste que cette alerte appelle est le renvoi de l'événement depuis
+      // le tableau de bord Stripe. L'unique `(tenant_id, event_id)` avalerait ce
+      // renvoi comme un rejeu si la ligne morte n'était pas remise au travail :
+      // l'encaissement resterait `PENDING`, et l'alerte demanderait une action
+      // qu'aucun chemin n'exécute.
+      const event = succeeded(a.paymentIntentId);
+      const delivery = await spool(a, event);
+      await tenants.runWithTenant(a.id, async () =>
+        repository.deadLetterDelivery(delivery?.id ?? '', {
+          attempts: 4,
+          lastError: 'Error: base injoignable',
+        }),
+      );
+
+      const revived = await spool(a, event);
+
+      // La même ligne, remise à zéro — jamais une seconde.
+      expect(revived?.id).toBe(delivery?.id);
+      expect(revived?.attempts).toBe(0);
+      expect(
+        await prismaUnscoped.stripeWebhookDelivery.count({ where: { eventId: event.eventId } }),
+      ).toBe(1);
+      expect(
+        await prismaUnscoped.stripeWebhookDelivery.findUniqueOrThrow({
+          where: { id: delivery?.id ?? '' },
+          select: { status: true, attempts: true, lastError: true },
+        }),
+      ).toMatchObject({ status: 'PENDING', attempts: 0, lastError: null });
+    });
+
+    it('ne ressuscite jamais la livraison enterrée d’un autre établissement', async () => {
+      // La résurrection passe par le client scopé : une portée ouverte sur le
+      // voisin ne voit pas la ligne, et n'a donc rien à remettre au travail.
+      const event = succeeded(a.paymentIntentId);
+      const delivery = await spool(a, event);
+      await tenants.runWithTenant(a.id, async () =>
+        repository.deadLetterDelivery(delivery?.id ?? '', {
+          attempts: 4,
+          lastError: 'Error: base injoignable',
+        }),
+      );
+
+      // Chez `b`, l'unique ne s'oppose à rien : c'est une inscription neuve.
+      expect(await spool(b, event)).not.toBeNull();
+      expect(
+        await prismaUnscoped.stripeWebhookDelivery.findUniqueOrThrow({
+          where: { id: delivery?.id ?? '' },
+          select: { status: true },
+        }),
+      ).toMatchObject({ status: 'DEAD' });
+    });
+
+    it('enterre sur place une ligne dont le payload ne se relit plus', async () => {
+      // Le seul scénario réaliste : une ligne écrite par une version antérieure
+      // du code. La rendre ferait tomber le traitement à chaque tour ; la
+      // laisser telle quelle la ferait reprendre indéfiniment.
+      const delivery = await spool(a, succeeded(a.paymentIntentId));
+      await prismaUnscoped.stripeWebhookDelivery.update({
+        where: { id: delivery?.id ?? '' },
+        data: { payload: { forme: 'inconnue' }, claimedAt: new Date(Date.now() - 60_000) },
+      });
+
+      expect((await claimNow()).map((taken) => taken.id)).not.toContain(delivery?.id);
+      expect(
+        await prismaUnscoped.stripeWebhookDelivery.findUniqueOrThrow({
+          where: { id: delivery?.id ?? '' },
+          select: { status: true, claimedAt: true },
+        }),
+      ).toMatchObject({ status: 'DEAD', claimedAt: null });
+    });
+
+    it('replanifie sans relâcher le bail', async () => {
+      // Cette instance tient toujours la livraison et va la reprendre après le
+      // délai. Relâcher le bail ferait partir une seconde tentative de front.
+      const delivery = await spool(a, succeeded(a.paymentIntentId));
+      const nextAttemptAt = new Date(Date.now() + 5_000);
+
+      await tenants.runWithTenant(a.id, async () =>
+        repository.rescheduleDelivery(delivery?.id ?? '', {
+          attempts: 1,
+          nextAttemptAt,
+          lastError: 'Error: interblocage',
+        }),
+      );
+
+      const row = await prismaUnscoped.stripeWebhookDelivery.findUniqueOrThrow({
+        where: { id: delivery?.id ?? '' },
+        select: { attempts: true, nextAttemptAt: true, claimedAt: true, status: true },
+      });
+      expect(row).toMatchObject({ attempts: 1, status: 'PENDING' });
+      expect(row.claimedAt).not.toBeNull();
+      expect(row.nextAttemptAt.getTime()).toBe(nextAttemptAt.getTime());
+    });
+
+    it('ne reprend pas une livraison dont l’échéance n’est pas venue', async () => {
+      const delivery = await spool(a, succeeded(a.paymentIntentId));
+      await prismaUnscoped.stripeWebhookDelivery.update({
+        where: { id: delivery?.id ?? '' },
+        data: { nextAttemptAt: new Date(Date.now() + 60_000), claimedAt: null },
+      });
+
+      expect((await claimNow()).map((taken) => taken.id)).not.toContain(delivery?.id);
+    });
+
+    it('efface la ligne quand la livraison a abouti', async () => {
+      const delivery = await spool(a, succeeded(a.paymentIntentId));
+
+      await tenants.runWithTenant(a.id, async () =>
+        repository.completeDelivery(delivery?.id ?? ''),
+      );
+
+      expect(
+        await prismaUnscoped.stripeWebhookDelivery.count({ where: { id: delivery?.id ?? '' } }),
+      ).toBe(0);
+    });
+
+    it('n’efface jamais la ligne d’un autre établissement', async () => {
+      // La frontière tenue par l'extension : `completeDelivery` est un
+      // `deleteMany` scopé, et une portée ouverte sur le voisin n'atteint rien.
+      const delivery = await spool(a, succeeded(a.paymentIntentId));
+
+      await tenants.runWithTenant(b.id, async () =>
+        repository.completeDelivery(delivery?.id ?? ''),
+      );
+
+      expect(
+        await prismaUnscoped.stripeWebhookDelivery.count({ where: { id: delivery?.id ?? '' } }),
+      ).toBe(1);
     });
   });
 

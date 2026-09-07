@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { StructuredLogger } from '../../common/logging/structured-logger';
 import { TenantContextService } from '../../common/tenant/tenant-context.service';
 import { StripeWebhookRepository } from './stripe-webhook.repository';
-import type { StripeWebhookEvent, WebhookFact } from './stripe-webhook.types';
+import { referenceOf, type StripeWebhookEvent, type WebhookFact } from './stripe-webhook.types';
 
 /**
  * Le traitement d'un événement Stripe déjà vérifié — la règle métier des
@@ -37,19 +37,22 @@ export class StripeWebhookService {
   /**
    * Traite un événement. **Ne lève que sur une panne** — base injoignable,
    * contrainte violée : ce sont les cas où l'on veut précisément que la
-   * transaction soit annulée, pour que rien de faux ne s'écrive et que le renvoi
-   * manuel de l'événement s'applique pour de bon. Stripe, lui, ne rejoue pas :
-   * le 200 est parti avant le traitement (`stripe-webhook.queue.ts`), et c'est
-   * le journal de niveau `error` de la file qui est l'alerte.
+   * transaction soit annulée, pour que rien de faux ne s'écrive.
+   *
+   * Laisser la panne remonter est la conduite utile, et non un abandon : Stripe,
+   * lui, ne rejoue pas — le 200 est parti avant le traitement —, mais depuis
+   * #409 c'est la **file durable** qui rejoue. Elle réessaie un nombre borné de
+   * fois, puis enterre la livraison en file d'attente morte avec une alerte de
+   * niveau `error`. Une panne avalée ici priverait cette mécanique de ce sur
+   * quoi elle s'appuie.
    *
    * Tout le reste — établissement introuvable, encaissement inconnu — se
-   * journalise et s'arrête là, en `warn`. Ces deux cas ne sont pas des pannes,
-   * mais ils ne sont pas anodins non plus : depuis #410, un encaissement inconnu
+   * journalise et s'arrête là, en `warn` : ce sont des issues, pas des pannes,
+   * et les réessayer ne changerait rien. Depuis #410, un encaissement inconnu
    * laisse la base **rigoureusement intacte**, marque d'idempotence comprise, si
    * bien qu'un renvoi de l'événement depuis le tableau de bord Stripe
    * l'appliquera une fois la ligne présente. Le journal est ce qui déclenche ce
-   * renvoi ; il n'y a pas d'autre reprise tant que la file durable du CDC §2.2
-   * n'est pas posée.
+   * renvoi.
    */
   public async process(event: StripeWebhookEvent): Promise<void> {
     const tenantId = await this.resolveTenant(event);
@@ -113,11 +116,35 @@ export class StripeWebhookService {
    * exemple. Elle a été écrite par nous à la création de l'intention et la
    * signature du corps l'authentifie, mais elle reste ce que Stripe nous renvoie
    * — c'est pourquoi elle ne prime jamais sur une ligne réelle.
+   *
+   * **Publique depuis #409**, et pas par commodité : la file durable doit
+   * inscrire la livraison sous un établissement **avant** d'acquitter à Stripe,
+   * et il n'existe pas d'autre autorité que celle-ci pour dire lequel. Une
+   * seconde règle de résolution, écrite dans la file, aurait fini par diverger
+   * de celle-ci — et un désaccord entre les deux inscrirait la livraison sous un
+   * établissement pour l'appliquer sous un autre.
+   *
+   * C'est aussi ce qui a rendu la **confrontation** de l'indication à la base
+   * nécessaire, alors qu'elle ne l'était pas avant. Tant que le tenant résolu ne
+   * servait qu'à ouvrir une portée de lecture, une indication qui ne désignait
+   * rien ne trouvait simplement aucune ligne. Depuis #409 elle sert à écrire, et
+   * un établissement inexistant ferait violer la clé étrangère pendant la
+   * requête HTTP : la route rendrait 500 et Stripe redélivrerait trois jours
+   * durant un événement que rien ne rendra jamais inscriptible. Le contrat que
+   * `tenantHint` annonce depuis le premier jour — « le résolveur la confronte à
+   * la base avant d'ouvrir quoi que ce soit » — est donc tenu ici.
    */
-  private async resolveTenant(event: StripeWebhookEvent): Promise<string | null> {
+  public async resolveTenant(event: StripeWebhookEvent): Promise<string | null> {
     const reference = referenceOf(event.fact);
     const owner = await this.repository.findTenantIdByProviderReference(reference);
-    return owner ?? event.tenantHint;
+
+    if (owner !== null) {
+      return owner;
+    }
+
+    return event.tenantHint === null
+      ? null
+      : this.repository.findTenantIdByHint(event.tenantHint);
   }
 
   /**
@@ -143,22 +170,5 @@ export class StripeWebhookService {
       },
       StripeWebhookService.name,
     );
-  }
-}
-
-/** Les références Stripe que porte un fait, quelle que soit sa nature. */
-function referenceOf(fact: WebhookFact): {
-  readonly paymentIntentId: string | null;
-  readonly chargeId: string | null;
-} {
-  switch (fact.kind) {
-    case 'payment-succeeded':
-      return { paymentIntentId: fact.paymentIntentId, chargeId: fact.chargeId };
-    case 'payment-failed':
-      return { paymentIntentId: fact.paymentIntentId, chargeId: null };
-    case 'charge-refunded':
-      return { paymentIntentId: fact.paymentIntentId, chargeId: fact.chargeId };
-    case 'dispute-opened':
-      return { paymentIntentId: fact.paymentIntentId, chargeId: fact.chargeId };
   }
 }

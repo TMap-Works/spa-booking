@@ -1,5 +1,14 @@
+import { randomUUID } from 'node:crypto';
+
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
-import type { WebhookApplication, StripeWebhookRepository } from '../stripe-webhook.repository';
+import { requireTenantId } from '../../../common/tenant/tenant-context';
+import type {
+  ClaimRequest,
+  SpooledDelivery,
+  SpoolRequest,
+  WebhookApplication,
+  StripeWebhookRepository,
+} from '../stripe-webhook.repository';
 import type { StripeWebhookEvent, WebhookFact } from '../stripe-webhook.types';
 
 /**
@@ -55,6 +64,19 @@ export interface FakePayment {
   appointmentStatus: string | null;
 }
 
+/** Une ligne de `stripe_webhook_deliveries`, réduite à ce que la file manipule (#409). */
+export interface FakeDelivery {
+  readonly id: string;
+  readonly tenantId: string;
+  readonly serializationKey: string;
+  readonly event: StripeWebhookEvent;
+  attempts: number;
+  status: 'PENDING' | 'DEAD';
+  claimedAt: Date | null;
+  nextAttemptAt: Date;
+  lastError: string | null;
+}
+
 /**
  * Les seuls états depuis lesquels un encaissement devient `SUCCEEDED` — la copie
  * du `status: { in: [...] }` de `StripeWebhookRepository.settle`.
@@ -95,6 +117,13 @@ const DECLINED: Omit<WebhookApplication, 'outcome'> = {
  * exactement ce que le ticket avait à trancher, et un double qui écrivait sans
  * garde ne pouvait pas la montrer.
  *
+ * Depuis #409 il porte aussi la **file durable** — inscrire, aboutir,
+ * replanifier, enterrer, reprendre. Ces cinq opérations sont ce que
+ * `DurableWebhookQueue` appelle, et un double qui ne les aurait pas ferait
+ * échouer toute suite qui monte le module réel. Elles reproduisent les deux
+ * propriétés dont les suites ont besoin : l'unique `(tenant, event)` qui rend
+ * `null` sur une redélivrance, et le bail qui rend une livraison reprenable.
+ *
  * Ce qu'il **ne** modélise pas, et qu'il ne faut donc pas lui demander : la
  * transaction — donc l'annulation de la marque quand l'effet échoue —, la
  * contrainte d'unicité qui sérialise deux livraisons concurrentes, la frontière
@@ -107,6 +136,8 @@ const DECLINED: Omit<WebhookApplication, 'outcome'> = {
 export class FakeStripeWebhookRepository {
   public readonly payments = new Map<string, FakePayment>();
   public readonly processed = new Set<string>();
+  /** Les lignes de `stripe_webhook_deliveries`, par identifiant (#409). */
+  public readonly deliveries = new Map<string, FakeDelivery>();
   /** Levée à la prochaine application — pour exercer le chemin « la file journalise et n'échoue pas ». */
   public failNext: Error | null = null;
 
@@ -128,6 +159,158 @@ export class FakeStripeWebhookRepository {
       }
     }
     return null;
+  }
+
+  /**
+   * L'établissement d'une indication de métadonnée.
+   *
+   * Le double ne tient pas de table `tenants` : il accepte toute indication et
+   * la rend telle quelle. Ce n'est pas une simplification gratuite — la
+   * propriété que le vrai dépôt ajoute ici est « cet identifiant existe-t-il en
+   * base », et c'est très exactement ce qu'un double ne peut pas dire. Elle se
+   * prouve contre un vrai moteur, dans `test/payments-webhook.isolation-spec.ts`.
+   *
+   * `inconnus` permet néanmoins à une suite de désigner une indication qui ne
+   * doit rien résoudre, sans avoir à doubler la classe entière.
+   */
+  public readonly inconnus = new Set<string>();
+
+  public async findTenantIdByHint(hint: string): Promise<string | null> {
+    return this.inconnus.has(hint) ? null : hint;
+  }
+
+  /**
+   * L'inscription en file, avant l'accusé (#409).
+   *
+   * Le tenant vient du **contexte**, exactement comme l'extension Prisma le
+   * pose sur le vrai dépôt : la file ouvre la portée avec `runWithTenant` avant
+   * d'appeler, et un double qui recopierait un tenant passé en argument ne
+   * dirait rien de cette mécanique.
+   *
+   * Une redélivrance qui retombe sur une ligne **morte** la ressuscite, comme
+   * le vrai dépôt : c'est ce qui rend effectif le renvoi depuis le tableau de
+   * bord Stripe, seul geste que l'alerte de file d'attente morte appelle.
+   */
+  public async spool(request: SpoolRequest): Promise<SpooledDelivery | null> {
+    const tenantId = requireTenantId();
+    const key = `${tenantId}:${request.event.eventId}`;
+
+    for (const delivery of this.deliveries.values()) {
+      if (`${delivery.tenantId}:${delivery.event.eventId}` !== key) {
+        continue;
+      }
+
+      if (delivery.status !== 'DEAD') {
+        // L'unique `(tenant_id, event_id)` : Stripe a redélivré pendant que la
+        // première livraison attendait.
+        return null;
+      }
+
+      delivery.status = 'PENDING';
+      delivery.attempts = 0;
+      delivery.claimedAt = new Date();
+      delivery.nextAttemptAt = new Date();
+      delivery.lastError = null;
+
+      return {
+        id: delivery.id,
+        tenantId: delivery.tenantId,
+        attempts: 0,
+        serializationKey: delivery.serializationKey,
+        event: request.event,
+      };
+    }
+
+    const spooled: FakeDelivery = {
+      id: randomUUID(),
+      tenantId,
+      attempts: 0,
+      serializationKey: request.serializationKey,
+      event: request.event,
+      status: 'PENDING',
+      claimedAt: new Date(),
+      nextAttemptAt: new Date(),
+      lastError: null,
+    };
+    this.deliveries.set(spooled.id, spooled);
+
+    return {
+      id: spooled.id,
+      tenantId,
+      attempts: 0,
+      serializationKey: request.serializationKey,
+      event: request.event,
+    };
+  }
+
+  /** La livraison a abouti : la ligne disparaît. */
+  public async completeDelivery(deliveryId: string): Promise<void> {
+    this.deliveries.delete(deliveryId);
+  }
+
+  /** Réessai programmé : le bail est repoussé, pas relâché. */
+  public async rescheduleDelivery(
+    deliveryId: string,
+    next: { readonly attempts: number; readonly nextAttemptAt: Date; readonly lastError: string },
+  ): Promise<void> {
+    const delivery = this.deliveries.get(deliveryId);
+    if (delivery === undefined) {
+      return;
+    }
+    delivery.attempts = next.attempts;
+    delivery.nextAttemptAt = next.nextAttemptAt;
+    delivery.lastError = next.lastError;
+    delivery.claimedAt = new Date();
+  }
+
+  /** File d'attente morte : le bail est relâché, le statut exclut du balayage. */
+  public async deadLetterDelivery(
+    deliveryId: string,
+    outcome: { readonly attempts: number; readonly lastError: string },
+  ): Promise<void> {
+    const delivery = this.deliveries.get(deliveryId);
+    if (delivery === undefined) {
+      return;
+    }
+    delivery.status = 'DEAD';
+    delivery.attempts = outcome.attempts;
+    delivery.lastError = outcome.lastError;
+    delivery.claimedAt = null;
+  }
+
+  /**
+   * La reprise : ce que plus personne ne tient.
+   *
+   * Même prédicat que le vrai dépôt — `PENDING`, échéance passée, bail absent
+   * ou périmé —, et la prise repose le bail pour que deux tours consécutifs ne
+   * rendent pas deux fois la même livraison.
+   */
+  public async claimAbandonedDeliveries(claim: ClaimRequest): Promise<SpooledDelivery[]> {
+    const staleBefore = claim.now.getTime() - claim.leaseMs;
+    const claimed: SpooledDelivery[] = [];
+
+    for (const delivery of this.deliveries.values()) {
+      if (claimed.length >= claim.batchSize) {
+        break;
+      }
+      if (delivery.status !== 'PENDING' || delivery.nextAttemptAt.getTime() > claim.now.getTime()) {
+        continue;
+      }
+      if (delivery.claimedAt !== null && delivery.claimedAt.getTime() >= staleBefore) {
+        continue;
+      }
+
+      delivery.claimedAt = claim.now;
+      claimed.push({
+        id: delivery.id,
+        tenantId: delivery.tenantId,
+        attempts: delivery.attempts,
+        serializationKey: delivery.serializationKey,
+        event: delivery.event,
+      });
+    }
+
+    return claimed;
   }
 
   public async apply(event: StripeWebhookEvent): Promise<WebhookApplication> {

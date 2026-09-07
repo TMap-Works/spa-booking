@@ -61,6 +61,13 @@ describe('Extension de scoping tenant', () => {
       // portée coûterait le plus — elle borne ce qui reste remboursable, si
       // bien qu'un cumul lu chez le voisin ferait rendre deux fois la même
       // somme.
+      // Puis `StripeWebhookDelivery` par #409 : la file durable des webhooks.
+      // Son cas est le miroir de `ProcessedWebhookEvent` — une table de
+      // mécanique, qui aurait pu prétendre au global —, et la réponse est la
+      // même : elle porte `tenant_id`, elle est donc scopée. Une seule lecture
+      // y déroge, la reprise des livraisons orphelines, et elle est nommée,
+      // justifiée et confinée dans `StripeWebhookRepository` (tenant-isolation
+      // §3) — pas obtenue en retirant le modèle de cette liste.
       expect([...TENANT_SCOPED_MODELS].sort()).toEqual([
         'Appointment',
         'Notification',
@@ -77,6 +84,7 @@ describe('Extension de scoping tenant', () => {
         'Staff',
         'StaffSchedule',
         'StaffTimeOff',
+        'StripeWebhookDelivery',
         'TenantClosingDay',
         'TenantOpeningHour',
         'User',

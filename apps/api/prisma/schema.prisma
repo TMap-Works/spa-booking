@@ -181,6 +181,22 @@ enum NotificationStatus {
   FAILED
 }
 
+/// L'état d'une livraison de webhook dans la file durable — #409.
+///
+/// Deux valeurs et non trois : une livraison **aboutie n'existe plus**. La
+/// preuve qu'elle a eu lieu est la ligne de `processed_webhook_events`, écrite
+/// dans la transaction du traitement lui-même ; en garder une seconde ici
+/// ferait deux journaux de la même chose, dont l'un grossirait sans être lu.
+///
+/// `PENDING` couvre donc « jamais tentée », « en cours » et « en attente d'un
+/// réessai » — c'est `claimed_at` et `next_attempt_at` qui les distinguent, pas
+/// le statut. `DEAD` est la file d'attente morte : la borne de réessais est
+/// franchie, une alerte est partie, et plus rien ne se produira sans un humain.
+enum WebhookDeliveryStatus {
+  PENDING
+  DEAD
+}
+
 // ---------------------------------------------------------------------------
 // Tenant — la racine de l'isolation
 // ---------------------------------------------------------------------------
@@ -310,7 +326,8 @@ model Tenant {
   notifications     Notification[]
   refreshTokens     RefreshToken[]
 
-  processedWebhookEvents ProcessedWebhookEvent[]
+  processedWebhookEvents  ProcessedWebhookEvent[]
+  stripeWebhookDeliveries StripeWebhookDelivery[]
 
   @@map("tenants")
 }
@@ -424,13 +441,13 @@ model User {
   /// c'est le prix à payer pour qu'aucun index métier ne commence par autre
   /// chose que `tenant_id`.
   staffProfiles         Staff[]
-  clientAppointments    Appointment[]  @relation("AppointmentClient")
-  receivedNotifications Notification[] @relation("NotificationRecipient")
+  clientAppointments    Appointment[]   @relation("AppointmentClient")
+  receivedNotifications Notification[]  @relation("NotificationRecipient")
   refreshTokens         RefreshToken[]
   /// Les tickets composés par ce compte au comptoir — #60. Nommée, comme
   /// `clientAppointments`, parce que `User` porte déjà plusieurs relations et
   /// que Prisma exige de les distinguer.
-  cashedSales           Sale[]         @relation("SaleCashier")
+  cashedSales           Sale[]          @relation("SaleCashier")
   /// Les remboursements ordonnés par ce compte — #63. Nommée pour la même
   /// raison que `cashedSales` : `User` porte plusieurs relations et Prisma
   /// exige de les distinguer.
@@ -1564,4 +1581,111 @@ model ProcessedWebhookEvent {
   // prévues, et toutes deux bornées à un établissement.
   @@index([tenantId, createdAt])
   @@map("processed_webhook_events")
+}
+
+/// La file durable des livraisons de webhook Stripe — #409.
+///
+/// ## Ce qu'elle rend vrai, et que rien d'autre ne rendait vrai
+///
+/// Le contrôleur répond 200 **avant** de traiter (payments-stripe §3), et
+/// Stripe ne redélivre que ce qu'il a vu échouer. À partir de cet accusé, la
+/// livraison n'existe plus que chez nous : un processus qui meurt, ou un
+/// traitement qui échoue en base, laissait jusqu'ici l'encaissement `PENDING`
+/// et le rendez-vous jamais confirmé — sans que personne ne le sache, sauf à
+/// lire le journal.
+///
+/// Cette table est ce qui déplace la livraison de la mémoire d'un processus
+/// vers le disque d'une base, **avant** l'accusé. La ligne est inscrite pendant
+/// la requête HTTP ; si elle ne peut pas l'être, la route ne rend pas 2xx et
+/// c'est Stripe qui redélivre. Après l'accusé, la ligne est le seul
+/// propriétaire de la livraison, et elle survit à ce à quoi un processus ne
+/// survit pas.
+///
+/// ## Elle ne double pas `processed_webhook_events`
+///
+/// Les deux tables ne parlent pas du même objet, et aucune ne remplace l'autre :
+///
+/// | Table | Ce qu'elle porte | Durée de vie |
+/// |---|---|---|
+/// | `stripe_webhook_deliveries` | le **travail à faire** | de l'accusé au traitement — puis supprimée |
+/// | `processed_webhook_events` | la **preuve que c'est fait** | conservée, c'est l'idempotence |
+///
+/// Une livraison aboutie est donc supprimée d'ici : ce qui reste est ce qui
+/// attend, ce qui réessaie, et ce qui est mort. Une table de file qui
+/// conserverait ses succès grossirait indéfiniment pour redire ce que la
+/// seconde dit déjà.
+///
+/// ## Aucune donnée de carte, aucune donnée personnelle
+///
+/// `payload` est l'événement **réduit** que `readWebhookEvent` produit — des
+/// identifiants opaques (`evt_…`, `pi_…`, `ch_…`), un montant en centimes, un
+/// type. Jamais le corps Stripe brut, que payments-stripe §1 interdit de
+/// conserver, et rien qui désigne une personne (CDC §5.1).
+model StripeWebhookDelivery {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  /// L'identifiant Stripe de l'événement — `evt_…`, la clé de dédoublonnage.
+  eventId String @map("event_id") @db.VarChar(255)
+
+  /// `payment_intent.succeeded`, `charge.refunded`… — lisible sans désérialiser
+  /// `payload`, ce qui rend une file en souffrance diagnosticable d'un `SELECT`.
+  eventType String @map("event_type") @db.VarChar(255)
+
+  /// La clé de **sérialisation** — l'encaissement concerné, `pi_…` ou `ch_…`.
+  ///
+  /// C'est le second constat de #409, tranché : deux livraisons portant sur le
+  /// même encaissement ne s'appliquent pas en parallèle. Aujourd'hui la file
+  /// applicative chaîne sur cette clé ; le jour du passage à SQS, elle devient
+  /// le `MessageGroupId` d'une file FIFO, sans qu'une ligne de schéma bouge.
+  /// La persister plutôt que de la recalculer est ce qui rend cette continuité
+  /// possible — une livraison reprise après un redémarrage retrouve la chaîne
+  /// qu'elle avait quittée.
+  serializationKey String @map("serialization_key") @db.VarChar(255)
+
+  /// L'événement réduit, tel que `readWebhookEvent` l'a produit — jamais le
+  /// corps brut de Stripe.
+  payload Json
+
+  status WebhookDeliveryStatus @default(PENDING)
+
+  /// Nombre de tentatives déjà consommées — ce que borne `RetrySchedule`.
+  attempts Int @default(0)
+
+  /// L'instant à partir duquel la livraison est de nouveau tentable.
+  ///
+  /// Posé par le réessai, avec la gigue de `retryDelayMs`. Le chemin normal ne
+  /// le lit pas : la file traite ce qu'elle vient d'inscrire sans attendre.
+  /// C'est le balayage qui s'en sert, et lui seul.
+  nextAttemptAt DateTime @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
+
+  /// Le bail : une instance tient cette livraison, et depuis quand.
+  ///
+  /// `NULL` veut dire « personne ». Une valeur plus vieille que le bail veut
+  /// dire « l'instance qui la tenait ne répond plus » — c'est exactement l'état
+  /// que laisse un `SIGKILL`, et c'est ce qui rend la reprise automatique
+  /// possible sans qu'aucune instance n'ait à savoir qu'une autre est morte.
+  claimedAt DateTime? @map("claimed_at") @db.Timestamptz(6)
+
+  /// La dernière panne, tronquée — de quoi diagnostiquer une ligne `DEAD` sans
+  /// remonter le journal. Jamais une pile d'appels : le nom et le message.
+  lastError String? @map("last_error") @db.VarChar(500)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// Deux livraisons du même événement ne font qu'une ligne. Stripe redélivre
+  /// tant qu'il n'a pas vu de 2xx : sans cet unique, une redélivrance arrivée
+  /// pendant que la première attend son réessai créerait un second travail pour
+  /// le même effet.
+  @@unique([tenantId, eventId])
+  /// L'index du balayage, préfixé par `tenant_id` comme tous les autres. Le
+  /// balayage, lui, lit sans portée de tenant par nécessité — une livraison
+  /// orpheline n'appartient à aucune requête —, mais la table ne contient que
+  /// ce qui attend, les succès étant supprimés. Un parcours y porte sur
+  /// quelques lignes, et un index sans `tenant_id` en tête aurait ouvert une
+  /// voie de lecture inter-établissement pour n'économiser rien.
+  @@index([tenantId, status, nextAttemptAt])
+  @@map("stripe_webhook_deliveries")
 }

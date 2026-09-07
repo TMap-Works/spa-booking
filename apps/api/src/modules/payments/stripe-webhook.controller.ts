@@ -33,7 +33,8 @@ import { StripeConfig } from './stripe/stripe.config';
  * 2. la signature est-elle valide ? sinon **400 immédiat, aucun traitement**
  *    (payments-stripe §3) ;
  * 3. seulement là, le corps est désérialisé ;
- * 4. l'événement part en file, et la réponse 200 est écrite sans l'attendre.
+ * 4. l'événement est **inscrit** en file durable, puis la réponse 200 est
+ *    écrite — sans attendre le traitement, qui part après.
  *
  * Rien entre l'étape 1 et l'étape 2 ne touche le contenu du corps : il n'est ni
  * désérialisé, ni journalisé, ni mesuré autrement que par sa taille. Un corps
@@ -47,6 +48,18 @@ import { StripeConfig } from './stripe/stripe.config';
  * son échec éventuel n'a aucune influence sur le statut rendu — c'est
  * l'idempotence de `processed_webhook_events` qui rend le rejeu inoffensif, pas
  * la finesse de notre code de retour.
+ *
+ * ## Ce que le 200 engage, depuis #409
+ *
+ * La seule chose que ce contrôleur **attend** est que la livraison soit
+ * devenue durable. C'est peu — une insertion indexée — et c'est ce qui donne
+ * son sens à l'accusé : à partir du 200, Stripe ne redélivrera plus, et la
+ * livraison doit donc déjà appartenir à quelque chose qui survit au processus.
+ *
+ * D'où la conduite en cas d'échec d'inscription : `enqueue` rejette, le filtre
+ * d'exceptions rend un 500, et **Stripe redélivre**. C'est le comportement
+ * juste, et c'est l'inverse de celui d'avant #409, où un 200 partait quoi qu'il
+ * arrive et emportait l'événement avec lui.
  *
  * ## Ce que la réponse ne dit jamais
  *
@@ -80,10 +93,10 @@ export class StripeWebhookController {
     description: 'Signature de la livraison, au format `t=…,v1=…`.',
   })
   @ApiOkResponse({ type: WebhookAckDto, description: 'Livraison reçue et signature vérifiée.' })
-  public receive(
+  public async receive(
     @Req() request: RawBodyRequest<Request>,
     @Headers('stripe-signature') signature?: string,
-  ): WebhookAckDto {
+  ): Promise<WebhookAckDto> {
     const secret = this.config.requireWebhookSecret();
     const payload = this.requireRawBody(request);
 
@@ -106,7 +119,10 @@ export class StripeWebhookController {
 
     switch (read.status) {
       case 'handled':
-        this.queue.enqueue(read.event);
+        // Le seul `await` du chemin passant, et il ne porte que sur
+        // l'inscription en base — pas sur le traitement. S'il rejette, aucun
+        // 2xx ne part et Stripe redélivre (#409).
+        await this.queue.enqueue(read.event);
         break;
 
       case 'ignored':

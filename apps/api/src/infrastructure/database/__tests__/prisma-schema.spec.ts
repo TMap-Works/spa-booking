@@ -99,6 +99,15 @@ const TENANT_ROOT_TABLE = 'tenants';
  * périmètre, un encaissement peut en recevoir plusieurs, et des colonnes
  * n'auraient gardé que le dernier. Elle est soumise aux mêmes exigences que les
  * autres.
+ *
+ * `stripe_webhook_deliveries` est la file **durable** des webhooks (#409). Elle
+ * ne double pas `processed_webhook_events` : celle-ci porte la preuve qu'un
+ * événement a été traité et se conserve, celle-là porte le travail à faire et
+ * disparaît quand il est fait. Elle existe parce que le point d'entrée répond
+ * 200 avant de traiter — après quoi Stripe ne redélivre plus rien —, et qu'il
+ * faut donc que la livraison appartienne à quelque chose qui survit au
+ * processus. Elle est soumise aux mêmes exigences que les autres : `tenant_id`
+ * non nullable, index préfixé, unique composite.
  */
 const EXPECTED_TABLES = [
   'tenants',
@@ -120,6 +129,7 @@ const EXPECTED_TABLES = [
   'notifications',
   'refresh_tokens',
   'processed_webhook_events',
+  'stripe_webhook_deliveries',
 ] as const;
 
 interface Column {
