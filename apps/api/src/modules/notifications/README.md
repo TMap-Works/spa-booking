@@ -10,9 +10,114 @@ canaux, rien de plus — le marketing et les campagnes sont hors périmètre MVP
 | #68 | La table `notifications` complétée, l'**index unique partiel** qui porte l'idempotence, l'ordre d'écriture `PENDING → fournisseur → SENT`, et la reprise d'un envoi échoué |
 | #70 | La **confirmation de réservation** — abonnement à `appointment.created`, rendu du message (récapitulatif, lien d'annulation, heure dans le fuseau du salon), choix des canaux, et `GET /notifications` pour le back-office |
 | #71 | Le **rappel J-1** — la fenêtre `[+24 h, +25 h)` en UTC, le balayage inter-tenant, la revérification du rendez-vous au moment de l'envoi, le modèle de rappel, et la route interne que le planning EventBridge appelle |
+| #73 | Les **rebonds et les plaintes** — le classement des événements de remise SES, la suppression des adresses mortes dans tous les établissements qui les connaissent, et le respect de cette suppression aux trois endroits qui composent ou expédient un e-mail |
 
 À venir : les passerelles SES et SNS, les modèles de message par établissement
-(#69), l'avis d'annulation (#72) et le traitement des rebonds (#73).
+(#69) et l'avis d'annulation (#72).
+
+## Les rebonds et les plaintes (#73)
+
+```
+SES ──► topic spa-{env}-ses-events ──► SQS ──► Lambda ──► POST /notifications/delivery-events
+ (Bounce, Complaint,                                                    │
+  Reject, Rendering Failure)                                    ce module : classement
+                                                                        │
+                                                      users.email_suppressed_at ◄─┘
+```
+
+Le ticket répond à une phrase du CDC §6 : « continuer à écrire à une adresse
+morte dégrade la réputation d'envoi de tout le domaine ». Le mot **domaine** est
+ce qui rend le traitement inter-tenant : la réputation SES est partagée par tous
+les établissements, et un salon qui écrit à une boîte inexistante fait finir en
+spam les rappels J-1 de tous les autres.
+
+### Les trois issues, et pourquoi trois et pas deux
+
+`delivery-event.ts` est une fonction pure, sans base ni horloge, et c'est là que
+se prend la seule décision qui ne dépende d'aucun état.
+
+| Issue | Ce qu'elle veut dire | Effet en base |
+|---|---|---|
+| `suppress` | rebond **permanent** ou plainte — l'adresse est morte, ou son titulaire ne veut plus rien recevoir | l'adresse cesse d'être sollicitée |
+| `transient` | rebond `Transient` ou `Undetermined`, retard de livraison | rien |
+| `ignored` | `Reject`, `Rendering Failure`, remise, ouverture — l'événement ne dit rien de l'adresse | rien |
+
+`Reject` et `Rendering Failure` sont définitifs mais **innocents** : SES a refusé
+le message ou n'a pas su rendre le modèle, et supprimer l'adresse punirait la
+cliente d'un défaut qui est le nôtre.
+
+`Undetermined` est traité comme transitoire, délibérément : dans le doute, on
+préfère réécrire une fois de trop à une adresse peut-être vivante plutôt que
+couper définitivement les confirmations d'une cliente sur une réponse SMTP que
+SES lui-même n'a pas su interpréter.
+
+### La suppression est portée par `users`, pas par une table
+
+Deux colonnes nullables — `email_suppressed_at` et `email_suppression_reason` —
+et rien d'autre. Une table `email_suppressions` aurait dû **recopier l'adresse**
+pour être utile : une liste de suppression se consulte par adresse, et sans la
+colonne `email` elle n'aurait su répondre qu'« ce compte-ci est supprimé », ce que
+deux colonnes disent déjà sans dupliquer une donnée personnelle dans une seconde
+table à faire vivre au même rythme (RGPD, CDC §5.1).
+
+C'est aussi ce qui donne l'isolation gratuitement : la ligne `users` porte déjà
+son `tenant_id` non nullable, et l'unique `(tenant_id, email)` de la migration
+initiale **est** la clé de lecture dont l'ingestion a besoin.
+
+### L'ingestion traverse les établissements ; ses écritures ne le font pas
+
+Un événement SES ne porte que des adresses. Pas d'établissement, pas de compte :
+SES ne connaît rien de notre découpage. Or la même personne peut être cliente de
+trois salons, et sa fiche existe alors trois fois.
+
+`DeliveryEventRepository` est donc le **second et dernier** endroit du module où
+le client non scopé est injecté — comme `ReminderSweepRepository`, et sous la
+même discipline : la dérogation s'arrête à une liste d'identifiants de tenants,
+et toute lecture ou écriture de `users` passe par le client scopé, dans une
+portée ouverte établissement par établissement.
+
+### « N'est plus jamais sollicitée » se tient en trois endroits
+
+Le mot **jamais** est ce qui impose le troisième.
+
+| Où | Quand | Ce que cela évite |
+|---|---|---|
+| `findRecipientContact` | le producteur compose les canaux d'une confirmation | aucune enveloppe e-mail n'est publiée |
+| `ReminderSweepRepository.findDueAppointments` | le balayage horaire sélectionne | la file ne se remplit pas de rappels sans objet |
+| `NotificationDispatchService.emailSuppressed` | juste avant l'appel au fournisseur | le rebond tombé **entre** la publication et la consommation |
+
+Le troisième n'est pas une redite : entre la composition et l'appel à SES il y a
+une file, une Lambda, un appel HTTP et jusqu'à cinq réceptions. Et le cas est le
+plus probable des trois — un rebond arrive *après* un envoi, donc précisément
+quand la chaîne travaille.
+
+Le canal SMS n'est concerné par aucun des trois : SES ne dit rien d'un numéro de
+téléphone, et SNS n'expose pas d'équivalent au périmètre du MVP.
+
+### Le corps de la route n'est pas validé
+
+`POST /api/v1/notifications/delivery-events` reçoit le JSON de SES tel quel,
+l'enveloppe SNS ayant été retirée par la remise brute. Ce corps ne nous
+appartient pas : nous ne le dessinons pas, nous ne le versionnons pas, et AWS y
+ajoute des champs sans prévenir. Le valider contre un schéma de notre cru ferait
+rejeter en 400 le premier rebond enrichi — lequel finirait en file d'attente
+morte. La lecture est donc défensive, et ce qui ne se lit pas rend
+`outcome: "unreadable"` avec un statut **200** : rien ne se répare en rejouant un
+message que rien ne réparera.
+
+### Ce que le ticket ne fait pas
+
+- **Il ne touche à aucune ligne de `notifications`.** Un rebond arrive *après*
+  l'envoi : la ligne est déjà `SENT`, et la repasser en `FAILED` réécrirait
+  l'histoire — le message *est* parti, c'est sa remise qui a échoué.
+- **Il ne remet aucune adresse en service.** Une adresse supprimée le reste. Le
+  jour où une route permettra de modifier `users.email`, elle devra remettre les
+  deux colonnes à nul : la suppression porte sur une **adresse**, et une nouvelle
+  adresse n'a rien fait pour la mériter.
+- **Il n'affiche rien sur la fiche cliente.** Le quatrième critère d'acceptation
+  demande au back-office de signaler une adresse supprimée ; cela relève du
+  module `crm`, qui sert `GET /customers/:id`, et du contrat partagé. Une issue
+  de suivi le porte.
 
 ## Le rappel J-1, de bout en bout (#71)
 
