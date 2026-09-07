@@ -17,6 +17,7 @@ import {
   PASSWORD_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
   PHONE_MAX_LENGTH,
+  PHONE_MIN_DIGITS,
   REASON_MAX_LENGTH,
   SLUG_MAX_LENGTH,
 } from '../constants/limits';
@@ -108,13 +109,46 @@ export type Email = z.infer<typeof emailSchema>;
  * demande une table de plans de numérotation. Refuser un numéro pourtant valide
  * empêche une réservation ; en accepter un douteux ne coûte qu'un SMS non
  * délivré, que la chaîne de notifications sait déjà journaliser.
+ *
+ * **Ce schéma décrit le stock, pas une saisie**, et c'est la raison pour laquelle
+ * il n'a pas de plancher de chiffres. Toute réponse de l'API portant un `phone`
+ * est validée avec lui côté front (`apps/web/lib/api-client.ts`), qui lève un
+ * `INTERNAL_ERROR` et fait échouer la page entière au moindre refus. Une écriture
+ * antérieure à une règle qu'on durcirait ici — un `+` saisi au comptoir avant
+ * #66, que les DTO `class-validator` de l'API acceptent toujours — rendrait donc
+ * illisibles la fiche cliente, la page publique du salon et jusqu'à la réponse de
+ * connexion. Le durcissement appartient à la saisie, et il vit dans
+ * `phoneSchema` ci-dessous.
  */
-export const phoneSchema = z
+export const storedPhoneSchema = z
   .string()
   .trim()
   .min(1)
   .max(PHONE_MAX_LENGTH)
   .regex(/^[+0-9][0-9\s().-]*$/, { message: 'numéro de téléphone invalide' });
+
+/**
+ * Numéro de téléphone **saisi** — `storedPhoneSchema` plus un plancher de
+ * chiffres.
+ *
+ * Permissif n'est pas complaisant, et c'est ce que `PHONE_MIN_DIGITS` corrige
+ * (#66) : le motif seul accepte `+` ou `+ ()`, qui ne portent aucun chiffre
+ * composable, et `0`, qui n'en porte pas assez pour l'être. Un tel champ
+ * traversait la saisie, la fiche cliente et la file d'envoi pour n'être reconnu
+ * comme inexploitable qu'au moment où il aurait fallu l'utiliser — trop tard
+ * pour le redemander à qui le connaissait.
+ *
+ * Le plancher ne vaut qu'**en entrée** : schémas de requête et formulaires
+ * d'`apps/web`, qui importent ce schéma directement, si bien que le refus
+ * s'affiche sur le champ. Les schémas de réponse prennent `storedPhoneSchema` —
+ * voir son commentaire pour ce qui se casserait sinon.
+ */
+export const phoneSchema = storedPhoneSchema.refine(
+  (value) => (value.match(/\d/g) ?? []).length >= PHONE_MIN_DIGITS,
+  {
+    message: `numéro de téléphone incomplet — au moins ${PHONE_MIN_DIGITS} chiffres attendus`,
+  },
+);
 
 export type Phone = z.infer<typeof phoneSchema>;
 
@@ -169,6 +203,45 @@ export function normalizeToE164(value: string): string | null {
  * Le plafond de longueur porte sur la saisie **avant** normalisation : c'est
  * elle qui doit tenir dans `VARCHAR(32)` si un appelant la conserve, et la forme
  * normalisée est de toute façon plus courte.
+ *
+ * ## Quelle surface prend lequel — la décision de #66
+ *
+ * Le critère de l'issue est « numéros normalisés en E.164 ; un numéro non
+ * normalisable est refusé à la saisie ». Appliqué partout sans distinction, il
+ * ferait plus de mal que de bien : le répartir demande de séparer les surfaces
+ * qui **composent** un numéro de celles qui l'**enregistrent** ou l'affichent.
+ *
+ * | Surface | Schéma | Pourquoi |
+ * |---|---|---|
+ * | `guestContactSchema` — coordonnées du tunnel public | `e164PhoneSchema` | Le seul numéro que la chaîne SMS compose sans qu'aucun humain le relise |
+ * | Toute réponse de l'API portant un `phone` | `storedPhoneSchema` | Décrit le **stock**, pas une saisie. Une écriture antérieure à cette règle rendrait la page entière illisible si le schéma la refusait |
+ * | `contactPhone` d'un établissement | `phoneSchema` | Numéro **affiché** à la cliente, jamais composé par SNS. Le normaliser retirerait les espaces d'un numéro fait pour être lu |
+ * | Fiche cliente, inscription, profil, compte staff | `phoneSchema` | Voir ci-dessous — la règle vaut, la marche est ailleurs |
+ *
+ * La dernière ligne est un constat, pas un renoncement, et elle mérite son
+ * explication. Ces quatre surfaces alimentent bien le canal SMS, et la règle
+ * devrait s'y appliquer. Mais chacune est saisie par un formulaire d'`apps/web`
+ * qui **redéclare** son champ `phone` sur `phoneSchema` — puis postée à une
+ * action serveur qui, elle, valide avec le schéma de requête. Resserrer le
+ * schéma de requête seul déplacerait donc le refus **après** la soumission, sous
+ * la forme d'un message global en tête de page, pour un numéro que le champ
+ * venait d'accepter. C'est exactement ce que la skill web-frontend §4 interdit :
+ * un message d'erreur appartient à son champ.
+ *
+ * La marche à faire est donc d'un seul tenant — schéma de requête **et**
+ * formulaire — et elle appartient à `apps/web`, hors de l'empreinte de #66. Elle
+ * rejoint la décision de #404, dont le critère est justement de trancher « le
+ * téléphone (E.164 contre format libre) » lors de la substitution des DTO de
+ * l'API : les trois écritures de la règle — contrat partagé, DTO `class-validator`,
+ * formulaire — doivent bouger ensemble ou pas du tout.
+ *
+ * Ce que #66 tranche en attendant, et qui ne dépend d'aucune des deux : le
+ * plancher de `phoneSchema` (`PHONE_MIN_DIGITS`), qui refuse dès la saisie ce
+ * qui n'est un numéro dans aucune convention. Les formulaires importent ce
+ * schéma-là **directement**, si bien que le refus s'affiche sur le champ, où il
+ * doit être. Le plancher s'arrête à la saisie : les schémas de réponse gardent
+ * `storedPhoneSchema`, sans quoi le durcissement rendrait illisible le stock
+ * écrit avant lui.
  */
 export const e164PhoneSchema = z
   .string()

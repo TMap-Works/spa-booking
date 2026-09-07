@@ -24,6 +24,7 @@ import {
   passwordSchema,
   phoneSchema,
   slugSchema,
+  storedPhoneSchema,
   submittedPasswordSchema,
   uuidSchema,
 } from '../common/identifiers';
@@ -44,7 +45,7 @@ export const userSchema = z.object({
   role: userRoleSchema,
   firstName: nameSchema,
   lastName: nameSchema,
-  phone: phoneSchema.optional(),
+  phone: storedPhoneSchema.optional(),
   isActive: z.boolean(),
   lastLoginAt: utcInstantSchema.optional(),
   createdAt: utcInstantSchema,
@@ -191,7 +192,7 @@ export const sessionUserSchema = z.object({
   role: receivedUserRoleSchema,
   firstName: nameSchema,
   lastName: nameSchema,
-  phone: phoneSchema.nullable(),
+  phone: storedPhoneSchema.nullable(),
 });
 
 export type SessionUser = z.infer<typeof sessionUserSchema>;

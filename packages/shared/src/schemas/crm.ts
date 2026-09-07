@@ -33,6 +33,7 @@ import {
   longTextSchema,
   nameSchema,
   phoneSchema,
+  storedPhoneSchema,
   uuidSchema,
 } from '../common/identifiers';
 import { nonNegativeMoneySchema } from '../common/money';
@@ -84,7 +85,7 @@ export const customerSummarySchema = z.object({
   firstName: nameSchema,
   lastName: nameSchema,
   email: emailSchema,
-  phone: phoneSchema.nullable(),
+  phone: storedPhoneSchema.nullable(),
   /**
    * Une fiche cliente ne se supprime pas — ses rendez-vous passés la
    * référencent, et le reporting doit continuer à les compter. `false` la retire

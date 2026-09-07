@@ -11,7 +11,14 @@
 
 import { z } from 'zod';
 
-import { displayNameSchema, emailSchema, phoneSchema, slugSchema, uuidSchema } from '../common/identifiers';
+import {
+  displayNameSchema,
+  emailSchema,
+  phoneSchema,
+  slugSchema,
+  storedPhoneSchema,
+  uuidSchema,
+} from '../common/identifiers';
 import { currencyCodeSchema } from '../common/money';
 import { localTimeSchema, timeZoneSchema } from '../common/time';
 import {
@@ -199,7 +206,7 @@ export const publicTenantSchema = z.object({
   timezone: timeZoneSchema,
   defaultCurrency: currencyCodeSchema,
   contactEmail: emailSchema.optional(),
-  contactPhone: phoneSchema.optional(),
+  contactPhone: storedPhoneSchema.optional(),
   address: postalAddressSchema.optional(),
   /**
    * Plages d'ouverture de la semaine, dans le fuseau de l'établissement.
