@@ -1,4 +1,9 @@
-import { HANDLED_EVENT_TYPES, readWebhookEvent } from '../stripe-webhook.types';
+import {
+  HANDLED_EVENT_TYPES,
+  readWebhookEvent,
+  reviveWebhookEvent,
+  serializationKeyOf,
+} from '../stripe-webhook.types';
 
 /**
  * La lecture d'un corps Stripe — et ce qu'elle refuse de lire.
@@ -213,5 +218,138 @@ describe('readWebhookEvent — charge.dispute.created', () => {
     expect(
       readWebhookEvent(stripeEvent('charge.dispute.created', { id: 'dp_1', charge: 'ch_1' })),
     ).toMatchObject({ event: { fact: { paymentIntentId: null, chargeId: 'ch_1' } } });
+  });
+});
+
+/**
+ * La clé de sérialisation et la relecture — les deux fonctions que #409 a
+ * ajoutées, et qui ne servent qu'à la file durable.
+ *
+ * La première décide quelles livraisons se suivent au lieu de s'éventailler ;
+ * la seconde est le seul chemin par lequel une ligne de
+ * `stripe_webhook_deliveries` redevient un événement typé. Toutes deux sont
+ * pures, et c'est ce qui les rend éprouvables sans base ni minuteur.
+ */
+describe('serializationKeyOf', () => {
+  it('sérialise sur l’intention, qui est ce que porte `payments`', () => {
+    expect(
+      serializationKeyOf({
+        eventId: 'evt_1',
+        eventType: 'payment_intent.succeeded',
+        tenantHint: null,
+        fact: { kind: 'payment-succeeded', paymentIntentId: 'pi_1', chargeId: 'ch_1' },
+      }),
+    ).toBe('pi_1');
+  });
+
+  it('retombe sur la charge quand l’intention manque', () => {
+    expect(
+      serializationKeyOf({
+        eventId: 'evt_1',
+        eventType: 'charge.dispute.created',
+        tenantHint: null,
+        fact: { kind: 'dispute-opened', paymentIntentId: null, chargeId: 'ch_1', disputeId: 'dp_1' },
+      }),
+    ).toBe('ch_1');
+  });
+
+  it('isole un litige sans référence sur son propre événement', () => {
+    // Il ne partage rien avec personne, ce qui est la bonne réponse pour une
+    // alerte sans écriture : la faire attendre derrière un encaissement
+    // arbitraire n'aurait aucun sens.
+    expect(
+      serializationKeyOf({
+        eventId: 'evt_seul',
+        eventType: 'charge.dispute.created',
+        tenantHint: null,
+        fact: { kind: 'dispute-opened', paymentIntentId: null, chargeId: null, disputeId: 'dp_1' },
+      }),
+    ).toBe('evt_seul');
+  });
+
+  it('range deux événements du même encaissement sous la même clé', () => {
+    // La propriété qui fait toute la sérialisation : un succès et le
+    // remboursement qui le suit doivent se chaîner, pas s'éventailler.
+    const settled = serializationKeyOf({
+      eventId: 'evt_1',
+      eventType: 'payment_intent.succeeded',
+      tenantHint: null,
+      fact: { kind: 'payment-succeeded', paymentIntentId: 'pi_1', chargeId: 'ch_1' },
+    });
+    const refunded = serializationKeyOf({
+      eventId: 'evt_2',
+      eventType: 'charge.refunded',
+      tenantHint: null,
+      fact: {
+        kind: 'charge-refunded',
+        paymentIntentId: 'pi_1',
+        chargeId: 'ch_1',
+        refundedAmountMinor: 1000,
+        fullyRefunded: false,
+      },
+    });
+
+    expect(settled).toBe(refunded);
+  });
+});
+
+describe('reviveWebhookEvent', () => {
+  const spooled = {
+    eventId: 'evt_1',
+    eventType: 'payment_intent.succeeded',
+    tenantHint: 'tenant-a',
+    fact: { kind: 'payment-succeeded', paymentIntentId: 'pi_1', chargeId: null },
+  };
+
+  it('relit ce que la file a écrit', () => {
+    // Un aller-retour complet : ce que `spool` a sérialisé, le balayage le
+    // retrouve à l'identique.
+    expect(reviveWebhookEvent(JSON.parse(JSON.stringify(spooled)) as unknown)).toEqual(spooled);
+  });
+
+  it('refuse une ligne dont le type d’événement n’est plus du périmètre', () => {
+    expect(reviveWebhookEvent({ ...spooled, eventType: 'customer.created' })).toBeNull();
+  });
+
+  it('refuse un fait dont le discriminant est inconnu', () => {
+    expect(reviveWebhookEvent({ ...spooled, fact: { kind: 'payment-half-done' } })).toBeNull();
+  });
+
+  it('refuse un remboursement sans montant plutôt que d’écrire un trou', () => {
+    // Le cas qui justifie une relecture champ par champ. Une simple conversion
+    // de type aurait laissé passer cette ligne, et le montant absent serait
+    // allé jusqu'à une colonne `NOT NULL` — des heures après l'écriture
+    // fautive, et sans rien pour désigner la ligne d'origine.
+    expect(
+      reviveWebhookEvent({
+        eventId: 'evt_1',
+        eventType: 'charge.refunded',
+        tenantHint: null,
+        fact: { kind: 'charge-refunded', paymentIntentId: 'pi_1', chargeId: 'ch_1' },
+      }),
+    ).toBeNull();
+  });
+
+  it('refuse un montant fractionnaire — l’argent est entier', () => {
+    expect(
+      reviveWebhookEvent({
+        eventId: 'evt_1',
+        eventType: 'charge.refunded',
+        tenantHint: null,
+        fact: {
+          kind: 'charge-refunded',
+          paymentIntentId: 'pi_1',
+          chargeId: null,
+          refundedAmountMinor: 12.5,
+          fullyRefunded: false,
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it('refuse ce qui n’est pas un objet', () => {
+    expect(reviveWebhookEvent(null)).toBeNull();
+    expect(reviveWebhookEvent('evt_1')).toBeNull();
+    expect(reviveWebhookEvent([spooled])).toBeNull();
   });
 });
