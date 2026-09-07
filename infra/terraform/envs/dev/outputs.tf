@@ -297,3 +297,54 @@ output "waf_log_group_name" {
   description = "Groupe de journaux où atterrissent les décisions du WAF. C'est là qu'on lit quelle règle a bloqué quelle requête."
   value       = module.waf.log_group_name
 }
+
+# --- Sauvegarde et reprise d'activité (#82) -----------------------------------
+#
+# Les neuf valeurs que la vérification préalable du runbook de restauration lit
+# avant de commencer — `terraform output` plutôt que la console AWS, pour que le
+# relevé de l'exercice soit reproductible. Voir docs/runbooks/pra-restauration-rds.md.
+
+output "rds_backup_retention_period" {
+  description = "Rétention des sauvegardes automatiques RDS, en jours. Borne de la restauration à un instant donné : au-delà, il ne reste que le coffre AWS Backup."
+  value       = module.database.backup_retention_period
+}
+
+output "rds_multi_az" {
+  description = "Vrai quand une instance de secours veille dans une seconde zone. Faux, la perte d'une zone se répare par une restauration et non par une bascule — voir docs/runbooks/pra-bascule-az.md."
+  value       = module.database.multi_az
+}
+
+output "rds_availability_zone" {
+  description = "Zone de l'instance primaire. À relever avant l'incident : après une bascule, la valeur a changé, et c'est ce qui prouve que la bascule a eu lieu."
+  value       = module.database.availability_zone
+}
+
+output "backup_vault_name" {
+  description = "Coffre AWS Backup. Première commande du runbook : `aws backup list-recovery-points-by-backup-vault --backup-vault-name <cette valeur>`."
+  value       = module.backup.vault_name
+}
+
+output "backup_restore_role_arn" {
+  description = "Rôle à passer à `aws backup start-restore-job --iam-role-arn`. Il porte les droits de restauration en plus de ceux de sauvegarde."
+  value       = module.backup.role_arn
+}
+
+output "backup_retention_policy" {
+  description = "Rétentions effectivement posées, par cadence et en jours. Une cadence absente n'a pas de règle dans le plan."
+  value       = module.backup.retention_policy
+}
+
+output "backup_continuous_enabled" {
+  description = "Vrai quand la sauvegarde continue est active dans le coffre — donc quand la restauration à un instant donné y est possible. C'est la seule règle qui tienne le RPO ≤ 1 h du CDC §4.14."
+  value       = module.backup.continuous_backup_enabled
+}
+
+output "backup_protects_anything" {
+  description = "Faux si le plan n'a aucune sélection : coffre et plan existent, règles posées, et rien n'est sauvegardé."
+  value       = module.backup.protects_anything
+}
+
+output "backup_alarms_notify" {
+  description = "Vrai quand les alarmes du coffre sont branchées sur un topic SNS. Faux, elles passent au rouge sans prévenir personne."
+  value       = module.backup.alarms_notify
+}

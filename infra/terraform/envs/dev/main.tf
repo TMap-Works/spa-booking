@@ -207,6 +207,53 @@ module "cache" {
   log_retention_days = local.log_retention_days
 }
 
+# --- Sauvegarde et reprise d'activité (#82) -----------------------------------
+
+# La politique de rétention unifiée du CDC §4.14, en plus des sauvegardes
+# automatiques que le module `database` configure de son côté. Le développement
+# la compose d'abord parce qu'il est le seul environnement à porter une base :
+# c'est ici que le runbook de restauration s'exerce avant d'être joué ailleurs
+# (docs/runbooks/pra-restauration-rds.md).
+module "backup" {
+  source = "../../modules/backup"
+
+  environment = local.environment
+
+  # Désignée par ARN et non par étiquette : un plan qui ne protège plus rien se
+  # voit alors en revue, au lieu de se découvrir le jour de la restauration. Une
+  # sélection par `{ Environment = "dev" }` embarquerait au passage les
+  # compartiments S3 de l'environnement — dont celui de l'état Terraform.
+  resource_arns = [module.database.instance_arn]
+
+  # La clé de l'instance source. Le coffre, lui, a la sienne : une sauvegarde
+  # chiffrée par la clé de ce qu'elle sauvegarde ne survit pas à la perte de
+  # cette clé. Sans cette ligne, le travail de sauvegarde ne peut pas lire le
+  # volume chiffré — et la restauration vers cette clé échoue.
+  restore_kms_key_arns = [module.database.kms_key_arn]
+
+  # Rétentions de développement : la semaine écoulée, et rien de plus. Les
+  # paliers hebdomadaire et mensuel servent la corruption découverte tardivement
+  # et l'archive — deux besoins que cet environnement n'a pas, et qu'il paierait
+  # au gibioctet-mois. Les préconditions du module refuseraient ces valeurs sur un
+  # environnement nommé `prod`.
+  continuous_backup_retention_days = 7
+  daily_retention_days             = 7
+  weekly_retention_days            = 0
+  monthly_retention_days           = 0
+
+  # Le coffre part avec ses points de restauration au `destroy`. C'est le pendant
+  # de `skip_final_snapshot` sur la base : un environnement qu'on recrée souvent
+  # ne peut pas vivre avec un coffre que la destruction refuse d'emporter. Une
+  # précondition du module l'interdit en production.
+  force_destroy = true
+
+  # Le topic du module `budgets`, comme pour les alarmes d'observabilité. Sans
+  # lui, les quatre alarmes du coffre changent d'état sans prévenir personne —
+  # et « aucune sauvegarde depuis vingt-quatre heures » est précisément le genre
+  # de panne qu'on ne découvre pas en regardant une console.
+  alarm_topic_arns = [module.budgets.alerts_topic_arn]
+}
+
 # --- Délivrabilité e-mail -----------------------------------------------------
 
 # Rien tant qu'aucun domaine d'envoi n'est fourni. Ce n'est pas de la prudence
