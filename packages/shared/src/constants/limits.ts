@@ -26,6 +26,30 @@ export const EMAIL_ADDRESS_MAX_LENGTH = 254;
 /** `VARCHAR(32)` — numéro de téléphone, format libre à ce stade du MVP. */
 export const PHONE_MAX_LENGTH = 32;
 
+/**
+ * Nombre minimal de **chiffres** dans un numéro saisi, séparateurs exclus.
+ *
+ * Le motif du format libre — `^[+0-9][0-9\s().-]*$` — décrit la forme d'un
+ * numéro, pas sa substance : `+` et `+ ()` le satisfont sans porter le moindre
+ * chiffre, et `0` ou `12` le satisfont sans en porter assez pour être composés.
+ * Un tel champ est enregistré, affiché sur la fiche cliente, puis remis à la
+ * chaîne de notifications, qui n'a plus qu'à constater qu'elle ne peut rien en
+ * faire — trop tard pour le demander à la personne qui le connaissait.
+ *
+ * Trois est le plus petit plancher qui refuse ce qui n'est un numéro dans aucun
+ * plan de numérotation, sans jamais préjuger d'aucun : les numéros les plus
+ * courts qui existent — les numéros d'urgence à trois chiffres, `112`, `117` —
+ * le passent. Le seuil reste **au-dessus** du plancher théorique d'E.164, que
+ * `E164_PATTERN` fixe à deux chiffres (`\+[1-9]\d{1,14}`) ; aucun indicatif pays
+ * suivi d'un seul chiffre n'étant attribué, l'écart ne refuse aucun numéro
+ * joignable.
+ *
+ * Ce plancher ne vaut **qu'en saisie** — `phoneSchema`. Les schémas de réponse
+ * prennent `storedPhoneSchema`, qui ne l'applique pas : le durcir sur le stock
+ * ferait échouer la lecture des numéros écrits avant lui.
+ */
+export const PHONE_MIN_DIGITS = 3;
+
 /** `VARCHAR(80)` — prénom, nom, catégorie. */
 export const NAME_MAX_LENGTH = 80;
 

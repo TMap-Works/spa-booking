@@ -114,6 +114,34 @@ module "notifications" {
   # vérification de la mise en production.
   dispatch_url              = var.notification_dispatch_url
   dispatch_token_secret_arn = var.notification_dispatch_token_secret_arn
+
+  # --- Canal SMS (#66) ---
+
+  # C'est ici, et **seulement ici**, que les préférences SMS d'SNS se posent.
+  # `aws_sns_sms_preferences` n'a pas de nom : il y en a un par compte et par
+  # région, et les trois environnements partagent le compte. Deux environnements
+  # à vrai s'écraseraient tour à tour sans qu'aucun plan ne montre de conflit —
+  # le plafond de la production pourrait finir par être celui du développement.
+  #
+  # Le corollaire tient en une phrase : le réglage posé ici vaut pour dev et
+  # staging aussi. C'est voulu — la dépense SMS est celle du compte, et un essai
+  # d'envoi en recette la consomme au même titre qu'un rappel réel.
+  manage_sms_account_preferences = true
+
+  # Le CDC §4.16 sort le SMS de l'estimation budgétaire — « très variable selon
+  # le pays et le volume ». Ce plafond est ce qui borne l'inconnue, et c'est un
+  # arrêt dur : au plafond, SNS cesse d'envoyer et les rappels J-1 s'arrêtent sans
+  # erreur applicative. L'alarme à 80 % existe pour qu'on l'apprenne avant.
+  #
+  # Le quota du compte le plafonne, et il vaut 1 USD sur un compte neuf : la
+  # demande de relèvement se fait auprès du support AWS, tôt (#83).
+  sms_monthly_spend_limit_usd = var.notification_sms_monthly_spend_limit_usd
+
+  # Nul tant qu'aucun expéditeur n'est arrêté. Le poser ne l'enregistre nulle
+  # part : la sortie `notification_sms_sender_id_registration` dit ce qui reste à
+  # faire pays par pays, et aucun fournisseur Terraform n'expose de ressource pour
+  # cette démarche.
+  sms_sender_id = var.notification_sms_sender_id
 }
 
 # --- Observabilité ------------------------------------------------------------

@@ -123,3 +123,61 @@ variable "notification_dispatch_token_secret_arn" {
     error_message = "notification_dispatch_token_secret_arn doit être `null` ou un ARN Secrets Manager (`arn:aws:secretsmanager:…`)."
   }
 }
+
+# --- Canal SMS (#66) ----------------------------------------------------------
+
+variable "notification_sms_monthly_spend_limit_usd" {
+  description = <<-EOT
+    Plafond de dépense SMS du mois civil, en dollars US. Posé sur le **compte** :
+    la production détient ce réglage pour les trois environnements, `SetSMSAttributes`
+    n'ayant qu'une case par compte et par région.
+
+    Arrêt dur et non seuil d'alerte — au plafond, SNS refuse la publication et les
+    rappels J-1 s'arrêtent sans erreur applicative. L'alarme
+    `spa-prod-notifications-sms-spend` prévient à 80 %, quand il reste de la marge
+    pour relever le plafond ou couper le canal.
+
+    Cinquante dollars par défaut, faute de métrique réelle : le CDC §4.16 sort le
+    SMS de l'estimation budgétaire, « très variable selon le pays et le volume ».
+    À réviser après un mois d'exploitation, comme le reste du dimensionnement.
+
+    **Le quota du compte plafonne cette valeur** — 1 USD sur un compte neuf. Un
+    `apply` qui demande davantage échoue tant que le support AWS n'a pas accordé
+    le relèvement : la demande se fait avec celle de sortie du bac à sable SES,
+    pas la veille du go-live.
+  EOT
+  type        = number
+  default     = 50
+
+  validation {
+    condition     = var.notification_sms_monthly_spend_limit_usd >= 1 && var.notification_sms_monthly_spend_limit_usd <= 10000 && floor(var.notification_sms_monthly_spend_limit_usd) == var.notification_sms_monthly_spend_limit_usd
+    error_message = "notification_sms_monthly_spend_limit_usd doit être un entier compris entre 1 et 10000 dollars."
+  }
+}
+
+variable "notification_sms_sender_id" {
+  description = <<-EOT
+    Nom d'expéditeur affiché à la place d'un numéro, là où l'opérateur du pays
+    destinataire l'accepte — onze caractères alphanumériques au plus, dont au
+    moins une lettre.
+
+    `null` — le défaut — laisse SNS émettre depuis un numéro partagé : le rappel
+    n'a alors l'air de venir de personne, ce qui est la première raison de ne pas
+    le lire. Le poser ici ne l'**enregistre** nulle part ; la sortie
+    `notification_sms_sender_id_registration` dit ce qu'il reste à faire pays par
+    pays, et c'est une démarche administrative qu'aucune ressource Terraform ne
+    couvre.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.notification_sms_sender_id == null || can(regex("^[A-Za-z0-9]{1,11}$", var.notification_sms_sender_id))
+    error_message = "notification_sms_sender_id doit être `null` ou une chaîne de 1 à 11 caractères alphanumériques sans espace ni accent."
+  }
+
+  validation {
+    condition     = var.notification_sms_sender_id == null || can(regex("[A-Za-z]", var.notification_sms_sender_id))
+    error_message = "notification_sms_sender_id doit comporter au moins une lettre : un expéditeur purement numérique est refusé par les opérateurs, qui y voient une usurpation de numéro court."
+  }
+}

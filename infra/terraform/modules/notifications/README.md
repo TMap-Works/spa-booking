@@ -1,12 +1,13 @@
-# notifications — délivrabilité e-mail (SES) et chaîne d'envoi
+# notifications — délivrabilité e-mail (SES), canal SMS (SNS) et chaîne d'envoi
 
 Ce module pose la moitié « infrastructure » de la chaîne de notifications du
 CDC §4.8 : le domaine d'envoi, sa signature, sa politique d'authentification, le
-canal par lequel remontent les rebonds et les plaintes — et, depuis #67, la
+canal par lequel remontent les rebonds et les plaintes — depuis #67, la
 **file de découplage, la Lambda d'envoi, la file d'attente morte et la
-supervision** qui les relient à l'API.
+supervision** qui les relient à l'API — et, depuis #66, les **réglages du canal
+SMS** : type de message, plafond de dépense et son alarme, sender ID.
 
-Il existe pour deux raisons, chacune nommée dans le CDC :
+Il existe pour trois raisons, chacune nommée dans le CDC :
 
 - **Une délivrabilité insuffisante vide le rappel J-1 de son sens** (CDC §6). Un
   rappel qui arrive dans les indésirables ne réduit aucun no-show ; il coûte le
@@ -14,6 +15,9 @@ Il existe pour deux raisons, chacune nommée dans le CDC :
 - **Une réservation ne doit jamais échouer parce qu'un e-mail n'est pas parti**
   (CDC §4.8). C'est ce que garantit la file : l'API publie et rend la main, elle
   n'appelle jamais SES depuis le chemin de requête HTTP.
+- **Le SMS est le seul poste que le CDC §4.16 sort de l'estimation budgétaire**,
+  « très variable selon le pays et le volume ». Une dépense qu'on ne sait pas
+  estimer se borne : c'est le rôle du plafond mensuel et de son alarme.
 
 Périmètre volontairement resserré, et complémentaire d'autres tickets :
 
@@ -23,7 +27,7 @@ Périmètre volontairement resserré, et complémentaire d'autres tickets :
 | Jeu de configuration, liste de suppression | — |
 | Topic SNS des événements de remise | Son traitement applicatif : #73 |
 | File SQS, Lambda d'envoi, DLQ, alarmes | La route d'envoi côté API : #70 |
-| — | SMS (SNS, plafond, sender ID) : #66 |
+| SMS : type de message, plafond, alarme, sender ID | L'appel à `Publish` : #70 · la normalisation E.164 : `packages/shared` |
 | — | Modèles de messages par tenant : #69 |
 | — | Publication du rappel J-1 par EventBridge : #71 |
 
@@ -46,6 +50,9 @@ Périmètre volontairement resserré, et complémentaire d'autres tickets :
 | Groupe de journaux | `/aws/lambda/spa-{env}-notification-dispatcher` | Rétention explicite |
 | Alarmes CloudWatch | 4 | DLQ, erreurs, retard, refus définitifs |
 | Tableau de bord | `spa-{env}-notifications` | **Seulement si `create_dashboard`** |
+| Politique IAM | `spa-{env}-notifications-sms-publisher` | Émettre un SMS ; aucun droit sur les réglages du compte |
+| Préférences SMS d'SNS | *sans nom — une par compte et par région* | **Seulement si `manage_sms_account_preferences`** |
+| Alarme CloudWatch | `spa-{env}-notifications-sms-spend` | Dépense SMS du mois — **même condition** |
 
 ## Composition
 
@@ -74,6 +81,13 @@ module "notifications" {
   # joignable sans jeton laisserait n'importe qui déclencher des envois.
   dispatch_url              = "https://api.exemple.fr/api/v1/interne/notifications/dispatch"
   dispatch_token_secret_arn = aws_secretsmanager_secret.dispatch_token.arn
+
+  # Canal SMS. `manage_sms_account_preferences` ne doit être vrai que dans **un**
+  # environnement — voir « Le réglage SMS est celui du compte » plus bas. Les
+  # autres héritent du réglage sans le poser.
+  manage_sms_account_preferences = true
+  sms_monthly_spend_limit_usd    = 50
+  sms_sender_id                  = "SpaSalon"
 }
 ```
 
@@ -456,6 +470,153 @@ racine. Une issue de suivi porte ce câblage.
 - **La publication du rappel J-1** (#71) : la règle EventBridge cible cette file,
   avec la politique `dispatch_producer_policy_arn` sur son rôle.
 
+## Le canal SMS — plafond, type de message, sender ID
+
+Le SMS est le seul poste que le CDC §4.16 **retire** de l'estimation budgétaire :
+« hors volumétrie SMS (très variable selon le pays et le volume) ». Le même rappel
+J-1 ne coûte pas la même chose vers Madagascar et vers la France, et rien dans le
+code ne le sait. Ce module ne prétend donc pas prévoir la dépense — il la borne.
+
+| Ce qui protège | De quoi |
+|---|---|
+| `monthly_spend_limit` | d'une facture qu'on découvre en fin de mois |
+| l'alarme à 80 % | d'un plafond atteint **en silence**, qui coupe les rappels |
+| `Transactional` | d'un rappel routé comme une promotion, donc filtré |
+| le sender ID | d'un expéditeur illisible, voire refusé par l'opérateur |
+
+### Le plafond est un arrêt dur, pas une alerte
+
+C'est la seule chose à retenir de cette section. AWS Budgets n'arrête rien ;
+`monthly_spend_limit` d'SNS, si : **au plafond, SNS refuse la publication**. Les
+rappels J-1 s'arrêtent, et aucune erreur applicative ne le dit, puisque le refus
+vient du service.
+
+D'où l'alarme, et d'où son seuil. À 100 % il n'y aurait plus rien à prévenir : le
+mal est fait, les rappels sont perdus. Le seul moment où l'information sert est
+celui où il reste de la marge pour relever le plafond ou couper le canal — 80 %
+par défaut, le même seuil que la première alerte du module `budgets`.
+
+```
+dépense du mois ──► 80 % du plafond ──► alarme, il reste de la marge
+                └─► 100 %             ──► SNS n'envoie plus, en silence
+```
+
+L'alarme porte sur `AWS/SNS`/`SMSMonthToDateSpentUSD`, **sans dimension** — c'est
+une métrique de compte. Son `treat_missing_data` vaut `missing` et non le
+`notBreaching` des quatre alarmes de la chaîne d'envoi : une profondeur de file
+absente veut dire « vide », une dépense cumulée absente veut seulement dire
+« aucun SMS pendant cette période ». Avec `notBreaching`, l'alarme retomberait au
+vert à chaque heure creuse pour repartir au rouge au SMS suivant — un battement,
+donc une alarme qu'on finit par couper.
+
+**Le quota du compte plafonne le plafond**, et il vaut **1 USD par mois sur un
+compte neuf**. Un `apply` qui demande davantage échoue tant que le support AWS
+n'a pas accordé le relèvement. La demande se fait en même temps que la sortie du
+bac à sable SES, pas la veille du go-live :
+
+```bash
+aws service-quotas request-service-quota-increase \
+  --region eu-west-3 \
+  --service-code sns \
+  --quota-code L-24B04930 \
+  --desired-value 50
+```
+
+Et pour lire la dépense en cours sans attendre l'alarme :
+
+```bash
+aws cloudwatch get-metric-statistics --region eu-west-3 \
+  --namespace AWS/SNS --metric-name SMSMonthToDateSpentUSD \
+  --start-time "$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%SZ)" \
+  --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --period 3600 --statistics Maximum
+```
+
+### Le réglage SMS est celui du compte, pas de l'environnement
+
+`aws_sns_sms_preferences` **n'a pas de nom**. Il y en a exactement un par compte
+et par région, comme il n'y a qu'un écran de préférences dans la console. C'est le
+même piège que l'identité de domaine SES, en pire : l'identité se dispute au moins
+sur un nom distinct, ici trois environnements écriraient sur la même case sans
+qu'aucun plan ne montre de conflit. Le dernier `apply` gagnerait, et le plafond de
+la production pourrait finir par être celui du développement.
+
+D'où `manage_sms_account_preferences`, faux par défaut et vrai **dans un seul
+environnement** — la production, qui l'assume pour les autres.
+
+Ce n'est une privation pour personne. Le réglage étant celui du compte, dev et
+staging en héritent : une boucle d'envoi en développement est plafonnée par la
+valeur de la production, ce qui est exactement la protection recherchée. Ce que
+chaque environnement crée pour son compte, en revanche, c'est la **politique de
+publication** — le droit d'envoyer est propre à l'environnement, le plafond ne
+l'est pas.
+
+### `Transactional`, et pourquoi ce n'est pas qu'une étiquette
+
+Deux effets, et le second est le moins connu (skill notifications §5) :
+
+1. la priorité de routage est supérieure — un opérateur remet un message
+   transactionnel avant un message promotionnel ;
+2. certains opérateurs **refusent** un message promotionnel hors plage horaire ou
+   vers un numéro inscrit sur une liste d'opposition commerciale.
+
+Un rappel de rendez-vous classé `Promotional` serait donc perdu **sans erreur
+côté AWS**. Le CDC §1.4 borne d'ailleurs le MVP à trois messages transactionnels ;
+aucun envoi de ce produit n'est promotionnel.
+
+### Le droit d'envoyer, et celui qu'on ne donne pas
+
+`sms_publisher_policy_arn` s'attache au rôle de tâche de l'API. Elle accorde
+`sns:Publish` sur `Resource = "*"`, et c'est le seul ARN possible : un envoi de
+SMS est un `Publish` **à un numéro de téléphone**, pas à un topic, et `Resource`
+est comparé à l'ARN du topic — absent ici. Toute autre valeur refuserait chaque
+envoi. Le droit résiduel — publier vers n'importe quel topic du compte — est nommé
+en commentaire dans `sms.tf`, avec ce qui le borne.
+
+Ce qu'elle **ne** donne **pas** est le point : ni `sns:SetSMSAttributes`, ni
+`sns:SetSMSSandboxAccountStatus`. Une application capable de relever son propre
+plafond de dépense rendrait le plafond décoratif — le premier bug d'envoi en
+boucle le repousserait de lui-même. Ces réglages appartiennent à Terraform,
+c'est-à-dire à une pull request relue.
+
+### Le sender ID : ce que Terraform pose, et ce qu'il ne peut pas enregistrer
+
+`sms_sender_id` pose le nom d'expéditeur par défaut du compte — onze caractères
+alphanumériques au plus, **dont au moins une lettre** : un expéditeur purement
+numérique est refusé par les opérateurs, qui y voient une usurpation de numéro
+court. Sans lui, SNS émet depuis un numéro partagé et le rappel n'a l'air de venir
+de personne, ce qui est la première raison de ne pas le lire.
+
+**Le poser ne l'enregistre nulle part.** Certains pays exigent que l'expéditeur
+alphanumérique soit déclaré auprès du régulateur ou de l'opérateur avant d'être
+accepté ; ailleurs il est simplement remplacé par un numéro court, sans erreur.
+Aucun fournisseur Terraform n'expose de ressource pour cette démarche — ni sous
+`aws_sns_*`, ni sous `aws_pinpointsmsvoicev2_*`, qui ne couvre que les numéros,
+les listes d'opposition et les jeux de configuration. C'est un dossier instruit
+par un humain, au même titre que la sortie du bac à sable SES.
+
+Le module ne peut pas le faire ; il peut ne rien laisser à deviner :
+
+```bash
+terraform output -json notification_sms_sender_id_registration
+```
+
+Chaque entrée porte `pays`, `statut` et `exigence`. Un `statut` valant
+`a-verifier` ou `a-reconfirmer` **n'est pas un critère de go-live coché** : la
+table AWS des pays pris en charge évolue, et un pays y passe de « libre » à
+« enregistrement requis » sans préavis. Les deux pays cibles nommés par la skill
+notifications §5 — Madagascar et la France — sont le défaut de
+`sms_target_countries`.
+
+### Numéros — E.164, et où la règle vit
+
+SNS n'accepte qu'un numéro au format E.164 strict (`+261341234567`). La règle
+n'est pas dans ce module mais dans le contrat partagé : `normalizeToE164` et
+`e164PhoneSchema` de `packages/shared/src/common/identifiers.ts`, qui normalisent
+à la saisie et refusent ce qui n'est pas normalisable **sans deviner un pays**.
+Un numéro national compléterait un indicatif au hasard, c'est-à-dire enverrait le
+rappel à quelqu'un d'autre.
+
 ## Coût
 
 Négligeable devant le reste de l'environnement, mais non nul :
@@ -464,6 +625,7 @@ Négligeable devant le reste de l'environnement, mais non nul :
 |---|---|
 | Clé KMS | 1 USD / mois / environnement — partagée par le topic et les deux files |
 | SES | 0,10 USD / 1000 messages hors Free Tier |
+| SNS (SMS) | **borné par `sms_monthly_spend_limit_usd`, et par rien d'autre** — le CDC §4.16 le sort de l'estimation, le prix par message variant d'un ordre de grandeur selon le pays |
 | SNS (événements) | quelques centimes — seuls les échecs publient |
 | Route 53 | aucun coût propre, la zone préexiste |
 | SQS | premier million de requêtes gratuit ; l'interrogation longue divise le reste par vingt |

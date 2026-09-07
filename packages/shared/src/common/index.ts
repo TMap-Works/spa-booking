@@ -11,6 +11,7 @@ export {
   phoneSchema,
   reasonSchema,
   slugSchema,
+  storedPhoneSchema,
   submittedPasswordSchema,
   uuidSchema,
 } from './identifiers';
