@@ -88,6 +88,38 @@ data "aws_iam_policy_document" "events_kms" {
       values   = [data.aws_caller_identity.current.account_id]
     }
   }
+
+  # SNS remet ce topic à des files SQS chiffrées par **cette même clé**
+  # (`delivery-events.tf`, #73). La remise est une écriture faite par le service
+  # SNS pour son propre compte : sans ce droit, SNS échoue en `KMSAccessDenied`,
+  # abandonne le message, et la panne est **totalement silencieuse** — la file
+  # reste vide, la file d'attente morte aussi, et les deux alarmes de la chaîne,
+  # qui regardent l'une et l'autre, ne voient rien. Aucune adresse morte ne
+  # serait jamais supprimée.
+  #
+  # Pas de condition `aws:SourceAccount` ici, contrairement à l'énoncé SES :
+  # l'appel KMS de la remise n'est pas celui de la publication, et le contexte
+  # qu'il porte n'est pas garanti. Une condition qui ne s'évalue pas rendrait le
+  # droit inopérant, c'est-à-dire reconduirait exactement la panne qu'il ferme.
+  # L'adjoint confus est fermé ailleurs, et deux fois : la politique de la file
+  # n'accepte de dépôt que du topic **nommé** (`ArnEquals aws:SourceArn`), et
+  # celle du topic ne laisse publier que l'identité SES de ce compte.
+  statement {
+    sid    = "AllowSnsToDeliverToEncryptedQueues"
+    effect = "Allow"
+
+    principals {
+      type        = "Service"
+      identifiers = ["sns.amazonaws.com"]
+    }
+
+    actions = [
+      "kms:Decrypt",
+      "kms:GenerateDataKey*",
+    ]
+
+    resources = ["*"]
+  }
 }
 
 # --- Topic --------------------------------------------------------------------

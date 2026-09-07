@@ -3,6 +3,8 @@ import { Module } from '@nestjs/common';
 import { AppointmentsModule } from '../appointments/appointments.module';
 import { IdentityModule } from '../identity/identity.module';
 import { BookingConfirmationListener } from './booking-confirmation.listener';
+import { DeliveryEventRepository } from './delivery-event.repository';
+import { DeliveryEventService } from './delivery-event.service';
 import { NotificationDispatchService } from './notification-dispatch.service';
 import { AppointmentNotificationRenderer, NOTIFICATION_RENDERER } from './notification-renderer';
 import { NOTIFICATION_SENDER, UnconfiguredNotificationSender } from './notification-sender';
@@ -75,6 +77,12 @@ import { ReminderSweepService } from './reminder-sweep.service';
     // sept autres modules.
     ReminderSweepRepository,
     ReminderSweepService,
+    // Le traitement des rebonds et des plaintes (#73). Il partage la garde et la
+    // configuration du balayage — même frontière de confiance, même jeton — et
+    // confine sa propre dérogation au client non scopé dans
+    // `DeliveryEventRepository`, comme le balayage le fait dans le sien.
+    DeliveryEventRepository,
+    DeliveryEventService,
     // `useFactory` et non la classe nue, exactement comme `StripeConfig` : le
     // seul paramètre du constructeur est l'environnement, que Nest chercherait
     // sinon à résoudre comme une dépendance.

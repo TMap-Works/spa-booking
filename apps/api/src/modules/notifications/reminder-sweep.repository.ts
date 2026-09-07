@@ -125,7 +125,13 @@ export class ReminderSweepRepository {
         // ici même à deux booléens, comme le fait `findRecipientContact`. Les
         // lire dans la même requête que le rendez-vous évite une requête par
         // rendez-vous, ce qui compte sur un balayage qui en traite un lot.
-        client: { select: { email: true, phone: true } },
+        //
+        // `emailSuppressedAt` est lu pour la même raison, et rejoint les deux
+        // autres dans le même booléen : une adresse supprimée n'est pas un canal
+        // (#73). Sans lui, le balayage publierait chaque heure des rappels pour
+        // une boîte morte, que l'expédition écarterait un à un — du travail pour
+        // rien, et une file qui grossit de messages sans objet.
+        client: { select: { email: true, phone: true, emailSuppressedAt: true } },
         // Les canaux déjà couverts par un rappel vivant, et rien d'autre de la
         // ligne de journal : ni statut, ni horodatage, ni accusé.
         notifications: {
@@ -149,7 +155,7 @@ export class ReminderSweepRepository {
       appointmentId: row.id,
       clientId: row.clientId,
       startsAt: row.startsAt,
-      hasEmail: row.client.email.length > 0,
+      hasEmail: row.client.email.length > 0 && row.client.emailSuppressedAt === null,
       hasSms: isDialableNumber(row.client.phone),
       liveChannels: row.notifications.map((notification) => notification.channel),
     }));

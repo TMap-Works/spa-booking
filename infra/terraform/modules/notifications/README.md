@@ -53,7 +53,13 @@ Périmètre volontairement resserré, et complémentaire d'autres tickets :
 | Groupe de journaux | `/aws/lambda/spa-{env}-reminder-sweeper` | Rétention explicite |
 | Planning EventBridge Scheduler | `spa-{env}-reminder-sweep` | `cron(0 * * * ? *)` en UTC — **désactivé** sans `reminder_sweep_url` |
 | Rôle + politique IAM | `spa-{env}-reminder-schedule` | `lambda:InvokeFunction`, et rien d'autre |
-| Alarmes CloudWatch | 5 | Balayage, DLQ, erreurs, retard, refus définitifs |
+| File SQS | `spa-{env}-ses-events` | Abonnée au topic — les rebonds et les plaintes à traiter |
+| File SQS | `spa-{env}-ses-events-dlq` | Bout de course, rétention 14 jours |
+| Abonnement SNS | *sans nom — file → topic* | Remise **brute** : le JSON de SES, sans enveloppe |
+| Lambda | `spa-{env}-delivery-events` | Relaie chaque événement de remise à l'API |
+| Rôle + politique IAM | `spa-{env}-delivery-events` | Sa file, sa clé, ses journaux, son jeton — rien d'autre |
+| Groupe de journaux | `/aws/lambda/spa-{env}-delivery-events` | Rétention explicite ; **aucune adresse** n'y figure |
+| Alarmes CloudWatch | 8 | Balayage, DLQ, erreurs, retard, refus définitifs, rebonds |
 | Tableau de bord | `spa-{env}-notifications` | **Seulement si `create_dashboard`** |
 | Politique IAM | `spa-{env}-notifications-sms-publisher` | Émettre un SMS ; aucun droit sur les réglages du compte |
 | Préférences SMS d'SNS | *sans nom — une par compte et par région* | **Seulement si `manage_sms_account_preferences`** |
@@ -290,9 +296,9 @@ Deux mécanismes distincts, et il faut les deux :
 - **La liste de suppression du compte** (`suppression_options`) est posée par ce
   module. SES refuse de lui-même tout envoi vers une adresse qui y figure, même
   si l'application le demandait. C'est le filet.
-- **Le traitement applicatif** — passer la notification en `suppressed` en base,
-  cesser de solliciter le client — s'abonne au topic `events_topic_arn` et fait
-  l'objet de #73.
+- **Le traitement applicatif** — marquer l'adresse comme supprimée sur les fiches
+  clientes, et cesser de la solliciter — est posé par #73 : c'est la chaîne
+  décrite ci-dessous.
 
 Le consommateur du topic s'abonne par **file SQS**, pas par HTTP : un abonnement
 HTTP perd les événements pendant qu'un déploiement redémarre l'API, et un rebond
@@ -302,6 +308,62 @@ Le topic est chiffré par une clé KMS gérée par le compte. Tout abonné doit 
 `kms:Decrypt` sur `kms_key_arn`, sinon il recevra des messages qu'il ne saura pas
 déchiffrer — panne silencieuse, et la plus longue à diagnostiquer de cette
 chaîne.
+
+### La chaîne de traitement (#73)
+
+```
+SES ──► spa-{env}-ses-events (SNS) ──► spa-{env}-ses-events (SQS) ──► spa-{env}-ses-events-dlq
+ (Bounce, Complaint,                              │             5 réceptions
+  Reject, Rendering Failure)                      ▼
+                                       spa-{env}-delivery-events (Lambda)
+                                                  │
+                                                  ▼
+                                    POST {delivery_events_url}
+                                    (API — classe et supprime)
+```
+
+Trois choix méritent d'être dits.
+
+**Une file entre le topic et la fonction.** Un abonnement Lambda direct sur SNS
+existe et serait plus court à écrire ; il n'a ni file d'attente morte
+utilisable, ni compteur de réception, ni rétention. Un échec de l'API pendant un
+déploiement ferait perdre les rebonds de la fenêtre, définitivement et sans
+trace.
+
+**Remise brute** (`raw_message_delivery = true`). La fonction reçoit le JSON de
+SES tel quel, sans l'enveloppe SNS. Sans elle, il faudrait extraire `Message` —
+une chaîne JSON dans un objet JSON — et le désérialiser une seconde fois, à un
+endroit de plus où se tromper.
+
+**La fonction ne classe rien.** Elle relaie la charge à l'API et traduit la
+réponse en une décision de rejeu. « Ce rebond est-il permanent ? », « quelles
+adresses désigne-t-il ? », « dans quels établissements les supprimer ? » vivent
+dans `apps/api/src/modules/notifications`, où le schéma et les suites de test se
+trouvent déjà — les réécrire ici donnerait deux implémentations de la même règle
+avec un seul jeu de tests.
+
+**Aucune adresse ne part au journal.** C'est la contrainte propre à cette
+fonction : le corps qu'elle relaie *contient* l'adresse du destinataire, là où
+les enveloppes de notification n'en portent aucune. Ni le corps, ni un extrait,
+ni « juste pour diagnostiquer » — seulement l'identifiant du message SQS, le
+verdict rendu par l'API et des compteurs (CDC §5.1). `delivery-events.smoke.mjs`
+le vérifie en interceptant la sortie standard.
+
+**Défaut fermé.** `delivery_events_url` vaut `null` par défaut : la fonction rend
+chaque message à SQS plutôt que de l'acquitter, la file vieillit, la DLQ se
+remplit et son alarme parle. C'est ce qu'on veut voir quand la chaîne n'est pas
+branchée — la sortie `delivery_events_configured` le dit sans avoir à chercher.
+
+**Concurrence maximale à 2**, contre 5 pour la file d'envoi. Un incident de
+délivrabilité produit des rebonds par milliers, au moment précis où l'API a le
+moins d'air ; aucun rebond n'est urgent à la minute près.
+
+Deux alarmes couvrent cette chaîne — `…-delivery-events-errors` (la fonction a
+levé, le lot sera rejoué) et `…-delivery-events-dlq-depth` (le rebond ne sera
+plus rejoué du tout, et l'adresse reste sollicitée). Aucune sur `Suppressions` :
+un seuil y serait arbitraire, et c'est la **forme** de la courbe qui parle — une
+montée lente est une base client qui vieillit, un pic est un incident d'envoi.
+Elle est au tableau de bord pour cette raison.
 
 ## La chaîne d'envoi — file, Lambda, DLQ, supervision
 

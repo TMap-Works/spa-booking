@@ -114,6 +114,21 @@ export interface FakeNotificationsRepository {
    * `null` fait disparaître le rendez-vous.
    */
   reminder: ReminderEligibility | null;
+  /**
+   * L'adresse du destinataire est-elle en liste de suppression ? (#73)
+   *
+   * `false` par défaut, qui est l'état de l'immense majorité des adresses : les
+   * suites qui ne parlent pas de suppression n'ont ainsi rien à régler, et
+   * celles qui en parlent posent l'état qu'elles veulent éprouver.
+   *
+   * Distinct de `contact.hasEmail`, et ce n'est pas une redite : le premier est
+   * ce que le **producteur** consulte pour composer ses enveloppes, celui-ci ce
+   * que l'**expédition** relit juste avant d'appeler le fournisseur. Le double
+   * les tient séparés parce que le service les appelle à deux instants
+   * différents, et que tout l'intérêt de la seconde lecture est de pouvoir dire
+   * autre chose que la première.
+   */
+  emailSuppressed: boolean;
 }
 
 function toRecord(row: FakeRow): NotificationRecord {
@@ -207,8 +222,10 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
   const state: {
     contact: { hasEmail: boolean; hasSms: boolean } | null;
     reminder: ReminderEligibility | null;
+    emailSuppressed: boolean;
   } = {
     contact: { hasEmail: true, hasSms: true },
+    emailSuppressed: false,
     // Au milieu de la fenêtre : `reminderTiming` rendra `due` quel que soit le
     // temps que la suite met à s'exécuter.
     reminder: {
@@ -223,12 +240,15 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
   const findReminderEligibility = (): Promise<ReminderEligibility | null> =>
     Promise.resolve(state.reminder);
 
+  const isEmailSuppressed = (): Promise<boolean> => Promise.resolve(state.emailSuppressed);
+
   const repository = {
     claim,
     markSent,
     markFailed,
     findRecipientContact,
     findReminderEligibility,
+    isEmailSuppressed,
   } as unknown as NotificationsRepository;
 
   return {
@@ -245,6 +265,12 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     },
     set reminder(value) {
       state.reminder = value;
+    },
+    get emailSuppressed() {
+      return state.emailSuppressed;
+    },
+    set emailSuppressed(value) {
+      state.emailSuppressed = value;
     },
   };
 }

@@ -245,6 +245,81 @@ resource "aws_cloudwatch_metric_alarm" "permanent_failures" {
   }
 }
 
+# --- 5. La chaîne des rebonds ne traite plus rien (#73) -----------------------
+
+# Deux alarmes, et elles ne disent pas la même chose.
+#
+# La première est la profondeur de la file d'attente morte des **événements de
+# remise**. Un rebond bloqué là est plus insidieux qu'une notification bloquée :
+# rien n'a échoué du point de vue de la cliente — les messages continuent de
+# partir — mais l'adresse morte n'a jamais été supprimée, et le domaine continue
+# donc d'écrire à une boîte inexistante. C'est le mécanisme même que le ticket
+# cherche à arrêter, arrêté à son tour, et sans cette alarme rien ne le dirait.
+resource "aws_cloudwatch_metric_alarm" "delivery_events_dlq_depth" {
+  alarm_name        = "${local.alarm_prefix}-delivery-events-dlq-depth"
+  alarm_description = "Au moins un événement de remise SES est en file d'attente morte (${aws_sqs_queue.delivery_events_dlq.name}) : le rebond ou la plainte n'a pas été traité, et l'adresse concernée reste sollicitée — c'est la réputation d'envoi du domaine entier qui se dégrade."
+
+  namespace   = "AWS/SQS"
+  metric_name = "ApproximateNumberOfMessagesVisible"
+  dimensions = {
+    QueueName = aws_sqs_queue.delivery_events_dlq.name
+  }
+
+  statistic           = "Maximum"
+  period              = var.alarm_period_seconds
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+
+  # SQS ne publie pas de point quand la file est restée vide toute la période.
+  treat_missing_data = "notBreaching"
+
+  alarm_actions = var.alarm_topic_arns
+  ok_actions    = var.alarm_topic_arns
+
+  tags = {
+    Name = "${local.alarm_prefix}-delivery-events-dlq-depth"
+  }
+}
+
+# La seconde est l'échec de la fonction elle-même. Elle se distingue de la
+# précédente par le moment : ici le message est encore dans la file et sera
+# rejoué, là il ne le sera plus. Les deux méritent d'être vues, et la première
+# à sonner est presque toujours celle-ci.
+resource "aws_cloudwatch_metric_alarm" "delivery_events_errors" {
+  alarm_name        = "${local.alarm_prefix}-delivery-events-errors"
+  alarm_description = "La Lambda ${local.delivery_events_function_name} a levé au moins une fois : le lot concerné est rejoué en entier, et ses événements de remise se rapprochent de la DLQ sans avoir été refusés."
+
+  namespace   = "AWS/Lambda"
+  metric_name = "Errors"
+  dimensions = {
+    FunctionName = aws_lambda_function.delivery_events.function_name
+  }
+
+  statistic           = "Sum"
+  period              = var.alarm_period_seconds
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  alarm_actions = var.alarm_topic_arns
+  ok_actions    = var.alarm_topic_arns
+
+  tags = {
+    Name = "${local.alarm_prefix}-delivery-events-errors"
+  }
+}
+
+# Pas d'alarme sur `Suppressions`, délibérément.
+#
+# Un seuil y serait arbitraire — combien d'adresses mortes par heure est-il
+# « normal » pour une plateforme dont le volume varie avec les saisons ? — et une
+# alarme qu'on ne sait pas régler finit désactivée. La métrique existe, elle est
+# au tableau de bord, et c'est sa **forme** qui parle : une montée lente est une
+# base client qui vieillit, un pic est un incident d'envoi. Ni l'une ni l'autre
+# ne se lit sur un franchissement de seuil.
+
 # --- Tableau de bord ----------------------------------------------------------
 
 # Ce que les alarmes ne donnent pas : la vue d'ensemble. Une alarme dit qu'un
@@ -377,6 +452,30 @@ resource "aws_cloudwatch_dashboard" "notifications" {
             ["AWS/Lambda", "Invocations", "FunctionName", aws_lambda_function.reminder_sweeper.function_name],
             [".", "Errors", ".", "."],
             [".", "Throttles", ".", "."],
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 18
+        width  = 12
+        height = 6
+        properties = {
+          # La courbe que personne ne regarde tant qu'elle est plate, et qui dit
+          # tout quand elle ne l'est plus : une montée lente est une base client
+          # qui vieillit, un pic est un incident d'envoi. Aucune alarme dessus —
+          # voir le commentaire de la section 5.
+          title  = "Rebonds et plaintes"
+          region = data.aws_region.current.name
+          view   = "timeSeries"
+          period = var.alarm_period_seconds
+          stat   = "Sum"
+          metrics = [
+            [var.metric_namespace, "Suppressions", "Environment", var.environment],
+            [".", "DeliveryEventsProcessed", ".", "."],
+            [".", "DeliveryEventsUnreadable", ".", "."],
+            [".", "DeliveryEventsTransientFailures", ".", "."],
           ]
         }
       },

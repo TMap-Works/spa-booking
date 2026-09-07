@@ -181,6 +181,27 @@ enum NotificationStatus {
   FAILED
 }
 
+/// Pourquoi une adresse a cessé d'être sollicitée — #73, notifications §5.
+///
+/// Deux valeurs, et seulement deux, parce que seules deux issues sont
+/// **définitives** au sens de SES : un rebond permanent (la boîte n'existe pas,
+/// le domaine ne résout pas, le serveur refuse pour toujours) et une plainte
+/// (le destinataire a cliqué « courrier indésirable »). Les autres événements de
+/// remise — rebond transitoire, retard de livraison, refus du message par SES,
+/// échec de rendu — ne disent rien de l'adresse : ils ne suppriment donc rien.
+///
+/// La distinction n'est pas cosmétique. Traiter un rebond transitoire comme
+/// permanent priverait durablement une cliente de ses confirmations pour une
+/// boîte pleine pendant deux jours ; l'inverse — réécrire à une adresse morte —
+/// dégrade la réputation d'envoi du **domaine entier**, donc la délivrabilité
+/// des rappels de tous les établissements (CDC §6, risque de délivrabilité).
+enum EmailSuppressionReason {
+  /// Rebond permanent : `bounceType = Permanent` dans l'événement SES.
+  HARD_BOUNCE
+  /// Plainte : le destinataire a signalé le message comme indésirable.
+  COMPLAINT
+}
+
 /// L'état d'une livraison de webhook dans la file durable — #409.
 ///
 /// Deux valeurs et non trois : une livraison **aboutie n'existe plus**. La
@@ -431,6 +452,51 @@ model User {
   /// demande sur une fiche déjà anonymisée la rend telle quelle, au lieu de lui
   /// attribuer un second pseudonyme.
   anonymizedAt DateTime? @map("anonymized_at") @db.Timestamptz(6)
+
+  /// Instant où l'adresse de ce compte a cessé d'être sollicitée — #73,
+  /// notifications §5 : « une adresse en hard bounce est marquée `suppressed` et
+  /// n'est plus jamais sollicitée ».
+  ///
+  /// Nul sur toute adresse vivante, ce qui est le cas de l'immense majorité.
+  /// Daté, plus aucun e-mail ne part vers ce compte : `findRecipientContact` rend
+  /// `hasEmail: false`, donc le producteur ne compose plus d'enveloppe e-mail, et
+  /// l'expédition revérifie de son côté — la suppression a pu tomber entre la
+  /// publication du message et sa consommation.
+  ///
+  /// ## Pourquoi deux colonnes sur `users` plutôt qu'une table de suppression
+  ///
+  /// Parce qu'une fiche cliente **est** une ligne `users`, et que la question à
+  /// laquelle ces colonnes répondent — « peut-on encore écrire à cette
+  /// personne ? » — se pose exactement là où l'adresse est écrite. Une table
+  /// séparée aurait dû **recopier l'adresse** pour être utile, c'est-à-dire
+  /// dupliquer une donnée personnelle dans une seconde table, à faire vivre au
+  /// même rythme (RGPD, CDC §5.1). C'est le raisonnement qui a déjà porté
+  /// `internal_note` et `marketing_consent` ici plutôt qu'ailleurs.
+  ///
+  /// La suppression est donc **par établissement**, comme la ligne qui la porte :
+  /// deux salons ont chacun leur fiche pour une même personne, et un rebond
+  /// n'apprend rien de plus à l'un qu'à l'autre. L'ingestion des événements SES
+  /// (#73) balaie tous les établissements et supprime l'adresse partout où elle
+  /// est connue — la réputation d'envoi est celle du domaine, pas celle d'un
+  /// salon.
+  ///
+  /// ## Ce qu'elles ne gouvernent pas
+  ///
+  /// Le canal SMS. Un rebond SES ne dit rien d'un numéro de téléphone, et SNS
+  /// n'expose pas d'équivalent au périmètre du MVP.
+  ///
+  /// ## À reprendre le jour où l'adresse deviendra modifiable
+  ///
+  /// Aucune route ne permet aujourd'hui de changer `email` (le contrat
+  /// `updateCustomerRequest` ne le déclare pas). Le jour où l'une le permettra,
+  /// elle devra remettre ces deux colonnes à nul : la suppression porte sur une
+  /// **adresse**, et une nouvelle adresse n'a rien fait pour la mériter.
+  emailSuppressedAt DateTime? @map("email_suppressed_at") @db.Timestamptz(6)
+
+  /// Ce qui a valu la suppression — nul exactement quand `emailSuppressedAt`
+  /// l'est. Le back-office l'affiche sur la fiche cliente : « rebond définitif »
+  /// et « plainte » n'appellent pas la même conversation au comptoir.
+  emailSuppressionReason EmailSuppressionReason? @map("email_suppression_reason")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)

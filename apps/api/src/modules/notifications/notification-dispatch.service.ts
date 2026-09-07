@@ -93,6 +93,17 @@ import type {
  *
  * Le rendu, lui, ne juge toujours pas du statut : il lit le rendez-vous pour son
  * heure et sa prestation, c'est une lecture d'affichage.
+ *
+ * ## Ce que #73 y a ajouté, et pour le seul canal e-mail
+ *
+ * Une **relecture de la suppression au moment de l'envoi** — voir
+ * `emailSuppressed`. Même raisonnement que ci-dessus, appliqué à une autre
+ * donnée : les producteurs consultent la suppression au moment de composer, un
+ * rebond peut tomber entre-temps, et « n'est plus jamais sollicitée » ne se tient
+ * qu'ici.
+ *
+ * Les deux contrôles sont indépendants et se cumulent : le premier borne
+ * *à qui* on écrit, le second *si le message a encore un objet*.
  */
 @Injectable()
 export class NotificationDispatchService {
@@ -110,6 +121,10 @@ export class NotificationDispatchService {
    * rend la main à SQS pour qu'il réessaie.
    */
   public async dispatch(message: NotificationMessage, now: Date = new Date()): Promise<DispatchOutcome> {
+    if (message.channel === 'EMAIL' && (await this.emailSuppressed(message))) {
+      return 'skipped';
+    }
+
     if (message.type === 'REMINDER_24H' && !(await this.reminderStillDue(message, now))) {
       return 'skipped';
     }
@@ -156,6 +171,72 @@ export class NotificationDispatchService {
     });
 
     return 'sent';
+  }
+
+  /**
+   * Cette adresse a-t-elle cessé d'être sollicitée — **au moment de l'envoi** ?
+   * (#73)
+   *
+   * ## Ce qu'elle garantit, et que rien d'autre ne garantissait
+   *
+   * « Une adresse en hard bounce passe en supprimé et **n'est plus jamais
+   * sollicitée** » est le deuxième critère d'acceptation du ticket, et le mot
+   * « jamais » est ce qui impose cette relecture. Les producteurs consultent bien
+   * la suppression — `findRecipientContact` pour la confirmation, le balayage
+   * pour le rappel J-1 — mais ils la consultent au moment de **composer**. Entre
+   * cette composition et l'appel à SES il y a une file, une Lambda, un appel
+   * HTTP et jusqu'à cinq réceptions : un rebond tombé dans cet intervalle
+   * n'aurait été vu par personne.
+   *
+   * Le cas n'est pas théorique, il est même le plus probable des trois : un rebond
+   * arrive *après* un envoi, donc précisément quand la chaîne travaille. Une
+   * confirmation et un rappel partent souvent à quelques minutes d'écart pour la
+   * même cliente — c'est le premier qui apprend que la boîte est morte, et c'est
+   * le second qu'il faut arrêter.
+   *
+   * ## Elle passe **avant** la prise de droit, et avant la revérification du
+   * rappel
+   *
+   * Avant `claim()`, pour la raison qu'expose `reminderStillDue` : un message
+   * supprimé n'a pas à laisser de ligne, et le seul statut disponible pour
+   * défaire un `PENDING` est `FAILED`, qui afficherait « échec » au comptoir pour
+   * une décision qui n'en est pas un.
+   *
+   * Avant la revérification du rappel, parce qu'elle est plus générale : elle
+   * vaut pour les trois types de message, là où l'autre ne concerne que
+   * `REMINDER_24H`. Sur un rappel vers une adresse supprimée, les deux
+   * concluraient de toute façon à `skipped` ; l'ordre ne fait qu'éviter la
+   * seconde lecture.
+   *
+   * ## Le canal SMS n'est pas concerné
+   *
+   * SES ne dit rien d'un numéro de téléphone, et SNS n'expose aucun équivalent au
+   * périmètre du MVP. La condition sur le canal n'est donc pas une optimisation :
+   * c'est la portée exacte de ce que la suppression sait.
+   *
+   * ## Un destinataire absent ne suppose rien
+   *
+   * `recipientUserId` est déclaré non nul par `NotificationMessage`, mais la
+   * colonne est nullable et la ligne relue peut l'avoir perdu (anonymisation
+   * RGPD). Sans compte à consulter, il n'y a pas de suppression à constater : le
+   * message poursuit son chemin, et c'est le rendu qui dira, s'il le faut, que
+   * son objet a disparu.
+   */
+  private async emailSuppressed(message: NotificationMessage): Promise<boolean> {
+    const suppressed = await this.repository.isEmailSuppressed(message.recipientUserId);
+
+    if (suppressed) {
+      // Aucune adresse au journal — c'est une donnée personnelle
+      // (notifications §7). L'identifiant du compte suffit à retrouver la fiche,
+      // et il ne dit rien à qui lit le journal sans accès à la base.
+      this.logger.log('envoi e-mail supprimé, adresse en liste de suppression', {
+        recipientUserId: message.recipientUserId,
+        type: message.type,
+        appointmentId: message.appointmentId,
+      });
+    }
+
+    return suppressed;
   }
 
   /**
