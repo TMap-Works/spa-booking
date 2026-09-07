@@ -28,12 +28,53 @@ séparation est offerte par ce module, mais c'est IAM qui la rend effective (voi
 
 ## Ce qu'il crée, pour le compte entier
 
-| Ressource | Rôle |
-|---|---|
-| Étiquettes de répartition de coûts | Active `Environment`, `ManagedBy`, `Owner` et `Project` dans Cost Explorer |
+| Ressource | Nom | Rôle |
+|---|---|---|
+| Étiquettes de répartition de coûts | — | Active `Environment`, `ManagedBy`, `Owner` et `Project` dans Cost Explorer |
+| Bucket S3 + clé KMS | `spa-booking-audit-logs`, `alias/spa-audit-logs` | Destination des journaux CloudTrail et des instantanés AWS Config |
+| Trace CloudTrail | `spa-account-trail` | Audit multi-région des appels d'API, avec validation d'intégrité |
+| Enregistreur AWS Config + 14 règles | `spa-config-recorder` | Contrôle **continu** de conformité |
+| Détecteur GuardDuty | — | Détection de menaces sur CloudTrail, flux VPC et DNS |
+| Topic SNS + règle EventBridge | `spa-security-alerts` | Fait sortir les constats GuardDuty de la console |
 
-Voir « Étiquettes de répartition de coûts » plus bas — c'est le seul bloc de ce
-module dont l'effet ne se range pas dans un environnement.
+Ces blocs partagent une propriété : leur effet ne se range dans **aucun**
+environnement. Une trace multi-région couvre le compte ; un détecteur GuardDuty
+est unique par compte et par région ; une création de rôle IAM n'appartient ni à
+`dev` ni à `prod`. Les déclarer dans un module composé une fois par
+environnement en produirait trois, qui factureraient trois fois les mêmes
+événements — c'est le raisonnement qui tient déjà les étiquettes de répartition
+de coûts et les préférences SMS d'SNS hors des environnements.
+
+### Le volet audit (CDC §4.10, #79)
+
+Les trois services répondent à des questions différentes, et c'est pourquoi il
+en faut trois :
+
+| Service | Question à laquelle il répond |
+|---|---|
+| CloudTrail | **Qui a fait quoi**, et quand |
+| AWS Config | **Dans quel état** se trouve le compte, en ce moment et dans le temps |
+| GuardDuty | **Est-ce anormal** — corrélation, réputation, comportement |
+
+Un groupe de sécurité ouvert sur Internet apparaît dans CloudTrail au moment où
+quelqu'un l'ouvre — une ligne parmi des milliers — et dans Config **tant qu'il
+reste ouvert**. C'est cette seconde propriété qui fait des règles Config la
+preuve continue des critères de sécurité : « aucun groupe de sécurité n'expose la
+base à Internet » n'est pas une chose qu'on vérifie une fois avant le go-live,
+c'est une chose qui doit rester vraie. La variable `config_rules` associe chaque
+règle au critère qu'elle tient.
+
+Trois réglages à connaître avant le go-live (#83) :
+
+- `security_alert_emails` est **vide par défaut** : les constats sont publiés et
+  personne ne les lit. La sortie `security_alert_subscriptions_pending` nomme les
+  abonnements que leur destinataire n'a pas encore confirmés — Terraform crée
+  l'abonnement, il ne clique pas le lien à sa place.
+- `audit_services_enabled` dit d'un coup d'œil si les trois services sont en
+  place. Un `false` y est un critère de sécurité non tenu, pas une préférence.
+- `config_recorder_running` existe parce que **créer un enregistreur Config ne le
+  démarre pas**. C'est le piège le plus courant du service : la console montre un
+  enregistreur, les règles sont là, et aucune évaluation n'a jamais lieu.
 
 ### Pourquoi un seul état pour les trois environnements
 
@@ -139,11 +180,20 @@ interpolation, la valeur y est nécessairement littérale.
   Un `destroy` accidentel ici coûterait l'ensemble de l'infrastructure.
 - **Journaux d'accès S3 non activés** — exception assumée, annotée dans le code :
   ils exigeraient un bucket de destination soumis au même contrôle, et la règle se
-  mord la queue. La traçabilité repose sur les **événements de données CloudTrail**
-  — qui couvrent en plus les lectures faites hors S3, mais qui ne sont **pas activés
-  par défaut** et ne sont créés par aucun module de ce dépôt à ce jour. Tant que le
-  trail dédié n'existe pas, l'exemption `tfsec` laisse les accès à l'état sans
-  journal : c'est une dette à solder avec l'observabilité (#16).
+  mord la queue. La traçabilité repose sur les **événements de données CloudTrail**,
+  qui couvrent en plus les lectures faites hors S3. **Cette dette est soldée**
+  (#79) : `cloudtrail.tf` déclare un second sélecteur d'événements restreint aux
+  objets des buckets d'état, et l'exemption `tfsec` ne laisse donc plus les accès
+  à l'état sans journal. Le sélecteur est volontairement borné à ces buckets — les
+  événements de données sont facturés à l'événement, et les activer partout
+  produirait un volume sans commune mesure avec ce qu'on en tire.
+- **Le bucket d'audit est protégé comme la mémoire du compte qu'il est** :
+  versionné, chiffré par une clé **distincte** de celles des états — un rôle qui
+  déchiffre l'état de `dev` n'a aucune raison de lire la trace du compte —,
+  `prevent_destroy`, ACL désactivées, refus du transport en clair, et validation
+  d'intégrité côté CloudTrail. Cette dernière est ce qui distingue un journal d'un
+  fichier texte : sans elle, un fichier modifié après coup est indiscernable d'un
+  fichier authentique.
 
 ## Étiquettes de répartition de coûts
 
@@ -208,13 +258,38 @@ ventilation sur cette dimension au mois suivant.
 
 ## Coût
 
-Environ **3 à 5 USD par mois** au total : trois clés KMS à 1 USD chacune — soit
-3 USD de plancher incompressible —, un stockage S3 de quelques mégaoctets et une
-table DynamoDB en facturation à la demande dont le volume se compte en dizaines de
-requêtes par `apply`.
+**État et verrouillage** : environ **3 à 5 USD par mois** — trois clés KMS à
+1 USD chacune, soit 3 USD de plancher incompressible, un stockage S3 de quelques
+mégaoctets et une table DynamoDB en facturation à la demande dont le volume se
+compte en dizaines de requêtes par `apply`.
 
-Deux règles de cycle de vie tiennent le stockage : expiration des versions
-antérieures au bout de 90 jours (`noncurrent_version_retention_days`) et abandon des
+**Volet audit** : environ **10 à 25 USD par mois**, dont la part variable dépend
+du nombre de ressources du compte.
+
+| Poste | Ordre de grandeur | Ce qui le fait varier |
+|---|---|---|
+| CloudTrail, événements de gestion | 0 USD | Le premier trail du compte est gratuit |
+| CloudTrail, événements de données | 1 à 3 USD | Restreints aux objets des buckets d'état |
+| CloudTrail → CloudWatch Logs | 1 à 3 USD | Ingestion ; rétention volontairement courte (30 j) |
+| Clé KMS d'audit | 1 USD | Plancher fixe |
+| Stockage S3 des journaux | 1 à 3 USD | Cycle de vie : `GLACIER_IR` à 90 jours, expiration à 365 |
+| AWS Config, éléments enregistrés | 3 à 10 USD | `all_supported` — chaque changement de ressource |
+| AWS Config, évaluations de règles | 2 à 5 USD | 14 règles × ressources évaluées |
+| GuardDuty | 3 à 8 USD | Volume CloudTrail, flux VPC et DNS analysés |
+
+C'est le poste que `config_enabled` permet de couper si le compte devient trop
+bavard, et `guardduty_features` celui qui l'arbitre source par source :
+`EBS_MALWARE_PROTECTION` et `EKS_AUDIT_LOGS` sont désactivés par défaut, cette
+plateforme n'ayant ni volume EBS — elle est en Fargate — ni cluster Kubernetes.
+
+Sur les 430 à 800 USD par mois du CDC §4.16 pour la production, cet ensemble
+reste sous 5 % — et sans commune mesure avec le coût d'un groupe de sécurité
+ouvert découvert trois semaines trop tard.
+
+Trois règles de cycle de vie tiennent le stockage : expiration des versions
+antérieures de l'état au bout de 90 jours (`noncurrent_version_retention_days`),
+archivage puis expiration des journaux d'audit
+(`audit_log_glacier_transition_days`, `audit_log_retention_days`) et abandon des
 envois multipart incomplets au bout de 7 jours.
 
 ## Ce qui n'est pas ici

@@ -63,9 +63,47 @@ variable "certificate_arn" {
 }
 
 variable "ssl_policy" {
-  description = "Politique TLS du listener 443. Le défaut n'accepte que TLS 1.2 et 1.3 ; ne le rabaisser que sur besoin client démontré."
+  description = <<-EOT
+    Politique TLS du listener 443. Le défaut n'accepte que TLS 1.2 et 1.3.
+
+    La liste admise ci-dessous est **fermée**, et c'est le point : « TLS 1.2
+    minimum sur toutes les communications externes » est un critère de sécurité
+    (CDC §4.10, #79), pas une préférence. Tant que cette exigence ne vivait que
+    dans la description, un environnement pouvait passer
+    `ELBSecurityPolicy-2016-08` — qui accepte encore TLS 1.0 — et le plan
+    l'aurait appliqué sans rien dire. Elle vit maintenant dans le plan.
+
+    Toutes les politiques nommées ici imposent TLS 1.2 au minimum. Celles qu'AWS
+    propose et qui n'y figurent pas — `ELBSecurityPolicy-2016-08`,
+    `ELBSecurityPolicy-TLS-1-0-2015-04`, `ELBSecurityPolicy-TLS-1-1-2017-01`,
+    `ELBSecurityPolicy-FS-2018-06`, `ELBSecurityPolicy-FS-1-1-2019-08` — sont
+    exclues parce qu'elles négocient TLS 1.0 ou 1.1.
+
+    Une politique nouvellement publiée par AWS s'ajoute ici, dans une pull
+    request qui dit laquelle et pourquoi.
+  EOT
   type        = string
   default     = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+
+  validation {
+    condition = contains([
+      # Familles TLS 1.3 — TLS 1.2 en plancher, 1.3 négocié quand le client sait.
+      "ELBSecurityPolicy-TLS13-1-2-2021-06",
+      "ELBSecurityPolicy-TLS13-1-2-Res-2021-06",
+      "ELBSecurityPolicy-TLS13-1-2-Ext1-2021-06",
+      "ELBSecurityPolicy-TLS13-1-2-Ext2-2021-06",
+      # TLS 1.3 seul : plancher plus haut encore, au prix des clients anciens.
+      "ELBSecurityPolicy-TLS13-1-3-2021-06",
+      # Familles TLS 1.2, sans 1.3.
+      "ELBSecurityPolicy-TLS-1-2-2017-01",
+      "ELBSecurityPolicy-TLS-1-2-Ext-2018-06",
+      # Confidentialité persistante, plancher 1.2.
+      "ELBSecurityPolicy-FS-1-2-2019-08",
+      "ELBSecurityPolicy-FS-1-2-Res-2019-08",
+      "ELBSecurityPolicy-FS-1-2-Res-2020-10",
+    ], var.ssl_policy)
+    error_message = "ssl_policy doit être une politique imposant TLS 1.2 au minimum (CDC §4.10). `ELBSecurityPolicy-2016-08`, `-TLS-1-0-2015-04`, `-TLS-1-1-2017-01`, `-FS-2018-06` et `-FS-1-1-2019-08` négocient TLS 1.0 ou 1.1 et sont refusées."
+  }
 }
 
 # --- Services -----------------------------------------------------------------

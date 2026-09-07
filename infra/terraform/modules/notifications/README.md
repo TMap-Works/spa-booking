@@ -685,8 +685,15 @@ aucun envoi de ce produit n'est promotionnel.
 `sns:Publish` sur `Resource = "*"`, et c'est le seul ARN possible : un envoi de
 SMS est un `Publish` **à un numéro de téléphone**, pas à un topic, et `Resource`
 est comparé à l'ARN du topic — absent ici. Toute autre valeur refuserait chaque
-envoi. Le droit résiduel — publier vers n'importe quel topic du compte — est nommé
-en commentaire dans `sms.tf`, avec ce qui le borne.
+envoi.
+
+Le droit résiduel qu'ouvrait ce joker — publier vers n'importe quel topic du
+compte — est retiré par un énoncé `Deny` sur
+`arn:{partition}:sns:*:{compte}:*` (#79). Un envoi SMS ne le rencontre jamais,
+n'ayant aucun ARN de topic à comparer ; une publication vers un topic, si. Ce
+qui l'a rendu nécessaire est l'arrivée d'un topic qu'il fallait protéger :
+`spa-security-alerts`, qui porte les constats GuardDuty du compte — pouvoir y
+publier, c'est pouvoir noyer une détection sous de faux constats.
 
 Ce qu'elle **ne** donne **pas** est le point : ni `sns:SetSMSAttributes`, ni
 `sns:SetSMSSandboxAccountStatus`. Une application capable de relever son propre

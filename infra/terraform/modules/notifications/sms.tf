@@ -180,13 +180,35 @@ data "aws_iam_policy_document" "sms_publisher" {
     # envoi. AWS documente exactement cette politique pour l'envoi direct.
     #
     # Le droit résiduel est réel et il faut le nommer : ce `*` autorise aussi la
-    # publication vers n'importe quel topic du compte. Deux choses le bornent —
-    # la politique n'est attachée qu'au rôle de tâche de l'API, dont tous les
-    # autres droits sont nommés ARN par ARN, et les topics du compte
-    # (événements SES, alertes budgétaires) ne portent que de la supervision. Le
-    # jour où un topic sensible apparaîtra, c'est ici qu'il faudra un `Deny`
-    # explicite.
+    # publication vers n'importe quel topic du compte. C'est ce que l'énoncé
+    # `Deny` ci-dessous retire — voir son commentaire.
     resources = ["*"]
+  }
+
+  # Le `Deny` que le commentaire ci-dessus annonçait, et le topic sensible qui le
+  # déclenche est arrivé : `spa-security-alerts`, qui porte les constats
+  # GuardDuty du compte (#79). Publier dessus, c'est pouvoir noyer une détection
+  # sous de faux constats, ou faire croire à un incident qui n'a pas eu lieu.
+  #
+  # `Deny` et non un `Resource` restreint, parce que c'est la seule forme qui
+  # marche ici : `sns:Publish` vers un numéro de téléphone ne compare `Resource`
+  # à aucun ARN de topic, si bien que toute valeur autre que `*` dans l'`Allow`
+  # refuserait chaque SMS. Un refus explicite sur les ARN de topic, lui, ne
+  # rencontre jamais un envoi SMS — il n'y a pas d'ARN à comparer — et retire
+  # exactement le droit résiduel sans toucher au droit voulu.
+  #
+  # Le joker de l'ARN couvre les topics de toutes les régions du compte : le
+  # canal SMS ne publie sur aucun d'eux, et un topic créé demain dans une autre
+  # région serait sinon hors de la garde.
+  statement {
+    sid    = "RefuserLaPublicationVersUnTopic"
+    effect = "Deny"
+
+    actions = ["sns:Publish"]
+
+    resources = [
+      "arn:${data.aws_partition.current.partition}:sns:*:${data.aws_caller_identity.current.account_id}:*",
+    ]
   }
 }
 
@@ -197,7 +219,7 @@ data "aws_iam_policy_document" "sms_publisher" {
 # réglages appartiennent à Terraform, c'est-à-dire à une pull request relue.
 resource "aws_iam_policy" "sms_publisher" {
   name        = "${local.name_prefix}-notifications-sms-publisher"
-  description = "Publier un SMS vers un numéro de téléphone. N'accorde aucun droit sur les réglages SMS du compte — plafond de dépense compris."
+  description = "Publier un SMS vers un numéro de téléphone, et rien d'autre : ni les réglages SMS du compte — plafond de dépense compris —, ni la publication sur un topic SNS, refusée explicitement."
   policy      = data.aws_iam_policy_document.sms_publisher.json
 
   tags = {

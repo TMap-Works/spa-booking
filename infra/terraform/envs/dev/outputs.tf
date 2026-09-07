@@ -270,3 +270,30 @@ output "notification_dashboard_name" {
   description = "Tableau de bord CloudWatch de la chaîne d'envoi : issue des livraisons, profondeur et âge des files, invocations et durée de la Lambda."
   value       = one(module.notifications[*].dashboard_name)
 }
+
+# --- Pare-feu applicatif (#79) ------------------------------------------------
+
+output "waf_web_acl_name" {
+  description = "Nom de la Web ACL protégeant l'ALB. C'est aussi la valeur de la dimension CloudWatch `WebACL` — celle à donner à `aws wafv2 get-sampled-requests` pour voir ce qui a été bloqué."
+  value       = module.waf.web_acl_name
+}
+
+output "waf_protects_anything" {
+  description = "Faux si la Web ACL n'est associée à aucune ressource : elle existe alors, ses règles sont là, ses métriques sont à zéro — ce qui ressemble à du calme et n'est qu'un pare-feu débranché."
+  value       = module.waf.protects_anything
+}
+
+output "waf_blocking_rule_groups" {
+  description = "Groupes de règles managés en mode blocage. Ceux qui n'y figurent pas comptent sans bloquer."
+  value       = module.waf.blocking_rule_groups
+}
+
+output "waf_counting_rule_groups" {
+  description = "Groupes de règles managés en observation. La métrique `CountedRequests` de chacun dit ce qu'il aurait bloqué : c'est elle qu'il faut lire avant de le faire passer en blocage."
+  value       = module.waf.counting_rule_groups
+}
+
+output "waf_log_group_name" {
+  description = "Groupe de journaux où atterrissent les décisions du WAF. C'est là qu'on lit quelle règle a bloqué quelle requête."
+  value       = module.waf.log_group_name
+}

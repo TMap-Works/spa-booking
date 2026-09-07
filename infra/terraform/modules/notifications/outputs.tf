@@ -264,6 +264,10 @@ output "sms_publisher_policy_arn" {
     Elle accorde `sns:Publish` et **aucun droit sur les réglages SMS du compte** :
     une application capable de relever son propre plafond de dépense rendrait le
     plafond décoratif.
+
+    Elle ne permet pas davantage de publier sur un **topic** du compte : le
+    joker qu'exige l'envoi vers un numéro de téléphone est repris par un `Deny`
+    explicite sur les ARN de topic (#79).
   EOT
   value       = aws_iam_policy.sms_publisher.arn
 }
