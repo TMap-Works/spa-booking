@@ -11,9 +11,95 @@ canaux, rien de plus — le marketing et les campagnes sont hors périmètre MVP
 | #70 | La **confirmation de réservation** — abonnement à `appointment.created`, rendu du message (récapitulatif, lien d'annulation, heure dans le fuseau du salon), choix des canaux, et `GET /notifications` pour le back-office |
 | #71 | Le **rappel J-1** — la fenêtre `[+24 h, +25 h)` en UTC, le balayage inter-tenant, la revérification du rendez-vous au moment de l'envoi, le modèle de rappel, et la route interne que le planning EventBridge appelle |
 | #73 | Les **rebonds et les plaintes** — le classement des événements de remise SES, la suppression des adresses mortes dans tous les établissements qui les connaissent, et le respect de cette suppression aux trois endroits qui composent ou expédient un e-mail |
+| #69 | Les **modèles par établissement** — la table `notification_templates`, le moteur de substitution à variables échappées, les défauts de la plateforme en code, la mesure GSM-7 / UCS-2 du coût d'un SMS, et les quatre routes de personnalisation |
 
-À venir : les passerelles SES et SNS, les modèles de message par établissement
-(#69) et l'avis d'annulation (#72).
+À venir : les passerelles SES et SNS, et l'avis d'annulation (#72).
+
+## Les modèles de message (#69)
+
+```
+modèle du salon (notification_templates)  ─┐
+                                           ├─► moteur ──► subject / html / text
+modèle par défaut (code, versionné)       ─┘      ▲
+                                                  │
+                                        variables du rendez-vous,
+                                        déjà formatées dans le fuseau du salon
+```
+
+Le ticket répond à une phrase de notifications §6 : « un salon doit pouvoir
+personnaliser ses messages sans déploiement ». Tant que les modèles sont des
+littéraux TypeScript, changer une formule de politesse demande une pull request,
+une CI et une mise en production.
+
+### Où vivent les modèles, et pourquoi pas au même endroit
+
+| | Où | Pourquoi |
+|---|---|---|
+| Personnalisation d'un salon | `notification_templates`, avec son `tenant_id` | c'est une donnée d'établissement, et elle doit changer sans déploiement |
+| Défaut de la plateforme | `notification-default-templates.ts` | il n'a **pas** d'établissement : l'inscrire en base aurait demandé un `tenant_id` nullable dans la table même qui décide de ce que les clientes reçoivent |
+
+La conséquence pratique est agréable : **une ligne absente n'est pas un manque**,
+c'est un salon qui n'a rien personnalisé. Effacer la ligne *est* le retour au
+défaut, sans qu'aucun contenu n'ait à être recopié — et une correction de
+coquille dans un défaut est un déploiement, pas une migration de données sur tous
+les tenants.
+
+### La grammaire, et ce qu'elle refuse d'être
+
+Deux formes, et elles n'évaluent rien :
+
+| Forme | Ce qu'elle fait |
+|---|---|
+| `{{nom}}` | remplace par la valeur, **échappée** si le corps est du HTML |
+| `{{#nom}}…{{/nom}}` | garde le fragment seulement si la variable est renseignée |
+
+Pas de Handlebars, pas d'EJS : le contenu vient d'un utilisateur authentifié mais
+non privilégié à l'échelle de la plateforme, et un moteur qui évalue des
+expressions transforme un champ de formulaire en exécution côté serveur. La
+section existe pour un besoin précis — l'adresse et le téléphone du salon sont
+nullables, et un modèle sans conditionnel produirait « Adresse : » vide dans
+chaque message.
+
+Trois bornes tiennent ce que le salon ne peut pas faire :
+
+- **la liste des variables est close** ; ce qu'elle ne nomme pas n'est pas
+  substituable, donc pas exposable, et un modèle qui nomme autre chose est refusé
+  à l'écriture — pas rendu à vide dans l'e-mail d'une cliente ;
+- **un modèle ne calcule rien** : il nomme `{{date}}`, dont la valeur est déjà
+  convertie au fuseau de l'établissement, et `{{lien_annulation}}`, composé depuis
+  `APP_URL` et le slug de la ligne `tenants`. Un salon ne peut donc ni décaler une
+  heure, ni faire pointer un lien signé de son nom vers un domaine qu'il aurait
+  choisi ;
+- **l'échappement porte sur la valeur, jamais sur le modèle** : le modèle *est* du
+  HTML, l'échapper aurait rendu impossible d'en écrire. Le corps texte, lui,
+  n'échappe rien — un `&amp;` y serait lu tel quel par la cliente.
+
+### Le coût d'un SMS, mesuré et non supposé
+
+`measureSms` compte des **septets** en GSM-7 et des unités de code UTF-16 en
+UCS-2. La bascule tient à un seul caractère : `é` et `è` sont dans l'alphabet de
+base, mais `ê`, `ô`, `ç` minuscule, l'apostrophe typographique `’`, le tiret
+cadratin `—` et les guillemets `« »` n'y sont pas — et chacun, seul, fait tomber
+la capacité de 160 à 70 caractères, donc double la facture (notifications §5).
+
+Un modèle de SMS est mesuré **sur un rendu de référence** avant d'être
+enregistré, et refusé au-delà de trois segments : mesurer la chaîne brute aurait
+dit n'importe quoi, `{{date}}` faisant huit caractères et en rendant
+trente-quatre. La mesure est aussi rendue par l'API, pour qu'un salon voie son
+message passer de un segment à deux au moment où il ajoute l'apostrophe.
+
+### Les routes
+
+| Route | Rôle | Ce qu'elle fait |
+|---|---|---|
+| `GET /notification-templates` | `STAFF` | les modèles effectifs, et le vocabulaire des variables |
+| `GET /notification-templates/:type/:channel` | `STAFF` | le modèle effectif d'un message |
+| `PUT /notification-templates/:type/:channel` | `MANAGER` | écrit la personnalisation, après validation |
+| `DELETE /notification-templates/:type/:channel` | `MANAGER` | revient au modèle par défaut |
+
+Lire à `STAFF` répond à une question de comptoir — « qu'est-ce que ma cliente a
+reçu, exactement ? ». Écrire engage l'établissement auprès de **toutes** ses
+clientes à venir : c'est un geste de responsable.
 
 ## Les rebonds et les plaintes (#73)
 
@@ -377,8 +463,13 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
 | `internal-caller.guard.ts` | La garde à jeton partagé des routes internes |
 | `notifications.config.ts` | Le jeton d'appel interne, résolu et validé |
 | `notification-sender.ts` | Le **port** vers SES/SNS, et son implémentation par défaut qui refuse |
-| `notification-renderer.ts` | Le **port** de rendu, et son implémentation pour les messages de rendez-vous |
-| `notification-content.ts` | Les modèles — des fonctions pures, sans Nest ni Prisma |
+| `notification-renderer.ts` | Le **port** de rendu : modèle du salon d'abord, défaut de la plateforme sinon |
+| `notification-template.ts` | Le moteur — substitution, sections, échappement, mesure GSM-7 / UCS-2 |
+| `notification-default-templates.ts` | Les modèles **par défaut** de la plateforme, versionnés en code |
+| `notification-content.ts` | Le pont rendez-vous → variables : fuseau, montant, lien d'annulation |
+| `notification-templates.repository.ts` | Les personnalisations en base, toujours par le client scopé |
+| `notification-templates.service.ts` | La résolution du modèle effectif et la validation d'un modèle soumis |
+| `notification-templates.controller.ts` | Les quatre routes de personnalisation |
 | `booking-confirmation.listener.ts` | L'abonné à `appointment.created` |
 | `notifications.service.ts` | La lecture du journal, et son plafond |
 | `notifications.controller.ts` | `GET /notifications` et la route interne de balayage |

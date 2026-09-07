@@ -8,6 +8,9 @@ import { DeliveryEventService } from './delivery-event.service';
 import { NotificationDispatchService } from './notification-dispatch.service';
 import { AppointmentNotificationRenderer, NOTIFICATION_RENDERER } from './notification-renderer';
 import { NOTIFICATION_SENDER, UnconfiguredNotificationSender } from './notification-sender';
+import { NotificationTemplatesController } from './notification-templates.controller';
+import { NotificationTemplatesRepository } from './notification-templates.repository';
+import { NotificationTemplatesService } from './notification-templates.service';
 import { InternalCallerGuard } from './internal-caller.guard';
 import { NotificationsConfig } from './notifications.config';
 import { NotificationsController } from './notifications.controller';
@@ -64,12 +67,19 @@ import { ReminderSweepService } from './reminder-sweep.service';
  */
 @Module({
   imports: [IdentityModule, AppointmentsModule],
-  controllers: [NotificationsController],
+  controllers: [NotificationsController, NotificationTemplatesController],
   providers: [
     NotificationsRepository,
     NotificationsService,
     NotificationDispatchService,
     BookingConfirmationListener,
+    // Les modèles par établissement (#69). Le dépôt sert **deux** appelants qui
+    // n'ont rien en commun : le service, pour le back-office, et le renderer,
+    // juste avant chaque envoi. C'est la raison pour laquelle il est un provider
+    // à part entière et non un détail du service — la chaîne d'expédition ne doit
+    // pas dépendre d'un service dont l'objet est un écran de configuration.
+    NotificationTemplatesRepository,
+    NotificationTemplatesService,
     // Le rappel J-1 (#71) : sa sélection, ses lectures, et la garde de la route
     // interne qui la déclenche. `NotificationsConfig` lit `process.env` à la
     // construction — même régime que `StripeConfig`, et pour la même raison :
@@ -88,9 +98,10 @@ import { ReminderSweepService } from './reminder-sweep.service';
     // sinon à résoudre comme une dépendance.
     { provide: NotificationsConfig, useFactory: () => new NotificationsConfig(process.env) },
     InternalCallerGuard,
-    // Le port de rendu. Les modèles par établissement (notifications §6) le
-    // remplaceront sans que le reste du module bouge — c'est l'intérêt d'avoir
-    // nommé la frontière plutôt que d'appeler les fonctions de rendu en dur.
+    // Le port de rendu. Depuis #69 il résout le modèle du salon avant celui de
+    // la plateforme — et le reste du module n'a pas bougé, ce qui est
+    // exactement l'intérêt d'avoir nommé la frontière plutôt que d'appeler les
+    // fonctions de rendu en dur.
     { provide: NOTIFICATION_RENDERER, useClass: AppointmentNotificationRenderer },
     // Le port d'expédition. Un ticket ultérieur remplacera ce fournisseur par
     // les passerelles SES et SNS ; rien d'autre du module n'aura à changer, et
