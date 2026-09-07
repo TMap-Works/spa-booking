@@ -1,4 +1,6 @@
+import { getTenantId } from '../../../common/tenant';
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
+import type { NotificationRenderer } from '../notification-renderer';
 import type {
   NotificationReceipt,
   NotificationSender,
@@ -7,10 +9,15 @@ import type {
 import type { NotificationsRepository } from '../notifications.repository';
 import {
   LIVE_NOTIFICATION_STATUSES,
+  type NotificationChannel,
   type NotificationClaim,
+  type NotificationListQuery,
   type NotificationMessage,
   type NotificationRecord,
   type NotificationStatus,
+  type NotificationTrace,
+  type NotificationType,
+  type RenderedNotification,
 } from '../notifications.types';
 
 /**
@@ -89,6 +96,13 @@ export interface FakeNotificationsRepository {
   readonly repository: NotificationsRepository;
   /** L'état de la table, pour asserter dessus. */
   readonly rows: FakeRow[];
+  /**
+   * Les canaux joignables du destinataire, que la suite règle à sa guise.
+   *
+   * `null` fait disparaître le compte — le cas où l'établissement du contexte
+   * n'est pas celui de la cliente, que le client scopé traite comme une absence.
+   */
+  contact: { hasEmail: boolean; hasSms: boolean } | null;
 }
 
 function toRecord(row: FakeRow): NotificationRecord {
@@ -179,9 +193,159 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     return Promise.resolve(true);
   };
 
-  const repository = { claim, markSent, markFailed } as unknown as NotificationsRepository;
+  const state: { contact: { hasEmail: boolean; hasSms: boolean } | null } = {
+    contact: { hasEmail: true, hasSms: true },
+  };
 
-  return { repository, rows };
+  const findRecipientContact = (): Promise<{ hasEmail: boolean; hasSms: boolean } | null> =>
+    Promise.resolve(state.contact);
+
+  const repository = {
+    claim,
+    markSent,
+    markFailed,
+    findRecipientContact,
+  } as unknown as NotificationsRepository;
+
+  return {
+    repository,
+    rows,
+    get contact() {
+      return state.contact;
+    },
+    set contact(value) {
+      state.contact = value;
+    },
+  };
+}
+
+/** Le contenu que `stubRenderer` rend par défaut. */
+export const RENDERED: RenderedNotification = {
+  subject: 'objet',
+  html: '<p>corps</p>',
+  text: 'corps',
+};
+
+/**
+ * Rendu bouchonné — le contenu est un détail pour les suites qui n'en testent
+ * pas la composition.
+ *
+ * Les modèles eux-mêmes sont des fonctions pures, exercées directement par
+ * `notification-content.spec.ts` : les rejouer ici n'apprendrait rien et
+ * ferait dépendre l'ordre d'écriture de la mise en forme d'une date.
+ *
+ * @param outcome le contenu rendu, ou l'erreur à lever — un modèle manquant et
+ * un rendez-vous disparu sont deux échecs de rendu que le service doit inscrire
+ * en `FAILED` avant de les relever.
+ */
+export function stubRenderer(outcome: RenderedNotification | Error = RENDERED): {
+  readonly renderer: NotificationRenderer;
+  readonly calls: NotificationMessage[];
+} {
+  const calls: NotificationMessage[] = [];
+
+  const renderer: NotificationRenderer = {
+    render(message: NotificationMessage): Promise<RenderedNotification> {
+      calls.push(message);
+      return outcome instanceof Error ? Promise.reject(outcome) : Promise.resolve(outcome);
+    },
+  };
+
+  return { renderer, calls };
+}
+
+/** Une trace semée dans le double du journal, tenant compris. */
+export interface StoredNotification {
+  readonly tenantId: string;
+  readonly id: string;
+  readonly appointmentId: string | null;
+  readonly recipientUserId?: string | null;
+  readonly type: NotificationType;
+  readonly channel: NotificationChannel;
+  readonly status: NotificationStatus;
+  readonly sentAt?: Date | null;
+  readonly failureReason?: string | null;
+  readonly createdAt: Date;
+}
+
+/**
+ * Échec du double quand aucune portée de tenant n'est ouverte.
+ *
+ * Le pendant de `MissingTenantContextError` de l'extension de scoping : le
+ * **défaut fermé** est ce qu'une suite d'isolation doit constater, et un double
+ * qui lirait tout en l'absence de portée ferait passer une garde défaillante.
+ */
+export class FakeMissingTenantContextError extends Error {
+  public constructor(operation: string) {
+    super(`aucune portée de tenant ouverte pour ${operation}`);
+  }
+}
+
+/**
+ * Le journal d'envois, en mémoire — pour les suites d'intégration et
+ * d'isolation de `GET /notifications` (#70).
+ *
+ * Il reproduit les deux propriétés qui décident du verdict de ces suites :
+ *
+ * 1. le **filtrage par le vrai contexte de tenant**, celui que l'extension
+ *    Prisma consulte. Une garde qui n'ouvrirait pas la portée, ou qui
+ *    l'ouvrirait sur le mauvais établissement, fait donc rougir les suites — ce
+ *    qu'un double indexé sur un tenant passé en argument n'aurait pas su voir ;
+ * 2. le **défaut fermé** — sans portée résolue, aucune lecture.
+ *
+ * Il reproduit aussi l'ordre (du plus récent au plus ancien) et le plafond,
+ * parce que ce sont des promesses du contrat que la suite d'intégration vérifie.
+ */
+export class FakeNotificationsJournal {
+  private readonly stored: StoredNotification[] = [];
+
+  public seed(notification: StoredNotification): void {
+    this.stored.push(notification);
+  }
+
+  public list(query: NotificationListQuery): Promise<readonly NotificationTrace[]> {
+    const tenantId = this.requireScope('notification.findMany');
+
+    const matches = this.stored
+      .filter((row) => row.tenantId === tenantId)
+      .filter((row) => query.appointmentId === undefined || row.appointmentId === query.appointmentId)
+      .filter((row) => query.type === undefined || row.type === query.type)
+      .filter((row) => query.channel === undefined || row.channel === query.channel)
+      .filter((row) => query.statuses === undefined || query.statuses.includes(row.status))
+      .sort((left, right) => {
+        const byDate = right.createdAt.getTime() - left.createdAt.getTime();
+        return byDate === 0 ? right.id.localeCompare(left.id) : byDate;
+      })
+      .slice(0, query.limit)
+      .map(
+        (row): NotificationTrace => ({
+          id: row.id,
+          appointmentId: row.appointmentId,
+          recipientUserId: row.recipientUserId ?? null,
+          type: row.type,
+          channel: row.channel,
+          status: row.status,
+          scheduledFor: null,
+          sentAt: row.sentAt ?? null,
+          attemptCount: 1,
+          failureReason: row.failureReason ?? null,
+          createdAt: row.createdAt,
+        }),
+      );
+
+    return Promise.resolve(matches);
+  }
+
+  /** Hors portée, on échoue plutôt que de lire le journal de tous les salons. */
+  private requireScope(operation: string): string {
+    const tenantId = getTenantId();
+
+    if (tenantId === undefined) {
+      throw new FakeMissingTenantContextError(operation);
+    }
+
+    return tenantId;
+  }
 }
 
 /** Expéditeur qui compte ses appels — la mesure du rejeu. */

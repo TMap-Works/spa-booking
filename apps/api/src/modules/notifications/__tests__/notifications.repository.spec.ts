@@ -392,3 +392,77 @@ describe('NotificationsRepository — la clôture d’un envoi', () => {
     expect(rows[0]?.failureReason).toHaveLength(500);
   });
 });
+
+describe('NotificationsRepository.loadAppointmentContext — l’heure annoncée', () => {
+  /**
+   * Un dépôt branché sur une ligne d'agenda et son établissement.
+   *
+   * Le double rend la ligne **telle qu'elle est en base** : l'intervalle
+   * occupé, tampons compris. C'est tout l'intérêt de la suite — c'est au dépôt
+   * d'en dériver le soin.
+   */
+  function contextRepository(service: {
+    durationMinutes: number;
+    bufferBeforeMinutes: number;
+  }): NotificationsRepository {
+    return new NotificationsRepository({
+      appointment: {
+        findFirst: () =>
+          Promise.resolve({
+            // 14:15 à Paris — l'occupé, quinze minutes avant le soin.
+            startsAt: new Date('2026-09-08T12:15:00Z'),
+            priceAmountMinor: 6_500,
+            priceCurrency: 'EUR',
+            client: { firstName: 'Amina', lastName: 'Rakoto' },
+            service: { name: 'Massage suédois', ...service },
+            staff: { displayName: 'Claire D.' },
+          }),
+      },
+      tenant: {
+        findFirst: () =>
+          Promise.resolve({
+            name: 'Maison Lotus',
+            slug: 'maison-lotus',
+            timezone: 'Europe/Paris',
+            addressLine1: null,
+            addressLine2: null,
+            postalCode: null,
+            city: null,
+            contactPhone: null,
+          }),
+      },
+    } as unknown as ScopedPrismaClient);
+  }
+
+  it('rend l’intervalle facturé, jamais l’occupé', async () => {
+    // La ligne occupe 14:15 → 15:40 (15 min de préparation, 60 de soin, 10 de
+    // ménage). La cliente a réservé 14:30 → 15:30, et c'est cela qu'une
+    // confirmation doit annoncer : lui écrire l'heure occupée avancerait son
+    // rendez-vous du temps de préparation de la cabine.
+    const repository = contextRepository({ durationMinutes: 60, bufferBeforeMinutes: 15 });
+
+    const context = await repository.loadAppointmentContext('appointment-1');
+
+    expect(context?.startsAt.toISOString()).toBe('2026-09-08T12:30:00.000Z');
+    expect(context?.endsAt.toISOString()).toBe('2026-09-08T13:30:00.000Z');
+  });
+
+  it('rend la ligne telle quelle quand la prestation n’a aucun tampon', async () => {
+    const repository = contextRepository({ durationMinutes: 45, bufferBeforeMinutes: 0 });
+
+    const context = await repository.loadAppointmentContext('appointment-1');
+
+    expect(context?.startsAt.toISOString()).toBe('2026-09-08T12:15:00.000Z');
+    expect(context?.endsAt.toISOString()).toBe('2026-09-08T13:00:00.000Z');
+  });
+
+  it('ne fait sortir de la base ni adresse ni numéro de la cliente', async () => {
+    // Le contexte compose un message, il ne l'adresse pas : la coordonnée se
+    // relit sur le compte au moment de l'envoi (notifications §7).
+    const repository = contextRepository({ durationMinutes: 60, bufferBeforeMinutes: 0 });
+
+    const context = await repository.loadAppointmentContext('appointment-1');
+
+    expect(JSON.stringify(context)).not.toContain('@');
+  });
+});
