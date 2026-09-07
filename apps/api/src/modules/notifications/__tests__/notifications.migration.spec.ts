@@ -97,3 +97,67 @@ describe('notifications — ce que la migration ne défait pas', () => {
     expect(sql).toContain('"notifications_tenant_id_dedupe_key_key"');
   });
 });
+
+/**
+ * La table des modèles par établissement — #69.
+ *
+ * `prisma-schema.spec.ts` relit déjà, pour **toutes** les tables, le `tenant_id`
+ * non nullable, sa clé étrangère et le préfixe des index. Ce qui se vérifie ici
+ * est ce qu'il ne sait pas dire : que les corps sont bien des `TEXT` non
+ * nullables — l'invariant « une version texte brut, toujours » repose dessus — et
+ * que l'unique porte les trois colonnes qui identifient un message, dans cet
+ * ordre.
+ */
+describe('modèles de messages — la table', () => {
+  const table = /CREATE TABLE "notification_templates" \([\s\S]*?\n\);/.exec(sql)?.[0] ?? '';
+
+  it('est créée par une migration', () => {
+    expect(table).not.toBe('');
+  });
+
+  it('rend les trois corps non nullables — dont la version texte brut', () => {
+    // Le quatrième critère d'acceptation tient à cette colonne : un modèle sans
+    // texte produirait un e-mail que les filtres anti-spam pénalisent.
+    for (const column of ['subject', 'body_html', 'body_text']) {
+      expect(new RegExp(`"${column}" [A-Z(0-9)]+ NOT NULL`).test(table)).toBe(true);
+    }
+  });
+
+  it('borne l’objet et laisse les corps libres', () => {
+    // La borne d'un corps HTML aurait fini par refuser un modèle légitime :
+    // PostgreSQL stocke `TEXT` et `VARCHAR(n)` de la même façon.
+    expect(table).toContain('"subject" VARCHAR(200)');
+    expect(table).toContain('"body_html" TEXT');
+    expect(table).toContain('"body_text" TEXT');
+  });
+
+  it('n’ouvre aucune colonne où une donnée personnelle pourrait se glisser', () => {
+    // Un modèle porte `{{client}}`, jamais un nom de cliente (CDC §5.1,
+    // notifications §7). C'est ce qui permet de lire cette table au back-office
+    // sans réserve.
+    for (const forbidden of ['email', 'phone', 'recipient', 'first_name', 'last_name']) {
+      expect({ colonne: forbidden, présente: table.includes(`"${forbidden}"`) }).toEqual({
+        colonne: forbidden,
+        présente: false,
+      });
+    }
+  });
+
+  it('identifie un modèle par `(tenant_id, type, channel)`, dans cet ordre', () => {
+    const statement =
+      /CREATE UNIQUE INDEX "notification_templates_tenant_id_type_channel_key"[\s\S]*?;/.exec(
+        sql,
+      )?.[0] ?? '';
+
+    expect(statement).toMatch(/ON\s+"notification_templates"/);
+
+    const columns = [...statement.matchAll(/"([a-z_]+)"/g)]
+      .map((match) => match[1])
+      .filter((name) => name !== 'notification_templates')
+      .filter((name) => name !== 'notification_templates_tenant_id_type_channel_key');
+
+    // `tenant_id` en tête : un index qui ne commence pas par lui fait payer un
+    // parcours inter-établissement à une lecture toujours bornée à un salon.
+    expect(columns).toEqual(['tenant_id', 'type', 'channel']);
+  });
+});

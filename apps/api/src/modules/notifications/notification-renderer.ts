@@ -1,13 +1,9 @@
 import { Injectable } from '@nestjs/common';
 
 import { AppConfigService } from '../../config/app-config.service';
-import {
-  cancellationUrl,
-  renderBookingConfirmationEmail,
-  renderBookingConfirmationSms,
-  renderReminderEmail,
-  renderReminderSms,
-} from './notification-content';
+import { buildTemplateVariables, cancellationUrl, renderNotification } from './notification-content';
+import { defaultTemplateFor } from './notification-default-templates';
+import { NotificationTemplatesRepository } from './notification-templates.repository';
 import { NotificationContextGoneError, UnrenderableNotificationError } from './notifications.errors';
 import { NotificationsRepository } from './notifications.repository';
 import type { NotificationMessage, RenderedNotification } from './notifications.types';
@@ -55,19 +51,34 @@ export const NOTIFICATION_RENDERER = Symbol('NOTIFICATION_RENDERER');
 /**
  * Le rendu des messages rattachés à un rendez-vous.
  *
- * ## Ce qu'il couvre, et ce qu'il refuse
+ * ## Le modèle du salon d'abord, celui de la plateforme sinon — #69
  *
- * `BOOKING_CONFIRMATION` (#70) et `REMINDER_24H` (#71). `CANCELLATION` est le
- * troisième message du MVP (CDC §1.4) et a son issue (#72) ; ce renderer **lève**
- * plutôt que de lui servir un autre modèle, parce qu'un avis d'annulation qui
- * dirait « nous vous attendons » serait pire qu'un avis absent. Le refus laisse
- * la ligne en `FAILED`, donc reprenable dès que le modèle manquant existe
- * (notifications §4) — c'est exactement le régime de
- * `UnconfiguredNotificationSender`.
+ * C'est le seul choix que fait ce renderer, et il tient en une ligne : la
+ * personnalisation de l'établissement si elle existe, le défaut versionné sinon.
+ * Le repli n'est pas une commodité, c'est ce qui garantit qu'un salon qui n'a
+ * jamais ouvert l'écran de personnalisation reçoit malgré tout des confirmations
+ * — et qu'un salon qui efface la sienne y revient sans qu'aucun contenu n'ait été
+ * recopié.
  *
- * Le rappel a son propre modèle et ne réemploie pas celui de la confirmation :
- * ils affirment deux choses différentes, et un rappel qui annoncerait « votre
- * rendez-vous est confirmé » ne dirait pas à la cliente ce qu'on attend d'elle.
+ * La lecture a lieu **à chaque envoi**, et non une fois pour toutes : un modèle
+ * corrigé à 14 h doit s'appliquer au message de 14 h 01. C'est une lecture
+ * indexée sur l'unique `(tenant_id, type, channel)`, du même ordre que la
+ * relecture d'éligibilité du rappel, et elle a lieu dans la portée de tenant
+ * déjà ouverte par le consommateur — le modèle d'un salon ne peut donc pas partir
+ * chez la cliente d'un autre.
+ *
+ * ## Ce qu'il refuse encore
+ *
+ * `CANCELLATION` n'a pas de modèle de plateforme : c'est le troisième message du
+ * MVP (CDC §1.4) et il a son issue (#72). Le renderer **lève** plutôt que de lui
+ * servir le modèle du rappel, parce qu'un avis d'annulation qui dirait « nous
+ * vous attendons » serait pire qu'un avis absent. Le refus laisse la ligne en
+ * `FAILED`, donc reprenable dès que le modèle manquant existe (notifications §4).
+ *
+ * Le refus n'est plus une liste de types en dur : il découle de l'absence de
+ * modèle. Un salon qui écrit lui-même son avis d'annulation le voit donc partir,
+ * ce qui est exactement ce que « personnaliser sans déploiement » veut dire — et
+ * le jour où #72 livrera le défaut de plateforme, il n'y aura rien à changer ici.
  *
  * ## Le lien d'annulation vient de la configuration, jamais d'une requête
  *
@@ -76,40 +87,44 @@ export const NOTIFICATION_RENDERER = Symbol('NOTIFICATION_RENDERER');
  * d'une requête entrante finisse dans un e-mail — le vecteur classique de
  * l'empoisonnement de lien. Un consommateur de file n'a de toute façon aucune
  * requête à interroger.
+ *
+ * C'est aussi ce qui borne ce qu'un modèle personnalisé peut faire : il **nomme**
+ * `{{lien_annulation}}`, il ne l'écrit pas. Un salon ne peut donc pas faire
+ * pointer le lien d'annulation d'un e-mail signé de son nom vers un domaine qu'il
+ * aurait choisi.
  */
 @Injectable()
 export class AppointmentNotificationRenderer implements NotificationRenderer {
   public constructor(
     private readonly repository: NotificationsRepository,
+    private readonly templates: NotificationTemplatesRepository,
     private readonly config: AppConfigService,
   ) {}
 
   public async render(message: NotificationMessage): Promise<RenderedNotification> {
-    // `CANCELLATION` reste refusé : c'est #72, et lui servir le modèle du rappel
-    // annoncerait un rendez-vous à qui vient de l'annuler.
-    if (message.type !== 'BOOKING_CONFIRMATION' && message.type !== 'REMINDER_24H') {
+    const source =
+      (await this.templates.find(message.type, message.channel))?.source ??
+      defaultTemplateFor(message.type, message.channel);
+
+    if (source === null) {
       throw new UnrenderableNotificationError(message.type);
     }
 
+    // Le contexte se lit **après** le modèle : un message sans modèle n'a aucune
+    // raison de coûter une jointure sur le rendez-vous, la cliente, la prestation
+    // et le praticien.
     const context = await this.repository.loadAppointmentContext(message.appointmentId);
 
     if (context === null) {
       throw new NotificationContextGoneError(message.appointmentId);
     }
 
-    if (message.type === 'REMINDER_24H') {
-      return message.channel === 'SMS'
-        ? renderReminderSms(context)
-        : renderReminderEmail(context, cancellationUrl(this.config.appUrl, context.tenantSlug));
-    }
+    const cancelUrl = cancellationUrl(this.config.appUrl, context.tenantSlug);
 
-    if (message.channel === 'SMS') {
-      return renderBookingConfirmationSms(context);
-    }
-
-    return renderBookingConfirmationEmail(
-      context,
-      cancellationUrl(this.config.appUrl, context.tenantSlug),
+    return renderNotification(
+      source,
+      buildTemplateVariables(context, cancelUrl, message.channel),
+      message.channel,
     );
   }
 }
