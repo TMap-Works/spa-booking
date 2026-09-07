@@ -249,6 +249,26 @@ jobs:
       - name: Tests de concurrence (anti-double-réservation)
         run: npm run test:concurrency
 
+  # Le parcours critique `réserver → confirmer → encaisser`, joué dans un vrai
+  # navigateur contre l'API et le front compilés (#80).
+  #
+  # Ce que les jobs ci-dessus ne peuvent pas dire : `test` éprouve les endpoints
+  # contre des doubles et une base jetable, `build` compile, `docker` démarre
+  # l'image. Aucun des trois ne traverse le tunnel de réservation, ne clique le
+  # bouton d'encaissement, ni ne constate que la réservation d'un écran devient
+  # la ligne à encaisser d'un autre. C'est cette continuité-là — la boucle de
+  # valeur du MVP — que ce job protège.
+  #
+  # Appel du workflow réutilisable plutôt que job en propre : le même parcours
+  # garde le déploiement en production (deploy-production.yml), et il n'a à
+  # exister qu'une fois. `secrets: inherit` lui transmet les clés Stripe de test
+  # si le dépôt en porte — sans elles, la scène carte se saute et le reste du
+  # parcours, qui encaisse en espèces, s'exécute intégralement.
+  e2e:
+    name: Parcours critique
+    uses: ./.github/workflows/e2e.yml
+    secrets: inherit
+
   # L'outillage de `scripts/` n'est couvert par aucun test JS : `npm run verify`
   # ne parcourt que les workspaces. Or `pr_gate.py` est la barrière de merge du
   # dépôt — une régression sur son verdict remergerait des PR de paiement ou

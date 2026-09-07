@@ -24,8 +24,29 @@ env:
   CLUSTER: spa-prod-cluster
 
 jobs:
+  # La barrière du parcours critique, avant toute mise en production (#80,
+  # troisième critère).
+  #
+  # ## Pourquoi ici, alors que `ci.yml` le joue déjà sur les pull requests
+  #
+  # Parce que rien ne garantit qu'une pull request soit passée par là. Ce
+  # workflow se déclenche aussi sur `workflow_dispatch`, et une PR vers `main`
+  # peut être rejouée, forcée ou mergée depuis un état que la CI n'a pas revu.
+  # Surtout, le déploiement embarque `${{ github.sha }}` — l'état de `main` au
+  # moment du push, qui n'est pas nécessairement celui qu'un check de PR a vu.
+  # Éprouver l'état réellement déployé est le seul contrôle qui vaille.
+  #
+  # Il précède la prise de rôle AWS, le snapshot RDS et les migrations : un
+  # parcours rouge n'aura donc coûté ni instantané, ni image poussée, ni
+  # migration appliquée.
+  e2e:
+    name: Parcours critique
+    uses: ./.github/workflows/e2e.yml
+    secrets: inherit
+
   deploy:
     name: Déployer en production
+    needs: e2e
     runs-on: ubuntu-latest
     # Tant que le rôle OIDC n'est pas appliqué (infra/terraform/modules/oidc), le
     # déploiement est ignoré proprement plutôt que de faire échouer chaque push.
@@ -99,7 +120,20 @@ jobs:
   rollback-on-failure:
     name: Rollback
     needs: deploy
-    if: failure()
+    # `needs.deploy.result == 'failure'` et non `failure()` : depuis que le
+    # parcours critique précède le déploiement, `failure()` serait vrai *aussi*
+    # quand c'est le parcours qui rougit — cas où `deploy` est sauté et où rien
+    # n'a été mis en production. Le rollback repartirait alors sur la
+    # `deployments[1]` d'un service que personne n'a touché, et **défairait le
+    # déploiement précédent**, qui était sain. La condition nomme donc
+    # exactement ce qu'elle répare : un déploiement qui a échoué.
+    #
+    # `always() &&` n'est pas décoratif : une condition `if` qui ne porte
+    # **aucune** fonction d'état se voit appliquer `success()` d'office par
+    # GitHub. Sans lui, `needs.deploy.result == 'failure'` serait évalué comme
+    # `success() && …` — donc faux précisément quand `deploy` a échoué, et le
+    # rollback ne s'exécuterait jamais.
+    if: always() && needs.deploy.result == 'failure'
     runs-on: ubuntu-latest
     environment: prod
     steps:
