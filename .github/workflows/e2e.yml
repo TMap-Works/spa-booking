@@ -1,0 +1,152 @@
+# Le parcours critique, joué dans un vrai navigateur — #80.
+#
+# ## Pourquoi un workflow appelable, et non un job de plus dans ci.yml
+#
+# Le troisième critère de #80 demande que ces tests s'exécutent « dans la CI
+# avant tout déploiement en production ». Deux appelants doivent donc jouer la
+# même chose : `ci.yml`, sur chaque pull request, et `deploy-production.yml`, en
+# barrière du déploiement. Recopié dans les deux, le job dériverait — et c'est
+# précisément celui des deux exemplaires qui garde la production qui se
+# périmerait, puisqu'il ne rougit qu'une fois par mise en production.
+#
+# ## Pourquoi cela ne perce pas la barrière de merge
+#
+# `auto-merge.yml` réagit aux workflows qu'il énumère (`workflows: [CI, ...]`) et
+# `pr_gate.py` compte les checks de la pull request. Un workflow **appelé**
+# (`workflow_call`) ne produit pas de run indépendant : ses jobs apparaissent
+# dans le run de l'appelant, sous le nom `CI / …`. Il n'y a donc rien à ajouter à
+# la liste d'`auto-merge.yml` — et c'est exactement pour éviter cet oubli, que
+# ci.yml documente comme « un oubli valant trou dans la barrière », que la forme
+# appelable a été retenue plutôt qu'un workflow autonome.
+
+name: E2E
+
+on:
+  workflow_call:
+
+# Un workflow appelé hérite des permissions de son appelant faute d'en déclarer.
+# `deploy-production.yml` accorde `contents: write` et surtout `id-token: write`
+# — de quoi prendre le rôle de déploiement en production. Ce job installe des
+# dépendances npm et exécute du code de test : il n'a aucune raison de porter le
+# jeton OIDC qui ouvre AWS. Les déclarer ici les borne pour tous les appelants.
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '20'
+
+jobs:
+  parcours-critique:
+    name: Parcours critique (Playwright)
+    runs-on: ubuntu-latest
+    # Le parcours démarre deux serveurs compilés et pilote un navigateur : c'est
+    # le job le plus lent de la chaîne. Le borner évite qu'un serveur qui ne
+    # démarre jamais consomme les six heures du délai par défaut de GitHub.
+    timeout-minutes: 30
+
+    services:
+      # Les ports publiés sont ceux du `docker-compose.yml` du dépôt — 5433 et
+      # 6380 — et non les ports standard. Non par mimétisme : `.env.example` les
+      # documente comme les ports du projet, et un développeur qui reproduit un
+      # échec de CI en local doit pouvoir employer exactement les mêmes
+      # variables. Deux jeux de ports feraient de chaque reproduction une
+      # traduction.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: spa
+          POSTGRES_PASSWORD: spa
+          POSTGRES_DB: spa_dev
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd="pg_isready -U spa"
+          --health-interval=10s --health-timeout=5s --health-retries=5
+      redis:
+        image: redis:7
+        ports: ['6380:6379']
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s --health-timeout=5s --health-retries=5
+
+    env:
+      DATABASE_URL: postgresql://spa:spa@localhost:5433/spa_dev
+      REDIS_URL: redis://localhost:6380
+      # Les deux processus sont démarrés par `webServer` de Playwright, qui leur
+      # transmet cet environnement (apps/web/playwright.config.ts).
+      APP_URL: http://127.0.0.1:3100
+      API_URL: http://127.0.0.1:3101
+
+      # Les clés Stripe viennent des secrets du dépôt, et sont **facultatives**.
+      # Absentes, la scène carte se saute en le disant ; le parcours critique,
+      # lui, encaisse en espèces et n'en dépend pas. C'est ce qui permet à la
+      # boucle de valeur du MVP de rester verte sur une CI sans secret.
+      #
+      # La garde de `paiement-carte.e2e.ts`, elle, s'exécute toujours : si l'un
+      # de ces secrets portait une clé `sk_live_` ou `pk_live_`, le job
+      # rougirait au lieu d'encaisser sur de vraies cartes.
+      STRIPE_SECRET_KEY: ${{ secrets.STRIPE_TEST_SECRET_KEY }}
+      STRIPE_PUBLISHABLE_KEY: ${{ secrets.STRIPE_TEST_PUBLISHABLE_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - run: npm ci
+
+      # Engendrés à la volée, jamais écrits en clair : `env.schema.ts` exige deux
+      # secrets d'au moins 32 caractères **et différents l'un de l'autre**, et un
+      # littéral de cette forme dans un workflow versionné est un secret publié —
+      # même s'il ne signe rien de réel. Même raison que l'étape « L'image API
+      # démarre » de ci.yml.
+      - name: Secrets de session éphémères
+        run: |
+          {
+            echo "JWT_SECRET=$(openssl rand -hex 32)"
+            echo "JWT_REFRESH_SECRET=$(openssl rand -hex 32)"
+          } >> "$GITHUB_ENV"
+
+      # Le schéma est appliqué par la CLI Prisma, comme le fait la tâche ECS
+      # `spa-*-migrate` au déploiement : le jeu d'essai écrit ensuite dans une
+      # base dont les tables existent.
+      - run: npm run db:migrate:deploy --workspace @spa/api
+
+      # La version du navigateur suit celle de `@playwright/test` : la clé de
+      # cache la reprend, sans quoi une montée de version servirait un binaire
+      # que la bibliothèque ne sait plus piloter.
+      - id: playwright
+        name: Version de Playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        id: cache-navigateurs
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+
+      # `--with-deps` installe les bibliothèques système du navigateur, que le
+      # cache ne porte pas : il est donc rejoué même sur cache chaud, mais sans
+      # retélécharger Chromium.
+      - name: Navigateur
+        run: npx playwright install --with-deps chromium
+
+      - name: Parcours critique
+        run: npm run test:e2e --workspace @spa/web
+
+      # Sans ces artefacts, un échec de CI ne laisse que le journal. La trace et
+      # les captures sont ce qui permet de comprendre un échec sans le
+      # reproduire — et le parcours critique est justement celui dont on ne veut
+      # pas attendre la reproduction pour savoir ce qui a cédé.
+      - name: Rapport et traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-parcours-critique
+          path: |
+            apps/web/playwright-report/
+            apps/web/test-results/
+          retention-days: 7
+          if-no-files-found: ignore
