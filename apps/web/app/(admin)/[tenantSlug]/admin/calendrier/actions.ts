@@ -41,6 +41,9 @@ import {
   type Appointment,
   type Customer,
   type CustomerSummary,
+  // Aliasé : `Notification` est aussi le composant du design system, et le nom
+  // nu prêterait à confusion dans un module que le tiroir consomme.
+  type Notification as NotificationTrace,
   type ServiceStaffMember,
 } from '@spa/shared';
 
@@ -48,6 +51,7 @@ import {
   changeAppointmentStatus,
   createAppointment,
   createCustomer,
+  fetchAppointmentNotifications,
   fetchAppointments,
   fetchServiceStaff,
   rescheduleDeskAppointment,
@@ -214,6 +218,41 @@ export async function loadDeskServiceStaffAction(
 
   try {
     return { ok: true, data: { staff: await fetchServiceStaff(access.token, serviceId) } };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * Le journal d'envois d'un rendez-vous — cinquième critère de #70.
+ *
+ * Une lecture, comme `loadDeskServiceStaffAction`, et pour la même raison : le
+ * tiroir est un Client Component, et le client HTTP de `lib/api-client.ts` est
+ * serveur-only — c'est lui qui détient le cookie `httpOnly` de session.
+ *
+ * L'établissement ne circule pas : `tenantSlug` ne sert qu'à retrouver le
+ * cookie, et l'API borne la lecture sur le jeton. Un rendez-vous d'un autre
+ * salon rend donc une liste vide, jamais ses traces.
+ */
+export async function loadAppointmentNotificationsAction(
+  tenantSlug: string,
+  appointmentId: string,
+): Promise<AdminActionResult<{ readonly notifications: readonly NotificationTrace[] }>> {
+  const access = await deskToken(tenantSlug);
+
+  if ('refusal' in access) {
+    return access.refusal;
+  }
+
+  if (!uuidSchema.safeParse(appointmentId).success) {
+    return invalid('Rendez-vous inconnu.');
+  }
+
+  try {
+    return {
+      ok: true,
+      data: { notifications: await fetchAppointmentNotifications(access.token, appointmentId) },
+    };
   } catch (error) {
     return failure(error);
   }

@@ -6,6 +6,9 @@ import {
   type AppointmentStatus,
   type CalendarDate,
   type CustomerSummary,
+  // Aliasé : `Notification` est aussi le composant du design system que ce
+  // fichier importe deux lignes plus bas.
+  type Notification as NotificationTrace,
   type Service,
   type ServiceStaffMember,
   type TimeZone,
@@ -31,12 +34,14 @@ import { formatMoney } from '@/lib/format';
 
 import {
   createDeskAppointmentAction,
+  loadAppointmentNotificationsAction,
   loadDeskServiceStaffAction,
   markDeskAppointmentStatusAction,
   rescheduleDeskAppointmentAction,
 } from '../calendrier/actions';
 
 import { ClientPicker } from './client-picker';
+import { NotificationStatusList } from './notification-status-list';
 
 /**
  * Le tiroir de rendez-vous du comptoir — création et édition (#50).
@@ -135,6 +140,16 @@ export function AppointmentPanel({
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  // Le journal d'envois du rendez-vous (#70). `null` couvre les deux cas où il
+  // n'y a rien à montrer — pas encore lu, et création — que la section distingue
+  // de l'échec de lecture.
+  const [notifications, setNotifications] = useState<readonly NotificationTrace[] | null>(null);
+  const [notificationsFailure, setNotificationsFailure] = useState<string | null>(null);
+
+  // L'identifiant seul plutôt que l'objet en dépendance d'effet : `editing` est
+  // une nouvelle référence à chaque rendu du parent, et l'effet rechargerait le
+  // journal à chaque frappe dans le formulaire.
+  const editingId = editing?.id ?? null;
 
   const service = services.find((candidate) => candidate.id === serviceId) ?? null;
   // La prestation d'un rendez-vous **posé** peut avoir quitté le catalogue actif
@@ -189,6 +204,44 @@ export function AppointmentPanel({
       current = false;
     };
   }, [tenantSlug, serviceId, onExpired]);
+
+  // Le journal d'envois du rendez-vous — cinquième critère de #70. Chargé une
+  // fois à l'ouverture du tiroir : les messages d'une confirmation partent dans
+  // la seconde qui suit la création, et rien dans cet écran ne les provoque.
+  //
+  // Rien à charger à la **création** : le rendez-vous n'existe pas encore, donc
+  // aucun message n'a pu être émis. La section n'apparaît qu'en édition.
+  useEffect(() => {
+    if (editingId === null) {
+      return undefined;
+    }
+
+    let current = true;
+    setNotifications(null);
+    setNotificationsFailure(null);
+
+    void loadAppointmentNotificationsAction(tenantSlug, editingId).then((result) => {
+      if (!current) {
+        return;
+      }
+      if (result.ok) {
+        setNotifications(result.data.notifications);
+        return;
+      }
+      if (result.code === ERROR_CODES.UNAUTHORIZED) {
+        onExpired();
+        return;
+      }
+      // Le journal illisible ne bloque rien : c'est une information de contexte,
+      // et le tiroir sert d'abord à poser et déplacer des rendez-vous. Le dire
+      // vaut mieux que d'afficher un « aucun message » qui, lui, serait faux.
+      setNotificationsFailure('Le journal d’envois n’a pas pu être lu.');
+    });
+
+    return () => {
+      current = false;
+    };
+  }, [tenantSlug, editingId, onExpired]);
 
   // Les praticiens réellement offerts par le sélecteur : ceux qui tiennent la
   // prestation, plus — en édition — celui déjà affecté au rendez-vous même s'il
@@ -522,6 +575,18 @@ export function AppointmentPanel({
             </div>
           )}
         </form>
+
+        {/* Hors du `<form>`, et délibérément : c'est un bloc en lecture seule.
+            L'y mettre lui aurait donné un `form=` implicite et fait remonter ses
+            éventuels contrôles à la soumission du tiroir. */}
+        {editingId === null ? null : (
+          <NotificationStatusList
+            notifications={notifications}
+            timeZone={timeZone}
+            loading={notifications === null && notificationsFailure === null}
+            failure={notificationsFailure}
+          />
+        )}
       </div>
 
       <div className="spa-admin-panel__footer">
