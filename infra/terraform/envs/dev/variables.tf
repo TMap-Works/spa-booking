@@ -188,3 +188,43 @@ variable "notification_reminder_sweep_url" {
     error_message = "notification_reminder_sweep_url doit être `null` ou une URL en `https://` — un appel en clair porterait le jeton d'appel interne sur le réseau."
   }
 }
+
+# --- Rebonds et plaintes (#73) ------------------------------------------------
+
+variable "notification_delivery_events_url" {
+  description = <<-EOT
+    URL de la route **interne** d'ingestion des rebonds et des plaintes servie
+    par l'API — `https://…/api/v1/notifications/delivery-events`. La Lambda de
+    relais l'appelle pour chaque événement de remise dépilé de la file, et
+    présente `notification_dispatch_token_secret_arn` dans l'en-tête
+    `x-internal-token`.
+
+    `null` — le défaut — laisse la fonction en **défaut fermé**, comme
+    `notification_dispatch_url` et pour la même raison : elle rend chaque
+    événement à SQS, la file vieillit, la DLQ se remplit et son alarme de
+    profondeur parle. Une chaîne non branchée doit se voir. Rien ne se perd —
+    la DLQ retient un événement quatorze jours —, mais rien ne se rattrape tout
+    seul : au bout de cinq réceptions infructueuses, soit une douzaine de
+    minutes, l'événement n'est plus dans la file mais dans sa DLQ, et un câblage
+    posé ensuite ne le rejouera qu'une fois la DLQ vidée à la main
+    (`aws sqs start-message-move-task`).
+
+    Ce n'est pas une capacité de confort : tant qu'elle est nulle, **aucune
+    adresse en rebond permanent n'est supprimée**. On continue d'écrire à des
+    boîtes mortes, et la réputation d'envoi du domaine — partagée par tous les
+    établissements — se dégrade sans que rien d'autre ne le dise (CDC §6).
+
+    Elle n'est pas déduite de l'ALB, pour la raison qui vaut sur
+    `notification_dispatch_url` : la terminaison TLS de cet environnement est un
+    certificat auto-signé qu'aucun client ne vérifie sans y être forcé, et la
+    fonction refuse de désactiver la vérification. La sortie
+    `notification_delivery_events_configured` dit l'état sans détour.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.notification_delivery_events_url == null || can(regex("^https://", var.notification_delivery_events_url))
+    error_message = "notification_delivery_events_url doit être `null` ou une URL en `https://` — un appel en clair porterait le jeton d'appel interne et l'adresse du destinataire sur le réseau."
+  }
+}

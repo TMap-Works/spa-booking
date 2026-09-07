@@ -123,6 +123,21 @@ module "notifications" {
   # frontière de confiance, une seule rotation.
   reminder_sweep_url = var.notification_reminder_sweep_url
 
+  # --- Rebonds et plaintes (#73) ---
+  #
+  # À poser avant le go-live (#83), au même moment que `dispatch_url` et pour une
+  # raison qui n'est pas symétrique de la sienne : sans route d'envoi, rien ne
+  # part et cela se voit tout de suite ; sans route d'ingestion, tout part —
+  # y compris vers les adresses mortes que SES vient de signaler. Continuer à
+  # écrire à une adresse morte dégrade la réputation d'envoi de **tout le
+  # domaine**, partagée par tous les établissements (CDC §6). C'est une panne
+  # lente, et elle ne se voit que dans la DLQ des événements de remise.
+  #
+  # La sortie `notification_delivery_events_configured` fait donc partie de la
+  # liste de vérification de la mise en production, au même titre que
+  # `notification_dispatch_configured`.
+  delivery_events_url = var.notification_delivery_events_url
+
   # --- Canal SMS (#66) ---
 
   # C'est ici, et **seulement ici**, que les préférences SMS d'SNS se posent.

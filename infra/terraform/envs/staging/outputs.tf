@@ -156,8 +156,30 @@ output "notification_reminder_sweep_configured" {
   value       = one(module.notifications[*].reminder_sweep_configured)
 }
 
+# --- Rebonds et plaintes (#73) ------------------------------------------------
+
+output "notification_delivery_events_function_name" {
+  description = "Lambda de relais des rebonds et des plaintes. `aws logs tail /aws/lambda/<ce nom> --follow` montre `delivery.relayed`, `delivery.unconfigured` et `delivery.failed` — jamais une adresse de destinataire (CDC §5.1)."
+  value       = one(module.notifications[*].delivery_events_function_name)
+}
+
+output "notification_delivery_events_queue_url" {
+  description = "File sur laquelle SES dépose ses événements de remise, via le topic SNS. C'est la destination du rejeu de la DLQ des rebonds — `aws sqs start-message-move-task`."
+  value       = one(module.notifications[*].delivery_events_queue_url)
+}
+
+output "notification_delivery_events_dlq_name" {
+  description = "File d'attente morte de la chaîne des rebonds. Un événement ici ne sera plus rejoué : l'adresse qu'il désigne reste sollicitée, et c'est d'ici qu'on rejoue une fois le câblage posé."
+  value       = one(module.notifications[*].delivery_events_dlq_name)
+}
+
+output "notification_delivery_events_configured" {
+  description = "Vrai quand `notification_delivery_events_url` est renseignée. Faux, la Lambda est en **défaut fermé** : les rebonds s'accumulent dans la file puis en DLQ, aucune adresse morte n'est supprimée, et la réputation d'envoi du domaine se dégrade sans que rien d'autre ne le dise. À vérifier en premier quand la DLQ des événements de remise se remplit."
+  value       = one(module.notifications[*].delivery_events_configured)
+}
+
 output "notification_alarm_names" {
-  description = "Les six alarmes de la chaîne — balayage jamais fait, balayage incomplet, refus définitifs, retard, plantage de l'envoi, bout de course — dans l'ordre du trajet d'un message."
+  description = "Les huit alarmes de la chaîne, dans l'ordre du trajet d'un message : balayage jamais fait, balayage incomplet, refus définitifs, retard, plantage de l'envoi, bout de course — puis, sur le chemin de retour, plantage du traitement des rebonds et rebonds en bout de course."
   value       = one(module.notifications[*].alarm_names)
 }
 
