@@ -43,10 +43,12 @@ import { CANCELLATION_REASON_MAX_LENGTH, OptionalPresent, Trim } from './validat
  * `cancelled_at`, `cancelled_by` et le motif, sans lesquels le reporting du CDC
  * §1.4 compterait une annulation muette.
  *
- * TODO(#26) : `changeAppointmentStatusRequestSchema` de
+ * TODO(#510) : `changeAppointmentStatusRequestSchema` de
  * `packages/shared/src/schemas/appointment.ts` décrit la même forme et devra
- * être importé lors de la reprise groupée de ce TODO — la dépendance vers le
- * paquet existe depuis #463. Même TODO que dans `book-appointment.dto.ts`.
+ * être monté à la place de ces décorateurs, sur le patron de
+ * `book-appointment.dto.ts` ([ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
+ * L'écart de vocabulaire des statuts est à trancher d'abord : le contrat les
+ * déclare en minuscules, cette route accepte la casse de l'énumération Prisma.
  */
 export class ChangeAppointmentStatusDto {
   @ApiProperty({

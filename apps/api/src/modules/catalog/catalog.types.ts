@@ -2,7 +2,7 @@
  * Formes de données du module `catalog` — CDC §2.3 « services, catégories,
  * durée, prix ».
  *
- * TODO(#26) : `Money`, `ServiceView` et `ServiceCategoryView` appartiennent au
+ * TODO(#510) : `Money`, `ServiceView` et `ServiceCategoryView` appartiennent au
  * contrat d'API et devront être importés de `@spa/shared` — le front ne
  * redéclare jamais un type que l'API expose (CLAUDE.md). Le paquet décrit déjà
  * ces formes (`packages/shared/src/schemas/catalog.ts`, tenu à jour par ce même

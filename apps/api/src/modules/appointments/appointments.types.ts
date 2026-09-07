@@ -7,7 +7,7 @@ import type { AppointmentCancelledBy, AppointmentStatus } from './appointment-st
  * ce que le service et le repository acceptent et rendent (api-module §2). Les
  * DTO HTTP, eux, vivent sous `dto/`.
  *
- * TODO(#26) : `AppointmentView` appartient au contrat d'API et sera importé de
+ * TODO(#510) : `AppointmentView` appartient au contrat d'API et sera importé de
  * `@spa/shared` (`appointmentSchema`) lors de la reprise groupée de ce TODO — la
  * dépendance vers le paquet existe depuis #463. Même TODO que dans
  * `catalog.types.ts` et `identity.types.ts`.
@@ -345,7 +345,7 @@ export interface RescheduleOutcome {
  * Les deux moitiés de l'historique d'une cliente — `appointmentScopeSchema` de
  * `@spa/shared`, côté domaine (#47).
  *
- * TODO(#26) : à importer du paquet partagé lors de la reprise groupée de ce
+ * TODO(#510) : à importer du paquet partagé lors de la reprise groupée de ce
  * TODO — `apps/api` en dépend depuis #463.
  */
 export type AppointmentScope = 'upcoming' | 'past';

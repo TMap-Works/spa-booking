@@ -184,7 +184,7 @@ un compte : deux transitions concurrentes du même rendez-vous se sérialisent s
 le verrou de ligne, et la seconde sort en 409. Même conduite que l'annulation et
 le report — le service parle, la base décide (booking-engine §1).
 
-## Le contrat partagé, et le doublon qui l'accompagne (#314)
+## Le contrat partagé, et la substitution en cours (#314, #404)
 
 `packages/shared` est la source de vérité du contrat d'API (CLAUDE.md) : le front
 ne redéclare jamais un type que l'API expose. Ce module y a ses contreparties, et
@@ -225,38 +225,63 @@ le contrat peut produire une requête que la route refuse en 400. C'est le cas
 qu'aucun appelant réel ne produit : le tiroir de #50 désactive son bouton
 d'enregistrement tant qu'aucune fiche n'est choisie.
 
-Ces formes sont donc écrites **deux fois** — ici en `class-validator`, là-bas en
-Zod : c'est ce qu'attend le quatrième critère de #314, et la reprise des DTO est
-celle de #26, qui les migre d'un seul tenant. Ce qui la bloquait ne la bloque
-plus — `apps/api` déclare `@spa/shared` en dépendance depuis #463, et l'image
-d'exécution en porte le `dist`. Le doublon n'est tenable qu'à une condition, et
-deux suites s'en chargent :
+### Où en est la substitution (#404)
 
-- `__tests__/guest-contract.spec.ts` — la **requête**, champ par champ et borne
-  par borne, sur les fixtures littérales de
-  `packages/shared/src/__tests__/guest-booking.spec.ts` ;
-- `test/appointments-booking.integration-spec.ts` — la **réponse**, dont le jeu
-  de clés servi est comparé à celui de `bookedAppointmentSchema`.
+Ces formes étaient écrites **deux fois** — ici en `class-validator`, là-bas en
+Zod. #404 a instruit la décision qui manquait et l'a écrite dans
+[l'ADR 0008](../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md) :
+**le schéma Zod valide, la classe DTO documente.** La classe survit parce que le
+schéma OpenAPI de `/api/docs` sort de ses `@ApiProperty`, que Zod ne porte pas ;
+elle perd en revanche tous ses décorateurs de validation, et le handler monte le
+schéma du contrat par `ZodValidationPipe`.
 
-Deux écarts de comportement subsistent, tous deux assumés :
+| Route | Frontière |
+|---|---|
+| `POST /public/:tenantSlug/appointments` | **substituée** — `bookGuestAppointmentRequestSchema`, monté par `bookAppointmentBody` |
+| toutes les autres routes du module | `ValidationPipe` global + `class-validator`, en attendant #510 |
 
-- **`phone`** — le contrat le veut en E.164 et le normalise ; le DTO accepte un
-  format libre borné et conserve la saisie. L'écart est orienté dans le **sens
-  sûr** : le contrat étant le plus strict, un formulaire qui valide avec lui ne
-  produit jamais une requête que la route refuse. Le refermer demande de décider
-  si `users.phone` est en E.164 pour **tous** ses écrivains, `identity` compris,
-  ce qui déborde ce module ;
-- **la version d'UUID** — `uuidSchema` accepte n'importe quelle version, les DTO
-  exigent `@IsUUID('4')`. Celui-là penche dans le sens **inverse**, et donc moins
-  confortable : le contrat est le plus permissif. Il reste théorique tant que
-  tous les identifiants proposés à un formulaire viennent de l'API, qui n'émet
-  que des v4 — mais c'est un « tant que », pas une garantie, et il porte sur
-  toute la surface du contrat et non sur ce module.
+Un piège à connaître avant de toucher à un handler substitué : **typer son
+paramètre par la classe DTO viderait le corps de la requête**, le `whitelist` du
+pipe global s'appliquant à une classe qui n'a plus rien à mettre sur sa liste
+blanche. Le paramètre prend le type inféré du schéma, et la classe se déclare par
+`@ApiBody`. `__tests__/guest-booking-frontier.spec.ts` attrape ce câblage.
 
-Ces deux-là et le découpage en labels du domaine d'une adresse (que
-`@IsEmail()` borne à 63 octets et que le contrat ne rejoue pas) sont l'inventaire
-complet au terme de #314. Les bornes de longueur d'adresse, elles, ont été
-alignées : voir l'en-tête d'`emailSchema`.
+`__tests__/guest-contract.spec.ts` a disparu avec la substitution : il n'existait
+que pour tenir d'accord deux écritures d'une même règle, et il n'y en a plus
+qu'une. Sa disparition **est** la preuve. Ce qui le remplace :
+
+- `__tests__/guest-booking-frontier.spec.ts` — le **câblage** : que la route est
+  bien montée sur le schéma du contrat, et ce que cela change de visible ;
+- les assertions de compilation de `dto/book-appointment.dto.ts` — la **sortie**,
+  dont le jeu de clés et la forme sont tenus contre `bookedAppointmentSchema` ;
+- `test/appointments-booking.integration-spec.ts` — la réponse servie pour de
+  bon, en HTTP.
+
+### Les deux écarts de #314, et comment ils ont été tranchés
+
+Substituer, c'est faire passer la route du comportement de ses décorateurs à
+celui du contrat. Les deux écarts que #314 avait laissés ouverts se referment
+donc mécaniquement, et le sens dans lequel ils se referment était la décision à
+prendre :
+
+- **`phone`** — le tunnel public passe à l'**E.164** : `guestContactSchema`
+  normalise (`+261 34 12 345 67` → `+261341234567`) et refuse un numéro national,
+  dont le pays n'est déductible de rien. C'est la répartition arrêtée par #66 :
+  les surfaces qui **composent** un numéro l'exigent en E.164 — le rappel SMS
+  part d'ici —, celles qui l'**enregistrent** ou l'**affichent** gardent
+  `phoneSchema`. `users.phone` n'est donc **pas** en E.164 pour tous ses
+  écrivains, et c'est délibéré : durcir la colonne rendrait illisible le stock
+  antérieur à la règle. Aucun appelant réel n'est cassé — le tunnel de #45 valide
+  déjà avec ce schéma ;
+- **la version d'UUID** — le **contrat** est resserré sur la v4 (#403), et non
+  les DTO relâchés. C'est le sens qui laisse le comportement de cette route
+  inchangé, et le seul des deux qui refuse l'UUID nil. Voir l'en-tête
+  d'`uuidSchema`.
+
+Reste le découpage en labels du domaine d'une adresse, que `@IsEmail()` borne à
+63 octets et que le contrat ne rejoue pas — sans effet depuis que le contrat est
+seul à valider. Les bornes de longueur d'adresse, elles, avaient été alignées
+par #314 : voir l'en-tête d'`emailSchema`.
 
 ## L'historique de la cliente connectée (#47)
 

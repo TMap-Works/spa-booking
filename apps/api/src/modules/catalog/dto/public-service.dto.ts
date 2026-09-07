@@ -13,7 +13,7 @@ import { MoneyDto } from './service.dto';
  * d'un champ. Ce qui rend ces routes sûres n'est pas une garde mais ce qu'elles
  * rendent — ces classes et leur liste blanche de champs.
  *
- * TODO(#26) : ces formes appartiennent au contrat d'API et sont décrites par
+ * TODO(#510) : ces formes appartiennent au contrat d'API et sont décrites par
  * `packages/shared/src/schemas/catalog.ts` (`publicServiceSchema`) ; elles
  * devront en être importées.
  */

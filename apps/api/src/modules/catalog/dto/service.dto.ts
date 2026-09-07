@@ -42,7 +42,7 @@ import {
  * un champ non déclaré ici ne passe pas — en particulier un `tenantId` glissé
  * dans le corps (tenant-isolation §2).
  *
- * TODO(#26) : ces formes appartiennent au contrat d'API et sont décrites par
+ * TODO(#510) : ces formes appartiennent au contrat d'API et sont décrites par
  * `packages/shared/src/schemas/catalog.ts` ; elles devront en être importées.
  */
 

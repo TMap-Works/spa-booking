@@ -18,7 +18,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * `PostalAddress` incomplet — publier faux coûte plus cher que ne pas publier.
  * La base tient la même règle (`tenants_address_completeness_check`).
  *
- * Reprend `postalAddressSchema` de `packages/shared` — même TODO(#26) que
+ * Reprend `postalAddressSchema` de `packages/shared` — même TODO(#510) que
  * `PublicTenantDto` ci-dessous.
  */
 export class PostalAddressDto {
@@ -117,7 +117,7 @@ export class OpeningHoursEntryDto {
  * La forme reprend `publicTenantSchema` de `packages/shared` — le contrat que le
  * front consomme.
  *
- * TODO(#26) : `@spa/shared` porte déjà cette forme (`publicTenantSchema`,
+ * TODO(#510) : `@spa/shared` porte déjà cette forme (`publicTenantSchema`,
  * `PublicTenant`), et `apps/api` en dépend depuis #463 — ce qui reste à câbler
  * est la reprise groupée de #26. La classe subsistera de toute façon :
  * `@nestjs/swagger` documente

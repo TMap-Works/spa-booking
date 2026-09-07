@@ -1290,7 +1290,7 @@ function billedView(record: AppointmentRecord, service: BilledIntervalSource): A
  * l'arrondi qui en découle fait perdre ou gagner un jour à la fenêtre. Les dates
  * sont ici des étiquettes de calendrier — leur écart ne dépend d'aucun fuseau.
  *
- * TODO(#26) : c'est `calendarDaysBetween` de `@spa/shared`
+ * TODO(#510) : c'est `calendarDaysBetween` de `@spa/shared`
  * (`packages/shared/src/common/time.ts`), écrit à l'identique — même nom, même
  * corps — en attendant que `apps/api` dépende du paquet. `availability` en
  * porte une troisième copie, pour la même raison et sous le même TODO.

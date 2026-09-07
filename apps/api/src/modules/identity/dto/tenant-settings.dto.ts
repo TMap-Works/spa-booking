@@ -28,7 +28,7 @@ import { OpeningHoursEntryDto, PostalAddressDto, PublicTenantDto } from './publi
  * `slug` glissés dans le corps. L'établissement vient du jeton vérifié, jamais
  * de la charge utile (tenant-isolation §2).
  *
- * TODO(#26) : ces formes sont celles de `updateTenantRequestSchema` et
+ * TODO(#510) : ces formes sont celles de `updateTenantRequestSchema` et
  * `tenantSchema` de `packages/shared`, et devront en être importées lors de la
  * reprise groupée de ce TODO — la dépendance existe depuis #463. Les bornes sont
  * donc **les mêmes valeurs**, aux mêmes noms, pour que la substitution ne change

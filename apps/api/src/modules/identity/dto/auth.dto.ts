@@ -23,7 +23,7 @@ import { USER_ROLES } from '../roles';
  * bcrypt tronque au-delà de 72 octets, et un mot de passe de 10 Mo ferait payer à
  * l'API un hachage inutile — le `MaxLength` est ce qui l'évite.
  *
- * TODO(#26) : ces formes appartiennent au contrat d'API et devront être exposées
+ * TODO(#510) : ces formes appartiennent au contrat d'API et devront être exposées
  * par `@spa/shared`, que #26 remplit en parallèle.
  */
 

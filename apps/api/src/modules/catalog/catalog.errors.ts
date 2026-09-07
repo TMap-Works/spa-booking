@@ -7,7 +7,7 @@ import { DomainError } from '../../common/errors';
  * ces classes, et `DomainExceptionFilter` la traduit. Le front réagit sur
  * `code`, jamais sur `message`.
  *
- * TODO(#26) : ces codes appartiennent au contrat d'API et devront vivre dans
+ * TODO(#510) : ces codes appartiennent au contrat d'API et devront vivre dans
  * `@spa/shared`, comme ceux d'`identity`. Les déclarer ici suit le précédent du
  * module voisin ; l'import se substituera à ces constantes sans changer une
  * seule valeur, lors de la reprise groupée de ce TODO — la dépendance vers le

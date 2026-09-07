@@ -30,7 +30,7 @@ import { BusinessRuleError } from '../../common/errors';
  * Le sens du décalage compte : une borne **plus étroite** que la colonne refuse
  * proprement, une borne plus large produit un 500 sur un `VARCHAR` trop court.
  * Cette valeur est celle de `SLUG_MAX_LENGTH` dans `@spa/shared` — la même
- * duplication temporaire que les autres constantes du module, voir le TODO(#26)
+ * duplication temporaire que les autres constantes du module, voir le TODO(#510)
  * de `catalog.types.ts`.
  */
 export const SLUG_MAX_LENGTH = 63;
