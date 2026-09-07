@@ -347,6 +347,7 @@ model Tenant {
   notifications     Notification[]
   refreshTokens     RefreshToken[]
 
+  notificationTemplates   NotificationTemplate[]
   processedWebhookEvents  ProcessedWebhookEvent[]
   stripeWebhookDeliveries StripeWebhookDelivery[]
 
@@ -1576,6 +1577,79 @@ model Notification {
   @@index([tenantId, status, scheduledFor])
   @@index([tenantId, appointmentId])
   @@map("notifications")
+}
+
+/// La **personnalisation** des messages d'un établissement — #69,
+/// notifications §6, « un salon doit pouvoir personnaliser ses messages sans
+/// déploiement ».
+///
+/// ## Ce que la table contient, et ce qu'elle ne contient pas
+///
+/// Uniquement ce qu'un salon a délibérément écrit. Les modèles **par défaut de
+/// la plateforme** restent en code (`notification-default-templates.ts`) : ils
+/// n'ont, par définition, pas d'établissement, et les inscrire ici aurait exigé
+/// un `tenant_id` nullable — c'est-à-dire une ligne que l'extension de scoping ne
+/// sait pas borner, dans la table même qui décide de ce que les clientes de
+/// chaque salon reçoivent (tenant-isolation §1). L'autre issue aurait été de
+/// recopier les quatre modèles dans chaque établissement à sa création, ce qui
+/// aurait fait d'une correction de coquille une migration de données sur tous les
+/// tenants.
+///
+/// Une ligne absente n'est donc pas un manque : c'est un salon qui n'a rien
+/// personnalisé, et qui reçoit le défaut. Supprimer la ligne **est** le retour au
+/// défaut, sans qu'aucun contenu n'ait à être recopié.
+///
+/// ## Ni destinataire, ni contenu rendu
+///
+/// Un modèle n'est pas un message : il porte des balises `{{client}}`, jamais un
+/// nom de cliente. La règle du module — « aucune donnée personnelle qui persiste »
+/// (CDC §5.1, notifications §7) — est ici tenue par construction, et c'est la
+/// raison pour laquelle cette table peut être lue au back-office sans réserve.
+model NotificationTemplate {
+  id       String @id @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  type    NotificationType
+  channel NotificationChannel
+
+  /// Objet de l'e-mail. Chaîne **vide** sur le canal SMS, qui n'en a pas.
+  ///
+  /// Vide plutôt que nullable : la distinction entre « pas d'objet » et « objet
+  /// absent » n'existe pas pour un SMS, et une colonne nullable aurait obligé
+  /// chaque lecture à s'en défendre pour un cas qui ne se produit jamais.
+  subject String @db.VarChar(200)
+
+  /// Corps HTML. Vide sur le canal SMS.
+  ///
+  /// `TEXT` et non `VARCHAR(n)` : un e-mail HTML de mise en page raisonnable
+  /// dépasse volontiers deux mille caractères, et PostgreSQL stocke les deux
+  /// types exactement de la même façon — une borne arbitraire n'aurait fait que
+  /// refuser un jour un modèle légitime. La borne qui compte est applicative et
+  /// elle est ailleurs : elle porte sur le coût du SMS, pas sur la taille du HTML.
+  bodyHtml String @map("body_html")
+
+  /// Version texte brut — doublon de l'e-mail, corps du SMS. **Jamais vide.**
+  ///
+  /// Quatrième critère d'acceptation de #69 : « version texte brut
+  /// systématiquement fournie à côté du HTML ». Un e-mail qui n'a que du HTML est
+  /// pénalisé par les filtres anti-spam (notifications §6), et le rappel J-1 perd
+  /// tout intérêt s'il finit en indésirables. L'invariant est tenu par la
+  /// validation du DTO, qui refuse un texte vide sur les deux canaux.
+  bodyText String @map("body_text")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// Un message, un canal, un modèle — et l'unicité est composite avec le
+  /// tenant, comme tout unique métier : deux salons personnalisent chacun leur
+  /// confirmation par e-mail.
+  ///
+  /// C'est aussi l'index de lecture : la résolution du modèle effectif interroge
+  /// exactement `(tenant_id, type, channel)` avant chaque envoi, et l'unique la
+  /// sert sans qu'un second index soit nécessaire.
+  @@unique([tenantId, type, channel])
+  @@map("notification_templates")
 }
 
 /// Un événement de webhook Stripe déjà traité — la table qui rend le traitement

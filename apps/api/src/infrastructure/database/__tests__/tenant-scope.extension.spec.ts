@@ -68,9 +68,16 @@ describe('Extension de scoping tenant', () => {
       // y déroge, la reprise des livraisons orphelines, et elle est nommée,
       // justifiée et confinée dans `StripeWebhookRepository` (tenant-isolation
       // §3) — pas obtenue en retirant le modèle de cette liste.
+      // Puis `NotificationTemplate` par #69 : la personnalisation des messages
+      // d'un salon. Elle décide de ce que reçoivent les clientes, si bien qu'une
+      // fuite de portée en lecture servirait le modèle d'un concurrent et qu'une
+      // fuite en écriture réécrirait ses messages. Aucune dérogation ne la vise :
+      // les modèles **par défaut** n'étant pas en base, aucun traitement de cette
+      // table n'est légitimement inter-tenant.
       expect([...TENANT_SCOPED_MODELS].sort()).toEqual([
         'Appointment',
         'Notification',
+        'NotificationTemplate',
         'Payment',
         'PaymentRefund',
         'ProcessedWebhookEvent',
