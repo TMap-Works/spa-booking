@@ -22,10 +22,12 @@ import { CANCELLATION_REASON_MAX_LENGTH, OptionalPresent, Trim } from './validat
  *   franchise que #48 posera.
  * - **`status`.** L'annulation a une destination, elle ne la choisit pas.
  *
- * TODO(#26) : cette forme appartient au contrat d'API et devra venir de
- * `@spa/shared` lors de la reprise groupée de ce TODO — la dépendance vers le
- * paquet existe depuis #463. Même TODO que dans `book-appointment.dto.ts` et
- * `reschedule-appointment.dto.ts`.
+ * TODO(#510) : cette forme est `cancelAppointmentRequestSchema` de
+ * `@spa/shared`, et sa substitution suit le patron déjà posé par
+ * `book-appointment.dto.ts` — pipe du contrat, classe réduite à ses
+ * `@ApiProperty` ([ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
+ * Cette route-ci n'est pas encore substituée : elle reste sous le
+ * `ValidationPipe` global, qui refuse exactement les mêmes corps.
  */
 export class CancelAppointmentDto {
   @ApiPropertyOptional({

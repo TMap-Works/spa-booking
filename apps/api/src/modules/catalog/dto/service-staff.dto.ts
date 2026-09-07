@@ -12,7 +12,7 @@ import type { ServiceStaffMemberView } from '../catalog.types';
  * (tenant-isolation §2). Ni `serviceId` : il vient du chemin, et l'accepter en
  * plus dans le corps ouvrirait deux sources pour la même désignation.
  *
- * TODO(#26) : ces formes appartiennent au contrat d'API et sont décrites par
+ * TODO(#510) : ces formes appartiennent au contrat d'API et sont décrites par
  * `packages/shared/src/schemas/catalog.ts` (`assignServiceStaffRequestSchema`,
  * `serviceStaffMemberSchema`) ; elles devront en être importées.
  */

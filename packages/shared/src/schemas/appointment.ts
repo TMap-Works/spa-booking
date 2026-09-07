@@ -73,11 +73,16 @@ export const cancellationActorSchema = z.enum(CANCELLATION_ACTORS);
  * `offsetDateTimeSchema` normalise un instant entrant : au-delà, plus aucun
  * écran n'a à se demander dans quelle casse il compare un statut.
  *
- * Ce n'est pas la forme d'arrivée : le jour où `apps/api` importera ce paquet
- * — le TODO(#26) que portent ses DTO —, les deux vocabulaires se rejoindront et
- * ce schéma pourra redevenir `appointmentStatusSchema` tout court. Le laisser
- * ici plutôt que d'écrire un `.toLowerCase()` dans un composant est ce qui rend
- * cette suppression possible en un seul endroit.
+ * Ce n'est pas la forme d'arrivée définitive, et ce qui l'en sépare n'est plus
+ * la dépendance — `apps/api` valide déjà ses entrées avec ce paquet
+ * ([ADR 0008](../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
+ * C'est la **casse émise** : unifier les deux vocabulaires change le format du
+ * fil, et casserait tout lecteur qui n'aurait pas bougé en même temps —
+ * `notifications`, `reporting` et `apps/web` compris. C'est le premier point de
+ * vigilance de #510 ; le jour où il sera tranché, ce schéma pourra redevenir
+ * `appointmentStatusSchema` tout court. Le laisser ici plutôt que d'écrire un
+ * `.toLowerCase()` dans un composant est ce qui rend cette suppression possible
+ * en un seul endroit.
  *
  * Déclaré **avant** `appointmentSchema` et non plus à côté des schémas du
  * parcours public : les deux formes de sortie du contrat s'en servent
@@ -219,23 +224,25 @@ export type CreateAppointmentRequest = z.infer<typeof createAppointmentRequestSc
  * C'est ce schéma, et lui seul, que le formulaire de coordonnées du parcours
  * public valide : le front ne redéclare pas la règle, il importe celle-ci.
  *
- * ## L'écart avec ce que l'API accepte, et son sens (#314)
+ * ## Ce schéma **est** la frontière de l'API, depuis #404
  *
- * `GuestContactDto` — `apps/api/src/modules/appointments/dto/book-appointment.dto.ts`,
- * la même forme écrite une seconde fois en attendant que `apps/api` dépende de
- * ce paquet — valide `phone` avec un motif **libre borné** et conserve la saisie
- * telle quelle. Ce schéma-ci normalise et refuse un numéro national.
+ * `GuestContactDto` décrivait la même forme une seconde fois, en
+ * `class-validator`, et l'écart de comportement était réel : il validait `phone`
+ * avec un motif **libre borné** et conservait la saisie, là où ce schéma-ci
+ * normalise et refuse un numéro national.
  *
- * L'écart est donc **orienté, et dans le sens sûr** : ce contrat est le plus
- * strict des deux, si bien qu'un formulaire qui valide avec lui ne produit
- * jamais une requête que l'API refuse. Le lecteur à qui cela importe est celui
- * qui écrit un formulaire de coordonnées : le message à afficher n'est pas
+ * Il n'y a plus d'écart, parce qu'il n'y a plus de seconde écriture :
+ * `POST /api/v1/public/:tenantSlug/appointments` valide avec **ce** schéma, monté
+ * par `ZodValidationPipe`
+ * ([ADR 0008](../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
+ * `GuestContactDto` survit dépouillé de ses décorateurs de validation, comme
+ * porteur des `@ApiProperty` d'où sort `/api/docs`.
+ *
+ * La conséquence pour qui écrit un formulaire de coordonnées est inchangée, et
+ * désormais garantie plutôt qu'espérée : le message à afficher n'est pas
  * « l'API a refusé », c'est « ce numéro doit porter son indicatif ».
- *
- * Tous les autres champs concordent exactement, bornes comprises, et
- * `apps/api/src/modules/appointments/__tests__/guest-contract.spec.ts` le tient
- * champ par champ — c'est ce qui rendra visible le jour où l'un des deux
- * bougerait seul.
+ * `apps/api/src/modules/appointments/__tests__/guest-booking-frontier.spec.ts`
+ * tient le câblage — que la route est bien montée sur ce schéma-ci.
  */
 export const guestContactSchema = z
   .object({

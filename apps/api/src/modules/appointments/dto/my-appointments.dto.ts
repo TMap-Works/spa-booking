@@ -8,7 +8,7 @@ import { OptionalPresent } from './validation';
 /**
  * DTO de l'historique de la cliente connectée (#47).
  *
- * TODO(#26) : ces bornes sont celles de `myAppointmentsQuerySchema` de
+ * TODO(#510) : ces bornes sont celles de `myAppointmentsQuerySchema` de
  * `packages/shared/src/schemas/appointment.ts`, recopiées en attendant que
  * `apps/api` dépende du paquet partagé. Les noms sont **ceux du contrat**, pour
  * que la substitution ne change pas une borne en silence.

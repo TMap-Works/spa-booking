@@ -8,7 +8,7 @@ import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
  * `{ code, message, details }`. Le front réagit sur `code`, jamais sur
  * `message`.
  *
- * TODO(#26) : ces codes appartiennent au contrat d'API et devront venir de
+ * TODO(#510) : ces codes appartiennent au contrat d'API et devront venir de
  * `@spa/shared`, où `BOOKING_ERROR_CODES.SLOT_NO_LONGER_AVAILABLE` porte déjà la
  * **même valeur**. L'import se substituera à cette constante sans changer un
  * seul caractère.
@@ -55,7 +55,7 @@ const UNPROCESSABLE_ENTITY = DOMAIN_HTTP_STATUS.UNPROCESSABLE_ENTITY;
  * back-office affiche ; les vues jour et semaine de #49 tiennent largement
  * dessous.
  *
- * TODO(#26) : c'est `MAX_APPOINTMENT_RANGE_DAYS` de `@spa/shared`
+ * TODO(#510) : c'est `MAX_APPOINTMENT_RANGE_DAYS` de `@spa/shared`
  * (`packages/shared/src/constants/limits.ts`), à importer lors de la reprise
  * groupée de ce TODO — la dépendance, elle, existe depuis #463. Le nom est celui
  * du paquet partagé pour que la substitution ne change pas une borne en silence.

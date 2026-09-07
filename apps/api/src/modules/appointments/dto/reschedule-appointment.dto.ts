@@ -13,10 +13,14 @@ import { IsOffsetDateTime, OptionalPresent } from './validation';
  * facultatif, un praticien ; tout le reste est recopié du rendez-vous d'origine
  * côté serveur.
  *
- * TODO(#26) : `rescheduleAppointmentRequestSchema` de
+ * TODO(#510) : `rescheduleAppointmentRequestSchema` de
  * `packages/shared/src/schemas/appointment.ts` décrit la même forme et devra
- * être importé lors de la reprise groupée de ce TODO — la dépendance vers le
- * paquet existe depuis #463. Même TODO que dans `book-appointment.dto.ts`.
+ * être monté à la place de ces décorateurs, sur le patron déjà posé par
+ * `book-appointment.dto.ts` ([ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
+ * En attendant, cette route reste sous le `ValidationPipe` global :
+ * `__tests__/date-time.validation.spec.ts` exerce les deux frontières sur les
+ * mêmes chaînes et vérifie qu'elles produisent le même instant — c'est la
+ * propriété qui rendra la substitution sans effet visible.
  */
 export class RescheduleAppointmentDto {
   @ApiProperty({

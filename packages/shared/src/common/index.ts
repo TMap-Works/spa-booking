@@ -1,5 +1,6 @@
 export {
   E164_PATTERN,
+  UUID_V4_PATTERN,
   displayNameSchema,
   e164PhoneSchema,
   emailSchema,

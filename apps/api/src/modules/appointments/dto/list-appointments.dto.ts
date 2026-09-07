@@ -18,7 +18,7 @@ import { IsCalendarDate, OptionalPresent } from './validation';
 /**
  * L'agenda du back-office — `GET /api/v1/appointments` (#444).
  *
- * TODO(#26) : ces formes appartiennent au contrat d'API et sont décrites par
+ * TODO(#510) : ces formes appartiennent au contrat d'API et sont décrites par
  * `packages/shared/src/schemas/appointment.ts`
  * (`appointmentListQuerySchema`, `appointmentSchema`) ; elles devront en être
  * importées. Les noms et les bornes sont **ceux du contrat**, pour que la

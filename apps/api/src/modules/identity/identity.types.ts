@@ -3,7 +3,7 @@ import type { UserRole } from './roles';
 /**
  * Formes de données du module `identity`.
  *
- * TODO(#26) : `AuthenticatedUser`, `UserProfile` et `UserRole` appartiennent au
+ * TODO(#510) : `AuthenticatedUser`, `UserProfile` et `UserRole` appartiennent au
  * contrat d'API et devront être réexportés depuis `@spa/shared` — le front ne
  * redéclare jamais un type que l'API expose (CLAUDE.md). Le paquet expose déjà
  * ces rôles (`packages/shared/src/constants/roles.ts`) ; l'import se substituera

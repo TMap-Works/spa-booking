@@ -9,7 +9,7 @@ import { ValidateIf } from 'class-validator';
  * un 500 sur un `VARCHAR` trop court là où l'appelant attendait un message de
  * champ. Les deux se corrigent ensemble.
  *
- * TODO(#26) : ces valeurs sont celles de `@spa/shared`
+ * TODO(#510) : ces valeurs sont celles de `@spa/shared`
  * (`packages/shared/src/constants/limits.ts`) et devront en être importées lors
  * de la reprise groupée de ce TODO — la dépendance existe depuis #463 — voir le
  * même TODO dans `catalog.types.ts`. Les noms sont donc **ceux du paquet

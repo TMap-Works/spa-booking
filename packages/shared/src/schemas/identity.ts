@@ -158,11 +158,15 @@ export type UpdateProfileRequest = z.infer<typeof updateProfileRequestSchema>;
  * `receivedAppointmentStatusSchema` le fait pour les statuts de rendez-vous : au
  * delà, plus aucun écran n'a à se demander dans quelle casse il compare un rôle.
  *
- * Ce n'est pas la forme d'arrivée définitive : le jour où `apps/api` importera
- * ce paquet — le TODO(#26) que portent ses DTO —, les deux vocabulaires se
- * rejoindront et ce schéma pourra redevenir `userRoleSchema` tout court. Le
- * laisser ici plutôt que d'écrire un `.toLowerCase()` dans un composant est ce
- * qui rend cette suppression possible en un seul endroit.
+ * Ce n'est pas la forme d'arrivée définitive, et ce qui l'en sépare n'est plus
+ * la dépendance — `apps/api` valide déjà ses entrées avec ce paquet
+ * ([ADR 0008](../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
+ * C'est la **casse émise** : unifier les deux vocabulaires change le format du
+ * fil, et casserait tout lecteur qui n'aurait pas bougé en même temps. C'est le
+ * premier point de vigilance de #510 ; le jour où il sera tranché, ce schéma
+ * pourra redevenir `userRoleSchema` tout court. Le laisser ici plutôt que
+ * d'écrire un `.toLowerCase()` dans un composant est ce qui rend cette
+ * suppression possible en un seul endroit.
  */
 export const receivedUserRoleSchema = z
   .string()

@@ -39,7 +39,7 @@ import { IsOffsetDateTime, LONG_TEXT_MAX_LENGTH, OptionalPresent, Trim } from '.
  * personne. Le tiroir de #50 n'envoie de toute façon jamais sans — son bouton
  * d'enregistrement est désactivé tant qu'aucune fiche n'est choisie.
  *
- * TODO(#26) : `createAppointmentRequestSchema` de
+ * TODO(#510) : `createAppointmentRequestSchema` de
  * `packages/shared/src/schemas/appointment.ts` décrit cette forme et devra être
  * importé lors de la reprise groupée de ce TODO — la dépendance vers le paquet
  * existe depuis #463. Même TODO que dans

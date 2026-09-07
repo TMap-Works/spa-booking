@@ -1,51 +1,47 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
 import {
-  IsDefined,
-  IsEmail,
-  IsInt,
-  IsString,
-  IsUUID,
-  Matches,
-  MaxLength,
-  MinLength,
-  ValidateNested,
-} from 'class-validator';
+  type BookGuestAppointmentRequest,
+  EMAIL_ADDRESS_MAX_LENGTH,
+  type GuestContact as GuestContactRequest,
+  LONG_TEXT_MAX_LENGTH,
+  NAME_MAX_LENGTH,
+  PHONE_MAX_LENGTH,
+  bookGuestAppointmentRequestSchema,
+  bookedAppointmentSchema,
+  guestContactSchema,
+} from '@spa/shared';
+import type { z } from 'zod';
 
+import { ZodValidationPipe } from '../../../common/validation';
 import type { AppointmentCancelledBy, AppointmentStatus } from '../appointment-status';
 import { CANCELLATION_AUTHORS } from '../appointment-status';
 import type { AppointmentView, GuestContact, Money } from '../appointments.types';
-import {
-  EMAIL_MAX_LENGTH,
-  IsOffsetDateTime,
-  LONG_TEXT_MAX_LENGTH,
-  NAME_MAX_LENGTH,
-  NormalizeEmail,
-  OptionalPresent,
-  PHONE_MAX_LENGTH,
-  PHONE_PATTERN,
-  Trim,
-} from './validation';
 
 /**
- * DTO de la réservation publique (#37).
+ * La réservation publique (#37), **validée par le contrat partagé** (#404).
  *
- * `ValidationPipe` est global avec `whitelist` **et** `forbidNonWhitelisted` : un
- * champ non déclaré ici ne passe pas — en particulier un `tenantId` glissé dans
- * le corps, qui est exactement la fuite que le scoping automatique supprime
- * (tenant-isolation §2). Sur une route publique, c'est la seule barrière avant le
- * service : il n'y a pas de garde à franchir.
+ * ## Ce que ce fichier est devenu, et ce qu'il n'est plus
  *
- * ## TODO(#26) — ce que ces classes deviendront, et à quoi elles répondent
+ * Il ne décrit plus la frontière : il la **documente**. Les trois formes de
+ * cette route appartiennent au contrat d'API, et `packages/shared` les décrit —
+ * chacune sous son nom propre, apparié ici une fois pour toutes :
  *
- * Ces formes appartiennent au contrat d'API, et `packages/shared` les décrit
- * **déjà**, chacune sous son nom propre (#314) :
- *
- * | Classe d'ici | Schéma de `packages/shared/src/schemas/appointment.ts` |
+ * | Ce fichier | `packages/shared/src/schemas/appointment.ts` |
  * |---|---|
- * | `BookAppointmentDto` | `bookGuestAppointmentRequestSchema` |
- * | `GuestContactDto` | `guestContactSchema` |
- * | `AppointmentDto` | `bookedAppointmentSchema` |
+ * | `bookAppointmentBody` (le pipe) | `bookGuestAppointmentRequestSchema` |
+ * | `GuestContactDto` (la documentation) | `guestContactSchema` |
+ * | `AppointmentDto` (la documentation) | `bookedAppointmentSchema` |
+ *
+ * Les classes survivent parce que le schéma OpenAPI de `/api/docs` sort des
+ * décorateurs `@nestjs/swagger`, que Zod ne porte pas : les supprimer
+ * supprimerait la documentation de l'API. Elles ont en revanche perdu **tous**
+ * leurs décorateurs `class-validator` — c'est la décision de
+ * [l'ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md),
+ * et la conséquence à connaître avant de toucher à ce fichier : **typer un
+ * paramètre de handler par l'une de ces classes viderait le corps de la
+ * requête**, le `ValidationPipe` global appliquant `whitelist` à une classe qui
+ * n'a plus rien à mettre sur sa liste blanche. Le handler prend le type inféré
+ * du schéma, et déclare la classe par `@ApiBody` / `@ApiCreatedResponse`.
  *
  * Ce n'est **pas** `createAppointmentRequestSchema` : celui-là est `.strict()`,
  * porte un `clientId` et pas de coordonnées, et décrit la route de back-office
@@ -54,38 +50,50 @@ import {
  * cliente, du praticien et de la prestation : les servir ici diffuserait
  * l'identité d'une cliente à qui connaît un identifiant de rendez-vous.
  *
- * Cette dépendance-là est posée depuis #463 — `apps/api/package.json` déclare
- * `@spa/shared`, et l'image d'exécution en porte le `dist`. La substitution
- * n'attend plus que la reprise groupée de #26, qui migre les DTO d'un seul
- * tenant — même TODO que dans `catalog/dto/service.dto.ts`.
+ * ## Le `.strict()` du contrat remplace `forbidNonWhitelisted`
  *
- * ## Les écarts de comportement que la substitution changerait
+ * `bookGuestAppointmentRequestSchema` et `guestContactSchema` sont l'un et
+ * l'autre `.strict()` : un champ non déclaré est **refusé**, en particulier un
+ * `tenantId` glissé dans le corps — la fuite que le scoping automatique supprime
+ * (tenant-isolation §2). Sur une route publique, c'est la seule barrière avant
+ * le service : il n'y a pas de garde à franchir. `ZodValidationPipe` refuse
+ * d'ailleurs au montage un schéma d'entrée qui ne serait pas `.strict()`.
  *
- * Il en reste deux au terme de #314, l'un et l'autre assumés. Le second est
- * `uuidSchema`, qui accepte n'importe quelle version d'UUID là où `@IsUUID('4')`
- * exige la v4 : celui-là penche du côté inconfortable — le contrat est le plus
- * permissif — mais il porte sur toute la surface du contrat, pas sur ce module,
- * et reste théorique tant que les identifiants proposés à un formulaire viennent
- * de l'API, qui n'émet que des v4.
+ * ## Les deux écarts de #314, et comment ils se referment
  *
- * Le premier, propre à ce module :
+ * **Téléphone.** `guestContactSchema` valide `phone` avec `e164PhoneSchema`, qui
+ * **normalise** (`+261 34 12 345 67` → `+261341234567`) et **refuse un numéro
+ * national** (`0341234567`), dont le pays n'est déductible ni du fuseau du salon
+ * ni de la langue du navigateur. C'est désormais le comportement de cette route,
+ * là où le DTO acceptait un format libre borné et conservait la saisie.
  *
- * `guestContactSchema` valide `phone` avec `e164PhoneSchema`, qui **normalise**
- * (`+261 34 12 345 67` → `+261341234567`) et **refuse un numéro national**
- * (`0341234567`), dont le pays n'est déductible ni du fuseau du salon ni de la
- * langue du navigateur. `GuestContactDto` valide avec `PHONE_PATTERN`, format
- * libre borné, et conserve la saisie telle quelle.
+ * Le sens de la décision est celui de #66 : les surfaces qui **composent** un
+ * numéro l'exigent en E.164 — le rappel SMS J-1 part d'ici, sans qu'aucun humain
+ * le relise —, celles qui l'**enregistrent** ou l'**affichent** gardent
+ * `phoneSchema`. `users.phone` n'est donc pas en E.164 pour tous ses écrivains,
+ * et c'est délibéré : `identity` et `crm` y écrivent en format libre, et
+ * durcir la colonne rendrait illisible le stock antérieur à la règle
+ * (`storedPhoneSchema`). Le changement ne casse aucun appelant réel : le tunnel
+ * de #45 valide déjà avec ce schéma, donc envoie déjà de l'E.164.
  *
- * L'écart est **orienté** : le contrat est le plus strict des deux, si bien
- * qu'un formulaire qui valide avec lui ne produit jamais une requête que cette
- * route refuse — c'est ce que fait le tunnel de #45, qui envoie donc toujours de
- * l'E.164. Ce qui reste ouvert est l'autre sens : un appelant qui n'est pas ce
- * front peut poser un numéro que la chaîne SMS ne saura pas composer. Le
- * trancher demande de décider si `users.phone` est en E.164 pour **tous** ses
- * écrivains — `identity` y écrit aussi, avec `phoneSchema` —, ce qui déborde ce
- * module ; #314 laisse donc l'écart en l'état, documenté des deux côtés et tenu
- * par `__tests__/guest-contract.spec.ts`.
+ * **Version d'UUID.** `uuidSchema` acceptait n'importe quelle version là où
+ * `@IsUUID('4')` exigeait la v4 ; le contrat a été resserré sur la v4 (#403),
+ * ce qui laisse le comportement de cette route inchangé. Voir l'en-tête
+ * d'`uuidSchema`.
  */
+
+/**
+ * Le pipe de la demande de réservation — c'est **lui** qui valide, et non les
+ * classes ci-dessous.
+ *
+ * Instancié une fois au chargement du module plutôt qu'à chaque décoration : le
+ * schéma ne change pas d'une requête à l'autre, et la garde `.strict()` du pipe
+ * se paie ainsi une seule fois, à l'amorçage.
+ */
+export const bookAppointmentBody = new ZodValidationPipe(bookGuestAppointmentRequestSchema);
+
+/** La demande de réservation, telle que le contrat la rend au contrôleur. */
+export type BookAppointmentBody = BookGuestAppointmentRequest;
 
 /**
  * Un montant, tel qu'il sort de l'API : entier dans la plus petite unité
@@ -93,16 +101,15 @@ import {
  */
 export class MoneyDto implements Money {
   @ApiProperty({ description: 'Montant entier dans la plus petite unité — 3500 pour 35,00 €.' })
-  @IsInt()
   public amountMinor!: number;
 
   @ApiProperty({ description: 'Code devise ISO 4217.', example: 'EUR' })
-  @IsString()
   public currency!: string;
 }
 
 /**
- * Les coordonnées d'une cliente qui réserve **sans compte**.
+ * Les coordonnées d'une cliente qui réserve **sans compte** — la documentation
+ * de `guestContactSchema`.
  *
  * Aucun mot de passe, et il n'y en aura pas : ce formulaire crée une fiche
  * jointe au rendez-vous, pas une identité. Un visiteur qui veut un compte passe
@@ -111,17 +118,9 @@ export class MoneyDto implements Money {
  */
 export class GuestContactDto {
   @ApiProperty({ example: 'Camille', maxLength: NAME_MAX_LENGTH })
-  @IsString()
-  @Trim()
-  @MinLength(1)
-  @MaxLength(NAME_MAX_LENGTH)
   public firstName!: string;
 
   @ApiProperty({ example: 'Rakoto', maxLength: NAME_MAX_LENGTH })
-  @IsString()
-  @Trim()
-  @MinLength(1)
-  @MaxLength(NAME_MAX_LENGTH)
   public lastName!: string;
 
   @ApiProperty({
@@ -129,32 +128,32 @@ export class GuestContactDto {
       'Canonisée avant écriture — élaguée, en minuscules. C’est ce qui rend ' +
       'l’unicité (tenant, e-mail) fiable, la contrainte de base portant sur les octets.',
     example: 'camille@example.test',
-    maxLength: EMAIL_MAX_LENGTH,
+    // `EMAIL_ADDRESS_MAX_LENGTH` (254, RFC 5321 §4.5.3.1.3) et non
+    // `EMAIL_MAX_LENGTH` (320, la largeur de la colonne) : c'est la borne
+    // qu'`emailSchema` applique réellement, et cette classe documente le schéma.
+    // Publier 320 ferait annoncer par `/api/docs` une adresse que la route
+    // refuse en 400 — le sens dangereux de l'écart, celui que l'ADR 0008 ferme.
+    maxLength: EMAIL_ADDRESS_MAX_LENGTH,
   })
-  @IsString()
-  @NormalizeEmail()
-  @MaxLength(EMAIL_MAX_LENGTH)
-  @IsEmail({}, { message: 'email : adresse e-mail invalide' })
   public email!: string;
 
   @ApiPropertyOptional({
     description:
       'Facultatif : le SMS de rappel est un confort, l’e-mail de confirmation est ' +
-      'le canal obligatoire. Format libre borné — une validation stricte par pays ' +
-      'refuserait des numéros valides, donc des réservations.',
-    example: '+261 34 12 345 67',
+      'le canal obligatoire. **Format international obligatoire**, indicatif ' +
+      'compris — c’est le seul numéro que la chaîne SMS compose sans qu’aucun ' +
+      'humain le relise, et le pays d’un numéro national n’est déductible ni du ' +
+      'fuseau du salon ni de la langue du navigateur. Normalisé à la frontière : ' +
+      '« +261 34 12 345 67 » est enregistré « +261341234567 ».',
+    example: '+261341234567',
     maxLength: PHONE_MAX_LENGTH,
   })
-  @OptionalPresent()
-  @IsString()
-  @Trim()
-  @MaxLength(PHONE_MAX_LENGTH)
-  @Matches(PHONE_PATTERN, { message: 'phone : numéro de téléphone invalide' })
   public phone?: string;
 }
 
 /**
- * La demande de réservation.
+ * La demande de réservation — la documentation de
+ * `bookGuestAppointmentRequestSchema`.
  *
  * **Aucun `endsAt`.** La cliente choisit un début et une prestation ; la fin se
  * dérive de la durée du catalogue, côté serveur. Laisser le client l'envoyer
@@ -167,7 +166,6 @@ export class GuestContactDto {
  */
 export class BookAppointmentDto {
   @ApiProperty({ format: 'uuid', description: 'La prestation réservée.' })
-  @IsUUID('4')
   public serviceId!: string;
 
   @ApiPropertyOptional({
@@ -179,46 +177,36 @@ export class BookAppointmentDto {
       'suivant si la base refuse son créneau. Le choix est fait côté serveur : le ' +
       'laisser au navigateur reviendrait à décider sur un calendrier déjà périmé.',
   })
-  @OptionalPresent()
-  @IsUUID('4')
   public staffId?: string;
 
   @ApiProperty({
     description:
       'Début du **soin** — l’instant proposé par le calendrier, tel qu’il s’est ' +
       'affiché. ISO 8601 avec offset explicite (`Z` ou `±HH:MM`) : une date-heure ' +
-      'nue obligerait le serveur à deviner un fuseau.',
+      'nue obligerait le serveur à deviner un fuseau. Normalisé en UTC à la ' +
+      'frontière.',
     example: '2026-09-01T09:00:00Z',
   })
-  @IsOffsetDateTime()
   public startsAt!: string;
 
-  @ApiProperty({ type: GuestContactDto })
-  // `@IsDefined` est indispensable : class-validator **saute** la validation
-  // imbriquée quand la valeur est `undefined`. Sans lui, un corps sans `client`
-  // traverse la validation intact et le service déréférence `input.client.email`
-  // — un 500 là où le contrat annonce un 400 nommant le champ.
-  @IsDefined({ message: 'client : les coordonnées sont obligatoires' })
-  // `@Type` est indispensable aussi : sans lui, `class-transformer` laisse un
-  // objet nu et `@ValidateNested` n'a aucune classe sur laquelle rejouer les
-  // validateurs — l'adresse traverserait sans être regardée.
-  @ValidateNested()
-  @Type(() => GuestContactDto)
+  @ApiProperty({
+    type: GuestContactDto,
+    description:
+      'Les coordonnées de la cliente. **Obligatoires** : sans elles, le serveur ' +
+      'n’a personne à ficher ni personne à qui confirmer.',
+  })
   public client!: GuestContactDto;
 
   @ApiPropertyOptional({
     description: 'Mot de la cliente au salon — allergie, préférence, retard annoncé.',
     maxLength: LONG_TEXT_MAX_LENGTH,
   })
-  @OptionalPresent()
-  @IsString()
-  @Trim()
-  @MaxLength(LONG_TEXT_MAX_LENGTH)
   public clientNote?: string;
 }
 
 /**
- * Le rendez-vous tel qu'il sort de l'API.
+ * Le rendez-vous tel qu'il sort de l'API — la documentation de
+ * `bookedAppointmentSchema`.
  *
  * `startsAt` et `endsAt` sont l'intervalle **facturé** : le soin, sans les
  * tampons de cabine. C'est ce que la cliente a réservé et ce que son écran de
@@ -316,14 +304,74 @@ export class AppointmentDto implements AppointmentView {
   public cancelledBy!: AppointmentCancelledBy | null;
 }
 
+// ---------------------------------------------------------------------------
+// La sortie tenue par le contrat — à la compilation, faute de pouvoir l'être à
+// l'exécution
+// ---------------------------------------------------------------------------
+
+/**
+ * `bookedAppointmentSchema` décrit ce que le **front lit**, pas ce que l'API
+ * **émet** : ses champs `status` et `cancelledBy` normalisent la casse de
+ * l'énumération PostgreSQL (`PENDING` → `pending`). Valider notre propre sortie
+ * contre lui exigerait donc de changer le format du fil, ce qui déborde ce
+ * ticket et casserait tout lecteur d'agenda.
+ *
+ * Ce que le contrat peut garder, en revanche, c'est la **forme entrante** qu'il
+ * sait lire — `z.input<…>` —, et il la garde à la compilation. Les deux
+ * assertions ci-dessous coûtent zéro à l'exécution et échouent au `tsc` :
+ *
+ * 1. le **jeu de clés** est exactement celui du schéma. Un champ ajouté d'un
+ *    côté et pas de l'autre casse la compilation, là où il aurait autrement
+ *    voyagé sans que personne ne le lise ;
+ * 2. **chaque champ** est assignable à ce que le schéma sait lire. Un
+ *    `cancelledAt` passé de `string | null` à `string | undefined` ne
+ *    traverserait plus.
+ *
+ * C'est ce qui remplace `__tests__/guest-contract.spec.ts`, supprimé par #404 :
+ * la suite n'existait que pour tenir d'accord deux écritures d'une même règle,
+ * et il n'y en a plus qu'une.
+ */
+type BookedAppointmentWire = z.input<typeof bookedAppointmentSchema>;
+
+type AssertNever<T extends never> = T;
+type AssertTrue<T extends true> = T;
+
+type _AppointmentDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof AppointmentDto, keyof BookedAppointmentWire>
+  | Exclude<keyof BookedAppointmentWire, keyof AppointmentDto>
+>;
+
+type _AppointmentDtoIsReadableByTheContract = AssertTrue<
+  AppointmentDto extends BookedAppointmentWire ? true : false
+>;
+
+/**
+ * Même garde sur l'**entrée**, dans l'autre sens : la classe qui documente
+ * `/api/docs` doit annoncer exactement les champs que le pipe accepte.
+ *
+ * Sans elle, la substitution aurait déplacé le risque plutôt que de le
+ * supprimer — la validation n'a plus qu'une écriture, mais la documentation en
+ * garde une seconde, et une `@ApiProperty` oubliée décrirait une route qui
+ * refuse ce qu'elle annonce.
+ */
+type _BookAppointmentDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof BookAppointmentDto, keyof z.input<typeof bookGuestAppointmentRequestSchema>>
+  | Exclude<keyof z.input<typeof bookGuestAppointmentRequestSchema>, keyof BookAppointmentDto>
+>;
+
+type _GuestContactDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof GuestContactDto, keyof z.input<typeof guestContactSchema>>
+  | Exclude<keyof z.input<typeof guestContactSchema>, keyof GuestContactDto>
+>;
+
 /** Les coordonnées validées, sous la forme que le service attend. */
-export function toGuestContact(dto: GuestContactDto): GuestContact {
+export function toGuestContact(contact: GuestContactRequest): GuestContact {
   return {
-    firstName: dto.firstName,
-    lastName: dto.lastName,
-    email: dto.email,
-    // Le DTO distingue « absent » de « vide » ; le domaine, lui, ne connaît que
-    // `null` — c'est ce que la colonne `users.phone` accepte.
-    phone: dto.phone ?? null,
+    firstName: contact.firstName,
+    lastName: contact.lastName,
+    email: contact.email,
+    // Le contrat distingue « absent » de « vide » ; le domaine, lui, ne connaît
+    // que `null` — c'est ce que la colonne `users.phone` accepte.
+    phone: contact.phone ?? null,
   };
 }

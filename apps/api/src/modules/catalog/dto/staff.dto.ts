@@ -13,7 +13,7 @@ import { BooleanQuery, OptionalPresent } from './validation';
  * appelant choisirait son établissement (tenant-isolation §2). Il n'y en a pas,
  * et il ne doit pas y en avoir : l'établissement vient du jeton vérifié.
  *
- * TODO(#26) : ces formes appartiennent au contrat d'API et sont décrites par
+ * TODO(#510) : ces formes appartiennent au contrat d'API et sont décrites par
  * `packages/shared/src/schemas/catalog.ts` (`staffMemberSchema`) ; elles devront
  * en être importées.
  */
