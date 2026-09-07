@@ -1,15 +1,18 @@
 import {
-  SMS_SINGLE_SEGMENT_UCS2,
+  buildTemplateVariables,
   cancellationUrl,
-  escapeHtml,
   formatDateTimeInTenantTimeZone,
   formatMoney,
-  renderBookingConfirmationEmail,
-  renderBookingConfirmationSms,
-  renderReminderEmail,
-  renderReminderSms,
+  renderNotification,
 } from '../notification-content';
-import type { AppointmentMessageContext } from '../notifications.types';
+import { defaultTemplateFor } from '../notification-default-templates';
+import { SMS_SINGLE_SEGMENT_UCS2, escapeHtml } from '../notification-template';
+import type {
+  AppointmentMessageContext,
+  NotificationChannel,
+  RenderedNotification,
+  NotificationType,
+} from '../notifications.types';
 
 /**
  * Les modèles de la confirmation de réservation — trois des cinq critères
@@ -18,7 +21,51 @@ import type { AppointmentMessageContext } from '../notifications.types';
  *
  * Ces fonctions sont pures : la suite n'ouvre ni base, ni module Nest, et
  * n'appelle aucune horloge. Ce qu'elle mesure est ce qu'une cliente lira.
+ *
+ * ## Ce que #69 y a changé, et ce qu'il n'y a pas changé
+ *
+ * Les quatre messages ne sont plus des fonctions : ce sont les **modèles par
+ * défaut de la plateforme** (`notification-default-templates.ts`), rendus par le
+ * moteur de `notification-template.ts`. Aucune assertion n'a bougé pour autant,
+ * et c'est le point : cette suite est la preuve que le passage aux modèles en
+ * base n'a rien changé à ce qu'une cliente lit. Les quatre fonctions locales
+ * ci-dessous ne font que rendre le défaut du couple `(type, canal)` — elles
+ * n'existent que pour que les assertions restent lisibles.
  */
+
+/** Rend le modèle **par défaut** de ce message — ce que reçoit un salon qui n'a rien personnalisé. */
+function renderDefault(
+  type: NotificationType,
+  channel: NotificationChannel,
+  context: AppointmentMessageContext,
+  cancelUrl: string,
+): RenderedNotification {
+  const source = defaultTemplateFor(type, channel);
+
+  if (source === null) {
+    throw new Error(`Aucun modèle par défaut pour ${type} / ${channel}.`);
+  }
+
+  return renderNotification(source, buildTemplateVariables(context, cancelUrl, channel), channel);
+}
+
+const renderBookingConfirmationEmail = (
+  context: AppointmentMessageContext,
+  cancelUrl: string,
+): RenderedNotification => renderDefault('BOOKING_CONFIRMATION', 'EMAIL', context, cancelUrl);
+
+const renderReminderEmail = (
+  context: AppointmentMessageContext,
+  cancelUrl: string,
+): RenderedNotification => renderDefault('REMINDER_24H', 'EMAIL', context, cancelUrl);
+
+// Le SMS n'a pas de lien d'annulation : le détail est dans l'e-mail, qui part
+// toujours. L'URL passée n'est donc jamais substituée — le modèle ne la nomme pas.
+const renderBookingConfirmationSms = (context: AppointmentMessageContext): RenderedNotification =>
+  renderDefault('BOOKING_CONFIRMATION', 'SMS', context, '');
+
+const renderReminderSms = (context: AppointmentMessageContext): RenderedNotification =>
+  renderDefault('REMINDER_24H', 'SMS', context, '');
 
 /**
  * Un salon à Paris, un rendez-vous en **heure d'été**.
