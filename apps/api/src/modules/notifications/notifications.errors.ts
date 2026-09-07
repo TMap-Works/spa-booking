@@ -26,7 +26,16 @@ export const NOTIFICATION_ERROR_CODES = {
   NOTIFICATION_CONTEXT_GONE: 'NOTIFICATION_CONTEXT_GONE',
   INTERNAL_CALLER_NOT_CONFIGURED: 'INTERNAL_CALLER_NOT_CONFIGURED',
   INTERNAL_CALLER_REJECTED: 'INTERNAL_CALLER_REJECTED',
+  NOTIFICATION_TEMPLATE_INVALID: 'NOTIFICATION_TEMPLATE_INVALID',
+  NOTIFICATION_TEMPLATE_TOO_LONG: 'NOTIFICATION_TEMPLATE_TOO_LONG',
+  NOTIFICATION_TEMPLATE_NOT_FOUND: 'NOTIFICATION_TEMPLATE_NOT_FOUND',
 } as const;
+
+/** 400 — la requête est fautive, et le champ en cause est nommé. */
+const BAD_REQUEST = 400;
+
+/** 404 — aucun modèle, ni personnalisé ni par défaut, pour ce message. */
+const NOT_FOUND = 404;
 
 /**
  * Aucun expéditeur n'est branché pour ce canal.
@@ -135,5 +144,99 @@ export class InternalCallerRejectedError extends DomainError {
 
   public constructor() {
     super("Appel interne refusé : jeton absent ou invalide.");
+  }
+}
+
+/**
+ * Le modèle soumis nomme des variables qui n'existent pas — ou laisse une
+ * section ouverte (#69).
+ *
+ * **400 et non 422** : c'est une requête fautive, et le champ en cause est
+ * nommable. Le `details` porte les noms exacts, parce que c'est la seule chose
+ * qui aide : un salon qui a écrit `{{prenom}}` doit lire « prenom », pas
+ * « modèle invalide ».
+ *
+ * ## Pourquoi refuser plutôt que rendre à vide
+ *
+ * Une variable inconnue rendue à vide ne se découvrirait que dans l'e-mail d'une
+ * cliente, une fois parti — « Bonjour , » au lieu de « Bonjour Amina, ». Le refus
+ * a lieu au seul instant où quelqu'un est là pour le corriger : la saisie.
+ *
+ * Ce refus est aussi la frontière de sécurité du moteur. La liste des variables
+ * est close ; ce qu'elle ne nomme pas n'est pas substituable, donc pas
+ * exposable. Un modèle qui pourrait nommer n'importe quoi serait un moyen de lire
+ * ce que le rendu a sous la main.
+ */
+export class NotificationTemplateInvalidError extends DomainError {
+  public override readonly code = NOTIFICATION_ERROR_CODES.NOTIFICATION_TEMPLATE_INVALID;
+  public override readonly status = BAD_REQUEST;
+
+  public constructor(details: {
+    readonly unknownVariables?: readonly string[];
+    readonly unbalancedSections?: readonly string[];
+    /**
+     * Champs que le canal exige et que le modèle laisse vides — `subject` sur
+     * l'e-mail. La contrainte dépend du canal, elle ne peut donc pas être portée
+     * par un décorateur du DTO, qui ne connaît que le corps de la requête.
+     */
+    readonly missingFields?: readonly string[];
+  }) {
+    super(
+      'Le modèle emploie des variables inconnues, laisse une section non refermée, ' +
+        'ou omet un champ que son canal exige.',
+      details,
+    );
+  }
+}
+
+/**
+ * Le modèle de SMS coûterait plus que le plafond de segments (#69).
+ *
+ * **400** : le modèle est refusé, pas tronqué. Tronquer aurait enregistré une
+ * chaîne que le salon n'a pas écrite, et lui aurait fait découvrir la coupure
+ * dans le message reçu par sa cliente.
+ *
+ * Le `details` porte l'encodage et le nombre de segments mesurés, parce que c'est
+ * ce qui rend la faute compréhensible : « 2 segments en UCS-2 » dit au salon que
+ * son apostrophe typographique vient de doubler sa facture, là où « trop long »
+ * l'aurait laissé raccourcir un texte qui n'était pas trop long
+ * (notifications §5).
+ *
+ * Aucun contenu de modèle dans le `details` : un `details` d'erreur est
+ * journalisé, et si un modèle ne porte pas de donnée personnelle, il n'y a
+ * aucune raison de faire grossir un journal avec un corps d'e-mail.
+ */
+export class NotificationTemplateTooLongError extends DomainError {
+  public override readonly code = NOTIFICATION_ERROR_CODES.NOTIFICATION_TEMPLATE_TOO_LONG;
+  public override readonly status = BAD_REQUEST;
+
+  public constructor(details: {
+    readonly encoding: string;
+    readonly segments: number;
+    readonly maxSegments: number;
+  }) {
+    super(
+      'Ce modèle de SMS dépasse le nombre de segments autorisé : un accent hors GSM-7 ' +
+        'bascule le message en UCS-2 et le limite à 70 caractères au lieu de 160.',
+      details,
+    );
+  }
+}
+
+/**
+ * Aucun modèle — ni personnalisé, ni par défaut — pour ce message.
+ *
+ * **404** : la ressource demandée n'existe pas. C'est le cas de `CANCELLATION`
+ * tant que #72 n'a pas livré son modèle de plateforme, et d'aucun autre. Distinct
+ * d'`UnrenderableNotificationError`, qui est le même fait vu depuis la chaîne
+ * d'envoi et se traduit en 503 : là-bas, c'est une capacité absente qui laisse la
+ * ligne reprenable ; ici, c'est une lecture qui ne trouve rien.
+ */
+export class NotificationTemplateNotFoundError extends DomainError {
+  public override readonly code = NOTIFICATION_ERROR_CODES.NOTIFICATION_TEMPLATE_NOT_FOUND;
+  public override readonly status = NOT_FOUND;
+
+  public constructor(type: string, channel: string) {
+    super("Aucun modèle de message n'existe pour ce type et ce canal.", { type, channel });
   }
 }

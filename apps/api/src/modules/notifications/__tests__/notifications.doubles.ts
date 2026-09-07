@@ -6,6 +6,7 @@ import type {
   NotificationSender,
   NotificationSendRequest,
 } from '../notification-sender';
+import type { NotificationTemplatesRepository } from '../notification-templates.repository';
 import type { NotificationsRepository } from '../notifications.repository';
 import {
   LIVE_NOTIFICATION_STATUSES,
@@ -15,10 +16,12 @@ import {
   type NotificationMessage,
   type NotificationRecord,
   type NotificationStatus,
+  type NotificationTemplateSource,
   type NotificationTrace,
   type NotificationType,
   type ReminderEligibility,
   type RenderedNotification,
+  type StoredNotificationTemplate,
 } from '../notifications.types';
 import { REMINDER_LEAD_MS, REMINDER_WINDOW_MS } from '../reminder-window';
 
@@ -438,4 +441,130 @@ export function countingSender(behaviour: readonly SendBehaviour[] = []): Counti
   };
 
   return { sender, calls };
+}
+
+/** Une personnalisation semée dans le double des modèles, tenant compris. */
+export interface StoredTemplateRow {
+  readonly tenantId: string;
+  readonly type: NotificationType;
+  readonly channel: NotificationChannel;
+  readonly source: NotificationTemplateSource;
+  readonly updatedAt?: Date;
+}
+
+/**
+ * Les modèles par établissement, en mémoire — pour les suites du service, du
+ * renderer et des routes de #69.
+ *
+ * ## Ce qu'il reproduit, et pourquoi cela suffit
+ *
+ * Deux propriétés, et ce sont celles dont dépendent les verdicts :
+ *
+ * - le **scoping** : il lit le vrai contexte de tenant, celui que l'extension
+ *   Prisma consulte, et **échoue** s'il n'y en a aucun. Un double qui lirait tout
+ *   hors portée ferait passer au vert une garde défaillante — c'est le même
+ *   défaut fermé que `FakeNotificationsJournal` ;
+ * - l'**unicité** `(tenant_id, type, channel)` : `save` remplace la ligne du
+ *   couple au lieu d'en empiler une seconde, ce qui est la conduite que
+ *   l'`updateMany`-puis-`create` du vrai dépôt produit.
+ *
+ * Ce qu'il ne prouve pas — que l'unique existe réellement en base — appartient à
+ * `notifications.migration.spec.ts`, qui relit le SQL, et à la CI, qui l'applique.
+ */
+export class FakeNotificationTemplates {
+  private readonly stored: StoredTemplateRow[] = [];
+
+  public seed(row: StoredTemplateRow): void {
+    this.stored.push(row);
+  }
+
+  public findAll(): Promise<readonly StoredNotificationTemplate[]> {
+    const tenantId = this.requireScope('notificationTemplate.findMany');
+
+    return Promise.resolve(
+      this.stored
+        .filter((row) => row.tenantId === tenantId)
+        .sort(
+          (left, right) =>
+            left.type.localeCompare(right.type) || left.channel.localeCompare(right.channel),
+        )
+        .map((row) => toStoredTemplate(row)),
+    );
+  }
+
+  public find(
+    type: NotificationType,
+    channel: NotificationChannel,
+  ): Promise<StoredNotificationTemplate | null> {
+    const tenantId = this.requireScope('notificationTemplate.findFirst');
+    const found = this.rowFor(tenantId, type, channel);
+
+    return Promise.resolve(found === undefined ? null : toStoredTemplate(found));
+  }
+
+  public save(
+    type: NotificationType,
+    channel: NotificationChannel,
+    source: NotificationTemplateSource,
+  ): Promise<StoredNotificationTemplate> {
+    const tenantId = this.requireScope('notificationTemplate.save');
+    const existing = this.rowFor(tenantId, type, channel);
+
+    if (existing !== undefined) {
+      this.stored.splice(this.stored.indexOf(existing), 1);
+    }
+
+    const row: StoredTemplateRow = { tenantId, type, channel, source, updatedAt: new Date() };
+    this.stored.push(row);
+
+    return Promise.resolve(toStoredTemplate(row));
+  }
+
+  public remove(type: NotificationType, channel: NotificationChannel): Promise<boolean> {
+    const tenantId = this.requireScope('notificationTemplate.deleteMany');
+    const existing = this.rowFor(tenantId, type, channel);
+
+    if (existing === undefined) {
+      return Promise.resolve(false);
+    }
+
+    this.stored.splice(this.stored.indexOf(existing), 1);
+
+    return Promise.resolve(true);
+  }
+
+  /** Le double, dans la forme que Nest injecte. */
+  public get repository(): NotificationTemplatesRepository {
+    return this as unknown as NotificationTemplatesRepository;
+  }
+
+  private rowFor(
+    tenantId: string,
+    type: NotificationType,
+    channel: NotificationChannel,
+  ): StoredTemplateRow | undefined {
+    return this.stored.find(
+      (row) => row.tenantId === tenantId && row.type === type && row.channel === channel,
+    );
+  }
+
+  /** Hors portée, on échoue plutôt que de lire les modèles de tous les salons. */
+  private requireScope(operation: string): string {
+    const tenantId = getTenantId();
+
+    if (tenantId === undefined) {
+      throw new FakeMissingTenantContextError(operation);
+    }
+
+    return tenantId;
+  }
+}
+
+function toStoredTemplate(row: StoredTemplateRow): StoredNotificationTemplate {
+  return {
+    type: row.type,
+    channel: row.channel,
+    source: row.source,
+    updatedAt: row.updatedAt ?? new Date('2026-09-07T10:00:00Z'),
+  };
 }

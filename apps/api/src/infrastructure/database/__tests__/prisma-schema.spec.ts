@@ -108,6 +108,14 @@ const TENANT_ROOT_TABLE = 'tenants';
  * faut donc que la livraison appartienne à quelque chose qui survit au
  * processus. Elle est soumise aux mêmes exigences que les autres : `tenant_id`
  * non nullable, index préfixé, unique composite.
+ *
+ * `notification_templates` porte la **personnalisation** des messages d'un salon
+ * (#69, CDC §1.4). Elle ne contient que ce qu'un établissement a délibérément
+ * écrit : les modèles par défaut de la plateforme restent en code, faute d'avoir
+ * un établissement auquel les rattacher — les y mettre aurait demandé un
+ * `tenant_id` nullable dans la table même qui décide de ce que les clientes de
+ * chaque salon reçoivent. Elle est donc soumise aux mêmes exigences que les
+ * autres, sans exception : `tenant_id` non nullable, unique composite préfixé.
  */
 const EXPECTED_TABLES = [
   'tenants',
@@ -127,6 +135,7 @@ const EXPECTED_TABLES = [
   'sales',
   'sale_items',
   'notifications',
+  'notification_templates',
   'refresh_tokens',
   'processed_webhook_events',
   'stripe_webhook_deliveries',

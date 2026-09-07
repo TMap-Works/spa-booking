@@ -22,6 +22,13 @@
  * deux.
  */
 import type { DeliveryEventOutcome } from './delivery-event';
+/**
+ * Le coût d'un SMS vient du moteur de modèles, qui sait seul compter les
+ * septets. Import **de type seul** : `notification-template.ts` n'importe rien
+ * d'ici, il n'y a donc aucun cycle, et l'effacement à la compilation garantit
+ * qu'il ne s'en formera pas.
+ */
+import type { SmsCost } from './notification-template';
 
 /**
  * Les trois messages du périmètre MVP — CDC §1.4, `enum NotificationType` du
@@ -418,4 +425,69 @@ export interface RenderedNotification {
   readonly html: string;
   /** Version texte brut — doublon de l'e-mail, corps du SMS. */
   readonly text: string;
+}
+
+/**
+ * Le contenu d'un modèle **avant** rendu — ce que le salon écrit, ou ce que la
+ * plateforme fournit par défaut (#69).
+ *
+ * Sa forme est celle de `RenderedNotification`, et ce n'est pas une coïncidence :
+ * un modèle est un message dont les valeurs ne sont pas encore posées. Les deux
+ * types restent distincts parce que confondre « ce qui porte des balises » et
+ * « ce qui part chez la cliente » est exactement l'erreur qu'un moteur de
+ * modèles doit rendre impossible.
+ *
+ * `text` n'est **jamais** vide : la version texte brut accompagne
+ * systématiquement le HTML — un e-mail qui n'a que du HTML est pénalisé par les
+ * filtres anti-spam (notifications §6, quatrième critère d'acceptation de #69) —
+ * et c'est aussi le corps du SMS. `subject` et `html` sont vides sur le canal
+ * SMS, qui n'a ni l'un ni l'autre.
+ */
+export interface NotificationTemplateSource {
+  readonly subject: string;
+  readonly html: string;
+  readonly text: string;
+}
+
+/**
+ * D'où vient le modèle qui sera employé.
+ *
+ * `PLATFORM` est le défaut versionné en code ; `TENANT` est ce que
+ * l'établissement a délibérément écrit. Le back-office a besoin de la
+ * distinction : « revenir au modèle par défaut » n'a de sens que sur un modèle
+ * qui n'en est pas un.
+ */
+export const NOTIFICATION_TEMPLATE_ORIGINS = ['PLATFORM', 'TENANT'] as const;
+
+export type NotificationTemplateOrigin = (typeof NOTIFICATION_TEMPLATE_ORIGINS)[number];
+
+/**
+ * Un modèle **effectif** — celui qui partira réellement pour ce message.
+ *
+ * C'est la seule forme que le back-office lit : la question « que reçoit ma
+ * cliente ? » se répond par un contenu et son origine, jamais par « voici votre
+ * personnalisation, débrouillez-vous pour savoir ce qui s'applique sinon ».
+ */
+export interface NotificationTemplateView {
+  readonly type: NotificationType;
+  readonly channel: NotificationChannel;
+  readonly origin: NotificationTemplateOrigin;
+  readonly source: NotificationTemplateSource;
+  /** Quand le salon l'a écrit. `null` sur un modèle de plateforme. */
+  readonly updatedAt: Date | null;
+  /**
+   * Ce que ce modèle coûtera en SMS, mesuré sur un rendu de référence.
+   *
+   * `null` sur le canal e-mail, où la question ne se pose pas : un e-mail long
+   * ne coûte rien de plus.
+   */
+  readonly sms: SmsCost | null;
+}
+
+/** Une ligne de `notification_templates`, réduite à ce dont le domaine a besoin. */
+export interface StoredNotificationTemplate {
+  readonly type: NotificationType;
+  readonly channel: NotificationChannel;
+  readonly source: NotificationTemplateSource;
+  readonly updatedAt: Date;
 }
