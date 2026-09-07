@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import type { ITXClientDenyList } from '@prisma/client/runtime/library';
 
 import {
@@ -8,7 +8,11 @@ import {
   type ScopedPrismaClient,
   type UnscopedPrismaClient,
 } from '../../infrastructure/database/prisma-clients';
-import type { StripeWebhookEvent, WebhookFact } from './stripe-webhook.types';
+import {
+  reviveWebhookEvent,
+  type StripeWebhookEvent,
+  type WebhookFact,
+} from './stripe-webhook.types';
 
 /**
  * Accès Prisma du point d'entrée des webhooks (api-module §2).
@@ -25,8 +29,9 @@ import type { StripeWebhookEvent, WebhookFact } from './stripe-webhook.types';
  * `__tests__/payments.boundaries.spec.ts` échoue si un second fichier du module
  * cite ce jeton.
  *
- * Il porte deux responsabilités que rien d'autre ne peut porter à sa place, et
- * une règle d'idempotence que #410 a tranchée.
+ * Il porte deux responsabilités que rien d'autre ne peut porter à sa place, une
+ * règle d'idempotence que #410 a tranchée, et — depuis #409 — la file durable
+ * des livraisons.
  *
  * ## 1. Résoudre l'établissement, avant toute portée de tenant
  *
@@ -73,11 +78,11 @@ import type { StripeWebhookEvent, WebhookFact } from './stripe-webhook.types';
  * | un `charge.refunded` émis à la main depuis le tableau de bord | ordinaire |
  *
  * Marquer un tel événement « traité » alors qu'il n'a rien touché serait la
- * **perte silencieuse d'une confirmation d'encaissement** : la file en mémoire
- * n'a aucune reprise automatique (`stripe-webhook.queue.ts`), le 200 est déjà
- * parti, et le renvoi manuel depuis le tableau de bord — le seul recours qui
- * reste — serait alors avalé comme un rejeu. Le rendez-vous ne serait jamais
- * confirmé, et rien ne le dirait.
+ * **perte silencieuse d'une confirmation d'encaissement** : le 200 est déjà
+ * parti, Stripe ne redélivre plus, et le renvoi manuel depuis le tableau de
+ * bord — le recours qui reste quand la ligne `payments` n'existera jamais —
+ * serait alors avalé comme un rejeu. Le rendez-vous ne serait jamais confirmé,
+ * et rien ne le dirait.
  *
  * La règle est donc : **si aucune ligne `payments` ne porte la référence citée,
  * la transaction est annulée en entier** — pas de marque, pas d'effet, et un
@@ -98,6 +103,25 @@ import type { StripeWebhookEvent, WebhookFact } from './stripe-webhook.types';
  * l'effet, parce que c'est ce qui sérialise deux livraisons concurrentes. C'est
  * l'annulation qui la retire, pas un test préalable — un test préalable aurait
  * relâché le verrou et laissé deux livraisons appliquer l'effet deux fois.
+ *
+ * ## 4. Il porte aussi la file durable des livraisons (#409)
+ *
+ * `stripe_webhook_deliveries` est le **travail à faire** ; `processed_webhook_events`
+ * est la preuve que c'est fait. Les deux vivent ici pour la même raison qui a
+ * fait exister cette classe : le balayage de reprise lit **sans portée de
+ * tenant**, parce qu'une livraison qu'un processus mort a laissée derrière lui
+ * n'appartient à aucune requête et n'a personne pour ouvrir sa portée. C'est la
+ * même dérogation que la résolution d'établissement, au même endroit, sous le
+ * même contrôle de `__tests__/payments.boundaries.spec.ts` — la loger ailleurs
+ * ferait un second détenteur de `PRISMA_UNSCOPED` dans le module, ce que
+ * tenant-isolation §3 refuse.
+ *
+ * Toutes les autres opérations de la file — inscrire, aboutir, replanifier,
+ * enterrer — passent par le client **scopé**, sous la portée ouverte par la
+ * file. La dérogation se réduit donc à ceci : lire les identifiants des
+ * livraisons prenables, et poser leur bail. Aucune de ces deux opérations ne
+ * fait sortir une donnée d'établissement de sa frontière — la seconde écrit
+ * `claimed_at`, et rien d'autre.
  */
 
 /**
@@ -151,6 +175,75 @@ export interface WebhookApplication {
 /** L'effet d'un fait sur la base, ou `null` quand aucune ligne ne porte sa référence. */
 type WebhookEffect = Omit<WebhookApplication, 'outcome'> | null;
 
+/**
+ * Une livraison inscrite en file durable, telle que la file la manipule (#409).
+ *
+ * Elle porte son établissement, parce qu'elle a pu être reprise par un
+ * balayage qui n'en avait aucun : c'est la ligne qui dit sous quelle portée le
+ * traitement doit s'ouvrir, et non l'inverse.
+ */
+export interface SpooledDelivery {
+  readonly id: string;
+  readonly tenantId: string;
+  /** Tentatives déjà consommées — la reprise ne remet pas le compteur à zéro. */
+  readonly attempts: number;
+  readonly serializationKey: string;
+  readonly event: StripeWebhookEvent;
+}
+
+/** Ce qu'il faut pour inscrire une livraison — l'événement, et ce qu'on en déduit. */
+export interface SpoolRequest {
+  readonly event: StripeWebhookEvent;
+  readonly serializationKey: string;
+}
+
+/** Les paramètres d'un tour de balayage — la fenêtre du bail, et sa borne. */
+export interface ClaimRequest {
+  readonly now: Date;
+  readonly leaseMs: number;
+  readonly batchSize: number;
+}
+
+/**
+ * Le conflit d'unicité, et lui seul.
+ *
+ * `P2002` est le code que Prisma pose sur une violation de contrainte unique.
+ * Le distinguer d'une panne quelconque est ce qui sépare « Stripe a redélivré »
+ * — normal, rien à faire — de « la base ne répond pas » — qu'il faut laisser
+ * remonter jusqu'au contrôleur, pour que la route ne rende pas 2xx et que
+ * Stripe redélivre.
+ */
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+}
+
+/**
+ * La valeur mal formée, et elle seule.
+ *
+ * `P2023` est le code que Prisma pose quand PostgreSQL refuse une valeur pour la
+ * colonne visée — ici, une chaîne comparée à un `uuid`. Ce n'est pas une panne :
+ * c'est une donnée qui ne peut désigner aucune ligne, et la traiter comme un
+ * « introuvable » est exactement ce qu'elle mérite.
+ */
+function isMalformedValue(error: unknown): boolean {
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2023';
+}
+
+/**
+ * Le nom et le message d'une panne, tronqués à ce que `last_error` accepte.
+ *
+ * La troncature n'est pas cosmétique : la colonne est un `VARCHAR(500)`, et une
+ * trace un peu bavarde — Prisma en produit — ferait échouer l'écriture qui
+ * enregistre la panne. Perdre la ligne de file pour cause de message trop long
+ * serait le comble.
+ */
+const MAX_ERROR_LENGTH = 500;
+
+export function describeFailure(error: unknown): string {
+  const text = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  return text.length > MAX_ERROR_LENGTH ? text.slice(0, MAX_ERROR_LENGTH) : text;
+}
+
 const ALREADY_PROCESSED: WebhookApplication = {
   outcome: 'replayed',
   paymentsTouched: 0,
@@ -162,6 +255,9 @@ const UNMATCHED: WebhookApplication = {
   paymentsTouched: 0,
   appointmentsConfirmed: 0,
 };
+
+/** Ce qu'on écrit dans `last_error` quand la ligne elle-même n'est plus lisible. */
+const UNREADABLE_PAYLOAD = 'payload illisible : forme inconnue du lecteur courant';
 
 /**
  * Sentinelle interne : le seul moyen d'annuler une transaction Prisma est d'en
@@ -182,7 +278,8 @@ export class StripeWebhookRepository {
     // un webhook n'arrive ni avec un jeton ni avec un slug, seulement avec la
     // référence opaque de l'intention. Le filtre par référence est écrit à la
     // main ci-dessous, et la projection est réduite au seul `tenant_id`
-    // (tenant-isolation §3).
+    // (tenant-isolation §3). La reprise des livraisons orphelines relève de la
+    // même nécessité, et de la même dérogation.
     @Inject(PRISMA_UNSCOPED) private readonly prismaUnscoped: UnscopedPrismaClient,
   ) {}
 
@@ -219,6 +316,323 @@ export class StripeWebhookRepository {
     });
 
     return found?.tenantId ?? null;
+  }
+
+  /**
+   * L'établissement que désigne une **indication** de métadonnée, s'il existe.
+   *
+   * `StripeWebhookEvent.tenantHint` annonce depuis toujours qu'elle est « une
+   * *indication* — le résolveur la confronte à la base avant d'ouvrir quoi que
+   * ce soit ». Jusqu'à #409 rien ne le faisait, et cela ne coûtait rien : la
+   * valeur n'était employée que pour ouvrir une portée, et une portée ouverte
+   * sur un établissement inexistant ne trouvait simplement aucune ligne.
+   *
+   * Depuis #409 elle sert à **écrire** — c'est sous cet établissement que la
+   * livraison est inscrite, pendant la requête HTTP. Une indication qui ne
+   * désigne rien fait alors violer la clé étrangère, `enqueue` rejette, la route
+   * rend 500, et Stripe redélivre trois jours durant un événement que rien ne
+   * rendra jamais inscriptible. La confrontation promise devient donc
+   * nécessaire, et c'est ici qu'elle se fait.
+   *
+   * Deux formes de « ne désigne rien » sont traitées de la même façon, parce
+   * qu'elles appellent la même conduite : l'établissement supprimé ou jamais
+   * créé — `findFirst` rend `null` —, et la chaîne qui n'est pas un UUID —
+   * PostgreSQL refuse la comparaison, Prisma lève `P2023`. La seconde n'est pas
+   * théorique : la métadonnée est recopiée telle quelle depuis une intention que
+   * n'importe qui peut créer dans le tableau de bord Stripe.
+   *
+   * `prismaUnscoped`, forcément : on cherche un établissement avant qu'aucune
+   * portée n'existe, et la projection est réduite à son identifiant — c'est la
+   * même dérogation, au même endroit, que `findTenantIdByProviderReference`
+   * (tenant-isolation §3).
+   */
+  public async findTenantIdByHint(hint: string): Promise<string | null> {
+    try {
+      const found = await this.prismaUnscoped.tenant.findFirst({
+        where: { id: hint },
+        select: { id: true },
+      });
+      return found?.id ?? null;
+    } catch (error) {
+      if (isMalformedValue(error)) {
+        return null;
+      }
+      // Toute autre panne remonte : une base injoignable ne doit pas se
+      // déguiser en « cet établissement n'existe pas », qui ferait acquitter à
+      // Stripe un événement qu'on n'a pas su traiter.
+      throw error;
+    }
+  }
+
+  /**
+   * Inscrit une livraison en file durable, ou rend `null` si elle y est déjà.
+   *
+   * **C'est l'appel qui se produit pendant la requête HTTP**, avant que le 200
+   * ne parte. Tout le troisième critère de #409 tient dans ce placement : après
+   * lui, la livraison est sur disque et survit à l'arrêt du processus ; avant
+   * lui, elle n'existe que chez Stripe — qui redélivrera, précisément parce que
+   * nous n'aurons rien acquitté.
+   *
+   * `null` veut dire « Stripe a redélivré pendant que la première attendait » :
+   * l'unique `(tenant_id, event_id)` a tranché, et il n'y a pas de second
+   * travail à faire. Ce n'est pas une erreur, c'est la contrainte qui fait son
+   * office — la même mécanique que `processed_webhook_events`, un cran plus
+   * tôt.
+   *
+   * **Sauf si la ligne en conflit est morte.** Une livraison `DEAD` n'attend
+   * plus rien : le balayage l'exclut, et l'alerte qui l'a accompagnée demandait
+   * précisément une intervention humaine — dont le seul geste disponible est le
+   * renvoi de l'événement depuis le tableau de bord Stripe. Rendre `null` sur
+   * cette ligne-là avalerait ce renvoi comme un rejeu et laisserait
+   * l'encaissement `PENDING` pour de bon. La redélivrance **ressuscite** donc la
+   * ligne morte au lieu d'être ignorée : voir `reviveDeadDelivery`.
+   *
+   * Un `create` sous `try`, et non le `createMany({ skipDuplicates })` de
+   * `apply` : la raison qui impose l'autre là-bas — un `INSERT` en conflit
+   * avorte la transaction PostgreSQL entière — n'existe pas ici, puisqu'il n'y
+   * a pas de transaction autour. Et `create` rend l'identifiant, dont la file a
+   * besoin pour aboutir ou replanifier.
+   */
+  public async spool(request: SpoolRequest): Promise<SpooledDelivery | null> {
+    try {
+      const created = await this.prisma.stripeWebhookDelivery.create({
+        data: withScopedTenant<Prisma.StripeWebhookDeliveryUncheckedCreateInput>({
+          eventId: request.event.eventId,
+          eventType: request.event.eventType,
+          serializationKey: request.serializationKey,
+          // L'événement **réduit**, jamais le corps brut de Stripe : aucun champ
+          // de carte n'y figure, parce que `stripe-webhook.types.ts` n'en
+          // déclare aucun (payments-stripe §1).
+          payload: request.event as unknown as Prisma.InputJsonValue,
+          // Le bail est posé d'emblée : l'instance qui inscrit est celle qui
+          // traite. Sans cela, le balayage d'une autre instance pourrait
+          // reprendre la livraison dans la seconde qui suit, et deux traitements
+          // partiraient de front.
+          claimedAt: new Date(),
+        }),
+        // `tenantId` est relu de la ligne écrite plutôt que recopié de
+        // l'appelant : c'est l'extension de scoping qui l'a posé depuis le
+        // contexte, et le relire est la seule façon d'être sûr que la livraison
+        // reprise s'ouvrira sous la portée où elle a été inscrite.
+        select: { id: true, tenantId: true, attempts: true },
+      });
+
+      return {
+        id: created.id,
+        tenantId: created.tenantId,
+        attempts: created.attempts,
+        serializationKey: request.serializationKey,
+        event: request.event,
+      };
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        return this.reviveDeadDelivery(request);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * La redélivrance qui retombe sur une livraison **enterrée** la remet au
+   * travail (#409).
+   *
+   * C'est ce qui rend le recours humain effectif. `bury` pose `DEAD` et émet
+   * l'alerte « intervention humaine requise » ; le seul geste que cette alerte
+   * appelle est le renvoi de l'événement depuis le tableau de bord Stripe, une
+   * fois l'incident tranché. Sans cette résurrection, ce renvoi buterait sur
+   * l'unique `(tenant_id, event_id)`, serait acquitté comme un rejeu, et la
+   * ligne morte resterait morte — l'alerte demanderait donc une action qu'aucun
+   * chemin n'exécute.
+   *
+   * `updateMany` filtré sur `DEAD`, et non un `update` : c'est le filtre de
+   * statut, réévalué après la prise du verrou de ligne, qui départage deux
+   * redélivrances arrivées ensemble. Une seule voit `count = 1` et rend la
+   * livraison ; l'autre rend `null`, comme n'importe quelle redélivrance
+   * arrivée pendant qu'une livraison vivante attendait.
+   *
+   * Le compteur de tentatives repart de zéro, et le `payload` est réécrit :
+   * l'événement qui revient est le même, mais il est relu par le code courant —
+   * ce qui répare au passage la ligne qu'un `payload` devenu illisible avait
+   * fait enterrer.
+   */
+  private async reviveDeadDelivery(request: SpoolRequest): Promise<SpooledDelivery | null> {
+    const now = new Date();
+    const revived = await this.prisma.stripeWebhookDelivery.updateMany({
+      where: { eventId: request.event.eventId, status: 'DEAD' },
+      data: {
+        status: 'PENDING',
+        attempts: 0,
+        serializationKey: request.serializationKey,
+        payload: request.event as unknown as Prisma.InputJsonValue,
+        nextAttemptAt: now,
+        // Le bail est reposé comme à l'inscription : l'instance qui ressuscite
+        // est celle qui traite.
+        claimedAt: now,
+        lastError: null,
+      },
+    });
+
+    if (revived.count === 0) {
+      return null;
+    }
+
+    // `findFirst` et non `findUnique` : l'extension injecte `tenantId` dans le
+    // `where`, et le couple `(tenant_id, event_id)` est unique.
+    const row = await this.prisma.stripeWebhookDelivery.findFirst({
+      where: { eventId: request.event.eventId },
+      select: { id: true, tenantId: true, attempts: true },
+    });
+
+    return row === null
+      ? null
+      : {
+          id: row.id,
+          tenantId: row.tenantId,
+          attempts: row.attempts,
+          serializationKey: request.serializationKey,
+          event: request.event,
+        };
+  }
+
+  /**
+   * La livraison a abouti : elle n'a plus de raison d'exister.
+   *
+   * La preuve qu'elle a eu lieu est la ligne de `processed_webhook_events`,
+   * écrite dans la transaction du traitement. Conserver ici un second
+   * enregistrement du même fait ferait grossir une table de file pour redire ce
+   * qu'un journal d'idempotence dit déjà mieux.
+   *
+   * `deleteMany` et non `delete` : la ligne a pu être emportée entre-temps —
+   * par une purge, par un autre chemin — et un `delete` sur une ligne absente
+   * lèverait là où il n'y a rien à signaler.
+   */
+  public async completeDelivery(deliveryId: string): Promise<void> {
+    await this.prisma.stripeWebhookDelivery.deleteMany({ where: { id: deliveryId } });
+  }
+
+  /**
+   * Le traitement a échoué et il reste des tentatives : on replanifie.
+   *
+   * Le bail est **repoussé**, pas relâché : cette instance tient toujours la
+   * livraison et va la reprendre après le délai. Le relâcher ferait reprendre
+   * la même livraison par le balayage d'une autre instance pendant que celle-ci
+   * attend, et les deux tentatives partiraient de front.
+   */
+  public async rescheduleDelivery(
+    deliveryId: string,
+    next: { readonly attempts: number; readonly nextAttemptAt: Date; readonly lastError: string },
+  ): Promise<void> {
+    await this.prisma.stripeWebhookDelivery.updateMany({
+      where: { id: deliveryId },
+      data: {
+        attempts: next.attempts,
+        nextAttemptAt: next.nextAttemptAt,
+        lastError: next.lastError,
+        claimedAt: new Date(),
+      },
+    });
+  }
+
+  /**
+   * La borne de réessais est franchie : la livraison passe en file d'attente
+   * morte.
+   *
+   * Le bail est relâché — plus personne ne la tient, et plus personne ne doit
+   * la reprendre : c'est le statut `DEAD` qui l'exclut du balayage, et le
+   * relâchement du bail évite qu'une ligne morte n'ait l'air d'être en cours de
+   * traitement pour qui la relira.
+   */
+  public async deadLetterDelivery(
+    deliveryId: string,
+    outcome: { readonly attempts: number; readonly lastError: string },
+  ): Promise<void> {
+    await this.prisma.stripeWebhookDelivery.updateMany({
+      where: { id: deliveryId },
+      data: {
+        status: 'DEAD',
+        attempts: outcome.attempts,
+        lastError: outcome.lastError,
+        claimedAt: null,
+      },
+    });
+  }
+
+  /**
+   * Les livraisons que plus personne ne tient — la reprise après un arrêt
+   * brutal.
+   *
+   * **La seule lecture inter-tenant de la file**, et elle l'est par nécessité :
+   * une livraison orpheline n'appartient à aucune requête, aucun jeton ne la
+   * désigne, et il n'existe personne pour ouvrir sa portée avant qu'on ne
+   * l'ait lue. C'est le même raisonnement, mot pour mot, que
+   * `findTenantIdByProviderReference` — d'où la présence des deux dans cette
+   * classe et pas ailleurs (tenant-isolation §3).
+   *
+   * La prise est un `UPDATE` **conditionnel**, jamais un `SELECT` suivi d'un
+   * `UPDATE` : sous `READ COMMITTED`, PostgreSQL réévalue le prédicat après
+   * avoir pris le verrou de ligne, si bien que de deux instances qui prennent
+   * la même livraison, une seule voit `count = 1`. C'est la base qui tranche,
+   * pas une fenêtre de code (ADR 0002).
+   *
+   * Une ligne dont le `payload` ne se relit plus est **enterrée sur place** :
+   * la rendre ferait tomber le traitement à chaque tour de balayage, et la
+   * laisser telle quelle la ferait reprendre indéfiniment. C'est très
+   * exactement ce à quoi la file d'attente morte sert.
+   */
+  public async claimAbandonedDeliveries(claim: ClaimRequest): Promise<SpooledDelivery[]> {
+    const staleBefore = new Date(claim.now.getTime() - claim.leaseMs);
+    const takeable: Prisma.StripeWebhookDeliveryWhereInput = {
+      status: 'PENDING',
+      nextAttemptAt: { lte: claim.now },
+      OR: [{ claimedAt: null }, { claimedAt: { lt: staleBefore } }],
+    };
+
+    const candidates = await this.prismaUnscoped.stripeWebhookDelivery.findMany({
+      where: takeable,
+      orderBy: { createdAt: 'asc' },
+      take: claim.batchSize,
+      select: {
+        id: true,
+        tenantId: true,
+        attempts: true,
+        serializationKey: true,
+        payload: true,
+      },
+    });
+
+    const claimed: SpooledDelivery[] = [];
+
+    for (const candidate of candidates) {
+      const won = await this.prismaUnscoped.stripeWebhookDelivery.updateMany({
+        // Le prédicat est répété à l'identique : c'est lui, réévalué après la
+        // prise du verrou de ligne, qui départage deux instances.
+        where: { ...takeable, id: candidate.id },
+        data: { claimedAt: claim.now },
+      });
+
+      if (won.count === 0) {
+        continue;
+      }
+
+      const event = reviveWebhookEvent(candidate.payload);
+      if (event === null) {
+        await this.prismaUnscoped.stripeWebhookDelivery.updateMany({
+          where: { id: candidate.id },
+          data: { status: 'DEAD', lastError: UNREADABLE_PAYLOAD, claimedAt: null },
+        });
+        continue;
+      }
+
+      claimed.push({
+        id: candidate.id,
+        tenantId: candidate.tenantId,
+        attempts: candidate.attempts,
+        serializationKey: candidate.serializationKey,
+        event,
+      });
+    }
+
+    return claimed;
   }
 
   /**
@@ -323,10 +737,11 @@ export class StripeWebhookRepository {
         // pas plafonné ici : `payments_refunded_amount_minor_check` refuse en
         // base un remboursement supérieur à l'encaissement, la transaction est
         // annulée et l'événement n'est pas marqué traité — rien de faux n'est
-        // écrit. La reprise, elle, est **manuelle** : le 200 est déjà parti,
-        // Stripe ne rejouera pas de lui-même, et c'est l'alerte de niveau
-        // `error` de `InProcessWebhookQueue` qui doit amener quelqu'un à
-        // renvoyer l'événement une fois l'incident de réconciliation tranché.
+        // écrit. La panne remonte alors jusqu'à la file durable, qui réessaie
+        // puis enterre la livraison avec une alerte (#409) : la contrainte étant
+        // déterministe, les réessais échoueront tous, et c'est bien l'alerte de
+        // file d'attente morte qui doit amener quelqu'un à trancher
+        // l'incident de réconciliation.
         const { count } = await tx.payment.updateMany({
           where: { id: payment.id },
           data: {
