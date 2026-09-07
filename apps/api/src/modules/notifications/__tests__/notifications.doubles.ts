@@ -17,8 +17,10 @@ import {
   type NotificationStatus,
   type NotificationTrace,
   type NotificationType,
+  type ReminderEligibility,
   type RenderedNotification,
 } from '../notifications.types';
+import { REMINDER_LEAD_MS, REMINDER_WINDOW_MS } from '../reminder-window';
 
 /**
  * Doubles du module `notifications`.
@@ -103,6 +105,15 @@ export interface FakeNotificationsRepository {
    * n'est pas celui de la cliente, que le client scopé traite comme une absence.
    */
   contact: { hasEmail: boolean; hasSms: boolean } | null;
+  /**
+   * Ce que la relecture d'éligibilité du rappel J-1 trouve (#71).
+   *
+   * Par défaut un rendez-vous confirmé, situé **au milieu** de la fenêtre de
+   * rappel : les suites qui ne parlent pas de la revérification n'ont ainsi rien
+   * à régler, et celles qui en parlent posent l'état qu'elles veulent éprouver.
+   * `null` fait disparaître le rendez-vous.
+   */
+  reminder: ReminderEligibility | null;
 }
 
 function toRecord(row: FakeRow): NotificationRecord {
@@ -193,18 +204,31 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     return Promise.resolve(true);
   };
 
-  const state: { contact: { hasEmail: boolean; hasSms: boolean } | null } = {
+  const state: {
+    contact: { hasEmail: boolean; hasSms: boolean } | null;
+    reminder: ReminderEligibility | null;
+  } = {
     contact: { hasEmail: true, hasSms: true },
+    // Au milieu de la fenêtre : `reminderTiming` rendra `due` quel que soit le
+    // temps que la suite met à s'exécuter.
+    reminder: {
+      status: 'CONFIRMED',
+      startsAt: new Date(Date.now() + REMINDER_LEAD_MS + REMINDER_WINDOW_MS / 2),
+    },
   };
 
   const findRecipientContact = (): Promise<{ hasEmail: boolean; hasSms: boolean } | null> =>
     Promise.resolve(state.contact);
+
+  const findReminderEligibility = (): Promise<ReminderEligibility | null> =>
+    Promise.resolve(state.reminder);
 
   const repository = {
     claim,
     markSent,
     markFailed,
     findRecipientContact,
+    findReminderEligibility,
   } as unknown as NotificationsRepository;
 
   return {
@@ -215,6 +239,12 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     },
     set contact(value) {
       state.contact = value;
+    },
+    get reminder() {
+      return state.reminder;
+    },
+    set reminder(value) {
+      state.reminder = value;
     },
   };
 }

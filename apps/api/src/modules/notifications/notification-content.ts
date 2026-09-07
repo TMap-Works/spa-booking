@@ -248,6 +248,97 @@ export function renderBookingConfirmationEmail(
 }
 
 /**
+ * L'e-mail de rappel J-1 — le message que #71 met en circulation.
+ *
+ * ## Ce qu'il partage avec la confirmation, et ce qui l'en distingue
+ *
+ * Le récapitulatif est le même, et c'est voulu : une cliente qui reçoit un
+ * rappel ne doit pas avoir à retrouver la confirmation pour savoir avec qui, où
+ * et pour combien. Ce qui change est **ce que le message affirme** — la
+ * confirmation dit « c'est enregistré », le rappel dit « c'est demain, et voici
+ * comment vous décommander si vous ne pouvez pas ». Ce second membre de phrase
+ * est la raison d'être du message : le CDC §1.4 le tient pour la mesure qui
+ * réduit le taux de no-show, et une annulation la veille libère un créneau que
+ * le salon peut encore vendre.
+ *
+ * ## Il ne dit pas « demain »
+ *
+ * Le rappel part entre 24 et 25 heures avant le rendez-vous, ce qui tombe
+ * presque toujours la veille dans le calendrier du salon — mais « presque
+ * toujours » n'est pas une garantie qu'un modèle a le droit de prendre : un
+ * changement d'heure, ou un rendez-vous au tout début de la fenêtre, suffirait à
+ * rendre le mot faux. La date complète, dans le fuseau de l'établissement, est
+ * toujours juste et ne coûte rien de plus à lire.
+ */
+export function renderReminderEmail(
+  context: AppointmentMessageContext,
+  cancelUrl: string,
+): RenderedNotification {
+  const rows = summaryRows(context);
+  const zone = context.tenantTimeZone;
+  const when = formatDateTimeInTenantTimeZone(context.startsAt, zone);
+
+  const subject = `Rappel : votre rendez-vous du ${when} — ${context.tenantName}`;
+
+  const htmlRows = rows
+    .map(
+      ([label, value]) =>
+        `<tr><th align="left">${escapeHtml(label)}</th><td>${escapeHtml(value)}</td></tr>`,
+    )
+    .join('');
+
+  const html = [
+    '<!DOCTYPE html>',
+    '<html lang="fr"><body>',
+    `<p>Bonjour ${escapeHtml(clientName(context))},</p>`,
+    `<p>Nous vous attendons chez ${escapeHtml(context.tenantName)} le ${escapeHtml(when)}.</p>`,
+    `<table role="presentation">${htmlRows}</table>`,
+    `<p>Les horaires sont donnés à l’heure de ${escapeHtml(zone)}.</p>`,
+    `<p>Un empêchement ? <a href="${escapeHtml(cancelUrl)}">Annulez ou déplacez votre rendez-vous</a> — ` +
+      'cela libère le créneau pour quelqu’un d’autre.</p>',
+    `<p>À très bientôt,<br />${escapeHtml(context.tenantName)}</p>`,
+    '</body></html>',
+  ].join('');
+
+  const text = [
+    `Bonjour ${clientName(context)},`,
+    '',
+    `Nous vous attendons chez ${context.tenantName} le ${when}.`,
+    '',
+    ...rows.map(([label, value]) => `${label} : ${value}`),
+    '',
+    `Les horaires sont donnés à l’heure de ${zone}.`,
+    '',
+    `Un empêchement ? Annulez ou déplacez votre rendez-vous : ${cancelUrl}`,
+    '',
+    `À très bientôt,`,
+    context.tenantName,
+  ].join('\n');
+
+  return { subject, html, text };
+}
+
+/**
+ * Le SMS de rappel — l'avis, et rien d'autre.
+ *
+ * Même économie que le SMS de confirmation : le détail et le lien d'annulation
+ * sont dans l'e-mail, qui part toujours. Le SMS existe pour être lu sur un écran
+ * verrouillé, et un rappel qu'on ne lit pas ne réduit aucun no-show.
+ */
+export function renderReminderSms(context: AppointmentMessageContext): RenderedNotification {
+  const zone = context.tenantTimeZone;
+  const name =
+    context.tenantName.length > SMS_TENANT_NAME_MAX
+      ? `${context.tenantName.slice(0, SMS_TENANT_NAME_MAX - 1)}…`
+      : context.tenantName;
+  const text =
+    `${name} : rappel de votre rendez-vous le ` +
+    `${formatDateTimeInTenantTimeZone(context.startsAt, zone)} (${zone}).`;
+
+  return { subject: '', html: '', text: text.slice(0, SMS_MAX_LENGTH) };
+}
+
+/**
  * Le SMS de confirmation — le même fait, en une phrase.
  *
  * Il ne reprend pas le récapitulatif complet : un SMS n'est pas un e-mail

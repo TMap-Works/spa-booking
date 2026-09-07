@@ -6,9 +6,13 @@ import { BookingConfirmationListener } from './booking-confirmation.listener';
 import { NotificationDispatchService } from './notification-dispatch.service';
 import { AppointmentNotificationRenderer, NOTIFICATION_RENDERER } from './notification-renderer';
 import { NOTIFICATION_SENDER, UnconfiguredNotificationSender } from './notification-sender';
+import { InternalCallerGuard } from './internal-caller.guard';
+import { NotificationsConfig } from './notifications.config';
 import { NotificationsController } from './notifications.controller';
 import { NotificationsRepository } from './notifications.repository';
 import { NotificationsService } from './notifications.service';
+import { ReminderSweepRepository } from './reminder-sweep.repository';
+import { ReminderSweepService } from './reminder-sweep.service';
 
 /**
  * Module `notifications` — confirmations, rappels J-1, avis d'annulation
@@ -64,6 +68,18 @@ import { NotificationsService } from './notifications.service';
     NotificationsService,
     NotificationDispatchService,
     BookingConfirmationListener,
+    // Le rappel J-1 (#71) : sa sélection, ses lectures, et la garde de la route
+    // interne qui la déclenche. `NotificationsConfig` lit `process.env` à la
+    // construction — même régime que `StripeConfig`, et pour la même raison :
+    // une variable de notifications n'a pas à conditionner le démarrage des
+    // sept autres modules.
+    ReminderSweepRepository,
+    ReminderSweepService,
+    // `useFactory` et non la classe nue, exactement comme `StripeConfig` : le
+    // seul paramètre du constructeur est l'environnement, que Nest chercherait
+    // sinon à résoudre comme une dépendance.
+    { provide: NotificationsConfig, useFactory: () => new NotificationsConfig(process.env) },
+    InternalCallerGuard,
     // Le port de rendu. Les modèles par établissement (notifications §6) le
     // remplaceront sans que le reste du module bouge — c'est l'intérêt d'avoir
     // nommé la frontière plutôt que d'appeler les fonctions de rendu en dur.

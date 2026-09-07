@@ -4,6 +4,7 @@ import {
   type NotificationMessage,
   type NotificationType,
 } from '../notifications.types';
+import { REMINDER_LEAD_MS, REMINDER_WINDOW_MS } from '../reminder-window';
 import {
   RENDERED,
   countingSender,
@@ -27,6 +28,7 @@ import {
  * soit la conduite du service.
  */
 
+const TENANT_ID = 'tenant-1';
 const APPOINTMENT_ID = 'appointment-1';
 const RECIPIENT_ID = 'user-1';
 
@@ -38,6 +40,7 @@ function message(
   const appointmentId = overrides.appointmentId ?? APPOINTMENT_ID;
 
   return {
+    tenantId: TENANT_ID,
     dedupeKey: appointmentDedupeKey(appointmentId, type, channel),
     appointmentId,
     recipientUserId: RECIPIENT_ID,
@@ -309,5 +312,90 @@ describe("notifications — l'échec d'expédition", () => {
     await expect(service.dispatch(message())).rejects.toBeDefined();
 
     expect(repository.rows[0]?.failureReason).toHaveLength(500);
+  });
+});
+
+/**
+ * La revérification du rendez-vous au moment de l'envoi — troisième critère
+ * d'acceptation de #71.
+ *
+ * Elle ne concerne **que** `REMINDER_24H` : la confirmation part dans la seconde
+ * qui suit la réservation, et l'avis d'annulation a pour objet même un
+ * rendez-vous qui n'occupe plus rien.
+ */
+describe('notifications — le rappel J-1 se revérifie au moment de l’envoi', () => {
+  /** Un instant de référence, et un rendez-vous placé par rapport à lui. */
+  const NOW = new Date('2026-09-07T09:00:00.000Z');
+  const inWindow = new Date(NOW.getTime() + REMINDER_LEAD_MS + REMINDER_WINDOW_MS / 2);
+
+  it('envoie quand le rendez-vous tient toujours son créneau', async () => {
+    const { service, sender, repository } = build();
+    repository.reminder = { status: 'CONFIRMED', startsAt: inWindow };
+
+    await expect(service.dispatch(message('REMINDER_24H'), NOW)).resolves.toBe('sent');
+
+    expect(sender.calls).toHaveLength(1);
+  });
+
+  it.each([['CANCELLED'], ['NO_SHOW'], ['COMPLETED']])(
+    'n’envoie rien quand le rendez-vous est passé en %s entre-temps',
+    async (status) => {
+      const { service, sender, repository } = build();
+      repository.reminder = { status, startsAt: inWindow };
+
+      await expect(service.dispatch(message('REMINDER_24H'), NOW)).resolves.toBe('skipped');
+
+      expect(sender.calls).toEqual([]);
+      // Aucune ligne inscrite : un rappel supprimé n'est pas un envoi échoué, et
+      // l'afficher `FAILED` au comptoir aurait fait chercher une panne.
+      expect(repository.rows).toEqual([]);
+    },
+  );
+
+  it('n’envoie rien quand le rendez-vous a disparu sous la livraison', async () => {
+    const { service, sender, repository } = build();
+    repository.reminder = null;
+
+    await expect(service.dispatch(message('REMINDER_24H'), NOW)).resolves.toBe('skipped');
+
+    expect(sender.calls).toEqual([]);
+    expect(repository.rows).toEqual([]);
+  });
+
+  it('n’envoie pas un rappel en retard — le message a trop attendu en file', async () => {
+    const { service, sender, repository } = build();
+    // Le message a été publié pour un rendez-vous à J-24 h ; il n'est consommé
+    // qu'une fois la tolérance dépassée — après un passage en file d'attente
+    // morte, puis un rejeu manuel.
+    repository.reminder = {
+      status: 'CONFIRMED',
+      startsAt: new Date(NOW.getTime() + 3 * 3_600_000),
+    };
+
+    await expect(service.dispatch(message('REMINDER_24H'), NOW)).resolves.toBe('skipped');
+
+    expect(sender.calls).toEqual([]);
+    expect(repository.rows).toEqual([]);
+  });
+
+  it('ne lève pas : un rappel supprimé s’acquitte auprès de SQS', async () => {
+    // Lever aurait fait rejouer le message jusqu'à la file d'attente morte, et
+    // l'alarme de profondeur aurait signalé une panne là où il n'y a qu'une
+    // annulation.
+    const { service, repository } = build();
+    repository.reminder = { status: 'CANCELLED', startsAt: inWindow };
+
+    await expect(service.dispatch(message('REMINDER_24H'), NOW)).resolves.toBe('skipped');
+  });
+
+  it('ne revérifie rien pour une confirmation de réservation', async () => {
+    const { service, sender, repository } = build();
+    // Le rendez-vous est annulé et hors fenêtre : une confirmation part quand
+    // même, parce qu'elle est la preuve d'une réservation qui a bien eu lieu.
+    repository.reminder = { status: 'CANCELLED', startsAt: new Date(NOW.getTime() - 1) };
+
+    await expect(service.dispatch(message('BOOKING_CONFIRMATION'), NOW)).resolves.toBe('sent');
+
+    expect(sender.calls).toHaveLength(1);
   });
 });
