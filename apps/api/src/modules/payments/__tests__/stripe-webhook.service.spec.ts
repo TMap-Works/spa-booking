@@ -106,6 +106,22 @@ describe('StripeWebhookService — résolution de l’établissement', () => {
     expect(observed).toEqual(['tenant-b']);
   });
 
+  it('n’ouvre rien sur une métadonnée qui ne désigne aucun établissement (#409)', async () => {
+    // La métadonnée est **confrontée** à la base, comme son commentaire
+    // l'annonce depuis le premier jour. Elle ne coûtait rien tant qu'elle
+    // n'ouvrait qu'une portée de lecture ; depuis que la file s'en sert pour
+    // écrire la livraison, une indication qui ne désigne rien ferait violer la
+    // clé étrangère pendant la requête HTTP — et Stripe redélivrerait sans fin.
+    const { service, repository, log } = subject();
+    repository.inconnus.add('tenant-disparu');
+    const apply = jest.spyOn(repository, 'apply');
+
+    await service.process(succeeded({ tenantHint: 'tenant-disparu' }));
+
+    expect(apply).not.toHaveBeenCalled();
+    expect(log.warnings).toContain('stripe webhook: établissement non résolu, événement ignoré');
+  });
+
   it('n’écrit rien et journalise quand l’établissement reste introuvable', async () => {
     const { service, repository, log } = subject();
     const apply = jest.spyOn(repository, 'apply');

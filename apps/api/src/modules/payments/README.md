@@ -274,25 +274,55 @@ n'ont de quoi travailler. L'établissement se résout donc en deux temps :
 Le traitement s'exécute ensuite dans `runWithTenant`, la porte que
 `tenant-context.ts` prévoit pour les traitements hors requête HTTP.
 
-### 4. Le 200 ne dépend pas du traitement
+### 4. Le 200 ne dépend pas du traitement, mais il engage à le faire (#409)
 
 Le traitement part dans `WEBHOOK_QUEUE`. « Un webhook qui dépasse le délai est
-rejoué et amplifie la charge » : la file coupe ce couplage. Son implémentation
-est en mémoire — la chaîne EventBridge → SQS → Lambda du CDC §2.2 n'est pas
-posée.
+rejoué et amplifie la charge » : la file coupe ce couplage.
 
-La contrepartie est à connaître, et elle n'est pas gratuite : **le 200 étant
-déjà parti, Stripe ne rejoue rien.** Il ne redélivre que ce qu'il a vu échouer
-— un non-2xx ou un délai dépassé. Un traitement qui échoue en base, ou un arrêt
-brutal du processus, laisse donc l'encaissement `PENDING` et le rendez-vous non
-confirmé, sans aucune nouvelle livraison. `processed_webhook_events` rend un
-renvoi manuel depuis le tableau de bord Stripe inoffensif — c'est ce qui rend la
-reprise possible —, mais elle ne la déclenche pas.
+Ce que le 200 **engage** est l'autre moitié de l'affaire, et c'est ce que #409 a
+posé. À partir de l'accusé, **Stripe ne rejoue plus rien** — il ne redélivre que
+ce qu'il a vu échouer, un non-2xx ou un délai dépassé. Il faut donc qu'à cet
+instant la livraison appartienne déjà à quelque chose qui survit au processus.
+D'où la seule chose que le contrôleur attend avant de répondre : l'inscription
+de la ligne dans `stripe_webhook_deliveries`.
 
-Deux garde-fous en attendant la file durable : `onApplicationShutdown` attend
-les traitements en vol à chaque déploiement, et tout échec est journalisé en
-`error` sous `InProcessWebhookQueue` — c'est une **alerte à traiter**, pas une
-trace.
+| Instant | Ce qui se passe |
+|---|---|
+| l'inscription échoue | `enqueue` **rejette**, pas de 2xx — **Stripe redélivre** |
+| 200 rendu | la livraison est sur disque, plus en mémoire |
+| processus tué | ligne `PENDING`, bail périmé, reprise par le balayage |
+| traitement en échec | réessai borné (`webhook-retry.policy.ts`), puis `DEAD` + alerte `error` |
+| renvoi manuel d'une livraison `DEAD` | la ligne morte est **ressuscitée** (`PENDING`, compteur remis à zéro) et retraitée |
+
+Cette dernière ligne est ce qui rend l'alerte actionnable. Elle dit
+« intervention humaine requise », et le seul geste disponible est le renvoi de
+l'événement depuis le tableau de bord Stripe : si l'unique
+`(tenant_id, event_id)` avalait ce renvoi comme un rejeu, l'alerte demanderait
+une action qu'aucun chemin n'exécuterait.
+
+Trois pièces, et rien de plus :
+
+- **`stripe_webhook_deliveries`** porte le *travail à faire* et disparaît quand
+  il est fait ; `processed_webhook_events` porte la *preuve que c'est fait* et
+  se conserve. Aucune ne remplace l'autre ;
+- **le bail** (`claimed_at`) dit qui tient une livraison. `NULL` : personne.
+  Récent : quelqu'un traite. Vieux de plus que le bail : l'instance qui la
+  tenait ne répond plus — c'est l'état que laisse un `SIGKILL`, et c'est ce que
+  le balayage reprend, par un `UPDATE` conditionnel que la base arbitre ;
+- **la clé de sérialisation** (`serialization_key`) chaîne les livraisons d'un
+  même encaissement au lieu de les éventailler. Elle est persistée, et non
+  recalculée : c'est elle qui deviendra le `MessageGroupId` d'une file FIFO le
+  jour du passage à SQS.
+
+Ce qui n'est **toujours pas** posé : la chaîne EventBridge → SQS → Lambda du
+CDC §2.2, qui demande du Terraform. La durabilité et la reprise sont en base, et
+`WEBHOOK_QUEUE` reste le jeton derrière lequel SQS entrera sans qu'une ligne du
+contrôleur ne bouge. Ce qui reste, dit sans se raconter d'histoire : la
+sérialisation est tenue **dans le processus** — deux instances ECS traitant deux
+livraisons du même encaissement au même instant ne s'ordonneraient pas entre
+elles. Aucun état incohérent n'en découle, les transitions étant des
+`updateMany` filtrés par statut dans une transaction ; c'est l'ordre qui n'est
+pas garanti.
 
 ## Ce que le module fait de chaque événement
 
@@ -314,8 +344,10 @@ paiement déjà rendu le bloquerait pour rien.
 Le montant d'un remboursement vient de Stripe, qui fait foi, et n'est pas
 plafonné par le code : `payments_refunded_amount_minor_check` le refuse en base.
 La transaction est alors annulée et l'événement n'est pas marqué traité — rien
-de faux n'est écrit. La reprise est en revanche **manuelle** : voir « Le 200 ne
-dépend pas du traitement » ci-dessus.
+de faux n'est écrit. La panne remonte à la file durable, qui réessaie puis
+enterre la livraison avec une alerte : la contrainte étant déterministe, les
+réessais échoueront tous, et c'est l'alerte de file d'attente morte qui appelle
+un arbitrage humain sur l'écart de réconciliation.
 
 ## Aucune donnée de carte, nulle part
 
@@ -357,7 +389,8 @@ créer une intention.
 | `__tests__/stripe-webhook.types.spec.ts` | La réduction des événements — et qu'aucune donnée de carte n'en ressort |
 | `__tests__/stripe.config.spec.ts` | Les trois valeurs, la frontière entre elles, et la table « refuser de démarrer » |
 | `__tests__/payments.boundaries.spec.ts` | Le confinement de `PRISMA_UNSCOPED`, l'unicité du fichier d'erreurs et de la porte de configuration |
-| `__tests__/stripe-webhook.queue.spec.ts` | Le différé, l'absence de propagation d'erreur, l'attente à l'arrêt |
+| `__tests__/stripe-webhook.queue.spec.ts` | L'inscription **avant** l'accusé, le réessai borné, la file d'attente morte et son alerte, la reprise d'une livraison orpheline, la sérialisation par encaissement, l'attente à l'arrêt |
+| `__tests__/webhook-retry.policy.spec.ts` | La borne de réessais au cran annoncé, le doublement plafonné, les deux bornes de la gigue, et l'attente cumulée que le calendrier de production promet |
 | `__tests__/stripe-webhook.service.spec.ts` | La résolution d'établissement, l'alerte de litige, et — depuis que le double applique les gardes de statut (#447) — la ligne « la ligne existe, le garde de statut décline → marque **posée** » de la table du §2 ci-dessus, sans Docker |
 | `test/payments-webhook.integration-spec.ts` | La route servie, le corps **brut**, le 400 sans traitement, le 200 rendu avant le traitement |
 | `test/payments-webhook.isolation-spec.ts` | Contre un vrai PostgreSQL : la frontière entre établissements, l'unicité qui tranche, la transaction qui fait bloc, et la marque qui n'est **pas** posée quand aucun encaissement ne porte la référence (#410) |
@@ -606,11 +639,14 @@ ici. Une annulation n'est pas un remboursement : rien n'a été capturé, et
   d'un autre module l'en sortirait, et un paiement abouti pourrait coexister
   avec un rendez-vous resté `PENDING`. Dette assumée vis-à-vis d'api-module §3,
   portée par une issue de suivi.
-- **La file est en mémoire, et sans reprise.** Un traitement qui échoue après le
-  200 n'est rejoué par personne : ni par la file, ni par Stripe. Seul un renvoi
-  manuel depuis le tableau de bord le rattrape. La chaîne durable du CDC §2.2
-  (SQS, accusé de consommation, file d'attente morte) est ce qui referme ce
-  trou ; elle est hors de l'empreinte de #58 et porte sa propre issue de suivi.
+- **La sérialisation par encaissement est tenue dans le processus** (#409). Deux
+  instances ECS qui traiteraient deux livraisons du même encaissement au même
+  instant ne s'ordonneraient pas entre elles — le bail empêche seulement qu'elles
+  traitent la *même* livraison. Aucun état incohérent n'en découle, les
+  transitions étant des `updateMany` filtrés par statut dans une transaction ;
+  c'est l'ordre qui n'est pas garanti, et c'est la file FIFO de la chaîne
+  EventBridge → SQS → Lambda du CDC §2.2 qui le garantira. Cette chaîne demande
+  du Terraform, hors de l'empreinte de #409, et porte sa propre issue de suivi.
 - **`PosRepository` lit `appointments` et `tenants` directement**, pour une
   existence et pour deux colonnes de paramétrage. Même dette, et même
   justification, que la lecture d'`appointments` par `PaymentsRepository` :
