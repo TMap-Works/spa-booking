@@ -135,6 +135,45 @@ resource "aws_sns_topic" "events" {
 }
 
 data "aws_iam_policy_document" "events" {
+  # Même garde de transport que sur les deux files de `dispatch-queue.tf`, que les
+  # buckets d'état et d'audit du bootstrap, et que le topic d'alertes de sécurité.
+  # Elle ferme l'asymétrie qui restait sur les topics antérieurs à #79 (#516).
+  #
+  # Un refus pur : il n'accorde rien — les droits viennent des énoncés ci-dessous
+  # et des politiques d'identité — il interdit seulement de joindre ce topic hors
+  # TLS. Un `Deny` explicite l'emporte sur tout `Allow`, y compris celui du compte
+  # propriétaire, ce qui est bien l'effet recherché.
+  #
+  # Le caractère générique sur l'action est ici la forme **correcte** : une garde
+  # de transport doit couvrir toute action présente et à venir. La restreindre à
+  # une liste laisserait passer en clair celles qu'on aurait oublié d'y écrire —
+  # l'inverse exact du risque qu'elle couvre.
+  #
+  # `{"AWS": "*"}` — la forme des quatre gardes déjà en place — porte sur les
+  # principaux IAM et les appels anonymes, pas sur les principaux de service. SES
+  # n'en dépend pas : il joint SNS en HTTPS, comme tout appel de service à service
+  # chez AWS. Cet énoncé ne retire donc aucun droit à `AllowSesPublish` ni à
+  # `AllowAccountOwner` ci-dessous — il ne mord que sur un appel en clair, qu'aucun
+  # SDK ne fait par défaut.
+  statement {
+    sid    = "DenyInsecureTransport"
+    effect = "Deny"
+
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
+
+    actions   = ["sns:*"]
+    resources = [aws_sns_topic.events.arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+
   statement {
     sid    = "AllowSesPublish"
     effect = "Allow"
