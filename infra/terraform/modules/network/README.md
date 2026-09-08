@@ -19,6 +19,7 @@ est une variable. La composition se fait dans `envs/{dev,staging,prod}`.
 | Endpoint de passerelle | 1 | S3 |
 | Endpoints d'interface | 4 | `ecr.api`, `ecr.dkr`, `secretsmanager`, `logs` |
 | Groupe de sécurité | 1 | HTTPS depuis les sous-réseaux privés vers les endpoints d'interface |
+| Flow log + groupe de journaux + rôle IAM | 1 de chaque | Trace du trafic accepté et rejeté du VPC |
 
 Le groupe de sécurité par défaut du VPC et sa table de routage principale sont
 repris et vidés : rien ne les référence, mais toute ressource créée sans choix
@@ -86,6 +87,46 @@ garde la sienne.
 Les endpoints jouent dans le même sens : sans eux, chaque démarrage de tâche
 Fargate tire son image ECR et pousse ses logs à travers la NAT.
 
+## Flow logs
+
+Le VPC enregistre ses flow logs dans CloudWatch Logs, en `traffic_type = "ALL"` —
+**trafic accepté et trafic rejeté**. C'est le rejet qui compte le plus : c'est lui
+qui dit qu'une tentative a eu lieu, et la segmentation décrite plus haut n'est
+vérifiable *a posteriori* que s'il en reste une trace (CDC §4.11).
+
+| Ressource | Nom |
+|---|---|
+| Groupe de journaux | `/aws/vpc/spa-{env}/flow-logs` |
+| Rôle IAM | `spa-{env}-vpc-flow-logs` |
+
+- **Rétention explicite** par `log_retention_days` — 30 jours en dev et staging,
+  90 en production (skill aws-infra §8). Un groupe laissé au service naît sans
+  terme, et les flow logs sont volumineux : c'est un poste qui grossit sans bruit.
+- **Moindre privilège.** Le rôle ne porte que les cinq actions qu'AWS documente
+  comme exigées par la livraison — `logs:CreateLogGroup`, `logs:CreateLogStream`,
+  `logs:PutLogEvents`, `logs:DescribeLogGroups`, `logs:DescribeLogStreams` — et
+  toutes sont bornées au seul groupe ci-dessus. La borne fait le travail que
+  ferait le retrait de `logs:CreateLogGroup` : ce rôle peut recréer *ce* groupe,
+  aucun autre. L'ôter n'aurait pas cassé l'`apply` — le flow log se serait créé
+  sans rien délivrer, et l'échec ne se lirait que dans son
+  `deliver_logs_error_message`.
+- La relation de confiance est conditionnée à `aws:SourceAccount` et à un
+  `aws:SourceArn` de flow log de la région : sans ces deux conditions, un flow log
+  créé dans un autre compte pourrait désigner ce rôle, dont l'ARN se devine, et
+  déverser son trafic à notre charge.
+- `max_aggregation_interval = 600` plutôt que 60 : l'intervalle d'une minute
+  multiplie le nombre d'enregistrements — donc l'ingestion CloudWatch, facturée au
+  gigaoctet — pour une précision dont l'instruction d'un incident n'a pas besoin.
+
+Le groupe est chiffré par la clé gérée par CloudWatch Logs, pas par une clé du
+compte, et le porte en clair (`#tfsec:ignore:aws-cloudwatch-log-group-customer-key`) :
+la seule clé KMS d'un environnement est créée par le module `database`, qui se
+pose *sur* ce réseau — la lui demander ici inverserait la dépendance et rendrait
+le graphe cyclique. Même arbitrage que le groupe CloudTrail du bootstrap.
+
+Sans ces ressources, `tfsec infra/terraform/envs` remonte
+`aws-ec2-require-vpc-flow-logs-for-all-vpcs` (MEDIUM) une fois par environnement.
+
 ## Variables
 
 | Variable | Type | Défaut | Rôle |
@@ -94,6 +135,7 @@ Fargate tire son image ECR et pousse ses logs à travers la NAT.
 | `vpc_cidr` | `string` | — | `/16` de l'environnement |
 | `availability_zone_count` | `number` | `2` | 2 ou 3 |
 | `availability_zones` | `list(string)` | `[]` | Zones figées ; vide = les premières de la région |
+| `log_retention_days` | `number` | `30` | Rétention des flow logs ; 30 en dev et staging, 90 en production |
 | `nat_gateway_count` | `number` | `1` | Ne peut pas dépasser le nombre de zones |
 
 Deux préconditions portées par le VPC refusent un `apply` incohérent : plus de
@@ -105,7 +147,8 @@ demandé.
 `vpc_id`, `vpc_cidr_block`, `availability_zones`, `public_subnet_ids`,
 `app_subnet_ids`, `data_subnet_ids`, `public_route_table_id`,
 `app_route_table_ids`, `data_route_table_id`, `nat_gateway_ids`,
-`nat_gateway_public_ips`, `vpc_endpoint_security_group_id`, `s3_vpc_endpoint_id`,
+`nat_gateway_public_ips`, `flow_log_group_name`, `flow_log_group_arn`,
+`vpc_endpoint_security_group_id`, `s3_vpc_endpoint_id`,
 `interface_vpc_endpoint_ids`.
 
 Les listes de sous-réseaux suivent l'ordre de `availability_zones`, pas l'ordre
@@ -122,6 +165,7 @@ module "network" {
   vpc_cidr           = "10.30.0.0/16"
   availability_zones = ["eu-west-3a", "eu-west-3b"]
   nat_gateway_count  = 2
+  log_retention_days = 90
 }
 ```
 

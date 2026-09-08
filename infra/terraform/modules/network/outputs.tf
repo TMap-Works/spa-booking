@@ -58,6 +58,16 @@ output "nat_gateway_public_ips" {
   value       = aws_eip.nat[*].public_ip
 }
 
+output "flow_log_group_name" {
+  description = "Groupe CloudWatch Logs où atterrissent les flow logs du VPC — trafic accepté et rejeté."
+  value       = aws_cloudwatch_log_group.flow_logs.name
+}
+
+output "flow_log_group_arn" {
+  description = "ARN du groupe de flow logs, à donner à un filtre de métrique ou à une requête Logs Insights."
+  value       = aws_cloudwatch_log_group.flow_logs.arn
+}
+
 output "vpc_endpoint_security_group_id" {
   description = "Groupe de sécurité des endpoints d'interface."
   value       = aws_security_group.vpc_endpoints.id

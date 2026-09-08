@@ -35,6 +35,17 @@ variable "availability_zones" {
   default     = []
 }
 
+variable "log_retention_days" {
+  description = "Rétention des flow logs du VPC dans CloudWatch Logs, en jours — 30 en dev et staging, 90 en production (skill aws-infra §8). Le défaut est le réglage hors production : un environnement qui garde plus longtemps doit le dire, jamais l'inverse."
+  type        = number
+  default     = 30
+
+  validation {
+    condition     = contains([1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653], var.log_retention_days)
+    error_message = "log_retention_days doit être une des durées acceptées par CloudWatch Logs (1, 3, 5, 7, 14, 30, 60, 90, 120, 150, 180, 365, 400, 545, 731, 1096, 1827, 2192, 2557, 2922, 3288, 3653)."
+  }
+}
+
 variable "nat_gateway_count" {
   description = "Nombre de NAT Gateway. 1 en dev et staging, 2 en production — une par zone, pour qu'une panne de zone ne coupe pas la sortie de l'autre. C'est l'un des postes les plus chers du CDC §4.16 : ne pas l'augmenter par confort."
   type        = number
