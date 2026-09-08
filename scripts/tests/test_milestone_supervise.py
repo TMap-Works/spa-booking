@@ -2808,5 +2808,136 @@ class CoupureEffectiveOuNon(unittest.TestCase):
         self.assertGreaterEqual(sup.LEG_TIMEOUT, 151)
 
 
+class FenetreTropEntamee(unittest.TestCase):
+    """N'ouvrir une étape que si la fenêtre peut la porter (#550).
+
+    Mesuré sur le run S4 : 9 étapes sur 21 se terminent sur une attente de
+    quota, et 8 d'entre elles n'ont mergé aucun ticket. Elles meurent en vol
+    au bout de 8 à 52 min et emmènent avec elles les tickets commencés, qu'il
+    faut reprendre à zéro — douze reprises « agent mort avec son étape ».
+
+    Le signal existait déjà et n'était lu qu'après le refus. Dépouillement des
+    flux bruts : toute étape refusée finit à 99 % d'utilisation, celles qui
+    aboutissent entre 83 % et 97 %.
+    """
+
+    def args(self, headroom=sup.QUOTA_HEADROOM):
+        return argparse.Namespace(quota_headroom=headroom)
+
+    def mesure(self, used, dans=3600):
+        return {"utilization": used, "resetsAt": time.time() + dans,
+                "rateLimitType": "five_hour"}
+
+    def test_une_fenetre_a_99_pourcent_ne_porte_plus_d_etape(self):
+        self.assertTrue(sup.window_spent(self.args(), self.mesure(0.99)))
+
+    def test_une_fenetre_a_83_pourcent_n_en_porte_deja_plus(self):
+        """83 % est la mesure de fin de leg-008 — et l'étape ouverte sur ce
+        reliquat a été refusée.
+
+        Ce que la garde regarde n'est pas la santé de l'étape qui s'achève mais
+        ce qu'elle laisse à la suivante. Les trois valeurs observées en fin
+        d'étape avant un refus sont 83 %, 90 % et 99 % : le seuil se place donc
+        sous la plus basse des trois, pas entre elles.
+        """
+        self.assertTrue(sup.window_spent(self.args(), self.mesure(0.83)))
+
+    def test_une_fenetre_fraiche_porte_une_etape(self):
+        self.assertFalse(sup.window_spent(self.args(), self.mesure(0.30)))
+        self.assertFalse(sup.window_spent(self.args(), self.mesure(0.0)))
+
+    def test_le_seuil_est_celui_du_reglage(self):
+        args = self.args(headroom=20)
+        self.assertTrue(sup.window_spent(args, self.mesure(0.80)))
+        self.assertFalse(sup.window_spent(args, self.mesure(0.79)))
+
+    def test_headroom_a_zero_ouvre_quoi_qu_il_reste(self):
+        """Le réglage doit pouvoir rendre au dispositif son comportement d'avant."""
+        self.assertFalse(sup.window_spent(self.args(headroom=0), self.mesure(0.99)))
+
+    def test_sans_mesure_on_ouvre(self):
+        """Bloquer sur l'ignorance immobiliserait le jalon.
+
+        L'inverse exact de `worktree_gc`, où l'ignorance retient : là, se
+        tromper en retenant fait perdre du travail ; ici, ça arrête le run.
+        """
+        self.assertFalse(sup.window_spent(self.args(), None))
+        self.assertFalse(sup.window_spent(self.args(), {"resetsAt": time.time() + 60}))
+        self.assertFalse(sup.window_spent(self.args(), {"utilization": None}))
+
+    def test_une_mesure_dont_la_fenetre_a_tourne_ne_bloque_pas(self):
+        """Sinon le superviseur attendrait sur le souvenir d'un budget rendu."""
+        perimee = {"utilization": 0.99, "resetsAt": time.time() - 1}
+        self.assertFalse(sup.window_spent(self.args(), perimee))
+
+    def test_la_garde_precede_le_decompte_des_etapes(self):
+        """Une étape non ouverte n'en est pas une : elle ne doit rien consommer
+        de `--max-legs`, sans quoi une fenêtre entamée épuiserait le budget du
+        run en n'ouvrant rien. Lu dans le texte, la boucle n'étant pas isolable.
+        """
+        code = inspect.getsource(sup.supervise)
+        garde = code.index("if window_spent(args, quota_seen):")
+        # L'instruction, pas le commentaire qui la cite — chercher le texte nu
+        # ferait tomber le test sur la prose qui l'explique.
+        self.assertLess(garde, code.index("\n        legs += 1"),
+                        "la garde doit être posée avant l'incrément d'étape")
+        apres = code[garde:]
+        self.assertIn("quota_seen = None", apres,
+                      "la mesure doit être oubliée après l'attente, sinon le "
+                      "superviseur attendrait indéfiniment")
+
+    def test_la_fenetre_nommee_prime_sur_le_chiffre_de_tete(self):
+        """`unifiedWindows` est renseigné 357 fois sur 357, `utilization` 203.
+
+        Et il porte la valeur même quand celui de tête est nul : s'en tenir au
+        second laissait aveugle une ouverture d'étape sur deux — exactement le
+        cas que la garde existe pour couvrir.
+        """
+        mesure = {"utilization": None, "rateLimitType": "five_hour",
+                  "unifiedWindows": {
+                      "five_hour": {"utilization": 0.99,
+                                    "resetsAt": time.time() + 3600},
+                      "seven_day": {"utilization": 0.11,
+                                    "resetsAt": time.time() + 80000}}}
+        self.assertEqual(sup.window_reading(mesure)[0], 0.99)
+        self.assertTrue(sup.window_spent(self.args(), mesure))
+
+    def test_la_fenetre_de_sept_jours_ne_ferme_pas_celle_de_cinq_heures(self):
+        """Un chiffre sans étiquette peut décrire l'une ou l'autre."""
+        mesure = {"rateLimitType": "five_hour",
+                  "unifiedWindows": {
+                      "five_hour": {"utilization": 0.20,
+                                    "resetsAt": time.time() + 3600},
+                      "seven_day": {"utilization": 0.95,
+                                    "resetsAt": time.time() + 80000}}}
+        self.assertFalse(sup.window_spent(self.args(), mesure))
+
+    def test_le_chiffre_de_tete_sert_de_repli(self):
+        mesure = {"utilization": 0.99, "resetsAt": time.time() + 3600}
+        self.assertEqual(sup.window_reading(mesure)[0], 0.99)
+        self.assertTrue(sup.window_spent(self.args(), mesure))
+
+    def test_l_abandon_precoce_est_borne_aux_premieres_minutes(self):
+        """Une étape ouverte sur une fenêtre déjà entamée rend la main tout de
+        suite — mais seulement tant qu'aucun agent n'est lancé.
+
+        Le refus du serveur, lui, arrive de 8 à 52 min après l'ouverture, donc
+        après le dispatch : ce sont les agents dispatchés qu'on paie ensuite à
+        reprendre. Passé la réconciliation et le replan, couper coûterait ce que
+        la garde évite. Lu dans le texte, `stream_call` n'étant pas isolable
+        sans lancer un `claude -p`.
+        """
+        code = inspect.getsource(sup.stream_call)
+        self.assertIn("time.time() - opened <= EARLY_ABORT", code)
+        self.assertIn('label == "étape"', code,
+                      "un arbitrage n'ouvre aucune vague : rien à protéger")
+        self.assertLessEqual(sup.EARLY_ABORT, 15 * 60,
+                             "au-delà, une vague est en cours")
+
+    def test_le_reglage_voyage_dans_l_intention(self):
+        """Un superviseur ressuscité par la veille doit garder le même seuil."""
+        self.assertIn("quota_headroom", sup.ARMING_FLAGS)
+
+
 if __name__ == "__main__":
     unittest.main()

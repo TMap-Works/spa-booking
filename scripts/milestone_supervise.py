@@ -227,6 +227,7 @@ ARMING_FLAGS = {
     "arbiter_budget": "--arbiter-budget",
     "arbiter_timeout": "--arbiter-timeout",
     "stall_minutes": "--stall-minutes",
+    "quota_headroom": "--quota-headroom",
     "claude": "--claude",
 }
 
@@ -353,6 +354,22 @@ GO, PAUSE, STOP, NO_RUN, QUOTA = 0, 1, 2, 3, 4
 # Une fenêtre de quota dure cinq heures : c'est la seule attente à tenir quand
 # l'API n'a pas dit quand elle se rouvrirait.
 FALLBACK_WINDOW = 5 * 3600
+
+# La part du budget de la fenêtre qui doit rester pour qu'une étape s'ouvre, en
+# pour-cent. Vingt : les étapes mesurées sur S4 qui ont abouti finissaient entre
+# 83 % et 97 % d'utilisation, et **toutes** celles qui ont été refusées à 99 %.
+# Le seuil se place donc sous la première, pas entre les deux — ce qu'on veut
+# éviter n'est pas l'étape qui finit haut, c'est celle qui s'ouvre trop tard
+# pour finir. Le tiers de fenêtre ainsi laissé n'est pas perdu : il sert à
+# l'étape suivante, qui l'aura entier.
+QUOTA_HEADROOM = 20
+
+# Combien de temps, après l'ouverture d'une étape, l'abandon reste sans dégât.
+# L'orchestrateur y réconcilie et revoit son plan — cinq à quinze minutes
+# pendant lesquelles aucun agent n'est encore lancé (#186). Rendre la main là
+# ne laisse aucun ticket en plan ; le faire ensuite couperait une vague en
+# cours, soit exactement le dégât que la garde existe pour éviter.
+EARLY_ABORT = 5 * 60
 # Le mot du serveur, pas le nôtre : ces motifs ne servent que si le flux s'est
 # interrompu avant l'événement structuré.
 # `429` seul se retrouve dans un numéro de ligne, un port ou un compte de tests :
@@ -509,6 +526,7 @@ def intent_of(args):
         # coup, sous peine d'emporter toute la reprise automatique.
         "max_legs": args.max_legs,
         "leg_timeout": getattr(args, "leg_timeout", LEG_TIMEOUT),
+        "quota_headroom": getattr(args, "quota_headroom", QUOTA_HEADROOM),
         # L'arbitrage se rejoue comme le reste : un superviseur ressuscité par la
         # veille doit trancher comme celui qu'il remplace. L'oublier ferait qu'un
         # run armé perde sa capacité de décision au premier redémarrage — c'est
@@ -889,6 +907,7 @@ def intent_argv(intent):
              "--patience", str(intent.get("patience", 2)),
              "--max-legs", str(intent.get("max_legs", 40)),
              "--leg-timeout", str(intent.get("leg_timeout", LEG_TIMEOUT)),
+             "--quota-headroom", str(intent.get("quota_headroom", QUOTA_HEADROOM)),
              "--arbiter-model", intent.get("arbiter_model") or ARBITER_MODEL,
              "--arbiter-budget", str(intent.get("arbiter_budget", ARBITER_BUDGET)),
              "--arbiter-timeout", str(intent.get("arbiter_timeout", ARBITER_TIMEOUT)),
@@ -1975,6 +1994,7 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
         return "lancement", None, f"{type(exc).__name__} : {exc}"
 
     track_call(process)
+    opened = time.time()
     errors = []
     pump = threading.Thread(target=drain, args=(process.stderr, errors), daemon=True)
     pump.start()
@@ -2048,6 +2068,30 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
                     limit_info, issue = info, "quota"
                     say(f"quota {info.get('rateLimitType') or 'inconnu'} refusé "
                         f"par le serveur", "WARN")
+                    break
+                # Le refus arrive tard — de 8 à 52 minutes après l'ouverture sur
+                # le run S4 —, c'est-à-dire après que l'orchestrateur a dispatché
+                # ses agents. Ce sont eux qu'on paie ensuite à reprendre à zéro.
+                #
+                # La fenêtre, elle, se lit dès le premier événement. Si elle est
+                # déjà trop entamée, autant rendre la main tout de suite : le
+                # temps de la réconciliation et du replan, aucun agent n'a encore
+                # été lancé, et le run repart au rafraîchissement sans rien avoir
+                # laissé en plan. Mesuré sur les étapes refusées de S4 : quatre
+                # d'entre elles ouvraient au-dessus du seuil, et aucune étape
+                # saine ne s'y trouvait — la plus haute d'entre elles ouvrait à
+                # 77 %.
+                #
+                # Borné aux premières minutes, et c'est essentiel : passé ce
+                # délai, une vague est en cours et l'interrompre coûterait
+                # exactement ce que la garde cherche à éviter.
+                if (label == "étape" and time.time() - opened <= EARLY_ABORT
+                        and window_spent(args, info)):
+                    limit_info, issue = info, "quota"
+                    used = window_reading(info)[0]
+                    say(f"fenêtre déjà à {used * 100:.0f}% à l'ouverture — étape "
+                        f"abandonnée avant tout dispatch, plutôt que de la voir "
+                        f"mourir sur ses agents", "WARN")
                     break
                 if status == "allowed_warning":
                     used = info.get("utilization")
@@ -2215,6 +2259,64 @@ def arbitrate(args, reasons, index):
 # --------------------------------------------------------------------------- #
 # L'attente
 # --------------------------------------------------------------------------- #
+
+def window_spent(args, measure):
+    """La fenêtre est-elle trop entamée pour porter une étape de plus ?
+
+    Le superviseur ouvrait une étape sans jamais regarder ce qu'il restait de
+    budget. Mesuré sur le run S4 : **9 étapes sur 21 se terminent sur une
+    attente de quota, et 8 d'entre elles n'ont mergé aucun ticket**. Elles
+    meurent en vol au bout de 8 à 52 minutes, et les tickets qu'elles avaient
+    commencés repartent de zéro — worktree neuf, `npm install`, relecture de
+    l'issue, récupération à la main des fichiers non commités. Douze reprises
+    « agent mort avec son étape » sur ce seul run.
+
+    Le signal était déjà là, simplement lu trop tard : `stream_call` garde le
+    dernier `rate_limit_event` de l'étape, et `wait_for_quota` s'en sert **après**
+    le refus. Dépouillement des flux bruts : `resetsAt` présent 357 fois sur 357,
+    `utilization` 203 fois sur 357 — et discriminant, puisque toute étape refusée
+    finit à 99 % quand celles qui aboutissent finissent entre 83 % et 97 %.
+
+    Deux refus de bloquer, et ils comptent autant que la garde elle-même :
+
+    - **Sans mesure, on ouvre.** Bloquer sur l'ignorance immobiliserait le jalon
+      pour de bon — l'inverse exact de `worktree_gc`, où l'ignorance retient
+      parce qu'y renoncer perdrait du travail. Ici, se tromper en retenant coûte
+      plus cher que se tromper en ouvrant.
+    - **Une mesure dont le `resetsAt` est passé décrit une fenêtre déjà tournée.**
+      La rejouer bloquerait sur le souvenir d'un budget qui vient d'être rendu.
+    """
+    used, resets = window_reading(measure)
+    if used is None:
+        return False
+    if resets and float(resets) <= time.time():
+        return False
+    return used * 100 >= 100 - args.quota_headroom
+
+
+def window_reading(measure):
+    """(utilisation, rafraîchissement) de la fenêtre de cinq heures, ou (None, None).
+
+    Deux sources, et il faut les deux. Le champ `utilization` de tête n'est
+    renseigné que dans 203 des 357 événements mesurés ; `unifiedWindows`, lui,
+    l'est dans les 357 — et il porte la valeur **même quand celui de tête est
+    nul**. S'en tenir au premier laissait aveugle une ouverture d'étape sur
+    deux, ce qui est précisément le cas qu'on cherche à couvrir.
+
+    `unifiedWindows` d'abord, donc, et le champ de tête en repli : la fenêtre
+    nommée est plus précise qu'un chiffre sans étiquette, qui peut décrire la
+    fenêtre de sept jours aussi bien que celle de cinq heures.
+    """
+    if not measure:
+        return None, None
+    windows = measure.get("unifiedWindows") or {}
+    window = windows.get(measure.get("rateLimitType") or "five_hour") \
+        or windows.get("five_hour") or {}
+    used = window.get("utilization")
+    if used is not None:
+        return used, window.get("resetsAt") or measure.get("resetsAt")
+    return measure.get("utilization"), measure.get("resetsAt")
+
 
 def wait_for_quota(args, info, stop_flag, source=None):
     """Inscrit la retenue, dort jusqu'au rafraîchissement, puis la lève.
@@ -2623,6 +2725,11 @@ def supervise(args):
     # de ce superviseur : on les tient pour vus, faute de quoi le premier leg
     # passerait pour productif sans avoir rien produit.
     seen_commits, seen_merges = work_commits(), merged_tickets()
+    # Le dernier `rate_limit_event` porteur d'une utilisation, gardé d'une étape
+    # à l'autre : c'est ce que `window_spent` consulte avant d'en ouvrir une de
+    # plus. Vierge au démarrage — un superviseur qui vient de naître n'a rien
+    # mesuré, et ouvre donc sa première étape sans rien demander.
+    quota_seen = None
     # Le code que ce processus exécute, tel qu'il était à l'instant du
     # chargement. Retenu une fois et jamais rafraîchi : c'est l'écart avec le
     # **démarrage** qui compte, puisque c'est le module de ce démarrage-là qui
@@ -2734,6 +2841,25 @@ def supervise(args):
                 return 1
             continue
 
+        # Ce qu'il reste de la fenêtre, avant d'engager quoi que ce soit. Une
+        # étape ouverte sur un budget épuisé ne meurt pas seule : elle emmène
+        # les tickets qu'elle a commencés, qu'il faut ensuite reprendre à zéro.
+        # Mieux vaut attendre le rafraîchissement en n'ayant rien engagé.
+        #
+        # Placé avant `legs += 1` : une étape non ouverte n'en est pas une, et
+        # ne doit pas être décomptée du budget de `--max-legs`.
+        if window_spent(args, quota_seen):
+            say(f"fenêtre à {window_reading(quota_seen)[0] * 100:.0f}% — étape non "
+                f"ouverte, on attend le rafraîchissement plutôt que de la voir "
+                f"mourir en vol", "WARN")
+            if not wait_for_quota(args, quota_seen, stop_flag,
+                                  source="fenêtre presque épuisée, étape non ouverte"):
+                return 1
+            # La fenêtre a tourné : la mesure d'avant ne dit plus rien de celle
+            # qui s'ouvre. La garder ferait attendre indéfiniment.
+            quota_seen = None
+            continue
+
         before = progress_count(args.no_merge)
         legs += 1
         # Une étape va tourner : la prochaine conclusion aura droit, elle aussi,
@@ -2744,6 +2870,11 @@ def supervise(args):
 
         issue, info, note = run_leg(args, legs)
         elapsed = human_delta(time.time() - started)
+        # Ce que l'étape a appris de la fenêtre, retenu pour la prochaine
+        # ouverture. Seule une mesure chiffrée remplace la précédente : un
+        # événement sans `utilization` ne prouve pas que le budget est revenu.
+        if window_reading(info)[0] is not None:
+            quota_seen = info
 
         # Ce que le leg a rendu durable — commits sur les branches de tickets
         # **et** merges que le run s'est imputés. Les deux, parce qu'une étape
@@ -2933,6 +3064,11 @@ def main():
                         help="au-delà, l'appel d'une étape est coupé et ses "
                              f"tickets repris à l'étape suivante (défaut "
                              f"{LEG_TIMEOUT})")
+    parser.add_argument("--quota-headroom", type=float, default=QUOTA_HEADROOM,
+                        metavar="POURCENT",
+                        help="part du budget de la fenetre qui doit rester pour "
+                             f"qu'une etape s'ouvre (defaut {QUOTA_HEADROOM}) ; "
+                             "0 pour ouvrir quoi qu'il reste")
     parser.add_argument("--patience", type=int, default=3,
                         help="étapes sans avancement tolérées avant l'arrêt")
     parser.add_argument("--echo", action="store_true",
