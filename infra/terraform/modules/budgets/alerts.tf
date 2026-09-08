@@ -33,6 +33,47 @@ resource "aws_sns_topic" "alerts" {
 # Budgets, faute de quoi un principal du compte n'aurait plus que ses politiques
 # IAM pour joindre le topic.
 data "aws_iam_policy_document" "alerts" {
+  # Garde de transport, alignée sur les files d'envoi des notifications, les
+  # buckets d'état et d'audit, et le topic d'alertes de sécurité (#516). Elle vaut
+  # d'autant plus ici que ce topic **n'est pas chiffré au repos** — voir
+  # l'arbitrage au-dessus : il n'y a aucune raison de le laisser en plus joignable
+  # en clair sur le réseau.
+  #
+  # Un refus pur : il n'accorde rien — les droits viennent des énoncés ci-dessous
+  # et des politiques d'identité — il interdit seulement de joindre ce topic hors
+  # TLS. Un `Deny` explicite l'emporte sur tout `Allow`, y compris celui du compte
+  # propriétaire, ce qui est bien l'effet recherché.
+  #
+  # Le caractère générique sur l'action est ici la forme **correcte** : une garde
+  # de transport doit couvrir toute action présente et à venir. La restreindre à
+  # une liste laisserait passer en clair celles qu'on aurait oublié d'y écrire —
+  # l'inverse exact du risque qu'elle couvre.
+  #
+  # `{"AWS": "*"}` — la forme des quatre gardes déjà en place — porte sur les
+  # principaux IAM et les appels anonymes, pas sur les principaux de service.
+  # Budgets et CloudWatch n'en dépendent pas : ils joignent SNS en HTTPS, comme
+  # tout appel de service à service chez AWS. Cet énoncé ne retire donc aucun droit
+  # aux trois `Allow` ci-dessous — il ne mord que sur un appel en clair, qu'aucun
+  # SDK ne fait par défaut.
+  statement {
+    sid    = "DenyInsecureTransport"
+    effect = "Deny"
+
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
+
+    actions   = ["sns:*"]
+    resources = [aws_sns_topic.alerts.arn]
+
+    condition {
+      test     = "Bool"
+      variable = "aws:SecureTransport"
+      values   = ["false"]
+    }
+  }
+
   statement {
     sid    = "AllowBudgetsPublish"
     effect = "Allow"

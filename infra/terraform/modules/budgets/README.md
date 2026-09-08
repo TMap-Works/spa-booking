@@ -15,7 +15,7 @@ au premier jour plutôt qu'au premier relevé.
 | Budget AWS | `spa-{env}-monthly` | Plafond mensuel filtré sur l'étiquette `Environment` |
 | Notifications | une par seuil | 80 % et 100 % de la dépense constatée |
 | Topic SNS | `spa-{env}-budget-alerts` | Canal des alertes, réutilisable par les alarmes CloudWatch |
-| Politique de topic | — | Publication ouverte à `budgets.amazonaws.com` **et à `cloudwatch.amazonaws.com`**, gardée par `aws:SourceAccount` |
+| Politique de topic | — | Publication ouverte à `budgets.amazonaws.com` **et à `cloudwatch.amazonaws.com`**, gardée par `aws:SourceAccount` ; transport en clair refusé |
 | Abonnements SNS | un par adresse | Optionnels — voir « Confirmer un abonnement » |
 
 ## Composition
@@ -86,6 +86,21 @@ publication échouerait. Il faudrait donc une clé KMS dédiée — 1 USD par mo
 par environnement — pour protéger un message dont tout le contenu est « le budget
 de dev a dépassé 80 % ». Le module chargé de surveiller la dépense n'a pas à en
 créer une permanente pour ce résultat.
+
+### Le transport en clair, lui, est refusé (#516)
+
+La politique de topic porte un énoncé `Deny` sur `sns:*`, conditionné par
+`aws:SecureTransport = false`. C'est la même garde que sur les files d'envoi du
+module `notifications`, sur les buckets d'état et d'audit du bootstrap et sur le
+topic d'alertes de sécurité — et elle vaut d'autant plus ici que ce canal ne
+chiffre pas au repos : il n'y a aucune raison de le laisser en plus joignable en
+clair sur le réseau.
+
+Le générique sur l'action est voulu : une garde de transport doit couvrir toute
+action présente et à venir, sans quoi elle laisse passer en clair celles qu'on a
+oublié d'énumérer. Et elle ne coupe rien de légitime — Budgets et CloudWatch
+joignent SNS en HTTPS, comme tout appel de service à service chez AWS, et les
+SDK aussi par défaut.
 
 ## Les seuils portent sur la dépense constatée
 
