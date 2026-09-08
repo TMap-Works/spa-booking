@@ -1,4 +1,19 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  CUSTOMER_HISTORY_MAX_VISITS,
+  CUSTOMER_SEARCH_MAX_LENGTH,
+  CUSTOMER_SEARCH_MIN_LENGTH,
+  DEFAULT_PAGE_SIZE,
+  EMAIL_MAX_LENGTH,
+  LONG_TEXT_MAX_LENGTH,
+  MAX_PAGE_SIZE,
+  NAME_MAX_LENGTH,
+  PHONE_MAX_LENGTH,
+  type SetCustomerStatusRequest,
+  customerPageSchema,
+  customerSummarySchema,
+  setCustomerStatusRequestSchema,
+} from '@spa/shared';
 import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
@@ -13,54 +28,95 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
+import type { z } from 'zod';
 
+import { ZodValidationPipe } from '../../../common/validation';
 // Import **de valeur** d'un vocabulaire de module voisin — même geste que
 // l'`APPOINTMENT_STATUSES` de `customer-history.dto.ts`, et pour la même raison :
 // l'énumération annoncée dans l'OpenAPI doit être *la* liste que la colonne
 // écrit, pas une copie qui divergerait au premier motif ajouté. Le fichier
 // importé ne porte que des types et des tableaux `as const`, sans dépendance
 // Nest ni Prisma.
+//
+// Ce n'est **pas** l'`EMAIL_SUPPRESSION_REASONS` de `@spa/shared`, qui porte les
+// mêmes deux motifs en **minuscules** (`hard_bounce`, `complaint`) : le contrat
+// nomme ce que le front lit, cette classe documente ce que l'API émet — la casse
+// de l'énumération PostgreSQL. Substituer l'import changerait l'énumération
+// publiée par `/api/docs` sans changer une seule réponse, c'est-à-dire ferait
+// mentir la documentation. Voir la note « ce qui reste » en fin de fichier.
 import { EMAIL_SUPPRESSION_REASONS } from '../../notifications/notifications.types';
 import type { CustomerPatch } from '../crm.repository';
 import type { Customer, CustomerPage, CustomerSummary } from '../crm.types';
 
 /**
- * DTO du fichier client — #56.
+ * DTO du fichier client — #56, **partiellement substitué par le contrat**
+ * (#510, [ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
  *
- * TODO(#26) : ces bornes reprennent `@spa/shared` (`crm.ts`). Les recopier ici
- * suit le précédent des modules voisins ; l'import se substituera à ces
- * constantes sans changer une valeur, lors de la reprise groupée de ce TODO — la
- * dépendance vers le paquet partagé est posée depuis #463.
+ * ## Ce qui a été substitué ici, et ce qui ne l'a pas été
+ *
+ * | Route | État | Pourquoi |
+ * |---|---|---|
+ * | `PATCH /customers/:id/status` | **validée par `setCustomerStatusRequestSchema`** | même règle, mot pour mot : un booléen obligatoire, rien d'autre |
+ * | `POST /customers` | classe `class-validator` | le contrat ne porte pas `marketingConsent` — voir plus bas |
+ * | `PATCH /customers/:id` | classe `class-validator` | même raison |
+ * | `GET /customers` | classe `class-validator` | le contrat ne borne pas `page` par le haut — voir plus bas |
+ *
+ * Les **bornes**, elles, ne sont plus recopiées : elles viennent toutes de
+ * `@spa/shared`, valeur pour valeur (`NAME_MAX_LENGTH` 80, `PHONE_MAX_LENGTH`
+ * 32, `EMAIL_MAX_LENGTH` 320, `LONG_TEXT_MAX_LENGTH` 2000,
+ * `CUSTOMER_SEARCH_MIN_LENGTH` 2, `CUSTOMER_SEARCH_MAX_LENGTH` 254,
+ * `DEFAULT_PAGE_SIZE` 20, `MAX_PAGE_SIZE` 100, `CUSTOMER_HISTORY_MAX_VISITS`
+ * 50). Aucune n'a changé de valeur au passage : c'était la condition pour les
+ * importer sans relire le comportement de chaque route.
  *
  * ## Ce qu'aucun DTO d'entrée ne porte
  *
  * Ni `tenantId`, ni `role`, ni `isActive` sur les deux premiers, ni `email` sur
  * la modification. Le `ValidationPipe` global est en `whitelist` +
- * `forbidNonWhitelisted` : un champ non déclaré ici est **refusé en 400 en le
- * nommant**, jamais ignoré en silence. C'est ce qui rend ces omissions
- * exécutoires plutôt que déclaratives — un `tenantId` glissé dans un corps JSON
- * est exactement le scénario de fuite qu'on refuse (tenant-isolation §2).
+ * `forbidNonWhitelisted` sur les routes non substituées, et c'est le `.strict()`
+ * du contrat sur `PATCH /customers/:id/status` : dans les deux cas, un champ non
+ * déclaré est **refusé en 400 en le nommant**, jamais ignoré en silence. C'est ce
+ * qui rend ces omissions exécutoires plutôt que déclaratives — un `tenantId`
+ * glissé dans un corps JSON est exactement le scénario de fuite qu'on refuse
+ * (tenant-isolation §2).
+ *
+ * ## Le piège de la substitution, à connaître avant de toucher ce fichier
+ *
+ * `SetCustomerStatusDto` n'a plus **aucun** décorateur `class-validator`. Typer
+ * un paramètre de handler par cette classe **viderait le corps de la requête** :
+ * le `ValidationPipe` global appliquerait `whitelist` à une classe qui n'a plus
+ * rien à mettre sur sa liste blanche. Le handler prend le type inféré du schéma
+ * (`SetCustomerStatusBody`) et déclare la classe par `@ApiBody`.
+ *
+ * TODO(#536) : trois substitutions restent à faire, et aucune ne se fait ici
+ * sans une décision de contrat, c'est-à-dire une modification de
+ * `packages/shared` qui déborde l'empreinte de #510 :
+ *
+ * 1. **`POST /customers` et `PATCH /customers/:id`.**
+ *    `createCustomerRequestSchema` et `updateCustomerRequestSchema` ne portent
+ *    **pas** `marketingConsent`, que ces deux routes acceptent depuis #81. Les
+ *    deux schémas étant `.strict()`, les monter ici refuserait en 400 un champ
+ *    que l'API accepte aujourd'hui — un consentement RGPD perdu en silence à la
+ *    saisie au comptoir. Le contrat doit d'abord décrire le champ (et la
+ *    distinction « absent » / `false` qui le rend probant) ;
+ * 2. **`GET /customers`.** `customerSearchQuerySchema` coerce bien les chaînes de
+ *    la query string (`paginationQuerySchema` est en `z.coerce`), mais il ne
+ *    borne pas `page` par le haut là où `ListCustomersQueryDto` applique
+ *    {@link MAX_PAGE}. Le substituer ferait sortir `?page=1e30` en **500** —
+ *    décalage hors du `bigint` de PostgreSQL — là où le contrat annonce un 400
+ *    nommant le champ. Il faut d'abord porter la borne dans le contrat ;
+ * 3. **`CustomerDto`.** `customerSchema` ne décrit ni `marketingConsent`, ni
+ *    `marketingConsentAt`, ni `anonymizedAt` (#81). L'assertion « jeu de clés
+ *    identique » ne peut donc pas être posée sur cette classe, contrairement à
+ *    ses deux voisines ci-dessous ; c'est la même décision de contrat que le
+ *    point 1.
+ *
+ * `EMAIL_SUPPRESSION_REASONS` reste importée du module `notifications` pour une
+ * raison d'une autre nature, qui n'appelle aucune évolution du contrat : les deux
+ * listes ne portent pas les mêmes valeurs — majuscules ici, minuscules dans le
+ * contrat — parce qu'elles ne décrivent pas la même chose. Voir le commentaire de
+ * l'import.
  */
-
-/** `users.first_name` / `users.last_name` — `VARCHAR(80)`. */
-const NAME_MAX_LENGTH = 80;
-
-/** `users.phone` — `VARCHAR(32)`, format libre borné. */
-const PHONE_MAX_LENGTH = 32;
-
-/** `users.email` — `VARCHAR(320)`. */
-const EMAIL_MAX_LENGTH = 320;
-
-/** `users.internal_note` — `VARCHAR(2000)`, la largeur des textes libres du schéma. */
-const NOTE_MAX_LENGTH = 2000;
-
-/** Bornes de la recherche libre — voir `CUSTOMER_SEARCH_MIN_LENGTH` de `@spa/shared`. */
-const SEARCH_MIN_LENGTH = 2;
-const SEARCH_MAX_LENGTH = 254;
-
-/** Bornes de la pagination — `DEFAULT_PAGE_SIZE` et `MAX_PAGE_SIZE` de `@spa/shared`. */
-const DEFAULT_PAGE_SIZE = 20;
-const MAX_PAGE_SIZE = 100;
 
 /**
  * Borne haute du numéro de page — celle au-delà de laquelle `(page - 1) *
@@ -72,16 +128,30 @@ const MAX_PAGE_SIZE = 100;
  * moteur remontée en 500 là où le contrat annonce un 400 nommant le champ. La
  * borne n'est pas arbitraire : elle est le plus grand `page` dont le décalage
  * reste un entier sûr, et aucun écran n'en atteindra jamais le millionième.
+ *
+ * Elle est **locale**, et c'est ce qui retient la substitution de
+ * `customerSearchQuerySchema` : le contrat ne la porte pas encore.
  */
 const MAX_PAGE = Math.floor(Number.MAX_SAFE_INTEGER / MAX_PAGE_SIZE);
 
-/** Fenêtre de l'historique — `CUSTOMER_HISTORY_MAX_VISITS` de `@spa/shared`. */
-export const HISTORY_MAX_VISITS = 50;
+/**
+ * Fenêtre de l'historique — c'est `CUSTOMER_HISTORY_MAX_VISITS` du contrat,
+ * réexporté sous le nom que `customer-history.dto.ts` et le contrôleur
+ * emploient déjà. Une seule écriture de la valeur, et elle est dans
+ * `@spa/shared`.
+ */
+export const HISTORY_MAX_VISITS = CUSTOMER_HISTORY_MAX_VISITS;
 
 /**
- * Numéro de téléphone — volontairement permissif, comme `phoneSchema` de
- * `@spa/shared` : refuser un numéro pourtant valide empêche d'être rappelée, en
- * accepter un douteux ne coûte qu'un SMS non délivré.
+ * Numéro de téléphone — volontairement permissif, et c'est **le motif de
+ * `storedPhoneSchema`** de `@spa/shared`, recopié faute que le paquet l'exporte
+ * (il n'en publie que `E164_PATTERN` et `UUID_V4_PATTERN`).
+ *
+ * Le régime est celui que l'ADR 0008 arrête pour la fiche cliente : format libre
+ * borné, **jamais** E.164. Une fiche s'enregistre et s'affiche ; elle ne se
+ * compose pas — c'est le rappel SMS J-1 qui compose, et il part d'ailleurs.
+ * Refuser un numéro pourtant valide empêche d'être rappelée, en accepter un
+ * douteux ne coûte qu'un SMS non délivré.
  */
 const PHONE_PATTERN = /^[+0-9][0-9\s().-]*$/;
 
@@ -89,13 +159,16 @@ const PHONE_PATTERN = /^[+0-9][0-9\s().-]*$/;
  * Élague une chaîne avant que les bornes ne la jugent — sans quoi `"   "`
  * passerait pour un prénom. Jumeau de celui d'`identity/dto/users.dto.ts`,
  * dupliqué pour la même raison (un module n'importe pas un fichier profond d'un
- * autre, api-module §3) et destiné à disparaître avec #26.
+ * autre, api-module §3) et destiné à disparaître avec les trois substitutions
+ * que le TODO(#536) ci-dessus décrit : les schémas du contrat font le `.trim()`
+ * eux-mêmes.
  */
 const Trim = (): PropertyDecorator =>
   Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value));
 
 /**
- * Fiche cliente réduite — l'élément des listes.
+ * Fiche cliente réduite — l'élément des listes, et la documentation de
+ * `customerSummarySchema`.
  *
  * **Pas de `internalNote` ici**, et c'est la moitié applicative du critère
  * « notes internes distinctes des informations visibles du client » : une liste
@@ -131,6 +204,12 @@ export class CustomerSummaryDto implements CustomerSummary {
  *
  * `internalNote` n'apparaît que sur cette forme, servie au rang `STAFF` et
  * au-dessus. Aucune route du parcours public ne la référence.
+ *
+ * Elle porte **trois champs que `customerSchema` ne décrit pas** —
+ * `marketingConsent`, `marketingConsentAt`, `anonymizedAt`, tous trois ajoutés
+ * par #81. C'est pourquoi elle n'a pas les deux assertions de compilation de
+ * `CustomerSummaryDto` : les poser ferait échouer le `tsc` sur un écart réel,
+ * qui se referme dans le contrat et non ici (TODO(#536) de l'en-tête).
  */
 export class CustomerDto
   extends CustomerSummaryDto
@@ -140,7 +219,7 @@ export class CustomerDto
   @ApiProperty({
     nullable: true,
     type: String,
-    maxLength: NOTE_MAX_LENGTH,
+    maxLength: LONG_TEXT_MAX_LENGTH,
     description:
       'Note interne du salon. **Jamais servie au parcours public** : c’est un ' +
       'champ de back-office, réservé aux rôles internes.',
@@ -242,12 +321,14 @@ export class CustomerPageDto implements Omit<CustomerPage, 'items'> {
  * des chaînes, et le `ValidationPipe` global est en
  * `enableImplicitConversion: false` — `?page=2` arriverait sinon en `'2'` et
  * `@IsInt()` le refuserait.
+ *
+ * Cette classe **valide encore** : voir le point 2 du TODO(#536) de l'en-tête.
  */
 export class ListCustomersQueryDto {
   @ApiPropertyOptional({
     example: 'dur',
-    minLength: SEARCH_MIN_LENGTH,
-    maxLength: SEARCH_MAX_LENGTH,
+    minLength: CUSTOMER_SEARCH_MIN_LENGTH,
+    maxLength: CUSTOMER_SEARCH_MAX_LENGTH,
     description:
       'Recherche par **préfixe** de nom, de prénom, d’adresse e-mail ou de numéro. ' +
       'Absent, la liste rend tout le fichier.',
@@ -255,10 +336,10 @@ export class ListCustomersQueryDto {
   @IsOptional()
   @IsString()
   @Trim()
-  @MinLength(SEARCH_MIN_LENGTH, {
-    message: `q : au moins ${String(SEARCH_MIN_LENGTH)} caractères`,
+  @MinLength(CUSTOMER_SEARCH_MIN_LENGTH, {
+    message: `q : au moins ${String(CUSTOMER_SEARCH_MIN_LENGTH)} caractères`,
   })
-  @MaxLength(SEARCH_MAX_LENGTH)
+  @MaxLength(CUSTOMER_SEARCH_MAX_LENGTH)
   public q?: string;
 
   @ApiPropertyOptional({
@@ -271,6 +352,8 @@ export class ListCustomersQueryDto {
   // `'true'` / `'false'` en query string : la conversion est explicite ici parce
   // que le pipe global ne convertit pas implicitement. Toute autre valeur vaut
   // `false` — un `?includeInactive=oui` ne doit pas ouvrir la liste par accident.
+  // C'est mot pour mot le prédicat de `customerSearchQuerySchema`, qui refuse lui
+  // aussi `z.coerce.boolean()` pour cette raison précise.
   @Transform(({ value }: { value: unknown }) => value === true || value === 'true')
   @IsBoolean()
   public includeInactive?: boolean;
@@ -282,7 +365,8 @@ export class ListCustomersQueryDto {
   @Min(1)
   // Plafond **serveur** lui aussi : `@IsInt()` laisse passer `1e30`, dont le
   // décalage dépasse le `bigint` de PostgreSQL et sort en 500 au lieu du 400
-  // annoncé.
+  // annoncé. Le contrat ne le porte pas encore — c'est ce qui retient la
+  // substitution de cette classe.
   @Max(MAX_PAGE)
   public page?: number;
 
@@ -323,6 +407,10 @@ export function toSearchQuery(dto: ListCustomersQueryDto): {
  * l'établissement, empreinte nulle ou non. Le correctif appartient à `identity`
  * et fait l'objet d'une issue de suivi ; voir l'en-tête de
  * `createCustomerRequestSchema` dans `@spa/shared`.
+ *
+ * Cette classe **valide encore** : voir le point 1 du TODO(#536) de l'en-tête —
+ * `createCustomerRequestSchema` est `.strict()` et ne déclare pas
+ * `marketingConsent`.
  */
 export class CreateCustomerDto {
   @ApiProperty({ example: 'alice@example.test', maxLength: EMAIL_MAX_LENGTH })
@@ -368,7 +456,7 @@ export class CreateCustomerDto {
   public phone?: string;
 
   @ApiPropertyOptional({
-    maxLength: NOTE_MAX_LENGTH,
+    maxLength: LONG_TEXT_MAX_LENGTH,
     description:
       'Note interne, acceptée dès la création : le front-desk a souvent la ' +
       'remarque à noter au même instant que la fiche.',
@@ -376,7 +464,7 @@ export class CreateCustomerDto {
   @IsOptional()
   @IsString()
   @Trim()
-  @MaxLength(NOTE_MAX_LENGTH)
+  @MaxLength(LONG_TEXT_MAX_LENGTH)
   public internalNote?: string;
 
   @ApiPropertyOptional({
@@ -410,6 +498,10 @@ export class CreateCustomerDto {
  * descendrait jusqu'à une colonne `NOT NULL`. Sur `phone` et `internalNote`, en
  * revanche, `null` **est** une valeur — c'est ainsi qu'on efface —, et la
  * validation le laisse traverser.
+ *
+ * Cette classe **valide encore** : voir le point 1 du TODO(#536) de l'en-tête —
+ * `updateCustomerRequestSchema` est `.strict()` et ne déclare pas
+ * `marketingConsent`.
  */
 export class UpdateCustomerDto {
   @ApiPropertyOptional({ example: 'Alice', maxLength: NAME_MAX_LENGTH })
@@ -446,13 +538,13 @@ export class UpdateCustomerDto {
   @ApiPropertyOptional({
     nullable: true,
     type: String,
-    maxLength: NOTE_MAX_LENGTH,
+    maxLength: LONG_TEXT_MAX_LENGTH,
     description: '`null` efface la note ; le champ absent la laisse telle quelle.',
   })
   @ValidateIf((_object: unknown, value: unknown) => value !== undefined && value !== null)
   @IsString()
   @Trim()
-  @MaxLength(NOTE_MAX_LENGTH)
+  @MaxLength(LONG_TEXT_MAX_LENGTH)
   public internalNote?: string | null;
 
   @ApiPropertyOptional({
@@ -490,13 +582,37 @@ export function toCustomerPatch(dto: UpdateCustomerDto): CustomerPatch {
 }
 
 /**
- * Activation ou désactivation d'une fiche — `PATCH /customers/:id/status`.
+ * Le pipe de `PATCH /customers/:id/status` — c'est **lui** qui valide, et non la
+ * classe ci-dessous.
+ *
+ * Instancié une fois au chargement du module plutôt qu'à chaque décoration : le
+ * schéma ne change pas d'une requête à l'autre, et la garde `.strict()` du pipe
+ * se paie ainsi une seule fois, à l'amorçage.
+ *
+ * `setCustomerStatusRequestSchema` est `.strict()` : un `tenantId`, un `role` ou
+ * un `email` glissé dans ce corps est **refusé**, exactement comme le faisait
+ * `forbidNonWhitelisted` (tenant-isolation §2). Le refus a la même forme —
+ * `BadRequestException` portant un tableau de messages, servie en
+ * `VALIDATION_ERROR` par `DomainExceptionFilter` — et aucun client ne distingue
+ * cette route de ses voisines non encore substituées.
+ */
+export const setCustomerStatusBody = new ZodValidationPipe(setCustomerStatusRequestSchema);
+
+/** L'état demandé, tel que le contrat le rend au contrôleur. */
+export type SetCustomerStatusBody = SetCustomerStatusRequest;
+
+/**
+ * Activation ou désactivation d'une fiche — `PATCH /customers/:id/status`, la
+ * documentation de `setCustomerStatusRequestSchema`.
  *
  * Un booléen et non deux routes `/deactivate` et `/reactivate` : la
  * réactivation est le même geste, et deux points d'entrée auraient deux jeux de
  * gardes à tenir en accord. Le champ est **obligatoire** — un corps vide qui
  * « bascule » l'état rendrait l'opération non idempotente, donc dangereuse à
  * rejouer.
+ *
+ * Elle n'a plus **aucun** décorateur `class-validator` : la typer sur un
+ * paramètre de handler viderait le corps de la requête (ADR 0008).
  */
 export class SetCustomerStatusDto {
   @ApiProperty({
@@ -504,7 +620,6 @@ export class SetCustomerStatusDto {
       '`false` retire la fiche des écrans de saisie. Ses rendez-vous passés et ' +
       'son historique restent intacts.',
   })
-  @IsBoolean({ message: 'isActive : booléen attendu' })
   public isActive!: boolean;
 }
 
@@ -538,3 +653,66 @@ export function toCustomerDto(customer: Customer): CustomerDto {
     emailSuppressionReason: customer.emailSuppressionReason,
   };
 }
+
+// ---------------------------------------------------------------------------
+// La sortie tenue par le contrat — à la compilation, faute de pouvoir l'être à
+// l'exécution
+// ---------------------------------------------------------------------------
+
+/**
+ * Les schémas de sortie du contrat décrivent ce que le **front lit**, pas ce que
+ * l'API **émet** : `receivedEmailSuppressionReasonSchema` ramène `HARD_BOUNCE` en
+ * `hard_bounce`, comme il le fait des rôles. Valider notre propre sortie contre
+ * eux exigerait donc de changer le format du fil, ce qui déborde ce ticket et
+ * casserait tout lecteur du back-office.
+ *
+ * Ce que le contrat peut garder, en revanche, c'est la **forme entrante** qu'il
+ * sait lire — `z.input<…>` —, et il la garde à la compilation. Les assertions
+ * ci-dessous coûtent zéro à l'exécution et échouent au `tsc` :
+ *
+ * 1. le **jeu de clés** est exactement celui du schéma. Un champ ajouté d'un
+ *    côté et pas de l'autre casse la compilation, là où il aurait autrement
+ *    voyagé sans que personne ne le lise ;
+ * 2. **chaque champ** est assignable à ce que le schéma sait lire.
+ *
+ * Elles portent sur `CustomerSummaryDto` et `CustomerPageDto`, dont les jeux de
+ * clés coïncident avec le contrat. `CustomerDto` en est privée, et l'en-tête dit
+ * pourquoi : `customerSchema` ignore les trois champs de #81.
+ */
+type CustomerSummaryWire = z.input<typeof customerSummarySchema>;
+type CustomerPageWire = z.input<typeof customerPageSchema>;
+
+type AssertNever<T extends never> = T;
+type AssertTrue<T extends true> = T;
+
+type _CustomerSummaryDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof CustomerSummaryDto, keyof CustomerSummaryWire>
+  | Exclude<keyof CustomerSummaryWire, keyof CustomerSummaryDto>
+>;
+
+type _CustomerSummaryDtoIsReadableByTheContract = AssertTrue<
+  CustomerSummaryDto extends CustomerSummaryWire ? true : false
+>;
+
+type _CustomerPageDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof CustomerPageDto, keyof CustomerPageWire>
+  | Exclude<keyof CustomerPageWire, keyof CustomerPageDto>
+>;
+
+type _CustomerPageDtoIsReadableByTheContract = AssertTrue<
+  CustomerPageDto extends CustomerPageWire ? true : false
+>;
+
+/**
+ * Même garde sur l'**entrée** substituée, dans l'autre sens : la classe qui
+ * documente `/api/docs` doit annoncer exactement les champs que le pipe accepte.
+ *
+ * Sans elle, la substitution aurait déplacé le risque plutôt que de le
+ * supprimer — la validation n'a plus qu'une écriture, mais la documentation en
+ * garde une seconde, et une `@ApiProperty` oubliée décrirait une route qui
+ * refuse ce qu'elle annonce.
+ */
+type _SetCustomerStatusDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof SetCustomerStatusDto, keyof z.input<typeof setCustomerStatusRequestSchema>>
+  | Exclude<keyof z.input<typeof setCustomerStatusRequestSchema>, keyof SetCustomerStatusDto>
+>;

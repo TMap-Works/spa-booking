@@ -11,13 +11,25 @@ import type { EmailSuppressionReason } from '../notifications/notifications.type
  * Vocabulaire du module `crm` — ce qui franchit la frontière du service, jamais
  * une entité Prisma (api-module §4).
  *
- * TODO(#26) : ces formes reprennent `customerSchema`, `customerVisitSchema` et
- * `customerVisitSummarySchema` de `@spa/shared`. Les redéclarer ici suit le
- * précédent des modules voisins ; l'import se substituera à ces interfaces sans
- * changer un champ, lors de la reprise groupée de ce TODO — la dépendance vers
- * le paquet partagé est posée depuis #463, et `crm.errors.ts` en consomme déjà
- * une valeur. La casse des statuts est le seul écart connu et il est documenté
- * sur `CustomerVisit.status`.
+ * L'accord avec le contrat se vérifie à la **frontière** depuis #510 :
+ * `dto/customer.dto.ts` porte des assertions de compilation contre
+ * `z.input<customerSummarySchema>` et `z.input<customerPageSchema>`, et un champ
+ * ajouté d'un côté et pas de l'autre casse le `tsc`.
+ *
+ * TODO(#536) : remplacer ces interfaces par les types inférés du contrat reste
+ * souhaitable, et trois choses s'y opposent, dont aucune ne se tranche depuis ce
+ * module :
+ *
+ * 1. **la casse des statuts.** `CustomerVisit.status` porte la casse de
+ *    l'énumération PostgreSQL (`COMPLETED`) ; `appointmentStatusSchema` du
+ *    contrat porte le même mot en minuscules. C'est le premier point de
+ *    vigilance de #510 — même constat que dans `reporting.types.ts` ;
+ * 2. **`readonly`.** `z.infer<...>` ne le porte pas, là où toutes les vues de ce
+ *    fichier le sont ;
+ * 3. **les trois champs de #81** — `marketingConsent`, `marketingConsentAt`,
+ *    `anonymizedAt` —, que `customerSchema` ne décrit pas encore, et qui sont
+ *    déjà la raison pour laquelle `CustomerDto` n'a pas d'assertion de jeu de
+ *    clés (voir son en-tête).
  */
 
 /**

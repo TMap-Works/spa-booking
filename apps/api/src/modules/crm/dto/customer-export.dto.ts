@@ -49,8 +49,9 @@ export class ExportedAppointmentDto
   public id!: string;
 
   // Le statut est **tel que la colonne l'écrit** — majuscules comprises. La
-  // conversion vers les libellés minuscules du contrat partagé appartient à la
-  // reprise groupée du TODO(#26), comme pour l'historique et les rôles.
+  // conversion vers les libellés minuscules du contrat partagé est le premier
+  // point de vigilance de #510 : elle change le format du fil et se décide en un
+  // seul endroit, pour l'historique, les rôles et l'agenda à la fois — TODO(#536).
   @ApiProperty({ enum: APPOINTMENT_STATUSES, example: 'COMPLETED' })
   public status!: AppointmentStatus;
 

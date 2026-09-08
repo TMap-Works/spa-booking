@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNotFoundResponse,
@@ -37,8 +38,10 @@ import {
   CustomerPageDto,
   HISTORY_MAX_VISITS,
   ListCustomersQueryDto,
+  type SetCustomerStatusBody,
   SetCustomerStatusDto,
   UpdateCustomerDto,
+  setCustomerStatusBody,
   toCustomerDto,
   toCustomerPatch,
   toSearchQuery,
@@ -328,12 +331,21 @@ export class CustomersController {
   @Patch(':id/status')
   @AuthAtLeast('MANAGER')
   @ApiOperation({ summary: 'Désactiver ou réactiver une fiche cliente' })
+  // Déclaré explicitement : le corps est validé par le contrat partagé et le
+  // paramètre est typé par un alias de type, dont `@nestjs/swagger` ne peut plus
+  // rien déduire. `SetCustomerStatusDto` ne sert plus qu'à cela (ADR 0008).
+  @ApiBody({ type: SetCustomerStatusDto })
   @ApiOkResponse({ type: CustomerDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
   @ApiNotFoundResponse({ description: 'Aucune fiche de cet établissement ne porte cet identifiant.' })
   public async setStatus(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: SetCustomerStatusDto,
+    // Le type est celui **du contrat**, jamais `SetCustomerStatusDto` : la
+    // classe n'a plus de décorateur `class-validator`, et la typer ici ferait
+    // rejouer le `ValidationPipe` global, dont le `whitelist` viderait le corps
+    // de son unique champ — la fiche serait alors basculée sur un `isActive`
+    // indéfini (ADR 0008).
+    @Body(setCustomerStatusBody) body: SetCustomerStatusBody,
   ): Promise<CustomerDto> {
     return toCustomerDto(await this.customers.setActive(id, body.isActive));
   }
