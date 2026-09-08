@@ -55,12 +55,11 @@ export class NotificationTemplatesService {
   /**
    * Tous les modèles **effectifs** de l'établissement.
    *
-   * Un par couple `(type, canal)` qui en a un : quatre par défaut — confirmation
-   * et rappel, e-mail et SMS —, davantage si le salon a personnalisé un message
-   * que la plateforme ne fournit pas encore. Un couple sans modèle du tout
-   * (`CANCELLATION` tant que #72 n'est pas livré, et que le salon n'a rien écrit)
-   * n'apparaît pas : la liste répond à « que reçoit ma cliente ? », et la réponse
-   * pour ce message est « rien ».
+   * Un par couple `(type, canal)` qui en a un : six par défaut depuis #72 — les
+   * trois messages du CDC §1.4 sur les deux canaux. Un couple sans modèle du
+   * tout — un type ajouté à l'énumération sans son défaut, et que le salon n'a
+   * pas écrit lui-même — n'apparaît pas : la liste répond à « que reçoit ma
+   * cliente ? », et la réponse pour ce message est « rien ».
    *
    * L'ordre est celui des énumérations — le même que celui du schéma, donc le
    * même d'un appel à l'autre. Une liste de configuration qui change d'ordre

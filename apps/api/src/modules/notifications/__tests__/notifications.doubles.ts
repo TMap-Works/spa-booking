@@ -132,6 +132,14 @@ export interface FakeNotificationsRepository {
    * autre chose que la première.
    */
   emailSuppressed: boolean;
+  /**
+   * Le compte du praticien du rendez-vous — #72.
+   *
+   * `null` fait disparaître la ligne `staff`, ce que le client scopé produit
+   * aussi pour un praticien d'un autre établissement : dans les deux cas il n'y
+   * a personne à prévenir, et rien à divulguer.
+   */
+  staffUserId: string | null;
 }
 
 function toRecord(row: FakeRow): NotificationRecord {
@@ -226,9 +234,11 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     contact: { hasEmail: boolean; hasSms: boolean } | null;
     reminder: ReminderEligibility | null;
     emailSuppressed: boolean;
+    staffUserId: string | null;
   } = {
     contact: { hasEmail: true, hasSms: true },
     emailSuppressed: false,
+    staffUserId: 'staff-user',
     // Au milieu de la fenêtre : `reminderTiming` rendra `due` quel que soit le
     // temps que la suite met à s'exécuter.
     reminder: {
@@ -245,6 +255,8 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
 
   const isEmailSuppressed = (): Promise<boolean> => Promise.resolve(state.emailSuppressed);
 
+  const findStaffRecipient = (): Promise<string | null> => Promise.resolve(state.staffUserId);
+
   const repository = {
     claim,
     markSent,
@@ -252,6 +264,7 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     findRecipientContact,
     findReminderEligibility,
     isEmailSuppressed,
+    findStaffRecipient,
   } as unknown as NotificationsRepository;
 
   return {
@@ -274,6 +287,12 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     },
     set emailSuppressed(value) {
       state.emailSuppressed = value;
+    },
+    get staffUserId() {
+      return state.staffUserId;
+    },
+    set staffUserId(value) {
+      state.staffUserId = value;
     },
   };
 }

@@ -21,6 +21,7 @@
  * un fichier de fonctions pures — sans que le vocabulaire du module se scinde en
  * deux.
  */
+import type { AppointmentCancelledBy } from '../appointments/appointment-status';
 import type { DeliveryEventOutcome } from './delivery-event';
 /**
  * Le coût d'un SMS vient du moteur de modèles, qui sait seul compter les
@@ -315,13 +316,30 @@ export type DispatchOutcome = 'sent' | 'skipped';
  *
  * Elle ne porte **pas** le tenant : la colonne est déjà dans l'unique, et l'y
  * recopier n'ajouterait rien qu'une occasion de divergence.
+ *
+ * ## Le destinataire, quand il y en a plusieurs (#72)
+ *
+ * Les deux premiers messages du MVP n'ont qu'un destinataire — la cliente — et
+ * leur clé n'a donc rien à en dire. L'avis d'annulation en a **deux** possibles,
+ * la cliente et le praticien (CDC §1.4), et le même rendez-vous peut produire un
+ * avis pour l'un ou pour l'autre selon d'où vient la décision. Sans le
+ * destinataire dans la clé, l'avis destiné au praticien serait pris pour un
+ * rejeu de celui destiné à la cliente : la clé de livraison identifie « ce
+ * message-là, une fois », et ce ne sont pas les mêmes messages.
+ *
+ * L'argument est fourni ou non, jamais deviné : les appelants existants
+ * composent exactement la même chaîne qu'avant, et aucune ligne déjà écrite ne
+ * change de clé.
  */
 export function appointmentDedupeKey(
   appointmentId: string,
   type: NotificationType,
   channel: NotificationChannel,
+  recipientUserId?: string,
 ): string {
-  return `appointment:${appointmentId}:${type}:${channel}`;
+  const base = `appointment:${appointmentId}:${type}:${channel}`;
+
+  return recipientUserId === undefined ? base : `${base}:${recipientUserId}`;
 }
 
 /**
@@ -353,6 +371,56 @@ export function isDialableNumber(phone: string | null): boolean {
   }
 
   return /^\+[1-9][0-9]{7,14}$/.test(phone.replaceAll(/[\s.-]/g, ''));
+}
+
+/**
+ * Les canaux sur lesquels un compte est joignable, dans l'ordre d'envoi.
+ *
+ * Les **trois** producteurs du module posaient la même règle chacun de leur
+ * côté — les deux abonnés au bus d'`appointments` et le balayage du rappel J-1 —
+ * et une règle recopiée trois fois est une règle qui finit par diverger sur le
+ * message le moins relu. Elle est ici, écrite une fois, sur les deux booléens que
+ * `findRecipientContact` et `findDueReminders` rendent l'un comme l'autre.
+ *
+ * ## L'e-mail d'abord, et il part toujours
+ *
+ * L'ordre n'est pas cosmétique : les deux canaux écrivent dans la même table, et
+ * c'est l'e-mail qui porte le récapitulatif — le journal du back-office affiche
+ * les lignes dans cet ordre.
+ *
+ * Et il part **toujours**, dès que l'adresse existe et n'est pas supprimée : le
+ * contrat partagé pose la règle (« le SMS se désactive, l'e-mail non »), parce
+ * qu'un message d'exécution du contrat est la preuve du rendez-vous. Le SMS, lui,
+ * ne part que si le compte porte un numéro composable — la seule préférence que
+ * le schéma sache exprimer aujourd'hui.
+ *
+ * `marketing_consent` n'entre nulle part ici : une confirmation, un rappel ou un
+ * avis d'annulation relèvent de l'exécution du contrat, pas de la prospection
+ * (CDC §5.1, notifications §7).
+ *
+ * Rend une liste **vide** sur un compte introuvable — anonymisé, ou d'un autre
+ * établissement, ce que le client scopé traite de la même façon. L'appelant le
+ * journalise : c'est le seul chemin par lequel un fait métier ne produirait
+ * aucune trace d'envoi.
+ */
+export function reachableChannels(
+  contact: { readonly hasEmail: boolean; readonly hasSms: boolean } | null,
+): readonly NotificationChannel[] {
+  if (contact === null) {
+    return [];
+  }
+
+  const channels: NotificationChannel[] = [];
+
+  if (contact.hasEmail) {
+    channels.push('EMAIL');
+  }
+
+  if (contact.hasSms) {
+    channels.push('SMS');
+  }
+
+  return channels;
 }
 
 /**
@@ -407,6 +475,31 @@ export interface AppointmentMessageContext {
   /** Prix, entier dans la plus petite unité — jamais un flottant. */
   readonly priceAmountMinor: number;
   readonly priceCurrency: string;
+
+  /**
+   * De quel côté du comptoir l'annulation vient — troisième critère de #72,
+   * « mentionne l'origine de l'annulation ». `null` sur un rendez-vous qui n'est
+   * pas annulé, ce qui est le cas de la confirmation et du rappel.
+   *
+   * ## Pourquoi il est **relu** ici et non porté par le message de file
+   *
+   * Pour la raison qui vaut pour tout le reste de cette structure : « un message
+   * de file survit à sa file ». `NotificationMessage` ne transporte que des
+   * identifiants, et l'origine d'une annulation est un fait de la ligne
+   * `appointments`, pas de la livraison. La relire garantit qu'un avis rejoué
+   * une heure plus tard dit ce que la ligne dit alors — et évite d'élargir la
+   * charge utile d'un message SQS à un champ que le rendu sait aller chercher.
+   *
+   * ## Ce qu'il ne porte pas, et ne portera pas
+   *
+   * Le **motif** d'annulation (`appointments.cancellation_reason`) n'entre pas
+   * ici. C'est un texte libre écrit par un humain — il peut nommer un état de
+   * santé ou un tiers — et `appointment-cancelled.event.ts` explique pourquoi il
+   * ne voyage nulle part. Un modèle de message est écrit par le salon : lui
+   * ouvrir une variable sur ce texte le ferait partir chez la cliente, ou chez
+   * le praticien, sans que personne ne l'ait décidé (CDC §5.1).
+   */
+  readonly cancelledBy: AppointmentCancelledBy | null;
 }
 
 /**

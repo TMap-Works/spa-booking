@@ -2,6 +2,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
+import type { AppointmentCancelledBy } from '../appointments/appointment-status';
 import {
   LIVE_NOTIFICATION_STATUSES,
   isDialableNumber,
@@ -436,6 +437,10 @@ export class NotificationsRepository {
           startsAt: true,
           priceAmountMinor: true,
           priceCurrency: true,
+          // L'origine de l'annulation — #72. `cancellation_reason` n'est **pas**
+          // lu : c'est un texte libre écrit par un humain, et il n'a rien à faire
+          // dans un message composé par un modèle de salon (CDC §5.1).
+          cancelledBy: true,
           client: { select: { firstName: true, lastName: true } },
           service: {
             select: { name: true, durationMinutes: true, bufferBeforeMinutes: true },
@@ -483,7 +488,43 @@ export class NotificationsRepository {
       ),
       priceAmountMinor: appointment.priceAmountMinor,
       priceCurrency: appointment.priceCurrency,
+      // L'énumération du schéma est reprise telle quelle, comme les trois
+      // autres de ce fichier : `appointment-status.spec.ts` tient le témoin qui
+      // garantit que les libellés coïncident.
+      cancelledBy: appointment.cancelledBy as AppointmentCancelledBy | null,
     };
+  }
+
+  /**
+   * Le **compte** du praticien d'un rendez-vous — #72.
+   *
+   * ## Pourquoi une lecture de plus, et pas `staffId` directement
+   *
+   * Parce que `notifications.recipient_user_id` référence `users`, jamais
+   * `staff`. Les deux tables ne portent pas la même chose : `staff` décrit un
+   * praticien dans un salon — son nom d'affichage, sa biographie, son activité —
+   * là où `users` porte l'**adresse** et le numéro, c'est-à-dire les deux seules
+   * choses dont un envoi ait besoin. Passer `staff.id` en destinataire aurait
+   * écrit une clé étrangère qui ne résout rien et rendu injoignable le seul
+   * message du MVP qui s'adresse au personnel.
+   *
+   * ## Elle ne rend qu'un identifiant
+   *
+   * Ni nom, ni adresse, ni numéro : le module désigne ses destinataires par le
+   * compte, et la coordonnée se relit à l'envoi (notifications §7). C'est la
+   * même discipline que `findRecipientContact`, qui ne rend que deux booléens.
+   *
+   * Rend `null` si le praticien n'existe plus — ou appartient à un autre
+   * établissement, ce que le client scopé traite de la même façon. Il n'y a
+   * alors personne à prévenir, et rien à divulguer.
+   */
+  public async findStaffRecipient(staffId: string): Promise<string | null> {
+    const staff = await this.prisma.staff.findFirst({
+      where: { id: staffId },
+      select: { userId: true },
+    });
+
+    return staff === null ? null : staff.userId;
   }
 
   /**

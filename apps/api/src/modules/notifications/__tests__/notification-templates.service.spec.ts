@@ -7,7 +7,7 @@ import {
   NotificationTemplateNotFoundError,
   NotificationTemplateTooLongError,
 } from '../notifications.errors';
-import type { NotificationTemplateSource } from '../notifications.types';
+import type { NotificationTemplateSource, NotificationType } from '../notifications.types';
 import { FakeNotificationTemplates } from './notifications.doubles';
 
 /**
@@ -92,11 +92,17 @@ describe('modèles — la résolution du modèle effectif', () => {
   });
 
   it('refuse en 404 un message sans modèle, ni personnalisé ni par défaut', async () => {
-    // `CANCELLATION` tant que #72 n'a pas livré son modèle de plateforme.
+    // Depuis #72, les trois types du CDC §1.4 ont tous leur défaut : ce refus ne
+    // se produit plus par une valeur de l'énumération, et le DTO du contrôleur
+    // n'en laisse pas passer d'autre. La barrière reste malgré tout — un type
+    // ajouté à l'énumération sans son modèle doit rendre 404 plutôt que servir
+    // celui d'un autre message.
     const store = new FakeNotificationTemplates();
 
     await expect(
-      runWithTenant(SALON, () => serviceOn(store).get('CANCELLATION', 'EMAIL')),
+      runWithTenant(SALON, () =>
+        serviceOn(store).get('WELCOME' as NotificationType, 'EMAIL'),
+      ),
     ).rejects.toBeInstanceOf(NotificationTemplateNotFoundError);
   });
 
@@ -110,7 +116,10 @@ describe('modèles — la résolution du modèle effectif', () => {
 });
 
 describe('modèles — la liste du back-office', () => {
-  it('rend les quatre modèles servis par défaut, et pas l’avis d’annulation', async () => {
+  it('rend les six modèles servis par défaut — trois messages, deux canaux', async () => {
+    // Quatre jusqu'à #72, qui a livré l'avis d'annulation. L'ordre est celui des
+    // énumérations : une liste de configuration qui change d'ordre fait bouger
+    // les lignes sous la souris.
     const store = new FakeNotificationTemplates();
 
     const list = await runWithTenant(SALON, () => serviceOn(store).list());
@@ -120,20 +129,23 @@ describe('modèles — la liste du back-office', () => {
       'BOOKING_CONFIRMATION/SMS',
       'REMINDER_24H/EMAIL',
       'REMINDER_24H/SMS',
+      'CANCELLATION/EMAIL',
+      'CANCELLATION/SMS',
     ]);
     expect(list.every((item) => item.origin === 'PLATFORM')).toBe(true);
   });
 
-  it('fait apparaître un message que seul le salon a écrit', async () => {
-    // La table accepte les trois types : un salon qui écrit lui-même son avis
-    // d'annulation le voit partir, ce qui est ce que « personnaliser sans
-    // déploiement » veut dire.
+  it('fait passer la personnalisation du salon devant le défaut', async () => {
+    // Ce que « personnaliser sans déploiement » veut dire : le salon qui réécrit
+    // son avis d'annulation voit partir le sien, et non celui de la plateforme.
     const store = new FakeNotificationTemplates();
     store.seed({ tenantId: SALON, type: 'CANCELLATION', channel: 'EMAIL', source: PERSONNALISE });
 
     const list = await runWithTenant(SALON, () => serviceOn(store).list());
+    const avis = list.find((item) => `${item.type}/${item.channel}` === 'CANCELLATION/EMAIL');
 
-    expect(list.map((item) => `${item.type}/${item.channel}`)).toContain('CANCELLATION/EMAIL');
+    expect(avis?.origin).toBe('TENANT');
+    expect(avis?.source).toEqual(PERSONNALISE);
   });
 
   it('mesure le coût des modèles de SMS, et d’eux seuls', async () => {
@@ -379,19 +391,31 @@ describe('modèles — le retour au défaut', () => {
     expect(chezLeVoisin.origin).toBe('TENANT');
   });
 
-  it('signale en 404 le message qui reste alors sans aucun modèle', async () => {
-    // L'effacement a bien eu lieu — c'est ce que le salon a demandé —, et le
-    // refus porte sur la lecture qui suit.
+  it('rend l’avis d’annulation à son défaut, comme les deux autres messages', async () => {
+    // Jusqu'à #72 ce couple n'avait aucun défaut : l'effacement le laissait sans
+    // modèle, et la lecture qui suit rendait 404. Ce n'est plus le cas — les
+    // trois messages du CDC §1.4 ont le leur.
     const store = new FakeNotificationTemplates();
     store.seed({ tenantId: SALON, type: 'CANCELLATION', channel: 'SMS', source: PERSONNALISE });
 
-    await expect(
-      runWithTenant(SALON, () => serviceOn(store).reset('CANCELLATION', 'SMS')),
-    ).rejects.toBeInstanceOf(NotificationTemplateNotFoundError);
+    const template = await runWithTenant(SALON, () =>
+      serviceOn(store).reset('CANCELLATION', 'SMS'),
+    );
 
-    const store2 = new FakeNotificationTemplates();
+    expect(template.origin).toBe('PLATFORM');
+    expect(template.source).toEqual(defaultTemplateFor('CANCELLATION', 'SMS'));
+  });
+
+  it('signale en 404 le message qui reste alors sans aucun modèle', async () => {
+    // L'effacement a bien eu lieu — c'est ce que le salon a demandé —, et le
+    // refus porte sur la lecture qui suit. Le cas ne s'atteint plus par une
+    // valeur de l'énumération, mais la barrière reste et doit se prouver.
+    const store = new FakeNotificationTemplates();
+
     await expect(
-      runWithTenant(SALON, () => serviceOn(store2).get('CANCELLATION', 'SMS')),
+      runWithTenant(SALON, () =>
+        serviceOn(store).reset('WELCOME' as NotificationType, 'SMS'),
+      ),
     ).rejects.toBeInstanceOf(NotificationTemplateNotFoundError);
   });
 });

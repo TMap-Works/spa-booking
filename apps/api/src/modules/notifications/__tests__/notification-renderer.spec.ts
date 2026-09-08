@@ -33,7 +33,18 @@ const CONTEXTE: AppointmentMessageContext = {
   endsAt: new Date('2026-09-08T13:30:00Z'),
   priceAmountMinor: 6_500,
   priceCurrency: 'EUR',
+  cancelledBy: null,
 };
+
+/**
+ * Un type de message que la plateforme ne sert pas.
+ *
+ * Depuis #72, les trois valeurs de `NotificationType` ont toutes leur modèle de
+ * plateforme : le refus du renderer ne se produit donc plus par une valeur de
+ * l'énumération. La barrière reste, et c'est elle qu'on éprouve — un type ajouté
+ * à l'énumération sans son modèle doit tomber en `FAILED`, pas partir vide.
+ */
+const SANS_MODELE = 'WELCOME' as NotificationMessage['type'];
 
 const MESSAGE: NotificationMessage = {
   tenantId: SALON,
@@ -146,15 +157,27 @@ describe('rendu à l’envoi — quel modèle part', () => {
     expect(rendered.text).toBe('https://reservation.test/maison-lotus/compte');
   });
 
-  it('refuse l’avis d’annulation tant qu’aucun modèle ne le sert', async () => {
-    // #72. Lui servir le modèle du rappel annoncerait un rendez-vous à qui vient
-    // de l'annuler.
+  it('sert l’avis d’annulation depuis le défaut de la plateforme', async () => {
+    // #72. Jusque-là le renderer levait faute de modèle, et la ligne tombait en
+    // `FAILED` — le refus délibéré de #69, « un faux message serait pire ».
+    const templates = new FakeNotificationTemplates();
+
+    const rendered = await runWithTenant(SALON, () =>
+      rendererOn(templates, { ...CONTEXTE, cancelledBy: 'STAFF' }).render({
+        ...MESSAGE,
+        type: 'CANCELLATION',
+      }),
+    );
+
+    expect(rendered.subject).toContain('Annulation');
+    expect(rendered.text).toContain("à l'initiative du salon");
+  });
+
+  it('refuse un message qu’aucun modèle ne sert', async () => {
     const templates = new FakeNotificationTemplates();
 
     await expect(
-      runWithTenant(SALON, () =>
-        rendererOn(templates).render({ ...MESSAGE, type: 'CANCELLATION' }),
-      ),
+      runWithTenant(SALON, () => rendererOn(templates).render({ ...MESSAGE, type: SANS_MODELE })),
     ).rejects.toBeInstanceOf(UnrenderableNotificationError);
   });
 
@@ -198,7 +221,7 @@ describe('rendu à l’envoi — quel modèle part', () => {
     const renderer = new AppointmentNotificationRenderer(repository, templates.repository, CONFIG);
 
     await runWithTenant(SALON, () =>
-      renderer.render({ ...MESSAGE, type: 'CANCELLATION' }).catch(() => undefined),
+      renderer.render({ ...MESSAGE, type: SANS_MODELE }).catch(() => undefined),
     );
 
     expect(lectures).toBe(0);

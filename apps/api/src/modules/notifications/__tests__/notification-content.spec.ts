@@ -67,6 +67,14 @@ const renderBookingConfirmationSms = (context: AppointmentMessageContext): Rende
 const renderReminderSms = (context: AppointmentMessageContext): RenderedNotification =>
   renderDefault('REMINDER_24H', 'SMS', context, '');
 
+const renderCancellationEmail = (
+  context: AppointmentMessageContext,
+  cancelUrl: string,
+): RenderedNotification => renderDefault('CANCELLATION', 'EMAIL', context, cancelUrl);
+
+const renderCancellationSms = (context: AppointmentMessageContext): RenderedNotification =>
+  renderDefault('CANCELLATION', 'SMS', context, '');
+
 /**
  * Un salon à Paris, un rendez-vous en **heure d'été**.
  *
@@ -89,6 +97,7 @@ const PARIS: AppointmentMessageContext = {
   endsAt: new Date('2026-09-08T13:30:00Z'),
   priceAmountMinor: 6_500,
   priceCurrency: 'EUR',
+  cancelledBy: null,
 };
 
 const CANCEL_URL = 'https://reservation.test/maison-lotus/compte';
@@ -345,6 +354,109 @@ describe('notifications — le rappel J-1', () => {
     const { text } = renderReminderSms(PARIS);
 
     expect(text).toContain('rappel');
+    expect(text).toContain('14:30');
+    expect(text).toContain('(Europe/Paris)');
+  });
+});
+
+/**
+ * L'avis d'annulation — #72, troisième message du MVP.
+ *
+ * Ce qui s'y vérifie et qui ne se vérifie nulle part ailleurs : que le message
+ * **dit d'où vient l'annulation** (troisième critère d'acceptation), qu'il reste
+ * lisible par ses deux publics — la cliente et le praticien —, et qu'il ne
+ * transporte jamais le motif.
+ */
+describe('notifications — l’avis d’annulation', () => {
+  const SALON_ANNULE: AppointmentMessageContext = { ...PARIS, cancelledBy: 'STAFF' };
+  const CLIENTE_ANNULE: AppointmentMessageContext = { ...PARIS, cancelledBy: 'CLIENT' };
+
+  it('mentionne l’origine de l’annulation, et elle change avec elle', () => {
+    const salon = renderCancellationEmail(SALON_ANNULE, CANCEL_URL);
+    const cliente = renderCancellationEmail(CLIENTE_ANNULE, CANCEL_URL);
+
+    expect(salon.text).toContain("annulé à l'initiative du salon");
+    expect(cliente.text).toContain('annulé à la demande du client');
+  });
+
+  it('ne s’adresse à personne en particulier — le même modèle sert les deux publics', () => {
+    // Le CDC §1.4 veut « un avis d'annulation au staff et au client », et
+    // l'unique de `notification_templates` est `(tenant_id, type, channel)` : il
+    // n'y a qu'un modèle pour les deux. « Bonjour Amina » aurait salué le
+    // praticien du nom de sa cliente.
+    const { text, html } = renderCancellationEmail(SALON_ANNULE, CANCEL_URL);
+
+    expect(text).toContain('Bonjour,');
+    expect(text).not.toContain('Bonjour Amina');
+    expect(html).not.toContain('Bonjour Amina');
+  });
+
+  it('nomme la cliente dans le récapitulatif — c’est ce que le praticien cherche', () => {
+    const { text, html } = renderCancellationEmail(SALON_ANNULE, CANCEL_URL);
+
+    expect(text).toContain('Amina Rakoto');
+    expect(text).toContain('Massage suédois');
+    expect(text).toContain('Claire D.');
+    expect(html).toContain('Amina Rakoto');
+  });
+
+  it('affiche l’heure dans le fuseau du salon, et le dit', () => {
+    const { text } = renderCancellationEmail(SALON_ANNULE, CANCEL_URL);
+
+    expect(text).toContain('14:30');
+    expect(text).toContain('Europe/Paris');
+    expect(text).not.toContain('12:30');
+  });
+
+  it('n’annonce pas un rendez-vous à qui vient de l’annuler', () => {
+    const { text } = renderCancellationEmail(CLIENTE_ANNULE, CANCEL_URL);
+
+    expect(text).not.toContain('Nous vous attendons');
+    expect(text).toContain('de nouveau disponible');
+  });
+
+  it('efface la mention d’origine quand il n’y en a pas', () => {
+    // La section, et non une valeur de repli : « a été annulé . » avec une
+    // espace en trop est ce qu'une substitution nue aurait produit.
+    const { text } = renderCancellationEmail(PARIS, CANCEL_URL);
+
+    expect(text).toContain('a été annulé.');
+    expect(text).not.toContain('annulé .');
+  });
+
+  it('échappe les variables dans le corps HTML, et seulement là', () => {
+    const hostile = { ...SALON_ANNULE, clientFirstName: '<script>alert(1)</script>' };
+
+    const { html, text } = renderCancellationEmail(hostile, CANCEL_URL);
+
+    expect(html).not.toContain('<script>');
+    expect(html).toContain('&lt;script&gt;');
+    expect(text).toContain('<script>');
+  });
+
+  it('rend une version texte à côté du HTML', () => {
+    const { html, text } = renderCancellationEmail(SALON_ANNULE, CANCEL_URL);
+
+    expect(html.length).toBeGreaterThan(0);
+    expect(text.length).toBeGreaterThan(0);
+  });
+
+  it('reste un avis en SMS : ni objet, ni HTML, et sous trois segments UCS-2', () => {
+    const { subject, html, text } = renderCancellationSms({
+      ...SALON_ANNULE,
+      tenantName: 'é'.repeat(400),
+    });
+
+    expect(subject).toBe('');
+    expect(html).toBe('');
+    expect(text.length).toBeLessThanOrEqual(SMS_SINGLE_SEGMENT_UCS2 * 3);
+  });
+
+  it('dit en SMS que le rendez-vous est annulé, d’où cela vient, et à quelle heure', () => {
+    const { text } = renderCancellationSms(SALON_ANNULE);
+
+    expect(text).toContain('annulé');
+    expect(text).toContain("à l'initiative du salon");
     expect(text).toContain('14:30');
     expect(text).toContain('(Europe/Paris)');
   });

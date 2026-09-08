@@ -67,18 +67,20 @@ export const NOTIFICATION_RENDERER = Symbol('NOTIFICATION_RENDERER');
  * déjà ouverte par le consommateur — le modèle d'un salon ne peut donc pas partir
  * chez la cliente d'un autre.
  *
- * ## Ce qu'il refuse encore
+ * ## Ce qu'il refuse
  *
- * `CANCELLATION` n'a pas de modèle de plateforme : c'est le troisième message du
- * MVP (CDC §1.4) et il a son issue (#72). Le renderer **lève** plutôt que de lui
- * servir le modèle du rappel, parce qu'un avis d'annulation qui dirait « nous
- * vous attendons » serait pire qu'un avis absent. Le refus laisse la ligne en
+ * Un message dont **aucun** modèle ne sert le couple `(type, canal)` : le
+ * renderer lève `UnrenderableNotificationError` plutôt que de lui servir celui
+ * d'un autre message, parce qu'un avis d'annulation qui dirait « nous vous
+ * attendons » serait pire qu'un avis absent. Le refus laisse la ligne en
  * `FAILED`, donc reprenable dès que le modèle manquant existe (notifications §4).
  *
- * Le refus n'est plus une liste de types en dur : il découle de l'absence de
- * modèle. Un salon qui écrit lui-même son avis d'annulation le voit donc partir,
- * ce qui est exactement ce que « personnaliser sans déploiement » veut dire — et
- * le jour où #72 livrera le défaut de plateforme, il n'y aura rien à changer ici.
+ * Depuis #72, les **trois** messages du CDC §1.4 ont leur défaut de plateforme
+ * sur les deux canaux : le refus n'est plus atteignable par une valeur de
+ * `NotificationType`. Il reste parce qu'il n'est pas une liste de types en dur —
+ * il découle de l'absence de modèle —, et c'est ce qui fera tomber en `FAILED`,
+ * plutôt que partir vide, un quatrième message ajouté à l'énumération sans le
+ * sien.
  *
  * ## Le lien d'annulation vient de la configuration, jamais d'une requête
  *

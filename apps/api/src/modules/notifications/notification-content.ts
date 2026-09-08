@@ -6,6 +6,7 @@ import {
   renderTemplateSource,
   type TemplateVariables,
 } from './notification-template';
+import type { AppointmentCancelledBy } from '../appointments/appointment-status';
 import type {
   AppointmentMessageContext,
   NotificationChannel,
@@ -138,6 +139,54 @@ function clientName(context: AppointmentMessageContext): string {
 }
 
 /**
+ * D'où vient l'annulation, en toutes lettres — variable `{{origine}}`, troisième
+ * critère d'acceptation de #72.
+ *
+ * ## Trois formulations, et aucune ne s'adresse à quelqu'un
+ *
+ * « à la demande du client » et non « à votre demande » : le modèle
+ * `CANCELLATION` est **unique par canal** et sert les deux destinataires que le
+ * CDC §1.4 nomme — la cliente et le praticien. Une formulation à la deuxième
+ * personne aurait donc été fausse pour l'un des deux à chaque envoi, et c'est
+ * exactement le genre de faute qu'une cliente relit des jours plus tard dans sa
+ * boîte.
+ *
+ * `SYSTEM` n'est émis par aucune surface aujourd'hui — seuls le tunnel public
+ * (`CLIENT`) et le back-office (`STAFF`) annulent — mais il est dans
+ * `CANCELLATION_AUTHORS`, donc dans ce que la colonne peut contenir. Lui donner
+ * une phrase plutôt que de le laisser tomber dans le cas vide est ce qui évite
+ * qu'un avis parte un jour en disant « a été annulé. » sans plus d'explication.
+ *
+ * ## La chaîne vide n'est pas un défaut, c'est une absence
+ *
+ * `null` — un rendez-vous qui n'est pas annulé, ce qui est le cas de tous ceux
+ * que la confirmation et le rappel décrivent — rend `''`, ce que la grammaire
+ * des sections sait lire : `{{#origine}}…{{/origine}}` s'efface entièrement. Un
+ * texte de repli aurait fini par apparaître dans une confirmation.
+ *
+ * ## Chaque caractère est dans l'alphabet GSM-7
+ *
+ * `à`, `é` et `è` en font partie ; `ê`, `ô` et `ç` minuscule n'y sont pas, et un
+ * seul d'entre eux ferait basculer l'avis d'annulation en UCS-2 — donc de 160
+ * caractères à 70, donc au double de sa facture (notifications §5). C'est
+ * pourquoi la formulation évite « à l'initiative du gérant » ou « suite à un
+ * empêchement », et `notification-template.spec.ts` le vérifie plutôt que de
+ * l'espérer.
+ */
+export function cancellationOrigin(cancelledBy: AppointmentCancelledBy | null): string {
+  switch (cancelledBy) {
+    case 'CLIENT':
+      return 'à la demande du client';
+    case 'STAFF':
+      return "à l'initiative du salon";
+    case 'SYSTEM':
+      return 'automatiquement par le système';
+    default:
+      return '';
+  }
+}
+
+/**
  * Les valeurs des variables, pour ce rendez-vous et ce canal.
  *
  * ## Pourquoi le canal entre ici
@@ -178,6 +227,7 @@ export function buildTemplateVariables(
     fuseau: zone,
     prix: formatMoney(context.priceAmountMinor, context.priceCurrency),
     lien_annulation: cancelUrl,
+    origine: cancellationOrigin(context.cancelledBy),
   };
 }
 
