@@ -257,6 +257,31 @@ Deux raisons, et la seconde n'est pas la moindre : une requête inter-tenant sur
 d'`appointments` sont préfixés de `tenant_id` — et elle aurait mis dans la chaîne
 d'envoi un `where` écrit à la main dont l'oubli serait une fuite.
 
+### Le départ du balayage tourne d'un salon à chaque heure (#514)
+
+Le plafond `REMINDER_SWEEP_MAX_APPOINTMENTS` est **global** — 500 rendez-vous,
+tous établissements confondus — et il se consomme dans l'ordre `id asc` de
+`listTenantIds()`, qui est stable. Un salon anormalement peuplé le vidait donc à
+lui seul et privait **toujours les mêmes** suivants de leur rappel. Le défaut
+n'est pas la troncature, que `truncated` et l'alarme `…-reminder-sweep-truncated`
+signalent déjà : c'est son **déterminisme**.
+
+`sweepStartOffset` décale le départ d'un établissement à chaque balayage. Le tour
+est donc complet en `N` balayages, et un salon privé d'une heure est servi la
+suivante. L'ordre relatif reste celui de `listTenantIds()` : la rotation le
+décale, elle ne le mélange pas.
+
+**Il n'y a aucun curseur.** Le décalage se déduit de l'instant du balayage —
+`now / REMINDER_WINDOW_MS` est l'index de la fenêtre horaire, et les fenêtres
+pavent le temps, si bien que l'index avance d'exactement un par balayage. Un
+curseur retenu aurait demandé un état : en mémoire il serait propre à une
+réplique ECS et remis à zéro au déploiement ; partagé, il aurait demandé une
+table, donc une migration. Il aurait de plus cessé d'avancer dès qu'un balayage
+échoue avant de l'écrire — la famine déterministe, reconstituée.
+
+Un balayage rejoué dans la même heure retrouve le même décalage, donc les mêmes
+salons et les mêmes `dedupeKey` : le rejeu reste inoffensif.
+
 ### La revérification à l'envoi passe avant la prise de droit
 
 Un rappel supprimé ne laisse **aucune ligne**. La placer après `claim()` aurait
@@ -560,7 +585,7 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
 | `notification-dispatch.service.ts` | L'ordre d'écriture, et la revérification du rappel à l'envoi |
 | `reminder-window.ts` | La règle horaire du rappel J-1 — fonctions pures, UTC |
 | `reminder-sweep.repository.ts` | Le balayage : la **seule** injection du client non scopé du module |
-| `reminder-sweep.service.ts` | Une portée par salon, une enveloppe par canal |
+| `reminder-sweep.service.ts` | Une portée par salon, une enveloppe par canal, un départ qui tourne |
 | `internal-caller.guard.ts` | La garde à jeton partagé des routes internes |
 | `notifications.config.ts` | Le jeton d'appel interne, résolu et validé |
 | `notification-sender.ts` | Le **port** vers SES/SNS, et son implémentation par défaut qui refuse |
