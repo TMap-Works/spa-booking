@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { MIGRATIONS_DIR, PRISMA_DIR, readMigrationSql } from './migration-sql';
+import { MIGRATIONS_DIR, PRISMA_DIR, readMigrationSql, readMigrations } from './migration-sql';
 
 /**
  * Le schéma comme objet de test.
@@ -335,6 +335,7 @@ function parseCheckConstraints(sql: string): CheckConstraint[] {
   }));
 }
 
+const migrations = readMigrations();
 const sql = readMigrationSql();
 const schema = readFileSync(join(PRISMA_DIR, 'schema.prisma'), 'utf8');
 const tables = parseTables(sql);
@@ -547,13 +548,112 @@ describe('Schéma Prisma — montants', () => {
   });
 });
 
+/**
+ * Ce qui détruit de la **donnée**, et que rien n'autorise.
+ *
+ * Une table, une colonne, un type, une contrainte : les quatre emportent
+ * quelque chose qu'aucun `CREATE` ultérieur ne rend. Une colonne retirée perd
+ * ses valeurs ; une contrainte retirée perd l'invariant qui empêchait les
+ * lignes fausses d'exister, et rien ne dit que la table est encore en état de la
+ * reprendre. La suppression d'une colonne se fait donc en deux déploiements
+ * (api-module §6), jamais dans la migration qui cesse de la lire.
+ *
+ * `DROP INDEX` n'est **pas** dans cette liste depuis #534, et c'est le seul
+ * assouplissement : voir le test qui suit.
+ */
+const DATA_DESTRUCTIVE = /\b(DROP\s+(TABLE|COLUMN|TYPE|CONSTRAINT)|TRUNCATE|DELETE FROM)\b/i;
+
+/**
+ * Le SQL débarrassé de ses commentaires — ce que PostgreSQL exécutera vraiment.
+ *
+ * Les migrations de ce dépôt sont abondamment commentées, et elles **parlent**
+ * de ce qu'elles ne font pas : « un `DROP TABLE` détruirait des données »,
+ * « l'inverse exact serait `DROP INDEX …` ». Un garde qui relit le texte brut
+ * prend ces phrases pour des instructions et rougit sur une migration
+ * irréprochable — ce qui pousse à écrire des commentaires évasifs, c'est-à-dire
+ * exactement le contraire de ce qu'on veut d'une migration.
+ *
+ * Le retrait est volontairement naïf : `--` jusqu'à la fin de la ligne. Un `--`
+ * à l'intérieur d'une chaîne SQL serait pris pour un commentaire ; aucune
+ * migration n'en porte, et le jour où l'une en portera, ce garde rendra le
+ * fichier moins destructif qu'il ne l'est — jamais l'inverse.
+ */
+function executable(text: string): string {
+  return text.replaceAll(/--[^\n]*/g, '');
+}
+
+/** Un `DROP INDEX "nom"`, le nom capturé. */
+const DROP_INDEX = /\bDROP\s+INDEX\s+(?:IF\s+EXISTS\s+)?"([^"]+)"/gi;
+
+/** Un `CREATE [UNIQUE] INDEX "nom"`, le nom capturé. */
+const CREATE_INDEX = /\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"([^"]+)"/gi;
+
+/** Les noms capturés par un motif global, sans le laisser garder son curseur. */
+function names(pattern: RegExp, text: string): readonly string[] {
+  return [...text.matchAll(new RegExp(pattern.source, pattern.flags))].map((match) =>
+    group(match, 1),
+  );
+}
+
 describe('Schéma Prisma — migration', () => {
-  it('est purement additive', () => {
+  it('ne détruit jamais de donnée', () => {
     // Une migration destructive rejouée sur la recette ou la production
-    // détruirait des données sans retour possible. La suppression d'une colonne
-    // se fait en deux déploiements (api-module §6), jamais dans la migration qui
-    // cesse de la lire.
-    expect(sql).not.toMatch(/\b(DROP\s+(TABLE|COLUMN|TYPE|INDEX|CONSTRAINT)|TRUNCATE|DELETE FROM)\b/i);
+    // détruirait des données sans retour possible.
+    expect(executable(sql)).not.toMatch(DATA_DESTRUCTIVE);
+  });
+
+  it('ne retire un index que pour le remplacer, dans la même migration', () => {
+    // L'assouplissement de #534, et sa borne.
+    //
+    // Un index ne se modifie pas : il se **remplace**. Ajouter un second index à
+    // côté de l'ancien ne débloque rien, puisque c'est l'ancien qui refuse — une
+    // contrainte d'unicité ne s'assouplit pas en en ajoutant une autre. Il
+    // existe donc des changements de schéma légitimes qu'aucun chemin additif ne
+    // sert, et `notifications_live_once` en est un.
+    //
+    // Ce qui distingue ce cas d'un retrait sec n'est pas l'intention de qui
+    // l'écrit, c'est un fait vérifiable : **le même** fichier de migration —
+    // donc la même transaction, Prisma les jouant une par une — recrée un index
+    // du même nom. À aucun instant visible d'une autre transaction la table
+    // n'est sans son invariant.
+    //
+    // Un `DROP INDEX` isolé, lui, reste refusé : il perd une garantie
+    // d'unicité ou une performance de lecture sans que rien ne la reprenne, et
+    // c'est exactement ce que ce garde existe pour empêcher.
+    const orphans = migrations.flatMap((migration) => {
+      const statements = executable(migration.sql);
+      const recreated = new Set(names(CREATE_INDEX, statements));
+
+      return names(DROP_INDEX, statements)
+        .filter((dropped) => !recreated.has(dropped))
+        .map((dropped) => `${migration.name} : « ${dropped} » retiré sans être recréé`);
+    });
+
+    expect(orphans).toEqual([]);
+  });
+
+  it('n’a assoupli que le retrait d’index, et rien d’autre', () => {
+    // La borne de l'assouplissement, écrite comme un test parce qu'une borne qui
+    // n'est que dans un commentaire s'élargit à la première migration pressée.
+    // Ce qui détruit de la donnée doit rester reconnu comme tel, y compris sous
+    // les formes qu'aucune migration du dépôt n'emploie encore.
+    for (const destructive of [
+      'DROP TABLE "notifications";',
+      'ALTER TABLE "notifications" DROP COLUMN "dedupe_key";',
+      'DROP TYPE "NotificationStatus";',
+      'ALTER TABLE "appointments" DROP CONSTRAINT "appointments_no_overlap";',
+      'TRUNCATE "notifications";',
+      'DELETE FROM "notifications";',
+    ]) {
+      expect({ sql: destructive, refusé: DATA_DESTRUCTIVE.test(destructive) }).toEqual({
+        sql: destructive,
+        refusé: true,
+      });
+    }
+
+    // Et le seul qui passe désormais — sous condition de recréation, que le test
+    // précédent vérifie.
+    expect(DATA_DESTRUCTIVE.test('DROP INDEX "notifications_live_once";')).toBe(false);
   });
 
   it('verrouille le connecteur sur PostgreSQL', () => {
