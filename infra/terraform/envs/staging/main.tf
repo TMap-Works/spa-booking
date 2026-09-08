@@ -11,11 +11,12 @@ locals {
   # production, 90 en production (skill aws-infra §8). Sans rétention explicite,
   # CloudWatch conserve indéfiniment et la facture monte sans bruit.
   #
-  # Aucun module composé ici ne crée encore de groupe de journaux — `network` n'en
-  # produit pas. La valeur est posée maintenant, et exposée en sortie pour être
-  # vérifiable, parce que c'est le contrat que devront recevoir `database`,
-  # `cache` et `ecs-service` le jour où cet environnement les composera, comme le
-  # fait déjà `envs/dev`.
+  # Deux modules composés ici créent des groupes de journaux : `network` — les
+  # flow logs du VPC — et `notifications` — les trois groupes de la chaîne
+  # d'envoi. La valeur leur est passée plutôt que laissée à leur défaut, et
+  # exposée en sortie pour être vérifiable — c'est aussi le contrat que recevront
+  # `database`, `cache` et `ecs-service` le jour où cet environnement les
+  # composera, comme le fait déjà `envs/dev`.
   log_retention_days = 30
 }
 
@@ -65,6 +66,10 @@ module "network" {
   # comportement applicatif, pas une tolérance de panne d'infrastructure — ce
   # qui se vérifie, lui, en production.
   nat_gateway_count = 1
+
+  # Rétention des flow logs du VPC — trente jours, comme en développement. La
+  # recette reproduit la forme de la production, pas sa profondeur d'archive.
+  log_retention_days = local.log_retention_days
 }
 
 # --- Délivrabilité e-mail -----------------------------------------------------

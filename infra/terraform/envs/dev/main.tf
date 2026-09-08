@@ -99,6 +99,11 @@ module "network" {
   # sur un environnement de développement, où une coupure de sortie se répare
   # en attendant le retour de la zone.
   nat_gateway_count = 1
+
+  # Rétention des flow logs du VPC. Trente jours ici : sur un environnement de
+  # développement, une trace de trafic sert à comprendre ce qu'on vient de casser,
+  # pas à instruire un incident vieux d'un trimestre.
+  log_retention_days = local.log_retention_days
 }
 
 # --- Maîtrise budgétaire ------------------------------------------------------
