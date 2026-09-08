@@ -21,7 +21,13 @@ import { STATUS_LABELS, statusModifier, zonedFields } from '@/lib/admin/calendar
 import { formatCalendarDate, formatMoney, formatTimeInTimeZone } from '@/lib/format';
 
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
-import { customerContactLine, isVoidVisit, parsePageNumber, parseSearchTerm } from './client-view';
+import {
+  customerContactLine,
+  emailSuppressionNotice,
+  isVoidVisit,
+  parsePageNumber,
+  parseSearchTerm,
+} from './client-view';
 import { ClientContactForm } from './components/client-contact-form';
 import { ClientNoteForm } from './components/client-note-form';
 import { ClientSearchForm } from './components/client-search-form';
@@ -436,6 +442,7 @@ function ClientRecord({
   readonly timeZone: TimeZone;
 }) {
   const { summary } = history;
+  const suppression = emailSuppressionNotice(customer);
 
   return (
     <div className="spa-admin-client">
@@ -450,6 +457,16 @@ function ClientRecord({
             <span className="spa-admin-client__contact-item">
               Fiche créée le {dayLabel(customer.createdAt, timeZone)}
             </span>
+            {/*
+              La marque est **collée à l'adresse**, et pas seulement dans le
+              bandeau qui suit : c'est la ligne qu'on lit à voix haute au
+              téléphone, et un gestionnaire qui la parcourt doit voir tout de
+              suite que celle-ci ne sert plus à rien. Le libellé est écrit ;
+              l'aplat ne fait que rendre le balayage rapide (WCAG 1.4.1).
+            */}
+            {suppression === null ? null : (
+              <span className="spa-admin-badge spa-admin-badge--no-show">Adresse supprimée</span>
+            )}
             {customer.isActive ? null : (
               <span className="spa-admin-badge spa-admin-badge--cancelled">Fiche désactivée</span>
             )}
@@ -460,6 +477,35 @@ function ClientRecord({
             volet d'édition resterait ouvert sur la nouvelle cliente. */}
         <ClientContactForm key={customer.id} customer={customer} tenantSlug={tenantSlug} />
       </div>
+
+      {/*
+        Le quatrième critère de #73, livré ici (#525) : sans cet avis, un
+        gestionnaire voit une réservation confirmée sans jamais savoir que la
+        cliente n'a rien reçu et ne recevra plus rien — et il n'a aucun moyen de
+        le découvrir. `tone="danger"` plutôt que `warning` : ce n'est pas un
+        risque à peser, c'est un fait acquis, et l'aplat le dit d'un coup d'œil.
+        Le rôle ARIA, lui, ne les distingue pas — le composant rend `role="alert"`
+        pour les deux tons, et l'avis interrompt donc la lecture d'un lecteur
+        d'écran dans un cas comme dans l'autre.
+
+        L'instant est rendu **au fuseau du salon**, comme toutes les dates de cet
+        écran : une suppression lue en UTC daterait de la veille pour la moitié
+        des établissements.
+      */}
+      {suppression === null ? null : (
+        <Notification tone="danger" title="Adresse e-mail supprimée — plus aucun envoi">
+          <p>
+            Depuis le {dayLabel(suppression.suppressedAt, timeZone)} à{' '}
+            {formatTimeInTimeZone(suppression.suppressedAt, timeZone)} · {suppression.reason}.
+          </p>
+          <p>
+            Ni confirmation, ni rappel, ni avis d’annulation ne partent vers{' '}
+            {customer.email}. Prévenez la cliente autrement — par téléphone ou au comptoir. Son
+            adresse ne se corrige pas d’ici : le back-office ne la modifie pas, faute de pouvoir
+            vérifier la nouvelle.
+          </p>
+        </Notification>
+      )}
 
       {summary.noShowVisits > 0 ? (
         <Notification

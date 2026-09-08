@@ -38,6 +38,9 @@ const FARA: Customer = {
   isActive: true,
   internalNote: 'Peau réactive — éviter les huiles parfumées.',
   createdAt: '2026-03-04T08:00:00.000Z',
+  // Une adresse vivante — l'état de la quasi-totalité du fichier (#525).
+  emailSuppressedAt: null,
+  emailSuppressionReason: null,
 };
 
 afterEach(() => {

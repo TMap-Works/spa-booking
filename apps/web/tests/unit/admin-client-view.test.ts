@@ -1,8 +1,9 @@
-import { CUSTOMER_SEARCH_MAX_LENGTH, type CustomerSummary } from '@spa/shared';
+import { CUSTOMER_SEARCH_MAX_LENGTH, type Customer, type CustomerSummary } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
   customerContactLine,
+  emailSuppressionNotice,
   isVoidVisit,
   parsePageNumber,
   parseSearchTerm,
@@ -93,6 +94,79 @@ describe('la ligne de coordonnées de la liste', () => {
     // Une fiche saisie au comptoir n'en a pas toujours ; une ligne vide
     // obligerait à ouvrir la fiche pour savoir si la personne est joignable.
     expect(customerContactLine({ ...FARA, phone: null })).toBe('fara.rakotoson@example.mg');
+  });
+});
+
+/**
+ * L'avis d'adresse supprimée — #525, quatrième critère de #73.
+ *
+ * Ce que ces cas protègent : un gestionnaire de salon voit une réservation
+ * confirmée sans jamais savoir que la cliente n'a rien reçu et ne recevra plus
+ * rien. La fonction est le seul endroit qui décide **si** l'avis se montre et
+ * **ce qu'il dit** ; l'écran ne fait que le rendre.
+ */
+describe('l’avis d’adresse supprimée', () => {
+  /** Une fiche complète, adresse vivante — le socle des cas ci-dessous. */
+  const VIVANTE: Customer = {
+    ...FARA,
+    internalNote: null,
+    createdAt: '2026-03-04T08:00:00.000Z',
+    emailSuppressedAt: null,
+    emailSuppressionReason: null,
+  };
+
+  it('ne dit rien d’une adresse vivante — l’état de la quasi-totalité du fichier', () => {
+    expect(emailSuppressionNotice(VIVANTE)).toBeNull();
+  });
+
+  it('nomme le motif en toutes lettres, jamais par la seule couleur du bandeau', () => {
+    const rebond = emailSuppressionNotice({
+      ...VIVANTE,
+      emailSuppressedAt: '2026-09-05T10:30:00.000Z',
+      emailSuppressionReason: 'hard_bounce',
+    });
+    const plainte = emailSuppressionNotice({
+      ...VIVANTE,
+      emailSuppressedAt: '2026-09-05T10:30:00.000Z',
+      emailSuppressionReason: 'complaint',
+    });
+
+    // Les deux motifs n'appellent pas la même conversation au comptoir : le
+    // premier se corrige en redemandant l'adresse, le second ne se corrige pas.
+    expect(rebond?.reason).toMatch(/rebond définitif/);
+    expect(plainte?.reason).toMatch(/plainte/);
+    expect(rebond?.reason).not.toBe(plainte?.reason);
+  });
+
+  it('rend l’instant tel quel — c’est l’écran qui le passe au fuseau du salon', () => {
+    // La fonction est pure et sans fuseau : convertir ici aurait obligé à lui
+    // passer le `timeZone` du salon, et deux formateurs auraient fini par
+    // diverger sur une frontière de jour.
+    expect(
+      emailSuppressionNotice({
+        ...VIVANTE,
+        emailSuppressedAt: '2026-09-05T10:30:00.000Z',
+        emailSuppressionReason: 'complaint',
+      })?.suppressedAt,
+    ).toBe('2026-09-05T10:30:00.000Z');
+  });
+
+  it('c’est la date qui supprime, pas le motif — un motif orphelin n’affiche rien', () => {
+    // Les deux colonnes sont posées ensemble par l'unique écriture qui les
+    // écrit, mais aucun `CHECK` ne le garde en base. `emailSuppressedAt` est le
+    // fait : « depuis quand n'écrit-on plus ».
+    expect(
+      emailSuppressionNotice({ ...VIVANTE, emailSuppressionReason: 'hard_bounce' }),
+    ).toBeNull();
+  });
+
+  it('affiche quand même une date sans motif — savoir que rien ne part prime', () => {
+    const notice = emailSuppressionNotice({
+      ...VIVANTE,
+      emailSuppressedAt: '2026-09-05T10:30:00.000Z',
+    });
+
+    expect(notice?.reason).toBe('motif non enregistré');
   });
 });
 

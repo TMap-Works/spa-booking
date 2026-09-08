@@ -12,7 +12,9 @@ import {
   CUSTOMER_SEARCH_MAX_LENGTH,
   CUSTOMER_SEARCH_MIN_LENGTH,
   type AppointmentStatus,
+  type Customer,
   type CustomerSummary,
+  type EmailSuppressionReason,
 } from '@spa/shared';
 
 /**
@@ -84,4 +86,64 @@ export function isVoidVisit(status: AppointmentStatus): boolean {
  */
 export function customerContactLine(customer: CustomerSummary): string {
   return customer.phone === null ? customer.email : `${customer.phone} · ${customer.email}`;
+}
+
+/**
+ * Ce que chaque motif de suppression veut dire **au comptoir** — #525.
+ *
+ * Les deux ne s'expliquent pas de la même façon à la cliente, et c'est toute la
+ * raison d'afficher le motif plutôt qu'un simple « adresse invalide » :
+ *
+ * - un **rebond définitif** est une adresse fausse ou fermée. Elle se corrige :
+ *   on redemande l'adresse, on la ressaisit ;
+ * - une **plainte** est un geste délibéré du destinataire, qui a rangé le
+ *   message dans les indésirables. Réécrire malgré tout dégraderait la
+ *   réputation d'envoi du domaine — donc la délivrabilité des rappels de **tous**
+ *   les salons —, et il n'y a rien à corriger dans la fiche.
+ *
+ * Le libellé est écrit en toutes lettres, jamais porté par la seule couleur du
+ * bandeau (WCAG 1.4.1).
+ */
+const EMAIL_SUPPRESSION_LABELS: Record<EmailSuppressionReason, string> = {
+  hard_bounce: 'rebond définitif — la boîte n’existe pas ou refuse nos messages',
+  complaint: 'plainte — le message a été signalé comme indésirable',
+};
+
+/** Ce que l'écran a à dire d'une adresse supprimée : depuis quand, et pourquoi. */
+export interface EmailSuppressionNotice {
+  /** L'instant UTC de la suppression, que l'écran affichera au fuseau du salon. */
+  readonly suppressedAt: string;
+  /** Le motif en toutes lettres, prêt à lire. */
+  readonly reason: string;
+}
+
+/**
+ * L'avis de suppression d'une fiche, ou `null` — l'adresse est vivante (#525).
+ *
+ * ## Pourquoi c'est la **date** qui décide, et pas le motif
+ *
+ * Les deux colonnes sont nulles ou renseignées ensemble, et l'invariant est tenu
+ * par l'unique écriture qui les pose (`DeliveryEventRepository.suppressEmails`).
+ * Mais aucun `CHECK` ne le garde en base, et le contrat partagé ne le refuse pas
+ * non plus — un schéma de sortie qui rejetterait une réponse mal appariée
+ * transformerait une incohérence de données en écran en erreur. Cette fonction
+ * tranche donc explicitement : `emailSuppressedAt` est le fait — « depuis quand
+ * n'écrit-on plus » —, et un motif orphelin, sans date, ne supprime rien.
+ *
+ * Le cas inverse — une date sans motif — reste affichable, parce que le
+ * gestionnaire a plus besoin de savoir que la cliente ne reçoit rien que de
+ * savoir pourquoi.
+ */
+export function emailSuppressionNotice(customer: Customer): EmailSuppressionNotice | null {
+  if (customer.emailSuppressedAt === null) {
+    return null;
+  }
+
+  return {
+    suppressedAt: customer.emailSuppressedAt,
+    reason:
+      customer.emailSuppressionReason === null
+        ? 'motif non enregistré'
+        : EMAIL_SUPPRESSION_LABELS[customer.emailSuppressionReason],
+  };
 }
