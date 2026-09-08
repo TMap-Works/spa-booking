@@ -34,31 +34,74 @@ import { LIVE_NOTIFICATION_STATUSES } from '../notifications.types';
 const sql = readMigrationSql();
 
 /**
- * L'instruction complète, du `CREATE UNIQUE INDEX` au point-virgule.
+ * L'instruction complète, du `CREATE INDEX` au point-virgule — et la
+ * **dernière** du SQL concaténé, non la première.
  *
  * Extraite plutôt que testée par sous-chaînes : un `WHERE` présent quelque part
  * dans le fichier ne prouve pas qu'il porte sur **cet** index.
+ *
+ * La dernière, parce que l'index a été **remplacé** par #534 : le SQL concaténé
+ * porte désormais deux créations de `notifications_live_once`, celle de #68 puis
+ * celle qui lui succède, séparées par le `DROP INDEX` qui les rend exclusives.
+ * Regarder la première aurait fait porter toute cette suite sur une définition
+ * que la base n'a plus — le pire des faux témoignages, puisqu'il est vert.
+ *
+ * `UNIQUE` est **facultatif dans le motif d'extraction**, et c'est délibéré : le
+ * chercher aurait fait retomber `.at(-1)` sur la définition de #68 le jour où
+ * une migration recréerait l'index sans son unicité — le garde de
+ * `prisma-schema.spec.ts` ne vérifie que le nom —, et toute cette suite aurait
+ * validé, en vert, un invariant que la base n'aurait plus. L'unicité se prouve
+ * donc ci-dessous, sur l'instruction effective, au lieu d'être présupposée.
  */
-const statement = /CREATE UNIQUE INDEX "notifications_live_once"[\s\S]*?;/.exec(sql)?.[0] ?? '';
+const statement =
+  [...sql.matchAll(/CREATE (?:UNIQUE )?INDEX "notifications_live_once"[\s\S]*?;/g)].at(-1)?.[0] ??
+  '';
 
 describe('notifications — l’index unique partiel', () => {
   it('est créé par une migration, en unique', () => {
     expect(statement).not.toBe('');
+    expect(statement).toMatch(/^CREATE UNIQUE INDEX/);
   });
 
   it('porte sur la table `notifications`', () => {
     expect(statement).toMatch(/ON\s+"notifications"/);
   });
 
-  it('porte les quatre colonnes du critère d’acceptation, `tenant_id` en tête', () => {
+  it('porte les cinq colonnes de l’identité d’un message, `tenant_id` en tête', () => {
     // L'ordre n'est pas cosmétique : un index qui ne commence pas par
     // `tenant_id` fait payer un parcours inter-tenant à toute lecture bornée à
-    // un établissement (tenant-isolation §1).
+    // un établissement (tenant-isolation §1). Le destinataire est en queue —
+    // ajouté par #534 —, ce qui laisse les quatre colonnes d'origine dans leur
+    // ordre et le préfixe intact.
     const columns = [...statement.matchAll(/"([a-z_]+)"/g)]
       .map((match) => match[1])
       .filter((name) => name !== 'notifications' && name !== 'notifications_live_once');
 
-    expect(columns.slice(0, 4)).toEqual(['tenant_id', 'appointment_id', 'type', 'channel']);
+    expect(columns.slice(0, 5)).toEqual([
+      'tenant_id',
+      'appointment_id',
+      'type',
+      'channel',
+      'recipient_user_id',
+    ]);
+  });
+
+  it('ramène l’absence de destinataire à une valeur unique', () => {
+    // `recipient_user_id` est nullable, et PostgreSQL tient deux `NULL` pour
+    // distincts dans un index unique. Écrire la colonne nue aurait **affaibli**
+    // l'invariant que #68 avait posé : deux messages vivants sans destinataire
+    // seraient passés côte à côte, là où l'ancien index les sérialisait.
+    expect(statement).toMatch(
+      /COALESCE\(\s*"recipient_user_id"\s*,\s*'0{8}-0{4}-0{4}-0{4}-0{12}'::uuid\s*\)/,
+    );
+  });
+
+  it('remplace l’index de #68 au lieu de s’ajouter à côté de lui', () => {
+    // Un index ne se modifie pas : il se remplace. Deux index unique partiels
+    // sur la même table, l'ancien plus grossier que le nouveau, auraient laissé
+    // l'ancien refuser exactement ce que ce ticket veut permettre — le second
+    // avis d'annulation.
+    expect(sql).toContain('DROP INDEX "notifications_live_once";');
   });
 
   it('ne vaut que pour les statuts vivants — `FAILED` libère la place', () => {

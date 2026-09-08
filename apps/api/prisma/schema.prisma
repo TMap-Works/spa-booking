@@ -1507,21 +1507,34 @@ model SaleItem {
 /// livraison-là, une fois ». Elle couvre tous les statuts, `FAILED` compris.
 ///
 /// L'autre est un **index unique partiel**, que Prisma n'exprime pas et qui vit
-/// donc en SQL brut dans `20260906120000_add_notification_idempotency`
+/// donc en SQL brut. Posé par `20260906120000_add_notification_idempotency`,
+/// **remplacé** par `20260908120000_notification_live_once_per_recipient`
 /// (api-module §6) :
 ///
 /// ```sql
 /// CREATE UNIQUE INDEX "notifications_live_once"
-///   ON "notifications" ("tenant_id", "appointment_id", "type", "channel")
+///   ON "notifications" (
+///     "tenant_id", "appointment_id", "type", "channel",
+///     COALESCE("recipient_user_id", '00000000-0000-0000-0000-000000000000'::uuid)
+///   )
 ///   WHERE "status" IN ('PENDING', 'SENT');
 /// ```
 ///
 /// Elle est l'invariant sur la **donnée** : au plus un message vivant par
-/// établissement, rendez-vous, type et canal — quelle qu'ait été la clé de
-/// déduplication qui l'a produit. C'est elle que notifications §2 nomme, et
-/// c'est elle qui tient quand deux producteurs composent leur `dedupe_key`
-/// différemment : le balayage horaire du rappel J-1 et l'événement de domaine
-/// ne se coordonnent pas, et rien ne les y oblige puisque la base tranche.
+/// établissement, rendez-vous, type, canal et destinataire — quelle qu'ait été
+/// la clé de déduplication qui l'a produit. C'est elle que notifications §2
+/// nomme, et c'est elle qui tient quand deux producteurs composent leur
+/// `dedupe_key` différemment : le balayage horaire du rappel J-1 et l'événement
+/// de domaine ne se coordonnent pas, et rien ne les y oblige puisque la base
+/// tranche.
+///
+/// Le destinataire est entré dans la clé avec #534, et il est en **queue** :
+/// `tenant_id` reste en tête (tenant-isolation §1). Sans lui, l'avis
+/// d'annulation ne pouvait pas prévenir la cliente **et** le praticien de la
+/// même annulation — le second envoi était refusé, et le CDC §1.4 demande les
+/// deux. Le `COALESCE` est ce qui empêche que l'ajout d'une colonne nullable
+/// affaiblisse l'invariant : PostgreSQL tient deux `NULL` pour distincts, et
+/// deux messages vivants sans destinataire seraient sinon passés côte à côte.
 ///
 /// Le `WHERE` est le cœur du dispositif : un envoi `FAILED` **libère** la place,
 /// exactement comme un rendez-vous annulé libère son créneau dans

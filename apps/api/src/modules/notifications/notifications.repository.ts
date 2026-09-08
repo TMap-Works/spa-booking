@@ -100,6 +100,46 @@ function isUniqueViolation(error: unknown): boolean {
 }
 
 /**
+ * Les colonnes par lesquelles `notifications_live_once` identifie un message —
+ * en un seul endroit, parce que deux endroits finiraient par diverger.
+ *
+ * ## Pourquoi cette fonction existe
+ *
+ * Deux lectures s'en servent, et toutes deux se déclenchent **après** un refus
+ * de la base : `resolveRefusal` cherche la ligne vivante qui occupe la place,
+ * `findReclaimable` cherche la ligne échouée qui l'occupait. L'une comme l'autre
+ * doivent regarder par les mêmes colonnes que l'index, faute de quoi le dépôt et
+ * le moteur ne diraient plus la même chose — et le désaccord se manifesterait
+ * de la pire façon : un message tenu pour un doublon, acquitté auprès de SQS,
+ * jamais parti.
+ *
+ * ## Le destinataire en fait partie depuis #534
+ *
+ * L'index le porte, en queue de ses colonnes. Sans lui ici, `resolveRefusal`
+ * trouverait l'avis d'annulation de la cliente en cherchant celui du praticien —
+ * ils partagent l'établissement, le rendez-vous, le type et le canal — et
+ * rendrait `already-live` sur un message que la base venait d'accepter.
+ *
+ * ## `null` se cherche par `IS NULL`, et cela coïncide avec le `COALESCE`
+ *
+ * Prisma traduit `recipientUserId: null` en `recipient_user_id IS NULL`, là où
+ * l'index compare `COALESCE(recipient_user_id, '000…0')`. Les deux désignent
+ * exactement les mêmes lignes : le sentinelle est l'UUID nul, qu'aucune ligne de
+ * `users` ne porte — `uuid()` produit une v4, dont le 13ᵉ chiffre hexadécimal
+ * vaut toujours `4`.
+ */
+function liveIdentity(
+  message: NotificationMessage,
+): Pick<Prisma.NotificationWhereInput, 'appointmentId' | 'recipientUserId' | 'type' | 'channel'> {
+  return {
+    appointmentId: message.appointmentId,
+    recipientUserId: message.recipientUserId,
+    type: message.type,
+    channel: message.channel,
+  };
+}
+
+/**
  * Charge utile de création **sans** le tenant, tel que le repository l'écrit.
  *
  * Même conversion, et pour la même raison, que dans `payments.repository.ts` et
@@ -441,7 +481,9 @@ export class NotificationsRepository {
           // lu : c'est un texte libre écrit par un humain, et il n'a rien à faire
           // dans un message composé par un modèle de salon (CDC §5.1).
           cancelledBy: true,
-          client: { select: { firstName: true, lastName: true } },
+          // `id` sert au rendu, jamais au message : c'est lui qui dit si l'avis
+          // part vers la cliente ou vers le praticien (#534).
+          client: { select: { id: true, firstName: true, lastName: true } },
           service: {
             select: { name: true, durationMinutes: true, bufferBeforeMinutes: true },
           },
@@ -478,6 +520,7 @@ export class NotificationsRepository {
       tenantTimeZone: tenant.timezone,
       tenantAddress: postalAddress(tenant),
       tenantPhone: tenant.contactPhone,
+      clientId: appointment.client.id,
       clientFirstName: appointment.client.firstName,
       clientLastName: appointment.client.lastName,
       serviceName: appointment.service.name,
@@ -622,12 +665,7 @@ export class NotificationsRepository {
    */
   private async resolveRefusal(message: NotificationMessage): Promise<NotificationClaim> {
     const live = await this.prisma.notification.findFirst({
-      where: {
-        appointmentId: message.appointmentId,
-        type: message.type,
-        channel: message.channel,
-        status: { in: [...LIVE_NOTIFICATION_STATUSES] },
-      },
+      where: { ...liveIdentity(message), status: { in: [...LIVE_NOTIFICATION_STATUSES] } },
       select: { id: true },
     });
 
@@ -674,12 +712,7 @@ export class NotificationsRepository {
     }
 
     const byIdentity = await this.prisma.notification.findFirst({
-      where: {
-        appointmentId: message.appointmentId,
-        type: message.type,
-        channel: message.channel,
-        status: 'FAILED',
-      },
+      where: { ...liveIdentity(message), status: 'FAILED' },
       select: NOTIFICATION_SELECT,
     });
 

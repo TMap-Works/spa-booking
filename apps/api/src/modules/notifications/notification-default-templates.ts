@@ -240,6 +240,20 @@ const CANCELLATION_TEXT_SUMMARY = [
  * aura pas : c'est un texte libre écrit par un humain, qui peut nommer un état
  * de santé ou un tiers. Il est enregistré sur la ligne, et qui a le droit de le
  * lire l'y relit (CDC §5.1).
+ *
+ * ## Le lien est sous section, et c'est le correctif de #534
+ *
+ * « Prendre un nouveau rendez-vous » vers l'espace client est une invitation qui
+ * n'a de sens que pour la cliente. Tant qu'un seul des deux publics recevait
+ * l'avis, la faute passait ; depuis que les deux le reçoivent sur la même
+ * annulation, le praticien lirait à chaque fois une phrase qui ne le concerne
+ * pas — et qui l'enverrait sur un espace qui n'est pas son agenda.
+ *
+ * `{{#destinataire_client}}` referme le paragraphe pour lui, et pour lui seul.
+ * Le reste du message — le récapitulatif qui nomme la cliente, l'origine, le
+ * « le créneau est de nouveau disponible » — vaut pour les deux et ne bouge pas.
+ * C'est ce qui permet de corriger la faute **sans** dégrader l'e-mail de la
+ * cliente, ce qu'une reformulation neutre aurait fait.
  */
 const CANCELLATION_EMAIL: NotificationTemplateSource = {
   subject: 'Annulation du rendez-vous du {{date}} — {{salon}}',
@@ -250,7 +264,7 @@ const CANCELLATION_EMAIL: NotificationTemplateSource = {
     '<p>Le rendez-vous ci-dessous chez {{salon}} a été annulé{{#origine}} {{origine}}{{/origine}}.</p>',
     `<table role="presentation">${CANCELLATION_HTML_SUMMARY}</table>`,
     '<p>Les horaires sont donnés à l’heure de {{fuseau}}. Le créneau est de nouveau disponible.</p>',
-    '<p><a href="{{lien_annulation}}">Prendre un nouveau rendez-vous</a></p>',
+    '{{#destinataire_client}}<p><a href="{{lien_annulation}}">Prendre un nouveau rendez-vous</a></p>{{/destinataire_client}}',
     '<p>{{salon}}</p>',
     '</body></html>',
   ].join(''),
@@ -261,9 +275,11 @@ const CANCELLATION_EMAIL: NotificationTemplateSource = {
     '',
     CANCELLATION_TEXT_SUMMARY,
     'Les horaires sont donnés à l’heure de {{fuseau}}. Le créneau est de nouveau disponible.',
-    '',
+    // La ligne vide est **dans** la section : sans cela, un avis au praticien
+    // aurait laissé deux lignes vides à la place du lien.
+    '{{#destinataire_client}}',
     'Prendre un nouveau rendez-vous : {{lien_annulation}}',
-    '',
+    '{{/destinataire_client}}',
     '{{salon}}',
   ].join('\n'),
 };

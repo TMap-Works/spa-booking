@@ -43,6 +43,9 @@ const VALUES: TemplateVariables = {
   // Vide, comme sur tout rendez-vous qui n'est pas annulé : c'est l'état dans
   // lequel la confirmation et le rappel voient cette variable.
   origine: '',
+  // La confirmation et le rappel ne partent qu'à la cliente : c'est l'état
+  // ordinaire de cette variable.
+  destinataire_client: 'oui',
 };
 
 describe('modèles — la substitution des variables', () => {
@@ -361,12 +364,19 @@ describe('modèles — les défauts de la plateforme', () => {
  * décalage qui rend le critère vérifiable : afficher l'instant UTC tel quel
  * avancerait le rendez-vous de deux heures dans l'esprit de la cliente.
  */
+/** Le compte de la cliente du rendez-vous — le destinataire par défaut ici. */
+const CLIENT = '33333333-3333-4333-8333-333333333333';
+
+/** Le compte du praticien : tout ce qui n'est pas la cliente. */
+const PRATICIEN = '66666666-6666-4666-8666-666666666666';
+
 const PARIS: AppointmentMessageContext = {
   tenantName: 'Maison Lotus',
   tenantSlug: 'maison-lotus',
   tenantTimeZone: 'Europe/Paris',
   tenantAddress: '12 rue des Lilas, 75011 Paris',
   tenantPhone: '+33123456789',
+  clientId: CLIENT,
   clientFirstName: 'Amina',
   clientLastName: 'Rakoto',
   serviceName: 'Massage suédois',
@@ -380,7 +390,7 @@ const PARIS: AppointmentMessageContext = {
 
 describe('modèles — les valeurs que le rendu compose', () => {
   it('donne l’heure dans le fuseau du salon, jamais en UTC', () => {
-    const values = buildTemplateVariables(PARIS, 'https://x.test', 'EMAIL');
+    const values = buildTemplateVariables(PARIS, 'https://x.test', 'EMAIL', CLIENT);
 
     expect(values.heure).toBe('14:30');
     expect(values.date).toContain('14:30');
@@ -394,6 +404,7 @@ describe('modèles — les valeurs que le rendu compose', () => {
       { ...PARIS, tenantTimeZone: 'Indian/Antananarivo' },
       'https://x.test',
       'EMAIL',
+      CLIENT,
     );
 
     expect(values.heure).toBe('15:30');
@@ -404,6 +415,7 @@ describe('modèles — les valeurs que le rendu compose', () => {
       { ...PARIS, tenantAddress: null, tenantPhone: null },
       'https://x.test',
       'EMAIL',
+      CLIENT,
     );
 
     expect(values.adresse).toBe('');
@@ -413,21 +425,38 @@ describe('modèles — les valeurs que le rendu compose', () => {
   it('écourte le nom du salon sur le canal SMS, et lui seul', () => {
     const long = { ...PARIS, tenantName: 'Le '.repeat(60) };
 
-    expect(buildTemplateVariables(long, '', 'SMS').salon.length).toBe(SMS_TENANT_NAME_MAX);
-    expect(buildTemplateVariables(long, '', 'EMAIL').salon).toBe(long.tenantName);
+    expect(buildTemplateVariables(long, '', 'SMS', CLIENT).salon.length).toBe(SMS_TENANT_NAME_MAX);
+    expect(buildTemplateVariables(long, '', 'EMAIL', CLIENT).salon).toBe(long.tenantName);
+  });
+
+  it('dit si le message part vers la cliente du rendez-vous — #534', () => {
+    // La variable qui permet à un modèle unique de servir deux destinataires :
+    // vide pour le praticien, elle referme sur lui les sections qui ne
+    // s'adressent qu'à la cliente.
+    expect(buildTemplateVariables(PARIS, '', 'EMAIL', CLIENT).destinataire_client).toBe('oui');
+    expect(buildTemplateVariables(PARIS, '', 'EMAIL', PRATICIEN).destinataire_client).toBe('');
+  });
+
+  it('compare le compte, jamais le rôle', () => {
+    // Une praticienne qui réserve pour elle-même **est** la cliente de ce
+    // rendez-vous : la question posée est « es-tu la cliente de celui-ci », pas
+    // « quel est ton rôle dans le salon ».
+    const soi = { ...PARIS, clientId: PRATICIEN };
+
+    expect(buildTemplateVariables(soi, '', 'EMAIL', PRATICIEN).destinataire_client).toBe('oui');
   });
 
   it('laisse `origine` vide sur un rendez-vous qui n’est pas annulé', () => {
     // C'est ce qui rend la variable utilisable en section : un modèle qui la
     // nomme dans une confirmation n'écrit rien plutôt qu'une phrase fausse.
-    expect(buildTemplateVariables(PARIS, '', 'EMAIL').origine).toBe('');
+    expect(buildTemplateVariables(PARIS, '', 'EMAIL', CLIENT).origine).toBe('');
   });
 
   it('dit d’où vient l’annulation, sans s’adresser à personne', () => {
     // Le même modèle sert la cliente et le praticien : « à votre demande » aurait
     // été faux pour l'un des deux à chaque envoi.
     const dit = (cancelledBy: AppointmentMessageContext['cancelledBy']): string =>
-      buildTemplateVariables({ ...PARIS, cancelledBy }, '', 'EMAIL').origine;
+      buildTemplateVariables({ ...PARIS, cancelledBy }, '', 'EMAIL', CLIENT).origine;
 
     expect(dit('CLIENT')).toBe('à la demande du client');
     expect(dit('STAFF')).toBe("à l'initiative du salon");
@@ -442,7 +471,7 @@ describe('modèles — les valeurs que le rendu compose', () => {
     // `ê`, `ô` et `ç` minuscule n'y sont pas, et un seul d'entre eux ferait
     // passer l'avis d'annulation de 160 à 70 caractères (notifications §5).
     for (const cancelledBy of ['CLIENT', 'STAFF', 'SYSTEM'] as const) {
-      const phrase = buildTemplateVariables({ ...PARIS, cancelledBy }, '', 'SMS').origine;
+      const phrase = buildTemplateVariables({ ...PARIS, cancelledBy }, '', 'SMS', CLIENT).origine;
 
       expect({ cancelledBy, encoding: measureSms(phrase).encoding }).toEqual({
         cancelledBy,
@@ -459,7 +488,7 @@ describe('modèles — le rendu d’un message', () => {
 
     const rendered = renderNotification(
       source,
-      buildTemplateVariables(hostile, 'https://x.test', 'EMAIL'),
+      buildTemplateVariables(hostile, 'https://x.test', 'EMAIL', CLIENT),
       'EMAIL',
     );
 
@@ -471,7 +500,7 @@ describe('modèles — le rendu d’un message', () => {
     const source = { subject: "L'atelier & vous", html: '', text: 'x' };
 
     expect(
-      renderNotification(source, buildTemplateVariables(PARIS, '', 'EMAIL'), 'EMAIL').subject,
+      renderNotification(source, buildTemplateVariables(PARIS, '', 'EMAIL', CLIENT), 'EMAIL').subject,
     ).toBe("L'atelier & vous");
   });
 
@@ -480,7 +509,7 @@ describe('modèles — le rendu d’un message', () => {
     // porte à une passerelle mal branchée qui l'enverrait tel quel.
     const source = { subject: 'objet', html: '<p>corps</p>', text: 'avis' };
 
-    expect(renderNotification(source, buildTemplateVariables(PARIS, '', 'SMS'), 'SMS')).toEqual({
+    expect(renderNotification(source, buildTemplateVariables(PARIS, '', 'SMS', CLIENT), 'SMS')).toEqual({
       subject: '',
       html: '',
       text: 'avis',
@@ -495,7 +524,7 @@ describe('modèles — le rendu d’un message', () => {
 
     const { text } = renderNotification(
       source,
-      buildTemplateVariables(bavard, '', 'SMS'),
+      buildTemplateVariables(bavard, '', 'SMS', CLIENT),
       'SMS',
     );
 
@@ -515,7 +544,7 @@ describe('modèles — le rendu d’un message', () => {
     const source = { subject: '', html: '', text: '{{client}}' };
     const bavard = { ...PARIS, clientFirstName: 'ê'.repeat(200), clientLastName: 'ê'.repeat(200) };
 
-    const { text } = renderNotification(source, buildTemplateVariables(bavard, '', 'SMS'), 'SMS');
+    const { text } = renderNotification(source, buildTemplateVariables(bavard, '', 'SMS', CLIENT), 'SMS');
 
     expect(measureSms(text).segments).toBe(SMS_MAX_SEGMENTS);
     // 67 unités par segment concaténé, et non 70 : l'en-tête de segmentation en

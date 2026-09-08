@@ -1,0 +1,144 @@
+-- L'avis d'annulation part vers **deux** destinataires — #534, suite de #72.
+--
+-- ## Ce que cette migration change, en une phrase
+--
+-- `notifications_live_once` cesse d'identifier « ce message-là » par
+-- `(tenant_id, appointment_id, type, channel)` et l'identifie désormais par
+-- `(tenant_id, appointment_id, type, channel, destinataire)`.
+--
+-- ## Pourquoi il fallait la faire
+--
+-- Le CDC §1.4 veut « un avis d'annulation **au staff et au client** ». #72 n'a
+-- tenu ce critère qu'à moitié — un avis par annulation, vers la partie qui n'a
+-- pas décidé — et la raison n'était pas un oubli : l'index d'idempotence
+-- l'interdisait. Il ne peut pas exister deux messages **vivants** du même type,
+-- sur le même canal, pour le même rendez-vous. Écrire la cliente puis le
+-- praticien faisait refuser le second par PostgreSQL, `claim()` rendait
+-- `already-live`, et le praticien ne recevait rien — **en silence**, puisque
+-- c'est exactement la forme d'un rejeu SQS légitime.
+--
+-- Le cas non couvert est étroit et réel : sur `cancelled_by = 'STAFF'`, une
+-- annulation posée au comptoir par l'accueil ou la gérance prévenait la cliente
+-- et pas le praticien, alors que son agenda venait de changer.
+--
+-- ## Pourquoi un `DROP INDEX`, et pourquoi il n'existait aucun chemin additif
+--
+-- Un index ne se modifie pas : il se **remplace**. Ajouter un second index à
+-- côté de l'ancien n'aurait rien débloqué, puisque c'est l'ancien qui refuse —
+-- une contrainte d'unicité ne s'assouplit pas en en ajoutant une autre. Le
+-- retrait est donc la seule voie, et il est ici sans perte : un index ne porte
+-- aucune donnée, il porte un invariant, et celui-ci est immédiatement remplacé
+-- par un invariant **plus fin** dans la même migration.
+--
+-- C'est la distinction que le garde de
+-- `src/infrastructure/database/__tests__/prisma-schema.spec.ts` fait désormais :
+-- un `DROP TABLE`, un `DROP COLUMN` ou un `DROP TYPE` détruisent de la donnée et
+-- restent refusés sans exception ; un `DROP INDEX` est admis **à la seule
+-- condition** que la même migration recrée un index du même nom. Le garde vérifie
+-- donc le remplacement, pas la bonne foi de qui l'écrit.
+--
+-- ## Pourquoi `COALESCE` plutôt que la colonne nue
+--
+-- `recipient_user_id` est nullable, et PostgreSQL tient deux `NULL` pour
+-- distincts dans un index unique. Écrire la colonne telle quelle aurait donc
+-- **affaibli** l'invariant : deux messages vivants sans destinataire — le cas
+-- qu'aucun producteur ne produit aujourd'hui, mais que le schéma autorise —
+-- seraient passés côte à côte, alors que l'ancien index les sérialisait.
+--
+-- `COALESCE(recipient_user_id, '00000000-0000-0000-0000-000000000000'::uuid)`
+-- ramène l'absence de destinataire à une valeur unique, et l'invariant d'origine
+-- tient donc **exactement** sur ces lignes-là. Le sentinelle est l'UUID nul :
+-- aucune ligne de `users` ne peut le porter — `uuid()` produit une v4, dont le
+-- 13ᵉ chiffre hexadécimal vaut toujours `4` — et il ne se confond donc avec
+-- aucun destinataire réel. C'est ce qui permet au dépôt de chercher la ligne
+-- vivante par `recipient_user_id IS NULL`, ce que Prisma écrit pour un `null`,
+-- sans diverger de ce que l'index refuse.
+--
+-- ## `tenant_id` reste en tête
+--
+-- Pour la raison qui vaut partout (tenant-isolation §1) : la frontière se lit
+-- dans l'index, pas dans les intentions. Le destinataire est ajouté **en queue**,
+-- après les quatre colonnes d'origine, si bien que toute lecture bornée à un
+-- établissement continue de préfixer l'index.
+--
+-- ## Ce que la nouvelle définition ne change pas
+--
+-- Le filtre partiel. `PENDING` et `SENT` occupent la place, `FAILED` la libère —
+-- un échec transitoire se réessaie, et si `FAILED` occupait la place, la première
+-- erreur réseau condamnerait le message pour de bon (notifications §4). C'est le
+-- cœur du dispositif posé par #68, et il est repris mot pour mot.
+--
+-- L'unique total `(tenant_id, dedupe_key)` n'est pas touché non plus : il
+-- identifie la **livraison**, là où celui-ci identifie la **donnée**. Les deux
+-- avis d'une même annulation portent déjà deux clés de livraison distinctes —
+-- `appointmentDedupeKey` y met le destinataire depuis #72.
+--
+-- ## Réversibilité
+--
+-- L'inverse exact tient en deux instructions, et il est écrit ici pour qu'on
+-- n'ait pas à le retrouver :
+--
+-- ```sql
+-- DROP INDEX "notifications_live_once";
+-- CREATE UNIQUE INDEX "notifications_live_once"
+--     ON "notifications" ("tenant_id", "appointment_id", "type", "channel")
+--     WHERE "status" IN ('PENDING', 'SENT');
+-- ```
+--
+-- Il ne perd **aucune ligne** : les deux instructions ne touchent que des index.
+-- Il peut en revanche **échouer**, et c'est voulu : si un rendez-vous porte déjà
+-- deux avis vivants sur le même canal — ce que cette migration rend légal —, la
+-- recréation de l'ancien index est refusée. Le retour arrière s'arrête alors sur
+-- une erreur explicite plutôt que de choisir en silence lequel des deux avis
+-- perdre. Le remède est d'usage : passer l'un des deux à `FAILED`, ce qui le
+-- sort du filtre partiel, puis rejouer.
+--
+-- Le retour arrière du **code** seul, lui, est sans effet de bord : la version
+-- antérieure n'écrit qu'un destinataire par annulation, ce que le nouvel index
+-- accepte — il est plus permissif, jamais plus strict.
+--
+-- La création échouerait si la table portait déjà deux messages vivants
+-- identiques au sens de la **nouvelle** clé. Comme celle-ci est plus fine que
+-- l'ancienne, et que l'ancienne tenait jusqu'ici, ce cas est impossible sur une
+-- base cohérente : la migration ne peut pas se casser sur une donnée existante.
+--
+-- `CONCURRENTLY` n'est **pas** employé, pour la raison de #68 : PostgreSQL
+-- l'interdit dans un bloc transactionnel, et Prisma joue chaque migration dans
+-- une transaction. Le `DROP` et le `CREATE` sont donc atomiques ensemble, ce qui
+-- est précisément ce qu'on veut d'un remplacement — à aucun instant visible la
+-- table n'est sans invariant d'idempotence.
+--
+-- ## Invariants relus par les suites
+--
+-- `src/modules/notifications/__tests__/notifications.migration.spec.ts` relit la
+-- définition **effective** de l'index — la dernière du SQL concaténé, celle-ci —
+-- et vérifie ses colonnes, leur ordre, le sentinelle et le filtre.
+-- `prisma-schema.spec.ts` vérifie que ce `DROP INDEX` est bien un remplacement.
+
+-- DropIndex
+--
+-- Le remplacement, premier temps. Aucune donnée n'est touchée : `notifications`
+-- garde toutes ses lignes, et l'unique total sur la clé de livraison continue
+-- de valoir pendant l'instant qui sépare ces deux instructions — instant qui
+-- n'est de toute façon visible d'aucune autre transaction, la migration étant
+-- jouée dans la sienne.
+DROP INDEX "notifications_live_once";
+
+-- CreateIndex
+--
+-- La lecture : « il ne peut pas exister deux notifications qui, toutes deux dans
+-- un statut vivant, portent le même établissement, le même rendez-vous, le même
+-- type, le même canal **et le même destinataire** ».
+--
+-- Ce que Prisma n'exprime ni ne verra jamais : ni index partiel, ni expression
+-- indexée (api-module §6). Le SQL est donc écrit à la main, et `schema.prisma`
+-- le documente en tête du modèle `Notification`.
+CREATE UNIQUE INDEX "notifications_live_once"
+    ON "notifications" (
+        "tenant_id",
+        "appointment_id",
+        "type",
+        "channel",
+        COALESCE("recipient_user_id", '00000000-0000-0000-0000-000000000000'::uuid)
+    )
+    WHERE "status" IN ('PENDING', 'SENT');

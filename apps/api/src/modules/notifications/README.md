@@ -13,6 +13,7 @@ canaux, rien de plus — le marketing et les campagnes sont hors périmètre MVP
 | #73 | Les **rebonds et les plaintes** — le classement des événements de remise SES, la suppression des adresses mortes dans tous les établissements qui les connaissent, et le respect de cette suppression aux trois endroits qui composent ou expédient un e-mail |
 | #69 | Les **modèles par établissement** — la table `notification_templates`, le moteur de substitution à variables échappées, les défauts de la plateforme en code, la mesure GSM-7 / UCS-2 du coût d'un SMS, et les quatre routes de personnalisation |
 | #72 | L'**avis d'annulation** — abonnement à `appointment.cancelled`, modèles de plateforme e-mail et SMS, mention de l'origine de la décision, et résolution du destinataire selon d'où elle vient |
+| #534 | Les **deux publics** de l'avis d'annulation — l'index d'idempotence remplacé pour porter le destinataire, la parité du dépôt avec sa nouvelle définition, la résolution de deux destinataires, et le CTA du modèle e-mail réservé à la cliente |
 
 À venir : les passerelles SES et SNS.
 
@@ -315,8 +316,8 @@ appointments.service                notifications
        │                                  │
        ├─ appointmentCancelled() ─────────┤ CancellationNoticeListener
        │   (bus en mémoire, #37)          │   runWithTenant(event.tenantId)
-       │   porte cancelledBy              │   destinataire = f(cancelledBy)
-       │                                  │   canaux = f(coordonnées du compte)
+       │   porte cancelledBy              │   destinataires = {client, praticien} \ auteur
+       │                                  │   canaux = f(coordonnées de chaque compte)
        │                                  │
        │                                  └─ dispatch(EMAIL, SMS) ──► chaîne #68
 ```
@@ -325,51 +326,61 @@ Troisième et dernier message du CDC §1.4. `appointments` n'est pas modifié :
 l'événement `appointment.cancelled` existe depuis #40, et il porte déjà tout ce
 qu'il faut — `cancelledBy`, `clientId`, `staffId`, `tenantId`.
 
-### Qui reçoit l'avis, et pourquoi un seul destinataire à la fois
+### Qui reçoit l'avis — les deux publics, moins l'auteur
 
 Le CDC §1.4 veut « un avis d'annulation **au staff et au client** », et le
 quatrième critère d'acceptation en retire un cas : « aucun avis envoyé si
 l'annulation vient du client lui-même sur son propre rendez-vous, **hors
-notification au staff** ». L'avis va donc à la partie qui **n'a pas décidé** :
+notification au staff** ». L'avis part donc vers les deux, **moins celui qui a
+décidé** :
 
-| `cancelledBy` | Destinataire | Pourquoi |
+| `cancelledBy` | Destinataires | Pourquoi |
 |---|---|---|
-| `CLIENT` | le praticien | son agenda vient de changer sans lui ; la cliente sait déjà, c'est elle qui a cliqué |
-| `STAFF` | la cliente | le salon a décidé ; elle doit l'apprendre autrement qu'en se déplaçant |
-| `SYSTEM` | la cliente | personne ne l'a décidé de son côté du comptoir |
+| `CLIENT` | le praticien seul | son agenda vient de changer sans lui ; la cliente sait déjà, c'est elle qui a cliqué — et le quatrième critère l'exclut nommément |
+| `STAFF` | la cliente **et** le praticien | le salon a décidé ; elle doit l'apprendre autrement qu'en se déplaçant, et lui parce que rien dans l'événement ne dit que c'est lui qui a posé l'annulation — l'accueil et la gérance annulent aussi |
+| `SYSTEM` | la cliente **et** le praticien | personne ne l'a décidé d'aucun côté du comptoir |
 
-**Un seul, et c'est une limite de la base, pas un choix de confort.**
-`notifications_live_once` porte sur `(tenant_id, appointment_id, type, channel)` :
-deux avis vivants sur le même canal pour un même rendez-vous sont impossibles.
-Écrire la cliente **puis** le praticien ferait refuser le second par PostgreSQL,
-`claim()` rendrait `already-live`, et le praticien ne recevrait rien — en
-silence, puisque c'est exactement la forme d'un rejeu SQS légitime.
+Deux cas particuliers, et ils ne sont pas symétriques :
 
-Prévenir les deux à la fois demande d'ajouter `recipient_user_id` à cet index.
-Et un index ne se modifie pas : il se **remplace**, donc il se `DROP`. C'est là
-que la porte se ferme, et pas là où on l'attendait — le garde « migration
-purement additive » de
-`src/infrastructure/database/__tests__/prisma-schema.spec.ts` refuse tout
-`DROP INDEX` dans le SQL de migration, sans exception ni échappatoire. Aucun
-chemin additif n'existe — tant que l'ancien index vit, il bloque, et en créer un
-second à côté n'y change rien.
+- le praticien **est** la cliente — elle a réservé pour elle-même. Les deux
+  destinataires se résolvent au même compte, la liste est dédupliquée, et un
+  seul avis part. S'il s'agit en plus de son propre désistement, aucun ne part :
+  le seul destinataire possible serait l'auteur ;
+- le praticien n'a **pas** de compte joignable dans cet établissement. C'est
+  journalisé en `warn`, et la cliente est tout de même prévenue : un public perdu
+  n'en emporte pas deux. La même règle couvre la **panne** — la lecture de la
+  ligne `staff` est passée devant la cliente avec #534, et une erreur de base qui
+  remonterait jusqu'au `catch` de `handle` priverait les deux publics d'un avis
+  que rien ne rejouerait, le bus étant en mémoire. `staffRecipient()` l'absorbe
+  et journalise en `error`.
 
-Le contournement — écrire l'avis du praticien avec `appointment_id` à `NULL`,
-qui échappe à l'index — a été écarté délibérément : il romprait le lien avec le
-rendez-vous, que le journal du back-office affiche, pour esquiver un invariant
-plutôt que pour le servir.
+**Ce que #534 a débloqué.** Jusque-là un seul des deux recevait l'avis, et c'était
+une limite de la base : `notifications_live_once` portait sur
+`(tenant_id, appointment_id, type, channel)`, si bien que deux avis vivants sur
+le même canal pour un même rendez-vous étaient impossibles. Écrire la cliente
+**puis** le praticien faisait refuser le second par PostgreSQL, `claim()` rendait
+`already-live`, et le praticien ne recevait rien — en silence, puisque c'est
+exactement la forme d'un rejeu SQS légitime.
 
-Lever la limite demande donc d'assouplir ce garde **et** de poser la migration,
-dans un ticket qui porte les deux — c'est l'objet de l'issue de suivi. La règle
-ci-dessus est ce qui, sans migration, sert les deux publics **sans jamais perdre
-un envoi** : à chaque annulation, un avis part vers la partie qui n'a pas décidé.
+`20260908120000_notification_live_once_per_recipient` a **remplacé** cet index
+par un index qui porte le destinataire, en queue de ses colonnes —
+`tenant_id` reste en tête. Un index ne se modifie pas : il se `DROP`, et c'est ce
+que le garde « migration purement additive » de
+`src/infrastructure/database/__tests__/prisma-schema.spec.ts` refusait. Ce garde
+distingue désormais un `DROP` de **données** — table, colonne, type, contrainte,
+toujours refusé — d'un `DROP INDEX` de **remplacement**, admis à la seule
+condition que la même migration recrée un index du même nom.
 
-Ce que la règle ne couvre pas, et qu'il faut savoir : sur un `cancelledBy` à
-`STAFF`, seule la cliente est prévenue. Une annulation posée au comptoir par une
-autre personne que le praticien concerné — accueil, gérance — ne lui dit donc
-rien, alors que son agenda vient de changer. C'est le second public que la
-migration ci-dessus débloquera ; en attendant, le back-office reste la seule
-surface où il le voit.
+Le contournement qu'on aurait pu prendre à la place — écrire l'avis du praticien
+avec `appointment_id` à `NULL`, qui échappe à l'index — avait été écarté, et le
+reste : il romprait le lien avec le rendez-vous, que le journal du back-office
+affiche, pour esquiver un invariant plutôt que pour le servir.
+
+**La parité du dépôt avec l'index n'est pas facultative.** `resolveRefusal` et
+`findReclaimable` cherchent la ligne vivante par `liveIdentity()`, qui énumère
+exactement les colonnes de l'index. Sans le destinataire, l'avis du praticien
+trouverait celui de la cliente et serait rendu `already-live` sur un message que
+la base venait d'accepter.
 
 ### La clé de livraison porte le destinataire
 
@@ -391,6 +402,15 @@ demande »).
 `{{origine}}` est **vide** sur un rendez-vous qui n'est pas annulé, ce qui la rend
 utilisable en section : un modèle qui la nomme dans une confirmation n'écrit rien
 plutôt qu'une phrase fausse.
+
+Une seule chose y échappe, et c'est `{{destinataire_client}}` (#534) : « Prendre
+un nouveau rendez-vous » ne veut rien dire pour un praticien, et le lien pointe
+un espace client qui n'est pas son agenda. Le paragraphe est donc sous section —
+`{{#destinataire_client}}…{{/destinataire_client}}` — et s'efface pour lui seul.
+La variable vaut `oui` quand le compte destinataire est celui de la cliente **du
+rendez-vous**, vide sinon ; elle vaut donc toujours `oui` pour la confirmation et
+le rappel, qui n'ont qu'un public. C'est ce qui permet de corriger la faute sans
+dégrader l'e-mail de la cliente, ce qu'une reformulation neutre aurait fait.
 
 ### Le motif n'a pas de variable, et n'en aura pas
 
@@ -517,13 +537,24 @@ la même façon — **la base tranche, le code traduit**.
 | `notifications_live_once` | **la donnée** — « ce rappel-là, une fois » | `PENDING` et `SENT` seulement |
 
 Le premier vient de la migration initiale et dépend de la façon dont le
-producteur compose sa clé. Le second est posé par #68 :
+producteur compose sa clé. Le second est posé par #68, et **remplacé** par #534
+pour y faire entrer le destinataire :
 
 ```sql
 CREATE UNIQUE INDEX "notifications_live_once"
-  ON "notifications" ("tenant_id", "appointment_id", "type", "channel")
+  ON "notifications" (
+    "tenant_id", "appointment_id", "type", "channel",
+    COALESCE("recipient_user_id", '00000000-0000-0000-0000-000000000000'::uuid)
+  )
   WHERE "status" IN ('PENDING', 'SENT');
 ```
+
+Le `COALESCE` n'est pas une coquetterie : `recipient_user_id` est nullable, et
+PostgreSQL tient deux `NULL` pour distincts dans un index unique. Écrire la
+colonne nue aurait **affaibli** l'invariant de #68 sur les lignes sans
+destinataire. Le sentinelle est l'UUID nul, qu'aucun compte ne porte —
+`uuid()` produit une v4 —, si bien que la lecture `recipient_user_id IS NULL` du
+dépôt et le `COALESCE` de l'index désignent exactement les mêmes lignes.
 
 Il ne dépend d'aucune convention de clé : deux producteurs qui ne se coordonnent
 pas — l'événement `appointment.confirmed` d'un côté, le balayage EventBridge de

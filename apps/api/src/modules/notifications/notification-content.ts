@@ -206,11 +206,24 @@ export function cancellationOrigin(cancelledBy: AppointmentCancelledBy | null): 
  * la grammaire des sections sait lire (`{{#adresse}}…{{/adresse}}` s'efface), là
  * où un `null` aurait obligé chaque substitution à s'en défendre — et aurait fini
  * par écrire « null » dans un e-mail le jour d'un oubli.
+ *
+ * ## Pourquoi le destinataire entre ici — #534
+ *
+ * Pour une seule variable, `destinataire_client`, et pour la même raison que le
+ * canal : il n'y a **qu'un** modèle par `(tenant_id, type, channel)`, et l'avis
+ * d'annulation part désormais vers deux comptes sur la même annulation. Ce qui
+ * ne vaut que pour l'un des deux doit pouvoir s'effacer pour l'autre, et cela se
+ * décide au rendu — le seul instant où le destinataire est connu.
+ *
+ * Le compte est comparé à `context.clientId`, jamais au rôle du compte : c'est
+ * « es-tu la cliente **de ce rendez-vous** » qui est demandé, et une praticienne
+ * qui a réservé pour elle-même y répond oui.
  */
 export function buildTemplateVariables(
   context: AppointmentMessageContext,
   cancelUrl: string,
   channel: NotificationChannel,
+  recipientUserId: string,
 ): TemplateVariables {
   const zone = context.tenantTimeZone;
 
@@ -228,6 +241,7 @@ export function buildTemplateVariables(
     prix: formatMoney(context.priceAmountMinor, context.priceCurrency),
     lien_annulation: cancelUrl,
     origine: cancellationOrigin(context.cancelledBy),
+    destinataire_client: recipientUserId === context.clientId ? 'oui' : '',
   };
 }
 

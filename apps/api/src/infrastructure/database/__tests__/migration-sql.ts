@@ -34,14 +34,32 @@ export const PRISMA_DIR = join(__dirname, '..', '..', '..', '..', 'prisma');
 /** `apps/api/prisma/migrations`. */
 export const MIGRATIONS_DIR = join(PRISMA_DIR, 'migrations');
 
+/** Une migration, telle qu'elle sera jouée : son dossier et son SQL. */
+export interface Migration {
+  /** Le nom du dossier — l'horodatage Prisma suivi du libellé. */
+  readonly name: string;
+  /** Le contenu de son `migration.sql`. */
+  readonly sql: string;
+}
+
 /**
- * Le SQL de toutes les migrations concaténé, dans son ordre d'application.
+ * Les migrations une à une, dans leur ordre d'application.
  *
- * @throws si aucune migration n'est trouvée — sans cette borne, un dossier
- * introuvable ou vide rendrait une chaîne vide, sur laquelle toute assertion
- * « le SQL ne contient pas … » passerait au vert sans rien avoir lu.
+ * ## Pourquoi la découpe, alors que la concaténation suffisait jusqu'ici
+ *
+ * Parce qu'une migration est l'**unité d'atomicité** : Prisma la joue dans une
+ * transaction, et ce qui s'y trouve s'applique ensemble ou pas du tout. Un
+ * garde qui raisonne sur le texte concaténé ne peut donc pas distinguer « cet
+ * index est retiré puis recréé dans le même souffle » de « cet index a été
+ * retiré ici, et un homonyme créé trois migrations plus loin » — deux situations
+ * qui n'ont pas du tout la même conséquence sur une base de production.
+ *
+ * C'est ce dont `prisma-schema.spec.ts` a besoin depuis #534 pour admettre un
+ * `DROP INDEX` de remplacement sans ouvrir la porte à un retrait sec.
+ *
+ * @throws si aucune migration n'est trouvée — même borne que ci-dessous.
  */
-export function readMigrationSql(): string {
+export function readMigrations(): readonly Migration[] {
   const directories = readdirSync(MIGRATIONS_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
@@ -53,7 +71,21 @@ export function readMigrationSql(): string {
     throw new Error(`aucune migration sous « ${MIGRATIONS_DIR} »`);
   }
 
-  return directories
-    .map((directory) => readFileSync(join(MIGRATIONS_DIR, directory, 'migration.sql'), 'utf8'))
+  return directories.map((name) => ({
+    name,
+    sql: readFileSync(join(MIGRATIONS_DIR, name, 'migration.sql'), 'utf8'),
+  }));
+}
+
+/**
+ * Le SQL de toutes les migrations concaténé, dans son ordre d'application.
+ *
+ * @throws si aucune migration n'est trouvée — sans cette borne, un dossier
+ * introuvable ou vide rendrait une chaîne vide, sur laquelle toute assertion
+ * « le SQL ne contient pas … » passerait au vert sans rien avoir lu.
+ */
+export function readMigrationSql(): string {
+  return readMigrations()
+    .map((migration) => migration.sql)
     .join('\n');
 }
