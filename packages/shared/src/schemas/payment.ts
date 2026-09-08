@@ -113,8 +113,16 @@ export type RecordCounterPaymentRequest = z.infer<typeof recordCounterPaymentReq
  *
  * `amount` omis vaut « tout ce qui reste encaissé ». Le plafonnement se fait
  * côté serveur — un remboursement supérieur au restant sort en
- * `REFUND_EXCEEDS_CAPTURED_AMOUNT`, et une devise différente de celle de
- * l'encaissement en `CURRENCY_MISMATCH`, jamais en conversion silencieuse.
+ * `REFUND_EXCEEDS_CAPTURED`, jamais en conversion silencieuse.
+ *
+ * **La devise déclarée ici n'est pas encore celle que la route reçoit.** Ce
+ * schéma décrit un couple `{ amountMinor, currency }` là où
+ * `POST /payments/:id/refunds` porte un `amountMinor` nu et relit la devise de
+ * l'encaissement en base : elle n'est pas au choix de l'appelant, et l'API
+ * n'émet aucun refus pour une devise contredite — il n'y en a pas à contredire.
+ * L'écart est instruit, avec la décision qui reste à prendre, en tête de
+ * `apps/api/src/modules/payments/dto/refund.dto.ts` : poster le couple tel quel
+ * se fait aujourd'hui refuser en 400 par le `whitelist` du `ValidationPipe`.
  */
 export const refundPaymentRequestSchema = z
   .object({

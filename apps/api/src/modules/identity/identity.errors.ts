@@ -1,3 +1,5 @@
+import { IDENTITY_ERROR_CODES } from '@spa/shared';
+
 import { DomainError, type DomainErrorDetails } from '../../common/errors';
 
 /**
@@ -7,29 +9,17 @@ import { DomainError, type DomainErrorDetails } from '../../common/errors';
  * ces classes, et `DomainExceptionFilter` la traduit. Le front réagit sur `code`,
  * jamais sur `message`.
  *
- * TODO(#536) : ces codes appartiennent au contrat d'API, et #510 n'a pas pu les
- * y prendre — la famille ne se recouvre qu'à moitié. `ERROR_CODES` de
- * `@spa/shared` porte `INVALID_CREDENTIALS` et `EMAIL_ALREADY_REGISTERED`, à la
- * même valeur, mais ignore `INVALID_REFRESH_TOKEN`, `INVALID_INVITATION` et
- * `INVITATION_ALREADY_ACCEPTED`. Importer les deux premiers laisserait donc
- * cette constante à cheval sur deux sources, ce qui est pire que la duplication
- * qu'on cherche à supprimer : le lecteur ne saurait plus laquelle fait foi.
- *
- * Reste à faire, et c'est une décision de contrat commune aux six modules :
- * découper les codes de `@spa/shared` par module, y compléter les familles
- * partielles, puis importer d'un seul geste. Même TODO dans
- * `appointments.errors.ts`, `availability.errors.ts`, `catalog.errors.ts`,
- * `crm.errors.ts`, `payments.errors.ts` et `reporting.errors.ts`.
+ * Les **codes** viennent désormais de `@spa/shared` et sont simplement
+ * réexportés d'ici (#536) : le contrat est leur seule écriture, et la famille
+ * n'est plus à cheval sur deux sources. Ce qu'a coûté ce rapatriement, et qui
+ * est écrit en tête de `packages/shared/src/errors/error-codes.ts` : les six
+ * codes que le contrat déclarait ici sans que l'API les émette jamais —
+ * `ACCESS_TOKEN_EXPIRED`, `INVALID_TOKEN`, `REFRESH_TOKEN_REVOKED`,
+ * `ACCOUNT_DISABLED`, `INSUFFICIENT_ROLE`, `TENANT_UNAVAILABLE` — ont été
+ * retirés. Les refus de jeton et de rôle ne passent pas par une `DomainError`
+ * mais par les gardes de Nest, et sortent en `UNAUTHORIZED` ou `FORBIDDEN`.
  */
-
-/** Codes d'erreur du module, tels qu'ils partent au client. */
-export const IDENTITY_ERROR_CODES = {
-  INVALID_CREDENTIALS: 'INVALID_CREDENTIALS',
-  EMAIL_ALREADY_REGISTERED: 'EMAIL_ALREADY_REGISTERED',
-  INVALID_REFRESH_TOKEN: 'INVALID_REFRESH_TOKEN',
-  INVALID_INVITATION: 'INVALID_INVITATION',
-  INVITATION_ALREADY_ACCEPTED: 'INVITATION_ALREADY_ACCEPTED',
-} as const;
+export { IDENTITY_ERROR_CODES };
 
 /** 401 — absent de `DOMAIN_HTTP_STATUS`, qui ne connaît pas encore l'authentification. */
 const UNAUTHORIZED = 401;

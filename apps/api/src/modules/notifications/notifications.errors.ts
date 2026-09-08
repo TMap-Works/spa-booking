@@ -1,3 +1,5 @@
+import { NOTIFICATION_ERROR_CODES } from '@spa/shared';
+
 import { DomainError } from '../../common/errors';
 
 /**
@@ -7,29 +9,25 @@ import { DomainError } from '../../common/errors';
  * ces classes, et `DomainExceptionFilter` la traduit en
  * `{ code, message, details }` le jour où une route les fera passer par HTTP.
  *
+ * Les **codes** viennent désormais de `@spa/shared`, où le rapatriement de #536
+ * leur a créé une famille propre au module, et sont réexportés d'ici. Le contrat
+ * n'en portait aucun : les huit y ont été ajoutés à l'identique. Cela vaut aussi
+ * pour ceux que seul le consommateur de file lit — un code qui ne sort pas
+ * aujourd'hui par HTTP peut en sortir demain, et le contrat est l'endroit où
+ * cette liste se tient.
+ *
  * **Aucune ne porte de donnée personnelle.** Ni adresse e-mail, ni numéro, ni
  * nom de cliente : un `details` d'erreur est journalisé, et notifications §7
  * interdit de journaliser les coordonnées comme le contenu des messages. Ce qui
  * s'y trouve est un identifiant de notification et un canal — rien d'autre.
  */
+export { NOTIFICATION_ERROR_CODES };
 
 /** 503 — `DOMAIN_HTTP_STATUS` ne connaît pas les dépendances externes. */
 const SERVICE_UNAVAILABLE = 503;
 
 /** 401 — `DOMAIN_HTTP_STATUS` s'arrête à 403 : il ne connaît que les droits, pas l'authentification. */
 const UNAUTHORIZED = 401;
-
-/** Codes d'erreur du module, tels qu'ils partiraient au client. */
-export const NOTIFICATION_ERROR_CODES = {
-  NOTIFICATION_SENDER_NOT_CONFIGURED: 'NOTIFICATION_SENDER_NOT_CONFIGURED',
-  NOTIFICATION_NOT_RENDERABLE: 'NOTIFICATION_NOT_RENDERABLE',
-  NOTIFICATION_CONTEXT_GONE: 'NOTIFICATION_CONTEXT_GONE',
-  INTERNAL_CALLER_NOT_CONFIGURED: 'INTERNAL_CALLER_NOT_CONFIGURED',
-  INTERNAL_CALLER_REJECTED: 'INTERNAL_CALLER_REJECTED',
-  NOTIFICATION_TEMPLATE_INVALID: 'NOTIFICATION_TEMPLATE_INVALID',
-  NOTIFICATION_TEMPLATE_TOO_LONG: 'NOTIFICATION_TEMPLATE_TOO_LONG',
-  NOTIFICATION_TEMPLATE_NOT_FOUND: 'NOTIFICATION_TEMPLATE_NOT_FOUND',
-} as const;
 
 /** 400 — la requête est fautive, et le champ en cause est nommé. */
 const BAD_REQUEST = 400;

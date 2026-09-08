@@ -1,4 +1,4 @@
-import { MAX_APPOINTMENT_RANGE_DAYS } from '@spa/shared';
+import { APPOINTMENTS_ERROR_CODES, MAX_APPOINTMENT_RANGE_DAYS } from '@spa/shared';
 
 import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
 
@@ -15,23 +15,15 @@ import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
  * exactement ce qu'elle valait (31), et le contrat est maintenant sa seule
  * écriture.
  *
- * TODO(#536) : les **codes** d'erreur, eux, restent déclarés ici, et pour la
- * raison qui vaut déjà dans `availability.errors.ts` : les rapatrier n'est pas
- * un import mais une décision de contrat. `BOOKING_ERROR_CODES` de `@spa/shared`
- * porte bien `SLOT_NO_LONGER_AVAILABLE` et `APPOINTMENT_RANGE_TOO_WIDE` — à la
- * même valeur, caractère pour caractère —, mais il les mêle à ceux
- * d'`availability`, si bien qu'importer depuis ici ferait de la famille de
- * `appointments` un sous-ensemble emprunté à une famille voisine, sans que rien
- * ne dise lequel des deux modules en est propriétaire. Reste à faire : découper
- * les codes du contrat par module, puis importer — les deux fichiers d'erreurs
- * bougeront ensemble.
+ * Les **codes** viennent eux aussi de `@spa/shared` depuis #536, et sont
+ * réexportés d'ici. Ce qui bloquait n'était pas l'import mais le découpage : le
+ * contrat les mêlait à ceux d'`availability` dans un `BOOKING_ERROR_CODES`
+ * commun, si bien qu'importer d'ici aurait fait de la famille d'`appointments`
+ * un sous-ensemble emprunté à une famille voisine. Le contrat porte désormais
+ * une famille par module, et les deux valeurs de celle-ci sont inchangées,
+ * caractère pour caractère.
  */
-
-/** Codes d'erreur du module, tels qu'ils partent au client. */
-export const APPOINTMENTS_ERROR_CODES = {
-  SLOT_NO_LONGER_AVAILABLE: 'SLOT_NO_LONGER_AVAILABLE',
-  APPOINTMENT_RANGE_TOO_WIDE: 'APPOINTMENT_RANGE_TOO_WIDE',
-} as const;
+export { APPOINTMENTS_ERROR_CODES };
 
 /**
  * 409 et non 422 : la requête est parfaitement valide, c'est **l'état du monde**

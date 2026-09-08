@@ -14,27 +14,38 @@ import {
   isApiError,
 } from '../errors/api-error';
 import {
-  BOOKING_ERROR_CODES,
+  APPOINTMENTS_ERROR_CODES,
+  AVAILABILITY_ERROR_CODES,
+  CATALOG_ERROR_CODES,
+  CRM_ERROR_CODES,
   DOMAIN_ERROR_CODES,
   ERROR_CODES,
   IDENTITY_ERROR_CODES,
+  NOTIFICATION_ERROR_CODES,
   PAYMENT_ERROR_CODES,
+  REPORTING_ERROR_CODES,
   TRANSPORT_ERROR_CODES,
   isKnownErrorCode,
 } from '../errors/error-codes';
 
 /**
- * Les cinq familles qui composent `ERROR_CODES`. Les énumérer ici plutôt que de
- * les recopier dans chaque test : une famille oubliée dans l'une des listes
- * rendrait le test de doublon aveugle à ses codes — c'est exactement la
- * collision silencieuse que le `spread` de `ERROR_CODES` produirait.
+ * Les dix familles qui composent `ERROR_CODES` — une par module du CDC §2.3,
+ * plus le transport HTTP et les refus transverses (#536). Les énumérer ici
+ * plutôt que de les recopier dans chaque test : une famille oubliée dans l'une
+ * des listes rendrait le test de doublon aveugle à ses codes — c'est exactement
+ * la collision silencieuse que le `spread` de `ERROR_CODES` produirait.
  */
 const ERROR_CODE_FAMILIES = [
   TRANSPORT_ERROR_CODES,
   DOMAIN_ERROR_CODES,
   IDENTITY_ERROR_CODES,
-  BOOKING_ERROR_CODES,
+  CATALOG_ERROR_CODES,
+  AVAILABILITY_ERROR_CODES,
+  APPOINTMENTS_ERROR_CODES,
+  CRM_ERROR_CODES,
   PAYMENT_ERROR_CODES,
+  NOTIFICATION_ERROR_CODES,
+  REPORTING_ERROR_CODES,
 ] as const;
 
 describe('codes d’erreur', () => {

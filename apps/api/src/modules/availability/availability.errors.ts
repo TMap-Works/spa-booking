@@ -1,4 +1,8 @@
-import { MAX_AVAILABILITY_RANGE_DAYS, MAX_TIME_OFF_RANGE_DAYS } from '@spa/shared';
+import {
+  AVAILABILITY_ERROR_CODES,
+  MAX_AVAILABILITY_RANGE_DAYS,
+  MAX_TIME_OFF_RANGE_DAYS,
+} from '@spa/shared';
 
 import { DomainError } from '../../common/errors';
 
@@ -15,32 +19,21 @@ import { DomainError } from '../../common/errors';
  * valaient (31 et 366), et le contrat est maintenant la seule écriture de
  * chacune.
  *
- * TODO(#536) : les **codes** d'erreur, eux, restent déclarés ici. Les rapatrier
- * n'est pas un import mais une décision de contrat, hors de l'empreinte de
- * #510 : les familles ne se recouvrent pas. `BOOKING_ERROR_CODES` de
- * `@spa/shared` porte `AVAILABILITY_RANGE_TOO_WIDE` et `TIME_OFF_RANGE_INVALID`
- * — mêlés à ceux d'`appointments` —, mais ignore `NON_EXISTENT_LOCAL_TIME`,
- * `AMBIGUOUS_LOCAL_TIME`, `UNKNOWN_TIME_ZONE` et `OVERLAPPING_SCHEDULE_RANGES`.
- * Substituer supposerait donc de trancher d'abord *où* vit la frontière entre
- * les deux familles — et un `AVAILABILITY_ERROR_CODES` réduit à deux membres
- * empruntés à une famille voisine se lirait moins bien que celui-ci. Reste à
- * faire : découper les codes du contrat par module, puis importer.
+ * Les **codes** viennent eux aussi de `@spa/shared` depuis #536, et sont
+ * réexportés d'ici. Ce qui bloquait était le découpage, pas l'import : le
+ * contrat portait `AVAILABILITY_RANGE_TOO_WIDE` et `TIME_OFF_RANGE_INVALID`
+ * mêlés à ceux d'`appointments` dans un `BOOKING_ERROR_CODES` commun, et
+ * ignorait `NON_EXISTENT_LOCAL_TIME`, `AMBIGUOUS_LOCAL_TIME`,
+ * `UNKNOWN_TIME_ZONE` et `OVERLAPPING_SCHEDULE_RANGES`. Il porte désormais une
+ * famille par module, les quatre manquants y ont été ajoutés à l'identique, et
+ * les deux qui s'y trouvaient déjà n'ont pas changé de valeur.
  *
  * **Aucune de ces erreurs ne parle d'un autre établissement.** Elles ne portent
  * que ce que l'appelant vient d'envoyer — une heure, un fuseau —, jamais
  * l'existence d'une ressource d'un tenant voisin, qui reste un 404
  * (tenant-isolation §4).
  */
-
-/** Codes d'erreur du module, tels qu'ils partent au client. */
-export const AVAILABILITY_ERROR_CODES = {
-  NON_EXISTENT_LOCAL_TIME: 'NON_EXISTENT_LOCAL_TIME',
-  AMBIGUOUS_LOCAL_TIME: 'AMBIGUOUS_LOCAL_TIME',
-  UNKNOWN_TIME_ZONE: 'UNKNOWN_TIME_ZONE',
-  OVERLAPPING_SCHEDULE_RANGES: 'OVERLAPPING_SCHEDULE_RANGES',
-  TIME_OFF_RANGE_INVALID: 'TIME_OFF_RANGE_INVALID',
-  AVAILABILITY_RANGE_TOO_WIDE: 'AVAILABILITY_RANGE_TOO_WIDE',
-} as const;
+export { AVAILABILITY_ERROR_CODES };
 
 const UNPROCESSABLE_ENTITY = 422;
 

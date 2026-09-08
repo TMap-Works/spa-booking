@@ -1,3 +1,5 @@
+import { CATALOG_ERROR_CODES } from '@spa/shared';
+
 import { DomainError } from '../../common/errors';
 
 /**
@@ -7,27 +9,17 @@ import { DomainError } from '../../common/errors';
  * ces classes, et `DomainExceptionFilter` la traduit. Le front réagit sur
  * `code`, jamais sur `message`.
  *
- * TODO(#536) : ces codes appartiennent au contrat d'API, et #510 n'a pas pu les
- * y prendre — la même décision de contrat que dans les cinq autres fichiers
- * d'erreurs du dépôt. Il n'y a pas d'import à faire mais une famille à
- * découper : `@spa/shared` mêle les codes de tous les modules dans
- * `ERROR_CODES`, `DOMAIN_ERROR_CODES` et `BOOKING_ERROR_CODES`, sans qu'aucun
- * regroupement ne dise lequel appartient à quel module. Reste à faire :
- * découper les codes du contrat par module, puis importer — les six fichiers
- * d'erreurs bougeront ensemble.
+ * Les **codes** viennent désormais de `@spa/shared`, où ils forment une famille
+ * propre au module, et sont simplement réexportés d'ici (#536). Le contrat les
+ * ignorait jusque-là : ils y ont été ajoutés à l'identique, sans qu'aucune
+ * valeur servie ne change.
  *
  * **Aucune de ces erreurs ne parle d'un autre établissement.** Une prestation ou
  * une catégorie d'un autre tenant est introuvable, point : c'est `NotFoundError`
  * du tronc commun qui répond, en 404. Un code dédié — ou un 403 — confirmerait
  * son existence (tenant-isolation §4).
  */
-
-/** Codes d'erreur du module, tels qu'ils partent au client. */
-export const CATALOG_ERROR_CODES = {
-  SERVICE_SLUG_TAKEN: 'SERVICE_SLUG_TAKEN',
-  SERVICE_CATEGORY_SLUG_TAKEN: 'SERVICE_CATEGORY_SLUG_TAKEN',
-  SERVICE_STAFF_ALREADY_ASSIGNED: 'SERVICE_STAFF_ALREADY_ASSIGNED',
-} as const;
+export { CATALOG_ERROR_CODES };
 
 const CONFLICT = 409;
 
