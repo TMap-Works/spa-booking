@@ -7,6 +7,7 @@ import {
   SaleItemUnavailableError,
 } from '../payments.errors';
 import type { PosRepository } from '../pos.repository';
+import type { SaleLineRequest } from '../pos.types';
 import { SalesService } from '../sales.service';
 import { FakePosRepository, FakeServicesService } from './pos.doubles';
 
@@ -28,6 +29,8 @@ import { FakePosRepository, FakeServicesService } from './pos.doubles';
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
 const TENANT_B = '22222222-2222-4222-8222-222222222222';
 const CASHIER = '33333333-3333-4333-8333-333333333333';
+/** Un identifiant qui ne désigne rien, nulle part. */
+const INCONNU = '55555555-5555-4555-8555-555555555555';
 
 describe('SalesService — composition d’un ticket', () => {
   let repository: FakePosRepository;
@@ -339,6 +342,221 @@ describe('SalesService — composition d’un ticket', () => {
           ),
         ),
       ).rejects.toBeInstanceOf(SaleAmountOutOfRangeError);
+    });
+  });
+
+  describe('le catalogue du ticket est lu par lot — #420', () => {
+    it('résout dix lignes en deux lectures, une par nature', async () => {
+      const prestation = catalog.seedService({ tenantId: TENANT_A, amountMinor: 7000 });
+      const article = repository.seedProduct({ tenantId: TENANT_A, amountMinor: 1000 });
+
+      const lines: SaleLineRequest[] = [
+        ...Array.from(
+          { length: 5 },
+          (): SaleLineRequest => ({ kind: 'SERVICE', serviceId: prestation.id, quantity: 1 }),
+        ),
+        ...Array.from(
+          { length: 5 },
+          (): SaleLineRequest => ({ kind: 'PRODUCT', productId: article.id, quantity: 1 }),
+        ),
+      ];
+
+      const sale = await inTenantA(() => service.open({ appointmentId: null, lines }, CASHIER));
+
+      // Le coût cesse de croître avec la longueur du ticket : deux lectures pour
+      // dix lignes, et ce seraient les deux mêmes pour cent.
+      expect(catalog.serviceReads).toEqual({ byId: 0, byIds: 1 });
+      expect(repository.productReads).toEqual({ byId: 0, byIds: 1 });
+      // Et le total, lui, ne bouge pas d'un centime.
+      expect(sale.subtotal.amountMinor).toBe(5 * 7000 + 5 * 1000);
+      expect(sale.items.filter((item) => item.kind !== 'TAX')).toHaveLength(10);
+    });
+
+    it('ne lit pas le rayon quand le ticket ne porte aucune ligne d’article', async () => {
+      // Le court-circuit sur le lot vide : la nature absente ne coûte rien du
+      // tout, pas même un `IN ()` qui ne pourrait rien rendre.
+      const prestation = catalog.seedService({ tenantId: TENANT_A, amountMinor: 7000 });
+
+      await inTenantA(() =>
+        service.open(
+          {
+            appointmentId: null,
+            lines: [{ kind: 'SERVICE', serviceId: prestation.id, quantity: 1 }],
+          },
+          CASHIER,
+        ),
+      );
+
+      expect(catalog.serviceReads.byIds).toBe(1);
+      expect(repository.productReads).toEqual({ byId: 0, byIds: 0 });
+    });
+
+    it('ne lit pas le catalogue quand le ticket n’est qu’un pourboire sur un article', async () => {
+      const article = repository.seedProduct({ tenantId: TENANT_A, amountMinor: 1000 });
+
+      await inTenantA(() =>
+        service.open(
+          {
+            appointmentId: null,
+            lines: [
+              { kind: 'PRODUCT', productId: article.id, quantity: 1 },
+              { kind: 'TIP', amountMinor: 200 },
+            ],
+          },
+          CASHIER,
+        ),
+      );
+
+      // Une ligne `TIP` ne désigne aucun article : elle n'entre dans aucun lot.
+      expect(catalog.serviceReads).toEqual({ byId: 0, byIds: 0 });
+      expect(repository.productReads.byIds).toBe(1);
+    });
+
+    it('facture chaque occurrence d’une référence répétée, sans la relire', async () => {
+      const article = repository.seedProduct({ tenantId: TENANT_A, amountMinor: 1000 });
+
+      const sale = await inTenantA(() =>
+        service.open(
+          {
+            appointmentId: null,
+            lines: [
+              { kind: 'PRODUCT', productId: article.id, quantity: 1 },
+              { kind: 'PRODUCT', productId: article.id, quantity: 3 },
+            ],
+          },
+          CASHIER,
+        ),
+      );
+
+      // Le lot confond les doublons, le ticket non : deux lignes distinctes sur
+      // le reçu, chacune à son rang, pour une seule lecture.
+      expect(repository.productReads.byIds).toBe(1);
+      expect(sale.items.filter((item) => item.kind === 'PRODUCT')).toHaveLength(2);
+      expect(sale.subtotal.amountMinor).toBe(4000);
+    });
+  });
+
+  describe('le refus multi-lignes nomme la première position fautive', () => {
+    // Le contrat que le groupement des lectures **n'a pas** changé : les lignes
+    // restent jugées dans l'ordre du comptoir, et la première fautive l'emporte
+    // — c'est sur elle que l'écran de caisse surligne. Rapporter d'un coup
+    // toutes les positions fautives serait un autre contrat, et il se déciderait
+    // dans `packages/shared`.
+
+    it('s’arrête sur la ligne retirée du rayon, sans regarder la devise de la suivante', async () => {
+      const vendable = repository.seedProduct({ tenantId: TENANT_A });
+      const retire = repository.seedProduct({ tenantId: TENANT_A, isActive: false });
+      const etranger = repository.seedProduct({ tenantId: TENANT_A, currency: 'MGA' });
+
+      const refus = await inTenantA(() =>
+        service
+          .open(
+            {
+              appointmentId: null,
+              lines: [
+                { kind: 'PRODUCT', productId: vendable.id, quantity: 1 },
+                { kind: 'PRODUCT', productId: retire.id, quantity: 1 },
+                { kind: 'PRODUCT', productId: etranger.id, quantity: 1 },
+              ],
+            },
+            CASHIER,
+          )
+          .catch((error: unknown) => error),
+      );
+
+      expect(refus).toBeInstanceOf(SaleItemUnavailableError);
+      expect((refus as SaleItemUnavailableError).details).toEqual({ position: 1 });
+    });
+
+    it('s’arrête sur la devise étrangère quand c’est elle qui vient en premier', async () => {
+      // La même paire de lignes, dans l'autre ordre : c'est le **rang** qui
+      // tranche, jamais la gravité du refus ni l'ordre des lectures.
+      const vendable = repository.seedProduct({ tenantId: TENANT_A });
+      const etranger = repository.seedProduct({ tenantId: TENANT_A, currency: 'MGA' });
+      const retire = repository.seedProduct({ tenantId: TENANT_A, isActive: false });
+
+      const refus = await inTenantA(() =>
+        service
+          .open(
+            {
+              appointmentId: null,
+              lines: [
+                { kind: 'PRODUCT', productId: vendable.id, quantity: 1 },
+                { kind: 'PRODUCT', productId: etranger.id, quantity: 1 },
+                { kind: 'PRODUCT', productId: retire.id, quantity: 1 },
+              ],
+            },
+            CASHIER,
+          )
+          .catch((error: unknown) => error),
+      );
+
+      expect(refus).toBeInstanceOf(SaleCurrencyMismatchError);
+      expect((refus as SaleCurrencyMismatchError).details).toEqual({ position: 1 });
+    });
+
+    it('rend 404 quand la première fautive est introuvable, même si une suivante est retirée', async () => {
+      const retire = repository.seedProduct({ tenantId: TENANT_A, isActive: false });
+
+      await expect(
+        inTenantA(() =>
+          service.open(
+            {
+              appointmentId: null,
+              lines: [
+                { kind: 'SERVICE', serviceId: INCONNU, quantity: 1 },
+                { kind: 'PRODUCT', productId: retire.id, quantity: 1 },
+              ],
+            },
+            CASHIER,
+          ),
+        ),
+      ).rejects.toBeInstanceOf(NotFoundError);
+    });
+
+    it('rend 422 quand la ligne retirée précède la ligne introuvable', async () => {
+      // Le pendant du cas précédent : le 404 ne « gagne » pas parce qu'il est un
+      // 404, il gagne quand il tombe le premier.
+      const retire = repository.seedProduct({ tenantId: TENANT_A, isActive: false });
+
+      const refus = await inTenantA(() =>
+        service
+          .open(
+            {
+              appointmentId: null,
+              lines: [
+                { kind: 'PRODUCT', productId: retire.id, quantity: 1 },
+                { kind: 'SERVICE', serviceId: INCONNU, quantity: 1 },
+              ],
+            },
+            CASHIER,
+          )
+          .catch((error: unknown) => error),
+      );
+
+      expect(refus).toBeInstanceOf(SaleItemUnavailableError);
+      expect((refus as SaleItemUnavailableError).details).toEqual({ position: 0 });
+    });
+
+    it('n’inscrit aucun ticket quand une ligne quelconque est refusée', async () => {
+      const vendable = repository.seedProduct({ tenantId: TENANT_A });
+      const retire = repository.seedProduct({ tenantId: TENANT_A, isActive: false });
+
+      await expect(
+        inTenantA(() =>
+          service.open(
+            {
+              appointmentId: null,
+              lines: [
+                { kind: 'PRODUCT', productId: vendable.id, quantity: 1 },
+                { kind: 'PRODUCT', productId: retire.id, quantity: 1 },
+              ],
+            },
+            CASHIER,
+          ),
+        ),
+      ).rejects.toBeInstanceOf(SaleItemUnavailableError);
+      expect(repository.allSales()).toHaveLength(0);
     });
   });
 

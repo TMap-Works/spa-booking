@@ -20,9 +20,9 @@ import { createTenantHarness, type TenantHarness } from './utils/tenant-harness'
  *    exercent ; un double qui l'ignorerait ferait verdir exactement ce qu'on
  *    cherche.
  * 2. `ServicesService` → un double du **service** du catalogue, et non de son
- *    dépôt. C'est bien `ServicesService.byId` que `SalesService` appelle
- *    (api-module §3), et c'est donc sa frontière — 404 hors de l'établissement
- *    courant — qu'il faut reproduire.
+ *    dépôt. C'est bien `ServicesService.byIds` que `SalesService` appelle
+ *    (api-module §3), et c'est donc sa frontière — la prestation d'un autre
+ *    établissement absente du lot, donc introuvable — qu'il faut reproduire.
  *
  * `IdentityRepository` est substitué par le harnais partagé : le POS ne
  * l'interroge jamais, mais `TenantScopeMiddleware` si — c'est par lui qu'un slug

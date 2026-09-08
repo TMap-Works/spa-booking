@@ -101,6 +101,7 @@ type PosRepositoryPort = Pick<
   | 'tenantSaleSettings'
   | 'listProducts'
   | 'findProductById'
+  | 'findProductsByIds'
   | 'createProduct'
   | 'updateProduct'
   | 'appointmentExists'
@@ -114,6 +115,21 @@ export class FakePosRepository implements PosRepositoryPort {
   private readonly products: StoredProduct[] = [];
   private readonly sales: StoredSale[] = [];
   private readonly appointments: StoredAppointment[] = [];
+
+  /**
+   * Combien d'**allers-retours** chacune des deux lectures d'article a coûté
+   * (#420).
+   *
+   * Le nombre de lectures *est* la propriété que le groupement apporte : un
+   * ticket de dix lignes qui rendrait le même total en dix requêtes serait
+   * fonctionnellement juste, et exactement la régression qu'on vient de
+   * corriger. Un compteur est le seul moyen de l'assertionner sans base.
+   *
+   * Un lot **vide** ne compte pas : le vrai court-circuite avant de toucher la
+   * base, et c'est ce court-circuit que le compteur doit rendre visible — un
+   * ticket sans article ne coûte aucune lecture du rayon.
+   */
+  public readonly productReads = { byId: 0, byIds: 0 };
 
   /**
    * Déclare le paramétrage d'un établissement.
@@ -238,9 +254,35 @@ export class FakePosRepository implements PosRepositoryPort {
   }
 
   public findProductById(id: string): Promise<Product | null> {
+    this.productReads.byId += 1;
     const row = this.locateProduct(id);
 
     return Promise.resolve(row === undefined ? null : toProduct(row));
+  }
+
+  /**
+   * Le lot d'articles, scopé comme le vrai — et **sans les absents** (#420).
+   *
+   * Trois propriétés du vrai sont reproduites, et chacune compte : le résultat
+   * n'a pas la longueur de l'entrée — un identifiant inconnu, ou d'un autre
+   * établissement, en est simplement absent —, deux fois le même identifiant ne
+   * rend qu'un article, comme le `IN` de la base les confond, et le lot vide
+   * court-circuite avant toute portée, le vrai ne touchant alors pas la base.
+   */
+  public findProductsByIds(ids: readonly string[]): Promise<Product[]> {
+    if (ids.length === 0) {
+      return Promise.resolve([]);
+    }
+
+    this.productReads.byIds += 1;
+    const tenantId = requireTenant();
+    const wanted = new Set(ids);
+
+    return Promise.resolve(
+      this.products
+        .filter((candidate) => candidate.tenantId === tenantId && wanted.has(candidate.id))
+        .map((candidate) => toProduct(candidate)),
+    );
   }
 
   public createProduct(draft: ProductDraft): Promise<Product | null> {
@@ -412,16 +454,24 @@ function toSale(row: StoredSale): Sale {
 /**
  * Le catalogue des prestations, doublé **au niveau du service**.
  *
- * C'est `ServicesService.byId` que `SalesService` appelle — la voie conforme
+ * C'est `ServicesService.byIds` que `SalesService` appelle — la voie conforme
  * d'api-module §3 —, et c'est donc sa frontière qu'il faut reproduire : une
  * prestation d'un autre établissement est *introuvable*, pas interdite. Le
- * double lève la même `NotFoundError` que le vrai, ce qui est exactement la
- * propriété que les suites de fuite exercent.
+ * double la rend absente du lot, là où `byId` lève la même `NotFoundError` que
+ * le vrai — deux formes du même refus, et exactement la propriété que les suites
+ * de fuite exercent.
  */
-type ServicesServicePort = Pick<ServicesService, 'byId'>;
+type ServicesServicePort = Pick<ServicesService, 'byId' | 'byIds'>;
 
 export class FakeServicesService implements ServicesServicePort {
   private readonly services: (ServiceView & { tenantId: string })[] = [];
+
+  /**
+   * Combien d'**allers-retours** chacune des deux lectures a coûté — même
+   * convention que `FakePosRepository.productReads`, un lot vide ne comptant
+   * pas (#420).
+   */
+  public readonly serviceReads = { byId: 0, byIds: 0 };
 
   public seedService(input: {
     tenantId: string;
@@ -451,6 +501,7 @@ export class FakeServicesService implements ServicesServicePort {
   }
 
   public byId(id: string): Promise<ServiceView> {
+    this.serviceReads.byId += 1;
     const tenantId = requireTenant();
     const row = this.services.find(
       (candidate) => candidate.tenantId === tenantId && candidate.id === id,
@@ -463,5 +514,35 @@ export class FakeServicesService implements ServicesServicePort {
     }
 
     return Promise.resolve(row);
+  }
+
+  /**
+   * Le lot de prestations, scopé comme le vrai — et **sans les absentes**
+   * (#420).
+   *
+   * Elle ne lève pas, là où `byId` lève : c'est le contrat du vrai, et c'est ce
+   * qui permet à l'appelant de dire *quelle ligne* du ticket est fautive. Un
+   * double qui rejetterait ici ferait passer les tests de refus pour de
+   * mauvaises raisons — sur le rejet du catalogue, et non sur le jugement de la
+   * caisse.
+   *
+   * Mêmes trois propriétés que du côté du rayon : le résultat n'a pas la
+   * longueur de l'entrée, les doublons sont confondus, et le lot vide
+   * court-circuite avant toute portée.
+   */
+  public byIds(ids: readonly string[]): Promise<ServiceView[]> {
+    if (ids.length === 0) {
+      return Promise.resolve([]);
+    }
+
+    this.serviceReads.byIds += 1;
+    const tenantId = requireTenant();
+    const wanted = new Set(ids);
+
+    return Promise.resolve(
+      this.services.filter(
+        (candidate) => candidate.tenantId === tenantId && wanted.has(candidate.id),
+      ),
+    );
   }
 }

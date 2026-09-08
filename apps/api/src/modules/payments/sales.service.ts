@@ -11,6 +11,7 @@ import {
   SaleCurrencyMismatchError,
   SaleItemUnavailableError,
 } from './payments.errors';
+import type { Money } from './payments.types';
 import { PosRepository } from './pos.repository';
 import { composeSale, fitsInAmountColumn } from './pos.totals';
 import type {
@@ -22,6 +23,105 @@ import type {
   SaleRequest,
   TenantSaleSettings,
 } from './pos.types';
+
+/**
+ * Ce qu'une ligne de ticket a besoin de savoir d'un article, quelle que soit sa
+ * nature.
+ *
+ * `ServiceView` et `Product` n'ont pas la même forme complète — l'une porte une
+ * durée et des tampons, l'autre un code article — mais le prix d'une ligne ne
+ * dépend que de ces quatre champs. Les nommer ici évite d'avoir à choisir entre
+ * les deux types à chaque accès, sans élargir ce que la caisse lit du catalogue.
+ */
+interface SellableArticle {
+  readonly id: string;
+  readonly name: string;
+  readonly price: Money;
+  readonly isActive: boolean;
+}
+
+/**
+ * Le catalogue d'un ticket : tout ce que ses lignes désignent, déjà lu et indexé
+ * par identifiant (#420).
+ *
+ * Deux ensembles et non un seul : un identifiant de prestation et un identifiant
+ * d'article vivent dans deux tables, et rien n'interdit qu'ils coïncident. Les
+ * confondre dans une table unique aurait fait dépendre le prix d'une ligne de
+ * l'ordre des lectures.
+ */
+interface TicketCatalog {
+  readonly services: ReadonlyMap<string, SellableArticle>;
+  readonly products: ReadonlyMap<string, SellableArticle>;
+}
+
+/** Un ensemble d'articles, indexé par identifiant — l'ordre n'y veut rien dire. */
+function indexById<T extends { readonly id: string }>(
+  articles: readonly T[],
+): ReadonlyMap<string, T> {
+  return new Map(articles.map((article) => [article.id, article]));
+}
+
+/**
+ * Résout une ligne de catalogue en prix unitaire — **le seul chemin par lequel
+ * un montant d'article entre dans un ticket**.
+ *
+ * Trois refus, dans l'ordre où ils comptent : l'article n'existe pas ici (404,
+ * indiscernable du voisin), il existe mais n'est plus vendable (422), il est
+ * libellé dans une autre devise (422). Le premier protège la frontière du
+ * tenant, les deux autres protègent la pièce comptable.
+ *
+ * ## Le contrat du refus multi-lignes : la première position fautive
+ *
+ * Cette fonction juge **une** ligne ; l'appelant les parcourt dans l'ordre du
+ * comptoir, et le premier refus l'emporte — `details.position` désigne cette
+ * ligne-là et aucune autre. Lire le catalogue par lot (#420) aurait permis de
+ * rapporter d'un coup toutes les positions fautives ; ce n'est délibérément pas
+ * fait. C'est sur cette position unique que l'écran de caisse surligne, et en
+ * changer serait un changement du contrat d'API — donc une écriture dans
+ * `packages/shared`, hors de l'empreinte du ticket qui a groupé la lecture. La
+ * lecture est devenue constante, le jugement reste séquentiel.
+ *
+ * Pure et synchrone : tout ce dont elle a besoin a déjà été lu.
+ */
+function priceLine(
+  line: Extract<SaleLineRequest, { kind: 'SERVICE' | 'PRODUCT' }>,
+  position: number,
+  settings: TenantSaleSettings,
+  catalog: TicketCatalog,
+): PricedCatalogItem {
+  const article =
+    line.kind === 'SERVICE'
+      ? catalog.services.get(line.serviceId)
+      : catalog.products.get(line.productId);
+
+  if (article === undefined) {
+    // Le refus ne distingue pas « inconnu » de « chez le voisin » : les deux
+    // lectures sont scopées, et n'ont donc simplement pas rendu la ligne. Le
+    // libellé suit la nature que l'appelant vient de demander, et ne lui apprend
+    // rien qu'il ne sache déjà.
+    throw new NotFoundError(
+      line.kind === 'SERVICE' ? 'Prestation introuvable.' : 'Article introuvable.',
+    );
+  }
+
+  if (!article.isActive) {
+    throw new SaleItemUnavailableError(position);
+  }
+
+  if (article.price.currency !== settings.defaultCurrency) {
+    throw new SaleCurrencyMismatchError(position);
+  }
+
+  return {
+    kind: line.kind,
+    referenceId: article.id,
+    // Le libellé est **figé** ici : un renommage ultérieur de l'article ne doit
+    // pas réécrire les tickets déjà émis.
+    label: article.name,
+    unitPrice: article.price,
+    quantity: line.quantity,
+  };
+}
 
 /**
  * La caisse — composition et lecture d'un ticket (#60, CDC §1.4 « POS de
@@ -45,13 +145,28 @@ import type {
  * 4. **Aucun montant n'est un flottant.** Entiers dans la plus petite unité,
  *    devise explicite, taux de taxe en points de base.
  *
+ * ## Deux lectures par ticket, quelle qu'en soit la longueur
+ *
+ * Les prix sont relus **par lot** (#420) : une lecture pour toutes les
+ * prestations du ticket, une pour tous ses articles, avant que la moindre ligne
+ * ne soit jugée. La résolution ligne par ligne d'origine coûtait un aller-retour
+ * par ligne — jusqu'à cent, la borne du DTO —, invisible sur l'addition de deux
+ * lignes d'un comptoir réel, mesurable sur une addition longue.
+ *
+ * Ce que le groupement **ne change pas** : le refus. Les lignes restent jugées
+ * dans l'ordre du comptoir et le premier refus l'emporte, `details.position`
+ * désignant cette ligne-là. Rapporter d'un coup toutes les positions fautives
+ * serait un autre contrat, et il se déciderait dans `packages/shared`, pas ici.
+ *
  * ## Où se joue l'isolation
  *
  * Nulle part ici, et c'est le point. Le dépôt est scopé par le contexte de
  * requête, `ServicesService` l'est par le sien : une prestation ou un article
  * d'un autre établissement est *introuvable*, et le ticket entier est refusé en
  * 404 — jamais 403, qui confirmerait son existence (tenant-isolation §4). Ce
- * service ne compare aucun `tenantId` parce qu'il n'en reçoit aucun.
+ * service ne compare aucun `tenantId` parce qu'il n'en reçoit aucun. Lire par
+ * lot n'y change rien : un identifiant du voisin est absent des deux ensembles
+ * rendus, exactement comme un identifiant inventé.
  *
  * ## Ce que ce service ne fait pas
  *
@@ -93,12 +208,20 @@ export class SalesService {
       throw new NotFoundError('Rendez-vous introuvable.');
     }
 
+    // **Deux lectures pour le ticket entier**, quelle qu'en soit sa longueur
+    // (#420) : une pour les prestations, une pour les articles. La résolution
+    // ligne par ligne qui les précédait coûtait un aller-retour par ligne,
+    // jusqu'à cent par addition.
+    const catalog = await this.readCatalog(request.lines);
+
     const items: PricedCatalogItem[] = [];
     let tipAmountMinor = 0;
 
-    // Les lignes sont résolues **dans l'ordre du comptoir** : c'est cet ordre
-    // que `position` fige, donc celui du reçu. Le rang sert aussi à désigner la
-    // ligne fautive dans un refus, sans jamais recopier d'identifiant.
+    // Les lignes sont jugées **dans l'ordre du comptoir** : c'est cet ordre que
+    // `position` fige, donc celui du reçu. Le rang sert aussi à désigner la
+    // ligne fautive dans un refus, sans jamais recopier d'identifiant — et c'est
+    // la **première** fautive qui l'emporte, contrat inchangé par le groupement
+    // des lectures.
     for (const [position, line] of request.lines.entries()) {
       if (line.kind === 'TIP') {
         // Un seul pourboire par ticket — le DTO le garantit. Le cumul est écrit
@@ -108,7 +231,7 @@ export class SalesService {
         continue;
       }
 
-      items.push(await this.priceLine(line, position, settings));
+      items.push(priceLine(line, position, settings, catalog));
     }
 
     const composed = composeSale({
@@ -163,47 +286,48 @@ export class SalesService {
   }
 
   /**
-   * Résout une ligne de catalogue en prix unitaire — **le seul chemin par
-   * lequel un montant d'article entre dans un ticket**.
+   * Lit d'un coup tout ce que les lignes du ticket désignent — **deux requêtes,
+   * et non une par ligne** (#420).
    *
-   * Trois refus, dans l'ordre où ils comptent : l'article n'existe pas ici
-   * (404, indiscernable du voisin), il existe mais n'est plus vendable (422), il
-   * est libellé dans une autre devise (422). Le premier protège la frontière du
-   * tenant, les deux autres protègent la pièce comptable.
+   * Les deux partent de front : elles visent deux tables distinctes, et rien
+   * dans l'une ne conditionne l'autre. Sur un ticket qui ne porte qu'une nature,
+   * la lecture de l'autre ne coûte rien du tout — `byIds` et
+   * `findProductsByIds` court-circuitent sur un lot vide.
+   *
+   * Ce que la lecture anticipée change, et qui ne s'observe pas : les lignes qui
+   * suivent une ligne fautive sont désormais lues avant que le refus ne tombe.
+   * Elles ne sont ni écrites, ni rendues, et les deux lectures sont bornées à
+   * l'établissement courant — il n'y a donc ni effet, ni fuite, seulement un
+   * coût que le lot rend constant.
+   *
+   * Les références sont **dédoublonnées** en chemin : trois shampoings sur trois
+   * lignes ne font qu'un identifiant à demander. La base les confondrait de
+   * toute façon, mais un `IN` de cent paramètres pour dix articles distincts
+   * serait exactement le gaspillage que ce regroupement existe pour supprimer.
+   * Le ticket, lui, garde ses trois lignes : c'est la boucle de `open` qui
+   * facture, pas ce lot.
    */
-  private async priceLine(
-    line: Extract<SaleLineRequest, { kind: 'SERVICE' | 'PRODUCT' }>,
-    position: number,
-    settings: TenantSaleSettings,
-  ): Promise<PricedCatalogItem> {
-    const article =
-      line.kind === 'SERVICE'
-        ? // `byId` lève `NotFoundError` hors de l'établissement courant : la
-          // frontière est tenue par `catalog`, et le POS n'a rien à comparer.
-          await this.services.byId(line.serviceId)
-        : await this.repository.findProductById(line.productId);
+  private async readCatalog(lines: readonly SaleLineRequest[]): Promise<TicketCatalog> {
+    const serviceIds = new Set<string>();
+    const productIds = new Set<string>();
 
-    if (article === null) {
-      throw new NotFoundError('Article introuvable.');
+    for (const line of lines) {
+      if (line.kind === 'SERVICE') {
+        serviceIds.add(line.serviceId);
+      } else if (line.kind === 'PRODUCT') {
+        productIds.add(line.productId);
+      }
     }
 
-    if (!article.isActive) {
-      throw new SaleItemUnavailableError(position);
-    }
+    const [services, products] = await Promise.all([
+      // `byIds` est la voie conforme d'api-module §3, au même titre que `byId`
+      // avant elle : c'est `catalog` qui décide du prix d'une prestation, et le
+      // POS n'en a pas de second avis — pas plus par lot qu'à l'unité.
+      this.services.byIds([...serviceIds]),
+      this.repository.findProductsByIds([...productIds]),
+    ]);
 
-    if (article.price.currency !== settings.defaultCurrency) {
-      throw new SaleCurrencyMismatchError(position);
-    }
-
-    return {
-      kind: line.kind,
-      referenceId: article.id,
-      // Le libellé est **figé** ici : un renommage ultérieur de l'article ne
-      // doit pas réécrire les tickets déjà émis.
-      label: article.name,
-      unitPrice: article.price,
-      quantity: line.quantity,
-    };
+    return { services: indexById(services), products: indexById(products) };
   }
 
   /** Le paramétrage de l'établissement courant — voir `ProductsService`. */

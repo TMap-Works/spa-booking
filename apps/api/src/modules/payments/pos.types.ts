@@ -101,7 +101,7 @@ export interface SaleRequest {
 /**
  * L'article résolu au catalogue, prêt à être facturé.
  *
- * C'est la seule source du prix unitaire : ce que rend `ServicesService.byId`
+ * C'est la seule source du prix unitaire : ce que rend `ServicesService.byIds`
  * pour une prestation, ce que rend le dépôt pour un article. Le `label` est
  * recopié ici pour être **figé** sur la ligne — un renommage ultérieur ne doit
  * pas réécrire les tickets passés.
