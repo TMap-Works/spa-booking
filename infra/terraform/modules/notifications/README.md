@@ -39,7 +39,7 @@ Périmètre volontairement resserré, et complémentaire d'autres tickets :
 | Attributs MAIL FROM | `mail.{domain}` | Domaine d'enveloppe, pour l'alignement SPF |
 | Jeu de configuration | `spa-{env}-email` | TLS exigé, métriques de réputation, liste de suppression |
 | Destination d'événements | `spa-{env}-delivery-events` | Rebonds, plaintes, refus, échecs de rendu → SNS |
-| Topic SNS | `spa-{env}-ses-events` | Canal des événements, chiffré |
+| Topic SNS | `spa-{env}-ses-events` | Canal des événements, chiffré ; transport en clair refusé |
 | Clé KMS + alias | `alias/spa-{env}-ses-events` | Chiffre le topic **et les deux files** |
 | Enregistrements Route 53 | 6 | **Seulement si `route53_zone_id` est fourni** |
 | File SQS | `spa-{env}-notifications` | Découplage — l'API y publie et rend la main |
@@ -313,6 +313,19 @@ Le topic est chiffré par une clé KMS gérée par le compte. Tout abonné doit 
 `kms:Decrypt` sur `kms_key_arn`, sinon il recevra des messages qu'il ne saura pas
 déchiffrer — panne silencieuse, et la plus longue à diagnostiquer de cette
 chaîne.
+
+Sa politique refuse par ailleurs le **transport en clair** : un énoncé `Deny` sur
+`sns:*` conditionné par `aws:SecureTransport = false`, la même garde que sur les
+deux files d'envoi ci-dessous (#516). Le générique sur l'action est voulu — une
+garde de transport doit couvrir toute action présente et à venir. Elle ne coupe
+rien de légitime : SES publie en HTTPS, comme tout appel de service à service
+chez AWS.
+
+Écrire cette politique reste par ailleurs ce qui **efface celle qu'SNS pose par
+défaut**. C'est pourquoi elle réaffirme explicitement `AllowSesPublish` — sans
+quoi plus aucun rebond n'arriverait — et `AllowAccountOwner`, sans quoi un
+principal du compte n'aurait plus que ses politiques d'identité pour joindre le
+topic.
 
 ### La chaîne de traitement (#73)
 
