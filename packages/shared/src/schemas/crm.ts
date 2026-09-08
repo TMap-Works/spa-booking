@@ -97,16 +97,86 @@ export const customerSummarySchema = z.object({
 export type CustomerSummary = z.infer<typeof customerSummarySchema>;
 
 /**
+ * Les deux motifs pour lesquels une adresse cesse d'être écrite — #73, #525.
+ *
+ * Deux valeurs, et seulement deux, parce que seules deux issues sont
+ * **définitives** au sens de SES : un rebond permanent — la boîte n'existe pas,
+ * le domaine ne résout pas, le serveur refuse pour toujours — et une plainte,
+ * le destinataire ayant signalé le message comme indésirable. Un rebond
+ * transitoire — boîte pleine, serveur momentanément indisponible — ne supprime
+ * rien : priver une cliente de ses confirmations parce que sa boîte a été pleine
+ * deux jours coûterait plus cher que le rebond lui-même.
+ *
+ * ## Pourquoi ce vocabulaire est ici et non dans `./notification`
+ *
+ * Parce que la **seule** surface d'API qui l'expose est la fiche cliente. Les
+ * colonnes vivent sur `users` (migration `20260907150000_add_email_suppression`)
+ * et non dans une table de notifications, pour la même raison : une liste de
+ * suppression se consulte par adresse, et l'adresse est sur la fiche. Le jour où
+ * une seconde surface la servirait, ce vocabulaire remontera dans
+ * `constants/notification.ts` — pas avant, une constante partagée par un seul
+ * consommateur n'étant partagée avec personne.
+ */
+export const EMAIL_SUPPRESSION_REASONS = ['hard_bounce', 'complaint'] as const;
+
+export const emailSuppressionReasonSchema = z.enum(EMAIL_SUPPRESSION_REASONS);
+
+export type EmailSuppressionReason = z.infer<typeof emailSuppressionReasonSchema>;
+
+/**
+ * Le motif **tel que l'API l'émet**, ramené au vocabulaire du contrat.
+ *
+ * L'énumération PostgreSQL s'écrit `HARD_BOUNCE` / `COMPLAINT` ; le contrat
+ * nomme les mêmes valeurs en minuscules, comme il le fait des rôles et des
+ * statuts de rendez-vous. Même construction que `receivedUserRoleSchema` de
+ * `./identity`, et pour la même raison : le front ne doit connaître qu'une
+ * casse, et la conversion appartient à la frontière plutôt qu'à chaque écran qui
+ * lirait la valeur.
+ */
+export const receivedEmailSuppressionReasonSchema = z
+  .string()
+  .transform((value) => value.toLowerCase())
+  .pipe(emailSuppressionReasonSchema);
+
+/**
  * Fiche cliente complète — ce que rend `GET /customers/:id`.
  *
  * `internalNote` est le « notes internes distinctes des informations visibles du
  * client » du CDC §2.3. La distinction n'est pas une convention de nommage :
  * aucun schéma servi au parcours public ne porte ce champ, et c'est la seule
  * façon d'en faire une propriété vérifiable plutôt qu'une promesse.
+ *
+ * ## L'état de suppression de l'adresse — #525
+ *
+ * `emailSuppressedAt` et `emailSuppressionReason` sont nuls ou renseignés
+ * **ensemble** : une adresse supprimée sans motif ne dirait pas au comptoir ce
+ * qu'il faut expliquer à la cliente, et un motif sans date ne dirait pas depuis
+ * quand. L'invariant est tenu par l'unique écriture qui les pose côté API
+ * (`DeliveryEventRepository.suppressEmails`) ; le contrat ne l'exprime pas par
+ * un raffinement, parce qu'un schéma de **sortie** qui refuserait une réponse
+ * mal appariée transformerait une incohérence de données en écran en erreur.
+ *
+ * Les deux champs sont sur la fiche complète et **absents du résumé** : une
+ * liste de deux cents lignes n'affiche pas d'avis de délivrabilité, et ce qui
+ * n'est pas lu n'a pas à transiter. C'est le même partage qu'`internalNote`.
+ *
+ * `.nullable()` et non `.optional()` : l'API émet toujours les deux champs, à
+ * `null` sur une adresse vivante — qui est l'état de la quasi-totalité du
+ * fichier. Un front qui distingue « absent » de « vide » finit par afficher
+ * `undefined`.
  */
 export const customerSchema = customerSummarySchema.extend({
   internalNote: longTextSchema.nullable(),
   createdAt: utcInstantSchema,
+  /**
+   * Instant UTC auquel l'adresse a cessé d'être écrite, ou `null` — l'adresse
+   * est vivante. Stocké en UTC et **affiché dans le fuseau du salon** : une
+   * suppression datée en heure murale se lirait à deux instants différents
+   * selon qui la relit.
+   */
+  emailSuppressedAt: utcInstantSchema.nullable(),
+  /** Ce qui a valu la suppression — nul exactement quand `emailSuppressedAt` l'est. */
+  emailSuppressionReason: receivedEmailSuppressionReasonSchema.nullable(),
 });
 
 export type Customer = z.infer<typeof customerSchema>;

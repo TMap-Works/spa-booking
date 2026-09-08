@@ -34,6 +34,22 @@ const VALID_SUMMARY = {
   isActive: true,
 };
 
+/**
+ * La fiche complète telle que l'API l'émet, adresse vivante — le socle des cas
+ * qui n'éprouvent qu'un champ à la fois.
+ *
+ * Les deux champs de suppression y sont à `null` et **présents** : c'est ce que
+ * rend `GET /customers/:id` pour la quasi-totalité du fichier, et les omettre
+ * ici aurait fait passer pour valide une réponse que le contrat refuse (#525).
+ */
+const VALID_RECORD = {
+  ...VALID_SUMMARY,
+  internalNote: 'allergique au monoï',
+  createdAt: '2026-09-01T08:00:00.000Z',
+  emailSuppressedAt: null,
+  emailSuppressionReason: null,
+};
+
 describe('fiche cliente', () => {
   it('n’expose pas la note interne sur la forme réduite', () => {
     const parsed = customerSummarySchema.parse({
@@ -47,28 +63,99 @@ describe('fiche cliente', () => {
   });
 
   it('porte la note interne sur la fiche complète, `null` compris', () => {
-    const parsed = customerSchema.parse({
-      ...VALID_SUMMARY,
-      internalNote: null,
-      createdAt: '2026-09-01T08:00:00.000Z',
-    });
+    const parsed = customerSchema.parse({ ...VALID_RECORD, internalNote: null });
 
     expect(parsed.internalNote).toBeNull();
   });
 
   it('canonise l’adresse et rend le téléphone nullable', () => {
     const parsed = customerSchema.parse({
-      ...VALID_SUMMARY,
+      ...VALID_RECORD,
       email: '  Alice@Example.TEST ',
       phone: null,
       internalNote: null,
-      createdAt: '2026-09-01T08:00:00.000Z',
     });
 
     expect({ email: parsed.email, phone: parsed.phone }).toEqual({
       email: 'alice@example.test',
       phone: null,
     });
+  });
+});
+
+/**
+ * L'état de suppression d'adresse sur la fiche — #525, quatrième critère de #73.
+ *
+ * Trois propriétés valent d'être verrouillées ici, et aucune ne se lit sur un
+ * type :
+ *
+ * 1. **la fiche complète les porte, le résumé non** — une liste de deux cents
+ *    lignes n'affiche aucun avis de délivrabilité, et ce qui n'est pas lu n'a
+ *    pas à transiter (même partage qu'`internalNote`) ;
+ * 2. **le motif est ramené en minuscules** — l'API émet la valeur de
+ *    l'énumération PostgreSQL, le contrat nomme les mêmes valeurs comme il nomme
+ *    les rôles et les statuts. Une casse qui remonterait jusqu'à l'écran ferait
+ *    deux vocabulaires pour une seule notion ;
+ * 3. **les deux champs sont obligatoires et nullables** — l'API les émet
+ *    toujours, à `null` sur une adresse vivante. Les rendre facultatifs
+ *    laisserait un front distinguer « absent » de « vide », c'est-à-dire
+ *    afficher `undefined` un jour.
+ */
+describe('l’adresse supprimée d’une fiche', () => {
+  it('n’apparaît pas sur la forme réduite, qui alimente les listes', () => {
+    const parsed = customerSummarySchema.parse({
+      ...VALID_SUMMARY,
+      emailSuppressedAt: '2026-09-05T10:00:00.000Z',
+      emailSuppressionReason: 'HARD_BOUNCE',
+    });
+
+    expect(parsed).not.toHaveProperty('emailSuppressedAt');
+    expect(parsed).not.toHaveProperty('emailSuppressionReason');
+  });
+
+  it('ramène le motif émis par l’API au vocabulaire du contrat', () => {
+    for (const [emis, attendu] of [
+      ['HARD_BOUNCE', 'hard_bounce'],
+      ['COMPLAINT', 'complaint'],
+    ] as const) {
+      const parsed = customerSchema.parse({
+        ...VALID_RECORD,
+        emailSuppressedAt: '2026-09-05T10:00:00.000Z',
+        emailSuppressionReason: emis,
+      });
+
+      expect(parsed.emailSuppressionReason).toBe(attendu);
+    }
+  });
+
+  it('refuse un motif que l’ingestion n’écrit jamais', () => {
+    // Un rebond transitoire ne supprime rien : il n'a pas de valeur dans
+    // l'énumération, et une chaîne libre qui s'y glisserait ferait afficher au
+    // comptoir un motif que le back n'a pas écrit.
+    for (const intrus of ['transient', 'SOFT_BOUNCE', '']) {
+      const result = customerSchema.safeParse({
+        ...VALID_RECORD,
+        emailSuppressedAt: '2026-09-05T10:00:00.000Z',
+        emailSuppressionReason: intrus,
+      });
+
+      expect({ intrus, accepte: result.success }).toEqual({ intrus, accepte: false });
+    }
+  });
+
+  it('exige les deux champs, `null` compris — jamais absents', () => {
+    // « Adresse vivante » est un fait que l'API énonce, pas un champ qu'elle
+    // oublie : une réponse muette serait indiscernable d'une réponse tronquée.
+    for (const manquant of ['emailSuppressedAt', 'emailSuppressionReason'] as const) {
+      const { [manquant]: _omis, ...incomplete } = VALID_RECORD;
+
+      expect({ manquant, accepte: customerSchema.safeParse(incomplete).success }).toEqual({
+        manquant,
+        accepte: false,
+      });
+    }
+
+    expect(customerSchema.parse(VALID_RECORD).emailSuppressedAt).toBeNull();
   });
 });
 
