@@ -980,9 +980,76 @@ def heartbeat_age():
     return time.time() - float(beaten)
 
 
+def heartbeat_pid():
+    """Le PID inscrit au dernier battement, ou None."""
+    try:
+        return int(json.loads(HEARTBEAT.read_text(encoding="utf-8"))["pid"])
+    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return None
+
+
+def process_is_supervisor(pid):
+    """Ce PID désigne-t-il **encore un superviseur**, et pas un homonyme ?
+
+    La question du recyclage est ce qui avait fait écarter le PID au départ :
+    le système le réattribue, et un PID vivant ne prouve donc rien à lui seul.
+    On ne se contente pas de son existence — on lit sa ligne de commande et on
+    y cherche ce fichier-ci. Un intrus qui aurait hérité du numéro ne porte pas
+    `milestone_supervise.py`.
+
+    Interrogé par sous-processus plutôt que par `psutil`, absent du dépôt, et
+    seulement sur le chemin rare : le battement périmé. Une erreur d'appel rend
+    False — ne pas savoir, ici, c'est laisser la veille faire son travail.
+    """
+    if not pid or pid <= 0:
+        return False
+    marker = Path(__file__).name
+    try:
+        if os.name == "nt":
+            done = subprocess.run(
+                ["powershell", "-NoProfile", "-Command",
+                 "(Get-CimInstance Win32_Process -Filter "
+                 f"'ProcessId={pid}').CommandLine"],
+                capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=30)
+        else:
+            done = subprocess.run(["ps", "-p", str(pid), "-o", "args="],
+                                  capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return marker in (done.stdout or "")
+
+
 def supervisor_alive():
+    """Y a-t-il un superviseur, mort ou gelé mis à part ?
+
+    Le battement seul ne suffit pas, et #489 dit pourquoi. La machine s'est mise
+    en veille 4 h 15 sur déclic de batterie ; au réveil, le battement avait
+    l'âge de la veille alors que le processus, lui, était intact. La veille
+    planifiée a conclu « aucun superviseur ne bat » et en a lancé un second :
+    **deux boucles sur le même run**, toutes deux en merge automatique et
+    pré-autorisées sur cinq périmètres sensibles, à quinze secondes du réveil.
+    L'une s'apprêtait à dispatcher une seconde étape sur les tickets de l'autre.
+
+    Aucun délai ne distingue un processus mort d'un processus gelé — seul le
+    PID le fait, et `beat()` l'écrivait depuis toujours sans que personne le
+    lise.
+
+    **Le compromis, assumé.** Un battement périmé sur un processus encore vivant
+    rend désormais « vivant », donc la veille s'abstient. Un superviseur
+    réellement bloqué ne sera donc plus remplacé, ce que le choix d'origine
+    voulait précisément permettre. C'est délibéré : des deux pannes, celle qu'on
+    accepte est visible et inerte — le run n'avance plus, `--state` le dit —,
+    tandis que celle qu'on écarte est silencieuse et destructrice : deux vagues
+    qui dispatchent les mêmes tickets et mergent sur le même `develop`. On ne
+    tue pas non plus l'ancien pour le remplacer : il porte peut-être une étape
+    en vol, et l'orpheliner rendrait le run ingouvernable.
+    """
     age = heartbeat_age()
-    return age is not None and age < HEARTBEAT_STALE
+    if age is not None and age < HEARTBEAT_STALE:
+        return True
+    return process_is_supervisor(heartbeat_pid())
 
 
 def start_beating():
@@ -1498,6 +1565,17 @@ def cmd_watchdog(args):
     # le run n'existe pas encore — c'est la première vague qui l'ouvre — et le
     # désarmer ici tuerait le dispositif au moment précis où il démarre.
     if supervisor_alive():
+        # Le cas neuf de #489 : le battement est périmé mais le processus vit.
+        # Au réveil d'une mise en veille il se résorbe en trente secondes ; s'il
+        # dure, c'est une boucle bloquée, et le run n'avance plus sans que rien
+        # ne le dise. On ne lance pas de second superviseur — c'est tout l'objet
+        # du correctif — mais on refuse de se taire.
+        stale = heartbeat_age()
+        if stale is not None and stale >= HEARTBEAT_STALE:
+            say(f"veille : battement périmé depuis {human_delta(stale)}, mais le "
+                f"superviseur (PID {heartbeat_pid()}) tourne toujours — machine "
+                f"sortie de veille, ou boucle bloquée. Aucun second superviseur "
+                f"lancé ; `--disarm` puis relance si elle l'est vraiment", "WARN")
         return 0
 
     # Un orchestrateur qui n'est pas un superviseur en est un quand même. Une
