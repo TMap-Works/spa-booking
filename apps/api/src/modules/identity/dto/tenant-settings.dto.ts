@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { tenantSchema } from '@spa/shared';
 import { Transform, Type } from 'class-transformer';
+import type { z } from 'zod';
 import {
   ArrayMaxSize,
   IsArray,
@@ -28,11 +30,33 @@ import { OpeningHoursEntryDto, PostalAddressDto, PublicTenantDto } from './publi
  * `slug` glissés dans le corps. L'établissement vient du jeton vérifié, jamais
  * de la charge utile (tenant-isolation §2).
  *
- * TODO(#510) : ces formes sont celles de `updateTenantRequestSchema` et
- * `tenantSchema` de `packages/shared`, et devront en être importées lors de la
- * reprise groupée de ce TODO — la dépendance existe depuis #463. Les bornes sont
- * donc **les mêmes valeurs**, aux mêmes noms, pour que la substitution ne change
- * pas une borne en silence.
+ * La **sortie** est tenue par le contrat depuis #510 — voir l'assertion de
+ * compilation en fin de fichier, contre `tenantSchema`.
+ *
+ * TODO(#536) : l'**entrée**, en revanche, reste sous `class-validator`, et
+ * `updateTenantRequestSchema` ne peut pas la remplacer en l'état. L'écart n'est
+ * pas de borne — elles coïncident valeur pour valeur — mais de **code de
+ * réponse**, et il porte sur trois règles :
+ *
+ * 1. **`closesAt` antérieur à `opensAt`.** `openingHoursEntrySchema` le refuse
+ *    par un `.refine()`, donc en **400**. Cette route rend un **422**
+ *    (`BusinessRuleError` levée par `TenantSettingsService`), et c'est délibéré :
+ *    chaque heure est bien écrite, c'est leur mise en présence qui ne veut rien
+ *    dire ;
+ * 2. **le recouvrement de deux plages du même jour.** Même chose —
+ *    `openingHoursSchema` porte un `.refine()` qui sortirait en 400, là où le
+ *    service rend 422 avec un message qui nomme la faute. La base tient de toute
+ *    façon la règle (`tenant_opening_hours_no_overlap`), et ce contrôle-ci n'est
+ *    que le message ;
+ * 3. **le fuseau horaire.** `timeZoneSchema` vérifie l'existence du fuseau IANA
+ *    et refuserait en 400 ; le module traduit un fuseau inconnu en
+ *    `UNKNOWN_TIME_ZONE`, un 422 que le front distingue d'une faute de frappe.
+ *
+ * Monter le schéma changerait donc le code que le formulaire de réglages lit,
+ * sans qu'aucun test ne le dise. Reste à faire : décider, côté contrat, si ces
+ * trois refus sont des erreurs de forme (400) ou de règle (422) — et, s'ils
+ * restent en 422, sortir les deux `refine` d'`openingHoursSchema` pour en faire
+ * des prédicats que le service appelle, comme `openingHoursOverlap` l'est déjà.
  */
 
 /** `VARCHAR(160)` — nom d'établissement, ligne d'adresse. */
@@ -276,3 +300,31 @@ export class TenantDto extends PublicTenantDto {
 // Réexportés pour que le contrôleur et le service n'aient qu'un import de DTO à
 // faire : les formes publiques et les formes de réglage décrivent le même objet.
 export { OpeningHoursEntryDto, PostalAddressDto };
+
+// ---------------------------------------------------------------------------
+// La sortie tenue par le contrat — à la compilation, faute de pouvoir l'être à
+// l'exécution
+// ---------------------------------------------------------------------------
+
+/**
+ * `TenantDto` est `PublicTenantDto` plus `isActive`, exactement comme
+ * `tenantSchema` est `publicTenantSchema.extend({ isActive })`. La garde vaut
+ * donc pour la composition autant que pour les champs : un champ ajouté à la
+ * vitrine sans l'être au contrat casse ici, et l'inverse aussi.
+ *
+ * Même réserve que dans `public-tenant.dto.ts` sur le tableau d'horaires —
+ * `readonly` d'un côté, mutable de l'autre —, et le même remède : l'assignabilité
+ * est vérifiée sans lui, l'élément l'étant par sa propre assertion.
+ */
+type TenantWire = z.input<typeof tenantSchema>;
+
+type AssertNever<T extends never> = T;
+type AssertTrue<T extends true> = T;
+
+type _TenantDtoHasTheContractKeys = AssertNever<
+  Exclude<keyof TenantDto, keyof TenantWire> | Exclude<keyof TenantWire, keyof TenantDto>
+>;
+
+type _TenantDtoIsReadableByTheContract = AssertTrue<
+  Omit<TenantDto, 'openingHours'> extends Omit<TenantWire, 'openingHours'> ? true : false
+>;

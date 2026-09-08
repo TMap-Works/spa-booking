@@ -7,11 +7,19 @@ import { DomainError, type DomainErrorDetails } from '../../common/errors';
  * ces classes, et `DomainExceptionFilter` la traduit. Le front réagit sur `code`,
  * jamais sur `message`.
  *
- * TODO(#510) : ces codes appartiennent au contrat d'API et devront vivre dans
- * `@spa/shared` — le front doit pouvoir brancher son comportement dessus sans les
- * recopier. Le paquet est tenu par #26 en parallèle de ce ticket ; les déclarer
- * ici évite d'écrire dans son empreinte, et l'import se substituera à ces
- * constantes sans changer une seule valeur.
+ * TODO(#536) : ces codes appartiennent au contrat d'API, et #510 n'a pas pu les
+ * y prendre — la famille ne se recouvre qu'à moitié. `ERROR_CODES` de
+ * `@spa/shared` porte `INVALID_CREDENTIALS` et `EMAIL_ALREADY_REGISTERED`, à la
+ * même valeur, mais ignore `INVALID_REFRESH_TOKEN`, `INVALID_INVITATION` et
+ * `INVITATION_ALREADY_ACCEPTED`. Importer les deux premiers laisserait donc
+ * cette constante à cheval sur deux sources, ce qui est pire que la duplication
+ * qu'on cherche à supprimer : le lecteur ne saurait plus laquelle fait foi.
+ *
+ * Reste à faire, et c'est une décision de contrat commune aux six modules :
+ * découper les codes de `@spa/shared` par module, y compléter les familles
+ * partielles, puis importer d'un seul geste. Même TODO dans
+ * `appointments.errors.ts`, `availability.errors.ts`, `catalog.errors.ts`,
+ * `crm.errors.ts`, `payments.errors.ts` et `reporting.errors.ts`.
  */
 
 /** Codes d'erreur du module, tels qu'ils partent au client. */
