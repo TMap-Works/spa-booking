@@ -3,7 +3,7 @@ import { Injectable } from '@nestjs/common';
 import { StructuredLogger } from '../../common/logging/structured-logger';
 import { TenantContextService } from '../../common/tenant/tenant-context.service';
 import { ReminderSweepRepository } from './reminder-sweep.repository';
-import { REMINDER_LEAD_MS, reminderWindow } from './reminder-window';
+import { REMINDER_LEAD_MS, REMINDER_WINDOW_MS, reminderWindow } from './reminder-window';
 import {
   appointmentDedupeKey,
   reachableChannels,
@@ -30,6 +30,62 @@ import {
  * atteint sans le savoir serait pire qu'aucun plafond.
  */
 export const REMINDER_SWEEP_MAX_APPOINTMENTS = 500;
+
+/**
+ * De combien d'établissements le balayage décale son départ — la rotation qui
+ * empêche la famine du plafond d'être toujours la même (#514).
+ *
+ * ## Le défaut que cela corrige
+ *
+ * Le budget ci-dessus est global, et il se consomme dans l'ordre `id asc` de
+ * `listTenantIds()`, qui est **stable**. Un établissement anormalement peuplé —
+ * import de planning, erreur de saisie de dates — le vide à lui seul et prive
+ * les suivants de leur rappel ; et comme l'ordre ne change pas, ce sont **les
+ * mêmes** salons qui en sont privés, à **chaque** balayage. Une famine
+ * déterministe : le vrai défaut n'est pas qu'un balayage tronque — le plafond
+ * est là pour cela — mais qu'il tronque toujours au détriment des mêmes.
+ *
+ * Décaler le départ d'un salon à chaque balayage suffit à la supprimer : un
+ * salon privé d'un balayage est servi au suivant, et sur `N` balayages
+ * consécutifs chacun des `N` établissements a été servi au moins une fois.
+ *
+ * ## Pourquoi un décalage déduit de l'heure, et non un curseur retenu
+ *
+ * « Repartir du salon suivant celui où le balayage précédent s'est arrêté »
+ * demanderait de retenir un curseur entre deux balayages — donc un état. Le
+ * numéro du balayage en tient lieu, et il n'est stocké nulle part :
+ * `now / REMINDER_WINDOW_MS` est l'index de la fenêtre horaire courante, et les
+ * fenêtres successives pavent le temps (voir `reminder-window.ts`). L'index
+ * avance donc exactement de un par balayage, ce qui est précisément la rotation
+ * voulue.
+ *
+ * Trois raisons de préférer cette dérivation à un curseur persisté :
+ *
+ * 1. **L'API tourne en plusieurs tâches ECS.** Un curseur en mémoire serait
+ *    propre à la réplique qui a servi l'appel, et remis à zéro à chaque
+ *    déploiement — deux répliques rejoueraient la même rotation. Un curseur
+ *    partagé exigerait une table, donc une migration.
+ * 2. **Un balayage qui échoue n'immobilise pas la rotation.** Un curseur écrit
+ *    en fin de traitement ne serait pas écrit du tout si le balayage plantait,
+ *    et le suivant repartirait du même salon — la famine déterministe,
+ *    reconstituée.
+ * 3. **C'est observable en test.** `now` est déjà un paramètre de `sweep()` ; la
+ *    rotation se déroule donc sans horloge simulée ni état à réinitialiser entre
+ *    deux assertions.
+ *
+ * Le modulo est ramené dans `[0, tenantCount)` à la main : `%` garde le signe du
+ * dividende en JavaScript, et un instant antérieur à l'époque rendrait un index
+ * négatif — donc une rotation qui sortirait du tableau.
+ */
+export function sweepStartOffset(now: Date, tenantCount: number): number {
+  if (tenantCount <= 0) {
+    return 0;
+  }
+
+  const sweepIndex = Math.floor(now.getTime() / REMINDER_WINDOW_MS);
+
+  return ((sweepIndex % tenantCount) + tenantCount) % tenantCount;
+}
 
 /** Ce qu'un balayage a produit. */
 export interface ReminderSweepResult {
@@ -106,11 +162,21 @@ export class ReminderSweepService {
     const window = reminderWindow(now);
     const tenantIds = await this.repository.listTenantIds();
 
+    // Le départ tourne d'un salon à chaque balayage : le plafond tronque
+    // toujours, mais plus jamais au détriment des mêmes (#514). L'ordre relatif,
+    // lui, reste celui de `listTenantIds()` — la rotation le décale, elle ne le
+    // mélange pas, et un balayage reste donc reproductible pour un instant donné.
+    const startOffset = sweepStartOffset(now, tenantIds.length);
+    const order =
+      startOffset === 0
+        ? tenantIds
+        : [...tenantIds.slice(startOffset), ...tenantIds.slice(0, startOffset)];
+
     const due: DueReminder[] = [];
     let remaining = maxAppointments;
     let truncated = false;
 
-    for (const [index, tenantId] of tenantIds.entries()) {
+    for (const [index, tenantId] of order.entries()) {
       // **Une ligne de plus que le budget.** C'est elle, et elle seule, qui
       // distingue « ce salon remplit exactement le budget » de « il en restait
       // après » : une page de la taille exacte du budget ne dit rien de ce qui
@@ -147,7 +213,7 @@ export class ReminderSweepService {
         // reste des salons à visiter : avec un budget nul, les visiter ne
         // rendrait plus rien, et l'on ne peut donc pas trancher autrement qu'en
         // se déclarant incomplet dès qu'il en reste un.
-        truncated = index < tenantIds.length - 1;
+        truncated = index < order.length - 1;
         break;
       }
     }
@@ -158,6 +224,17 @@ export class ReminderSweepService {
       from: window.from.toISOString(),
       to: window.to.toISOString(),
       tenantCount: tenantIds.length,
+      // Par quel salon ce balayage a commencé. Sans lui, un `truncated` ne dit
+      // pas *qui* a été servi, et deux balayages tronqués sont indiscernables
+      // dans le journal alors qu'ils n'ont pas servi les mêmes établissements.
+      //
+      // L'identifiant **et** le rang : le rang seul ne se résout qu'en rejouant
+      // `listTenantIds()` au moment de la lecture, or cette liste bouge — un
+      // salon créé ou supprimé entre le balayage et l'enquête décale tous les
+      // rangs, et `startOffset: 7` désigne alors un autre établissement que
+      // celui qui a réellement ouvert le balayage.
+      startOffset,
+      startTenantId: order[0] ?? null,
       appointmentCount: due.length,
       messageCount: messages.length,
       truncated,
