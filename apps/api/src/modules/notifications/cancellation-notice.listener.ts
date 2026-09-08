@@ -34,42 +34,37 @@ import {
  * qui donne la règle : « aucun avis envoyé si l'annulation vient du client
  * lui-même sur son propre rendez-vous, **hors notification au staff** ».
  *
- * L'avis va donc à la partie qui **n'a pas décidé** :
+ * L'avis part donc vers les deux, **moins celui qui a décidé** :
  *
- * | `cancelledBy` | Destinataire | Pourquoi |
+ * | `cancelledBy` | Destinataires | Pourquoi |
  * |---|---|---|
- * | `CLIENT` | le praticien | son agenda vient de changer sans lui ; la cliente, elle, sait déjà — c'est elle qui a cliqué |
- * | `STAFF` | la cliente | le salon a décidé ; elle doit l'apprendre autrement qu'en se déplaçant |
- * | `SYSTEM` | la cliente | personne ne l'a décidé de son côté du comptoir |
+ * | `CLIENT` | le praticien seul | son agenda vient de changer sans lui ; la cliente, elle, sait déjà — c'est elle qui a cliqué, et le quatrième critère l'exclut nommément |
+ * | `STAFF` | la cliente **et** le praticien | le salon a décidé ; elle doit l'apprendre autrement qu'en se déplaçant, et lui doit l'apprendre parce que rien ne dit que c'est lui qui a posé l'annulation — l'accueil et la gérance annulent aussi |
+ * | `SYSTEM` | la cliente **et** le praticien | personne ne l'a décidé d'aucun côté du comptoir |
  *
- * ## Pourquoi un seul destinataire par annulation, et non les deux
+ * ## Pourquoi deux destinataires ont demandé une migration (#534)
  *
- * Parce que la base ne l'autorise pas encore, et c'est une limite assumée, pas un
- * oubli. `notifications_live_once` — l'index unique partiel posé par #68 — porte
- * sur `(tenant_id, appointment_id, type, channel)` : il ne peut pas exister deux
- * avis d'annulation **vivants** sur le même canal pour le même rendez-vous.
- * Écrire la cliente puis le praticien ferait donc refuser le second par
- * PostgreSQL, `claim()` rendrait `already-live`, et le praticien ne recevrait
- * rien — **en silence**, puisque c'est exactement la forme qu'a un rejeu SQS
- * légitime.
+ * Jusqu'à #534, l'avis partait vers **une** seule des deux parties, et ce
+ * n'était pas un oubli : `notifications_live_once` — l'index unique partiel posé
+ * par #68 — portait sur `(tenant_id, appointment_id, type, channel)`. Il ne
+ * pouvait donc pas exister deux avis d'annulation **vivants** sur le même canal
+ * pour le même rendez-vous. Écrire la cliente puis le praticien faisait refuser
+ * le second par PostgreSQL, `claim()` rendait `already-live`, et le praticien ne
+ * recevait rien — **en silence**, puisque c'est exactement la forme qu'a un
+ * rejeu SQS légitime.
  *
- * Servir les deux publics demande d'ajouter `recipient_user_id` à cet index. Un
- * index ne se modifie pas — il se **remplace**, donc il se `DROP` —, et c'est là
- * que la porte se ferme : le garde « migration purement additive » de
- * `infrastructure/database/__tests__/prisma-schema.spec.ts` refuse tout
- * `DROP INDEX` dans le SQL de migration. Aucun chemin additif n'existe, puisque
- * l'ancien index bloque tant qu'il vit. Lever la limite demande d'assouplir ce
- * garde **et** de poser la migration, dans un ticket qui porte les deux : c'est
- * l'objet de l'issue de suivi.
+ * `20260908120000_notification_live_once_per_recipient` a remplacé cet index par
+ * un index qui porte le destinataire. Les deux avis d'une même annulation sont
+ * désormais deux lignes légales, et le rejeu reste refusé **par destinataire** :
+ * c'est ce qui fait qu'ajouter un public n'a pas coûté l'idempotence.
  *
- * La règle ci-dessus est ce qui, sans migration, sert les deux publics **sans
- * jamais perdre un envoi** : à chaque annulation, un avis part vers la partie qui
- * n'a pas décidé.
+ * ## Le praticien qui **est** la cliente ne reçoit qu'un avis
  *
- * Ce qu'elle ne couvre pas : sur `STAFF`, seule la cliente est prévenue. Une
- * annulation posée au comptoir par quelqu'un d'autre que le praticien concerné —
- * accueil, gérance — ne lui dit donc rien, alors que son agenda vient de changer.
- * C'est le second public que la migration débloquera.
+ * Une praticienne peut réserver pour elle-même. Les deux destinataires se
+ * résolvent alors au même compte, et il serait absurde de lui écrire deux fois
+ * la même chose : la liste est dédupliquée. Ce n'est pas une précaution
+ * théorique — c'est le seul cas où les deux publics du CDC désignent une seule
+ * personne.
  *
  * ## La portée de tenant est rouverte explicitement
  *
@@ -110,36 +105,22 @@ export class CancellationNoticeListener implements OnModuleInit, OnModuleDestroy
   }
 
   /**
-   * Traite un `appointment.cancelled` : un message par canal retenu, pour le
-   * destinataire que l'origine de l'annulation désigne.
+   * Traite un `appointment.cancelled` : un message par canal retenu, pour chacun
+   * des destinataires que l'origine de l'annulation laisse à prévenir.
    *
    * Ne lève jamais — voir l'en-tête.
    */
   public async handle(event: AppointmentCancelledEvent): Promise<void> {
     try {
       await this.tenants.runWithTenant(event.tenantId, async () => {
-        const recipientUserId = await this.resolveRecipient(event);
+        const recipients = await this.resolveRecipients(event);
 
-        if (recipientUserId === null) {
-          return;
-        }
-
-        const channels = await this.resolveChannels(recipientUserId);
-
-        if (channels.length === 0) {
-          this.logger.warn("avis d'annulation sans canal joignable", {
-            appointmentId: event.appointmentId,
-            recipientUserId,
-          });
-          return;
-        }
-
-        // Séquentiel, et non `Promise.all` : les deux canaux écrivent dans la
-        // même table, et l'e-mail est celui qui porte le récapitulatif. Le
-        // paralléliser ferait dépendre l'ordre des lignes de l'ordonnancement,
-        // ce que le journal du back-office affiche.
-        for (const channel of channels) {
-          await this.dispatchOne(event, recipientUserId, channel);
+        // Séquentiel, et non `Promise.all` : destinataires comme canaux
+        // écrivent dans la même table, et l'e-mail est celui qui porte le
+        // récapitulatif. Le paralléliser ferait dépendre l'ordre des lignes de
+        // l'ordonnancement, ce que le journal du back-office affiche.
+        for (const recipientUserId of recipients) {
+          await this.notify(event, recipientUserId);
         }
       });
     } catch (error: unknown) {
@@ -147,47 +128,130 @@ export class CancellationNoticeListener implements OnModuleInit, OnModuleDestroy
     }
   }
 
-  /**
-   * Le compte à prévenir — la partie qui n'a pas décidé de l'annulation.
-   *
-   * Rend `null` quand il n'y a personne à prévenir, et les deux cas sont
-   * distincts :
-   *
-   * - le praticien n'a pas de compte joignable dans cet établissement — sa ligne
-   *   `staff` a disparu, ou appartient à un autre salon, ce que le client scopé
-   *   traite de la même façon. C'est journalisé : c'est le seul chemin par lequel
-   *   une annulation ne produirait aucune trace ;
-   * - le praticien **est** la personne qui a annulé. Cela se produit quand une
-   *   praticienne réserve pour elle-même et se décommande depuis son espace
-   *   client : le compte destinataire serait alors celui de l'auteur de
-   *   l'annulation, ce que le quatrième critère d'acceptation interdit
-   *   littéralement — « aucun avis envoyé si l'annulation vient du client
-   *   lui-même sur son propre rendez-vous ». Rien n'est envoyé, et rien n'est
-   *   anormal.
-   */
-  private async resolveRecipient(event: AppointmentCancelledEvent): Promise<string | null> {
-    if (event.cancelledBy !== 'CLIENT') {
-      return event.clientId;
+  /** Un destinataire, tous ses canaux joignables. */
+  private async notify(
+    event: AppointmentCancelledEvent,
+    recipientUserId: string,
+  ): Promise<void> {
+    const channels = await this.resolveChannels(recipientUserId);
+
+    if (channels.length === 0) {
+      this.logger.warn("avis d'annulation sans canal joignable", {
+        appointmentId: event.appointmentId,
+        recipientUserId,
+      });
+      return;
     }
 
-    const staffUserId = await this.repository.findStaffRecipient(event.staffId);
+    for (const channel of channels) {
+      await this.dispatchOne(event, recipientUserId, channel);
+    }
+  }
+
+  /**
+   * Les comptes à prévenir — les deux publics du CDC §1.4, moins celui qui a
+   * décidé.
+   *
+   * La cliente d'abord, le praticien ensuite : c'est l'ordre dans lequel les
+   * lignes s'écrivent, donc celui que le journal du back-office affiche, et il
+   * n'est pas indifférent — l'avis de la cliente est celui qui arrête un
+   * déplacement.
+   *
+   * Trois retraits, et chacun a sa raison :
+   *
+   * - **la cliente, quand c'est elle qui a annulé.** Quatrième critère
+   *   d'acceptation de #72, au mot près : « aucun avis envoyé si l'annulation
+   *   vient du client lui-même sur son propre rendez-vous, hors notification au
+   *   staff ». Elle sait déjà, c'est elle qui a cliqué ;
+   * - **le praticien, quand il n'a pas de compte joignable** dans cet
+   *   établissement — sa ligne `staff` a disparu, ou appartient à un autre
+   *   salon, ce que le client scopé traite de la même façon. C'est journalisé :
+   *   c'est le seul chemin par lequel un public du CDC serait silencieusement
+   *   privé de son avis. Une lecture **en échec** est traitée de la même façon,
+   *   et `staffRecipient` dit pourquoi : elle ne doit pas emporter l'avis de la
+   *   cliente avec elle ;
+   * - **le praticien, quand il est l'auteur ou qu'il est déjà dans la liste.**
+   *   Une praticienne qui réserve pour elle-même est à la fois la cliente et le
+   *   praticien du rendez-vous : un seul avis, pas deux fois le même — et aucun
+   *   si c'est elle qui s'est décommandée, le quatrième critère valant aussi de
+   *   ce côté-là.
+   *
+   * La liste peut être vide, et ce n'est pas une anomalie : c'est le cas d'une
+   * praticienne qui se décommande de son propre rendez-vous depuis son espace
+   * client. Le seul destinataire possible serait alors l'auteur de l'annulation,
+   * que le quatrième critère exclut. Rien n'est envoyé, et c'est juste.
+   */
+  private async resolveRecipients(
+    event: AppointmentCancelledEvent,
+  ): Promise<readonly string[]> {
+    // Le compte de l'auteur, quand l'événement le nomme. `CLIENT` le nomme —
+    // c'est `clientId`. `STAFF` ne le nomme pas : l'événement ne porte pas le
+    // compte qui a posé l'annulation au comptoir, et c'est précisément pourquoi
+    // le praticien doit être prévenu même là, rien ne disant que c'est lui.
+    // `SYSTEM` n'est personne.
+    const author = event.cancelledBy === 'CLIENT' ? event.clientId : null;
+
+    const recipients: string[] = [];
+
+    if (event.clientId !== author) {
+      recipients.push(event.clientId);
+    }
+
+    const staffUserId = await this.staffRecipient(event);
 
     if (staffUserId === null) {
       this.logger.warn("avis d'annulation sans praticien joignable", {
         appointmentId: event.appointmentId,
         staffId: event.staffId,
       });
-      return null;
+    } else if (staffUserId !== author && !recipients.includes(staffUserId)) {
+      recipients.push(staffUserId);
     }
 
-    if (staffUserId === event.clientId) {
-      this.logger.log("avis d'annulation sans objet, le praticien est l'auteur", {
+    if (recipients.length === 0) {
+      this.logger.log("avis d'annulation sans destinataire à prévenir", {
         appointmentId: event.appointmentId,
       });
-      return null;
     }
 
-    return staffUserId;
+    return recipients;
+  }
+
+  /**
+   * Le compte du praticien — **sans jamais lever**.
+   *
+   * ## Pourquoi cette lecture est enveloppée, et elle seule
+   *
+   * Parce qu'elle est passée devant la cliente. Avant #534, une annulation
+   * `STAFF` ou `SYSTEM` n'interrogeait pas la table `staff` du tout : le
+   * destinataire était la cliente, et son avis partait sans qu'aucune autre
+   * lecture ait pu échouer. Depuis que les deux publics sont servis, cette
+   * lecture précède les deux envois — et une coupure de connexion, un délai
+   * d'attente ou un pool saturé la ferait remonter jusqu'au `catch` de `handle`,
+   * qui journalise et rend la main. Personne ne serait alors prévenu, pas même
+   * la cliente, et le bus étant en mémoire il n'y a **aucun rejeu** : elle se
+   * déplacerait pour un rendez-vous qui n'a plus lieu.
+   *
+   * L'échec est donc traité ici comme l'absence l'est juste après : le praticien
+   * est perdu, la cliente ne l'est pas. C'est la règle que le module s'est
+   * donnée — « un public perdu n'en emporte pas deux » — et elle ne vaut que si
+   * elle couvre aussi la panne, pas seulement la ligne manquante.
+   */
+  private async staffRecipient(event: AppointmentCancelledEvent): Promise<string | null> {
+    try {
+      return await this.repository.findStaffRecipient(event.staffId);
+    } catch (error: unknown) {
+      // Distinct du journal de `failed()` : rien n'a échoué à partir, c'est la
+      // **résolution** d'un destinataire qui n'a pas abouti. Ni coordonnée, ni
+      // contenu, ni pile (notifications §7).
+      this.logger.error("avis d'annulation — praticien non résolu", {
+        appointmentId: event.appointmentId,
+        staffId: event.staffId,
+        error: error instanceof Error ? error.message : `erreur non standard (${typeof error})`,
+      });
+
+      return null;
+    }
   }
 
   /**

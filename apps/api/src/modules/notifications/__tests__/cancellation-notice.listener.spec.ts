@@ -107,7 +107,13 @@ describe('notifications — l’avis d’annulation naît de l’événement de 
     // L'écouteur est asynchrone : `emit` rend la main avant qu'il n'ait fini.
     await new Promise((resolve) => setImmediate(resolve));
 
-    expect(sender.calls.map((call) => call.type)).toEqual(['CANCELLATION', 'CANCELLATION']);
+    // Deux destinataires, deux canaux chacun — quatre envois.
+    expect(sender.calls.map((call) => call.type)).toEqual([
+      'CANCELLATION',
+      'CANCELLATION',
+      'CANCELLATION',
+      'CANCELLATION',
+    ]);
   });
 
   it('ne réagit pas à une création de rendez-vous', async () => {
@@ -161,18 +167,96 @@ describe('notifications — l’avis d’annulation naît de l’événement de 
 
     await listener.handle(event());
 
-    expect(seen).toEqual([TENANT]);
+    // Une lecture par destinataire, toutes dans la portée de l'événement.
+    expect(seen).toEqual([TENANT, TENANT]);
   });
 });
 
 describe('notifications — qui reçoit l’avis d’annulation', () => {
-  it('prévient la cliente quand le salon annule', async () => {
-    // Deuxième critère : l'avis va à la partie qui n'a pas décidé.
+  it('prévient la cliente **et** le praticien quand le salon annule', async () => {
+    // Le cœur de #534, et le deuxième critère de #72 enfin tenu en entier :
+    // « envoyé au client **et** au praticien concerné ». Une annulation posée au
+    // comptoir par l'accueil ou la gérance change l'agenda du praticien, et rien
+    // dans l'événement ne dit que c'est lui qui l'a posée.
     const { listener, sender } = build();
 
     await listener.handle(event({ cancelledBy: 'STAFF' }));
 
+    expect(new Set(sender.calls.map((call) => call.recipientUserId))).toEqual(
+      new Set([CLIENT, STAFF_USER]),
+    );
+  });
+
+  it('écrit deux lignes vivantes par canal, une par destinataire', async () => {
+    // Ce que l'ancien index interdisait : `notifications_live_once` portait sur
+    // `(tenant_id, appointment_id, type, channel)`, et le second avis était
+    // refusé en silence. Le double rejoue la **nouvelle** définition, qui porte
+    // le destinataire.
+    const { listener, repository } = build();
+
+    await listener.handle(event({ cancelledBy: 'STAFF' }));
+
+    expect(
+      repository.rows.map((row) => `${row.channel}:${String(row.recipientUserId)}`),
+    ).toEqual([
+      `EMAIL:${CLIENT}`,
+      `SMS:${CLIENT}`,
+      `EMAIL:${STAFF_USER}`,
+      `SMS:${STAFF_USER}`,
+    ]);
+  });
+
+  it('prévient les deux quand l’annulation vient du système', async () => {
+    // `SYSTEM` n'est émis par aucune surface aujourd'hui, mais il est dans
+    // `CANCELLATION_AUTHORS` : personne n'a décidé d'aucun côté du comptoir.
+    const { listener, sender } = build();
+
+    await listener.handle(event({ cancelledBy: 'SYSTEM' }));
+
+    expect(new Set(sender.calls.map((call) => call.recipientUserId))).toEqual(
+      new Set([CLIENT, STAFF_USER]),
+    );
+  });
+
+  it('n’écrit qu’un avis quand le praticien **est** la cliente', async () => {
+    // Une praticienne réserve pour elle-même, et le salon annule : les deux
+    // publics du CDC désignent un seul compte. Lui écrire deux fois la même
+    // chose n'aurait servi personne — et le nouvel index ne l'aurait pas
+    // interdit, puisque le destinataire est le même.
+    const { listener, repository, sender } = build();
+    repository.staffUserId = CLIENT;
+
+    await listener.handle(event({ cancelledBy: 'STAFF' }));
+
+    expect(sender.calls.map((call) => call.channel)).toEqual(['EMAIL', 'SMS']);
     expect(new Set(sender.calls.map((call) => call.recipientUserId))).toEqual(new Set([CLIENT]));
+  });
+
+  it('prévient la cliente même quand le praticien est introuvable', async () => {
+    // Un public perdu n'en emporte pas deux : la ligne `staff` a disparu, la
+    // cliente doit tout de même apprendre que son rendez-vous n'a plus lieu.
+    const { listener, repository, sender, logger } = build();
+    repository.staffUserId = null;
+
+    await listener.handle(event({ cancelledBy: 'STAFF' }));
+
+    expect(new Set(sender.calls.map((call) => call.recipientUserId))).toEqual(new Set([CLIENT]));
+    expect(logger.entries.some((entry) => entry.level === 'warn')).toBe(true);
+  });
+
+  it('prévient la cliente même quand la lecture du praticien échoue', async () => {
+    // La lecture du praticien est passée **devant** la cliente avec #534 : avant
+    // lui, une annulation `STAFF` n'interrogeait pas la table `staff` du tout.
+    // Une panne de base sur cette lecture-là ne doit donc pas emporter l'avis de
+    // la cliente — le bus est en mémoire, rien ne rejouera l'événement, et elle
+    // se déplacerait pour un rendez-vous qui n'a plus lieu.
+    const { listener, repository, sender, logger } = build();
+    repository.staffLookupError = new Error('connexion perdue');
+
+    await listener.handle(event({ cancelledBy: 'STAFF' }));
+
+    expect(new Set(sender.calls.map((call) => call.recipientUserId))).toEqual(new Set([CLIENT]));
+    expect(logger.entries.some((entry) => entry.level === 'error')).toBe(true);
   });
 
   it('prévient le praticien quand la cliente annule elle-même', async () => {
@@ -195,17 +279,6 @@ describe('notifications — qui reçoit l’avis d’annulation', () => {
     expect(sender.calls.some((call) => call.recipientUserId === CLIENT)).toBe(false);
   });
 
-  it('prévient la cliente quand l’annulation vient du système', async () => {
-    // `SYSTEM` n'est émis par aucune surface aujourd'hui, mais il est dans
-    // `CANCELLATION_AUTHORS` : personne n'a décidé du côté du comptoir de la
-    // cliente, c'est donc elle qu'il faut prévenir.
-    const { listener, sender } = build();
-
-    await listener.handle(event({ cancelledBy: 'SYSTEM' }));
-
-    expect(new Set(sender.calls.map((call) => call.recipientUserId))).toEqual(new Set([CLIENT]));
-  });
-
   it('n’envoie rien quand la praticienne annule son propre rendez-vous', async () => {
     // Elle a réservé pour elle-même et se décommande depuis son espace client :
     // le seul destinataire possible serait l'auteur de l'annulation.
@@ -219,7 +292,8 @@ describe('notifications — qui reçoit l’avis d’annulation', () => {
 
   it('journalise, sans rien envoyer, un praticien introuvable', async () => {
     // Sa ligne `staff` a disparu, ou appartient à un autre salon — le client
-    // scopé traite les deux de la même façon.
+    // scopé traite les deux de la même façon. La cliente ayant annulé, c'était
+    // le seul destinataire possible.
     const { listener, repository, sender, logger } = build();
     repository.staffUserId = null;
 
@@ -232,11 +306,18 @@ describe('notifications — qui reçoit l’avis d’annulation', () => {
 
 describe('notifications — les canaux de l’avis d’annulation', () => {
   it('envoie e-mail **et** SMS quand le compte porte un numéro', async () => {
+    // Deux destinataires, deux canaux chacun, et l'e-mail d'abord : c'est lui
+    // qui porte le récapitulatif.
     const { listener, sender } = build();
 
     await listener.handle(event());
 
-    expect(sender.calls.map((call) => call.channel)).toEqual(['EMAIL', 'SMS']);
+    expect(sender.calls.map((call) => `${call.channel}:${call.recipientUserId}`)).toEqual([
+      `EMAIL:${CLIENT}`,
+      `SMS:${CLIENT}`,
+      `EMAIL:${STAFF_USER}`,
+      `SMS:${STAFF_USER}`,
+    ]);
   });
 
   it('n’envoie que l’e-mail quand aucun numéro n’est exploitable', async () => {
@@ -245,13 +326,14 @@ describe('notifications — les canaux de l’avis d’annulation', () => {
 
     await listener.handle(event());
 
-    expect(sender.calls.map((call) => call.channel)).toEqual(['EMAIL']);
+    expect(sender.calls.map((call) => call.channel)).toEqual(['EMAIL', 'EMAIL']);
   });
 
   it('compose une clé de livraison par canal **et** par destinataire', async () => {
     // Le destinataire est dans la clé parce que l'avis d'annulation est le seul
-    // message dont il dépende d'une donnée du rendez-vous : sans lui, un avis au
-    // praticien serait pris pour un rejeu d'un avis à la cliente.
+    // message dont il dépende d'une donnée du rendez-vous : sans lui, l'avis au
+    // praticien serait pris pour un rejeu de l'avis à la cliente — et acquitté
+    // auprès de SQS sans être parti.
     const { listener, repository } = build();
 
     await listener.handle(event());
@@ -259,19 +341,23 @@ describe('notifications — les canaux de l’avis d’annulation', () => {
     expect(repository.rows.map((row) => row.dedupeKey)).toEqual([
       `appointment:${APPOINTMENT}:CANCELLATION:EMAIL:${CLIENT}`,
       `appointment:${APPOINTMENT}:CANCELLATION:SMS:${CLIENT}`,
+      `appointment:${APPOINTMENT}:CANCELLATION:EMAIL:${STAFF_USER}`,
+      `appointment:${APPOINTMENT}:CANCELLATION:SMS:${STAFF_USER}`,
     ]);
   });
 
-  it('rejoué, le même événement ne produit pas un second envoi', async () => {
+  it('rejoué, le même événement n’en produit toujours qu’un par destinataire', async () => {
     // Une republication — reprise de file, redémarrage — ne doit pas doubler
     // l'avis. C'est `notifications_live_once` qui l'arrête, et le listener n'a
-    // rien à vérifier lui-même.
-    const { listener, sender } = build();
+    // rien à vérifier lui-même. Ajouter un destinataire n'a donc rien coûté à
+    // l'idempotence : l'index l'a suivi.
+    const { listener, sender, repository } = build();
 
     await listener.handle(event());
     await listener.handle(event());
 
-    expect(sender.calls).toHaveLength(2);
+    expect(sender.calls).toHaveLength(4);
+    expect(repository.rows).toHaveLength(4);
   });
 
   it('ne dit rien quand le compte destinataire est introuvable, mais le journalise', async () => {
@@ -296,6 +382,8 @@ describe('notifications — un abonné qui échoue ne fait échouer personne', (
   });
 
   it('laisse une trace `FAILED` en base pour chaque canal en échec', async () => {
+    // Les deux premiers envois échouent — ceux de la cliente ; ceux du praticien
+    // partent quand même.
     const { listener, repository } = build([
       new Error('SES indisponible'),
       new Error('SNS indisponible'),
@@ -303,16 +391,26 @@ describe('notifications — un abonné qui échoue ne fait échouer personne', (
 
     await listener.handle(event());
 
-    expect(repository.rows.map((row) => row.status)).toEqual(['FAILED', 'FAILED']);
+    expect(repository.rows.map((row) => row.status)).toEqual([
+      'FAILED',
+      'FAILED',
+      'SENT',
+      'SENT',
+    ]);
   });
 
-  it('un canal en échec n’empêche pas le suivant de partir', async () => {
+  it('un canal en échec n’empêche ni le suivant ni l’autre destinataire de partir', async () => {
     const { listener, repository, sender } = build([new Error('SES indisponible')]);
 
     await listener.handle(event());
 
-    expect(sender.calls.map((call) => call.channel)).toEqual(['EMAIL', 'SMS']);
-    expect(repository.rows.map((row) => row.status)).toEqual(['FAILED', 'SENT']);
+    expect(sender.calls.map((call) => call.channel)).toEqual(['EMAIL', 'SMS', 'EMAIL', 'SMS']);
+    expect(repository.rows.map((row) => row.status)).toEqual([
+      'FAILED',
+      'SENT',
+      'SENT',
+      'SENT',
+    ]);
   });
 
   it('ne journalise ni coordonnée, ni contenu, ni motif d’annulation', async () => {
