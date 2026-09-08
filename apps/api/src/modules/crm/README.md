@@ -13,6 +13,7 @@ ce fait.
 | #313 | `ClientDirectoryService`, la porte par laquelle `appointments` obtient la fiche d'une cliente qui réserve sans compte |
 | #465 | `assertBookableWithin`, le second battant de cette porte : confirmer qu'une fiche **désignée** par le comptoir est bien du fichier client |
 | #81 | Les droits des personnes : export, anonymisation, consentement marketing — et le [registre des traitements](../../../../../docs/registre-des-traitements.md) |
+| #525 | La projection de l'état de suppression d'adresse sur la fiche — le module lit ce que `notifications` écrit |
 
 Hors périmètre MVP, et donc non livré : fusion de doublons, segmentation,
 campagnes. Le CDC §1.4 borne le module à un « CRM client de base » ; chacun de
@@ -95,6 +96,30 @@ d'acceptation. Il tient par quatre choses, et non par une convention de nommage 
    rang `STAFF`, si ;
 4. **l'absence de toute surface publique** — aucun schéma du parcours client ne
    la référence, et il n'y a aucune route par laquelle elle pourrait sortir.
+
+## L'adresse supprimée — un état que ce module lit et n'écrit jamais
+
+`users.email_suppressed_at` et `users.email_suppression_reason` sont posées par
+l'ingestion d'un événement de remise SES (`notifications`, #73) : un rebond
+permanent ou une plainte, et l'adresse cesse d'être écrite. Un rebond
+**transitoire** — boîte pleine, serveur momentanément indisponible — n'y écrit
+rien, et c'est délibéré.
+
+Le fichier client en est le seul lecteur servi à un écran (#525), et le partage
+est le même que celui de la note interne : les deux champs sont sur
+`CUSTOMER_SELECT` et sur `CustomerDto`, **pas** sur le résumé. Une liste de deux
+cents lignes n'affiche aucun avis de délivrabilité.
+
+Ce que le back-office en fait : la fiche signale l'adresse supprimée, avec son
+motif et sa date, convertie au fuseau de l'établissement. Sans cela, un
+gestionnaire voit une réservation confirmée sans jamais savoir que la cliente
+n'a rien reçu et ne recevra plus rien.
+
+Aucune route de ce module ne les écrit, et il n'y en aura pas : la suppression
+est un fait constaté par le fournisseur d'envoi, pas une décision du comptoir.
+Le corollaire est que l'adresse ne se corrige pas d'ici non plus —
+`updateCustomerRequest` ne porte pas `email`, faute de pouvoir vérifier la
+nouvelle au périmètre du MVP.
 
 ## Aucune donnée personnelle dans les logs
 

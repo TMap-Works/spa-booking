@@ -14,6 +14,13 @@ import {
   ValidateIf,
 } from 'class-validator';
 
+// Import **de valeur** d'un vocabulaire de module voisin — même geste que
+// l'`APPOINTMENT_STATUSES` de `customer-history.dto.ts`, et pour la même raison :
+// l'énumération annoncée dans l'OpenAPI doit être *la* liste que la colonne
+// écrit, pas une copie qui divergerait au premier motif ajouté. Le fichier
+// importé ne porte que des types et des tableaux `as const`, sans dépendance
+// Nest ni Prisma.
+import { EMAIL_SUPPRESSION_REASONS } from '../../notifications/notifications.types';
 import type { CustomerPatch } from '../crm.repository';
 import type { Customer, CustomerPage, CustomerSummary } from '../crm.types';
 
@@ -127,7 +134,8 @@ export class CustomerSummaryDto implements CustomerSummary {
  */
 export class CustomerDto
   extends CustomerSummaryDto
-  implements Omit<Customer, 'createdAt' | 'marketingConsentAt' | 'anonymizedAt'>
+  implements
+    Omit<Customer, 'createdAt' | 'marketingConsentAt' | 'anonymizedAt' | 'emailSuppressedAt'>
 {
   @ApiProperty({
     nullable: true,
@@ -171,6 +179,30 @@ export class CustomerDto
       'comptés.',
   })
   public anonymizedAt!: string | null;
+
+  @ApiProperty({
+    format: 'date-time',
+    nullable: true,
+    type: String,
+    description:
+      'Instant UTC auquel l’adresse a cessé d’être écrite — rebond définitif ou ' +
+      'plainte —, ou `null` sur une adresse vivante. Le back-office l’affiche dans ' +
+      'le fuseau de l’établissement : une cliente dont l’adresse est supprimée ne ' +
+      'reçoit plus ni confirmation, ni rappel, ni avis d’annulation.',
+  })
+  public emailSuppressedAt!: string | null;
+
+  @ApiProperty({
+    enum: EMAIL_SUPPRESSION_REASONS,
+    nullable: true,
+    type: String,
+    description:
+      'Ce qui a valu la suppression — nul **exactement** quand `emailSuppressedAt` ' +
+      'l’est. `HARD_BOUNCE` : la boîte n’existe pas ou la refuse définitivement. ' +
+      '`COMPLAINT` : le destinataire a signalé le message comme indésirable. Un ' +
+      'rebond transitoire ne supprime rien et n’apparaît donc jamais ici.',
+  })
+  public emailSuppressionReason!: Customer['emailSuppressionReason'];
 }
 
 /** Une page de fiches, avec de quoi afficher un sélecteur de page. */
@@ -494,5 +526,15 @@ export function toCustomerDto(customer: Customer): CustomerDto {
     // sont des faits, pas des dates manquantes.
     marketingConsentAt: customer.marketingConsentAt?.toISOString() ?? null,
     anonymizedAt: customer.anonymizedAt?.toISOString() ?? null,
+    // Les deux champs de #525 voyagent **appariés** — nuls ensemble, renseignés
+    // ensemble. Ce n'est pas cette fonction qui le garantit : c'est l'unique
+    // écriture qui les pose, dans `notifications`. Ici, `null` traverse tel quel
+    // comme pour les deux dates précédentes, parce que « adresse vivante » est un
+    // fait et non une date manquante.
+    emailSuppressedAt: customer.emailSuppressedAt?.toISOString() ?? null,
+    // La valeur de l'énumération PostgreSQL, telle quelle : le contrat partagé
+    // la ramène en minuscules à la lecture (`receivedEmailSuppressionReasonSchema`),
+    // exactement comme il le fait des rôles émis par `identity`.
+    emailSuppressionReason: customer.emailSuppressionReason,
   };
 }

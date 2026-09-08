@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { getTenantId } from '../../../common/tenant';
 import type { AppointmentStatus } from '../../appointments/appointment-status';
+import type { EmailSuppressionReason } from '../../notifications/notifications.types';
 import { CustomerEmailTakenError } from '../crm.errors';
 import type {
   AnonymizationOutcome,
@@ -66,6 +67,15 @@ export interface StoredCustomer {
   marketingConsentAt: Date | null;
   anonymizedAt: Date | null;
   /**
+   * Les deux colonnes de #73, que la fiche projette depuis #525.
+   *
+   * Elles sont **en lecture seule** pour ce module : aucune méthode du dépôt ne
+   * les écrit, seule `addCustomer` les sème — comme le fait en vrai l'ingestion
+   * d'un événement de remise SES, hors du fichier client.
+   */
+  emailSuppressedAt: Date | null;
+  emailSuppressionReason: EmailSuppressionReason | null;
+  /**
    * L'empreinte de mot de passe, que le double ne sert à personne mais que
    * l'anonymisation doit pouvoir vider (#81).
    *
@@ -121,6 +131,13 @@ export class FakeCrmRepository {
     marketingConsent?: boolean;
     marketingConsentAt?: Date | null;
     anonymizedAt?: Date | null;
+    /**
+     * L'état de suppression de l'adresse, semé **sans passer par le module** —
+     * il n'y a pas de route pour l'écrire, et c'est le propos : le fichier
+     * client le lit, l'ingestion SES le pose (#525).
+     */
+    emailSuppressedAt?: Date | null;
+    emailSuppressionReason?: EmailSuppressionReason | null;
     passwordHash?: string | null;
   }): StoredCustomer {
     const stored: StoredCustomer = {
@@ -139,6 +156,10 @@ export class FakeCrmRepository {
       marketingConsent: input.marketingConsent ?? false,
       marketingConsentAt: input.marketingConsentAt ?? null,
       anonymizedAt: input.anonymizedAt ?? null,
+      // `null` par défaut, comme la colonne : `NULL` se lit « adresse vivante »,
+      // qui est l'état de la quasi-totalité du fichier.
+      emailSuppressedAt: input.emailSuppressedAt ?? null,
+      emailSuppressionReason: input.emailSuppressionReason ?? null,
       passwordHash: input.passwordHash ?? null,
     };
     this.customers.push(stored);
@@ -462,6 +483,8 @@ function toCustomer(row: StoredCustomer): Customer {
     marketingConsent: row.marketingConsent,
     marketingConsentAt: row.marketingConsentAt,
     anonymizedAt: row.anonymizedAt,
+    emailSuppressedAt: row.emailSuppressedAt,
+    emailSuppressionReason: row.emailSuppressionReason,
   };
 }
 

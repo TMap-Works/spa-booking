@@ -304,6 +304,50 @@ describe('Isolation inter-tenant — module crm', () => {
     }
   });
 
+  it('l’adresse supprimée du voisin ne se lit ni sur sa fiche ni sur la nôtre (#525)', async () => {
+    // La même personne, cliente des deux salons sous la même adresse — le
+    // scénario où une confusion de tenant se voit. Son adresse a rebondi pour
+    // le salon B, et pas pour le salon A : c'est bien une ligne `users` par
+    // établissement, et l'état de délivrabilité est propre à chacune.
+    const chezA = harness.repository.addCustomer({
+      tenantId: a,
+      email: ADRESSE,
+      lastName: NOM,
+    }).id;
+    const chezB = harness.repository.addCustomer({
+      tenantId: b,
+      email: ADRESSE,
+      lastName: NOM,
+      emailSuppressedAt: new Date('2026-09-05T10:30:00.000Z'),
+      emailSuppressionReason: 'COMPLAINT',
+    }).id;
+    const bearer = await harness.bearer('STAFF');
+
+    // La fiche du salon A ne prend rien de l'état du salon B — ni la date, ni
+    // le motif. Une projection qui aurait perdu son filtre de tenant afficherait
+    // ici « plainte » sur une adresse que personne n'a signalée chez A, et le
+    // comptoir cesserait d'écrire à une cliente parfaitement joignable.
+    const sienne = await request(server())
+      .get(`${BASE}/${chezA}`)
+      .set('Authorization', bearer)
+      .expect(200);
+
+    expect({
+      date: (sienne.body as Record<string, unknown>)['emailSuppressedAt'],
+      motif: (sienne.body as Record<string, unknown>)['emailSuppressionReason'],
+    }).toEqual({ date: null, motif: null });
+
+    // Et la fiche du voisin reste introuvable — 404, jamais 403 : le motif de
+    // suppression est une donnée de son fichier client, pas une information
+    // publique sur l'adresse.
+    const voisine = await request(server())
+      .get(`${BASE}/${chezB}`)
+      .set('Authorization', bearer)
+      .expect(404);
+
+    expect(JSON.stringify(voisine.body)).not.toContain('COMPLAINT');
+  });
+
   it('anonymiser chez soi ne touche ni la fiche ni les rendez-vous du voisin (#81)', async () => {
     const { chezA, chezB } = semerDesDeuxCotes();
     const visiteVoisine = harness.repository.addVisit({

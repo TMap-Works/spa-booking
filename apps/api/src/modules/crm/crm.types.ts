@@ -1,4 +1,11 @@
 import type { AppointmentStatus } from '../appointments/appointment-status';
+// Même import que le précédent, et pour la même raison : un **vocabulaire** de
+// module voisin, en `import type`, effacé à la compilation. Ce n'est pas
+// l'import du repository d'un autre module qu'api-module §3 interdit — c'est le
+// nom de l'énumération que la colonne `users.email_suppression_reason` écrit, et
+// la recopier ici aurait créé une seconde définition de « pourquoi une adresse
+// est morte », divergente au premier motif ajouté.
+import type { EmailSuppressionReason } from '../notifications/notifications.types';
 
 /**
  * Vocabulaire du module `crm` — ce qui franchit la frontière du service, jamais
@@ -62,6 +69,25 @@ export interface Customer extends CustomerSummary {
    * encaissements et ses tickets restent comptés, sans personne au bout.
    */
   anonymizedAt: Date | null;
+  /**
+   * Instant auquel l'adresse a cessé d'être écrite, ou `null` — #73, #525.
+   *
+   * Posé par l'ingestion d'un événement de remise SES
+   * (`DeliveryEventRepository.suppressEmails`), jamais par ce module : le
+   * fichier client **lit** cet état, il ne le décide pas. Sans lui, un
+   * gestionnaire voit une réservation confirmée sans jamais savoir que la
+   * cliente n'a rien reçu et ne recevra plus rien.
+   */
+  emailSuppressedAt: Date | null;
+  /**
+   * Ce qui a valu la suppression — nul exactement quand `emailSuppressedAt`
+   * l'est.
+   *
+   * « Rebond définitif » et « plainte » n'appellent pas la même conversation au
+   * comptoir : la première se corrige en redemandant l'adresse, la seconde ne se
+   * corrige pas du tout.
+   */
+  emailSuppressionReason: EmailSuppressionReason | null;
 }
 
 /** Une page de fiches, avec de quoi afficher un sélecteur de page. */
