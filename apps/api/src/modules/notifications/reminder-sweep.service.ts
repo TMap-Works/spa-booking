@@ -6,8 +6,8 @@ import { ReminderSweepRepository } from './reminder-sweep.repository';
 import { REMINDER_LEAD_MS, reminderWindow } from './reminder-window';
 import {
   appointmentDedupeKey,
+  reachableChannels,
   type DueReminder,
-  type NotificationChannel,
   type NotificationMessage,
 } from './notifications.types';
 
@@ -178,10 +178,11 @@ export class ReminderSweepService {
    * Une enveloppe par canal joignable — la même règle de canaux que la
    * confirmation.
    *
-   * L'e-mail part dès qu'il y a une adresse, le SMS dès que le numéro est
-   * composable au sens E.164 (`isDialableNumber`). `marketing_consent` n'entre
-   * pas dans la décision : un rappel de rendez-vous relève de l'exécution du
-   * contrat, pas de la prospection (CDC §5.1, notifications §7).
+   * La règle est celle de `reachableChannels` : l'e-mail dès qu'il y a une
+   * adresse, le SMS dès que le numéro est composable au sens E.164
+   * (`isDialableNumber`). `marketing_consent` n'entre pas dans la décision : un
+   * rappel de rendez-vous relève de l'exécution du contrat, pas de la
+   * prospection (CDC §5.1, notifications §7).
    *
    * `scheduledFor` porte l'instant **voulu** de l'envoi — le début du rendez-vous
    * moins 24 heures —, et non l'instant de publication. C'est ce que la colonne
@@ -192,15 +193,7 @@ export class ReminderSweepService {
    * rendez-vous — la largeur de la fenêtre de balayage, et rien de plus.
    */
   private envelopes(reminder: DueReminder): readonly NotificationMessage[] {
-    const channels: NotificationChannel[] = [];
-
-    if (reminder.hasEmail) {
-      channels.push('EMAIL');
-    }
-
-    if (reminder.hasSms) {
-      channels.push('SMS');
-    }
+    const channels = reachableChannels(reminder);
 
     if (channels.length === 0) {
       // Structurellement improbable — `users.email` est `NOT NULL` — mais le

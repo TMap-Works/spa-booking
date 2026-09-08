@@ -88,6 +88,20 @@ export const TEMPLATE_VARIABLES = [
   'prix',
   /** Lien vers l'espace client, d'où la cliente annule ou déplace. */
   'lien_annulation',
+  /**
+   * D'où vient l'annulation, en toutes lettres — « à la demande du client », « à
+   * l'initiative du salon » (#72, troisième critère d'acceptation).
+   *
+   * **Vide** sur un rendez-vous qui n'est pas annulé, donc sur la confirmation
+   * et sur le rappel. C'est ce qui la rend utilisable en section
+   * (`{{#origine}}…{{/origine}}`) : un modèle qui la nomme hors d'un avis
+   * d'annulation n'écrit rien plutôt qu'une phrase fausse.
+   *
+   * La formulation est **neutre quant au destinataire**, et cela n'est pas un
+   * détail de style : le même modèle sert la cliente et le praticien, et « à
+   * votre demande » aurait été faux pour l'un des deux à chaque envoi.
+   */
+  'origine',
 ] as const;
 
 export type TemplateVariableName = (typeof TEMPLATE_VARIABLES)[number];
@@ -507,6 +521,10 @@ export const SMS_REFERENCE_VARIABLES: TemplateVariables = {
   // fichier, ce sont pourtant elles qui décident de l'encodage.
   prix: '1\u202f250,00\u00a0MGA',
   lien_annulation: 'https://reservation.spa-booking.app/maison-lotus/compte',
+  // La plus longue des trois formulations que `cancellationOrigin` sait rendre :
+  // mesurer la plus courte aurait annoncé un segment à un salon dont l'avis
+  // d'annulation en coûte deux dès qu'une annulation vient du système.
+  origine: 'automatiquement par le système',
 };
 
 /**

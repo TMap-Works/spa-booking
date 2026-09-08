@@ -226,11 +226,14 @@ export class NotificationTemplateTooLongError extends DomainError {
 /**
  * Aucun modèle — ni personnalisé, ni par défaut — pour ce message.
  *
- * **404** : la ressource demandée n'existe pas. C'est le cas de `CANCELLATION`
- * tant que #72 n'a pas livré son modèle de plateforme, et d'aucun autre. Distinct
- * d'`UnrenderableNotificationError`, qui est le même fait vu depuis la chaîne
- * d'envoi et se traduit en 503 : là-bas, c'est une capacité absente qui laisse la
- * ligne reprenable ; ici, c'est une lecture qui ne trouve rien.
+ * **404** : la ressource demandée n'existe pas. Depuis #72, les trois messages du
+ * CDC §1.4 ont tous leur défaut de plateforme sur les deux canaux : aucune valeur
+ * de `NotificationType` ne l'atteint plus, et le DTO du contrôleur n'en laisse
+ * passer aucune autre. La barrière reste pour le message qu'on ajouterait à
+ * l'énumération sans son modèle — mieux vaut 404 que servir celui d'un autre.
+ * Distinct d'`UnrenderableNotificationError`, qui est le même fait vu depuis la
+ * chaîne d'envoi et se traduit en 503 : là-bas, c'est une capacité absente qui
+ * laisse la ligne reprenable ; ici, c'est une lecture qui ne trouve rien.
  */
 export class NotificationTemplateNotFoundError extends DomainError {
   public override readonly code = NOTIFICATION_ERROR_CODES.NOTIFICATION_TEMPLATE_NOT_FOUND;

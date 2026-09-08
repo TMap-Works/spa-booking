@@ -12,8 +12,9 @@ canaux, rien de plus — le marketing et les campagnes sont hors périmètre MVP
 | #71 | Le **rappel J-1** — la fenêtre `[+24 h, +25 h)` en UTC, le balayage inter-tenant, la revérification du rendez-vous au moment de l'envoi, le modèle de rappel, et la route interne que le planning EventBridge appelle |
 | #73 | Les **rebonds et les plaintes** — le classement des événements de remise SES, la suppression des adresses mortes dans tous les établissements qui les connaissent, et le respect de cette suppression aux trois endroits qui composent ou expédient un e-mail |
 | #69 | Les **modèles par établissement** — la table `notification_templates`, le moteur de substitution à variables échappées, les défauts de la plateforme en code, la mesure GSM-7 / UCS-2 du coût d'un SMS, et les quatre routes de personnalisation |
+| #72 | L'**avis d'annulation** — abonnement à `appointment.cancelled`, modèles de plateforme e-mail et SMS, mention de l'origine de la décision, et résolution du destinataire selon d'où elle vient |
 
-À venir : les passerelles SES et SNS, et l'avis d'annulation (#72).
+À venir : les passerelles SES et SNS.
 
 ## Les modèles de message (#69)
 
@@ -280,6 +281,106 @@ Sans jeton configuré, elle répond **503** — défaut fermé. C'est le même r
 que `UnconfiguredNotificationSender`, et non un refus de démarrer : une variable
 de notifications n'a pas à conditionner le démarrage des sept autres modules.
 
+## L'avis d'annulation (#72)
+
+```
+appointments.service                notifications
+       │                                  │
+   COMMIT (statut CANCELLED)              │
+       │                                  │
+       ├─ appointmentCancelled() ─────────┤ CancellationNoticeListener
+       │   (bus en mémoire, #37)          │   runWithTenant(event.tenantId)
+       │   porte cancelledBy              │   destinataire = f(cancelledBy)
+       │                                  │   canaux = f(coordonnées du compte)
+       │                                  │
+       │                                  └─ dispatch(EMAIL, SMS) ──► chaîne #68
+```
+
+Troisième et dernier message du CDC §1.4. `appointments` n'est pas modifié :
+l'événement `appointment.cancelled` existe depuis #40, et il porte déjà tout ce
+qu'il faut — `cancelledBy`, `clientId`, `staffId`, `tenantId`.
+
+### Qui reçoit l'avis, et pourquoi un seul destinataire à la fois
+
+Le CDC §1.4 veut « un avis d'annulation **au staff et au client** », et le
+quatrième critère d'acceptation en retire un cas : « aucun avis envoyé si
+l'annulation vient du client lui-même sur son propre rendez-vous, **hors
+notification au staff** ». L'avis va donc à la partie qui **n'a pas décidé** :
+
+| `cancelledBy` | Destinataire | Pourquoi |
+|---|---|---|
+| `CLIENT` | le praticien | son agenda vient de changer sans lui ; la cliente sait déjà, c'est elle qui a cliqué |
+| `STAFF` | la cliente | le salon a décidé ; elle doit l'apprendre autrement qu'en se déplaçant |
+| `SYSTEM` | la cliente | personne ne l'a décidé de son côté du comptoir |
+
+**Un seul, et c'est une limite de la base, pas un choix de confort.**
+`notifications_live_once` porte sur `(tenant_id, appointment_id, type, channel)` :
+deux avis vivants sur le même canal pour un même rendez-vous sont impossibles.
+Écrire la cliente **puis** le praticien ferait refuser le second par PostgreSQL,
+`claim()` rendrait `already-live`, et le praticien ne recevrait rien — en
+silence, puisque c'est exactement la forme d'un rejeu SQS légitime.
+
+Prévenir les deux à la fois demande d'ajouter `recipient_user_id` à cet index.
+Et un index ne se modifie pas : il se **remplace**, donc il se `DROP`. C'est là
+que la porte se ferme, et pas là où on l'attendait — le garde « migration
+purement additive » de
+`src/infrastructure/database/__tests__/prisma-schema.spec.ts` refuse tout
+`DROP INDEX` dans le SQL de migration, sans exception ni échappatoire. Aucun
+chemin additif n'existe — tant que l'ancien index vit, il bloque, et en créer un
+second à côté n'y change rien.
+
+Le contournement — écrire l'avis du praticien avec `appointment_id` à `NULL`,
+qui échappe à l'index — a été écarté délibérément : il romprait le lien avec le
+rendez-vous, que le journal du back-office affiche, pour esquiver un invariant
+plutôt que pour le servir.
+
+Lever la limite demande donc d'assouplir ce garde **et** de poser la migration,
+dans un ticket qui porte les deux — c'est l'objet de l'issue de suivi. La règle
+ci-dessus est ce qui, sans migration, sert les deux publics **sans jamais perdre
+un envoi** : à chaque annulation, un avis part vers la partie qui n'a pas décidé.
+
+Ce que la règle ne couvre pas, et qu'il faut savoir : sur un `cancelledBy` à
+`STAFF`, seule la cliente est prévenue. Une annulation posée au comptoir par une
+autre personne que le praticien concerné — accueil, gérance — ne lui dit donc
+rien, alors que son agenda vient de changer. C'est le second public que la
+migration ci-dessus débloquera ; en attendant, le back-office reste la seule
+surface où il le voit.
+
+### La clé de livraison porte le destinataire
+
+`appointment:{id}:CANCELLATION:{canal}:{destinataire}`, là où la confirmation et
+le rappel s'arrêtent au canal. L'avis d'annulation est le seul message dont le
+destinataire dépende d'une donnée du rendez-vous : sans lui dans la clé, un avis
+au praticien serait pris pour un rejeu d'un avis à la cliente, et acquitté sans
+être parti.
+
+### Le modèle ne s'adresse à personne
+
+L'unique de `notification_templates` est `(tenant_id, type, channel)` : il n'y a
+**qu'un** modèle d'avis d'annulation par canal, et il sert les deux publics. D'où
+sa forme — « Bonjour, » et non « Bonjour {{client}} », le nom de la cliente dans
+le récapitulatif plutôt que dans la salutation, et une variable `{{origine}}`
+rédigée à la troisième personne (« à la demande du client », jamais « à votre
+demande »).
+
+`{{origine}}` est **vide** sur un rendez-vous qui n'est pas annulé, ce qui la rend
+utilisable en section : un modèle qui la nomme dans une confirmation n'écrit rien
+plutôt qu'une phrase fausse.
+
+### Le motif n'a pas de variable, et n'en aura pas
+
+`appointments.cancellation_reason` est un texte libre écrit par un humain — il
+peut nommer un état de santé ou un tiers. Il ne voyage pas dans l'événement
+(`appointment-cancelled.event.ts` explique pourquoi), il n'est pas lu par
+`loadAppointmentContext`, et le vocabulaire des modèles ne l'expose pas. Un salon
+ne peut donc pas, même par mégarde, le faire partir chez sa cliente (CDC §5.1).
+
+### Aucune revérification de statut
+
+Contrairement au rappel J-1, l'avis d'annulation n'en demande pas : son objet
+**est** un rendez-vous qui n'occupe plus rien. `NotificationDispatchService` ne
+revérifie que `REMINDER_24H`, et c'est écrit dans son en-tête.
+
 ## La confirmation, de bout en bout (#70)
 
 ```
@@ -471,6 +572,7 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
 | `notification-templates.service.ts` | La résolution du modèle effectif et la validation d'un modèle soumis |
 | `notification-templates.controller.ts` | Les quatre routes de personnalisation |
 | `booking-confirmation.listener.ts` | L'abonné à `appointment.created` |
+| `cancellation-notice.listener.ts` | L'abonné à `appointment.cancelled`, et le choix du destinataire |
 | `notifications.service.ts` | La lecture du journal, et son plafond |
 | `notifications.controller.ts` | `GET /notifications` et la route interne de balayage |
 | `notifications.errors.ts` | Le catalogue d'erreurs du module |

@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { AppointmentsModule } from '../appointments/appointments.module';
 import { IdentityModule } from '../identity/identity.module';
 import { BookingConfirmationListener } from './booking-confirmation.listener';
+import { CancellationNoticeListener } from './cancellation-notice.listener';
 import { DeliveryEventRepository } from './delivery-event.repository';
 import { DeliveryEventService } from './delivery-event.service';
 import { NotificationDispatchService } from './notification-dispatch.service';
@@ -28,8 +29,10 @@ import { ReminderSweepService } from './reminder-sweep.service';
  * et avec lui les trois pièces qui manquaient : l'abonnement à l'événement de
  * domaine, le rendu du contenu, et la lecture du journal par le back-office.
  *
- * Restent à venir : les passerelles SES et SNS, la Lambda d'envoi, les modèles
- * par établissement, et le balayage horaire du rappel J-1.
+ * #72 y ajoute le **troisième et dernier** message du CDC §1.4 — l'avis
+ * d'annulation — et avec lui le second abonné du module au bus d'`appointments`.
+ *
+ * Restent à venir : les passerelles SES et SNS, et la Lambda d'envoi.
  *
  * ## Il importe `AppointmentsModule`, et le sens compte
  *
@@ -73,6 +76,11 @@ import { ReminderSweepService } from './reminder-sweep.service';
     NotificationsService,
     NotificationDispatchService,
     BookingConfirmationListener,
+    // L'avis d'annulation (#72). Second abonné du module au bus d'`appointments`,
+    // et le dernier : les trois messages du CDC §1.4 sont servis. Il s'abonne à
+    // un autre événement que le premier, si bien qu'aucun des deux ne voit
+    // passer ce qui ne le regarde pas.
+    CancellationNoticeListener,
     // Les modèles par établissement (#69). Le dépôt sert **deux** appelants qui
     // n'ont rien en commun : le service, pour le back-office, et le renderer,
     // juste avant chaque envoi. C'est la raison pour laquelle il est un provider

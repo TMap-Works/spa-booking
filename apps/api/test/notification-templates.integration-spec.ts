@@ -60,11 +60,15 @@ describe('Modèles de messages — routes du back-office', () => {
 
       const body = response.body as { items: TemplateBody[]; variables: string[] };
 
+      // Six depuis #72, qui a livré l'avis d'annulation : les trois messages du
+      // CDC §1.4, sur les deux canaux.
       expect(body.items.map((item) => `${item.type}/${item.channel}`)).toEqual([
         'booking_confirmation/email',
         'booking_confirmation/sms',
         'reminder_24h/email',
         'reminder_24h/sms',
+        'cancellation/email',
+        'cancellation/sms',
       ]);
       expect(body.items.every((item) => item.origin === 'platform')).toBe(true);
       expect(body.variables).toEqual([...TEMPLATE_VARIABLES]);
@@ -116,12 +120,20 @@ describe('Modèles de messages — routes du back-office', () => {
       expect(JSON.stringify(body)).toContain('type');
     });
 
-    it('rend 404 sur un message qu’aucun modèle ne sert', async () => {
-      // L'avis d'annulation, tant que #72 n'a pas livré son modèle de plateforme.
-      await request(server())
+    it('sert l’avis d’annulation, et il nomme l’origine de la décision', async () => {
+      // #72 : le couple avait 404 tant qu'aucun modèle de plateforme ne le
+      // servait. Les trois messages du CDC §1.4 en ont un désormais, et le refus
+      // du service n'est plus atteignable par une valeur de l'énumération — le
+      // DTO du contrôleur n'en laisse pas passer d'autre.
+      const response = await request(server())
         .get(`${BASE}/cancellation/email`)
         .set('Authorization', await harness.bearer('STAFF'))
-        .expect(404);
+        .expect(200);
+
+      const body = response.body as TemplateBody;
+
+      expect(body.origin).toBe('platform');
+      expect(body.text).toContain('{{origine}}');
     });
   });
 

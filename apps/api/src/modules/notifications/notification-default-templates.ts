@@ -39,19 +39,15 @@ import type {
  * elles sont la preuve que le passage au moteur n'a rien changé à ce qu'une
  * cliente lit.
  *
- * ## Pourquoi `CANCELLATION` n'en a pas
+ * ## `CANCELLATION` en a un depuis #72
  *
- * L'avis d'annulation est le troisième message du MVP (CDC §1.4) et il a son
- * issue, #72. Lui servir ici le modèle du rappel dirait « nous vous attendons » à
- * qui vient d'annuler — pire qu'un message absent. Son absence laisse
- * `AppointmentNotificationRenderer` lever `UnrenderableNotificationError`, donc la
- * ligne en `FAILED`, donc reprenable telle quelle le jour où le modèle existera
- * (notifications §4).
- *
- * Un salon peut malgré tout en écrire un : la table accepte les trois types, et
- * rien ne justifierait de lui refuser ce que le schéma représente. S'il le fait,
- * son avis d'annulation part — ce qui est exactement ce que « personnaliser sans
- * déploiement » veut dire.
+ * Il en manquait un jusque-là, délibérément : servir à un avis d'annulation le
+ * modèle du rappel aurait dit « nous vous attendons » à qui vient d'annuler,
+ * pire qu'un message absent. C'est ce ticket qui l'écrit, et il est le seul des
+ * trois à s'adresser **à deux publics** — la cliente et le praticien (CDC §1.4,
+ * « avis d'annulation au staff et au client »). D'où sa forme : il ne tutoie
+ * personne, ne dit ni « votre cliente » ni « votre praticien », et nomme les
+ * deux parties dans son récapitulatif.
  */
 
 /**
@@ -189,10 +185,117 @@ const REMINDER_SMS: NotificationTemplateSource = {
 };
 
 /**
+ * Le récapitulatif d'un rendez-vous **annulé**, en lignes de tableau HTML.
+ *
+ * Il diffère de `HTML_SUMMARY` sur deux points, et les deux tiennent au fait
+ * qu'il est lu par la cliente **ou** par le praticien :
+ *
+ * 1. il nomme la **cliente**. Les deux autres messages n'en ont pas besoin — ils
+ *    lui sont adressés — mais un praticien qui apprend une annulation a d'abord
+ *    besoin de savoir de qui il s'agit ;
+ * 2. il ne dit pas la **fin prévue** ni le **prix**. Ce sont des informations
+ *    d'exécution : elles servent à se préparer et à payer, or il n'y a plus rien
+ *    à préparer ni à régler. Les faire figurer aurait donné à un avis
+ *    d'annulation l'allure d'une facture.
+ */
+const CANCELLATION_HTML_SUMMARY =
+  '<tr><th align="left">Client</th><td>{{client}}</td></tr>' +
+  '<tr><th align="left">Prestation</th><td>{{service}}</td></tr>' +
+  '<tr><th align="left">Avec</th><td>{{praticien}}</td></tr>' +
+  '<tr><th align="left">Date</th><td>{{date}}</td></tr>' +
+  '{{#telephone}}<tr><th align="left">Téléphone du salon</th><td>{{telephone}}</td></tr>{{/telephone}}';
+
+/** Le même récapitulatif en texte brut — même grammaire de sections. */
+const CANCELLATION_TEXT_SUMMARY = [
+  'Client : {{client}}',
+  'Prestation : {{service}}',
+  'Avec : {{praticien}}',
+  'Date : {{date}}',
+  '{{#telephone}}Téléphone du salon : {{telephone}}',
+  '{{/telephone}}',
+].join('\n');
+
+/**
+ * L'avis d'annulation — #72, troisième message du MVP.
+ *
+ * ## Il ne salue personne par son nom
+ *
+ * « Bonjour, » et non « Bonjour {{client}}, ». Le modèle est unique par canal —
+ * l'unique de `notification_templates` est `(tenant_id, type, channel)` — et il
+ * part aussi bien à la cliente qu'au praticien. Le nom de la cliente est donc
+ * dans le récapitulatif, où il est une **information** pour l'un et une
+ * confirmation pour l'autre, et non dans la salutation, où il aurait salué le
+ * praticien du nom de sa cliente.
+ *
+ * ## L'origine est sous section
+ *
+ * `{{#origine}}` s'efface si l'origine est vide, ce qui n'arrive pas sur un
+ * rendez-vous réellement annulé mais reste la conduite sûre : un salon qui
+ * recopie ce modèle pour le personnaliser n'écrira jamais « a été annulé . »
+ * avec une espace en trop.
+ *
+ * ## Il ne dit pas pourquoi
+ *
+ * Le motif (`appointments.cancellation_reason`) n'a pas de variable, et il n'en
+ * aura pas : c'est un texte libre écrit par un humain, qui peut nommer un état
+ * de santé ou un tiers. Il est enregistré sur la ligne, et qui a le droit de le
+ * lire l'y relit (CDC §5.1).
+ */
+const CANCELLATION_EMAIL: NotificationTemplateSource = {
+  subject: 'Annulation du rendez-vous du {{date}} — {{salon}}',
+  html: [
+    '<!DOCTYPE html>',
+    '<html lang="fr"><body>',
+    '<p>Bonjour,</p>',
+    '<p>Le rendez-vous ci-dessous chez {{salon}} a été annulé{{#origine}} {{origine}}{{/origine}}.</p>',
+    `<table role="presentation">${CANCELLATION_HTML_SUMMARY}</table>`,
+    '<p>Les horaires sont donnés à l’heure de {{fuseau}}. Le créneau est de nouveau disponible.</p>',
+    '<p><a href="{{lien_annulation}}">Prendre un nouveau rendez-vous</a></p>',
+    '<p>{{salon}}</p>',
+    '</body></html>',
+  ].join(''),
+  text: [
+    'Bonjour,',
+    '',
+    'Le rendez-vous ci-dessous chez {{salon}} a été annulé{{#origine}} {{origine}}{{/origine}}.',
+    '',
+    CANCELLATION_TEXT_SUMMARY,
+    'Les horaires sont donnés à l’heure de {{fuseau}}. Le créneau est de nouveau disponible.',
+    '',
+    'Prendre un nouveau rendez-vous : {{lien_annulation}}',
+    '',
+    '{{salon}}',
+  ].join('\n'),
+};
+
+/**
+ * Le SMS d'annulation — même économie que les deux autres.
+ *
+ * Il ne porte ni récapitulatif ni lien : le détail est dans l'e-mail, qui part
+ * toujours (notifications §6). Ce qu'un SMS doit faire ici est **arrêter le
+ * déplacement** de quelqu'un qui allait venir, et cela tient en une phrase.
+ *
+ * Chacun de ses caractères est dans l'alphabet GSM-7 — y compris le `é` de
+ * « annulé » et le `è` de « système », que `{{origine}}` peut y déposer. Il tient
+ * donc en un segment, et `notification-template.spec.ts` le mesure sur le rendu
+ * de référence plutôt que de le supposer.
+ */
+const CANCELLATION_SMS: NotificationTemplateSource = {
+  subject: '',
+  html: '',
+  text: '{{salon}} : rendez-vous du {{date}} ({{fuseau}}) annulé{{#origine}} {{origine}}{{/origine}}.',
+};
+
+/**
  * Les modèles de la plateforme, par type puis par canal.
  *
- * Une entrée absente veut dire « aucun modèle par défaut » — et non « modèle
- * vide » : c'est le cas de `CANCELLATION`, dont l'absence est délibérée.
+ * Les trois messages du CDC §1.4 y sont désormais, sur les deux canaux. La
+ * structure reste **partielle** — `Partial<Record<…>>` — et `defaultTemplateFor`
+ * continue de rendre `null` : une entrée absente veut dire « aucun modèle par
+ * défaut », et non « modèle vide ». C'est la forme qui accueillera un quatrième
+ * message sans que le renderer ait à changer, et c'est elle qui garantit qu'un
+ * type ajouté à l'énumération sans son modèle échoue en `FAILED` plutôt que de
+ * partir vide.
  */
 export const DEFAULT_TEMPLATES: Readonly<
   Partial<
@@ -201,6 +304,7 @@ export const DEFAULT_TEMPLATES: Readonly<
 > = {
   BOOKING_CONFIRMATION: { EMAIL: BOOKING_CONFIRMATION_EMAIL, SMS: BOOKING_CONFIRMATION_SMS },
   REMINDER_24H: { EMAIL: REMINDER_EMAIL, SMS: REMINDER_SMS },
+  CANCELLATION: { EMAIL: CANCELLATION_EMAIL, SMS: CANCELLATION_SMS },
 };
 
 /** Le modèle de plateforme pour ce message, s'il en existe un. */

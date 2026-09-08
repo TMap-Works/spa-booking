@@ -40,6 +40,9 @@ const VALUES: TemplateVariables = {
   fuseau: 'Europe/Paris',
   prix: '65,00 €',
   lien_annulation: 'https://reservation.test/maison-lotus/compte',
+  // Vide, comme sur tout rendez-vous qui n'est pas annulé : c'est l'état dans
+  // lequel la confirmation et le rappel voient cette variable.
+  origine: '',
 };
 
 describe('modèles — la substitution des variables', () => {
@@ -255,7 +258,7 @@ describe('modèles — le coût d’un SMS', () => {
  */
 describe('modèles — les défauts de la plateforme', () => {
   it('tiennent en un seul segment SMS, et en GSM-7', () => {
-    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H'] as const) {
+    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION'] as const) {
       const source = defaultTemplateFor(type, 'SMS');
       expect(source).not.toBeNull();
 
@@ -271,7 +274,7 @@ describe('modèles — les défauts de la plateforme', () => {
   });
 
   it('n’emploient que des variables du vocabulaire', () => {
-    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H'] as const) {
+    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION'] as const) {
       for (const channel of ['EMAIL', 'SMS'] as const) {
         const source = defaultTemplateFor(type, channel);
         const whole = [source?.subject, source?.html, source?.text].join('\n');
@@ -290,7 +293,7 @@ describe('modèles — les défauts de la plateforme', () => {
     // Quatrième critère d'acceptation : un e-mail qui n'a que du HTML est
     // pénalisé par les filtres anti-spam, et le rappel J-1 perd son intérêt s'il
     // finit en indésirables.
-    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H'] as const) {
+    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION'] as const) {
       const email = defaultTemplateFor(type, 'EMAIL');
 
       expect(email?.html.length ?? 0).toBeGreaterThan(0);
@@ -299,9 +302,55 @@ describe('modèles — les défauts de la plateforme', () => {
     }
   });
 
-  it('n’ont pas d’avis d’annulation — c’est #72, et un faux message serait pire', () => {
-    expect(defaultTemplateFor('CANCELLATION', 'EMAIL')).toBeNull();
-    expect(defaultTemplateFor('CANCELLATION', 'SMS')).toBeNull();
+  it('servent les trois messages du CDC §1.4, sur les deux canaux', () => {
+    // #72 pose le dernier. Un couple sans modèle laisserait le renderer lever
+    // `UnrenderableNotificationError`, donc la ligne en `FAILED` — ce qui était
+    // le sort de l'avis d'annulation jusqu'ici.
+    for (const type of ['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION'] as const) {
+      for (const channel of ['EMAIL', 'SMS'] as const) {
+        expect({ type, channel, servi: defaultTemplateFor(type, channel) !== null }).toEqual({
+          type,
+          channel,
+          servi: true,
+        });
+      }
+    }
+  });
+
+  it('n’annoncent pas un rendez-vous à qui vient de l’annuler', () => {
+    // La raison pour laquelle #69 avait laissé `CANCELLATION` sans défaut plutôt
+    // que de lui servir le modèle du rappel. Le modèle livré par #72 dit
+    // l'inverse, et cette suite est ce qui empêche une recopie distraite du
+    // rappel de repasser en douce.
+    const email = defaultTemplateFor('CANCELLATION', 'EMAIL');
+    const sms = defaultTemplateFor('CANCELLATION', 'SMS');
+
+    for (const body of [email?.subject, email?.html, email?.text, sms?.text]) {
+      // « Annulation » dans l'objet, « annulé » dans les corps : c'est la racine
+      // qui compte, et elle doit être dans chacun des quatre.
+      expect(body ?? '').toMatch(/annul/i);
+      expect(body ?? '').not.toContain('attendons');
+    }
+  });
+
+  it('nomment l’origine de l’annulation, sous section', () => {
+    // Troisième critère d'acceptation de #72. La section est ce qui garantit
+    // qu'un rendez-vous sans origine ne produit pas « a été annulé . ».
+    for (const channel of ['EMAIL', 'SMS'] as const) {
+      const source = defaultTemplateFor('CANCELLATION', channel);
+      const whole = [source?.subject, source?.html, source?.text].join('\n');
+
+      expect(whole).toContain('{{#origine}}');
+      expect(whole).toContain('{{/origine}}');
+    }
+  });
+
+  it('ne nomment jamais le motif d’annulation — il n’a pas de variable', () => {
+    // `cancellation_reason` est un texte libre écrit par un humain : il peut
+    // porter un état de santé ou le nom d'un tiers (CDC §5.1). Aucune variable
+    // ne l'expose, et le relevé de conformité refuserait un modèle qui essaierait.
+    expect(unknownPlaceholders('{{motif}}')).toEqual(['motif']);
+    expect(unknownPlaceholders('{{cancellation_reason}}')).toEqual(['cancellation_reason']);
   });
 });
 
@@ -326,6 +375,7 @@ const PARIS: AppointmentMessageContext = {
   endsAt: new Date('2026-09-08T13:30:00Z'),
   priceAmountMinor: 6_500,
   priceCurrency: 'EUR',
+  cancelledBy: null,
 };
 
 describe('modèles — les valeurs que le rendu compose', () => {
@@ -365,6 +415,40 @@ describe('modèles — les valeurs que le rendu compose', () => {
 
     expect(buildTemplateVariables(long, '', 'SMS').salon.length).toBe(SMS_TENANT_NAME_MAX);
     expect(buildTemplateVariables(long, '', 'EMAIL').salon).toBe(long.tenantName);
+  });
+
+  it('laisse `origine` vide sur un rendez-vous qui n’est pas annulé', () => {
+    // C'est ce qui rend la variable utilisable en section : un modèle qui la
+    // nomme dans une confirmation n'écrit rien plutôt qu'une phrase fausse.
+    expect(buildTemplateVariables(PARIS, '', 'EMAIL').origine).toBe('');
+  });
+
+  it('dit d’où vient l’annulation, sans s’adresser à personne', () => {
+    // Le même modèle sert la cliente et le praticien : « à votre demande » aurait
+    // été faux pour l'un des deux à chaque envoi.
+    const dit = (cancelledBy: AppointmentMessageContext['cancelledBy']): string =>
+      buildTemplateVariables({ ...PARIS, cancelledBy }, '', 'EMAIL').origine;
+
+    expect(dit('CLIENT')).toBe('à la demande du client');
+    expect(dit('STAFF')).toBe("à l'initiative du salon");
+    expect(dit('SYSTEM')).toBe('automatiquement par le système');
+
+    for (const phrase of [dit('CLIENT'), dit('STAFF'), dit('SYSTEM')]) {
+      expect(phrase).not.toContain('votre');
+    }
+  });
+
+  it('écrit les trois origines en GSM-7 — un accent hors table doublerait la facture', () => {
+    // `ê`, `ô` et `ç` minuscule n'y sont pas, et un seul d'entre eux ferait
+    // passer l'avis d'annulation de 160 à 70 caractères (notifications §5).
+    for (const cancelledBy of ['CLIENT', 'STAFF', 'SYSTEM'] as const) {
+      const phrase = buildTemplateVariables({ ...PARIS, cancelledBy }, '', 'SMS').origine;
+
+      expect({ cancelledBy, encoding: measureSms(phrase).encoding }).toEqual({
+        cancelledBy,
+        encoding: 'GSM_7',
+      });
+    }
   });
 });
 
