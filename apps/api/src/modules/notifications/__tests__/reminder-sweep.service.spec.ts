@@ -2,7 +2,11 @@ import { getTenantId } from '../../../common/tenant';
 import { TenantContextService } from '../../../common/tenant/tenant-context.service';
 import { appointmentDedupeKey, type DueReminder } from '../notifications.types';
 import type { ReminderSweepRepository } from '../reminder-sweep.repository';
-import { ReminderSweepService } from '../reminder-sweep.service';
+import {
+  ReminderSweepService,
+  sweepStartOffset,
+  type ReminderSweepResult,
+} from '../reminder-sweep.service';
 import { REMINDER_LEAD_MS, REMINDER_WINDOW_MS } from '../reminder-window';
 import { recordingLogger } from './notifications.doubles';
 
@@ -110,8 +114,11 @@ describe('ReminderSweepService — la sélection', () => {
 
     const result = await service.sweep(NOW);
 
-    // La preuve du scoping : deux portées, distinctes, dans l'ordre des salons.
-    expect(scopes).toEqual(['tenant-a', 'tenant-b']);
+    // La preuve du scoping : deux portées, distinctes, une par salon. L'ordre
+    // dans lequel elles s'ouvrent dépend de la rotation du départ (#514) et se
+    // vérifie dans la suite qui lui est consacrée, pas ici.
+    expect(scopes).toHaveLength(2);
+    expect(new Set(scopes)).toEqual(new Set(['tenant-a', 'tenant-b']));
     expect(result.tenantCount).toBe(2);
     expect(result.appointmentCount).toBe(2);
   });
@@ -128,10 +135,14 @@ describe('ReminderSweepService — la sélection', () => {
     const { messages } = await service.sweep(NOW);
 
     expect(messages).toHaveLength(2);
-    expect(messages.map((message) => [message.tenantId, message.appointmentId])).toEqual([
-      ['tenant-a', 'appointment-1'],
-      ['tenant-b', 'appointment-2'],
-    ]);
+    // Un rattachement, pas un ordre : c'est le couple salon/rendez-vous qui est
+    // en cause, et la rotation du départ (#514) rend l'ordre indifférent.
+    expect(new Map(messages.map((message) => [message.tenantId, message.appointmentId]))).toEqual(
+      new Map([
+        ['tenant-a', 'appointment-1'],
+        ['tenant-b', 'appointment-2'],
+      ]),
+    );
   });
 
   it('ne retient que ce qui tombe dans la fenêtre du balayage', async () => {
@@ -286,5 +297,123 @@ describe('ReminderSweepService — le plafond', () => {
 
     expect(result.appointmentCount).toBe(3);
     expect(result.truncated).toBe(false);
+  });
+});
+
+describe('sweepStartOffset — la rotation du départ', () => {
+  it('avance d’un établissement par fenêtre horaire', () => {
+    const first = sweepStartOffset(NOW, 3);
+    const next = sweepStartOffset(new Date(NOW.getTime() + REMINDER_WINDOW_MS), 3);
+
+    expect(next).toBe((first + 1) % 3);
+  });
+
+  it('revient à son point de départ après un tour complet', () => {
+    const first = sweepStartOffset(NOW, 3);
+    const afterFullTurn = sweepStartOffset(new Date(NOW.getTime() + 3 * REMINDER_WINDOW_MS), 3);
+
+    expect(afterFullTurn).toBe(first);
+  });
+
+  it('ne bouge pas dans la même fenêtre — un balayage rejoué reste identique', () => {
+    // C'est ce qui préserve l'innocuité du rejeu : la Lambda peut réappeler la
+    // route dans l'heure, elle retrouve les mêmes salons et les mêmes clés.
+    const replayed = new Date(NOW.getTime() + REMINDER_WINDOW_MS / 2);
+
+    expect(sweepStartOffset(replayed, 3)).toBe(sweepStartOffset(NOW, 3));
+  });
+
+  it('reste dans les bornes du tableau, y compris avant l’époque', () => {
+    // `%` garde le signe du dividende en JavaScript : sans le repli, un instant
+    // antérieur à 1970 rendrait un décalage négatif, donc une rotation qui
+    // sortirait du tableau et un balayage qui ne visiterait plus personne.
+    const offset = sweepStartOffset(new Date('1965-01-01T00:00:00.000Z'), 7);
+
+    expect(offset).toBeGreaterThanOrEqual(0);
+    expect(offset).toBeLessThan(7);
+  });
+
+  it('ne tourne pas quand il n’y a aucun établissement', () => {
+    expect(sweepStartOffset(NOW, 0)).toBe(0);
+  });
+});
+
+describe('ReminderSweepService — la famine du plafond ne se répète pas (#514)', () => {
+  /** Trois salons, dont le premier dépasse à lui seul le plafond du balayage. */
+  const TENANTS = ['tenant-a', 'tenant-b', 'tenant-c'];
+
+  /** Le plafond de ces balayages — deux rendez-vous, que `tenant-a` déborde. */
+  const BUDGET = 2;
+
+  /**
+   * Le balayage de la `hour`-ième heure après `NOW`, sur un jeu où `tenant-a`
+   * déborde à lui seul le plafond et où les deux autres ont un rappel dû.
+   *
+   * C'est le cas de l'issue : un import de planning chez un salon, et un budget
+   * global consommé dans un ordre stable.
+   *
+   * Le jeu est **repositionné dans la fenêtre de l'heure balayée**, et il le faut
+   * : chaque balayage a sa propre fenêtre `[now+24h, now+25h)`, et des rendez-vous
+   * figés autour de `NOW` sortiraient de la fenêtre dès le deuxième balayage —
+   * lequel ne verrait plus rien, et la rotation ne se prouverait pas.
+   */
+  async function sweepHour(hour: number): Promise<ReminderSweepResult> {
+    const at = new Date(NOW.getTime() + hour * REMINDER_WINDOW_MS);
+    const start = new Date(at.getTime() + REMINDER_LEAD_MS + REMINDER_WINDOW_MS / 2);
+
+    const { service } = build(TENANTS, [
+      ...Array.from({ length: 5 }, (_unused, index) =>
+        due({ appointmentId: `glouton-${hour}-${index}`, startsAt: start, hasSms: false }),
+      ),
+      due({
+        tenantId: 'tenant-b',
+        appointmentId: `appointment-b-${hour}`,
+        startsAt: start,
+        hasSms: false,
+      }),
+      due({
+        tenantId: 'tenant-c',
+        appointmentId: `appointment-c-${hour}`,
+        startsAt: start,
+        hasSms: false,
+      }),
+    ]);
+
+    return service.sweep(at, BUDGET);
+  }
+
+  /** Les établissements qui ont réellement obtenu un rappel. */
+  function served(result: ReminderSweepResult): Set<string> {
+    return new Set(result.messages.map((message) => message.tenantId));
+  }
+
+  it('deux balayages successifs ne servent pas les mêmes établissements', async () => {
+    const first = await sweepHour(0);
+    const second = await sweepHour(1);
+
+    // Le plafond tronque toujours — c'est son rôle, et le jeu le dépasse.
+    expect(first.truncated).toBe(true);
+    expect(second.truncated).toBe(true);
+    // Ce qui change, c'est qui en fait les frais.
+    expect(served(second)).not.toEqual(served(first));
+  });
+
+  it('sur un tour complet, aucun établissement n’est privé de bout en bout', async () => {
+    const swept = new Set<string>();
+
+    for (let hour = 0; hour < TENANTS.length; hour += 1) {
+      // Des heures successives, donc en séquence : les paralléliser leur ferait
+      // perdre l'ordre qui est précisément l'objet de l'assertion.
+      const result = await sweepHour(hour);
+
+      for (const message of result.messages) {
+        swept.add(message.tenantId);
+      }
+    }
+
+    // Avant #514, le glouton vidait le budget à chaque balayage et l'ordre `id
+    // asc` ne bougeait pas : cet ensemble se serait réduit à `tenant-a` seul,
+    // quel que soit le nombre de balayages.
+    expect(swept).toEqual(new Set(TENANTS));
   });
 });
