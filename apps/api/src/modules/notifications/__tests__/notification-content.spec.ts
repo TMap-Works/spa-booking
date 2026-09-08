@@ -33,12 +33,21 @@ import type {
  * n'existent que pour que les assertions restent lisibles.
  */
 
-/** Rend le modèle **par défaut** de ce message — ce que reçoit un salon qui n'a rien personnalisé. */
+/**
+ * Rend le modèle **par défaut** de ce message — ce que reçoit un salon qui n'a
+ * rien personnalisé.
+ *
+ * Le destinataire vaut la cliente sauf mention contraire : c'est le cas des
+ * trois quarts des messages du MVP, et le seul que la confirmation et le rappel
+ * connaissent. L'avis d'annulation est le seul à en avoir deux, et les suites
+ * qui l'éprouvent nomment celui qu'elles veulent (#534).
+ */
 function renderDefault(
   type: NotificationType,
   channel: NotificationChannel,
   context: AppointmentMessageContext,
   cancelUrl: string,
+  recipientUserId: string = context.clientId,
 ): RenderedNotification {
   const source = defaultTemplateFor(type, channel);
 
@@ -46,7 +55,11 @@ function renderDefault(
     throw new Error(`Aucun modèle par défaut pour ${type} / ${channel}.`);
   }
 
-  return renderNotification(source, buildTemplateVariables(context, cancelUrl, channel), channel);
+  return renderNotification(
+    source,
+    buildTemplateVariables(context, cancelUrl, channel, recipientUserId),
+    channel,
+  );
 }
 
 const renderBookingConfirmationEmail = (
@@ -70,7 +83,9 @@ const renderReminderSms = (context: AppointmentMessageContext): RenderedNotifica
 const renderCancellationEmail = (
   context: AppointmentMessageContext,
   cancelUrl: string,
-): RenderedNotification => renderDefault('CANCELLATION', 'EMAIL', context, cancelUrl);
+  recipientUserId: string = context.clientId,
+): RenderedNotification =>
+  renderDefault('CANCELLATION', 'EMAIL', context, cancelUrl, recipientUserId);
 
 const renderCancellationSms = (context: AppointmentMessageContext): RenderedNotification =>
   renderDefault('CANCELLATION', 'SMS', context, '');
@@ -83,12 +98,19 @@ const renderCancellationSms = (context: AppointmentMessageContext): RenderedNoti
  * avancerait le rendez-vous de deux heures dans l'esprit de la cliente — le bug
  * de sévérité haute que CLAUDE.md nomme.
  */
+/** Le compte de la cliente du rendez-vous. */
+const CLIENT = '33333333-3333-4333-8333-333333333333';
+
+/** Le compte du praticien — l'autre destinataire de l'avis d'annulation. */
+const PRATICIEN = '66666666-6666-4666-8666-666666666666';
+
 const PARIS: AppointmentMessageContext = {
   tenantName: 'Maison Lotus',
   tenantSlug: 'maison-lotus',
   tenantTimeZone: 'Europe/Paris',
   tenantAddress: '12 rue des Lilas, 75011 Paris',
   tenantPhone: '+33123456789',
+  clientId: CLIENT,
   clientFirstName: 'Amina',
   clientLastName: 'Rakoto',
   serviceName: 'Massage suédois',
@@ -439,6 +461,46 @@ describe('notifications — l’avis d’annulation', () => {
 
     expect(html.length).toBeGreaterThan(0);
     expect(text.length).toBeGreaterThan(0);
+  });
+
+  it('invite la cliente à reprendre rendez-vous', () => {
+    const { html, text } = renderCancellationEmail(SALON_ANNULE, CANCEL_URL, CLIENT);
+
+    expect(text).toContain(`Prendre un nouveau rendez-vous : ${CANCEL_URL}`);
+    expect(html).toContain(`<a href="${CANCEL_URL}">Prendre un nouveau rendez-vous</a>`);
+  });
+
+  it('ne propose pas au praticien de prendre rendez-vous chez lui — #534', () => {
+    // Le constat n°7 de la revue de #533. Le modèle est unique par
+    // `(tenant_id, type, channel)` et sert désormais les deux publics sur la
+    // **même** annulation : ce qui ne vaut que pour la cliente doit s'effacer
+    // pour l'autre, sans quoi le praticien lit une invitation à réserver dans
+    // son propre salon et un lien vers un espace qui n'est pas son agenda.
+    const { html, text } = renderCancellationEmail(SALON_ANNULE, CANCEL_URL, PRATICIEN);
+
+    expect(text).not.toContain('Prendre un nouveau rendez-vous');
+    expect(html).not.toContain('Prendre un nouveau rendez-vous');
+    expect(text).not.toContain(CANCEL_URL);
+    expect(html).not.toContain(CANCEL_URL);
+  });
+
+  it('dit au praticien tout le reste — le retrait ne vaut que pour le lien', () => {
+    // Ce qui compte pour lui est ailleurs, et doit rester : de qui il s'agit,
+    // quelle prestation, quand, et d'où vient la décision.
+    const { text } = renderCancellationEmail(SALON_ANNULE, CANCEL_URL, PRATICIEN);
+
+    expect(text).toContain('Amina Rakoto');
+    expect(text).toContain('Massage suédois');
+    expect(text).toContain("annulé à l'initiative du salon");
+    expect(text).toContain('de nouveau disponible');
+  });
+
+  it('ne laisse pas de ligne vide à la place du lien retiré', () => {
+    // La section emporte son saut de ligne : un avis au praticien ne doit pas
+    // porter la cicatrice de ce qu'il ne reçoit pas.
+    const { text } = renderCancellationEmail(SALON_ANNULE, CANCEL_URL, PRATICIEN);
+
+    expect(text).not.toMatch(/\n{3}/);
   });
 
   it('reste un avis en SMS : ni objet, ni HTML, et sous trois segments UCS-2', () => {

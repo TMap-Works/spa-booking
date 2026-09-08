@@ -25,6 +25,7 @@ const CONTEXTE: AppointmentMessageContext = {
   tenantTimeZone: 'Europe/Paris',
   tenantAddress: '12 rue des Lilas, 75011 Paris',
   tenantPhone: '+33123456789',
+  clientId: '44444444-4444-4444-8444-444444444444',
   clientFirstName: 'Amina',
   clientLastName: 'Rakoto',
   serviceName: 'Massage suédois',

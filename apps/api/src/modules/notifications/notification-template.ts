@@ -102,6 +102,37 @@ export const TEMPLATE_VARIABLES = [
    * votre demande » aurait été faux pour l'un des deux à chaque envoi.
    */
   'origine',
+  /**
+   * Le message part-il vers la **cliente** du rendez-vous ? — #534.
+   *
+   * ## Ce qu'elle vaut
+   *
+   * `oui` quand le compte destinataire est celui de la cliente, **vide** sinon —
+   * c'est-à-dire quand l'avis d'annulation part vers le praticien.
+   *
+   * ## Elle est faite pour être lue en section
+   *
+   * `{{#destinataire_client}}…{{/destinataire_client}}` est son seul emploi
+   * sensé, et c'est celui du modèle de plateforme. Écrite nue, elle rendrait
+   * « oui » au milieu d'une phrase — ce qui n'est interdit à personne, mais
+   * n'aide personne non plus.
+   *
+   * ## Pourquoi elle existe
+   *
+   * Parce que l'unique de `notification_templates` est `(tenant_id, type,
+   * channel)` : il n'y a **qu'un** modèle d'avis d'annulation par canal, et
+   * depuis #534 il sert deux destinataires sur la même annulation. Tout ce qui
+   * ne vaut que pour l'un des deux — au premier chef le « Prendre un nouveau
+   * rendez-vous » de l'e-mail, qui ne veut rien dire pour un praticien — doit
+   * pouvoir s'effacer pour l'autre. Sans cette variable, la seule issue était de
+   * retirer le lien à tout le monde, donc de dégrader le message de la
+   * destinataire majoritaire.
+   *
+   * Elle vaut `oui` pour la confirmation et pour le rappel, qui ne s'adressent
+   * qu'à la cliente : un modèle qui la nomme là s'y comporte comme si elle
+   * n'était pas là.
+   */
+  'destinataire_client',
 ] as const;
 
 export type TemplateVariableName = (typeof TEMPLATE_VARIABLES)[number];
@@ -525,6 +556,10 @@ export const SMS_REFERENCE_VARIABLES: TemplateVariables = {
   // mesurer la plus courte aurait annoncé un segment à un salon dont l'avis
   // d'annulation en coûte deux dès qu'une annulation vient du système.
   origine: 'automatiquement par le système',
+  // Le pire cas, ici encore : une section ouverte coûte ce qu'elle contient, et
+  // mesurer avec la variable vide aurait annoncé un segment à un salon dont le
+  // SMS en coûte deux dès qu'il part vers une cliente.
+  destinataire_client: 'oui',
 };
 
 /**

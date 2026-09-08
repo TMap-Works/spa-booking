@@ -125,7 +125,7 @@ export class AppointmentNotificationRenderer implements NotificationRenderer {
 
     return renderNotification(
       source,
-      buildTemplateVariables(context, cancelUrl, message.channel),
+      buildTemplateVariables(context, cancelUrl, message.channel, message.recipientUserId),
       message.channel,
     );
   }
