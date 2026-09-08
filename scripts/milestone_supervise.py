@@ -256,11 +256,24 @@ ARBITER_TIMEOUT = 45
 # ici parce que c'est cette valeur-là que la ligne de commande expose.
 ARBITER_BUDGET = 12
 # Le silence qui dit qu'une étape est morte debout. Une phase de ticket dure
-# quelques minutes ; un journal muet depuis vingt-cinq minutes, alors que des
-# agents sont censés y écrire, signifie qu'ils attendent tous quelque chose que
-# personne ne leur donnera. La coupure au temps (`--leg-timeout`, trois heures)
-# finirait par les libérer — mais trois heures plus tard.
-STALL_MINUTES = 25
+# quelques minutes ; un journal muet trop longtemps, alors que des agents sont
+# censés y écrire, signifie qu'ils attendent tous quelque chose que personne ne
+# leur donnera. La coupure au temps (`--leg-timeout`, trois heures) finirait par
+# les libérer — mais trois heures plus tard.
+#
+# Le seuil doit rester **au-dessus de la plus longue attente légitime**, et
+# celle-ci est connue : `pr_gate.py --timeout` vaut 1800 s. Un agent qui attend
+# la CI d'une PR y reste dans un seul appel bloquant, sans écrire une ligne. À
+# 25 minutes, toute CI dépassant la demi-heure déclenchait donc le guetteur —
+# de façon déterministe, pas aléatoire, et sur une étape en parfaite santé
+# (#541). Les deux constantes sont liées ici pour qu'elles ne puissent plus
+# diverger en silence.
+#
+# L'étape n'y survivait que parce que `terminate()` ne descend pas dans l'arbre
+# de processus sous Windows. Rendre la coupure efficace **sans** cet écart
+# tuerait chaque vague saine attendant une CI un peu longue.
+PR_GATE_TIMEOUT_MINUTES = 30
+STALL_MINUTES = PR_GATE_TIMEOUT_MINUTES + 5
 
 # Le plafond d'une étape. Trois heures et non deux : à deux, le plafond passait
 # *sous* le travail assigné. Une étape porte une vague entière — jusqu'à trois
@@ -2076,12 +2089,18 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
         # Une fenêtre qui se referme prime sur la façon dont l'appel est mort :
         # c'est la seule panne qu'on attend au lieu de la compter.
         pass
-    elif stalled.is_set():
+    elif was_cut(stalled.is_set(), summary):
         # Distinguée du délai, et ce n'est pas une nuance : un appel coupé au
         # temps a peut-être travaillé jusqu'au bout de ses trois heures, tandis
         # qu'un appel coupé sur le silence n'écrivait plus rien depuis vingt-cinq
         # minutes. Le second est un motif d'arbitrage à lui seul ; le premier ne
         # l'est que parce qu'il laisse des tickets en plan.
+        #
+        # `was_cut` sur cette porte-là aussi (#541) : #353 ne l'avait posée que
+        # sur le délai, alors que les deux branches retombent sur le même motif
+        # `leg_delai` plus bas. Un ordre d'arrêt émis n'est pas un arrêt — et
+        # une étape qui rend `is_error=false` après que le guetteur a tiré n'a
+        # pas plus démérité qu'une autre.
         #
         # Le quota se relit malgré tout dans stderr : un `claude -p` qui attend
         # la réouverture de sa fenêtre est muet, donc coupé par le guetteur. Le
