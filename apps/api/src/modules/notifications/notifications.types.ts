@@ -449,6 +449,18 @@ export interface AppointmentMessageContext {
   readonly tenantAddress: string | null;
   readonly tenantPhone: string | null;
 
+  /**
+   * Le **compte** de la cliente du rendez-vous — #534.
+   *
+   * Un identifiant, et rien d'autre : il ne s'écrit dans aucun message. Il sert
+   * à une seule question, posée au rendu : « ce message part-il vers la cliente
+   * ou vers le praticien ? », dont dépend la variable `destinataire_client`.
+   * Depuis que l'avis d'annulation sert les deux publics du CDC §1.4 sur la même
+   * annulation, c'est la seule façon pour un modèle unique de ne pas dire à un
+   * praticien ce qui ne s'adresse qu'à une cliente.
+   */
+  readonly clientId: string;
+
   readonly clientFirstName: string;
   readonly clientLastName: string;
 

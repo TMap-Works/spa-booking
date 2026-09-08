@@ -113,6 +113,10 @@ function fakeEngine(seed: readonly Partial<Row>[] = [], options: FakeEngineOptio
         (row) =>
           LIVE.has(row.status) &&
           row.appointmentId === candidate.appointmentId &&
+          // Le destinataire est dans la clé depuis #534 : sans lui, ce double
+          // refuserait l'avis d'annulation du praticien après celui de la
+          // cliente, et prouverait le contraire de ce que la base fait.
+          row.recipientUserId === candidate.recipientUserId &&
           row.type === candidate.type &&
           row.channel === candidate.channel,
       )
@@ -255,6 +259,58 @@ describe('NotificationsRepository.claim — la traduction d’un refus', () => {
       outcome: 'already-live',
       notificationId: 'seeded-1',
     });
+  });
+
+  it('ne prend pas l’avis d’un destinataire pour celui d’un autre — #534', async () => {
+    // La parité avec l'index, et c'est le seul endroit où elle se prouve.
+    // `resolveRefusal` cherche la ligne vivante par les colonnes de
+    // `notifications_live_once` : si le destinataire n'y était pas, l'avis
+    // d'annulation du praticien trouverait celui de la cliente — même
+    // rendez-vous, même type, même canal — et serait rendu `already-live` sur un
+    // message que la base venait pourtant d'accepter. Le praticien n'aurait
+    // alors jamais rien reçu, et rien ne l'aurait dit.
+    const praticien = '66666666-6666-4666-8666-666666666666';
+    const { repository, rows } = fakeEngine([
+      {
+        status: 'SENT',
+        type: 'CANCELLATION',
+        channel: 'EMAIL',
+        dedupeKey: `appointment:${APPOINTMENT_ID}:CANCELLATION:EMAIL:${RECIPIENT_ID}`,
+      },
+    ]);
+
+    const claim = await repository.claim(
+      message({
+        type: 'CANCELLATION',
+        channel: 'EMAIL',
+        recipientUserId: praticien,
+        dedupeKey: `appointment:${APPOINTMENT_ID}:CANCELLATION:EMAIL:${praticien}`,
+      }),
+    );
+
+    expect(claim.outcome).toBe('claimed');
+    expect(rows).toHaveLength(2);
+  });
+
+  it('rend `already-live` sur le rejeu du **même** destinataire', async () => {
+    // L'envers du test précédent : ajouter un public ne doit rien coûter à
+    // l'idempotence. Le rejeu SQS de l'avis du praticien reste refusé.
+    const praticien = '66666666-6666-4666-8666-666666666666';
+    const { repository } = fakeEngine([
+      {
+        status: 'SENT',
+        type: 'CANCELLATION',
+        channel: 'EMAIL',
+        recipientUserId: praticien,
+        dedupeKey: 'autre-cle',
+      },
+    ]);
+
+    await expect(
+      repository.claim(
+        message({ type: 'CANCELLATION', channel: 'EMAIL', recipientUserId: praticien }),
+      ),
+    ).resolves.toEqual({ outcome: 'already-live', notificationId: 'seeded-1' });
   });
 
   it('ranime la ligne échouée qui porte la clé de livraison', async () => {

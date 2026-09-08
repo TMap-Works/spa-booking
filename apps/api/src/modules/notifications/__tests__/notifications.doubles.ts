@@ -42,7 +42,8 @@ import { REMINDER_LEAD_MS, REMINDER_WINDOW_MS } from '../reminder-window';
  * doublons selon les deux mêmes règles que PostgreSQL :
  *
  * - `(tenant_id, dedupe_key)` — total, tous statuts confondus ;
- * - `notifications_live_once` — partiel, `PENDING` et `SENT` seulement.
+ * - `notifications_live_once` — partiel, `PENDING` et `SENT` seulement, et
+ *   porteur du **destinataire** depuis #534.
  *
  * Le tenant n'y figure pas : l'extension de scoping le pose en amont, et une
  * suite unitaire tourne dans un seul établissement. Ce que le double reproduit,
@@ -140,6 +141,15 @@ export interface FakeNotificationsRepository {
    * a personne à prévenir, et rien à divulguer.
    */
   staffUserId: string | null;
+  /**
+   * L'erreur que la lecture du praticien lève, quand la suite en pose une.
+   *
+   * `null` par défaut — la base répond. Distinct de `staffUserId: null`, et la
+   * distinction est tout l'intérêt : l'absence est un fait métier, la panne est
+   * un accident. Les deux doivent coûter le même prix — le praticien, et lui
+   * seul.
+   */
+  staffLookupError: Error | null;
 }
 
 function toRecord(row: FakeRow): NotificationRecord {
@@ -160,11 +170,20 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
   const rows: FakeRow[] = [];
   let sequence = 0;
 
-  /** La ligne vivante qui occupe la place, au sens de `notifications_live_once`. */
+  /**
+   * La ligne vivante qui occupe la place, au sens de `notifications_live_once`.
+   *
+   * Le destinataire est dans la clé depuis #534
+   * (`20260908120000_notification_live_once_per_recipient`) : sans lui ici, le
+   * double refuserait l'avis d'annulation du praticien après celui de la
+   * cliente, et une suite qui prouve que les deux partent passerait au vert en
+   * prouvant le contraire de ce que la base fait.
+   */
   const liveFor = (message: NotificationMessage): FakeRow | undefined =>
     rows.find(
       (row) =>
         row.appointmentId === message.appointmentId &&
+        row.recipientUserId === message.recipientUserId &&
         row.type === message.type &&
         row.channel === message.channel &&
         LIVE.has(row.status),
@@ -235,10 +254,12 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     reminder: ReminderEligibility | null;
     emailSuppressed: boolean;
     staffUserId: string | null;
+    staffLookupError: Error | null;
   } = {
     contact: { hasEmail: true, hasSms: true },
     emailSuppressed: false,
     staffUserId: 'staff-user',
+    staffLookupError: null,
     // Au milieu de la fenêtre : `reminderTiming` rendra `due` quel que soit le
     // temps que la suite met à s'exécuter.
     reminder: {
@@ -255,7 +276,10 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
 
   const isEmailSuppressed = (): Promise<boolean> => Promise.resolve(state.emailSuppressed);
 
-  const findStaffRecipient = (): Promise<string | null> => Promise.resolve(state.staffUserId);
+  const findStaffRecipient = (): Promise<string | null> =>
+    state.staffLookupError === null
+      ? Promise.resolve(state.staffUserId)
+      : Promise.reject(state.staffLookupError);
 
   const repository = {
     claim,
@@ -293,6 +317,12 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     },
     set staffUserId(value) {
       state.staffUserId = value;
+    },
+    get staffLookupError() {
+      return state.staffLookupError;
+    },
+    set staffLookupError(value) {
+      state.staffLookupError = value;
     },
   };
 }
