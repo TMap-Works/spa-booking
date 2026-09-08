@@ -46,7 +46,7 @@ import type {
  * de suivi porte la dette.
  *
  * Les **prestations**, elles, ne sont pas lues ici : `SalesService` passe par
- * `ServicesService.byId`, la voie conforme d'api-module §3. C'est possible parce
+ * `ServicesService.byIds`, la voie conforme d'api-module §3. C'est possible parce
  * que `catalog` expose ce service, et c'est fait parce qu'un prix de prestation
  * lu à deux endroits finit par être lu de deux façons.
  */
@@ -250,6 +250,32 @@ export class PosRepository {
     const row = await this.prisma.product.findFirst({ where: { id }, select: PRODUCT_SELECT });
 
     return row === null ? null : toProduct(row);
+  }
+
+  /**
+   * Plusieurs articles de l'établissement courant, **en une seule lecture**
+   * (#420).
+   *
+   * Le pendant, côté rayon, de `ServicesService.byIds` : composer un ticket
+   * relisait le prix ligne par ligne, jusqu'à cent allers-retours par addition.
+   *
+   * Mêmes trois propriétés que du côté catalogue, et pour les mêmes raisons :
+   * un identifiant inconnu — ou d'un autre établissement — est simplement absent
+   * du résultat, l'ordre du résultat ne veut rien dire, et un lot vide
+   * court-circuite plutôt que de payer un aller-retour pour un `IN ()`.
+   */
+  public async findProductsByIds(ids: readonly string[]): Promise<Product[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+
+    // Copie mutable : le `in` de Prisma n'accepte pas un tableau `readonly`.
+    const rows = await this.prisma.product.findMany({
+      where: { id: { in: [...ids] } },
+      select: PRODUCT_SELECT,
+    });
+
+    return rows.map((row) => toProduct(row));
   }
 
   /**

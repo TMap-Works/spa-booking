@@ -391,6 +391,39 @@ export class CatalogRepository {
     return this.prisma.service.findFirst({ where: { id }, select: SERVICE_SELECT });
   }
 
+  /**
+   * Plusieurs prestations de l'établissement courant, **en une seule lecture**
+   * (#420).
+   *
+   * Le POS composait jusqu'ici son ticket par un `findServiceById` par ligne —
+   * jusqu'à cent allers-retours pour une addition, là où un `IN` sur la clé
+   * primaire en fait un. Le coût cesse ainsi de croître avec la longueur du
+   * ticket.
+   *
+   * Ce qui **n'y figure pas** fait partie du contrat : un identifiant inconnu —
+   * ou d'un autre établissement — est simplement absent du résultat, sans que
+   * rien ne distingue les deux cas. C'est le `null` indiscernable de
+   * `findServiceById`, décliné pour un lot (tenant-isolation §4). Le résultat
+   * n'a donc pas la longueur de l'entrée, et son ordre ne veut rien dire : c'est
+   * un ensemble, que l'appelant indexe par identifiant.
+   *
+   * Le lot vide court-circuite : un `IN ()` ne peut rien rendre, et payer un
+   * aller-retour pour l'apprendre serait exactement le coût que cette méthode
+   * existe pour supprimer.
+   */
+  public async findServicesByIds(ids: readonly string[]): Promise<ServiceRecord[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+
+    // Copie mutable : `as const` et `readonly` ne se laissent pas passer au
+    // `in` de Prisma, qui attend un tableau modifiable.
+    return this.prisma.service.findMany({
+      where: { id: { in: [...ids] } },
+      select: SERVICE_SELECT,
+    });
+  }
+
   public async createService(input: {
     slug: string;
     name: string;

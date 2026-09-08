@@ -333,6 +333,30 @@ export class FakeCatalogRepository {
     return service === undefined ? null : this.toServiceRecord(service);
   }
 
+  /**
+   * Le lot de prestations, scopé comme le vrai — et **sans les absentes**
+   * (#420).
+   *
+   * Trois propriétés du vrai, chacune portée par un test : le résultat n'a pas
+   * la longueur de l'entrée — un identifiant inconnu, ou d'un autre
+   * établissement, en est simplement absent, c'est la propriété 4 déclinée pour
+   * un lot —, deux fois le même identifiant ne rend qu'une prestation comme le
+   * `IN` de la base les confond, et le lot vide court-circuite **avant** la
+   * portée, le vrai ne touchant alors pas la base.
+   */
+  public async findServicesByIds(ids: readonly string[]): Promise<ServiceRecord[]> {
+    if (ids.length === 0) {
+      return [];
+    }
+
+    const tenantId = this.requireTenant();
+    const wanted = new Set(ids);
+
+    return this.services
+      .filter((candidate) => candidate.tenantId === tenantId && wanted.has(candidate.id))
+      .map((service) => this.toServiceRecord(service));
+  }
+
   public async createService(input: {
     slug: string;
     name: string;

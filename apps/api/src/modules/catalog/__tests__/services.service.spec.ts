@@ -237,6 +237,66 @@ describe('ServicesService', () => {
       expect(actives.map((service: ServiceView) => service.name)).toEqual(['Coupe']);
     });
 
+    it('rend le lot demandé, avec le prix et la durée occupée de chaque prestation', async () => {
+      const coupe = repository.seedService({
+        tenantId: TENANT_A,
+        name: 'Coupe',
+        slug: 'coupe',
+        priceAmountMinor: 3500,
+        bufferAfterMinutes: 10,
+      });
+      const barbe = repository.seedService({ tenantId: TENANT_A, name: 'Barbe', slug: 'barbe' });
+      repository.seedService({ tenantId: TENANT_A, name: 'Ignorée', slug: 'ignoree' });
+
+      const lot = await inTenantA(async () => services.byIds([coupe.id, barbe.id]));
+
+      expect(lot.map((service: ServiceView) => service.id).sort()).toEqual(
+        [coupe.id, barbe.id].sort(),
+      );
+      const relue = lot.find((service: ServiceView) => service.id === coupe.id);
+      expect(relue?.price).toEqual({ amountMinor: 3500, currency: 'EUR' });
+      // La même vue que `byId` : c'est le prix que le POS facture (#420).
+      expect(relue?.occupiedMinutes).toBe(70);
+    });
+
+    it('omet un identifiant inconnu plutôt que de lever', async () => {
+      // C'est tout le contrat de `byIds` : l'absence est une **réponse**, pas un
+      // refus. L'appelant seul sait ce qu'un identifiant manquant veut dire chez
+      // lui — pour le POS, la ligne du ticket à désigner par son rang.
+      const connue = repository.seedService({ tenantId: TENANT_A });
+
+      const lot = await inTenantA(async () => services.byIds([connue.id, randomUUID()]));
+
+      expect(lot.map((service: ServiceView) => service.id)).toEqual([connue.id]);
+    });
+
+    it('omet la prestation d’un autre établissement, exactement comme un identifiant inventé', async () => {
+      const chezA = repository.seedService({ tenantId: TENANT_A });
+      const chezB = repository.seedService({ tenantId: TENANT_B });
+
+      const lot = await inTenantA(async () => services.byIds([chezA.id, chezB.id]));
+
+      expect(lot.map((service: ServiceView) => service.id)).toEqual([chezA.id]);
+    });
+
+    it('confond deux fois le même identifiant, comme le `IN` de la base', async () => {
+      const connue = repository.seedService({ tenantId: TENANT_A });
+
+      const lot = await inTenantA(async () => services.byIds([connue.id, connue.id]));
+
+      // Le prix d'une prestation ne dépend pas du nombre de fois qu'on la
+      // demande ; c'est l'appelant qui facture autant de lignes qu'il en a.
+      expect(lot).toHaveLength(1);
+    });
+
+    it('ne lit rien sur un lot vide — donc ne réclame aucune portée', async () => {
+      // Le court-circuit est la moitié utile de l'optimisation : un ticket sans
+      // prestation ne doit pas payer un aller-retour pour un `IN ()` qui ne peut
+      // rien rendre. Hors portée de tenant, ce chemin est le seul de ce service
+      // qui n'échoue pas — parce qu'il ne touche pas la base.
+      await expect(services.byIds([])).resolves.toEqual([]);
+    });
+
     it('vérifie la rubrique du filtre au lieu de rendre une liste vide', async () => {
       // Sans ce contrôle, un identifiant inconnu — ou d'un autre établissement —
       // rendrait `[]`, indistinguable d'une rubrique réellement vide.

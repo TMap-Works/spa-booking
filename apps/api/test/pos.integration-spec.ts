@@ -353,6 +353,88 @@ describe('POS — rayon retail et ticket de caisse', () => {
       });
     });
 
+    it('nomme la **première** ligne fautive d’un ticket qui en compte plusieurs', async () => {
+      // Le contrat que le groupement des lectures (#420) n'a pas changé : les
+      // lignes restent jugées dans l'ordre du comptoir, et c'est ce rang-là que
+      // l'écran de caisse surligne. Deux lignes fautives, une seule position
+      // rapportée — la première.
+      const vendable = harness.repository.seedProduct({ tenantId: harness.tenantId });
+      const retire = harness.repository.seedProduct({
+        tenantId: harness.tenantId,
+        isActive: false,
+      });
+      const etranger = harness.repository.seedProduct({
+        tenantId: harness.tenantId,
+        currency: 'MGA',
+      });
+
+      const response = await request(harness.server())
+        .post(SALES)
+        .set('Authorization', await harness.bearer('STAFF'))
+        .send({
+          lines: [
+            { kind: 'PRODUCT', productId: vendable.id, quantity: 1 },
+            { kind: 'PRODUCT', productId: retire.id, quantity: 1 },
+            { kind: 'PRODUCT', productId: etranger.id, quantity: 1 },
+          ],
+        })
+        .expect(422);
+
+      expect(response.body).toMatchObject({ code: 'SALE_ITEM_UNAVAILABLE' });
+      // `toEqual` et non `toMatchObject` : c'est l'absence d'une liste de
+      // positions qui est le contrat, autant que la présence de celle-ci.
+      expect((response.body as { details: unknown }).details).toEqual({ position: 1 });
+    });
+
+    it('compose une addition longue en deux lectures de catalogue, une par nature', async () => {
+      // La propriété que #420 apporte, vérifiée sur l'application réellement
+      // câblée : dix lignes, deux allers-retours. Les compteurs sont ceux des
+      // doubles que le harnais substitue — c'est bien le chemin
+      // contrôleur → service qui les incrémente.
+      const prestation = harness.catalog.seedService({
+        tenantId: harness.tenantId,
+        amountMinor: 7000,
+      });
+      const article = harness.repository.seedProduct({
+        tenantId: harness.tenantId,
+        amountMinor: 1000,
+      });
+
+      const response = await request(harness.server())
+        .post(SALES)
+        .set('Authorization', await harness.bearer('STAFF'))
+        .send({
+          lines: [
+            ...Array.from({ length: 5 }, () => ({
+              kind: 'SERVICE',
+              serviceId: prestation.id,
+              quantity: 1,
+            })),
+            ...Array.from({ length: 5 }, () => ({
+              kind: 'PRODUCT',
+              productId: article.id,
+              quantity: 2,
+            })),
+          ],
+        })
+        .expect(201);
+
+      expect(harness.catalog.serviceReads).toEqual({ byId: 0, byIds: 1 });
+      expect(harness.repository.productReads).toEqual({ byId: 0, byIds: 1 });
+
+      const body = response.body as {
+        subtotal: { amountMinor: number };
+        total: { amountMinor: number };
+        items: { kind: string }[];
+      };
+      // Cinq prestations à 7 000 et cinq lignes de deux articles à 1 000.
+      expect(body.subtotal.amountMinor).toBe(45_000);
+      expect(body.total.amountMinor).toBe(54_000);
+      // Dix lignes de catalogue, plus la ligne de taxe composée par le serveur.
+      expect(body.items).toHaveLength(11);
+      expect(body.items.filter((item) => item.kind === 'TAX')).toHaveLength(1);
+    });
+
     it('relit un ticket avec ses lignes, dans l’ordre du reçu', async () => {
       const article = harness.repository.seedProduct({ tenantId: harness.tenantId });
       const bearer = await harness.bearer('STAFF');
