@@ -47,6 +47,7 @@ import inspect
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -2757,6 +2758,45 @@ class CoupureEffectiveOuNon(unittest.TestCase):
         for summary in (None, {"is_error": False}, {"is_error": True}):
             with self.subTest(summary=summary):
                 self.assertFalse(sup.was_cut(False, summary))
+
+    def test_les_deux_portes_sont_gardees(self):
+        """#353 n'avait posé `was_cut` que sur le délai (#541).
+
+        Les deux branches retombent sur le même motif `leg_delai` ; garder une
+        porte et laisser l'autre ouverte ne supprime pas la fausse alarme, il la
+        déplace. Lu dans le texte : câbler `stream_call` pour de vrai
+        demanderait de lancer un `claude -p`, comme le dit déjà le test du
+        registre d'appels en vol.
+        """
+        code = inspect.getsource(sup.stream_call)
+        self.assertIn("was_cut(stalled.is_set(), summary)", code)
+        self.assertIn("was_cut(expired.is_set(), summary)", code)
+
+    def test_le_guetteur_laisse_passer_la_plus_longue_attente_legitime(self):
+        """`pr_gate` attend la CI dans un seul appel bloquant, sans journaliser.
+
+        Tant que c'est vrai, un seuil de silence sous ce délai coupe une étape
+        saine dès qu'une CI dépasse la demi-heure — déterministe, et non
+        aléatoire. Les deux constantes sont donc tenues ensemble, et ce test
+        échoue si elles se remettent à diverger.
+
+        Le défaut est lu dans la source de `pr_gate.parse_args` plutôt
+        qu'importé : `pr_gate` résout la racine du dépôt à l'import, ce qu'un
+        banc d'essai n'a pas à déclencher pour lire un nombre.
+        """
+        gate = Path(sup.__file__).resolve().parent / "pr_gate.py"
+        source = gate.read_text(encoding="utf-8")
+        found = re.search(r'"--timeout".*?default=(\d+)', source, re.S)
+        self.assertIsNotNone(found, "pr_gate.py n'expose plus de --timeout")
+        timeout = int(found.group(1))
+
+        self.assertGreater(
+            sup.STALL_MINUTES * 60, timeout,
+            "le guetteur de silence doit survivre à l'attente maximale de "
+            "pr_gate, sinon il coupe des étapes saines")
+        self.assertEqual(
+            sup.PR_GATE_TIMEOUT_MINUTES * 60, timeout,
+            "la constante qui documente le lien doit suivre pr_gate.py")
 
     def test_le_plafond_par_defaut_couvre_une_vague_pleine(self):
         """Trois vagues pleines mesurées à 145,8 / 148,2 / 150,1 min sur S4.
