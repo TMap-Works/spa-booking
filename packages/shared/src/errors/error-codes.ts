@@ -82,14 +82,19 @@
  * `DomainError` d'abord, sa ligne ici ensuite. Pas l'inverse — c'est l'inverse
  * qui a produit la divergence.
  *
- * ### Les deux orphelins qui restent, et jusqu'à quand
+ * ### Les deux orphelins qui restaient, et qui sont partis
  *
- * `PAYMENT_ALREADY_CAPTURED` et `PAYMENT_PROVIDER_ERROR` sont encore déclarés,
- * marqués `@deprecated`. Ils ne sont **pas** émis. Ils sont lus par
- * `apps/web/lib/admin/checkout-summary.ts`, qui les range dans le même `case`
- * que les noms servis, et les retirer d'ici casserait la compilation du front.
- * Ce fichier est hors de l'empreinte du ticket qui a fait ce rapatriement : les
- * deux lignes partent ensemble dans l'issue de suivi.
+ * `PAYMENT_ALREADY_CAPTURED` et `PAYMENT_PROVIDER_ERROR` ont survécu à #536 sous
+ * un `@deprecated`. Non qu'un doute subsistât — ni l'un ni l'autre n'a jamais
+ * été émis — mais parce que `apps/web/lib/admin/checkout-summary.ts` les lisait,
+ * et que ce fichier-là était hors de l'empreinte du ticket. #546 a retiré les
+ * deux `case` du front et les deux lignes d'ici, du même geste : **`ERROR_CODES`
+ * ne déclare plus aucun code que l'API n'émet pas, et plus aucun `@deprecated`
+ * n'y subsiste.**
+ *
+ * L'ordre importe, et il est l'inverse de celui qui avait produit la divergence :
+ * le lecteur d'abord, la déclaration ensuite. Retirer la ligne du contrat en
+ * premier n'aurait rien assaini — cela aurait cassé la compilation du front.
  *
  * ## Le garde qui empêche la divergence de se rouvrir
  *
@@ -98,6 +103,13 @@
  * `ERROR_CODES`, ou si un module réintroduit un littéral. C'est ce qui manquait :
  * les deux écritures ont divergé pendant des mois sans qu'aucune barrière ne le
  * dise.
+ *
+ * Depuis #546 il balaie aussi `apps/web` et y refuse tout littéral d'un code que
+ * ce fichier porte : le front n'a pas besoin d'une seconde écriture pour rouvrir
+ * la divergence, il lui suffit d'écrire `'PAYMENT_ALREADY_SETTLED'` en clair
+ * dans un `case` — ce qu'il faisait pour huit codes avant ce ticket. Les
+ * `HTTP_<statut>` du repli, eux, ne sont **pas** des codes du contrat et
+ * traversent le garde sans le heurter.
  */
 
 /**
@@ -447,22 +459,6 @@ export const PAYMENT_ERROR_CODES = {
    * addition impossible.
    */
   CURRENCY_MISMATCH: 'CURRENCY_MISMATCH',
-
-  /* --- Orphelins en sursis ------------------------------------------------ */
-
-  /**
-   * @deprecated Jamais émis. Le refus réel est `PAYMENT_ALREADY_SETTLED`.
-   *
-   * Conservé le temps que `apps/web/lib/admin/checkout-summary.ts` cesse de le
-   * lire — le retirer d'ici casse aujourd'hui la compilation du front (#536).
-   */
-  PAYMENT_ALREADY_CAPTURED: 'PAYMENT_ALREADY_CAPTURED',
-  /**
-   * @deprecated Jamais émis. Le refus réel est `PAYMENT_PROVIDER_UNAVAILABLE`.
-   *
-   * Même sursis que `PAYMENT_ALREADY_CAPTURED`, et il part avec lui.
-   */
-  PAYMENT_PROVIDER_ERROR: 'PAYMENT_PROVIDER_ERROR',
 } as const;
 
 /**
