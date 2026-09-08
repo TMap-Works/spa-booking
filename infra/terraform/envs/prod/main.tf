@@ -12,11 +12,12 @@ locals {
   # jour où on le comprend — et pas davantage, parce que CloudWatch facture le
   # stockage indéfiniment quand personne ne fixe de terme.
   #
-  # Aucun module composé ici ne crée encore de groupe de journaux — `network` n'en
-  # produit pas. La valeur est posée maintenant, et exposée en sortie pour être
-  # vérifiable, parce que c'est le contrat que devront recevoir `database`,
-  # `cache` et `ecs-service` le jour où cet environnement les composera, comme le
-  # fait déjà `envs/dev`.
+  # Deux modules composés ici créent des groupes de journaux : `network` — les
+  # flow logs du VPC — et `notifications` — les trois groupes de la chaîne
+  # d'envoi. La valeur leur est passée plutôt que laissée à leur défaut, qui vaut
+  # 30, le réglage hors production —, et exposée en sortie pour être vérifiable.
+  # C'est aussi le contrat que recevront `database`, `cache` et `ecs-service` le
+  # jour où cet environnement les composera, comme le fait déjà `envs/dev`.
   log_retention_days = 90
 }
 
@@ -67,6 +68,11 @@ module "network" {
   # couperait la sortie Internet des deux zones applicatives — donc Stripe, SES
   # et SNS. C'est le poste de coût qu'on accepte de doubler, et le seul.
   nat_gateway_count = 2
+
+  # Rétention des flow logs du VPC — quatre-vingt-dix jours en production. Un
+  # incident réseau se comprend rarement le jour où il se produit, et c'est le
+  # seul environnement dont les traces servent à répondre à quelqu'un.
+  log_retention_days = local.log_retention_days
 }
 
 # --- Délivrabilité e-mail -----------------------------------------------------

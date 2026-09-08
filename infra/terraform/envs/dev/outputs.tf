@@ -38,6 +38,11 @@ output "vpc_endpoint_security_group_id" {
   value       = module.network.vpc_endpoint_security_group_id
 }
 
+output "vpc_flow_log_group_name" {
+  description = "Groupe CloudWatch Logs des flow logs du VPC — trafic accepté et rejeté. C'est là qu'on cherche après un incident réseau."
+  value       = module.network.flow_log_group_name
+}
+
 # --- Registre d'images --------------------------------------------------------
 
 output "ecr_repository_urls" {

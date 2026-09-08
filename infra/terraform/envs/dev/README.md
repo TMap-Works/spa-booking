@@ -264,9 +264,12 @@ l'`apply`, ou s'abonner à la main sur l'ARN de la sortie
 confirmation, l'adresse ne reçoit rien.
 
 La rétention des journaux CloudWatch est de **30 jours**, passée explicitement à
-`database`, `cache` et `ecs-service` depuis un seul `local` — c'est la sortie
-`log_retention_days`. Sans rétention explicite, CloudWatch conserve indéfiniment
-et le poste grossit sans jamais apparaître dans une revue.
+chacun des modules qui créent un groupe de journaux — `network`, `database`,
+`cache`, `notifications`, `ecs-service` et `waf` — depuis un seul `local`, c'est
+la sortie `log_retention_days`. Sans rétention explicite, CloudWatch conserve
+indéfiniment et le poste grossit sans jamais apparaître dans une revue. Les flow
+logs du VPC, créés par `network`, sont le plus volumineux de ces groupes : la
+sortie `vpc_flow_log_group_name` dit où les chercher.
 
 La ventilation de la dépense par environnement dans Cost Explorer dépend en
 revanche d'une activation faite **une fois pour le compte**, portée par
