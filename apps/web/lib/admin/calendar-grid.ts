@@ -108,11 +108,23 @@ export function zonedFields(instant: string, timeZone: TimeZone): ZonedFields {
   };
 }
 
-/** Les bornes d'un rendez-vous, en rangées de la journée où il commence. */
+/**
+ * Les bornes d'un rendez-vous — en rangées pour le dessin, en minutes pour le dire.
+ *
+ * Les deux, et pas une seule : la grille est à 30 minutes, un rendez-vous ne
+ * l'est pas. Le bloc doit se **caler** sur la rangée, sinon il ne s'aligne sur
+ * rien ; son libellé doit porter l'heure **réelle**, sinon il ment. Confondre
+ * les deux affichait « 09:00 – 10:30 » sur un rendez-vous de 09:15 à 10:15, et
+ * le comptoir lisait une heure qui n'existait pas (#538).
+ */
 interface SlotSpan {
   readonly day: CalendarDate;
   readonly startSlot: number;
   readonly endSlot: number;
+  /** Minutes depuis minuit, dans le fuseau du salon — l'heure du rendez-vous. */
+  readonly startMinutes: number;
+  /** Idem, écrêtée à minuit comme `endSlot` pour un soin qui déborde. */
+  readonly endMinutes: number;
 }
 
 /**
@@ -135,6 +147,11 @@ export function slotSpanOf(appointment: Appointment, timeZone: TimeZone): SlotSp
     // Un rendez-vous plus court qu'une rangée en occupe une : une cellule de
     // hauteur nulle serait invisible et increvable au clavier.
     endSlot: Math.max(endSlot, startSlot + 1),
+    // Non arrondies, elles : ce sont elles qu'on affiche. L'écrêtage à minuit
+    // est le même que celui d'`endSlot`, faute de quoi un soin qui déborde
+    // annoncerait une fin qui n'appartient pas à la journée qu'on regarde.
+    startMinutes: start.minutes,
+    endMinutes,
   };
 }
 
@@ -219,11 +236,14 @@ function hourLabel(hour: number): string {
   return `${String(hour).padStart(2, '0')} h`;
 }
 
-/** « 09:30 » — une heure de rangée, sans dépendre d'un fuseau : elle est déjà locale. */
-function slotClock(slot: number): string {
-  const minutes = slot * SLOT_MINUTES;
-
+/** « 09:15 » — des minutes depuis minuit, déjà locales : aucun fuseau ici. */
+function clockOf(minutes: number): string {
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
+}
+
+/** « 09:30 » — l'heure d'une **rangée**, pour les cellules libres de la grille. */
+function slotClock(slot: number): string {
+  return clockOf(slot * SLOT_MINUTES);
 }
 
 /** « 10 h 30 » — la même heure, telle qu'un lecteur d'écran doit l'entendre. */
@@ -439,10 +459,12 @@ function buildColumn(
       span: Math.max(end - start, 1),
       lane: lanes[index] ?? 0,
       appointment,
+      // L'heure du rendez-vous, pas celle de la rangée où il est posé : le bloc
+      // se cale sur la grille (`slot`, `span` ci-dessus), son libellé non.
       timeLabel:
         context.view === 'semaine'
-          ? slotClock(span.startSlot)
-          : `${slotClock(span.startSlot)} – ${slotClock(span.endSlot)}`,
+          ? clockOf(span.startMinutes)
+          : `${clockOf(span.startMinutes)} – ${clockOf(span.endMinutes)}`,
       clientLabel:
         context.view === 'semaine'
           ? shortClientName(appointment.client)

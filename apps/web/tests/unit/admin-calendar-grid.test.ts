@@ -71,7 +71,13 @@ describe('un rendez-vous devient des rangées de 30 minutes', () => {
       TIMEZONE,
     );
 
-    expect(span).toEqual({ day: '2026-08-26', startSlot: 18, endSlot: 20 });
+    expect(span).toEqual({
+      day: '2026-08-26',
+      startSlot: 18,
+      endSlot: 20,
+      startMinutes: 9 * 60,
+      endMinutes: 10 * 60,
+    });
   });
 
   it('arrondit la fin à la rangée supérieure', () => {
@@ -92,7 +98,32 @@ describe('un rendez-vous devient des rangées de 30 minutes', () => {
       TIMEZONE,
     );
 
-    expect(span).toEqual({ day: '2026-08-26', startSlot: 44, endSlot: 48 });
+    expect(span).toEqual({
+      day: '2026-08-26',
+      startSlot: 44,
+      endSlot: 48,
+      startMinutes: 22 * 60,
+      // Écrêtée à minuit comme `endSlot` : la fin réelle appartient au lendemain.
+      endMinutes: 24 * 60,
+    });
+  });
+
+  it('garde l’heure réelle à côté des rangées, quand elle tombe hors grille', () => {
+    // 09:15 → 10:15 : le bloc se cale sur les rangées 18 à 21 (09:00 → 10:30),
+    // mais les minutes, elles, restent celles du rendez-vous. C'est ce que le
+    // libellé affiche, et c'est tout l'objet de #538.
+    const span = slotSpanOf(
+      appointment({ startsAt: '2026-08-26T06:15:00.000Z', endsAt: '2026-08-26T07:15:00.000Z' }),
+      TIMEZONE,
+    );
+
+    expect(span).toEqual({
+      day: '2026-08-26',
+      startSlot: 18,
+      endSlot: 21,
+      startMinutes: 9 * 60 + 15,
+      endMinutes: 10 * 60 + 15,
+    });
   });
 });
 
@@ -395,5 +426,57 @@ describe('statuts', () => {
 describe('nom abrégé', () => {
   it('garde le prénom entier et l’initiale du nom', () => {
     expect(shortClientName({ id: 'x', firstName: 'Rina', lastName: 'Andriamana' })).toBe('Rina A.');
+  });
+});
+
+describe('un rendez-vous hors grille dit son heure, pas celle de sa rangée (#538)', () => {
+  // Toutes les autres fixtures de ce fichier commencent pile sur la grille —
+  // 09:00, 10:00, 08:00. `Math.floor` et `Math.ceil` n'y déplacent jamais rien,
+  // et le défaut y était donc invisible. Il n'a été vu qu'en CI, parce que le
+  // parcours critique réserve le premier créneau libre : rouge quand l'heure
+  // du jour le faisait tomber entre deux rangées, vert le reste du temps.
+  const horsGrille = appointment({
+    // 06:15 UTC = 09:15 à Antananarivo, pour un soin d'une heure.
+    startsAt: '2026-08-26T06:15:00.000Z',
+    endsAt: '2026-08-26T07:15:00.000Z',
+  });
+
+  it('affiche « 09:15 – 10:15 » en vue jour, et non les bornes de la grille', () => {
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [horsGrille],
+      timeZone: TIMEZONE,
+    });
+    const event = eventsOf(board.columns[0]?.cells ?? [])[0];
+
+    expect(event?.timeLabel).toBe('09:15 – 10:15');
+  });
+
+  it('cale malgré tout le bloc sur la grille — le dessin, lui, ne ment pas', () => {
+    // Le libellé porte l'heure réelle ; la géométrie reste sur les rangées,
+    // faute de quoi le bloc ne s'alignerait sur rien. Rangée 18 (09:00) à 21
+    // (10:30), soit 2 rangées après la première affichée, sur 3 de haut.
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [horsGrille],
+      timeZone: TIMEZONE,
+    });
+    const event = eventsOf(board.columns[0]?.cells ?? [])[0];
+
+    expect(event).toMatchObject({ slot: 2, span: 3 });
+  });
+
+  it('affiche « 09:15 » en vue semaine', () => {
+    const board = buildCalendarBoard({
+      view: 'semaine',
+      range: rangeOf('semaine', '2026-08-26'),
+      appointments: [horsGrille],
+      timeZone: TIMEZONE,
+    });
+    const event = eventsOf(board.columns[2]?.cells ?? [])[0];
+
+    expect(event?.timeLabel).toBe('09:15');
   });
 });
