@@ -78,6 +78,40 @@ export class ServicesService {
   }
 
   /**
+   * Plusieurs prestations de l'établissement courant, en une lecture (#420).
+   *
+   * C'est la lecture par lot qui manquait au POS : composer un ticket de caisse
+   * relisait le prix ligne par ligne, jusqu'à cent fois par addition. Elle vit
+   * **ici** et non chez l'appelant parce que c'est `catalog` qui décide de ce
+   * qu'est le prix d'une prestation (api-module §3) — un module voisin qui
+   * lirait la table lui-même s'en donnerait un second avis.
+   *
+   * ## Pourquoi elle ne lève rien, là où `byId` lève
+   *
+   * `byId` répond à « donne-moi cette prestation », et l'absence y est un refus.
+   * `byIds` répond à « lesquelles de ces références existent ici », et l'absence
+   * y est une **réponse**. C'est l'appelant qui sait ce qu'un identifiant
+   * manquant veut dire chez lui : le POS en fait un 404 sur la ligne du ticket,
+   * en désignant son rang. Lever ici aurait perdu ce rang, cette méthode ne
+   * connaissant pas l'ordre du comptoir.
+   *
+   * Le résultat n'a donc **pas** la longueur de l'entrée, et son ordre ne veut
+   * rien dire — c'est un ensemble, que l'appelant indexe par identifiant. Deux
+   * fois le même identifiant ne rend qu'une prestation : le `IN` de la base les
+   * confond, et le prix d'une prestation ne dépend pas du nombre de fois qu'on
+   * la demande.
+   *
+   * La frontière du tenant n'a rien de particulier ici : le client scopé ne voit
+   * que l'établissement courant, si bien qu'une prestation du voisin est absente
+   * du résultat exactement comme un identifiant inventé — et pour l'appelant,
+   * les deux sont le même 404 (tenant-isolation §4).
+   */
+  public async byIds(ids: readonly string[]): Promise<ServiceView[]> {
+    const services = await this.repository.findServicesByIds(ids);
+    return services.map((service) => toServiceView(service));
+  }
+
+  /**
    * Crée une prestation dans l'établissement courant.
    *
    * Les tampons sont facultatifs et valent `0` par défaut — un soin sans temps
