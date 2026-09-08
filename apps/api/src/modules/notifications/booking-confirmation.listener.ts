@@ -8,6 +8,7 @@ import { NotificationDispatchService } from './notification-dispatch.service';
 import { NotificationsRepository } from './notifications.repository';
 import {
   appointmentDedupeKey,
+  reachableChannels,
   type NotificationChannel,
   type NotificationMessage,
 } from './notifications.types';
@@ -123,43 +124,18 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
    *
    * ## Ce que « préférence » veut dire au périmètre de #70
    *
-   * L'e-mail part **toujours**. C'est la règle que pose le contrat partagé
-   * (`notificationPreferencesSchema` : « le SMS se désactive, l'e-mail non ») et
-   * elle tient à ce que la confirmation est la preuve du rendez-vous : un
-   * établissement doit pouvoir la produire, et un opt-out total relève de la
-   * suppression du compte, pas d'une case à cocher.
+   * La règle est celle de `reachableChannels`, écrite une fois pour les trois
+   * producteurs du module : l'e-mail part toujours, le SMS seulement si le compte
+   * porte un numéro composable, et `marketing_consent` n'entre nulle part.
    *
-   * Le SMS ne part que si le compte porte un numéro exploitable. C'est la seule
-   * préférence que le schéma sache exprimer aujourd'hui : `users.sms_enabled`
-   * n'existe pas, et l'ajouter aurait demandé une migration hors du périmètre de
-   * ce ticket — elle fait l'objet d'une issue de suivi. Saisir ou effacer son
-   * numéro est donc, pour l'instant, la façon dont une cliente choisit de
-   * recevoir des SMS.
-   *
-   * **`marketing_consent` n'entre pas ici**, et le schéma l'écrit noir sur
-   * blanc : une confirmation relève de l'exécution du contrat (CDC §5.1,
-   * notifications §7), pas de la prospection. La subordonner à un consentement
-   * marketing priverait de leur preuve de rendez-vous toutes les clientes qui
-   * ont refusé les offres commerciales.
+   * C'est la seule préférence que le schéma sache exprimer aujourd'hui :
+   * `users.sms_enabled` n'existe pas, et l'ajouter aurait demandé une migration
+   * hors du périmètre de ce ticket — elle fait l'objet d'une issue de suivi.
+   * Saisir ou effacer son numéro est donc, pour l'instant, la façon dont une
+   * cliente choisit de recevoir des SMS.
    */
   private async resolveChannels(clientId: string): Promise<readonly NotificationChannel[]> {
-    const contact = await this.repository.findRecipientContact(clientId);
-
-    if (contact === null) {
-      return [];
-    }
-
-    const channels: NotificationChannel[] = [];
-
-    if (contact.hasEmail) {
-      channels.push('EMAIL');
-    }
-
-    if (contact.hasSms) {
-      channels.push('SMS');
-    }
-
-    return channels;
+    return reachableChannels(await this.repository.findRecipientContact(clientId));
   }
 
   /**
