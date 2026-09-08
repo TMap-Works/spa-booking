@@ -42,11 +42,12 @@ import { MoneyDto, toMoneyDto } from './sale.dto';
  *
  * L'écart a un sens des deux côtés, et c'est ce qui en fait une décision de
  * contrat plutôt qu'un correctif : la devise d'un remboursement n'est **pas** au
- * choix de l'appelant — c'est celle de l'encaissement, relue en base, et une
- * devise différente sort en `CURRENCY_MISMATCH`. La demander dans le corps
- * invite à la contredire. Reste à faire : décider si le contrat porte un montant
- * nu sur cette route, ou si l'API accepte le couple et refuse la devise qui ne
- * correspond pas.
+ * choix de l'appelant — c'est celle de l'encaissement, relue en base, et cette
+ * route n'en accepte aucune. La demander dans le corps invite à la contredire,
+ * et exigerait alors un refus dédié que l'API n'émet pas — #536 a précisément
+ * retiré du contrat les codes que rien ne servait. Reste à faire : décider si le
+ * contrat porte un montant nu sur cette route, ou si l'API accepte le couple,
+ * refuse la devise qui ne correspond pas, et gagne le code qui va avec.
  */
 export class CreateRefundDto {
   @ApiPropertyOptional({
