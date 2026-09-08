@@ -38,9 +38,22 @@ import {
  * (`TIME_OFF_RANGE_INVALID`) plutôt qu'en 400 : la requête est bien formée, ce
  * sont ses valeurs prises ensemble qui ne tiennent pas.
  *
- * TODO(#26) : ces formes appartiennent au contrat d'API et sont décrites par
- * `packages/shared/src/schemas/availability.ts` ; elles devront en être
- * importées.
+ * TODO(#536) : `createStaffTimeOffRequestSchema` et
+ * `updateStaffTimeOffRequestSchema` de
+ * `packages/shared/src/schemas/availability.ts` décrivent ces corps, et #510 n'a
+ * pourtant pas pu les monter — pour la raison que le paragraphe ci-dessus
+ * énonce, prise à l'envers. Le schéma de création porte un `.refine()` sur le
+ * couple `startsAt` / `endsAt`, donc un refus en **400**, là où cette route rend
+ * un **422 `TIME_OFF_RANGE_INVALID`** dont le `details.rule` distingue « fin
+ * avant début » de « fenêtre déraisonnable ». Et le schéma de modification ne
+ * peut de toute façon pas juger ce couple : une modification partielle ne
+ * fournit qu'une des deux bornes, l'autre se lisant en base — ce qu'un schéma de
+ * requête ne voit pas.
+ *
+ * Reste à faire, côté contrat : sortir la règle du `.refine()` pour en faire un
+ * prédicat que le service appelle, comme `staffScheduleEntriesOverlap` l'est
+ * déjà. Même constat, mot pour mot, dans `staff-schedule.dto.ts`,
+ * `availability.dto.ts` et `identity/dto/tenant-settings.dto.ts`.
  */
 
 export class CreateStaffTimeOffDto {

@@ -1,9 +1,14 @@
 import { Body, Controller, Get, Put } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 import { AuthAtLeast } from '../identity/auth.decorator';
 import { ClosingDaysService } from './closing-days.service';
-import { ClosingDaysDto, SetClosingDaysDto } from './dto/closing-days.dto';
+import {
+  ClosingDaysDto,
+  type SetClosingDaysBody,
+  SetClosingDaysDto,
+  setClosingDaysBody,
+} from './dto/closing-days.dto';
 
 /**
  * Jours de fermeture récurrents de l'établissement.
@@ -37,8 +42,14 @@ export class ClosingDaysController {
   @Put()
   @AuthAtLeast('MANAGER')
   @ApiOperation({ summary: 'Remplacer les jours de fermeture de l’établissement' })
+  // Déclaré explicitement : le corps est validé par le contrat partagé et le
+  // paramètre est typé par un alias de type, dont `@nestjs/swagger` ne peut plus
+  // rien déduire. `SetClosingDaysDto` ne sert plus qu'à cela (ADR 0008).
+  @ApiBody({ type: SetClosingDaysDto })
   @ApiOkResponse({ type: ClosingDaysDto })
-  public async replace(@Body() body: SetClosingDaysDto): Promise<ClosingDaysDto> {
+  public async replace(
+    @Body(setClosingDaysBody) body: SetClosingDaysBody,
+  ): Promise<ClosingDaysDto> {
     return this.closingDays.replace(body.weekdays);
   }
 }

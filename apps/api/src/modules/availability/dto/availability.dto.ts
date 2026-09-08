@@ -34,10 +34,25 @@ import { IsCalendarDate, OptionalPresent } from './validation';
  * date est bien écrite, c'est leur écart qui n'est pas servable. Tout appelant
  * du moteur s'y heurte, y compris celui qui n'est pas venu par HTTP.
  *
- * TODO(#26) : ces formes appartiennent au contrat d'API et sont décrites par
- * `packages/shared/src/schemas/availability.ts` (`availabilityQuerySchema`,
- * `availabilitySlotSchema`, `dayAvailabilitySchema`,
- * `availabilityResponseSchema`) ; elles devront en être importées.
+ * TODO(#536) : `availabilityQuerySchema` de
+ * `packages/shared/src/schemas/availability.ts` décrit cette chaîne de requête,
+ * et #510 n'a pourtant pas pu la monter. Deux écarts, et le second est le même
+ * que celui du paragraphe ci-dessus, pris à l'envers :
+ *
+ * 1. **c'est une chaîne de requête**, et aucun schéma du contrat ne coerce —
+ *    `myAppointmentsQuerySchema` excepté. Les valeurs arrivent en `string` ;
+ *    `uuidSchema` et `calendarDateSchema` les lisent, mais rien n'y prépare la
+ *    forme répétée ni les conversions qu'un `@Transform` fait ici ;
+ * 2. **le couple `from` / `to`.** Le schéma le juge par un `.refine()`, donc en
+ *    **400** ; cette route rend un **422 `AVAILABILITY_RANGE_TOO_WIDE`**, parce
+ *    que chaque date est bien écrite et que c'est leur écart qui n'est pas
+ *    servable. La règle vit d'ailleurs dans `requireServableRange`, à côté du
+ *    moteur, pour que **tout** appelant s'y heurte — y compris celui qui n'est
+ *    pas venu par HTTP.
+ *
+ * Les formes de **sortie** (`availabilitySlotSchema`, `dayAvailabilitySchema`,
+ * `availabilityResponseSchema`) attendent la même décision de contrat que les
+ * vues d'`availability.types.ts` — voir le `TODO(#536)` de leur en-tête.
  */
 export class AvailabilityQueryDto {
   @ApiProperty({ format: 'uuid', description: 'Prestation dont on veut les créneaux.' })

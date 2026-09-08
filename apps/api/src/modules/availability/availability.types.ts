@@ -2,13 +2,21 @@
  * Formes de données du module `availability` — CDC §2.3 « créneaux libres,
  * horaires du staff, plages bloquées, buffers ».
  *
- * TODO(#26) : `StaffScheduleView`, `StaffScheduleEntryView` et `ClosingDaysView`
- * appartiennent au contrat d'API et sont décrites par
- * `packages/shared/src/schemas/availability.ts` (`staffScheduleSchema`,
- * `staffScheduleEntrySchema`, `closingDaysSchema`). Elles devront en être
- * importées lors de la reprise groupée de ce TODO — la dépendance vers le paquet
- * partagé existe depuis #463 — même TODO que `catalog.types.ts` et
- * `identity.types.ts`.
+ * L'accord avec le contrat se vérifie à la **frontière** depuis #510 : les DTO
+ * de `dto/` portent des assertions de compilation contre les `z.input<…>` des
+ * schémas correspondants, et un champ ajouté d'un côté et pas de l'autre casse
+ * le `tsc`.
+ *
+ * TODO(#536) : remplacer `StaffScheduleView`, `StaffScheduleEntryView` et
+ * `ClosingDaysView` par les types inférés de
+ * `packages/shared/src/schemas/availability.ts` reste souhaitable, et deux
+ * choses s'y opposent, dont aucune ne se tranche depuis ce module. La première :
+ * `z.infer<...>` ne porte pas `readonly`, là où toutes les vues de ce fichier le
+ * sont — et `ClosingDaysView.weekdays` est précisément un tableau qu'on ne veut
+ * pas voir réordonné par son lecteur. La seconde : `IsoWeekday` du contrat est
+ * `number` et non l'union `1 | … | 7`, si bien que l'import **élargirait** le
+ * type de tout le module — voir le `TODO(#536)` d'`availability.schedule.ts`,
+ * qui décrit ce que cet élargissement casse, prédicat par prédicat.
  *
  * ## Aucune de ces formes ne porte de `tenantId`
  *
@@ -67,10 +75,9 @@ export interface ClosingDaysView {
  * `staffId` restreint à un praticien ; son absence vaut « tous ceux qui
  * pratiquent le soin ».
  *
- * TODO(#26) : cette forme appartient au contrat d'API — `packages/shared`
+ * TODO(#536) : cette forme appartient au contrat d'API — `packages/shared`
  * expose déjà l'homonyme `availabilityQuerySchema`, et les deux déclarations
- * deviendront ambiguës à l'import dès que ce module consommera le paquet — dont
- * `apps/api` dépend depuis #463.
+ * sont ambiguës à l'import maintenant que ce module consomme le paquet.
  * **Attention à ce que la substitution vise** : depuis #442 le schéma
  * partagé porte **cinq** champs — il décrit la chaîne de requête, exclusion
  * comprise —, et c'est donc `EngineAvailabilityQuery` ci-dessous qu'il faut lui
@@ -81,8 +88,9 @@ export interface ClosingDaysView {
  * que la clé indexe » — cesserait d'être adossée à un type qui exclut ce champ,
  * et le premier qui la « simplifierait » en étalement écrirait une vue calculée
  * avec une exclusion sous une clé qui n'en dit rien. Cette forme-ci garde donc
- * ses quatre champs, parce que ce sont ceux que la clé de cache indexe — même
- * TODO que les trois formes ci-dessus.
+ * ses quatre champs, parce que ce sont ceux que la clé de cache indexe — et
+ * `readonly`, que `z.infer<...>` ne porte pas, s'y ajoute comme sur les trois
+ * formes ci-dessus.
  */
 export interface AvailabilityQuery {
   readonly serviceId: string;
@@ -178,11 +186,15 @@ export interface DayAvailabilityView {
  * journée du salon appartient un instant, et regrouperait autrement que le
  * serveur.
  *
- * TODO(#26) : ces trois formes appartiennent au contrat d'API et sont décrites
+ * TODO(#536) : ces trois formes appartiennent au contrat d'API et sont décrites
  * par `packages/shared/src/schemas/availability.ts` (`availabilitySlotSchema`,
- * `dayAvailabilitySchema`, `availabilityResponseSchema`). Elles devront en être
- * importées lors de la reprise groupée de ce TODO — la dépendance existe depuis
- * #463 — même TODO que `StaffScheduleView` ci-dessus.
+ * `dayAvailabilitySchema`, `availabilityResponseSchema`) ; l'accord se vérifie
+ * déjà à la frontière, dans `dto/availability.dto.ts`. Ce qui retient l'import
+ * lui-même est celui de l'en-tête : `readonly`, que `z.infer<...>` ne porte pas,
+ * et qui compte doublement ici — `AvailabilityView.days` et
+ * `DayAvailabilityView.slots` sont des tableaux **servis depuis un cache**, et
+ * un lecteur qui les trierait en place modifierait l'entrée que le prochain
+ * appelant recevra.
  */
 export interface AvailabilityView {
   readonly serviceId: string;
