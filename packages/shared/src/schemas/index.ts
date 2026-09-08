@@ -126,6 +126,9 @@ export {
   CUSTOMER_HISTORY_MAX_VISITS,
   CUSTOMER_SEARCH_MAX_LENGTH,
   CUSTOMER_SEARCH_MIN_LENGTH,
+  emailSuppressionReasonSchema,
+  EMAIL_SUPPRESSION_REASONS,
+  receivedEmailSuppressionReasonSchema,
   setCustomerStatusRequestSchema,
   updateCustomerRequestSchema,
 } from './crm';
@@ -139,6 +142,7 @@ export type {
   CustomerVisit,
   CustomerVisitHistory,
   CustomerVisitSummary,
+  EmailSuppressionReason,
   SetCustomerStatusRequest,
   UpdateCustomerRequest,
 } from './crm';

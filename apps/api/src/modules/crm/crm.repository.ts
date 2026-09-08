@@ -125,6 +125,16 @@ const CUSTOMER_SELECT = {
   marketingConsent: true,
   marketingConsentAt: true,
   anonymizedAt: true,
+  // Les deux colonnes de #73, projetées par #525. Même arbitrage que les trois
+  // précédentes : sur la fiche complète, pas sur le résumé. La liste du
+  // back-office n'affiche aucun avis de délivrabilité, et une projection qui les
+  // lirait quand même les ferait transiter deux cents fois pour rien.
+  //
+  // Ce module ne les **écrit** jamais : l'unique écriture est celle de
+  // l'ingestion d'un événement de remise SES, dans `notifications`. Le fichier
+  // client en est un lecteur, et le `select` dit exactement cela.
+  emailSuppressedAt: true,
+  emailSuppressionReason: true,
 } as const;
 
 /**

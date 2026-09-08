@@ -275,6 +275,57 @@ describe('CRM — fichier client', () => {
         .set('Authorization', await harness.bearer('STAFF'))
         .expect(404);
     });
+
+    /**
+     * L'état de suppression d'adresse — #525, quatrième critère de #73.
+     *
+     * Le module ne l'écrit jamais : c'est l'ingestion d'un événement de remise
+     * SES qui le pose, dans `notifications`. La fiche en est le seul lecteur
+     * servi à un écran, et ces deux cas vérifient qu'elle le rend — sans quoi un
+     * gestionnaire verrait une réservation confirmée sans jamais savoir que la
+     * cliente n'a rien reçu.
+     */
+    it('rend l’adresse supprimée avec son motif et l’instant, en UTC', async () => {
+      const supprimee = harness.repository.addCustomer({
+        tenantId: harness.tenantId,
+        email: 'boite-morte@example.test',
+        emailSuppressedAt: new Date('2026-09-05T10:30:00.000Z'),
+        emailSuppressionReason: 'HARD_BOUNCE',
+      });
+
+      const response = await request(server())
+        .get(`${BASE}/${supprimee.id}`)
+        .set('Authorization', await harness.bearer('STAFF'))
+        .expect(200);
+
+      // `…Z` et rien d'autre : la conversion au fuseau du salon est le travail
+      // de l'écran, pas celui de l'API (ADR 0006).
+      expect(response.body).toMatchObject({
+        emailSuppressedAt: '2026-09-05T10:30:00.000Z',
+        emailSuppressionReason: 'HARD_BOUNCE',
+      });
+    });
+
+    it('rend les deux champs à `null` sur une adresse vivante, jamais absents', async () => {
+      const creee = await creerFiche();
+
+      const response = await request(server())
+        .get(`${BASE}/${String(creee['id'])}`)
+        .set('Authorization', await harness.bearer('STAFF'))
+        .expect(200);
+
+      // `toMatchObject` ne distingue pas « absent » de « nul » : le contrat
+      // partagé, lui, exige les deux champs, et un front qui ferait la
+      // distinction finirait par afficher `undefined`.
+      const body = response.body as Record<string, unknown>;
+      expect(Object.keys(body)).toEqual(
+        expect.arrayContaining(['emailSuppressedAt', 'emailSuppressionReason']),
+      );
+      expect({
+        date: body['emailSuppressedAt'],
+        motif: body['emailSuppressionReason'],
+      }).toEqual({ date: null, motif: null });
+    });
   });
 
   describe('PATCH /customers/:id', () => {

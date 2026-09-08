@@ -76,6 +76,8 @@ describe('la rédaction couvrirait les champs du module', () => {
       isActive: true,
       internalNote: 'allergique au monoï',
       createdAt: new Date('2026-09-01T08:00:00.000Z'),
+      emailSuppressedAt: null,
+      emailSuppressionReason: null,
       marketingConsent: true,
       marketingConsentAt: new Date('2026-09-01T08:00:00.000Z'),
       anonymizedAt: null,

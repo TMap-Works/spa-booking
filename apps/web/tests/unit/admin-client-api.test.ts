@@ -41,6 +41,12 @@ const CUSTOMER = {
   isActive: true,
   internalNote: 'Peau réactive — éviter les huiles parfumées.',
   createdAt: '2026-03-04T08:00:00.000Z',
+  // Une adresse vivante. Les deux champs sont **toujours émis** par l'API, à
+  // `null` quand rien n'a rebondi (#525) — le contrat les exige, et une réponse
+  // qui les omettrait serait refusée à la frontière comme l'est une fiche sans
+  // note interne.
+  emailSuppressedAt: null,
+  emailSuppressionReason: null,
 };
 
 const HISTORY = {
