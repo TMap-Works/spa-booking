@@ -48,6 +48,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -2937,6 +2938,98 @@ class FenetreTropEntamee(unittest.TestCase):
     def test_le_reglage_voyage_dans_l_intention(self):
         """Un superviseur ressuscité par la veille doit garder le même seuil."""
         self.assertIn("quota_headroom", sup.ARMING_FLAGS)
+
+
+class UnSeulSuperviseur(unittest.TestCase):
+    """Un battement périmé ne prouve pas qu'il n'y a plus personne (#489).
+
+    La machine s'est mise en veille 4 h 15 sur déclic de batterie. Au réveil,
+    le battement avait l'âge de la veille alors que le processus était intact :
+    la veille planifiée a conclu « aucun superviseur ne bat » et en a lancé un
+    second. Deux boucles sur le même run, toutes deux en merge automatique et
+    pré-autorisées sur cinq périmètres sensibles, à quinze secondes du réveil —
+    l'une s'apprêtait à dispatcher une seconde étape sur les tickets de l'autre.
+
+    Aucun délai ne distingue un mort d'un gelé. Le PID le fait, et `beat()`
+    l'écrivait déjà sans que personne le lise.
+    """
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="sup-beat-"))
+        self.patch = mock.patch.object(sup, "HEARTBEAT", self.dir / "supervisor.alive")
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def bat(self, age, pid=4242):
+        sup.HEARTBEAT.write_text(
+            json.dumps({"pid": pid, "at": time.time() - age}), encoding="utf-8")
+
+    def test_un_battement_frais_suffit_sans_rien_demander_au_systeme(self):
+        self.bat(age=1)
+        with mock.patch.object(sup, "process_is_supervisor") as sonde:
+            self.assertTrue(sup.supervisor_alive())
+            sonde.assert_not_called()
+
+    def test_un_battement_perime_sur_un_processus_vivant_reste_vivant(self):
+        """Le cas du réveil de veille : ne pas lancer de second superviseur."""
+        self.bat(age=sup.HEARTBEAT_STALE + 4 * 3600)
+        with mock.patch.object(sup, "process_is_supervisor", return_value=True):
+            self.assertTrue(sup.supervisor_alive())
+
+    def test_un_battement_perime_sur_un_processus_mort_rend_la_main(self):
+        self.bat(age=sup.HEARTBEAT_STALE + 60)
+        with mock.patch.object(sup, "process_is_supervisor", return_value=False):
+            self.assertFalse(sup.supervisor_alive())
+
+    def test_sans_battement_du_tout_personne_ne_veille(self):
+        with mock.patch.object(sup, "process_is_supervisor", return_value=False):
+            self.assertFalse(sup.supervisor_alive())
+
+    def test_le_pid_est_relu_du_battement(self):
+        self.bat(age=1, pid=1234)
+        self.assertEqual(sup.heartbeat_pid(), 1234)
+
+    def test_un_battement_illisible_ne_rend_aucun_pid(self):
+        sup.HEARTBEAT.write_text("{ pas du json", encoding="utf-8")
+        self.assertIsNone(sup.heartbeat_pid())
+
+    def test_un_pid_recycle_n_est_pas_un_superviseur(self):
+        """Le recyclage est ce qui avait fait écarter le PID au départ.
+
+        On ne se contente donc pas de l'existence du processus : sa ligne de
+        commande doit porter ce fichier-ci.
+        """
+        rendu = subprocess.CompletedProcess([], 0, "notepad.exe\n", "")
+        with mock.patch.object(sup.subprocess, "run", return_value=rendu):
+            self.assertFalse(sup.process_is_supervisor(4242))
+
+    def test_un_vrai_superviseur_est_reconnu_a_sa_ligne_de_commande(self):
+        ligne = 'pythonw milestone_supervise.py "S4 …" --width 2\n'
+        rendu = subprocess.CompletedProcess([], 0, ligne, "")
+        with mock.patch.object(sup.subprocess, "run", return_value=rendu):
+            self.assertTrue(sup.process_is_supervisor(4242))
+
+    def test_une_sonde_en_echec_laisse_la_veille_agir(self):
+        """Ne pas savoir, ici, c'est rendre la main — l'inverse du réflexe
+        habituel, parce qu'un run figé sur une sonde cassée ne repartirait
+        jamais."""
+        with mock.patch.object(sup.subprocess, "run", side_effect=OSError("nope")):
+            self.assertFalse(sup.process_is_supervisor(4242))
+        self.assertFalse(sup.process_is_supervisor(0))
+        self.assertFalse(sup.process_is_supervisor(None))
+
+    def test_la_veille_dit_le_battement_perime_plutot_que_de_se_taire(self):
+        """Le compromis assumé : un superviseur bloqué n'est plus remplacé. Il
+        ne doit donc pas être silencieux, sans quoi le run s'arrête sans trace.
+        """
+        code = inspect.getsource(sup.cmd_watchdog)
+        debut = code.index("if supervisor_alive():")
+        avant_retour = code[debut:code.index("return 0", debut)]
+        self.assertIn("heartbeat_age()", avant_retour)
+        self.assertIn("WARN", avant_retour)
 
 
 if __name__ == "__main__":
