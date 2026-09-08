@@ -1,4 +1,11 @@
 import { Injectable } from '@nestjs/common';
+// Les formes d'entrée viennent du **contrat partagé** et ne sont plus
+// redéclarées ici (#510) : le pipe des contrôleurs rend exactement ces types, et
+// une seconde écriture de la même forme aurait divergé au premier champ ajouté.
+import type {
+  CreateServiceCategoryRequest,
+  UpdateServiceCategoryRequest,
+} from '@spa/shared';
 
 import { NotFoundError } from '../../common/errors';
 import { CatalogRepository, toCategoryView } from './catalog.repository';
@@ -63,11 +70,7 @@ export class ServiceCategoriesService {
     return toCategoryView(category);
   }
 
-  public async create(input: {
-    name: string;
-    slug?: string;
-    description?: string;
-  }): Promise<ServiceCategoryView> {
+  public async create(input: CreateServiceCategoryRequest): Promise<ServiceCategoryView> {
     const created = await this.repository.createCategory({
       slug:
         input.slug === undefined ? requireSlug(input.name, 'name') : requireSlug(input.slug, 'slug'),
@@ -87,7 +90,7 @@ export class ServiceCategoriesService {
    */
   public async update(
     id: string,
-    patch: { name?: string; slug?: string; description?: string | null; isActive?: boolean },
+    patch: UpdateServiceCategoryRequest,
   ): Promise<ServiceCategoryView> {
     const updated = await this.repository.updateCategory(id, {
       ...(patch.slug !== undefined && { slug: requireSlug(patch.slug, 'slug') }),

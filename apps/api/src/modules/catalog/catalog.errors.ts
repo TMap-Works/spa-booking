@@ -7,11 +7,14 @@ import { DomainError } from '../../common/errors';
  * ces classes, et `DomainExceptionFilter` la traduit. Le front réagit sur
  * `code`, jamais sur `message`.
  *
- * TODO(#510) : ces codes appartiennent au contrat d'API et devront vivre dans
- * `@spa/shared`, comme ceux d'`identity`. Les déclarer ici suit le précédent du
- * module voisin ; l'import se substituera à ces constantes sans changer une
- * seule valeur, lors de la reprise groupée de ce TODO — la dépendance vers le
- * paquet partagé, elle, est posée depuis #463.
+ * TODO(#536) : ces codes appartiennent au contrat d'API, et #510 n'a pas pu les
+ * y prendre — la même décision de contrat que dans les cinq autres fichiers
+ * d'erreurs du dépôt. Il n'y a pas d'import à faire mais une famille à
+ * découper : `@spa/shared` mêle les codes de tous les modules dans
+ * `ERROR_CODES`, `DOMAIN_ERROR_CODES` et `BOOKING_ERROR_CODES`, sans qu'aucun
+ * regroupement ne dise lequel appartient à quel module. Reste à faire :
+ * découper les codes du contrat par module, puis importer — les six fichiers
+ * d'erreurs bougeront ensemble.
  *
  * **Aucune de ces erreurs ne parle d'un autre établissement.** Une prestation ou
  * une catégorie d'un autre tenant est introuvable, point : c'est `NotFoundError`

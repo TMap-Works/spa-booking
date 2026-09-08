@@ -1,9 +1,15 @@
 import { Injectable } from '@nestjs/common';
+// Les formes d'entrée viennent du **contrat partagé** et ne sont plus
+// redéclarées ici (#510) : le pipe des contrôleurs rend exactement ces types, et
+// une seconde écriture de la même forme aurait divergé au premier champ ajouté.
+// Le plafond des durées que `service.dto.ts` ajoute par `.extend()` ne change
+// pas le type inféré — c'est une borne, pas un champ.
+import type { CreateServiceRequest, UpdateServiceRequest } from '@spa/shared';
 
 import { NotFoundError } from '../../common/errors';
 import { CatalogRepository, toServiceView } from './catalog.repository';
 import { requireSlug } from './catalog.slug';
-import type { Money, ServiceView } from './catalog.types';
+import type { ServiceView } from './catalog.types';
 
 /**
  * Prestations du catalogue — CDC §2.3 « services, catégories, durée, prix ».
@@ -78,16 +84,7 @@ export class ServicesService {
    * de préparation est le cas courant, et exiger deux zéros explicites à chaque
    * création ferait du bruit pour rien.
    */
-  public async create(input: {
-    name: string;
-    slug?: string;
-    description?: string;
-    categoryId?: string;
-    durationMinutes: number;
-    bufferBeforeMinutes?: number;
-    bufferAfterMinutes?: number;
-    price: Money;
-  }): Promise<ServiceView> {
+  public async create(input: CreateServiceRequest): Promise<ServiceView> {
     if (input.categoryId !== undefined) {
       await this.requireCategory(input.categoryId);
     }
@@ -121,20 +118,7 @@ export class ServicesService {
    * remplace la suppression, et lui donner en plus une route dédiée aurait
    * doublé la surface pour la même écriture.
    */
-  public async update(
-    id: string,
-    patch: {
-      name?: string;
-      slug?: string;
-      description?: string | null;
-      categoryId?: string | null;
-      durationMinutes?: number;
-      bufferBeforeMinutes?: number;
-      bufferAfterMinutes?: number;
-      price?: Money;
-      isActive?: boolean;
-    },
-  ): Promise<ServiceView> {
+  public async update(id: string, patch: UpdateServiceRequest): Promise<ServiceView> {
     if (patch.categoryId !== undefined && patch.categoryId !== null) {
       await this.requireCategory(patch.categoryId);
     }

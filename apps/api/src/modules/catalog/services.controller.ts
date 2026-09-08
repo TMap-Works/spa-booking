@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import {
+  ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNotFoundResponse,
@@ -10,10 +11,14 @@ import {
 
 import { AuthAtLeast } from '../identity/auth.decorator';
 import {
+  type CreateServiceBody,
   CreateServiceDto,
   ListServicesQueryDto,
   ServiceDto,
+  type UpdateServiceBody,
   UpdateServiceDto,
+  createServiceBody,
+  updateServiceBody,
 } from './dto/service.dto';
 import { ServicesService } from './services.service';
 
@@ -93,10 +98,20 @@ export class ServicesController {
   @Post()
   @AuthAtLeast('MANAGER')
   @ApiOperation({ summary: 'Créer une prestation' })
+  // Déclaré explicitement : le corps est validé par le contrat partagé et le
+  // paramètre est typé par un alias de type, dont `@nestjs/swagger` ne peut plus
+  // rien déduire. `CreateServiceDto` ne sert plus qu'à cela (ADR 0008).
+  @ApiBody({ type: CreateServiceDto })
   @ApiCreatedResponse({ type: ServiceDto })
   @ApiNotFoundResponse({ description: 'La rubrique demandée n’existe pas ici.' })
   @ApiConflictResponse({ description: 'Une prestation de cet établissement porte déjà ce slug.' })
-  public async create(@Body() body: CreateServiceDto): Promise<ServiceDto> {
+  public async create(
+    // Le type est celui **du contrat**, jamais `CreateServiceDto` : la classe
+    // n'a plus de décorateur `class-validator`, et la typer ici ferait rejouer
+    // le `ValidationPipe` global, dont le `whitelist` viderait le corps de tous
+    // ses champs (ADR 0008).
+    @Body(createServiceBody) body: CreateServiceBody,
+  ): Promise<ServiceDto> {
     return this.services.create(body);
   }
 
@@ -110,12 +125,13 @@ export class ServicesController {
   @Patch(':id')
   @AuthAtLeast('MANAGER')
   @ApiOperation({ summary: 'Modifier une prestation, ou l’activer / la désactiver' })
+  @ApiBody({ type: UpdateServiceDto })
   @ApiOkResponse({ type: ServiceDto })
   @ApiNotFoundResponse({ description: 'Aucune prestation de cet établissement ne porte cet identifiant.' })
   @ApiConflictResponse({ description: 'Une prestation de cet établissement porte déjà ce slug.' })
   public async update(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: UpdateServiceDto,
+    @Body(updateServiceBody) body: UpdateServiceBody,
   ): Promise<ServiceDto> {
     return this.services.update(id, body);
   }
