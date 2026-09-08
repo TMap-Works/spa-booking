@@ -9,10 +9,11 @@ import { DomainError } from '../../common/errors';
  * ces classes, et `DomainExceptionFilter` la traduit. Le front réagit sur
  * `code`, jamais sur `message`.
  *
- * TODO(#26) : ces codes appartiennent au contrat d'API et devront vivre dans
- * `@spa/shared`, comme ceux d'`identity` et de `catalog`. Les déclarer ici suit
- * le précédent des modules voisins, et l'import se substituera à ces constantes
- * sans changer une valeur.
+ * TODO(#536) : les **autres** codes appartiennent au contrat d'API, et #510 n'a
+ * pas pu les y prendre — la même décision de contrat que dans les cinq autres
+ * fichiers d'erreurs du dépôt : il n'y a pas d'import à faire mais une famille à
+ * découper, `@spa/shared` mêlant les codes de tous les modules dans trois
+ * constantes sans regroupement par module.
  *
  * `CLIENT_EMAIL_NOT_BOOKABLE`, lui, y est **déjà** déclaré — dans
  * `DOMAIN_ERROR_CODES` de `packages/shared/src/errors/error-codes.ts`, parce que

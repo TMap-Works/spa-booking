@@ -1,3 +1,5 @@
+import { SLUG_MAX_LENGTH } from '@spa/shared';
+
 import { BusinessRuleError } from '../../common/errors';
 
 /**
@@ -29,13 +31,24 @@ import { BusinessRuleError } from '../../common/errors';
  *
  * Le sens du décalage compte : une borne **plus étroite** que la colonne refuse
  * proprement, une borne plus large produit un 500 sur un `VARCHAR` trop court.
- * Cette valeur est celle de `SLUG_MAX_LENGTH` dans `@spa/shared` — la même
- * duplication temporaire que les autres constantes du module, voir le TODO(#510)
- * de `catalog.types.ts`.
+ *
+ * **Importée du contrat partagé** depuis #510, et réexportée d'ici pour les
+ * appelants du module qui la lisaient déjà à cette adresse. Le littéral valait
+ * 63 des deux côtés : la substitution n'a donc changé aucune borne, elle a
+ * seulement supprimé la seconde écriture qui aurait pu, elle, diverger — et la
+ * dérivation ci-dessous tronque désormais exactement là où `slugSchema` de
+ * `@spa/shared` refuse.
  */
-export const SLUG_MAX_LENGTH = 63;
+export { SLUG_MAX_LENGTH };
 
-/** Forme acceptée : minuscules, chiffres, tirets simples, ni en tête ni en fin. */
+/**
+ * Forme acceptée : minuscules, chiffres, tirets simples, ni en tête ni en fin.
+ *
+ * Recopié de `slugSchema` faute que `@spa/shared` publie le motif seul — il le
+ * porte en ligne dans le `.regex()` du schéma. Il ne valide plus aucun corps de
+ * requête : les DTO du module montent le schéma partagé (ADR 0008), et ce motif
+ * n'alimente plus que le `pattern` de `/api/docs` et la garde de `slugify`.
+ */
 export const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 /**

@@ -2,11 +2,13 @@
  * Formes de données des plages bloquées et congés — CDC §2.3 « plages
  * bloquées », #33.
  *
- * TODO(#26) : ces formes appartiennent au contrat d'API et sont décrites par
+ * TODO(#536) : ces formes appartiennent au contrat d'API et sont décrites par
  * `packages/shared/src/schemas/availability.ts` (`staffTimeOffSchema`,
- * `staffBusyIntervalSchema`, tenus à jour par ce même ticket) ; elles devront en
- * être importées lors de la reprise groupée de ce TODO — la dépendance existe
- * depuis #463. Même TODO que dans `catalog.types.ts` et `identity.types.ts`.
+ * `staffBusyIntervalSchema`). Ce qui retient l'import est celui de
+ * `availability.types.ts`, mot pour mot : `z.infer<...>` ne porte pas
+ * `readonly`, là où toutes les vues de ce fichier le sont — et un intervalle
+ * d'occupation modifié en place par son lecteur ferait calculer des créneaux
+ * libres sur une contrainte qui n'est plus celle de la base.
  *
  * ## Aucune de ces formes ne porte de `tenantId`
  *

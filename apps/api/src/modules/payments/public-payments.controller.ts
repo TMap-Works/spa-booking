@@ -1,6 +1,7 @@
 import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNotFoundResponse,
@@ -13,7 +14,12 @@ import {
 } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 
-import { CreatePaymentIntentDto, PaymentIntentDto } from './dto/create-payment-intent.dto';
+import {
+  type CreatePaymentIntentBody,
+  CreatePaymentIntentDto,
+  PaymentIntentDto,
+  createPaymentIntentBody,
+} from './dto/create-payment-intent.dto';
 import { PaymentsService } from './payments.service';
 
 /**
@@ -42,8 +48,12 @@ import { PaymentsService } from './payments.service';
  * Ce que cette route n'apprend donc à personne : un identifiant inconnu et
  * celui d'un autre salon rendent le **même** 404. Et ce qu'elle ne permet pas :
  * choisir un montant, une devise, un établissement ou un moyen de paiement —
- * le corps ne porte qu'un identifiant, et `forbidNonWhitelisted` rejette tout
- * le reste.
+ * le corps ne porte qu'un identifiant, et le `.strict()` du contrat partagé
+ * rejette tout le reste
+ * ([ADR 0008](../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
+ * C'est le seul changement de #510 sur cette surface : le refus vient du schéma
+ * plutôt que du `forbidNonWhitelisted` du pipe global, et il rend le même 400
+ * avec le même corps `VALIDATION_ERROR`.
  *
  * `ThrottlerGuard` complète, pour la raison qui le pose sur la réservation :
  * cette route **écrit** — une ligne `payments` — et appelle un prestataire
@@ -107,6 +117,10 @@ export class PublicPaymentsController {
   @Post('intents')
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Ouvrir le paiement en ligne d’un rendez-vous' })
+  // Déclaré explicitement : le corps est validé par le contrat partagé et le
+  // paramètre est typé par un alias de type, dont `@nestjs/swagger` ne peut plus
+  // rien déduire. `CreatePaymentIntentDto` ne sert plus qu'à cela (ADR 0008).
+  @ApiBody({ type: CreatePaymentIntentDto })
   @ApiCreatedResponse({ type: PaymentIntentDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
   @ApiNotFoundResponse({ description: 'Établissement ou rendez-vous introuvable.' })
@@ -122,7 +136,14 @@ export class PublicPaymentsController {
   @ApiServiceUnavailableResponse({
     description: 'Le prestataire de paiement est indisponible (`PAYMENT_PROVIDER_UNAVAILABLE`).',
   })
-  public async createIntent(@Body() body: CreatePaymentIntentDto): Promise<PaymentIntentDto> {
+  public async createIntent(
+    // Le type est celui **du contrat**, jamais `CreatePaymentIntentDto` : la
+    // classe n'a plus de décorateur `class-validator`, et la typer ici ferait
+    // rejouer le `ValidationPipe` global, dont le `whitelist` viderait le corps
+    // de son unique champ — l'intention serait alors ouverte sur un
+    // `appointmentId` indéfini (ADR 0008).
+    @Body(createPaymentIntentBody) body: CreatePaymentIntentBody,
+  ): Promise<PaymentIntentDto> {
     return this.payments.createIntentForAppointment(body.appointmentId);
   }
 }

@@ -10,6 +10,7 @@ import {
   Post,
 } from '@nestjs/common';
 import {
+  ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNoContentResponse,
@@ -21,7 +22,12 @@ import {
 } from '@nestjs/swagger';
 
 import { AuthAtLeast } from '../identity/auth.decorator';
-import { AssignServiceStaffDto, ServiceStaffMemberDto } from './dto/service-staff.dto';
+import {
+  type AssignServiceStaffBody,
+  AssignServiceStaffDto,
+  ServiceStaffMemberDto,
+  assignServiceStaffBody,
+} from './dto/service-staff.dto';
 import { ServiceStaffService } from './service-staff.service';
 
 /**
@@ -107,9 +113,13 @@ export class ServiceStaffController {
     description: 'Ni la prestation ni le praticien ne sont désignés dans cet établissement.',
   })
   @ApiConflictResponse({ description: 'Ce praticien est déjà affecté à cette prestation.' })
+  // Déclaré explicitement : le corps est validé par le contrat partagé et le
+  // paramètre est typé par un alias de type, dont `@nestjs/swagger` ne peut plus
+  // rien déduire. `AssignServiceStaffDto` ne sert plus qu'à cela (ADR 0008).
+  @ApiBody({ type: AssignServiceStaffDto })
   public async assign(
     @Param('serviceId', ParseUUIDPipe) serviceId: string,
-    @Body() body: AssignServiceStaffDto,
+    @Body(assignServiceStaffBody) body: AssignServiceStaffBody,
   ): Promise<ServiceStaffMemberDto> {
     return this.assignments.assign(serviceId, body.staffId);
   }

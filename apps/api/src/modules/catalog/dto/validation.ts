@@ -1,74 +1,129 @@
 import { Transform } from 'class-transformer';
 import { ValidateIf } from 'class-validator';
+import { z, type ZodTypeAny } from 'zod';
 
 /**
- * Briques de validation partagées par les DTO du module `catalog`.
+ * Ce qui **survit** à la substitution du contrat partagé dans `catalog` (#510),
+ * et rien de plus.
  *
- * Les bornes reprennent **exactement** les largeurs de `schema.prisma`. Ce n'est
- * pas de la duplication décorative : une borne plus large que la colonne produit
- * un 500 sur un `VARCHAR` trop court là où l'appelant attendait un message de
- * champ. Les deux se corrigent ensemble.
+ * Les corps de requête du module ne passent plus par `class-validator` : ils
+ * sont validés par les schémas de `@spa/shared`, montés sur le paramètre du
+ * handler par `ZodValidationPipe`
+ * ([ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
+ * Ce fichier ne porte donc plus que deux familles, et il faut savoir laquelle
+ * est laquelle avant d'y ajouter quoi que ce soit :
  *
- * TODO(#510) : ces valeurs sont celles de `@spa/shared`
- * (`packages/shared/src/constants/limits.ts`) et devront en être importées lors
- * de la reprise groupée de ce TODO — la dépendance existe depuis #463 — voir le
- * même TODO dans `catalog.types.ts`. Les noms sont donc **ceux du paquet
- * partagé**, et pas
- * seulement les valeurs : un homonyme local qui ne vaudrait pas la même chose
- * que celui de `@spa/shared` ferait de la substitution un changement de borne
- * silencieux. C'est le cas de `NAME_MAX_LENGTH` là-bas — 80, pour un prénom ou
- * un nom — quand la borne d'un libellé de catalogue est
- * `DISPLAY_NAME_MAX_LENGTH`.
+ * 1. **les briques des DTO de chaîne de requête** — `OptionalPresent` et
+ *    `BooleanQuery`. Ces trois DTO-là restent sous `class-validator` faute de
+ *    schéma de requête dans le contrat ; voir le `TODO(#536)` qui les
+ *    accompagne dans `service.dto.ts` ;
+ * 2. **les bornes que le contrat ne porte pas**, et elles se comptent sur une
+ *    main : le plafond des durées. Toutes les autres — longueur d'un libellé,
+ *    d'un slug, d'une description, plafond d'un montant — sont désormais
+ *    **importées** de `@spa/shared` par les fichiers qui les documentent.
+ *
+ * ## Le piège d'homonymie, constaté valeur par valeur avant de substituer
+ *
+ * Le marqueur que ce fichier portait le nommait, et deux cas s'y sont
+ * effectivement présentés. Substituer sur la foi du nom aurait déplacé une
+ * borne sans qu'aucun test ne le dise :
+ *
+ * | Ici | Dans `@spa/shared` | Verdict |
+ * |---|---|---|
+ * | `DISPLAY_NAME_MAX_LENGTH` = 160 | `DISPLAY_NAME_MAX_LENGTH` = 160 | substitué |
+ * | — | `NAME_MAX_LENGTH` = **80** | *jamais* : c'est la borne d'un prénom, pas d'un libellé de catalogue |
+ * | `SLUG_MAX_LENGTH` = 63 | `SLUG_MAX_LENGTH` = 63 | substitué, via `catalog.slug` |
+ * | `DESCRIPTION_MAX_LENGTH` = 2000 | `LONG_TEXT_MAX_LENGTH` = 2000 | substitué — même valeur, autre nom |
+ * | `MAX_AMOUNT_MINOR` = 2 147 483 647 | `AMOUNT_MINOR_MAX` = 2 147 483 647 | substitué |
+ * | `MIN_AMOUNT_MINOR` = **0** | `AMOUNT_MINOR_MIN` = **−2 147 483 648** | *jamais* : les deux noms sont l'anagramme l'un de l'autre et ne valent pas la même chose. Le plancher d'un prix est celui de `nonNegativeMoneySchema`, pas celui de la colonne. La constante locale est conservée sous le nom `NON_NEGATIVE_AMOUNT_MINOR_FLOOR`, qui ne se confond avec rien |
  */
 
-/** `VARCHAR(160)` — nom de prestation, nom de catégorie. */
-export const DISPLAY_NAME_MAX_LENGTH = 160;
-
 /**
- * Slug : la longueur d'un label DNS (63), pas la largeur de la colonne (80).
+ * Bornes des durées, en minutes — **la seule règle d'entrée du module qui ne
+ * vienne pas du contrat**.
  *
- * Le sens du décalage compte — une borne **plus étroite** que la colonne refuse
- * proprement en 422, une borne plus large produit un 500.
+ * Les planchers (`1` pour un soin, `0` pour un tampon) sont ceux
+ * qu'appliquent déjà `durationMinutesSchema` et `bufferMinutesSchema` de
+ * `@spa/shared` : ils ne sont plus validés ici, ils sont **publiés** ici, dans
+ * les `minimum` que lit `/api/docs`.
  *
- * La borne et le motif viennent de `catalog.slug.ts`, qui **dérive** les slugs :
- * les redéclarer ici laisserait le DTO refuser en 400 une forme que le serveur
- * produit pourtant lui-même à partir du nom, le jour où l'un des deux bougerait
- * seul.
- */
-export { SLUG_MAX_LENGTH, SLUG_PATTERN } from '../catalog.slug';
-
-/** `VARCHAR(2000)` — description de prestation ou de catégorie. */
-export const DESCRIPTION_MAX_LENGTH = 2000;
-
-/**
- * Bornes des durées, en minutes.
+ * Le plafond, lui, est validé — et c'est un écart assumé. Le contrat ne borne
+ * les durées par le haut nulle part, là où les DTO le faisaient à
+ * `MAX_DURATION_MINUTES`. Relâcher l'API pour l'aligner sur le contrat aurait
+ * changé la nature de l'échec sur une saisie absurde : `duration_minutes` est
+ * un `integer` PostgreSQL, et une valeur au-delà de 2³¹ sortirait en
+ * `numeric value out of range` — un 500 là où l'appelant recevait un 400
+ * nommant le champ. C'est le sens que l'ADR 0008 refuse explicitement pour la
+ * version d'UUID : on resserre le contrat, on ne relâche pas l'API.
  *
- * Le plancher d'une durée de soin est `1` : un rendez-vous de durée nulle
- * produit un intervalle vide, qui ne chevauche rien et passerait sous la
- * contrainte d'exclusion anti-double-réservation sans jamais la déclencher
- * (`CHECK ("duration_minutes" > 0)` en base le refuse aussi). Le plancher d'un
- * tampon est `0` : un soin sans temps de préparation est le cas courant.
+ * Le resserrement du contrat appartient à `packages/shared`, hors de
+ * l'empreinte de ce ticket — d'où le `TODO(#536)` de `service.dto.ts`, où le
+ * plafond est **ajouté** au schéma partagé par un `.extend()` local.
  *
- * Le plafond de vingt-quatre heures ne protège d'aucun scénario métier — il
- * borne simplement l'absurde avant qu'il n'atteigne le calcul de créneaux.
+ * Le plafond de vingt-quatre heures ne protège d'aucun scénario métier : il
+ * borne l'absurde avant qu'il n'atteigne le calcul de créneaux et la colonne.
  */
 export const MIN_DURATION_MINUTES = 1;
 export const MAX_DURATION_MINUTES = 1440;
 export const MIN_BUFFER_MINUTES = 0;
 
 /**
- * Bornes d'un `integer` PostgreSQL, la largeur de `price_amount_minor`.
+ * Plancher d'un prix — `0`, un soin offert.
  *
- * Les valider ici change la nature de l'échec : un dépassement devient un 400
- * nommant le champ, au lieu d'un `numeric value out of range` remonté en 500
- * depuis le pilote. Le plancher est `0` — un soin offert vaut zéro, il n'a
- * jamais un prix négatif — en écho au `CHECK ("price_amount_minor" >= 0)`.
+ * **Ce n'est pas `AMOUNT_MINOR_MIN`** de `@spa/shared`, qui vaut
+ * −2 147 483 648 : celui-là est la borne basse de la colonne `integer`, celle
+ * que `moneySchema` applique aux montants signés (un remboursement, un écart de
+ * caisse). Le prix d'une prestation, lui, passe par `nonNegativeMoneySchema`,
+ * dont le plancher est zéro. Publier l'autre dans `/api/docs` annoncerait un
+ * prix négatif que la route refuse en 400 — le sens dangereux de l'écart, celui
+ * que l'ADR 0008 ferme.
+ *
+ * La valeur n'est pas validée ici : `nonNegativeMoneySchema` s'en charge. Elle
+ * est publiée, comme les planchers de durée.
  */
-export const MIN_AMOUNT_MINOR = 0;
-export const MAX_AMOUNT_MINOR = 2_147_483_647;
+export const NON_NEGATIVE_AMOUNT_MINOR_FLOOR = 0;
 
-/** Code devise ISO 4217, normalisé en majuscules par `NormalizeCurrency`. */
+/**
+ * Code devise ISO 4217, tel que `currencyCodeSchema` l'impose après passage en
+ * majuscules.
+ *
+ * Déclaré ici parce que le contrat ne l'exporte pas — il le porte en ligne dans
+ * `currencyCodeSchema`. Il ne valide plus rien : il alimente le `pattern` que
+ * publie `/api/docs`, pour que la documentation dise la règle que le schéma
+ * applique.
+ */
 export const CURRENCY_PATTERN = /^[A-Z]{3}$/;
+
+/**
+ * Un corps **absent** vaut un corps vide — la propriété que
+ * `ValidationPipe.toEmptyIfNil` tenait avant la substitution (#510).
+ *
+ * Elle ne se voit que sur les corps dont **aucun** champ n'est obligatoire, et
+ * les deux `PATCH` de ce module en sont : `PATCH /services/{id}` et
+ * `PATCH /service-categories/{id}` répondaient 200 à une requête sans corps —
+ * un no-op, mais un no-op qui réussissait.
+ *
+ * Ce qui a changé : Express 5 et body-parser 2 laissent `req.body` à `undefined`
+ * quand la requête ne porte aucun en-tête `Content-Type`, et le `ValidationPipe`
+ * global ne le normalise **plus** — il ne normalisait que les paramètres dont la
+ * métadonnée est une classe à valider, et le paramètre du handler est désormais
+ * typé par un alias, dont la métadonnée émise est `Object`.
+ *
+ * Enveloppe le schéma plutôt que de modifier le pipe : le correctif reste dans
+ * le module qui en a besoin, et les schémas dont un champ **est** obligatoire —
+ * la création d'une prestation, celle d'une rubrique — ne changent pas de
+ * comportement. `ZodValidationPipe` déballe les `ZodEffects` avant de vérifier
+ * `.strict()`, si bien que la garde de champ inconnu reste posée.
+ *
+ * Jumeau de celui d'`appointments/dto/validation.ts`, dupliqué pour la raison
+ * qui vaut déjà pour `OptionalPresent` et `BooleanQuery` : un module n'importe
+ * pas un fichier profond d'un autre (api-module §3).
+ */
+export function optionalBody<TSchema extends ZodTypeAny>(
+  schema: TSchema,
+): z.ZodEffects<TSchema, z.output<TSchema>, unknown> {
+  return z.preprocess((value) => value ?? {}, schema);
+}
 
 /**
  * Champ facultatif dont `null` n'est **pas** une valeur acceptée.
@@ -79,39 +134,11 @@ export const CURRENCY_PATTERN = /^[A-Z]{3}$/;
  * `NOT NULL`. Ce décorateur-ci ne laisse passer que l'absence — un `null`
  * déclenche les validateurs, donc un 400 qui nomme le champ.
  *
- * Les champs réellement effaçables, eux, gardent `@IsOptional()` : c'est là que
- * `null` a un sens, et il vaut « efface ce texte ».
+ * Ne sert plus qu'aux DTO de chaîne de requête : les corps, eux, tiennent la
+ * distinction du contrat, où `.optional()` et `.nullable()` sont deux choses.
  */
 export const OptionalPresent = (): PropertyDecorator =>
   ValidateIf((_object: unknown, value: unknown) => value !== undefined);
-
-/**
- * Élague un libellé avant que les bornes ne le jugent.
- *
- * Sans lui, `@MinLength(1)` laisse passer `"   "` — trois espaces font trois
- * caractères — et le catalogue se retrouve avec une prestation sans nom
- * lisible, introuvable dans la liste du back-office. C'est aussi ce que fait
- * `displayNameSchema` / `longTextSchema` dans `@spa/shared` (`.trim()` avant
- * `.min(1)`) : l'API ne doit pas accepter ce que le contrat refuse.
- *
- * Rend la valeur telle quelle si ce n'est pas une chaîne — un `null` d'effacement
- * doit continuer à valoir « efface », et un type inattendu doit être refusé par
- * son validateur, pas transformé ici.
- */
-export const Trim = (): PropertyDecorator =>
-  Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value));
-
-/** Met le code devise en majuscules : `eur` et `EUR` désignent la même devise. */
-export const NormalizeCurrency = (): PropertyDecorator =>
-  Transform(({ value }: { value: unknown }) =>
-    typeof value === 'string' ? value.trim().toUpperCase() : value,
-  );
-
-/** Abaisse et élague un slug fourni, avant que le motif ne le juge. */
-export const NormalizeSlug = (): PropertyDecorator =>
-  Transform(({ value }: { value: unknown }) =>
-    typeof value === 'string' ? value.trim().toLowerCase() : value,
-  );
 
 /**
  * Lit un booléen de chaîne de requête.
@@ -122,6 +149,10 @@ export const NormalizeSlug = (): PropertyDecorator =>
  * transformée en `false` : c'est `@IsBoolean()` qui la refuse ensuite, en 400
  * nommant le champ, là où un `false` silencieux aurait servi une liste que
  * personne n'a demandée.
+ *
+ * C'est cette conversion-là qui interdit de substituer les DTO de requête en
+ * l'état : une chaîne de requête arrive en `string`, et aucun schéma du contrat
+ * ne coerce. Voir le `TODO(#536)` de `service.dto.ts`.
  */
 export const BooleanQuery = (): PropertyDecorator =>
   Transform(({ value }: { value: unknown }) => {

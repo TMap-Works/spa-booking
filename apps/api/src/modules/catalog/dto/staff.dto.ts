@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { serviceStaffMemberSchema } from '@spa/shared';
 import { IsBoolean } from 'class-validator';
+import type { z } from 'zod';
 
 import type { StaffMemberView } from '../catalog.types';
 import { BooleanQuery, OptionalPresent } from './validation';
@@ -13,9 +15,13 @@ import { BooleanQuery, OptionalPresent } from './validation';
  * appelant choisirait son établissement (tenant-isolation §2). Il n'y en a pas,
  * et il ne doit pas y en avoir : l'établissement vient du jeton vérifié.
  *
- * TODO(#510) : ces formes appartiennent au contrat d'API et sont décrites par
- * `packages/shared/src/schemas/catalog.ts` (`staffMemberSchema`) ; elles devront
- * en être importées.
+ * La **sortie** est tenue par le contrat depuis #510 — voir les assertions de
+ * compilation en fin de fichier.
+ *
+ * TODO(#536) : le filtre, lui, reste sous `class-validator`. C'est le cas commun
+ * des DTO de chaîne de requête du dépôt : `activeOnly` arrive en `"true"` ou
+ * `"false"`, et aucun schéma du contrat ne décrit ce filtre ni ne coerce — voir
+ * le même TODO dans `service.dto.ts`, qui porte les deux filtres du catalogue.
  */
 
 /** Filtre de la liste — le seul paramètre que la route accepte. */
@@ -62,3 +68,35 @@ export class StaffMemberDto implements StaffMemberView {
   })
   public isActive!: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// La sortie tenue par le contrat — à la compilation, faute de pouvoir l'être à
+// l'exécution
+// ---------------------------------------------------------------------------
+
+/**
+ * Le schéma de référence est `serviceStaffMemberSchema` et non
+ * `staffMemberSchema`, et ce n'est pas un raccourci : le contrat décrit la fiche
+ * complète avec sa `bio`, que cette route ne sert pas — une liste de choix n'a
+ * pas à transporter deux mille caractères par ligne. `serviceStaffMemberSchema`
+ * est exactement le résumé plus `isActive`, c'est-à-dire la forme servie ici, et
+ * `catalog.types.ts` fait déjà de `ServiceStaffMemberView` un alias de
+ * `StaffMemberView` pour la même raison.
+ *
+ * Les assertions coûtent zéro à l'exécution et échouent au `tsc` : un champ
+ * ajouté d'un côté et pas de l'autre — une `bio` qui reviendrait par
+ * inadvertance dans le `select` du repository — casse la compilation.
+ */
+type StaffMemberWire = z.input<typeof serviceStaffMemberSchema>;
+
+type AssertNever<T extends never> = T;
+type AssertTrue<T extends true> = T;
+
+type _StaffMemberDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof StaffMemberDto, keyof StaffMemberWire>
+  | Exclude<keyof StaffMemberWire, keyof StaffMemberDto>
+>;
+
+type _StaffMemberDtoIsReadableByTheContract = AssertTrue<
+  StaffMemberDto extends StaffMemberWire ? true : false
+>;

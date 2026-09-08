@@ -1,4 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { openingHoursEntrySchema, postalAddressSchema, publicTenantSchema } from '@spa/shared';
+import type { z } from 'zod';
 
 /**
  * Adresse postale de l'établissement — #343.
@@ -18,8 +20,9 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
  * `PostalAddress` incomplet — publier faux coûte plus cher que ne pas publier.
  * La base tient la même règle (`tenants_address_completeness_check`).
  *
- * Reprend `postalAddressSchema` de `packages/shared` — même TODO(#510) que
- * `PublicTenantDto` ci-dessous.
+ * Reprend `postalAddressSchema` de `packages/shared`, et le fait désormais **de
+ * façon vérifiable** : les assertions de compilation en fin de fichier tiennent
+ * le jeu de clés et l'assignabilité champ par champ (#510).
  */
 export class PostalAddressDto {
   @ApiProperty({ maxLength: 160, example: '12 rue des Lilas' })
@@ -115,19 +118,14 @@ export class OpeningHoursEntryDto {
  *   plus.
  *
  * La forme reprend `publicTenantSchema` de `packages/shared` — le contrat que le
- * front consomme.
+ * front consomme —, et depuis #510 elle le reprend **de façon vérifiable** : les
+ * assertions de compilation en fin de fichier tiennent le jeu de clés et
+ * l'assignabilité champ par champ, optionalité comprise. Un contact passé de
+ * `.optional()` à `.nullable()` d'un seul côté échoue désormais au `tsc`, là où
+ * il aurait cassé la lecture de la vitrine de tout salon sans coordonnées.
  *
- * TODO(#510) : `@spa/shared` porte déjà cette forme (`publicTenantSchema`,
- * `PublicTenant`), et `apps/api` en dépend depuis #463 — ce qui reste à câbler
- * est la reprise groupée de #26. La classe subsistera de toute façon :
- * `@nestjs/swagger` documente
- * une réponse par une classe décorée, pas par un schéma Zod. Ce qu'apportera le
- * câblage, c'est de pouvoir la contraindre au contrat
- * (`PublicTenantDto implements PublicTenant`) au lieu de la maintenir identique
- * à la main.
- *
- * D'ici là, le champ à champ ci-dessous suit `publicTenantSchema` **exactement**,
- * optionalité comprise.
+ * La classe, elle, subsiste : `@nestjs/swagger` documente une réponse par une
+ * classe décorée, pas par un schéma Zod (ADR 0008).
  */
 export class PublicTenantDto {
   @ApiProperty({
@@ -197,3 +195,66 @@ export class PublicTenantDto {
   })
   public openingHours?: readonly OpeningHoursEntryDto[] | undefined;
 }
+
+// ---------------------------------------------------------------------------
+// Les formes tenues par le contrat — à la compilation, faute de pouvoir l'être
+// à l'exécution
+// ---------------------------------------------------------------------------
+
+/**
+ * La vitrine ne porte aucun vocabulaire à casse divergente — ni statut, ni
+ * rôle —, si bien que le jeu de clés **et** l'assignabilité champ par champ se
+ * tiennent tous deux à la compilation, sans rien changer au format du fil.
+ *
+ * C'est la garde qui compte le plus de ce module : cette classe est ce qu'un
+ * visiteur **sans authentification** reçoit, et chaque champ ajouté est une
+ * décision de publication. Un `isActive` qui reviendrait par inadvertance dans
+ * le `select` du repository échoue ici, et non en production.
+ */
+type PublicTenantWire = z.input<typeof publicTenantSchema>;
+type PostalAddressWire = z.input<typeof postalAddressSchema>;
+type OpeningHoursEntryWire = z.input<typeof openingHoursEntrySchema>;
+
+type AssertNever<T extends never> = T;
+type AssertTrue<T extends true> = T;
+
+type _PublicTenantDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof PublicTenantDto, keyof PublicTenantWire>
+  | Exclude<keyof PublicTenantWire, keyof PublicTenantDto>
+>;
+
+/**
+ * L'assignabilité porte sur la forme **sans son tableau d'horaires**, et c'est
+ * le seul écart du fichier.
+ *
+ * `openingHoursSchema` est un `z.array(...)`, dont le type inféré est un tableau
+ * **mutable** ; cette classe le déclare `readonly`, et un `ReadonlyArray<T>`
+ * n'est pas assignable à un `T[]`. L'écart n'est pas un défaut : la réponse est
+ * rendue telle quelle par le service, et la rendre mutable inviterait un
+ * appelant à la réordonner en place — alors que l'ordre est précisément ce que
+ * `sortOpeningHours` établit une fois pour toutes. L'élément, lui, est tenu par
+ * l'assertion d'`OpeningHoursEntryDto` ci-dessous.
+ */
+type _PublicTenantDtoIsReadableByTheContract = AssertTrue<
+  Omit<PublicTenantDto, 'openingHours'> extends Omit<PublicTenantWire, 'openingHours'>
+    ? true
+    : false
+>;
+
+type _PostalAddressDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof PostalAddressDto, keyof PostalAddressWire>
+  | Exclude<keyof PostalAddressWire, keyof PostalAddressDto>
+>;
+
+type _PostalAddressDtoIsReadableByTheContract = AssertTrue<
+  PostalAddressDto extends PostalAddressWire ? true : false
+>;
+
+type _OpeningHoursEntryDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof OpeningHoursEntryDto, keyof OpeningHoursEntryWire>
+  | Exclude<keyof OpeningHoursEntryWire, keyof OpeningHoursEntryDto>
+>;
+
+type _OpeningHoursEntryDtoIsReadableByTheContract = AssertTrue<
+  OpeningHoursEntryDto extends OpeningHoursEntryWire ? true : false
+>;

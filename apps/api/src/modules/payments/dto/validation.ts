@@ -1,4 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE, OFFSET_DATE_TIME_PATTERN } from '@spa/shared';
 import { Type } from 'class-transformer';
 import {
   IsInt,
@@ -10,38 +11,31 @@ import {
 } from 'class-validator';
 
 /**
- * Briques de validation du module `payments` (#62).
+ * Briques de validation du module `payments` (#62), **branchées sur le contrat
+ * partagé** (#510).
  *
- * ## Pourquoi ce fichier existe alors que trois voisins en ont un identique
+ * ## Ce que ce fichier a cessé de redéclarer
  *
- * `appointments/dto/validation.ts`, `availability/dto/validation.ts` et
- * `catalog/dto/validation.ts` portent déjà la lecture d'une date-heure à offset
- * explicite. Elle est **dupliquée** plutôt qu'importée, et ce n'est pas un
- * oubli : un module n'importe pas un fichier profond d'un autre (api-module §3),
- * et la place définitive de ces primitives est `@spa/shared` — c'est l'objet de
- * #26. La dépendance qu'il fallait pour cela est déclarée depuis #463 ; ce qui
- * reste est la reprise elle-même. Les noms sont donc **ceux du paquet partagé**,
- * pour que la substitution ne change pas une borne en silence.
+ * Il recopiait trois valeurs que `@spa/shared` porte déjà — le motif de la
+ * date-heure à offset explicite, et les deux bornes de pagination. Elles sont
+ * désormais **importées**, et la vérification qui a précédé l'import est la
+ * seule chose qui rendait la substitution sûre : `OFFSET_DATE_TIME_PATTERN` de
+ * `common/time.ts` est caractère pour caractère celui qui était écrit ici,
+ * `DEFAULT_PAGE_SIZE` vaut 20 des deux côtés et `MAX_PAGE_SIZE` vaut 100. Aucune
+ * borne ne bouge, et il n'y a plus qu'une écriture à faire vivre.
  *
- * Ce fichier-ci n'en reprend que ce dont l'historique des ventes et des
- * transactions a besoin : les bornes `from` et `to` de sa fenêtre. Recopier les
- * six autres primitives « au cas où » aurait fait six duplicatas à faire vivre
- * pour zéro appelant.
+ * L'ADR 0008 ne s'applique pas à ce fichier : il ne décrit pas une **route**,
+ * donc il n'y a pas de schéma d'entrée à monter en pipe. Ce qui reste ici est ce
+ * que le contrat ne porte pas — voir les deux TODO(#536) plus bas.
+ *
+ * ## Ce qui reste local, et pourquoi
+ *
+ * Les deux historiques de #62 paginent et bornent une fenêtre ; leurs DTO sont
+ * encore validés par `class-validator`, faute d'un schéma de contrat qui décrive
+ * la même chose (`paymentListQuerySchema` filtre sur d'autres critères et ne
+ * pagine pas — voir l'en-tête de `cash-payment.dto.ts`). Les décorateurs de ce
+ * fichier restent donc la frontière réelle de `GET /payments` et `GET /sales`.
  */
-
-/**
- * ISO 8601 avec offset explicite — `Z` ou `±HH:MM`, secondes et fraction
- * facultatives.
- *
- * Jumeau de `OFFSET_DATE_TIME_PATTERN` d'`appointments/dto/validation.ts`, et il
- * doit le rester : la fenêtre d'un rapprochement se pose sur les mêmes instants
- * que ceux qu'un rendez-vous accepte. L'heure est bornée à `00`-`23` — le profil
- * RFC 3339 ne connaît pas `24:00`, et un `\d{2}` complaisant laisserait
- * `2026-03-29T24:00:00Z` franchir la frontière pour être normalisé, sans un mot,
- * au 30 mars.
- */
-export const OFFSET_DATE_TIME_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,9})?)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$/;
 
 /**
  * `true` si la chaîne est une date-heure ISO 8601 à offset explicite **et**
@@ -52,6 +46,22 @@ export const OFFSET_DATE_TIME_PATTERN =
  * rapprochement décalée de deux jours par une faute de frappe, donc des
  * encaissements qui manquent au total sans qu'aucune erreur ne le dise. La date
  * civile est donc rejouée composant par composant.
+ *
+ * TODO(#536) : reste à faire converger cette fonction avec `isOffsetDateTime`
+ * de `@spa/shared`, dont le motif est déjà celui importé ci-dessus. Deux écarts
+ * l'ont empêché ici, et aucun ne se tranche depuis ce module :
+ *
+ * 1. **la signature.** Celle du contrat prend une `string` ; celle-ci prend un
+ *    `unknown`, parce qu'un validateur `class-validator` reçoit ce que le corps
+ *    JSON portait — un nombre, un objet, `null`. Le garde de type est donc ici,
+ *    pas là-bas ;
+ * 2. **le rejeu de la date civile**, et c'est le vrai écart. `isRealCalendarDate`
+ *    passe par `Date.UTC`, qui mappe les années `0`-`99` sur `1900`-`1999` :
+ *    `0026-09-01T00:00:00Z` y est **refusé**, là où le `setUTCFullYear` employé
+ *    ci-dessous l'accepte. Déléguer resserrerait donc la frontière de ces deux
+ *    routes sans que le contrat ait décidé de le faire — et le corriger dans
+ *    `packages/shared` déborde l'empreinte de ce ticket, `calendarDateSchema` et
+ *    toutes les requêtes de disponibilité en dépendant.
  */
 export function isOffsetDateTime(value: unknown): boolean {
   if (typeof value !== 'string' || !OFFSET_DATE_TIME_PATTERN.test(value)) {
@@ -104,17 +114,6 @@ export function IsOffsetDateTime(options?: ValidationOptions): PropertyDecorator
 }
 
 /**
- * Bornes de la pagination — celles de `CustomerPageDto`, et volontairement les
- * mêmes.
- *
- * TODO(#26) : ce sont `DEFAULT_PAGE_SIZE` et `MAX_PAGE_SIZE` de `@spa/shared`.
- * Deux écrans de back-office qui pagineraient différemment obligeraient le front
- * à savoir lequel il regarde.
- */
-export const DEFAULT_PAGE_SIZE = 20;
-export const MAX_PAGE_SIZE = 100;
-
-/**
  * Borne haute du numéro de page — celle au-delà de laquelle `(page - 1) *
  * pageSize` cesse d'être un entier exact.
  *
@@ -135,6 +134,21 @@ export const MAX_PAGE = Math.floor(Number.MAX_SAFE_INTEGER / MAX_PAGE_SIZE);
  * des chaînes, et le `ValidationPipe` global est en
  * `enableImplicitConversion: false` — `?page=2` arriverait sinon en `'2'` et
  * `@IsInt()` le refuserait.
+ *
+ * TODO(#536) : reste à monter `paginationQuerySchema` de `@spa/shared` à la
+ * place de ces deux décorateurs. Deux raisons l'ont empêché ici, et la seconde
+ * est bloquante :
+ *
+ * 1. **c'est une classe de base**, dont `ListPaymentsQueryDto` et
+ *    `ListSalesQueryDto` héritent en ajoutant `from`, `to` et leurs filtres. Un
+ *    pipe monté sur `paginationQuerySchema`, qui est `.strict()`, refuserait ces
+ *    champs-là. La substitution demande donc un schéma **par écran**, et le
+ *    contrat n'en porte aucun qui décrive ces deux fenêtres ;
+ * 2. **`paginationQuerySchema` ne borne pas la magnitude de `page`.** Il n'a que
+ *    `.int().min(1)`, là où `MAX_PAGE` ci-dessus existe précisément parce que
+ *    `?page=1e30` sort en 500 du pilote PostgreSQL. Substituer **relâcherait**
+ *    la frontière de ces routes — le sens interdit par l'ADR 0008, qui ne
+ *    referme un écart qu'en resserrant.
  */
 export class PageQueryDto {
   @ApiPropertyOptional({ minimum: 1, maximum: MAX_PAGE, default: 1 })

@@ -1,4 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { publicServiceSchema, staffMemberSummarySchema } from '@spa/shared';
+import type { z } from 'zod';
 
 import type { PublicServiceView, StaffMemberSummaryView } from '../catalog.types';
 import { ServiceCategorySummaryDto } from './service-category.dto';
@@ -13,9 +15,11 @@ import { MoneyDto } from './service.dto';
  * d'un champ. Ce qui rend ces routes sûres n'est pas une garde mais ce qu'elles
  * rendent — ces classes et leur liste blanche de champs.
  *
- * TODO(#510) : ces formes appartiennent au contrat d'API et sont décrites par
- * `packages/shared/src/schemas/catalog.ts` (`publicServiceSchema`) ; elles
- * devront en être importées.
+ * Depuis #510, cette liste blanche n'est plus seulement déclarative : les
+ * assertions de compilation en fin de fichier la tiennent contre
+ * `publicServiceSchema` du contrat, si bien qu'un champ ajouté ici sans l'être
+ * là-bas — un tampon de cabine, l'état d'activation — casse le `tsc` au lieu de
+ * partir sur le fil.
  */
 
 /**
@@ -83,3 +87,55 @@ export class PublicServiceDto implements PublicServiceView {
   })
   public staff!: readonly PublicStaffMemberDto[];
 }
+
+// ---------------------------------------------------------------------------
+// La sortie tenue par le contrat — à la compilation, faute de pouvoir l'être à
+// l'exécution
+// ---------------------------------------------------------------------------
+
+/**
+ * Le catalogue public ne porte aucun vocabulaire à casse divergente — ni statut,
+ * ni rôle —, si bien que le jeu de clés **et** l'assignabilité champ par champ
+ * se tiennent tous deux à la compilation, sans rien changer au format du fil.
+ *
+ * C'est la garde qui compte le plus de tout le module : cette classe est ce
+ * qu'un visiteur **sans compte** reçoit, et chacun des trois champs que
+ * l'en-tête écarte est une information d'exploitation. Un `bufferAfterMinutes`
+ * ajouté par inadvertance au `select` du repository échoue ici, et non en
+ * production.
+ */
+type PublicServiceWire = z.input<typeof publicServiceSchema>;
+type PublicStaffMemberWire = z.input<typeof staffMemberSummarySchema>;
+
+type AssertNever<T extends never> = T;
+type AssertTrue<T extends true> = T;
+
+type _PublicServiceDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof PublicServiceDto, keyof PublicServiceWire>
+  | Exclude<keyof PublicServiceWire, keyof PublicServiceDto>
+>;
+
+/**
+ * L'assignabilité champ par champ porte sur la forme **sans son tableau**, et
+ * c'est le seul écart de tout le fichier.
+ *
+ * `publicServiceSchema` déclare `staff: z.array(...)`, dont le type inféré est
+ * un tableau **mutable** ; `PublicServiceView` le déclare `readonly`, et un
+ * `ReadonlyArray<T>` n'est pas assignable à un `T[]`. L'écart n'est pas un
+ * défaut : la vue est rendue telle quelle par le service, et la rendre mutable
+ * inviterait un appelant à la modifier en place. La garde est donc posée sur le
+ * reste des champs, et le tableau est tenu par l'assertion de son élément —
+ * `PublicStaffMemberDto` ci-dessous.
+ */
+type _PublicServiceDtoIsReadableByTheContract = AssertTrue<
+  Omit<PublicServiceDto, 'staff'> extends Omit<PublicServiceWire, 'staff'> ? true : false
+>;
+
+type _PublicStaffMemberDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof PublicStaffMemberDto, keyof PublicStaffMemberWire>
+  | Exclude<keyof PublicStaffMemberWire, keyof PublicStaffMemberDto>
+>;
+
+type _PublicStaffMemberDtoIsReadableByTheContract = AssertTrue<
+  PublicStaffMemberDto extends PublicStaffMemberWire ? true : false
+>;

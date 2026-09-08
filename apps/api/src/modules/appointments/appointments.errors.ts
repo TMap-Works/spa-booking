@@ -1,3 +1,5 @@
+import { MAX_APPOINTMENT_RANGE_DAYS } from '@spa/shared';
+
 import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
 
 /**
@@ -8,15 +10,21 @@ import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
  * `{ code, message, details }`. Le front réagit sur `code`, jamais sur
  * `message`.
  *
- * TODO(#510) : ces codes appartiennent au contrat d'API et devront venir de
- * `@spa/shared`, où `BOOKING_ERROR_CODES.SLOT_NO_LONGER_AVAILABLE` porte déjà la
- * **même valeur**. L'import se substituera à cette constante sans changer un
- * seul caractère.
+ * La **borne** de ce fichier — `MAX_APPOINTMENT_RANGE_DAYS` — vient désormais de
+ * `@spa/shared` et est simplement réexportée d'ici (#510) : elle y vaut
+ * exactement ce qu'elle valait (31), et le contrat est maintenant sa seule
+ * écriture.
  *
- * Ce qui l'en séparait a été levé par #463 : `apps/api` déclare `@spa/shared` en
- * dépendance, l'image d'exécution porte le `dist` du paquet, et `crm.errors.ts`
- * en consomme déjà une **valeur**. Ce qui reste est la reprise groupée de #26 —
- * tous les codes de modules d'un seul tenant, plutôt qu'un par ticket.
+ * TODO(#536) : les **codes** d'erreur, eux, restent déclarés ici, et pour la
+ * raison qui vaut déjà dans `availability.errors.ts` : les rapatrier n'est pas
+ * un import mais une décision de contrat. `BOOKING_ERROR_CODES` de `@spa/shared`
+ * porte bien `SLOT_NO_LONGER_AVAILABLE` et `APPOINTMENT_RANGE_TOO_WIDE` — à la
+ * même valeur, caractère pour caractère —, mais il les mêle à ceux
+ * d'`availability`, si bien qu'importer depuis ici ferait de la famille de
+ * `appointments` un sous-ensemble emprunté à une famille voisine, sans que rien
+ * ne dise lequel des deux modules en est propriétaire. Reste à faire : découper
+ * les codes du contrat par module, puis importer — les deux fichiers d'erreurs
+ * bougeront ensemble.
  */
 
 /** Codes d'erreur du module, tels qu'ils partent au client. */
@@ -55,12 +63,12 @@ const UNPROCESSABLE_ENTITY = DOMAIN_HTTP_STATUS.UNPROCESSABLE_ENTITY;
  * back-office affiche ; les vues jour et semaine de #49 tiennent largement
  * dessous.
  *
- * TODO(#510) : c'est `MAX_APPOINTMENT_RANGE_DAYS` de `@spa/shared`
- * (`packages/shared/src/constants/limits.ts`), à importer lors de la reprise
- * groupée de ce TODO — la dépendance, elle, existe depuis #463. Le nom est celui
- * du paquet partagé pour que la substitution ne change pas une borne en silence.
+ * **Importée du contrat partagé** depuis #510, et réexportée d'ici pour les
+ * appelants du module qui la lisaient déjà à cette adresse. Le littéral valait
+ * 31 des deux côtés : la substitution n'a donc changé aucune borne, elle a
+ * seulement supprimé la seconde écriture qui aurait pu, elle, diverger.
  */
-export const MAX_APPOINTMENT_RANGE_DAYS = 31;
+export { MAX_APPOINTMENT_RANGE_DAYS };
 
 /**
  * Plage d'agenda inversée, ou plus large que `MAX_APPOINTMENT_RANGE_DAYS`.

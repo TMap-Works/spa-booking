@@ -26,6 +26,8 @@
  * du côté de la **création** de rendez-vous, qui refuse de trancher.
  */
 
+import { END_OF_DAY_LOCAL_TIME, MINUTES_IN_CIVIL_DAY } from '@spa/shared';
+
 import {
   CALENDAR_DATE_PATTERN,
   LOCAL_TIME_PATTERN,
@@ -42,24 +44,42 @@ import {
  * dimanche comme une valeur absente, et le praticien qui travaille le dimanche
  * verrait son horaire disparaître sans qu'aucun test de forme ne rougisse.
  *
- * TODO(#26) : cette numérotation est celle d'`isoWeekdaySchema` dans
- * `@spa/shared`. Elle en sera importée lors de la reprise groupée de ce TODO — la
- * dépendance existe depuis #463 — même TODO que `LOCAL_TIME_PATTERN` et
- * `AVAILABILITY_ERROR_CODES`.
+ * TODO(#536) : le contrat décrit la même numérotation avec `isoWeekdaySchema`,
+ * mais **pas le même type**. `IsoWeekday` de `@spa/shared` est
+ * `z.infer<typeof isoWeekdaySchema>`, c'est-à-dire `number` : Zod ne sait pas
+ * inférer l'union `1 | … | 7` d'un `.min(1).max(7)`. L'importer ici élargirait
+ * donc le type de tout le module, et ce n'est pas cosmétique — `isIsoWeekday`
+ * cesserait d'être un prédicat de type utile, `Map<IsoWeekday, …>` et
+ * `ReadonlySet<IsoWeekday>` accepteraient `0` et `8`, et
+ * `record.weekday as IsoWeekday` deviendrait une conversion sans contenu. Même
+ * constat sur `isoWeekdayOf` du contrat : il rend `number` et lève une
+ * `ZodError` là où celui-ci lève un `RangeError` que les suites du module
+ * attendent. Reste à faire : donner à `isoWeekdaySchema` un type de sortie
+ * étroit côté contrat (`z.union` de sept littéraux, ou un `.transform`
+ * typé), après quoi l'import est un remplacement pur.
  */
 export const ISO_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 
 export type IsoWeekday = (typeof ISO_WEEKDAYS)[number];
 
-/** Minutes d'une journée civile de 24 heures — la borne haute d'une plage. */
-export const MINUTES_IN_CIVIL_DAY = 1440;
+/**
+ * Minutes d'une journée civile de 24 heures — la borne haute d'une plage.
+ *
+ * Importée du contrat partagé et réexportée d'ici (#510) : `1440` des deux
+ * côtés, et une seule écriture désormais.
+ */
+export { MINUTES_IN_CIVIL_DAY };
 
 /**
  * Minuit **de fin de journée**, la seule heure de fermeture que `HH:MM` ne sait
  * pas dire — la borne haute d'une plage est exclue, elle ne désigne pas une
- * heure vécue. Même littéral que `END_OF_DAY_LOCAL_TIME` du contrat partagé.
+ * heure vécue.
+ *
+ * Importée du contrat partagé et réexportée d'ici (#510). Le littéral valait
+ * `'24:00'` des deux côtés ; ce fichier le comparait déjà au même caractère
+ * près, il le lit maintenant à la source.
  */
-export const END_OF_DAY_LOCAL_TIME = '24:00';
+export { END_OF_DAY_LOCAL_TIME };
 
 /** Une plage récurrente, telle que la base la porte : des minutes, pas des instants. */
 export interface ScheduleRange {
@@ -216,8 +236,18 @@ function utcMidnightOf(calendarDate: string): Date {
  * Se **compte sans s'énumérer**, et c'est tout l'objet de cette fonction : le
  * refus d'une plage trop large est une protection contre un déni de service, et
  * la faire précéder de la construction de la liste qu'elle refuse ferait payer
- * exactement le coût qu'elle existe pour éviter. Même définition que
- * `calendarDaysBetween` du contrat partagé (TODO(#26)).
+ * exactement le coût qu'elle existe pour éviter.
+ *
+ * TODO(#536) : le contrat porte une fonction de même nom, et `appointments` a
+ * substitué la sienne par elle (#510). Celle-ci **ne peut pas** l'être en
+ * l'état, et l'écart n'est pas cosmétique : `calendarDaysBetween` de
+ * `@spa/shared` fait deux `Date.parse` et rend `NaN` sur une date mal formée,
+ * là où `utcMidnightOf` ci-dessous passe par `CALENDAR_DATE_PATTERN` et lève un
+ * `RangeError` que les suites du module attendent. Un `NaN` traverserait la
+ * comparaison `days > MAX_AVAILABILITY_RANGE_DAYS` — toute comparaison avec
+ * `NaN` est fausse — et le moteur parcourrait une plage qu'il vient de déclarer
+ * servable. Reste à faire : donner au contrat une variante qui refuse plutôt
+ * qu'elle ne rend `NaN`, après quoi l'import est un remplacement pur.
  */
 export function calendarDaysBetween(from: string, to: string): number {
   const span = utcMidnightOf(to).getTime() - utcMidnightOf(from).getTime();

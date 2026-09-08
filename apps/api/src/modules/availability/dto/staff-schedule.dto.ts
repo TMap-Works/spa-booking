@@ -19,8 +19,24 @@ import { IsAfterLocalTime, IsLocalTime, IsScheduleEndTime } from './validation';
  * l'établissement (`tenants.timezone`), pas à la charge utile. Le laisser
  * soumettre reviendrait à laisser un client décaler l'agenda d'un salon.
  *
- * TODO(#26) : ces formes sont décrites par
- * `packages/shared/src/schemas/availability.ts` et devront en être importées.
+ * TODO(#536) : `setStaffScheduleRequestSchema` de
+ * `packages/shared/src/schemas/availability.ts` décrit exactement ce corps —
+ * mêmes bornes, même motif d'heure murale, même refus d'une fin antérieure au
+ * début —, et #510 n'a pourtant pas pu le monter. L'écart n'est pas de règle
+ * mais de **code de réponse** : le schéma refuse le recouvrement de deux plages
+ * du même jour par un `.refine()`, donc en **400**, là où cette route rend un
+ * **422 `OVERLAPPING_SCHEDULE_RANGES`** avec les deux plages fautives dans
+ * `details`. C'est délibéré — chaque plage est bien écrite, c'est leur mise en
+ * présence qui ne veut rien dire —, et l'écran de planning affiche les deux
+ * refus différemment. Monter le schéma changerait donc le code que le
+ * back-office lit, et lui retirerait au passage le `details` dont il a besoin
+ * pour désigner les plages à corriger.
+ *
+ * Reste à faire, côté contrat : sortir `staffScheduleEntriesOverlap` du
+ * `.refine()` de `setStaffScheduleRequestSchema` — la fonction est déjà exportée
+ * séparément — pour que le service reste seul juge du recouvrement. Même
+ * constat, mot pour mot, sur `updateTenantRequestSchema` dans
+ * `identity/dto/tenant-settings.dto.ts`.
  *
  * ## Une seule classe pour l'entrée et la sortie
  *

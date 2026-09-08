@@ -19,11 +19,16 @@ import {
 /**
  * Les modèles de messages du back-office — `/api/v1/notification-templates` (#69).
  *
- * TODO(#26) : ces formes appartiennent au contrat d'API et devront être
- * importées de `packages/shared` le jour où il les décrira. Les noms suivent les
- * conventions déjà en vigueur dans le paquet — types et canaux **en minuscules**
- * dans le contrat, en majuscules dans le domaine — pour que la substitution ne
- * change rien en silence.
+ * TODO(#536) : ces formes appartiennent au contrat d'API, et #510 n'a pas pu les
+ * y prendre pour la raison la plus simple qui soit : le contrat **ne les décrit
+ * pas**. `packages/shared/src/schemas/notification.ts` porte la notification, ses
+ * préférences et le filtre du journal, mais ni le modèle de message, ni son
+ * contenu, ni le coût qu'il représente sur le canal SMS. Il n'y a donc pas
+ * d'import à faire mais des schémas à écrire, dans un paquet hors de l'empreinte
+ * de ce ticket — et l'écriture n'est pas mécanique : elle demande de trancher la
+ * casse des types et des canaux, que la colonne écrit en majuscules et que le
+ * contrat nomme en minuscules (premier point de vigilance de #510, même constat
+ * que dans `list-notifications.dto.ts`).
  *
  * ## Ce que ce contrat porte, et qui n'est pas anodin
  *

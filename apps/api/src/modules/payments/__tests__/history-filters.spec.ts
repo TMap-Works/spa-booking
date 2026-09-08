@@ -1,3 +1,7 @@
+// Les deux bornes de pagination viennent désormais du contrat partagé et non
+// plus d'une seconde écriture dans `../dto/validation` (#510) : la suite les lit
+// donc à leur source, exactement comme le DTO qu'elle exerce.
+import { DEFAULT_PAGE_SIZE, MAX_PAGE_SIZE } from '@spa/shared';
 import { validate } from 'class-validator';
 
 import {
@@ -5,12 +9,7 @@ import {
   toPaymentHistoryFilter,
 } from '../dto/cash-payment.dto';
 import { ListSalesQueryDto, toSaleHistoryFilter } from '../dto/sale.dto';
-import {
-  DEFAULT_PAGE_SIZE,
-  MAX_PAGE,
-  MAX_PAGE_SIZE,
-  isOffsetDateTime,
-} from '../dto/validation';
+import { MAX_PAGE, isOffsetDateTime } from '../dto/validation';
 
 /**
  * La frontière HTTP des deux historiques de #62.

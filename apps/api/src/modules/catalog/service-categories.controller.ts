@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, ParseUUIDPipe, Patch, Post, Query } from '@nestjs/common';
 import {
+  ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNotFoundResponse,
@@ -10,10 +11,14 @@ import {
 
 import { AuthAtLeast } from '../identity/auth.decorator';
 import {
+  type CreateServiceCategoryBody,
   CreateServiceCategoryDto,
   ListServiceCategoriesQueryDto,
   ServiceCategoryDto,
+  type UpdateServiceCategoryBody,
   UpdateServiceCategoryDto,
+  createServiceCategoryBody,
+  updateServiceCategoryBody,
 } from './dto/service-category.dto';
 import { ServiceCategoriesService } from './service-categories.service';
 
@@ -65,21 +70,32 @@ export class ServiceCategoriesController {
   @Post()
   @AuthAtLeast('MANAGER')
   @ApiOperation({ summary: 'Créer une rubrique' })
+  // Déclaré explicitement : le corps est validé par le contrat partagé et le
+  // paramètre est typé par un alias de type, dont `@nestjs/swagger` ne peut plus
+  // rien déduire. `CreateServiceCategoryDto` ne sert plus qu'à cela (ADR 0008).
+  @ApiBody({ type: CreateServiceCategoryDto })
   @ApiCreatedResponse({ type: ServiceCategoryDto })
   @ApiConflictResponse({ description: 'Une rubrique de cet établissement porte déjà ce slug.' })
-  public async create(@Body() body: CreateServiceCategoryDto): Promise<ServiceCategoryDto> {
+  public async create(
+    // Le type est celui **du contrat**, jamais `CreateServiceCategoryDto` : la
+    // classe n'a plus de décorateur `class-validator`, et la typer ici ferait
+    // rejouer le `ValidationPipe` global, dont le `whitelist` viderait le corps
+    // de tous ses champs (ADR 0008).
+    @Body(createServiceCategoryBody) body: CreateServiceCategoryBody,
+  ): Promise<ServiceCategoryDto> {
     return this.categories.create(body);
   }
 
   @Patch(':id')
   @AuthAtLeast('MANAGER')
   @ApiOperation({ summary: 'Modifier une rubrique, ou l’activer / la désactiver' })
+  @ApiBody({ type: UpdateServiceCategoryDto })
   @ApiOkResponse({ type: ServiceCategoryDto })
   @ApiNotFoundResponse({ description: 'Aucune rubrique de cet établissement ne porte cet identifiant.' })
   @ApiConflictResponse({ description: 'Une rubrique de cet établissement porte déjà ce slug.' })
   public async update(
     @Param('id', ParseUUIDPipe) id: string,
-    @Body() body: UpdateServiceCategoryDto,
+    @Body(updateServiceCategoryBody) body: UpdateServiceCategoryBody,
   ): Promise<ServiceCategoryDto> {
     return this.categories.update(id, body);
   }

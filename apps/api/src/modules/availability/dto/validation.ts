@@ -1,3 +1,4 @@
+import { OFFSET_DATE_TIME_PATTERN, REASON_MAX_LENGTH } from '@spa/shared';
 import { Transform } from 'class-transformer';
 import {
   Matches,
@@ -39,13 +40,11 @@ import { CALENDAR_DATE_PATTERN, LOCAL_TIME_PATTERN } from '../availability.time'
  * réponse : elle se recalcule à l'affichage à partir de l'instant UTC et de
  * `tenants.timezone` — c'est le rôle de `TenantClockService`.
  *
- * TODO(#26) : `OFFSET_DATE_TIME_PATTERN` est le motif de `@spa/shared`
- * (`packages/shared/src/common/time.ts`) et devra en être importé lors de la
- * reprise groupée de ce TODO — la dépendance existe depuis #463. Même TODO que
- * dans `catalog/dto/validation.ts`.
- * Le nom est donc **celui du paquet partagé**, pour que la substitution ne change
- * pas une borne en silence. `LOCAL_TIME_PATTERN`, lui, vient déjà d'une source
- * unique : le moteur de conversion du module, qui est ce qui lira l'heure.
+ * Le motif de la date-heure à offset explicite vient désormais de `@spa/shared`
+ * et est simplement réexporté d'ici (#510) : il y est écrit caractère pour
+ * caractère comme il l'était ici, et le contrat en est maintenant la seule
+ * écriture. `LOCAL_TIME_PATTERN`, lui, vient déjà d'une source unique : le
+ * moteur de conversion du module, qui est ce qui lira l'heure.
  */
 
 /**
@@ -61,9 +60,11 @@ import { CALENDAR_DATE_PATTERN, LOCAL_TIME_PATTERN } from '../availability.time'
  * `\d{2}` complaisant laisserait `2026-03-29T24:00:00Z` franchir la frontière
  * pour être normalisé, sans un mot, au 30 mars — un rendez-vous déplacé d'un
  * jour par une saisie que rien n'a refusée.
+ *
+ * **Importé du contrat partagé** depuis #510, et réexporté d'ici pour les
+ * appelants du module qui le lisaient déjà à cette adresse.
  */
-export const OFFSET_DATE_TIME_PATTERN =
-  /^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,9})?)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$/;
+export { OFFSET_DATE_TIME_PATTERN };
 
 /**
  * Heure murale `HH:MM`, 00:00 à 23:59 — un horaire de personnel (#32).
@@ -327,14 +328,12 @@ export function IsAfterLocalTime(
  * La même largeur que les autres motifs du schéma (`cancellation_reason`,
  * `failure_reason`) : c'est une phrase, pas une note de dossier.
  *
- * TODO(#26) : c'est `REASON_MAX_LENGTH` de `@spa/shared`
- * (`packages/shared/src/constants/limits.ts`), à importer lors de la reprise
- * groupée de ce TODO — la dépendance existe depuis #463. Même TODO que dans
- * `catalog/dto/validation.ts`, et même
- * précaution de nommage : un homonyme local qui ne vaudrait pas la même chose
- * ferait de la substitution un changement de borne silencieux.
+ * **Importée du contrat partagé** depuis #510, et réexportée d'ici pour les DTO
+ * du module qui la lisaient déjà à cette adresse. Le littéral valait 500 des
+ * deux côtés : la substitution n'a donc changé aucune borne, elle a seulement
+ * supprimé la seconde écriture qui aurait pu, elle, diverger.
  */
-export const REASON_MAX_LENGTH = 500;
+export { REASON_MAX_LENGTH };
 
 /**
  * Champ facultatif dont `null` n'est **pas** une valeur acceptée.

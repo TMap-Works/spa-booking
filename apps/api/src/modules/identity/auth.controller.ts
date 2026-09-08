@@ -9,7 +9,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBody, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
@@ -19,9 +19,13 @@ import { AuthService } from './auth.service';
 import {
   AcceptInvitationDto,
   AuthTokensDto,
+  type LoginBody,
   LoginDto,
+  type RegisterBody,
   RegisterDto,
   UserProfileDto,
+  loginBody,
+  registerBody,
 } from './dto/auth.dto';
 import type { AuthenticationResult } from './identity.types';
 import { CurrentUser } from './jwt-auth.guard';
@@ -65,9 +69,17 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: 'Inscrire un client et ouvrir sa session' })
+  // Déclaré explicitement : le corps est validé par le contrat partagé et le
+  // paramètre est typé par un alias de type, dont `@nestjs/swagger` ne peut plus
+  // rien déduire. `RegisterDto` ne sert plus qu'à cela (ADR 0008).
+  @ApiBody({ type: RegisterDto })
   @ApiOkResponse({ type: AuthTokensDto })
   public async register(
-    @Body() body: RegisterDto,
+    // Le type est celui **du contrat**, jamais `RegisterDto` : la classe n'a plus
+    // de décorateur `class-validator`, et la typer ici ferait rejouer le
+    // `ValidationPipe` global, dont le `whitelist` viderait le corps de tous ses
+    // champs — l'inscription partirait alors sans e-mail ni mot de passe.
+    @Body(registerBody) body: RegisterBody,
     @Res({ passthrough: true }) response: Response,
   ): Promise<AuthTokensDto> {
     const result = await this.auth.register({
@@ -92,9 +104,10 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Ouvrir une session' })
+  @ApiBody({ type: LoginDto })
   @ApiOkResponse({ type: AuthTokensDto })
   public async login(
-    @Body() body: LoginDto,
+    @Body(loginBody) body: LoginBody,
     @Res({ passthrough: true }) response: Response,
   ): Promise<AuthTokensDto> {
     const result = await this.auth.login({

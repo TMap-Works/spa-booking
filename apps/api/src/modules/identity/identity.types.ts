@@ -3,13 +3,21 @@ import type { UserRole } from './roles';
 /**
  * Formes de données du module `identity`.
  *
- * TODO(#510) : `AuthenticatedUser`, `UserProfile` et `UserRole` appartiennent au
- * contrat d'API et devront être réexportés depuis `@spa/shared` — le front ne
- * redéclare jamais un type que l'API expose (CLAUDE.md). Le paquet expose déjà
- * ces rôles (`packages/shared/src/constants/roles.ts`) ; l'import se substituera
- * à la déclaration locale lors de la reprise groupée de ce TODO. Ce qui l'en
- * séparait — la dépendance vers le paquet partagé, hors du périmètre de fichiers
- * de #22 — a été posé par #463.
+ * TODO(#536) : `UserRole` appartient au contrat d'API, et #510 n'a pas pu l'y
+ * prendre — c'est son premier point de vigilance, sur le vocabulaire le plus
+ * chargé du dépôt. `USER_ROLES` de `@spa/shared` porte les quatre mêmes rôles en
+ * **minuscules** (`client`, `staff`, `manager`, `admin`), là où `roles.ts` de ce
+ * module porte la casse de l'énumération PostgreSQL, celle que Prisma génère et
+ * que les *claims* des jetons d'accès transportent. Substituer l'import
+ * n'échangerait pas une déclaration contre une autre : il **invaliderait tous
+ * les jetons en circulation**, puisque `RolesGuard` compare la revendication du
+ * jeton à cette liste, et rendrait faux le `USER_ROLE_RANK` que la garde lit.
+ *
+ * Reste à faire, et c'est une décision de contrat doublée d'une migration :
+ * unifier les deux casses, ou déclarer côté contrat la conversion que la couche
+ * repository fait déjà — `receivedUserRoleSchema` est écrit pour que ce soit
+ * possible en un seul endroit. `UserProfile` et `AuthenticatedUser` suivront,
+ * les deux portant ce type.
  *
  * Le vocabulaire des rôles et leur hiérarchie vivent dans `roles.ts` : ils sont
  * consommés par la garde de permissions autant que par ces formes de données, et

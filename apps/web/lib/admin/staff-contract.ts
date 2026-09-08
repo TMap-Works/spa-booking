@@ -5,9 +5,15 @@
  * Même raison d'être que `payment-contract.ts`, et la même discipline : rien
  * n'est inventé ici. Chaque schéma décrit une charge utile que `apps/api` émet
  * ou attend **aujourd'hui**, et chacun est écrit à partir du DTO qui la produit.
- * Ce module est un point de passage, pas une seconde source de vérité :
- * TODO(#26) ces formes appartiennent au contrat partagé, et les DTO de
- * `apps/api/src/modules/identity/dto/users.dto.ts` portent le même renvoi.
+ * Ce module est un point de passage, pas une seconde source de vérité.
+ *
+ * TODO(#536) : ces formes appartiennent au contrat partagé, et #510 a instruit
+ * pourquoi elles n'y sont pas encore — les deux paragraphes qui suivent sont
+ * cette justification, et non un renvoi. Le second est bloquant : tant que
+ * l'API émet et exige `MANAGER` là où le contrat nomme `manager`, un schéma
+ * partagé décrirait l'un ou l'autre, jamais les deux, et `toApiRole` ci-dessous
+ * n'aurait plus d'endroit où vivre. C'est le premier point de vigilance de #510,
+ * et il se tranche dans `packages/shared` et `identity` d'un même geste.
  *
  * ## Pourquoi elles n'y sont pas déjà
  *

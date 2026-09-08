@@ -21,9 +21,15 @@ import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
  *   bornes sont individuellement bien formées, c'est leur relation ou leur
  *   étendue qui ne convient pas (api-module §5).
  *
- * TODO(#26) : ces codes appartiennent au contrat d'API et devront vivre dans
- * `@spa/shared`, comme ceux d'`identity`, de `catalog`, d'`appointments`, de
- * `crm` et de `payments`.
+ * TODO(#536) : ces codes appartiennent au contrat d'API, et #510 n'a pas pu les
+ * y prendre pour la raison qui vaut dans les cinq autres fichiers d'erreurs du
+ * dépôt : les rapatrier n'est pas un import mais une **décision de contrat**.
+ * `@spa/shared` ne porte aucun `REPORTING_ERROR_CODES` — ni
+ * `REPORT_WINDOW_INVALID`, ni `REPORT_WINDOW_TOO_WIDE` —, si bien qu'il n'y a
+ * pas d'import à faire mais une famille à créer, et la question de savoir où
+ * passe la frontière entre familles se pose alors pour les six modules à la
+ * fois. Reste à faire : découper les codes du contrat par module, puis importer
+ * — les six fichiers d'erreurs bougeront ensemble.
  */
 
 const { UNPROCESSABLE_ENTITY } = DOMAIN_HTTP_STATUS;

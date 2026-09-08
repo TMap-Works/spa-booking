@@ -38,9 +38,14 @@ import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
  * public ; c'est exactement l'endroit où la frontière SAQ A se perd
  * (payments-stripe §1).
  *
- * TODO(#26) : ces codes appartiennent au contrat d'API et devront vivre dans
- * `@spa/shared` lors de la reprise groupée de ce TODO — la dépendance existe
- * depuis #463 —, comme ceux d'`identity`, de `catalog` et d'`appointments`.
+ * TODO(#536) : ces codes appartiennent au contrat d'API, et #510 n'a pas pu les
+ * y prendre — la même décision de contrat que dans les cinq autres fichiers
+ * d'erreurs du dépôt. Il n'y a pas d'import à faire mais une famille à
+ * découper : `@spa/shared` mêle les codes de tous les modules dans
+ * `ERROR_CODES`, `DOMAIN_ERROR_CODES` et `BOOKING_ERROR_CODES`, sans qu'aucun
+ * regroupement ne dise lequel appartient à quel module. Reste à faire :
+ * découper les codes du contrat par module, puis importer — les six fichiers
+ * d'erreurs bougeront ensemble.
  */
 
 /** Codes d'erreur du module, tels qu'ils partent au client. */

@@ -1,3 +1,5 @@
+import { MAX_AVAILABILITY_RANGE_DAYS, MAX_TIME_OFF_RANGE_DAYS } from '@spa/shared';
+
 import { DomainError } from '../../common/errors';
 
 /**
@@ -7,11 +9,22 @@ import { DomainError } from '../../common/errors';
  * ces classes, et `DomainExceptionFilter` la traduit. Le front réagit sur
  * `code`, jamais sur `message`.
  *
- * TODO(#26) : ces codes appartiennent au contrat d'API et devront vivre dans
- * `@spa/shared`, à côté de `BOOKING_ERROR_CODES`. Les déclarer ici suit le
- * précédent des modules voisins ; l'import se substituera à ces constantes sans
- * changer une valeur, lors de la reprise groupée de ce TODO — la dépendance vers
- * le paquet, elle, est posée depuis #463.
+ * Les deux **bornes** de ce fichier — `MAX_AVAILABILITY_RANGE_DAYS` et
+ * `MAX_TIME_OFF_RANGE_DAYS` — viennent désormais de `@spa/shared` et sont
+ * simplement réexportées d'ici (#510) : elles y valent exactement ce qu'elles
+ * valaient (31 et 366), et le contrat est maintenant la seule écriture de
+ * chacune.
+ *
+ * TODO(#536) : les **codes** d'erreur, eux, restent déclarés ici. Les rapatrier
+ * n'est pas un import mais une décision de contrat, hors de l'empreinte de
+ * #510 : les familles ne se recouvrent pas. `BOOKING_ERROR_CODES` de
+ * `@spa/shared` porte `AVAILABILITY_RANGE_TOO_WIDE` et `TIME_OFF_RANGE_INVALID`
+ * — mêlés à ceux d'`appointments` —, mais ignore `NON_EXISTENT_LOCAL_TIME`,
+ * `AMBIGUOUS_LOCAL_TIME`, `UNKNOWN_TIME_ZONE` et `OVERLAPPING_SCHEDULE_RANGES`.
+ * Substituer supposerait donc de trancher d'abord *où* vit la frontière entre
+ * les deux familles — et un `AVAILABILITY_ERROR_CODES` réduit à deux membres
+ * empruntés à une famille voisine se lirait moins bien que celui-ci. Reste à
+ * faire : découper les codes du contrat par module, puis importer.
  *
  * **Aucune de ces erreurs ne parle d'un autre établissement.** Elles ne portent
  * que ce que l'appelant vient d'envoyer — une heure, un fuseau —, jamais
@@ -139,13 +152,12 @@ export class OverlappingScheduleRangesError extends DomainError {
  * journées civiles, chacune convertie par l'ICU. Trente et un jours couvrent le
  * « mois suivant » du calendrier public, qui est le seul écran qui interroge.
  *
- * TODO(#26) : c'est `MAX_AVAILABILITY_RANGE_DAYS` de `@spa/shared`
- * (`packages/shared/src/constants/limits.ts`), à importer lors de la reprise
- * groupée de ce TODO — la dépendance existe depuis #463. Le nom est celui du
- * paquet partagé pour que la substitution ne change pas une borne en silence —
- * même TODO que `MAX_TIME_OFF_RANGE_DAYS` ci-dessous.
+ * **Importée du contrat partagé** depuis #510, et réexportée d'ici pour les
+ * appelants du module qui la lisaient déjà à cette adresse. Le littéral valait
+ * 31 des deux côtés : la substitution n'a donc changé aucune borne, elle a
+ * seulement supprimé la seconde écriture qui aurait pu, elle, diverger.
  */
-export const MAX_AVAILABILITY_RANGE_DAYS = 31;
+export { MAX_AVAILABILITY_RANGE_DAYS };
 
 /**
  * Plage de dates trop large, ou inversée, pour une interrogation de créneaux.
@@ -196,12 +208,10 @@ export type TimeOffRule = (typeof TIME_OFF_RULES)[keyof typeof TIME_OFF_RULES];
  * pour deux siècles, et rien ne le signalerait — le moteur de créneaux cesserait
  * simplement de rendre des disponibilités, sans erreur ni trace.
  *
- * TODO(#26) : c'est `MAX_TIME_OFF_RANGE_DAYS` de `@spa/shared`
- * (`packages/shared/src/constants/limits.ts`), à importer lors de la reprise
- * groupée de ce TODO — la dépendance existe depuis #463. Le nom est celui du
- * paquet partagé pour que la substitution ne change pas une borne en silence.
+ * **Importée du contrat partagé** depuis #510, et réexportée d'ici comme sa
+ * jumelle ci-dessus. Le littéral valait 366 des deux côtés.
  */
-export const MAX_TIME_OFF_RANGE_DAYS = 366;
+export { MAX_TIME_OFF_RANGE_DAYS };
 
 /**
  * Bornes d'absence refusées — fin avant début, ou fenêtre déraisonnable.

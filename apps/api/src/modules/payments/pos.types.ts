@@ -13,9 +13,16 @@ import type { Money } from './payments.types';
  * redéclarer une seconde ici aurait ouvert la porte à deux définitions de
  * l'argent dans un module qui n'en manipule que ça.
  *
- * TODO(#26) : `Product`, `Sale` et `SaleItem` appartiennent au contrat d'API et
- * seront importés de `@spa/shared` lors de la reprise groupée de ce TODO — la
- * dépendance existe depuis #463. Même TODO que dans `payments.types.ts`.
+ * TODO(#536) : `Product`, `Sale` et `SaleItem` appartiennent au contrat d'API, et
+ * #510 n'a pas pu les y prendre pour la raison la plus simple qui soit : le
+ * contrat **ne les décrit pas**. `packages/shared/src/schemas/payment.ts` porte
+ * l'intention de paiement, le remboursement et l'encaissement au comptoir, mais
+ * ni le produit retail, ni le ticket de caisse, ni ses lignes. Il n'y a donc pas
+ * d'import à faire mais des schémas à écrire, dans un paquet hors de l'empreinte
+ * de ce ticket — et l'écriture n'est pas mécanique : elle demande de trancher la
+ * casse de `SALE_ITEM_KINDS` et de `PAYMENT_METHODS`, que la colonne écrit en
+ * majuscules et que le contrat nomme partout ailleurs en minuscules (premier
+ * point de vigilance de #510, même constat que dans `reporting.types.ts`).
  */
 
 /**

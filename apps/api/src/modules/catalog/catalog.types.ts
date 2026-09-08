@@ -2,13 +2,28 @@
  * Formes de données du module `catalog` — CDC §2.3 « services, catégories,
  * durée, prix ».
  *
- * TODO(#510) : `Money`, `ServiceView` et `ServiceCategoryView` appartiennent au
- * contrat d'API et devront être importés de `@spa/shared` — le front ne
- * redéclare jamais un type que l'API expose (CLAUDE.md). Le paquet décrit déjà
- * ces formes (`packages/shared/src/schemas/catalog.ts`, tenu à jour par ce même
- * ticket) ; la dépendance que la substitution demandait est déclarée dans
- * `apps/api/package.json` depuis #463, et `crm.errors.ts` consomme déjà une
- * valeur du contrat — voir le même TODO dans `identity.types.ts`.
+ * ## Ce que #510 a fait de l'accord avec le contrat, et pourquoi pas un import
+ *
+ * Ces interfaces sont des **vues de domaine** : ce que le service rend, en
+ * amont de la frontière HTTP. Ce que le contrat décrit, ce sont les formes qui
+ * **franchissent** cette frontière, et c'est là que l'accord se vérifie —
+ * `dto/service.dto.ts`, `dto/service-category.dto.ts` et
+ * `dto/public-service.dto.ts` portent depuis #510 des assertions de compilation
+ * contre `z.input<serviceSchema>`, `z.input<serviceCategorySchema>` et
+ * `z.input<publicServiceSchema>`. Un champ ajouté d'un côté et pas de l'autre
+ * casse le `tsc`, ce qu'un simple alias de type n'aurait pas fait mieux.
+ *
+ * TODO(#536) : remplacer malgré tout ces interfaces par les types inférés du
+ * contrat reste souhaitable — une écriture de moins —, et deux choses s'y
+ * opposent, dont aucune ne se tranche depuis ce module. La première :
+ * `z.infer<...>` ne porte pas `readonly`, là où toutes les vues de ce fichier
+ * le sont ; substituer rendrait modifiable en place ce que le service rend, et
+ * `PublicServiceView.staff` est précisément un tableau qu'on ne veut pas voir
+ * réordonné par son lecteur. La seconde : le contrat nomme `Service` et
+ * `ServiceCategory` ce que ce module nomme `ServiceView` et
+ * `ServiceCategoryView`, et l'homonymie avec les entités Prisma du même nom est
+ * exactement ce que le suffixe `View` existe pour éviter. Reste à faire :
+ * décider, côté contrat, s'il publie des types `readonly` — et sous quels noms.
  *
  * ## Aucune de ces formes ne porte de `tenantId`
  *
