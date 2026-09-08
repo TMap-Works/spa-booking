@@ -1,4 +1,9 @@
 import { Injectable } from '@nestjs/common';
+// La fenêtre d'agenda se compte avec la fonction du **contrat partagé** depuis
+// #510, et non plus avec une copie locale : `calendarDaysBetween` y a le même
+// nom et le même corps — `Date.parse` sur deux minuits UTC —, si bien que la
+// substitution ne déplace aucune borne. Voir la note qu'elle remplace, plus bas.
+import { calendarDaysBetween } from '@spa/shared';
 
 import { InvalidStateTransitionError, NotFoundError } from '../../common/errors';
 import { requireTenantId } from '../../common/tenant';
@@ -1279,27 +1284,6 @@ function billedView(record: AppointmentRecord, service: BilledIntervalSource): A
     // qu'au comptoir, et un motif écrit par un praticien est une note interne.
     // Voir `AppointmentView` (#40).
   };
-}
-
-/**
- * Nombre de jours civils entre deux dates, **bornes comprises** (#444).
- *
- * Le calcul passe par `Date.parse` sur des minuits UTC et non par une
- * soustraction de minuits locaux : une différence en millisecondes entre deux
- * minuits d'un fuseau à heure d'été vaut 23 ou 25 heures les jours de bascule, et
- * l'arrondi qui en découle fait perdre ou gagner un jour à la fenêtre. Les dates
- * sont ici des étiquettes de calendrier — leur écart ne dépend d'aucun fuseau.
- *
- * TODO(#510) : c'est `calendarDaysBetween` de `@spa/shared`
- * (`packages/shared/src/common/time.ts`), écrit à l'identique — même nom, même
- * corps — en attendant que `apps/api` dépende du paquet. `availability` en
- * porte une troisième copie, pour la même raison et sous le même TODO.
- */
-function calendarDaysBetween(from: string, to: string): number {
-  const start = Date.parse(`${from}T00:00:00Z`);
-  const end = Date.parse(`${to}T00:00:00Z`);
-
-  return Math.round((end - start) / DAY_MS) + 1;
 }
 
 /**

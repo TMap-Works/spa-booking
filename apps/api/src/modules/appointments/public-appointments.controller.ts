@@ -22,8 +22,17 @@ import {
   bookAppointmentBody,
   toGuestContact,
 } from './dto/book-appointment.dto';
-import { CancelAppointmentDto, toCancellationReason } from './dto/cancel-appointment.dto';
-import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
+import {
+  type CancelAppointmentBody,
+  CancelAppointmentDto,
+  cancelAppointmentBody,
+  toCancellationReason,
+} from './dto/cancel-appointment.dto';
+import {
+  type RescheduleAppointmentBody,
+  RescheduleAppointmentDto,
+  rescheduleAppointmentBody,
+} from './dto/reschedule-appointment.dto';
 
 /**
  * Le tunnel public du rendez-vous — le point d'entrée du revenu (#37), son
@@ -222,6 +231,10 @@ export class PublicAppointmentsController {
     format: 'uuid',
     description: 'Le rendez-vous à déplacer, tel que l’écran de confirmation l’a rendu.',
   })
+  // Déclaré explicitement : le corps est validé par le contrat partagé et le
+  // paramètre est typé par un alias de type, dont `@nestjs/swagger` ne peut plus
+  // rien déduire. `RescheduleAppointmentDto` ne sert plus qu'à cela (ADR 0008).
+  @ApiBody({ type: RescheduleAppointmentDto })
   @ApiCreatedResponse({ type: AppointmentDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
   @ApiNotFoundResponse({
@@ -243,13 +256,19 @@ export class PublicAppointmentsController {
     // identifiant mal formé est un 400 nommant le paramètre, jamais une requête
     // qui descend jusqu'au pilote PostgreSQL pour en revenir en 500.
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
-    @Body() body: RescheduleAppointmentDto,
+    // Le type est celui **du contrat**, jamais `RescheduleAppointmentDto` : la
+    // classe n'a plus de décorateur `class-validator`, et la typer ici ferait
+    // rejouer le `ValidationPipe` global, dont le `whitelist` viderait le corps
+    // de ses deux champs (ADR 0008).
+    @Body(rescheduleAppointmentBody) body: RescheduleAppointmentBody,
   ): Promise<AppointmentDto> {
     return this.appointments.reschedule({
       appointmentId,
-      // La chaîne a été validée comme instant à offset explicite par le DTO.
+      // La chaîne a été validée **et normalisée en UTC** par
+      // `offsetDateTimeSchema` : `new Date` ne peut donc produire ici ni une
+      // date invalide, ni un instant lu dans le fuseau de la machine.
       startsAt: new Date(body.startsAt),
-      // Le DTO distingue « absent » de « vide » ; le domaine ne connaît que
+      // Le contrat distingue « absent » de « vide » ; le domaine ne connaît que
       // `null`, qui se lit « le même praticien qu'avant ».
       staffId: body.staffId ?? null,
     });
@@ -322,16 +341,17 @@ export class PublicAppointmentsController {
       '(`INVALID_STATE_TRANSITION`).',
   })
   @ApiTooManyRequestsResponse({ description: 'Quota d’annulations dépassé pour cette adresse.' })
+  @ApiBody({ type: CancelAppointmentDto })
   public async cancel(
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
-    @Body() body: CancelAppointmentDto,
+    @Body(cancelAppointmentBody) body: CancelAppointmentBody,
   ): Promise<AppointmentDto> {
     return this.appointments.cancel({
       appointmentId,
       // Fixé par la **porte**, jamais lu du corps : c'est la cliente qui annule
       // ici, et rien de ce qu'elle envoie ne peut le dire autrement.
       cancelledBy: 'CLIENT',
-      // Le DTO distingue « absent » de « vide » ; le domaine ne connaît que
+      // Le contrat distingue « absent » de « vide » ; le domaine ne connaît que
       // `null`, qui se lit « aucun motif donné ». Un motif réduit à rien par
       // l'élagage compte pour absent — voir `toCancellationReason`.
       reason: toCancellationReason(body),

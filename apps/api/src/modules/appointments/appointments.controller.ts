@@ -1,12 +1,14 @@
 import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
+  ApiQuery,
   ApiTags,
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
@@ -16,19 +18,40 @@ import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
 import { AppointmentsService } from './appointments.service';
 import { AppointmentDto } from './dto/book-appointment.dto';
-import { CancelAppointmentDto, toCancellationReason } from './dto/cancel-appointment.dto';
 import {
+  type CancelAppointmentBody,
+  CancelAppointmentDto,
+  cancelAppointmentBody,
+  toCancellationReason,
+} from './dto/cancel-appointment.dto';
+import {
+  type ChangeAppointmentStatusBody,
   ChangeAppointmentStatusDto,
+  changeAppointmentStatusBody,
   toStatusChangeInput,
 } from './dto/change-appointment-status.dto';
-import { CreateAppointmentDto, toCreateInput } from './dto/create-appointment.dto';
+import {
+  type CreateAppointmentBody,
+  CreateAppointmentDto,
+  createAppointmentBody,
+  toCreateInput,
+} from './dto/create-appointment.dto';
 import {
   AgendaAppointmentDto,
   AppointmentListQueryDto,
   toAgendaInput,
 } from './dto/list-appointments.dto';
-import { MyAppointmentsQueryDto, toListInput } from './dto/my-appointments.dto';
-import { RescheduleAppointmentDto } from './dto/reschedule-appointment.dto';
+import {
+  type MyAppointmentsQueryBody,
+  MyAppointmentsQueryDto,
+  myAppointmentsQuery,
+  toListInput,
+} from './dto/my-appointments.dto';
+import {
+  type RescheduleAppointmentBody,
+  RescheduleAppointmentDto,
+  rescheduleAppointmentBody,
+} from './dto/reschedule-appointment.dto';
 
 /**
  * Les rendez-vous **derrière un jeton** — le comptoir (#40) et l'espace client
@@ -228,9 +251,14 @@ export class AppointmentsController {
   @ApiBadRequestResponse({
     description: 'Paramètre de requête invalide — le champ fautif est nommé.',
   })
+  // Déclarés explicitement : la chaîne de requête est validée par le contrat
+  // partagé et le paramètre est typé par un alias de type, dont
+  // `@nestjs/swagger` ne peut plus rien déduire. `MyAppointmentsQueryDto` ne
+  // sert plus qu'à cela (ADR 0008).
+  @ApiQuery({ type: MyAppointmentsQueryDto })
   public async mine(
     @CurrentUser() user: AuthenticatedUser,
-    @Query() query: MyAppointmentsQueryDto,
+    @Query(myAppointmentsQuery) query: MyAppointmentsQueryBody,
   ): Promise<AppointmentDto[]> {
     // La cliente vient du jeton, jamais de la requête (tenant-isolation §2) :
     // c'est `toListInput` qui les réunit, et lui seul.
@@ -293,7 +321,10 @@ export class AppointmentsController {
   @ApiConflictResponse({
     description: 'Le créneau n’est pas — ou n’est plus — réservable (`SLOT_NO_LONGER_AVAILABLE`).',
   })
-  public async create(@Body() body: CreateAppointmentDto): Promise<AgendaAppointmentDto> {
+  @ApiBody({ type: CreateAppointmentDto })
+  public async create(
+    @Body(createAppointmentBody) body: CreateAppointmentBody,
+  ): Promise<AgendaAppointmentDto> {
     // Aucun `@CurrentUser()` : l'établissement vient du jeton et est déjà dans le
     // contexte de requête, la cliente vient du corps, et le rang de l'appelant a
     // été jugé par la porte. Il n'y a rien de l'appelant à lire ici.
@@ -339,6 +370,10 @@ export class AppointmentsController {
     format: 'uuid',
     description: 'Le rendez-vous à déplacer, dans l’établissement du jeton.',
   })
+  // Déclaré explicitement : le corps est validé par le contrat partagé et le
+  // paramètre est typé par un alias de type, dont `@nestjs/swagger` ne peut plus
+  // rien déduire. `RescheduleAppointmentDto` ne sert plus qu'à cela (ADR 0008).
+  @ApiBody({ type: RescheduleAppointmentDto })
   @ApiCreatedResponse({ type: AgendaAppointmentDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
   @ApiNotFoundResponse({
@@ -360,13 +395,19 @@ export class AppointmentsController {
     // identifiant mal formé est un 400 nommant le paramètre, jamais une requête
     // qui descend jusqu'au pilote PostgreSQL pour en revenir en 500.
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
-    @Body() body: RescheduleAppointmentDto,
+    // Le type est celui **du contrat**, jamais `RescheduleAppointmentDto` : la
+    // classe n'a plus de décorateur `class-validator`, et la typer ici ferait
+    // rejouer le `ValidationPipe` global, dont le `whitelist` viderait le corps
+    // de ses deux champs (ADR 0008).
+    @Body(rescheduleAppointmentBody) body: RescheduleAppointmentBody,
   ): Promise<AgendaAppointmentDto> {
     return this.appointments.rescheduleAtDesk({
       appointmentId,
-      // La chaîne a été validée comme instant à offset explicite par le DTO.
+      // La chaîne a été validée **et normalisée en UTC** par
+      // `offsetDateTimeSchema` : `new Date` ne peut donc produire ici ni une
+      // date invalide, ni un instant lu dans le fuseau de la machine.
       startsAt: new Date(body.startsAt),
-      // Le DTO distingue « absent » de « vide » ; le domaine ne connaît que
+      // Le contrat distingue « absent » de « vide » ; le domaine ne connaît que
       // `null`, qui se lit « le même praticien qu'avant ».
       staffId: body.staffId ?? null,
     });
@@ -416,6 +457,7 @@ export class AppointmentsController {
     format: 'uuid',
     description: 'Le rendez-vous à faire avancer, dans l’établissement du jeton.',
   })
+  @ApiBody({ type: ChangeAppointmentStatusDto })
   @ApiOkResponse({ type: AgendaAppointmentDto })
   @ApiBadRequestResponse({
     description: 'Corps invalide — statut hors du vocabulaire, ou motif trop long.',
@@ -431,7 +473,7 @@ export class AppointmentsController {
   })
   public async changeStatus(
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
-    @Body() body: ChangeAppointmentStatusDto,
+    @Body(changeAppointmentStatusBody) body: ChangeAppointmentStatusBody,
   ): Promise<AgendaAppointmentDto> {
     return this.appointments.changeStatus(toStatusChangeInput(appointmentId, body));
   }
@@ -478,6 +520,7 @@ export class AppointmentsController {
     format: 'uuid',
     description: 'Le rendez-vous à annuler, dans l’établissement du jeton.',
   })
+  @ApiBody({ type: CancelAppointmentDto })
   @ApiOkResponse({ type: AppointmentDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
   @ApiNotFoundResponse({ description: 'Rendez-vous introuvable dans cet établissement.' })
@@ -494,7 +537,7 @@ export class AppointmentsController {
     // identifiant mal formé est un 400 nommant le paramètre, jamais une requête
     // qui descend jusqu'au pilote PostgreSQL pour en revenir en 500.
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
-    @Body() body: CancelAppointmentDto,
+    @Body(cancelAppointmentBody) body: CancelAppointmentBody,
   ): Promise<AppointmentDto> {
     return this.appointments.cancel({
       appointmentId,

@@ -1,3 +1,9 @@
+// `AppointmentScope` vient du **contrat partagé** depuis #510 : les deux moitiés
+// de l'historique d'une cliente y portent les mêmes deux mots, dans la même
+// casse — c'est le seul vocabulaire de ce module qui échappe à la divergence de
+// casse de l'énumération PostgreSQL, parce qu'aucune colonne ne le stocke.
+import type { AppointmentScope } from '@spa/shared';
+
 import type { AppointmentCancelledBy, AppointmentStatus } from './appointment-status';
 
 /**
@@ -7,10 +13,19 @@ import type { AppointmentCancelledBy, AppointmentStatus } from './appointment-st
  * ce que le service et le repository acceptent et rendent (api-module §2). Les
  * DTO HTTP, eux, vivent sous `dto/`.
  *
- * TODO(#510) : `AppointmentView` appartient au contrat d'API et sera importé de
- * `@spa/shared` (`appointmentSchema`) lors de la reprise groupée de ce TODO — la
- * dépendance vers le paquet existe depuis #463. Même TODO que dans
- * `catalog.types.ts` et `identity.types.ts`.
+ * L'accord avec le contrat se vérifie à la **frontière** depuis #510 :
+ * `dto/book-appointment.dto.ts` et `dto/list-appointments.dto.ts` portent des
+ * assertions de compilation contre `z.input<bookedAppointmentSchema>` et
+ * `z.input<appointmentSchema>`, et un champ ajouté d'un côté et pas de l'autre
+ * casse le `tsc`.
+ *
+ * TODO(#536) : remplacer `AppointmentView` par le type inféré du contrat reste
+ * souhaitable, et deux choses s'y opposent, dont aucune ne se tranche depuis ce
+ * module. La première est le **statut** : `AppointmentStatus` porte ici la casse
+ * de l'énumération PostgreSQL (`PENDING`), là où `appointmentStatusSchema` du
+ * contrat porte le même mot en minuscules — c'est le premier point de vigilance
+ * de #510, et l'importer changerait le format du fil. La seconde est
+ * `readonly`, que `z.infer<...>` ne porte pas.
  */
 
 /**
@@ -343,12 +358,17 @@ export interface RescheduleOutcome {
 
 /**
  * Les deux moitiés de l'historique d'une cliente — `appointmentScopeSchema` de
- * `@spa/shared`, côté domaine (#47).
+ * `@spa/shared` (#47).
  *
- * TODO(#510) : à importer du paquet partagé lors de la reprise groupée de ce
- * TODO — `apps/api` en dépend depuis #463.
+ * **Importé du contrat partagé** depuis #510, et réexporté d'ici pour les
+ * appelants du module qui le lisaient déjà à cette adresse. L'union valait
+ * `'upcoming' | 'past'` des deux côtés : la substitution n'a donc changé aucun
+ * vocabulaire, elle a seulement supprimé la seconde écriture qui aurait pu, elle,
+ * diverger — et c'est le seul type de ce fichier que la casse de l'énumération
+ * PostgreSQL ne sépare pas du contrat, `appointments.scope` n'étant pas une
+ * colonne.
  */
-export type AppointmentScope = 'upcoming' | 'past';
+export type { AppointmentScope };
 
 /**
  * Ce qu'une lecture d'historique demande, telle que le **service** la reçoit

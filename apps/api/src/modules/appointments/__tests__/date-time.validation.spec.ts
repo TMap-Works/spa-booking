@@ -19,26 +19,25 @@
  * ce qu'on regarde n'est pas ce que la réservation produit — `appointments.service.spec.ts`
  * s'en charge —, c'est ce que la frontière lui transmet.
  *
- * ## Les deux frontières que cette suite traverse (#404)
+ * ## Les deux frontières que cette suite traverse (#404, puis #510)
  *
- * Elles ne sont plus de même nature, et c'est voulu :
+ * Elles sont désormais **de même nature**, et c'est le changement de #510 :
  *
- * - **`book`** est validée par `bookGuestAppointmentRequestSchema`, le schéma du
- *   contrat partagé, monté par `bookAppointmentBody`
- *   ([ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
- *   `offsetDateTimeSchema` y **normalise** l'instant dès la frontière ;
- * - **`reschedule`** est encore validée par `RescheduleAppointmentDto` et
- *   `@IsOffsetDateTime()`, sous le `ValidationPipe` global. La chaîne descend
- *   telle quelle et c'est `new Date` qui la convertit, dans le contrôleur.
+ * - **`book`** est validée par `bookGuestAppointmentRequestSchema`, monté par
+ *   `bookAppointmentBody`
+ *   ([ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)) ;
+ * - **`reschedule`** l'est par `rescheduleAppointmentRequestSchema`, monté par
+ *   `rescheduleAppointmentBody`.
  *
- * Les deux doivent produire **le même instant** pour la même chaîne : c'est ce
- * que cette suite vérifie cas par cas, et c'est la propriété qui rendra la
- * substitution du second sans effet visible. Le pendant côté contrat vit dans
- * `packages/shared/src/__tests__/schemas.spec.ts`, sur la même liste de chaînes
- * refusées.
+ * Les deux passent par `offsetDateTimeSchema`, qui **normalise** l'instant dès
+ * la frontière : le `new Date(...)` des contrôleurs ne convertit plus rien, il
+ * relit une chaîne déjà en UTC. C'est précisément ce que cette suite continue de
+ * vérifier cas par cas — la substitution devait rester sans effet visible, et
+ * les mêmes chaînes doivent produire les mêmes instants qu'avant.
+ *
+ * Le pendant côté contrat vit dans `packages/shared/src/__tests__/schemas.spec.ts`,
+ * sur la même liste de chaînes refusées.
  */
-
-import { ValidationPipe } from '@nestjs/common';
 
 import type { AppointmentsService } from '../appointments.service';
 import type {
@@ -47,16 +46,11 @@ import type {
   RescheduleAppointmentInput,
 } from '../appointments.types';
 import { type BookAppointmentBody, bookAppointmentBody } from '../dto/book-appointment.dto';
-import { RescheduleAppointmentDto } from '../dto/reschedule-appointment.dto';
+import {
+  type RescheduleAppointmentBody,
+  rescheduleAppointmentBody,
+} from '../dto/reschedule-appointment.dto';
 import { PublicAppointmentsController } from '../public-appointments.controller';
-
-/** Le pipe tel qu'`app.module.ts` le monte pour toute l'application. */
-const pipe = new ValidationPipe({
-  whitelist: true,
-  forbidNonWhitelisted: true,
-  transform: true,
-  transformOptions: { enableImplicitConversion: false },
-});
 
 /** Des coordonnées valides — le sujet du test est ailleurs. */
 const CLIENT = {
@@ -126,11 +120,6 @@ function view(): AppointmentView {
   };
 }
 
-/** Fait franchir au corps brut le pipe global, puis le DTO. */
-async function validate<T>(type: new () => T, body: unknown): Promise<T> {
-  return (await pipe.transform(body, { type: 'body', metatype: type })) as T;
-}
-
 /** Le corps d'erreur sérialisé, ou la chaîne vide si la frontière a laissé passer. */
 function refusalOf(attempt: () => unknown): string {
   try {
@@ -142,14 +131,9 @@ function refusalOf(attempt: () => unknown): string {
   }
 }
 
-async function refusalFor(type: new () => unknown, body: unknown): Promise<string> {
-  try {
-    await validate(type, body);
-
-    return '';
-  } catch (error) {
-    return JSON.stringify((error as { getResponse: () => unknown }).getResponse());
-  }
+/** Le refus que la frontière de `reschedule` oppose à ce `startsAt`. */
+function rescheduleRefusal(startsAt: string): string {
+  return refusalOf(() => rescheduleAppointmentBody.transform({ startsAt }));
 }
 
 /** Corps de réservation complet, dont seul `startsAt` varie d'un cas à l'autre. */
@@ -175,7 +159,10 @@ async function bookedInstant(startsAt: string): Promise<string> {
 async function rescheduledInstant(startsAt: string): Promise<string> {
   const { controller, captured } = capturingService();
 
-  await controller.reschedule(APPOINTMENT_ID, await validate(RescheduleAppointmentDto, { startsAt }));
+  await controller.reschedule(
+    APPOINTMENT_ID,
+    rescheduleAppointmentBody.transform({ startsAt }) as RescheduleAppointmentBody,
+  );
 
   return instantOf(captured.reschedule, 'reschedule');
 }
@@ -217,14 +204,12 @@ describe('début de rendez-vous entrant', () => {
     expect(await bookedInstant('2026-03-28T15:30:00.500-10:00')).toBe('2026-03-29T01:30:00.500Z');
   });
 
-  it('refuse une date-heure nue — le serveur n’a pas à deviner le fuseau', async () => {
+  it('refuse une date-heure nue — le serveur n’a pas à deviner le fuseau', () => {
     expect(bookingRefusal('2026-03-29T03:30:00')).toContain('offset explicite');
-    expect(await refusalFor(RescheduleAppointmentDto, { startsAt: '2026-03-29T03:30:00' })).toContain(
-      'offset explicite',
-    );
+    expect(rescheduleRefusal('2026-03-29T03:30:00')).toContain('offset explicite');
   });
 
-  it('refuse une date civile seule, un epoch, une heure hors journée, un 31 février', async () => {
+  it('refuse une date civile seule, un epoch, une heure hors journée, un 31 février', () => {
     // Cette liste est reprise **mot pour mot** par le pendant côté contrat,
     // `packages/shared/src/__tests__/schemas.spec.ts` : c'est ce qui rend la
     // double écriture de la frontière vérifiable. Une liste plus courte d'un
@@ -247,9 +232,7 @@ describe('début de rendez-vous entrant', () => {
 
     for (const startsAt of refused) {
       expect(bookingRefusal(startsAt)).toContain('offset explicite');
-      expect(await refusalFor(RescheduleAppointmentDto, { startsAt })).toContain(
-        'offset explicite',
-      );
+      expect(rescheduleRefusal(startsAt)).toContain('offset explicite');
     }
   });
 });

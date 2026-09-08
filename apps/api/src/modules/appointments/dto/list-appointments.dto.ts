@@ -1,6 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  appointmentSchema,
+  serviceSummarySchema,
+  staffMemberSummarySchema,
+  userSummarySchema,
+} from '@spa/shared';
 import { Transform } from 'class-transformer';
 import { ArrayNotEmpty, IsArray, IsIn, IsUUID } from 'class-validator';
+import type { z } from 'zod';
 
 import type { AppointmentStatus } from '../appointment-status';
 import { APPOINTMENT_STATUSES } from '../appointment-status';
@@ -18,11 +25,34 @@ import { IsCalendarDate, OptionalPresent } from './validation';
 /**
  * L'agenda du back-office — `GET /api/v1/appointments` (#444).
  *
- * TODO(#510) : ces formes appartiennent au contrat d'API et sont décrites par
- * `packages/shared/src/schemas/appointment.ts`
- * (`appointmentListQuerySchema`, `appointmentSchema`) ; elles devront en être
- * importées. Les noms et les bornes sont **ceux du contrat**, pour que la
- * substitution ne change rien en silence.
+ * ## Ce que #510 a substitué ici, et ce qu'il n'a pas pu
+ *
+ * La **borne** de la fenêtre vient du contrat depuis #510 — elle est réexportée
+ * par `appointments.errors.ts`, qui l'importe de `@spa/shared`. La sortie, elle,
+ * est tenue par les assertions de compilation en fin de fichier, contre
+ * `appointmentSchema` et ses trois *summaries*.
+ *
+ * TODO(#536) : la **requête**, en revanche, reste sous `class-validator`, et
+ * `appointmentListQuerySchema` ne peut pas la remplacer en l'état. Deux écarts,
+ * dont le second change le contrat de la route :
+ *
+ * 1. **`statuses` arrive en chaîne ou en tableau.** Express rend une `string`
+ *    pour `?statuses=pending` et un tableau pour la forme répétée ; le schéma du
+ *    contrat déclare `z.array(...)` sans coercition, si bien que le filtre le
+ *    plus courant du comptoir — un seul statut — sortirait en 400. Aucun schéma
+ *    de requête du contrat ne coerce, `myAppointmentsQuerySchema` excepté ;
+ * 2. **les deux `.refine()` du schéma jugent le couple `from`/`to`**, et un
+ *    refus de `refine` sort en **400**. Cette route rend un **422
+ *    `APPOINTMENT_RANGE_TOO_WIDE`**, et c'est délibéré : chaque date est bien
+ *    écrite, c'est leur écart qui n'est pas servable. Monter le schéma
+ *    changerait donc le code d'erreur que le calendrier lit, sans que rien ne le
+ *    dise. La règle vit d'ailleurs dans le service et pas seulement ici, parce
+ *    que c'est lui qui complète la borne absente avec la journée courante du
+ *    salon — un schéma de requête ne la voit pas.
+ *
+ * Reste à faire, côté contrat : un schéma de requête qui coerce la forme
+ * répétée d'Express, et le déplacement du jugement de la fenêtre hors des
+ * `refine` — ou l'acceptation explicite que ce refus-là devienne un 400.
  */
 
 /**
@@ -310,3 +340,74 @@ export class AgendaAppointmentDto implements AgendaAppointmentView {
   })
   public createdAt!: string;
 }
+
+// ---------------------------------------------------------------------------
+// La sortie tenue par le contrat — à la compilation, faute de pouvoir l'être à
+// l'exécution
+// ---------------------------------------------------------------------------
+
+/**
+ * `appointmentSchema` décrit ce que le **front lit**, pas ce que l'API **émet** :
+ * son champ `status` normalise la casse de l'énumération PostgreSQL
+ * (`CONFIRMED` → `confirmed`). Valider notre propre sortie contre lui à
+ * l'exécution changerait donc le format du fil et casserait tout lecteur
+ * d'agenda — c'est le premier point de vigilance de #510.
+ *
+ * Ce que le contrat peut garder, c'est la **forme entrante** qu'il sait lire —
+ * `z.input<…>` —, et il la garde à la compilation. Les assertions ci-dessous
+ * coûtent zéro à l'exécution et échouent au `tsc` :
+ *
+ * 1. le **jeu de clés** est exactement celui du schéma. Un champ ajouté d'un
+ *    côté et pas de l'autre casse la compilation, là où il aurait autrement
+ *    voyagé sans que personne ne le lise ;
+ * 2. **chaque champ** est assignable à ce que le schéma sait lire — un
+ *    `cancelledAt` passé de `string | undefined` à `string | null` ne
+ *    traverserait plus, et c'est précisément la distinction que l'en-tête
+ *    d'`AgendaAppointmentDto` défend.
+ *
+ * Même patron que `book-appointment.dto.ts`, sur les quatre formes de cette
+ * route plutôt que sur une seule.
+ */
+type AgendaAppointmentWire = z.input<typeof appointmentSchema>;
+type AgendaClientWire = z.input<typeof userSummarySchema>;
+type AgendaStaffWire = z.input<typeof staffMemberSummarySchema>;
+type AgendaServiceWire = z.input<typeof serviceSummarySchema>;
+
+type AssertNever<T extends never> = T;
+type AssertTrue<T extends true> = T;
+
+type _AgendaAppointmentDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof AgendaAppointmentDto, keyof AgendaAppointmentWire>
+  | Exclude<keyof AgendaAppointmentWire, keyof AgendaAppointmentDto>
+>;
+
+type _AgendaAppointmentDtoIsReadableByTheContract = AssertTrue<
+  AgendaAppointmentDto extends AgendaAppointmentWire ? true : false
+>;
+
+type _AgendaClientDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof AgendaClientDto, keyof AgendaClientWire>
+  | Exclude<keyof AgendaClientWire, keyof AgendaClientDto>
+>;
+
+type _AgendaClientDtoIsReadableByTheContract = AssertTrue<
+  AgendaClientDto extends AgendaClientWire ? true : false
+>;
+
+type _AgendaStaffDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof AgendaStaffDto, keyof AgendaStaffWire>
+  | Exclude<keyof AgendaStaffWire, keyof AgendaStaffDto>
+>;
+
+type _AgendaStaffDtoIsReadableByTheContract = AssertTrue<
+  AgendaStaffDto extends AgendaStaffWire ? true : false
+>;
+
+type _AgendaServiceDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof AgendaServiceDto, keyof AgendaServiceWire>
+  | Exclude<keyof AgendaServiceWire, keyof AgendaServiceDto>
+>;
+
+type _AgendaServiceDtoIsReadableByTheContract = AssertTrue<
+  AgendaServiceDto extends AgendaServiceWire ? true : false
+>;
