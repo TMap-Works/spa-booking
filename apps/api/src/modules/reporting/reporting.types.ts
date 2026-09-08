@@ -28,9 +28,20 @@
  * énumérations réellement générées, si bien qu'une valeur ajoutée au schéma
  * fait rougir une suite avant qu'un total ne l'ignore en silence.
  *
- * TODO(#26) : ces vocabulaires appartiennent au contrat d'API et rejoindront
- * `@spa/shared` avec ceux d'`identity`, de `catalog`, d'`appointments` et de
- * `payments`.
+ * TODO(#536) : ces vocabulaires appartiennent au contrat d'API, et #510 n'a pas
+ * pu les y prendre — c'est son premier point de vigilance, et il se voit ici
+ * mieux qu'ailleurs. Les listes de ce fichier portent la casse de
+ * l'énumération PostgreSQL (`PENDING`, `CARD`) parce que c'est ce que la colonne
+ * écrit et ce que le total agrège ; `appointmentStatusSchema` et
+ * `paymentMethodSchema` de `@spa/shared` portent les mêmes mots en
+ * **minuscules**, parce que c'est ce que le front lit. Importer les seconds ici
+ * ne changerait pas une réponse — il ferait simplement que plus aucun `groupBy`
+ * de ce module ne reconnaîtrait la valeur qu'il vient de lire en base.
+ *
+ * Reste à faire, et c'est une décision de contrat et non de module : unifier les
+ * deux vocabulaires, ce qui change le format du fil et touche du même coup
+ * `notifications`, `apps/web` et tout lecteur d'agenda. `receivedAppointmentStatusSchema`
+ * est écrit pour que cette unification se fasse en un seul endroit le jour venu.
  */
 
 /** Moyen d'encaissement — `enum PaymentMethod` du schéma. */

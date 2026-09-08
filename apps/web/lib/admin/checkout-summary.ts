@@ -115,9 +115,14 @@ export function methodHint(method: PaymentMethod): string {
  * Ils viennent de `apps/api/src/modules/payments/payments.errors.ts` et ne sont
  * **pas** encore dans `@spa/shared` — `PAYMENT_ERROR_CODES` du contrat n'en
  * porte aucun. Ils sont donc écrits en clair ici, comme le fait déjà
- * `calendar-failure.ts` pour le 404 de l'agenda, et rejoindront le contrat avec
- * le reste des DTO (TODO(#26)). C'est aussi la raison pour laquelle
- * `ApiClientError.code` est un `string` et non un `ErrorCode`.
+ * `calendar-failure.ts` pour le 404 de l'agenda. C'est aussi la raison pour
+ * laquelle `ApiClientError.code` est un `string` et non un `ErrorCode`.
+ *
+ * TODO(#536) : les rapatrier n'est pas un import mais le découpage par module de
+ * la famille de codes du contrat, que #510 a instruit dans les six fichiers
+ * `*.errors.ts` d'`apps/api` sans pouvoir le trancher depuis eux. Le jour où
+ * `PAYMENT_ERROR_CODES` existe côté contrat, ces quatre constantes disparaissent
+ * et `ApiClientError.code` peut redevenir un `ErrorCode`.
  */
 const APPOINTMENT_NOT_PAYABLE = 'APPOINTMENT_NOT_PAYABLE';
 const APPOINTMENT_NOT_SETTLEABLE = 'APPOINTMENT_NOT_SETTLEABLE';
@@ -515,8 +520,9 @@ export function saleTotalRows(sale: SaleSummary): readonly SaleTotalRow[] {
  * Codes de refus de la caisse, tels que `payments.errors.ts` les émet.
  *
  * Écrits en clair pour la même raison que ceux de l'encaissement quelques
- * lignes plus haut : `PAYMENT_ERROR_CODES` vit dans `apps/api` et rejoindra
- * `@spa/shared` avec le reste des DTO (TODO(#26)).
+ * centaines de lignes plus haut : `PAYMENT_ERROR_CODES` vit dans `apps/api`, et
+ * le rapatrier suppose de découper par module la famille de codes du contrat —
+ * TODO(#536), instruit en tête de cette section.
  */
 const SALE_ITEM_UNAVAILABLE = 'SALE_ITEM_UNAVAILABLE';
 const SALE_CURRENCY_MISMATCH = 'SALE_CURRENCY_MISMATCH';

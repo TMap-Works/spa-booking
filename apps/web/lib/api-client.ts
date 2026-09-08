@@ -93,8 +93,9 @@ import {
 import { z } from 'zod';
 
 // Les deux formes d'encaissement que l'API sert et que `@spa/shared` ne décrit
-// pas encore telles quelles. La raison — et le TODO(#26) qui les y ramènera —
-// est dans l'en-tête de `lib/admin/payment-contract.ts`.
+// pas encore telles quelles. La raison — et le TODO(#536) qui les y ramènera —
+// est dans l'en-tête de `lib/admin/payment-contract.ts`, que #510 a instruite
+// écart par écart.
 import {
   appointmentPaymentIntentSchema,
   paymentTransactionSchema,
@@ -103,7 +104,7 @@ import {
 } from '@/lib/admin/payment-contract';
 
 // Les formes de l'administration du personnel que `@spa/shared` ne décrit pas
-// encore telles quelles, pour la même raison et avec le même TODO(#26) : voir
+// encore telles quelles, pour la même raison et avec le même TODO(#536) : voir
 // l'en-tête de `lib/admin/staff-contract.ts`.
 import {
   staffAccountSchema,

@@ -12,14 +12,18 @@
  * | `paymentIntentSchema` — `.strict()`, trois champs | `PaymentIntentDto` — six champs, dont `publishableKey` | le `.strict()` rejetterait la réponse entière |
  * | `paymentSchema` — `capturedAt` optionnel | `PaymentTransactionDto` — `capturedAt: null` | « absent » et « nul » ne sont pas la même chose pour Zod |
  *
- * Les DTO d'`apps/api` portent tous le même `TODO(#26)` : ils rejoindront
- * `packages/shared` le jour où l'API dépendra du paquet, et les deux formes se
- * rejoindront alors. D'ici là, corriger le contrat partagé pour un écran
- * reviendrait à changer une source de vérité que trois autres branches lisent —
- * pour un module que #26 supprimera. Les schémas vivent donc ici, **composés des
- * primitives du contrat** (`nonNegativeMoneySchema`, `uuidSchema`,
- * `utcInstantSchema`, les deux énumérations de paiement) : rien du vocabulaire
- * n'est redéclaré, seule l'enveloppe l'est.
+ * TODO(#536) : les deux écarts du tableau ci-dessus sont ce que #510 a instruit
+ * sans pouvoir le refermer, et le tableau **est** la justification demandée — pas
+ * un renvoi. Les refermer suppose de trancher, côté contrat, lequel des deux a
+ * raison : retirer `publishableKey` et `status` de la réponse casserait le
+ * tunnel de paiement, les ajouter au contrat change une source de vérité que
+ * l'API et le front lisent tous deux. Même constat, mot pour mot, dans
+ * `apps/api/src/modules/payments/payments.types.ts`.
+ *
+ * D'ici là, les schémas vivent ici, **composés des primitives du contrat**
+ * (`nonNegativeMoneySchema`, `uuidSchema`, `utcInstantSchema`, les deux
+ * énumérations de paiement) : rien du vocabulaire n'est redéclaré, seule
+ * l'enveloppe l'est.
  *
  * ## La frontière PCI, dans la forme même de ces schémas
  *

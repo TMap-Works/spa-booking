@@ -16,11 +16,26 @@ import {
 /**
  * Le journal d'envois du back-office — `GET /api/v1/notifications` (#70).
  *
- * TODO(#26) : ces formes appartiennent au contrat d'API et sont décrites par
+ * TODO(#536) : ces formes appartiennent au contrat d'API et sont décrites par
  * `packages/shared/src/schemas/notification.ts` (`notificationSchema`,
- * `notificationListQuerySchema`) ; elles devront en être importées. Les noms et
- * les valeurs sont **ceux du contrat**, pour que la substitution ne change rien
- * en silence — mêmes champs, même casse, mêmes facultatifs.
+ * `notificationListQuerySchema`), et #510 n'a pu monter ni l'une ni l'autre.
+ * Deux empêchements, un par sens :
+ *
+ * 1. **la requête.** `notificationListQuerySchema` déclare
+ *    `statuses: z.array(...)` sans coercition, là où Express rend une `string`
+ *    pour `?statuses=sent` et un tableau pour la forme répétée. Le filtre le
+ *    plus courant du comptoir — un seul statut — sortirait donc en 400. Aucun
+ *    schéma de requête du contrat ne coerce, `myAppointmentsQuerySchema`
+ *    excepté, et c'est le même constat que sur `appointmentListQuerySchema` ;
+ * 2. **la réponse.** `notificationSchema` porte type, canal et statut **en
+ *    minuscules**, là où cette route émet la casse de l'énumération PostgreSQL.
+ *    C'est le premier point de vigilance de #510, et une assertion de
+ *    compilation contre `z.input<...>` ne se pose donc pas ici : les
+ *    énumérations du contrat sont des `z.enum`, dont le type d'entrée est
+ *    l'union en minuscules, et non `string` comme celui des schémas de réception
+ *    (`receivedAppointmentStatusSchema`). Reste à faire côté contrat : donner à
+ *    ce module ses trois schémas de réception, comme `appointments` et
+ *    `identity` ont les leurs.
  *
  * ## Ce que ce contrat ne porte pas
  *
