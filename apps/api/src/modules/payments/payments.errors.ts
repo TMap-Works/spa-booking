@@ -1,3 +1,5 @@
+import { PAYMENT_ERROR_CODES } from '@spa/shared';
+
 import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
 
 /**
@@ -38,38 +40,21 @@ import { DOMAIN_HTTP_STATUS, DomainError } from '../../common/errors';
  * public ; c'est exactement l'endroit où la frontière SAQ A se perd
  * (payments-stripe §1).
  *
- * TODO(#536) : ces codes appartiennent au contrat d'API, et #510 n'a pas pu les
- * y prendre — la même décision de contrat que dans les cinq autres fichiers
- * d'erreurs du dépôt. Il n'y a pas d'import à faire mais une famille à
- * découper : `@spa/shared` mêle les codes de tous les modules dans
- * `ERROR_CODES`, `DOMAIN_ERROR_CODES` et `BOOKING_ERROR_CODES`, sans qu'aucun
- * regroupement ne dise lequel appartient à quel module. Reste à faire :
- * découper les codes du contrat par module, puis importer — les six fichiers
- * d'erreurs bougeront ensemble.
+ * ## Où vivent les codes, depuis #536
+ *
+ * Dans `packages/shared/src/errors/error-codes.ts`, sous une famille
+ * `PAYMENT_ERROR_CODES` propre au module ; ils sont simplement réexportés d'ici,
+ * si bien que rien ne change à l'usage. Le rapatriement a tranché trois paires
+ * divergentes, et **dans le sens du nom servi** : le contrat annonçait
+ * `PAYMENT_ALREADY_CAPTURED`, `REFUND_EXCEEDS_CAPTURED_AMOUNT` et
+ * `PAYMENT_PROVIDER_ERROR` là où cette API émet, depuis toujours,
+ * `PAYMENT_ALREADY_SETTLED`, `REFUND_EXCEEDS_CAPTURED` et
+ * `PAYMENT_PROVIDER_UNAVAILABLE`. Un front branché sur les premiers n'aurait
+ * jamais vu sa branche se déclencher. Le raisonnement complet, et les deux
+ * anciens noms encore déclarés le temps que le back-office cesse de les lire,
+ * sont écrits en tête du fichier du contrat.
  */
-
-/** Codes d'erreur du module, tels qu'ils partent au client. */
-export const PAYMENT_ERROR_CODES = {
-  // Encaissement en ligne et au comptoir (#57, #62, #63).
-  APPOINTMENT_NOT_PAYABLE: 'APPOINTMENT_NOT_PAYABLE',
-  APPOINTMENT_NOT_SETTLEABLE: 'APPOINTMENT_NOT_SETTLEABLE',
-  PAYMENT_ALREADY_SETTLED: 'PAYMENT_ALREADY_SETTLED',
-  PAYMENT_PROVIDER_UNAVAILABLE: 'PAYMENT_PROVIDER_UNAVAILABLE',
-  HISTORY_WINDOW_INVALID: 'HISTORY_WINDOW_INVALID',
-  PAYMENT_NOT_REFUNDABLE: 'PAYMENT_NOT_REFUNDABLE',
-  REFUND_EXCEEDS_CAPTURED: 'REFUND_EXCEEDS_CAPTURED',
-
-  // Réception des webhooks Stripe (#58).
-  INVALID_WEBHOOK_SIGNATURE: 'INVALID_WEBHOOK_SIGNATURE',
-  WEBHOOK_NOT_CONFIGURED: 'WEBHOOK_NOT_CONFIGURED',
-  WEBHOOK_PAYLOAD_TOO_LARGE: 'WEBHOOK_PAYLOAD_TOO_LARGE',
-
-  // Rayon retail et ticket de caisse (#60).
-  PRODUCT_SKU_TAKEN: 'PRODUCT_SKU_TAKEN',
-  SALE_ITEM_UNAVAILABLE: 'SALE_ITEM_UNAVAILABLE',
-  SALE_CURRENCY_MISMATCH: 'SALE_CURRENCY_MISMATCH',
-  SALE_AMOUNT_OUT_OF_RANGE: 'SALE_AMOUNT_OUT_OF_RANGE',
-} as const;
+export { PAYMENT_ERROR_CODES };
 
 // Les valeurs viennent de `DOMAIN_HTTP_STATUS`, la table de correspondance
 // d'api-module §5, et non d'un nombre recopié : deux tables de statuts qui

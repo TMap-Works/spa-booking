@@ -1,4 +1,4 @@
-import { DOMAIN_ERROR_CODES } from '@spa/shared';
+import { CRM_ERROR_CODES } from '@spa/shared';
 
 import { DomainError } from '../../common/errors';
 
@@ -9,21 +9,15 @@ import { DomainError } from '../../common/errors';
  * ces classes, et `DomainExceptionFilter` la traduit. Le front réagit sur
  * `code`, jamais sur `message`.
  *
- * TODO(#536) : les **autres** codes appartiennent au contrat d'API, et #510 n'a
- * pas pu les y prendre — la même décision de contrat que dans les cinq autres
- * fichiers d'erreurs du dépôt : il n'y a pas d'import à faire mais une famille à
- * découper, `@spa/shared` mêlant les codes de tous les modules dans trois
- * constantes sans regroupement par module.
+ * Les **codes** viennent de `@spa/shared` et sont réexportés d'ici (#536). Le
+ * contrat n'en portait qu'un — `CLIENT_EMAIL_NOT_BOOKABLE`, déjà consommé ici
+ * depuis #463, mais rangé dans `DOMAIN_ERROR_CODES` faute de famille `crm` où le
+ * mettre. Il y en a une maintenant, et il y a rejoint les deux autres : c'est le
+ * module qui **lève** le refus qui le porte, quelle que soit la route par
+ * laquelle il sort. `CUSTOMER_EMAIL_TAKEN` et
+ * `CUSTOMER_HAS_UPCOMING_APPOINTMENTS` y ont été ajoutés à l'identique.
  *
- * `CLIENT_EMAIL_NOT_BOOKABLE`, lui, y est **déjà** déclaré — dans
- * `DOMAIN_ERROR_CODES` de `packages/shared/src/errors/error-codes.ts`, parce que
- * le front en a besoin pour trier ce refus définitif du 409 passager qu'est un
- * créneau perdu (#452). Il n'est plus recopié ici : la constante ci-dessous
- * **consomme la valeur du contrat** (#463). Il n'y a donc plus deux versions à
- * faire diverger — renommer ou retirer le code dans `@spa/shared` casse la
- * compilation d'`apps/api`, ici, et le changerait des deux côtés d'un seul geste.
- *
- * **Ce que cet import de valeur a exigé, et qui le garde.** Il émet un
+ * **Ce que cet import de valeur exige, et qui le garde.** Il émet un
  * `require('@spa/shared')` dans `apps/api/dist`, que `node` résout par le `main`
  * du workspace — `packages/shared/dist/index.js`. Trois choses le rendent
  * possible, et aucune n'est décorative : `@spa/shared` est déclaré dans les
@@ -32,27 +26,15 @@ import { DomainError } from '../../common/errors';
  * « L'image API démarre » de `.github/workflows/ci.yml` **lance** l'image à
  * chaque PR, là où le job `docker` se contentait de la construire. C'est cette
  * dernière qui empêche le `MODULE_NOT_FOUND` de ne se découvrir qu'au
- * déploiement (#463).
+ * déploiement (#463). Les huit modules importent désormais leurs codes de cette
+ * façon : la garde vaut pour tous.
  *
  * **Aucune de ces erreurs ne parle d'un autre établissement**, et aucune ne
  * recopie une donnée personnelle. Une fiche d'un autre tenant est introuvable,
  * point : c'est `NotFoundError` du tronc commun qui répond, en 404. Un code
  * dédié — ou un 403 — confirmerait son existence (tenant-isolation §4).
  */
-
-/**
- * Codes d'erreur du module, tels qu'ils partent au client.
- *
- * `CUSTOMER_EMAIL_TAKEN` n'a pas d'équivalent dans `@spa/shared` — ni dans
- * `DOMAIN_ERROR_CODES`, ni ailleurs dans `ERROR_CODES` — et reste donc déclaré
- * ici seul. C'est le seul autre code de ce fichier, et la réponse au troisième
- * critère de #456 : il n'y avait qu'un doublon à résorber.
- */
-export const CRM_ERROR_CODES = {
-  CUSTOMER_EMAIL_TAKEN: 'CUSTOMER_EMAIL_TAKEN',
-  CLIENT_EMAIL_NOT_BOOKABLE: DOMAIN_ERROR_CODES.CLIENT_EMAIL_NOT_BOOKABLE,
-  CUSTOMER_HAS_UPCOMING_APPOINTMENTS: 'CUSTOMER_HAS_UPCOMING_APPOINTMENTS',
-} as const;
+export { CRM_ERROR_CODES };
 
 const CONFLICT = 409;
 const UNPROCESSABLE_ENTITY = 422;
