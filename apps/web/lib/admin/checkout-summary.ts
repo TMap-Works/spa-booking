@@ -19,7 +19,7 @@
  */
 
 import type { Appointment, AppointmentStatus, Money, PaymentMethod } from '@spa/shared';
-import { ERROR_CODES } from '@spa/shared';
+import { ERROR_CODES, PAYMENT_ERROR_CODES } from '@spa/shared';
 
 import type {
   CreateSaleRequest,
@@ -109,25 +109,27 @@ export function methodHint(method: PaymentMethod): string {
     : 'La cliente saisit sa carte dans les champs servis par Stripe. Aucun numéro n’est saisi, ni vu, ni conservé par le salon.';
 }
 
-/**
+/*
  * Codes de refus que l'API d'encaissement émet et que cet écran sait nommer.
  *
- * Ils viennent de `apps/api/src/modules/payments/payments.errors.ts` et ne sont
- * **pas** encore dans `@spa/shared` — `PAYMENT_ERROR_CODES` du contrat n'en
- * porte aucun. Ils sont donc écrits en clair ici, comme le fait déjà
- * `calendar-failure.ts` pour le 404 de l'agenda. C'est aussi la raison pour
- * laquelle `ApiClientError.code` est un `string` et non un `ErrorCode`.
+ * Ils étaient écrits en clair ici — quatre constantes locales — le temps que
+ * `PAYMENT_ERROR_CODES` existe côté contrat. C'est fait depuis #536, et #546 les
+ * y a ramenés : l'écran lit désormais `PAYMENT_ERROR_CODES.…`, comme il lisait
+ * déjà `ERROR_CODES.…` pour les refus de transport, quelques lignes plus bas.
  *
- * TODO(#536) : les rapatrier n'est pas un import mais le découpage par module de
- * la famille de codes du contrat, que #510 a instruit dans les six fichiers
- * `*.errors.ts` d'`apps/api` sans pouvoir le trancher depuis eux. Le jour où
- * `PAYMENT_ERROR_CODES` existe côté contrat, ces quatre constantes disparaissent
- * et `ApiClientError.code` peut redevenir un `ErrorCode`.
+ * Ce que la substitution vaut, au-delà de la cosmétique : un code renommé dans
+ * `apps/api` fait maintenant échouer la **compilation** de cet écran, là où un
+ * littéral l'aurait laissé compiler pour ne plus jamais correspondre à rien. Un
+ * `case` mort ne se voit pas ; c'est ainsi que le contrat a pu annoncer
+ * `PAYMENT_ALREADY_CAPTURED` pendant des mois quand l'API servait
+ * `PAYMENT_ALREADY_SETTLED`. Le garde de `packages/shared` refuse désormais
+ * qu'un littéral revienne ici (`src/__tests__/api-error-codes.spec.ts`).
+ *
+ * `ApiClientError.code` reste un `string` malgré tout, et ce n'est plus un
+ * pis-aller : voir la note de `lib/api-client.ts`, où la question a été
+ * tranchée — le filtre d'exception de l'API retombe sur `HTTP_<statut>`, une
+ * valeur que `ErrorCode` ne contient pas et ne doit pas contenir.
  */
-const APPOINTMENT_NOT_PAYABLE = 'APPOINTMENT_NOT_PAYABLE';
-const APPOINTMENT_NOT_SETTLEABLE = 'APPOINTMENT_NOT_SETTLEABLE';
-const PAYMENT_ALREADY_SETTLED = 'PAYMENT_ALREADY_SETTLED';
-const PAYMENT_PROVIDER_UNAVAILABLE = 'PAYMENT_PROVIDER_UNAVAILABLE';
 
 /**
  * Ce que le comptoir lit quand rien n'a répondu — quel que soit le maillon.
@@ -155,16 +157,14 @@ export const PROVIDER_UNREACHABLE_MESSAGE =
  */
 export function checkoutFailureMessage(code: string, message: string): string {
   switch (code) {
-    case PAYMENT_ALREADY_SETTLED:
-    case ERROR_CODES.PAYMENT_ALREADY_CAPTURED:
+    case PAYMENT_ERROR_CODES.PAYMENT_ALREADY_SETTLED:
     case ERROR_CODES.CONFLICT:
       return 'Ce rendez-vous a déjà été encaissé. Rechargez l’écran avant de reprendre — un second règlement créerait une pièce comptable de trop.';
-    case APPOINTMENT_NOT_PAYABLE:
+    case PAYMENT_ERROR_CODES.APPOINTMENT_NOT_PAYABLE:
       return 'Le paiement par carte n’accepte pas ce rendez-vous : il est annulé, terminé ou non honoré. Encaissez en espèces si la prestation a été rendue.';
-    case APPOINTMENT_NOT_SETTLEABLE:
+    case PAYMENT_ERROR_CODES.APPOINTMENT_NOT_SETTLEABLE:
       return 'Ce rendez-vous est annulé : il n’y a plus de prestation à encaisser.';
-    case PAYMENT_PROVIDER_UNAVAILABLE:
-    case ERROR_CODES.PAYMENT_PROVIDER_ERROR:
+    case PAYMENT_ERROR_CODES.PAYMENT_PROVIDER_UNAVAILABLE:
     case ERROR_CODES.SERVICE_UNAVAILABLE:
       return PROVIDER_UNREACHABLE_MESSAGE;
     case ERROR_CODES.TOO_MANY_REQUESTS:
@@ -516,18 +516,13 @@ export function saleTotalRows(sale: SaleSummary): readonly SaleTotalRow[] {
   ];
 }
 
-/**
- * Codes de refus de la caisse, tels que `payments.errors.ts` les émet.
- *
- * Écrits en clair pour la même raison que ceux de l'encaissement quelques
- * centaines de lignes plus haut : `PAYMENT_ERROR_CODES` vit dans `apps/api`, et
- * le rapatrier suppose de découper par module la famille de codes du contrat —
- * TODO(#536), instruit en tête de cette section.
+/*
+ * Les codes de refus de la caisse viennent du contrat, comme ceux de
+ * l'encaissement quelques centaines de lignes plus haut : `PAYMENT_ERROR_CODES`
+ * porte les quatre que ce `switch` nomme, et #546 a retiré les quatre
+ * constantes locales qui les redoublaient. La note de la section précédente vaut
+ * mot pour mot ici.
  */
-const SALE_ITEM_UNAVAILABLE = 'SALE_ITEM_UNAVAILABLE';
-const SALE_CURRENCY_MISMATCH = 'SALE_CURRENCY_MISMATCH';
-const SALE_AMOUNT_OUT_OF_RANGE = 'SALE_AMOUNT_OUT_OF_RANGE';
-const HISTORY_WINDOW_INVALID = 'HISTORY_WINDOW_INVALID';
 
 /**
  * Le message d'un refus de la caisse, à partir du code rendu par l'API.
@@ -543,14 +538,14 @@ const HISTORY_WINDOW_INVALID = 'HISTORY_WINDOW_INVALID';
  */
 export function saleFailureMessage(code: string, message: string): string {
   switch (code) {
-    case SALE_ITEM_UNAVAILABLE:
+    case PAYMENT_ERROR_CODES.SALE_ITEM_UNAVAILABLE:
       return 'Un article du ticket n’est plus au rayon. Retirez-le et rechargez le catalogue avant de reprendre.';
-    case SALE_CURRENCY_MISMATCH:
+    case PAYMENT_ERROR_CODES.SALE_CURRENCY_MISMATCH:
     case ERROR_CODES.CURRENCY_MISMATCH:
       return 'Un article du ticket est libellé dans une autre devise que celle du salon. Il n’est pas vendable ici : retirez-le du ticket.';
-    case SALE_AMOUNT_OUT_OF_RANGE:
+    case PAYMENT_ERROR_CODES.SALE_AMOUNT_OUT_OF_RANGE:
       return 'Le total dépasse ce qu’un ticket peut porter. Réduisez les quantités, ou composez plusieurs tickets.';
-    case HISTORY_WINDOW_INVALID:
+    case PAYMENT_ERROR_CODES.HISTORY_WINDOW_INVALID:
       return 'La période demandée est vide : la fin doit suivre le début.';
     case ERROR_CODES.VALIDATION_ERROR:
       return 'Le ticket a été refusé : une ligne est incomplète ou hors bornes. Vérifiez les quantités avant de réessayer.';

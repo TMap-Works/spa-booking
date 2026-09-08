@@ -359,11 +359,19 @@ jobs:
           fi
           echo "Aucun compilateur TypeScript dans l'image API."
 
-      # `apps/api` dépend de `@spa/shared` et en importe une **valeur**
-      # (`crm.errors.ts`) : `apps/api/dist` porte donc un `require('@spa/shared')`
-      # que `node` résout par le `main` du workspace, `./dist/index.js`. Tant que
-      # l'étape `runtime` n'emportait du paquet que son `package.json`, ce
-      # `require` n'avait rien à charger (#463).
+      # `apps/api` dépend de `@spa/shared` et en importe des **valeurs** :
+      # `apps/api/dist` porte donc un `require('@spa/shared')` que `node` résout
+      # par le `main` du workspace, `./dist/index.js`. Tant que l'étape `runtime`
+      # n'emportait du paquet que son `package.json`, ce `require` n'avait rien à
+      # charger (#463).
+      #
+      # À l'époque de #463, `crm.errors.ts` était le seul module dans ce cas, et
+      # ce commentaire le nommait. Depuis le rapatriement des familles de codes
+      # (#536), **les huit modules du CDC §2.3** importent leur famille du
+      # contrat et la réexportent — `identity`, `catalog`, `availability`,
+      # `appointments`, `crm`, `payments`, `notifications`, `reporting`. La
+      # vérification n'a pas changé de nature ; sa portée, si : ce n'est plus un
+      # module qui tomberait sur un paquet absent, c'est le graphe entier.
       #
       # Charger le paquet plutôt que le seul `require.resolve` : le résoudre
       # prouve que le chemin existe, le charger prouve qu'il s'exécute.

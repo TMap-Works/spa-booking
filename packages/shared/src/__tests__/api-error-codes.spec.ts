@@ -13,16 +13,24 @@
  * Le rapatriement des familles supprime la seconde écriture. Ce test empêche
  * qu'elle revienne.
  *
+ * ## Les deux côtés du contrat
+ *
+ * Le premier bloc garde `apps/api`, qui **émet** les codes. Le second garde
+ * `apps/web`, qui les **lit** : #546 y a trouvé huit littéraux pour des codes que
+ * le contrat portait déjà, et rien n'aurait empêché le neuvième. Le producteur
+ * comme le consommateur n'ont plus qu'une écriture, celle d'ici.
+ *
  * ## Pourquoi ici, dans `packages/shared`
  *
  * Parce que la propriété gardée est une propriété **du contrat** : c'est lui qui
  * ne doit pas perdre un code que l'API sert. La mettre dans `apps/api`
- * l'aurait rangée sous l'un des huit modules alors qu'elle les concerne tous.
+ * l'aurait rangée sous l'un des huit modules alors qu'elle les concerne tous —
+ * et elle concerne désormais une application de plus.
  *
- * Ce test **lit** les sources d'`apps/api`, il ne les importe pas : le paquet
- * partagé ne gagne aucune dépendance de code sur l'application, et l'ordre de
- * compilation ne change pas. C'est le même procédé que
- * `contract-surface.spec.ts`, qui remonte déjà à la racine du dépôt pour
+ * Ce test **lit** les sources d'`apps/api` et d'`apps/web`, il ne les importe
+ * pas : le paquet partagé ne gagne aucune dépendance de code sur les
+ * applications, et l'ordre de compilation ne change pas. C'est le même procédé
+ * que `contract-surface.spec.ts`, qui remonte déjà à la racine du dépôt pour
  * vérifier la résolution de `@spa/shared` depuis `apps/api` et `apps/web`.
  *
  * ## Ce qu'il ne prouve pas
@@ -155,6 +163,83 @@ const MODULE_FILES = ALL_FILES.filter((file) => file.startsWith(API_MODULES + se
 const ALL_DECLARATIONS = codeDeclarationsIn(ALL_FILES);
 const MODULE_DECLARATIONS = codeDeclarationsIn(MODULE_FILES);
 
+/* --- Le second consommateur du contrat : `apps/web` (#546) ---------------- */
+
+const WEB_ROOT = join(REPO_ROOT, 'apps', 'web');
+
+/**
+ * Les suites du front sont exclues, pour la raison qui exclut `__tests__` côté
+ * API : elles fabriquent des **corps d'erreur du fil**, et un corps du fil porte
+ * la valeur textuelle, pas une référence au contrat. Un test qui pose
+ * `{ code: 'NOT_FOUND' }` dans un `fetch` simulé écrit ce que l'API écrirait —
+ * l'y interdire l'obligerait à prouver le contrat par le contrat.
+ */
+const WEB_TESTS = join(WEB_ROOT, 'tests');
+
+function webSourceFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const full = join(directory, entry.name);
+
+    if (entry.isDirectory()) {
+      return entry.name === 'node_modules' || entry.name === '.next' || full === WEB_TESTS
+        ? []
+        : webSourceFiles(full);
+    }
+
+    return entry.isFile() && /\.tsx?$/.test(entry.name) ? [full] : [];
+  });
+}
+
+/**
+ * Un littéral en **position de jeton**, et non n'importe quelle apostrophe.
+ *
+ * Le caractère qui précède le guillemet ouvrant ne doit pas être alphanumérique.
+ * C'est ce qui écarte l'élision française — `l'`, `d'`, `qu'` — dont les
+ * commentaires de ce dépôt sont pleins : sans cette contrainte, une phrase comme
+ * « l'ERROR_CODES' » suffirait à faire échouer le garde pour une raison de
+ * typographie. Le code, lui, fait toujours précéder un littéral d'un espace,
+ * d'une parenthèse, d'une virgule ou d'un crochet.
+ *
+ * Le balayage lit le fichier brut, commentaires compris — écarter les
+ * commentaires demanderait un vrai découpage lexical, qu'un remplacement par
+ * expression régulière ne sait pas faire sans manger la fin de toute ligne
+ * portant `//` dans une chaîne. Un garde bruyant vaut mieux qu'un garde aveugle,
+ * et le bruit se corrige d'un geste : une prose qui **cite** un code l'écrit
+ * `` `PAYMENT_ALREADY_SETTLED` `` — entre accents graves, sans guillemets —,
+ * comme le fait déjà tout le reste du dépôt.
+ */
+const WEB_CODE_LITERAL = /(?:^|[^A-Za-z0-9_$])(['"])([A-Z][A-Z0-9_]*)\1/gm;
+
+const WEB_FILES = webSourceFiles(WEB_ROOT);
+
+/** Chaque littéral de code du contrat écrit en clair dans `apps/web`, localisé. */
+function webCodeLiterals(): string[] {
+  return WEB_FILES.flatMap((file) => {
+    const source = readFileSync(file, 'utf8');
+    const found: string[] = [];
+
+    for (const match of source.matchAll(WEB_CODE_LITERAL)) {
+      const value = match[2] ?? '';
+
+      if (!isKnownErrorCode(value)) {
+        continue;
+      }
+
+      // Compté jusqu'à la **fin** du littéral, et non jusqu'au début du motif :
+      // celui-ci commence un cran plus tôt, sur le caractère qui précède le
+      // guillemet — et ce caractère est le saut de ligne lui-même quand le
+      // littéral ouvre la ligne. Partir de `match.index` désignerait alors la
+      // ligne précédente. Un code n'ayant ni guillemet ni retour à la ligne, la
+      // fin du motif est toujours sur la ligne du littéral.
+      const line = source.slice(0, (match.index ?? 0) + match[0].length).split('\n').length;
+
+      found.push(`${relative(REPO_ROOT, file).split(sep).join('/')}:${line} : '${value}'`);
+    }
+
+    return found;
+  });
+}
+
 /**
  * Le code du contrat que cette affectation sert, ou `undefined` si elle n'en
  * sert aucun — expression d'une forme imprévue, littéral hors contrat, ou membre
@@ -265,5 +350,44 @@ describe('couverture des codes d’erreur d’apps/api par le contrat', () => {
     }).map(({ file, expression }) => `${file} : ${expression}`);
 
     expect(borrowed).toEqual([]);
+  });
+});
+
+/**
+ * L'autre côté du contrat — #546.
+ *
+ * ## Pourquoi le garde ne pouvait pas s'arrêter à `apps/api`
+ *
+ * Le rapatriement de #536 a supprimé la seconde écriture **côté serveur**. Elle
+ * subsistait côté front : `apps/web/lib/admin/checkout-summary.ts` déclarait huit
+ * constantes locales — `const PAYMENT_ALREADY_SETTLED = 'PAYMENT_ALREADY_SETTLED'`
+ * et sept sœurs — pour des codes que `PAYMENT_ERROR_CODES` porte désormais. Rien
+ * ne l'en empêchait, et rien n'aurait empêché la neuvième.
+ *
+ * Le dégât n'est pas cosmétique. Un littéral **compile toujours** : le jour où
+ * l'API renomme un refus, le `case` du front cesse simplement de correspondre, la
+ * branche devient morte, et le message précis est remplacé par le repli
+ * générique. C'est exactement l'histoire de `PAYMENT_ALREADY_CAPTURED`, restée
+ * invisible des mois durant. Passer par le contrat transforme ce silence en
+ * erreur de compilation.
+ *
+ * ## Ce qui reste licite
+ *
+ * Les `HTTP_<statut>` du repli — `'HTTP_404'`, `'HTTP_429'` — ne sont pas des
+ * codes du contrat et n'ont pas vocation à le devenir : `isKnownErrorCode` les
+ * rejette, ce garde les ignore. Voir la note d'`ApiClientError` dans
+ * `apps/web/lib/api-client.ts`, où la question du type de `code` est tranchée.
+ */
+describe('couverture des codes d’erreur d’apps/web par le contrat', () => {
+  /** Même garde anti-vidage que ci-dessus : une liste vide passerait au vert. */
+  it('a bien balayé les sources du front', () => {
+    expect(WEB_FILES.length).toBeGreaterThan(50);
+    expect(WEB_FILES.some((file) => file.endsWith(`admin${sep}checkout-summary.ts`))).toBe(true);
+    expect(WEB_FILES.some((file) => file.endsWith(`lib${sep}api-client.ts`))).toBe(true);
+    expect(WEB_FILES.every((file) => !file.startsWith(WEB_TESTS + sep))).toBe(true);
+  });
+
+  it('ne laisse aucun littéral de code du contrat dans apps/web', () => {
+    expect(webCodeLiterals()).toEqual([]);
   });
 });

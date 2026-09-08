@@ -29,6 +29,7 @@
  */
 
 import {
+  ERROR_CODES,
   apiErrorSchema,
   appointmentSchema,
   authSessionResponseSchema,
@@ -126,9 +127,27 @@ import {
  * est destiné à un humain, il est traduisible et peut changer sans préavis.
  * `code` est le contrat.
  *
- * `code` est un `string` et non un `ErrorCode` : le filtre d'exception de l'API
- * retombe sur `HTTP_<statut>` pour un statut qu'il ne sait pas nommer, et un
- * transtypage optimiste ferait croire à une exhaustivité qui n'existe pas.
+ * ## Pourquoi `code` est un `string` et non un `ErrorCode` — tranché, #546
+ *
+ * La question s'est posée une fois le contrat assaini : `ERROR_CODES` ne déclare
+ * plus que ce que l'API émet, alors pourquoi ne pas resserrer le type ici ?
+ *
+ * Parce que **toutes les valeurs qui passent par ce champ ne sont pas des codes
+ * du contrat**, et qu'aucune ne peut le devenir :
+ *
+ * - le filtre d'exception de l'API retombe sur `HTTP_<statut>` pour un statut
+ *   qu'il ne sait pas nommer — `HTTP_404`, `HTTP_429`, que les écrans traitent
+ *   nommément (`lib/admin/checkout-summary.ts`). Les ajouter à `ErrorCode`
+ *   reviendrait à faire entrer au contrat les 500 combinaisons du repli ;
+ * - un corps d'erreur hors forme donne le même repli, construit plus bas ;
+ * - `apiErrorSchema` valide un `string`, pas une énumération, et c'est
+ *   délibéré : une API qui émettrait un code inédit doit être **lue**, pas
+ *   rejetée à la frontière.
+ *
+ * `ErrorCode` reste ce qu'il doit être — la liste close de ce que l'API nomme —
+ * et `isKnownErrorCode` de `@spa/shared` est le pont pour qui a besoin de
+ * restreindre. Un transtypage ici ferait croire à une exhaustivité qui n'existe
+ * pas ; la note du contrat le dit déjà de son côté.
  */
 export class ApiClientError extends Error {
   public readonly code: string;
@@ -206,7 +225,7 @@ async function request<TSchema extends z.ZodTypeAny>(
     // L'API injoignable n'est pas une erreur d'API : elle n'a pas de code, et un
     // écran qui l'afficherait comme un refus métier tromperait le visiteur.
     throw new ApiClientError(
-      'SERVICE_UNAVAILABLE',
+      ERROR_CODES.SERVICE_UNAVAILABLE,
       "Le service de réservation est momentanément injoignable. Merci de réessayer dans un instant.",
       503,
       { cause: cause instanceof Error ? cause.message : String(cause) },
@@ -231,7 +250,7 @@ async function request<TSchema extends z.ZodTypeAny>(
 
   if (!parsed.success) {
     throw new ApiClientError(
-      'INTERNAL_ERROR',
+      ERROR_CODES.INTERNAL_ERROR,
       `La réponse de l’API ne respecte pas le contrat sur ${path}.`,
       response.status,
       { issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`) },
@@ -435,7 +454,7 @@ async function authorizedRequest<TSchema extends z.ZodTypeAny | null>(
     response = await fetch(`${apiBaseUrl()}${options.path}`, init);
   } catch (cause) {
     throw new ApiClientError(
-      'SERVICE_UNAVAILABLE',
+      ERROR_CODES.SERVICE_UNAVAILABLE,
       'Le service est momentanément injoignable. Merci de réessayer dans un instant.',
       503,
       { cause: cause instanceof Error ? cause.message : String(cause) },
@@ -469,7 +488,7 @@ async function authorizedRequest<TSchema extends z.ZodTypeAny | null>(
 
   if (!parsed.success) {
     throw new ApiClientError(
-      'INTERNAL_ERROR',
+      ERROR_CODES.INTERNAL_ERROR,
       `La réponse de l’API ne respecte pas le contrat sur ${options.path}.`,
       response.status,
       { issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`) },
