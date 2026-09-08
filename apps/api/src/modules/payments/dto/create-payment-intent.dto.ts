@@ -1,21 +1,56 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsUUID } from 'class-validator';
+import {
+  type CreatePaymentIntentRequest,
+  createPaymentIntentRequestSchema,
+  moneySchema,
+} from '@spa/shared';
+import type { z } from 'zod';
 
+import { ZodValidationPipe } from '../../../common/validation';
 import type { Money, PaymentIntentView, PaymentStatus } from '../payments.types';
 
 /**
- * Le corps de la création d'intention — **un identifiant, et rien d'autre**.
+ * L'ouverture d'un paiement en ligne (#57), **validée par le contrat partagé**
+ * (#510).
  *
- * Ce DTO est un dispositif de conformité autant qu'un contrat. `ValidationPipe`
- * est global avec `whitelist` **et** `forbidNonWhitelisted` : un champ non
- * déclaré ici ne passe pas, il fait rejeter la requête en 400. Ce que ce corps
- * ne porte pas est donc structurellement impossible à envoyer, et c'est là que
- * se joue la frontière PCI (payments-stripe §1) :
+ * ## Ce que ce fichier est devenu, et ce qu'il n'est plus
+ *
+ * Il ne décrit plus la frontière d'entrée : il la **documente**. La demande
+ * d'intention appartient au contrat d'API, et `packages/shared` la décrit —
+ * appariée ici une fois pour toutes :
+ *
+ * | Ce fichier | `packages/shared/src/schemas/payment.ts` |
+ * |---|---|
+ * | `createPaymentIntentBody` (le pipe) | `createPaymentIntentRequestSchema` |
+ * | `CreatePaymentIntentDto` (la documentation) | idem, côté OpenAPI |
+ *
+ * La classe survit parce que le schéma OpenAPI de `/api/docs` sort des
+ * décorateurs `@nestjs/swagger`, que Zod ne porte pas : la supprimer
+ * supprimerait la documentation de la route. Elle a en revanche perdu **tous**
+ * ses décorateurs `class-validator` — c'est la décision de
+ * [l'ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md),
+ * et la conséquence à connaître avant de toucher à ce fichier : **typer un
+ * paramètre de handler par cette classe viderait le corps de la requête**, le
+ * `ValidationPipe` global appliquant `whitelist` à une classe qui n'a plus rien
+ * à mettre sur sa liste blanche. Le handler prend le type inféré du schéma, et
+ * déclare la classe par `@ApiBody`.
+ *
+ * La substitution ne change **aucun** comportement de la route :
+ * `createPaymentIntentRequestSchema` valide `appointmentId` avec `uuidSchema`,
+ * resserré sur la v4 par #404, c'est-à-dire exactement ce qu'exigeait
+ * `@IsUUID('4')`.
+ *
+ * ## Le `.strict()` du contrat remplace `forbidNonWhitelisted`, et c'est ici un
+ * dispositif de conformité
+ *
+ * Ce corps est un dispositif PCI autant qu'un contrat. Ce qu'il ne porte pas est
+ * structurellement impossible à envoyer, et c'est là que se joue la frontière
+ * (payments-stripe §1) :
  *
  * - **aucun champ de carte** — ni numéro, ni cryptogramme, ni date
- *   d'expiration, ni nom de porteur. Un PAN glissé dans ce corps est refusé par
- *   le pipe avant d'atteindre la moindre ligne de code métier, et n'atteint
- *   donc ni nos journaux ni notre base. C'est le quatrième critère de #57 ;
+ *   d'expiration, ni nom de porteur. Un PAN glissé dans ce corps est refusé
+ *   avant d'atteindre la moindre ligne de code métier, et n'atteint donc ni nos
+ *   journaux ni notre base. C'est le quatrième critère de #57 ;
  * - **aucun `amount`.** Le montant est le prix figé à la réservation, relu en
  *   base. Le laisser entrer ici aurait laissé n'importe qui payer un massage un
  *   centime (payments-stripe §4) ;
@@ -24,9 +59,32 @@ import type { Money, PaymentIntentView, PaymentStatus } from '../payments.types'
  * - **aucun `tenantId`.** Il vient du slug d'URL résolu par le middleware, et
  *   de nulle part ailleurs (tenant-isolation §2).
  *
- * TODO(#26) : cette forme appartient au contrat d'API et devra venir de
- * `@spa/shared` lors de la reprise groupée de ce TODO — la dépendance existe
- * depuis #463. Même TODO que dans les DTO d'`appointments`.
+ * Le refus vient désormais du `.strict()` du schéma plutôt que du
+ * `forbidNonWhitelisted` du pipe global. Les deux rendent le même 400 et le même
+ * corps `VALIDATION_ERROR` : `ZodValidationPipe` refuse d'ailleurs au montage un
+ * schéma d'entrée qui ne serait pas `.strict()`, si bien que la propriété est
+ * vérifiée à l'amorçage de l'application et non à la première requête d'un
+ * appelant qui aurait deviné le nom d'un champ.
+ */
+
+/**
+ * Le pipe de la demande d'intention — c'est **lui** qui valide, et non la classe
+ * ci-dessous.
+ *
+ * Instancié une fois au chargement du module plutôt qu'à chaque décoration : le
+ * schéma ne change pas d'une requête à l'autre, et la garde `.strict()` du pipe
+ * se paie ainsi une seule fois, à l'amorçage.
+ */
+export const createPaymentIntentBody = new ZodValidationPipe(createPaymentIntentRequestSchema);
+
+/** La demande d'intention, telle que le contrat la rend au contrôleur. */
+export type CreatePaymentIntentBody = CreatePaymentIntentRequest;
+
+/**
+ * Le corps de la création d'intention — **un identifiant, et rien d'autre**.
+ *
+ * La documentation de `createPaymentIntentRequestSchema`, et rien de plus : la
+ * règle appliquée à la requête est écrite là-bas, une seule fois.
  */
 export class CreatePaymentIntentDto {
   @ApiProperty({
@@ -37,10 +95,6 @@ export class CreatePaymentIntentDto {
       'exactement comme pour le report et l’annulation du même tunnel.',
     example: '3f1b1f6e-0a2b-4c3d-8e4f-5a6b7c8d9e0f',
   })
-  // `IsUUID` et non un simple `IsString` : un identifiant mal formé est un 400
-  // qui nomme le champ, jamais une requête qui descend jusqu'au pilote
-  // PostgreSQL pour en revenir en 500.
-  @IsUUID('4')
   public appointmentId!: string;
 }
 
@@ -78,6 +132,22 @@ export class MoneyDto implements Money {
  * Ni `tenantId`, ni marque de carte, ni quatre derniers chiffres : au moment où
  * cette réponse part, aucune carte n'a été saisie — et quand elle le sera, ce
  * sera dans une iframe servie par Stripe, que notre DOM ne lit pas.
+ *
+ * ## Pourquoi aucune assertion de compilation ne la tient — TODO(#536)
+ *
+ * Le patron de l'ADR 0008 garde une sortie par deux assertions contre
+ * `z.input<…>` du schéma correspondant. Ici, il n'y a pas de correspondance :
+ * `paymentIntentSchema` du contrat ne porte que `paymentId`, `clientSecret` et
+ * `amount`, là où cette classe sert en plus `appointmentId`, `status` et
+ * `publishableKey`. Le **jeu de clés** diffère des deux côtés, si bien que même
+ * la première des deux assertions ne compilerait pas.
+ *
+ * Ce qui reste à faire, et pourquoi pas ici : trancher lequel des deux a
+ * raison est une décision de **contrat**, pas de module. Retirer les trois
+ * champs de la réponse casserait le tunnel (`publishableKey` est ce qui évite de
+ * graver la clé dans le build du front, `status` ce que l'écran affiche) ; les
+ * ajouter au contrat est une modification de `packages/shared`, hors de
+ * l'empreinte de ce ticket, et qui touche aussi le front qui lit ce schéma.
  */
 export class PaymentIntentDto implements PaymentIntentView {
   @ApiProperty({
@@ -118,3 +188,45 @@ export class PaymentIntentDto implements PaymentIntentView {
   })
   public publishableKey!: string;
 }
+
+// ---------------------------------------------------------------------------
+// Les formes tenues par le contrat — à la compilation, faute de pouvoir l'être
+// à l'exécution
+// ---------------------------------------------------------------------------
+
+type AssertNever<T extends never> = T;
+type AssertTrue<T extends true> = T;
+
+/**
+ * La classe qui documente `/api/docs` doit annoncer **exactement** les champs
+ * que le pipe accepte.
+ *
+ * Sans cette garde, la substitution aurait déplacé le risque plutôt que de le
+ * supprimer — la validation n'a plus qu'une écriture, mais la documentation en
+ * garde une seconde, et une `@ApiProperty` oubliée décrirait une route qui
+ * refuse ce qu'elle annonce. Sur cette route-ci, elle porte davantage : un champ
+ * ajouté à la classe sans l'être au contrat serait un champ **documenté comme
+ * acceptable** sur le seul corps de requête du tunnel de paiement.
+ */
+type _CreatePaymentIntentDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof CreatePaymentIntentDto, keyof z.input<typeof createPaymentIntentRequestSchema>>
+  | Exclude<keyof z.input<typeof createPaymentIntentRequestSchema>, keyof CreatePaymentIntentDto>
+>;
+
+/**
+ * Le montant servi est celui du contrat — jeu de clés, puis champ par champ.
+ *
+ * `moneySchema` est la seule écriture de l'argent dans le contrat, et
+ * `CLAUDE.md` en fait une règle non négociable : entier dans la plus petite
+ * unité, code devise explicite, jamais de flottant. Un `amount` de type `number`
+ * ajouté à côté d'`amountMinor`, ou une `currency` devenue facultative,
+ * casseraient ici la compilation plutôt que d'atteindre un rapprochement
+ * bancaire.
+ */
+type MoneyWire = z.input<typeof moneySchema>;
+
+type _MoneyDtoHasTheContractKeys = AssertNever<
+  Exclude<keyof MoneyDto, keyof MoneyWire> | Exclude<keyof MoneyWire, keyof MoneyDto>
+>;
+
+type _MoneyDtoIsReadableByTheContract = AssertTrue<MoneyDto extends MoneyWire ? true : false>;

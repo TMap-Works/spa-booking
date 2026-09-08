@@ -11,10 +11,19 @@
  * d'un paiement se lit intégralement dans `PaymentRecord` — des références
  * opaques, un montant, une devise, un statut.
  *
- * TODO(#26) : `PaymentIntentView` appartient au contrat d'API et sera importé
- * de `@spa/shared` lors de la reprise groupée de ce TODO — la dépendance existe
- * depuis #463. Même TODO que dans `appointments.types.ts`, `catalog.types.ts`
- * et `identity.types.ts`.
+ * TODO(#536) : `PaymentIntentView` appartient au contrat d'API, et #510 n'a pas
+ * pu l'y prendre — le **jeu de clés diffère**, ce qui n'est pas un écart de
+ * nommage mais un désaccord de fond. `paymentIntentSchema` du contrat ne porte
+ * que `paymentId`, `clientSecret` et `amount` ; cette vue sert en plus
+ * `appointmentId`, `status` et `publishableKey`, et les trois sont utiles au
+ * tunnel — la clé publiable évite de graver la clé Stripe dans le build du
+ * front, le statut est ce que l'écran affiche. C'est le même constat que celui
+ * qui prive `PaymentIntentDto` de ses assertions de compilation ; voir son
+ * en-tête dans `dto/create-payment-intent.dto.ts`.
+ *
+ * Reste à faire, et c'est une décision de contrat : trancher lequel des deux a
+ * raison. Retirer les trois champs de la réponse casserait le tunnel ; les
+ * ajouter au contrat touche `packages/shared` et le front qui lit ce schéma.
  */
 
 /**

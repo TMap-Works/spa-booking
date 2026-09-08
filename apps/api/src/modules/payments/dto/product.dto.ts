@@ -30,7 +30,13 @@ import type { Product } from '../pos.types';
  * champ non déclaré ici est **refusé en 400 en le nommant**, jamais ignoré en
  * silence. C'est ce qui rend ces omissions exécutoires plutôt que déclaratives.
  *
- * TODO(#26) : ces bornes rejoindront `@spa/shared` avec le reste du contrat.
+ * TODO(#536) : ces bornes rejoindront `@spa/shared`, et #510 n'a pas pu les y
+ * prendre pour la raison la plus simple qui soit : le contrat **ne décrit pas le
+ * produit retail**. `packages/shared/src/schemas/payment.ts` porte l'intention
+ * de paiement, le remboursement et l'encaissement au comptoir, mais ni le
+ * produit, ni son SKU, ni son prix unitaire. Il n'y a donc pas d'import à faire
+ * mais des schémas à écrire, hors de l'empreinte de ce ticket — même constat que
+ * dans `pos.types.ts`, qui porte les vues correspondantes.
  */
 
 /** `products.sku` — `VARCHAR(64)`. */

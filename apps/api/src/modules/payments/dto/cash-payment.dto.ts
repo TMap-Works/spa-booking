@@ -26,7 +26,21 @@ import { IsOffsetDateTime, PageQueryDto, toPageBounds, toWindowBound } from './v
  * Ni `tenantId` : l'établissement vient de la revendication signée
  * (tenant-isolation §2).
  *
- * TODO(#26) : ces formes rejoindront `@spa/shared` avec le reste du contrat.
+ * TODO(#536) : `recordCounterPaymentRequestSchema` de
+ * `packages/shared/src/schemas/payment.ts` porte le même nom de geste, et #510
+ * s'est **gardé** de le monter ici — c'est le cas où la substitution aurait été
+ * une régression de conformité, pas une simplification. Le schéma du contrat
+ * déclare `amount: positiveMoneySchema` et `method`, là où ce corps ne porte
+ * qu'un identifiant : le montant est le prix figé à la réservation, relu en
+ * base, et le moyen est déterminé par la route. Le monter tel quel laisserait
+ * l'appelant **choisir ce qu'il paie** — exactement ce que payments-stripe §4
+ * interdit, et ce que l'absence de champ rend aujourd'hui impossible.
+ *
+ * Reste à faire, et c'est une décision de contrat : le schéma décrit une vente
+ * de comptoir sans rendez-vous (`appointmentId` y est facultatif), cette
+ * route-ci un règlement de rendez-vous. Les deux ne se fondent pas — il faut au
+ * contrat un second schéma, comme il a `createAppointmentRequestSchema` et
+ * `bookGuestAppointmentRequestSchema` pour les deux portes de la réservation.
  */
 export class CreateCashPaymentDto {
   @ApiProperty({

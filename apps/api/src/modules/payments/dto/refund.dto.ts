@@ -31,7 +31,22 @@ import { MoneyDto, toMoneyDto } from './sale.dto';
  * `payment_refunds_amount_minor_check` en base. Ce n'est pas le front qui fait
  * autorité : c'est lui qui propose, et trois barrières qui disposent.
  *
- * TODO(#26) : ces formes rejoindront `@spa/shared` avec le reste du contrat.
+ * TODO(#536) : `refundPaymentRequestSchema` de
+ * `packages/shared/src/schemas/payment.ts` décrit ce geste, et #510 n'a pas pu
+ * le monter : les deux **formes du montant diffèrent**. Le contrat porte
+ * `amount: positiveMoneySchema.optional()`, c'est-à-dire un couple
+ * `{ amountMinor, currency }` ; cette route porte `amountMinor` seul, un entier
+ * nu. Ce n'est pas un détail de nommage — le monter changerait le corps que le
+ * comptoir envoie, et un client qui posterait l'ancien champ verrait son
+ * remboursement refusé en 400 par le `.strict()`.
+ *
+ * L'écart a un sens des deux côtés, et c'est ce qui en fait une décision de
+ * contrat plutôt qu'un correctif : la devise d'un remboursement n'est **pas** au
+ * choix de l'appelant — c'est celle de l'encaissement, relue en base, et une
+ * devise différente sort en `CURRENCY_MISMATCH`. La demander dans le corps
+ * invite à la contredire. Reste à faire : décider si le contrat porte un montant
+ * nu sur cette route, ou si l'API accepte le couple et refuse la devise qui ne
+ * correspond pas.
  */
 export class CreateRefundDto {
   @ApiPropertyOptional({
