@@ -306,8 +306,10 @@ resource "aws_lambda_function" "delivery_events" {
   role          = aws_iam_role.delivery_events.arn
 
   # Runtime figé, et non pris en variable : le code utilise `fetch` natif et le
-  # SDK v3 fourni par le runtime.
-  runtime = "nodejs20.x"
+  # SDK v3 fourni par le runtime. Même version que la Lambda d'envoi, et pour la
+  # même raison qu'elle documente : `nodejs20.x` est déprécié depuis le
+  # 30 avril 2026 (#577).
+  runtime = "nodejs22.x"
   handler = "index.handler"
 
   # Graviton : environ 20 % moins cher à durée égale, et cette fonction ne dépend

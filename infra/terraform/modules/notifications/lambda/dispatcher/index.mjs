@@ -118,7 +118,7 @@ let secretsManager = null;
 /**
  * Import dynamique du SDK, et non `import` en tête de fichier.
  *
- * Le SDK v3 est fourni par le runtime `nodejs20.x`, pas par l'archive : un
+ * Le SDK v3 est fourni par le runtime `nodejs22.x`, pas par l'archive : un
  * import statique lierait le démarrage de la fonction à cette fourniture, y
  * compris quand aucun jeton n'est configuré et qu'elle n'a donc rien à lire.
  * Chargé ici, il ne coûte rien tant que `DISPATCH_TOKEN_SECRET_ARN` est vide —

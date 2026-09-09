@@ -124,7 +124,9 @@ resource "aws_lambda_function" "reminder_sweeper" {
 
   # Runtime figé et non pris en variable, pour la raison qui vaut chez la Lambda
   # d'envoi : le code utilise `fetch` natif et le SDK v3 fourni par le runtime.
-  runtime = "nodejs20.x"
+  # Même version qu'elle, et pour la même raison qu'elle documente : `nodejs20.x`
+  # est déprécié depuis le 30 avril 2026 (#577).
+  runtime = "nodejs22.x"
   handler = "index.handler"
 
   # Graviton : environ 20 % moins cher à durée égale, et cette fonction ne dépend

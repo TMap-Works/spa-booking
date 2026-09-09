@@ -185,7 +185,7 @@ let sqs = null;
  * L'envoi d'un lot vers SQS, par le SDK fourni par le runtime.
  *
  * Import **dynamique**, comme celui du client Secrets Manager de la Lambda
- * d'envoi et pour la même raison : le SDK v3 vient du runtime `nodejs20.x`, pas
+ * d'envoi et pour la même raison : le SDK v3 vient du runtime `nodejs22.x`, pas
  * de l'archive, et un import statique lierait le simple chargement du module à
  * cette fourniture (#495). Chargé ici, l'échec se produit à l'appel, avec un
  * `ERR_MODULE_NOT_FOUND` que le journal nomme — et le fichier reste importable

@@ -112,7 +112,7 @@ const TRANSIENT = 'transient';
  * journalisé, jamais rendu dans une erreur.
  *
  * L'import du SDK est **dynamique**, comme ailleurs : il est fourni par le
- * runtime `nodejs20.x` et non par l'archive, si bien qu'un import statique
+ * runtime `nodejs22.x` et non par l'archive, si bien qu'un import statique
  * lierait le simple chargement du module à cette fourniture.
  */
 let cachedToken = null;

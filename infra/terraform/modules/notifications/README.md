@@ -624,35 +624,50 @@ c'est-à-dire au go-live. **La question est tranchée : le runtime les fournit.*
 
 #### Ce qui a été constaté
 
-Sur l'image du runtime elle-même — `public.ecr.aws/lambda/nodejs:20`, digest
-`sha256:a4440274d6f0…`, Node `v20.20.2` :
+Sur l'image du runtime en service — `public.ecr.aws/lambda/nodejs:22`, digest
+`sha256:154a29b0b43f…`, Node `v22.23.2` (#577) :
 
 | Constat | Résultat |
 |---|---|
-| `@aws-sdk/client-secrets-manager` dans `/var/runtime/node_modules` | présent, version `3.895.0` |
-| `@aws-sdk/client-sqs`, et les 400 autres clients v3 | présents — le runtime embarque le SDK v3 **entier**, 138 Mo |
-| `import()` du client depuis un handler ESM en `/var/task` | résolu |
-| Invocation réelle du handler du dispatcher, jeton configuré | `GetSecretValue` signé et servi, jeton relayé en `x-internal-token`, `notification.sent` / `status: 202`, `TransientFailures: 0` |
+| `@aws-sdk/client-secrets-manager` dans `/var/runtime/node_modules` | présent, version `3.1105.0` |
+| `@aws-sdk/client-sqs`, et le reste des clients v3 | présents — 430 paquets `@aws-sdk/client-*`, le SDK v3 **entier**, 121 Mo |
+| `import()` des deux clients depuis un handler ESM en `/var/task` | résolu |
 
-L'invocation est la preuve qui compte : le handler de
+Le même constat avait été établi sous #495 sur `public.ecr.aws/lambda/nodejs:20`
+(Node `v20.20.2`, `client-secrets-manager` `3.895.0`), et **avec une invocation
+réelle en plus** — c'est elle qui est la preuve qui compte : le handler de
 `lambda/dispatcher/index.mjs`, déposé tel quel dans `/var/task` d'un conteneur
 bâti sur l'image du runtime, invoqué par l'émulateur d'interface (RIE) avec une
 enveloppe SQS et `DISPATCH_TOKEN_SECRET_ARN` renseignée, contre un bouchon local
-tenant lieu de Secrets Manager et de route d'envoi. Le jeton lu par le SDK est
-ressorti dans l'en-tête de l'appel d'envoi — le chemin complet, pas seulement
-l'import.
+tenant lieu de Secrets Manager et de route d'envoi. `GetSecretValue` signé et
+servi, jeton relayé en `x-internal-token`, `notification.sent` / `status: 202`,
+`TransientFailures: 0` — le chemin complet, pas seulement l'import.
+
+Cette invocation-là n'a pas été rejouée sur `nodejs:22` : le handler n'a pas
+changé, et ce que la bascule pouvait casser est exactement ce que les trois
+lignes du tableau vérifient — la présence des paquets et leur résolution depuis
+`/var/task`.
 
 Deux commandes pour le revérifier sans rien bâtir :
 
-```bash
-# 1. Le client est là, et à quelle version.
-docker run --rm --entrypoint node public.ecr.aws/lambda/nodejs:20 \
-  -p "require('/var/runtime/node_modules/@aws-sdk/client-secrets-manager/package.json').version"
+Les deux clients, et non le seul `client-secrets-manager` : le balayeur dépend de
+`@aws-sdk/client-sqs`, et c'est la fonction dont l'import manquant ressort **sans
+ligne structurée du tout** (tableau des journaux plus bas). Vérifier l'un et
+supposer l'autre laisserait exactement ce trou-là.
 
-# 2. Il se résout en ESM depuis le répertoire du handler.
-docker run --rm --entrypoint sh public.ecr.aws/lambda/nodejs:20 -c \
+```bash
+# 1. Les clients sont là, et à quelle version.
+docker run --rm --entrypoint node public.ecr.aws/lambda/nodejs:22 -p "
+  ['@aws-sdk/client-secrets-manager', '@aws-sdk/client-sqs']
+    .map((p) => p + ' ' + require('/var/runtime/node_modules/' + p + '/package.json').version)
+    .join('\n')"
+
+# 2. Ils se résolvent en ESM depuis le répertoire du handler.
+docker run --rm --entrypoint sh public.ecr.aws/lambda/nodejs:22 -c \
   'cd /var/task && NODE_PATH=/var/runtime/node_modules node --input-type=module \
-     -e "await import(\"@aws-sdk/client-secrets-manager\"); console.log(\"resolu\")"'
+     -e "await import(\"@aws-sdk/client-secrets-manager\");
+         await import(\"@aws-sdk/client-sqs\");
+         console.log(\"resolu\")"'
 ```
 
 #### Le détail qui rend le constat non évident
@@ -660,7 +675,7 @@ docker run --rm --entrypoint sh public.ecr.aws/lambda/nodejs:20 -c \
 Le SDK n'est pas dans un `node_modules` que le résolveur trouverait en remontant
 depuis `/var/task` : il est dans `/var/runtime/node_modules`, atteint par
 `NODE_PATH`, et c'est `/var/runtime/bootstrap` qui exporte cette variable au
-démarrage — `nodejs20_mods:nodejs_mods:runtime_mods:task`, seulement si elle est
+démarrage — `nodejs22_mods:nodejs_mods:runtime_mods:task`, seulement si elle est
 vide. Le même import lancé avec un `NODE_PATH` qui ne porte pas ce chemin échoue.
 Écraser `NODE_PATH` par une variable d'environnement de la fonction couperait donc
 les trois Lambdas de leur SDK : **ne pas y toucher.**
@@ -698,18 +713,19 @@ son `NODE_PATH` : la Lambda d'envoi rend bien l'enregistrement dans
 `batchItemFailures` et journalise exactement cette ligne.
 
 **Quand reposer la question.** Au changement de runtime, et à ce moment-là
-seulement — le constat ci-dessus vaut pour `nodejs20.x`, qu'`archive_file`
-empaquette sans dépendances. `nodejs22.x` embarque le même SDK v3 entier
-(vérifié : 430 clients, `client-secrets-manager` compris), donc la bascule est
-sans danger de ce côté ; c'est le seul point à revérifier d'une commande avant de
-la faire.
+seulement — le constat ci-dessus vaut pour `nodejs22.x`, qu'`archive_file`
+empaquette sans dépendances. Les deux commandes suffisent à le refaire sur
+l'image du runtime visé, avant la bascule et non après.
 
-Et ce changement est daté : `nodejs20.x`, que les trois fonctions épinglent, est
-un runtime **déprécié** depuis le 30 avril 2026. Les fonctions existantes
-continuent d'être invoquées, mais AWS cesse d'en corriger le socle, bloque la
-création de nouvelles fonctions au 1ᵉʳ février 2027 et leur mise à jour au
-3 mars 2027 — deux dates qui mordent sur un `terraform apply` en environnement
-neuf. La bascule est hors du périmètre de #495 ; une issue de suivi la porte.
+**Une bascule a déjà eu lieu, et elle était datée.** Les trois fonctions
+épinglaient `nodejs20.x`, un runtime **déprécié** depuis le 30 avril 2026 : les
+fonctions déjà déployées continuaient d'être invoquées, mais AWS cessait d'en
+corriger le socle, bloquait la création de nouvelles fonctions au 1ᵉʳ février 2027
+et leur mise à jour au 3 mars 2027 — deux dates qui mordaient sur un
+`terraform apply` en environnement neuf. Hors du périmètre de #495, la bascule
+vers `nodejs22.x` a été portée par #577, après avoir rejoué le constat ci-dessus
+sur la nouvelle image. La prochaine échéance est la dépréciation de `nodejs22.x`,
+annoncée au 30 avril 2027.
 
 ## Le rappel J-1 — planning horaire et balayage (#71)
 
