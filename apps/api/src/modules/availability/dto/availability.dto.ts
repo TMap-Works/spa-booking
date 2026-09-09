@@ -34,7 +34,7 @@ import { IsCalendarDate, OptionalPresent } from './validation';
  * date est bien écrite, c'est leur écart qui n'est pas servable. Tout appelant
  * du moteur s'y heurte, y compris celui qui n'est pas venu par HTTP.
  *
- * TODO(#536) : `availabilityQuerySchema` de
+ * Écart assumé, tranché en #554 : `availabilityQuerySchema` de
  * `packages/shared/src/schemas/availability.ts` décrit cette chaîne de requête,
  * et #510 n'a pourtant pas pu la monter. Deux écarts, et le second est le même
  * que celui du paragraphe ci-dessus, pris à l'envers :
@@ -52,7 +52,7 @@ import { IsCalendarDate, OptionalPresent } from './validation';
  *
  * Les formes de **sortie** (`availabilitySlotSchema`, `dayAvailabilitySchema`,
  * `availabilityResponseSchema`) attendent la même décision de contrat que les
- * vues d'`availability.types.ts` — voir le `TODO(#536)` de leur en-tête.
+ * vues d'`availability.types.ts` — voir la note d’écart de leur en-tête.
  */
 export class AvailabilityQueryDto {
   @ApiProperty({ format: 'uuid', description: 'Prestation dont on veut les créneaux.' })

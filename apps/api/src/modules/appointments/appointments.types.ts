@@ -19,7 +19,7 @@ import type { AppointmentCancelledBy, AppointmentStatus } from './appointment-st
  * `z.input<appointmentSchema>`, et un champ ajouté d'un côté et pas de l'autre
  * casse le `tsc`.
  *
- * TODO(#536) : remplacer `AppointmentView` par le type inféré du contrat reste
+ * Écart assumé, tranché en #554 : remplacer `AppointmentView` par le type inféré du contrat reste
  * souhaitable, et deux choses s'y opposent, dont aucune ne se tranche depuis ce
  * module. La première est le **statut** : `AppointmentStatus` porte ici la casse
  * de l'énumération PostgreSQL (`PENDING`), là où `appointmentStatusSchema` du

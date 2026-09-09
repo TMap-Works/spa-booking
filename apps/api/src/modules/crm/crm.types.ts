@@ -16,7 +16,7 @@ import type { EmailSuppressionReason } from '../notifications/notifications.type
  * `z.input<customerSummarySchema>` et `z.input<customerPageSchema>`, et un champ
  * ajouté d'un côté et pas de l'autre casse le `tsc`.
  *
- * TODO(#536) : remplacer ces interfaces par les types inférés du contrat reste
+ * Écart assumé, tranché en #554 : remplacer ces interfaces par les types inférés du contrat reste
  * souhaitable, et trois choses s'y opposent, dont aucune ne se tranche depuis ce
  * module :
  *

@@ -229,11 +229,13 @@ describe('tenant', () => {
   });
 
   it('trie la semaine par jour puis par heure d’ouverture, sans muter l’entrée', () => {
+    // `as const` fige les jours en littéraux : depuis #554 `IsoWeekday` est
+    // l'union `1 | … | 7`, et un `number` élargi ne s'y assigne plus.
     const desordre = [
       { weekday: 3, opensAt: '09:00', closesAt: '12:00' },
       { weekday: 2, opensAt: '14:00', closesAt: '19:00' },
       { weekday: 2, opensAt: '09:00', closesAt: '12:00' },
-    ];
+    ] as const;
     const trie = sortOpeningHours(desordre);
 
     expect(trie.map((entry) => `${String(entry.weekday)}-${entry.opensAt}`)).toEqual([

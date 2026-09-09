@@ -11,19 +11,29 @@
  * d'un paiement se lit intégralement dans `PaymentRecord` — des références
  * opaques, un montant, une devise, un statut.
  *
- * TODO(#536) : `PaymentIntentView` appartient au contrat d'API, et #510 n'a pas
- * pu l'y prendre — le **jeu de clés diffère**, ce qui n'est pas un écart de
- * nommage mais un désaccord de fond. `paymentIntentSchema` du contrat ne porte
- * que `paymentId`, `clientSecret` et `amount` ; cette vue sert en plus
- * `appointmentId`, `status` et `publishableKey`, et les trois sont utiles au
- * tunnel — la clé publiable évite de graver la clé Stripe dans le build du
- * front, le statut est ce que l'écran affiche. C'est le même constat que celui
- * qui prive `PaymentIntentDto` de ses assertions de compilation ; voir son
- * en-tête dans `dto/create-payment-intent.dto.ts`.
+ * ## `PaymentIntentView` et le contrat, désormais d'accord
  *
- * Reste à faire, et c'est une décision de contrat : trancher lequel des deux a
- * raison. Retirer les trois champs de la réponse casserait le tunnel ; les
- * ajouter au contrat touche `packages/shared` et le front qui lit ce schéma.
+ * `paymentIntentSchema` du contrat ne portait que `paymentId`, `clientSecret` et
+ * `amount`, là où cette vue sert en plus `appointmentId`, `status` et
+ * `publishableKey` : le **jeu de clés** différait, ce qui n'était pas un écart
+ * de nommage mais un désaccord de fond, et c'est ce qui privait
+ * `PaymentIntentDto` de ses assertions de compilation.
+ *
+ * #554 l'a tranché en faveur de la réponse : les trois champs sont utiles au
+ * tunnel — la clé publiable évite de graver la clé Stripe dans le build du
+ * front, le statut est ce que l'écran affiche —, si bien que les retirer aurait
+ * cassé le parcours pour aligner un schéma que personne ne lisait. Le contrat
+ * les porte maintenant, et `dto/create-payment-intent.dto.ts` a retrouvé son
+ * assertion de **jeu de clés** — la seconde, celle de lisibilité champ à champ,
+ * reste hors de portée tant que le statut ne se nomme pas dans la même casse des
+ * deux côtés. La décision a été prise en même temps côté front, dans
+ * `apps/web/lib/admin/payment-contract.ts` : refermer un seul des deux bords
+ * aurait recréé la divergence.
+ *
+ * Seule la **casse du statut** reste ce qu'elle était : ce module porte celle de
+ * l'énumération PostgreSQL (`PENDING`), le contrat celle du fil public
+ * (`pending`), et la conversion se fait une fois, à la frontière du client
+ * d'API. C'est délibéré, et documenté au même titre dans `identity/roles.ts`.
  */
 
 /**

@@ -7,7 +7,7 @@
  * ou attend **aujourd'hui**, et chacun est écrit à partir du DTO qui la produit.
  * Ce module est un point de passage, pas une seconde source de vérité.
  *
- * TODO(#536) : ces formes appartiennent au contrat partagé, et #510 a instruit
+ * Écart assumé, tranché en #554 : ces formes appartiennent au contrat partagé, et #510 a instruit
  * pourquoi elles n'y sont pas encore — les deux paragraphes qui suivent sont
  * cette justification, et non un renvoi. Le second est bloquant : tant que
  * l'API émet et exige `MANAGER` là où le contrat nomme `manager`, un schéma

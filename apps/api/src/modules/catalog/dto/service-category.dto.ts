@@ -54,7 +54,7 @@ import { BooleanQuery, OptionalPresent, optionalBody } from './validation';
  *
  * `ListServiceCategoriesQueryDto` seul. Une chaîne de requête ne transporte que
  * des chaînes, et aucun schéma du contrat ne décrit ce filtre ni ne coerce
- * `"true"` en booléen — voir le `TODO(#536)` de `service.dto.ts`.
+ * `"true"` en booléen — voir la note d’écart de `service.dto.ts`.
  */
 
 /**
@@ -138,8 +138,8 @@ export class UpdateServiceCategoryDto {
  * Filtres de la liste des catégories.
  *
  * Seule classe du fichier qui **valide encore** : une chaîne de requête arrive
- * en `string`, et aucun schéma du contrat ne décrit ce filtre. Voir le
- * `TODO(#536)` de `service.dto.ts`.
+ * en `string`, et aucun schéma du contrat ne décrit ce filtre. Voir la
+ * note d’écart de `service.dto.ts`.
  */
 export class ListServiceCategoriesQueryDto {
   @ApiPropertyOptional({

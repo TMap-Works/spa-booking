@@ -19,7 +19,7 @@ import {
 /**
  * Les modèles de messages du back-office — `/api/v1/notification-templates` (#69).
  *
- * TODO(#536) : ces formes appartiennent au contrat d'API, et #510 n'a pas pu les
+ * Écart assumé, tranché en #554 : ces formes appartiennent au contrat d'API, et #510 n'a pas pu les
  * y prendre pour la raison la plus simple qui soit : le contrat **ne les décrit
  * pas**. `packages/shared/src/schemas/notification.ts` porte la notification, ses
  * préférences et le filtre du journal, mais ni le modèle de message, ni son

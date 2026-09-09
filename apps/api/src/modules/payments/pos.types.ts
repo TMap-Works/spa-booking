@@ -13,7 +13,7 @@ import type { Money } from './payments.types';
  * redéclarer une seconde ici aurait ouvert la porte à deux définitions de
  * l'argent dans un module qui n'en manipule que ça.
  *
- * TODO(#536) : `Product`, `Sale` et `SaleItem` appartiennent au contrat d'API, et
+ * Écart assumé, tranché en #554 : `Product`, `Sale` et `SaleItem` appartiennent au contrat d'API, et
  * #510 n'a pas pu les y prendre pour la raison la plus simple qui soit : le
  * contrat **ne les décrit pas**. `packages/shared/src/schemas/payment.ts` porte
  * l'intention de paiement, le remboursement et l'encaissement au comptoir, mais

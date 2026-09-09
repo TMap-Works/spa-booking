@@ -32,22 +32,29 @@ export const paymentStatusSchema = z.enum(PAYMENT_STATUSES);
 /**
  * Encaissement tel que l'API le renvoie.
  *
- * `amount` et `refundedAmount` sont deux `Money` complets et non deux entiers
+ * `amount` et `refunded` sont deux `Money` complets et non deux entiers
  * partageant une devise implicite : le rapprochement additionne des montants,
  * et un entier sans devise est exactement ce qui permet d'additionner des euros
  * à des dollars sans que rien ne proteste.
  *
- * `appointmentId` est absent d'une vente au comptoir sans rendez-vous — d'où
- * l'optionalité, qui suit la colonne nullable correspondante.
+ * `appointmentId` et `capturedAt` sont `nullable` et non `optional` : l'API émet
+ * explicitement `null` sur une vente retail sans rendez-vous et tant que
+ * l'argent n'a pas été pris. « Absent » et « nul » ne sont pas la même chose
+ * pour Zod, et c'est le second des deux écarts que #554 a tranchés — le contrat
+ * suit ce que `PaymentTransactionDto` sert, plutôt que l'inverse.
+ *
+ * `refunded` porte le nom de la clé du fil, celui de `PaymentTransactionDto` :
+ * décrire la même réponse sous deux noms était exactement ce qui obligeait le
+ * back-office à redéclarer l'enveloppe au lieu de lire celle-ci.
  */
 export const paymentSchema = z.object({
   id: uuidSchema,
-  appointmentId: uuidSchema.optional(),
+  appointmentId: uuidSchema.nullable(),
   amount: nonNegativeMoneySchema,
-  refundedAmount: nonNegativeMoneySchema,
+  refunded: nonNegativeMoneySchema,
   method: paymentMethodSchema,
   status: paymentStatusSchema,
-  capturedAt: utcInstantSchema.optional(),
+  capturedAt: utcInstantSchema.nullable(),
   createdAt: utcInstantSchema,
 });
 
@@ -76,13 +83,36 @@ export type CreatePaymentIntentRequest = z.infer<typeof createPaymentIntentReque
  * `clientSecret` est un jeton opaque à usage unique, lié à une intention. Il
  * n'est **pas** un secret d'API : il ne permet que de confirmer ce paiement-là.
  * Le contrat le type comme opaque pour que personne ne soit tenté d'y lire
- * quelque chose.
+ * quelque chose. `publishableKey` est publiable par définition
+ * (payments-stripe §7) : c'est elle qui évite de graver la clé Stripe du salon
+ * dans le build du front. La clé **secrète** ne quitte jamais le serveur.
+ *
+ * ## Les six clés, et pourquoi elles sont six
+ *
+ * Ce schéma n'en portait que trois — `paymentId`, `clientSecret`, `amount` —, et
+ * son `.strict()` aurait donc rejeté la réponse entière de
+ * `POST /appointments/:id/payment-intent`, qui en sert six. C'est le premier des
+ * deux écarts que #510 avait instruits sans pouvoir les refermer, et #554 l'a
+ * tranché dans ce sens-ci : **le contrat suit la réponse**. Retirer
+ * `appointmentId`, `status` et `publishableKey` de l'API aurait cassé le tunnel
+ * de paiement, alors que les décrire ici ne coûte que cette déclaration — et
+ * rend au back-office comme au module `payments` une enveloppe qu'ils
+ * redéclaraient chacun de leur côté.
+ *
+ * `status` est nommé dans le vocabulaire **du contrat**, en minuscules. L'API
+ * sert la casse de l'énumération PostgreSQL (`PENDING`) ; la conversion se fait
+ * une fois, à la frontière du client d'API, par `receivedPaymentStatusSchema`.
+ * C'est la même discipline que pour le statut d'un rendez-vous, et elle est
+ * délibérée : un seul endroit sait dans quelle casse la valeur est arrivée.
  */
 export const paymentIntentSchema = z
   .object({
     paymentId: uuidSchema,
-    clientSecret: opaqueTokenSchema,
+    appointmentId: uuidSchema,
     amount: positiveMoneySchema,
+    status: paymentStatusSchema,
+    clientSecret: opaqueTokenSchema,
+    publishableKey: opaqueTokenSchema,
   })
   .strict();
 

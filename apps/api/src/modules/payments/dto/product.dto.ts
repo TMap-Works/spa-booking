@@ -30,7 +30,7 @@ import type { Product } from '../pos.types';
  * champ non déclaré ici est **refusé en 400 en le nommant**, jamais ignoré en
  * silence. C'est ce qui rend ces omissions exécutoires plutôt que déclaratives.
  *
- * TODO(#536) : ces bornes rejoindront `@spa/shared`, et #510 n'a pas pu les y
+ * Écart assumé, tranché en #554 : ces bornes rejoindront `@spa/shared`, et #510 n'a pas pu les y
  * prendre pour la raison la plus simple qui soit : le contrat **ne décrit pas le
  * produit retail**. `packages/shared/src/schemas/payment.ts` porte l'intention
  * de paiement, le remboursement et l'encaissement au comptoir, mais ni le

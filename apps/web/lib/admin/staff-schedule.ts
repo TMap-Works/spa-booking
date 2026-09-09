@@ -26,6 +26,7 @@
  */
 
 import {
+  ISO_WEEKDAYS,
   MAX_STAFF_SCHEDULE_ENTRIES,
   END_OF_DAY_LOCAL_TIME,
   setStaffScheduleRequestSchema,
@@ -37,21 +38,23 @@ import {
 /**
  * Les sept jours, dans l'ordre ISO 8601 — lundi ouvre la semaine.
  *
- * Le même ordre que le calendrier public et que `isoWeekdaySchema`. Le
- * `0`-dimanche de `Date.getDay` n'apparaît nulle part dans cette pile,
- * délibérément : `0` est *falsy*, et un seul `?? défaut` mal placé ferait
- * disparaître l'horaire du dimanche sans qu'aucun test de forme ne rougisse.
+ * Réexportés du contrat plutôt que redéclarés ici : c'est la même liste que celle
+ * dont `isoWeekdaySchema` tire son type, et deux écritures de « du lundi au
+ * dimanche » sont deux écritures susceptibles de diverger. Le `0`-dimanche de
+ * `Date.getDay` n'y apparaît pas, délibérément : `0` est *falsy*, et un seul
+ * `?? défaut` mal placé ferait disparaître l'horaire du dimanche sans qu'aucun
+ * test de forme ne rougisse.
  */
-export const ISO_WEEKDAYS: readonly IsoWeekday[] = [1, 2, 3, 4, 5, 6, 7];
+export { ISO_WEEKDAYS };
 
 /**
  * Les libellés, rangés à leur numéro ISO — d'où la case 0 inutilisée.
  *
- * `IsoWeekday` n'est qu'un `number` du point de vue du compilateur : le schéma
- * borne la valeur à l'exécution, pas au typage. Toute lecture est donc
- * `string | undefined` sous `noUncheckedIndexedAccess`, et c'est heureux — un
- * `undefined` laissé filer écrirait « undefined » en toutes lettres dans la
- * grille.
+ * Le tableau est déclaré `readonly string[]` et non indexé par `IsoWeekday` :
+ * toute lecture est donc `string | undefined` sous `noUncheckedIndexedAccess`, et
+ * c'est heureux — un `undefined` laissé filer écrirait « undefined » en toutes
+ * lettres dans la grille, et c'est exactement ce qui arriverait à un `0` venu
+ * d'un `Date.getDay` mal converti et forcé au type.
  */
 const WEEKDAY_LABELS: readonly string[] = [
   '',

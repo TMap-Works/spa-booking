@@ -33,7 +33,7 @@ import { OpeningHoursEntryDto, PostalAddressDto, PublicTenantDto } from './publi
  * La **sortie** est tenue par le contrat depuis #510 — voir l'assertion de
  * compilation en fin de fichier, contre `tenantSchema`.
  *
- * TODO(#536) : l'**entrée**, en revanche, reste sous `class-validator`, et
+ * Écart assumé, tranché en #554 : l'**entrée**, en revanche, reste sous `class-validator`, et
  * `updateTenantRequestSchema` ne peut pas la remplacer en l'état. L'écart n'est
  * pas de borne — elles coïncident valeur pour valeur — mais de **code de
  * réponse**, et il porte sur trois règles :

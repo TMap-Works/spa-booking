@@ -3,6 +3,7 @@ import {
   type CreatePaymentIntentRequest,
   createPaymentIntentRequestSchema,
   moneySchema,
+  paymentIntentSchema,
 } from '@spa/shared';
 import type { z } from 'zod';
 
@@ -133,21 +134,21 @@ export class MoneyDto implements Money {
  * cette réponse part, aucune carte n'a été saisie — et quand elle le sera, ce
  * sera dans une iframe servie par Stripe, que notre DOM ne lit pas.
  *
- * ## Pourquoi aucune assertion de compilation ne la tient — TODO(#536)
+ * ## Ce qui tient cette sortie, et ce qui ne peut pas la tenir
  *
  * Le patron de l'ADR 0008 garde une sortie par deux assertions contre
- * `z.input<…>` du schéma correspondant. Ici, il n'y a pas de correspondance :
- * `paymentIntentSchema` du contrat ne porte que `paymentId`, `clientSecret` et
- * `amount`, là où cette classe sert en plus `appointmentId`, `status` et
- * `publishableKey`. Le **jeu de clés** diffère des deux côtés, si bien que même
- * la première des deux assertions ne compilerait pas.
+ * `z.input<…>` du schéma correspondant. Il n'y avait longtemps pas de
+ * correspondance à garder : `paymentIntentSchema` ne portait que `paymentId`,
+ * `clientSecret` et `amount`, là où cette classe sert en plus `appointmentId`,
+ * `status` et `publishableKey`, et un **jeu de clés** différent des deux côtés
+ * empêchait même la première des deux assertions de compiler.
  *
- * Ce qui reste à faire, et pourquoi pas ici : trancher lequel des deux a
- * raison est une décision de **contrat**, pas de module. Retirer les trois
- * champs de la réponse casserait le tunnel (`publishableKey` est ce qui évite de
- * graver la clé dans le build du front, `status` ce que l'écran affiche) ; les
- * ajouter au contrat est une modification de `packages/shared`, hors de
- * l'empreinte de ce ticket, et qui touche aussi le front qui lit ce schéma.
+ * #554 a tranché en faveur de la réponse — le contrat porte les six clés — et
+ * l'assertion de jeu de clés est donc revenue, en fin de fichier. La **seconde**
+ * assertion, celle de lisibilité (`Dto extends Wire`), reste hors de portée et
+ * le restera : le contrat nomme le statut en minuscules (`pending`) quand ce
+ * module porte la casse de l'énumération PostgreSQL (`PENDING`). Cet écart-là
+ * est délibéré et se referme à la frontière du client d'API, jamais ici.
  */
 export class PaymentIntentDto implements PaymentIntentView {
   @ApiProperty({
@@ -230,3 +231,24 @@ type _MoneyDtoHasTheContractKeys = AssertNever<
 >;
 
 type _MoneyDtoIsReadableByTheContract = AssertTrue<MoneyDto extends MoneyWire ? true : false>;
+
+/**
+ * La réponse du tunnel annonce **exactement** les clés que le contrat décrit.
+ *
+ * C'est l'assertion que l'en-tête disait manquante, et elle a un sens précis
+ * depuis #554 : `paymentIntentSchema` porte les six champs que cette classe
+ * sert, si bien qu'un champ ajouté d'un seul côté casse la compilation au lieu
+ * d'atteindre le front. Un champ retiré du contrat sans l'être ici la casse
+ * aussi — c'est la même garde, prise dans les deux sens.
+ *
+ * Elle ne compare que les **clés**. La lisibilité champ à champ resterait fausse
+ * sur `status`, que ce module écrit en majuscules et que le contrat nomme en
+ * minuscules : la normalisation appartient au client d'API
+ * (`receivedPaymentStatusSchema`), pas à cette classe.
+ */
+type PaymentIntentWire = z.input<typeof paymentIntentSchema>;
+
+type _PaymentIntentDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof PaymentIntentDto, keyof PaymentIntentWire>
+  | Exclude<keyof PaymentIntentWire, keyof PaymentIntentDto>
+>;

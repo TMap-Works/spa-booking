@@ -21,7 +21,7 @@ import { z, type ZodTypeAny } from 'zod';
  *
  * - la lecture d'une **date civile**, qui garde la chaîne de requête de l'agenda
  *   — le seul DTO du module encore validé par `class-validator`, et son
- *   `TODO(#536)` dit pourquoi ;
+ *   note d’écart dit pourquoi ;
  * - `OptionalPresent`, la brique de ce même DTO ;
  * - `optionalBody`, qui rattrape ce que le pipe global ne normalise plus.
  *
@@ -100,7 +100,7 @@ export function optionalBody<TSchema extends ZodTypeAny>(
  * à une règle qui n'en a plus qu'une.
  *
  * `availability/dto/validation.ts` et `payments/dto/validation.ts` portent
- * encore la leur : leurs DTO ne sont pas substitués, et leurs `TODO(#536)`
+ * encore la leur : leurs DTO ne sont pas substitués, et leurs notes d’écart
  * disent pourquoi.
  */
 

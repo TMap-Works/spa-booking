@@ -32,7 +32,7 @@ import { IsCalendarDate, OptionalPresent } from './validation';
  * est tenue par les assertions de compilation en fin de fichier, contre
  * `appointmentSchema` et ses trois *summaries*.
  *
- * TODO(#536) : la **requête**, en revanche, reste sous `class-validator`, et
+ * Écart assumé, tranché en #554 : la **requête**, en revanche, reste sous `class-validator`, et
  * `appointmentListQuerySchema` ne peut pas la remplacer en l'état. Deux écarts,
  * dont le second change le contrat de la route :
  *

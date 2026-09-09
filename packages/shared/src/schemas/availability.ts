@@ -164,13 +164,38 @@ export type AvailabilityResponse = z.infer<typeof availabilityResponseSchema>;
  *
  * La conversion depuis `getUTCDay()` se fait par `isoWeekdayOf`, écrite une fois.
  */
+export const ISO_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
+
+/**
+ * Le jour de semaine, **en union de sept littéraux** et non en `number`.
+ *
+ * L'écart n'était pas cosmétique tant qu'il a duré. `z.infer` d'un
+ * `.min(1).max(7)` rend `number` : Zod ne sait pas déduire l'union des bornes.
+ * Un module qui importait ce type voyait donc s'élargir tout ce qui s'y adosse —
+ * un prédicat `isIsoWeekday` cessait d'apprendre quoi que ce soit au
+ * compilateur, une `Map<IsoWeekday, …>` acceptait `0` et `8`, et un
+ * `record.weekday as IsoWeekday` devenait une conversion sans contenu. C'est ce
+ * qui a tenu `availability` à l'écart du contrat, et #554 l'a refermé ici plutôt
+ * que là-bas : c'est le contrat qui devait se resserrer.
+ */
+export type IsoWeekday = (typeof ISO_WEEKDAYS)[number];
+
+/**
+ * Le `.transform()` ne convertit rien à l'exécution — il **rétrécit le type de
+ * sortie**, une fois les trois gardes passées.
+ *
+ * Cette forme est préférée à une `z.union` de sept littéraux pour une raison
+ * précise : elle conserve les messages d'erreur ci-dessous, qui nomment la
+ * numérotation attendue, là où une union rendrait sept refus de littéral. Et
+ * `z.input` reste `number`, si bien que les assertions de compilation des DTO,
+ * qui s'écrivent contre l'entrée, ne bougent pas.
+ */
 export const isoWeekdaySchema = z
   .number()
   .int({ message: 'un jour de semaine s’exprime en entier' })
   .min(1, { message: 'jour de semaine ISO attendu : 1 (lundi) à 7 (dimanche)' })
-  .max(7, { message: 'jour de semaine ISO attendu : 1 (lundi) à 7 (dimanche)' });
-
-export type IsoWeekday = z.infer<typeof isoWeekdaySchema>;
+  .max(7, { message: 'jour de semaine ISO attendu : 1 (lundi) à 7 (dimanche)' })
+  .transform((value) => value as IsoWeekday);
 
 /**
  * Jour de semaine ISO d'une **date civile du tenant**.
@@ -185,8 +210,10 @@ export function isoWeekdayOf(date: CalendarDate): IsoWeekday {
   const parsed = calendarDateSchema.parse(date);
   const day = new Date(`${parsed}T00:00:00Z`).getUTCDay();
 
-  // `getUTCDay` rend 0 pour dimanche ; ISO 8601 le numérote 7.
-  return day === 0 ? 7 : day;
+  // `getUTCDay` rend 0 pour dimanche ; ISO 8601 le numérote 7. La conversion est
+  // sûre par construction — `getUTCDay` ne rend que 0 à 6 — mais le compilateur
+  // ne le sait pas depuis un `number`.
+  return (day === 0 ? 7 : day) as IsoWeekday;
 }
 
 /** Minutes d'une journée civile de 24 heures — la borne haute d'une plage. */

@@ -47,6 +47,7 @@ export {
 export type { Paginated, PaginationMeta, PaginationQuery } from './pagination';
 
 export {
+  DURATION_MINUTES_MAX,
   LOCAL_TIME_PATTERN,
   OFFSET_DATE_TIME_PATTERN,
   addMinutes,

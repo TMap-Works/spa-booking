@@ -26,7 +26,7 @@ import { IsOffsetDateTime, PageQueryDto, toPageBounds, toWindowBound } from './v
  * Ni `tenantId` : l'établissement vient de la revendication signée
  * (tenant-isolation §2).
  *
- * TODO(#536) : `recordCounterPaymentRequestSchema` de
+ * Écart assumé, tranché en #554 : `recordCounterPaymentRequestSchema` de
  * `packages/shared/src/schemas/payment.ts` porte le même nom de geste, et #510
  * s'est **gardé** de le monter ici — c'est le cas où la substitution aurait été
  * une régression de conformité, pas une simplification. Le schéma du contrat

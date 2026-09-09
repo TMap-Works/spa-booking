@@ -4,9 +4,7 @@ import {
   DISPLAY_NAME_MAX_LENGTH,
   LONG_TEXT_MAX_LENGTH,
   SLUG_MAX_LENGTH,
-  bufferMinutesSchema,
   createServiceRequestSchema,
-  durationMinutesSchema,
   nonNegativeMoneySchema,
   serviceSchema,
   updateServiceRequestSchema,
@@ -54,61 +52,30 @@ import {
  * | `categoryId` | `@IsUUID('4')` | `uuidSchema`, resserré sur la v4 par #403 | identique |
  * | `price.amountMinor` | `@IsInt()` + `@Min(0)` + `@Max(2 147 483 647)` | `nonNegativeMoneySchema` | identique |
  * | `price.currency` | `@NormalizeCurrency()` + `@Matches(/^[A-Z]{3}$/)` | `currencyCodeSchema` — `.trim().toUpperCase().length(3)` + le même motif | identique |
- * | `durationMinutes`, les deux tampons | `@Min(…)` **et `@Max(1440)`** | `durationMinutesSchema` / `bufferMinutesSchema`, **sans plafond** | voir ci-dessous |
+ * | `durationMinutes`, les deux tampons | `@Min(…)` **et `@Max(1440)`** | `durationMinutesSchema` / `bufferMinutesSchema`, plafonnés depuis #554 | identique |
  *
- * Le plafond est le seul écart, et il va dans le sens dangereux : substituer les
- * schémas tels quels **relâcherait** la frontière, là où l'ADR 0008 ne referme
- * un écart qu'en resserrant. `duration_minutes` est un `integer` PostgreSQL, et
- * une valeur au-delà de 2³¹ sortirait en `numeric value out of range` — un 500
- * là où l'appelant recevait un 400 nommant le champ.
+ * Le plafond a été le dernier écart de ce tableau, et il allait dans le sens
+ * dangereux : substituer les schémas tels quels **relâchait** la frontière, là où
+ * l'ADR 0008 ne referme un écart qu'en resserrant. `duration_minutes` est un
+ * `integer` PostgreSQL, et une valeur au-delà de 2³¹ sortirait en
+ * `numeric value out of range` — un 500 là où l'appelant recevait un 400 nommant
+ * le champ.
  *
- * TODO(#536) : le plafond est donc **ajouté au schéma partagé** par les deux
- * `.extend()` ci-dessous, en attendant que le contrat le porte lui-même. Le
- * resserrement appartient à `packages/shared` et déborde l'empreinte de #510 :
- * `durationMinutesSchema` est lu par les schémas de rendez-vous, de créneaux et
- * de disponibilité, dont aucun n'est dans ce module. Une fois la borne posée
- * là-bas, les deux `.extend()` disparaissent et les schémas s'importent tels
- * quels. Le même TODO couvre les deux DTO de chaîne de requête du module —
- * `ListServicesQueryDto` et `ListServiceCategoriesQueryDto` — qu'aucun schéma du
- * contrat ne décrit, et dont les valeurs arrivent en `string` sans qu'aucun
- * schéma partagé ne les coerce.
+ * Il tenait donc par deux `.extend()` locaux, faute de pouvoir toucher
+ * `packages/shared` depuis #510. #554 a posé la borne au contrat
+ * (`DURATION_MINUTES_MAX`), où elle vaut pour les schémas de rendez-vous, de
+ * créneaux et de disponibilité aussi bien que pour ceux d'ici : les deux
+ * `.extend()` ont disparu, et les schémas du contrat s'importent tels quels.
+ *
+ * ## Les filtres de liste, eux, restent sous `class-validator`
+ *
+ * Écart assumé, tranché en #554 : `ListServicesQueryDto` et
+ * `ListServiceCategoriesQueryDto` ne sont décrits par aucun schéma du contrat, et
+ * les valeurs d'une chaîne de requête arrivent en `string` sans qu'aucun schéma
+ * partagé ne les coerce en booléen. C'est la note d'écart que
+ * `service-category.dto.ts` et `staff.dto.ts` citent pour leurs propres filtres,
+ * et elle couvre les trois.
  */
-
-/**
- * Les durées, bornées par le haut — le contrat plus le plafond que la colonne
- * impose.
- *
- * `.max()` sur un schéma importé produit un **nouveau** schéma : `@spa/shared`
- * n'est pas modifié, et le plafond ne vaut que pour les deux routes de ce
- * module.
- */
-const boundedDurationMinutesSchema = durationMinutesSchema.max(MAX_DURATION_MINUTES, {
-  message: `une durée n’excède pas ${String(MAX_DURATION_MINUTES)} minutes`,
-});
-
-const boundedBufferMinutesSchema = bufferMinutesSchema.max(MAX_DURATION_MINUTES, {
-  message: `un tampon n’excède pas ${String(MAX_DURATION_MINUTES)} minutes`,
-});
-
-/**
- * Le contrat de création, plus le plafond des durées.
- *
- * `.extend()` conserve le `.strict()` du schéma d'origine — un `tenantId` glissé
- * dans le corps reste refusé (tenant-isolation §2), et `ZodValidationPipe` le
- * vérifie au montage.
- */
-const boundedCreateServiceRequestSchema = createServiceRequestSchema.extend({
-  durationMinutes: boundedDurationMinutesSchema,
-  bufferBeforeMinutes: boundedBufferMinutesSchema.optional(),
-  bufferAfterMinutes: boundedBufferMinutesSchema.optional(),
-});
-
-/** Le contrat de modification, plus le même plafond. `.partial()` le conserve. */
-const boundedUpdateServiceRequestSchema = updateServiceRequestSchema.extend({
-  durationMinutes: boundedDurationMinutesSchema.optional(),
-  bufferBeforeMinutes: boundedBufferMinutesSchema.optional(),
-  bufferAfterMinutes: boundedBufferMinutesSchema.optional(),
-});
 
 /**
  * Les deux pipes du module — ce sont **eux** qui valident, et non les classes.
@@ -117,7 +84,7 @@ const boundedUpdateServiceRequestSchema = updateServiceRequestSchema.extend({
  * les schémas ne changent pas d'une requête à l'autre, et la garde `.strict()`
  * du pipe se paie ainsi une seule fois, à l'amorçage.
  */
-export const createServiceBody = new ZodValidationPipe(boundedCreateServiceRequestSchema);
+export const createServiceBody = new ZodValidationPipe(createServiceRequestSchema);
 
 /**
  * `optionalBody` n'enveloppe que la **modification** : aucun de ses champs n'est
@@ -126,14 +93,14 @@ export const createServiceBody = new ZodValidationPipe(boundedCreateServiceReque
  * refus reste un 400 qui les nomme.
  */
 export const updateServiceBody = new ZodValidationPipe(
-  optionalBody(boundedUpdateServiceRequestSchema),
+  optionalBody(updateServiceRequestSchema),
 );
 
 /** La création d'une prestation, telle que le contrat la rend au contrôleur. */
-export type CreateServiceBody = z.infer<typeof boundedCreateServiceRequestSchema>;
+export type CreateServiceBody = z.infer<typeof createServiceRequestSchema>;
 
 /** La modification d'une prestation, telle que le contrat la rend au contrôleur. */
-export type UpdateServiceBody = z.infer<typeof boundedUpdateServiceRequestSchema>;
+export type UpdateServiceBody = z.infer<typeof updateServiceRequestSchema>;
 
 /**
  * Un montant : entier dans la plus petite unité, plus son code devise — la
@@ -294,7 +261,7 @@ export class UpdateServiceDto {
  *
  * Seule classe du fichier qui **valide encore** : une chaîne de requête arrive
  * en `string`, et aucun schéma du contrat ne décrit ce filtre ni ne coerce
- * `"true"` en booléen. Voir le `TODO(#536)` de l'en-tête.
+ * `"true"` en booléen. Voir la note d’écart de l'en-tête.
  */
 export class ListServicesQueryDto {
   @ApiPropertyOptional({
@@ -374,13 +341,13 @@ type AssertTrue<T extends true> = T;
  * refuse ce qu'elle annonce.
  */
 type _CreateServiceDtoHasTheContractKeys = AssertNever<
-  | Exclude<keyof CreateServiceDto, keyof z.input<typeof boundedCreateServiceRequestSchema>>
-  | Exclude<keyof z.input<typeof boundedCreateServiceRequestSchema>, keyof CreateServiceDto>
+  | Exclude<keyof CreateServiceDto, keyof z.input<typeof createServiceRequestSchema>>
+  | Exclude<keyof z.input<typeof createServiceRequestSchema>, keyof CreateServiceDto>
 >;
 
 type _UpdateServiceDtoHasTheContractKeys = AssertNever<
-  | Exclude<keyof UpdateServiceDto, keyof z.input<typeof boundedUpdateServiceRequestSchema>>
-  | Exclude<keyof z.input<typeof boundedUpdateServiceRequestSchema>, keyof UpdateServiceDto>
+  | Exclude<keyof UpdateServiceDto, keyof z.input<typeof updateServiceRequestSchema>>
+  | Exclude<keyof z.input<typeof updateServiceRequestSchema>, keyof UpdateServiceDto>
 >;
 
 /**

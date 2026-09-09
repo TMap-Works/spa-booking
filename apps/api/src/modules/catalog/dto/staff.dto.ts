@@ -18,10 +18,11 @@ import { BooleanQuery, OptionalPresent } from './validation';
  * La **sortie** est tenue par le contrat depuis #510 — voir les assertions de
  * compilation en fin de fichier.
  *
- * TODO(#536) : le filtre, lui, reste sous `class-validator`. C'est le cas commun
+ * Écart assumé, tranché en #554 : le filtre, lui, reste sous `class-validator`. C'est le cas commun
  * des DTO de chaîne de requête du dépôt : `activeOnly` arrive en `"true"` ou
  * `"false"`, et aucun schéma du contrat ne décrit ce filtre ni ne coerce — voir
- * le même TODO dans `service.dto.ts`, qui porte les deux filtres du catalogue.
+ * la même note d’écart dans `service.dto.ts`, qui porte les deux filtres du
+ * catalogue.
  */
 
 /** Filtre de la liste — le seul paramètre que la route accepte. */

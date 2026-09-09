@@ -31,7 +31,7 @@ import { MoneyDto, toMoneyDto } from './sale.dto';
  * `payment_refunds_amount_minor_check` en base. Ce n'est pas le front qui fait
  * autorité : c'est lui qui propose, et trois barrières qui disposent.
  *
- * TODO(#536) : `refundPaymentRequestSchema` de
+ * Écart assumé, tranché en #554 : `refundPaymentRequestSchema` de
  * `packages/shared/src/schemas/payment.ts` décrit ce geste, et #510 n'a pas pu
  * le monter : les deux **formes du montant diffèrent**. Le contrat porte
  * `amount: positiveMoneySchema.optional()`, c'est-à-dire un couple

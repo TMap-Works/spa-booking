@@ -26,7 +26,12 @@
  * du côté de la **création** de rendez-vous, qui refuse de trancher.
  */
 
-import { END_OF_DAY_LOCAL_TIME, MINUTES_IN_CIVIL_DAY } from '@spa/shared';
+import {
+  END_OF_DAY_LOCAL_TIME,
+  ISO_WEEKDAYS,
+  MINUTES_IN_CIVIL_DAY,
+  type IsoWeekday,
+} from '@spa/shared';
 
 import {
   CALENDAR_DATE_PATTERN,
@@ -44,23 +49,22 @@ import {
  * dimanche comme une valeur absente, et le praticien qui travaille le dimanche
  * verrait son horaire disparaître sans qu'aucun test de forme ne rougisse.
  *
- * TODO(#536) : le contrat décrit la même numérotation avec `isoWeekdaySchema`,
- * mais **pas le même type**. `IsoWeekday` de `@spa/shared` est
- * `z.infer<typeof isoWeekdaySchema>`, c'est-à-dire `number` : Zod ne sait pas
- * inférer l'union `1 | … | 7` d'un `.min(1).max(7)`. L'importer ici élargirait
- * donc le type de tout le module, et ce n'est pas cosmétique — `isIsoWeekday`
- * cesserait d'être un prédicat de type utile, `Map<IsoWeekday, …>` et
- * `ReadonlySet<IsoWeekday>` accepteraient `0` et `8`, et
- * `record.weekday as IsoWeekday` deviendrait une conversion sans contenu. Même
- * constat sur `isoWeekdayOf` du contrat : il rend `number` et lève une
- * `ZodError` là où celui-ci lève un `RangeError` que les suites du module
- * attendent. Reste à faire : donner à `isoWeekdaySchema` un type de sortie
- * étroit côté contrat (`z.union` de sept littéraux, ou un `.transform`
- * typé), après quoi l'import est un remplacement pur.
+ * Le contrat décrit la même numérotation, et depuis #554 **le même type** :
+ * `isoWeekdaySchema` a reçu un type de sortie étroit, si bien qu'`IsoWeekday` de
+ * `@spa/shared` est l'union `1 | … | 7` et non plus `number`. L'importer
+ * n'élargit donc plus rien — `isIsoWeekday` reste un prédicat qui apprend
+ * quelque chose, `Map<IsoWeekday, …>` et `ReadonlySet<IsoWeekday>` refusent
+ * toujours `0` et `8` —, et la liste comme le type sont désormais réexportés du
+ * contrat plutôt que redéclarés ici (#510).
+ *
+ * `isoWeekdayOf` du contrat, lui, **n'est pas** substitué : il lève une
+ * `ZodError` sur une date mal formée là où celui de ce module lève un
+ * `RangeError` que ses suites attendent. C'est le même écart que sur
+ * `calendarDaysBetween` plus bas, et il se traite de la même façon.
  */
-export const ISO_WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
+export { ISO_WEEKDAYS };
 
-export type IsoWeekday = (typeof ISO_WEEKDAYS)[number];
+export type { IsoWeekday };
 
 /**
  * Minutes d'une journée civile de 24 heures — la borne haute d'une plage.
@@ -238,7 +242,7 @@ function utcMidnightOf(calendarDate: string): Date {
  * la faire précéder de la construction de la liste qu'elle refuse ferait payer
  * exactement le coût qu'elle existe pour éviter.
  *
- * TODO(#536) : le contrat porte une fonction de même nom, et `appointments` a
+ * Écart assumé, tranché en #554 : le contrat porte une fonction de même nom, et `appointments` a
  * substitué la sienne par elle (#510). Celle-ci **ne peut pas** l'être en
  * l'état, et l'écart n'est pas cosmétique : `calendarDaysBetween` de
  * `@spa/shared` fait deux `Date.parse` et rend `NaN` sur une date mal formée,

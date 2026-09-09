@@ -2,7 +2,7 @@
  * Formes de données des plages bloquées et congés — CDC §2.3 « plages
  * bloquées », #33.
  *
- * TODO(#536) : ces formes appartiennent au contrat d'API et sont décrites par
+ * Écart assumé, tranché en #554 : ces formes appartiennent au contrat d'API et sont décrites par
  * `packages/shared/src/schemas/availability.ts` (`staffTimeOffSchema`,
  * `staffBusyIntervalSchema`). Ce qui retient l'import est celui de
  * `availability.types.ts`, mot pour mot : `z.infer<...>` ne porte pas

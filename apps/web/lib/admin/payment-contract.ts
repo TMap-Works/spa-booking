@@ -2,28 +2,27 @@
  * Les réponses de paiement que le back-office lit, rejouées contre un schéma —
  * l'encaissement d'un rendez-vous (#59), puis la caisse du comptoir (#61).
  *
- * ## Pourquoi elles ne viennent pas de `@spa/shared`
+ * ## Les deux écarts de contrat, et comment ils se sont refermés
  *
- * Le contrat partagé publie bien `paymentIntentSchema` et `paymentSchema`, mais
- * ni l'un ni l'autre ne décrit ce que l'API **sert aujourd'hui** :
+ * Le contrat partagé publiait bien `paymentIntentSchema` et `paymentSchema`,
+ * mais ni l'un ni l'autre ne décrivait ce que l'API **sert** — d'où deux
+ * enveloppes redéclarées ici :
  *
- * | Contrat partagé | Ce que l'API rend | Écart |
+ * | Contrat partagé, avant | Ce que l'API rend | Écart |
  * |---|---|---|
- * | `paymentIntentSchema` — `.strict()`, trois champs | `PaymentIntentDto` — six champs, dont `publishableKey` | le `.strict()` rejetterait la réponse entière |
+ * | `paymentIntentSchema` — `.strict()`, trois champs | `PaymentIntentDto` — six champs, dont `publishableKey` | le `.strict()` rejetait la réponse entière |
  * | `paymentSchema` — `capturedAt` optionnel | `PaymentTransactionDto` — `capturedAt: null` | « absent » et « nul » ne sont pas la même chose pour Zod |
  *
- * TODO(#536) : les deux écarts du tableau ci-dessus sont ce que #510 a instruit
- * sans pouvoir le refermer, et le tableau **est** la justification demandée — pas
- * un renvoi. Les refermer suppose de trancher, côté contrat, lequel des deux a
- * raison : retirer `publishableKey` et `status` de la réponse casserait le
- * tunnel de paiement, les ajouter au contrat change une source de vérité que
- * l'API et le front lisent tous deux. Même constat, mot pour mot, dans
- * `apps/api/src/modules/payments/payments.types.ts`.
+ * #554 les a tranchés **dans le sens du serveur** : c'est le contrat qui a suivi
+ * la réponse, parce que l'inverse — retirer `publishableKey` et `status` de
+ * l'API — aurait cassé le tunnel de paiement. `paymentIntentSchema` porte
+ * désormais les six clés et `paymentSchema` ses deux `nullable`, si bien que les
+ * deux schémas ci-dessous ne redéclarent plus l'enveloppe : ils **étendent celle
+ * du contrat**, et n'y ajoutent que la normalisation de casse de la frontière.
  *
- * D'ici là, les schémas vivent ici, **composés des primitives du contrat**
- * (`nonNegativeMoneySchema`, `uuidSchema`, `utcInstantSchema`, les deux
- * énumérations de paiement) : rien du vocabulaire n'est redéclaré, seule
- * l'enveloppe l'est.
+ * Ce qui restait à trancher l'a donc été des deux bords à la fois, comme
+ * `apps/api/src/modules/payments/payments.types.ts` le demandait : refermer un
+ * seul des deux aurait recréé la divergence.
  *
  * ## La frontière PCI, dans la forme même de ces schémas
  *
@@ -44,8 +43,9 @@
 
 import {
   nonNegativeMoneySchema,
-  opaqueTokenSchema,
+  paymentIntentSchema,
   paymentMethodSchema,
+  paymentSchema,
   paymentStatusSchema,
   utcInstantSchema,
   uuidSchema,
@@ -85,15 +85,28 @@ export const receivedPaymentStatusSchema = z
  *
  * C'est ce qui permet à ces deux champs de traverser la frontière serveur vers
  * le navigateur, là où un jeton de session ne le pourrait pas.
+ *
+ * Les six clés viennent maintenant de `paymentIntentSchema` : seul le statut est
+ * réécrit, parce que l'API l'émet en majuscules et que la conversion appartient
+ * à la frontière.
+ *
+ * ## Pourquoi le `.strip()` explicite, contre le `.strict()` du contrat
+ *
+ * Le schéma partagé est `.strict()`, et c'est juste **en entrée** : un
+ * `cardNumber` glissé dans un corps de requête doit sortir en refus nommé plutôt
+ * que d'être ignoré. En **lecture**, la même rigueur se retournerait contre ce
+ * qu'elle protège : si l'API se mettait un jour à émettre un champ de carte, un
+ * schéma strict ferait échouer la réponse entière et fermerait le tunnel de
+ * paiement, là où un `.strip()` le retire et laisse le parcours vivre. La donnée
+ * n'atteint ni composant ni journal dans les deux cas (payments-stripe §1) ;
+ * seule diffère la manière dont le front survit à l'incident.
  */
-export const appointmentPaymentIntentSchema = z.object({
-  paymentId: uuidSchema,
-  appointmentId: uuidSchema,
-  amount: nonNegativeMoneySchema,
-  status: receivedPaymentStatusSchema,
-  clientSecret: opaqueTokenSchema,
-  publishableKey: opaqueTokenSchema,
-});
+export const appointmentPaymentIntentSchema = paymentIntentSchema
+  .extend({
+    amount: nonNegativeMoneySchema,
+    status: receivedPaymentStatusSchema,
+  })
+  .strip();
 
 export type AppointmentPaymentIntent = z.infer<typeof appointmentPaymentIntentSchema>;
 
@@ -104,17 +117,18 @@ export type AppointmentPaymentIntent = z.infer<typeof appointmentPaymentIntentSc
  * `capturedAt` est `nullable` et non `optional` : l'API émet explicitement
  * `null` tant que l'argent n'a pas été pris. Sur un règlement en espèces il est
  * toujours renseigné — la caisse fait foi, l'encaissement naît abouti — mais le
- * schéma décrit la route, pas le seul cas qu'on en attend.
+ * schéma décrit la route, pas le seul cas qu'on en attend. C'est cette
+ * distinction que #554 a portée dans `paymentSchema`, d'où l'extension plutôt
+ * que la redéclaration.
+ *
+ * Les deux références de prestataire que l'API sert en plus
+ * (`providerPaymentIntentId`, `providerChargeId`) n'ont pas besoin d'être
+ * exclues : un objet Zod non `.strict()` **retire** les clés qu'il ne déclare
+ * pas, et le comptoir ne les verra donc jamais.
  */
-export const paymentTransactionSchema = z.object({
-  id: uuidSchema,
-  appointmentId: uuidSchema.nullable(),
-  amount: nonNegativeMoneySchema,
-  refunded: nonNegativeMoneySchema,
+export const paymentTransactionSchema = paymentSchema.extend({
   method: receivedPaymentMethodSchema,
   status: receivedPaymentStatusSchema,
-  capturedAt: utcInstantSchema.nullable(),
-  createdAt: utcInstantSchema,
 });
 
 export type PaymentTransaction = z.infer<typeof paymentTransactionSchema>;

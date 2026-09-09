@@ -16,7 +16,7 @@ import {
 /**
  * Le journal d'envois du back-office — `GET /api/v1/notifications` (#70).
  *
- * TODO(#536) : ces formes appartiennent au contrat d'API et sont décrites par
+ * Écart assumé, tranché en #554 : ces formes appartiennent au contrat d'API et sont décrites par
  * `packages/shared/src/schemas/notification.ts` (`notificationSchema`,
  * `notificationListQuerySchema`), et #510 n'a pu monter ni l'une ni l'autre.
  * Deux empêchements, un par sens :

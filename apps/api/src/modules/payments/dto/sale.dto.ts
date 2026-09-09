@@ -58,7 +58,7 @@ import { IsOffsetDateTime, PageQueryDto, toPageBounds, toWindowBound } from './v
  * ligne que ce que son `kind` autorise. Ce qui n'est pas lu n'atteint pas la
  * base.
  *
- * TODO(#536) : ces bornes rejoindront `@spa/shared`, et #510 n'a pas pu les y
+ * Écart assumé, tranché en #554 : ces bornes rejoindront `@spa/shared`, et #510 n'a pas pu les y
  * prendre pour la raison qui vaut dans `product.dto.ts` : le contrat **ne décrit
  * pas le ticket de caisse**. `packages/shared/src/schemas/payment.ts` ignore la
  * vente, ses lignes et leurs natures. Il n'y a donc pas d'import à faire mais

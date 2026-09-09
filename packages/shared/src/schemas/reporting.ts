@@ -6,9 +6,11 @@
  * Les trois rapports de lecture (`/reports/revenue`, `/reports/appointments`,
  * `/reports/no-shows`) ne sont pas encore au contrat partagé : le front les
  * relit contre ses propres schémas (`apps/web/lib/admin/reporting-contract.ts`),
- * qui documentent l'écart et le TODO(#536) qui le refermera — il suppose de
- * trancher la question de casse (`NO_SHOW` en base, `no_show` au contrat), ce
- * que ce ticket-ci n'a aucune raison d'arbitrer en passant.
+ * qui documentent l'écart. #554 l'a examiné et **assumé** plutôt que refermé :
+ * les y remonter suppose de trancher la question de casse (`NO_SHOW` en base,
+ * `no_show` au contrat), qui est un changement de format de fil, et elle ne se
+ * décide pas pour le reporting seul — l'historique, les rôles et l'agenda la
+ * posent au même endroit.
  *
  * L'export, lui, **naît** au contrat. Sa réponse ne porte ni statut, ni moyen de
  * paiement, ni la moindre valeur d'énumération : trois chaînes, dont aucune n'a
