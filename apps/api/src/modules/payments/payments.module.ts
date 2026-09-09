@@ -22,6 +22,7 @@ import { StripeWebhookService } from './stripe-webhook.service';
 import { StripeHttpGateway } from './stripe/stripe-http.gateway';
 import { StripeConfig } from './stripe/stripe.config';
 import { STRIPE_GATEWAY } from './stripe/stripe.gateway';
+import { SYSTEM_CLOCK, WEBHOOK_CLOCK } from './webhook-clock';
 import {
   DEFAULT_RETRY_SCHEDULE,
   DEFAULT_SWEEP_SCHEDULE,
@@ -149,6 +150,13 @@ import {
  * d'attente morte, un bail d'une milliseconde pour observer la reprise — sans
  * qu'aucun test n'ait à attendre les secondes du calendrier de production.
  *
+ * `WEBHOOK_CLOCK` complète la paire (#523). Un TTL paramétrable ne suffit pas à
+ * rendre le bail décidable : il faut aussi que l'**instant** soit pilotable,
+ * sans quoi une suite ne peut périmer un bail qu'en attendant vraiment. La
+ * même horloge est injectée dans `StripeWebhookRepository` — qui pose le
+ * bail — et dans `DurableWebhookQueue` — qui le compare : c'est ce qui interdit
+ * de réintroduire les deux horloges de #555.
+ *
  * ## Ce qu'il exporte
  *
  * `PaymentsService`, la porte de l'encaissement en ligne. `SalesService`, celle
@@ -200,6 +208,7 @@ import {
     { provide: STRIPE_GATEWAY, useClass: StripeHttpGateway },
     { provide: WEBHOOK_RETRY_SCHEDULE, useValue: DEFAULT_RETRY_SCHEDULE },
     { provide: WEBHOOK_SWEEP_SCHEDULE, useValue: DEFAULT_SWEEP_SCHEDULE },
+    { provide: WEBHOOK_CLOCK, useValue: SYSTEM_CLOCK },
     { provide: WEBHOOK_QUEUE, useClass: DurableWebhookQueue },
   ],
   exports: [PaymentsService, SalesService, StripeConfig, WEBHOOK_QUEUE],

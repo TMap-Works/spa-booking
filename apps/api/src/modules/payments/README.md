@@ -308,7 +308,17 @@ Trois pièces, et rien de plus :
 - **le bail** (`claimed_at`) dit qui tient une livraison. `NULL` : personne.
   Récent : quelqu'un traite. Vieux de plus que le bail : l'instance qui la
   tenait ne répond plus — c'est l'état que laisse un `SIGKILL`, et c'est ce que
-  le balayage reprend, par un `UPDATE` conditionnel que la base arbitre ;
+  le balayage reprend, par un `UPDATE` conditionnel que la base arbitre.
+  Son invariant tient en une phrase : **une seule horloge, de la pose du bail à
+  sa péremption**. Les deux instants que compare le balayage — le `claimed_at`
+  qu'une instance a écrit, et le `now` qu'un tour se donne — viennent tous deux
+  de `WEBHOOK_CLOCK` (`webhook-clock.ts`), injectée dans le dépôt comme dans la
+  file. Deux horloges de part et d'autre de cette comparaison et le verdict se
+  joue sur leur écart : c'est #555, où le défaut de `next_attempt_at` venait du
+  `now()` du serveur PostgreSQL pendant que le balayage comparait à celui du
+  processus. L'horloge est injectée et non appelée pour que ce soit vrai *et*
+  éprouvable — une suite périme un bail en avançant l'horloge d'un TTL, jamais
+  en attendant (#523) ;
 - **la clé de sérialisation** (`serialization_key`) chaîne les livraisons d'un
   même encaissement au lieu de les éventailler. Elle est persistée, et non
   recalculée : c'est elle qui deviendra le `MessageGroupId` d'une file FIFO le
