@@ -161,6 +161,30 @@
    * et un salon doit pouvoir déplacer l'un sans l'autre. */
   --spa-color-now: var(--spa-palette-red-600);
 
+  /* Graphiques du reporting — issue #75.
+   * -------------------------------------------------------------------------
+   * Rôles distincts de l'accent et des états, bien qu'ils empruntent les mêmes
+   * rampes : une barre de chiffre d'affaires n'est pas un bouton « Réserver »,
+   * et la part de no-shows n'est pas un message d'erreur. Les fondre
+   * interdirait de repeindre un tableau de bord sans repeindre le produit.
+   *
+   * Le critère du ticket est « graphiques lisibles en thème clair ET sombre » :
+   * ces cinq rôles ne portent donc aucune valeur propre, ils délèguent à des
+   * primitives — et c'est le bloc sombre en bas de fichier qui les fait basculer
+   * d'un thème à l'autre, sans qu'une ligne de `admin/reporting.css` change.
+   *
+   * La couleur ne porte jamais l'information seule (WCAG 1.4.1) : la série
+   * secondaire est **hachurée** en plus d'être d'une autre teinte — `chart-hatch`
+   * est la couleur de ces traits, et elle doit contraster avec `chart-alert`, non
+   * avec la surface. Le graphique rend par ailleurs toutes ses valeurs dans un
+   * tableau en lecture d'écran. */
+  --spa-color-chart-primary: var(--spa-palette-brand-500);
+  --spa-color-chart-primary-strong: var(--spa-palette-brand-700);
+  --spa-color-chart-alert: var(--spa-palette-red-600);
+  --spa-color-chart-hatch: var(--spa-palette-neutral-0);
+  --spa-color-chart-grid: var(--spa-palette-neutral-200);
+  --spa-color-chart-axis: var(--spa-palette-neutral-400);
+
   /* Chargement et inertie. `skeleton-*` est décoratif : un squelette n'est pas
    * du texte, il ne porte aucune information, et l'information « ça charge »
    * passe par `aria-busy` et un message en lecture d'écran — pas par le
@@ -292,4 +316,94 @@
   --spa-admin-slot-height: var(--spa-target-min-size);
   /* Colonne des heures du calendrier, à gauche de la grille. */
   --spa-admin-time-gutter: 4.5rem;
+}
+
+/* ==========================================================================
+ * 8. THÈME SOMBRE (issue #75)
+ * --------------------------------------------------------------------------
+ * « Graphiques lisibles en thème clair et sombre » est un critère d'acceptation
+ * de #75, et il n'était pas tenable sans thème sombre : un graphique ne peut pas
+ * être lisible dans un thème qui n'existe pas. Ce bloc l'ajoute — et le fait
+ * pour tout le produit, parce qu'un tableau de bord sombre au milieu d'une
+ * application claire aurait été un défaut, pas une fonctionnalité.
+ *
+ * ## Seules les PRIMITIVES sont redéfinies
+ *
+ * Pas un seul `--spa-color-*` ici. Les rôles sémantiques du bloc `:root`
+ * ci-dessus délèguent tous à une primitive : redéfinir les primitives fait donc
+ * basculer les quarante-cinq rôles d'un coup, sans qu'aucun puisse être oublié,
+ * et sans qu'un composant ait à connaître le thème dans lequel il est peint.
+ * `tests/tokens.test.mjs` le vérifie — une redéfinition sémantique glissée ici
+ * fait rougir la suite.
+ *
+ * ## Les rampes sont retournées, pas assombries
+ *
+ * Chaque rampe est lue de l'autre bout : ce qui était le fond le plus clair
+ * devient le fond le plus sombre, ce qui portait le texte le plus foncé porte le
+ * texte le plus clair. C'est ce qui conserve **toutes** les paires de contraste
+ * par symétrie plutôt que par chance — `--spa-color-text-inverse` sur
+ * `--spa-color-surface-inverse` tient dans les deux thèmes, alors qu'un simple
+ * assombrissement des surfaces aurait laissé du texte clair sur du clair dans la
+ * barre latérale du back-office.
+ *
+ * Les teintes ne sont pas les mêmes valeurs retournées à l'identique : sur fond
+ * sombre, une couleur saturée paraît plus vive et un texte trop clair
+ * « éblouit ». Les valeurs ci-dessous sont désaturées d'un cran et vérifiées par
+ * `tests/contrast.test.mjs`, qui rejoue **les mêmes paires** sur ce jeu-ci.
+ *
+ * ## Pourquoi `prefers-color-scheme` et pas un sélecteur de thème
+ *
+ * Un interrupteur suppose un réglage à stocker, donc un choix par utilisateur,
+ * donc un écran de préférences — hors périmètre MVP. La requête de média suit ce
+ * que le système d'exploitation dit déjà, ce qui est le comportement attendu par
+ * défaut et ne coûte aucune interface. Un salon qui substitue sa rampe de marque
+ * doit redéfinir les deux jeux, comme il redéfinit déjà le clair.
+ * ========================================================================== */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    /* Neutres chauds, lus de l'autre bout. `neutral-0` reste « la surface de la
+     * page » et `neutral-900` « la couleur du texte » : ce sont des rôles, et ce
+     * sont eux qui doivent rester vrais. */
+    --spa-palette-neutral-0: #14120f;
+    --spa-palette-neutral-50: #1c1a16;
+    --spa-palette-neutral-100: #252220;
+    --spa-palette-neutral-200: #35312c;
+    --spa-palette-neutral-300: #4f4a44;
+    --spa-palette-neutral-400: #6e675f;
+    --spa-palette-neutral-500: #8f877e;
+    --spa-palette-neutral-600: #b3aaa1;
+    --spa-palette-neutral-700: #cfc7bf;
+    --spa-palette-neutral-800: #e6e0da;
+    --spa-palette-neutral-900: #f5f2ef;
+
+    /* Marque — la même rampe, parcourue à l'envers. */
+    --spa-palette-brand-50: #0b201d;
+    --spa-palette-brand-100: #12332e;
+    --spa-palette-brand-200: #194741;
+    --spa-palette-brand-300: #215c53;
+    --spa-palette-brand-400: #2a7268;
+    --spa-palette-brand-500: #6fb3a9;
+    --spa-palette-brand-600: #a5d2cb;
+    --spa-palette-brand-700: #d3e9e5;
+    --spa-palette-brand-800: #e5f1ef;
+    --spa-palette-brand-900: #eef6f5;
+
+    /* États. Le `-600`/`-700` porte toujours le texte, le `-50` toujours la
+     * surface : les deux échangent donc leur clarté, pas leur rôle. */
+    --spa-palette-green-600: #79d9a3;
+    --spa-palette-green-50: #10261a;
+    --spa-palette-amber-700: #f0b968;
+    --spa-palette-amber-50: #2b1d08;
+    --spa-palette-red-600: #f38b84;
+    --spa-palette-red-50: #2e1413;
+    --spa-palette-blue-700: #8ab7ec;
+    --spa-palette-blue-50: #10203a;
+
+    /* Le voile de modale s'appuie sur du noir plus dense : sur fond sombre, un
+     * voile clair éclaircirait la page au lieu de la mettre en retrait. */
+    --spa-palette-scrim: rgb(0 0 0 / 68%);
+  }
 }

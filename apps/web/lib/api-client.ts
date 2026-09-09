@@ -120,6 +120,18 @@ import {
   type StaffInvitation,
 } from '@/lib/admin/staff-contract';
 
+// Les trois rapports du back-office, pour la même raison et avec le même
+// TODO(#536) : voir l'en-tête de `lib/admin/reporting-contract.ts`.
+import {
+  appointmentVolumeReportSchema,
+  dailyRevenueReportSchema,
+  noShowReportSchema,
+  type AppointmentGrouping,
+  type AppointmentVolumeReport,
+  type DailyRevenueReport,
+  type NoShowReport,
+} from '@/lib/admin/reporting-contract';
+
 /**
  * Erreur d'API, telle que les écrans la lisent.
  *
@@ -1535,4 +1547,86 @@ export async function deleteStaffTimeOff(accessToken: string, timeOffId: string)
     schema: null,
     accessToken,
   });
+}
+
+/**
+ * La fenêtre d'un rapport telle que les trois routes la prennent — `from`
+ * **inclus**, `to` **exclu**, deux instants ISO 8601 à offset explicite.
+ *
+ * Le calcul de ces bornes depuis les dates civiles du salon appartient à
+ * `lib/admin/reporting-window.ts` : c'est une question de fuseau, pas de
+ * transport.
+ */
+export interface ReportWindowRequest {
+  readonly from: string;
+  readonly to: string;
+}
+
+/** La chaîne de requête d'une fenêtre, encodée une fois pour les trois routes. */
+function reportWindowQuery(window: ReportWindowRequest): string {
+  return new URLSearchParams({ from: window.from, to: window.to }).toString();
+}
+
+/**
+ * Le revenu quotidien — `GET /v1/reports/revenue`, `@AuthAtLeast('MANAGER')`.
+ *
+ * Les jours sans recette sont **absents** de la réponse : le rapport ne fabrique
+ * pas les journées de fermeture, et c'est l'écran qui décide s'il veut une barre
+ * à zéro au calendrier.
+ */
+export async function fetchRevenueReport(
+  accessToken: string,
+  window: ReportWindowRequest,
+): Promise<DailyRevenueReport> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/reports/revenue?${reportWindowQuery(window)}`,
+    schema: dailyRevenueReportSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Le volume de rendez-vous — `GET /v1/reports/appointments`,
+ * `@AuthAtLeast('MANAGER')`.
+ *
+ * `groupBy` est explicite plutôt que laissé au défaut de la route : l'écran
+ * demande les trois axes, et un appel dont l'axe dépendrait d'un défaut serveur
+ * serait le seul des trois à changer de sens si ce défaut changeait.
+ */
+export async function fetchAppointmentVolumeReport(
+  accessToken: string,
+  window: ReportWindowRequest,
+  groupBy: AppointmentGrouping,
+): Promise<AppointmentVolumeReport> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/reports/appointments?${reportWindowQuery(window)}&groupBy=${encodeURIComponent(groupBy)}`,
+    schema: appointmentVolumeReportSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/**
+ * Le nombre et le taux de no-shows — `GET /v1/reports/no-shows`,
+ * `@AuthAtLeast('MANAGER')`.
+ *
+ * `rate` peut valoir `null` : « aucun rendez-vous à honorer sur la période »
+ * n'est pas « aucun no-show ». Le schéma le laisse passer tel quel plutôt que de
+ * le ramener à zéro à la frontière, ce qui ferait afficher une performance là où
+ * il n'y a pas eu d'activité.
+ */
+export async function fetchNoShowReport(
+  accessToken: string,
+  window: ReportWindowRequest,
+): Promise<NoShowReport> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/reports/no-shows?${reportWindowQuery(window)}`,
+    schema: noShowReportSchema,
+    accessToken,
+  });
+  return payload;
 }

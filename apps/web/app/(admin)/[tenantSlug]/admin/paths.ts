@@ -10,6 +10,7 @@
 import type { CalendarDate } from '@spa/shared';
 
 import { DEFAULT_CALENDAR_VIEW, type CalendarView } from '@/lib/admin/calendar-range';
+import { DEFAULT_REPORT_PERIOD } from '@/lib/admin/reporting-window';
 
 /** Racine du back-office d'un établissement. */
 export function adminPath(tenantSlug: string): string {
@@ -129,6 +130,46 @@ export function adminCheckoutPath(
   }
 
   return `${adminPath(tenantSlug)}/encaissement${search.size === 0 ? '' : `?${search.toString()}`}`;
+}
+
+/**
+ * Les indicateurs d'activité — revenu, volume, no-shows (#75).
+ *
+ * La période **et** le filtre sont dans l'URL, pour la raison qui y met la vue
+ * du planning : un tableau de bord se partage (« regarde le mois dernier, chez
+ * Camille »), se met en favori, et surtout survit à un rafraîchissement. Un état
+ * local ramènerait la gérante aux trente derniers jours à chaque rechargement,
+ * au milieu d'une revue de fin de mois.
+ *
+ * Les paramètres sont omis quand ils valent le défaut : l'URL nue
+ * `/{slug}/admin/reporting` est celle qu'on tape, et elle ouvre les trente
+ * derniers jours pour l'établissement entier. Les deux bornes ne sont écrites
+ * que sur une période personnalisée — sur une période nommée, elles seraient
+ * périmées dès le lendemain.
+ */
+export function adminReportingPath(
+  tenantSlug: string,
+  options: {
+    readonly period?: string;
+    readonly from?: CalendarDate;
+    readonly to?: CalendarDate;
+    readonly scope?: string | null;
+  } = {},
+): string {
+  const search = new URLSearchParams();
+
+  if (options.period !== undefined && options.period !== DEFAULT_REPORT_PERIOD) {
+    search.set('periode', options.period);
+  }
+  if (options.period === 'personnalisee' && options.from !== undefined && options.to !== undefined) {
+    search.set('du', options.from);
+    search.set('au', options.to);
+  }
+  if (options.scope !== undefined && options.scope !== null) {
+    search.set('filtre', options.scope);
+  }
+
+  return `${adminPath(tenantSlug)}/reporting${search.size === 0 ? '' : `?${search.toString()}`}`;
 }
 
 /**

@@ -36,13 +36,21 @@ import { listStyleSheets, readStyleSheet, relativeName, stripComments } from './
 const here = dirname(fileURLToPath(import.meta.url));
 const mockupsDir = join(here, '..', 'mockups', 'admin');
 
-/** Les cinq écrans des critères d'acceptation, plus leur sommaire. */
+/**
+ * Les écrans du tableau de bord, plus leur sommaire.
+ *
+ * Les cinq premiers viennent des critères d'acceptation de #30. Le sixième —
+ * les indicateurs d'activité — a été ajouté par #75, et pour la raison même qui
+ * fait vivre cette suite : `styles/admin/reporting.css` doit être exercé par une
+ * maquette, sans quoi ses vingt-trois règles ne seraient montrées nulle part.
+ */
 const SCREENS = {
   'calendrier.html': 'calendrier jour et semaine',
   'rendez-vous.html': 'création et édition manuelle d’un rendez-vous',
   'fiche-client.html': 'fiche client, notes et historique',
   'personnel.html': 'personnel et horaires',
   'encaissement.html': 'encaissement et POS',
+  'reporting.html': 'indicateurs d’activité et export CSV',
 };
 const SUMMARY = 'index.html';
 
@@ -89,8 +97,8 @@ const adminOnly = declaredClasses(
 
 const mockupFiles = readdirSync(mockupsDir).filter((file) => file.endsWith('.html'));
 
-describe('Les cinq écrans existent et sont autoportants', () => {
-  it('livre une maquette par critère d’acceptation, plus son sommaire', () => {
+describe('Les écrans existent et sont autoportants', () => {
+  it('livre une maquette par écran du tableau de bord, plus son sommaire', () => {
     assert.deepEqual(
       [...mockupFiles].sort(),
       [...Object.keys(SCREENS), SUMMARY].sort(),

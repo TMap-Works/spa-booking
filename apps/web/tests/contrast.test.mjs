@@ -24,7 +24,15 @@
  *   · squelettes de chargement — décoratifs, ne portent aucune information ;
  *     l'annonce passe par `aria-busy` et un texte en lecture d'écran ;
  *   · `--spa-color-scrim` — translucide, donc sans rapport de contraste défini
- *     tant qu'il n'est pas composé avec ce qu'il recouvre.
+ *     tant qu'il n'est pas composé avec ce qu'il recouvre ;
+ *   · `--spa-color-chart-grid` — décorative : la grille d'un graphique ne porte
+ *     aucune information, ce sont ses libellés d'échelle qui la portent, et une
+ *     grille assez contrastée pour atteindre 3:1 dominerait les barres.
+ *
+ * Depuis #75, chaque paire est rejouée sur les **deux** thèmes : le clair du
+ * bloc `:root`, et le sombre de `@media (prefers-color-scheme: dark)`. Le thème
+ * sombre ne redéfinit que des primitives, si bien que les rôles — donc les
+ * paires — sont exactement les mêmes ; seules les valeurs changent.
  *
  * Exécution : `node --test apps/web/tests/`
  */
@@ -32,9 +40,20 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { readTokenDeclarations, tokenContrast } from './support/tokens.mjs';
+import { readSchemeDeclarations, tokenContrast } from './support/tokens.mjs';
 
-const declarations = readTokenDeclarations();
+/**
+ * Les deux thèmes, et les mêmes paires sur chacun (#75).
+ *
+ * Le thème sombre ne redéfinit que des primitives : les rôles sémantiques sont
+ * les mêmes, donc les paires à vérifier aussi. Les écrire deux fois aurait
+ * garanti qu'elles divergent — c'est le jeu de valeurs qui change, pas ce qu'on
+ * regarde. Le critère « graphiques lisibles en thème clair et sombre » se lit
+ * ici, en rapports recalculés à chaque exécution.
+ */
+const SCHEMES = ['clair', 'sombre'];
+
+const declarations = readSchemeDeclarations('clair');
 
 /** Seuil du texte normal. Aucun composant ne descend sous `--spa-font-size-sm`. */
 const AA_TEXT = 4.5;
@@ -154,19 +173,39 @@ const PAIRS = [
   // Le trait de l'heure courante dans le calendrier : un repère, pas du texte.
   ['--spa-color-now', '--spa-color-surface', AA_NON_TEXT, 'heure courante / surface du planning'],
 
+  // --- Graphiques du reporting (#75) ---
+  // Des aplats et des traits : le seuil est celui des éléments non textuels
+  // (1.4.11). Les deux séries ne sont pas comparées l'une à l'autre — la norme
+  // ne l'exige pas, et c'est précisément pourquoi la série secondaire est
+  // hachurée : la distinction ne repose pas sur leur écart de teinte.
+  ['--spa-color-chart-primary', '--spa-color-surface-raised', AA_NON_TEXT, 'barre / fond du graphique'],
+  ['--spa-color-chart-primary-strong', '--spa-color-surface-raised', AA_NON_TEXT, 'barre sélectionnée / fond du graphique'],
+  ['--spa-color-chart-alert', '--spa-color-surface-raised', AA_NON_TEXT, 'part de no-shows / fond du graphique'],
+  // La hachure se peint **sur** la série secondaire, jamais sur le fond : c'est
+  // contre elle qu'elle doit se détacher.
+  ['--spa-color-chart-hatch', '--spa-color-chart-alert', AA_NON_TEXT, 'hachure / part de no-shows'],
+  ['--spa-color-chart-axis', '--spa-color-surface-raised', AA_NON_TEXT, 'axe / fond du graphique'],
+  // Les étiquettes et l'échelle du SVG sont du texte, et n'échappent donc pas au
+  // 4.5:1 sous prétexte qu'elles sont petites.
+  ['--spa-color-text-muted', '--spa-color-surface-raised', AA_TEXT, 'échelle du graphique / son fond'],
+
   ...STATUS_PAIRS,
 ];
 
 describe('Contraste AA des jetons de couleur', () => {
-  for (const [foreground, background, minimum, label] of PAIRS) {
-    it(`${label} atteint ${minimum}:1`, () => {
-      const ratio = tokenContrast(declarations, foreground, background);
-      assert.ok(
-        ratio >= minimum,
-        `${label} : ${ratio.toFixed(2)}:1, en deçà du minimum WCAG AA de ${minimum}:1 ` +
-          `(${foreground} sur ${background}).`,
-      );
-    });
+  for (const scheme of SCHEMES) {
+    const themed = readSchemeDeclarations(scheme);
+
+    for (const [foreground, background, minimum, label] of PAIRS) {
+      it(`[${scheme}] ${label} atteint ${minimum}:1`, () => {
+        const ratio = tokenContrast(themed, foreground, background);
+        assert.ok(
+          ratio >= minimum,
+          `[thème ${scheme}] ${label} : ${ratio.toFixed(2)}:1, en deçà du minimum ` +
+            `WCAG AA de ${minimum}:1 (${foreground} sur ${background}).`,
+        );
+      });
+    }
   }
 
   it('couvre chaque rôle de texte du système', () => {
@@ -186,6 +225,35 @@ describe('Contraste AA des jetons de couleur', () => {
         verified.has(role),
         `${role} n'est vérifié par aucune paire de contraste — ajouter la paire ` +
           `correspondante dans PAIRS, ou justifier son exemption dans l'en-tête.`,
+      );
+    }
+  });
+
+  it('couvre chaque rôle de graphique déclaré', () => {
+    // Même garde-fou que pour les rôles de texte, pour la famille ajoutée par
+    // #75 : un septième rôle de graphique déclaré dans tokens.css et vérifié par
+    // aucune paire se peindrait au jugé, et le critère « lisible en thème clair
+    // et sombre » redeviendrait une affirmation.
+    const verified = new Set(PAIRS.flatMap(([foreground, background]) => [foreground, background]));
+    const chartRoles = [...declarations.keys()].filter(
+      (name) =>
+        name.startsWith('--spa-color-chart-') &&
+        // La grille de fond est **décorative** : elle ne porte aucune
+        // information — ce sont les libellés d'échelle qui la portent, et eux
+        // sont vérifiés au seuil du texte. 1.4.11 ne s'applique qu'aux éléments
+        // « nécessaires à la compréhension », et une grille assez contrastée
+        // pour atteindre 3:1 dominerait les barres qu'elle est censée aider à
+        // lire. Même exemption, et même raison, que les squelettes de chargement.
+        name !== '--spa-color-chart-grid',
+    );
+
+    assert.ok(chartRoles.length > 0, 'aucun rôle de graphique trouvé dans tokens.css.');
+
+    for (const role of chartRoles) {
+      assert.ok(
+        verified.has(role),
+        `${role} n'est vérifié par aucune paire de contraste — ajouter la paire ` +
+          `correspondante dans PAIRS.`,
       );
     }
   });

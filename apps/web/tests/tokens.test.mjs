@@ -17,6 +17,8 @@ import { describe, it } from 'node:test';
 import {
   entryPoints,
   listStyleSheets,
+  readDarkTokenDeclarations,
+  readSchemeDeclarations,
   readStyleSheet,
   readTokenDeclarations,
   relativeName,
@@ -27,6 +29,7 @@ import {
 } from './support/tokens.mjs';
 
 const declarations = readTokenDeclarations();
+const darkDeclarations = readDarkTokenDeclarations();
 const sheets = listStyleSheets();
 
 /** Mots-clés qui ressemblent à une couleur mais n'en fixent aucune. */
@@ -121,6 +124,57 @@ describe('Deux couches, et une seule qui porte des littéraux', () => {
           `couleur nommée littérale dans ${where}. Passer par un jeton sémantique.`,
         );
       }
+    }
+  });
+});
+
+describe('Thème sombre — une seule couche redéfinie', () => {
+  it('ne redéfinit que des primitives', () => {
+    // C'est **la** propriété qui fait tenir le thème sombre (#75) : les rôles
+    // sémantiques délèguent tous à une primitive, donc redéfinir les primitives
+    // fait basculer les rôles d'un coup, sans qu'aucun puisse être oublié. Un
+    // `--spa-color-*` glissé dans le bloc sombre romprait cette symétrie — et le
+    // rôle en question cesserait de suivre la rampe qu'un salon substitue.
+    for (const name of darkDeclarations.keys()) {
+      assert.match(
+        name,
+        /^--spa-palette-/,
+        `le bloc sombre redéfinit ${name}, qui n'est pas une primitive. Le thème ` +
+          `sombre ne retouche que --spa-palette-*, jamais un rôle sémantique.`,
+      );
+    }
+  });
+
+  it('redéfinit chaque primitive de couleur, sans en inventer', () => {
+    // Une primitive oubliée resterait à sa valeur claire sous le thème sombre —
+    // un fond blanc au milieu d'une page sombre, sans que rien ne le signale. Et
+    // une primitive inventée ici ne serait employée par aucun rôle.
+    const colorPrimitives = (source) =>
+      [...source.keys()]
+        .filter((name) => name.startsWith('--spa-palette-'))
+        .sort();
+
+    assert.deepEqual(
+      colorPrimitives(darkDeclarations),
+      colorPrimitives(declarations),
+      'les primitives du thème clair et celles du thème sombre ont divergé.',
+    );
+  });
+
+  it('résout chaque rôle sémantique en une couleur littérale', () => {
+    // La fusion des deux blocs doit rester résoluble : un rôle qui pointerait une
+    // primitive absente du bloc sombre lèverait ici plutôt que de se peindre en
+    // transparent dans le navigateur.
+    const merged = readSchemeDeclarations('sombre');
+
+    for (const name of merged.keys()) {
+      if (!name.startsWith('--spa-color-')) continue;
+
+      assert.doesNotMatch(
+        resolveToken(merged, name),
+        /var\(/,
+        `${name} ne se résout pas en valeur littérale sous le thème sombre.`,
+      );
     }
   });
 });
