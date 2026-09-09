@@ -14,6 +14,7 @@ canaux, rien de plus — le marketing et les campagnes sont hors périmètre MVP
 | #69 | Les **modèles par établissement** — la table `notification_templates`, le moteur de substitution à variables échappées, les défauts de la plateforme en code, la mesure GSM-7 / UCS-2 du coût d'un SMS, et les quatre routes de personnalisation |
 | #72 | L'**avis d'annulation** — abonnement à `appointment.cancelled`, modèles de plateforme e-mail et SMS, mention de l'origine de la décision, et résolution du destinataire selon d'où elle vient |
 | #534 | Les **deux publics** de l'avis d'annulation — l'index d'idempotence remplacé pour porter le destinataire, la parité du dépôt avec sa nouvelle définition, la résolution de deux destinataires, et le CTA du modèle e-mail réservé à la cliente |
+| #493 | La preuve **comportementale** de l'idempotence — huit `claim()` parallèles contre un vrai PostgreSQL, jouées par `npm run test:concurrency` |
 
 À venir : les passerelles SES et SNS.
 
@@ -670,3 +671,27 @@ comptage significatif plutôt que tautologique.
 `__tests__/notifications.migration.spec.ts` relit le SQL de migration et vérifie
 que l'index existe, sur ces colonnes-là, avec ce filtre-là — le lecteur d'index
 de `prisma-schema.spec.ts` ne reconnaissant que les index totaux.
+
+### La sérialisation, elle, se prouve contre un vrai PostgreSQL (#493)
+
+Les deux suites ci-dessus sont **structurelles** : l'une relit ce qui est écrit
+dans la migration, l'autre exerce le dépôt contre un faux client Prisma qui
+rejoue les deux uniques. Ni l'une ni l'autre n'établit qu'un vrai moteur refuse
+deux insertions **simultanées** — or c'est exactement la garantie sur laquelle
+repose « rejouer deux fois le même message SQS produit un seul envoi ».
+
+`test/notifications-idempotency.concurrency-spec.ts`, jouée par
+`npm run test:concurrency` aux côtés de la suite d'exclusion de créneau, lance
+huit `claim()` parallèles contre une base jetable et compte les succès :
+
+| Ce qu'elle joue | Ce que cela établit |
+|---|---|
+| huit livraisons du **même** message | un `claimed`, sept `already-live`, une ligne en base — le rejeu SQS nominal |
+| huit livraisons à `dedupe_key` **toutes différentes** | le cas que seul `notifications_live_once` arrête : `(tenant_id, dedupe_key)` les laisserait toutes passer |
+| huit reprises après un `FAILED`, à clés neuves | la place est bien rendue, et une seule insertion l'obtient |
+| huit rejeux du **même** message après un `FAILED` | la course propre à `reclaim()` : une seule transition `FAILED → PENDING`, `attempt_count` à 2 |
+| huit livraisons après un `SENT` | la place n'est **pas** rendue : aucune ne repart |
+| huit livraisons de chaque côté sur une clé partagée | deux établissements ne se disputent jamais la place — `tenant_id` est en tête des deux uniques |
+
+Chaque cas sème son propre rendez-vous, donc sa propre clé d'index : aucun ne
+dépend de ce que le précédent a laissé en base.
