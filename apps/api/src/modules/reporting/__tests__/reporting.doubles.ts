@@ -87,13 +87,25 @@ export class FakeReportingRepository {
   /** Le fuseau que rend `currentTimeZone`, par tenant. */
   private readonly timeZones = new Map<string, string>();
 
+  /** Le slug que rend `currentSlug`, par tenant — voir {@link seedTenant}. */
+  private readonly slugs = new Map<string, string>();
+
   private readonly payments: StoredPayment[] = [];
 
   private readonly appointments: StoredAppointment[] = [];
 
-  /** Sème le fuseau d'un établissement — sans quoi tous les rapports rendent 404. */
-  public seedTenant(tenantId: string, timeZone = 'Europe/Paris'): void {
+  /**
+   * Sème le fuseau et le slug d'un établissement — sans quoi tous les rapports
+   * rendent 404.
+   *
+   * Le slug est facultatif : les trois routes de lecture ne le regardent pas,
+   * seul l'export s'en sert pour nommer son fichier (#563). À défaut, un slug
+   * dérivé de l'identifiant, qui reste distinct d'un établissement à l'autre —
+   * ce qui est la seule propriété dont une suite d'isolation ait besoin.
+   */
+  public seedTenant(tenantId: string, timeZone = 'Europe/Paris', slug?: string): void {
     this.timeZones.set(tenantId, timeZone);
+    this.slugs.set(tenantId, slug ?? `salon-${tenantId.slice(0, 8)}`);
   }
 
   public seedPayment(payment: StoredPayment): void {
@@ -108,6 +120,12 @@ export class FakeReportingRepository {
     const tenantId = this.requireScope('currentTimeZone');
 
     return Promise.resolve(this.timeZones.get(tenantId) ?? null);
+  }
+
+  public async currentSlug(): Promise<string | null> {
+    const tenantId = this.requireScope('currentSlug');
+
+    return Promise.resolve(this.slugs.get(tenantId) ?? null);
   }
 
   public async dailyRevenue(

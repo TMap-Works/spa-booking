@@ -180,6 +180,31 @@ export class ReportingRepository {
   }
 
   /**
+   * Le slug de l'établissement courant, ou `null` s'il n'existe plus — #563.
+   *
+   * Une seconde lecture par l'API de Prisma, scopée par l'extension comme la
+   * précédente. Elle sert au **nom du fichier** d'export, préfixé par
+   * l'établissement (`maison-lotus-reporting-…csv`) — la première moitié du
+   * cinquième critère de #75, désormais tenue côté serveur.
+   *
+   * Une méthode à part plutôt qu'un `select` élargi sur `currentTimeZone` : ce
+   * dernier est appelé par les trois routes de lecture, qui n'ont que faire du
+   * slug, et élargir sa projection aurait fait payer une colonne de plus à
+   * chaque ouverture d'écran pour un besoin que seul l'export a. Deux lectures
+   * d'une même ligne par sa clé primaire coûtent moins que ce que coûterait la
+   * confusion entre « le fuseau du rapport » et « l'identité du salon ».
+   *
+   * Le slug **n'est pas** ce qui isole l'export : la clé S3 est préfixée par le
+   * `tenant_id`, pas par le slug (`report-export.key.ts`). Il ne sert qu'à
+   * nommer un fichier — un slug est public, il est dans l'URL de la vitrine.
+   */
+  public async currentSlug(): Promise<string | null> {
+    const tenant = await this.prisma.tenant.findFirst({ select: { slug: true } });
+
+    return tenant?.slug ?? null;
+  }
+
+  /**
    * Le revenu de la fenêtre, ventilé par **jour civil du salon** et par moyen de
    * paiement — premier critère de #74.
    *

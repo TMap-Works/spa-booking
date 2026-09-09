@@ -1,93 +1,128 @@
 'use client';
 
+import { ERROR_CODES } from '@spa/shared';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { buildReportCsv, reportCsvFilename, type ReportCsvInput } from '@/lib/admin/reporting-csv';
+
+import { adminSessionRefreshPath } from '../paths';
+import {
+  createReportExportAction,
+  type ReportExportWindow,
+} from '../reporting/actions';
 
 /**
- * L'export CSV — quatrième critère de #75.
+ * L'export CSV — quatrième critère de #75, et sa seconde moitié tenue par #563.
  *
- * ## Pourquoi le fichier est fabriqué dans le navigateur
+ * ## Ce qui a changé, et ce que cela coûte
  *
- * Le critère demande « l'export CSV des **données affichées** ». Fabriquer le
- * fichier ici, à partir des chiffres que la page vient de peindre, est la seule
- * façon d'en être certain : une seconde requête, même à la même période, pourrait
- * rendre autre chose — un encaissement de plus, un rendez-vous marqué honoré
- * entre-temps — et la gérante aurait sous les yeux un tableau que son fichier
- * contredit.
+ * #75 fabriquait le fichier **dans le navigateur**, à partir des chiffres que la
+ * page venait de peindre, et c'était la seule façon d'être certain que le
+ * fichier corresponde exactement à l'écran. Depuis #563, le fichier est
+ * sérialisé **par l'API**, déposé dans un bucket sous une clé préfixée par
+ * l'établissement, et servi par une URL présignée de quinze minutes au plus.
  *
- * Cela vaut aussi une propriété qui n'est pas rien : **aucune donnée ne repart
- * vers un serveur pour être exportée**. Le fichier ne quitte pas le poste.
+ * La garantie « le fichier est ce que je vois » est donc perdue : une caisse
+ * encaissée entre l'affichage et le clic apparaîtra dans le fichier sans être à
+ * l'écran. L'échange est celui qu'exige le cinquième critère de #75 — une URL
+ * présignée suppose un objet déposé par un porteur d'identifiants AWS,
+ * c'est-à-dire un fichier produit côté serveur — et ce qu'on gagne n'est pas
+ * mince : le fichier porte le détail complet des trois rapports plutôt que ce
+ * qu'un écran a bien voulu peindre, et deux exports de la même fenêtre disent
+ * la même chose.
  *
- * ## Ce que cet export **n'est pas**, et c'est écrit dans l'issue
+ * ## Le nom du fichier vient du serveur
  *
- * Le cinquième critère de #75 demande un fichier « préfixé par le tenant et
- * servi par URL présignée ». La première moitié est tenue —
- * `reportCsvFilename` préfixe par le slug de l'établissement. La seconde ne peut
- * pas l'être depuis `apps/web` : une URL présignée suppose un objet déposé dans
- * un bucket et signé par un porteur d'identifiants AWS, c'est-à-dire une route
- * d'API et un module Terraform. Le dépôt n'en a aucun aujourd'hui — ni bucket
- * d'export, ni SDK S3 côté `apps/api`. Le critère reste donc **ouvert**, suivi
- * par une issue dédiée, plutôt que simulé par un lien de téléchargement qu'on
- * appellerait présigné.
+ * `filename` est rendu par l'API, préfixé par le slug de l'établissement, et le
+ * `Content-Disposition` de l'objet le porte aussi. L'écran ne le recompose pas :
+ * deux calculs du même nom finiraient par diverger, et c'est celui qui n'est pas
+ * dans l'objet qu'on oublierait de corriger.
  *
- * ## Le bouton se désactive pendant la fabrication
+ * ## L'URL est ouverte, jamais gardée
+ *
+ * Elle est **porteuse** : quiconque la détient lit le fichier jusqu'à son
+ * échéance, sans jeton. Elle n'est donc ni mise en cache, ni écrite dans l'URL
+ * de la page, ni conservée après le clic — le composant l'ouvre et l'oublie.
+ * `rel="noopener"` sur le lien fabriqué pour la même raison qu'ailleurs : la
+ * fenêtre ouverte n'a rien à savoir de celle-ci.
+ *
+ * ## Le bouton se désactive pendant la préparation
  *
  * Même règle que les soumissions du parcours (web-frontend §3) : un double clic
- * ne produit pas deux fichiers. La sérialisation d'une année de données est
- * courte mais pas instantanée, et c'est exactement l'intervalle pendant lequel
- * on reclique.
+ * ne produit pas deux fichiers. Ici cela compte plus qu'avant — chaque clic
+ * dépose réellement un objet dans un bucket, là où le `Blob` d'hier ne coûtait
+ * qu'une allocation.
+ *
+ * ## Une session expirée se renouvelle, elle ne s'affiche pas
+ *
+ * Le `Blob` d'hier n'appelait personne : l'export ne pouvait pas buter sur un
+ * jeton périmé. Il le peut désormais, et un tableau de bord se laisse ouvert
+ * longtemps — c'est même l'écran où cela arrive le plus. `UNAUTHORIZED` part
+ * donc vers la route de renouvellement, qui rend la main sur la période
+ * affichée, comme le planning et le sélecteur de clientes le font déjà (#48,
+ * #458). Afficher « votre session a expiré » aurait été un cul-de-sac là où un
+ * aller-retour suffit.
  */
 
 interface ReportExportButtonProps {
   readonly tenantSlug: string;
-  /** Exactement ce que l'écran affiche — voir l'en-tête de `reporting-csv.ts`. */
-  readonly data: ReportCsvInput;
+  /** La fenêtre affichée, déjà calculée dans le fuseau du salon. */
+  readonly window: ReportExportWindow;
 }
 
-export function ReportExportButton({ tenantSlug, data }: ReportExportButtonProps) {
+export function ReportExportButton({ tenantSlug, window: reportWindow }: ReportExportButtonProps) {
+  const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [downloaded, setDownloaded] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
 
-  const download = (): void => {
+  const download = async (): Promise<void> => {
     setBusy(true);
     setFailure(null);
 
-    try {
-      const filename = reportCsvFilename(tenantSlug, data.range);
-      // `text/csv;charset=utf-8` **et** la marque d'ordre d'octets que pose
-      // `buildReportCsv` : le type MIME ne suffit pas à faire lire l'UTF-8 au
-      // tableur, qui se fie à la marque.
-      const blob = new Blob([buildReportCsv(data)], { type: 'text/csv;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
+    const result = await createReportExportAction(tenantSlug, reportWindow);
 
-      anchor.href = url;
-      anchor.download = filename;
-      anchor.rel = 'noopener';
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      // Révoqué au tour de boucle suivant : révoquer dans la foulée du clic
-      // annule le téléchargement sur certains navigateurs, qui n'ont pas encore
-      // lu l'objet.
-      setTimeout(() => {
-        URL.revokeObjectURL(url);
-      }, 0);
+    if (!result.ok) {
+      if (result.code === ERROR_CODES.UNAUTHORIZED) {
+        // `replace` et non `push` : un renouvellement n'est pas une destination,
+        // et le laisser dans l'historique ferait renouveler une seconde fois au
+        // premier retour arrière. La destination est l'écran **tel qu'il est
+        // affiché**, période et filtre compris — lus de la barre d'adresse,
+        // seule à les porter tous les deux.
+        router.replace(
+          adminSessionRefreshPath(
+            tenantSlug,
+            `${globalThis.location.pathname}${globalThis.location.search}`,
+          ),
+        );
+        return;
+      }
 
-      setDownloaded(filename);
-    } catch (error) {
       setDownloaded(null);
       setFailure(
-        error instanceof Error
-          ? `L’export n’a pas pu être produit : ${error.message}`
-          : 'L’export n’a pas pu être produit.',
+        result.code === ERROR_CODES.REPORT_EXPORT_UNAVAILABLE
+          ? 'L’export n’est pas disponible sur cet environnement.'
+          : `L’export n’a pas pu être produit : ${result.message}`,
       );
-    } finally {
       setBusy(false);
+      return;
     }
+
+    // `globalThis.window` et non `window` : la prop du composant porte ce nom,
+    // et l'ombrer ici rendrait la lecture ambiguë à l'endroit où elle ne doit
+    // pas l'être.
+    const anchor = globalThis.document.createElement('a');
+
+    anchor.href = result.data.url;
+    anchor.download = result.data.filename;
+    anchor.rel = 'noopener';
+    globalThis.document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+
+    setDownloaded(result.data.filename);
+    setBusy(false);
   };
 
   return (
@@ -97,7 +132,9 @@ export function ReportExportButton({ tenantSlug, data }: ReportExportButtonProps
         variant="neutral"
         loading={busy}
         loadingLabel="Préparation…"
-        onClick={download}
+        onClick={() => {
+          void download();
+        }}
       >
         Exporter en CSV
       </Button>

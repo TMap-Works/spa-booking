@@ -15,7 +15,6 @@ import {
   type DailyRevenueReport,
   type NoShowReport,
 } from '@/lib/admin/reporting-contract';
-import type { ReportCsvInput } from '@/lib/admin/reporting-csv';
 import {
   filterOptions,
   formatCount,
@@ -194,20 +193,6 @@ export default async function ReportingPage({ params, searchParams }: ReportingP
   const volume = volumePoints(scope, axis, range, shortDayLabel);
   const days = daysInRange(range);
 
-  const csv: ReportCsvInput = {
-    range,
-    timeZone: revenue.timeZone,
-    scope,
-    revenueTotals: totals,
-    revenueSeries: series,
-    revenueByMethod: revenue.totals,
-    volumeAxis:
-      scope.kind === 'praticien' ? 'praticien' : scope.kind === 'prestation' ? 'prestation' : 'jour',
-    volume,
-    appointments: activity.appointments,
-    noShows: activity.noShows,
-  };
-
   return (
     <ReportingShell
       period={period}
@@ -224,7 +209,7 @@ export default async function ReportingPage({ params, searchParams }: ReportingP
           {scope.label}
         </p>
         <span className="spa-admin-toolbar__spacer" />
-        <ReportExportButton data={csv} tenantSlug={tenantSlug} />
+        <ReportExportButton tenantSlug={tenantSlug} window={reportWindow} />
       </div>
 
       <div className="spa-admin-report-metrics">

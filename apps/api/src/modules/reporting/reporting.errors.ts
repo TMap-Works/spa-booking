@@ -33,6 +33,15 @@ export { REPORTING_ERROR_CODES };
 const { UNPROCESSABLE_ENTITY } = DOMAIN_HTTP_STATUS;
 
 /**
+ * 503 — `DOMAIN_HTTP_STATUS` ne connaît pas les dépendances externes.
+ *
+ * Repris tel quel de `notifications/notifications.errors.ts`, et pour la même
+ * raison : la table d'api-module §5 couvre les refus **métier**, et une capacité
+ * absente de l'environnement n'en est pas un.
+ */
+const SERVICE_UNAVAILABLE = 503;
+
+/**
  * L'étendue maximale d'un rapport, en jours — un an bissextile, borne haute
  * exclue comprise.
  *
@@ -92,5 +101,31 @@ export class ReportWindowTooWideError extends DomainError {
       maxDays: MAX_REPORT_WINDOW_DAYS,
       requestedDays,
     });
+  }
+}
+
+/**
+ * Aucun entrepôt d'export n'est branché sur ce déploiement — #563.
+ *
+ * **503 et non 500** : ce n'est pas un défaut de notre code, c'est une capacité
+ * absente de l'environnement. Elle revient dès que le module Terraform
+ * `reporting-export` est composé et que `REPORT_EXPORT_BUCKET` atteint la
+ * définition de tâche ; d'ici là, l'export échoue **visiblement** plutôt que de
+ * rendre une URL qui ne mène nulle part.
+ *
+ * Ce refus ne ferme pas le reporting : les trois routes de lecture continuent de
+ * servir et l'écran affiche ses chiffres. C'est le fichier qui manque, pas les
+ * indicateurs — le même arbitrage que celui de l'expéditeur de notifications non
+ * configuré, qui laisse les rendez-vous se prendre.
+ *
+ * `details` est vide à dessein : nommer la variable d'environnement manquante
+ * apprendrait la forme de notre configuration à qui appelle la route.
+ */
+export class ReportExportUnavailableError extends DomainError {
+  public override readonly code = REPORTING_ERROR_CODES.REPORT_EXPORT_UNAVAILABLE;
+  public override readonly status = SERVICE_UNAVAILABLE;
+
+  public constructor() {
+    super('L’export du reporting n’est pas disponible sur cet environnement.');
   }
 }

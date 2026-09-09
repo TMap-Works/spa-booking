@@ -215,6 +215,9 @@ export type {
   RefundPaymentRequest,
 } from './payment';
 
+export { MAX_REPORT_EXPORT_TTL_SECONDS, reportExportSchema } from './reporting';
+export type { ReportExport } from './reporting';
+
 export {
   openingHoursEntrySchema,
   openingHoursOverlap,
