@@ -21,6 +21,7 @@ env:
   API_REPOSITORY: spa-dev-api
   API_SERVICE: spa-dev-api
   WEB_REPOSITORY: spa-dev-web
+  WEB_SERVICE: spa-dev-web
   MIGRATE_TASK_DEFINITION: spa-dev-migrate
   TF_DIR: infra/terraform/envs/dev
 
@@ -232,11 +233,97 @@ jobs:
           set -euo pipefail
           terraform apply -auto-approve -input=false -var="image_tag=$SHA_TAG"
 
-      # `terraform apply` n'attend pas la stabilité du service — il rend la main
+      # `terraform apply` n'attend pas la stabilité des services — il rend la main
       # dès la mise à jour acceptée. C'est ici qu'on constate que le déploiement
       # a réellement abouti.
-      - name: Attendre la stabilité du service
-        run: aws ecs wait services-stable --cluster "$CLUSTER" --services "$API_SERVICE"
+      #
+      # Les **deux** services, depuis #345 : l'ALB porte `spa-dev-api` (règle
+      # d'écoute 100, `/health` et `/api/*`) et `spa-dev-web` (règle 200, `/*`).
+      # N'attendre que l'API laissait le job au vert pendant qu'un front qui ne
+      # démarre jamais faisait rendre 503 à tout ce qui n'est pas `/api` (#579).
+      - name: Attendre la stabilité des services
+        env:
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Le waiter échoue en bloc, sans nommer le service fautif. Son verdict
+          # est donc relevé mais pas rendu tel quel : la lecture service par
+          # service qui suit court **dans les deux cas**, parce qu'un waiter au
+          # vert ne prouve pas encore que le déploiement a abouti (voir plus bas).
+          if aws ecs wait services-stable \
+               --cluster "$CLUSTER" \
+               --services "$API_SERVICE" "$WEB_SERVICE"; then
+            waiter_ok=1
+          else
+            waiter_ok=0
+            echo "::warning::L attente de stabilite ECS a rendu la main en echec — verification service par service."
+          fi
+
+          failed=0
+          for service in "$API_SERVICE" "$WEB_SERVICE"; do
+            # `deployments[?status=='PRIMARY']` et non `deployments[0]` : quand un
+            # déploiement échoue, le service en porte deux — le nouveau et
+            # l'ancien encore `ACTIVE` — et l'API ne garantit pas leur ordre. Lire
+            # le premier venu, c'est risquer de rendre le `rolloutStateReason` de
+            # celui qui va bien, c'est-à-dire `None`, pour un service en panne.
+            state="$(aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services "$service" \
+              --query "services[0].[runningCount,desiredCount,length(deployments),deployments[?status=='PRIMARY']|[0].taskDefinition,deployments[?status=='PRIMARY']|[0].rolloutStateReason]" \
+              --output text)"
+
+            # Un appel qui échoue rend une sortie vide, et `read` laisserait alors
+            # `running` et `desired` tous deux vides — que le test d'égalité
+            # accepterait. On refuse la sortie vide avant de l'interpréter.
+            if [ -z "$state" ]; then
+              failed=1
+              echo "::error::Impossible de relire l etat du service ECS $service sur le cluster $CLUSTER — l appel describe-services n a rien rendu."
+              continue
+            fi
+
+            read -r running desired deployments task_definition reason <<<"$state"
+
+            if [ "$running" != "$desired" ] || [ "$deployments" != "1" ]; then
+              failed=1
+              echo "::error::Le service ECS $service n est pas stable apres le deploiement : $running/$desired tache(s) en cours d execution, $deployments deploiement(s) actif(s) — $reason"
+              echo "Journaux : groupe /ecs/spa-dev/${service#spa-dev-}."
+              continue
+            fi
+
+            # Stable ne veut pas dire déployé. `deployment_circuit_breaker` a
+            # `rollback = true` (modules/ecs-service/service.tf) : une tâche qui ne
+            # démarre jamais fait revenir ECS à la révision précédente, et le
+            # service redevient parfaitement stable — sur l'ancienne image. Le
+            # waiter passe, la sonde HTTP passe aussi puisque l'ancienne révision
+            # répond, et le job serait vert sans que le commit déployé ait jamais
+            # tourné : exactement la panne que cette garde doit attraper (#579).
+            #
+            # On compare donc l'étiquette des images de la révision effectivement
+            # servie au sha du commit. « Une image au moins » et non « toutes » :
+            # la tâche de l'API porte le sidecar `aws-xray-daemon`, dont l'image
+            # vient d'AWS et n'a pas cette étiquette.
+            images="$(aws ecs describe-task-definition \
+              --task-definition "$task_definition" \
+              --query 'taskDefinition.containerDefinitions[].image' \
+              --output text)"
+            if printf '%s' "$images" | tr '\t' '\n' | grep -q ":$SHA_TAG\$"; then
+              echo "Service $service : stable ($running/$desired tâche(s)), révision ${task_definition##*/} sur $SHA_TAG."
+            else
+              failed=1
+              echo "::error::Le service ECS $service est stable mais ne sert pas le commit deploye : la revision active ${task_definition##*/} porte $images au lieu de l etiquette $SHA_TAG. Le disjoncteur de deploiement est probablement revenu a la revision precedente — $reason"
+              echo "Journaux : groupe /ecs/spa-dev/${service#spa-dev-}."
+            fi
+          done
+
+          if [ "$failed" != "0" ]; then
+            exit 1
+          fi
+          if [ "$waiter_ok" = "0" ]; then
+            echo "::error::L attente de stabilite a expire alors que $API_SERVICE et $WEB_SERVICE paraissent stables et a jour — relancer le deploiement."
+            exit 1
+          fi
+          echo "Services stables et à jour : $API_SERVICE, $WEB_SERVICE."
 
       # `--insecure` est délibéré et cantonné à dev : faute de nom de domaine,
       # l'ALB de cet environnement porte un certificat auto-signé fabriqué par
@@ -245,6 +332,12 @@ jobs:
       #
       # L'URL vient d'une variable de dépôt : `terraform output app_url` la donne
       # après le premier apply.
+      #
+      # Deux sondes, parce que deux services partagent cet ALB : `/health` part
+      # à l'API par la règle d'écoute prioritaire, `/` au front. Ne sonder que
+      # `/health` ne prouvait rien du front — c'est pourtant là que la garde
+      # d'origine publique d'`apps/web/instrumentation.ts` fait sortir la tâche
+      # en code 1 quand `APP_URL` est absente ou trompeuse (#345, #579).
       - name: Vérification de santé
         if: ${{ vars.APP_URL != '' }}
         env:
@@ -253,10 +346,29 @@ jobs:
           APP_URL: ${{ vars.APP_URL }}
         run: |
           set -euo pipefail
-          curl --fail --insecure --silent --show-error \
-            --retry 5 --retry-delay 10 --retry-connrefused \
-            "${APP_URL%/}/health"
-          echo
+          # Les deux sondes sont jouées quel que soit le sort de la première :
+          # une mauvaise règle d'écoute casse les deux routes, et s'arrêter sur
+          # `/health` ferait découvrir la panne du front au déploiement suivant.
+          failed=0
+          for probe in "/health:$API_SERVICE" "/:$WEB_SERVICE"; do
+            path="${probe%%:*}"
+            service="${probe#*:}"
+            url="${APP_URL%/}$path"
+            if status="$(curl --fail --insecure --silent --show-error \
+                 --retry 5 --retry-delay 10 --retry-connrefused \
+                 --output /dev/null --write-out '%{http_code}' \
+                 "$url")"; then
+              echo "$url → $status (service $service)"
+            else
+              failed=1
+              # Le code relevé est dans le message : 503 (aucune cible saine),
+              # 404 (règle d'écoute absente) et 502 (tâche tombée en cours de
+              # requête) appellent trois diagnostics différents, et la sonde les
+              # connaît déjà. `000` signale que curl n'a pas obtenu de réponse.
+              echo "::error::Controle de sante en echec sur $url (code HTTP ${status:-000}) — service ECS $service. L ALB route $path vers ce service, il ne repond pas."
+            fi
+          done
+          exit "$failed"
 
       - name: Vérification de santé ignorée
         if: ${{ vars.APP_URL == '' }}
