@@ -18,6 +18,7 @@
     "test:integration:api": "jest --config jest.integration.config.js --runInBand --testPathPattern integration-spec",
     "test:isolation": "jest --config jest.integration.config.js --runInBand --testPathPattern isolation-spec",
     "test:concurrency": "jest --config jest.concurrency.config.js --runInBand",
+    "test:load": "jest --config jest.load.config.js --runInBand",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
