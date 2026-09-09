@@ -14,33 +14,46 @@ permissions:
   id-token: write   # OIDC — aucune clé AWS statique
 
 env:
-  # Nom posé par infra/terraform/modules/ecs-service/cluster.tf : le cluster
-  # s'appelle `${local.name_prefix}-cluster`, suffixe compris — le préfixe
-  # d'environnement seul ne désigne aucune ressource. La politique du rôle OIDC
-  # (modules/oidc) cible ce nom-là et lui seul : s'en écarter donne un
-  # AccessDenied qui accuse les droits au lieu du nom. Posé une seule fois ici,
-  # comme dans deploy-dev.yml.
+  # Noms posés par infra/terraform/envs/staging. Le cluster s'appelle
+  # `spa-{env}-cluster` (modules/ecs-service/cluster.tf), les services, les dépôts
+  # et la famille de migration `spa-{env}-{composant}`. La politique du rôle OIDC
+  # (modules/oidc) cible ces noms-là et eux seuls : s'en écarter donne un
+  # AccessDenied qui accuse les droits au lieu du nom.
   CLUSTER: spa-staging-cluster
+  API_REPOSITORY: spa-staging-api
+  API_SERVICE: spa-staging-api
+  WEB_REPOSITORY: spa-staging-web
+  WEB_SERVICE: spa-staging-web
+  MIGRATE_TASK_DEFINITION: spa-staging-migrate
+  TF_DIR: infra/terraform/envs/staging
 
 jobs:
   deploy:
     name: Déployer sur staging
     runs-on: ubuntu-latest
-    # Tant que le rôle OIDC n'est pas appliqué (infra/terraform/modules/oidc), le
-    # déploiement est ignoré proprement plutôt que de faire échouer chaque push.
-    # Poser les variables de dépôt AWS_REGION et AWS_DEPLOY_ROLE_ARN active les
-    # déploiements. Ce sont des `vars` et non des `secrets` : un ARN de rôle n'est
-    # pas un secret, et le tenir hors des secrets rend visible qu'aucun identifiant
-    # AWS n'y est stocké.
-    if: ${{ vars.AWS_REGION != '' && vars.AWS_DEPLOY_ROLE_ARN != '' }}
+    # Tant que les rôles OIDC ne sont pas appliqués (infra/terraform/modules/oidc),
+    # le déploiement est ignoré proprement plutôt que de faire échouer chaque push.
+    # Poser les variables de dépôt AWS_REGION, AWS_DEPLOY_ROLE_ARN et
+    # AWS_TERRAFORM_ROLE_ARN active les déploiements. Ce sont des `vars` et non des
+    # `secrets` : un ARN de rôle n'est pas un secret, et le tenir hors des secrets
+    # rend visible qu'aucun identifiant AWS n'y est stocké.
+    #
+    # `AWS_TERRAFORM_ROLE_ARN` s'ajoute à la garde depuis #76 : le déploiement
+    # passe désormais par `terraform apply`, et sans ce rôle le job échouerait au
+    # milieu — images poussées, schéma non migré, services inchangés.
+    if: ${{ vars.AWS_REGION != '' && vars.AWS_DEPLOY_ROLE_ARN != '' && vars.AWS_TERRAFORM_ROLE_ARN != '' }}
     environment: staging
     steps:
       - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
 
+      # --- Publication des images -------------------------------------------
+      #
       # Le sujet OIDC présenté ici est `repo:<dépôt>:environment:staging`, parce que
       # le job déclare `environment:`. C'est cette forme que la politique de
-      # confiance du rôle attend — pas la branche.
-      - uses: aws-actions/configure-aws-credentials@v4
+      # confiance des deux rôles attend — pas la branche.
+      - name: Identité de publication (rôle de déploiement)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: gha-deploy-staging-${{ github.run_id }}
@@ -49,35 +62,398 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr
 
-      - name: Construire et pousser les images
+      # Une seule étiquette, le sha du commit : les dépôts ECR sont immuables
+      # (modules/ecr/repositories.tf), une étiquette mobile ne pourrait donc être
+      # poussée qu'une fois. C'est aussi ce qui garantit que l'image analysée par
+      # le scan de vulnérabilités est celle qui s'exécute.
+      #
+      # Pas de garde « le front est-il initialisé ? » comme dans deploy-dev.yml :
+      # `apps/web/next.config.mjs` existe depuis #345, et une garde qui ne peut
+      # plus être fausse ne protège de rien tout en donnant à croire le contraire.
+      - name: Construire et pousser l'image de l'API
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          TAG: ${{ github.sha }}
+          SHA_TAG: ${{ github.sha }}
         run: |
-          docker build -t $REGISTRY/spa-staging-api:$TAG -f apps/api/Dockerfile .
-          docker build -t $REGISTRY/spa-staging-web:$TAG -f apps/web/Dockerfile .
-          docker push $REGISTRY/spa-staging-api:$TAG
-          docker push $REGISTRY/spa-staging-web:$TAG
+          set -euo pipefail
+          docker build \
+            --tag "$REGISTRY/$API_REPOSITORY:$SHA_TAG" \
+            --file apps/api/Dockerfile .
+          docker push "$REGISTRY/$API_REPOSITORY:$SHA_TAG"
 
-      # Nom du cluster et remise en forme seulement — les retours à la ligne de
-      # cette commande avaient disparu. Les autres défauts de l'étape (`run-task`
-      # n'a pas d'option `--wait` ; la configuration réseau recopiée à la main
-      # dans une variable de dépôt) relèvent de #204, qui les traite le jour où
-      # `envs/staging` composera le module `ecs-service`.
-      - name: Appliquer les migrations de base de données
+      - name: Construire et pousser l'image du front
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          SHA_TAG: ${{ github.sha }}
         run: |
-          aws ecs run-task \
+          set -euo pipefail
+          docker build \
+            --tag "$REGISTRY/$WEB_REPOSITORY:$SHA_TAG" \
+            --file apps/web/Dockerfile .
+          docker push "$REGISTRY/$WEB_REPOSITORY:$SHA_TAG"
+
+      # --- Migrations --------------------------------------------------------
+      #
+      # La définition de tâche appartient à l'état Terraform : c'est `apply` qui
+      # la fait pointer sur l'image qu'on vient de publier, et le rôle de
+      # déploiement n'a de toute façon pas `ecs:RegisterTaskDefinition`.
+      #
+      # C'est le défaut n° 3 de #204 : `update-service --force-new-deployment`
+      # redéployait la **même** définition de tâche, donc la même image. Le
+      # workflow était vert et le commit n'était jamais déployé.
+      #
+      # Cet `apply` est **ciblé** sur la seule tâche de migration, délibérément :
+      # il faut que le schéma soit migré avant que les nouvelles tâches de l'API
+      # ne démarrent. Un `apply` complet ici lancerait les deux en même temps.
+      - name: Identité d'infrastructure (rôle Terraform)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          role-session-name: gha-tf-staging-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init -input=false
+
+      # Les variables de l'environnement, et pas seulement `image_tag`.
+      #
+      # `.gitignore` écarte `*.tfvars` : le checkout de la CI n'en porte aucun,
+      # et un `terraform apply` qui ne passe que `-var image_tag` ramène **toutes
+      # les autres variables à leur défaut**. Ce n'est pas une inélégance, c'est
+      # une destruction : `certificate_arn` redevenant nul, cet `apply` remplace
+      # le vrai certificat ACM du listener 443 par le repli auto-signé — et la
+      # recette de bout en bout cesse d'être jouable ; `notification_domain`
+      # redevenant nul, `module.notifications` repasse à `count = 0` et l'`apply`
+      # détruit l'identité SES, la file, la DLQ et les trois Lambda, en retirant
+      # au passage `NOTIFICATION_QUEUE_URL` de la définition de tâche de l'API.
+      # Le tout sans plan relu, `-auto-approve` étant posé.
+      #
+      # La variable de dépôt `STAGING_TFVARS` porte donc le contenu du `.tfvars`
+      # de l'environnement, que cette étape dépose en `ci.auto.tfvars` —
+      # `terraform` charge de lui-même tout `*.auto.tfvars` du répertoire de
+      # travail, pour l'`apply` ciblé comme pour l'`apply` complet.
+      #
+      # Écrite depuis l'**environnement** et jamais interpolée dans la ligne de
+      # commande, pour la même raison que l'URL de la sonde de santé (défaut n° 5
+      # de #204). Une origine publique et un ARN de certificat ne sont pas des
+      # secrets ; ce qui l'est — mot de passe, jeton — n'a rien à faire ici et
+      # continue de passer par Secrets Manager.
+      - name: Composer les variables de l'environnement
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          STAGING_TFVARS: ${{ vars.STAGING_TFVARS }}
+        run: |
+          set -euo pipefail
+          if [ -n "${STAGING_TFVARS:-}" ]; then
+            printf '%s\n' "$STAGING_TFVARS" > ci.auto.tfvars
+            # Les noms seulement, jamais les valeurs : la sortie d'un job est
+            # publique sur un dépôt public, et une variable de dépôt n'est pas
+            # masquée comme l'est un secret.
+            echo "Variables reprises de la variable de depot STAGING_TFVARS :"
+            sed -nE 's/^[[:space:]]*([a-z_]+)[[:space:]]*=.*/  \1/p' ci.auto.tfvars | sort || true
+          else
+            echo "::warning::Variable de depot STAGING_TFVARS absente — terraform apply s executera sur les defauts de envs/staging : certificat auto-signe sur le listener 443, aucune chaine de notifications. Toute valeur posee a la main par -var sera annulee par cet apply. La poser avec le contenu du .tfvars de l environnement (voir docs/runbooks/recette-staging.md)."
+          fi
+
+      - name: Publier la définition de tâche de migration
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          terraform apply -auto-approve -input=false \
+            -var="image_tag=$SHA_TAG" \
+            -target=aws_ecs_task_definition.migrate
+
+      - name: Identité de déploiement (rôle de déploiement)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: gha-deploy-staging-migrate-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # La configuration réseau se lit sur le service plutôt que dans une
+      # variable de dépôt — défaut n° 4 de #204. Elle vaut par construction ce que
+      # Terraform a posé : les sous-réseaux applicatifs et le groupe de sécurité
+      # des tâches, seul autorisé à joindre RDS. Une variable recopiée à la main
+      # divergerait au premier changement de réseau, et la migration échouerait
+      # sur un délai d'attente que rien n'expliquerait.
+      - id: network
+        name: Relever la configuration réseau du service
+        run: |
+          set -euo pipefail
+          config="$(aws ecs describe-services \
             --cluster "$CLUSTER" \
-            --task-definition spa-staging-migrate \
-            --launch-type FARGATE \
-            --network-configuration "${{ vars.ECS_NETWORK_CONFIG }}" \
-            --wait
+            --services "$API_SERVICE" \
+            --query 'services[0].networkConfiguration' \
+            --output json)"
+          if [ -z "$config" ] || [ "$config" = "null" ]; then
+            echo "::error::Le service $API_SERVICE est introuvable sur le cluster $CLUSTER. Appliquer infra/terraform/envs/staging avant le premier deploiement."
+            exit 1
+          fi
+          {
+            echo "config<<EOF"
+            echo "$config"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Déployer les services ECS
+      # `aws ecs run-task` rend la main dès la tâche lancée : il n'a pas d'option
+      # `--wait` — défaut n° 1 de #204, où l'option inexistante faisait de toute
+      # façon échouer la CLI sur un argument inconnu. Sans l'attente explicite
+      # ci-dessous, le déploiement démarrerait sur un schéma non migré et l'échec
+      # se lirait dans les journaux de l'application, pas dans ceux du workflow.
+      - name: Appliquer les migrations de base de données
+        env:
+          NETWORK_CONFIGURATION: ${{ steps.network.outputs.config }}
         run: |
-          aws ecs update-service --cluster "$CLUSTER" --service spa-staging-api --force-new-deployment
-          aws ecs update-service --cluster "$CLUSTER" --service spa-staging-web --force-new-deployment
-          aws ecs wait services-stable --cluster "$CLUSTER" --services spa-staging-api spa-staging-web
+          set -euo pipefail
+          task_arn="$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$MIGRATE_TASK_DEFINITION" \
+            --launch-type FARGATE \
+            --network-configuration "$NETWORK_CONFIGURATION" \
+            --started-by "gha-${GITHUB_RUN_ID}" \
+            --query 'tasks[0].taskArn' \
+            --output text)"
 
+          if [ -z "$task_arn" ] || [ "$task_arn" = "None" ]; then
+            echo "::error::La tache de migration n a pas demarre — voir la cle failures de la reponse ECS."
+            exit 1
+          fi
+          echo "Tâche de migration : $task_arn"
+
+          # L'attente plafonne à une dizaine de minutes : au-delà, le job échoue
+          # alors que la migration peut encore aboutir. Elle échoue donc du bon
+          # côté — sans déployer une application en avance sur son schéma.
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$task_arn"
+
+          # Le code de sortie du conteneur est le seul verdict qui compte : une
+          # tâche « STOPPED » l'est aussi bien après un succès qu'après un échec
+          # de migration.
+          exit_code="$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$task_arn" \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)"
+          reason="$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$task_arn" \
+            --query 'tasks[0].stoppedReason' \
+            --output text)"
+
+          if [ "$exit_code" != "0" ]; then
+            echo "::error::Migration en echec (code de sortie $exit_code) : $reason"
+            echo "Journaux : groupe /ecs/spa-staging/api, flux prefixe migrate."
+            exit 1
+          fi
+          echo "Migrations appliquées."
+
+      # --- Déploiement -------------------------------------------------------
+      #
+      # L'`apply` complet fait pointer les définitions de tâche des services sur
+      # les nouvelles images, et ECS déroule un déploiement rolling :
+      # `minimum_healthy_percent = 100` interdit de descendre sous la capacité
+      # nominale, la nouvelle tâche doit être saine pour l'ALB avant que
+      # l'ancienne ne soit retirée — donc aucune coupure. Le disjoncteur de
+      # déploiement revient de lui-même à la révision précédente si les nouvelles
+      # tâches ne passent jamais le contrôle de santé.
+      #
+      # Cet `apply` a un second effet, propre à cet environnement : il rétablit
+      # les capacités des cibles d'auto-scaling, que l'arrêt hors heures ouvrées a
+      # pu ramener à zéro. Un déploiement lancé à 23 h rallume donc
+      # l'environnement, le temps d'aboutir ; l'arrêt du soir suivant le recouche.
+      - name: Identité d'infrastructure (rôle Terraform)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          role-session-name: gha-tf-staging-deploy-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Déployer
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          terraform apply -auto-approve -input=false -var="image_tag=$SHA_TAG"
+
+      # `terraform apply` n'attend pas la stabilité des services — il rend la main
+      # dès la mise à jour acceptée. C'est ici qu'on constate que le déploiement
+      # a réellement abouti, sur les **deux** services : l'ALB porte
+      # `spa-staging-api` (règle d'écoute 100, `/health` et `/api/*`) et
+      # `spa-staging-web` (règle 200, `/*`).
+      - name: Attendre la stabilité des services
+        env:
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Réveil de l'arrêt hors heures ouvrées, **avant** le waiter.
+          #
+          # L'`apply` de l'étape précédente a rétabli les bornes des cibles
+          # d'auto-scaling, que l'arrêt du soir avait ramenées à `0/0`. Mais
+          # Application Auto Scaling relève `desiredCount` de façon
+          # **asynchrone** : sans cette attente, `wait services-stable` se
+          # satisfait au premier sondage d'un service parfaitement stable à
+          # `0/0` — `runningCount == desiredCount`, un seul déploiement — et la
+          # vérification qui suit échouerait sur un déploiement pourtant sain.
+          # Comme l'arrêt court de 20 h à 7 h et tout le week-end, c'est la
+          # majorité des heures de la semaine qui seraient concernées.
+          for service in "$API_SERVICE" "$WEB_SERVICE"; do
+            attempt=0
+            desired=0
+            while [ "$attempt" -lt 30 ]; do
+              desired="$(aws ecs describe-services \
+                --cluster "$CLUSTER" \
+                --services "$service" \
+                --query 'services[0].desiredCount' \
+                --output text)"
+              if [ -n "$desired" ] && [ "$desired" != "None" ] && [ "$desired" != "0" ]; then
+                break
+              fi
+              attempt=$((attempt + 1))
+              sleep 10
+            done
+            if [ -z "$desired" ] || [ "$desired" = "None" ] || [ "$desired" = "0" ]; then
+              echo "::error::Le service ECS $service vise toujours zero tache cinq minutes apres le terraform apply. L arret hors heures ouvrees a ramene sa cible d auto-scaling a zero et les capacites n ont pas ete retablies — relancer le deploiement, ou lever l arret le temps de la campagne (voir infra/terraform/modules/ecs-service/README.md)."
+              exit 1
+            fi
+          done
+
+          # Le waiter échoue en bloc, sans nommer le service fautif. Son verdict
+          # est donc relevé mais pas rendu tel quel : la lecture service par
+          # service qui suit court **dans les deux cas**, parce qu'un waiter au
+          # vert ne prouve pas encore que le déploiement a abouti (voir plus bas).
+          if aws ecs wait services-stable \
+               --cluster "$CLUSTER" \
+               --services "$API_SERVICE" "$WEB_SERVICE"; then
+            waiter_ok=1
+          else
+            waiter_ok=0
+            echo "::warning::L attente de stabilite ECS a rendu la main en echec — verification service par service."
+          fi
+
+          failed=0
+          for service in "$API_SERVICE" "$WEB_SERVICE"; do
+            # `deployments[?status=='PRIMARY']` et non `deployments[0]` : quand un
+            # déploiement échoue, le service en porte deux — le nouveau et
+            # l'ancien encore `ACTIVE` — et l'API ne garantit pas leur ordre.
+            state="$(aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services "$service" \
+              --query "services[0].[runningCount,desiredCount,length(deployments),deployments[?status=='PRIMARY']|[0].taskDefinition,deployments[?status=='PRIMARY']|[0].rolloutStateReason]" \
+              --output text)"
+
+            # Un appel qui échoue rend une sortie vide, et `read` laisserait alors
+            # `running` et `desired` tous deux vides — que le test d'égalité
+            # accepterait. On refuse la sortie vide avant de l'interpréter.
+            if [ -z "$state" ]; then
+              failed=1
+              echo "::error::Impossible de relire l etat du service ECS $service sur le cluster $CLUSTER — l appel describe-services n a rien rendu."
+              continue
+            fi
+
+            read -r running desired deployments task_definition reason <<<"$state"
+
+            # Filet de sécurité : l'attente de réveil ci-dessus a déjà refusé
+            # un service à zéro, mais l'arrêt du soir peut retomber entre les
+            # deux. Le dire au lieu de laisser lire « 0/0 tache(s) » comme un
+            # succès muet.
+            if [ "$desired" = "0" ]; then
+              failed=1
+              echo "::error::Le service ECS $service vise zero tache. L arret hors heures ouvrees a ramene sa cible d auto-scaling a zero apres le terraform apply — relancer le deploiement, ou lever l arret le temps de la campagne (voir infra/terraform/modules/ecs-service/README.md)."
+              continue
+            fi
+
+            if [ "$running" != "$desired" ] || [ "$deployments" != "1" ]; then
+              failed=1
+              echo "::error::Le service ECS $service n est pas stable apres le deploiement : $running/$desired tache(s) en cours d execution, $deployments deploiement(s) actif(s) — $reason"
+              echo "Journaux : groupe /ecs/spa-staging/${service#spa-staging-}."
+              continue
+            fi
+
+            # Stable ne veut pas dire déployé. `deployment_circuit_breaker` a
+            # `rollback = true` (modules/ecs-service/service.tf) : une tâche qui ne
+            # démarre jamais fait revenir ECS à la révision précédente, et le
+            # service redevient parfaitement stable — sur l'ancienne image. Le
+            # waiter passe, la sonde HTTP passe aussi puisque l'ancienne révision
+            # répond, et le job serait vert sans que le commit déployé ait jamais
+            # tourné (#579).
+            #
+            # On compare donc l'étiquette des images de la révision effectivement
+            # servie au sha du commit. « Une image au moins » et non « toutes » :
+            # la tâche de l'API porte le sidecar `aws-xray-daemon`, dont l'image
+            # vient d'AWS et n'a pas cette étiquette.
+            images="$(aws ecs describe-task-definition \
+              --task-definition "$task_definition" \
+              --query 'taskDefinition.containerDefinitions[].image' \
+              --output text)"
+            if printf '%s' "$images" | tr '\t' '\n' | grep -q ":$SHA_TAG\$"; then
+              echo "Service $service : stable ($running/$desired tâche(s)), révision ${task_definition##*/} sur $SHA_TAG."
+            else
+              failed=1
+              echo "::error::Le service ECS $service est stable mais ne sert pas le commit deploye : la revision active ${task_definition##*/} porte $images au lieu de l etiquette $SHA_TAG. Le disjoncteur de deploiement est probablement revenu a la revision precedente — $reason"
+              echo "Journaux : groupe /ecs/spa-staging/${service#spa-staging-}."
+            fi
+          done
+
+          if [ "$failed" != "0" ]; then
+            exit 1
+          fi
+          if [ "$waiter_ok" = "0" ]; then
+            echo "::error::L attente de stabilite a expire alors que $API_SERVICE et $WEB_SERVICE paraissent stables et a jour — relancer le deploiement."
+            exit 1
+          fi
+          echo "Services stables et à jour : $API_SERVICE, $WEB_SERVICE."
+
+      # Pas de `--insecure`, à la différence de deploy-dev.yml, et c'est
+      # délibéré : cet environnement veut un vrai certificat ACM
+      # (infra/terraform/envs/staging, « Terminaison TLS »). Le repli auto-signé
+      # n'existe que pour que le premier `apply` aboutisse avant qu'un domaine
+      # n'existe, et une sonde qui l'accepterait laisserait croire que la recette
+      # de bout en bout est possible — alors que ni les Server Components du
+      # front, ni les Lambda de notification ne l'acceptent, eux.
+      #
+      # L'URL vient d'une variable de dépôt, passée par l'environnement et non par
+      # `${{ }}` dans le script — défaut n° 5 de #204 : interpolée dans la ligne de
+      # commande, une variable de dépôt y serait exécutée.
+      # `terraform output app_url` la donne après le premier apply.
+      #
+      # Deux sondes, parce que deux services partagent cet ALB : `/health` part
+      # à l'API par la règle d'écoute prioritaire, `/` au front.
       - name: Vérification de santé
-        run: curl --fail --retry 5 --retry-delay 10 ${{ vars.APP_URL }}/health
+        if: ${{ vars.APP_URL != '' }}
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          set -euo pipefail
+          # Les deux sondes sont jouées quel que soit le sort de la première :
+          # une mauvaise règle d'écoute casse les deux routes, et s'arrêter sur
+          # `/health` ferait découvrir la panne du front au déploiement suivant.
+          failed=0
+          for probe in "/health:$API_SERVICE" "/:$WEB_SERVICE"; do
+            path="${probe%%:*}"
+            service="${probe#*:}"
+            url="${APP_URL%/}$path"
+            if status="$(curl --fail --silent --show-error \
+                 --retry 5 --retry-delay 10 --retry-connrefused \
+                 --output /dev/null --write-out '%{http_code}' \
+                 "$url")"; then
+              echo "$url → $status (service $service)"
+            else
+              failed=1
+              # Le code relevé est dans le message : 503 (aucune cible saine),
+              # 404 (règle d'écoute absente) et 502 (tâche tombée en cours de
+              # requête) appellent trois diagnostics différents. `000` signale que
+              # curl n'a pas obtenu de réponse — sur cet environnement, c'est le
+              # symptôme d'un certificat auto-signé que curl refuse de vérifier :
+              # comparer la sortie `tls_certificate_is_self_signed`.
+              echo "::error::Controle de sante en echec sur $url (code HTTP ${status:-000}) — service ECS $service. L ALB route $path vers ce service, il ne repond pas."
+            fi
+          done
+          exit "$failed"
+
+      - name: Vérification de santé ignorée
+        if: ${{ vars.APP_URL == '' }}
+        run: echo "::warning::Variable de depot APP_URL absente — controle de sante post-deploiement ignore. La poser avec la sortie app_url de infra/terraform/envs/staging."
