@@ -74,18 +74,20 @@
  *
  *     DATABASE_URL="postgresql://spa:spa@localhost:5433/spa_dev" \
  *     SEED_TARGET=local \
- *     node --require ts-node/register prisma/seed.ts
+ *     npm run db:seed
  *
  * Contre la base de recette, depuis une session qui l'atteint (tunnel Session
  * Manager, cf. skill aws-infra §4) :
  *
  *     DATABASE_URL="<lu dans le secret d'exécution>" \
  *     SEED_TARGET=staging \
- *     node --require ts-node/register prisma/seed.ts
+ *     npm run db:seed
  *
- * Le raccourci `prisma db seed` demande une clé `prisma.seed` dans
- * `apps/api/package.json`, hors de l'empreinte de fichiers de #76 : c'est l'objet
- * de l'issue de suivi #588.
+ * `prisma db seed` mène au même endroit : la clé `prisma.seed` du `package.json`
+ * porte la ligne de commande complète — `node --require ts-node/register
+ * prisma/seed.ts`, toujours utilisable telle quelle — et le script `db:seed`
+ * délègue à `prisma db seed`, pour que cette ligne ne soit écrite qu'une fois
+ * (#588).
  */
 
 import { createHash } from 'node:crypto';
