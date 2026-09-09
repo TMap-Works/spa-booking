@@ -198,11 +198,30 @@ export const timeZoneSchema = z
 
 export type TimeZone = z.infer<typeof timeZoneSchema>;
 
-/** Durée en minutes — entière et strictement positive (un soin de 0 min n'existe pas). */
+/**
+ * Plafond d'une durée, en minutes — vingt-quatre heures.
+ *
+ * Il ne protège aucun scénario métier : il borne l'absurde avant qu'il n'atteigne
+ * le calcul de créneaux et la colonne. `duration_minutes` est un `integer`
+ * PostgreSQL, et une valeur au-delà de 2³¹ en sortirait en
+ * `numeric value out of range` — un 500 là où l'appelant mérite un 400 qui nomme
+ * le champ.
+ *
+ * La borne était jusqu'ici posée module par module, par un `.extend()` local de
+ * `catalog`. #554 l'a remontée ici : le contrat est le seul endroit où une règle
+ * de forme vaut pour tous ses lecteurs à la fois, et l'ADR 0008 ne referme un
+ * écart qu'en **resserrant le contrat**, jamais en relâchant l'API.
+ */
+export const DURATION_MINUTES_MAX = 1440;
+
+/** Durée en minutes — entière, strictement positive (un soin de 0 min n'existe pas) et bornée à la journée. */
 export const durationMinutesSchema = z
   .number()
   .int({ message: 'une durée s’exprime en minutes entières' })
-  .min(1, { message: 'une durée doit être strictement positive' });
+  .min(1, { message: 'une durée doit être strictement positive' })
+  .max(DURATION_MINUTES_MAX, {
+    message: `une durée n’excède pas ${String(DURATION_MINUTES_MAX)} minutes`,
+  });
 
 /**
  * Intervalle `[startsAt, endsAt[` en UTC.

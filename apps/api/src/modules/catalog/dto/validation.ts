@@ -1,3 +1,4 @@
+import { DURATION_MINUTES_MAX } from '@spa/shared';
 import { Transform } from 'class-transformer';
 import { ValidateIf } from 'class-validator';
 import { z, type ZodTypeAny } from 'zod';
@@ -15,12 +16,14 @@ import { z, type ZodTypeAny } from 'zod';
  *
  * 1. **les briques des DTO de chaîne de requête** — `OptionalPresent` et
  *    `BooleanQuery`. Ces trois DTO-là restent sous `class-validator` faute de
- *    schéma de requête dans le contrat ; voir le `TODO(#536)` qui les
+ *    schéma de requête dans le contrat ; voir la note d’écart qui les
  *    accompagne dans `service.dto.ts` ;
- * 2. **les bornes que le contrat ne porte pas**, et elles se comptent sur une
- *    main : le plafond des durées. Toutes les autres — longueur d'un libellé,
- *    d'un slug, d'une description, plafond d'un montant — sont désormais
- *    **importées** de `@spa/shared` par les fichiers qui les documentent.
+ * 2. **les bornes publiées dans `/api/docs`**, et plus aucune borne validée ici :
+ *    depuis #554 le plafond des durées lui-même vient du contrat, et les
+ *    constantes ci-dessous n'en sont que le relais pour les `minimum` et
+ *    `maximum` de la documentation. Toutes les autres — longueur d'un libellé,
+ *    d'un slug, d'une description, plafond d'un montant — sont importées de
+ *    `@spa/shared` par les fichiers qui les documentent.
  *
  * ## Le piège d'homonymie, constaté valeur par valeur avant de substituer
  *
@@ -39,32 +42,33 @@ import { z, type ZodTypeAny } from 'zod';
  */
 
 /**
- * Bornes des durées, en minutes — **la seule règle d'entrée du module qui ne
- * vienne pas du contrat**.
+ * Bornes des durées, en minutes — **publiées ici, validées par le contrat**.
  *
  * Les planchers (`1` pour un soin, `0` pour un tampon) sont ceux
  * qu'appliquent déjà `durationMinutesSchema` et `bufferMinutesSchema` de
  * `@spa/shared` : ils ne sont plus validés ici, ils sont **publiés** ici, dans
  * les `minimum` que lit `/api/docs`.
  *
- * Le plafond, lui, est validé — et c'est un écart assumé. Le contrat ne borne
- * les durées par le haut nulle part, là où les DTO le faisaient à
- * `MAX_DURATION_MINUTES`. Relâcher l'API pour l'aligner sur le contrat aurait
+ * Le plafond, lui, a longtemps été validé ici — et c'était un écart assumé. Le
+ * contrat ne bornait les durées par le haut nulle part, là où les DTO le
+ * faisaient à `MAX_DURATION_MINUTES`, et relâcher l'API pour l'aligner aurait
  * changé la nature de l'échec sur une saisie absurde : `duration_minutes` est
  * un `integer` PostgreSQL, et une valeur au-delà de 2³¹ sortirait en
  * `numeric value out of range` — un 500 là où l'appelant recevait un 400
  * nommant le champ. C'est le sens que l'ADR 0008 refuse explicitement pour la
  * version d'UUID : on resserre le contrat, on ne relâche pas l'API.
  *
- * Le resserrement du contrat appartient à `packages/shared`, hors de
- * l'empreinte de ce ticket — d'où le `TODO(#536)` de `service.dto.ts`, où le
- * plafond est **ajouté** au schéma partagé par un `.extend()` local.
+ * #554 a fait ce resserrement : `DURATION_MINUTES_MAX` vit désormais dans
+ * `@spa/shared`, appliqué par `durationMinutesSchema` et `bufferMinutesSchema`
+ * eux-mêmes. La constante ci-dessous n'est plus qu'un **alias de publication**,
+ * pour que `/api/docs` annonce la borne que le contrat applique — et non une
+ * seconde valeur susceptible d'en diverger.
  *
  * Le plafond de vingt-quatre heures ne protège d'aucun scénario métier : il
  * borne l'absurde avant qu'il n'atteigne le calcul de créneaux et la colonne.
  */
 export const MIN_DURATION_MINUTES = 1;
-export const MAX_DURATION_MINUTES = 1440;
+export const MAX_DURATION_MINUTES = DURATION_MINUTES_MAX;
 export const MIN_BUFFER_MINUTES = 0;
 
 /**
@@ -152,7 +156,7 @@ export const OptionalPresent = (): PropertyDecorator =>
  *
  * C'est cette conversion-là qui interdit de substituer les DTO de requête en
  * l'état : une chaîne de requête arrive en `string`, et aucun schéma du contrat
- * ne coerce. Voir le `TODO(#536)` de `service.dto.ts`.
+ * ne coerce. Voir la note d’écart de `service.dto.ts`.
  */
 export const BooleanQuery = (): PropertyDecorator =>
   Transform(({ value }: { value: unknown }) => {

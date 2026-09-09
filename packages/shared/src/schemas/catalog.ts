@@ -24,7 +24,7 @@ import {
   uuidSchema,
 } from '../common/identifiers';
 import { nonNegativeMoneySchema } from '../common/money';
-import { durationMinutesSchema } from '../common/time';
+import { DURATION_MINUTES_MAX, durationMinutesSchema } from '../common/time';
 
 /**
  * Tampon de part et d'autre d'un soin, en minutes.
@@ -34,11 +34,39 @@ import { durationMinutesSchema } from '../common/time';
  * raccourcirait le créneau occupé au lieu de l'allonger, rendant la cabine
  * disponible avant la fin réelle du soin. La base pose le même plancher
  * (`CHECK ("buffer_before_minutes" >= 0)`).
+ *
+ * Le plafond est celui d'une durée, et pour la même raison de colonne
+ * (`DURATION_MINUTES_MAX`) : il était posé par un `.extend()` de `catalog`, #554
+ * l'a remonté au contrat.
  */
 export const bufferMinutesSchema = z
   .number()
   .int({ message: 'un tampon s’exprime en minutes entières' })
-  .min(0, { message: 'un tampon n’est jamais négatif' });
+  .min(0, { message: 'un tampon n’est jamais négatif' })
+  .max(DURATION_MINUTES_MAX, {
+    message: `un tampon n’excède pas ${String(DURATION_MINUTES_MAX)} minutes`,
+  });
+
+/**
+ * Durée **occupée** — la somme des trois termes, et non une durée de plus.
+ *
+ * Elle ne peut pas emprunter `durationMinutesSchema` : le plafond de celui-ci
+ * borne une **saisie**, là où `occupiedMinutes` est *dérivé* de trois saisies
+ * indépendamment plafonnées. Une prestation d'une journée entière assortie d'un
+ * quart d'heure de remise en état — deux valeurs que l'API accepte l'une comme
+ * l'autre — sort à 1455 minutes, et un schéma borné à `DURATION_MINUTES_MAX`
+ * rejetterait alors la réponse d'une prestation qu'il vient lui-même de laisser
+ * créer. Le plafond est donc celui de la somme.
+ */
+const OCCUPIED_MINUTES_MAX = 3 * DURATION_MINUTES_MAX;
+
+const occupiedMinutesSchema = z
+  .number()
+  .int({ message: 'une durée s’exprime en minutes entières' })
+  .min(1, { message: 'une durée doit être strictement positive' })
+  .max(OCCUPIED_MINUTES_MAX, {
+    message: `une durée occupée n’excède pas ${String(OCCUPIED_MINUTES_MAX)} minutes`,
+  });
 
 /**
  * Rubrique du catalogue — « Soins du visage », « Coiffure ».
@@ -128,7 +156,7 @@ export const serviceSchema = z.object({
    * partielle. Le serveur la calcule pour que la règle n'ait pas à être
    * réécrite — donc à diverger — côté client.
    */
-  occupiedMinutes: durationMinutesSchema,
+  occupiedMinutes: occupiedMinutesSchema,
   /** Prix affiché. Un soin offert vaut zéro ; il n'a jamais un prix négatif. */
   price: nonNegativeMoneySchema,
   isActive: z.boolean(),
