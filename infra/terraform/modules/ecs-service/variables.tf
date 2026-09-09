@@ -106,6 +106,35 @@ variable "ssl_policy" {
   }
 }
 
+# --- Origine publique ---------------------------------------------------------
+
+variable "public_base_url" {
+  description = <<-EOT
+    Origine sous laquelle ce déploiement est vu de l'extérieur — celle qu'un
+    visiteur tape, qu'un moteur de recherche indexe et qu'un lien de notification
+    porte. Sans barre oblique finale ni chemin : c'est une **origine**, pas une
+    URL de base.
+
+    `null` — le défaut — la déduit du nom DNS de l'ALB créé par ce module :
+    `https://<dns>`. C'est ce qui permet à un environnement de renseigner
+    `public_url_env_vars` sans rien connaître de l'ALB, et c'est le point : lire
+    la sortie `alb_dns_name` pour construire une entrée de ce même module serait
+    un cycle que Terraform refuse. La dérivation a lieu **dans** le module, où
+    l'ALB et la définition de tâche sont deux ressources ordinaires — la seconde
+    dépend de la première, et rien ne revient en arrière.
+
+    À renseigner dès qu'un nom de domaine existe : le nom DNS d'un ALB n'est pas
+    une adresse à publier, et il change si l'ALB est recréé.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.public_base_url == null || can(regex("^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$", var.public_base_url))
+    error_message = "public_base_url doit être `null` ou une origine en `https://` sans chemin ni barre oblique finale, par exemple `https://reservation.exemple.fr`."
+  }
+}
+
 # --- Services -----------------------------------------------------------------
 
 variable "services" {
@@ -155,6 +184,17 @@ variable "services" {
     # la console ECS.
     environment = optional(map(string), {})
 
+    # Variables qui reçoivent l'origine publique du déploiement — `public_base_url`
+    # si elle est fournie, le nom DNS de l'ALB sinon. C'est ce qui donne à un
+    # conteneur son `APP_URL` sans qu'aucune valeur ne remonte à l'appelant.
+    #
+    # Une origine publique n'est pas un secret : elle est publique par
+    # définition. Elle passait pourtant par Secrets Manager faute de pouvoir être
+    # calculée hors du module, ce qui accordait au rôle d'exécution du service
+    # un `GetSecretValue` sur un secret entier — IAM ne sait pas restreindre à
+    # une clé JSON.
+    public_url_env_vars = optional(set(string), [])
+
     # Nom de variable d'environnement → ARN Secrets Manager. La valeur n'est
     # jamais lue par Terraform : l'agent ECS la résout au démarrage de la tâche.
     secret_arns = optional(map(string), {})
@@ -199,6 +239,28 @@ variable "services" {
   validation {
     condition     = alltrue([for s in values(var.services) : startswith(s.health_check_path, "/")])
     error_message = "health_check_path doit être un chemin absolu, par exemple /health."
+  }
+
+  validation {
+    condition = alltrue([
+      for s in values(var.services) :
+      alltrue([for name in s.public_url_env_vars : can(regex("^[A-Z][A-Z0-9_]*$", name))])
+    ])
+    error_message = "Chaque entrée de public_url_env_vars doit être un nom de variable d'environnement en majuscules, par exemple APP_URL."
+  }
+
+  # Une même clé dans `environment` et dans `secrets` fait refuser la définition
+  # de tâche par l'API ECS, et le message ne dit pas laquelle. Le collisionnement
+  # se voit ici, au plan, avec le nom du service et celui de la variable.
+  validation {
+    condition = alltrue([
+      for name, s in var.services :
+      length(setintersection(
+        s.public_url_env_vars,
+        toset(concat(keys(s.environment), keys(s.secret_arns))),
+      )) == 0
+    ])
+    error_message = "Une variable de public_url_env_vars est déjà déclarée dans `environment` ou dans `secret_arns` du même service. L'origine publique est calculée par le module : retirer le doublon."
   }
 }
 

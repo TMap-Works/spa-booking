@@ -28,6 +28,16 @@ output "alb_dns_name" {
   value       = aws_lb.this.dns_name
 }
 
+output "public_base_url" {
+  description = "Origine publique effectivement injectée dans les `public_url_env_vars` des services — `public_base_url` si elle est fournie, `https://<alb_dns_name>` sinon. C'est la valeur qu'un environnement republie en sortie `app_url`, et celle à comparer à une canonique servie par le front quand elle ne porte pas le bon domaine."
+  value       = local.public_base_url
+}
+
+output "public_url_env_vars" {
+  description = "Variables d'environnement qui reçoivent l'origine publique, par clé de `services`. Liste vide = le conteneur ne connaît pas l'origine sous laquelle il est servi, et tout ce qu'il en déduirait — canonique, lien de notification — serait faux."
+  value       = { for name, service in var.services : name => sort(tolist(service.public_url_env_vars)) }
+}
+
 output "alb_zone_id" {
   description = "Zone hébergée de l'ALB, requise par un enregistrement d'alias Route 53."
   value       = aws_lb.this.zone_id
