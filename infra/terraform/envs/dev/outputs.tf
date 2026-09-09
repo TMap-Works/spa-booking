@@ -55,6 +55,11 @@ output "api_image" {
   value       = local.api_image
 }
 
+output "web_image" {
+  description = "Image que la définition de tâche du front désigne actuellement. Même étiquette que `api_image` — les deux images sortent du même commit."
+  value       = local.web_image
+}
+
 # --- Point d'entrée public ----------------------------------------------------
 
 output "alb_dns_name" {
@@ -63,8 +68,13 @@ output "alb_dns_name" {
 }
 
 output "app_url" {
-  description = "URL publique de l'environnement, telle qu'elle doit être posée en variable de dépôt APP_URL. Le certificat étant auto-signé par défaut, un client doit y désactiver la vérification TLS."
-  value       = "https://${module.ecs_service.alb_dns_name}"
+  description = "Origine publique de l'environnement, telle qu'elle doit être posée en variable de dépôt APP_URL — et telle que le module l'injecte réellement dans la définition de tâche du front (#345). Elle vaut `public_base_url` si elle est fournie, `https://<alb_dns_name>` sinon. Le certificat étant auto-signé par défaut, un client doit y désactiver la vérification TLS."
+  value       = module.ecs_service.public_base_url
+}
+
+output "public_url_env_vars" {
+  description = "Variables d'environnement qui reçoivent `app_url` dans chaque définition de tâche. C'est ce qui prouve, sans ouvrir la console ECS, que le conteneur web connaît l'origine sous laquelle il est servi — sans quoi il refuse de démarrer (apps/web/instrumentation.ts)."
+  value       = module.ecs_service.public_url_env_vars
 }
 
 # --- Compute ------------------------------------------------------------------

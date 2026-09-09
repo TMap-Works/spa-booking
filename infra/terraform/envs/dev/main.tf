@@ -29,6 +29,13 @@ locals {
   # l'état, et rien d'autre ne peut la faire pointer sur la nouvelle image.
   api_image = "${module.ecr.repository_urls["api"]}:${var.image_tag}"
 
+  # Même étiquette pour les deux images : `deploy-dev.yml` construit et pousse
+  # `spa-dev-api:<sha>` et `spa-dev-web:<sha>` dans le même job, depuis le même
+  # commit. Deux `image_tag` distincts laisseraient le front et l'API diverger
+  # sans que rien ne le dise, alors qu'ils partagent les contrats de
+  # `packages/shared`.
+  web_image = "${module.ecr.repository_urls["web"]}:${var.image_tag}"
+
   # Certificat porté par le listener 443. À défaut d'ARN fourni, l'environnement
   # en fabrique un lui-même — voir le bloc « Terminaison TLS » plus bas.
   certificate_arn = var.certificate_arn != null ? var.certificate_arn : one(aws_acm_certificate.alb[*].arn)
@@ -115,11 +122,16 @@ module "budgets" {
 
   # Ordre de grandeur du coût nominal de cet environnement, en USD par mois :
   # quatre endpoints d'interface sur deux zones (~65), RDS `db.t4g.medium`
-  # mono-AZ et son stockage (~55), une NAT Gateway (~35), l'ALB (~20), une tâche
-  # Fargate 0,5 vCPU (~18), ElastiCache `cache.t4g.micro` (~12), les clés KMS et
-  # le stockage ECR pour le reste. Le plafond laisse la marge d'un environnement
-  # qu'on recrée : sous ~230, l'alerte à 80 % serait permanente, donc ignorée.
-  monthly_limit = 250
+  # mono-AZ et son stockage (~55), une NAT Gateway (~35), l'ALB (~20), **deux**
+  # tâches Fargate 0,5 vCPU — l'API et le front (~36) —, ElastiCache
+  # `cache.t4g.micro` (~12), les clés KMS et le stockage ECR pour le reste, soit
+  # ~225. Le plafond laisse la marge d'un environnement qu'on recrée.
+  #
+  # Relevé de 250 à 300 avec l'arrivée du service ECS `web` (#345) : le seuil
+  # d'alerte est à 80 % du plafond, et 80 % de 250 valait 200 — sous le coût
+  # nominal. L'alerte aurait sonné en permanence, c'est-à-dire qu'on aurait
+  # appris à ne plus la regarder.
+  monthly_limit = 300
 
   # Vide tant qu'aucune adresse n'est fournie : le topic existe quand même, et
   # s'abonner ne demande alors qu'un `-var`.
@@ -486,6 +498,11 @@ module "ecs_service" {
   container_insights_enabled = false
   alb_deletion_protection    = false
 
+  # `null` : l'origine publique est déduite du nom DNS de l'ALB par le module.
+  # Cet environnement n'a pas de nom de domaine — il n'a pas non plus de vrai
+  # certificat, les deux se poseront ensemble (voir `certificate_arn`).
+  public_base_url = var.public_base_url
+
   # Ouverture de la chaîne vers le niveau données. Le sens est délibéré : les
   # modules `database` et `cache` déclarent leur entrée depuis le groupe des
   # tâches, ce module déclare la sortie vers eux.
@@ -503,10 +520,6 @@ module "ecs_service" {
     }
   }
 
-  # Un seul service pour l'instant : `apps/web` ne porte encore aucun
-  # `next.config.*`, son image ne se construit donc pas (voir la garde du job
-  # `docker` de ci.yml). Le dépôt ECR `spa-dev-web` existe déjà côté registre ;
-  # le service ECS s'ajoutera ici le jour où le front démarre.
   services = {
     api = {
       image                  = local.api_image
@@ -614,6 +627,93 @@ module "ecs_service" {
           NOTIFICATIONS_INTERNAL_TOKEN = "${aws_secretsmanager_secret.api_runtime.arn}:NOTIFICATIONS_INTERNAL_TOKEN::"
         } : {},
       )
+    }
+
+    # --- Front Next.js (#345) -------------------------------------------------
+    #
+    # Absent jusqu'ici parce qu'`apps/web` ne portait aucun `next.config.*` : ni
+    # `ci.yml` ni `deploy-dev.yml` ne construisaient son image, et un service ECS
+    # aurait tourné à vide. Le front est posé, sa garde de construction se lève
+    # d'elle-même, et le service arrive avec.
+    web = {
+      image                  = local.web_image
+      ecr_repository_arn     = module.ecr.repository_arns["web"]
+      listener_rule_priority = 200
+
+      # `PORT=3000` dans l'image du front (apps/web/Dockerfile), et `HOSTNAME` y
+      # vaut `0.0.0.0` — sans quoi le serveur autonome de Next n'écouterait que
+      # la boucle locale du conteneur et aucun health check ne l'atteindrait.
+      container_port = 3000
+
+      cpu    = 512
+      memory = 1024
+
+      # Une tâche suffit en développement, avec la même marge de montée que
+      # l'API. Le rendu serveur d'une page de salon est le poste le plus coûteux
+      # du front, et il n'y a ici qu'un ou deux visiteurs à la fois.
+      desired_count = 1
+      min_capacity  = 1
+      max_capacity  = 4
+
+      # `/*` en dernier : la règle de l'API est évaluée avant (priorité 100) et
+      # capte `/health` et `/api/*`. Tout le reste — la page publique du salon,
+      # le tunnel de réservation, l'espace client, le back-office — est servi par
+      # le front.
+      path_patterns = ["/*"]
+
+      # La racine, et non un `/health` dédié. Deux raisons : le front n'expose
+      # aucune route de santé — il n'a ni base ni cache à sonder, sa seule
+      # dépendance est l'API, que le health check de l'API couvre déjà —, et
+      # `/health` est de toute façon routé vers l'API par la règle d'écoute
+      # prioritaire. Ce que ce contrôle prouve est ce qu'on lui demande : le
+      # serveur Next écoute et rend une page.
+      #
+      # C'est aussi ce qui donne son effet à la garde d'origine publique
+      # (`apps/web/instrumentation.ts`) : en production, Next ne joue son hook
+      # d'instrumentation qu'à la première requête servie, et cette première
+      # requête est justement ce contrôle de santé. Faute d'`APP_URL`, la tâche
+      # sort en code 1 sans jamais entrer dans le groupe cible, et le disjoncteur
+      # de déploiement revient à la révision précédente.
+      health_check_path = "/"
+
+      # Next compile ses routes au démarrage du serveur autonome ; 60 s suffisent
+      # largement, mais le déploiement de dev part d'un cache d'image froid.
+      health_check_grace_period_seconds = 120
+
+      # Ce que le front doit connaître de son propre déploiement, et le module le
+      # calcule pour lui à partir de son ALB :
+      #
+      #   APP_URL  l'origine publique — `metadataBase`, balise canonique, `@id`
+      #            et `url` du graphe schema.org de la page de salon (#43).
+      #            Absente, le front s'arrête désormais plutôt que de publier des
+      #            canoniques `localhost` (#345).
+      #   API_URL  l'hôte de l'API, **sans** préfixe : `lib/api-client.ts` y
+      #            ajoute lui-même `/api/v1`, le versionnement étant une
+      #            propriété de l'API et non du déploiement. Les Server
+      #            Components sortent donc par la NAT et repassent par l'ALB
+      #            public, qui route `/api/*` vers le service `api`.
+      #
+      # **En développement, cet aller-retour ne fonctionnera pas tant que
+      # `certificate_arn` n'est pas fourni** : l'ALB porte un certificat
+      # auto-signé, et `fetch` refuse de le vérifier — comme les Lambda de la
+      # chaîne de notifications, pour la même raison et sans plus de
+      # contournement. Le service démarre, son contrôle de santé passe, et les
+      # pages qui appellent l'API rendent une erreur de service indisponible.
+      # Voir « Ce qui reste à faire » dans le README.
+      public_url_env_vars = ["APP_URL", "API_URL"]
+
+      environment = {
+        LOG_LEVEL = "debug"
+        PORT      = "3000"
+      }
+
+      # Aucune politique : le front n'appelle aucune API AWS. Il ne lit pas non
+      # plus de secret — son origine publique et l'hôte de son API n'en sont pas,
+      # et c'est précisément ce que `public_url_env_vars` évite d'aller chercher
+      # dans Secrets Manager (#345).
+      #
+      # Pas de sidecar X-Ray non plus : le front n'ouvre aucun segment, et le
+      # démon consommerait le CPU et la mémoire de la tâche pour relayer du vide.
     }
   }
 }
