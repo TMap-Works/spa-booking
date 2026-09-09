@@ -111,8 +111,29 @@ describe('l’avis d’adresse supprimée', () => {
     ...FARA,
     internalNote: null,
     createdAt: '2026-03-04T08:00:00.000Z',
+    anonymizedAt: null,
     emailSuppressedAt: null,
     emailSuppressionReason: null,
+  };
+
+  /**
+   * La même fiche après exercice du droit à l'effacement — #529.
+   *
+   * C'est exactement ce que `CustomerService.anonymize` laisse en base : le
+   * pseudonyme, l'adresse en `.invalid`, le téléphone et la note vidés, la fiche
+   * désactivée — et les **deux colonnes de suppression intactes**, posées du
+   * temps où l'adresse existait.
+   */
+  const ANONYMISEE: Customer = {
+    ...VIVANTE,
+    firstName: 'Client',
+    lastName: 'anonymisé',
+    email: `anonymise-${FARA.id}@anonymise.invalid`,
+    phone: null,
+    isActive: false,
+    anonymizedAt: '2026-09-08T09:00:00.000Z',
+    emailSuppressedAt: '2026-09-05T10:30:00.000Z',
+    emailSuppressionReason: 'hard_bounce',
   };
 
   it('ne dit rien d’une adresse vivante — l’état de la quasi-totalité du fichier', () => {
@@ -167,6 +188,35 @@ describe('l’avis d’adresse supprimée', () => {
     });
 
     expect(notice?.reason).toBe('motif non enregistré');
+  });
+
+  it('se tait sur une fiche anonymisée — l’adresse visée n’a jamais existé (#529)', () => {
+    // L'anonymisation laisse les deux colonnes de suppression en place : sans
+    // cette garde, l'écran annonçait « plus aucun envoi ne part vers
+    // anonymise-….invalid · prévenez la cliente par téléphone » — une consigne
+    // de rattrapage visant une personne effacée, dont le numéro a été vidé par
+    // la même opération. Le bandeau **et** le badge lisent cette fonction : les
+    // deux disparaissent d'un même geste.
+    expect(emailSuppressionNotice(ANONYMISEE)).toBeNull();
+  });
+
+  it('ne se tait que sur l’anonymisation — une fiche désactivée dit toujours ce qui ne part plus', () => {
+    // Deux états à ne pas confondre : une fiche désactivée désigne encore
+    // quelqu'un, qu'on peut avoir au téléphone et à qui l'avis dit quoi faire.
+    // Seule l'anonymisation retire la personne, et donc le sens de l'avis.
+    const desactivee = emailSuppressionNotice({
+      ...ANONYMISEE,
+      email: 'fara.rakotoson@example.mg',
+      phone: '+261341234567',
+      firstName: 'Fara',
+      lastName: 'Rakotoson',
+      anonymizedAt: null,
+    });
+
+    expect({ affiche: desactivee !== null, instant: desactivee?.suppressedAt }).toEqual({
+      affiche: true,
+      instant: '2026-09-05T10:30:00.000Z',
+    });
   });
 });
 

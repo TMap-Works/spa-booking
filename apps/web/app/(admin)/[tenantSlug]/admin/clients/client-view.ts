@@ -133,9 +133,32 @@ export interface EmailSuppressionNotice {
  * Le cas inverse — une date sans motif — reste affichable, parce que le
  * gestionnaire a plus besoin de savoir que la cliente ne reçoit rien que de
  * savoir pourquoi.
+ *
+ * ## Pourquoi une fiche anonymisée n'en dit rien — #529
+ *
+ * Parce que l'avis porterait alors sur une adresse qui n'a jamais existé.
+ * L'anonymisation réécrit `email` en `anonymise-<uuid>@anonymise.invalid`, vide
+ * le téléphone et la note, mais **laisse les deux colonnes de suppression en
+ * place** — elles datent de l'adresse d'avant. L'écran affichait donc « plus
+ * aucun envoi ne part vers `anonymise-…@anonymise.invalid` · prévenez la cliente
+ * par téléphone », c'est-à-dire une consigne de rattrapage visant une personne
+ * effacée dont le numéro venait d'être vidé par la même opération.
+ *
+ * La condition est ici, et non dans l'écran, pour que le **bandeau et le badge**
+ * disparaissent du même geste : ils lisent tous deux cette fonction, et un
+ * second prédicat dans `page.tsx` aurait fini par diverger de celui-ci.
+ *
+ * Rien n'est masqué d'une fiche vivante : `anonymizedAt` y est `null`, et cette
+ * garde ne s'y voit pas.
+ *
+ * C'est bien l'**affichage** qui se tait, et non la donnée qui s'efface : les
+ * deux colonnes restent écrites en base, parce que `notifications` déduit
+ * « joignable par e-mail » de `emailSuppressedAt === null`. Les remettre à
+ * `NULL` aurait fait de la fiche anonymisée une destinataire de nouveau
+ * éligible, à une adresse en `.invalid` qui rebondit par construction (#529).
  */
 export function emailSuppressionNotice(customer: Customer): EmailSuppressionNotice | null {
-  if (customer.emailSuppressedAt === null) {
+  if (customer.anonymizedAt !== null || customer.emailSuppressedAt === null) {
     return null;
   }
 
