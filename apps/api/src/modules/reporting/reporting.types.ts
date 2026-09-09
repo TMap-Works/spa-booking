@@ -28,7 +28,7 @@
  * énumérations réellement générées, si bien qu'une valeur ajoutée au schéma
  * fait rougir une suite avant qu'un total ne l'ignore en silence.
  *
- * TODO(#536) : ces vocabulaires appartiennent au contrat d'API, et #510 n'a pas
+ * Écart assumé, tranché en #554 : ces vocabulaires appartiennent au contrat d'API, et #510 n'a pas
  * pu les y prendre — c'est son premier point de vigilance, et il se voit ici
  * mieux qu'ailleurs. Les listes de ce fichier portent la casse de
  * l'énumération PostgreSQL (`PENDING`, `CARD`) parce que c'est ce que la colonne

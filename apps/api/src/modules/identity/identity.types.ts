@@ -3,7 +3,7 @@ import type { UserRole } from './roles';
 /**
  * Formes de données du module `identity`.
  *
- * TODO(#536) : `UserRole` appartient au contrat d'API, et #510 n'a pas pu l'y
+ * Écart assumé, tranché en #554 : `UserRole` appartient au contrat d'API, et #510 n'a pas pu l'y
  * prendre — c'est son premier point de vigilance, sur le vocabulaire le plus
  * chargé du dépôt. `USER_ROLES` de `@spa/shared` porte les quatre mêmes rôles en
  * **minuscules** (`client`, `staff`, `manager`, `admin`), là où `roles.ts` de ce

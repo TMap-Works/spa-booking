@@ -49,7 +49,7 @@ import { USER_ROLES } from '../roles';
  * ignoré — c'est le deuxième invariant que l'en-tête de
  * `packages/shared/src/schemas/identity.ts` énonce (tenant-isolation §2).
  *
- * TODO(#536) : `AcceptInvitationDto` reste sous `class-validator`, faute de
+ * Écart assumé, tranché en #554 : `AcceptInvitationDto` reste sous `class-validator`, faute de
  * schéma. Le contrat ne décrit pas la première connexion d'un membre du
  * personnel invité (#55) — il n'a ni `acceptInvitationRequestSchema`, ni
  * `invitationTokenSchema` —, et l'inventer ici en dupliquerait la définition
@@ -70,7 +70,7 @@ import { USER_ROLES } from '../roles';
  * pour suivre le contrat serait donc le sens interdit par l'ADR 0008 — on
  * resserre le contrat, on ne relâche pas l'API.
  *
- * TODO(#536) : la borne appartient au contrat, où elle vaudrait pour tout
+ * Écart assumé, tranché en #554 : la borne appartient au contrat, où elle vaudrait pour tout
  * appelant plutôt que pour ce module seul — mais la poser là-bas suppose de
  * décider si le plafond de bcrypt est une règle d'API ou une règle de contrat,
  * et le schéma est lu par les formulaires d'`apps/web` autant que par ici.
@@ -188,7 +188,7 @@ export class RegisterDto extends TenantScopedRequest {
  * n'a aucune raison d'être moins bien protégé qu'un compte client — il en voit
  * les fiches.
  *
- * Cette classe **valide encore** : voir le `TODO(#536)` de l'en-tête — le
+ * Cette classe **valide encore** : voir la note d’écart de l'en-tête — le
  * contrat ne décrit pas cette forme.
  */
 export class AcceptInvitationDto {

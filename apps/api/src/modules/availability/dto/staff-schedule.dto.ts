@@ -19,7 +19,7 @@ import { IsAfterLocalTime, IsLocalTime, IsScheduleEndTime } from './validation';
  * l'établissement (`tenants.timezone`), pas à la charge utile. Le laisser
  * soumettre reviendrait à laisser un client décaler l'agenda d'un salon.
  *
- * TODO(#536) : `setStaffScheduleRequestSchema` de
+ * Écart assumé, tranché en #554 : `setStaffScheduleRequestSchema` de
  * `packages/shared/src/schemas/availability.ts` décrit exactement ce corps —
  * mêmes bornes, même motif d'heure murale, même refus d'une fin antérieure au
  * début —, et #510 n'a pourtant pas pu le monter. L'écart n'est pas de règle

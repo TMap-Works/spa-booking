@@ -26,7 +26,7 @@ import {
  *
  * L'ADR 0008 ne s'applique pas à ce fichier : il ne décrit pas une **route**,
  * donc il n'y a pas de schéma d'entrée à monter en pipe. Ce qui reste ici est ce
- * que le contrat ne porte pas — voir les deux TODO(#536) plus bas.
+ * que le contrat ne porte pas — voir les deux notes d’écart plus bas.
  *
  * ## Ce qui reste local, et pourquoi
  *
@@ -47,7 +47,7 @@ import {
  * encaissements qui manquent au total sans qu'aucune erreur ne le dise. La date
  * civile est donc rejouée composant par composant.
  *
- * TODO(#536) : reste à faire converger cette fonction avec `isOffsetDateTime`
+ * Écart assumé, tranché en #554 : reste à faire converger cette fonction avec `isOffsetDateTime`
  * de `@spa/shared`, dont le motif est déjà celui importé ci-dessus. Deux écarts
  * l'ont empêché ici, et aucun ne se tranche depuis ce module :
  *
@@ -135,7 +135,7 @@ export const MAX_PAGE = Math.floor(Number.MAX_SAFE_INTEGER / MAX_PAGE_SIZE);
  * `enableImplicitConversion: false` — `?page=2` arriverait sinon en `'2'` et
  * `@IsInt()` le refuserait.
  *
- * TODO(#536) : reste à monter `paginationQuerySchema` de `@spa/shared` à la
+ * Écart assumé, tranché en #554 : reste à monter `paginationQuerySchema` de `@spa/shared` à la
  * place de ces deux décorateurs. Deux raisons l'ont empêché ici, et la seconde
  * est bloquante :
  *

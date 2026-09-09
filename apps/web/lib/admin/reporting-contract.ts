@@ -12,7 +12,7 @@
  * même façon : le jour où le contrat partagé porte ces trois réponses, ce
  * fichier disparaît et `api-client.ts` importe les schémas de `@spa/shared`.
  *
- * TODO(#536) : ce paquet de vocabulaire appartient au contrat d'API, et
+ * Écart assumé, tranché en #554 : ce paquet de vocabulaire appartient au contrat d'API, et
  * `reporting.types.ts` le dit déjà de son côté — « ces vocabulaires
  * appartiennent au contrat d'API, et #510 n'a pas pu les y prendre ». Le
  * déplacer suppose de trancher la question de casse que ce même fichier

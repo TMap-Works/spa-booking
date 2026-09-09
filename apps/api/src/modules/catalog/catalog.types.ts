@@ -13,7 +13,7 @@
  * `z.input<publicServiceSchema>`. Un champ ajouté d'un côté et pas de l'autre
  * casse le `tsc`, ce qu'un simple alias de type n'aurait pas fait mieux.
  *
- * TODO(#536) : remplacer malgré tout ces interfaces par les types inférés du
+ * Écart assumé, tranché en #554 : remplacer malgré tout ces interfaces par les types inférés du
  * contrat reste souhaitable — une écriture de moins —, et deux choses s'y
  * opposent, dont aucune ne se tranche depuis ce module. La première :
  * `z.infer<...>` ne porte pas `readonly`, là où toutes les vues de ce fichier

@@ -44,7 +44,7 @@ import type { CreateAppointmentInput } from '../appointments.types';
  * personne. Le tiroir de #50 n'envoie de toute façon jamais sans — son bouton
  * d'enregistrement est désactivé tant qu'aucune fiche n'est choisie.
  *
- * TODO(#536) : l'écart est tenu par le `.extend()` ci-dessous, en attendant que
+ * Écart assumé, tranché en #554 : l'écart est tenu par le `.extend()` ci-dessous, en attendant que
  * le contrat sépare les deux formes. Le refermer côté `packages/shared`
  * demanderait d'y déclarer un schéma de back-office distinct — `clientId`
  * obligatoire — de celui que le parcours client servirait, et c'est une décision

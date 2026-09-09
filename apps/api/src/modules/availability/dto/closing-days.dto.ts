@@ -35,7 +35,7 @@ import type { ClosingDaysView } from '../availability.types';
  * la raison en est précise : c'est le seul dont **aucune règle ne sort en 422**.
  * Les trois autres — semaine de travail, absence, interrogation de créneaux —
  * portent des règles que le service traduit en `BusinessRuleError`, là où le
- * `.refine()` du contrat rendrait 400. Voir les `TODO(#536)` de
+ * `.refine()` du contrat rendrait 400. Voir les notes d’écart de
  * `staff-schedule.dto.ts` et de `staff-time-off.dto.ts`.
  *
  * Le `.strict()` du contrat remplace `forbidNonWhitelisted` : un `tenantId`

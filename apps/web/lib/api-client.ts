@@ -93,10 +93,10 @@ import {
 } from '@spa/shared';
 import { z } from 'zod';
 
-// Les deux formes d'encaissement que l'API sert et que `@spa/shared` ne décrit
-// pas encore telles quelles. La raison — et le TODO(#536) qui les y ramènera —
-// est dans l'en-tête de `lib/admin/payment-contract.ts`, que #510 a instruite
-// écart par écart.
+// Les deux formes d'encaissement, désormais **étendues du contrat partagé** :
+// #554 y a porté les six clés de l'intention et les deux `nullable` de
+// l'encaissement, et il ne reste ici que la normalisation de casse de la
+// frontière. Le détail est dans l'en-tête de `lib/admin/payment-contract.ts`.
 import {
   appointmentPaymentIntentSchema,
   paymentTransactionSchema,
@@ -104,9 +104,9 @@ import {
   type PaymentTransaction,
 } from '@/lib/admin/payment-contract';
 
-// Les formes de l'administration du personnel que `@spa/shared` ne décrit pas
-// encore telles quelles, pour la même raison et avec le même TODO(#536) : voir
-// l'en-tête de `lib/admin/staff-contract.ts`.
+// Les formes de l'administration du personnel, que `@spa/shared` ne décrit pas
+// telles quelles — écart assumé, faute d'un vocabulaire de rôle commun aux deux
+// bords. L'en-tête de `lib/admin/staff-contract.ts` dit pourquoi.
 import {
   staffAccountSchema,
   staffAccountStateSchema,
@@ -120,8 +120,8 @@ import {
   type StaffInvitation,
 } from '@/lib/admin/staff-contract';
 
-// Les trois rapports du back-office, pour la même raison et avec le même
-// TODO(#536) : voir l'en-tête de `lib/admin/reporting-contract.ts`.
+// Les trois rapports du back-office, pour la même raison — écart assumé, même
+// question de casse. Voir l'en-tête de `lib/admin/reporting-contract.ts`.
 import {
   appointmentVolumeReportSchema,
   dailyRevenueReportSchema,

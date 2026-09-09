@@ -88,7 +88,7 @@ import type { Customer, CustomerPage, CustomerSummary } from '../crm.types';
  * rien à mettre sur sa liste blanche. Le handler prend le type inféré du schéma
  * (`SetCustomerStatusBody`) et déclare la classe par `@ApiBody`.
  *
- * TODO(#536) : trois substitutions restent à faire, et aucune ne se fait ici
+ * Écart assumé, tranché en #554 : trois substitutions restent à faire, et aucune ne se fait ici
  * sans une décision de contrat, c'est-à-dire une modification de
  * `packages/shared` qui déborde l'empreinte de #510 :
  *
@@ -162,7 +162,7 @@ const PHONE_PATTERN = /^[+0-9][0-9\s().-]*$/;
  * passerait pour un prénom. Jumeau de celui d'`identity/dto/users.dto.ts`,
  * dupliqué pour la même raison (un module n'importe pas un fichier profond d'un
  * autre, api-module §3) et destiné à disparaître avec les trois substitutions
- * que le TODO(#536) ci-dessus décrit : les schémas du contrat font le `.trim()`
+ * que l'écart assumé ci-dessus décrit : les schémas du contrat font le `.trim()`
  * eux-mêmes.
  */
 const Trim = (): PropertyDecorator =>
@@ -211,7 +211,7 @@ export class CustomerSummaryDto implements CustomerSummary {
  * `marketingConsent` et `marketingConsentAt`, ajoutés par #81. C'est pourquoi
  * elle n'a pas les deux assertions de compilation de `CustomerSummaryDto` : les
  * poser ferait échouer le `tsc` sur un écart réel, qui se referme dans le
- * contrat et non ici (TODO(#536) de l'en-tête). Le troisième champ de #81,
+ * contrat et non ici (écart assumé de l'en-tête). Le troisième champ de #81,
  * `anonymizedAt`, a fait le chemin inverse en #529 : il est entré au contrat
  * parce que le back-office en a besoin pour taire l'avis d'adresse supprimée sur
  * une fiche anonymisée.
@@ -327,7 +327,7 @@ export class CustomerPageDto implements Omit<CustomerPage, 'items'> {
  * `enableImplicitConversion: false` — `?page=2` arriverait sinon en `'2'` et
  * `@IsInt()` le refuserait.
  *
- * Cette classe **valide encore** : voir le point 2 du TODO(#536) de l'en-tête.
+ * Cette classe **valide encore** : voir le point 2 de l'écart assumé de l'en-tête.
  */
 export class ListCustomersQueryDto {
   @ApiPropertyOptional({
@@ -413,7 +413,7 @@ export function toSearchQuery(dto: ListCustomersQueryDto): {
  * et fait l'objet d'une issue de suivi ; voir l'en-tête de
  * `createCustomerRequestSchema` dans `@spa/shared`.
  *
- * Cette classe **valide encore** : voir le point 1 du TODO(#536) de l'en-tête —
+ * Cette classe **valide encore** : voir le point 1 de l'écart assumé de l'en-tête —
  * `createCustomerRequestSchema` est `.strict()` et ne déclare pas
  * `marketingConsent`.
  */
@@ -504,7 +504,7 @@ export class CreateCustomerDto {
  * revanche, `null` **est** une valeur — c'est ainsi qu'on efface —, et la
  * validation le laisse traverser.
  *
- * Cette classe **valide encore** : voir le point 1 du TODO(#536) de l'en-tête —
+ * Cette classe **valide encore** : voir le point 1 de l'écart assumé de l'en-tête —
  * `updateCustomerRequestSchema` est `.strict()` et ne déclare pas
  * `marketingConsent`.
  */

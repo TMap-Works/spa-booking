@@ -38,7 +38,7 @@ import {
  * (`TIME_OFF_RANGE_INVALID`) plutôt qu'en 400 : la requête est bien formée, ce
  * sont ses valeurs prises ensemble qui ne tiennent pas.
  *
- * TODO(#536) : `createStaffTimeOffRequestSchema` et
+ * Écart assumé, tranché en #554 : `createStaffTimeOffRequestSchema` et
  * `updateStaffTimeOffRequestSchema` de
  * `packages/shared/src/schemas/availability.ts` décrivent ces corps, et #510 n'a
  * pourtant pas pu les monter — pour la raison que le paragraphe ci-dessus
