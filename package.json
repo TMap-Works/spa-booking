@@ -35,6 +35,7 @@
     "@playwright/mcp": "0.0.79"
   },
   "overrides": {
-    "postcss": "^8.5.18"
+    "postcss": "^8.5.18",
+    "multer": "^2.3.0"
   }
 }
