@@ -5,6 +5,7 @@ import {
   adminCalendarPath,
   adminCatalogPath,
   adminCheckoutPath,
+  adminReportingPath,
   adminSettingsPath,
 } from '../paths';
 import { adminStaffPath } from '../personnel/paths';
@@ -184,10 +185,30 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
     {
       key: 'reporting',
       label: 'Reporting',
-      href: null,
-      // Chiffre d'affaires et taux de remplissage : une lecture de gestion.
+      /*
+       * L'écran d'indicateurs est servi depuis #75 : l'entrée porte donc son
+       * chemin, et cesse d'être inerte. Quatrième entrée à passer de l'annonce
+       * au lien, après « Clients » et « Personnel » (#480) et « Encaissement »
+       * (#484) — et la dernière du sommaire.
+       *
+       * `adminReportingPath(tenantSlug)` **nu** : ni période, ni filtre. L'écran
+       * ouvre alors les trente derniers jours pour l'établissement entier, ce
+       * que fait déjà l'URL qu'on tape. Y figer une période la rendrait périmée
+       * dès le mois suivant ; y figer un filtre ferait du sommaire le tableau de
+       * bord de quelqu'un d'autre.
+       */
+      href: adminReportingPath(tenantSlug),
+      /*
+       * `manager`, inchangé — et cette fois vérifié contre les routes que
+       * l'écran appelle. Les trois rapports sont au seuil `MANAGER`
+       * (`GET /v1/reports/revenue`, `/appointments`, `/no-shows`), et le fuseau
+       * vient de la vitrine publique `GET /public/{slug}`, sans jeton, comme sur
+       * le planning et l'encaissement. Rien ici n'appelle `GET /v1/tenant`, qui
+       * aurait refermé l'écran au rang gérant — le défaut que #458 a corrigé
+       * ailleurs.
+       */
       minimumRole: 'manager',
-      upcoming: 'Indicateurs d’activité — écran à venir.',
+      upcoming: null,
     },
     {
       key: 'reglages',

@@ -1,0 +1,210 @@
+/*
+ * Tableau de bord — indicateurs d'activité (issue #75)
+ * =============================================================================
+ *
+ * L'écran que la gérante ouvre en fin de mois : une barre de filtres, trois
+ * indicateurs, deux graphiques, deux tableaux.
+ *
+ * Aucune couleur littérale, aucune primitive employée directement — comme
+ * partout sous `styles/` (`tests/tokens.test.mjs`). C'est ce qui fait que les
+ * graphiques basculent en thème sombre sans qu'une ligne d'ici ne change : les
+ * six rôles `--spa-color-chart-*` délèguent à des primitives, et `tokens.css`
+ * redéfinit ces primitives sous `prefers-color-scheme: dark`.
+ */
+
+/* --- Barre de filtres ------------------------------------------------------ */
+
+/*
+ * Les contrôles s'alignent sur une ligne tant qu'ils tiennent, et passent à la
+ * ligne sinon : la barre porte deux à quatre champs selon la période choisie —
+ * les deux bornes n'apparaissent que sur « personnalisée » — et une grille à
+ * colonnes fixes aurait laissé un trou le reste du temps.
+ *
+ * `align-items: flex-end` aligne les contrôles entre eux et non leurs étiquettes :
+ * un champ de date et un sélecteur n'ont pas la même hauteur d'étiquette, et
+ * l'alignement par le haut décalait leurs bases d'un demi-caractère. Le mot-clé
+ * `flex-end` et non `end` : autoprefixer signale que le second a un support
+ * mêlé selon les préfixes, et la recette l'a fait remonter en avertissement de
+ * compilation.
+ */
+.spa-admin-report-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--spa-space-3);
+  margin-block-end: var(--spa-space-6);
+}
+
+.spa-admin-report-filters > * {
+  flex: 1 1 12rem;
+  margin-block-end: 0;
+}
+
+/* Le bouton ne s'étire pas : il n'a rien à saisir, et une cible large au bout
+ * d'une rangée de champs se confond avec eux. */
+.spa-admin-report-filters > button {
+  flex: 0 0 auto;
+}
+
+/* --- Indicateurs ----------------------------------------------------------- */
+
+/*
+ * Trois tuiles au moins, une de plus par devise pratiquée. `auto-fit` plutôt
+ * qu'un nombre de colonnes figé : un salon monodevise en montre trois, un salon
+ * qui encaisse en deux devises quatre, et aucune ne doit se retrouver seule sur
+ * sa ligne.
+ */
+.spa-admin-report-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--spa-space-3);
+  margin-block-end: var(--spa-space-6);
+}
+
+/* --- Export ---------------------------------------------------------------- */
+
+.spa-admin-report-export {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+}
+
+/*
+ * Le compte rendu du téléchargement. Il occupe sa place même vide (`min-block-size`)
+ * : sans cela, l'apparition du message pousserait la barre d'outils vers le bas
+ * au moment précis où l'on vient de cliquer.
+ */
+.spa-admin-report-export__status {
+  min-block-size: 1rem;
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Graphiques ------------------------------------------------------------ */
+
+.spa-admin-chart {
+  margin: 0;
+  padding: var(--spa-space-4);
+  background-color: var(--spa-color-surface-raised);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-admin-chart__title {
+  margin-block-end: var(--spa-space-2);
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+}
+
+.spa-admin-chart__legend {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  margin-block-end: var(--spa-space-3);
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* Le carré de légende. `--inner` reprend la teinte de la série secondaire ; la
+ * hachure, elle, ne se transpose pas à cette taille — le libellé qui suit dit
+ * de quelle série il s'agit, et le graphique porte les deux redondances. */
+.spa-admin-chart__key {
+  inline-size: 0.75rem;
+  block-size: 0.75rem;
+  border-radius: var(--spa-radius-xs);
+}
+
+.spa-admin-chart__key--primary {
+  background-color: var(--spa-color-chart-primary);
+}
+
+.spa-admin-chart__key--inner {
+  margin-inline-start: var(--spa-space-3);
+  background-color: var(--spa-color-chart-alert);
+}
+
+/*
+ * Le graphique déborde plutôt qu'il ne se comprime.
+ *
+ * Une période d'un an fait 366 colonnes : les faire tenir dans la largeur de
+ * l'écran les réduirait à un trait d'un demi-pixel, et l'axe deviendrait
+ * illisible. Le conteneur défile donc horizontalement, et le SVG garde une
+ * largeur minimale sous laquelle il ne descend pas.
+ */
+.spa-admin-chart__canvas {
+  overflow-x: auto;
+}
+
+.spa-admin-chart__svg {
+  display: block;
+  inline-size: 100%;
+  min-inline-size: 30rem;
+  block-size: auto;
+}
+
+.spa-admin-chart__empty {
+  padding-block: var(--spa-space-6);
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  text-align: center;
+}
+
+/* --- Tracé ----------------------------------------------------------------- */
+
+.spa-admin-chart__bar {
+  fill: var(--spa-color-chart-primary);
+}
+
+/* La barre que le filtre désigne : un liseré **en plus** de la teinte, pour que
+ * la mise en avant ne repose pas sur la seule couleur (WCAG 1.4.1). */
+.spa-admin-chart__bar--selected {
+  fill: var(--spa-color-chart-primary-strong);
+  stroke: var(--spa-color-text);
+  stroke-width: 1.5;
+}
+
+.spa-admin-chart__bar-inner {
+  fill: var(--spa-color-chart-alert);
+}
+
+.spa-admin-chart__hatch {
+  stroke: var(--spa-color-chart-hatch);
+  stroke-width: 1.5;
+}
+
+.spa-admin-chart__grid {
+  stroke: var(--spa-color-chart-grid);
+  stroke-width: 1;
+}
+
+.spa-admin-chart__axis {
+  stroke: var(--spa-color-chart-axis);
+  stroke-width: 1;
+}
+
+/* Les textes du SVG : chiffres tabulaires pour que les échelles s'alignent, et
+ * la couleur de texte du thème — jamais une valeur propre au graphique. */
+.spa-admin-chart__scale,
+.spa-admin-chart__tick,
+.spa-admin-chart__row-label,
+.spa-admin-chart__row-value {
+  font-family: var(--spa-font-sans);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  fill: var(--spa-color-text-muted);
+}
+
+.spa-admin-chart__scale,
+.spa-admin-chart__row-label {
+  text-anchor: end;
+}
+
+.spa-admin-chart__tick {
+  text-anchor: middle;
+}
+
+.spa-admin-chart__row-label,
+.spa-admin-chart__row-value {
+  fill: var(--spa-color-text);
+}

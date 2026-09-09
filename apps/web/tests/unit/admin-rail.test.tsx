@@ -76,6 +76,12 @@ describe('rail — la navigation', () => {
     expect(screen.getByRole('link', { name: 'Encaissement' }).getAttribute('href')).toBe(
       '/maison-lotus/admin/encaissement',
     );
+    // Quatrième et dernière entrée à passer de l'annonce au lien (#75) : l'URL
+    // est nue elle aussi — ni période, ni filtre —, et le rail ouvre donc les
+    // trente derniers jours pour l'établissement entier.
+    expect(screen.getByRole('link', { name: 'Reporting' }).getAttribute('href')).toBe(
+      '/maison-lotus/admin/reporting',
+    );
   });
 
   it('marque l’encaissement pendant qu’une cliente règle', () => {
@@ -90,17 +96,30 @@ describe('rail — la navigation', () => {
     expect(screen.getByRole('link', { name: 'Planning' }).getAttribute('aria-current')).toBeNull();
   });
 
-  it('annonce les sections non livrées sans en faire des liens', () => {
+  it('marque le reporting pendant qu’une période est filtrée', () => {
+    // Comme l'encaissement : la période et le filtre voyagent dans la chaîne de
+    // requête, que `usePathname` ne rend pas. Le repère tient sur le chemin seul.
+    pathname = '/maison-lotus/admin/reporting';
     renderRail();
 
-    // Le nom accessible porte la raison : sans elle, un lecteur d'écran
-    // n'annoncerait qu'un mot inerte.
-    expect(screen.queryByRole('link', { name: /Reporting/ })).toBeNull();
+    expect(screen.getByRole('link', { name: 'Reporting' }).getAttribute('aria-current')).toBe(
+      'page',
+    );
+    expect(screen.getByRole('link', { name: 'Planning' }).getAttribute('aria-current')).toBeNull();
+  });
 
-    const reporting = screen.getByText('Reporting');
+  it('ne laisse plus aucune section annoncée sans écran', () => {
+    // Le sommaire annonçait six sections dont une inerte — « Indicateurs
+    // d'activité — écran à venir ». #75 a livré la dernière : toute entrée que le
+    // rang voit est désormais un lien, et une entrée inerte qui réapparaîtrait
+    // serait une régression, pas un jalon.
+    renderRail();
 
-    expect(reporting.getAttribute('aria-disabled')).toBe('true');
-    expect(reporting.textContent).toMatch(/à venir/);
+    for (const label of ['Planning', 'Clients', 'Prestations', 'Personnel', 'Encaissement', 'Reporting']) {
+      expect(screen.getByRole('link', { name: label })).toBeTruthy();
+    }
+
+    expect(document.querySelector('[aria-disabled="true"]')).toBeNull();
   });
 
   it('marque la section courante, paramètres d’URL compris', () => {

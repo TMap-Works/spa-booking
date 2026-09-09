@@ -10,6 +10,7 @@ import { adminClientsPath } from '@/app/(admin)/[tenantSlug]/admin/clients/paths
 import {
   adminCatalogPath,
   adminCheckoutPath,
+  adminReportingPath,
   adminSessionRefreshPath,
   safeAdminNext,
 } from '@/app/(admin)/[tenantSlug]/admin/paths';
@@ -108,15 +109,25 @@ describe('sommaire du back-office — aucun lien mort', () => {
     }
   });
 
-  it('laisse sans chemin les écrans que la vague n’a pas encore livrés', () => {
-    // Le reporting est désormais **seul** dans cet état : le fichier client et
-    // le personnel ont été branchés par #480, l'encaissement par #484. Une
-    // entrée qui rejoint cette liste est une régression, pas un oubli.
+  it('ne laisse plus aucun écran sans chemin', () => {
+    // Le fichier client et le personnel ont été branchés par #480,
+    // l'encaissement par #484, le reporting par #75. La liste est vide, et elle
+    // doit le rester : une entrée qui y rejoindrait serait une régression du
+    // sommaire, pas un jalon en attente.
     const pending = adminNavigation(SLUG, 'admin')
       .filter((candidate) => candidate.href === null)
       .map((candidate) => candidate.key);
 
-    expect(pending).toEqual(['reporting']);
+    expect(pending).toEqual([]);
+  });
+
+  it('mène aux indicateurs, sans période ni filtre figés', () => {
+    // Y figer une période la rendrait périmée dès le mois suivant ; y figer un
+    // filtre ferait du sommaire le tableau de bord de quelqu'un d'autre.
+    expect(navEntry('reporting').href).toBe(adminReportingPath(SLUG));
+    expect(navEntry('reporting').href).toBe(`/${SLUG}/admin/reporting`);
+    expect(navEntry('reporting').href).not.toContain('?');
+    expect(navEntry('reporting').upcoming).toBeNull();
   });
 
   it('mène au fichier client, entier et sans recherche figée', () => {
@@ -228,6 +239,43 @@ describe('l’entrée courante', () => {
     expect(
       isCurrentEntry(adminStaffMemberPath(SLUG, 'a1b2'), navEntry('personnel').href ?? ''),
     ).toBe(true);
+  });
+});
+
+describe('le chemin des indicateurs', () => {
+  it('omet la période quand elle vaut le défaut', () => {
+    // L'URL nue est celle qu'on tape, et c'est aussi celle que le rail ouvre.
+    expect(adminReportingPath(SLUG, { period: 'trente-jours' })).toBe(`/${SLUG}/admin/reporting`);
+    expect(adminReportingPath(SLUG, { period: 'mois-precedent' })).toBe(
+      `/${SLUG}/admin/reporting?periode=mois-precedent`,
+    );
+  });
+
+  it('n’écrit les deux bornes que sur une période personnalisée', () => {
+    // Sur une période nommée, elles seraient périmées dès le lendemain : « les
+    // 30 derniers jours » se recalcule chaque matin, et c'est son intérêt.
+    expect(
+      adminReportingPath(SLUG, { period: 'sept-jours', from: '2026-09-01', to: '2026-09-30' }),
+    ).toBe(`/${SLUG}/admin/reporting?periode=sept-jours`);
+    expect(
+      adminReportingPath(SLUG, {
+        period: 'personnalisee',
+        from: '2026-09-01',
+        to: '2026-09-30',
+      }),
+    ).toBe(`/${SLUG}/admin/reporting?periode=personnalisee&du=2026-09-01&au=2026-09-30`);
+  });
+
+  it('porte le filtre tel quel, et l’omet sur l’établissement entier', () => {
+    expect(adminReportingPath(SLUG, { scope: 'praticien:a1b2' })).toBe(
+      `/${SLUG}/admin/reporting?filtre=praticien%3Aa1b2`,
+    );
+    expect(adminReportingPath(SLUG, { scope: null })).toBe(`/${SLUG}/admin/reporting`);
+  });
+
+  it('encode le slug plutôt que de le recopier', () => {
+    // Même exigence que les autres chemins : le slug vient d'un segment d'URL.
+    expect(adminReportingPath('salon/lilas')).toBe('/salon%2Flilas/admin/reporting');
   });
 });
 

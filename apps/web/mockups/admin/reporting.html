@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Maquette — Indicateurs d’activité</title>
+    <link rel="stylesheet" href="../../styles/index.css" />
+    <link rel="stylesheet" href="../../styles/admin/index.css" />
+  </head>
+  <body>
+    <!--
+      Indicateurs d'activité — issue #75.
+
+      Sixième maquette du tableau de bord, et la seule qui ne montre pas une
+      opération de comptoir : c'est l'écran de fin de mois. Elle exerce chaque
+      règle de `styles/admin/reporting.css`, y compris les états que l'écran réel
+      atteint rarement — un graphique vide, un chargement — parce que ce sont
+      justement ceux qu'on oublie de dessiner.
+
+      Les couleurs viennent toutes des jetons : le SVG n'en écrit aucune, ses
+      classes délèguent aux rôles `--spa-color-chart-*`, et c'est ce qui fait que
+      les mêmes barres restent lisibles quand le système bascule en thème sombre.
+    -->
+    <div class="spa-admin">
+      <nav class="spa-admin__rail" aria-label="Sections du tableau de bord">
+        <span class="spa-admin__brand">Maison Lotus</span>
+        <div class="spa-admin__nav">
+          <a class="spa-admin__nav-link" href="calendrier.html">Planning</a>
+          <a class="spa-admin__nav-link" href="rendez-vous.html">Rendez-vous</a>
+          <a class="spa-admin__nav-link" href="fiche-client.html">Clients</a>
+          <a class="spa-admin__nav-link" href="personnel.html">Personnel</a>
+          <a class="spa-admin__nav-link" href="encaissement.html">Encaissement</a>
+          <a class="spa-admin__nav-link" href="reporting.html" aria-current="page">Reporting</a>
+        </div>
+        <div class="spa-admin__rail-footer">
+          <strong>Maison Lotus — Antananarivo</strong>
+          <span>Fuseau du salon : Indian/Antananarivo (UTC+3)</span>
+          <span>Connectée : Hasina R., gérante</span>
+        </div>
+      </nav>
+
+      <div class="spa-admin__main">
+        <header class="spa-admin__topbar">
+          <h1 class="spa-admin__title">Indicateurs d’activité</h1>
+        </header>
+
+        <main class="spa-admin__content">
+          <!-- Période et filtre. Les deux bornes n'apparaissent que sur « personnalisée ». -->
+          <form class="spa-admin-report-filters">
+            <div class="spa-select">
+              <label class="spa-select__label" for="periode">Période</label>
+              <div class="spa-select__shell">
+                <select class="spa-select__control" id="periode">
+                  <option>7 derniers jours</option>
+                  <option selected>30 derniers jours</option>
+                  <option>Mois en cours</option>
+                  <option>Mois précédent</option>
+                  <option>Période personnalisée</option>
+                </select>
+                <span class="spa-select__chevron" aria-hidden="true"></span>
+              </div>
+            </div>
+
+            <div class="spa-select">
+              <label class="spa-select__label" for="filtre">Filtrer</label>
+              <div class="spa-select__shell">
+                <select class="spa-select__control" id="filtre" aria-describedby="filtre-hint">
+                  <option selected>Tout l’établissement</option>
+                  <optgroup label="Praticiens">
+                    <option>Hasina Rakoto</option>
+                    <option>Tiana Andria</option>
+                  </optgroup>
+                  <optgroup label="Prestations">
+                    <option>Massage 60 min</option>
+                    <option>Coupe et brushing</option>
+                  </optgroup>
+                </select>
+                <span class="spa-select__chevron" aria-hidden="true"></span>
+              </div>
+              <p class="spa-select__hint" id="filtre-hint">
+                Un praticien ou une prestation — les deux ne se croisent pas.
+              </p>
+            </div>
+
+            <button class="spa-button spa-button--accent" type="button">
+              <span class="spa-button__label">Afficher</span>
+            </button>
+          </form>
+
+          <div class="spa-admin-toolbar">
+            <p class="spa-admin-toolbar__caption">
+              1 – 30 septembre 2026 · 30 jours · Tout l’établissement
+            </p>
+            <span class="spa-admin-toolbar__spacer"></span>
+            <div class="spa-admin-report-export">
+              <button class="spa-button spa-button--neutral" type="button">
+                <span class="spa-button__label">Exporter en CSV</span>
+              </button>
+              <p class="spa-admin-report-export__status">
+                Fichier téléchargé : maison-lotus-reporting-2026-09-01_2026-09-30.csv
+              </p>
+            </div>
+          </div>
+
+          <!-- Les trois indicateurs du deuxième critère : revenu, volume, no-shows. -->
+          <div class="spa-admin-report-metrics">
+            <div class="spa-admin-metric">
+              <span class="spa-admin-metric__value">1 284 000 MGA</span>
+              <span class="spa-admin-metric__label">
+                Revenu net · 96 encaissements · remboursé 24 000 MGA
+              </span>
+            </div>
+            <div class="spa-admin-metric">
+              <span class="spa-admin-metric__value">164</span>
+              <span class="spa-admin-metric__label">Rendez-vous · Tout l’établissement</span>
+            </div>
+            <div class="spa-admin-metric">
+              <span class="spa-admin-metric__value">3,3 %</span>
+              <span class="spa-admin-metric__label">
+                No-shows · 4 sur 122 arrivés à échéance
+              </span>
+            </div>
+          </div>
+
+          <!--
+            Graphique en colonnes — l'axe temporel.
+
+            Le viewBox fait 720 de large **quel que soit le nombre de colonnes**,
+            comme celui que peint `report-chart.tsx` : une largeur qui suivrait le
+            nombre de barres serait étirée à celle du conteneur, et le texte avec
+            elle — une semaine s'écrirait deux fois plus gros qu'un mois sur le
+            même écran. Cinq colonnes ici, une par jour dans l'écran réel ; la
+            colonne est plafonnée à 48 et centrée dans son pas.
+          -->
+          <div class="spa-admin__section">
+            <figure class="spa-admin-chart">
+              <figcaption class="spa-admin-chart__title">Revenu net par jour — MGA</figcaption>
+              <p class="spa-admin-chart__legend">
+                <span class="spa-admin-chart__key spa-admin-chart__key--primary"></span>
+                Revenu net (MGA)
+              </p>
+              <div class="spa-admin-chart__canvas">
+                <svg class="spa-admin-chart__svg" role="img" viewBox="0 0 720 192">
+                  <title>Revenu net par journée de caisse</title>
+                  <desc>
+                    Revenu net par journée de caisse en MGA, du 1er au 30 septembre 2026,
+                    fuseau Indian/Antananarivo.
+                  </desc>
+                  <line class="spa-admin-chart__grid" x1="52" x2="710" y1="12" y2="12" />
+                  <text class="spa-admin-chart__scale" x="46" y="15">60 k</text>
+                  <line class="spa-admin-chart__grid" x1="52" x2="710" y1="87" y2="87" />
+                  <text class="spa-admin-chart__scale" x="46" y="90">30 k</text>
+                  <rect class="spa-admin-chart__bar" height="90" rx="2" width="48" x="104" y="72" />
+                  <text class="spa-admin-chart__tick" x="128" y="178">1 sept.</text>
+                  <rect class="spa-admin-chart__bar" height="140" rx="2" width="48" x="236" y="22" />
+                  <text class="spa-admin-chart__tick" x="260" y="178">2 sept.</text>
+                  <rect class="spa-admin-chart__bar" height="60" rx="2" width="48" x="368" y="102" />
+                  <text class="spa-admin-chart__tick" x="392" y="178">3 sept.</text>
+                  <rect class="spa-admin-chart__bar" height="112" rx="2" width="48" x="500" y="50" />
+                  <text class="spa-admin-chart__tick" x="524" y="178">4 sept.</text>
+                  <rect class="spa-admin-chart__bar" height="34" rx="2" width="48" x="632" y="128" />
+                  <text class="spa-admin-chart__tick" x="656" y="178">5 sept.</text>
+                  <line class="spa-admin-chart__axis" x1="52" x2="710" y1="162" y2="162" />
+                </svg>
+              </div>
+            </figure>
+          </div>
+
+          <!--
+            Graphique en barres — l'axe nominal, celui qu'un filtre ouvre. La
+            barre retenue porte un liseré en plus de sa teinte, et la part de
+            no-shows une hachure en plus de la sienne : la couleur ne porte jamais
+            l'information seule (WCAG 1.4.1).
+          -->
+          <div class="spa-admin__section">
+            <figure class="spa-admin-chart">
+              <figcaption class="spa-admin-chart__title">Rendez-vous par praticien</figcaption>
+              <p class="spa-admin-chart__legend">
+                <span class="spa-admin-chart__key spa-admin-chart__key--primary"></span>
+                Rendez-vous
+                <span class="spa-admin-chart__key spa-admin-chart__key--inner"></span>
+                dont no-shows
+              </p>
+              <div class="spa-admin-chart__canvas">
+                <svg class="spa-admin-chart__svg" role="img" viewBox="0 0 480 70">
+                  <title>Rendez-vous par praticien</title>
+                  <desc>
+                    Nombre de rendez-vous par praticien, dont no-shows, du 1er au
+                    30 septembre 2026 inclus.
+                  </desc>
+                  <defs>
+                    <pattern
+                      height="4"
+                      id="hachure-maquette"
+                      patternTransform="rotate(45)"
+                      patternUnits="userSpaceOnUse"
+                      width="4"
+                    >
+                      <line class="spa-admin-chart__hatch" x1="0" x2="0" y1="0" y2="4" />
+                    </pattern>
+                  </defs>
+                  <text class="spa-admin-chart__row-label" x="142" y="21">Hasina Rakoto</text>
+                  <rect
+                    class="spa-admin-chart__bar spa-admin-chart__bar--selected"
+                    height="16"
+                    rx="2"
+                    width="240"
+                    x="150"
+                    y="9"
+                  />
+                  <rect class="spa-admin-chart__bar-inner" height="16" rx="2" width="26" x="150" y="9" />
+                  <rect fill="url(#hachure-maquette)" height="16" rx="2" width="26" x="150" y="9" />
+                  <text class="spa-admin-chart__row-value" x="396" y="21">88 rendez-vous</text>
+                  <text class="spa-admin-chart__row-label" x="142" y="47">Tiana Andria</text>
+                  <rect class="spa-admin-chart__bar" height="16" rx="2" width="180" x="150" y="35" />
+                  <text class="spa-admin-chart__row-value" x="336" y="47">76 rendez-vous</text>
+                </svg>
+              </div>
+            </figure>
+          </div>
+
+          <!-- État vide : la période existe, mais rien ne s'y est passé. -->
+          <div class="spa-admin__section">
+            <figure class="spa-admin-chart">
+              <figcaption class="spa-admin-chart__title">Revenu net par jour — février</figcaption>
+              <p class="spa-admin-chart__empty">Aucun encaissement sur la période.</p>
+            </figure>
+          </div>
+
+          <!-- État de chargement : distinct de l'état vide, et annoncé comme tel. -->
+          <div class="spa-admin__section" aria-busy="true">
+            <h2 class="spa-admin__section-title">Rendez-vous par prestation</h2>
+            <p class="spa-visually-hidden">Chargement des indicateurs…</p>
+            <div class="spa-skeleton spa-admin-skeleton-line"></div>
+            <div class="spa-skeleton spa-admin-skeleton-line spa-admin-skeleton-line--short"></div>
+          </div>
+
+          <!-- Rien à afficher du tout : ni période fautive, ni panne — un salon qui ouvre. -->
+          <div class="spa-admin__section">
+            <div class="spa-empty-state">
+              <p class="spa-empty-state__title">Aucune activité sur la période</p>
+              <p class="spa-empty-state__description">
+                Ni encaissement, ni rendez-vous entre le 1er et le 30 septembre. Élargissez
+                la période, ou retirez le filtre pour voir tout l’établissement.
+              </p>
+            </div>
+          </div>
+
+          <div class="spa-admin__section">
+            <h2 class="spa-admin__section-title">Détail des statuts — Tout l’établissement</h2>
+            <table class="spa-admin-table">
+              <caption class="spa-visually-hidden">
+                Rendez-vous de la période par statut.
+              </caption>
+              <thead>
+                <tr>
+                  <th class="spa-admin-table__head" scope="col">Statut</th>
+                  <th class="spa-admin-table__head spa-admin-table__head--numeric" scope="col">
+                    Rendez-vous
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="spa-admin-table__row">
+                  <td class="spa-admin-table__cell">Honorés</td>
+                  <td class="spa-admin-table__cell spa-admin-table__cell--numeric">118</td>
+                </tr>
+                <tr class="spa-admin-table__row">
+                  <td class="spa-admin-table__cell">No-shows</td>
+                  <td class="spa-admin-table__cell spa-admin-table__cell--numeric">4</td>
+                </tr>
+                <tr class="spa-admin-table__row">
+                  <td class="spa-admin-table__cell">Annulés</td>
+                  <td class="spa-admin-table__cell spa-admin-table__cell--numeric">9</td>
+                </tr>
+                <tr class="spa-admin-table__row">
+                  <td class="spa-admin-table__cell">À venir</td>
+                  <td class="spa-admin-table__cell spa-admin-table__cell--numeric">33</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>
