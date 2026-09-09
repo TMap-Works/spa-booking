@@ -392,8 +392,35 @@ export class StripeWebhookRepository {
    * avorte la transaction PostgreSQL entière — n'existe pas ici, puisqu'il n'y
    * a pas de transaction autour. Et `create` rend l'identifiant, dont la file a
    * besoin pour aboutir ou replanifier.
+   *
+   * ## L'échéance est posée par le processus, pas par le moteur (#555)
+   *
+   * `next_attempt_at` a pour défaut le `now()` **du serveur**, et le balayage
+   * compare cette colonne au `now` que l'appelant lui donne — un `new Date()`
+   * **du processus** (`sweepOnce`). Laisser le défaut décider met donc deux
+   * horloges de part et d'autre du même prédicat, pour une valeur qui vaut
+   * « maintenant » dans les deux cas.
+   *
+   * L'écart mesuré entre les deux est de l'ordre de quelques millisecondes ici,
+   * et il n'a aucune portée en exploitation : le bail dure une minute, le
+   * balayage passe tous les quarts de minute, et une échéance en retard de
+   * quelques millisecondes n'y change rien. Il en a une dès que l'intervalle
+   * entre l'inscription et la reprise se compte en millisecondes — c'est le cas
+   * d'une suite d'intégration, où la livraison inscrite se retrouvait « pas
+   * encore échue » selon l'humeur du moment (#555).
+   *
+   * Toutes les autres écritures de la file datent déjà depuis le processus :
+   * `rescheduleDelivery` reçoit un `Date` calculé par `DurableWebhookQueue`, et
+   * `reviveDeadDelivery` pose le sien. L'inscription était la seule à déléguer
+   * la sienne au moteur — le double en mémoire, lui, ne l'a jamais fait
+   * (`__tests__/webhook.doubles.ts`). C'est cette divergence-là qui est levée.
    */
   public async spool(request: SpoolRequest): Promise<SpooledDelivery | null> {
+    // Un seul instant pour les deux colonnes : la livraison est échue au moment
+    // même où elle est prise en charge, et c'est l'instance qui l'inscrit qui la
+    // tient.
+    const now = new Date();
+
     try {
       const created = await this.prisma.stripeWebhookDelivery.create({
         data: withScopedTenant<Prisma.StripeWebhookDeliveryUncheckedCreateInput>({
@@ -404,11 +431,14 @@ export class StripeWebhookRepository {
           // de carte n'y figure, parce que `stripe-webhook.types.ts` n'en
           // déclare aucun (payments-stripe §1).
           payload: request.event as unknown as Prisma.InputJsonValue,
+          // Échue tout de suite, et depuis l'horloge du balayage — voir
+          // l'en-tête de cette méthode.
+          nextAttemptAt: now,
           // Le bail est posé d'emblée : l'instance qui inscrit est celle qui
           // traite. Sans cela, le balayage d'une autre instance pourrait
           // reprendre la livraison dans la seconde qui suit, et deux traitements
           // partiraient de front.
-          claimedAt: new Date(),
+          claimedAt: now,
         }),
         // `tenantId` est relu de la ligne écrite plutôt que recopié de
         // l'appelant : c'est l'extension de scoping qui l'a posé depuis le
