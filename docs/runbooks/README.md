@@ -25,6 +25,21 @@ Le retour en arrière se lit **avant** d'en avoir besoin, comme les deux premier
 sa section 6.2 dit ce que le rollback automatique ne défait pas — les migrations
 de schéma — et la contrainte qui en découle sur la manière de les écrire.
 
+## Ce qui se joue sur l'environnement une fois monté
+
+`recette-staging.md` dit comment **poser** l'environnement. Ce qu'on y **joue**
+vit à côté, sous [docs/recette/](../recette/) :
+
+| Document | À quoi il sert |
+|---|---|
+| [cahier-de-recette-mvp.md](../recette/cahier-de-recette-mvp.md) | Les 91 cas de recette des six domaines du CDC §1.4, la boucle de valeur de bout en bout, l'isolation inter-tenant, et la feuille de verdict à joindre au compte rendu de campagne |
+| [tests-de-charge.md](../recette/tests-de-charge.md) | `npm run test:load` — ce que les tirs mesurent, ce qu'ils ne mesurent pas, et le relevé de référence à comparer d'une campagne à l'autre |
+
+L'ordre est celui-là : monter l'environnement, charger le jeu de données, puis
+dérouler le cahier. Un cahier joué sur un environnement dont le certificat est
+encore le repli auto-signé échouera sur la moitié de ses cas, pour une raison qui
+n'est pas celle qu'il croit tester (§1.2 de `recette-staging.md`).
+
 ## Objectifs de continuité (CDC §4.14)
 
 | Mesure | Cible |
