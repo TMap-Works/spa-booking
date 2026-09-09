@@ -77,6 +77,36 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       - run: terraform init -input=false
+
+      # Sans les variables de l'environnement, le plan est un mensonge : `.gitignore`
+      # écarte `*.tfvars`, le checkout n'en porte aucun, et Terraform planifie donc
+      # sur les **défauts**. Sur `prod`, cela affiche la destruction de la
+      # distribution CloudFront, de sa Web ACL de bord et des deux certificats ACM —
+      # un plan que personne ne peut relire utilement. Voir docs/github-setup.md §3.
+      - name: Composer les variables de l'environnement
+        env:
+          TF_ENV: ${{ matrix.env }}
+          TFVARS_DEV: ${{ vars.DEV_TFVARS }}
+          TFVARS_STAGING: ${{ vars.STAGING_TFVARS }}
+          TFVARS_PROD: ${{ vars.PROD_TFVARS }}
+        run: |
+          set -euo pipefail
+          case "$TF_ENV" in
+            dev)     content="${TFVARS_DEV:-}" ;;
+            staging) content="${TFVARS_STAGING:-}" ;;
+            prod)    content="${TFVARS_PROD:-}" ;;
+            *)       content="" ;;
+          esac
+          if [ -z "$content" ]; then
+            echo "::warning::Variable de depot $(echo "$TF_ENV" | tr '[:lower:]' '[:upper:]')_TFVARS absente — le plan porte sur les defauts de envs/$TF_ENV et non sur l etat reel de l environnement. Les destructions qu il affiche sont un artefact de la CI, pas une intention."
+            exit 0
+          fi
+          printf '%s\n' "$content" > ci.auto.tfvars
+          # Les noms seulement, jamais les valeurs : une variable de dépôt n'est
+          # pas masquée comme l'est un secret.
+          echo "Variables reprises :"
+          sed -nE 's/^[[:space:]]*([a-z_]+)[[:space:]]*=.*/  \1/p' ci.auto.tfvars | sort || true
+
       - id: plan
         run: terraform plan -no-color -input=false -out=tfplan
         continue-on-error: true
@@ -136,4 +166,44 @@ jobs:
           aws-region: ${{ vars.AWS_REGION }}
 
       - run: terraform init -input=false
+
+      # `.gitignore` écarte `*.tfvars` : sans cette étape, `terraform apply
+      # -auto-approve` s'exécute sur les **défauts** de la racine, et ce n'est pas
+      # une dégradation mais une destruction. Sur `prod`, `public_domain_name`
+      # redevenant nul, l'apply détruit la distribution CloudFront, sa Web ACL de
+      # bord et les deux certificats ACM, et remplace le certificat du listener 443
+      # par un repli auto-signé ; `notification_domain` redevenant nul, il détruit
+      # l'identité SES, ses files et ses trois Lambda. `deploy-production.yml` porte
+      # la même garde, et les deux chemins d'apply doivent l'avoir.
+      #
+      # `image_tag` fait partie du contenu attendu de ces variables : sans lui, il
+      # reprend son défaut d'amorçage et les services viseraient une image
+      # inexistante. Un `-var image_tag=<sha>` posé ailleurs le recouvre — la ligne
+      # de commande l'emporte sur un `*.auto.tfvars`.
+      - name: Composer les variables de l'environnement
+        env:
+          TF_ENV: ${{ inputs.environment }}
+          TFVARS_DEV: ${{ vars.DEV_TFVARS }}
+          TFVARS_STAGING: ${{ vars.STAGING_TFVARS }}
+          TFVARS_PROD: ${{ vars.PROD_TFVARS }}
+        run: |
+          set -euo pipefail
+          case "$TF_ENV" in
+            dev)     content="${TFVARS_DEV:-}" ;;
+            staging) content="${TFVARS_STAGING:-}" ;;
+            prod)    content="${TFVARS_PROD:-}" ;;
+            *)       content="" ;;
+          esac
+          if [ -z "$content" ]; then
+            if [ "$TF_ENV" = "prod" ]; then
+              echo "::error::Variable de depot PROD_TFVARS absente. Un terraform apply sur les defauts de envs/prod detruirait la distribution CloudFront, sa Web ACL de bord et les deux certificats ACM, et rendrait la production injoignable sous son nom. La poser avec le contenu du .tfvars de l environnement — voir docs/runbooks/mise-en-production.md."
+              exit 1
+            fi
+            echo "::warning::Variable de depot $(echo "$TF_ENV" | tr '[:lower:]' '[:upper:]')_TFVARS absente — terraform apply s executera sur les defauts de envs/$TF_ENV, et toute valeur posee a la main par -var sera annulee."
+            exit 0
+          fi
+          printf '%s\n' "$content" > ci.auto.tfvars
+          echo "Variables reprises :"
+          sed -nE 's/^[[:space:]]*([a-z_]+)[[:space:]]*=.*/  \1/p' ci.auto.tfvars | sort || true
+
       - run: terraform apply -auto-approve -input=false

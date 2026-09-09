@@ -4,6 +4,183 @@ variable "aws_region" {
   default     = "eu-west-3"
 }
 
+# --- Nom public et diffusion --------------------------------------------------
+
+variable "public_domain_name" {
+  description = <<-EOT
+    Nom public de la plateforme — celui qu'une cliente tape.
+
+    C'est **la** variable qui décide de la forme de cet environnement. Posée avec
+    `route53_zone_id`, elle compose la chaîne complète : deux certificats ACM
+    validés par DNS donc renouvelés automatiquement, la distribution CloudFront,
+    sa Web ACL de bord, et les enregistrements qui font pointer ce nom dessus.
+
+    `null` — le défaut — laisse l'environnement **applicable mais pas
+    exploitable** : l'ALB porte un certificat auto-signé, aucune distribution
+    n'existe, et ni les Server Components du front ni les Lambda de notification
+    ne peuvent joindre l'API. C'est l'état d'amorçage, celui du tout premier
+    `apply` avant qu'un domaine n'existe. La sortie `go_live_blockers` le nomme.
+
+    Un sous-domaine `origin.<ce nom>` est réservé par la composition : c'est par
+    lui que CloudFront joint l'ALB, et il ne peut pas servir à autre chose.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.public_domain_name == null || can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$", var.public_domain_name))
+    error_message = "public_domain_name doit être `null` ou un nom de domaine pleinement qualifié en minuscules, par exemple `reservation.exemple.fr`."
+  }
+
+  validation {
+    condition     = var.public_domain_name == null || !startswith(var.public_domain_name, "origin.")
+    error_message = "public_domain_name ne peut pas commencer par `origin.` : ce préfixe est réservé au nom par lequel CloudFront joint l'ALB, que la composition dérive de ce nom-ci."
+  }
+}
+
+variable "public_domain_aliases" {
+  description = "Noms supplémentaires servis par la même distribution — un `www.` par exemple. Chacun doit être couvert par le certificat de bord : les ajouter ici sans les ajouter au certificat fait échouer l'`apply` sur un refus de CloudFront."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition = alltrue([
+      for name in var.public_domain_aliases :
+      can(regex("^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z]{2,}$", name))
+    ])
+    error_message = "Chaque entrée de public_domain_aliases doit être un nom de domaine pleinement qualifié en minuscules."
+  }
+
+  # Même réserve que sur `public_domain_name`, et pour une raison plus concrète
+  # ici : `origin.<domaine>` est déjà posé par le module `cdn` en alias vers
+  # l'ALB. Le remettre parmi les noms publics ferait poser un second
+  # enregistrement du même nom vers la distribution, que l'`apply` ne peut pas
+  # départager.
+  validation {
+    condition = alltrue([
+      for name in var.public_domain_aliases : !startswith(name, "origin.")
+    ])
+    error_message = "public_domain_aliases ne peut pas contenir un nom commençant par `origin.` : ce préfixe est réservé au nom par lequel CloudFront joint l'ALB, et le module `cdn` y pose déjà un enregistrement vers l'ALB."
+  }
+}
+
+variable "route53_zone_id" {
+  description = <<-EOT
+    Zone hébergée Route 53 servant `public_domain_name`.
+
+    Elle porte trois choses : les enregistrements CNAME de validation des deux
+    certificats, l'alias `origin.<domaine>` vers l'ALB, et les alias A et AAAA du
+    nom public vers la distribution.
+
+    **C'est elle qui rend le renouvellement des certificats automatique.** ACM
+    réémet un certificat validé par DNS soixante jours avant son échéance, sans
+    intervention, à la seule condition que les CNAME de validation soient encore
+    publiés ce jour-là. Confier la zone au code, c'est rendre leur suppression
+    accidentelle impossible.
+
+    `null` — le défaut — ne compose ni les certificats, ni la distribution :
+    l'environnement reste en amorçage. Servir le domaine hors Route 53 est
+    possible mais demande de publier ces enregistrements à la main **et de ne
+    jamais les retirer** ; la panne, sinon, arrive un an plus tard sans que rien
+    ne la relie au geste qui l'a causée.
+  EOT
+  type        = string
+  default     = null
+}
+
+variable "certificate_arn" {
+  description = <<-EOT
+    Certificat ACM porté par le listener 443 de l'ALB, quand il est géré hors de
+    cet état.
+
+    `null` — le défaut — le fait émettre par le module `certificate` dès que
+    `public_domain_name` et `route53_zone_id` sont posés, et retomber sur un
+    certificat auto-signé sinon.
+
+    Le fournir ici **désarme le renouvellement automatique de ce certificat-là** :
+    il devient la responsabilité de qui l'a émis. Il doit par ailleurs couvrir le
+    nom `origin.<public_domain_name>`, sans quoi CloudFront refusera l'origine,
+    et se trouver dans la région de l'ALB — le module `ecs-service` le vérifie au
+    plan.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.certificate_arn == null || can(regex("^arn:aws[a-z-]*:acm:", var.certificate_arn))
+    error_message = "certificate_arn doit être `null` ou un ARN de certificat ACM (`arn:aws:acm:…`)."
+  }
+}
+
+variable "edge_certificate_arn" {
+  description = <<-EOT
+    Certificat ACM de la distribution CloudFront, quand il est géré hors de cet
+    état. **Obligatoirement dans `us-east-1`** : CloudFront n'en accepte aucun
+    autre.
+
+    `null` — le défaut — le fait émettre et renouveler par le module
+    `certificate`, sur le provider aliasé. Le fournir ici désarme le
+    renouvellement automatique de ce certificat-là.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.edge_certificate_arn == null || can(regex("^arn:aws[a-z-]*:acm:us-east-1:", var.edge_certificate_arn))
+    error_message = "edge_certificate_arn doit être `null` ou un ARN de certificat ACM de la région `us-east-1` — CloudFront n'accepte pas de certificat d'une autre région."
+  }
+}
+
+# --- Déploiement --------------------------------------------------------------
+
+variable "image_tag" {
+  description = <<-EOT
+    Étiquette des images tirées par les services ECS et par la tâche de
+    migration : le **sha du commit déployé**. Les dépôts du module `ecr` sont
+    immuables — une étiquette mobile ne pourrait être poussée qu'une fois — et la
+    définition de tâche appartient à l'état : déployer, c'est donc appliquer avec
+    le nouveau sha, ce que fait `deploy-production.yml` (`-var="image_tag=<sha>"`).
+
+    Le défaut n'est **pas** une image déployable : il ne sert qu'au tout premier
+    `apply` d'un environnement vide, avant qu'aucune image n'existe. Un `apply`
+    lancé à la main sans `-var image_tag` ramènerait les services à cette
+    étiquette inexistante — les nouvelles tâches échoueraient au tirage et le
+    disjoncteur de déploiement reviendrait à la révision précédente. Reprendre la
+    valeur de la sortie `api_image` avant d'appliquer à la main.
+  EOT
+  type        = string
+  default     = "bootstrap"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", var.image_tag))
+    error_message = "image_tag doit être une étiquette d'image valide : lettres, chiffres, point, tiret ou tiret bas, 128 caractères au plus."
+  }
+}
+
+variable "rds_monitoring_role_arn" {
+  description = <<-EOT
+    Rôle IAM que RDS assume pour publier les métriques système d'Enhanced
+    Monitoring — celles de la machine, que Performance Insights ne voit pas.
+
+    Ce rôle n'est pas créé ici : c'est un rôle **de compte**, unique, que les
+    trois environnements partagent, et qui porte la politique managée
+    `AmazonRDSEnhancedMonitoringRole`. Le créer par environnement en produirait
+    trois pour le même usage.
+
+    `null` — le défaut — désactive Enhanced Monitoring : une précondition du
+    module `database` refuse un intervalle de mesure sans rôle pour l'écrire. La
+    production s'en passe donc jusqu'à ce que ce rôle existe, ce qui fait partie
+    de la liste de vérification de la mise en production.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.rds_monitoring_role_arn == null || can(regex("^arn:aws[a-z-]*:iam::[0-9]{12}:role/", var.rds_monitoring_role_arn))
+    error_message = "rds_monitoring_role_arn doit être `null` ou un ARN de rôle IAM (`arn:aws:iam::…:role/…`)."
+  }
+}
+
 variable "budget_alert_emails" {
   description = <<-EOT
     Adresses prévenues quand le budget mensuel de l'environnement dépasse 80 %
