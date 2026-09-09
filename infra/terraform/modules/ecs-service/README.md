@@ -148,6 +148,42 @@ n'accepte que les sept premiers champs. Le module tronque de lui-même avant
 d'écrire la politique — accorder le droit sur l'ARN suffixé produirait une
 politique qui n'autorise rien, et un démarrage de tâche en échec.
 
+## L'origine publique n'est pas un secret (#345)
+
+Un conteneur a presque toujours besoin de savoir sous quelle origine il est
+servi : le front y compose ses balises canoniques et ses données structurées,
+l'API y compose les liens de ses notifications. Cette valeur est publique par
+définition — et elle passait pourtant par Secrets Manager, faute de pouvoir être
+calculée ailleurs : elle vaut l'URL de l'ALB, que seul ce module connaît, et lire
+sa sortie `alb_dns_name` pour construire son entrée `services` est un cycle que
+Terraform refuse.
+
+Le module la calcule donc lui-même. Vu du graphe, la définition de tâche dépend
+de l'ALB — une arête de plus, dans le seul sens qui existe.
+
+```hcl
+public_base_url = null            # défaut : https://<alb_dns_name>
+
+services = {
+  web = {
+    # …
+    public_url_env_vars = ["APP_URL", "API_URL"]
+  }
+}
+```
+
+Chaque nom listé reçoit l'origine, en clair dans `environment` — ce qu'elle
+mérite. Deux gardes au plan : le nom doit ressembler à une variable
+d'environnement (`^[A-Z][A-Z0-9_]*$`), et il ne doit apparaître ni dans
+`environment` ni dans `secret_arns` du même service — une même clé des deux côtés
+fait refuser la définition de tâche par l'API ECS, sur un message qui ne dit pas
+laquelle.
+
+`public_base_url` se renseigne dès qu'un nom de domaine existe : le nom DNS d'un
+ALB n'est pas une adresse à publier, et il change si l'ALB est recréé. La sortie
+`public_base_url` rend la valeur effective, `public_url_env_vars` dit quel service
+la reçoit et sous quels noms.
+
 ## Traçage X-Ray
 
 `xray_tracing_enabled = true` sur un service ajoute à sa tâche un second
@@ -197,6 +233,7 @@ vide — ce n'est pas une panne d'infrastructure.
 | `app_subnet_ids` | `list(string)` | — | Tâches Fargate — jamais les sous-réseaux `data` |
 | `certificate_arn` | `string` | — | Certificat ACM du listener 443, à SAN multiples |
 | `ssl_policy` | `string` | `ELBSecurityPolicy-TLS13-1-2-2021-06` | TLS 1.2 et 1.3 seulement |
+| `public_base_url` | `string` | `null` | Origine publique injectée dans `public_url_env_vars` ; `null` = `https://<alb_dns_name>` |
 | `services` | `map(object)` | — | Une entrée par application, voir ci-dessous |
 | `cpu_target_utilization` | `number` | `60` | Cible d'auto-scaling, en pourcentage |
 | `scale_out_cooldown_seconds` | `number` | `60` | Délai avant une nouvelle montée |
@@ -226,7 +263,8 @@ dit au plan.
 `tasks_security_group_id`, `service_names`, `service_arns`,
 `task_definition_arns`, `task_role_arns`, `task_role_names`,
 `execution_role_arns`, `target_group_arns`, `target_group_arn_suffixes`,
-`log_group_names`, `xray_traced_services`.
+`log_group_names`, `xray_traced_services`, `public_base_url`,
+`public_url_env_vars`.
 
 Les sorties par service sont des maps indexées sur la clé de `services`. Cinq
 d'entre elles servent aux modules voisins, en trois usages :
@@ -252,6 +290,9 @@ module "ecs" {
   log_retention_days         = 90
   container_insights_enabled = true
   alb_deletion_protection    = true
+
+  # Un domaine existe ici : l'origine ne se déduit plus du nom DNS de l'ALB.
+  public_base_url = "https://exemple.com"
 
   services = {
     api = {
@@ -279,6 +320,9 @@ module "ecs" {
       ecr_repository_arn     = aws_ecr_repository.web.arn
       listener_rule_priority = 20
       host_headers           = ["exemple.com", "www.exemple.com"]
+
+      # L'origine sous laquelle le front est servi, calculée par le module.
+      public_url_env_vars = ["APP_URL"]
     }
   }
 

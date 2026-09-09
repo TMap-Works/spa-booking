@@ -41,6 +41,31 @@ variable "certificate_arn" {
   }
 }
 
+variable "public_base_url" {
+  description = <<-EOT
+    Origine publique de l'environnement — celle qu'un visiteur tape, qu'un moteur
+    de recherche indexe et que le front publie dans ses balises canoniques et ses
+    données structurées (#345). C'est la valeur que le module `ecs-service`
+    injecte dans `APP_URL` et `API_URL` de la définition de tâche du service
+    `web`.
+
+    `null` — le défaut — la fait déduire du nom DNS de l'ALB, `https://<dns>`.
+    C'est ce qui rend cet environnement applicable sans nom de domaine, et c'est
+    exactement ce que la sortie `app_url` rend.
+
+    À poser **en même temps que `certificate_arn`** : les deux décrivent le même
+    passage à un vrai domaine, et une origine publique annoncée sur un certificat
+    qui ne la couvre pas ferait échouer chaque appel du front vers l'API.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.public_base_url == null || can(regex("^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$", var.public_base_url))
+    error_message = "public_base_url doit être `null` ou une origine en `https://` sans chemin ni barre oblique finale, par exemple `https://dev.reservation.exemple.fr`."
+  }
+}
+
 variable "image_tag" {
   description = <<-EOT
     Étiquette des images tirées par le service ECS et par la tâche de migration :

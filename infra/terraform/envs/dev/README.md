@@ -6,7 +6,8 @@ avant chaque déploiement.
 
 ```
 Internet → ALB (443, certificat auto-signé)
-         → ECS Fargate spa-dev-api (port 3001, /health)
+         → /health, /api/*  → ECS Fargate spa-dev-api (port 3001, /health)
+         → /*               → ECS Fargate spa-dev-web (port 3000, /)
          → RDS spa-dev-rds (5432) · ElastiCache spa-dev-redis (6379)
 ```
 
@@ -16,11 +17,11 @@ Internet → ALB (443, certificat auto-signé)
 | Dépôts d'images `api` et `web` | `spa-dev-api`, `spa-dev-web` | `ecr` |
 | PostgreSQL 16, mono-AZ, 7 j de sauvegardes | `spa-dev-rds` | `database` |
 | Redis 7.1, un nœud, chiffré en transit | `spa-dev-redis` | `cache` |
-| Cluster, ALB, service `api`, auto-scaling | `spa-dev-cluster` | `ecs-service` |
-| Budget mensuel 250 USD, alertes 80 % et 100 % | `spa-dev-monthly` | `budgets` |
+| Cluster, ALB, services `api` et `web`, auto-scaling | `spa-dev-cluster` | `ecs-service` |
+| Budget mensuel 300 USD, alertes 80 % et 100 % | `spa-dev-monthly` | `budgets` |
 | Domaine SES, DKIM/SPF/DMARC, topic des rebonds | `spa-dev-email`, `spa-dev-ses-events` | `notifications` — **rien sans `notification_domain`** |
 | File de découplage, DLQ, Lambda d'envoi, 4 alarmes | `spa-dev-notifications`, `spa-dev-notification-dispatcher` | `notifications` — idem |
-| 5 alarmes, tableau de bord, règle d'échantillonnage X-Ray | `spa-dev-supervision`, `spa-dev-api` | `observability` |
+| 6 alarmes — une de CPU par service ECS —, tableau de bord, règle d'échantillonnage X-Ray | `spa-dev-supervision`, `spa-dev-api`, `spa-dev-web` | `observability` |
 | Définition de tâche de migration | `spa-dev-migrate` | déclarée ici |
 | Secret d'exécution de l'API | `spa-dev/api/runtime-…` | déclarée ici |
 | Certificat de terminaison TLS | `spa-dev-alb` | déclarée ici |
@@ -100,8 +101,49 @@ démarre donc pas tant que le JSON suivant n'y a pas été déposé :
 sensibles : elles valent l'URL de l'ALB, que seul le module `ecs-service` connaît.
 Les passer en variables d'environnement de la définition de tâche demanderait de
 lire une sortie de ce module pour construire une de ses entrées — un cycle que
-Terraform refuse. Le jour où un nom de domaine existe, elles redeviennent des
-valeurs en clair.
+Terraform refuse.
+
+**Ce détour n'est plus nécessaire, et le service `web` ne le prend pas** (#345) :
+le module calcule lui-même l'origine publique et l'injecte dans les variables
+nommées par `public_url_env_vars`. Les deux clés de l'API restent dans le secret
+pour l'instant, faute de pouvoir y exprimer le préfixe `/api` que sa propre
+`API_URL` porte ; les en sortir est une issue de suivi. Elles doivent donc valoir
+**exactement** ce que rend `terraform output app_url`, sans quoi l'API et le front
+publieraient deux domaines différents pour le même établissement.
+
+## Origine publique du front
+
+Le front compose ses balises canoniques, son `metadataBase` et son graphe
+schema.org à partir d'`APP_URL` (#43). Sans elle, il retombait sur
+`http://localhost:3000` — sans erreur, sans log, et sans symptôme visible avant
+que le référencement n'en pâtisse.
+
+Deux verrous ferment cela, et il faut les deux :
+
+- la définition de tâche du service `web` porte `APP_URL` et `API_URL`, calculées
+  par `modules/ecs-service` à partir de son propre ALB. `terraform output
+  public_url_env_vars` dit lesquelles, `terraform output app_url` dit ce qu'elles
+  valent ;
+- `apps/web/instrumentation.ts` **arrête le conteneur** si l'origine est absente,
+  malformée ou ne désigne que la machine courante, dès que `NODE_ENV` vaut autre
+  chose que `development` ou `test`. En production, Next ne joue son hook
+  d'instrumentation qu'à la première requête servie — c'est-à-dire au premier
+  contrôle de santé de l'ALB sur `/`. Le conteneur sort alors en code 1, n'entre
+  jamais dans le groupe cible, et le disjoncteur de déploiement revient à la
+  révision précédente. Le journal de la tâche porte la phrase « Origine publique
+  inutilisable », qui nomme la variable et ce qu'on en attend.
+
+```bash
+terraform output app_url                 # https://spa-dev-alb-….elb.amazonaws.com
+terraform output public_url_env_vars     # { api = [], web = ["API_URL", "APP_URL"] }
+
+# La canonique servie doit porter ce domaine, et non localhost
+curl --insecure --silent "$(terraform output -raw app_url)/maison-lotus" \
+  | grep --only-matching '<link rel="canonical"[^>]*>'
+```
+
+Poser `public_base_url` — en même temps que `certificate_arn` — remplace le nom
+DNS de l'ALB par le vrai domaine, sans rien changer d'autre.
 
 ## Terminaison TLS
 
@@ -309,9 +351,17 @@ déploiement saura publier une révision de définition de tâche, ou le module
 
 ## Ce qui reste à faire
 
-- `apps/web` ne porte encore aucun `next.config.*` : son dépôt ECR existe, mais
-  ni son image ni son service ECS ne sont créés. Le service s'ajoutera dans
-  `services` quand le front démarrera.
+- **Le front ne peut pas encore joindre l'API dans cet environnement.** Ses
+  Server Components appellent `API_URL`, c'est-à-dire l'ALB, dont le certificat
+  est auto-signé tant que `certificate_arn` n'est pas fourni — et `fetch` refuse
+  de le vérifier. Même limite que les Lambda de la chaîne de notifications, même
+  remède : un vrai certificat. Le service `web` démarre et son contrôle de santé
+  passe ; les pages qui appellent l'API rendent une erreur de service
+  indisponible.
+- Les clés `APP_URL` et `API_URL` du **secret d'exécution de l'API** pourraient
+  sortir du secret comme celles du front (#345), à ceci près que l'`API_URL` de
+  l'API porte un préfixe `/api` que `public_url_env_vars` ne sait pas exprimer.
+  Issue de suivi.
 - Le certificat, le secret d'exécution et la définition de tâche de migration
   sont déclarés ici faute de module. Ils ont vocation à en devenir un —
   `modules/ecs-service` pour la tâche de migration, un module `dns` pour le

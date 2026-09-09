@@ -46,6 +46,21 @@ locals {
     for name in keys(var.services) : name => "${local.name_prefix}-${name}"
   }
 
+  # --- Origine publique -------------------------------------------------------
+
+  # Ce que le monde extérieur voit de ce déploiement. Déduite du nom DNS de l'ALB
+  # tant qu'aucun domaine n'est fourni.
+  #
+  # Calculée **ici**, dans le module qui crée l'ALB, et non par l'environnement :
+  # celui-ci devrait sinon lire la sortie `alb_dns_name` pour construire l'entrée
+  # `services` du même module, ce que Terraform refuse. Vue du graphe, la
+  # définition de tâche dépend de l'ALB — une arête de plus, dans le seul sens
+  # qui existe.
+  #
+  # `aws_lb.this.dns_name` est en minuscules et sans point final : l'origine
+  # produite est directement comparable à celle qu'un navigateur enverrait.
+  public_base_url = var.public_base_url != null ? var.public_base_url : "https://${aws_lb.this.dns_name}"
+
   # --- Traçage distribué ------------------------------------------------------
 
   # Les services à tracer, sous une forme directement utilisable en `for_each` :
@@ -77,10 +92,15 @@ locals {
   # X-Ray retombe silencieusement sur sa règle `Default` — commune aux trois
   # environnements, qui partagent un compte. La panne est muette : des traces
   # arrivent, simplement pas à l'échantillonnage qu'on croit avoir posé.
+  # L'origine publique s'y ajoute par `public_url_env_vars`, sous les noms que le
+  # service demande. Aucun risque d'écraser une valeur de l'appelant : une
+  # validation de `services` refuse la collision au plan, avec le nom du service
+  # et celui de la variable.
   service_environment = {
     for name, service in var.services :
     name => merge(
       service.environment,
+      { for variable_name in service.public_url_env_vars : variable_name => local.public_base_url },
       service.xray_tracing_enabled ? merge(local.xray_environment, {
         AWS_XRAY_TRACING_NAME = "${local.name_prefix}-${name}"
       }) : {},
