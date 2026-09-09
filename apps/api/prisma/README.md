@@ -101,6 +101,72 @@ La CI applique réellement la migration avant les tests — l'étape
 [ci.yml](../../../.github/workflows/ci.yml) la rejoue sur un PostgreSQL 16 neuf.
 Une migration syntaxiquement fausse ne peut donc pas être mergée.
 
+## Le jeu de données de recette — `seed.ts` (#76)
+
+`seed.ts` charge un jeu de données représentatif : **deux établissements**, leurs
+comptes, leur catalogue, leur personnel, leurs horaires et cinq rendez-vous
+chacun — un par statut du cycle de vie — plus la vente et le paiement du
+rendez-vous honoré. De quoi dérouler « réserver → confirmer → honorer →
+encaisser → mesurer » sans rien saisir à la main (CDC §4.13).
+
+```bash
+# base locale du docker-compose.yml
+DATABASE_URL="postgresql://spa:spa@localhost:5433/spa_dev" SEED_TARGET=local \
+  node --require ts-node/register prisma/seed.ts
+
+# base de recette, depuis une session qui l'atteint (tunnel Session Manager)
+DATABASE_URL="<lu dans le secret d'exécution>" SEED_TARGET=staging \
+  node --require ts-node/register prisma/seed.ts
+```
+
+**Deux établissements, et c'est le point.** Un seul tenant ne prouverait rien de
+ce que ce produit garantit en premier. Deux rendent l'isolation *exerçable* : la
+recette rejoue chaque route avec le jeton du voisin et attend un 404
+([tenant-isolation §4](../../../.claude/skills/tenant-isolation/SKILL.md)). Ils
+diffèrent par ce qui casse en silence quand on se trompe — leur **fuseau**
+(`Europe/Paris` et `Indian/Antananarivo`), leur **taux de taxe** (20 % et 0 %),
+leur pas de créneau et leur préavis minimum.
+
+**Toute ligne porte son `tenant_id`**, sans exception. Le script écrit avec un
+`PrismaClient` nu, sans l'extension de scoping de l'API : il est légitimement
+inter-tenants, et c'est pour cela qu'il pose lui-même chaque `tenantId`, ligne
+après ligne.
+
+**Idempotent.** Chaque ligne est identifiée par un UUIDv5 déterministe et écrite
+par `upsert` : la dixième exécution laisse exactement les lignes de la première.
+Les rendez-vous sont ancrés sur le jour courant et **glissent** d'une exécution à
+l'autre, sur les mêmes lignes — un jeu de recette dont le « rendez-vous de
+demain » date du mois dernier ne sert plus au rappel J-1. Le glissement est borné
+aux **jours ouvrés** : les praticiens ne travaillent que du lundi au vendredi et
+le dimanche est fermé, si bien qu'un décalage brut posait, selon le jour où le
+seed était joué, des rendez-vous et l'absence de recette un samedi ou un
+dimanche — hors de tout horaire, donc invisibles du moteur de créneaux.
+L'empreinte de mot de
+passe, elle, n'est jamais réécrite : bcrypt tire un sel neuf à chaque appel, et
+la mettre à jour ferait battre `updated_at` sur tous les comptes sans qu'aucun
+identifiant ne change.
+
+**Il refuse de s'exécuter contre une base de production.** Trois barrières, en
+défaut fermé :
+
+1. `SEED_TARGET` doit valoir `local` ou `staging` — **liste blanche**, sans
+   défaut. Une liste noire de motifs « production » laisserait passer tout ce
+   qu'elle n'a pas prévu ;
+2. l'hôte, le nom de base ou l'utilisateur de `DATABASE_URL` ne doit jamais
+   contenir `prod`, quelle que soit la cible déclarée. C'est la barrière qui
+   rattrape le vrai scénario de panne — la bonne intention, la mauvaise variable
+   exportée ;
+3. `SEED_TARGET=local` exige un hôte local.
+
+`SEED_PASSWORD` change le mot de passe des comptes chargés (défaut
+`Recette-2026!`), `BCRYPT_COST` son coût de hachage (défaut 12, comme l'API).
+
+**Pas encore de `npm run db:seed`** : le raccourci `prisma db seed` demande une
+clé `prisma.seed` dans `apps/api/package.json`, et l'inscription du fichier dans
+`apps/api/tsconfig.json` le ferait entrer dans `npm run typecheck`. Les deux
+fichiers sont hors de l'empreinte de #76 ; c'est l'objet de l'issue de suivi
+#588.
+
 ## Règles de migration
 
 - **Une migration par PR**, nommée en clair.

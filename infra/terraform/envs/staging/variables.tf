@@ -23,6 +23,113 @@ variable "budget_alert_emails" {
   default     = []
 }
 
+variable "certificate_arn" {
+  description = <<-EOT
+    Certificat ACM porté par le listener 443 de l'ALB.
+
+    **Cet environnement en veut un vrai**, et pas seulement par principe : le
+    parcours que la recette doit exercer — réserver, confirmer, encaisser —
+    passe par des appels qui refusent un certificat non vérifiable. Les Server
+    Components du front rappellent l'API par l'ALB public et `fetch` refuse ;
+    les trois Lambda de la chaîne de notifications refusent aussi, sans
+    contournement possible.
+
+    `null` — le défaut — fait fabriquer à l'environnement un certificat
+    auto-signé et l'importe dans ACM. Ce repli n'a qu'une raison d'être : que le
+    **tout premier** `terraform apply` aboutisse avant qu'un nom de domaine
+    n'existe, sans quoi il n'y aurait rien sur quoi poser le vrai certificat.
+    Tant qu'il est en place, l'environnement se déploie et rend `/health`, mais
+    la recette de bout en bout ne s'y joue pas. La sortie
+    `tls_certificate_is_self_signed` dit dans lequel des deux états on se trouve.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.certificate_arn == null || can(regex("^arn:aws[a-z-]*:acm:", var.certificate_arn))
+    error_message = "certificate_arn doit être `null` ou un ARN de certificat ACM (`arn:aws:acm:…`)."
+  }
+}
+
+variable "public_base_url" {
+  description = <<-EOT
+    Origine publique de l'environnement — celle qu'un testeur tape et que le
+    front publie dans ses balises canoniques et ses données structurées (#345).
+    C'est la valeur que le module `ecs-service` injecte dans `APP_URL` et
+    `API_URL` de la définition de tâche du service `web`.
+
+    `null` — le défaut — la fait déduire du nom DNS de l'ALB, `https://<dns>`.
+    C'est ce qui rend cet environnement applicable sans nom de domaine, et c'est
+    exactement ce que la sortie `app_url` rend.
+
+    À poser **en même temps que `certificate_arn`** : les deux décrivent le même
+    passage à un vrai domaine, et une origine publique annoncée sur un certificat
+    qui ne la couvre pas ferait échouer chaque appel du front vers l'API.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.public_base_url == null || can(regex("^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$", var.public_base_url))
+    error_message = "public_base_url doit être `null` ou une origine en `https://` sans chemin ni barre oblique finale, par exemple `https://recette.reservation.exemple.fr`."
+  }
+}
+
+variable "image_tag" {
+  description = <<-EOT
+    Étiquette des images tirées par les services ECS et par la tâche de
+    migration : le **sha du commit déployé**. Les dépôts du module `ecr` sont
+    immuables — une étiquette mobile ne pourrait être poussée qu'une fois — et la
+    définition de tâche appartient à l'état : déployer, c'est donc appliquer avec
+    le nouveau sha, ce que fait `deploy-staging.yml` (`-var="image_tag=<sha>"`).
+
+    Le défaut n'est **pas** une image déployable : il ne sert qu'au tout premier
+    `apply` d'un environnement vide, avant qu'aucune image n'existe. Un `apply`
+    lancé à la main sans `-var image_tag` ramènerait les services à cette
+    étiquette inexistante — les nouvelles tâches échoueraient au tirage et le
+    disjoncteur de déploiement reviendrait à la révision précédente. Reprendre la
+    valeur de la sortie `api_image` avant d'appliquer à la main.
+  EOT
+  type        = string
+  default     = "bootstrap"
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$", var.image_tag))
+    error_message = "image_tag doit être une étiquette d'image valide : lettres, chiffres, point, tiret ou tiret bas, 128 caractères au plus."
+  }
+}
+
+variable "off_hours_shutdown" {
+  description = <<-EOT
+    Arrêt programmé des services ECS hors heures ouvrées — « dev et staging
+    dimensionnés a minima et **arrêtables hors heures ouvrées** » (skill
+    aws-infra §9, CDC §4.16).
+
+    Le défaut arrête les deux services à 20 h et les redémarre à 7 h, du lundi au
+    vendredi, à l'heure de Paris. Le week-end reste éteint de lui-même :
+    l'arrêt du vendredi soir n'est suivi d'aucun démarrage avant le lundi.
+
+    **Ce que cela n'arrête pas** : l'ALB, la base, le cache, les endpoints
+    d'interface et la NAT Gateway continuent d'être facturés — ce réglage coupe
+    le calcul, pas l'environnement. La base est délibérément laissée allumée :
+    RDS redémarre de lui-même toute instance arrêtée depuis sept jours, et une
+    tâche de migration jouée par un déploiement de nuit échouerait sur une base
+    éteinte.
+
+    `null` lève l'arrêt durablement — au prix d'une vingtaine de dollars par mois
+    qui font passer le coût nominal au-dessus du seuil d'alerte du budget. Pour
+    le lever le temps d'une campagne de recette sans toucher au code, voir
+    `infra/terraform/modules/ecs-service/README.md`.
+  EOT
+
+  type = object({
+    stop_cron  = optional(string, "cron(0 20 ? * MON-FRI *)")
+    start_cron = optional(string, "cron(0 7 ? * MON-FRI *)")
+    timezone   = optional(string, "Europe/Paris")
+  })
+  default = {}
+}
+
 variable "notification_domain" {
   description = <<-EOT
     Domaine d'envoi des notifications, vérifié dans SES — celui qui apparaît à

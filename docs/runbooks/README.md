@@ -7,11 +7,16 @@ découvert pendant une panne est une documentation, pas une procédure.
 |---|---|
 | [pra-restauration-rds.md](pra-restauration-rds.md) | La donnée est perdue, corrompue, ou l'instance a disparu |
 | [pra-bascule-az.md](pra-bascule-az.md) | Une zone de disponibilité est tombée, la donnée est intacte |
+| [recette-staging.md](recette-staging.md) | Monter l'environnement de recette, y charger ses données, comprendre son arrêt hors heures ouvrées |
 
-Le premier réflexe est de savoir **lequel des deux** : restaurer une base saine
-parce qu'une zone est tombée coûte des heures pour rien, et attendre une bascule
-qui n'aura pas lieu — la base est mono-AZ hors production — coûte davantage.
-`terraform output rds_multi_az` tranche en une commande.
+Entre les deux premiers, le réflexe est de savoir **lequel** : restaurer une base
+saine parce qu'une zone est tombée coûte des heures pour rien, et attendre une
+bascule qui n'aura pas lieu — la base est mono-AZ hors production — coûte
+davantage. `terraform output rds_multi_az` tranche en une commande.
+
+Le troisième n'est pas un runbook d'incident : il se déroule avant une campagne
+de recette, et il porte la liste des gestes que seule une session humaine avec
+des identifiants AWS peut poser.
 
 ## Objectifs de continuité (CDC §4.14)
 

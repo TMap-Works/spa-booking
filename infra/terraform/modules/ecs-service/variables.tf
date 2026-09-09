@@ -299,6 +299,90 @@ variable "scale_out_cooldown_seconds" {
   }
 }
 
+variable "off_hours_shutdown" {
+  description = <<-EOT
+    Arrêt programmé des services hors heures ouvrées — le « environnement
+    arrêtable hors heures ouvrées » du skill aws-infra §9 et du CDC §4.16, en
+    Terraform plutôt qu'en geste manuel.
+
+    `null` — le défaut — ne pose aucune planification : c'est le réglage de la
+    production, qu'on n'arrête jamais, et celui d'un environnement dont
+    personne n'a encore décidé les horaires.
+
+    Renseigné, le module pose **deux actions planifiées par service** sur la
+    cible d'auto-scaling :
+
+      * `stop_cron` ramène `min_capacity` et `max_capacity` à **zéro** —
+        Application Auto Scaling réduit alors `desired_count` à zéro, les tâches
+        s'arrêtent, et la facture Fargate de l'environnement cesse de courir ;
+      * `start_cron` les restaure aux valeurs déclarées par chaque service —
+        relever la capacité minimale d'une cible au-dessus de sa capacité
+        courante fait immédiatement redémarrer les tâches manquantes.
+
+    Trois choses à savoir avant de s'en servir :
+
+    1. **Rien d'autre ne s'arrête.** L'ALB, la base, le cache, les endpoints
+       d'interface et la NAT Gateway continuent d'être facturés : ce réglage
+       coupe le calcul, pas l'environnement. Arrêter la base est une décision
+       distincte, et elle a ses propres effets de bord — voir le README de ce
+       module.
+    2. **Un `terraform apply` réveille l'environnement.** Une action planifiée
+       modifie la cible d'auto-scaling elle-même : après l'arrêt du soir, la
+       cible porte `0/0` là où l'état Terraform déclare les capacités du
+       service. Le `apply` suivant les rétablit, donc redémarre les tâches, et
+       l'arrêt du soir suivant les recouche. C'est le comportement voulu — un
+       déploiement lancé à 23 h sur cet environnement doit pouvoir aboutir —
+       mais il faut savoir que `plan` montrera cette dérive-là toutes les nuits.
+    3. **Les crons sont des crons d'Application Auto Scaling** : six champs,
+       `cron(minutes heures jour-du-mois mois jour-de-semaine année)`, et non la
+       forme à cinq champs d'un crontab Unix.
+
+    Pour lever l'arrêt — une recette qui doit tourner un week-end, une
+    démonstration un soir :
+
+      * ponctuellement, sans toucher au code :
+        `aws application-autoscaling register-scalable-target
+         --service-namespace ecs --scalable-dimension ecs:service:DesiredCount
+         --resource-id service/<cluster>/<service> --min-capacity 1 --max-capacity 2`
+        — la prochaine action planifiée reprendra la main ;
+      * durablement : repasser cette variable à `null` et appliquer.
+  EOT
+
+  type = object({
+    # 20 h et 7 h, du lundi au vendredi. Le week-end reste éteint de lui-même :
+    # l'arrêt du vendredi soir n'est suivi d'aucun démarrage avant lundi matin.
+    stop_cron  = optional(string, "cron(0 20 ? * MON-FRI *)")
+    start_cron = optional(string, "cron(0 7 ? * MON-FRI *)")
+
+    # Fuseau des deux expressions. Sans lui, Application Auto Scaling lit les
+    # crons en UTC : « 20 h » deviendrait 21 h l'hiver et 22 h l'été à Paris,
+    # c'est-à-dire deux heures de Fargate payées pour rien la moitié de l'année.
+    timezone = optional(string, "Europe/Paris")
+  })
+  default = null
+
+  # `try(…, true)` et non `var.off_hours_shutdown == null || …` : l'opérateur `||`
+  # de Terraform n'est pas court-circuitant au sens où on l'attend — les deux
+  # opérandes sont évalués, et lire un attribut sur `null` lève avant que la
+  # disjonction n'ait pu trancher. C'est exactement ce qu'a montré
+  # `terraform validate` sur `envs/dev`, qui ne compose pas ce réglage.
+  validation {
+    condition = try(alltrue([
+      for expression in [var.off_hours_shutdown.stop_cron, var.off_hours_shutdown.start_cron] :
+      can(regex("^(cron\\(.+\\)|rate\\(.+\\)|at\\(.+\\))$", expression))
+    ]), true)
+    error_message = "stop_cron et start_cron doivent être des expressions Application Auto Scaling — `cron(...)`, `rate(...)` ou `at(...)`. Un cron y compte six champs, année comprise."
+  }
+
+  # Le `try` est **à l'intérieur** du `can`, et pas l'inverse : `can` avale
+  # l'erreur d'accès à un attribut de `null` et rend `false`, que `try` n'a alors
+  # plus aucune raison de rattraper. La règle refusait ainsi le défaut du module.
+  validation {
+    condition     = can(regex("^[A-Za-z]+(/[A-Za-z0-9_+-]+){1,2}$|^UTC$", try(var.off_hours_shutdown.timezone, "UTC")))
+    error_message = "off_hours_shutdown.timezone doit être un fuseau IANA — `Europe/Paris`, `Indian/Antananarivo` — ou `UTC`."
+  }
+}
+
 variable "log_retention_days" {
   description = "Rétention des journaux CloudWatch : 30 jours en dev et staging, 90 en production (skill aws-infra §8). Sans rétention explicite, les journaux sont conservés indéfiniment et la facture monte sans bruit."
   type        = number
