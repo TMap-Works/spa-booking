@@ -164,10 +164,43 @@ export const receivedEmailSuppressionReasonSchema = z
  * `null` sur une adresse vivante — qui est l'état de la quasi-totalité du
  * fichier. Un front qui distingue « absent » de « vide » finit par afficher
  * `undefined`.
+ *
+ * ## Pourquoi `anonymizedAt` est ici — #529
+ *
+ * Parce que **l'avis de suppression d'adresse ne se lit pas sans lui**. Une
+ * fiche anonymisée porte l'adresse `anonymise-<uuid>@anonymise.invalid`, mais
+ * garde les deux colonnes de suppression posées du temps où l'adresse existait :
+ * l'écran affichait donc « plus aucun envoi ne part vers
+ * `anonymise-…@anonymise.invalid` · prévenez la cliente par téléphone » sur une
+ * personne effacée dont le numéro a été vidé par la même opération.
+ *
+ * La correction demandait de choisir entre deux gestes, et c'est **le contrat
+ * qui bouge** :
+ *
+ * - l'API émet déjà le champ (`CustomerDto.anonymizedAt`, posé par #81) ; il ne
+ *   manquait qu'ici, où Zod le retirait à la frontière. L'ajouter ne change donc
+ *   aucune réponse, seulement ce que le front a le droit de lire ;
+ * - l'autre geste — remettre `email_suppressed_at` et `email_suppression_reason`
+ *   à `NULL` en anonymisant — aurait effacé un fait de délivrabilité pour cacher
+ *   un défaut d'affichage, et coûté bien plus que le défaut. `notifications`
+ *   déduit « joignable par e-mail » de `emailSuppressedAt === null`
+ *   (`NotificationsRepository`, `ReminderSweepRepository`) : la fiche anonymisée
+ *   serait redevenue une destinataire, à une adresse en `.invalid` — un TLD
+ *   réservé par la RFC 2606, qui rebondit par construction. Un défaut de rendu
+ *   se serait ainsi payé en réputation d'envoi, partagée par tous les salons.
+ *
+ * `null` sur une fiche vivante, ce qui laisse l'avis de suppression se comporter
+ * exactement comme avant partout ailleurs.
  */
 export const customerSchema = customerSummarySchema.extend({
   internalNote: longTextSchema.nullable(),
   createdAt: utcInstantSchema,
+  /**
+   * Instant UTC de l'anonymisation, ou `null` — la fiche désigne encore
+   * quelqu'un. Daté, elle ne porte plus qu'un pseudonyme : ses rendez-vous et
+   * ses encaissements restent comptés, sans personne au bout.
+   */
+  anonymizedAt: utcInstantSchema.nullable(),
   /**
    * Instant UTC auquel l'adresse a cessé d'être écrite, ou `null` — l'adresse
    * est vivante. Stocké en UTC et **affiché dans le fuseau du salon** : une
