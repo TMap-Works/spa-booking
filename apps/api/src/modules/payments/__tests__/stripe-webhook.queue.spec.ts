@@ -3,6 +3,7 @@ import { DurableWebhookQueue } from '../stripe-webhook.queue';
 import type { StripeWebhookRepository } from '../stripe-webhook.repository';
 import type { StripeWebhookService } from '../stripe-webhook.service';
 import type { StripeWebhookEvent } from '../stripe-webhook.types';
+import { SYSTEM_CLOCK } from '../webhook-clock';
 import type { RetrySchedule, SweepSchedule } from '../webhook-retry.policy';
 import { FakeStripeWebhookRepository, recordingLogger } from './webhook.doubles';
 
@@ -34,7 +35,16 @@ const TENANT = '11111111-1111-4111-8111-111111111111';
 /** Trois tentatives, aucune attente : la borne s'observe sans faire patienter la suite. */
 const IMMEDIATE_RETRY: RetrySchedule = { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 };
 
-/** Un bail nul : toute livraison non tenue à l'instant même est reprenable. */
+/**
+ * Un bail nul : est reprenable ce dont le bail est **absent**, ou strictement
+ * antérieur à l'instant du balayage.
+ *
+ * Le prédicat est `claimed_at < now - leaseMs`, et il est strict : avec un bail
+ * nul, une livraison inscrite et balayée dans la même milliseconde n'est *pas*
+ * reprenable. Les cas de reprise ci-dessous ne s'y exposent pas — ils posent
+ * `claimedAt: null`, ce que laisse un processus tué —, et c'est ce qui leur
+ * évite d'avoir à déplacer le moindre instant.
+ */
 const IMMEDIATE_SWEEP: SweepSchedule = { intervalMs: 60_000, leaseMs: 0, batchSize: 10 };
 
 function eventOf(eventId: string, paymentIntentId = 'pi_1'): StripeWebhookEvent {
@@ -62,7 +72,14 @@ interface Assembled {
  * d'observer : un établissement, ou son absence.
  */
 function assemble(options: { tenantId?: string | null; retry?: RetrySchedule } = {}): Assembled {
-  const repository = new FakeStripeWebhookRepository();
+  // Une seule horloge, **câblée** dans le double comme dans la file (#523).
+  // La faire tenir par la coïncidence de deux valeurs par défaut la rendrait
+  // fausse au premier cas qui piloterait celle du double sans piloter celle de
+  // la file : le balayage comparerait alors son `now` réel au `claimed_at`
+  // d'une autre horloge — les deux horloges de #555, reconstituées dans le
+  // harnais même qui prétend les interdire.
+  const clock = SYSTEM_CLOCK;
+  const repository = new FakeStripeWebhookRepository(clock);
   const log = recordingLogger();
   const process = jest.fn().mockResolvedValue(undefined);
   const service = {
@@ -77,6 +94,12 @@ function assemble(options: { tenantId?: string | null; retry?: RetrySchedule } =
     log.logger,
     options.retry ?? IMMEDIATE_RETRY,
     IMMEDIATE_SWEEP,
+    // L'horloge du bail (#523) — la **même** instance que celle du double, ce
+    // qui est la propriété que le ticket tient : un seul instant de la pose du
+    // bail à sa péremption. Celle du système ici, parce que ce que ces cas
+    // observent est l'ordonnancement, et que les livraisons qu'ils font
+    // reprendre n'ont pas de bail du tout.
+    clock,
   );
 
   return { queue, repository, log, process };
