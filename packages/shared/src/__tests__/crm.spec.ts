@@ -46,6 +46,7 @@ const VALID_RECORD = {
   ...VALID_SUMMARY,
   internalNote: 'allergique au monoï',
   createdAt: '2026-09-01T08:00:00.000Z',
+  anonymizedAt: null,
   emailSuppressedAt: null,
   emailSuppressionReason: null,
 };
@@ -156,6 +157,37 @@ describe('l’adresse supprimée d’une fiche', () => {
     }
 
     expect(customerSchema.parse(VALID_RECORD).emailSuppressedAt).toBeNull();
+  });
+});
+
+/**
+ * L'anonymisation, telle que la fiche complète la porte — #529.
+ *
+ * Le champ existait dans la réponse de l'API depuis #81 (`CustomerDto`), mais
+ * pas dans ce contrat : Zod le retirait à la frontière, et le back-office n'avait
+ * donc aucun moyen de distinguer une fiche effacée d'une fiche vivante. C'est ce
+ * qui laissait l'avis d'adresse supprimée s'afficher sur une adresse en
+ * `.invalid`, en conseillant de joindre par téléphone une personne dont le numéro
+ * venait d'être vidé.
+ */
+describe('l’anonymisation d’une fiche', () => {
+  it('voyage sur la fiche complète, jamais sur le résumé qui alimente les listes', () => {
+    const parsed = customerSchema.parse({
+      ...VALID_RECORD,
+      anonymizedAt: '2026-09-08T09:00:00.000Z',
+    });
+
+    expect(parsed.anonymizedAt).toBe('2026-09-08T09:00:00.000Z');
+    expect(
+      customerSummarySchema.parse({ ...VALID_SUMMARY, anonymizedAt: '2026-09-08T09:00:00.000Z' }),
+    ).not.toHaveProperty('anonymizedAt');
+  });
+
+  it('est obligatoire et nullable — « fiche vivante » est un fait, pas un champ oublié', () => {
+    const { anonymizedAt: _omis, ...incomplete } = VALID_RECORD;
+
+    expect(customerSchema.safeParse(incomplete).success).toBe(false);
+    expect(customerSchema.parse(VALID_RECORD).anonymizedAt).toBeNull();
   });
 });
 
