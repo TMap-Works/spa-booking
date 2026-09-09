@@ -13,10 +13,10 @@
  * Il est **hors** de `lambda/delivery-events/`, le répertoire qu'`archive_file`
  * empaquette : un fichier de test n'a rien à faire dans l'artefact déployé, et
  * l'exclure par filtre serait un réglage de plus à ne pas oublier. Même
- * disposition que `dispatcher.smoke.mjs` et `reminder-sweeper.smoke.mjs`, et
- * même limite : ce dossier n'appartient à aucun espace de travail npm, si bien
- * que `npm run verify` ne le joue pas. L'issue de suivi qui porte ce câblage
- * vaut pour les trois.
+ * disposition que `dispatcher.smoke.mjs` et `reminder-sweeper.smoke.mjs`.
+ *
+ * Depuis #496, les trois sont jouées par `npm run verify` et par le job `test`
+ * de `ci.yml`, via la cible `test:smoke:lambda` et le lanceur `run-smoke.mjs`.
  */
 
 process.env.ENVIRONMENT = 'smoke';

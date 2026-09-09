@@ -99,6 +99,27 @@ jobs:
 
       - run: npm run test:unit
 
+      # Les handlers Lambda du module `notifications` ne sont couverts par aucun
+      # workspace : ce sont des `.mjs` sous `infra/terraform/`, empaquetés tels
+      # quels par `archive_file`, sans build ni cadre de test. Leurs fumigations
+      # sont la seule preuve exécutable de ce qu'ils **rendent** — le tri des
+      # échecs transitoires et permanents de la Lambda d'envoi (#67), l'absence
+      # d'adresse au journal de la Lambda de rebonds (#73), le découpage en lots
+      # du balayeur de rappels (#71). `terraform validate` ne lit pas de
+      # JavaScript, et aucune de ces trois affirmations ne se prouve en relisant
+      # le code.
+      #
+      # Elles ne tournaient nulle part jusqu'ici (#496) : une modification d'un
+      # handler pouvait casser le tri des issues sans qu'une ligne rougisse.
+      #
+      # Étape nommée plutôt que noyée dans `test:unit`, pour la même raison que
+      # l'isolation inter-tenant et la concurrence plus bas : quand elle rougit,
+      # elle nomme un handler Lambda, pas « un test unitaire ». Le lanceur
+      # découvre les `*.smoke.mjs` du dossier et refuse le lot vide — une
+      # barrière qui n'exerce rien serait verte pour rien (#326).
+      - name: Fumigation des Lambda de notification
+        run: npm run test:smoke:lambda
+
       # Contrat des cibles de test, tenu par une garde et non par un commentaire
       # (#274, étendu par #326). Les deux étapes d'intégration appellent les
       # cibles **feuilles**, pas l'alias `test:integration` : celui-ci enchaîne

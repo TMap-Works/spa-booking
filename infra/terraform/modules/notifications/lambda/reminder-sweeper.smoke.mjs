@@ -13,10 +13,10 @@
  * Il est **hors** de `lambda/reminder-sweeper/`, le répertoire qu'`archive_file`
  * empaquette : un fichier de test n'a rien à faire dans l'artefact déployé.
  *
- * Il n'est pas joué par `npm run verify`, pour la même raison que la fumigation
- * de la Lambda d'envoi : ce dossier n'appartient à aucun espace de travail npm,
- * et l'y rattacher demanderait de toucher le `package.json` de la racine. C'est
- * l'objet de l'issue #496, qui couvrira les deux d'un même geste.
+ * Depuis #496, il est joué par `npm run verify` et par le job `test` de
+ * `ci.yml`, comme les fumigations de la Lambda d'envoi et de la Lambda de
+ * rebonds : la cible `test:smoke:lambda` appelle `run-smoke.mjs`, qui découvre
+ * les `*.smoke.mjs` de ce dossier.
  */
 
 process.env.ENVIRONMENT = 'smoke';
