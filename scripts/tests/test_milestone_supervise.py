@@ -3032,5 +3032,138 @@ class UnSeulSuperviseur(unittest.TestCase):
         self.assertIn("WARN", avant_retour)
 
 
+class RepriseApresRedemarrage(unittest.TestCase):
+    """La relance ne doit pas se prendre elle-même pour un orchestrateur (#564).
+
+    Nuit du 8 au 9 septembre : le run s'arrête sur une retenue de quota, la
+    machine redémarre et tue le superviseur. La veille fait son travail à 07:00
+    — « du travail reste et aucun superviseur ne bat, relance » — et le
+    superviseur lancé meurt deux secondes plus tard sur « quelqu'un orchestre
+    déjà ce run ». Ce qui venait d'être écrit dans le journal, ce sont les
+    `resumed` et `reconciled` que la relance elle-même produit.
+
+    Le run est resté immobile cinq heures et demie, quota revenu.
+    """
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="sup-journal-"))
+        (self.dir / "journal.ndjson").touch()
+        self.patch = mock.patch.object(sup, "current_run_dir", return_value=self.dir)
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def ecrire(self, *events):
+        with (self.dir / "journal.ndjson").open("w", encoding="utf-8") as flux:
+            for event in events:
+                flux.write(json.dumps(event) + "\n")
+
+    def il_y_a(self, secondes):
+        return datetime.fromtimestamp(time.time() - secondes,
+                                      timezone.utc).isoformat()
+
+    def test_les_marqueurs_de_reprise_ne_font_pas_un_orchestrateur(self):
+        """Le cas exact de la nuit : un vrai travail ancien, une reprise récente."""
+        self.ecrire(
+            {"ts": self.il_y_a(8 * 3600), "kind": "run", "status": "leg_ended",
+             "message": "étape 1 en 1h17 — terminée"},
+            {"ts": self.il_y_a(2), "kind": "run", "status": "resumed",
+             "message": "run inachevé repris automatiquement"},
+            {"ts": self.il_y_a(1), "kind": "run", "status": "reconciled",
+             "message": "0 correction(s) sur 10 ticket(s) ouverts"},
+        )
+        self.assertFalse(sup.orchestrator_active())
+
+    def test_un_vrai_travail_recent_retient_toujours(self):
+        """Le garde de #130 doit continuer de tenir : c'est sa raison d'être."""
+        self.ecrire(
+            {"ts": self.il_y_a(30), "kind": "ticket", "actor": "agent",
+             "phase": "implementation", "message": "module posé"},
+            {"ts": self.il_y_a(2), "kind": "run", "status": "resumed",
+             "message": "run inachevé repris automatiquement"},
+        )
+        self.assertTrue(sup.orchestrator_active())
+
+    def test_un_journal_qui_n_a_que_sa_propre_ouverture_ne_retient_pas(self):
+        """Sur un run neuf, le repli sur le `mtime` ferait passer la trace de
+        l'armement pour du travail — et le superviseur se refuserait à démarrer
+        sur sa propre empreinte."""
+        self.ecrire(
+            {"ts": self.il_y_a(3), "kind": "run", "status": "resumed",
+             "message": "run inachevé repris automatiquement"},
+            {"ts": self.il_y_a(1), "kind": "run", "status": "reconciled",
+             "message": "0 correction(s)"},
+        )
+        self.assertIsNone(sup.journal_activity(ignore_status=sup.RESUME_MARKERS))
+        self.assertFalse(sup.orchestrator_active())
+
+    def test_le_guetteur_de_silence_voit_toujours_tout(self):
+        """`journal_activity()` sans filtre ne change pas : une réconciliation
+        reste une preuve de vie pour le guetteur, sinon il couperait une étape
+        qui vient de s'ouvrir."""
+        self.ecrire({"ts": self.il_y_a(5), "kind": "run", "status": "reconciled",
+                     "message": "0 correction(s)"})
+        vu = sup.journal_activity()
+        self.assertIsNotNone(vu)
+        self.assertLess(time.time() - vu, 60)
+
+    def test_les_battements_restent_ecartes_des_deux_cotes(self):
+        self.ecrire(
+            {"ts": self.il_y_a(4000), "kind": "run", "status": "leg_started",
+             "message": "étape 1"},
+            {"ts": self.il_y_a(1), "kind": "run", "beat": True,
+             "message": "étape en vol"},
+        )
+        self.assertFalse(sup.orchestrator_active())
+
+
+class VeilleSurPortable(unittest.TestCase):
+    """La veille ne doit pas être débranchée par la batterie (#564).
+
+    `schtasks /Create` n'expose aucun drapeau d'alimentation et applique les
+    défauts d'un poste fixe. Au matin du 9 septembre, la tâche comptait 81
+    réveils manqués sur une machine qui est un portable.
+    """
+
+    def test_l_armement_reprend_les_reglages_d_alimentation(self):
+        with mock.patch.object(sup, "write_watchdog_cmd"), \
+             mock.patch.object(sup, "schtasks",
+                               return_value=subprocess.CompletedProcess([], 0, "", "")), \
+             mock.patch.object(sup, "unbind_from_battery") as repris, \
+             mock.patch.object(sup, "os") as faux_os:
+            faux_os.name = "nt"
+            self.assertTrue(sup.arm_watchdog(5))
+        repris.assert_called_once()
+
+    def test_les_trois_reglages_sont_ceux_qui_manquaient(self):
+        appels = []
+
+        def espion(cmd, **kwargs):
+            appels.append(" ".join(cmd))
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+
+        with mock.patch.object(sup.subprocess, "run", side_effect=espion), \
+             mock.patch.object(sup.os, "name", "nt"):
+            self.assertTrue(sup.unbind_from_battery())
+        script = appels[0]
+        self.assertIn("DisallowStartIfOnBatteries = $false", script)
+        self.assertIn("StopIfGoingOnBatteries = $false", script)
+        self.assertIn("StartWhenAvailable = $true", script)
+        self.assertIn("Set-ScheduledTask", script)
+        # Sur l'objet existant, et non reconstruit : un jeu de réglages neuf
+        # réécrirait aussi ce qu'on ne veut pas toucher.
+        self.assertIn("$t.Settings", script)
+        self.assertNotIn("New-ScheduledTaskSettingsSet", script)
+
+    def test_un_echec_n_annule_pas_l_armement(self):
+        """La tâche existe et fonctionne sur secteur : on le dit, on continue."""
+        rate = subprocess.CompletedProcess([], 1, "", "accès refusé")
+        with mock.patch.object(sup.subprocess, "run", return_value=rate), \
+             mock.patch.object(sup.os, "name", "nt"):
+            self.assertFalse(sup.unbind_from_battery())
+
+
 if __name__ == "__main__":
     unittest.main()
