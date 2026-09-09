@@ -60,8 +60,17 @@
   // `eslint-rules` porte le plugin ESLint local : ses règles sont en CommonJS
   // (ESLint charge sa configuration avant tout compilateur TypeScript), mais
   // leurs déclarations et leur suite de tests sont typées comme le reste.
+  // `prisma` porte le jeu de données de recette (`seed.ts`), exécuté par
+  // `npm run db:seed` : il est typé comme le reste du paquet et doit l'être en
+  // continu — sans cette entrée, `npm run typecheck` ne le voyait pas et sa
+  // vérification restait un `tsc --noEmit` joué à la main (#588).
   // `tsconfig.build.json` restreint la compilation à `src` — rien de tout cela
   // n'entre dans `dist`.
-  "include": ["src/**/*.ts", "test/**/*.ts", "eslint-rules/**/*.ts"],
+  "include": [
+    "src/**/*.ts",
+    "test/**/*.ts",
+    "eslint-rules/**/*.ts",
+    "prisma/**/*.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

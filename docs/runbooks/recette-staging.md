@@ -206,9 +206,13 @@ statique (skill aws-infra §4).
 
 ```bash
 # depuis apps/api, DATABASE_URL pointant sur le tunnel
-DATABASE_URL="postgresql://…" SEED_TARGET=staging \
-  node --require ts-node/register prisma/seed.ts
+DATABASE_URL="postgresql://…" SEED_TARGET=staging npm run db:seed
 ```
+
+`npm run db:seed` délègue à `prisma db seed`, dont la clé `prisma.seed` du
+`package.json` porte la ligne de commande complète
+`node --require ts-node/register prisma/seed.ts` (#588). Celle-ci reste valable
+telle quelle — elle n'est simplement plus la seule.
 
 Le script est **idempotent** : le rejouer entre deux campagnes rafraîchit les
 dates des rendez-vous sans dupliquer une seule ligne. Il **refuse** de s'exécuter
@@ -311,6 +315,11 @@ comme un succès muet.
 Ces gestes ne sont **jouables par aucun agent** de ce dépôt : il n'y a ni CLI
 `aws`, ni identifiants, ni compte à atteindre. Ils sont la moitié non
 automatisable de l'issue #76, et font l'objet de l'issue de suivi **#588**.
+
+#588 portait aussi deux points de câblage qui, eux, ne demandaient pas AWS :
+`npm run db:seed` et `prisma db seed` invoquent désormais le seed, et
+`npm run typecheck` le couvre. Ils sont faits ; le tableau ci-dessous est tout
+ce qui reste de l'issue.
 
 | # | Geste | Ce qu'il prouve |
 |---|---|---|

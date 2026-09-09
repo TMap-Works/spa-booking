@@ -5,6 +5,20 @@
     "outDir": "dist",
     "types": ["node"]
   },
+  // Le bundle de production ne contient que `src`. `include` le garantit déjà —
+  // il **remplace** celui de `tsconfig.json` au lieu de s'y ajouter — mais
+  // `prisma` est nommé dans `exclude` pour que la garantie soit lisible : le jeu
+  // de données de recette est couvert par `npm run typecheck` (#588) et ne doit
+  // pour autant jamais partir dans l'image, ni y tirer `ts-node`. (`bcryptjs`,
+  // lui, est bien une dépendance d'exécution de l'API — `password.hasher.ts`
+  // l'utilise ; ce n'est pas le seed qui l'y met.)
   "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "test", "**/__tests__/**", "**/*.spec.ts"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "prisma",
+    "**/__tests__/**",
+    "**/*.spec.ts"
+  ]
 }

@@ -112,11 +112,11 @@ encaisser → mesurer » sans rien saisir à la main (CDC §4.13).
 ```bash
 # base locale du docker-compose.yml
 DATABASE_URL="postgresql://spa:spa@localhost:5433/spa_dev" SEED_TARGET=local \
-  node --require ts-node/register prisma/seed.ts
+  npm run db:seed
 
 # base de recette, depuis une session qui l'atteint (tunnel Session Manager)
 DATABASE_URL="<lu dans le secret d'exécution>" SEED_TARGET=staging \
-  node --require ts-node/register prisma/seed.ts
+  npm run db:seed
 ```
 
 **Deux établissements, et c'est le point.** Un seul tenant ne prouverait rien de
@@ -161,11 +161,24 @@ défaut fermé :
 `SEED_PASSWORD` change le mot de passe des comptes chargés (défaut
 `Recette-2026!`), `BCRYPT_COST` son coût de hachage (défaut 12, comme l'API).
 
-**Pas encore de `npm run db:seed`** : le raccourci `prisma db seed` demande une
-clé `prisma.seed` dans `apps/api/package.json`, et l'inscription du fichier dans
-`apps/api/tsconfig.json` le ferait entrer dans `npm run typecheck`. Les deux
-fichiers sont hors de l'empreinte de #76 ; c'est l'objet de l'issue de suivi
-#588.
+**Trois invocations équivalentes** depuis `apps/api`, depuis #588 :
+`npm run db:seed`, `prisma db seed` et la ligne de commande complète
+`node --require ts-node/register prisma/seed.ts`. Les variables d'environnement
+se posent de la même façon dans les trois cas.
+
+Elles sont équivalentes **par construction** et non par recopie : la ligne de
+commande n'est écrite qu'une fois, dans la clé `prisma.seed` du `package.json`,
+et le script `db:seed` se contente de déléguer à `prisma db seed`. Modifier
+l'invocation à un seul endroit suffit — les deux raccourcis ne peuvent pas
+diverger.
+
+`prisma/**/*.ts` figure aussi dans les `include` de `apps/api/tsconfig.json` :
+`npm run typecheck` couvre donc ce fichier, au lieu du `tsc --noEmit` joué à la
+main pendant #76. La compilation de production, elle, ne le voit pas —
+`tsconfig.build.json` restreint son `include` à `src` et nomme `prisma` dans son
+`exclude` : ni `seed.ts` ni `ts-node` n'entrent dans l'image. (`bcryptjs`, lui,
+y est de toute façon — c'est une dépendance d'exécution de l'API, utilisée par
+`src/modules/identity/password.hasher.ts` ; le seed ne fait que la partager.)
 
 ## Règles de migration
 
