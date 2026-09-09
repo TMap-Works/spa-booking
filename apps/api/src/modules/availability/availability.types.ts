@@ -7,16 +7,22 @@
  * schémas correspondants, et un champ ajouté d'un côté et pas de l'autre casse
  * le `tsc`.
  *
- * TODO(#536) : remplacer `StaffScheduleView`, `StaffScheduleEntryView` et
- * `ClosingDaysView` par les types inférés de
- * `packages/shared/src/schemas/availability.ts` reste souhaitable, et deux
- * choses s'y opposent, dont aucune ne se tranche depuis ce module. La première :
- * `z.infer<...>` ne porte pas `readonly`, là où toutes les vues de ce fichier le
- * sont — et `ClosingDaysView.weekdays` est précisément un tableau qu'on ne veut
- * pas voir réordonné par son lecteur. La seconde : `IsoWeekday` du contrat est
- * `number` et non l'union `1 | … | 7`, si bien que l'import **élargirait** le
- * type de tout le module — voir le `TODO(#536)` d'`availability.schedule.ts`,
- * qui décrit ce que cet élargissement casse, prédicat par prédicat.
+ * ## Écart assumé, tranché en #554 : ces vues restent des interfaces
+ *
+ * Remplacer `StaffScheduleView`, `StaffScheduleEntryView` et `ClosingDaysView`
+ * par les types inférés de `packages/shared/src/schemas/availability.ts` restait
+ * souhaitable, et deux choses s'y opposaient. La seconde a été levée :
+ * `IsoWeekday` du contrat est désormais l'union `1 | … | 7` et non plus
+ * `number`, si bien que l'import n'élargit plus rien — `availability.schedule.ts`
+ * réexporte le type du contrat depuis.
+ *
+ * La première, elle, ne se lève pas : `z.infer<...>` ne porte pas `readonly`, là
+ * où toutes les vues de ce fichier le sont — et `ClosingDaysView.weekdays` est
+ * précisément un tableau qu'on ne veut pas voir réordonné par son lecteur.
+ * Substituer rendrait modifiable en place ce que le service rend, pour n'y
+ * gagner qu'une écriture de moins. L'accord de forme est déjà tenu, et mieux :
+ * par les assertions de compilation de `dto/`, qui cassent le `tsc` sur un champ
+ * ajouté d'un seul côté. Ces interfaces restent donc, délibérément.
  *
  * ## Aucune de ces formes ne porte de `tenantId`
  *
@@ -75,7 +81,7 @@ export interface ClosingDaysView {
  * `staffId` restreint à un praticien ; son absence vaut « tous ceux qui
  * pratiquent le soin ».
  *
- * TODO(#536) : cette forme appartient au contrat d'API — `packages/shared`
+ * Écart assumé, tranché en #554 : cette forme appartient au contrat d'API — `packages/shared`
  * expose déjà l'homonyme `availabilityQuerySchema`, et les deux déclarations
  * sont ambiguës à l'import maintenant que ce module consomme le paquet.
  * **Attention à ce que la substitution vise** : depuis #442 le schéma
@@ -186,7 +192,7 @@ export interface DayAvailabilityView {
  * journée du salon appartient un instant, et regrouperait autrement que le
  * serveur.
  *
- * TODO(#536) : ces trois formes appartiennent au contrat d'API et sont décrites
+ * Écart assumé, tranché en #554 : ces trois formes appartiennent au contrat d'API et sont décrites
  * par `packages/shared/src/schemas/availability.ts` (`availabilitySlotSchema`,
  * `dayAvailabilitySchema`, `availabilityResponseSchema`) ; l'accord se vérifie
  * déjà à la frontière, dans `dto/availability.dto.ts`. Ce qui retient l'import

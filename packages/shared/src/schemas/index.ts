@@ -40,6 +40,7 @@ export {
   createStaffTimeOffRequestSchema,
   dayAvailabilitySchema,
   END_OF_DAY_LOCAL_TIME,
+  ISO_WEEKDAYS,
   isoWeekdayOf,
   isoWeekdaySchema,
   MAX_STAFF_SCHEDULE_ENTRIES,
