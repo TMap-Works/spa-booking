@@ -536,6 +536,17 @@ export const REPORTING_ERROR_CODES = {
    * requête sur les trois routes à la fois.
    */
   REPORT_WINDOW_TOO_WIDE: 'REPORT_WINDOW_TOO_WIDE',
+  /**
+   * Aucun entrepôt d'export n'est branché sur ce déploiement — pas de bucket,
+   * donc pas d'URL présignée à rendre.
+   *
+   * **503 et non 500** : ce n'est pas un défaut du code, c'est une capacité
+   * absente de l'environnement, et elle revient dès que le module Terraform
+   * `reporting-export` est composé. Même régime que l'expéditeur de
+   * notifications non configuré — défaut fermé, bruyant, jamais un export
+   * silencieusement vide.
+   */
+  REPORT_EXPORT_UNAVAILABLE: 'REPORT_EXPORT_UNAVAILABLE',
 } as const;
 
 /**
