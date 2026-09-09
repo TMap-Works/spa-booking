@@ -212,14 +212,21 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
 
   describe('frontière entre établissements', () => {
     it('encaisse et confirme chez le propriétaire, sans toucher au voisin', async () => {
+      // Le témoin d'intégrité est un établissement **à ce cas** (#555). `b` est
+      // partagé, et d'autres cas de cette suite l'encaissent délibérément : ce
+      // qu'on lirait alors chez lui ne dirait plus rien de la frontière, mais de
+      // l'ordre d'exécution. Un voisin que personne d'autre ne touche est le
+      // seul témoin dont le `PENDING` prouve quelque chose.
+      const voisin = await seedTenant('voisin-intact');
+
       await service.process(succeeded(a.paymentIntentId));
 
       expect(await paymentOf(a)).toMatchObject({ status: 'SUCCEEDED' });
       expect(await appointmentOf(a)).toMatchObject({ status: 'CONFIRMED' });
 
       // Le voisin est intact, dans les deux tables.
-      expect(await paymentOf(b)).toMatchObject({ status: 'PENDING', capturedAt: null });
-      expect(await appointmentOf(b)).toMatchObject({ status: 'PENDING' });
+      expect(await paymentOf(voisin)).toMatchObject({ status: 'PENDING', capturedAt: null });
+      expect(await appointmentOf(voisin)).toMatchObject({ status: 'PENDING' });
     });
 
     it('ignore une métadonnée qui désigne le voisin', async () => {
@@ -522,6 +529,21 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
    * 3. **la prise est un `UPDATE` conditionnel** : de deux instances qui
    *    reprennent la même livraison orpheline, une seule voit `count = 1`.
    *    C'est la base qui tranche, pas une fenêtre de code (ADR 0002).
+   * 4. **l'échéance d'une livraison est comparable à l'horloge du balayage**
+   *    (#555). Le prédicat de reprise confronte `next_attempt_at` au `now` que
+   *    l'appelant donne : si les deux ne viennent pas de la même horloge, une
+   *    livraison inscrite à l'instant peut être jugée « pas encore échue ».
+   *
+   * ## Chaque cas repart d'une file vide (#555)
+   *
+   * Le `beforeEach` ci-dessous vide `stripe_webhook_deliveries`. Ce n'est pas de
+   * l'hygiène décorative : sans lui, le verdict d'un cas dépend de ce que les
+   * précédents ont laissé — l'ordre du lot que `claimAbandonedDeliveries` rend
+   * est celui de `created_at`, et il est borné par `batchSize`. Cette
+   * dépendance n'a jamais fait rougir la suite (le relevé de #555 montre au plus
+   * quinze lignes et **un seul** candidat par balayage, très loin du plafond de
+   * vingt), mais elle rendait chaque cas illisible seul : ce qu'il prouve ne
+   * doit rien devoir à ce qui l'a précédé.
    */
   describe('file durable des livraisons (#409)', () => {
     const spool = async (tenant: SeededTenant, event: StripeWebhookEvent) =>
@@ -529,16 +551,60 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
         repository.spool({ event, serializationKey: `pi_${event.eventId}` }),
       );
 
-    /** Vieillit le bail d'une livraison — ce qu'un `SIGKILL` laisse derrière lui. */
+    /**
+     * Vieillit une livraison d'une minute — ce qu'un `SIGKILL` laisse derrière
+     * lui.
+     *
+     * **L'échéance vieillit avec le bail** (#555). Ce n'est pas une précaution
+     * de confort : une livraison qu'un processus mort a laissée derrière lui est
+     * échue depuis aussi longtemps que son bail est périmé. Ne vieillir que le
+     * bail laissait l'échéance à l'instant de l'inscription, à quelques
+     * millisecondes du `now` que le balayage se donne — et le verdict des trois
+     * cas de reprise se jouait sur cet écart-là.
+     */
     const abandon = async (deliveryId: string) => {
+      const aMinuteAgo = new Date(Date.now() - 60_000);
       await prismaUnscoped.stripeWebhookDelivery.update({
         where: { id: deliveryId },
-        data: { claimedAt: new Date(Date.now() - 60_000) },
+        data: { claimedAt: aMinuteAgo, nextAttemptAt: aMinuteAgo },
       });
     };
 
     const claimNow = async (leaseMs = 1_000) =>
       repository.claimAbandonedDeliveries({ now: new Date(), leaseMs, batchSize: 20 });
+
+    beforeEach(async () => {
+      // `deleteMany` nu, et sans danger : la base est jetable et n'appartient
+      // qu'à ce fichier (`utils/disposable-database.ts`). Les autres blocs de
+      // cette suite n'inscrivent aucune livraison — ils passent par
+      // `service.process`, qui n'a pas de file.
+      await prismaUnscoped.stripeWebhookDelivery.deleteMany({});
+    });
+
+    it('inscrit une livraison échue depuis l’horloge du balayage, pas celle du moteur', async () => {
+      // Le piège que #555 a mis au jour, et la seule raison pour laquelle les
+      // trois cas de reprise ci-dessous rougissaient une fois sur deux.
+      //
+      // `next_attempt_at` a pour défaut le `now()` du **serveur** ; le balayage
+      // le compare au `now` que son appelant lui donne, un `new Date()` du
+      // **processus**. Entre les deux, l'écart mesuré allait de 2 à 11 ms — et
+      // une livraison inscrite à l'instant se retrouvait « pas encore échue »
+      // dès que l'écart passait du mauvais côté. Le dépôt pose donc désormais
+      // les deux colonnes d'un même instant, celui du processus.
+      //
+      // La borne est `claimedAt`, et non `Date.now()` : c'est la seule
+      // comparaison qui reste dans une seule horloge, donc la seule qui puisse
+      // trancher sans dépendre de l'écart qu'on mesure ici.
+      const delivery = await spool(a, succeeded(a.paymentIntentId));
+
+      const row = await prismaUnscoped.stripeWebhookDelivery.findUniqueOrThrow({
+        where: { id: delivery?.id ?? '' },
+        select: { nextAttemptAt: true, claimedAt: true },
+      });
+
+      expect(row.claimedAt).not.toBeNull();
+      expect(row.nextAttemptAt.getTime()).toBeLessThanOrEqual(row.claimedAt?.getTime() ?? 0);
+    });
 
     it('inscrit la livraison sous l’établissement de la portée, jamais sous un autre', async () => {
       // Le dépôt ne fournit pas `tenant_id` — c'est l'extension qui le pose
@@ -607,7 +673,10 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
       const event = succeeded(a.paymentIntentId);
       const delivery = await spool(a, event);
 
-      expect((await claimNow()).map((taken) => taken.id)).not.toContain(delivery?.id);
+      // Un bail d'une minute, et non celui d'une seconde des cas de reprise :
+      // ce qui est prouvé ici est qu'un bail **non périmé** exclut du balayage,
+      // pas que ce cas s'exécute en moins d'une seconde (#555).
+      expect((await claimNow(60_000)).map((taken) => taken.id)).not.toContain(delivery?.id);
     });
 
     it('reprend une livraison dont le bail est périmé, et la relit intacte', async () => {
@@ -722,8 +791,9 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
       const delivery = await spool(a, succeeded(a.paymentIntentId));
       await prismaUnscoped.stripeWebhookDelivery.update({
         where: { id: delivery?.id ?? '' },
-        data: { payload: { forme: 'inconnue' }, claimedAt: new Date(Date.now() - 60_000) },
+        data: { payload: { forme: 'inconnue' } },
       });
+      await abandon(delivery?.id ?? '');
 
       expect((await claimNow()).map((taken) => taken.id)).not.toContain(delivery?.id);
       expect(
