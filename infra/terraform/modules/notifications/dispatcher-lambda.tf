@@ -1,7 +1,7 @@
 # Lambda d'envoi — le consommateur de la file de découplage.
 #
 # Le code vit dans `lambda/dispatcher/`, en clair et sans dépendance à
-# installer : le SDK AWS v3 est fourni par le runtime `nodejs20.x`, et `fetch`
+# installer : le SDK AWS v3 est fourni par le runtime `nodejs22.x`, et `fetch`
 # est natif depuis Node 18. C'est ce qui permet d'empaqueter la fonction avec un
 # simple `archive_file`, sans étape de construction en CI — donc sans qu'un
 # `terraform apply` dépende d'un artefact produit ailleurs.
@@ -152,7 +152,16 @@ resource "aws_lambda_function" "dispatcher" {
   # Runtime figé, et non pris en variable : le code utilise `fetch` natif et le
   # SDK v3 fourni par le runtime. Le faire varier depuis un environnement ferait
   # tourner le même fichier sur un socle qui ne porte ni l'un ni l'autre.
-  runtime = "nodejs20.x"
+  #
+  # `nodejs22.x` et non `nodejs20.x` : ce dernier est déprécié depuis le
+  # 30 avril 2026. Les fonctions déjà déployées continuent d'être invoquées, mais
+  # AWS bloque la création sur un runtime déprécié au 1ᵉʳ février 2027 et la mise
+  # à jour au 3 mars 2027 — c'est le `terraform apply` d'un environnement neuf
+  # qui cesserait alors de passer (#577). Les trois fonctions du module basculent
+  # ensemble, et le constat de fourniture du SDK a été refait sur le nouveau
+  # socle (README, « Le client Secrets Manager, et pourquoi l'archive reste
+  # vide »).
+  runtime = "nodejs22.x"
   handler = "index.handler"
 
   # Graviton : environ 20 % moins cher à durée égale, et cette fonction ne
