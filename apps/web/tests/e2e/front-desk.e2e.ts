@@ -50,31 +50,18 @@ test.describe('Comptoir', () => {
     await connexionComptoir(page, COMPTES.staff);
   });
 
-  test('création manuelle depuis le planning', async ({ page, request, jeu }) => {
+  /**
+   * La journée est **vide au départ**, et c'est le sujet du scénario.
+   *
+   * La vue jour ouvre une colonne par praticien du répertoire de l'établissement
+   * et non par praticien déjà occupé (#507) : une journée creuse rend donc une
+   * grille de créneaux libres, et le clic sur l'un d'eux ouvre le tiroir. Ce
+   * scénario a longtemps dû poser un rendez-vous par l'API pour faire exister
+   * une seule case cliquable — ce n'est plus nécessaire, et le retirer est ce
+   * qui prouve le troisième critère du ticket.
+   */
+  test('création manuelle depuis le planning', async ({ page, jeu }) => {
     const jour = jourDuScenario(0);
-    const jeton = await connecter(request, COMPTES.staff);
-
-    /**
-     * Une journée vide n'a **aucun créneau cliquable**, et ce n'est pas un
-     * défaut du test.
-     *
-     * En vue jour, `columnInputs` (`apps/web/lib/admin/calendar-grid.ts`) ouvre
-     * une colonne par praticien **ayant déjà un rendez-vous ce jour-là**. Une
-     * journée sans rien rend donc l'état vide « Aucun rendez-vous sur cette
-     * période » — pas une grille — et le seul point d'entrée du tiroir de
-     * création, le clic sur une case libre, n'existe pas.
-     *
-     * Poser un rendez-vous d'abord n'affaiblit pas le scénario : ce qu'il
-     * éprouve est la création **par le tiroir**, du choix de la cliente à
-     * l'apparition du bloc sur la grille. Le manque de point d'entrée sur une
-     * journée vide est un défaut du produit, consigné en issue de suivi plutôt
-     * que comblé depuis une suite de tests.
-     */
-    await poserRendezVous(request, jeton, {
-      serviceId: jeu.prestation.id,
-      clientId: compteClient(jeu),
-      leJour: jour,
-    });
 
     await test.step('Ouvrir un créneau libre du planning', async () => {
       await page.goto(chemins.calendrier(jour));
@@ -115,10 +102,10 @@ test.describe('Comptoir', () => {
 
     await test.step('Le rendez-vous apparaît sur le planning', async () => {
       await expect(tiroir(page)).toBeHidden({ timeout: 20_000 });
-      // Deux blocs, et non « au moins un » : celui de la mise en situation était
-      // déjà là, et un `.first()` visible passerait au vert sans que le tiroir
-      // ait rien créé.
-      await expect(blocRendezVous(page, CLIENTE_FICHIER)).toHaveCount(2, { timeout: 20_000 });
+      // Un bloc exactement : la journée était vide, celui-là est donc bien celui
+      // que le tiroir vient de créer. Un compte, et non un `.first()` visible,
+      // pour que l'assertion tombe si le tiroir n'a rien écrit.
+      await expect(blocRendezVous(page, CLIENTE_FICHIER)).toHaveCount(1, { timeout: 20_000 });
     });
   });
 

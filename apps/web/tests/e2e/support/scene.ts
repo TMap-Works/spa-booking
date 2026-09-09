@@ -66,7 +66,8 @@ const JOURS_PAR_PASSE = 6;
  * seconde tentative retrouve donc tout ce que la première a écrit. Sur un jour
  * figé, cela rendait les reprises de `retries` incapables de passer, et pour des
  * raisons qui n'accusaient rien de réel : « création manuelle » compte les blocs
- * du planning (`toHaveCount(2)`) et en aurait vu trois ; « report » vise 16:00,
+ * du planning (`toHaveCount(1)`, la journée partant vide depuis #507) et en
+ * aurait vu un de plus à chaque tentative ; « report » vise 16:00,
  * que la tentative précédente occupe déjà, et le déplacement se heurterait à la
  * contrainte d'exclusion. Une reprise qui échoue toujours n'est pas une reprise
  * — c'est un échec plus lent, doublé d'un message trompeur.

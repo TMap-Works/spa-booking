@@ -141,6 +141,9 @@ describe('premier critère — le tiroir s’ouvre sur le créneau cliqué', () 
         initialPeriods={{ 'jour:2026-08-26': [CONFIRME] }}
         loadError={null}
         services={[MASSAGE]}
+        // Ces deux cas partent d'une journée déjà occupée : la colonne vient du
+        // rendez-vous posé, pas du répertoire (#507).
+        staff={[]}
         tenantSlug={SLUG}
         timeZone={TIMEZONE}
         view="jour"
@@ -165,6 +168,9 @@ describe('premier critère — le tiroir s’ouvre sur le créneau cliqué', () 
         initialPeriods={{ 'jour:2026-08-26': [CONFIRME] }}
         loadError={null}
         services={[MASSAGE]}
+        // Ces deux cas partent d'une journée déjà occupée : la colonne vient du
+        // rendez-vous posé, pas du répertoire (#507).
+        staff={[]}
         tenantSlug={SLUG}
         timeZone={TIMEZONE}
         view="jour"

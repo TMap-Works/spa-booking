@@ -130,6 +130,9 @@ function renderBoard(periods: Readonly<Record<string, readonly Appointment[]>>):
       initialPeriods={periods}
       loadError={null}
       services={CATALOGUE}
+      // Les colonnes de ces cas viennent des rendez-vous qu'ils posent : le
+      // report se joue entre deux blocs, pas sur une journée creuse (#507).
+      staff={[]}
       tenantSlug={SLUG}
       timeZone={TIMEZONE}
       view="jour"

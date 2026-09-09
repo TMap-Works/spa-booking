@@ -1,4 +1,4 @@
-import type { Appointment, PublicTenant, Service } from '@spa/shared';
+import type { Appointment, PublicTenant, Service, StaffMember } from '@spa/shared';
 import { redirect } from 'next/navigation';
 
 import {
@@ -6,6 +6,7 @@ import {
   fetchAppointments,
   fetchPublicTenant,
   fetchServices,
+  fetchStaffMembers,
 } from '@/lib/api-client';
 import { calendarFailureMessage } from '@/lib/admin/calendar-failure';
 import {
@@ -62,6 +63,17 @@ import { adminCalendarPath, adminLoginPath } from '../paths';
  * être plus rapide que le tunnel client. Leur échec ne casse pas le planning —
  * consulter l'agenda et poser un rendez-vous sont deux gestes, et le premier
  * n'a pas à tomber parce que le second est indisponible.
+ *
+ * ## Le répertoire des praticiens fait les colonnes de la vue jour (#507)
+ *
+ * `GET /v1/staff?activeOnly=true` est lu ici, de front avec le reste. C'est lui
+ * qui donne une colonne à chaque praticien, occupé ou non : sans lui, une journée
+ * creuse n'avait aucune colonne, donc aucune case libre, donc aucun moyen de
+ * poser depuis le planning le premier rendez-vous de la journée — le seul point
+ * d'entrée du tiroir de création étant le clic sur une case libre.
+ *
+ * La route est au seuil `STAFF`, comme l'agenda : elle n'exclut donc personne de
+ * ceux à qui le rail annonce « Planning ».
  *
  * ## Les écritures que l'API ne sert pas encore
  *
@@ -123,8 +135,18 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
   // conditionnent pas, et les enchaîner ferait payer la somme des deux
   // allers-retours à l'écran dont le ticket demande justement qu'il soit plus
   // rapide que le tunnel public.
-  const [services, loaded] = await Promise.all([
+  const [services, staff, loaded] = await Promise.all([
     fetchServices(accessToken, { activeOnly: true }).catch((): readonly Service[] => []),
+    // Les praticiens **actifs** seuls : ce sont les colonnes de la vue jour, et
+    // une fiche suspendue ne prend plus de rendez-vous — lui ouvrir une colonne
+    // inviterait à en poser un. Celles qui portent déjà un rendez-vous ce
+    // jour-là gardent malgré tout leur colonne (`buildCalendarBoard`).
+    //
+    // Même régime d'échec que le catalogue : le planning se consulte sans le
+    // répertoire, et le faire tomber pour lui reviendrait à fermer l'agenda
+    // parce qu'une liste annexe n'a pas répondu. Sans lui, la vue jour retrouve
+    // simplement son comportement d'avant #507.
+    fetchStaffMembers(accessToken, { activeOnly: true }).catch((): readonly StaffMember[] => []),
     Promise.all(
       [anchor, shiftAnchor(view, anchor, -1), shiftAnchor(view, anchor, 1)].map(async (target) => {
         try {
@@ -177,6 +199,7 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
         initialPeriods={periods}
         loadError={loadError}
         services={services}
+        staff={staff}
         tenantSlug={tenantSlug}
         timeZone={tenant.timezone}
         view={view}
