@@ -63,7 +63,17 @@ seul fichier de jetons.
 | Statuts de rendez-vous | `--spa-color-status-{confirmed,pending,completed,cancelled,no-show}` et leur `-surface` | « annulé » n'est pas « erreur », « honoré » n'est pas « information » : les fondre dans les rôles d'état interdirait de repeindre l'agenda sans repeindre les messages d'erreur |
 | Heure courante | `--spa-color-now` | « maintenant » n'est pas une erreur ; un salon doit pouvoir déplacer l'un sans l'autre |
 | Fond sombre | `--spa-color-surface-inverse-raised`, `--spa-color-text-inverse-muted`, `--spa-color-accent-inverse` | la barre latérale est sombre ; sans ces rôles, son survol et ses libellés secondaires s'écriraient en littéraux |
+| Graphiques (#75) | `--spa-color-chart-{primary,primary-strong,alert,hatch,grid,axis}` | une barre de chiffre d'affaires n'est pas un bouton « Réserver », et la part de no-shows n'est pas un message d'erreur : les fondre interdirait de repeindre un tableau de bord sans repeindre le produit |
 | Densité | `--spa-admin-{rail-width,topbar-height,panel-width,row-height,slot-height,time-gutter}` | la densité du back-office, réunie en un endroit |
+
+**Un thème sombre, et il ne redéfinit que des primitives.** `tokens.css` porte
+depuis #75 un bloc `@media (prefers-color-scheme: dark)` qui retourne les rampes
+— neutres, marque, états — sans toucher un seul `--spa-color-*`. Les rôles
+sémantiques délèguent tous à une primitive : les redéfinir toutes fait donc
+basculer les quarante-cinq rôles d'un coup, et aucune feuille de ce dossier n'a
+une ligne à changer. `tokens.test.mjs` refuse un rôle sémantique glissé dans ce
+bloc, et `contrast.test.mjs` rejoue **les mêmes paires** sur les deux jeux de
+valeurs.
 
 `--spa-color-accent` n'atteint que **3.09:1** sur la surface inversée : assez
 pour un repère, trop juste pour porter un libellé et trop juste pour survivre à
@@ -75,7 +85,7 @@ tableau ouvre une fiche, une maille de 30 min ouvre la création d'un rendez-vou
 et ni l'une ni l'autre ne descend sous la cible minimale. La densité vient des
 gouttières, du chrome minimal et de corps de texte plus petits.
 
-## 3. Les cinq écrans
+## 3. Les six écrans
 
 Toutes les heures affichées sont dans **le fuseau du salon**, écrit en clair dans
 le pied de la barre latérale et sous les champs d'horaire. Le stockage est en UTC.
@@ -263,6 +273,37 @@ Taxes et remises sont des lignes distinctes (`__total-row`), jamais fondues dans
 un prix — c'est ce qui rend le ticket vérifiable par le client et réconciliable
 par le salon.
 
+### 3.6 Reporting — `reporting.css`
+
+L'écran de fin de mois, et le seul qui ne serve aucune opération de comptoir
+(#75). Une barre de filtres, trois tuiles `.spa-admin-metric`, deux graphiques,
+deux tableaux.
+
+Les graphiques sont du **SVG calculé au rendu serveur**, sans bibliothèque : un
+graphique de barres est de la géométrie, et cent kilo-octets de dépendance sur
+un écran ouvert une fois par mois auraient été payés par tout le reste du
+bundle. Deux dispositions, choisies par l'axe et non devinées :
+`colonnes` pour un axe temporel — les journées se lisent de gauche à droite —,
+`barres` pour un axe nominal, où les noms ont besoin de place.
+
+Trois redondances font que **la couleur ne porte jamais l'information seule** :
+
+- la série secondaire — les no-shows dans le volume — est **hachurée**
+  (`.spa-admin-chart__hatch`) en plus d'être d'une autre teinte : un daltonisme
+  deutan ne distingue pas deux aplats voisins ;
+- la barre que le filtre désigne porte un **liseré** (`__bar--selected`) ;
+- un **tableau en lecture d'écran** (`.spa-visually-hidden`) donne toutes les
+  valeurs, dans l'ordre des barres. C'est la seule forme du graphique qu'un
+  lecteur non voyant reçoit, d'où les chiffres plutôt qu'un résumé.
+
+`.spa-admin-chart__canvas` défile horizontalement et `__svg` garde une largeur
+minimale : une période d'un an fait 366 colonnes, et les faire tenir dans la
+largeur de l'écran les réduirait à un trait d'un demi-pixel.
+
+Aucune couleur n'est écrite dans le SVG ni dans cette feuille : tout passe par
+les six rôles `--spa-color-chart-*`, ce qui fait basculer les graphiques en thème
+sombre sans une ligne à changer ici.
+
 ## 4. Accessibilité
 
 - **Rien n'est porté par la seule couleur** (WCAG 1.4.1) : chaque statut affiche
@@ -274,9 +315,10 @@ par le salon.
   rien déclarer.
 - **L'état courant s'appuie sur l'attribut** (`aria-current`), jamais sur une
   classe `--active` : l'état visuel ne peut alors pas diverger de l'état annoncé.
-- **Contraste AA vérifié par exécution** — les rôles ajoutés ici ont leurs paires
-  dans `contrast.test.mjs`, dérivées par statut pour qu'un sixième statut ne
-  puisse pas arriver sans être vérifié.
+- **Contraste AA vérifié par exécution, dans les deux thèmes** — les rôles
+  ajoutés ici ont leurs paires dans `contrast.test.mjs`, dérivées par statut pour
+  qu'un sixième statut ne puisse pas arriver sans être vérifié, et rejouées
+  telles quelles sur le jeu de valeurs sombre.
 - Les cibles cliquables respectent `--spa-target-min-size`, y compris la plus
   petite maille du calendrier.
 
@@ -288,7 +330,7 @@ npm run test:unit --workspace @spa/web   # ou : node --test apps/web/tests/
 
 | Suite | Ce qu'elle empêche |
 |---|---|
-| `contrast.test.mjs` | qu'une teinte passe sous le seuil AA, statuts d'agenda et barre latérale sombre compris |
+| `contrast.test.mjs` | qu'une teinte passe sous le seuil AA **dans l'un ou l'autre thème** — statuts d'agenda, barre latérale sombre et graphiques compris |
 | `tokens.test.mjs` | qu'une couleur littérale ou une primitive entre dans une feuille, qu'une feuille échappe aux points d'entrée, et que le chrome admin fuie vers le parcours public |
 | `admin-mockups.test.mjs` | que maquettes et CSS dérivent l'un de l'autre, qu'un écran perde son état vide ou son état de chargement, qu'un contrôle perde son libellé — **et qu'un champ de saisie de carte apparaisse sur l'écran d'encaissement** |
 

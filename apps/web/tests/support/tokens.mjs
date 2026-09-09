@@ -154,6 +154,62 @@ export function readTokenDeclarations() {
 }
 
 /**
+ * Déclarations du bloc `@media (prefers-color-scheme: dark)` de `tokens.css`.
+ *
+ * Le thème sombre (#75) ne redéfinit que des **primitives** : les rôles
+ * sémantiques du bloc `:root` clair délèguent tous à une primitive, si bien que
+ * les redéfinir toutes fait basculer les quarante-cinq rôles d'un coup. C'est
+ * `tokens.test.mjs` qui garde cette propriété ; ici on se contente de lire.
+ *
+ * L'accolade fermante du bloc de média est reconnue à sa position en début de
+ * ligne — celle du `:root` imbriqué est indentée. Même ruse que la lecture du
+ * `:root` clair, et pour la même raison : une analyse CSS complète pour deux
+ * blocs serait une dépendance de plus dans un dossier qui n'en a aucune.
+ */
+export function readDarkTokenDeclarations() {
+  const css = stripComments(readStyleSheet(tokensFile));
+  const media = css.match(/@media\s*\(prefers-color-scheme:\s*dark\)\s*\{([\s\S]*?)\n\}/);
+  if (!media) {
+    throw new Error('tokens.css : aucun bloc @media (prefers-color-scheme: dark) trouvé.');
+  }
+
+  const root = media[1].match(/:root\s*\{([\s\S]*?)\n\s+\}/);
+  if (!root) {
+    throw new Error('tokens.css : le bloc sombre ne déclare aucun :root.');
+  }
+
+  const declarations = new Map();
+  const pattern = /(--[\w-]+)\s*:\s*([^;]+);/g;
+  let match;
+  while ((match = pattern.exec(root[1])) !== null) {
+    declarations.set(match[1], match[2].trim().replace(/\s+/g, ' '));
+  }
+  return declarations;
+}
+
+/**
+ * Les jetons tels qu'ils se résolvent dans un thème donné.
+ *
+ * `clair` rend le bloc `:root` seul ; `sombre` rend ce même bloc **recouvert**
+ * par les primitives du bloc de média. C'est exactement ce que fait la cascade
+ * du navigateur, et c'est ce qui permet à `contrast.test.mjs` de rejouer les
+ * mêmes paires sur les deux thèmes sans les écrire deux fois.
+ */
+export function readSchemeDeclarations(scheme) {
+  const base = readTokenDeclarations();
+
+  if (scheme === 'clair') {
+    return base;
+  }
+
+  const merged = new Map(base);
+  for (const [name, value] of readDarkTokenDeclarations()) {
+    merged.set(name, value);
+  }
+  return merged;
+}
+
+/**
  * Suit une chaîne `var()` jusqu'à sa valeur littérale.
  *
  * C'est ce qui donne sa portée au test de contraste : il énonce des paires en
