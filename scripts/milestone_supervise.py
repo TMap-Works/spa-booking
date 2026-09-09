@@ -1371,7 +1371,16 @@ def current_run_milestone():
         return None
 
 
-def journal_activity():
+# Les marqueurs qu'écrit une **reprise**, et qui ne sont le travail de personne.
+# `milestone_run.py start` les pose à chaque ouverture ou reprise de run : le
+# `resumed` de l'orchestrateur, le `reconciled` du rapprochement avec GitHub, et
+# le `resumed` que l'humain contresigne. Ce sont des actes d'administration, pas
+# de l'orchestration — et les compter pour telle est ce qui empêchait la reprise
+# automatique de repartir (#564).
+RESUME_MARKERS = frozenset({"resumed", "reconciled"})
+
+
+def journal_activity(ignore_status=frozenset()):
     """Instant du dernier événement du journal qui ne soit **pas** un battement.
 
     Deux mesures reposent sur le journal — « quelqu'un orchestre-t-il ? » et
@@ -1389,6 +1398,12 @@ def journal_activity():
     Rend un epoch, ou None si aucun run n'est ouvert ou si le journal n'existe
     pas encore. Le `st_mtime` reste le repli chaque fois que le contenu ne dit
     rien d'exploitable : un journal sans horodatage vaut mieux qu'aucune mesure.
+
+    `ignore_status` écarte en plus certains statuts. Vide par défaut, et c'est
+    voulu : le guetteur de silence doit continuer de voir **toute** ligne comme
+    une preuve de vie, y compris une réconciliation, sinon il couperait une
+    étape qui vient à peine de s'ouvrir. Seul `orchestrator_active()` s'en sert,
+    parce que lui seul a besoin de distinguer le travail de sa propre relance.
     """
     directory = current_run_dir()
     if directory is None:
@@ -1399,12 +1414,20 @@ def journal_activity():
     except OSError:
         return None
     for event in reversed(journal_events(directory)):
-        if event.get("beat"):
+        if event.get("beat") or event.get("status") in ignore_status:
             continue
         try:
             return datetime.fromisoformat(event["ts"]).timestamp()
         except (KeyError, TypeError, ValueError):
             break             # journal sans horodatage lisible : le mtime fait foi
+    else:
+        # Le journal n'a rien d'autre que ce qu'on écarte. Sur un run neuf, il
+        # ne porte que les marqueurs de sa propre ouverture : rendre le `mtime`
+        # les ferait passer pour du travail, et le superviseur se refuserait à
+        # démarrer sur la trace de son propre armement. Sans filtre, en
+        # revanche, le repli d'origine tient — un journal de battements seuls
+        # reste un journal touché.
+        return None if ignore_status else touched
     return touched
 
 
@@ -1424,8 +1447,16 @@ def orchestrator_active():
     activité-là : il prouverait sa propre présence, ce que `supervisor_alive()`
     dit déjà mieux, et retarderait de dix minutes la relance d'un superviseur
     tué juste après avoir battu.
+
+    Les marqueurs d'une **reprise** ne comptent pas davantage, et pour la même
+    raison (#564) : `milestone_run.py start` écrit `resumed` et `reconciled`, or
+    c'est la commande même qui arme le superviseur. Les lire comme du travail
+    faisait qu'après un redémarrage, la veille relançait un superviseur qui
+    mourait dans la seconde sur la trace de son propre armement — trois fois de
+    suite dans la nuit du 8 au 9 septembre, et le run est resté immobile cinq
+    heures et demie alors que le quota était revenu.
     """
-    activity = journal_activity()
+    activity = journal_activity(ignore_status=RESUME_MARKERS)
     return activity is not None and time.time() - activity < ORCHESTRATOR_QUIET
 
 
@@ -1520,7 +1551,56 @@ def arm_watchdog(every):
         say("la tâche de veille n'a pas pu être enregistrée : "
             + (proc.stderr or proc.stdout).strip()[:200], "ERROR")
         return False
+    unbind_from_battery()
     say(f"veille armée · réveil toutes les {every} min · tâche « {TASK_NAME} »")
+    return True
+
+
+def unbind_from_battery():
+    """Retire de la veille les garde-fous d'alimentation posés par défaut.
+
+    `schtasks /Create` n'expose aucun drapeau pour eux, et ses défauts sont ceux
+    d'un poste fixe :
+
+        DisallowStartIfOnBatteries : True     ne démarre pas sur batterie
+        StopIfGoingOnBatteries     : True     s'arrête si la machine y passe
+        StartWhenAvailable         : False    ne rattrape aucun réveil manqué
+
+    La machine du projet est un portable — la même qui s'est endormie 4 h 15 sur
+    déclic de batterie (#489). Le filet de sécurité était donc débranché
+    précisément quand il sert : au matin du 9 septembre, la tâche comptait
+    **81 réveils manqués**, et le run était resté immobile cinq heures et demie
+    après un redémarrage nocturne (#564).
+
+    `StartWhenAvailable` compte autant que les deux autres : sans lui, les
+    réveils sautés pendant que la machine était éteinte ne sont pas rattrapés,
+    et la répétition reprend à l'échéance suivante comme si de rien n'était.
+
+    Les réglages sont repris **sur l'objet existant** plutôt que reconstruits :
+    un `New-ScheduledTaskSettingsSet` réécrirait aussi tout ce qu'on ne veut pas
+    toucher. Un échec n'annule pas l'armement — la tâche existe et fonctionne
+    sur secteur ; on le dit, et le run continue.
+    """
+    if os.name != "nt":
+        return False
+    script = (f"$t = Get-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction Stop;"
+              "$s = $t.Settings;"
+              "$s.DisallowStartIfOnBatteries = $false;"
+              "$s.StopIfGoingOnBatteries = $false;"
+              "$s.StartWhenAvailable = $true;"
+              f"Set-ScheduledTask -TaskName '{TASK_NAME}' -Settings $s | Out-Null")
+    try:
+        done = subprocess.run(["powershell", "-NoProfile", "-Command", script],
+                              capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        say(f"veille : réglages d'alimentation inchangés ({exc}) — elle ne "
+            "démarrera pas sur batterie", "WARN")
+        return False
+    if done.returncode != 0:
+        say("veille : réglages d'alimentation inchangés — elle ne démarrera pas "
+            "sur batterie : " + (done.stderr or done.stdout).strip()[:160], "WARN")
+        return False
     return True
 
 
