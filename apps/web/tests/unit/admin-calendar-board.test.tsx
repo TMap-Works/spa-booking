@@ -1,4 +1,4 @@
-import type { Appointment, AppointmentStatus, Service } from '@spa/shared';
+import type { Appointment, AppointmentStatus, Service, StaffMemberSummary } from '@spa/shared';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -130,6 +130,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   loadCalendarRangeAction.mockReset();
+  loadDeskServiceStaffAction.mockReset();
   push.mockReset();
   replace.mockReset();
 });
@@ -141,6 +142,7 @@ function renderBoard(
     readonly view?: 'jour' | 'semaine';
     readonly loadError?: string | null;
     readonly services?: readonly Service[];
+    readonly staff?: readonly StaffMemberSummary[];
   } = {},
 ): void {
   render(
@@ -149,6 +151,10 @@ function renderBoard(
       initialPeriods={overrides.periods ?? amorce}
       loadError={overrides.loadError ?? null}
       services={overrides.services ?? CATALOGUE}
+      // Répertoire vide par défaut : les colonnes se déduisent alors des seuls
+      // rendez-vous, ce qui laisse l'état vide observable là où ces cas
+      // l'éprouvent. Le répertoire garni a son propre bloc, plus bas (#507).
+      staff={overrides.staff ?? []}
       tenantSlug={SLUG}
       timeZone={TIMEZONE}
       view={overrides.view ?? 'jour'}
@@ -489,7 +495,9 @@ describe('états', () => {
   });
 
   it('explique un planning vide et propose la suite', async () => {
-    // Vide n'est pas une panne : le salon n'a peut-être rien ce jour-là.
+    // Vide n'est pas une panne : le salon n'a peut-être rien ce jour-là. Depuis
+    // #507 cet état ne reste que pour un salon sans aucune fiche praticien — ou
+    // un répertoire illisible, ce que `staff: []` représente ici.
     const user = userEvent.setup();
     loadCalendarRangeAction.mockResolvedValue({ ok: true, data: { appointments: [] } });
     renderBoard({ periods: { 'jour:2026-08-26': [] } });
@@ -505,5 +513,58 @@ describe('états', () => {
     renderBoard();
 
     expect(screen.getByText(/Indian\/Antananarivo/)).toBeDefined();
+  });
+});
+
+/**
+ * Poser le **premier** rendez-vous d'une journée — #507.
+ *
+ * Le tiroir de création n'a qu'un point d'entrée : le clic sur une case libre.
+ * Tant que les colonnes se déduisaient des seuls rendez-vous, une journée creuse
+ * rendait l'état vide, donc aucune case, donc aucun moyen d'ouvrir le tiroir là
+ * où on en a justement besoin.
+ */
+describe('journée sans rendez-vous — les deux premiers critères', () => {
+  const REPERTOIRE: readonly StaffMemberSummary[] = [
+    { id: 'staff-hasina', displayName: 'Hasina' },
+    { id: 'staff-tiana', displayName: 'Tiana' },
+  ];
+
+  function renderJourneeVide(): void {
+    loadCalendarRangeAction.mockResolvedValue({ ok: true, data: { appointments: [] } });
+    // Le tiroir demande les praticiens de la prestation dès son montage : sans
+    // réponse, l'effet part sur une promesse absente et le rendu échoue.
+    loadDeskServiceStaffAction.mockResolvedValue({
+      ok: true,
+      data: { staff: REPERTOIRE.map((membre) => ({ ...membre, isActive: true })) },
+    });
+    renderBoard({ periods: { 'jour:2026-08-26': [] }, staff: REPERTOIRE });
+  }
+
+  it('rend une grille de créneaux libres, et non l’état vide', () => {
+    renderJourneeVide();
+
+    expect(screen.queryByText('Aucun rendez-vous sur cette période')).toBeNull();
+    // Une colonne par praticienne du répertoire, chacune annoncée vide.
+    expect(screen.getByRole('list', { name: /^Hasina/ })).toBeDefined();
+    expect(screen.getByRole('list', { name: /^Tiana/ })).toBeDefined();
+    expect(screen.getAllByRole('button', { name: /libre — poser un rendez-vous/ }).length)
+      .toBeGreaterThan(0);
+  });
+
+  it('ouvre le tiroir « Nouveau rendez-vous » au clic sur une case libre', async () => {
+    const user = userEvent.setup();
+    renderJourneeVide();
+
+    const colonne = screen.getByRole('list', { name: /^Hasina/ });
+    // 08 h 00, la première rangée du cadrage par défaut.
+    await user.click(
+      within(colonne).getByRole('button', { name: /^08 h 00, libre — poser un rendez-vous/ }),
+    );
+
+    expect(screen.getByRole('heading', { name: 'Nouveau rendez-vous' })).toBeDefined();
+    // Le créneau cliqué amorce le tiroir : c'est bien celui de la journée creuse.
+    expect(screen.getByLabelText<HTMLInputElement>(/^Date/).value).toBe('2026-08-26');
+    expect(screen.getByLabelText<HTMLInputElement>(/Heure de début/).value).toBe('08:00');
   });
 });

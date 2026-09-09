@@ -236,7 +236,10 @@ describe('vue jour — une colonne par praticien', () => {
     expect(board.columns).toHaveLength(0);
   });
 
-  it('n’ouvre aucune colonne quand la journée est vide', () => {
+  it('n’ouvre aucune colonne quand la journée est vide et le répertoire inconnu', () => {
+    // Le repli d'avant #507 : sans répertoire, les colonnes se déduisent des
+    // seuls rendez-vous. Le planning reste consultable, mais la journée creuse
+    // n'offre aucun créneau — c'est pourquoi la page lit `GET /v1/staff`.
     const empty = buildCalendarBoard({
       view: 'jour',
       range: rangeOf('jour', '2026-08-26'),
@@ -246,6 +249,129 @@ describe('vue jour — une colonne par praticien', () => {
 
     expect(empty.columns).toHaveLength(0);
     expect(empty.appointmentCount).toBe(0);
+  });
+});
+
+/**
+ * Le premier rendez-vous d'une journée creuse — #507.
+ *
+ * Le tiroir de création ne s'ouvre que par un clic sur une case libre. Sans
+ * colonne, il n'y a pas de case, et le salon ne pouvait pas poser depuis le
+ * planning le rendez-vous d'un jour vide — précisément le geste qu'on en attend.
+ */
+describe('vue jour — le répertoire des praticiens fait les colonnes', () => {
+  const REPERTOIRE = [
+    { id: 'staff-tiana', displayName: 'Tiana' },
+    { id: 'staff-hasina', displayName: 'Hasina' },
+  ];
+
+  it('ouvre une colonne de créneaux libres sur une journée sans rendez-vous', () => {
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [],
+      staff: REPERTOIRE,
+      timeZone: TIMEZONE,
+    });
+
+    // Alphabétique, comme les colonnes déduites des rendez-vous : la place d'une
+    // colonne ne doit pas dépendre de l'ordre où l'API a rendu les fiches.
+    expect(board.columns.map((column) => column.name)).toEqual(['Hasina', 'Tiana']);
+    expect(board.columns.map((column) => column.meta)).toEqual([
+      'Aucun rendez-vous',
+      'Aucun rendez-vous',
+    ]);
+    expect(board.appointmentCount).toBe(0);
+  });
+
+  it('remplit ces colonnes de cases libres cliquables, praticien désigné', () => {
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [],
+      staff: REPERTOIRE,
+      timeZone: TIMEZONE,
+    });
+    const hasina = board.columns[0];
+
+    // 08 h – 20 h par défaut, soit 24 rangées de 30 minutes, toutes libres.
+    expect(hasina?.cells).toHaveLength(board.slotCount);
+    expect(hasina?.cells.every((cell) => cell.kind === 'free')).toBe(true);
+    // C'est ce couple que le clic transmet au tiroir : la journée du salon et
+    // l'heure civile, converties une fois avec le fuseau de l'établissement.
+    expect(hasina?.cells[0]).toMatchObject({ kind: 'free', day: '2026-08-26', time: '08:00' });
+    // Le praticien de la colonne, que le tiroir propose d'emblée.
+    expect(hasina?.staffId).toBe('staff-hasina');
+  });
+
+  it('range les rendez-vous du jour dans la colonne de leur praticien', () => {
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [
+        appointment({ startsAt: '2026-08-26T06:00:00.000Z', endsAt: '2026-08-26T07:00:00.000Z' }),
+      ],
+      staff: REPERTOIRE,
+      timeZone: TIMEZONE,
+    });
+
+    expect(board.columns.map((column) => column.meta)).toEqual(['1 RDV', 'Aucun rendez-vous']);
+    expect(eventsOf(board.columns[0]?.cells ?? [])).toHaveLength(1);
+    expect(eventsOf(board.columns[1]?.cells ?? [])).toHaveLength(0);
+  });
+
+  it('garde sa colonne à un praticien occupé mais absent du répertoire', () => {
+    // Fiche désactivée depuis que le rendez-vous a été posé : le répertoire
+    // actif ne la porte plus, et pourtant le rendez-vous existe. Le masquer
+    // ferait disparaître de l'écran un soin que le salon doit honorer.
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [
+        appointment({
+          startsAt: '2026-08-26T06:00:00.000Z',
+          endsAt: '2026-08-26T07:00:00.000Z',
+          staff: { id: 'staff-zo', displayName: 'Zo' },
+        }),
+      ],
+      staff: [{ id: 'staff-hasina', displayName: 'Hasina' }],
+      timeZone: TIMEZONE,
+    });
+
+    expect(board.columns.map((column) => column.name)).toEqual(['Hasina', 'Zo']);
+    expect(board.columns.map((column) => column.meta)).toEqual(['Aucun rendez-vous', '1 RDV']);
+  });
+
+  it('ne dédouble pas la colonne d’un praticien qui est dans les deux', () => {
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [
+        appointment({ startsAt: '2026-08-26T06:00:00.000Z', endsAt: '2026-08-26T07:00:00.000Z' }),
+        appointment({ startsAt: '2026-08-26T08:00:00.000Z', endsAt: '2026-08-26T09:00:00.000Z' }),
+      ],
+      staff: [{ id: 'staff-hasina', displayName: 'Hasina' }],
+      timeZone: TIMEZONE,
+    });
+
+    expect(board.columns).toHaveLength(1);
+    expect(board.columns[0]?.meta).toBe('2 RDV');
+  });
+
+  it('laisse la vue semaine sur ses journées, quel que soit le répertoire', () => {
+    const board = buildCalendarBoard({
+      view: 'semaine',
+      range: rangeOf('semaine', '2026-08-26'),
+      appointments: [],
+      staff: REPERTOIRE,
+      timeZone: TIMEZONE,
+    });
+
+    // Une colonne de la vue semaine est une journée de toute l'équipe : le
+    // répertoire n'y a rien à dire, et `staffId` y reste `null` pour que le
+    // tiroir laisse choisir plutôt que de deviner.
+    expect(board.columns).toHaveLength(7);
+    expect(board.columns.every((column) => column.staffId === null)).toBe(true);
   });
 });
 
