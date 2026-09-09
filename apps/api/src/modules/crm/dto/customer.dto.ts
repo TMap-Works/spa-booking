@@ -106,10 +106,12 @@ import type { Customer, CustomerPage, CustomerSummary } from '../crm.types';
  *    décalage hors du `bigint` de PostgreSQL — là où le contrat annonce un 400
  *    nommant le champ. Il faut d'abord porter la borne dans le contrat ;
  * 3. **`CustomerDto`.** `customerSchema` ne décrit ni `marketingConsent`, ni
- *    `marketingConsentAt`, ni `anonymizedAt` (#81). L'assertion « jeu de clés
- *    identique » ne peut donc pas être posée sur cette classe, contrairement à
- *    ses deux voisines ci-dessous ; c'est la même décision de contrat que le
- *    point 1.
+ *    `marketingConsentAt` (#81). L'assertion « jeu de clés identique » ne peut
+ *    donc pas être posée sur cette classe, contrairement à ses deux voisines
+ *    ci-dessous ; c'est la même décision de contrat que le point 1.
+ *    `anonymizedAt`, troisième champ de #81, **est** décrit par le contrat
+ *    depuis #529 — l'avis d'adresse supprimée du back-office ne se lit pas sans
+ *    lui.
  *
  * `EMAIL_SUPPRESSION_REASONS` reste importée du module `notifications` pour une
  * raison d'une autre nature, qui n'appelle aucune évolution du contrat : les deux
@@ -205,11 +207,14 @@ export class CustomerSummaryDto implements CustomerSummary {
  * `internalNote` n'apparaît que sur cette forme, servie au rang `STAFF` et
  * au-dessus. Aucune route du parcours public ne la référence.
  *
- * Elle porte **trois champs que `customerSchema` ne décrit pas** —
- * `marketingConsent`, `marketingConsentAt`, `anonymizedAt`, tous trois ajoutés
- * par #81. C'est pourquoi elle n'a pas les deux assertions de compilation de
- * `CustomerSummaryDto` : les poser ferait échouer le `tsc` sur un écart réel,
- * qui se referme dans le contrat et non ici (TODO(#536) de l'en-tête).
+ * Elle porte **deux champs que `customerSchema` ne décrit pas** —
+ * `marketingConsent` et `marketingConsentAt`, ajoutés par #81. C'est pourquoi
+ * elle n'a pas les deux assertions de compilation de `CustomerSummaryDto` : les
+ * poser ferait échouer le `tsc` sur un écart réel, qui se referme dans le
+ * contrat et non ici (TODO(#536) de l'en-tête). Le troisième champ de #81,
+ * `anonymizedAt`, a fait le chemin inverse en #529 : il est entré au contrat
+ * parce que le back-office en a besoin pour taire l'avis d'adresse supprimée sur
+ * une fiche anonymisée.
  */
 export class CustomerDto
   extends CustomerSummaryDto
@@ -677,7 +682,8 @@ export function toCustomerDto(customer: Customer): CustomerDto {
  *
  * Elles portent sur `CustomerSummaryDto` et `CustomerPageDto`, dont les jeux de
  * clés coïncident avec le contrat. `CustomerDto` en est privée, et l'en-tête dit
- * pourquoi : `customerSchema` ignore les trois champs de #81.
+ * pourquoi : `customerSchema` ignore `marketingConsent` et `marketingConsentAt`,
+ * les deux champs de #81 qu'aucun écran ne lit encore.
  */
 type CustomerSummaryWire = z.input<typeof customerSummarySchema>;
 type CustomerPageWire = z.input<typeof customerPageSchema>;

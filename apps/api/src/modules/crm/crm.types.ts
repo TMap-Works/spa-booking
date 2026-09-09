@@ -26,10 +26,12 @@ import type { EmailSuppressionReason } from '../notifications/notifications.type
  *    vigilance de #510 — même constat que dans `reporting.types.ts` ;
  * 2. **`readonly`.** `z.infer<...>` ne le porte pas, là où toutes les vues de ce
  *    fichier le sont ;
- * 3. **les trois champs de #81** — `marketingConsent`, `marketingConsentAt`,
- *    `anonymizedAt` —, que `customerSchema` ne décrit pas encore, et qui sont
- *    déjà la raison pour laquelle `CustomerDto` n'a pas d'assertion de jeu de
- *    clés (voir son en-tête).
+ * 3. **deux des trois champs de #81** — `marketingConsent` et
+ *    `marketingConsentAt` —, que `customerSchema` ne décrit pas encore, et qui
+ *    sont déjà la raison pour laquelle `CustomerDto` n'a pas d'assertion de jeu
+ *    de clés (voir son en-tête). Le troisième, `anonymizedAt`, est entré au
+ *    contrat en #529 : le back-office en a besoin pour taire l'avis d'adresse
+ *    supprimée sur une fiche anonymisée.
  */
 
 /**
