@@ -13,6 +13,7 @@ import {
   type StripeWebhookEvent,
   type WebhookFact,
 } from './stripe-webhook.types';
+import { WEBHOOK_CLOCK, type WebhookClock } from './webhook-clock';
 
 /**
  * Accès Prisma du point d'entrée des webhooks (api-module §2).
@@ -281,6 +282,12 @@ export class StripeWebhookRepository {
     // (tenant-isolation §3). La reprise des livraisons orphelines relève de la
     // même nécessité, et de la même dérogation.
     @Inject(PRISMA_UNSCOPED) private readonly prismaUnscoped: UnscopedPrismaClient,
+    // L'horloge du bail, injectée plutôt qu'appelée (#523). Toutes les dates
+    // que ce dépôt **pose** sur une ligne de file en viennent, et le balayage
+    // compare à cette même horloge : c'est ce qui rend le prédicat de reprise
+    // décidable sans dépendre de la vitesse de la machine. Voir
+    // `webhook-clock.ts`.
+    @Inject(WEBHOOK_CLOCK) private readonly clock: WebhookClock,
   ) {}
 
   /**
@@ -414,12 +421,22 @@ export class StripeWebhookRepository {
    * `reviveDeadDelivery` pose le sien. L'inscription était la seule à déléguer
    * la sienne au moteur — le double en mémoire, lui, ne l'a jamais fait
    * (`__tests__/webhook.doubles.ts`). C'est cette divergence-là qui est levée.
+   *
+   * ## Et l'horloge est **injectée**, pas appelée (#523)
+   *
+   * Poser l'instant depuis le processus a supprimé l'écart, mais l'a laissé
+   * **subi** : une suite ne pouvait qu'espérer que la machine irait assez vite
+   * entre l'inscription et la reprise. `WEBHOOK_CLOCK` rend cet instant
+   * pilotable — en exploitation `new Date()`, dans une suite une horloge qu'on
+   * avance d'un TTL pour périmer le bail sans attendre. L'invariant reste le
+   * même, et il est désormais tenu par construction : **une seule horloge de la
+   * pose du bail à sa péremption**.
    */
   public async spool(request: SpoolRequest): Promise<SpooledDelivery | null> {
     // Un seul instant pour les deux colonnes : la livraison est échue au moment
     // même où elle est prise en charge, et c'est l'instance qui l'inscrit qui la
     // tient.
-    const now = new Date();
+    const now = this.clock();
 
     try {
       const created = await this.prisma.stripeWebhookDelivery.create({
@@ -486,7 +503,7 @@ export class StripeWebhookRepository {
    * fait enterrer.
    */
   private async reviveDeadDelivery(request: SpoolRequest): Promise<SpooledDelivery | null> {
-    const now = new Date();
+    const now = this.clock();
     const revived = await this.prisma.stripeWebhookDelivery.updateMany({
       where: { eventId: request.event.eventId, status: 'DEAD' },
       data: {
@@ -558,7 +575,9 @@ export class StripeWebhookRepository {
         attempts: next.attempts,
         nextAttemptAt: next.nextAttemptAt,
         lastError: next.lastError,
-        claimedAt: new Date(),
+        // Reposé depuis l'horloge de la file, comme à l'inscription : le bail
+        // n'a qu'une seule horloge, de sa pose à sa péremption (#523).
+        claimedAt: this.clock(),
       },
     });
   }
@@ -608,6 +627,15 @@ export class StripeWebhookRepository {
    * la rendre ferait tomber le traitement à chaque tour de balayage, et la
    * laisser telle quelle la ferait reprendre indéfiniment. C'est très
    * exactement ce à quoi la file d'attente morte sert.
+   *
+   * ## L'instant vient de l'appelant, et il vient de la même horloge (#523)
+   *
+   * `claim.now` n'est pas une commodité de test : c'est la moitié gauche du
+   * prédicat de bail, dont la moitié droite (`claimed_at`, `next_attempt_at`)
+   * a été posée par `spool`. Les deux doivent venir de la **même** horloge —
+   * `WEBHOOK_CLOCK`, celle que `DurableWebhookQueue.sweepOnce` lit avant
+   * d'appeler ici. Deux horloges de part et d'autre de cette comparaison, et le
+   * verdict se joue sur leur écart : c'est #555, mot pour mot.
    */
   public async claimAbandonedDeliveries(claim: ClaimRequest): Promise<SpooledDelivery[]> {
     const staleBefore = new Date(claim.now.getTime() - claim.leaseMs);

@@ -14,6 +14,7 @@ import {
 } from './stripe-webhook.repository';
 import { StripeWebhookService } from './stripe-webhook.service';
 import { serializationKeyOf, type StripeWebhookEvent } from './stripe-webhook.types';
+import { WEBHOOK_CLOCK, type WebhookClock } from './webhook-clock';
 import {
   hasAttemptsLeft,
   retryDelayMs,
@@ -155,6 +156,10 @@ export class DurableWebhookQueue
     private readonly logger: StructuredLogger,
     @Inject(WEBHOOK_RETRY_SCHEDULE) private readonly retry: RetrySchedule,
     @Inject(WEBHOOK_SWEEP_SCHEDULE) private readonly sweep: SweepSchedule,
+    // La même horloge que celle du dépôt, et c'est tout l'intérêt : le `now`
+    // que le balayage donne et le `claimed_at` que l'inscription a posé sont
+    // les deux côtés d'une seule comparaison (#523, #555).
+    @Inject(WEBHOOK_CLOCK) private readonly clock: WebhookClock,
   ) {}
 
   public async enqueue(event: StripeWebhookEvent): Promise<void> {
@@ -262,7 +267,7 @@ export class DurableWebhookQueue
 
     try {
       const abandoned = await this.repository.claimAbandonedDeliveries({
-        now: new Date(),
+        now: this.clock(),
         leaseMs: this.sweep.leaseMs,
         batchSize: this.sweep.batchSize,
       });
@@ -417,7 +422,7 @@ export class DurableWebhookQueue
       await this.tenants.runWithTenant(delivery.tenantId, async () =>
         this.repository.rescheduleDelivery(delivery.id, {
           attempts,
-          nextAttemptAt: new Date(Date.now() + delayMs),
+          nextAttemptAt: new Date(this.clock().getTime() + delayMs),
           lastError: reason,
         }),
       );

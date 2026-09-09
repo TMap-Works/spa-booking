@@ -59,6 +59,48 @@ function withScopedTenant<T>(data: Omit<T, 'tenantId' | 'tenant'>): T {
 
 const PRICE = { amountMinor: 7000, currency: 'EUR' } as const;
 
+/**
+ * Le TTL du bail que cette suite se donne (#523).
+ *
+ * Sa valeur n'a aucune importance, et c'est tout l'intérêt : la péremption
+ * s'obtient en avançant l'horloge de `LEASE_MS + 1`, jamais en attendant que
+ * `LEASE_MS` s'écoule. Une durée d'une seconde et une durée d'une heure
+ * produiraient donc exactement le même temps d'exécution — et le même verdict.
+ *
+ * Elle est prise loin du calendrier de production (60 s) pour qu'aucun lecteur
+ * ne la confonde avec lui : ce qui est éprouvé ici est la mécanique du bail, pas
+ * le réglage qu'`DEFAULT_SWEEP_SCHEDULE` en fait.
+ */
+const LEASE_MS = 30_000;
+
+/**
+ * L'horloge que la suite pilote — la moitié gauche du prédicat de bail (#523).
+ *
+ * Elle est **figée** : deux lectures sans `advance` rendent le même instant.
+ * C'est la propriété qui rend les cas de reprise décidables, parce qu'elle
+ * supprime la seule chose dont ils dépendaient encore — le temps que la machine
+ * met à passer d'une ligne à la suivante.
+ *
+ * Elle rend un `Date` neuf à chaque lecture : l'appelant qui le mute — Prisma
+ * n'en fait rien, mais rien ne l'en empêcherait — ne déplace pas l'horloge de
+ * tout le monde.
+ */
+class SteerableClock {
+  private instant = new Date();
+
+  public readonly now = (): Date => new Date(this.instant);
+
+  /** Repart de l'instant réel, au début de chaque cas. */
+  public reset(): void {
+    this.instant = new Date();
+  }
+
+  /** Fait passer le temps sans en laisser passer — aucun `sleep`, jamais. */
+  public advance(milliseconds: number): void {
+    this.instant = new Date(this.instant.getTime() + milliseconds);
+  }
+}
+
 /** Ce qu'un établissement de cette suite porte : un rendez-vous et son encaissement. */
 interface SeededTenant {
   readonly id: string;
@@ -93,6 +135,8 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
   let service: StripeWebhookService;
   let tenants: TenantContextService;
   let log: ReturnType<typeof recordingLogger>;
+  /** L'horloge injectée au dépôt — c'est la suite qui décide de l'heure (#523). */
+  const clock = new SteerableClock();
 
   let a: SeededTenant;
   let b: SeededTenant;
@@ -188,7 +232,7 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
     // Le client scopé est construit **par la fabrique de l'application** : c'est
     // l'extension que `DatabaseModule` applique réellement qui est exercée.
     const scoped = createScopedPrismaClient(prismaUnscoped);
-    repository = new StripeWebhookRepository(scoped, prismaUnscoped);
+    repository = new StripeWebhookRepository(scoped, prismaUnscoped, clock.now);
     log = recordingLogger();
     tenants = new TenantContextService();
     service = new StripeWebhookService(repository, tenants, log.logger);
@@ -544,6 +588,25 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
    * quinze lignes et **un seul** candidat par balayage, très loin du plafond de
    * vingt), mais elle rendait chaque cas illisible seul : ce qu'il prouve ne
    * doit rien devoir à ce qui l'a précédé.
+   *
+   * ## Et le bail est **piloté**, jamais subi (#523)
+   *
+   * Voilà la cause de l'instabilité, écrite là où elle se lit : les trois cas de
+   * reprise ci-dessous ne rougissaient pas parce que le moteur de file avait
+   * tort, mais parce que leur verdict se jouait sur **l'écart entre deux
+   * horloges** — celle qui pose le bail et celle qui le compare — et que cet
+   * écart dépend de la charge de la machine. #568 a ramené les deux colonnes de
+   * l'inscription sur l'horloge du processus, ce qui a supprimé l'écart ; il
+   * restait que l'instant était *subi*, et qu'un cas ne pouvait périmer un bail
+   * qu'en espérant que la machine irait assez vite.
+   *
+   * Cette suite injecte donc son horloge (`WEBHOOK_CLOCK`) et la déplace
+   * elle-même : {@link LEASE_MS} est le TTL du bail, `expireLease()` avance
+   * l'horloge juste au-delà. Le bail périme parce qu'on l'a décidé, à la
+   * milliseconde près, et le verdict ne doit plus rien à l'ordonnanceur du
+   * système d'exploitation. **Aucune attente n'a été ajoutée** : faire passer le
+   * temps sans en laisser passer est très exactement ce qu'un `sleep` aurait
+   * masqué au lieu de corriger.
    */
   describe('file durable des livraisons (#409)', () => {
     const spool = async (tenant: SeededTenant, event: StripeWebhookEvent) =>
@@ -551,27 +614,22 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
         repository.spool({ event, serializationKey: `pi_${event.eventId}` }),
       );
 
-    /**
-     * Vieillit une livraison d'une minute — ce qu'un `SIGKILL` laisse derrière
-     * lui.
-     *
-     * **L'échéance vieillit avec le bail** (#555). Ce n'est pas une précaution
-     * de confort : une livraison qu'un processus mort a laissée derrière lui est
-     * échue depuis aussi longtemps que son bail est périmé. Ne vieillir que le
-     * bail laissait l'échéance à l'instant de l'inscription, à quelques
-     * millisecondes du `now` que le balayage se donne — et le verdict des trois
-     * cas de reprise se jouait sur cet écart-là.
-     */
-    const abandon = async (deliveryId: string) => {
-      const aMinuteAgo = new Date(Date.now() - 60_000);
-      await prismaUnscoped.stripeWebhookDelivery.update({
-        where: { id: deliveryId },
-        data: { claimedAt: aMinuteAgo, nextAttemptAt: aMinuteAgo },
-      });
-    };
+    const claimNow = async (leaseMs = LEASE_MS) =>
+      repository.claimAbandonedDeliveries({ now: clock.now(), leaseMs, batchSize: 20 });
 
-    const claimNow = async (leaseMs = 1_000) =>
-      repository.claimAbandonedDeliveries({ now: new Date(), leaseMs, batchSize: 20 });
+    /**
+     * Périme le bail de tout ce qui est en file — ce qu'un `SIGKILL` laisse
+     * derrière lui.
+     *
+     * L'horloge avance d'un TTL et d'une milliseconde ; rien n'attend. La
+     * livraison devient donc reprenable par les **deux** moitiés du prédicat
+     * d'un seul geste : son bail est périmé (`claimed_at < now - leaseMs`) et
+     * son échéance est passée (`next_attempt_at <= now`), puisque l'inscription
+     * a posé les deux colonnes au même instant.
+     */
+    const expireLease = () => {
+      clock.advance(LEASE_MS + 1);
+    };
 
     beforeEach(async () => {
       // `deleteMany` nu, et sans danger : la base est jetable et n'appartient
@@ -579,22 +637,27 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
       // cette suite n'inscrivent aucune livraison — ils passent par
       // `service.process`, qui n'a pas de file.
       await prismaUnscoped.stripeWebhookDelivery.deleteMany({});
+      // L'horloge repart d'une origine propre : ce qu'un cas prouve ne doit rien
+      // devoir au temps qu'un autre a fait passer.
+      clock.reset();
     });
 
-    it('inscrit une livraison échue depuis l’horloge du balayage, pas celle du moteur', async () => {
+    it('inscrit une livraison à l’instant exact de l’horloge de la file', async () => {
       // Le piège que #555 a mis au jour, et la seule raison pour laquelle les
       // trois cas de reprise ci-dessous rougissaient une fois sur deux.
       //
-      // `next_attempt_at` a pour défaut le `now()` du **serveur** ; le balayage
-      // le compare au `now` que son appelant lui donne, un `new Date()` du
-      // **processus**. Entre les deux, l'écart mesuré allait de 2 à 11 ms — et
-      // une livraison inscrite à l'instant se retrouvait « pas encore échue »
-      // dès que l'écart passait du mauvais côté. Le dépôt pose donc désormais
-      // les deux colonnes d'un même instant, celui du processus.
+      // `next_attempt_at` avait pour défaut le `now()` du **serveur** ; le
+      // balayage le compare au `now` que son appelant lui donne. Entre les deux,
+      // l'écart mesuré allait de 2 à 11 ms — et une livraison inscrite à
+      // l'instant se retrouvait « pas encore échue » dès que l'écart passait du
+      // mauvais côté.
       //
-      // La borne est `claimedAt`, et non `Date.now()` : c'est la seule
-      // comparaison qui reste dans une seule horloge, donc la seule qui puisse
-      // trancher sans dépendre de l'écart qu'on mesure ici.
+      // L'égalité est stricte, et c'est ce que l'horloge injectée permet
+      // d'exiger (#523) : les deux colonnes portent l'instant que la file a lu,
+      // et rien qui vienne du moteur. Une seule des deux qui retomberait sur un
+      // `now()` PostgreSQL ferait échouer ce cas au lieu d'aller déstabiliser
+      // les suivants.
+      const spooledAt = clock.now();
       const delivery = await spool(a, succeeded(a.paymentIntentId));
 
       const row = await prismaUnscoped.stripeWebhookDelivery.findUniqueOrThrow({
@@ -602,8 +665,8 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
         select: { nextAttemptAt: true, claimedAt: true },
       });
 
-      expect(row.claimedAt).not.toBeNull();
-      expect(row.nextAttemptAt.getTime()).toBeLessThanOrEqual(row.claimedAt?.getTime() ?? 0);
+      expect(row.claimedAt?.getTime()).toBe(spooledAt.getTime());
+      expect(row.nextAttemptAt.getTime()).toBe(spooledAt.getTime());
     });
 
     it('inscrit la livraison sous l’établissement de la portée, jamais sous un autre', async () => {
@@ -670,13 +733,15 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
     it('ne reprend pas une livraison dont le bail est frais', async () => {
       // L'instance qui a inscrit la livraison la traite : la reprendre ferait
       // partir deux traitements de front.
+      //
+      // L'horloge n'a pas bougé depuis l'inscription : le bail est frais **par
+      // construction**, et non parce que ce cas se serait exécuté en moins d'un
+      // TTL (#523). C'est l'exact complément du cas suivant, à un
+      // `expireLease()` près.
       const event = succeeded(a.paymentIntentId);
       const delivery = await spool(a, event);
 
-      // Un bail d'une minute, et non celui d'une seconde des cas de reprise :
-      // ce qui est prouvé ici est qu'un bail **non périmé** exclut du balayage,
-      // pas que ce cas s'exécute en moins d'une seconde (#555).
-      expect((await claimNow(60_000)).map((taken) => taken.id)).not.toContain(delivery?.id);
+      expect((await claimNow()).map((taken) => taken.id)).not.toContain(delivery?.id);
     });
 
     it('reprend une livraison dont le bail est périmé, et la relit intacte', async () => {
@@ -685,7 +750,7 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
       // quelle instance la reprend sans savoir qu'une autre est morte.
       const event = succeeded(a.paymentIntentId);
       const delivery = await spool(a, event);
-      await abandon(delivery?.id ?? '');
+      expireLease();
 
       const claimed = await claimNow();
       const taken = claimed.find((candidate) => candidate.id === delivery?.id);
@@ -701,9 +766,13 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
       // Deux instances ECS balaient en même temps. Sous `READ COMMITTED`,
       // PostgreSQL réévalue le prédicat après avoir pris le verrou de ligne :
       // une seule voit `count = 1`.
+      //
+      // Les deux balayages partagent l'horloge de la suite, donc le **même**
+      // `now` : ce qui les départage est le verrou de ligne, jamais l'écart de
+      // quelques millisecondes qui séparait autrefois leurs deux `new Date()`.
       const event = succeeded(a.paymentIntentId);
       const delivery = await spool(a, event);
-      await abandon(delivery?.id ?? '');
+      expireLease();
 
       const [left, right] = await Promise.all([claimNow(), claimNow()]);
       const winners = [...left, ...right].filter((taken) => taken.id === delivery?.id);
@@ -793,7 +862,7 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
         where: { id: delivery?.id ?? '' },
         data: { payload: { forme: 'inconnue' } },
       });
-      await abandon(delivery?.id ?? '');
+      expireLease();
 
       expect((await claimNow()).map((taken) => taken.id)).not.toContain(delivery?.id);
       expect(
@@ -804,11 +873,15 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
       ).toMatchObject({ status: 'DEAD', claimedAt: null });
     });
 
-    it('replanifie sans relâcher le bail', async () => {
+    it('replanifie sans relâcher le bail, et le repose depuis la même horloge', async () => {
       // Cette instance tient toujours la livraison et va la reprendre après le
       // délai. Relâcher le bail ferait partir une seconde tentative de front.
       const delivery = await spool(a, succeeded(a.paymentIntentId));
-      const nextAttemptAt = new Date(Date.now() + 5_000);
+      // Le temps passe entre l'inscription et l'échec : c'est ce qui rend
+      // observable que le bail est **reposé** et non laissé tel quel (#523).
+      clock.advance(1_000);
+      const rescheduledAt = clock.now();
+      const nextAttemptAt = new Date(rescheduledAt.getTime() + 5_000);
 
       await tenants.runWithTenant(a.id, async () =>
         repository.rescheduleDelivery(delivery?.id ?? '', {
@@ -823,15 +896,18 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
         select: { attempts: true, nextAttemptAt: true, claimedAt: true, status: true },
       });
       expect(row).toMatchObject({ attempts: 1, status: 'PENDING' });
-      expect(row.claimedAt).not.toBeNull();
+      expect(row.claimedAt?.getTime()).toBe(rescheduledAt.getTime());
       expect(row.nextAttemptAt.getTime()).toBe(nextAttemptAt.getTime());
     });
 
     it('ne reprend pas une livraison dont l’échéance n’est pas venue', async () => {
       const delivery = await spool(a, succeeded(a.paymentIntentId));
+      // Bail relâché — donc prenable de ce côté-là — mais échéance dans le
+      // futur de l'horloge de la file : c'est bien `next_attempt_at` seul qui
+      // exclut la ligne, et le TTL n'y est pour rien.
       await prismaUnscoped.stripeWebhookDelivery.update({
         where: { id: delivery?.id ?? '' },
-        data: { nextAttemptAt: new Date(Date.now() + 60_000), claimedAt: null },
+        data: { nextAttemptAt: new Date(clock.now().getTime() + 60_000), claimedAt: null },
       });
 
       expect((await claimNow()).map((taken) => taken.id)).not.toContain(delivery?.id);

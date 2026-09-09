@@ -10,6 +10,7 @@ import type {
   StripeWebhookRepository,
 } from '../stripe-webhook.repository';
 import type { StripeWebhookEvent, WebhookFact } from '../stripe-webhook.types';
+import { SYSTEM_CLOCK, type WebhookClock } from '../webhook-clock';
 
 /**
  * Doubles du point d'entrée des webhooks — écrits une fois, partagés par les
@@ -141,6 +142,16 @@ export class FakeStripeWebhookRepository {
   /** Levée à la prochaine application — pour exercer le chemin « la file journalise et n'échoue pas ». */
   public failNext: Error | null = null;
 
+  /**
+   * L'horloge du bail, comme le vrai dépôt la reçoit (#523).
+   *
+   * Elle a un défaut parce qu'aucune suite unitaire n'a besoin de la piloter
+   * aujourd'hui — mais laisser le double appeler `new Date()` aurait rétabli, à
+   * l'endroit même où l'on croit lire le comportement du dépôt, l'instant
+   * ambiant que ce ticket retire.
+   */
+  public constructor(private readonly clock: WebhookClock = SYSTEM_CLOCK) {}
+
   public seed(payment: FakePayment): void {
     this.payments.set(payment.paymentIntentId, payment);
   }
@@ -206,10 +217,11 @@ export class FakeStripeWebhookRepository {
         return null;
       }
 
+      const revivedAt = this.clock();
       delivery.status = 'PENDING';
       delivery.attempts = 0;
-      delivery.claimedAt = new Date();
-      delivery.nextAttemptAt = new Date();
+      delivery.claimedAt = revivedAt;
+      delivery.nextAttemptAt = revivedAt;
       delivery.lastError = null;
 
       return {
@@ -221,6 +233,8 @@ export class FakeStripeWebhookRepository {
       };
     }
 
+    // Un seul instant pour les deux colonnes, comme le vrai dépôt (#555, #523).
+    const spooledAt = this.clock();
     const spooled: FakeDelivery = {
       id: randomUUID(),
       tenantId,
@@ -228,8 +242,8 @@ export class FakeStripeWebhookRepository {
       serializationKey: request.serializationKey,
       event: request.event,
       status: 'PENDING',
-      claimedAt: new Date(),
-      nextAttemptAt: new Date(),
+      claimedAt: spooledAt,
+      nextAttemptAt: spooledAt,
       lastError: null,
     };
     this.deliveries.set(spooled.id, spooled);
@@ -260,7 +274,7 @@ export class FakeStripeWebhookRepository {
     delivery.attempts = next.attempts;
     delivery.nextAttemptAt = next.nextAttemptAt;
     delivery.lastError = next.lastError;
-    delivery.claimedAt = new Date();
+    delivery.claimedAt = this.clock();
   }
 
   /** File d'attente morte : le bail est relâché, le statut exclut du balayage. */
