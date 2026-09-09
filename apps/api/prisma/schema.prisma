@@ -1808,9 +1808,38 @@ model StripeWebhookDelivery {
 
   /// L'instant à partir duquel la livraison est de nouveau tentable.
   ///
-  /// Posé par le réessai, avec la gigue de `retryDelayMs`. Le chemin normal ne
-  /// le lit pas : la file traite ce qu'elle vient d'inscrire sans attendre.
-  /// C'est le balayage qui s'en sert, et lui seul.
+  /// **Toujours daté depuis l'horloge du processus, jamais par le défaut du
+  /// moteur.** Trois chemins écrivent cette colonne, et chacun pose son propre
+  /// `Date` :
+  ///
+  /// | Écrivain | L'instant qu'il pose |
+  /// |---|---|
+  /// | `StripeWebhookRepository.spool` | l'inscription — échue tout de suite, la file traite sans attendre |
+  /// | `StripeWebhookRepository.reviveDeadDelivery` | la résurrection d'une ligne `DEAD`, redélivrée par Stripe |
+  /// | `DurableWebhookQueue.postpone` → `rescheduleDelivery` | le réessai, gigue de `retryDelayMs` comprise |
+  ///
+  /// Le `@default(now())` reste déclaré — il couvre une écriture qui viendrait
+  /// d'ailleurs —, mais le seul de ces chemins qui insère, `spool`, ne le laisse
+  /// plus décider ; les deux autres sont des mises à jour, qu'aucun défaut ne
+  /// couvre.
+  ///
+  /// La règle n'est pas une préférence de style, c'est le prédicat du balayage :
+  /// `claimAbandonedDeliveries` ne retient que les lignes vérifiant
+  /// `next_attempt_at <= claim.now`, où ce `now` est le `new Date()` que
+  /// `sweepOnce` lui passe. Laisser le moteur dater l'écriture mettrait deux
+  /// horloges de part et d'autre de la même comparaison, et une livraison
+  /// inscrite avec une horloge serveur de quelques millisecondes en avance
+  /// serait jugée « pas encore échue » par tout balayage dont le `now` précède
+  /// cette échéance. Sans portée en exploitation — le tour suivant arrive un
+  /// quart de minute plus tard et la reprend —, mais décisif pour une suite
+  /// d'intégration qui ne balaie qu'une fois : c'est là que le défaut de #555 se
+  /// voyait.
+  ///
+  /// Le garde-fou vaut donc chemin par chemin. Retirer le `nextAttemptAt: now`
+  /// de `spool` comme « redondant avec le défaut » restaurerait ce défaut en
+  /// silence. Le retirer d'un des deux `updateMany` ferait tout autre chose — un
+  /// défaut ne s'applique qu'à l'insertion : la colonne garderait l'échéance
+  /// précédente au lieu de la nouvelle.
   nextAttemptAt DateTime @default(now()) @map("next_attempt_at") @db.Timestamptz(6)
 
   /// Le bail : une instance tient cette livraison, et depuis quand.
