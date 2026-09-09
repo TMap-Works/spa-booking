@@ -43,6 +43,109 @@ output "vpc_flow_log_group_name" {
   value       = module.network.flow_log_group_name
 }
 
+# --- Registre d'images --------------------------------------------------------
+
+output "ecr_repository_urls" {
+  description = "URL des dépôts ECR, par application. C'est ce que `deploy-staging.yml` étiquette et pousse."
+  value       = module.ecr.repository_urls
+}
+
+output "api_image" {
+  description = "Image que la définition de tâche de l'API désigne actuellement — dépôt et étiquette. C'est la valeur à reprendre en `-var image_tag` avant tout `terraform apply` lancé à la main, faute de quoi le service reviendrait à l'étiquette d'amorçage."
+  value       = local.api_image
+}
+
+output "web_image" {
+  description = "Image que la définition de tâche du front désigne actuellement. Même étiquette que `api_image` — les deux images sortent du même commit."
+  value       = local.web_image
+}
+
+# --- Point d'entrée public ----------------------------------------------------
+
+output "alb_dns_name" {
+  description = "Nom DNS public de l'ALB. C'est l'hôte à poser dans la variable de dépôt APP_URL (`https://<ce nom>`) et à reprendre dans les clés APP_URL et API_URL du secret d'exécution."
+  value       = module.ecs_service.alb_dns_name
+}
+
+output "app_url" {
+  description = "Origine publique de l'environnement, telle qu'elle doit être posée en variable de dépôt APP_URL — et telle que le module l'injecte réellement dans la définition de tâche du front (#345). Elle vaut `public_base_url` si elle est fournie, `https://<alb_dns_name>` sinon."
+  value       = module.ecs_service.public_base_url
+}
+
+output "public_url_env_vars" {
+  description = "Variables d'environnement qui reçoivent `app_url` dans chaque définition de tâche. C'est ce qui prouve, sans ouvrir la console ECS, que le conteneur web connaît l'origine sous laquelle il est servi — sans quoi il refuse de démarrer (apps/web/instrumentation.ts)."
+  value       = module.ecs_service.public_url_env_vars
+}
+
+output "tls_certificate_is_self_signed" {
+  description = "Vrai tant qu'aucun `certificate_arn` n'est fourni : l'ALB porte alors le certificat auto-signé de repli, et la recette de bout en bout **ne peut pas** se jouer — ni les Server Components du front, ni les Lambda de notification n'acceptent un certificat non vérifiable. C'est le premier prérequis à lever avant une campagne de recette."
+  value       = var.certificate_arn == null
+}
+
+# --- Compute ------------------------------------------------------------------
+
+output "ecs_cluster_name" {
+  description = "Nom du cluster ECS — celui que `deploy-staging.yml` passe en `--cluster`."
+  value       = module.ecs_service.cluster_name
+}
+
+output "ecs_service_names" {
+  description = "Nom du service ECS, par application. Ce sont les noms que `deploy-staging.yml` passe en `--services`."
+  value       = module.ecs_service.service_names
+}
+
+output "migrate_task_definition_family" {
+  description = "Famille de la définition de tâche de migration, jouée avant chaque déploiement. Le rôle OIDC n'autorise `ecs:RunTask` que sur cette famille."
+  value       = aws_ecs_task_definition.migrate.family
+}
+
+output "off_hours_shutdown_enabled" {
+  description = "Vrai quand les services s'arrêtent hors heures ouvrées. Faux, ils tournent la nuit et le week-end — et le coût nominal de l'environnement passe au-dessus du seuil d'alerte du budget."
+  value       = module.ecs_service.off_hours_shutdown_enabled
+}
+
+output "off_hours_schedule" {
+  description = "Les deux expressions d'arrêt et de reprise, avec leur fuseau. C'est ce qu'on relit quand un service est introuvable un lundi matin — avant de chercher une panne qui n'existe pas."
+  value       = module.ecs_service.off_hours_schedule
+}
+
+output "off_hours_scheduled_action_names" {
+  description = "Noms des actions planifiées posées sur les cibles d'auto-scaling — deux par service, l'arrêt et la reprise."
+  value       = module.ecs_service.off_hours_scheduled_action_names
+}
+
+# --- Configuration d'exécution ------------------------------------------------
+
+output "api_runtime_secret_arn" {
+  description = "ARN du secret Secrets Manager portant les variables d'exécution de l'API. Terraform en crée le conteneur ; sa valeur est déposée hors Terraform (voir le README de envs/dev, qui vaut mot pour mot ici)."
+  value       = aws_secretsmanager_secret.api_runtime.arn
+}
+
+output "database_endpoint" {
+  description = "Point d'accès `hôte:port` de PostgreSQL, à composer dans la clé DATABASE_URL du secret d'exécution."
+  value       = module.database.endpoint
+}
+
+output "database_master_user_secret_arn" {
+  description = "ARN du secret où RDS dépose le mot de passe maître. C'est là que se lit le mot de passe à composer dans DATABASE_URL — jamais dans l'état Terraform."
+  value       = module.database.master_user_secret_arn
+}
+
+output "database_instance_class" {
+  description = "Classe d'instance réellement provisionnée. À confronter à `observability_rds_connections_threshold` : le maximum de connexions du moteur dépend de la mémoire de l'instance, et le seuil de l'alarme est saisi à la main dans main.tf."
+  value       = module.database.instance_class
+}
+
+output "redis_primary_endpoint" {
+  description = "Nom d'hôte du nœud primaire Redis, à composer dans la clé REDIS_URL du secret d'exécution — en `rediss://`, le chiffrement en transit étant activé."
+  value       = module.cache.primary_endpoint_address
+}
+
+output "redis_auth_token_secret_arn" {
+  description = "ARN du secret portant le jeton AUTH Redis, à reprendre dans REDIS_URL."
+  value       = module.cache.auth_token_secret_arn
+}
+
 # --- Délivrabilité e-mail -----------------------------------------------------
 
 # Toutes nulles tant que `notification_domain` n'est pas fourni : le module n'est
@@ -196,4 +299,132 @@ output "notification_alarms_notify" {
 output "notification_dashboard_name" {
   description = "Tableau de bord CloudWatch de la chaîne d'envoi : issue des livraisons, profondeur et âge des files, invocations et durée de la Lambda."
   value       = one(module.notifications[*].dashboard_name)
+}
+
+# --- Supervision (#78) --------------------------------------------------------
+
+output "observability_alarm_names" {
+  description = "Alarmes CloudWatch de l'environnement, dans l'ordre où elles se lisent : entrée publique, calcul, données. C'est la liste à confronter au tableau du CDC §4.11 avant un go-live — et la recette est l'endroit où l'on découvre qu'une d'entre elles se déclenche en fonctionnement nominal."
+  value       = module.observability.alarm_names
+}
+
+output "observability_alarms_notify" {
+  description = "Vrai quand les alarmes sont branchées sur un topic SNS. Faux, elles changent d'état dans la console sans prévenir personne — ce qui est pire que pas d'alarme du tout, puisqu'on se croit couvert."
+  value       = module.observability.alarms_notify
+}
+
+output "observability_rds_connections_threshold" {
+  description = "Nombre de connexions à partir duquel l'alarme se déclenche. À revérifier après tout changement de `instance_class` : le maximum du moteur dépend de la mémoire de l'instance, et il est saisi à la main dans main.tf faute d'être exposé par une métrique. Cet environnement tourne sur `db.t4g.medium`, la même classe que dev et la production — voir `database_instance_class`, qui rend ce qui est réellement provisionné."
+  value       = module.observability.rds_connections_threshold
+}
+
+output "observability_dashboard_name" {
+  description = "Tableau de bord transverse de l'environnement — trafic et 5xx de l'ALB, latence, CPU et mémoire des services, connexions et espace disque de la base."
+  value       = module.observability.dashboard_name
+}
+
+output "xray_traced_services" {
+  description = "Services dont la tâche porte le sidecar `aws-xray-daemon` et dont le rôle peut publier ses segments."
+  value       = module.ecs_service.xray_traced_services
+}
+
+output "xray_sampling_rule_name" {
+  description = "Règle d'échantillonnage X-Ray de l'environnement. Elle filtre sur `spa-staging-*` : les trois environnements partagent un compte, donc un jeu de règles."
+  value       = module.observability.xray_sampling_rule_name
+}
+
+# --- Pare-feu applicatif (#79) ------------------------------------------------
+
+output "waf_web_acl_name" {
+  description = "Nom de la Web ACL protégeant l'ALB. C'est aussi la valeur de la dimension CloudWatch `WebACL` — celle à donner à `aws wafv2 get-sampled-requests` pour voir ce qui a été bloqué pendant une campagne de recette."
+  value       = module.waf.web_acl_name
+}
+
+output "waf_protects_anything" {
+  description = "Faux si la Web ACL n'est associée à aucune ressource : elle existe alors, ses règles sont là, ses métriques sont à zéro — ce qui ressemble à du calme et n'est qu'un pare-feu débranché."
+  value       = module.waf.protects_anything
+}
+
+output "waf_blocking_rule_groups" {
+  description = "Groupes de règles managés en mode blocage. Ceux qui n'y figurent pas comptent sans bloquer."
+  value       = module.waf.blocking_rule_groups
+}
+
+output "waf_counting_rule_groups" {
+  description = "Groupes de règles managés en observation. La métrique `CountedRequests` de chacun dit ce qu'il aurait bloqué : c'est elle qu'il faut lire avant de le faire passer en blocage."
+  value       = module.waf.counting_rule_groups
+}
+
+output "waf_log_group_name" {
+  description = "Groupe de journaux où atterrissent les décisions du WAF. C'est là qu'on lit quelle règle a bloqué quelle requête — la première chose à ouvrir quand un parcours de recette échoue sans erreur applicative."
+  value       = module.waf.log_group_name
+}
+
+# --- Sauvegarde et reprise d'activité (#82) -----------------------------------
+#
+# Les neuf valeurs que la vérification préalable du runbook de restauration lit
+# avant de commencer — `terraform output` plutôt que la console AWS, pour que le
+# relevé de l'exercice soit reproductible. C'est sur cet environnement que le
+# runbook se répète. Voir docs/runbooks/pra-restauration-rds.md.
+
+output "rds_backup_retention_period" {
+  description = "Rétention des sauvegardes automatiques RDS, en jours. Borne de la restauration à un instant donné : au-delà, il ne reste que le coffre AWS Backup."
+  value       = module.database.backup_retention_period
+}
+
+output "rds_multi_az" {
+  description = "Vrai quand une instance de secours veille dans une seconde zone. Faux ici : la perte d'une zone se répare par une restauration et non par une bascule — voir docs/runbooks/pra-bascule-az.md."
+  value       = module.database.multi_az
+}
+
+output "rds_availability_zone" {
+  description = "Zone de l'instance primaire. À relever avant l'incident : après une bascule, la valeur a changé, et c'est ce qui prouve que la bascule a eu lieu."
+  value       = module.database.availability_zone
+}
+
+output "backup_vault_name" {
+  description = "Coffre AWS Backup. Première commande du runbook : `aws backup list-recovery-points-by-backup-vault --backup-vault-name <cette valeur>`."
+  value       = module.backup.vault_name
+}
+
+output "backup_restore_role_arn" {
+  description = "Rôle à passer à `aws backup start-restore-job --iam-role-arn`. Il porte les droits de restauration en plus de ceux de sauvegarde."
+  value       = module.backup.role_arn
+}
+
+output "backup_retention_policy" {
+  description = "Rétentions effectivement posées, par cadence et en jours. Une cadence absente n'a pas de règle dans le plan — le palier mensuel n'existe pas sur cet environnement."
+  value       = module.backup.retention_policy
+}
+
+output "backup_continuous_enabled" {
+  description = "Vrai quand la sauvegarde continue est active dans le coffre — donc quand la restauration à un instant donné y est possible. C'est la seule règle qui tienne le RPO ≤ 1 h du CDC §4.14."
+  value       = module.backup.continuous_backup_enabled
+}
+
+output "backup_protects_anything" {
+  description = "Faux si le plan n'a aucune sélection : coffre et plan existent, règles posées, et rien n'est sauvegardé."
+  value       = module.backup.protects_anything
+}
+
+output "backup_alarms_notify" {
+  description = "Vrai quand les alarmes du coffre sont branchées sur un topic SNS. Faux, elles passent au rouge sans prévenir personne."
+  value       = module.backup.alarms_notify
+}
+
+# --- Export du reporting (#563) -----------------------------------------------
+
+output "reporting_export_bucket" {
+  description = "Bucket qui reçoit les exports CSV du back-office. C'est la valeur posée dans `REPORT_EXPORT_BUCKET` sur la tâche de l'API ; sans elle, la route d'export répond 503."
+  value       = module.reporting_export.bucket_name
+}
+
+output "reporting_export_retention_days" {
+  description = "Nombre de jours au bout desquels un export est supprimé par le cycle de vie du bucket. Rendu pour être vérifiable sans ouvrir le module."
+  value       = module.reporting_export.retention_days
+}
+
+output "reporting_export_encryption" {
+  description = "Chiffrement au repos effectivement appliqué au bucket d'exports — `AES256` sans clé client, `aws:kms` avec. Dans les deux cas, le bucket est chiffré."
+  value       = module.reporting_export.encryption_algorithm
 }
