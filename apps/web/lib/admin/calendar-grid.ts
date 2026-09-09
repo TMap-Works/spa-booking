@@ -22,7 +22,13 @@
  *    règle, pas l'exception.
  */
 
-import type { Appointment, AppointmentStatus, CalendarDate, TimeZone } from '@spa/shared';
+import type {
+  Appointment,
+  AppointmentStatus,
+  CalendarDate,
+  StaffMemberSummary,
+  TimeZone,
+} from '@spa/shared';
 
 import type { CalendarRange, CalendarView } from './calendar-range';
 import { daysOf, weekdayLabel } from './calendar-range';
@@ -302,6 +308,13 @@ interface BuildOptions {
   readonly range: CalendarRange;
   readonly appointments: readonly Appointment[];
   readonly timeZone: TimeZone;
+  /**
+   * Le répertoire des praticiens de l'établissement — les colonnes de la vue jour.
+   *
+   * Facultatif : sans lui, la vue jour retombe sur les seuls praticiens occupés,
+   * ce qui reste juste et n'oblige pas chaque appelant à disposer du répertoire.
+   */
+  readonly staff?: readonly StaffMemberSummary[];
   /** Instant de référence du trait d'heure courante. */
   readonly now?: Date;
 }
@@ -309,15 +322,21 @@ interface BuildOptions {
 /**
  * Le planning complet, prêt à rendre.
  *
- * Les colonnes sont **déduites des rendez-vous** en vue jour : l'API n'expose pas
- * la liste des fiches praticien de l'établissement (#421), et inventer des
- * colonnes à partir des comptes internes afficherait des personnes qui ne
- * pratiquent pas. Un praticien sans rendez-vous ce jour-là n'a donc pas de
- * colonne — c'est la limite connue de cet écran tant que `GET /staff` n'existe
- * pas.
+ * En vue jour, les colonnes viennent du **répertoire des praticiens**
+ * (`GET /v1/staff`) et non des seuls rendez-vous du jour. Déduire les colonnes de
+ * l'agenda laissait une journée creuse sans une seule case cliquable : le tiroir
+ * de création ne s'ouvre que par un clic sur un créneau libre, si bien qu'un
+ * salon ne pouvait pas poser depuis le planning le **premier** rendez-vous d'une
+ * journée — précisément le geste qu'on attend d'un jour vide (#507).
+ *
+ * Le répertoire ne remplace pas l'agenda, il s'y ajoute : un praticien qui porte
+ * un rendez-vous ce jour-là garde sa colonne même s'il ne figure pas dans la
+ * liste reçue — une fiche désactivée depuis, ou un répertoire que l'appelant
+ * n'a pas pu lire. Un rendez-vous ne doit jamais disparaître de l'écran parce que
+ * la fiche de son praticien a changé d'état.
  */
 export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
-  const { view, range, appointments, timeZone } = options;
+  const { view, range, appointments, timeZone, staff = [] } = options;
   const spans = new Map<string, SlotSpan>();
 
   for (const appointment of appointments) {
@@ -325,7 +344,7 @@ export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
   }
 
   const { firstSlot, lastSlot } = displayedSlots([...spans.values()]);
-  const columns = columnInputs(view, range, appointments, spans).map((input) =>
+  const columns = columnInputs(view, range, appointments, spans, staff).map((input) =>
     buildColumn(input, spans, { view, firstSlot, lastSlot, timeZone, ...(options.now === undefined ? {} : { now: options.now }) }),
   );
 
@@ -370,6 +389,7 @@ function columnInputs(
   range: CalendarRange,
   appointments: readonly Appointment[],
   spans: ReadonlyMap<string, SlotSpan>,
+  staff: readonly StaffMemberSummary[],
 ): ColumnInput[] {
   if (view === 'semaine') {
     return daysOf(range).map((day) => ({
@@ -382,6 +402,13 @@ function columnInputs(
   }
 
   const byStaff = new Map<string, { name: string; appointments: Appointment[] }>();
+
+  // Le répertoire d'abord : chaque praticien ouvre sa colonne, occupée ou non.
+  // C'est ce qui donne à une journée creuse une grille de créneaux libres, donc
+  // un point d'entrée vers le tiroir de création (#507).
+  for (const member of staff) {
+    byStaff.set(member.id, { name: member.displayName, appointments: [] });
+  }
 
   for (const appointment of appointments) {
     // Filtré sur la journée affichée, comme la vue semaine l'est sur la sienne :
@@ -396,6 +423,9 @@ function columnInputs(
     const existing = byStaff.get(appointment.staff.id);
 
     if (existing === undefined) {
+      // Un praticien absent du répertoire garde sa colonne dès qu'il porte un
+      // rendez-vous : fiche désactivée depuis, ou répertoire illisible. Un
+      // rendez-vous ne disparaît pas de l'écran pour un état de fiche.
       byStaff.set(appointment.staff.id, {
         name: appointment.staff.displayName,
         appointments: [appointment],

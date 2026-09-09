@@ -1,6 +1,6 @@
 'use client';
 
-import type { Appointment, Service, TimeZone } from '@spa/shared';
+import type { Appointment, Service, StaffMemberSummary, TimeZone } from '@spa/shared';
 import { ERROR_CODES } from '@spa/shared';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -149,6 +149,19 @@ interface CalendarBoardProps {
    * éviter. Vide, le tiroir bascule sur son état « catalogue vide ».
    */
   readonly services: readonly Service[];
+  /**
+   * Les praticiens actifs de l'établissement — les colonnes de la vue jour (#507).
+   *
+   * Chargé par la page en même temps que le catalogue, pour la même raison : le
+   * répertoire ne change pas entre deux journées, et le relire à chaque
+   * navigation ferait payer un aller-retour à la flèche « jour suivant ».
+   *
+   * Vide — répertoire illisible, ou salon sans aucune fiche —, la vue jour
+   * retombe sur les praticiens occupés, c'est-à-dire sur le comportement d'avant
+   * ce ticket. Une journée creuse y redevient un état vide, mais le planning
+   * reste consultable : lire l'agenda ne dépend pas du répertoire.
+   */
+  readonly staff: readonly StaffMemberSummary[];
 }
 
 /** Rafraîchissement du trait d'heure courante — sa résolution est la minute. */
@@ -165,6 +178,7 @@ export function CalendarBoard({
   initialPeriods,
   loadError,
   services,
+  staff,
 }: CalendarBoardProps) {
   const router = useRouter();
   const [view, setView] = useState<CalendarView>(initialView);
@@ -255,10 +269,11 @@ export function CalendarBoard({
         view,
         range: rangeOf(view, date),
         appointments: appointments ?? [],
+        staff,
         timeZone,
         ...(now === null ? {} : { now }),
       }),
-    [view, date, appointments, timeZone, now],
+    [view, date, appointments, staff, timeZone, now],
   );
 
   // Une période qu'on n'a pas encore n'est pas une période vide : dire « aucun
@@ -266,8 +281,10 @@ export function CalendarBoard({
   // ne sait rien encore, et c'est exactement l'écran sur lequel le comptoir
   // décide de poser un client.
   const isPending = appointments === undefined && loading;
-  // Une vue jour sans rendez-vous n'a aucune colonne : l'écran bascule alors sur
-  // son état vide, et la grille — donc le conteneur mesuré — n'est pas montée.
+  // Aucune colonne à rendre : l'écran bascule sur son état vide, et la grille —
+  // donc le conteneur mesuré — n'est pas montée. Depuis #507 la vue jour ouvre
+  // une colonne par praticien du répertoire : il n'y reste donc que le salon
+  // sans aucune fiche praticien, et le cas où le répertoire n'a pas pu être lu.
   const isEmpty = !isPending && board.columns.length === 0;
   const showsGrid = !isPending && !isEmpty;
 

@@ -98,9 +98,14 @@ colonnes change d'une période à l'autre.
 `GET /appointments/mine` : la route d'agenda du comptoir — `GET /appointments`,
 bornée par dates civiles — reste à livrer. La grille, la navigation et la
 virtualisation sont complètes ; le chargement des rendez-vous dégrade en un
-bandeau qui nomme le manque. Faute de `GET /staff` (#421), les colonnes de la vue
-jour sont **déduites des rendez-vous** : un praticien sans rendez-vous ce jour-là
-n'a pas de colonne.
+bandeau qui nomme le manque.
+
+Les colonnes de la vue jour viennent du **répertoire des praticiens**
+(`GET /v1/staff?activeOnly=true`, lu par `calendrier/page.tsx`) depuis #507 : un
+praticien sans rendez-vous garde donc sa colonne, et une journée creuse offre des
+créneaux libres — le seul point d'entrée du tiroir de création. Les rendez-vous
+du jour s'y ajoutent, et un praticien absent du répertoire — fiche désactivée
+depuis, ou répertoire illisible — garde sa colonne dès qu'il en porte un.
 
 ### Le report par glisser-déposer (#51)
 
