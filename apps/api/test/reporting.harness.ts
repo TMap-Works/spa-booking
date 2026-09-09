@@ -1,6 +1,9 @@
 import type { INestApplication } from '@nestjs/common';
 
+import { ReportExportConfig } from '../src/modules/reporting/export/report-export.config';
+import { REPORT_EXPORT_STORAGE } from '../src/modules/reporting/export/report-export.storage';
 import { ReportingRepository } from '../src/modules/reporting/reporting.repository';
+import { FakeReportExportStorage } from '../src/modules/reporting/__tests__/report-export.doubles';
 import {
   FakeReportingRepository,
   type StoredAppointment,
@@ -33,15 +36,28 @@ import { createTenantHarness, type TenantHarness } from './utils/tenant-harness'
  *
  * ## Le module n'a aucune surface publique
  *
- * D'où l'absence de `tenantSlug` ici, comme chez `crm.harness.ts` : les trois
- * routes de rapport se désignent par un jeton, aucune par un slug d'URL. Un
- * agrégat d'exploitation n'a pas de surface anonyme — le chiffre d'affaires d'un
- * salon ne se lit pas en connaissant son slug.
+ * D'où l'absence de `tenantSlug` ici, comme chez `crm.harness.ts` : les routes
+ * de rapport se désignent par un jeton, aucune par un slug d'URL. Un agrégat
+ * d'exploitation n'a pas de surface anonyme — le chiffre d'affaires d'un salon
+ * ne se lit pas en connaissant son slug.
+ *
+ * ## L'entrepôt d'exports est substitué lui aussi (#563)
+ *
+ * `REPORT_EXPORT_STORAGE` est remplacé par un entrepôt en mémoire, et
+ * `ReportExportConfig` par une configuration qui se déclare branchée. Sans les
+ * deux, la route d'export répondrait 503 en test — ce qui est le bon défaut en
+ * production, et ne prouverait rien ici.
+ *
+ * Les objets déposés restent **inspectables** par `storage` : c'est ce qui
+ * permet à la suite d'isolation de vérifier la forme de la clé, et non seulement
+ * le code de statut de la réponse.
  */
 
 export interface ReportingHarness {
   app: INestApplication;
   repository: FakeReportingRepository;
+  /** L'entrepôt d'exports en mémoire — les clés déposées s'y relisent. */
+  storage: FakeReportExportStorage;
   /** L'établissement de l'appelant — celui que porteront ses jetons par défaut. */
   tenantId: string;
   /** L'établissement voisin, pour les scénarios de traversée. */
@@ -59,20 +75,34 @@ export interface ReportingHarness {
 
 export async function createReportingHarness(): Promise<ReportingHarness> {
   const repository = new FakeReportingRepository();
+  const storage = new FakeReportExportStorage();
 
   const harness: TenantHarness = await createTenantHarness({
-    overrides: [{ provide: ReportingRepository, useValue: repository }],
+    overrides: [
+      { provide: ReportingRepository, useValue: repository },
+      { provide: REPORT_EXPORT_STORAGE, useValue: storage },
+      // Un bucket nommé mais jamais joint : c'est l'entrepôt substitué qui
+      // répond. Ce que cette configuration décide réellement ici est la **durée
+      // de vie** signée, que la suite d'intégration vérifie.
+      {
+        provide: ReportExportConfig,
+        useValue: new ReportExportConfig({ REPORT_EXPORT_BUCKET: 'spa-test-reporting-exports' }),
+      },
+    ],
   });
 
   // Les deux établissements existent : sans fuseau, tout rapport répondrait 404
   // et les suites prouveraient la mauvaise chose. Des fuseaux **différents**,
   // pour qu'une confusion d'établissement se voie dans la réponse elle-même.
-  repository.seedTenant(harness.a.id, 'Europe/Paris');
-  repository.seedTenant(harness.b.id, 'Pacific/Tahiti');
+  // Des slugs différents aussi, pour la même raison — c'est le slug qui nomme le
+  // fichier d'export.
+  repository.seedTenant(harness.a.id, 'Europe/Paris', 'maison-lotus');
+  repository.seedTenant(harness.b.id, 'Pacific/Tahiti', 'lagon-bleu');
 
   return {
     app: harness.app,
     repository,
+    storage,
     tenantId: harness.a.id,
     otherTenantId: harness.b.id,
     seedPayment: (payment) => {
