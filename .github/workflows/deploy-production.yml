@@ -14,14 +14,19 @@ permissions:
   id-token: write   # OIDC — aucune clé AWS statique
 
 env:
-  # Nom posé par infra/terraform/modules/ecs-service/cluster.tf : le cluster
-  # s'appelle `${local.name_prefix}-cluster`, suffixe compris — le préfixe
-  # d'environnement seul ne désigne aucune ressource. La politique du rôle OIDC
-  # (modules/oidc) cible ce nom-là et lui seul : s'en écarter donne un
-  # AccessDenied qui accuse les droits au lieu du nom. Posé une seule fois ici,
-  # comme dans deploy-dev.yml, et lu aussi bien par le job `deploy` que par
-  # `rollback-on-failure`.
+  # Noms posés par infra/terraform/envs/prod. Le cluster s'appelle
+  # `spa-{env}-cluster` (modules/ecs-service/cluster.tf), les services, les dépôts
+  # et la famille de migration `spa-{env}-{composant}`. La politique du rôle OIDC
+  # (modules/oidc) cible ces noms-là et eux seuls : s'en écarter donne un
+  # AccessDenied qui accuse les droits au lieu du nom.
   CLUSTER: spa-prod-cluster
+  API_REPOSITORY: spa-prod-api
+  API_SERVICE: spa-prod-api
+  WEB_REPOSITORY: spa-prod-web
+  WEB_SERVICE: spa-prod-web
+  MIGRATE_TASK_DEFINITION: spa-prod-migrate
+  DB_INSTANCE: spa-prod-rds
+  TF_DIR: infra/terraform/envs/prod
 
 jobs:
   # La barrière du parcours critique, avant toute mise en production (#80,
@@ -43,23 +48,24 @@ jobs:
   # ## Pourquoi la même garde que `deploy`
   #
   # Ce job est la barrière *de ce déploiement-ci*. Quand le déploiement est
-  # désactivé — rôle OIDC non appliqué —, il ne garde rien : il dépense jusqu'à
+  # désactivé — rôles OIDC non appliqués —, il ne garde rien : il dépense jusqu'à
   # 30 minutes de runner à éprouver un état que personne ne mettra en
   # production (#508). La garde est donc recopiée à l'identique depuis `deploy`
   # ci-dessous, et les deux doivent le rester : une barrière qui s'exécute sans
   # son déploiement est du temps perdu, un déploiement qui s'exécute sans sa
   # barrière est un défaut de sûreté.
   #
-  # Les deux conditions ne sont réellement identiques que si `AWS_REGION` et
-  # `AWS_DEPLOY_ROLE_ARN` restent des variables **de dépôt**. Ce job ne déclare
-  # pas `environment:` — à dessein : le lui donner soumettrait la barrière à
-  # l'approbation manuelle de `prod`, et ferait attendre un humain avant même de
-  # savoir si le parcours est vert. Il ne voit donc que les variables de dépôt,
-  # là où `deploy` résout aussi celles de l'environnement `prod`. Porter ces
-  # deux variables au niveau de l'environnement désaccorderait silencieusement
-  # les gardes : ce job serait ignoré, `deploy` le serait à son tour par
-  # `needs`, et plus rien ne partirait en production sur un run vert.
-  # `docs/github-setup.md` §3 les pose au niveau du dépôt pour cette raison.
+  # Les deux conditions ne sont réellement identiques que si `AWS_REGION`,
+  # `AWS_DEPLOY_ROLE_ARN` et `AWS_TERRAFORM_ROLE_ARN` restent des variables **de
+  # dépôt**. Ce job ne déclare pas `environment:` — à dessein : le lui donner
+  # soumettrait la barrière à l'approbation manuelle de `prod`, et ferait
+  # attendre un humain avant même de savoir si le parcours est vert. Il ne voit
+  # donc que les variables de dépôt, là où `deploy` résout aussi celles de
+  # l'environnement `prod`. Porter ces variables au niveau de l'environnement
+  # désaccorderait silencieusement les gardes : ce job serait ignoré, `deploy` le
+  # serait à son tour par `needs`, et plus rien ne partirait en production sur un
+  # run vert. `docs/github-setup.md` §3 les pose au niveau du dépôt pour cette
+  # raison.
   #
   # Rien ne se relâche quand la garde est fausse : `deploy` porte la même
   # condition et est ignoré par la sienne, indépendamment de ce `needs`. Et
@@ -68,7 +74,7 @@ jobs:
   # un déploiement qui n'a pas eu lieu.
   e2e:
     name: Parcours critique
-    if: ${{ vars.AWS_REGION != '' && vars.AWS_DEPLOY_ROLE_ARN != '' }}
+    if: ${{ vars.AWS_REGION != '' && vars.AWS_DEPLOY_ROLE_ARN != '' && vars.AWS_TERRAFORM_ROLE_ARN != '' }}
     uses: ./.github/workflows/e2e.yml
     secrets: inherit
 
@@ -76,24 +82,52 @@ jobs:
     name: Déployer en production
     needs: e2e
     runs-on: ubuntu-latest
-    # Tant que le rôle OIDC n'est pas appliqué (infra/terraform/modules/oidc), le
-    # déploiement est ignoré proprement plutôt que de faire échouer chaque push.
-    # Poser les variables de dépôt AWS_REGION et AWS_DEPLOY_ROLE_ARN active les
-    # déploiements. Ce sont des `vars` et non des `secrets` : un ARN de rôle n'est
-    # pas un secret, et le tenir hors des secrets rend visible qu'aucun identifiant
-    # AWS n'y est stocké.
-    if: ${{ vars.AWS_REGION != '' && vars.AWS_DEPLOY_ROLE_ARN != '' }}
-    environment: prod   # approbation manuelle requise
+    # Tant que les rôles OIDC ne sont pas appliqués (infra/terraform/modules/oidc),
+    # le déploiement est ignoré proprement plutôt que de faire échouer chaque push.
+    # Poser les variables de dépôt AWS_REGION, AWS_DEPLOY_ROLE_ARN et
+    # AWS_TERRAFORM_ROLE_ARN active les déploiements. Ce sont des `vars` et non des
+    # `secrets` : un ARN de rôle n'est pas un secret, et le tenir hors des secrets
+    # rend visible qu'aucun identifiant AWS n'y est stocké.
+    #
+    # `AWS_TERRAFORM_ROLE_ARN` fait partie de la garde depuis #77 : le
+    # déploiement passe désormais par `terraform apply`, comme celui de staging,
+    # et sans ce rôle le job échouerait au milieu — images poussées, schéma non
+    # migré, services inchangés.
+    if: ${{ vars.AWS_REGION != '' && vars.AWS_DEPLOY_ROLE_ARN != '' && vars.AWS_TERRAFORM_ROLE_ARN != '' }}
+    # **Quatrième critère de #77 — l'approbation manuelle avant apply.**
+    #
+    # Ce bloc est le mécanisme, et il est en place : dès que la règle « required
+    # reviewers » est posée sur l'environnement `prod`, le job attend l'accord
+    # d'un relecteur avant sa première étape. Aucune image n'est alors poussée,
+    # aucun instantané n'est pris, aucune migration n'est jouée avant cet accord.
+    #
+    # **Ce qu'il faut savoir aujourd'hui** : l'organisation est sur le plan
+    # GitHub **Free**, où cette règle n'est pas disponible sur un dépôt privé
+    # (docs/github-setup.md §2). Le bloc `environment:` existe donc, il résout
+    # bien les variables de l'environnement et présente bien le sujet OIDC
+    # attendu — mais **il ne retient encore personne**. Poser les relecteurs est
+    # un geste de compte, hors de ce dépôt, et il est nommé comme tel dans la
+    # liste de docs/runbooks/mise-en-production.md.
+    #
+    # Ne pas retirer cette ligne en attendant : c'est aussi ce qui donne son sens
+    # au sujet OIDC. La politique de confiance des rôles n'accepte que
+    # `repo:<dépôt>:environment:prod` et refuse `ref:refs/heads/main` — un job
+    # sans bloc `environment:` n'obtiendrait aucun rôle. La retirer ne
+    # contournerait pas l'approbation, elle couperait le déploiement.
+    environment: prod
+    outputs:
+      snapshot: ${{ steps.snapshot.outputs.identifier }}
+      baseline: ${{ steps.baseline.outputs.revisions }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Le sujet OIDC présenté ici est `repo:<dépôt>:environment:prod`. La politique
-      # de confiance n'accepte pas `ref:refs/heads/main` : la production ne passe
-      # que par cet environnement, dont l'approbation manuelle serait sinon
-      # contournable par un job sans bloc `environment:`.
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: hashicorp/setup-terraform@v3
+
+      # --- Publication des images -------------------------------------------
+      - name: Identité de publication (rôle de déploiement)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: gha-deploy-prod-${{ github.run_id }}
@@ -102,49 +136,461 @@ jobs:
       - uses: aws-actions/amazon-ecr-login@v2
         id: ecr
 
-      - name: Snapshot RDS avant déploiement
+      # **Cinquième critère de #77 — l'instantané avant déploiement.**
+      #
+      # Avant les images, avant les migrations, avant tout : c'est le seul point
+      # de retour d'une migration destructive, et le seul moment où il est encore
+      # certain que la base est dans l'état d'avant.
+      #
+      # L'identifiant est relevé en sortie du job et repris par le rollback : sans
+      # lui, revenir en arrière demanderait de choisir un instantané à la main,
+      # dans une liste, pendant un incident. Le format horodaté à la seconde
+      # évite une collision entre deux déploiements rapprochés — un identifiant
+      # déjà pris fait échouer l'appel, donc le déploiement, ce qui est le bon
+      # échec mais un échec quand même.
+      #
+      # `wait db-snapshot-completed` n'est **pas** décoratif : `create-db-snapshot`
+      # rend la main dès la demande acceptée, sur un instantané encore
+      # `creating`. Un instantané incomplet ne restaure rien, et c'est
+      # exactement au moment où l'on en aurait besoin qu'on l'apprendrait.
+      - name: Instantané RDS avant déploiement
+        id: snapshot
         run: |
-          aws rds create-db-snapshot \
-            --db-instance-identifier spa-prod-rds \
-            --db-snapshot-identifier "spa-prod-predeploy-$(date +%Y%m%d%H%M%S)"
+          set -euo pipefail
+          identifier="spa-prod-predeploy-$(date -u +%Y%m%d%H%M%S)"
 
-      - name: Construire et pousser les images
+          aws rds create-db-snapshot \
+            --db-instance-identifier "$DB_INSTANCE" \
+            --db-snapshot-identifier "$identifier" \
+            --tags "Key=Commit,Value=${GITHUB_SHA}" "Key=Workflow,Value=${GITHUB_RUN_ID}" \
+            --output text --query 'DBSnapshot.DBSnapshotIdentifier'
+
+          echo "identifier=$identifier" >> "$GITHUB_OUTPUT"
+
+          # Jusqu'à quarante minutes sur une base Multi-AZ chargée. Le waiter
+          # sonde toutes les trente secondes et rend la main dès que l'instantané
+          # est `available`.
+          aws rds wait db-snapshot-completed --db-snapshot-identifier "$identifier"
+          echo "Instantané disponible : $identifier"
+
+      # Une seule étiquette, le sha du commit : les dépôts ECR sont immuables
+      # (modules/ecr/repositories.tf), une étiquette mobile ne pourrait donc être
+      # poussée qu'une fois. C'est aussi ce qui garantit que l'image analysée par
+      # le scan de vulnérabilités est celle qui s'exécute.
+      - name: Construire et pousser l'image de l'API
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
-          TAG: ${{ github.sha }}
+          SHA_TAG: ${{ github.sha }}
         run: |
-          docker build -t $REGISTRY/spa-prod-api:$TAG -f apps/api/Dockerfile .
-          docker build -t $REGISTRY/spa-prod-web:$TAG -f apps/web/Dockerfile .
-          docker push $REGISTRY/spa-prod-api:$TAG
-          docker push $REGISTRY/spa-prod-web:$TAG
+          set -euo pipefail
+          docker build \
+            --tag "$REGISTRY/$API_REPOSITORY:$SHA_TAG" \
+            --file apps/api/Dockerfile .
+          docker push "$REGISTRY/$API_REPOSITORY:$SHA_TAG"
 
-      # Nom du cluster seulement — les autres défauts de l'étape (`run-task` n'a
-      # pas d'option `--wait` ; la configuration réseau recopiée à la main dans
-      # une variable de dépôt) relèvent de #204, qui les traite le jour où
-      # `envs/prod` composera le module `ecs-service`.
-      - name: Appliquer les migrations de base de données
+      - name: Construire et pousser l'image du front
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          SHA_TAG: ${{ github.sha }}
         run: |
-          aws ecs run-task \
+          set -euo pipefail
+          docker build \
+            --tag "$REGISTRY/$WEB_REPOSITORY:$SHA_TAG" \
+            --file apps/web/Dockerfile .
+          docker push "$REGISTRY/$WEB_REPOSITORY:$SHA_TAG"
+
+      # --- Migrations --------------------------------------------------------
+      #
+      # La définition de tâche appartient à l'état Terraform : c'est `apply` qui
+      # la fait pointer sur l'image qu'on vient de publier, et le rôle de
+      # déploiement n'a de toute façon pas `ecs:RegisterTaskDefinition`.
+      #
+      # C'est le défaut n° 3 de #204, que ce workflow portait encore :
+      # `update-service --force-new-deployment` redéployait la **même**
+      # définition de tâche, donc la même image. Le workflow était vert et le
+      # commit n'était jamais déployé.
+      #
+      # Cet `apply` est **ciblé** sur la seule tâche de migration, délibérément :
+      # il faut que le schéma soit migré avant que les nouvelles tâches de l'API
+      # ne démarrent. Un `apply` complet ici lancerait les deux en même temps.
+      - name: Identité d'infrastructure (rôle Terraform)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          role-session-name: gha-tf-prod-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_DIR }}
+        run: terraform init -input=false
+
+      # Les variables de l'environnement, et pas seulement `image_tag`.
+      #
+      # `.gitignore` écarte `*.tfvars` : le checkout de la CI n'en porte aucun,
+      # et un `terraform apply` qui ne passe que `-var image_tag` ramène **toutes
+      # les autres variables à leur défaut**. Ce n'est pas une inélégance, c'est
+      # une destruction, et elle est bien pire ici qu'en recette :
+      # `public_domain_name` redevenant nul, cet `apply` **détruit la
+      # distribution CloudFront, sa Web ACL de bord et les deux certificats ACM**,
+      # et remplace le certificat du listener 443 par un repli auto-signé — la
+      # production cesse d'être joignable sous son nom ; `notification_domain`
+      # redevenant nul, il détruit l'identité SES, la file, la DLQ et les trois
+      # Lambda. Le tout sans plan relu, `-auto-approve` étant posé.
+      #
+      # La variable de dépôt `PROD_TFVARS` porte donc le contenu du `.tfvars` de
+      # l'environnement, que cette étape dépose en `ci.auto.tfvars` — `terraform`
+      # charge de lui-même tout `*.auto.tfvars` du répertoire de travail, pour
+      # l'`apply` ciblé comme pour l'`apply` complet.
+      #
+      # Écrite depuis l'**environnement** et jamais interpolée dans la ligne de
+      # commande, pour la même raison que l'URL de la sonde de santé (défaut n° 5
+      # de #204). Un nom de domaine et un ARN de certificat ne sont pas des
+      # secrets ; ce qui l'est — mot de passe, jeton — n'a rien à faire ici et
+      # continue de passer par Secrets Manager.
+      #
+      # Son absence n'est pas un avertissement ici mais une **erreur** : sur cet
+      # environnement-là, appliquer sur les défauts est une destruction, pas une
+      # dégradation.
+      - name: Composer les variables de l'environnement
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          PROD_TFVARS: ${{ vars.PROD_TFVARS }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PROD_TFVARS:-}" ]; then
+            echo "::error::Variable de depot PROD_TFVARS absente. Un terraform apply sur les defauts de envs/prod detruirait la distribution CloudFront, sa Web ACL de bord et les deux certificats ACM, et rendrait la production injoignable sous son nom. La poser avec le contenu du .tfvars de l environnement — voir docs/runbooks/mise-en-production.md."
+            exit 1
+          fi
+          printf '%s\n' "$PROD_TFVARS" > ci.auto.tfvars
+          # Les noms seulement, jamais les valeurs : la sortie d'un job est
+          # publique sur un dépôt public, et une variable de dépôt n'est pas
+          # masquée comme l'est un secret.
+          echo "Variables reprises de la variable de depot PROD_TFVARS :"
+          sed -nE 's/^[[:space:]]*([a-z_]+)[[:space:]]*=.*/  \1/p' ci.auto.tfvars | sort || true
+
+      - name: Publier la définition de tâche de migration
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          terraform apply -auto-approve -input=false \
+            -var="image_tag=$SHA_TAG" \
+            -target=aws_ecs_task_definition.migrate
+
+      - name: Identité de déploiement (rôle de déploiement)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          role-session-name: gha-deploy-prod-migrate-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # La configuration réseau se lit sur le service plutôt que dans une
+      # variable de dépôt — défaut n° 4 de #204, que ce workflow portait encore
+      # sous la forme d'un `vars.ECS_NETWORK_CONFIG` recopié à la main. Elle vaut
+      # par construction ce que Terraform a posé : les sous-réseaux applicatifs
+      # et le groupe de sécurité des tâches, seul autorisé à joindre RDS. Une
+      # variable recopiée divergerait au premier changement de réseau, et la
+      # migration échouerait sur un délai d'attente que rien n'expliquerait.
+      - id: network
+        name: Relever la configuration réseau du service
+        run: |
+          set -euo pipefail
+          config="$(aws ecs describe-services \
             --cluster "$CLUSTER" \
-            --task-definition spa-prod-migrate \
-            --launch-type FARGATE \
-            --network-configuration "${{ vars.ECS_NETWORK_CONFIG }}" \
-            --wait
+            --services "$API_SERVICE" \
+            --query 'services[0].networkConfiguration' \
+            --output json)"
+          if [ -z "$config" ] || [ "$config" = "null" ]; then
+            echo "::error::Le service $API_SERVICE est introuvable sur le cluster $CLUSTER. Appliquer infra/terraform/envs/prod avant le premier deploiement — voir docs/runbooks/mise-en-production.md."
+            exit 1
+          fi
+          {
+            echo "config<<EOF"
+            echo "$config"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
-      - name: Déployer les services ECS
+      # `aws ecs run-task` rend la main dès la tâche lancée : il n'a pas d'option
+      # `--wait` — défaut n° 1 de #204, où l'option inexistante faisait échouer la
+      # CLI sur un argument inconnu, et que ce workflow portait encore. Sans
+      # l'attente explicite ci-dessous, le déploiement démarrerait sur un schéma
+      # non migré et l'échec se lirait dans les journaux de l'application, pas
+      # dans ceux du workflow.
+      - name: Appliquer les migrations de base de données
+        env:
+          NETWORK_CONFIGURATION: ${{ steps.network.outputs.config }}
+          # Passé par l'environnement et non interpolé dans le script : c'est le
+          # défaut n° 5 de #204, et il vaut aussi pour une valeur qu'on a
+          # soi-même produite deux étapes plus haut.
+          SNAPSHOT: ${{ steps.snapshot.outputs.identifier }}
         run: |
-          aws ecs update-service --cluster "$CLUSTER" --service spa-prod-api --force-new-deployment
-          aws ecs update-service --cluster "$CLUSTER" --service spa-prod-web --force-new-deployment
-          aws ecs wait services-stable --cluster "$CLUSTER" --services spa-prod-api spa-prod-web
+          set -euo pipefail
+          task_arn="$(aws ecs run-task \
+            --cluster "$CLUSTER" \
+            --task-definition "$MIGRATE_TASK_DEFINITION" \
+            --launch-type FARGATE \
+            --network-configuration "$NETWORK_CONFIGURATION" \
+            --started-by "gha-${GITHUB_RUN_ID}" \
+            --query 'tasks[0].taskArn' \
+            --output text)"
 
+          if [ -z "$task_arn" ] || [ "$task_arn" = "None" ]; then
+            echo "::error::La tache de migration n a pas demarre — voir la cle failures de la reponse ECS."
+            exit 1
+          fi
+          echo "Tâche de migration : $task_arn"
+
+          aws ecs wait tasks-stopped --cluster "$CLUSTER" --tasks "$task_arn"
+
+          # Le code de sortie du conteneur est le seul verdict qui compte : une
+          # tâche « STOPPED » l'est aussi bien après un succès qu'après un échec
+          # de migration.
+          exit_code="$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$task_arn" \
+            --query 'tasks[0].containers[0].exitCode' \
+            --output text)"
+          reason="$(aws ecs describe-tasks \
+            --cluster "$CLUSTER" \
+            --tasks "$task_arn" \
+            --query 'tasks[0].stoppedReason' \
+            --output text)"
+
+          if [ "$exit_code" != "0" ]; then
+            echo "::error::Migration en echec (code de sortie $exit_code) : $reason"
+            echo "Journaux : groupe /ecs/spa-prod/api, flux prefixe migrate."
+            echo "Instantane de retour : $SNAPSHOT — voir docs/runbooks/mise-en-production.md, section rollback."
+            exit 1
+          fi
+          echo "Migrations appliquées."
+
+      # Les révisions **actuellement servies**, relevées avant que quoi que ce soit
+      # ne les remplace. C'est le point de retour de `rollback-on-failure`, et il
+      # ne peut se prendre qu'ici.
+      #
+      # `deployments[1]` ne suffit pas, et c'est le cas qui compte : une fois
+      # `wait services-stable` revenu, ECS ne garde plus qu'un seul déploiement par
+      # service, et l'ancienne révision a disparu de la réponse. Or c'est
+      # exactement l'état dans lequel la sonde de santé rougit — des tâches saines
+      # pour ECS, un service cassé pour une cliente —, c'est-à-dire la panne que ce
+      # rollback existe pour réparer. Sans ce relevé, il ne trouverait rien à
+      # défaire précisément là où il sert.
+      - id: baseline
+        name: Relever les révisions servies avant le déploiement
+        run: |
+          set -euo pipefail
+          revisions=""
+          for service in "$API_SERVICE" "$WEB_SERVICE"; do
+            current="$(aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services "$service" \
+              --query "services[0].deployments[?status=='PRIMARY']|[0].taskDefinition" \
+              --output text 2>/dev/null || echo None)"
+            if [ -z "$current" ] || [ "$current" = "None" ]; then
+              echo "::warning::Aucune revision active sur $service — rien a relever comme point de retour."
+              continue
+            fi
+            echo "Point de retour de $service : ${current##*/}"
+            revisions="$revisions$service=$current "
+          done
+          echo "revisions=${revisions% }" >> "$GITHUB_OUTPUT"
+
+      # --- Déploiement -------------------------------------------------------
+      #
+      # L'`apply` complet fait pointer les définitions de tâche des services sur
+      # les nouvelles images, et ECS déroule un déploiement rolling :
+      # `minimum_healthy_percent = 100` interdit de descendre sous la capacité
+      # nominale — deux tâches par service en production —, la nouvelle tâche doit
+      # être saine pour l'ALB avant que l'ancienne ne soit retirée, donc aucune
+      # coupure. Le disjoncteur de déploiement revient de lui-même à la révision
+      # précédente si les nouvelles tâches ne passent jamais le contrôle de santé.
+      - name: Identité d'infrastructure (rôle Terraform)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          role-session-name: gha-tf-prod-deploy-${{ github.run_id }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Déployer
+        working-directory: ${{ env.TF_DIR }}
+        env:
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          terraform apply -auto-approve -input=false -var="image_tag=$SHA_TAG"
+
+      # `terraform apply` n'attend pas la stabilité des services — il rend la main
+      # dès la mise à jour acceptée. C'est ici qu'on constate que le déploiement
+      # a réellement abouti, sur les **deux** services.
+      - name: Attendre la stabilité des services
+        env:
+          SHA_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # Le waiter échoue en bloc, sans nommer le service fautif. Son verdict
+          # est donc relevé mais pas rendu tel quel : la lecture service par
+          # service qui suit court **dans les deux cas**, parce qu'un waiter au
+          # vert ne prouve pas encore que le déploiement a abouti (voir plus bas).
+          if aws ecs wait services-stable \
+               --cluster "$CLUSTER" \
+               --services "$API_SERVICE" "$WEB_SERVICE"; then
+            waiter_ok=1
+          else
+            waiter_ok=0
+            echo "::warning::L attente de stabilite ECS a rendu la main en echec — verification service par service."
+          fi
+
+          failed=0
+          for service in "$API_SERVICE" "$WEB_SERVICE"; do
+            # `deployments[?status=='PRIMARY']` et non `deployments[0]` : quand un
+            # déploiement échoue, le service en porte deux — le nouveau et
+            # l'ancien encore `ACTIVE` — et l'API ne garantit pas leur ordre.
+            state="$(aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services "$service" \
+              --query "services[0].[runningCount,desiredCount,length(deployments),deployments[?status=='PRIMARY']|[0].taskDefinition,deployments[?status=='PRIMARY']|[0].rolloutStateReason]" \
+              --output text)"
+
+            # Un appel qui échoue rend une sortie vide, et `read` laisserait alors
+            # `running` et `desired` tous deux vides — que le test d'égalité
+            # accepterait. On refuse la sortie vide avant de l'interpréter.
+            if [ -z "$state" ]; then
+              failed=1
+              echo "::error::Impossible de relire l etat du service ECS $service sur le cluster $CLUSTER — l appel describe-services n a rien rendu."
+              continue
+            fi
+
+            read -r running desired deployments task_definition reason <<<"$state"
+
+            # La production ne descend jamais à zéro : elle ne porte pas d'arrêt
+            # hors heures ouvrées, et son auto-scaling a un minimum de deux
+            # tâches. Un zéro ici n'est donc pas un environnement endormi, c'est
+            # une panne — et il faut le dire ainsi.
+            if [ "$desired" = "0" ]; then
+              failed=1
+              echo "::error::Le service ECS $service vise zero tache. La production n a pas d arret programme et son auto-scaling a un minimum de deux taches : c est une anomalie, pas un environnement endormi. Verifier la cible d auto-scaling avant de relancer."
+              continue
+            fi
+
+            if [ "$running" != "$desired" ] || [ "$deployments" != "1" ]; then
+              failed=1
+              echo "::error::Le service ECS $service n est pas stable apres le deploiement : $running/$desired tache(s) en cours d execution, $deployments deploiement(s) actif(s) — $reason"
+              echo "Journaux : groupe /ecs/spa-prod/${service#spa-prod-}."
+              continue
+            fi
+
+            # Stable ne veut pas dire déployé. `deployment_circuit_breaker` a
+            # `rollback = true` (modules/ecs-service/service.tf) : une tâche qui ne
+            # démarre jamais fait revenir ECS à la révision précédente, et le
+            # service redevient parfaitement stable — sur l'ancienne image. Le
+            # waiter passe, la sonde HTTP passe aussi puisque l'ancienne révision
+            # répond, et le job serait vert sans que le commit déployé ait jamais
+            # tourné (#579).
+            #
+            # On compare donc l'étiquette des images de la révision effectivement
+            # servie au sha du commit. « Une image au moins » et non « toutes » :
+            # la tâche de l'API porte le sidecar `aws-xray-daemon`, dont l'image
+            # vient d'AWS et n'a pas cette étiquette.
+            images="$(aws ecs describe-task-definition \
+              --task-definition "$task_definition" \
+              --query 'taskDefinition.containerDefinitions[].image' \
+              --output text)"
+            if printf '%s' "$images" | tr '\t' '\n' | grep -q ":$SHA_TAG\$"; then
+              echo "Service $service : stable ($running/$desired tâche(s)), révision ${task_definition##*/} sur $SHA_TAG."
+            else
+              failed=1
+              echo "::error::Le service ECS $service est stable mais ne sert pas le commit deploye : la revision active ${task_definition##*/} porte $images au lieu de l etiquette $SHA_TAG. Le disjoncteur de deploiement est probablement revenu a la revision precedente — $reason"
+              echo "Journaux : groupe /ecs/spa-prod/${service#spa-prod-}."
+            fi
+          done
+
+          if [ "$failed" != "0" ]; then
+            exit 1
+          fi
+          if [ "$waiter_ok" = "0" ]; then
+            echo "::error::L attente de stabilite a expire alors que $API_SERVICE et $WEB_SERVICE paraissent stables et a jour — relancer le deploiement."
+            exit 1
+          fi
+          echo "Services stables et à jour : $API_SERVICE, $WEB_SERVICE."
+
+      # La sonde part sur l'**origine publique**, c'est-à-dire la distribution
+      # CloudFront et non l'ALB : c'est le chemin qu'une cliente emprunte, et
+      # c'est le seul qui éprouve aussi le certificat de bord, la Web ACL de bord
+      # et la résolution DNS du nom public. Sonder l'ALB en direct laisserait
+      # passer une distribution mal configurée — un `502` d'origine, par exemple,
+      # que rien d'autre ne signalerait.
+      #
+      # Pas de `--insecure` : la production a un vrai certificat, et une sonde
+      # qui accepterait n'importe quoi ne prouverait rien.
+      #
+      # L'URL vient d'une variable de dépôt, passée par l'environnement et non par
+      # `${{ }}` dans le script — défaut n° 5 de #204 : interpolée dans la ligne de
+      # commande, une variable de dépôt y serait exécutée. `terraform output
+      # app_url` la donne après le premier apply.
       - name: Vérification de santé
-        run: curl --fail --retry 10 --retry-delay 15 ${{ vars.APP_URL }}/health
+        if: ${{ vars.APP_URL != '' }}
+        env:
+          APP_URL: ${{ vars.APP_URL }}
+        run: |
+          set -euo pipefail
+          # Les deux sondes sont jouées quel que soit le sort de la première :
+          # une mauvaise règle d'écoute casse les deux routes, et s'arrêter sur
+          # `/health` ferait découvrir la panne du front au déploiement suivant.
+          failed=0
+          for probe in "/health:$API_SERVICE" "/:$WEB_SERVICE"; do
+            path="${probe%%:*}"
+            service="${probe#*:}"
+            url="${APP_URL%/}$path"
+            if status="$(curl --fail --silent --show-error \
+                 --retry 5 --retry-delay 10 --retry-connrefused \
+                 --output /dev/null --write-out '%{http_code}' \
+                 "$url")"; then
+              echo "$url → $status (service $service)"
+            else
+              failed=1
+              # Le code relevé est dans le message : 503 (aucune cible saine),
+              # 404 (règle d'écoute absente), 502 (origine injoignable par
+              # CloudFront — presque toujours un certificat d'ALB qui ne couvre
+              # pas le nom d'origine) et 403 (bloqué par une des deux Web ACL)
+              # appellent quatre diagnostics différents.
+              echo "::error::Controle de sante en echec sur $url (code HTTP ${status:-000}) — service ECS $service."
+            fi
+          done
+          exit "$failed"
+
+      - name: Vérification de santé ignorée
+        if: ${{ vars.APP_URL == '' }}
+        run: echo "::warning::Variable de depot APP_URL absente — controle de sante post-deploiement ignore. La poser avec la sortie app_url de infra/terraform/envs/prod."
 
       - name: Étiqueter la version déployée
         run: |
-          git tag "deploy-prod-$(date +%Y%m%d-%H%M%S)" ${{ github.sha }}
+          set -euo pipefail
+          git tag "deploy-prod-$(date -u +%Y%m%d-%H%M%S)" "$GITHUB_SHA"
           git push --tags
 
+  # Retour à la révision précédente quand le déploiement a échoué.
+  #
+  # ## Ce que ce job répare, et ce qu'il ne répare pas
+  #
+  # Il répare le **code déployé** : il ramène chaque service à la définition de
+  # tâche qui tournait avant, donc à l'image précédente. C'est le chemin de
+  # rollback automatique du CDC §4.12, et il couvre le cas de loin le plus
+  # fréquent — une image qui démarre mais se comporte mal, que le disjoncteur
+  # d'ECS ne rattrape pas puisque le contrôle de santé passe.
+  #
+  # Il ne répare **pas le schéma de base de données**. Une migration Prisma
+  # appliquée reste appliquée, et rien ici ne la défait : `prisma migrate deploy`
+  # n'a pas d'inverse, et rejouer un instantané est une décision humaine, pas une
+  # étape de workflow — elle perd toutes les écritures postérieures. C'est
+  # exactement à cela que sert l'instantané pris plus haut, dont l'identifiant est
+  # rappelé dans le résumé de ce job ; la procédure est dans
+  # docs/runbooks/mise-en-production.md.
+  #
+  # C'est aussi pourquoi les migrations doivent rester **additives et
+  # rétrocompatibles** : la révision précédente doit pouvoir tourner sur le
+  # schéma nouveau, sans quoi ce rollback rend un service qui ne démarre plus.
   rollback-on-failure:
     name: Rollback
     needs: deploy
@@ -170,13 +616,135 @@ jobs:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           role-session-name: gha-rollback-prod-${{ github.run_id }}
           aws-region: ${{ vars.AWS_REGION }}
+
       - name: Revenir à la définition de tâche précédente
+        id: rollback
+        env:
+          BASELINE: ${{ needs.deploy.outputs.baseline }}
         run: |
-          for svc in api web; do
-            prev=$(aws ecs describe-services --cluster "$CLUSTER" --services spa-prod-$svc \
-              --query 'services[0].deployments[1].taskDefinition' --output text)
-            if [ "$prev" != "None" ] && [ -n "$prev" ]; then
-              aws ecs update-service --cluster "$CLUSTER" --service spa-prod-$svc --task-definition "$prev"
+          set -euo pipefail
+          rolled_back=""
+          untouched=""
+
+          for service in "$API_SERVICE" "$WEB_SERVICE"; do
+            active="$(aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services "$service" \
+              --query "services[0].deployments[?status=='PRIMARY']|[0].taskDefinition" \
+              --output text)"
+
+            # La révision relevée **avant** le déploiement, quand le job a eu le
+            # temps de la relever. C'est la seule qui vaille encore quelque chose
+            # une fois le déploiement stabilisé : ECS ne garde plus alors qu'un
+            # seul déploiement par service, et `deployments[1]` est vide — c'est
+            # l'état d'une sonde de santé rouge sur des tâches saines, la panne
+            # même que ce job existe pour réparer.
+            prev=""
+            for entry in ${BASELINE:-}; do
+              if [ "${entry%%=*}" = "$service" ]; then
+                prev="${entry#*=}"
+              fi
+            done
+
+            # Repli quand le relevé n'a pas eu lieu — échec avant l'étape qui le
+            # prend. Le déploiement est alors encore en cours : la `PRIMARY` est
+            # en tête et l'`ACTIVE` qu'elle remplace vient ensuite.
+            if [ -z "$prev" ]; then
+              prev="$(aws ecs describe-services \
+                --cluster "$CLUSTER" \
+                --services "$service" \
+                --query 'services[0].deployments[1].taskDefinition' \
+                --output text)"
+            fi
+
+            if [ "$prev" = "None" ] || [ -z "$prev" ]; then
+              untouched="$untouched $service"
+              echo "::warning::Aucune revision precedente sur $service — il n a pas ete redeploye, rien a defaire."
+              continue
+            fi
+
+            # Le service sert déjà ce qu'on voulait remettre : le disjoncteur
+            # d'ECS l'a devancé, ou rien n'a bougé sur ce service-là. Forcer une
+            # mise à jour ne ferait que relancer un déploiement pour rien.
+            if [ "$prev" = "$active" ]; then
+              untouched="$untouched $service"
+              echo "::warning::$service sert deja ${prev##*/} — rien a defaire."
+              continue
+            fi
+
+            echo "Retour de $service sur ${prev##*/}"
+            aws ecs update-service \
+              --cluster "$CLUSTER" \
+              --service "$service" \
+              --task-definition "$prev" \
+              --output text --query 'service.serviceName'
+            rolled_back="$rolled_back $service"
+          done
+
+          {
+            echo "rolled_back=${rolled_back# }"
+            echo "untouched=${untouched# }"
+          } >> "$GITHUB_OUTPUT"
+
+          if [ -z "${rolled_back# }" ]; then
+            echo "Aucun service n a ete ramene en arriere."
+            exit 0
+          fi
+
+          # L'attente est ce qui distingue « le rollback a été demandé » de « le
+          # rollback a abouti ». Sans elle, ce job serait vert sur une production
+          # encore en train de basculer — ou qui n'y arrive pas.
+          aws ecs wait services-stable \
+            --cluster "$CLUSTER" \
+            --services $rolled_back
+
+          # Et la stabilité ne suffit pas non plus : un service peut être stable
+          # sur la révision qu'on voulait défaire. On relit ce qui tourne.
+          failed=0
+          for service in $rolled_back; do
+            active="$(aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services "$service" \
+              --query "services[0].deployments[?status=='PRIMARY']|[0].taskDefinition" \
+              --output text)"
+            echo "Service $service : révision active ${active##*/}"
+            running="$(aws ecs describe-services \
+              --cluster "$CLUSTER" \
+              --services "$service" \
+              --query 'services[0].runningCount' \
+              --output text)"
+            if [ "$running" = "0" ]; then
+              failed=1
+              echo "::error::Le service $service tourne a zero tache apres le rollback — la revision precedente ne demarre pas non plus. Intervention manuelle requise : docs/runbooks/mise-en-production.md."
             fi
           done
-          aws ecs wait services-stable --cluster "$CLUSTER" --services spa-prod-api spa-prod-web
+          exit "$failed"
+
+      # Le résumé du run porte ce qu'un humain doit savoir en ouvrant l'onglet :
+      # ce qui a été défait, ce qui ne l'a pas été, et **l'identifiant de
+      # l'instantané** — le seul point de retour du schéma, que ce job ne touche
+      # pas. Le chercher dans une liste d'instantanés pendant un incident est
+      # exactement ce qu'on veut éviter.
+      - name: Résumé du rollback
+        if: always()
+        env:
+          SNAPSHOT: ${{ needs.deploy.outputs.snapshot }}
+          ROLLED_BACK: ${{ steps.rollback.outputs.rolled_back }}
+          UNTOUCHED: ${{ steps.rollback.outputs.untouched }}
+        run: |
+          {
+            echo "## Rollback de production"
+            echo
+            echo "- Commit visé : \`${GITHUB_SHA}\`"
+            echo "- Services ramenés à la révision précédente : \`${ROLLED_BACK:-aucun}\`"
+            echo "- Services non redéployés, donc non touchés : \`${UNTOUCHED:-aucun}\`"
+            echo
+            echo "### Schéma de base de données"
+            echo
+            echo "Ce rollback **ne défait aucune migration**. L'instantané pris avant"
+            echo "le déploiement est \`${SNAPSHOT:-non pris — le job a échoué avant}\`."
+            echo
+            echo "Le restaurer perd toutes les écritures postérieures : c'est une"
+            echo "décision humaine, pas une étape de workflow. Procédure dans"
+            echo "\`docs/runbooks/mise-en-production.md\`."
+          } >> "$GITHUB_STEP_SUMMARY"
