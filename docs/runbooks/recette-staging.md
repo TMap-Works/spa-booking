@@ -222,6 +222,16 @@ Deux établissements, et non un : c'est ce qui rend l'isolation exerçable. Rejo
 une route avec le jeton du voisin doit rendre **404**, jamais 403, jamais la
 donnée.
 
+### Puis dérouler le cahier
+
+Une fois le jeu chargé, ce qui se joue est écrit :
+[docs/recette/cahier-de-recette-mvp.md](../recette/cahier-de-recette-mvp.md) —
+91 cas couvrant les six domaines du CDC §1.4, la boucle « réserver → confirmer →
+honorer → encaisser → mesurer », l'isolation inter-tenant, et la feuille de
+verdict à remplir. Il nomme les comptes et les rendez-vous que ce seed vient de
+poser, et il ne se joue pas sur un environnement encore sous certificat
+auto-signé (§1.2).
+
 ---
 
 ## 5. L'arrêt hors heures ouvrées
