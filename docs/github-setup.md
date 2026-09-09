@@ -88,23 +88,97 @@ sur `staging` et `develop`, les contrôles de statut obligatoires, et interdit
 suppression et force-push.
 
 Même limite sur les **approbations manuelles d'environnement** : la règle
-« required reviewers » sur `prod` n'est pas disponible en Free. En attendant,
-`deploy-production.yml` ne se déclenche que sur `main`, et `terraform apply` en
-production reste un déclenchement manuel.
+« required reviewers » sur `prod` n'est pas disponible en Free.
+
+Le mécanisme, lui, est en place depuis #77 : les jobs `deploy` et
+`rollback-on-failure` de `deploy-production.yml`, comme le job `apply` de
+`terraform.yml`, déclarent `environment: prod`. Dès que la règle sera posée, ils
+attendront l'accord d'un relecteur **avant leur première étape** — donc avant
+l'instantané RDS, avant les images, avant les migrations.
+
+Tant qu'elle ne l'est pas, ce bloc ne retient personne : il résout les variables
+de l'environnement et présente le sujet OIDC attendu, rien de plus. Ce qui tient
+lieu de barrière en attendant est plus faible et il faut le savoir : le workflow
+ne se déclenche que sur `main` ou sur un `workflow_dispatch` explicite, et le
+parcours critique de bout en bout doit être vert avant que `deploy` ne démarre.
+
+**Ne pas retirer ces blocs `environment:` en attendant.** La politique de
+confiance des rôles OIDC n'accepte que `repo:<dépôt>:environment:prod` et refuse
+`ref:refs/heads/main` : un job qui ne le déclare pas n'obtient aucun rôle. Les
+retirer ne contournerait pas l'approbation, cela couperait le déploiement.
+
+Une fois le plan relevé :
+
+```bash
+gh api -X PUT repos/TMap-Works/spa-booking/environments/prod \
+  -f 'reviewers[][type]=User' -F 'reviewers[][id]=<identifiant du relecteur>'
+```
 
 ### 3. Secrets et variables AWS
 
-À renseigner quand le compte AWS et les rôles OIDC existent (issue #14) :
+À renseigner quand le compte AWS et les rôles OIDC existent (issue #14).
+
+**Des `variable` et non des `secret`**, y compris pour les ARN de rôle : un ARN
+de rôle n'est pas un secret, et le tenir hors des secrets rend visible d'un coup
+d'œil qu'aucun identifiant AWS n'est stocké ici. Aucune clé d'accès AWS statique
+n'existe nulle part — l'authentification passe par OIDC.
+
+**Au niveau du dépôt**, jamais au niveau d'un environnement :
 
 ```bash
-gh secret   set AWS_DEPLOY_ROLE_ARN    --repo TMap-Works/spa-booking
-gh secret   set AWS_TERRAFORM_ROLE_ARN --repo TMap-Works/spa-booking
-gh variable set AWS_REGION             --repo TMap-Works/spa-booking --body "eu-west-3"
-gh variable set APP_URL       --env dev --repo TMap-Works/spa-booking --body "https://dev.example.com"
-gh variable set ECS_NETWORK_CONFIG --env dev --repo TMap-Works/spa-booking --body "awsvpcConfiguration={...}"
+gh variable set AWS_REGION                 --repo TMap-Works/spa-booking --body "eu-west-3"
+gh variable set AWS_DEPLOY_ROLE_ARN        --repo TMap-Works/spa-booking --body "arn:aws:iam::…:role/spa-github-deploy"
+gh variable set AWS_TERRAFORM_ROLE_ARN     --repo TMap-Works/spa-booking --body "arn:aws:iam::…:role/spa-github-terraform"
+gh variable set AWS_TERRAFORM_PLAN_ROLE_ARN --repo TMap-Works/spa-booking --body "arn:aws:iam::…:role/spa-github-terraform-plan"
 ```
 
-Aucune clé d'accès AWS statique : l'authentification passe par OIDC.
+Ce niveau n'est pas une commodité. `deploy-production.yml` porte deux gardes qui
+**doivent** rester identiques — celle du job `e2e`, qui ne déclare pas
+`environment:` pour ne pas soumettre le parcours critique à l'approbation
+manuelle, et celle du job `deploy`, qui la déclare. Porter ces trois variables au
+niveau d'un environnement désaccorderait les deux : `e2e` ne les verrait pas,
+serait ignoré, `deploy` le serait à son tour par `needs`, et **plus rien ne
+partirait en production sur un run vert**.
+
+**Par environnement**, après le premier `terraform apply` :
+
+```bash
+gh variable set APP_URL --env prod --repo TMap-Works/spa-booking \
+  --body "$(terraform -chdir=infra/terraform/envs/prod output -raw app_url)"
+```
+
+`APP_URL` est l'origine **publique** — celle de la distribution CloudFront en
+production, pas celle de l'ALB. C'est ce qui fait que la sonde de santé
+post-déploiement éprouve aussi le certificat de bord, la Web ACL de bord et la
+résolution DNS du nom public.
+
+**Le contenu du `.tfvars` de chaque environnement déployé**, en variable de
+dépôt : `STAGING_TFVARS` et `PROD_TFVARS`. `.gitignore` écarte `*.tfvars`, le
+checkout de la CI n'en porte aucun, et un `terraform apply` qui ne passe que
+`-var image_tag` ramène **toutes les autres variables à leur défaut**.
+
+Sur la production, ce n'est pas une dégradation mais une destruction :
+`public_domain_name` redevenant nul, l'`apply` détruit la distribution
+CloudFront, sa Web ACL de bord et les deux certificats ACM, et remplace le
+certificat du listener 443 par un repli auto-signé. `deploy-production.yml`
+**échoue** donc quand `PROD_TFVARS` est absente, là où `deploy-staging.yml` se
+contente d'un avertissement. Voir
+[runbooks/mise-en-production.md](runbooks/mise-en-production.md).
+
+`terraform.yml` les lit aussi — dans son job `plan` comme dans son job `apply`,
+et `DEV_TFVARS` s'y ajoute pour l'environnement de développement. Un `apply`
+manuel sur `prod` **échoue** sans `PROD_TFVARS`, pour la même raison que
+`deploy-production.yml` ; un plan sans elle porte sur les défauts, et les
+destructions qu'il affiche sont un artefact de la CI, pas une intention.
+
+Ces variables doivent porter `image_tag`, à côté du reste : `terraform.yml`
+n'en passe aucun en ligne de commande, et son défaut d'amorçage ferait viser une
+image inexistante aux services. Les workflows de déploiement, eux, posent
+`-var image_tag=<sha>`, qui l'emporte sur un `*.auto.tfvars`.
+
+Ces variables portent des noms de domaine et des ARN de certificat, pas des
+secrets : ce qui est sensible — mot de passe, jeton — passe par AWS Secrets
+Manager et n'apparaît jamais ici.
 
 ### 4. Secrets Stripe
 
