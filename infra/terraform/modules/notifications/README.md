@@ -579,16 +579,108 @@ racine. Une issue de suivi porte ce câblage.
 - **Le jeton partagé** : Terraform crée le droit de le lire, pas sa valeur. Le
   secret se dépose hors code, comme celui d'exécution de l'API.
 
-  **À éprouver en développement avant staging.** La fonction lit ce secret avec
-  `@aws-sdk/client-secrets-manager`, qu'elle attend du runtime `nodejs20.x` —
-  l'archive ne transporte aucune dépendance, c'est ce qui lui évite une étape de
-  construction. Si le runtime ne le fournissait pas, l'import échouerait, tous
-  les messages deviendraient transitoires et la file entière partirait en DLQ. Le
-  journal distingue ce cas des autres : un `notification.token_unavailable` avec
-  `code: "ERR_MODULE_NOT_FOUND"` désigne le runtime, un refus IAM ou une panne
-  réseau porte un autre code. Le remède, si le cas se présente, est de vendre le
-  client dans l'archive ou de passer par l'extension Lambda de Secrets Manager —
-  hors du périmètre de #67, une issue de suivi le porte.
+### Le client Secrets Manager, et pourquoi l'archive reste vide (#495)
+
+Les trois fonctions du module lisent leur jeton avec
+`@aws-sdk/client-secrets-manager` — le balayeur y ajoute `@aws-sdk/client-sqs` —
+et l'archive produite par `archive_file` ne transporte aucune de ces dépendances.
+C'est ce qui évite au module une étape de construction en CI, et donc de faire
+dépendre un `terraform apply` d'un artefact produit ailleurs.
+
+#67 avait laissé la question ouverte : *et si le runtime ne les fournissait pas ?*
+L'import échouerait, tous les messages deviendraient transitoires, et la file
+entière partirait en DLQ — le jour où `dispatch_token_secret_arn` est renseignée,
+c'est-à-dire au go-live. **La question est tranchée : le runtime les fournit.**
+
+#### Ce qui a été constaté
+
+Sur l'image du runtime elle-même — `public.ecr.aws/lambda/nodejs:20`, digest
+`sha256:a4440274d6f0…`, Node `v20.20.2` :
+
+| Constat | Résultat |
+|---|---|
+| `@aws-sdk/client-secrets-manager` dans `/var/runtime/node_modules` | présent, version `3.895.0` |
+| `@aws-sdk/client-sqs`, et les 400 autres clients v3 | présents — le runtime embarque le SDK v3 **entier**, 138 Mo |
+| `import()` du client depuis un handler ESM en `/var/task` | résolu |
+| Invocation réelle du handler du dispatcher, jeton configuré | `GetSecretValue` signé et servi, jeton relayé en `x-internal-token`, `notification.sent` / `status: 202`, `TransientFailures: 0` |
+
+L'invocation est la preuve qui compte : le handler de
+`lambda/dispatcher/index.mjs`, déposé tel quel dans `/var/task` d'un conteneur
+bâti sur l'image du runtime, invoqué par l'émulateur d'interface (RIE) avec une
+enveloppe SQS et `DISPATCH_TOKEN_SECRET_ARN` renseignée, contre un bouchon local
+tenant lieu de Secrets Manager et de route d'envoi. Le jeton lu par le SDK est
+ressorti dans l'en-tête de l'appel d'envoi — le chemin complet, pas seulement
+l'import.
+
+Deux commandes pour le revérifier sans rien bâtir :
+
+```bash
+# 1. Le client est là, et à quelle version.
+docker run --rm --entrypoint node public.ecr.aws/lambda/nodejs:20 \
+  -p "require('/var/runtime/node_modules/@aws-sdk/client-secrets-manager/package.json').version"
+
+# 2. Il se résout en ESM depuis le répertoire du handler.
+docker run --rm --entrypoint sh public.ecr.aws/lambda/nodejs:20 -c \
+  'cd /var/task && NODE_PATH=/var/runtime/node_modules node --input-type=module \
+     -e "await import(\"@aws-sdk/client-secrets-manager\"); console.log(\"resolu\")"'
+```
+
+#### Le détail qui rend le constat non évident
+
+Le SDK n'est pas dans un `node_modules` que le résolveur trouverait en remontant
+depuis `/var/task` : il est dans `/var/runtime/node_modules`, atteint par
+`NODE_PATH`, et c'est `/var/runtime/bootstrap` qui exporte cette variable au
+démarrage — `nodejs20_mods:nodejs_mods:runtime_mods:task`, seulement si elle est
+vide. Le même import lancé avec un `NODE_PATH` qui ne porte pas ce chemin échoue.
+Écraser `NODE_PATH` par une variable d'environnement de la fonction couperait donc
+les trois Lambdas de leur SDK : **ne pas y toucher.**
+
+#### Ce qui a été retenu
+
+**Ni vendorisation dans l'archive, ni extension Lambda de Secrets Manager.** Les
+deux remèdes que #495 tenait en réserve répondaient à une panne qui n'existe pas,
+et chacun coûte ce que le module a délibérément refusé : la vendorisation impose
+l'étape de construction et l'artefact hors Terraform ; l'extension ajoute une
+couche dont l'ARN varie par région et par architecture, à câbler depuis chaque
+environnement.
+
+AWS recommande par ailleurs d'embarquer ses propres dépendances plutôt que de
+s'en remettre au SDK du runtime, pour maîtriser les versions à travers les mises
+à jour automatiques de runtime. L'argument ne mord pas ici : la seule surface
+utilisée est `GetSecretValue`, et `SendMessageBatch` pour le balayeur — des API
+stables, appelées derrière une gestion d'erreur qui traite toute lecture ratée en
+transitoire.
+
+**Ce qui reste vrai, et rend le diagnostic utile.** La dépendance au runtime est
+réelle, simplement satisfaite. Le journal continue de la distinguer des autres
+causes — mais chaque fonction la nomme à sa façon, et c'est cela qu'il faut
+filtrer :
+
+| Fonction | Ce que dit son journal si le SDK manquait |
+|---|---|
+| Lambda d'envoi | `notification.token_unavailable`, `code: "ERR_MODULE_NOT_FOUND"` |
+| Lambda de rebonds SES | `delivery.token_unavailable`, même `code` |
+| Balayeur des rappels | `reminder.sweep_failed`, `reason: "Error"` — **pas de champ `code`** : c'est `message` qui nomme le paquet. Et l'import de `@aws-sdk/client-sqs`, plus tard dans le balayage, ressort en erreur non rattrapée de l'invocation, sans ligne structurée du tout |
+
+Un refus IAM ou une panne réseau porte un autre code — ou, pour le balayeur, un
+autre message. Ce chemin a été exercé lui aussi, en privant la même invocation de
+son `NODE_PATH` : la Lambda d'envoi rend bien l'enregistrement dans
+`batchItemFailures` et journalise exactement cette ligne.
+
+**Quand reposer la question.** Au changement de runtime, et à ce moment-là
+seulement — le constat ci-dessus vaut pour `nodejs20.x`, qu'`archive_file`
+empaquette sans dépendances. `nodejs22.x` embarque le même SDK v3 entier
+(vérifié : 430 clients, `client-secrets-manager` compris), donc la bascule est
+sans danger de ce côté ; c'est le seul point à revérifier d'une commande avant de
+la faire.
+
+Et ce changement est daté : `nodejs20.x`, que les trois fonctions épinglent, est
+un runtime **déprécié** depuis le 30 avril 2026. Les fonctions existantes
+continuent d'être invoquées, mais AWS cesse d'en corriger le socle, bloque la
+création de nouvelles fonctions au 1ᵉʳ février 2027 et leur mise à jour au
+3 mars 2027 — deux dates qui mordent sur un `terraform apply` en environnement
+neuf. La bascule est hors du périmètre de #495 ; une issue de suivi la porte.
+
 ## Le rappel J-1 — planning horaire et balayage (#71)
 
 ```
