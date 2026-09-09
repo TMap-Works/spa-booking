@@ -11,12 +11,13 @@
  *
  * Il est **hors** de `lambda/dispatcher/`, le répertoire qu'`archive_file`
  * empaquette : un fichier de test n'a rien à faire dans l'artefact déployé, et
- * l'exclure par filtre serait un réglage de plus à ne pas oublier.
+ * l'exclure par filtre serait un réglage de plus à ne pas oublier. `run-smoke.mjs`
+ * refuse désormais tout fichier de test trouvé dans un répertoire empaqueté —
+ * la disposition est tenue par une garde, plus par la seule convention.
  *
- * Il n'est pas joué par `npm run verify` : ce dossier n'appartient à aucun
- * espace de travail npm, et l'y rattacher demanderait de toucher le
- * `package.json` de la racine — hors de l'empreinte de ce ticket. Une issue de
- * suivi porte ce câblage.
+ * Depuis #496, il est joué par `npm run verify` et par le job `test` de
+ * `ci.yml` : la cible `test:smoke:lambda` appelle `run-smoke.mjs`, qui découvre
+ * les `*.smoke.mjs` de ce dossier et les exécute.
  */
 
 process.env.ENVIRONMENT = 'smoke';

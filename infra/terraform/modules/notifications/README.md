@@ -365,7 +365,8 @@ fonction : le corps qu'elle relaie *contient* l'adresse du destinataire, là où
 les enveloppes de notification n'en portent aucune. Ni le corps, ni un extrait,
 ni « juste pour diagnostiquer » — seulement l'identifiant du message SQS, le
 verdict rendu par l'API et des compteurs (CDC §5.1). `delivery-events.smoke.mjs`
-le vérifie en interceptant la sortie standard.
+le vérifie en interceptant la sortie standard — et il est joué par
+`npm run verify` et par la CI depuis #496, voir « Où les fumigations tournent ».
 
 **Défaut fermé.** `delivery_events_url` vaut `null` par défaut : la fonction rend
 chaque message à SQS plutôt que de l'acquitter, la file vieillit, la DLQ se
@@ -566,10 +567,39 @@ cd infra/terraform/modules/notifications/lambda && node dispatcher.smoke.mjs
 ```
 
 Trois vérifications : le tri des issues (seuls les transitoires sont rendus à
-SQS), la garde de fin de temps imparti, et le défaut fermé. Ce script n'est
-**pas** joué par `npm run verify` — ce dossier n'appartient à aucun espace de
-travail npm, et l'y rattacher demanderait de toucher le `package.json` de la
-racine. Une issue de suivi porte ce câblage.
+SQS), la garde de fin de temps imparti, et le défaut fermé.
+
+#### Où les fumigations tournent (#496)
+
+Les trois fumigations du module — celle-ci, celle de la Lambda de rebonds et
+celle du balayeur de rappels — sont jouées par **`npm run verify`** et par le job
+`test` de `.github/workflows/ci.yml`, à l'étape « Fumigation des Lambda de
+notification ». Une modification d'un handler qui casserait le tri des issues
+rougit donc avant le merge, et non au premier incident de production.
+
+Le câblage tient en une cible du `package.json` de la racine :
+
+```bash
+npm run test:smoke:lambda
+```
+
+Elle appelle `lambda/run-smoke.mjs`, qui **découvre** les `*.smoke.mjs` du dossier
+plutôt que de les nommer : la quatrième Lambda n'aura rien à câbler. Le lanceur
+refuse trois situations :
+
+- le **lot vide** — une barrière qui n'exerce rien serait verte pour rien ;
+- un **répertoire empaqueté portant un `index.mjs` sans `<nom>.smoke.mjs`** en
+  regard : découvrir dispense de câbler la fumigation de la quatrième Lambda,
+  pas de l'écrire, et sans ce contrôle le nouveau handler ne serait jamais
+  exécuté tout en laissant l'étape au vert ;
+- tout **fichier de test trouvé dans un sous-dossier** de `lambda/`.
+
+Ce dernier contrôle tient le second critère de #496 : les sous-dossiers de
+`lambda/` sont les `source_dir` des `archive_file`, et `archive_file` empaquette
+un répertoire **entier, sans filtre**. Une fumigation déposée dans
+`lambda/dispatcher/` partirait telle quelle dans l'artefact Lambda déployé. Les
+scripts et leur lanceur restent donc à la racine de `lambda/`, à côté des
+répertoires empaquetés et jamais dedans.
 
 ### Ce qui reste à faire ailleurs
 
@@ -777,8 +807,10 @@ cd infra/terraform/modules/notifications/lambda && node reminder-sweeper.smoke.m
 
 Onze vérifications : la publication par lots de dix, le rejet d'une enveloppe
 malformée avant publication, la levée sur lot partiellement refusé, la levée sur
-refus de l'API, l'heure creuse qui n'appelle pas SQS, et le défaut fermé. Comme
-celle de la Lambda d'envoi, ce script n'est pas joué par `npm run verify` (#496).
+refus de l'API, l'heure creuse qui n'appelle pas SQS, et le défaut fermé.
+
+Comme celle de la Lambda d'envoi, ce script est joué par `npm run verify` et par
+la CI depuis #496 — voir « Où les fumigations tournent », plus haut.
 
 ### Ce qui reste à faire ailleurs
 
