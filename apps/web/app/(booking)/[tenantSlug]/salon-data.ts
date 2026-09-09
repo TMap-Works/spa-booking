@@ -27,6 +27,7 @@ import type { PublicService, PublicTenant } from '@spa/shared';
 import { cache } from 'react';
 
 import { fetchPublicServices, fetchPublicTenant } from '@/lib/api-client';
+import { resolvePublicOrigin } from '@/lib/public-origin';
 
 /** Vitrine de l'établissement, chargée une fois par requête. */
 export const loadSalonTenant = cache((tenantSlug: string): Promise<PublicTenant> =>
@@ -42,16 +43,14 @@ export const loadSalonServices = cache((tenantSlug: string): Promise<PublicServi
  * Origine publique du front — celle sous laquelle un moteur de recherche voit
  * cette page.
  *
- * Lue d'`APP_URL`, la variable que `.env.example` déclare déjà pour le front, et
- * **non** de l'en-tête `Host` de la requête : un en-tête est fourni par
- * l'appelant, et le recopier dans une URL canonique ou dans des données
- * structurées laisserait un tiers désigner le domaine que les moteurs
- * associeront au salon.
- *
- * Sans préfixe `NEXT_PUBLIC_` : elle n'est lue que côté serveur, au rendu.
+ * Le repli sur `http://localhost:3000` n'existe plus que pour le développement :
+ * hors de là, `instrumentation.ts` arrête le processus si `APP_URL` est absente,
+ * mal formée ou ne désigne que la machine courante (#345). Une canonique
+ * `localhost` en déployé n'est donc plus une dérive silencieuse, c'est une tâche
+ * qui meurt sur son premier contrôle de santé.
  */
 export function siteOrigin(): string {
-  return (process.env['APP_URL'] ?? 'http://localhost:3000').replace(/\/+$/, '');
+  return resolvePublicOrigin();
 }
 
 /** Chemin canonique de la page publique d'un salon. */
