@@ -88,11 +88,19 @@ export function modeCle(valeur: string | undefined): ModeCle {
 
 /** Les variables que ce module regarde, et leur mode. */
 export interface DiagnosticStripe {
+  /**
+   * Le mode de chaque variable de `VARIABLES_SURVEILLEES`.
+   *
+   * **Ce n'est pas une liste d'anomalies.** `modeCle` ne connaît que les
+   * préfixes de clé, et `STRIPE_WEBHOOK_SECRET` — préfixé `whsec_`, sans mode —
+   * y figure donc comme `'invalide'` dès qu'il est posé, alors que sa valeur est
+   * parfaitement normale (non posé, il vaut `'absente'` comme les autres). Qui
+   * veut dériver des anomalies de cette carte doit d'abord décider du sort des
+   * variables sans mode (#508).
+   */
   readonly cles: ReadonlyMap<string, ModeCle>;
   /** Les noms des variables porteuses d'une clé live. */
   readonly live: readonly string[];
-  /** Les noms des variables porteuses d'une valeur non classable. */
-  readonly invalides: readonly string[];
   /** `true` quand les deux clés nécessaires à la scène carte sont en mode test. */
   readonly carteJouable: boolean;
 }
@@ -125,15 +133,23 @@ export function inspecterStripe(env: Readonly<Record<string, string | undefined>
   const live = [...cles.entries()]
     .filter(([, mode]) => mode === 'live')
     .map(([nom]) => nom);
-  const invalides = [...cles.entries()]
-    .filter(([, mode]) => mode === 'invalide')
-    .map(([nom]) => nom);
 
   // Le secret de webhook n'est pas préfixé `whsec_test_` : il ne porte pas de
   // mode, et n'entre donc pas dans la condition de jouabilité.
+  //
+  // Il n'existe volontairement **aucun** pendant de `live` pour les valeurs non
+  // classables (#508). Un tel champ n'aurait eu aucun lecteur — ni
+  // `refuserCleLive`, qui ne s'intéresse qu'au live, ni `motifDeSaut`, qui
+  // dérive les siennes de `VARIABLES_STRIPE` seul — et il aurait porté
+  // `STRIPE_WEBHOOK_SECRET` dès qu'il est posé, que `modeCle` range en
+  // `'invalide'` faute de savoir lire un `whsec_`. Le premier à s'en servir
+  // aurait hérité d'un faux positif installé. `cles` porte toute l'information :
+  // la liste se reconstruit en une ligne le jour où quelqu'un en a l'usage — et
+  // ce jour-là, c'est lui qui tranchera le sort des variables sans mode, en
+  // connaissance de cause.
   const carteJouable = VARIABLES_STRIPE.every((nom) => cles.get(nom) === 'test');
 
-  return { cles, live, invalides, carteJouable };
+  return { cles, live, carteJouable };
 }
 
 /** Levée quand l'environnement porte de quoi appeler Stripe en live. */

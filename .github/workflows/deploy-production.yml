@@ -39,8 +39,36 @@ jobs:
   # Il précède la prise de rôle AWS, le snapshot RDS et les migrations : un
   # parcours rouge n'aura donc coûté ni instantané, ni image poussée, ni
   # migration appliquée.
+  #
+  # ## Pourquoi la même garde que `deploy`
+  #
+  # Ce job est la barrière *de ce déploiement-ci*. Quand le déploiement est
+  # désactivé — rôle OIDC non appliqué —, il ne garde rien : il dépense jusqu'à
+  # 30 minutes de runner à éprouver un état que personne ne mettra en
+  # production (#508). La garde est donc recopiée à l'identique depuis `deploy`
+  # ci-dessous, et les deux doivent le rester : une barrière qui s'exécute sans
+  # son déploiement est du temps perdu, un déploiement qui s'exécute sans sa
+  # barrière est un défaut de sûreté.
+  #
+  # Les deux conditions ne sont réellement identiques que si `AWS_REGION` et
+  # `AWS_DEPLOY_ROLE_ARN` restent des variables **de dépôt**. Ce job ne déclare
+  # pas `environment:` — à dessein : le lui donner soumettrait la barrière à
+  # l'approbation manuelle de `prod`, et ferait attendre un humain avant même de
+  # savoir si le parcours est vert. Il ne voit donc que les variables de dépôt,
+  # là où `deploy` résout aussi celles de l'environnement `prod`. Porter ces
+  # deux variables au niveau de l'environnement désaccorderait silencieusement
+  # les gardes : ce job serait ignoré, `deploy` le serait à son tour par
+  # `needs`, et plus rien ne partirait en production sur un run vert.
+  # `docs/github-setup.md` §3 les pose au niveau du dépôt pour cette raison.
+  #
+  # Rien ne se relâche quand la garde est fausse : `deploy` porte la même
+  # condition et est ignoré par la sienne, indépendamment de ce `needs`. Et
+  # `rollback-on-failure` teste `needs.deploy.result == 'failure'` — un job
+  # ignoré conclut `skipped`, jamais `failure`, donc aucun rollback ne part sur
+  # un déploiement qui n'a pas eu lieu.
   e2e:
     name: Parcours critique
+    if: ${{ vars.AWS_REGION != '' && vars.AWS_DEPLOY_ROLE_ARN != '' }}
     uses: ./.github/workflows/e2e.yml
     secrets: inherit
 
