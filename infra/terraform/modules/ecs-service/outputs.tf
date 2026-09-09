@@ -103,6 +103,24 @@ output "log_group_names" {
   value       = { for name, group in aws_cloudwatch_log_group.service : name => group.name }
 }
 
+output "off_hours_shutdown_enabled" {
+  description = "Vrai quand les services de ce cluster s'arrêtent hors heures ouvrées. Faux, ils tournent nuit et week-end — ce qui est le réglage attendu en production et une dépense inutile ailleurs (skill aws-infra §9)."
+  value       = var.off_hours_shutdown != null
+}
+
+output "off_hours_schedule" {
+  description = "Les deux expressions d'arrêt et de reprise, avec leur fuseau, ou `null` si aucune planification n'est posée. C'est ce qu'on relit quand un service est introuvable un lundi matin — avant de chercher une panne qui n'existe pas."
+  value       = var.off_hours_shutdown
+}
+
+output "off_hours_scheduled_action_names" {
+  description = "Noms des actions planifiées posées sur les cibles d'auto-scaling — deux par service, l'arrêt et la reprise. Liste vide quand l'arrêt hors heures ouvrées n'est pas configuré : c'est ce qui distingue « pas de planification » de « planification qui ne s'est pas déclenchée »."
+  value = sort(concat(
+    [for action in values(aws_appautoscaling_scheduled_action.off_hours_stop) : action.name],
+    [for action in values(aws_appautoscaling_scheduled_action.off_hours_start) : action.name],
+  ))
+}
+
 output "xray_traced_services" {
   description = "Clés des services dont la tâche porte le sidecar `aws-xray-daemon` et dont le rôle peut publier ses segments. Liste vide = aucune trace ne remontera, quoi que fasse le code applicatif."
   value       = sort(keys(local.xray_services))

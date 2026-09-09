@@ -124,6 +124,57 @@ créé, d'où l'`ignore_changes = [desired_count]` posé sur le service. Sans ce
 exclusion, chaque `apply` ramènerait le service à sa valeur initiale —
 c'est-à-dire réduirait la capacité en pleine charge.
 
+## Arrêt hors heures ouvrées
+
+« Dev et staging dimensionnés a minima et **arrêtables hors heures ouvrées** »
+(skill aws-infra §9, CDC §4.16). `off_hours_shutdown` le pose en Terraform, ce
+qui n'est pas un détail : un environnement qu'on éteint à la main reste allumé
+le soir où personne n'y pense.
+
+```hcl
+off_hours_shutdown = {
+  stop_cron  = "cron(0 20 ? * MON-FRI *)"   # 20 h, du lundi au vendredi
+  start_cron = "cron(0 7 ? * MON-FRI *)"    # 7 h, du lundi au vendredi
+  timezone   = "Europe/Paris"
+}
+```
+
+Deux actions planifiées par service, posées sur la **cible** d'auto-scaling et
+non sur le service : l'arrêt y écrit `min_capacity = max_capacity = 0`, la
+reprise y restaure les bornes déclarées dans `services`. Le week-end reste éteint
+de lui-même — l'arrêt du vendredi soir n'est suivi d'aucun démarrage avant lundi.
+
+Zéro des **deux** côtés, et pas seulement du minimum : un maximum non nul
+laisserait la politique de suivi de cible faire remonter le service à la première
+métrique de CPU.
+
+Trois choses à savoir :
+
+1. **Rien d'autre ne s'arrête.** ALB, base, cache, endpoints d'interface et NAT
+   Gateway continuent d'être facturés. Ce réglage coupe le calcul, pas
+   l'environnement. Arrêter la base est une décision distincte : RDS redémarre de
+   lui-même toute instance arrêtée depuis sept jours, et une tâche de migration
+   jouée par un déploiement de nuit échouerait sur une base éteinte.
+2. **Un `terraform apply` réveille l'environnement.** Une action planifiée
+   modifie la cible elle-même : après l'arrêt du soir, elle porte `0/0` là où
+   l'état déclare les capacités du service, et le `apply` suivant les rétablit —
+   Application Auto Scaling redémarre alors les tâches manquantes. C'est le
+   comportement voulu, un déploiement de nuit devant aboutir, mais `plan` montre
+   cette dérive-là toutes les nuits.
+3. Les expressions sont des crons **Application Auto Scaling** : six champs,
+   année comprise, et non la forme à cinq champs d'un crontab Unix.
+
+Pour lever l'arrêt ponctuellement, sans toucher au code :
+
+```bash
+aws application-autoscaling register-scalable-target \
+  --service-namespace ecs --scalable-dimension ecs:service:DesiredCount \
+  --resource-id "service/<cluster>/<service>" --min-capacity 1 --max-capacity 2
+```
+
+La prochaine action planifiée reprendra la main. Pour le lever durablement,
+repasser `off_hours_shutdown` à `null` et appliquer.
+
 ## Secrets
 
 Les valeurs sensibles arrivent par **ARN Secrets Manager**, dans le bloc
@@ -238,6 +289,7 @@ vide — ce n'est pas une panne d'infrastructure.
 | `cpu_target_utilization` | `number` | `60` | Cible d'auto-scaling, en pourcentage |
 | `scale_out_cooldown_seconds` | `number` | `60` | Délai avant une nouvelle montée |
 | `scale_in_cooldown_seconds` | `number` | `300` | Délai avant une nouvelle descente |
+| `off_hours_shutdown` | `object` | `null` | Arrêt programmé hors heures ouvrées ; `null` en production |
 | `log_retention_days` | `number` | `30` | 30 en dev et staging, 90 en production |
 | `container_insights_enabled` | `bool` | `false` | Facturé à la métrique ; production et staging |
 | `kms_key_arn` | `string` | `null` | Chiffre journaux et secrets ; `null` = clé gérée par AWS |
@@ -264,7 +316,8 @@ dit au plan.
 `task_definition_arns`, `task_role_arns`, `task_role_names`,
 `execution_role_arns`, `target_group_arns`, `target_group_arn_suffixes`,
 `log_group_names`, `xray_traced_services`, `public_base_url`,
-`public_url_env_vars`.
+`public_url_env_vars`, `off_hours_shutdown_enabled`, `off_hours_schedule`,
+`off_hours_scheduled_action_names`.
 
 Les sorties par service sont des maps indexées sur la clé de `services`. Cinq
 d'entre elles servent aux modules voisins, en trois usages :

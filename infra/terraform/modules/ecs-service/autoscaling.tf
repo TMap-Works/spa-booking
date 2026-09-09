@@ -44,3 +44,62 @@ resource "aws_appautoscaling_policy" "cpu" {
     scale_in_cooldown  = var.scale_in_cooldown_seconds
   }
 }
+
+# --- Arrêt hors heures ouvrées ------------------------------------------------
+#
+# « Dev et staging dimensionnés a minima et **arrêtables hors heures ouvrées** »
+# (skill aws-infra §9, CDC §4.16). Arrêtables *en Terraform* : un environnement
+# qu'on éteint à la main reste allumé le soir où personne n'y pense, et c'est
+# précisément le poste de dépense qu'on croyait avoir maîtrisé.
+#
+# Le levier est la **cible** d'auto-scaling, pas le service : une action
+# planifiée y écrit `min_capacity` et `max_capacity`, et Application Auto
+# Scaling ramène `desired_count` dans l'intervalle. Passer par
+# `aws_ecs_service.desired_count` n'aurait rien donné — il est sous
+# `ignore_changes`, l'auto-scaling en étant propriétaire une fois le service
+# créé.
+#
+# Les deux ressources ne se posent que si `off_hours_shutdown` est renseigné, et
+# elles se posent **par service** : l'API et le front s'arrêtent ensemble, mais
+# rien n'oblige à ce qu'ils repartent avec la même capacité.
+
+resource "aws_appautoscaling_scheduled_action" "off_hours_stop" {
+  for_each = var.off_hours_shutdown == null ? {} : var.services
+
+  name               = "${local.name_prefix}-${each.key}-off-hours-stop"
+  service_namespace  = aws_appautoscaling_target.service[each.key].service_namespace
+  resource_id        = aws_appautoscaling_target.service[each.key].resource_id
+  scalable_dimension = aws_appautoscaling_target.service[each.key].scalable_dimension
+
+  schedule = var.off_hours_shutdown.stop_cron
+  timezone = var.off_hours_shutdown.timezone
+
+  # Zéro des deux côtés, et pas seulement `min_capacity` : laisser un maximum
+  # non nul autoriserait la politique de suivi de cible à faire remonter le
+  # service dès la première métrique de CPU, ce qui rallumerait l'environnement
+  # qu'on vient d'éteindre.
+  scalable_target_action {
+    min_capacity = 0
+    max_capacity = 0
+  }
+}
+
+resource "aws_appautoscaling_scheduled_action" "off_hours_start" {
+  for_each = var.off_hours_shutdown == null ? {} : var.services
+
+  name               = "${local.name_prefix}-${each.key}-off-hours-start"
+  service_namespace  = aws_appautoscaling_target.service[each.key].service_namespace
+  resource_id        = aws_appautoscaling_target.service[each.key].resource_id
+  scalable_dimension = aws_appautoscaling_target.service[each.key].scalable_dimension
+
+  schedule = var.off_hours_shutdown.start_cron
+  timezone = var.off_hours_shutdown.timezone
+
+  # Les bornes déclarées par le service, et non des constantes : c'est ce qui
+  # fait que relever `min_capacity` dans `services` suffit, sans avoir à penser
+  # à corriger la planification du matin en même temps.
+  scalable_target_action {
+    min_capacity = each.value.min_capacity
+    max_capacity = each.value.max_capacity
+  }
+}
