@@ -270,6 +270,27 @@ module "backup" {
   alarm_topic_arns = [module.budgets.alerts_topic_arn]
 }
 
+# --- Export du reporting (#563) -----------------------------------------------
+
+# Le bucket qui reçoit les exports CSV du back-office, et le droit pour l'API de
+# les y déposer et de les signer. Aucune dépendance : il n'est branché ni au VPC,
+# ni à la base — l'API l'atteint par l'endpoint S3 déjà présent dans le réseau.
+module "reporting_export" {
+  source = "../../modules/reporting-export"
+
+  environment = local.environment
+
+  # Trois jours plutôt que les sept du module : sur un environnement de
+  # développement, un export sert à vérifier que le bouton fonctionne, pas à
+  # remplir un dossier. Le raccourcir ici fait aussi qu'une purge se **voit** —
+  # sept jours, personne ne repasse pour constater.
+  retention_days = 3
+
+  # `kms_key_arn` laissé à `null` : chiffrement géré par S3. Une clé du compte se
+  # justifierait en production, où les exports portent le chiffre d'affaires
+  # réel ; ici ils portent celui d'un jeu d'essai.
+}
+
 # --- Délivrabilité e-mail -----------------------------------------------------
 
 # Rien tant qu'aucun domaine d'envoi n'est fourni. Ce n'est pas de la prudence
@@ -529,9 +550,22 @@ module "ecs_service" {
       # la file sur laquelle l'API publie au lieu d'appeler SES depuis le chemin
       # de requête HTTP (CDC §4.8). Une URL de file n'est pas un secret — elle ne
       # donne aucun droit à qui la connaît sans la politique qui va avec.
+      #
+      # `REPORT_EXPORT_BUCKET` obéit à la même règle (#563) : un nom de bucket
+      # n'accorde rien, et le bucket refuse tout principal hors du compte. Sans
+      # cette clé, l'API démarre et sert ses trois routes de rapport ; seule la
+      # route d'export répond 503.
+      #
+      # `AWS_REGION` l'accompagne, et elle n'est pas facultative : contrairement à
+      # Lambda, ECS ne pose **aucune** variable de région dans le conteneur. Le
+      # SDK JS v3 ne résout la région que depuis `AWS_REGION`, `AWS_DEFAULT_REGION`
+      # ou un profil de configuration — à défaut, le premier `PutObject` échoue sur
+      # « Region is missing », c'est-à-dire un 500 sur chaque export.
       environment = merge(local.notification_queue_env, {
-        LOG_LEVEL = "debug"
-        PORT      = "3001"
+        LOG_LEVEL            = "debug"
+        PORT                 = "3001"
+        AWS_REGION           = data.aws_region.current.name
+        REPORT_EXPORT_BUCKET = module.reporting_export.bucket_name
       })
 
       # Le droit de publier sur cette file, et celui d'émettre un SMS — rien
@@ -539,7 +573,14 @@ module "ecs_service" {
       # pourrait dépiler pouvant faire disparaître un rappel ; la seconde
       # n'accorde aucun droit sur les réglages SMS du compte, une application qui
       # pourrait relever son propre plafond de dépense le rendant décoratif (#66).
-      task_role_policy_arns = local.notification_api_policy_arns
+      #
+      # S'y ajoute le droit de déposer et de signer un export de reporting
+      # (#563) : ni `ListBucket` — qui donnerait à l'API le droit d'énumérer les
+      # exports de tous les établissements —, ni `DeleteObject` — c'est le cycle
+      # de vie du bucket qui purge.
+      task_role_policy_arns = concat(local.notification_api_policy_arns, [
+        module.reporting_export.producer_policy_arn,
+      ])
 
       # Résolus par l'agent ECS au démarrage, à partir des clés JSON du secret
       # d'exécution. Aucune valeur ne transite par l'état ni par la console ECS.

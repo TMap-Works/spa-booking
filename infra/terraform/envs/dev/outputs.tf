@@ -375,3 +375,20 @@ output "backup_alarms_notify" {
   description = "Vrai quand les alarmes du coffre sont branchées sur un topic SNS. Faux, elles passent au rouge sans prévenir personne."
   value       = module.backup.alarms_notify
 }
+
+# --- Export du reporting (#563) -----------------------------------------------
+
+output "reporting_export_bucket" {
+  description = "Bucket qui reçoit les exports CSV du back-office. C'est la valeur posée dans `REPORT_EXPORT_BUCKET` sur la tâche de l'API ; sans elle, la route d'export répond 503."
+  value       = module.reporting_export.bucket_name
+}
+
+output "reporting_export_retention_days" {
+  description = "Nombre de jours au bout desquels un export est supprimé par le cycle de vie du bucket. Rendu pour être vérifiable sans ouvrir le module."
+  value       = module.reporting_export.retention_days
+}
+
+output "reporting_export_encryption" {
+  description = "Chiffrement au repos effectivement appliqué au bucket d'exports — `AES256` sans clé client, `aws:kms` avec. Dans les deux cas, le bucket est chiffré."
+  value       = module.reporting_export.encryption_algorithm
+}

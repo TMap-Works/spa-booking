@@ -173,6 +173,51 @@ module "notifications" {
   sms_sender_id = var.notification_sms_sender_id
 }
 
+# --- Export du reporting (#563) -----------------------------------------------
+
+# `../../modules/reporting-export` n'est pas composé ici : le bucket n'a aucune
+# dépendance, mais les deux choses qui le rendent utile en ont une. Le nom du
+# bucket doit atteindre la tâche de l'API par `REPORT_EXPORT_BUCKET`, et sa
+# politique doit s'attacher au rôle de tâche de cette même API : les deux passent
+# par `module "ecs_service"`, que cet environnement ne compose pas encore.
+#
+# Le composer seul créerait un bucket que rien n'alimente et une politique
+# attachée à personne — et, en production, un bucket vide portant le mot
+# « exports » que personne ne saurait interpréter à l'incident suivant. Le bloc
+# arrive donc avec `module "ecs_service"`, dans le même `apply` :
+#
+#   module "reporting_export" {
+#     source = "../../modules/reporting-export"
+#
+#     environment    = local.environment
+#     retention_days = 7
+#
+#     # Une clé du compte plutôt que le chiffrement géré par S3 : ces fichiers
+#     # portent le chiffre d'affaires réel des établissements, et une clé dédiée
+#     # ajoute une politique distincte, une rotation qu'on décide et une
+#     # révocation qui les rend illisibles sans avoir à les supprimer. Attention :
+#     # le rôle de tâche doit alors porter `kms:Decrypt` — une URL présignée est
+#     # vérifiée avec les droits de son **signataire** —, ce dont la politique du
+#     # module se charge dès que `kms_key_arn` est renseignée.
+#     # kms_key_arn = <ARN d'une clé du compte>
+#   }
+#
+# Puis, sur le service `api` de `ecs_service` :
+#
+#   environment = {
+#     AWS_REGION           = data.aws_region.current.name
+#     REPORT_EXPORT_BUCKET = module.reporting_export.bucket_name
+#   }
+#   task_role_policy_arns = [module.reporting_export.producer_policy_arn]
+#
+# `AWS_REGION` n'est pas facultative : ECS n'injecte aucune variable de région
+# dans le conteneur, et le SDK JS v3 échoue alors sur « Region is missing » au
+# premier dépôt.
+#
+# Sans la variable, l'API démarre et sert ses trois routes de rapport ; seule la
+# route d'export répond 503 — défaut fermé, jamais une URL qui ne mène nulle
+# part. Voir infra/terraform/modules/reporting-export/README.md.
+
 # --- Observabilité ------------------------------------------------------------
 
 # `../../modules/observability` n'est pas composé ici, et c'est temporaire : les
