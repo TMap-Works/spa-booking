@@ -10,6 +10,7 @@ import type {
   PublicTenantRecord,
   SessionRecord,
   TenantSettingsChanges,
+  TenantTimeZoneRecord,
   UserRecord,
 } from '../identity.repository';
 import type { UserProfile } from '../identity.types';
@@ -191,6 +192,21 @@ export class FakeIdentityRepository {
     }
     // Désactivé = introuvable, comme dans le vrai dépôt.
     return this.tenantRecords.get(tenantId)?.isActive === false ? null : tenantId;
+  }
+
+  /**
+   * Le fuseau de **tous** les établissements (#604) — seconde lecture
+   * légitimement hors portée, comme dans le vrai dépôt : le relevé de démarrage
+   * les inspecte tous et n'a pas de tenant courant à filtrer.
+   *
+   * Elle rend les trois seules colonnes que la vraie projection rend, et le tri
+   * par `slug` est celui que la base applique : un double plus généreux
+   * laisserait passer un signalement qui journalise des coordonnées.
+   */
+  public async listTenantTimeZones(): Promise<TenantTimeZoneRecord[]> {
+    return [...this.tenantRecords.values()]
+      .sort((left, right) => left.slug.localeCompare(right.slug))
+      .map((tenant) => ({ id: tenant.id, name: tenant.name, timezone: tenant.timezone }));
   }
 
   /**
