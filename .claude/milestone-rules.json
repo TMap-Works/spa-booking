@@ -469,6 +469,214 @@
       "scripts/milestone-run",
       "scripts/milestone-supervise",
       "scripts/tests"
+    ],
+    "68": [
+      "api/notifications",
+      "db:schema"
+    ],
+    "80": [
+      "ci:workflows",
+      "tests/appointments"
+    ],
+    "81": [
+      "api/crm",
+      "db:schema"
+    ],
+    "74": [
+      "api/reporting",
+      "db:schema"
+    ],
+    "404": [
+      "api/appointments",
+      "api/catalog",
+      "api/core",
+      "api/identity",
+      "contracts:shared",
+      "root:deps"
+    ],
+    "70": [
+      "api/notifications",
+      "web/appointments",
+      "web/notifications"
+    ],
+    "66": [
+      "contracts:shared",
+      "infra/terraform"
+    ],
+    "71": [
+      "api/notifications",
+      "infra/terraform"
+    ],
+    "409": [
+      "api/payments",
+      "db:schema"
+    ],
+    "73": [
+      "api/notifications",
+      "db:schema",
+      "infra/terraform/modules/notifications",
+      "web/crm"
+    ],
+    "510": [
+      ".claude/skills/api-module",
+      "api/appointments",
+      "api/availability",
+      "api/catalog",
+      "api/crm",
+      "api/identity",
+      "api/notifications",
+      "api/payments",
+      "api/reporting",
+      "contracts:shared",
+      "web/api-client"
+    ],
+    "82": [
+      "docs/runbooks",
+      "infra/terraform/envs",
+      "infra/terraform/modules/backup",
+      "infra/terraform/modules/database"
+    ],
+    "420": [
+      "api/catalog",
+      "api/payments"
+    ],
+    "516": [
+      "infra/terraform/modules/budgets",
+      "infra/terraform/modules/notifications"
+    ],
+    "151": [
+      "infra/terraform/envs",
+      "infra/terraform/modules/network"
+    ],
+    "345": [
+      "apps/web",
+      "infra/terraform/envs",
+      "infra/terraform/modules/ecs-service"
+    ],
+    "495": [
+      "infra/terraform/modules/notifications"
+    ],
+    "69": [
+      "api/notifications",
+      "db:schema"
+    ],
+    "524": [
+      "infra/terraform/envs",
+      "infra/terraform/modules/notifications"
+    ],
+    "525": [
+      "api/crm",
+      "contracts:shared",
+      "web/crm"
+    ],
+    "72": [
+      "api/notifications",
+      "db:schema"
+    ],
+    "513": [
+      "root:env"
+    ],
+    "538": [
+      "tests/appointments",
+      "web/appointments"
+    ],
+    "536": [
+      "api/appointments",
+      "api/availability",
+      "api/catalog",
+      "api/crm",
+      "api/identity",
+      "api/notifications",
+      "api/payments",
+      "api/reporting",
+      "contracts:shared"
+    ],
+    "534": [
+      "api/core",
+      "api/notifications",
+      "db:schema"
+    ],
+    "546": [
+      "ci:workflows",
+      "contracts:shared",
+      "web/core",
+      "web/payments"
+    ],
+    "493": [
+      "api/notifications",
+      "tests/notifications"
+    ],
+    "563": [
+      "api/reporting",
+      "contracts:shared",
+      "infra/terraform/envs",
+      "infra/terraform/modules/reporting-export",
+      "web/reporting"
+    ],
+    "555": [
+      "api/payments",
+      "tests/payments"
+    ],
+    "496": [
+      "ci:workflows/ci",
+      "infra/terraform/modules/notifications",
+      "npm:verify",
+      "tests/notifications"
+    ],
+    "508": [
+      "ci:workflows/deploy-production",
+      "tests/appointments"
+    ],
+    "529": [
+      "api/crm",
+      "contracts:shared",
+      "web/crm"
+    ],
+    "577": [
+      "infra/terraform/modules/notifications"
+    ],
+    "579": [
+      "ci:workflows/deploy-dev"
+    ],
+    "523": [
+      "api/payments",
+      "tests/payments"
+    ],
+    "554": [
+      "api/appointments",
+      "api/availability",
+      "api/catalog",
+      "api/crm",
+      "api/identity",
+      "api/notifications",
+      "api/payments",
+      "api/reporting",
+      "contracts:shared",
+      "web/core",
+      "web/payments",
+      "web/staff"
+    ],
+    "76": [
+      "apps/api/prisma",
+      "ci:workflows",
+      "docs",
+      "infra/terraform"
+    ],
+    "77": [
+      "ci:workflows",
+      "docs",
+      "infra/terraform"
+    ],
+    "588": [
+      "api/core",
+      "docs",
+      "infra/terraform"
+    ],
+    "83": [
+      "api/core",
+      "docs",
+      "tests/appointments",
+      "tests/availability"
     ]
   },
   "depends": {
@@ -536,6 +744,10 @@
     ],
     "47": [
       45
+    ],
+    "83": [
+      76,
+      77
     ]
   },
   "why": {
@@ -560,6 +772,7 @@
     "43": "le socle Next.js d'apps/web n'existe pas encore (ni next, ni app/, ni tsconfig, ni lib/api-client) : #45 le pose, tout autre ecran le reecrirait en conflit",
     "44": "le socle Next.js d'apps/web n'existe pas encore (ni next, ni app/, ni tsconfig, ni lib/api-client) : #45 le pose, tout autre ecran le reecrirait en conflit",
     "46": "le socle Next.js d'apps/web n'existe pas encore (ni next, ni app/, ni tsconfig, ni lib/api-client) : #45 le pose, tout autre ecran le reecrirait en conflit",
-    "47": "le socle Next.js d'apps/web n'existe pas encore (ni next, ni app/, ni tsconfig, ni lib/api-client) : #45 le pose, tout autre ecran le reecrirait en conflit"
+    "47": "le socle Next.js d'apps/web n'existe pas encore (ni next, ni app/, ni tsconfig, ni lib/api-client) : #45 le pose, tout autre ecran le reecrirait en conflit",
+    "83": "la bascule en production de #83 suppose la production multi-AZ livree par #77"
   }
 }
