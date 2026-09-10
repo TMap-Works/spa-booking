@@ -691,6 +691,9 @@
     ],
     "597": [
       "api/identity"
+    ],
+    "604": [
+      "api/identity"
     ]
   },
   "depends": {
