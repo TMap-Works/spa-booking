@@ -5,9 +5,9 @@ import { SalonHeader } from '@/components/salon/salon-header';
 import { SalonInfo } from '@/components/salon/salon-info';
 import { ServiceCatalog } from '@/components/salon/service-catalog';
 import { SalonStructuredData } from '@/components/salon/structured-data';
-import { Notification } from '@/components/ui/notification';
 import { ApiClientError } from '@/lib/api-client';
 
+import { BookingErrorNotice } from './booking-error-notice';
 import {
   loadSalonServices,
   loadSalonTenant,
@@ -131,14 +131,7 @@ export default async function SalonPage({ params }: PageProps) {
 
     return (
       <main className="spa-salon">
-        <Notification tone="danger" title="La page du salon n’a pas pu être chargée">
-          <p>
-            {error instanceof ApiClientError
-              ? error.message
-              : 'Une erreur inattendue est survenue.'}{' '}
-            Merci de réessayer dans un instant.
-          </p>
-        </Notification>
+        <BookingErrorNotice title="La page du salon n’a pas pu être chargée" error={error} />
       </main>
     );
   }
