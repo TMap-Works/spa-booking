@@ -12,7 +12,7 @@ import type { UserProfile, UserRole } from './identity.types';
 import { STAFF_ROLES } from './roles';
 
 /**
- * Seul point du module qui connaît le schéma (api-module §2).
+ * Le point du module qui connaît le schéma **des routes** (api-module §2).
  *
  * Il injecte le client **scopé** : l'extension pose `tenant_id` sur chaque
  * écriture et l'ajoute au `where` de chaque lecture, sans qu'une seule requête
@@ -20,6 +20,12 @@ import { STAFF_ROLES } from './roles';
  *
  * Une exception, nommée et argumentée : `findTenantIdBySlug`. Voir son
  * commentaire.
+ *
+ * Un second fichier du module touche la base, et un seul :
+ * `tenant-timezone-audit.repository.ts` (#604). Il ne sert aucune route — c'est
+ * le relevé inter-tenant des fuseaux invalides, joué à l'amorçage du module — et
+ * il est séparé pour cette raison : son `updateMany` non scopé n'a rien à faire
+ * sur la classe qu'injectent les gestionnaires de requête.
  */
 
 /** Le compte tel que le service en a besoin — empreinte comprise. */
@@ -236,12 +242,14 @@ export function toProfile(user: UserRecord): UserProfile {
 export class IdentityRepository {
   public constructor(
     @Inject(PRISMA) private readonly prisma: ScopedPrismaClient,
-    // Dérogation au scoping, et la seule du module. Résoudre l'établissement
+    // Dérogation au scoping, et la seule de ce fichier. Résoudre l'établissement
     // depuis son slug est par construction une opération **sans tenant courant** :
     // c'est elle qui va le déterminer, avant toute authentification. Le filtre
     // par tenant n'a donc rien à filtrer — il y a un `slug` unique global, et
     // c'est lui la clé. Le résultat est immédiatement posé dans le contexte, et
-    // aucune autre requête du module ne passe par cette porte.
+    // aucune autre requête de ce fichier ne passe par cette porte. L'autre
+    // dérogation du module vit dans `tenant-timezone-audit.repository.ts`, hors
+    // de tout chemin de requête.
     @Inject(PRISMA_UNSCOPED) private readonly prismaUnscoped: UnscopedPrismaClient,
   ) {}
 

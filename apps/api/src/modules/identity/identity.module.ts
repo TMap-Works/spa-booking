@@ -16,6 +16,8 @@ import { PublicTenantService } from './public-tenant.service';
 import { RolesGuard } from './roles.guard';
 import { TenantSettingsController } from './tenant-settings.controller';
 import { TenantSettingsService } from './tenant-settings.service';
+import { TenantTimezoneAuditRepository } from './tenant-timezone-audit.repository';
+import { TenantTimezoneAuditService } from './tenant-timezone-audit.service';
 import { TokenService } from './token.service';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
@@ -74,6 +76,15 @@ const publicTenantResolver: PublicTenantResolverProvider = {
  * racine parce que c'est ici que se trouvent les endpoints à protéger : le rendre
  * global imposerait un quota à `/health`, que les sondes de l'ALB interrogent
  * bien plus souvent qu'un humain ne se connecte.
+ *
+ * ## Un fournisseur qui ne sert aucune route
+ *
+ * `TenantTimezoneAuditService` n'est référencé par aucun contrôleur : il
+ * s'exécute à l'amorçage du module (`OnModuleInit`) pour rattraper les fuseaux
+ * invalides déjà persistés (#604). Il est déclaré ici parce que la table
+ * `tenants` appartient à `identity`, et il n'est **pas exporté** — le rejouer
+ * depuis un autre module n'aurait pas de sens, et l'exporter mettrait une
+ * écriture inter-tenant à portée de leurs services.
  */
 @Module({
   imports: [
@@ -98,7 +109,9 @@ const publicTenantResolver: PublicTenantResolverProvider = {
     UsersService,
     PublicTenantService,
     TenantSettingsService,
+    TenantTimezoneAuditService,
     IdentityRepository,
+    TenantTimezoneAuditRepository,
     PasswordHasher,
     TokenService,
     JwtAuthGuard,
