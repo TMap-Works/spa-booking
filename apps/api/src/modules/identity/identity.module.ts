@@ -16,6 +16,7 @@ import { PublicTenantService } from './public-tenant.service';
 import { RolesGuard } from './roles.guard';
 import { TenantSettingsController } from './tenant-settings.controller';
 import { TenantSettingsService } from './tenant-settings.service';
+import { TenantTimeZoneAudit } from './tenant-timezone.audit';
 import { TokenService } from './token.service';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
@@ -74,6 +75,15 @@ const publicTenantResolver: PublicTenantResolverProvider = {
  * racine parce que c'est ici que se trouvent les endpoints à protéger : le rendre
  * global imposerait un quota à `/health`, que les sondes de l'ALB interrogent
  * bien plus souvent qu'un humain ne se connecte.
+ *
+ * ## Un fournisseur sans route : `TenantTimeZoneAudit`
+ *
+ * Il ne sert aucun contrôleur et n'est exporté par personne — il existe pour son
+ * `onApplicationBootstrap`, qui relève au démarrage les établissements dont le
+ * fuseau ne se résout pas (#604). Le déclarer ici suffit à le faire instancier,
+ * et c'est bien ce module qu'il fallait choisir : la table `tenants` lui
+ * appartient, et le prédicat qu'il applique est celui que son DTO de réglages
+ * applique déjà à la frontière.
  */
 @Module({
   imports: [
@@ -98,6 +108,7 @@ const publicTenantResolver: PublicTenantResolverProvider = {
     UsersService,
     PublicTenantService,
     TenantSettingsService,
+    TenantTimeZoneAudit,
     IdentityRepository,
     PasswordHasher,
     TokenService,

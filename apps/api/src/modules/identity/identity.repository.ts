@@ -18,8 +18,10 @@ import { STAFF_ROLES } from './roles';
  * écriture et l'ajoute au `where` de chaque lecture, sans qu'une seule requête
  * d'ici ait à le répéter — donc sans qu'aucune puisse l'oublier.
  *
- * Une exception, nommée et argumentée : `findTenantIdBySlug`. Voir son
- * commentaire.
+ * Deux exceptions, nommées et argumentées, et elles seules :
+ * `findTenantIdBySlug` — qui détermine le tenant, donc ne peut pas déjà le
+ * connaître — et `listTenantTimeZones` — le relevé de démarrage, qui les
+ * inspecte tous. Voir leurs commentaires respectifs.
  */
 
 /** Le compte tel que le service en a besoin — empreinte comprise. */
@@ -68,6 +70,19 @@ export interface PublicTenantRecord {
 /** La vue back-office : la vitrine, plus l'état d'activation (#343). */
 export interface TenantRecord extends PublicTenantRecord {
   isActive: boolean;
+}
+
+/**
+ * De quoi nommer un établissement et juger son fuseau — rien de plus (#604).
+ *
+ * Trois champs, et la projection du dépôt s'y tient : c'est ce qui garantit
+ * qu'un signalement de fuseau ne peut pas emporter dans un journal les
+ * coordonnées de contact du salon (CDC §5.1).
+ */
+export interface TenantTimeZoneRecord {
+  id: string;
+  name: string;
+  timezone: string;
 }
 
 /**
@@ -236,12 +251,18 @@ export function toProfile(user: UserRecord): UserProfile {
 export class IdentityRepository {
   public constructor(
     @Inject(PRISMA) private readonly prisma: ScopedPrismaClient,
-    // Dérogation au scoping, et la seule du module. Résoudre l'établissement
-    // depuis son slug est par construction une opération **sans tenant courant** :
-    // c'est elle qui va le déterminer, avant toute authentification. Le filtre
-    // par tenant n'a donc rien à filtrer — il y a un `slug` unique global, et
-    // c'est lui la clé. Le résultat est immédiatement posé dans le contexte, et
-    // aucune autre requête du module ne passe par cette porte.
+    // Dérogation au scoping. Deux requêtes du module passent par cette porte,
+    // et deux seulement : `findTenantIdBySlug` et `listTenantTimeZones`.
+    //
+    // La première résout l'établissement depuis son slug — par construction une
+    // opération **sans tenant courant**, puisque c'est elle qui va le
+    // déterminer, avant toute authentification. Le filtre par tenant n'a donc
+    // rien à filtrer : il y a un `slug` unique global, et c'est lui la clé. Le
+    // résultat est immédiatement posé dans le contexte.
+    //
+    // La seconde balaie le fuseau de **tous** les établissements au démarrage
+    // (#604), hors de toute requête HTTP : aucune portée n'y est résolue, et
+    // rien de ce qu'elle rend ne sort par une route. Voir son commentaire.
     @Inject(PRISMA_UNSCOPED) private readonly prismaUnscoped: UnscopedPrismaClient,
   ) {}
 
@@ -263,6 +284,58 @@ export class IdentityRepository {
       return null;
     }
     return tenant.id;
+  }
+
+  /**
+   * Le fuseau déclaré par **chaque** établissement — la matière du contrôle de
+   * démarrage (#604).
+   *
+   * ## Pourquoi le client non scopé, et pourquoi c'est légitime ici
+   *
+   * Seconde dérogation de ce fichier, et de même nature que la première : le
+   * balayage est inter-tenant **par construction** — il n'a pas d'établissement
+   * courant à filtrer, il les inspecte tous —, et il s'exécute hors de toute
+   * requête HTTP, au démarrage du module, là où aucune portée n'est résolue. Le
+   * client scopé lèverait plutôt que de rendre les lignes.
+   *
+   * Rien de ce qu'elle rend ne sort par une route : le seul appelant est
+   * `TenantTimeZoneAudit`, qui journalise et n'a pas de contrôleur.
+   *
+   * ## Pourquoi le tri se fait ici et le filtre ailleurs
+   *
+   * Le `where` qu'on voudrait écrire — « les fuseaux que le moteur ne résout
+   * pas » — n'est pas exprimable en SQL : l'ensemble valide est celui d'ICU, il
+   * suit tzdata, et PostgreSQL n'a aucun moyen de le tenir. C'est la raison
+   * même pour laquelle #604 refuse d'y poser une contrainte `CHECK`. Le tri, en
+   * revanche, revient à la base : `slug` est unique et indexé, ce qui rend le
+   * relevé reproductible d'un démarrage à l'autre.
+   *
+   * ## Aucun `where`, pas même sur `isActive` — c'est un choix
+   *
+   * La revue de #604 a relevé qu'un salon désactivé au fuseau fautif se
+   * signalerait à chaque démarrage de chaque tâche. C'est exact, et c'est
+   * accepté : `isActive` est un état **réversible** — un salon se réactive
+   * depuis le back-office —, et un fuseau fautif qui n'aurait été signalé que
+   * pendant l'inactivité redeviendrait silencieux à l'instant précis où il se
+   * remet à décaler des rendez-vous. Un relevé dont la couverture dépend d'un
+   * drapeau qu'un écran peut retourner ne couvre rien de façon fiable.
+   *
+   * Le signalement reste par ailleurs **refermable** par celui qui le lit : un
+   * `PATCH /api/v1/tenant` ou une correction en base fait disparaître la ligne
+   * au démarrage suivant, salon actif ou non. Ce n'est donc pas un
+   * avertissement qu'on ne peut pas éteindre — c'en est un qu'il faut traiter.
+   *
+   * ## Le coût
+   *
+   * Une lecture de trois colonnes sur `tenants`, une fois par démarrage de
+   * processus. La table compte un établissement par salon abonné : à l'échelle
+   * du MVP, c'est un aller-retour, pas une pagination.
+   */
+  public async listTenantTimeZones(): Promise<TenantTimeZoneRecord[]> {
+    return this.prismaUnscoped.tenant.findMany({
+      select: { id: true, name: true, timezone: true },
+      orderBy: { slug: 'asc' },
+    });
   }
 
   /**
