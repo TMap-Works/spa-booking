@@ -1,8 +1,8 @@
 import { notFound } from 'next/navigation';
 
-import { Notification } from '@/components/ui/notification';
 import { ApiClientError, fetchPublicServices, fetchPublicTenant } from '@/lib/api-client';
 
+import { BookingErrorNotice } from '../booking-error-notice';
 import { BookingTunnel } from './booking-tunnel';
 
 /**
@@ -46,14 +46,10 @@ export default async function BookingPage({ params }: PageProps) {
 
     return (
       <main className="spa-card">
-        <Notification tone="danger" title="La page de réservation n’a pas pu être chargée">
-          <p>
-            {error instanceof ApiClientError
-              ? error.message
-              : 'Une erreur inattendue est survenue.'}{' '}
-            Merci de réessayer dans un instant.
-          </p>
-        </Notification>
+        <BookingErrorNotice
+          title="La page de réservation n’a pas pu être chargée"
+          error={error}
+        />
       </main>
     );
   }

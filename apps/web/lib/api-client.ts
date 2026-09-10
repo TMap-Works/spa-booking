@@ -139,6 +139,21 @@ import {
  * est destiné à un humain, il est traduisible et peut changer sans préavis.
  * `code` est le contrat.
  *
+ * ## `message` est une phrase complète — tranché, #601
+ *
+ * Un message écrit ici s'affiche **tel quel**, et aucune surface de rendu n'y
+ * concatène rien : ni ponctuation, ni « Merci de réessayer dans un instant. ».
+ * L'invitation à réessayer, quand elle a un sens, s'écrit donc **dans le
+ * message**, à l'endroit où l'on sait si réessayer peut aboutir.
+ *
+ * La convention inverse — un message sec, l'écran qui ajoute l'invitation —
+ * était tenable, mais mélanger les deux ne l'est pas : c'est ce qui faisait lire
+ * « Merci de réessayer dans un instant. Merci de réessayer dans un instant. » au
+ * visiteur des deux pages du parcours client. Une seule règle, partout.
+ * Journalisation et remontée d'erreur s'appuient sur `code`, `status` et
+ * `details.cause`, jamais sur cette phrase — c'est ce qui rend le choix sans
+ * conséquence hors de l'écran.
+ *
  * ## Pourquoi `code` est un `string` et non un `ErrorCode` — tranché, #546
  *
  * La question s'est posée une fois le contrat assaini : `ERROR_CODES` ne déclare
@@ -253,7 +268,7 @@ async function request<TSchema extends z.ZodTypeAny>(
       ? new ApiClientError(parsed.data.code, parsed.data.message, response.status, parsed.data.details)
       : new ApiClientError(
           `HTTP_${String(response.status)}`,
-          'Une erreur inattendue est survenue.',
+          'Une erreur inattendue est survenue. Merci de réessayer dans un instant.',
           response.status,
         );
   }
@@ -261,11 +276,17 @@ async function request<TSchema extends z.ZodTypeAny>(
   const parsed = options.schema.safeParse(payload);
 
   if (!parsed.success) {
+    // Le message est celui que lit le visiteur — la règle #601 veut qu'il
+    // s'affiche tel quel. Le chemin fautif et les violations n'ont donc pas leur
+    // place dedans : ils partent dans `details`, que la journalisation lit.
     throw new ApiClientError(
       ERROR_CODES.INTERNAL_ERROR,
-      `La réponse de l’API ne respecte pas le contrat sur ${path}.`,
+      'Une erreur inattendue est survenue. Merci de réessayer dans un instant.',
       response.status,
-      { issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`) },
+      {
+        path,
+        issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`),
+      },
     );
   }
 
@@ -487,7 +508,7 @@ async function authorizedRequest<TSchema extends z.ZodTypeAny | null>(
         )
       : new ApiClientError(
           `HTTP_${String(response.status)}`,
-          'Une erreur inattendue est survenue.',
+          'Une erreur inattendue est survenue. Merci de réessayer dans un instant.',
           response.status,
         );
   }
@@ -499,11 +520,16 @@ async function authorizedRequest<TSchema extends z.ZodTypeAny | null>(
   const parsed = options.schema.safeParse(payload);
 
   if (!parsed.success) {
+    // Même règle qu'au-dessus : la phrase est pour l'écran, le chemin fautif
+    // pour `details` et la journalisation.
     throw new ApiClientError(
       ERROR_CODES.INTERNAL_ERROR,
-      `La réponse de l’API ne respecte pas le contrat sur ${options.path}.`,
+      'Une erreur inattendue est survenue. Merci de réessayer dans un instant.',
       response.status,
-      { issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`) },
+      {
+        path: options.path,
+        issues: parsed.error.issues.map((issue) => `${issue.path.join('.')}: ${issue.message}`),
+      },
     );
   }
 
