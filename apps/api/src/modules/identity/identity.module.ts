@@ -80,8 +80,9 @@ const publicTenantResolver: PublicTenantResolverProvider = {
  * ## Un fournisseur qui ne sert aucune route
  *
  * `TenantTimezoneAuditService` n'est référencé par aucun contrôleur : il
- * s'exécute à l'amorçage du module (`OnModuleInit`) pour rattraper les fuseaux
- * invalides déjà persistés (#604). Il est déclaré ici parce que la table
+ * s'exécute à l'amorçage de l'application (`OnApplicationBootstrap`, sans
+ * bloquer) pour rattraper les fuseaux invalides déjà persistés (#604). Il est
+ * déclaré ici parce que la table
  * `tenants` appartient à `identity`, et il n'est **pas exporté** — le rejouer
  * depuis un autre module n'aurait pas de sens, et l'exporter mettrait une
  * écriture inter-tenant à portée de leurs services.

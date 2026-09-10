@@ -1,4 +1,4 @@
-import { Injectable, type OnModuleInit } from '@nestjs/common';
+import { Injectable, type OnApplicationBootstrap, type OnModuleDestroy } from '@nestjs/common';
 import { isValidTimeZone } from '@spa/shared';
 
 import { StructuredLogger } from '../../common/logging/structured-logger';
@@ -30,9 +30,9 @@ import {
  * L'amorçage plutôt qu'une commande à lancer à la main : une requête de relevé
  * jouée une fois répond pour la base de ce jour-là, et le ticket demande
  * explicitement que cela « vaille pour la base de production le jour où il y en
- * a une ». Un `OnModuleInit` se rejoue à chaque déploiement, sans que personne
- * ait à y penser, et son coût est d'une requête sur une table qui porte une
- * ligne par établissement.
+ * a une ». Un crochet d'amorçage se rejoue à chaque déploiement, sans que
+ * personne ait à y penser, et son coût est d'une requête sur une table qui porte
+ * une ligne par établissement.
  *
  * ## Pourquoi pas une contrainte `CHECK`
  *
@@ -44,13 +44,28 @@ import {
  * d'affichage, lui, ne traite pas pareil. La garde est à la frontière ; c'est sa
  * place.
  *
- * ## Le service ne fait jamais tomber le démarrage
+ * ## Le service ne retarde ni ne fait tomber le démarrage
  *
- * `onModuleInit` capture tout : une base injoignable ou un droit manquant se
- * journalise en `error` et laisse l'API démarrer. Un audit de données n'est pas
- * une condition de bon fonctionnement de l'application — la faire refuser de
- * démarrer sur son échec ajouterait un mode de panne là où ce ticket vient
- * précisément en retirer un.
+ * Deux précautions, et elles répondent à la même exigence — celle que
+ * `prisma.service.spec.ts` énonce en une phrase : « le conteneur doit démarrer
+ * même si PostgreSQL ne répond pas ». `PrismaService` n'ouvre délibérément
+ * aucune connexion à l'initialisation pour cela ; un balayage qui en ouvrirait
+ * une **et l'attendrait** rendrait ce choix caduc.
+ *
+ * 1. **`onApplicationBootstrap` ne rend pas de promesse.** Nest n'attend donc
+ *    rien : l'API se met à écouter, et le balayage se déroule derrière. Une base
+ *    injoignable ne retarde pas la mise en service de la tâche ECS, et c'est la
+ *    sonde `/health` qui la retire du service — pas une boucle de redémarrage
+ *    qui se lirait comme une panne de déploiement.
+ * 2. **Tout est capturé.** Une base injoignable, un droit manquant, un incident :
+ *    la cause part en `error` et rien ne remonte. Un audit de données n'est pas
+ *    une condition de bon fonctionnement de l'application — la faire refuser de
+ *    démarrer sur son échec ajouterait un mode de panne là où ce ticket vient
+ *    précisément en retirer un.
+ *
+ * `onModuleDestroy` attend en revanche le balayage en cours : c'est ce qui
+ * garantit qu'aucune requête ne survit à la fermeture de l'application, en test
+ * d'intégration comme à l'arrêt d'une tâche.
  */
 
 /**
@@ -90,13 +105,38 @@ export interface TenantTimeZoneAuditReport {
 }
 
 @Injectable()
-export class TenantTimezoneAuditService implements OnModuleInit {
+export class TenantTimezoneAuditService implements OnApplicationBootstrap, OnModuleDestroy {
+  /**
+   * Le balayage lancé au démarrage, pour pouvoir l'attendre à la fermeture.
+   *
+   * Initialisée résolue plutôt que laissée `undefined` : `onModuleDestroy` peut
+   * être appelé sur une application qui n'a jamais fini de démarrer, et une
+   * garde `?? Promise.resolve()` à chaque usage se serait oubliée au premier
+   * usage supplémentaire.
+   */
+  private sweeping: Promise<void> = Promise.resolve();
+
   public constructor(
     private readonly repository: TenantTimezoneAuditRepository,
     private readonly logger: StructuredLogger,
   ) {}
 
-  public async onModuleInit(): Promise<void> {
+  /**
+   * Rend `void` et **non** une promesse : c'est ce qui rend le balayage non
+   * bloquant. Voir l'en-tête du fichier — la signature est le mécanisme, pas un
+   * détail de style.
+   */
+  public onApplicationBootstrap(): void {
+    this.sweeping = this.sweep();
+  }
+
+  /** Aucune requête ne survit à la fermeture de l'application. */
+  public async onModuleDestroy(): Promise<void> {
+    await this.sweeping;
+  }
+
+  /** Le balayage tel qu'il s'exécute en tâche de fond : il n'échoue jamais. */
+  private async sweep(): Promise<void> {
     try {
       await this.audit();
     } catch (error) {
@@ -114,7 +154,9 @@ export class TenantTimezoneAuditService implements OnModuleInit {
    *
    * Publique et non privée : c'est elle qui est exercée par les tests, et c'est
    * par elle qu'un futur point d'entrée d'exploitation — commande ou route
-   * d'administration — rejouerait le rattrapage sans redémarrer l'API.
+   * d'administration — rejouerait le rattrapage sans redémarrer l'API. Elle
+   * **propage** ses erreurs, à la différence de `sweep` : un appelant qui la
+   * choisit veut savoir.
    *
    * Séquentielle et non `Promise.all` : le nombre de lignes fautives est nul
    * dans le cas normal et se compte sur les doigts d'une main dans le cas

@@ -22,8 +22,8 @@ import {
  *    d'écrire ;
  * 3. **chaque bascule est journalisée** avec la valeur refusée, le slug et le
  *    tenant : c'est la seule trace qui subsiste, la colonne ne la porte plus ;
- * 4. **rien ne remonte de `onModuleInit`** : un audit de données ne fait pas
- *    échouer le démarrage de l'API.
+ * 4. **le démarrage de l'API n'est ni retardé ni mis en échec** : le crochet
+ *    d'amorçage rend la main avant le relevé, et le relevé capture tout.
  */
 
 const TENANT_A = '11111111-1111-4111-8111-111111111111';
@@ -246,17 +246,47 @@ describe('TenantTimezoneAuditService', () => {
   it('journalise et laisse démarrer l’API quand le relevé échoue', async () => {
     const harness = harnessOver([], { listFails: new Error('connexion refusée') });
 
-    await expect(harness.service.onModuleInit()).resolves.toBeUndefined();
+    harness.service.onApplicationBootstrap();
+    await expect(harness.service.onModuleDestroy()).resolves.toBeUndefined();
 
     const failure = harness.lines().find((line) => line.level === 'error');
     expect(failure?.message).toContain('Relevé des fuseaux horaires impossible');
   });
 
-  it('rattrape depuis `onModuleInit`, sans qu’on ait à appeler `audit`', async () => {
+  it('rattrape depuis l’amorçage, sans qu’on ait à appeler `audit`', async () => {
     const harness = harnessOver([{ id: TENANT_A, slug: 'spa-lumiere', timezone: 'Pas/UnFuseau' }]);
 
-    await harness.service.onModuleInit();
+    harness.service.onApplicationBootstrap();
+    await harness.service.onModuleDestroy();
 
     expect(harness.stored()[0]?.timezone).toBe(FALLBACK_TIME_ZONE);
+  });
+
+  // Le crochet d'amorçage ne rend pas de promesse : Nest ne l'attend donc pas, et
+  // une base injoignable ne retarde pas la mise en service de la tâche ECS.
+  // C'est la contrepartie du choix de `PrismaService` de ne pas se connecter à
+  // l'initialisation — voir `prisma.service.spec.ts`.
+  it('ne bloque pas le démarrage : l’amorçage rend la main avant le relevé', () => {
+    const harness = harnessOver([{ id: TENANT_A, slug: 'spa-lumiere', timezone: 'Pas/UnFuseau' }]);
+
+    expect(harness.service.onApplicationBootstrap()).toBeUndefined();
+    // Le relevé n'a pas encore eu lieu : la ligne porte toujours sa valeur.
+    expect(harness.stored()[0]?.timezone).toBe('Pas/UnFuseau');
+  });
+
+  it('aucune requête ne survit à la fermeture — `onModuleDestroy` attend le balayage', async () => {
+    const harness = harnessOver([{ id: TENANT_A, slug: 'spa-lumiere', timezone: 'Pas/UnFuseau' }]);
+
+    harness.service.onApplicationBootstrap();
+    await harness.service.onModuleDestroy();
+
+    expect(harness.writes()).toHaveLength(1);
+  });
+
+  it('se ferme sans incident quand l’amorçage n’a jamais eu lieu', async () => {
+    const harness = harnessOver([]);
+
+    await expect(harness.service.onModuleDestroy()).resolves.toBeUndefined();
+    expect(harness.writes()).toHaveLength(0);
   });
 });
