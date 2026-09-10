@@ -677,6 +677,20 @@
       "docs",
       "tests/appointments",
       "tests/availability"
+    ],
+    "602": [
+      "apps/api/prisma"
+    ],
+    "601": [
+      "web/api-client",
+      "web/salon-public",
+      "web/tunnel"
+    ],
+    "598": [
+      "api/identity"
+    ],
+    "597": [
+      "api/identity"
     ]
   },
   "depends": {
