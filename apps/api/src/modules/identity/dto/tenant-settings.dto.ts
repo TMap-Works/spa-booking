@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { tenantSchema } from '@spa/shared';
+import { isValidTimeZone, tenantSchema } from '@spa/shared';
 import { Transform, Type } from 'class-transformer';
 import type { z } from 'zod';
 import {
@@ -14,8 +14,11 @@ import {
   MaxLength,
   Min,
   MinLength,
+  registerDecorator,
   ValidateIf,
   ValidateNested,
+  type ValidationArguments,
+  type ValidationOptions,
 } from 'class-validator';
 
 import { CLOSING_TIME_PATTERN, WALL_CLOCK_PATTERN } from '../opening-hours';
@@ -36,7 +39,7 @@ import { OpeningHoursEntryDto, PostalAddressDto, PublicTenantDto } from './publi
  * Écart assumé, tranché en #554 : l'**entrée**, en revanche, reste sous `class-validator`, et
  * `updateTenantRequestSchema` ne peut pas la remplacer en l'état. L'écart n'est
  * pas de borne — elles coïncident valeur pour valeur — mais de **code de
- * réponse**, et il porte sur trois règles :
+ * réponse**, et il porte sur deux règles :
  *
  * 1. **`closesAt` antérieur à `opensAt`.** `openingHoursEntrySchema` le refuse
  *    par un `.refine()`, donc en **400**. Cette route rend un **422**
@@ -47,16 +50,33 @@ import { OpeningHoursEntryDto, PostalAddressDto, PublicTenantDto } from './publi
  *    `openingHoursSchema` porte un `.refine()` qui sortirait en 400, là où le
  *    service rend 422 avec un message qui nomme la faute. La base tient de toute
  *    façon la règle (`tenant_opening_hours_no_overlap`), et ce contrôle-ci n'est
- *    que le message ;
- * 3. **le fuseau horaire.** `timeZoneSchema` vérifie l'existence du fuseau IANA
- *    et refuserait en 400 ; le module traduit un fuseau inconnu en
- *    `UNKNOWN_TIME_ZONE`, un 422 que le front distingue d'une faute de frappe.
+ *    que le message.
  *
  * Monter le schéma changerait donc le code que le formulaire de réglages lit,
- * sans qu'aucun test ne le dise. Reste à faire : décider, côté contrat, si ces
- * trois refus sont des erreurs de forme (400) ou de règle (422) — et, s'ils
- * restent en 422, sortir les deux `refine` d'`openingHoursSchema` pour en faire
- * des prédicats que le service appelle, comme `openingHoursOverlap` l'est déjà.
+ * sans qu'aucun test ne le dise.
+ *
+ * ## Le fuseau horaire était le troisième de cette liste — à tort (#597)
+ *
+ * Ce commentaire annonçait qu'un fuseau inconnu sortait en 422
+ * `UNKNOWN_TIME_ZONE`. Aucune ligne de ce module ne le vérifiait :
+ * `PATCH /api/v1/tenant` rendait **200** sur `{ "timezone": "Pas/UnFuseau" }` et
+ * écrivait la valeur telle quelle, qu'un `GET` restituait ensuite inchangée.
+ * Le 422 existe bien, mais il appartient à `TenantClockService`
+ * (`availability`) et ne se lève qu'au **calcul de créneaux** — des heures,
+ * voire des jours après l'écriture, sur une requête qui n'a plus rien à voir
+ * avec le formulaire fautif.
+ *
+ * L'écart n'était donc pas de code de réponse mais d'**absence de contrôle**, et
+ * il coûtait cher : `tenants.timezone` est ce qui convertit à l'affichage tous
+ * les rendez-vous de l'établissement, et le CLAUDE.md classe un rendez-vous mal
+ * fuseau-horairé en sévérité haute. La règle est désormais tenue **à la
+ * frontière**, en 400 nommant le champ (`IsIanaTimeZone`), ce qui aligne du
+ * même coup cette route sur `timeZoneSchema` du contrat partagé.
+ *
+ * Reste à faire : décider, côté contrat, si les deux refus restants sont des
+ * erreurs de forme (400) ou de règle (422) — et, s'ils restent en 422, sortir
+ * les deux `refine` d'`openingHoursSchema` pour en faire des prédicats que le
+ * service appelle, comme `openingHoursOverlap` l'est déjà.
  */
 
 /** `VARCHAR(160)` — nom d'établissement, ligne d'adresse. */
@@ -105,6 +125,53 @@ const Trim = (): PropertyDecorator =>
  */
 const OptionalPresent = (): PropertyDecorator =>
   ValidateIf((_object: unknown, value: unknown) => value !== undefined);
+
+/**
+ * Le champ porte un identifiant de fuseau que la base IANA connaît (#597).
+ *
+ * ## Pourquoi la question est posée à `Intl`, et non à `Intl.supportedValuesOf`
+ *
+ * Les deux voies sont usuelles ; elles ne rendent pas le même verdict.
+ * `Intl.supportedValuesOf('timeZone')` ne liste que les identifiants
+ * **canoniques** — 418 sur le Node 20 de ce dépôt — et laisse dehors les *liens*
+ * de la base tzdata, qui sont pourtant des fuseaux valides que le moteur résout
+ * sans broncher : `UTC`, `Etc/GMT+5`, `America/Argentina/Buenos_Aires`. Valider
+ * contre cette liste refuserait `UTC` en 400 — une validation plus nuisible que
+ * le défaut qu'elle corrige, et le genre de resserrement qu'un ticket de
+ * correction n'a pas le droit d'introduire.
+ *
+ * Construire un `Intl.DateTimeFormat` pose au contraire la question à l'ICU
+ * lui-même : il lève `RangeError` sur ce qu'il ne sait pas résoudre, et accepte
+ * tout ce qu'il saura **convertir ensuite** — c'est-à-dire exactement la borne
+ * dont l'agenda a besoin, puisque c'est le même moteur qui affichera les
+ * rendez-vous.
+ *
+ * Le prédicat est celui de `@spa/shared` — `isValidTimeZone`, que
+ * `timeZoneSchema` applique déjà — plutôt qu'un `try` recopié ici : les deux
+ * frontières du contrat doivent refuser les mêmes valeurs, et deux copies
+ * dérivent.
+ *
+ * Le coût, une construction d'`Intl.DateTimeFormat` par requête, est sans objet
+ * sur une route de réglages saisie à la main. Le chemin chaud du calcul de
+ * créneaux, lui, passe par le formateur mémoïsé d'`availability.time` et n'a
+ * rien à voir avec ceci.
+ */
+function IsIanaTimeZone(options?: ValidationOptions): PropertyDecorator {
+  return (target: object, propertyName: string | symbol): void => {
+    registerDecorator({
+      name: 'isIanaTimeZone',
+      target: target.constructor,
+      propertyName: propertyName.toString(),
+      options: options ?? {},
+      validator: {
+        validate: (value: unknown): boolean => typeof value === 'string' && isValidTimeZone(value),
+        defaultMessage: (args?: ValidationArguments): string =>
+          `${args?.property ?? 'timezone'} : identifiant de fuseau horaire IANA attendu ` +
+          '(« Europe/Paris », « Indian/Antananarivo »)',
+      },
+    });
+  };
+}
 
 /**
  * Une adresse postale soumise par le back-office.
@@ -205,12 +272,19 @@ export class UpdateTenantDto {
   @MaxLength(DISPLAY_NAME_MAX_LENGTH)
   public name?: string;
 
-  @ApiPropertyOptional({ type: String, example: 'Europe/Paris' })
+  @ApiPropertyOptional({
+    type: String,
+    example: 'Europe/Paris',
+    description:
+      'Identifiant de fuseau IANA, vérifié contre la base de fuseaux du moteur ' +
+      'ICU. Une valeur inconnue est refusée en 400 et n’est jamais persistée.',
+  })
   @OptionalPresent()
   @Trim()
   @IsString()
   @MinLength(1)
   @MaxLength(TIMEZONE_MAX_LENGTH)
+  @IsIanaTimeZone()
   public timezone?: string;
 
   @ApiPropertyOptional({ type: String, example: 'EUR', description: 'ISO 4217, majuscules.' })
