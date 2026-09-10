@@ -124,3 +124,21 @@ d'écrire — et rien d'autre, le périmètre étant déduit du diff. Elle se sa
 d'elle-même quand le diff ne touche ni API ni UI, et son verdict est bloquant.
 Voir [.claude/skills/recette-mcp/SKILL.md](.claude/skills/recette-mcp/SKILL.md)
 et l'[ADR 0005](docs/adr/0005-recette-fonctionnelle-mcp.md).
+
+Ni les tests ni la recette ne disent ce que **vaut** le produit quand on s'en
+sert : un formulaire peut se soumettre et rester illisible à 360 px, répondre en
+quatre secondes, ou renvoyer `tenantId` dans son JSON. C'est l'objet de la
+**campagne de QA**, `/qa` : elle traverse un parcours entier — et non le diff
+d'un ticket — et confronte ce qu'elle voit à deux grilles de critères, frontend
+(design, espacement, positionnement, responsive, UX, accessibilité, performance,
+console) et backend (sécurité, validation, latence, coût serveur, fiabilité,
+justesse des données). Chaque critère porte un **seuil** : un constat sans seuil
+franchi n'ouvre pas de ticket.
+
+Elle ne corrige rien — elle **ouvre des tickets**, dans un jalon dédié
+**`Bug & correction`**, chacun avec sa capture d'écran, son attendu, son
+constaté et sa preuve. `/milestone "Bug & correction"` déroule ensuite les
+corrections comme n'importe quel lot produit. Le point d'écriture unique de ces
+tickets est `scripts/qa_bugs.py`, qui garantit le classement complet sans lequel
+le plan les écarterait, et déduplique d'une campagne à l'autre. Voir
+[.claude/skills/qa/SKILL.md](.claude/skills/qa/SKILL.md).
