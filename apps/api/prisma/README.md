@@ -132,8 +132,16 @@ leur pas de créneau et leur préavis minimum.
 inter-tenants, et c'est pour cela qu'il pose lui-même chaque `tenantId`, ligne
 après ligne.
 
-**Idempotent.** Chaque ligne est identifiée par un UUIDv5 déterministe et écrite
-par `upsert` : la dixième exécution laisse exactement les lignes de la première.
+**Idempotent.** Chaque ligne est identifiée par un UUID déterministe — condensat
+d'un espace de noms fixe, estampillé **v4** parce que le contrat partagé
+n'accepte que celle-là (#602) — et écrite par `upsert` : la dixième exécution
+laisse exactement les lignes de la première. Les identifiants ont changé avec
+#602 : sur une base chargée par un seed antérieur, les `upsert` ne retrouvent
+plus les lignes existantes et tentent de les créer — le script s'arrête alors
+sur la violation d'une clé naturelle unique (`Tenant.slug`, puis
+`(tenant_id, email)`, `(tenant_id, slug)`…), dès le premier établissement. Il
+n'y a pas de doublons à accepter : repartir d'une base propre avec
+`npx prisma migrate reset`, qui la recrée et rejoue le seed.
 Les rendez-vous sont ancrés sur le jour courant et **glissent** d'une exécution à
 l'autre, sur les mêmes lignes — un jeu de recette dont le « rendez-vous de
 demain » date du mois dernier ne sert plus au rappel J-1. Le glissement est borné

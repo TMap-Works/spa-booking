@@ -42,8 +42,9 @@
  *
  * Rejouable autant de fois qu'on veut, sur une base vide comme sur une base
  * déjà chargée : chaque ligne est identifiée par un UUID **déterministe**
- * (UUIDv5 d'un espace de noms fixe), et écrite par `upsert`. Deuxième
- * exécution, aucune ligne en double ; dixième, non plus.
+ * — condensat d'un espace de noms fixe, estampillé v4 pour rester acceptable
+ * par l'API (voir `seedId`) —, et écrite par `upsert`. Deuxième exécution,
+ * aucune ligne en double ; dixième, non plus.
  *
  * Les rendez-vous sont ancrés sur le **jour courant** : les rejouer les fait
  * glisser dans le temps, sur les mêmes lignes. C'est voulu — un jeu de recette
@@ -218,7 +219,9 @@ function assertSafeTarget(databaseUrl: string): SeedTarget {
 const SEED_NAMESPACE = '9f2b8c14-6a7d-4c53-9d1e-2f5a8b0c3d47';
 
 /**
- * UUID version 5 (SHA-1) — la construction de la RFC 4122.
+ * Identifiant **déterministe** au format UUID **v4** — condensat SHA-1 d'un
+ * espace de noms fixe, dont les bits de version et de variante sont ensuite
+ * forcés.
  *
  * Déterministe **par conception**, et c'est ce qui rend le script rejouable :
  * `upsert` a besoin d'une clé stable, et la moitié des tables du schéma n'a pas
@@ -228,9 +231,44 @@ const SEED_NAMESPACE = '9f2b8c14-6a7d-4c53-9d1e-2f5a8b0c3d47';
  *
  * Ce sont bien des UUID : le schéma en veut partout, et l'énumération
  * d'identifiants séquentiels est un vecteur de fuite inter-tenant à part
- * entière (tenant-isolation §4). Prévisibles pour qui connaît la graine, ce qui
- * n'a de conséquence que sur un jeu de données de recette — jamais sur une
- * donnée réelle, qu'aucun code de production ne fabrique ainsi.
+ * entière (tenant-isolation §4).
+ *
+ * ## Pourquoi la v4 et non la v5 que la construction appelait — #602
+ *
+ * La dérivation par condensat est exactement celle de l'UUIDv5, et c'est bien
+ * une v5 que ce script estampillait. Sauf que le contrat partagé n'accepte que
+ * la **v4** : `UUID_V4_PATTERN` de `packages/shared/src/common/identifiers.ts`,
+ * décision tranchée par #403/#404 au motif que resserrer le contrat était la
+ * seule des deux corrections qui ne changeait le comportement d'aucune route.
+ * Toute route validant un identifiant refusait donc en 400 les entités de ce
+ * jeu de données, et un environnement chargé par `prisma db seed` avait un
+ * catalogue que personne ne pouvait réserver :
+ *
+ *     GET /api/v1/public/spa-lumiere/availability?serviceId=<id v5 du seed>
+ *     → 400 VALIDATION_ERROR — « serviceId must be a UUID »
+ *
+ * Des deux façons de refermer l'écart, c'est le seed qui vient au contrat, pas
+ * l'inverse : relâcher `UUID_V4_PATTERN` pour accommoder un jeu de recette
+ * rouvrirait #403 et élargirait la frontière de **toute** l'API pour le confort
+ * d'un script de développement.
+ *
+ * Estampiller v4 ne coûte rien à ce qui faisait choisir la v5. Le contrat ne
+ * regarde que la **forme** — le `4` en tête du troisième groupe, la variante
+ * RFC 4122 en tête du quatrième —, jamais l'entropie : la propriété affichée en
+ * en-tête tient telle quelle, mêmes identifiants à chaque exécution, sur
+ * n'importe quelle machine. Un identifiant prévisible pour qui connaît la
+ * graine n'a de conséquence que sur un jeu de recette, et rien en production ne
+ * fabrique d'identifiant ainsi — `@default(uuid())` tire une vraie v4 aléatoire.
+ *
+ * Ce que ce changement déplace, en revanche : **les identifiants ne sont plus
+ * les mêmes qu'avant #602**. Sur une base déjà chargée par l'ancien seed, les
+ * `upsert` ne retrouvent plus les lignes existantes et tentent de les créer —
+ * mais ces lignes portent des clés naturelles uniques (`Tenant.slug`, puis
+ * `(tenant_id, email)`, `(tenant_id, slug)`, `(tenant_id, sku)`…), si bien que
+ * le script s'arrête net sur une violation de contrainte (P2002) dès le tenant.
+ * Il n'y a donc pas de doublons à accepter : il faut repartir d'une base propre
+ * — `npx prisma migrate reset`, qui la recrée et rejoue ce script dans la
+ * foulée.
  */
 function seedId(...parts: readonly string[]): string {
   const namespaceBytes = Buffer.from(SEED_NAMESPACE.replace(/-/g, ''), 'hex');
@@ -240,9 +278,12 @@ function seedId(...parts: readonly string[]): string {
     .digest();
 
   const bytes = Buffer.from(digest.subarray(0, 16));
-  // Version 5 sur les quatre bits de poids fort de l'octet 6, variante RFC 4122
-  // sur les deux bits de poids fort de l'octet 8.
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x50;
+  // Version 4 sur les quatre bits de poids fort de l'octet 6, variante RFC 4122
+  // sur les deux bits de poids fort de l'octet 8. Ces deux octets sont ceux que
+  // `UUID_V4_PATTERN` inspecte — premier caractère du troisième groupe, puis du
+  // quatrième —, et les seuls que la dérivation abandonne : les 122 autres bits
+  // restent ceux du condensat, donc le déterminisme entier du jeu de données.
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40;
   bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
 
   const hex = bytes.toString('hex');
