@@ -7,7 +7,7 @@ import {
   fetchPublicTenant,
   fetchRevenueReport,
 } from '@/lib/api-client';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, formatMoneyCompact } from '@/lib/format';
 import {
   APPOINTMENT_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
@@ -284,6 +284,12 @@ export default async function ReportingPage({ params, searchParams }: ReportingP
                 }),
               }))}
               emptyLabel="Aucun encaissement sur la période."
+              // Les barres portent des unités mineures — la donnée ne se
+              // convertit pas en chemin. C'est l'échelle qui les met en forme
+              // dans la devise, comme le tableau de la même figure (#614).
+              formatScaleValue={(value) =>
+                formatMoneyCompact({ amountMinor: value, currency: currencySeries.currency })
+              }
               key={currencySeries.currency}
               layout="colonnes"
               seriesLabel={`Revenu net (${currencySeries.currency})`}

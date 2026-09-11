@@ -11,6 +11,7 @@ import {
   dailyRevenueReportSchema,
   noShowReportSchema,
 } from '@/lib/admin/reporting-contract';
+import { formatMoney, formatMoneyCompact } from '@/lib/format';
 
 /**
  * Le graphique du tableau de bord (#75, troisième critère) et la frontière qui
@@ -57,6 +58,62 @@ describe('l’échelle et l’axe', () => {
   it('espace les étiquettes pour qu’elles ne se chevauchent pas', () => {
     expect(labelStride(10)).toBe(1);
     expect(labelStride(366)).toBe(31);
+  });
+});
+
+describe('l’échelle dit la même chose que le tableau de sa figure', () => {
+  /** Les graduations peintes, espaces insécables ramenées à l'ordinaire. */
+  const scaleOf = (container: HTMLElement): string[] =>
+    [...container.querySelectorAll('.spa-admin-chart__scale')].map((tick) =>
+      (tick.textContent ?? '').replace(/[\u202f\u00a0]/g, ' '),
+    );
+
+  it('gradue un axe monétaire dans la devise, et non en centimes', () => {
+    // #614 : la barre porte 8 500 unités mineures — 85,00 € —, et l'axe
+    // graduait « 8,5 k » sous un titre « EUR ». La gérante lisait 8 500 € là où
+    // la caisse avait fait 85 €, sur le seul graphe de chiffre d'affaires du
+    // produit. La donnée reste en unité mineure : c'est le rendu qui convertit.
+    const amount = { amountMinor: 8_500, currency: 'EUR' } as const;
+    const { container } = render(
+      <ReportChart
+        bars={[{ key: '2026-09-11', label: '11 sept.', value: amount.amountMinor, valueLabel: formatMoney(amount) }]}
+        emptyLabel="Aucun encaissement sur la période."
+        formatScaleValue={(value) => formatMoneyCompact({ amountMinor: value, currency: amount.currency })}
+        layout="colonnes"
+        seriesLabel="Revenu net (EUR)"
+        summary="Revenu net par journée de caisse en EUR."
+        title="Revenu net par jour — EUR"
+        valueHeader="Revenu net"
+      />,
+    );
+
+    const scale = scaleOf(container);
+
+    expect(scale).toContain('85 €');
+    expect(scale).not.toContain('8,5 k');
+    // Le plafond de l'échelle et la ligne du tableau annoncent le même montant.
+    expect([...container.querySelectorAll('td')].map((cell) => cell.textContent)).toContain(
+      formatMoney(amount),
+    );
+  });
+
+  it('laisse un axe de comptage en nombres nus', () => {
+    // Le graphe de volume est juste et doit le rester : sans formateur, l'axe
+    // écrit le compact d'un entier, pas une devise.
+    const { container } = render(
+      <ReportChart
+        bars={[{ key: '2026-09-11', label: '11 sept.', value: 18, valueLabel: '18 rendez-vous' }]}
+        emptyLabel="Aucun rendez-vous sur la période."
+        layout="colonnes"
+        seriesLabel="Rendez-vous"
+        summary="Nombre de rendez-vous par jour."
+        title="Rendez-vous par jour"
+        valueHeader="Rendez-vous"
+      />,
+    );
+
+    // `niceCeiling(18)` vaut 20 : l'axe se gradue 0, 10, 20.
+    expect(scaleOf(container)).toEqual(['0', '10', '20']);
   });
 });
 

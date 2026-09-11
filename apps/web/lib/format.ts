@@ -94,6 +94,36 @@ export function formatMoney(amount: Money): string {
 }
 
 /**
+ * « 85 € », « 8,5 k € » — le même montant que {@link formatMoney}, ramené à la
+ * place dont dispose une **graduation d'axe**.
+ *
+ * Même conversion, même lecture des décimales chez `Intl` : c'est ce qui
+ * garantit que l'échelle d'un graphique et le tableau de la même figure
+ * annoncent le même montant. L'axe du revenu graduait ses centimes — « 8,5 k »
+ * sous un titre « EUR », pour une journée à 85,00 € — parce qu'il mettait en
+ * forme la valeur brute de la barre avec un formateur d'entiers (#614).
+ *
+ * Seule la notation change : compacte, une décimale au plus. Une graduation
+ * dispose d'une quarantaine d'unités de `viewBox`, et « 8 500,00 € » y
+ * déborderait sur le tracé.
+ *
+ * `minimumFractionDigits: 0` est explicite : sans lui, `Intl` ramènerait le
+ * minimum de l'euro — deux décimales — au maximum demandé, et une échelle ronde
+ * s'écrirait « 85,0 € ».
+ */
+export function formatMoneyCompact(amount: Money): string {
+  const digits = fractionDigitsOf(amount.currency);
+
+  return new Intl.NumberFormat(LOCALE, {
+    style: 'currency',
+    currency: amount.currency,
+    notation: 'compact',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 1,
+  }).format(amount.amountMinor / 10 ** digits);
+}
+
+/**
  * Le montant en unité principale, **sans flottant**, avec le séparateur décimal
  * demandé — « 35,00 » ou « 35.00 » selon qui va le lire.
  *
