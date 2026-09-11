@@ -42,6 +42,7 @@ Aucune dépendance : `unittest` de la bibliothèque standard, comme
 `test_pr_gate.py`.
 """
 import argparse
+import ast
 import contextlib
 import inspect
 import io
@@ -585,6 +586,198 @@ class AppelsEnVol(unittest.TestCase):
         code = inspect.getsource(sup.stream_call)
         self.assertIn("track_call(process)", code)
         self.assertIn("untrack_call(process)", code)
+
+
+def code_sans_docstring(fonction):
+    """Le code exécutable d'une fonction, sa docstring retirée.
+
+    Nécessaire ici parce que les docstrings de ce ticket **nomment** le drapeau
+    qu'elles disent avoir retiré : le premier jet du test cherchait
+    `DETACHED_PROCESS` dans `inspect.getsource` et échouait sur la phrase qui
+    explique pourquoi il n'y est plus. Un test qui lit la prose plutôt que le
+    code interdirait d'expliquer le correctif.
+    """
+    arbre = ast.parse(inspect.getsource(fonction)).body[0]
+    corps = [n for n in arbre.body
+             if not (isinstance(n, ast.Expr) and isinstance(n.value, ast.Constant)
+                     and isinstance(n.value.value, str))]
+    return "\n".join(ast.unparse(n) for n in corps)
+
+
+class FenetresDeConsole(unittest.TestCase):
+    """Un run ne doit ouvrir aucune fenêtre de terminal (#608).
+
+    Le défaut ne se voyait pas depuis une session : lancé à la main,
+    `/milestone` fait tourner ses agents dans la session, et rien ne s'ouvre. Il
+    ne se manifestait que sous **reprise automatique** — donc la nuit, chez
+    l'utilisateur, en volant le focus à chaque ouverture.
+
+    Le diagnostic d'origine du ticket ne tenait pas : il n'accusait que
+    `stream_call`, une fenêtre par vague et par arbitrage. La mesure en a montré
+    trois de plus, et surtout une cause commune que l'intuition prend à
+    l'envers — `pythonw.exe`, choisi pour ne pas ouvrir de fenêtre, est ce qui
+    les fait ouvrir. Un programme GUI n'a aucune console ; Windows en alloue
+    donc une neuve, et visible, à chacun de ses enfants console. Mesuré sur la
+    machine du projet :
+
+        parent sans console  -> enfant console            : visible=1
+        parent sans console  -> enfant CREATE_NO_WINDOW   : visible=0
+        console invisible    -> petit-fils sans drapeau   : visible=0   <- hérite
+        pythonw + CREATE_NO_WINDOW -> petit-fils          : visible=1   <- ignoré
+
+    La troisième ligne porte le correctif : une console sans fenêtre **s'hérite**,
+    donc la poser au lancement du superviseur fait taire tout le sous-arbre. La
+    quatrième dit pourquoi il a fallu quitter `pythonw` — le drapeau n'est honoré
+    que pour un programme console.
+    """
+
+    def test_le_drapeau_est_pose_quand_aucune_console_n_est_visible(self):
+        # `getattr` et non l'attribut : la CI tourne sous Linux, où la constante
+        # n'existe pas. L'y lire directement ferait échouer le test sur un
+        # `AttributeError` qui ne dit rien du correctif.
+        attendu = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        with mock.patch.object(sup.os, "name", "nt"), \
+             mock.patch.object(sup, "console_visible", return_value=False):
+            self.assertEqual(sup.flags_sans_fenetre(), attendu)
+        if attendu:
+            # Sous Windows seulement, la valeur elle-même se vérifie : sans cela
+            # l'assertion ci-dessus comparerait 0 à 0 et ne prouverait rien.
+            self.assertEqual(attendu, 0x08000000)
+
+    def test_aucun_drapeau_quand_une_console_est_deja_visible(self):
+        """Le cas qui protège l'opérateur, et non plus le run.
+
+        Lancé à la main dans un terminal, le dispositif doit continuer d'écrire
+        **dans ce terminal**. `milestone_run.py step` encadre des commandes dont
+        il ne capte jamais la sortie : lui substituer une console invisible
+        l'avalerait. Quand une console existe, l'enfant en hérite et il n'y a
+        rien à corriger — d'où le drapeau conditionnel plutôt que posé partout.
+        """
+        with mock.patch.object(sup.os, "name", "nt"), \
+             mock.patch.object(sup, "console_visible", return_value=True):
+            self.assertEqual(sup.flags_sans_fenetre(), 0)
+
+    def test_aucun_drapeau_ailleurs_que_sous_windows(self):
+        # `creationflags` n'existe pas sur POSIX : y passer autre chose que 0
+        # ferait lever `Popen`, et le superviseur mourrait au premier appel.
+        for nom in ("posix", "java"):
+            with self.subTest(os=nom):
+                with mock.patch.object(sup.os, "name", nom):
+                    self.assertEqual(sup.flags_sans_fenetre(), 0)
+
+    def test_console_visible_ne_leve_jamais(self):
+        """Elle est appelée avant chaque lancement : une exception y serait un
+        superviseur mort, que la veille relancerait pour qu'il remeure pareil."""
+        self.assertIn(sup.console_visible(), (True, False))
+        with mock.patch.object(sup.os, "name", "posix"):
+            self.assertFalse(sup.console_visible())
+
+    def test_l_interpreteur_retenu_est_celui_qui_a_une_console(self):
+        """`python_console()` ne doit jamais rendre `pythonw.exe` — c'est
+        exactement l'inversion que le ticket a coûté."""
+        self.assertFalse(sup.python_console().endswith("pythonw.exe"))
+
+    def test_stream_call_transmet_le_drapeau_a_popen(self):
+        """`Popen` est doublé par une fonction qui enregistre ses arguments puis
+        lève : `stream_call` sort alors par sa branche d'erreur de lancement,
+        sans thread ni lecture de flux, et sans qu'aucun `claude -p` ne parte."""
+        vus = {}
+
+        def faux_popen(command, **kwargs):
+            vus.update(kwargs)
+            raise OSError("arrêt volontaire du banc d'essai")
+
+        with mock.patch.object(sup.subprocess, "Popen", faux_popen):
+            issue, quota, resume = sup.stream_call(
+                argparse.Namespace(), ["claude", "-p", "peu importe"],
+                None, {}, 1, "banc d'essai")
+
+        self.assertEqual(issue, "lancement")
+        self.assertIsNone(quota)
+        self.assertIn("creationflags", vus,
+                      "sans creationflags, Windows rouvre une console par appel")
+        self.assertEqual(vus["creationflags"], sup.flags_sans_fenetre())
+
+    def test_runner_lance_un_interpreteur_a_console_avec_le_drapeau(self):
+        """Le point qui couvre le plus de fenêtres après `spawn_supervisor`.
+
+        `milestone_run.py` passe lui-même des dizaines d'appels `git` et `gh`.
+        Le lancer sous `pythonw` les laissait tous sans console — donc tous avec
+        une fenêtre. Le lancer en console invisible les couvre d'un coup, sans
+        toucher une ligne de `milestone_run.py`.
+        """
+        vus = {}
+
+        def faux_run(command, **kwargs):
+            vus["command"] = command
+            vus.update(kwargs)
+            return subprocess.CompletedProcess(command, 0, "", "")
+
+        with mock.patch.object(sup.subprocess, "run", faux_run):
+            sup.runner("progress")
+
+        self.assertFalse(vus["command"][0].endswith("pythonw.exe"),
+                         "sous pythonw, chaque git de milestone_run rouvre une fenêtre")
+        self.assertIn("creationflags", vus)
+        self.assertEqual(vus["creationflags"], sup.flags_sans_fenetre())
+
+    def test_le_superviseur_est_lance_en_console_invisible(self):
+        """Le point de pose qui compte le plus : le superviseur est le parent de
+        tout le run, et une console sans fenêtre s'hérite.
+
+        `DETACHED_PROCESS` doit avoir disparu — non parce qu'il était faux, mais
+        parce qu'il ne laisse **aucune** console, ce qui est précisément ce qui
+        faisait allouer les fenêtres. Les deux drapeaux s'excluent : il n'y a
+        rien à combiner, l'un remplace l'autre.
+        """
+        code = code_sans_docstring(sup.spawn_supervisor)
+        self.assertIn("CREATE_NO_WINDOW", code)
+        self.assertIn("CREATE_NEW_PROCESS_GROUP", code,
+                      "sans lui, le Ctrl-C du lanceur emporterait le superviseur")
+        self.assertNotIn("DETACHED_PROCESS", code,
+                         "DETACHED_PROCESS ne laisse aucune console — c'est le défaut")
+        self.assertIn("python_console()", code)
+        self.assertNotIn("pythonw()", code)
+
+    def test_le_tic_de_la_veille_garde_pythonw_et_le_dit(self):
+        """La seule exception, et elle est motivée : la tâche planifiée lance le
+        tic par un `.cmd` dont la console n'a pas de fenêtre — y mettre un
+        `python.exe` lui en ferait allouer une. Les appels du tic portent donc
+        le drapeau un par un, faute de pouvoir en hériter."""
+        self.assertIn("pythonw()", inspect.getsource(sup.write_watchdog_cmd))
+        self.assertIn("#608", inspect.getdoc(sup.pythonw) or "")
+
+    def test_aucun_lancement_windows_n_est_laisse_sans_drapeau(self):
+        """Le garde-fou contre la récidive, et le seul test qui vieillira bien.
+
+        Les autres prouvent les points de pose d'aujourd'hui. Celui-ci interdit
+        d'en ajouter un demain sans drapeau : il relit l'arbre syntaxique du
+        module et exige `creationflags` sur chaque `subprocess.run`/`Popen`.
+
+        Une seule exception, nommée plutôt que devinée : la branche `ps`, qui ne
+        s'exécute que hors Windows et où `creationflags` ferait lever `Popen`.
+        """
+        source = Path(sup.__file__).read_text(encoding="utf-8")
+        arbre = ast.parse(source)
+        manquants = []
+        for noeud in ast.walk(arbre):
+            if not isinstance(noeud, ast.Call):
+                continue
+            fonction = noeud.func
+            if not (isinstance(fonction, ast.Attribute)
+                    and fonction.attr in ("run", "Popen")
+                    and isinstance(fonction.value, ast.Name)
+                    and fonction.value.id == "subprocess"):
+                continue
+            extrait = ast.get_source_segment(source, noeud) or ""
+            if '"ps", "-p"' in extrait:      # branche POSIX, sans équivalent Windows
+                continue
+            if not any(k.arg == "creationflags" for k in noeud.keywords):
+                manquants.append("ligne %d : %s"
+                                 % (noeud.lineno, extrait.splitlines()[0][:60]))
+        self.assertEqual(manquants, [],
+                         "ces lancements rouvriront une fenêtre sous la veille :\n"
+                         + "\n".join(manquants))
 
 
 class RechargementDeLaSource(unittest.TestCase):
