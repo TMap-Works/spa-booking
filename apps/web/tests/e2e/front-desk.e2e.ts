@@ -137,9 +137,13 @@ test.describe('Comptoir', () => {
     await test.step(`Déplacer le rendez-vous posé à ${heureInitiale}`, async () => {
       const panneau = tiroir(page);
       const heures = panneau.getByLabel('Heure de début');
-      // Le sélecteur n'est peuplé qu'une fois la disponibilité lue : ses options
-      // arrivent après le rendu du tiroir.
-      await expect(heures.locator('option')).not.toHaveCount(0, { timeout: 20_000 });
+      // **Attendre que le sélecteur s'arme, et pas qu'il porte une option.** Le
+      // tiroir affiche d'emblée l'heure du rendez-vous — une option de repli qui
+      // existe avant même que la disponibilité soit lue —, si bien qu'un
+      // « au moins une option » est satisfait instantanément et fait lire la
+      // liste vide. Le contrôle n'est actif que lorsque le moteur a répondu et
+      // que la journée porte des créneaux : c'est cet état-là qu'on attend.
+      await expect(heures).toBeEnabled({ timeout: 20_000 });
 
       const proposees = await heures
         .locator('option')
