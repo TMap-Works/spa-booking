@@ -348,4 +348,46 @@ describe('historique agrégé', () => {
 
     expect(customerVisitHistorySchema.parse(sansPraticien).visits[0]?.staffName).toBeNull();
   });
+
+  /**
+   * La casse du fil, verrouillée ici et pas seulement du côté du rendez-vous
+   * (#610).
+   *
+   * L'API sert `COMPLETED` — la casse de l'énumération PostgreSQL —, et le
+   * client HTTP du back-office valide chaque réponse avant de la rendre. Tant
+   * que ce champ portait `z.enum(APPOINTMENT_STATUSES)`, une fiche de quatre
+   * visites faisait échouer la lecture quatre fois, et la page tombait en
+   * entier. Le cas passant ci-dessous est donc la réponse **réelle** de la
+   * route, pas une version aimablement minusculisée.
+   */
+  const visiteDuFil = (status: string) => ({
+    summary: { ...EMPTY, totalVisits: 1, honoredVisits: 1 },
+    visits: [
+      {
+        appointmentId: '22222222-2222-4222-8222-222222222222',
+        status,
+        startsAt: '2026-08-01T09:00:00.000Z',
+        endsAt: '2026-08-01T10:00:00.000Z',
+        serviceName: 'Massage 60 min',
+        staffName: 'Alice',
+        price: { amountMinor: 3500, currency: 'EUR' },
+      },
+    ],
+  });
+
+  it.each(['COMPLETED', 'CANCELLED', 'NO_SHOW', 'PENDING', 'CONFIRMED'])(
+    'accepte le statut `%s` tel que l’API l’émet et le rend en minuscules',
+    (status) => {
+      expect(customerVisitHistorySchema.parse(visiteDuFil(status)).visits[0]?.status).toBe(
+        status.toLowerCase(),
+      );
+    },
+  );
+
+  it('refuse toujours un statut hors du vocabulaire, quelle qu’en soit la casse', () => {
+    // La normalisation ramène la casse, elle n'élargit pas l'énumération : un
+    // statut inventé reste une réponse invalide, et c'est ce qui distingue ce
+    // schéma d'un `z.string()` complaisant.
+    expect(customerVisitHistorySchema.safeParse(visiteDuFil('ARCHIVED')).success).toBe(false);
+  });
 });

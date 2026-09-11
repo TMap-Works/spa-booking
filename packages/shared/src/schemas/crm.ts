@@ -39,7 +39,8 @@ import {
 import { nonNegativeMoneySchema } from '../common/money';
 import { paginatedSchema, paginationQuerySchema } from '../common/pagination';
 import { utcInstantSchema } from '../common/time';
-import { APPOINTMENT_STATUSES } from '../constants/appointment';
+
+import { receivedAppointmentStatusSchema } from './appointment';
 
 /**
  * Longueur minimale d'un terme de recherche.
@@ -346,10 +347,26 @@ export type SetCustomerStatusRequest = z.infer<typeof setCustomerStatusRequestSc
  * `staff` est `.nullable()` : un praticien peut avoir été retiré de
  * l'établissement, et une visite sans praticien nommé reste une visite à
  * compter.
+ *
+ * ## Le statut est normalisé à la réception, comme partout ailleurs (#610)
+ *
+ * `receivedAppointmentStatusSchema` et non `appointmentStatusSchema` : l'API
+ * émet la casse de l'énumération PostgreSQL (`COMPLETED`, `NO_SHOW`) — c'est ce
+ * que documente `CustomerVisit` côté `apps/api`, et ce que le point de vigilance
+ * de #510 laisse en l'état tant que le format du fil n'est pas tranché pour tous
+ * ses lecteurs à la fois. `bookedAppointmentSchema` absorbe cet écart depuis
+ * #45, `appointmentSchema` depuis #444 ; cette route-ci avait été oubliée, et
+ * comme le client HTTP du back-office valide chaque réponse, les quatre visites
+ * d'une fiche la faisaient échouer d'un bloc : la page entière tombait sur la
+ * casse d'une chaîne, liste et recherche comprises.
+ *
+ * Le champ inféré reste `AppointmentStatus`, en minuscules — rien ne change pour
+ * qui consomme ce type, et les libellés d'agenda (`STATUS_LABELS`) s'y lisent
+ * sans conversion locale.
  */
 export const customerVisitSchema = z.object({
   appointmentId: uuidSchema,
-  status: z.enum(APPOINTMENT_STATUSES),
+  status: receivedAppointmentStatusSchema,
   startsAt: utcInstantSchema,
   endsAt: utcInstantSchema,
   serviceName: z.string().min(1),
