@@ -342,6 +342,33 @@
 
 /* --- Tableau dense --------------------------------------------------------- */
 
+/*
+ * Un tableau dense ne se comprime pas (#612).
+ *
+ * Sa largeur est celle de son contenu : huit colonnes de catalogue en font
+ * 901 px quand la fenêtre en mesure 768. Sans conteneur qui défile, ce
+ * débordement sortait de la carte, poussait le document au-delà de la fenêtre et
+ * emportait la colonne d'actions hors de l'écran — les boutons « Désactiver »
+ * étaient peints à x=717 pour une fenêtre de 768.
+ *
+ * Le conteneur est le bloc qui porte le tableau, quel qu'il soit, désigné par
+ * `:has(> …)` : les treize écrans n'ont pas un `<div>` à ajouter autour de leur
+ * `<table>`, et un quatorzième l'obtiendra sans le savoir. La carte
+ * `.spa-admin__section` du catalogue et la `<section>` nue de l'encaissement
+ * sont deux balisages différents pour le même besoin — les nommer une à une,
+ * c'était retrouver le débordement au premier écran suivant.
+ *
+ * Le `<table>` garde son affichage natif : le passer en `display: block` pour le
+ * faire défiler lui ferait perdre son rôle de tableau auprès des lecteurs
+ * d'écran, ce qui coûterait plus cher que le débordement.
+ *
+ * Sans requête de largeur : `auto` ne peint une barre que lorsqu'il y a de quoi
+ * défiler, si bien qu'au comptoir, à 1280 et 1920 px, rien ne change.
+ */
+.spa-admin__content :has(> .spa-admin-table) {
+  overflow-x: auto;
+}
+
 .spa-admin-table {
   inline-size: 100%;
   border-collapse: collapse;
@@ -479,4 +506,181 @@
 /* Un squelette n'est pas cliquable, même là où le contenu réel le sera. */
 [aria-busy='true'] .spa-admin-skeleton-line {
   pointer-events: none;
+}
+
+/* --- Points de rupture ----------------------------------------------------- */
+
+/*
+ * Le back-office se sert d'abord au comptoir, sur un poste large — 1280 ou
+ * 1920 px — et cette mise en page reste la nominale : rien de ce qui suit ne la
+ * touche. Mais il se consulte aussi depuis une tablette en salle et depuis le
+ * téléphone de la gérante, et jusqu'à #612 aucune feuille de ce dossier ne
+ * portait une seule requête de largeur. La conséquence se mesurait : à 360 px le
+ * rail gardait ses 15 rem et ne laissait que 120 px au contenu, sur les huit
+ * pages relevées par la campagne de QA.
+ *
+ * Deux paliers, et deux seulement, parce que ce sont les deux largeurs que la
+ * campagne mesure en échec :
+ *
+ *   ≤ 48rem (768 px) — tablette portrait : le rail se replie en bandeau,
+ *                      les paires de colonnes repassent en une ;
+ *   ≤ 30rem (480 px) — téléphone : la densité du comptoir cède, les gouttières
+ *                      se resserrent et les barres d'outils s'empilent.
+ *
+ * 48rem et 30rem valent bien 768 px et 480 px : dans une requête de média, `rem`
+ * se rapporte à la taille de police initiale du navigateur, que rien dans la
+ * page ne peut déplacer. Le palier bas est celui qu'emploie déjà
+ * `components/slot-grid.css` côté client public — le produit n'a pas deux
+ * échelles de rupture.
+ *
+ * Ces paliers vivent dans la feuille de coquille, et non dans celle de chaque
+ * écran : ce qui déborde n'est presque jamais l'écran, c'est l'enveloppe qui lui
+ * mesure sa place.
+ */
+
+@media (max-width: 48rem) {
+  /*
+   * La grille à deux colonnes redevient une pile. `minmax(0, 1fr)` plutôt que
+   * `1fr` : une colonne de grille a par défaut une taille minimale de contenu,
+   * et un tableau large la ferait déborder avant même d'atteindre son conteneur
+   * de défilement.
+   */
+  .spa-admin {
+    grid-template-columns: minmax(0, 1fr);
+    /*
+     * Deux rangées, et la première mesure son contenu. Sans cette ligne, les
+     * rangées implicites se partagent les `100vh` du minimum de la coquille : le
+     * bandeau était étiré à 299 px pour 185 px de contenu, et le back-office
+     * s'ouvrait sur une bande sombre vide.
+     */
+    grid-template-rows: auto 1fr;
+  }
+
+  .spa-admin__rail {
+    gap: var(--spa-space-3);
+    padding: var(--spa-space-3);
+  }
+
+  /*
+   * Le sommaire passe en bandeau qui défile — une rangée de 44 px — plutôt qu'en
+   * rangée qui s'enroule : sept entrées enroulées à 360 px occupent trois lignes
+   * et repoussent le contenu sous la ligne de flottaison, alors que le
+   * back-office sur téléphone sert à consulter, pas à naviguer. Le clavier n'y
+   * perd rien : le focus fait défiler l'entrée visée jusque dans le champ.
+   *
+   * La gouttière verticale réserve la place de l'anneau de focus, que le
+   * conteneur de défilement rognerait sinon.
+   *
+   * Le sélecteur descend du rail, et ne se contente pas de `.spa-admin__nav` :
+   * le panneau des prestations d'un praticien emprunte cette classe pour sa
+   * liste de cartes. Sans cette précision, elle se couchait elle aussi en
+   * bandeau qui défile — trois cartes de service alignées hors de l'écran.
+   */
+  .spa-admin__rail .spa-admin__nav {
+    flex-direction: row;
+    gap: var(--spa-space-2);
+    overflow-x: auto;
+    padding-block: var(--spa-space-1);
+  }
+
+  .spa-admin__rail .spa-admin__nav-link {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
+  /*
+   * Le pied de rail n'est plus un pied : il suit le bandeau. `margin-block-start`
+   * revient à zéro — sa valeur `auto` poussait le bloc au bas d'un rail qui
+   * n'occupe plus toute la hauteur.
+   */
+  .spa-admin__rail-footer {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--spa-space-1) var(--spa-space-3);
+    margin-block-start: 0;
+    padding-block-start: var(--spa-space-3);
+  }
+
+  .spa-admin__topbar {
+    flex-wrap: wrap;
+    padding-block: var(--spa-space-2);
+    padding-inline: var(--spa-space-3);
+  }
+
+  .spa-admin__content {
+    padding: var(--spa-space-4) var(--spa-space-3);
+  }
+
+  /*
+   * Liste et détail l'un sous l'autre. La liste reste en premier : c'est elle
+   * qu'on cherche quand on a le client au téléphone, et la fiche se lit en
+   * dessous.
+   */
+  .spa-admin__split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 30rem) {
+  /*
+   * Le nom du salon est déjà écrit douze pixels plus bas, dans le sélecteur
+   * d'établissement du pied de rail — et celui-là, on peut le manœuvrer. À cette
+   * largeur le bandeau n'a pas la place de le dire deux fois.
+   */
+  .spa-admin__brand {
+    display: none;
+  }
+
+  .spa-admin__content {
+    gap: var(--spa-space-3);
+    padding: var(--spa-space-3) var(--spa-space-2);
+  }
+
+  .spa-admin__section {
+    padding: var(--spa-space-3);
+  }
+
+  /*
+   * Le titre d'écran descend d'un cran : à 360 px, « Encaissement du jour »
+   * en `xl` couvre deux lignes et repousse la barre d'outils.
+   */
+  .spa-admin__title {
+    font-size: var(--spa-font-size-lg);
+  }
+
+  /*
+   * L'entretoise de la barre d'outils est une marge automatique : sur une rangée
+   * qui s'enroule, elle rejette le second groupe tout à droite de sa ligne et
+   * creuse un trou entre deux boutons voisins. À cette largeur les groupes
+   * s'empilent d'eux-mêmes, l'entretoise n'a plus rien à séparer.
+   *
+   * C'est la marge qu'on neutralise, et non l'élément : la classe ne désigne
+   * pas toujours une cale vide. Le planning la pose sur un
+   * `.spa-admin-toolbar__group` qui porte le fuseau du salon (`calendar-board`),
+   * et un `display: none` effacerait du téléphone la mention même que le
+   * back-office s'engage à afficher en permanence.
+   */
+  .spa-admin-toolbar__spacer {
+    margin-inline-start: 0;
+  }
+
+  .spa-admin-toolbar__group {
+    flex-wrap: wrap;
+  }
+
+  /*
+   * Le sélecteur segmenté prend la largeur : ses deux options réparties à parts
+   * égales restent au-dessus de la cible minimale, là où le contenu naturel les
+   * réduirait à deux pastilles de 60 px collées au bord.
+   */
+  .spa-admin-segmented {
+    display: flex;
+    inline-size: 100%;
+  }
+
+  .spa-admin-segmented__option {
+    flex: 1 1 0;
+    padding-inline: var(--spa-space-2);
+  }
 }

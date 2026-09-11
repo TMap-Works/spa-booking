@@ -222,3 +222,36 @@
 .spa-admin-schedule__exception-label {
   color: var(--spa-color-text-muted);
 }
+
+/* --- Points de rupture ----------------------------------------------------- */
+
+/*
+ * Le palier est celui de la coquille — 48rem, soit 768 px (`shell.css`). Ce qui
+ * le rend nécessaire ici : une ligne de jour réserve 7 rem au libellé et une
+ * colonne à l'interrupteur, si bien que les plages se retrouvaient à 112 px pour
+ * une saisie qui en demande 336. Les deux champs d'heure, la case « minuit » et
+ * le bouton « Retirer » étaient alors peints hors de la colonne, hors de la
+ * carte et hors de l'écran — à x=461 pour une fenêtre de 360 (#612).
+ *
+ * La grille hebdomadaire perd sa lecture en colonnes à cette largeur : c'est le
+ * prix à payer pour que la saisie reste possible. Elle la retrouve dès 768 px,
+ * et c'est au comptoir qu'on saisit des horaires.
+ */
+@media (max-width: 48rem) {
+  .spa-admin-schedule__day {
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--spa-space-2);
+  }
+
+  /* La pastille de plage passe à la ligne plutôt que de déborder : 336 px de
+   * contenu ne tiennent pas dans les 318 px d'une carte à 360. */
+  .spa-admin-schedule__range {
+    flex-wrap: wrap;
+  }
+
+  .spa-admin-schedule__exception {
+    grid-template-columns: minmax(0, 1fr);
+    padding-block: var(--spa-space-2);
+  }
+}
