@@ -119,13 +119,12 @@ test.describe('Comptoir', () => {
       leJour: jour,
     });
     const heureInitiale = heureDuSalon(new Date(rendezVous.startsAt));
-    // Le jeu d'essai ouvre 08:00–20:00 et ce jour ne porte que ce rendez-vous :
-    // 16:00 est donc libre, et différent de l'heure posée quelle qu'elle soit.
-    const heureVisee = '16:00';
-    expect(
-      heureInitiale,
-      "Le créneau initial tombe sur l'heure visée : le report ne déplacerait rien.",
-    ).not.toBe(heureVisee);
+    // L'heure de destination n'est plus une constante, et c'est le sujet de
+    // #611 : le tiroir n'offre que les créneaux que le moteur rend, alignés sur
+    // le début de plage du praticien au pas de quinze minutes. Une heure ronde
+    // écrite ici serait refusée en 409 — c'est exactement le bug qu'on corrige.
+    // Elle est donc **lue dans le sélecteur**, au moment du report.
+    let heureVisee = '';
 
     await test.step('Ouvrir le rendez-vous posé', async () => {
       await page.goto(chemins.calendrier(jour));
@@ -135,9 +134,25 @@ test.describe('Comptoir', () => {
       await expect(tiroir(page)).toBeVisible();
     });
 
-    await test.step(`Déplacer le rendez-vous de ${heureInitiale} à ${heureVisee}`, async () => {
+    await test.step(`Déplacer le rendez-vous posé à ${heureInitiale}`, async () => {
       const panneau = tiroir(page);
-      await panneau.getByLabel('Heure de début').fill(heureVisee);
+      const heures = panneau.getByLabel('Heure de début');
+      // Le sélecteur n'est peuplé qu'une fois la disponibilité lue : ses options
+      // arrivent après le rendu du tiroir.
+      await expect(heures.locator('option')).not.toHaveCount(0, { timeout: 20_000 });
+
+      const proposees = await heures
+        .locator('option')
+        .evaluateAll((options) => options.map((option) => (option as HTMLOptionElement).value));
+      const autre = proposees.find((heure) => heure !== heureInitiale);
+      expect(
+        autre,
+        `Aucun créneau autre que ${heureInitiale} n'est proposé : le report ne ` +
+          `déplacerait rien (${proposees.length} créneaux lus).`,
+      ).toBeDefined();
+      heureVisee = autre ?? '';
+
+      await heures.selectOption(heureVisee);
       await panneau.getByRole('button', { name: 'Enregistrer' }).click();
       await expect(panneau).toBeHidden({ timeout: 20_000 });
 
