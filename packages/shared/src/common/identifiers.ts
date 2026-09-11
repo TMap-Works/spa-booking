@@ -308,11 +308,52 @@ export const e164PhoneSchema = z
 
 export type E164Phone = z.infer<typeof e164PhoneSchema>;
 
+/**
+ * Ce qu'affiche un champ obligatoire laissé vide.
+ *
+ * Le message est **générique** parce que le schéma ignore l'intitulé du champ
+ * qui le monte : `nameSchema` sert « Prénom », « Nom » et le nom d'une rubrique,
+ * et une formule qui nommerait l'un des trois serait fausse sous les deux
+ * autres. Le contexte, c'est `Field` qui le donne, en posant le message **sous
+ * son champ** (skill web-frontend §4).
+ *
+ * Sans lui, `.min(1)` rendait le libellé par défaut de Zod — « String must
+ * contain at least 1 character(s) » — sur huit écrans par ailleurs entièrement
+ * français (#613). Le défaut n'était pas une traduction manquante mais un
+ * message manquant : Zod ne se traduit pas, il se renseigne.
+ */
+const REQUIRED_FIELD_MESSAGE = 'ce champ est obligatoire';
+
+/**
+ * Ce qu'affiche un champ dont la saisie dépasse la borne de sa colonne.
+ *
+ * Le plafond a le même angle mort que le plancher : sans message, `.max()` rend
+ * « String must contain at most 80 character(s) », et le cas est atteignable —
+ * les champs ne portent pas d'attribut `maxLength` et les formulaires sont en
+ * `noValidate`, si bien qu'un nom collé depuis une autre fiche sort une phrase
+ * anglaise sous un libellé français. Corriger le seul plancher aurait laissé
+ * #613 à moitié fait.
+ *
+ * La borne est **interpolée** : « faites plus court » sans dire combien oblige
+ * à tâtonner caractère par caractère.
+ */
+function tooLongMessage(max: number): string {
+  return `ce champ fait au plus ${String(max)} caractères`;
+}
+
 /** Prénom, nom, catégorie — `VARCHAR(80)`. */
-export const nameSchema = z.string().trim().min(1).max(NAME_MAX_LENGTH);
+export const nameSchema = z
+  .string()
+  .trim()
+  .min(1, { message: REQUIRED_FIELD_MESSAGE })
+  .max(NAME_MAX_LENGTH, { message: tooLongMessage(NAME_MAX_LENGTH) });
 
 /** Nom d'établissement, de prestation, nom public de praticien — `VARCHAR(160)`. */
-export const displayNameSchema = z.string().trim().min(1).max(DISPLAY_NAME_MAX_LENGTH);
+export const displayNameSchema = z
+  .string()
+  .trim()
+  .min(1, { message: REQUIRED_FIELD_MESSAGE })
+  .max(DISPLAY_NAME_MAX_LENGTH, { message: tooLongMessage(DISPLAY_NAME_MAX_LENGTH) });
 
 /** Description, biographie, note de rendez-vous — `VARCHAR(2000)`. */
 export const longTextSchema = z.string().trim().max(LONG_TEXT_MAX_LENGTH);
@@ -358,7 +399,15 @@ export const passwordSchema = z
  * Le plafond, lui, reste : c'est une borne de coût argon2id, pas une règle de
  * composition.
  */
-export const submittedPasswordSchema = z.string().min(1).max(PASSWORD_MAX_LENGTH);
+export const submittedPasswordSchema = z
+  .string()
+  .min(1, { message: 'mot de passe attendu' })
+  .max(PASSWORD_MAX_LENGTH, {
+    // Même phrase que `passwordSchema` : le plafond est le même des deux côtés,
+    // et deux rédactions pour une seule borne se liraient comme deux règles.
+    // Rien n'est divulgué que le refus lui-même ne dise déjà.
+    message: `le mot de passe fait au plus ${String(PASSWORD_MAX_LENGTH)} caractères`,
+  });
 
 /**
  * Jeton opaque — jeton d'accès, de rafraîchissement, ou secret client d'un
