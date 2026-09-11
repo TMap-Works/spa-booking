@@ -146,6 +146,7 @@ par l'appel, jamais exportée, et `all` lui est interdit.
 """
 import argparse
 import atexit
+import ctypes
 import hashlib
 import json
 import os
@@ -392,6 +393,73 @@ def resolve_binary(name):
     return shutil.which(name) or name
 
 
+def console_visible():
+    """Ce processus a-t-il une fenêtre de console bien à lui ?
+
+    C'est la question qui décide, et elle se pose dans ce sens-là : tant qu'une
+    console existe, les enfants en héritent et rien ne s'ouvre. C'est quand elle
+    **manque** que Windows en alloue une neuve à chaque enfant console — et
+    celle-là est visible.
+
+    Douter revient à répondre non, et c'est le côté sûr : on pose alors le
+    drapeau, dont le pire effet possible est de laisser captée une sortie qui
+    l'était déjà.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+        return bool(hwnd) and bool(ctypes.windll.user32.IsWindowVisible(hwnd))
+    except (AttributeError, OSError):
+        return False
+
+
+def flags_sans_fenetre():
+    """Les drapeaux qui empêchent une console de s'ouvrir chez un enfant (#608).
+
+    Le superviseur tourne détaché, sans console. Sous Windows, un processus sans
+    console qui lance un programme console force le système à en **allouer une
+    neuve** — visible, et qui arrive au premier plan en volant la frappe en
+    cours. Une par vague, une par arbitrage, plus celles du tic de veille toutes
+    les cinq minutes. Aucune n'était lisible : elles ne portent qu'un flux
+    `stream-json`, et se referment avec l'appel.
+
+    Conditionné à `console_visible()` plutôt que posé partout, et c'est
+    délibéré : lancé à la main depuis un terminal, le dispositif doit continuer
+    d'écrire **dans ce terminal**. `CREATE_NO_WINDOW` y substituerait une
+    console neuve et invisible, et avalerait la sortie que l'opérateur attend —
+    `milestone_run.py step` encadre des commandes dont il n'a jamais capté la
+    sortie. Quand une console existe, il n'y a rien à corriger : l'enfant en
+    hérite, et rien ne s'ouvre.
+    """
+    if os.name != "nt" or console_visible():
+        return 0
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def python_console():
+    """L'interpréteur **console**, pour un processus dont on veut faire taire
+    toute la descendance.
+
+    Contre-intuitif, et c'est tout le sujet de #608 : `pythonw.exe` — qu'on
+    choisit précisément parce qu'il n'ouvre pas de fenêtre — est **ce qui les
+    fait ouvrir**. Un programme GUI n'a aucune console, donc chacun de ses
+    enfants console s'en voit allouer une neuve et visible ; et le drapeau ne
+    rattrape rien, puisque `CREATE_NO_WINDOW` n'est honoré que pour un programme
+    console. Mesuré sur la machine du projet : `pythonw` + `CREATE_NO_WINDOW`
+    laisse le petit-fils à `visible=1`.
+
+    `python.exe` lancé avec `CREATE_NO_WINDOW` fait exactement l'inverse : il
+    reçoit une console bien réelle mais **sans fenêtre**, et toute sa
+    descendance en hérite sans qu'aucun drapeau ne soit posé sur elle. Mesuré :
+    petit-fils à `visible=0`. C'est ce qui permet de corriger tout un sous-arbre
+    — vagues, arbitrages, `git`, `gh`, agents et leurs propres enfants — en un
+    seul point plutôt qu'à chaque appel.
+    """
+    candidate = Path(sys.executable).with_name("python.exe")
+    return str(candidate) if candidate.exists() else sys.executable
+
+
 def now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -425,9 +493,15 @@ def say(message, level="INFO"):
 # --------------------------------------------------------------------------- #
 
 def runner(*args, capture=True):
-    return subprocess.run([sys.executable, str(RUNNER), *args], cwd=ROOT,
+    # `python_console()` et non `sys.executable` : sous la veille, ce processus
+    # tourne sous `pythonw` et n'a donc pas de console à léguer. Le lancer en
+    # console invisible couvre d'un coup toute la descendance de
+    # `milestone_run.py` — ses `git`, ses `gh`, son plan — sans avoir à poser
+    # le drapeau sur chacun d'eux (#608).
+    return subprocess.run([python_console(), str(RUNNER), *args], cwd=ROOT,
                           capture_output=capture, text=True,
-                          encoding="utf-8", errors="replace")
+                          encoding="utf-8", errors="replace",
+                          creationflags=flags_sans_fenetre())
 
 
 def current_run():
@@ -1011,7 +1085,8 @@ def process_is_supervisor(pid):
                  "(Get-CimInstance Win32_Process -Filter "
                  f"'ProcessId={pid}').CommandLine"],
                 capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=30)
+                errors="replace", timeout=30,
+                creationflags=flags_sans_fenetre())
         else:
             done = subprocess.run(["ps", "-p", str(pid), "-o", "args="],
                                   capture_output=True, text=True,
@@ -1122,7 +1197,7 @@ def git_lines(*argv):
     try:
         proc = subprocess.run(["git", *argv], cwd=ROOT, capture_output=True,
                               text=True, encoding="utf-8", errors="replace",
-                              timeout=30)
+                              timeout=30, creationflags=flags_sans_fenetre())
     except (OSError, subprocess.SubprocessError):
         return []
     if proc.returncode != 0:
@@ -1499,7 +1574,16 @@ def journal(status, message, level=None, beat=False):
 # --------------------------------------------------------------------------- #
 
 def pythonw():
-    """L'interpréteur sans console : la veille ne doit ouvrir aucune fenêtre."""
+    """L'interpréteur sans console — pour le seul tic de la veille.
+
+    Ne pas l'étendre au reste du dispositif : « sans console » veut aussi dire
+    « ses enfants en reçoivent une, visible », et c'est précisément #608 —
+    `python_console()` raconte la mesure. Le tic le garde pour une raison qui
+    lui est propre : la tâche planifiée le lance par un `.cmd` dont la console
+    n'a pas de fenêtre, et y mettre un `python.exe` lui en ferait allouer une.
+    Les appels que le tic passe portent donc le drapeau un par un, faute de
+    pouvoir en hériter.
+    """
     candidate = Path(sys.executable).with_name("pythonw.exe")
     return str(candidate) if candidate.exists() else sys.executable
 
@@ -1522,7 +1606,8 @@ def write_watchdog_cmd():
 def schtasks(*args):
     try:
         return subprocess.run(["schtasks", *args], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=60)
+                              encoding="utf-8", errors="replace", timeout=60,
+                              creationflags=flags_sans_fenetre())
     except (OSError, subprocess.SubprocessError) as exc:
         return subprocess.CompletedProcess(args, 1, "", str(exc))
 
@@ -1592,7 +1677,8 @@ def unbind_from_battery():
     try:
         done = subprocess.run(["powershell", "-NoProfile", "-Command", script],
                               capture_output=True, text=True, encoding="utf-8",
-                              errors="replace", timeout=60)
+                              errors="replace", timeout=60,
+                              creationflags=flags_sans_fenetre())
     except (OSError, subprocess.SubprocessError) as exc:
         say(f"veille : réglages d'alimentation inchangés ({exc}) — elle ne "
             "démarrera pas sur batterie", "WARN")
@@ -1619,12 +1705,34 @@ def disarm_watchdog(quiet=False):
 
 
 def spawn_supervisor(intent):
-    """Relance un superviseur détaché — il survivra à la tâche qui l'a lancé."""
-    command = [resolve_binary(pythonw()), str(Path(__file__).resolve()),
+    """Relance un superviseur détaché — il survivra à la tâche qui l'a lancé.
+
+    Le couple posé ici a changé avec #608, et à rebours de l'intuition :
+    `pythonw` + `DETACHED_PROCESS` est devenu `python.exe` +
+    `CREATE_NO_WINDOW`. Les deux détachent de la console du lanceur et
+    survivent à sa mort — mesuré : le processus écrivait encore dans son
+    journal six secondes après que son lanceur avait rendu la main. Mais
+    `DETACHED_PROCESS` ne laisse **aucune** console, et ce processus-ci est le
+    parent de tout le run : chaque vague, chaque arbitrage, chaque `git`
+    s'en voyait donc allouer une neuve, et visible.
+
+    C'est le point de pose qui compte le plus du ticket : une console sans
+    fenêtre s'hérite, et la poser ici fait taire tout le sous-arbre d'un
+    coup — y compris les enfants qu'un agent lance lui-même et que nous ne
+    voyons jamais passer.
+
+    Le journal ne bouge pas : `stdout` et `stderr` vont dans `SUPERVISOR_LOG`,
+    pas dans cette console.
+    """
+    command = [resolve_binary(python_console()), str(Path(__file__).resolve()),
                *intent_argv(intent)]
     flags = 0
     if os.name == "nt":
-        flags = (getattr(subprocess, "DETACHED_PROCESS", 0)
+        # `CREATE_NEW_PROCESS_GROUP` reste : c'est lui qui met le superviseur
+        # hors d'atteinte du Ctrl-C de la console qui l'a lancé. Les deux
+        # drapeaux de création s'excluent — `DETACHED_PROCESS` cède la place,
+        # il n'y a rien à combiner.
+        flags = (getattr(subprocess, "CREATE_NO_WINDOW", 0)
                  | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     with open(SUPERVISOR_LOG, "a", encoding="utf-8") as log:
@@ -1879,7 +1987,8 @@ def preflight(args):
         try:
             proc = subprocess.run(["gh", "auth", "status"], capture_output=True,
                                   text=True, encoding="utf-8",
-                                  errors="replace", timeout=30)
+                                  errors="replace", timeout=30,
+                                  creationflags=flags_sans_fenetre())
             failed = proc.returncode != 0
         except subprocess.SubprocessError:
             failed = True
@@ -2144,7 +2253,8 @@ def stream_call(args, command, raw_path, env, timeout_min, label, stall=None):
     try:
         process = subprocess.Popen(
             command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, encoding="utf-8", errors="replace", bufsize=1, env=env)
+            text=True, encoding="utf-8", errors="replace", bufsize=1, env=env,
+            creationflags=flags_sans_fenetre())
     except (OSError, ValueError) as exc:
         # Sans cela, l'exception remonte, le superviseur meurt, et la veille le
         # relance toutes les cinq minutes pour qu'il remeure de la même façon.
@@ -2342,13 +2452,14 @@ def arbiter_should(args, reasons):
     """
     if args.no_arbiter:
         return None
-    argv = [sys.executable, str(ARBITER), "should",
+    argv = [python_console(), str(ARBITER), "should",
             "--per-run", str(args.arbiter_budget)]
     for name in reasons:
         argv += ["--reason", name]
     try:
         proc = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=300)
+                              encoding="utf-8", errors="replace", timeout=300,
+                              creationflags=flags_sans_fenetre())
     except (OSError, subprocess.SubprocessError) as exc:
         # Un dossier qu'on ne sait pas constituer ne doit pas arrêter le run : on
         # le dit, et le superviseur retombe sur son comportement d'avant.
