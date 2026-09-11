@@ -232,3 +232,19 @@
 .spa-admin-checkout--empty .spa-admin-checkout__ticket {
   justify-content: center;
 }
+
+/* --- Points de rupture ----------------------------------------------------- */
+
+/*
+ * Même palier que la coquille — 48rem, soit 768 px (`shell.css`).
+ *
+ * Le panneau de paiement est borné à 18 rem : sous 768 px, les deux colonnes ne
+ * laissaient plus au ticket que la cinquantaine de pixels qui restait, et la
+ * ligne « À encaisser » y devenait illisible. Le ticket passe donc au-dessus du
+ * moyen de paiement — l'ordre dans lequel l'opérateur les lit (#612).
+ */
+@media (max-width: 48rem) {
+  .spa-admin-checkout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
