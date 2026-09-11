@@ -7,6 +7,7 @@ import {
   formatCalendarDate,
   formatDuration,
   formatMoney,
+  formatMoneyCompact,
   formatTimeInTimeZone,
   parseAmountInput,
 } from '@/lib/format';
@@ -59,6 +60,39 @@ describe('formatMoney', () => {
 
     expect(formatted).toContain('3');
     expect(formatted).not.toContain('35,00');
+  });
+});
+
+describe('formatMoneyCompact', () => {
+  const compact = (amountMinor: number, currency: string): string =>
+    formatMoneyCompact({ amountMinor, currency }).replace(NO_BREAK_SPACES, ' ');
+
+  it('dit le même montant que l’affichage humain, en plus court', () => {
+    // Le point dur de #614 : l'échelle d'un graphique et le tableau de la même
+    // figure lisent la **même** donnée en unité mineure. Si les deux ne
+    // convertissent pas au même endroit, l'axe annonce 8 500 € là où la caisse
+    // a fait 85 €.
+    expect(compact(8_500, 'EUR')).toBe('85 €');
+    expect(compact(4_250, 'EUR')).toBe('42,5 €');
+    expect(compact(0, 'EUR')).toBe('0 €');
+  });
+
+  it('abrège au-delà du millier, là où un montant entier déborderait', () => {
+    // Une graduation d'axe dispose d'une quarantaine d'unités de viewBox :
+    // « 8 500,00 € » y passerait sur le tracé.
+    expect(compact(850_000, 'EUR')).toBe('8,5 k €');
+  });
+
+  it('ne divise pas par cent une devise sans décimale', () => {
+    // 3500 ariary sont 3500 ariary : le nombre de décimales vient d'`Intl`,
+    // comme pour `formatMoney`, et non d'un `10 ** 2` codé en dur.
+    expect(compact(3_500, 'MGA')).toBe('3,5 k MGA');
+  });
+
+  it('n’écrit pas une décimale que l’échelle n’a pas', () => {
+    // `Intl` ramènerait sinon le minimum de l'euro — deux décimales — au
+    // maximum demandé, et une graduation ronde s'écrirait « 85,0 € ».
+    expect(compact(8_500, 'EUR')).not.toContain(',0');
   });
 });
 

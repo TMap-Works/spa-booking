@@ -62,6 +62,21 @@ interface ReportChartProps {
    * l'ordre est celui du classement.
    */
   readonly layout: 'colonnes' | 'barres';
+  /**
+   * Met en forme une **graduation de l'échelle**, dans l'unité des `value` des
+   * barres — donc l'unité mineure pour un montant.
+   *
+   * Par défaut un nombre compact, ce qu'attend un axe qui compte des
+   * rendez-vous. Un graphique monétaire y passe le formatage de sa devise :
+   * sans quoi l'axe graduerait des centimes — « 8,5 k » pour une journée à
+   * 85,00 € — sous un titre qui annonce des euros, et contredirait le tableau
+   * de sa propre figure (#614). L'argent reste un entier dans la plus petite
+   * unité jusqu'ici : c'est le rendu, et lui seul, qui convertit.
+   *
+   * Sans effet sur `layout="barres"`, qui écrit le `valueLabel` de chaque
+   * barre au lieu d'une échelle.
+   */
+  readonly formatScaleValue?: (value: number) => string;
   readonly bars: readonly ReportChartBar[];
   readonly seriesLabel: string;
   readonly innerSeriesLabel?: string;
@@ -85,8 +100,15 @@ const COLUMN_PLOT_HEIGHT = 150;
  * écran s'écrivent dans le même corps.
  */
 const CHART_WIDTH = 720;
-/** Marges du viewBox — la gauche loge l'échelle, le bas les étiquettes d'axe. */
-const COLUMN_MARGIN = { left: 52, right: 10, top: 12, bottom: 30 } as const;
+/**
+ * Marges du viewBox — la gauche loge l'échelle, le bas les étiquettes d'axe.
+ *
+ * La gauche vaut une graduation entière, devise comprise : depuis #614 l'axe
+ * d'un graphe monétaire écrit « 4,5 M MGA » là où il écrivait « 4,5 M », et le
+ * texte est ancré à sa fin — trop court, la marge le faisait sortir par la
+ * gauche du `viewBox`, où un SVG le rogne sans rien dire.
+ */
+const COLUMN_MARGIN = { left: 66, right: 10, top: 12, bottom: 30 } as const;
 /** Gouttière entre deux colonnes, ramenée au pas quand celui-ci devient étroit. */
 const COLUMN_GAP = 6;
 /**
@@ -107,6 +129,7 @@ export function ReportChart({
   title,
   summary,
   layout,
+  formatScaleValue = compactNumber,
   bars,
   seriesLabel,
   innerSeriesLabel,
@@ -137,7 +160,12 @@ export function ReportChart({
 
           <div className="spa-admin-chart__canvas">
             {layout === 'colonnes' ? (
-              <ColumnChart bars={bars} summary={summary} title={title} />
+              <ColumnChart
+                bars={bars}
+                formatScaleValue={formatScaleValue}
+                summary={summary}
+                title={title}
+              />
             ) : (
               <BarChart bars={bars} summary={summary} title={title} />
             )}
@@ -173,6 +201,11 @@ interface ChartBodyProps {
   readonly bars: readonly ReportChartBar[];
   readonly title: string;
   readonly summary: string;
+}
+
+/** Le graphique en colonnes est le seul à peindre une échelle — voir {@link ReportChartProps}. */
+interface ColumnChartProps extends ChartBodyProps {
+  readonly formatScaleValue: (value: number) => string;
 }
 
 /**
@@ -239,7 +272,12 @@ function hatchIdOf(title: string): string {
   return `spa-chart-hatch-${hash.toString(36)}`;
 }
 
-function ColumnChart({ bars, title, summary }: ChartBodyProps): ReactElement {
+function ColumnChart({
+  bars,
+  title,
+  summary,
+  formatScaleValue,
+}: ColumnChartProps): ReactElement {
   const hatchId = hatchIdOf(title);
   const ceiling = niceCeiling(Math.max(...bars.map((bar) => bar.value)));
   const width = CHART_WIDTH;
@@ -276,7 +314,7 @@ function ColumnChart({ bars, title, summary }: ChartBodyProps): ReactElement {
               y2={y}
             />
             <text className="spa-admin-chart__scale" x={COLUMN_MARGIN.left - 6} y={y + 3}>
-              {compactNumber(value)}
+              {formatScaleValue(value)}
             </text>
           </g>
         );
