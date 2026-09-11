@@ -63,15 +63,36 @@ export const DESK_ROUTE_MISSING_MESSAGE =
   'L’écriture de rendez-vous au comptoir n’est pas encore servie par l’API : le formulaire est complet, l’enregistrement suivra.';
 
 /**
- * Ce qu'on montre quand le créneau a été pris pendant la saisie.
+ * Ce qu'on montre quand l'API refuse le créneau en `SLOT_NO_LONGER_AVAILABLE`.
  *
  * Sous concurrence, ce n'est **pas** une panne : c'est le cas normal que le
  * quatrième critère du ticket demande de traiter (web-frontend §3). D'où un ton
  * `warning` et non `danger`, et d'où le rechargement de la période plutôt qu'un
  * formulaire vidé.
+ *
+ * ## Ce message n'affirme plus une cause qu'il ne connaît pas (#611)
+ *
+ * Il a longtemps dit « vient d'être pris depuis un autre poste ». C'était une
+ * **déduction**, et elle était fausse la plupart du temps : le contrôleur
+ * annonce noir sur blanc que ce seul code « couvre toutes les façons dont le
+ * créneau n'est pas réservable — pris entre l'affichage et la validation, hors
+ * des heures du praticien, pendant un congé, sous le préavis, ou chez un
+ * praticien qui ne pratique pas ce soin »
+ * (`apps/api/src/modules/appointments/appointments.controller.ts`). Rien dans le
+ * corps du refus ne permet de trancher — `details` ne rend que le `staffId` et
+ * le `startsAt` que l'appelant vient d'envoyer, délibérément, pour ne pas faire
+ * de ce 409 une sonde d'agenda.
+ *
+ * La campagne de QA a mesuré ce que coûte cette invention : six refus
+ * consécutifs au comptoir, tous annoncés comme une course perdue entre postes,
+ * sur une journée qui ne portait **aucun** rendez-vous. L'opératrice cherchait
+ * une collègue qui n'avait rien réservé.
+ *
+ * Le message énumère donc les causes possibles sans en désigner une, et se
+ * termine par le seul geste qui débloque : reprendre une heure dans la liste.
  */
 export const SLOT_CONFLICT_MESSAGE =
-  'Ce créneau vient d’être pris depuis un autre poste. Le planning a été rechargé ; vos autres saisies sont conservées.';
+  'Ce créneau n’est pas — ou n’est plus — réservable : il a pu être pris depuis un autre poste, sortir des heures du praticien, ou ne plus être proposé pour cette prestation. Le planning a été rechargé ; reprenez une heure dans la liste — vos autres saisies sont conservées.';
 
 /**
  * `HTTP_404` est le repli du client d'API quand le corps d'erreur ne suit pas le
@@ -277,6 +298,136 @@ export function summarize(service: SummarizableService, time: string): DeskSumma
 }
 
 // ---------------------------------------------------------------------------
+// Les créneaux réellement proposables — #611
+// ---------------------------------------------------------------------------
+
+/**
+ * Pourquoi le tiroir ne laisse plus saisir une heure libre.
+ *
+ * La création de rendez-vous ne réussit que sur un créneau que le moteur de
+ * disponibilité a **lui-même rendu** : `AppointmentsService.offeredStaffAt`
+ * rejoue `slotsFor` et exige l'égalité stricte de l'instant demandé avec l'un
+ * des créneaux offerts, sans quoi il lève `SlotNoLongerAvailableError`. Ce n'est
+ * pas un excès de zèle — c'est ce qui garantit qu'un rendez-vous posé au
+ * comptoir est aussi honorable qu'un autre : dans les heures du praticien, hors
+ * congé, tampons compris.
+ *
+ * Or le planning dessine une grille de trente minutes depuis minuit, et le
+ * moteur aligne ses créneaux sur le **début de plage du praticien**, au pas de
+ * quinze minutes. Les deux ne coïncident qu'accidentellement : un praticien qui
+ * ouvre à 07:10 n'a pas un seul créneau à la minute 00 de la journée, et chaque
+ * case du planning menait alors à un refus (#611).
+ *
+ * D'où ce module : la rangée cliquée n'est plus une heure de réservation, c'est
+ * une **intention** — « vers 10 h, chez Hasina ». Le tiroir la résout en un
+ * créneau réel, et n'offre à choisir que ceux-là.
+ */
+export interface DeskSlotOption {
+  /** Heure civile du salon, « HH:MM » — la valeur du sélecteur. */
+  readonly time: string;
+  /**
+   * L'instant exact rendu par le moteur, tel quel.
+   *
+   * C'est **lui** qu'on renvoie à l'API, et non une reconversion de l'heure
+   * civile : l'égalité que `offeredStaffAt` exige porte sur la chaîne ISO, et
+   * refaire le trajet `civil → instant` rouvrirait sans raison la question du
+   * changement d'heure — une heure murale qui n'existe pas dans le trou d'un
+   * passage à l'heure d'été n'a pas de conversion juste (voir
+   * `offsetDateTimeInTenant`).
+   */
+  readonly startsAt: string;
+}
+
+/**
+ * Les créneaux d'une journée, dédoublonnés par heure civile et ordonnés.
+ *
+ * Le dédoublonnage n'est pas cosmétique : sans praticien désigné — l'option
+ * « premier disponible » —, le moteur rend un créneau **par praticien libre**,
+ * et le sélecteur afficherait trois fois « 09:25 » sans que rien ne les
+ * distingue. L'un d'eux suffit : c'est le serveur qui affecte, et il refera
+ * l'affectation à l'écriture (#36).
+ *
+ * Le tri se fait sur l'heure civile en `HH:MM`, où l'ordre lexicographique est
+ * l'ordre chronologique — la fenêtre demandée étant d'une seule journée.
+ */
+export function deskSlotOptions(
+  slots: readonly { readonly startsAt: string }[],
+  timeZone: TimeZone,
+): readonly DeskSlotOption[] {
+  const byTime = new Map<string, DeskSlotOption>();
+
+  for (const slot of slots) {
+    const { time } = tenantFields(slot.startsAt, timeZone);
+
+    if (!byTime.has(time)) {
+      byTime.set(time, { time, startsAt: slot.startsAt });
+    }
+  }
+
+  return [...byTime.values()].sort((left, right) => left.time.localeCompare(right.time));
+}
+
+/**
+ * Le créneau à préselectionner pour une heure visée : le **premier à partir
+ * d'elle**, et le dernier de la journée s'il n'y en a plus après.
+ *
+ * « À partir de » et non « le plus proche », parce que c'est exactement ce que
+ * la case du planning annonce désormais — « poser un rendez-vous à partir de
+ * cette heure ». Cliquer la rangée de 10 h et voir s'ouvrir 09:55 ferait
+ * remonter le rendez-vous au-dessus de l'endroit visé, et l'opératrice a
+ * rarement envie de le poser *avant* ce qu'elle a montré du doigt.
+ *
+ * Le repli sur le dernier créneau évite le cas contraire : une fin de journée
+ * cliquée trop bas doit proposer ce qui reste, pas rien du tout.
+ *
+ * Rend `null` sur une liste vide — la journée est complète, ou le praticien ne
+ * travaille pas : c'est au tiroir de le dire, pas à cette fonction d'inventer
+ * une heure.
+ *
+ * La liste est supposée triée, ce que `deskSlotOptions` garantit.
+ */
+export function nearestDeskSlot(
+  options: readonly DeskSlotOption[],
+  wanted: string,
+): DeskSlotOption | null {
+  const last = options[options.length - 1];
+
+  if (last === undefined) {
+    return null;
+  }
+
+  const target = minutesOfClock(wanted);
+
+  if (target === null) {
+    return options[0] ?? null;
+  }
+
+  return (
+    options.find((option) => {
+      const minutes = minutesOfClock(option.time);
+
+      return minutes !== null && minutes >= target;
+    }) ?? last
+  );
+}
+
+/**
+ * Ce que le tiroir dit quand la liste des créneaux n'a pas pu être lue.
+ *
+ * Le sélecteur retombe alors sur une saisie libre plutôt que de se bloquer :
+ * une lecture de disponibilité en panne ne doit pas fermer le comptoir, et
+ * l'API reste de toute façon le juge du créneau. Le ton est celui d'un
+ * avertissement, pas d'une panne — ce qui suit est possible, seulement moins
+ * sûr.
+ */
+export const DESK_SLOTS_UNREADABLE_MESSAGE =
+  'Les créneaux proposés par le planning n’ont pas pu être lus : saisissez l’heure à la main, elle sera vérifiée à l’enregistrement.';
+
+/** Ce que le sélecteur affiche à la place d'une liste vide. */
+export const DESK_NO_SLOT_MESSAGE =
+  'Aucun créneau ce jour-là pour cette prestation. Changez de date, de praticien, ou de prestation.';
+
+// ---------------------------------------------------------------------------
 // Ce que le pied du tiroir propose — cinquième critère
 // ---------------------------------------------------------------------------
 
@@ -445,15 +596,21 @@ export function deskMoment(instant: string, timeZone: TimeZone): string {
 }
 
 /**
- * Le créneau perdu, dit pour un **report** et non pour une saisie.
+ * Le créneau refusé, dit pour un **report** et non pour une saisie.
  *
  * `SLOT_CONFLICT_MESSAGE` promet que « vos autres saisies sont conservées » : vrai
  * dans le tiroir, où un formulaire attend ; hors sujet sur un glisser-déposer, où
  * il n'y a rien de saisi et où la seule chose à dire est qu'il faut viser
  * ailleurs.
+ *
+ * Même correction de fond que lui (#611) : le code ne dit pas *pourquoi* le
+ * créneau est refusé, et l'affirmer envoyait chercher une course entre postes
+ * qui n'avait pas eu lieu. Le lâcher vise en outre une **rangée de la grille**,
+ * qui n'est pas un créneau du moteur — d'où le renvoi explicite vers le tiroir,
+ * seul endroit où la liste des créneaux réellement proposés est offerte.
  */
 export const MOVE_CONFLICT_MESSAGE =
-  'Ce créneau vient d’être pris depuis un autre poste : visez-en un autre.';
+  'Ce créneau n’est pas — ou n’est plus — réservable : il a pu être pris depuis un autre poste, ou sortir des heures du praticien. Ouvrez le rendez-vous pour choisir parmi les créneaux proposés.';
 
 /**
  * Le rendez-vous a disparu sous le geste.
@@ -511,7 +668,10 @@ export function moveRefusal(
 
   return {
     title: transient
-      ? 'Créneau déjà pris — rendez-vous remis en place'
+      ? // « Indisponible » et non « déjà pris » : le titre est la première chose
+        // que l'opératrice lit, et c'est là que l'ancienne version affirmait le
+        // plus fort une cause que le refus ne donne pas (#611).
+        'Créneau indisponible — rendez-vous remis en place'
       : 'Report refusé — rendez-vous remis en place',
     body: `${restored} ${reason}`,
     tone: transient ? 'warning' : 'danger',

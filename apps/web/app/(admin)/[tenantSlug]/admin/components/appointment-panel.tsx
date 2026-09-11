@@ -21,20 +21,27 @@ import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
 import { TextArea } from '@/components/ui/textarea';
 import {
+  DESK_NO_SLOT_MESSAGE,
+  DESK_SLOTS_UNREADABLE_MESSAGE,
   deskFailureMessage,
+  deskSlotOptions,
   deskStatusActions,
   isReschedulable,
   isSlotConflict,
+  nearestDeskSlot,
   offsetDateTimeInTenant,
   summarize,
   tenantFields,
+  type DeskSlotOption,
 } from '@/lib/admin/appointment-desk';
 import { STATUS_LABELS, statusModifier } from '@/lib/admin/calendar-grid';
+import { parseCalendarDate } from '@/lib/admin/calendar-range';
 import { formatMoney } from '@/lib/format';
 
 import {
   createDeskAppointmentAction,
   loadAppointmentNotificationsAction,
+  loadDeskAvailabilityAction,
   loadDeskServiceStaffAction,
   markDeskAppointmentStatusAction,
   rescheduleDeskAppointmentAction,
@@ -62,12 +69,34 @@ import { NotificationStatusList } from './notification-status-list';
  * chevauchement que la contrainte d'exclusion refuserait **après** la saisie —
  * trop tard pour l'opérateur qui a la cliente au téléphone.
  *
+ * ## L'heure ne se saisit plus : elle se choisit (#611)
+ *
+ * L'API n'accepte que les créneaux que le moteur de disponibilité a lui-même
+ * rendus, à l'instant près. Le planning, lui, dessine une grille de trente
+ * minutes qui ne coïncide pas avec eux — un praticien qui ouvre à 07:10 n'a pas
+ * un seul créneau à la minute 00. Un champ d'heure libre amorcé par la rangée
+ * cliquée menait donc à un refus quoi qu'on y saisisse.
+ *
+ * Le tiroir lit donc les créneaux de la journée — prestation, praticien et date
+ * retenus — et n'offre qu'eux. La rangée cliquée n'est plus une heure de
+ * réservation mais une **intention** : le créneau réel le plus proche est
+ * préselectionné, et l'opérateur en change dans la liste. Voir
+ * `lib/admin/appointment-desk.ts`.
+ *
+ * La lecture peut échouer — c'est une lecture de plus, sur une route de plus. Le
+ * sélecteur retombe alors sur la saisie libre d'avant, avec un avertissement :
+ * une disponibilité illisible ne doit pas fermer le comptoir, et c'est l'API qui
+ * juge le créneau de toute façon.
+ *
  * ## Le créneau perdu n'est pas une panne
  *
  * Sous concurrence, un autre poste peut avoir pris le créneau pendant la saisie.
  * C'est le cas normal du quatrième critère (web-frontend §3) : le tiroir affiche
  * un avertissement, **demande le rechargement de la période** au planning, et ne
  * touche à aucune autre saisie. L'opérateur change l'heure et renvoie.
+ *
+ * Ce que l'avertissement ne fait plus, c'est **nommer la cause** : le 409 couvre
+ * cinq refus différents et n'en distingue aucun (#611).
  *
  * ## La prestation ne se change pas en édition
  *
@@ -137,6 +166,17 @@ export function AppointmentPanel({
   const [note, setNote] = useState<string>(editing?.clientNote ?? '');
 
   const [staff, setStaff] = useState<readonly ServiceStaffMember[] | null>(null);
+  // Les créneaux réellement proposables de la journée retenue (#611). `null`
+  // couvre les deux moments où il n'y a rien à offrir — pas encore lus, et pas
+  // de prestation choisie — que le sélecteur distingue de la journée complète,
+  // qui est une liste **vide**.
+  const [slots, setSlots] = useState<readonly DeskSlotOption[] | null>(null);
+  const [slotsFailure, setSlotsFailure] = useState<string | null>(null);
+  // Un compteur, relu par l'effet de disponibilité : un créneau refusé par l'API
+  // doit disparaître de la liste, sinon l'opératrice renvoie la même heure et
+  // reçoit le même refus. Le planning se recharge déjà dans ce cas (`onReload`),
+  // et le tiroir n'avait aucune raison de rester sur une liste périmée.
+  const [slotsVersion, setSlotsVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -243,6 +283,91 @@ export function AppointmentPanel({
     };
   }, [tenantSlug, editingId, onExpired]);
 
+  // Les créneaux de la journée retenue — le cœur de #611.
+  //
+  // Relus à chaque changement de prestation, de praticien ou de date : les trois
+  // changent la liste. Le praticien surtout — ses heures de travail sont ce sur
+  // quoi le moteur aligne ses créneaux, et « premier disponible » rend l'union
+  // de toute l'équipe.
+  //
+  // En édition, le rendez-vous déplacé ne doit pas s'occuper lui-même
+  // (`excludeAppointmentId`, #442) : sans cela, un report d'un quart d'heure ne
+  // trouverait jamais de créneau, le soin en cours de déplacement couvrant
+  // précisément celui qu'on vise.
+  //
+  // La date est revalidée avant de partir : un `<input type="date">` rend une
+  // valeur **vide** tant que l'opérateur n'a pas fini de retaper ses trois
+  // segments, et interroger le serveur là-dessus ne rapporterait qu'un
+  // `VALIDATION_ERROR` — que l'écran traduirait à tort en « disponibilité
+  // illisible », donc en retour à la saisie libre, c'est-à-dire au 409 que ce
+  // ticket supprime. Une date en cours de frappe est un **chargement**, pas une
+  // panne.
+  useEffect(() => {
+    if (serviceId === '' || parseCalendarDate(day) === null) {
+      setSlots(null);
+      setSlotsFailure(null);
+      return undefined;
+    }
+
+    let current = true;
+    setSlots(null);
+    setSlotsFailure(null);
+
+    void loadDeskAvailabilityAction(tenantSlug, {
+      serviceId,
+      day,
+      ...(staffId === '' ? {} : { staffId }),
+      ...(editingId === null ? {} : { excludeAppointmentId: editingId }),
+    }).then((result) => {
+      if (!current) {
+        return;
+      }
+      if (result.ok) {
+        const options = deskSlotOptions(result.data.slots, timeZone);
+        setSlots(options);
+        // L'heure retenue est ramenée sur un créneau réel — celui d'après
+        // l'heure visée, à défaut celui d'avant. La forme fonctionnelle évite
+        // de mettre `time` en dépendance : l'effet rejouerait à chaque choix de
+        // l'opérateur, et rechargerait la journée pour rien.
+        //
+        // **À la création seulement.** L'heure d'amorce y est une rangée de la
+        // grille, donc une intention, et la résoudre est tout l'objet du ticket.
+        // En édition, elle est l'heure **réelle** d'un rendez-vous posé : la
+        // déplacer sans qu'on l'ait demandé ferait afficher une heure que le
+        // rendez-vous n'a pas — le récapitulatif avec —, et un « Enregistrer »
+        // cliqué de confiance le décalerait pour de bon. Le créneau du
+        // rendez-vous reste offert dès lors qu'`excludeAppointmentId` le
+        // libère (#442) ; quand le moteur ne le rend plus — horaires du
+        // praticien changés depuis la réservation —, l'heure d'origine reste
+        // affichée, non réservable, et c'est à l'opérateur d'en choisir une.
+        if (editingId === null) {
+          setTime((wanted) => nearestDeskSlot(options, wanted)?.time ?? wanted);
+        }
+        return;
+      }
+      if (result.code === ERROR_CODES.UNAUTHORIZED) {
+        onExpired();
+        return;
+      }
+      // La disponibilité illisible ne ferme pas le comptoir : le sélecteur
+      // retombe sur la saisie libre, et l'API reste juge du créneau.
+      setSlots(null);
+      setSlotsFailure(DESK_SLOTS_UNREADABLE_MESSAGE);
+    });
+
+    return () => {
+      current = false;
+    };
+  }, [tenantSlug, serviceId, staffId, day, editingId, timeZone, slotsVersion, onExpired]);
+
+  // Le créneau retenu, quand il vient bien de la liste du moteur. `null` en
+  // saisie libre — liste illisible — et pendant le chargement.
+  const chosen = slots?.find((option) => option.time === time) ?? null;
+  // Une heure qu'aucun créneau ne porte ne part pas à l'API : elle reviendrait
+  // en 409, et c'est exactement le refus que ce ticket supprime. La saisie libre
+  // fait exception — la liste étant illisible, c'est l'API qui tranchera.
+  const bookable = slotsFailure !== null || chosen !== null;
+
   // Les praticiens réellement offerts par le sélecteur : ceux qui tiennent la
   // prestation, plus — en édition — celui déjà affecté au rendez-vous même s'il
   // n'y figure plus. Le retirer ferait retomber le sélecteur sur « premier
@@ -289,6 +414,10 @@ export function AppointmentPanel({
         // saisie n'est touchée — c'est tout l'objet du quatrième critère.
         setConflict(deskFailureMessage(code, message));
         setFailure(null);
+        // …et la liste des créneaux avec lui (#611) : celui que l'API vient de
+        // refuser n'a plus à être proposé, et le suivant se choisit sans quitter
+        // le tiroir.
+        setSlotsVersion((version) => version + 1);
         onReload();
         return;
       }
@@ -301,7 +430,11 @@ export function AppointmentPanel({
 
   const submit = useCallback(async (): Promise<void> => {
     setSaving(true);
-    const startsAt = offsetDateTimeInTenant(day, time, timeZone);
+    // L'instant du créneau tel que le moteur l'a rendu, et non une reconversion
+    // de l'heure civile : c'est sur cette chaîne que porte l'égalité exigée par
+    // l'API (#611). La conversion locale ne sert plus qu'à la saisie libre, quand
+    // la liste des créneaux n'a pas pu être lue.
+    const startsAt = chosen?.startsAt ?? offsetDateTimeInTenant(day, time, timeZone);
 
     const result =
       editing === null
@@ -327,6 +460,7 @@ export function AppointmentPanel({
 
     refuse(result.code, result.message);
   }, [
+    chosen,
     day,
     time,
     timeZone,
@@ -421,7 +555,9 @@ export function AppointmentPanel({
       <div className="spa-admin-panel__body">
         {conflict === null ? null : (
           <div className="spa-admin-appointment__conflict">
-            <Notification tone="warning" title="Ce créneau vient d’être réservé">
+            {/* « Indisponible » et non « déjà réservé » : le 409 couvre cinq
+                refus différents et n'en distingue aucun (#611). */}
+            <Notification tone="warning" title="Créneau indisponible">
               <p>{conflict}</p>
             </Notification>
           </div>
@@ -514,16 +650,62 @@ export function AppointmentPanel({
               }}
             />
 
-            <Field
-              id={`${formId}-heure`}
-              label="Heure de début"
-              required
-              type="time"
-              value={time}
-              onChange={(event) => {
-                setTime(event.target.value);
-              }}
-            />
+            {/* L'heure se choisit dans la liste du moteur, et ne se saisit à la
+                main que si cette liste n'a pas pu être lue (#611). */}
+            {slotsFailure === null ? (
+              <Select
+                id={`${formId}-heure`}
+                label="Heure de début"
+                value={time}
+                disabled={slots === null}
+                {...(slots !== null && slots.length === 0
+                  ? { emptyLabel: DESK_NO_SLOT_MESSAGE }
+                  : {})}
+                {...(slots !== null && slots.length === 0
+                  ? // Le message de liste vide dit déjà tout : y ajouter
+                    // « seuls les créneaux honorables sont proposés » ferait
+                    // affirmer au même contrôle qu'il propose quelque chose et
+                    // qu'il ne propose rien.
+                    {}
+                  : {
+                      hint:
+                        slots === null
+                          ? 'Lecture des créneaux disponibles…'
+                          : 'Seuls les créneaux que le planning peut honorer sont proposés.',
+                    })}
+                onChange={(event) => {
+                  setTime(event.target.value);
+                }}
+              >
+                {/* L'heure retenue, quand aucun créneau ne la porte : pendant la
+                    lecture, sur une journée sans créneau, et sur un rendez-vous
+                    posé que le moteur n'offre plus. Sans elle, le sélecteur
+                    tomberait sur du vide — l'écran cesserait de dire à quelle
+                    heure le rendez-vous qu'il affiche est posé. Elle n'est pas
+                    réservable pour autant : `bookable` la refuse, faute de
+                    créneau correspondant. */}
+                {slots === null || !slots.some((option) => option.time === time) ? (
+                  <option value={time}>{time}</option>
+                ) : null}
+                {(slots ?? []).map((option) => (
+                  <option key={option.time} value={option.time}>
+                    {option.time}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <Field
+                id={`${formId}-heure`}
+                label="Heure de début"
+                required
+                type="time"
+                value={time}
+                hint={DESK_SLOTS_UNREADABLE_MESSAGE}
+                onChange={(event) => {
+                  setTime(event.target.value);
+                }}
+              />
+            )}
 
             <p className="spa-admin-appointment__timezone">
               Heures saisies et affichées dans le fuseau du salon — {timeZone}. Le stockage se fait
@@ -617,7 +799,9 @@ export function AppointmentPanel({
           type="submit"
           variant="accent"
           loading={saving}
-          disabled={editing === null ? client === null : !isReschedulable(editing.status)}
+          disabled={
+            !bookable || (editing === null ? client === null : !isReschedulable(editing.status))
+          }
         >
           {editing === null ? 'Créer le rendez-vous' : 'Enregistrer'}
         </Button>
