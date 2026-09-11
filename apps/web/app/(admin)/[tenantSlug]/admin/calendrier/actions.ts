@@ -31,6 +31,7 @@
  */
 
 import {
+  availabilityQuerySchema,
   changeAppointmentStatusRequestSchema,
   createAppointmentRequestSchema,
   createCustomerRequestSchema,
@@ -39,6 +40,7 @@ import {
   slugSchema,
   uuidSchema,
   type Appointment,
+  type AvailabilitySlot,
   type Customer,
   type CustomerSummary,
   // Aliasé : `Notification` est aussi le composant du design system, et le nom
@@ -53,6 +55,7 @@ import {
   createCustomer,
   fetchAppointmentNotifications,
   fetchAppointments,
+  fetchAvailability,
   fetchServiceStaff,
   rescheduleDeskAppointment,
   searchCustomers,
@@ -218,6 +221,91 @@ export async function loadDeskServiceStaffAction(
 
   try {
     return { ok: true, data: { staff: await fetchServiceStaff(access.token, serviceId) } };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * Les créneaux qu'une journée offre réellement, pour le tiroir de rendez-vous (#611).
+ *
+ * ## Pourquoi cette lecture existe
+ *
+ * L'API n'accepte une écriture que sur un créneau que le moteur a lui-même
+ * rendu — égalité stricte de l'instant, sinon `SLOT_NO_LONGER_AVAILABLE`. Le
+ * tiroir ne peut donc pas laisser saisir une heure quelconque : il faut qu'il
+ * connaisse la liste. Voir l'en-tête de `deskSlotOptions`.
+ *
+ * ## Pourquoi la route publique
+ *
+ * `GET /public/{slug}/availability` et `GET /v1/availability` appellent la
+ * **même** `AvailabilityQueryService.slotsFor` avec les mêmes paramètres : la
+ * charge utile est identique, à l'octet près. La publique ne demande aucun
+ * jeton, ne porte ni `tenantId` ni identité de cliente, et c'est déjà elle que
+ * le tunnel de réservation interroge — c'est aussi ce que fait la page du
+ * planning pour lire le fuseau du salon (`fetchPublicTenant`).
+ *
+ * **C'est un pis-aller, et il a un coût connu.** La route publique porte un
+ * quota de cent vingt interrogations par minute **et par adresse** ; or une
+ * action serveur s'exécute sur le serveur Next, si bien que l'API voit une
+ * seule adresse pour tous les comptoirs de tous les établissements **et** pour
+ * tous les visiteurs du tunnel de réservation. Le budget est donc partagé, et
+ * l'épuiser dégraderait chaque tiroir en saisie libre. La bonne route est celle
+ * qui est gardée — `GET /v1/availability`, au seuil `STAFF`, sans quota —, mais
+ * l'atteindre demande une fonction de plus dans `lib/api-client.ts`, hors de
+ * l’empreinte de ce ticket. Suivi dans l’issue #642.
+ *
+ * La session est malgré tout exigée, et pour une raison d'écran et non de
+ * secret : un tiroir ouvert sur une session expirée doit partir au
+ * renouvellement comme les cinq autres lectures du comptoir, et non afficher
+ * une liste de créneaux au milieu d'un écran qui va se fermer.
+ *
+ * ## Ce que la fenêtre vaut
+ *
+ * Une seule journée civile — celle du champ « Date ». Le tiroir ne propose des
+ * heures que pour la journée affichée, et une fenêtre plus large ferait calculer
+ * au serveur des journées que personne ne regarde.
+ */
+export async function loadDeskAvailabilityAction(
+  tenantSlug: string,
+  query: unknown,
+): Promise<AdminActionResult<{ readonly slots: readonly AvailabilitySlot[] }>> {
+  const access = await deskToken(tenantSlug);
+
+  if ('refusal' in access) {
+    return access.refusal;
+  }
+
+  if (typeof query !== 'object' || query === null) {
+    return invalid('Interrogation de disponibilité invalide.');
+  }
+
+  const raw: Record<string, unknown> = { ...query };
+  // Les champs sont repris un par un — et `day` étalé sur les deux bornes — parce
+  // que `availabilityQuerySchema` est `.strict()` : lui passer l'objet du tiroir
+  // tel quel ferait refuser la requête sur le nom d'un champ, pas sur son
+  // contenu. Les facultatifs sont étalés plutôt que posés à `undefined`, comme
+  // partout ailleurs sous `exactOptionalPropertyTypes`.
+  const parsed = availabilityQuerySchema.safeParse({
+    serviceId: raw.serviceId,
+    from: raw.day,
+    to: raw.day,
+    ...(raw.staffId === undefined ? {} : { staffId: raw.staffId }),
+    ...(raw.excludeAppointmentId === undefined
+      ? {}
+      : { excludeAppointmentId: raw.excludeAppointmentId }),
+  });
+
+  if (!parsed.success) {
+    return invalid(parsed.error.issues[0]?.message ?? 'Interrogation de disponibilité invalide.');
+  }
+
+  try {
+    const view = await fetchAvailability(tenantSlug, parsed.data);
+
+    // Aplati : la fenêtre ne porte qu'une journée, et rendre le découpage
+    // obligerait l'appelant à le défaire pour la seule journée qu'il a demandée.
+    return { ok: true, data: { slots: view.days.flatMap((day) => day.slots) } };
   } catch (error) {
     return failure(error);
   }

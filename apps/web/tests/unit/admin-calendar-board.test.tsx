@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CalendarBoard } from '@/app/(admin)/[tenantSlug]/admin/components/calendar-board';
 
+import { deskSlots } from './admin-desk-fixtures';
+
 /**
  * Le planning tel qu'il se manipule (#49, critères 1, 2, 3, 4 et 5).
  *
@@ -14,6 +16,7 @@ import { CalendarBoard } from '@/app/(admin)/[tenantSlug]/admin/components/calen
  */
 
 const loadCalendarRangeAction = vi.fn();
+const loadDeskAvailabilityAction = vi.fn();
 const loadDeskServiceStaffAction = vi.fn();
 const loadAppointmentNotificationsAction = vi.fn();
 const createDeskAppointmentAction = vi.fn();
@@ -29,6 +32,7 @@ const replace = vi.fn();
 // avant le premier rendu.
 vi.mock('@/app/(admin)/[tenantSlug]/admin/calendrier/actions', () => ({
   loadCalendarRangeAction: (...args: unknown[]) => loadCalendarRangeAction(...args),
+  loadDeskAvailabilityAction: (...args: unknown[]) => loadDeskAvailabilityAction(...args),
   loadDeskServiceStaffAction: (...args: unknown[]) => loadDeskServiceStaffAction(...args),
   loadAppointmentNotificationsAction: (...args: unknown[]) =>
     loadAppointmentNotificationsAction(...args),
@@ -125,12 +129,20 @@ beforeEach(() => {
   // Le préchargement des périodes voisines part au montage : sans réponse par
   // défaut, chaque rendu laisserait une promesse rejetée derrière lui.
   loadCalendarRangeAction.mockResolvedValue({ ok: true, data: { appointments: [] } });
+  // Le tiroir lit les créneaux de la journée dès son ouverture (#611) : la
+  // réponse par défaut porte ceux que le moteur rend vraiment — au quart
+  // d'heure, alignés sur 07:10, et donc jamais à la minute 00.
+  loadDeskAvailabilityAction.mockResolvedValue({
+    ok: true,
+    data: { slots: deskSlots('2026-08-26') },
+  });
 });
 
 afterEach(() => {
   cleanup();
   loadCalendarRangeAction.mockReset();
   loadDeskServiceStaffAction.mockReset();
+  loadDeskAvailabilityAction.mockReset();
   push.mockReset();
   replace.mockReset();
 });
@@ -214,7 +226,7 @@ describe('vue jour — ce que l’écran montre', () => {
     renderBoard({ periods: { 'jour:2026-08-26': [matin] } });
 
     expect(
-      screen.getByRole('button', { name: '08 h 00, libre — poser un rendez-vous' }),
+      screen.getByRole('button', { name: '08 h 00, libre — poser un rendez-vous à partir de cette heure' }),
     ).toBeDefined();
   });
 });
@@ -352,14 +364,14 @@ describe('virtualisation — troisième critère', () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole('button', { name: '08 h 00, libre — poser un rendez-vous' }),
+        screen.getByRole('button', { name: '08 h 00, libre — poser un rendez-vous à partir de cette heure' }),
       ).toBeDefined();
     });
 
     // 24 rangées affichées, une fenêtre de repli de 12 : la fin de journée n'est
     // pas dans le DOM tant qu'on n'y a pas défilé.
     expect(
-      screen.queryByRole('button', { name: '18 h 00, libre — poser un rendez-vous' }),
+      screen.queryByRole('button', { name: '18 h 00, libre — poser un rendez-vous à partir de cette heure' }),
     ).toBeNull();
     expect(screen.getAllByRole('listitem').length).toBeLessThan(24);
   });
@@ -378,7 +390,7 @@ describe('virtualisation — troisième critère', () => {
 
     await waitFor(() => {
       expect(
-        screen.getAllByRole('button', { name: /, libre — poser un rendez-vous$/ }).length,
+        screen.getAllByRole('button', { name: /, libre — poser un rendez-vous à partir de cette heure$/ }).length,
       ).toBeGreaterThan(0);
     });
   });
@@ -565,6 +577,10 @@ describe('journée sans rendez-vous — les deux premiers critères', () => {
     expect(screen.getByRole('heading', { name: 'Nouveau rendez-vous' })).toBeDefined();
     // Le créneau cliqué amorce le tiroir : c'est bien celui de la journée creuse.
     expect(screen.getByLabelText<HTMLInputElement>(/^Date/).value).toBe('2026-08-26');
-    expect(screen.getByLabelText<HTMLInputElement>(/Heure de début/).value).toBe('08:00');
+    // …et l'heure retenue est le premier créneau **réel** à partir de 08 h,
+    // c'est-à-dire 08:10 et non l'heure ronde que la rangée affiche (#611).
+    await waitFor(() => {
+      expect(screen.getByLabelText<HTMLSelectElement>(/Heure de début/).value).toBe('08:10');
+    });
   });
 });

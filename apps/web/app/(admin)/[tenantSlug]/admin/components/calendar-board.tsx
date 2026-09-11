@@ -1038,8 +1038,13 @@ function CalendarCellView({
           <span className="spa-visually-hidden">
             {cell.timeLabel}
             {cell.nowOffset === null ? ', libre' : ', libre, heure courante'}
+            {/* « à partir de cette heure », et non « à cette heure » : la rangée
+                de la grille n'est pas un créneau du moteur, et le tiroir
+                proposera le premier créneau réel qui la suit (#611). Promettre
+                l'heure exacte était le mensonge que la campagne de QA a relevé —
+                six refus au comptoir sur une journée entièrement libre. */}
             {dropping === null
-              ? ' — poser un rendez-vous'
+              ? ' — poser un rendez-vous à partir de cette heure'
               : ` — déplacer ici le rendez-vous de ${dropping.client.firstName} ${dropping.client.lastName}`}
           </span>
         </button>

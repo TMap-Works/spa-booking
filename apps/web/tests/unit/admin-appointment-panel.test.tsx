@@ -1,5 +1,5 @@
 import type { Appointment, Service } from '@spa/shared';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -8,7 +8,13 @@ import {
   type DeskTarget,
 } from '@/app/(admin)/[tenantSlug]/admin/components/appointment-panel';
 import { CalendarBoard } from '@/app/(admin)/[tenantSlug]/admin/components/calendar-board';
-import { DESK_ROUTE_MISSING_MESSAGE } from '@/lib/admin/appointment-desk';
+import {
+  DESK_NO_SLOT_MESSAGE,
+  DESK_ROUTE_MISSING_MESSAGE,
+  DESK_SLOTS_UNREADABLE_MESSAGE,
+} from '@/lib/admin/appointment-desk';
+
+import { deskSlot, deskSlots } from './admin-desk-fixtures';
 
 /**
  * Le tiroir de rendez-vous du comptoir (#50, les cinq critères).
@@ -23,6 +29,7 @@ import { DESK_ROUTE_MISSING_MESSAGE } from '@/lib/admin/appointment-desk';
  */
 
 const loadCalendarRangeAction = vi.fn();
+const loadDeskAvailabilityAction = vi.fn();
 const loadDeskServiceStaffAction = vi.fn();
 const loadAppointmentNotificationsAction = vi.fn();
 const createDeskAppointmentAction = vi.fn();
@@ -34,6 +41,7 @@ const push = vi.fn();
 
 vi.mock('@/app/(admin)/[tenantSlug]/admin/calendrier/actions', () => ({
   loadCalendarRangeAction: (...args: unknown[]) => loadCalendarRangeAction(...args),
+  loadDeskAvailabilityAction: (...args: unknown[]) => loadDeskAvailabilityAction(...args),
   loadDeskServiceStaffAction: (...args: unknown[]) => loadDeskServiceStaffAction(...args),
   loadAppointmentNotificationsAction: (...args: unknown[]) =>
     loadAppointmentNotificationsAction(...args),
@@ -109,6 +117,23 @@ function renderPanel(target: DeskTarget, services: readonly Service[] = [MASSAGE
   return { onClose, onReload, onExpired };
 }
 
+/**
+ * Le bouton de validation, une fois que le tiroir a lu ses créneaux (#611).
+ *
+ * Il reste désactivé tant qu'aucun créneau réel n'est retenu : un clic posé
+ * avant la lecture ne déclencherait rien, et le scénario passerait sans avoir
+ * rien exercé.
+ */
+async function enregistrerArme(nom: string): Promise<HTMLElement> {
+  const bouton = screen.getByRole('button', { name: nom });
+
+  await waitFor(() => {
+    expect(bouton.hasAttribute('disabled')).toBe(false);
+  });
+
+  return bouton;
+}
+
 const CREATION: DeskTarget = {
   kind: 'create',
   day: '2026-08-26',
@@ -124,6 +149,14 @@ beforeEach(() => {
   });
   searchDeskClientsAction.mockResolvedValue({ ok: true, data: { clients: [RINA] } });
   loadAppointmentNotificationsAction.mockResolvedValue({ ok: true, data: { notifications: [] } });
+  // Les créneaux que le moteur rend vraiment : au quart d'heure, alignés sur
+  // 07:10, donc aucun à la minute 00 (#611). Celui de 09:00 au salon s'y ajoute
+  // — c'est celui du rendez-vous de `CONFIRME`, que `excludeAppointmentId` rend
+  // à nouveau libre dès qu'on ouvre le tiroir pour le déplacer (#442).
+  loadDeskAvailabilityAction.mockResolvedValue({
+    ok: true,
+    data: { slots: [deskSlot('2026-08-26T06:00:00.000Z'), ...deskSlots('2026-08-26')] },
+  });
 });
 
 afterEach(() => {
@@ -156,7 +189,11 @@ describe('premier critère — le tiroir s’ouvre sur le créneau cliqué', () 
 
     expect(screen.getByRole('heading', { name: 'Nouveau rendez-vous' })).toBeDefined();
     expect(screen.getByLabelText<HTMLInputElement>(/^Date/).value).toBe('2026-08-26');
-    expect(screen.getByLabelText<HTMLInputElement>(/Heure de début/).value).toBe('08:00');
+    // 08:10 et non 08:00 : la rangée cliquée est une intention, et le tiroir la
+    // résout sur le premier créneau que le moteur propose réellement (#611).
+    await waitFor(() => {
+      expect(screen.getByLabelText<HTMLSelectElement>(/Heure de début/).value).toBe('08:10');
+    });
   });
 
   it('ouvre en édition sur le rendez-vous cliqué', async () => {
@@ -184,7 +221,9 @@ describe('premier critère — le tiroir s’ouvre sur le créneau cliqué', () 
 
     expect(screen.getByRole('heading', { name: 'Rina Andriamana' })).toBeDefined();
     // 06:00 UTC = 09:00 au salon : c'est l'heure du salon qui doit s'afficher.
-    expect(screen.getByLabelText<HTMLInputElement>(/Heure de début/).value).toBe('09:00');
+    await waitFor(() => {
+      expect(screen.getByLabelText<HTMLSelectElement>(/Heure de début/).value).toBe('09:00');
+    });
   });
 });
 
@@ -231,14 +270,18 @@ describe('quatrième critère — le créneau perdu n’est pas une panne', () =
     await user.click(await screen.findByRole('button', { name: /Rina Andriamana/ }));
     await user.click(screen.getByRole('button', { name: 'Créer le rendez-vous' }));
 
-    expect(await screen.findByText(/Ce créneau vient d’être réservé/)).toBeDefined();
+    // Le message ne nomme plus de cause : le 409 en couvre cinq et n'en
+    // distingue aucune (#611).
+    expect(await screen.findByText(/n’est pas — ou n’est plus — réservable/)).toBeDefined();
+    expect(screen.queryByText(/vient d’être pris depuis un autre poste/)).toBeNull();
     // Le planning est relu — le créneau perdu doit se voir occupé…
     await waitFor(() => {
       expect(onReload).toHaveBeenCalledTimes(1);
     });
     // …mais le tiroir reste ouvert, et la saisie avec lui.
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByLabelText<HTMLInputElement>(/Heure de début/).value).toBe('14:30');
+    // 14:40 : le premier créneau réel à partir de la rangée cliquée à 14:30.
+    expect(screen.getByLabelText<HTMLSelectElement>(/Heure de début/).value).toBe('14:40');
     expect(screen.getByText(/Rina Andriamana/)).toBeDefined();
   });
 });
@@ -289,7 +332,9 @@ describe('la dégradation, tant que l’API ne sert pas l’écriture', () => {
     });
 
     renderPanel({ kind: 'edit', appointment: CONFIRME });
-    await user.click(screen.getByRole('button', { name: 'Enregistrer' }));
+    // Le bouton ne s'arme qu'une fois les créneaux lus (#611) : cliquer avant
+    // ne déclencherait rien, et le test passerait sans rien prouver.
+    await user.click(await enregistrerArme('Enregistrer'));
 
     expect(await screen.findByText(DESK_ROUTE_MISSING_MESSAGE)).toBeDefined();
   });
@@ -299,5 +344,180 @@ describe('la dégradation, tant que l’API ne sert pas l’écriture', () => {
 
     expect(screen.getByText('Le catalogue est vide')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Créer le rendez-vous' })).toBeNull();
+  });
+});
+
+/**
+ * L'écran ne propose plus que ce que le moteur peut honorer (#611).
+ *
+ * C'était le défaut le plus coûteux de cet écran : la grille du planning trace
+ * des heures rondes, le moteur n'en rend aucune, et chaque case « libre » menait
+ * donc à un `409 SLOT_NO_LONGER_AVAILABLE` — six refus d'affilée relevés au
+ * comptoir sur une journée qui ne portait pas un seul rendez-vous.
+ */
+describe('#611 — le tiroir n’offre que des créneaux réservables', () => {
+  it('n’offre que les créneaux de la journée interrogée — pas une seule heure ronde', async () => {
+    loadDeskAvailabilityAction.mockResolvedValue({
+      ok: true,
+      data: { slots: deskSlots('2026-08-26') },
+    });
+    renderPanel(CREATION);
+
+    const heures = await screen.findByLabelText<HTMLSelectElement>(/Heure de début/);
+    await waitFor(() => {
+      expect(heures.options.length).toBeGreaterThan(1);
+    });
+
+    // La journée, la prestation et le praticien retenus — les trois font la liste.
+    expect(loadDeskAvailabilityAction).toHaveBeenCalledWith(SLUG, {
+      serviceId: MASSAGE.id,
+      day: '2026-08-26',
+      staffId: 'staff-hasina',
+    });
+
+    const proposees = [...heures.options].map((option) => option.value);
+    expect(proposees).toContain('14:40');
+    // Le cœur du ticket : la grille de 30 minutes du planning n'a rien à voir
+    // avec le pas de 15 minutes du moteur, aligné sur 07:10.
+    expect(proposees.filter((heure) => heure.endsWith(':00'))).toEqual([]);
+  });
+
+  it('envoie l’instant exact rendu par le moteur, et non une reconversion de l’heure civile', async () => {
+    const user = userEvent.setup();
+    createDeskAppointmentAction.mockResolvedValue({ ok: true, data: CONFIRME });
+    renderPanel(CREATION);
+
+    await user.type(screen.getByLabelText(/^Client/), 'Rina');
+    await user.click(await screen.findByRole('button', { name: /Rina Andriamana/ }));
+    await user.click(await enregistrerArme('Créer le rendez-vous'));
+
+    await waitFor(() => {
+      expect(createDeskAppointmentAction).toHaveBeenCalledWith(
+        SLUG,
+        // 14:40 au salon d'Antananarivo, qui est à UTC+3 — c'est bien la chaîne
+        // que le moteur a rendue qui repart, à l'identique.
+        expect.objectContaining({ startsAt: '2026-08-26T11:40:00.000Z' }),
+      );
+    });
+  });
+
+  it('dit la journée complète et refuse d’envoyer plutôt que de provoquer un 409', async () => {
+    loadDeskAvailabilityAction.mockResolvedValue({ ok: true, data: { slots: [] } });
+    renderPanel(CREATION);
+
+    expect(await screen.findByText(DESK_NO_SLOT_MESSAGE)).toBeDefined();
+    // Le bouton reste hors d'atteinte : ce qui manque est un créneau, et aucune
+    // saisie ne peut y remédier.
+    expect(
+      screen.getByRole('button', { name: 'Créer le rendez-vous' }).hasAttribute('disabled'),
+    ).toBe(true);
+    expect(createDeskAppointmentAction).not.toHaveBeenCalled();
+  });
+
+  it('retombe sur la saisie libre quand la disponibilité n’a pas pu être lue', async () => {
+    loadDeskAvailabilityAction.mockResolvedValue({
+      ok: false,
+      code: 'INTERNAL_ERROR',
+      message: 'Une erreur inattendue est survenue.',
+    });
+    renderPanel(CREATION);
+
+    expect(await screen.findByText(DESK_SLOTS_UNREADABLE_MESSAGE)).toBeDefined();
+
+    // Un champ de saisie, et non un sélecteur vide : une disponibilité illisible
+    // ne ferme pas le comptoir, et c'est l'API qui juge le créneau.
+    const heure = screen.getByLabelText<HTMLInputElement>(/Heure de début/);
+    expect(heure.tagName).toBe('INPUT');
+    expect(heure.value).toBe('14:30');
+  });
+
+  it('relit les créneaux quand l’API refuse celui qu’on vient d’envoyer', async () => {
+    const user = userEvent.setup();
+    createDeskAppointmentAction.mockResolvedValue({
+      ok: false,
+      code: 'SLOT_NO_LONGER_AVAILABLE',
+      message: 'Ce créneau vient d’être réservé.',
+    });
+    renderPanel(CREATION);
+
+    await user.type(screen.getByLabelText(/^Client/), 'Rina');
+    await user.click(await screen.findByRole('button', { name: /Rina Andriamana/ }));
+    const appelsAvant = loadDeskAvailabilityAction.mock.calls.length;
+    await user.click(await enregistrerArme('Créer le rendez-vous'));
+
+    // Le créneau refusé n'a plus à figurer dans la liste : sans cette relecture,
+    // l'opératrice renvoie la même heure et reçoit le même refus (#611).
+    await waitFor(() => {
+      expect(loadDeskAvailabilityAction.mock.calls.length).toBeGreaterThan(appelsAvant);
+    });
+  });
+
+  it('exclut le rendez-vous déplacé de sa propre disponibilité', async () => {
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await waitFor(() => {
+      expect(loadDeskAvailabilityAction).toHaveBeenCalledWith(
+        SLUG,
+        expect.objectContaining({ excludeAppointmentId: CONFIRME.id }),
+      );
+    });
+  });
+
+  it('garde l’heure d’un rendez-vous posé que le moteur n’offre plus', async () => {
+    // Le cas courant : les horaires du praticien ont changé depuis la
+    // réservation, et 09:00 n'est plus un créneau. Le tiroir ne doit pas pour
+    // autant afficher une **autre** heure que celle du rendez-vous — le
+    // récapitulatif suivrait, et un « Enregistrer » cliqué de confiance
+    // déplacerait un rendez-vous que personne n'a demandé à déplacer.
+    loadDeskAvailabilityAction.mockResolvedValue({
+      ok: true,
+      data: { slots: deskSlots('2026-08-26') },
+    });
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    const heures = await screen.findByLabelText<HTMLSelectElement>(/Heure de début/);
+    await waitFor(() => {
+      expect(heures.options.length).toBeGreaterThan(1);
+    });
+
+    expect(heures.value).toBe('09:00');
+    // Affichée, mais pas réservable : c'est bien un créneau de la liste qu'il
+    // faut choisir pour envoyer le report.
+    expect(screen.getByRole('button', { name: 'Enregistrer' }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('dit encore l’heure du rendez-vous sur une journée sans créneau', async () => {
+    // La journée d'un rendez-vous **passé** n'offre rien : le moteur filtre le
+    // passé et le préavis. Ouvrir le tiroir pour marquer « honoré » ne doit pas
+    // effacer de l'écran l'heure à laquelle ce rendez-vous a eu lieu.
+    loadDeskAvailabilityAction.mockResolvedValue({ ok: true, data: { slots: [] } });
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    expect(await screen.findByText(DESK_NO_SLOT_MESSAGE)).toBeDefined();
+
+    const heures = screen.getByLabelText<HTMLSelectElement>(/Heure de début/);
+    expect(heures.value).toBe('09:00');
+  });
+
+  it('n’interroge pas la disponibilité sur une date en cours de frappe', async () => {
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    const heures = await screen.findByLabelText<HTMLSelectElement>(/Heure de début/);
+    await waitFor(() => {
+      expect(heures.options.length).toBeGreaterThan(1);
+    });
+
+    const appelsAvant = loadDeskAvailabilityAction.mock.calls.length;
+    // Un `<input type="date">` rend une valeur vide tant que ses trois segments
+    // ne sont pas tous saisis. L'interroger là-dessus ne rapporterait qu'un
+    // refus de validation, que l'écran traduirait en « disponibilité illisible »
+    // — donc en retour à la saisie libre, c'est-à-dire au 409 qu'on supprime.
+    fireEvent.change(screen.getByLabelText<HTMLInputElement>(/^Date/), { target: { value: '' } });
+
+    await waitFor(() => {
+      expect(screen.getByText(/Lecture des créneaux disponibles/)).toBeDefined();
+    });
+    expect(loadDeskAvailabilityAction.mock.calls.length).toBe(appelsAvant);
+    expect(screen.queryByText(DESK_SLOTS_UNREADABLE_MESSAGE)).toBeNull();
   });
 });

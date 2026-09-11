@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CalendarBoard } from '@/app/(admin)/[tenantSlug]/admin/components/calendar-board';
 
+import { deskSlots } from './admin-desk-fixtures';
+
 /**
  * Le report par glisser-déposer, tel qu'il se manipule (#51).
  *
@@ -19,6 +21,7 @@ import { CalendarBoard } from '@/app/(admin)/[tenantSlug]/admin/components/calen
  */
 
 const loadCalendarRangeAction = vi.fn();
+const loadDeskAvailabilityAction = vi.fn();
 const loadDeskServiceStaffAction = vi.fn();
 const loadAppointmentNotificationsAction = vi.fn();
 const createDeskAppointmentAction = vi.fn();
@@ -30,6 +33,7 @@ const replace = vi.fn();
 
 vi.mock('@/app/(admin)/[tenantSlug]/admin/calendrier/actions', () => ({
   loadCalendarRangeAction: (...args: unknown[]) => loadCalendarRangeAction(...args),
+  loadDeskAvailabilityAction: (...args: unknown[]) => loadDeskAvailabilityAction(...args),
   loadDeskServiceStaffAction: (...args: unknown[]) => loadDeskServiceStaffAction(...args),
   loadAppointmentNotificationsAction: (...args: unknown[]) =>
     loadAppointmentNotificationsAction(...args),
@@ -113,12 +117,19 @@ const chezTiana = appointment({
 
 beforeEach(() => {
   loadCalendarRangeAction.mockResolvedValue({ ok: true, data: { appointments: [] } });
+  // Le tiroir lit les créneaux de la journée dès son ouverture (#611) : sans
+  // réponse par défaut, son effet partirait sur une promesse absente.
+  loadDeskAvailabilityAction.mockResolvedValue({
+    ok: true,
+    data: { slots: deskSlots('2026-08-26') },
+  });
 });
 
 afterEach(() => {
   cleanup();
   loadCalendarRangeAction.mockReset();
   loadDeskServiceStaffAction.mockReset();
+  loadDeskAvailabilityAction.mockReset();
   rescheduleDeskAppointmentAction.mockReset();
   replace.mockReset();
 });
@@ -346,7 +357,7 @@ describe('le retour arrière sur 409 — troisième critère', () => {
 
     const alerte = screen.getByRole('alert');
 
-    expect(alerte.textContent).toContain('Créneau déjà pris');
+    expect(alerte.textContent).toContain('Créneau indisponible');
     expect(alerte.textContent).toContain(
       'Le rendez-vous de Rina Andriamana est resté le mercredi 26 août à 09:00',
     );

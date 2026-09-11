@@ -8,6 +8,8 @@ import {
 } from '@/app/(admin)/[tenantSlug]/admin/components/appointment-panel';
 import { NotificationStatusList } from '@/app/(admin)/[tenantSlug]/admin/components/notification-status-list';
 
+import { deskSlots } from './admin-desk-fixtures';
+
 /**
  * Le statut d'envoi dans le back-office — cinquième critère d'acceptation de
  * #70.
@@ -21,6 +23,7 @@ import { NotificationStatusList } from '@/app/(admin)/[tenantSlug]/admin/compone
  */
 
 const loadCalendarRangeAction = vi.fn();
+const loadDeskAvailabilityAction = vi.fn();
 const loadDeskServiceStaffAction = vi.fn();
 const loadAppointmentNotificationsAction = vi.fn();
 const createDeskAppointmentAction = vi.fn();
@@ -31,6 +34,7 @@ const createDeskClientAction = vi.fn();
 
 vi.mock('@/app/(admin)/[tenantSlug]/admin/calendrier/actions', () => ({
   loadCalendarRangeAction: (...args: unknown[]) => loadCalendarRangeAction(...args),
+  loadDeskAvailabilityAction: (...args: unknown[]) => loadDeskAvailabilityAction(...args),
   loadDeskServiceStaffAction: (...args: unknown[]) => loadDeskServiceStaffAction(...args),
   loadAppointmentNotificationsAction: (...args: unknown[]) =>
     loadAppointmentNotificationsAction(...args),
@@ -125,6 +129,12 @@ beforeEach(() => {
   });
   searchDeskClientsAction.mockResolvedValue({ ok: true, data: { clients: [] } });
   loadAppointmentNotificationsAction.mockResolvedValue({ ok: true, data: { notifications: [] } });
+  // Le tiroir lit les créneaux de la journée dès son ouverture (#611) : sans
+  // réponse par défaut, son effet partirait sur une promesse absente.
+  loadDeskAvailabilityAction.mockResolvedValue({
+    ok: true,
+    data: { slots: deskSlots('2026-08-26') },
+  });
 });
 
 afterEach(() => {
