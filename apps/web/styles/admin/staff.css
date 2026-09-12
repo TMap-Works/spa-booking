@@ -207,6 +207,12 @@
   gap: var(--spa-space-3);
   align-items: center;
   min-block-size: var(--spa-admin-row-height);
+  /* Le pavé de confirmation ouvre une seconde rangée dans la ligne (#620) : sans
+     marge en bloc, il toucherait la bordure. Le `min-block-size` continue de
+     donner sa hauteur à la ligne au repos — 16 px de marge sous 20 px de texte
+     restent sous les 44 px de la rangée, rien ne bouge tant qu'on ne confirme
+     rien. */
+  padding-block: var(--spa-space-2);
   padding-inline: var(--spa-space-3);
   border: 1px solid var(--spa-color-border);
   border-inline-start: 3px solid var(--spa-color-warning);
@@ -221,6 +227,43 @@
 
 .spa-admin-schedule__exception-label {
   color: var(--spa-color-text-muted);
+}
+
+/*
+ * La question posée avant un retrait d'absence (#620).
+ *
+ * Elle prend toute la largeur de la ligne — `1 / -1` la fait passer sous les
+ * dates et le motif plutôt que dans la colonne du bouton, qui fait 5 rem. Elle
+ * reste ainsi collée à l'absence qu'elle désigne, sur un écran où deux lignes ne
+ * sont séparées que de 8 px : une question flottant en haut de page obligerait à
+ * vérifier de laquelle il s'agit.
+ *
+ * Teinte d'alerte et non d'accent, contrairement au report du planning : ce qui
+ * se joue ici ne se rejoue pas.
+ */
+.spa-admin-schedule__exception-confirm {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-3);
+  background-color: var(--spa-color-danger-surface);
+  border: 1px solid var(--spa-color-danger);
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-admin-schedule__exception-confirm-text {
+  flex: 1 1 20ch;
+  margin: 0;
+  color: var(--spa-color-text);
+}
+
+.spa-admin-schedule__exception-confirm-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
 }
 
 /* --- Points de rupture ----------------------------------------------------- */
@@ -252,6 +295,5 @@
 
   .spa-admin-schedule__exception {
     grid-template-columns: minmax(0, 1fr);
-    padding-block: var(--spa-space-2);
   }
 }
