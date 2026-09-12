@@ -32,6 +32,53 @@ const contactFormSchema = guestContactSchema.extend({
   clientNote: longTextSchema,
 });
 
+/**
+ * L'aide et l'erreur du champ « Téléphone » — **sans exemple de pays** (#626).
+ *
+ * Les deux disaient auparavant « +261… » et « par exemple +261 34 12 345 67 » :
+ * un indicatif de Madagascar écrit en dur, donc proposé à l'identique à la
+ * cliente d'un salon lyonnais dont la vitrine affiche pourtant un numéro en
+ * +33.
+ *
+ * ## Pourquoi neutre, plutôt que déduit de l'établissement
+ *
+ * Parce que le pays de la cliente n'est pas celui du salon, et que le contrat
+ * partagé a déjà tranché exactement cette question à côté. L'en-tête de
+ * `normalizeToE164` refuse de compléter un numéro national et dit pourquoi :
+ * « Le compléter demanderait de connaître le pays de la personne, que rien dans
+ * la requête ne dit — **ni le fuseau du salon, qui n'est pas un pays**, ni la
+ * langue du navigateur. » Un exemple déduit de l'établissement ferait dire à
+ * l'aide ce que la validation placée juste en dessous refuse de supposer.
+ *
+ * S'y ajoutent deux faits d'implémentation : `publicTenantSchema.address` est
+ * `.optional()` — un salon qui n'a pas publié son adresse n'a aucun pays à
+ * déduire —, et le projet n'embarque aucune base de métadonnées téléphoniques.
+ * La déduction se réduirait donc à une table d'indicatifs écrits en dur doublée
+ * d'un repli neutre : le même défaut, avec un aiguillage devant.
+ *
+ * Ce qui reste dit à la cliente est ce qui est vrai partout — un numéro
+ * international porte son indicatif de pays — et c'est exactement ce que le
+ * schéma vérifie.
+ */
+const PHONE_HINT = 'Facultatif, pour le rappel par SMS. Au format international, indicatif du pays compris.';
+
+/**
+ * Écrit ici et non repris de `e164PhoneSchema`, alors que c'est bien ce
+ * schéma-là qui refuse la saisie.
+ *
+ * Le message du contrat se termine par « par exemple +261 34 12 345 67 », et il
+ * ne peut pas mieux faire : il sert aussi la frontière serveur, où aucun
+ * établissement n'est en vue. **La règle reste unique** — c'est toujours
+ * `e164PhoneSchema` qui accepte ou refuse, ce formulaire n'en redit rien ; seule
+ * la formulation montrée à la cliente appartient à l'écran qui la montre.
+ *
+ * Le message couvre toute valeur refusée sans distinguer laquelle : hors la
+ * chaîne vide, qui est valable, ce champ n'a que deux façons d'échouer — une
+ * saisie plus longue que `PHONE_MAX_LENGTH`, ou un numéro qui n'est pas au
+ * format international — et les deux appellent la même correction.
+ */
+const PHONE_FORMAT_ERROR = 'numéro attendu au format international, indicatif du pays compris';
+
 interface ContactStepProps {
   readonly contact: ContactDraft;
   /**
@@ -122,8 +169,8 @@ export function ContactStep({ contact, onSave, onBack, onSubmit }: ContactStepPr
         label="Téléphone"
         type="tel"
         autoComplete="tel"
-        hint="Facultatif, pour le rappel par SMS. Format international, +261…"
-        error={errors.phone?.message}
+        hint={PHONE_HINT}
+        error={errors.phone === undefined ? undefined : PHONE_FORMAT_ERROR}
         {...register('phone')}
       />
       <Field
