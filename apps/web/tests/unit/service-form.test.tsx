@@ -261,3 +261,50 @@ describe('prestation — soumission', () => {
     expect(valueOf(/Nom de la prestation/)).toBe('Massage suédois');
   });
 });
+
+describe('prestation — ce que le rang praticien voit (#619)', () => {
+  function renderReadOnly(): void {
+    render(
+      <ServiceForm
+        tenantSlug="salon-des-lilas"
+        currency="EUR"
+        categories={categories}
+        service={service}
+        canManage={false}
+      />,
+    );
+  }
+
+  it('garde la fiche lisible et rend ses champs inertes', () => {
+    // `PATCH /v1/services` est `@AuthAtLeast('MANAGER')` : une praticienne a
+    // besoin de lire la durée et le prix de ce qu'elle pratique, pas de les
+    // saisir pour se voir opposer un 403.
+    renderReadOnly();
+
+    expect(valueOf(/Nom de la prestation/)).toBe('Massage suédois');
+    expect(valueOf(/Prix/)).toBe('35,00');
+
+    for (const label of [
+      /Nom de la prestation/,
+      /Description/,
+      /Rubrique/,
+      /Durée du soin/,
+      /Tampon avant/,
+      /Tampon après/,
+      /Prix/,
+      /Adresse publique/,
+    ]) {
+      expect(
+        (screen.getByLabelText(label) as HTMLInputElement).disabled,
+        `${String(label)} devrait être grisé`,
+      ).toBe(true);
+    }
+  });
+
+  it('remplace le bouton d’enregistrement par la raison du refus', () => {
+    renderReadOnly();
+
+    expect(screen.queryByRole('button', { name: /Enregistrer/ })).toBeNull();
+    expect(screen.getByText(/réservée au rang gérant/i)).toBeDefined();
+  });
+});

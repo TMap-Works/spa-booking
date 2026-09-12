@@ -184,3 +184,34 @@ describe('affectation des praticiens — les gestes', () => {
     resolve?.({ ok: true, data: { id: RINA, displayName: 'Rina', isActive: true } });
   });
 });
+
+describe('affectation des praticiens — ce que le rang praticien voit (#619)', () => {
+  function renderReadOnly(): void {
+    render(
+      <ServiceStaffPanel
+        tenantSlug="salon-des-lilas"
+        serviceId={SERVICE_ID}
+        assigned={assigned}
+        candidates={candidates}
+        canManage={false}
+      />,
+    );
+  }
+
+  it('garde la liste des affectés et retire ses commandes', () => {
+    // `POST` et `DELETE /v1/services/{id}/staff` sont `@AuthAtLeast('MANAGER')` :
+    // qui pratique la prestation reste une information utile, l'affecter non.
+    renderReadOnly();
+
+    expect(screen.getByText('Hasina')).toBeDefined();
+    expect(screen.queryByRole('button', { name: /Retirer/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Affecter$/ })).toBeNull();
+    expect(screen.queryByLabelText(/Ajouter un praticien/)).toBeNull();
+  });
+
+  it('dit pourquoi l’affectation n’est pas proposée', () => {
+    renderReadOnly();
+
+    expect(screen.getByText(/réservée au rang gérant/i)).toBeDefined();
+  });
+});

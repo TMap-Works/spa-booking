@@ -157,3 +157,33 @@ describe('rubriques — modification et activité', () => {
     });
   });
 });
+
+describe('rubriques — ce que le rang praticien voit (#619)', () => {
+  function renderReadOnly(): void {
+    render(
+      <CategoryManager tenantSlug="salon-des-lilas" categories={categories} canManage={false} />,
+    );
+  }
+
+  it('garde la liste et retire la colonne « Actions »', () => {
+    // Même geste que la liste du personnel : la colonne disparaît pour le rôle
+    // qui ne peut rien en faire, plutôt que d'offrir des boutons qui rendraient
+    // 403.
+    renderReadOnly();
+
+    expect(screen.getByRole('cell', { name: 'Soins du visage' })).toBeDefined();
+    expect(screen.getByRole('cell', { name: 'Coiffure' })).toBeDefined();
+    expect(screen.queryByRole('columnheader', { name: 'Actions' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Modifier/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Désactiver/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Réactiver/ })).toBeNull();
+  });
+
+  it('retire le formulaire de création et dit pourquoi', () => {
+    renderReadOnly();
+
+    expect(screen.queryByRole('heading', { name: 'Nouvelle rubrique' })).toBeNull();
+    expect(screen.queryByLabelText(/Nom de la rubrique/)).toBeNull();
+    expect(screen.getByText(/réservées au rang gérant/i)).toBeDefined();
+  });
+});
