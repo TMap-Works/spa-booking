@@ -78,11 +78,23 @@
   border-radius: var(--spa-radius-md);
 }
 
+/*
+ * Libellé à gauche, valeur à droite — et la paire s'enroule plutôt que de se
+ * comprimer. Sans `flex-wrap`, une colonne étroite rognait les deux côtés l'un
+ * sur l'autre : « À encaisser » se cassait en « À » / « encaisser » autour d'un
+ * montant lui-même coupé (#615). Enroulée, la valeur descend d'une ligne entière
+ * et reste lisible d'un bloc.
+ *
+ * La gouttière se dédouble : serrée entre les deux lignes, large entre les deux
+ * colonnes. Une gouttière de 1 rem entre les lignes aurait fait de chaque total
+ * enroulé un paragraphe.
+ */
 .spa-admin-checkout__total-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
   justify-content: space-between;
-  gap: var(--spa-space-4);
+  gap: var(--spa-space-1) var(--spa-space-4);
   font-size: var(--spa-font-size-sm);
 }
 
@@ -90,7 +102,14 @@
   color: var(--spa-color-text-muted);
 }
 
+/*
+ * La marge automatique tient la valeur à droite **aussi quand la ligne s'est
+ * enroulée** : seule sur sa ligne, `justify-content: space-between` la
+ * replacerait au début, et la colonne des montants perdrait son bord droit,
+ * c'est-à-dire le repère qui la rend comparable d'un coup d'œil.
+ */
 .spa-admin-checkout__total-value {
+  margin-inline-start: auto;
   font-variant-numeric: tabular-nums;
   font-weight: var(--spa-font-weight-medium);
 }
@@ -107,6 +126,27 @@
 .spa-admin-checkout__total-row--grand .spa-admin-checkout__total-value {
   color: var(--spa-color-text);
   font-weight: var(--spa-font-weight-semibold);
+}
+
+/*
+ * Le montant à encaisser ne se coupe jamais. C'est le seul chiffre que
+ * l'opératrice annonce à voix haute devant la cliente, et un « 85,00 € » rendu
+ * « 85,00 » puis « € » à la ligne suivante est un prix qu'on lit de travers. Les
+ * autres valeurs du bloc — un horaire, un moyen de paiement — s'enroulent sans
+ * dommage ; celle-ci, non.
+ *
+ * La règle est **défensive, et non curative** : ce n'est pas elle qui a réparé
+ * le « 85,0 » relevé par la QA — celui-là était un rognage par débordement, que
+ * seul le palier à 60 rem corrige. `formatMoney` s'appuie aujourd'hui sur
+ * `Intl.NumberFormat`, dont la sortie ne présente aucune occasion de coupure
+ * (espace insécable avant le symbole, séparateur fine insécable entre milliers)
+ * : la déclaration est donc inerte tant que ce formatage ne change pas. Elle
+ * reste posée pour le jour où il changerait — une devise formatée à la main, un
+ * suffixe ajouté au montant — parce que ce chiffre-là ne doit jamais dépendre de
+ * la bienveillance du formateur.
+ */
+.spa-admin-checkout__total-row--grand .spa-admin-checkout__total-value {
+  white-space: nowrap;
 }
 
 /* --- Moyens de paiement ---------------------------------------------------- */
@@ -236,14 +276,42 @@
 /* --- Points de rupture ----------------------------------------------------- */
 
 /*
- * Même palier que la coquille — 48rem, soit 768 px (`shell.css`).
+ * Un palier plus haut que celui de la coquille — 60 rem, soit 960 px — et
+ * l'écart est le correctif de #615.
  *
- * Le panneau de paiement est borné à 18 rem : sous 768 px, les deux colonnes ne
- * laissaient plus au ticket que la cinquantaine de pixels qui restait, et la
- * ligne « À encaisser » y devenait illisible. Le ticket passe donc au-dessus du
- * moyen de paiement — l'ordre dans lequel l'opérateur les lit (#612).
+ * `shell.css` replie le rail à 48 rem et fait repasser ses paires de colonnes en
+ * une au même endroit. Ce palier-là convient à un écran dont la paire occupe
+ * toute la largeur de la fenêtre. Pas à celui-ci : **au-dessus** de 48 rem le
+ * rail garde ses 15 rem, si bien que la zone de contenu ne vaut que la fenêtre
+ * moins 17,5 rem — 15 de rail et 2,5 de gouttières. Mesuré : à 1024 px de
+ * fenêtre, `.spa-admin-checkout` reçoit 744 px, pas 1024.
+ *
+ * Ce que cela donnait entre 48 rem et 60 rem, le panneau de paiement gardant ses
+ * 22 rem : à 790 px de fenêtre il ne restait que 142 px au ticket. La colonne
+ * TOTAL du récapitulatif sortait du cadre, l'en-tête « PRATICIEN » était tranché
+ * en « PRATICI », et « 85,00 € » se lisait « 85,0 » — le seul chiffre que
+ * l'opératrice annonce à voix haute. Le palier de la coquille ne voyait rien de
+ * tout cela, parce qu'il mesure la fenêtre et que ce qui manquait, c'est la
+ * place réellement laissée à l'écran.
+ *
+ * D'où le calcul du seuil, en largeur de contenu puis en largeur de fenêtre :
+ * le récapitulatif tient ses trois colonnes — prestation, praticien, total — à
+ * partir de 19,5 rem ; plus les 22 rem du panneau et 1 rem de gouttière, la
+ * paire réclame 42,5 rem de contenu, soit 60 rem de fenêtre.
+ *
+ * Le seuil est vérifié aux deux bords, et non déduit : à 961 px — le premier
+ * pixel au-dessus du palier, donc le plus mauvais cas encore rendu côte à côte —
+ * le récapitulatif garde ses trois colonnes et « 85,00 € » reste entier ; à
+ * 960 px la grille s'empile. `tests/admin-checkout-layout.test.mjs` tient ce
+ * calcul, pour qu'un alignement « par cohérence » sur les 48 rem de la coquille
+ * ne rouvre pas le bug en silence.
+ *
+ * Ce seuil **contient** celui de la coquille, il ne le contredit pas : sous
+ * 48 rem, rail déjà replié en bandeau, la pile reste la bonne mise en page — le
+ * ticket au-dessus du moyen de paiement, dans l'ordre où l'opérateur les lit
+ * (#612).
  */
-@media (max-width: 48rem) {
+@media (max-width: 60rem) {
   .spa-admin-checkout {
     grid-template-columns: minmax(0, 1fr);
   }
