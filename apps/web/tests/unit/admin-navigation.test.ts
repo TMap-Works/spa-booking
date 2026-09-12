@@ -2,16 +2,19 @@ import type { UserRole } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
+  adminLandingPath,
   adminNavigation,
   isCurrentEntry,
   roleLabel,
 } from '@/app/(admin)/[tenantSlug]/admin/components/navigation';
 import { adminClientsPath } from '@/app/(admin)/[tenantSlug]/admin/clients/paths';
 import {
+  adminCalendarPath,
   adminCatalogPath,
   adminCheckoutPath,
   adminReportingPath,
   adminSessionRefreshPath,
+  adminSettingsPath,
   safeAdminNext,
 } from '@/app/(admin)/[tenantSlug]/admin/paths';
 import {
@@ -93,6 +96,61 @@ describe('sommaire du back-office — ce que chaque rôle voit', () => {
     ]) {
       expect(keys).toContain(section);
     }
+  });
+});
+
+describe('où la connexion dépose chaque rôle (#618)', () => {
+  it('dépose une praticienne sur le planning, et non sur les réglages', () => {
+    // Le défaut corrigé : la redirection était inconditionnelle vers
+    // `adminSettingsPath`, écran `@AuthAtLeast('ADMIN')`. Le premier écran d'une
+    // praticienne après son mot de passe était « Accès réservé ».
+    expect(adminLandingPath(SLUG, 'staff')).toBe(adminCalendarPath(SLUG));
+    expect(adminLandingPath(SLUG, 'staff')).not.toBe(adminSettingsPath(SLUG));
+  });
+
+  it('dépose les trois rangs du back-office sur leur première section ouverte', () => {
+    // Le sommaire est ordonné comme la journée d'un comptoir : ce qu'on regarde
+    // en arrivant vient en tête. C'est le planning pour les trois rangs — et
+    // c'est bien ce que le rail leur propose en premier.
+    for (const role of ['staff', 'manager', 'admin'] as const) {
+      const first = adminNavigation(SLUG, role)[0];
+
+      expect(adminLandingPath(SLUG, role)).toBe(first?.href);
+      expect(adminLandingPath(SLUG, role)).toBe(adminCalendarPath(SLUG));
+    }
+  });
+
+  it('n’a aucune destination pour un compte client', () => {
+    // Le sommaire ne lui propose rien : lui en choisir une malgré tout serait
+    // recommencer le défaut, en le conduisant là où on va le refuser.
+    expect(adminLandingPath(SLUG, 'client')).toBeNull();
+  });
+
+  it('ne dépose jamais personne sur un écran que son rang ne peut ouvrir', () => {
+    // La garantie qui tient dans le temps : la destination est **une entrée du
+    // sommaire de ce rôle**, quoi qu'il advienne des seuils. Aucune seconde
+    // table de rangs à tenir à jour ici.
+    for (const role of ['client', 'staff', 'manager', 'admin'] as const) {
+      const landing = adminLandingPath(SLUG, role);
+
+      if (landing === null) {
+        continue;
+      }
+      expect(adminNavigation(SLUG, role).map((entry) => entry.href)).toContain(landing);
+    }
+  });
+
+  it('ne dépose jamais personne sur une entrée annoncée mais non servie', () => {
+    // Une entrée sans `href` est inerte : y envoyer quelqu'un donnerait un 404.
+    for (const role of ['staff', 'manager', 'admin'] as const) {
+      expect(adminLandingPath(SLUG, role)).not.toBeNull();
+    }
+  });
+
+  it('encode le slug de sa destination', () => {
+    expect(adminLandingPath('salon/lilas', 'staff')?.startsWith('/salon%2Flilas/admin')).toBe(
+      true,
+    );
   });
 });
 

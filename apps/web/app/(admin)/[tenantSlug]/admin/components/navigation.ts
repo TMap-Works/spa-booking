@@ -225,6 +225,39 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
 }
 
 /**
+ * Le premier écran du back-office qu'un rôle a le droit d'ouvrir — ou `null`
+ * s'il n'y en a aucun (#618).
+ *
+ * ## Pourquoi ici, et pas dans le formulaire de connexion
+ *
+ * « Qui peut ouvrir quoi » est déjà écrit une fois, juste au-dessus : c'est
+ * `minimumRole`, aligné entrée par entrée sur l'`@AuthAtLeast` de la route que
+ * l'écran appelle. Déduire la destination d'après-connexion de ce même sommaire
+ * plutôt que d'une seconde table de rangs évite la seule chose qui rende ces
+ * tables nuisibles : qu'elles divergent. Le jour où un écran change de seuil —
+ * et c'est arrivé trois fois, #458, #480, #484 — le rail **et** l'atterrissage
+ * suivent du même geste.
+ *
+ * ## Le premier servi, pas le premier annoncé
+ *
+ * Une entrée sans `href` est annoncée mais inerte : y envoyer quelqu'un donnerait
+ * un 404. On prend donc la première entrée **servie**, dans l'ordre du sommaire —
+ * celui de la journée d'un comptoir, qui met en tête ce qu'on regarde en
+ * arrivant. C'est le planning pour les trois rangs du back-office.
+ *
+ * ## `null` n'est pas un repli, c'est une réponse
+ *
+ * Un compte `client` obtient une session ici — il n'y a qu'une identité par
+ * établissement — et ce sommaire ne lui propose rien. Lui choisir malgré tout une
+ * destination reviendrait à le conduire là où on va le refuser, c'est-à-dire
+ * exactement le défaut que ce ticket corrige. L'appelant doit traiter ce cas, et
+ * le type l'y oblige.
+ */
+export function adminLandingPath(tenantSlug: string, role: UserRole): string | null {
+  return adminNavigation(tenantSlug, role).find((entry) => entry.href !== null)?.href ?? null;
+}
+
+/**
  * `true` si le chemin courant est celui de l'entrée, ou l'un de ses écrans.
  *
  * Deux raffinements, et chacun corrige un défaut visible :
