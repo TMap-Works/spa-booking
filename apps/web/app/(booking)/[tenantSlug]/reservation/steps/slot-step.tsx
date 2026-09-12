@@ -8,37 +8,13 @@ import {
   type PublicTenant,
   type UtcInstant,
 } from '@spa/shared';
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent as ReactKeyboardEvent,
-} from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { SlotPicker } from '@/components/booking/slot-picker';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
-import {
-  addCalendarDays,
-  calendarDateInTimeZone,
-  calendarWindow,
-  formatCalendarDayShort,
-} from '@/lib/booking/calendar';
-import {
-  canSelectDay,
-  dateBarDays,
-  dateBarMoveForKey,
-  gridMoveForKey,
-  moveInDateBar,
-  moveInGrid,
-  openDays as openDaysOf,
-  resolveActiveDay,
-  selectableDays,
-  slotRows,
-} from '@/lib/booking/slots';
-import { formatCalendarDate, formatTimeInTimeZone, timeZoneMention } from '@/lib/format';
+import { addCalendarDays, calendarDateInTimeZone, calendarWindow } from '@/lib/booking/calendar';
 
 import { loadAvailabilityAction } from '../actions';
 
@@ -69,37 +45,16 @@ interface SlotStepProps {
   readonly onChoose: (startsAt: UtcInstant) => void;
 }
 
-/** « 3 créneaux », « 1 créneau » — le pluriel se voit à l'écran. */
-function slotCountLabel(count: number): string {
-  return count === 1 ? '1 créneau' : `${String(count)} créneaux`;
-}
-
-/**
- * L'heure telle qu'elle **s'énonce** — « 14 h 00 » quand la grille affiche
- * « 14:00 » (`keyboard-navigation.md`, « États et attributs par créneau »).
- *
- * Les deux formes ne disent pas la même chose parce qu'elles ne sont pas lues
- * dans le même contexte. Dans sa colonne, sous l'en-tête « Après-midi », « 14:00 »
- * se comprend d'un coup d'œil et tient sur un téléphone. Énoncé seul par un
- * lecteur d'écran, il s'entend « un quatre deux points zéro zéro » — ou passe
- * pour un score. L'heure en toutes lettres, elle, se suffit.
- *
- * Elle est **composée ici**, chiffre à chiffre, plutôt que demandée à une locale
- * qui la rend déjà : `fr-CA` écrit « 14 h 00 » avec une espace fine insécable
- * dont la présence et la forme dépendent de la version d'ICU du moteur, si bien
- * que le libellé différerait entre la CI et le poste — et avec lui les requêtes
- * par nom accessible qui éprouvent tout le tunnel.
- *
- * La dériver du texte affiché plutôt que d'un second formateur garantit en outre
- * que les deux formes ne peuvent pas diverger : mêmes chiffres, même fuseau,
- * seul le séparateur change.
- */
-function spokenTime(shortTime: string): string {
-  return shortTime.replace(':', ' h ');
-}
-
 /**
  * Choix du praticien et du créneau (#44, #351).
+ *
+ * ## La bande de journées et la grille sont un composant partagé (#622)
+ *
+ * Elles vivent dans [`SlotPicker`](../../../../../components/booking/slot-picker.tsx),
+ * que l'écran de report de l'espace client emploie aussi. Ce qui reste **ici**
+ * est ce qui n'appartient qu'au tunnel : le choix du praticien, le chargement et
+ * sa revalidation, l'élargissement de la fenêtre, et ce que l'écran dit quand
+ * l'agenda est vide. Le sélecteur, lui, ne fait que montrer ce qu'on lui donne.
  *
  * ## Le praticien se change **ici**, pas un écran plus haut
  *
@@ -127,28 +82,12 @@ function spokenTime(shortTime: string): string {
  * créneau a pu partir. Les recharger ne supprime pas le 409 — seul le verrou
  * serveur le fait — mais évite de proposer longtemps ce qui n'existe plus.
  *
- * ## La barre de dates et la grille suivent les documents de conception
+ * ## Les états non nominaux suivent les documents de conception
  *
- * [keyboard-navigation.md](../../../../../../../docs/design/appointments/keyboard-navigation.md)
- * fixe le comportement clavier de ce sélecteur, et c'est lui qui fait foi ici :
- * `grid` › `row` › `gridcell` › `<button>`, *roving tabindex*, flèches et
- * `Début`/`Fin` (et `Ctrl` pour les bornes de la grille), **sans enroulement**
- * aux bords, région `aria-live` pour le nombre de créneaux, focus déplacé quand
- * un créneau disparaît sous lui. La barre de dates reprend le même roving
- * tabindex sur une ligne, avec `PagePréc`/`PageSuiv` à la semaine.
- *
- * [states.md](../../../../../../../docs/design/appointments/states.md) fixe ses
- * trois états non nominaux : squelette de grille **sous une barre de dates
- * restée opérable**, état vide qui offre d'élargir la fenêtre au-delà des
+ * [states.md](../../../../../../../docs/design/appointments/states.md) fixe les
+ * trois : squelette de grille **sous une barre de dates restée opérable** — que
+ * `SlotPicker` rend —, état vide qui offre d'élargir la fenêtre au-delà des
  * quatorze jours, état d'erreur qui offre de réessayer.
- *
- * Le **libellé accessible complet** de chaque créneau — « 14 h 00 » là où la
- * grille montre « 14:00 » — est posé par `spokenTime` (#481).
- *
- * Un seul point de ces documents reste à faire : le **rendu barré des créneaux
- * indisponibles** est sans objet en l'état — `availabilityResponse` ne rend que
- * les créneaux libres, un créneau pris est simplement absent, et il n'y a rien à
- * barrer. À reprendre si l'API se met un jour à rendre l'agenda complet.
  */
 export function SlotStep({
   tenant,
@@ -161,7 +100,6 @@ export function SlotStep({
   const [days, setDays] = useState<readonly DayAvailability[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
-  const [selectedDate, setSelectedDate] = useState<CalendarDate | null>(null);
   /**
    * Largeur de la fenêtre demandée, en journées.
    *
@@ -181,27 +119,13 @@ export function SlotStep({
    * trois cent soixante-cinq, à minuit passé dans le fuseau du salon.
    */
   const [windowDates, setWindowDates] = useState<readonly CalendarDate[]>([]);
-  /**
-   * Le créneau qui porte le `tabindex` de la grille — le *roving tabindex* de
-   * `keyboard-navigation.md`.
-   *
-   * Un seul créneau est dans l'ordre de tabulation : `Tab` entre dans la grille,
-   * les flèches y circulent, `Tab` en ressort vers le bloc suivant. Sans cela,
-   * une journée de trente créneaux imposerait trente tabulations pour atteindre
-   * le bouton d'après — c'est exactement l'écueil que le document décrit.
-   *
-   * Il est retenu par son instant et non par son rang : entre deux
-   * revalidations, le rang d'un créneau change dès qu'un créneau plus tôt
-   * disparaît, et le `tabindex` sauterait tout seul sur un autre horaire.
-   */
-  const [activeSlot, setActiveSlot] = useState<UtcInstant | null>(null);
-  const gridRef = useRef<HTMLDivElement | null>(null);
   const dateBarRef = useRef<HTMLDivElement | null>(null);
   /**
    * Le conteneur de l'état vide, pour pouvoir y poser le focus.
    *
-   * Il n'est pas naturellement focalisable : c'est un `tabIndex={-1}` qui le
-   * rend atteignable par programme sans l'ajouter à l'ordre de tabulation.
+   * Il n'est pas naturellement focalisable : c'est un `tabIndex={-1}` que
+   * `SlotPicker` pose, qui le rend atteignable par programme sans l'ajouter à
+   * l'ordre de tabulation.
    */
   const emptyStateRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -216,16 +140,6 @@ export function SlotStep({
    * état déclencherait un rendu de plus pour une valeur consommée aussitôt.
    */
   const catchFocusAfterWidening = useRef<'inactif' | 'chargement' | 'resultat'>('inactif');
-  /**
-   * `true` tant que le focus est **dans** la grille.
-   *
-   * Suivi par un drapeau et non relu sur `document.activeElement` au moment où
-   * l'on en aurait besoin : quand un créneau disparaît d'une revalidation, React
-   * a déjà retiré son bouton du document, et le focus est retombé sur `<body>`
-   * avant que le moindre effet ne s'exécute. Lire l'état d'après ne dirait donc
-   * jamais que la grille tenait le focus juste avant.
-   */
-  const gridHasFocus = useRef(false);
   /**
    * Numéro de la requête la plus récente.
    *
@@ -313,31 +227,6 @@ export function SlotStep({
     });
   }, [load]);
 
-  const allDays = useMemo(() => selectableDays(days ?? []), [days]);
-  const open = useMemo(() => openDaysOf(allDays), [allDays]);
-  const activeDay = resolveActiveDay(open, selectedDate);
-  /**
-   * Les journées de la barre de dates : la fenêtre civile tant que la réponse
-   * n'est pas là, la réponse elle-même ensuite.
-   */
-  const bar = useMemo(
-    () => dateBarDays(windowDates, days === null ? null : allDays),
-    [windowDates, days, allDays],
-  );
-  /**
-   * La journée que la barre montre comme retenue — même en cours de chargement.
-   *
-   * Le repli sur la première journée n'est pas décoratif : c'est elle qui porte
-   * le `tabindex` de la barre, et une barre où aucune pastille ne serait retenue
-   * n'aurait plus aucun arrêt de tabulation. La journée choisie peut sortir de
-   * la fenêtre — à minuit passé, « aujourd'hui » n'est plus le même jour et la
-   * fenêtre a glissé —, d'où la vérification plutôt qu'un simple `??`.
-   */
-  const barActiveDate =
-    activeDay?.date ??
-    (bar.some((day) => day.date === selectedDate) ? selectedDate : null) ??
-    bar[0]?.date ??
-    null;
   /**
    * Le praticien demandé, tel qu'on peut le nommer à l'écran.
    *
@@ -352,50 +241,6 @@ export function SlotStep({
       ? null
       : (service.staff.find((member) => member.id === staffId)?.displayName ?? 'ce praticien');
 
-  /**
-   * La mention du fuseau, calculée **après** le chargement seulement.
-   *
-   * Elle lit le fuseau du navigateur, qui n'existe pas au rendu serveur. Ce
-   * n'est pas une contrainte gênante ici : la branche qui l'affiche n'est
-   * atteinte qu'une fois les disponibilités reçues, donc après le montage.
-   */
-  const zoneMention = days === null ? null : timeZoneMention(tenant.timezone);
-  const dayHeading =
-    activeDay === null
-      ? ''
-      : `Créneaux du ${formatCalendarDate(activeDay.date)}${
-          zoneMention === null ? '' : ` — ${zoneMention}`
-        }`;
-
-  /** La journée affichée, découpée en lignes de grille — matin, après-midi, soir. */
-  const rows = useMemo(
-    () => (activeDay === null ? [] : slotRows(activeDay.slots, tenant.timezone)),
-    [activeDay, tenant.timezone],
-  );
-  const slotsShown = useMemo(() => rows.flatMap((row) => row.slots), [rows]);
-
-  /**
-   * Le créneau qui porte réellement le `tabindex`.
-   *
-   * Le créneau retenu peut avoir disparu du dernier rechargement : on retombe
-   * alors sur le premier de la journée, faute de quoi la grille n'aurait plus
-   * aucun arrêt de tabulation et deviendrait inatteignable au clavier.
-   */
-  const tabbableSlot =
-    slotsShown.find((slot) => slot.startsAt === activeSlot)?.startsAt ??
-    slotsShown[0]?.startsAt ??
-    null;
-
-  /**
-   * Le focus suit le créneau qu'une revalidation vient d'emporter.
-   *
-   * C'est la dernière ligne de la liste de vérification du document de
-   * conception, et le piège propre à une liste qui se rafraîchit toute seule :
-   * le bouton focalisé disparaît du DOM, le focus retombe sur `<body>`, et la
-   * navigation au clavier repart du haut du document au moment précis où l'on
-   * choisissait son heure. Le déplacement n'a lieu que si la grille tenait
-   * effectivement le focus — sinon ce serait un vol de focus.
-   */
   /**
    * Le focus rattrapé quand le bouton qu'on vient d'actionner s'est effacé.
    *
@@ -440,200 +285,9 @@ export function SlotStep({
     }
   });
 
-  useEffect(() => {
-    const grid = gridRef.current;
-
-    if (grid === null || !gridHasFocus.current || activeSlot === null) {
-      return;
-    }
-    if (slotsShown.some((shown) => shown.startsAt === activeSlot)) {
-      return;
-    }
-
-    grid.querySelector<HTMLButtonElement>('button[tabindex="0"]')?.focus();
-  }, [slotsShown, activeSlot]);
-
-  /**
-   * Les flèches circulent dans la grille — `keyboard-navigation.md`, « Touches
-   * dans la grille de créneaux ».
-   *
-   * Les boutons sont relus dans le DOM à chaque frappe plutôt que suivis par des
-   * `ref` : la grille se réécrit à chaque revalidation, et une collection de
-   * `ref` y survivrait mal.
-   */
-  const moveFocus = useCallback(
-    (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      const move = gridMoveForKey(event.key, event.ctrlKey || event.metaKey);
-      const grid = gridRef.current;
-
-      if (move === null || grid === null) {
-        return;
-      }
-
-      const cells = [...grid.querySelectorAll<HTMLDivElement>('[role="row"]')].map((row) => [
-        ...row.querySelectorAll<HTMLButtonElement>('button'),
-      ]);
-      const row = cells.findIndex((buttons) =>
-        buttons.some((button) => button === document.activeElement),
-      );
-
-      if (row === -1) {
-        return;
-      }
-
-      const column = cells[row]?.indexOf(document.activeElement as HTMLButtonElement) ?? -1;
-      const target = moveInGrid(
-        cells.map((buttons) => buttons.length),
-        { row, column },
-        move,
-      );
-
-      // Le défilement de la page par les flèches est écarté seulement quand le
-      // focus est bien dans la grille : ailleurs, la touche est au navigateur.
-      event.preventDefault();
-      cells[target.row]?.[target.column]?.focus();
-    },
-    [],
-  );
-
-  /**
-   * Les flèches circulent dans la barre de dates — `keyboard-navigation.md`,
-   * « Barre de dates ».
-   *
-   * **Activation automatique** : la flèche déplace le focus *et* retient la
-   * journée, comme dans tout `radiogroup`. Le document décrit `Entrée`/`Espace`
-   * comme le geste de sélection, et ils le restent — mais un groupe de boutons
-   * radio où la flèche ne sélectionnerait pas serait un groupe où un lecteur
-   * d'écran annonce « non coché » sur quatorze journées d'affilée. La grille se
-   * réécrit sous la barre, et la région `aria-live` annonce le nouveau nombre de
-   * créneaux : c'est ce que la liste de vérification demande du changement de
-   * jour.
-   *
-   * Le focus **reste dans la barre** plutôt que de partir sur le premier créneau
-   * du nouveau jour, comme le suggère la prose du document : le déplacer
-   * interdirait d'enchaîner deux flèches pour comparer deux journées, qui est
-   * précisément ce à quoi une barre de dates sert.
-   */
-  const moveDay = useCallback(
-    (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      const move = dateBarMoveForKey(event.key);
-      const dateBar = dateBarRef.current;
-
-      if (move === null || dateBar === null) {
-        return;
-      }
-
-      const buttons = [...dateBar.querySelectorAll<HTMLButtonElement>('button')];
-      const index = buttons.findIndex((button) => button === document.activeElement);
-
-      if (index === -1) {
-        return;
-      }
-
-      const target = moveInDateBar(bar, index, move);
-      const day = bar[target];
-
-      // `PagePréc` et `PageSuiv` défileraient la page ; les flèches la
-      // déplaceraient latéralement. Seulement quand le focus est dans la barre.
-      event.preventDefault();
-
-      if (day === undefined) {
-        return;
-      }
-
-      buttons[target]?.focus();
-
-      // En bord de barre — ou quand plus rien n'est ouvert dans la direction
-      // demandée —, `moveInDateBar` rend le rang de départ. Celui-ci peut être
-      // une journée complète : la souris peut poser le focus dessus, là où les
-      // flèches ne s'y arrêtent jamais. La retenir mettrait `selectedDate` sur
-      // une date que `resolveActiveDay` ne retrouvera jamais, et la pastille
-      // cochée s'en irait ailleurs que là où le focus est.
-      if (canSelectDay(day)) {
-        setSelectedDate(day.date);
-      }
-    },
-    [bar],
-  );
-
-  /**
-   * La barre de dates — `keyboard-navigation.md`, « Barre de dates ».
-   *
-   * Un `radiogroup` et non un `<select>` natif : le document décrit une ligne de
-   * journées parcourue aux flèches, et le `<select>` qui tenait ce rôle jusqu'ici
-   * ne montrait qu'une journée à la fois. C'est un écart de forme qui coûtait
-   * cher — comparer mardi et jeudi demandait d'ouvrir deux fois la liste.
-   *
-   * Les journées complètes restent rendues, inertes. Le serveur les renvoie avec
-   * `slots: []` plutôt que de les omettre précisément pour qu'un calendrier
-   * puisse afficher « complet » sans deviner les trous : les retirer ferait
-   * croire à un salon fermé ce jour-là.
-   */
-  const dateBar =
-    bar.length === 0 ? null : (
-      <div
-        ref={dateBarRef}
-        className="spa-date-bar"
-        role="radiogroup"
-        aria-label="Journée"
-        onKeyDown={moveDay}
-      >
-        {bar.map((day) => {
-          const selectable = canSelectDay(day);
-          const checked = day.date === barActiveDate;
-          const state =
-            day.slotCount === null
-              ? 'disponibilités en cours de chargement'
-              : day.slotCount === 0
-                ? 'complet'
-                : slotCountLabel(day.slotCount);
-
-          return (
-            <Button
-              key={day.date}
-              variant="neutral"
-              role="radio"
-              aria-checked={checked}
-              aria-disabled={selectable ? undefined : true}
-              aria-label={`${formatCalendarDate(day.date)} — ${state}`}
-              tabIndex={checked ? 0 : -1}
-              onClick={() => {
-                // Une journée complète reste affichée et lisible, mais ne se
-                // retient pas : il n'y aurait rien à montrer dessous.
-                if (selectable) {
-                  setSelectedDate(day.date);
-                }
-              }}
-            >
-              <span aria-hidden="true" className="spa-date-bar__day">
-                {formatCalendarDayShort(day.date)}
-              </span>
-              <span aria-hidden="true" className="spa-date-bar__count">
-                {day.slotCount === null ? '…' : day.slotCount === 0 ? 'complet' : day.slotCount}
-              </span>
-            </Button>
-          );
-        })}
-      </div>
-    );
-
   return (
     <section aria-label="Choix du praticien et du créneau">
       <h2 className="spa-card__title">{service.name}</h2>
-
-      {/*
-        Ce que le changement de liste annonce à qui ne la voit pas. Le texte est
-        dérivé de la journée affichée : il ne bouge donc qu'au changement de
-        journée ou de nombre de créneaux, et une revalidation qui ne change rien
-        reste silencieuse.
-      */}
-      <p role="status" className="spa-visually-hidden">
-        {activeDay === null
-          ? ''
-          : `${slotCountLabel(activeDay.slots.length)} le ${formatCalendarDate(activeDay.date)}${
-              zoneMention === null ? '' : `, ${zoneMention}`
-            }.`}
-      </p>
 
       <Select
         id="creneau-praticien"
@@ -671,149 +325,77 @@ export function SlotStep({
         </Notification>
       )}
 
-      {days === null ? (
-        // `states.md` étape 3 : « grille de créneaux en squelette, **en gardant
-        // la barre de dates interactive** pour changer de jour sans attendre ».
-        // La fenêtre est une suite de dates civiles, que le navigateur sait
-        // poser sans le serveur ; seuls les comptes de créneaux l'attendent.
-        <>
-          {dateBar}
-          <div className="spa-card spa-card--loading" aria-busy="true">
-            <span className="spa-visually-hidden">Chargement des disponibilités…</span>
-            <span className="spa-skeleton spa-field__skeleton" />
-            <span className="spa-skeleton spa-card__skeleton-line spa-card__skeleton-line--title" />
-            <span className="spa-skeleton spa-card__skeleton-line" />
-            <span className="spa-skeleton spa-card__skeleton-line spa-card__skeleton-line--short" />
-          </div>
-        </>
-      ) : error !== null && allDays.length === 0 ? (
-        // Le chargement a échoué et rien n'avait été affiché : la notification
-        // ci-dessus le dit déjà, et annoncer sous elle « aucun créneau » ferait
-        // passer une panne pour un agenda complet — en conseillant de changer de
-        // prestation, ce qui n'y changerait rien.
-        //
-        // La condition porte sur les journées reçues, pas sur celles qui ont des
-        // créneaux : le serveur rend toujours une entrée par jour demandé, même
-        // vide, si bien qu'une liste de journées vide ne peut venir que d'un
-        // premier chargement en échec. S'appuyer sur les journées *ouvertes*
-        // ferait disparaître un état vide déjà affiché — et avec lui le bouton
-        // qui lève la préférence de praticien — à la première revalidation ratée.
-        null
-      ) : open.length === 0 ? (
-        <div className="spa-card spa-card--empty" role="status" ref={emptyStateRef} tabIndex={-1}>
-          <div className="spa-empty-state">
-            <p className="spa-empty-state__title">
-              {staffLabel === null
-                ? `Aucun créneau sur les ${String(windowDays)} prochains jours`
-                : `Aucun créneau avec ${staffLabel} sur les ${String(windowDays)} prochains jours`}
-            </p>
-            <p className="spa-empty-state__description">
-              {staffLabel === null
-                ? 'Essayez une autre prestation, ou contactez le salon directement.'
-                : 'Un autre praticien a peut-être de la place, sinon contactez le salon directement.'}
-            </p>
-            {/*
-              « Voir plus de jours » — `states.md` étape 3. Le contrat autorise
-              trente et un jours ; on n'en demande quatorze d'emblée que parce
-              que la très grande majorité des clientes réservent dans la semaine.
-              Une fois la fenêtre élargie, le bouton disparaît : il n'aurait plus
-              rien à élargir.
-            */}
-            {windowDays < MAX_AVAILABILITY_RANGE_DAYS ? (
-              <Button
-                variant="neutral"
-                onClick={() => {
-                  // Le clic emporte le bouton lui-même : la fenêtre élargie
-                  // repasse par le chargement, l'état vide disparaît, et le
-                  // focus retomberait sur `<body>` — le clavier repartirait du
-                  // haut du document juste après un geste délibéré. On le
-                  // rattrape sur la barre de dates, qui prend justement la
-                  // place de cet écran (`keyboard-navigation.md`, « Parcours
-                  // complet réalisable sans souris »).
-                  catchFocusAfterWidening.current = 'chargement';
-                  setWindowDays(MAX_AVAILABILITY_RANGE_DAYS);
-                }}
-              >
-                Voir plus de jours
-              </Button>
-            ) : null}
-            {staffLabel === null ? null : (
-              <Button
-                variant="neutral"
-                onClick={() => {
-                  onStaffChange(null);
-                }}
-              >
-                Voir tous les praticiens
-              </Button>
-            )}
-          </div>
-        </div>
-      ) : (
-        <>
-          {dateBar}
+      {/*
+        Le chargement a échoué et rien n'avait été affiché : la notification
+        ci-dessus le dit déjà, et annoncer sous elle « aucun créneau » ferait
+        passer une panne pour un agenda complet — en conseillant de changer de
+        prestation, ce qui n'y changerait rien.
 
-          <h3 className="spa-card__meta" id="creneaux-titre">
-            {dayHeading}
-          </h3>
-
-          {/*
-            Grille composite, telle que `keyboard-navigation.md` la décrit :
-            `grid` › `row` (un moment de la journée) › `gridcell` › `<button>`
-            natif. Le libellé du moment est un `rowheader`, ce qui le rend
-            visible **et** l'annonce comme l'en-tête de sa ligne — un titre posé
-            à côté de la grille ne dirait pas à quels créneaux il se rapporte.
-          */}
-          <div
-            ref={gridRef}
-            className="spa-slot-grid"
-            role="grid"
-            aria-labelledby="creneaux-titre"
-            onKeyDown={moveFocus}
-            onBlur={(event) => {
-              // Le focus quitte la grille pour de bon — le prochain
-              // rafraîchissement n'a plus à le rattraper. Un bouton **déjà
-              // détaché** ne dit pas cela : c'est la disparition d'un créneau,
-              // pas un départ, et c'est précisément le cas à rattraper.
-              if (event.target.isConnected) {
-                gridHasFocus.current = event.currentTarget.contains(event.relatedTarget);
-              }
-            }}
-          >
-            {rows.map((row) => (
-              <div role="row" className="spa-slot-grid__row" key={row.label}>
-                <span role="rowheader" className="spa-slot-grid__rowheader spa-card__meta">
-                  {row.label}
-                </span>
-                {row.slots.map((slot) => {
-                  const time = formatTimeInTimeZone(slot.startsAt, tenant.timezone);
-
-                  return (
-                    <span role="gridcell" className="spa-slot-grid__cell" key={slot.startsAt}>
-                      <Button
-                        variant="neutral"
-                        // Le nom accessible dit l'heure en toutes lettres, le
-                        // texte visible garde la forme courte : hors de sa
-                        // colonne, un créneau est lu seul.
-                        aria-label={spokenTime(time)}
-                        tabIndex={slot.startsAt === tabbableSlot ? 0 : -1}
-                        onFocus={() => {
-                          gridHasFocus.current = true;
-                          setActiveSlot(slot.startsAt);
-                        }}
-                        onClick={() => {
-                          onChoose(slot.startsAt);
-                        }}
-                      >
-                        {time}
-                      </Button>
-                    </span>
-                  );
-                })}
-              </div>
-            ))}
-          </div>
-        </>
+        La condition porte sur les journées reçues, pas sur celles qui ont des
+        créneaux : le serveur rend toujours une entrée par jour demandé, même
+        vide, si bien qu'une liste de journées vide ne peut venir que d'un
+        premier chargement en échec. S'appuyer sur les journées *ouvertes*
+        ferait disparaître un état vide déjà affiché — et avec lui le bouton
+        qui lève la préférence de praticien — à la première revalidation ratée.
+      */}
+      {days !== null && error !== null && days.length === 0 ? null : (
+        <SlotPicker
+          days={days}
+          windowDates={windowDates}
+          timeZone={tenant.timezone}
+          dateBarRef={dateBarRef}
+          emptyStateRef={emptyStateRef}
+          onChoose={onChoose}
+          emptyState={
+            <div className="spa-empty-state">
+              <p className="spa-empty-state__title">
+                {staffLabel === null
+                  ? `Aucun créneau sur les ${String(windowDays)} prochains jours`
+                  : `Aucun créneau avec ${staffLabel} sur les ${String(windowDays)} prochains jours`}
+              </p>
+              <p className="spa-empty-state__description">
+                {staffLabel === null
+                  ? 'Essayez une autre prestation, ou contactez le salon directement.'
+                  : 'Un autre praticien a peut-être de la place, sinon contactez le salon directement.'}
+              </p>
+              {/*
+                « Voir plus de jours » — `states.md` étape 3. Le contrat autorise
+                trente et un jours ; on n'en demande quatorze d'emblée que parce
+                que la très grande majorité des clientes réservent dans la semaine.
+                Une fois la fenêtre élargie, le bouton disparaît : il n'aurait plus
+                rien à élargir.
+              */}
+              {windowDays < MAX_AVAILABILITY_RANGE_DAYS ? (
+                <Button
+                  variant="neutral"
+                  onClick={() => {
+                    // Le clic emporte le bouton lui-même : la fenêtre élargie
+                    // repasse par le chargement, l'état vide disparaît, et le
+                    // focus retomberait sur `<body>` — le clavier repartirait du
+                    // haut du document juste après un geste délibéré. On le
+                    // rattrape sur la barre de dates, qui prend justement la
+                    // place de cet écran (`keyboard-navigation.md`, « Parcours
+                    // complet réalisable sans souris »).
+                    catchFocusAfterWidening.current = 'chargement';
+                    setWindowDays(MAX_AVAILABILITY_RANGE_DAYS);
+                  }}
+                >
+                  Voir plus de jours
+                </Button>
+              ) : null}
+              {staffLabel === null ? null : (
+                <Button
+                  variant="neutral"
+                  onClick={() => {
+                    onStaffChange(null);
+                  }}
+                >
+                  Voir tous les praticiens
+                </Button>
+              )}
+            </div>
+          }
+        />
       )}
 
       <Button variant="quiet" onClick={onBack}>
