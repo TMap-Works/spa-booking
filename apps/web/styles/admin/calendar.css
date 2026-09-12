@@ -494,6 +494,154 @@
   gap: var(--spa-space-2);
 }
 
+/* --- Tiroir de rendez-vous ------------------------------------------------- */
+
+/*
+ * Le tiroir s'ouvre DANS la fenêtre (#617).
+ *
+ * Il était posé dans le flux, à la suite de la grille : le haut du panneau
+ * tombait à 1 290 px du haut de page en 1920 × 1080 — 210 px sous la ligne de
+ * flottaison — et 480 px sous elle en 1280 × 800. Rien ne bougeait au clic, ni
+ * défilement ni focus : l'opératrice cliquait un créneau et croyait que le clic
+ * s'était perdu. Le bouton « Fermer le tiroir » promettait pourtant autre chose.
+ *
+ * `fixed` et non `sticky` : le repère est la FENÊTRE et non la grille. Une
+ * position collante reste prisonnière du flux de son parent — elle ne remonte
+ * pas un panneau déjà passé sous la ligne de flottaison, et la page du planning
+ * défile sur toute une journée de rendez-vous.
+ *
+ * Le bord haut seul est ancré, jamais les deux : un tiroir dont `inset-block`
+ * serait posé en entier prendrait la hauteur de la fenêtre même pour dire « le
+ * catalogue est vide ». La hauteur reste donc celle du contenu, plafonnée par la
+ * fenêtre, et c'est le corps du panneau qui défile — l'en-tête et le pied, donc
+ * « Enregistrer », restent atteignables sans faire défiler le tiroir entier.
+ *
+ * Aucun voile : le planning doit rester lisible ET cliquable pendant la saisie —
+ * c'est la raison d'être du tiroir plutôt que de la modale (`shell.css`), et un
+ * voile avalerait le clic sur le créneau suivant.
+ */
+.spa-admin-calendar__drawer {
+  position: fixed;
+  z-index: var(--spa-z-modal);
+  inset-block-start: var(--spa-space-4);
+  inset-inline-end: var(--spa-space-4);
+  max-block-size: calc(100dvh - 2 * var(--spa-space-4));
+  max-inline-size: calc(100vw - 2 * var(--spa-space-4));
+  box-shadow: var(--spa-shadow-lg);
+}
+
+/*
+ * `min-block-size: 0` est ce qui autorise le corps à défiler : un enfant flexible
+ * ne descend pas sous la hauteur de son contenu tant qu'il vaut `auto`, et sans
+ * cette ligne le tiroir dépasserait son plafond au lieu de faire défiler ses
+ * champs — le pied, donc le bouton d'enregistrement, sortirait de la fenêtre.
+ */
+.spa-admin-calendar__drawer .spa-admin-panel__body {
+  overflow-y: auto;
+  min-block-size: 0;
+  /* Le défilement s'arrête au bas du tiroir au lieu d'emporter la page avec lui :
+   * sur tablette, poursuivre le geste faisait défiler le planning DERRIÈRE le
+   * tiroir, et l'opératrice perdait le créneau qu'elle était en train de remplir. */
+  overscroll-behavior: contain;
+}
+
+/* L'en-tête et le pied ne se compriment pas : c'est le corps qui cède, lui seul
+ * défile. Sans cette ligne, un formulaire plus haut que la fenêtre écraserait le
+ * pied — donc « Enregistrer » — au lieu de faire défiler les champs. */
+.spa-admin-calendar__drawer .spa-admin-panel__header,
+.spa-admin-calendar__drawer .spa-admin-panel__footer {
+  flex: 0 0 auto;
+}
+
+/*
+ * Sous 48 rem, le tiroir devient une feuille basse : 26 rem de colonne latérale
+ * ne tiennent pas à côté d'une grille sur une tablette portrait, et la poser en
+ * bas met les champs à portée du pouce. Le haut reste libre — on y voit encore
+ * la grille, et donc le créneau qu'on est en train de remplir.
+ */
+@media (max-width: 48rem) {
+  .spa-admin-calendar__drawer {
+    inset-block-start: auto;
+    inset-block-end: 0;
+    inset-inline: 0;
+    inline-size: auto;
+    max-inline-size: none;
+    max-block-size: 85dvh;
+    border-radius: var(--spa-radius-lg) var(--spa-radius-lg) 0 0;
+  }
+
+  /*
+   * La vue semaine défile au lieu d'être coupée.
+   *
+   * `flex: 1 1 0` partageait les 318 px de la carte entre sept jours : 34 px par
+   * colonne. « Lun 24 » s'y empilait une lettre par ligne — 10 px de large sur
+   * 43 de haut —, les noms de clientes tombaient à « R. », les heures à « 09:0 »,
+   * et le dimanche disparaissait sous l'`overflow: hidden` du corps, sans barre
+   * de défilement pour aller le chercher. Relevé en marge de #612, qui n'a pas pu
+   * le traiter : le correctif est ici, pas dans l'enveloppe du back-office.
+   *
+   * Sept jours ne tiennent pas dans un téléphone — c'est une donnée, pas un
+   * réglage. La colonne garde donc une largeur lisible et c'est la carte qui
+   * défile, comme le tableau du catalogue depuis #641 et pour la même raison :
+   * un contenu qu'on atteint en glissant vaut mieux qu'un contenu hors d'atteinte.
+   *
+   * La vue jour n'est pas concernée et n'est donc pas touchée : quatre praticiens
+   * y tiennent dans la carte, en-têtes lisibles et heures entières.
+   */
+  .spa-admin-calendar--week:not(.spa-admin-calendar--empty) {
+    overflow-x: auto;
+    /* Le geste s'arrête au bord de la grille au lieu de faire reculer l'historique
+     * de navigation, que le balayage horizontal déclenche sur tablette. */
+    overscroll-behavior-inline: contain;
+  }
+
+  /*
+   * Une largeur calculée, et surtout pas `max-content`.
+   *
+   * L'en-tête et le corps sont frères : ils défilent du même pas mais se
+   * dimensionnent chacun pour soi. Mesurés en `max-content`, ils tombaient sur
+   * deux largeurs différentes dès que leurs contenus différaient — l'en-tête
+   * s'élargissait sur « Aucun rendez-vous » quand le corps s'en tenait à ses
+   * colonnes, 122 px contre 88, et « Dim. 13 » finissait 202 px à droite du jour
+   * qu'il nomme. La maquette ne le montrait pas : ses libellés courts
+   * (« 2 RDV », « Fermé ») donnaient par hasard la même largeur des deux côtés.
+   *
+   * Une seule expression, posée sur les deux, les rend solidaires par
+   * construction. `min-inline-size: 100%` laisse la grille occuper toute la carte
+   * quand la semaine y tient — à 768 px les colonnes s'élargissent au lieu de
+   * laisser un vide à droite —, et les colonnes gardent leur `flex: 1 1 0` : elles
+   * se partagent une largeur désormais identique de part et d'autre.
+   *
+   * `7` est le nombre de jours d'une semaine, pas un réglage : la vue semaine rend
+   * toujours sept colonnes, fermetures comprises.
+   *
+   * Le corps garde son `overflow: hidden`, qui arrondit ses coins : il ne coupe
+   * plus rien puisqu'il fait désormais la largeur de ses colonnes.
+   */
+  .spa-admin-calendar--week:not(.spa-admin-calendar--empty) .spa-admin-calendar__head,
+  .spa-admin-calendar--week:not(.spa-admin-calendar--empty) .spa-admin-calendar__body {
+    inline-size: calc(var(--spa-admin-time-gutter) + 7 * 5.5rem);
+    min-inline-size: 100%;
+  }
+
+  /*
+   * La légende ne part pas avec la grille.
+   *
+   * Elle est dans la carte, donc dans le conteneur qui défile désormais : sans
+   * cette ligne, le premier geste vers le dimanche emportait les pastilles de
+   * statut hors de l'écran et laissait une bande vide au-dessus des colonnes.
+   * Or c'est la seule clé de lecture des couleurs des blocs — elle doit rester
+   * sous les yeux pendant qu'on parcourt la semaine.
+   *
+   * Collante sur l'axe en ligne seulement : rien n'est posé sur l'axe de bloc,
+   * la légende suit donc le défilement vertical de la page comme avant.
+   */
+  .spa-admin-calendar--week:not(.spa-admin-calendar--empty) .spa-admin-calendar__legend {
+    position: sticky;
+    inset-inline-start: 0;
+  }
+}
+
 /* --- Temps indisponible ---------------------------------------------------- */
 
 /*

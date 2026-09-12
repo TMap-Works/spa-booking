@@ -584,3 +584,141 @@ describe('journée sans rendez-vous — les deux premiers critères', () => {
     });
   });
 });
+
+/**
+ * Le tiroir s'ouvre DANS la fenêtre — #617.
+ *
+ * Rendu dans le flux, il tombait 210 px sous la ligne de flottaison en
+ * 1920 × 1080 et 480 px sous elle en 1280 × 800 : rien ne bougeait au clic, ni
+ * la fenêtre ni le focus, et l'opératrice croyait que son clic s'était perdu.
+ *
+ * Ce qui se vérifie ici est ce qu'une suite en jsdom peut vraiment prouver — la
+ * classe de surimpression est posée, le focus entre et revient, Échap referme.
+ * La géométrie elle-même est du ressort de `styles/admin/calendar.css` et de la
+ * campagne de QA, qui la mesure au pixel dans un vrai navigateur.
+ */
+describe('#617 — le tiroir s’ouvre dans la fenêtre', () => {
+  const REPERTOIRE: readonly StaffMemberSummary[] = [
+    { id: 'staff-hasina', displayName: 'Hasina' },
+  ];
+
+  function ouvrirJournee(): void {
+    loadCalendarRangeAction.mockResolvedValue({ ok: true, data: { appointments: [] } });
+    loadDeskServiceStaffAction.mockResolvedValue({
+      ok: true,
+      data: { staff: REPERTOIRE.map((membre) => ({ ...membre, isActive: true })) },
+    });
+    renderBoard({ periods: { 'jour:2026-08-26': [] }, staff: REPERTOIRE });
+  }
+
+  /** Le bouton d'un créneau libre de la colonne de Hasina. */
+  function creneau(heure: string): HTMLElement {
+    return within(screen.getByRole('list', { name: /^Hasina/ })).getByRole('button', {
+      name: new RegExp(`^${heure}, libre — poser un rendez-vous`),
+    });
+  }
+
+  /** La région du tiroir — c'est elle qui porte la surimpression et le focus. */
+  function tiroir(): HTMLElement {
+    const titre = screen.getByRole('heading', { name: 'Nouveau rendez-vous' });
+    const region = titre.closest('aside');
+
+    if (region === null) {
+      throw new Error('le titre du tiroir n’est pas dans une région <aside>.');
+    }
+
+    return region;
+  }
+
+  it('pose le tiroir en surimpression et non dans le flux', async () => {
+    const user = userEvent.setup();
+    ouvrirJournee();
+
+    await user.click(creneau('08 h 00'));
+
+    // La classe est le contrat passé avec `styles/admin/calendar.css` : c'est
+    // elle qui sort le tiroir du flux et l'ancre au bord de la fenêtre.
+    expect(tiroir().classList.contains('spa-admin-calendar__drawer')).toBe(true);
+  });
+
+  it('fait entrer le focus dans le tiroir dès l’ouverture', async () => {
+    const user = userEvent.setup();
+    ouvrirJournee();
+
+    await user.click(creneau('08 h 00'));
+
+    // Sur la région et non sur le premier champ : son nom accessible est annoncé
+    // avant la saisie, et la tabulation suivante mène au premier contrôle.
+    expect(document.activeElement).toBe(tiroir());
+  });
+
+  it('referme sur Échap et rend le focus au créneau cliqué', async () => {
+    const user = userEvent.setup();
+    ouvrirJournee();
+
+    const declencheur = creneau('08 h 00');
+
+    await user.click(declencheur);
+    expect(screen.queryByRole('heading', { name: 'Nouveau rendez-vous' })).not.toBeNull();
+
+    await user.keyboard('{Escape}');
+
+    expect(screen.queryByRole('heading', { name: 'Nouveau rendez-vous' })).toBeNull();
+    // Le focus ne retombe pas sur le `<body>` : l'opératrice au clavier reprend
+    // sa tabulation là où elle l'avait laissée.
+    expect(document.activeElement).toBe(declencheur);
+  });
+
+  it('rend le focus au DERNIER créneau cliqué quand on ouvre sans refermer', async () => {
+    const user = userEvent.setup();
+    ouvrirJournee();
+
+    await user.click(creneau('08 h 00'));
+    const second = creneau('09 h 00');
+    await user.click(second);
+
+    // Le tiroir se remonte sur la nouvelle cible ; le déclencheur retenu est
+    // celui qu'on vient de cliquer, pas celui du premier clic.
+    await waitFor(() => {
+      expect(document.activeElement).toBe(tiroir());
+    });
+
+    await user.keyboard('{Escape}');
+
+    expect(document.activeElement).toBe(second);
+  });
+
+  /**
+   * Échap referme le tiroir **et** repose ce qui était saisi à la poignée.
+   *
+   * Le tiroir écoute Échap sur sa région ; le planning l'écoute sur la fenêtre
+   * pour reposer un rendez-vous saisi (#51). Couper la propagation depuis le
+   * tiroir empêchait le second de s'exécuter : la saisie restait armée derrière
+   * un tiroir refermé, tous les créneaux libres restaient des cibles de dépôt,
+   * et le clic suivant — censé poser un nouveau rendez-vous — déplaçait celui
+   * d'avant. Le nom accessible du créneau libre est la preuve la plus directe :
+   * il dit ce que le clic fera.
+   */
+  it('repose aussi le rendez-vous saisi à la poignée', async () => {
+    const user = userEvent.setup();
+    loadDeskServiceStaffAction.mockResolvedValue({ ok: true, data: { staff: [] } });
+    loadAppointmentNotificationsAction.mockResolvedValue({
+      ok: true,
+      data: { notifications: [] },
+    });
+    renderBoard();
+
+    await user.click(screen.getByRole('button', { name: 'Déplacer Rina Andriamana' }));
+    // La fiche d'un AUTRE bloc s'ouvre sans reposer la saisie : c'est le geste
+    // du comptoir — « attends, celui de 11 h, il est à quelle heure déjà ? ».
+    await user.click(screen.getByRole('button', { name: /^11:00 – 12:00 Lova Andrian/ }));
+
+    await user.keyboard('{Escape}');
+
+    const colonne = screen.getByRole('list', { name: /^Hasina/ });
+
+    expect(
+      within(colonne).getByRole('button', { name: /^08 h 00, libre/ }).textContent,
+    ).toContain('poser un rendez-vous');
+  });
+});

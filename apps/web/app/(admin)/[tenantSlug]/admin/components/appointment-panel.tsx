@@ -13,7 +13,17 @@ import {
   type ServiceStaffMember,
   type TimeZone,
 } from '@spa/shared';
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  // Aliasé : `KeyboardEvent` est aussi le type global du DOM, et c'est bien
+  // l'événement synthétique de React que le tiroir reçoit.
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
@@ -98,6 +108,26 @@ import { NotificationStatusList } from './notification-status-list';
  * Ce que l'avertissement ne fait plus, c'est **nommer la cause** : le 409 couvre
  * cinq refus différents et n'en distingue aucun (#611).
  *
+ * ## Le tiroir s'ouvre DANS la fenêtre (#617)
+ *
+ * Il était rendu dans le flux, sous la grille — à 1 290 px du haut de page en
+ * 1920 × 1080, soit 210 px sous la ligne de flottaison, et 480 px sous elle en
+ * 1280 × 800. Ni défilement, ni déplacement du focus : l'opératrice cliquait un
+ * créneau et voyait un écran rigoureusement identique.
+ *
+ * Il est donc posé en surimpression, ancré au bord de la fenêtre
+ * (`.spa-admin-calendar__drawer`), et le clavier y est conduit : le focus entre
+ * dans le tiroir à l'ouverture, Échap referme, et le planning rend le focus au
+ * créneau cliqué (`calendar-board.tsx`).
+ *
+ * **En surimpression et non en modale**, et c'est le point : le planning reste
+ * lisible ET manœuvrable pendant la saisie — c'est ce qui permet de proposer
+ * « et à 15 h, ça vous irait ? » sans rien fermer, et c'est pour cela que le
+ * tiroir reste un `<aside>`. Un `<dialog>` ouvert par `showModal()` rendrait la
+ * grille inerte, donc interdirait de cliquer un autre créneau sans refermer —
+ * un geste que ce composant sait faire (voir la `key` du tiroir, côté planning).
+ * Aucun voile n'est posé pour la même raison : il avalerait ces clics-là.
+ *
  * ## La prestation ne se change pas en édition
  *
  * `rescheduleAppointmentRequestSchema` n'accepte que `startsAt` et `staffId`, et
@@ -142,6 +172,8 @@ export function AppointmentPanel({
 }: AppointmentPanelProps) {
   const formId = useId();
   const editing = target.kind === 'edit' ? target.appointment : null;
+  // La région du tiroir — c'est elle qui prend le focus à l'ouverture (#617).
+  const drawerRef = useRef<HTMLElement | null>(null);
 
   // La fiche cliente n'est saisie qu'à la création : un report ne change pas de
   // cliente, et fabriquer ici un `CustomerSummary` à partir du résumé imbriqué du
@@ -496,6 +528,49 @@ export function AppointmentPanel({
     [editing, tenantSlug, onReload, onClose, refuse],
   );
 
+  /**
+   * Le focus entre dans le tiroir à son ouverture (#617).
+   *
+   * Sur le tiroir lui-même et non sur son premier champ : le nom accessible de
+   * la région est alors annoncé — « Nouveau rendez-vous » — avant la saisie, et
+   * la tabulation suivante mène au premier contrôle sans en sauter aucun. C'est
+   * aussi ce qui rend la fermeture par Échap atteignable tout de suite, le
+   * gestionnaire étant posé sur la région.
+   *
+   * Au montage seulement, et le montage suffit : le planning donne au tiroir une
+   * `key` par cible, donc cliquer un autre créneau le remonte.
+   */
+  useEffect(() => {
+    drawerRef.current?.focus();
+  }, []);
+
+  /**
+   * Échap referme, depuis n'importe où dans le tiroir.
+   *
+   * Le gestionnaire est posé sur la région et non sur la fenêtre : l'événement
+   * doit **provenir** du tiroir — ce qui est le cas dès l'ouverture, le focus y
+   * étant entré —, et non de n'importe où dans la page.
+   *
+   * La propagation n'est PAS coupée, et c'est délibéré. Le planning écoute Échap
+   * sur la fenêtre pour reposer un rendez-vous saisi à la poignée (#51), et un
+   * `stopPropagation()` ici l'empêchait de s'exécuter : ouvrir la fiche d'un
+   * autre bloc alors qu'un rendez-vous est saisi, puis refermer par Échap,
+   * laissait la saisie **armée** — tous les créneaux libres restaient des cibles
+   * de dépôt, et le clic suivant, censé poser un nouveau rendez-vous, déplaçait
+   * celui d'avant. Les deux gestes vont ensemble : Échap referme le tiroir et
+   * repose ce qui était saisi.
+   */
+  const closeOnEscape = useCallback(
+    (event: ReactKeyboardEvent<HTMLElement>): void => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+
+      onClose();
+    },
+    [onClose],
+  );
+
   const title =
     editing === null
       ? 'Nouveau rendez-vous'
@@ -508,7 +583,13 @@ export function AppointmentPanel({
   // interdirait de le marquer honoré ou non présenté.
   if (services.length === 0 && editing === null) {
     return (
-      <aside aria-labelledby={`${formId}-titre`} className="spa-admin-panel">
+      <aside
+        aria-labelledby={`${formId}-titre`}
+        className="spa-admin-calendar__drawer spa-admin-panel"
+        onKeyDown={closeOnEscape}
+        ref={drawerRef}
+        tabIndex={-1}
+      >
         <div className="spa-admin-panel__header">
           <h2 className="spa-admin-panel__title" id={`${formId}-titre`}>
             {title}
@@ -534,7 +615,13 @@ export function AppointmentPanel({
   }
 
   return (
-    <aside aria-labelledby={`${formId}-titre`} className="spa-admin-panel">
+    <aside
+      aria-labelledby={`${formId}-titre`}
+      className="spa-admin-calendar__drawer spa-admin-panel"
+      onKeyDown={closeOnEscape}
+      ref={drawerRef}
+      tabIndex={-1}
+    >
       <div className="spa-admin-panel__header">
         <h2 className="spa-admin-panel__title" id={`${formId}-titre`}>
           {title}
