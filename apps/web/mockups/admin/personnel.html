@@ -248,6 +248,44 @@
                   <span class="spa-visually-hidden">l’exception du 3 octobre</span>
                 </button>
               </li>
+              <!--
+                RETRAIT ARMÉ. Le retrait d'une exception est irréversible : ni les
+                dates ni le motif ne sont écrits ailleurs, et le praticien
+                redevient réservable sur la période dès le clic. Il demande donc
+                un second geste — ce que la désactivation d'une prestation ne
+                demande pas, elle que le même bouton annule.
+
+                La question s'ouvre SUR la ligne, sous les dates et le motif
+                qu'elle va effacer : deux exceptions ne sont séparées que de
+                8 px, et une question flottant en haut d'écran obligerait à
+                vérifier de laquelle il s'agit.
+              -->
+              <li class="spa-admin-schedule__exception">
+                <span class="spa-admin-schedule__exception-date">24 déc. 2026</span>
+                <span class="spa-admin-schedule__exception-label">Fermeture anticipée — Hasina Rakoto</span>
+                <button class="spa-button spa-button--quiet" type="button" disabled>
+                  <span class="spa-button__label">Retirer</span>
+                  <span class="spa-visually-hidden">l’exception du 24 décembre</span>
+                </button>
+                <div
+                  class="spa-admin-schedule__exception-confirm"
+                  role="alertdialog"
+                  aria-labelledby="titre-retrait-exception"
+                >
+                  <p class="spa-admin-schedule__exception-confirm-text" id="titre-retrait-exception">
+                    Retirer l’exception du 24 déc. 2026 (Fermeture anticipée)&nbsp;? Elle ne pourra
+                    pas être rétablie, et le praticien redeviendra réservable sur cette période.
+                  </p>
+                  <div class="spa-admin-schedule__exception-confirm-actions">
+                    <button class="spa-button spa-button--neutral" type="button">
+                      <span class="spa-button__label">Annuler</span>
+                    </button>
+                    <button class="spa-button spa-button--danger" type="button">
+                      <span class="spa-button__label">Retirer définitivement</span>
+                    </button>
+                  </div>
+                </div>
+              </li>
             </ul>
           </section>
 
