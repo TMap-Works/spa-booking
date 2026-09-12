@@ -164,6 +164,56 @@ describe('ce qu’un lecteur d’écran reçoit', () => {
   });
 });
 
+describe('ce qui déborde reste atteignable', () => {
+  // #616 : sur une carte plus étroite que le plancher de lisibilité du tracé, le
+  // canevas défile horizontalement et la fin de la période est hors cadre. Un
+  // conteneur de défilement sans descendant atteignable au clavier ne se
+  // manœuvre qu'à la souris (WCAG 2.1.1) : le SVG est l'arrêt de tabulation qui
+  // donne aux flèches de quoi défiler son conteneur.
+  for (const layout of ['colonnes', 'barres'] as const) {
+    it(`donne au tracé en ${layout} un arrêt de tabulation`, () => {
+      const { container } = render(
+        <ReportChart
+          bars={BARS}
+          emptyLabel="Aucun rendez-vous sur la période."
+          layout={layout}
+          seriesLabel="Rendez-vous"
+          summary="Nombre de rendez-vous par jour."
+          title="Rendez-vous par jour"
+          valueHeader="Rendez-vous"
+        />,
+      );
+
+      expect(container.querySelector('.spa-admin-chart__svg')?.getAttribute('tabindex')).toBe('0');
+    });
+  }
+
+  it('masque le tableau de lecture d’écran par une div, jamais par la table', () => {
+    // `.spa-visually-hidden` réduit sa boîte à 1 px et coupe ce qui dépasse. Une
+    // table en `table-layout: auto` ignore cette largeur — elle ne descend pas
+    // sous la largeur minimale de son contenu — et, posée en absolu, étendait la
+    // zone de défilement du document : 690 px de large sur un écran de 360 px.
+    // Le masque appartient donc à l'enveloppe, et la table reste une table.
+    const { container } = render(
+      <ReportChart
+        bars={BARS}
+        emptyLabel="Aucun rendez-vous sur la période."
+        layout="colonnes"
+        seriesLabel="Rendez-vous"
+        summary="Nombre de rendez-vous par jour."
+        title="Rendez-vous par jour"
+        valueHeader="Rendez-vous"
+      />,
+    );
+
+    const masque = container.querySelector('.spa-visually-hidden');
+
+    expect(masque?.tagName).toBe('DIV');
+    expect(masque?.querySelector('table')).toBeTruthy();
+    expect(container.querySelector('table.spa-visually-hidden')).toBeNull();
+  });
+});
+
 describe('la couleur ne porte jamais l’information seule', () => {
   it('marque la barre retenue par un liseré, pas seulement par sa teinte', () => {
     const { container } = render(

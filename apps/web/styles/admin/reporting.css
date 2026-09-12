@@ -125,22 +125,99 @@
 }
 
 /*
- * Le graphique déborde plutôt qu'il ne se comprime.
+ * Le graphique déborde plutôt qu'il ne se comprime — et il le dit (#616).
  *
  * Une période d'un an fait 366 colonnes : les faire tenir dans la largeur de
  * l'écran les réduirait à un trait d'un demi-pixel, et l'axe deviendrait
  * illisible. Le conteneur défile donc horizontalement, et le SVG garde une
  * largeur minimale sous laquelle il ne descend pas.
+ *
+ * Ce qui manquait, c'est **de quoi voir qu'il défile**. Sur une carte plus
+ * étroite que ce minimum — 452 px de canevas à 800 px de fenêtre, 284 px à
+ * 360 px —, la fin de la période est hors cadre, dont la journée que la gérante
+ * vient d'encaisser. Là où le navigateur peint ses barres de défilement en
+ * surimpression — macOS, tablette, et le navigateur sans-tête de la campagne de
+ * QA —, rien ne l'annonce : l'axe paraît simplement s'arrêter au 6 septembre,
+ * et c'est ce que la campagne a relevé.
+ *
+ * L'indice est donc peint par le conteneur lui-même, sans JavaScript et sans
+ * mesurer quoi que ce soit : deux ombres collées aux bords du **cadre**
+ * (`scroll`) et deux voiles de la couleur de la carte collés aux bords du
+ * **contenu** (`local`). Tant que le contenu tient, chaque voile couvre son
+ * ombre et rien ne paraît ; dès qu'il déborde, le voile s'en va avec lui et
+ * découvre l'ombre du côté où il reste quelque chose à lire — puis la recouvre
+ * quand on y arrive. Un graphe qui tient dans sa carte — 768 px et au-delà
+ * depuis #641 — est donc peint exactement comme avant.
+ *
+ * Le voile est opaque sur toute la largeur de l'ombre avant de s'éteindre :
+ * un dégradé qui commencerait à pâlir tout de suite en laisserait passer le
+ * cinquième, et le graphe porterait deux bandes grises en permanence.
+ *
+ * `overscroll-behavior-x` arrête la chaîne au bord du graphe : sur une tablette,
+ * poursuivre le geste une fois la dernière journée atteinte déclencherait le
+ * retour arrière du navigateur, et l'écran d'indicateurs disparaîtrait.
  */
 .spa-admin-chart__canvas {
   overflow-x: auto;
+  overscroll-behavior-x: contain;
+  background-image:
+    linear-gradient(
+      to right,
+      var(--spa-color-surface-raised) 0,
+      var(--spa-color-surface-raised) var(--spa-space-3),
+      transparent var(--spa-space-8)
+    ),
+    linear-gradient(
+      to left,
+      var(--spa-color-surface-raised) 0,
+      var(--spa-color-surface-raised) var(--spa-space-3),
+      transparent var(--spa-space-8)
+    ),
+    linear-gradient(to right, var(--spa-color-border), transparent),
+    linear-gradient(to left, var(--spa-color-border), transparent);
+  background-repeat: no-repeat;
+  background-position: left center, right center, left center, right center;
+  background-size:
+    var(--spa-space-8) 100%,
+    var(--spa-space-8) 100%,
+    var(--spa-space-3) 100%,
+    var(--spa-space-3) 100%;
+  background-attachment: local, local, scroll, scroll;
 }
 
+/*
+ * Le plancher de 30 rem est un plancher de **lisibilité**, pas une marge de
+ * confort : le texte du SVG est écrit en unités du `viewBox`, donc mis à
+ * l'échelle avec lui. Les 10 unités d'une étiquette d'axe font 6,7 px à 480 px
+ * de large, et 3,9 px si on laissait le tracé se réduire à la carte d'un
+ * téléphone. Le descendre échangerait des journées cachées contre un axe
+ * illisible — c'est le défilement, annoncé par le conteneur ci-dessus, qui
+ * tranche ce compromis.
+ */
 .spa-admin-chart__svg {
   display: block;
   inline-size: 100%;
   min-inline-size: 30rem;
   block-size: auto;
+}
+
+/*
+ * L'anneau de focus du tracé se dessine **à l'intérieur** de sa boîte.
+ *
+ * L'anneau global de `base.css` est posé en dehors (`outline-offset: 2px`), et
+ * le canevas n'a pas de remplissage : le SVG occupe exactement sa boîte de
+ * contenu, en largeur comme en hauteur. `overflow-x: auto` faisant aussi
+ * calculer `overflow-y` à `auto`, le conteneur coupe sur les quatre côtés —
+ * l'anneau tombait entièrement hors du cadre, et là où la barre de défilement
+ * est peinte en surimpression il ne restait rien à voir. Le tabulateur aurait
+ * gagné un arrêt sans savoir qu'il y était (#616, WCAG 2.4.7).
+ *
+ * Un décalage négatif de la largeur de l'anneau le rentre dans le tracé : ses
+ * bords haut et bas traversent alors tout le cadre, quel que soit l'endroit où
+ * l'on a défilé.
+ */
+.spa-admin-chart__svg:focus-visible {
+  outline-offset: calc(-1 * var(--spa-focus-ring-width));
 }
 
 .spa-admin-chart__empty {
