@@ -569,6 +569,77 @@
     max-block-size: 85dvh;
     border-radius: var(--spa-radius-lg) var(--spa-radius-lg) 0 0;
   }
+
+  /*
+   * La vue semaine défile au lieu d'être coupée.
+   *
+   * `flex: 1 1 0` partageait les 318 px de la carte entre sept jours : 34 px par
+   * colonne. « Lun 24 » s'y empilait une lettre par ligne — 10 px de large sur
+   * 43 de haut —, les noms de clientes tombaient à « R. », les heures à « 09:0 »,
+   * et le dimanche disparaissait sous l'`overflow: hidden` du corps, sans barre
+   * de défilement pour aller le chercher. Relevé en marge de #612, qui n'a pas pu
+   * le traiter : le correctif est ici, pas dans l'enveloppe du back-office.
+   *
+   * Sept jours ne tiennent pas dans un téléphone — c'est une donnée, pas un
+   * réglage. La colonne garde donc une largeur lisible et c'est la carte qui
+   * défile, comme le tableau du catalogue depuis #641 et pour la même raison :
+   * un contenu qu'on atteint en glissant vaut mieux qu'un contenu hors d'atteinte.
+   *
+   * La vue jour n'est pas concernée et n'est donc pas touchée : quatre praticiens
+   * y tiennent dans la carte, en-têtes lisibles et heures entières.
+   */
+  .spa-admin-calendar--week:not(.spa-admin-calendar--empty) {
+    overflow-x: auto;
+    /* Le geste s'arrête au bord de la grille au lieu de faire reculer l'historique
+     * de navigation, que le balayage horizontal déclenche sur tablette. */
+    overscroll-behavior-inline: contain;
+  }
+
+  /*
+   * Une largeur calculée, et surtout pas `max-content`.
+   *
+   * L'en-tête et le corps sont frères : ils défilent du même pas mais se
+   * dimensionnent chacun pour soi. Mesurés en `max-content`, ils tombaient sur
+   * deux largeurs différentes dès que leurs contenus différaient — l'en-tête
+   * s'élargissait sur « Aucun rendez-vous » quand le corps s'en tenait à ses
+   * colonnes, 122 px contre 88, et « Dim. 13 » finissait 202 px à droite du jour
+   * qu'il nomme. La maquette ne le montrait pas : ses libellés courts
+   * (« 2 RDV », « Fermé ») donnaient par hasard la même largeur des deux côtés.
+   *
+   * Une seule expression, posée sur les deux, les rend solidaires par
+   * construction. `min-inline-size: 100%` laisse la grille occuper toute la carte
+   * quand la semaine y tient — à 768 px les colonnes s'élargissent au lieu de
+   * laisser un vide à droite —, et les colonnes gardent leur `flex: 1 1 0` : elles
+   * se partagent une largeur désormais identique de part et d'autre.
+   *
+   * `7` est le nombre de jours d'une semaine, pas un réglage : la vue semaine rend
+   * toujours sept colonnes, fermetures comprises.
+   *
+   * Le corps garde son `overflow: hidden`, qui arrondit ses coins : il ne coupe
+   * plus rien puisqu'il fait désormais la largeur de ses colonnes.
+   */
+  .spa-admin-calendar--week:not(.spa-admin-calendar--empty) .spa-admin-calendar__head,
+  .spa-admin-calendar--week:not(.spa-admin-calendar--empty) .spa-admin-calendar__body {
+    inline-size: calc(var(--spa-admin-time-gutter) + 7 * 5.5rem);
+    min-inline-size: 100%;
+  }
+
+  /*
+   * La légende ne part pas avec la grille.
+   *
+   * Elle est dans la carte, donc dans le conteneur qui défile désormais : sans
+   * cette ligne, le premier geste vers le dimanche emportait les pastilles de
+   * statut hors de l'écran et laissait une bande vide au-dessus des colonnes.
+   * Or c'est la seule clé de lecture des couleurs des blocs — elle doit rester
+   * sous les yeux pendant qu'on parcourt la semaine.
+   *
+   * Collante sur l'axe en ligne seulement : rien n'est posé sur l'axe de bloc,
+   * la légende suit donc le défilement vertical de la page comme avant.
+   */
+  .spa-admin-calendar--week:not(.spa-admin-calendar--empty) .spa-admin-calendar__legend {
+    position: sticky;
+    inset-inline-start: 0;
+  }
 }
 
 /* --- Temps indisponible ---------------------------------------------------- */
