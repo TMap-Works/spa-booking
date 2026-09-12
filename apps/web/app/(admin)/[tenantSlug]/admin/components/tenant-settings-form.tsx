@@ -52,6 +52,31 @@ import { updateTenantSettingsAction } from '../actions';
  * conservées telles quelles et renvoyées avec les autres : l'écran n'édite que
  * ce qu'il montre, et ne détruit rien de ce qu'il ne montre pas.
  *
+ * ## Le nom accessible d'un champ d'horaire porte son jour
+ *
+ * La grille aligne 28 champs, et le libellé visible n'en distingue que quatre :
+ * « Ouverture 1 », « Fermeture 1 », « Ouverture 2 », « Fermeture 2 ». Le jour
+ * n'est lisible que dans la colonne d'à côté — c'est-à-dire à l'œil, et
+ * seulement à l'œil. Au clavier ou au lecteur d'écran, l'ouverture du lundi et
+ * celle du dimanche s'annonçaient donc à l'identique, sur les heures mêmes qui
+ * pilotent ce que la page publique affiche (#621).
+ *
+ * Chaque champ porte donc un `aria-label` qui nomme son jour — « Ouverture 1 du
+ * lundi » —, dans les mêmes termes que la semaine d'un praticien
+ * (`staff-schedule-editor.tsx` : « Début de la plage du lundi »). Là-bas le nom
+ * tient dans un `<label>` visuellement masqué, faute de libellé visible ; ici il
+ * en existe un, et c'est l'`aria-label` qui l'étend sans le répéter sept fois à
+ * l'écran. Le libellé visible **ouvre** le nom accessible, et ne s'y trouve pas
+ * seulement contenu : c'est ce que demande WCAG 2.5.3, sans quoi la commande
+ * vocale « Ouverture 1 » ne désignerait plus rien.
+ *
+ * Le libellé visible, lui, ne change pas : répéter le jour sept fois dans la
+ * colonne alourdirait une grille dont la lecture verticale est justement ce qui
+ * fait repérer le mercredi resté vide. Le jour est rattaché aux champs par un
+ * `role="group"` renvoyant au libellé de la ligne, ce qui donne au groupe le nom
+ * que le `<fieldset>` lui donnerait sans exposer la grille CSS aux réglages par
+ * défaut de cet élément.
+ *
  * ## Le slug n'est pas modifiable
  *
  * Il est l'adresse publique du salon : le changer casserait les liens partagés
@@ -66,6 +91,23 @@ const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 
 /** Plages éditables par jour — voir l'en-tête. */
 const RANGES_PER_DAY = 2;
+
+/**
+ * Le jour tel qu'on l'écrit, avec un repli qui se voit.
+ *
+ * `noUncheckedIndexedAccess` rend la lecture du `Record` optionnelle, et c'est
+ * heureux : un jour sans nom écrirait « undefined » dans le nom accessible d'un
+ * champ, c'est-à-dire dans ce que le lecteur d'écran annonce.
+ *
+ * Ce repli répète, mot pour mot, celui de `groupOpeningHoursByDay` dans
+ * `components/salon/opening-hours.ts`. La revue proposait de l'en extraire ; ce
+ * fichier est hors de l'empreinte de ce ticket, et deux autres agents écrivent
+ * dans `apps/web` en même temps. Le facteur commun part donc en issue de suivi
+ * plutôt qu'en rallonge de diff.
+ */
+function dayLabel(weekday: number): string {
+  return WEEKDAY_LABELS[weekday] ?? `Jour ${String(weekday)}`;
+}
 
 /**
  * Une borne horaire de la grille : vide, ou une heure murale.
@@ -359,36 +401,56 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
             permettent d’indiquer une coupure.
           </p>
           <div className="spa-admin-schedule">
-            {WEEKDAYS.map((weekday, dayIndex) => (
-            <div className="spa-admin-schedule__day" key={weekday}>
-              <p className="spa-admin-schedule__day-label">{WEEKDAY_LABELS[weekday]}</p>
-              <div className="spa-admin-schedule__ranges">
-              {Array.from({ length: RANGES_PER_DAY }, (_unused, rangeIndex) => (
-                <div className="spa-admin-schedule__range" key={rangeIndex}>
-                  <Field
-                    id={`tenant-hours-${String(weekday)}-${String(rangeIndex)}-opens`}
-                    label={`Ouverture ${String(rangeIndex + 1)}`}
-                    placeholder="09:00"
-                    inputMode="numeric"
-                    error={errors.days?.[dayIndex]?.ranges?.[rangeIndex]?.opensAt?.message}
-                    {...register(`days.${dayIndex}.ranges.${rangeIndex}.opensAt` as const)}
-                  />
-                  <Field
-                    id={`tenant-hours-${String(weekday)}-${String(rangeIndex)}-closes`}
-                    label={`Fermeture ${String(rangeIndex + 1)}`}
-                    placeholder="12:00"
-                    inputMode="numeric"
-                    error={
-                      errors.days?.[dayIndex]?.ranges?.[rangeIndex]?.closesAt?.message ??
-                      errors.days?.[dayIndex]?.ranges?.[rangeIndex]?.root?.message
-                    }
-                    {...register(`days.${dayIndex}.ranges.${rangeIndex}.closesAt` as const)}
-                  />
+            {WEEKDAYS.map((weekday, dayIndex) => {
+              const day = dayLabel(weekday);
+              const dayLabelId = `tenant-hours-${String(weekday)}-jour`;
+
+              return (
+                <div
+                  aria-labelledby={dayLabelId}
+                  className="spa-admin-schedule__day"
+                  key={weekday}
+                  role="group"
+                >
+                  <p className="spa-admin-schedule__day-label" id={dayLabelId}>
+                    {day}
+                  </p>
+                  <div className="spa-admin-schedule__ranges">
+                    {Array.from({ length: RANGES_PER_DAY }, (_unused, rangeIndex) => {
+                      const rank = String(rangeIndex + 1);
+                      const opens = `Ouverture ${rank}`;
+                      const closes = `Fermeture ${rank}`;
+
+                      return (
+                        <div className="spa-admin-schedule__range" key={rangeIndex}>
+                          <Field
+                            aria-label={`${opens} du ${day.toLowerCase()}`}
+                            id={`tenant-hours-${String(weekday)}-${String(rangeIndex)}-opens`}
+                            label={opens}
+                            placeholder="09:00"
+                            inputMode="numeric"
+                            error={errors.days?.[dayIndex]?.ranges?.[rangeIndex]?.opensAt?.message}
+                            {...register(`days.${dayIndex}.ranges.${rangeIndex}.opensAt` as const)}
+                          />
+                          <Field
+                            aria-label={`${closes} du ${day.toLowerCase()}`}
+                            id={`tenant-hours-${String(weekday)}-${String(rangeIndex)}-closes`}
+                            label={closes}
+                            placeholder="12:00"
+                            inputMode="numeric"
+                            error={
+                              errors.days?.[dayIndex]?.ranges?.[rangeIndex]?.closesAt?.message ??
+                              errors.days?.[dayIndex]?.ranges?.[rangeIndex]?.root?.message
+                            }
+                            {...register(`days.${dayIndex}.ranges.${rangeIndex}.closesAt` as const)}
+                          />
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
-              ))}
-              </div>
-            </div>
-          ))}
+              );
+            })}
           </div>
         </fieldset>
 
