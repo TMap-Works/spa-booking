@@ -83,11 +83,37 @@ describe('formulaire de coordonnées', () => {
     const message = screen.getByRole('alert');
 
     expect(message.textContent).toContain('format international');
+    // #626 — et sans l'indicatif d'aucun pays : un indicatif s'écrit toujours
+    // `+` suivi d'un chiffre, et ce motif-là ne doit pas reparaître ici, pas
+    // plus le « +261 » d'origine qu'un « +33 » écrit en dur à sa place.
+    expect(message.textContent).not.toMatch(/\+\s?\d/);
     // Le message est rattaché au champ, pas posé en bloc en haut de page.
     expect(screen.getByLabelText(/Téléphone/).getAttribute('aria-describedby')).toContain(
       message.id,
     );
     expect(screen.getByLabelText(/Téléphone/).getAttribute('aria-invalid')).toBe('true');
+  });
+
+  /**
+   * #626 — l'aide donnait « Format international, +261… », l'indicatif de
+   * Madagascar, à la cliente de n'importe quel salon, y compris lyonnais.
+   *
+   * Le test porte sur l'**absence d'indicatif**, pas sur la formule retenue :
+   * un indicatif de pays s'écrit toujours `+` suivi d'un chiffre, et c'est ce
+   * motif-là qui ne doit pas reparaître. Formulé ainsi, il refuserait tout
+   * autant un « +33 » écrit en dur — l'autre façon de mal corriger ce ticket.
+   *
+   * L'autre surface du ticket, le message d'erreur, est gardée par le test
+   * ci-dessus, qui la fait déjà apparaître : la redemander ici rejouerait le
+   * même formulaire pour la même assertion.
+   */
+  it('ne donne l’indicatif d’aucun pays dans l’aide du champ', () => {
+    renderContactStep();
+
+    const hint = document.getElementById('phone-hint');
+
+    expect(hint?.textContent).toMatch(/format international/);
+    expect(hint?.textContent).not.toMatch(/\+\s?\d/);
   });
 
   it('accepte un numéro international écrit avec des espaces', async () => {
