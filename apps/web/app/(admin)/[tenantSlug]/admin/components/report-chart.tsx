@@ -33,6 +33,17 @@ import type { ReactElement } from 'react';
  * 3. le tableau en lecture d'écran donne **tous** les chiffres, dans l'ordre des
  *    barres. C'est la seule forme du graphique qu'un lecteur non voyant reçoit,
  *    et c'est pour cela qu'il porte les valeurs et non un résumé.
+ *
+ * ## Ce qui déborde se défile, au clavier comme à la souris
+ *
+ * Sur une carte plus étroite que le plancher de lisibilité du tracé, le canevas
+ * défile horizontalement (`styles/admin/reporting.css`). Un conteneur de
+ * défilement dont aucun descendant n'est atteignable au clavier n'est
+ * manœuvrable qu'à la souris — la fin de la période resterait hors d'atteinte
+ * pour qui n'en a pas (#616, WCAG 2.1.1). Le SVG porte donc `tabindex="0"` :
+ * c'est lui qu'on atteint par tabulation, et les flèches défilent alors son
+ * conteneur. Le tabulateur y trouve un arrêt nommé — `role="img"` et son
+ * `<title>` — et l'anneau de focus global de `base.css` le montre.
  */
 
 /** Une barre : sa valeur, son étiquette, et ce qu'elle contient d'anormal. */
@@ -295,6 +306,7 @@ function ColumnChart({
     <svg
       className="spa-admin-chart__svg"
       role="img"
+      tabIndex={0}
       viewBox={`0 0 ${String(width)} ${String(height)}`}
     >
       <title>{title}</title>
@@ -380,6 +392,7 @@ function BarChart({ bars, title, summary }: ChartBodyProps): ReactElement {
     <svg
       className="spa-admin-chart__svg"
       role="img"
+      tabIndex={0}
       viewBox={`0 0 ${String(width)} ${String(height)}`}
     >
       <title>{title}</title>

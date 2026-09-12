@@ -164,6 +164,31 @@ describe('ce qu’un lecteur d’écran reçoit', () => {
   });
 });
 
+describe('ce qui déborde reste atteignable', () => {
+  // #616 : sur une carte plus étroite que le plancher de lisibilité du tracé, le
+  // canevas défile horizontalement et la fin de la période est hors cadre. Un
+  // conteneur de défilement sans descendant atteignable au clavier ne se
+  // manœuvre qu'à la souris (WCAG 2.1.1) : le SVG est l'arrêt de tabulation qui
+  // donne aux flèches de quoi défiler son conteneur.
+  for (const layout of ['colonnes', 'barres'] as const) {
+    it(`donne au tracé en ${layout} un arrêt de tabulation`, () => {
+      const { container } = render(
+        <ReportChart
+          bars={BARS}
+          emptyLabel="Aucun rendez-vous sur la période."
+          layout={layout}
+          seriesLabel="Rendez-vous"
+          summary="Nombre de rendez-vous par jour."
+          title="Rendez-vous par jour"
+          valueHeader="Rendez-vous"
+        />,
+      );
+
+      expect(container.querySelector('.spa-admin-chart__svg')?.getAttribute('tabindex')).toBe('0');
+    });
+  }
+});
+
 describe('la couleur ne porte jamais l’information seule', () => {
   it('marque la barre retenue par un liseré, pas seulement par sa teinte', () => {
     const { container } = render(
