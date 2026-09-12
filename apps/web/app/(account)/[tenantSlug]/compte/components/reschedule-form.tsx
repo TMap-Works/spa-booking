@@ -1,18 +1,14 @@
 'use client';
 
-import { ERROR_CODES, type AvailabilityResponse, type TimeZone } from '@spa/shared';
+import { ERROR_CODES, type AvailabilityResponse, type TimeZone, type UtcInstant } from '@spa/shared';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 
+import { SlotPicker } from '@/components/booking/slot-picker';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
-import {
-  formatCalendarDate,
-  formatDateTimeInTimeZone,
-  formatTimeInTimeZone,
-  timeZoneMention,
-} from '@/lib/format';
+import { formatDateTimeInTimeZone, timeZoneMention } from '@/lib/format';
 
 import { rescheduleOwnAppointmentAction } from '../actions';
 import { accountPath } from '../paths';
@@ -29,6 +25,21 @@ import { accountPath } from '../paths';
  * praticien). Il n'y a donc qu'un choix à faire, et l'écran ne montre que
  * celui-là : les créneaux que le calendrier propose pour **cette** prestation
  * chez **ce** praticien.
+ *
+ * ## Le sélecteur de créneau est celui du tunnel (#622)
+ *
+ * Il l'était par l'intention et pas par le code : cet écran dépliait les quinze
+ * journées d'un coup, toutes leurs heures visibles, sans bande de journées ni
+ * regroupement Matin / Après-midi / Soir. Mesuré à 360 px, cela faisait 4 960 px
+ * de haut — six hauteurs d'écran — et le bouton de validation restait deux mille
+ * pixels sous le créneau qu'on venait de choisir : rien à l'écran ne disait
+ * comment poursuivre.
+ *
+ * C'est maintenant [`SlotPicker`](../../../../../components/booking/slot-picker.tsx),
+ * le composant de l'étape 3 du tunnel, qui rend le choix : une bande de journées
+ * compacte, puis la grille d'**une seule** journée. Le même geste se fait donc au
+ * même endroit, au clavier comme à la souris, et une correction apportée à l'un
+ * des deux écrans profite à l'autre.
  *
  * ## Le créneau actuel se montre, il ne se choisit pas (#442)
  *
@@ -69,17 +80,21 @@ export function RescheduleForm({
   timeZone,
 }: RescheduleFormProps) {
   const router = useRouter();
-  const [chosen, setChosen] = useState<string | null>(null);
+  const [chosen, setChosen] = useState<UtcInstant | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<{ title: string; message: string } | null>(null);
 
   const mention = timeZoneMention(timeZone);
-  const openDays = availability.days.filter((day) => day.slots.length > 0);
 
   // Comparaison d'instants et non de chaînes : rien ne garantit que le
   // calendrier et l'historique écrivent le même moment avec la même précision,
   // et « …T14:00:00Z » ne s'égale pas à « …T14:00:00.000Z ».
   const currentInstant = Date.parse(currentStartsAt);
+  const currentSlotNote = useCallback(
+    (startsAt: UtcInstant): string | null =>
+      Date.parse(startsAt) === currentInstant ? 'actuel' : null,
+    [currentInstant],
+  );
 
   const confirm = async (): Promise<void> => {
     // Deux verrous : celui-ci et le `disabled` du bouton. Un double clic ne doit
@@ -137,45 +152,24 @@ export function RescheduleForm({
         </Notification>
       )}
 
-      {openDays.length === 0 ? (
-        <div className="spa-empty-state">
-          <p className="spa-empty-state__title">Aucun créneau disponible</p>
-          <p className="spa-empty-state__description">
-            Le calendrier ne propose rien pour cette prestation dans les prochaines semaines.
-            Contactez le salon pour convenir d’une autre date.
-          </p>
-        </div>
-      ) : (
-        <div className="spa-reschedule">
-          {openDays.map((day) => (
-            <div className="spa-reschedule__day" key={day.date}>
-              <h3 className="spa-reschedule__date">{formatCalendarDate(day.date)}</h3>
-              <ul className="spa-reschedule__slots">
-                {day.slots.map((slot) => {
-                  const isCurrent = Date.parse(slot.startsAt) === currentInstant;
-
-                  return (
-                    <li key={slot.startsAt}>
-                      <button
-                        type="button"
-                        className={`spa-reschedule__slot${
-                          chosen === slot.startsAt ? ' spa-reschedule__slot--chosen' : ''
-                        }`}
-                        aria-pressed={chosen === slot.startsAt}
-                        disabled={submitting || isCurrent}
-                        onClick={() => setChosen(slot.startsAt)}
-                      >
-                        {formatTimeInTimeZone(slot.startsAt, timeZone)}
-                        {isCurrent ? ' (actuel)' : null}
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
+      <SlotPicker
+        days={availability.days}
+        timeZone={timeZone}
+        headingId="report-creneaux-titre"
+        selectedSlot={chosen}
+        lockedSlotNote={currentSlotNote}
+        busy={submitting}
+        onChoose={setChosen}
+        emptyState={
+          <div className="spa-empty-state">
+            <p className="spa-empty-state__title">Aucun créneau disponible</p>
+            <p className="spa-empty-state__description">
+              Le calendrier ne propose rien pour cette prestation dans les prochaines semaines.
+              Contactez le salon pour convenir d’une autre date.
+            </p>
+          </div>
+        }
+      />
 
       <div className="spa-account__actions">
         <Button

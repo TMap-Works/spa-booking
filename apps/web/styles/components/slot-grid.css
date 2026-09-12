@@ -163,6 +163,57 @@
 }
 
 /*
+ * Le créneau retenu, quand l'écran en retient un avant de confirmer — le report
+ * d'un rendez-vous. `aria-pressed` porte l'état pour les technologies
+ * d'assistance ; la bordure épaissie le porte pour qui ne distingue pas la
+ * teinte, la couleur seule ne suffisant jamais (WCAG 1.4.1).
+ *
+ * Le tunnel, lui, avance dès le clic : ses créneaux ne portent pas l'attribut, et
+ * cette règle ne les atteint pas.
+ */
+.spa-slot-grid__cell .spa-button[aria-pressed='true'] {
+  background-color: var(--spa-color-accent);
+  border-color: var(--spa-color-accent);
+  border-width: 2px;
+  color: var(--spa-color-text-on-accent);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+/*
+ * Le créneau rendu mais non choisissable — l'heure actuelle du rendez-vous qu'on
+ * déplace, ou tous les créneaux le temps qu'un report parte.
+ *
+ * `aria-disabled` et non `:disabled` : le bouton reste focalisable, faute de quoi
+ * il ferait un trou dans le parcours des flèches. Même règle, même lecture que
+ * les journées complètes de la barre de dates.
+ */
+.spa-slot-grid__cell .spa-button[aria-disabled='true'] {
+  background-color: var(--spa-color-disabled-surface);
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  cursor: not-allowed;
+}
+
+/*
+ * Le mot qui dit pourquoi — « actuel ». Empilé sous l'heure comme le compte de
+ * créneaux l'est sous le jour dans la barre de dates : une cellule de grille fait
+ * 4,5 rem à 360 px, et « 14:00 (actuel) » sur une ligne la ferait déborder.
+ *
+ * L'empilement se joue sur `.spa-button__label`, seul enfant de flux du bouton.
+ */
+.spa-slot-grid__cell .spa-button[aria-disabled='true'] .spa-button__label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spa-space-1);
+}
+
+.spa-slot-grid__note {
+  font-size: var(--spa-font-size-xs);
+  white-space: nowrap;
+}
+
+/*
  * `scroll-margin` — la dernière ligne de « Focus visible » du document de
  * conception : *« la grille défile pour garder le créneau focalisé dans le
  * viewport (scroll-margin sous l'en-tête et au-dessus de la barre collante) »*.
