@@ -1,7 +1,7 @@
-import type { ServiceCategory } from '@spa/shared';
+import { hasAtLeastRole, type ServiceCategory, type SessionUser } from '@spa/shared';
 import Link from 'next/link';
 
-import { fetchServiceCategories } from '@/lib/api-client';
+import { fetchOwnProfile, fetchServiceCategories } from '@/lib/api-client';
 
 import { CategoryManager } from '../../components/category-manager';
 import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
@@ -13,6 +13,11 @@ import { adminCatalogPath, adminServiceCategoriesPath } from '../../paths';
  * `activeOnly` n'est pas posé : c'est l'écran où l'on vient remettre en ligne une
  * rubrique retirée, et la masquer inviterait à en recréer une du même nom — pour
  * se heurter au conflit d'unicité de son slug.
+ *
+ * La liste se lit au rang praticien, ses écritures non : `POST` et
+ * `PATCH /v1/service-categories` sont `@AuthAtLeast('MANAGER')`. Le rang est donc
+ * lu ici et descendu au gestionnaire, qui retire ce qu'il ne sert à rien
+ * d'offrir (#619).
  */
 
 export const dynamic = 'force-dynamic';
@@ -29,8 +34,12 @@ export default async function ServiceCategoriesPage({ params }: CategoriesPagePr
   );
 
   let categories: ServiceCategory[];
+  let profile: SessionUser;
   try {
-    categories = await fetchServiceCategories(accessToken);
+    [categories, profile] = await Promise.all([
+      fetchServiceCategories(accessToken),
+      fetchOwnProfile(accessToken),
+    ]);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, {
       deniedTitle: 'Accès réservé',
@@ -57,7 +66,11 @@ export default async function ServiceCategoriesPage({ params }: CategoriesPagePr
         </p>
       </div>
 
-      <CategoryManager tenantSlug={tenantSlug} categories={categories} />
+      <CategoryManager
+        tenantSlug={tenantSlug}
+        categories={categories}
+        canManage={hasAtLeastRole(profile.role, 'manager')}
+      />
     </section>
   );
 }

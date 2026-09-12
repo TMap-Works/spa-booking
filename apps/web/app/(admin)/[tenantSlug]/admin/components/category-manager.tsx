@@ -36,6 +36,14 @@ import { CatalogStatusBadge } from './catalog-status-badge';
  * C'est ici qu'on vient les rechercher pour les remettre en ligne. Les masquer
  * ferait croire qu'elles ont disparu et inviterait à en recréer une du même nom
  * — pour se heurter au conflit d'unicité du slug.
+ *
+ * ## Ce que le rang praticien voit
+ *
+ * La liste, et rien d'autre : `POST` et `PATCH /v1/service-categories` sont
+ * `@AuthAtLeast('MANAGER')`. Le formulaire de création et la colonne « Actions »
+ * disparaissent donc pour ce rôle — comme la colonne « Actions » de la liste du
+ * personnel — et une mention dit pourquoi (#619). Ce filtrage ne protège rien :
+ * la seule garde qui compte est celle de l'API.
  */
 
 const categoryFormSchema = z.object({
@@ -224,9 +232,16 @@ function CategoryActivationButton({
 export function CategoryManager({
   tenantSlug,
   categories,
+  canManage = true,
 }: {
   readonly tenantSlug: string;
   readonly categories: readonly ServiceCategory[];
+  /**
+   * `false` au rang praticien : la création, le renommage et la bascule
+   * d'activité sont toutes `@AuthAtLeast('MANAGER')`. La liste reste lisible,
+   * ses commandes disparaissent.
+   */
+  readonly canManage?: boolean;
 }) {
   // Une seule rubrique s'édite à la fois : deux formulaires ouverts sur la même
   // liste inviteraient à en enregistrer un et à perdre l'autre sans le voir.
@@ -234,12 +249,18 @@ export function CategoryManager({
 
   return (
     <div className="spa-admin__content">
-      <section className="spa-admin__section" aria-labelledby="rubrique-nouvelle">
-        <h2 className="spa-admin__section-title" id="rubrique-nouvelle">
-          Nouvelle rubrique
-        </h2>
-        <CategoryForm tenantSlug={tenantSlug} onDone={() => setEditing(null)} />
-      </section>
+      {canManage ? (
+        <section className="spa-admin__section" aria-labelledby="rubrique-nouvelle">
+          <h2 className="spa-admin__section-title" id="rubrique-nouvelle">
+            Nouvelle rubrique
+          </h2>
+          <CategoryForm tenantSlug={tenantSlug} onDone={() => setEditing(null)} />
+        </section>
+      ) : (
+        <p className="spa-admin-toolbar__hint">
+          La création et la modification des rubriques sont réservées au rang gérant.
+        </p>
+      )}
 
       <section className="spa-admin__section" aria-labelledby="rubriques-existantes">
         <h2 className="spa-admin__section-title" id="rubriques-existantes">
@@ -270,9 +291,11 @@ export function CategoryManager({
                 <th className="spa-admin-table__head" scope="col">
                   État
                 </th>
-                <th className="spa-admin-table__head" scope="col">
-                  Actions
-                </th>
+                {canManage ? (
+                  <th className="spa-admin-table__head" scope="col">
+                    Actions
+                  </th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
@@ -280,7 +303,7 @@ export function CategoryManager({
                 <tr className="spa-admin-table__row" key={category.id}>
                   <td className="spa-admin-table__cell">
                     {category.name}
-                    {editing === category.id ? (
+                    {canManage && editing === category.id ? (
                       <CategoryForm
                         tenantSlug={tenantSlug}
                         category={category}
@@ -292,17 +315,19 @@ export function CategoryManager({
                   <td className="spa-admin-table__cell">
                     <CatalogStatusBadge isActive={category.isActive} />
                   </td>
-                  <td className="spa-admin-table__cell">
-                    <Button
-                      variant="quiet"
-                      aria-expanded={editing === category.id}
-                      onClick={() => setEditing(editing === category.id ? null : category.id)}
-                    >
-                      {editing === category.id ? 'Fermer' : 'Modifier'}
-                      <span className="spa-visually-hidden"> {category.name}</span>
-                    </Button>
-                    <CategoryActivationButton tenantSlug={tenantSlug} category={category} />
-                  </td>
+                  {canManage ? (
+                    <td className="spa-admin-table__cell">
+                      <Button
+                        variant="quiet"
+                        aria-expanded={editing === category.id}
+                        onClick={() => setEditing(editing === category.id ? null : category.id)}
+                      >
+                        {editing === category.id ? 'Fermer' : 'Modifier'}
+                        <span className="spa-visually-hidden"> {category.name}</span>
+                      </Button>
+                      <CategoryActivationButton tenantSlug={tenantSlug} category={category} />
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>

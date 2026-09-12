@@ -1,9 +1,17 @@
-import type { Service, ServiceCategory, ServiceStaffMember, StaffMember } from '@spa/shared';
+import {
+  hasAtLeastRole,
+  type Service,
+  type ServiceCategory,
+  type ServiceStaffMember,
+  type SessionUser,
+  type StaffMember,
+} from '@spa/shared';
 import Link from 'next/link';
 
 import { Notification } from '@/components/ui/notification';
 import {
   ApiClientError,
+  fetchOwnProfile,
   fetchService,
   fetchServiceCategories,
   fetchServiceStaff,
@@ -44,6 +52,14 @@ import { adminCatalogPath, adminCatalogPreviewPath, adminServicePath } from '../
  * fiche de l'établissement, le back-office est justement l'endroit où on la
  * retrouve, et l'API accepte de l'affecter. Le panneau la propose donc, en
  * disant qu'elle est désactivée plutôt qu'en la masquant.
+ *
+ * ## Le rang qui écrit n'est pas celui qui ouvre la fiche
+ *
+ * `GET /v1/services/{id}` se lit dès le rang praticien ; l'enregistrement du
+ * formulaire et l'affectation d'un praticien sont, eux, `@AuthAtLeast('MANAGER')`.
+ * Le profil est donc lu ici et descendu aux deux panneaux, qui rendent la fiche
+ * en lecture seule plutôt que de faire découvrir le refus à la soumission
+ * (#619).
  */
 
 export const dynamic = 'force-dynamic';
@@ -63,12 +79,14 @@ export default async function ServicePage({ params }: ServicePageProps) {
   let categories: ServiceCategory[];
   let assigned: ServiceStaffMember[];
   let staff: StaffMember[];
+  let profile: SessionUser;
   try {
-    [service, categories, assigned, staff] = await Promise.all([
+    [service, categories, assigned, staff, profile] = await Promise.all([
       fetchService(accessToken, serviceId),
       fetchServiceCategories(accessToken, { activeOnly: true }),
       fetchServiceStaff(accessToken, serviceId),
       fetchStaffMembers(accessToken),
+      fetchOwnProfile(accessToken),
     ]);
   } catch (error) {
     // Un 404 est le cas d'une prestation d'un autre établissement autant que
@@ -106,6 +124,7 @@ export default async function ServicePage({ params }: ServicePageProps) {
   // Personnel —, actives d'abord puis `localeCompare` en `fr-FR`.
   const affected = new Set(assigned.map((member) => member.id));
   const candidates = sortStaffMembers(staff.filter((member) => !affected.has(member.id)));
+  const canManage = hasAtLeastRole(profile.role, 'manager');
 
   return (
     <section aria-labelledby="prestation-titre">
@@ -140,12 +159,14 @@ export default async function ServicePage({ params }: ServicePageProps) {
           serviceId={service.id}
           assigned={assigned}
           candidates={candidates}
+          canManage={canManage}
         />
         <ServiceForm
           tenantSlug={tenantSlug}
           currency={service.price.currency}
           categories={categories}
           service={service}
+          canManage={canManage}
         />
       </div>
     </section>

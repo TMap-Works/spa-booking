@@ -1,7 +1,7 @@
-import type { Service } from '@spa/shared';
+import { hasAtLeastRole, type Service, type SessionUser } from '@spa/shared';
 import Link from 'next/link';
 
-import { fetchServices } from '@/lib/api-client';
+import { fetchOwnProfile, fetchServices } from '@/lib/api-client';
 import { formatDuration, formatMoney } from '@/lib/format';
 
 import { CatalogStatusBadge } from '../components/catalog-status-badge';
@@ -34,7 +34,34 @@ import {
  * existe pour l'autre besoin — vérifier ce que la cliente voit —, et il passe
  * par l'URL plutôt que par un état local, de sorte qu'un lien vers la vue
  * filtrée se partage et survive à un rafraîchissement.
+ *
+ * ## Le rôle décide de ce que l'écran propose, il ne protège rien
+ *
+ * `POST` et `PATCH /v1/services` sont `@AuthAtLeast('MANAGER')`, quand la lecture
+ * s'ouvre dès le rang praticien. Offrir « Nouvelle prestation » et les bascules
+ * d'activité à un compte `staff`, c'était lui faire découvrir le refus après
+ * coup — neuf champs saisis, puis « Droits insuffisants » (#619). La colonne
+ * « Actions » disparaît donc pour ce rôle, comme sur la liste du personnel, et la
+ * barre d'outils dit pourquoi plutôt que de faire disparaître sans un mot. La
+ * seule garde qui compte reste celle de l'API, qu'aucun front ne contourne.
  */
+
+/**
+ * Ce que dit l'écran vide, selon le filtre **et** selon ce que le rôle peut
+ * faire : inviter une praticienne à créer une prestation, c'est lui proposer
+ * exactement le geste que l'API refusera.
+ */
+function emptyCatalogDescription(activeOnly: boolean, canManage: boolean): string {
+  if (activeOnly) {
+    return canManage
+      ? 'Toutes les prestations du salon sont désactivées : la page publique n’en propose aucune. Retirez le filtre pour les retrouver et en réactiver une.'
+      : 'Toutes les prestations du salon sont désactivées : la page publique n’en propose aucune. Retirez le filtre pour les retrouver — leur réactivation est réservée au rang gérant.';
+  }
+
+  return canManage
+    ? 'Créez votre première prestation pour que la page publique du salon propose quelque chose à réserver.'
+    : 'Aucune prestation n’est enregistrée : la page publique du salon ne propose rien à réserver. La création d’une prestation est réservée au rang gérant.';
+}
 
 export const dynamic = 'force-dynamic';
 
@@ -55,8 +82,14 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
   );
 
   let services: Service[];
+  let profile: SessionUser;
   try {
-    services = await fetchServices(accessToken, { activeOnly });
+    // Deux lectures indépendantes : les enchaîner ajouterait un aller-retour à
+    // l'ouverture de l'écran.
+    [services, profile] = await Promise.all([
+      fetchServices(accessToken, { activeOnly }),
+      fetchOwnProfile(accessToken),
+    ]);
   } catch (error) {
     return adminLoadFailure(error, tenantSlug, {
       deniedTitle: 'Accès réservé',
@@ -65,6 +98,8 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
       failedTitle: 'Catalogue indisponible',
     });
   }
+
+  const canManage = hasAtLeastRole(profile.role, 'manager');
 
   return (
     <section aria-labelledby="catalogue-titre">
@@ -97,9 +132,15 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
           <Link className="spa-button spa-button--neutral" href={adminCatalogPreviewPath(tenantSlug)}>
             Aperçu public
           </Link>
-          <Link className="spa-button spa-button--accent" href={adminNewServicePath(tenantSlug)}>
-            Nouvelle prestation
-          </Link>
+          {canManage ? (
+            <Link className="spa-button spa-button--accent" href={adminNewServicePath(tenantSlug)}>
+              Nouvelle prestation
+            </Link>
+          ) : (
+            <span className="spa-admin-toolbar__hint">
+              La création et la modification des prestations sont réservées au rang gérant.
+            </span>
+          )}
         </div>
       </div>
 
@@ -109,9 +150,7 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
             {activeOnly ? 'Aucune prestation en ligne' : 'Catalogue vide'}
           </p>
           <p className="spa-empty-state__description">
-            {activeOnly
-              ? 'Toutes les prestations du salon sont désactivées : la page publique n’en propose aucune. Retirez le filtre pour les retrouver et en réactiver une.'
-              : 'Créez votre première prestation pour que la page publique du salon propose quelque chose à réserver.'}
+            {emptyCatalogDescription(activeOnly, canManage)}
           </p>
         </div>
       ) : (
@@ -145,9 +184,11 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
                 <th className="spa-admin-table__head" scope="col">
                   État
                 </th>
-                <th className="spa-admin-table__head" scope="col">
-                  Actions
-                </th>
+                {canManage ? (
+                  <th className="spa-admin-table__head" scope="col">
+                    Actions
+                  </th>
+                ) : null}
               </tr>
             </thead>
             <tbody>
@@ -176,9 +217,11 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
                   <td className="spa-admin-table__cell">
                     <CatalogStatusBadge isActive={service.isActive} />
                   </td>
-                  <td className="spa-admin-table__cell">
-                    <ServiceActivationButton tenantSlug={tenantSlug} service={service} />
-                  </td>
+                  {canManage ? (
+                    <td className="spa-admin-table__cell">
+                      <ServiceActivationButton tenantSlug={tenantSlug} service={service} />
+                    </td>
+                  ) : null}
                 </tr>
               ))}
             </tbody>
