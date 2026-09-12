@@ -577,6 +577,48 @@
               </div>
             </div>
           </section>
+
+          <!--
+            LE TIROIR, TEL QU'IL S'OUVRE (#617). Un clic sur un créneau libre ou
+            sur un bloc ouvre la fiche EN SURIMPRESSION, ancrée au bord de la
+            fenêtre — d'où sa position flottante sur cette page, qui est bien ce
+            que l'écran fait. Rendue dans le flux, elle tombait 210 px sous la
+            ligne de flottaison en 1920 × 1080 et 480 px sous elle en 1280 × 800 :
+            l'opératrice cliquait et croyait que rien ne s'était passé.
+
+            Aucun voile derrière : le planning reste lisible ET cliquable pendant
+            la saisie, c'est la raison d'être du tiroir plutôt que de la modale.
+            Le formulaire complet a son propre écran — voir rendez-vous.html.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-tiroir">
+            <h2 class="spa-admin__section-title" id="titre-tiroir">Tiroir ouvert</h2>
+
+            <aside class="spa-admin-calendar__drawer spa-admin-panel" aria-labelledby="tiroir-titre">
+              <div class="spa-admin-panel__header">
+                <h3 class="spa-admin-panel__title" id="tiroir-titre">Nouveau rendez-vous</h3>
+                <button class="spa-button spa-button--quiet" type="button">
+                  <span class="spa-button__label" aria-hidden="true">×</span>
+                  <span class="spa-visually-hidden">Fermer le tiroir</span>
+                </button>
+              </div>
+
+              <div class="spa-admin-panel__body">
+                <p>
+                  Mercredi 26 août, 08 h 00 — Hasina R. Le formulaire de saisie est détaillé
+                  sur l’écran « Rendez-vous ».
+                </p>
+              </div>
+
+              <div class="spa-admin-panel__footer">
+                <button class="spa-button spa-button--neutral" type="button">
+                  <span class="spa-button__label">Annuler</span>
+                </button>
+                <button class="spa-button spa-button--accent" type="button">
+                  <span class="spa-button__label">Enregistrer</span>
+                </button>
+              </div>
+            </aside>
+          </section>
         </main>
       </div>
     </div>

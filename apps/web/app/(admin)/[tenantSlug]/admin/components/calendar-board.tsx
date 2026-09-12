@@ -205,6 +205,10 @@ export function CalendarBoard({
   } | null>(null);
 
   const columnsRef = useRef<HTMLDivElement | null>(null);
+  // Le contrôle qui a ouvert le tiroir — le créneau libre ou le bloc cliqué. Le
+  // focus y retourne à la fermeture : sans lui, Échap laisserait le curseur sur
+  // le `<body>` et l'opératrice au clavier repartirait du haut de la page (#617).
+  const openerRef = useRef<HTMLElement | null>(null);
   // La requête en cours, et non seulement sa clé : un second appel sur la même
   // période s'y **greffe** au lieu d'abandonner. Voir `load`.
   const inFlight = useRef<Map<string, Promise<CalendarLoadResult>>>(new Map());
@@ -518,6 +522,47 @@ export function CalendarBoard({
     },
     [moving, confirming, timeZone, replaceAppointment, commitMove],
   );
+
+  /**
+   * Ouvre le tiroir en retenant d'où on l'a ouvert (#617).
+   *
+   * Le tiroir est en surimpression depuis ce ticket : il ne se trouve plus en
+   * faisant défiler la page, et le clavier doit donc être conduit — le focus y
+   * entre à l'ouverture (`AppointmentPanel`) et revient ici à la fermeture.
+   *
+   * `document.activeElement` et non l'élément de l'événement : un clic souris
+   * comme une validation au clavier laissent tous deux le focus sur le bouton
+   * cliqué, et c'est ce contrôle-là — pas son conteneur — qu'il faut retrouver.
+   * Le déclencheur est **remplacé** quand on ouvre un autre créneau sans avoir
+   * refermé : c'est le dernier cliqué que l'opératrice cherche des yeux.
+   */
+  const openTarget = useCallback((next: DeskTarget): void => {
+    const active = globalThis.document.activeElement;
+
+    openerRef.current = active instanceof HTMLElement ? active : null;
+    setTarget(next);
+  }, []);
+
+  /**
+   * Le focus revient au déclencheur quand le tiroir se referme (#617).
+   *
+   * `isConnected` parce que le planning se relit après une écriture : le créneau
+   * libre d'où l'on est parti peut avoir été remplacé par le bloc qu'on vient de
+   * poser, et rendre le focus à un nœud détaché le renverrait au `<body>`.
+   */
+  useEffect(() => {
+    if (target !== null) {
+      return;
+    }
+
+    const opener = openerRef.current;
+
+    openerRef.current = null;
+
+    if (opener !== null && opener.isConnected) {
+      opener.focus();
+    }
+  }, [target]);
 
   /** Échap repose le rendez-vous saisi à la poignée, sans rien déplacer. */
   useEffect(() => {
@@ -873,7 +918,7 @@ export function CalendarBoard({
                     column={column}
                     drag={drag}
                     key={column.id}
-                    onOpen={setTarget}
+                    onOpen={openTarget}
                     slotCount={board.slotCount}
                     visible={visible}
                   />
