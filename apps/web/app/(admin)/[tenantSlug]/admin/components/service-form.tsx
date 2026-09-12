@@ -54,6 +54,16 @@ import { createServiceAction, updateServiceAction } from '../catalogue/actions';
  * gérante doit la voir avant d'enregistrer. Elle reste en lecture seule : un
  * quatrième champ divergerait de ses trois termes au premier enregistrement
  * partiel.
+ *
+ * ## Ce que le rang praticien en voit
+ *
+ * Tout, en lecture seule. `POST` et `PATCH /v1/services` sont
+ * `@AuthAtLeast('MANAGER')` : laisser les champs vifs et le bouton actif, c'était
+ * faire saisir neuf champs pour rendre « Droits insuffisants » (#619). Les champs
+ * sont donc grisés et le bouton cède la place à la raison — c'est le geste déjà
+ * écrit dans l'éditeur d'horaires du personnel, et il vaut mieux que la fiche
+ * disparaisse : une praticienne a besoin de lire la durée et le prix de ce
+ * qu'elle pratique.
  */
 
 /** Chaîne d'entiers positifs — le contrôle le plus proche de la saisie réelle. */
@@ -97,6 +107,14 @@ interface ServiceFormProps {
   readonly categories: readonly ServiceCategory[];
   /** Absente, le formulaire crée ; présente, il modifie. */
   readonly service?: Service;
+  /**
+   * `false` au rang praticien : `POST` et `PATCH /v1/services` sont
+   * `@AuthAtLeast('MANAGER')`. La fiche reste lisible — durée, tampons, prix,
+   * rubrique — mais ses champs sont inertes et le bouton d'enregistrement cède
+   * la place à la raison, sur le modèle de l'éditeur d'horaires du personnel
+   * (#619).
+   */
+  readonly canManage?: boolean;
 }
 
 /**
@@ -112,7 +130,13 @@ function minutesOf(value: string): number {
   return /^\d+$/.test(digits) ? Number(digits) : 0;
 }
 
-export function ServiceForm({ tenantSlug, currency, categories, service }: ServiceFormProps) {
+export function ServiceForm({
+  tenantSlug,
+  currency,
+  categories,
+  service,
+  canManage = true,
+}: ServiceFormProps) {
   const router = useRouter();
   const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -232,6 +256,7 @@ export function ServiceForm({ tenantSlug, currency, categories, service }: Servi
         id="service-name"
         label="Nom de la prestation"
         required
+        disabled={!canManage}
         error={errors.name?.message}
         {...register('name')}
       />
@@ -240,6 +265,7 @@ export function ServiceForm({ tenantSlug, currency, categories, service }: Servi
         id="service-description"
         label="Description"
         hint="Affichée sur la page publique, sous le nom de la prestation. Facultative."
+        disabled={!canManage}
         error={errors.description?.message}
         {...register('description')}
       />
@@ -248,6 +274,7 @@ export function ServiceForm({ tenantSlug, currency, categories, service }: Servi
         id="service-category"
         label="Rubrique"
         hint="Regroupe la prestation sur la page publique. « Non classée » est un choix valide."
+        disabled={!canManage}
         error={errors.categoryId?.message}
         {...register('categoryId')}
       >
@@ -266,6 +293,7 @@ export function ServiceForm({ tenantSlug, currency, categories, service }: Servi
         inputMode="numeric"
         placeholder="60"
         hint="Ce que la cliente voit et paie, tampons exclus."
+        disabled={!canManage}
         error={errors.durationMinutes?.message}
         {...register('durationMinutes')}
       />
@@ -276,6 +304,7 @@ export function ServiceForm({ tenantSlug, currency, categories, service }: Servi
         inputMode="numeric"
         placeholder="0"
         hint="Préparation de la cabine. Invisible de la cliente, occupée sur l’agenda."
+        disabled={!canManage}
         error={errors.bufferBeforeMinutes?.message}
         {...register('bufferBeforeMinutes')}
       />
@@ -286,6 +315,7 @@ export function ServiceForm({ tenantSlug, currency, categories, service }: Servi
         inputMode="numeric"
         placeholder="0"
         hint="Remise en état. Invisible de la cliente, occupée sur l’agenda."
+        disabled={!canManage}
         error={errors.bufferAfterMinutes?.message}
         {...register('bufferAfterMinutes')}
       />
@@ -302,6 +332,7 @@ export function ServiceForm({ tenantSlug, currency, categories, service }: Servi
         inputMode="decimal"
         placeholder="35,00"
         hint="Devise de l’établissement. Un soin offert vaut 0."
+        disabled={!canManage}
         error={errors.price?.message}
         {...register('price')}
       />
@@ -314,19 +345,26 @@ export function ServiceForm({ tenantSlug, currency, categories, service }: Servi
             ? 'Laissez vide : elle sera dérivée du nom. Utile à renseigner pour figer un lien déjà partagé.'
             : 'Le lien profond vers cette prestation. La changer casse les liens déjà partagés.'
         }
+        disabled={!canManage}
         error={errors.slug?.message}
         {...register('slug')}
       />
 
-      <Button
-        type="submit"
-        variant="accent"
-        block
-        loading={isSubmitting}
-        loadingLabel="Enregistrement…"
-      >
-        {service === undefined ? 'Créer la prestation' : 'Enregistrer'}
-      </Button>
+      {canManage ? (
+        <Button
+          type="submit"
+          variant="accent"
+          block
+          loading={isSubmitting}
+          loadingLabel="Enregistrement…"
+        >
+          {service === undefined ? 'Créer la prestation' : 'Enregistrer'}
+        </Button>
+      ) : (
+        <p className="spa-admin-toolbar__hint">
+          La modification du catalogue est réservée au rang gérant.
+        </p>
+      )}
     </form>
   );
 }

@@ -45,6 +45,14 @@ import { assignServiceStaffAction, removeServiceStaffAction } from '../catalogue
  * retrouver une praticienne suspendue. Les masquer les rendrait introuvables
  * ici ; les proposer sans rien dire ferait créer une affectation dont le moteur
  * de disponibilité ne tirera aucun créneau. L'option porte donc la mention.
+ *
+ * ## Ce que le rang praticien en voit
+ *
+ * Qui pratique la prestation, et rien de plus : `POST` et
+ * `DELETE /v1/services/{id}/staff` sont `@AuthAtLeast('MANAGER')`. Le sélecteur
+ * et les deux boutons disparaissent pour ce rôle, une mention dit pourquoi, et la
+ * liste reste lisible — c'est une information dont une praticienne se sert
+ * (#619).
  */
 /**
  * Pourquoi la liste de choix est vide — les deux cas ne sont pas le même écran.
@@ -74,6 +82,7 @@ export function ServiceStaffPanel({
   serviceId,
   assigned,
   candidates,
+  canManage = true,
 }: {
   readonly tenantSlug: string;
   readonly serviceId: string;
@@ -84,6 +93,12 @@ export function ServiceStaffPanel({
    * d'abord, puis par nom en français.
    */
   readonly candidates: readonly StaffMember[];
+  /**
+   * `false` au rang praticien : l'affectation et le retrait sont tous deux
+   * `@AuthAtLeast('MANAGER')`. La liste des affectés reste affichée, ses
+   * commandes disparaissent.
+   */
+  readonly canManage?: boolean;
 }) {
   const router = useRouter();
   const [choice, setChoice] = useState('');
@@ -178,46 +193,56 @@ export function ServiceStaffPanel({
                 </span>
               )}
               <span className="spa-admin-toolbar__spacer" />
-              <Button
-                variant="quiet"
-                loading={pending === member.id}
-                disabled={refreshing}
-                loadingLabel="Retrait…"
-                onClick={() => void remove(member.id)}
-              >
-                Retirer
-                <span className="spa-visually-hidden"> {member.displayName}</span>
-              </Button>
+              {canManage ? (
+                <Button
+                  variant="quiet"
+                  loading={pending === member.id}
+                  disabled={refreshing}
+                  loadingLabel="Retrait…"
+                  onClick={() => void remove(member.id)}
+                >
+                  Retirer
+                  <span className="spa-visually-hidden"> {member.displayName}</span>
+                </Button>
+              ) : null}
             </li>
           ))}
         </ul>
       )}
 
-      <Select
-        id="service-staff-candidate"
-        label="Ajouter un praticien"
-        value={choice}
-        onChange={(event) => setChoice(event.target.value)}
-        hint="Toutes les fiches praticien de l’établissement, celles qui pratiquent déjà cette prestation en moins."
-        emptyLabel={emptyChoiceLabel(assigned.length, candidates.length)}
-      >
-        <option value="">Choisir un praticien…</option>
-        {candidates.map((member) => (
-          <option key={member.id} value={member.id}>
-            {member.isActive ? member.displayName : `${member.displayName} (désactivé)`}
-          </option>
-        ))}
-      </Select>
+      {canManage ? (
+        <>
+          <Select
+            id="service-staff-candidate"
+            label="Ajouter un praticien"
+            value={choice}
+            onChange={(event) => setChoice(event.target.value)}
+            hint="Toutes les fiches praticien de l’établissement, celles qui pratiquent déjà cette prestation en moins."
+            emptyLabel={emptyChoiceLabel(assigned.length, candidates.length)}
+          >
+            <option value="">Choisir un praticien…</option>
+            {candidates.map((member) => (
+              <option key={member.id} value={member.id}>
+                {member.isActive ? member.displayName : `${member.displayName} (désactivé)`}
+              </option>
+            ))}
+          </Select>
 
-      <Button
-        variant="accent"
-        disabled={candidates.length === 0 || refreshing}
-        loading={pending === 'assign'}
-        loadingLabel="Affectation…"
-        onClick={() => void assign()}
-      >
-        Affecter
-      </Button>
+          <Button
+            variant="accent"
+            disabled={candidates.length === 0 || refreshing}
+            loading={pending === 'assign'}
+            loadingLabel="Affectation…"
+            onClick={() => void assign()}
+          >
+            Affecter
+          </Button>
+        </>
+      ) : (
+        <p className="spa-admin-toolbar__hint">
+          L’affectation des praticiens est réservée au rang gérant.
+        </p>
+      )}
     </section>
   );
 }
