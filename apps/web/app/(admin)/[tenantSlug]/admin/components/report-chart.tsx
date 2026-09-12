@@ -44,6 +44,11 @@ import type { ReactElement } from 'react';
  * c'est lui qu'on atteint par tabulation, et les flèches défilent alors son
  * conteneur. Le tabulateur y trouve un arrêt nommé — `role="img"` et son
  * `<title>` — et l'anneau de focus global de `base.css` le montre.
+ *
+ * Et ce qui est masqué ne déborde pas non plus : le tableau de lecture d'écran
+ * est enveloppé dans une `<div class="spa-visually-hidden">` plutôt que de
+ * porter la classe lui-même — une table ne descend pas sous la largeur de son
+ * contenu, et celle-ci élargissait la page à 690 px sur un écran de 360 px.
  */
 
 /** Une barre : sa valeur, son étiquette, et ce qu'elle contient d'anormal. */
@@ -184,26 +189,41 @@ export function ReportChart({
         </>
       )}
 
-      {/* Le graphique, en chiffres — la seule forme qu'un lecteur d'écran reçoit. */}
-      <table className="spa-visually-hidden">
-        <caption>{summary}</caption>
-        <thead>
-          <tr>
-            <th scope="col">Période</th>
-            <th scope="col">{valueHeader}</th>
-            {innerHeader === undefined ? null : <th scope="col">{innerHeader}</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {bars.map((bar) => (
-            <tr key={bar.key}>
-              <th scope="row">{bar.label}</th>
-              <td>{bar.valueLabel}</td>
-              {innerHeader === undefined ? null : <td>{bar.innerLabel ?? '0'}</td>}
+      {/*
+        Le graphique, en chiffres — la seule forme qu'un lecteur d'écran reçoit.
+
+        Le masque est porté par une `<div>` et non par la `<table>` elle-même.
+        `.spa-visually-hidden` réduit sa boîte à 1 px et coupe ce qui dépasse ;
+        une table en `table-layout: auto` ignore cette largeur — l'algorithme de
+        table ne descend jamais sous la largeur minimale de son contenu, ici
+        652 px pour onze lignes de dates et de montants. Posée en absolu, elle
+        étendait alors la zone de défilement du document : l'écran des
+        indicateurs mesurait 690 px de large sur un téléphone de 360 px, et la
+        page entière se défilait latéralement. Une `<div>` obéit, elle, à ses
+        1 px, et sa coupure confine la table au lieu de la laisser pousser la
+        page (#616).
+      */}
+      <div className="spa-visually-hidden">
+        <table>
+          <caption>{summary}</caption>
+          <thead>
+            <tr>
+              <th scope="col">Période</th>
+              <th scope="col">{valueHeader}</th>
+              {innerHeader === undefined ? null : <th scope="col">{innerHeader}</th>}
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {bars.map((bar) => (
+              <tr key={bar.key}>
+                <th scope="row">{bar.label}</th>
+                <td>{bar.valueLabel}</td>
+                {innerHeader === undefined ? null : <td>{bar.innerLabel ?? '0'}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </figure>
   );
 }
