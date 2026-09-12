@@ -203,8 +203,10 @@ export async function connexionComptoir(page: Page, email: string): Promise<void
     await page.getByLabel('Mot de passe').fill(MOT_DE_PASSE);
     await page.getByRole('button', { name: 'Se connecter' }).click();
 
-    // La connexion réussie renvoie vers les réglages, jamais vers le planning :
-    // c'est le repère qui dit que la session est posée.
+    // La connexion réussie dépose ce rang sur le planning — la première section
+    // que le sommaire lui ouvre (#618) — et non plus sur les réglages, qu'un
+    // rang `STAFF` recevait en « Accès réservé ». Le repère qui dit que la
+    // session est posée reste le rail, présent sur toutes ces destinations.
     await expect(
       page.getByRole('navigation', { name: 'Sections du tableau de bord' }),
     ).toBeVisible({ timeout: 20_000 });
