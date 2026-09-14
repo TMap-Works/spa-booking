@@ -1,0 +1,127 @@
+/*
+ * Composant — Enveloppe du tunnel de réservation
+ * =============================================================================
+ *
+ * Le tunnel (#45) était jusqu'ici rendu à même le `<body>` : le groupe
+ * `(booking)` n'avait pas de layout, et sa carte s'étirait donc sur toute la
+ * fenêtre — 1 880 px de champ de saisie sur un écran de 1 920 px, sans bandeau
+ * ni pied de page, là où la vitrine et l'espace compte sont l'un et l'autre
+ * dans un conteneur centré (#623).
+ *
+ * ## Pourquoi 44rem et non les 64rem de la vitrine
+ *
+ * Les deux surfaces publiques n'ont pas le même contenu. `.spa-salon` porte une
+ * grille de prestations qui gagne à s'étaler ; le tunnel porte un formulaire —
+ * les mêmes champs, exactement, que `/compte/inscription`, qui les rend dans
+ * 44rem. Aligner le tunnel sur l'espace compte plutôt que sur la vitrine met
+ * donc les deux rendus du même formulaire à la même mesure, et tient la
+ * longueur de ligne où elle se lit.
+ *
+ * Aucune couleur littérale, aucune primitive `--spa-palette-*` : tout passe par
+ * les jetons sémantiques (styles/README.md §1).
+ */
+
+.spa-booking {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-8);
+  max-inline-size: 44rem;
+  margin-inline: auto;
+  padding-block: var(--spa-space-8) var(--spa-space-12);
+  padding-inline: var(--spa-space-4);
+}
+
+/* --- Bandeau --------------------------------------------------------------- */
+
+.spa-booking__tenant {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-booking__title {
+  margin: var(--spa-space-1) 0 0;
+  font-size: var(--spa-font-size-2xl);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-tight);
+  color: var(--spa-color-text);
+}
+
+.spa-booking__lead {
+  margin: var(--spa-space-2) 0 0;
+  color: var(--spa-color-text-muted);
+  line-height: var(--spa-line-height-relaxed);
+}
+
+/* --- Corps ----------------------------------------------------------------- */
+
+.spa-booking__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-8);
+}
+
+/*
+ * Le panneau du tunnel — même relief que `.spa-account__panel`, parce que c'est
+ * la comparaison que fait la cliente : elle passe de `/compte/inscription` au
+ * tunnel sans changer de produit, et deux cartes différentes pour un même
+ * formulaire se lisent comme deux sites.
+ */
+.spa-booking__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  padding: var(--spa-space-6);
+  background: var(--spa-color-surface-raised);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-lg);
+  box-shadow: var(--spa-shadow-sm);
+}
+
+/*
+ * La paire de boutons qui termine une étape — « Corriger mes coordonnées » et
+ * « Confirmer la réservation », « Confirmer l'annulation » et « Garder mon
+ * rendez-vous ».
+ *
+ * Elle remplace `.spa-card__footer`, dont le `justify-content: space-between`
+ * plaquait les deux boutons aux extrémités : sans conteneur, la QA les a
+ * mesurés à 940 px l'un de l'autre à 1 280 px de large (#623). Le conteneur de
+ * 44rem ramène l'écart à quelques centaines de pixels, ce qui ne suffit pas —
+ * une question et sa réponse ne se lisent pas d'un bout à l'autre de la ligne,
+ * et le regard doit traverser toute la carte pour trouver le bouton sûr.
+ *
+ * Le groupement est donc calqué sur `.spa-account__actions`, qui rend les mêmes
+ * paires dans l'espace compte : les boutons se suivent au début de la ligne,
+ * séparés du seul interstice, et passent à la ligne plutôt que de déborder sur
+ * un écran étroit.
+ */
+.spa-booking__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spa-space-3);
+  margin-block-start: var(--spa-space-2);
+}
+
+/* --- Pied de page ---------------------------------------------------------- */
+
+.spa-booking__footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-4);
+  padding-top: var(--spa-space-4);
+  border-top: 1px solid var(--spa-color-border);
+}
+
+.spa-booking__back {
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-medium);
+  text-decoration: underline;
+  /* La cible reste tapable au doigt même quand le texte est court (WCAG 2.5.8). */
+  min-height: var(--spa-target-min-size);
+  display: inline-flex;
+  align-items: center;
+}

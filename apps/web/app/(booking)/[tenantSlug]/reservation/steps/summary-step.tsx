@@ -187,7 +187,9 @@ export function SummaryStep({
         contact={contact}
       />
 
-      <div className="spa-card__footer">
+      {/* Même groupement que l'espace compte : les deux boutons se suivent au
+          lieu d'être plaqués aux extrémités par `.spa-card__footer` (#623). */}
+      <div className="spa-booking__actions">
         <Button variant="quiet" onClick={onBack} disabled={submitting}>
           Corriger mes coordonnées
         </Button>

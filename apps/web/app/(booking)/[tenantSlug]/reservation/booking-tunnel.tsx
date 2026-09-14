@@ -228,8 +228,11 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
   const zoneMention = hydrated ? timeZoneMention(tenant.timezone) : null;
 
   return (
-    <main className="spa-card">
-      <h1 className="spa-card__title">Réserver chez {tenant.name}</h1>
+    // Ni `<main>` ni `<h1>` ici : le layout voisin porte les deux (#623). Le
+    // tunnel n'est plus qu'un panneau dans une page, comme un écran de l'espace
+    // compte l'est dans la sienne — et le titre, désormais porté par un Server
+    // Component, ne voyage plus dans le bundle client de ce composant-ci.
+    <div className="spa-booking__panel">
       {zoneMention === null ? null : (
         <p className="spa-card__meta">Tous les horaires sont affichés en {zoneMention}.</p>
       )}
@@ -316,6 +319,6 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
           onRestart={restart}
         />
       ) : null}
-    </main>
+    </div>
   );
 }

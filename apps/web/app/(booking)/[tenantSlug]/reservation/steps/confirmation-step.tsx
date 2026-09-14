@@ -111,7 +111,12 @@ export function ConfirmationStep({
         </Notification>
       )}
 
-      <div className="spa-card__footer">
+      {/* `.spa-booking__actions` et non `.spa-card__footer` : ce dernier écarte
+          les deux boutons aux extrémités de la ligne, et « Confirmer
+          l'annulation » se retrouvait à des centaines de pixels de « Garder mon
+          rendez-vous » (#623). Une question et sa réponse se lisent côte à
+          côte. */}
+      <div className="spa-booking__actions">
         {isCancelled ? (
           <Button variant="accent" onClick={onRestart}>
             Prendre un nouveau rendez-vous
