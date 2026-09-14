@@ -119,6 +119,10 @@ export function ContactStep({ contact, onSave, onBack, onSubmit }: ContactStepPr
 
   return (
     <form
+      // L'étape porte la mise en page des étapes du tunnel : sans elle, les
+      // champs s'empilaient sans interstice et chaque libellé se lisait comme
+      // appartenant au champ du dessus (#624).
+      className="spa-booking__step"
       noValidate
       // `focusout` remonte jusqu'ici : chaque champ quitté verse sa valeur au
       // brouillon. C'est le même instant que la validation `onTouched`, donc
@@ -181,21 +185,27 @@ export function ContactStep({ contact, onSave, onBack, onSubmit }: ContactStepPr
         {...register('clientNote')}
       />
 
-      <Button
-        variant="quiet"
-        onClick={() => {
-          // Le retour n'est pas un abandon : la saisie part au brouillon avant
-          // de quitter l'étape, faute de quoi la cliente qui vient changer
-          // d'horaire retrouverait un formulaire vide.
-          onSave(getValues());
-          onBack();
-        }}
-      >
-        Changer de créneau
-      </Button>
-      <Button type="submit" variant="accent" loading={isSubmitting}>
-        Vérifier ma réservation
-      </Button>
+      {/* Groupés, comme le récapitulatif et la confirmation le font déjà : la
+          colonne flex de `.spa-booking__step` étirerait sinon chaque bouton sur
+          toute la largeur du panneau, et les deux passeraient l'un sous
+          l'autre. */}
+      <div className="spa-booking__actions">
+        <Button
+          variant="quiet"
+          onClick={() => {
+            // Le retour n'est pas un abandon : la saisie part au brouillon avant
+            // de quitter l'étape, faute de quoi la cliente qui vient changer
+            // d'horaire retrouverait un formulaire vide.
+            onSave(getValues());
+            onBack();
+          }}
+        >
+          Changer de créneau
+        </Button>
+        <Button type="submit" variant="accent" loading={isSubmitting}>
+          Vérifier ma réservation
+        </Button>
+      </div>
     </form>
   );
 }

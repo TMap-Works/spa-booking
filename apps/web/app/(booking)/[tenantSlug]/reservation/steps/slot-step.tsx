@@ -286,7 +286,7 @@ export function SlotStep({
   });
 
   return (
-    <section aria-label="Choix du praticien et du créneau">
+    <section className="spa-booking__step" aria-label="Choix du praticien et du créneau">
       <h2 className="spa-card__title">{service.name}</h2>
 
       <Select
@@ -398,9 +398,13 @@ export function SlotStep({
         />
       )}
 
-      <Button variant="quiet" onClick={onBack}>
-        Changer de prestation
-      </Button>
+      {/* Seul, mais groupé quand même : la colonne flex de `.spa-booking__step`
+          étirerait un `.spa-button` sur toute la largeur du panneau. */}
+      <div className="spa-booking__actions">
+        <Button variant="quiet" onClick={onBack}>
+          Changer de prestation
+        </Button>
+      </div>
     </section>
   );
 }

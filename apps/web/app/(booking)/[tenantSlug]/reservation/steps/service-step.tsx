@@ -39,6 +39,7 @@ export function ServiceStep({
 
   return (
     <form
+      className="spa-booking__step"
       onSubmit={(event) => {
         event.preventDefault();
         if (service !== null) {
@@ -93,9 +94,13 @@ export function ServiceStep({
         ))}
       </Select>
 
-      <Button type="submit" variant="accent" disabled={service === null}>
-        Choisir un créneau
-      </Button>
+      {/* Seul, mais groupé quand même : la colonne flex de `.spa-booking__step`
+          étirerait un `.spa-button` sur toute la largeur du panneau. */}
+      <div className="spa-booking__actions">
+        <Button type="submit" variant="accent" disabled={service === null}>
+          Choisir un créneau
+        </Button>
+      </div>
     </form>
   );
 }

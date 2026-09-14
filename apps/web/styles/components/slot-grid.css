@@ -125,11 +125,20 @@
 
 /* --- Grille de créneaux ---------------------------------------------------- */
 
+/*
+ * Aucune marge propre : l'écart avec ce qui précède et ce qui suit appartient au
+ * conteneur. Les deux écrans qui montent `SlotPicker` — l'étape « créneau » du
+ * tunnel (`.spa-booking__step`) et le report de l'espace compte
+ * (`.spa-account__panel`) — sont l'un et l'autre des colonnes flex à
+ * `gap: var(--spa-space-4)`. Une marge d'autant s'y **ajoutait** : 32 px entre le
+ * titre de la journée et la grille qu'il annonce, contre 16 px entre ce titre et
+ * la barre de dates qui le précède — la proximité disait l'inverse de
+ * l'appartenance, exactement le défaut que #624 corrige un cran plus haut.
+ */
 .spa-slot-grid {
   display: flex;
   flex-direction: column;
   gap: var(--spa-space-4);
-  margin-block: var(--spa-space-4);
 }
 
 /*
