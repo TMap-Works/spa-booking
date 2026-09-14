@@ -227,6 +227,12 @@ variante `warning` : sous concurrence, c'est un cas normal, pas une panne.
   confort : un mouvement continu peut déclencher un trouble vestibulaire.
 - **`.spa-visually-hidden`** porte les annonces de chargement et de vide pour les
   lecteurs d'écran.
+- **Listes** — `base.css` retire marqueur et retrait de tout `<ul>`/`<ol>` : dans
+  ce produit une liste est presque toujours structurelle (#625). Deux
+  conséquences. Une énumération de prose, qui veut vraiment sa puce, se déclare
+  en `.spa-list`. Et une liste dont la séquence ou le décompte porte du sens doit
+  écrire `role="list"` : sans marqueur, Safari lui retire sa sémantique de liste
+  et VoiceOver n'annonce plus « liste de N éléments ».
 - Trois exemptions assumées, chacune fondée sur la norme : les contrôles
   désactivés (1.4.3 les exempte), les squelettes (décoratifs, l'annonce passe par
   `aria-busy`), et `--spa-color-scrim` (translucide, sans rapport défini hors

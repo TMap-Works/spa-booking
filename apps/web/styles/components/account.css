@@ -59,6 +59,27 @@
   gap: var(--spa-space-3);
 }
 
+/*
+ * « Se déconnecter » est un `<button>` et non un lien, pour la raison de
+ * sécurité expliquée dans `logout-button.tsx`. Il se lit pourtant comme le lien
+ * qui le précède, et se range sous lui dès que la barre se replie — à 360 px,
+ * toujours. Le retrait interne du bouton (`--spa-space-5`, 20 px) n'a alors
+ * plus de fond ni de bordure pour se lire comme une marge de clic : il ne se
+ * voit que comme un décalage du libellé vers la droite (#625). On le retire ;
+ * la hauteur minimale du bouton suffit à garder la cible tapable (WCAG 2.5.8).
+ *
+ * Le retrait n'est pas mis à zéro sec, mais compensé par une marge négative de
+ * même valeur : le libellé s'aligne exactement comme s'il n'y avait pas de
+ * retrait, et l'aplat de survol — que la variante `--quiet` peint toujours —
+ * garde de quoi se dessiner autour du texte au lieu d'en épouser les jambages.
+ * La marge négative de 8 px reste logée dans les 16 px de gouttière de
+ * `.spa-account`, elle ne peut donc pas faire déborder la page.
+ */
+.spa-account__nav .spa-button--quiet {
+  padding-inline: var(--spa-space-2);
+  margin-inline: calc(var(--spa-space-2) * -1);
+}
+
 .spa-account__nav-link,
 .spa-account__back {
   color: var(--spa-color-accent-text);
@@ -127,9 +148,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--spa-space-3);
-  margin: 0;
-  padding: 0;
-  list-style: none;
 }
 
 .spa-appointment {

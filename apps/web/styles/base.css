@@ -58,6 +58,53 @@ p {
   margin: 0;
 }
 
+/*
+ * Listes
+ * -----------------------------------------------------------------------------
+ * Le navigateur retire toute liste de 40 px — `padding-inline-start` — pour y
+ * loger ses puces, et l'écarte verticalement d'un `em`. Or dans ce produit une
+ * liste est presque toujours *structurelle* : une pile de cartes, une colonne
+ * de lignes, un fil d'étapes. Elle n'affiche aucune puce, ce retrait ne loge
+ * donc rien — il décale seulement le contenu par rapport au titre qui le
+ * surmonte, et la carte paraît penchée puisque son bord droit, lui, ne bouge
+ * pas (#625).
+ *
+ * Chaque feuille de composant le remettait à zéro pour son compte, et trois
+ * l'avaient oublié. La remise à zéro est donc ici, une seule fois : le défaut
+ * du produit est l'alignement, et c'est l'exception qui doit se déclarer.
+ *
+ * Cette exception, c'est `.spa-list` : une liste qui porte vraiment une puce et
+ * son retrait — une énumération dans un texte suivi — la demande explicitement.
+ *
+ * Contrepartie à ne pas oublier côté balisage : Safari retire la sémantique de
+ * liste à VoiceOver dès qu'une liste n'a plus de marqueur. Toute liste
+ * structurelle dont la séquence ou le décompte porte du sens doit donc déclarer
+ * `role="list"` — c'est le cas du fil d'étapes du tunnel de réservation.
+ */
+ul,
+ol {
+  margin-block: 0;
+  padding-inline-start: 0;
+  list-style: none;
+}
+
+/* Le retrait loge le marqueur sans le laisser déborder de la colonne. */
+.spa-list {
+  padding-inline-start: var(--spa-space-5);
+  list-style: disc outside;
+}
+
+/*
+ * Un marqueur décimal est plus large qu'une puce, et il grandit avec le
+ * décompte : `outside` dessine « 10. » à gauche de la boîte, donc hors de la
+ * colonne si le retrait est taillé pour un seul chiffre. 2 rem tient jusqu'à
+ * trois chiffres — au-delà, la liste n'est plus une énumération de prose.
+ */
+ol.spa-list {
+  padding-inline-start: var(--spa-space-8);
+  list-style-type: decimal;
+}
+
 a {
   color: var(--spa-color-accent-text);
   text-decoration-thickness: 1px;

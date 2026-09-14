@@ -166,9 +166,6 @@
   min-inline-size: 0;
   display: grid;
   grid-auto-rows: var(--spa-admin-slot-height);
-  margin: 0;
-  padding: 0;
-  list-style: none;
   border-inline-end: 1px solid var(--spa-color-border);
 }
 
