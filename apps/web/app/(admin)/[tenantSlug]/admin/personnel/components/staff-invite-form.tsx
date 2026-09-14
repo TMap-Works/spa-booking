@@ -3,6 +3,7 @@
 import { STAFF_ROLES, type StaffRole } from '@spa/shared';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
+import type { ZodIssue } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
@@ -37,6 +38,15 @@ import { inviteStaffAccountAction } from '../actions';
  * `client` n'est pas invitable : une cliente s'inscrit d'elle-même ou est saisie
  * au comptoir par le module `crm`, et un compte `client` créé ici serait aussitôt
  * invisible — la liste du personnel ne le rendrait pas.
+ *
+ * ## Une soumission, toutes les erreurs
+ *
+ * Le formulaire ne retient plus le seul `issues[0]` de `safeParse` (#631) : trois
+ * champs obligatoires vides réclamaient trois soumissions pour être découverts un
+ * par un, chaque essai n'en marquant qu'un. La moisson est donc rangée par champ,
+ * et la saisie n'efface que la marque du champ qu'on est en train de corriger —
+ * tout effacer d'une frappe re-cacherait les autres et rendrait la soumission
+ * précédente inutile.
  */
 
 const EMPTY = { firstName: '', lastName: '', email: '', phone: '', role: 'staff' } as const;
@@ -49,23 +59,95 @@ type InviteDraft = {
   role: StaffRole;
 };
 
+type InviteField = keyof InviteDraft;
+
+/** Le message porté par chaque champ fautif, `undefined` pour les autres. */
+type InviteFieldErrors = Partial<Record<InviteField, string>>;
+
+const INVITE_FIELDS = ['firstName', 'lastName', 'email', 'phone', 'role'] as const satisfies
+  readonly InviteField[];
+
+/**
+ * Garde de compilation : le jour où `InviteDraft` gagne un champ, cette ligne
+ * cesse de compiler tant qu'il n'est pas ajouté à `INVITE_FIELDS`.
+ *
+ * Sans elle, l'oubli serait silencieux et rejouerait exactement #631 : l'erreur
+ * du champ neuf ne serait pas reconnue par `isInviteField`, elle retomberait
+ * dans le bandeau au lieu de marquer son contrôle, et `change` ne saurait plus
+ * l'effacer quand on corrige la saisie.
+ */
+type AucunChampOublie<T extends never> = T;
+type _ChampsCouverts = AucunChampOublie<Exclude<InviteField, (typeof INVITE_FIELDS)[number]>>;
+
+function isInviteField(value: unknown): value is InviteField {
+  return typeof value === 'string' && (INVITE_FIELDS as readonly string[]).includes(value);
+}
+
+/**
+ * Range **toutes** les erreurs d'une soumission : celles qui désignent un champ
+ * du formulaire d'un côté, le reste de l'autre.
+ *
+ * Deux règles, et elles ont chacune leur raison :
+ *
+ * - **un seul message par champ**, le premier rencontré. Un même champ cumule
+ *   volontiers deux règles (vide *et* trop court) et empiler les phrases sous le
+ *   contrôle n'apprend rien de plus sur ce qu'il faut taper ;
+ * - **ce qui ne désigne aucun champ remonte au formulaire.** Le schéma est
+ *   `.strict()` : une clé inattendue produit une erreur de chemin vide, qu'aucun
+ *   contrôle ne saurait afficher. Sans ce filet, elle disparaîtrait sans trace et
+ *   le bouton semblerait ne rien faire.
+ */
+function collectInviteErrors(issues: readonly ZodIssue[]): {
+  readonly fields: InviteFieldErrors;
+  readonly form: string | null;
+} {
+  const fields: InviteFieldErrors = {};
+  let form: string | null = null;
+
+  for (const issue of issues) {
+    const field = issue.path[0];
+
+    if (isInviteField(field)) {
+      fields[field] ??= issue.message;
+    } else {
+      form ??= issue.message;
+    }
+  }
+
+  return { fields, form };
+}
+
 export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string }) {
   const router = useRouter();
   const [draft, setDraft] = useState<InviteDraft>({ ...EMPTY });
   const [sending, setSending] = useState(false);
   const [, startRefresh] = useTransition();
-  const [error, setError] = useState<{ field: keyof InviteDraft | null; message: string } | null>(
-    null,
-  );
+  const [fieldErrors, setFieldErrors] = useState<InviteFieldErrors>({});
+  const [formError, setFormError] = useState<string | null>(null);
   const [invitation, setInvitation] = useState<{ email: string; token: string } | null>(null);
 
   function change(changes: Partial<InviteDraft>): void {
     setDraft((current) => ({ ...current, ...changes }));
-    setError(null);
-  }
+    setFormError(null);
+    setFieldErrors((current) => {
+      const corrected = Object.keys(changes)
+        .filter(isInviteField)
+        .filter((field) => current[field] !== undefined);
 
-  function fieldError(field: keyof InviteDraft): string | undefined {
-    return error !== null && error.field === field ? error.message : undefined;
+      if (corrected.length === 0) {
+        // Rendre la même référence plutôt qu'un objet neuf : sans cela, chaque
+        // frappe dans un champ sain provoquerait un rendu pour rien.
+        return current;
+      }
+
+      const next = { ...current };
+
+      for (const field of corrected) {
+        delete next[field];
+      }
+
+      return next;
+    });
   }
 
   async function invite(): Promise<void> {
@@ -80,18 +162,22 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
     });
 
     if (!parsed.success) {
-      const issue = parsed.error.issues[0];
-      const path = issue?.path[0];
+      const { fields, form } = collectInviteErrors(parsed.error.issues);
 
-      setError({
-        field: typeof path === 'string' ? (path as keyof InviteDraft) : null,
-        message: issue?.message ?? 'Les informations saisies sont invalides.',
-      });
+      setFieldErrors(fields);
+      // Le bandeau ne double pas les marques de champ : il ne parle que lorsque
+      // rien n'a pu être rattaché à un contrôle, sans quoi le refus resterait
+      // muet.
+      setFormError(
+        form ??
+          (Object.keys(fields).length === 0 ? 'Les informations saisies sont invalides.' : null),
+      );
       return;
     }
 
     setSending(true);
-    setError(null);
+    setFieldErrors({});
+    setFormError(null);
     setInvitation(null);
 
     const result = await inviteStaffAccountAction(tenantSlug, parsed.data);
@@ -99,7 +185,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
     setSending(false);
 
     if (!result.ok) {
-      setError({ field: null, message: result.message });
+      setFormError(result.message);
       return;
     }
 
@@ -116,11 +202,11 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
         Inviter un membre du personnel
       </h2>
 
-      {error !== null && error.field === null ? (
+      {formError === null ? null : (
         <Notification tone="danger" title="Invitation impossible">
-          <p>{error.message}</p>
+          <p>{formError}</p>
         </Notification>
-      ) : null}
+      )}
 
       {invitation === null ? null : (
         <Notification tone="success" title="Invitation émise">
@@ -144,7 +230,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
       )}
 
       <Field
-        error={fieldError('firstName')}
+        error={fieldErrors.firstName}
         id="invitation-prenom"
         label="Prénom"
         onChange={(event) => change({ firstName: event.target.value })}
@@ -152,7 +238,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
         value={draft.firstName}
       />
       <Field
-        error={fieldError('lastName')}
+        error={fieldErrors.lastName}
         id="invitation-nom"
         label="Nom"
         onChange={(event) => change({ lastName: event.target.value })}
@@ -160,7 +246,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
         value={draft.lastName}
       />
       <Field
-        error={fieldError('email')}
+        error={fieldErrors.email}
         hint="C’est l’identifiant de connexion, et il ne se modifie pas ensuite."
         id="invitation-email"
         label="Adresse électronique"
@@ -170,7 +256,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
         value={draft.email}
       />
       <Field
-        error={fieldError('phone')}
+        error={fieldErrors.phone}
         hint="Facultatif."
         id="invitation-telephone"
         label="Téléphone"
@@ -179,7 +265,7 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
         value={draft.phone}
       />
       <Select
-        error={fieldError('role')}
+        error={fieldErrors.role}
         hint="Le rôle décide de ce que la personne pourra faire ; il se change ensuite depuis la liste."
         id="invitation-role"
         label="Rôle"
