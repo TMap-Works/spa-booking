@@ -1,8 +1,9 @@
 import { notFound } from 'next/navigation';
 
-import { ApiClientError, fetchPublicServices, fetchPublicTenant } from '@/lib/api-client';
+import { ApiClientError } from '@/lib/api-client';
 
 import { BookingErrorNotice } from '../booking-error-notice';
+import { loadSalonServices, loadSalonTenant } from '../salon-data';
 import { BookingTunnel } from './booking-tunnel';
 
 /**
@@ -12,6 +13,10 @@ import { BookingTunnel } from './booking-tunnel';
  * serveur — c'est la surface indexable du produit, et l'appel à l'API se fait
  * sans aller-retour par le navigateur (skill web-frontend §1). Seul le tunnel
  * lui-même est un Client Component, parce qu'il porte de l'état.
+ *
+ * Le bandeau, le conteneur centré et le pied de page viennent du layout voisin
+ * (`layout.tsx`, #623). Les deux chargent l'établissement par le même loader
+ * mémoïsé de `salon-data.ts` : un seul appel à `GET /public/{slug}` par requête.
  *
  * `force-dynamic` parce que le catalogue et l'établissement changent sans que
  * le front en soit averti — et surtout parce qu'une prérendu au build
@@ -31,8 +36,8 @@ export default async function BookingPage({ params }: PageProps) {
     // En parallèle : deux requêtes indépendantes, et le parcours critique vise
     // un LCP sous 2,5 s en 4G (skill web-frontend §7).
     const [tenant, services] = await Promise.all([
-      fetchPublicTenant(tenantSlug),
-      fetchPublicServices(tenantSlug),
+      loadSalonTenant(tenantSlug),
+      loadSalonServices(tenantSlug),
     ]);
 
     return <BookingTunnel tenant={tenant} services={services} />;
@@ -44,13 +49,16 @@ export default async function BookingPage({ params }: PageProps) {
       notFound();
     }
 
+    // Pas de `<main>` ici : le layout en pose déjà un autour de cet écran, et
+    // deux régions principales dans un même document se disputent le repère de
+    // navigation des lecteurs d'écran.
     return (
-      <main className="spa-card">
+      <div className="spa-booking__panel">
         <BookingErrorNotice
           title="La page de réservation n’a pas pu être chargée"
           error={error}
         />
-      </main>
+      </div>
     );
   }
 }
