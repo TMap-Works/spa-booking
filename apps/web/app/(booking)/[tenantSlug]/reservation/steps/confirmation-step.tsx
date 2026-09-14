@@ -77,7 +77,7 @@ export function ConfirmationStep({
   };
 
   return (
-    <section aria-label="Confirmation de votre réservation">
+    <section className="spa-booking__step" aria-label="Confirmation de votre réservation">
       {isCancelled ? (
         <Notification tone="info" title="Votre rendez-vous est annulé">
           <p>

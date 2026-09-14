@@ -169,7 +169,7 @@ export function SummaryStep({
   };
 
   return (
-    <section aria-label="Récapitulatif de votre réservation">
+    <section className="spa-booking__step" aria-label="Récapitulatif de votre réservation">
       <h2 className="spa-card__title">Vérifiez votre réservation</h2>
 
       {refusal === null ? null : (

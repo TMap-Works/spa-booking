@@ -82,6 +82,67 @@
 }
 
 /*
+ * La racine d'une étape — le `<form>` ou la `<section>` que `BookingTunnel`
+ * monte dans le panneau.
+ *
+ * ## Pourquoi il en faut une
+ *
+ * Sans elle, cette racine n'avait **aucune** mise en page : ses enfants — le
+ * titre de l'étape, les `.spa-field`, les `.spa-select` — s'empilaient dans le
+ * flux normal, sans le moindre interstice. Le seul écart visible entre un champ
+ * et le libellé suivant était donc l'interlignage du libellé, mesuré à ~7 px par
+ * la QA, quand `.spa-field` pose déjà `--spa-space-1` entre son libellé et son
+ * contrôle — 4 px de gouttière, que la QA a relevés à ~10 px parce que
+ * l'interlignage du libellé s'y ajoute à l'œil. Chaque libellé se lisait ainsi
+ * comme appartenant au champ du dessus, et le titre de l'étape touchait le
+ * premier libellé (#624).
+ *
+ * ## Pourquoi `--spa-space-4`, et pourquoi ici
+ *
+ * Le défaut ne vient pas de `.spa-field`, qui rend le même intérieur sur
+ * `/compte/inscription` sans rien montrer de tel : là-bas les mêmes champs sont
+ * enfants de `.spa-account__form`, qui porte `gap: var(--spa-space-4)`. C'est
+ * l'interstice extérieur qui manquait au tunnel, et c'est lui qu'on lui rend —
+ * à la même valeur, pour que les deux rendus du même formulaire aient le même
+ * rythme vertical. L'écart entre blocs (16 px) devient alors quatre fois celui
+ * qui lie un libellé à son champ (4 px) : la proximité dit enfin ce qu'elle doit
+ * dire.
+ *
+ * ## Les boutons se regroupent
+ *
+ * Une colonne flex étire ses enfants : un `.spa-button`, qui est `inline-flex`,
+ * occuperait toute la largeur du panneau et deux boutons passeraient l'un sous
+ * l'autre. Toute étape qui termine par des boutons les groupe donc dans
+ * `.spa-booking__actions` ci-dessous, comme le récapitulatif et la confirmation
+ * le faisaient déjà.
+ */
+.spa-booking__step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+}
+
+/*
+ * Le récapitulatif est une `<dl>`, et `base.css` ne remet à zéro que les marges
+ * de `h1`–`h4`, `p` et `body`. Celle du navigateur vaut `1em` du corps réduit de
+ * `.spa-card__body`, soit 14 px, qui s'ajouteraient au `gap` ci-dessus : 30 px
+ * de part et d'autre du récapitulatif, une valeur qui n'est sur aucun barreau de
+ * l'échelle d'espacement.
+ *
+ * Le `gap` de l'étape suffit, et c'est lui qui doit faire le rythme. Enfant
+ * direct, et depuis l'étape seulement : la même carte rendue ailleurs garde sa
+ * marge, et `card.css` n'a pas à connaître le tunnel.
+ *
+ * `.spa-slot-grid` a posé le même problème et s'est réglé autrement : sa marge
+ * était fautive partout, les deux écrans qui montent `SlotPicker` étant l'un et
+ * l'autre des colonnes flex à `gap: var(--spa-space-4)`. Elle est donc retirée à
+ * la source, dans `slot-grid.css`, plutôt que neutralisée ici.
+ */
+.spa-booking__step > .spa-card__body {
+  margin-block: 0;
+}
+
+/*
  * La paire de boutons qui termine une étape — « Corriger mes coordonnées » et
  * « Confirmer la réservation », « Confirmer l'annulation » et « Garder mon
  * rendez-vous ».
@@ -97,13 +158,18 @@
  * paires dans l'espace compte : les boutons se suivent au début de la ligne,
  * séparés du seul interstice, et passent à la ligne plutôt que de déborder sur
  * un écran étroit.
+ *
+ * Le `margin-block-start` qu'il portait a disparu avec #624 : il compensait
+ * l'absence d'interstice de la racine d'étape, que `.spa-booking__step` pose
+ * désormais. Le garder aurait ajouté ses 8 px aux 16 px du `gap`, et fait de la
+ * seule rangée de boutons une exception dans le rythme vertical — `.spa-account__actions`
+ * ne porte rien de tel non plus, pour la même raison.
  */
 .spa-booking__actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--spa-space-3);
-  margin-block-start: var(--spa-space-2);
 }
 
 /* --- Pied de page ---------------------------------------------------------- */
