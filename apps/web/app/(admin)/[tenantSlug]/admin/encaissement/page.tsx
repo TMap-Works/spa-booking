@@ -4,7 +4,13 @@ import Link from 'next/link';
 import { Notification } from '@/components/ui/notification';
 import { fetchAppointments, fetchPublicTenant } from '@/lib/api-client';
 import { STATUS_LABELS, statusModifier } from '@/lib/admin/calendar-grid';
-import { parseCalendarDate, rangeOf, shiftAnchor, todayInTimeZone } from '@/lib/admin/calendar-range';
+import {
+  parseCalendarDate,
+  rangeLabel,
+  rangeOf,
+  shiftAnchor,
+  todayInTimeZone,
+} from '@/lib/admin/calendar-range';
 import { amountDue, isSettleable } from '@/lib/admin/checkout-summary';
 import {
   formatCalendarDate,
@@ -14,6 +20,7 @@ import {
 } from '@/lib/format';
 
 import { CheckoutPanel } from '../components/checkout-panel';
+import { PeriodNav } from '../components/period-nav';
 import { adminCheckoutPath } from '../paths';
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
 
@@ -116,22 +123,27 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
         Encaissement
       </h1>
 
+      {/* La même barre que le planning, et le même composant (#629) : deux
+       * chevrons encadrés encadrant la date, plus le retour au jour courant qui
+       * manquait ici. Les contrôles sont des **liens** — cette page est rendue
+       * côté serveur et changer de jour n'a aucune raison d'embarquer du
+       * JavaScript (web-frontend §1). Le jour courant est celui du salon, comme
+       * l'ancre par défaut : on encaisse la journée que l'équipe travaille. */}
       <nav aria-label="Journée encaissée" className="spa-admin-toolbar">
-        <div className="spa-admin-toolbar__group">
-          <Link
-            className="spa-button spa-button--quiet"
-            href={adminCheckoutPath(tenantSlug, { date: shiftAnchor('jour', anchor, -1) })}
-          >
-            <span className="spa-button__label">Jour précédent</span>
-          </Link>
-          <Link
-            className="spa-button spa-button--quiet"
-            href={adminCheckoutPath(tenantSlug, { date: shiftAnchor('jour', anchor, 1) })}
-          >
-            <span className="spa-button__label">Jour suivant</span>
-          </Link>
-        </div>
-        <p className="spa-admin-toolbar__caption">{formatCalendarDate(anchor)}</p>
+        <PeriodNav
+          label={rangeLabel('jour', anchor)}
+          next={{
+            href: adminCheckoutPath(tenantSlug, { date: shiftAnchor('jour', anchor, 1) }),
+          }}
+          nextLabel="Jour suivant"
+          previous={{
+            href: adminCheckoutPath(tenantSlug, { date: shiftAnchor('jour', anchor, -1) }),
+          }}
+          previousLabel="Jour précédent"
+          today={{
+            href: adminCheckoutPath(tenantSlug, { date: todayInTimeZone(tenant.timezone) }),
+          }}
+        />
         <span className="spa-admin-toolbar__spacer" />
         <p className="spa-admin-toolbar__hint">Heures affichées dans le fuseau du salon.</p>
       </nav>

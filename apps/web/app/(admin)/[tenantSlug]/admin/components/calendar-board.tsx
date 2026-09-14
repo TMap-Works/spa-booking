@@ -42,6 +42,7 @@ import { adminCalendarPath, adminSessionRefreshPath } from '../paths';
 
 import { AppointmentPanel, type DeskTarget } from './appointment-panel';
 import { CalendarMoveConfirm } from './calendar-move-confirm';
+import { PeriodNav } from './period-nav';
 
 /**
  * Le planning du back-office — vues jour et semaine (#49).
@@ -730,39 +731,30 @@ export function CalendarBoard({
   return (
     <>
       <div className="spa-admin-toolbar">
-        <div className="spa-admin-toolbar__group">
-          <Button
-            variant="neutral"
-            onClick={() => {
-              openPeriod(view, shiftAnchor(view, date, -1));
-            }}
-          >
-            <span aria-hidden="true">‹</span>
-            <span className="spa-visually-hidden">
-              {view === 'jour' ? 'Jour précédent' : 'Semaine précédente'}
-            </span>
-          </Button>
-          <span className="spa-admin-toolbar__caption">{rangeLabel(view, date)}</span>
-          <Button
-            variant="neutral"
-            onClick={() => {
+        {/* La barre de période est partagée avec l'encaissement (#629) : c'est
+         * le même geste, il se rend au même endroit. Ici les contrôles sont des
+         * gestes et non des liens — la période voisine est déjà en cache, et la
+         * faire repasser par le serveur annulerait ce préchargement. */}
+        <PeriodNav
+          label={rangeLabel(view, date)}
+          next={{
+            onSelect: () => {
               openPeriod(view, shiftAnchor(view, date, 1));
-            }}
-          >
-            <span aria-hidden="true">›</span>
-            <span className="spa-visually-hidden">
-              {view === 'jour' ? 'Jour suivant' : 'Semaine suivante'}
-            </span>
-          </Button>
-          <Button
-            variant="quiet"
-            onClick={() => {
+            },
+          }}
+          nextLabel={view === 'jour' ? 'Jour suivant' : 'Semaine suivante'}
+          previous={{
+            onSelect: () => {
+              openPeriod(view, shiftAnchor(view, date, -1));
+            },
+          }}
+          previousLabel={view === 'jour' ? 'Jour précédent' : 'Semaine précédente'}
+          today={{
+            onSelect: () => {
               openPeriod(view, todayInTimeZone(timeZone));
-            }}
-          >
-            Aujourd’hui
-          </Button>
-        </div>
+            },
+          }}
+        />
 
         <fieldset className="spa-admin-segmented">
           <legend className="spa-visually-hidden">Vue du planning</legend>
