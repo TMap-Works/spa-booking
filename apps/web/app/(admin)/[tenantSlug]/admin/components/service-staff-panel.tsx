@@ -183,7 +183,7 @@ export function ServiceStaffPanel({
           </p>
         </div>
       ) : (
-        <ul className="spa-admin__nav">
+        <ul className="spa-admin__nav" role="list">
           {assigned.map((member) => (
             <li className="spa-admin-toolbar" key={member.id}>
               <span className="spa-admin-toolbar__caption">{member.displayName}</span>

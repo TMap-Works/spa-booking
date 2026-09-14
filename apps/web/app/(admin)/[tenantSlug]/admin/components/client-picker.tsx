@@ -178,7 +178,7 @@ export function ClientPicker({ tenantSlug, selected, onSelect, onExpired }: Clie
       </p>
 
       {results !== null && results.length > 0 ? (
-        <ul className="spa-admin-appointment__conflict">
+        <ul className="spa-admin-appointment__conflict" role="list">
           {results.map((client) => (
             <li key={client.id}>
               <Button

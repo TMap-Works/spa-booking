@@ -112,7 +112,7 @@ export function StaffServicesPanel({
           </p>
         </div>
       ) : (
-        <ul className="spa-admin__nav">
+        <ul className="spa-admin__nav" role="list">
           {services.map((service) => (
             <li className="spa-admin-toolbar" key={service.id}>
               <span className="spa-admin-toolbar__caption">{service.name}</span>
