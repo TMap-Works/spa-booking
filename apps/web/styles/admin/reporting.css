@@ -20,17 +20,35 @@
  * les deux bornes n'apparaissent que sur « personnalisée » — et une grille à
  * colonnes fixes aurait laissé un trou le reste du temps.
  *
- * `align-items: flex-end` aligne les contrôles entre eux et non leurs étiquettes :
- * un champ de date et un sélecteur n'ont pas la même hauteur d'étiquette, et
- * l'alignement par le haut décalait leurs bases d'un demi-caractère. Le mot-clé
- * `flex-end` et non `end` : autoprefixer signale que le second a un support
- * mêlé selon les préfixes, et la recette l'a fait remonter en avertissement de
- * compilation.
+ * ## L'alignement se fait par le haut, et c'est ce qui aligne les contrôles
+ *
+ * La barre s'alignait auparavant par le bas (`flex-end`), pour aligner les
+ * contrôles entre eux plutôt que leurs étiquettes. Cela ne tenait qu'aussi
+ * longtemps qu'aucun champ ne portait de phrase d'aide — et deux en portent
+ * une. Sous alignement bas, tout ce qui pend sous un contrôle le **remonte**
+ * d'autant : la hauteur d'une ligne d'indice vaut
+ * `0,875rem × 1,55 + 0,25rem` de gouttière, soit 25,7 px, et c'est exactement
+ * l'escalier de 26 px relevé entre « Filtrer » et « Période » en période
+ * simple. En période personnalisée, l'indice du champ « Au (inclus) » et celui
+ * de « Filtrer » s'enroulent sur deux lignes : 47,4 px, les 47 px relevés
+ * (#628).
+ *
+ * Par le haut, cette arithmétique disparaît : les quatre étiquettes partagent
+ * la typographie de `.spa-field__label` et de `.spa-select__label` — même
+ * corps, même hauteur de ligne, une seule ligne chacune à ces largeurs — donc
+ * le bord haut de chaque contrôle tombe au même endroit, quoi qu'on accroche
+ * en dessous. C'est aussi la seule mise en page qui reste juste quand la
+ * période personnalisée est refusée : le message d'erreur s'ajoute alors sous
+ * « Au (inclus) » sans déplacer les trois autres contrôles.
+ *
+ * Le mot-clé `flex-start` et non `start` : autoprefixer signale que le second a
+ * un support mêlé selon les préfixes, et la recette l'a fait remonter en
+ * avertissement de compilation.
  */
 .spa-admin-report-filters {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: var(--spa-space-3);
   margin-block-end: var(--spa-space-6);
 }
@@ -40,10 +58,24 @@
   margin-block-end: 0;
 }
 
-/* Le bouton ne s'étire pas : il n'a rien à saisir, et une cible large au bout
- * d'une rangée de champs se confond avec eux. */
+/*
+ * Le bouton ne s'étire pas : il n'a rien à saisir, et une cible large au bout
+ * d'une rangée de champs se confond avec eux.
+ *
+ * Il est en revanche le seul contrôle de la barre sans étiquette au-dessus de
+ * lui : aligné par le haut comme les autres, il se poserait à la hauteur des
+ * **mots** « Période » et « Filtrer », pas à celle des champs. La marge lui
+ * rend la ligne d'étiquette qu'il n'a pas, écrite avec les jetons mêmes qui la
+ * composent — le corps d'étiquette, sa hauteur de ligne, et la gouttière que
+ * `.spa-field` et `.spa-select` posent entre étiquette et contrôle. Un jeton
+ * qui bougerait emporterait donc le bouton avec les champs, au lieu de les
+ * désaligner en silence.
+ */
 .spa-admin-report-filters > button {
   flex: 0 0 auto;
+  margin-block-start: calc(
+    var(--spa-font-size-sm) * var(--spa-line-height-normal) + var(--spa-space-1)
+  );
 }
 
 /* --- Indicateurs ----------------------------------------------------------- */
