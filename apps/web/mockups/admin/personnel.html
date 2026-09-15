@@ -385,6 +385,29 @@
             </button>
           </section>
 
+          <!--
+            LE TITRE DE LA FICHE D'UN PRATICIEN. Ouvrir quelqu'un depuis la liste
+            mène à sa fiche, dont le titre reprend la pastille de la liste. La
+            pastille étant elle-même une boîte flex, un titre laissé en flux
+            normal la posait au-dessus du nom au lieu de le précéder : le titre
+            faisait deux lignes pour un nom d'une ligne (#632). C'est le titre
+            qu'on rend flex, d'où cette classe — et c'est ici qu'on le montre.
+
+            Le rendu se démontre sur un <h3> : cette maquette est le catalogue
+            des états d'un écran, et l'écran n'a qu'un seul <h1>, déjà posé dans
+            la barre du haut. Seule la boîte du titre est en jeu, pas son rang.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-fiche-praticien">
+            <h2 class="spa-admin__section-title" id="titre-fiche-praticien">
+              Titre de la fiche d’un praticien
+            </h2>
+
+            <h3 class="spa-admin__title spa-admin-staff__heading">
+              <span class="spa-admin-staff__initials" aria-hidden="true">HR</span>
+              Hasina Rakoto
+            </h3>
+          </section>
+
           <!-- ÉTAT DE CHARGEMENT. -->
           <section class="spa-admin__section" aria-labelledby="titre-personnel-chargement">
             <h2 class="spa-admin__section-title" id="titre-personnel-chargement">État de chargement</h2>

@@ -202,10 +202,15 @@ export default async function StaffMemberPage({ params }: StaffMemberPageProps) 
         </Link>
       </div>
 
-      <h1 className="spa-admin__title" id="praticien-titre">
+      {/* `spa-admin-staff__heading` fait de ce titre une rangée flex : la
+          pastille est elle-même une boîte flex, et dans un `<h1>` en flux normal
+          elle se poserait au-dessus du nom au lieu de le précéder (#632). Le
+          `gap` de la règle remplace l'espace typographique qui séparait les deux
+          — il ne dépend pas de la fonte et vaut celui de la liste. */}
+      <h1 className="spa-admin__title spa-admin-staff__heading" id="praticien-titre">
         <span aria-hidden="true" className="spa-admin-staff__initials">
           {staffInitials(member.displayName)}
-        </span>{' '}
+        </span>
         {member.displayName}
       </h1>
 
