@@ -1,6 +1,6 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AdminRail } from '@/app/(admin)/[tenantSlug]/admin/components/admin-rail';
 
@@ -9,8 +9,9 @@ import { AdminRail } from '@/app/(admin)/[tenantSlug]/admin/components/admin-rai
  *
  * Ce que la suite protège : qu'aucune entrée inerte ne se présente comme un
  * lien, que le repère de section survive aux paramètres d'URL, que le contexte
- * du salon soit lu tel qu'il est écrit, et que la déconnexion ne parte qu'une
- * fois même sur un double clic.
+ * du salon soit lu tel qu'il est écrit, que la déconnexion ne parte qu'une fois
+ * même sur un double clic, et qu'une entrée atteinte au clavier demande son
+ * cadrage entier (#701).
  */
 
 const adminLogoutAction = vi.fn();
@@ -152,6 +153,96 @@ describe('rail — la navigation', () => {
     expect(screen.getByRole('link', { name: 'Réglages' }).getAttribute('href')).toBe(
       '/maison-lotus/admin/reglages',
     );
+  });
+});
+
+describe('rail — le bandeau du téléphone', () => {
+  /*
+   * Le sommaire devient un bandeau qui défile sous 48rem, et Blink n'y déplace le
+   * défilement que pour une entrée *entièrement* hors champ : une entrée que le
+   * bord coupe est tenue pour visible, et le clavier laissait son libellé dehors
+   * — 22 px de « Réglages » sur 82 au septième `Tab` à 360 px.
+   *
+   * Ce que cette suite peut prouver et ce qu'elle ne peut pas : jsdom ne met rien
+   * en page, il n'y a donc ici ni largeur, ni défilement, ni bord. Ce qui se
+   * vérifie est la **demande** — que l'entrée focalisée réclame son cadrage
+   * entier, et le réclame sur les deux axes. Que le cadrage ait bien lieu à
+   * 360 px est de la recette, pas de l'unitaire.
+   *
+   * La garde `:focus-visible` du rail échappe elle aussi à l'unitaire : jsdom
+   * fait correspondre ce sélecteur à tout élément focalisé, souris comprise, si
+   * bien qu'un test du geste au doigt passerait ici sans rien prouver. Qu'un
+   * doigt ne déplace pas le bandeau se constate au navigateur, et s'est constaté.
+   */
+  const scrollIntoView = vi.fn();
+  /*
+   * jsdom ne fournit pas `scrollIntoView` du tout. On l'installe pour l'observer,
+   * et on le retire ensuite : le laisser en place ferait passer, ailleurs dans la
+   * suite, un composant qui compte sur une API que jsdom n'a pas.
+   */
+  const original = Element.prototype.scrollIntoView;
+
+  beforeEach(() => {
+    scrollIntoView.mockReset();
+    Element.prototype.scrollIntoView = scrollIntoView;
+  });
+
+  afterEach(() => {
+    /*
+     * `delete`, et non une réaffectation : jsdom ne définit pas `scrollIntoView`
+     * du tout, si bien que réaffecter `original` — qui vaut `undefined` —
+     * laisserait sur le prototype une propriété propre que la plateforme n'avait
+     * pas, et `'scrollIntoView' in element` répondrait `true` pour le reste de la
+     * suite. On ne remet la valeur que si la plateforme en avait une.
+     */
+    if (original === undefined) {
+      delete (Element.prototype as Partial<Element>).scrollIntoView;
+    } else {
+      Element.prototype.scrollIntoView = original;
+    }
+  });
+
+  it('amène l’entrée atteinte au clavier entièrement en vue', async () => {
+    renderRail({ role: 'admin' });
+
+    // La reproduction du ticket, à la lettre : sept tabulations depuis le haut du
+    // rail mènent à la dernière entrée du sommaire.
+    for (let index = 0; index < 7; index += 1) {
+      await userEvent.tab();
+    }
+
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Réglages' }));
+    /*
+     * `'nearest'` sur les deux axes : il ne déplace que ce qu'il faut pour rendre
+     * l'entrée entière. `'center'` recentrerait le bandeau à chaque tabulation,
+     * et `'start'` le ferait sauter d'une entrée à l'autre.
+     */
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest', inline: 'nearest' });
+  });
+
+  it('le demande pour chaque entrée, et pas seulement pour la dernière', async () => {
+    // « Personnel » à 360 px, « Encaissement » à 400 px, « Réglages » à 600 px :
+    // le défaut frappait toute entrée que le bord coupe, d'où un cadrage demandé
+    // à chaque prise de focus et non sur la seule fin du bandeau.
+    renderRail({ role: 'admin' });
+
+    await userEvent.tab();
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Planning' }));
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+
+    await userEvent.tab();
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Clients' }));
+    expect(scrollIntoView).toHaveBeenCalledTimes(2);
+  });
+
+  it('ne le demande pas pour la déconnexion, qui n’est pas dans le bandeau', async () => {
+    // Le pied de rail s'enroule, il ne défile pas : lui faire réclamer un cadrage
+    // déplacerait la page sans rien révéler.
+    renderRail({ role: 'admin' });
+
+    screen.getByRole('button', { name: 'Se déconnecter' }).focus();
+
+    expect(scrollIntoView).not.toHaveBeenCalled();
   });
 });
 
