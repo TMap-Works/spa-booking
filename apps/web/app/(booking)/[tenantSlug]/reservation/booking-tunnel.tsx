@@ -237,15 +237,21 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
         <p className="spa-card__meta">Tous les horaires sont affichés en {zoneMention}.</p>
       )}
 
-      <ol className="spa-card__meta" aria-label="Étapes de la réservation">
+      {/* `role="list"` explicite : le socle retire le marqueur de tout `<ol>`
+          (#625), et Safari retire alors à VoiceOver la sémantique de liste. Sans
+          ce rôle, l'`aria-label` ci-dessous ne nomme plus une liste et la
+          séquence des étapes — toute l'information que ce fil transporte — n'est
+          plus annoncée comme telle (styles/README.md §3). */}
+      <ol className="spa-card__meta" role="list" aria-label="Étapes de la réservation">
         {BOOKING_STEPS.map((name, index) => (
           <li key={name} aria-current={name === step ? 'step' : undefined}>
             {STEP_LABELS[name]}
             {/* Séparateur visuel, masqué à l'arbre d'accessibilité : la liste
                 ordonnée dit déjà la séquence, un lecteur d'écran n'a pas à
                 entendre un point médian entre chaque étape. Il est posé en fin
-                d'élément et non en tête, pour tomber avant la puce numérotée du
-                suivant plutôt qu'après elle. */}
+                d'élément et non en tête du suivant : aucun marqueur n'est plus
+                rendu depuis le reset du socle, et le séparateur se rattache donc
+                à l'étape qu'il termine. */}
             {index === BOOKING_STEPS.length - 1 ? null : <span aria-hidden="true"> · </span>}
           </li>
         ))}
