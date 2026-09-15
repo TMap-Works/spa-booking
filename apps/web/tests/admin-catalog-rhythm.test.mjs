@@ -47,7 +47,13 @@ import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { readStyleSheet, stripComments, styleSheetPath } from './support/tokens.mjs';
+import {
+  readStyleSheet,
+  rulesFor,
+  stripComments,
+  styleSheetPath,
+  withoutMediaQueries,
+} from './support/tokens.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -62,42 +68,16 @@ const categoryManager = readFileSync(
 );
 const preview = readFileSync(join(adminDir, 'catalogue', 'apercu', 'page.tsx'), 'utf8');
 
-/**
- * Retire les blocs `@media` d'une feuille.
- *
- * Même filtre qu'en #630 (`admin-form-width.test.mjs`), et pour la même raison :
- * les paliers redéclarent les sélecteurs de la mise en page nominale. Sous 360 px,
- * `admin/shell.css` redéclare `.spa-admin__content` **avec** un `gap` et
- * `.spa-admin__section` **sans**. Sans ce filtre, les deux blocs seraient joints
- * et lus comme un seul : la gouttière de base pourrait disparaître de
- * `.spa-admin__content` — le palier la fournirait à l'assertion — et le défaut de
- * #633 rouvrirait en vert sur l'écran large, celui que la QA a mesuré.
- *
- * L'accolade fermante du bloc est reconnue à sa position en début de ligne,
- * comme dans `support/tokens.mjs` : une analyse CSS complète serait une
- * dépendance de plus dans un dossier qui n'en a aucune.
+/*
+ * `rulesFor` et `withoutMediaQueries` viennent de `support/tokens.mjs` (#683).
+ * Le second n'est pas une commodité : sous 360 px, `admin/shell.css` redéclare
+ * `.spa-admin__content` **avec** un `gap` et `.spa-admin__section` **sans**. Lue
+ * sans filtre, la feuille joint les deux blocs en un seul, la gouttière de base
+ * peut disparaître de `.spa-admin__content` — le palier la fournit à
+ * l'assertion — et le défaut de #633 rouvre en vert sur l'écran large, celui que
+ * la QA a mesuré. Le raisonnement complet est dans la documentation des deux
+ * fonctions, qui se lisent ensemble.
  */
-function withoutMediaQueries(css) {
-  return css.replace(/@media[^{]*\{[\s\S]*?\n\}/g, '');
-}
-
-/**
- * Les blocs de déclarations des règles dont la liste de sélecteurs contient
- * **exactement** `selector`.
- *
- * L'égalité et non la sous-chaîne, pour la raison déjà écrite en #615, #628 et
- * #630 : une déclaration déplacée vers une règle plus spécifique laisserait
- * l'assertion verte alors que le sélecteur vérifié aurait perdu le comportement.
- */
-function rulesFor(css, selector) {
-  const wanted = selector.trim().replace(/\s+/g, ' ');
-  const found = [];
-  for (const [, prelude, body] of css.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
-    const selectors = prelude.split(',').map((one) => one.trim().replace(/\s+/g, ' '));
-    if (selectors.includes(wanted)) found.push(body);
-  }
-  return found;
-}
 
 /** La valeur d'une propriété dans un bloc de déclarations, ou `null`. */
 function declaration(body, property) {

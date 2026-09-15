@@ -47,6 +47,7 @@ import {
   readStyleSheet,
   readTokenDeclarations,
   resolveToken,
+  rulesFor,
   stripComments,
   styleSheetPath,
 } from './support/tokens.mjs';
@@ -68,24 +69,14 @@ const STEP_FILES = [
 const booking = stripComments(readStyleSheet(styleSheetPath('components/booking.css')));
 const field = stripComments(readStyleSheet(styleSheetPath('components/field.css')));
 
-/**
- * Les blocs de déclarations des règles dont la liste de sélecteurs contient
- * **exactement** `selector`, dans la feuille donnée.
- *
- * L'égalité et non la sous-chaîne : chercher `.spa-booking__step` par
- * sous-chaîne attraperait aussi la règle `.spa-booking__step > .spa-card__body`,
- * et une déclaration déplacée de l'une à l'autre laisserait l'assertion verte
- * alors que l'étape aurait changé de comportement.
+/*
+ * `rulesFor` vient de `support/tokens.mjs` (#683). Il lit les règles dont la liste
+ * de sélecteurs contient **exactement** le sélecteur demandé, ce dont cette suite
+ * dépend de près : chercher `.spa-booking__step` par sous-chaîne attraperait aussi
+ * la règle `.spa-booking__step > .spa-card__body`, et une déclaration déplacée de
+ * l'une à l'autre laisserait l'assertion verte alors que l'étape aurait changé de
+ * comportement.
  */
-function rulesFor(sheet, selector) {
-  const wanted = selector.trim().replace(/\s+/g, ' ');
-  const found = [];
-  for (const [, prelude, body] of sheet.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
-    const selectors = prelude.split(',').map((one) => one.trim().replace(/\s+/g, ' '));
-    if (selectors.includes(wanted)) found.push(body);
-  }
-  return found;
-}
 
 /** La dernière valeur déclarée pour `property` dans un ensemble de blocs. */
 function declaredValue(rules, property) {
