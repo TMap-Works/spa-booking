@@ -87,6 +87,29 @@
   font-weight: var(--spa-font-weight-semibold);
 }
 
+/*
+ * Le titre de la fiche praticien reprend cette pastille — il doit donc être une
+ * boîte flex, exactement comme l'est la ligne de la liste.
+ *
+ * Sans cela, le `display: flex` ci-dessus fait de la pastille un bloc à
+ * l'intérieur d'un `<h1>` resté en flux normal : elle prend une ligne pour elle
+ * seule et le nom tombe en dessous, pour un titre de deux lignes là où le nom en
+ * occupe une (#632). C'est bien le conteneur qu'on corrige, et non la pastille :
+ * la liste, elle, aligne correctement parce que `.spa-admin-staff__member` est
+ * déjà une rangée flex — y toucher déplacerait les deux écrans pour n'en réparer
+ * qu'un.
+ *
+ * Le `gap` est celui de la liste, pour que la pastille se pose au même endroit
+ * d'un écran à l'autre. La classe est propre au domaine personnel :
+ * `.spa-admin__title` sert les treize écrans du back-office, dont aucun autre
+ * n'a de pastille dans son titre.
+ */
+.spa-admin-staff__heading {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+}
+
 .spa-admin-staff__identity {
   display: flex;
   flex-direction: column;
