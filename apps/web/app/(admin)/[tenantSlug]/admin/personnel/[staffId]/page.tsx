@@ -31,9 +31,19 @@ import { StaffScheduleEditor } from '../components/staff-schedule-editor';
 import { StaffServicesPanel, type StaffServiceChoice } from '../components/staff-services-panel';
 import { StaffTimeOffPanel } from '../components/staff-time-off-panel';
 import { adminStaffMemberPath, adminStaffPath } from '../paths';
+import { StaffProfilePanel } from './staff-profile-panel';
 
 /**
  * La fiche d'un praticien — horaires, absences, prestations (#53, critères 2 à 5).
+ *
+ * ## Et, depuis #705, la fiche elle-même
+ *
+ * `PATCH /v1/staff/:id` était servi sans écran : le nom d'affichage ne se
+ * corrigeait pas et une fiche ne se suspendait que par le jeu d'essai Prisma.
+ * `StaffProfilePanel` ouvre les deux, ici et pas dans la liste — c'est sur cette
+ * page que vit déjà tout ce qui concerne cette personne, et l'encart « Cette
+ * fiche est suspendue » ci-dessous annonçait un état dont rien ne permettait de
+ * sortir.
  *
  * ## Ce que cette page prouve, et qu'aucun test ne prouve à sa place
  *
@@ -292,6 +302,12 @@ export default async function StaffMemberPage({ params }: StaffMemberPageProps) 
           soient les horaires ci-dessous.
         </p>
       )}
+
+      {/* La fiche elle-même avant son agenda : on corrige qui est cette
+          personne, puis quand elle travaille. C'est aussi le panneau qui répond
+          à l'encart de suspension juste au-dessus — il l'annonçait sans offrir
+          de quoi en sortir (#705). */}
+      <StaffProfilePanel canManage={canManage} member={member} tenantSlug={tenantSlug} />
 
       {/* Pas de `spa-admin__split` ici : sa première colonne est bornée à 22 rem
           — elle est faite pour une liste, pas pour une grille de sept jours à
