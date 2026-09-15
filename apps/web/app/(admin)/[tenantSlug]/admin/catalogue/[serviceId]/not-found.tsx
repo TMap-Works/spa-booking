@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { Notification } from '@/components/ui/notification';
+import { tenantSlugFromPathname } from '@/lib/tenant-slug';
 
 import { adminCatalogPath } from '../../paths';
 
@@ -40,43 +41,16 @@ import { adminCatalogPath } from '../../paths';
  * `searchParams` : c'est une limite de l'App Router, pas un oubli. Le slug de
  * l'établissement, dont dépend le chemin de retour, ne peut donc venir que de
  * l'URL courante, et `usePathname()` est le seul accès qui y mène.
+ *
+ * La lecture du slug elle-même vit dans `lib/tenant-slug.ts` depuis #703 : cette
+ * frontière en portait la **troisième** copie, caractère pour caractère, après
+ * celles du report de rendez-vous (#627) et de la fiche praticien (#696), et les
+ * deux gardes qu'elle porte — premier segment absent, segment non décodable —
+ * sont trop coûteuses à perdre pour être écrites trois fois. Le décodage qu'elle
+ * fait n'est pas redondant ici non plus : `adminCatalogPath` réencode ce qu'on
+ * lui donne, et sans ce passage un slug déjà encodé dans le chemin le serait une
+ * seconde fois.
  */
-
-/**
- * Le slug de l'établissement, premier segment de toute URL du back-office.
- *
- * Il est décodé avant d'être rendu à `adminCatalogPath`, qui le réencode : sans
- * ce passage, un slug déjà encodé dans le chemin le serait une seconde fois, et
- * le lien de retour pointerait à côté. `usePathname()` rend bien le chemin
- * **encodé** — Next le tire de `new URL(canonicalUrl).pathname`.
- *
- * Rend `null` plutôt qu'une chaîne vide quand le premier segment manque ou ne se
- * décode pas : une chaîne vide passée à `adminCatalogPath` donnerait
- * `//admin/...`, que le navigateur lit comme une URL **absolue** vers l'hôte
- * `admin` — la seule issue de l'écran sortirait du site. Et un
- * `decodeURIComponent` qui lève remplacerait le 404 par la frontière d'erreur,
- * précisément l'écran dont ce ticket cherche à sortir.
- *
- * C'est la **troisième** copie de cette lecture, après celles de
- * `personnel/[staffId]/not-found.tsx` (#696) et de l'espace client (#627). Elle
- * reste locale à dessein : le module partagé qui les réunira est l'objet de
- * l'issue de suivi #703, et l'anticiper ici ferait sortir ce correctif du segment
- * qu'il corrige.
- */
-function tenantSlugFromPathname(pathname: string): string | null {
-  const [, encodedSlug = ''] = pathname.split('/');
-
-  if (encodedSlug === '') {
-    return null;
-  }
-
-  try {
-    return decodeURIComponent(encodedSlug);
-  } catch {
-    return null;
-  }
-}
-
 export default function ServiceNotFound() {
   const tenantSlug = tenantSlugFromPathname(usePathname());
 
