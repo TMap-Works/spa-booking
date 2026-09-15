@@ -1,5 +1,6 @@
 import {
   hasAtLeastRole,
+  uuidSchema,
   type AvailabilityResponse,
   type SessionUser,
   type StaffMember,
@@ -65,6 +66,14 @@ import { adminStaffMemberPath, adminStaffPath } from '../paths';
  * disparaître une affectation qu'on vient précisément consulter pour la
  * corriger. Les lectures partent donc en parallèle, une par prestation, sur un
  * catalogue de back-office dont la taille est bornée par ce que le salon vend.
+ *
+ * ## Les trois façons de ne pas trouver la fiche n'en font qu'une
+ *
+ * Identifiant mal formé, identifiant inconnu, fiche d'un autre établissement :
+ * les trois se répondent `notFound()`, indistinctement (tenant-isolation §4), et
+ * `not-found.tsx` — la frontière posée au même segment par #696 — en rend
+ * l'encart dans l'enveloppe du back-office, avec son lien de retour vers
+ * Personnel.
  */
 
 export const dynamic = 'force-dynamic';
@@ -85,6 +94,28 @@ export default async function StaffMemberPage({ params }: StaffMemberPageProps) 
     tenantSlug,
     adminStaffMemberPath(tenantSlug, staffId),
   );
+
+  /*
+   * Un identifiant mal formé ne désigne aucune fiche : il se refuse ici, avant
+   * le moindre aller-retour (#696).
+   *
+   * Sans ce contrôle, `pas-un-uuid` partait jusqu'à `GET /v1/staff/:id/schedule`
+   * dont le `ParseUUIDPipe` rend **400**. Ce statut n'est ni un 404 ni un refus
+   * de rôle : il tombait donc dans la branche par défaut d'`adminLoadFailure`,
+   * qui affiche `error.message` tel quel — « Validation failed (uuid is
+   * expected) », en anglais, sous « Fiche indisponible », sans la moindre issue.
+   *
+   * Le refus vient **après** la garde, et non avant : l'écran d'introuvable est
+   * celui du back-office, et une visiteuse sans session doit voir la connexion,
+   * pas un 404 qui lui apprendrait la forme des identifiants du salon.
+   *
+   * `uuidSchema` est la v4 stricte du contrat partagé — la même que celle dont
+   * l'API tire tous ses identifiants (`@default(uuid())`) : refuser ici ce
+   * qu'elle refuse là-bas ne coûte qu'un refus plus tôt, du bon côté de l'écran.
+   */
+  if (!uuidSchema.safeParse(staffId).success) {
+    notFound();
+  }
 
   let profile: SessionUser | undefined;
   let member: StaffMember | undefined;
@@ -192,6 +223,10 @@ export default async function StaffMemberPage({ params }: StaffMemberPageProps) 
   // `notFound()` et `redirect()` lèvent : ils sont appelés **hors** du `try`,
   // sans quoi le `catch` avalerait la navigation qu'ils déclenchent et la page
   // rendrait une erreur à la place d'un 404.
+  //
+  // Ce que ce `notFound()` rend est désormais `not-found.tsx`, la frontière
+  // posée au même segment (#696) : l'encart « Praticien introuvable » du
+  // back-office, et non plus la page d'adresse inconnue des clientes.
   if (loadError instanceof ApiClientError && loadError.status === 404) {
     notFound();
   }
