@@ -143,6 +143,91 @@
 }
 
 /*
+ * Le récapitulatif en deux colonnes — libellé, puis valeur (#636).
+ *
+ * ## Ce qui était rendu
+ *
+ * Rien. La `<dl>` ne portait aucune règle, et le style par défaut du navigateur
+ * s'appliquait : `<dt>` et `<dd>` sont des blocs, et la feuille de l'agent
+ * utilisateur décale le second de 40 px. Chaque valeur passait donc à la ligne
+ * sous son libellé, indentée — dix couples étalés sur vingt lignes, à l'écran
+ * même où la cliente vérifie ce qu'elle réserve. La mise en page ci-dessous est
+ * la seule chose qui neutralise ce `margin-inline-start` de 40 px : une `<dl>`
+ * rendue en grille ou en flex le garderait, il appartient au `<dd>` et non à la
+ * liste.
+ *
+ * ## Pourquoi c'est un calque d'« Informations pratiques »
+ *
+ * La vitrine rend les mêmes couples libellé / valeur, et les rend bien :
+ * `.spa-salon__info-row` dans `salon.css`. Les deux surfaces sont publiques et
+ * se suivent dans le parcours — on quitte `/spa-lumiere` pour le tunnel —, et
+ * deux mises en page pour la même information s'y lisent comme deux produits.
+ * Les valeurs sont donc reprises à l'identique : une rangée par couple, terme à
+ * `8rem` de largeur minimale, gouttières `--spa-space-1` et `--spa-space-3`.
+ *
+ * Calque et non partage : la règle n'est pas factorisée entre les deux feuilles.
+ * `salon.css` décrit la vitrine, `booking.css` le tunnel, et aucune des deux ne
+ * doit avoir à connaître l'autre pour changer. Une abstraction commune se paierait
+ * d'un couplage entre deux écrans qui n'ont en commun que ce motif.
+ *
+ * ## Et sur un écran étroit
+ *
+ * `flex-wrap` fait toute la dégradation : quand la valeur ne tient plus à côté de
+ * son libellé, elle passe à la ligne — sur toute la largeur de la rangée, et sans
+ * l'indentation de 40 px qui est précisément le défaut corrigé ici. À 360 px, un
+ * panneau de tunnel offre ~280 px utiles : le terme en tient 128, la valeur prend
+ * le reste ou la ligne suivante. `overflow-wrap` couvre le cas des valeurs sans
+ * espace — une adresse e-mail longue, qui déborderait sinon du panneau.
+ */
+.spa-booking__recap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+}
+
+/*
+ * `align-items: baseline` est le seul écart au calque de la vitrine, et il a une
+ * raison que la vitrine n'a pas : la rangée « Prix » met côte à côte un libellé
+ * à `--spa-font-size-sm` et une valeur à `--spa-font-size-lg`, celle-ci portant
+ * aussi `.spa-card__price`. L'alignement par défaut d'un conteneur flex est
+ * `stretch` : les deux boîtes sont alors étirées à la hauteur de la rangée et
+ * leurs textes démarrent en haut de leur propre boîte. Les interlignes valant
+ * 14 × 1,55 et 18 × 1,55, les deux lignes de base s'écartent d'environ 4 px et
+ * « Prix » flotte au-dessus de son montant. « Informations pratiques » ne
+ * connaît pas ce cas : toutes ses valeurs ont le corps de leur libellé.
+ *
+ * Aligner sur la ligne de base est sans effet sur les huit autres rangées, et
+ * sur un écran étroit où la valeur passe à la ligne chaque ligne flex ne porte
+ * plus qu'un élément — l'alignement n'y a rien à aligner.
+ */
+.spa-booking__recap-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--spa-space-1) var(--spa-space-3);
+}
+
+.spa-booking__recap-term {
+  min-inline-size: 8rem;
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text-muted);
+}
+
+/*
+ * `margin: 0` d'abord : c'est lui qui retire les 40 px du navigateur.
+ *
+ * La couleur pleine ensuite, contre l'atténuée héritée de `.spa-card__body` :
+ * sans elle, le libellé et sa valeur auraient exactement le même ton, et la
+ * colonne de gauche ne se lirait plus comme une colonne de libellés. Même
+ * partage qu'entre `.spa-salon__info-term` et `.spa-salon__info-value`.
+ */
+.spa-booking__recap-value {
+  margin: 0;
+  color: var(--spa-color-text);
+  overflow-wrap: anywhere;
+}
+
+/*
  * La paire de boutons qui termine une étape — « Corriger mes coordonnées » et
  * « Confirmer la réservation », « Confirmer l'annulation » et « Garder mon
  * rendez-vous ».
