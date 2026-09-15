@@ -592,7 +592,11 @@ function VisitHistory({
 
   return (
     <>
-      <ol className="spa-admin-history">
+      {/* `role="list"` explicite : le socle retire le marqueur de tout `<ol>`
+          (#625), et Safari retire alors à VoiceOver la sémantique de liste. Ici
+          l'ordre chronologique des visites fait sens — il doit rester annoncé
+          comme une liste (styles/README.md §3). */}
+      <ol className="spa-admin-history" role="list">
         {history.visits.map((visit) => (
           <li className="spa-admin-history__item" key={visit.appointmentId}>
             <span className="spa-admin-history__date">
