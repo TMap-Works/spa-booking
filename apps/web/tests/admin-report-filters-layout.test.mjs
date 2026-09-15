@@ -2,10 +2,10 @@
  * Indicateurs d'activité — l'alignement de la barre de filtres
  * =============================================================================
  *
- * Issue #628. La campagne de QA a relevé, sur `/…/admin/reporting`, une barre de
- * filtres en escalier : le sélecteur « Filtrer » posé 26 px au-dessus de celui
- * de « Période », et, en période personnalisée, quatre champs répartis sur deux
- * hauteurs séparées de 47 px.
+ * Issues #628 puis #656. La campagne de QA a relevé, sur `/…/admin/reporting`,
+ * une barre de filtres en escalier : le sélecteur « Filtrer » posé 26 px
+ * au-dessus de celui de « Période », et, en période personnalisée, quatre champs
+ * répartis sur deux hauteurs séparées de 47 px.
  *
  * Ces deux chiffres ne sont pas des accidents de rendu, ce sont des sommes de
  * jetons. Sous `align-items: flex-end`, tout ce qui pend sous un contrôle le
@@ -22,23 +22,61 @@
  * bas « pour caler les contrôles », rouvre le bug à l'identique — et rien ne
  * l'en avertit : la page compile, la barre s'affiche.
  *
- * Cette suite ne mesure pas un rendu : elle tient les deux invariants dont le
- * rendu découle — la barre s'aligne par le haut, et le bouton, seul contrôle
- * sans étiquette, se voit rendre la ligne d'étiquette qui lui manque. La preuve
- * visuelle, elle, est au navigateur : phase de recette de #628, `boxes=true` en
- * période simple et en période personnalisée.
+ * ## Ce que #656 y a ajouté
+ *
+ * Rendre au bouton la ligne d'étiquette qu'il n'a pas le pose à la hauteur des
+ * champs tant qu'il **partage leur ligne**. Le même décalage devient ~26 px de
+ * vide dès que l'enroulement le laisse seul en tête de sa propre ligne : il n'a
+ * alors plus d'étiquette voisine à rattraper. Aucune écriture de ce décalage ne
+ * s'en tire — marge ou vraie ligne d'étiquette vide occupent la même hauteur
+ * dans la ligne flex, et CSS n'offre aucun sélecteur pour « premier élément
+ * d'une ligne flex ».
+ *
+ * Ce qui se tient, c'est donc la cause : **le bouton n'est plus un élément de la
+ * barre**. Le dernier champ et lui n'en forment qu'un, insécable, qui s'enroule
+ * d'un bloc — une ligne ouverte par ce couple commence toujours par
+ * l'étiquette « Filtrer ». L'invariant a deux moitiés, et les deux se perdent
+ * en silence : le balisage qui groupe (`report-filters.tsx`) et le
+ * `flex-wrap: nowrap` qui interdit au couple de se rompre (`reporting.css`).
+ * Séparées, elles rouvrent le défaut sans qu'aucune page cesse de compiler.
+ *
+ * Cette suite ne mesure pas un rendu : elle tient les invariants dont le rendu
+ * découle. La preuve visuelle, elle, est au navigateur : phase de recette de
+ * #628 et de #656, à 1280, 768 et 360 px, en période simple et personnalisée,
+ * plus la bande ~800-900 px où le bouton s'isolait.
  *
  * Aucune dépendance : `node:test` et `node:assert` suffisent, comme pour les
  * autres suites de style de ce dossier.
  */
 
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { readStyleSheet, stripComments, styleSheetPath } from './support/tokens.mjs';
 
+const here = dirname(fileURLToPath(import.meta.url));
+
 /** La feuille des indicateurs d'activité, commentaires neutralisés. */
 const reporting = stripComments(readStyleSheet(styleSheetPath('admin/reporting.css')));
+
+/*
+ * Le source de la barre de filtres, ses commentaires neutralisés — même raison
+ * qu'en #636 pour le récapitulatif de réservation : la prose qui explique le
+ * groupement cite le balisage qu'elle décrit, et l'assertion échouerait sur le
+ * commentaire qui la justifie.
+ */
+const filters = stripComments(
+  readFileSync(
+    join(here, '..', 'app', '(admin)', '[tenantSlug]', 'admin', 'components', 'report-filters.tsx'),
+    'utf8',
+  ),
+);
+
+/** Le couple « Filtrer » + « Afficher », tel que la feuille le désigne. */
+const PAIR = '.spa-admin-report-filters > div:has(> button)';
 
 /**
  * Les blocs de déclarations des règles dont la liste de sélecteurs contient
@@ -98,13 +136,20 @@ describe('La barre de filtres aligne ses libellés en haut', () => {
 });
 
 describe('Le bouton « Afficher » se pose sur la rangée des champs', () => {
-  const button = rulesFor('.spa-admin-report-filters > button');
+  const button = rulesFor('.spa-admin-report-filters button');
 
-  it('vise bien le bouton de la barre', () => {
+  it('atteint le bouton où qu’il se trouve dans la barre', () => {
+    // Un enfant direct — `.spa-admin-report-filters > button` — ne l'atteint
+    // plus : depuis #656, l'application pose le bouton dans le couple
+    // « Filtrer », alors que `mockups/admin/reporting.html` le montre encore nu
+    // au bout de la barre. La règle doit valoir pour les deux.
     assert.notDeepEqual(
       button,
       [],
-      'aucune règle ne vise `.spa-admin-report-filters > button`.',
+      'aucune règle ne vise `.spa-admin-report-filters button`. Un sélecteur ' +
+        'restreint à l’enfant direct n’atteint plus le bouton, que ' +
+        '`report-filters.tsx` groupe avec le champ « Filtrer » (#656) : le ' +
+        'bouton s’étirerait alors comme un champ et perdrait son décalage.',
     );
   });
 
@@ -115,7 +160,7 @@ describe('Le bouton « Afficher » se pose sur la rangée des champs', () => {
     assert.match(
       button.join(' '),
       /margin-block-start\s*:\s*calc\([^)]*\)/,
-      '`.spa-admin-report-filters > button` n’est plus décalé : aligné par le ' +
+      '`.spa-admin-report-filters button` n’est plus décalé : aligné par le ' +
         'haut sans étiquette, il remonte à la hauteur des libellés et se ' +
         'désaligne des champs qu’il commande (#628).',
     );
@@ -138,5 +183,74 @@ describe('Le bouton « Afficher » se pose sur la rangée des champs', () => {
           'Exprimé autrement, il cesse de suivre les jetons qu’il rattrape.',
       );
     }
+  });
+});
+
+describe('Le bouton « Afficher » n’ouvre jamais une ligne à lui seul', () => {
+  it('voyage avec le champ « Filtrer » dans un même élément de la barre', () => {
+    // La moitié « balisage » de l'invariant. Sorti de ce groupe, le bouton
+    // redevient un élément de la barre : il s'enroule seul dès que les champs
+    // de la dernière ligne tiennent sans lui — la bande ~800-900 px en période
+    // personnalisée — et sa marge d'étiquette devient ~26 px de vide (#656).
+    assert.match(
+      filters,
+      /<div>\s*<Select[\s\S]*?label="Filtrer"[\s\S]*?<\/Select>\s*<Button[\s\S]*?<\/Button>\s*<\/div>/,
+      'report-filters.tsx ne groupe plus le sélecteur « Filtrer » et le bouton ' +
+        '« Afficher » dans un même `<div>`. C’est ce groupe, et lui seul, qui ' +
+        'empêche le bouton d’ouvrir une ligne sans étiquette au-dessus de lui ' +
+        '(#656) — aucune écriture de son décalage ne s’en charge à sa place.',
+    );
+  });
+
+  it('n’a qu’un bouton, celui du couple', () => {
+    // Un second bouton posé ailleurs dans la barre rouvrirait le défaut sans
+    // rien casser de l'assertion précédente, qui ne regarde que le couple.
+    assert.equal(
+      (filters.match(/<[Bb]utton\b/g) ?? []).length,
+      1,
+      'la barre de filtres porte plus d’un bouton. Tout bouton hors du couple ' +
+        '« Filtrer » s’enroule seul en tête de ligne, avec la marge qui lui ' +
+        'rend sa ligne d’étiquette — c’est le vide de #656.',
+    );
+  });
+
+  it('déclare le couple comme une rangée qui ne se rompt pas', () => {
+    // La moitié « style » de l'invariant. Sans `nowrap`, le couple se coupe
+    // sous la pression et le bouton retombe sous le champ, avec sa marge :
+    // exactement le défaut qu'on retire, à une largeur de moins.
+    const pair = rulesFor(PAIR);
+
+    assert.notDeepEqual(pair, [], `aucune règle ne vise \`${PAIR}\`.`);
+    assert.match(
+      pair.join(' '),
+      /flex-wrap\s*:\s*nowrap/,
+      `\`${PAIR}\` ne déclare plus \`flex-wrap: nowrap\`. Le couple se romprait ` +
+        'sous la pression, et le bouton reprendrait sa ligne — avec les ~26 px ' +
+        'de vide de #656 au-dessus de lui.',
+    );
+    assert.match(
+      pair.join(' '),
+      /align-items\s*:\s*flex-start/,
+      `\`${PAIR}\` n’aligne plus son contenu par le haut. Un conteneur flex ` +
+        'étire ses éléments par défaut : le bouton prendrait la hauteur du ' +
+        'champ, phrase d’aide comprise.',
+    );
+  });
+
+  it('rend au champ du couple la base qu’il avait dans la barre', () => {
+    // `.spa-admin-report-filters > *` ne l'atteint plus : le champ n'est plus un
+    // enfant direct de la barre. Sans base propre, il retombe sur `flex: 0 1
+    // auto` et le couple cesse de s'enrouler comme un champ de la barre.
+    const field = rulesFor(`${PAIR} > .spa-select`);
+
+    assert.notDeepEqual(field, [], `aucune règle ne vise \`${PAIR} > .spa-select\`.`);
+    assert.match(
+      field.join(' '),
+      /flex\s*:\s*1\s+1\s+12rem/,
+      `\`${PAIR} > .spa-select\` ne reprend plus la base \`1 1 12rem\` des ` +
+        'champs de la barre. Sorti de l’enfance directe, il ne l’hérite plus de ' +
+        '`.spa-admin-report-filters > *`, et le couple s’enroulerait sur la ' +
+        'largeur de ses options plutôt que sur celle d’un champ.',
+    );
   });
 });
