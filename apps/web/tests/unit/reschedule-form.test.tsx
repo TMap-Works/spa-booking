@@ -1,6 +1,7 @@
 import type { AvailabilityResponse } from '@spa/shared';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { RescheduleForm } from '@/app/(account)/[tenantSlug]/compte/components/reschedule-form';
@@ -8,7 +9,7 @@ import { RescheduleForm } from '@/app/(account)/[tenantSlug]/compte/components/r
 /**
  * L'écran de report.
  *
- * Deux choses s'y prouvent, et rien d'autre — ce que la page serveur envoie à
+ * Trois choses s'y prouvent, et rien d'autre — ce que la page serveur envoie à
  * l'API (`excludeAppointmentId`) se prouve à l'intégration, côté API :
  *
  * - **#442** — la liste ainsi élargie contient les créneaux qui *chevauchent* le
@@ -19,11 +20,29 @@ import { RescheduleForm } from '@/app/(account)/[tenantSlug]/compte/components/r
  *   puis la grille d'**une seule** journée. L'écran dépliait auparavant toutes
  *   les journées d'un coup, 4 960 px de haut à 360 px, le bouton de validation
  *   deux mille pixels sous le créneau qu'on venait de choisir.
+ * - **#654** — la mention du fuseau ne sort pas du rendu serveur, qui n'a aucun
+ *   moyen de savoir où se trouve la visiteuse.
  */
 
 const rescheduleOwnAppointmentAction = vi.fn();
 const refresh = vi.fn();
 const replace = vi.fn();
+
+/**
+ * Le fuseau du visiteur est piloté par le test, comme dans `slot-step.test.tsx`.
+ *
+ * `timeZoneMention` lit celui du navigateur : une assertion sur la mention
+ * dépendrait sinon de la machine où la suite tourne — verte à Paris, rouge sur
+ * un agent en UTC. Seule cette fonction est remplacée ; les mises en forme
+ * d'heure restent les vraies, puisque les autres suites en dépendent.
+ */
+const MENTION = 'heure de UTC';
+
+vi.mock('@/lib/format', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/format')>();
+
+  return { ...actual, timeZoneMention: () => MENTION };
+});
 
 vi.mock('@/app/(account)/[tenantSlug]/compte/actions', () => ({
   rescheduleOwnAppointmentAction: (...args: unknown[]) => rescheduleOwnAppointmentAction(...args),
@@ -84,8 +103,8 @@ afterEach(() => {
   replace.mockReset();
 });
 
-function renderForm(days: AvailabilityResponse = availability): ReturnType<typeof userEvent.setup> {
-  render(
+function form(days: AvailabilityResponse = availability) {
+  return (
     <RescheduleForm
       tenantSlug="salon-des-lilas"
       appointmentId={APPOINTMENT_ID}
@@ -93,8 +112,12 @@ function renderForm(days: AvailabilityResponse = availability): ReturnType<typeo
       serviceName="Massage suédois"
       availability={days}
       timeZone="UTC"
-    />,
+    />
   );
+}
+
+function renderForm(days: AvailabilityResponse = availability): ReturnType<typeof userEvent.setup> {
+  render(form(days));
 
   return userEvent.setup();
 }
@@ -217,5 +240,41 @@ describe('report — le sélecteur est celui du tunnel', () => {
 
     expect(screen.getByText('Aucun créneau disponible')).toBeDefined();
     expect(screen.queryByRole('grid')).toBeNull();
+  });
+});
+
+/**
+ * #654 — la mention du fuseau attend le montage.
+ *
+ * `timeZoneMention` lit `Intl.DateTimeFormat().resolvedOptions().timeZone`,
+ * c'est-à-dire le fuseau du **navigateur**. Au rendu serveur il n'y a pas de
+ * navigateur : `Intl` y rend celui du conteneur, et la phrase partait donc du
+ * serveur avec une mention qu'une visiteuse déjà dans le fuseau du salon ne
+ * devait pas lire — puis disparaissait à l'hydratation, avec l'avertissement
+ * React de divergence.
+ *
+ * La divergence elle-même n'est pas reproductible ici : sous jsdom, le rendu
+ * serveur et le rendu client tournent dans le même processus, donc avec le même
+ * `Intl`. Ce qui se prouve est sa **cause** — que le rendu serveur ne calcule
+ * pas la mention du tout — et c'est exactement ce que le drapeau `mounted`
+ * garantit.
+ */
+describe('report — la mention du fuseau attend l’hydratation (#654)', () => {
+  it('ne sort pas la mention du rendu serveur', () => {
+    const markup = renderToStaticMarkup(form());
+
+    // La phrase, elle, est bien rendue par le serveur : sans cette assertion,
+    // celle du dessous serait verte même si le composant ne rendait rien.
+    expect(markup).toContain('actuellement le');
+    expect(markup).not.toContain(MENTION);
+    expect(markup).not.toContain('spa-appointment__timezone');
+  });
+
+  it('la complète une fois le composant monté', () => {
+    renderForm();
+
+    // `getByText` ne joint que les nœuds de texte **directs** : c'est bien le
+    // paragraphe d'en-tête qui est retenu, pas la section qui le contient.
+    expect(screen.getByText(/actuellement le/).textContent).toContain(`(${MENTION})`);
   });
 });
