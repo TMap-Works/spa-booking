@@ -132,6 +132,34 @@ différentes de l'utilisateur.
 Variantes : `--accent` (action principale), `--neutral`, `--quiet`, `--danger`
 (destructif, toujours précédé d'une confirmation), `--block` (pleine largeur).
 
+#### Quel bouton porte `--block`, et lequel ne le porte pas (#674)
+
+`--block` ne dit pas « ce bouton est important », il dit **« ce bouton mesure la
+boîte qui le contient »**. La question n'est donc jamais quel rôle joue le
+bouton, mais **ce qu'il y a autour de lui** — et le produit n'a que deux
+réponses :
+
+| Ce que le bouton conclut | Largeur | Pourquoi |
+|---|---|---|
+| une **colonne de saisie bornée** — un `<form>` sous `.spa-admin-form` (44 rem), la carte d'un tiroir, la colonne d'un ticket | `--block` | la borne est ce qui donne au bouton une mesure à prendre. Il finit la colonne qu'il vient de remplir, et un bouton court sous une pile de champs pleine largeur se lit comme un oubli |
+| une **barre d'outils** — `.spa-admin-toolbar` | largeur automatique | une barre n'a pas de colonne : elle traverse toute la zone de contenu. Un bouton qui la prendrait mesurerait **940 px** d'un bord à l'autre — mesure au navigateur, 1280 px de fenêtre — et l'entretoise `__spacer` qui cale la rangée à droite n'aurait plus rien à pousser |
+
+Les deux familles sont disjointes, et elles le restent par exécution :
+`admin-toolbar-buttons.test.mjs` refuse la pleine largeur sous une barre
+d'outils, `admin-form-width.test.mjs` tient la borne des colonnes de saisie.
+
+Le piège est qu'une largeur automatique **ressemble** à un oubli : la campagne
+de QA `20260911-1` a relevé trois largeurs pour ce qu'elle lisait comme un même
+rôle — 966, 164 et 202 px. Deux l'étaient bien, et #634 les a ramenées à leur
+carte. La troisième, « Enregistrer la semaine » à 202 px, ne l'est pas : la
+grille des horaires occupe toute la largeur **exprès** — sept jours à deux
+champs horaires ne tiennent pas en 44 rem — si bien que `--block` y poserait un
+bouton de bout en bout de l'écran. La contre-épreuve a été faite au navigateur :
+la classe ajoutée à la volée fait passer le bouton de **202 px à 940 px**, à un
+cheveu des 966 px que la campagne reprochait justement au premier des trois. Le
+défaut que #634 venait de corriger sur `/catalogue/rubriques` (926 px), pris
+dans l'autre sens.
+
 En chargement, le libellé reste dans le flux et devient seulement invisible : le
 bouton garde sa largeur. Sans cela la mise en page saute au moment précis où le
 client vient de cliquer. Le bouton se désactive dès le premier clic — un double

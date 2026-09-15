@@ -53,6 +53,27 @@ import { setStaffScheduleAction } from '../actions';
  * aucune façon exacte de le dire en `HH:MM`. `23:59` perdrait une minute, donc le
  * dernier créneau de la soirée. La case pose le littéral `24:00` que le contrat
  * réserve à ce cas, et neutralise le champ tant qu'elle est cochée.
+ *
+ * ## « Enregistrer la semaine » n'est pas en pleine largeur, et c'est voulu (#674)
+ *
+ * La campagne de QA `20260911-1` l'a relevé à 202 px contre 670 px pour « Créer
+ * la prestation », et l'a lu comme une incohérence. C'en serait une si les deux
+ * jouaient le même rôle. Ils n'en jouent pas : « Créer la prestation » conclut
+ * une **colonne de saisie bornée** à 44 rem, où `block` vaut exactement la carte
+ * qu'on vient de remplir ; celui-ci est le bouton d'une **barre d'outils**, qui
+ * ne borne rien.
+ *
+ * Et la grille des horaires n'est pas bornée **exprès** — sept jours à deux
+ * champs horaires chacun ne tiennent pas en 44 rem, c'est écrit dans
+ * `personnel/[staffId]/page.tsx`, qui lui refuse aussi `spa-admin__split` pour
+ * la même raison. La contre-épreuve a été faite au navigateur, à 1280 px : la
+ * classe ajoutée à la volée fait passer ce bouton de **202 px à 940 px**, dans
+ * une barre qui en mesure 966 — le défaut que #634 a corrigé sur
+ * `/catalogue/rubriques` (926 px), pris dans l'autre sens.
+ *
+ * La règle des deux familles est écrite dans `styles/README.md` §2 et tenue par
+ * `tests/admin-toolbar-buttons.test.mjs`. Changer d'avis ici demande de changer
+ * la règle, pas seulement ce fichier.
  */
 
 /** Les plages d'un jour, dans l'ordre où elles ont été saisies. */

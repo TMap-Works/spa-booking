@@ -247,6 +247,34 @@
 
 /* --- Barre d'outils -------------------------------------------------------- */
 
+/*
+ * La rangée de commandes d'un écran : le retour vers la liste, la navigation de
+ * période, le sélecteur jour/semaine, l'action de la fiche ouverte. Elle
+ * traverse toute la zone de contenu — rien ne la borne, contrairement à la
+ * colonne de saisie déclarée juste au-dessus.
+ *
+ * ## Ses boutons restent en largeur automatique (#674)
+ *
+ * `spa-button--block` fait mesurer au bouton la boîte qui le contient. Sous une
+ * colonne bornée à 44 rem, cela donne 670 px et une fin de formulaire propre
+ * (#630, #634) ; ici, cela donne **940 px** — mesuré au navigateur sur la fiche
+ * praticien, à 1280 px de fenêtre, en ajoutant la classe à la volée : le bouton
+ * passe de 202 px à 940 px dans une barre qui en mesure 966. C'est le défaut que
+ * #634 a corrigé sur `/catalogue/rubriques`, où le même `block` posé sur une
+ * carte non bornée avait rendu 926 px. Le même écart, dans l'autre sens.
+ *
+ * L'entretoise ci-dessous n'y survivrait pas non plus : son
+ * `margin-inline-start: auto` présuppose que ce qui la suit prend sa largeur
+ * naturelle. Une barre dont le dernier bouton est en pleine largeur est une
+ * barre à un seul élément.
+ *
+ * Aucune règle ne l'impose ici, et c'est délibéré : il n'y a rien à neutraliser,
+ * seulement un `block` à ne pas passer. Une règle qui le rattraperait après coup
+ * — `.spa-admin-toolbar .spa-button--block { inline-size: auto }` — rendrait la
+ * classe silencieusement inopérante, et personne ne saurait plus pourquoi. C'est
+ * `tests/admin-toolbar-buttons.test.mjs` qui tient la disjonction, et
+ * `styles/README.md` §2 qui énonce la règle pour les deux familles.
+ */
 .spa-admin-toolbar {
   display: flex;
   flex-wrap: wrap;
