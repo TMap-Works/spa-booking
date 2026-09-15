@@ -733,7 +733,8 @@
    * rangée qui s'enroule : sept entrées enroulées à 360 px occupent trois lignes
    * et repoussent le contenu sous la ligne de flottaison, alors que le
    * back-office sur téléphone sert à consulter, pas à naviguer. Le clavier n'y
-   * perd rien : le focus fait défiler l'entrée visée jusque dans le champ.
+   * perd rien — mais cela ne va pas de soi, et ne l'a pas été : c'est le rail qui
+   * amène l'entrée focalisée en vue, et non le navigateur (#701, plus bas).
    *
    * La gouttière verticale réserve la place de l'anneau de focus, que le
    * conteneur de défilement rognerait sinon.
@@ -748,6 +749,31 @@
     gap: var(--spa-space-2);
     overflow-x: auto;
     padding-block: var(--spa-space-1);
+    /*
+     * Le bandeau court d'un bord de l'écran à l'autre (#701).
+     *
+     * La marge négative vaut exactement la gouttière du rail à ce palier, et le
+     * `padding-inline` la rend au contenu : la première et la dernière entrée
+     * gardent leurs 12 px, mais la **coupure** du défilement tombe désormais sur
+     * le bord de la fenêtre. C'est ce qui la rend lisible : une entrée tranchée
+     * par le bord de l'écran annonce qu'il y a une suite, là où la même coupure
+     * douze pixels plus tôt, au milieu de l'aplat sombre du rail, ne disait rien
+     * — et faisait croire le sommaire terminé à « Reporting ». Sur téléphone, où
+     * aucune barre de défilement ne se montre, c'était le seul indice possible.
+     *
+     * `scroll-padding-inline` cale l'entrée amenée en vue à 12 px de cette
+     * coupure et non à ras : son anneau de focus reste entier. C'est le même
+     * réglage, pour la même raison, que la barre de dates du tunnel client
+     * (`components/slot-grid.css`).
+     *
+     * Ce qui amène l'entrée focalisée en vue, en revanche, n'est pas ici : Blink
+     * ignore une entrée que le bord coupe — il ne déplace le défilement que pour
+     * une entrée *entièrement* sortie —, et c'est le rail lui-même qui demande le
+     * cadrage (`admin-rail.tsx`, `revealEntry`).
+     */
+    margin-inline: calc(-1 * var(--spa-space-3));
+    padding-inline: var(--spa-space-3);
+    scroll-padding-inline: var(--spa-space-3);
   }
 
   .spa-admin__rail .spa-admin__nav-link {
