@@ -3,7 +3,7 @@
 import { ERROR_CODES, type AvailabilityResponse, type TimeZone, type UtcInstant } from '@spa/shared';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { SlotPicker } from '@/components/booking/slot-picker';
 import { Button } from '@/components/ui/button';
@@ -84,7 +84,30 @@ export function RescheduleForm({
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<{ title: string; message: string } | null>(null);
 
-  const mention = timeZoneMention(timeZone);
+  /**
+   * La mention du fuseau, calculée **après le montage** seulement (#654).
+   *
+   * `timeZoneMention` lit le fuseau du **navigateur**
+   * (`Intl.DateTimeFormat().resolvedOptions().timeZone`), qui n'existe pas au
+   * rendu serveur : `Intl` y rend celui du conteneur, c'est-à-dire UTC. Cet
+   * écran étant rendu par le serveur avec ses journées déjà chargées, la phrase
+   * « actuellement le … (heure de Europe/Paris) » partait donc du serveur pour
+   * une visiteuse parisienne, qui ne doit précisément rien lire — React signale
+   * la divergence et réécrit le nœud à l'hydratation.
+   *
+   * Le drapeau est le même que celui de
+   * [`SlotPicker`](../../../../../components/booking/slot-picker.tsx) et de
+   * `booking-tunnel.tsx` : au premier rendu — serveur comme client — la mention
+   * est absente des deux côtés, donc les balises s'accordent ; l'effet ne joue
+   * qu'ensuite, sur le client seul, et c'est là que la phrase se complète.
+   */
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  const mention = mounted ? timeZoneMention(timeZone) : null;
 
   // Comparaison d'instants et non de chaînes : rien ne garantit que le
   // calendrier et l'historique écrivent le même moment avec la même précision,
