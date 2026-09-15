@@ -9,6 +9,7 @@ import { roleLabel } from '../components/navigation';
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
 import { StaffAccountActions } from './components/staff-account-actions';
 import { StaffInviteForm } from './components/staff-invite-form';
+import { StaffMemberForm } from './components/staff-member-form';
 import { adminStaffMemberPath, adminStaffPath } from './paths';
 
 /**
@@ -26,17 +27,28 @@ import { adminStaffMemberPath, adminStaffPath } from './paths';
  *
  * « Membre du personnel » recouvre deux choses que l'API tient séparées : le
  * **compte**, qui porte le rôle et l'accès, et la **fiche praticien**, qui porte
- * l'agenda. Rien ne publie le lien entre les deux — `StaffMemberDto` masque
- * `userId` — et les apparier sur le nom serait une devinette dont le coût est
- * d'attribuer les horaires d'une collègue. L'écran affiche donc les deux, en
+ * l'agenda. Rien ne publie le lien entre les deux en lecture — `StaffMemberDto`
+ * masque `userId` — et les apparier sur le nom serait une devinette dont le coût
+ * est d'attribuer les horaires d'une collègue. L'écran affiche donc les deux, en
  * disant ce que chacune est et ce qu'on y fait.
  *
- * ## Le rôle filtre l'affichage, il ne protège rien
+ * Le lien se **pose**, en revanche, et depuis #694 : `StaffMemberForm` choisit
+ * explicitement le compte qu'une nouvelle fiche sert. C'est ce qui manquait pour
+ * qu'un salon neuf soit exploitable — aucune route n'écrivait la table `staff`,
+ * si bien que « Praticiens — 0 » était un état dont rien ne permettait de
+ * sortir, et que le tunnel public répondait « aucun créneau » indéfiniment.
  *
- * L'invitation et les actions de compte sont réservées aux administrateurs côté
- * API. Les masquer pour les autres évite d'offrir des boutons qui répondraient
- * 403 ; la seule garde qui compte reste celle de l'API, qu'aucun front ne
- * contourne.
+ * ## Deux seuils de rôle, et ils ne disent pas la même chose
+ *
+ * Créer une fiche s'arrête au rang `MANAGER` : composer l'équipe réservable est
+ * une décision d'exploitation. Inviter un compte, changer un rôle, désactiver un
+ * accès exigent `ADMIN` — tout ce qui change ce qu'une personne *peut faire*.
+ * L'écran reprend cette ligne de partage plutôt que d'aligner les deux sur le
+ * plus haut, qui priverait les gérantes d'un geste que l'API leur accorde.
+ *
+ * Dans les deux cas, le rôle **filtre l'affichage, il ne protège rien** :
+ * masquer un contrôle évite d'offrir un bouton qui répondrait 403, et la seule
+ * garde qui compte reste celle de l'API, qu'aucun front ne contourne.
  */
 
 export const dynamic = 'force-dynamic';
@@ -71,6 +83,12 @@ export default async function StaffPage({ params }: StaffPageProps) {
   }
 
   const canAdminister = hasAtLeastRole(profile.role, 'admin');
+  // Composer l'équipe réservable est une décision d'exploitation, pas une
+  // distribution de droits : `POST /v1/staff` s'arrête au rang `MANAGER`, là où
+  // l'invitation et le changement de rôle exigent `ADMIN`. Les deux seuils sont
+  // donc distincts ici aussi — masquer le formulaire aux gérantes leur cacherait
+  // un geste que l'API leur accorde.
+  const canManage = hasAtLeastRole(profile.role, 'manager');
   // Un compte `client` n'a rien à faire dans cette liste — `GET /v1/users` ne
   // rend que le personnel — mais toutes les actions de la ligne supposent un
   // rôle interne, et l'afficher offrirait des boutons qui échoueraient.
@@ -94,9 +112,10 @@ export default async function StaffPage({ params }: StaffPageProps) {
           <div className="spa-empty-state">
             <p className="spa-empty-state__title">Aucun praticien enregistré</p>
             <p className="spa-empty-state__description">
-              Tant que personne n’est déclaré, le parcours de réservation ne propose aucun créneau.
-              La création d’une fiche praticien n’est pas encore servie par l’API — invitez d’abord
-              le compte ci-dessous.
+              Tant que personne n’est déclarée, le parcours de réservation ne propose aucun créneau.
+              {canManage
+                ? ' Créez une fiche ci-dessous à partir d’un compte du personnel — invitez-en un d’abord s’il n’y en a aucun.'
+                : ' Un gérant ou un administrateur peut en créer une à partir d’un compte du personnel.'}
             </p>
           </div>
         ) : (
@@ -194,6 +213,8 @@ export default async function StaffPage({ params }: StaffPageProps) {
           </table>
         )}
       </div>
+
+      {canManage ? <StaffMemberForm accounts={staffAccounts} tenantSlug={tenantSlug} /> : null}
 
       {canAdminister ? <StaffInviteForm tenantSlug={tenantSlug} /> : null}
     </section>

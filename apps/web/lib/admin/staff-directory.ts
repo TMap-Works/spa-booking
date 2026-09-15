@@ -11,11 +11,36 @@
  * Il serait tentant de les apparier sur le nom. Ce serait une devinette, et une
  * devinette qui se trompe attribue les horaires d'une collègue : deux
  * « M. Rakoto » suffisent. L'écran montre donc les deux listes côte à côte en
- * disant ce que chacune est, et l'appariement fait l'objet d'une issue de suivi
- * — il appartient à l'API, pas au front.
+ * disant ce que chacune est.
+ *
+ * Ce que #694 a changé : le lien ne se **devine** toujours pas, mais il se
+ * **pose**. Créer une fiche praticien, c'est choisir explicitement le compte
+ * qu'elle sert — et c'est le seul endroit du produit où les deux notions se
+ * rencontrent. L'API continue de ne pas publier `userId` en lecture, si bien que
+ * l'écran ne sait toujours pas, d'une fiche existante, quel compte elle sert :
+ * l'appariement rétrospectif reste une question ouverte, celle-là même que la
+ * liste des comptes proposés à la création ne peut donc pas filtrer.
  */
 
 import type { StaffMember } from '@spa/shared';
+
+/**
+ * Le nom qu'une fiche praticien porterait par défaut pour ce compte.
+ *
+ * C'est une **proposition de saisie**, pas une règle : le nom d'affichage est
+ * celui que la cliente lira dans le tunnel de réservation, et il n'a aucune
+ * raison de reprendre l'état civil du contrat de travail. Le formulaire le
+ * préremplit, la personne le corrige.
+ *
+ * `trim` sur le tout plutôt que sur chaque moitié : un prénom seul ne doit pas
+ * laisser d'espace en fin de champ, où il se verrait à la sélection.
+ */
+export function suggestedStaffDisplayName(account: {
+  readonly firstName: string;
+  readonly lastName: string;
+}): string {
+  return `${account.firstName} ${account.lastName}`.trim();
+}
 
 /**
  * Les initiales d'un nom d'affichage — la pastille de la liste.

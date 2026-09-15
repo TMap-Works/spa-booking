@@ -63,6 +63,7 @@ import {
   type CreateCustomerRequest,
   type CreateServiceCategoryRequest,
   type CreateServiceRequest,
+  type CreateStaffMemberRequest,
   type CreateStaffTimeOffRequest,
   type Customer,
   type CustomerHistoryQuery,
@@ -1447,6 +1448,45 @@ export async function fetchStaffMembers(
   });
   return payload;
 }
+
+/**
+ * Crée la **fiche praticien** d'un compte — `POST /v1/staff` (#694).
+ *
+ * C'est le geste qui manquait : aucune route n'écrivait la table `staff`, si
+ * bien qu'un salon jamais semé restait sans praticien — donc sans affectation
+ * possible, donc sans le moindre créneau à proposer.
+ *
+ * `userId` est l'identifiant d'un **compte** (`GET /v1/users`), et c'est la
+ * seule fonction de ce module où les deux notions se rencontrent : tout le reste
+ * du personnel manipule soit des comptes, soit des fiches, jamais le lien. La
+ * réponse, elle, est une fiche — son `id` part tel quel dans
+ * `POST /v1/services/{id}/staff` et dans `PUT /v1/staff/{id}/schedule`.
+ *
+ * Un 409 `STAFF_PROFILE_ALREADY_EXISTS` signifie que ce compte a déjà sa fiche ;
+ * un 404, que l'identifiant ne désigne aucun compte **interne d'ici**.
+ */
+export async function createStaffMember(
+  accessToken: string,
+  body: CreateStaffMemberRequest,
+): Promise<StaffMember> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/staff',
+    body,
+    schema: staffMemberSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/*
+ * `PATCH /v1/staff/:id` — renommer une fiche, l'activer ou la suspendre — est
+ * servi par l'API depuis #694 mais n'a pas de fonction ici, pour la même raison
+ * que `PATCH /v1/users/:id` ci-dessous : aucun écran ne le déclenche encore. Le
+ * contrôle a sa place sur la fiche du praticien, pas dans la liste du personnel
+ * — c'est là que vivent déjà ses horaires, ses congés et ses prestations —, et
+ * ce module ne porte que ce qui est appelé.
+ */
 
 /**
  * Invite un membre du personnel — `POST /v1/users`, réservé aux administrateurs.
