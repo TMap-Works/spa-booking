@@ -31,6 +31,28 @@ export const WEEKDAY_LABELS: Readonly<Record<number, string>> = {
 };
 
 /**
+ * Le jour tel qu'on l'écrit, avec un repli qui se voit.
+ *
+ * Point d'écriture **unique** du repli « jour sans nom » dans `apps/web` (#652).
+ * Il n'apparaît jamais en usage normal — la numérotation ISO ne sort pas de
+ * 1–7 —, et c'est bien ce qui le rendait dangereux en double : une branche
+ * qu'aucun écran n'exerce laisse deux copies diverger sans que rien ne le
+ * signale. Or l'une des deux alimentait le nom accessible des 28 champs de la
+ * grille horaire des réglages, c'est-à-dire ce qu'un lecteur d'écran annonce.
+ *
+ * `noUncheckedIndexedAccess` rend la lecture du `Record` optionnelle, et c'est
+ * heureux : sans le repli, un jour hors bornes écrirait « undefined ».
+ *
+ * À ne pas confondre avec le `weekdayLabel` de `lib/admin/staff-schedule.ts`,
+ * qui reste distinct : celui-là est typé sur `IsoWeekday` et traite
+ * délibérément la case 0 comme un jour manquant. Les rapprocher changerait son
+ * comportement.
+ */
+export function weekdayLabel(weekday: number): string {
+  return WEEKDAY_LABELS[weekday] ?? `Jour ${String(weekday)}`;
+}
+
+/**
  * Les mêmes jours pour `schema.org/DayOfWeek`.
  *
  * En URL absolue plutôt qu'en nom nu : c'est la forme que la documentation de
@@ -77,7 +99,7 @@ export function groupOpeningHoursByDay(
       byWeekday.set(entry.weekday, ranges);
       days.push({
         weekday: entry.weekday,
-        label: WEEKDAY_LABELS[entry.weekday] ?? `Jour ${String(entry.weekday)}`,
+        label: weekdayLabel(entry.weekday),
         ranges,
       });
       continue;
