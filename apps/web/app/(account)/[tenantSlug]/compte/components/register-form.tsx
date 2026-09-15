@@ -49,7 +49,29 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
   } = useForm<RegisterFormValues, unknown, z.output<typeof registerFormSchema>>({
     resolver: zodResolver(registerFormSchema),
     defaultValues: { email: '', password: '', firstName: '', lastName: '', phone: '' },
-    mode: 'onTouched',
+    // Validation à la **soumission**, puis à chaque frappe — et non au `blur`
+    // de chaque champ. Ce n'est pas une préférence de style : `onTouched`
+    // faisait perdre la première soumission (#698).
+    //
+    // Le formulaire compte cinq champs et aucun n'est pré-rempli, si bien qu'au
+    // moment où l'on clique sur « Créer mon compte » le dernier champ saisi est
+    // encore celui qui a le focus. Le `mousedown` du bouton le fait perdre, le
+    // `blur` déclenche la validation de ce champ, et son message s'insère
+    // **dans le flux** sous le contrôle : le bouton descend de 25 px, le
+    // `mouseup` retombe à côté, et le navigateur n'émet aucun `click` — donc
+    // aucun `submit`. Ce que voit la cliente, ce sont les seules erreurs de
+    // `blur`, celles des champs qu'elle a traversés ; « Nom », laissé vide et
+    // jamais visité, n'en fait pas partie. Il faut un second clic — sur une
+    // mise en page cette fois stabilisée — pour que la soumission ait lieu et
+    // le signale enfin.
+    //
+    // `onSubmit` supprime la cause plutôt que le symptôme : aucun message ne
+    // peut plus s'insérer entre le `mousedown` et le `mouseup`, la première
+    // soumission aboutit, et elle rend d'un coup **tous** les champs fautifs,
+    // sur leurs champs. `reValidateMode` rend ensuite la correction vivante —
+    // chaque erreur disparaît à la frappe, sans attendre une soumission de plus.
+    mode: 'onSubmit',
+    reValidateMode: 'onChange',
   });
 
   const submit = handleSubmit(async (values) => {
