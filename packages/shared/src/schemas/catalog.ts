@@ -247,21 +247,44 @@ export const staffMemberSummarySchema = staffMemberSchema.pick({
 
 export type StaffMemberSummary = z.infer<typeof staffMemberSummarySchema>;
 
-/** Création d'une fiche praticien, rattachée à un compte existant. */
+/**
+ * Création d'une fiche praticien, rattachée à un compte existant.
+ *
+ * `userId` désigne le **compte** — celui que `GET /v1/users` liste — et non la
+ * fiche : c'est précisément le rattachement que l'unicité `(tenant_id, user_id)`
+ * rend unique, et qu'aucun autre champ ne saurait exprimer. Deux fiches pour la
+ * même personne se disputeraient son agenda.
+ *
+ * `serviceIds` en a disparu avec #694, qui a ouvert cette route : l'affectation
+ * « ce praticien pratique cette prestation » a la sienne
+ * (`POST /v1/services/{id}/staff`), et l'accepter ici aurait fait écrire deux
+ * tables sous une seule route pour un geste que l'écran demande plus tard — la
+ * fiche se crée d'abord, ses prestations se cochent ensuite, depuis sa page.
+ */
 export const createStaffMemberRequestSchema = z
   .object({
     userId: uuidSchema,
     displayName: displayNameSchema,
     bio: longTextSchema.optional(),
-    serviceIds: z.array(uuidSchema).optional(),
   })
   .strict();
 
 export type CreateStaffMemberRequest = z.infer<typeof createStaffMemberRequestSchema>;
 
+/**
+ * Modification d'une fiche praticien — tous les champs facultatifs.
+ *
+ * `isActive` s'y ajoute : c'est **ainsi** qu'un praticien cesse d'être
+ * réservable, et il n'y a pas de suppression — les rendez-vous passés le
+ * citent, et le reporting doit continuer à savoir qui a tenu la cabine.
+ *
+ * `bio` accepte `null` — « efface ce texte » —, comme `description` sur une
+ * prestation. `userId` n'y figure pas : rattacher une fiche à un autre compte
+ * n'est pas une modification, c'est une autre fiche.
+ */
 export const updateStaffMemberRequestSchema = createStaffMemberRequestSchema
   .omit({ userId: true })
-  .extend({ isActive: z.boolean() })
+  .extend({ bio: longTextSchema.nullable(), isActive: z.boolean() })
   .partial();
 
 export type UpdateStaffMemberRequest = z.infer<typeof updateStaffMemberRequestSchema>;

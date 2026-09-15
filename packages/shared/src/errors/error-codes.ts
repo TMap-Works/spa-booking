@@ -203,6 +203,16 @@ export const CATALOG_ERROR_CODES = {
    * contrôle préalable que deux clics concurrents passeraient tous les deux.
    */
   SERVICE_STAFF_ALREADY_ASSIGNED: 'SERVICE_STAFF_ALREADY_ASSIGNED',
+  /**
+   * Ce compte a déjà une fiche praticien — l'unicité `(tenant_id, user_id)`
+   * refusée par la base (#694).
+   *
+   * Le conflit vient de l'insertion et non d'un contrôle préalable : deux
+   * soumissions concurrentes du même formulaire le passeraient toutes les deux,
+   * et la perdante recevrait un 500 là où le contrat annonce un 409. `details`
+   * porte le `userId` envoyé, ce que l'appelant sait déjà.
+   */
+  STAFF_PROFILE_ALREADY_EXISTS: 'STAFF_PROFILE_ALREADY_EXISTS',
 } as const;
 
 /**
