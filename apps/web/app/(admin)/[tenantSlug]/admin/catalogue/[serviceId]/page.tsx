@@ -1,5 +1,6 @@
 import {
   hasAtLeastRole,
+  uuidSchema,
   type Service,
   type ServiceCategory,
   type ServiceStaffMember,
@@ -7,8 +8,8 @@ import {
   type StaffMember,
 } from '@spa/shared';
 import Link from 'next/link';
+import { notFound } from 'next/navigation';
 
-import { Notification } from '@/components/ui/notification';
 import {
   ApiClientError,
   fetchOwnProfile,
@@ -60,6 +61,18 @@ import { adminCatalogPath, adminCatalogPreviewPath, adminServicePath } from '../
  * Le profil est donc lu ici et descendu aux deux panneaux, qui rendent la fiche
  * en lecture seule plutôt que de faire découvrir le refus à la soumission
  * (#619).
+ *
+ * ## Les trois façons de ne pas trouver la prestation n'en font qu'une
+ *
+ * Identifiant mal formé, identifiant inconnu, prestation d'un autre
+ * établissement : les trois se répondent `notFound()`, indistinctement
+ * (tenant-isolation §4), et `not-found.tsx` — la frontière posée au même segment
+ * par #697 — en rend l'encart dans l'enveloppe du back-office, avec son lien de
+ * retour vers le catalogue.
+ *
+ * Cette page rendait auparavant l'encart elle-même, et pour le seul 404 : elle
+ * répondait donc **200** sur une prestation inexistante, et laissait le 400 du
+ * `ParseUUIDPipe` tomber dans la branche par défaut d'`adminLoadFailure`.
  */
 
 export const dynamic = 'force-dynamic';
@@ -74,6 +87,30 @@ export default async function ServicePage({ params }: ServicePageProps) {
     tenantSlug,
     adminServicePath(tenantSlug, serviceId),
   );
+
+  /*
+   * Un identifiant mal formé ne désigne aucune prestation : il se refuse ici,
+   * avant le moindre aller-retour (#697).
+   *
+   * Sans ce contrôle, `pas-un-uuid` partait jusqu'à `GET /v1/services/:id` et
+   * `GET /v1/services/:id/staff`, dont le `ParseUUIDPipe` rend **400**. Ce statut
+   * n'est ni un 404 ni un refus de rôle : il tombait dans la branche par défaut
+   * d'`adminLoadFailure`, qui affiche `error.message` tel quel — et, quand le
+   * jeton d'accès expirait dans la même seconde, l'écran de connexion vide que la
+   * campagne de QA a relevé sur une session valide.
+   *
+   * Le refus vient **après** la garde, et non avant : l'écran d'introuvable est
+   * celui du back-office, et une visiteuse sans session doit voir la connexion,
+   * pas un 404 qui lui apprendrait la forme des identifiants du salon.
+   *
+   * `uuidSchema` est la v4 stricte du contrat partagé — la même que celle dont
+   * l'API tire tous ses identifiants (`@default(uuid())`) : refuser ici ce
+   * qu'elle refuse là-bas ne coûte qu'un refus plus tôt, du bon côté de l'écran.
+   * Même garde-fou, mêmes mots, que la fiche praticien (#696).
+   */
+  if (!uuidSchema.safeParse(serviceId).success) {
+    notFound();
+  }
 
   let service: Service;
   let categories: ServiceCategory[];
@@ -91,17 +128,15 @@ export default async function ServicePage({ params }: ServicePageProps) {
   } catch (error) {
     // Un 404 est le cas d'une prestation d'un autre établissement autant que
     // d'un identifiant inconnu — l'API ne distingue pas les deux, et l'écran
-    // n'a pas à le faire non plus (tenant-isolation §4).
+    // n'a pas à le faire non plus (tenant-isolation §4). Il rejoint désormais le
+    // refus d'identifiant hors contrat sur `not-found.tsx`, au lieu d'un encart
+    // rendu ici sous un statut 200.
+    //
+    // `notFound()` lève : l'appeler depuis ce `catch` est sans risque, rien ne
+    // l'entoure qui pourrait avaler la navigation — c'est déjà ainsi que le 401
+    // d'`adminLoadFailure` part à la connexion.
     if (error instanceof ApiClientError && error.status === 404) {
-      return (
-        <Notification tone="warning" title="Prestation introuvable">
-          <p>
-            Aucune prestation de ce salon ne porte cet identifiant. Elle a pu être créée dans un
-            autre établissement.{' '}
-            <Link href={adminCatalogPath(tenantSlug)}>Revenir au catalogue</Link>.
-          </p>
-        </Notification>
-      );
+      notFound();
     }
 
     return adminLoadFailure(error, tenantSlug, {
