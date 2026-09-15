@@ -21,8 +21,10 @@
  * état d'activation et ses horodatages — quand `UserProfileDto` décrit ce qui
  * franchit réellement la frontière HTTP : six champs, sans `isActive` ni
  * `createdAt`. C'est exactement l'écart que `sessionUserSchema` a déjà tranché
- * pour `/auth/me`, et les routes d'administration des comptes rendent la même
- * forme. On la réemploie plutôt que d'en écrire une jumelle qui divergerait.
+ * pour `/auth/me`, et les **écritures** de compte rendent cette forme telle
+ * quelle. On la réemploie plutôt que d'en écrire une jumelle qui divergerait.
+ * Les trois routes qui portent en plus `isActive` ont, depuis #695, leur propre
+ * schéma dans le contrat partagé : `staffAccountStateSchema`.
  *
  * ## La casse des rôles, et pourquoi elle ne peut pas s'ignorer
  *
@@ -46,32 +48,25 @@ import {
 import { z } from 'zod';
 
 /**
- * Un compte du personnel, tel que `GET /v1/users`, `GET /v1/users/:id`,
- * `PATCH /v1/users/:id` et `PATCH /v1/users/:id/role` le rendent.
+ * Un compte du personnel tel que `PATCH /v1/users/:id` et
+ * `PATCH /v1/users/:id/role` le rendent — et tel que les invitations
+ * l'emboîtent.
  *
  * C'est `UserProfileDto`, et c'est déjà `sessionUserSchema` : même six champs,
  * même `phone` nullable, même conversion de casse du rôle. Réexporté sous le nom
  * du domaine plutôt que recopié, pour que le jour où l'un des deux bouge, il n'y
  * ait qu'un schéma à corriger.
+ *
+ * **Ne pas l'étendre d'un `isActive` ici.** Les routes qui portent ce champ —
+ * `GET /v1/users`, `GET /v1/users/:id` et `PATCH /v1/users/:id/status` — se
+ * lisent avec `staffAccountStateSchema` de `@spa/shared`. Aucun de ces schémas
+ * n'étant `.strict()`, en écrire un jumeau ici ne romprait pas la compilation :
+ * il jetterait `isActive` en silence, et c'est exactement le défaut que #695 a
+ * corrigé — la liste affichait « Désactiver » sur un compte déjà fermé.
  */
 export const staffAccountSchema = sessionUserSchema;
 
 export type StaffAccount = z.infer<typeof staffAccountSchema>;
-
-/**
- * Le compte **avec** son état d'activation — réponse de
- * `PATCH /v1/users/:id/status`, et d'elle seule.
- *
- * `StaffAccountStateDto` étend `UserProfileDto` d'un booléen pour cette route :
- * les trois autres ne le portent pas, si bien que la liste du personnel ne peut
- * pas dire aujourd'hui qui est désactivé. L'écran le dit franchement plutôt que
- * de l'inventer — voir la note de la page.
- */
-export const staffAccountStateSchema = staffAccountSchema.extend({
-  isActive: z.boolean(),
-});
-
-export type StaffAccountState = z.infer<typeof staffAccountStateSchema>;
 
 /**
  * Ce que rend l'émission d'une invitation — `POST /v1/users` et

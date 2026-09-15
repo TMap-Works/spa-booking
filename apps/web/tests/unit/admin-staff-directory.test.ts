@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest';
 import {
   inviteStaffAccountRequestSchema,
   isStaffRole,
-  staffAccountStateSchema,
   staffInvitationSchema,
   toApiRole,
 } from '@/lib/admin/staff-contract';
@@ -132,27 +131,15 @@ describe('le rôle, de part et d’autre de la frontière', () => {
   });
 });
 
+/*
+ * Le compte **avec** son état d'activation ne se lit plus ici : il est
+ * `staffAccountStateSchema` de `@spa/shared` depuis #695, et
+ * `packages/shared/src/__tests__/schemas.spec.ts` le couvre déjà — casse du rôle
+ * ramenée au vocabulaire du contrat, et `isActive` exigé. Le rejouer depuis
+ * `apps/web` n'éprouverait rien du front : ce fichier garde les formes que
+ * `lib/admin/staff-contract.ts` déclare pour de bon.
+ */
 describe('les réponses que l’API rend', () => {
-  it('lit un compte dont le rôle arrive en majuscules', () => {
-    // L'API émet `STAFF` là où le contrat partagé nomme `staff` : la conversion
-    // se fait à la frontière, et nulle part ailleurs.
-    const parsed = staffAccountStateSchema.safeParse({
-      id: '11111111-1111-4111-8111-111111111111',
-      email: 'hasina@salon-des-lilas.test',
-      role: 'MANAGER',
-      firstName: 'Hasina',
-      lastName: 'Rakoto',
-      phone: null,
-      isActive: false,
-    });
-
-    expect(parsed.success).toBe(true);
-    if (parsed.success) {
-      expect(parsed.data.role).toBe('manager');
-      expect(parsed.data.isActive).toBe(false);
-    }
-  });
-
   it('lit une invitation avec son jeton et sa durée', () => {
     const parsed = staffInvitationSchema.safeParse({
       user: {
