@@ -71,9 +71,12 @@
  * qui bougerait emporterait donc le bouton avec les champs, au lieu de les
  * désaligner en silence.
  *
- * Un descendant et non un enfant direct : depuis #656, l'application pose le
- * bouton dans le couple ci-dessous, alors que `mockups/admin/reporting.html` le
- * montre encore nu au bout de la barre. La règle doit atteindre les deux.
+ * Un descendant et non un enfant direct : depuis #656 côté application et #678
+ * côté maquette, le bouton est posé dans le couple ci-dessous et n'est donc
+ * plus un enfant de la barre. Écrite en `> button`, la règle n'atteindrait plus
+ * rien du tout : le bouton perdrait son décalage, et, rendu compressible dans
+ * un couple `nowrap` qui s'autorise à descendre sous sa base, se ferait écraser
+ * par le champ au lieu de garder sa largeur.
  */
 .spa-admin-report-filters button {
   flex: 0 0 auto;
@@ -117,11 +120,16 @@
  * `:has(> .spa-admin-table)` de `shell.css`. Le sélecteur désigne donc ce que
  * le couple est : le seul enfant de la barre qui porte le bouton.
  *
- * Reste que `mockups/admin/reporting.html` montre toujours la barre plate : la
- * maquette continue de se peindre juste — la règle du bouton ci-dessus atteint
- * aussi bien le bouton nu —, mais elle ne montre pas le groupement, et ces deux
- * règles-ci ne sont donc exercées par aucune maquette. C'était hors de
- * l'empreinte de ce correctif ; #678 l'y aligne.
+ * `mockups/admin/reporting.html` montre le même groupement depuis #678 : elle
+ * montrait jusque-là la barre plate, ce qui la peignait juste — la règle du
+ * bouton ci-dessus atteint aussi bien le bouton nu — mais laissait ces règles-ci
+ * exercées par aucune maquette.
+ *
+ * Le garde-fou d'`admin-mockups.test.mjs` ne les y tiendra pas : il raisonne sur
+ * les classes, et un couple sans classe propre lui échappe par construction.
+ * C'est `tests/admin-report-filters-layout.test.mjs` qui tient le groupement de
+ * la maquette, comme il tient déjà celui de `report-filters.tsx` — les deux
+ * moitiés du même invariant, chacune avec sa preuve.
  */
 .spa-admin-report-filters > div:has(> button) {
   display: flex;

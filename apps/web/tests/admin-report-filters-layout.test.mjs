@@ -40,10 +40,27 @@
  * `flex-wrap: nowrap` qui interdit au couple de se rompre (`reporting.css`).
  * Séparées, elles rouvrent le défaut sans qu'aucune page cesse de compiler.
  *
+ * ## Ce que #678 y a ajouté
+ *
+ * Une troisième moitié, si l'on veut : `mockups/admin/reporting.html`. La
+ * maquette montrait encore le bouton nu au bout de la barre — elle se peignait
+ * juste, la règle du bouton étant écrite en descendant, mais elle rejouait le
+ * défaut dans la bande où le bouton s'isole, et surtout **aucune maquette
+ * n'exerçait les trois règles du couple**.
+ *
+ * Cette dernière lacune ne se comble pas dans `admin-mockups.test.mjs` : son
+ * garde-fou raisonne sur les classes — aucune classe inventée, aucun style admin
+ * sans maquette qui l'emploie — et le couple n'a volontairement pas de classe à
+ * lui. Un sélecteur sans classe propre lui échappe par construction. C'est donc
+ * ici, avec le reste de l'invariant, que le groupement de la maquette se tient.
+ *
  * Cette suite ne mesure pas un rendu : elle tient les invariants dont le rendu
  * découle. La preuve visuelle, elle, est au navigateur : phase de recette de
  * #628 et de #656, à 1280, 768 et 360 px, en période simple et personnalisée,
- * plus la bande ~800-900 px où le bouton s'isolait.
+ * plus la bande ~800-900 px où le bouton s'isolait. Celle de #678 a repris la
+ * maquette à 850, 736, 480 et 344 px de largeur de contenu — 480 px est sa
+ * propre bande d'isolement, la barre n'y portant que deux champs, et le bouton
+ * y reste désormais sur la ligne de « Filtrer ».
  *
  * Aucune dépendance : `node:test` et `node:assert` suffisent, comme pour les
  * autres suites de style de ce dossier.
@@ -74,6 +91,34 @@ const filters = stripComments(
     'utf8',
   ),
 );
+
+/**
+ * Neutralise les commentaires HTML, en blancs de même longueur.
+ *
+ * Locale et non partagée : `support/tokens.mjs` est un lecteur de **CSS**, et y
+ * monter de quoi lire du HTML sortait de l'empreinte de #678.
+ * `admin-mockups.test.mjs` en porte la même dizaine de caractères, pour la même
+ * raison qu'ici — la prose d'une maquette cite le balisage qu'elle décrit.
+ */
+const stripHtmlComments = (html) =>
+  html.replace(/<!--[\s\S]*?-->/g, (comment) => comment.replace(/[^\n]/g, ' '));
+
+/** La barre de filtres de la maquette, commentaires neutralisés. */
+const mockupFilters = (() => {
+  const html = stripHtmlComments(
+    readFileSync(join(here, '..', 'mockups', 'admin', 'reporting.html'), 'utf8'),
+  );
+  const bar = html.match(/<form class="spa-admin-report-filters">([\s\S]*?)<\/form>/);
+
+  assert.notEqual(
+    bar,
+    null,
+    'mockups/admin/reporting.html ne porte plus de `<form class="spa-admin-report-filters">`. ' +
+      'C’est la seule maquette qui exerce les règles du couple (#678).',
+  );
+
+  return bar[1];
+})();
 
 /** Le couple « Filtrer » + « Afficher », tel que la feuille le désigne. */
 const PAIR = '.spa-admin-report-filters > div:has(> button)';
@@ -130,16 +175,18 @@ describe('Le bouton « Afficher » se pose sur la rangée des champs', () => {
 
   it('atteint le bouton où qu’il se trouve dans la barre', () => {
     // Un enfant direct — `.spa-admin-report-filters > button` — ne l'atteint
-    // plus : depuis #656, l'application pose le bouton dans le couple
-    // « Filtrer », alors que `mockups/admin/reporting.html` le montre encore nu
-    // au bout de la barre. La règle doit valoir pour les deux.
+    // plus du tout : l'application pose le bouton dans le couple « Filtrer »
+    // depuis #656, et la maquette depuis #678. Le sélecteur doit rester
+    // descendant.
     assert.notDeepEqual(
       button,
       [],
       'aucune règle ne vise `.spa-admin-report-filters button`. Un sélecteur ' +
         'restreint à l’enfant direct n’atteint plus le bouton, que ' +
-        '`report-filters.tsx` groupe avec le champ « Filtrer » (#656) : le ' +
-        'bouton s’étirerait alors comme un champ et perdrait son décalage.',
+        '`report-filters.tsx` (#656) comme `mockups/admin/reporting.html` ' +
+        '(#678) groupent avec le champ « Filtrer » : le bouton perdrait alors ' +
+        'son décalage, et se laisserait écraser par le champ dans un couple ' +
+        'qui se comprime sous sa base.',
     );
   });
 
@@ -241,6 +288,48 @@ describe('Le bouton « Afficher » n’ouvre jamais une ligne à lui seul', () =
         'champs de la barre. Sorti de l’enfance directe, il ne l’hérite plus de ' +
         '`.spa-admin-report-filters > *`, et le couple s’enroulerait sur la ' +
         'largeur de ses options plutôt que sur celle d’un champ.',
+    );
+  });
+});
+
+describe('La maquette montre le couple, et non la barre plate', () => {
+  /*
+   * #678. Ce n'est pas une redite du groupement de `report-filters.tsx` : c'est
+   * l'autre moitié du même contrat. La maquette est ce qu'un contributeur ouvre
+   * pour voir l'écran, et c'est aussi la **seule** à exercer les trois règles du
+   * couple — rien d'autre sous `mockups/` ne porte de bouton dans cette barre.
+   *
+   * Le garde-fou d'`admin-mockups.test.mjs` ne peut pas le tenir à sa place : il
+   * vérifie que toute classe employée est déclarée et que tout style admin est
+   * employé quelque part, et le couple n'a volontairement pas de classe. Les
+   * règles peuvent donc pourrir sans que rien ne le signale — sauf ici.
+   */
+  it('groupe « Filtrer » et « Afficher » dans un même élément sans classe', () => {
+    assert.match(
+      mockupFilters,
+      /<div>\s*<div class="spa-select">[\s\S]*?>Filtrer<\/label>[\s\S]*?<\/div>\s*<button\b[\s\S]*?<\/button>\s*<\/div>/,
+      'mockups/admin/reporting.html ne groupe plus le sélecteur « Filtrer » et ' +
+        'le bouton « Afficher » dans un même `<div>` sans classe. La maquette ' +
+        'rejoue alors le vide de ~26 px au-dessus du bouton dans la bande où ' +
+        'l’enroulement l’isole — vers 480 px de largeur de contenu pour ses deux ' +
+        'champs, mesuré en recette de #678 — et les règles `' +
+        PAIR +
+        '` cessent d’être exercées par la moindre maquette. Le `<div>` est nu à ' +
+        'dessein : c’est le bouton qu’il porte qui le désigne.',
+    );
+  });
+
+  it('n’a qu’un bouton dans la barre, celui du couple', () => {
+    // Même raison que côté `report-filters.tsx` : un second bouton posé
+    // ailleurs dans la barre s'enroulerait seul en tête de ligne, avec la marge
+    // qui lui rend sa ligne d'étiquette. L'assertion précédente ne regarde que
+    // le couple et ne le verrait pas.
+    assert.equal(
+      (mockupFilters.match(/<button\b/g) ?? []).length,
+      1,
+      'la barre de filtres de mockups/admin/reporting.html porte plus d’un ' +
+        'bouton. Tout bouton hors du couple « Filtrer » rouvre le vide de #656 ' +
+        'au-dessus de lui.',
     );
   });
 });
