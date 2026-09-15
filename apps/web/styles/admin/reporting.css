@@ -45,12 +45,29 @@
  * un support mêlé selon les préfixes, et la recette l'a fait remonter en
  * avertissement de compilation.
  */
+/*
+ * ## Aucune marge de pied ici (#700)
+ *
+ * La barre portait `margin-block-end: var(--spa-space-6)`, et les indicateurs
+ * plus bas la même. Ce n'était pas un espacement voulu de 24 px : c'était le
+ * rattrapage d'une gouttière qui n'arrivait pas. `.spa-admin__content` écarte
+ * ses enfants directs, et l'écran du reporting range les siens dans une
+ * `<section aria-labelledby="reporting-titre">` — la gouttière s'arrêtait à
+ * cette enveloppe, ces deux blocs se payaient donc leur propre écart et tout le
+ * reste de la page se rejoignait à 0 px.
+ *
+ * `admin/shell.css` rend désormais le rythme à l'enveloppe. Garder la marge en
+ * plus donnait **40 px** à deux coutures de la page — mesurées au navigateur,
+ * 1920 px — contre 16 partout ailleurs : l'irrégularité changeait de place au
+ * lieu de disparaître. C'est la gouttière de la coquille qui espace, ici comme
+ * sur les autres écrans du back-office, et la barre de filtres ne se distingue
+ * plus de ses voisines.
+ */
 .spa-admin-report-filters {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   gap: var(--spa-space-3);
-  margin-block-end: var(--spa-space-6);
 }
 
 .spa-admin-report-filters > * {
@@ -176,12 +193,16 @@
  * qu'un nombre de colonnes figé : un salon monodevise en montre trois, un salon
  * qui encaisse en deux devises quatre, et aucune ne doit se retrouver seule sur
  * sa ligne.
+ *
+ * Pas de marge de pied non plus : même rattrapage, retiré pour la même raison
+ * que celui de la barre de filtres (#700). La `gap` ci-dessous écarte les tuiles
+ * **entre elles** ; ce qui sépare le bloc de la carte du graphe qui le suit est
+ * la gouttière de l'écran.
  */
 .spa-admin-report-metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
   gap: var(--spa-space-3);
-  margin-block-end: var(--spa-space-6);
 }
 
 /* --- Export ---------------------------------------------------------------- */
