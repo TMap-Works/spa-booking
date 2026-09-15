@@ -240,10 +240,9 @@ export function withoutMediaQueries(css) {
  *
  * **Une quatrième copie subsiste**, dans `admin-screen-rhythm.test.mjs` (#717).
  * Elle est arrivée après l'ouverture de #713, dont elle sort de l'empreinte, et
- * fait l'objet d'une issue de suivi ouverte avec cette PR — même enchaînement que
- * #712 → #713. Tant qu'elle est là, une correction apportée ici ne l'atteint pas :
- * c'est la dernière suite qui puisse encore lire les feuilles selon l'ancienne
- * règle en restant verte.
+ * c'est #722 qui la reprend — même enchaînement que #712 → #713. Tant qu'elle est
+ * là, une correction apportée ici ne l'atteint pas : c'est la dernière suite qui
+ * puisse encore lire les feuilles selon l'ancienne règle en restant verte.
  *
  * ## Ce que la lecture garantit, et ce qu'elle ne garantit pas
  *
