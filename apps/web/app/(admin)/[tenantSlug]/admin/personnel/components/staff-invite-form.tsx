@@ -196,8 +196,13 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
     });
   }
 
+  // `spa-admin-form` borne la colonne de saisie (#630). Les deux blocs qui
+  // précèdent sur l'écran — praticiens et comptes — gardent, eux, la largeur de
+  // la zone de contenu : ce sont une liste et un tableau, dont la lecture
+  // profite de la place, là où cinq champs d'identité étirés sur 1 637 px n'en
+  // profitent pas.
   return (
-    <section className="spa-admin__section" aria-labelledby="invitation-titre">
+    <section className="spa-admin__section spa-admin-form" aria-labelledby="invitation-titre">
       <h2 className="spa-admin__section-title" id="invitation-titre">
         Inviter un membre du personnel
       </h2>

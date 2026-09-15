@@ -93,11 +93,19 @@ export default async function NewServicePage({ params }: NewServicePageProps) {
         </Link>
       </div>
 
-      <ServiceForm
-        tenantSlug={tenantSlug}
-        currency={tenant.defaultCurrency}
-        categories={categories}
-      />
+      {/* La colonne de saisie est bornée (#630) : sans elle, la zone de contenu
+       * vaut la fenêtre moins le rail, et « Durée du soin (minutes) » mesurait
+       * 1 637 px à 1920 pour y taper « 60 ». La borne se pose sur un conteneur
+       * d'écran et non dans `ServiceForm` : le même formulaire sert la fiche
+       * d'une prestation, où il est rangé dans une colonne de `spa-admin__split`
+       * — deux enveloppes différentes, une seule mesure. */}
+      <div className="spa-admin-form">
+        <ServiceForm
+          tenantSlug={tenantSlug}
+          currency={tenant.defaultCurrency}
+          categories={categories}
+        />
+      </div>
     </section>
   );
 }

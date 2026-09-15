@@ -289,6 +289,102 @@
             </ul>
           </section>
 
+          <!--
+            INVITER QUELQU'UN — et la colonne de saisie du back-office (#630).
+
+            C'est le seul formulaire de cet écran, et il porte `spa-admin-form`
+            là où les blocs qui précèdent ne le portent pas : la liste de l'équipe
+            et la grille des horaires se lisent d'autant mieux qu'elles ont de la
+            place, cinq champs d'identité non. Sans cette borne, la zone de
+            contenu vaut la fenêtre moins le rail, et le champ « Prénom »
+            mesurait 1 637 px à 1920 px de fenêtre.
+
+            La mesure — 44 rem — est celle que le tunnel de réservation et
+            l'espace compte emploient déjà : le produit n'a pas deux largeurs de
+            formulaire. La règle vit dans `styles/admin/shell.css`, à côté de
+            `spa-admin__split` et de `spa-admin__section`, parce que c'est un
+            conteneur de mise en page et non un état de champ — et parce que le
+            parcours client public n'a pas à charger le chrome du back-office.
+          -->
+          <section class="spa-admin__section spa-admin-form" aria-labelledby="titre-invitation">
+            <h2 class="spa-admin__section-title" id="titre-invitation">
+              Inviter un membre du personnel
+            </h2>
+
+            <div class="spa-field">
+              <label class="spa-field__label" for="invitation-prenom">
+                Prénom<span class="spa-field__required" aria-hidden="true">*</span>
+              </label>
+              <input id="invitation-prenom" class="spa-field__control" type="text" value="Njara" />
+            </div>
+
+            <div class="spa-field">
+              <label class="spa-field__label" for="invitation-nom">
+                Nom<span class="spa-field__required" aria-hidden="true">*</span>
+              </label>
+              <input id="invitation-nom" class="spa-field__control" type="text" value="Be" />
+            </div>
+
+            <div class="spa-field">
+              <label class="spa-field__label" for="invitation-email">
+                Adresse électronique<span class="spa-field__required" aria-hidden="true">*</span>
+              </label>
+              <input
+                id="invitation-email"
+                class="spa-field__control"
+                type="email"
+                value="njara.be@maisonlotus.mg"
+                aria-describedby="invitation-email-hint"
+              />
+              <p id="invitation-email-hint" class="spa-field__hint">
+                C’est l’identifiant de connexion, et il ne se modifie pas ensuite.
+              </p>
+            </div>
+
+            <div class="spa-field">
+              <label class="spa-field__label" for="invitation-telephone">Téléphone</label>
+              <input
+                id="invitation-telephone"
+                class="spa-field__control"
+                type="tel"
+                value="+261 34 12 345 67"
+                aria-describedby="invitation-telephone-hint"
+              />
+              <p id="invitation-telephone-hint" class="spa-field__hint">Facultatif.</p>
+            </div>
+
+            <!--
+              Le cinquième contrôle est un sélecteur et non un champ : c'est lui
+              qui décide de ce que la personne pourra faire, et c'est aussi le
+              seul dont la boîte ne se comporte pas comme celle d'un `<input>`.
+              Il figure donc ici, sans quoi la maquette ferait juger la colonne
+              bornée sur quatre champs de texte quand l'écran en porte cinq.
+            -->
+            <div class="spa-select">
+              <label class="spa-select__label" for="invitation-role">Rôle</label>
+              <div class="spa-select__shell">
+                <select
+                  id="invitation-role"
+                  class="spa-select__control"
+                  aria-describedby="invitation-role-hint"
+                >
+                  <option>praticien·ne</option>
+                  <option>gérant·e</option>
+                  <option>administrateur·rice</option>
+                </select>
+                <span class="spa-select__chevron" aria-hidden="true"></span>
+              </div>
+              <p id="invitation-role-hint" class="spa-select__hint">
+                Le rôle décide de ce que la personne pourra faire ; il se change ensuite depuis la
+                liste.
+              </p>
+            </div>
+
+            <button class="spa-button spa-button--accent" type="button">
+              <span class="spa-button__label">Inviter</span>
+            </button>
+          </section>
+
           <!-- ÉTAT DE CHARGEMENT. -->
           <section class="spa-admin__section" aria-labelledby="titre-personnel-chargement">
             <h2 class="spa-admin__section-title" id="titre-personnel-chargement">État de chargement</h2>

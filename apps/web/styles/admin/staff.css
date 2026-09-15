@@ -174,6 +174,40 @@
   font-variant-numeric: tabular-nums;
 }
 
+/*
+ * Une borne horaire est large de ce qu'elle contient (#630).
+ *
+ * La grille des réglages compose ses plages avec le champ du design system,
+ * dont le contrôle occupe 100 % de sa boîte — et la boîte d'un champ sans
+ * largeur déclarée est celle que le navigateur donne à un `<input>` nu, soit une
+ * vingtaine de caractères. « 09:00 » en réclame cinq, et les quatre bornes d'une
+ * journée occupaient à elles seules sept cents pixels.
+ *
+ * Cela ne se voyait pas tant que l'écran s'étirait sur toute la zone de contenu.
+ * Il est désormais borné à la mesure de saisie du produit, et sans cette règle
+ * les deux plages d'un même jour passaient à la ligne : la semaine perdait la
+ * lecture en colonnes qui est tout l'intérêt de cette grille — c'est elle qui
+ * fait repérer le mercredi resté vide.
+ *
+ * 5,5 rem loge « 09:00 » et son remplissage, et reste au-dessus du libellé
+ * « Ouverture 1 » qui le surmonte : plus étroit, c'est le libellé qui se
+ * couperait en deux.
+ *
+ * L'éditeur d'horaires d'un praticien emploie les mêmes pastilles avec des
+ * `<input type="time">` nus, que le navigateur dimensionne déjà sur leur
+ * contenu — d'où le sélecteur sur le contrôle du champ, qui ne désigne que la
+ * grille des réglages.
+ *
+ * La borne porte sur le **contrôle** et non sur `.spa-field` qui l'enveloppe :
+ * ce champ rend aussi son message d'erreur, et « heure attendue au format HH:MM
+ * (« 24:00 » pour minuit) » dans une boîte de 88 px se replie en une dizaine de
+ * lignes illisibles. Le contrôle borné, la boîte reste large de son plus grand
+ * enfant — 5,5 rem au repos, la largeur du message quand il y en a un.
+ */
+.spa-admin-schedule__range .spa-field__control {
+  inline-size: 5.5rem;
+}
+
 /* La pause est un creux, pas une plage de travail : elle se distingue par son
  * fond neutre et par son libellé, jamais par la seule couleur. */
 .spa-admin-schedule__range--break {
