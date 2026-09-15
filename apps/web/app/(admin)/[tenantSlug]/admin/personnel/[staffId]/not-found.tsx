@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { Notification } from '@/components/ui/notification';
+import { tenantSlugFromPathname } from '@/lib/tenant-slug';
 
 import { adminStaffPath } from '../paths';
 
@@ -44,37 +45,12 @@ import { adminStaffPath } from '../paths';
  * l'établissement, dont dépend le chemin de retour, ne peut donc venir que de
  * l'URL courante. `usePathname()` est le seul accès qui y mène, et il n'existe
  * que côté client. Même arbitrage que le rail du back-office.
- */
-
-/**
- * Le slug de l'établissement, premier segment de toute URL du back-office.
  *
- * Il est décodé avant d'être rendu à `adminStaffPath`, qui le réencode : sans ce
- * passage, un slug déjà encodé dans le chemin le serait une seconde fois, et le
- * lien de retour pointerait à côté. `usePathname()` rend bien le chemin
- * **encodé** — Next le tire de `new URL(canonicalUrl).pathname`.
- *
- * Rend `null` plutôt qu'une chaîne vide quand le premier segment manque ou ne se
- * décode pas : une chaîne vide passée à `adminStaffPath` donnerait `//admin/...`,
- * que le navigateur lit comme une URL **absolue** vers l'hôte `admin` — la seule
- * issue de l'écran sortirait du site. Et un `decodeURIComponent` qui lève
- * remplacerait le 404 par la frontière d'erreur, précisément l'écran dont ce
- * ticket cherche à sortir.
+ * La lecture du slug elle-même vit dans `lib/tenant-slug.ts` depuis #703 : la
+ * frontière du report de rendez-vous en avait la copie exacte, et les deux
+ * gardes qu'elle porte — premier segment absent, segment non décodable — sont
+ * trop coûteuses à perdre pour être écrites deux fois.
  */
-function tenantSlugFromPathname(pathname: string): string | null {
-  const [, encodedSlug = ''] = pathname.split('/');
-
-  if (encodedSlug === '') {
-    return null;
-  }
-
-  try {
-    return decodeURIComponent(encodedSlug);
-  } catch {
-    return null;
-  }
-}
-
 export default function StaffMemberNotFound() {
   const tenantSlug = tenantSlugFromPathname(usePathname());
 

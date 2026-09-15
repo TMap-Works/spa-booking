@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+import { tenantSlugFromPathname } from '@/lib/tenant-slug';
+
 import { accountPath } from '../../../paths';
 
 /**
@@ -41,42 +43,16 @@ import { accountPath } from '../../../paths';
  * l'établissement, dont dépend le chemin de retour, ne peut donc venir que de
  * l'URL courante. `usePathname()` est le seul accès qui y mène, et il n'existe
  * que côté client. C'est le même arbitrage que le rail du back-office.
- */
-
-/**
- * Le slug de l'établissement, premier segment de toute URL de l'espace client.
  *
- * Il est décodé avant d'être rendu à `accountPath`, qui le réencode : sans ce
- * passage, un slug déjà encodé dans le chemin le serait une seconde fois, et le
- * lien de retour pointerait à côté. `usePathname()` rend bien le chemin **encodé**
- * — Next le tire de `new URL(canonicalUrl).pathname` —, ce qui rend ce décodage
- * nécessaire et non redondant.
- *
- * Rend `null` plutôt qu'une chaîne vide quand le premier segment manque ou ne se
- * décode pas. Les deux cas ne devraient pas se présenter sur cette frontière, qui
- * n'est atteinte que sous un slug déjà résolu par `compte/layout.tsx` — mais une
- * chaîne vide passée à `accountPath` donnerait `//compte`, que le navigateur lit
- * comme l'URL **absolue** `https://compte/` : la seule issue de l'écran sortirait
- * du site. Et un `decodeURIComponent` qui lève remplacerait le 404 par la
- * frontière d'erreur — précisément l'écran que #627 cherche à ne plus montrer.
+ * La lecture du slug elle-même vit dans `lib/tenant-slug.ts` depuis #703 : la
+ * frontière de la fiche praticien du back-office en avait la copie exacte, et
+ * les deux gardes qu'elle porte — premier segment absent, segment non décodable
+ * — sont trop coûteuses à perdre pour être écrites deux fois. Ni l'un ni l'autre
+ * cas ne devrait se présenter ici, cette frontière n'étant atteinte que sous un
+ * slug déjà résolu par `compte/layout.tsx` ; c'est le prix d'un lien qui sort du
+ * site, ou d'un écran d'erreur à la place du 404, qui justifie de s'en garder
+ * quand même.
  */
-function tenantSlugFromPathname(pathname: string): string | null {
-  const [, encodedSlug = ''] = pathname.split('/');
-
-  if (encodedSlug === '') {
-    return null;
-  }
-
-  try {
-    return decodeURIComponent(encodedSlug);
-  } catch {
-    // Un segment qui ne se décode pas ne désigne aucun établissement : mieux vaut
-    // n'offrir aucun lien que d'en fabriquer un au hasard. Même arbitrage que
-    // `readApiSessionCookie` dans `lib/api-client.ts`.
-    return null;
-  }
-}
-
 export default function ReportAppointmentNotFound() {
   const tenantSlug = tenantSlugFromPathname(usePathname());
 
