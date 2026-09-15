@@ -53,9 +53,9 @@ import {
   changeAppointmentStatus,
   createAppointment,
   createCustomer,
+  fetchAdminAvailability,
   fetchAppointmentNotifications,
   fetchAppointments,
-  fetchAvailability,
   fetchServiceStaff,
   rescheduleDeskAppointment,
   searchCustomers,
@@ -236,29 +236,32 @@ export async function loadDeskServiceStaffAction(
  * tiroir ne peut donc pas laisser saisir une heure quelconque : il faut qu'il
  * connaisse la liste. Voir l'en-tête de `deskSlotOptions`.
  *
- * ## Pourquoi la route publique
+ * ## Pourquoi la route gardée, et non la publique (#642)
  *
  * `GET /public/{slug}/availability` et `GET /v1/availability` appellent la
  * **même** `AvailabilityQueryService.slotsFor` avec les mêmes paramètres : la
- * charge utile est identique, à l'octet près. La publique ne demande aucun
- * jeton, ne porte ni `tenantId` ni identité de cliente, et c'est déjà elle que
- * le tunnel de réservation interroge — c'est aussi ce que fait la page du
- * planning pour lire le fuseau du salon (`fetchPublicTenant`).
+ * charge utile est identique, à l'octet près. Ce qui les sépare est la porte, et
+ * la porte décide de deux choses.
  *
- * **C'est un pis-aller, et il a un coût connu.** La route publique porte un
- * quota de cent vingt interrogations par minute **et par adresse** ; or une
- * action serveur s'exécute sur le serveur Next, si bien que l'API voit une
+ * Le quota, d'abord. La publique sert le tunnel de réservation et se protège
+ * d'un quota de cent vingt interrogations par minute **et par adresse** ; or une
+ * action serveur s'exécute sur le serveur Next, si bien que l'API y voit une
  * seule adresse pour tous les comptoirs de tous les établissements **et** pour
- * tous les visiteurs du tunnel de réservation. Le budget est donc partagé, et
- * l'épuiser dégraderait chaque tiroir en saisie libre. La bonne route est celle
- * qui est gardée — `GET /v1/availability`, au seuil `STAFF`, sans quota —, mais
- * l'atteindre demande une fonction de plus dans `lib/api-client.ts`, hors de
- * l’empreinte de ce ticket. Suivi dans l’issue #642.
+ * tous les visiteurs du tunnel. Le budget aurait donc été partagé par le
+ * déploiement entier, et l'épuiser aurait dégradé chaque tiroir en saisie libre
+ * d'heure — c'est-à-dire précisément le chemin vers le
+ * `SLOT_NO_LONGER_AVAILABLE` que #611 supprime. La route gardée, au seuil
+ * `STAFF`, n'en porte aucun.
  *
- * La session est malgré tout exigée, et pour une raison d'écran et non de
- * secret : un tiroir ouvert sur une session expirée doit partir au
- * renouvellement comme les cinq autres lectures du comptoir, et non afficher
- * une liste de créneaux au milieu d'un écran qui va se fermer.
+ * L'établissement, ensuite. Sur la publique, il vient du slug d'URL ; sur la
+ * gardée, du jeton — et c'est la discipline de tout le reste du back-office
+ * (tenant-isolation §2). `tenantSlug` ne sert donc plus ici qu'à retrouver le
+ * cookie de session, comme dans les cinq autres lectures du comptoir.
+ *
+ * La session était déjà exigée avant ce changement, pour une raison d'écran : un
+ * tiroir ouvert sur une session expirée doit partir au renouvellement comme les
+ * cinq autres lectures, et non afficher une liste de créneaux au milieu d'un
+ * écran qui va se fermer. Elle est désormais exigée pour les deux raisons.
  *
  * ## Ce que la fenêtre vaut
  *
@@ -301,7 +304,7 @@ export async function loadDeskAvailabilityAction(
   }
 
   try {
-    const view = await fetchAvailability(tenantSlug, parsed.data);
+    const view = await fetchAdminAvailability(access.token, parsed.data);
 
     // Aplati : la fenêtre ne porte qu'une journée, et rendre le découpage
     // obligerait l'appelant à le défaire pour la seule journée qu'il a demandée.

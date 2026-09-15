@@ -303,15 +303,28 @@ export function fetchPublicServices(tenantSlug: string): Promise<PublicService[]
   return request(publicPath(tenantSlug, '/services'), { schema: z.array(publicServiceSchema) });
 }
 
-/** Créneaux libres, découpés en journées dans le fuseau de l'établissement. */
-export function fetchAvailability(
-  tenantSlug: string,
-  query: AvailabilityQuery,
-): Promise<AvailabilityResponse> {
-  // `from` et `to` sont obligatoires dans `availabilityQuerySchema` — les
-  // rendre conditionnels ferait croire à une fenêtre par défaut côté serveur,
-  // qui n'existe pas. Seul `staffId` est facultatif : l'omettre, c'est
-  // « n'importe quel praticien », et l'envoyer vide serait un identifiant vide.
+/**
+ * La query d'une interrogation de disponibilité — écrite **une seule fois**.
+ *
+ * Les deux lectures, la publique du tunnel (`fetchAvailability`) et la gardée du
+ * comptoir (`fetchAdminAvailability`, #642), aboutissent à la **même**
+ * `AvailabilityQueryService.slotsFor` avec les mêmes paramètres : seule la porte
+ * les sépare. Fabriquer la query deux fois laisserait un champ ajouté d'un côté
+ * manquer silencieusement de l'autre — et un tiroir qui n'envoie pas son filtre
+ * se voit proposer des créneaux qu'il aurait dû écarter.
+ *
+ * `from` et `to` sont obligatoires dans `availabilityQuerySchema` — les rendre
+ * conditionnels ferait croire à une fenêtre par défaut côté serveur, qui
+ * n'existe pas. Deux champs seulement sont facultatifs, et ils s'omettent plutôt
+ * que de partir vides :
+ *
+ * - `staffId` — l'absence vaut « n'importe quel praticien », et un identifiant
+ *   vide serait un praticien nommé qui n'existe pas ;
+ * - `excludeAppointmentId` — le rendez-vous que l'appelant s'apprête à déplacer,
+ *   et qui ne doit donc pas s'occuper lui-même (#442). Seul l'écran de report le
+ *   renseigne, et c'est sa **présence** qui fait contourner le cache serveur.
+ */
+function availabilitySearchParams(query: AvailabilityQuery): URLSearchParams {
   const search = new URLSearchParams({
     serviceId: query.serviceId,
     from: query.from,
@@ -322,13 +335,19 @@ export function fetchAvailability(
     search.set('staffId', query.staffId);
   }
 
-  // Le rendez-vous que l'appelant s'apprête à déplacer, et qui ne doit donc pas
-  // s'occuper lui-même (#442). Facultatif de la même façon que `staffId` : seul
-  // l'écran de report le renseigne, et sa présence suffit à faire contourner le
-  // cache côté serveur.
   if (query.excludeAppointmentId !== undefined) {
     search.set('excludeAppointmentId', query.excludeAppointmentId);
   }
+
+  return search;
+}
+
+/** Créneaux libres, découpés en journées dans le fuseau de l'établissement. */
+export function fetchAvailability(
+  tenantSlug: string,
+  query: AvailabilityQuery,
+): Promise<AvailabilityResponse> {
+  const search = availabilitySearchParams(query);
 
   return request(publicPath(tenantSlug, `/availability?${search.toString()}`), {
     schema: availabilityResponseSchema,
@@ -909,6 +928,55 @@ export async function fetchMyAppointments(
 // ---------------------------------------------------------------------------
 // L'agenda du back-office — #49
 // ---------------------------------------------------------------------------
+
+/**
+ * Les créneaux libres, lus **avec la session du comptoir** — #642.
+ *
+ * ## Pourquoi une seconde lecture de disponibilité
+ *
+ * `fetchAvailability` plus haut sert le tunnel de réservation : elle passe par
+ * `GET /public/{slug}/availability`, sans jeton, parce qu'on réserve sans
+ * compte. Le back-office, lui, a une session, et la route qui lui est destinée
+ * est `GET /api/v1/availability` — seuil `STAFF`, **sans quota**.
+ *
+ * L'écart n'est pas cosmétique. La route publique porte
+ * `@Throttle({ limit: 120, ttl: 60_000 })`, et ce budget est compté **par
+ * adresse**. Or une action serveur Next sort par l'adresse du serveur Next :
+ * l'API y voit une seule adresse pour tous les comptoirs de tous les
+ * établissements *et* pour tous les visiteurs du tunnel. Le comptoir aurait
+ * donc consommé un quota qu'il partage avec le parcours client, et l'épuiser
+ * aurait fait retomber le tiroir de rendez-vous sur la saisie libre d'heure —
+ * c'est-à-dire sur le `SLOT_NO_LONGER_AVAILABLE` que #611 venait de supprimer.
+ *
+ * Les deux contrôleurs appellent la **même** `AvailabilityQueryService.slotsFor`
+ * avec les mêmes paramètres : la charge utile est identique, à l'octet près.
+ * Seule la porte change.
+ *
+ * ## L'établissement ne circule pas
+ *
+ * Comme `fetchAppointments` juste en dessous : aucun slug dans le chemin, aucun
+ * `tenantId` en query, et il n'y a pas de paramètre pour en poser un. L'API tire
+ * l'établissement du jeton (tenant-isolation §2) — c'est ce qui distingue cette
+ * lecture de la publique, où le slug d'URL désigne le salon et où n'importe qui
+ * peut en écrire un autre.
+ */
+export async function fetchAdminAvailability(
+  accessToken: string,
+  query: AvailabilityQuery,
+): Promise<AvailabilityResponse> {
+  // Mêmes bornes que la lecture publique, et par la même fabrique : les deux
+  // routes servent la même charge utile, et une query écrite deux fois finirait
+  // par diverger sur le champ qu'un ticket n'aurait ajouté qu'à l'une d'elles.
+  const search = availabilitySearchParams(query);
+
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/availability?${search.toString()}`,
+    schema: availabilityResponseSchema,
+    accessToken,
+  });
+  return payload;
+}
 
 /**
  * Les rendez-vous d'une période, tels que le planning du comptoir les affiche.
