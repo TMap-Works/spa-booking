@@ -79,6 +79,39 @@ type CategoryFormValues = z.input<typeof categoryFormSchema>;
  * Le formulaire d'édition en ligne, lui, gagne la même carte dans sa cellule de
  * tableau : c'est le même composant, il avait le même défaut, et le liseré qui en
  * résulte délimite l'édition ouverte au milieu d'une liste.
+ *
+ * ## Le bouton primaire occupe sa carte (#634)
+ *
+ * `block` manquait ici seul : « Créer la rubrique » se rendait en largeur
+ * automatique — 164 px relevés par la campagne contre les 966 px de « Créer la
+ * prestation » sur l'écran voisin, à 1280 px. Un même rôle, deux rendus, à un
+ * clic de distance.
+ *
+ * La forme dominante du back-office est la pleine largeur : `ServiceForm`,
+ * `TenantSettingsForm`, `AdminLoginForm`, `ClientSearchForm`, `ClientPicker` et
+ * l'encaissement passent tous `block` sur leur bouton de soumission. C'est donc
+ * ce formulaire-ci qui rejoint les autres, et non l'inverse — aucune règle CSS
+ * ajoutée, aucun composant partagé modifié.
+ *
+ * `block` est posé sans condition, comme dans `ServiceForm` : création et
+ * édition partagent le même formulaire, et n'en habiller qu'une moitié
+ * réintroduirait à l'intérieur d'un composant l'incohérence qu'on vient de
+ * retirer entre deux écrans. Dans la cellule de tableau, la carte est étroite —
+ * le bouton occupe sa carte, pas la page.
+ *
+ * `spa-admin-form` vient avec lui, et sans lui la correction serait fausse. Un
+ * bouton en pleine largeur mesure sa carte : `/catalogue/nouveau` borne la
+ * sienne à 44 rem (#630), `/catalogue/rubriques` ne l'était pas — la campagne de
+ * #630 n'y avait relevé aucun champ étiré, et l'écran était resté hors de sa
+ * liste. `block` seul y rendait donc un bouton de toute la zone de contenu :
+ * **926 px** mesurés à 1280 px de fenêtre, contre 670 px sur l'écran voisin. Le
+ * même écart, dans l'autre sens.
+ *
+ * Avec les deux, les deux boutons mesurent **670 px** dans une carte de 704 px —
+ * mesure faite au navigateur, phase de recette. La borne se pose sur le `<form>`
+ * lui-même, comme `StaffInviteForm` la pose sur sa `<section>` ; la liste des
+ * rubriques, elle, garde ses 926 px, parce qu'un tableau profite de la place
+ * qu'un formulaire gaspille.
  */
 function CategoryForm({
   tenantSlug,
@@ -146,7 +179,7 @@ function CategoryForm({
 
   return (
     <form
-      className="spa-admin__section"
+      className="spa-admin__section spa-admin-form"
       aria-labelledby={category === undefined ? 'rubrique-nouvelle' : undefined}
       onSubmit={(event) => void submit(event)}
       noValidate
@@ -193,6 +226,7 @@ function CategoryForm({
       <Button
         type="submit"
         variant="accent"
+        block
         loading={isSubmitting}
         loadingLabel="Enregistrement…"
       >

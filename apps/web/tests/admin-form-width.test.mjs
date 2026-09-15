@@ -233,6 +233,11 @@ describe('Les écrans de formulaire portent le conteneur borné', () => {
       join(adminDir, 'personnel', 'components', 'staff-invite-form.tsx'),
     ],
     ['/reglages', join(adminDir, 'reglages', 'page.tsx')],
+    // Ajouté par #634. La campagne de #630 n'avait relevé ici aucun champ étiré,
+    // et l'écran était resté hors de la liste ; c'est son bouton de création qui
+    // a trahi la carte non bornée. Seul le `<form>` porte la classe — la liste
+    // des rubriques garde toute la largeur, comme tout tableau du back-office.
+    ['/catalogue/rubriques', join(adminDir, 'components', 'category-manager.tsx')],
   ];
 
   for (const [ecran, fichier] of ecrans) {
