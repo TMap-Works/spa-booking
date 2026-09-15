@@ -52,10 +52,20 @@ const publicTenantResolver: PublicTenantResolverProvider = {
  * serait l'inverse, et api-module §3 l'interdit.
  *
  * Les autres modules
- * métier gouverneront l'accès à leurs routes avec les deux gardes — par
+ * métier gouvernent l'accès à leurs routes avec les deux gardes — par
  * `@Auth(...)` / `@AuthAtLeast(...)`, qui les montent ensemble et dans le bon
- * ordre. Aucun n'a de raison d'atteindre `IdentityRepository` ni `UsersService` :
- * un module n'importe jamais le repository d'un autre (api-module §3).
+ * ordre.
+ *
+ * `UsersService` s'y est ajouté avec #694, et c'est le premier export de ce
+ * module vers un autre module **métier**. La raison est celle que api-module §3
+ * prévoit : `catalog` crée désormais la fiche praticien, qui se rattache à un
+ * **compte**, et vérifier que ce compte est un compte interne de
+ * l'établissement est une question d'identité — pas de catalogue. C'est un appel
+ * de service, la voie autorisée ; `IdentityRepository`, lui, reste privé, et un
+ * module n'importe jamais le repository d'un autre. La différence n'est pas
+ * cosmétique : le service tient la règle — un 404 qui confond « inconnu »,
+ * « d'ailleurs » et « cliente » —, là où le dépôt ne rendrait qu'une ligne, et
+ * laisserait chaque appelant réinventer ce refus.
  *
  * Les deux gardes sont déclarées comme fournisseurs — et non seulement
  * référencées par `@UseGuards` — parce qu'elles ont des dépendances à injecter :
@@ -116,6 +126,6 @@ const publicTenantResolver: PublicTenantResolverProvider = {
     RolesGuard,
     publicTenantResolver,
   ],
-  exports: [JwtAuthGuard, RolesGuard, TokenService, PUBLIC_TENANT_RESOLVER],
+  exports: [JwtAuthGuard, RolesGuard, TokenService, UsersService, PUBLIC_TENANT_RESOLVER],
 })
 export class IdentityModule {}

@@ -18,11 +18,14 @@ import { StaffService } from './staff.service';
  *
  * ## Ce qu'il importe
  *
- * `IdentityModule`, et seulement pour ses **gardes** : `@AuthAtLeast(...)` monte
- * `JwtAuthGuard` et `RolesGuard`, qui ont des dépendances à injecter. C'est la
- * voie prévue par api-module §3 — un appel de service, jamais un import du
- * repository d'un autre module. Rien ici n'atteint `IdentityRepository`, et rien
- * ne le doit.
+ * `IdentityModule`, pour deux choses. Ses **gardes** d'abord :
+ * `@AuthAtLeast(...)` monte `JwtAuthGuard` et `RolesGuard`, qui ont des
+ * dépendances à injecter. Puis, depuis #694, son `UsersService` : créer une
+ * fiche praticien exige de vérifier que le compte visé est un compte **interne
+ * de l'établissement**, et cette question appartient à `identity`. C'est la voie
+ * prévue par api-module §3 — un appel de service, jamais un import du repository
+ * d'un autre module. Rien ici n'atteint `IdentityRepository`, et rien ne le
+ * doit.
  *
  * ## Ce qu'il exporte, et pourquoi
  *
@@ -40,11 +43,15 @@ import { StaffService } from './staff.service';
  * aura besoin de « quels praticiens pratiquent cette prestation », passera par
  * `ServicesService` — un module n'a pas à choisir entre plusieurs portes.
  *
- * `StaffService` (#421) reste privé pour une raison de plus : il **lit** la
- * fiche praticien sans en être propriétaire — le CDC §2.3 n'attribue cette
- * entité à aucun module. L'exporter reviendrait à faire de `catalog` la porte
- * d'entrée d'une donnée qui n'est pas la sienne, et à figer par l'usage un choix
- * qui mérite d'être fait explicitement.
+ * `StaffService` (#421, #694) reste privé, mais plus pour la même raison. Le CDC
+ * §2.3 n'attribuait la fiche praticien à aucun module, et tant que personne ne
+ * la possédait, personne ne pouvait en créer : un salon neuf restait sans
+ * praticien, donc sans créneau. #694 a tranché — c'est `catalog` qui la
+ * possède, parce que c'est là que le contrat partagé décrit sa forme et que
+ * l'affectation qui la consomme y vit déjà. Il reste privé parce qu'aucun autre
+ * module n'a de décision à prendre sur elle : `availability` lit les fiches par
+ * son propre dépôt pour calculer des créneaux, ce qui est une lecture de table
+ * et non une règle à partager.
  *
  * ## Un contrôleur public dans un module de back-office
  *

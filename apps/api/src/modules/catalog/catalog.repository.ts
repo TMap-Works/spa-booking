@@ -6,6 +6,7 @@ import {
   ServiceCategorySlugTakenError,
   ServiceStaffAlreadyAssignedError,
   ServiceSlugTakenError,
+  StaffProfileAlreadyExistsError,
 } from './catalog.errors';
 import type { PublicServiceView, ServiceCategoryView, ServiceView } from './catalog.types';
 
@@ -64,6 +65,24 @@ export interface StaffRecord {
   id: string;
   displayName: string;
   isActive: boolean;
+}
+
+/**
+ * Champs modifiables d'une fiche praticien — tous facultatifs (#694).
+ *
+ * Ne porte que les champs **présents** : un `{ bio: null }` efface la
+ * présentation, un objet sans `bio` n'y touche pas. La distinction ne peut pas
+ * se faire plus bas — Prisma ignore un `undefined`, et écrirait `null` là où
+ * l'appelant n'a rien demandé.
+ *
+ * Ni `userId`, ni `tenantId` : le type l'interdit, et c'est ce qui empêche cette
+ * charge utile de devenir la porte par laquelle une fiche change de compte — ou
+ * d'établissement.
+ */
+export interface StaffPatch {
+  displayName?: string;
+  bio?: string | null;
+  isActive?: boolean;
 }
 
 /** Une prestation publiable, praticiens actifs déjà joints. */
@@ -499,12 +518,16 @@ export class CatalogRepository {
   /**
    * Une fiche praticien de l'établissement courant — `null` hors de celui-ci.
    *
-   * Le module `catalog` lit la table `staff` sans en être propriétaire : il ne
-   * la crée ni ne la modifie, il vérifie seulement qu'un identifiant reçu
-   * désigne un praticien **d'ici** avant d'écrire l'affectation. Ce n'est pas
-   * l'import du repository d'un autre module (api-module §3) — aucun module ne
-   * possède encore la fiche praticien, et le jour où l'un la prendra, cette
-   * lecture deviendra l'appel de service correspondant.
+   * Sert deux appelants : `ServiceStaffService`, qui vérifie qu'un identifiant
+   * reçu désigne un praticien **d'ici** avant d'écrire l'affectation, et
+   * `StaffService`, qui relit la fiche après l'avoir modifiée.
+   *
+   * Le module `catalog` possède cette table depuis #694 — la fiche praticien
+   * n'appartenait jusque-là à aucun module, et aucun geste du back-office ne
+   * pouvait donc en créer une. Le propriétaire est désormais nommé : c'est ici
+   * que la fiche naît, se modifie et se lit. Le **compte** derrière elle reste à
+   * `identity`, et c'est un appel de service qui le vérifie (api-module §3) —
+   * jamais une lecture de la table `users` depuis ce dépôt.
    */
   public async findStaffById(id: string): Promise<StaffRecord | null> {
     return this.prisma.staff.findFirst({ where: { id }, select: STAFF_SELECT });
@@ -534,6 +557,66 @@ export class CatalogRepository {
       select: STAFF_SELECT,
       orderBy: [{ displayName: 'asc' }],
     });
+  }
+
+  /**
+   * Crée la fiche praticien d'un compte de l'établissement courant (#694).
+   *
+   * C'est l'écriture qui manquait : jusqu'ici la table `staff` n'était peuplée
+   * que par le jeu d'essai, si bien qu'un salon jamais semé n'avait aucun
+   * praticien, donc aucune affectation possible, donc aucun créneau à proposer.
+   *
+   * `userId` n'est **pas** vérifié ici — le service l'a fait, par un appel au
+   * module qui possède les comptes. Ce que la base garantit, elle, c'est qu'un
+   * compte d'un autre établissement ne peut pas être rattaché : la clé étrangère
+   * composite `(tenant_id, user_id)` vers `User.@@unique([tenantId, id])` le
+   * rend impossible, même si le contrôle applicatif venait à être contourné.
+   *
+   * L'unicité `(tenant_id, user_id)` devient `StaffProfileAlreadyExistsError`,
+   * comme l'unicité de l'affectation devient son 409 : la base tranche, et deux
+   * soumissions concurrentes du même formulaire ne peuvent pas produire deux
+   * fiches pour la même personne.
+   *
+   * `isActive` n'est pas posé : la colonne vaut `true` par défaut. Une fiche
+   * naît réservable — c'est tout l'objet du geste.
+   */
+  public async createStaff(input: {
+    userId: string;
+    displayName: string;
+    bio: string | null;
+  }): Promise<StaffRecord> {
+    try {
+      return await this.prisma.staff.create({
+        data: withScopedTenant<Prisma.StaffUncheckedCreateInput>(input),
+        select: STAFF_SELECT,
+      });
+    } catch (error: unknown) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === UNIQUE_VIOLATION) {
+        throw new StaffProfileAlreadyExistsError(input.userId);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Modifie une fiche de l'établissement courant. Rend `null` si aucune ligne
+   * n'a bougé — identifiant inconnu, ou d'un autre établissement,
+   * indistinctement. C'est cette valeur-là qui devient le 404 (§4).
+   *
+   * `updateMany` et non `update` : sous le scoping, le `where` porte `tenantId`
+   * en plus, ce qui n'est pas une clé unique au sens de Prisma. Même conduite
+   * que `updateService` et `updateCategory`, et c'est le compte rendu qui sert
+   * de garde — un `update` scopé lèverait `P2025` sur la fiche du voisin, ce qui
+   * remonterait en 500 au lieu du 404 attendu.
+   *
+   * Aucun conflit d'unicité à traduire : ni `displayName`, ni `bio`, ni
+   * `isActive` n'en portent — deux praticiennes homonymes sont un fait
+   * d'état civil, pas une faute de saisie.
+   */
+  public async updateStaff(id: string, patch: StaffPatch): Promise<StaffRecord | null> {
+    const { count } = await this.prisma.staff.updateMany({ where: { id }, data: patch });
+
+    return count === 0 ? null : this.findStaffById(id);
   }
 
   /**
