@@ -37,9 +37,41 @@
  * serveur, et le front ne fait jamais autorité sur ce qu'il envoie.
  */
 
+/*
+ * La colonne du ticket est bornée, comme l'est celle du paiement (#630).
+ *
+ * `1fr` donnait au ticket tout ce que la zone de contenu ne prenait pas : à
+ * 1920 px de fenêtre elle en vaut 1 637, le panneau de paiement en garde 22 rem,
+ * et le récapitulatif recevait les 1 269 px restants. « À encaisser » était alors
+ * peint à x=266 et « 85,00 € » à x=1481 — 1 215 px entre un libellé et son
+ * montant, c'est-à-dire deux regards pour lire une ligne que l'opératrice annonce
+ * à voix haute devant la cliente.
+ *
+ * 44 rem est la mesure de saisie du produit — celle de `components/booking.css`,
+ * de `components/account.css` et de `.spa-admin-form`. Le ticket n'est pas un
+ * formulaire, mais il se lit de la même façon : un libellé à gauche, sa valeur à
+ * droite, et la distance entre les deux est ce qui décide de la lisibilité.
+ *
+ * `justify-content: start` est explicite plutôt que déduit : sans piste en `fr`,
+ * la grille ne consomme plus l'espace libre, et il faut dire où la paire se pose.
+ * Collée au début, elle reste sous la barre de dates et sous le titre.
+ *
+ * Rien ne change sous 67 rem de zone de contenu — 44 de ticket, 1 de gouttière,
+ * 22 de paiement : la borne ne mord qu'au-delà, là où le ticket s'étirait. Le
+ * palier d'empilement de #615 est donc intact, et avec lui tout le calcul qui le
+ * justifie plus bas.
+ *
+ * Ce qui n'a **pas** été fait, et pourquoi : la QA relevait aussi que le ticket
+ * n'a pas de carte. Lui en donner une coûterait 2 rem de remplissage à une
+ * colonne dont #615 a mesuré qu'elle tient ses trois colonnes à partir de
+ * 19,5 rem — le palier d'empilement devrait passer de 60 à 62 rem, et le
+ * récapitulatif se remettrait à rogner entre les deux. Le bloc des totaux porte
+ * déjà sa propre surface en creux ; la borne suffit à la lisibilité demandée.
+ */
 .spa-admin-checkout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(18rem, 22rem);
+  grid-template-columns: minmax(0, 44rem) minmax(18rem, 22rem);
+  justify-content: start;
   gap: var(--spa-space-4);
   align-items: start;
 }
