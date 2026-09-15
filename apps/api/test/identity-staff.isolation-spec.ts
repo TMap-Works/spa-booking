@@ -459,6 +459,23 @@ describe('Gestion du personnel — #55', () => {
         .expect(200);
       expect(relu.body.id).toBe(staffA);
       expect(harness.identity.users.some((user) => user.id === staffA)).toBe(true);
+
+      // #695 : la relecture porte l'état, et la liste aussi. Sans cela, le
+      // back-office ne savait qu'une chose après un rechargement — le compte
+      // existe — et reproposait « Désactiver » sur une ligne déjà fermée.
+      expect(relu.body.isActive).toBe(false);
+
+      const liste = await request(server())
+        .get('/api/v1/users')
+        .set('Authorization', await bearerOf(adminA))
+        .expect(200);
+      expect(
+        liste.body.find((user: { id: string; isActive: boolean }) => user.id === staffA),
+      ).toMatchObject({ isActive: false });
+      // Les autres comptes ne sont pas emportés au passage.
+      expect(
+        liste.body.find((user: { id: string; isActive: boolean }) => user.id === adminA),
+      ).toMatchObject({ isActive: true });
     });
 
     it('ferme la connexion du compte désactivé, et la rouvre à la réactivation', async () => {

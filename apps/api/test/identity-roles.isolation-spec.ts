@@ -148,6 +148,14 @@ describe('Rôles, permissions et isolation — #22', () => {
         managerA,
         adminA,
       ]);
+      // Chaque ligne porte son état d'activation (#695) : c'est ce qui permet à
+      // l'écran de signaler un compte fermé plutôt que d'offrir « Désactiver » à
+      // tout le monde.
+      expect(response.body.map((user: { isActive: boolean }) => user.isActive)).toEqual([
+        true,
+        true,
+        true,
+      ]);
     });
 
     it('refuse CLIENT en 403', async () => {
@@ -191,10 +199,15 @@ describe('Rôles, permissions et isolation — #22', () => {
         .expect(200);
 
       expect(response.body.id).toBe(staffA);
+      // `isActive` depuis #695 : la lecture d'un compte rend ce que la liste en
+      // montre, et les deux servent l'écran qui ferme et rouvre les accès. Ni
+      // `passwordHash`, ni `tenantId`, ni les horodatages pour autant — la liste
+      // reste blanche.
       expect(Object.keys(response.body).sort()).toEqual([
         'email',
         'firstName',
         'id',
+        'isActive',
         'lastName',
         'phone',
         'role',

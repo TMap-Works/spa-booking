@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { getTenantId } from '../../../common/tenant';
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
 import type { AppConfigService } from '../../../config/app-config.service';
-import { toProfile } from '../identity.repository';
+import { toStaffAccount } from '../identity.repository';
 import type {
   IdentityRepository,
   OpeningHourRecord,
@@ -13,7 +13,7 @@ import type {
   TenantTimeZoneRecord,
   UserRecord,
 } from '../identity.repository';
-import type { UserProfile } from '../identity.types';
+import type { StaffAccountState } from '../identity.types';
 import { STAFF_ROLES, USER_ROLE_RANK, type UserRole } from '../roles';
 
 /**
@@ -349,7 +349,7 @@ export class FakeIdentityRepository {
    * résultat réel, jusqu'au jour où un test sur vraie base la contredirait.
    * `roles.spec.ts` verrouille la concordance des deux ordres.
    */
-  public async listStaffAccounts(): Promise<UserProfile[]> {
+  public async listStaffAccounts(): Promise<StaffAccountState[]> {
     const tenantId = this.requireTenant();
     const staffRoles: readonly string[] = STAFF_ROLES;
     return this.users
@@ -359,7 +359,10 @@ export class FakeIdentityRepository {
           ? left.email.localeCompare(right.email)
           : USER_ROLE_RANK[left.role] - USER_ROLE_RANK[right.role],
       )
-      .map((user) => toProfile(user));
+      // `toStaffAccount` et non `toProfile` : la projection du vrai dépôt porte
+      // `isActive` depuis #695, et un double qui l'omettrait laisserait passer
+      // une régression que seule la recette verrait.
+      .map((user) => toStaffAccount(user));
   }
 
   /**

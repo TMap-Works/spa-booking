@@ -145,12 +145,17 @@ export class UsersController {
    * La clientèle n'y figure pas — elle relève du module `crm` et de sa
    * pagination. Cette liste répond à une question d'administration des droits,
    * et sa taille est bornée par le nombre de personnes qui travaillent au salon.
+   *
+   * Chaque ligne porte son état d'activation (#695). C'est ce qui manquait pour
+   * que le back-office puisse signaler un compte fermé et proposer de le rouvrir
+   * : la seule route qui rendait `isActive` était celle qui l'écrit, si bien
+   * qu'un rechargement de page effaçait ce que l'écran croyait savoir.
    */
   @Get()
   @AuthAtLeast('STAFF')
   @ApiOperation({ summary: 'Lister les comptes internes de l’établissement' })
-  @ApiOkResponse({ type: [UserProfileDto] })
-  public async list(): Promise<UserProfileDto[]> {
+  @ApiOkResponse({ type: [StaffAccountStateDto] })
+  public async list(): Promise<StaffAccountStateDto[]> {
     return this.users.listStaffAccounts();
   }
 
@@ -160,13 +165,16 @@ export class UsersController {
    * Répond **404** pour un identifiant inconnu comme pour celui d'un compte d'un
    * autre établissement : distinguer les deux reviendrait à confirmer l'existence
    * du second (tenant-isolation §4).
+   *
+   * Même forme que la liste, état d'activation compris (#695) : relire un compte
+   * après l'avoir modifié doit rendre ce que la liste en montrait.
    */
   @Get(':id')
   @AuthAtLeast('STAFF')
   @ApiOperation({ summary: 'Lire un compte de l’établissement' })
-  @ApiOkResponse({ type: UserProfileDto })
+  @ApiOkResponse({ type: StaffAccountStateDto })
   @ApiNotFoundResponse({ description: 'Aucun compte de cet établissement ne porte cet identifiant.' })
-  public async byId(@Param('id', ParseUUIDPipe) id: string): Promise<UserProfileDto> {
+  public async byId(@Param('id', ParseUUIDPipe) id: string): Promise<StaffAccountStateDto> {
     return this.users.byId(id);
   }
 

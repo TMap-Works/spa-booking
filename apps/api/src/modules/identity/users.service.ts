@@ -3,7 +3,12 @@ import { Injectable } from '@nestjs/common';
 import { BusinessRuleError, NotFoundError } from '../../common/errors';
 import { normalizeEmail } from './email';
 import { EmailAlreadyRegisteredError, InvitationAlreadyAcceptedError } from './identity.errors';
-import { IdentityRepository, toProfile, type UserRecord } from './identity.repository';
+import {
+  IdentityRepository,
+  toProfile,
+  toStaffAccount,
+  type UserRecord,
+} from './identity.repository';
 import type {
   AuthenticatedUser,
   StaffAccountState,
@@ -40,8 +45,14 @@ export class UsersService {
     private readonly tokens: TokenService,
   ) {}
 
-  /** Les comptes internes de l'établissement courant — jamais la clientèle. */
-  public async listStaffAccounts(): Promise<UserProfile[]> {
+  /**
+   * Les comptes internes de l'établissement courant — jamais la clientèle.
+   *
+   * Chacun porte son état d'activation (#695) : la liste sert l'écran qui ferme
+   * et rouvre les accès, et sans ce champ il ne pouvait que proposer
+   * « Désactiver », y compris sur un compte déjà fermé.
+   */
+  public async listStaffAccounts(): Promise<StaffAccountState[]> {
     return this.repository.listStaffAccounts();
   }
 
@@ -190,13 +201,17 @@ export class UsersService {
    * précisément l'information à ne pas donner, et la troisième relève du module
    * `crm`, pas de l'administration des droits. Le point d'entrée rend ce que la
    * liste rend, ni plus ni moins.
+   *
+   * « Ce que la liste rend » inclut l'état d'activation depuis #695, et l'égalité
+   * des deux formes est la propriété à tenir : un écran qui relit un compte après
+   * l'avoir modifié doit y retrouver ce que la liste lui montrait.
    */
-  public async byId(userId: string): Promise<UserProfile> {
+  public async byId(userId: string): Promise<StaffAccountState> {
     const user = await this.repository.findStaffAccountById(userId);
     if (user === null) {
       throw new NotFoundError('Compte introuvable.');
     }
-    return toProfile(user);
+    return toStaffAccount(user);
   }
 
   /**
@@ -374,12 +389,13 @@ export class UsersService {
       }
     }
 
-    // `isActive` s'ajoute **ici**, dans la forme propre à cette route, plutôt que
-    // dans `UserProfile` : ce dernier est la charge utile de `GET /users`,
-    // `GET /users/:id` et `/auth/me`, que le front lit par un schéma partagé
-    // (`packages/shared`, empreinte de #314). Y ajouter un champ élargirait trois
-    // contrats pour le besoin d'un seul, et un compte inactif n'a pas à être
-    // désigné comme tel dans une réponse rendue à la clientèle.
+    // `StaffAccountState` est désormais la forme des **trois** routes
+    // d'administration des comptes — `GET /users`, `GET /users/:id` et celle-ci
+    // (#695) : la liste ne pouvait pas dire quels comptes étaient fermés, et
+    // l'écran affichait « Désactiver » sur une ligne déjà désactivée. Ce qui
+    // reste hors de cette forme est `UserProfile`, charge utile de `/auth/me` et
+    // de `PATCH /users/me` : ces deux-là servent aussi la clientèle, à qui l'état
+    // d'un compte du salon n'apprend rien qui la regarde.
     //
     // La valeur rendue est celle demandée, pas celle qu'on a lue : c'est l'état
     // du compte après l'appel, y compris quand rien n'a été écrit parce qu'il y

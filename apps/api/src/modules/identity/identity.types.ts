@@ -56,13 +56,20 @@ export interface UserProfile {
 }
 
 /**
- * Le compte du personnel **avec** son état d'activation — #55.
+ * Le compte du personnel **avec** son état d'activation — #55, étendu par #695.
  *
- * Forme propre à `PATCH /users/:id/status`, et non un élargissement de
- * `UserProfile` : ce dernier est la charge utile de `GET /users`,
- * `GET /users/:id` et `/auth/me`, que le front lit par un schéma partagé.
- * Y ajouter `isActive` élargirait trois contrats pour le besoin d'un seul, et
- * dirait à la clientèle qu'un compte a été fermé, ce qui ne la regarde pas.
+ * Forme des trois routes d'**administration des comptes** : `GET /users`,
+ * `GET /users/:id` et `PATCH /users/:id/status`. Elle est née propre à la
+ * dernière ; les deux lectures l'ont rejointe parce que sans ce champ la liste
+ * du personnel ne pouvait ni signaler un compte fermé, ni proposer de le rouvrir
+ * — elle offrait « Désactiver » sur une ligne déjà désactivée.
+ *
+ * Elle reste distincte d'`UserProfile`, qui sert `/auth/me` et
+ * `PATCH /users/me` : ces deux-là répondent aussi à la clientèle, et l'état
+ * d'activation d'un compte du salon ne la regarde pas. Les trois routes
+ * ci-dessus sont gardées au rang `STAFF` au minimum.
+ *
+ * `staffAccountStateSchema` de `@spa/shared` décrit la même forme côté front.
  */
 export interface StaffAccountState extends UserProfile {
   readonly isActive: boolean;
