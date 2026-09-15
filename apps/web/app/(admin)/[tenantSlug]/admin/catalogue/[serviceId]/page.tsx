@@ -161,13 +161,19 @@ export default async function ServicePage({ params }: ServicePageProps) {
           candidates={candidates}
           canManage={canManage}
         />
-        <ServiceForm
-          tenantSlug={tenantSlug}
-          currency={service.price.currency}
-          categories={categories}
-          service={service}
-          canManage={canManage}
-        />
+        {/* La seconde colonne du partage est en `1fr` : elle prenait tout ce
+         * que le panneau des praticiens laissait, soit 1 269 px à 1920 pour des
+         * champs de durée et de prix (#630). Le conteneur la borne à la mesure
+         * de saisie du produit, la même qu'à la création. */}
+        <div className="spa-admin-form">
+          <ServiceForm
+            tenantSlug={tenantSlug}
+            currency={service.price.currency}
+            categories={categories}
+            service={service}
+            canManage={canManage}
+          />
+        </div>
       </div>
     </section>
   );

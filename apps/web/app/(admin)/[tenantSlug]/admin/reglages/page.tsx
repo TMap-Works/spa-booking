@@ -59,5 +59,15 @@ export default async function TenantSettingsPage({ params }: SettingsPageProps) 
     });
   }
 
-  return <TenantSettingsForm tenantSlug={tenantSlug} tenant={tenant} />;
+  // La colonne de saisie est bornée ici, sur l'enveloppe de l'écran (#630) :
+  // `TenantSettingsForm` rend son propre titre et ses trois cartes, et tout cela
+  // s'étirait sur la zone de contenu entière — 1 637 px à 1920 pour un code
+  // postal. La borne descend sur l'ensemble plutôt que sur le seul `<form>` :
+  // c'est la colonne de l'écran qu'on mesure, titre compris, sans quoi le `<h1>`
+  // et les champs ne se seraient plus alignés sur le même bord droit.
+  return (
+    <div className="spa-admin-form">
+      <TenantSettingsForm tenantSlug={tenantSlug} tenant={tenant} />
+    </div>
+  );
 }

@@ -206,6 +206,45 @@
   font-weight: var(--spa-font-weight-semibold);
 }
 
+/* --- Colonne de saisie ----------------------------------------------------- */
+
+/*
+ * La largeur maximale d'un formulaire d'administration (#630).
+ *
+ * `.spa-admin__content` vaut la fenêtre moins le rail : à 1920 px, un champ
+ * « Durée du soin (minutes) » mesurait 1 637 px pour y taper « 60 ». Les écrans
+ * du back-office n'avaient jamais eu besoin d'une borne — ce sont des plannings,
+ * des tableaux et des listes, qui profitent de la place. Les formulaires, non, et
+ * ils avaient hérité de la même enveloppe.
+ *
+ * 44 rem n'est pas un chiffre neuf : c'est la mesure que `components/booking.css`
+ * et `components/account.css` emploient déjà. Le produit n'a pas deux largeurs de
+ * formulaire.
+ *
+ * POURQUOI ICI ET NON DANS `components/field.css`
+ * -----------------------------------------------
+ * Deux raisons, et la seconde est celle qui a décidé du fichier.
+ *
+ * La borne ne porte pas sur le champ mais sur la colonne qui le contient : un
+ * `.spa-field` doit remplir sa boîte, dans une colonne de 22 rem comme dans une
+ * pastille d'horaire. C'est donc un conteneur de mise en page, voisin de
+ * `.spa-admin__split` et de `.spa-admin__section`, et non un état de composant.
+ *
+ * Surtout, `components/field.css` est tiré par `styles/index.css`, que le layout
+ * racine charge pour les **deux** produits de `apps/web`. Une règle qui ne sert
+ * qu'au tableau de bord n'a pas à voyager dans le parcours client public, qui vise
+ * un LCP < 2,5 s en 4G (skill web-frontend §7) — c'est la raison d'être des deux
+ * points d'entrée, écrite en tête de `admin/index.css`. Cette feuille-ci n'est
+ * chargée que par `app/(admin)/[tenantSlug]/admin/layout.tsx`.
+ *
+ * `inline-size: 100%` est nécessaire là où le conteneur est un élément de grille
+ * ou de flex qui, sans lui, se réduirait à la largeur de son contenu.
+ */
+.spa-admin-form {
+  inline-size: 100%;
+  max-inline-size: 44rem;
+}
+
 /* --- Barre d'outils -------------------------------------------------------- */
 
 .spa-admin-toolbar {

@@ -5,8 +5,10 @@
  * SECOND point d'entrée du front, distinct de `styles/index.css`. Les deux
  * produits de `apps/web` ne partagent pas leur chrome (skill web-frontend §1) :
  *
- *     app/layout.tsx           import '../styles/index.css';        // les deux
- *     app/(admin)/layout.tsx   import '../../styles/admin/index.css'; // admin seul
+ *     app/layout.tsx
+ *         import '../styles/index.css';                    // les deux produits
+ *     app/(admin)/[tenantSlug]/admin/layout.tsx
+ *         import '../../../../styles/admin/index.css';     // le tableau de bord seul
  *
  * Pourquoi deux entrées et non une : le parcours client public vise un LCP
  * < 2,5 s en 4G (skill web-frontend §7), et il n'affiche jamais un calendrier de
