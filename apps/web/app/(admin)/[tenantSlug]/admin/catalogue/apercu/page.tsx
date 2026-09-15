@@ -33,6 +33,24 @@ import { adminCatalogPath, adminCatalogPreviewPath } from '../../paths';
  * `robots: noindex`. Le servir sans session en ferait une seconde page publique
  * du catalogue, à une autre URL — un doublon que le référencement pénalise et
  * que personne n'a demandé.
+ *
+ * ## Pourquoi les blocs ne sont pas réunis sous une `<section>` (#633)
+ *
+ * Ils l'étaient, dans une `<section>` que rien ne mettait en page : ses enfants
+ * s'empilaient dans le flux normal, à **0 px**, et la carte de la barre d'outils
+ * touchait l'encart « Ce que voit la cliente » — deux liserés confondus en un
+ * trait. La gouttière existe pourtant déjà : `.spa-admin__content`, la zone de
+ * contenu que le shell pose autour de chaque écran, sépare ses enfants de
+ * `var(--spa-space-4)`. Cette `<section>` intermédiaire était exactement ce qui
+ * l'empêchait d'atteindre les blocs.
+ *
+ * Elle n'est pas remplacée par une enveloppe équivalente : rien ne se perd à la
+ * retirer. Le `<h1>` nomme déjà l'écran, et l'aperçu lui-même est une région
+ * nommée — `ServiceCatalog` rend sa propre `<section aria-labelledby>`, celle que
+ * la cliente voit. L'identifiant que le `<h1>` portait pour cette `<section>`
+ * disparaît avec elle : plus rien ne s'y réfère. La correction reste ainsi dans
+ * le balisage du catalogue, sans une ligne de CSS partagé — `/catalogue/nouveau`,
+ * qui porte la même `<section>`, n'est pas touché.
  */
 
 export const dynamic = 'force-dynamic';
@@ -57,10 +75,8 @@ export default async function CatalogPreviewPage({ params }: CatalogPreviewPageP
   }
 
   return (
-    <section aria-labelledby="apercu-titre">
-      <h1 className="spa-admin__title" id="apercu-titre">
-        Aperçu du rendu public
-      </h1>
+    <>
+      <h1 className="spa-admin__title">Aperçu du rendu public</h1>
 
       <div className="spa-admin-toolbar">
         <Link className="spa-button spa-button--quiet" href={adminCatalogPath(tenantSlug)}>
@@ -81,6 +97,6 @@ export default async function CatalogPreviewPage({ params }: CatalogPreviewPageP
       </Notification>
 
       <ServiceCatalog services={services} />
-    </section>
+    </>
   );
 }
