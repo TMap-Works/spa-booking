@@ -55,7 +55,7 @@ import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { readStyleSheet, stripComments, styleSheetPath } from './support/tokens.mjs';
+import { readStyleSheet, rulesFor, stripComments, styleSheetPath } from './support/tokens.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -78,28 +78,18 @@ const filters = stripComments(
 /** Le couple « Filtrer » + « Afficher », tel que la feuille le désigne. */
 const PAIR = '.spa-admin-report-filters > div:has(> button)';
 
-/**
- * Les blocs de déclarations des règles dont la liste de sélecteurs contient
- * **exactement** `selector`.
- *
- * L'égalité et non la sous-chaîne, pour la même raison qu'en #615 : chercher
- * `.spa-admin-report-filters` par sous-chaîne attraperait aussi la règle du
- * bouton, et un `align-items` déplacé de l'une à l'autre laisserait l'assertion
- * verte alors que la barre aurait changé de comportement.
+/*
+ * `rulesFor` — les blocs de déclarations des règles dont la liste de sélecteurs
+ * contient **exactement** le sélecteur demandé — vit dans `support/tokens.mjs`
+ * depuis #657, et l'égalité stricte y est justifiée une fois pour toutes. Pour
+ * cette barre-ci, elle empêche `.spa-admin-report-filters` d'attraper aussi la
+ * règle du bouton : un `align-items` déplacé de l'une à l'autre laisserait
+ * l'assertion verte alors que la barre aurait changé de comportement.
  */
-function rulesFor(selector) {
-  const wanted = selector.trim().replace(/\s+/g, ' ');
-  const found = [];
-  for (const [, prelude, body] of reporting.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
-    const selectors = prelude.split(',').map((one) => one.trim().replace(/\s+/g, ' '));
-    if (selectors.includes(wanted)) found.push(body);
-  }
-  return found;
-}
 
 describe('La barre de filtres aligne ses libellés en haut', () => {
   it('déclare un alignement de la barre', () => {
-    const rules = rulesFor('.spa-admin-report-filters');
+    const rules = rulesFor(reporting, '.spa-admin-report-filters');
 
     assert.notDeepEqual(rules, [], 'aucune règle ne vise `.spa-admin-report-filters`.');
     assert.match(
@@ -116,7 +106,7 @@ describe('La barre de filtres aligne ses libellés en haut', () => {
     // qui pend sous son contrôle ; `baseline` aligne les premières lignes de
     // texte, c'est-à-dire les étiquettes, et laisse les contrôles se décaler
     // dès que deux étiquettes n'ont pas la même hauteur.
-    for (const rule of rulesFor('.spa-admin-report-filters')) {
+    for (const rule of rulesFor(reporting, '.spa-admin-report-filters')) {
       for (const [, value] of rule.matchAll(/align-items\s*:\s*([^;]+)/g)) {
         assert.match(
           value.trim(),
@@ -136,7 +126,7 @@ describe('La barre de filtres aligne ses libellés en haut', () => {
 });
 
 describe('Le bouton « Afficher » se pose sur la rangée des champs', () => {
-  const button = rulesFor('.spa-admin-report-filters button');
+  const button = rulesFor(reporting, '.spa-admin-report-filters button');
 
   it('atteint le bouton où qu’il se trouve dans la barre', () => {
     // Un enfant direct — `.spa-admin-report-filters > button` — ne l'atteint
@@ -218,7 +208,7 @@ describe('Le bouton « Afficher » n’ouvre jamais une ligne à lui seul', () =
     // La moitié « style » de l'invariant. Sans `nowrap`, le couple se coupe
     // sous la pression et le bouton retombe sous le champ, avec sa marge :
     // exactement le défaut qu'on retire, à une largeur de moins.
-    const pair = rulesFor(PAIR);
+    const pair = rulesFor(reporting, PAIR);
 
     assert.notDeepEqual(pair, [], `aucune règle ne vise \`${PAIR}\`.`);
     assert.match(
@@ -241,7 +231,7 @@ describe('Le bouton « Afficher » n’ouvre jamais une ligne à lui seul', () =
     // `.spa-admin-report-filters > *` ne l'atteint plus : le champ n'est plus un
     // enfant direct de la barre. Sans base propre, il retombe sur `flex: 0 1
     // auto` et le couple cesse de s'enrouler comme un champ de la barre.
-    const field = rulesFor(`${PAIR} > .spa-select`);
+    const field = rulesFor(reporting, `${PAIR} > .spa-select`);
 
     assert.notDeepEqual(field, [], `aucune règle ne vise \`${PAIR} > .spa-select\`.`);
     assert.match(

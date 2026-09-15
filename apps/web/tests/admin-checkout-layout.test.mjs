@@ -26,7 +26,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { readStyleSheet, stripComments, styleSheetPath } from './support/tokens.mjs';
+import { readStyleSheet, rulesFor, stripComments, styleSheetPath } from './support/tokens.mjs';
 
 /** La feuille de l'écran d'encaissement, commentaires neutralisés. */
 const checkout = stripComments(readStyleSheet(styleSheetPath('admin/checkout.css')));
@@ -117,34 +117,26 @@ describe('Le ticket et le moyen de paiement s’empilent avant d’être écras�
   });
 });
 
-describe('Le montant à encaisser reste lisible d’un coup d’œil', () => {
-  /**
-   * Les blocs de déclarations des règles dont la liste de sélecteurs contient
-   * **exactement** `selector`.
-   *
-   * L'égalité est le point important, et non la sous-chaîne : chercher
-   * `.spa-admin-checkout__total-value` par sous-chaîne attrape aussi
-   * `.spa-admin-checkout__total-row--grand .spa-admin-checkout__total-value`,
-   * si bien qu'une déclaration déplacée de la règle de base vers celle du grand
-   * total laisserait l'assertion verte alors que les lignes ordinaires —
-   * horaire, moyen de paiement — auraient perdu le comportement vérifié.
-   *
-   * Le corps est borné à `[^{}]*` : une règle imbriquée dans une requête de
-   * média est alors lue comme une règle à part entière, et le prélude
-   * `@media (…)` ne peut pas passer pour une liste de sélecteurs.
-   */
-  function rulesFor(selector) {
-    const wanted = selector.trim().replace(/\s+/g, ' ');
-    const found = [];
-    for (const [, prelude, body] of checkout.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
-      const selectors = prelude.split(',').map((one) => one.trim().replace(/\s+/g, ' '));
-      if (selectors.includes(wanted)) found.push(body);
-    }
-    return found;
-  }
+/*
+ * `rulesFor` — les blocs de déclarations des règles dont la liste de sélecteurs
+ * contient **exactement** le sélecteur demandé — vit dans `support/tokens.mjs`
+ * depuis #657, et l'égalité stricte y est justifiée une fois pour toutes. Pour
+ * cet écran-ci, elle empêche `.spa-admin-checkout__total-value` d'attraper aussi
+ * la règle du grand total, `.spa-admin-checkout__total-row--grand
+ * .spa-admin-checkout__total-value` : une déclaration déplacée de la règle de
+ * base vers celle-là laisserait l'assertion verte alors que les lignes
+ * ordinaires — horaire, moyen de paiement — auraient perdu le comportement
+ * vérifié.
+ *
+ * Le seul `@media` de la feuille ne vise que `.spa-admin-checkout`, qu'aucune
+ * de ces assertions ne lit : l'aplatissement des at-rules décrit dans
+ * `support/tokens.mjs` reste ici sans effet, et `stackingBreakpointsRem`
+ * ci-dessus lit ce palier par sa propre expression, avec sa condition.
+ */
 
+describe('Le montant à encaisser reste lisible d’un coup d’œil', () => {
   it('laisse la ligne du total s’enrouler plutôt que de se comprimer', () => {
-    const rules = rulesFor('.spa-admin-checkout__total-row').join(' ');
+    const rules = rulesFor(checkout, '.spa-admin-checkout__total-row').join(' ');
     assert.match(
       rules,
       /flex-wrap\s*:\s*wrap/,
@@ -154,7 +146,7 @@ describe('Le montant à encaisser reste lisible d’un coup d’œil', () => {
   });
 
   it('tient la valeur au bord droit, y compris sur une ligne enroulée', () => {
-    const rules = rulesFor('.spa-admin-checkout__total-value').join(' ');
+    const rules = rulesFor(checkout, '.spa-admin-checkout__total-value').join(' ');
     assert.match(
       rules,
       /margin-inline-start\s*:\s*auto/,
@@ -168,6 +160,7 @@ describe('Le montant à encaisser reste lisible d’un coup d’œil', () => {
     // C'est le seul chiffre que l'opératrice annonce à voix haute. Les autres
     // valeurs du bloc — un horaire, un moyen de paiement — peuvent s'enrouler.
     const grand = rulesFor(
+      checkout,
       '.spa-admin-checkout__total-row--grand .spa-admin-checkout__total-value',
     );
 
