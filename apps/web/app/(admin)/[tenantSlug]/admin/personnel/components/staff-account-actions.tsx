@@ -1,6 +1,6 @@
 'use client';
 
-import { STAFF_ROLES, type StaffRole } from '@spa/shared';
+import { STAFF_ROLES, type StaffAccountState, type StaffRole } from '@spa/shared';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 
@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
-import { type StaffAccount } from '@/lib/admin/staff-contract';
 
 import { roleLabel } from '../../components/navigation';
 import {
@@ -34,15 +33,17 @@ import {
  * d'un salon qui se ferme l'accès ferme la porte de l'intérieur. Le bouton est
  * donc absent sur sa propre ligne plutôt que présent et refusé.
  *
- * ## L'état d'activation n'est pas dans la liste, et l'écran ne l'invente pas
+ * ## L'état d'activation vient de l'API, et le bouton en découle
  *
- * `GET /v1/users` rend `UserProfileDto`, qui ne porte pas `isActive` : seule la
- * réponse de `PATCH /v1/users/:id/status` le dit. Tant que rien n'a été fait sur
- * une ligne, le composant ne prétend donc **rien** savoir — il propose la
- * désactivation, le geste courant, et n'affiche d'état qu'une fois qu'il en a
- * reçu un. Deviner « actif » et peindre une pastille verte serait affirmer sur
- * un écran d'administration une chose que l'API n'a pas dite. Une issue de suivi
- * porte l'ajout du champ à la liste.
+ * `GET /v1/users` rend `isActive` depuis #695 : l'état de départ est celui du
+ * compte reçu, et non plus un `null` qui ne savait rien. C'était la cause côté
+ * front du défaut relevé — après un rechargement, une ligne désactivée
+ * reproposait « Désactiver », et une gérante n'avait aucun moyen de voir quels
+ * comptes étaient fermés ni d'en rouvrir un autrement qu'à l'aveugle.
+ *
+ * L'état local survit ensuite à l'appel de statut, le temps que
+ * `router.refresh()` rapporte la liste relue : sans lui, le bouton reviendrait à
+ * son libellé d'avant pendant la revalidation.
  */
 
 export function StaffAccountActions({
@@ -51,7 +52,7 @@ export function StaffAccountActions({
   isSelf,
 }: {
   readonly tenantSlug: string;
-  readonly account: StaffAccount;
+  readonly account: StaffAccountState;
   readonly isSelf: boolean;
 }) {
   const router = useRouter();
@@ -60,7 +61,18 @@ export function StaffAccountActions({
     // devrait pas s'y trouver, et le repli évite un `<select>` sans valeur.
     (STAFF_ROLES as readonly string[]).includes(account.role) ? (account.role as StaffRole) : 'staff',
   );
-  const [active, setActive] = useState<boolean | null>(null);
+  // L'état de départ est celui que l'API rend (#695), et la liste relue reste la
+  // source de vérité : `knownActive` retient ce que le dernier rendu serveur
+  // disait, si bien qu'un `router.refresh()` — ou la modification faite depuis un
+  // autre poste — reprend la main sur l'état local au lieu de le laisser figé.
+  // Ce dernier ne sert qu'à tenir le libellé juste entre la réponse de l'API et
+  // la fin de la revalidation.
+  const [active, setActive] = useState(account.isActive);
+  const [knownActive, setKnownActive] = useState(account.isActive);
+  if (knownActive !== account.isActive) {
+    setKnownActive(account.isActive);
+    setActive(account.isActive);
+  }
   const [pending, setPending] = useState<string | null>(null);
   const [refreshing, startRefresh] = useTransition();
   const [notice, setNotice] = useState<{ tone: 'success' | 'danger'; message: string } | null>(null);
@@ -96,7 +108,7 @@ export function StaffAccountActions({
   }
 
   async function toggleStatus(): Promise<void> {
-    const next = active === null ? false : !active;
+    const next = !active;
 
     setPending('status');
     setNotice(null);
@@ -180,9 +192,9 @@ export function StaffAccountActions({
           loading={pending === 'status'}
           loadingLabel="Enregistrement…"
           onClick={() => void toggleStatus()}
-          variant={active === false ? 'neutral' : 'quiet'}
+          variant={active ? 'quiet' : 'neutral'}
         >
-          {active === false ? 'Réactiver' : 'Désactiver'}
+          {active ? 'Désactiver' : 'Réactiver'}
           <span className="spa-visually-hidden">
             {' '}
             le compte de {account.firstName} {account.lastName}

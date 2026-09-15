@@ -33,6 +33,7 @@ import {
   authSessionResponseSchema,
   registerRequestSchema,
   sessionUserSchema,
+  staffAccountStateSchema,
   tenantScopedLoginRequestSchema,
   updateProfileRequestSchema,
   userSchema,
@@ -783,6 +784,33 @@ describe('espace client — #47', () => {
     expect(parsed).not.toHaveProperty('passwordHash');
     expect(parsed).not.toHaveProperty('tenantId');
     expect(parsed).not.toHaveProperty('isActive');
+  });
+
+  it('le compte du personnel porte son état d’activation, et l’exige', () => {
+    // #695 : sans ce champ, la liste du back-office affichait « Désactiver » sur
+    // un compte déjà fermé. L'exiger plutôt que de le rendre facultatif est ce
+    // qui interdit de le retirer côté API sans que la frontière le dise.
+    const parsed = staffAccountStateSchema.parse({
+      id: UUID,
+      email: 'lea@salon-des-lilas.test',
+      role: 'STAFF',
+      firstName: 'Léa',
+      lastName: 'Rakoto',
+      phone: null,
+      isActive: false,
+    });
+
+    expect(parsed).toMatchObject({ role: 'staff', isActive: false });
+    expect(
+      staffAccountStateSchema.safeParse({
+        id: UUID,
+        email: 'lea@salon-des-lilas.test',
+        role: 'staff',
+        firstName: 'Léa',
+        lastName: 'Rakoto',
+        phone: null,
+      }).success,
+    ).toBe(false);
   });
 
   it('ramène au vocabulaire du contrat le rôle que l’API émet en majuscules', () => {

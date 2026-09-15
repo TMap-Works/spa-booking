@@ -45,6 +45,7 @@ import {
   serviceSchema,
   serviceStaffMemberSchema,
   sessionUserSchema,
+  staffAccountStateSchema,
   staffMemberSchema,
   staffScheduleSchema,
   staffTimeOffSchema,
@@ -82,6 +83,7 @@ import {
   type ServiceStaffMember,
   type SessionUser,
   type SetStaffScheduleRequest,
+  type StaffAccountState,
   type StaffMember,
   type StaffSchedule,
   type StaffTimeOff,
@@ -108,16 +110,19 @@ import {
 // Les formes de l'administration du personnel, que `@spa/shared` ne décrit pas
 // telles quelles — écart assumé, faute d'un vocabulaire de rôle commun aux deux
 // bords. L'en-tête de `lib/admin/staff-contract.ts` dit pourquoi.
+//
+// Le compte **avec son état d'activation** a quitté ce module en #695 : il est
+// désormais `staffAccountStateSchema` du contrat partagé, puisque trois routes
+// le rendent et que l'écran en dépend. Reste ici la forme à six champs, celle
+// que rendent encore le changement de rôle et l'invitation.
 import {
   staffAccountSchema,
-  staffAccountStateSchema,
   staffInvitationSchema,
   toApiRole,
   type ChangeStaffRoleRequest,
   type InviteStaffAccountRequest,
   type SetStaffAccountStatusRequest,
   type StaffAccount,
-  type StaffAccountState,
   type StaffInvitation,
 } from '@/lib/admin/staff-contract';
 
@@ -1418,12 +1423,16 @@ export async function changeAppointmentStatus(
  * d'une collègue.
  *
  * La clientèle n'y figure pas — elle relève du module `crm` et de sa pagination.
+ *
+ * Chaque compte porte son `isActive` depuis #695 : sans lui, la liste ne pouvait
+ * pas dire qui était désactivé, et l'écran reproposait « Désactiver » à chaque
+ * rechargement sur un compte déjà fermé.
  */
-export async function fetchStaffAccounts(accessToken: string): Promise<StaffAccount[]> {
+export async function fetchStaffAccounts(accessToken: string): Promise<StaffAccountState[]> {
   const { payload } = await authorizedRequest({
     method: 'GET',
     path: '/users',
-    schema: z.array(staffAccountSchema),
+    schema: z.array(staffAccountStateSchema),
     accessToken,
   });
   return payload;
@@ -1550,8 +1559,9 @@ export async function changeStaffAccountRole(
  * Désactive — ou réactive — un compte : `PATCH /v1/users/:id/status`.
  *
  * **Ce n'est pas une suppression**, et l'API n'expose aucun `DELETE` ici : le
- * compte, ses affectations et ses rendez-vous passés restent intacts. C'est la
- * seule route du personnel dont la réponse porte `isActive`.
+ * compte, ses affectations et ses rendez-vous passés restent intacts. La réponse
+ * porte l'état **après** l'appel — la même forme que la liste depuis #695, si
+ * bien que ce qu'on vient d'écrire et ce qu'on relira coïncident.
  */
 export async function setStaffAccountStatus(
   accessToken: string,

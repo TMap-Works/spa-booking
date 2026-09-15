@@ -202,6 +202,29 @@ export const sessionUserSchema = z.object({
 export type SessionUser = z.infer<typeof sessionUserSchema>;
 
 /**
+ * Le compte du personnel tel que le **back-office** le lit — `GET /users`,
+ * `GET /users/:id` et `PATCH /users/:id/status`.
+ *
+ * C'est `sessionUserSchema` plus l'état d'activation, et l'extension est ce qui
+ * distingue les deux surfaces : l'espace client n'a pas à savoir qu'un compte a
+ * été fermé, l'administration des droits ne peut pas s'en passer. Sans ce champ,
+ * la liste du personnel ne pouvait ni signaler un compte désactivé, ni proposer
+ * de le rouvrir autrement qu'à l'aveugle (#695) — elle affichait « Désactiver »
+ * sur une ligne déjà fermée.
+ *
+ * Les trois routes qui le portent sont gardées au rang `STAFF` au minimum ;
+ * `/auth/me` et `PATCH /users/me`, qui servent aussi la clientèle, gardent
+ * `sessionUserSchema`.
+ *
+ * Non `.strict()`, comme tous les schémas de sortie du contrat.
+ */
+export const staffAccountStateSchema = sessionUserSchema.extend({
+  isActive: z.boolean(),
+});
+
+export type StaffAccountState = z.infer<typeof staffAccountStateSchema>;
+
+/**
  * Ce que rendent `POST /auth/register`, `POST /auth/login` et
  * `POST /auth/refresh`.
  *

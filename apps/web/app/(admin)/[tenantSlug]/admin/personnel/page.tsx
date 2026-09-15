@@ -1,9 +1,14 @@
-import { hasAtLeastRole, type SessionUser, type StaffMember } from '@spa/shared';
+import {
+  hasAtLeastRole,
+  type SessionUser,
+  type StaffAccountState,
+  type StaffMember,
+} from '@spa/shared';
 import Link from 'next/link';
 
 import { fetchOwnProfile, fetchStaffAccounts, fetchStaffMembers } from '@/lib/api-client';
 import { sortStaffMembers, staffInitials } from '@/lib/admin/staff-directory';
-import { isStaffRole, type StaffAccount } from '@/lib/admin/staff-contract';
+import { isStaffRole } from '@/lib/admin/staff-contract';
 
 import { roleLabel } from '../components/navigation';
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
@@ -62,7 +67,7 @@ export default async function StaffPage({ params }: StaffPageProps) {
   const accessToken = await requireAdminAccessToken(tenantSlug, adminStaffPath(tenantSlug));
 
   let profile: SessionUser;
-  let accounts: StaffAccount[];
+  let accounts: StaffAccountState[];
   let members: StaffMember[];
 
   try {
@@ -166,7 +171,7 @@ export default async function StaffPage({ params }: StaffPageProps) {
         ) : (
           <table className="spa-admin-table">
             <caption className="spa-visually-hidden">
-              Comptes du personnel de l’établissement, avec leur rôle.
+              Comptes du personnel de l’établissement, avec leur rôle et l’état de leur accès.
             </caption>
             <thead>
               <tr>
@@ -181,6 +186,9 @@ export default async function StaffPage({ params }: StaffPageProps) {
                 </th>
                 <th className="spa-admin-table__head" scope="col">
                   Rôle
+                </th>
+                <th className="spa-admin-table__head" scope="col">
+                  État
                 </th>
                 {canAdminister ? (
                   <th className="spa-admin-table__head" scope="col">
@@ -198,6 +206,17 @@ export default async function StaffPage({ params }: StaffPageProps) {
                   <td className="spa-admin-table__cell">{account.email}</td>
                   <td className="spa-admin-table__cell">{account.phone ?? '—'}</td>
                   <td className="spa-admin-table__cell">{roleLabel(account.role)}</td>
+                  <td className="spa-admin-table__cell">
+                    <span
+                      className={
+                        account.isActive
+                          ? 'spa-admin-badge spa-admin-badge--confirmed'
+                          : 'spa-admin-badge spa-admin-badge--cancelled'
+                      }
+                    >
+                      {account.isActive ? 'Actif' : 'Désactivé'}
+                    </span>
+                  </td>
                   {canAdminister ? (
                     <td className="spa-admin-table__cell">
                       <StaffAccountActions

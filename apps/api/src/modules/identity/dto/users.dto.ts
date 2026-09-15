@@ -153,15 +153,27 @@ export class SetAccountStatusDto {
 
 /**
  * Le compte du personnel **avec** son état d'activation — réponse de
+ * `GET /api/v1/users`, `GET /api/v1/users/:id` et
  * `PATCH /api/v1/users/:id/status`.
  *
- * Forme propre à cette route : `UserProfileDto` est la charge utile de
- * `GET /users`, `GET /users/:id` et `/auth/me`, et y ajouter `isActive`
- * élargirait trois contrats pour le besoin d'un seul — en disant au passage à la
- * clientèle qu'un compte a été fermé, ce qui ne la regarde pas.
+ * Les deux lectures ont rejoint cette forme en #695 : elles rendaient
+ * `UserProfileDto`, si bien que la liste du personnel ne savait pas quels comptes
+ * étaient fermés et proposait « Désactiver » sur une ligne déjà désactivée. Le
+ * champ existait en base — `PATCH /users/:id/status` l'écrit —, il n'était
+ * simplement jamais relu.
+ *
+ * `UserProfileDto` reste la forme de `/auth/me` et de `PATCH /users/me` : ces
+ * deux routes répondent aussi à la clientèle, à qui l'état d'un compte du salon
+ * n'apprend rien qui la regarde. Les trois routes ci-dessus, elles, exigent au
+ * minimum le rang `STAFF`.
  */
 export class StaffAccountStateDto extends UserProfileDto implements StaffAccountState {
-  @ApiProperty({ description: 'État du compte **après** l’appel.' })
+  @ApiProperty({
+    description:
+      'Un compte désactivé ne peut plus se connecter ; ses affectations et ses ' +
+      'rendez-vous passés restent intacts. Sur `PATCH /users/:id/status`, c’est ' +
+      'l’état **après** l’appel.',
+  })
   public isActive!: boolean;
 }
 

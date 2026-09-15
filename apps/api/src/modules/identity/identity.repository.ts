@@ -8,7 +8,7 @@ import {
   type UnscopedPrismaClient,
 } from '../../infrastructure/database/prisma-clients';
 import { EmailAlreadyRegisteredError } from './identity.errors';
-import type { UserProfile, UserRole } from './identity.types';
+import type { StaffAccountState, UserProfile, UserRole } from './identity.types';
 import { STAFF_ROLES } from './roles';
 
 /**
@@ -143,6 +143,12 @@ const USER_SELECT = {
  * `toProfile` la retirerait à la sortie, mais elle aurait quand même traversé le
  * réseau, la mémoire du processus et, sur un chemin d'erreur, un log. La bonne
  * défense est de ne pas la lire.
+ *
+ * `isActive` y figure depuis #695 : c'est une lecture d'administration des
+ * droits, et la liste du personnel ne pouvait pas dire quels comptes étaient
+ * fermés. Le champ ne sort que par les routes gardées au rang `STAFF` au minimum
+ * — `toProfile`, que lisent `/auth/me` et `PATCH /users/me`, continue de le
+ * retirer.
  */
 const PROFILE_SELECT = {
   id: true,
@@ -151,6 +157,7 @@ const PROFILE_SELECT = {
   firstName: true,
   lastName: true,
   phone: true,
+  isActive: true,
 } as const;
 
 /**
@@ -245,6 +252,19 @@ export function toProfile(user: UserRecord): UserProfile {
     lastName: user.lastName,
     phone: user.phone,
   };
+}
+
+/**
+ * Le profil **plus** l'état d'activation — ce que rendent les routes
+ * d'administration des comptes (#695).
+ *
+ * Écrit à côté de `toProfile` plutôt qu'en étalant `{ ...toProfile(u), isActive }`
+ * sur chaque site d'appel : les trois routes concernées doivent rendre exactement
+ * la même forme, et un champ ajouté à l'une seulement est précisément le défaut
+ * que ce ticket corrige.
+ */
+export function toStaffAccount(user: UserRecord): StaffAccountState {
+  return { ...toProfile(user), isActive: user.isActive };
 }
 
 @Injectable()
@@ -577,8 +597,12 @@ export class IdentityRepository {
    *
    * `@@index([tenantId, role])` du schéma sert exactement cette requête — c'est
    * la seule qui filtre sur ce couple.
+   *
+   * La projection porte `isActive` depuis #695 : l'écran qui lit cette liste est
+   * celui d'où l'on ferme et rouvre un accès, et il ne peut pas le faire à
+   * l'aveugle.
    */
-  public async listStaffAccounts(): Promise<UserProfile[]> {
+  public async listStaffAccounts(): Promise<StaffAccountState[]> {
     return this.prisma.user.findMany({
       where: { role: { in: [...STAFF_ROLES] } },
       select: PROFILE_SELECT,

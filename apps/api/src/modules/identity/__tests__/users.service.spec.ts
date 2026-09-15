@@ -123,9 +123,31 @@ describe('UsersService', () => {
         'email',
         'firstName',
         'id',
+        'isActive',
         'lastName',
         'phone',
         'role',
+      ]);
+    });
+
+    it('signale les comptes désactivés (#695)', async () => {
+      // Sans ce champ, l'écran du personnel ne pouvait proposer que
+      // « Désactiver », y compris sur une ligne déjà fermée : la seule route qui
+      // rendait l'état était celle qui l'écrit.
+      const f = fixture();
+      await runWithTenant(TENANT_A, () =>
+        f.service.setStaffAccountActive({
+          actor: actor(f.adminA),
+          userId: f.staffA,
+          isActive: false,
+        }),
+      );
+
+      const list = await runWithTenant(TENANT_A, () => f.service.listStaffAccounts());
+
+      expect(list.map((user) => [user.id, user.isActive])).toEqual([
+        [f.staffA, false],
+        [f.adminA, true],
       ]);
     });
   });
@@ -135,6 +157,25 @@ describe('UsersService', () => {
       const f = fixture();
       const user = await runWithTenant(TENANT_A, () => f.service.byId(f.staffA));
       expect(user.id).toBe(f.staffA);
+      // Même forme que la liste, état d'activation compris (#695) : relire un
+      // compte doit rendre ce que la liste en montrait.
+      expect(user.isActive).toBe(true);
+    });
+
+    it('rend l’état d’activation courant, désactivation comprise (#695)', async () => {
+      const f = fixture();
+      await runWithTenant(TENANT_A, () =>
+        f.service.setStaffAccountActive({
+          actor: actor(f.adminA),
+          userId: f.staffA,
+          isActive: false,
+        }),
+      );
+
+      expect(await runWithTenant(TENANT_A, () => f.service.byId(f.staffA))).toMatchObject({
+        id: f.staffA,
+        isActive: false,
+      });
     });
 
     it('rend 404 sur une fiche cliente du même établissement', async () => {
