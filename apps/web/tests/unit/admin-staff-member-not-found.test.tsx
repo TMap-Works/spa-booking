@@ -183,12 +183,14 @@ describe('frontière « Praticien introuvable »', () => {
    * Un chemin sans slug lisible ne doit produire **aucun** lien : `//admin/...`
    * serait lu par le navigateur comme l'URL absolue `https://admin/...`, et la
    * seule issue de l'écran sortirait du site.
+   *
+   * Un seul cas ici : ce que la frontière a à prouver, c'est qu'un slug illisible
+   * fait taire le lien sans emporter l'écran. L'énumération des façons de ne pas
+   * lire un slug — segment absent, séquence non décodable — appartient à
+   * `tenant-slug.test.ts`, depuis que la lecture est partagée (#703).
    */
-  it.each([
-    ['sans premier segment', '/'],
-    ['avec une séquence non décodable', '/%E0%A4%A/admin/personnel/pas-un-uuid'],
-  ])('ne fabrique aucun lien %s', (_cas, chemin) => {
-    cheminCourant = chemin;
+  it('ne fabrique aucun lien sans premier segment', () => {
+    cheminCourant = '/';
 
     render(<StaffMemberNotFound />);
 
