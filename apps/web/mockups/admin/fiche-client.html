@@ -190,7 +190,21 @@
                 -->
                 <div>
                   <h3 class="spa-admin__section-title">Historique</h3>
-                  <ol class="spa-admin-history">
+                  <!--
+                    `role="list"` explicite : le socle retire le marqueur de tout
+                    `<ol>` (#625), et Safari retire alors à VoiceOver la
+                    sémantique de liste. Ici l'ordre chronologique des visites
+                    fait sens — il doit rester annoncé comme une liste
+                    (../../styles/README.md §3).
+
+                    Même justification que la source rendue qui a été tirée de
+                    cette maquette —
+                    `app/(admin)/[tenantSlug]/admin/clients/page.tsx`
+                    (#30, corrigée par #659) : une maquette est un contrat de
+                    balisage, et une reprise faite depuis elle sans ce rôle
+                    rouvrirait la régression (#684).
+                  -->
+                  <ol class="spa-admin-history" role="list">
                     <li class="spa-admin-history__item">
                       <span class="spa-admin-history__date">12 août 2026</span>
                       <span class="spa-admin-history__body">
