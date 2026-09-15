@@ -79,3 +79,30 @@ export class ServiceStaffAlreadyAssignedError extends DomainError {
     super('Ce praticien est déjà affecté à cette prestation.', { serviceId, staffId });
   }
 }
+
+/**
+ * Ce compte a déjà sa fiche praticien (#694).
+ *
+ * Traduit l'unicité `(tenant_id, user_id)` de la table `staff`. Comme pour
+ * l'affectation, le conflit vient de la **base** et non d'un contrôle préalable
+ * du service : deux soumissions concurrentes du même formulaire passeraient
+ * toutes les deux un `findFirst`, et la perdante recevrait un 500 là où le
+ * contrat annonce un 409.
+ *
+ * Le message est ce qu'un écran de back-office peut afficher tel quel : la
+ * personne existe déjà comme praticienne, il n'y a rien à recréer — et deux
+ * fiches pour un même compte se disputeraient son agenda.
+ *
+ * `details.userId` est **ce que l'appelant vient d'envoyer** : le lui rendre ne
+ * lui apprend rien, et lui évite de deviner quelle ligne de sa liste a fauté.
+ * Rien n'y révèle la fiche existante — son identifiant appartient à
+ * l'établissement, que l'appelant peut de toute façon lister.
+ */
+export class StaffProfileAlreadyExistsError extends DomainError {
+  public override readonly code = CATALOG_ERROR_CODES.STAFF_PROFILE_ALREADY_EXISTS;
+  public override readonly status = CONFLICT;
+
+  public constructor(userId: string) {
+    super('Ce compte a déjà une fiche praticien.', { userId });
+  }
+}

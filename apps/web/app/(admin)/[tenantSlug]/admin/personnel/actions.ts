@@ -30,11 +30,13 @@
 
 import {
   assignServiceStaffRequestSchema,
+  createStaffMemberRequestSchema,
   createStaffTimeOffRequestSchema,
   setStaffScheduleRequestSchema,
   slugSchema,
   uuidSchema,
   type ServiceStaffMember,
+  type StaffMember,
   type StaffSchedule,
   type StaffTimeOff,
 } from '@spa/shared';
@@ -43,6 +45,7 @@ import { revalidatePath } from 'next/cache';
 import {
   assignServiceStaff,
   changeStaffAccountRole,
+  createStaffMember,
   createStaffTimeOff,
   deleteStaffTimeOff,
   inviteStaffAccount,
@@ -143,6 +146,47 @@ export async function inviteStaffAccountAction(
     const invitation = await inviteStaffAccount(call.accessToken, parsed.data);
     revalidateStaffList(call.slug);
     return { ok: true, data: invitation };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * Crée la fiche praticien d'un compte du personnel — #694.
+ *
+ * C'est le geste qui rend une personne **réservable**. Inviter un compte ne
+ * suffisait pas : le compte porte l'accès, la fiche porte l'agenda, et tant que
+ * la seconde n'existait pas le parcours de réservation s'arrêtait à « aucun
+ * créneau », faute de praticien à qui affecter une prestation.
+ *
+ * Deux refus à distinguer pour l'écran : un 409
+ * `STAFF_PROFILE_ALREADY_EXISTS` dit que ce compte a déjà sa fiche — il n'y a
+ * rien à recréer —, un 404 que l'identifiant ne désigne aucun compte interne
+ * d'ici. Le second ne devrait pas se produire depuis la liste, qui ne propose
+ * que des comptes qu'elle vient de lire ; il arrive si la personne a été
+ * supprimée entre l'affichage et la soumission.
+ *
+ * `serviceIds` n'est pas envoyé : le contrat ne le décrit plus, et l'affectation
+ * des prestations se fait depuis la fiche, une fois qu'elle existe.
+ */
+export async function createStaffMemberAction(
+  tenantSlug: string,
+  input: unknown,
+): Promise<AdminActionResult<StaffMember>> {
+  const call = await openCall(tenantSlug);
+  if (!call.ok) {
+    return call;
+  }
+
+  const parsed = createStaffMemberRequestSchema.safeParse(input);
+  if (!parsed.success) {
+    return invalid(firstIssue(parsed.error.issues, 'Les informations saisies sont invalides.'));
+  }
+
+  try {
+    const member = await createStaffMember(call.accessToken, parsed.data);
+    revalidateStaffList(call.slug);
+    return { ok: true, data: member };
   } catch (error) {
     return failure(error);
   }

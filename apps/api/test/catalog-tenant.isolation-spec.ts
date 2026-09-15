@@ -1,4 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
 
 import request from 'supertest';
 
@@ -8,7 +9,7 @@ import { createCatalogHarness, type CatalogHarness } from './catalog.harness';
  * Isolation inter-tenant du module `catalog` — obligatoire pour tout endpoint
  * nouveau (tenant-isolation §6, DoD de #24).
  *
- * La suite couvre les **douze** routes de back-office du module, pas un
+ * La suite couvre les **quatorze** routes de back-office du module, pas un
  * échantillon :
  *
  * | Route | Ce qui est vérifié |
@@ -25,8 +26,10 @@ import { createCatalogHarness, type CatalogHarness } from './catalog.harness';
  * | `POST /services/:id/staff` | 404 des deux côtés — prestation ou praticien d'ailleurs — et rien d'écrit |
  * | `DELETE /services/:id/staff/:staffId` | 404, et l'affectation du voisin intacte |
  * | `GET /staff` | la liste ne contient aucune fiche du voisin |
+ * | `POST /staff` | 404 sur le **compte** du voisin ; la fiche créée reste invisible d'en face |
+ * | `PATCH /staff/:id` | 404, et la fiche du voisin intacte |
  *
- * La **treizième** route du module, `GET /public/:tenantSlug/services`, n'est
+ * La **quinzième** route du module, `GET /public/:tenantSlug/services`, n'est
  * pas ici : elle ne se désigne pas par un jeton mais par un slug d'URL, et sa
  * traversée se prouve donc autrement — dans `public-catalog.isolation-spec.ts`.
  *
@@ -549,6 +552,131 @@ describe('Isolation inter-tenant — module catalog', () => {
         .expect(404);
 
       expect(harness.repository.assignments).toHaveLength(0);
+    });
+  });
+
+  /**
+   * L'écriture de la fiche praticien — `POST /staff` et `PATCH /staff/:id`
+   * (#694).
+   *
+   * Ces deux routes sont les premières du module à **écrire** la table `staff`,
+   * et la création a une particularité qu'aucune autre écriture du catalogue
+   * n'a : elle reçoit un identifiant qui désigne une ligne d'un **autre
+   * module**. C'est la frontière qu'on vérifie ici — le compte vient de
+   * `identity`, et son appartenance à l'établissement se joue dans le service de
+   * ce module-là, pas dans le dépôt de celui-ci.
+   */
+  describe('écriture de la fiche praticien', () => {
+    /** Un compte interne, posé dans le dépôt `identity` de l'établissement voulu. */
+    const compteChez = (tenantId: string) =>
+      harness.identity.addUser({
+        tenantId,
+        email: `${randomUUID()}@salon.test`,
+        passwordHash: null,
+        role: 'STAFF',
+      });
+
+    it('ne crée pas de fiche pour le compte du voisin — 404, et rien d’écrit', async () => {
+      // Jamais 403 : le distinguer confirmerait que ce compte existe ailleurs.
+      const chezB = compteChez(b);
+
+      await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${await asA()}`)
+        .send({ userId: chezB.id, displayName: 'Détournée' })
+        .expect(404);
+
+      expect(harness.repository.staff).toHaveLength(0);
+    });
+
+    it('la fiche créée appartient à l’établissement du jeton, et au voisin reste invisible', async () => {
+      const compte = compteChez(a);
+
+      const creation = await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${await asA()}`)
+        .send({ userId: compte.id, displayName: 'Chez A' })
+        .expect(201);
+
+      const vuDeB = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${await harness.tokenFor('ADMIN', b)}`)
+        .expect(200);
+
+      expect(vuDeB.body).toEqual([]);
+      expect(JSON.stringify(vuDeB.body)).not.toContain(creation.body.id);
+    });
+
+    it('un même compte peut être praticien des deux côtés, sans que rien ne traverse', async () => {
+      // L'unicité `(tenant_id, user_id)` est **par établissement**. Une gérante
+      // qui tient deux salons y est praticienne deux fois ; ce qu'il faut
+      // vérifier est que la seconde création ne bute pas sur la première, et
+      // qu'aucune des deux fiches n'apparaît chez l'autre.
+      const identifiantPartage = randomUUID();
+      harness.identity.users.push(
+        ...[a, b].map((tenantId) => ({
+          id: identifiantPartage,
+          tenantId,
+          email: `${tenantId}@partage.test`,
+          role: 'STAFF' as const,
+          passwordHash: null,
+          firstName: 'Alice',
+          lastName: 'Durand',
+          phone: null,
+          isActive: true,
+        })),
+      );
+
+      const chezA = await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${await asA()}`)
+        .send({ userId: identifiantPartage, displayName: 'Chez A' })
+        .expect(201);
+
+      const chezB = await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${await harness.tokenFor('ADMIN', b)}`)
+        .send({ userId: identifiantPartage, displayName: 'Chez B' })
+        .expect(201);
+
+      expect(chezA.body.id).not.toBe(chezB.body.id);
+
+      const vuDeA = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${await asA()}`)
+        .expect(200);
+      expect(vuDeA.body).toEqual([chezA.body]);
+    });
+
+    it('ne modifie pas la fiche du voisin — 404, et la fiche intacte', async () => {
+      const chezB = harness.repository.seedStaff({ tenantId: b, displayName: 'Chez B' });
+
+      await request(server())
+        .patch(`/api/v1/staff/${chezB.id}`)
+        .set('Authorization', `Bearer ${await asA()}`)
+        .send({ displayName: 'Détournée', isActive: false })
+        .expect(404);
+
+      const vuDeB = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${await harness.tokenFor('ADMIN', b)}`)
+        .expect(200);
+
+      expect(vuDeB.body).toEqual([{ id: chezB.id, displayName: 'Chez B', isActive: true }]);
+    });
+
+    it('un `tenantId` dans le corps de la création ne déplace rien', async () => {
+      // Le `.strict()` du contrat **rejette** au lieu d'ignorer : la tentative
+      // s'arrête en 400, et rien n'est écrit nulle part.
+      const compte = compteChez(a);
+
+      await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${await asA()}`)
+        .send({ userId: compte.id, displayName: 'Léa', tenantId: b })
+        .expect(400);
+
+      expect(harness.repository.staff).toHaveLength(0);
     });
   });
 

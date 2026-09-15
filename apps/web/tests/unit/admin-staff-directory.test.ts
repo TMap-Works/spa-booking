@@ -8,7 +8,11 @@ import {
   staffInvitationSchema,
   toApiRole,
 } from '@/lib/admin/staff-contract';
-import { sortStaffMembers, staffInitials } from '@/lib/admin/staff-directory';
+import {
+  sortStaffMembers,
+  staffInitials,
+  suggestedStaffDisplayName,
+} from '@/lib/admin/staff-directory';
 
 /**
  * L'annuaire du personnel et les formes que l'API en attend (#53).
@@ -59,6 +63,20 @@ describe('l’ordre de la liste', () => {
     sortStaffMembers(members);
 
     expect(members.map((entry) => entry.displayName)).toEqual(['Zoé', 'Émilie']);
+  });
+});
+
+describe('le nom proposé à la création d’une fiche', () => {
+  it('reprend le prénom et le nom du compte', () => {
+    expect(suggestedStaffDisplayName({ firstName: 'Léa', lastName: 'Praticienne' })).toBe(
+      'Léa Praticienne',
+    );
+  });
+
+  it('ne laisse pas d’espace en bout quand une moitié manque', () => {
+    // L'espace se verrait à la sélection, et partirait tel quel dans le corps.
+    expect(suggestedStaffDisplayName({ firstName: 'Léa', lastName: '' })).toBe('Léa');
+    expect(suggestedStaffDisplayName({ firstName: '', lastName: 'Rakoto' })).toBe('Rakoto');
   });
 });
 

@@ -506,28 +506,15 @@ describe('Catalogue — API', () => {
       await request(server()).get('/api/v1/staff').expect(401);
     });
 
-    it('n’expose aucune route d’écriture — la fiche n’appartient à aucun module', async () => {
+    it('n’expose pas de suppression — une fiche se désactive (#694)', async () => {
       const seeded = repository.seedStaff({ tenantId: harness.tenantId });
-      const admin = await harness.tokenFor('ADMIN');
 
-      // 404 « route inconnue » : le cycle de vie de la fiche praticien n'est
-      // attribué à aucun module par le CDC §2.3, et `catalog` ne fait que la
-      // lire pour ses affectations.
-      await request(server())
-        .post('/api/v1/staff')
-        .set('Authorization', `Bearer ${admin}`)
-        .send({ displayName: 'Nouvelle' })
-        .expect(404);
-
-      await request(server())
-        .patch(`/api/v1/staff/${seeded.id}`)
-        .set('Authorization', `Bearer ${admin}`)
-        .send({ displayName: 'Renommée' })
-        .expect(404);
-
+      // 404 « route inconnue ». Les rendez-vous passés citent la fiche par
+      // `staff_id`, et le reporting doit continuer à savoir qui a tenu la
+      // cabine : `PATCH { isActive: false }` est le seul retrait.
       await request(server())
         .delete(`/api/v1/staff/${seeded.id}`)
-        .set('Authorization', `Bearer ${admin}`)
+        .set('Authorization', `Bearer ${await harness.tokenFor('ADMIN')}`)
         .expect(404);
 
       expect(repository.staff).toHaveLength(1);
@@ -541,6 +528,215 @@ describe('Catalogue — API', () => {
         .get(`/api/v1/staff?tenantId=${randomUUID()}`)
         .set('Authorization', `Bearer ${await harness.tokenFor('STAFF')}`)
         .expect(400);
+    });
+  });
+
+  /**
+   * Le cycle de vie de la fiche praticien (#694).
+   *
+   * Ce que cette suite prouve, et qu'aucun test unitaire ne peut : les deux
+   * routes sont **servies** — c'est précisément ce qui manquait, aucune des 82
+   * routes n'écrivant la table `staff` —, leur seuil de rôle, et le fait que
+   * l'écriture passe par le vrai `UsersService` pour valider le compte.
+   *
+   * Le compte est semé dans le dépôt `identity` du harnais et non dans celui du
+   * catalogue : c'est bien deux tables, et deux modules.
+   */
+  describe('cycle de vie de la fiche praticien', () => {
+    /** Un compte interne de l'établissement de l'appelant. */
+    const compteInterne = (role: 'STAFF' | 'MANAGER' | 'ADMIN' = 'STAFF', tenantId?: string) =>
+      harness.identity.addUser({
+        tenantId: tenantId ?? harness.tenantId,
+        email: `${randomUUID()}@salon.test`,
+        passwordHash: null,
+        role,
+      });
+
+    it('crée une fiche réservable, que l’annuaire rend aussitôt', async () => {
+      // Le parcours que le ticket rouvre : un salon neuf invite un compte, lui
+      // crée une fiche, et cesse d'afficher « Praticiens — 0 ».
+      const compte = compteInterne();
+      const manager = await harness.tokenFor('MANAGER');
+
+      const creation = await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ userId: compte.id, displayName: 'Léa Praticienne' })
+        .expect(201);
+
+      expect(creation.body).toEqual({
+        id: expect.any(String),
+        displayName: 'Léa Praticienne',
+        isActive: true,
+      });
+      // Ni `userId`, ni `tenantId`, ni `bio` : la réponse a la forme de
+      // l'annuaire, et rien de plus.
+      expect(Object.keys(creation.body).sort()).toEqual(['displayName', 'id', 'isActive']);
+
+      const annuaire = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${manager}`)
+        .expect(200);
+      expect(annuaire.body).toEqual([creation.body]);
+    });
+
+    it('rend une fiche que l’affectation accepte — le tunnel peut démarrer', async () => {
+      // La cascade que le ticket décrit : sans fiche, « Ajouter un praticien »
+      // reste désactivé et le tunnel public répond « aucun créneau ». La preuve
+      // que la fiche créée débloque bien la suite est qu'elle s'affecte.
+      const compte = compteInterne();
+      const service = repository.seedService({ tenantId: harness.tenantId });
+      const manager = await harness.tokenFor('MANAGER');
+
+      const creation = await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ userId: compte.id, displayName: 'Léa' })
+        .expect(201);
+
+      await request(server())
+        .post(`/api/v1/services/${service.id}/staff`)
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ staffId: creation.body.id })
+        .expect(201);
+    });
+
+    it('refuse un compte inconnu, celui du voisin et une cliente — 404 dans les trois cas', async () => {
+      // Les distinguer ferait de cette route un oracle sur l'annuaire du voisin
+      // (tenant-isolation §4). Jamais 403 : le 403 confirmerait l'existence.
+      const chezLeVoisin = compteInterne('STAFF', harness.otherTenantId);
+      const cliente = harness.identity.addUser({
+        tenantId: harness.tenantId,
+        email: `${randomUUID()}@cliente.test`,
+        passwordHash: null,
+        role: 'CLIENT',
+      });
+      const manager = await harness.tokenFor('MANAGER');
+
+      for (const userId of [randomUUID(), chezLeVoisin.id, cliente.id]) {
+        await request(server())
+          .post('/api/v1/staff')
+          .set('Authorization', `Bearer ${manager}`)
+          .send({ userId, displayName: 'Refusée' })
+          .expect(404);
+      }
+
+      expect(repository.staff).toHaveLength(0);
+    });
+
+    it('refuse une seconde fiche pour le même compte — 409 et son code', async () => {
+      const compte = compteInterne();
+      const manager = await harness.tokenFor('MANAGER');
+
+      await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ userId: compte.id, displayName: 'Léa' })
+        .expect(201);
+
+      const conflit = await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ userId: compte.id, displayName: 'Léa bis' })
+        .expect(409);
+
+      expect(conflit.body.code).toBe('STAFF_PROFILE_ALREADY_EXISTS');
+      expect(repository.staff).toHaveLength(1);
+    });
+
+    it('refuse un corps invalide, et un champ non déclaré avec lui', async () => {
+      const compte = compteInterne();
+      const manager = await harness.tokenFor('MANAGER');
+
+      // `displayName` manquant.
+      await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ userId: compte.id })
+        .expect(400);
+
+      // `isActive` n'est pas un choix de l'appelant à la création, et
+      // `tenantId` est le champ par lequel on désignerait un autre
+      // établissement. Le `.strict()` du contrat refuse les deux.
+      await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ userId: compte.id, displayName: 'Léa', isActive: false })
+        .expect(400);
+
+      await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ userId: compte.id, displayName: 'Léa', tenantId: harness.otherTenantId })
+        .expect(400);
+
+      expect(repository.staff).toHaveLength(0);
+    });
+
+    it('désactive une fiche sans la supprimer, et l’annuaire filtré la retire', async () => {
+      const membre = repository.seedStaff({ tenantId: harness.tenantId, displayName: 'Léa' });
+      const manager = await harness.tokenFor('MANAGER');
+
+      const modification = await request(server())
+        .patch(`/api/v1/staff/${membre.id}`)
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ isActive: false })
+        .expect(200);
+
+      expect(modification.body).toEqual({ id: membre.id, displayName: 'Léa', isActive: false });
+
+      const actives = await request(server())
+        .get('/api/v1/staff?activeOnly=true')
+        .set('Authorization', `Bearer ${manager}`)
+        .expect(200);
+      expect(actives.body).toEqual([]);
+      expect(repository.staff).toHaveLength(1);
+    });
+
+    it('accepte un corps vide et rend 404 sur une fiche inconnue', async () => {
+      const membre = repository.seedStaff({ tenantId: harness.tenantId, displayName: 'Léa' });
+      const manager = await harness.tokenFor('MANAGER');
+
+      await request(server())
+        .patch(`/api/v1/staff/${membre.id}`)
+        .set('Authorization', `Bearer ${manager}`)
+        .expect(200);
+
+      await request(server())
+        .patch(`/api/v1/staff/${randomUUID()}`)
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ displayName: 'Personne' })
+        .expect(404);
+
+      // Un identifiant mal formé est refusé avant d'atteindre la base.
+      await request(server())
+        .patch('/api/v1/staff/pas-un-uuid')
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ displayName: 'Personne' })
+        .expect(400);
+    });
+
+    it('réserve l’écriture au rang `MANAGER`, et exige une identité vérifiée', async () => {
+      const compte = compteInterne();
+      const membre = repository.seedStaff({ tenantId: harness.tenantId });
+
+      // Un praticien lit l'annuaire mais ne compose pas l'équipe.
+      await request(server())
+        .post('/api/v1/staff')
+        .set('Authorization', `Bearer ${await harness.tokenFor('STAFF')}`)
+        .send({ userId: compte.id, displayName: 'Léa' })
+        .expect(403);
+
+      await request(server())
+        .patch(`/api/v1/staff/${membre.id}`)
+        .set('Authorization', `Bearer ${await harness.tokenFor('STAFF')}`)
+        .send({ isActive: false })
+        .expect(403);
+
+      await request(server())
+        .post('/api/v1/staff')
+        .send({ userId: compte.id, displayName: 'Léa' })
+        .expect(401);
     });
   });
 });
