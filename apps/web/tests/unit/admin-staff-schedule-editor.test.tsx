@@ -65,6 +65,21 @@ describe('la grille hebdomadaire — ce qu’elle montre', () => {
     // 3 h 30 le matin, 4 h 30 l'après-midi.
     expect(screen.getByText(/8 h/)).toBeDefined();
   });
+
+  it('garde « Enregistrer la semaine » en largeur automatique, comme tout bouton de barre d’outils', () => {
+    // #674. La campagne de QA a lu les 202 px de ce bouton comme l'oubli d'un
+    // `block` — il n'en est pas un. `block` fait mesurer au bouton la boîte qui
+    // le contient : sous la colonne bornée à 44 rem d'un formulaire de création
+    // cela vaut 670 px, sous cette barre d'outils cela vaudrait toute la zone de
+    // contenu. Les deux moitiés s'assertent ensemble : la largeur ne se juge que
+    // sachant ce qui entoure le bouton.
+    renderEditor();
+
+    const enregistrer = screen.getByRole('button', { name: /Enregistrer la semaine/ });
+
+    expect(enregistrer.closest('.spa-admin-toolbar')).not.toBeNull();
+    expect([...enregistrer.classList]).not.toContain('spa-button--block');
+  });
 });
 
 describe('la grille hebdomadaire — les gestes', () => {
