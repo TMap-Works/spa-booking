@@ -51,7 +51,13 @@ import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { readStyleSheet, stripComments, styleSheetPath } from './support/tokens.mjs';
+import {
+  readStyleSheet,
+  rulesFor,
+  stripComments,
+  styleSheetPath,
+  withoutMediaQueries,
+} from './support/tokens.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -62,40 +68,14 @@ const field = stripComments(readStyleSheet(styleSheetPath('components/field.css'
 const shell = stripComments(readStyleSheet(styleSheetPath('admin/shell.css')));
 const checkout = stripComments(readStyleSheet(styleSheetPath('admin/checkout.css')));
 
-/**
- * Retire les blocs `@media` d'une feuille.
- *
- * Les paliers d'un écran redéclarent les mêmes sélecteurs que sa mise en page
- * nominale : sans ce filtre, la règle d'empilement de `.spa-admin-checkout` —
- * une seule colonne, sous 60 rem — passerait pour la déclaration de base et
- * ferait conclure que la colonne du ticket n'est plus bornée.
- *
- * L'accolade fermante du bloc est reconnue à sa position en début de ligne,
- * comme dans `support/tokens.mjs` : une analyse CSS complète serait une
- * dépendance de plus dans un dossier qui n'en a aucune.
+/*
+ * `rulesFor` et `withoutMediaQueries` viennent de `support/tokens.mjs` (#683).
+ * Le second n'est pas une commodité : sous 60 rem, `admin/checkout.css` rend
+ * `.spa-admin-checkout` à une seule colonne. Lue sans filtre, cette règle de
+ * palier passe pour la déclaration de base et fait conclure que la colonne du
+ * ticket n'est plus bornée. Le raisonnement complet est dans la documentation des
+ * deux fonctions, qui se lisent ensemble.
  */
-function withoutMediaQueries(css) {
-  return css.replace(/@media[^{]*\{[\s\S]*?\n\}/g, '');
-}
-
-/**
- * Les blocs de déclarations des règles dont la liste de sélecteurs contient
- * **exactement** `selector`.
- *
- * L'égalité et non la sous-chaîne, pour la raison déjà écrite en #615 et #628 :
- * une déclaration déplacée vers une règle plus spécifique laisserait
- * l'assertion verte alors que le sélecteur vérifié aurait perdu le
- * comportement.
- */
-function rulesFor(css, selector) {
-  const wanted = selector.trim().replace(/\s+/g, ' ');
-  const found = [];
-  for (const [, prelude, body] of css.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
-    const selectors = prelude.split(',').map((one) => one.trim().replace(/\s+/g, ' '));
-    if (selectors.includes(wanted)) found.push(body);
-  }
-  return found;
-}
 
 /** La valeur d'une propriété dans un bloc de déclarations, ou `null`. */
 function declaration(body, property) {

@@ -10,7 +10,8 @@
  *
  * `contrast.test.mjs` et `tokens.test.mjs` en furent les premiers clients ; les
  * suites de mise en page l'ont rejoint à mesure qu'elles répétaient le même
- * petit lecteur de règles, que #657 a commencé d'y rassembler.
+ * petit lecteur de règles, que #657 a commencé d'y rassembler et que #683 a fini
+ * d'y ramener — avec le filtre qui pare son piège, `withoutMediaQueries`.
  *
  * Aucune dépendance : `node:test`, `node:assert` et `node:fs` sont fournis par
  * la plateforme. Le design system ne peut pas ajouter de paquet — `package.json`
@@ -152,12 +153,11 @@ export function stripComments(css) {
  * #636, une fois par suite qui recopiait ce lecteur. C'est ce qui a valu à la
  * fonction de monter ici (#657).
  *
- * `admin-report-filters-layout.test.mjs` et `admin-checkout-layout.test.mjs`
- * l'importent. Quatre suites en portent encore une copie littérale —
- * `admin-catalog-rhythm`, `admin-form-width`, `booking-recap-columns`,
- * `booking-step-rhythm` : elles sortaient de l'empreinte de #657, et une issue
- * de suivi les ramènera ici. **Toute suite nouvelle importe celle-ci**, il n'y a
- * plus de raison d'en écrire une septième.
+ * Les six suites de mise en page l'importent — `admin-report-filters-layout`,
+ * `admin-checkout-layout`, `admin-catalog-rhythm`, `admin-form-width`,
+ * `booking-recap-columns`, `booking-step-rhythm` — et aucune n'en porte plus de
+ * copie locale (#683). **Toute suite nouvelle importe celle-ci**, il n'y a plus
+ * de raison d'en écrire une septième.
  *
  * ## Ce que cette lecture fait des at-rules — #657
  *
@@ -173,9 +173,9 @@ export function stripComments(css) {
  * redéclare `.spa-admin__content` **avec** une gouttière fournit à lui seul
  * l'assertion, et la gouttière peut alors disparaître de la mise en page
  * nominale — celle que la QA mesure — sans que rien ne le signale (#633).
- * Quand la condition compte, filtrer la feuille avant de la lire, comme le font
- * `admin-form-width.test.mjs` (#630) et `admin-catalog-rhythm.test.mjs` (#633)
- * avec leur `withoutMediaQueries`.
+ * Quand la condition compte, filtrer la feuille avant de la lire avec
+ * `withoutMediaQueries`, juste en dessous : la parade se lit avec le piège, et
+ * c'est pour cela que les deux voisinent.
  *
  * Seul le prélude d'une at-rule sans règle imbriquée — `@font-face`, `@page` —
  * se présente comme une liste de sélecteurs. Il ne peut égaler aucun sélecteur
@@ -189,6 +189,38 @@ export function rulesFor(css, selector) {
     if (selectors.includes(wanted)) found.push(body);
   }
   return found;
+}
+
+/**
+ * Retire les blocs `@media` d'une feuille, pour la lire ensuite avec `rulesFor`.
+ *
+ * La parade de l'aplatissement décrit juste au-dessus. Une suite qui affirme
+ * quelque chose de la mise en page **nominale** — celle que la QA mesure sur un
+ * écran large — doit filtrer avant de lire, sinon un palier lui fournit
+ * l'assertion à la place de la règle de base. Le défaut a deux occurrences
+ * connues, une par suite qui a eu besoin du filtre :
+ *
+ * - `admin-form-width` (#630) : sous 60 rem, `admin/checkout.css` rend
+ *   `.spa-admin-checkout` à une seule colonne. Non filtrée, cette règle de palier
+ *   passe pour la déclaration de base et fait conclure que la colonne du ticket
+ *   n'est plus bornée.
+ * - `admin-catalog-rhythm` (#633) : sous 360 px, `admin/shell.css` redéclare
+ *   `.spa-admin__content` **avec** un `gap` et `.spa-admin__section` **sans**.
+ *   Non filtrés, les deux blocs sont lus comme un seul : la gouttière de base
+ *   peut disparaître de `.spa-admin__content` — le palier la fournit — et le
+ *   défaut rouvre en vert sur l'écran large.
+ *
+ * L'accolade fermante du bloc de média est reconnue à sa position en début de
+ * ligne, celle des règles imbriquées étant indentée. Même ruse que la lecture
+ * des deux blocs de `tokens.css`, et pour la même raison : une analyse CSS
+ * complète serait une dépendance de plus dans un dossier qui n'en a aucune.
+ *
+ * Le filtre est donc **volontairement absent de `rulesFor`** : une suite qui veut
+ * au contraire voir les paliers — parce que c'est d'eux qu'elle parle — lit la
+ * feuille telle quelle.
+ */
+export function withoutMediaQueries(css) {
+  return css.replace(/@media[^{]*\{[\s\S]*?\n\}/g, '');
 }
 
 /**

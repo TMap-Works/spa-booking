@@ -43,7 +43,7 @@ import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { readStyleSheet, stripComments, styleSheetPath } from './support/tokens.mjs';
+import { readStyleSheet, rulesFor, stripComments, styleSheetPath } from './support/tokens.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -64,24 +64,14 @@ const recapSource = stripComments(
 
 const booking = stripComments(readStyleSheet(styleSheetPath('components/booking.css')));
 
-/**
- * Les blocs de déclarations des règles dont la liste de sélecteurs contient
- * **exactement** `selector`.
- *
- * L'égalité et non la sous-chaîne : `.spa-booking__recap` est un préfixe de
- * `.spa-booking__recap-row` comme de `.spa-booking__recap-term`, et une
- * recherche par sous-chaîne rendrait vraie n'importe quelle assertion dès que
+/*
+ * `rulesFor` vient de `support/tokens.mjs` (#683). Il lit les règles dont la liste
+ * de sélecteurs contient **exactement** le sélecteur demandé, ce dont cette suite
+ * dépend de près : `.spa-booking__recap` est un préfixe de
+ * `.spa-booking__recap-row` comme de `.spa-booking__recap-term`, et une recherche
+ * par sous-chaîne rendrait vraie n'importe quelle assertion ci-dessous dès que
  * l'une des trois règles existe.
  */
-function rulesFor(sheet, selector) {
-  const wanted = selector.trim().replace(/\s+/g, ' ');
-  const found = [];
-  for (const [, prelude, body] of sheet.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
-    const selectors = prelude.split(',').map((one) => one.trim().replace(/\s+/g, ' '));
-    if (selectors.includes(wanted)) found.push(body);
-  }
-  return found;
-}
 
 describe('La valeur du récapitulatif ne porte plus l’indentation du navigateur', () => {
   const value = rulesFor(booking, '.spa-booking__recap-value');
