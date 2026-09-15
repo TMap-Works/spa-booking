@@ -34,6 +34,7 @@ import {
   createStaffTimeOffRequestSchema,
   setStaffScheduleRequestSchema,
   slugSchema,
+  updateStaffMemberRequestSchema,
   uuidSchema,
   type ServiceStaffMember,
   type StaffMember,
@@ -53,6 +54,7 @@ import {
   removeServiceStaff,
   setStaffAccountStatus,
   setStaffSchedule,
+  updateStaffMember,
 } from '@/lib/api-client';
 import {
   changeStaffRoleRequestSchema,
@@ -185,6 +187,65 @@ export async function createStaffMemberAction(
 
   try {
     const member = await createStaffMember(call.accessToken, parsed.data);
+    revalidateStaffList(call.slug);
+    return { ok: true, data: member };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * Corrige une fiche praticien, la suspend ou la réactive — #705.
+ *
+ * ## Ce que cette action périme, et pourquoi c'est plus que la fiche
+ *
+ * Trois écrans montrent ce que `PATCH /v1/staff/:id` change. La **fiche** porte
+ * le nom en titre et l'encart de suspension ; la **liste du personnel** porte le
+ * même nom et le badge « Active » / « Suspendue » — c'est même le seul endroit
+ * d'où l'on voit l'ensemble de l'équipe ; le **planning** montre des créneaux
+ * qu'une fiche suspendue cesse de produire. Ne périmer que la première laisserait
+ * la liste afficher l'ancien nom jusqu'à la prochaine navigation dure, ce qui est
+ * exactement le genre d'écart qu'on prend pour une écriture perdue.
+ *
+ * `revalidateStaffAgenda` couvre les deux dernières, `revalidateStaffList` la
+ * liste : la suspension agit sur la disponibilité au même titre qu'un horaire
+ * effacé, et les réunir ici plutôt que d'écrire un troisième helper garde une
+ * seule définition de « ce qu'une écriture d'agenda périme ».
+ *
+ * ## Le corps ne porte que ce qui change
+ *
+ * `updateStaffMemberRequestSchema` est `.partial()` et `.strict()` : chacun des
+ * trois champs est facultatif, et rien d'autre ne passe. C'est l'écran qui
+ * décide de ce qu'il envoie — en particulier, il n'envoie **pas** `bio` tant que
+ * la présentation n'a pas été touchée, faute de pouvoir la relire (aucune route
+ * ne la publie), et il envoie `null` — jamais `""` — pour l'effacer.
+ *
+ * Un 404 signifie que la fiche n'existe pas, ou qu'elle appartient à
+ * l'établissement voisin : les deux se répondent pareil.
+ */
+export async function updateStaffMemberAction(
+  tenantSlug: string,
+  staffId: string,
+  input: unknown,
+): Promise<AdminActionResult<StaffMember>> {
+  const call = await openCall(tenantSlug);
+  if (!call.ok) {
+    return call;
+  }
+
+  const id = uuidSchema.safeParse(staffId);
+  const parsed = updateStaffMemberRequestSchema.safeParse(input);
+
+  if (!id.success) {
+    return invalid('Praticien inconnu.');
+  }
+  if (!parsed.success) {
+    return invalid(firstIssue(parsed.error.issues, 'Les informations saisies sont invalides.'));
+  }
+
+  try {
+    const member = await updateStaffMember(call.accessToken, id.data, parsed.data);
+    revalidateStaffAgenda(call.slug, id.data);
     revalidateStaffList(call.slug);
     return { ok: true, data: member };
   } catch (error) {

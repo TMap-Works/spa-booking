@@ -92,6 +92,7 @@ import {
   type UpdateProfileRequest,
   type UpdateServiceCategoryRequest,
   type UpdateServiceRequest,
+  type UpdateStaffMemberRequest,
   type UpdateTenantRequest,
 } from '@spa/shared';
 import { z } from 'zod';
@@ -1488,14 +1489,48 @@ export async function createStaffMember(
   return payload;
 }
 
-/*
- * `PATCH /v1/staff/:id` — renommer une fiche, l'activer ou la suspendre — est
- * servi par l'API depuis #694 mais n'a pas de fonction ici, pour la même raison
- * que `PATCH /v1/users/:id` ci-dessous : aucun écran ne le déclenche encore. Le
- * contrôle a sa place sur la fiche du praticien, pas dans la liste du personnel
- * — c'est là que vivent déjà ses horaires, ses congés et ses prestations —, et
- * ce module ne porte que ce qui est appelé.
+/**
+ * Corrige une fiche praticien, la suspend ou la réactive — `PATCH /v1/staff/:id`
+ * (#705).
+ *
+ * La place du contrôle qui l'appelle est la **fiche** du praticien, là où vivent
+ * déjà ses horaires, ses congés et ses prestations — c'est ce qui manquait à
+ * #694, dont l'empreinte s'arrêtait à la liste.
+ *
+ * `PATCH` et non `PUT` : le corps ne porte que ce qui change, si bien que deux
+ * gérants qui corrigent l'un le nom, l'autre la présentation, ne s'écrasent pas
+ * l'un l'autre. Les trois champs sont donc facultatifs — mais `undefined` ne
+ * descend pas jusqu'ici : le contrat distingue « absent » de « présent et
+ * `undefined` », et c'est l'appelant qui compose l'objet à envoyer.
+ *
+ * `bio: null` efface la présentation ; `bio: ""` écrirait une chaîne vide là où
+ * `NULL` veut dire « pas de présentation ». L'API accepte les deux — la
+ * normalisation est donc à la charge de l'écran, et elle est faite dans le
+ * panneau de la fiche.
+ *
+ * Un **404** couvre indistinctement la fiche inconnue et celle de
+ * l'établissement voisin (tenant-isolation §4) : l'établissement vient du jeton,
+ * aucun paramètre ne permet d'en désigner un autre.
+ *
+ * La réponse est une fiche complète au sens du contrat — mais `StaffMemberDto`
+ * ne publie pas `bio`, pas plus en écriture qu'en lecture : `staffMemberSchema`
+ * l'a facultatif, et il revient absent. Un écran qui voudrait relire le texte
+ * qu'il vient d'enregistrer ne le peut pas, et ne doit donc pas le prétendre.
  */
+export async function updateStaffMember(
+  accessToken: string,
+  staffId: string,
+  body: UpdateStaffMemberRequest,
+): Promise<StaffMember> {
+  const { payload } = await authorizedRequest({
+    method: 'PATCH',
+    path: `/staff/${encodeURIComponent(staffId)}`,
+    body,
+    schema: staffMemberSchema,
+    accessToken,
+  });
+  return payload;
+}
 
 /**
  * Invite un membre du personnel — `POST /v1/users`, réservé aux administrateurs.
