@@ -6,12 +6,14 @@
  * travail préparatoire : localiser une feuille, neutraliser ses commentaires,
  * extraire les déclarations de `:root`, suivre les chaînes de `var()`,
  * convertir une couleur en composantes, relire les règles d'un sélecteur
- * donné. Ce module le fait une fois.
+ * donné, y lire la valeur d'une propriété. Ce module le fait une fois.
  *
  * `contrast.test.mjs` et `tokens.test.mjs` en furent les premiers clients ; les
  * suites de mise en page l'ont rejoint à mesure qu'elles répétaient le même
  * petit lecteur de règles, que #657 a commencé d'y rassembler et que #683 a fini
- * d'y ramener — avec le filtre qui pare son piège, `withoutMediaQueries`.
+ * d'y ramener — avec le filtre qui pare son piège, `withoutMediaQueries`. Le
+ * lecteur de déclarations les a suivies (#713) : il accompagne `rulesFor` partout
+ * où elle est appelée, et se déplaçait donc avec elle ou pas du tout.
  *
  * Aucune dépendance : `node:test`, `node:assert` et `node:fs` sont fournis par
  * la plateforme. Le design system ne peut pas ajouter de paquet — `package.json`
@@ -153,11 +155,14 @@ export function stripComments(css) {
  * #636, une fois par suite qui recopiait ce lecteur. C'est ce qui a valu à la
  * fonction de monter ici (#657).
  *
- * Les six suites de mise en page l'importent — `admin-report-filters-layout`,
+ * Les suites de mise en page l'importent toutes — `admin-report-filters-layout`,
  * `admin-checkout-layout`, `admin-catalog-rhythm`, `admin-form-width`,
- * `booking-recap-columns`, `booking-step-rhythm` — et aucune n'en porte plus de
- * copie locale (#683). **Toute suite nouvelle importe celle-ci**, il n'y a plus
- * de raison d'en écrire une septième.
+ * `admin-login-layout`, `admin-screen-rhythm`, `booking-recap-columns`,
+ * `booking-step-rhythm` — et aucune n'en porte plus de copie locale (#683).
+ * **Toute suite nouvelle importe celle-ci**, il n'y a plus de raison d'en écrire
+ * une neuvième. Le lecteur de déclarations qui l'accompagne est juste en dessous
+ * de `withoutMediaQueries` : il a fait le même chemin (#713), à une copie près
+ * que sa documentation nomme.
  *
  * ## Ce que cette lecture fait des at-rules — #657
  *
@@ -221,6 +226,64 @@ export function rulesFor(css, selector) {
  */
 export function withoutMediaQueries(css) {
   return css.replace(/@media[^{]*\{[\s\S]*?\n\}/g, '');
+}
+
+/**
+ * La valeur d'une propriété dans un bloc de déclarations, ou `null`.
+ *
+ * Le pendant de `rulesFor`, et c'est pour cela qu'il la suit : on ne lit pas une
+ * règle pour la règle, on la lit pour interroger une de ses propriétés. Les deux
+ * appels s'écrivent toujours ensemble — `declaration(rulesFor(css, sel).join(' '),
+ * 'gap')` — et n'ont donc aucune raison de vivre à deux endroits. Trois suites en
+ * portaient chacune une copie octet pour octet et l'importent désormais (#713) :
+ * `admin-catalog-rhythm`, `admin-form-width`, `admin-login-layout`.
+ *
+ * **Une quatrième copie subsiste**, dans `admin-screen-rhythm.test.mjs` (#717).
+ * Elle est arrivée après l'ouverture de #713, dont elle sort de l'empreinte, et
+ * fait l'objet d'une issue de suivi ouverte avec cette PR — même enchaînement que
+ * #712 → #713. Tant qu'elle est là, une correction apportée ici ne l'atteint pas :
+ * c'est la dernière suite qui puisse encore lire les feuilles selon l'ancienne
+ * règle en restant verte.
+ *
+ * ## Ce que la lecture garantit, et ce qu'elle ne garantit pas
+ *
+ * Ce n'est pas un analyseur CSS, c'est une expression régulière — même parti pris
+ * que `rulesFor`, et pour la même raison : ce dossier n'a aucune dépendance.
+ * Quatre traits en découlent, à connaître avant de s'en servir.
+ *
+ * 1. **Le nom est borné des deux côtés**, et chaque borne pare un défaut distinct.
+ *    À gauche, `(?:^|;|\s)` interdit d'apparier un **suffixe** : sans elle,
+ *    demander `direction` trouverait `flex-direction: column`. À droite, `\s*:`
+ *    interdit d'apparier un **préfixe** : `margin` ne peut pas être lu dans
+ *    `margin-inline: auto`. C'est de cette seconde borne que vit
+ *    `admin-login-layout`, qui exige `margin-inline: auto` sur la carte de
+ *    connexion **et** l'absence de `margin` sur `.spa-admin-form` (#699) — deux
+ *    assertions que la même chaîne doit satisfaire en sens contraire.
+ * 2. **La première occurrence gagne.** Un bloc qui redéclare la même propriété
+ *    deux fois — ce que la cascade autorise — est lu selon la première, alors que
+ *    le navigateur applique la dernière. Aucune feuille du design system ne le
+ *    fait ; si l'une s'y met, c'est ici qu'il faudra le corriger.
+ * 3. **Les raccourcis ne sont pas développés**, et `!important` reste dans la
+ *    valeur rendue. Demander `gap` ne trouve pas un `gap` posé par un raccourci,
+ *    et une valeur écrite `auto !important` ne s'apparie pas à `'auto'`.
+ * 4. **La valeur s'arrête au premier `;`**, y compris s'il est entre parenthèses.
+ *    Une `background-image: url("data:image/svg+xml;utf8,…")` serait donc lue
+ *    tronquée. Le design system ne peint aucune image en ligne — ses illustrations
+ *    passent par `next/image` (web-frontend §7) —, mais c'est l'un des trois
+ *    correctifs que #713 rend possibles en un seul endroit.
+ *
+ * Le nom de propriété est injecté tel quel dans l'expression : les appelants
+ * passent des littéraux — `'gap'`, `'max-inline-size'` —, pas des chaînes
+ * construites, et aucun nom de propriété CSS ne porte de métacaractère.
+ *
+ * Que ces quatre traits soient écrits **une fois** est tout l'objet de #713. Une
+ * correction apportée à l'une des copies laissait les autres suites lire les
+ * feuilles selon l'ancienne règle, sans qu'aucune ne devienne rouge : un faux
+ * vert, et non un échec.
+ */
+export function declaration(body, property) {
+  const found = new RegExp(`(?:^|;|\\s)${property}\\s*:\\s*([^;]+)`).exec(body);
+  return found === null ? null : found[1].trim().replace(/\s+/g, ' ');
 }
 
 /**
