@@ -11,7 +11,7 @@ import { notFound } from 'next/navigation';
 
 import {
   ApiClientError,
-  fetchAvailability,
+  fetchAdminAvailability,
   fetchOwnProfile,
   fetchServiceStaff,
   fetchServices,
@@ -39,7 +39,8 @@ import { adminStaffMemberPath, adminStaffPath } from '../paths';
  * Le cinquième critère — « les modifications se reflètent immédiatement dans les
  * créneaux proposés » — est le seul qui ne se vérifie pas en lisant du code. La
  * page rend donc, à côté de la grille, **les créneaux réellement calculés** par
- * le moteur pour ce praticien, lus par la route publique de disponibilité. Les
+ * le moteur pour ce praticien, lus — depuis #676 — par la route **gardée** de
+ * disponibilité, celle du back-office, avec le jeton de la session. Les
  * actions d'écriture périment cette page (`revalidatePath`), si bien qu'un
  * horaire enregistré ou un congé posé déplace visiblement cette liste, sans
  * recharger la fenêtre.
@@ -131,19 +132,55 @@ export default async function StaffMemberPage({ params }: StaffMemberPageProps) 
       const preview = services.find((service) => service.assigned && service.isActive);
 
       if (preview !== undefined) {
-        // Cette lecture-ci a son propre `try` : c'est un aperçu, et la route
-        // publique rend **404** pour une prestation retirée du catalogue entre
-        // les deux appels. Laissée dans le `try` d'ensemble, ce 404-là passerait
-        // pour « ce praticien n'existe pas » et la fiche entière disparaîtrait
-        // derrière un `notFound()`.
+        /*
+         * Cette lecture-ci a son propre `try` : c'est un aperçu, et il ne doit
+         * pas emporter la fiche qu'il illustre.
+         *
+         * Elle passe par `GET /api/v1/availability` — la route gardée, seuil
+         * `STAFF`, **sans quota** — et non plus par
+         * `GET /public/{slug}/availability` (#676). La publique est comptée à
+         * cent vingt interrogations par minute **et par adresse** ; une page
+         * serveur Next sort par l'adresse du serveur Next, si bien que ce
+         * back-office consommait le budget du tunnel de réservation, partagé par
+         * tous les établissements du déploiement.
+         *
+         * Changer de porte change les statuts, et c'est ce que ce `catch` relit :
+         *
+         * - **404** — la prestation a été retirée du catalogue entre les deux
+         *   appels. C'est la raison d'être de ce `try` : laissé au `try`
+         *   d'ensemble, ce 404-là passerait pour « ce praticien n'existe pas »
+         *   et la fiche entière disparaîtrait derrière un `notFound()`. Il ne
+         *   recouvre plus « établissement inconnu » comme sur la publique :
+         *   l'établissement vient du jeton, plus du slug d'URL
+         *   (tenant-isolation §2) ;
+         * - **422 `AVAILABILITY_RANGE_TOO_WIDE`** — plage inversée ou de plus de
+         *   trente et un jours. Les sept jours d'ici ne l'atteignent pas, mais
+         *   l'aperçu se tait plutôt que de parier sur une constante ;
+         * - **403** — rang sous le seuil `STAFF`. Inatteignable tant que ce seuil
+         *   égale celui de `GET /v1/staff/:id/schedule`, lu plus haut avec le
+         *   même jeton. S'il montait, un compte qui a droit à la grille doit
+         *   garder sa fiche et perdre le seul aperçu — la dégradation est donc
+         *   ici, et non sur la page ;
+         * - **401** — la session a été révoquée en cours de rendu. Celui-là n'est
+         *   pas un défaut d'aperçu : il périme la page entière, panneaux
+         *   compris. Il est donc relancé, et `adminLoadFailure` le renvoie à la
+         *   connexion comme partout ailleurs dans ce back-office.
+         *
+         * La publique rendait en plus **429**, et la gardée jamais : c'est tout
+         * l'objet du ticket.
+         */
         try {
-          availability = await fetchAvailability(tenantSlug, {
+          availability = await fetchAdminAvailability(accessToken, {
             serviceId: preview.id,
             staffId,
             from: today,
             to: addCalendarDays(today, AVAILABILITY_PREVIEW_DAYS - 1),
           });
-        } catch {
+        } catch (error) {
+          if (error instanceof ApiClientError && error.status === 401) {
+            throw error;
+          }
+
           availability = null;
         }
       }
