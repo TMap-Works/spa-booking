@@ -2,10 +2,15 @@
  * Outillage de lecture du design system
  * =============================================================================
  *
- * Les deux suites (`contrast.test.mjs`, `tokens.test.mjs`) lisent les mêmes
- * fichiers CSS et ont besoin du même travail préparatoire : extraire les
- * déclarations de `:root`, suivre les chaînes de `var()`, convertir une couleur
- * en composantes. Ce module le fait une fois.
+ * Les suites de style lisent les mêmes fichiers CSS et ont besoin du même
+ * travail préparatoire : localiser une feuille, neutraliser ses commentaires,
+ * extraire les déclarations de `:root`, suivre les chaînes de `var()`,
+ * convertir une couleur en composantes, relire les règles d'un sélecteur
+ * donné. Ce module le fait une fois.
+ *
+ * `contrast.test.mjs` et `tokens.test.mjs` en furent les premiers clients ; les
+ * suites de mise en page l'ont rejoint à mesure qu'elles répétaient le même
+ * petit lecteur de règles, que #657 a commencé d'y rassembler.
  *
  * Aucune dépendance : `node:test`, `node:assert` et `node:fs` sont fournis par
  * la plateforme. Le design system ne peut pas ajouter de paquet — `package.json`
@@ -131,6 +136,59 @@ export function stripComments(css) {
   return css.replace(/\/\*[\s\S]*?\*\//g, (comment) =>
     comment.replace(/[^\n]/g, ' '),
   );
+}
+
+/**
+ * Les blocs de déclarations des règles dont la liste de sélecteurs contient
+ * **exactement** `selector`.
+ *
+ * L'égalité, et jamais la sous-chaîne : `.spa-booking__recap` est un préfixe de
+ * `.spa-booking__recap-row` comme de `.spa-booking__recap-term`, et une
+ * recherche par sous-chaîne rendrait vraie n'importe quelle assertion dès que
+ * l'une des trois règles existe. Plus insidieux encore, une déclaration
+ * déplacée de la règle de base vers une règle plus spécifique laisserait
+ * l'assertion verte alors que le sélecteur vérifié aurait perdu le
+ * comportement — c'est le raisonnement écrit et réécrit en #615, #628, #630 et
+ * #636, une fois par suite qui recopiait ce lecteur. C'est ce qui a valu à la
+ * fonction de monter ici (#657).
+ *
+ * `admin-report-filters-layout.test.mjs` et `admin-checkout-layout.test.mjs`
+ * l'importent. Quatre suites en portent encore une copie littérale —
+ * `admin-catalog-rhythm`, `admin-form-width`, `booking-recap-columns`,
+ * `booking-step-rhythm` : elles sortaient de l'empreinte de #657, et une issue
+ * de suivi les ramènera ici. **Toute suite nouvelle importe celle-ci**, il n'y a
+ * plus de raison d'en écrire une septième.
+ *
+ * ## Ce que cette lecture fait des at-rules — #657
+ *
+ * Elle les **aplatit**. C'est le contraire d'un angle mort, et c'est le piège à
+ * connaître avant de s'en servir. Le corps borné à `[^{}]*` interdit à une
+ * règle imbriquée d'être lue avec son enveloppe : l'expression échoue sur
+ * `@media (…) {`, l'analyse repart après l'accolade, et retrouve la règle
+ * intérieure comme si elle était posée à la racine. Une règle sous `@media`,
+ * `@supports` ou `@container` est donc bien vue — mais dépouillée de la
+ * condition qui la gouverne.
+ *
+ * La conséquence est un faux positif, jamais un faux négatif : un palier qui
+ * redéclare `.spa-admin__content` **avec** une gouttière fournit à lui seul
+ * l'assertion, et la gouttière peut alors disparaître de la mise en page
+ * nominale — celle que la QA mesure — sans que rien ne le signale (#633).
+ * Quand la condition compte, filtrer la feuille avant de la lire, comme le font
+ * `admin-form-width.test.mjs` (#630) et `admin-catalog-rhythm.test.mjs` (#633)
+ * avec leur `withoutMediaQueries`.
+ *
+ * Seul le prélude d'une at-rule sans règle imbriquée — `@font-face`, `@page` —
+ * se présente comme une liste de sélecteurs. Il ne peut égaler aucun sélecteur
+ * CSS, et ne remonte donc jamais.
+ */
+export function rulesFor(css, selector) {
+  const wanted = selector.trim().replace(/\s+/g, ' ');
+  const found = [];
+  for (const [, prelude, body] of css.matchAll(/([^{}]*)\{([^{}]*)\}/g)) {
+    const selectors = prelude.split(',').map((one) => one.trim().replace(/\s+/g, ' '));
+    if (selectors.includes(wanted)) found.push(body);
+  }
+  return found;
 }
 
 /**
