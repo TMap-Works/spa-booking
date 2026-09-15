@@ -257,14 +257,32 @@ interface ColumnChartProps extends ChartBodyProps {
  * alors son propre plafond — la plus haute barre touchait le haut du cadre — et
  * la graduation médiane s'écrivait « 0,5 » ou « 3,5 » sur un axe qui compte des
  * rendez-vous. C'est le régime courant d'un petit salon, pas un cas limite.
+ *
+ * ## Le pas est pair, donc la médiane est un entier
+ *
+ * Le plafond est un multiple du pas, et la graduation médiane vaut sa moitié :
+ * un pas impair donne une médiane à la demi-unité. Le seul pas impair que le
+ * demi-ordre produise est **5**, dans la décennie 10–99 — un plafond de 85 s'y
+ * graduait « 0 / 42,5 / 85 ». Sur un axe qui compte des rendez-vous, c'est une
+ * demi-visite ; sur un axe monétaire, dont les barres portent des unités
+ * mineures, c'est un demi-centime : le montant cessait d'être un entier avant
+ * d'entrer dans le formateur, et l'invariant « l'argent est un entier » tombait
+ * sur ce chemin (#640).
+ *
+ * Le pas impair est donc doublé — 5 devient 10 —, ce qui ramène la décennie
+ * 10–99 au régime de toutes les autres : un plafond pair, une médiane entière.
+ * Le plafond de repli d'une série vide suit la même règle, pour que la propriété
+ * tienne sur **toutes** les sorties de la fonction et pas seulement sur celles
+ * que le graphique demande aujourd'hui.
  */
 export function niceCeiling(value: number): number {
   if (value <= 0) {
-    return 1;
+    return 2;
   }
 
   const magnitude = 10 ** Math.floor(Math.log10(value));
-  const step = Math.max(magnitude / 2, 2);
+  const halfOrder = Math.max(magnitude / 2, 2);
+  const step = halfOrder % 2 === 0 ? halfOrder : halfOrder * 2;
 
   return Math.ceil(value / step) * step;
 }

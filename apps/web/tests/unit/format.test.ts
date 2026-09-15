@@ -94,6 +94,25 @@ describe('formatMoneyCompact', () => {
     // maximum demandé, et une graduation ronde s'écrirait « 85,0 € ».
     expect(compact(8_500, 'EUR')).not.toContain(',0');
   });
+
+  it('distingue deux montants voisins sous l’unité principale', () => {
+    // #640 : une décimale au plus efface tout ce qui vit sous ~0,05 €. Une
+    // période dont le plafond vaut deux centimes se gradue 0 / 1 / 2 unités
+    // mineures, et les trois repères s'écrivaient « 0 € », « 0 € », « 0 € ».
+    expect(compact(1, 'EUR')).toBe('0,01 €');
+    expect(compact(2, 'EUR')).toBe('0,02 €');
+    expect(compact(5, 'EUR')).toBe('0,05 €');
+    expect(new Set([compact(0, 'EUR'), compact(1, 'EUR'), compact(2, 'EUR')]).size).toBe(3);
+  });
+
+  it('ne descend pas sous la précision de la devise pour autant', () => {
+    // La précision rendue est celle de la devise, pas une décimale de plus :
+    // l'euro n'a rien sous le centime, et l'ariary rien sous l'unité. Un
+    // troisième chiffre serait une précision inventée.
+    expect(compact(1, 'EUR')).not.toMatch(/\d,\d{3}/);
+    expect(compact(3, 'MGA')).not.toContain(',');
+    expect(compact(0, 'MGA')).not.toContain(',');
+  });
 });
 
 describe('forme machine d’un montant', () => {
