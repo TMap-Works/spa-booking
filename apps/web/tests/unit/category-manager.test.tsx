@@ -89,6 +89,23 @@ describe('rubriques — création', () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  it('rend « Créer la rubrique » comme « Créer la prestation » — pleine largeur d’une carte bornée (#634)', () => {
+    // La campagne de QA a relevé 164 px ici contre 966 px sur /catalogue/nouveau,
+    // à 1280 px de fenêtre. Deux rendus pour un même rôle, à un clic de distance.
+    //
+    // Les deux classes tiennent ensemble et se vérifient ensemble : `block` sans
+    // la borne rendrait un bouton de toute la zone de contenu — plus large que
+    // celui de l'écran voisin, donc toujours pas le même rendu.
+    renderManager();
+
+    const form = screen.getByRole('button', { name: /Créer la rubrique/ }).closest('form');
+
+    expect(form?.className).toContain('spa-admin-form');
+    expect(screen.getByRole('button', { name: /Créer la rubrique/ }).className).toContain(
+      'spa-button--block',
+    );
+  });
+
   it('pose le conflit de slug sur le champ d’adresse', async () => {
     createServiceCategoryAction.mockResolvedValue({
       ok: false,
