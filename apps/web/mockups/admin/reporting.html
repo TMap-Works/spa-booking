@@ -61,30 +61,53 @@
               </div>
             </div>
 
-            <div class="spa-select">
-              <label class="spa-select__label" for="filtre">Filtrer</label>
-              <div class="spa-select__shell">
-                <select class="spa-select__control" id="filtre" aria-describedby="filtre-hint">
-                  <option selected>Tout l’établissement</option>
-                  <optgroup label="Praticiens">
-                    <option>Hasina Rakoto</option>
-                    <option>Tiana Andria</option>
-                  </optgroup>
-                  <optgroup label="Prestations">
-                    <option>Massage 60 min</option>
-                    <option>Coupe et brushing</option>
-                  </optgroup>
-                </select>
-                <span class="spa-select__chevron" aria-hidden="true"></span>
-              </div>
-              <p class="spa-select__hint" id="filtre-hint">
-                Un praticien ou une prestation — les deux ne se croisent pas.
-              </p>
-            </div>
+            <!--
+              « Filtrer » et « Afficher » ne font qu'un élément de la barre —
+              le groupement de `report-filters.tsx` depuis #656, que la maquette
+              montrait encore plat (#678).
 
-            <button class="spa-button spa-button--accent" type="button">
-              <span class="spa-button__label">Afficher</span>
-            </button>
+              Seul, le bouton ouvrait une ligne en portant la marge qui lui rend
+              la ligne d'étiquette qu'il n'a pas : ~26 px de vide au-dessus de
+              lui dans la bande où l'enroulement l'isolait — les champs de la
+              dernière ligne tiennent, le bouton ne tient plus après eux.
+              Mesurée ici, cette bande s'ouvre vers 480 px de largeur de contenu ;
+              sur l'écran réel en période personnalisée, qui porte deux champs de
+              date de plus, elle tombe entre 800 et 900 px (#656). Groupé, le
+              bouton ne peut plus ouvrir de ligne : celle du couple commence
+              toujours par une étiquette.
+
+              Le groupe n'a volontairement pas de classe : il ne peint rien, il
+              ne fait que tenir ensemble deux contrôles déjà habillés.
+              `styles/admin/reporting.css` le désigne par le bouton qu'il porte,
+              et cette maquette est la seule à exercer ses trois règles —
+              `tests/admin-report-filters-layout.test.mjs` l'y tient.
+            -->
+            <div>
+              <div class="spa-select">
+                <label class="spa-select__label" for="filtre">Filtrer</label>
+                <div class="spa-select__shell">
+                  <select class="spa-select__control" id="filtre" aria-describedby="filtre-hint">
+                    <option selected>Tout l’établissement</option>
+                    <optgroup label="Praticiens">
+                      <option>Hasina Rakoto</option>
+                      <option>Tiana Andria</option>
+                    </optgroup>
+                    <optgroup label="Prestations">
+                      <option>Massage 60 min</option>
+                      <option>Coupe et brushing</option>
+                    </optgroup>
+                  </select>
+                  <span class="spa-select__chevron" aria-hidden="true"></span>
+                </div>
+                <p class="spa-select__hint" id="filtre-hint">
+                  Un praticien ou une prestation — les deux ne se croisent pas.
+                </p>
+              </div>
+
+              <button class="spa-button spa-button--accent" type="button">
+                <span class="spa-button__label">Afficher</span>
+              </button>
+            </div>
           </form>
 
           <div class="spa-admin-toolbar">
