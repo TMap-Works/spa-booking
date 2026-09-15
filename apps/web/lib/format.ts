@@ -110,17 +110,35 @@ export function formatMoney(amount: Money): string {
  * `minimumFractionDigits: 0` est explicite : sans lui, `Intl` ramènerait le
  * minimum de l'euro — deux décimales — au maximum demandé, et une échelle ronde
  * s'écrirait « 85,0 € ».
+ *
+ * ## Une décimale au-dessus de l'unité, la précision de la devise en dessous
+ *
+ * Le maximum d'une décimale est taillé pour des montants qui se comptent en
+ * unités principales — le régime de toutes les graduations d'un salon qui
+ * encaisse. Sous l'unité, il efface tout : une période dont le plafond vaut deux
+ * centimes se gradue 0 / 1 / 2 centimes, et les trois repères s'écrivaient
+ * « 0 € », « 0 € », « 0 € » — un axe qui ne distingue plus rien de ce qu'il
+ * gradue (#640).
+ *
+ * En dessous de l'unité principale, la précision devient donc celle de la devise
+ * — deux décimales pour l'euro, aucune pour l'ariary, qui n'a de toute façon
+ * rien sous son unité. La notation compacte, elle, n'agit qu'à partir du
+ * millier : sous l'unité, elle n'abrège rien et la place gagnée ne manque à
+ * personne.
  */
 export function formatMoneyCompact(amount: Money): string {
   const digits = fractionDigitsOf(amount.currency);
+  // Le seul flottant du chemin, et il ne sert qu'à choisir une précision
+  // d'affichage — voir {@link formatMoney} sur pourquoi il est sans risque ici.
+  const major = amount.amountMinor / 10 ** digits;
 
   return new Intl.NumberFormat(LOCALE, {
     style: 'currency',
     currency: amount.currency,
     notation: 'compact',
     minimumFractionDigits: 0,
-    maximumFractionDigits: 1,
-  }).format(amount.amountMinor / 10 ** digits);
+    maximumFractionDigits: Math.abs(major) < 1 ? digits : 1,
+  }).format(major);
 }
 
 /**
