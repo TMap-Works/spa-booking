@@ -56,6 +56,12 @@ describe('ReportAppointmentNotFound', () => {
   it('ne fabrique jamais un lien qui sort du site', () => {
     // `accountPath('')` rend `//compte`, que le navigateur lit comme l'URL
     // **absolue** `https://compte/`. Aucun href du panneau ne doit y ressembler.
+    //
+    // Un seul cas ici : ce que la frontière a à prouver, c'est qu'un slug
+    // illisible fait taire le lien sans emporter l'écran. L'énumération des
+    // façons de ne pas lire un slug — segment absent, échappement tronqué que
+    // `decodeURIComponent` refuse — appartient à `tenant-slug.test.ts`, depuis
+    // que la lecture est partagée (#703).
     pathname = '/';
 
     render(<ReportAppointmentNotFound />);
@@ -64,19 +70,6 @@ describe('ReportAppointmentNotFound', () => {
     expect(
       screen.getByRole('heading', { name: /ce rendez-vous n’est plus disponible/i }),
     ).toBeDefined();
-  });
-
-  it('survit à un segment que `decodeURIComponent` refuse', () => {
-    // Un échappement tronqué lève `URIError` : non rattrapé, il remplacerait le
-    // 404 par la frontière d'erreur — l'écran que #627 fait disparaître.
-    pathname = '/salon%/compte/rendez-vous/abc/report';
-
-    render(<ReportAppointmentNotFound />);
-
-    expect(
-      screen.getByRole('heading', { name: /ce rendez-vous n’est plus disponible/i }),
-    ).toBeDefined();
-    expect(screen.queryByRole('link')).toBeNull();
   });
 
   it('ne dit pas laquelle des trois situations s’est produite', () => {
