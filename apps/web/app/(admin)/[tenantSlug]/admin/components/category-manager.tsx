@@ -59,6 +59,26 @@ type CategoryFormValues = z.input<typeof categoryFormSchema>;
  *
  * Les deux gestes portent les mêmes champs et les mêmes règles ; les tenir en
  * deux composants garantirait qu'une validation ajoutée à l'un manque à l'autre.
+ *
+ * ## Le `<form>` est la carte, il n'est pas dedans (#633)
+ *
+ * Il portait auparavant un `<form>` nu, rangé dans une `<section>` qui était, elle,
+ * la carte `.spa-admin__section`. Cette classe est ce qui donne à ses enfants leur
+ * rythme vertical — `display: flex` en colonne, `gap: var(--spa-space-3)` —, et le
+ * `<form>` intercalé la privait d'effet : les groupes de champs redevenaient des
+ * blocs du flux normal, empilés à **0 px**. « Description » se collait au bas de
+ * « Nom de la rubrique », « Adresse publique » à la mention « Facultative. », et le
+ * bouton au dernier texte d'aide.
+ *
+ * `ServiceForm`, sur `/catalogue/nouveau`, ne s'est jamais posé la question : son
+ * `<form>` **est** la carte. C'est ce balisage-là qui est repris ici — la gouttière
+ * de 12 px de l'écran voisin vient de là, et non d'une règle ajoutée pour ce
+ * ticket. Le titre de la section descend donc dans le formulaire, faute de quoi il
+ * resterait hors de la carte qu'il nomme.
+ *
+ * Le formulaire d'édition en ligne, lui, gagne la même carte dans sa cellule de
+ * tableau : c'est le même composant, il avait le même défaut, et le liseré qui en
+ * résulte délimite l'édition ouverte au milieu d'une liste.
  */
 function CategoryForm({
   tenantSlug,
@@ -125,7 +145,18 @@ function CategoryForm({
   });
 
   return (
-    <form onSubmit={(event) => void submit(event)} noValidate>
+    <form
+      className="spa-admin__section"
+      aria-labelledby={category === undefined ? 'rubrique-nouvelle' : undefined}
+      onSubmit={(event) => void submit(event)}
+      noValidate
+    >
+      {category === undefined ? (
+        <h2 className="spa-admin__section-title" id="rubrique-nouvelle">
+          Nouvelle rubrique
+        </h2>
+      ) : null}
+
       {failure === null ? null : (
         <Notification tone="danger" title="L’enregistrement a échoué">
           <p>{failure}</p>
@@ -250,12 +281,12 @@ export function CategoryManager({
   return (
     <div className="spa-admin__content">
       {canManage ? (
-        <section className="spa-admin__section" aria-labelledby="rubrique-nouvelle">
-          <h2 className="spa-admin__section-title" id="rubrique-nouvelle">
-            Nouvelle rubrique
-          </h2>
-          <CategoryForm tenantSlug={tenantSlug} onDone={() => setEditing(null)} />
-        </section>
+        // Pas d'enveloppe : le `<form>` est lui-même la carte `.spa-admin__section`
+        // et porte le titre de la section (#633). Une `<section>` de plus autour de
+        // lui remettrait une carte dans une carte — et surtout, la gouttière de
+        // cette enveloppe n'écarterait que le titre et le `<form>` qu'elle
+        // contiendrait, jamais les champs, qui sont ce qu'il fallait écarter.
+        <CategoryForm tenantSlug={tenantSlug} onDone={() => setEditing(null)} />
       ) : (
         <p className="spa-admin-toolbar__hint">
           La création et la modification des rubriques sont réservées au rang gérant.
