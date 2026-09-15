@@ -22,6 +22,11 @@ import { accountTenant } from '../../../tenant';
  * inexistant, celui d'une autre cliente, ou l'un des siens déjà passé — les
  * trois doivent être indiscernables (tenant-isolation §4).
  *
+ * Ce 404-là est rendu par `not-found.tsx`, posé à côté de cette page (#627) :
+ * sans lui, l'appel remontait jusqu'au 404 des adresses publiques, qui renvoie la
+ * cliente vers « le lien que le salon vous a communiqué » — alors qu'elle est
+ * dans son propre espace — et qui ne porte aucun lien de retour.
+ *
  * ## La fenêtre de créneaux part d'aujourd'hui, dans le fuseau du salon
  *
  * Une date civile n'est pas un instant : « aujourd'hui » n'est pas la même
