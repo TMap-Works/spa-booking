@@ -1,0 +1,104 @@
+'use client';
+
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+
+import { Notification } from '@/components/ui/notification';
+
+import { adminStaffPath } from '../paths';
+
+/**
+ * L'écran servi quand la fiche praticien demandée n'existe pas (#696).
+ *
+ * ## Pourquoi une frontière à ce segment
+ *
+ * `page.tsx` appelle `notFound()` dans trois situations qui doivent rester
+ * indiscernables — identifiant mal formé, identifiant inconnu, fiche d'un autre
+ * établissement (tenant-isolation §4). Sans frontière propre, cet appel remontait
+ * jusqu'à `app/not-found.tsx`, qui répond pour une **adresse publique inconnue** :
+ * « Vérifiez le lien que le salon vous a communiqué », hors du back-office, sans
+ * rail ni la moindre issue. L'opérateur était pourtant connecté, dans son propre
+ * tableau de bord, et n'avait suivi aucun lien du salon.
+ *
+ * Une frontière posée ici corrige les deux à la fois :
+ *
+ * - le **message** parle de la fiche, plus de l'adresse ;
+ * - l'écran est rendu **dans** l'enveloppe du back-office — rail, sections,
+ *   pied de rail — au lieu de la remplacer.
+ *
+ * C'est la transposition au back-office de ce que #627 a posé sur l'espace
+ * client, et l'encart reprend mot pour mot la forme de
+ * `catalogue/[serviceId]/page.tsx` : même ton `warning`, même phrase sur
+ * l'établissement voisin, même lien de retour vers la liste.
+ *
+ * ## Le statut HTTP reste 404
+ *
+ * C'est la raison de passer par `not-found.tsx` plutôt que de faire rendre
+ * l'encart par la page elle-même : une page qui rend son message sans lever
+ * répond **200**, et annoncerait comme existante une fiche qui n'existe pas.
+ *
+ * ## Pourquoi un Client Component pour quatre lignes de balisage
+ *
+ * Une frontière `not-found` ne reçoit **aucune prop** — ni `params`, ni
+ * `searchParams` : c'est une limite de l'App Router, pas un oubli. Le slug de
+ * l'établissement, dont dépend le chemin de retour, ne peut donc venir que de
+ * l'URL courante. `usePathname()` est le seul accès qui y mène, et il n'existe
+ * que côté client. Même arbitrage que le rail du back-office.
+ */
+
+/**
+ * Le slug de l'établissement, premier segment de toute URL du back-office.
+ *
+ * Il est décodé avant d'être rendu à `adminStaffPath`, qui le réencode : sans ce
+ * passage, un slug déjà encodé dans le chemin le serait une seconde fois, et le
+ * lien de retour pointerait à côté. `usePathname()` rend bien le chemin
+ * **encodé** — Next le tire de `new URL(canonicalUrl).pathname`.
+ *
+ * Rend `null` plutôt qu'une chaîne vide quand le premier segment manque ou ne se
+ * décode pas : une chaîne vide passée à `adminStaffPath` donnerait `//admin/...`,
+ * que le navigateur lit comme une URL **absolue** vers l'hôte `admin` — la seule
+ * issue de l'écran sortirait du site. Et un `decodeURIComponent` qui lève
+ * remplacerait le 404 par la frontière d'erreur, précisément l'écran dont ce
+ * ticket cherche à sortir.
+ */
+function tenantSlugFromPathname(pathname: string): string | null {
+  const [, encodedSlug = ''] = pathname.split('/');
+
+  if (encodedSlug === '') {
+    return null;
+  }
+
+  try {
+    return decodeURIComponent(encodedSlug);
+  } catch {
+    return null;
+  }
+}
+
+export default function StaffMemberNotFound() {
+  const tenantSlug = tenantSlugFromPathname(usePathname());
+
+  /*
+   * Le texte ne dit pas **laquelle** des trois situations s'est produite :
+   * distinguer « identifiant inconnu » de « fiche d'un autre établissement »
+   * confirmerait à qui essaie des identifiants au hasard qu'une fiche existe, et
+   * chez qui (tenant-isolation §4).
+   *
+   * Sans slug lisible, le lien est tu plutôt que fabriqué : le rail du
+   * back-office, lui, tient son slug des `params` du layout et reste une issue.
+   */
+  return (
+    <Notification tone="warning" title="Praticien introuvable">
+      <p>
+        Aucune fiche de ce salon ne porte cet identifiant. Elle a pu être créée dans un autre
+        établissement, ou avoir été supprimée depuis.
+        {tenantSlug === null ? null : (
+          <>
+            {' '}
+            <Link href={adminStaffPath(tenantSlug)}>Revenir au personnel</Link>.
+          </>
+        )}
+      </p>
+    </Notification>
+  );
+}
