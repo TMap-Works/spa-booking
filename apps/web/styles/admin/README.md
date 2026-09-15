@@ -333,6 +333,14 @@ npm run test:unit --workspace @spa/web   # ou : node --test apps/web/tests/
 | `contrast.test.mjs` | qu'une teinte passe sous le seuil AA **dans l'un ou l'autre thème** — statuts d'agenda, barre latérale sombre et graphiques compris |
 | `tokens.test.mjs` | qu'une couleur littérale ou une primitive entre dans une feuille, qu'une feuille échappe aux points d'entrée, et que le chrome admin fuie vers le parcours public |
 | `admin-mockups.test.mjs` | que maquettes et CSS dérivent l'un de l'autre, qu'un écran perde son état vide ou son état de chargement, qu'un contrôle perde son libellé — **et qu'un champ de saisie de carte apparaisse sur l'écran d'encaissement** |
+| `admin-toolbar-buttons.test.mjs` | qu'un bouton de barre d'outils prenne la pleine largeur : `spa-button--block` mesure la boîte qui le contient, et une barre d'outils n'en borne aucune (#674) |
+
+La dernière ligne est le versant exécutable d'une règle qui n'était nulle part :
+**quel bouton porte `--block`, et lequel ne le porte pas**. Elle est énoncée dans
+[`../README.md`](../README.md) §2, à l'endroit où la variante se choisit, et
+rappelée au-dessus de `.spa-admin-toolbar` dans `shell.css`, à l'endroit où la
+barre s'édite. La suite tient la moitié qui manquait — la disjonction des deux
+familles — quand `admin-form-width.test.mjs` tient déjà l'autre.
 
 La vérification dans les deux sens est le cœur du dispositif : aucune classe
 inventée dans une maquette, **et** aucun style admin que plus aucune maquette
