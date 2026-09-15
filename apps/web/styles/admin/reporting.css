@@ -70,12 +70,95 @@
  * `.spa-field` et `.spa-select` posent entre étiquette et contrôle. Un jeton
  * qui bougerait emporterait donc le bouton avec les champs, au lieu de les
  * désaligner en silence.
+ *
+ * Un descendant et non un enfant direct : depuis #656, l'application pose le
+ * bouton dans le couple ci-dessous, alors que `mockups/admin/reporting.html` le
+ * montre encore nu au bout de la barre. La règle doit atteindre les deux.
  */
-.spa-admin-report-filters > button {
+.spa-admin-report-filters button {
   flex: 0 0 auto;
   margin-block-start: calc(
     var(--spa-font-size-sm) * var(--spa-line-height-normal) + var(--spa-space-1)
   );
+}
+
+/*
+ * ## « Filtrer » et « Afficher » ne forment qu'un élément de la barre
+ *
+ * La marge ci-dessus vaut exactement ce qu'il faut tant que le bouton partage
+ * sa ligne avec un champ étiqueté — le cas des trois largeurs recettées en
+ * #628. Elle devient ~26 px de vide dès que l'enroulement le laisse **seul** en
+ * tête de sa propre ligne : il n'a alors plus d'étiquette voisine à rattraper.
+ * La bande concernée est celle où les champs de la dernière ligne tiennent mais
+ * où le bouton ne tient plus après eux — en période personnalisée, autour de
+ * 800 à 900 px de largeur de contenu (#656).
+ *
+ * Rien ne corrige cela du côté de la marge, et une **vraie** ligne d'étiquette
+ * vide ne la corrigerait pas davantage : élément ou marge, elle occupe la même
+ * hauteur dans la ligne flex, et CSS n'offre aucun sélecteur pour « premier
+ * élément d'une ligne flex ». Ce qui se corrige, c'est la cause : le bouton
+ * n'ouvre plus de ligne seul parce qu'il n'est plus un élément de la barre. Le
+ * dernier champ et lui n'en font qu'un, qui s'enroule d'un bloc — et une ligne
+ * ouverte par ce couple commence donc toujours par une étiquette.
+ *
+ * `flex-wrap: nowrap` est ce qui tient l'invariant : sous la pression, le
+ * couple se comprime au lieu de se rompre. Sans lui, le bouton retomberait sous
+ * le champ avec sa marge, c'est-à-dire exactement le défaut qu'on retire.
+ *
+ * La base du couple est celle d'un champ de la barre, plus la gouttière, plus
+ * le bouton. La largeur du bouton n'est pas un jeton : `6rem` en est l'ordre de
+ * grandeur, et ne sert qu'à décider **quand** le couple passe à la ligne. Rien
+ * ne casse s'il dérive de quelques pixels — `min-inline-size: 0`, ici et sur le
+ * champ qu'il porte, laisse le couple se comprimer sous sa base plutôt que de
+ * déborder là où la barre est plus étroite que lui.
+ *
+ * Le couple n'a pas de classe à lui, et c'est délibéré : il ne peint rien, il
+ * ne fait que tenir ensemble deux contrôles déjà habillés — même raison que le
+ * `:has(> .spa-admin-table)` de `shell.css`. Le sélecteur désigne donc ce que
+ * le couple est : le seul enfant de la barre qui porte le bouton.
+ *
+ * Reste que `mockups/admin/reporting.html` montre toujours la barre plate : la
+ * maquette continue de se peindre juste — la règle du bouton ci-dessus atteint
+ * aussi bien le bouton nu —, mais elle ne montre pas le groupement, et ces deux
+ * règles-ci ne sont donc exercées par aucune maquette. C'était hors de
+ * l'empreinte de ce correctif ; #678 l'y aligne.
+ */
+.spa-admin-report-filters > div:has(> button) {
+  display: flex;
+  flex: 1 1 calc(12rem + var(--spa-space-3) + 6rem);
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+  min-inline-size: 0;
+}
+
+/* Le champ du couple reprend la base qu'il avait comme enfant direct de la
+ * barre : il n'y est plus, et `.spa-admin-report-filters > *` ne l'atteint
+ * donc plus. */
+.spa-admin-report-filters > div:has(> button) > .spa-select {
+  flex: 1 1 12rem;
+  min-inline-size: 0;
+}
+
+/*
+ * Et le `<select>` lui-même se laisse comprimer, sinon le `min-inline-size: 0`
+ * ci-dessus ne sert à rien.
+ *
+ * Un `<select>` est un élément de flex qui refuse par défaut (`min-width: auto`)
+ * de descendre sous la largeur de son option la plus longue — environ 205 px
+ * ici. Le couple, lui, peut se comprimer : sous ~330 px de fenêtre il alloue
+ * moins que cela au champ, et le contrôle déborderait alors de sa boîte, c'est
+ * à-dire de la barre — une barre de défilement horizontale sur toute la page.
+ * À 360 px, la largeur plancher de la campagne de QA, la question ne se pose
+ * pas : le couple mesure 344 px et le champ en reçoit 233 (recette de #656).
+ *
+ * En deçà, mieux vaut un libellé d'option tronqué qu'une page qui défile de
+ * travers. La déclaration est **portée au couple** et non à `.spa-select__control`
+ * : c'est ce couple insécable qui crée la contrainte, et le sélecteur du design
+ * system garde partout ailleurs son refus de se comprimer.
+ */
+.spa-admin-report-filters > div:has(> button) .spa-select__control {
+  min-inline-size: 0;
 }
 
 /* --- Indicateurs ----------------------------------------------------------- */

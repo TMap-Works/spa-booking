@@ -207,39 +207,51 @@ export function ReportFilters({
         </>
       ) : null}
 
-      <Select
-        id={`${fieldId}-filtre`}
-        label="Filtrer"
-        value={selectedScope}
-        hint="Un praticien ou une prestation — les deux ne se croisent pas."
-        onChange={(event) => {
-          setSelectedScope(event.target.value);
-        }}
-      >
-        <option value="">Tout l’établissement</option>
-        {staff.length === 0 ? null : (
-          <optgroup label="Praticiens">
-            {staff.map((option) => (
-              <option key={option.key} value={`praticien:${option.key}`}>
-                {option.label}
-              </option>
-            ))}
-          </optgroup>
-        )}
-        {services.length === 0 ? null : (
-          <optgroup label="Prestations">
-            {services.map((option) => (
-              <option key={option.key} value={`prestation:${option.key}`}>
-                {option.label}
-              </option>
-            ))}
-          </optgroup>
-        )}
-      </Select>
+      {/*
+        Le dernier champ et le bouton ne font qu'un élément de la barre, et c'est
+        ce qui tient l'alignement du bouton (#656) : seul, il ouvrait une ligne
+        en portant la marge qui lui rend sa ligne d'étiquette — ~26 px de vide,
+        puisqu'il n'avait alors plus d'étiquette voisine à rattraper. Groupé, il
+        ne peut plus ouvrir de ligne : celle du couple commence par « Filtrer ».
 
-      <Button type="submit" variant="accent" loading={pending} loadingLabel="Chargement…">
-        Afficher
-      </Button>
+        Le `<div>` n'a volontairement pas de classe — `styles/admin/reporting.css`
+        dit pourquoi, et le désigne par le bouton qu'il porte.
+      */}
+      <div>
+        <Select
+          id={`${fieldId}-filtre`}
+          label="Filtrer"
+          value={selectedScope}
+          hint="Un praticien ou une prestation — les deux ne se croisent pas."
+          onChange={(event) => {
+            setSelectedScope(event.target.value);
+          }}
+        >
+          <option value="">Tout l’établissement</option>
+          {staff.length === 0 ? null : (
+            <optgroup label="Praticiens">
+              {staff.map((option) => (
+                <option key={option.key} value={`praticien:${option.key}`}>
+                  {option.label}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {services.length === 0 ? null : (
+            <optgroup label="Prestations">
+              {services.map((option) => (
+                <option key={option.key} value={`prestation:${option.key}`}>
+                  {option.label}
+                </option>
+              ))}
+            </optgroup>
+          )}
+        </Select>
+
+        <Button type="submit" variant="accent" loading={pending} loadingLabel="Chargement…">
+          Afficher
+        </Button>
+      </div>
     </form>
   );
 }
