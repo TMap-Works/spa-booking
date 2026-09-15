@@ -50,6 +50,36 @@ import { adminLandingPath } from './navigation';
  * session sur `/{slug}/admin` serait dire une chose et en faire une autre. Le
  * message dit ensuite laquelle des deux choses a eu lieu : promettre une
  * fermeture qui a échoué serait retomber dans le même travers.
+ *
+ * ## Le `<form>` est la carte, il n'est pas dedans (#699)
+ *
+ * Deux défauts d'un même balisage, relevés par la campagne de QA `20260915-1`.
+ *
+ * Le `<form>` était **nu**, rangé dans une `<section className="spa-admin__section">`.
+ * Or c'est cette classe qui donne le rythme vertical — `display: flex` en
+ * colonne, `gap: var(--spa-space-3)` —, et elle n'écartait donc que ses trois
+ * enfants directs : le titre, la notification et le formulaire. À l'intérieur,
+ * champs et bouton redevenaient des blocs du flux normal, empilés à **0 px** —
+ * le bord haut de « Se connecter » touchait le bord bas du champ « Mot de
+ * passe », aux quatre largeurs mesurées, là où la connexion cliente laisse
+ * 16 px. C'est exactement le défaut que #633 a corrigé sur `/catalogue/rubriques`,
+ * et le remède est le même : le `<form>` **est** la carte, le titre descend
+ * dedans. Rien n'est ajouté au CSS pour cela.
+ *
+ * La carte n'était par ailleurs pas bornée : `.spa-admin__content` vaut ici
+ * toute la fenêtre — l'écran de connexion est le seul du back-office servi sans
+ * rail —, si bien que les champs s'étiraient sur environ 1 400 px à 1920 px,
+ * contre environ 470 px sur `/compte/connexion`. #630 avait borné les
+ * formulaires d'administration à 44 rem ; celui-ci était resté hors de sa liste.
+ * `spa-admin-form` l'y fait entrer.
+ *
+ * Le centrage vient de la conjonction des deux classes, et non d'une troisième :
+ * `admin/shell.css` centre une carte de saisie qui est l'unique enfant de la
+ * zone de contenu — ce qu'est celle-ci, et qu'aucun autre écran borné n'est.
+ * C'est pourquoi la page ne rend que ce composant, sans enveloppe.
+ *
+ * `block` sur le bouton n'en devient que plus juste : il mesure désormais une
+ * colonne bornée, et non la fenêtre (`styles/README.md` §2).
  */
 
 /** Ce qu'un échec affiche : un titre **et** son explication, jamais l'un sans l'autre. */
@@ -119,7 +149,12 @@ export function AdminLoginForm({ tenantSlug }: { readonly tenantSlug: string }) 
   });
 
   return (
-    <section className="spa-admin__section" aria-labelledby="admin-connexion-titre">
+    <form
+      className="spa-admin__section spa-admin-form"
+      aria-labelledby="admin-connexion-titre"
+      onSubmit={(event) => void submit(event)}
+      noValidate
+    >
       <h1 className="spa-admin__section-title" id="admin-connexion-titre">
         Back-office — se connecter
       </h1>
@@ -130,35 +165,33 @@ export function AdminLoginForm({ tenantSlug }: { readonly tenantSlug: string }) 
         </Notification>
       )}
 
-      <form onSubmit={(event) => void submit(event)} noValidate>
-        <Field
-          id="admin-login-email"
-          label="Adresse e-mail"
-          type="email"
-          autoComplete="email"
-          required
-          error={errors.email?.message}
-          {...register('email')}
-        />
-        <Field
-          id="admin-login-password"
-          label="Mot de passe"
-          type="password"
-          autoComplete="current-password"
-          required
-          error={errors.password?.message}
-          {...register('password')}
-        />
-        <Button
-          type="submit"
-          variant="accent"
-          block
-          loading={isSubmitting}
-          loadingLabel="Connexion en cours…"
-        >
-          Se connecter
-        </Button>
-      </form>
-    </section>
+      <Field
+        id="admin-login-email"
+        label="Adresse e-mail"
+        type="email"
+        autoComplete="email"
+        required
+        error={errors.email?.message}
+        {...register('email')}
+      />
+      <Field
+        id="admin-login-password"
+        label="Mot de passe"
+        type="password"
+        autoComplete="current-password"
+        required
+        error={errors.password?.message}
+        {...register('password')}
+      />
+      <Button
+        type="submit"
+        variant="accent"
+        block
+        loading={isSubmitting}
+        loadingLabel="Connexion en cours…"
+      >
+        Se connecter
+      </Button>
+    </form>
   );
 }
