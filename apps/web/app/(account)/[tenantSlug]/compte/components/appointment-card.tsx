@@ -3,7 +3,7 @@
 import type { AppointmentScope, BookedAppointment, TimeZone } from '@spa/shared';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
@@ -65,9 +65,34 @@ export function AppointmentCard({
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * La mention du fuseau, calculée **après le montage** seulement (#680).
+   *
+   * `timeZoneMention` lit le fuseau du **navigateur**
+   * (`Intl.DateTimeFormat().resolvedOptions().timeZone`), qui n'existe pas au
+   * rendu serveur : `Intl` y rend celui du conteneur. La liste qui monte cette
+   * carte est un Server Component — c'est tout l'intérêt du découpage décrit en
+   * en-tête —, si bien que chaque ligne d'historique partait du serveur avec
+   * « (heure de Europe/Paris) » pour une visiteuse parisienne, qui ne doit
+   * précisément rien lire ; React signalait la divergence et réécrivait le nœud
+   * à l'hydratation.
+   *
+   * Le drapeau est le même que celui de
+   * [`SlotPicker`](../../../../../components/booking/slot-picker.tsx), de
+   * `booking-tunnel.tsx` et de `reschedule-form.tsx` : au premier rendu —
+   * serveur comme client — la mention est absente des deux côtés, donc les
+   * balises s'accordent ; l'effet ne joue qu'ensuite, sur le client seul, et
+   * c'est là que la ligne se complète.
+   */
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
   const badge = appointmentBadge(appointment);
   const actionable = scope === 'upcoming' && isStillActionable(appointment);
-  const mention = timeZoneMention(timeZone);
+  const mention = mounted ? timeZoneMention(timeZone) : null;
 
   const cancel = async (): Promise<void> => {
     // La garde en tête du gestionnaire double le `disabled` du bouton : entre le
