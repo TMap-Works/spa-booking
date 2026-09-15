@@ -138,6 +138,64 @@ describe('un compte client sur l’écran du back-office', () => {
   });
 });
 
+describe('la mise en forme de l’écran (#699)', () => {
+  /** La carte rendue par le composant — c'est le `<form>`, et c'est le sujet. */
+  const carte = (): HTMLFormElement => {
+    render(<AdminLoginForm tenantSlug={SLUG} />);
+    const form = screen.getByRole('form', { name: /back-office — se connecter/i });
+    return form as HTMLFormElement;
+  };
+
+  it('fait du `<form>` la carte, et n’en remet pas une autour', () => {
+    const form = carte();
+
+    // `.spa-admin__section` est ce qui empile les enfants en colonne avec une
+    // gouttière. Sous un `<form>` nu, elle n'écartait que le titre, la
+    // notification et le formulaire : à l'intérieur, le bouton « Se connecter »
+    // touchait le champ « Mot de passe » à 0 px, aux quatre largeurs mesurées.
+    expect(form.className.split(/\s+/)).toContain('spa-admin__section');
+
+    // Deux cartes emboîtées ramèneraient le défaut : la gouttière de
+    // l'enveloppe ne porterait plus que sur le `<form>` unique qu'elle
+    // contient, et les champs se rejoindraient de nouveau.
+    expect(form.closest('.spa-admin__section')).toBe(form);
+
+    // Le titre est dans la carte, sans quoi il resterait hors de ce qu'il nomme.
+    expect(form.querySelector('#admin-connexion-titre')).not.toBeNull();
+  });
+
+  it('borne la colonne de saisie', () => {
+    // 44 rem, la mesure que #630 a posée sur les formulaires du back-office.
+    // Sans elle, les champs prenaient toute la zone de contenu — qui vaut ici
+    // la fenêtre entière, l'écran de connexion étant le seul servi sans rail :
+    // environ 1 400 px mesurés à 1920 contre 470 px sur /compte/connexion.
+    expect(carte().className.split(/\s+/)).toContain('spa-admin-form');
+  });
+
+  it('ne rend que la carte, ce dont dépend son centrage', () => {
+    const { container } = render(<AdminLoginForm tenantSlug={SLUG} />);
+
+    // `admin/shell.css` centre une colonne de saisie qui est l'unique enfant de
+    // `.spa-admin__content` — la condition qui distingue cet écran des cinq
+    // autres écrans bornés, où la colonne s'aligne sur une barre d'outils ou une
+    // liste. Une enveloppe, un fragment à deux blocs, et le centrage tombe sans
+    // que rien d'autre ne le signale.
+    expect(container.children).toHaveLength(1);
+    expect(container.firstElementChild?.tagName).toBe('FORM');
+  });
+
+  it('garde le bouton de soumission en pleine largeur de sa colonne', () => {
+    const form = carte();
+    const bouton = screen.getByRole('button', { name: /se connecter/i });
+
+    // Le `block` n'est juste que sous une colonne bornée : il finit la colonne
+    // qu'il vient de remplir (`styles/README.md` §2). Retirer l'une des deux
+    // sans l'autre rendrait un bouton de bout en bout de la fenêtre.
+    expect(bouton.className).toContain('spa-button--block');
+    expect(form.contains(bouton)).toBe(true);
+  });
+});
+
 describe('un refus de l’API', () => {
   it('reste sur l’écran et nomme la cause', async () => {
     adminLoginAction.mockResolvedValue({

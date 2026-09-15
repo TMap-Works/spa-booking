@@ -245,6 +245,31 @@
   max-inline-size: 44rem;
 }
 
+/*
+ * Une carte de saisie qui est **tout** l'écran se centre (#699).
+ *
+ * La connexion est le seul écran du back-office servi sans rail : le layout se
+ * rabat sur `.spa-admin__main` seul, et sa zone de contenu vaut alors toute la
+ * fenêtre. La carte que la règle précédente vient de borner à 44 rem s'y
+ * retrouvait collée au bord gauche de 1 900 px de vide, là où la connexion
+ * cliente se pose au milieu (`.spa-account`, `margin: 0 auto`).
+ *
+ * La condition n'est pas décorative, c'est elle qui décide : une colonne de
+ * saisie se centre quand elle n'a personne à qui s'aligner, et reste au bord
+ * gauche sinon. Les cinq autres écrans bornés par #630 partagent leur zone avec
+ * une barre d'outils, une liste ou un tableau qui commencent tous à ce bord —
+ * les centrer les décalerait de ce qui les encadre. `:only-child` dit exactement
+ * cela, et se retire de lui-même le jour où l'écran gagne un voisin.
+ *
+ * `.spa-admin__section` fait partie du sélecteur pour la même raison :
+ * `/reglages` rend un `.spa-admin-form` seul dans sa zone, mais c'est une
+ * enveloppe nue autour de trois cartes — ce n'est pas une carte, et ses cartes
+ * s'alignent entre elles.
+ */
+.spa-admin__content > .spa-admin__section.spa-admin-form:only-child {
+  margin-inline: auto;
+}
+
 /* --- Barre d'outils -------------------------------------------------------- */
 
 /*
