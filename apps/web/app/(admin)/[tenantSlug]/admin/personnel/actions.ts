@@ -37,6 +37,7 @@ import {
   updateStaffMemberRequestSchema,
   uuidSchema,
   type ServiceStaffMember,
+  type StaffAccountState,
   type StaffMember,
   type StaffSchedule,
   type StaffTimeOff,
@@ -61,7 +62,6 @@ import {
   inviteStaffAccountRequestSchema,
   setStaffAccountStatusRequestSchema,
   type StaffAccount,
-  type StaffAccountState,
   type StaffInvitation,
 } from '@/lib/admin/staff-contract';
 
