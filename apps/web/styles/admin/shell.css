@@ -183,6 +183,81 @@
   gap: var(--spa-space-4);
 }
 
+/*
+ * L'écran s'enveloppe d'une région nommée, et la gouttière doit la traverser
+ * (#700).
+ *
+ * `.spa-admin__content` écarte ses enfants **directs** — c'est tout ce qu'un
+ * `gap` sait faire. Or chaque écran du back-office rend une
+ * `<section aria-labelledby="…-titre">` qui réunit son titre, sa barre d'outils
+ * et ses cartes : la région que le lecteur d'écran annonce, et sans laquelle le
+ * `<h1>` de l'écran ne nommerait rien. Cette enveloppe recevait donc la
+ * gouttière pour elle seule, et les blocs qu'elle porte se rejoignaient à
+ * **0 px**. La campagne de QA l'a mesuré sur cinq écrans — /personnel,
+ * /catalogue, /catalogue/nouveau, la fiche d'une prestation et /reporting — en
+ * prenant pour référence /catalogue/rubriques, dont un conteneur intermédiaire
+ * redéclare la gouttière (voir plus bas).
+ *
+ * C'est la mécanique de #633, une couche plus haut : là, une `<section>` nue
+ * était intercalée dans **un** écran ; ici, elle l'est dans tous. La même
+ * correction — remonter les blocs d'un cran dans le balisage — reviendrait à
+ * démonter la région nommée de chaque écran, donc son `aria-labelledby`, pour un
+ * défaut d'espacement. La règle ci-dessous rend le rythme une fois pour toutes,
+ * aux écrans d'aujourd'hui comme au prochain.
+ *
+ * ## Pourquoi `:not([class])` décide, et pas autre chose
+ *
+ * Une `<section>` qui ne déclare **aucune** classe ne met rien en page : elle ne
+ * fait qu'envelopper, et c'est exactement la population qu'on veut traverser.
+ * Celles qui en portent une se mettent en page elles-mêmes, et les rattraper ici
+ * les casserait — le sélecteur pèse plus lourd (0,1,1) que la classe seule
+ * (0,1,0) et écraserait sa gouttière :
+ *
+ *   - `.spa-admin__section`, la carte, tient déjà ses enfants à
+ *     `--spa-space-3` ; l'élargir les écarterait de 16 px à l'intérieur d'une
+ *     carte, là où la densité du comptoir veut 12 ;
+ *   - la connexion pose `.spa-admin__section.spa-admin-form` à même la zone de
+ *     contenu, et son centrage tient à un `:only-child` (#699).
+ *
+ * L'attribut plutôt qu'une liste de classes à exclure : la condition reste vraie
+ * pour un écran qu'on n'a pas encore écrit, et elle se retire d'elle-même le
+ * jour où une enveloppe gagne sa propre mise en page.
+ *
+ * ## Les deux écrans que le combinateur enfant ne voit pas, et pourquoi c'est sans
+ * conséquence
+ *
+ * Les écrans du back-office rendent leur région nommée **à même** la zone de
+ * contenu, et la règle les atteint. Deux font exception : `/reglages` la range
+ * dans le `<div class="spa-admin-form">` qui borne sa colonne (#630), et
+ * `/catalogue/rubriques` porte la sienne autour de `CategoryManager`. Aucun des
+ * deux ne présentait le défaut, et c'est la même raison des deux côtés : tous
+ * deux rendent **un second `.spa-admin__content`** autour de leurs blocs — un
+ * `<form>` pour l'un, un `<div>` pour l'autre — qui leur redéclare la gouttière
+ * une couche plus bas. C'est d'ailleurs à ce titre que la QA a pris
+ * /catalogue/rubriques pour référence : elle mesurait, sans le savoir, ce que la
+ * règle ci-dessous rend maintenant partout.
+ *
+ * Il en reste une couture de 20 px entre le `<h1>` de `/reglages` et son premier
+ * champ — le remplissage de ce conteneur imbriqué, mesuré au navigateur — là où
+ * les autres coutures de l'écran valent 16. Un écart de quatre pixels sur une
+ * seule couture d'un écran que la campagne n'a pas relevé : ce n'est pas ce
+ * ticket-ci, et le corriger demande de reprendre le balisage de l'écran, pas
+ * cette règle.
+ *
+ * ## La valeur est celle de la zone de contenu
+ *
+ * Aux deux paliers, y compris celui de 30 rem plus bas. L'enveloppe est
+ * transparente : elle rend le rythme qu'elle interceptait, pas un autre. Un
+ * `--spa-space-3` ici et un `--spa-space-4` sur la zone donneraient deux
+ * gouttières différentes selon qu'un écran s'enveloppe ou non — /catalogue/apercu
+ * rend un fragment, ses blocs sont déjà les enfants directs de la zone (#633).
+ */
+.spa-admin__content > section:not([class]) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+}
+
 /* Liste à gauche, détail à droite — fiche client, personnel, encaissement. */
 .spa-admin__split {
   display: grid;
@@ -727,6 +802,13 @@
   .spa-admin__content {
     gap: var(--spa-space-3);
     padding: var(--spa-space-3) var(--spa-space-2);
+  }
+
+  /* L'enveloppe d'écran suit la zone qu'elle traverse (#700) : sans cette ligne,
+   * un écran enveloppé garderait 16 px de gouttière là où un écran en fragment
+   * passe à 12, et le téléphone aurait deux rythmes selon la page ouverte. */
+  .spa-admin__content > section:not([class]) {
+    gap: var(--spa-space-3);
   }
 
   .spa-admin__section {
