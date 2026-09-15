@@ -39,19 +39,35 @@ describe('l’échelle et l’axe', () => {
     expect(niceCeiling(18)).toBe(20);
     expect(niceCeiling(240)).toBe(250);
     expect(niceCeiling(1_384)).toBe(1_500);
-    expect(niceCeiling(0)).toBe(1);
+    // Le repli d'une série vide est pair lui aussi : la médiane d'un plafond de
+    // 1 vaudrait 0,5, et la propriété ci-dessous doit tenir sur **toutes** les
+    // sorties de la fonction (#640).
+    expect(niceCeiling(0)).toBe(2);
   });
 
-  it('garde une graduation médiane entière sur les petits comptes', () => {
+  it('garde une graduation médiane entière, quel que soit l’ordre de grandeur', () => {
     // Sous dix, le demi-ordre de grandeur vaut 0,5 : tout entier était son
     // propre plafond — la plus haute barre touchait le haut du cadre — et la
     // graduation médiane s'écrivait « 0,5 » ou « 3,5 » sur un axe qui compte des
     // rendez-vous. C'est le régime courant d'un petit salon.
-    for (const value of [1, 3, 5, 7, 9]) {
-      const ceiling = niceCeiling(value);
+    //
+    // Le même défaut survivait une décennie plus haut, où le demi-ordre vaut 5 :
+    // un plafond de 85 se graduait « 0 / 42,5 / 85 ». Sur un axe monétaire, dont
+    // les barres portent des unités mineures, ce demi-centime faisait tomber
+    // l'invariant « l'argent est un entier » avant même le formateur (#640).
+    expect(niceCeiling(12)).toBe(20);
+    expect(niceCeiling(85)).toBe(90);
 
-      expect(ceiling).toBeGreaterThan(value);
-      expect(Number.isInteger(ceiling / 2)).toBe(true);
+    // Un maximum qui n'est pas déjà un multiple du pas garde de l'air au-dessus
+    // de lui : c'est la raison d'être du plafond arrondi.
+    for (const value of [1, 3, 5, 7, 9, 12, 42, 85, 99, 1_384]) {
+      expect(niceCeiling(value), `plafond de ${String(value)}`).toBeGreaterThan(value);
+    }
+
+    // La médiane, elle, est entière sur **toutes** les sorties — repli d'une
+    // série vide et multiples exacts du pas compris.
+    for (const value of [0, 1, 3, 5, 7, 9, 10, 12, 42, 85, 99, 240, 1_384, 8_500, 123_456]) {
+      expect(Number.isInteger(niceCeiling(value) / 2), `médiane de ${String(value)}`).toBe(true);
     }
   });
 
@@ -95,6 +111,45 @@ describe('l’échelle dit la même chose que le tableau de sa figure', () => {
     expect([...container.querySelectorAll('td')].map((cell) => cell.textContent)).toContain(
       formatMoney(amount),
     );
+  });
+
+  it('distingue ses trois graduations sur une période de quelques centimes', () => {
+    // #640 : deux centimes sur toute la période — le cas dégénéré d'un salon qui
+    // n'a presque rien encaissé. L'axe se gradue 0 / 1 / 2 unités mineures, et
+    // les trois repères s'écrivaient « 0 € », « 0 € », « 0 € » : une échelle qui
+    // n'oppose plus rien de ce qu'elle gradue.
+    const amount = { amountMinor: 2, currency: 'EUR' } as const;
+    const { container } = render(
+      <ReportChart
+        bars={[{ key: '2026-09-11', label: '11 sept.', value: amount.amountMinor, valueLabel: formatMoney(amount) }]}
+        emptyLabel="Aucun encaissement sur la période."
+        formatScaleValue={(value) => formatMoneyCompact({ amountMinor: value, currency: amount.currency })}
+        layout="colonnes"
+        seriesLabel="Revenu net (EUR)"
+        summary="Revenu net par journée de caisse en EUR."
+        title="Revenu net par jour — EUR"
+        valueHeader="Revenu net"
+      />,
+    );
+
+    expect(scaleOf(container)).toEqual(['0 €', '0,01 €', '0,02 €']);
+  });
+
+  it('ne confond jamais deux de ses graduations, du centime au millier d’euros', () => {
+    // Le critère de #640 pris au mot — « quel que soit l'ordre de grandeur de la
+    // période ». Les deux corrections se tiennent ici : un plafond pair donne
+    // une médiane entière en unité mineure, et le formateur la distingue encore
+    // quand elle vaut un centime. Ni l'une ni l'autre ne suffit seule.
+    for (const amountMinor of [1, 2, 5, 9, 12, 42, 85, 99, 150, 850, 8_500, 123_456]) {
+      const ceiling = niceCeiling(amountMinor);
+      const ticks = [0, ceiling / 2, ceiling].map((value) =>
+        formatMoneyCompact({ amountMinor: value, currency: 'EUR' }),
+      );
+
+      expect(new Set(ticks).size, `plafond ${String(ceiling)} pour ${String(amountMinor)} c€`).toBe(
+        3,
+      );
+    }
   });
 
   it('laisse un axe de comptage en nombres nus', () => {
