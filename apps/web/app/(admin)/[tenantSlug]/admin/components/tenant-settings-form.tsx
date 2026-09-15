@@ -15,7 +15,7 @@ import {
   type UpdateTenantRequest,
 } from '@spa/shared';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -76,6 +76,29 @@ import { updateTenantSettingsAction } from '../actions';
  * `role="group"` renvoyant au libellé de la ligne, ce qui donne au groupe le nom
  * que le `<fieldset>` lui donnerait sans exposer la grille CSS aux réglages par
  * défaut de cet élément.
+ *
+ * ## Le verdict se rend contre le bouton, pas en tête d'écran
+ *
+ * L'écran mesure environ 2 500 px : le nom, l'adresse, les 28 champs de la
+ * grille horaire, les coordonnées, puis « Enregistrer ». Tant que le verdict
+ * était peint en tête de section, il apparaissait à quelque 2 400 px au-dessus
+ * du bouton qu'on venait de cliquer, pour une fenêtre de 900 px — l'écran restait
+ * strictement identique après un enregistrement réussi, et rien ne disait que
+ * quoi que ce soit avait été sauvegardé (#635).
+ *
+ * Il est donc rendu en dernier enfant du `<form>`, juste au-dessus du bouton :
+ * le geste et sa réponse tiennent dans le même champ de vision, quel que soit
+ * l'endroit où la page a été laissée. Placé **avant** le bouton plutôt qu'après,
+ * il suit l'ordre de lecture — au clavier, la tabulation qui repart du bouton ne
+ * saute pas par-dessus la réponse.
+ *
+ * Le focus s'y pose à chaque verdict, succès comme échec. Trois effets d'un seul
+ * geste : le navigateur amène l'encart dans la fenêtre même si le clic est venu
+ * d'un raccourci qui l'avait fait défiler, le lecteur d'écran le lit sans
+ * dépendre de la seule politesse de `role="status"`, et la navigation au clavier
+ * repart de la réponse et non du haut du document. Le conteneur est
+ * `tabIndex={-1}` : atteignable par script, jamais par tabulation, et le halo de
+ * focus ne se peint qu'en `:focus-visible` — donc pas après un clic à la souris.
  *
  * ## Le slug n'est pas modifiable
  *
@@ -215,11 +238,37 @@ function hiddenRanges(tenant: Tenant): readonly OpeningHoursEntry[] {
   });
 }
 
+/**
+ * Le verdict du dernier enregistrement — succès, ou refus et sa raison.
+ *
+ * Un seul état pour les deux tons : ils s'excluent, et les tenir séparément
+ * ouvrait la porte à les afficher tous les deux.
+ */
+type Verdict = { readonly tone: 'success' } | { readonly tone: 'danger'; readonly message: string };
+
 export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormProps) {
   const router = useRouter();
-  const [saved, setSaved] = useState(false);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [verdict, setVerdict] = useState<Verdict | null>(null);
+  const verdictRef = useRef<HTMLDivElement | null>(null);
   const carriedOver = hiddenRanges(tenant);
+
+  /**
+   * Amener le verdict sous les yeux — voir l'en-tête.
+   *
+   * La dépendance est l'objet `verdict` entier, et chaque verdict en pose un
+   * neuf : deux refus au message identique restent deux valeurs distinctes,
+   * donc l'effet se rejoue et le focus se repose. Deux `useState` séparés ne
+   * l'auraient pas fait — sur les chemins de validation locale, le
+   * `setVerdict(null)` de tête et la pose du verdict tombent dans le même lot de
+   * rendu, si bien qu'un message répété n'aurait changé aucune dépendance.
+   */
+  useEffect(() => {
+    if (verdict === null) {
+      return;
+    }
+
+    verdictRef.current?.focus();
+  }, [verdict]);
 
   const {
     register,
@@ -241,93 +290,99 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
     mode: 'onTouched',
   });
 
-  const submit = handleSubmit(async (values) => {
-    setFailure(null);
-    setSaved(false);
+  const submit = handleSubmit(
+    async (values) => {
+      setVerdict(null);
 
-    const openingHours: OpeningHoursEntry[] = [];
+      const openingHours: OpeningHoursEntry[] = [];
 
-    values.days.forEach((day, index) => {
-      const weekday = WEEKDAYS[index];
-      if (weekday === undefined) {
+      values.days.forEach((day, index) => {
+        const weekday = WEEKDAYS[index];
+        if (weekday === undefined) {
+          return;
+        }
+        for (const range of day.ranges) {
+          if (range.opensAt !== '' && range.closesAt !== '') {
+            openingHours.push({ weekday, opensAt: range.opensAt, closesAt: range.closesAt });
+          }
+        }
+      });
+
+      // `safeParse` et non `parse` : le schéma du formulaire ne porte pas toutes
+      // les règles du contrat — le recouvrement de deux plages du même jour porte
+      // sur l'ensemble de la semaine, plages reportées comprises, et se voit donc
+      // ici seulement. Une exception levée dans ce rappel remonte telle quelle
+      // depuis `handleSubmit` : l'écran n'afficherait rien, le bouton reprendrait
+      // son état de repos, et rien n'aurait été enregistré — un échec muet, la
+      // pire des réponses.
+      const address =
+        values.line1 === ''
+          ? null
+          : postalAddressSchema.safeParse({
+              line1: values.line1,
+              ...(values.line2 === '' ? {} : { line2: values.line2 }),
+              ...(values.postalCode === '' ? {} : { postalCode: values.postalCode }),
+              city: values.city,
+              country: values.country,
+            });
+
+      if (address !== null && !address.success) {
+        setVerdict({
+          tone: 'danger',
+          message: address.error.issues[0]?.message ?? 'L’adresse saisie est invalide.',
+        });
         return;
       }
-      for (const range of day.ranges) {
-        if (range.opensAt !== '' && range.closesAt !== '') {
-          openingHours.push({ weekday, opensAt: range.opensAt, closesAt: range.closesAt });
-        }
+
+      const week = openingHoursSchema.safeParse([...openingHours, ...carriedOver]);
+
+      if (!week.success) {
+        setVerdict({
+          tone: 'danger',
+          message: week.error.issues[0]?.message ?? 'Les horaires saisis sont invalides.',
+        });
+        return;
       }
-    });
 
-    // `safeParse` et non `parse` : le schéma du formulaire ne porte pas toutes
-    // les règles du contrat — le recouvrement de deux plages du même jour porte
-    // sur l'ensemble de la semaine, plages reportées comprises, et se voit donc
-    // ici seulement. Une exception levée dans ce rappel remonte telle quelle
-    // depuis `handleSubmit` : l'écran n'afficherait rien, le bouton reprendrait
-    // son état de repos, et rien n'aurait été enregistré — un échec muet, la
-    // pire des réponses.
-    const address =
-      values.line1 === ''
-        ? null
-        : postalAddressSchema.safeParse({
-            line1: values.line1,
-            ...(values.line2 === '' ? {} : { line2: values.line2 }),
-            ...(values.postalCode === '' ? {} : { postalCode: values.postalCode }),
-            city: values.city,
-            country: values.country,
-          });
+      const changes: UpdateTenantRequest = {
+        name: values.name,
+        // `null` efface ; la chaîne vide n'est pas une valeur du contrat.
+        contactEmail: values.contactEmail === '' ? null : values.contactEmail,
+        contactPhone: values.contactPhone === '' ? null : values.contactPhone,
+        address: address === null ? null : address.data,
+        openingHours: [...week.data],
+      };
 
-    if (address !== null && !address.success) {
-      setFailure(address.error.issues[0]?.message ?? 'L’adresse saisie est invalide.');
-      return;
-    }
+      const result = await updateTenantSettingsAction(tenantSlug, changes);
 
-    const week = openingHoursSchema.safeParse([...openingHours, ...carriedOver]);
+      if (!result.ok) {
+        setVerdict({ tone: 'danger', message: result.message });
+        return;
+      }
 
-    if (!week.success) {
-      setFailure(week.error.issues[0]?.message ?? 'Les horaires saisis sont invalides.');
-      return;
-    }
-
-    const changes: UpdateTenantRequest = {
-      name: values.name,
-      // `null` efface ; la chaîne vide n'est pas une valeur du contrat.
-      contactEmail: values.contactEmail === '' ? null : values.contactEmail,
-      contactPhone: values.contactPhone === '' ? null : values.contactPhone,
-      address: address === null ? null : address.data,
-      openingHours: [...week.data],
-    };
-
-    const result = await updateTenantSettingsAction(tenantSlug, changes);
-
-    if (!result.ok) {
-      setFailure(result.message);
-      return;
-    }
-
-    setSaved(true);
-    // La page est rendue côté serveur : sans ce rafraîchissement, elle
-    // continuerait d'afficher les valeurs d'avant l'enregistrement.
-    router.refresh();
-  });
+      setVerdict({ tone: 'success' });
+      // La page est rendue côté serveur : sans ce rafraîchissement, elle
+      // continuerait d'afficher les valeurs d'avant l'enregistrement.
+      router.refresh();
+    },
+    /*
+     * Soumission refusée par la validation des champs : rien n'a été envoyé, donc
+     * le verdict précédent ne vaut plus. Sans ce rappel, `handleSubmit` n'appelle
+     * pas du tout le premier — et un « Réglages enregistrés » d'un enregistrement
+     * antérieur resterait peint juste au-dessus du bouton, à affirmer le contraire
+     * de ce qui vient de se passer. Les erreurs de champ, elles, se lisent sous
+     * chaque champ.
+     */
+    () => {
+      setVerdict(null);
+    },
+  );
 
   return (
     <section aria-labelledby="reglages-titre">
       <h1 className="spa-admin__title" id="reglages-titre">
         Réglages de l’établissement
       </h1>
-
-      {saved ? (
-        <Notification tone="success" title="Réglages enregistrés">
-          <p>La page publique du salon affiche désormais ces informations.</p>
-        </Notification>
-      ) : null}
-
-      {failure === null ? null : (
-        <Notification tone="danger" title="L’enregistrement a échoué">
-          <p>{failure}</p>
-        </Notification>
-      )}
 
       <form className="spa-admin__content" onSubmit={(event) => void submit(event)} noValidate>
         <Field
@@ -477,6 +532,23 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
             {...register('contactPhone')}
           />
         </fieldset>
+
+        {verdict === null ? null : (
+          // Dernier enfant du formulaire avant le bouton : le verdict se lit là
+          // où le geste a eu lieu (#635). L'enveloppe porte les deux tons pour
+          // ne tenir qu'un seul point de focus, quel que soit celui qui s'affiche.
+          <div ref={verdictRef} tabIndex={-1}>
+            {verdict.tone === 'success' ? (
+              <Notification tone="success" title="Réglages enregistrés">
+                <p>La page publique du salon affiche désormais ces informations.</p>
+              </Notification>
+            ) : (
+              <Notification tone="danger" title="L’enregistrement a échoué">
+                <p>{verdict.message}</p>
+              </Notification>
+            )}
+          </div>
+        )}
 
         <Button
           type="submit"
