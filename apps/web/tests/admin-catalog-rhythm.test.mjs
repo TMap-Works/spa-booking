@@ -48,6 +48,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  declaration,
   readStyleSheet,
   rulesFor,
   stripComments,
@@ -69,21 +70,16 @@ const categoryManager = readFileSync(
 const preview = readFileSync(join(adminDir, 'catalogue', 'apercu', 'page.tsx'), 'utf8');
 
 /*
- * `rulesFor` et `withoutMediaQueries` viennent de `support/tokens.mjs` (#683).
+ * `rulesFor`, `withoutMediaQueries` et `declaration` viennent de
+ * `support/tokens.mjs` (#683, #713).
  * Le second n'est pas une commodité : sous 360 px, `admin/shell.css` redéclare
  * `.spa-admin__content` **avec** un `gap` et `.spa-admin__section` **sans**. Lue
  * sans filtre, la feuille joint les deux blocs en un seul, la gouttière de base
  * peut disparaître de `.spa-admin__content` — le palier la fournit à
  * l'assertion — et le défaut de #633 rouvre en vert sur l'écran large, celui que
- * la QA a mesuré. Le raisonnement complet est dans la documentation des deux
+ * la QA a mesuré. Le raisonnement complet est dans la documentation des trois
  * fonctions, qui se lisent ensemble.
  */
-
-/** La valeur d'une propriété dans un bloc de déclarations, ou `null`. */
-function declaration(body, property) {
-  const found = new RegExp(`(?:^|;|\\s)${property}\\s*:\\s*([^;]+)`).exec(body);
-  return found === null ? null : found[1].trim().replace(/\s+/g, ' ');
-}
 
 /**
  * Neutralise les commentaires d'un fichier TSX.

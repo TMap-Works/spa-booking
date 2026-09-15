@@ -52,6 +52,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  declaration,
   readStyleSheet,
   rulesFor,
   stripComments,
@@ -69,19 +70,14 @@ const shell = stripComments(readStyleSheet(styleSheetPath('admin/shell.css')));
 const checkout = stripComments(readStyleSheet(styleSheetPath('admin/checkout.css')));
 
 /*
- * `rulesFor` et `withoutMediaQueries` viennent de `support/tokens.mjs` (#683).
+ * `rulesFor`, `withoutMediaQueries` et `declaration` viennent de
+ * `support/tokens.mjs` (#683, #713).
  * Le second n'est pas une commodité : sous 60 rem, `admin/checkout.css` rend
  * `.spa-admin-checkout` à une seule colonne. Lue sans filtre, cette règle de
  * palier passe pour la déclaration de base et fait conclure que la colonne du
  * ticket n'est plus bornée. Le raisonnement complet est dans la documentation des
- * deux fonctions, qui se lisent ensemble.
+ * trois fonctions, qui se lisent ensemble.
  */
-
-/** La valeur d'une propriété dans un bloc de déclarations, ou `null`. */
-function declaration(body, property) {
-  const found = new RegExp(`(?:^|;|\\s)${property}\\s*:\\s*([^;]+)`).exec(body);
-  return found === null ? null : found[1].trim().replace(/\s+/g, ' ');
-}
 
 /**
  * Les deux façons d'écrire une largeur maximale en CSS.

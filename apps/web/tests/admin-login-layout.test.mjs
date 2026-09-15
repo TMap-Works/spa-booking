@@ -24,19 +24,16 @@
  * court pour refermer ce ticket, et c'est celui qui casse ailleurs — sans rien
  * afficher de faux sur l'écran qu'on regardait.
  *
- * Aucune dépendance : `node:test` et `node:assert` suffisent, et le lecteur de
- * règles vient de `support/tokens.mjs` (#683) — aucune suite n'en porte de copie.
- *
- * Le lecteur de **déclarations**, lui, est encore recopié ici : `admin-catalog-rhythm`
- * et `admin-form-width` en portent chacune la même version, et le faire monter dans
- * `support/tokens.mjs` toucherait ces deux suites, hors de l'empreinte de ce ticket.
- * C'est l'objet d'une issue de suivi ouverte avec cette PR.
+ * Aucune dépendance : `node:test` et `node:assert` suffisent, et les lecteurs de
+ * règles et de déclarations viennent tous deux de `support/tokens.mjs` (#683,
+ * #713) — cette suite n'en porte plus aucune copie.
  */
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  declaration,
   readStyleSheet,
   rulesFor,
   stripComments,
@@ -48,12 +45,6 @@ const shell = withoutMediaQueries(stripComments(readStyleSheet(styleSheetPath('a
 
 /** Le sélecteur qui centre, tel qu'`admin/shell.css` doit l'écrire. */
 const CENTRAGE = '.spa-admin__content > .spa-admin__section.spa-admin-form:only-child';
-
-/** La valeur d'une propriété dans un bloc de déclarations, ou `null`. */
-function declaration(body, property) {
-  const found = new RegExp(`(?:^|;|\\s)${property}\\s*:\\s*([^;]+)`).exec(body);
-  return found === null ? null : found[1].trim().replace(/\s+/g, ' ');
-}
 
 describe('La carte de connexion se centre dans sa zone de contenu', () => {
   it('pose une marge automatique sur la carte qui est tout l’écran', () => {
