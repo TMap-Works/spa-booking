@@ -22,7 +22,7 @@ import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
-import { WEEKDAY_LABELS } from '@/components/salon/opening-hours';
+import { weekdayLabel } from '@/components/salon/opening-hours';
 
 import { updateTenantSettingsAction } from '../actions';
 
@@ -77,6 +77,12 @@ import { updateTenantSettingsAction } from '../actions';
  * que le `<fieldset>` lui donnerait sans exposer la grille CSS aux réglages par
  * défaut de cet élément.
  *
+ * Le nom du jour vient de `weekdayLabel` (`components/salon/opening-hours.ts`),
+ * celui-là même dont la vitrine publique se sert : un seul point d'écriture pour
+ * la formulation et pour son repli, faute de quoi deux copies d'une branche que
+ * rien n'exerce finissent par diverger — et la divergence se lirait ici dans ce
+ * qu'un lecteur d'écran annonce (#652).
+ *
  * ## Le verdict se rend contre le bouton, pas en tête d'écran
  *
  * L'écran mesure environ 2 500 px : le nom, l'adresse, les 28 champs de la
@@ -114,23 +120,6 @@ const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 
 /** Plages éditables par jour — voir l'en-tête. */
 const RANGES_PER_DAY = 2;
-
-/**
- * Le jour tel qu'on l'écrit, avec un repli qui se voit.
- *
- * `noUncheckedIndexedAccess` rend la lecture du `Record` optionnelle, et c'est
- * heureux : un jour sans nom écrirait « undefined » dans le nom accessible d'un
- * champ, c'est-à-dire dans ce que le lecteur d'écran annonce.
- *
- * Ce repli répète, mot pour mot, celui de `groupOpeningHoursByDay` dans
- * `components/salon/opening-hours.ts`. La revue proposait de l'en extraire ; ce
- * fichier est hors de l'empreinte de ce ticket, et deux autres agents écrivent
- * dans `apps/web` en même temps. Le facteur commun part donc en issue de suivi
- * plutôt qu'en rallonge de diff.
- */
-function dayLabel(weekday: number): string {
-  return WEEKDAY_LABELS[weekday] ?? `Jour ${String(weekday)}`;
-}
 
 /**
  * Une borne horaire de la grille : vide, ou une heure murale.
@@ -457,7 +446,7 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
           </p>
           <div className="spa-admin-schedule">
             {WEEKDAYS.map((weekday, dayIndex) => {
-              const day = dayLabel(weekday);
+              const day = weekdayLabel(weekday);
               const dayLabelId = `tenant-hours-${String(weekday)}-jour`;
 
               return (
