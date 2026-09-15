@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
+import { NotFoundError } from '../../../common/errors';
 import { getTenantId } from '../../../common/tenant';
+import type { UsersService } from '../../identity/users.service';
 import {
   ServiceCategorySlugTakenError,
   ServiceStaffAlreadyAssignedError,
   ServiceSlugTakenError,
+  StaffProfileAlreadyExistsError,
 } from '../catalog.errors';
 import type {
   CatalogRepository,
@@ -13,6 +16,7 @@ import type {
   ServiceCategoryRecord,
   ServicePatch,
   ServiceRecord,
+  StaffPatch,
   StaffRecord,
 } from '../catalog.repository';
 
@@ -38,7 +42,13 @@ import type {
  *    de même `false` dans les deux cas ;
  * 5. les **filtres d'activité de la projection publique** — prestations actives,
  *    praticiens actifs. Ils sont dans le `select` du vrai et non chez l'appelant,
- *    pour que la donnée retirée du catalogue ne quitte jamais la base.
+ *    pour que la donnée retirée du catalogue ne quitte jamais la base ;
+ * 6. l'**unicité `(tenant_id, user_id)` de la fiche praticien** (#694), avec la
+ *    même erreur de domaine que la traduction du code Prisma `P2002` — c'est
+ *    elle qui interdit deux fiches pour la même personne.
+ *
+ * S'y ajoute `FakeUsersService`, en fin de fichier : le double du seul service
+ * qu'un autre module rend à celui-ci.
  */
 
 interface StoredCategory {
@@ -65,10 +75,20 @@ interface StoredService {
   isActive: boolean;
 }
 
+/**
+ * Une ligne de `staff`.
+ *
+ * `userId` y figure depuis #694 — il n'était pas nécessaire tant que la table
+ * n'était que lue. Il l'est devenu : c'est lui que porte l'unicité
+ * `(tenant_id, user_id)`, celle qui interdit deux fiches pour la même personne,
+ * et un double qui l'ignorerait ferait passer le test du 409 sans rien prouver.
+ */
 interface StoredStaff {
   tenantId: string;
   id: string;
+  userId: string;
   displayName: string;
+  bio: string | null;
   isActive: boolean;
 }
 
@@ -148,13 +168,17 @@ export class FakeCatalogRepository {
 
   public seedStaff(input: {
     tenantId: string;
+    userId?: string;
     displayName?: string;
+    bio?: string | null;
     isActive?: boolean;
   }): StoredStaff {
     const member: StoredStaff = {
       tenantId: input.tenantId,
       id: randomUUID(),
+      userId: input.userId ?? randomUUID(),
       displayName: input.displayName ?? 'Camille Rousseau',
+      bio: input.bio ?? null,
       isActive: input.isActive ?? true,
     };
     this.staff.push(member);
@@ -439,6 +463,51 @@ export class FakeCatalogRepository {
   }
 
   /**
+   * Reproduit l'unicité `(tenant_id, user_id)` et son 409 (#694).
+   *
+   * La fiche naît **active** — c'est le `@default(true)` de la colonne, et c'est
+   * le sens du geste : on crée une fiche pour qu'elle prenne des rendez-vous.
+   *
+   * Ce que le double ne reproduit pas, et n'a pas à reproduire : la clé
+   * étrangère composite `(tenant_id, user_id)` vers `users`. Le compte n'est pas
+   * vérifié ici, il l'est un cran plus haut par `UsersService` — c'est
+   * précisément le partage de responsabilité que le service documente.
+   */
+  public async createStaff(input: {
+    userId: string;
+    displayName: string;
+    bio: string | null;
+  }): Promise<StaffRecord> {
+    const tenantId = this.requireTenant();
+
+    if (
+      this.staff.some(
+        (candidate) => candidate.tenantId === tenantId && candidate.userId === input.userId,
+      )
+    ) {
+      throw new StaffProfileAlreadyExistsError(input.userId);
+    }
+
+    const member: StoredStaff = { tenantId, id: randomUUID(), isActive: true, ...input };
+    this.staff.push(member);
+    return this.toStaffRecord(member);
+  }
+
+  /** Reproduit la valeur de retour d'un `updateMany` scopé — `null` pour zéro ligne. */
+  public async updateStaff(id: string, patch: StaffPatch): Promise<StaffRecord | null> {
+    const tenantId = this.requireTenant();
+    const member = this.staff.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.id === id,
+    );
+    if (member === undefined) {
+      return null;
+    }
+
+    Object.assign(member, patch);
+    return this.toStaffRecord(member);
+  }
+
+  /**
    * Les praticiens affectés, **désactivés compris** — c'est ce que le vrai rend,
    * et ce que l'écran d'affectation doit montrer.
    *
@@ -536,5 +605,53 @@ export class FakeCatalogRepository {
   /** Vue typée pour l'injection dans les services du module. */
   public asRepository(): CatalogRepository {
     return this as unknown as CatalogRepository;
+  }
+}
+
+/**
+ * Le double de `UsersService`, réduit à ce que `catalog` lui demande : « ce
+ * compte est-il un compte **interne d'ici** ? » (#694).
+ *
+ * Il reproduit la seule propriété qui compte pour l'appelant — un 404 qui
+ * **confond** les trois refus : compte inconnu, compte de l'établissement
+ * voisin, fiche cliente. Les distinguer ferait de la création de fiche un oracle
+ * sur l'annuaire du voisin (tenant-isolation §4), et un double qui les
+ * distinguerait laisserait passer cette régression sans rien dire.
+ *
+ * Le tenant est lu dans la **portée courante**, comme le vrai le fait par son
+ * client Prisma scopé : un test qui pose un compte chez le voisin et l'appelle
+ * d'ici doit voir le même 404 que la production.
+ */
+export class FakeUsersService {
+  public readonly accounts: { tenantId: string; id: string; isClient: boolean }[] = [];
+
+  /** Pose un compte sans passer par la portée — un jeu d'essai, pas un appel. */
+  public seedAccount(input: { tenantId: string; isClient?: boolean }): { id: string } {
+    const account = { tenantId: input.tenantId, id: randomUUID(), isClient: input.isClient ?? false };
+    this.accounts.push(account);
+    return account;
+  }
+
+  public async byId(userId: string): Promise<{ id: string }> {
+    const tenantId = getTenantId();
+    if (tenantId === undefined) {
+      throw new Error('aucun tenant courant — le double refuse de lire sans portée');
+    }
+
+    const account = this.accounts.find(
+      (candidate) =>
+        candidate.tenantId === tenantId && candidate.id === userId && !candidate.isClient,
+    );
+
+    if (account === undefined) {
+      throw new NotFoundError('Compte introuvable.');
+    }
+
+    return { id: account.id };
+  }
+
+  /** Vue typée pour l'injection dans les services du module. */
+  public asService(): UsersService {
+    return this as unknown as UsersService;
   }
 }
