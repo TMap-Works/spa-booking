@@ -14,14 +14,9 @@
  * dans celle de la fiche prestation (#697) —, et toute frontière future en
  * aurait écrit une quatrième copie. Les deux gardes ci-dessous auraient alors
  * divergé à la première correction, chacune dans son coin, sans que rien ne le
- * signale.
- *
- * **Deux des trois sont branchées ici** : #703 a été écrite quand il n'y en
- * avait que deux, et la troisième (#697) est arrivée entre-temps, dans un
- * segment que ce ticket n'a pas ouvert — la migrer aurait fait sortir le diff de
- * son empreinte pendant qu'un lot de tickets tourne sur le dépôt, exactement ce
- * qui avait déjà fait annuler la correction une première fois. Elle suit dans
- * son propre ticket ; ce module est le seul endroit où cette lecture doit finir.
+ * signale. Les trois frontières sont branchées ici : les deux premières par
+ * #703, la dernière par #710. Ce module est le seul endroit où cette lecture
+ * doit vivre.
  *
  * ## Ce que la fonction rend
  *
@@ -46,9 +41,9 @@
  * 2. **`decodeURIComponent` est enveloppé.** Un échappement tronqué — `/salon%/…`
  *    — lève `URIError`. Non rattrapée dans une frontière `not-found`, l'exception
  *    remplacerait le 404 par la frontière d'erreur, c'est-à-dire précisément
- *    l'écran dont #627 et #696 cherchaient à sortir.
+ *    l'écran dont #627, #696 et #697 cherchaient à sortir.
  *
- * L'appelant décide quoi faire de `null` ; les deux frontières taisent leur lien
+ * L'appelant décide quoi faire de `null` ; les trois frontières taisent leur lien
  * plutôt que d'en fabriquer un au hasard — même arbitrage que
  * `readApiSessionCookie` dans `lib/api-client.ts`.
  */
