@@ -78,14 +78,24 @@ Pour **chaque écran du périmètre**, et pour aucun autre :
 Deux recherches, et tu sauras si le design system est tenu :
 
 ```bash
-grep -rnE "#[0-9a-fA-F]{3,8}|rgba?\(" apps/web/app apps/web/components --include=*.tsx
-grep -rn -- "--spa-palette-" apps/web/app apps/web/components --include=*.tsx
+grep -rnE "#[0-9a-fA-F]{6}\b|rgba?\(|hsla?\(" apps/web/app apps/web/components \
+  --include=*.tsx | grep -vE ":[0-9]+:\s*(\*|//|/\*)"
+grep -rn --include=*.tsx -e "--spa-palette-" apps/web/app apps/web/components
 ```
 
 La première trouve les couleurs littérales hors de `tokens.css` ; la seconde,
-les primitives employées là où un rôle sémantique était attendu. Vérifie ce que
-tu trouves avant de le rapporter : un fichier de jetons, un test, ou un
-commentaire ne sont pas des écarts.
+les primitives employées là où un rôle sémantique était attendu.
+
+Les deux commandes sont écrites ainsi pour une raison, et les abréger les casse.
+`{6}` et non `{3,8}` : ce dépôt cite ses numéros d'issue en commentaire, et
+`#630` est un code hexadécimal de trois chiffres parfaitement valide — sans la
+borne, tout l'historique du dépôt remonte comme autant de fausses couleurs. Le
+second `grep` exclut les lignes de commentaire pour la même raison. Et le `--`
+isolé devant `--spa-palette-` avalerait le `--include` qui suit : c'est `-e`
+qu'il faut.
+
+Vérifie malgré tout ce que tu trouves avant de le rapporter : un fichier de
+jetons, un test, ou une valeur calculée ne sont pas des écarts.
 
 De même pour les composants : avant de dire qu'un écran redessine une liste ou
 un bouton, ouvre `apps/web/components/ui/` et vérifie qu'il en existait un.

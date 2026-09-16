@@ -211,6 +211,20 @@ class Reference(unittest.TestCase):
             with self.subTest(reference=reference):
                 self.assertEqual(dt.valider_reference(reference), reference)
 
+    def test_les_chemins_du_depot_qui_ont_une_forme_hostile_passent(self):
+        # Trouvés en menant le premier audit, pas en relisant le code : une
+        # route Next porte des parenthèses et des crochets, et les maquettes du
+        # dépôt sont des `.html`. La garde les refusait — donc elle refusait des
+        # références justes, ce qui est le pire des deux défauts possibles.
+        for reference in (
+                "apps/web/app/(admin)/[tenantSlug]/admin/components/service-staff-panel.tsx",
+                "apps/web/mockups/admin/personnel.html"):
+            with self.subTest(reference=reference):
+                chemin = reference.split()[0]
+                if not (RACINE / chemin).is_file():   # pragma: no cover
+                    self.skipTest(f"{chemin} absent de ce worktree")
+                self.assertEqual(dt.valider_reference(reference), reference)
+
     def test_un_chemin_qui_n_existe_pas_est_refuse(self):
         # La forme la plus commode est aussi la plus facile à inventer.
         with self.assertRaises(dt.DesignError) as refus:
