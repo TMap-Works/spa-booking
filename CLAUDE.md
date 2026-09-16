@@ -150,11 +150,23 @@ réservation qui perd la progression au rafraîchissement, un tableau de bord vi
 sans amorce le premier jour, un prix qu'on ne découvre qu'après avoir choisi.
 C'est l'objet de l'**audit de conception**, `/design-audit` : l'agent
 `design-auditor` traverse les écrans d'un parcours et les confronte à une grille
-de neuf critères (`ds:parcours`, `ds:hierarchie`, `ds:systeme`, `ds:coherence`,
-`ds:libelles`, `ds:etats`, `ds:mobile`, `ds:a11y`, `ds:confiance`). Là où la QA
-exige un seuil, l'audit exige une **référence écrite** — une section du CDC, un
-ADR, une norme d'accessibilité, un fichier du dépôt qui existe : un constat sans
+de dix critères (`ds:parcours`, `ds:hierarchie`, `ds:systeme`, `ds:coherence`,
+`ds:libelles`, `ds:etats`, `ds:mobile`, `ds:a11y`, `ds:confiance`,
+`ds:standard`). Là où la QA exige un seuil, l'audit exige une **référence
+écrite** — une section du CDC, un ADR, une norme d'accessibilité, un fichier du
+dépôt qui existe, ou un motif du **benchmark du marché** : un constat sans
 référence est un goût personnel, et `scripts/design_tickets.py` le refuse.
+
+Le benchmark, [docs/design/benchmark/](docs/design/benchmark/README.md), est ce
+qui permet de juger chaque étape — vitrine, créneau, paiement, espace client,
+tableau de bord, planning, listes et filtres, encaissement, reporting — à
+l'aune de Booker et de ses concurrents (Fresha, Planity, Treatwell, Vagaro,
+Boulevard, Square…) sans que « comme chez Booker » devienne un alibi : un motif
+n'y est citable (`BM-CRENEAU-01`) que s'il est vu chez deux plateformes au
+moins, sourcé, daté et dans le périmètre MVP. L'auditeur peut en ouvrir les
+pages publiques pour comparer — jamais de compte, jamais de réservation réelle —
+et s'inspire du motif, jamais de l'identité d'une marque. Voir
+l'[ADR 0011](docs/adr/0011-standard-du-marche-reference-de-l-audit.md).
 
 Il ne corrige rien non plus : il ouvre des tickets `type:design` dans le jalon
 **`Design & UX`**, chacun avec sa référence, son attendu, son constaté, sa

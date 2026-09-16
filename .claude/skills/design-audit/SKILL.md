@@ -1,6 +1,6 @@
 ---
 name: design-audit
-description: Audit de conception UI/UX du produit — traverser chaque écran et chaque parcours, les confronter au cahier des charges, aux ADR et au design system, et ouvrir chaque écart comme ticket d'amélioration du jalon « Design & UX ». À charger avant `/design-audit`, ou dès qu'une tâche parle de conception, d'ergonomie, de parcours utilisateur, de design system, de cohérence entre écrans ou du jalon de reprise design.
+description: Audit de conception UI/UX du produit — traverser chaque écran et chaque parcours, les confronter au cahier des charges, aux ADR, au design system et au standard du marché (benchmark Booker, Fresha, Planity…), et ouvrir chaque écart comme ticket d'amélioration du jalon « Design & UX ». À charger avant `/design-audit`, ou dès qu'une tâche parle de conception, d'ergonomie, de parcours utilisateur, de design system, de cohérence entre écrans ou du jalon de reprise design.
 ---
 
 # Audit de conception
@@ -46,9 +46,14 @@ plus clair autrement » que personne ne sait clore. Un audit avec référence
 produit dix tickets dont chacun cite le document qu'il fait respecter.
 
 `scripts/design_tickets.py` **refuse** une référence qui ne pointe rien : une
-section du cahier des charges, un ADR, une norme d'accessibilité, ou un fichier
-du dépôt — et le fichier doit exister. Ce n'est pas une politesse de format,
-c'est le garde-fou.
+section du cahier des charges, un ADR, une norme d'accessibilité, un fichier
+du dépôt — et le fichier doit exister —, ou un **motif du benchmark du
+marché**, cité par son identifiant (`BM-CRENEAU-01`) — et le motif doit exister.
+Ce n'est pas une politesse de format, c'est le garde-fou.
+
+« Comme chez Booker » n'est pas une référence. Un motif écrit, sourcé chez deux
+plateformes au moins, en est une (§5.1). La différence entre les deux est
+exactement celle qui sépare un constat d'un goût.
 
 Corollaire : la grille est un contrat partagé. Les critères listés ici sont
 exactement les clés de `CRITERES` dans `scripts/design_tickets.py`, et un test
@@ -67,6 +72,14 @@ exactement les clés de `CRITERES` dans `scripts/design_tickets.py`, et un test
 | `ds:mobile` | la conception mobile d'abord du parcours client | à 360 px, l'action principale hors du premier écran ; un tableau à défilement horizontal là où une liste ferait ; une densité de bureau simplement rétrécie ; un formulaire dont le bouton de soumission ne s'atteint qu'en repliant le clavier | CDC §1.4, `.claude/skills/web-frontend/SKILL.md` §7 |
 | `ds:a11y` | ce qu'un choix de conception exclut | une information portée par la seule couleur ; un contrôle qui n'est atteignable qu'à la souris **par construction** (glisser-déposer sans équivalent clavier) ; un contraste de palette sous 4,5:1 sur du texte ; un ordre de lecture qui ne suit pas l'ordre visuel | WCAG 2.2 AA, `apps/web/tests/contrast.test.mjs` |
 | `ds:confiance` | ce qui permet de décider, avant de réserver ou de payer | prix ou durée absents au moment de choisir ; politique d'annulation invisible avant de confirmer ; identité et coordonnées du salon absentes de la page publique ; aucune trace visible de la réservation après confirmation | CDC §1.3 (enseignements de l'analyse de Booker), CDC §1.4 |
+| `ds:standard` | l'écran face à ce que les plateformes de référence font **à la même étape** | un motif du benchmark qui relève de cette étape est absent de l'écran ; ou il y est, mais rendu nettement en deçà — une information qu'il porte manque, un geste qu'il épargne est exigé, une finition qu'il montre fait défaut au point de se voir sur la capture | un motif `BM-…` de [docs/design/benchmark/](../../../docs/design/benchmark/README.md), cité par son identifiant — **seule** référence recevable pour ce critère |
+
+**`ds:standard` est le critère qui répond à la question « est-ce que ça
+tient la comparaison ? ».** Les neuf autres jugent le produit contre ce que le
+projet a écrit ; celui-ci le juge contre ce qu'une cliente a déjà vu ailleurs —
+chez Booker, Fresha, Planity — et qui fixe son attente avant même d'ouvrir
+l'écran. Il ne rend pas un écran « moderne » par décret : il fait respecter,
+motif par motif, ce que le marché a établi.
 
 **Le parcours client se juge à 360 px d'abord.** C'est le téléphone réel des
 clientes d'un salon, et c'est la surface qui génère le revenu (CDC §1.4). Un
@@ -104,6 +117,7 @@ rien : il donne un avis.
 | [docs/specs/cdc-fr.txt](../../../docs/specs/cdc-fr.txt) | §1.3 les enseignements de l'analyse de Booker — ce que le produit doit faire **mieux** ; §1.4 le périmètre figé et les parcours ; §2.3 les modules ; §2.4 le nom des entités, qui est le vocabulaire de l'interface |
 | [docs/adr/](../../../docs/adr/) | les décisions figées et leur raison — notamment 0002 (double réservation), 0006 (fuseaux horaires du tenant) : un écran qui les contredit n'est pas un débat de conception |
 | [docs/design/](../../../docs/design/) | les maquettes et les états déjà spécifiés — un écran qui s'en écarte se compare à ce qui était prévu |
+| [docs/design/benchmark/](../../../docs/design/benchmark/README.md) | **le standard du marché, étape par étape** — ce que Booker et ses concurrents montrent sur la vitrine, le choix du créneau, le paiement, l'espace client, le tableau de bord, le planning, les listes et leurs filtres, l'encaissement, le reporting. Lire le `README.md` (la carte écran → motifs), puis le fichier de chaque étape du périmètre (§5.1) |
 | [.claude/skills/web-frontend/SKILL.md](../web-frontend/SKILL.md) | les conventions du front : §3 le parcours de réservation, §4 les formulaires, §5 le calendrier admin, §6 le design system, §7 l'accessibilité |
 | [apps/web/styles/tokens.css](../../../apps/web/styles/tokens.css) | les deux couches de jetons — primitives et rôles sémantiques. Une couleur littérale hors de ce fichier est un écart, pas un choix |
 | [apps/web/components/ui/](../../../apps/web/components/ui/) | ce qui existe déjà et qu'on n'a pas à redessiner |
@@ -115,6 +129,58 @@ CI. Ce qu'elles couvrent est tenu. Ce qu'elles ne couvrent pas est exactement ce
 que l'audit doit regarder — et quand un écart relevé **est** mécaniquement
 vérifiable, la recommandation du ticket dit d'étendre la suite qui l'aurait
 attrapé.
+
+### 5.1 Le benchmark du marché — se mesurer à Booker sans le copier
+
+Le CDC nomme Booker comme « le standard du marché » (§1.2) et bâtit ses
+priorités sur son analyse (§1.3). Le benchmark de `docs/design/benchmark/` est
+la forme **opposable** de cette comparaison : pour chaque étape de l'app, les
+motifs que les plateformes de référence — Booker d'abord, puis Fresha, Planity,
+Treatwell, Vagaro, Boulevard, Square, Mindbody — ont en commun.
+
+Ce qui rend un motif citable, et que `test_design_tickets.Benchmark` vérifie :
+
+- il porte un **identifiant stable** — `BM-<ÉTAPE>-<nn>` ;
+- il est vu chez **deux plateformes au moins**, dont une au moins **observée**
+  (vue à l'écran) ou **documentée** (centre d'aide) — une page marketing seule
+  annonce, elle ne montre pas ;
+- chaque source est **datée** : un site évolue, et un motif sans date ne dit
+  pas s'il est encore vrai ;
+- il **relève du MVP** — un motif de cartes cadeaux, d'avis ou de fidélité n'a
+  pas d'identifiant, parce que son absence chez nous n'est pas un écart
+  (CDC §1.4).
+
+Comment s'en servir :
+
+1. **Avant chaque écran**, lire dans la carte du `README.md` les motifs de son
+   étape. Ce sont les questions à poser à cet écran — chaque motif porte une
+   ligne « À vérifier chez nous ».
+2. **Un motif absent ou rendu en deçà** fait un constat `ds:standard`, qui cite
+   l'identifiant. Un motif peut aussi appuyer un constat d'un autre critère — un
+   récapitulatif collant absent est `ds:hierarchie` autant que `ds:standard` :
+   choisir le critère qui dit le mieux **où va la main**, et citer le motif en
+   référence dans les deux cas.
+3. **La comparaison en direct est permise, et bornée.** Le `README.md` liste
+   des pages **publiques** de référence par étape. L'auditeur peut les ouvrir à
+   la même largeur que l'écran audité et joindre la capture comme seconde
+   preuve (« chez la référence »). Jamais de compte, jamais de connexion,
+   jamais de donnée personnelle saisie, jamais au-delà de l'étape qui précède
+   les coordonnées : on ne réserve pas chez un vrai salon pour auditer le
+   nôtre. Une bannière de cookies se **refuse**.
+4. **Ce que la page en direct montre et que le benchmark ne dit pas** n'est pas
+   un constat : c'est une ligne « benchmark à compléter » du compte rendu. Le
+   benchmark se complète dans un ticket dédié, jamais pendant l'audit — un
+   référentiel qu'on réécrit en jugeant ne juge plus rien.
+5. **Un motif que la page en direct contredit** — le site a changé — se
+   signale « benchmark à rafraîchir ». Le motif reste citable tant qu'une
+   autre de ses sources le porte encore.
+
+**S'inspirer du motif, jamais de l'identité.** La recommandation d'un ticket
+`ds:standard` décrit la **structure** à atteindre — ce qui s'affiche, dans quel
+ordre, avec quel geste — et la réalise avec les jetons de `tokens.css` et les
+composants de `components/ui/`. Elle ne reprend ni logo, ni illustration, ni
+palette, ni texte d'une marque tierce : un écran qui ressemble à Fresha n'est
+pas un écran qui tient la comparaison, c'est une contrefaçon.
 
 ## 6. La frontière avec `/qa`
 
@@ -133,6 +199,8 @@ référence est une amélioration.**
 | l'écran d'erreur ne propose aucune reprise | `/design-audit` — `ds:etats` | Design & UX |
 | deux boutons de même rôle rendus avec deux styles | `/qa` — `fe:design` | Bug & correction |
 | deux écrans qui nomment le même objet de deux façons | `/design-audit` — `ds:coherence` | Design & UX |
+| la liste des clients n'a ni recherche ni filtre, quand les références en ont | `/design-audit` — `ds:standard`, motif cité | Design & UX |
+| l'écran « fait daté », sans motif du benchmark à citer | personne | écarté, dit dans le compte rendu |
 
 En cas de doute, la question qui tranche : **puis-je citer un seuil chiffré ?**
 Si oui, c'est un bug. Sinon, puis-je citer un document ? Si oui, c'est un écart.
@@ -153,8 +221,9 @@ son compte rendu et n'ouvre rien.
 Six temps. `/design-audit` les orchestre ; cette section dit ce qu'ils valent.
 
 1. **Le référentiel, avant les écrans.** Lire §5 — au minimum le CDC §1.3 et
-   §1.4, et la skill `web-frontend`. Un audit qui regarde d'abord et lit ensuite
-   trouve ce qu'il avait déjà en tête.
+   §1.4, la skill `web-frontend`, et **les fichiers du benchmark des étapes du
+   périmètre** (§5.1). Un audit qui regarde d'abord et lit ensuite trouve ce
+   qu'il avait déjà en tête.
 2. **Le périmètre.** Un parcours (réservation client, back-office, comptoir,
    compte client) ou un module. Un périmètre non écrit est un périmètre qui
    dérive, et un audit « complet » finit par ne rien ouvrir d'exploitable.
@@ -167,7 +236,10 @@ Six temps. `/design-audit` les orchestre ; cette section dit ce qu'ils valent.
    `qa-backend` de front, les agents d'audit se partagent **un seul navigateur
    Playwright** : deux agents lancés ensemble se volent la page en pleine
    traversée. Découper le périmètre en trois ou quatre parcours et les enchaîner
-   coûte du temps, pas de la qualité. Ils rendent des **constats**, pas des
+   coûte du temps, pas de la qualité. Chaque agent reçoit la liste des motifs
+   `BM-…` des écrans qu'il traverse, et peut ouvrir les pages publiques de
+   référence de ces étapes (§5.1, point 3) — dans le même navigateur, donc
+   toujours dans son propre tour. Ils rendent des **constats**, pas des
    tickets.
 5. **Le tri.** Chaque constat est confronté à la grille, à la référence, et aux
    voisins déjà ouverts. Ce qui n'entre dans aucune case est **écarté**, et le
@@ -187,6 +259,11 @@ principale se perd, si.
   aucun ne ressort », jamais « capture de la page ».
 - Pour un constat `ds:coherence`, il faut **deux** captures — l'écart n'est
   visible que par comparaison. `--capture` est répétable.
+- Pour un constat `ds:standard`, la capture de notre écran est obligatoire ; la
+  **capture de référence** — la page publique d'une plateforme du benchmark, à
+  la même largeur — est recommandée, et sa légende nomme la plateforme et la
+  date : « Fresha, 16/09/2026, 390 px — le récapitulatif reste sous le pouce ».
+  Elle sert de preuve interne et de direction, jamais de maquette à reproduire.
 - Les captures partent sur la branche `qa-captures`, sous
   `docs/design/captures/`, séparées de celles de la QA. La branche ne merge
   jamais et ne porte aucun code.
@@ -265,6 +342,15 @@ ticket.
   un projet. Un ticket d'audit se corrige en une branche.
 - **Un goût sans référence** — « je mettrais plutôt du bleu », « ce serait plus
   moderne en cartes ». C'est la règle du §2, et c'est celle qui se relâche.
+- **« Comme chez Booker », sans motif.** Ce qu'une plateforme fait et que le
+  benchmark n'a pas écrit — ou n'a vu que chez elle — n'est pas un standard.
+  Le dire sous « benchmark à compléter », avec l'URL et ce qui a été vu.
+- **Une fonctionnalité du concurrent hors MVP** — avis, cartes cadeaux,
+  fidélité, place de marché. Le benchmark ne leur donne pas d'identifiant, et
+  c'est voulu (CDC §1.4).
+- **Une ressemblance recherchée pour elle-même.** « Reprendre la mise en page de
+  Fresha » n'est pas une recommandation : la recommandation décrit la structure
+  à atteindre avec notre design system (§5.1).
 - **Un seuil franchi** — c'est un bug (§6).
 - **Ce qu'une suite de `apps/web/tests/` garde déjà.** Le ticket serait rouge
   avant d'être lu.
@@ -281,6 +367,9 @@ ticket.
 | Playwright sans navigateur | binaire jamais installé | `npx playwright install chromium` |
 | l'écran visé n'existe pas encore | `apps/web` sert alors `apps/web/mockups/` | auditer la maquette, et **le dire** dans le constat — un écart de maquette n'a pas la même valeur qu'un écart d'application |
 | `référence irrecevable` | le chemin cité n'existe pas | vérifier le chemin, ou citer le CDC — la garde a fait son travail |
+| `Motif(s) absent(s) du benchmark` | identifiant mal recopié, ou motif inventé | `grep -rn '^### BM-' docs/design/benchmark` ; si le motif n'existe vraiment pas, le constat va sous « benchmark à compléter » |
+| `référence irrecevable pour ds:standard` | un constat `ds:standard` qui cite le CDC ou un fichier | citer le motif ; s'il n'y en a pas, changer de critère ou écarter |
+| la page de référence exige un compte, ou bloque le robot | les back-offices des références sont privés | s'en tenir au benchmark écrit, qui s'appuie pour eux sur les centres d'aide — ne jamais créer de compte |
 
 Appliquer, relancer, poursuivre. Un audit qui s'arrête sur une dépendance
 éteinte n'a rien regardé.
@@ -291,9 +380,14 @@ Appliquer, relancer, poursuivre. Un audit qui s'arrête sur une dépendance
   refusés par les réglages du dépôt : l'espacement, le contraste et les tailles
   se jugent **à l'œil sur une capture**. Un constat doit donc montrer un écart
   visible, jamais un écart supposé de deux pixels.
-- **Le jugement est le juge.** Aucune de ces neuf lignes ne se mesure : elles se
+- **Le jugement est le juge.** Aucune de ces dix lignes ne se mesure : elles se
   constatent, et c'est pourquoi la référence est obligatoire. La grille ne
   remplace pas le jugement, elle l'oblige à se justifier.
+- **Le benchmark vieillit.** Chaque source est datée, mais personne ne la relit
+  d'office : ce sont les lignes « benchmark à rafraîchir » des comptes rendus
+  qui disent quand le reprendre. Et les back-offices des références ne sont
+  **pas observés** — ils sont documentés par leurs centres d'aide, qui décrivent
+  ce qu'un écran fait mieux que ce à quoi il ressemble.
 - **L'audit ne voit que ce qui est rendu.** Un écran derrière un état que le jeu
   d'essai ne produit pas — un établissement sans praticien, un paiement refusé —
   n'est pas audité tant qu'on n'a pas su l'atteindre. Le dire.
