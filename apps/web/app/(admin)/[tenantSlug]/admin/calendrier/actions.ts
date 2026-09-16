@@ -18,8 +18,8 @@
  *
  * ## Les écritures du comptoir (#50)
  *
- * Elles ont rejoint ce module : poser un rendez-vous, le déplacer, le solder, et
- * retrouver ou créer la fiche cliente au passage. Toutes suivent la même
+ * Elles ont rejoint ce module : poser un rendez-vous, le déplacer, le solder,
+ * l'annuler (#754), et retrouver ou créer la fiche cliente au passage. Toutes suivent la même
  * discipline que la lecture — l'établissement ne circule jamais, `tenantSlug` ne
  * sert qu'à retrouver le cookie de session, et le corps est **revalidé ici**
  * avec le schéma de `@spa/shared` avant d'atteindre l'API (web-frontend §4).
@@ -32,6 +32,7 @@
 
 import {
   availabilityQuerySchema,
+  cancelAppointmentRequestSchema,
   changeAppointmentStatusRequestSchema,
   createAppointmentRequestSchema,
   createCustomerRequestSchema,
@@ -41,6 +42,7 @@ import {
   uuidSchema,
   type Appointment,
   type AvailabilitySlot,
+  type BookedAppointment,
   type Customer,
   type CustomerSummary,
   // Aliasé : `Notification` est aussi le composant du design system, et le nom
@@ -50,6 +52,7 @@ import {
 } from '@spa/shared';
 
 import {
+  cancelDeskAppointment,
   changeAppointmentStatus,
   createAppointment,
   createCustomer,
@@ -453,6 +456,69 @@ export async function markDeskAppointmentStatusAction(
     return {
       ok: true,
       data: await changeAppointmentStatus(access.token, appointmentId, parsed.data),
+    };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * Annule un rendez-vous depuis le comptoir — #754.
+ *
+ * ## Pourquoi elle ne passe pas par `markDeskAppointmentStatusAction`
+ *
+ * `cancelled` n'est pas un statut que `POST /appointments/:id/status` accepte :
+ * l'annulation a sa propre route, parce qu'elle a son propre corps — un motif —
+ * et parce qu'elle inscrit **qui** l'a décidée. Le passage par la route de
+ * statut aurait perdu les deux.
+ *
+ * ## Ce que cette action ne transmet pas, et ne doit pas transmettre
+ *
+ * `cancelledBy`. Il se déduit de la porte, côté API : cette route-ci, gardée au
+ * seuil `STAFF`, inscrit `STAFF` ; la route publique du tunnel inscrit `CLIENT`.
+ * Le `.strict()` de `cancelAppointmentRequestSchema` refuserait de toute façon
+ * le champ — c'est ce qui empêche un écran d'attribuer au salon une annulation
+ * qu'il n'a pas décidée, donc de fausser le seul chiffre que cette colonne
+ * existe pour établir (CDC §1.4).
+ *
+ * Le motif, lui, est **facultatif** : l'exiger ferait renoncer à l'annulation au
+ * téléphone, donc laisserait des créneaux fantômes bloqués. Il est revalidé ici
+ * avec le schéma partagé avant d'atteindre l'API — le front valide pour le
+ * confort, l'API pour la sécurité (web-frontend §4).
+ *
+ * ## Ce qu'elle rend, et pourquoi ce n'est pas un `Appointment`
+ *
+ * La route d'annulation rend un `BookedAppointment` — des identifiants nus et
+ * `cancelledBy` —, jamais la ligne d'agenda à *summaries* imbriqués. Le tiroir
+ * n'en consomme rien : il recharge la période et se referme. Le type est rendu
+ * tel quel plutôt que remodelé, parce qu'un remodelage ici inventerait des noms
+ * que la réponse ne porte pas.
+ */
+export async function cancelDeskAppointmentAction(
+  tenantSlug: string,
+  appointmentId: string,
+  payload: unknown,
+): Promise<AdminActionResult<BookedAppointment>> {
+  const access = await deskToken(tenantSlug);
+
+  if ('refusal' in access) {
+    return access.refusal;
+  }
+
+  if (!uuidSchema.safeParse(appointmentId).success) {
+    return invalid('Rendez-vous inconnu.');
+  }
+
+  const parsed = cancelAppointmentRequestSchema.safeParse(payload);
+
+  if (!parsed.success) {
+    return invalid(parsed.error.issues[0]?.message ?? 'Le motif d’annulation est invalide.');
+  }
+
+  try {
+    return {
+      ok: true,
+      data: await cancelDeskAppointment(access.token, appointmentId, parsed.data),
     };
   } catch (error) {
     return failure(error);

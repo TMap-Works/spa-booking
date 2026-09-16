@@ -117,6 +117,21 @@
   gap: var(--spa-space-2);
 }
 
+/* --- Annulation au comptoir — #754 ----------------------------------------- */
+
+/*
+ * La question et le motif forment un bloc, et pas deux éléments voisins du
+ * corps : le `gap` du tiroir est celui qui sépare des sections, et il aurait
+ * détaché le champ de la question à laquelle il répond. Même écart que le bloc
+ * de conflit ci-dessus, pour la même raison — une notification et ce qu'elle
+ * commande se tiennent.
+ */
+.spa-admin-appointment__cancel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+}
+
 /* --- État de chargement ---------------------------------------------------- */
 
 /*

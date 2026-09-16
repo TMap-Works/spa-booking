@@ -440,9 +440,12 @@ export interface DeskStatusAction {
 }
 
 /**
- * Libellés des transitions que le comptoir déclenche. `cancelled` n'y est pas :
- * l'annulation a sa propre route (`POST /appointments/:id/cancel`, #40), son
- * propre corps — un motif — et sa propre confirmation.
+ * Libellés des transitions que le comptoir déclenche par la route de statut.
+ * `cancelled` n'y est pas, et n'a pas à y être : l'annulation a sa propre route
+ * (`POST /appointments/:id/cancel`, #40), son propre corps — un motif — et sa
+ * propre confirmation. Ce sont ces trois choses que le pied du tiroir rend
+ * désormais (#754), par `isCancellable` et `cancelDeskAppointmentAction` ; ce
+ * qui manquait n'était pas une entrée de plus dans cette table, c'était l'écran.
  */
 const DESK_STATUS_LABELS: Partial<Record<AppointmentStatus, DeskStatusAction>> = {
   completed: { status: 'completed', label: 'Marquer honoré', variant: 'neutral' },
@@ -464,9 +467,72 @@ export function deskStatusActions(status: AppointmentStatus): readonly DeskStatu
     .filter((action): action is DeskStatusAction => action !== undefined);
 }
 
-/** `true` si le rendez-vous peut encore être déplacé — un soldé ne bouge plus. */
-export function isReschedulable(status: AppointmentStatus): boolean {
+/**
+ * `true` si le rendez-vous peut encore être annulé par le salon — #754.
+ *
+ * La table du contrat partagé tranche, et elle seule : un rendez-vous terminé,
+ * déjà annulé ou marqué non présenté est dans un état **terminal**, et l'API le
+ * refuserait en `INVALID_STATE_TRANSITION`. Offrir le bouton quand même serait
+ * offrir un 422 — un bouton qui mène à un refus est un bouton qui ment, c'est la
+ * règle que `deskStatusActions` applique déjà à ses deux transitions.
+ */
+export function isCancellable(status: AppointmentStatus): boolean {
   return canTransitionAppointment(status, 'cancelled');
+}
+
+/**
+ * `true` si le rendez-vous peut encore être déplacé — un soldé ne bouge plus.
+ *
+ * C'est exactement la même condition que l'annulation, et ce n'est pas une
+ * coïncidence : côté serveur, un report **est** une annulation suivie d'une
+ * création liée, dans une seule transaction (booking-engine §5). Ce que le
+ * cycle de vie refuse d'annuler, il refuse donc de le déplacer.
+ */
+export function isReschedulable(status: AppointmentStatus): boolean {
+  return isCancellable(status);
+}
+
+// ---------------------------------------------------------------------------
+// L'annulation au comptoir — #754
+// ---------------------------------------------------------------------------
+
+/**
+ * La question posée avant d'annuler.
+ *
+ * Elle dit ce que le geste **fait**, et non ce qu'il s'appelle : le créneau
+ * repart à la réservation dans la seconde, et le statut `cancelled` est
+ * terminal. C'est ce que web-frontend §5 exige des actions destructives —
+ * confirmation, et réversibilité annoncée telle qu'elle est. Ici elle est nulle,
+ * et le dire vaut mieux que de le laisser découvrir : reposer le rendez-vous
+ * suppose que le créneau soit encore libre.
+ */
+export const DESK_CANCEL_QUESTION =
+  'Annuler ce rendez-vous ? Le créneau repart immédiatement à la réservation, et l’annulation ne se défait pas.';
+
+/** Ce que le motif est — et ce qu'il n'est pas. */
+export const DESK_CANCEL_REASON_HINT =
+  'Facultatif, et jamais montré à la cliente : c’est une note interne au salon.';
+
+/** Ce qu'on montre quand deux postes annulent le même rendez-vous à la fois. */
+export const DESK_CANCEL_CONFLICT_MESSAGE =
+  'Ce rendez-vous vient d’être modifié depuis un autre poste : rouvrez-le pour voir son état avant de réessayer.';
+
+/**
+ * Le message à afficher pour un refus d'**annulation** — #754.
+ *
+ * `deskFailureMessage` ne convient pas ici, et ses deux traductions le disent :
+ * il rend `CONFLICT` en « reprenez une heure dans la liste », alors qu'une
+ * annulation n'a aucun créneau à reprendre — le 409 y désigne deux annulations
+ * concurrentes (`appointments.service.ts`, `ConflictError`) ; et il rend
+ * `NOT_FOUND` en « l'API ne sert pas encore cette écriture », alors que
+ * `POST /appointments/:id/cancel` est servie depuis #40 — le 404 y désigne un
+ * rendez-vous introuvable, ou d'un autre établissement.
+ *
+ * Tout le reste se dit avec le message de l'API, qui nomme déjà le refus —
+ * `INVALID_STATE_TRANSITION` compris.
+ */
+export function deskCancelFailureMessage(code: string, message: string): string {
+  return code === ERROR_CODES.CONFLICT ? DESK_CANCEL_CONFLICT_MESSAGE : message;
 }
 
 // ---------------------------------------------------------------------------
