@@ -11,6 +11,7 @@ import type { CalendarDate } from '@spa/shared';
 
 import { DEFAULT_CALENDAR_VIEW, type CalendarView } from '@/lib/admin/calendar-range';
 import { DEFAULT_REPORT_PERIOD } from '@/lib/admin/reporting-window';
+import { sitePath } from '@/lib/site-path';
 
 /** Racine du back-office d'un établissement. */
 export function adminPath(tenantSlug: string): string {
@@ -225,6 +226,11 @@ function adminSessionPath(tenantSlug: string): string {
  * 3. **la racine `/{slug}/admin`**, qui ne sert aucune page : y renvoyer
  *    transformerait un renouvellement réussi en 404.
  *
+ * Les trois se jugent sur le chemin **normalisé** (#856), et c'est lui qui est
+ * rendu : `/{slug}/admin/../..//exemple.test` porte le bon préfixe et se résout
+ * pourtant en `//exemple.test`, un autre domaine dans un `Location` relatif.
+ * Voir `sitePath`.
+ *
  * Le repli est le planning : l'écran qu'un comptoir garde ouvert, et le seul
  * qu'on puisse ouvrir sans rien savoir de l'intention initiale.
  */
@@ -233,16 +239,18 @@ export function safeAdminNext(candidate: string | null, tenantSlug: string): str
   const root = adminPath(tenantSlug);
   const session = adminSessionPath(tenantSlug);
 
-  if (candidate === null || !candidate.startsWith('/') || candidate.startsWith('//')) {
+  const path = candidate === null ? null : sitePath(candidate);
+
+  if (path === null) {
     return fallback;
   }
 
-  if (candidate === session || candidate.startsWith(`${session}/`) || candidate.startsWith(`${session}?`)) {
+  if (path === session || path.startsWith(`${session}/`) || path.startsWith(`${session}?`)) {
     return fallback;
   }
 
   // Seuls les **descendants** de la racine passent : `/{slug}/admin` et
   // `/{slug}/admin?quoi-que-ce-soit` désignent le même segment sans page, et
   // les accepter ferait finir un renouvellement réussi sur un 404.
-  return candidate.startsWith(`${root}/`) ? candidate : fallback;
+  return path.startsWith(`${root}/`) ? path : fallback;
 }

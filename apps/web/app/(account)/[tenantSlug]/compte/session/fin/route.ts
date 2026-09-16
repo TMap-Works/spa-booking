@@ -1,6 +1,7 @@
-import { type NextRequest, NextResponse } from 'next/server';
+import type { NextRequest, NextResponse } from 'next/server';
 
 import { logoutSession } from '@/lib/api-client';
+import { redirectWithinSite } from '@/lib/relative-redirect';
 
 import { loginPath } from '../../paths';
 import { clearSessionCookies, readRefreshToken } from '../../session';
@@ -23,7 +24,7 @@ import { clearSessionCookies, readRefreshToken } from '../../session';
 export const dynamic = 'force-dynamic';
 
 export async function GET(
-  request: NextRequest,
+  _request: NextRequest,
   context: { params: Promise<{ tenantSlug: string }> },
 ): Promise<NextResponse> {
   const { tenantSlug } = await context.params;
@@ -38,9 +39,9 @@ export async function GET(
     }
   }
 
-  const response = NextResponse.redirect(
-    new URL(loginPath(tenantSlug, 'session-expiree'), request.nextUrl),
-  );
+  // Relative, comme les routes de renouvellement : l'hôte de `request.nextUrl`
+  // est l'adresse d'écoute du serveur, pas celle du navigateur (#856).
+  const response = redirectWithinSite(loginPath(tenantSlug, 'session-expiree'));
   clearSessionCookies(response.cookies, tenantSlug);
   return response;
 }

@@ -358,6 +358,10 @@ describe('retour après renouvellement de session', () => {
     '//exemple.test/vol',
     '/autre-salon/admin/calendrier',
     '/maison-lotus/compte',
+    // Le bon préfixe, puis ailleurs une fois les `..` résolus (#856).
+    `/${SLUG}/admin/../..//exemple.test/vol`,
+    `/${SLUG}/admin/%2e%2e/%2e%2e//exemple.test/vol`,
+    `/${SLUG}/admin/../../autre-salon/admin/calendrier`,
     null,
   ]) {
     it(`refuse « ${String(hostile)} » et retombe sur le planning`, () => {
@@ -368,6 +372,18 @@ describe('retour après renouvellement de session', () => {
       expect(safeAdminNext(hostile, SLUG)).toBe(`/${SLUG}/admin/calendrier`);
     });
   }
+
+  it('rend la destination normalisée et encodée — #856', () => {
+    // Le `next` arrive décodé de la chaîne de requête : c'est la forme encodée
+    // qui part dans le `Location`, et les `..` restés dans le back-office sont
+    // résolus plutôt que recopiés.
+    expect(safeAdminNext(`/${SLUG}/admin/clients?q=é`, SLUG)).toBe(
+      `/${SLUG}/admin/clients?q=%C3%A9`,
+    );
+    expect(safeAdminNext(`/${SLUG}/admin/personnel/../reglages`, SLUG)).toBe(
+      `/${SLUG}/admin/reglages`,
+    );
+  });
 
   it('refuse de se renvoyer sur les routes de session', () => {
     // Chaque tour réussirait : rien n'arrêterait la boucle.
