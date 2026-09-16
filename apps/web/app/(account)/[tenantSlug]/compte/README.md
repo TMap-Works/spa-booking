@@ -42,6 +42,32 @@ précisément pourquoi cette moitié ne peut pas s'intituler « Rendez-vous pass
 elle annoncerait un critère de créneau là où elle range par statut (#744,
 CDC §2.4).
 
+## Un état vide porte toujours une sortie
+
+`docs/design/appointments/states.md` § « Règles générales » : *« Vide : toujours
+accompagné d'une explication **et d'au moins une action** pour sortir de
+l'impasse. Un cul-de-sac muet fait abandonner. »*
+
+C'est sur un compte neuf que la règle se joue — les deux moitiés sont vides en
+même temps, et à 360 px le lien de pied de page se trouve **sous** les deux
+blocs. L'action est donc un paramètre **obligatoire** d'`AppointmentList` : une
+moitié ne peut pas réintroduire le cul-de-sac par omission (#745).
+
+| Moitié vide | Sortie | Rôle |
+|---|---|---|
+| Rendez-vous à venir | « Prendre rendez-vous » → `/{slug}/reservation` | accent — c'est elle qui commande l'écran |
+| Historique | « Découvrir les prestations » → `/{slug}` | neutre — on n'archive rien sans avoir choisi un soin |
+
+Deux sorties distinctes plutôt que deux exemplaires du même bouton : empilés,
+deux boutons primaires ne hiérarchisent plus rien. Les liens portent les
+primitives `.spa-button` du design system dans `.spa-empty-state`, qui est déjà
+une colonne centrée — aucune classe nouvelle, donc aucun style à maintenir en
+double (même motif que l'état vide du planning, #788).
+
+L'écran de report a le sien à part : quand la fenêtre du calendrier est déjà au
+maximum, « Voir plus de jours » n'a plus rien à élargir, et c'est
+« Renoncer au report » — juste sous le bloc — qui reste la sortie.
+
 ## La session ne touche jamais le navigateur
 
 C'est le cinquième critère de #47, et il est tenu par construction plutôt que par

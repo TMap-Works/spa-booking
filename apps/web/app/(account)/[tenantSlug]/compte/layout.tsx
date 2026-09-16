@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 
 import { ApiClientError } from '@/lib/api-client';
 
-import { accountPath } from './paths';
+import { accountPath, bookingPath } from './paths';
 import { accountTenant } from './tenant';
 
 /**
@@ -75,7 +75,7 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
         {children}
       </main>
       <footer className="spa-account__footer">
-        <a className="spa-account__back" href={`/${encodeURIComponent(tenantSlug)}/reservation`}>
+        <a className="spa-account__back" href={bookingPath(tenantSlug)}>
           Prendre un nouveau rendez-vous
         </a>
         <a className="spa-account__back" href={accountPath(tenantSlug)}>
