@@ -660,6 +660,25 @@
   );
 }
 
+/*
+ * Le trait d'heure courante traverse aussi le temps indisponible : l'heure qu'il
+ * est tombe dans une fermeture chaque midi, chaque soir et tout un dimanche, et
+ * un planning sans repère y perd le regard. `--now-offset` porte ici sur la
+ * hauteur du bloc fusionné, pas sur une demi-heure — voir `CalendarClosedCell`.
+ */
+.spa-admin-calendar__blocked--now {
+  position: relative;
+}
+
+.spa-admin-calendar__blocked--now::before {
+  content: '';
+  position: absolute;
+  inset-inline: 0;
+  inset-block-start: var(--now-offset, 0);
+  block-size: 2px;
+  background-color: var(--spa-color-now);
+}
+
 .spa-admin-calendar__blocked-label {
   font-size: var(--spa-font-size-xs);
   color: var(--spa-color-text-muted);
