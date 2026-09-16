@@ -1,9 +1,11 @@
+import { ERROR_CODES } from '@spa/shared';
 import type { ReactElement } from 'react';
 import { redirect } from 'next/navigation';
 
 import { Notification } from '@/components/ui/notification';
 import { ApiClientError } from '@/lib/api-client';
 
+import { AdminRetryButton } from './components/admin-retry-button';
 import { adminLoginPath, adminSessionRefreshPath } from './paths';
 import { readAdminAccessToken, readAdminRefreshToken } from './session';
 
@@ -74,6 +76,28 @@ export async function requireAdminAccessToken(
 }
 
 /**
+ * Ce que le back-office dit d'une API injoignable — et qui n'est pas ce que le
+ * client public en dit (#755).
+ *
+ * `lib/api-client.ts` construit, pour une coupure réseau, un
+ * `SERVICE_UNAVAILABLE` dont le message nomme « le service de réservation ». Il
+ * est juste devant un visiteur en train de réserver ; il ne l'est plus sur
+ * l'encaissement, le planning ou les réglages, où il fait chercher à l'opérateur
+ * ce que la réservation vient faire dans son écran de comptoir.
+ *
+ * C'est le **`code`** qui est lu et non le message, comme le veulent
+ * `web-frontend` §2 et `docs/design/appointments/states.md` : le message est ce
+ * qui change d'une version d'API à l'autre, le code est ce qui tient.
+ */
+const UNREACHABLE_MESSAGE =
+  'Le serveur du salon est momentanément injoignable. Réessayez dans un instant.';
+
+/** Le texte à afficher pour cet échec — le nôtre s'il s'agit d'une panne. */
+function failureMessage(error: ApiClientError): string {
+  return error.code === ERROR_CODES.SERVICE_UNAVAILABLE ? UNREACHABLE_MESSAGE : error.message;
+}
+
+/**
  * Ce qu'une page affiche quand un chargement de l'API échoue.
  *
  * Trois issues, et aucune ne boucle :
@@ -85,11 +109,24 @@ export async function requireAdminAccessToken(
  *    une raison de renvoyer à la connexion : se reconnecter avec le même compte
  *    donnerait le même refus, et la boucle serait sans fin. L'écran le dit, et
  *    s'arrête là ;
- * 3. **le reste** — le message de l'API, tel quel.
+ * 3. **le reste** — le message de l'API, et **une reprise**.
  *
  * Ce qui n'est pas une `ApiClientError` est **relancé** : une panne de rendu
  * n'est pas un refus métier, et l'avaler la ferait passer pour une donnée
  * manquante au lieu de remonter à la frontière d'erreur de Next.
+ *
+ * ## Pourquoi « Réessayer » sur la troisième branche, et sur elle seule (#755)
+ *
+ * `docs/design/appointments/states.md`, « Règles générales », exige d'un état
+ * d'erreur un message compréhensible **et** une action « Réessayer ». L'encart
+ * n'en avait aucune : l'écran de comptoir se réduisait à un pavé rouge, et le
+ * seul recours de l'opérateur était la barre d'adresse.
+ *
+ * La branche 403, elle, n'en reçoit pas — et ce n'est pas un oubli. Réessayer un
+ * refus de rôle rejoue le même appel avec le même compte, pour le même refus :
+ * le bouton promettrait une issue qui n'existe pas. C'est la raison même pour
+ * laquelle cette branche ne repart pas vers la connexion, deux paragraphes plus
+ * haut.
  */
 export function adminLoadFailure(
   error: unknown,
@@ -114,7 +151,8 @@ export function adminLoadFailure(
 
   return (
     <Notification tone="danger" title={options.failedTitle}>
-      <p>{error.message}</p>
+      <p>{failureMessage(error)}</p>
+      <AdminRetryButton />
     </Notification>
   );
 }
