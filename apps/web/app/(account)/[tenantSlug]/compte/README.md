@@ -16,7 +16,7 @@ jamais.
 |---|---|---|
 | `/{slug}/compte/connexion` | non | ouvre une session |
 | `/{slug}/compte/inscription` | non | crée le compte et ouvre la session dans la foulée |
-| `/{slug}/compte` | oui | les rendez-vous à venir et passés, avec report et annulation |
+| `/{slug}/compte` | oui | les rendez-vous à venir et l'historique, avec report et annulation |
 | `/{slug}/compte/coordonnees` | oui | prénom, nom, téléphone |
 | `/{slug}/compte/rendez-vous/{id}/report` | oui | choix d'un nouveau créneau |
 | `/{slug}/compte/session/refresh` | — | renouvelle la session et renvoie d'où l'on vient |
@@ -28,6 +28,19 @@ Router, et une page peut être servie sans que son parent ait été réévalué.
 deux écrans ouverts s'en passent délibérément, plutôt que d'être exemptés par une
 liste tenue ailleurs — une liste d'exemptions finit toujours par contenir une
 page de trop.
+
+## Les deux moitiés se nomment par ce qu'elles rangent
+
+L'accueil partage la liste en **« Rendez-vous à venir »** et **« Historique »**,
+et chacune porte son critère en légende. La coupure est celle que sert l'API
+(`scope`, `appointments.repository.ts` · `listForClient`) : « à venir » est
+l'intervalle non terminé **dont le statut occupe encore le créneau**,
+l'historique en est le complément exact. Un rendez-vous annulé pour la semaine
+prochaine tombe donc dans la seconde moitié tout en étant daté du futur — c'est
+ce qui garantit qu'aucune ligne ne disparaît de l'espace client, et c'est
+précisément pourquoi cette moitié ne peut pas s'intituler « Rendez-vous passés » :
+elle annoncerait un critère de créneau là où elle range par statut (#744,
+CDC §2.4).
 
 ## La session ne touche jamais le navigateur
 
