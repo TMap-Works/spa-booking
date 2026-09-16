@@ -13,6 +13,7 @@ import {
   type ServiceStaffMember,
   type TimeZone,
 } from '@spa/shared';
+import Link from 'next/link';
 import {
   useCallback,
   useEffect,
@@ -46,6 +47,11 @@ import {
 } from '@/lib/admin/appointment-desk';
 import { STATUS_LABELS, statusModifier } from '@/lib/admin/calendar-grid';
 import { parseCalendarDate } from '@/lib/admin/calendar-range';
+import {
+  catalogStartLink,
+  CATALOG_EMPTY_DESCRIPTION,
+  CATALOG_EMPTY_TITLE,
+} from '@/lib/admin/calendar-start';
 import { formatMoney } from '@/lib/format';
 
 import {
@@ -56,6 +62,7 @@ import {
   markDeskAppointmentStatusAction,
   rescheduleDeskAppointmentAction,
 } from '../calendrier/actions';
+import { adminCatalogPath } from '../paths';
 
 import { ClientPicker } from './client-picker';
 import { NotificationStatusList } from './notification-status-list';
@@ -582,6 +589,8 @@ export function AppointmentPanel({
   // avec lui, et refuser de l'ouvrir parce que le catalogue actif s'est vidé
   // interdirait de le marquer honoré ou non présenté.
   if (services.length === 0 && editing === null) {
+    const catalogue = catalogStartLink(adminCatalogPath(tenantSlug));
+
     return (
       <aside
         aria-labelledby={`${formId}-titre`}
@@ -602,11 +611,15 @@ export function AppointmentPanel({
         <div className="spa-admin-panel__body">
           <div className="spa-admin-appointment spa-admin-appointment--empty">
             <div className="spa-empty-state spa-empty-state--inline">
-              <p className="spa-empty-state__title">Le catalogue est vide</p>
-              <p className="spa-empty-state__description">
-                Un rendez-vous se pose sur une prestation. Créez-en au moins une — durée et prix
-                compris — avant de planifier.
-              </p>
+              <p className="spa-empty-state__title">{CATALOG_EMPTY_TITLE}</p>
+              <p className="spa-empty-state__description">{CATALOG_EMPTY_DESCRIPTION}</p>
+              {/* L'explication seule restait un cul-de-sac : elle nommait ce qui
+                  manque sans donner le moyen d'y remédier (#751). Le lien est le
+                  même que celui de l'état vide du planning — même impasse, même
+                  sortie. */}
+              <Link className="spa-button spa-button--accent" href={catalogue.href}>
+                <span className="spa-button__label">{catalogue.label}</span>
+              </Link>
             </div>
           </div>
         </div>
