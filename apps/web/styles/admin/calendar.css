@@ -161,10 +161,27 @@
 
 /* --- Colonnes -------------------------------------------------------------- */
 
+/*
+ * Une piste explicite, même quand il n'y a qu'un couloir.
+ *
+ * Sans elle, une colonne sans chevauchement n'avait aucune piste déclarée : ses
+ * cellules créaient une piste **implicite**, dimensionnée sur leur contenu et
+ * non sur la colonne, et la journée s'affichait sur 267 px des 464 disponibles —
+ * un tiers de la colonne perdu, bordures de créneaux comprises. Le cas ne se
+ * voyait guère tant que le moindre chevauchement posait un `grid-template-columns`
+ * en ligne (`CalendarColumnView`) ; il saute aux yeux depuis que les rendez-vous
+ * soldés ont cessé de compter pour un couloir (#753).
+ *
+ * `minmax(0, 1fr)` et non `1fr` : c'est ce qui autorise une cellule à être plus
+ * étroite que son contenu, donc à tronquer un nom de cliente au lieu d'élargir
+ * la colonne — la même raison qui fait écrire `repeat(N, minmax(0, 1fr))` pour
+ * les couloirs.
+ */
 .spa-admin-calendar__column {
   flex: 1 1 0;
   min-inline-size: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-auto-rows: var(--spa-admin-slot-height);
   border-inline-end: 1px solid var(--spa-color-border);
 }
@@ -351,6 +368,106 @@
 .spa-admin-calendar__event--no-show {
   background-color: var(--spa-color-status-no-show-surface);
   border-inline-start-color: var(--spa-color-status-no-show);
+}
+
+/* --- Rendez-vous soldé : un repère, pas une occupation --------------------- */
+
+/*
+ * Honoré, annulé, non présenté — les trois statuts terminaux n'occupent pas le
+ * créneau (skill booking-engine §5), et la contrainte d'exclusion les exclut de
+ * son prédicat partiel : leur demi-heure est de nouveau réservable. Le planning
+ * la peignait pourtant comme prise, et un après-midi entièrement annulé ne
+ * laissait pas une seule case où poser un client (#753).
+ *
+ * Le repère passe donc **sous** la trame des créneaux libres, et ne capte rien :
+ * `pointer-events: none` sur le `<li>`, qui couvre toute la durée du soin. Ce
+ * qui est dessous redevient cliquable sur toute la plage — la recette l'a
+ * vérifié à l'endroit même de la capture de l'audit.
+ *
+ * Le rendez-vous, lui, ne disparaît pas : il garde sa plage, son heure, son
+ * client et son liseré de statut. Fond transparent et liseré discontinu, parce
+ * qu'un rendez-vous vivant est plein et qu'un soldé ne l'est plus.
+ */
+.spa-admin-calendar__cell--ghost {
+  pointer-events: none;
+}
+
+.spa-admin-calendar__event--ghost {
+  position: relative;
+  /*
+   * `--ghost-lane` et `--ghost-lanes` sont HORS du préfixe `--spa-`, comme
+   * `--now-offset` et pour la même raison : deux annulés qui se chevauchent
+   * sont une donnée d'exécution, pas un jeton de design. Le repli `0 / 1` garde
+   * la règle valide tant que rien n'est injecté — un seul repère, pleine
+   * largeur. Le compte est propre au calque des soldés : il ne rétrécit jamais
+   * un rendez-vous vivant.
+   */
+  inline-size: calc(100% / var(--ghost-lanes, 1));
+  margin-inline-start: calc(var(--ghost-lane, 0) * 100% / var(--ghost-lanes, 1));
+  background-color: transparent;
+  border-style: dashed;
+  /* Jamais le raccourci `border-color` : il écraserait le liseré de statut, et
+   * un soldé perdrait la seule couleur qui dit s'il est annulé ou honoré. */
+  border-block-color: var(--spa-color-border);
+  border-inline-end-color: var(--spa-color-border);
+}
+
+/*
+ * Ouvrir la fiche d'un soldé — le seul point du repère qui capte le clic.
+ *
+ * Rendre le repère entier cliquable le remettrait par-dessus les créneaux
+ * libres sur toute la durée du soin, et c'est exactement ce que ce ticket
+ * défait. Un petit contrôle dans le coin, en revanche, ne recouvre qu'un angle
+ * de la première demi-heure : la cellule libre reste atteignable à la souris et
+ * au clavier, la fiche aussi.
+ *
+ * Aucun `z-index` : le repère est déjà peint après la trame libre et après le
+ * fond inactif (`laneOf`, `calendar-grid.ts`), et il doit rester DERRIÈRE le
+ * bloc d'un rendez-vous vivant posé sur la même heure. Un cran d'empilement le
+ * ferait ressortir par-dessus, et son « ⋯ » volerait les clics de la poignée de
+ * déplacement, qui occupe exactement le même coin.
+ *
+ * Discret mais jamais révélé au survol du bloc, contrairement à la poignée : le
+ * repère est `pointer-events: none`, il ne connaît donc pas le survol. C'est le
+ * bouton lui-même qui s'affirme quand on l'atteint — à la souris comme au
+ * clavier.
+ */
+.spa-admin-calendar__ghost-open {
+  position: absolute;
+  inset-block-start: 2px;
+  inset-inline-end: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: var(--spa-space-5);
+  min-block-size: var(--spa-space-5);
+  padding: 0;
+  pointer-events: auto;
+  background-color: transparent;
+  border: 0;
+  border-radius: var(--spa-radius-xs);
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-xs);
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-admin-calendar__ghost-open:hover,
+.spa-admin-calendar__ghost-open:focus-visible {
+  opacity: 1;
+}
+
+/*
+ * Une période qui charge rend la colonne inerte — mais le `pointer-events: auto`
+ * ci-dessus l'emporte aussi sur ce garde-là, et non seulement sur celui du
+ * repère. Sans cette règle, le contrôle du coin serait le seul point du planning
+ * encore cliquable pendant un chargement, et il ouvrirait la fiche d'un
+ * rendez-vous de la période qu'on quitte. Voir `.spa-admin-calendar--loading`.
+ */
+.spa-admin-calendar--loading .spa-admin-calendar__ghost-open {
+  pointer-events: none;
 }
 
 /* --- Report par glisser-déposer -------------------------------------------- */

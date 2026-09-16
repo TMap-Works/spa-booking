@@ -111,6 +111,21 @@ import { PeriodNav } from './period-nav';
  * chaque bloc déplaçable : elle saisit le rendez-vous, les créneaux libres
  * deviennent des cibles nommées, Échap repose. Même mécanique, même code, sans
  * souris (web-frontend §7).
+ *
+ * ## Deux calques, et non un seul (#753)
+ *
+ * Un rendez-vous soldé — honoré, annulé, non présenté — n'occupe plus son
+ * créneau : le tableau du cycle de vie le dit statut par statut, la contrainte
+ * d'exclusion l'exclut de son prédicat partiel, et le calcul des créneaux libres
+ * ne retranche que les `pending` et les `confirmed` (booking-engine §1, §3, §5).
+ * La grille émet donc des **cellules libres sous lui**, et le soldé n'est plus
+ * qu'un repère (`CalendarGhostCell`) : `styles/admin/calendar.css` laisse la
+ * cellule passer les clics et ne les rend qu'au repère lui-même.
+ *
+ * Ce que cela rend au comptoir : reposer un client sur une heure annulée, ce que
+ * l'agenda interdisait alors que le moteur l'acceptait. Ce que cela préserve :
+ * le rendez-vous annulé reste à l'écran, à son heure, et sa fiche s'ouvre d'un
+ * clic — il explique le trou dans la journée.
  */
 
 /** Ce que la page a déjà chargé, période par période. */
@@ -1089,11 +1104,22 @@ function CalendarColumnView({
       ))}
       {/* Sentinelle : elle tient la hauteur de la journée entière quoi que la
           virtualisation ait monté. Sans elle, la grille se replierait sur les
-          seules rangées visibles et le défilement s'arrêterait à mi-journée. */}
+          seules rangées visibles et le défilement s'arrêterait à mi-journée.
+
+          Sa colonne est dite, et ne se devine plus : sans `gridColumn`, elle
+          était placée d'office là où la dernière rangée était libre — c'est-à
+          -dire dans une piste **implicite** de plus dès que cette rangée était
+          occupée, ce qui rétrécissait d'autant les cellules de la journée. Et
+          elle ne capte rien : ainsi posée sur la dernière rangée, elle
+          recouvrirait sinon le créneau qui s'y trouve. */}
       <li
         aria-hidden="true"
         className="spa-admin-calendar__cell"
-        style={{ gridRow: `${String(slotCount)} / span 1` }}
+        style={{
+          gridRow: `${String(slotCount)} / span 1`,
+          gridColumn: '1 / -1',
+          pointerEvents: 'none',
+        }}
       />
     </ul>
   );
@@ -1144,6 +1170,69 @@ function CalendarCellView({
           {cell.nowOffset === null ? null : (
             <span className="spa-visually-hidden">heure courante</span>
           )}
+        </div>
+      </li>
+    );
+  }
+
+  if (cell.kind === 'ghost') {
+    // Un rendez-vous soldé n'occupe plus son créneau (booking-engine §5) : la
+    // grille a émis des cellules libres sous lui, et c'est à elles que doivent
+    // aller les clics. Le repère ne garde donc que sa propre surface — le `<li>`
+    // laisse tout passer, le bouton seul reprend la main. Sans cela, la cellule
+    // de la grille recouvrirait le créneau libre sur toute la durée du soin
+    // annulé, et le comptoir ne pourrait toujours rien y poser (#753).
+    const settled = cell.appointment;
+
+    return (
+      <li className="spa-admin-calendar__cell spa-admin-calendar__cell--ghost" style={placement}>
+        <div
+          className={[
+            'spa-admin-calendar__event',
+            `spa-admin-calendar__event--${statusModifier(settled.status)}`,
+            'spa-admin-calendar__event--ghost',
+          ].join(' ')}
+          style={
+            {
+              // Les couloirs d'un calque qui en compte plusieurs ne rétrécissent
+              // que les repères — jamais un rendez-vous vivant, ni la cellule
+              // libre, qui garde toute la largeur de la colonne.
+              '--ghost-lane': String(cell.lane),
+              '--ghost-lanes': String(cell.laneCount),
+            } as Record<string, string>
+          }
+        >
+          <span className="spa-admin-calendar__event-time">{cell.timeLabel}</span>
+          <span className="spa-admin-calendar__event-client">{cell.clientLabel}</span>
+          {cell.serviceLabel === null ? null : (
+            <span className="spa-admin-calendar__event-service">{cell.serviceLabel}</span>
+          )}
+          {/* Ce que la couleur seule ne dit pas, et qui est le cœur du ticket :
+              le créneau est de nouveau à prendre. Sans cette phrase, un écran
+              lu au clavier verrait un rendez-vous et des créneaux libres au
+              même endroit sans comprendre lequel des deux fait foi. */}
+          <span className="spa-visually-hidden">
+            Statut : {STATUS_LABELS[settled.status]}. Ce créneau est de nouveau réservable.
+          </span>
+
+          {/* La fiche s'ouvre par ce bouton-là, et non par le repère entier.
+              Un repère pleine hauteur qui capterait le clic recouvrirait les
+              créneaux libres rendus dessous sur toute la durée du soin annulé,
+              et le constat de l'audit tiendrait toujours — la recette l'a
+              montré. Même dispositif que la poignée de déplacement : un petit
+              contrôle dans le coin, discret tant qu'on ne s'y intéresse pas. */}
+          <button
+            className="spa-admin-calendar__ghost-open"
+            type="button"
+            onClick={() => {
+              onOpen({ kind: 'edit', appointment: settled });
+            }}
+          >
+            <span aria-hidden="true">⋯</span>
+            <span className="spa-visually-hidden">
+              Ouvrir la fiche de {cell.clientLabel}, {cell.timeLabel}
+            </span>
+          </button>
         </div>
       </li>
     );
