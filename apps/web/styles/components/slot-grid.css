@@ -1,12 +1,17 @@
 /*
- * Composant — Barre de dates et grille de créneaux
+ * Composant — Grille de créneaux
  * =============================================================================
  *
- * Le sélecteur de l'étape 3 du tunnel de réservation, tel que
- * `docs/design/appointments/keyboard-navigation.md` et `states.md` le décrivent.
+ * La seconde moitié du sélecteur de l'étape 3 du tunnel de réservation, telle
+ * que `docs/design/appointments/keyboard-navigation.md` et `states.md` la
+ * décrivent : les heures de la journée retenue.
  *
- *   .spa-date-bar     une ligne de journées, role="radiogroup"
  *   .spa-slot-grid    la grille de créneaux, role="grid" › row › gridcell
+ *
+ * Le choix de la **date**, lui, est un calendrier mensuel depuis #827, et vit
+ * dans [calendar.css](calendar.css). Il a remplacé la bande de journées que
+ * cette feuille peignait — `.spa-date-bar`, une ligne à défilement horizontal
+ * dont trois jours et demi tenaient à 360 px.
  *
  * ## Pourquoi une feuille, alors que le composant tenait sans
  *
@@ -27,196 +32,10 @@
  *
  * `Button` n'accepte pas de `className` — c'est délibéré, le design system
  * décide de l'allure d'un bouton. Les états se lisent donc sur les attributs
- * ARIA que le composant pose déjà (`aria-checked`, `aria-disabled`) : la règle
+ * ARIA que le composant pose déjà (`aria-pressed`, `aria-disabled`) : la règle
  * CSS et le lecteur d'écran s'appuient alors sur la même source, et un état
  * peint sans être annoncé devient impossible.
  */
-
-/* --- Barre de dates -------------------------------------------------------- */
-
-/*
- * Le bloc entier : la navigation de période, puis la bande et sa sortie (#738).
- *
- * `--spa-space-2` et non `--spa-space-4` : les trois rangées sont un seul objet,
- * et l'écart qui les lie doit rester plus petit que celui qui sépare le bloc du
- * titre de journée qui le suit — lequel vaut le `gap` de l'étape, 16 px. La
- * proximité dit alors l'appartenance, comme #624 l'a établi un cran plus haut.
- */
-.spa-date-bar-block {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spa-space-2);
-}
-
-/*
- * « ‹ août 2026 › » — la navigation de période de `wireframes.md`, étape 3.
- *
- * Calquée sur `.spa-admin-toolbar__group`, qui rend le même geste dans le
- * back-office : deux chevrons encadrant le libellé de la période. Calque et non
- * partage — `styles/admin/` décrit le back-office, et le parcours public n'a pas
- * à en dépendre pour changer —, mais le même rendu, pour que la flèche se
- * cherche au même endroit d'un produit à l'autre.
- *
- * Les chevrons tiennent la cible de 44 px du bout du doigt (WCAG 2.5.8) : un
- * chevron est un glyphe étroit, et sans plancher il ferait une cible de 12 px.
- */
-.spa-date-bar-nav {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--spa-space-2);
-}
-
-.spa-date-bar-nav .spa-button {
-  flex: 0 0 auto;
-  min-inline-size: var(--spa-target-min-size);
-  min-block-size: var(--spa-target-min-size);
-  padding-inline: var(--spa-space-3);
-}
-
-/*
- * Le chevron éteint — plus rien dans cette direction. Même peinture et même
- * attribut que les journées complètes de la bande et que les créneaux inertes de
- * la grille : trois contrôles inactifs, une seule façon de le dire.
- *
- * L'atténuation ne porte pas seule l'information : `aria-disabled` l'annonce, et
- * le chevron ne fait plus rien au clic (WCAG 1.4.1).
- */
-.spa-date-bar-nav .spa-button[aria-disabled='true'] {
-  background-color: var(--spa-color-disabled-surface);
-  border-color: var(--spa-color-disabled-border);
-  color: var(--spa-color-disabled-text);
-  cursor: not-allowed;
-}
-
-/*
- * Le mois, entre les deux chevrons. `margin-inline: auto` le centre sur la
- * rangée dès qu'elle est plus large que son contenu — sur un écran de bureau, la
- * bande s'étale et les chevrons se retrouveraient sinon collés à gauche, loin du
- * bord qu'ils commandent.
- */
-.spa-date-bar-nav__period {
-  margin-inline: auto;
-  font-weight: var(--spa-font-weight-medium);
-  color: var(--spa-color-text);
-}
-
-/*
- * La bande et, à son bout, « Voir plus de jours ».
- *
- * `flex-wrap` fait toute la dégradation : la bande demande 14rem, le bouton ce
- * qu'il lui faut, et sur un écran étroit le second passe sous la première plutôt
- * que de lui prendre la moitié de sa largeur — à 360 px, ce serait deux journées
- * visibles au lieu de trois et demie.
- *
- * `min-inline-size: 0` sur la bande n'est pas décoratif : un enfant de flex ne
- * rétrécit pas sous la taille de son contenu sans cela, et une bande de trente
- * et un jours ferait déborder la page au lieu de défiler dans son propre cadre.
- */
-.spa-date-bar-track {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--spa-space-2);
-}
-
-.spa-date-bar-track > .spa-date-bar {
-  flex: 1 1 14rem;
-  min-inline-size: 0;
-}
-
-.spa-date-bar-track__more {
-  flex: 0 0 auto;
-}
-
-/*
- * Une ligne qui défile plutôt qu'une grille qui se replie : les journées sont
- * ordonnées, et un retour à la ligne au milieu d'une quinzaine ferait chercher
- * « le lendemain » en début de ligne suivante. `scroll-snap` cale la pastille
- * sur le bord, pour qu'un défilement au doigt ne s'arrête jamais à cheval.
- */
-.spa-date-bar {
-  display: flex;
-  gap: var(--spa-space-2);
-  padding-block: var(--spa-space-2);
-  overflow-x: auto;
-  scroll-snap-type: x proximity;
-  /* Le clavier fait défiler la barre en même temps qu'il la parcourt : sans
-   * cela, la journée focalisée reste hors champ dès la huitième flèche. */
-  scroll-padding-inline: var(--spa-space-4);
-}
-
-.spa-date-bar .spa-button {
-  flex: 0 0 auto;
-  min-inline-size: var(--spa-target-min-size);
-  min-block-size: var(--spa-target-min-size);
-  padding-inline: var(--spa-space-3);
-  scroll-snap-align: start;
-}
-
-/*
- * L'empilement se joue sur `.spa-button__label` et non sur le bouton : `Button`
- * enveloppe **tous** ses enfants dans ce span, si bien qu'un bouton n'a jamais
- * qu'un seul enfant de flux. Un `flex-direction: column` posé sur le bouton
- * n'aurait donc rien à empiler, et le jour et le compte se suivraient sur une
- * même ligne — « mar. 1 » suivi de « 4 » se lit « mar. 14 ».
- */
-.spa-date-bar .spa-button__label {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--spa-space-1);
-}
-
-.spa-date-bar__day {
-  font-size: var(--spa-font-size-sm);
-  font-weight: var(--spa-font-weight-medium);
-  white-space: nowrap;
-}
-
-/*
- * Le nombre de créneaux, en second registre : c'est l'information qui fait
- * choisir une journée plutôt qu'une autre, mais ce n'est pas son nom.
- */
-.spa-date-bar__count {
-  font-size: var(--spa-font-size-xs);
-  color: var(--spa-color-text-muted);
-  white-space: nowrap;
-}
-
-/*
- * La journée retenue. `aria-checked` et non une classe : c'est l'attribut que le
- * lecteur d'écran annonce, et le faire porter aussi la peinture garantit que les
- * deux ne peuvent pas diverger.
- */
-.spa-date-bar .spa-button[aria-checked='true'] {
-  background-color: var(--spa-color-accent-soft);
-  border-color: var(--spa-color-accent);
-  color: var(--spa-color-accent-text);
-}
-
-.spa-date-bar .spa-button[aria-checked='true'] .spa-date-bar__count {
-  color: var(--spa-color-accent-text);
-}
-
-/*
- * Journée complète : rendue, lisible, hors du parcours des flèches. Le serveur
- * la renvoie vide plutôt que de l'omettre pour qu'on puisse écrire « complet »
- * plutôt que de laisser un trou dans la quinzaine.
- *
- * L'atténuation ne porte pas seule l'information — le libellé dit « complet »,
- * et l'`aria-label` de la pastille aussi (WCAG 1.4.1).
- */
-.spa-date-bar .spa-button[aria-disabled='true'] {
-  background-color: var(--spa-color-disabled-surface);
-  border-color: var(--spa-color-disabled-border);
-  color: var(--spa-color-disabled-text);
-  cursor: not-allowed;
-}
-
-.spa-date-bar .spa-button[aria-disabled='true'] .spa-date-bar__count {
-  color: var(--spa-color-disabled-text);
-}
 
 /* --- Grille de créneaux ---------------------------------------------------- */
 
@@ -331,8 +150,7 @@
  * focus qui doit garder sa marge, et une marge sur le conteneur ne protégerait
  * que le premier créneau.
  */
-.spa-slot-grid__cell .spa-button,
-.spa-date-bar .spa-button {
+.spa-slot-grid__cell .spa-button {
   scroll-margin-block: var(--spa-space-16) var(--spa-space-16);
 }
 
