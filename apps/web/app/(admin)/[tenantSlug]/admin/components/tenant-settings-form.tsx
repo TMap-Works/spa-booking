@@ -16,7 +16,7 @@ import {
 } from '@spa/shared';
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
-import { useForm } from 'react-hook-form';
+import { useForm, useWatch } from 'react-hook-form';
 import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
@@ -51,6 +51,42 @@ import { updateTenantSettingsAction } from '../actions';
  * détruirait au premier « Enregistrer ». Ces plages surnuméraires sont donc
  * conservées telles quelles et renvoyées avec les autres : l'écran n'édite que
  * ce qu'il montre, et ne détruit rien de ce qu'il ne montre pas.
+ *
+ * ## Fermé est un état, pas quatre champs vides (#764)
+ *
+ * La grille présentait la journée de fermeture comme la journée non renseignée :
+ * quatre champs vides, dont les placeholders gris annonçaient « 09:00 / 12:00 ».
+ * Sur Spa Lumière, fermé le week-end, le samedi et le dimanche se lisaient donc
+ * comme un salon ouvert le matin — et rien nulle part ne disait le contraire.
+ * C'est exactement ce que `styles/admin/README.md` §3.4 refuse : « Fermé est un
+ * état, pas une plage vide (`__closed`) : sans quoi “pas encore saisi” et “le
+ * salon ferme le mercredi” se confondent. »
+ *
+ * Le motif repris est celui de la semaine d'un praticien
+ * (`personnel/components/staff-schedule-editor.tsx`), au balisage près — même
+ * interrupteur `__toggle`, même `__closed`, mêmes mots : un back-office qui
+ * nomme deux fois la même chose de deux façons fait douter de laquelle est la
+ * bonne. Décocher « Ouvert » **retire** les plages du jour plutôt que de les
+ * masquer : une borne restée seule ferait sinon échouer la validation sur un
+ * champ que l'écran n'affiche plus, et la journée « fermée » repartirait avec
+ * ses heures au premier « Enregistrer ». Recocher en propose une, comme là-bas.
+ *
+ * L'interrupteur ne vaut que par ce qu'il empêche : une journée cochée « Ouvert »
+ * dont on a vidé les deux plages est refusée, faute de quoi elle s'enregistrerait
+ * fermée — l'ambiguïté déplacée d'un cran plutôt que levée.
+ *
+ * ## Le fuseau est nommé, et il est nommé sous les champs
+ *
+ * « Heures de votre horloge » désignait l'horloge du navigateur, c'est-à-dire
+ * celle de qui regarde l'écran — un gérant en déplacement aurait saisi la
+ * semaine du salon dans son fuseau à lui. Le README §3 tranche : toutes les
+ * heures affichées sont dans **le fuseau du salon**, « écrit en clair dans le
+ * pied de la barre latérale et sous les champs d'horaire ». La mention est donc
+ * posée sous la grille, dans les termes de la fiche praticien, et elle nomme le
+ * fuseau de l'établissement — `tenant.timezone`, soit « Europe/Paris » pour un
+ * salon parisien — au lieu de renvoyer à une horloge dont on ne sait pas
+ * laquelle c'est. Le contrat le porte déjà et il n'est pas optionnel
+ * (`publicTenantSchema`) : il n'y a rien à ajouter à `packages/shared`.
  *
  * ## Le nom accessible d'un champ d'horaire porte son jour
  *
@@ -122,6 +158,15 @@ const WEEKDAYS = [1, 2, 3, 4, 5, 6, 7] as const;
 const RANGES_PER_DAY = 2;
 
 /**
+ * La plage que « Ouvert » propose quand la journée n'en porte aucune.
+ *
+ * Les mêmes bornes que `newScheduleRow` de la semaine d'un praticien : la
+ * journée type d'un salon commence le matin, et pré-remplir épargne deux saisies
+ * sur trois. Elles restent modifiables — c'est une proposition, pas une règle.
+ */
+const PROPOSED_RANGE = { opensAt: '09:00', closesAt: '12:00' } as const;
+
+/**
  * Une borne horaire de la grille : vide, ou une heure murale.
  *
  * `24:00` est admis des deux côtés du contrôle plutôt que de la seule fermeture.
@@ -148,6 +193,28 @@ const rangeSchema = z
     message: 'la fermeture doit être postérieure à l’ouverture',
     path: ['closesAt'],
   });
+
+/**
+ * Une journée de la grille : son état d'ouverture, puis ses plages.
+ *
+ * Le refus porte sur la journée entière et non sur une plage, parce que c'est la
+ * journée qui est incohérente : « Ouvert » coché sans une seule plage complète
+ * s'enregistrerait **fermé**, et l'interrupteur aurait menti. Le message se pose
+ * sur la première ouverture — le champ par lequel on corrige — plutôt qu'en bloc
+ * en haut d'écran (web-frontend §4).
+ *
+ * Une journée fermée n'est pas contrôlée, et n'a pas à l'être : décocher vide ses
+ * champs, donc ses deux plages sont vides et passent `rangeSchema` sans rien dire.
+ */
+const daySchema = z
+  .object({ open: z.boolean(), ranges: z.array(rangeSchema) })
+  .refine(
+    (day) => !day.open || day.ranges.some((range) => range.opensAt !== '' && range.closesAt !== ''),
+    {
+      message: 'renseignez une plage, ou décochez « Ouvert » pour fermer la journée',
+      path: ['ranges', 0, 'opensAt'],
+    },
+  );
 
 /**
  * Le schéma du formulaire — celui de la **saisie**, pas celui du contrat.
@@ -178,7 +245,7 @@ const settingsFormSchema = z
         .toUpperCase()
         .regex(/^[A-Z]{2}$/, { message: 'code pays ISO 3166-1 alpha-2 attendu (« FR »)' }),
     ]),
-    days: z.array(z.object({ ranges: z.array(rangeSchema) })),
+    days: z.array(daySchema),
   })
   // L'adresse se publie en entier ou pas du tout : le triplet rue / ville / pays
   // va ensemble. La base porte la même règle
@@ -213,6 +280,20 @@ function editableRanges(tenant: Tenant, weekday: number): { opensAt: string; clo
 }
 
 /**
+ * La journée est-elle ouverte ? — c'est-à-dire porte-t-elle une plage.
+ *
+ * L'état initial de l'interrupteur se **déduit** des horaires, il ne se stocke
+ * pas : le contrat ne connaît que des plages, et une journée sans plage est une
+ * journée fermée. Un salon qui n'a encore rien renseigné ouvre donc l'écran avec
+ * sept journées fermées — ce qui est la vérité de ce que sa page publique
+ * affiche, là où sept lignes de champs vides laissaient croire à une semaine en
+ * cours de saisie.
+ */
+function isOpenOn(tenant: Tenant, weekday: number): boolean {
+  return (tenant.openingHours ?? []).some((entry) => entry.weekday === weekday);
+}
+
+/**
  * Les plages qu'aucun champ de la grille ne montre — voir l'en-tête.
  *
  * Elles sont renvoyées à l'identique pour que « Enregistrer » ne les efface pas.
@@ -242,6 +323,21 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
   const carriedOver = hiddenRanges(tenant);
 
   /**
+   * Les jours dont la fermeture a emporté les plages surnuméraires.
+   *
+   * Fermer une journée la ferme **entièrement**, plages invisibles comprises. La
+   * rouvrir ne les ressuscite donc pas : sans cette mémoire, décocher puis
+   * recocher le mercredi renverrait la troisième plage qu'aucun champ ne montre
+   * — la journée repartirait avec des heures que personne n'a saisies, et la
+   * plage proposée pourrait même la recouvrir, pour un refus désignant un
+   * horaire introuvable à l'écran.
+   *
+   * Un `ref` et non un état : la grille ne se repeint pas pour autant, et la
+   * liste est relue au seul moment où elle sert, l'enregistrement.
+   */
+  const droppedHiddenRanges = useRef(new Set<number>());
+
+  /**
    * Amener le verdict sous les yeux — voir l'en-tête.
    *
    * La dépendance est l'objet `verdict` entier, et chaque verdict en pose un
@@ -260,7 +356,10 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
   }, [verdict]);
 
   const {
+    control,
     register,
+    setValue,
+    clearErrors,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<SettingsFormValues, unknown, z.output<typeof settingsFormSchema>>({
@@ -274,28 +373,90 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
       postalCode: tenant.address?.postalCode ?? '',
       city: tenant.address?.city ?? '',
       country: tenant.address?.country ?? '',
-      days: WEEKDAYS.map((weekday) => ({ ranges: editableRanges(tenant, weekday) })),
+      days: WEEKDAYS.map((weekday) => ({
+        open: isOpenOn(tenant, weekday),
+        ranges: editableRanges(tenant, weekday),
+      })),
     },
     mode: 'onTouched',
   });
+
+  /**
+   * L'état d'ouverture des sept jours, tel que la grille le peint.
+   *
+   * Souscrire à `days` plutôt qu'aux sept interrupteurs un à un : les noms de
+   * champ d'un tableau ne se composent pas dans une boucle de hooks, et cet
+   * écran ne peint que soixante nœuds — le coût du rendu supplémentaire à la
+   * frappe est sans commune mesure avec celui d'un second état à tenir synchrone
+   * avec le formulaire.
+   */
+  const days = useWatch({ control, name: 'days' });
+
+  /**
+   * Ouvrir ou fermer une journée — voir l'en-tête.
+   *
+   * Décocher **vide** les champs du jour et efface ses erreurs : ils ne sont plus
+   * affichés, et une saisie laissée derrière eux se jugerait sans pouvoir se
+   * corriger. Recocher propose une plage quand la journée n'en porte aucune,
+   * plutôt que de rendre quatre champs vides — c'est-à-dire l'état même qu'on
+   * vient de rendre lisible.
+   */
+  function toggleDay(dayIndex: number, open: boolean): void {
+    if (!open) {
+      for (let rangeIndex = 0; rangeIndex < RANGES_PER_DAY; rangeIndex += 1) {
+        setValue(`days.${dayIndex}.ranges.${rangeIndex}.opensAt` as const, '');
+        setValue(`days.${dayIndex}.ranges.${rangeIndex}.closesAt` as const, '');
+      }
+      clearErrors(`days.${dayIndex}` as const);
+
+      const weekday = WEEKDAYS[dayIndex];
+
+      if (weekday !== undefined) {
+        droppedHiddenRanges.current.add(weekday);
+      }
+
+      return;
+    }
+
+    const ranges = days[dayIndex]?.ranges ?? [];
+
+    if (ranges.every((range) => range.opensAt === '' && range.closesAt === '')) {
+      setValue(`days.${dayIndex}.ranges.0.opensAt` as const, PROPOSED_RANGE.opensAt);
+      setValue(`days.${dayIndex}.ranges.0.closesAt` as const, PROPOSED_RANGE.closesAt);
+    }
+  }
 
   const submit = handleSubmit(
     async (values) => {
       setVerdict(null);
 
       const openingHours: OpeningHoursEntry[] = [];
+      const openWeekdays = new Set<number>();
 
       values.days.forEach((day, index) => {
         const weekday = WEEKDAYS[index];
-        if (weekday === undefined) {
+        if (weekday === undefined || !day.open) {
           return;
         }
+        openWeekdays.add(weekday);
         for (const range of day.ranges) {
           if (range.opensAt !== '' && range.closesAt !== '') {
             openingHours.push({ weekday, opensAt: range.opensAt, closesAt: range.closesAt });
           }
         }
       });
+
+      // Les plages surnuméraires d'une journée **fermée** ne se reportent pas.
+      // Les conserver ferait de « Fermé » un affichage sans effet : la troisième
+      // plage du mercredi, qu'aucun champ ne montre, rouvrirait la journée au
+      // premier enregistrement — et l'écran affirmerait le contraire de ce que
+      // la page publique affiche. Fermer une journée la ferme entièrement — et
+      // la rouvrir dans la foulée ne la rouvre pas avec ses heures d'avant, d'où
+      // la seconde condition.
+      const kept = carriedOver.filter(
+        (entry) =>
+          openWeekdays.has(entry.weekday) && !droppedHiddenRanges.current.has(entry.weekday),
+      );
 
       // `safeParse` et non `parse` : le schéma du formulaire ne porte pas toutes
       // les règles du contrat — le recouvrement de deux plages du même jour porte
@@ -323,7 +484,7 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
         return;
       }
 
-      const week = openingHoursSchema.safeParse([...openingHours, ...carriedOver]);
+      const week = openingHoursSchema.safeParse([...openingHours, ...kept]);
 
       if (!week.success) {
         setVerdict({
@@ -441,13 +602,19 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
             Horaires d’ouverture
           </legend>
           <p className="spa-admin-toolbar__hint">
-            Heures de votre horloge. Laissez une journée vide si le salon est fermé ; deux plages
-            permettent d’indiquer une coupure.
+            Décochez « Ouvert » pour une journée de fermeture ; deux plages permettent d’indiquer
+            une coupure méridienne.
           </p>
           <div className="spa-admin-schedule">
             {WEEKDAYS.map((weekday, dayIndex) => {
               const day = weekdayLabel(weekday);
               const dayLabelId = `tenant-hours-${String(weekday)}-jour`;
+              const toggleId = `tenant-hours-${String(weekday)}-ouvert`;
+              const open = days[dayIndex]?.open ?? false;
+              // Le rappel de `register` est enveloppé et non remplacé : c'est lui
+              // qui porte la valeur au formulaire, et le nôtre ne fait que
+              // rattraper les champs du jour derrière lui.
+              const openField = register(`days.${dayIndex}.open` as const);
 
               return (
                 <div
@@ -459,43 +626,83 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
                   <p className="spa-admin-schedule__day-label" id={dayLabelId}>
                     {day}
                   </p>
+                  <span className="spa-admin-schedule__toggle">
+                    <input
+                      {...openField}
+                      // Sept interrupteurs pour un seul libellé visible : le jour
+                      // ne se lit qu'à l'œil, dans la colonne d'à côté. Le nom
+                      // accessible l'ajoute, et **s'ouvre** par le libellé visible
+                      // — sans quoi « Ouvert » prononcé à une commande vocale ne
+                      // désignerait plus rien (WCAG 2.5.3), comme pour les 28
+                      // champs d'horaire de la même grille (#621).
+                      aria-label={`Ouvert le ${day.toLowerCase()}`}
+                      id={toggleId}
+                      onChange={(event) => {
+                        void openField.onChange(event);
+                        toggleDay(dayIndex, event.target.checked);
+                      }}
+                      type="checkbox"
+                    />
+                    <label htmlFor={toggleId}>Ouvert</label>
+                  </span>
                   <div className="spa-admin-schedule__ranges">
-                    {Array.from({ length: RANGES_PER_DAY }, (_unused, rangeIndex) => {
-                      const rank = String(rangeIndex + 1);
-                      const opens = `Ouverture ${rank}`;
-                      const closes = `Fermeture ${rank}`;
+                    {!open ? (
+                      <span className="spa-admin-schedule__closed">
+                        Fermé — aucun créneau proposé
+                      </span>
+                    ) : (
+                      Array.from({ length: RANGES_PER_DAY }, (_unused, rangeIndex) => {
+                        const rank = String(rangeIndex + 1);
+                        const opens = `Ouverture ${rank}`;
+                        const closes = `Fermeture ${rank}`;
 
-                      return (
-                        <div className="spa-admin-schedule__range" key={rangeIndex}>
-                          <Field
-                            aria-label={`${opens} du ${day.toLowerCase()}`}
-                            id={`tenant-hours-${String(weekday)}-${String(rangeIndex)}-opens`}
-                            label={opens}
-                            placeholder="09:00"
-                            inputMode="numeric"
-                            error={errors.days?.[dayIndex]?.ranges?.[rangeIndex]?.opensAt?.message}
-                            {...register(`days.${dayIndex}.ranges.${rangeIndex}.opensAt` as const)}
-                          />
-                          <Field
-                            aria-label={`${closes} du ${day.toLowerCase()}`}
-                            id={`tenant-hours-${String(weekday)}-${String(rangeIndex)}-closes`}
-                            label={closes}
-                            placeholder="12:00"
-                            inputMode="numeric"
-                            error={
-                              errors.days?.[dayIndex]?.ranges?.[rangeIndex]?.closesAt?.message ??
-                              errors.days?.[dayIndex]?.ranges?.[rangeIndex]?.root?.message
-                            }
-                            {...register(`days.${dayIndex}.ranges.${rangeIndex}.closesAt` as const)}
-                          />
-                        </div>
-                      );
-                    })}
+                        return (
+                          <div className="spa-admin-schedule__range" key={rangeIndex}>
+                            <Field
+                              aria-label={`${opens} du ${day.toLowerCase()}`}
+                              id={`tenant-hours-${String(weekday)}-${String(rangeIndex)}-opens`}
+                              label={opens}
+                              placeholder="09:00"
+                              inputMode="numeric"
+                              error={
+                                errors.days?.[dayIndex]?.ranges?.[rangeIndex]?.opensAt?.message
+                              }
+                              {...register(
+                                `days.${dayIndex}.ranges.${rangeIndex}.opensAt` as const,
+                              )}
+                            />
+                            <Field
+                              aria-label={`${closes} du ${day.toLowerCase()}`}
+                              id={`tenant-hours-${String(weekday)}-${String(rangeIndex)}-closes`}
+                              label={closes}
+                              placeholder="12:00"
+                              inputMode="numeric"
+                              error={
+                                errors.days?.[dayIndex]?.ranges?.[rangeIndex]?.closesAt?.message ??
+                                errors.days?.[dayIndex]?.ranges?.[rangeIndex]?.root?.message
+                              }
+                              {...register(
+                                `days.${dayIndex}.ranges.${rangeIndex}.closesAt` as const,
+                              )}
+                            />
+                          </div>
+                        );
+                      })
+                    )}
                   </div>
                 </div>
               );
             })}
           </div>
+          {/*
+            Sous les champs, et non au-dessus : c'est là que le README §3 place
+            le fuseau du salon, c'est-à-dire là où l'on vient de saisir une heure
+            et où la question « dans quel fuseau ? » se pose. Les mots sont ceux
+            de la fiche praticien, au nom du fuseau près.
+          */}
+          <p className="spa-admin-toolbar__hint">
+            Heures écrites dans le fuseau du salon ({tenant.timezone}), stockées en UTC.
+          </p>
         </fieldset>
 
         <fieldset className="spa-admin__section" aria-labelledby="reglages-contact">
