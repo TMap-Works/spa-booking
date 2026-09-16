@@ -233,8 +233,13 @@ test.describe('Comptoir', () => {
     });
 
     await test.step('Le planning affiche « non présenté »', async () => {
-      await expect(blocRendezVous(page, CLIENTE_FICHIER).first()).toHaveAccessibleName(
-        /Statut : non présenté/,
+      // Le statut se lit dans le texte du repère, et non plus dans un nom
+      // accessible : un rendez-vous soldé n'occupe plus son créneau (#753), son
+      // bloc est donc un `<div>` inerte — un élément générique n'expose aucun
+      // nom accessible, seul le contrôle du coin en porte un. `toContainText`
+      // lit `textContent`, `.spa-visually-hidden` compris.
+      await expect(blocRendezVous(page, CLIENTE_FICHIER).first()).toContainText(
+        'Statut : non présenté',
       );
     });
 
@@ -277,8 +282,10 @@ test.describe('Comptoir', () => {
 
     await test.step('Le planning affiche « annulé »', async () => {
       await page.goto(chemins.calendrier(jour));
-      await expect(blocRendezVous(page, CLIENTE_FICHIER).first()).toHaveAccessibleName(
-        /Statut : annulé/,
+      // Même raison qu'au no-show : le repère d'un soldé est un bloc inerte
+      // sans nom accessible, et c'est son texte qui porte le statut (#753).
+      await expect(blocRendezVous(page, CLIENTE_FICHIER).first()).toContainText(
+        'Statut : annulé',
         { timeout: 20_000 },
       );
     });
