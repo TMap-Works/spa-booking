@@ -1083,8 +1083,215 @@ def outil_api_demarrer(args: dict) -> dict:
     }
 
 
+# --------------------------------------------------------------------------- #
+# Migrations — la base porte-t-elle le schéma que le dépôt compile ? (#318)
+# --------------------------------------------------------------------------- #
+
+# Une base de développement en retard n'est pas un accident : un ticket qui
+# écrit une migration la crée, par construction, avant que la base partagée ne
+# l'ait vue. Laisser Prisma le découvrir, c'était rendre 2000 caractères de trace
+# autour d'un « column does not exist » — et laisser l'agent conclure que sa
+# propre migration était fausse.
+DOSSIER_MIGRATIONS = "apps/api/prisma/migrations"
+COMMANDE_MIGRATIONS = "npm run db:migrate:deploy -w @spa/api"
+
+# La lecture de `_prisma_migrations` passe par la fixture **du serveur** et non
+# par celle du dépôt recetté : un worktree parti d'un `develop` plus ancien porte
+# une fixture qui ne connaît pas `--migrations`, et l'appeler y poserait un jeu
+# d'essai « recette-0 » au lieu de lire.
+FIXTURE_DU_SERVEUR = Path(__file__).resolve().parent / "recette_fixture.mjs"
+
+# Ce qu'une trace Prisma dit quand le schéma manque en base : P2021 (table),
+# P2022 (colonne). Sert de repli quand la lecture des migrations n'a pas pu se
+# faire.
+TRACE_SCHEMA_ABSENT = re.compile(r"P202[12]\b|does not exist in the current database")
+
+
+def migrations_locales(racine: Path) -> list:
+    """Les migrations que porte le dépôt, dans l'ordre où Prisma les applique."""
+    dossier = Path(racine) / DOSSIER_MIGRATIONS
+    if not dossier.is_dir():
+        return []
+    return sorted(d.name for d in dossier.iterdir() if (d / "migration.sql").is_file())
+
+
+def migrations_sur_develop(racine: Path):
+    """Les noms de migration d'`origin/develop`, ou `None` si git ne sait pas le dire.
+
+    C'est ce qui sépare les deux retards. Une migration déjà sur `develop` manque à
+    une base simplement en retard : l'appliquer ne fait de tort à personne. Une
+    migration propre à la branche, elle, n'est connue que de ce ticket : la poser
+    sur la base partagée précède le merge, et les autres dépôts la subissent.
+    """
+    try:
+        sortie = subprocess.run(
+            ["git", "ls-tree", "--name-only", "origin/develop", DOSSIER_MIGRATIONS + "/"],
+            cwd=str(racine), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if sortie.returncode != 0:
+        return None
+    return {ligne.rsplit("/", 1)[-1] for ligne in sortie.stdout.splitlines() if ligne.strip()}
+
+
+def ecart_migrations(locales, base) -> dict:
+    """Ce qui sépare le dossier du dépôt de ce que `_prisma_migrations` enregistre.
+
+    `base` : les lignes de la table, `{"nom", "terminee", "annulee"}`. Une
+    migration en échec — commencée, jamais terminée ni annulée — bloque Prisma
+    tout entier : elle est rendue à part, pas mêlée aux migrations en attente.
+    """
+    appliquees = {m["nom"] for m in base if m.get("terminee") and not m.get("annulee")}
+    en_echec = sorted(
+        {m["nom"] for m in base if not m.get("terminee") and not m.get("annulee")} - appliquees
+    )
+    return {
+        "en_attente": [nom for nom in locales if nom not in appliquees and nom not in en_echec],
+        "en_echec": en_echec,
+        "inconnues": sorted(appliquees - set(locales)),
+    }
+
+
+def cible_base(url: str) -> str:
+    """« hôte:port/base » d'une URL de connexion — sans ses identifiants."""
+    try:
+        decoupe = urllib.parse.urlparse(url)
+        return "%s:%s%s" % (decoupe.hostname or "?", decoupe.port or PORT_POSTGRES, decoupe.path or "")
+    except ValueError:
+        return "?"
+
+
+def _liste(noms) -> str:
+    return ", ".join(noms)
+
+
+def diagnostiquer_migrations(locales, lecture: dict, cible: str, racine: Path, sur_develop=None):
+    """Rend `(refus, avertissement)` : le refus arrête le jeu d'essai, pas l'avertissement.
+
+    Un retard refuse : la base n'a pas le schéma que le dépôt compile, et ce qui
+    échouerait ensuite — fixture ou API — accuserait le ticket à tort. Une avance
+    se contente d'avertir : le jeu d'essai peut aboutir, mais une colonne NOT NULL
+    posée par une autre branche fera rendre 500 aux écritures de ce dépôt, et
+    l'agent doit savoir que ce ne sera pas son code.
+    """
+    ecart = ecart_migrations(locales, lecture.get("migrations") or [])
+
+    avertissement = None
+    if ecart["inconnues"]:
+        connues_de_develop = sur_develop is not None and set(ecart["inconnues"]) <= sur_develop
+        origine = (
+            "Elles sont sur develop : ce dépôt est en retard — « git fetch origin develop "
+            "&& git rebase origin/develop »"
+            if connues_de_develop
+            else "Une branche non mergée les a probablement appliquées avant son merge — ou ce "
+            "dépôt est en retard sur develop"
+        )
+        avertissement = (
+            "la base %s porte %d migration(s) que ce dépôt ne connaît pas : %s. %s. Si l'une "
+            "ajoute une colonne NOT NULL sans défaut, les écritures de ce dépôt sur sa table "
+            "rendront 500 — ce ne sera pas le code du ticket."
+            % (cible, len(ecart["inconnues"]), _liste(ecart["inconnues"]), origine)
+        )
+
+    remede = {
+        "commande": COMMANDE_MIGRATIONS,
+        "depuis": str(racine),
+        "base": cible,
+        "environnement": (
+            "DATABASE_URL doit viser %s — un worktree n'a pas de .env.local : passer la "
+            "variable dans le shell" % cible
+        ),
+    }
+
+    refus = None
+    if ecart["en_echec"]:
+        premiere = ecart["en_echec"][0]
+        refus = {
+            "erreur": (
+                "la base %s porte %d migration(s) en échec : %s. Prisma n'appliquera plus rien "
+                "tant qu'elle n'est pas résolue — le jeu d'essai n'a pas été lancé."
+                % (cible, len(ecart["en_echec"]), _liste(ecart["en_echec"]))
+            ),
+            "migrations_en_echec": ecart["en_echec"],
+            "remede": dict(
+                remede,
+                commande=(
+                    "npx prisma migrate resolve --rolled-back %s (depuis apps/api), après avoir "
+                    "vérifié qu'elle n'a rien laissé à moitié ; puis %s" % (premiere, COMMANDE_MIGRATIONS)
+                ),
+            ),
+        }
+    elif ecart["en_attente"]:
+        attente = [
+            {"nom": nom, "sur_develop": None if sur_develop is None else nom in sur_develop}
+            for nom in ecart["en_attente"]
+        ]
+        jamais = "" if lecture.get("table", True) else " (table _prisma_migrations absente : jamais migrée)"
+        refus = {
+            "erreur": (
+                "la base %s%s n'a pas %d migration(s) de ce dépôt : %s. Le jeu d'essai n'a pas "
+                "été lancé : Prisma aurait échoué sur une table ou une colonne absente, et ce "
+                "n'est pas le code du ticket qui serait en cause."
+                % (cible, jamais, len(attente), _liste(ecart["en_attente"]))
+            ),
+            "migrations_en_attente": attente,
+            "remede": remede,
+        }
+        propres = [a["nom"] for a in attente if a["sur_develop"] is False]
+        if propres:
+            refus["attention"] = (
+                "%s n'existe que sur cette branche : l'appliquer écrit sur la base partagée avant "
+                "le merge. Une colonne NOT NULL sans défaut y ferait rendre 500 aux écritures des "
+                "autres dépôts jusqu'au merge (#826)." % _liste(propres)
+            )
+
+    if refus and avertissement:
+        refus["avertissement_migrations"] = avertissement
+    return refus, avertissement
+
+
+def executer_fixture(script: Path, racine: Path, env: dict, arguments, delai: float = 180):
+    """Un appel de `recette_fixture.mjs` — le seul chemin de ce serveur vers Prisma."""
+    return subprocess.run(
+        [_executable("node"), str(script)] + list(arguments),
+        cwd=str(racine),
+        env=env,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=delai,
+    )
+
+
+def lire_migrations(racine: Path, env: dict):
+    """Les lignes de `_prisma_migrations`, ou `(None, motif)` si la lecture échoue."""
+    try:
+        sortie = executer_fixture(FIXTURE_DU_SERVEUR, racine, env, ["--migrations"], delai=60)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as erreur:
+        return None, str(erreur)
+    if sortie.returncode != 0:
+        lignes = [l.strip() for l in ((sortie.stderr or "") + (sortie.stdout or "")).splitlines() if l.strip()]
+        return None, (lignes[0] if lignes else "code de sortie %d" % sortie.returncode)[:300]
+    try:
+        lecture = json.loads((sortie.stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return None, "sortie illisible"
+    if not isinstance(lecture, dict) or "migrations" not in lecture:
+        return None, "la fixture n'a pas rendu de liste de migrations"
+    return lecture, None
+
+
 def outil_api_jeu_dessai(args: dict) -> dict:
-    """Établissement, comptes des quatre rôles, établissement voisin — via Prisma."""
+    """Établissement, comptes des quatre rôles, établissement voisin — via Prisma.
+
+    Avant d'écrire, il vérifie que la base porte les migrations du dépôt, et
+    refuse en les nommant quand elles manquent (#318). Si la vérification ne peut
+    pas se faire, le jeu d'essai est tenté comme avant : elle est une aide au
+    diagnostic, pas une barrière de plus.
+    """
     racine, _, refus = resoudre_racine(args)
     if refus:
         return refus
@@ -1093,33 +1300,50 @@ def outil_api_jeu_dessai(args: dict) -> dict:
     env_fichiers = charger_env(racine)
     secrets = secrets_de(env_fichiers)
 
-    joignable, adresse = service_joignable(env_fichiers.get("DATABASE_URL", ""), PORT_POSTGRES)
+    url = env_fichiers.get("DATABASE_URL", "")
+    joignable, adresse = service_joignable(url, PORT_POSTGRES)
     if not joignable:
         return {"erreur": "PostgreSQL injoignable sur %s — « docker compose up -d »." % adresse}
 
     env = os.environ.copy()
     env.update(env_fichiers)
+    cible = cible_base(url)
 
-    sortie = subprocess.run(
-        [_executable("node"), str(racine / "scripts" / "mcp" / "recette_fixture.mjs"), "--ticket", ticket],
-        cwd=str(racine),
-        env=env,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=180,
+    lecture, motif = lire_migrations(racine, env)
+    avertissement = None
+    if lecture is not None:
+        refus, avertissement = diagnostiquer_migrations(
+            migrations_locales(racine), lecture, cible, racine, migrations_sur_develop(racine)
+        )
+        if refus:
+            return refus
+
+    sortie = executer_fixture(
+        racine / "scripts" / "mcp" / "recette_fixture.mjs", racine, env, ["--ticket", ticket]
     )
     if sortie.returncode != 0:
-        return {
+        trace = (sortie.stdout or "") + (sortie.stderr or "")
+        echec = {
             "erreur": "le jeu d'essai a échoué",
-            "sortie": masquer(((sortie.stdout or "") + (sortie.stderr or ""))[-2000:], secrets),
+            "sortie": masquer(trace[-2000:], secrets),
         }
+        if avertissement:
+            echec["avertissement_migrations"] = avertissement
+        if motif:
+            echec["verification_migrations"] = "impossible : " + masquer(motif, secrets)
+            if TRACE_SCHEMA_ABSENT.search(trace):
+                echec["piste"] = (
+                    "Prisma ne trouve pas une table ou une colonne : la base %s est probablement en "
+                    "retard de migrations — « %s » depuis %s." % (cible, COMMANDE_MIGRATIONS, racine)
+                )
+        return echec
     try:
         jeu = json.loads((sortie.stdout or "").strip().splitlines()[-1])
     except (ValueError, IndexError):
         return {"erreur": "sortie du jeu d'essai illisible", "sortie": masquer((sortie.stdout or "")[-1000:], secrets)}
 
+    if avertissement:
+        jeu["avertissement_migrations"] = avertissement
     ETAT["jeu"] = jeu
     return jeu
 
@@ -1431,7 +1655,9 @@ OUTILS = [
         "description": (
             "Crée en base l'établissement de recette, ses comptes CLIENT/STAFF/MANAGER/ADMIN "
             "et un établissement voisin pour la sonde d'isolation. Idempotent, cloisonné par "
-            "numéro de ticket. Sans lui, aucune route authentifiée ne peut être exercée."
+            "numéro de ticket. Sans lui, aucune route authentifiée ne peut être exercée. "
+            "Vérifie d'abord que la base porte les migrations du dépôt : sinon il refuse en "
+            "les nommant, avec la commande à poser."
         ),
         "inputSchema": {
             "type": "object",
