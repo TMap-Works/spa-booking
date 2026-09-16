@@ -135,8 +135,15 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
   // conditionnent pas, et les enchaîner ferait payer la somme des deux
   // allers-retours à l'écran dont le ticket demande justement qu'il soit plus
   // rapide que le tunnel public.
-  const [services, staff, loaded] = await Promise.all([
-    fetchServices(accessToken, { activeOnly: true }).catch((): readonly Service[] => []),
+  //
+  // `null` et non `[]` en cas d'échec : depuis #751 l'état vide du planning
+  // **diagnostique** l'installation du salon à partir de ces deux listes, et une
+  // liste vide faute de réponse lui ferait annoncer « ce salon n'est pas encore
+  // installé » à un salon qui l'est. Les deux cas se rendent pareil — un
+  // catalogue et un répertoire vides —, mais un seul des deux autorise le
+  // diagnostic.
+  const [loadedServices, loadedStaff, loaded] = await Promise.all([
+    fetchServices(accessToken, { activeOnly: true }).catch((): readonly Service[] | null => null),
     // Les praticiens **actifs** seuls : ce sont les colonnes de la vue jour, et
     // une fiche suspendue ne prend plus de rendez-vous — lui ouvrir une colonne
     // inviterait à en poser un. Celles qui portent déjà un rendez-vous ce
@@ -146,7 +153,9 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
     // répertoire, et le faire tomber pour lui reviendrait à fermer l'agenda
     // parce qu'une liste annexe n'a pas répondu. Sans lui, la vue jour retrouve
     // simplement son comportement d'avant #507.
-    fetchStaffMembers(accessToken, { activeOnly: true }).catch((): readonly StaffMember[] => []),
+    fetchStaffMembers(accessToken, { activeOnly: true }).catch(
+      (): readonly StaffMember[] | null => null,
+    ),
     Promise.all(
       [anchor, shiftAnchor(view, anchor, -1), shiftAnchor(view, anchor, 1)].map(async (target) => {
         try {
@@ -160,6 +169,11 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
       }),
     ),
   ]);
+
+  const services = loadedServices ?? [];
+  const staff = loadedStaff ?? [];
+  /** Les deux listes ont répondu : ce qu'elles ne portent pas n'existe pas. */
+  const setupKnown = loadedServices !== null && loadedStaff !== null;
 
   const periods: Record<string, readonly Appointment[]> = {};
   let loadError: string | null = null;
@@ -199,6 +213,7 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
         initialPeriods={periods}
         loadError={loadError}
         services={services}
+        setupKnown={setupKnown}
         staff={staff}
         tenantSlug={tenantSlug}
         timeZone={tenant.timezone}

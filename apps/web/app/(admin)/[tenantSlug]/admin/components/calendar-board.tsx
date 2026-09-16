@@ -2,6 +2,7 @@
 
 import type { Appointment, Service, StaffMemberSummary, TimeZone } from '@spa/shared';
 import { ERROR_CODES } from '@spa/shared';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
@@ -35,10 +36,12 @@ import {
   todayInTimeZone,
   type CalendarView,
 } from '@/lib/admin/calendar-range';
+import { calendarPeriodEmptyState, calendarStartState } from '@/lib/admin/calendar-start';
 
 import type { AdminActionResult } from '../action-result';
 import { loadCalendarRangeAction, rescheduleDeskAppointmentAction } from '../calendrier/actions';
-import { adminCalendarPath, adminSessionRefreshPath } from '../paths';
+import { adminCalendarPath, adminCatalogPath, adminSessionRefreshPath } from '../paths';
+import { adminStaffPath } from '../personnel/paths';
 
 import { AppointmentPanel, type DeskTarget } from './appointment-panel';
 import { CalendarMoveConfirm } from './calendar-move-confirm';
@@ -163,6 +166,19 @@ interface CalendarBoardProps {
    * reste consultable : lire l'agenda ne dépend pas du répertoire.
    */
   readonly staff: readonly StaffMemberSummary[];
+  /**
+   * Les deux listes ci-dessus ont bien été lues (#751).
+   *
+   * Elles arrivent vides pour deux raisons opposées — un salon qui n'a rien
+   * créé, ou une API qui n'a pas répondu (`calendrier/page.tsx` retombe sur une
+   * liste vide plutôt que de fermer l'agenda) — et l'état vide ne doit
+   * diagnostiquer l'installation du salon que dans le premier cas. `false`, il
+   * reprend son énoncé neutre : la période est creuse, allez voir la suivante.
+   *
+   * Facultatif, et vrai par défaut : les écrans qui n'ont qu'un catalogue à
+   * passer n'ont pas à répondre d'une question qu'ils ne se posent pas.
+   */
+  readonly setupKnown?: boolean;
 }
 
 /** Rafraîchissement du trait d'heure courante — sa résolution est la minute. */
@@ -180,6 +196,7 @@ export function CalendarBoard({
   loadError,
   services,
   staff,
+  setupKnown = true,
 }: CalendarBoardProps) {
   const router = useRouter();
   const [view, setView] = useState<CalendarView>(initialView);
@@ -292,6 +309,32 @@ export function CalendarBoard({
   // sans aucune fiche praticien, et le cas où le répertoire n'a pas pu être lu.
   const isEmpty = !isPending && board.columns.length === 0;
   const showsGrid = !isPending && !isEmpty;
+
+  /**
+   * Ce que l'état vide dit, et ce qu'il propose (#751).
+   *
+   * Un planning sans colonne n'est presque jamais une journée creuse : depuis
+   * #507 la vue jour ouvre une colonne par praticien du répertoire, si bien
+   * qu'il n'y reste que le salon qui n'a **aucune** fiche. Lui conseiller le
+   * lendemain était un cul-de-sac — il est vide à l'identique, indéfiniment.
+   * C'est le module qui tranche, sur les deux seuls comptes qui décident.
+   *
+   * Encore faut-il que ces comptes veuillent dire quelque chose : un catalogue
+   * ou un répertoire que l'API n'a pas rendus arrivent vides eux aussi, et le
+   * diagnostic annoncerait alors à un salon installé qu'il ne l'est pas. Tant
+   * qu'un doute subsiste — `setupKnown` faux, ou la période elle-même en échec —
+   * l'écran reprend son énoncé neutre et son bouton de période.
+   */
+  const start = useMemo(
+    () =>
+      setupKnown && failure === null
+        ? calendarStartState(
+            { serviceCount: services.length, staffCount: staff.length },
+            { catalog: adminCatalogPath(tenantSlug), staff: adminStaffPath(tenantSlug) },
+          )
+        : calendarPeriodEmptyState(),
+    [setupKnown, failure, services.length, staff.length, tenantSlug],
+  );
 
   /** Charge une période absente du cache, et la range dedans. */
   const load = useCallback(
@@ -881,19 +924,38 @@ export function CalendarBoard({
             </div>
           ) : isEmpty ? (
             <div className="spa-empty-state">
-              <p className="spa-empty-state__title">Aucun rendez-vous sur cette période</p>
-              <p className="spa-empty-state__description">
-                Rien n’est encore posé ici. Changez de période, ou passez en vue semaine pour voir
-                plus large.
-              </p>
-              <Button
-                variant="neutral"
-                onClick={() => {
-                  openPeriod(view, shiftAnchor(view, date, 1));
-                }}
-              >
-                {view === 'jour' ? 'Aller au jour suivant' : 'Aller à la semaine suivante'}
-              </Button>
+              <p className="spa-empty-state__title">{start.title}</p>
+              <p className="spa-empty-state__description">{start.description}</p>
+              {start.links.length === 0 ? (
+                // Rien ne manque au salon : la période est vraiment creuse, et
+                // changer de période est alors le bon conseil.
+                <Button
+                  variant="neutral"
+                  onClick={() => {
+                    openPeriod(view, shiftAnchor(view, date, 1));
+                  }}
+                >
+                  {view === 'jour' ? 'Aller au jour suivant' : 'Aller à la semaine suivante'}
+                </Button>
+              ) : (
+                // Des liens et non des boutons : ce sont des destinations, elles
+                // s'ouvrent dans un onglet et se copient. Le premier porte
+                // l'accent — c'est par là qu'on commence.
+                //
+                // Empilés directement dans `.spa-empty-state`, sans conteneur :
+                // c'est déjà une colonne centrée avec son écart, et une classe de
+                // rangée propre au planning devrait être montrée par une maquette
+                // pour ne pas devenir du style mort (`tests/admin-mockups.test.mjs`).
+                start.links.map((link, index) => (
+                  <Link
+                    className={`spa-button spa-button--${index === 0 ? 'accent' : 'neutral'}`}
+                    href={link.href}
+                    key={link.key}
+                  >
+                    <span className="spa-button__label">{link.label}</span>
+                  </Link>
+                ))
+              )}
             </div>
           ) : (
             <>
