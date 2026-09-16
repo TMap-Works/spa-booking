@@ -29,6 +29,7 @@ import type { AppointmentMessageContext } from '../notifications.types';
 
 const VALUES: TemplateVariables = {
   client: 'Amina Rakoto',
+  reference: 'RDV-8F3K-27',
   service: 'Massage suédois',
   praticien: 'Claire D.',
   salon: 'Maison Lotus',
@@ -376,6 +377,7 @@ const PARIS: AppointmentMessageContext = {
   tenantTimeZone: 'Europe/Paris',
   tenantAddress: '12 rue des Lilas, 75011 Paris',
   tenantPhone: '+33123456789',
+  appointmentReference: 'RDV-8F3K-27',
   clientId: CLIENT,
   clientFirstName: 'Amina',
   clientLastName: 'Rakoto',

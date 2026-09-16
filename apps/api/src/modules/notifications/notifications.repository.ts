@@ -474,6 +474,11 @@ export class NotificationsRepository {
       this.prisma.appointment.findFirst({
         where: { id: appointmentId },
         select: {
+          // La référence citable — #796. C'est le seul chemin de retour vers le
+          // salon que l'e-mail donnait jusque-là : `{{lien_annulation}}`, qui
+          // ouvre l'espace client. Une cliente qui téléphone n'a plus à décrire
+          // son rendez-vous, elle lit son code.
+          reference: true,
           startsAt: true,
           priceAmountMinor: true,
           priceCurrency: true,
@@ -520,6 +525,7 @@ export class NotificationsRepository {
       tenantTimeZone: tenant.timezone,
       tenantAddress: postalAddress(tenant),
       tenantPhone: tenant.contactPhone,
+      appointmentReference: appointment.reference,
       clientId: appointment.client.id,
       clientFirstName: appointment.client.firstName,
       clientLastName: appointment.client.lastName,

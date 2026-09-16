@@ -461,6 +461,29 @@ export interface AppointmentMessageContext {
    */
   readonly clientId: string;
 
+  /**
+   * La référence citable du rendez-vous — `RDV-8F3K-27` (#796).
+   *
+   * Elle s'écrit, elle : c'est la variable `{{reference}}`, et le récapitulatif
+   * des modèles de plateforme la porte. Ce qu'elle change pour une cliente qui
+   * relit son e-mail trois jours plus tard, c'est qu'elle a désormais de quoi
+   * **nommer** son rendez-vous au téléphone — le seul chemin de retour que le
+   * message donnait jusque-là était `{{lien_annulation}}`, qui suppose un
+   * navigateur et une session.
+   *
+   * ## Pourquoi elle est **relue** ici, comme l'origine d'annulation
+   *
+   * Pour la raison qui vaut pour tout le reste de cette structure : « un message
+   * de file survit à sa file ». `NotificationMessage` ne transporte que des
+   * identifiants, et la référence est un fait de la ligne `appointments`. La
+   * relire coûte une colonne sur une requête qui a lieu de toute façon.
+   *
+   * Nommée `appointmentReference` et non `reference` : dans une structure qui
+   * porte déjà `tenantName`, `clientId` et `serviceName`, un `reference` nu
+   * n'aurait pas dit de quoi il est la référence.
+   */
+  readonly appointmentReference: string;
+
   readonly clientFirstName: string;
   readonly clientLastName: string;
 
