@@ -24,10 +24,19 @@ function renderContactStep() {
   return { onSubmit, onSave, onBack, user: userEvent.setup() };
 }
 
+/**
+ * Ce qu'il faut poser pour que l'étape accepte la soumission.
+ *
+ * La case de consentement en fait partie depuis #734 : elle est bloquante, et
+ * une saisie « valide » qui l'oublierait ne l'est pas. Ce que cette case refuse
+ * et ce qu'elle annonce est éprouvé à part, par `booking-consent.test.tsx` —
+ * ici elle n'est qu'un préalable, comme le nom et l'adresse.
+ */
 async function fillRequiredFields(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText(/Prénom/), 'Camille');
   await user.type(screen.getByLabelText(/^Nom/), 'Rakoto');
   await user.type(screen.getByLabelText(/Adresse e-mail/), 'camille@example.test');
+  await user.click(screen.getByRole('checkbox'));
 }
 
 describe('la saisie part au brouillon avant la soumission', () => {
@@ -136,6 +145,8 @@ describe('formulaire de coordonnées', () => {
     await user.type(screen.getByLabelText(/Prénom/), 'Camille');
     await user.type(screen.getByLabelText(/^Nom/), 'Rakoto');
     await user.type(screen.getByLabelText(/Adresse e-mail/), 'camille');
+    // Cochée pour que le seul message attendu ci-dessous soit celui de l'adresse.
+    await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: /Vérifier ma réservation/ }));
 
     expect(onSubmit).not.toHaveBeenCalled();

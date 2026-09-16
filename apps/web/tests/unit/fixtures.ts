@@ -36,4 +36,7 @@ export const contact: ContactDraft = {
   email: 'camille@example.test',
   phone: '+261341234567',
   clientNote: '',
+  // Les coordonnées d'une cliente qui a traversé l'étape 4 : le consentement y
+  // est donné, sans quoi elle n'aurait pas atteint le récapitulatif (#734).
+  consent: true,
 };

@@ -293,6 +293,196 @@
   gap: var(--spa-space-3);
 }
 
+/* --- Information et consentement ------------------------------------------- */
+
+/*
+ * Le bloc que `lib/booking/consent.tsx` rend avant le bouton d'une étape (#734).
+ *
+ * ## Pourquoi il vit dans cette feuille alors que l'inscription l'emploie aussi
+ *
+ * Parce qu'il n'a qu'une seule définition, et qu'il fallait choisir laquelle des
+ * deux feuilles la porte. `wireframes.md` prescrit la case à l'étape 4 du
+ * tunnel : c'est le tunnel qui l'introduit, et c'est ici qu'on la trouve. La
+ * décrire deux fois — une fois ici, une fois dans `account.css` — aurait donné
+ * deux blocs voués à diverger, sur le seul écran du parcours où la cliente
+ * compare : elle passe de `/compte/inscription` au tunnel sans changer de
+ * produit, comme le dit déjà `.spa-booking__panel` un peu plus haut.
+ *
+ * Aucune règle n'y suppose l'un ou l'autre contexte : `.spa-booking__step` et
+ * `.spa-account__form` sont deux colonnes flex au même `gap`, et le bloc s'y
+ * pose à l'identique.
+ *
+ * ## Pourquoi un encart et non du texte au fil du formulaire
+ *
+ * Le fond `surface-sunken` et la bordure le détachent de la suite des champs :
+ * ce n'est pas une saisie de plus, c'est ce qu'il faut avoir lu avant de
+ * soumettre. La hiérarchie le dit avant la lecture (skill `web-frontend` §6).
+ */
+.spa-consent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-4);
+  background: var(--spa-color-surface-sunken);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-md);
+}
+
+/* La phrase toujours visible : les finalités en une fois, sans rien déplier. */
+.spa-consent__intro {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  line-height: var(--spa-line-height-relaxed);
+}
+
+/*
+ * Le résumé du dépliant se lit et se clique comme un lien — c'est ce qu'il
+ * remplace. La hauteur minimale est celle de toute cible tactile du système
+ * (WCAG 2.5.8) : le texte est court, et sans elle la zone à viser ferait la
+ * hauteur d'une ligne de 14 px.
+ */
+.spa-consent__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  min-block-size: var(--spa-target-min-size);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-accent-text);
+  cursor: pointer;
+  /* Explicite, parce que la ligne ci-dessus l'a déjà fait implicitement : un
+   * `<summary>` ne dessine son marqueur que tant qu'il est `display: list-item`,
+   * et passer en `flex` le retire. Le dire évite qu'on croie le voir encore. */
+  list-style: none;
+}
+
+/* Safari dessine son marqueur par un pseudo-élément propriétaire, que
+ * `list-style` ne touche pas. */
+.spa-consent__summary::-webkit-details-marker {
+  display: none;
+}
+
+/*
+ * Le chevron rendu à la place du marqueur perdu.
+ *
+ * Sans lui, « Ce que nous faisons de vos données » se lit comme un intertitre :
+ * rien ne dit qu'il s'ouvre, et le détail — la finalité et la base légale de
+ * chaque donnée (CDC §5.1) — reste replié sur un écran où il est justement dû.
+ * Un carré dont deux côtés sont tracés, pivoté : à droite replié, vers le bas
+ * déplié, comme le marqueur natif qu'il remplace. Pas de transition — l'état
+ * doit être lu, pas animé.
+ */
+.spa-consent__summary::before {
+  content: '';
+  flex: none;
+  inline-size: 0.45em;
+  block-size: 0.45em;
+  border-inline-end: 2px solid currentcolor;
+  border-block-end: 2px solid currentcolor;
+  transform: rotate(-45deg);
+}
+
+.spa-consent__details[open] > .spa-consent__summary::before {
+  transform: rotate(45deg);
+}
+
+/*
+ * Le retrait et la puce viennent de `.spa-list`, l'utilitaire du socle : le
+ * reset y retire le marqueur de toute liste, et c'est cette classe qui le rend
+ * aux listes de prose. Ici il est nécessaire — chaque entrée fait deux lignes,
+ * et le retrait est ce qui rattache la seconde à la première.
+ *
+ * D'où l'espacement en `margin` entre les puces plutôt qu'en `gap` : une liste
+ * mise en `flex` blockifie ses `<li>`, qui perdent leur `display: list-item` et
+ * donc leur puce. La règle du socle serait restée sans effet.
+ */
+.spa-consent__list {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  line-height: var(--spa-line-height-relaxed);
+}
+
+.spa-consent__list > li + li {
+  margin-block-start: var(--spa-space-2);
+}
+
+/* Le nom du champ, en couleur pleine sur la finalité atténuée : c'est la même
+ * répartition que `.spa-booking__recap-term` et sa valeur. */
+.spa-consent__data {
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+}
+
+.spa-consent__rights {
+  margin: var(--spa-space-3) 0 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  line-height: var(--spa-line-height-relaxed);
+}
+
+/*
+ * La case et son libellé.
+ *
+ * `flex-start` et non `center` : le libellé fait deux à trois lignes sur un
+ * écran de 360 px, et centrer la case sur ce bloc la ferait flotter au milieu du
+ * texte, loin de sa première ligne.
+ */
+.spa-consent__choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+}
+
+/*
+ * 24 px — le minimum de WCAG 2.5.8 pour une cible, et non les 2.75rem des
+ * contrôles de saisie : une case de 44 px de côté se lirait comme un bouton.
+ * La cible réelle est bien plus grande que la case, le `<label>` étant associé
+ * au contrôle : tout le libellé coche et décoche.
+ *
+ * `margin: 0` et non le défaut du navigateur : une case de 24 px et une ligne
+ * de libellé de 14 px en interligne 1.7 font toutes deux 24 px de haut, si bien
+ * que la case est déjà alignée sur la première ligne. Le moindre décalage la
+ * ferait pendre sous le texte, et les 3 px que le navigateur pose d'office en
+ * sont un.
+ */
+.spa-consent__control {
+  flex: none;
+  inline-size: var(--spa-space-6);
+  block-size: var(--spa-space-6);
+  margin: 0;
+  accent-color: var(--spa-color-accent);
+  cursor: pointer;
+}
+
+/*
+ * L'état invalide, comme ailleurs, ne repose pas sur la seule couleur
+ * (WCAG 1.4.1) : le message en `role="alert"` ci-dessous le dit, et ce contour
+ * ne fait que montrer laquelle des cases il désigne — il y en a une, mais le
+ * formulaire en compte huit contrôles.
+ */
+.spa-consent__control[aria-invalid='true'] {
+  outline: 2px solid var(--spa-color-danger);
+  outline-offset: 2px;
+}
+
+.spa-consent__label {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text);
+  line-height: var(--spa-line-height-relaxed);
+  cursor: pointer;
+}
+
+/* Même rendu que `.spa-field__error`, et pour la même raison : c'est le message
+ * d'un contrôle, sous son contrôle. Il n'est pas partagé avec lui parce que
+ * `field.css` décrit `.spa-field`, et qu'une case de consentement n'en est
+ * pas un — elle n'a ni libellé au-dessus, ni contrôle pleine largeur. */
+.spa-consent__error {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-danger);
+}
+
 /* --- Pied de page ---------------------------------------------------------- */
 
 .spa-booking__footer {
