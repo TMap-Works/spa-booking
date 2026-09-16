@@ -9,13 +9,18 @@
  * seulement sont admis ici :
  *
  * 1. **Le back-office n'expose pas le geste.** C'est le cas de la confirmation
- *    d'un rendez-vous et de son annulation au comptoir : `DESK_STATUS_LABELS`
+ *    d'un rendez-vous en attente : `DESK_STATUS_LABELS`
  *    (`apps/web/lib/admin/appointment-desk.ts`) ne connaît que « Marquer honoré »
- *    et « Marquer non présenté », et aucun écran d'administration ne rend de
- *    bouton d'annulation. Les routes, elles, existent et sont servies —
- *    `POST /appointments/:id/status` et `POST /appointments/:id/cancel`. C'est
- *    donc l'IHM qui manque, pas le produit, et un test E2E n'a pas à combler ce
- *    manque en inventant un écran.
+ *    et « Marquer non présenté », et aucun bouton ne déclenche
+ *    `pending → confirmed`. La route, elle, existe et est servie —
+ *    `POST /appointments/:id/status`. C'est donc l'IHM qui manque, pas le
+ *    produit, et un test E2E n'a pas à combler ce manque en inventant un écran.
+ *
+ *    L'annulation au comptoir relevait du même motif jusqu'à #754, et n'en
+ *    relève plus : le pied du tiroir porte l'action, et `front-desk.e2e.ts`
+ *    l'exerce à l'écran. Le raccourci a donc été **retiré** plutôt que laissé
+ *    disponible — un raccourci qui survit à l'écran qu'il suppléait finit par
+ *    être repris par commodité, et le scénario cesse alors d'éprouver l'IHM.
  * 2. **La mise en situation.** Éprouver le report exige un rendez-vous déjà
  *    posé ; le faire naître par le tunnel complet à chaque test tripleraît la
  *    durée de la suite sans rien éprouver de plus, le tunnel ayant sa propre
@@ -216,27 +221,6 @@ export async function changerStatut(
     data: { status: statut },
   });
   await exiger(reponse, `passage du rendez-vous ${identifiant} en ${statut}`);
-  return (await reponse.json()) as RendezVous;
-}
-
-/**
- * Annule un rendez-vous côté salon — motif 1 : aucun écran ne le rend.
- *
- * `appointments.controller.ts` documente le manque en creux : « Le tiroir de #50
- * […] a un bouton d'annulation à part » — bouton que `appointment-panel.tsx` ne
- * porte pas. La route, elle, est servie et rend `cancelledBy: 'STAFF'`.
- */
-export async function annuler(
-  request: APIRequestContext,
-  jeton: string,
-  identifiant: string,
-  motif: string,
-): Promise<RendezVous> {
-  const reponse = await request.post(`${BASE_API}/appointments/${identifiant}/cancel`, {
-    headers: entetes(jeton),
-    data: { reason: motif },
-  });
-  await exiger(reponse, `annulation du rendez-vous ${identifiant}`);
   return (await reponse.json()) as RendezVous;
 }
 

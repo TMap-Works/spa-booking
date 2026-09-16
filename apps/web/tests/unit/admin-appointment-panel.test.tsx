@@ -9,6 +9,7 @@ import {
 } from '@/app/(admin)/[tenantSlug]/admin/components/appointment-panel';
 import { CalendarBoard } from '@/app/(admin)/[tenantSlug]/admin/components/calendar-board';
 import {
+  DESK_CANCEL_QUESTION,
   DESK_NO_SLOT_MESSAGE,
   DESK_ROUTE_MISSING_MESSAGE,
   DESK_SLOTS_UNREADABLE_MESSAGE,
@@ -35,6 +36,7 @@ const loadAppointmentNotificationsAction = vi.fn();
 const createDeskAppointmentAction = vi.fn();
 const rescheduleDeskAppointmentAction = vi.fn();
 const markDeskAppointmentStatusAction = vi.fn();
+const cancelDeskAppointmentAction = vi.fn();
 const searchDeskClientsAction = vi.fn();
 const createDeskClientAction = vi.fn();
 const push = vi.fn();
@@ -50,6 +52,7 @@ vi.mock('@/app/(admin)/[tenantSlug]/admin/calendrier/actions', () => ({
     rescheduleDeskAppointmentAction(...args),
   markDeskAppointmentStatusAction: (...args: unknown[]) =>
     markDeskAppointmentStatusAction(...args),
+  cancelDeskAppointmentAction: (...args: unknown[]) => cancelDeskAppointmentAction(...args),
   searchDeskClientsAction: (...args: unknown[]) => searchDeskClientsAction(...args),
   createDeskClientAction: (...args: unknown[]) => createDeskClientAction(...args),
 }));
@@ -342,6 +345,139 @@ describe('cinquième critère — marquer honoré et non présenté', () => {
     });
     expect(onReload).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * L'annulation par le salon — #754.
+ *
+ * Le tiroir invitait à « annuler et reposer le rendez-vous » sans offrir
+ * d'annulation : la route existait, l'écran manquait, et le geste de comptoir le
+ * plus courant — « j'appelle pour annuler » — n'avait nulle part où se faire.
+ *
+ * Ce qui est éprouvé ici est le geste complet : la question posée avant tout
+ * envoi, le motif qui l'accompagne, et l'absence du bouton là où le cycle de vie
+ * refuserait la transition.
+ */
+describe('#754 — le salon annule depuis le tiroir', () => {
+  it('offre l’annulation sur un rendez-vous encore annulable, et sur lui seul', () => {
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+    expect(screen.getByRole('button', { name: 'Annuler le rendez-vous' })).toBeDefined();
+
+    cleanup();
+
+    renderPanel({ kind: 'edit', appointment: { ...CONFIRME, status: 'completed' } });
+    expect(screen.queryByRole('button', { name: 'Annuler le rendez-vous' })).toBeNull();
+  });
+
+  it('n’en offre aucune à la création — il n’y a rien à annuler', () => {
+    renderPanel(CREATION);
+
+    expect(screen.queryByRole('button', { name: 'Annuler le rendez-vous' })).toBeNull();
+  });
+
+  it('pose la question au premier clic au lieu d’annuler', async () => {
+    const user = userEvent.setup();
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await user.click(screen.getByRole('button', { name: 'Annuler le rendez-vous' }));
+
+    expect(screen.getByText(DESK_CANCEL_QUESTION)).toBeDefined();
+    expect(screen.getByLabelText(/Motif de l’annulation/)).toBeDefined();
+    expect(cancelDeskAppointmentAction).not.toHaveBeenCalled();
+    // Le pied ne porte plus que la réponse : « Enregistrer » déplacerait le
+    // rendez-vous qu'on est en train d'annuler.
+    expect(screen.queryByRole('button', { name: 'Enregistrer' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Marquer honoré' })).toBeNull();
+  });
+
+  it('revient au pied ordinaire sans rien envoyer quand on garde le rendez-vous', async () => {
+    const user = userEvent.setup();
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await user.click(screen.getByRole('button', { name: 'Annuler le rendez-vous' }));
+    await user.click(screen.getByRole('button', { name: 'Garder ce rendez-vous' }));
+
+    expect(screen.queryByText(DESK_CANCEL_QUESTION)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Enregistrer' })).toBeDefined();
+    expect(cancelDeskAppointmentAction).not.toHaveBeenCalled();
+  });
+
+  it('envoie le motif élagué, referme et relit le planning', async () => {
+    const user = userEvent.setup();
+    cancelDeskAppointmentAction.mockResolvedValue({
+      ok: true,
+      data: { ...CONFIRME, status: 'cancelled' },
+    });
+
+    const { onReload, onClose } = renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await user.click(screen.getByRole('button', { name: 'Annuler le rendez-vous' }));
+    await user.type(screen.getByLabelText(/Motif de l’annulation/), '  Cliente souffrante  ');
+    await user.click(screen.getByRole('button', { name: 'Confirmer l’annulation' }));
+
+    await waitFor(() => {
+      expect(cancelDeskAppointmentAction).toHaveBeenCalledWith(SLUG, CONFIRME.id, {
+        reason: 'Cliente souffrante',
+      });
+    });
+    expect(onReload).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('n’envoie aucun motif quand le champ est resté vide', async () => {
+    const user = userEvent.setup();
+    cancelDeskAppointmentAction.mockResolvedValue({
+      ok: true,
+      data: { ...CONFIRME, status: 'cancelled' },
+    });
+
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await user.click(screen.getByRole('button', { name: 'Annuler le rendez-vous' }));
+    await user.click(screen.getByRole('button', { name: 'Confirmer l’annulation' }));
+
+    // `{}` et non `{ reason: '' }` : un motif présent et vide ferait compter
+    // comme motivée une annulation qui ne l'est pas.
+    await waitFor(() => {
+      expect(cancelDeskAppointmentAction).toHaveBeenCalledWith(SLUG, CONFIRME.id, {});
+    });
+  });
+
+  it('laisse la question posée quand l’annulation échoue, motif compris', async () => {
+    const user = userEvent.setup();
+    cancelDeskAppointmentAction.mockResolvedValue({
+      ok: false,
+      code: 'INVALID_STATE_TRANSITION',
+      message: 'Rendez-vous déjà annulé.',
+    });
+
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await user.click(screen.getByRole('button', { name: 'Annuler le rendez-vous' }));
+    await user.type(screen.getByLabelText(/Motif de l’annulation/), 'Fermeture exceptionnelle');
+    await user.click(screen.getByRole('button', { name: 'Confirmer l’annulation' }));
+
+    expect(await screen.findByText('Rendez-vous déjà annulé.')).toBeDefined();
+    expect(screen.getByLabelText<HTMLTextAreaElement>(/Motif de l’annulation/).value).toBe(
+      'Fermeture exceptionnelle',
+    );
+  });
+
+  it('ne renvoie plus le champ Prestation à un geste que le tiroir n’offre pas', () => {
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    // L'invite relevée par l'audit : elle ordonnait « Annulez et reposez le
+    // rendez-vous » depuis un tiroir sans annulation.
+    expect(screen.queryByText(/Annulez et reposez le rendez-vous/)).toBeNull();
+    expect(screen.getByText(/annulez ce rendez-vous au pied du tiroir/)).toBeDefined();
+  });
+
+  it('retombe au constat seul quand l’annulation n’est plus possible', () => {
+    renderPanel({ kind: 'edit', appointment: { ...CONFIRME, status: 'completed' } });
+
+    expect(screen.queryByText(/annulez ce rendez-vous au pied du tiroir/)).toBeNull();
+    expect(screen.getByText(/son prix et sa durée sont figés à la réservation\.$/)).toBeDefined();
   });
 });
 

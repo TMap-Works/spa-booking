@@ -2,14 +2,17 @@ import type { Appointment, AppointmentStatus, Service } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
+  DESK_CANCEL_CONFLICT_MESSAGE,
   DESK_ROUTE_MISSING_MESSAGE,
   MOVE_CONFLICT_MESSAGE,
   MOVE_GONE_MESSAGE,
   SLOT_CONFLICT_MESSAGE,
+  deskCancelFailureMessage,
   deskFailureMessage,
   deskMoment,
   deskSlotOptions,
   deskStatusActions,
+  isCancellable,
   isReschedulable,
   isSlotConflict,
   minutesOfClock,
@@ -142,6 +145,16 @@ describe('ce que le pied du tiroir propose', () => {
     expect(isReschedulable('completed')).toBe(false);
     expect(isReschedulable('cancelled')).toBe(false);
   });
+
+  it('n’offre l’annulation que sur un état que le cycle de vie laisse annuler (#754)', () => {
+    expect(isCancellable('pending')).toBe(true);
+    expect(isCancellable('confirmed')).toBe(true);
+    // Terminaux : l'API les refuserait en `INVALID_STATE_TRANSITION`, et un
+    // bouton qui mène à un 422 est un bouton qui ment.
+    expect(isCancellable('completed')).toBe(false);
+    expect(isCancellable('no_show')).toBe(false);
+    expect(isCancellable('cancelled')).toBe(false);
+  });
 });
 
 describe('les refus, et ce qu’ils veulent dire à l’opérateur', () => {
@@ -166,6 +179,22 @@ describe('les refus, et ce qu’ils veulent dire à l’opérateur', () => {
     expect(deskFailureMessage('SLOT_OUTSIDE_WORKING_HOURS', 'Le salon est fermé.')).toBe(
       'Le salon est fermé.',
     );
+  });
+
+  it('ne lit pas un refus d’annulation comme un refus d’écriture (#754)', () => {
+    // Le 409 d'une annulation, ce sont deux postes qui annulent à la fois — pas
+    // un créneau perdu : il n'y a aucune heure à reprendre dans la liste.
+    expect(deskCancelFailureMessage('CONFLICT', 'peu importe')).toBe(
+      DESK_CANCEL_CONFLICT_MESSAGE,
+    );
+    // Et le 404 désigne un rendez-vous introuvable, jamais une route absente :
+    // `POST /appointments/:id/cancel` est servie depuis #40.
+    expect(deskCancelFailureMessage('NOT_FOUND', 'Rendez-vous introuvable.')).toBe(
+      'Rendez-vous introuvable.',
+    );
+    expect(
+      deskCancelFailureMessage('INVALID_STATE_TRANSITION', 'Rendez-vous déjà annulé.'),
+    ).toBe('Rendez-vous déjà annulé.');
   });
 });
 

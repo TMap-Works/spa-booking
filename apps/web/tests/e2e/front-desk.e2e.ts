@@ -7,24 +7,23 @@
  *
  * ## Ce que ces scénarios ont découvert, et qu'ils consignent
  *
- * Deux des quatre gestes **n'ont pas d'écran** dans le back-office :
+ * **L'annulation n'avait pas d'écran** : `DESK_STATUS_LABELS`
+ * (`apps/web/lib/admin/appointment-desk.ts`) l'écarte, au motif qu'elle a « sa
+ * propre route, son propre corps — un motif — et sa propre confirmation », et
+ * ces trois choses n'étaient branchées nulle part. Le scénario la passait donc
+ * par sa route, en le consignant. Ce n'est plus le cas depuis #754 : le pied du
+ * tiroir porte l'action destructive, et le scénario l'exerce à l'écran, en deux
+ * temps et avec son motif.
  *
- * - **l'annulation** — `DESK_STATUS_LABELS` l'écarte explicitement
- *   (`apps/web/lib/admin/appointment-desk.ts`), au motif que « l'annulation a sa
- *   propre route, son propre corps — un motif — et sa propre confirmation ». Le
- *   commentaire de `appointments.controller.ts` renvoie de son côté à « un
- *   bouton d'annulation à part » dans le tiroir de #50 — bouton que
- *   `appointment-panel.tsx` ne rend pas. La route est servie, l'écran manque ;
- * - **la confirmation** d'un rendez-vous en attente, pour la même raison.
- *
- * Ces deux-là sont donc exercés par leur route, et le scénario vérifie ensuite à
- * l'écran que le comptoir **voit** le résultat. Ce n'est pas un contournement de
- * confort : c'est l'état réel du produit, et le combler reviendrait à écrire de
- * l'IHM depuis une suite de tests. Un suivi est ouvert sur ce manque.
+ * Reste **la confirmation** d'un rendez-vous en attente : `pending → confirmed`
+ * est dans la table du contrat, mais aucun bouton ne la déclenche. Elle est donc
+ * exercée par sa route, et le scénario vérifie ensuite à l'écran que le comptoir
+ * **voit** le résultat. Ce n'est pas un contournement de confort : c'est l'état
+ * réel du produit, et le combler reviendrait à écrire de l'IHM depuis une suite
+ * de tests. Un suivi est ouvert sur ce manque.
  */
 
 import {
-  annuler,
   changerStatut,
   connecter,
   lireAgenda,
@@ -259,7 +258,7 @@ test.describe('Comptoir', () => {
       leJour: jour,
     });
 
-    await test.step("Aucun écran du back-office ne porte l'annulation", async () => {
+    await test.step('Annuler depuis le tiroir, en deux temps (#754)', async () => {
       await page.goto(chemins.calendrier(jour));
       const bloc = blocRendezVous(page, CLIENTE_FICHIER).first();
       await expect(bloc).toBeVisible({ timeout: 20_000 });
@@ -267,17 +266,19 @@ test.describe('Comptoir', () => {
 
       const panneau = tiroir(page);
       await expect(panneau).toBeVisible();
-      // Consigné plutôt que contourné : le jour où le tiroir portera son bouton
-      // d'annulation, cette assertion rougira et dira quoi réécrire.
-      await expect(
-        panneau.getByRole('button', { name: /Annuler ce rendez-vous|Marquer annulé/ }),
-      ).toHaveCount(0);
-      await panneau.getByRole('button', { name: 'Fermer le tiroir' }).click();
-    });
 
-    await test.step('Annuler par la route du salon', async () => {
-      const apres = await annuler(request, jeton, rendezVous.id, 'Cliente empêchée');
-      expect(apres.status.toLowerCase()).toBe('cancelled');
+      // Premier temps : la question, pas l'envoi. Le pied perd ses autres
+      // issues tant qu'elle est posée — c'est ce qui se vérifie ici, et pas
+      // seulement que le bouton existe.
+      await panneau.getByRole('button', { name: 'Annuler le rendez-vous' }).click();
+      await expect(panneau.getByRole('button', { name: 'Enregistrer' })).toHaveCount(0);
+
+      // Second temps, motif compris : il est enregistré sur la ligne et rendu
+      // par aucune réponse — c'est une note interne, et le vérifier à l'écran
+      // reviendrait à exiger une fuite.
+      await panneau.getByLabel(/Motif de l’annulation/).fill('Cliente empêchée');
+      await panneau.getByRole('button', { name: 'Confirmer l’annulation' }).click();
+      await expect(panneau).toBeHidden({ timeout: 20_000 });
     });
 
     await test.step('Le planning affiche « annulé »', async () => {
