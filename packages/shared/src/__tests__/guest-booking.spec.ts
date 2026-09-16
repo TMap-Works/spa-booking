@@ -228,6 +228,9 @@ describe('createAppointmentRequestSchema — la forme de back-office', () => {
 describe('bookedAppointmentSchema', () => {
   const response = {
     id: '2b0f3a1c-6a4d-4a2e-9d3b-8f7c1e5a4b21',
+    // La référence citable, requise depuis #796 : l'API l'émet sur toute
+    // réponse de réservation, et c'est elle que l'écran de confirmation montre.
+    reference: 'RDV-8F3K-27',
     status: 'PENDING',
     serviceId: '2b0f3a1c-6a4d-4a2e-9d3b-8f7c1e5a4b22',
     staffId: '2b0f3a1c-6a4d-4a2e-9d3b-8f7c1e5a4b23',

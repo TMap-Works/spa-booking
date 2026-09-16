@@ -1,12 +1,20 @@
 export {
+  APPOINTMENT_REFERENCE_ALPHABET,
+  APPOINTMENT_REFERENCE_GROUP_LENGTH,
+  APPOINTMENT_REFERENCE_LENGTH,
+  APPOINTMENT_REFERENCE_PATTERN,
+  APPOINTMENT_REFERENCE_PREFIX,
+  APPOINTMENT_REFERENCE_SUFFIX_LENGTH,
   APPOINTMENT_STATUS_TRANSITIONS,
   APPOINTMENT_STATUSES,
   BLOCKING_APPOINTMENT_STATUSES,
   CANCELLATION_ACTORS,
   TERMINAL_APPOINTMENT_STATUSES,
   canTransitionAppointment,
+  isAppointmentReference,
   isAppointmentStatus,
   isBlockingAppointmentStatus,
+  normalizeAppointmentReference,
 } from './appointment';
 export type { AppointmentStatus, CancellationActor } from './appointment';
 
