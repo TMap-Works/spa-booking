@@ -1,4 +1,4 @@
-import type { Appointment, AppointmentStatus } from '@spa/shared';
+import type { Appointment, AppointmentStatus, OpeningHoursEntry } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -9,6 +9,7 @@ import {
   slotSpanOf,
   statusModifier,
   type CalendarCell,
+  type CalendarClosedCell,
   type CalendarEventCell,
 } from '@/lib/admin/calendar-grid';
 import { rangeOf } from '@/lib/admin/calendar-range';
@@ -604,5 +605,294 @@ describe('un rendez-vous hors grille dit son heure, pas celle de sa rangée (#53
     const event = eventsOf(board.columns[2]?.cells ?? [])[0];
 
     expect(event?.timeLabel).toBe('09:15');
+  });
+});
+
+/**
+ * Les heures que le salon n'ouvre pas — #752.
+ *
+ * Le planning peignait chaque rangée de son amplitude comme un créneau libre,
+ * jours de fermeture compris, là où le moteur refuse tout ce qui tombe hors des
+ * fenêtres de travail (`booking-engine` §3, étape 2 : les horaires du personnel,
+ * moins les congés, moins les jours de fermeture du tenant). Ces rangées-là
+ * deviennent le fond inactif nommé de `mockups/admin/calendrier.html`.
+ */
+describe('les horaires d’ouverture ferment les rangées qu’ils ne couvrent pas', () => {
+  /** Spa Lumière : du lundi au vendredi, 09:00–13:00 puis 14:00–19:00. */
+  const SEMAINE: readonly OpeningHoursEntry[] = ([1, 2, 3, 4, 5] as const).flatMap((weekday) => [
+    { weekday, opensAt: '09:00', closesAt: '13:00' },
+    { weekday, opensAt: '14:00', closesAt: '19:00' },
+  ]);
+
+  const HASINA = { id: 'staff-hasina', displayName: 'Hasina' };
+  const REPERTOIRE = [HASINA];
+
+  /** Les cellules fermées d'une colonne, dans l'ordre chronologique. */
+  function closedOf(cells: readonly CalendarCell[]): CalendarClosedCell[] {
+    return cells.filter((cell): cell is CalendarClosedCell => cell.kind === 'closed');
+  }
+
+  /**
+   * La clé React attendue d'une cellule fermée — **composée**, jamais écrite.
+   *
+   * `key: closedKey(16)` en toutes lettres déclenche la règle
+   * `generic-api-key` de gitleaks : une propriété nommée `key`, une valeur à
+   * entropie suffisante, et la barrière de sécurité de la CI bloque la PR sur un
+   * faux positif. La composer dit exactement la même chose — c'est bien la forme
+   * que `buildColumn` produit, `ferme-<colonne>-<rangée absolue>` — et ne
+   * ressemble plus à un secret.
+   */
+  const closedKey = (slot: number): string => `ferme-col-${HASINA.id}-${String(slot)}`;
+
+  /** Mercredi 26 août 2026 — une journée ouverte, avec sa coupure méridienne. */
+  const mercredi = buildCalendarBoard({
+    view: 'jour',
+    range: rangeOf('jour', '2026-08-26'),
+    appointments: [],
+    openingHours: SEMAINE,
+    staff: REPERTOIRE,
+    timeZone: TIMEZONE,
+  });
+
+  it('fusionne les rangées fermées en trois blocs nommés', () => {
+    // Amplitude 08 h – 20 h : une heure avant l'ouverture, une heure de coupure,
+    // une heure après la fermeture. Un libellé par demi-heure serait illisible.
+    expect(closedOf(mercredi.columns[0]?.cells ?? [])).toEqual([
+      {
+        kind: 'closed',
+        key: closedKey(16),
+        slot: 0,
+        span: 2,
+        label: 'Hors horaires',
+        nowOffset: null,
+      },
+      {
+        kind: 'closed',
+        key: closedKey(26),
+        slot: 10,
+        span: 2,
+        label: 'Pause',
+        nowOffset: null,
+      },
+      {
+        kind: 'closed',
+        key: closedKey(38),
+        slot: 22,
+        span: 2,
+        label: 'Hors horaires',
+        nowOffset: null,
+      },
+    ]);
+  });
+
+  it('ne laisse libres que les rangées que le salon ouvre vraiment', () => {
+    const free = (mercredi.columns[0]?.cells ?? []).filter((cell) => cell.kind === 'free');
+
+    // 09:00 → 12:30 et 14:00 → 18:30, soit 8 + 10 rangées de départ possibles.
+    expect(free).toHaveLength(18);
+    expect(free[0]).toMatchObject({ time: '09:00' });
+    expect(free.at(-1)).toMatchObject({ time: '18:30' });
+    // La rangée de 18:30 est la dernière : à 19:00 le salon ferme, et une
+    // prestation ne peut plus y commencer.
+    expect(free.some((cell) => cell.kind === 'free' && cell.time === '19:00')).toBe(false);
+  });
+
+  it('ferme la journée entière un jour absent des horaires', () => {
+    // Dimanche 30 août. Un jour absent d'une semaine renseignée est un jour de
+    // fermeture — la lecture qu'en font déjà la vitrine publique et les réglages.
+    const dimanche = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-30'),
+      appointments: [],
+      openingHours: SEMAINE,
+      staff: REPERTOIRE,
+      timeZone: TIMEZONE,
+    });
+    const colonne = dimanche.columns[0];
+
+    expect(colonne?.cells).toEqual([
+      {
+        kind: 'closed',
+        key: closedKey(16),
+        slot: 0,
+        span: 24,
+        label: 'Fermé',
+        nowOffset: null,
+      },
+    ]);
+    expect(colonne?.meta).toBe('Fermé');
+  });
+
+  it('ne ferme rien quand le salon n’a saisi aucun horaire', () => {
+    // « Le salon ferme tous les jours » et « le salon n'a rien saisi » sont deux
+    // états différents, et un seul autorise à peindre une fermeture.
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-30'),
+      appointments: [],
+      openingHours: [],
+      staff: REPERTOIRE,
+      timeZone: TIMEZONE,
+    });
+
+    expect(closedOf(board.columns[0]?.cells ?? [])).toHaveLength(0);
+    expect(board.columns[0]?.meta).toBe('Aucun rendez-vous');
+  });
+
+  it('élargit l’amplitude aux heures d’ouverture, sans jamais la resserrer', () => {
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [],
+      openingHours: [{ weekday: 3, opensAt: '07:00', closesAt: '21:00' }],
+      staff: REPERTOIRE,
+      timeZone: TIMEZONE,
+    });
+
+    expect(board.firstSlot).toBe(14);
+    expect(board.lastSlot).toBe(42);
+    // Et l'inverse : des horaires étroits ne masquent pas le reste de la
+    // journée, ils le peignent en fond inactif.
+    expect(mercredi.firstSlot).toBe(16);
+    expect(mercredi.lastSlot).toBe(40);
+  });
+
+  it('garde visible — et intact — un rendez-vous posé hors horaires', () => {
+    // Le cas qui interdit de masquer les rangées fermées : un rendez-vous de
+    // 07 h un jour ouvert à 09 h existe, et le salon doit l'honorer.
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [
+        appointment({ startsAt: '2026-08-26T04:00:00.000Z', endsAt: '2026-08-26T05:00:00.000Z' }),
+      ],
+      openingHours: SEMAINE,
+      staff: REPERTOIRE,
+      timeZone: TIMEZONE,
+    });
+    const cells = board.columns[0]?.cells ?? [];
+
+    expect(board.firstSlot).toBe(14);
+    expect(eventsOf(cells)[0]).toMatchObject({ slot: 0, span: 2 });
+    // La fermeture reprend là où le rendez-vous s'arrête : 08 h → 09 h.
+    expect(closedOf(cells)[0]).toMatchObject({ slot: 2, span: 2, label: 'Hors horaires' });
+    expect(board.columns[0]?.meta).toBe('1 RDV');
+  });
+
+  it('ne coupe pas une journée décrite en deux plages adjacentes', () => {
+    // « 09:00–12:00 » et « 12:00–19:00 » sont une journée continue en deux
+    // morceaux — le contrat tolère l'adjacence. Une « Pause » de hauteur nulle
+    // n'aurait rien à dire.
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [],
+      openingHours: [
+        { weekday: 3, opensAt: '12:00', closesAt: '19:00' },
+        { weekday: 3, opensAt: '09:00', closesAt: '12:00' },
+      ],
+      staff: REPERTOIRE,
+      timeZone: TIMEZONE,
+    });
+
+    expect(closedOf(board.columns[0]?.cells ?? []).map((cell) => cell.label)).toEqual([
+      'Hors horaires',
+      'Hors horaires',
+    ]);
+  });
+
+  it('lit « 24:00 » comme la fin de la journée, et non comme une heure illisible', () => {
+    // `scheduleEndTimeSchema` l'admet en borne haute : c'est ainsi qu'un salon
+    // ouvert jusqu'à minuit s'écrit. Le refuser aurait fermé sa soirée entière.
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [],
+      openingHours: [{ weekday: 3, opensAt: '18:00', closesAt: '24:00' }],
+      staff: REPERTOIRE,
+      timeZone: TIMEZONE,
+    });
+
+    expect(board.lastSlot).toBe(48);
+    expect(closedOf(board.columns[0]?.cells ?? [])).toEqual([
+      {
+        kind: 'closed',
+        key: closedKey(16),
+        slot: 0,
+        span: 20,
+        label: 'Hors horaires',
+        nowOffset: null,
+      },
+    ]);
+  });
+
+  it('pose le trait d’heure courante sur une fermeture, et à sa vraie hauteur', () => {
+    // Le trait ne vivait que sur les créneaux libres : un dimanche fermé, une
+    // coupure méridienne ou une soirée close le faisaient disparaître — c'est-à-
+    // dire la moitié des moments où l'on regarde le planning. Le pourcentage
+    // porte sur le bloc fusionné entier, pas sur une demi-heure.
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-30'),
+      appointments: [],
+      openingHours: SEMAINE,
+      staff: REPERTOIRE,
+      timeZone: TIMEZONE,
+      // 07:40 UTC = 10:40 au salon. Le bloc va de 08 h à 20 h : 160 minutes
+      // écoulées sur 720, soit 22 %.
+      now: new Date('2026-08-30T07:40:00.000Z'),
+    });
+
+    expect(closedOf(board.columns[0]?.cells ?? [])[0]).toMatchObject({
+      span: 24,
+      nowOffset: '22%',
+    });
+  });
+
+  it('ne ferme rien quand aucune plage saisie ne se lit', () => {
+    // Des plages toutes illisibles ne disent pas « fermé sept jours sur sept » :
+    // elles ne disent rien. Les traiter comme une semaine close aurait retiré au
+    // salon son seul point d'entrée vers le tiroir, sur la donnée la moins sûre.
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [],
+      openingHours: [{ weekday: 3, opensAt: '10:00', closesAt: '09:00' }],
+      staff: REPERTOIRE,
+      timeZone: TIMEZONE,
+    });
+
+    expect(closedOf(board.columns[0]?.cells ?? [])).toHaveLength(0);
+    expect(board.columns[0]?.meta).toBe('Aucun rendez-vous');
+  });
+
+  it('ferme les colonnes de week-end de la vue semaine', () => {
+    const board = buildCalendarBoard({
+      view: 'semaine',
+      range: rangeOf('semaine', '2026-08-26'),
+      appointments: [],
+      openingHours: SEMAINE,
+      timeZone: TIMEZONE,
+    });
+
+    // Sept colonnes, du lundi 24 au dimanche 30.
+    expect(board.columns).toHaveLength(7);
+    expect(board.columns.map((column) => column.meta)).toEqual([
+      'Aucun rendez-vous',
+      'Aucun rendez-vous',
+      'Aucun rendez-vous',
+      'Aucun rendez-vous',
+      'Aucun rendez-vous',
+      'Fermé',
+      'Fermé',
+    ]);
+    // Samedi et dimanche : pas une seule cellule libre, là où la vue semaine en
+    // offrait 48 sur ces deux journées.
+    for (const index of [5, 6]) {
+      const cells = board.columns[index]?.cells ?? [];
+
+      expect(cells.filter((cell) => cell.kind === 'free')).toHaveLength(0);
+      expect(closedOf(cells)).toHaveLength(1);
+    }
   });
 });
