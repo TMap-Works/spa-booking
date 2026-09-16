@@ -60,6 +60,18 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
   const [hydrated, setHydrated] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const noticeRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * Le rendez-vous affiché vient du brouillon relu, et non d'une réponse de
+   * l'API obtenue dans cette page (#732).
+   *
+   * Il ne s'agit pas d'un détail d'affichage : le brouillon est écrit **une
+   * fois**, à la réservation, et rien ne le relit. Reporté ou annulé depuis
+   * l'espace client, le rendez-vous reste donc annoncé « enregistré » ici, à son
+   * ancien horaire. Tant qu'aucune lecture publique d'un rendez-vous n'existe
+   * côté API, l'écran de confirmation doit au moins savoir qu'il montre un
+   * instantané — c'est ce que ce drapeau lui dit.
+   */
+  const [restoredAppointment, setRestoredAppointment] = useState(false);
 
   // Relecture du brouillon. `sessionStorage` n'existe pas au rendu serveur :
   // l'état de départ est donc toujours vierge, et l'étape réelle n'apparaît
@@ -69,6 +81,7 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
     const stored = readBookingDraft(tenant.slug);
 
     setDraft({ ...stored, step: reachableStep(stored) });
+    setRestoredAppointment(stored.appointment !== null);
     setHydrated(true);
   }, [tenant.slug]);
 
@@ -146,6 +159,9 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
 
   const onBooked = useCallback((appointment: BookedAppointment) => {
     setNotice(null);
+    // Le rendez-vous sort de la réponse de l'API : à cet instant précis, et à
+    // cet instant seulement, l'écran peut l'annoncer enregistré.
+    setRestoredAppointment(false);
     setDraft((current) => ({ ...current, appointment, step: 'confirmation' }));
   }, []);
 
@@ -202,11 +218,22 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
 
   const onCancelled = useCallback((appointment: BookedAppointment) => {
     setNotice(null);
+    // Même raison qu'à la réservation : l'annulation vient d'être confirmée par
+    // l'API, l'état affiché redevient celui du salon.
+    setRestoredAppointment(false);
     setDraft((current) => ({ ...current, appointment }));
   }, []);
 
+  /**
+   * « Réserver à nouveau » — la sortie de l'écran terminal (#732).
+   *
+   * Le brouillon repart vierge, y compris les coordonnées : une nouvelle
+   * réservation n'est pas forcément pour la même personne, et le tunnel ne doit
+   * pas resservir un e-mail à qui vient de rendre son poste.
+   */
   const restart = useCallback(() => {
     setNotice(null);
+    setRestoredAppointment(false);
     setDraft(emptyBookingDraft());
   }, []);
 
@@ -321,6 +348,7 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
           service={selectedService}
           appointment={draft.appointment}
           contact={draft.contact}
+          restored={restoredAppointment}
           onCancelled={onCancelled}
           onRestart={restart}
         />
