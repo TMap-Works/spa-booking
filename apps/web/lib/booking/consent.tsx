@@ -1,0 +1,273 @@
+/**
+ * L'information et le consentement exigés avant toute collecte de données
+ * personnelles dans le parcours client (#734).
+ *
+ * ## La référence
+ *
+ * CDC §5.1, « Principes de protection des données » : *« Consentement et
+ * finalités. Information claire des utilisateurs, base légale explicite pour
+ * chaque traitement (notifications, marketing ultérieur). »* Et
+ * `docs/design/appointments/wireframes.md`, étape 4, qui dessine la case à
+ * cocher — *« [ ] J'accepte les CGV et la politique de données — consentement
+ * RGPD explicite »* — juste au-dessus du bouton de l'étape.
+ *
+ * Deux écrans collectent ces données et n'en disaient rien : l'étape
+ * « Coordonnées » du tunnel, qui demande identité, e-mail, téléphone **et un
+ * champ libre où le jeu d'essai montre une allergie** — donc une donnée de
+ * santé —, et la création de compte. Les deux servent le même produit, et une
+ * cliente passe de l'un à l'autre sans changer de site : elle doit y lire la
+ * même chose.
+ *
+ * ## Pourquoi les finalités sont écrites ici, et non derrière un lien
+ *
+ * La direction d'audit proposait « un lien vers la politique de données ». Le
+ * dépôt n'a pas de page de politique de données — ni route, ni champ de contrat
+ * qui porterait celle de l'établissement (`publicTenantSchema` n'en a pas) — et
+ * un lien vers une page inexistante informe moins que pas de lien du tout.
+ *
+ * Ce qui est dû à la cliente, c'est l'information ; le lien n'est qu'un moyen de
+ * la porter. Elle est donc portée **en place** : une phrase toujours visible qui
+ * dit à quoi servent ses données, et un dépliant qui les reprend champ par
+ * champ, avec la base légale de chacun et la façon d'exercer ses droits. Rien
+ * n'est à charger, rien ne fait quitter un formulaire à moitié rempli — ce que
+ * la §3 de la skill `web-frontend` reproche précisément à une sortie de tunnel.
+ *
+ * La page publique de politique de données reste à écrire ; elle vit hors du
+ * périmètre de ce ticket, et le dépliant ci-dessous n'a pas à disparaître
+ * lorsqu'elle existera : il restera ce qui se lit sans cliquer.
+ *
+ * ## Pourquoi sous `lib/booking/`
+ *
+ * C'est le seul endroit partagé par les deux écrans qui l'affichent, l'un dans
+ * le groupe de routes `(booking)` et l'autre dans `(account)`. Un composant par
+ * groupe aurait donné deux formulations de la même promesse, et la seconde
+ * aurait divergé au premier changement de texte. Le consentement porte sur le
+ * même traitement — réserver, confirmer, rappeler — quelle que soit la porte par
+ * laquelle on entre.
+ */
+
+import type { InputHTMLAttributes, Ref } from 'react';
+import { z } from 'zod';
+
+/**
+ * La case cochée, et rien d'autre.
+ *
+ * `refine` plutôt que `z.literal(true)` pour une raison de message : le refus
+ * littéral de Zod 3 s'annonce « Invalid literal value, expected true », et un
+ * message de champ se lit par la cliente, pas par le développeur.
+ *
+ * C'est ce schéma qui rend le consentement **bloquant** : les deux formulaires
+ * l'ajoutent au leur, et `react-hook-form` refuse la soumission tant qu'il n'est
+ * pas satisfait — le geste est donc impossible à sauter, là où un simple
+ * `required` HTML aurait été neutralisé par le `noValidate` que les deux
+ * formulaires portent déjà.
+ */
+export const consentSchema = z.boolean().refine((accepted) => accepted, {
+  message:
+    'cochez cette case pour continuer : sans votre accord, nous ne pouvons pas traiter vos données',
+});
+
+/** Une donnée demandée, et ce à quoi elle sert. */
+interface ConsentPurpose {
+  /** Le champ, nommé comme son libellé à l'écran. */
+  readonly data: string;
+  /** Sa finalité, puis sa base légale — « nécessaire à… », « facultatif… ». */
+  readonly why: string;
+}
+
+export interface ConsentCopy {
+  /** La phrase toujours visible : à quoi servent ces données, en une fois. */
+  readonly intro: string;
+  /** Ce qu'annonce le dépliant. */
+  readonly summary: string;
+  /** Le détail, champ par champ. */
+  readonly purposes: readonly ConsentPurpose[];
+  /** Conservation et droits des personnes (CDC §5.1). */
+  readonly rights: string;
+  /** Le libellé de la case — ce que la cliente accepte exactement. */
+  readonly label: string;
+}
+
+/**
+ * Ce qui n'est écrit nulle part parce que le produit ne le fait pas : la
+ * prospection. Le périmètre MVP est figé et n'a ni marketing ni revente
+ * (CDC §1.4), et le dire est une information, pas une promesse commerciale —
+ * c'est même la première question que pose un formulaire qui demande un
+ * téléphone.
+ */
+const NO_MARKETING = 'Elles ne servent à rien d’autre : aucune prospection, aucune revente.';
+
+const IDENTITY_PURPOSE: ConsentPurpose = {
+  data: 'Prénom et nom',
+  why: 'identifier votre rendez-vous auprès du salon. Nécessaires : sans eux, il n’y a pas de réservation à honorer.',
+};
+
+const EMAIL_PURPOSE: ConsentPurpose = {
+  data: 'Adresse e-mail',
+  why: 'vous envoyer la confirmation, puis tout avis d’annulation ou de report. Nécessaire : c’est le canal par lequel le salon vous répond.',
+};
+
+const PHONE_PURPOSE: ConsentPurpose = {
+  data: 'Téléphone',
+  why: 'vous envoyer par SMS le rappel de la veille. Facultatif : sans numéro, le rappel arrive par e-mail seulement.',
+};
+
+/**
+ * Ce qu'annonce le dépliant, écrit une fois pour les deux écrans.
+ *
+ * Même raison que `NO_MARKETING` ci-dessus : la phrase est la même des deux
+ * côtés du parcours, et deux copies auraient divergé au premier changement de
+ * formulation — ce que l'en-tête de ce fichier donne précisément comme motif de
+ * le faire exister.
+ */
+const SUMMARY = 'Ce que nous faisons de vos données';
+
+/**
+ * Conservation et droits — la troisième exigence de CDC §5.1, *« Mécanismes
+ * d'accès, de rectification, d'export et de suppression des données »*.
+ *
+ * L'espace client est nommé parce qu'il existe : `/{salon}/compte/coordonnees`
+ * rectifie, et l'export comme la suppression sont servis par l'API depuis #81.
+ * Le salon est nommé à côté parce qu'une cliente qui a réservé sans compte n'a
+ * pas d'espace client où aller.
+ */
+const RIGHTS =
+  'L’établissement conserve ces données le temps du suivi de sa clientèle. ' +
+  'Vous pouvez les consulter, les corriger ou en demander la suppression à tout ' +
+  'moment, depuis votre espace client ou en écrivant à l’établissement.';
+
+/** L'étape « Coordonnées » du tunnel — wireframes.md, étape 4. */
+export const BOOKING_CONSENT: ConsentCopy = {
+  intro:
+    'Vos coordonnées servent à gérer ce rendez-vous : le salon vous identifie, ' +
+    'vous recevez la confirmation par e-mail et, si vous laissez un numéro, le ' +
+    `rappel la veille par SMS. ${NO_MARKETING}`,
+  summary: SUMMARY,
+  purposes: [
+    IDENTITY_PURPOSE,
+    EMAIL_PURPOSE,
+    PHONE_PURPOSE,
+    {
+      data: 'Le mot pour le salon',
+      why: 'transmettre au praticien ce qu’il doit savoir pour la prestation. Facultatif : n’y écrivez qu’une information dont le salon a besoin ce jour-là.',
+    },
+  ],
+  rights: RIGHTS,
+  label:
+    'J’ai lu ces informations et j’accepte que mes données soient utilisées pour ce rendez-vous.',
+};
+
+/** La création de compte — `/{salon}/compte/inscription`. */
+export const ACCOUNT_CONSENT: ConsentCopy = {
+  intro:
+    'Vos coordonnées servent à tenir votre compte et vos rendez-vous : vous ' +
+    'connecter, retrouver votre historique, recevoir les confirmations par ' +
+    `e-mail et, si vous laissez un numéro, les rappels par SMS. ${NO_MARKETING}`,
+  summary: SUMMARY,
+  purposes: [
+    IDENTITY_PURPOSE,
+    {
+      ...EMAIL_PURPOSE,
+      why: `${EMAIL_PURPOSE.why} C’est aussi votre identifiant de connexion.`,
+    },
+    PHONE_PURPOSE,
+    {
+      data: 'Mot de passe',
+      why: 'protéger l’accès à votre compte. Nécessaire, et conservé sous forme chiffrée : personne, dans l’établissement comme chez nous, ne peut le relire.',
+    },
+  ],
+  rights: RIGHTS,
+  label:
+    'J’ai lu ces informations et j’accepte que mes données soient utilisées pour gérer mon compte et mes rendez-vous.',
+};
+
+/**
+ * `checked` et `defaultChecked` sont retirés au même titre que `type` et `id` :
+ * ce ne sont pas des détails de rendu que le composant se réserve, c'est la
+ * règle du ticket tenue par le type. Un consentement pré-coché n'est pas un
+ * consentement (#734, CDC §5.1), et un appelant qui déverserait ici un objet de
+ * props porteur d'un `defaultChecked` en livrerait un sans que rien ne
+ * l'arrête. L'état de la case vient de `react-hook-form`, et de lui seul.
+ */
+interface ConsentFieldProps
+  extends Omit<
+    InputHTMLAttributes<HTMLInputElement>,
+    'checked' | 'className' | 'defaultChecked' | 'id' | 'type'
+  > {
+  readonly id: string;
+  readonly copy: ConsentCopy;
+  /**
+   * Le message de refus **de cette case**, rendu sous elle et référencé par
+   * `aria-describedby` — jamais en bloc en haut de page (skill `web-frontend`
+   * §4), exactement comme `Field` le fait pour les autres champs de ces deux
+   * formulaires.
+   */
+  readonly error?: string | undefined;
+  readonly ref?: Ref<HTMLInputElement>;
+}
+
+/**
+ * La mention des finalités et la case de consentement, d'un seul bloc.
+ *
+ * Les deux vont ensemble et se rendent ensemble : une case cochée sans
+ * information n'est pas un consentement éclairé, et une information sans case
+ * n'est pas un consentement. Le `<details>` porte le détail parce qu'il le fait
+ * nativement — ouverture au clavier, état annoncé, contenu trouvé par la
+ * recherche du navigateur — là où une bascule maison redemanderait `aria-expanded`
+ * et la gestion du focus pour, au mieux, le même résultat.
+ *
+ * La case n'est pas cochée d'avance, et ne peut pas l'être : un consentement
+ * pré-coché n'est pas un consentement, et le schéma ci-dessus exige un `true`
+ * que seule la cliente peut poser.
+ */
+export function ConsentField({ id, copy, error, ref, ...input }: ConsentFieldProps) {
+  const introId = `${id}-finalites`;
+  const errorId = `${id}-error`;
+  const describedBy = [introId, error === undefined ? null : errorId]
+    .filter((value) => value !== null)
+    .join(' ');
+
+  return (
+    <div className="spa-consent">
+      <p className="spa-consent__intro" id={introId}>
+        {copy.intro}
+      </p>
+
+      <details className="spa-consent__details">
+        <summary className="spa-consent__summary">{copy.summary}</summary>
+        {/* `spa-list` rend la puce et le retrait que le socle retire à toute
+            liste (styles/base.css) : celle-ci est une liste de prose, pas une
+            suite d'éléments d'interface. */}
+        <ul className="spa-list spa-consent__list">
+          {copy.purposes.map((purpose) => (
+            <li key={purpose.data}>
+              <span className="spa-consent__data">{purpose.data}</span> — {purpose.why}
+            </li>
+          ))}
+        </ul>
+        <p className="spa-consent__rights">{copy.rights}</p>
+      </details>
+
+      <div className="spa-consent__choice">
+        <input
+          {...input}
+          type="checkbox"
+          id={id}
+          ref={ref}
+          className="spa-consent__control"
+          aria-invalid={error === undefined ? undefined : true}
+          aria-describedby={describedBy}
+        />
+        <label className="spa-consent__label" htmlFor={id}>
+          {copy.label}
+        </label>
+      </div>
+
+      {error === undefined ? null : (
+        <p id={errorId} className="spa-consent__error" role="alert">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
