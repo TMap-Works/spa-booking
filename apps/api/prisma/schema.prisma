@@ -1021,6 +1021,36 @@ model Appointment {
   serviceId String  @map("service_id") @db.Uuid
   service   Service @relation(fields: [serviceId], references: [id], onDelete: Restrict)
 
+  /// La référence citable — `RDV-8F3K-27` (#796).
+  ///
+  /// C'est le code que la cliente lit sur sa confirmation, retrouve dans son
+  /// e-mail, et dicte au téléphone ; c'est celui que le comptoir résout. Il
+  /// n'est **pas** l'identifiant : `id` est un UUID v4 qui ne se dicte pas, et
+  /// une référence de six symboles ne peut pas être une clé primaire exposée —
+  /// elle s'énumère (tenant-isolation §4).
+  ///
+  /// ## Pourquoi une colonne, et non une dérivation de `id`
+  ///
+  /// #736 la calculait côté front à partir de l'identifiant : aucune migration,
+  /// mais un espace de `32⁴ × 100` valeurs que **rien ne contraignait**. Deux
+  /// rendez-vous d'un même salon pouvaient porter la même référence, ce qui est
+  /// sans conséquence tant qu'elle sert à reconnaître son propre rendez-vous sur
+  /// un écran — et inacceptable dès qu'on la résout, puisque le comptoir
+  /// désignerait alors la mauvaise cliente. L'unicité est ici une contrainte du
+  /// moteur, pas une probabilité.
+  ///
+  /// ## Unique **par établissement**, jamais globalement
+  ///
+  /// `@@unique([tenantId, reference])`, comme tout unique métier de ce schéma
+  /// (tenant-isolation §1). Deux salons ont le droit de tirer le même code : ils
+  /// ne se citent pas l'un à l'autre, et une unicité globale aurait fait
+  /// dépendre le tirage d'un salon du volume de tous les autres.
+  ///
+  /// Onze caractères exactement, `RDV-XXXX-NN`. `VarChar(11)` plutôt que `Char`
+  /// : la largeur est fixe par construction, et un complément par espaces sur un
+  /// code qu'on compare à l'égalité n'apporte rien qu'un piège.
+  reference String @db.VarChar(11)
+
   startsAt DateTime @map("starts_at") @db.Timestamptz(6)
   endsAt   DateTime @map("ends_at") @db.Timestamptz(6)
 
@@ -1129,6 +1159,12 @@ model Appointment {
 
   // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
   @@unique([tenantId, id])
+  // La référence citable, unique **par établissement** (#796). Cet index est à
+  // la fois la garantie d'unicité et le chemin de la résolution : « quel
+  // rendez-vous porte RDV-A5HY-14 ? » est une lecture par clé, jamais un
+  // parcours. C'est ce qui sépare cette voie de la dérivation de #736, qui
+  // n'aurait pu répondre qu'en recalculant la référence de chaque ligne.
+  @@unique([tenantId, reference])
   @@index([tenantId, startsAt])
   @@index([tenantId, staffId, startsAt])
   @@index([tenantId, clientId, startsAt])
