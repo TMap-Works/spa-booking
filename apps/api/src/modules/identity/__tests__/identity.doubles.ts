@@ -498,6 +498,8 @@ export class FakeIdentityRepository {
       tokenHash: input.tokenHash,
       expiresAt: input.expiresAt,
       revokedAt: null,
+      previousTokenHash: null,
+      rotatedAt: null,
     };
     this.sessions.push(session);
     return session;
@@ -505,9 +507,12 @@ export class FakeIdentityRepository {
 
   public async findSessionById(id: string): Promise<SessionRecord | null> {
     const tenantId = this.requireTenant();
-    return (
-      this.sessions.find((session) => session.tenantId === tenantId && session.id === id) ?? null
+    const session = this.sessions.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.id === id,
     );
+    // Une copie, comme la ligne que Prisma rend : une rotation concurrente ne
+    // doit pas modifier sous les pieds du service la session qu'il vient de lire.
+    return session === undefined ? null : { ...session };
   }
 
   public async rotateSession(input: {
@@ -515,6 +520,7 @@ export class FakeIdentityRepository {
     expectedTokenHash: string;
     nextTokenHash: string;
     expiresAt: Date;
+    rotatedAt: Date | null;
   }): Promise<boolean> {
     const tenantId = this.requireTenant();
     const session = this.sessions.find(
@@ -526,6 +532,10 @@ export class FakeIdentityRepository {
     );
     if (session === undefined) {
       return false;
+    }
+    if (input.rotatedAt !== null) {
+      session.previousTokenHash = session.tokenHash;
+      session.rotatedAt = input.rotatedAt;
     }
     session.tokenHash = input.nextTokenHash;
     session.expiresAt = input.expiresAt;

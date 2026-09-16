@@ -10,11 +10,33 @@ import {
   InvalidInvitationError,
   InvalidRefreshTokenError,
 } from './identity.errors';
-import { IdentityRepository, toProfile, type UserRecord } from './identity.repository';
-import type { AuthenticationResult, UserProfile } from './identity.types';
+import {
+  IdentityRepository,
+  toProfile,
+  type SessionRecord,
+  type UserRecord,
+} from './identity.repository';
+import type { AuthenticationResult, RefreshResult, UserProfile } from './identity.types';
 import { PasswordHasher } from './password.hasher';
 import { isStaffRole } from './roles';
 import { hashJti, TokenService } from './token.service';
+
+/**
+ * Le délai pendant lequel un jeton de rafraîchissement **tout juste remplacé**
+ * reste reconnu comme tel — dix secondes (#856).
+ *
+ * Deux renouvellements partis ensemble avec le même cookie — deux onglets
+ * rechargés, un double clic, l'effet rejoué par `reactStrictMode` — arrivent à
+ * l'API à quelques millisecondes d'écart, parfois quelques centaines quand le
+ * serveur Next est chargé. Sans délai, le second passait pour un réemploi et
+ * fermait toutes les sessions du compte.
+ *
+ * Court et borné, parce que c'est une fenêtre pendant laquelle un jeton déjà
+ * consommé obtient encore un jeton d'accès : dix secondes couvrent largement une
+ * course réelle, et laissent entière la détection d'un jeton qui ressortirait
+ * plus tard.
+ */
+export const REFRESH_ROTATION_GRACE_MS = 10_000;
 
 /**
  * Règles d'authentification. Ne connaît ni `Request`, ni `Response`, ni Prisma
@@ -251,13 +273,30 @@ export class AuthService {
    * 2. son `tenantId`, désormais une donnée signée, ouvre la portée ;
    * 3. la session est relue **dans cette portée** : un `sid` d'un autre
    *    établissement ne se trouve pas ;
-   * 4. l'empreinte présentée est comparée à l'empreinte courante. Si elle diffère,
-   *    c'est qu'un jeton déjà consommé ressort : toutes les sessions du compte
-   *    sont éteintes ;
+   * 4. l'empreinte présentée est comparée à l'empreinte courante. Si elle diffère
+   *    et n'est pas celle que la dernière rotation vient de remplacer, c'est
+   *    qu'un jeton déjà consommé ressort : toutes les sessions du compte sont
+   *    éteintes ;
    * 5. la rotation elle-même est conditionnée à l'empreinte attendue, ce qui la
    *    rend atomique face à deux rafraîchissements concurrents.
+   *
+   * ## Le perdant d'une course n'est pas un voleur (#856)
+   *
+   * Deux renouvellements partis ensemble avec le même jeton se disputent la même
+   * ligne. Le gagnant la fait tourner ; le perdant la lit soit avant — sa
+   * rotation ne trouve alors plus rien à mettre à jour —, soit après — son
+   * empreinte est devenue la précédente. Dans les deux cas, et pendant
+   * `REFRESH_ROTATION_GRACE_MS` seulement, il reçoit un **jeton d'accès seul** :
+   * ni révocation, ni seconde rotation, ni cookie de rafraîchissement.
+   *
+   * Pourquoi un jeton d'accès, et non un simple refus sans conséquence : le
+   * gagnant peut ne jamais rendre son cookie — une navigation annulée par un
+   * double clic emporte sa réponse. Un perdant refusé renverrait alors la page
+   * vers ce même renouvellement, qui le refuserait encore, en boucle jusqu'à la
+   * fin du délai puis jusqu'à la révocation. Avec un jeton d'accès, la page
+   * s'affiche, et le prochain renouvellement tranche.
    */
-  public async refresh(refreshToken: string): Promise<AuthenticationResult> {
+  public async refresh(refreshToken: string): Promise<RefreshResult> {
     const claims = await this.tokens.verifyRefreshToken(refreshToken);
 
     // Le tenant vient d'une revendication signée : c'est une donnée serveur. Si
@@ -285,7 +324,10 @@ export class AuthService {
       throw new InvalidRefreshTokenError();
     }
 
-    if (session.tokenHash !== hashJti(claims.jti)) {
+    const presented = hashJti(claims.jti);
+    const isCurrent = session.tokenHash === presented;
+
+    if (!isCurrent && !AuthService.isJustReplaced(session, presented)) {
       await this.repository.revokeAllSessionsOfUser(session.userId);
       this.logger.warn(
         'Réemploi d’un jeton de rafraîchissement détecté : toutes les sessions du compte sont révoquées.',
@@ -301,6 +343,11 @@ export class AuthService {
       throw new InvalidRefreshTokenError();
     }
 
+    if (!isCurrent) {
+      // Le gagnant a déjà fait tourner la session, avant même notre lecture.
+      return this.renewAccessOnly(user, claims.tenantId, session.id);
+    }
+
     const issued = await this.tokens.signRefreshToken({
       userId: user.id,
       tenantId: claims.tenantId,
@@ -309,15 +356,26 @@ export class AuthService {
 
     const rotated = await this.repository.rotateSession({
       sessionId: session.id,
-      expectedTokenHash: session.tokenHash,
+      expectedTokenHash: presented,
       nextTokenHash: issued.tokenHash,
       expiresAt: issued.expiresAt,
+      rotatedAt: new Date(),
     });
 
     if (!rotated) {
-      // Un autre rafraîchissement a gagné la course. On ne rejoue pas : le jeton
-      // qu'on aurait rendu ne correspondrait plus à l'empreinte en base.
-      throw new InvalidRefreshTokenError();
+      // Un autre rafraîchissement a gagné la course entre notre lecture et notre
+      // écriture — ou la session vient d'être éteinte. On relit pour savoir
+      // lequel : seul le premier cas a droit au délai de grâce. On ne rejoue pas
+      // la rotation, le jeton qu'on rendrait écraserait celui du gagnant.
+      const after = await this.repository.findSessionById(session.id);
+      if (
+        after === null ||
+        after.revokedAt !== null ||
+        !AuthService.isJustReplaced(after, presented)
+      ) {
+        throw new InvalidRefreshTokenError();
+      }
+      return this.renewAccessOnly(user, claims.tenantId, session.id);
     }
 
     const accessToken = await this.tokens.signAccessToken({
@@ -332,6 +390,48 @@ export class AuthService {
       user: toProfile(user),
       refreshToken: issued.token,
       refreshTokenMaxAge: this.tokens.refreshTokenTtlSeconds,
+    };
+  }
+
+  /**
+   * `true` si l'empreinte présentée est celle que la dernière rotation vient de
+   * remplacer, il y a moins de `REFRESH_ROTATION_GRACE_MS`.
+   *
+   * L'écart est pris en valeur absolue : `rotated_at` est écrit par la tâche qui
+   * a gagné, et deux tâches ECS n'ont jamais tout à fait la même horloge. Une
+   * rotation datée d'un léger futur reste dans la fenêtre ; une date aberrante,
+   * dans un sens comme dans l'autre, en sort.
+   */
+  private static isJustReplaced(session: SessionRecord, presentedHash: string): boolean {
+    if (session.previousTokenHash !== presentedHash || session.rotatedAt === null) {
+      return false;
+    }
+    return Math.abs(Date.now() - session.rotatedAt.getTime()) <= REFRESH_ROTATION_GRACE_MS;
+  }
+
+  /** Le jeton d'accès du perdant d'une course — sans rotation ni cookie. */
+  private async renewAccessOnly(
+    user: UserRecord,
+    tenantId: string,
+    sessionId: string,
+  ): Promise<RefreshResult> {
+    const accessToken = await this.tokens.signAccessToken({
+      userId: user.id,
+      tenantId,
+      role: user.role,
+    });
+
+    this.logger.debug(
+      'Renouvellement concurrent absorbé : jeton d’accès émis sans nouvelle rotation.',
+      { sessionId },
+      AuthService.name,
+    );
+
+    return {
+      accessToken,
+      expiresIn: this.tokens.accessTokenTtlSeconds,
+      user: toProfile(user),
+      refreshToken: null,
     };
   }
 
@@ -414,6 +514,9 @@ export class AuthService {
       expectedTokenHash: placeholder,
       nextTokenHash: issued.tokenHash,
       expiresAt: issued.expiresAt,
+      // Un estampillage, pas une rotation : aucun jeton n'a porté l'empreinte
+      // de remplissage, aucun n'a donc droit au délai de grâce.
+      rotatedAt: null,
     });
 
     if (!stamped) {

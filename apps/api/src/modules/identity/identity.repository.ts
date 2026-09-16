@@ -116,7 +116,22 @@ export interface SessionRecord {
   tokenHash: string;
   expiresAt: Date;
   revokedAt: Date | null;
+  /** L'empreinte que la dernière rotation a remplacée — `null` avant la première. */
+  previousTokenHash: string | null;
+  /** L'instant de la dernière rotation — `null` avant la première. */
+  rotatedAt: Date | null;
 }
+
+/** La projection d’une session, partagée par sa création et sa lecture. */
+const SESSION_SELECT = {
+  id: true,
+  userId: true,
+  tokenHash: true,
+  expiresAt: true,
+  revokedAt: true,
+  previousTokenHash: true,
+  rotatedAt: true,
+} as const;
 
 /**
  * Projection du compte, écrite une fois.
@@ -738,14 +753,14 @@ export class IdentityRepository {
         tokenHash: input.tokenHash,
         expiresAt: input.expiresAt,
       }),
-      select: { id: true, userId: true, tokenHash: true, expiresAt: true, revokedAt: true },
+      select: SESSION_SELECT,
     });
   }
 
   public async findSessionById(id: string): Promise<SessionRecord | null> {
     return this.prisma.refreshToken.findFirst({
       where: { id },
-      select: { id: true, userId: true, tokenHash: true, expiresAt: true, revokedAt: true },
+      select: SESSION_SELECT,
     });
   }
 
@@ -759,6 +774,12 @@ export class IdentityRepository {
    * le second ne trouve plus rien à mettre à jour et reçoit `0`. Sans cette
    * condition, les deux réussiraient et la détection de réemploi ne verrait rien.
    *
+   * L'empreinte remplacée et l'instant de la rotation sont conservés dans la
+   * même écriture (#856) : c'est ce qui permet au perdant d'une course de se
+   * reconnaître comme tel, au lieu de passer pour un réemploi. `rotatedAt` vaut
+   * `null` pour l'estampillage d'une session qui s'ouvre : l'empreinte de
+   * remplissage ne correspond à aucun jeton émis, il n'y a rien à retenir.
+   *
    * Renvoie `true` si la rotation a eu lieu.
    */
   public async rotateSession(input: {
@@ -766,6 +787,7 @@ export class IdentityRepository {
     expectedTokenHash: string;
     nextTokenHash: string;
     expiresAt: Date;
+    rotatedAt: Date | null;
   }): Promise<boolean> {
     const { count } = await this.prisma.refreshToken.updateMany({
       where: {
@@ -773,7 +795,13 @@ export class IdentityRepository {
         tokenHash: input.expectedTokenHash,
         revokedAt: null,
       },
-      data: { tokenHash: input.nextTokenHash, expiresAt: input.expiresAt },
+      data: {
+        tokenHash: input.nextTokenHash,
+        expiresAt: input.expiresAt,
+        ...(input.rotatedAt === null
+          ? {}
+          : { previousTokenHash: input.expectedTokenHash, rotatedAt: input.rotatedAt }),
+      },
     });
 
     return count === 1;

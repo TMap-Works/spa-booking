@@ -27,7 +27,7 @@ import {
   loginBody,
   registerBody,
 } from './dto/auth.dto';
-import type { AuthenticationResult } from './identity.types';
+import type { RefreshResult } from './identity.types';
 import { CurrentUser } from './jwt-auth.guard';
 import type { AuthenticatedUser } from './identity.types';
 import { clearRefreshCookie, readRefreshCookie, setRefreshCookie } from './refresh-cookie';
@@ -163,6 +163,10 @@ export class AuthController {
    * pourrait poster est un jeton que JavaScript peut lire, ce qui annulerait
    * `httpOnly`. Le corps de cette route est vide, et le `ValidationPipe` global
    * rejetterait tout champ qu'on y glisserait.
+   *
+   * **200 sans `Set-Cookie`** quand la requête a perdu une course contre un
+   * autre renouvellement du même jeton (#856) : le jeton d'accès est rendu, le
+   * cookie posé par le gagnant reste celui du client.
    */
   @Post('refresh')
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
@@ -221,12 +225,18 @@ export class AuthController {
    *
    * Écrit en un seul endroit : c'est ce qui garantit que le jeton de
    * rafraîchissement ne part jamais dans un corps de réponse par distraction.
+   *
+   * Sans jeton de rafraîchissement — le perdant d'une course de renouvellement —,
+   * aucun cookie ne part : ni neuf, qu'on n'a pas, ni vide, qui effacerait celui
+   * que le gagnant vient de poser.
    */
-  private respondWithSession(response: Response, result: AuthenticationResult): AuthTokensDto {
-    setRefreshCookie(response, result.refreshToken, {
-      secure: this.config.isDeployed,
-      maxAgeSeconds: result.refreshTokenMaxAge,
-    });
+  private respondWithSession(response: Response, result: RefreshResult): AuthTokensDto {
+    if (result.refreshToken !== null) {
+      setRefreshCookie(response, result.refreshToken, {
+        secure: this.config.isDeployed,
+        maxAgeSeconds: result.refreshTokenMaxAge,
+      });
+    }
 
     return {
       accessToken: result.accessToken,

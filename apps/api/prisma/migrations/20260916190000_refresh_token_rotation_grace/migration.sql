@@ -1,0 +1,51 @@
+-- Délai de grâce de la rotation des jetons de rafraîchissement — #856.
+--
+-- Deux renouvellements partis en même temps avec le même cookie fermaient la
+-- session : le perdant de la course lisait une empreinte qui venait de tourner,
+-- la prenait pour un réemploi, et révoquait **toutes** les sessions du compte —
+-- celle que le gagnant venait de renouveler comprise. Le déclencheur n'a rien
+-- d'exotique : deux onglets rechargés ensemble, un double clic sur un lien, ou
+-- l'effet rejoué par `reactStrictMode` en développement.
+--
+-- ## Ce que la migration ajoute
+--
+-- Deux colonnes nullables sur `refresh_tokens`, et rien d'autre :
+--
+-- - `previous_token_hash` — l'empreinte que la dernière rotation a remplacée ;
+-- - `rotated_at` — l'instant de cette rotation.
+--
+-- Ensemble, elles permettent de reconnaître le jeton **tout juste** remplacé :
+-- présenté dans les secondes qui suivent sa rotation, il ne déclenche plus la
+-- révocation (voir `AuthService.refresh`). Au-delà, rien ne change — la
+-- détection de réemploi reste entière.
+--
+-- ## Pourquoi pas une table des jetons consommés
+--
+-- Seul le **dernier** jeton remplacé a droit au délai de grâce : un jeton plus
+-- ancien qui ressort est un réemploi, quel que soit l'instant. Une ligne par
+-- session suffit donc, et une table d'historique n'aurait servi qu'à
+-- conserver des empreintes dont aucune lecture n'a l'usage.
+--
+-- ## Pourquoi aucun index
+--
+-- La seule lecture passe par la clé primaire : le renouvellement retrouve la
+-- session par le `sid` de son jeton, puis compare les empreintes en mémoire.
+-- Aucune requête ne cherche une session par son empreinte précédente.
+--
+-- ## Purement additive, et réversible
+--
+-- Deux `ADD COLUMN` nullables sans valeur par défaut : PostgreSQL ne réécrit pas
+-- la table, le verrou est bref, et les lignes existantes se lisent « jamais
+-- tournée », ce qui les prive seulement du délai de grâce jusqu'à leur prochaine
+-- rotation. L'inverse exact est le retrait des deux colonnes, sans autre perte
+-- que ce délai. Le retour arrière du **code** seul est sans effet de bord : la
+-- version antérieure ignore les colonnes et retrouve le comportement d'avant ce
+-- ticket.
+--
+-- `rotated_at` est un `TIMESTAMPTZ`, jamais un `TIMESTAMP` : c'est le contrôle
+-- des instants de `prisma-schema.spec.ts`, et c'est surtout ce qui rend la
+-- comparaison à l'instant présent indépendante du fuseau de la tâche qui la fait.
+
+-- AlterTable
+ALTER TABLE "refresh_tokens" ADD COLUMN     "previous_token_hash" VARCHAR(64),
+ADD COLUMN     "rotated_at" TIMESTAMPTZ(6);
