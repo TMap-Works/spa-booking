@@ -2,6 +2,7 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { e164PhoneSchema, guestContactSchema, longTextSchema } from '@spa/shared';
+import { useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -9,6 +10,8 @@ import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { BOOKING_CONSENT, ConsentField, consentSchema } from '@/lib/booking/consent';
 import type { ContactDraft } from '@/lib/booking/draft';
+
+import { useDraftAutosave } from '../use-draft-autosave';
 
 /**
  * Le schéma du formulaire **dérive** du contrat, il ne le réécrit pas.
@@ -96,6 +99,11 @@ interface ContactStepProps {
    * rafraîchissement comme au retour vers le choix du créneau — alors que c'est
    * exactement ce que le brouillon promet de conserver
    * (`lib/booking/draft.ts`, troisième critère de #45).
+   *
+   * Il est appelé à la frappe, débouncé, et non au seul `focusout` : voir
+   * `useDraftAutosave` (#737). L'appelant doit donc le tenir pour **fréquent**,
+   * et son écriture dans `sessionStorage` pour synchrone — un masquage de page
+   * n'attend pas un effet React.
    */
   readonly onSave: (contact: ContactDraft) => void;
   readonly onBack: () => void;
@@ -124,6 +132,18 @@ export function ContactStep({ contact, onSave, onBack, onSubmit }: ContactStepPr
     mode: 'onTouched',
   });
 
+  /**
+   * Ce que le report enregistre : la saisie **telle qu'elle a été tapée**.
+   *
+   * `getValues` est stable d'un rendu à l'autre (react-hook-form), et `onSave`
+   * l'est aussi côté tunnel : le crochet de report n'a donc pas à réenregistrer
+   * ses écouteurs de masquage de page à chaque frappe.
+   */
+  const persistDraft = useCallback(() => {
+    onSave(getValues());
+  }, [onSave, getValues]);
+  const autosave = useDraftAutosave(persistDraft);
+
   return (
     <form
       // L'étape porte la mise en page des étapes du tunnel : sans elle, les
@@ -131,14 +151,36 @@ export function ContactStep({ contact, onSave, onBack, onSubmit }: ContactStepPr
       // appartenant au champ du dessus (#624).
       className="spa-booking__step"
       noValidate
+      // `input` remonte jusqu'ici : chaque frappe, dans n'importe quel champ,
+      // reporte une écriture du brouillon (#737). C'est ce qui fait survivre au
+      // rechargement le champ que la cliente **n'a pas quitté** — « Un mot pour
+      // le salon », le dernier du formulaire et le plus long à retaper.
+      //
+      // Le report ne provoque aucun rendu par lui-même : il pose un
+      // temporisateur, et la frappe reste aussi peu coûteuse qu'avant.
+      onInput={autosave.schedule}
       // `focusout` remonte jusqu'ici : chaque champ quitté verse sa valeur au
-      // brouillon. C'est le même instant que la validation `onTouched`, donc
-      // aucun rendu supplémentaire, et cela suffit à faire survivre la saisie à
-      // un rafraîchissement.
+      // brouillon **tout de suite**, sans attendre l'échéance du report. C'est le
+      // même instant que la validation `onTouched`, donc aucun rendu
+      // supplémentaire.
       onBlur={() => {
-        onSave(getValues());
+        // Le report en attente porterait les mêmes valeurs : le laisser courir
+        // ferait une seconde écriture identique un instant plus tard.
+        autosave.cancel();
+        persistDraft();
       }}
       onSubmit={(event) => {
+        // La saisie en attente est versée, et non abandonnée : la soumission
+        // n'emporte la saisie entière vers le récapitulatif que si elle
+        // **passe**. Refusée — un numéro national, une case non cochée —, elle
+        // laisse la cliente sur cette étape, et `shouldFocusError` de
+        // react-hook-form redonne le focus au champ fautif : celui qu'elle était
+        // en train de taper n'a donc pas forcément connu de `focusout`, et le
+        // report en attente est la seule copie de ses dernières lettres. Les
+        // annuler les perdrait au premier rafraîchissement — le cas même de
+        // #737. `flush` n'écrit que s'il y a quelque chose en attente : rien
+        // n'est réécrit pour rien quand le `focusout` a déjà versé.
+        autosave.flush();
         void handleSubmit(() => {
           // Le brouillon conserve la saisie **telle qu'elle a été tapée** : c'est
           // ce que la cliente doit retrouver si elle revient en arrière. La forme
@@ -221,7 +263,8 @@ export function ContactStep({ contact, onSave, onBack, onSubmit }: ContactStepPr
             // Le retour n'est pas un abandon : la saisie part au brouillon avant
             // de quitter l'étape, faute de quoi la cliente qui vient changer
             // d'horaire retrouverait un formulaire vide.
-            onSave(getValues());
+            autosave.cancel();
+            persistDraft();
             onBack();
           }}
         >
