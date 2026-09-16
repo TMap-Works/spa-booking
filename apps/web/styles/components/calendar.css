@@ -1,0 +1,261 @@
+/*
+ * Composant — Calendrier mensuel de disponibilité
+ * =============================================================================
+ *
+ * Le choix de la date de l'étape 3 du tunnel et du report, tel que
+ * `docs/design/appointments/wireframes.md` le dessine (#827) : « ‹ août 2026 › »,
+ * une ligne `L M M J V S D`, la date retenue mise en avant.
+ *
+ *   .spa-calendar         le bloc entier — navigation de mois, puis grille
+ *   .spa-calendar__grid   role="grid" › row › columnheader / gridcell
+ *   .spa-slot-picker      le calendrier et la journée choisie, côte à côte au bureau
+ *
+ * Il remplace `.spa-date-bar`, une ligne de journées à défilement horizontal.
+ * Ce que le calendrier apporte tient en une mesure : la bande ne montrait que
+ * trois jours et demi à 360 px, un mois en montre trente et un.
+ *
+ * ## Aucune classe sur les boutons
+ *
+ * `Button` n'accepte pas de `className` — c'est délibéré, le design system
+ * décide de l'allure d'un bouton. Les états se lisent donc sur les attributs
+ * ARIA que le composant pose déjà (`aria-selected` sur la cellule,
+ * `aria-disabled` sur le bouton) : la règle CSS et le lecteur d'écran s'appuient
+ * alors sur la même source, et un état peint sans être annoncé devient
+ * impossible.
+ */
+
+/* --- Le bloc et sa navigation de mois -------------------------------------- */
+
+/*
+ * `--spa-space-2` et non `--spa-space-4` : la navigation et la grille sont un
+ * seul objet, et l'écart qui les lie doit rester plus petit que celui qui sépare
+ * le bloc de ce qui le suit — lequel vaut le `gap` de l'étape, 16 px. La
+ * proximité dit alors l'appartenance, comme #624 l'a établi un cran plus haut.
+ */
+.spa-calendar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  min-inline-size: 0;
+}
+
+/*
+ * « ‹ septembre 2026 › ». Calquée sur `.spa-admin-toolbar__group`, qui rend le
+ * même geste dans le back-office : deux chevrons encadrant le libellé de la
+ * période. Calque et non partage — `styles/admin/` décrit le back-office, et le
+ * parcours public n'a pas à en dépendre pour changer —, mais le même rendu, pour
+ * que la flèche se cherche au même endroit d'un produit à l'autre.
+ *
+ * Les chevrons tiennent la cible de 44 px du bout du doigt (WCAG 2.5.8) : un
+ * chevron est un glyphe étroit, et sans plancher il ferait une cible de 12 px.
+ */
+.spa-calendar__nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spa-space-2);
+}
+
+.spa-calendar__nav .spa-button {
+  flex: 0 0 auto;
+  min-inline-size: var(--spa-target-min-size);
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-3);
+}
+
+/*
+ * Le chevron éteint — plus aucun mois dans cette direction. Même peinture et
+ * même attribut que les journées complètes et que les créneaux inertes : trois
+ * contrôles inactifs, une seule façon de le dire.
+ *
+ * L'atténuation ne porte pas seule l'information : `aria-disabled` l'annonce, et
+ * le chevron ne fait plus rien au clic (WCAG 1.4.1).
+ */
+.spa-calendar__nav .spa-button[aria-disabled='true'] {
+  background-color: var(--spa-color-disabled-surface);
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  cursor: not-allowed;
+}
+
+/*
+ * Le mois, entre les deux chevrons. `margin-inline: auto` le centre sur la
+ * rangée dès qu'elle est plus large que son contenu.
+ */
+.spa-calendar__period {
+  margin-inline: auto;
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+}
+
+/* --- La grille des jours --------------------------------------------------- */
+
+.spa-calendar__grid {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+}
+
+/*
+ * Sept colonnes d'égale largeur, et rien d'autre.
+ *
+ * `1fr` et non `auto` : la colonne du lundi et celle du dimanche doivent tomber
+ * l'une sous l'autre d'une ligne à la suivante, sinon la grille visuelle cesse
+ * de coïncider avec celle que les flèches parcourent — et `↓` ne tombe plus là
+ * où l'œil l'attend. `minmax(0, 1fr)` parce qu'un enfant de grille ne rétrécit
+ * pas sous la taille de son contenu sans cela, et qu'un `44px` de cible
+ * minimale ferait alors déborder la page à 320 px.
+ */
+.spa-calendar__row {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: var(--spa-space-1);
+}
+
+/* L'initiale du jour de semaine — le nom complet est dans l'`aria-label`. */
+.spa-calendar__weekday {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-block: var(--spa-space-1);
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-calendar__cell {
+  display: block;
+  min-inline-size: 0;
+}
+
+.spa-calendar__cell .spa-button {
+  inline-size: 100%;
+  min-block-size: var(--spa-target-min-size);
+  /* La cible tactile prime sur le texte : un quantième tient dans bien moins,
+   * mais un doigt non (WCAG 2.5.8). Le rembourrage latéral est donc rendu au
+   * strict nécessaire pour que sept colonnes tiennent à 320 px. */
+  padding-inline: var(--spa-space-1);
+}
+
+/*
+ * L'empilement se joue sur `.spa-button__label` et non sur le bouton : `Button`
+ * enveloppe **tous** ses enfants dans ce span, si bien qu'un bouton n'a jamais
+ * qu'un seul enfant de flux. Un `flex-direction: column` posé sur le bouton
+ * n'aurait donc rien à empiler, et le quantième et sa pastille se suivraient sur
+ * une même ligne.
+ */
+.spa-calendar__cell .spa-button__label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.spa-calendar__day {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  line-height: 1;
+}
+
+/*
+ * La pastille d'une journée libre.
+ *
+ * Une **forme** et non une teinte : c'est ce qui distingue une journée qui a des
+ * créneaux d'une journée complète pour qui ne perçoit pas la couleur (WCAG
+ * 1.4.1), le nom accessible portant par ailleurs le compte exact. Sa hauteur est
+ * réservée sur toutes les cases par la `gap` ci-dessus, si bien que le quantième
+ * ne saute pas d'une case à l'autre.
+ */
+.spa-calendar__mark {
+  inline-size: 5px;
+  block-size: 5px;
+  border-radius: 50%;
+  background-color: var(--spa-color-accent);
+}
+
+/*
+ * La journée retenue. `aria-selected` sur la cellule et non une classe : c'est
+ * l'attribut que le lecteur d'écran annonce, et le faire porter aussi la
+ * peinture garantit que les deux ne peuvent pas diverger.
+ */
+.spa-calendar__cell[aria-selected='true'] .spa-button {
+  background-color: var(--spa-color-accent);
+  border-color: var(--spa-color-accent);
+  border-width: 2px;
+  color: var(--spa-color-text-on-accent);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-calendar__cell[aria-selected='true'] .spa-calendar__mark {
+  background-color: var(--spa-color-text-on-accent);
+}
+
+/*
+ * Journée complète ou hors fenêtre : rendue, lisible, mais inerte. Le serveur
+ * renvoie les journées sans créneau avec `slots: []` plutôt que de les omettre
+ * pour qu'on puisse écrire « complet » plutôt que de laisser un trou.
+ *
+ * L'atténuation ne porte pas seule l'information — l'absence de pastille la
+ * distingue d'une journée libre, et l'`aria-label` dit le mot (WCAG 1.4.1).
+ */
+.spa-calendar__cell .spa-button[aria-disabled='true'] {
+  background-color: var(--spa-color-disabled-surface);
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  cursor: not-allowed;
+}
+
+/* Une case hors du mois : elle tient sa colonne, et ne montre rien. */
+.spa-calendar__cell--outside {
+  visibility: hidden;
+}
+
+/*
+ * `scroll-margin` — « Focus visible » de `keyboard-navigation.md` : *« la grille
+ * défile pour garder le créneau focalisé dans le viewport (scroll-margin sous
+ * l'en-tête et au-dessus de la barre collante) »*. La règle vaut pour le
+ * calendrier au même titre que pour la grille de créneaux : les flèches y
+ * déplacent un focus que la barre de résumé collante masquerait.
+ */
+.spa-calendar__cell .spa-button {
+  scroll-margin-block: var(--spa-space-16) var(--spa-space-16);
+}
+
+/* --- Le calendrier et la journée choisie ----------------------------------- */
+
+/*
+ * À 360 px, l'un sous l'autre ; dès qu'il y a la largeur pour deux colonnes,
+ * côte à côte.
+ *
+ * `wireframes.md` étape 3 : *« Desktop : le calendrier passe en vue semaine
+ * (colonnes de jours), plus de créneaux visibles d'un coup »*. L'intention est
+ * de voir la date choisie **et** ses heures d'un seul regard ; deux colonnes la
+ * servent sans dédoubler le composant en deux vues qui dériveraient l'une de
+ * l'autre.
+ *
+ * Le seuil est en `rem` et porte sur le conteneur du tunnel, plus étroit que la
+ * fenêtre : 48rem est la largeur à partir de laquelle un calendrier de 7 × 44 px
+ * et une grille de créneaux de deux colonnes tiennent côte à côte sans que l'un
+ * écrase l'autre.
+ */
+.spa-slot-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+}
+
+.spa-slot-picker__day {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  min-inline-size: 0;
+}
+
+@media (min-width: 48rem) {
+  .spa-slot-picker {
+    display: grid;
+    grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--spa-space-6);
+  }
+}

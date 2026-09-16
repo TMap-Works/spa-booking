@@ -8,6 +8,13 @@ import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
 import { SlotPicker } from '@/components/booking/slot-picker';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
+import {
+  addMonths,
+  formatMonth,
+  isNavigableMonth,
+  type BookingWindow,
+  type CalendarMonth,
+} from '@/lib/booking/month-grid';
 import { formatDateTimeInTimeZone, timeZoneMention } from '@/lib/format';
 
 import { rescheduleOwnAppointmentAction } from '../actions';
@@ -37,10 +44,18 @@ import { useAccountSessionRenewal } from './use-account-session-renewal';
  * comment poursuivre.
  *
  * C'est maintenant [`SlotPicker`](../../../../../components/booking/slot-picker.tsx),
- * le composant de l'étape 3 du tunnel, qui rend le choix : une bande de journées
- * compacte, puis la grille d'**une seule** journée. Le même geste se fait donc au
+ * le composant de l'étape 3 du tunnel, qui rend le choix : un calendrier
+ * mensuel, puis la grille d'**une seule** journée. Le même geste se fait donc au
  * même endroit, au clavier comme à la souris, et une correction apportée à l'un
- * des deux écrans profite à l'autre.
+ * des deux écrans profite à l'autre. Le calendrier de #827 est arrivé par là :
+ * il a été écrit une fois, et les deux écrans l'ont eu ensemble.
+ *
+ * ## Le mois regardé passe par l'adresse (#827)
+ *
+ * Cette page est rendue par le serveur, et c'est lui qui lit le calendrier :
+ * changer de mois est donc une navigation, là où le tunnel change un état. C'est
+ * ce que `monthHref` porte — et c'est aussi ce qui fait survivre le mois au
+ * rafraîchissement, comme la fenêtre élargie qu'il remplace (#738).
  *
  * ## Le créneau actuel se montre, il ne se choisit pas (#442)
  *
@@ -70,15 +85,19 @@ interface RescheduleFormProps {
   readonly serviceName: string | null;
   readonly availability: AvailabilityResponse;
   readonly timeZone: TimeZone;
+  /** Le mois que le calendrier affiche — celui que l'adresse demandait. */
+  readonly month: CalendarMonth;
+  /** Les bornes réservables, calculées par le serveur dans le fuseau du salon. */
+  readonly bounds: BookingWindow;
   /**
-   * L'adresse de la même page en fenêtre élargie — ce que « Voir plus de jours »
-   * ouvre (#738). `null` : la fenêtre est déjà au maximum du contrat, le bouton
-   * n'aurait plus rien à élargir et n'est pas rendu.
+   * Le gabarit d'adresse d'un changement de mois : le mois s'y ajoute.
    *
-   * Une adresse et non un geste : c'est le rendu serveur de la page qui lit le
-   * calendrier, et lui seul sait jusqu'où le contrat le laisse aller.
+   * Une adresse et non un geste, parce que c'est le rendu serveur de la page qui
+   * lit le calendrier. Un gabarit et non une adresse toute faite, parce que le
+   * calendrier peut mener vers n'importe lequel des mois de la fenêtre, et que
+   * le formulaire n'a pas à connaître la route qui le rend.
    */
-  readonly widerHref: string | null;
+  readonly monthHref: string;
 }
 
 export function RescheduleForm({
@@ -88,7 +107,9 @@ export function RescheduleForm({
   serviceName,
   availability,
   timeZone,
-  widerHref,
+  month,
+  bounds,
+  monthHref,
 }: RescheduleFormProps) {
   const router = useRouter();
   const { renewIfExpired } = useAccountSessionRenewal(tenantSlug);
@@ -96,39 +117,31 @@ export function RescheduleForm({
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<{ title: string; message: string } | null>(null);
   /**
-   * L'élargissement de la fenêtre est en vol.
+   * Le changement de mois est en vol.
    *
-   * Il repasse par le serveur, et rien ne le dirait sans cela : la bande resterait
-   * à quinze jours le temps de l'aller-retour, comme si le bouton n'avait pas
-   * fonctionné. Pendant ce temps les créneaux affichés sont ceux de l'ancienne
-   * fenêtre — `busy` les rend inertes plutôt que de laisser en retenir un qui
-   * disparaîtra du rendu suivant.
+   * Il repasse par le serveur, et rien ne le dirait sans cela : le calendrier
+   * resterait sur son mois le temps de l'aller-retour, comme si le chevron
+   * n'avait pas fonctionné. Pendant ce temps les créneaux affichés sont ceux de
+   * l'ancien mois — `busy` les rend inertes plutôt que de laisser en retenir un
+   * qui disparaîtra du rendu suivant.
    */
-  const [widening, startWidening] = useTransition();
-  /** Le conteneur de la bande, pour y rattraper le focus après un élargissement. */
-  const dateBarRef = useRef<HTMLDivElement | null>(null);
+  const [changingMonth, startMonthChange] = useTransition();
+  /** Le conteneur du calendrier, pour y rattraper le focus après un changement de mois. */
+  const calendarRef = useRef<HTMLDivElement | null>(null);
   /**
-   * Le conteneur de l'état vide, cible de repli du même rattrapage.
+   * Un changement de mois demandé depuis l'état vide est en cours, et son focus
+   * reste à rattraper.
    *
-   * Quand la fenêtre élargie ne rend toujours aucune journée ouverte, il n'y a
-   * pas de bande où se poser : `SlotPicker` rend l'état vide **à la place** du
-   * sélecteur. Sans ce repli, le focus resterait sur `<body>` — précisément ce
-   * que le rattrapage existe pour éviter. `slot-step.tsx` tient le même repli.
-   */
-  const emptyStateRef = useRef<HTMLDivElement | null>(null);
-  /**
-   * Un élargissement est en cours, et son focus reste à rattraper.
-   *
-   * « Voir plus de jours » emporte le bouton qu'on vient d'actionner : la
-   * fenêtre élargie n'a plus rien à élargir, et sans rattrapage le focus
-   * retombe sur `<body>` — le clavier repartirait du haut du document juste
-   * après un geste délibéré, ce que `keyboard-navigation.md` refuse ailleurs.
-   * La cible est la bande elle-même, qui prend la place du bouton.
+   * « Voir le mois suivant » peut emporter le bouton qu'on vient d'actionner —
+   * au dernier mois de la fenêtre, il n'a plus rien à ouvrir —, et sans
+   * rattrapage le focus retombe sur `<body>` : le clavier repartirait du haut du
+   * document juste après un geste délibéré, ce que `keyboard-navigation.md`
+   * refuse ailleurs. La cible est le calendrier, qui reste à l'écran.
    *
    * Un `ref` et non un état : il ne décide de rien à l'écran, et en faire un
    * état déclencherait un rendu de plus pour une valeur consommée aussitôt.
    */
-  const catchFocusAfterWidening = useRef(false);
+  const catchFocusAfterMonthChange = useRef(false);
 
   /**
    * La mention du fuseau, calculée **après le montage** seulement (#654).
@@ -156,59 +169,58 @@ export function RescheduleForm({
   const mention = mounted ? timeZoneMention(timeZone) : null;
 
   /**
-   * Le focus rattrapé quand « Voir plus de jours » s'est effacé.
+   * Le focus rattrapé quand « Voir le mois suivant » s'est effacé.
    *
    * On attend la fin de la transition : tant qu'elle court, la page affichée est
-   * encore l'ancienne, et se poser sur sa bande ferait perdre le focus une
+   * encore l'ancienne, et se poser sur son calendrier ferait perdre le focus une
    * seconde fois à l'arrivée des journées.
    *
-   * Selon ce que le serveur rend, la cible est la journée retenue de la bande,
-   * ou l'état vide lui-même — qui dit alors, en `role="status"`, ce que
-   * l'élargissement a donné. S'en tenir à la bande laisserait le focus sur
-   * `<body>` le jour où la fenêtre élargie ne rend rien de plus.
+   * La cible est la journée que le calendrier retient dans le nouveau mois —
+   * lui, contrairement à la bande d'avant, ne disparaît jamais. Ce que le mois a
+   * donné est annoncé de son côté par le `role="status"` de l'état vide.
    *
    * Sans tableau de dépendances : ce n'est pas une valeur qu'on observe mais un
    * geste qu'on rattrape, au premier rendu où sa cible existe.
    */
   useEffect(() => {
-    if (!catchFocusAfterWidening.current || widening) {
+    if (!catchFocusAfterMonthChange.current || changingMonth) {
       return;
     }
 
-    const target =
-      dateBarRef.current?.querySelector<HTMLButtonElement>('button[tabindex="0"]') ??
-      emptyStateRef.current;
+    const target = calendarRef.current?.querySelector<HTMLButtonElement>('button[tabindex="0"]');
 
     if (target !== null && target !== undefined) {
-      catchFocusAfterWidening.current = false;
+      catchFocusAfterMonthChange.current = false;
       target.focus();
     }
   });
 
   /**
-   * « Voir plus de jours » — `states.md` étape 3.
+   * Changer de mois — le geste des chevrons du calendrier et celui de la sortie
+   * de l'état vide.
    *
-   * Un seul geste pour deux boutons : celui que `SlotPicker` pose en bout de
-   * bande et celui que porte l'état vide. Les deux ne sont jamais à l'écran en
-   * même temps — le sélecteur rend la bande **ou** l'état vide —, mais ils
-   * doivent faire exactement la même chose, rattrapage de focus compris.
-   *
-   * `null` quand la fenêtre est déjà au maximum du contrat : ni l'un ni l'autre
-   * n'est alors rendu, ils n'auraient plus rien à élargir.
+   * Une navigation, parce que c'est le rendu serveur de la page qui lit le
+   * calendrier. `replace` et non `push` : le mois qu'on vient de quitter n'est
+   * pas une étape du parcours, et « Précédent » doit ramener à la liste des
+   * rendez-vous, pas à la page d'avant du même écran.
    */
-  const widen = useCallback(() => {
-    if (widerHref === null) {
-      return;
-    }
+  const goToMonth = useCallback(
+    (target: CalendarMonth) => {
+      startMonthChange(() => {
+        router.replace(`${monthHref}${target}`);
+      });
+    },
+    [monthHref, router],
+  );
 
-    catchFocusAfterWidening.current = true;
-    startWidening(() => {
-      // `replace` et non `push` : la fenêtre étroite qu'on vient de quitter
-      // n'est pas une étape du parcours, et « Précédent » doit ramener à la
-      // liste des rendez-vous, pas à une bande plus courte de la même page.
-      router.replace(widerHref);
-    });
-  }, [router, widerHref]);
+  /** La sortie de l'état vide, qui peut emporter le bouton qui la porte. */
+  const showNextMonth = useCallback(() => {
+    catchFocusAfterMonthChange.current = true;
+    goToMonth(addMonths(month, 1));
+  }, [goToMonth, month]);
+
+  /** Le mois suivant se laisse-t-il atteindre, ou la fenêtre s'arrête-t-elle là ? */
+  const canSeeNextMonth = isNavigableMonth(addMonths(month, 1), bounds);
 
   // Comparaison d'instants et non de chaînes : rien ne garantit que le
   // calendrier et l'historique écrivent le même moment avec la même précision,
@@ -285,36 +297,34 @@ export function RescheduleForm({
 
       <SlotPicker
         days={availability.days}
+        month={month}
+        bounds={bounds}
+        onMonthChange={goToMonth}
         timeZone={timeZone}
         headingId="report-creneaux-titre"
         selectedSlot={chosen}
         lockedSlotNote={currentSlotNote}
-        busy={submitting || widening}
-        dateBarRef={dateBarRef}
-        emptyStateRef={emptyStateRef}
-        onWiden={widerHref === null ? undefined : widen}
+        busy={submitting || changingMonth}
+        calendarRef={calendarRef}
         onChoose={setChosen}
         emptyState={
           <div className="spa-empty-state">
-            <p className="spa-empty-state__title">Aucun créneau disponible</p>
+            <p className="spa-empty-state__title">{`Aucun créneau en ${formatMonth(month)}`}</p>
             <p className="spa-empty-state__description">
-              Le calendrier ne propose rien pour cette prestation dans les prochaines semaines.
-              Contactez le salon pour convenir d’une autre date.
+              Le calendrier ne propose rien pour cette prestation ce mois-ci. Essayez un autre
+              mois, ou contactez le salon pour convenir d’une autre date.
             </p>
             {/*
-              La sortie de bande est **aussi** ici : quand aucune journée n'est
-              ouverte, `SlotPicker` rend cet écran **à la place** du sélecteur,
-              et le bouton qu'il pose en bout de bande n'est donc pas rendu. Sans
-              ce second exemplaire, le seul écran qui a vraiment besoin
-              d'élargir la fenêtre serait le seul à ne pas le proposer —
-              `states.md` étape 3 : *« Vide (aucune dispo sur toute la plage) :
-              proposer d'élargir la plage »*.
+              La sortie est **aussi** ici, et pas seulement sur les chevrons du
+              calendrier : `states.md` étape 3 — *« Vide (aucune dispo sur toute
+              la plage) : proposer d'élargir la plage »* — demande que la
+              commande se trouve là où l'on vient de lire qu'il n'y a rien.
             */}
-            {widerHref === null ? null : (
-              <Button variant="neutral" onClick={widen}>
-                Voir plus de jours
+            {canSeeNextMonth ? (
+              <Button variant="neutral" onClick={showNextMonth}>
+                Voir le mois suivant
               </Button>
-            )}
+            ) : null}
           </div>
         }
       />

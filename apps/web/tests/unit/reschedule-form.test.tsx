@@ -16,10 +16,11 @@ import { RescheduleForm } from '@/app/(account)/[tenantSlug]/compte/components/r
  *   rendez-vous, son heure actuelle comprise, et cette heure-là ne doit pas
  *   pouvoir être choisie : l'écran proposerait sinon de déplacer un rendez-vous
  *   là où il est déjà ;
- * - **#622** — le choix passe par le sélecteur du tunnel : une bande de journées,
- *   puis la grille d'**une seule** journée. L'écran dépliait auparavant toutes
- *   les journées d'un coup, 4 960 px de haut à 360 px, le bouton de validation
- *   deux mille pixels sous le créneau qu'on venait de choisir.
+ * - **#622, #827** — le choix passe par le sélecteur du tunnel : un calendrier
+ *   mensuel, puis la grille d'**une seule** journée. L'écran dépliait auparavant
+ *   toutes les journées d'un coup, 4 960 px de haut à 360 px, le bouton de
+ *   validation deux mille pixels sous le créneau qu'on venait de choisir. Le
+ *   calendrier de #827 lui est arrivé par ce partage, sans une ligne de plus ici.
  * - **#654** — la mention du fuseau ne sort pas du rendu serveur, qui n'a aucun
  *   moyen de savoir où se trouve la visiteuse.
  */
@@ -81,7 +82,7 @@ const availability: AvailabilityResponse = {
   ],
 };
 
-/** Deux journées ouvertes et une complète — de quoi éprouver la bande de journées. */
+/** Deux journées ouvertes et une complète — de quoi éprouver le calendrier. */
 const troisJournees: AvailabilityResponse = {
   ...availability,
   days: [
@@ -103,10 +104,24 @@ afterEach(() => {
   replace.mockReset();
 });
 
-/** L'adresse de la même page en fenêtre élargie, telle que la page serveur la pose. */
-const WIDER_HREF = `/salon-des-lilas/compte/rendez-vous/${APPOINTMENT_ID}/report?jours=31`;
+/**
+ * Le gabarit d'adresse d'un changement de mois, tel que la page serveur le pose.
+ */
+const MONTH_HREF = `/salon-des-lilas/compte/rendez-vous/${APPOINTMENT_ID}/report?mois=`;
 
-function form(days: AvailabilityResponse = availability, widerHref: string | null = WIDER_HREF) {
+/**
+ * La fenêtre de réservation que le serveur calcule — du 1er septembre au 1er
+ * octobre 2026, soit les trente et un jours du contrat, bornes comprises.
+ *
+ * Elle couvre donc deux mois : c'est ce qui rend la navigation de mois
+ * observable, et c'est aussi la borne au-delà de laquelle le chevron s'éteint.
+ */
+const BOUNDS = { first: '2026-09-01', last: '2026-10-01' } as const;
+
+function form(
+  days: AvailabilityResponse = availability,
+  month = '2026-09',
+): ReturnType<typeof RescheduleForm> {
   return (
     <RescheduleForm
       tenantSlug="salon-des-lilas"
@@ -115,7 +130,9 @@ function form(days: AvailabilityResponse = availability, widerHref: string | nul
       serviceName="Massage suédois"
       availability={days}
       timeZone="UTC"
-      widerHref={widerHref}
+      month={month}
+      bounds={BOUNDS}
+      monthHref={MONTH_HREF}
     />
   );
 }
@@ -124,6 +141,11 @@ function renderForm(days: AvailabilityResponse = availability): ReturnType<typeo
   render(form(days));
 
   return userEvent.setup();
+}
+
+/** Le calendrier, nommé par son mois — la grille d'heures l'est par sa journée. */
+function calendrier(): HTMLElement {
+  return screen.getByRole('grid', { name: /Journée/ });
 }
 
 describe('report — les créneaux qui chevauchent le rendez-vous déplacé', () => {
@@ -191,7 +213,8 @@ describe('report — les créneaux qui chevauchent le rendez-vous déplacé', ()
 });
 
 /**
- * #622 — le report emploie le sélecteur du tunnel, et non une liste dépliée.
+ * #622, #827 — le report emploie le sélecteur du tunnel, calendrier compris, et
+ * non une liste dépliée.
  */
 describe('report — le sélecteur est celui du tunnel', () => {
   it('présente les créneaux en grille, une ligne par moment de la journée', () => {
@@ -199,19 +222,17 @@ describe('report — le sélecteur est celui du tunnel', () => {
 
     // La grille composite de `keyboard-navigation.md`, et non une suite de
     // boutons : c'est elle qui donne au clavier son axe vertical.
-    expect(screen.getByRole('grid')).toBeDefined();
+    expect(screen.getByRole('grid', { name: /Créneaux/ })).toBeDefined();
     expect(screen.getByRole('rowheader', { name: 'Après-midi' })).toBeDefined();
   });
 
-  it('ne déplie qu’une journée à la fois sous une bande de journées', () => {
+  it('ne déplie qu’une journée à la fois, sous un calendrier mensuel', () => {
     renderForm(troisJournees);
 
-    const barre = screen.getByRole('radiogroup', { name: 'Journée' });
-
-    // Les trois journées de la fenêtre sont dans la bande — la complète
-    // comprise, faute de quoi on croirait le salon fermé ce jour-là —, mais une
-    // seule grille est dépliée.
-    expect(within(barre).getAllByRole('radio')).toHaveLength(3);
+    // Septembre entier est à l'écran — les journées complètes comprises, faute
+    // de quoi on croirait le salon fermé ce jour-là —, mais une seule grille
+    // d'heures est dépliée.
+    expect(within(calendrier()).getAllByRole('button')).toHaveLength(30);
     expect(screen.getByRole('button', { name: '13 h 45' })).toBeDefined();
     expect(screen.queryByRole('button', { name: '09 h 30' })).toBeNull();
   });
@@ -219,7 +240,9 @@ describe('report — le sélecteur est celui du tunnel', () => {
   it('change de journée sans recharger la page', async () => {
     const user = renderForm(troisJournees);
 
-    await user.click(screen.getByRole('radio', { name: /3 septembre 2026 — 1 créneau/ }));
+    await user.click(
+      within(calendrier()).getByRole('button', { name: /^jeudi 3 septembre 2026 — 1 créneau/ }),
+    );
 
     expect(screen.getByRole('button', { name: '09 h 30' })).toBeDefined();
     expect(screen.queryByRole('button', { name: '13 h 45' })).toBeNull();
@@ -229,7 +252,9 @@ describe('report — le sélecteur est celui du tunnel', () => {
   it('n’ouvre pas une journée complète', async () => {
     const user = renderForm(troisJournees);
 
-    const complet = screen.getByRole('radio', { name: /2 septembre 2026 — complet/ });
+    const complet = within(calendrier()).getByRole('button', {
+      name: /^mercredi 2 septembre 2026 — complet/,
+    });
 
     expect(complet.getAttribute('aria-disabled')).toBe('true');
 
@@ -239,11 +264,14 @@ describe('report — le sélecteur est celui du tunnel', () => {
     expect(screen.getByRole('button', { name: '13 h 45' })).toBeDefined();
   });
 
-  it('explique l’agenda vide plutôt que de laisser une grille sans rien', () => {
+  it('explique le mois vide sans emporter le calendrier', () => {
+    // C'est ce qui change avec lui : la bande disparaissait, emportant la seule
+    // commande qui menait ailleurs.
     renderForm({ ...availability, days: [{ date: '2026-09-01', slots: [] }] });
 
-    expect(screen.getByText('Aucun créneau disponible')).toBeDefined();
-    expect(screen.queryByRole('grid')).toBeNull();
+    expect(screen.getByText('Aucun créneau en septembre 2026')).toBeDefined();
+    expect(screen.queryByRole('grid', { name: /Créneaux/ })).toBeNull();
+    expect(calendrier()).toBeDefined();
   });
 });
 
@@ -284,53 +312,53 @@ describe('report — la mention du fuseau attend l’hydratation (#654)', () => 
 });
 
 /**
- * « Voir plus de jours », en bout de bande (#738).
+ * Le changement de mois (#738, #827).
  *
- * `states.md` étape 3 prescrit cette sortie partout où le sélecteur est rendu, et
- * cet écran n'y échappait pas : la bande listait ses dates et s'arrêtait. Ici,
- * l'élargissement passe par l'adresse — c'est le rendu serveur de la page qui lit
- * le calendrier, et lui seul sait jusqu'où le contrat le laisse aller.
+ * Il remplace « Voir plus de jours » : la fenêtre ne s'élargit plus, on tourne
+ * la page du calendrier. Il passe par l'**adresse** pour la même raison que
+ * l'élargissement le faisait — c'est le rendu serveur de la page qui lit le
+ * calendrier, et un `useState` aurait ramené la visiteuse au mois courant au
+ * premier F5.
  */
-describe('report — l’élargissement de la fenêtre (#738)', () => {
-  it('ouvre la même page en fenêtre élargie, sans empiler d’entrée d’historique', async () => {
+describe('report — le changement de mois passe par l’adresse', () => {
+  it('ouvre le mois demandé, sans empiler d’entrée d’historique', async () => {
     const user = renderForm();
 
-    await user.click(screen.getByRole('button', { name: 'Voir plus de jours' }));
+    await user.click(screen.getByRole('button', { name: 'Mois suivant' }));
 
-    // `replace` et non `push` : la fenêtre étroite qu'on vient de quitter n'est
-    // pas une étape du parcours, et « Précédent » doit ramener à la liste des
+    // `replace` et non `push` : le mois qu'on vient de quitter n'est pas une
+    // étape du parcours, et « Précédent » doit ramener à la liste des
     // rendez-vous.
-    expect(replace).toHaveBeenCalledWith(WIDER_HREF);
+    expect(replace).toHaveBeenCalledWith(`${MONTH_HREF}2026-10`);
   });
 
-  it('ne rend plus le bouton quand la fenêtre est déjà au maximum du contrat', () => {
-    render(form(availability, null));
+  it('éteint le chevron au bord de la fenêtre de réservation', () => {
+    render(form(availability, '2026-10'));
 
-    expect(screen.queryByRole('button', { name: 'Voir plus de jours' })).toBeNull();
-    // La bande, elle, reste rendue : c'est la sortie qui disparaît, pas le choix.
-    expect(screen.getByRole('radiogroup', { name: 'Journée' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Mois suivant' }).getAttribute('aria-disabled')).toBe(
+      'true',
+    );
+    // Le calendrier, lui, reste rendu : c'est la sortie qui s'éteint, pas le choix.
+    expect(calendrier()).toBeDefined();
   });
 
-  it('offre la sortie jusque dans l’agenda vide, où elle sert le plus', async () => {
-    // Aucune journée ouverte : `SlotPicker` rend l'état vide **à la place** du
-    // sélecteur, bande et bouton de bout de bande compris. Sans un second
-    // exemplaire ici, le seul écran qui a vraiment besoin d'élargir la fenêtre
-    // serait le seul à ne pas le proposer — `states.md` étape 3, *« Vide (aucune
-    // dispo sur toute la plage) : proposer d'élargir la plage »*.
+  it('offre la sortie jusque dans le mois vide, où elle sert le plus', async () => {
+    // `states.md` étape 3 : *« Vide (aucune dispo sur toute la plage) : proposer
+    // d'élargir la plage »*. La commande doit se trouver là où l'on vient de
+    // lire qu'il n'y a rien, et pas seulement sur le chevron.
     const user = renderForm({ ...availability, days: [{ date: '2026-09-01', slots: [] }] });
 
-    expect(screen.getByText('Aucun créneau disponible')).toBeDefined();
-    expect(screen.queryByRole('radiogroup', { name: 'Journée' })).toBeNull();
+    expect(screen.getByText('Aucun créneau en septembre 2026')).toBeDefined();
 
-    await user.click(screen.getByRole('button', { name: 'Voir plus de jours' }));
+    await user.click(screen.getByRole('button', { name: 'Voir le mois suivant' }));
 
-    expect(replace).toHaveBeenCalledWith(WIDER_HREF);
+    expect(replace).toHaveBeenCalledWith(`${MONTH_HREF}2026-10`);
   });
 
-  it('n’offre rien à élargir dans l’agenda vide d’une fenêtre déjà maximale', () => {
-    render(form({ ...availability, days: [{ date: '2026-09-01', slots: [] }] }, null));
+  it('n’offre rien à ouvrir dans le mois vide au bord de la fenêtre', () => {
+    render(form({ ...availability, days: [{ date: '2026-10-01', slots: [] }] }, '2026-10'));
 
-    expect(screen.getByText('Aucun créneau disponible')).toBeDefined();
-    expect(screen.queryByRole('button', { name: 'Voir plus de jours' })).toBeNull();
+    expect(screen.getByText('Aucun créneau en octobre 2026')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Voir le mois suivant' })).toBeNull();
   });
 });
