@@ -28,9 +28,17 @@ Chaque issue porte, sans exception :
 | **Milestone** | `S1 — Fondations`, `S2 — Réservation`, `S3 — Back-office & paiements`, `S4 — Notifications, reporting & lancement` |
 | **Label workstream** | `ws:devops`, `ws:backend`, `ws:frontend`, `ws:design`, `ws:qa` |
 | **Label module** | `mod:identity`, `mod:catalog`, `mod:availability`, `mod:appointments`, `mod:crm`, `mod:payments`, `mod:notifications`, `mod:reporting`, `mod:infra` |
-| **Label type** | `type:epic`, `type:feature`, `type:bug`, `type:chore`, `type:docs`, `type:spike` |
+| **Label type** | `type:epic`, `type:feature`, `type:bug`, `type:chore`, `type:docs`, `type:spike`, `type:design` |
 | **Label nature** | `nature:projet`, `nature:outillage` |
 | **Label priorité** | `P0` (bloquant), `P1` (MVP requis), `P2` (souhaitable) |
+
+`type:bug` et `type:design` se ressemblent et ne se confondent pas : le premier
+dit qu'un **seuil** est franchi — c'est ce que `/qa` ouvre dans « Bug &
+correction » —, le second qu'une conception **s'écarte d'une référence écrite**
+— c'est ce que `/design-audit` ouvre dans « Design & UX ». Aucun des deux ne
+s'ouvre à la main : ils ont chacun leur point d'écriture, `scripts/qa_bugs.py`
+et `scripts/design_tickets.py`, qui garantissent le classement sans lequel le
+plan les écarterait.
 
 ### La nature : qui traite le ticket
 

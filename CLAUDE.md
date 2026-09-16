@@ -142,3 +142,26 @@ corrections comme n'importe quel lot produit. Le point d'écriture unique de ces
 tickets est `scripts/qa_bugs.py`, qui garantit le classement complet sans lequel
 le plan les écarterait, et déduplique d'une campagne à l'autre. Voir
 [.claude/skills/qa/SKILL.md](.claude/skills/qa/SKILL.md).
+
+La QA dit si un seuil est franchi ; elle ne dit pas si le produit est **bien
+conçu**. Un écran peut franchir toutes les barrières et rester une mauvaise
+conception : trois pages qui nomment le même objet de trois façons, un tunnel de
+réservation qui perd la progression au rafraîchissement, un tableau de bord vide
+sans amorce le premier jour, un prix qu'on ne découvre qu'après avoir choisi.
+C'est l'objet de l'**audit de conception**, `/design-audit` : l'agent
+`design-auditor` traverse les écrans d'un parcours et les confronte à une grille
+de neuf critères (`ds:parcours`, `ds:hierarchie`, `ds:systeme`, `ds:coherence`,
+`ds:libelles`, `ds:etats`, `ds:mobile`, `ds:a11y`, `ds:confiance`). Là où la QA
+exige un seuil, l'audit exige une **référence écrite** — une section du CDC, un
+ADR, une norme d'accessibilité, un fichier du dépôt qui existe : un constat sans
+référence est un goût personnel, et `scripts/design_tickets.py` le refuse.
+
+Il ne corrige rien non plus : il ouvre des tickets `type:design` dans le jalon
+**`Design & UX`**, chacun avec sa référence, son attendu, son constaté, sa
+recommandation et sa capture. `/milestone "Design & UX"` déroule ensuite les
+reprises. La frontière avec `/qa` est tenue par l'outillage autant que par la
+règle — un seuil franchi est un bug, un écart à une référence est une
+amélioration, et `design_tickets.py voisins --url <écran>` dit ce qui est déjà
+ouvert des deux côtés. Voir
+[.claude/skills/design-audit/SKILL.md](.claude/skills/design-audit/SKILL.md) et
+l'[ADR 0010](docs/adr/0010-audit-de-conception-distinct-de-la-qa.md).

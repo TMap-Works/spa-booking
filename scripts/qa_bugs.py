@@ -188,6 +188,31 @@ def empreinte(critere, module, url, cle=""):
     return hashlib.sha1(graine.encode("utf-8")).hexdigest()[:12]
 
 
+def nettoyer_url(url):
+    """Rattrape la conversion de chemin de Git Bash — la panne la plus discrète
+    de tout ce dispositif sous Windows.
+
+    Un `--url /reservation` passé depuis Git Bash arrive au script sous la forme
+    `C:/Program Files/Git/reservation` : MSYS convertit toute valeur d'argument
+    qui commence par `/`. Rien n'échoue — le ticket s'ouvre, l'écran affiché est
+    faux, et l'empreinte calculée dessus ne retrouvera jamais son doublon à la
+    campagne suivante. Le remède à la source est `MSYS_NO_PATHCONV=1` devant la
+    commande ; celui-ci le rattrape quand on l'oublie, ce qui arrive.
+
+    La racine de conversion est le dossier d'installation de Git, que MSYS
+    exporte lui-même dans `EXEPATH` (`…/Git/bin`) : on ne la devine pas, on la
+    lit.
+    """
+    texte = (url or "").strip().replace("\\", "/")
+    racine = os.environ.get("EXEPATH", "").replace("\\", "/").rstrip("/")
+    if not (os.environ.get("MSYSTEM") and racine):
+        return texte
+    prefixe = racine.rsplit("/", 1)[0] if "/" in racine else racine
+    if prefixe and texte.lower().startswith(prefixe.lower() + "/"):
+        return texte[len(prefixe):]
+    return texte
+
+
 def normaliser_url(url):
     """`/reserver/creneaux?jour=3` et `/reserver/creneaux` désignent le même
     endroit : la chaîne de requête et la barre finale ne font pas partie de
@@ -195,7 +220,7 @@ def normaliser_url(url):
     identifiant sont ramenés à `:id`, sans quoi chaque exécution du jeu d'essai
     produirait une empreinte neuve.
     """
-    url = (url or "").strip().split("?")[0].split("#")[0]
+    url = nettoyer_url(url).split("?")[0].split("#")[0]
     url = re.sub(r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
                  "/:id", url, flags=re.I)
     url = re.sub(r"/\d+(?=/|$)", "/:id", url)
@@ -337,7 +362,7 @@ def milestones():
             for j in jalons]
 
 
-def ensure_milestone(verbeux=True):
+def ensure_milestone(verbeux=True, titre=None, description=None):
     """Idempotent : deux campagnes lancées le même jour ne créent qu'un jalon.
 
     **Sans échéance, délibérément.** `current_milestone()` de `tracking.py`
@@ -345,9 +370,17 @@ def ensure_milestone(verbeux=True):
     une date à « Bug & correction » le ferait rafler tous les `/ticket-new`
     suivants, qui sortiraient du sprint en cours sans que personne ne le
     remarque.
+
+    `titre` vise un **autre** jalon que celui de la QA. C'est la couture par
+    laquelle `design_tickets.py` réemploie cette plomberie pour « Design & UX »
+    sans réécrire la garde du jalon fermé, ni celle du 422 sur titre en double.
+    Un paramètre explicite plutôt qu'une variable de module réassignée : deux
+    scripts importés dans le même processus de test ne doivent pas se marcher
+    dessus.
     """
+    cible = titre or JALON
     for jalon in milestones():
-        if jalon["title"].strip().lower() != JALON.strip().lower():
+        if jalon["title"].strip().lower() != cible.strip().lower():
             continue
         # Un jalon fermé n'accueille plus de ticket : le rouvrir vaut mieux que
         # d'en créer un homonyme, que GitHub refuserait de toute façon.
@@ -361,10 +394,11 @@ def ensure_milestone(verbeux=True):
             print(f"jalon « {jalon['title']} » déjà là (#{jalon['number']})")
         return jalon["number"]
     cree = gh_json(["api", f"repos/{REPO}/milestones", "--method", "POST",
-                    "-f", f"title={JALON}",
-                    "-f", "description=Anomalies relevées par les campagnes de QA "
+                    "-f", f"title={cible}",
+                    "-f", "description=" + (description or
+                          "Anomalies relevées par les campagnes de QA "
                           "(/qa). Sans échéance : ce jalon ne doit pas se "
-                          "substituer au sprint en cours dans tracking.py.",
+                          "substituer au sprint en cours dans tracking.py."),
                     "--jq", "{number, title}"])
     if verbeux:
         print(f"jalon « {cree['title']} » créé (#{cree['number']})")
@@ -375,18 +409,23 @@ def ensure_milestone(verbeux=True):
 # Les captures
 # --------------------------------------------------------------------------
 
-def chemin_capture(campagne, marque, rang, fichier):
+def chemin_capture(campagne, marque, rang, fichier, famille="qa"):
     """L'emplacement d'une capture sur la branche d'images. Le nom vient de
     l'**empreinte**, pas du titre : le même défaut retrouvé plus tard écrase sa
     capture au lieu d'en accumuler une par campagne.
+
+    `famille` sépare les dispositifs qui partagent la branche : `qa` pour les
+    campagnes de `/qa`, `design` pour les audits de `/design-audit`. Sans elle,
+    les deux écriraient dans le même dossier, et on ne saurait plus six mois
+    plus tard quelle capture illustre quel constat.
     """
-    return (f"docs/qa/captures/{campagne}/{marque}-{rang}"
+    return (f"docs/{famille}/captures/{campagne}/{marque}-{rang}"
             f"{Path(fichier).suffix.lower()}")
 
 
-def url_capture(campagne, marque, rang, fichier):
+def url_capture(campagne, marque, rang, fichier, famille="qa"):
     return (f"https://raw.githubusercontent.com/{REPO}/{BRANCHE_CAPTURES}/"
-            f"{chemin_capture(campagne, marque, rang, fichier)}")
+            f"{chemin_capture(campagne, marque, rang, fichier, famille)}")
 
 
 def verifier_captures(fichiers):
@@ -416,7 +455,7 @@ def verifier_captures(fichiers):
     return verifies
 
 
-def pousser_captures(fichiers, campagne, marque):
+def pousser_captures(fichiers, campagne, marque, famille="qa"):
     """Dépose les captures sur `qa-captures` et rend leurs URL brutes.
 
     Écrit en plomberie : `hash-object` pour les octets, un index temporaire pour
@@ -430,10 +469,11 @@ def pousser_captures(fichiers, campagne, marque):
 
     entrees, resultats = [], []
     for rang, (chemin, legende) in enumerate(verifier_captures(fichiers), start=1):
-        cible = chemin_capture(campagne, marque, rang, chemin)
+        cible = chemin_capture(campagne, marque, rang, chemin, famille)
         blob = git(["hash-object", "-w", "--", str(chemin)]).strip()
         entrees.append((blob, cible))
-        resultats.append((url_capture(campagne, marque, rang, chemin), legende))
+        resultats.append((url_capture(campagne, marque, rang, chemin, famille),
+                          legende))
 
     # La branche peut ne pas exister : la première campagne l'inaugure.
     parent = None
@@ -454,8 +494,8 @@ def pousser_captures(fichiers, campagne, marque):
                 env=env)
         arbre = git(["write-tree"], env=env).strip()
 
-    message = (f"chore(qa): captures de la campagne {campagne} ({marque})\n\n"
-               "Branche d'images des tickets du jalon « Bug & correction ».\n"
+    message = (f"chore({famille}): captures de la campagne {campagne} ({marque})\n\n"
+               "Branche d'images des tickets de campagne et d'audit.\n"
                "Elle ne merge jamais et ne porte aucun code.\n")
     args = ["commit-tree", arbre]
     if parent:
@@ -470,8 +510,8 @@ def pousser_captures(fichiers, campagne, marque):
 # Les tickets
 # --------------------------------------------------------------------------
 
-def issues_du_jalon(etat="all"):
-    return gh_json(["issue", "list", "--repo", REPO, "--milestone", JALON,
+def issues_du_jalon(etat="all", titre=None):
+    return gh_json(["issue", "list", "--repo", REPO, "--milestone", titre or JALON,
                     "--state", etat, "--limit", "500",
                     "--json", "number,title,state,body,url,labels"]) or []
 
@@ -536,7 +576,7 @@ def cmd_open(args):
         "titre": args.titre.strip(),
         "critere": args.critere, "module": args.module,
         "workstream": args.workstream, "gravite": args.gravite,
-        "url": args.url.strip(), "attendu": args.attendu.strip(),
+        "url": nettoyer_url(args.url), "attendu": args.attendu.strip(),
         "constate": args.constate.strip(), "preuve": args.preuve.strip(),
         "mesure": (args.mesure or "").strip(),
         "reproduire": (args.reproduire or "").strip(),
