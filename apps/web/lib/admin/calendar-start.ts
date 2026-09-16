@@ -35,14 +35,16 @@
  *
  * La dernière ligne est ce qui laisse au planning sa navigation de période : sans
  * lien à proposer, l'état vide reste celui d'avant ce ticket, et son conseil
- * — changer de période — redevient vrai. Elle ne lui vient pourtant pas de la
- * grille : depuis #507 une fiche praticien ouvre toujours sa colonne, si bien
- * qu'un planning **sans colonne** n'a jamais de praticien, et que les deux
- * dernières lignes ne s'atteignent pas depuis cet écran-là. Ce qui lui rend son
- * bouton de période, c'est `calendarPeriodEmptyState` — l'écran s'y replie dès
- * qu'un doute pèse sur les comptes. Les quatre lignes restent tout de même
- * vraies pour le tiroir et pour tout appelant qui décide autrement que sur
- * l'absence de colonne.
+ * — changer de période — redevient vrai. Elle ne lui vient pourtant jamais de
+ * cet écran : depuis #758 le planning bascule sur son état vide dès que la
+ * période est creuse **et** qu'un lien manque à poser (`hasNothingToPlan`), si
+ * bien que la dernière ligne — rien ne manque — n'y est par construction pas
+ * atteignable. Ce qui lui rend alors son bouton de période, c'est
+ * `calendarPeriodEmptyState` : l'écran s'y replie dès qu'un doute pèse sur les
+ * comptes. Les trois premières lignes, elles, s'atteignent bel et bien depuis le
+ * planning — y compris « le catalogue est vide », qu'un salon pourvu de fiches
+ * praticien mais sans prestation y rend depuis #758. La quatrième reste vraie
+ * pour le tiroir et pour tout appelant qui décide autrement.
  *
  * ## Pourquoi les chemins sont passés plutôt qu'importés
  *
@@ -124,6 +126,11 @@ export const CATALOG_EMPTY_DESCRIPTION =
  * (`calendrier/page.tsx` retombe sur une liste vide plutôt que de fermer
  * l'agenda), et un salon installé s'entendrait alors dire qu'il ne l'est pas.
  * Sans lien à proposer, l'écran garde son bouton de période.
+ *
+ * Son conseil — « changez de période, ou passez en vue semaine » — reste vrai
+ * dans les deux vues du planning après #758 : c'est justement parce que ce bloc
+ * ne porte aucun lien que la vue semaine y garde sa grille, et qu'on peut donc
+ * l'y envoyer. Seule la vue jour le rend, faute de colonne à dessiner.
  */
 export function calendarPeriodEmptyState(): CalendarStartState {
   return {
@@ -135,7 +142,7 @@ export function calendarPeriodEmptyState(): CalendarStartState {
 }
 
 /**
- * Ce qu'un planning sans colonne doit dire, et ce qu'il doit proposer.
+ * Ce qu'un planning vide doit dire, et ce qu'il doit proposer.
  *
  * Le titre nomme la situation plutôt que son symptôme : « ce salon n'est pas
  * encore installé » explique pourquoi demain sera identique, là où « aucun

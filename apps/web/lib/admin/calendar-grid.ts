@@ -338,7 +338,13 @@ export interface CalendarBoard {
   /** Étiquettes de la gouttière, une par heure pleine. */
   readonly hours: readonly string[];
   readonly columns: readonly CalendarColumn[];
-  /** Nombre de rendez-vous de la plage, tous statuts confondus. */
+  /**
+   * Nombre de rendez-vous **placés** dans les colonnes, tous statuts confondus.
+   *
+   * Ce que la plage porte et ce que l'écran montre ne coïncident pas toujours :
+   * un soin de la veille au soir retombe dans les bornes civiles de la requête
+   * sans appartenir à la journée affichée, et `columnInputs` l'écarte.
+   */
   readonly appointmentCount: number;
 }
 
@@ -570,7 +576,8 @@ export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
 
   const week = openingWeekOf(openingHours);
   const { firstSlot, lastSlot } = displayedSlots([...spans.values()], daysOf(range), week);
-  const columns = columnInputs(view, range, appointments, spans, staff).map((input) =>
+  const inputs = columnInputs(view, range, appointments, spans, staff);
+  const columns = inputs.map((input) =>
     buildColumn(input, spans, {
       view,
       firstSlot,
@@ -593,7 +600,13 @@ export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
     slotCount: lastSlot - firstSlot,
     hours,
     columns,
-    appointmentCount: appointments.length,
+    // Compté sur les colonnes et non sur la liste reçue : les bornes de la
+    // requête sont des dates civiles, et le serveur y fait retomber un soin
+    // commencé la veille au soir, que `columnInputs` écarte ensuite. Le compter
+    // ferait croire à l'appelant que la plage porte un rendez-vous là où l'écran
+    // n'en montre aucun — et le planning y lit précisément s'il doit rendre sa
+    // grille ou son état vide (#758).
+    appointmentCount: inputs.reduce((total, input) => total + input.appointments.length, 0),
   };
 }
 

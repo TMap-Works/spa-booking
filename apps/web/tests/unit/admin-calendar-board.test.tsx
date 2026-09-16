@@ -176,6 +176,7 @@ function renderBoard(
     readonly loadError?: string | null;
     readonly services?: readonly Service[];
     readonly staff?: readonly StaffMemberSummary[];
+    readonly setupKnown?: boolean;
     readonly openingHours?: readonly OpeningHoursEntry[];
   } = {},
 ): void {
@@ -186,6 +187,7 @@ function renderBoard(
       loadError={overrides.loadError ?? null}
       openingHours={overrides.openingHours ?? []}
       services={overrides.services ?? CATALOGUE}
+      setupKnown={overrides.setupKnown ?? true}
       // Répertoire vide par défaut : les colonnes se déduisent alors des seuls
       // rendez-vous, ce qui laisse l'état vide observable là où ces cas
       // l'éprouvent. Le répertoire garni a son propre bloc, plus bas (#507).
@@ -950,5 +952,116 @@ describe('un rendez-vous soldé rend son créneau (#753)', () => {
     // Le serveur refuserait le report en `INVALID_STATE_TRANSITION` : une
     // poignée qui mène à un refus est une poignée qui ment.
     expect(screen.queryByRole('button', { name: /^Déplacer Claire Fanja/ })).toBeNull();
+  });
+});
+
+/**
+ * Un seul état vide, pour les deux vues — #758.
+ *
+ * L'audit `d20260916-1` a relevé l'écart sur le même établissement neuf et la
+ * même donnée : la vue jour remplaçait la grille par un bloc explicatif et une
+ * action, quand la vue semaine rendait sept colonnes sur vingt-quatre rangées,
+ * sans explication, sans action, et offrait cent soixante-huit boutons « libre »
+ * qui menaient tous au même cul-de-sac « Le catalogue est vide ».
+ * `docs/design/appointments/states.md`, « Règles générales » : « Vide :
+ * toujours accompagné d'une explication et d'au moins une action pour sortir de
+ * l'impasse. »
+ *
+ * La cause tenait au critère de bascule — le nombre de **colonnes**, qui dépend
+ * de la vue. Il est repris sur l'état de l'**établissement**, qui n'en dépend
+ * pas : c'est ce que ces scénarios éprouvent, des deux côtés de la bascule.
+ */
+describe('l’état vide ne dépend plus de la vue (#758)', () => {
+  const REPERTOIRE: readonly StaffMemberSummary[] = [
+    { id: 'staff-hasina', displayName: 'Hasina' },
+  ];
+
+  /** La semaine du 24 au 30 août 2026 — celle qui contient le mercredi 26. */
+  const SEMAINE_VIDE: Readonly<Record<string, readonly Appointment[]>> = {
+    'semaine:2026-08-24': [],
+  };
+
+  function renderSalonNeuf(view: 'jour' | 'semaine'): void {
+    renderBoard(
+      view === 'semaine'
+        ? { view, date: '2026-08-24', periods: SEMAINE_VIDE, services: [], staff: [] }
+        : { view, date: '2026-08-26', periods: { 'jour:2026-08-26': [] }, services: [], staff: [] },
+    );
+  }
+
+  it('rend en vue semaine le bloc d’installation, et plus une grille de créneaux offerts', () => {
+    renderSalonNeuf('semaine');
+
+    expect(screen.getByText('Ce salon n’est pas encore installé')).toBeDefined();
+    // La preuve de l'audit : ces boutons-là n'existent plus. Un seul suffirait à
+    // reconduire le cul-de-sac.
+    expect(screen.queryAllByRole('button', { name: /libre — poser un rendez-vous/ })).toHaveLength(
+      0,
+    );
+  });
+
+  it('propose en vue semaine les mêmes issues qu’en vue jour', () => {
+    renderSalonNeuf('semaine');
+
+    const semaine = screen.getAllByRole('link').map((lien) => lien.textContent);
+
+    cleanup();
+    renderSalonNeuf('jour');
+
+    // Mêmes mots, mêmes gestes, mêmes destinations : c'est exactement le critère
+    // `ds:coherence` que l'audit oppose aux deux vues.
+    expect(screen.getByText('Ce salon n’est pas encore installé')).toBeDefined();
+    expect(screen.getAllByRole('link').map((lien) => lien.textContent)).toEqual(semaine);
+  });
+
+  it('laisse sa grille à la semaine creuse d’un salon installé', () => {
+    // Non-régression : une semaine sans rendez-vous reste la surface où l'on en
+    // pose un. L'état vide ne remplace la grille que si le salon n'a pas de quoi
+    // accueillir un rendez-vous — jamais parce que la période est creuse.
+    renderBoard({
+      view: 'semaine',
+      date: '2026-08-24',
+      periods: SEMAINE_VIDE,
+      staff: REPERTOIRE,
+    });
+
+    expect(screen.queryByText('Ce salon n’est pas encore installé')).toBeNull();
+    expect(screen.getAllByRole('list')).toHaveLength(7);
+  });
+
+  it('ne masque jamais des rendez-vous derrière l’amorce d’installation', () => {
+    // Un salon qui retire toutes ses prestations du catalogue garde ses
+    // rendez-vous déjà posés : les cacher derrière « Le catalogue est vide » les
+    // rendrait introuvables depuis l'écran qui existe pour les montrer.
+    renderBoard({
+      view: 'semaine',
+      date: '2026-08-24',
+      periods: { 'semaine:2026-08-24': [matin] },
+      services: [],
+      staff: [],
+    });
+
+    expect(screen.queryByText('Le catalogue est vide')).toBeNull();
+    expect(screen.getAllByRole('list')).toHaveLength(7);
+    expect(screen.getAllByRole('button', { name: /Rina/ }).length).toBeGreaterThan(0);
+  });
+
+  it('ne retire pas sa grille à la semaine sur un doute d’installation', () => {
+    // Le verdict se lit sur `start.links`, et jamais sur le seul répertoire :
+    // celui-ci arrive vide aussi quand `GET /v1/staff` n'a pas répondu
+    // (`setupKnown` faux), et un salon installé perdrait alors sa semaine
+    // entière de créneaux cliquables parce qu'une liste annexe est tombée.
+    // Dans le doute, l'écran garde le comportement d'avant ce ticket.
+    renderBoard({
+      view: 'semaine',
+      date: '2026-08-24',
+      periods: SEMAINE_VIDE,
+      services: [],
+      staff: [],
+      setupKnown: false,
+    });
+
+    expect(screen.queryByText('Ce salon n’est pas encore installé')).toBeNull();
+    expect(screen.getAllByRole('list')).toHaveLength(7);
   });
 });

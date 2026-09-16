@@ -126,6 +126,14 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * l'agenda interdisait alors que le moteur l'acceptait. Ce que cela préserve :
  * le rendez-vous annulé reste à l'écran, à son heure, et sa fiche s'ouvre d'un
  * clic — il explique le trou dans la journée.
+ *
+ * ## Un seul état vide pour les deux vues (#758)
+ *
+ * Le basculement vers l'état vide se décide sur l'**établissement**, jamais sur
+ * la vue ni sur la période : voir `hasNothingToPlan`. Tant qu'il se décidait sur
+ * le nombre de colonnes, la même donnée donnait deux écrans opposés — la journée
+ * expliquait ce qui manque, la semaine offrait sept colonnes de créneaux sans
+ * un mot. Toute condition ajoutée ici doit rester vraie dans les deux vues.
  */
 
 /** Ce que la page a déjà chargé, période par période. */
@@ -344,17 +352,11 @@ export function CalendarBoard({
   // ne sait rien encore, et c'est exactement l'écran sur lequel le comptoir
   // décide de poser un client.
   const isPending = appointments === undefined && loading;
-  // Aucune colonne à rendre : l'écran bascule sur son état vide, et la grille —
-  // donc le conteneur mesuré — n'est pas montée. Depuis #507 la vue jour ouvre
-  // une colonne par praticien du répertoire : il n'y reste donc que le salon
-  // sans aucune fiche praticien, et le cas où le répertoire n'a pas pu être lu.
-  const isEmpty = !isPending && board.columns.length === 0;
-  const showsGrid = !isPending && !isEmpty;
 
   /**
    * Ce que l'état vide dit, et ce qu'il propose (#751).
    *
-   * Un planning sans colonne n'est presque jamais une journée creuse : depuis
+   * Un planning sans agenda n'est presque jamais une journée creuse : depuis
    * #507 la vue jour ouvre une colonne par praticien du répertoire, si bien
    * qu'il n'y reste que le salon qui n'a **aucune** fiche. Lui conseiller le
    * lendemain était un cul-de-sac — il est vide à l'identique, indéfiniment.
@@ -376,6 +378,46 @@ export function CalendarBoard({
         : calendarPeriodEmptyState(),
     [setupKnown, failure, services.length, staff.length, tenantSlug],
   );
+
+  // Aucune colonne à rendre : il n'y a littéralement rien à dessiner, et la
+  // grille — donc le conteneur mesuré — ne doit pas être montée. C'est un cas
+  // de la seule **vue jour** : la vue semaine a toujours ses sept journées, et
+  // c'est bien là qu'était le défaut.
+  const hasNoColumn = board.columns.length === 0;
+  /**
+   * Rien à montrer, et rien pour l'accueillir (#758).
+   *
+   * L'état vide se décidait sur le nombre de **colonnes**, qui dépend de la vue :
+   * une par praticien en vue jour — donc zéro dans un salon sans fiche —, une par
+   * journée en vue semaine — donc sept, toujours. Sur la même donnée et le même
+   * établissement neuf, la journée rendait son bloc « ce salon n'est pas encore
+   * installé » quand la semaine rendait une grille pleine de créneaux offerts,
+   * sans un mot d'explication, dont les cent soixante-huit boutons menaient tous
+   * au même cul-de-sac. Un même écran, deux vues, deux modèles mentaux — et un
+   * état vide sans explication ni issue, ce que
+   * `docs/design/appointments/states.md` (« Règles générales ») interdit.
+   *
+   * Le verdict est donc repris sur l'**établissement**, qui ne change pas d'une
+   * vue à l'autre : la période ne porte aucun rendez-vous, **et** le module a
+   * nommé ce qui manque au salon pour en poser un — c'est exactement ce que
+   * `start.links` porte, et rien d'autre ne le dit sans risque.
+   *
+   * Compter les fiches praticien ici serait tentant et faux : elles arrivent
+   * vides aussi quand `GET /v1/staff` n'a pas répondu (`setupKnown` faux), et un
+   * salon installé perdrait alors sa semaine entière de créneaux cliquables
+   * parce qu'une liste annexe est tombée. `start.links` ne se remplit que
+   * lorsque les comptes font foi ; dans le doute il reste vide, et l'écran garde
+   * le comportement d'avant ce ticket — grille en semaine, repli sur
+   * `hasNoColumn` en jour.
+   *
+   * Les deux conditions comptent, et la première protège la seconde : un salon
+   * qui retire toutes ses prestations du catalogue garde des rendez-vous déjà
+   * posés, et les masquer derrière une amorce d'installation les rendrait
+   * introuvables depuis l'écran qui existe pour les montrer.
+   */
+  const hasNothingToPlan = board.appointmentCount === 0 && start.links.length > 0;
+  const isEmpty = !isPending && (hasNoColumn || hasNothingToPlan);
+  const showsGrid = !isPending && !isEmpty;
 
   /** Charge une période absente du cache, et la range dedans. */
   const load = useCallback(
