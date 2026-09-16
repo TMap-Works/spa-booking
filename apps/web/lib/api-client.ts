@@ -103,9 +103,11 @@ import { z } from 'zod';
 // frontière. Le détail est dans l'en-tête de `lib/admin/payment-contract.ts`.
 import {
   appointmentPaymentIntentSchema,
+  paymentTransactionPageSchema,
   paymentTransactionSchema,
   type AppointmentPaymentIntent,
   type PaymentTransaction,
+  type PaymentTransactionPage,
 } from '@/lib/admin/payment-contract';
 
 // Les formes de l'administration du personnel, que `@spa/shared` ne décrit pas
@@ -1108,6 +1110,64 @@ export async function settleAppointmentInCash(
     path: '/payments/cash',
     body: { appointmentId },
     schema: paymentTransactionSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/** Une fenêtre d'historique de caisse — `from` inclus, `to` exclu, et la page. */
+export interface PaymentHistoryQuery {
+  /** Borne basse **incluse**, instant à offset explicite. */
+  readonly from?: string;
+  /** Borne haute **exclue**, instant à offset explicite. */
+  readonly to?: string;
+  readonly page?: number;
+  readonly pageSize?: number;
+}
+
+/**
+ * Les encaissements inscrits d'une fenêtre — `GET /payments` (#62), relu par
+ * l'écran d'encaissement pour savoir ce qui est **déjà réglé** (#828).
+ *
+ * ## Ce que cette lecture rapporte, et ce qu'elle ne rapporte pas
+ *
+ * Chaque ligne porte son `appointmentId`, son moyen, son statut, son montant et
+ * son instant de capture. Elle ne porte **aucune donnée de carte** — le schéma
+ * de lecture n'en déclare pas, et un objet Zod retire les clés qu'il ne déclare
+ * pas (payments-stripe §1). Elle ne porte pas davantage l'opérateur :
+ * `PaymentTransactionDto` n'a pas de `cashierUserId`, seul le ticket de caisse
+ * en a un.
+ *
+ * ## Deux bornes que l'appelant doit connaître
+ *
+ * La fenêtre porte sur `payments.createdAt` — l'ouverture de l'encaissement,
+ * pas la capture —, et la route est au seuil **`MANAGER`** quand l'encaissement
+ * est ouvert à `STAFF`. Un comptoir tenu par un compte `STAFF` reçoit donc un
+ * 403 ici : l'appelant traite ce refus comme « état de règlement inconnu » et
+ * non comme une panne, exactement comme le planning traite l'agenda
+ * indisponible.
+ */
+export async function fetchPayments(
+  accessToken: string,
+  query: PaymentHistoryQuery = {},
+): Promise<PaymentTransactionPage> {
+  const search = new URLSearchParams();
+
+  for (const [name, value] of [
+    ['from', query.from],
+    ['to', query.to],
+    ['page', query.page === undefined ? undefined : String(query.page)],
+    ['pageSize', query.pageSize === undefined ? undefined : String(query.pageSize)],
+  ] as const) {
+    if (value !== undefined) {
+      search.set(name, value);
+    }
+  }
+
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/payments${search.size === 0 ? '' : `?${search.toString()}`}`,
+    schema: paymentTransactionPageSchema,
     accessToken,
   });
   return payload;

@@ -171,6 +171,97 @@
             </div>
           </section>
 
+          <!--
+            LA JOURNÉE, ET CE QU'ELLE A DÉJÀ ENCAISSÉ — #828.
+            La liste taisait le règlement : il fallait ouvrir un rendez-vous pour
+            l'apprendre, et l'écran lui-même ne l'apprenait qu'après le clic, en
+            409. La pastille écrit toujours son libellé — la couleur n'accélère
+            que le balayage, elle ne porte jamais l'information seule (WCAG 1.4.1).
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-journee">
+            <h2 class="spa-admin__section-title" id="titre-journee">Journée du comptoir</h2>
+
+            <table class="spa-admin-table">
+              <caption class="spa-visually-hidden">Rendez-vous de la journée</caption>
+              <thead>
+                <tr>
+                  <th class="spa-admin-table__head" scope="col">Heure</th>
+                  <th class="spa-admin-table__head" scope="col">Cliente</th>
+                  <th class="spa-admin-table__head spa-admin-table__head--numeric" scope="col">Montant</th>
+                  <th class="spa-admin-table__head" scope="col">Règlement</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="spa-admin-table__row">
+                  <td class="spa-admin-table__cell">09:00</td>
+                  <td class="spa-admin-table__cell">Fara Rakotoson</td>
+                  <td class="spa-admin-table__cell spa-admin-table__cell--numeric">264 000 MGA</td>
+                  <td class="spa-admin-table__cell">
+                    <span class="spa-admin-badge spa-admin-badge--settlement-settled">réglé</span>
+                  </td>
+                </tr>
+                <tr class="spa-admin-table__row">
+                  <td class="spa-admin-table__cell">10:30</td>
+                  <td class="spa-admin-table__cell">Hanta Ravelo</td>
+                  <td class="spa-admin-table__cell spa-admin-table__cell--numeric">120 000 MGA</td>
+                  <td class="spa-admin-table__cell">
+                    <span class="spa-admin-badge spa-admin-badge--settlement-due">à encaisser</span>
+                  </td>
+                </tr>
+                <tr class="spa-admin-table__row">
+                  <td class="spa-admin-table__cell">11:15</td>
+                  <td class="spa-admin-table__cell">Soa Andrianina</td>
+                  <td class="spa-admin-table__cell spa-admin-table__cell--numeric">180 000 MGA</td>
+                  <td class="spa-admin-table__cell">
+                    <span class="spa-admin-badge spa-admin-badge--settlement-open">carte en cours</span>
+                  </td>
+                </tr>
+                <tr class="spa-admin-table__row">
+                  <td class="spa-admin-table__cell">14:00</td>
+                  <td class="spa-admin-table__cell">Miora Rasoa</td>
+                  <td class="spa-admin-table__cell spa-admin-table__cell--numeric">95 000 MGA</td>
+                  <td class="spa-admin-table__cell">
+                    <span class="spa-admin-badge spa-admin-badge--settlement-failed">carte en échec</span>
+                  </td>
+                </tr>
+                <tr class="spa-admin-table__row">
+                  <td class="spa-admin-table__cell">16:30</td>
+                  <td class="spa-admin-table__cell">Lova Ranaivo</td>
+                  <td class="spa-admin-table__cell spa-admin-table__cell--numeric">210 000 MGA</td>
+                  <td class="spa-admin-table__cell">
+                    <span class="spa-admin-badge spa-admin-badge--settlement-refunded">remboursé</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+
+          <!--
+            RENDEZ-VOUS DÉJÀ RÉGLÉ — #828. Aucun moyen de paiement, aucun bouton
+            d'encaissement : le règlement est annoncé avant le clic, et ce qui
+            reste à faire est de réimprimer le ticket.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-regle">
+            <h2 class="spa-admin__section-title" id="titre-regle">Rendez-vous déjà réglé</h2>
+
+            <div class="spa-admin-checkout__payment">
+              <div class="spa-notification spa-notification--success" role="status">
+                <span class="spa-notification__icon" aria-hidden="true">✓</span>
+                <div class="spa-notification__content">
+                  <p class="spa-notification__title">Réglé par carte — 264 000 MGA</p>
+                  <p>
+                    Encaissement inscrit le 26 août à 11:45. Il n’y a plus rien à encaisser
+                    sur ce rendez-vous.
+                  </p>
+                </div>
+              </div>
+
+              <button class="spa-button spa-button--neutral spa-button--block" type="button">
+                <span class="spa-button__label">Réimprimer le ticket</span>
+              </button>
+            </div>
+          </section>
+
           <!-- Lecteur injoignable — le cas le plus fréquent au comptoir. -->
           <section class="spa-admin__section" aria-labelledby="titre-lecteur">
             <h2 class="spa-admin__section-title" id="titre-lecteur">Lecteur hors ligne</h2>

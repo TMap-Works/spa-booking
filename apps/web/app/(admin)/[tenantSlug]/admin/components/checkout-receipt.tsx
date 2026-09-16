@@ -1,6 +1,7 @@
 'use client';
 
 import type { Appointment, PaymentMethod, TimeZone } from '@spa/shared';
+import { subtractMoney } from '@spa/shared';
 
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
@@ -9,6 +10,7 @@ import {
   methodLabel,
   receiptDisclaimer,
   receiptIsProvisional,
+  settledReceiptDisclaimer,
 } from '@/lib/admin/checkout-summary';
 import type { PaymentTransaction } from '@/lib/admin/payment-contract';
 import { formatDateTimeInTimeZone, formatDuration, formatMoney } from '@/lib/format';
@@ -43,22 +45,52 @@ import { formatDateTimeInTimeZone, formatDuration, formatMoney } from '@/lib/for
  * connaît, et qui sait aussi produire un PDF à joindre à un e-mail. Le CDC
  * demande « impression **ou** envoi » ; l'envoi supposerait une route de
  * notification que l'API ne sert pas.
+ *
+ * ## La réimpression, et pourquoi elle n'est pas provisoire (#828)
+ *
+ * Ce même reçu sert à **réimprimer** celui d'un encaissement déjà inscrit,
+ * relu de l'historique de la journée. `settled` dit qu'on est dans ce cas, et
+ * il ne se déduit pas du moyen : un reçu carte imprimé sur la réponse du
+ * navigateur est provisoire, le même reçu réimprimé depuis une ligne
+ * `succeeded` ne l'est pas — c'est le webhook signé qui a écrit cette ligne.
+ * Sans ce drapeau, la réimpression aurait annoncé « preuve de passage, pas de
+ * capture » sur un encaissement que la base confirme.
+ *
+ * Et si l'encaissement relu porte un remboursement (#63), le reçu l'écrit :
+ * « Remboursé », puis « Reste acquis » à la place du total. Un ticket se remet
+ * en main propre : lui faire affirmer une somme encaissée que le prestataire a
+ * déjà rendue contredirait le bandeau juste au-dessus, qui l'annonce, et la
+ * pastille de la liste, qui dit « remboursé ».
  */
 export function CheckoutReceipt({
   appointment,
   method,
+  settled = false,
   timeZone,
   transaction,
 }: {
   readonly appointment: Appointment;
   readonly method: PaymentMethod;
+  /** L'encaissement est déjà inscrit en base : le reçu est définitif. */
+  readonly settled?: boolean;
   readonly timeZone: TimeZone;
   /** L'encaissement inscrit — `null` sur une carte, que seul le webhook conclut. */
   readonly transaction: PaymentTransaction | null;
 }) {
   const due = amountDue(appointment);
-  const provisional = receiptIsProvisional(method);
+  const provisional = !settled && receiptIsProvisional(method);
   const settledAt = transaction?.capturedAt ?? transaction?.createdAt ?? null;
+  // Ce que le prestataire a **rendu** sur cet encaissement (#63) — `null` tant
+  // qu'il n'a rien rendu, ce qui est le cas de tout reçu imprimé au comptoir.
+  const refunded =
+    transaction !== null && transaction.refunded.amountMinor > 0 ? transaction.refunded : null;
+  // Le montant de la ligne inscrite, moins ce qui a été rendu. `due` reste la
+  // référence hors remboursement : c'est le prix figé à la réservation, et rien
+  // n'est calculé ici sur un reçu qui n'a rien à défalquer.
+  const kept =
+    refunded === null || transaction === null
+      ? due
+      : subtractMoney(transaction.amount, refunded);
 
   return (
     <section aria-labelledby="recu-titre" className="spa-admin-checkout__ticket">
@@ -70,7 +102,7 @@ export function CheckoutReceipt({
             : `Encaissement enregistré — ${formatMoney(due)}`
         }
       >
-        <p>{receiptDisclaimer(method)}</p>
+        <p>{settled ? settledReceiptDisclaimer(method) : receiptDisclaimer(method)}</p>
       </Notification>
 
       <h2 className="spa-admin__section-title" id="recu-titre">
@@ -118,9 +150,17 @@ export function CheckoutReceipt({
             </span>
           </div>
         )}
+        {refunded === null ? null : (
+          <div className="spa-admin-checkout__total-row">
+            <span className="spa-admin-checkout__total-label">Remboursé</span>
+            <span className="spa-admin-checkout__total-value">− {formatMoney(refunded)}</span>
+          </div>
+        )}
         <div className="spa-admin-checkout__total-row spa-admin-checkout__total-row--grand">
-          <span className="spa-admin-checkout__total-label">Total</span>
-          <span className="spa-admin-checkout__total-value">{formatMoney(due)}</span>
+          <span className="spa-admin-checkout__total-label">
+            {refunded === null ? 'Total' : 'Reste acquis'}
+          </span>
+          <span className="spa-admin-checkout__total-value">{formatMoney(kept)}</span>
         </div>
       </div>
 

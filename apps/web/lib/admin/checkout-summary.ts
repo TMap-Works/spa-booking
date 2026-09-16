@@ -18,11 +18,18 @@
  * confirme pas — et c'est devant la cliente que l'écart se verrait.
  */
 
-import type { Appointment, AppointmentStatus, Money, PaymentMethod } from '@spa/shared';
-import { ERROR_CODES, PAYMENT_ERROR_CODES } from '@spa/shared';
+import type {
+  Appointment,
+  AppointmentStatus,
+  Money,
+  PaymentMethod,
+  PaymentStatus,
+} from '@spa/shared';
+import { CAPTURED_PAYMENT_STATUSES, ERROR_CODES, PAYMENT_ERROR_CODES } from '@spa/shared';
 
 import type {
   CreateSaleRequest,
+  PaymentTransaction,
   SaleLineRequest,
   SaleSummary,
 } from '@/lib/admin/payment-contract';
@@ -61,6 +68,142 @@ const NOT_PAYABLE_ONLINE: readonly AppointmentStatus[] = ['cancelled', 'complete
 /** Le seul statut sur lequel le comptoir n'encaisse rien du tout. */
 const NOT_SETTLEABLE: readonly AppointmentStatus[] = ['cancelled'];
 
+// ---------------------------------------------------------------------------
+// L'état de règlement, lu avant le clic et non après — #828
+// ---------------------------------------------------------------------------
+
+/**
+ * ## Pourquoi cet état existe, et ce qu'il corrige
+ *
+ * L'écran ouvrait tout rendez-vous avec « À encaisser », ses deux moyens de
+ * paiement et un bouton actif — y compris celui qu'une carte avait déjà réglé.
+ * Le refus n'arrivait qu'**après** le clic, en 409, et le bouton restait actif :
+ * l'opérateur pouvait recliquer devant sa cliente sur un règlement qui
+ * n'aboutirait jamais. Le CDC §1.4 range l'historique des ventes dans le
+ * périmètre Paiements ; un rendez-vous réglé doit donc **montrer** son
+ * règlement, pas le taire jusqu'au refus.
+ *
+ * Le 409 reste en place et reste le filet : la seule autorité sur ce qui est
+ * encaissé est la base, et une lecture d'écran ne peut pas gagner une course
+ * contre le poste d'à côté. Ce qui change est le chemin **normal**.
+ *
+ * ## Quatre états, et pas un booléen
+ *
+ * La table `payments` porte au plus une ligne par rendez-vous
+ * (`@@unique([tenantId, appointmentId])`), mais cette ligne a cinq statuts
+ * possibles, et ils n'appellent pas la même conduite au comptoir :
+ *
+ * | Statut de la ligne | État | Ce que le comptoir peut encore faire |
+ * |---|---|---|
+ * | aucune ligne | `du` | encaisser, par l'un ou l'autre moyen |
+ * | `succeeded`, `refunded`, `partially_refunded` | `regle` | rien — l'argent a été pris |
+ * | `pending` | `ouvert` | reprendre la carte ; les espèces sont refusées en 409 |
+ * | `failed` | `echoue` | reprendre la carte ; les espèces sont refusées en 409 |
+ *
+ * Les deux dernières lignes ne sont pas une subtilité : `replayOrRefuse` côté
+ * API refuse un règlement en espèces dès qu'une intention carte existe, quel
+ * que soit son sort. Un booléen « réglé ou non » aurait laissé l'écran proposer
+ * les espèces sur une intention en échec — et le refus serait revenu après le
+ * clic, ce que ce ticket corrige précisément.
+ */
+export type SettlementState =
+  | { readonly kind: 'du' }
+  | { readonly kind: 'regle'; readonly payment: PaymentTransaction }
+  | { readonly kind: 'ouvert'; readonly payment: PaymentTransaction }
+  | { readonly kind: 'echoue'; readonly payment: PaymentTransaction };
+
+/** `true` si de l'argent a réellement été pris — la liste close du contrat. */
+export function isCapturedPayment(status: PaymentStatus): boolean {
+  return (CAPTURED_PAYMENT_STATUSES as readonly PaymentStatus[]).includes(status);
+}
+
+/**
+ * L'état de règlement d'un rendez-vous, lu dans les encaissements de la journée.
+ *
+ * Le rapprochement se fait sur `appointmentId` et il est **sans ambiguïté** :
+ * la contrainte d'unicité de la table n'autorise qu'une ligne par rendez-vous.
+ * `find` plutôt qu'un filtre suivi d'un tri n'est donc pas un raccourci — il n'y
+ * a rien à départager.
+ */
+export function settlementOf(
+  payments: readonly PaymentTransaction[],
+  appointmentId: string,
+): SettlementState {
+  const payment = payments.find((one) => one.appointmentId === appointmentId);
+
+  if (payment === undefined) {
+    return { kind: 'du' };
+  }
+
+  if (isCapturedPayment(payment.status)) {
+    return { kind: 'regle', payment };
+  }
+
+  return payment.status === 'failed' ? { kind: 'echoue', payment } : { kind: 'ouvert', payment };
+}
+
+/** Le rendez-vous est réglé — plus aucun encaissement à proposer. */
+export function isSettled(settlement: SettlementState): boolean {
+  return settlement.kind === 'regle';
+}
+
+/**
+ * Ce que la pastille de la liste annonce — un libellé **et** sa nuance.
+ *
+ * Le libellé est toujours écrit : la couleur ne fait qu'accélérer le balayage
+ * d'une journée, elle ne porte jamais l'information seule (WCAG 1.4.1). C'est
+ * la règle que les pastilles de statut du planning tiennent déjà.
+ */
+export function settlementBadge(
+  settlement: SettlementState,
+): { readonly label: string; readonly modifier: string } {
+  switch (settlement.kind) {
+    case 'regle':
+      switch (settlement.payment.status) {
+        case 'refunded':
+          return { label: 'remboursé', modifier: 'refunded' };
+        case 'partially_refunded':
+          return { label: 'partiellement remboursé', modifier: 'refunded' };
+        default:
+          return { label: 'réglé', modifier: 'settled' };
+      }
+    case 'ouvert':
+      return { label: 'carte en cours', modifier: 'open' };
+    case 'echoue':
+      return { label: 'carte en échec', modifier: 'failed' };
+    default:
+      return { label: 'à encaisser', modifier: 'due' };
+  }
+}
+
+/**
+ * Pourquoi ce moyen de paiement est fermé **par l'encaissement déjà inscrit** —
+ * `null` s'il reste ouvert.
+ *
+ * Les messages reprennent ceux que l'API rend en 409, au mot près pour le cas
+ * réglé : l'opérateur doit lire la même chose avant et après le clic, faute de
+ * quoi il croirait à deux incidents différents.
+ */
+export function settlementBlocker(
+  settlement: SettlementState,
+  method: PaymentMethod,
+): string | null {
+  switch (settlement.kind) {
+    case 'regle':
+      return 'Ce rendez-vous a déjà été encaissé : un second règlement créerait une pièce comptable de trop.';
+    case 'ouvert':
+      return method === 'cash'
+        ? 'Un paiement par carte est déjà ouvert sur ce rendez-vous. Terminez-le — le règlement en espèces serait refusé tant qu’il court.'
+        : null;
+    case 'echoue':
+      return method === 'cash'
+        ? 'Une intention de paiement par carte en échec reste attachée à ce rendez-vous. Reprenez la carte — le règlement en espèces serait refusé tant qu’elle n’est pas levée.'
+        : null;
+    default:
+      return null;
+  }
+}
+
 /**
  * Pourquoi ce moyen de paiement est fermé pour ce rendez-vous — `null` s'il est
  * ouvert.
@@ -68,13 +211,23 @@ const NOT_SETTLEABLE: readonly AppointmentStatus[] = ['cancelled'];
  * Le message s'adresse à l'opérateur devant sa cliente : il dit ce qui bloque
  * **et** ce qu'il reste à faire. Une case grisée sans explication renvoie la
  * question au support.
+ *
+ * Le statut du rendez-vous passe **avant** l'encaissement déjà inscrit : sur un
+ * rendez-vous annulé, c'est l'annulation qui explique tout le reste.
  */
 export function checkoutBlocker(
   status: AppointmentStatus,
   method: PaymentMethod,
+  settlement: SettlementState = { kind: 'du' },
 ): string | null {
   if (NOT_SETTLEABLE.includes(status)) {
     return 'Ce rendez-vous est annulé : le créneau a été rendu, il n’y a plus de prestation à encaisser.';
+  }
+
+  const settled = settlementBlocker(settlement, method);
+
+  if (settled !== null) {
+    return settled;
   }
 
   if (method === 'card' && NOT_PAYABLE_ONLINE.includes(status)) {
@@ -92,6 +245,19 @@ export function isSettleable(status: AppointmentStatus): boolean {
 /** Le libellé du moyen de paiement, tel que le fieldset l'annonce. */
 export function methodLabel(method: PaymentMethod): string {
   return method === 'cash' ? 'Espèces' : 'Carte';
+}
+
+/**
+ * Le même moyen, mais **dans une phrase** — « réglé par carte », « réglé en
+ * espèces ».
+ *
+ * Deux formes plutôt qu'une parce que la première est un libellé de case à
+ * cocher et la seconde un complément : « Réglé par Espèces » se lit comme une
+ * chaîne concaténée, ce qu'elle est, et un bandeau d'encaissement est ce que
+ * l'opérateur montre à sa cliente.
+ */
+export function methodPhrase(method: PaymentMethod): string {
+  return method === 'cash' ? 'en espèces' : 'par carte';
 }
 
 /**
@@ -155,10 +321,34 @@ export const PROVIDER_UNREACHABLE_MESSAGE =
  * **et** celui d'un autre établissement, indistinctement, et l'écran n'a pas à
  * distinguer ce que l'API refuse de distinguer (tenant-isolation §4).
  */
+/**
+ * `true` si ce refus dit « ce rendez-vous porte déjà un encaissement » (#828).
+ *
+ * L'écran s'en sert pour **changer d'état** plutôt que d'afficher une ligne
+ * d'erreur sous un bouton resté actif : un second clic ne pourrait qu'échouer
+ * de la même façon, et le proposer devant une cliente est ce que ce ticket
+ * corrige. Le code est lu, jamais le message (web-frontend §2).
+ *
+ * `HTTP_409` est du lot, pour la raison même qui fait lire `HTTP_404` et
+ * `HTTP_429` plus bas : le filtre d'exception de l'API retombe sur
+ * `HTTP_<statut>` dès qu'un refus arrive hors de la forme d'erreur du contrat
+ * (voir l'en-tête d'`ApiClientError`). L'omettre aurait laissé ce 409-là
+ * s'afficher en ligne rouge sous un bouton resté actif — exactement le défaut
+ * que cette fonction ferme.
+ */
+export function isAlreadySettledRefusal(code: string): boolean {
+  return (
+    code === PAYMENT_ERROR_CODES.PAYMENT_ALREADY_SETTLED ||
+    code === ERROR_CODES.CONFLICT ||
+    code === 'HTTP_409'
+  );
+}
+
 export function checkoutFailureMessage(code: string, message: string): string {
   switch (code) {
     case PAYMENT_ERROR_CODES.PAYMENT_ALREADY_SETTLED:
     case ERROR_CODES.CONFLICT:
+    case 'HTTP_409':
       return 'Ce rendez-vous a déjà été encaissé. Rechargez l’écran avant de reprendre — un second règlement créerait une pièce comptable de trop.';
     case PAYMENT_ERROR_CODES.APPOINTMENT_NOT_PAYABLE:
       return 'Le paiement par carte n’accepte pas ce rendez-vous : il est annulé, terminé ou non honoré. Encaissez en espèces si la prestation a été rendue.';
@@ -232,6 +422,23 @@ export function receiptDisclaimer(method: PaymentMethod): string {
   return receiptIsProvisional(method)
     ? 'La confirmation définitive est inscrite par le webhook signé, côté serveur : ce reçu vaut preuve de passage, pas de capture.'
     : 'Règlement en espèces inscrit et horodaté. C’est la caisse qui fait foi au rapprochement.';
+}
+
+/**
+ * La mention d'un reçu **réimprimé** depuis un encaissement déjà inscrit (#828).
+ *
+ * Elle diffère de la précédente sur le seul cas qui compte, et l'écart n'est pas
+ * cosmétique : un reçu carte imprimé juste après la confirmation du navigateur
+ * est provisoire — le webhook signé n'a pas encore inscrit la capture —, tandis
+ * qu'un reçu réimprimé depuis une ligne `succeeded` relue de l'historique est
+ * **définitif**, puisque c'est précisément le webhook qui a écrit cette ligne
+ * (payments-stripe §2). Réutiliser la mention provisoire ferait dire à l'écran
+ * qu'il ne sait pas ce qu'il vient de lire en base.
+ */
+export function settledReceiptDisclaimer(method: PaymentMethod): string {
+  return method === 'card'
+    ? 'Encaissement par carte inscrit en base, sur confirmation du webhook signé. Ce reçu est définitif.'
+    : receiptDisclaimer('cash');
 }
 
 // ---------------------------------------------------------------------------

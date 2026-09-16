@@ -133,6 +133,31 @@ export const paymentTransactionSchema = paymentSchema.extend({
 
 export type PaymentTransaction = z.infer<typeof paymentTransactionSchema>;
 
+/**
+ * Une page de l'historique des transactions — `GET /payments` (#828).
+ *
+ * Même forme de page que `salePageSchema` quelques centaines de lignes plus
+ * bas, et pour la même raison : c'est celle que les deux historiques de #62
+ * servent, et un `totalPages` à `0` sur un ensemble vide y dit « page 1 sur 0 »
+ * plutôt que de faire croire à une page qu'on n'a pas su charger.
+ *
+ * L'encaissement s'en sert pour une lecture et une seule : savoir si le
+ * rendez-vous qu'il s'apprête à régler porte **déjà** un encaissement. La
+ * contrainte `@@unique([tenantId, appointmentId])` de la table `payments` en
+ * fait au plus une ligne par rendez-vous, si bien qu'un rapprochement par
+ * `appointmentId` est sans ambiguïté — voir `settlementOf` dans
+ * `checkout-summary.ts`.
+ */
+export const paymentTransactionPageSchema = z.object({
+  items: z.array(paymentTransactionSchema),
+  page: z.number().int().min(1),
+  pageSize: z.number().int().min(1),
+  totalItems: z.number().int().min(0),
+  totalPages: z.number().int().min(0),
+});
+
+export type PaymentTransactionPage = z.infer<typeof paymentTransactionPageSchema>;
+
 // ---------------------------------------------------------------------------
 // La caisse du comptoir — le rayon et le ticket (#61)
 // ---------------------------------------------------------------------------
