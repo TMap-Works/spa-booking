@@ -1,4 +1,9 @@
-import type { StaffMember } from '@spa/shared';
+import {
+  DISPLAY_NAME_MAX_LENGTH,
+  NAME_MAX_LENGTH,
+  displayNameSchema,
+  type StaffMember,
+} from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -76,6 +81,46 @@ describe('le nom proposé à la création d’une fiche', () => {
     // L'espace se verrait à la sélection, et partirait tel quel dans le corps.
     expect(suggestedStaffDisplayName({ firstName: 'Léa', lastName: '' })).toBe('Léa');
     expect(suggestedStaffDisplayName({ firstName: '', lastName: 'Rakoto' })).toBe('Rakoto');
+  });
+
+  /*
+   * Deux moitiés extrêmes (#714).
+   *
+   * Chaque moitié tient dans `NAME_MAX_LENGTH` = 80, leur somme espacée fait 161,
+   * et `DISPLAY_NAME_MAX_LENGTH` vaut 160 : le formulaire préremplissait donc le
+   * champ avec une valeur que sa propre soumission refusait. Le cas est le seul
+   * que les deux bornes rendent atteignable, et c'est exactement celui-là qu'on
+   * fige ici.
+   */
+  it('se replie sur le prénom seul quand le nom complet ne tient pas', () => {
+    const firstName = 'Andrianampoinimerina'.padEnd(NAME_MAX_LENGTH, 'a');
+    const lastName = 'Rakotoarisoa'.padEnd(NAME_MAX_LENGTH, 'o');
+
+    expect(`${firstName} ${lastName}`).toHaveLength(DISPLAY_NAME_MAX_LENGTH + 1);
+    // Le prénom entier, pas un patronyme tranché au milieu d'un mot : une
+    // proposition est faite pour être lue et corrigée.
+    expect(suggestedStaffDisplayName({ firstName, lastName })).toBe(firstName);
+  });
+
+  it('ne propose jamais plus long que ce que le contrat accepte', () => {
+    // La promesse de la fonction, éprouvée contre le schéma lui-même plutôt que
+    // contre un nombre recopié : c'est ce refus-là qui tombait à la soumission.
+    // Seul le plafond est en jeu — un compte sans aucun nom rendrait la chaîne
+    // vide, et c'est le champ obligatoire du formulaire qui s'en charge.
+    const cases = [
+      { firstName: 'Léa', lastName: 'Praticienne' },
+      { firstName: 'a'.repeat(NAME_MAX_LENGTH), lastName: 'b'.repeat(NAME_MAX_LENGTH) },
+      // Hors d'atteinte par `nameSchema`, mais la fonction ne s'appuie sur
+      // aucune borne posée ailleurs : le dernier filet tronque.
+      { firstName: '', lastName: 'z'.repeat(DISPLAY_NAME_MAX_LENGTH + 40) },
+    ];
+
+    for (const account of cases) {
+      const suggestion = suggestedStaffDisplayName(account);
+
+      expect(suggestion.length).toBeLessThanOrEqual(DISPLAY_NAME_MAX_LENGTH);
+      expect(displayNameSchema.safeParse(suggestion).success).toBe(true);
+    }
   });
 });
 

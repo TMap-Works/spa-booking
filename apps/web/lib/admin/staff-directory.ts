@@ -22,7 +22,7 @@
  * liste des comptes proposés à la création ne peut donc pas filtrer.
  */
 
-import type { StaffMember } from '@spa/shared';
+import { DISPLAY_NAME_MAX_LENGTH, type StaffMember } from '@spa/shared';
 
 /**
  * Le nom qu'une fiche praticien porterait par défaut pour ce compte.
@@ -34,12 +34,46 @@ import type { StaffMember } from '@spa/shared';
  *
  * `trim` sur le tout plutôt que sur chaque moitié : un prénom seul ne doit pas
  * laisser d'espace en fin de champ, où il se verrait à la sélection.
+ *
+ * ## Une proposition ne propose jamais ce que le contrat refuse (#714)
+ *
+ * `firstName` et `lastName` valent chacun jusqu'à `NAME_MAX_LENGTH` = 80
+ * caractères, là où `displayNameSchema` borne le nom d'affichage à
+ * `DISPLAY_NAME_MAX_LENGTH` = 160 : le nom complet peut donc atteindre 161, et
+ * l'écran préremplissait alors le champ avec une valeur que sa propre
+ * soumission refusait — « ce champ fait au plus 160 caractères » sous un texte
+ * que la gérante n'avait pas saisi. Le cas demande deux moitiés extrêmes, mais
+ * les deux bornes le rendent atteignable, et rien d'autre ne l'empêchait.
+ *
+ * Le repli se fait sur le **prénom seul** plutôt que sur un nom complet coupé :
+ * une proposition est faite pour être lue et corrigée, et un patronyme tranché
+ * au milieu d'un mot se corrige moins bien qu'un prénom entier. La troncature
+ * ne reste que comme dernier filet, pour que la promesse de cette fonction — le
+ * résultat ne dépasse jamais `DISPLAY_NAME_MAX_LENGTH` — ne dépende d'aucune
+ * borne posée ailleurs. Le plancher, lui, reste celui de l'appelant : deux
+ * moitiés vides rendent la chaîne vide, que `displayNameSchema` refuse, et
+ * c'est le champ obligatoire du formulaire qui le dit.
+ *
+ * Le décompte est celui de `String.prototype.length`, en unités UTF-16 :
+ * c'est exactement la mesure que le `.max()` de Zod applique de l'autre côté,
+ * donc la seule qui garantisse que la proposition passe le contrat.
  */
 export function suggestedStaffDisplayName(account: {
   readonly firstName: string;
   readonly lastName: string;
 }): string {
-  return `${account.firstName} ${account.lastName}`.trim();
+  const fullName = `${account.firstName} ${account.lastName}`.trim();
+
+  if (fullName.length <= DISPLAY_NAME_MAX_LENGTH) {
+    return fullName;
+  }
+
+  const firstName = account.firstName.trim();
+  const folded = firstName === '' ? fullName : firstName;
+
+  return folded.length <= DISPLAY_NAME_MAX_LENGTH
+    ? folded
+    : folded.slice(0, DISPLAY_NAME_MAX_LENGTH).trimEnd();
 }
 
 /**
