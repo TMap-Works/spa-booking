@@ -97,11 +97,40 @@
   gap: var(--spa-space-4);
 }
 
+/*
+ * Le titre d'une moitié et sa légende forment un bloc (#744).
+ *
+ * La gouttière de `.spa-account__section` sépare deux choses différentes — un
+ * en-tête et la liste qu'il annonce — et vaut 16 px. La légende, elle,
+ * appartient à son titre : elle s'en tient à 8 px, et c'est ce groupement qui la
+ * fait lire comme la définition de la section plutôt que comme une première
+ * ligne de contenu. D'où un conteneur avec sa propre gouttière, plutôt qu'une
+ * marge négative qui annulerait celle du parent.
+ */
+.spa-account__section-heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+}
+
 .spa-account__section-title {
   margin: 0;
   font-size: var(--spa-font-size-xl);
   font-weight: var(--spa-font-weight-semibold);
   color: var(--spa-color-text);
+}
+
+/*
+ * La légende dit le **critère** par lequel la moitié est peuplée — « encore
+ * actionnable » ou « archivé » — et non son contenu du jour. Sans elle, un
+ * rendez-vous annulé pour la semaine prochaine se lit comme une erreur de tri
+ * sous « Historique » (#744).
+ */
+.spa-account__section-hint {
+  margin: 0;
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-sm);
+  line-height: var(--spa-line-height-relaxed);
 }
 
 .spa-account__panel {

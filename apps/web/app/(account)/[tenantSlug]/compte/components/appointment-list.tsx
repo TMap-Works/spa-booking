@@ -8,7 +8,7 @@ import type {
 import { AppointmentCard } from './appointment-card';
 
 /**
- * Une moitié de l'historique — « à venir » ou « passés ».
+ * Une moitié de l'espace client — « Rendez-vous à venir » ou « Historique ».
  *
  * Server Component : rien ici n'a d'état, et ce qui en a — les deux gestes d'une
  * ligne — vit dans `AppointmentCard`. C'est ce découpage qui garde la session
@@ -19,8 +19,8 @@ import { AppointmentCard } from './appointment-card';
  *
  * Un écran vide sans explication est un bug d'UX (web-frontend §6), et les deux
  * moitiés n'ont pas le même vide : « aucun rendez-vous à venir » invite à
- * réserver, « aucune visite passée » constate. Le libellé est donc passé par
- * l'appelant plutôt que déduit ici.
+ * réserver, « votre historique est vide » constate. Le libellé est donc passé
+ * par l'appelant plutôt que déduit ici.
  */
 interface AppointmentListProps {
   readonly tenantSlug: string;
