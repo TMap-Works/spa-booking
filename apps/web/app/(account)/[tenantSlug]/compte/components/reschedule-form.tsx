@@ -19,6 +19,7 @@ import { formatDateTimeInTimeZone, timeZoneMention } from '@/lib/format';
 
 import { rescheduleOwnAppointmentAction } from '../actions';
 import { accountPath } from '../paths';
+import { useAccountAnnouncement } from './account-announcement';
 import { useAccountSessionRenewal } from './use-account-session-renewal';
 
 /**
@@ -76,6 +77,14 @@ import { useAccountSessionRenewal } from './use-account-session-renewal';
  * sous concurrence (web-frontend §3) : l'écran le dit, recharge les créneaux, et
  * ne perd rien de ce que la visiteuse avait déjà choisi — le rendez-vous
  * d'origine est intact, le report ayant échoué en bloc.
+ *
+ * ## Le report abouti s'annonce sur la liste (#746)
+ *
+ * L'écran disait tout de l'échec et rien du succès : « Déplacer au … » ramenait à
+ * la liste sans un mot, la carte ayant simplement changé d'heure quelque part plus
+ * bas. Le succès part maintenant vers la région `aria-live` du layout
+ * (`account-announcement.tsx`), qui survit à cette navigation et n'affiche
+ * l'annonce qu'à l'arrivée.
  */
 interface RescheduleFormProps {
   readonly tenantSlug: string;
@@ -112,6 +121,7 @@ export function RescheduleForm({
   monthHref,
 }: RescheduleFormProps) {
   const router = useRouter();
+  const announce = useAccountAnnouncement();
   const { renewIfExpired } = useAccountSessionRenewal(tenantSlug);
   const [chosen, setChosen] = useState<UtcInstant | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -273,6 +283,15 @@ export function RescheduleForm({
       return;
     }
 
+    // L'annonce part d'ici, mais ne se lira que là-bas : elle porte le chemin de
+    // la liste, et la région du layout la garde en attente le temps de la
+    // navigation (#746). Un bandeau de succès posé une demi-seconde au-dessus de
+    // « Reporter mon rendez-vous » se lirait comme un second déplacement.
+    announce({
+      kind: 'appointment-rescheduled',
+      when: formatDateTimeInTimeZone(chosen, timeZone),
+      path: accountPath(tenantSlug),
+    });
     router.replace(accountPath(tenantSlug));
     router.refresh();
   };

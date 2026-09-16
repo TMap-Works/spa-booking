@@ -11,6 +11,7 @@ import { formatDateTimeInTimeZone, formatMoney, timeZoneMention } from '@/lib/fo
 
 import { cancelOwnAppointmentAction } from '../actions';
 import { accountPath } from '../paths';
+import { useAccountAnnouncement } from './account-announcement';
 import { appointmentBadge, isStillActionable } from './appointment-status';
 import { useAccountSessionRenewal } from './use-account-session-renewal';
 
@@ -43,6 +44,14 @@ import { useAccountSessionRenewal } from './use-account-session-renewal';
  * passer pour annulée une visite qui a bien eu lieu, et faussant le comptage des
  * visites honorées du CDC §1.4. La moitié d'où vient la ligne est donc passée
  * explicitement, et c'est elle qui commande.
+ *
+ * ## L'annulation aboutie s'annonce, et pas ici (#746)
+ *
+ * Elle ne peut pas s'annoncer ici : le rafraîchissement qui suit fait quitter la
+ * ligne « à venir », et cette carte est démontée avec son état. Le message part
+ * donc vers la région `aria-live` du layout
+ * (`account-announcement.tsx`) — permanente, comme WCAG 4.1.3 l'exige d'un
+ * message d'état, et conservée par `router.refresh()`.
  */
 interface AppointmentCardProps {
   readonly tenantSlug: string;
@@ -62,6 +71,7 @@ export function AppointmentCard({
   scope,
 }: AppointmentCardProps) {
   const router = useRouter();
+  const announce = useAccountAnnouncement();
   const { renewIfExpired } = useAccountSessionRenewal(tenantSlug);
   const [cancelling, setCancelling] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -118,6 +128,15 @@ export function AppointmentCard({
     }
 
     setConfirming(false);
+    // L'annonce est posée **avant** le rafraîchissement, et c'est ce qui la rend
+    // possible : cette carte est sur le point de disparaître de « à venir », et
+    // avec elle tout état qu'elle porterait. La région vit dans le layout, que
+    // `router.refresh()` conserve (#746).
+    announce({
+      kind: 'appointment-cancelled',
+      when: formatDateTimeInTimeZone(appointment.startsAt, timeZone),
+      path: accountPath(tenantSlug),
+    });
     // La liste est rendue côté serveur : c'est elle qu'il faut refaire, pas un
     // état local à recoller. Le rendez-vous annulé bascule alors de lui-même de
     // « à venir » vers l'historique.

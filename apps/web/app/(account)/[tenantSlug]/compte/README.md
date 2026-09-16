@@ -68,6 +68,38 @@ L'écran de report a le sien à part : quand la fenêtre du calendrier est déj�
 maximum, « Voir plus de jours » n'a plus rien à élargir, et c'est
 « Renoncer au report » — juste sous le bloc — qui reste la sortie.
 
+## Un geste abouti s'annonce, dans une région posée d'avance
+
+`docs/design/appointments/states.md` § « Règles générales » exige déjà qu'un état
+vide ou d'erreur soit « annoncé via une région `aria-live` » ; WCAG 2.2 AA,
+critère **4.1.3 Messages d'état**, étend la même exigence au succès. Or le report
+et l'annulation ramenaient l'un et l'autre à la liste **sans un mot** : la carte
+quittait « Rendez-vous à venir » et réapparaissait sous « Historique », souvent
+hors de vue à 360 px (#746).
+
+La région est montée par le **layout**, pas par la page, et cela pour deux
+raisons qui sont les deux moitiés du ticket :
+
+| Ce que le layout donne | Pourquoi la page ne pouvait pas |
+|---|---|
+| la région existe avant tout geste, et reste vide | une région `aria-live` insérée **avec** son message n'est annoncée par aucun lecteur d'écran de façon fiable |
+| son état traverse la navigation du report vers la liste | l'App Router conserve le layout d'un écran à l'autre du segment ; un état porté par la page de report serait démonté avec elle |
+
+Les deux gestes n'y écrivent donc qu'un message et le chemin où il doit se lire —
+`components/account-announcement.tsx`. Le report annonce avant de naviguer, mais
+rien ne s'affiche tant que la liste n'est pas là. Une fois lue, l'annonce
+s'efface au premier détour : elle ne se rallume pas au retour sur la liste.
+
+Rien ne transite par l'adresse. Un `?annonce=…` aurait rejoué le succès à chaque
+F5, et se serait tu sur une seconde annulation faute de changer de valeur — là où
+chaque phrase nomme l'heure du rendez-vous concerné, ce qui la distingue de la
+précédente et dit **où la ligne est passée**.
+
+Le bandeau visible est `components/ui/notification.tsx`, celui par lequel le
+tunnel confirme sa réservation : même composant, mêmes tons — `success` pour un
+report obtenu, `info` pour une annulation, qui réussit sans être une bonne
+nouvelle.
+
 ## La session ne touche jamais le navigateur
 
 C'est le cinquième critère de #47, et il est tenu par construction plutôt que par

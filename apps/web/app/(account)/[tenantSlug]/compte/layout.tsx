@@ -4,6 +4,10 @@ import type { ReactNode } from 'react';
 
 import { ApiClientError } from '@/lib/api-client';
 
+import {
+  AccountAnnouncementProvider,
+  AccountAnnouncementRegion,
+} from './components/account-announcement';
 import { accountPath, bookingPath } from './paths';
 import { accountTenant } from './tenant';
 
@@ -31,6 +35,17 @@ import { accountTenant } from './tenant';
  * ait été réévalué. La garde vit donc **dans chaque page**, par
  * `readAccountData` (`session.ts`) — et les deux pages qui doivent rester
  * ouvertes, connexion et inscription, ne l'appellent simplement pas.
+ *
+ * ## Ce que ce layout fait, en revanche : porter la région d'annonce (#746)
+ *
+ * Ce qui le disqualifie comme frontière de sécurité le qualifie pour cela. Un
+ * layout n'est pas rejoué à chaque navigation : l'App Router le **conserve** d'un
+ * écran à l'autre du même segment, avec l'état de ses Client Components. La
+ * région `aria-live` qu'il monte existe donc avant tout geste — c'est ce que WCAG
+ * 4.1.3 exige d'un message d'état, une région insérée avec son message n'étant
+ * annoncée par aucun lecteur d'écran de façon fiable — et l'annonce d'un report
+ * traverse le retour vers la liste, alors qu'un état porté par la page de report
+ * serait démonté avec elle. Voir `components/account-announcement.tsx`.
  */
 
 export const metadata: Metadata = {
@@ -63,25 +78,32 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
   }
 
   return (
-    <div className="spa-account">
-      <header className="spa-account__header">
-        <p className="spa-account__tenant">{tenantName}</p>
-        <h1 className="spa-account__title">Mon compte</h1>
-        <p className="spa-account__lead">
-          Vos rendez-vous à venir, votre historique et vos coordonnées.
-        </p>
-      </header>
-      <main className="spa-account__main" id="contenu">
-        {children}
-      </main>
-      <footer className="spa-account__footer">
-        <a className="spa-account__back" href={bookingPath(tenantSlug)}>
-          Prendre un nouveau rendez-vous
-        </a>
-        <a className="spa-account__back" href={accountPath(tenantSlug)}>
-          Mes rendez-vous
-        </a>
-      </footer>
-    </div>
+    <AccountAnnouncementProvider>
+      <div className="spa-account">
+        <header className="spa-account__header">
+          <p className="spa-account__tenant">{tenantName}</p>
+          <h1 className="spa-account__title">Mon compte</h1>
+          <p className="spa-account__lead">
+            Vos rendez-vous à venir, votre historique et vos coordonnées.
+          </p>
+        </header>
+        <main className="spa-account__main" id="contenu">
+          {/*
+            En tête du contenu, et non au pied : ce qui vient de se passer se lit
+            avant ce qu'il reste à faire, et le lien d'évitement mène ici.
+          */}
+          <AccountAnnouncementRegion />
+          {children}
+        </main>
+        <footer className="spa-account__footer">
+          <a className="spa-account__back" href={bookingPath(tenantSlug)}>
+            Prendre un nouveau rendez-vous
+          </a>
+          <a className="spa-account__back" href={accountPath(tenantSlug)}>
+            Mes rendez-vous
+          </a>
+        </footer>
+      </div>
+    </AccountAnnouncementProvider>
   );
 }
