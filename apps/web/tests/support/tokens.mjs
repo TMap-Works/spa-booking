@@ -161,8 +161,8 @@ export function stripComments(css) {
  * `booking-step-rhythm` — et aucune n'en porte plus de copie locale (#683).
  * **Toute suite nouvelle importe celle-ci**, il n'y a plus de raison d'en écrire
  * une neuvième. Le lecteur de déclarations qui l'accompagne est juste en dessous
- * de `withoutMediaQueries` : il a fait le même chemin (#713), à une copie près
- * que sa documentation nomme.
+ * de `withoutMediaQueries`, sous le même régime : il a fait le même chemin
+ * (#713, #722), et aucune suite n'en porte plus de copie non plus.
  *
  * ## Ce que cette lecture fait des at-rules — #657
  *
@@ -234,15 +234,12 @@ export function withoutMediaQueries(css) {
  * Le pendant de `rulesFor`, et c'est pour cela qu'il la suit : on ne lit pas une
  * règle pour la règle, on la lit pour interroger une de ses propriétés. Les deux
  * appels s'écrivent toujours ensemble — `declaration(rulesFor(css, sel).join(' '),
- * 'gap')` — et n'ont donc aucune raison de vivre à deux endroits. Trois suites en
- * portaient chacune une copie octet pour octet et l'importent désormais (#713) :
- * `admin-catalog-rhythm`, `admin-form-width`, `admin-login-layout`.
- *
- * **Une quatrième copie subsiste**, dans `admin-screen-rhythm.test.mjs` (#717).
- * Elle est arrivée après l'ouverture de #713, dont elle sort de l'empreinte, et
- * c'est #722 qui la reprend — même enchaînement que #712 → #713. Tant qu'elle est
- * là, une correction apportée ici ne l'atteint pas : c'est la dernière suite qui
- * puisse encore lire les feuilles selon l'ancienne règle en restant verte.
+ * 'gap')` — et n'ont donc aucune raison de vivre à deux endroits. Quatre suites en
+ * portaient chacune une copie octet pour octet et l'importent désormais :
+ * `admin-catalog-rhythm`, `admin-form-width`, `admin-login-layout` (#713), puis
+ * `admin-screen-rhythm` (#722) — sa copie était arrivée par #717, après l'ouverture
+ * de #713 dont elle sortait de l'empreinte. Il n'en subsiste aucune : une
+ * correction apportée ici les atteint toutes.
  *
  * ## Ce que la lecture garantit, et ce qu'elle ne garantit pas
  *
