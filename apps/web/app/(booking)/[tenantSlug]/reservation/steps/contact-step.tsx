@@ -7,6 +7,7 @@ import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
+import { BOOKING_CONSENT, ConsentField, consentSchema } from '@/lib/booking/consent';
 import type { ContactDraft } from '@/lib/booking/draft';
 
 /**
@@ -26,10 +27,16 @@ import type { ContactDraft } from '@/lib/booking/draft';
  *
  * Écrire ces deux ajustements ici plutôt que d'assouplir le contrat garde la
  * règle stricte là où elle protège : au moment de composer la requête.
+ *
+ * S'y ajoute depuis #734 le **consentement**, qui n'est ni l'un ni l'autre : il
+ * n'est pas une donnée que l'API reçoit — aucun champ du contrat ne le porte —
+ * mais la condition pour la lui envoyer (CDC §5.1). Il vit donc dans le schéma
+ * du formulaire, qui est l'endroit exact où se décide si la soumission a lieu.
  */
 const contactFormSchema = guestContactSchema.extend({
   phone: z.union([z.literal(''), e164PhoneSchema]),
   clientNote: longTextSchema,
+  consent: consentSchema,
 });
 
 /**
@@ -107,7 +114,7 @@ export function ContactStep({ contact, onSave, onBack, onSubmit }: ContactStepPr
     register,
     handleSubmit,
     getValues,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitted, isSubmitting },
   } = useForm<ContactDraft, unknown, z.output<typeof contactFormSchema>>({
     resolver: zodResolver(contactFormSchema),
     defaultValues: contact,
@@ -183,6 +190,24 @@ export function ContactStep({ contact, onSave, onBack, onSubmit }: ContactStepPr
         hint="Allergie, préférence, retard annoncé — facultatif."
         error={errors.clientNote?.message}
         {...register('clientNote')}
+      />
+
+      {/* L'information et le consentement, juste avant le bouton qui les engage
+          — la place que leur donne `wireframes.md` à l'étape 4 (#734).
+
+          Le message n'apparaît qu'**après une soumission**, et c'est la seule
+          exception au `mode: 'onTouched'` de ce formulaire. Une case non cochée
+          n'est pas une saisie fautive : c'est l'état normal de qui n'a pas
+          encore décidé. Reprocher son absence à la cliente parce qu'elle a
+          tabulé dessus en lisant serait signaler une faute qu'elle n'a pas
+          commise. Passé le premier clic sur « Vérifier ma réservation », la
+          question est posée, et `reValidateMode` fait disparaître le message à
+          la seconde où la case est cochée. */}
+      <ConsentField
+        id="consent"
+        copy={BOOKING_CONSENT}
+        error={isSubmitted ? errors.consent?.message : undefined}
+        {...register('consent')}
       />
 
       {/* Groupés, comme le récapitulatif et la confirmation le font déjà : la

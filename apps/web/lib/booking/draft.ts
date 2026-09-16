@@ -81,6 +81,24 @@ export const contactDraftSchema = z.object({
   email: z.string(),
   phone: z.string(),
   clientNote: z.string(),
+  /**
+   * Le consentement de l'étape « Coordonnées » (#734, CDC §5.1).
+   *
+   * Il vit dans le brouillon pour la même raison que le reste de la saisie :
+   * une cliente qui rafraîchit la page n'a pas à recocher une case qu'elle
+   * vient de cocher. Et il y vit pour une seconde raison, qui n'appartient
+   * qu'à lui — c'est ce qui permet à `reachableStep` de refuser le
+   * récapitulatif à qui n'a pas consenti, y compris arrivé là par une URL
+   * écrite à la main.
+   *
+   * `.catch(false)` et non `z.boolean()` sec : un brouillon écrit avant ce
+   * ticket n'a pas la clé, et faire échouer tout le schéma renverrait la
+   * cliente à la première étape en lui prenant sa prestation et son créneau.
+   * Elle recoche la case, elle ne recommence pas le tunnel. Le repli est
+   * `false` dans tous les cas douteux : un consentement qu'on n'a pas lu n'est
+   * pas un consentement.
+   */
+  consent: z.boolean().catch(false),
 });
 
 export type ContactDraft = z.infer<typeof contactDraftSchema>;
@@ -104,7 +122,7 @@ export function emptyBookingDraft(): BookingDraft {
     serviceId: null,
     staffId: null,
     startsAt: null,
-    contact: { firstName: '', lastName: '', email: '', phone: '', clientNote: '' },
+    contact: { firstName: '', lastName: '', email: '', phone: '', clientNote: '', consent: false },
     appointment: null,
   };
 }
@@ -277,10 +295,21 @@ export function draftFromSearch(search: string | URLSearchParams, base: BookingD
  * facultatif). On ne les **valide** pas ici — `ContactStep` le fait à la
  * soumission, avec le schéma partagé. Ce garde-fou répond à une autre question :
  * y a-t-il seulement quelqu'un au bout de ce récapitulatif ?
+ *
+ * Le consentement est de la partie depuis #734, et pour la même raison
+ * qu'eux — pas parce qu'il manquerait un nom, mais parce qu'un récapitulatif
+ * atteint sans lui porterait un bouton « Confirmer la réservation » qui
+ * enverrait à l'API des données que personne n'a accepté de nous confier
+ * (CDC §5.1). La case est **sur l'étape précédente**, et c'est là qu'on
+ * renvoie : `reachableStep` ramène à `coordonnees`, où le formulaire garde ce
+ * qui a déjà été tapé.
  */
 function contactIsUsable(contact: ContactDraft): boolean {
   return (
-    contact.firstName.trim() !== '' && contact.lastName.trim() !== '' && contact.email.trim() !== ''
+    contact.firstName.trim() !== '' &&
+    contact.lastName.trim() !== '' &&
+    contact.email.trim() !== '' &&
+    contact.consent
   );
 }
 
