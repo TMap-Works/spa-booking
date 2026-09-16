@@ -224,11 +224,14 @@ describe('vue jour — ce que l’écran montre', () => {
   it('porte le statut par la classe **et** par le texte, jamais par la seule couleur', () => {
     renderBoard();
 
-    const bloc = screen.getByRole('button', { name: /Lova Andrian/ });
+    // Un « non présenté » est un statut terminal : depuis #753 il ne capte plus
+    // son créneau, et son repère n'est donc plus un bouton mais un bloc inerte.
+    // Le contrôle du coin, lui, en ouvre la fiche.
+    const bloc = screen.getByText('Lova Andrian').closest('div');
 
-    expect(bloc.className).toContain('spa-admin-calendar__event--no-show');
+    expect(bloc?.className).toContain('spa-admin-calendar__event--no-show');
     // WCAG 1.4.1 : la couleur ne peut pas être le seul véhicule de l'information.
-    expect(bloc.textContent).toContain('Statut : non présenté.');
+    expect(bloc?.textContent).toContain('Statut : non présenté.');
   });
 
   it('écrit l’heure du salon, pas celle du navigateur', () => {
@@ -728,7 +731,9 @@ describe('#617 — le tiroir s’ouvre dans la fenêtre', () => {
     await user.click(screen.getByRole('button', { name: 'Déplacer Rina Andriamana' }));
     // La fiche d'un AUTRE bloc s'ouvre sans reposer la saisie : c'est le geste
     // du comptoir — « attends, celui de 11 h, il est à quelle heure déjà ? ».
-    await user.click(screen.getByRole('button', { name: /^11:00 – 12:00 Lova Andrian/ }));
+    await user.click(
+      screen.getByRole('button', { name: /^Ouvrir la fiche de Lova Andrian/ }),
+    );
 
     await user.keyboard('{Escape}');
 
@@ -833,5 +838,113 @@ describe('hors des horaires d’ouverture, la rangée n’est plus un créneau',
     // lâcher, et rien ne l'annonce comme une destination.
     expect(within(colonne).queryByRole('button', { name: /^08 h 00/ })).toBeNull();
     expect(within(colonne).getByText('Hors horaires')).toBeDefined();
+  });
+});
+
+/**
+ * Un rendez-vous soldé n'occupe plus son créneau — #753.
+ *
+ * L'audit a relevé l'après-midi du 16 septembre : deux annulés, leurs blocs de
+ * 14 h à 16 h 30, et pas une cellule libre entre les deux. Le comptoir ne
+ * pouvait pas reposer un client sur une heure que le moteur tenait pour libre —
+ * `cancelled`, `no_show` et `completed` n'occupent pas le créneau
+ * (`booking-engine` §5), et « un créneau annulé redevient réservable » (§6).
+ */
+describe('un rendez-vous soldé rend son créneau (#753)', () => {
+  /**
+   * 10:10 – 11:40 au salon, annulé.
+   *
+   * La capture de l'audit portait sur 14 h 10 ; l'heure est avancée ici pour
+   * tenir dans la fenêtre de repli de la virtualisation — jsdom ne mesure rien,
+   * et seules les douze premières rangées sont montées
+   * (`FALLBACK_VISIBLE_SLOTS`). Le cas d'origine, lui, est éprouvé à son heure
+   * réelle dans `admin-calendar-grid.test.ts`, où rien n'est virtualisé.
+   */
+  const annule = appointment({
+    startsAt: '2026-09-16T07:10:00.000Z',
+    endsAt: '2026-09-16T08:40:00.000Z',
+    status: 'cancelled',
+    client: { firstName: 'Claire', lastName: 'Fanja' },
+  });
+
+  function renderApresMidi(): void {
+    loadDeskServiceStaffAction.mockResolvedValue({ ok: true, data: { staff: [] } });
+    loadDeskAvailabilityAction.mockResolvedValue({
+      ok: true,
+      data: { slots: deskSlots('2026-09-16') },
+    });
+    renderBoard({ date: '2026-09-16', periods: { 'jour:2026-09-16': [annule] } });
+  }
+
+  /** Le repère du rendez-vous annulé — un bloc inerte, plus un bouton. */
+  function repere(): HTMLElement {
+    const bloc = screen.getByText('Claire Fanja').closest('div');
+
+    if (bloc === null) {
+      throw new Error('le repère du rendez-vous annulé n’est pas à l’écran');
+    }
+
+    return bloc;
+  }
+
+  it('ouvre le tiroir depuis la demi-heure que l’annulé recouvrait', async () => {
+    const user = userEvent.setup();
+    renderApresMidi();
+
+    const colonne = screen.getByRole('list', { name: /^Hasina/ });
+
+    await user.click(
+      within(colonne).getByRole('button', { name: /^10 h 00, libre — poser un rendez-vous/ }),
+    );
+
+    expect(screen.getByRole('heading', { name: 'Nouveau rendez-vous' })).toBeDefined();
+    expect(screen.getByLabelText<HTMLInputElement>(/^Date/).value).toBe('2026-09-16');
+  });
+
+  it('laisse l’annulé à l’écran, et dit que son créneau est repris', () => {
+    renderApresMidi();
+
+    // Barré, pas effacé : il explique le trou dans la journée.
+    expect(repere().className).toContain('spa-admin-calendar__event--cancelled');
+    expect(repere().className).toContain('spa-admin-calendar__event--ghost');
+    // WCAG 1.4.1, et le cœur du ticket : ce que la couleur seule ne dit pas.
+    expect(repere().textContent).toContain('Statut : annulé.');
+    expect(repere().textContent).toContain('Ce créneau est de nouveau réservable.');
+  });
+
+  it('laisse la cellule du soldé passer les clics à la grille', () => {
+    renderApresMidi();
+
+    // La cellule couvre les trois rangées du soin annulé : si elle captait les
+    // clics, les créneaux libres rendus dessous resteraient inatteignables à la
+    // souris, et le constat de l'audit tiendrait toujours. C'est bien ce que la
+    // recette a observé sur la première version de ce ticket, où le repère
+    // entier était un bouton.
+    expect(repere().closest('li')?.className).toContain('spa-admin-calendar__cell--ghost');
+    expect(repere().tagName).toBe('DIV');
+  });
+
+  it('ouvre la fiche du soldé par le contrôle du coin, et par lui seul', async () => {
+    const user = userEvent.setup();
+    loadAppointmentNotificationsAction.mockResolvedValue({
+      ok: true,
+      data: { notifications: [] },
+    });
+    renderApresMidi();
+
+    await user.click(
+      screen.getByRole('button', { name: /^Ouvrir la fiche de Claire Fanja/ }),
+    );
+
+    // Le tiroir d'édition prend le nom du client pour titre.
+    expect(screen.getByRole('heading', { name: 'Claire Fanja' })).toBeDefined();
+  });
+
+  it('n’offre aucune poignée de déplacement sur un soldé', () => {
+    renderApresMidi();
+
+    // Le serveur refuserait le report en `INVALID_STATE_TRANSITION` : une
+    // poignée qui mène à un refus est une poignée qui ment.
+    expect(screen.queryByRole('button', { name: /^Déplacer Claire Fanja/ })).toBeNull();
   });
 });

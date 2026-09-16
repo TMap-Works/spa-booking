@@ -20,6 +20,9 @@
  *    contrainte d'exclusion l'interdit pour un même praticien, mais une colonne
  *    de la vue semaine agrège toute l'équipe : deux soins simultanés y sont la
  *    règle, pas l'exception.
+ * 4. **Seul ce qui occupe le créneau le prend.** `pending` et `confirmed`
+ *    occupent, les trois statuts terminaux non (`booking-engine` §5). Les
+ *    seconds sont donc rendus sur un calque à part — voir `CalendarGhostCell`.
  */
 
 import type {
@@ -34,7 +37,12 @@ import type {
 // numérote les plages d'ouverture (1 lundi … 7 dimanche, jamais le `0`-dimanche
 // *falsy* de `Date.getUTCDay`), et deux lectures du jour de semaine finiraient
 // par diverger sur l'écran où une divergence d'un jour se voit le moins.
-import { isoWeekdayOf } from '@spa/shared';
+//
+// `isBlockingAppointmentStatus` vient du même contrat, et pour la même raison :
+// c'est la liste que lit le prédicat partiel de la contrainte d'exclusion
+// (`packages/shared/src/constants/appointment.ts`). La réécrire ici ferait
+// diverger l'agenda affiché de l'agenda que le moteur sait honorer.
+import { isBlockingAppointmentStatus, isoWeekdayOf } from '@spa/shared';
 
 import { minutesOfClock } from './appointment-desk';
 import type { CalendarRange, CalendarView } from './calendar-range';
@@ -185,6 +193,49 @@ export interface CalendarEventCell {
   readonly serviceLabel: string | null;
 }
 
+/**
+ * Un rendez-vous **soldé** — honoré, annulé, non présenté (#753).
+ *
+ * Il n'occupe plus rien : le tableau du cycle de vie porte « Occupe le créneau :
+ * non » pour les trois statuts terminaux, la contrainte d'exclusion les exclut
+ * de son prédicat partiel, et le calcul des créneaux libres ne retranche que les
+ * `pending` et les `confirmed` (`booking-engine` §1, §3 et §5). Son créneau est
+ * donc réservable, et l'agenda doit le dire.
+ *
+ * Il était pourtant rendu comme n'importe quel bloc : ses rangées passaient pour
+ * occupées, aucune cellule libre n'était émise dessous, et un après-midi
+ * entièrement annulé ne laissait pas un seul point d'entrée vers le tiroir de
+ * création — le comptoir ne pouvait pas reposer un client sur un créneau que le
+ * moteur tenait pour libre. Deux annulés qui se chevauchaient scindaient en
+ * outre la colonne en deux couloirs, au détriment des rendez-vous vivants.
+ *
+ * D'où un **calque à part** : la grille des cellules libres est peinte sur toute
+ * la plage, et le soldé n'est plus qu'un repère posé au début de son créneau —
+ * visible, daté, cliquable pour ouvrir sa fiche, mais sans prendre la place.
+ * C'est le sens même de « ne pas occuper le créneau » ; un bloc pleine hauteur
+ * dirait le contraire de ce que le statut signifie.
+ */
+export interface CalendarGhostCell {
+  readonly kind: 'ghost';
+  readonly key: string;
+  readonly slot: number;
+  readonly span: number;
+  /**
+   * Couloir **du calque des soldés**, indépendant de celui des vivants.
+   *
+   * Deux annulés qui se chevauchent se rangent côte à côte, comme deux soins
+   * simultanés — mais sans jamais rétrécir un rendez-vous vivant : les deux
+   * calques ne partagent pas leur compte de couloirs.
+   */
+  readonly lane: number;
+  /** Couloirs de ce calque — la largeur d'un repère en est le quotient. */
+  readonly laneCount: number;
+  readonly appointment: Appointment;
+  readonly timeLabel: string;
+  readonly clientLabel: string;
+  readonly serviceLabel: string | null;
+}
+
 export interface CalendarFreeCell {
   readonly kind: 'free';
   readonly key: string;
@@ -245,7 +296,11 @@ export interface CalendarClosedCell {
   readonly nowOffset: string | null;
 }
 
-export type CalendarCell = CalendarEventCell | CalendarFreeCell | CalendarClosedCell;
+export type CalendarCell =
+  | CalendarEventCell
+  | CalendarGhostCell
+  | CalendarFreeCell
+  | CalendarClosedCell;
 
 export interface CalendarColumn {
   /** Identifiant stable — c'est lui qui relie la colonne à son en-tête. */
@@ -261,7 +316,13 @@ export interface CalendarColumn {
    * et le tiroir laisse choisir plutôt que de deviner.
    */
   readonly staffId: string | null;
-  /** Nombre de couloirs occupés, `1` dans le cas courant. */
+  /**
+   * Nombre de couloirs occupés, `1` dans le cas courant.
+   *
+   * Compté sur les seuls rendez-vous qui **occupent** le créneau : un soldé vit
+   * sur son propre calque (`CalendarGhostCell`) et ne rétrécit donc jamais un
+   * rendez-vous vivant, ni la cellule libre qui s'étend sur tous les couloirs.
+   */
   readonly laneCount: number;
   readonly cells: readonly CalendarCell[];
 }
@@ -648,6 +709,40 @@ interface ColumnContext {
   readonly now?: Date;
 }
 
+/** Les rangées d'un rendez-vous, écrêtées à l'amplitude affichée. */
+function clampSpan(span: SlotSpan, context: ColumnContext): { start: number; end: number } {
+  return {
+    start: Math.max(span.startSlot, context.firstSlot),
+    end: Math.min(span.endSlot, context.lastSlot),
+  };
+}
+
+/**
+ * Les trois libellés d'un rendez-vous, vivant ou soldé.
+ *
+ * L'heure affichée est celle du **rendez-vous**, pas celle de la rangée où il
+ * est posé : le bloc se cale sur la grille, son libellé non (#538). La vue
+ * semaine masque la prestation en CSS faute de place — ne pas l'émettre du tout
+ * épargne autant de nœuds qu'il y a de rendez-vous.
+ */
+function labelsOf(
+  appointment: Appointment,
+  span: SlotSpan,
+  view: CalendarView,
+): { timeLabel: string; clientLabel: string; serviceLabel: string | null } {
+  return {
+    timeLabel:
+      view === 'semaine'
+        ? clockOf(span.startMinutes)
+        : `${clockOf(span.startMinutes)} – ${clockOf(span.endMinutes)}`,
+    clientLabel:
+      view === 'semaine'
+        ? shortClientName(appointment.client)
+        : `${appointment.client.firstName} ${appointment.client.lastName}`,
+    serviceLabel: view === 'semaine' ? null : appointment.service.name,
+  };
+}
+
 function buildColumn(
   input: ColumnInput,
   spans: ReadonlyMap<string, SlotSpan>,
@@ -658,16 +753,22 @@ function buildColumn(
       ? left.id.localeCompare(right.id)
       : left.startsAt.localeCompare(right.startsAt),
   );
-  const columnSpans = sorted.map((appointment) => spans.get(appointment.id) as SlotSpan);
-  const { lanes, laneCount } = assignLanes(columnSpans);
+  // Les deux calques, séparés une fois pour toutes. `booked` prend le créneau et
+  // ses couloirs ; `settled` ne prend rien — c'est tout le sujet de #753.
+  const booked = sorted.filter((appointment) => isBlockingAppointmentStatus(appointment.status));
+  const settled = sorted.filter((appointment) => !isBlockingAppointmentStatus(appointment.status));
+
+  const bookedSpans = booked.map((appointment) => spans.get(appointment.id) as SlotSpan);
+  const { lanes, laneCount } = assignLanes(bookedSpans);
+  const settledSpans = settled.map((appointment) => spans.get(appointment.id) as SlotSpan);
+  const settledLanes = assignLanes(settledSpans);
 
   const cells: CalendarCell[] = [];
   const occupied = new Set<number>();
 
-  sorted.forEach((appointment, index) => {
-    const span = columnSpans[index] as SlotSpan;
-    const start = Math.max(span.startSlot, context.firstSlot);
-    const end = Math.min(span.endSlot, context.lastSlot);
+  booked.forEach((appointment, index) => {
+    const span = bookedSpans[index] as SlotSpan;
+    const { start, end } = clampSpan(span, context);
 
     for (let slot = start; slot < end; slot += 1) {
       occupied.add(slot);
@@ -680,19 +781,26 @@ function buildColumn(
       span: Math.max(end - start, 1),
       lane: lanes[index] ?? 0,
       appointment,
-      // L'heure du rendez-vous, pas celle de la rangée où il est posé : le bloc
-      // se cale sur la grille (`slot`, `span` ci-dessus), son libellé non.
-      timeLabel:
-        context.view === 'semaine'
-          ? clockOf(span.startMinutes)
-          : `${clockOf(span.startMinutes)} – ${clockOf(span.endMinutes)}`,
-      clientLabel:
-        context.view === 'semaine'
-          ? shortClientName(appointment.client)
-          : `${appointment.client.firstName} ${appointment.client.lastName}`,
-      // La vue semaine masque la prestation en CSS faute de place ; ne pas
-      // l'émettre du tout épargne autant de nœuds qu'il y a de rendez-vous.
-      serviceLabel: context.view === 'semaine' ? null : appointment.service.name,
+      ...labelsOf(appointment, span, context.view),
+    });
+  });
+
+  // L'ordre d'insertion ne décide de rien ici : c'est `laneOf` qui range les
+  // trois étages à rangée égale — trame libre et fond inactif dessous, repère du
+  // soldé au milieu, bloc du vivant devant.
+  settled.forEach((appointment, index) => {
+    const span = settledSpans[index] as SlotSpan;
+    const { start, end } = clampSpan(span, context);
+
+    cells.push({
+      kind: 'ghost',
+      key: appointment.id,
+      slot: start - context.firstSlot,
+      span: Math.max(end - start, 1),
+      lane: settledLanes.lanes[index] ?? 0,
+      laneCount: settledLanes.laneCount,
+      appointment,
+      ...labelsOf(appointment, span, context.view),
     });
   });
 
@@ -815,8 +923,27 @@ function columnMeta(count: number, windows: readonly OpeningWindow[] | null): st
   return count === 0 && windows !== null && windows.length === 0 ? 'Fermé' : countLabel(count);
 }
 
+/**
+ * Le rang d'une cellule à rangée égale — donc son ordre de peinture.
+ *
+ * Les cellules sont posées les unes sur les autres sans `z-index` : à rangée
+ * égale, c'est l'ordre du document qui décide, et la dernière écrite passe
+ * devant. Trois étages, du fond vers la surface (#753) :
+ *
+ * 1. la trame libre et le fond inactif — transparents ou opaques, mais toujours
+ *    dessous ;
+ * 2. le repère d'un rendez-vous soldé, qui doit rester lisible par-dessus un
+ *    « Pause » opaque commençant sur sa propre rangée ;
+ * 3. le bloc d'un rendez-vous vivant, opaque, lane par lane : reposer un client
+ *    sur l'heure qu'une annulation vient de libérer est précisément le geste
+ *    que ce ticket rend possible, et c'est le vivant qui doit s'y lire.
+ */
 function laneOf(cell: CalendarCell): number {
-  return cell.kind === 'event' ? cell.lane : 0;
+  if (cell.kind === 'event') {
+    return 2 + cell.lane;
+  }
+
+  return cell.kind === 'ghost' ? 1 : 0;
 }
 
 function countLabel(count: number): string {

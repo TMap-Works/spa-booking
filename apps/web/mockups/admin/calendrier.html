@@ -225,13 +225,32 @@
                         <span class="spa-visually-hidden">10 h 30, libre, heure courante — créer un rendez-vous avec Tiana</span>
                       </button>
                     </li>
-                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
-                      <button class="spa-admin-calendar__event spa-admin-calendar__event--completed" type="button">
+                    <!--
+                      RENDEZ-VOUS SOLDÉ (#753) — honoré, annulé ou non présenté :
+                      le statut n'occupe plus le créneau (skill booking-engine
+                      §5), et la demi-heure est de nouveau réservable. Le repère
+                      garde sa plage mais ne capte plus rien (`--ghost` sur le
+                      `<li>`) : les créneaux libres que la grille émet DESSOUS
+                      restent cliquables sur toute la durée du soin. Seul le
+                      petit contrôle du coin ouvre la fiche — même dispositif que
+                      la poignée de déplacement, et pour la même raison.
+
+                      Cette page est statique : les rangées s'y suivent au lieu
+                      de se recouvrir, faute de pouvoir écrire un `grid-row` sans
+                      attribut `style`. Ce qu'elle montre est donc le repère
+                      lui-même, et les créneaux libres qui le voisinent.
+                    -->
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2 spa-admin-calendar__cell--ghost">
+                      <div class="spa-admin-calendar__event spa-admin-calendar__event--completed spa-admin-calendar__event--ghost">
                         <span class="spa-admin-calendar__event-time">11:00 – 12:00</span>
                         <span class="spa-admin-calendar__event-client">Miora Hery</span>
                         <span class="spa-admin-calendar__event-service">Manucure</span>
-                        <span class="spa-visually-hidden">Statut : honoré. Ouvrir la fiche.</span>
-                      </button>
+                        <span class="spa-visually-hidden">Statut : honoré. Ce créneau est de nouveau réservable.</span>
+                        <button class="spa-admin-calendar__ghost-open" type="button">
+                          <span aria-hidden="true">⋯</span>
+                          <span class="spa-visually-hidden">Ouvrir la fiche de Miora Hery, 11:00 – 12:00</span>
+                        </button>
+                      </div>
                     </li>
                     <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
                       <div class="spa-admin-calendar__blocked">
@@ -241,13 +260,17 @@
                   </ul>
 
                   <ul class="spa-admin-calendar__column" aria-labelledby="col-njara">
-                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
-                      <button class="spa-admin-calendar__event spa-admin-calendar__event--cancelled" type="button">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2 spa-admin-calendar__cell--ghost">
+                      <div class="spa-admin-calendar__event spa-admin-calendar__event--cancelled spa-admin-calendar__event--ghost">
                         <span class="spa-admin-calendar__event-time">09:00 – 10:00</span>
                         <span class="spa-admin-calendar__event-client">Solo Ravelo</span>
                         <span class="spa-admin-calendar__event-service">Massage dos · annulé la veille</span>
-                        <span class="spa-visually-hidden">Statut : annulé. Ouvrir la fiche.</span>
-                      </button>
+                        <span class="spa-visually-hidden">Statut : annulé. Ce créneau est de nouveau réservable.</span>
+                        <button class="spa-admin-calendar__ghost-open" type="button">
+                          <span aria-hidden="true">⋯</span>
+                          <span class="spa-visually-hidden">Ouvrir la fiche de Solo Ravelo, 09:00 – 10:00</span>
+                        </button>
+                      </div>
                     </li>
                     <li class="spa-admin-calendar__cell">
                       <button class="spa-admin-calendar__slot" type="button">
@@ -259,13 +282,17 @@
                         <span class="spa-visually-hidden">10 h 30, libre — créer un rendez-vous avec Njara</span>
                       </button>
                     </li>
-                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
-                      <button class="spa-admin-calendar__event spa-admin-calendar__event--no-show" type="button">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2 spa-admin-calendar__cell--ghost">
+                      <div class="spa-admin-calendar__event spa-admin-calendar__event--no-show spa-admin-calendar__event--ghost">
                         <span class="spa-admin-calendar__event-time">11:00 – 12:00</span>
                         <span class="spa-admin-calendar__event-client">Lova Andrian</span>
                         <span class="spa-admin-calendar__event-service">Épilation</span>
-                        <span class="spa-visually-hidden">Statut : non présenté. Ouvrir la fiche.</span>
-                      </button>
+                        <span class="spa-visually-hidden">Statut : non présenté. Ce créneau est de nouveau réservable.</span>
+                        <button class="spa-admin-calendar__ghost-open" type="button">
+                          <span aria-hidden="true">⋯</span>
+                          <span class="spa-visually-hidden">Ouvrir la fiche de Lova Andrian, 11:00 – 12:00</span>
+                        </button>
+                      </div>
                     </li>
                     <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
                       <div class="spa-admin-calendar__blocked">
@@ -423,19 +450,29 @@
                   </ul>
 
                   <ul class="spa-admin-calendar__column" aria-labelledby="col-jeu">
-                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
-                      <button class="spa-admin-calendar__event spa-admin-calendar__event--completed" type="button">
+                    <!-- Deux soldés, donc deux repères : la vue semaine suit la
+                         même règle que la vue jour, en plus court. -->
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2 spa-admin-calendar__cell--ghost">
+                      <div class="spa-admin-calendar__event spa-admin-calendar__event--completed spa-admin-calendar__event--ghost">
                         <span class="spa-admin-calendar__event-time">09:00</span>
                         <span class="spa-admin-calendar__event-client">Miora H.</span>
-                        <span class="spa-visually-hidden">Statut : honoré. Ouvrir la fiche.</span>
-                      </button>
+                        <span class="spa-visually-hidden">Statut : honoré. Ce créneau est de nouveau réservable.</span>
+                        <button class="spa-admin-calendar__ghost-open" type="button">
+                          <span aria-hidden="true">⋯</span>
+                          <span class="spa-visually-hidden">Ouvrir la fiche de Miora H., 09:00</span>
+                        </button>
+                      </div>
                     </li>
-                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
-                      <button class="spa-admin-calendar__event spa-admin-calendar__event--no-show" type="button">
+                    <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2 spa-admin-calendar__cell--ghost">
+                      <div class="spa-admin-calendar__event spa-admin-calendar__event--no-show spa-admin-calendar__event--ghost">
                         <span class="spa-admin-calendar__event-time">10:00</span>
                         <span class="spa-admin-calendar__event-client">Lova A.</span>
-                        <span class="spa-visually-hidden">Statut : non présenté. Ouvrir la fiche.</span>
-                      </button>
+                        <span class="spa-visually-hidden">Statut : non présenté. Ce créneau est de nouveau réservable.</span>
+                        <button class="spa-admin-calendar__ghost-open" type="button">
+                          <span aria-hidden="true">⋯</span>
+                          <span class="spa-visually-hidden">Ouvrir la fiche de Lova A., 10:00</span>
+                        </button>
+                      </div>
                     </li>
                     <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-2">
                       <button class="spa-admin-calendar__slot" type="button">

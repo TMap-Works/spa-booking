@@ -11,6 +11,8 @@ import {
   type CalendarCell,
   type CalendarClosedCell,
   type CalendarEventCell,
+  type CalendarFreeCell,
+  type CalendarGhostCell,
 } from '@/lib/admin/calendar-grid';
 import { rangeOf } from '@/lib/admin/calendar-range';
 
@@ -62,6 +64,14 @@ function appointment(
 
 function eventsOf(cells: readonly CalendarCell[]): CalendarEventCell[] {
   return cells.filter((cell): cell is CalendarEventCell => cell.kind === 'event');
+}
+
+function ghostsOf(cells: readonly CalendarCell[]): CalendarGhostCell[] {
+  return cells.filter((cell): cell is CalendarGhostCell => cell.kind === 'ghost');
+}
+
+function freeOf(cells: readonly CalendarCell[]): CalendarFreeCell[] {
+  return cells.filter((cell): cell is CalendarFreeCell => cell.kind === 'free');
 }
 
 describe('un rendez-vous devient des rangées de 30 minutes', () => {
@@ -894,5 +904,179 @@ describe('les horaires d’ouverture ferment les rangées qu’ils ne couvrent p
       expect(cells.filter((cell) => cell.kind === 'free')).toHaveLength(0);
       expect(closedOf(cells)).toHaveLength(1);
     }
+  });
+});
+
+/**
+ * Un rendez-vous soldé n'occupe plus son créneau — #753.
+ *
+ * Le tableau du cycle de vie porte « Occupe le créneau : non » pour `completed`,
+ * `cancelled` et `no_show` ; la contrainte d'exclusion les laisse hors de son
+ * prédicat partiel, et le calcul des créneaux libres ne retranche que les
+ * `pending` et les `confirmed` (`booking-engine` §1, §3, §5). L'après-midi
+ * relevé par l'audit est celui de la preuve : deux annulés qui se chevauchent, et
+ * pas une cellule libre entre 13 h 30 et 16 h 30.
+ *
+ * Le mercredi 16 septembre 2026, à Antananarivo — la journée de la capture.
+ */
+describe('les statuts terminaux ne prennent plus la place (#753)', () => {
+  /** 14:10 – 15:40 au salon, annulé — le premier bloc de la capture. */
+  const ANNULE_TOT = {
+    startsAt: '2026-09-16T11:10:00.000Z',
+    endsAt: '2026-09-16T12:40:00.000Z',
+    status: 'cancelled',
+  } as const;
+
+  /** 14:55 – 16:25 au salon, annulé — celui qui chevauchait le précédent. */
+  const ANNULE_TARD = {
+    startsAt: '2026-09-16T11:55:00.000Z',
+    endsAt: '2026-09-16T13:25:00.000Z',
+    status: 'cancelled',
+  } as const;
+
+  function journee(appointments: readonly Appointment[], openingHours?: readonly OpeningHoursEntry[]) {
+    return buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-09-16'),
+      appointments,
+      timeZone: TIMEZONE,
+      ...(openingHours === undefined ? {} : { openingHours }),
+    });
+  }
+
+  it('rouvre à la réservation l’après-midi que deux annulés occupaient', () => {
+    const cells = journee([appointment(ANNULE_TOT), appointment(ANNULE_TARD)]).columns[0]?.cells ?? [];
+
+    // La preuve de l'audit, prise à l'envers : chaque demi-heure de 14 h à 16 h
+    // redevient une cellule libre, donc un point d'entrée vers le tiroir.
+    expect(freeOf(cells).map((cell) => cell.time)).toEqual(
+      expect.arrayContaining(['14:00', '14:30', '15:00', '15:30', '16:00']),
+    );
+    // Et rien n'a disparu : les deux annulés sont toujours là, à leur heure.
+    expect(ghostsOf(cells).map((cell) => cell.timeLabel)).toEqual([
+      '14:10 – 15:40',
+      '14:55 – 16:25',
+    ]);
+    expect(eventsOf(cells)).toHaveLength(0);
+  });
+
+  it('range les annulés qui se chevauchent sur leur propre calque', () => {
+    const column = journee([appointment(ANNULE_TOT), appointment(ANNULE_TARD)]).columns[0];
+    const cells = column?.cells ?? [];
+
+    // Deux couloirs pour les soldés — ils ne se recouvrent pas…
+    expect(ghostsOf(cells).map((cell) => cell.lane)).toEqual([0, 1]);
+    expect(ghostsOf(cells).map((cell) => cell.laneCount)).toEqual([2, 2]);
+    // …mais la colonne, elle, n'est plus scindée : la cellule libre garde toute
+    // sa largeur, et un rendez-vous vivant la garderait aussi.
+    expect(column?.laneCount).toBe(1);
+  });
+
+  it('ne rétrécit pas le rendez-vous vivant posé sur l’heure d’un annulé', () => {
+    // Le geste que le ticket rend possible : reposer un client sur le créneau
+    // qu'une annulation a libéré. Le bloc neuf doit occuper toute la colonne —
+    // sans quoi on aurait remplacé une gêne par une autre.
+    const column = journee([
+      appointment(ANNULE_TOT),
+      appointment({
+        startsAt: '2026-09-16T11:30:00.000Z',
+        endsAt: '2026-09-16T12:30:00.000Z',
+        status: 'confirmed',
+      }),
+    ]).columns[0];
+    const cells = column?.cells ?? [];
+
+    expect(column?.laneCount).toBe(1);
+    expect(eventsOf(cells).map((cell) => cell.lane)).toEqual([0]);
+    // Le vivant, lui, reprend bien son créneau : plus de cellule libre dessous.
+    expect(freeOf(cells).map((cell) => cell.time)).not.toContain('14:30');
+  });
+
+  it('sépare les deux calques sur le seul critère du contrat partagé', () => {
+    const statuses: readonly AppointmentStatus[] = [
+      'pending',
+      'confirmed',
+      'completed',
+      'cancelled',
+      'no_show',
+    ];
+    const cells =
+      journee(
+        statuses.map((status, index) =>
+          appointment({
+            // Une heure chacun, à la suite, pour qu'aucun ne se chevauche.
+            startsAt: `2026-09-16T${String(6 + index).padStart(2, '0')}:00:00.000Z`,
+            endsAt: `2026-09-16T${String(7 + index).padStart(2, '0')}:00:00.000Z`,
+            status,
+          }),
+        ),
+      ).columns[0]?.cells ?? [];
+
+    expect(eventsOf(cells).map((cell) => cell.appointment.status)).toEqual([
+      'pending',
+      'confirmed',
+    ]);
+    expect(ghostsOf(cells).map((cell) => cell.appointment.status)).toEqual([
+      'completed',
+      'cancelled',
+      'no_show',
+    ]);
+  });
+
+  it('garde le soldé visible même sur une rangée que le salon ne travaille pas', () => {
+    // Un annulé pendant la coupure méridienne : la rangée redevient « Pause »,
+    // parce qu'elle n'est toujours pas réservable (#752) — et le repère reste,
+    // parce qu'un rendez-vous ne disparaît jamais de l'écran.
+    const cells =
+      journee(
+        [
+          appointment({
+            startsAt: '2026-09-16T10:00:00.000Z',
+            endsAt: '2026-09-16T10:30:00.000Z',
+            status: 'cancelled',
+          }),
+        ],
+        [
+          { weekday: 3, opensAt: '09:00', closesAt: '13:00' },
+          { weekday: 3, opensAt: '14:00', closesAt: '19:00' },
+        ],
+      ).columns[0]?.cells ?? [];
+
+    expect(ghostsOf(cells)).toHaveLength(1);
+    expect(freeOf(cells).map((cell) => cell.time)).not.toContain('13:00');
+    expect(
+      cells
+        .filter((cell): cell is CalendarClosedCell => cell.kind === 'closed')
+        .map((cell) => cell.label),
+    ).toContain('Pause');
+    // Et il reste lisible : « Pause » est opaque, le repère est écrit après lui,
+    // donc peint par-dessus. Rien ne porte de `z-index` sur cette grille — c'est
+    // l'ordre du document qui décide, et c'est donc lui qu'on vérifie.
+    const pause = cells.findIndex((cell) => cell.kind === 'closed');
+    const repere = cells.findIndex((cell) => cell.kind === 'ghost');
+
+    expect(pause).toBeGreaterThanOrEqual(0);
+    expect(repere).toBeGreaterThan(pause);
+  });
+
+  it('peint le rendez-vous vivant par-dessus le soldé qu’il remplace', () => {
+    // Le geste du ticket, poussé à son terme : le client repris à l'heure exacte
+    // de l'annulation. Les deux cellules partagent alors la même rangée, et c'est
+    // le vivant qu'il faut lire — un repère écrit après lui le recouvrirait.
+    const cells =
+      journee([
+        appointment(ANNULE_TOT),
+        appointment({
+          startsAt: ANNULE_TOT.startsAt,
+          endsAt: ANNULE_TOT.endsAt,
+          status: 'confirmed',
+        }),
+      ]).columns[0]?.cells ?? [];
+
+    const repere = cells.findIndex((cell) => cell.kind === 'ghost');
+    const vivant = cells.findIndex((cell) => cell.kind === 'event');
+
+    expect(repere).toBeGreaterThanOrEqual(0);
+    expect(vivant).toBeGreaterThan(repere);
   });
 });
