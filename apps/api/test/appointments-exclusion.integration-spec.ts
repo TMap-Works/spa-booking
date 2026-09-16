@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 
 import { InvalidStateTransitionError, NotFoundError } from '../src/common/errors';
+import { generateAppointmentReference } from '../src/modules/appointments/appointment-reference';
 import { SLOT_EXCLUSION_CONSTRAINT } from '../src/modules/appointments/appointments.conflicts';
 import { SlotNoLongerAvailableError } from '../src/modules/appointments/appointments.errors';
 import type { AppointmentsRepository } from '../src/modules/appointments/appointments.repository';
@@ -327,6 +328,10 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
         'endsAt',
         'id',
         'price',
+        // La référence citable (#796) : elle **sort**, et c'est son objet — la
+        // cliente doit pouvoir la citer. Ce que la frontière continue de retenir
+        // est `tenantId`, `timeRange` et la note interne du praticien.
+        'reference',
         'rescheduledFromId',
         'serviceId',
         'staffId',
@@ -519,6 +524,9 @@ describe('Contrainte d’exclusion anti-double-réservation — contre un vrai P
             serviceId: voisin.serviceId,
             startsAt: new Date('2026-12-07T15:00:00.000Z'),
             endsAt: new Date('2026-12-07T16:00:00.000Z'),
+            // La référence citable est `NOT NULL` depuis #796 : cette écriture
+            // passe par `prismaUnscoped`, donc hors du tirage du repository.
+            reference: generateAppointmentReference(),
             priceAmountMinor: 3500,
             priceCurrency: 'EUR',
             rescheduledFromId: chezSalon.id,

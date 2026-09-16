@@ -208,6 +208,10 @@ describe('GET /api/v1/appointments/mine', () => {
       'endsAt',
       'id',
       'price',
+      // La référence citable (#796) : c'est le code que la cliente retrouve dans
+      // son e-mail, et elle a toute sa place dans son historique. Ce que la vue
+      // continue de refuser est le motif d'annulation et la note interne.
+      'reference',
       'rescheduledFromId',
       'serviceId',
       'staffId',

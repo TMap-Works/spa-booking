@@ -106,6 +106,7 @@ function instantOf(captured: Date | null, method: string): string {
 function view(): AppointmentView {
   return {
     id: APPOINTMENT_ID,
+    reference: 'RDV-8F3K-27',
     status: 'PENDING',
     serviceId: SERVICE_ID,
     staffId: APPOINTMENT_ID,

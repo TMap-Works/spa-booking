@@ -9,8 +9,10 @@ import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/p
 // dans les métadonnées émises par TypeScript, qu'un `import type` effacerait.
 import { ClientDirectoryService, type ClientDirectoryScope } from '../crm/client-directory.service';
 import { ClientRecordRaceError } from '../crm/crm.errors';
+import { generateAppointmentReference } from './appointment-reference';
 import { OCCUPYING_STATUSES, occupiesSlot } from './appointment-status';
 import {
+  isAppointmentReferenceCollision,
   isSlotExclusionViolation,
   isTransientWriteConflict,
   isUnknownClientReference,
@@ -81,6 +83,11 @@ import type {
  */
 const APPOINTMENT_SELECT = {
   id: true,
+  // La référence citable (#796). Elle est dans la frontière commune et non dans
+  // une liste à part, parce qu'elle sort partout : l'écran de confirmation la
+  // montre, l'e-mail la reprend, le comptoir la lit. Ce n'est pas une donnée
+  // sensible — c'est ce que la cliente est censée citer.
+  reference: true,
   clientId: true,
   staffId: true,
   serviceId: true,
@@ -267,6 +274,7 @@ function toAgendaRecord(row: AgendaRow): AgendaAppointmentRecord {
 function toRecord(row: AppointmentRow): AppointmentRecord {
   return {
     id: row.id,
+    reference: row.reference,
     clientId: row.clientId,
     staffId: row.staffId,
     serviceId: row.serviceId,
@@ -563,7 +571,15 @@ export class AppointmentsRepository {
    * créneau peut-être libre.
    */
   private worthRetrying(error: unknown): boolean {
-    return isTransientWriteConflict(error) || error instanceof ClientRecordRaceError;
+    return (
+      isTransientWriteConflict(error) ||
+      error instanceof ClientRecordRaceError ||
+      // Le tirage de la référence citable est tombé sur une valeur déjà prise
+      // dans cet établissement (#796). L'appelant n'y est pour rien, le créneau
+      // n'y est pour rien : c'est le tirage qui est à refaire, et le rejeu en
+      // fait un autre.
+      isAppointmentReferenceCollision(error)
+    );
   }
 
   /**
@@ -643,6 +659,15 @@ export class AppointmentsRepository {
 
       const row = await tx.appointment.create({
         data: withScopedTenant<Prisma.AppointmentUncheckedCreateInput>({
+          // Une référence **neuve**, et non celle de la ligne d'origine (#796).
+          //
+          // Deux raisons, et la première suffirait : l'unique est par
+          // établissement, et la ligne d'origine garde la sienne — la recopier
+          // ferait échouer tout report. La seconde est de conception : un report
+          // produit un rendez-vous neuf, avec un nouvel identifiant, que la
+          // réponse demande au front de substituer à l'ancien. La référence suit
+          // l'identifiant, et la confirmation de report porte la nouvelle.
+          reference: generateAppointmentReference(),
           // Recopiés de la ligne relue **dans la transaction**, jamais de la
           // demande : reporter ne change ni la cliente, ni la prestation, ni le
           // prix figé à la réservation d'origine.
@@ -761,6 +786,11 @@ export class AppointmentsRepository {
 
       const row = await tx.appointment.create({
         data: withScopedTenant<Prisma.AppointmentUncheckedCreateInput>({
+          // Tirée ici, à chaque tentative — et c'est le point : une collision sur
+          // `appointments_tenant_id_reference_key` fait rejouer `insert`, donc
+          // repasser par ce tirage. Une référence calculée une fois à l'étage
+          // au-dessus se serait rejouée identique, indéfiniment (#796).
+          reference: generateAppointmentReference(),
           clientId,
           staffId: draft.staffId,
           serviceId: draft.serviceId,
@@ -883,6 +913,44 @@ export class AppointmentsRepository {
   public async findAgendaById(id: string): Promise<AgendaAppointmentRecord | null> {
     const row = await this.prisma.appointment.findFirst({
       where: { id },
+      select: AGENDA_SELECT,
+    });
+    return row === null ? null : toAgendaRecord(row);
+  }
+
+  /**
+   * Un rendez-vous de l'établissement courant, **par sa référence citable**
+   * (#796).
+   *
+   * C'est la lecture que #736 ne pouvait pas offrir : sa référence étant dérivée
+   * de l'identifiant, la retrouver aurait demandé de recalculer celle de chaque
+   * ligne du salon. Ici, c'est une lecture par clé —
+   * `appointments_tenant_id_reference_key` — et elle coûte le même prix sur un
+   * agenda de dix lignes et sur un agenda de cent mille.
+   *
+   * ## L'établissement n'est pas dans le `where` écrit ici, et c'est délibéré
+   *
+   * `findFirst` et non `findUnique`, pour la raison de `findById` : l'extension
+   * de scoping injecte `tenantId`, et `findUnique` exigerait que le `where`
+   * désigne exactement une clé unique — ce que `{ reference, tenantId }`
+   * satisfait en théorie mais que cette forme-ci n'écrit pas. Le couple obtenu
+   * est celui de l'index, qui est donc bien servi.
+   *
+   * La conséquence est celle qu'on veut : la référence d'un **autre salon** rend
+   * `null` — le comptoir lit 404, jamais le rendez-vous du voisin, et jamais un
+   * 403 qui confirmerait que le code existe ailleurs (tenant-isolation §4). Deux
+   * salons peuvent tirer la même référence sans jamais se voir.
+   *
+   * Rend la **ligne d'agenda** et non `AppointmentRecord` : l'appelant est le
+   * comptoir, qui a besoin de la cliente, du praticien et de la prestation pour
+   * afficher ce qu'il vient de retrouver. Une seconde résolution de noms après
+   * coup aurait fait trois lectures là où la jointure en fait une.
+   */
+  public async findAgendaByReference(
+    reference: string,
+  ): Promise<AgendaAppointmentRecord | null> {
+    const row = await this.prisma.appointment.findFirst({
+      where: { reference },
       select: AGENDA_SELECT,
     });
     return row === null ? null : toAgendaRecord(row);

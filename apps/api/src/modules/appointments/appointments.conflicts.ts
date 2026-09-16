@@ -70,8 +70,23 @@ export const CLIENT_FOREIGN_KEYS = [
   'appointments_tenant_id_client_id_fkey',
 ] as const;
 
+/**
+ * Le nom de l'unique qui porte la référence citable, tel que la migration
+ * `20260916120000_add_appointment_reference` le déclare (#796).
+ *
+ * Même couplage assumé que `SLOT_EXCLUSION_CONSTRAINT`, et
+ * `__tests__/appointments.conflicts.spec.ts` relit le SQL pour vérifier qu'ils
+ * portent bien le même nom. Un renommage côté SQL sans son pendant ici ferait
+ * remonter toute collision de tirage en 500, au lieu de se rejouer — et le cas
+ * nominal, lui, continuerait de passer.
+ */
+export const APPOINTMENT_REFERENCE_UNIQUE = 'appointments_tenant_id_reference_key';
+
 /** Code Prisma d'une violation de clé étrangère. */
 const FOREIGN_KEY_VIOLATION_CODE = 'P2003';
+
+/** Code Prisma d'une violation de contrainte d'unicité. */
+const UNIQUE_VIOLATION_CODE = 'P2002';
 
 /**
  * SQLSTATE des échecs **transitoires** d'écriture concurrente.
@@ -160,6 +175,52 @@ export function isUnknownClientReference(error: unknown): boolean {
 
   return CLIENT_FOREIGN_KEYS.some(
     (constraint) => metaMentions(error.meta, constraint) || error.message.includes(constraint),
+  );
+}
+
+/**
+ * `true` si l'erreur est le refus, par `appointments_tenant_id_reference_key`,
+ * d'une référence citable **déjà prise dans cet établissement** (#796).
+ *
+ * ## Pourquoi c'est un réessai, et non une erreur de domaine
+ *
+ * Parce que l'appelant n'y est pour rien : il n'a pas choisi la référence, elle
+ * a été tirée au sort à l'insertion. Une collision ne dit donc rien de la
+ * demande — ni que le créneau est pris, ni que la fiche est inconnue —, elle dit
+ * seulement que ce tirage-là est à refaire. La traduire en 409 ferait perdre une
+ * réservation sur un créneau libre, pour une raison que personne ne pourrait
+ * corriger.
+ *
+ * C'est le même régime que `ClientRecordRaceError` : un fait d'écriture
+ * concurrente que rejouer résout, parce que le rejeu tire une **autre**
+ * référence. Le nombre de tentatives est celui des autres courses
+ * (`MAX_INSERT_ATTEMPTS`), et il est très largement suffisant : sur un espace de
+ * 104 857 600 valeurs, trois collisions consécutives dans un même salon ne sont
+ * pas un événement rare, c'est un événement qui n'arrive pas.
+ *
+ * ## Pourquoi le nom de la contrainte, et non le seul code `P2002`
+ *
+ * La table porte deux uniques — `(tenant_id, id)`, qui sert de cible aux clés
+ * étrangères composites, et celui-ci. Le premier ne peut pas être violé par une
+ * insertion (l'identifiant est un UUID v4 neuf), mais un test sur le seul code
+ * ferait rejouer en silence n'importe quel unique que le schéma porterait
+ * demain — y compris un qui, lui, ne se résoudrait jamais.
+ */
+export function isAppointmentReferenceCollision(error: unknown): boolean {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError)) {
+    return false;
+  }
+
+  if (error.code !== UNIQUE_VIOLATION_CODE) {
+    return false;
+  }
+
+  return (
+    metaMentions(error.meta, APPOINTMENT_REFERENCE_UNIQUE) ||
+    // `meta.target` peut être la liste des colonnes plutôt que le nom de
+    // l'index, selon le connecteur : la référence y figure alors seule.
+    metaMentions(error.meta, 'reference') ||
+    error.message.includes(APPOINTMENT_REFERENCE_UNIQUE)
   );
 }
 
