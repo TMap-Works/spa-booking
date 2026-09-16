@@ -117,6 +117,7 @@ CRITERES = {
     "ds:mobile": "conception mobile d'abord du parcours client — 360 px comme point de départ",
     "ds:a11y": "accessibilité de conception — ce qu'un choix de conception exclut",
     "ds:confiance": "ce qui permet de décider — prix, durée, annulation, identité du salon",
+    "ds:standard": "standard du marché — un motif du benchmark absent ou rendu en deçà à son étape",
 }
 
 # L'impact, et la priorité qu'il vaut. Trois cases, et `P0` n'en fait pas
@@ -146,6 +147,18 @@ REFERENCE_NORME = re.compile(r"\bwcag\b|\brgaa\b", re.I)
 REFERENCE_CHEMIN = re.compile(
     r"[\w./\\()\[\]-]+\.(?:md|css|tsx|ts|mjs|txt|json|html)")
 
+# Le benchmark du marché — ce que Booker et ses concurrents font à chaque étape.
+# Il n'est recevable que **motif par motif** : `docs/design/benchmark/` tout
+# entier n'est pas une référence, c'est une bibliothèque, et citer une
+# bibliothèque revient à ne rien citer. Un motif n'y porte d'identifiant que
+# s'il est vu chez au moins deux plateformes et qu'il relève du MVP — c'est le
+# fichier qui en répond, et `test_design_tickets.Benchmark` qui le vérifie.
+BENCHMARK = Path("docs") / "design" / "benchmark"
+MOTIF = re.compile(r"\bBM-[A-Z]+-\d{2}\b")
+TITRE_MOTIF = re.compile(r"^###\s+(BM-[A-Z]+-\d{2})\s+—\s+(.+?)\s*$", re.M)
+TITRE_SUIVANT = re.compile(r"^#{1,3}\s", re.M)
+CRITERE_DU_MARCHE = "ds:standard"
+
 
 def valider(critere, module, workstream, impact):
     """Tout est refusé **avant** l'appel à `gh`, comme dans `qa_bugs.py` : un
@@ -169,17 +182,83 @@ def valider(critere, module, workstream, impact):
                           f"attendus : {', '.join(IMPACTS)}", USAGE)
 
 
-def valider_reference(reference):
+def motifs_du_benchmark():
+    """Les motifs citables : `{identifiant: (chemin relatif, titre, bloc)}`.
+
+    Le bloc est le texte du motif, de son titre au titre suivant — c'est ce que
+    le ticket recopie, pour que l'agent de correction voie la référence sans
+    ouvrir le benchmark.
+    """
+    dossier = ROOT / BENCHMARK
+    motifs = {}
+    if not dossier.is_dir():
+        return motifs
+    for fichier in sorted(dossier.glob("*.md")):
+        texte = fichier.read_text(encoding="utf-8")
+        for titre in TITRE_MOTIF.finditer(texte):
+            fin = TITRE_SUIVANT.search(texte, titre.end())
+            bloc = texte[titre.start():fin.start() if fin else len(texte)]
+            motifs[titre.group(1)] = (fichier.relative_to(ROOT).as_posix(),
+                                      titre.group(2), bloc.strip())
+    return motifs
+
+
+def _reference_du_marche(texte, critere):
+    """La part du benchmark dans une référence — `None` s'il n'y en a aucune.
+
+    Trois refus, pour une même raison : « comme chez Booker » sans motif écrit
+    est un goût personnel qui s'est trouvé un alibi.
+    """
+    cites = list(dict.fromkeys(MOTIF.findall(texte)))
+    if critere == CRITERE_DU_MARCHE and not cites:
+        raise DesignError(
+            f"référence irrecevable pour {CRITERE_DU_MARCHE} : {texte}\n"
+            "Un écart au standard du marché cite le motif qu'il fait "
+            "respecter, par son identifiant : « BM-CRENEAU-01 ». Les motifs "
+            f"sont dans {BENCHMARK.as_posix()}/.", USAGE)
+    if not cites:
+        if BENCHMARK.as_posix() in texte.replace("\\", "/"):
+            raise DesignError(
+                f"référence irrecevable : {texte}\n"
+                "Le benchmark se cite motif par motif (« BM-CRENEAU-01 »), pas "
+                "en entier : un recueil de motifs n'est pas une prescription.",
+                USAGE)
+        return None
+
+    connus = motifs_du_benchmark()
+    inconnus = [m for m in cites if m not in connus]
+    if inconnus:
+        raise DesignError(
+            f"référence irrecevable : {texte}\n"
+            f"Motif(s) absent(s) du benchmark : {', '.join(inconnus)}\n"
+            "Un motif qui n'est pas écrit n'est pas un standard — "
+            f"`grep -rn '^### BM-' {BENCHMARK.as_posix()}` les liste.", USAGE)
+    manquants = [connus[m][0] for m in cites
+                 if connus[m][0] not in texte.replace("\\", "/")]
+    if manquants:
+        # Le relecteur doit pouvoir ouvrir le motif sans avoir à le chercher.
+        texte = f"{texte} ({', '.join(dict.fromkeys(manquants))})"
+    return texte
+
+
+def valider_reference(reference, critere=None):
     """Une référence recevable pointe quelque chose qu'un relecteur peut ouvrir.
 
-    Quatre formes, et une seule suffit : une section du cahier des charges, un
-    ADR, une norme d'accessibilité, ou un fichier du dépôt qui **existe**. Le
-    contrôle d'existence est ce qui empêche la forme la plus commode de dériver :
-    citer `apps/web/styles/design.css` est facile, et ce fichier n'existe pas.
+    Cinq formes, et une seule suffit : une section du cahier des charges, un
+    ADR, une norme d'accessibilité, un fichier du dépôt qui **existe**, ou un
+    motif du benchmark du marché qui **existe**. Le contrôle d'existence est ce
+    qui empêche les formes les plus commodes de dériver : citer
+    `apps/web/styles/design.css` est facile, et ce fichier n'existe pas ;
+    « comme chez Booker » l'est plus encore, et ne prescrit rien.
+
+    Un constat `ds:standard` n'a qu'une forme recevable : un motif.
     """
     texte = (reference or "").strip()
     if not texte:
         raise DesignError("référence vide.", USAGE)
+    du_marche = _reference_du_marche(texte, critere)
+    if du_marche is not None:
+        return du_marche
     if (REFERENCE_CDC.search(texte) or REFERENCE_ADR.search(texte)
             or REFERENCE_NORME.search(texte)):
         return texte
@@ -203,7 +282,8 @@ def valider_reference(reference):
         "  - un ADR                            : ADR 0006\n"
         "  - une norme d'accessibilité         : WCAG 2.2 AA, 1.4.3\n"
         "  - un fichier du dépôt qui existe    : apps/web/styles/tokens.css, "
-        ".claude/skills/web-frontend/SKILL.md §6",
+        ".claude/skills/web-frontend/SKILL.md §6\n"
+        "  - un motif du benchmark du marché   : BM-CRENEAU-01",
         USAGE)
 
 
@@ -266,6 +346,21 @@ def corps(constat, captures, doublon_ferme=None):
         "",
         "## La référence", "",
         constat["reference"], "",
+    ]
+
+    # Le motif cité est recopié : l'agent de correction doit voir ce que font
+    # les références sans quitter le ticket.
+    cites = list(dict.fromkeys(MOTIF.findall(constat["reference"])))
+    motifs = motifs_du_benchmark() if cites else {}
+    for identifiant in cites:
+        if identifiant in motifs:
+            chemin, _, bloc = motifs[identifiant]
+            lignes += [f"<details><summary>Le motif <code>{identifiant}</code>"
+                       f" — <code>{chemin}</code></summary>", "",
+                       re.sub(r"^###\s+", "#### ", bloc), "",
+                       "</details>", ""]
+
+    lignes += [
         "## Ce qu'elle prescrit", "",
         constat["attendu"], "",
         "## Ce que l'écran fait", "",
@@ -330,7 +425,7 @@ def corps(constat, captures, doublon_ferme=None):
 
 def cmd_open(args):
     valider(args.critere, args.module, args.workstream, args.impact)
-    reference = valider_reference(args.reference)
+    reference = valider_reference(args.reference, args.critere)
 
     if not args.capture and not args.sans_capture:
         raise DesignError(
@@ -557,7 +652,9 @@ def build_parser():
     ouvrir.add_argument("--url", required=True, help="l'écran où l'écart se voit")
     ouvrir.add_argument("--reference", required=True,
                         help="le document qui dit ce qui est attendu — "
-                             "CDC §x, ADR n, WCAG, ou un fichier du dépôt")
+                             "CDC §x, ADR n, WCAG, un fichier du dépôt, ou un "
+                             "motif du benchmark (BM-…), seule forme "
+                             "recevable pour ds:standard")
     ouvrir.add_argument("--attendu", required=True,
                         help="ce que la référence prescrit, en clair")
     ouvrir.add_argument("--constate", required=True,

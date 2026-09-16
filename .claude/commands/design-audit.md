@@ -15,7 +15,10 @@ Doctrine, grille et référentiel :
 **La charger avant tout.**
 
 **Options** — `--dry-run` : mener l'audit et montrer les tickets **sans les
-ouvrir** · `--ecrans "<a,b,c>"` : borner la traversée à ces écrans.
+ouvrir** · `--ecrans "<a,b,c>"` : borner la traversée à ces écrans ·
+`--sans-comparaison` : interdire aux agents d'ouvrir les pages publiques des
+références — le benchmark écrit reste la référence, seules les captures « chez
+la référence » manqueront.
 
 ## Ce que cette commande ne fait pas
 
@@ -30,6 +33,12 @@ ouvrir** · `--ecrans "<a,b,c>"` : borner la traversée à ces écrans.
   un écart de conception — en cas de doute, charger l'agent `mvp-scope-guard`.
 - **Elle ne redessine rien.** Un audit rend des écarts et des directions, pas
   des maquettes. Une refonte n'est pas un ticket.
+- **Elle ne copie personne.** Le standard du marché se fait respecter motif par
+  motif, avec notre design system — jamais en reprenant la page d'une marque
+  tierce (skill §5.1).
+- **Elle ne réécrit pas le benchmark.** Ce qui y manque se dit dans le compte
+  rendu et se complète dans un ticket dédié : un référentiel qu'on modifie
+  pendant qu'on juge ne juge plus rien.
 
 ## Phase 1 — Le référentiel, puis le périmètre
 
@@ -39,12 +48,18 @@ lu ce que le projet a écrit retrouve ce qu'il avait déjà en tête.
 Lire — ou faire lire aux agents, mais alors le dire explicitement dans leur
 consigne : `docs/specs/cdc-fr.txt` §1.3, §1.4 et §2.4 ; la skill `web-frontend` ;
 `docs/design/` pour les écrans visés ; `apps/web/styles/tokens.css` ;
-`apps/web/components/ui/`.
+`apps/web/components/ui/` ; et **le benchmark du marché** —
+`docs/design/benchmark/README.md`, puis le fichier de chaque étape visée.
 
-Puis énoncer le périmètre en trois lignes : les **écrans** à traverser, les
-**parcours** à mener jusqu'au bout, et ce qui est **hors audit**. S'appuyer sur
-ce qui existe réellement — `apps/web/app/` pour les écrans — et non sur ce que
-le CDC prévoit.
+Puis énoncer le périmètre en quatre lignes : les **écrans** à traverser, les
+**parcours** à mener jusqu'au bout, ce qui est **hors audit**, et pour chaque
+écran les **motifs `BM-…`** de son étape, relevés dans la carte du `README.md`.
+S'appuyer sur ce qui existe réellement — `apps/web/app/` pour les écrans — et
+non sur ce que le CDC prévoit.
+
+```bash
+grep -rn '^### BM-' docs/design/benchmark     # les motifs citables, et leur fichier
+```
 
 ```bash
 python scripts/design_tickets.py grille          # la grille telle qu'appliquée
@@ -93,11 +108,16 @@ qualité.
 
 Donner à chacun, sans le laisser deviner : le périmètre exact de la phase 1,
 l'URL de base rendue par `web_demarrer`, les identifiants du jeu d'essai, les
-largeurs à regarder, et la consigne de capture.
+largeurs à regarder, la consigne de capture, **la liste des motifs `BM-…` de
+chaque écran**, et si la comparaison en direct est permise (elle l'est, sauf
+`--sans-comparaison`) — avec ses bornes : pages publiques seulement, aucun
+compte, aucune donnée saisie, jamais au-delà de l'étape qui précède les
+coordonnées, retour à notre application dans le même tour.
 
 Un agent qui reçoit « audite l'application » rend trente avis. Un agent qui
 reçoit « le tunnel de réservation, de `/le-spa` à la confirmation, à 360 px
-d'abord » rend des écarts.
+d'abord, contre les motifs `BM-SERVICE-*`, `BM-CRENEAU-*` et `BM-TUNNEL-*` »
+rend des écarts.
 
 Ils rendent des **constats**, pas des tickets — c'est cette commande qui
 arbitre. La raison est la même que pour un run de jalon : un seul arbitre produit
@@ -117,6 +137,12 @@ Un constat est retenu s'il coche les cinq :
 3. il porte une **recommandation** qui donne une direction ;
 4. il est **visible** — les gestes et la largeur sont écrits ;
 5. il porte une **capture**, deux pour un `ds:coherence`.
+
+Un constat `ds:standard` passe deux contrôles de plus : le motif cité **relève
+bien de l'étape** de l'écran (la carte du `README.md` le dit), et la
+recommandation décrit une **structure** réalisable avec notre design system —
+pas « faire comme Fresha ». Un constat qui ne cite qu'une plateforme, sans
+motif, va sous « benchmark à compléter ».
 
 Puis, pour chaque écran concerné :
 
@@ -191,6 +217,11 @@ Le compte rendu final, factuel :
 - ce qui a été **écarté**, et pourquoi — c'est ce qui distingue un audit d'un
   filtre silencieux ;
 - ce qui relève de la **QA** et a été laissé à `/qa` ;
+- la **tenue au standard du marché**, écran par écran : les motifs `BM-…`
+  confrontés, tenus ou ouverts en ticket ;
+- ce que les agents ont rangé sous **« benchmark à compléter ou à
+  rafraîchir »** — le proposer comme ticket `ws:design` dédié, sans le traiter
+  ici ;
 - ce qui n'a **pas pu être couvert** — écran absent, état inatteignable avec le
   jeu d'essai, maquette au lieu de l'application. Ne jamais conclure « audit
   terminé » sur un périmètre partiel.
