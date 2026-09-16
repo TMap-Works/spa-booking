@@ -259,3 +259,59 @@ describe('le tunnel trie sur le code d’erreur, jamais sur le message', () => {
     expect(loadAvailabilityAction).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('l’écran terminal rend la main au tunnel (#732)', () => {
+  it('repart d’un brouillon vierge, et non de la réservation précédente', async () => {
+    bookAppointmentAction.mockResolvedValue({ ok: true, data: rendezVous() });
+
+    const user = renderTunnel();
+    await allerJusquAuRecapitulatif(user, '09 h 00');
+    await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
+
+    await screen.findByText('Votre rendez-vous est enregistré');
+    await user.click(screen.getByRole('button', { name: 'Réserver à nouveau' }));
+
+    // Première étape, catalogue en main : le tunnel n'est plus bloqué sur la
+    // confirmation précédente.
+    expect(await screen.findByLabelText('Prestation')).toHaveProperty('value', '');
+    expect(screen.queryByText('Votre rendez-vous est enregistré')).toBeNull();
+
+    // Les coordonnées aussi sont reparties : une nouvelle réservation n'est pas
+    // forcément pour la même personne.
+    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+    await user.click(await screen.findByRole('button', { name: '14 h 00' }));
+
+    expect(screen.getByLabelText(/Adresse e-mail/)).toHaveProperty('value', '');
+  });
+
+  it('cesse d’annoncer « enregistré » quand il ne fait que relire le brouillon', async () => {
+    // Le tunnel rouvert plus tard dans la même session : c'est exactement la
+    // situation où le rendez-vous a pu être reporté ou annulé ailleurs, sans que
+    // le brouillon en sache rien.
+    window.sessionStorage.setItem(
+      `spa.booking.${tenant.slug}`,
+      JSON.stringify({
+        step: 'confirmation',
+        serviceId: service.id,
+        staffId: null,
+        startsAt: APRES_MIDI,
+        contact: {
+          firstName: 'Camille',
+          lastName: 'Rakoto',
+          email: 'camille@example.test',
+          phone: '',
+          clientNote: '',
+        },
+        appointment: rendezVous(),
+      }),
+    );
+
+    renderTunnel();
+
+    expect(await screen.findByText('Votre dernière réservation dans cet onglet')).toBeDefined();
+    expect(screen.queryByText('Votre rendez-vous est enregistré')).toBeNull();
+    // La sortie reste offerte, elle : c'est par là qu'on vérifie l'état réel.
+    expect(screen.getByRole('link', { name: 'Voir mes rendez-vous' })).toBeDefined();
+  });
+});
