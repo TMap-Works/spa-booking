@@ -50,6 +50,24 @@ vi.mock('@/lib/format', async (importActual) => {
   return { ...actual, timeZoneMention: () => mention };
 });
 
+/**
+ * Le jour « aujourd'hui », dans le fuseau du salon, est piloté par le test.
+ *
+ * Le calendrier rend le **mois** de cette date-là, et non les journées que la
+ * réponse contient : sans cela, un jeu d'essai daté de septembre 2026 ne
+ * trouverait aucune case le jour où la suite tourne. Seule cette fonction est
+ * remplacée — l'arithmétique de dates reste la vraie, puisque c'est elle qu'on
+ * éprouve. Lu dans une fermeture et non capturé à la construction du double :
+ * le module est encore en zone morte quand la fabrique s'installe.
+ */
+const AUJOURDHUI = '2026-09-01' as CalendarDate;
+
+vi.mock('@/lib/booking/calendar', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/booking/calendar')>();
+
+  return { ...actual, calendarDateInTimeZone: () => AUJOURDHUI };
+});
+
 /** Le salon est à Antananarivo (UTC+3) : 06:00 UTC s'affiche « 09:00 ». */
 const MATIN = '2026-09-01T06:00:00.000Z' as UtcInstant;
 const APRES_MIDI = '2026-09-01T11:00:00.000Z' as UtcInstant;
@@ -182,7 +200,7 @@ describe('créneaux par journée, dans le fuseau du salon', () => {
     expect(screen.getAllByRole('button', { name: '09 h 00' })).toHaveLength(1);
   });
 
-  it('garde les journées complètes dans la barre de dates, inertes', async () => {
+  it('garde les journées complètes dans le calendrier, inertes', async () => {
     // Le serveur les renvoie avec `slots: []` plutôt que de les omettre : les
     // retirer ferait croire à un salon fermé ce jour-là.
     loadAvailabilityAction.mockResolvedValue({
@@ -194,14 +212,15 @@ describe('créneaux par journée, dans le fuseau du salon', () => {
     });
     renderStep();
 
-    const complet = await screen.findByRole('radio', { name: /1 septembre 2026 — complet/ });
-    const ouverte = screen.getByRole('radio', { name: /2 septembre 2026 — 1 créneau/ });
+    const complet = await screen.findByRole('button', { name: /^mardi 1 septembre 2026 — complet/ });
+    const ouverte = screen.getByRole('button', { name: /^mercredi 2 septembre 2026 — 1 créneau/ });
 
-    // La journée ouverte est retenue d'office, la journée pleine reste lisible
-    // mais hors du parcours du clavier — `keyboard-navigation.md`.
-    expect(ouverte.getAttribute('aria-checked')).toBe('true');
+    // La journée ouverte est retenue d'office ; la journée pleine reste lisible
+    // et **atteignable** — c'est son état qu'on vient y lire — mais ne se retient
+    // pas : il n'y aurait rien à montrer dessous.
+    expect(ouverte.closest('[role="gridcell"]')?.getAttribute('aria-selected')).toBe('true');
     expect(complet.getAttribute('aria-disabled')).toBe('true');
-    expect(complet).toHaveProperty('tabIndex', -1);
+    expect(complet.hasAttribute('disabled')).toBe(false);
   });
 });
 
@@ -336,7 +355,7 @@ describe('états de chargement et état vide', () => {
     });
     renderStep({ service: deuxPraticiens });
 
-    expect(await screen.findByText(/^Aucun créneau sur les 14 prochains jours$/)).toBeDefined();
+    expect(await screen.findByText('Aucun créneau en septembre 2026')).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Voir tous les praticiens' })).toBeNull();
   });
 
@@ -416,95 +435,112 @@ describe('états de chargement et état vide', () => {
     expect(screen.queryByText('Service indisponible.')).toBeNull();
   });
 
-  it('élargit la fenêtre au-delà des quatorze jours sur demande', async () => {
+  it('ne demande au serveur que le mois visible, rogné sur aujourd’hui', async () => {
+    // La fenêtre glissante de quatorze jours a cédé la place au mois qu'on
+    // regarde (#827) : le mois courant part d'aujourd'hui, personne ne réservant
+    // dans le passé, et s'arrête à son dernier jour.
+    renderStep();
+    await screen.findByRole('button', { name: '09 h 00' });
+
+    expect(loadAvailabilityAction.mock.calls[0]?.[1]).toMatchObject({
+      from: '2026-09-01',
+      to: '2026-09-30',
+    });
+  });
+
+  it('propose de tourner la page du calendrier quand le mois n’a rien', async () => {
     // `states.md` étape 3 : « Vide (aucune dispo sur toute la plage) : proposer
-    // d'élargir la plage ». Le contrat en autorise trente et un.
+    // d'élargir la plage ». C'est le même geste, dans l'idiome du calendrier.
     loadAvailabilityAction.mockResolvedValue({
       ok: true,
       data: availability([{ date: LUNDI, slots: [] }]),
     });
     const user = renderStep();
 
-    expect(await screen.findByText(/^Aucun créneau sur les 14 prochains jours$/)).toBeDefined();
+    expect(await screen.findByText('Aucun créneau en septembre 2026')).toBeDefined();
 
-    await user.click(screen.getByRole('button', { name: 'Voir plus de jours' }));
+    await user.click(screen.getByRole('button', { name: 'Voir le mois suivant' }));
 
-    expect(await screen.findByText(/^Aucun créneau sur les 31 prochains jours$/)).toBeDefined();
+    expect(await screen.findByText('Aucun créneau en octobre 2026')).toBeDefined();
 
     const query = loadAvailabilityAction.mock.calls.at(-1)?.[1] as {
       from: CalendarDate;
       to: CalendarDate;
     };
 
-    // Trente et une journées, bornes comprises — la borne du contrat, pas une
-    // de plus : `availabilityQuerySchema` refuserait la requête.
-    expect(addCalendarDays(query.from, 30)).toBe(query.to);
-    // Une fois la fenêtre élargie, le bouton n'a plus rien à élargir.
-    expect(screen.queryByRole('button', { name: 'Voir plus de jours' })).toBeNull();
+    // Octobre est rogné sur la fin de la fenêtre de réservation, soit trente et
+    // une journées bornes comprises depuis aujourd'hui.
+    expect(query.from).toBe('2026-10-01');
+    expect(query.to).toBe('2026-10-01');
+    expect(addCalendarDays(AUJOURDHUI, 30)).toBe(query.to);
+    // Le dernier mois de la fenêtre atteint, le bouton n'a plus rien à ouvrir.
+    expect(screen.queryByRole('button', { name: 'Voir le mois suivant' })).toBeNull();
   });
 
-  it('élargit aussi depuis le bout de la bande, sans passer par l’agenda vide (#738)', async () => {
-    // `states.md` étape 3 place « Voir plus de jours » en bout de bande et pas
-    // seulement dans l'état vide : une cliente qui voit des créneaux cette
-    // semaine mais veut réserver dans trois n'a aucune raison de devoir d'abord
-    // tomber sur un agenda vide pour trouver la sortie.
+  it('laisse changer de mois sans passer par l’agenda vide', async () => {
+    // Une cliente qui voit des créneaux cette semaine mais veut réserver le mois
+    // prochain n'a aucune raison de devoir d'abord tomber sur un agenda vide
+    // pour trouver la sortie : le chevron est toujours là.
     const user = renderStep();
 
     await screen.findByRole('button', { name: '09 h 00' });
-    await user.click(screen.getByRole('button', { name: 'Voir plus de jours' }));
+    await user.click(screen.getByRole('button', { name: 'Mois suivant' }));
 
     await waitFor(() => {
       expect(loadAvailabilityAction).toHaveBeenCalledTimes(2);
     });
 
-    const query = loadAvailabilityAction.mock.calls.at(-1)?.[1] as {
-      from: CalendarDate;
-      to: CalendarDate;
-    };
-
-    // Trente et une journées, bornes comprises — la borne du contrat, pas une de
-    // plus : `availabilityQuerySchema` refuserait la requête.
-    expect(addCalendarDays(query.from, 30)).toBe(query.to);
-    // Une fois la fenêtre élargie, la bande n'a plus de sortie à offrir.
-    expect(screen.queryByRole('button', { name: 'Voir plus de jours' })).toBeNull();
+    expect(loadAvailabilityAction.mock.calls.at(-1)?.[1]).toMatchObject({
+      from: '2026-10-01',
+      to: '2026-10-01',
+    });
+    expect(screen.getByText('octobre 2026')).toBeDefined();
   });
 
   it('rattrape le focus que le bouton emporte en disparaissant', async () => {
-    // Le clic efface l'état vide qui portait le bouton : sans rattrapage, le
-    // focus retombe sur `<body>` et le clavier repart du haut du document juste
-    // après un geste délibéré.
+    // Le clic efface le bouton — le mois atteint est le dernier de la fenêtre.
+    // Sans rattrapage, le focus retombe sur `<body>` et le clavier repart du
+    // haut du document juste après un geste délibéré.
     loadAvailabilityAction.mockResolvedValue({
       ok: true,
       data: availability([{ date: LUNDI, slots: [] }]),
     });
     const user = renderStep();
 
-    await screen.findByRole('button', { name: 'Voir plus de jours' });
-    await user.click(screen.getByRole('button', { name: 'Voir plus de jours' }));
+    await screen.findByRole('button', { name: 'Voir le mois suivant' });
+    await user.click(screen.getByRole('button', { name: 'Voir le mois suivant' }));
 
-    const vide = await screen.findByText(/^Aucun créneau sur les 31 prochains jours$/);
+    await screen.findByText('Aucun créneau en octobre 2026');
 
-    // Le focus se pose sur l'état vide lui-même, qui dit en `role="status"` ce
-    // que l'élargissement a donné — et non sur le squelette d'attente, qu'un
-    // second rendu emporterait aussitôt.
+    // Le calendrier, lui, ne disparaît pas : le focus s'y pose, sur la journée
+    // qu'il retient dans le nouveau mois — et non sur le squelette d'attente,
+    // qu'un second rendu emporterait aussitôt. Ce que le mois a donné est
+    // annoncé par ailleurs, en `role="status"`.
     expect(document.activeElement).not.toBe(document.body);
-    expect((document.activeElement as HTMLElement).contains(vide)).toBe(true);
+    expect(document.activeElement?.getAttribute('aria-label')).toMatch(/octobre 2026/);
   });
 
-  it('rattrape le focus sur la barre de dates quand l’élargissement rend des créneaux', async () => {
+  it('rattrape le focus sur le calendrier quand le mois suivant rend des créneaux', async () => {
     loadAvailabilityAction.mockResolvedValue({
       ok: true,
       data: availability([{ date: LUNDI, slots: [] }]),
     });
     const user = renderStep();
 
-    await screen.findByRole('button', { name: 'Voir plus de jours' });
-    loadAvailabilityAction.mockResolvedValue({ ok: true, data: journeeOrdinaire });
-    await user.click(screen.getByRole('button', { name: 'Voir plus de jours' }));
+    await screen.findByRole('button', { name: 'Voir le mois suivant' });
+    loadAvailabilityAction.mockResolvedValue({
+      ok: true,
+      data: availability([{ date: '2026-10-01' as CalendarDate, slots: [slot(MATIN, HERY)] }]),
+    });
+    await user.click(screen.getByRole('button', { name: 'Voir le mois suivant' }));
 
-    await screen.findByRole('grid');
+    await screen.findByRole('grid', { name: /Créneaux/ });
 
-    expect(document.activeElement).toBe(screen.getByRole('radio', { checked: true }));
+    const calendrier = screen.getByRole('grid', { name: /Journée/ });
+
+    expect(document.activeElement).toBe(
+      within(calendrier).getByRole('button', { name: /^jeudi 1 octobre 2026/ }),
+    );
   });
 });
 
@@ -563,19 +599,25 @@ describe('rafraîchissement des disponibilités', () => {
 });
 
 /**
- * La barre de dates — `keyboard-navigation.md`, « Barre de dates », et
+ * Le calendrier mensuel — `wireframes.md` étape 3 et CDC §1.4 (#827), et
  * `states.md` étape 3 pour son maintien pendant le chargement.
+ *
+ * Le détail de son clavier et de sa navigation de mois est éprouvé sur
+ * `SlotPicker` directement, dans `slot-picker-calendar.test.tsx` : ce qui se
+ * vérifie ici est ce que le **tunnel** en fait — la plage qu'il demande, et le
+ * lien entre la journée retenue et la grille d'heures.
  */
-describe('barre de dates', () => {
+describe('calendrier mensuel', () => {
   /**
-   * La barre est là **avant** la réponse — c'est tout l'objet de `states.md`
-   * étape 3 —, et elle porte alors la fenêtre civile calculée depuis
-   * *aujourd'hui*. Interroger une journée du jeu d'essai sans attendre la
-   * réponse tomberait donc sur une pastille de cette fenêtre-là, et le test
-   * dépendrait du jour où la suite tourne. La grille, elle, n'existe qu'une fois
-   * la réponse reçue : elle fait un point d'attente sûr.
+   * La grille d'heures n'existe qu'une fois la réponse reçue : elle fait un
+   * point d'attente sûr. Elle se nomme par son titre de journée, le calendrier
+   * étant lui aussi une `grid`.
    */
-  const chargee = async (): Promise<HTMLElement> => screen.findByRole('grid');
+  const chargee = async (): Promise<HTMLElement> =>
+    screen.findByRole('grid', { name: /Créneaux/ });
+
+  /** Le calendrier, nommé par son mois. */
+  const calendrier = (): HTMLElement => screen.getByRole('grid', { name: /Journée/ });
 
   const deuxJournees = availability([
     { date: LUNDI, slots: [slot(MATIN, HERY)] },
@@ -584,8 +626,8 @@ describe('barre de dates', () => {
 
   it('reste à l’écran et opérable pendant le chargement', async () => {
     // `states.md` : « grille de créneaux en squelette, **en gardant la barre de
-    // dates interactive** pour changer de jour sans attendre ». La fenêtre est
-    // une suite de dates civiles : le navigateur la pose sans le serveur.
+    // dates interactive** pour changer de jour sans attendre ». Le calendrier
+    // est une trame de dates : le navigateur la pose sans le serveur.
     let libere: (value: unknown) => void = () => undefined;
 
     loadAvailabilityAction.mockReturnValue(
@@ -595,9 +637,12 @@ describe('barre de dates', () => {
     );
     renderStep();
 
-    const barre = screen.getByRole('radiogroup', { name: 'Journée' });
+    await waitFor(() => {
+      expect(screen.getByRole('grid', { name: /Journée/ })).toBeDefined();
+    });
 
-    expect(within(barre).getAllByRole('radio')).toHaveLength(14);
+    // Septembre 2026 : trente cases, et aucune du mois voisin.
+    expect(within(calendrier()).getAllByRole('button')).toHaveLength(30);
     expect(screen.getByText('Chargement des disponibilités…')).toBeDefined();
 
     await act(async () => {
@@ -612,53 +657,52 @@ describe('barre de dates', () => {
     renderStep();
     await chargee();
 
-    const lundi = screen.getByRole('radio', { name: /1 septembre 2026/ });
-    const mardi = screen.getByRole('radio', { name: /2 septembre 2026/ });
+    const arrets = [...calendrier().querySelectorAll('button')].filter(
+      (bouton) => bouton.getAttribute('tabindex') === '0',
+    );
 
-    expect(lundi).toHaveProperty('tabIndex', 0);
-    expect(mardi).toHaveProperty('tabIndex', -1);
+    expect(arrets).toHaveLength(1);
+    expect(arrets[0]?.getAttribute('aria-label')).toMatch(/1 septembre 2026/);
   });
 
-  it('change de journée aux flèches, et la grille suit', async () => {
+  it('change de journée aux flèches, et la grille d’heures suit', async () => {
     loadAvailabilityAction.mockResolvedValue({ ok: true, data: deuxJournees });
     const user = renderStep();
     await chargee();
 
-    const lundi = screen.getByRole('radio', { name: /1 septembre 2026/ });
-    const mardi = screen.getByRole('radio', { name: /2 septembre 2026/ });
+    const lundi = within(calendrier()).getByRole('button', { name: /^mardi 1 septembre 2026/ });
+    const mardi = within(calendrier()).getByRole('button', { name: /^mercredi 2 septembre 2026/ });
 
     lundi.focus();
     await user.keyboard('{ArrowRight}');
 
     expect(document.activeElement).toBe(mardi);
-    expect(mardi.getAttribute('aria-checked')).toBe('true');
+    expect(mardi.closest('[role="gridcell"]')?.getAttribute('aria-selected')).toBe('true');
     // « Changer de jour recharge la grille » — le créneau du lundi a cédé la
-    // place à celui du mardi, sans nouvel appel au serveur : la fenêtre entière
+    // place à celui du mardi, sans nouvel appel au serveur : le mois entier
     // tient dans une seule réponse.
     expect(screen.getByRole('button', { name: '15 h 00' })).toBeDefined();
     expect(screen.queryByRole('button', { name: '09 h 00' })).toBeNull();
   });
 
-  it('ne boucle pas aux bords de la barre', async () => {
+  it('ne boucle pas au bord de la fenêtre de réservation', async () => {
     loadAvailabilityAction.mockResolvedValue({ ok: true, data: deuxJournees });
     const user = renderStep();
     await chargee();
 
-    const lundi = screen.getByRole('radio', { name: /1 septembre 2026/ });
-    const mardi = screen.getByRole('radio', { name: /2 septembre 2026/ });
+    const lundi = within(calendrier()).getByRole('button', { name: /^mardi 1 septembre 2026/ });
 
+    // Le 1er septembre **est** aujourd'hui : rien avant lui n'est réservable.
     lundi.focus();
     await user.keyboard('{ArrowLeft}');
     expect(document.activeElement).toBe(lundi);
-
-    await user.keyboard('{ArrowRight}{ArrowRight}');
-    expect(document.activeElement).toBe(mardi);
   });
 
-  it('saute les journées complètes', async () => {
-    // Elles restent affichées — le serveur les rend vides pour qu'on écrive
-    // « complet » plutôt que de laisser un trou —, mais le clavier ne s'y pose
-    // jamais : `keyboard-navigation.md`, « jamais focus, jamais sélectionnables ».
+  it('atteint une journée complète sans la retenir', async () => {
+    // Elle reste affichée — le serveur la rend vide pour qu'on écrive
+    // « complet » plutôt que de laisser un trou — et **atteignable** : dans une
+    // grille de dates, une case qu'on ne peut pas atteindre est une case dont on
+    // ne peut pas lire l'état.
     loadAvailabilityAction.mockResolvedValue({
       ok: true,
       data: availability([
@@ -670,12 +714,16 @@ describe('barre de dates', () => {
     const user = renderStep();
     await chargee();
 
-    const lundi = screen.getByRole('radio', { name: /1 septembre 2026/ });
+    const lundi = within(calendrier()).getByRole('button', { name: /^mardi 1 septembre 2026/ });
 
     lundi.focus();
     await user.keyboard('{ArrowRight}');
 
-    expect(document.activeElement).toBe(screen.getByRole('radio', { name: /3 septembre 2026/ }));
+    expect(document.activeElement).toBe(
+      within(calendrier()).getByRole('button', { name: /^mercredi 2 septembre 2026 — complet/ }),
+    );
+    // La journée retenue n'a pas bougé : il n'y aurait rien à montrer dessous.
+    expect(screen.getByRole('button', { name: '09 h 00' })).toBeDefined();
   });
 });
 
@@ -690,8 +738,9 @@ describe('navigation au clavier', () => {
     renderStep();
     await screen.findByRole('button', { name: '09 h 00' });
 
-    expect(screen.getByRole('grid')).toBeDefined();
-    expect(screen.getAllByRole('row')).toHaveLength(2);
+    const grille = screen.getByRole('grid', { name: /Créneaux/ });
+
+    expect(within(grille).getAllByRole('row')).toHaveLength(2);
     expect(screen.getByRole('rowheader', { name: 'Matin' })).toBeDefined();
     expect(screen.getByRole('rowheader', { name: 'Après-midi' })).toBeDefined();
   });

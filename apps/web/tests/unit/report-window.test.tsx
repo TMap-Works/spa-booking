@@ -1,12 +1,12 @@
 /**
- * La fenêtre de créneaux de l'écran de report (#738).
+ * La fenêtre de créneaux de l'écran de report (#738, #827).
  *
- * « Voir plus de jours » élargit cette fenêtre par l'adresse, et c'est le rendu
- * serveur de la page qui la traduit en bornes de requête. La traduction est
- * précisément ce qui s'est trompé à la recette : `calendarDaysBetween` compte
- * **les deux bornes**, si bien qu'un `to` posé à `from + 31` demande
- * trente-deux journées — que `availabilityQuerySchema` refuse par un 400, rendu
- * à l'écran en page d'erreur, sur le bouton même qui venait d'être cliqué.
+ * Le mois regardé passe par l'adresse, et c'est le rendu serveur de la page qui
+ * le traduit en bornes de requête. La traduction est précisément ce qui s'est
+ * trompé à la recette de #738 : `calendarDaysBetween` compte **les deux
+ * bornes**, si bien qu'un `to` posé à `from + 31` demande trente-deux journées —
+ * que `availabilityQuerySchema` refuse par un 400, rendu à l'écran en page
+ * d'erreur, sur le bouton même qui venait d'être cliqué.
  *
  * Le contrat est donc éprouvé avec le schéma lui-même plutôt qu'avec un compte
  * de journées réécrit ici : c'est la seule façon que les deux ne puissent pas
@@ -41,6 +41,23 @@ vi.mock('@/app/(account)/[tenantSlug]/compte/session', () => ({
     read: (accessToken: string) => Promise<unknown>,
   ) => read('jeton'),
 }));
+
+/**
+ * Le jour « aujourd'hui » est piloté par le test.
+ *
+ * Les bornes de la requête dérivent maintenant du **mois** qu'on regarde, et un
+ * mois n'a pas la même longueur selon la date où la suite tourne : sans cette
+ * horloge fixe, l'essai serait vert quinze jours par mois. Le 17 septembre 2026
+ * est un mois entamé — le cas courant — et sa fenêtre de trente et un jours
+ * déborde sur octobre, ce qui donne deux mois à parcourir.
+ */
+const AUJOURDHUI = '2026-09-17';
+
+vi.mock('@/lib/booking/calendar', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/booking/calendar')>();
+
+  return { ...actual, calendarDateInTimeZone: () => AUJOURDHUI };
+});
 
 /**
  * Le formulaire est remplacé par une sonde : ce qui se prouve ici est ce que la
@@ -98,29 +115,45 @@ function span(query: { from: string; to: string }): number {
 }
 
 describe('la fenêtre de créneaux du report', () => {
-  it('reste à quinze journées quand rien ne la demande plus large', async () => {
+  it('demande le mois courant, rogné sur aujourd’hui', async () => {
+    // Personne ne réserve dans le passé, et l'agenda de la première quinzaine
+    // coûterait au moteur de disponibilité un calcul que rien n'affiche.
     const query = await queryFor();
 
-    expect(span(query)).toBe(15);
+    expect(query.from).toBe(AUJOURDHUI);
+    expect(query.to).toBe('2026-09-30');
     expect(availabilityQuerySchema.safeParse(query).success).toBe(true);
   });
 
-  it('s’élargit à la borne du contrat, et pas d’une journée de plus', async () => {
-    const query = await queryFor({ jours: String(MAX_AVAILABILITY_RANGE_DAYS) });
+  it('ouvre le mois que l’adresse demande, rogné sur la fin de la fenêtre', async () => {
+    const query = await queryFor({ mois: '2026-10' });
 
-    expect(span(query)).toBe(MAX_AVAILABILITY_RANGE_DAYS);
-    // Le schéma fait foi : c'est lui qui rendait 400 sur une journée de trop.
+    expect(query.from).toBe('2026-10-01');
+    // Trente et un jours bornes comprises depuis aujourd'hui : la borne du
+    // contrat, pas une journée de plus.
+    expect(query.to).toBe('2026-10-17');
     expect(availabilityQuerySchema.safeParse(query).success).toBe(true);
   });
 
-  it('ignore une profondeur que la visiteuse aurait écrite elle-même', async () => {
+  it('ne dépasse jamais le plafond du contrat, quel que soit le mois', async () => {
+    for (const mois of ['2026-09', '2026-10']) {
+      const query = await queryFor({ mois });
+
+      expect(span(query)).toBeLessThanOrEqual(MAX_AVAILABILITY_RANGE_DAYS);
+      // Le schéma fait foi : c'est lui qui rendait 400 sur une journée de trop.
+      expect(availabilityQuerySchema.safeParse(query).success).toBe(true);
+    }
+  });
+
+  it('ignore un mois que la visiteuse aurait écrit elle-même', async () => {
     // Le paramètre vient de l'adresse, donc du visiteur. Tout ce qui n'est pas
-    // la valeur attendue retombe sur la fenêtre par défaut, plutôt que de
-    // devenir une plage hors contrat que l'API refuserait.
-    for (const jours of ['999', '0', '-31', 'trente-et-un', '']) {
-      const query = await queryFor({ jours });
+    // atteignable retombe sur le mois courant, plutôt que de devenir une plage
+    // hors contrat — ou vide — que l'API refuserait.
+    for (const mois of ['2026-11', '2026-08', '1970-01', 'septembre', '2026-9', '']) {
+      const query = await queryFor({ mois });
 
-      expect(span(query)).toBe(15);
+      expect(query.from).toBe(AUJOURDHUI);
+      expect(query.to).toBe('2026-09-30');
     }
   });
 });
