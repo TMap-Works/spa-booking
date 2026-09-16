@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { NotFoundError } from '../../common/errors';
 import { requireTenantId } from '../../common/tenant/tenant-context';
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
+import { billedIntervalOf } from '../appointments/billed-interval';
 import type { ClientContact, ClientDirectoryScope } from './client-directory.service';
 import {
   ClientEmailNotBookableError,
@@ -151,6 +152,12 @@ const CUSTOMER_SELECT = {
  * praticien et celui de la prestation sont lus par relation — ils décrivent la
  * visite —, mais les identifiants internes de l'établissement n'ont rien à faire
  * dans un document remis à une personne (tenant-isolation §4).
+ *
+ * La durée et le tampon avant de la prestation y sont, sans être restitués :
+ * ils servent à retrouver l'intervalle **facturé** de chaque ligne
+ * (`billedIntervalOf`, #750). Un document qui daterait les visites sur
+ * l'intervalle occupé annoncerait à la personne des heures que ni son espace
+ * client ni le planning du salon n'ont jamais affichées.
  */
 const EXPORT_APPOINTMENT_SELECT = {
   id: true,
@@ -164,7 +171,7 @@ const EXPORT_APPOINTMENT_SELECT = {
   cancelledAt: true,
   cancellationReason: true,
   createdAt: true,
-  service: { select: { name: true } },
+  service: { select: { name: true, durationMinutes: true, bufferBeforeMinutes: true } },
   staff: { select: { displayName: true } },
 } as const;
 
@@ -186,6 +193,11 @@ const OCCUPYING_STATUSES = ['PENDING', 'CONFIRMED'] as const;
  * courant par l'opération de premier niveau. Ce sont les clés composites
  * `(tenant_id, service_id)` et `(tenant_id, staff_id)` de la migration initiale
  * qui interdisent que cette ligne en désigne une d'un autre établissement.
+ *
+ * `durationMinutes` et `bufferBeforeMinutes` sont lus sur la même relation que
+ * le nom, et pour la même raison que l'agenda les lit : ce sont eux qui
+ * convertissent l'intervalle **occupé** de la colonne en intervalle **facturé**,
+ * seul affichable (#750).
  */
 const VISIT_SELECT = {
   id: true,
@@ -194,7 +206,7 @@ const VISIT_SELECT = {
   endsAt: true,
   priceAmountMinor: true,
   priceCurrency: true,
-  service: { select: { name: true } },
+  service: { select: { name: true, durationMinutes: true, bufferBeforeMinutes: true } },
   staff: { select: { displayName: true } },
 } as const;
 
@@ -841,21 +853,25 @@ export class CrmRepository {
       orderBy: [{ startsAt: 'asc' }, { id: 'asc' }],
     });
 
-    return rows.map((row) => ({
-      id: row.id,
-      status: row.status,
-      startsAt: row.startsAt,
-      endsAt: row.endsAt,
-      serviceName: row.service.name,
-      staffName: row.staff.displayName,
-      priceAmountMinor: row.priceAmountMinor,
-      priceCurrency: row.priceCurrency,
-      clientNote: row.clientNote,
-      staffNote: row.staffNote,
-      cancelledAt: row.cancelledAt,
-      cancellationReason: row.cancellationReason,
-      createdAt: row.createdAt,
-    }));
+    return rows.map((row) => {
+      const billed = billedIntervalOf(row, row.service);
+
+      return {
+        id: row.id,
+        status: row.status,
+        startsAt: billed.startsAt,
+        endsAt: billed.endsAt,
+        serviceName: row.service.name,
+        staffName: row.staff.displayName,
+        priceAmountMinor: row.priceAmountMinor,
+        priceCurrency: row.priceCurrency,
+        clientNote: row.clientNote,
+        staffNote: row.staffNote,
+        cancelledAt: row.cancelledAt,
+        cancellationReason: row.cancellationReason,
+        createdAt: row.createdAt,
+      };
+    });
   }
 
   /**
@@ -1024,6 +1040,17 @@ export class CrmRepository {
    *
    * `orderBy: startsAt desc` sert l'index `(tenant_id, client_id, starts_at)` du
    * schéma initial — le seul qui filtre sur ce couple, posé pour cette question.
+   *
+   * ## L'ordre reste celui de la colonne, l'affichage celui du soin
+   *
+   * Le tri porte sur `starts_at`, c'est-à-dire sur l'intervalle **occupé** :
+   * c'est le seul que l'index sache servir, et le trier sur l'heure facturée
+   * demanderait de lire toute la fiche avant d'en montrer dix lignes. Les deux
+   * ordres ne diffèrent que si deux visites d'une même cliente se chevauchent à
+   * quelques minutes près chez deux praticiens différents — la contrainte
+   * d'exclusion ne porte que sur le praticien, pas sur la cliente —, et le prix
+   * de cet écart est deux lignes interverties dans une fenêtre où elles se
+   * voient toutes deux.
    */
   public async recentVisits(customerId: string, take: number): Promise<CustomerVisit[]> {
     const rows = await this.prisma.appointment.findMany({
@@ -1033,20 +1060,24 @@ export class CrmRepository {
       take,
     });
 
-    return rows.map((row) => ({
-      appointmentId: row.id,
-      status: row.status,
-      startsAt: row.startsAt,
-      endsAt: row.endsAt,
-      serviceName: row.service.name,
-      // La relation est **obligatoire** au schéma (`Appointment.staff`), donc
-      // toujours jointe. Le type de sortie la déclare pourtant nullable : c'est
-      // le contrat qui anticipe une fiche praticien retirée, et le jour où le
-      // schéma l'autorisera, seule cette ligne changera.
-      staffName: row.staff.displayName,
-      priceAmountMinor: row.priceAmountMinor,
-      priceCurrency: row.priceCurrency,
-    }));
+    return rows.map((row) => {
+      const billed = billedIntervalOf(row, row.service);
+
+      return {
+        appointmentId: row.id,
+        status: row.status,
+        startsAt: billed.startsAt,
+        endsAt: billed.endsAt,
+        serviceName: row.service.name,
+        // La relation est **obligatoire** au schéma (`Appointment.staff`), donc
+        // toujours jointe. Le type de sortie la déclare pourtant nullable : c'est
+        // le contrat qui anticipe une fiche praticien retirée, et le jour où le
+        // schéma l'autorisera, seule cette ligne changera.
+        staffName: row.staff.displayName,
+        priceAmountMinor: row.priceAmountMinor,
+        priceCurrency: row.priceCurrency,
+      };
+    });
   }
 
   /**
@@ -1074,6 +1105,15 @@ export class CrmRepository {
    * est-elle venue la dernière fois » sont des questions sur des soins reçus. Un
    * rendez-vous annulé n'est pas une venue, et un rendez-vous à venir n'a pas
    * encore eu lieu — les compter décalerait la dernière visite dans le futur.
+   *
+   * ## Ces deux bornes restent sur l'intervalle occupé, contrairement aux visites
+   *
+   * `min`/`max` sont calculés par le moteur sur `starts_at` seul : rendre la
+   * borne facturée demanderait de joindre la prestation ligne à ligne, c'est-à-
+   * dire de remplacer un agrégat indexé par un parcours. Le prix de l'écart est
+   * connu et borné — les cinq à dix minutes du tampon avant —, et la fiche
+   * affiche ces deux dates **au jour près** (`dayLabel`), où il ne se voit qu'à
+   * cheval sur minuit.
    */
   public async honoredVisitBounds(customerId: string): Promise<VisitBounds> {
     const bounds = await this.prisma.appointment.aggregate({

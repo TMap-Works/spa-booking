@@ -95,6 +95,32 @@ describe('export des données personnelles', () => {
     });
   });
 
+  it('date les rendez-vous à l’heure du soin, comme l’espace client', async () => {
+    const { dataExport, repository } = build();
+    const fiche = repository.addCustomer({ tenantId: TENANT });
+    repository.addVisit({
+      tenantId: TENANT,
+      clientId: fiche.id,
+      startsAt: new Date('2026-09-16T14:50:00.000Z'),
+      serviceDurationMinutes: 60,
+      serviceBufferBeforeMinutes: 10,
+      serviceBufferAfterMinutes: 10,
+    });
+
+    const dossier = await chez(TENANT, () => dataExport.byCustomerId(fiche.id));
+
+    // Un document remis au titre de l'art. 15 doit être exact : les heures qu'il
+    // porte sont celles que la personne a vues, pas la cadence des cabines
+    // (#750).
+    expect({
+      debut: dossier.appointments[0]?.startsAt,
+      fin: dossier.appointments[0]?.endsAt,
+    }).toEqual({
+      debut: new Date('2026-09-16T15:00:00.000Z'),
+      fin: new Date('2026-09-16T16:00:00.000Z'),
+    });
+  });
+
   it('n’est borné par aucune fenêtre, contrairement à l’historique', async () => {
     const { dataExport, repository } = build();
     const fiche = repository.addCustomer({ tenantId: TENANT });

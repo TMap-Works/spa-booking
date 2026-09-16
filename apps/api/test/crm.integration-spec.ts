@@ -482,6 +482,35 @@ describe('CRM — fichier client', () => {
       });
     });
 
+    it('annonce l’heure du soin, la même que celle de l’agenda', async () => {
+      const fiche = harness.repository.addCustomer({ tenantId: harness.tenantId });
+      harness.repository.addVisit({
+        tenantId: harness.tenantId,
+        clientId: fiche.id,
+        status: 'COMPLETED',
+        // La ligne occupe 14:50 → 16:10 ; le soin va de 15:00 à 16:00.
+        startsAt: new Date('2026-09-16T14:50:00.000Z'),
+        serviceDurationMinutes: 60,
+        serviceBufferBeforeMinutes: 10,
+        serviceBufferAfterMinutes: 10,
+      });
+
+      const response = await request(server())
+        .get(`${BASE}/${fiche.id}/history`)
+        .set('Authorization', await harness.bearer('STAFF'))
+        .expect(200);
+
+      const { visits } = response.body as { visits: { startsAt: string; endsAt: string }[] };
+
+      // Ce que franchit la frontière HTTP est l'intervalle **facturé** : c'est
+      // celui que `GET /appointments` rend pour le même rendez-vous, et celui
+      // que la cliente lit sur son espace (#750).
+      expect(visits[0]).toMatchObject({
+        startsAt: '2026-09-16T15:00:00.000Z',
+        endsAt: '2026-09-16T16:00:00.000Z',
+      });
+    });
+
     it('rend 404 plutôt qu’un historique vide sur un identifiant inconnu', async () => {
       await request(server())
         .get(`${BASE}/99999999-9999-4999-8999-999999999999/history`)
