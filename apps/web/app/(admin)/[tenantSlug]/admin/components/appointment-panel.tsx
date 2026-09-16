@@ -141,6 +141,12 @@ import { NotificationStatusList } from './notification-status-list';
  * un geste que ce composant sait faire (voir la `key` du tiroir, côté planning).
  * Aucun voile n'est posé pour la même raison : il avalerait ces clics-là.
  *
+ * ## La note du rendez-vous se lit en édition — #757
+ *
+ * Elle ne se **saisit** qu'à la création — un report ne réécrit pas ce que la
+ * cliente a joint à sa réservation —, mais elle se **lit** sur tout rendez-vous
+ * posé, à côté du récapitulatif : voir `AppointmentNote`, au bas de ce fichier.
+ *
  * ## La prestation ne se change pas en édition
  *
  * `rescheduleAppointmentRequestSchema` n'accepte que `startsAt` et `staffId`, et
@@ -1005,6 +1011,19 @@ export function AppointmentPanel({
           )}
         </form>
 
+        {/* La note du rendez-vous, en lecture — #757.
+
+            Juste après le récapitulatif, et hors du `<form>` pour la même raison
+            que le journal d'envois : c'est un bloc en lecture seule, et l'y
+            mettre lui aurait donné un `form=` implicite.
+
+            En édition seulement : à la création, le même texte est un champ de
+            saisie quelques lignes plus haut, et le rendre deux fois aurait
+            affiché côte à côte une note qu'on écrit et la même note qu'on lit. */}
+        {editing === null ? null : (
+          <AppointmentNote note={editing.clientNote ?? null} titleId={`${formId}-note`} />
+        )}
+
         {/* Hors du `<form>`, et délibérément : c'est un bloc en lecture seule.
             L'y mettre lui aurait donné un `form=` implicite et fait remonter ses
             éventuels contrôles à la soumission du tiroir. */}
@@ -1110,5 +1129,111 @@ export function AppointmentPanel({
         )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * La note jointe au rendez-vous, telle que le comptoir la lit — #757.
+ *
+ * ## Pourquoi ce bloc existe
+ *
+ * Le champ « Note jointe au rendez-vous » n'était rendu qu'à la **création**. À
+ * l'ouverture d'un rendez-vous existant, le tiroir montrait prestation,
+ * praticien, date, heure, récapitulatif et messages envoyés — jamais la note.
+ * Or c'est précisément ce que le tunnel de réservation invite la cliente à
+ * écrire (`docs/design/appointments/wireframes.md`, étape 4, « Remarque
+ * (facultatif) »), et ce que son espace client lui montre en retour. Une
+ * consigne d'allergie écrite à la réservation n'atteignait donc jamais la
+ * praticienne qui allait la recevoir.
+ *
+ * ## Ce n'est pas la note interne du salon, et c'est écrit
+ *
+ * Deux textes libres cohabitent dans ce produit et ne se confondent sous aucun
+ * prétexte : `clientNote`, jointe au rendez-vous et **reprise dans la
+ * confirmation** — la cliente en connaît le texte —, et `internalNote`, la note
+ * interne de la fiche cliente, que `client-note-form.tsx` marque « Interne au
+ * salon » et qui ne sort par aucune route publique. Les deux se lisent au
+ * comptoir, et une opératrice qui les mélangerait lirait à voix haute ce qui ne
+ * doit pas l'être. L'appartenance est donc écrite **en toutes lettres** sous le
+ * titre, jamais portée par une teinte (WCAG 1.4.1) — même doctrine que la
+ * marque « Interne au salon ».
+ *
+ * `staffNote` du rendez-vous n'est pas rendue ici : le contrat la sert à cette
+ * route, mais c'est une note de séance, et l'afficher dans le même bloc aurait
+ * reproduit exactement la confusion que ce composant existe pour lever.
+ *
+ * ## L'absence se dit
+ *
+ * Ne rien rendre quand il n'y a pas de note laisserait la même question ouverte
+ * qu'avant le ticket : la cliente n'a rien écrit, ou l'écran ne le montre pas ?
+ * Sur une consigne d'allergie, le doute coûte plus cher que la ligne. Le bloc
+ * est donc toujours là en édition, et dit son vide — comme le journal d'envois
+ * juste en dessous, et comme la note interne sur la fiche.
+ *
+ * Et « vide » se juge sur le **texte**, pas sur le seul `null` : `longTextSchema`
+ * n'a pas de `.min(1)`, si bien qu'une chaîne vide traverse tout le contrat. Une
+ * remarque tapée en espaces dans le tunnel y arrive intacte — l'étape de contact
+ * soumet `getValues()`, donc la valeur brute que le `.trim()` de Zod n'a pas
+ * touchée, et le récapitulatif n'omet le champ que s'il vaut exactement `''` —,
+ * l'API la range élaguée à `''` plutôt qu'à `null`, et l'agenda la sert telle
+ * quelle. S'arrêter à `null` afficherait alors un bloc titré « Visible de la
+ * cliente » au-dessus d'un paragraphe vide : le tiroir affirmerait une note qu'il
+ * ne montre pas, exactement le doute que ce composant existe pour lever.
+ * `appointment-card.tsx`, côté espace client, garde déjà ce cas.
+ *
+ * ## Aucune feuille de style n'est ajoutée
+ *
+ * Le bloc compose deux familles existantes, chargées par le layout du
+ * back-office (`styles/admin/index.css`) : `spa-admin-notes` — la présentation
+ * d'une note du design system, celle-là même qui rend la note interne — et
+ * `spa-empty-state--inline`, déjà employé par ce tiroir pour le catalogue vide.
+ * Reprendre la famille de la note interne est délibéré : les deux notes se
+ * ressemblent à l'œil, et ce sont leurs **libellés** qui les distinguent, ce qui
+ * est la seule distinction qui survive à une impression en gris.
+ */
+function AppointmentNote({
+  note,
+  titleId,
+}: {
+  /**
+   * Le texte joint au rendez-vous, ou `null` — le contrat rend le champ absent.
+   *
+   * Une chaîne vide ou blanche compte pour une absence : voir l'en-tête.
+   */
+  readonly note: string | null;
+  readonly titleId: string;
+}) {
+  const written = note === null || note.trim() === '' ? null : note;
+
+  return (
+    <section aria-labelledby={titleId} className="spa-admin-notes">
+      {/* Le titre reprend **au mot près** le libellé du champ de création, dix
+          lignes plus haut dans ce même tiroir : c'est le même objet, et le
+          nommer autrement selon qu'on l'écrit ou qu'on le lit aurait fait deux
+          choses de la même note. */}
+      <h3 className="spa-admin__section-title" id={titleId}>
+        Note jointe au rendez-vous
+      </h3>
+
+      {written === null ? (
+        <div className="spa-empty-state spa-empty-state--inline">
+          <p className="spa-empty-state__title">Aucune note jointe à ce rendez-vous</p>
+          <p className="spa-empty-state__description">
+            Rien n’a été écrit à la réservation. La note interne du salon, elle, se tient sur la
+            fiche de la cliente.
+          </p>
+        </div>
+      ) : (
+        <ul className="spa-admin-notes__list">
+          <li className="spa-admin-notes__item">
+            <div className="spa-admin-notes__meta">
+              <span>Jointe à la réservation</span>
+              <span>Visible de la cliente — ce n’est pas la note interne du salon</span>
+            </div>
+            <p className="spa-admin-notes__body">{written}</p>
+          </li>
+        </ul>
+      )}
+    </section>
   );
 }
