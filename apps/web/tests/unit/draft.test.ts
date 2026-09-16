@@ -91,6 +91,7 @@ describe('reachableStep', () => {
           step: 'confirmation',
           serviceId: PRESTATION,
           startsAt: CRENEAU,
+          contact: COORDONNEES,
         }),
       ),
     ).toBe('recapitulatif');
@@ -108,6 +109,9 @@ describe('reachableStep', () => {
 
     expect(reachableStep(sansCoordonnees)).toBe('coordonnees');
     expect(reachableStep({ ...sansCoordonnees, contact: COORDONNEES })).toBe('recapitulatif');
+    // Et par le même chemin : `?etape=confirmation` partagé retombe sur le
+    // récapitulatif, qui n'a pas plus de destinataire pour autant.
+    expect(reachableStep({ ...sansCoordonnees, step: 'confirmation' })).toBe('coordonnees');
   });
 });
 

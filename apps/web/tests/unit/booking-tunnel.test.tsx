@@ -419,6 +419,60 @@ describe('la progression est portée par l’adresse (#733)', () => {
     });
   });
 
+  it('n’empile pas une entrée en arrivant sur une adresse qu’elle doit corriger', async () => {
+    // La prestation du lien ne figure plus au catalogue : l'écran revient à la
+    // première étape et l'adresse avec lui. Cette correction-là n'est pas un
+    // changement d'étape — la pousser volerait au visiteur son premier geste
+    // retour, qui ne ferait alors rien de visible.
+    window.history.replaceState(
+      null,
+      '',
+      `${ADRESSE}?etape=coordonnees&prestation=11111111-1111-4111-8111-111111111111&creneau=${MATIN}`,
+    );
+
+    const pousse = vi.spyOn(window.history, 'pushState');
+
+    try {
+      renderTunnel();
+
+      expect(await screen.findByLabelText('Prestation')).toBeDefined();
+      await waitFor(() => {
+        expect(query().get('etape')).toBe('prestation');
+      });
+      expect(pousse).not.toHaveBeenCalled();
+    } finally {
+      pousse.mockRestore();
+    }
+  });
+
+  it('n’empile pas une entrée sur la correction qui suit un retour arrière', async () => {
+    bookAppointmentAction.mockResolvedValue({ ok: true, data: rendezVous() });
+
+    const user = renderTunnel();
+    await allerJusquAuRecapitulatif(user, '09 h 00');
+    await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
+    await screen.findByText('Votre rendez-vous est enregistré');
+    await user.click(screen.getByRole('button', { name: 'Réserver à nouveau' }));
+
+    await waitFor(() => {
+      expect(query().get('etape')).toBe('prestation');
+    });
+
+    const pousse = vi.spyOn(window.history, 'pushState');
+
+    try {
+      // L'entrée retrouvée décrit une confirmation dont le rendez-vous est
+      // reparti avec le brouillon : `reachableStep` la corrige. Empiler une
+      // entrée pour cette correction ferait grossir la pile à l'appui même où
+      // le visiteur demande qu'elle diminue.
+      await retourNavigateur();
+
+      expect(pousse).not.toHaveBeenCalled();
+    } finally {
+      pousse.mockRestore();
+    }
+  });
+
   it('ne laisse pas revenir confirmer un rendez-vous déjà pris', async () => {
     bookAppointmentAction.mockResolvedValue({ ok: true, data: rendezVous() });
 
