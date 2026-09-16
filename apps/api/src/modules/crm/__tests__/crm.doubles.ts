@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { getTenantId } from '../../../common/tenant';
 import type { AppointmentStatus } from '../../appointments/appointment-status';
+import { billedIntervalOf, type BilledInterval } from '../../appointments/billed-interval';
 import type { EmailSuppressionReason } from '../../notifications/notifications.types';
 import { CustomerEmailTakenError } from '../crm.errors';
 import type {
@@ -86,7 +87,15 @@ export interface StoredCustomer {
   passwordHash: string | null;
 }
 
-/** Une ligne `appointments`, réduite à ce que l'historique et l'export en lisent. */
+/**
+ * Une ligne `appointments`, réduite à ce que l'historique et l'export en lisent.
+ *
+ * `startsAt` et `endsAt` sont l'intervalle **occupé**, comme les colonnes : le
+ * double stocke ce que la base stocke, et laisse ses deux projections en dériver
+ * l'intervalle facturé par la même fonction que le vrai dépôt (#750). Un double
+ * qui aurait stocké l'heure déjà facturée aurait laissé passer exactement la
+ * régression que ce ticket corrige.
+ */
 export interface StoredVisit {
   tenantId: string;
   id: string;
@@ -95,6 +104,10 @@ export interface StoredVisit {
   startsAt: Date;
   endsAt: Date;
   serviceName: string;
+  /** La durée **facturée** de la prestation — sans les tampons. */
+  serviceDurationMinutes: number;
+  /** Le temps de préparation de la cabine, qui sépare `startsAt` du soin. */
+  serviceBufferBeforeMinutes: number;
   staffName: string;
   priceAmountMinor: number;
   priceCurrency: string;
@@ -166,13 +179,24 @@ export class FakeCrmRepository {
     return stored;
   }
 
-  /** Déclare une visite — même rôle que `addCustomer` pour l'historique. */
+  /**
+   * Déclare une visite — même rôle que `addCustomer` pour l'historique.
+   *
+   * `startsAt` est le début **occupé**, celui de la colonne. Les tampons valent
+   * zéro par défaut : l'intervalle facturé coïncide alors avec l'occupé, ce qui
+   * laisse les cas qui ne parlent pas de tampons dire exactement ce qu'ils
+   * disaient. Un cas qui veut exercer la conversion passe
+   * `serviceBufferBeforeMinutes` (#750).
+   */
   public addVisit(input: {
     tenantId: string;
     clientId: string;
     status?: AppointmentStatus;
     startsAt?: Date;
     serviceName?: string;
+    serviceDurationMinutes?: number;
+    serviceBufferBeforeMinutes?: number;
+    serviceBufferAfterMinutes?: number;
     staffName?: string;
     priceAmountMinor?: number;
     priceCurrency?: string;
@@ -182,14 +206,23 @@ export class FakeCrmRepository {
     cancelledAt?: Date | null;
   }): StoredVisit {
     const startsAt = input.startsAt ?? new Date('2026-08-01T09:00:00.000Z');
+    const durationMinutes = input.serviceDurationMinutes ?? 60;
+    const bufferBeforeMinutes = input.serviceBufferBeforeMinutes ?? 0;
+    const bufferAfterMinutes = input.serviceBufferAfterMinutes ?? 0;
     const stored: StoredVisit = {
       tenantId: input.tenantId,
       id: randomUUID(),
       clientId: input.clientId,
       status: input.status ?? HONORED,
       startsAt,
-      endsAt: new Date(startsAt.getTime() + 3_600_000),
+      // L'occupé, comme la colonne : le soin encadré de ses deux tampons.
+      endsAt: new Date(
+        startsAt.getTime() +
+          (bufferBeforeMinutes + durationMinutes + bufferAfterMinutes) * 60_000,
+      ),
       serviceName: input.serviceName ?? 'Massage 60 min',
+      serviceDurationMinutes: durationMinutes,
+      serviceBufferBeforeMinutes: bufferBeforeMinutes,
       staffName: input.staffName ?? 'Camille',
       priceAmountMinor: input.priceAmountMinor ?? 3500,
       priceCurrency: input.priceCurrency ?? 'EUR',
@@ -287,8 +320,7 @@ export class FakeCrmRepository {
       .map((row) => ({
         id: row.id,
         status: row.status,
-        startsAt: row.startsAt,
-        endsAt: row.endsAt,
+        ...billedOf(row),
         serviceName: row.serviceName,
         staffName: row.staffName,
         priceAmountMinor: row.priceAmountMinor,
@@ -371,8 +403,7 @@ export class FakeCrmRepository {
       .map((row) => ({
         appointmentId: row.id,
         status: row.status,
-        startsAt: row.startsAt,
-        endsAt: row.endsAt,
+        ...billedOf(row),
         serviceName: row.serviceName,
         staffName: row.staffName,
         priceAmountMinor: row.priceAmountMinor,
@@ -452,6 +483,23 @@ export class FakeCrmRepository {
   public asRepository(): CrmRepository {
     return this as unknown as CrmRepository;
   }
+}
+
+/**
+ * L'intervalle **facturé** d'une ligne stockée — la même conversion que le vrai
+ * dépôt, appelée par la même fonction (#750).
+ *
+ * L'appel, et non une réimplémentation : le double reproduit déjà la recherche
+ * en mémoire, et `crm.repository.spec.ts` rappelle ce que coûte une propriété
+ * réécrite des deux côtés — elle cesse d'être testée. Ici, une régression dans
+ * `billedIntervalOf` fait rougir les suites du CRM en même temps que celles
+ * d'`appointments`, ce qui est exactement le lien que ce ticket pose.
+ */
+function billedOf(row: StoredVisit): BilledInterval {
+  return billedIntervalOf(row, {
+    durationMinutes: row.serviceDurationMinutes,
+    bufferBeforeMinutes: row.serviceBufferBeforeMinutes,
+  });
 }
 
 /** `true` si la fiche répond au terme, par **préfixe**, comme le vrai `where`. */

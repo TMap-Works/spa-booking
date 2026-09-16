@@ -37,6 +37,7 @@ import type {
   RescheduleDraft,
   RescheduleOutcome,
 } from './appointments.types';
+import { billedIntervalOf, billedStartOf, type BilledIntervalSource } from './billed-interval';
 import { AppointmentEvents } from './events/appointment-events';
 import { SlotLockService } from './slot-lock.service';
 
@@ -1202,21 +1203,6 @@ function occupiedRange(billedStart: Date, service: ServiceView): { startsAt: Dat
 }
 
 /**
- * Ce dont la vue facturée a besoin d'une prestation — et rien d'autre.
- *
- * `ServiceView` le satisfait structurellement, si bien que tous les appelants
- * qui en ont un continuent de le passer tel quel. Le type existe pour le seul
- * cas où l'on n'en a pas : l'historique (#47), qui résout les prestations par
- * une lecture unique du catalogue et doit pouvoir se replier quand l'une d'elles
- * manque, sans fabriquer une fausse fiche de prestation pour tromper le
- * compilateur.
- */
-interface BilledIntervalSource {
-  readonly durationMinutes: number;
-  readonly bufferBeforeMinutes: number;
-}
-
-/**
  * Le repli de l'historique quand la prestation d'une ligne est introuvable —
  * cas qu'aucune clé étrangère `Restrict` ne permet aujourd'hui.
  *
@@ -1232,39 +1218,16 @@ function occupiedAsBilled(record: AppointmentRecord): BilledIntervalSource {
 }
 
 /**
- * L'instant du **soin** d'une ligne écrite — l'inverse d'`occupiedRange`.
- *
- * Extrait de `billedView` parce que le report en a besoin sans avoir besoin de
- * la vue : deux dérivations séparées auraient pu diverger, et le jour où elles
- * auraient divergé, une demande sans effet aurait recommencé à réécrire
- * l'agenda.
- */
-function billedStartOf(record: AppointmentRecord, service: BilledIntervalSource): number {
-  return record.startsAt.getTime() + service.bufferBeforeMinutes * MINUTE_MS;
-}
-
-/**
  * Le rendez-vous tel que la cliente le lit — l'intervalle **facturé**, retrouvé
- * depuis la ligne écrite.
+ * depuis la ligne écrite par `billedIntervalOf`.
  *
  * Dérivé de `record` et non de la demande d'origine : ce qui est rendu décrit
  * alors ce qui est réellement en base, et non ce qui avait été demandé. Les deux
  * coïncident aujourd'hui ; le jour où une règle ajusterait l'intervalle à
  * l'écriture, cette réponse suivrait au lieu de mentir.
- *
- * ## Les tampons sont ceux du catalogue **au moment de la lecture**
- *
- * L'intervalle occupé est en base, le facturé s'en déduit avec les tampons de la
- * prestation. Appliqué au rendez-vous que #39 vient de créer, l'écart est nul —
- * il vient d'être écrit avec ces tampons-là. Appliqué au rendez-vous
- * **remplacé**, il ne l'est plus si le salon a modifié ses temps de cabine
- * depuis : l'ancienne heure annoncée dans l'avis de déplacement dérive alors de
- * la différence. Corriger cela demanderait de figer les tampons sur la ligne, au
- * même titre que le prix — un changement de schéma qui sort du périmètre de ce
- * ticket, pour un écart de quelques minutes sur une heure déjà passée.
  */
 function billedView(record: AppointmentRecord, service: BilledIntervalSource): AppointmentView {
-  const billedStart = billedStartOf(record, service);
+  const billed = billedIntervalOf(record, service);
 
   return {
     id: record.id,
@@ -1272,8 +1235,8 @@ function billedView(record: AppointmentRecord, service: BilledIntervalSource): A
     serviceId: record.serviceId,
     staffId: record.staffId,
     clientId: record.clientId,
-    startsAt: new Date(billedStart).toISOString(),
-    endsAt: new Date(billedStart + service.durationMinutes * MINUTE_MS).toISOString(),
+    startsAt: billed.startsAt.toISOString(),
+    endsAt: billed.endsAt.toISOString(),
     price: record.price,
     clientNote: record.clientNote,
     rescheduledFromId: record.rescheduledFromId,
@@ -1307,7 +1270,7 @@ function billedView(record: AppointmentRecord, service: BilledIntervalSource): A
  * comptoir annoncerait à la cliente dix minutes trop tôt.
  */
 function agendaView(record: AgendaAppointmentRecord): AgendaAppointmentView {
-  const billedStart = billedStartOf(record, record.service);
+  const billed = billedIntervalOf(record, record.service);
 
   return {
     id: record.id,
@@ -1324,8 +1287,8 @@ function agendaView(record: AgendaAppointmentRecord): AgendaAppointmentView {
       // deux pour le dire.
       price: record.service.price,
     },
-    startsAt: new Date(billedStart).toISOString(),
-    endsAt: new Date(billedStart + record.service.durationMinutes * MINUTE_MS).toISOString(),
+    startsAt: billed.startsAt.toISOString(),
+    endsAt: billed.endsAt.toISOString(),
     price: record.price,
     ...(record.clientNote === null ? {} : { clientNote: record.clientNote }),
     // Servie ici et **nulle part ailleurs** : cette route vit derrière

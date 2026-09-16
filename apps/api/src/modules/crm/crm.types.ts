@@ -113,7 +113,17 @@ export interface CustomerPage {
   totalPages: number;
 }
 
-/** Une visite, telle que l'historique la rend. */
+/**
+ * Une visite, telle que l'historique la rend.
+ *
+ * `startsAt` et `endsAt` sont l'intervalle **facturé** — l'heure du soin, celle
+ * que la cliente a lue en réservant et que le planning affiche —, et non
+ * l'intervalle occupé que porte la colonne. Les tampons de préparation et de
+ * finition du CDC §2.3 bloquent la cabine sans être facturés : les montrer ici
+ * ferait annoncer chaque visite cinq à dix minutes avant l'heure du rendez-vous
+ * (#750). La conversion est celle d'`appointments/billed-interval.ts`, la même
+ * que celle de l'agenda.
+ */
 export interface CustomerVisit {
   appointmentId: string;
   /**
@@ -175,6 +185,11 @@ export interface CustomerVisitHistory {
  * Ce qu'il ne porte pas, en revanche : ni `tenantId`, ni `staffId`, ni
  * `serviceId`. Ce sont des identifiants internes de l'établissement, et le
  * destinataire de l'export n'est pas l'établissement (tenant-isolation §4).
+ *
+ * `startsAt` et `endsAt` sont l'intervalle **facturé**, comme sur `CustomerVisit`
+ * et pour une raison de plus : un document remis au titre de l'art. 15 du RGPD
+ * doit être exact, et les heures qu'il porte sont celles que la personne a
+ * réellement vues — pas la cadence interne des cabines (#750).
  */
 export interface ExportedAppointment {
   id: string;

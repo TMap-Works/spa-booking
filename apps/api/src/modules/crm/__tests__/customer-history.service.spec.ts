@@ -150,6 +150,53 @@ describe('historique d’une fiche', () => {
     expect(visits.map((visit) => visit.serviceName)).toEqual(['récente', 'ancienne']);
   });
 
+  it('date chaque visite à l’heure du soin, jamais à celle de la cabine', async () => {
+    const { service, repository } = build();
+    const fiche = repository.addCustomer({ tenantId: TENANT });
+
+    // La ligne d'agenda d'un massage suédois : la cabine est prise à 14:50 UTC,
+    // le soin commence à 15:00 et dure une heure. C'est 15:00 que le planning,
+    // le tiroir d'édition et l'espace client annoncent tous les trois — la fiche
+    // annonçait 14:50 (#750).
+    repository.addVisit({
+      tenantId: TENANT,
+      clientId: fiche.id,
+      status: 'COMPLETED',
+      startsAt: new Date('2026-09-16T14:50:00.000Z'),
+      serviceDurationMinutes: 60,
+      serviceBufferBeforeMinutes: 10,
+      serviceBufferAfterMinutes: 10,
+    });
+
+    const { visits } = await chez(TENANT, () => service.byCustomerId(fiche.id, 50));
+
+    expect(visits[0]).toMatchObject({
+      startsAt: new Date('2026-09-16T15:00:00.000Z'),
+      // 16:00 et non 16:10 : le tampon de finition n'est pas du temps de soin.
+      endsAt: new Date('2026-09-16T16:00:00.000Z'),
+    });
+  });
+
+  it('laisse l’heure intacte quand la prestation n’a pas de tampon', async () => {
+    const { service, repository } = build();
+    const fiche = repository.addCustomer({ tenantId: TENANT });
+
+    repository.addVisit({
+      tenantId: TENANT,
+      clientId: fiche.id,
+      status: 'COMPLETED',
+      startsAt: new Date('2026-09-16T15:00:00.000Z'),
+      serviceDurationMinutes: 45,
+    });
+
+    const { visits } = await chez(TENANT, () => service.byCustomerId(fiche.id, 50));
+
+    expect(visits[0]).toMatchObject({
+      startsAt: new Date('2026-09-16T15:00:00.000Z'),
+      endsAt: new Date('2026-09-16T15:45:00.000Z'),
+    });
+  });
+
   it('décline le total quand la fiche porte deux devises', async () => {
     const { service, repository } = build();
     const fiche = repository.addCustomer({ tenantId: TENANT });
