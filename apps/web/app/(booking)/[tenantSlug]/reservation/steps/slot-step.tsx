@@ -242,6 +242,32 @@ export function SlotStep({
       : (service.staff.find((member) => member.id === staffId)?.displayName ?? 'ce praticien');
 
   /**
+   * « Voir plus de jours » — `states.md` étape 3.
+   *
+   * Un seul geste pour deux boutons : celui que `SlotPicker` pose en bout de
+   * bande (#738) et celui que l'état vide portait déjà. Les deux ne sont jamais
+   * à l'écran en même temps — le sélecteur rend la bande **ou** l'état vide —,
+   * mais ils doivent faire exactement la même chose, rattrapage de focus compris.
+   *
+   * Le contrat autorise trente et un jours ; on n'en demande quatorze d'emblée
+   * que parce que la très grande majorité des clientes réservent dans la semaine,
+   * et qu'un mois d'agenda coûte au serveur ce que personne ne fait défiler.
+   */
+  const widen = useCallback(() => {
+    // Le clic peut emporter le bouton lui-même — c'est le cas dans l'état vide,
+    // que la fenêtre élargie remplace. Sans rattrapage, le focus retomberait sur
+    // `<body>` et le clavier repartirait du haut du document juste après un
+    // geste délibéré (`keyboard-navigation.md`, « Parcours complet réalisable
+    // sans souris »). On le rattrape sur la barre de dates, qui prend justement
+    // la place de cet écran.
+    catchFocusAfterWidening.current = 'chargement';
+    setWindowDays(MAX_AVAILABILITY_RANGE_DAYS);
+  }, []);
+
+  /** Rien à élargir une fois la fenêtre au maximum : le bouton n'est plus rendu. */
+  const canWiden = windowDays < MAX_AVAILABILITY_RANGE_DAYS;
+
+  /**
    * Le focus rattrapé quand le bouton qu'on vient d'actionner s'est effacé.
    *
    * « Voir plus de jours » emporte l'état vide qui le portait : sans cela le
@@ -286,7 +312,10 @@ export function SlotStep({
   });
 
   return (
-    <section className="spa-booking__step" aria-label="Choix du praticien et du créneau">
+    <section
+      className="spa-booking__step spa-booking__step--calendar"
+      aria-label="Choix du praticien et du créneau"
+    >
       <h2 className="spa-card__title">{service.name}</h2>
 
       <Select
@@ -345,6 +374,7 @@ export function SlotStep({
           timeZone={tenant.timezone}
           dateBarRef={dateBarRef}
           emptyStateRef={emptyStateRef}
+          onWiden={canWiden ? widen : undefined}
           onChoose={onChoose}
           emptyState={
             <div className="spa-empty-state">
@@ -365,21 +395,8 @@ export function SlotStep({
                 Une fois la fenêtre élargie, le bouton disparaît : il n'aurait plus
                 rien à élargir.
               */}
-              {windowDays < MAX_AVAILABILITY_RANGE_DAYS ? (
-                <Button
-                  variant="neutral"
-                  onClick={() => {
-                    // Le clic emporte le bouton lui-même : la fenêtre élargie
-                    // repasse par le chargement, l'état vide disparaît, et le
-                    // focus retomberait sur `<body>` — le clavier repartirait du
-                    // haut du document juste après un geste délibéré. On le
-                    // rattrape sur la barre de dates, qui prend justement la
-                    // place de cet écran (`keyboard-navigation.md`, « Parcours
-                    // complet réalisable sans souris »).
-                    catchFocusAfterWidening.current = 'chargement';
-                    setWindowDays(MAX_AVAILABILITY_RANGE_DAYS);
-                  }}
-                >
+              {canWiden ? (
+                <Button variant="neutral" onClick={widen}>
                   Voir plus de jours
                 </Button>
               ) : null}

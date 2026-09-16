@@ -17,7 +17,7 @@ import type {
   PublicService,
   UtcInstant,
 } from '@spa/shared';
-import { act, cleanup, render, screen, within } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -440,6 +440,32 @@ describe('états de chargement et état vide', () => {
     // de plus : `availabilityQuerySchema` refuserait la requête.
     expect(addCalendarDays(query.from, 30)).toBe(query.to);
     // Une fois la fenêtre élargie, le bouton n'a plus rien à élargir.
+    expect(screen.queryByRole('button', { name: 'Voir plus de jours' })).toBeNull();
+  });
+
+  it('élargit aussi depuis le bout de la bande, sans passer par l’agenda vide (#738)', async () => {
+    // `states.md` étape 3 place « Voir plus de jours » en bout de bande et pas
+    // seulement dans l'état vide : une cliente qui voit des créneaux cette
+    // semaine mais veut réserver dans trois n'a aucune raison de devoir d'abord
+    // tomber sur un agenda vide pour trouver la sortie.
+    const user = renderStep();
+
+    await screen.findByRole('button', { name: '09 h 00' });
+    await user.click(screen.getByRole('button', { name: 'Voir plus de jours' }));
+
+    await waitFor(() => {
+      expect(loadAvailabilityAction).toHaveBeenCalledTimes(2);
+    });
+
+    const query = loadAvailabilityAction.mock.calls.at(-1)?.[1] as {
+      from: CalendarDate;
+      to: CalendarDate;
+    };
+
+    // Trente et une journées, bornes comprises — la borne du contrat, pas une de
+    // plus : `availabilityQuerySchema` refuserait la requête.
+    expect(addCalendarDays(query.from, 30)).toBe(query.to);
+    // Une fois la fenêtre élargie, la bande n'a plus de sortie à offrir.
     expect(screen.queryByRole('button', { name: 'Voir plus de jours' })).toBeNull();
   });
 

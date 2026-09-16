@@ -86,3 +86,25 @@ export function formatCalendarDayShort(date: CalendarDate): string {
     day: 'numeric',
   }).format(new Date(`${date}T00:00:00Z`));
 }
+
+/**
+ * Le mois d'une date civile, tel que la navigation de période l'annonce —
+ * « août 2026 ».
+ *
+ * C'est le libellé que `docs/design/appointments/wireframes.md` écrit entre les
+ * deux chevrons de l'étape 3 (« ‹ août 2026 › »), et que `states.md` reprend
+ * dans ses trois états. Il porte l'année parce qu'une bande de trente et un
+ * jours ouverte fin décembre en couvre deux : « janvier » seul ne dirait pas
+ * lequel.
+ *
+ * Lu dans le référentiel UTC pour la raison qu'expose `formatCalendarDayShort` :
+ * une date civile **est déjà** celle de l'établissement, et la reprojeter dans
+ * son fuseau la décalerait d'un jour — donc, le 1er du mois, de tout un mois.
+ */
+export function formatCalendarMonth(date: CalendarDate): string {
+  return new Intl.DateTimeFormat('fr-FR', {
+    timeZone: 'UTC',
+    month: 'long',
+    year: 'numeric',
+  }).format(new Date(`${date}T00:00:00Z`));
+}

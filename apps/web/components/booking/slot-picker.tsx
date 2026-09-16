@@ -19,7 +19,7 @@ import {
 } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { formatCalendarDayShort } from '@/lib/booking/calendar';
+import { formatCalendarDayShort, formatCalendarMonth } from '@/lib/booking/calendar';
 import {
   canSelectDay,
   dateBarDays,
@@ -31,6 +31,7 @@ import {
   resolveActiveDay,
   selectableDays,
   slotRows,
+  type DateBarMove,
 } from '@/lib/booking/slots';
 import { formatCalendarDate, formatTimeInTimeZone, timeZoneMention } from '@/lib/format';
 
@@ -78,6 +79,22 @@ import { formatCalendarDate, formatTimeInTimeZone, timeZoneMention } from '@/lib
  *
  * [states.md](../../../../docs/design/appointments/states.md) fixe l'état de
  * chargement : squelette de grille **sous une barre de dates restée opérable**.
+ *
+ * ## La bande se commande, elle ne se devine pas (#738)
+ *
+ * [wireframes.md](../../../../docs/design/appointments/wireframes.md) coiffe la
+ * bande d'une navigation de période — « ‹ août 2026 › » — et la termine par
+ * « ( Voir plus de jours ) ». `states.md` reprend la même navigation dans ses
+ * trois états de l'étape 3. Ni l'une ni l'autre n'était rendue : la bande listait
+ * ses quatorze dates et s'arrêtait, dans un défilement horizontal sans la moindre
+ * affordance — trois jours et demi visibles à 360 px, et aucun chemin pour qui
+ * veut réserver dans trois semaines.
+ *
+ * Les deux chevrons sont **l'équivalent souris de `PagePréc` / `PageSuiv`**, que
+ * `keyboard-navigation.md` prescrit déjà sur cette bande : ils appellent le même
+ * `moveInDateBar`, avec le même pas d'une semaine et la même absence
+ * d'enroulement. Un geste, une règle — et non une seconde mécanique de
+ * déplacement qui dériverait de la première.
  */
 interface SlotPickerProps {
   /**
@@ -129,6 +146,16 @@ interface SlotPickerProps {
   readonly dateBarRef?: RefObject<HTMLDivElement | null>;
   /** Le conteneur de l'état vide, pour la même raison. */
   readonly emptyStateRef?: RefObject<HTMLDivElement | null>;
+  /**
+   * Ce que fait « Voir plus de jours », en bout de bande — `wireframes.md` et
+   * `states.md`, étape 3.
+   *
+   * Absent : le bouton n'est pas rendu. C'est le cas dès que la fenêtre est déjà
+   * à son maximum (`MAX_AVAILABILITY_RANGE_DAYS`), où il n'aurait plus rien à
+   * élargir. L'élargissement lui-même appartient à l'appelant : c'est lui qui
+   * charge les journées, et lui seul sait jusqu'où son contrat le laisse aller.
+   */
+  readonly onWiden?: (() => void) | undefined;
   readonly onChoose: (startsAt: UtcInstant) => void;
 }
 
@@ -182,6 +209,7 @@ export function SlotPicker({
   headingId = 'creneaux-titre',
   dateBarRef,
   emptyStateRef,
+  onWiden,
   onChoose,
 }: SlotPickerProps) {
   /** La journée que la barre de dates montre comme retenue. */
@@ -247,6 +275,18 @@ export function SlotPicker({
     (bar.some((day) => day.date === selectedDate) ? selectedDate : null) ??
     bar[0]?.date ??
     null;
+  /**
+   * Le rang de cette journée dans la bande — l'origine des chevrons de période.
+   *
+   * Les chevrons partent de la journée **retenue** et non de celle qui a le
+   * focus : ils sont d'abord un geste de souris, et une souris ne laisse aucun
+   * focus derrière elle. Le repli sur `0` ne sert que le cas d'une bande vide,
+   * où la navigation n'est de toute façon pas rendue.
+   */
+  const barActiveIndex = Math.max(
+    bar.findIndex((day) => day.date === barActiveDate),
+    0,
+  );
 
   /**
    * La mention du fuseau, calculée **après le montage** seulement.
@@ -420,6 +460,55 @@ export function SlotPicker({
   );
 
   /**
+   * Le rang visé par un chevron de période, `null` s'il n'y a rien de plus dans
+   * cette direction.
+   *
+   * `moveInDateBar` rend le rang de départ quand le déplacement ne mène nulle
+   * part — bord de bande, ou plus aucune journée ouverte au-delà. C'est
+   * exactement ce qui doit éteindre le chevron : un contrôle qui ne fait rien
+   * mais se laisse cliquer est pire qu'un contrôle absent, il fait croire que la
+   * bande s'arrête là alors que c'est la commande qui est muette.
+   */
+  const periodTarget = (move: DateBarMove): number | null => {
+    if (bar.length === 0) {
+      return null;
+    }
+
+    const target = moveInDateBar(bar, barActiveIndex, move);
+
+    return target === barActiveIndex ? null : target;
+  };
+
+  const weekBefore = periodTarget('weekBefore');
+  const weekAfter = periodTarget('weekAfter');
+
+  /**
+   * Ce que fait un chevron : retenir la journée visée et l'amener sous les yeux.
+   *
+   * Le focus **ne suit pas** — il reste sur le chevron, pour qu'on puisse
+   * remonter trois semaines en trois clics sans avoir à viser de nouveau. C'est
+   * la différence avec `moveDay`, où le focus est déjà dans la bande et doit y
+   * rester. Le défilement est donc explicite : le navigateur ne le fait de
+   * lui-même que pour l'élément qu'il focalise.
+   *
+   * Les boutons sont relus dans le DOM plutôt que suivis par des `ref`, pour la
+   * raison qu'expose `moveDay` : la bande se réécrit à chaque revalidation.
+   */
+  const goToPeriod = (target: number | null) => {
+    const day = target === null ? undefined : bar[target];
+
+    if (target === null || day === undefined || !canSelectDay(day)) {
+      return;
+    }
+
+    setSelectedDate(day.date);
+
+    const buttons = dateBarNode.current?.querySelectorAll<HTMLButtonElement>('button');
+
+    buttons?.[target]?.scrollIntoView({ block: 'nearest', inline: 'center' });
+  };
+
+  /**
    * La barre de dates — `keyboard-navigation.md`, « Barre de dates ».
    *
    * Un `radiogroup` et non un `<select>` natif : le document décrit une ligne de
@@ -433,49 +522,117 @@ export function SlotPicker({
    */
   const dateBar =
     bar.length === 0 ? null : (
-      <div
-        ref={dateBarNode}
-        className="spa-date-bar"
-        role="radiogroup"
-        aria-label="Journée"
-        onKeyDown={moveDay}
-      >
-        {bar.map((day) => {
-          const selectable = canSelectDay(day);
-          const checked = day.date === barActiveDate;
-          const state =
-            day.slotCount === null
-              ? 'disponibilités en cours de chargement'
-              : day.slotCount === 0
-                ? 'complet'
-                : slotCountLabel(day.slotCount);
+      <div className="spa-date-bar-block">
+        {/*
+          La navigation de période — « ‹ août 2026 › » de `wireframes.md`.
 
-          return (
-            <Button
-              key={day.date}
-              variant="neutral"
-              role="radio"
-              aria-checked={checked}
-              aria-disabled={selectable ? undefined : true}
-              aria-label={`${formatCalendarDate(day.date)} — ${state}`}
-              tabIndex={checked ? 0 : -1}
-              onClick={() => {
-                // Une journée complète reste affichée et lisible, mais ne se
-                // retient pas : il n'y aurait rien à montrer dessous.
-                if (selectable) {
-                  setSelectedDate(day.date);
-                }
-              }}
-            >
-              <span aria-hidden="true" className="spa-date-bar__day">
-                {formatCalendarDayShort(day.date)}
-              </span>
-              <span aria-hidden="true" className="spa-date-bar__count">
-                {day.slotCount === null ? '…' : day.slotCount === 0 ? 'complet' : day.slotCount}
-              </span>
-            </Button>
-          );
-        })}
+          Le mois **entre** les deux chevrons, comme la barre du back-office
+          (`admin/components/period-nav.tsx`) rend déjà le même geste : posé
+          avant eux, il laisserait deux contrôles orphelins. Le chevron est
+          `aria-hidden` — un signe typographique ne se lit pas —, et c'est le
+          libellé masqué qui nomme le contrôle.
+
+          `aria-disabled` et non `disabled` : le chevron éteint reste
+          atteignable au clavier, comme les journées complètes de la bande et
+          les créneaux inertes de la grille. Trois contrôles inactifs, une seule
+          façon de le dire.
+        */}
+        <div className="spa-date-bar-nav">
+          <Button
+            variant="neutral"
+            aria-disabled={weekBefore === null ? true : undefined}
+            onClick={() => {
+              goToPeriod(weekBefore);
+            }}
+          >
+            <span aria-hidden="true">‹</span>
+            <span className="spa-visually-hidden">Semaine précédente</span>
+          </Button>
+
+          <span className="spa-date-bar-nav__period">
+            {barActiveDate === null ? '' : formatCalendarMonth(barActiveDate)}
+          </span>
+
+          <Button
+            variant="neutral"
+            aria-disabled={weekAfter === null ? true : undefined}
+            onClick={() => {
+              goToPeriod(weekAfter);
+            }}
+          >
+            <span aria-hidden="true">›</span>
+            <span className="spa-visually-hidden">Semaine suivante</span>
+          </Button>
+        </div>
+
+        {/*
+          La bande et, à son bout, « Voir plus de jours ».
+
+          Le bouton est **hors** du `radiogroup` : un groupe de boutons radio ne
+          possède que des radios, et y glisser un bouton d'action ferait annoncer
+          « 15 sur 15 » sur une commande qui n'est pas une journée. Il est donc
+          posé à côté de la bande, dans la même ligne — visible sans avoir à
+          faire défiler jusqu'au dernier jour, ce qui est tout l'objet d'une
+          sortie de bande.
+        */}
+        <div className="spa-date-bar-track">
+          <div
+            ref={dateBarNode}
+            className="spa-date-bar"
+            role="radiogroup"
+            aria-label="Journée"
+            onKeyDown={moveDay}
+          >
+            {bar.map((day) => {
+              const selectable = canSelectDay(day);
+              const checked = day.date === barActiveDate;
+              const state =
+                day.slotCount === null
+                  ? 'disponibilités en cours de chargement'
+                  : day.slotCount === 0
+                    ? 'complet'
+                    : slotCountLabel(day.slotCount);
+
+              return (
+                <Button
+                  key={day.date}
+                  variant="neutral"
+                  role="radio"
+                  aria-checked={checked}
+                  aria-disabled={selectable ? undefined : true}
+                  aria-label={`${formatCalendarDate(day.date)} — ${state}`}
+                  tabIndex={checked ? 0 : -1}
+                  onClick={() => {
+                    // Une journée complète reste affichée et lisible, mais ne se
+                    // retient pas : il n'y aurait rien à montrer dessous.
+                    if (selectable) {
+                      setSelectedDate(day.date);
+                    }
+                  }}
+                >
+                  <span aria-hidden="true" className="spa-date-bar__day">
+                    {formatCalendarDayShort(day.date)}
+                  </span>
+                  <span aria-hidden="true" className="spa-date-bar__count">
+                    {day.slotCount === null
+                      ? '…'
+                      : day.slotCount === 0
+                        ? 'complet'
+                        : day.slotCount}
+                  </span>
+                </Button>
+              );
+            })}
+          </div>
+
+          {onWiden === undefined ? null : (
+            <div className="spa-date-bar-track__more">
+              <Button variant="neutral" onClick={onWiden}>
+                Voir plus de jours
+              </Button>
+            </div>
+          )}
+        </div>
       </div>
     );
 

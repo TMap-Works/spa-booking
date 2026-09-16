@@ -103,7 +103,10 @@ afterEach(() => {
   replace.mockReset();
 });
 
-function form(days: AvailabilityResponse = availability) {
+/** L'adresse de la même page en fenêtre élargie, telle que la page serveur la pose. */
+const WIDER_HREF = `/salon-des-lilas/compte/rendez-vous/${APPOINTMENT_ID}/report?jours=31`;
+
+function form(days: AvailabilityResponse = availability, widerHref: string | null = WIDER_HREF) {
   return (
     <RescheduleForm
       tenantSlug="salon-des-lilas"
@@ -112,6 +115,7 @@ function form(days: AvailabilityResponse = availability) {
       serviceName="Massage suédois"
       availability={days}
       timeZone="UTC"
+      widerHref={widerHref}
     />
   );
 }
@@ -276,5 +280,57 @@ describe('report — la mention du fuseau attend l’hydratation (#654)', () => 
     // `getByText` ne joint que les nœuds de texte **directs** : c'est bien le
     // paragraphe d'en-tête qui est retenu, pas la section qui le contient.
     expect(screen.getByText(/actuellement le/).textContent).toContain(`(${MENTION})`);
+  });
+});
+
+/**
+ * « Voir plus de jours », en bout de bande (#738).
+ *
+ * `states.md` étape 3 prescrit cette sortie partout où le sélecteur est rendu, et
+ * cet écran n'y échappait pas : la bande listait ses dates et s'arrêtait. Ici,
+ * l'élargissement passe par l'adresse — c'est le rendu serveur de la page qui lit
+ * le calendrier, et lui seul sait jusqu'où le contrat le laisse aller.
+ */
+describe('report — l’élargissement de la fenêtre (#738)', () => {
+  it('ouvre la même page en fenêtre élargie, sans empiler d’entrée d’historique', async () => {
+    const user = renderForm();
+
+    await user.click(screen.getByRole('button', { name: 'Voir plus de jours' }));
+
+    // `replace` et non `push` : la fenêtre étroite qu'on vient de quitter n'est
+    // pas une étape du parcours, et « Précédent » doit ramener à la liste des
+    // rendez-vous.
+    expect(replace).toHaveBeenCalledWith(WIDER_HREF);
+  });
+
+  it('ne rend plus le bouton quand la fenêtre est déjà au maximum du contrat', () => {
+    render(form(availability, null));
+
+    expect(screen.queryByRole('button', { name: 'Voir plus de jours' })).toBeNull();
+    // La bande, elle, reste rendue : c'est la sortie qui disparaît, pas le choix.
+    expect(screen.getByRole('radiogroup', { name: 'Journée' })).toBeDefined();
+  });
+
+  it('offre la sortie jusque dans l’agenda vide, où elle sert le plus', async () => {
+    // Aucune journée ouverte : `SlotPicker` rend l'état vide **à la place** du
+    // sélecteur, bande et bouton de bout de bande compris. Sans un second
+    // exemplaire ici, le seul écran qui a vraiment besoin d'élargir la fenêtre
+    // serait le seul à ne pas le proposer — `states.md` étape 3, *« Vide (aucune
+    // dispo sur toute la plage) : proposer d'élargir la plage »*.
+    const user = renderForm({ ...availability, days: [{ date: '2026-09-01', slots: [] }] });
+
+    expect(screen.getByText('Aucun créneau disponible')).toBeDefined();
+    expect(screen.queryByRole('radiogroup', { name: 'Journée' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Voir plus de jours' }));
+
+    expect(replace).toHaveBeenCalledWith(WIDER_HREF);
+  });
+
+  it('n’offre rien à élargir dans l’agenda vide d’une fenêtre déjà maximale', () => {
+    render(form({ ...availability, days: [{ date: '2026-09-01', slots: [] }] }, null));
+
+    expect(screen.getByText('Aucun créneau disponible')).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Voir plus de jours' })).toBeNull();
   });
 });

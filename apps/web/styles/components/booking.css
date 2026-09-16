@@ -31,6 +31,42 @@
   padding-inline: var(--spa-space-4);
 }
 
+/*
+ * … sauf sur l'étape « créneau », qui ne porte pas un formulaire (#738).
+ *
+ * ## Ce que 44rem coûtait là
+ *
+ * Le raisonnement ci-dessus tient pour cinq étapes sur six : ce sont des champs,
+ * et la longueur de ligne fait la lisibilité. La sixième est un calendrier. La
+ * bande de journées y listait quatorze dates dans 44rem — huit visibles à
+ * 1 280 px, le reste dans un défilement horizontal — pendant que des centaines de
+ * pixels de page restaient vides de chaque côté. `wireframes.md` dit d'ailleurs
+ * l'inverse pour cette étape-là : *« Desktop : le calendrier passe en vue
+ * semaine (colonnes de jours), plus de créneaux visibles d'un coup »*.
+ *
+ * ## Pourquoi `:has()` plutôt qu'une classe sur l'enveloppe
+ *
+ * L'enveloppe est rendue une fois pour tout le tunnel, par son layout ; l'étape
+ * affichée, elle, change à chaque geste. Poser la largeur sur l'enveloppe aurait
+ * demandé de lui faire connaître l'étape en cours, c'est-à-dire de faire
+ * remonter un état d'étape jusqu'au layout pour une question de pixels. Le
+ * sélecteur lit la même information là où elle est déjà — le même motif que
+ * `.spa-admin__content :has(> .spa-admin-table)` dans `admin/shell.css`.
+ *
+ * ## Pourquoi 60rem, et seulement au-delà de 64rem
+ *
+ * 60rem (960 px) montre la quinzaine entière sans défilement et laisse la page
+ * respirer à 1 280 px. Le seuil est posé au-dessus de cette largeur, pour que
+ * l'élargissement ne se déclenche jamais sur une fenêtre qui n'a pas de quoi le
+ * tenir : en dessous, `max-inline-size` ne fait rien de plus que la largeur
+ * disponible, et la bande défile comme avant.
+ */
+@media (min-width: 64rem) {
+  .spa-booking:has(.spa-booking__step--calendar) {
+    max-inline-size: 60rem;
+  }
+}
+
 /* --- Bandeau --------------------------------------------------------------- */
 
 .spa-booking__tenant {
