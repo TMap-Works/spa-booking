@@ -71,6 +71,7 @@ const MASSAGE: Service = {
 
 const CONFIRME: Appointment = {
   id: 'aaaaaaaa-0000-4000-8000-000000000001',
+  reference: 'RDV-8F3K-27',
   status: 'confirmed',
   client: { id: 'dddddddd-0000-4000-8000-000000000001', firstName: 'Rina', lastName: 'Andriamana' },
   staff: { id: 'staff-hasina', displayName: 'Hasina' },

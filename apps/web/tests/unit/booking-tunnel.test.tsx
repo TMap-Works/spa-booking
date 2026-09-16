@@ -69,6 +69,7 @@ function availability(slots: readonly UtcInstant[]): AvailabilityResponse {
 function rendezVous(): BookedAppointment {
   return {
     id: '55555555-5555-4555-8555-555555555555',
+    reference: 'RDV-8F3K-27',
     status: 'confirmed',
     serviceId: service.id,
     staffId: service.staff[0]?.id ?? '',

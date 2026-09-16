@@ -84,6 +84,7 @@ function appointment(overrides: {
 
   return {
     id,
+    reference: 'RDV-8F3K-27',
     status: overrides.status ?? 'confirmed',
     client: { id: `client-${id}`, ...client },
     staff: overrides.staff ?? HASINA,

@@ -45,6 +45,7 @@ const APPOINTMENT_ID = 'aaaaaaaa-0000-4000-8000-000000000001';
 function appointment(status: AppointmentStatus = 'confirmed'): Appointment {
   return {
     id: APPOINTMENT_ID,
+    reference: 'RDV-8F3K-27',
     status,
     client: { id: 'cccccccc-0000-4000-8000-000000000002', firstName: 'Rina', lastName: 'Andriamana' },
     staff: { id: 'dddddddd-0000-4000-8000-000000000003', displayName: 'Hasina' },

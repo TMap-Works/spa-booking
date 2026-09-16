@@ -151,14 +151,37 @@ describe('La rangée passe à la ligne plutôt que déborder', () => {
   });
 });
 
-describe('Le repli se coupe, lui', () => {
-  it('laisse l’identifiant brut casser n’importe où', () => {
-    assert.match(
-      rulesFor(booking, '.spa-booking__reference-fallback').join(' '),
-      /overflow-wrap\s*:\s*anywhere/,
-      '`.spa-booking__reference-fallback` ne pose plus `overflow-wrap` : le ' +
-        'repli rend une chaîne de longueur inconnue, sans espace où la couper — ' +
-        'elle déborderait du panneau, exactement comme l’UUID de l’audit (#736).',
+describe('Il n’y a plus de repli à couper', () => {
+  it('ne rend plus l’identifiant brut à la place de la référence', () => {
+    /*
+     * Le repli existait parce que la référence était **dérivée** de
+     * l'identifiant côté front (#736) : la dérivation pouvait rendre `null` sur
+     * une chaîne qui n'était pas un UUID, et l'écran affichait alors
+     * l'identifiant tel quel plutôt que rien.
+     *
+     * Depuis #796, la référence vient de l'API : `bookedAppointmentSchema` la
+     * déclare requise, et un brouillon qui ne la porte pas est écarté à la
+     * relecture — il n'arrive jamais jusqu'à cet écran. Il n'y a donc plus de
+     * cas où la référence manque, et un repli qui ne se déclenche jamais est un
+     * chemin de code que personne ne relit.
+     *
+     * Ce qui se vérifie ici est l'inverse de ce que #736 vérifiait : que le
+     * repli n'est **plus** posé. La règle `.spa-booking__reference-fallback` de
+     * `booking.css` n'a plus de prise et se retirera avec le nettoyage de la
+     * feuille.
+     */
+    const classNames = [...confirmationSource.matchAll(/className="([^"]*)"/g)].map(
+      ([, value]) => value,
+    );
+
+    assert.doesNotMatch(
+      classNames.join(' '),
+      /spa-booking__reference-fallback/,
+      'l’écran de confirmation rend de nouveau un repli sous la référence : ' +
+        'depuis #796 la référence vient de l’API et est requise par le contrat, ' +
+        'donc ce chemin ne peut plus se déclencher — et un repli qui ne se ' +
+        'déclenche jamais masque, le jour où il s’affiche, une réponse d’API ' +
+        'que le contrat aurait dû refuser.',
     );
   });
 });
@@ -169,7 +192,6 @@ describe('L’écran rend ces classes', () => {
       'spa-booking__reference"',
       'spa-booking__reference-term',
       'spa-booking__reference-code',
-      'spa-booking__reference-fallback',
     ]) {
       assert.match(
         confirmationSource,
