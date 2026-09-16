@@ -1,10 +1,8 @@
 import { MY_APPOINTMENTS_DEFAULT_LIMIT } from '@spa/shared';
-import Link from 'next/link';
 
 import { fetchMyAppointments, fetchPublicServices } from '@/lib/api-client';
 
 import { AppointmentList } from './components/appointment-list';
-import { LogoutButton } from './components/logout-button';
 import { accountPath, bookingPath, salonPath } from './paths';
 import { readAccountData } from './session';
 import { accountTenant } from './tenant';
@@ -61,6 +59,14 @@ import { accountTenant } from './tenant';
  *
  * Une seule action porte l'accent : deux boutons primaires côte à côte ne
  * hiérarchisent plus rien, et c'est le bloc « à venir » qui commande l'écran.
+ *
+ * ## Ce que cet écran ne rend plus : la navigation du compte (#747)
+ *
+ * « Modifier mes coordonnées | Se déconnecter » était rendue ici, et donc nulle
+ * part ailleurs : les coordonnées et le report n'offraient aucun moyen de fermer
+ * sa session. Ce qui appartient à l'espace et non à un écran est passé au
+ * gabarit (`layout.tsx`, `components/account-nav.tsx`). Cette page ne rend plus
+ * que ses deux moitiés — ce qui lui est propre.
  */
 
 export const dynamic = 'force-dynamic';
@@ -91,13 +97,6 @@ export default async function AccountPage({ params }: AccountPageProps) {
 
   return (
     <>
-      <nav className="spa-account__nav" aria-label="Mon compte">
-        <Link className="spa-account__nav-link" href={accountPath(tenantSlug, '/coordonnees')}>
-          Modifier mes coordonnées
-        </Link>
-        <LogoutButton tenantSlug={tenantSlug} />
-      </nav>
-
       <section className="spa-account__section" aria-labelledby="rdv-a-venir">
         <div className="spa-account__section-heading">
           <h2 className="spa-account__section-title" id="rdv-a-venir">

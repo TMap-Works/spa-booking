@@ -8,7 +8,9 @@ import {
   AccountAnnouncementProvider,
   AccountAnnouncementRegion,
 } from './components/account-announcement';
+import { AccountNav } from './components/account-nav';
 import { accountPath, bookingPath } from './paths';
+import { readAccessToken, readRefreshToken } from './session';
 import { accountTenant } from './tenant';
 
 /**
@@ -46,6 +48,43 @@ import { accountTenant } from './tenant';
  * annoncée par aucun lecteur d'écran de façon fiable — et l'annonce d'un report
  * traverse le retour vers la liste, alors qu'un état porté par la page de report
  * serait démonté avec elle. Voir `components/account-announcement.tsx`.
+ *
+ * ## … et la navigation du compte, pour la même raison (#747)
+ *
+ * « Modifier mes coordonnées | Se déconnecter » était rendue par `page.tsx`,
+ * donc par **un écran sur trois** : ni les coordonnées ni le report ne la
+ * portaient, et fermer sa session depuis l'écran de ses coordonnées demandait de
+ * revenir d'abord à la liste. Ce qui appartient à l'espace et non à un écran se
+ * pose ici — comme le rail du back-office, posé par le layout de `(admin)`.
+ *
+ * Elle n'est peinte que **s'il y a une session**, et ce n'est pas une garde :
+ * connexion et inscription partagent ce gabarit, et n'ont nulle part où
+ * naviguer — leur proposer « Se déconnecter » offrirait de fermer une session
+ * qui n'est pas ouverte. Le constat suffit donc, et il est le même que celui
+ * d'`AdminRail` : *« le rail n'est pas rendu du tout tant qu'il n'y a pas de
+ * session : c'est le layout qui en décide »*. La garde des écrans, elle, reste
+ * dans chaque page.
+ *
+ * Ce layout ne redirige pas pour autant : il lit la session pour savoir quoi
+ * dessiner, jamais pour décider d'une issue. Rediriger d'ici doublerait la
+ * décision de la page — et bouclerait sur l'écran de connexion, qui est sous ce
+ * même layout.
+ *
+ * ## La barre est posée **avant** `<main>`, et hors de lui
+ *
+ * `<main>` est le repère qui porte *le contenu de l'écran*, et rien d'autre : une
+ * navigation rendue à l'intérieur — ce que faisait `page.tsx` — s'y trouvait à
+ * tort, si bien que le geste « aller au contenu principal » d'un lecteur d'écran
+ * y atterrissait sur la barre plutôt que sur la liste. Dehors, et avant lui,
+ * l'ordre du document dit ce qu'il énonce : d'abord où aller, ensuite ce qu'on
+ * lit (HTML `main` / `navigation`, WCAG 1.3.2). C'est aussi ce que sauterait un
+ * lien d'évitement vers `#contenu` — `apps/web` n'en pose encore aucun, mais
+ * l'`id` est là pour lui et la barre n'est plus sur son chemin.
+ *
+ * Le rythme, lui, ne bouge pas : `.spa-account` et `.spa-account__main`
+ * partagent la même gouttière `--spa-space-8`, si bien que la barre garde
+ * exactement l'espacement qu'elle avait sous l'en-tête — aucune retouche de
+ * `styles/components/account.css` n'a été nécessaire.
  */
 
 export const metadata: Metadata = {
@@ -55,6 +94,17 @@ export const metadata: Metadata = {
   // trafic qui rebondit sur un écran de connexion.
   robots: { index: false, follow: false },
 };
+
+/**
+ * Ce gabarit lit un cookie de session pour savoir s'il doit peindre la barre du
+ * compte : le mettre en cache servirait la barre de la première visiteuse à
+ * quelqu'un qui n'est pas connecté — ou l'inverse (#747).
+ *
+ * `cookies()` suffirait à sortir du rendu statique ; le dire explicitement, comme
+ * le fait le layout du back-office, empêche qu'une revalidation posée un jour
+ * au-dessus rattrape la page.
+ */
+export const dynamic = 'force-dynamic';
 
 interface AccountLayoutProps {
   readonly children: ReactNode;
@@ -77,6 +127,21 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
     throw error;
   }
 
+  /**
+   * Y a-t-il une session à laquelle la barre du compte s'adresse ?
+   *
+   * La même lecture que `readAccountData` fait pour décider d'une issue, moins
+   * la décision : le cookie d'accès, ou à défaut celui de rafraîchissement — qui
+   * annonce une session que la prochaine page renouvellera sur place. Se borner
+   * au seul cookie d'accès aurait fait clignoter la barre à chaque expiration,
+   * juste avant le renouvellement qui la ramène.
+   *
+   * Aucun appel à l'API : cette barre ne dit rien du compte, seulement où aller.
+   * L'interroger ajouterait un aller-retour à chacun des cinq écrans pour deux
+   * libellés qui ne dépendent de personne.
+   */
+  const signedIn = (await readAccessToken()) !== null || (await readRefreshToken()) !== null;
+
   return (
     <AccountAnnouncementProvider>
       <div className="spa-account">
@@ -87,6 +152,7 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
             Vos rendez-vous à venir, votre historique et vos coordonnées.
           </p>
         </header>
+        {signedIn ? <AccountNav tenantSlug={tenantSlug} /> : null}
         <main className="spa-account__main" id="contenu">
           {/*
             En tête du contenu, et non au pied : ce qui vient de se passer se lit
