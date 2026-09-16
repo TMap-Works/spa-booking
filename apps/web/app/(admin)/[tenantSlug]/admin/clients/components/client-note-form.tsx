@@ -12,6 +12,7 @@ import { Notification } from '@/components/ui/notification';
 import { TextArea } from '@/components/ui/textarea';
 
 import { updateCustomerAction } from '../actions';
+import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
 
 /**
  * La note interne d'une fiche — troisième critère de #54.
@@ -53,6 +54,7 @@ interface ClientNoteFormProps {
 
 export function ClientNoteForm({ tenantSlug, customerId, internalNote }: ClientNoteFormProps) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -78,6 +80,9 @@ export function ClientNoteForm({ tenantSlug, customerId, internalNote }: ClientN
     });
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       setFailure(result.message);
       return;
     }

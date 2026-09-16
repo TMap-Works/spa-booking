@@ -2,6 +2,7 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 
 import { ApiClientError, type ApiSession } from '@/lib/api-client';
+import { accessTokenForAction, type ActionAccess } from '@/lib/session-refresh';
 
 import { accountPath, loginPath, refreshPath, sessionEndPath } from './paths';
 
@@ -87,6 +88,9 @@ export function sessionCookies(opened: ApiSession): readonly SessionCookie[] {
     maxAge: Math.max(opened.session.expiresIn - ACCESS_COOKIE_SAFETY_MARGIN_SECONDS, 1),
   };
 
+  // Un renouvellement qui a perdu une course contre un autre ne rend pas de jeton
+  // de rafraîchissement (#856) : le gagnant pose le cookie neuf, et le réécrire
+  // ici — fût-ce avec l'ancienne valeur — pourrait l'écraser.
   if (opened.refreshToken === null) {
     return [access];
   }
@@ -185,6 +189,18 @@ export async function readRefreshToken(): Promise<string | null> {
   const store = await cookies();
   const value = store.get(REFRESH_COOKIE)?.value;
   return value === undefined || value === '' ? null : value;
+}
+
+/**
+ * Le jeton d'accès d'une action serveur de l'espace client — renouvelé sur
+ * place quand le cookie a expiré (#856). Voir `accessTokenForAction`.
+ */
+export function accountActionAccess(tenantSlug: string): Promise<ActionAccess> {
+  return accessTokenForAction({
+    readAccessToken,
+    readRefreshToken,
+    write: (renewed) => writeSessionCookies(tenantSlug, renewed),
+  });
 }
 
 /**

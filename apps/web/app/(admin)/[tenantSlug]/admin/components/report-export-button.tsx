@@ -1,16 +1,16 @@
 'use client';
 
 import { ERROR_CODES } from '@spa/shared';
-import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 
-import { adminSessionRefreshPath } from '../paths';
 import {
   createReportExportAction,
   type ReportExportWindow,
 } from '../reporting/actions';
+
+import { useAdminSessionRenewal } from './use-admin-session-renewal';
 
 /**
  * L'export CSV — quatrième critère de #75, et sa seconde moitié tenue par #563.
@@ -62,7 +62,8 @@ import {
  * donc vers la route de renouvellement, qui rend la main sur la période
  * affichée, comme le planning et le sélecteur de clientes le font déjà (#48,
  * #458). Afficher « votre session a expiré » aurait été un cul-de-sac là où un
- * aller-retour suffit.
+ * aller-retour suffit. Le départ passe par le helper commun (#856), qui lit la
+ * destination dans la barre d'adresse — seule à porter la période et le filtre.
  */
 
 interface ReportExportButtonProps {
@@ -72,7 +73,7 @@ interface ReportExportButtonProps {
 }
 
 export function ReportExportButton({ tenantSlug, window: reportWindow }: ReportExportButtonProps) {
-  const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [busy, setBusy] = useState(false);
   const [downloaded, setDownloaded] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -84,18 +85,10 @@ export function ReportExportButton({ tenantSlug, window: reportWindow }: ReportE
     const result = await createReportExportAction(tenantSlug, reportWindow);
 
     if (!result.ok) {
-      if (result.code === ERROR_CODES.UNAUTHORIZED) {
-        // `replace` et non `push` : un renouvellement n'est pas une destination,
-        // et le laisser dans l'historique ferait renouveler une seconde fois au
-        // premier retour arrière. La destination est l'écran **tel qu'il est
-        // affiché**, période et filtre compris — lus de la barre d'adresse,
-        // seule à les porter tous les deux.
-        router.replace(
-          adminSessionRefreshPath(
-            tenantSlug,
-            `${globalThis.location.pathname}${globalThis.location.search}`,
-          ),
-        );
+      // La page revient telle quelle une fois la session rouverte : le bouton
+      // doit y être de nouveau utilisable.
+      if (renewIfExpired(result)) {
+        setBusy(false);
         return;
       }
 

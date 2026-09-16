@@ -26,10 +26,10 @@ import { cookies } from 'next/headers';
 
 import { loginToAccount, logoutSession, updateTenantSettings } from '@/lib/api-client';
 
-import { expired, failure, invalid, type AdminActionResult } from './action-result';
+import { failure, invalid, type AdminActionResult } from './action-result';
 import {
   clearAdminSession,
-  readAdminAccessToken,
+  adminActionAccess,
   readAdminRefreshToken,
   writeAdminSession,
 } from './session';
@@ -118,11 +118,13 @@ export async function updateTenantSettingsAction(
     return invalid(parsed.error.issues[0]?.message ?? 'Les réglages saisis sont invalides.');
   }
 
-  const accessToken = await readAdminAccessToken();
+  const access = await adminActionAccess(slug.data);
 
-  if (accessToken === null) {
-    return expired();
+  if (!access.ok) {
+    return access;
   }
+
+  const { accessToken } = access;
 
   try {
     return { ok: true, data: await updateTenantSettings(accessToken, parsed.data) };

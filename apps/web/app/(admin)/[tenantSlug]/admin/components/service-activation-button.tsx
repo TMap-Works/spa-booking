@@ -7,6 +7,7 @@ import { useState, useTransition } from 'react';
 import { Button } from '@/components/ui/button';
 
 import { updateServiceAction } from '../catalogue/actions';
+import { useAdminSessionRenewal } from './use-admin-session-renewal';
 
 /**
  * Retire une prestation du catalogue, ou l'y remet (#52, premier critère).
@@ -50,6 +51,7 @@ export function ServiceActivationButton({
   readonly service: Service;
 }) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saving, setSaving] = useState(false);
   const [refreshing, startRefresh] = useTransition();
   const [failure, setFailure] = useState<string | null>(null);
@@ -63,6 +65,10 @@ export function ServiceActivationButton({
     });
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        setSaving(false);
+        return;
+      }
       setFailure(result.message);
       setSaving(false);
       return;

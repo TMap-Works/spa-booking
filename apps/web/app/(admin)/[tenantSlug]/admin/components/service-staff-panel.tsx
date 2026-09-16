@@ -9,6 +9,7 @@ import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
 
 import { assignServiceStaffAction, removeServiceStaffAction } from '../catalogue/actions';
+import { useAdminSessionRenewal } from './use-admin-session-renewal';
 
 /**
  * Qui pratique cette prestation (#52, quatrième critère).
@@ -101,6 +102,7 @@ export function ServiceStaffPanel({
   readonly canManage?: boolean;
 }) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [choice, setChoice] = useState('');
   const [pending, setPending] = useState<string | null>(null);
   // `router.refresh()` ne remonte pas ce composant : la transition est ce qui
@@ -122,6 +124,10 @@ export function ServiceStaffPanel({
     const result = await assignServiceStaffAction(tenantSlug, serviceId, { staffId: choice });
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        setPending(null);
+        return;
+      }
       // Un 409 n'est pas une panne : quelqu'un a affecté ce praticien entre le
       // rendu de la page et le clic. On le dit, et le rafraîchissement remet la
       // liste d'aplomb.
@@ -151,6 +157,10 @@ export function ServiceStaffPanel({
     const result = await removeServiceStaffAction(tenantSlug, serviceId, staffId);
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        setPending(null);
+        return;
+      }
       setFailure(result.message);
       setPending(null);
       return;

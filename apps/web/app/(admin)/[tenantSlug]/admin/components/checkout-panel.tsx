@@ -23,6 +23,7 @@ import type { AdminActionResult } from '../action-result';
 import { openCardPaymentAction, settleInCashAction } from '../encaissement/actions';
 import { CheckoutCardForm } from './checkout-card-form';
 import { CheckoutReceipt } from './checkout-receipt';
+import { useAdminSessionRenewal } from './use-admin-session-renewal';
 
 /**
  * Le panneau d'encaissement d'un rendez-vous — deuxième et quatrième critères de
@@ -74,6 +75,7 @@ export function CheckoutPanel({
   const [phase, setPhase] = useState<Phase>({ kind: 'choix' });
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
 
   const blocker = checkoutBlocker(appointment.status, method);
 
@@ -100,6 +102,12 @@ export function CheckoutPanel({
 
       if (result.ok) {
         onSuccess(result.data);
+        return;
+      }
+
+      // Une session à renouveler n'est pas un échec d'encaissement : rien n'a
+      // été réglé, et l'écran revient tel quel une fois la session rouverte.
+      if (renewIfExpired(result)) {
         return;
       }
 

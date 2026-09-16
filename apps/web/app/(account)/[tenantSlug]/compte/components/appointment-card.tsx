@@ -12,6 +12,7 @@ import { formatDateTimeInTimeZone, formatMoney, timeZoneMention } from '@/lib/fo
 import { cancelOwnAppointmentAction } from '../actions';
 import { accountPath } from '../paths';
 import { appointmentBadge, isStillActionable } from './appointment-status';
+import { useAccountSessionRenewal } from './use-account-session-renewal';
 
 /**
  * Une ligne d'historique, avec ses deux gestes : reporter et annuler (#47,
@@ -61,6 +62,7 @@ export function AppointmentCard({
   scope,
 }: AppointmentCardProps) {
   const router = useRouter();
+  const { renewIfExpired } = useAccountSessionRenewal(tenantSlug);
   const [cancelling, setCancelling] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -108,8 +110,10 @@ export function AppointmentCard({
     const result = await cancelOwnAppointmentAction(tenantSlug, appointment.id);
 
     if (!result.ok) {
-      setError(result.message);
       setCancelling(false);
+      if (!renewIfExpired(result)) {
+        setError(result.message);
+      }
       return;
     }
 

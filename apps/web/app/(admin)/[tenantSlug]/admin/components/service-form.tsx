@@ -25,6 +25,7 @@ import { formatAmountInput, formatDuration, parseAmountInput } from '@/lib/forma
 
 import { adminServicePath } from '../paths';
 import { createServiceAction, updateServiceAction } from '../catalogue/actions';
+import { useAdminSessionRenewal } from './use-admin-session-renewal';
 
 /**
  * Création et modification d'une prestation (#52, critères 1 et 3).
@@ -138,6 +139,7 @@ export function ServiceForm({
   canManage = true,
 }: ServiceFormProps) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const schema = useMemo(() => serviceFormSchema(currency), [currency]);
@@ -216,6 +218,9 @@ export function ServiceForm({
           } satisfies UpdateServiceRequest);
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       if (result.code === ERROR_CODES.CONFLICT) {
         // Le conflit ne peut venir que du slug : c'est la seule unicité que
         // porte la table. Le message se pose donc sur le champ qui se corrige,

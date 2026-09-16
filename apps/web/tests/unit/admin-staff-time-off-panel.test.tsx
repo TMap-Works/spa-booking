@@ -19,6 +19,7 @@ import { StaffTimeOffPanel } from '@/app/(admin)/[tenantSlug]/admin/personnel/co
 const deleteStaffTimeOffAction = vi.fn();
 const createStaffTimeOffAction = vi.fn();
 const refresh = vi.fn();
+const replace = vi.fn();
 
 vi.mock('@/app/(admin)/[tenantSlug]/admin/personnel/actions', () => ({
   deleteStaffTimeOffAction: (...args: unknown[]) => deleteStaffTimeOffAction(...args),
@@ -26,7 +27,7 @@ vi.mock('@/app/(admin)/[tenantSlug]/admin/personnel/actions', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ refresh, push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ refresh, push: vi.fn(), replace }),
 }));
 
 const TANA = 'Indian/Antananarivo';
@@ -54,6 +55,7 @@ afterEach(() => {
   deleteStaffTimeOffAction.mockReset();
   createStaffTimeOffAction.mockReset();
   refresh.mockReset();
+  replace.mockReset();
 });
 
 function renderPanel(timeOff: readonly StaffTimeOff[] = [CONGE]): void {
@@ -193,8 +195,8 @@ describe('le retrait d’une absence — quand l’API refuse', () => {
     const user = userEvent.setup();
     deleteStaffTimeOffAction.mockResolvedValue({
       ok: false,
-      code: 'UNAUTHORIZED',
-      message: 'Session expirée.',
+      code: 'CONFLICT',
+      message: 'Cette absence a déjà été modifiée.',
     });
     renderPanel();
 
@@ -202,8 +204,36 @@ describe('le retrait d’une absence — quand l’API refuse', () => {
     await user.click(screen.getByRole('button', { name: 'Retirer définitivement' }));
 
     expect(screen.getByText('Absence non retirée')).toBeDefined();
-    expect(screen.getByText('Session expirée.')).toBeDefined();
+    expect(screen.getByText('Cette absence a déjà été modifiée.')).toBeDefined();
     expect(screen.getByRole('alertdialog')).toBeDefined();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it('renouvelle une session expirée au lieu de l’afficher — #856', async () => {
+    // Le message « Session expirée » était un cul-de-sac : un aller-retour par la
+    // route de renouvellement suffit, et la page revient telle quelle.
+    const user = userEvent.setup();
+    deleteStaffTimeOffAction.mockResolvedValue({
+      ok: false,
+      code: 'UNAUTHORIZED',
+      message: 'Votre session a expiré. Reconnectez-vous pour continuer.',
+    });
+    renderPanel();
+
+    await user.click(removeTrigger());
+    await user.click(screen.getByRole('button', { name: 'Retirer définitivement' }));
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledTimes(1);
+    });
+    const target = String(replace.mock.calls[0]?.[0]);
+    expect(target).toContain('/admin/session/refresh?next=');
+    // La destination est la page affichée — l'écran revient là où il était.
+    expect(target).toContain(encodeURIComponent(globalThis.location.pathname));
+
+    expect(screen.queryByText('Absence non retirée')).toBeNull();
+    expect(screen.queryByText(/Reconnectez-vous/)).toBeNull();
     expect(refresh).not.toHaveBeenCalled();
   });
 });

@@ -15,6 +15,7 @@ import type { StaffAccount } from '@/lib/admin/staff-contract';
 
 import { roleLabel } from '../../components/navigation';
 import { createStaffMemberAction } from '../actions';
+import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
 
 /**
  * Création d'une fiche praticien — #694.
@@ -115,6 +116,7 @@ interface StaffMemberFormProps {
 
 export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [userId, setUserId] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [bio, setBio] = useState('');
@@ -200,6 +202,9 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
     setSaving(false);
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       setFormError(result.message);
       return;
     }

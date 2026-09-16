@@ -12,6 +12,7 @@ import { formatDateTimeInTimeZone, timeZoneMention } from '@/lib/format';
 
 import { rescheduleOwnAppointmentAction } from '../actions';
 import { accountPath } from '../paths';
+import { useAccountSessionRenewal } from './use-account-session-renewal';
 
 /**
  * Choix d'un nouveau créneau pour un rendez-vous existant (#47, troisième
@@ -90,6 +91,7 @@ export function RescheduleForm({
   widerHref,
 }: RescheduleFormProps) {
   const router = useRouter();
+  const { renewIfExpired } = useAccountSessionRenewal(tenantSlug);
   const [chosen, setChosen] = useState<UtcInstant | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [failure, setFailure] = useState<{ title: string; message: string } | null>(null);
@@ -234,6 +236,13 @@ export function RescheduleForm({
     });
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        // Le rendez-vous n'a pas bougé : le choix reste en place, et le bouton
+        // doit être de nouveau utilisable au retour sur la page.
+        setSubmitting(false);
+        return;
+      }
+
       if (result.code === ERROR_CODES.SLOT_NO_LONGER_AVAILABLE) {
         setFailure({
           title: 'Ce créneau vient d’être pris',

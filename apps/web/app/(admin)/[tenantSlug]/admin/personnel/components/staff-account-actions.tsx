@@ -15,6 +15,7 @@ import {
   reissueStaffInvitationAction,
   setStaffAccountStatusAction,
 } from '../actions';
+import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
 
 /**
  * Ce qu'on fait d'un compte du personnel depuis la liste (#53, premier critère).
@@ -56,6 +57,7 @@ export function StaffAccountActions({
   readonly isSelf: boolean;
 }) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [role, setRole] = useState<StaffRole>(
     // La liste ne rend que le personnel ; un rôle hors des trois internes ne
     // devrait pas s'y trouver, et le repli évite un `<select>` sans valeur.
@@ -97,6 +99,9 @@ export function StaffAccountActions({
     setPending(null);
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       setNotice({ tone: 'danger', message: result.message });
       return;
     }
@@ -118,6 +123,9 @@ export function StaffAccountActions({
     setPending(null);
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       setNotice({ tone: 'danger', message: result.message });
       return;
     }
@@ -144,6 +152,9 @@ export function StaffAccountActions({
     setPending(null);
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       setNotice({ tone: 'danger', message: result.message });
       return;
     }

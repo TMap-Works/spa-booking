@@ -44,8 +44,8 @@ import { ERROR_CODES, reportExportSchema, slugSchema, type ReportExport } from '
 
 import { ApiClientError } from '@/lib/api-client';
 
-import { expired, failure, invalid, type AdminActionResult } from '../action-result';
-import { readAdminAccessToken } from '../session';
+import { failure, invalid, type AdminActionResult } from '../action-result';
+import { adminActionAccess } from '../session';
 
 /** La fenêtre demandée, telle que l'écran l'a calculée dans le fuseau du salon. */
 export interface ReportExportWindow {
@@ -78,11 +78,13 @@ export async function createReportExportAction(
     return invalid('La période à exporter est invalide.');
   }
 
-  const accessToken = await readAdminAccessToken();
+  const access = await adminActionAccess(slug.data);
 
-  if (accessToken === null) {
-    return expired();
+  if (!access.ok) {
+    return access;
   }
+
+  const { accessToken } = access;
 
   try {
     const query = new URLSearchParams({ from: parsed.from, to: parsed.to }).toString();
@@ -117,11 +119,13 @@ export async function refreshReportExportAction(
     return invalid('Export inconnu.');
   }
 
-  const accessToken = await readAdminAccessToken();
+  const access = await adminActionAccess(slug.data);
 
-  if (accessToken === null) {
-    return expired();
+  if (!access.ok) {
+    return access;
   }
+
+  const { accessToken } = access;
 
   try {
     return {

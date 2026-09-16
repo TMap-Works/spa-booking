@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 
 import { assignStaffServiceAction, removeStaffServiceAction } from '../actions';
+import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
 
 /**
  * Les prestations que ce praticien pratique (#53, quatrième critère).
@@ -58,6 +59,7 @@ export function StaffServicesPanel({
   readonly canManage?: boolean;
 }) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [pending, setPending] = useState<string | null>(null);
   const [refreshing, startRefresh] = useTransition();
   const [failure, setFailure] = useState<string | null>(null);
@@ -73,6 +75,9 @@ export function StaffServicesPanel({
     setPending(null);
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       // Un 409 n'est pas une panne : quelqu'un a posé la même affectation entre
       // le rendu de la page et le clic. On le dit, et le rafraîchissement remet
       // la liste d'aplomb.

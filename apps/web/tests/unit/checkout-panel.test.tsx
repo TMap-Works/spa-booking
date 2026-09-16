@@ -21,6 +21,7 @@ import { CheckoutPanel } from '@/app/(admin)/[tenantSlug]/admin/components/check
 
 const settleInCashAction = vi.fn();
 const openCardPaymentAction = vi.fn();
+const replace = vi.fn();
 const confirmPayment = vi.fn();
 const mount = vi.fn();
 const destroy = vi.fn();
@@ -28,6 +29,12 @@ const destroy = vi.fn();
 vi.mock('@/app/(admin)/[tenantSlug]/admin/encaissement/actions', () => ({
   settleInCashAction: (...args: unknown[]) => settleInCashAction(...args),
   openCardPaymentAction: (...args: unknown[]) => openCardPaymentAction(...args),
+}));
+
+// Le panneau part vers la route de renouvellement sur une session expirée
+// (#856) : le routeur est doublé pour observer ce départ.
+vi.mock('next/navigation', () => ({
+  useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace }),
 }));
 
 vi.mock('@/lib/admin/payment-stripe', () => ({
@@ -203,6 +210,36 @@ describe('le règlement en espèces', () => {
     const refusal = await screen.findByRole('alert');
     expect(refusal.textContent).toMatch(/déjà été encaissé/i);
     expect(refusal.textContent).not.toMatch(/Already settled/);
+  });
+
+  it('renouvelle une session expirée plutôt que de la dire — #856', async () => {
+    replace.mockReset();
+    settleInCashAction.mockResolvedValue({
+      ok: false,
+      code: 'UNAUTHORIZED',
+      message: 'Votre session a expiré. Reconnectez-vous pour continuer.',
+    });
+    renderPanel();
+
+    const button = screen.getByRole('button', { name: /en espèces/ });
+    await userEvent.click(button);
+
+    // Rien n'a été encaissé : l'écran part se renouveler et revient sur la
+    // page affichée, sans message de refus ni bouton resté grisé.
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledTimes(1);
+    });
+    expect(String(replace.mock.calls[0]?.[0])).toBe(
+      `/${SLUG}/admin/session/refresh?next=${encodeURIComponent(
+        `${globalThis.location.pathname}${globalThis.location.search}`,
+      )}`,
+    );
+    expect(screen.queryByRole('alert')).toBeNull();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /en espèces/ }).hasAttribute('disabled')).toBe(
+        false,
+      );
+    });
   });
 });
 

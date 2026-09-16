@@ -14,6 +14,7 @@ import { Notification } from '@/components/ui/notification';
 
 import { updateProfileAction } from '../actions';
 import { accountPath } from '../paths';
+import { useAccountSessionRenewal } from './use-account-session-renewal';
 
 /**
  * Modification de ses coordonnées (#47, quatrième critère).
@@ -52,6 +53,7 @@ interface ProfileFormProps {
 
 export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
   const router = useRouter();
+  const { renewIfExpired } = useAccountSessionRenewal(tenantSlug);
   const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -81,7 +83,11 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
     });
 
     if (!result.ok) {
-      setFailure(result.message);
+      // Une session à renouveler part vers la route de renouvellement, qui rend
+      // la main sur cette page ; le message n'aurait été qu'un cul-de-sac.
+      if (!renewIfExpired(result)) {
+        setFailure(result.message);
+      }
       return;
     }
 

@@ -45,9 +45,9 @@ import {
   updateServiceCategory,
 } from '@/lib/api-client';
 
-import { expired, failure, invalid, type AdminActionResult } from '../action-result';
+import { failure, invalid, type AdminActionResult } from '../action-result';
 import { adminCatalogPath, adminServiceCategoriesPath, adminServicePath } from '../paths';
-import { readAdminAccessToken } from '../session';
+import { adminActionAccess } from '../session';
 
 /**
  * Le préambule commun : slug licite, session ouverte.
@@ -65,9 +65,9 @@ async function openCall(
     return invalid('Établissement inconnu.');
   }
 
-  const accessToken = await readAdminAccessToken();
+  const access = await adminActionAccess(slug.data);
 
-  return accessToken === null ? expired() : { ok: true, accessToken, slug: slug.data };
+  return access.ok ? { ok: true, accessToken: access.accessToken, slug: slug.data } : access;
 }
 
 /**

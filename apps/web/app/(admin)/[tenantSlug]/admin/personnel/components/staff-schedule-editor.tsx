@@ -18,6 +18,7 @@ import {
 import { formatDuration } from '@/lib/format';
 
 import { setStaffScheduleAction } from '../actions';
+import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
 
 /**
  * La semaine de travail d'un praticien, saisissable (#53, deuxième critère).
@@ -113,6 +114,7 @@ export function StaffScheduleEditor({
   readonly canManage?: boolean;
 }) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [rows, setRows] = useState<readonly ScheduleRow[]>(() => rowsFromEntries(schedule.entries));
   const [saving, setSaving] = useState(false);
   const [refreshing, startRefresh] = useTransition();
@@ -170,6 +172,9 @@ export function StaffScheduleEditor({
     setSaving(false);
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       setError({ rowId: null, message: result.message });
       return;
     }

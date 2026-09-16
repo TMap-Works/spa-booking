@@ -38,8 +38,8 @@ import { slugSchema, uuidSchema } from '@spa/shared';
 import { openAppointmentPaymentIntent, settleAppointmentInCash } from '@/lib/api-client';
 import type { AppointmentPaymentIntent, PaymentTransaction } from '@/lib/admin/payment-contract';
 
-import { expired, failure, invalid, type AdminActionResult } from '../action-result';
-import { readAdminAccessToken } from '../session';
+import { failure, invalid, type AdminActionResult } from '../action-result';
+import { adminActionAccess } from '../session';
 
 /**
  * Valide les deux entrées communes aux deux actions.
@@ -84,8 +84,10 @@ export async function openCardPaymentAction(
     return invalid('Rendez-vous ou établissement inconnu.');
   }
 
-  if ((await readAdminAccessToken()) === null) {
-    return expired();
+  const access = await adminActionAccess(target.slug);
+
+  if (!access.ok) {
+    return access;
   }
 
   try {
@@ -116,11 +118,13 @@ export async function settleInCashAction(
     return invalid('Rendez-vous ou établissement inconnu.');
   }
 
-  const accessToken = await readAdminAccessToken();
+  const access = await adminActionAccess(target.slug);
 
-  if (accessToken === null) {
-    return expired();
+  if (!access.ok) {
+    return access;
   }
+
+  const { accessToken } = access;
 
   try {
     return { ok: true, data: await settleAppointmentInCash(accessToken, target.appointmentId) };
