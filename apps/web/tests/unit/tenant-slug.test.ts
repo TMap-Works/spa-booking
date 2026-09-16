@@ -1,17 +1,19 @@
 /**
- * La lecture du slug d'établissement depuis le chemin courant (#703).
+ * La lecture du slug d'établissement depuis le chemin courant (#703, #710).
  *
- * Cette fonction était écrite deux fois — frontières `not-found` du report de
- * rendez-vous (#627) et de la fiche praticien (#696) —, et une seule des deux
- * copies était éprouvée. Elle vit désormais dans `lib/tenant-slug.ts`, et c'est
- * ici que ses deux gardes sont tenues :
+ * Cette fonction était écrite trois fois, caractère pour caractère — frontières
+ * `not-found` du report de rendez-vous (#627), de la fiche praticien (#696) et
+ * de la fiche prestation (#697). Elle vit désormais dans `lib/tenant-slug.ts`,
+ * où les trois frontières la lisent — les deux premières y ont été branchées
+ * par #703, la troisième par #710 —, et c'est ici que ses deux gardes sont
+ * tenues :
  *
  * 1. premier segment absent → `null`, jamais une chaîne vide, faute de quoi le
  *    chemin reconstruit commence par `//` et sort du site ;
  * 2. `decodeURIComponent` enveloppé, faute de quoi un échappement tronqué
  *    remplace le 404 par la frontière d'erreur.
  *
- * Les suites des deux frontières n'en gardent qu'un cas chacune — celui qui
+ * Les suites des trois frontières n'en gardent qu'un cas chacune — celui qui
  * prouve qu'un `null` fait bien taire le lien. L'énumération des façons de ne
  * pas lire un slug est ici, une fois.
  */
@@ -63,7 +65,8 @@ describe('tenantSlugFromPathname', () => {
   /**
    * Seconde garde. `decodeURIComponent('%')` lève `URIError` ; non rattrapée
    * dans une frontière `not-found`, l'exception remplacerait le 404 par la
-   * frontière d'erreur — l'écran même dont #627 et #696 cherchaient à sortir.
+   * frontière d'erreur — l'écran même dont #627, #696 et #697 cherchaient à
+   * sortir.
    */
   it.each([
     ['un échappement tronqué', '/salon%/compte'],
