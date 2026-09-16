@@ -555,3 +555,66 @@ describe('l’écran terminal rend la main au tunnel (#732)', () => {
     expect(screen.getByRole('link', { name: 'Voir mes rendez-vous' })).toBeDefined();
   });
 });
+
+/**
+ * La barre de résumé, vue du tunnel (#735).
+ *
+ * Ce que `booking-summary-bar.test.tsx` ne peut pas dire : **à quelles étapes**
+ * elle apparaît. C'est le tunnel qui en décide, et c'est là qu'était l'écart
+ * relevé par l'audit — le prix disparaissait au passage de « Prestation » à
+ * « Créneau », et plus rien ne le rappelait jusqu'au récapitulatif.
+ */
+describe('la barre de résumé collante (#735)', () => {
+  /** La barre, ou `null` si l'étape courante ne la rend pas. */
+  function barre(): HTMLElement | null {
+    return screen.queryByRole('complementary', { name: 'Votre réservation' });
+  }
+
+  it('rappelle le prix et la durée dès l’étape « Créneau », où l’écran ne les portait plus', async () => {
+    const user = renderTunnel();
+
+    // Étape « Prestation » : le choix n'est pas encore retenu, et le sélecteur
+    // porte déjà durée et prix sur chacune de ses options.
+    await waitFor(() => {
+      expect(query().get('etape')).toBe('prestation');
+    });
+    expect(barre()).toBeNull();
+
+    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+
+    const creneau = barre();
+
+    expect(creneau).not.toBeNull();
+    expect(creneau?.textContent).toContain('35,00');
+    expect(creneau?.textContent).toContain('1 h');
+    // Aucun créneau retenu à cet instant : la date n'est pas encore un fait.
+    expect(creneau?.textContent).not.toContain('septembre');
+  });
+
+  it('rappelle l’horaire retenu à l’étape « Coordonnées », où rien ne le redisait', async () => {
+    const user = renderTunnel();
+
+    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+    await user.click(await screen.findByRole('button', { name: '09 h 00' }));
+
+    const coordonnees = barre();
+
+    expect(coordonnees?.textContent).toContain(service.name);
+    expect(coordonnees?.textContent).toContain('1 septembre 2026');
+    expect(coordonnees?.textContent).toContain('09:00');
+    expect(coordonnees?.textContent).toContain('35,00');
+  });
+
+  it('s’efface au récapitulatif, qui porte les mêmes faits en entier', async () => {
+    const user = renderTunnel();
+
+    await allerJusquAuRecapitulatif(user, '09 h 00');
+
+    expect(barre()).toBeNull();
+    // Et ce n'est pas une perte : le récapitulatif les redit tous, durée
+    // comprise depuis ce même ticket.
+    expect(screen.getByText('Durée')).toBeDefined();
+  });
+});

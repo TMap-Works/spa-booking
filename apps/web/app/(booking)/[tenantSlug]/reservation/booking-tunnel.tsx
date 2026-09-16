@@ -3,6 +3,7 @@
 import type { BookedAppointment, PublicService, PublicTenant, UtcInstant } from '@spa/shared';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
+import { BookingSummaryBar } from '@/components/booking/summary-bar';
 import { Notification, type NotificationTone } from '@/components/ui/notification';
 import {
   BOOKING_STEPS,
@@ -441,6 +442,33 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
 
   const zoneMention = hydrated ? timeZoneMention(tenant.timezone) : null;
 
+  /**
+   * Les deux étapes où la barre de résumé est rendue (#735).
+   *
+   * Ce sont exactement celles que l'audit de conception a relevées : « Créneau »,
+   * où l'écran ne portait que le nom de la prestation — son prix avait disparu
+   * avec l'étape précédente —, et « Coordonnées », où plus rien ne rappelait ni
+   * la prestation, ni la date, ni l'heure, ni le prix. Les trois autres sont
+   * écartées, chacune pour sa raison :
+   *
+   * - **« Prestation »**, parce que le choix n'y est pas encore *retenu* :
+   *   `ServiceStep` garde sa sélection dans son propre état jusqu'à la
+   *   soumission, si bien qu'une barre alimentée par le brouillon annoncerait la
+   *   prestation précédente pendant qu'on en désigne une autre — deux réponses
+   *   différentes à la même question, sur le même écran. Rien n'y manque pour
+   *   autant : chaque option du sélecteur porte déjà sa durée et son prix ;
+   * - **« Récapitulatif »**, parce que ces faits **y sont l'écran**. Le
+   *   wireframe garde la barre à son étape 5, mais cette étape-là est le
+   *   paiement — un conteneur Stripe, sous lequel un rappel a tout son sens.
+   *   Le tunnel du MVP n'en a pas : l'étape porte le récapitulatif entier, et
+   *   une barre collante sous lui redirait trois de ses lignes à quelques
+   *   pixels d'elles ;
+   * - **« Confirmation »**, parce que `wireframes.md` l'écarte explicitement à
+   *   l'étape 6 : « Plus d'indicateur d'étape ni de barre collante : le tunnel
+   *   est terminé ».
+   */
+  const showSummary = step === 'creneau' || step === 'coordonnees';
+
   return (
     // Ni `<main>` ni `<h1>` ici : le layout voisin porte les deux (#623). Le
     // tunnel n'est plus qu'un panneau dans une page, comme un écran de l'espace
@@ -539,6 +567,14 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
           onCancelled={onCancelled}
           onRestart={restart}
         />
+      ) : null}
+
+      {/* Dernier enfant du panneau, et c'est ce qui la rend collante : elle se
+          pose au bas du panneau tant qu'il tient dans la fenêtre, et reste au
+          bas de la fenêtre dès que l'étape déborde — l'étape « Créneau » et son
+          calendrier, d'abord. */}
+      {showSummary ? (
+        <BookingSummaryBar tenant={tenant} service={selectedService} startsAt={draft.startsAt} />
       ) : null}
     </div>
   );

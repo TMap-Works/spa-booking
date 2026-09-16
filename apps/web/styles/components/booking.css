@@ -293,6 +293,157 @@
   gap: var(--spa-space-3);
 }
 
+/* --- Barre de résumé collante ----------------------------------------------- */
+
+/*
+ * La barre qui rappelle prestation, durée, date/heure et prix (#735).
+ *
+ * `docs/design/appointments/README.md` — « Mobile d'abord » — la prescrit
+ * « collante en bas », et `wireframes.md` la dessine sous le contenu de chaque
+ * étape, « le contenu défile derrière ».
+ *
+ * ## Pourquoi `sticky` suffit, et pourquoi elle est le dernier enfant du panneau
+ *
+ * Elle n'est pas `fixed` : une barre fixée flotterait au-dessus du pied de page
+ * et du reste de la page une fois le tunnel dépassé, et il aurait fallu réserver
+ * sa hauteur en bas du document pour qu'elle ne recouvre pas la dernière ligne.
+ * Collée, elle reste dans le flux du panneau — elle tient le bas de la fenêtre
+ * tant que l'étape déborde, puis se pose au bas du panneau dès qu'il tient en
+ * entier. C'est exactement le comportement décrit, et il ne coûte aucune mesure.
+ *
+ * ## Les marges négatives
+ *
+ * Le panneau porte `padding: var(--spa-space-6)`. Sans elles, la barre
+ * s'arrêterait à 24 px des bords et laisserait voir le fond du panneau
+ * au-dessous d'elle pendant le défilement — une barre qui ne touche pas le bas
+ * ne se lit plus comme une barre. Elles la ramènent aux bords de la boîte de
+ * remplissage ; les coins bas reprennent alors le rayon du panneau, faute de
+ * quoi ses angles arrondis dépasseraient de chaque côté.
+ */
+.spa-booking__summary {
+  position: sticky;
+  inset-block-end: 0;
+  /* Au-dessus du contenu de l'étape qui défile derrière, et sous les surfaces
+   * qui recouvrent la page — modale et notification ont leurs propres jetons. */
+  z-index: var(--spa-z-sticky);
+  margin-inline: calc(var(--spa-space-6) * -1);
+  margin-block-end: calc(var(--spa-space-6) * -1);
+  padding: var(--spa-space-3) var(--spa-space-6);
+  /* Opaque, et de la teinte du panneau : c'est ce qui masque le contenu qui
+   * passe dessous. Une barre translucide rendrait les deux textes illisibles. */
+  background: var(--spa-color-surface-raised);
+  border-block-start: 1px solid var(--spa-color-border);
+  border-end-start-radius: var(--spa-radius-lg);
+  border-end-end-radius: var(--spa-radius-lg);
+}
+
+/*
+ * Les faits se suivent sur une ligne et passent à la ligne plutôt que de
+ * déborder : à 360 px, un panneau offre ~280 px utiles et les quatre couples
+ * tiennent sur deux rangées. La gouttière verticale est plus serrée que
+ * l'horizontale — deux rangées de la même barre sont plus proches l'une de
+ * l'autre que deux faits voisins ne le sont côte à côte.
+ */
+.spa-booking__summary-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2) var(--spa-space-5);
+  /* La marge par défaut d'une `<dl>`, que `base.css` ne remet pas à zéro : elle
+   * s'ajouterait au remplissage de la barre. Même correction que
+   * `.spa-booking__step > .spa-card__body` plus haut. */
+  margin: 0;
+}
+
+/*
+ * Le libellé **au-dessus** de sa valeur, là où le récapitulatif les met côte à
+ * côte : une barre horizontale n'a pas de colonne de libellés à tenir, et les
+ * empiler garde chaque couple insécable quand la barre passe à la ligne.
+ */
+.spa-booking__summary-fact {
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * Le même traitement que `.spa-booking__tenant` dans le bandeau : capitales,
+ * corps réduit, ton atténué. C'est ce qui fait lire la ligne du dessous comme la
+ * réponse et non comme une seconde étiquette.
+ */
+.spa-booking__summary-term {
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-medium);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-text-muted);
+}
+
+/* `margin: 0` d'abord : c'est lui qui retire les 40 px que le navigateur pose
+ * sur un `<dd>` — même correction que `.spa-booking__recap-value`. */
+.spa-booking__summary-value {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text);
+  overflow-wrap: anywhere;
+}
+
+/* Le prix est le fait qu'on cherche du regard : il se distingue par la graisse,
+ * et non par une taille qui désalignerait les quatre rangées. */
+.spa-booking__summary-value--price {
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+/* --- Ce qu'il faut savoir avant de confirmer -------------------------------- */
+
+/*
+ * L'encart d'annulation et de règlement du récapitulatif (#735).
+ *
+ * Calqué sur `.spa-consent` ci-dessous, et pour la même raison : ce n'est pas
+ * une ligne de plus du récapitulatif, c'est ce qu'il faut avoir lu avant de
+ * soumettre, et le fond creusé le dit avant la lecture. Calque et non partage —
+ * l'un porte une case à cocher qui garde le bouton, l'autre n'a rien à accepter,
+ * et les faire dépendre d'une même classe les ferait diverger par accident le
+ * jour où l'un des deux change.
+ */
+.spa-booking__terms {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-4);
+  background: var(--spa-color-surface-sunken);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-booking__terms-title {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+}
+
+/*
+ * Le retrait et la puce viennent de `.spa-list`, l'utilitaire du socle. Même
+ * raison qu'à `.spa-consent__list` : chaque entrée fait deux à trois lignes à
+ * 360 px, et le retrait est ce qui rattache les suivantes à la première. D'où
+ * l'espacement en `margin` plutôt qu'en `gap` — une liste mise en `flex`
+ * blockifie ses `<li>`, qui perdent leur puce.
+ */
+.spa-booking__terms-list {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  line-height: var(--spa-line-height-relaxed);
+}
+
+.spa-booking__terms-list > li + li {
+  margin-block-start: var(--spa-space-2);
+}
+
+/* Le nom de la règle en couleur pleine sur son explication atténuée : même
+ * répartition que `.spa-consent__data` et que le récapitulatif. */
+.spa-booking__terms-label {
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+}
+
 /* --- Information et consentement ------------------------------------------- */
 
 /*

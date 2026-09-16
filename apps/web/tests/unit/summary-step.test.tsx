@@ -54,6 +54,43 @@ describe('récapitulatif', () => {
 
     expect(screen.getByText('Premier disponible')).toBeDefined();
   });
+
+  /*
+   * Ce que l'audit de conception `d20260916-1` a relevé sur cet écran : trois
+   * des quatre faits qui permettent de décider — durée, conditions
+   * d'annulation, moment du paiement — n'y figuraient pas, jusqu'au bouton de
+   * confirmation inclus (#735, critère `ds:confiance`).
+   */
+  it('porte la durée de la prestation, et pas seulement son nom', () => {
+    renderSummary();
+
+    expect(screen.getByText('Durée')).toBeDefined();
+    expect(screen.getByText('1 h')).toBeDefined();
+  });
+
+  it('dit que rien ne se paie en ligne avant de proposer de confirmer', () => {
+    renderSummary();
+
+    const encart = screen.getByRole('heading', { name: 'Avant de confirmer' }).parentElement;
+
+    expect(encart?.textContent).toContain('Aucun paiement n’est demandé en ligne');
+    expect(encart?.textContent).toContain('à l’établissement');
+    // Le montant n'y est pas redit : il est dans le récapitulatif, deux lignes
+    // plus haut, et le prix ne doit être lisible qu'à un seul endroit.
+    expect(screen.getAllByText(/35,00/)).toHaveLength(1);
+  });
+
+  it('dit à quelles conditions on peut encore annuler', () => {
+    renderSummary();
+
+    const encart = screen.getByRole('heading', { name: 'Avant de confirmer' }).parentElement;
+
+    expect(encart?.textContent).toContain('Annulation sans frais');
+    // Ni frais ni préavis côté API : seul le cycle de vie refuse le passage une
+    // fois le rendez-vous honoré. La phrase ne promet donc rien de plus.
+    expect(encart?.textContent).toContain('tant que le rendez-vous n’a pas eu lieu');
+    expect(encart?.textContent).toContain('espace client');
+  });
 });
 
 describe('le bouton de soumission se désactive dès le premier clic', () => {

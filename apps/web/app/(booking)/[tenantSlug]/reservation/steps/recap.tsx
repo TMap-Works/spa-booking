@@ -2,11 +2,20 @@ import type { Money, PublicTenant, UtcInstant } from '@spa/shared';
 import type { ReactNode } from 'react';
 
 import type { ContactDraft } from '@/lib/booking/draft';
-import { formatDateTimeInTimeZone, formatMoney } from '@/lib/format';
+import { formatDateTimeInTimeZone, formatDuration, formatMoney } from '@/lib/format';
 
 interface RecapProps {
   readonly tenant: PublicTenant;
   readonly serviceName: string | null;
+  /**
+   * Durée du soin, en minutes — `null` quand elle n'est pas connue (#735).
+   *
+   * Elle manquait à la liste : la cliente ne la lisait que parce que les
+   * prestations du jeu d'essai la portent dans leur nom. C'est pourtant l'un des
+   * quatre faits sur lesquels on décide, avec le prix, la date et l'heure
+   * (`docs/design/appointments/README.md`, « Mobile d'abord »).
+   */
+  readonly durationMinutes: number | null;
   readonly staffName: string | null;
   readonly startsAt: UtcInstant;
   readonly price: Money | null;
@@ -76,12 +85,28 @@ function RecapRow({ term, valueClassName, children }: RecapRowProps) {
  * s'apprête à réserver. `.spa-booking__recap-*` rend les deux colonnes, et
  * `booking.css` dit pourquoi elles sont calquées sur la vitrine.
  */
-export function Recap({ tenant, serviceName, staffName, startsAt, price, contact }: RecapProps) {
+export function Recap({
+  tenant,
+  serviceName,
+  durationMinutes,
+  staffName,
+  startsAt,
+  price,
+  contact,
+}: RecapProps) {
   return (
     <dl className="spa-card__body spa-booking__recap">
       <RecapRow term="Établissement">{tenant.name}</RecapRow>
 
       {serviceName === null ? null : <RecapRow term="Prestation">{serviceName}</RecapRow>}
+
+      {/* Juste après la prestation, parce qu'elle la qualifie — comme le prix
+          plus bas. Omise plutôt que rendue à zéro : une durée nulle n'existe
+          pas, et l'afficher ferait passer une donnée absente pour un soin
+          instantané. */}
+      {durationMinutes === null || durationMinutes <= 0 ? null : (
+        <RecapRow term="Durée">{formatDuration(durationMinutes)}</RecapRow>
+      )}
 
       <RecapRow term="Praticien">{staffName ?? 'Premier disponible'}</RecapRow>
 
