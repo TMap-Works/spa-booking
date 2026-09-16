@@ -209,10 +209,16 @@ describe('Les cinq étapes du tunnel portent cette mise en page', () => {
   for (const name of STEP_FILES) {
     const source = readFileSync(join(stepsDir, name), 'utf8');
 
+    // Un modificateur est toléré à côté de la classe de base — `slot-step.tsx`
+    // porte `--calendar`, qui élargit l'enveloppe du tunnel sur cette seule
+    // étape (#738). Ce qui est exigé, c'est que la classe de base soit là : c'est
+    // elle qui pose le rythme vertical, et le modificateur ne fait que s'y
+    // ajouter. Le motif reste ancré sur le nom complet, faute de quoi il
+    // laisserait passer une classe qui ne ferait que commencer pareil.
     it(`${name} pose \`.spa-booking__step\` sur sa racine`, () => {
       assert.match(
         source,
-        /className="spa-booking__step"/,
+        /className="spa-booking__step(?:\s[^"]*)?"/,
         `${name} ne porte pas \`.spa-booking__step\` : son écran empile ses ` +
           'champs sans interstice, alors que les quatre autres étapes du même ' +
           'tunnel respirent (#624).',
