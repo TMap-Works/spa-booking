@@ -274,6 +274,71 @@
           </section>
 
           <!--
+            ANNULATION — le second visage du pied (#754).
+
+            Le bouton « Annuler le rendez-vous » ci-dessus n'annule rien : il
+            pose la question, et c'est cet état-là qui est montré ici. Le pied
+            perd alors ses autres issues — « Enregistrer » déplacerait le
+            rendez-vous qu'on est en train d'annuler, « Marquer non présenté » le
+            solderait. Laisser trois issues ouvertes à une question fermée est ce
+            qui fait cliquer à côté.
+
+            Le motif est une saisie, donc il est dans le corps et non dans le
+            pied : un champ posé entre deux boutons aurait poussé le pied hors du
+            tiroir. Il est facultatif — l'exiger ferait renoncer à l'annulation
+            au téléphone, donc laisserait des créneaux fantômes bloqués — et
+            c'est une note interne : la cliente ne le voit jamais.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-annulation">
+            <h2 class="spa-admin__section-title" id="titre-annulation">Édition — annulation à confirmer</h2>
+
+            <div class="spa-admin-panel">
+              <div class="spa-admin-panel__header">
+                <h3 class="spa-admin-panel__title">Rina Andriamana — 26 août</h3>
+                <span class="spa-admin-badge spa-admin-badge--confirmed">Confirmé</span>
+              </div>
+
+              <div class="spa-admin-panel__body">
+                <div class="spa-admin-appointment__cancel">
+                  <div class="spa-notification spa-notification--warning" role="alert">
+                    <span class="spa-notification__icon" aria-hidden="true">!</span>
+                    <div class="spa-notification__content">
+                      <p class="spa-notification__title">Annuler ce rendez-vous</p>
+                      <p>
+                        Annuler ce rendez-vous ? Le créneau repart immédiatement à la
+                        réservation, et l’annulation ne se défait pas.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div class="spa-field">
+                    <label class="spa-field__label" for="rdv-motif">Motif de l’annulation</label>
+                    <textarea
+                      id="rdv-motif"
+                      class="spa-field__control"
+                      rows="2"
+                      maxlength="500"
+                      aria-describedby="rdv-motif-hint"
+                    ></textarea>
+                    <p id="rdv-motif-hint" class="spa-field__hint">
+                      Facultatif, et jamais montré à la cliente : c’est une note interne au salon.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div class="spa-admin-panel__footer">
+                <button class="spa-button spa-button--quiet" type="button">
+                  <span class="spa-button__label">Garder ce rendez-vous</span>
+                </button>
+                <button class="spa-button spa-button--danger" type="button">
+                  <span class="spa-button__label">Confirmer l’annulation</span>
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!--
             ÉTAT DE CHARGEMENT — les libellés restent, les contrôles deviennent
             des squelettes à la boîte exacte du champ. Le tiroir ne saute pas
             quand les données arrivent.

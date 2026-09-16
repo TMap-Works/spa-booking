@@ -2,6 +2,7 @@
 
 import {
   ERROR_CODES,
+  REASON_MAX_LENGTH,
   type Appointment,
   type AppointmentStatus,
   type CalendarDate,
@@ -32,11 +33,15 @@ import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
 import { TextArea } from '@/components/ui/textarea';
 import {
+  DESK_CANCEL_QUESTION,
+  DESK_CANCEL_REASON_HINT,
   DESK_NO_SLOT_MESSAGE,
   DESK_SLOTS_UNREADABLE_MESSAGE,
+  deskCancelFailureMessage,
   deskFailureMessage,
   deskSlotOptions,
   deskStatusActions,
+  isCancellable,
   isReschedulable,
   isSlotConflict,
   nearestDeskSlot,
@@ -55,6 +60,7 @@ import {
 import { formatMoney } from '@/lib/format';
 
 import {
+  cancelDeskAppointmentAction,
   createDeskAppointmentAction,
   loadAppointmentNotificationsAction,
   loadDeskAvailabilityAction,
@@ -219,6 +225,13 @@ export function AppointmentPanel({
   const [saving, setSaving] = useState(false);
   const [conflict, setConflict] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
+  // L'annulation au comptoir, en deux temps — #754. Le premier clic n'annule
+  // rien : il pose la question. C'est ce que web-frontend §5 exige d'une action
+  // destructive, et c'est aussi ce qui protège du clic au téléphone, le pied du
+  // tiroir mettant « Annuler le rendez-vous » à quelques pixels de « Marquer
+  // honoré ».
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
   // Le journal d'envois du rendez-vous (#70). `null` couvre les deux cas où il
   // n'y a rien à montrer — pas encore lu, et création — que la section distingue
   // de l'échec de lecture.
@@ -468,6 +481,16 @@ export function AppointmentPanel({
   );
 
   const submit = useCallback(async (): Promise<void> => {
+    // La question d'annulation retire « Enregistrer » du pied, mais laisse le
+    // `<form>` vivant. En édition il n'y reste qu'un seul champ qui bloque la
+    // soumission implicite — la date —, et un formulaire sans bouton de
+    // soumission se soumet alors **de lui-même** sur `Entrée` : le rendez-vous
+    // qu'on est en train d'annuler partait au report, sans passer par aucune
+    // des gardes que portait le bouton disparu.
+    if (confirmingCancel) {
+      return;
+    }
+
     setSaving(true);
     // L'instant du créneau tel que le moteur l'a rendu, et non une reconversion
     // de l'heure civile : c'est sur cette chaîne que porte l'égalité exigée par
@@ -499,6 +522,7 @@ export function AppointmentPanel({
 
     refuse(result.code, result.message);
   }, [
+    confirmingCancel,
     chosen,
     day,
     time,
@@ -534,6 +558,57 @@ export function AppointmentPanel({
     },
     [editing, tenantSlug, onReload, onClose, refuse],
   );
+
+  /**
+   * L'annulation proprement dite — second temps, après la question (#754).
+   *
+   * Le motif part **élagué**, et absent quand il ne reste rien : le contrat
+   * distingue « pas de motif » de « motif vide », et trois espaces envoyés tels
+   * quels feraient compter comme motivée une annulation qui ne l'est pas
+   * (`cancel-appointment.dto.ts`). L'auteur, lui, n'est pas transmis : la route
+   * gardée inscrit `STAFF` depuis sa porte.
+   *
+   * Le planning est relu avant la fermeture : le créneau est déjà réservable
+   * quand la réponse arrive — la ligne a quitté le filtre partiel de la
+   * contrainte d'exclusion au `COMMIT` —, et le bloc doit disparaître de la
+   * grille sans qu'on ait à changer de jour.
+   */
+  const cancel = useCallback(async (): Promise<void> => {
+    if (editing === null) {
+      return;
+    }
+
+    const reason = cancelReason.trim();
+
+    setSaving(true);
+    const result = await cancelDeskAppointmentAction(
+      tenantSlug,
+      editing.id,
+      reason === '' ? {} : { reason },
+    );
+    setSaving(false);
+
+    if (result.ok) {
+      onReload();
+      onClose();
+      return;
+    }
+
+    if (result.code === ERROR_CODES.UNAUTHORIZED) {
+      onExpired();
+      return;
+    }
+
+    // La question reste posée : l'opérateur voit le refus au-dessus du motif
+    // qu'il vient d'écrire, et renvoie sans le ressaisir.
+    //
+    // Le refus ne passe **pas** par `refuse` : celui-ci lit un `CONFLICT` comme
+    // un créneau perdu et un `NOT_FOUND` comme une route absente — deux lectures
+    // que l'annulation ne supporte pas, sa route étant servie et n'ayant pas de
+    // créneau à reprendre (`deskCancelFailureMessage`).
+    setConflict(null);
+    setFailure(deskCancelFailureMessage(result.code, result.message));
+  }, [editing, cancelReason, tenantSlug, onReload, onClose, onExpired]);
 
   /**
    * Le focus entre dans le tiroir à son ouverture (#617).
@@ -697,6 +772,42 @@ export function AppointmentPanel({
           </div>
         )}
 
+        {/* La question d'annulation, et le motif qui l'accompagne — #754.
+
+            Dans le corps et non dans le pied : le motif est une saisie, et une
+            saisie posée dans un pied de deux lignes aurait poussé les boutons
+            hors du tiroir. Elle est rendue **avant** le formulaire pour être vue
+            sans défiler — c'est une question qui attend une réponse, pas un
+            champ de plus.
+
+            Hors du `<form>`, et pour la raison qui vaut déjà pour le journal
+            d'envois : l'y mettre ferait remonter ce `<textarea>` à la soumission
+            du tiroir, c'est-à-dire au report — et le motif d'une annulation n'a
+            rien à voir avec un déplacement d'heure. */}
+        {!confirmingCancel ? null : (
+          <div className="spa-admin-appointment__cancel">
+            <Notification tone="warning" title="Annuler ce rendez-vous">
+              <p>{DESK_CANCEL_QUESTION}</p>
+            </Notification>
+            <TextArea
+              // Le focus suit la question : sans cela, l'opérateur qui vient de
+              // déclencher la confirmation au clavier se retrouverait sans point
+              // d'appui, le bouton qu'il avait sous le doigt ayant disparu du
+              // pied avec le premier temps.
+              autoFocus
+              id={`${formId}-motif`}
+              label="Motif de l’annulation"
+              rows={2}
+              value={cancelReason}
+              hint={DESK_CANCEL_REASON_HINT}
+              maxLength={REASON_MAX_LENGTH}
+              onChange={(event) => {
+                setCancelReason(event.target.value);
+              }}
+            />
+          </div>
+        )}
+
         <form
           className="spa-admin-appointment"
           id={formId}
@@ -723,7 +834,17 @@ export function AppointmentPanel({
               {...(editing === null
                 ? {}
                 : {
-                    hint: 'La prestation d’un rendez-vous posé ne se change pas : son prix et sa durée sont figés à la réservation. Annulez et reposez le rendez-vous.',
+                    // L'invite ne désigne que le geste réellement offert (#754).
+                    // Elle disait « Annulez et reposez le rendez-vous » alors que
+                    // le tiroir n'avait pas d'annulation : elle renvoyait à une
+                    // action absente. Le pied en porte une depuis, et l'invite la
+                    // nomme là où elle se trouve — mais seulement tant qu'elle y
+                    // est : sur un rendez-vous soldé, annulé ou non présenté, le
+                    // cycle de vie refuse l'annulation, et l'invite retombe au
+                    // constat seul.
+                    hint: isCancellable(editing.status)
+                      ? 'La prestation d’un rendez-vous posé ne se change pas : son prix et sa durée sont figés à la réservation. Pour en changer, annulez ce rendez-vous au pied du tiroir, puis reposez-en un nouveau.'
+                      : 'La prestation d’un rendez-vous posé ne se change pas : son prix et sa durée sont figés à la réservation.',
                   })}
               onChange={(event) => {
                 setServiceId(event.target.value);
@@ -897,40 +1018,96 @@ export function AppointmentPanel({
         )}
       </div>
 
+      {/* Le pied, en deux visages — #754.
+
+          Pendant la confirmation d'annulation, il ne porte que la réponse à la
+          question posée. Les autres actions sont retirées, et c'est délibéré :
+          « Enregistrer » y déplacerait le rendez-vous qu'on est en train
+          d'annuler, et « Marquer honoré » le solderait. Laisser trois issues
+          ouvertes à une question fermée est ce qui fait cliquer à côté. */}
       <div className="spa-admin-panel__footer">
-        {editing === null
-          ? null
-          : deskStatusActions(editing.status).map((action) => (
+        {confirmingCancel ? (
+          <>
+            <Button
+              variant="quiet"
+              disabled={saving}
+              onClick={() => {
+                setConfirmingCancel(false);
+                // Le bouton qu'on vient d'activer disparaît avec la question,
+                // et le focus retomberait sur `document.body` : Échap, posé sur
+                // la région, cesserait de refermer le tiroir et la tabulation
+                // repartirait du haut de la page, derrière lui. Le focus revient
+                // donc au tiroir, comme à son ouverture (#617).
+                drawerRef.current?.focus();
+              }}
+            >
+              Garder ce rendez-vous
+            </Button>
+            <Button
+              variant="danger"
+              loading={saving}
+              loadingLabel="Annulation en cours…"
+              onClick={() => {
+                void cancel();
+              }}
+            >
+              Confirmer l’annulation
+            </Button>
+          </>
+        ) : (
+          <>
+            {/* L'annulation ouvre le pied, avant les transitions de statut : une
+                action destructive ne se range pas au milieu des gestes
+                courants, et la mettre à l'opposé d'« Enregistrer » est ce qui
+                évite de l'atteindre en visant autre chose. Elle n'apparaît que
+                sur un rendez-vous que le cycle de vie laisse encore annuler. */}
+            {editing !== null && isCancellable(editing.status) ? (
               <Button
-                key={action.status}
-                variant={action.variant}
-                loading={saving}
+                variant="danger"
+                disabled={saving}
                 onClick={() => {
-                  void mark(action.status);
+                  setConfirmingCancel(true);
                 }}
               >
-                {action.label}
+                Annuler le rendez-vous
               </Button>
-            ))}
+            ) : null}
 
-        <Button variant="neutral" onClick={onClose}>
-          Fermer
-        </Button>
+            {editing === null
+              ? null
+              : deskStatusActions(editing.status).map((action) => (
+                  <Button
+                    key={action.status}
+                    variant={action.variant}
+                    loading={saving}
+                    onClick={() => {
+                      void mark(action.status);
+                    }}
+                  >
+                    {action.label}
+                  </Button>
+                ))}
 
-        {/* Le pied est hors du `<form>` : le bouton doit désigner son formulaire
-            par `form=`, sans quoi il ne soumet rien. C'est le contrat que la
-            maquette a posé, et il est repris tel quel. */}
-        <Button
-          form={formId}
-          type="submit"
-          variant="accent"
-          loading={saving}
-          disabled={
-            !bookable || (editing === null ? client === null : !isReschedulable(editing.status))
-          }
-        >
-          {editing === null ? 'Créer le rendez-vous' : 'Enregistrer'}
-        </Button>
+            <Button variant="neutral" onClick={onClose}>
+              Fermer
+            </Button>
+
+            {/* Le pied est hors du `<form>` : le bouton doit désigner son
+                formulaire par `form=`, sans quoi il ne soumet rien. C'est le
+                contrat que la maquette a posé, et il est repris tel quel. */}
+            <Button
+              form={formId}
+              type="submit"
+              variant="accent"
+              loading={saving}
+              disabled={
+                !bookable || (editing === null ? client === null : !isReschedulable(editing.status))
+              }
+            >
+              {editing === null ? 'Créer le rendez-vous' : 'Enregistrer'}
+            </Button>
+          </>
+        )}
       </div>
     </aside>
   );

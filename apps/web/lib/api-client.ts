@@ -1407,6 +1407,62 @@ export async function changeAppointmentStatus(
   return payload;
 }
 
+/**
+ * Annule un rendez-vous depuis le back-office — `POST /appointments/:id/cancel`
+ * sous jeton (#754).
+ *
+ * ## Pourquoi une seconde fonction alors que `cancelAppointment` existe
+ *
+ * Même raison qu'entre `rescheduleAppointment` et `rescheduleDeskAppointment` :
+ * ce sont **deux routes**, sur deux surfaces, avec deux régimes de garde. La
+ * publique n'exige que la connaissance de l'identifiant et inscrit
+ * `cancelled_by = CLIENT` ; celle-ci exige un jeton au seuil `STAFF` et inscrit
+ * `cancelled_by = STAFF`. Le champ n'est pas décoratif — c'est lui qui distingue
+ * le désistement de la cliente de la fermeture décidée par le salon, et le seul
+ * chiffre que cette colonne existe pour établir (CDC §1.4). Router le comptoir
+ * vers la publique aurait fait compter chaque annulation de salon comme un
+ * désistement.
+ *
+ * L'auteur ne se passe donc **pas** dans le corps : il se déduit de la porte,
+ * côté API (`cancel-appointment.dto.ts`). Le corps ne porte que le motif, et il
+ * est facultatif des deux côtés du comptoir.
+ *
+ * La réponse est le rendez-vous **annulé** — même identifiant, statut
+ * `cancelled` —, à la différence du report qui en rend un neuf. Le créneau est
+ * déjà réservable quand elle arrive : la ligne a quitté le filtre partiel de
+ * `appointments_no_overlap` au `COMMIT`.
+ *
+ * ## `BookedAppointment`, et non `Appointment`
+ *
+ * Les deux routes d'annulation rendent la **même** forme, celle du parcours de
+ * réservation : des identifiants nus — `serviceId`, `staffId`, `clientId` — et
+ * `cancelledBy`, là où la ligne d'agenda du back-office imbrique les *summaries*
+ * de la cliente, du praticien et de la prestation. Lire cette réponse avec
+ * `appointmentSchema` échouait donc à la frontière, sur un appel que l'API avait
+ * pourtant honoré : l'annulation était écrite en base, et l'écran annonçait une
+ * erreur inattendue. Relevé par la recette de #754 — aucun test ne pouvait le
+ * voir, tous appellent des doubles.
+ *
+ * Ce n'est pas un manque de l'API : la réponse d'une écriture n'a pas à
+ * réimbriquer des noms que l'appelant vient de lire. C'est l'appelant qui doit
+ * la lire avec le bon schéma — et l'écran n'a de toute façon rien à en faire ici
+ * qu'à recharger la période.
+ */
+export async function cancelDeskAppointment(
+  accessToken: string,
+  appointmentId: string,
+  body: CancelAppointmentRequest = {},
+): Promise<BookedAppointment> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: `/appointments/${encodeURIComponent(appointmentId)}/cancel`,
+    body,
+    schema: bookedAppointmentSchema,
+    accessToken,
+  });
+  return payload;
+}
+
 // ---------------------------------------------------------------------------
 // Le personnel et ses horaires — #53
 // ---------------------------------------------------------------------------
