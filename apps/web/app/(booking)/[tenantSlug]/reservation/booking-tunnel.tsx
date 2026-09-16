@@ -1,11 +1,13 @@
 'use client';
 
 import type { BookedAppointment, PublicService, PublicTenant, UtcInstant } from '@spa/shared';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { Notification, type NotificationTone } from '@/components/ui/notification';
 import {
   BOOKING_STEPS,
+  bookingSearch,
+  draftFromSearch,
   emptyBookingDraft,
   readBookingDraft,
   reachableStep,
@@ -42,6 +44,21 @@ interface BookingTunnelProps {
 }
 
 /**
+ * L'effet qui écrit l'adresse — de disposition dans le navigateur, passif au
+ * rendu serveur.
+ *
+ * `useLayoutEffect` ne s'exécute pas au rendu serveur et React le dit sur la
+ * console, ce qu'un parcours critique qui vérifie la console ne tolère pas.
+ * Cette bascule est l'idiome habituel : le serveur n'a de toute façon ni
+ * historique ni adresse à corriger, et le choix est figé au chargement du
+ * module — jamais au fil des rendus, ce qui changerait l'ordre des hooks.
+ *
+ * Pourquoi un effet de disposition est indispensable ici : voir l'effet
+ * lui-même, plus bas.
+ */
+const useHistoryEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
+
+/**
  * Le tunnel de réservation (#45) — prestation, créneau, coordonnées,
  * récapitulatif, confirmation.
  *
@@ -51,9 +68,9 @@ interface BookingTunnelProps {
  * basculer toute la page côté client et coûterait le référencement de la
  * surface qui génère le revenu (skill web-frontend §1).
  *
- * L'état vit dans `sessionStorage` — voir `lib/booking/draft.ts` pour le
- * pourquoi. Le composant se contente de le relire au montage et de le réécrire à
- * chaque changement.
+ * L'état vit dans l'URL et dans `sessionStorage` — voir `lib/booking/draft.ts`
+ * pour le partage des rôles. Le composant relit les deux au montage, réécrit le
+ * stockage à chaque changement, et tient l'adresse à jour à chaque étape.
  */
 export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
   const [draft, setDraft] = useState<BookingDraft>(emptyBookingDraft);
@@ -72,16 +89,48 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
    * instantané — c'est ce que ce drapeau lui dit.
    */
   const [restoredAppointment, setRestoredAppointment] = useState(false);
+  /**
+   * L'étape que l'URL affiche déjà.
+   *
+   * C'est ce qui distingue « le visiteur a changé d'étape » — une entrée
+   * d'historique de plus, pour que le geste retour revienne d'une étape — de
+   * « l'étape n'a pas bougé, seuls les choix ont changé » — l'adresse se
+   * corrige sur place, sans empiler une entrée par praticien essayé.
+   */
+  const historyStepRef = useRef<BookingStep | null>(null);
+  /**
+   * Le geste retour vient de nous ramener ici (#733).
+   *
+   * Ce qui suit un `popstate` corrige l'adresse **sur place**, quelle que soit
+   * l'étape quittée : `reachableStep` a le dernier mot sur l'entrée retrouvée —
+   * un récapitulatif dont les coordonnées sont reparties, une confirmation dont
+   * le rendez-vous a disparu — et empiler une entrée pour cette correction
+   * ferait grossir la pile au moment précis où le visiteur cherche à en sortir.
+   */
+  const cameFromHistoryRef = useRef(false);
 
-  // Relecture du brouillon. `sessionStorage` n'existe pas au rendu serveur :
-  // l'état de départ est donc toujours vierge, et l'étape réelle n'apparaît
-  // qu'après le montage — d'où l'écran d'attente ci-dessous plutôt qu'un
-  // affichage de la première étape qui sauterait aussitôt à la bonne.
+  // Relecture du brouillon. Ni l'URL ni `sessionStorage` ne sont lisibles au
+  // rendu serveur : l'état de départ est donc toujours vierge, et l'étape réelle
+  // n'apparaît qu'après le montage — d'où l'écran d'attente ci-dessous plutôt
+  // qu'un affichage de la première étape qui sauterait aussitôt à la bonne.
+  //
+  // L'URL est relue **par-dessus** le stockage : c'est elle qui fait foi dès
+  // qu'elle porte l'étape, sans quoi un lien partagé rouvrirait le parcours de
+  // l'onglet plutôt que celui qu'on lui a envoyé (#733).
   useEffect(() => {
-    const stored = readBookingDraft(tenant.slug);
+    const merged = draftFromSearch(window.location.search, readBookingDraft(tenant.slug));
+    const step = reachableStep(merged);
 
-    setDraft({ ...stored, step: reachableStep(stored) });
-    setRestoredAppointment(stored.appointment !== null);
+    // Laissé vide, et non posé à l'étape : l'effet de synchronisation qui suit
+    // y inscrira l'étape **réellement affichée**, qui n'est pas toujours
+    // celle-ci — une prestation retirée du catalogue ramène l'écran à
+    // `prestation` sans que le brouillon en sache rien. Tant qu'il est vide,
+    // l'adresse se corrige sur place : l'arrivée sur la page n'est pas un
+    // changement d'étape et ne doit pas pousser une entrée d'historique que
+    // personne n'a demandée.
+    historyStepRef.current = null;
+    setDraft({ ...merged, step });
+    setRestoredAppointment(merged.appointment !== null);
     setHydrated(true);
   }, [tenant.slug]);
 
@@ -110,6 +159,144 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
       : selectedService === null
         ? 'prestation'
         : draft.step;
+
+  /**
+   * L'adresse suit l'étape affichée (#733).
+   *
+   * ## Pourquoi l'API du navigateur et non `router.push`
+   *
+   * Il ne s'agit pas de naviguer : l'écran est déjà monté, il ne change pas de
+   * route, et seule son adresse doit dire la vérité. Un `router.push` en ferait
+   * une navigation complète — remontage de la page, et sur un Server Component
+   * en `force-dynamic`, un nouveau rendu serveur avec ses appels à l'API. Next
+   * reconnaît les appels natifs et garde son routeur d'accord avec eux, pour un
+   * coût bien moindre : la recherche du nœud de cache de la nouvelle adresse.
+   *
+   * ## Pourquoi en `useLayoutEffect`, et pas en `useEffect`
+   *
+   * Ce n'est pas une préférence : c'est la condition pour que le tunnel
+   * fonctionne. Écrire l'adresse fait dispatcher à Next une action `RESTORE`,
+   * et sa file d'actions **écarte l'action serveur en vol** quand une
+   * navigation arrive par-dessus (`app-router-instance.js` :
+   * « Navigations take priority over any pending actions »,
+   * `pending.discarded = true`). La promesse de l'action écartée ne se résout
+   * jamais.
+   *
+   * Or chaque étape charge ses données dans un `useEffect` — `SlotStep`
+   * interroge les disponibilités dès son montage. En `useEffect`, l'ordre du
+   * commit est : l'enfant d'abord, le parent ensuite ; l'adresse s'écrivait donc
+   * **après** le départ de l'action, et le calendrier restait en squelette
+   * jusqu'à la revalidation d'une minute. C'est ce qui a fait échouer le
+   * parcours critique.
+   *
+   * Les effets de disposition, eux, s'exécutent **tous** avant les effets
+   * passifs, quel que soit l'étage de l'arbre. L'action `RESTORE` est donc
+   * déposée dans la file avant que l'étape ne demande ses données : celle-ci
+   * s'y range derrière, au lieu d'être écartée par elle.
+   *
+   * ## Pousser, ou corriger sur place
+   *
+   * Une entrée d'historique par **changement d'étape**, et une seule : c'est ce
+   * qui fait que le geste retour revient d'une étape au lieu de sortir du
+   * tunnel. Tout le reste — un praticien changé, un créneau repris, une lettre
+   * tapée dans le formulaire — corrige l'entrée courante : empiler une entrée
+   * par frappe rendrait le bouton « retour » inutilisable.
+   *
+   * La confirmation fait exception et **remplace** l'entrée du récapitulatif :
+   * le rendez-vous est pris, cet écran est terminal (#732), et il n'y a rien à
+   * revenir confirmer une seconde fois. Un visiteur qui insiste sur le retour
+   * ressort du tunnel, sans jamais retomber sur un récapitulatif qui
+   * réserverait deux fois.
+   *
+   * Deux autres corrections se posent sur place, et pour la même raison : la
+   * première adresse de la page — l'arrivée n'est pas un changement d'étape —,
+   * et celle que `reachableStep` rectifie après un retour arrière. Les pousser
+   * ferait grossir la pile d'historique à chaque appui sur « retour », c'est-à-dire
+   * au moment exact où le visiteur demande qu'elle diminue.
+   *
+   * ## Ce qui n'y va pas
+   *
+   * Les coordonnées et le rendez-vous obtenu restent hors de l'adresse
+   * (`lib/booking/draft.ts`). Et la prestation n'y figure que si le catalogue la
+   * résout encore : une prestation retirée entre deux visites laisserait sinon
+   * un identifiant mort dans une URL qu'on partage.
+   */
+  useHistoryEffect(() => {
+    if (!hydrated) {
+      return;
+    }
+
+    // Consommé à chaque passage, et pas seulement quand l'adresse change : le
+    // drapeau ne vaut que pour le rendu qui suit immédiatement le retour
+    // arrière.
+    const cameFromHistory = cameFromHistoryRef.current;
+
+    cameFromHistoryRef.current = false;
+
+    const search = bookingSearch(
+      { ...draft, step, serviceId: selectedService?.id ?? null },
+      window.location.search,
+    );
+    const url = `${window.location.pathname}${search}`;
+    // `null` au premier passage : l'adresse de départ n'a encore été écrite par
+    // personne, et rien ne s'est donc « changé » en arrivant.
+    const previousStep = historyStepRef.current;
+
+    historyStepRef.current = step;
+
+    if (url === `${window.location.pathname}${window.location.search}`) {
+      // Rien à corriger : c'est le cas de tous les rendus où seule la saisie a
+      // changé, et celui du retour arrière qui vient de nous amener ici.
+      return;
+    }
+
+    if (
+      cameFromHistory ||
+      previousStep === null ||
+      previousStep === step ||
+      step === 'confirmation'
+    ) {
+      window.history.replaceState(null, '', url);
+    } else {
+      window.history.pushState(null, '', url);
+    }
+  }, [hydrated, draft, step, selectedService]);
+
+  /**
+   * Le geste retour du navigateur — la navigation principale sur mobile (#733).
+   *
+   * L'étape et les choix sont relus dans l'adresse où le navigateur vient de
+   * nous ramener ; les coordonnées, elles, restent celles du brouillon en cours,
+   * puisqu'elles n'ont jamais quitté le stockage. Revenir d'une étape ne coûte
+   * donc jamais un formulaire déjà rempli.
+   *
+   * `reachableStep` reste le dernier mot : l'adresse peut avoir été bricolée,
+   * mise en favori avant un déploiement, ou décrire un état que le brouillon ne
+   * porte plus.
+   */
+  useEffect(() => {
+    if (!hydrated) {
+      return;
+    }
+
+    const onPopState = (): void => {
+      setNotice(null);
+      // L'effet de synchronisation corrigera l'adresse sur place : ce qui suit
+      // un retour arrière ne crée jamais d'entrée.
+      cameFromHistoryRef.current = true;
+      setDraft((current) => {
+        const merged = draftFromSearch(window.location.search, current);
+
+        return { ...merged, step: reachableStep(merged) };
+      });
+    };
+
+    window.addEventListener('popstate', onPopState);
+
+    return () => {
+      window.removeEventListener('popstate', onPopState);
+    };
+  }, [hydrated]);
 
   const chooseService = useCallback((serviceId: string, staffId: string | null) => {
     setNotice(null);
