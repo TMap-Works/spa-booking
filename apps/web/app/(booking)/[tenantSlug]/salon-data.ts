@@ -63,6 +63,24 @@ export function reservationPath(tenantSlug: string): string {
   return `${salonPath(tenantSlug)}/reservation`;
 }
 
+/**
+ * Chemin de l'espace client du même salon (#739).
+ *
+ * Il n'est pas gardé côté parcours public, et il n'a pas à l'être : `/compte`
+ * redirige lui-même vers la connexion quand aucune session n'est ouverte
+ * (`(account)/…/compte/session.ts`). La vitrine peut donc l'offrir à tout
+ * visiteur sans rien lire de sa session — ce qui lui éviterait au passage de
+ * rester rendue côté serveur sans cookie à consulter.
+ *
+ * Le groupe `(account)` construit le même chemin de son côté (`compte/paths.ts`)
+ * et explique pourquoi il ne partage pas ce module : il y porterait les
+ * chargements du salon pour une concaténation de chaîne. La duplication est
+ * celle du routeur, pas d'une règle métier.
+ */
+export function accountPath(tenantSlug: string): string {
+  return `${salonPath(tenantSlug)}/compte`;
+}
+
 /** Adresse absolue de la page publique — ce qu'exigent `url` et `@id` du graphe. */
 export function salonUrl(tenantSlug: string): string {
   return `${siteOrigin()}${salonPath(tenantSlug)}`;
