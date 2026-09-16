@@ -50,7 +50,14 @@
  * La preuve visuelle est au navigateur — phase de recette de #700 et de #718.
  *
  * Aucune dépendance : `node:test`, `node:assert` et `node:fs` suffisent, comme
- * pour les autres suites de style de ce dossier.
+ * pour les autres suites de style de ce dossier. Les lecteurs de règles et de
+ * déclarations viennent tous deux de `support/tokens.mjs` (#683, #713, #722) —
+ * cette suite n'en porte plus aucune copie. `mediaBlock()` lui reste propre sans
+ * dette : elle est la seule à parler des paliers, et il n'en existe pas de second
+ * exemplaire à rassembler. Le seul doublon qui subsiste ici est `withoutComments()`,
+ * repris à l'identique dans `admin-catalog-rhythm` — il neutralise des commentaires
+ * TSX, pas des règles CSS, et sortirait donc de `support/tokens.mjs` ; sa
+ * consolidation reste à ouvrir.
  */
 
 import assert from 'node:assert/strict';
@@ -60,6 +67,7 @@ import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 import {
+  declaration,
   readStyleSheet,
   rulesFor,
   stripComments,
@@ -128,12 +136,6 @@ function mediaBlock(css, condition) {
     `@media\\s*\\(${condition.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\)\\s*\\{([\\s\\S]*?)\\n\\}`,
   ).exec(css);
   return found === null ? '' : found[1];
-}
-
-/** La valeur d'une propriété dans un bloc de déclarations, ou `null`. */
-function declaration(body, property) {
-  const found = new RegExp(`(?:^|;|\\s)${property}\\s*:\\s*([^;]+)`).exec(body);
-  return found === null ? null : found[1].trim().replace(/\s+/g, ' ');
 }
 
 /** La gouttière déclarée par `selector` dans `css`, ou `null`. */
