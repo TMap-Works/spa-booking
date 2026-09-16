@@ -162,8 +162,13 @@ Six temps. `/design-audit` les orchestre ; cette section dit ce qu'ils valent.
    **racine du dépôt principal**. Le jeu d'essai est ce qui permet de voir les
    écrans pleins ; le **premier écran d'un établissement neuf**, lui, se regarde
    avant de le poser, parce que c'est ce que le gérant voit le premier jour.
-4. **La traversée.** Un agent `design-auditor` par parcours, lancés dans le même
-   message. Ils rendent des **constats**, pas des tickets.
+4. **La traversée.** Un agent `design-auditor` par parcours, lancés **l'un après
+   l'autre**. Contrairement à `/qa`, qui fait tourner `qa-frontend` et
+   `qa-backend` de front, les agents d'audit se partagent **un seul navigateur
+   Playwright** : deux agents lancés ensemble se volent la page en pleine
+   traversée. Découper le périmètre en trois ou quatre parcours et les enchaîner
+   coûte du temps, pas de la qualité. Ils rendent des **constats**, pas des
+   tickets.
 5. **Le tri.** Chaque constat est confronté à la grille, à la référence, et aux
    voisins déjà ouverts. Ce qui n'entre dans aucune case est **écarté**, et le
    dire fait partie du compte rendu.
@@ -228,7 +233,10 @@ Ce que le script garantit, et qu'il ne faut donc pas refaire :
 - le **workstream par défaut `Frontend`** — la correction d'un écart vit dans
   `apps/web`, et c'est ce label qui donne au plan la bonne empreinte de
   fichiers. `Design` ne se justifie que si le livrable est une maquette ou une
-  spécification de `docs/design/` ;
+  spécification de `docs/design/`. Et **`Backend` quand l'écart est servi par
+  l'API** : deux écrans qui affichent deux heures pour le même rendez-vous se
+  corrigent dans le repository, pas dans la page — le label doit dire où va la
+  main, sinon le plan envoie l'agent au mauvais endroit ;
 - la **déduplication** — même critère, même écran, même clé, donc même
   empreinte. Un écart déjà ouvert est commenté, pas doublé ; un écart déjà
   **corrigé** rouvre un ticket qui cite l'ancien ;
@@ -289,6 +297,14 @@ Appliquer, relancer, poursuivre. Un audit qui s'arrête sur une dépendance
 - **L'audit ne voit que ce qui est rendu.** Un écran derrière un état que le jeu
   d'essai ne produit pas — un établissement sans praticien, un paiement refusé —
   n'est pas audité tant qu'on n'a pas su l'atteindre. Le dire.
+- **L'empreinte porte le slug de l'établissement visité.** `--url
+  "/spa-lumiere/admin/clients"` et `--url "/autre-salon/admin/clients"` sont deux
+  empreintes différentes pour le même écart : `normaliser_url` sait ramener un
+  identifiant à `:id`, pas un slug de tenant à `:tenant`. Conséquence pratique :
+  **auditer toujours le même établissement d'une campagne à l'autre**, faute de
+  quoi la déduplication ne reconnaîtra rien. Le jeu d'essai de
+  `apps/api/prisma/seed.ts` sert exactement à cela — `spa-lumiere` est
+  l'établissement de référence.
 - **L'audit ne corrige rien.** Il ouvre des tickets.
   `/milestone "Design & UX"` déroule les reprises, et c'est un run séparé : on
   ne reprend pas pendant qu'on juge.

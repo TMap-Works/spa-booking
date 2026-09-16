@@ -81,9 +81,15 @@ les maquettes : **le dire**, et le redire dans le compte rendu.
 
 ## Phase 3 — La traversée
 
-Lancer les agents `design-auditor` **dans le même message** — un par parcours,
-pour qu'ils tournent de front. Deux parcours dont les écrans sont disjoints
-n'ont aucune raison de s'attendre.
+Lancer les agents `design-auditor` **l'un après l'autre**, un par parcours.
+
+Ce n'est pas la conduite de `/qa`, et la différence a une cause matérielle : là
+où `qa-frontend` et `qa-backend` tournent de front parce qu'ils n'emploient pas
+les mêmes outils, **tous les agents d'audit se partagent le même navigateur
+Playwright**. Deux lancés ensemble se volent la page au milieu d'un parcours, et
+leurs captures ne montrent plus ce qu'ils décrivent. Découper le périmètre en
+trois ou quatre parcours et les enchaîner coûte du temps de mur, pas de la
+qualité.
 
 Donner à chacun, sans le laisser deviner : le périmètre exact de la phase 1,
 l'URL de base rendue par `web_demarrer`, les identifiants du jeu d'essai, les

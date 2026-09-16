@@ -137,7 +137,14 @@ IMPACTS = {
 REFERENCE_CDC = re.compile(r"\bcdc\b[^\n]{0,24}§\s*[\d.]+", re.I)
 REFERENCE_ADR = re.compile(r"\badr\b[^\n]{0,12}\d{1,4}", re.I)
 REFERENCE_NORME = re.compile(r"\bwcag\b|\brgaa\b", re.I)
-REFERENCE_CHEMIN = re.compile(r"[\w./\\-]+\.(?:md|css|tsx|ts|mjs|txt|json)")
+# Les parenthèses et les crochets sont dans la classe parce que les routes Next
+# en portent : `app/(admin)/[tenantSlug]/…`. Sans eux, le chemin cité était
+# tronqué à son dernier segment, qui n'existe pas seul — et la garde refusait
+# une référence juste. Même raison pour `html` : les maquettes du dépôt vivent
+# dans `apps/web/mockups/` et font référence. Les deux manques ont été trouvés
+# en menant le premier audit (d20260916-1), pas en relisant le code.
+REFERENCE_CHEMIN = re.compile(
+    r"[\w./\\()\[\]-]+\.(?:md|css|tsx|ts|mjs|txt|json|html)")
 
 
 def valider(critere, module, workstream, impact):
