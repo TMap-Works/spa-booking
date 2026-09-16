@@ -12,6 +12,7 @@ import { accountPath } from '@/app/(account)/[tenantSlug]/compte/paths';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import type { ContactDraft } from '@/lib/booking/draft';
+import { appointmentReference } from '@/lib/booking/reference';
 
 import { cancelAppointmentAction } from '../actions';
 
@@ -77,11 +78,16 @@ function bookedMinutes(appointment: BookedAppointment): number | null {
  * visiteur revenu sur le tunnel dans la même session n'avait plus qu'un geste
  * disponible — et c'était le destructif.
  *
- * Les trois actions ne sont donc pas de même rang : **« Réserver à nouveau »**
- * repart d'un brouillon vierge, **« Voir mes rendez-vous »** mène à l'espace
- * client, et **« Annuler ce rendez-vous »** passe en `quiet`. Le rouge ne
- * disparaît pas pour autant : il est reporté sur « Confirmer l'annulation », qui
- * est le geste réellement destructif.
+ * Les trois actions ne sont donc pas de même rang : **« Voir mes rendez-vous »**
+ * mène à l'espace client et porte l'accent (#736), **« Réserver à nouveau »**
+ * repart d'un brouillon vierge, et **« Annuler ce rendez-vous »** passe en
+ * `quiet`. Le rouge ne disparaît pas pour autant : il est reporté sur
+ * « Confirmer l'annulation », qui est le geste réellement destructif.
+ *
+ * L'accent a changé de main avec #736, et pas par goût : cet écran ne se
+ * conserve pas — voir « Ce que cet écran n'est pas » plus bas —, si bien que la
+ * sortie qu'il doit mettre en avant est celle qui mène là où le rendez-vous vit
+ * encore une fois l'onglet fermé.
  *
  * ## L'annulation demande une confirmation
  *
@@ -97,6 +103,15 @@ function bookedMinutes(appointment: BookedAppointment): number | null {
  * survivre à un rafraîchissement, pas une adresse. Le lien d'annulation
  * **durable**, celui qui part dans l'e-mail de confirmation et fonctionne des
  * jours plus tard, relève de la chaîne de notifications et de son ticket.
+ *
+ * Il ne demande donc plus qu'on le conserve (#736). « Conservez cette page :
+ * c'est d'ici que vous pouvez annuler » promettait une permanence qu'un onglet
+ * fermé emporte — et `notification-content.ts` dit l'inverse noir sur blanc en
+ * expliquant où pointe le `{{lien_annulation}}` de l'e-mail : *« l'espace client
+ * … est la seule surface web qui annule durablement : l'écran de confirmation du
+ * tunnel de réservation le fait aussi, mais il vit dans le `sessionStorage` de
+ * l'onglet et ne survit pas à sa fermeture »*. Les deux surfaces nomment
+ * désormais la même autorité.
  *
  * Il n'est pas non plus la source de vérité sur le rendez-vous. Le brouillon est
  * écrit une fois, à la réservation, et rien ne le relit ensuite : reporté ou
@@ -123,6 +138,7 @@ export function ConfirmationStep({
   const isCancelled = appointment.status === 'cancelled';
   const staffName =
     service?.staff.find((member) => member.id === appointment.staffId)?.displayName ?? null;
+  const reference = appointmentReference(appointment.id);
 
   const cancel = async () => {
     if (cancelling) {
@@ -168,17 +184,26 @@ export function ConfirmationStep({
         </Notification>
       ) : (
         <Notification tone="success" title="Votre rendez-vous est enregistré">
-          {/* La page reste nommée comme surface d'annulation, et l'espace client
-              n'est pas promis : une réservation d'invitée crée une fiche sans
-              mot de passe, et `AuthService.register` refuse ensuite cette même
-              adresse (`EMAIL_ALREADY_REGISTERED`). Annoncer « vous le
-              retrouverez dans votre espace client » à qui n'a pas de compte,
-              tout en retirant le seul chemin qui marche, laisserait la cliente
-              sans aucune façon d'annuler dès l'onglet fermé. */}
+          {/* L'espace client est nommé, mais il reste conditionné : une
+              réservation d'invitée crée une fiche sans mot de passe, et
+              `AuthService.register` refuse ensuite cette même adresse
+              (`EMAIL_ALREADY_REGISTERED`). « Avec un compte client chez … » est
+              donc la condition que la phrase porte, et non un détail de style —
+              l'annulation de cet écran reste offerte plus bas, tant que
+              l'onglet vit, pour celles qui n'ont pas de compte.
+
+              Ce que la phrase ne dit plus, c'est de conserver la page : elle
+              promettait une permanence que la fermeture de l'onglet emporte.
+              Mais elle protégeait quelque chose — le seul recours de qui n'a pas
+              de compte —, et la dernière phrase le reprend à son compte : elle
+              nomme le bouton qui est juste au-dessous, et la durée pendant
+              laquelle il existe, au lieu de demander de garder un onglet
+              ouvert. */}
           <p>
-            Un e-mail de confirmation part vers {contact.email}. Conservez cette page : c’est d’ici
-            que vous pouvez annuler. Avec un compte client chez {tenant.name}, vous le retrouverez
-            aussi dans votre espace, d’où il peut être reporté.
+            Un e-mail de confirmation part vers {contact.email}. Avec un compte client chez{' '}
+            {tenant.name}, ce rendez-vous se retrouve dans votre espace, d’où il se reporte et
+            s’annule. Sans compte, vous pouvez encore l’annuler ci-dessous, tant que cet onglet
+            reste ouvert.
           </p>
         </Notification>
       )}
@@ -193,7 +218,35 @@ export function ConfirmationStep({
         contact={contact}
       />
 
-      <p className="spa-card__meta">Référence : {appointment.id}</p>
+      {/* « Réf. RDV-8F3K-27 », au mot près du wireframe — Étape 6. Ce n'est plus
+          une ligne de méta atténuée : la référence est l'une des rares choses de
+          cet écran qu'on recopie ou qu'on dicte, et `.spa-card__meta` la rendait
+          au ton des informations de second plan.
+
+          Le repli est le cas qui n'arrive pas : `BookedAppointment.id` est
+          validé en UUID des deux côtés. Rendre l'identifiant brut plutôt que
+          rien laisse tout de même quelque chose à citer si un brouillon bricolé
+          arrivait jusqu'ici, et il porte sa propre classe — la référence courte
+          est insécable, un UUID de trente-six caractères ne peut pas l'être à
+          360 px.
+
+          `data-appointment-id` porte l'identifiant que la ligne ne montre plus.
+          Il n'a rien de secret — c'est la donnée du brouillon de cet onglet, et
+          celle que l'annulation ci-dessous envoie déjà à l'API — mais il cesse
+          d'occuper deux lignes de l'écran. Ce qu'il permet : citer le rendez-vous
+          exactement, quand quelqu'un a de quoi le résoudre. Le parcours critique
+          s'en sert pour retrouver en API le rendez-vous qu'il vient de prendre
+          (`tests/e2e/support/scene.ts`), et c'est aussi ce qu'un support lit
+          dans l'inspecteur tant que la référence courte n'est pas reconnue
+          ailleurs que sur cet écran. */}
+      <p className="spa-booking__reference" data-appointment-id={appointment.id}>
+        <span className="spa-booking__reference-term">Réf.</span>{' '}
+        {reference === null ? (
+          <span className="spa-booking__reference-fallback">{appointment.id}</span>
+        ) : (
+          <strong className="spa-booking__reference-code">{reference}</strong>
+        )}
+      </p>
 
       {error === null ? null : (
         <Notification tone="danger" title="L’annulation n’a pas abouti">
@@ -235,16 +288,23 @@ export function ConfirmationStep({
           </>
         ) : (
           <>
-            <Button variant="accent" onClick={onRestart}>
-              Réserver à nouveau
-            </Button>
             {/* Un lien et non un bouton : c'est une navigation, elle doit
                 s'ouvrir dans un onglet et se copier comme n'importe quelle
                 adresse. Le style de bouton lui vient des classes du socle,
-                comme pour le retour de `report/not-found.tsx`. */}
-            <Link className="spa-button spa-button--neutral" href={accountPath(tenant.slug)}>
+                comme pour le retour de `report/not-found.tsx`.
+
+                Et c'est lui qui porte l'accent (#736). L'écran renvoie vers
+                l'espace client faute de pouvoir se conserver lui-même : la
+                sortie principale est donc celle qui mène là où le rendez-vous
+                vit encore demain, pas celle qui en ouvre un second. Le
+                wireframe — Étape 6 — les ordonne de la même façon,
+                « Modifier / annuler » avant « Réserver à nouveau ». */}
+            <Link className="spa-button spa-button--accent" href={accountPath(tenant.slug)}>
               Voir mes rendez-vous
             </Link>
+            <Button variant="neutral" onClick={onRestart}>
+              Réserver à nouveau
+            </Button>
             {isCancelled ? null : (
               <Button
                 variant="quiet"

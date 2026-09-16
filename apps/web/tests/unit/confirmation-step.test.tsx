@@ -2,7 +2,7 @@
  * L'écran terminal du tunnel — ce qui en sort, et ce qu'il a le droit d'affirmer
  * (#732).
  *
- * Deux choses lui étaient reprochées par l'audit de conception `d20260916-1`, et
+ * Trois choses lui étaient reprochées par l'audit de conception `d20260916-1`, et
  * la suite les tient séparément :
  *
  * - **il ne sortait nulle part.** La seule action offerte était « Annuler ce
@@ -11,7 +11,10 @@
  *   rendez-vous là où il se modifie ;
  * - **il affirmait un état qu'il ne relit pas.** Le brouillon est écrit une fois,
  *   à la réservation ; reporté ou annulé depuis l'espace client, le rendez-vous
- *   restait annoncé « enregistré » à son ancien horaire.
+ *   restait annoncé « enregistré » à son ancien horaire ;
+ * - **sa preuve de réservation ne se lisait pas** (#736). Un UUID de trente-six
+ *   caractères en gris atténué, et le conseil de conserver une page qui ne
+ *   survit pas à son onglet.
  */
 
 import type { BookedAppointment } from '@spa/shared';
@@ -53,7 +56,7 @@ function renderConfirmation(
   const onRestart = vi.fn();
   const onCancelled = vi.fn();
 
-  render(
+  const { container } = render(
     <ConfirmationStep
       tenant={tenant}
       service={service}
@@ -69,7 +72,7 @@ function renderConfirmation(
     />,
   );
 
-  return { onRestart, onCancelled, user: userEvent.setup() };
+  return { container, onRestart, onCancelled, user: userEvent.setup() };
 }
 
 afterEach(() => {
@@ -96,17 +99,27 @@ describe('l’écran terminal est une sortie', () => {
     expect(lien.getAttribute('href')).toBe('/maison-lotus/compte');
   });
 
+  it('donne l’accent au renvoi vers l’espace client, et non à la reprise (#736)', () => {
+    renderConfirmation();
+
+    // L'écran ne se conserve pas — il vit dans le `sessionStorage` de l'onglet.
+    // La sortie qu'il met en avant est donc celle qui mène là où le rendez-vous
+    // vit encore une fois l'onglet fermé, et non celle qui en ouvre un second.
+    expect(screen.getByRole('link', { name: 'Voir mes rendez-vous' }).className).toContain(
+      'spa-button--accent',
+    );
+    expect(screen.getByRole('button', { name: 'Réserver à nouveau' }).className).toContain(
+      'spa-button--neutral',
+    );
+  });
+
   it('range l’annulation en action secondaire, le rouge restant au geste destructif', async () => {
     const { user } = renderConfirmation();
 
     const annuler = screen.getByRole('button', { name: 'Annuler ce rendez-vous' });
 
-    // L'entrée dans l'annulation n'est plus l'action mise en avant de l'écran :
-    // c'est « Réserver à nouveau » qui porte l'accent.
+    // L'entrée dans l'annulation n'est pas l'action mise en avant de l'écran.
     expect(annuler.className).toContain('spa-button--quiet');
-    expect(
-      screen.getByRole('button', { name: 'Réserver à nouveau' }).className,
-    ).toContain('spa-button--accent');
 
     await user.click(annuler);
 
@@ -178,6 +191,76 @@ describe('ce que l’écran a le droit d’affirmer', () => {
     renderConfirmation({ restored: true, cancelled: true });
 
     expect(screen.getByText('Votre rendez-vous est annulé')).toBeDefined();
+  });
+});
+
+/**
+ * La preuve de réservation se lit et se dicte (#736).
+ *
+ * Troisième reproche du même audit : l'écran rendait « Référence :
+ * 8425dc59-e63d-4ff5-b679-5714157cb046 », en gris atténué, sur deux lignes à
+ * 360 px — et conseillait de conserver une page qui ne survit pas à son onglet.
+ */
+describe('la référence du rendez-vous', () => {
+  it('est la référence courte du wireframe, et non l’identifiant', () => {
+    renderConfirmation();
+
+    // `docs/design/appointments/wireframes.md` — Étape 6 : « Réf. RDV-8F3K-27 ».
+    expect(screen.getByText('Réf.')).toBeDefined();
+    expect(screen.getByText('RDV-RQWJ-77')).toBeDefined();
+    expect(screen.queryByText(/55555555-5555-4555-8555-555555555555/)).toBeNull();
+  });
+
+  it('garde l’identifiant en attribut, puisque la ligne ne le montre plus', () => {
+    const { container } = renderConfirmation();
+
+    // Rien de secret : c'est la donnée du brouillon de cet onglet, et celle que
+    // l'annulation envoie déjà à l'API. Mais c'est aussi ce dont le parcours
+    // critique se sert pour retrouver en API le rendez-vous qu'il vient de
+    // prendre (`tests/e2e/support/scene.ts`) — aucune route ne sait résoudre la
+    // référence courte.
+    expect(
+      container.querySelector('[data-appointment-id]')?.getAttribute('data-appointment-id'),
+    ).toBe('55555555-5555-4555-8555-555555555555');
+  });
+
+  it('reste affichée une fois le rendez-vous annulé', () => {
+    // C'est la preuve de ce qui a eu lieu : elle vaut aussi pour réclamer une
+    // annulation qu'on conteste.
+    renderConfirmation({ cancelled: true });
+
+    expect(screen.getByText('RDV-RQWJ-77')).toBeDefined();
+  });
+});
+
+describe('ce que l’écran demande de faire de lui', () => {
+  it('ne demande plus de conserver la page, et renvoie à l’espace client', () => {
+    renderConfirmation();
+
+    const message = screen.getByText('Votre rendez-vous est enregistré').parentElement?.textContent;
+
+    // « Conservez cette page : c'est d'ici que vous pouvez annuler » promettait
+    // une permanence que la fermeture de l'onglet emporte —
+    // `notification-content.ts` le dit lui-même en expliquant pourquoi le
+    // `{{lien_annulation}}` de l'e-mail pointe l'espace client et pas cet écran.
+    expect(message).not.toContain('Conservez cette page');
+    expect(message).toContain('votre espace');
+    // La condition reste dite : une réservation d'invitée crée une fiche sans
+    // mot de passe, et l'espace client n'est pas promis à qui n'a pas de compte.
+    expect(message).toContain('compte client');
+  });
+
+  it('garde à qui n’a pas de compte le recours que « Conservez cette page » protégeait', () => {
+    renderConfirmation();
+
+    const message = screen.getByText('Votre rendez-vous est enregistré').parentElement?.textContent;
+
+    // Retirer la phrase sans rien mettre à la place aurait laissé une cliente
+    // sans compte devant un renvoi qui l'envoie sur un mur de connexion, sans
+    // qu'on lui ait dit que le bouton d'annulation est juste au-dessous.
+    expect(message).toContain('Sans compte');
+    expect(message).toContain('tant que cet onglet reste ouvert');
+    expect(screen.getByRole('button', { name: 'Annuler ce rendez-vous' })).toBeDefined();
   });
 });
 

@@ -185,15 +185,26 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
     await expect(confirmation).toBeVisible({ timeout: 20_000 });
     await expect(page.getByText('Votre rendez-vous est enregistré')).toBeVisible();
 
-    const reference = confirmation.locator('p.spa-card__meta', { hasText: 'Référence :' });
+    // Ce que la cliente lit : la référence courte du wireframe — Étape 6,
+    // « Réf. RDV-8F3K-27 » (#736). L'écran rendait l'identifiant tel quel
+    // jusque-là, et c'est de cette ligne que la scène le relevait.
+    const reference = confirmation.locator('p.spa-booking__reference');
     await expect(reference).toBeVisible();
-    const texte = (await reference.innerText()).trim();
 
-    const identifiant = texte.replace(/^Référence\s*:\s*/u, '').trim();
+    const code = (await reference.locator('.spa-booking__reference-code').innerText()).trim();
+    expect(code, `La référence affichée (« ${code} ») n'a pas la forme du wireframe.`).toMatch(
+      /^RDV-[0-9A-Z]{4}-[0-9]{2}$/u,
+    );
+
+    // Ce dont la suite du parcours a besoin : l'identifiant, que la ligne porte
+    // en attribut depuis qu'elle ne le montre plus. Les appels d'API du
+    // comptoir — retrouver, confirmer, encaisser — travaillent sur lui, pas sur
+    // la référence courte, qu'aucune route ne sait résoudre.
+    const identifiant = (await reference.getAttribute('data-appointment-id'))?.trim() ?? '';
     expect(
       identifiant,
-      `La référence affichée (« ${texte} ») ne porte pas d'identifiant exploitable.`,
-    ).toMatch(/^[0-9a-f-]{36}$/i);
+      "La ligne de référence ne porte pas d'identifiant exploitable en `data-appointment-id`.",
+    ).toMatch(/^[0-9a-f-]{36}$/iu);
 
     return { identifiant };
   });

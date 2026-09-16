@@ -264,6 +264,65 @@
 }
 
 /*
+ * La référence courte du rendez-vous — « Réf. RDV-8F3K-27 » (#736).
+ *
+ * L'écran de confirmation rendait l'identifiant tel quel, sous
+ * `.spa-card__meta` : trente-six caractères au ton des informations de second
+ * plan, repliés sur deux lignes à 360 px. C'est pourtant l'une des rares choses
+ * de cet écran qu'on recopie ou qu'on dicte.
+ *
+ * Trois décisions, et rien d'autre :
+ *
+ * 1. **le code ne se coupe pas.** `white-space: nowrap` sur lui seul — c'est le
+ *    défaut corrigé. Onze caractères en chasse fixe à 16 px tiennent en ~110 px,
+ *    là où un panneau de tunnel en offre ~280 à 360 px : la rangée passe à la
+ *    ligne sous son libellé bien avant que le code ait à se couper, et le
+ *    `flex-wrap` est là pour ça ;
+ * 2. **la chasse est fixe.** `0` et `O` ne cohabitent pas dans l'alphabet retenu
+ *    (`lib/booking/reference.ts`), mais une chasse proportionnelle resserre les
+ *    groupes au point qu'on perd le compte des caractères en les dictant ;
+ * 3. **la couleur est pleine, le libellé seul reste atténué** — même partage
+ *    qu'entre `.spa-booking__recap-term` et sa valeur, et pour la même raison :
+ *    c'est ce qui distingue une étiquette de ce qu'elle étiquette.
+ *
+ * Le corps reste `md` et non `lg` : `lg` + `semibold` est ce que porte le prix
+ * (`.spa-card__price`), et deux valeurs au même poids dans la même carte ne se
+ * classent plus.
+ */
+.spa-booking__reference {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--spa-space-1) var(--spa-space-2);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-booking__reference-term {
+  color: var(--spa-color-text-muted);
+}
+
+.spa-booking__reference-code {
+  font-family: var(--spa-font-mono);
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  color: var(--spa-color-text);
+  white-space: nowrap;
+}
+
+/*
+ * Le repli, quand l'identifiant n'a pas la forme d'un UUID et qu'aucune
+ * référence ne s'en dérive. Il porte l'exact contraire du code : une chaîne de
+ * longueur inconnue doit pouvoir se couper n'importe où plutôt que déborder du
+ * panneau — même déclaration que `.spa-booking__recap-value`, pour le même
+ * motif.
+ */
+.spa-booking__reference-fallback {
+  color: var(--spa-color-text);
+  overflow-wrap: anywhere;
+}
+
+/*
  * La paire de boutons qui termine une étape — « Corriger mes coordonnées » et
  * « Confirmer la réservation », « Confirmer l'annulation » et « Garder mon
  * rendez-vous ».
