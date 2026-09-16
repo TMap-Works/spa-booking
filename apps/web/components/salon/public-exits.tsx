@@ -1,0 +1,96 @@
+import Link from 'next/link';
+
+/**
+ * Les **sorties** d'un écran du parcours public (#739).
+ *
+ * ## Ce qu'elle répare
+ *
+ * La vitrine d'un établissement n'avait qu'un seul lien sortant, « Prendre
+ * rendez-vous ». Une cliente déjà inscrite qui arrivait sur `/{slug}` ne pouvait
+ * atteindre son espace qu'en connaissant l'URL, ou en entrant d'abord dans le
+ * tunnel — dont le pied de page, lui, portait le lien. Or le compte client avec
+ * historique est dans le périmètre MVP (CDC §1.4), et la porte d'entrée publique
+ * de l'établissement doit y mener comme elle mène à la réservation.
+ *
+ * ## Pourquoi un composant partagé plutôt qu'un lien de plus
+ *
+ * Trois écrans du parcours client nomment déjà les mêmes destinations — la
+ * vitrine, le tunnel, l'espace client. Les laisser écrire chacun leur libellé,
+ * c'est ce qui produit « Mes rendez-vous » ici et « Mon compte » là pour la même
+ * page. Les libellés sont donc tenus ici, une fois, et une destination
+ * s'attrape par sa clé.
+ *
+ * Les **chemins**, eux, restent à l'appelant : les composants de ce dossier ne
+ * connaissent pas l'arborescence des routes, c'est la page qui la tient
+ * (`salon-data.ts`). Même règle que `SalonHeader` et son `reservationHref`.
+ *
+ * ## Server Component
+ *
+ * Rien ici n'a d'état ni d'écouteur : ce sont des `<Link>`. Sur la vitrine, ce
+ * bandeau précède le LCP — un `"use client"` le ferait rendre deux fois pour
+ * deux ancres (skill web-frontend §1).
+ */
+
+/** Les destinations que le parcours public sait nommer. */
+export type PublicExitKey = 'vitrine' | 'reservation' | 'compte';
+
+/**
+ * Le libellé de chaque destination — **source unique**.
+ *
+ * « Mes rendez-vous » plutôt que « Se connecter » : `/{slug}/compte` redirige de
+ * lui-même vers la connexion quand aucune session n'est ouverte
+ * (`compte/session.ts`). Un seul libellé sert donc la cliente inscrite et celle
+ * qui ne l'est pas, et il dit ce qu'elle vient chercher plutôt que la formalité
+ * qu'il faut traverser pour l'obtenir.
+ *
+ * Exporté parce que la destination « réservation » est aussi nommée hors d'une
+ * barre de sorties — l'appel à l'action de `SalonHeader` est un bouton, pas un
+ * lien de navigation, mais il désigne la même page. Le laisser réécrire la
+ * chaîne, c'est exactement ce que ce registre existe pour empêcher.
+ */
+export const PUBLIC_EXIT_LABELS: Readonly<Record<PublicExitKey, string>> = {
+  vitrine: 'Voir toutes les prestations',
+  reservation: 'Prendre rendez-vous',
+  compte: 'Mes rendez-vous',
+};
+
+export interface PublicExit {
+  readonly key: PublicExitKey;
+  /** Chemin construit par l'appelant, qui seul connaît les routes. */
+  readonly href: string;
+}
+
+interface PublicExitsProps {
+  readonly exits: readonly PublicExit[];
+  /**
+   * `header` pose la barre au-dessus du contenu, `footer` en dessous.
+   *
+   * L'élément rendu suit : un `<nav>` en tête — c'est une navigation, et un
+   * lecteur d'écran doit pouvoir l'atteindre par sa liste de repères — et un
+   * `<footer>` en pied, où le même jeu de liens n'est plus qu'un pied de page.
+   */
+  readonly variant: 'header' | 'footer';
+}
+
+export function PublicExits({ exits, variant }: PublicExitsProps) {
+  if (exits.length === 0) {
+    return null;
+  }
+
+  const className = `spa-public-exits spa-public-exits--${variant}`;
+  const links = exits.map((exit) => (
+    <Link className="spa-public-exits__link" key={exit.key} href={exit.href}>
+      {PUBLIC_EXIT_LABELS[exit.key]}
+    </Link>
+  ));
+
+  if (variant === 'footer') {
+    return <footer className={className}>{links}</footer>;
+  }
+
+  return (
+    <nav className={className} aria-label="Espace client">
+      {links}
+    </nav>
+  );
+}
