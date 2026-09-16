@@ -17,6 +17,27 @@ export function accountPath(tenantSlug: string, suffix = ''): string {
   return `/${encodeURIComponent(tenantSlug)}/compte${suffix}`;
 }
 
+/**
+ * La vitrine publique de l'établissement — son catalogue et ses tarifs.
+ *
+ * ## Pourquoi l'espace client construit ces deux chemins lui-même
+ *
+ * Le groupe `(booking)` en expose déjà des jumeaux (`salon-data.ts`), mais ce
+ * module-là porte aussi les **chargements** du salon : l'importer ferait entrer
+ * `cache()` et les appels API du tunnel dans le graphe de l'espace client pour
+ * deux concaténations de chaîne. Ces chemins sont par ailleurs des URL publiques
+ * stables, décrites par la structure de `app/` — la duplication est celle du
+ * routeur, pas d'une règle métier.
+ */
+export function salonPath(tenantSlug: string): string {
+  return `/${encodeURIComponent(tenantSlug)}`;
+}
+
+/** Le tunnel de réservation de l'établissement — la sortie de l'espace client. */
+export function bookingPath(tenantSlug: string): string {
+  return `${salonPath(tenantSlug)}/reservation`;
+}
+
 /** L'écran de connexion, éventuellement avec le motif qui y renvoie. */
 export function loginPath(tenantSlug: string, motif?: 'session-expiree'): string {
   return accountPath(tenantSlug, motif === undefined ? '/connexion' : `/connexion?motif=${motif}`);

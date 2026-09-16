@@ -5,7 +5,7 @@ import { fetchMyAppointments, fetchPublicServices } from '@/lib/api-client';
 
 import { AppointmentList } from './components/appointment-list';
 import { LogoutButton } from './components/logout-button';
-import { accountPath } from './paths';
+import { accountPath, bookingPath, salonPath } from './paths';
 import { readAccountData } from './session';
 import { accountTenant } from './tenant';
 
@@ -42,6 +42,25 @@ import { accountTenant } from './tenant';
  * contre « archivé », c'est elle qui est écrite — en titre pour la seconde
  * moitié, et en légende pour les deux, afin qu'une date future sous
  * « Historique » se lise comme une règle et non comme un bug.
+ *
+ * ## Les deux vides de la première visite portent chacun leur sortie (#745)
+ *
+ * Un compte créé à l'instant affiche les deux moitiés vides à la fois, et c'est
+ * le seul moment où cet écran n'a rien à montrer. `states.md` § « Règles
+ * générales » veut alors « une explication **et au moins une action** » : les
+ * deux phrases étaient là, aucune action ne l'était — à 360 px le seul chemin
+ * était un lien de pied de page situé **sous** les deux blocs.
+ *
+ * Les deux sorties sont distinctes à dessein, plutôt que deux exemplaires du
+ * même bouton empilés :
+ *
+ * | Moitié vide | Sortie | Pourquoi celle-là |
+ * |---|---|---|
+ * | Rendez-vous à venir | **Prendre rendez-vous** → tunnel | l'action que la phrase appelle déjà ; c'est la sortie principale de l'écran, donc l'accent |
+ * | Historique | Découvrir les prestations → vitrine | on n'archive rien sans avoir d'abord choisi un soin ; second rôle, donc `neutral` |
+ *
+ * Une seule action porte l'accent : deux boutons primaires côte à côte ne
+ * hiérarchisent plus rien, et c'est le bloc « à venir » qui commande l'écran.
  */
 
 export const dynamic = 'force-dynamic';
@@ -96,6 +115,11 @@ export default async function AccountPage({ params }: AccountPageProps) {
           scope="upcoming"
           emptyTitle="Aucun rendez-vous à venir"
           emptyDescription="Choisissez une prestation et un créneau pour réserver votre prochaine visite."
+          emptyAction={{
+            href: bookingPath(tenantSlug),
+            label: 'Prendre rendez-vous',
+            variant: 'accent',
+          }}
         />
       </section>
 
@@ -123,6 +147,16 @@ export default async function AccountPage({ params }: AccountPageProps) {
           // cette moitié sans qu'aucune visite ait eu lieu. Le déclencheur est la
           // sortie de l'autre moitié, et c'est lui qui est écrit.
           emptyDescription="Il se remplira dès qu’un de vos rendez-vous quittera la liste « Rendez-vous à venir »."
+          // La vitrine et non le tunnel : l'historique se remplit d'un
+          // rendez-vous, et un rendez-vous commence par le choix d'un soin. Le
+          // catalogue et ses tarifs sont là, et le bouton « Réserver » de la
+          // vitrine rejoint le tunnel — la sortie est réelle sans répéter mot
+          // pour mot le bouton primaire posé juste au-dessus.
+          emptyAction={{
+            href: salonPath(tenantSlug),
+            label: 'Découvrir les prestations',
+            variant: 'neutral',
+          }}
         />
       </section>
     </>
