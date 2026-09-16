@@ -20,6 +20,7 @@ import { TextArea } from '@/components/ui/textarea';
 
 import { createServiceCategoryAction, updateServiceCategoryAction } from '../catalogue/actions';
 import { CatalogStatusBadge } from './catalog-status-badge';
+import { useAdminSessionRenewal } from './use-admin-session-renewal';
 
 /**
  * Rubriques du catalogue — création, renommage, activation (#52, deuxième critère).
@@ -124,6 +125,7 @@ function CategoryForm({
   readonly onDone: () => void;
 }) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [failure, setFailure] = useState<string | null>(null);
   const suffix = category?.id ?? 'nouvelle';
 
@@ -162,6 +164,9 @@ function CategoryForm({
           });
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       if (result.code === ERROR_CODES.CONFLICT) {
         setError('slug', { message: 'une autre rubrique porte déjà cette adresse.' });
         return;
@@ -250,6 +255,7 @@ function CategoryActivationButton({
   readonly category: ServiceCategory;
 }) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saving, setSaving] = useState(false);
   const [refreshing, startRefresh] = useTransition();
   const [failure, setFailure] = useState<string | null>(null);
@@ -263,6 +269,10 @@ function CategoryActivationButton({
     });
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        setSaving(false);
+        return;
+      }
       setFailure(result.message);
       setSaving(false);
       return;

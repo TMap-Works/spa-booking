@@ -15,6 +15,7 @@ import {
 } from '@/lib/admin/staff-time-off';
 
 import { createStaffTimeOffAction, deleteStaffTimeOffAction } from '../actions';
+import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
 
 /**
  * Plages bloquées et congés d'un praticien (#53, troisième critère).
@@ -98,6 +99,7 @@ export function StaffTimeOffPanel({
   readonly canManage?: boolean;
 }) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const confirmTitleId = useId();
   /** Où le focus atterrit quand la ligne qui le portait vient d'être retirée. */
   const headingRef = useRef<HTMLHeadingElement>(null);
@@ -200,6 +202,9 @@ export function StaffTimeOffPanel({
       const result = await createStaffTimeOffAction(tenantSlug, validation.request);
 
       if (!result.ok) {
+        if (renewIfExpired(result)) {
+          return;
+        }
         setError({ field: null, message: result.message, title: 'Absence non enregistrée' });
         return;
       }
@@ -228,6 +233,9 @@ export function StaffTimeOffPanel({
       const result = await deleteStaffTimeOffAction(tenantSlug, staffId, timeOffId);
 
       if (!result.ok) {
+        if (renewIfExpired(result)) {
+          return;
+        }
         setError({ field: null, message: result.message, title: 'Absence non retirée' });
         return;
       }

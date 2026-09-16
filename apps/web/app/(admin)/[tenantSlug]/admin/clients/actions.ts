@@ -38,8 +38,8 @@ import { revalidatePath } from 'next/cache';
 
 import { updateCustomer } from '@/lib/api-client';
 
-import { expired, failure, invalid, type AdminActionResult } from '../action-result';
-import { readAdminAccessToken } from '../session';
+import { failure, invalid, type AdminActionResult } from '../action-result';
+import { adminActionAccess } from '../session';
 import { adminClientsPath } from './paths';
 
 /**
@@ -60,9 +60,9 @@ async function openCall(
     return invalid('Établissement inconnu.');
   }
 
-  const accessToken = await readAdminAccessToken();
+  const access = await adminActionAccess(slug.data);
 
-  return accessToken === null ? expired() : { ok: true, accessToken, slug: slug.data };
+  return access.ok ? { ok: true, accessToken: access.accessToken, slug: slug.data } : access;
 }
 
 /**

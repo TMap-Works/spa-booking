@@ -1,7 +1,9 @@
 import { cookies } from 'next/headers';
 
 import type { ApiSession } from '@/lib/api-client';
+import { accessTokenForAction } from '@/lib/session-refresh';
 
+import { expired, failure } from './action-result';
 import { adminPath } from './paths';
 
 /**
@@ -112,10 +114,11 @@ interface SessionCookie {
  * de renouvellement d'écrire exactement les mêmes valeurs, sur deux magasins
  * différents.
  *
- * L'API n'émet pas toujours un jeton de rafraîchissement — le cookie n'est alors
- * pas réécrit, et **surtout pas effacé** : celui de la connexion précédente
- * reste valide, et l'écraser par une valeur vide fermerait la session au premier
- * renouvellement.
+ * Un renouvellement qui a perdu une course contre un autre ne rend **pas** de
+ * jeton de rafraîchissement (#856) : l'API a déjà fait tourner la session pour
+ * le gagnant, qui pose le cookie neuf. Le cookie n'est alors pas réécrit, et
+ * **surtout pas effacé** — le réécrire, même avec l'ancienne valeur, pourrait
+ * écraser celui du gagnant si sa réponse arrive la première.
  */
 export function adminSessionCookies(opened: ApiSession): readonly SessionCookie[] {
   const access: SessionCookie = {
@@ -181,4 +184,35 @@ export async function readAdminRefreshToken(): Promise<string | null> {
   const value = store.get(ADMIN_REFRESH_COOKIE)?.value;
 
   return value === undefined || value === '' ? null : value;
+}
+
+/**
+ * Le jeton d'accès d'une action serveur du back-office — renouvelé sur place
+ * quand le cookie a expiré (#856).
+ *
+ * C'est la seule porte des actions vers leur jeton : lire le cookie seul
+ * rendait `UNAUTHORIZED` à chaque enregistrement tenté après un quart d'heure
+ * d'inactivité, et la saisie repartait avec la page. Le refus rendu est celui
+ * que les écrans connaissent déjà — `expired()` part vers la route de
+ * renouvellement, `failure()` s'affiche —, voir `accessTokenForAction`.
+ */
+export async function adminActionAccess(
+  tenantSlug: string,
+): Promise<
+  { readonly ok: true; readonly accessToken: string } | { ok: false; code: string; message: string }
+> {
+  const access = await accessTokenForAction({
+    readAccessToken: readAdminAccessToken,
+    readRefreshToken: readAdminRefreshToken,
+    write: (renewed) => writeAdminSession(tenantSlug, renewed),
+  });
+
+  switch (access.kind) {
+    case 'ready':
+      return { ok: true, accessToken: access.accessToken };
+    case 'expired':
+      return expired();
+    case 'failed':
+      return failure(access.error);
+  }
 }

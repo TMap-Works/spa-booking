@@ -67,8 +67,8 @@ import {
   type CalendarView,
 } from '@/lib/admin/calendar-range';
 
-import { expired, failure, invalid, type AdminActionResult } from '../action-result';
-import { readAdminAccessToken } from '../session';
+import { failure, invalid, type AdminActionResult } from '../action-result';
+import { adminActionAccess } from '../session';
 
 /**
  * Les rendez-vous d'une période, pour le planning du comptoir.
@@ -99,11 +99,13 @@ export async function loadCalendarRangeAction(
     return invalid('Date de planning invalide.');
   }
 
-  const accessToken = await readAdminAccessToken();
+  const access = await adminActionAccess(slug.data);
 
-  if (accessToken === null) {
-    return expired();
+  if (!access.ok) {
+    return access;
   }
+
+  const { accessToken } = access;
 
   const parsedView: CalendarView = parseCalendarView(view);
   const range = rangeOf(parsedView, anchor);
@@ -120,8 +122,9 @@ export async function loadCalendarRangeAction(
  *
  * Écrit une fois : les six actions qui suivent commencent toutes par le même
  * geste, et une session expirée doit rendre exactement le même `UNAUTHORIZED`
- * partout — c'est lui, et lui seul, que les écrans traduisent par un retour à la
- * connexion.
+ * partout — c'est lui, et lui seul, que les écrans traduisent par un passage à
+ * la route de renouvellement. Un cookie d'accès expiré ne le produit plus : il
+ * est renouvelé sur place (#856), et seul un renouvellement impossible remonte.
  */
 async function deskToken(
   tenantSlug: string,
@@ -130,9 +133,9 @@ async function deskToken(
     return { refusal: invalid('Établissement inconnu.') };
   }
 
-  const accessToken = await readAdminAccessToken();
+  const access = await adminActionAccess(tenantSlug);
 
-  return accessToken === null ? { refusal: expired() } : { token: accessToken };
+  return access.ok ? { token: access.accessToken } : { refusal: access };
 }
 
 /**

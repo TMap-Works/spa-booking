@@ -1,6 +1,9 @@
-import { type NextRequest, NextResponse } from 'next/server';
+import type { NextRequest, NextResponse } from 'next/server';
 
-import { ApiClientError, refreshSession } from '@/lib/api-client';
+import { refreshSession } from '@/lib/api-client';
+import { redirectWithinSite } from '@/lib/relative-redirect';
+import { sitePath } from '@/lib/site-path';
+import { isRefreshRefused } from '@/lib/session-refresh';
 
 import { accountPath, loginPath } from '../../paths';
 import { attachSessionCookies, clearSessionCookies, readRefreshToken } from '../../session';
@@ -24,6 +27,15 @@ import { attachSessionCookies, clearSessionCookies, readRefreshToken } from '../
  * « expiré » sont le même état (voir `session.ts`). Au retour de cette route, le
  * cookie existe donc forcément — sinon le renouvellement a échoué, et l'on est
  * parti à la connexion sans repasser par la page.
+ *
+ * ## Deux renouvellements à la fois (#856)
+ *
+ * Deux onglets rechargés ensemble, un double clic, l'effet rejoué par
+ * `reactStrictMode` : deux requêtes arrivent ici avec le même cookie. L'API
+ * fait tourner la session pour la première et rend à la seconde un jeton
+ * d'accès **sans** jeton de rafraîchissement. Cette réponse-là ne pose donc que
+ * le cookie d'accès, et laisse en place celui du gagnant — quel que soit
+ * l'ordre dans lequel les deux réponses reviennent au navigateur.
  */
 
 /** Vitesse de rafraîchissement d'une page qui ne se met jamais en cache. */
@@ -38,22 +50,25 @@ export const dynamic = 'force-dynamic';
  * stricts — la destination doit être **dans l'espace client de cet
  * établissement**, ce qui est la seule chose que cette route ait à savoir
  * renvoyer.
+ *
+ * Les deux se jugent sur le chemin **normalisé**, qui est aussi celui qu'on
+ * rend (#856) : `/{slug}/compte/../..//exemple.test` porte le bon préfixe et se
+ * résout pourtant en `//exemple.test`. Voir `sitePath`.
  */
 function safeNext(candidate: string | null, tenantSlug: string): string {
   const home = accountPath(tenantSlug);
 
-  if (candidate === null) {
-    return home;
-  }
-
   // `//exemple.test` est une URL protocole-relative : elle commence bien par
-  // `/` et mène pourtant ailleurs. Le second caractère est donc vérifié aussi.
-  if (!candidate.startsWith('/') || candidate.startsWith('//')) {
+  // `/` et mène pourtant ailleurs. `sitePath` la refuse, avant comme après la
+  // résolution des `..`.
+  const path = candidate === null ? null : sitePath(candidate);
+
+  if (path === null) {
     return home;
   }
 
-  return candidate === home || candidate.startsWith(`${home}/`) || candidate.startsWith(`${home}?`)
-    ? candidate
+  return path === home || path.startsWith(`${home}/`) || path.startsWith(`${home}?`)
+    ? path
     : home;
 }
 
@@ -66,33 +81,30 @@ export async function GET(
   const refreshToken = await readRefreshToken();
 
   if (refreshToken === null) {
-    return NextResponse.redirect(new URL(loginPath(tenantSlug), request.nextUrl));
+    return redirectWithinSite(loginPath(tenantSlug));
   }
+
+  // Relative, et non construite sur `request.nextUrl` : voir `redirectWithinSite`.
+  // Construite **avant** l'appel : une fois le jeton tourné par l'API, plus rien
+  // ne doit pouvoir lever avant que le cookie neuf ne soit posé.
+  const renewedResponse = redirectWithinSite(next);
 
   try {
     const renewed = await refreshSession(refreshToken);
-    const response = NextResponse.redirect(new URL(next, request.nextUrl));
-    attachSessionCookies(response.cookies, tenantSlug, renewed);
-    return response;
+    attachSessionCookies(renewedResponse.cookies, tenantSlug, renewed);
+    return renewedResponse;
   } catch (error) {
     // Jeton révoqué, expiré, ou réemployé — l'API ne distingue pas, et il n'y a
     // rien à en dire à la visiteuse au-delà de « reconnectez-vous ». Les deux
     // cookies partent alors : en garder un ferait retenter ce chemin à chaque
     // navigation.
     //
-    // Mais **seulement alors**. Un 429 du limiteur de débit, un 503, une coupure
-    // réseau : rien de tout cela ne dit que le jeton est mauvais, et effacer le
-    // cookie sur cette foi-là déconnecte pour de bon une session parfaitement
-    // valide. Le limiteur n'est pas hypothétique — il compte par adresse IP, et
-    // tous les appels partent du serveur Next, donc d'une seule. On renvoie donc
-    // à la connexion sans rien détruire : la navigation suivante repassera par
-    // ici et pourra aboutir.
-    const revoked =
-      error instanceof ApiClientError && (error.status === 401 || error.status === 403);
+    // Mais **seulement alors** (voir `isRefreshRefused`). Sur une panne ou le
+    // limiteur, on renvoie à la connexion sans rien détruire : la navigation
+    // suivante repassera par ici et pourra aboutir.
+    const revoked = isRefreshRefused(error);
 
-    const response = NextResponse.redirect(
-      new URL(loginPath(tenantSlug, 'session-expiree'), request.nextUrl),
-    );
+    const response = redirectWithinSite(loginPath(tenantSlug, 'session-expiree'));
 
     if (revoked) {
       clearSessionCookies(response.cookies, tenantSlug);

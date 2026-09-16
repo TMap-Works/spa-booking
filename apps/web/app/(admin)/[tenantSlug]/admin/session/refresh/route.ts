@@ -1,6 +1,8 @@
-import { type NextRequest, NextResponse } from 'next/server';
+import type { NextRequest, NextResponse } from 'next/server';
 
-import { ApiClientError, refreshSession } from '@/lib/api-client';
+import { refreshSession } from '@/lib/api-client';
+import { redirectWithinSite } from '@/lib/relative-redirect';
+import { isRefreshRefused } from '@/lib/session-refresh';
 
 import { adminLoginPath, safeAdminNext } from '../../paths';
 import { attachAdminSession, clearAdminSession, readAdminRefreshToken } from '../../session';
@@ -28,6 +30,15 @@ import { attachAdminSession, clearAdminSession, readAdminRefreshToken } from '..
  * qu'« absent » et « expiré » sont le même état. Au retour, le cookie existe
  * donc forcément — sinon le renouvellement a échoué, et l'on est parti à la
  * connexion sans repasser par la page.
+ *
+ * ## Deux renouvellements à la fois (#856)
+ *
+ * Deux onglets rechargés ensemble, un double clic sur un lien du rail, l'effet
+ * rejoué par `reactStrictMode` : deux requêtes arrivent ici avec le même
+ * cookie. L'API fait tourner la session pour la première et rend à la seconde
+ * un jeton d'accès **sans** jeton de rafraîchissement. Cette réponse-là ne pose
+ * donc que le cookie d'accès, et laisse en place celui du gagnant — quel que
+ * soit l'ordre dans lequel les deux réponses reviennent au navigateur.
  */
 
 /** Une route de session ne se met jamais en cache. */
@@ -42,28 +53,29 @@ export async function GET(
   const refreshToken = await readAdminRefreshToken();
 
   if (refreshToken === null) {
-    return NextResponse.redirect(new URL(adminLoginPath(tenantSlug), request.nextUrl));
+    return redirectWithinSite(adminLoginPath(tenantSlug));
   }
+
+  // Relative, et non construite sur `request.nextUrl` : voir `redirectWithinSite`.
+  // Construite **avant** l'appel : une fois le jeton tourné par l'API, plus rien
+  // ne doit pouvoir lever avant que le cookie neuf ne soit posé — sans quoi il
+  // serait perdu, et le renouvellement suivant passerait pour un réemploi.
+  const renewedResponse = redirectWithinSite(next);
 
   try {
     const renewed = await refreshSession(refreshToken);
-    const response = NextResponse.redirect(new URL(next, request.nextUrl));
-    attachAdminSession(response.cookies, tenantSlug, renewed);
-    return response;
+    attachAdminSession(renewedResponse.cookies, tenantSlug, renewed);
+    return renewedResponse;
   } catch (error) {
     // Jeton révoqué, expiré ou réemployé — l'API ne distingue pas, et il n'y a
     // rien à en dire au-delà de « reconnectez-vous ». Les deux cookies partent
     // alors : en garder un ferait retenter ce chemin à chaque navigation.
     //
-    // Mais **seulement alors**. Un 429 du limiteur de débit, un 503, une coupure
-    // réseau : rien de cela ne dit que le jeton est mauvais, et effacer le
-    // cookie sur cette foi-là déconnecte pour de bon une session valide. Le
-    // limiteur n'est pas hypothétique — il compte par adresse IP, et tous les
-    // appels partent du serveur Next, donc d'une seule.
-    const revoked =
-      error instanceof ApiClientError && (error.status === 401 || error.status === 403);
+    // Mais **seulement alors** : un 429 du limiteur de débit, un 503, une
+    // coupure réseau ne disent rien du jeton (voir `isRefreshRefused`).
+    const revoked = isRefreshRefused(error);
 
-    const response = NextResponse.redirect(new URL(adminLoginPath(tenantSlug), request.nextUrl));
+    const response = redirectWithinSite(adminLoginPath(tenantSlug));
 
     if (revoked) {
       clearAdminSession(response.cookies, tenantSlug);

@@ -9,7 +9,6 @@ import type {
 } from '@spa/shared';
 import { ERROR_CODES } from '@spa/shared';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -46,12 +45,13 @@ import { calendarPeriodEmptyState, calendarStartState } from '@/lib/admin/calend
 
 import type { AdminActionResult } from '../action-result';
 import { loadCalendarRangeAction, rescheduleDeskAppointmentAction } from '../calendrier/actions';
-import { adminCalendarPath, adminCatalogPath, adminSessionRefreshPath } from '../paths';
+import { adminCalendarPath, adminCatalogPath } from '../paths';
 import { adminStaffPath } from '../personnel/paths';
 
 import { AppointmentPanel, type DeskTarget } from './appointment-panel';
 import { CalendarMoveConfirm } from './calendar-move-confirm';
 import { PeriodNav } from './period-nav';
+import { useAdminSessionRenewal } from './use-admin-session-renewal';
 
 /**
  * Le planning du back-office — vues jour et semaine (#49).
@@ -242,7 +242,7 @@ export function CalendarBoard({
   setupKnown = true,
   openingHours = EMPTY_OPENING_HOURS,
 }: CalendarBoardProps) {
-  const router = useRouter();
+  const { renew } = useAdminSessionRenewal(tenantSlug);
   const [view, setView] = useState<CalendarView>(initialView);
   const [date, setDate] = useState<string>(initialDate);
   const [periods, setPeriods] = useState<Map<string, readonly Appointment[]>>(
@@ -316,18 +316,14 @@ export function CalendarBoard({
    * vient. Le planning était le seul écran à ne pas en profiter — celui-là même
    * dont les huit heures d'ouverture d'affilée justifient toute la mécanique.
    *
-   * `replace` et non `push` : un renouvellement n'est pas une destination, et le
-   * laisser dans l'historique ferait renouveler une seconde fois au premier
-   * retour arrière.
-   *
-   * Ce chemin ne boucle pas. La route repart vers la connexion quand le jeton de
-   * rafraîchissement manque lui aussi, et efface les deux cookies quand l'API le
-   * refuse — un `UNAUTHORIZED` né d'une session révoquée finit donc sur l'écran
-   * de connexion, en un aller-retour de plus et sans jamais revenir ici.
+   * Le départ passe par le helper commun des écrans (#856), qui dit pourquoi
+   * `replace` et pourquoi ce chemin ne boucle pas. Le planning ne lui laisse
+   * pas lire la barre d'adresse : c'est la période **regardée** qui doit être
+   * rendue, et l'effet qui l'écrit dans l'URL peut ne pas avoir encore joué.
    */
   const renewSession = useCallback((): void => {
-    router.replace(adminSessionRefreshPath(tenantSlug, currentPathRef.current));
-  }, [router, tenantSlug]);
+    renew(currentPathRef.current);
+  }, [renew]);
 
   const board = useMemo(
     () =>

@@ -1,5 +1,5 @@
 import type { SessionUser } from '@spa/shared';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -7,6 +7,7 @@ import { ProfileForm } from '@/app/(account)/[tenantSlug]/compte/components/prof
 
 const updateProfileAction = vi.fn();
 const refresh = vi.fn();
+const replace = vi.fn();
 
 // L'action serveur est un module Next qui n'existe pas hors du serveur, et le
 // routeur non plus. On les remplace entièrement : ce qu'on éprouve ici est le
@@ -16,7 +17,7 @@ vi.mock('@/app/(account)/[tenantSlug]/compte/actions', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ refresh, replace: vi.fn(), push: vi.fn() }),
+  useRouter: () => ({ refresh, replace, push: vi.fn() }),
 }));
 
 const profile: SessionUser = {
@@ -32,6 +33,7 @@ afterEach(() => {
   cleanup();
   updateProfileAction.mockReset();
   refresh.mockReset();
+  replace.mockReset();
 });
 
 function renderForm(): void {
@@ -138,6 +140,26 @@ describe('coordonnées — soumission', () => {
     await user.click(screen.getByRole('button', { name: /Enregistrer/ }));
 
     expect(await screen.findByText('Les coordonnées saisies sont invalides.')).toBeDefined();
+    expect(valueOf(/Prénom/)).toBe('Camille');
+  });
+
+  it('renouvelle une session expirée au lieu de dire « reconnectez-vous » — #856', async () => {
+    updateProfileAction.mockResolvedValue({
+      ok: false,
+      code: 'UNAUTHORIZED',
+      message: 'Votre session a expiré. Reconnectez-vous pour continuer.',
+    });
+    const user = userEvent.setup();
+    renderForm();
+
+    await user.click(screen.getByRole('button', { name: /Enregistrer/ }));
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledTimes(1);
+    });
+    expect(String(replace.mock.calls[0]?.[0])).toContain('/salon-des-lilas/compte/session/refresh?next=');
+    expect(screen.queryByText(/Reconnectez-vous/)).toBeNull();
+    // La saisie reste en place : la page revient telle quelle.
     expect(valueOf(/Prénom/)).toBe('Camille');
   });
 });

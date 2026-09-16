@@ -12,6 +12,7 @@ import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
 
 import { updateCustomerAction } from '../actions';
+import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
 
 /**
  * Correction des coordonnées d'une fiche — deuxième critère de #54.
@@ -53,6 +54,7 @@ interface ClientContactFormProps {
 
 export function ClientContactForm({ tenantSlug, customer }: ClientContactFormProps) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [open, setOpen] = useState(false);
   const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -83,6 +85,9 @@ export function ClientContactForm({ tenantSlug, customer }: ClientContactFormPro
     });
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       setFailure(result.message);
       return;
     }

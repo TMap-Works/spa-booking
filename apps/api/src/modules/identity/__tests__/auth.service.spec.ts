@@ -2,7 +2,7 @@ import { JwtService } from '@nestjs/jwt';
 
 import { ConflictError, NotFoundError } from '../../../common/errors';
 import { getTenantId, runInTenantScope, runWithTenant } from '../../../common/tenant';
-import { AuthService } from '../auth.service';
+import { AuthService, REFRESH_ROTATION_GRACE_MS } from '../auth.service';
 import {
   EmailAlreadyRegisteredError,
   InvalidCredentialsError,
@@ -288,17 +288,160 @@ describe('AuthService', () => {
       expect(rotated.accessToken).not.toBe('');
     });
 
+    /** Recule la dernière rotation au-delà du délai de grâce. */
+    const ageLastRotation = (): void => {
+      for (const session of repository.sessions) {
+        if (session.rotatedAt !== null) {
+          session.rotatedAt = new Date(Date.now() - REFRESH_ROTATION_GRACE_MS - 1_000);
+        }
+      }
+    };
+
     it('révoque toute la session au réemploi d’un jeton déjà consommé', async () => {
       const first = await openSession();
       await inRequest(() => service.refresh(first));
+      ageLastRotation();
 
-      // Le jeton d'origine ressort : soit un vol, soit un rejeu. On ne sait pas
-      // lequel des deux porteurs est légitime, donc aucun ne garde la main.
+      // Le jeton d'origine ressort, passé le délai de grâce : soit un vol, soit
+      // un rejeu. On ne sait pas lequel des deux porteurs est légitime, donc
+      // aucun ne garde la main.
       await expect(inRequest(() => service.refresh(first))).rejects.toBeInstanceOf(
         InvalidRefreshTokenError,
       );
 
       expect(repository.sessions.every((session) => session.revokedAt !== null)).toBe(true);
+    });
+
+    describe('renouvellements concurrents — #856', () => {
+      it('garde trace de l’empreinte remplacée et de l’instant de la rotation', async () => {
+        const first = await openSession();
+        // L'estampillage de la connexion n'est pas une rotation : rien à retenir.
+        expect(repository.sessions[0]?.previousTokenHash).toBeNull();
+        expect(repository.sessions[0]?.rotatedAt).toBeNull();
+
+        await inRequest(() => service.refresh(first));
+
+        expect(repository.sessions[0]?.previousTokenHash).toBe(
+          hashJti((await tokens.verifyRefreshToken(first)).jti),
+        );
+        expect(repository.sessions[0]?.rotatedAt).toBeInstanceOf(Date);
+      });
+
+      it('rend un jeton d’accès seul au jeton tout juste remplacé, sans rien révoquer', async () => {
+        const first = await openSession();
+        const winner = await inRequest(() => service.refresh(first));
+        const stored = repository.sessions[0]?.tokenHash;
+
+        // Le perdant lit après le commit du gagnant : son empreinte est devenue
+        // la précédente.
+        const loser = await inRequest(() => service.refresh(first));
+
+        expect(loser.accessToken).not.toBe('');
+        expect(loser.refreshToken).toBeNull();
+        // Aucune seconde rotation : le jeton du gagnant reste le bon.
+        expect(repository.sessions[0]?.tokenHash).toBe(stored);
+        expect(repository.sessions.every((session) => session.revokedAt === null)).toBe(true);
+
+        // Et il renouvelle normalement ensuite.
+        expect(winner.refreshToken).not.toBeNull();
+        const next = await inRequest(() => service.refresh(winner.refreshToken ?? ''));
+        expect(next.refreshToken).not.toBeNull();
+      });
+
+      it('rend un jeton d’accès seul au perdant qui a lu avant la rotation', async () => {
+        const first = await openSession();
+        const presented = hashJti((await tokens.verifyRefreshToken(first)).jti);
+
+        // Le chemin `rotated === false` : entre la lecture et l'écriture, un
+        // autre renouvellement fait tourner la ligne.
+        const rotate = repository.rotateSession.bind(repository);
+        jest.spyOn(repository, 'rotateSession').mockImplementationOnce(async (input) => {
+          await rotate({ ...input, nextTokenHash: hashJti('jeton-du-gagnant') });
+          return false;
+        });
+
+        const loser = await inRequest(() => service.refresh(first));
+
+        expect(loser.refreshToken).toBeNull();
+        expect(loser.accessToken).not.toBe('');
+        expect(repository.sessions[0]?.previousTokenHash).toBe(presented);
+        expect(repository.sessions[0]?.tokenHash).toBe(hashJti('jeton-du-gagnant'));
+        expect(repository.sessions.every((session) => session.revokedAt === null)).toBe(true);
+      });
+
+      it('refuse le perdant quand la session a été éteinte pendant la course', async () => {
+        const first = await openSession();
+        const sessionId = repository.sessions[0]?.id ?? '';
+
+        jest.spyOn(repository, 'rotateSession').mockImplementationOnce(async () => {
+          await repository.revokeSession(sessionId);
+          return false;
+        });
+
+        await expect(inRequest(() => service.refresh(first))).rejects.toBeInstanceOf(
+          InvalidRefreshTokenError,
+        );
+      });
+
+      it('laisse la session ouverte quand deux renouvellements partent ensemble', async () => {
+        const first = await openSession();
+
+        const results = await Promise.all([
+          inRequest(() => service.refresh(first)),
+          inRequest(() => service.refresh(first)),
+        ]);
+
+        // Un seul a fait tourner la session ; l'autre n'a qu'un jeton d'accès.
+        const rotated = results.filter((result) => result.refreshToken !== null);
+        expect(rotated).toHaveLength(1);
+        expect(results.every((result) => result.accessToken !== '')).toBe(true);
+        expect(repository.sessions.every((session) => session.revokedAt === null)).toBe(true);
+
+        // Le cookie final — celui du gagnant — renouvelle encore.
+        const next = await inRequest(() => service.refresh(rotated[0]?.refreshToken ?? ''));
+        expect(next.refreshToken).not.toBeNull();
+      });
+
+      it('révoque un jeton plus ancien que le précédent, même dans le délai', async () => {
+        const first = await openSession();
+        const second = await inRequest(() => service.refresh(first));
+        await inRequest(() => service.refresh(second.refreshToken ?? ''));
+
+        // `first` a été remplacé il y a quelques millisecondes, mais il n'est
+        // plus l'empreinte **précédente** : c'est un réemploi.
+        await expect(inRequest(() => service.refresh(first))).rejects.toBeInstanceOf(
+          InvalidRefreshTokenError,
+        );
+        expect(repository.sessions.every((session) => session.revokedAt !== null)).toBe(true);
+      });
+
+      it('ne rend rien au jeton tout juste remplacé d’un compte désactivé', async () => {
+        const first = await openSession();
+        await inRequest(() => service.refresh(first));
+        const user = repository.users[0];
+        if (user !== undefined) {
+          user.isActive = false;
+        }
+
+        await expect(inRequest(() => service.refresh(first))).rejects.toBeInstanceOf(
+          InvalidRefreshTokenError,
+        );
+        expect(repository.sessions[0]?.revokedAt).toBeInstanceOf(Date);
+      });
+
+      it('borne le délai dans les deux sens — une horloge aberrante n’ouvre rien', async () => {
+        const first = await openSession();
+        await inRequest(() => service.refresh(first));
+        const session = repository.sessions[0];
+        if (session !== undefined) {
+          session.rotatedAt = new Date(Date.now() + REFRESH_ROTATION_GRACE_MS + 60_000);
+        }
+
+        await expect(inRequest(() => service.refresh(first))).rejects.toBeInstanceOf(
+          InvalidRefreshTokenError,
+        );
+        expect(repository.sessions.every((candidate) => candidate.revokedAt !== null)).toBe(true);
+      });
     });
 
     it('refuse un jeton dont la session a été révoquée', async () => {

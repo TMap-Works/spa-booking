@@ -111,3 +111,19 @@ export interface AuthenticationResult {
   readonly refreshToken: string;
   readonly refreshTokenMaxAge: number;
 }
+
+/**
+ * Ce que rend un renouvellement : une session qui a tourné, **ou** un jeton
+ * d'accès seul (#856).
+ *
+ * Le second cas est celui du perdant d'une course entre deux renouvellements
+ * partis avec le même cookie. Le gagnant a déjà fait tourner la session et posé
+ * le cookie neuf ; le perdant reçoit de quoi afficher sa page, mais **aucun**
+ * cookie de rafraîchissement — il écraserait celui du gagnant par une valeur que
+ * la base ne reconnaît plus.
+ */
+export type RefreshResult =
+  | AuthenticationResult
+  | (Omit<AuthenticationResult, 'refreshToken' | 'refreshTokenMaxAge'> & {
+      readonly refreshToken: null;
+    });

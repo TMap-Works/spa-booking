@@ -13,6 +13,7 @@ import { inviteStaffAccountRequestSchema } from '@/lib/admin/staff-contract';
 
 import { roleLabel } from '../../components/navigation';
 import { inviteStaffAccountAction } from '../actions';
+import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
 
 /**
  * Invitation d'un membre du personnel (#53, premier critère).
@@ -119,6 +120,7 @@ function collectInviteErrors(issues: readonly ZodIssue[]): {
 
 export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string }) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [draft, setDraft] = useState<InviteDraft>({ ...EMPTY });
   const [sending, setSending] = useState(false);
   const [, startRefresh] = useTransition();
@@ -185,6 +187,9 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
     setSending(false);
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       setFormError(result.message);
       return;
     }

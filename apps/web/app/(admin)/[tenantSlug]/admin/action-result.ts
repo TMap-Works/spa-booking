@@ -45,17 +45,20 @@ export function invalid(message: string): { ok: false; code: string; message: st
 }
 
 /**
- * Refus faute de session — le jeton d'accès a expiré ou n'a jamais été posé.
+ * Refus faute de session — et d'une session qu'on n'a pas pu renouveler.
  *
- * Les écrans réagissent sur `UNAUTHORIZED` en partant vers la route de
- * renouvellement, qui pose une session neuve et rend la main sur la page
- * quittée (#48, #458). Elle retombe d'elle-même sur l'écran de connexion quand
- * le jeton de rafraîchissement manque ou que l'API le refuse : c'est là que
- * s'arrête le chemin, et il ne boucle pas (voir `session/refresh/route.ts`).
+ * Un cookie d'accès simplement expiré ne produit plus ce refus : l'action le
+ * renouvelle sur place avant d'appeler l'API (`adminActionAccess`, #856). Il ne
+ * reste donc que les cas où ce renouvellement est impossible — plus de cookie
+ * de rafraîchissement, ou jeton refusé par l'API.
  *
- * Ce refus ne distingue pas le cookie d'accès expiré de la session révoquée en
- * base, et il n'a pas à le faire : la route de renouvellement tranche pour lui,
- * en un aller-retour, et ferme la session quand elle n'est plus renouvelable.
+ * **Tous** les écrans du back-office réagissent sur `UNAUTHORIZED` — celui-ci,
+ * ou le 401 de l'API que `failure()` laisse passer — par le même helper,
+ * `useAdminSessionRenewal` : ils partent vers la route de renouvellement, qui
+ * pose une session neuve si elle le peut et rend la main sur la page quittée
+ * (#48, #458). Elle retombe d'elle-même sur l'écran de connexion quand le jeton
+ * de rafraîchissement manque ou que l'API le refuse : c'est là que s'arrête le
+ * chemin, et il ne boucle pas (voir `session/refresh/route.ts`).
  */
 export function expired(): { ok: false; code: string; message: string } {
   return {

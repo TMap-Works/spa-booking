@@ -10,6 +10,7 @@ import { Notification } from '@/components/ui/notification';
 import { TextArea } from '@/components/ui/textarea';
 
 import { updateStaffMemberAction } from '../actions';
+import { useAdminSessionRenewal } from '../../components/use-admin-session-renewal';
 
 /**
  * Corriger une fiche praticien, la suspendre, la réactiver — #705.
@@ -79,6 +80,7 @@ export function StaffProfilePanel({
   readonly canManage?: boolean;
 }) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [displayName, setDisplayName] = useState(member.displayName);
   const [bio, setBio] = useState('');
   // Tant que la présentation n'a pas été touchée, elle ne part pas : l'API ne la
@@ -192,6 +194,9 @@ export function StaffProfilePanel({
     setPending(null);
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       setNotice({ tone: 'danger', message: result.message });
       return;
     }
@@ -216,6 +221,9 @@ export function StaffProfilePanel({
     setPending(null);
 
     if (!result.ok) {
+      if (renewIfExpired(result)) {
+        return;
+      }
       setNotice({ tone: 'danger', message: result.message });
       return;
     }

@@ -65,9 +65,9 @@ import {
   type StaffInvitation,
 } from '@/lib/admin/staff-contract';
 
-import { expired, failure, invalid, type AdminActionResult } from '../action-result';
+import { failure, invalid, type AdminActionResult } from '../action-result';
 import { adminCalendarPath } from '../paths';
-import { readAdminAccessToken } from '../session';
+import { adminActionAccess } from '../session';
 import { adminStaffMemberPath, adminStaffPath } from './paths';
 
 /**
@@ -88,9 +88,9 @@ async function openCall(
     return invalid('Établissement inconnu.');
   }
 
-  const accessToken = await readAdminAccessToken();
+  const access = await adminActionAccess(slug.data);
 
-  return accessToken === null ? expired() : { ok: true, accessToken, slug: slug.data };
+  return access.ok ? { ok: true, accessToken: access.accessToken, slug: slug.data } : access;
 }
 
 /** Le message du premier refus de schéma — celui qui nomme la faute. */

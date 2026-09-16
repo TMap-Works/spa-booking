@@ -41,8 +41,8 @@ import {
 } from '@/lib/api-client';
 
 import {
+  accountActionAccess,
   clearSessionCookies,
-  readAccessToken,
   readRefreshToken,
   writeSessionCookies,
 } from './session';
@@ -68,13 +68,35 @@ function invalid(message: string): { ok: false; code: string; message: string } 
   return { ok: false, code: ERROR_CODES.VALIDATION_ERROR, message };
 }
 
-/** Session absente ou expirée — l'écran renvoie à la connexion. */
+/**
+ * Session absente ou impossible à renouveler — l'écran part vers la route de
+ * renouvellement, qui tranche et mène à la connexion.
+ */
 function unauthenticated(): { ok: false; code: string; message: string } {
   return {
     ok: false,
     code: ERROR_CODES.UNAUTHORIZED,
     message: 'Votre session a expiré. Reconnectez-vous pour continuer.',
   };
+}
+
+/**
+ * Le jeton de la session, renouvelé sur place s'il a expiré (#856) — ou le refus
+ * que l'écran sait traiter.
+ */
+async function sessionAccess(
+  tenantSlug: string,
+): Promise<{ ok: true; accessToken: string } | { ok: false; code: string; message: string }> {
+  const access = await accountActionAccess(tenantSlug);
+
+  switch (access.kind) {
+    case 'ready':
+      return { ok: true, accessToken: access.accessToken };
+    case 'expired':
+      return unauthenticated();
+    case 'failed':
+      return failure(access.error);
+  }
 }
 
 /**
@@ -166,13 +188,13 @@ export async function updateProfileAction(
     return invalid('Les coordonnées saisies sont invalides.');
   }
 
-  const accessToken = await readAccessToken();
-  if (accessToken === null) {
-    return unauthenticated();
+  const access = await sessionAccess(slug.data);
+  if (!access.ok) {
+    return access;
   }
 
   try {
-    return { ok: true, data: await updateOwnProfile(accessToken, parsed.data) };
+    return { ok: true, data: await updateOwnProfile(access.accessToken, parsed.data) };
   } catch (error) {
     return failure(error);
   }
@@ -206,10 +228,11 @@ export async function cancelOwnAppointmentAction(
   }
 
   // Non pour autoriser — la route ne l'exige pas — mais pour ne pas laisser un
-  // écran déconnecté écrire dans l'agenda du salon : la session a expiré, la
-  // bonne conduite est de se reconnecter puis de reprendre.
-  if ((await readAccessToken()) === null) {
-    return unauthenticated();
+  // écran déconnecté écrire dans l'agenda du salon. Une session simplement
+  // expirée se renouvelle sur place ; une session fermée renvoie à la connexion.
+  const access = await sessionAccess(slug.data);
+  if (!access.ok) {
+    return access;
   }
 
   try {
@@ -233,8 +256,9 @@ export async function rescheduleOwnAppointmentAction(
     return invalid('La demande de report est incomplète.');
   }
 
-  if ((await readAccessToken()) === null) {
-    return unauthenticated();
+  const access = await sessionAccess(slug.data);
+  if (!access.ok) {
+    return access;
   }
 
   try {

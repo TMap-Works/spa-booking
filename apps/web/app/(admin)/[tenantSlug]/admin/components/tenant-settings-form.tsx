@@ -25,6 +25,7 @@ import { Notification } from '@/components/ui/notification';
 import { weekdayLabel } from '@/components/salon/opening-hours';
 
 import { updateTenantSettingsAction } from '../actions';
+import { useAdminSessionRenewal } from './use-admin-session-renewal';
 
 /**
  * Réglages de l'établissement — adresse, horaires d'ouverture, coordonnées
@@ -318,6 +319,7 @@ type Verdict = { readonly tone: 'success' } | { readonly tone: 'danger'; readonl
 
 export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormProps) {
   const router = useRouter();
+  const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [verdict, setVerdict] = useState<Verdict | null>(null);
   const verdictRef = useRef<HTMLDivElement | null>(null);
   const carriedOver = hiddenRanges(tenant);
@@ -506,6 +508,9 @@ export function TenantSettingsForm({ tenantSlug, tenant }: TenantSettingsFormPro
       const result = await updateTenantSettingsAction(tenantSlug, changes);
 
       if (!result.ok) {
+        if (renewIfExpired(result)) {
+          return;
+        }
         setVerdict({ tone: 'danger', message: result.message });
         return;
       }

@@ -586,6 +586,12 @@ model RefreshToken {
   /// jamais remis à nul — une session révoquée ne se rouvre pas.
   revokedAt DateTime? @map("revoked_at") @db.Timestamptz(6)
 
+  /// L'empreinte que la dernière rotation a remplacée, et l'instant de cette
+  /// rotation (#856). Présenté dans les secondes qui suivent, ce jeton-là est un
+  /// renouvellement concurrent, pas un réemploi : il ne révoque rien.
+  previousTokenHash String?   @map("previous_token_hash") @db.VarChar(64)
+  rotatedAt         DateTime? @map("rotated_at") @db.Timestamptz(6)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 

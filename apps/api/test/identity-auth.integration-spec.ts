@@ -7,6 +7,7 @@ import { configureApp } from '../src/bootstrap';
 import { AppConfigService } from '../src/config/app-config.service';
 import { CacheConnection } from '../src/infrastructure/cache/cache.connection';
 import { DatabaseConnection } from '../src/infrastructure/database/database.connection';
+import { REFRESH_ROTATION_GRACE_MS } from '../src/modules/identity/auth.service';
 import { IdentityRepository } from '../src/modules/identity/identity.repository';
 import { PasswordHasher } from '../src/modules/identity/password.hasher';
 import { REFRESH_COOKIE_NAME } from '../src/modules/identity/refresh-cookie';
@@ -310,10 +311,70 @@ describe('Authentification — parcours HTTP', () => {
       const cookie = await login();
       await request(server()).post('/api/v1/auth/refresh').set('Cookie', cookie).expect(200);
 
+      // La rotation a eu lieu **avant** le délai de grâce (#856) : le rejeu qui
+      // suit n'est plus une course, c'est un réemploi.
+      for (const session of harness.repository.sessions) {
+        session.rotatedAt = new Date(Date.now() - REFRESH_ROTATION_GRACE_MS - 1_000);
+      }
+
       // Rejeu du jeton d'origine, déjà consommé par la rotation.
       await request(server()).post('/api/v1/auth/refresh').set('Cookie', cookie).expect(401);
 
       expect(harness.repository.sessions.every((session) => session.revokedAt !== null)).toBe(true);
+    });
+
+    describe('renouvellements concurrents — #856', () => {
+      it('deux renouvellements du même cookie laissent la session ouverte', async () => {
+        const cookie = await login();
+
+        const responses = await Promise.all([
+          request(server()).post('/api/v1/auth/refresh').set('Cookie', cookie),
+          request(server()).post('/api/v1/auth/refresh').set('Cookie', cookie),
+        ]);
+
+        // Aucun 401 : les deux pages peuvent s'afficher.
+        expect(responses.map((response) => response.status)).toEqual([200, 200]);
+        expect(responses.every((response) => typeof response.body.accessToken === 'string')).toBe(
+          true,
+        );
+
+        // Un seul cookie neuf : le perdant ne pose rien, donc n'écrase rien.
+        const cookies = responses
+          .map((response) => refreshCookie(response))
+          .filter((value): value is string => value !== undefined);
+        expect(cookies).toHaveLength(1);
+
+        // Aucune révocation — ni de cette session, ni d'une autre du compte.
+        expect(harness.repository.sessions.every((session) => session.revokedAt === null)).toBe(
+          true,
+        );
+
+        // Le cookie final est valide : il renouvelle à son tour.
+        const winner = (cookies[0] ?? '').split(';')[0] ?? '';
+        const next = await request(server())
+          .post('/api/v1/auth/refresh')
+          .set('Cookie', winner)
+          .expect(200);
+        expect(refreshCookie(next)).toBeDefined();
+      });
+
+      it('rend un jeton d’accès sans cookie au jeton tout juste remplacé', async () => {
+        const cookie = await login();
+        await request(server()).post('/api/v1/auth/refresh').set('Cookie', cookie).expect(200);
+
+        // Le perdant arrive après le commit du gagnant, dans le délai de grâce.
+        const late = await request(server())
+          .post('/api/v1/auth/refresh')
+          .set('Cookie', cookie)
+          .expect(200);
+
+        expect(late.body.accessToken).toEqual(expect.any(String));
+        // Ni cookie neuf, ni cookie vide : celui du gagnant reste en place.
+        expect(refreshCookie(late)).toBeUndefined();
+        expect(harness.repository.sessions.every((session) => session.revokedAt === null)).toBe(
+          true,
+        );
+      });
     });
   });
 
