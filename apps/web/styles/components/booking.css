@@ -279,7 +279,8 @@
  *    ligne sous son libellé bien avant que le code ait à se couper, et le
  *    `flex-wrap` est là pour ça ;
  * 2. **la chasse est fixe.** `0` et `O` ne cohabitent pas dans l'alphabet retenu
- *    (`lib/booking/reference.ts`), mais une chasse proportionnelle resserre les
+ *    (`APPOINTMENT_REFERENCE_ALPHABET`, `packages/shared/src/constants/appointment.ts`),
+ *    mais une chasse proportionnelle resserre les
  *    groupes au point qu'on perd le compte des caractères en les dictant ;
  * 3. **la couleur est pleine, le libellé seul reste atténué** — même partage
  *    qu'entre `.spa-booking__recap-term` et sa valeur, et pour la même raison :
@@ -308,18 +309,6 @@
   letter-spacing: var(--spa-letter-spacing-wide);
   color: var(--spa-color-text);
   white-space: nowrap;
-}
-
-/*
- * Le repli, quand l'identifiant n'a pas la forme d'un UUID et qu'aucune
- * référence ne s'en dérive. Il porte l'exact contraire du code : une chaîne de
- * longueur inconnue doit pouvoir se couper n'importe où plutôt que déborder du
- * panneau — même déclaration que `.spa-booking__recap-value`, pour le même
- * motif.
- */
-.spa-booking__reference-fallback {
-  color: var(--spa-color-text);
-  overflow-wrap: anywhere;
 }
 
 /*

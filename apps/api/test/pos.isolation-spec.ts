@@ -4,6 +4,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 
 import { runWithTenant } from '../src/common/tenant';
 import { createScopedPrismaClient } from '../src/infrastructure/database/prisma-clients';
+import { generateAppointmentReference } from '../src/modules/appointments/appointment-reference';
 import { PosRepository } from '../src/modules/payments/pos.repository';
 import { composeSale } from '../src/modules/payments/pos.totals';
 import type { PricedCatalogItem, SaleDraft } from '../src/modules/payments/pos.types';
@@ -122,6 +123,9 @@ describe('POS — le dépôt contre un vrai PostgreSQL', () => {
         clientId: client.id,
         staffId: staff.id,
         serviceId: service.id,
+        // `appointments.reference` est `NOT NULL` depuis #796 : ce semis écrit
+        // en direct, hors du tirage du repository.
+        reference: generateAppointmentReference(),
         startsAt: new Date('2026-10-01T09:00:00Z'),
         endsAt: new Date('2026-10-01T10:00:00Z'),
         priceAmountMinor: 7000,

@@ -66,6 +66,25 @@
 export const TEMPLATE_VARIABLES = [
   /** Nom d'usage de la cliente — « Amina Rakoto ». */
   'client',
+  /**
+   * La référence citable du rendez-vous — « RDV-8F3K-27 » (#796).
+   *
+   * Ce que la cliente lit sur son écran de confirmation, et ce qu'elle dicte
+   * quand elle appelle. C'est la seule variable de cette liste qui serve à
+   * **désigner** le rendez-vous plutôt qu'à le décrire : les autres disent ce
+   * qu'il est, celle-ci dit lequel c'est.
+   *
+   * Elle est dans les modèles de plateforme de la confirmation et du rappel,
+   * parce que ce sont les deux messages qu'une cliente a sous les yeux au moment
+   * de téléphoner. Pas dans l'avis d'annulation : il n'y a plus de rendez-vous à
+   * citer.
+   *
+   * Chacun de ses caractères est dans l'alphabet GSM-7 — chiffres, majuscules
+   * non accentuées et tiret — donc la nommer dans un modèle de SMS ne fait pas
+   * basculer le message en UCS-2. Elle coûte onze caractères, ce qui n'est pas
+   * rien sur 160 : les modèles de SMS de la plateforme ne la portent pas.
+   */
+  'reference',
   /** Nom de la prestation réservée. */
   'service',
   /** Nom d'affichage du praticien. */
@@ -539,6 +558,10 @@ function segmentsFor(units: number, single: number, concatenated: number): numbe
  */
 export const SMS_REFERENCE_VARIABLES: TemplateVariables = {
   client: 'Marie-Christine Rakotoarison',
+  // Onze caractères, et c'est le pire cas : la référence est de largeur fixe
+  // (`RDV-XXXX-NN`), donc la valeur mesurée est exactement celle que tout
+  // rendez-vous produira. Tous ses caractères sont dans GSM-7.
+  reference: 'RDV-8F3K-27',
   service: 'Massage suédois 60 minutes',
   praticien: 'Claire Delaunay',
   salon: 'S'.repeat(SMS_TENANT_NAME_MAX),

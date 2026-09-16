@@ -39,6 +39,7 @@ import {
 import {
   AgendaAppointmentDto,
   AppointmentListQueryDto,
+  citedAppointmentReference,
   toAgendaInput,
 } from './dto/list-appointments.dto';
 import {
@@ -263,6 +264,77 @@ export class AppointmentsController {
     // La cliente vient du jeton, jamais de la requête (tenant-isolation §2) :
     // c'est `toListInput` qui les réunit, et lui seul.
     return this.appointments.listForClient(toListInput(query, user.userId));
+  }
+
+  /**
+   * Résout une **référence citée** — « RDV-A5HY-14 » — vers le rendez-vous
+   * qu'elle désigne (#796).
+   *
+   * **200**, et le corps est la ligne d'agenda du rendez-vous : cliente,
+   * praticien et prestation imbriqués, exactement la forme que `GET
+   * /appointments` rend. Le comptoir ouvre donc la réponse dans le même tiroir,
+   * sans seconde lecture.
+   *
+   * C'est la route qui manquait à #736 : la référence était affichée sur l'écran
+   * de confirmation, mais aucune surface ne savait remonter d'elle au
+   * rendez-vous. Une cliente qui appelait en la citant ne pouvait pas être
+   * retrouvée par ce code.
+   *
+   * ## `@AuthAtLeast('STAFF')`, et ici la garde n'est pas qu'une question de rôle
+   *
+   * Même seuil que l'agenda, pour la même raison de métier : décrocher le
+   * téléphone est la conduite de la journée, pas un acte de gestion.
+   *
+   * Mais la garde porte ici une seconde charge, et elle est structurelle. Une
+   * référence fait **six symboles** : cent millions de valeurs, c'est-à-dire un
+   * espace qu'on énumère. Les identifiants du produit sont des UUID v4
+   * précisément pour que l'énumération soit sans intérêt (tenant-isolation §4),
+   * et une route publique qui résoudrait une référence aurait rendu ce soin
+   * inutile — on aurait tiré au hasard jusqu'à tomber sur le rendez-vous de
+   * quelqu'un. La référence se **donne** à la cliente ; elle ne se **résout**
+   * que du côté du comptoir.
+   *
+   * ## Ce que cette route ne peut pas faire, par construction
+   *
+   * Lire le rendez-vous d'un autre établissement. Il n'y a aucun `tenantId` dans
+   * le chemin : l'établissement vient du jeton vérifié, et le client Prisma est
+   * déjà borné. La référence d'un salon voisin — deux salons ont le droit de
+   * tirer la même — rend donc **404**, indiscernable d'une référence qui
+   * n'existe nulle part. Jamais 403 : il confirmerait que le code existe
+   * ailleurs.
+   *
+   * **400** quand ce n'est pas une référence — mauvaise longueur, symbole hors
+   * de l'alphabet. Ce qui est en revanche **absorbé** avant d'en arriver là :
+   * la casse, les séparateurs, le préfixe absent et les confusions de fonte
+   * (`I`/`L` pour `1`, `O` pour `0`). `rdv a5hy 14` et `A5HY-14` résolvent le
+   * même rendez-vous que `RDV-A5HY-14` — c'est le sens du `RDV-XXXX-NN` d'être
+   * dicté au téléphone, et un refus sur une minuscule aurait fait porter à la
+   * personne d'accueil une rigueur que la machine sait tenir.
+   *
+   * **404** quand la référence est bien formée mais ne désigne rien ici.
+   */
+  @Get('reference/:reference')
+  @AuthAtLeast('STAFF')
+  @ApiOperation({ summary: 'Retrouver un rendez-vous par sa référence citable' })
+  @ApiParam({
+    name: 'reference',
+    description:
+      'La référence telle qu’on vient de la lire ou de l’entendre. Casse, ' +
+      'séparateurs et préfixe absent sont normalisés ; `I`/`L` valent `1` et ' +
+      '`O` vaut `0`, comme le prescrit l’alphabet de Crockford.',
+    example: 'RDV-8F3K-27',
+  })
+  @ApiOkResponse({ type: AgendaAppointmentDto })
+  @ApiBadRequestResponse({ description: 'Référence mal formée.' })
+  @ApiNotFoundResponse({
+    description:
+      'Aucun rendez-vous de cet établissement ne porte cette référence — y ' +
+      'compris lorsqu’elle en désigne un chez un autre établissement.',
+  })
+  public async byReference(
+    @Param('reference', citedAppointmentReference) reference: string,
+  ): Promise<AgendaAppointmentDto> {
+    return this.appointments.findByReference(reference);
   }
 
   /**

@@ -12,7 +12,6 @@ import { accountPath } from '@/app/(account)/[tenantSlug]/compte/paths';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import type { ContactDraft } from '@/lib/booking/draft';
-import { appointmentReference } from '@/lib/booking/reference';
 
 import { cancelAppointmentAction } from '../actions';
 
@@ -138,7 +137,6 @@ export function ConfirmationStep({
   const isCancelled = appointment.status === 'cancelled';
   const staffName =
     service?.staff.find((member) => member.id === appointment.staffId)?.displayName ?? null;
-  const reference = appointmentReference(appointment.id);
 
   const cancel = async () => {
     if (cancelling) {
@@ -218,34 +216,34 @@ export function ConfirmationStep({
         contact={contact}
       />
 
-      {/* « Réf. RDV-8F3K-27 », au mot près du wireframe — Étape 6. Ce n'est plus
+      {/* « Réf. RDV-8F3K-27 », au mot près du wireframe — Étape 6. Ce n'est pas
           une ligne de méta atténuée : la référence est l'une des rares choses de
           cet écran qu'on recopie ou qu'on dicte, et `.spa-card__meta` la rendait
           au ton des informations de second plan.
 
-          Le repli est le cas qui n'arrive pas : `BookedAppointment.id` est
-          validé en UUID des deux côtés. Rendre l'identifiant brut plutôt que
-          rien laisse tout de même quelque chose à citer si un brouillon bricolé
-          arrivait jusqu'ici, et il porte sa propre classe — la référence courte
-          est insécable, un UUID de trente-six caractères ne peut pas l'être à
-          360 px.
+          Elle vient désormais de l'**API** (#796) : c'est la colonne
+          `appointments.reference`, unique par établissement, que le contrat
+          rend dans `BookedAppointment`. Elle n'est plus calculée ici à partir de
+          l'identifiant (#736), et c'est ce qui la rend citable ailleurs — le
+          tiroir du planning affiche la même, l'e-mail de confirmation la reprend,
+          et `GET /appointments/reference/{…}` la résout. Une référence que seul
+          cet écran savait produire ne servait qu'à reconnaître ; celle-ci sert à
+          en parler.
 
-          `data-appointment-id` porte l'identifiant que la ligne ne montre plus.
+          Plus de repli non plus : le champ est requis par
+          `bookedAppointmentSchema`, donc un brouillon qui ne le porte pas
+          n'arrive pas jusqu'ici — il est écarté à la relecture, comme toute
+          forme que le contrat ne reconnaît plus.
+
+          `data-appointment-id` porte l'identifiant que la ligne ne montre pas.
           Il n'a rien de secret — c'est la donnée du brouillon de cet onglet, et
           celle que l'annulation ci-dessous envoie déjà à l'API — mais il cesse
-          d'occuper deux lignes de l'écran. Ce qu'il permet : citer le rendez-vous
-          exactement, quand quelqu'un a de quoi le résoudre. Le parcours critique
-          s'en sert pour retrouver en API le rendez-vous qu'il vient de prendre
-          (`tests/e2e/support/scene.ts`), et c'est aussi ce qu'un support lit
-          dans l'inspecteur tant que la référence courte n'est pas reconnue
-          ailleurs que sur cet écran. */}
+          d'occuper deux lignes de l'écran. Le parcours critique s'en sert pour
+          retrouver en API le rendez-vous qu'il vient de prendre
+          (`tests/e2e/support/scene.ts`). */}
       <p className="spa-booking__reference" data-appointment-id={appointment.id}>
         <span className="spa-booking__reference-term">Réf.</span>{' '}
-        {reference === null ? (
-          <span className="spa-booking__reference-fallback">{appointment.id}</span>
-        ) : (
-          <strong className="spa-booking__reference-code">{reference}</strong>
-        )}
+        <strong className="spa-booking__reference-code">{appointment.reference}</strong>
       </p>
 
       {error === null ? null : (

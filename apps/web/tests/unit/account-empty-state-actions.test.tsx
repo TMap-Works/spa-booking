@@ -71,6 +71,7 @@ vi.mock('next/navigation', () => ({
 function appointment(): BookedAppointment {
   return {
     id: '3f7c1f4e-2a9d-4c53-8f0e-1b2c3d4e5f60',
+    reference: 'RDV-8F3K-27',
     status: 'confirmed',
     serviceId: service.id,
     staffId: '9a8b7c6d-5e4f-4a3b-9c8d-7e6f5a4b3c2e',

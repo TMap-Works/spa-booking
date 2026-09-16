@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  APPOINTMENT_REFERENCE_LENGTH,
+  APPOINTMENT_REFERENCE_PATTERN,
   type BookGuestAppointmentRequest,
   EMAIL_ADDRESS_MAX_LENGTH,
   type GuestContact as GuestContactRequest,
@@ -228,6 +230,16 @@ export class BookAppointmentDto {
 export class AppointmentDto implements AppointmentView {
   @ApiProperty({ format: 'uuid' })
   public id!: string;
+
+  @ApiProperty({
+    description:
+      'La référence citable du rendez-vous — le code que la cliente lit sur sa ' +
+      'confirmation et dicte au téléphone. Unique par établissement (#796).',
+    example: 'RDV-8F3K-27',
+    pattern: APPOINTMENT_REFERENCE_PATTERN.source,
+    maxLength: APPOINTMENT_REFERENCE_LENGTH,
+  })
+  public reference!: string;
 
   @ApiProperty({
     description:

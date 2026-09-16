@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  APPOINTMENT_REFERENCE_LENGTH,
+  APPOINTMENT_REFERENCE_PATTERN,
   appointmentSchema,
+  citedAppointmentReferenceSchema,
   serviceSummarySchema,
   staffMemberSummarySchema,
   userSummarySchema,
@@ -19,6 +22,7 @@ import type {
   ListAgendaInput,
   Money,
 } from '../appointments.types';
+import { ZodValidationPipe } from '../../../common/validation';
 import { MoneyDto } from './book-appointment.dto';
 import { IsCalendarDate, OptionalPresent } from './validation';
 
@@ -72,6 +76,23 @@ import { IsCalendarDate, OptionalPresent } from './validation';
 export const APPOINTMENT_STATUS_FILTERS = APPOINTMENT_STATUSES.map((status) =>
   status.toLowerCase(),
 ) as readonly string[];
+
+/**
+ * Le pipe de la **référence citée** — `GET /appointments/reference/{reference}`
+ * (#796).
+ *
+ * Il normalise avant de juger : casse, séparateurs, préfixe absent, confusions
+ * de fonte. Ce qui en sort est la forme émise, celle que la colonne stocke, si
+ * bien que le service compare une chaîne à une chaîne sans rien réinterpréter.
+ *
+ * Instancié une fois au chargement du module, comme `myAppointmentsQuery` et
+ * pour la même raison : le schéma ne change pas d'une requête à l'autre.
+ *
+ * Le schéma n'est pas un objet — c'est une chaîne transformée —, donc la garde
+ * `.strict()` du pipe ne s'y applique pas : il n'y a pas de clé inconnue
+ * possible dans un segment d'URL.
+ */
+export const citedAppointmentReference = new ZodValidationPipe(citedAppointmentReferenceSchema);
 
 /**
  * Le statut de la requête, dans le vocabulaire du domaine.
@@ -287,6 +308,17 @@ export class AgendaServiceDto {
 export class AgendaAppointmentDto implements AgendaAppointmentView {
   @ApiProperty({ format: 'uuid' })
   public id!: string;
+
+  @ApiProperty({
+    description:
+      'La référence citable du rendez-vous — celle que la cliente donne au ' +
+      'téléphone, et celle que `GET /appointments/reference/{reference}` ' +
+      'résout. Unique par établissement (#796).',
+    example: 'RDV-8F3K-27',
+    pattern: APPOINTMENT_REFERENCE_PATTERN.source,
+    maxLength: APPOINTMENT_REFERENCE_LENGTH,
+  })
+  public reference!: string;
 
   @ApiProperty({ enum: APPOINTMENT_STATUSES, example: 'CONFIRMED' })
   public status!: AppointmentStatus;

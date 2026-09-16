@@ -35,6 +35,7 @@ vi.mock('@/app/(booking)/[tenantSlug]/reservation/actions', () => ({
 function appointment(overrides: Partial<BookedAppointment> = {}): BookedAppointment {
   return {
     id: '55555555-5555-4555-8555-555555555555',
+    reference: 'RDV-8F3K-27',
     status: 'confirmed',
     serviceId: service.id,
     staffId: service.staff[0]?.id ?? '',
@@ -206,8 +207,10 @@ describe('la référence du rendez-vous', () => {
     renderConfirmation();
 
     // `docs/design/appointments/wireframes.md` — Étape 6 : « Réf. RDV-8F3K-27 ».
+    // Depuis #796, la valeur affichée est celle que l'API rend
+    // (`BookedAppointment.reference`), et non plus une dérivation de l'identifiant.
     expect(screen.getByText('Réf.')).toBeDefined();
-    expect(screen.getByText('RDV-RQWJ-77')).toBeDefined();
+    expect(screen.getByText('RDV-8F3K-27')).toBeDefined();
     expect(screen.queryByText(/55555555-5555-4555-8555-555555555555/)).toBeNull();
   });
 
@@ -217,8 +220,8 @@ describe('la référence du rendez-vous', () => {
     // Rien de secret : c'est la donnée du brouillon de cet onglet, et celle que
     // l'annulation envoie déjà à l'API. Mais c'est aussi ce dont le parcours
     // critique se sert pour retrouver en API le rendez-vous qu'il vient de
-    // prendre (`tests/e2e/support/scene.ts`) — aucune route ne sait résoudre la
-    // référence courte.
+    // prendre (`tests/e2e/support/scene.ts`). La référence, elle, se résout
+    // désormais aussi — mais derrière une garde `STAFF` (#796).
     expect(
       container.querySelector('[data-appointment-id]')?.getAttribute('data-appointment-id'),
     ).toBe('55555555-5555-4555-8555-555555555555');
@@ -229,7 +232,7 @@ describe('la référence du rendez-vous', () => {
     // annulation qu'on conteste.
     renderConfirmation({ cancelled: true });
 
-    expect(screen.getByText('RDV-RQWJ-77')).toBeDefined();
+    expect(screen.getByText('RDV-8F3K-27')).toBeDefined();
   });
 });
 

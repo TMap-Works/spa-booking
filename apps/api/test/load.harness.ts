@@ -13,6 +13,7 @@ import { StaffScheduleService } from '../src/modules/availability/staff-schedule
 import { StaffTimeOffRepository } from '../src/modules/availability/staff-time-off.repository';
 import { StaffTimeOffService } from '../src/modules/availability/staff-time-off.service';
 import { TenantClockService } from '../src/modules/availability/tenant-clock.service';
+import { generateAppointmentReference } from '../src/modules/appointments/appointment-reference';
 import { AppointmentsRepository } from '../src/modules/appointments/appointments.repository';
 import type { AppointmentDraft } from '../src/modules/appointments/appointments.types';
 import { ClientDirectoryService } from '../src/modules/crm/client-directory.service';
@@ -372,6 +373,7 @@ async function fillAgenda(
     serviceId: string;
     startsAt: Date;
     endsAt: Date;
+    reference: string;
     priceAmountMinor: number;
     priceCurrency: string;
   }[] = [];
@@ -413,6 +415,9 @@ async function fillAgenda(
         serviceId: fixture.serviceId,
         startsAt,
         endsAt: new Date(startsAt.getTime() + shape.durationMinutes * ONE_MINUTE),
+        // `NOT NULL` depuis #796, et tirée ici parce que ce semis écrit en
+        // direct : le tirage du repository ne passe pas par `createMany`.
+        reference: generateAppointmentReference(),
         priceAmountMinor: 3500,
         priceCurrency: 'EUR',
       });

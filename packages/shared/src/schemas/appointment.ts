@@ -53,7 +53,12 @@ import {
   offsetDateTimeSchema,
   utcInstantSchema,
 } from '../common/time';
-import { APPOINTMENT_STATUSES, CANCELLATION_ACTORS } from '../constants/appointment';
+import {
+  APPOINTMENT_REFERENCE_PATTERN,
+  APPOINTMENT_STATUSES,
+  CANCELLATION_ACTORS,
+  normalizeAppointmentReference,
+} from '../constants/appointment';
 import { MAX_APPOINTMENT_RANGE_DAYS } from '../constants/limits';
 
 import { serviceSummarySchema, staffMemberSummarySchema } from './catalog';
@@ -62,6 +67,45 @@ import { userSummarySchema } from './identity';
 export const appointmentStatusSchema = z.enum(APPOINTMENT_STATUSES);
 
 export const cancellationActorSchema = z.enum(CANCELLATION_ACTORS);
+
+/**
+ * La référence citable d'un rendez-vous, sous la forme **émise** — `RDV-8F3K-27`
+ * (#796).
+ *
+ * Elle vient de la colonne `appointments.reference`, unique par établissement,
+ * et non plus d'un calcul côté front (#736) : voir l'en-tête du bloc
+ * « référence citable » de `../constants/appointment`.
+ *
+ * Ce schéma est **strict** parce qu'il décrit une sortie : ce que l'API rend est
+ * ce que la base contient, à la casse et au séparateur près. La tolérance de
+ * saisie est l'affaire de `citedAppointmentReferenceSchema` ci-dessous, et les
+ * séparer est ce qui évite qu'un jour l'API se mette à émettre `a5hy14`.
+ */
+export const appointmentReferenceSchema = z
+  .string()
+  .regex(APPOINTMENT_REFERENCE_PATTERN, 'référence de rendez-vous attendue, au format RDV-XXXX-NN');
+
+export type AppointmentReference = z.infer<typeof appointmentReferenceSchema>;
+
+/**
+ * La référence telle qu'on vient de la **dicter** — normalisée, puis jugée.
+ *
+ * C'est le schéma d'**entrée** : celui d'un champ de recherche au comptoir ou
+ * d'un segment d'URL. Il transforme avant de valider, exactement comme
+ * `offsetDateTimeSchema` normalise un instant entrant, si bien que le type
+ * inféré est déjà la forme émise — passé la frontière, plus aucune couche n'a à
+ * se demander dans quelle casse elle compare une référence.
+ *
+ * Ce qu'il absorbe et ce qu'il refuse est documenté sur
+ * `normalizeAppointmentReference`. Ce qu'il **ne fait pas** : chercher. Une
+ * référence bien formée qui ne désigne aucun rendez-vous de l'établissement est
+ * un 404, pas un 400 — la distinction est celle entre « ce n'est pas une
+ * référence » et « ce n'en est pas une d'ici ».
+ */
+export const citedAppointmentReferenceSchema = z
+  .string()
+  .transform(normalizeAppointmentReference)
+  .pipe(appointmentReferenceSchema);
 
 /**
  * Statut de rendez-vous **tel qu'il arrive du fil**, ramené au vocabulaire du
@@ -128,6 +172,15 @@ export const receivedCancellationActorSchema = z
  */
 export const appointmentSchema = z.object({
   id: uuidSchema,
+  /**
+   * La référence citable — `RDV-8F3K-27` (#796).
+   *
+   * Requise, et non facultative : la colonne est `NOT NULL`, toute ligne en
+   * porte une, et un champ optionnel aurait laissé le comptoir afficher « — » à
+   * la place d'un code qui existe toujours. C'est elle, et non `id`, que le
+   * tiroir du planning montre : un UUID ne se dicte pas.
+   */
+  reference: appointmentReferenceSchema,
   status: receivedAppointmentStatusSchema,
   client: userSummarySchema,
   staff: staffMemberSummarySchema,
@@ -449,6 +502,18 @@ export type AppointmentListQuery = z.infer<typeof appointmentListQuerySchema>;
  */
 export const bookedAppointmentSchema = z.object({
   id: uuidSchema,
+  /**
+   * La référence citable — c'est elle que l'écran de confirmation affiche
+   * (#736, #796).
+   *
+   * Servie au parcours **public** à dessein, et sans que cela ouvre quoi que ce
+   * soit : la cliente reçoit la référence de son propre rendez-vous, celui
+   * qu'elle vient de prendre. Ce que la référence permet de faire — résoudre un
+   * rendez-vous à partir d'elle — est derrière une garde `STAFF` et n'a aucune
+   * surface publique, précisément parce qu'un code de six symboles s'énumère là
+   * où un UUID v4 ne s'énumère pas (tenant-isolation §4).
+   */
+  reference: appointmentReferenceSchema,
   status: receivedAppointmentStatusSchema,
   serviceId: uuidSchema,
   staffId: uuidSchema,

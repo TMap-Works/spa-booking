@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 
 import { createScopedPrismaClient } from '../src/infrastructure/database/prisma-clients';
+import { generateAppointmentReference } from '../src/modules/appointments/appointment-reference';
 import { NotificationsRepository } from '../src/modules/notifications/notifications.repository';
 import {
   appointmentDedupeKey,
@@ -192,6 +193,8 @@ async function seedAppointment(
       serviceId: fixture.serviceId,
       startsAt,
       endsAt: new Date(startsAt.getTime() + ONE_HOUR),
+      // `NOT NULL` depuis #796 : ce semis écrit hors du repository.
+      reference: generateAppointmentReference(),
       priceAmountMinor: 3500,
       priceCurrency: 'EUR',
     },

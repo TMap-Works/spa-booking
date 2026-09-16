@@ -653,6 +653,32 @@ export function AppointmentPanel({
       </div>
 
       <div className="spa-admin-panel__body">
+        {/* La référence citable, en tête du tiroir — #796.
+
+            C'est le premier bloc du corps, avant même le formulaire, et sa place
+            tient à ce qu'on en fait : quand le téléphone sonne, la personne qui
+            décroche entend « RDV-A5HY-14 » et doit retrouver ce code sous les
+            yeux. Le mettre plus bas, parmi les valeurs calculées du
+            récapitulatif, l'aurait rangé avec ce qui décrit le rendez-vous — or
+            elle ne le décrit pas, elle le désigne.
+
+            Absente à la création : la référence est tirée par le serveur à
+            l'insertion, et l'écran ne peut pas l'inventer avant que le
+            rendez-vous existe.
+
+            Le libellé est celui de l'écran de confirmation de la cliente
+            (« Réf. »), au mot près : les deux surfaces montrent le même code, et
+            le nommer autrement de chaque côté du comptoir aurait obligé à
+            traduire au téléphone. */}
+        {editing === null ? null : (
+          <div className="spa-admin-appointment__summary">
+            <div className="spa-admin-appointment__summary-row">
+              <span className="spa-admin-appointment__summary-label">Réf.</span>
+              <span className="spa-admin-appointment__summary-value">{editing.reference}</span>
+            </div>
+          </div>
+        )}
+
         {conflict === null ? null : (
           <div className="spa-admin-appointment__conflict">
             {/* « Indisponible » et non « déjà réservé » : le 409 couvre cinq

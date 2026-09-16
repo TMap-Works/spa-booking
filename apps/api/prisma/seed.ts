@@ -93,6 +93,12 @@
 
 import { createHash } from 'node:crypto';
 
+import {
+  APPOINTMENT_REFERENCE_ALPHABET,
+  APPOINTMENT_REFERENCE_GROUP_LENGTH,
+  APPOINTMENT_REFERENCE_PREFIX,
+  APPOINTMENT_REFERENCE_SUFFIX_LENGTH,
+} from '@spa/shared';
 import { hash } from 'bcryptjs';
 import {
   AppointmentCancelledBy,
@@ -294,6 +300,38 @@ function seedId(...parts: readonly string[]): string {
     hex.slice(16, 20),
     hex.slice(20, 32),
   ].join('-');
+}
+
+/**
+ * La référence citable d'un rendez-vous du jeu d'essai — `RDV-XXXX-NN` (#796).
+ *
+ * **Dérivée du condensat de l'identifiant**, et non tirée au sort comme le fait
+ * le code de production : un seed doit être rejouable à l'identique, et une
+ * référence aléatoire aurait changé à chaque exécution — donc fait échouer
+ * l'`upsert` sur l'unique `(tenant_id, reference)` dès la seconde passe, tout en
+ * rendant impossible d'écrire une référence en dur dans une recette.
+ *
+ * Ce n'est pas une seconde définition de ce qu'est une référence : la forme
+ * (préfixe, alphabet, longueurs) vient du contrat partagé, et seul le **choix**
+ * des symboles diffère. L'unicité, elle, reste celle de l'index : deux
+ * rendez-vous du jeu ont des identifiants distincts, donc des condensats
+ * distincts, et une collision se verrait immédiatement à l'exécution du seed.
+ */
+function seedAppointmentReference(appointmentId: string): string {
+  const digest = createHash('sha256').update(appointmentId).digest();
+  let group = '';
+
+  for (let index = 0; index < APPOINTMENT_REFERENCE_GROUP_LENGTH; index += 1) {
+    const byte = digest[index] ?? 0;
+    group += APPOINTMENT_REFERENCE_ALPHABET.charAt(byte % APPOINTMENT_REFERENCE_ALPHABET.length);
+  }
+
+  const suffix = String((digest[APPOINTMENT_REFERENCE_GROUP_LENGTH] ?? 0) % 100).padStart(
+    APPOINTMENT_REFERENCE_SUFFIX_LENGTH,
+    '0',
+  );
+
+  return `${APPOINTMENT_REFERENCE_PREFIX}-${group}-${suffix}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -1128,6 +1166,9 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
 
     const cancelled = fixtureAppointment.status === AppointmentStatus.CANCELLED;
     const shape = {
+      // La référence citable (#796) — dérivée de l'identifiant du jeu, donc
+      // stable d'une exécution à l'autre : une recette peut l'écrire en dur.
+      reference: seedAppointmentReference(id),
       clientId: required(clientIds, fixtureAppointment.clientKey, 'client'),
       staffId: required(staffIds, fixtureAppointment.staffKey, 'praticien'),
       serviceId: required(serviceIds, fixtureAppointment.serviceKey, 'prestation'),

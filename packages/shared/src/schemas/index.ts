@@ -1,5 +1,6 @@
 export {
   appointmentListQuerySchema,
+  appointmentReferenceSchema,
   appointmentSchema,
   appointmentScopeSchema,
   appointmentStatusSchema,
@@ -8,6 +9,7 @@ export {
   cancelAppointmentRequestSchema,
   cancellationActorSchema,
   changeAppointmentStatusRequestSchema,
+  citedAppointmentReferenceSchema,
   createAppointmentRequestSchema,
   DEFAULT_APPOINTMENT_SCOPE,
   guestContactSchema,
@@ -21,6 +23,7 @@ export {
 export type {
   Appointment,
   AppointmentListQuery,
+  AppointmentReference,
   AppointmentScope,
   BookGuestAppointmentRequest,
   BookedAppointment,

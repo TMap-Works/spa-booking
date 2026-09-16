@@ -3,7 +3,9 @@ import { Prisma } from '@prisma/client';
 // Voir `appointment-status.spec.ts` : lecteur unique du SQL de migration (#217).
 import { readMigrationSql } from '../../../infrastructure/database/__tests__/migration-sql';
 import {
+  APPOINTMENT_REFERENCE_UNIQUE,
   CLIENT_FOREIGN_KEYS,
+  isAppointmentReferenceCollision,
   isSlotExclusionViolation,
   isTransientWriteConflict,
   isUnknownClientReference,
@@ -229,5 +231,60 @@ describe('CLIENT_FOREIGN_KEYS', () => {
     // côté SQL sans son pendant ici ferait retomber en 500 toute désignation de
     // fiche erronée, sans qu'aucun cas nominal ne rougisse.
     expect(readMigrationSql()).toContain(`ADD CONSTRAINT "${constraint}"`);
+  });
+});
+
+/**
+ * Reconnaissance de la **collision de tirage** de la référence citable (#796).
+ *
+ * Deux modes de défaillance, asymétriques comme les précédents :
+ *
+ * - **trop strict** — la collision n'est plus reconnue, et une réservation
+ *   parfaitement légitime sort en 500 parce que le tirage est tombé sur une
+ *   valeur déjà prise dans ce salon. Rare, donc jamais vu en recette, et
+ *   incompréhensible en production : rien dans la demande ne l'explique ;
+ * - **trop laxiste** — le refus d'un autre unique serait rejoué à l'identique
+ *   jusqu'à épuisement des tentatives, puis remonté en 500 de toute façon, avec
+ *   trois écritures au lieu d'une.
+ */
+
+/** Le refus d'unicité, sous la forme où Prisma nomme l'index ou la colonne. */
+function uniqueViolation(target: string): Error {
+  return new Prisma.PrismaClientKnownRequestError(
+    `Unique constraint failed on the fields: (\`${target}\`)`,
+    { code: 'P2002', clientVersion: '6.12.0', meta: { modelName: 'Appointment', target } },
+  );
+}
+
+describe('isAppointmentReferenceCollision', () => {
+  it('reconnaît le refus de l’unique par établissement', () => {
+    expect(isAppointmentReferenceCollision(uniqueViolation(APPOINTMENT_REFERENCE_UNIQUE))).toBe(
+      true,
+    );
+  });
+
+  it('reconnaît la forme où le connecteur nomme la colonne plutôt que l’index', () => {
+    expect(isAppointmentReferenceCollision(uniqueViolation('reference'))).toBe(true);
+  });
+
+  it.each([
+    {
+      what: 'l’unique de cible des clés composites',
+      error: uniqueViolation('appointments_tenant_id_id_key'),
+    },
+    { what: 'une violation de clé étrangère', error: foreignKeyViolation(CLIENT_FOREIGN_KEYS[0]) },
+    { what: 'un refus de créneau', error: realExclusionViolation() },
+    { what: 'une erreur quelconque', error: new Error('boom') },
+  ])('ne reconnaît pas $what', ({ error }) => {
+    expect(isAppointmentReferenceCollision(error)).toBe(false);
+  });
+});
+
+describe('APPOINTMENT_REFERENCE_UNIQUE', () => {
+  it('porte le nom que la migration déclare', () => {
+    // Même couplage assumé que pour la contrainte d'exclusion : un renommage
+    // côté SQL sans son pendant ici ferait remonter toute collision de tirage
+    // en 500, sans qu'aucun cas nominal ne rougisse.
+    expect(readMigrationSql()).toContain(`CREATE UNIQUE INDEX "${APPOINTMENT_REFERENCE_UNIQUE}"`);
   });
 });

@@ -229,6 +229,11 @@ export function buildTemplateVariables(
 
   return {
     client: clientName(context),
+    // Recopiée telle quelle : la référence est déjà sous sa forme émise en base
+    // (#796). La reformater ici — ou pire, la recalculer — serait une seconde
+    // définition de ce qu'est une référence, et c'est celle de l'e-mail qui
+    // finirait par différer de celle de l'écran.
+    reference: context.appointmentReference,
     service: context.serviceName,
     praticien: context.staffName,
     salon: channel === 'SMS' ? shortenForSms(context.tenantName) : context.tenantName,

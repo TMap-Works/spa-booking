@@ -87,6 +87,7 @@ const RINA = {
 /** 09:00 – 10:00 au salon d'Antananarivo, le mercredi 26 août 2026. */
 const CONFIRME: Appointment = {
   id: 'aaaaaaaa-0000-4000-8000-000000000001',
+  reference: 'RDV-8F3K-27',
   status: 'confirmed',
   client: { id: RINA.id, firstName: RINA.firstName, lastName: RINA.lastName },
   staff: { id: 'staff-hasina', displayName: 'Hasina' },
@@ -252,6 +253,28 @@ describe('deuxième critère — la fiche cliente', () => {
     await user.type(screen.getByLabelText(/^Client/), 'Zafy');
 
     expect(await screen.findByText(/Aucune fiche pour/)).toBeDefined();
+  });
+});
+
+describe('#796 — la référence citable au comptoir', () => {
+  it('affiche « Réf. RDV-XXXX-NN » sur un rendez-vous posé', () => {
+    // Le geste que le ticket sert : une cliente appelle en citant son code, et
+    // la personne qui décroche doit le retrouver sous les yeux. Le libellé est
+    // celui de l'écran de confirmation de la cliente — les deux surfaces
+    // montrent le même code, et le nommer autrement aurait obligé à traduire au
+    // téléphone.
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    expect(screen.getByText('Réf.')).toBeDefined();
+    expect(screen.getByText(CONFIRME.reference)).toBeDefined();
+  });
+
+  it('ne l’annonce pas à la création — le serveur ne l’a pas encore tirée', () => {
+    // La référence est posée à l'insertion, par le serveur. Afficher une
+    // amorce ici aurait montré un code qu'aucun rendez-vous ne porte.
+    renderPanel(CREATION);
+
+    expect(screen.queryByText('Réf.')).toBeNull();
   });
 });
 

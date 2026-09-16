@@ -948,6 +948,52 @@ export class AppointmentsService {
   }
 
   /**
+   * Le rendez-vous que désigne une **référence citée** — `RDV-A5HY-14` (#796).
+   *
+   * C'est le geste que #736 laissait sans réponse : une cliente appelle en
+   * donnant le code de sa confirmation, et le comptoir doit retrouver son
+   * rendez-vous. La référence l'aidait à reconnaître le sien ; elle ne servait
+   * pas encore à en parler.
+   *
+   * ## Elle rend la ligne d'agenda, comme les trois écritures du comptoir
+   *
+   * Cliente, praticien et prestation imbriqués : ce que l'appelant fait de cette
+   * réponse est l'ouvrir dans le tiroir du planning, qui a besoin des trois. La
+   * forme est exactement `appointmentSchema` du contrat, si bien qu'une
+   * référence résolue et une ligne d'agenda listée se lisent avec le même code
+   * côté front.
+   *
+   * ## La normalisation de ce qu'on a dicté a déjà eu lieu
+   *
+   * `citedAppointmentReferenceSchema` l'a faite à la frontière HTTP — casse,
+   * séparateurs, préfixe absent, confusions de fonte. Ce service reçoit donc la
+   * forme émise, et il la compare telle quelle : une seconde normalisation ici
+   * aurait été une seconde définition de ce qu'est une référence, donc une
+   * occasion de diverger.
+   *
+   * ## Ce que cette méthode ne fait pas : deviner
+   *
+   * Pas de recherche approchante, pas de « références voisines ». Une référence
+   * qui ne désigne rien dans cet établissement est une référence inconnue — y
+   * compris quand elle désigne un rendez-vous du salon voisin, ce que le client
+   * Prisma scopé rend indiscernable (tenant-isolation §4). Un 404, jamais un
+   * 403 : le second confirmerait que le code existe ailleurs, et ferait de cette
+   * route une sonde de références.
+   *
+   * @throws {NotFoundError} aucune ligne de cet établissement ne porte cette
+   * référence.
+   */
+  public async findByReference(reference: string): Promise<AgendaAppointmentView> {
+    const record = await this.repository.findAgendaByReference(reference);
+
+    if (record === null) {
+      throw new NotFoundError('Rendez-vous introuvable.');
+    }
+
+    return agendaView(record);
+  }
+
+  /**
    * L'insertion, tentée sur les candidats **dans l'ordre**, jusqu'à ce que la
    * base en accepte un (#36, quatrième critère).
    *
@@ -1231,6 +1277,7 @@ function billedView(record: AppointmentRecord, service: BilledIntervalSource): A
 
   return {
     id: record.id,
+    reference: record.reference,
     status: record.status,
     serviceId: record.serviceId,
     staffId: record.staffId,
@@ -1274,6 +1321,7 @@ function agendaView(record: AgendaAppointmentRecord): AgendaAppointmentView {
 
   return {
     id: record.id,
+    reference: record.reference,
     status: record.status,
     client: record.client,
     staff: record.staff,

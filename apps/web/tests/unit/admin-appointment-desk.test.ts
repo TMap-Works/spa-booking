@@ -185,6 +185,7 @@ describe('le report par glisser-déposer', () => {
   function moved(status: AppointmentStatus = 'confirmed'): Appointment {
     return {
       id: 'aaaaaaaa-0000-4000-8000-000000000001',
+      reference: 'RDV-8F3K-27',
       status,
       client: { id: 'client-1', firstName: 'Rina', lastName: 'Andriamana' },
       staff: HASINA,
@@ -284,6 +285,7 @@ describe('le report par glisser-déposer', () => {
 describe('le retour arrière, et ce qu’il annonce', () => {
   const previous: Appointment = {
     id: 'aaaaaaaa-0000-4000-8000-000000000001',
+    reference: 'RDV-8F3K-27',
     status: 'confirmed',
     client: { id: 'client-1', firstName: 'Rina', lastName: 'Andriamana' },
     staff: { id: 'staff-hasina', displayName: 'Hasina' },

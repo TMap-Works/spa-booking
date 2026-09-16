@@ -46,6 +46,8 @@ function appointment(
 
   return {
     id,
+    // Distincte d'une ligne à l'autre, comme l'unique par tenant l'impose (#796).
+    reference: `RDV-8F3K-${String(sequence % 100).padStart(2, '0')}`,
     status: overrides.status ?? 'confirmed',
     client: { id: `client-${id}`, ...client },
     staff: { id: staff.id, displayName: staff.displayName },

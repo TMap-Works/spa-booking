@@ -4,6 +4,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 
 import { TenantContextService } from '../src/common/tenant/tenant-context.service';
 import { createScopedPrismaClient } from '../src/infrastructure/database/prisma-clients';
+import { generateAppointmentReference } from '../src/modules/appointments/appointment-reference';
 import { StripeWebhookRepository } from '../src/modules/payments/stripe-webhook.repository';
 import { StripeWebhookService } from '../src/modules/payments/stripe-webhook.service';
 import type { StripeWebhookEvent } from '../src/modules/payments/stripe-webhook.types';
@@ -192,6 +193,9 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
         clientId: client.id,
         staffId: staff.id,
         serviceId: service_.id,
+        // `appointments.reference` est `NOT NULL` depuis #796 : ce semis écrit
+        // en direct, hors du tirage du repository.
+        reference: generateAppointmentReference(),
         startsAt: new Date('2026-10-01T09:00:00Z'),
         endsAt: new Date('2026-10-01T10:00:00Z'),
         priceAmountMinor: PRICE.amountMinor,

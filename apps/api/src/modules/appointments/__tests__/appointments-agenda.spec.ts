@@ -463,3 +463,115 @@ describe('toAgendaInput', () => {
     });
   });
 });
+
+/**
+ * La résolution d'une référence citée — `AppointmentsService.findByReference`
+ * (#796).
+ *
+ * C'est le geste que #736 laissait sans réponse : une cliente téléphone en
+ * donnant « RDV-A5HY-14 », et le comptoir doit ouvrir son rendez-vous. Trois
+ * propriétés, et la dernière est celle qui coûte cher si elle tombe :
+ *
+ * 1. la référence **désigne** — le rendez-vous rendu est celui qui la porte, et
+ *    sous la forme d'une ligne d'agenda, cliente et prestation imbriquées ;
+ * 2. une référence inconnue est un **404**, pas une réponse vide ;
+ * 3. la référence d'un **autre établissement** est indiscernable d'une référence
+ *    inconnue. Deux salons ont le droit de tirer la même — l'unique est par
+ *    tenant —, et un 403 apprendrait au premier que le second l'a tirée
+ *    (tenant-isolation §4).
+ */
+describe('AppointmentsService.findByReference', () => {
+  const VOISIN = randomUUID();
+  let repository: FakeAppointmentsRepository;
+
+  beforeEach(() => {
+    repository = new FakeAppointmentsRepository();
+  });
+
+  /** Un rendez-vous de l'établissement demandé, et sa référence tirée. */
+  const seedIn = (tenantId: string): { id: string; reference: string } => {
+    const stored = repository.seedAppointment({
+      tenantId,
+      staffId: STAFF,
+      serviceId: SERVICE,
+      ...occupied(new Date('2026-03-04T10:00:00.000Z')),
+      display: DISPLAY,
+    });
+
+    return { id: stored.id, reference: stored.reference };
+  };
+
+  const resolve = async (tenantId: string, reference: string): Promise<AgendaAppointmentView> =>
+    runWithTenant(tenantId, () => agendaService(repository).findByReference(reference));
+
+  it('rend la ligne d’agenda du rendez-vous qui porte la référence', async () => {
+    const cliente = repository.seedClient({
+      tenantId: TENANT,
+      email: 'camille@example.test',
+      firstName: 'Camille',
+      lastName: 'Durand',
+    });
+    const stored = repository.seedAppointment({
+      tenantId: TENANT,
+      staffId: STAFF,
+      serviceId: SERVICE,
+      clientId: cliente.id,
+      ...occupied(new Date('2026-03-04T10:00:00.000Z')),
+      display: DISPLAY,
+    });
+    // Un second rendez-vous du même salon : la résolution doit désigner, pas
+    // rendre le premier venu.
+    seedIn(TENANT);
+
+    const row = await resolve(TENANT, stored.reference);
+
+    expect(row.id).toBe(stored.id);
+    expect(row.reference).toBe(stored.reference);
+    expect(row.client).toEqual({ id: cliente.id, firstName: 'Camille', lastName: 'Durand' });
+    // L'intervalle rendu est le **facturé**, comme partout ailleurs : le
+    // comptoir annoncerait sinon dix minutes trop tôt.
+    expect(row.startsAt).toBe('2026-03-04T10:00:00.000Z');
+  });
+
+  it('refuse une référence qu’aucun rendez-vous du salon ne porte', async () => {
+    seedIn(TENANT);
+
+    await expect(resolve(TENANT, 'RDV-ZZZZ-99')).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('ne résout pas la référence du salon voisin — 404, jamais la donnée', async () => {
+    const chezLeVoisin = seedIn(VOISIN);
+
+    // Le rendez-vous existe, sa référence est bien formée, et elle reste
+    // introuvable d'ici : c'est le client scopé qui le garantit, pas une
+    // comparaison écrite dans le service.
+    await expect(resolve(TENANT, chezLeVoisin.reference)).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  it('tire une référence distincte pour chaque rendez-vous d’un même salon', async () => {
+    // L'unicité réelle est celle de l'index ; ce qui se vérifie ici est que le
+    // service ne la contredit pas — deux réservations du même salon ne peuvent
+    // pas rendre le même code, faute de quoi la résolution serait ambiguë.
+    const references = new Set([seedIn(TENANT).reference, seedIn(TENANT).reference]);
+
+    expect(references.size).toBe(2);
+  });
+
+  it('laisse deux salons porter la même référence sans se voir', async () => {
+    // Deux établissements ont le droit de tirer le même code : ils ne se citent
+    // pas l'un à l'autre, et une unicité globale aurait fait dépendre le tirage
+    // d'un salon du volume de tous les autres.
+    const chezNous = seedIn(TENANT);
+    const jumeau = repository.seedAppointment({
+      tenantId: VOISIN,
+      staffId: OTHER_STAFF,
+      serviceId: OTHER_SERVICE,
+      ...occupied(new Date('2026-03-05T10:00:00.000Z')),
+      display: DISPLAY,
+    });
+    jumeau.reference = chezNous.reference;
+
+    await expect(resolve(TENANT, chezNous.reference)).resolves.toMatchObject({ id: chezNous.id });
+    await expect(resolve(VOISIN, chezNous.reference)).resolves.toMatchObject({ id: jumeau.id });
+  });
+});

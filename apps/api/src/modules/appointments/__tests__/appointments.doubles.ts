@@ -6,6 +6,7 @@ import { getTenantId } from '../../../common/tenant';
 import type { CacheConnection, CacheLockOutcome } from '../../../infrastructure/cache/cache.connection';
 import { ClientEmailNotBookableError } from '../../crm/crm.errors';
 import type { UserRole } from '../../identity/roles';
+import { generateAppointmentReference } from '../appointment-reference';
 import type { AppointmentCancelledBy, AppointmentStatus } from '../appointment-status';
 import { OCCUPYING_STATUSES, occupiesSlot } from '../appointment-status';
 import { SlotNoLongerAvailableError } from '../appointments.errors';
@@ -69,6 +70,15 @@ import type {
 interface StoredAppointment {
   tenantId: string;
   id: string;
+  /**
+   * La référence citable, unique **par tenant** (#796).
+   *
+   * Le double la tire comme le vrai, et la vérifie comme lui : `freeReference`
+   * rejoue le tirage tant que l'établissement en porte déjà une identique. Un
+   * double qui se contenterait d'une valeur fixe rendrait vert un service qui
+   * aurait cessé de la demander.
+   */
+  reference: string;
   clientId: string;
   staffId: string;
   serviceId: string;
@@ -235,6 +245,7 @@ export class FakeAppointmentsRepository {
       serviceId: input.serviceId ?? randomUUID(),
       startsAt: input.startsAt,
       endsAt: input.endsAt,
+      reference: this.freeReference(input.tenantId),
       status: input.status ?? 'PENDING',
       priceAmountMinor: input.priceAmountMinor ?? 0,
       priceCurrency: 'EUR',
@@ -306,6 +317,7 @@ export class FakeAppointmentsRepository {
       serviceId: draft.serviceId,
       startsAt: draft.startsAt,
       endsAt: draft.endsAt,
+      reference: this.freeReference(tenantId),
       // Le défaut de la colonne, et non un choix de l'appelant : le rendez-vous
       // occupe l'agenda dès sa création.
       status: 'PENDING',
@@ -380,6 +392,9 @@ export class FakeAppointmentsRepository {
       serviceId: previous.serviceId,
       startsAt: draft.startsAt,
       endsAt: draft.endsAt,
+      // Une référence neuve, comme le vrai : la ligne d'origine garde la sienne,
+      // et l'unique par tenant interdirait de la recopier (#796).
+      reference: this.freeReference(tenantId),
       status: before,
       priceAmountMinor: previous.priceAmountMinor,
       priceCurrency: previous.priceCurrency,
@@ -480,6 +495,46 @@ export class FakeAppointmentsRepository {
       (candidate) => candidate.tenantId === tenantId && candidate.id === id,
     );
     return found === undefined ? null : toRecord(found);
+  }
+
+  /**
+   * Une ligne d'agenda par **référence citée** (#796).
+   *
+   * Scopée au tenant, comme la vraie : la référence d'un salon voisin rend
+   * `null` — donc 404 — alors même que deux salons ont le droit de porter la
+   * même. C'est la propriété que la suite de service vérifie, et elle ne tient
+   * ici qu'à la comparaison du `tenantId` ci-dessous.
+   */
+  public async findAgendaByReference(
+    reference: string,
+  ): Promise<AgendaAppointmentRecord | null> {
+    const tenantId = this.requireTenant();
+    const found = this.appointments.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.reference === reference,
+    );
+    return found === undefined ? null : this.toAgendaRecord(found);
+  }
+
+  /**
+   * Une référence que cet établissement ne porte pas encore (#796).
+   *
+   * Le vrai repository laisse la base trancher — l'unique `(tenant_id,
+   * reference)` refuse, et `writingAgenda` rejoue le tirage. Le double n'a pas
+   * de base : il vérifie avant d'écrire, ce qui produit la **même** propriété
+   * observable — deux rendez-vous d'un même salon n'ont jamais la même
+   * référence — sans prétendre reproduire la course, qui ne se simule pas en
+   * mémoire (booking-engine §6).
+   */
+  private freeReference(tenantId: string): string {
+    for (;;) {
+      const candidate = generateAppointmentReference();
+      const taken = this.appointments.some(
+        (existing) => existing.tenantId === tenantId && existing.reference === candidate,
+      );
+      if (!taken) {
+        return candidate;
+      }
+    }
   }
 
   /**
@@ -820,6 +875,7 @@ function silentLogger(): StructuredLogger {
 function toRecord(stored: StoredAppointment): AppointmentRecord {
   return {
     id: stored.id,
+    reference: stored.reference,
     clientId: stored.clientId,
     staffId: stored.staffId,
     serviceId: stored.serviceId,

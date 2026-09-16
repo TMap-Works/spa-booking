@@ -1,10 +1,12 @@
 import { Prisma } from '@prisma/client';
+import { APPOINTMENT_REFERENCE_PATTERN } from '@spa/shared';
 
 import { ConflictError, InvalidStateTransitionError, NotFoundError } from '../../../common/errors';
 import { runWithTenant } from '../../../common/tenant/tenant-context';
 import type { ScopedPrismaClient } from '../../../infrastructure/database/prisma-clients';
 import type { ClientDirectoryService } from '../../crm/client-directory.service';
 import { ClientEmailNotBookableError, ClientRecordRaceError } from '../../crm/crm.errors';
+import { APPOINTMENT_REFERENCE_UNIQUE } from '../appointments.conflicts';
 import { SlotNoLongerAvailableError } from '../appointments.errors';
 import { AppointmentsRepository } from '../appointments.repository';
 import type { AppointmentDraft, RescheduleDraft } from '../appointments.types';
@@ -54,6 +56,10 @@ const DRAFT: AppointmentDraft = {
 
 const ROW = {
   id: '44444444-4444-4444-8444-444444444444',
+  // La référence citable, telle que la ligne la porte en base (#796) : elle est
+  // **relue**, jamais recalculée, et une ligne mimée qui l'omettrait ferait
+  // rendre `undefined` là où le domaine annonce une chaîne.
+  reference: 'RDV-8F3K-27',
   clientId: CLIENT_ID,
   staffId: DRAFT.staffId,
   serviceId: DRAFT.serviceId,
@@ -85,6 +91,18 @@ function slotTaken(): Error {
     'PostgresError { code: "23P01", message: "conflicting key value violates exclusion ' +
       'constraint \\"appointments_no_overlap\\"" }',
     { clientVersion: '6.12.0' },
+  );
+}
+
+/** Le refus de l'unique `(tenant_id, reference)` — un tirage déjà pris (#796). */
+function referenceTaken(): Error {
+  return new Prisma.PrismaClientKnownRequestError(
+    `Unique constraint failed on the fields: (\`${APPOINTMENT_REFERENCE_UNIQUE}\`)`,
+    {
+      code: 'P2002',
+      clientVersion: '6.12.0',
+      meta: { modelName: 'Appointment', target: APPOINTMENT_REFERENCE_UNIQUE },
+    },
   );
 }
 
@@ -334,6 +352,35 @@ describe('AppointmentsRepository.create — conduite face à l’échec', () => 
 
     await expect(createAppointment(double.prisma)).rejects.toBe(boom);
     expect(double.calls()).toBe(1);
+  });
+
+  it('tire une référence citable à chaque insertion, et la retire après collision', async () => {
+    // Le tirage est **dans** `insert`, et c'est ce qui rend le réessai utile :
+    // une référence calculée à l'étage au-dessus se serait rejouée identique,
+    // et les trois tentatives auraient buté sur la même valeur prise (#796).
+    const double = clientAnswering(referenceTaken(), ROW);
+
+    await expect(createAppointment(double.prisma)).resolves.toMatchObject({
+      reference: ROW.reference,
+    });
+    expect(double.calls()).toBe(2);
+
+    const [first, second] = double.createData();
+    expect(first?.reference).toEqual(expect.stringMatching(APPOINTMENT_REFERENCE_PATTERN));
+    expect(second?.reference).toEqual(expect.stringMatching(APPOINTMENT_REFERENCE_PATTERN));
+    expect(first?.reference).not.toBe(second?.reference);
+  });
+
+  it('ne maquille pas une collision de référence en créneau pris', async () => {
+    // Les deux refus n'ont rien à voir : l'un dit « ce créneau est pris »,
+    // l'autre « ce tirage est à refaire ». Les confondre ferait renoncer à une
+    // réservation sur un créneau libre.
+    const double = clientAnswering(referenceTaken());
+
+    await expect(createAppointment(double.prisma)).rejects.not.toBeInstanceOf(
+      SlotNoLongerAvailableError,
+    );
+    expect(double.calls()).toBe(3);
   });
 });
 
@@ -696,6 +743,10 @@ describe('AppointmentsRepository.reschedule — annulation puis création', () =
     await reschedule(double.prisma);
 
     expect(double.createData()[0]).toEqual({
+      // La référence citable est la seule chose qui **ne se recopie pas** (#796)
+      // : l'unique par établissement interdit de la reprendre, et un report
+      // produit un rendez-vous neuf — nouvel identifiant, nouvelle référence.
+      reference: expect.stringMatching(APPOINTMENT_REFERENCE_PATTERN),
       clientId: PREVIOUS_ROW.clientId,
       serviceId: PREVIOUS_ROW.serviceId,
       priceAmountMinor: PREVIOUS_ROW.priceAmountMinor,

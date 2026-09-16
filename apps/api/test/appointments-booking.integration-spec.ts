@@ -121,6 +121,11 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
       'endsAt',
       'id',
       'price',
+      // La référence citable (#796) : elle sort **à dessein** — c'est la preuve
+      // de réservation que l'écran de confirmation affiche, et celle que
+      // l'e-mail reprend. Ce que le contrat continue de retenir ici, ce sont les
+      // champs de back-office : `staffNote`, `cancellationReason`, `tenantId`.
+      'reference',
       'rescheduledFromId',
       'serviceId',
       'staffId',

@@ -57,8 +57,23 @@ import type {
  * au schéma, et un salon qui ne les a pas renseignés recevrait sinon deux lignes
  * vides dans chaque message. C'est le comportement que #70 avait déjà, porté dans
  * la grammaire du modèle plutôt que dans du code de rendu.
+ *
+ * ## La référence vient **en tête**, depuis #796
+ *
+ * Elle n'est pas sous section : la colonne est `NOT NULL`, tout rendez-vous en
+ * porte une. Et elle est la première ligne parce qu'elle ne décrit rien — elle
+ * **désigne**. C'est la seule information de ce tableau qu'une cliente cherche
+ * dans son e-mail au moment de téléphoner, et la seule que le comptoir sache
+ * résoudre : « RDV-A5HY-14 » ouvre le rendez-vous, « Massage 60 min, mardi » se
+ * cherche à la main.
+ *
+ * Ce récapitulatif sert la confirmation **et** le rappel J-1, et c'est voulu :
+ * le rappel est le message qu'une cliente a le plus souvent sous les yeux quand
+ * elle appelle pour déplacer. L'avis d'annulation, lui, a son propre
+ * récapitulatif et ne la porte pas — il n'y a plus de rendez-vous à citer.
  */
 const HTML_SUMMARY =
+  '<tr><th align="left">Référence</th><td>{{reference}}</td></tr>' +
   '<tr><th align="left">Prestation</th><td>{{service}}</td></tr>' +
   '<tr><th align="left">Avec</th><td>{{praticien}}</td></tr>' +
   '<tr><th align="left">Date</th><td>{{date}}</td></tr>' +
@@ -74,6 +89,7 @@ const HTML_SUMMARY =
  * ne laisse aucune ligne vide quand l'adresse manque.
  */
 const TEXT_SUMMARY = [
+  'Référence : {{reference}}',
   'Prestation : {{service}}',
   'Avec : {{praticien}}',
   'Date : {{date}}',

@@ -112,6 +112,14 @@ export type ClientReference =
  */
 export interface AppointmentRecord {
   readonly id: string;
+  /**
+   * La référence citable — `RDV-8F3K-27` (#796).
+   *
+   * Lue sur la ligne, jamais recalculée : c'est une colonne, unique par
+   * établissement, posée au tirage à l'insertion. La recalculer ici depuis `id`
+   * serait revenir à la dérivation de #736, qui ne garantit rien.
+   */
+  readonly reference: string;
   readonly clientId: string;
   readonly staffId: string;
   readonly serviceId: string;
@@ -562,6 +570,14 @@ export interface AgendaAppointmentRecord extends AppointmentRecord {
  */
 export interface AgendaAppointmentView {
   readonly id: string;
+  /**
+   * La référence citable, telle que le comptoir la lit et la dicte (#796).
+   *
+   * C'est ce que le tiroir du planning affiche : une cliente qui appelle en
+   * disant « RDV-A5HY-14 » doit trouver le même code sous les yeux de la
+   * personne qui décroche.
+   */
+  readonly reference: string;
   readonly status: AppointmentStatus;
   readonly client: AgendaClientSummary;
   readonly staff: AgendaStaffSummary;
@@ -603,6 +619,20 @@ export interface AgendaAppointmentView {
  */
 export interface AppointmentView {
   readonly id: string;
+  /**
+   * La référence citable — `RDV-8F3K-27` (#736, #796).
+   *
+   * Rendue au parcours **public** à dessein : c'est la preuve de réservation que
+   * l'écran de confirmation affiche, et celle que l'e-mail reprend. La cliente
+   * reçoit la référence du rendez-vous qu'elle vient de prendre, et d'aucun
+   * autre.
+   *
+   * Ce que cela n'ouvre pas : la **résolution**. Aller d'une référence à un
+   * rendez-vous est derrière `@AuthAtLeast('STAFF')`, et n'a aucune surface
+   * publique — six symboles s'énumèrent là où un UUID v4 ne s'énumère pas
+   * (tenant-isolation §4).
+   */
+  readonly reference: string;
   readonly status: AppointmentStatus;
   readonly serviceId: string;
   readonly staffId: string;

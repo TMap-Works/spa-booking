@@ -102,6 +102,10 @@ function appointment(overrides: {
 
   return {
     id,
+    // Distincte d'une ligne à l'autre, comme l'unique par tenant l'impose
+    // (#796) : une valeur constante aurait laissé passer une grille qui prend
+    // la référence pour une clé de rendu.
+    reference: `RDV-8F3K-${String(sequence % 100).padStart(2, '0')}`,
     status: overrides.status ?? 'confirmed',
     client: { id: `client-${id}`, ...client },
     staff,
