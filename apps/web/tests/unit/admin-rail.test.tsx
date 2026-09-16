@@ -258,6 +258,25 @@ describe('rail — le contexte du salon', () => {
     expect(screen.getByText(/Hasina R\., gérant·e/)).toBeDefined();
   });
 
+  /*
+   * Le layout ne renonce plus au rail quand l'API tombe : il lui passe ce qu'il a
+   * (#755). Le contrat du composant est donc de savoir rendre sans fuseau et sans
+   * compte — et de ne rien inventer à leur place, un fuseau de repli faisant lire
+   * la journée dans celui de personne.
+   */
+  it('s’en tient à ce qu’il sait quand le fuseau et le compte manquent', () => {
+    renderRail({ establishments: [], timeZone: null, userName: null });
+
+    expect(screen.queryByText(/Fuseau du salon/)).toBeNull();
+    expect(screen.queryByText(/Connecté·e/)).toBeNull();
+    expect(screen.getByText(/Compte non vérifié/)).toBeDefined();
+    // Le salon se nomme alors par le slug de l'URL, et la navigation reste
+    // entière : c'est elle que la panne emportait.
+    expect(screen.getAllByText('maison-lotus').length).toBeGreaterThan(0);
+    expect(screen.getByRole('link', { name: 'Planning' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Se déconnecter' })).toBeDefined();
+  });
+
   it('n’offre aucun choix quand le compte ne gère qu’un salon', () => {
     renderRail();
 

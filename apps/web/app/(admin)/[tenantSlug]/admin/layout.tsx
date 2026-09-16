@@ -2,7 +2,7 @@ import type { UserRole } from '@spa/shared';
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 
-import { fetchOwnProfile, fetchPublicTenant } from '@/lib/api-client';
+import { ApiClientError, fetchOwnProfile, fetchPublicTenant } from '@/lib/api-client';
 
 import { AdminRail } from './components/admin-rail';
 import type { AdminEstablishment } from './components/establishment-switcher';
@@ -69,10 +69,46 @@ export const dynamic = 'force-dynamic';
 
 /** Ce qu'il faut savoir pour peindre le rail. */
 interface AdminShell {
+  /** Vide quand la vitrine publique n'a pas répondu — le rail se rabat sur le slug. */
   readonly establishments: readonly AdminEstablishment[];
-  readonly timeZone: string;
-  readonly userName: string;
+  /** `null` quand la vitrine publique n'a pas répondu : on n'invente pas un fuseau. */
+  readonly timeZone: string | null;
+  /** `null` quand `/auth/me` n'a pas répondu : on n'annonce pas un compte qu'on ignore. */
+  readonly userName: string | null;
   readonly role: UserRole;
+}
+
+/**
+ * Le rang retenu quand `/auth/me` n'a pas répondu (#755).
+ *
+ * `staff` est le plus bas des trois rangs du back-office : le sommaire s'y
+ * réduit aux sections que **tous** ouvrent, et aucune entrée n'est promise à qui
+ * ne l'a pas. L'inverse — tout montrer — aurait conduit un praticien sur les
+ * réglages, pour un 403 causé par la panne elle-même.
+ *
+ * Ce choix n'ouvre aucune donnée : « le rôle filtre, il ne protège pas »
+ * (`components/navigation.ts`), et la seule garde qui compte est celle de l'API.
+ */
+const OUTAGE_ROLE: UserRole = 'staff';
+
+/**
+ * Les statuts qui **nient** — la session, le rang, ou le salon lui-même.
+ *
+ * C'est la frontière entre les deux façons d'échouer, et elle décide si le rail
+ * se peint (#755). Une réponse qui nie dit qu'il n'y a pas de back-office à
+ * dessiner ici : le repli sans rail est alors le bon, et il est délibéré. Tout
+ * le reste — 5xx, coupure réseau, réponse hors contrat — est une **panne**, et
+ * une panne ne doit pas emporter la navigation.
+ */
+const DENIAL_STATUSES: readonly number[] = [401, 403, 404];
+
+/** `true` si l'appel a été refusé par une réponse, plutôt que resté sans réponse. */
+function isDenial(settled: PromiseSettledResult<unknown>): boolean {
+  return (
+    settled.status === 'rejected' &&
+    settled.reason instanceof ApiClientError &&
+    DENIAL_STATUSES.includes(settled.reason.status)
+  );
 }
 
 /**
@@ -98,12 +134,31 @@ interface AdminShell {
  * (`session.ts`). Le nom affiché et les droits affichés parlent donc toujours du
  * même établissement.
  *
- * ## Un échec ne casse pas la page
+ * ## Un échec ne casse pas la page — et depuis #755, il ne retire plus le rail
  *
- * API éteinte, jeton révoqué, salon inconnu : on rend la forme dégradée et l'on
- * laisse la page décider. Elle a la garde, elle redirigera — et si elle
- * n'échoue pas, elle s'affiche sans son rail plutôt que derrière un écran
- * d'erreur qui n'aurait rien à proposer.
+ * Ce bloc attrapait **tout** et rendait `null`. Une API éteinte emportait donc
+ * la navigation, le nom du salon, le fuseau et « Se déconnecter » en même temps
+ * que le contenu : l'opérateur se retrouvait devant un encart rouge sans un seul
+ * lien pour revenir au planning, la barre d'adresse pour seul recours. C'est
+ * l'écart que `docs/design/appointments/states.md` interdit — un état d'erreur
+ * doit laisser une issue — et il frappait les sept écrans à la fois, puisque
+ * c'est ici qu'il se décide.
+ *
+ * Les deux appels sont donc **réglés séparément** (`allSettled`), et leurs
+ * échecs triés en deux familles :
+ *
+ * - **une réponse qui nie** — 401 session révoquée, 403 rang refusé, 404 salon
+ *   inconnu : il n'y a pas de back-office à dessiner, et le repli sans rail
+ *   reste le bon. C'est aussi ce qui garde l'écran de connexion tel qu'il est,
+ *   sans navigation — il est sous ce même layout, et un jeton d'accès périmé y
+ *   rendrait sinon un sommaire ;
+ * - **une panne** — 5xx, coupure réseau, réponse hors contrat : le rail se peint
+ *   avec ce qui est revenu, et **dit ce qu'il ignore** plutôt que de l'inventer.
+ *   Les deux appels ne dépendent pas l'un de l'autre : que la vitrine publique
+ *   tombe n'est pas une raison d'effacer le compte connecté, ni l'inverse.
+ *
+ * Ce fichier ne redirige toujours pas : la page a la garde, et c'est elle qui
+ * décide de l'issue.
  */
 async function loadAdminShell(tenantSlug: string): Promise<AdminShell | null> {
   const accessToken = await readAdminAccessToken();
@@ -112,31 +167,39 @@ async function loadAdminShell(tenantSlug: string): Promise<AdminShell | null> {
     return null;
   }
 
-  try {
-    const [profile, tenant] = await Promise.all([
-      fetchOwnProfile(accessToken),
-      fetchPublicTenant(tenantSlug),
-    ]);
+  const [profile, tenant] = await Promise.allSettled([
+    fetchOwnProfile(accessToken),
+    fetchPublicTenant(tenantSlug),
+  ]);
 
-    // Un compte `client` obtient une session ici — il n'y a qu'une identité par
-    // établissement — et se heurte au 403 de l'API dès le premier écran. Lui
-    // peindre un sommaire du back-office serait lui promettre des sections
-    // qu'aucune ne s'ouvrira.
-    if (profile.role === 'client') {
-      return null;
-    }
-
-    return {
-      establishments: [{ slug: tenant.slug, name: tenant.name }],
-      timeZone: tenant.timezone,
-      // L'initiale plutôt que le nom entier : le pied de rail est étroit, et
-      // « Rakotoarisoa » y déborderait sans rien apprendre à qui est connecté.
-      userName: `${profile.firstName} ${profile.lastName.slice(0, 1)}.`,
-      role: profile.role,
-    };
-  } catch {
+  if (isDenial(profile) || isDenial(tenant)) {
     return null;
   }
+
+  // Un compte `client` obtient une session ici — il n'y a qu'une identité par
+  // établissement — et se heurte au 403 de l'API dès le premier écran. Lui
+  // peindre un sommaire du back-office serait lui promettre des sections
+  // qu'aucune ne s'ouvrira.
+  if (profile.status === 'fulfilled' && profile.value.role === 'client') {
+    return null;
+  }
+
+  return {
+    // Rien plutôt qu'un établissement fabriqué : le rail se rabat alors sur le
+    // slug de l'URL, qui est la seule chose qu'on sache vraie du salon.
+    establishments:
+      tenant.status === 'fulfilled'
+        ? [{ slug: tenant.value.slug, name: tenant.value.name }]
+        : [],
+    timeZone: tenant.status === 'fulfilled' ? tenant.value.timezone : null,
+    // L'initiale plutôt que le nom entier : le pied de rail est étroit, et
+    // « Rakotoarisoa » y déborderait sans rien apprendre à qui est connecté.
+    userName:
+      profile.status === 'fulfilled'
+        ? `${profile.value.firstName} ${profile.value.lastName.slice(0, 1)}.`
+        : null,
+    role: profile.status === 'fulfilled' ? profile.value.role : OUTAGE_ROLE,
+  };
 }
 
 interface AdminLayoutProps {

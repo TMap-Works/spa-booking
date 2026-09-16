@@ -106,14 +106,29 @@ function isKeyboardFocus(entry: Element): boolean {
  * non plus rendu du tout tant qu'il n'y a pas de session : c'est le layout qui
  * en décide, et l'écran de connexion se sert donc sans navigation — il n'y a
  * nulle part où aller.
+ *
+ * ## Ce que le rail fait quand le layout n'a pas tout obtenu (#755)
+ *
+ * Le fuseau et le compte peuvent manquer : le layout ne renonce plus au rail
+ * entier quand l'API tombe, il lui passe ce qu'il a. Une ligne absente s'efface
+ * donc au lieu d'afficher un repli fabriqué — un fuseau deviné écrirait les
+ * heures du salon dans celui de personne, et un nom inventé annoncerait
+ * quelqu'un d'autre sur un poste de comptoir partagé. La panne, elle, est **dite**
+ * plutôt que tue : c'est ce qui explique qu'une section manque au sommaire.
  */
 interface AdminRailProps {
   readonly tenantSlug: string;
   readonly establishments: readonly AdminEstablishment[];
-  /** Fuseau de l'établissement — toutes les heures du back-office y sont écrites. */
-  readonly timeZone: string;
-  /** Le compte connecté, tel qu'on l'annonce : « Hasina R. ». */
-  readonly userName: string;
+  /**
+   * Fuseau de l'établissement — toutes les heures du back-office y sont écrites.
+   * `null` quand la vitrine publique n'a pas répondu.
+   */
+  readonly timeZone: string | null;
+  /**
+   * Le compte connecté, tel qu'on l'annonce : « Hasina R. ». `null` quand
+   * `/auth/me` n'a pas répondu — le rang est alors le plus bas, par défaut.
+   */
+  readonly userName: string | null;
   readonly role: UserRole;
 }
 
@@ -169,11 +184,26 @@ export function AdminRail({
          * heures du back-office sont écrites dans celui du salon, et un
          * opérateur qui consulte depuis ailleurs doit pouvoir le constater sans
          * le chercher.
+         *
+         * Il s'efface quand la vitrine publique n'a pas répondu (#755) : écrire
+         * ici un fuseau de repli ferait lire les horaires de la journée dans
+         * celui de personne, ce qui est pire que ne rien dire.
          */}
-        <span>Fuseau du salon : {timeZone}</span>
-        <span>
-          Connecté·e : {userName}, {roleLabel(role)}
-        </span>
+        {timeZone === null ? null : <span>Fuseau du salon : {timeZone}</span>}
+        {/*
+         * Le compte manque quand `/auth/me` n'a pas répondu. La panne est écrite
+         * plutôt que tue : c'est elle qui explique le sommaire écourté — le rang
+         * est retombé au plus bas, faute de le connaître — et elle dit à
+         * l'opérateur que le rail qu'il a sous les yeux est dégradé, non que sa
+         * session a changé.
+         */}
+        {userName === null ? (
+          <span>Compte non vérifié — le serveur du salon est injoignable.</span>
+        ) : (
+          <span>
+            Connecté·e : {userName}, {roleLabel(role)}
+          </span>
+        )}
         <AdminLogoutButton tenantSlug={tenantSlug} />
       </div>
     </nav>
