@@ -7,7 +7,7 @@ Ce qui est surveillé ici tient en une phrase : **un constat d'audit doit arrive
 jusqu'au run de reprise sans se perdre en route, et un goût personnel ne doit
 jamais y arriver du tout.**
 
-Quatre régressions redoutées, toutes silencieuses :
+Cinq régressions redoutées, toutes silencieuses :
 
   * **Un label qui manque.** `milestone_plan.py` écarte du plan toute issue sans
     `ws:*`, `mod:*` ou `nature:*`. Un ticket ouvert sans eux existe sur GitHub et
@@ -20,6 +20,10 @@ Quatre régressions redoutées, toutes silencieuses :
     le script refuse perd son constat au moment de l'ouvrir. `Grille` compare
     les deux listes, et vérifie qu'aucun critère ne recoupe celle de la QA — les
     deux dispositifs doivent rester distinguables.
+  * **Un benchmark pris pour un alibi.** « Comme chez Booker » est la plus
+    commode des références. `ReferenceDuMarche` exige un motif `BM-…` qui
+    existe, et `Benchmark` vérifie que chaque motif est bien un standard :
+    vu chez deux plateformes au moins, dont une observée ou documentée.
   * **Un `P0` sorti d'un audit.** Un audit de conception ne bloque personne ; ce
     qui bloque est un bug, et c'est `/qa` qui l'ouvre. `Impact` fige la borne.
 
@@ -29,6 +33,7 @@ Aucune dépendance : `unittest` de la bibliothèque standard, comme le reste de
 import io
 import json
 import os
+import re
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -506,6 +511,199 @@ class Rapport(unittest.TestCase):
         hub = Hub(issues=[issue_avec_empreinte(822, "fff")])
         _, sortie, _ = lancer(["report"], hub)
         self.assertIn(f'/milestone "{dt.JALON}"', sortie)
+
+
+MOTIF_FACTICE = """# Benchmark — tunnel de réservation
+
+Relevé le 2026-09-16.
+
+## Créneau
+
+### BM-CRENEAU-02 — Les jours d'abord, les horaires ensuite
+
+- **Étape** : tunnel de réservation — créneau
+- **Ce que voit l'utilisateur** : une rangée de jours, puis les horaires du jour choisi.
+- **Pourquoi** : on choisit un jour avant une heure.
+- **À vérifier chez nous** : le jour se choisit-il avant l'heure ?
+- **Sources** :
+  - Fresha · observé · 2026-09-16 · https://www.fresha.com/
+  - Planity · observé · 2026-09-16 · https://www.planity.com/
+
+### BM-CRENEAU-03 — Un autre motif
+
+- **Étape** : tunnel de réservation — créneau
+"""
+
+
+class BenchmarkFactice:
+    """Un dépôt jetable qui ne porte qu'un benchmark : la garde se teste sans
+    dépendre de ce que le vrai benchmark contient aujourd'hui."""
+
+    def __enter__(self):
+        import tempfile
+        self._dossier = tempfile.TemporaryDirectory()
+        racine = Path(self._dossier.name)
+        dossier = racine / dt.BENCHMARK
+        dossier.mkdir(parents=True)
+        (dossier / "parcours-client.md").write_text(MOTIF_FACTICE,
+                                                    encoding="utf-8")
+        self._patch = mock.patch.object(dt, "ROOT", racine)
+        self._patch.start()
+        return racine
+
+    def __exit__(self, *exc):
+        self._patch.stop()
+        self._dossier.cleanup()
+
+
+class ReferenceDuMarche(unittest.TestCase):
+    """Le standard du marché est une référence — motif par motif, jamais en vrac."""
+
+    CHEMIN = "docs/design/benchmark/parcours-client.md"
+
+    def test_un_motif_existant_passe_et_son_fichier_est_ajoute(self):
+        # Le relecteur doit pouvoir ouvrir le motif sans le chercher.
+        with BenchmarkFactice():
+            self.assertEqual(dt.valider_reference("BM-CRENEAU-02"),
+                             f"BM-CRENEAU-02 ({self.CHEMIN})")
+
+    def test_un_motif_deja_situe_n_est_pas_resitue(self):
+        reference = f"{self.CHEMIN} BM-CRENEAU-02"
+        with BenchmarkFactice():
+            self.assertEqual(dt.valider_reference(reference), reference)
+
+    def test_un_motif_inconnu_est_refuse(self):
+        # « Comme chez Booker » avec un identifiant inventé reste un avis.
+        with BenchmarkFactice():
+            with self.assertRaises(dt.DesignError) as refus:
+                dt.valider_reference("BM-CRENEAU-99, CDC §1.4")
+        self.assertIn("BM-CRENEAU-99", str(refus.exception))
+
+    def test_le_benchmark_cite_en_entier_est_refuse(self):
+        # Le fichier existe : sans cette garde, la forme « chemin du dépôt »
+        # l'accepterait, et le benchmark deviendrait un alibi universel.
+        with BenchmarkFactice():
+            with self.assertRaises(dt.DesignError) as refus:
+                dt.valider_reference(self.CHEMIN)
+        self.assertIn("motif par motif", str(refus.exception))
+
+    def test_ds_standard_exige_un_motif(self):
+        # Même une référence recevable ailleurs ne suffit pas : un écart au
+        # standard du marché se mesure à un motif, pas au CDC.
+        with BenchmarkFactice():
+            with self.assertRaises(dt.DesignError) as refus:
+                dt.valider_reference("CDC §1.3", dt.CRITERE_DU_MARCHE)
+            self.assertEqual(
+                dt.valider_reference("BM-CRENEAU-02", dt.CRITERE_DU_MARCHE),
+                f"BM-CRENEAU-02 ({self.CHEMIN})")
+        self.assertIn("ds:standard", str(refus.exception))
+
+    def test_un_autre_critere_peut_s_appuyer_sur_un_motif(self):
+        with BenchmarkFactice():
+            self.assertTrue(dt.valider_reference("BM-CRENEAU-02", "ds:parcours"))
+
+    def test_le_refus_tombe_avant_le_reseau(self):
+        hub = Hub()
+        with BenchmarkFactice():
+            code, _, erreur = lancer(argv_open(critere="ds:standard",
+                                               reference="comme chez Booker",
+                                               sans_capture="essai"), hub)
+        self.assertEqual(code, dt.USAGE)
+        self.assertEqual(hub.reseau, [])
+        self.assertIn("ds:standard", erreur)
+
+    def test_le_motif_est_recopie_dans_le_ticket(self):
+        # L'agent de correction voit ce que font les références sans quitter
+        # le ticket — et seulement le motif cité, pas son voisin.
+        hub = Hub()
+        with BenchmarkFactice():
+            code, sortie, _ = lancer(argv_open(critere="ds:standard",
+                                               reference="BM-CRENEAU-02",
+                                               sans_capture="essai",
+                                               dry_run=True), hub)
+        self.assertEqual(code, 0)
+        corps = json.loads(sortie)["corps"]
+        self.assertIn("<code>BM-CRENEAU-02</code>", corps)
+        self.assertIn("#### BM-CRENEAU-02 — Les jours d'abord", corps)
+        self.assertIn("https://www.planity.com/", corps)
+        self.assertNotIn("BM-CRENEAU-03", corps)
+
+
+SOURCE = re.compile(
+    r"^\s+- (?P<plateforme>[^·\n]+?) · (?P<mode>observé|documenté|extrait|annoncé)"
+    r" · (?P<date>\d{4}-\d{2}-\d{2}) · (?P<url>https?://\S+)\s*$", re.M)
+CHAMPS_DU_MOTIF = ("**Étape**", "**Ce que voit l'utilisateur**",
+                   "**Pourquoi**", "**À vérifier chez nous**", "**Sources**")
+
+
+class Benchmark(unittest.TestCase):
+    """Le vrai benchmark tient la promesse qui le rend citable.
+
+    Un motif porte un identifiant **parce qu'il** est un standard : vu chez au
+    moins deux plateformes, dont une au moins observée ou documentée — un
+    extrait de moteur de recherche ou une page marketing, seuls, ne montrent
+    rien. Si cette promesse se relâche,
+    la garde de `valider_reference` protège une coquille vide.
+    """
+
+    def setUp(self):
+        self.dossier = RACINE / dt.BENCHMARK
+        if not self.dossier.is_dir():                 # pragma: no cover
+            self.skipTest("le benchmark n'est pas dans ce worktree")
+        self.motifs = dt.motifs_du_benchmark()
+
+    def test_le_benchmark_porte_des_motifs(self):
+        self.assertGreater(len(self.motifs), 0)
+
+    def test_chaque_identifiant_est_unique(self):
+        vus = {}
+        for fichier in sorted(self.dossier.glob("*.md")):
+            for match in dt.TITRE_MOTIF.finditer(
+                    fichier.read_text(encoding="utf-8")):
+                with self.subTest(motif=match.group(1)):
+                    self.assertNotIn(match.group(1), vus,
+                                     f"déjà dans {vus.get(match.group(1))}")
+                vus[match.group(1)] = fichier.name
+
+    def test_chaque_motif_porte_ses_champs(self):
+        for identifiant, (_, _, bloc) in self.motifs.items():
+            for champ in CHAMPS_DU_MOTIF:
+                with self.subTest(motif=identifiant, champ=champ):
+                    self.assertIn(champ, bloc)
+
+    def test_chaque_motif_est_vu_chez_deux_plateformes(self):
+        for identifiant, (_, _, bloc) in self.motifs.items():
+            with self.subTest(motif=identifiant):
+                sources = list(SOURCE.finditer(bloc))
+                plateformes = {s["plateforme"].strip().lower() for s in sources}
+                self.assertGreaterEqual(len(plateformes), 2, bloc)
+                # Un extrait de moteur de recherche ou une page marketing
+                # disent qu'un écran existe ; ils ne le montrent pas.
+                self.assertTrue(
+                    any(s["mode"] in ("observé", "documenté") for s in sources),
+                    "ni observé ni documenté : ce n'est pas encore un standard")
+
+    def test_chaque_fichier_dit_quand_il_a_ete_releve(self):
+        # Un site évolue : un motif sans date ne dit pas s'il est encore vrai.
+        for fichier in sorted(self.dossier.glob("*.md")):
+            with self.subTest(fichier=fichier.name):
+                self.assertRegex(fichier.read_text(encoding="utf-8"),
+                                 r"Relevé le \d{4}-\d{2}-\d{2}")
+
+    def test_les_exemples_de_la_doctrine_existent(self):
+        # Un exemple de la skill ou de l'agent qui cite un motif absent
+        # apprend à l'auditeur à se faire refuser.
+        for doc in (".claude/skills/design-audit/SKILL.md",
+                    ".claude/agents/design-auditor.md",
+                    ".claude/commands/design-audit.md",
+                    "scripts/design_tickets.py"):
+            chemin = RACINE / doc
+            if not chemin.is_file():                  # pragma: no cover
+                continue
+            for identifiant in set(dt.MOTIF.findall(
+                    chemin.read_text(encoding="utf-8"))):
+                with self.subTest(doc=doc, motif=identifiant):
+                    self.assertIn(identifiant, self.motifs)
 
 
 if __name__ == "__main__":
