@@ -132,19 +132,31 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
     await page.getByRole('button', { name: 'Choisir un créneau' }).click();
   });
 
-  await test.step('3. Créneau — retenir le premier jour ouvert', async () => {
+  await test.step('3. Créneau — retenir le premier jour ouvert du calendrier', async () => {
     const etape = page.getByRole('region', { name: 'Choix du praticien et du créneau' });
     await expect(etape).toBeVisible();
 
-    // Les journées pleines s'annoncent « complet » et celles en cours de
-    // chargement « disponibilités en cours de chargement » : ne retenir que
-    // celles dont le libellé se termine par un décompte évite d'avoir à
-    // interroger `aria-disabled`.
-    const jourOuvert = etape.getByRole('radio', { name: /\d+ créneaux?$/ }).first();
+    // Le choix de la date est un calendrier mensuel depuis #827 : deux `grid`
+    // cohabitent donc dans l'étape, et chacune se désigne par son nom accessible
+    // plutôt que par son rang. Celle du calendrier s'appelle « Journée — <mois> ».
+    const calendrier = etape.getByRole('grid', { name: /^Journée —/ });
+    await expect(calendrier).toBeVisible({ timeout: 20_000 });
+
+    // Les journées pleines s'annoncent « complet », celles hors fenêtre « hors
+    // de la période de réservation » et celles en cours de chargement
+    // « disponibilités en cours de chargement » : ne retenir que celles dont le
+    // libellé se termine par un décompte évite d'avoir à interroger
+    // `aria-disabled`.
+    const jourOuvert = calendrier.getByRole('button', { name: /\d+ créneaux?$/ }).first();
     await expect(jourOuvert).toBeVisible({ timeout: 20_000 });
     await jourOuvert.click();
 
-    const creneau = etape.getByRole('gridcell').locator('button').first();
+    // La grille d'heures, elle, se nomme par la journée qu'elle détaille.
+    const creneau = etape
+      .getByRole('grid', { name: /^Créneaux du/ })
+      .getByRole('gridcell')
+      .locator('button')
+      .first();
     await expect(creneau).toBeVisible();
     await creneau.click();
   });
