@@ -281,6 +281,79 @@ describe('#796 — la référence citable au comptoir', () => {
   });
 });
 
+/**
+ * La note jointe au rendez-vous, lisible au comptoir — #757.
+ *
+ * L'écart relevé par l'audit : le champ n'était rendu qu'à la création, et une
+ * consigne d'allergie écrite par la cliente à la réservation — lisible dans son
+ * espace client — n'apparaissait nulle part au back-office. Ce qui est éprouvé
+ * ici est donc le **texte à l'écran** sur un rendez-vous posé, l'absence dite
+ * plutôt que muette, et la frontière avec la note interne du salon.
+ */
+describe('#757 — la note du rendez-vous se lit dans le tiroir', () => {
+  const ALLERGIE =
+    'Allergie aux huiles essentielles d’agrumes, merci d’en tenir compte pour le gommage.';
+
+  it('affiche le texte joint à la réservation sur un rendez-vous posé', () => {
+    renderPanel({ kind: 'edit', appointment: { ...CONFIRME, clientNote: ALLERGIE } });
+
+    expect(screen.getByRole('heading', { name: 'Note jointe au rendez-vous' })).toBeDefined();
+    expect(screen.getByText(ALLERGIE)).toBeDefined();
+  });
+
+  it('dit l’absence de note au lieu de se taire', () => {
+    // Se taire laisserait la question d'avant le ticket ouverte — la cliente n'a
+    // rien écrit, ou l'écran ne le montre pas ? Sur une consigne d'allergie, le
+    // doute coûte plus cher que la ligne.
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    expect(screen.getByRole('heading', { name: 'Note jointe au rendez-vous' })).toBeDefined();
+    expect(screen.getByText('Aucune note jointe à ce rendez-vous')).toBeDefined();
+  });
+
+  it('traite une note blanche comme une absence, et non comme un bloc vide', () => {
+    // `longTextSchema` n'a pas de `.min(1)` : une remarque tapée en espaces
+    // traverse le tunnel (l'étape de contact soumet `getValues()`, valeur brute)
+    // et l'API la range à `''`. S'arrêter à `null` titrerait « Visible de la
+    // cliente » au-dessus d'un paragraphe vide — le tiroir affirmerait une note
+    // qu'il ne montre pas.
+    renderPanel({ kind: 'edit', appointment: { ...CONFIRME, clientNote: '   ' } });
+
+    expect(screen.getByText('Aucune note jointe à ce rendez-vous')).toBeDefined();
+    expect(screen.queryByText(/Visible de la cliente/)).toBeNull();
+  });
+
+  it('dit que la note est visible de la cliente, et qu’elle n’est pas celle du salon', () => {
+    // Les deux textes libres du produit ne se confondent sous aucun prétexte :
+    // celui-ci est repris dans la confirmation, la note interne de la fiche ne
+    // sort par aucune route. L'appartenance est écrite, jamais portée par une
+    // teinte (WCAG 1.4.1).
+    renderPanel({ kind: 'edit', appointment: { ...CONFIRME, clientNote: ALLERGIE } });
+
+    expect(screen.getByText(/Visible de la cliente/)).toBeDefined();
+    expect(screen.getByText(/ce n’est pas la note interne du salon/)).toBeDefined();
+  });
+
+  it('ne rend pas la note interne de séance du rendez-vous', () => {
+    // `staffNote` voyage sur la même charge — la route est gardée `STAFF` — mais
+    // l'afficher dans ce bloc aurait reproduit la confusion qu'il lève.
+    renderPanel({
+      kind: 'edit',
+      appointment: { ...CONFIRME, clientNote: ALLERGIE, staffNote: 'Arrive souvent en retard.' },
+    });
+
+    expect(screen.queryByText('Arrive souvent en retard.')).toBeNull();
+  });
+
+  it('n’en rend aucun bloc à la création — le champ de saisie y tient déjà la note', () => {
+    renderPanel(CREATION);
+
+    expect(screen.queryByRole('heading', { name: 'Note jointe au rendez-vous' })).toBeNull();
+    // Le champ, lui, reste : c'est par lui que le comptoir joint une remarque.
+    expect(screen.getByLabelText(/Note jointe au rendez-vous/)).toBeDefined();
+  });
+});
+
 describe('quatrième critère — le créneau perdu n’est pas une panne', () => {
   it('avertit, redemande le planning et conserve toutes les autres saisies', async () => {
     const user = userEvent.setup();
