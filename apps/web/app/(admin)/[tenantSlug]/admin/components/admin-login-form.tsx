@@ -88,6 +88,132 @@ interface AdminLoginFailure {
   readonly message: string;
 }
 
+/**
+ * Ce que l'écran écrit lui-même d'une cause d'échec — le titre, et le texte
+ * quand répéter celui de l'API ne va pas.
+ */
+interface FailureCopy {
+  readonly title: string;
+  /**
+   * Le texte de l'encart, quand cet écran l'écrit plutôt que de répéter le
+   * `message` de l'API. Absent, c'est le message de l'API qui s'affiche : il en
+   * dit souvent plus que ce qu'on réécrirait par-dessus.
+   */
+  readonly message?: string;
+}
+
+/**
+ * Le quota de la route d'authentification est atteint.
+ *
+ * Dix tentatives par minute et par IP sur `POST /auth/login`
+ * (`auth.controller.ts`) : passé ce quota, ce sont les essais qui sont refusés,
+ * pas le mot de passe — et le réécrire n'y changerait rien.
+ *
+ * Le texte vient d'ici et non de l'API : `ThrottlerGuard` répond
+ * « ThrottlerException: Too Many Requests », une phrase anglaise qui nomme une
+ * classe d'exception. `checkout-summary.ts` écrit la sienne pour ce code, pour
+ * la même raison.
+ */
+const THROTTLED: FailureCopy = {
+  title: 'Trop de tentatives',
+  message:
+    'Trop de tentatives de connexion en peu de temps. Patientez une minute avant de réessayer.',
+};
+
+/** Le service n'a pas répondu — vu de la passerelle, qui n'a pas de message à nous. */
+const UNREACHABLE: FailureCopy = {
+  title: 'Service indisponible',
+  // Le repli de `api-client.ts` est un « une erreur inattendue est survenue »
+  // qui n'apprend rien : la même panne mérite la même phrase que celle qu'il
+  // écrit quand il la reconnaît lui-même.
+  message: 'Le service est momentanément injoignable. Merci de réessayer dans un instant.',
+};
+
+/**
+ * Ce que porte chaque cause d'échec (#759).
+ *
+ * ## Le défaut corrigé : un titre constant au-dessus d'un corps variable
+ *
+ * Le corps de l'encart dépendait déjà du `code`, le titre non — il valait
+ * « Connexion refusée » quoi qu'il arrive. Sur une coupure réseau, l'écran
+ * affichait donc « Connexion refusée » au-dessus de « Le service est
+ * momentanément injoignable » : le titre imputait la faute aux identifiants
+ * saisis, le corps au serveur. Les deux ne peuvent pas être vrais, et c'est le
+ * titre que l'œil lit d'abord — un gérant en conclut qu'il s'est trompé de mot
+ * de passe et va changer ce qui n'avait rien.
+ *
+ * Les deux moitiés se décident donc **ici, ensemble** : les séparer, c'était
+ * précisément ce qui les avait laissées diverger.
+ *
+ * ## Pourquoi le `code` et non le `message`
+ *
+ * `web-frontend` §2 et `docs/design/appointments/states.md` (« Règles
+ * générales ») demandent de réagir sur le **`code`** de l'erreur typée
+ * (`{ code, message, details }`), jamais sur le `message` : le message est ce
+ * qui change d'une version d'API à l'autre, le code est ce qui tient. C'est
+ * déjà ce que fait `guard.tsx` pour le texte des pages du back-office.
+ *
+ * ## Les `HTTP_<statut>` sont énumérés avec leur code de contrat
+ *
+ * `api-client.ts` ne rend le code du contrat que si le corps de la réponse est
+ * l'enveloppe `{ code, message, details }`. Une panne vue **de la passerelle** —
+ * conteneur d'API éteint, ALB qui rend sa page 503, limiteur d'entrée qui rend
+ * un 429 — n'a pas cette forme : le corps ne se parse pas et le code vaut
+ * `HTTP_503` ou `HTTP_429`. C'est le cas le plus courant des deux en déployé, et
+ * le laisser au repli neutre, c'était rater la panne que ce ticket vient nommer.
+ * `lib/admin/checkout-summary.ts` apparie les deux écritures pour cette raison ;
+ * ces codes-là ne sont pas des codes du contrat et ne heurtent pas le garde de
+ * littéraux de `packages/shared` (#546).
+ *
+ * ## Ce que le repli dit, et ce qu'il se garde de dire
+ *
+ * Un code absent de cette table n'est pas forcément un refus d'identité : le
+ * filtre d'erreurs retombe sur `HTTP_<statut>` pour un statut qu'il ne sait pas
+ * nommer, et `action-result.ts` produit `INTERNAL_ERROR` ou `VALIDATION_ERROR`
+ * sans que l'API ait seulement été atteinte. Le repli reste donc **neutre** :
+ * il constate que la connexion n'a pas eu lieu, sans désigner une cause qu'il
+ * ignore. Reproduire « Connexion refusée » ici, c'était reproduire le défaut
+ * pour tous les codes non énumérés.
+ *
+ * ## Une `Map`, et non un objet indexé
+ *
+ * `apiErrorSchema` accepte **n'importe quelle** chaîne comme `code`, à dessein
+ * (`packages/shared/src/errors/api-error.ts`). Un objet littéral indexé par une
+ * telle chaîne rend aussi ce qu'il hérite d'`Object.prototype` : un code
+ * `valueOf` ou `__proto__` ne retomberait pas sur le repli mais rendrait un
+ * objet, que `<Notification>` ne sait pas afficher — l'écran tomberait au lieu
+ * d'afficher un refus. Une `Map` n'a pas de chaîne de prototype à traverser.
+ */
+const FAILURE_COPY: ReadonlyMap<string, FailureCopy> = new Map<string, FailureCopy>([
+  [
+    ERROR_CODES.INVALID_CREDENTIALS,
+    {
+      title: 'Connexion refusée',
+      // L'API ne dit jamais **lequel** des deux est faux, et cet écran non plus.
+      message: 'Adresse e-mail ou mot de passe incorrect.',
+    },
+  ],
+  // Le message de l'API nomme déjà la panne quand elle vient de notre propre
+  // `fetch` ; on le laisse dire, et l'on n'écrit à sa place que lorsqu'il manque.
+  [ERROR_CODES.SERVICE_UNAVAILABLE, { title: UNREACHABLE.title }],
+  ['HTTP_503', UNREACHABLE],
+  [ERROR_CODES.TOO_MANY_REQUESTS, THROTTLED],
+  ['HTTP_429', THROTTLED],
+]);
+
+/** Le titre d'un échec dont le code ne nomme aucune cause connue de cet écran. */
+const UNKNOWN_FAILURE_TITLE = 'Connexion impossible';
+
+/** L'encart à afficher pour ce refus — titre et texte décidés du même geste. */
+function failureNotice(code: string, message: string): AdminLoginFailure {
+  const copy = FAILURE_COPY.get(code);
+
+  return {
+    title: copy?.title ?? UNKNOWN_FAILURE_TITLE,
+    message: copy?.message ?? message,
+  };
+}
+
 export function AdminLoginForm({ tenantSlug }: { readonly tenantSlug: string }) {
   const router = useRouter();
   const [failure, setFailure] = useState<AdminLoginFailure | null>(null);
@@ -107,13 +233,7 @@ export function AdminLoginForm({ tenantSlug }: { readonly tenantSlug: string }) 
     const result = await adminLoginAction(tenantSlug, values);
 
     if (!result.ok) {
-      setFailure({
-        title: 'Connexion refusée',
-        message:
-          result.code === ERROR_CODES.INVALID_CREDENTIALS
-            ? 'Adresse e-mail ou mot de passe incorrect.'
-            : result.message,
-      });
+      setFailure(failureNotice(result.code, result.message));
       return;
     }
 
