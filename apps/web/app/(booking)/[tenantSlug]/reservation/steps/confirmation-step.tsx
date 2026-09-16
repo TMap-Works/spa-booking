@@ -37,6 +37,35 @@ interface ConfirmationStepProps {
 }
 
 /**
+ * La durée **réservée**, déduite du rendez-vous lui-même (#735).
+ *
+ * Et non de la prestation, parce que `service` peut être `null` ici : une
+ * prestation retirée du catalogue public n'est plus dans la liste que le tunnel
+ * reçoit, alors que le rendez-vous déjà pris, lui, garde son intervalle. Lire la
+ * durée sur le rendez-vous, c'est la garder à l'écran dans ce cas-là.
+ *
+ * `startsAt` et `endsAt` bornent l'intervalle **facturé** — le soin, sans les
+ * tampons de cabine, que l'API ne publie pas (`billed-interval.ts`). C'est bien
+ * la durée annoncée à la cliente.
+ *
+ * Ce qu'il ne faut **pas** en conclure : que la durée serait figée à la
+ * réservation comme l'est le prix. Elle ne l'est pas — `billedIntervalOf` calcule
+ * `endsAt` avec le `durationMinutes` du catalogue **au moment de la lecture**, et
+ * un salon qui rallonge son soin rallonge donc aussi les rendez-vous déjà pris.
+ * Figer la durée demanderait de la porter sur la ligne `appointments`, comme le
+ * prix : un changement de schéma, côté API, qui relève de son propre ticket.
+ *
+ * Rend `null` sur tout ce qui n'est pas une durée positive : un instant illisible
+ * donnerait `NaN`, et l'afficher vaudrait moins que de ne rien afficher.
+ */
+function bookedMinutes(appointment: BookedAppointment): number | null {
+  const minutes =
+    (new Date(appointment.endsAt).getTime() - new Date(appointment.startsAt).getTime()) / 60_000;
+
+  return Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes) : null;
+}
+
+/**
  * Écran de confirmation — cinquième critère d'acceptation de #45 : récapitulatif
  * et lien d'annulation.
  *
@@ -157,6 +186,7 @@ export function ConfirmationStep({
       <Recap
         tenant={tenant}
         serviceName={service?.name ?? null}
+        durationMinutes={bookedMinutes(appointment)}
         staffName={staffName}
         startsAt={appointment.startsAt}
         price={appointment.price}

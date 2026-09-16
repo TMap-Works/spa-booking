@@ -181,11 +181,80 @@ export function SummaryStep({
       <Recap
         tenant={tenant}
         serviceName={service.name}
+        durationMinutes={service.durationMinutes}
         staffName={staffName}
         startsAt={startsAt}
         price={service.price}
         contact={contact}
       />
+
+      {/*
+        Ce qu'il faut savoir avant de s'engager, et qui n'était écrit nulle part
+        (#735).
+
+        ## Pourquoi ici, et pas ailleurs
+
+        C'est le dernier écran où l'on peut encore renoncer. Le critère
+        `ds:confiance` de l'audit de conception porte sur « ce qui permet de
+        décider — prix, durée, annulation, identité du salon » : les trois
+        premiers sont dans le récapitulatif au-dessus, les deux derniers
+        n'existaient sur aucun écran du tunnel, jusqu'au bouton de confirmation
+        inclus.
+
+        ## Pourquoi ces deux phrases-là
+
+        Elles décrivent ce que le produit fait, et rien de plus :
+
+        - **le règlement.** Le tunnel n'a pas d'étape de paiement et n'en
+          demande aucun : l'encaissement du MVP est celui du comptoir
+          (CDC §1.4, « Encaissement au checkout (carte/espèces) »), servi par
+          l'écran d'encaissement du back-office. Une cliente qui s'attend à
+          payer en ligne et ne trouve pas où le faire abandonne ; il faut donc
+          le lui dire avant qu'elle le cherche. Le moyen de paiement accepté
+          n'est en revanche **pas** énoncé : c'est le salon qui en décide, et
+          l'API n'expose rien qui le dise ;
+        - **l'annulation.** `AppointmentsService.cancel` n'oppose ni frais ni
+          préavis : seul le cycle de vie refuse le passage, une fois le
+          rendez-vous honoré, déjà annulé ou marqué no-show. La phrase dit donc
+          « tant qu'il n'a pas eu lieu », et nomme les surfaces qui l'annulent
+          réellement — l'écran de confirmation qui suit, et l'espace client.
+
+          Le salon ferme la liste, et ce n'est pas une politesse : **on réserve
+          sans compte** (#37), et la fiche née de cette réservation naît
+          `passwordHash: null` (`crm.repository.ts`). Qui a réservé en visiteur
+          ne peut donc ni se connecter, ni s'inscrire ensuite avec la même
+          adresse — `register` rend `EmailAlreadyRegisteredError` —, et l'écran
+          de confirmation ne survit pas à la fermeture de l'onglet, son état
+          vivant dans `sessionStorage`. Nommer l'espace client comme seule autre
+          issue aurait promis à la majorité des clientes une porte qu'aucune clé
+          n'ouvre ; le comptoir, lui, annule depuis le back-office pour tout le
+          monde.
+
+        Pourquoi un encart et non de la prose au fil de la carte : la même
+        raison que `.spa-consent` à l'étape précédente — ce n'est pas une ligne
+        du récapitulatif, c'est ce qu'il faut avoir lu avant de soumettre, et la
+        hiérarchie le dit avant la lecture (skill `web-frontend` §6). Ce n'est
+        pas `.spa-consent` pour autant : il n'y a rien à accepter ici, aucun
+        contrôle, et rien qui garde le bouton.
+      */}
+      <div className="spa-booking__terms">
+        <h3 className="spa-booking__terms-title">Avant de confirmer</h3>
+        <ul className="spa-list spa-booking__terms-list">
+          <li>
+            {/* Le montant n'est pas redit : il est deux lignes plus haut, dans
+                le récapitulatif. Ce que cette phrase ajoute, c'est *où* et
+                *quand* il se règle, pas *combien*. */}
+            <span className="spa-booking__terms-label">Règlement sur place.</span> Aucun paiement
+            n’est demandé en ligne : le règlement se fait à l’établissement, le jour du
+            rendez-vous.
+          </li>
+          <li>
+            <span className="spa-booking__terms-label">Annulation sans frais.</span> Vous pouvez
+            annuler tant que le rendez-vous n’a pas eu lieu — depuis l’écran qui suit la
+            confirmation, depuis votre espace client, ou en contactant l’établissement.
+          </li>
+        </ul>
+      </div>
 
       {/* Même groupement que l'espace compte : les deux boutons se suivent au
           lieu d'être plaqués aux extrémités par `.spa-card__footer` (#623). */}

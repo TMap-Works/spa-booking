@@ -180,3 +180,51 @@ describe('ce que l’écran a le droit d’affirmer', () => {
     expect(screen.getByText('Votre rendez-vous est annulé')).toBeDefined();
   });
 });
+
+/**
+ * La durée figure au récapitulatif, et vient du rendez-vous (#735).
+ *
+ * Elle manquait à la liste : la cliente ne la lisait que parce que les
+ * prestations du jeu d'essai la portent dans leur nom.
+ */
+describe('la durée du rendez-vous', () => {
+  it('est déduite de l’intervalle du rendez-vous, et non de la prestation reçue', () => {
+    // Le catalogue de ce rendu annonce 60 minutes, l'intervalle en porte 90 :
+    // c'est bien le second qui s'affiche. Ce n'est pas une garantie de gel —
+    // l'API recalcule `endsAt` avec la durée courante (`billed-interval.ts`) —
+    // mais la source lue, celle qui reste disponible quand la prestation a quitté
+    // le catalogue public et que `service` arrive à `null`.
+    render(
+      <ConfirmationStep
+        tenant={tenant}
+        service={service}
+        appointment={appointment({ endsAt: '2026-09-01T07:30:00.000Z' })}
+        contact={contact}
+        restored={false}
+        onCancelled={vi.fn()}
+        onRestart={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('Durée')).toBeDefined();
+    expect(screen.getByText('1 h 30')).toBeDefined();
+  });
+
+  it('s’omet plutôt que de rendre une durée que l’intervalle ne donne pas', () => {
+    // Un intervalle dégénéré ne doit produire ni « 0 min » ni « NaN min » sur
+    // l'écran qui sert de preuve de réservation.
+    render(
+      <ConfirmationStep
+        tenant={tenant}
+        service={service}
+        appointment={appointment({ endsAt: '2026-09-01T06:00:00.000Z' })}
+        contact={contact}
+        restored={false}
+        onCancelled={vi.fn()}
+        onRestart={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText('Durée')).toBeNull();
+  });
+});
