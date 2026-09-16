@@ -163,6 +163,10 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
     await champ('Nom').fill(CLIENTE.nom);
     await champ('Adresse e-mail').fill(CLIENTE.email);
     await champ('Téléphone').fill(CLIENTE.telephone);
+    // Le consentement de l'étape 4 (#734, CDC §5.1) : la case est décochée
+    // d'origine et retient la soumission tant qu'elle l'est. C'est le seul
+    // `checkbox` de l'écran.
+    await page.getByRole('checkbox').check();
     await page.getByRole('button', { name: 'Vérifier ma réservation' }).click();
   });
 

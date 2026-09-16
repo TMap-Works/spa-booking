@@ -21,6 +21,10 @@ const COORDONNEES = {
   email: 'camille@example.test',
   phone: '+261341234567',
   clientNote: '',
+  // Des coordonnées « complètes » le sont depuis #734 : la case de consentement
+  // de l'étape 4 conditionne le récapitulatif au même titre que le nom et
+  // l'adresse. Le cas contraire est éprouvé par `booking-consent.test.tsx`.
+  consent: true,
 };
 
 function draftWith(patch: Partial<BookingDraft>): BookingDraft {

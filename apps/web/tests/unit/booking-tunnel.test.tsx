@@ -158,6 +158,10 @@ async function allerJusquAuRecapitulatif(
   await user.type(screen.getByLabelText(/Prénom/), 'Camille');
   await user.type(screen.getByLabelText(/^Nom/), 'Rakoto');
   await user.type(screen.getByLabelText(/Adresse e-mail/), 'camille@example.test');
+  // Le consentement est bloquant depuis #734 : sans lui, l'étape ne rend pas la
+  // main au récapitulatif. Ce qu'il refuse est éprouvé par
+  // `booking-consent.test.tsx` ; ici il n'est qu'un préalable du parcours.
+  await user.click(screen.getByRole('checkbox'));
   await user.click(screen.getByRole('button', { name: /Vérifier ma réservation/ }));
 
   await screen.findByRole('button', { name: /Confirmer la réservation/ });

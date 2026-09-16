@@ -42,6 +42,11 @@ async function saisieDuRapport(user: ReturnType<typeof userEvent.setup>): Promis
   await user.type(screen.getByLabelText(/Adresse e-mail/), 'zoe-pas-un-email');
   await user.type(screen.getByLabelText(/Téléphone/), 'abc');
   await user.type(screen.getByLabelText(/Mot de passe/), 'court');
+  // La case de consentement (#734) est cochée d'entrée : elle ne fait pas
+  // partie du rapport de #698, et la laisser vide ferait porter aux listes de
+  // messages ci-dessous le libellé d'un autre ticket. Ce qu'elle refuse est
+  // éprouvé par `booking-consent.test.tsx`.
+  await user.click(screen.getByRole('checkbox'));
 }
 
 function messagesAffiches(): readonly string[] {
@@ -138,6 +143,7 @@ describe('inscription — correction', () => {
     await user.type(screen.getByLabelText(/^Nom/), 'Ranaivo');
     await user.type(screen.getByLabelText(/Adresse e-mail/), 'zoe@example.test');
     await user.type(screen.getByLabelText(/Mot de passe/), 'correct horse battery');
+    await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: /Créer mon compte/ }));
 
     expect(registerAction).toHaveBeenCalledWith('salon-des-lilas', {
