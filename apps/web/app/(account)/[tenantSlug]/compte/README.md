@@ -29,6 +29,34 @@ deux écrans ouverts s'en passent délibérément, plutôt que d'être exemptés
 liste tenue ailleurs — une liste d'exemptions finit toujours par contenir une
 page de trop.
 
+## La navigation appartient à l'espace, pas à un écran
+
+« Modifier mes coordonnées | Se déconnecter » était rendue par `page.tsx` : elle
+n'existait donc que sur **un écran sur trois**, et fermer sa session depuis ses
+coordonnées demandait de revenir d'abord à la liste. L'audit `d20260916-1` relève
+l'écart au titre de `ds:coherence` — *la même action se trouve au même endroit
+d'un écran à l'autre d'un même espace* — et le CDC §2.4 ne connaît qu'un `User`
+pour les trois écrans (#747).
+
+La barre est donc posée par le gabarit (`components/account-nav.tsx`), et trois
+choses en découlent :
+
+| Décision | Pourquoi |
+|---|---|
+| peinte **seulement s'il y a une session** | connexion et inscription partagent ce gabarit ; « Se déconnecter » y offrirait de fermer une session qui n'est pas ouverte. Ce n'est pas une garde — un menu masqué n'interdit pas de taper l'URL, et la seule frontière qui compte est celle de l'API |
+| **hors de `<main>`**, entre l'en-tête et le contenu | `<main>` porte le contenu de l'écran, pas sa navigation : rendue dedans, la barre récupérait le geste « aller au contenu principal » d'un lecteur d'écran. Dehors et avant lui, l'ordre du document énonce d'abord où aller, ensuite ce qu'on lit (WCAG 1.3.2) — et c'est ce qu'un lien d'évitement vers `#contenu` sauterait, le jour où le front en posera un |
+| **Client Component**, pour `usePathname()` seul | le layout n'est pas rejoué à chaque navigation : un repère calculé côté serveur resterait figé sur le premier écran ouvert. Même arbitrage que le rail du back-office. Aucun jeton ne franchit la frontière — le gabarit ne passe qu'un slug |
+
+Le lien reste présent sur l'écran qu'il désigne, `aria-current="page"` en plus :
+le retirer là rendrait la barre différente d'un écran à l'autre, c'est-à-dire
+l'écart qu'on corrige. Les classes CSS sont celles qui existaient déjà, et
+`.spa-account` partage la gouttière de `.spa-account__main` — la barre change de
+propriétaire, pas d'apparence.
+
+Le pied de page complète la barre et n'en fait pas partie : « Prendre un nouveau
+rendez-vous » et « Mes rendez-vous » sortent de l'espace ou y reviennent, là où
+la barre range ce qui s'y fait.
+
 ## Les deux moitiés se nomment par ce qu'elles rangent
 
 L'accueil partage la liste en **« Rendez-vous à venir »** et **« Historique »**,
