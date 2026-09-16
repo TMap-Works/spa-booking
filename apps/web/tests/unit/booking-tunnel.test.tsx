@@ -17,7 +17,7 @@ import type {
   CalendarDate,
   UtcInstant,
 } from '@spa/shared';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -83,12 +83,54 @@ function rendezVous(): BookedAppointment {
   };
 }
 
+const ADRESSE = `/${tenant.slug}/reservation`;
+
 beforeEach(() => {
   // Le brouillon vit dans `sessionStorage` : sans ce nettoyage, un test
   // reprendrait le tunnel là où le précédent l'a laissé.
   window.sessionStorage.clear();
+  // Depuis #733 la progression vit aussi dans l'adresse : elle se remet à celle
+  // d'un visiteur qui arrive, sans quoi un test rouvrirait l'étape du précédent.
+  window.history.replaceState(null, '', ADRESSE);
   loadAvailabilityAction.mockResolvedValue({ ok: true, data: availability([MATIN, APRES_MIDI]) });
 });
+
+/** Ce que l'adresse dit de la progression, à cet instant. */
+function query(): URLSearchParams {
+  return new URLSearchParams(window.location.search);
+}
+
+/**
+ * Le geste retour du navigateur.
+ *
+ * `history.back()` rend la main **avant** que la navigation n'ait lieu :
+ * l'événement `popstate` est distribué plus tard. On attend donc l'événement
+ * lui-même, et non un délai — un `setTimeout` suffisait tant que le test
+ * passait, et laissait sinon la navigation s'exécuter au milieu du test
+ * suivant, sur un tunnel fraîchement monté qui se retrouvait à l'étape d'un
+ * autre scénario.
+ */
+async function retourNavigateur(): Promise<void> {
+  await act(async () => {
+    const arrivee = new Promise<void>((resolve) => {
+      window.addEventListener(
+        'popstate',
+        () => {
+          resolve();
+        },
+        { once: true },
+      );
+    });
+
+    window.history.back();
+    await arrivee;
+    // L'écouteur du tunnel est enregistré avant celui-ci : son `setState` est
+    // posé, il reste à laisser React le rendre.
+    await new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  });
+}
 
 afterEach(() => {
   cleanup();
@@ -257,6 +299,146 @@ describe('le tunnel trie sur le code d’erreur, jamais sur le message', () => {
     );
     expect(screen.queryByRole('button', { name: '14 h 00' })).toBeNull();
     expect(loadAvailabilityAction).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('la progression est portée par l’adresse (#733)', () => {
+  it('nomme l’étape et les choix, à chaque étape', async () => {
+    const user = renderTunnel();
+
+    await waitFor(() => {
+      expect(query().get('etape')).toBe('prestation');
+    });
+
+    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+
+    await waitFor(() => {
+      expect(query().get('etape')).toBe('creneau');
+    });
+    expect(query().get('prestation')).toBe(service.id);
+
+    await user.click(await screen.findByRole('button', { name: '09 h 00' }));
+
+    await waitFor(() => {
+      expect(query().get('etape')).toBe('coordonnees');
+    });
+    expect(query().get('creneau')).toBe(MATIN);
+    // Le doublon tient toujours : l'adresse porte la progression, le stockage
+    // porte tout le reste (docs/design/appointments/README.md).
+    expect(window.sessionStorage.getItem(`spa.booking.${tenant.slug}`)).toContain('coordonnees');
+  });
+
+  it('ne met pas les coordonnées dans une adresse qu’on partage', async () => {
+    const user = renderTunnel();
+
+    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+    await user.click(await screen.findByRole('button', { name: '09 h 00' }));
+    await user.type(screen.getByLabelText(/Adresse e-mail/), 'camille@example.test');
+
+    expect(window.location.search).not.toContain('camille');
+    expect(window.location.search).not.toContain('%40');
+  });
+
+  it('revient d’une étape au geste retour, sans rendre le formulaire à remplir', async () => {
+    const user = renderTunnel();
+
+    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+    await user.click(await screen.findByRole('button', { name: '09 h 00' }));
+    await user.type(screen.getByLabelText(/Prénom/), 'Camille');
+    // Le formulaire reporte sa saisie au brouillon quand le champ rend la main
+    // (`ContactStep`) : sans ce passage au champ suivant, rien n'aurait encore
+    // été saisi du point de vue du tunnel.
+    await user.tab();
+
+    await retourNavigateur();
+
+    // Une étape en arrière — et non la vitrine, où le tunnel déposait le
+    // visiteur avant que l'adresse ne porte l'étape.
+    expect(await screen.findByRole('button', { name: '09 h 00' })).toBeDefined();
+    expect(query().get('etape')).toBe('creneau');
+
+    // Et le formulaire retrouvé intact : il n'a jamais quitté le brouillon.
+    await user.click(screen.getByRole('button', { name: '09 h 00' }));
+    expect(await screen.findByLabelText(/Prénom/)).toHaveProperty('value', 'Camille');
+  });
+
+  it('n’empile pas une entrée par praticien essayé', async () => {
+    const user = renderTunnel();
+
+    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+    await screen.findByRole('button', { name: '09 h 00' });
+
+    const avant = window.history.length;
+
+    await user.selectOptions(
+      screen.getByLabelText(/Praticien/),
+      service.staff[0]?.id ?? '',
+    );
+
+    await waitFor(() => {
+      expect(query().get('praticien')).toBe(service.staff[0]?.id);
+    });
+    // L'étape n'a pas changé : l'adresse se corrige sur place, sinon le bouton
+    // « retour » deviendrait inutilisable.
+    expect(window.history.length).toBe(avant);
+    expect(query().get('etape')).toBe('creneau');
+  });
+
+  it('ouvre l’étape que décrit un lien partagé', async () => {
+    window.history.replaceState(
+      null,
+      '',
+      `${ADRESSE}?etape=coordonnees&prestation=${service.id}&creneau=${MATIN}`,
+    );
+
+    renderTunnel();
+
+    // L'onglet n'a aucun brouillon : tout ce que le tunnel sait vient du lien.
+    expect(await screen.findByLabelText(/Prénom/)).toHaveProperty('value', '');
+    expect(screen.getByLabelText(/Adresse e-mail/)).toHaveProperty('value', '');
+  });
+
+  it('ramène à l’étape utile ce qu’un lien ne suffit pas à ouvrir', async () => {
+    // Le récapitulatif mis en favori, rouvert dans un onglet neuf : il ne reste
+    // personne à qui écrire, et « Confirmer » partirait en 400.
+    window.history.replaceState(
+      null,
+      '',
+      `${ADRESSE}?etape=recapitulatif&prestation=${service.id}&creneau=${MATIN}`,
+    );
+
+    renderTunnel();
+
+    expect(await screen.findByLabelText(/Prénom/)).toBeDefined();
+    await waitFor(() => {
+      expect(query().get('etape')).toBe('coordonnees');
+    });
+  });
+
+  it('ne laisse pas revenir confirmer un rendez-vous déjà pris', async () => {
+    bookAppointmentAction.mockResolvedValue({ ok: true, data: rendezVous() });
+
+    const user = renderTunnel();
+    await allerJusquAuRecapitulatif(user, '09 h 00');
+
+    const avant = window.history.length;
+
+    await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
+    await screen.findByText('Votre rendez-vous est enregistré');
+
+    // L'écran terminal prend la place du récapitulatif qui l'a produit plutôt
+    // que d'ajouter un arrêt : il n'y a rien à revenir confirmer deux fois.
+    expect(window.history.length).toBe(avant);
+    expect(query().get('etape')).toBe('confirmation');
+
+    await retourNavigateur();
+
+    expect(screen.getByText('Votre rendez-vous est enregistré')).toBeDefined();
+    expect(screen.queryByRole('button', { name: /Confirmer la réservation/ })).toBeNull();
   });
 });
 
