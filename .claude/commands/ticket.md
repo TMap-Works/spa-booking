@@ -343,8 +343,9 @@ python scripts/milestone_run.py event --ticket $1 --phase recette --status block
 
 Ce qui **n'est pas** un échec de recette, et se traite comme en phase 4 : une
 dépendance éteinte (`docker compose up -d`), un `dist/` périmé (l'outil
-recompile seul), un navigateur absent (`npx playwright install chromium`, une
-fois pour toutes). Appliquer le remède, relancer, poursuivre — une ligne de
+recompile seul), une base en retard de migrations (`api_jeu_dessai` nomme les
+migrations et la commande), un navigateur absent (`npx playwright install
+chromium`, une fois pour toutes). Appliquer le remède, relancer, poursuivre — une ligne de
 journal en `--level DEBUG`, sans `--status`.
 
 ### 6. Fin de phase
