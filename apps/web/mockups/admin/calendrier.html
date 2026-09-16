@@ -375,9 +375,21 @@
                         <span class="spa-visually-hidden">Statut : à confirmer. Ouvrir la fiche.</span>
                       </button>
                     </li>
+                    <!--
+                      Le trait d'heure courante traverse aussi le temps
+                      indisponible : l'heure qu'il est tombe dans la coupure
+                      méridienne chaque midi, et dans une fermeture tout un
+                      dimanche. Un planning qui perdrait son repère là où il est
+                      le plus vide serait illisible. `--now-offset` porte ici sur
+                      la hauteur du bloc **fusionné**, pas sur une demi-heure.
+                      Elle n'est pas écrite ici : c'est une donnée d'exécution,
+                      que le composant injecte, et la règle CSS se replie sur le
+                      haut du bloc — comme le fait `__slot--now` plus haut.
+                    -->
                     <li class="spa-admin-calendar__cell spa-admin-calendar__cell--span-3">
-                      <div class="spa-admin-calendar__blocked">
+                      <div class="spa-admin-calendar__blocked spa-admin-calendar__blocked--now">
                         <span class="spa-admin-calendar__blocked-label">Pause</span>
+                        <span class="spa-visually-hidden">heure courante</span>
                       </div>
                     </li>
                   </ul>

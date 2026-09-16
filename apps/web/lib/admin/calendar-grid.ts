@@ -26,10 +26,17 @@ import type {
   Appointment,
   AppointmentStatus,
   CalendarDate,
+  OpeningHoursEntry,
   StaffMemberSummary,
   TimeZone,
 } from '@spa/shared';
+// `isoWeekdayOf` vient du contrat et non d'un calcul local : c'est lui qui
+// numérote les plages d'ouverture (1 lundi … 7 dimanche, jamais le `0`-dimanche
+// *falsy* de `Date.getUTCDay`), et deux lectures du jour de semaine finiraient
+// par diverger sur l'écran où une divergence d'un jour se voit le moins.
+import { isoWeekdayOf } from '@spa/shared';
 
+import { minutesOfClock } from './appointment-desk';
 import type { CalendarRange, CalendarView } from './calendar-range';
 import { daysOf, weekdayLabel } from './calendar-range';
 
@@ -45,10 +52,12 @@ export const SLOTS_PER_DAY = 24 * SLOTS_PER_HOUR;
 /**
  * Amplitude affichée par défaut — 08 h à 20 h.
  *
- * Ce n'est pas l'amplitude du salon : les horaires d'ouverture ne sont pas
- * servis par la route d'agenda, et deviner une fermeture ferait disparaître un
- * rendez-vous pris hors horaires. C'est un cadrage de confort, **toujours
- * élargi** pour contenir ce que la journée porte réellement.
+ * Ce n'est pas l'amplitude du salon : c'est un cadrage de confort, **toujours
+ * élargi** pour contenir ce que la plage porte réellement — les rendez-vous, et
+ * depuis #752 les plages d'ouverture de l'établissement. Élargi et jamais
+ * resserré : une journée ouverte de 09 h à 19 h continue de montrer 08 h et
+ * 19 h 30, en fond inactif. Resserrer sur les horaires masquerait un rendez-vous
+ * pris hors horaires, et c'est le seul qu'un opérateur cherche des yeux.
  */
 const DEFAULT_FIRST_HOUR = 8;
 const DEFAULT_LAST_HOUR = 20;
@@ -201,7 +210,42 @@ export interface CalendarFreeCell {
   readonly nowOffset: string | null;
 }
 
-export type CalendarCell = CalendarEventCell | CalendarFreeCell;
+/**
+ * Une rangée que le salon ne travaille pas — fond inactif **nommé** (#752).
+ *
+ * Ni un créneau libre, ni un trou : c'est le `__blocked` de
+ * `styles/admin/calendar.css`, hachuré et non cliquable, que
+ * `mockups/admin/calendrier.html` montre depuis #30 et que la grille n'émettait
+ * pas. Le planning peignait donc chaque demi-heure de 08 h à 19 h 30, tous les
+ * jours, comme « libre — poser un rendez-vous à partir de cette heure » : avant
+ * l'ouverture, pendant la coupure méridienne, après la fermeture, et les
+ * journées entières où le salon est fermé. Le moteur, lui, refusait — le tiroir
+ * ouvert depuis ces cellules répondait « Aucun créneau ce jour-là ».
+ *
+ * Les rangées contiguës sont **fusionnées** en une seule cellule : un libellé
+ * par demi-heure serait illisible, et la maquette rend bien une journée fermée
+ * d'un seul tenant.
+ */
+export interface CalendarClosedCell {
+  readonly kind: 'closed';
+  readonly key: string;
+  readonly slot: number;
+  readonly span: number;
+  /** « Fermé », « Pause », « Hors horaires » — les libellés de la maquette. */
+  readonly label: string;
+  /**
+   * Position du trait d'heure courante dans le **bloc entier**, en pourcentage.
+   *
+   * Le trait ne vit pas que sur les créneaux libres : l'heure qu'il est tombe
+   * dans une fermeture chaque midi, chaque soir et tout un dimanche, et c'est
+   * précisément là qu'un planning sans repère temporel se lit de travers. Le
+   * pourcentage porte donc sur la hauteur des `span` rangées fusionnées, et non
+   * sur une demi-heure.
+   */
+  readonly nowOffset: string | null;
+}
+
+export type CalendarCell = CalendarEventCell | CalendarFreeCell | CalendarClosedCell;
 
 export interface CalendarColumn {
   /** Identifiant stable — c'est lui qui relie la colonne à son en-tête. */
@@ -315,8 +359,128 @@ interface BuildOptions {
    * ce qui reste juste et n'oblige pas chaque appelant à disposer du répertoire.
    */
   readonly staff?: readonly StaffMemberSummary[];
+  /**
+   * Les plages d'ouverture hebdomadaires de l'établissement (#752).
+   *
+   * Servies sans jeton par `GET /public/{slug}` — la vitrine que la page du
+   * planning lit déjà pour son fuseau (#343). Ce sont bien les heures que le
+   * salon **annonce**, et non les fenêtres de travail du moteur, qui partent des
+   * horaires du personnel ; mais le moteur les retranche des siennes
+   * (`booking-engine` §3, étape 2), si bien qu'une rangée hors ouverture n'est
+   * jamais réservable. L'agenda peut donc le dire sans mentir.
+   *
+   * Vide ou absent, **rien n'est peint en fermé** : un salon qui n'a pas encore
+   * saisi ses horaires n'est pas un salon fermé sept jours sur sept, et grimer
+   * son planning en semaine close lui retirerait le seul point d'entrée vers le
+   * tiroir de création. Un jour *absent* d'un tableau non vide, lui, est bien un
+   * jour fermé — c'est la lecture qu'en font déjà la vitrine publique
+   * (`components/salon/opening-hours.ts`) et l'écran de réglages (#764).
+   */
+  readonly openingHours?: readonly OpeningHoursEntry[];
   /** Instant de référence du trait d'heure courante. */
   readonly now?: Date;
+}
+
+/** Une plage d'ouverture ramenée à des minutes depuis minuit, borne haute exclue. */
+interface OpeningWindow {
+  readonly start: number;
+  readonly end: number;
+}
+
+/**
+ * Les plages d'ouverture par jour ISO, ou `null` quand on n'en sait rien.
+ *
+ * `null` et non une table vide : « le salon ferme tous les jours » et « le salon
+ * n'a rien saisi » sont deux états différents, et un seul des deux autorise à
+ * peindre une fermeture. C'est la même distinction que celle de la vitrine
+ * publique, qui omet les horaires plutôt que de rendre une semaine vide.
+ */
+type OpeningWeek = ReadonlyMap<number, readonly OpeningWindow[]> | null;
+
+/**
+ * Minutes depuis minuit d'une heure d'ouverture.
+ *
+ * `minutesOfClock` refuse `24:00` — à raison, c'est une heure de départ qui
+ * n'existe pas —, et `scheduleEndTimeSchema` l'admet pourtant comme **borne
+ * haute** : c'est ainsi qu'un salon ouvert jusqu'à minuit s'écrit. Le cas est
+ * traité ici plutôt qu'en relâchant le parseur partagé, qui sert aussi à lire
+ * des heures de début.
+ */
+function wallMinutes(time: string): number | null {
+  return time === '24:00' ? SLOTS_PER_DAY * SLOT_MINUTES : minutesOfClock(time);
+}
+
+/**
+ * La semaine d'ouverture, rangée par jour et fusionnée.
+ *
+ * Fusionnée parce que « 09:00–12:00 » et « 12:00–19:00 » décrivent une journée
+ * continue en deux morceaux — le contrat tolère explicitement l'adjacence — et
+ * qu'une coupure de zéro minute entre les deux se peindrait en « Pause » de
+ * hauteur nulle.
+ *
+ * Une plage illisible est **ignorée** plutôt que de faire tomber la grille : la
+ * validation du contrat l'a déjà refusée à l'écriture, et l'écran le plus
+ * regardé du back-office ne doit pas blanchir sur une donnée héritée.
+ */
+function openingWeekOf(entries: readonly OpeningHoursEntry[]): OpeningWeek {
+  if (entries.length === 0) {
+    return null;
+  }
+
+  const byWeekday = new Map<number, OpeningWindow[]>();
+
+  for (const entry of entries) {
+    const start = wallMinutes(entry.opensAt);
+    const end = wallMinutes(entry.closesAt);
+
+    if (start === null || end === null || end <= start) {
+      continue;
+    }
+
+    byWeekday.set(entry.weekday, [...(byWeekday.get(entry.weekday) ?? []), { start, end }]);
+  }
+
+  if (byWeekday.size === 0) {
+    // Des plages toutes illisibles ne disent pas « fermé sept jours sur sept » :
+    // elles ne disent rien. Rendre la table vide ici aurait peint la semaine
+    // entière en fermeture — exactement ce que le repli d'horaires inconnus
+    // existe pour éviter, et sur la donnée la moins fiable qui soit.
+    return null;
+  }
+
+  for (const [weekday, windows] of byWeekday) {
+    byWeekday.set(weekday, mergeWindows(windows));
+  }
+
+  return byWeekday;
+}
+
+/** Fusionne les plages qui se touchent ou se recouvrent, dans l'ordre horaire. */
+function mergeWindows(windows: readonly OpeningWindow[]): OpeningWindow[] {
+  const merged: OpeningWindow[] = [];
+
+  for (const window of [...windows].sort((left, right) => left.start - right.start)) {
+    const last = merged[merged.length - 1];
+
+    if (last !== undefined && window.start <= last.end) {
+      merged[merged.length - 1] = { start: last.start, end: Math.max(last.end, window.end) };
+      continue;
+    }
+
+    merged.push(window);
+  }
+
+  return merged;
+}
+
+/**
+ * Ce que le salon ouvre une journée donnée — `null` quand on n'en sait rien.
+ *
+ * Un jour **absent** d'une semaine renseignée rend un tableau vide : c'est une
+ * journée de fermeture, pas une journée inconnue.
+ */
+function windowsOfDay(week: OpeningWeek, day: CalendarDate): readonly OpeningWindow[] | null {
+  return week === null ? null : (week.get(isoWeekdayOf(day)) ?? []);
 }
 
 /**
@@ -336,16 +500,24 @@ interface BuildOptions {
  * la fiche de son praticien a changé d'état.
  */
 export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
-  const { view, range, appointments, timeZone, staff = [] } = options;
+  const { view, range, appointments, timeZone, staff = [], openingHours = [] } = options;
   const spans = new Map<string, SlotSpan>();
 
   for (const appointment of appointments) {
     spans.set(appointment.id, slotSpanOf(appointment, timeZone));
   }
 
-  const { firstSlot, lastSlot } = displayedSlots([...spans.values()]);
+  const week = openingWeekOf(openingHours);
+  const { firstSlot, lastSlot } = displayedSlots([...spans.values()], daysOf(range), week);
   const columns = columnInputs(view, range, appointments, spans, staff).map((input) =>
-    buildColumn(input, spans, { view, firstSlot, lastSlot, timeZone, ...(options.now === undefined ? {} : { now: options.now }) }),
+    buildColumn(input, spans, {
+      view,
+      firstSlot,
+      lastSlot,
+      timeZone,
+      windows: windowsOfDay(week, input.day),
+      ...(options.now === undefined ? {} : { now: options.now }),
+    }),
   );
 
   const hours: string[] = [];
@@ -366,15 +538,32 @@ export function buildCalendarBoard(options: BuildOptions): CalendarBoard {
 
 /**
  * L'amplitude horaire affichée : le cadrage par défaut, élargi à l'heure pleine
- * pour contenir tout ce que la plage porte.
+ * pour contenir tout ce que la plage porte — ses rendez-vous, et les heures que
+ * le salon annonce ouvrir.
+ *
+ * Les horaires élargissent, ils ne resserrent pas. Un salon ouvert de 07 h à
+ * 21 h doit voir ses deux extrémités ; un salon ouvert de 09 h à 19 h garde ses
+ * rangées de 08 h et de 19 h 30, peintes en fond inactif — c'est ce que #752
+ * demande explicitement, « sans les masquer ».
  */
-function displayedSlots(spans: readonly SlotSpan[]): { firstSlot: number; lastSlot: number } {
+function displayedSlots(
+  spans: readonly SlotSpan[],
+  days: readonly CalendarDate[],
+  week: OpeningWeek,
+): { firstSlot: number; lastSlot: number } {
   let first = DEFAULT_FIRST_HOUR * SLOTS_PER_HOUR;
   let last = DEFAULT_LAST_HOUR * SLOTS_PER_HOUR;
 
   for (const span of spans) {
     first = Math.min(first, span.startSlot);
     last = Math.max(last, span.endSlot);
+  }
+
+  for (const day of days) {
+    for (const window of windowsOfDay(week, day) ?? []) {
+      first = Math.min(first, Math.floor(window.start / SLOT_MINUTES));
+      last = Math.max(last, Math.ceil(window.end / SLOT_MINUTES));
+    }
   }
 
   return {
@@ -454,6 +643,8 @@ interface ColumnContext {
   readonly firstSlot: number;
   readonly lastSlot: number;
   readonly timeZone: TimeZone;
+  /** Ce que le salon ouvre ce jour-là, `null` si ses horaires sont inconnus. */
+  readonly windows: readonly OpeningWindow[] | null;
   readonly now?: Date;
 }
 
@@ -506,11 +697,40 @@ function buildColumn(
   });
 
   const nowSlot = currentSlot(input.day, context);
+  // La rangée où commence la fermeture courante, tant qu'elle dure. Les rangées
+  // fermées se fusionnent (`CalendarClosedCell`) : on ne ferme la cellule qu'à
+  // la première rangée qui ne l'est pas — ouverte, occupée, ou hors amplitude.
+  let closedFrom: number | null = null;
+
+  const closeRun = (until: number): void => {
+    if (closedFrom === null) {
+      return;
+    }
+
+    cells.push({
+      kind: 'closed',
+      key: `ferme-${input.id}-${String(closedFrom)}`,
+      slot: closedFrom - context.firstSlot,
+      span: until - closedFrom,
+      label: closedLabel(closedFrom, context.windows ?? []),
+      nowOffset: nowOffsetWithin(nowSlot, closedFrom, until),
+    });
+
+    closedFrom = null;
+  };
 
   for (let slot = context.firstSlot; slot < context.lastSlot; slot += 1) {
     if (occupied.has(slot)) {
+      closeRun(slot);
       continue;
     }
+
+    if (isClosed(slot, context.windows)) {
+      closedFrom ??= slot;
+      continue;
+    }
+
+    closeRun(slot);
 
     cells.push({
       kind: 'free',
@@ -520,9 +740,11 @@ function buildColumn(
       timeLabel: spokenClock(slot),
       day: input.day,
       time: slotClock(slot),
-      nowOffset: nowSlot !== null && nowSlot.slot === slot ? nowSlot.offset : null,
+      nowOffset: nowOffsetWithin(nowSlot, slot, slot + 1),
     });
   }
+
+  closeRun(context.lastSlot);
 
   // Ordre du document = ordre chronologique : la tabulation parcourt la journée
   // dans l'ordre où elle se déroule, sans motif ARIA inventé.
@@ -533,11 +755,64 @@ function buildColumn(
   return {
     id: input.id,
     name: input.name,
-    meta: countLabel(input.appointments.length),
+    meta: columnMeta(input.appointments.length, context.windows),
     staffId: input.staffId,
     laneCount,
     cells,
   };
+}
+
+/**
+ * `true` si le salon ne travaille pas cette rangée.
+ *
+ * C'est l'**heure de départ** de la rangée qui décide, et non son recouvrement :
+ * le bouton d'un créneau libre promet « poser un rendez-vous à partir de cette
+ * heure » (#611), et une rangée de 12 h 30 dont le salon ferme à 12 h 45 ne
+ * permet de poser aucun rendez-vous.
+ *
+ * Horaires inconnus (`null`) : rien n'est fermé. Voir `BuildOptions.openingHours`.
+ */
+function isClosed(slot: number, windows: readonly OpeningWindow[] | null): boolean {
+  if (windows === null) {
+    return false;
+  }
+
+  const minutes = slot * SLOT_MINUTES;
+
+  return !windows.some((window) => minutes >= window.start && minutes < window.end);
+}
+
+/**
+ * Le nom du fond inactif — les trois libellés de `mockups/admin/calendrier.html`.
+ *
+ * Nommer plutôt que griser : une rangée grise sans mot ne distingue pas une
+ * fermeture d'un défaut d'affichage, et l'opérateur qui cherche pourquoi il ne
+ * peut pas poser à 13 h doit lire la réponse sur la rangée même.
+ */
+function closedLabel(slot: number, windows: readonly OpeningWindow[]): string {
+  if (windows.length === 0) {
+    return 'Fermé';
+  }
+
+  const minutes = slot * SLOT_MINUTES;
+  // Une fermeture encadrée par deux plages du même jour est la coupure
+  // méridienne — « Pause » —, jamais la fermeture du salon.
+  const enclosed =
+    windows.some((window) => window.end <= minutes) &&
+    windows.some((window) => window.start > minutes);
+
+  return enclosed ? 'Pause' : 'Hors horaires';
+}
+
+/**
+ * L'en-tête de colonne : le compte de rendez-vous, ou « Fermé ».
+ *
+ * « Fermé » l'emporte sur « Aucun rendez-vous », qui se lit comme une journée
+ * ouverte et creuse — celle qu'on propose de remplir. Un jour fermé qui porte
+ * malgré tout un rendez-vous garde son compte : c'est lui l'information.
+ */
+function columnMeta(count: number, windows: readonly OpeningWindow[] | null): string {
+  return count === 0 && windows !== null && windows.length === 0 ? 'Fermé' : countLabel(count);
 }
 
 function laneOf(cell: CalendarCell): number {
@@ -552,11 +827,14 @@ function countLabel(count: number): string {
   return count === 1 ? '1 RDV' : `${String(count)} RDV`;
 }
 
-/** La rangée où tombe l'heure qu'il est, si elle tombe dans cette journée. */
+/**
+ * La rangée où tombe l'heure qu'il est, si elle tombe dans cette journée — et la
+ * minute exacte, que le placement du trait demande.
+ */
 function currentSlot(
   day: CalendarDate,
   context: ColumnContext,
-): { slot: number; offset: string } | null {
+): { slot: number; minutes: number } | null {
   if (context.now === undefined) {
     return null;
   }
@@ -573,9 +851,30 @@ function currentSlot(
     return null;
   }
 
-  const within = here.minutes - slot * SLOT_MINUTES;
+  return { slot, minutes: here.minutes };
+}
 
-  return { slot, offset: `${String(Math.round((within / SLOT_MINUTES) * 100))}%` };
+/**
+ * Où poser le trait d'heure courante dans une cellule qui couvre `[from, until)`,
+ * en pourcentage de sa hauteur — `null` si l'heure qu'il est n'y tombe pas.
+ *
+ * Écrit sur un intervalle de rangées et non sur une rangée : une cellule fermée
+ * en fusionne plusieurs, et un pourcentage calculé sur une demi-heure y placerait
+ * le trait au sommet du bloc, quelle que soit l'heure.
+ */
+function nowOffsetWithin(
+  now: { slot: number; minutes: number } | null,
+  from: number,
+  until: number,
+): string | null {
+  if (now === null || now.slot < from || now.slot >= until) {
+    return null;
+  }
+
+  const within = now.minutes - from * SLOT_MINUTES;
+  const height = (until - from) * SLOT_MINUTES;
+
+  return `${String(Math.round((within / height) * 100))}%`;
 }
 
 // ---------------------------------------------------------------------------

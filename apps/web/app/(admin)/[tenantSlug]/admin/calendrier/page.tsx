@@ -41,6 +41,13 @@ import { adminCalendarPath, adminLoginPath } from '../paths';
  * fermait donc l'écran à ceux qui l'utilisent, et le fuseau est de toute façon
  * public : il est affiché sur la page de réservation.
  *
+ * La même réponse porte les **horaires d'ouverture** (#343), et c'est ce qui
+ * règle #752 sans une route de plus : le planning peignait chaque demi-heure de
+ * l'amplitude comme « libre — poser un rendez-vous à partir de cette heure », y
+ * compris les jours de fermeture, là où le moteur refusait. Ces heures-là sont
+ * publiques — la page de réservation les affiche —, et l'agenda n'a pas à en
+ * demander l'autorisation pour dire quand le salon est fermé.
+ *
  * Elle garde la session, lit le fuseau de l'établissement, et **amorce le
  * cache** : la période demandée par l'URL, plus les deux périodes voisines. Le
  * reste — navigation, bascule jour/semaine, virtualisation, préchargement des
@@ -212,6 +219,7 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
         date={anchor}
         initialPeriods={periods}
         loadError={loadError}
+        openingHours={tenant.openingHours ?? []}
         services={services}
         setupKnown={setupKnown}
         staff={staff}

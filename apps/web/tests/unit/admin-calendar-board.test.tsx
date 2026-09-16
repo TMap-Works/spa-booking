@@ -1,4 +1,10 @@
-import type { Appointment, AppointmentStatus, Service, StaffMemberSummary } from '@spa/shared';
+import type {
+  Appointment,
+  AppointmentStatus,
+  OpeningHoursEntry,
+  Service,
+  StaffMemberSummary,
+} from '@spa/shared';
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -166,6 +172,7 @@ function renderBoard(
     readonly loadError?: string | null;
     readonly services?: readonly Service[];
     readonly staff?: readonly StaffMemberSummary[];
+    readonly openingHours?: readonly OpeningHoursEntry[];
   } = {},
 ): void {
   render(
@@ -173,6 +180,7 @@ function renderBoard(
       date={overrides.date ?? '2026-08-26'}
       initialPeriods={overrides.periods ?? amorce}
       loadError={overrides.loadError ?? null}
+      openingHours={overrides.openingHours ?? []}
       services={overrides.services ?? CATALOGUE}
       // Répertoire vide par défaut : les colonnes se déduisent alors des seuls
       // rendez-vous, ce qui laisse l'état vide observable là où ces cas
@@ -729,5 +737,101 @@ describe('#617 — le tiroir s’ouvre dans la fenêtre', () => {
     expect(
       within(colonne).getByRole('button', { name: /^08 h 00, libre/ }).textContent,
     ).toContain('poser un rendez-vous');
+  });
+});
+
+/**
+ * Les rangées que le salon ne travaille pas — #752.
+ *
+ * Le planning les peignait comme n'importe quelle autre : « libre — poser un
+ * rendez-vous à partir de cette heure », avant l'ouverture, pendant la coupure
+ * méridienne, après la fermeture, et les jours de fermeture entiers. Le moteur,
+ * lui, refusait — le tiroir ouvert depuis ces cellules répondait « Aucun créneau
+ * ce jour-là ». Ce que l'agenda présente comme réservable doit être ce que le
+ * moteur sait honorer (`booking-engine` §3, étape 2).
+ */
+describe('hors des horaires d’ouverture, la rangée n’est plus un créneau', () => {
+  /** Spa Lumière : du lundi au vendredi, 09:00–13:00 puis 14:00–19:00. */
+  const SEMAINE: readonly OpeningHoursEntry[] = ([1, 2, 3, 4, 5] as const).flatMap((weekday) => [
+    { weekday, opensAt: '09:00', closesAt: '13:00' },
+    { weekday, opensAt: '14:00', closesAt: '19:00' },
+  ]);
+
+  const REPERTOIRE: readonly StaffMemberSummary[] = [{ id: 'staff-hasina', displayName: 'Hasina' }];
+
+  it('rend « Hors horaires » avant l’ouverture, au lieu d’un bouton', () => {
+    renderBoard({ openingHours: SEMAINE, periods: { 'jour:2026-08-26': [] }, staff: REPERTOIRE });
+
+    const colonne = screen.getByRole('list', { name: /^Hasina/ });
+
+    expect(within(colonne).getByText('Hors horaires')).toBeDefined();
+    // La preuve que l'audit a relevée : ce bouton-là n'existe plus.
+    expect(within(colonne).queryByRole('button', { name: /^08 h 00, libre/ })).toBeNull();
+    // Ce que le salon ouvre vraiment reste cliquable.
+    expect(within(colonne).getByRole('button', { name: /^09 h 00, libre/ })).toBeDefined();
+  });
+
+  it('nomme « Pause » la coupure méridienne, et elle seule', () => {
+    renderBoard({ openingHours: SEMAINE, periods: { 'jour:2026-08-26': [] }, staff: REPERTOIRE });
+
+    const colonne = screen.getByRole('list', { name: /^Hasina/ });
+
+    expect(within(colonne).getByText('Pause')).toBeDefined();
+    expect(within(colonne).queryByRole('button', { name: /^13 h 00, libre/ })).toBeNull();
+  });
+
+  it('ferme la journée entière un jour sans plage d’ouverture', () => {
+    // Dimanche 30 août : Spa Lumière n'ouvre pas. Le planning en offrait
+    // pourtant chaque demi-heure à la réservation.
+    renderBoard({
+      date: '2026-08-30',
+      openingHours: SEMAINE,
+      periods: { 'jour:2026-08-30': [] },
+      staff: REPERTOIRE,
+    });
+
+    const colonne = screen.getByRole('list', { name: /^Hasina/ });
+
+    expect(within(colonne).getByText('Fermé')).toBeDefined();
+    expect(within(colonne).queryAllByRole('button')).toHaveLength(0);
+    // L'en-tête le dit aussi : « Aucun rendez-vous » se lirait comme une journée
+    // ouverte et creuse, celle qu'on propose justement de remplir.
+    expect(screen.getAllByText('Fermé')).toHaveLength(2);
+  });
+
+  it('laisse le planning intact quand le salon n’a saisi aucun horaire', () => {
+    // Un salon fraîchement inscrit n'est pas un salon fermé sept jours sur
+    // sept : le peindre en semaine close lui retirerait son seul point d'entrée
+    // vers le tiroir de création.
+    renderBoard({ openingHours: [], periods: { 'jour:2026-08-26': [] }, staff: REPERTOIRE });
+
+    const colonne = screen.getByRole('list', { name: /^Hasina/ });
+
+    expect(within(colonne).queryByText('Fermé')).toBeNull();
+    expect(within(colonne).getByRole('button', { name: /^08 h 00, libre/ })).toBeDefined();
+  });
+
+  it('n’offre pas la rangée fermée comme cible de dépôt', async () => {
+    // Un rendez-vous saisi à la poignée change tous les créneaux libres en
+    // cibles nommées (#51). Une fermeture n'en est pas une : le report y serait
+    // refusé par le serveur, exactement comme la création.
+    const user = userEvent.setup();
+    renderBoard({
+      openingHours: SEMAINE,
+      periods: { 'jour:2026-08-26': [matin] },
+      staff: REPERTOIRE,
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Déplacer Rina Andriamana' }));
+
+    const colonne = screen.getByRole('list', { name: /^Hasina/ });
+
+    expect(within(colonne).getByRole('button', { name: /^10 h 00, libre/ }).textContent).toContain(
+      'déplacer ici',
+    );
+    // La rangée de 08 h 00 n'est plus un bouton du tout : il n'y a rien à y
+    // lâcher, et rien ne l'annonce comme une destination.
+    expect(within(colonne).queryByRole('button', { name: /^08 h 00/ })).toBeNull();
+    expect(within(colonne).getByText('Hors horaires')).toBeDefined();
   });
 });

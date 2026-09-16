@@ -1,6 +1,12 @@
 'use client';
 
-import type { Appointment, Service, StaffMemberSummary, TimeZone } from '@spa/shared';
+import type {
+  Appointment,
+  OpeningHoursEntry,
+  Service,
+  StaffMemberSummary,
+  TimeZone,
+} from '@spa/shared';
 import { ERROR_CODES } from '@spa/shared';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -179,10 +185,32 @@ interface CalendarBoardProps {
    * passer n'ont pas à répondre d'une question qu'ils ne se posent pas.
    */
   readonly setupKnown?: boolean;
+  /**
+   * Les heures que l'établissement annonce ouvrir (#752).
+   *
+   * Lues sur la vitrine publique que la page consulte déjà pour son fuseau. Les
+   * rangées qu'elles ne couvrent pas cessent d'être des créneaux libres : elles
+   * deviennent le fond inactif nommé de la maquette — « Fermé », « Pause »,
+   * « Hors horaires » —, ni cliquable, ni cible de dépôt. Ce que l'agenda
+   * présente comme réservable redevient ce que le moteur sait honorer.
+   *
+   * Facultatif, et **vide par défaut** : sans horaires connus, le planning garde
+   * son comportement d'avant ce ticket plutôt que de peindre une semaine close.
+   */
+  readonly openingHours?: readonly OpeningHoursEntry[];
 }
 
 /** Rafraîchissement du trait d'heure courante — sa résolution est la minute. */
 const NOW_REFRESH_MS = 60_000;
+
+/**
+ * Le repli d'horaires inconnus, hissé hors du composant.
+ *
+ * Un `[]` littéral en valeur par défaut serait une référence neuve à chaque
+ * rendu, et le `useMemo` qui construit la grille se rejouerait à chaque fois —
+ * sur l'écran dont la virtualisation existe précisément pour éviter ce coût.
+ */
+const EMPTY_OPENING_HOURS: readonly OpeningHoursEntry[] = [];
 
 /** Ce que l'action serveur du planning rend — le type que le cache reçoit. */
 type CalendarLoadResult = AdminActionResult<{ readonly appointments: Appointment[] }>;
@@ -197,6 +225,7 @@ export function CalendarBoard({
   services,
   staff,
   setupKnown = true,
+  openingHours = EMPTY_OPENING_HOURS,
 }: CalendarBoardProps) {
   const router = useRouter();
   const [view, setView] = useState<CalendarView>(initialView);
@@ -292,10 +321,11 @@ export function CalendarBoard({
         range: rangeOf(view, date),
         appointments: appointments ?? [],
         staff,
+        openingHours,
         timeZone,
         ...(now === null ? {} : { now }),
       }),
-    [view, date, appointments, staff, timeZone, now],
+    [view, date, appointments, staff, openingHours, timeZone, now],
   );
 
   // Une période qu'on n'a pas encore n'est pas une période vide : dire « aucun
@@ -1087,6 +1117,37 @@ function CalendarCellView({
     gridRow: `${String(cell.slot + 1)} / span ${String(cell.span)}`,
     gridColumn: cell.kind === 'event' ? String(cell.lane + 1) : `1 / span ${String(laneCount)}`,
   };
+
+  if (cell.kind === 'closed') {
+    // Ni bouton, ni cible de dépôt : le salon ne travaille pas cette rangée, et
+    // le moteur refuserait le rendez-vous qu'on y poserait. Un `<div>` inerte
+    // dans la cellule — c'est le balisage que la maquette du planning montre
+    // depuis #30 (`mockups/admin/calendrier.html`), et il retire d'un même geste
+    // le clic vers le tiroir et le lâcher du glisser-déposer.
+    return (
+      <li className="spa-admin-calendar__cell" style={placement}>
+        <div
+          className={[
+            'spa-admin-calendar__blocked',
+            cell.nowOffset === null ? null : 'spa-admin-calendar__blocked--now',
+          ]
+            .filter((name) => name !== null)
+            .join(' ')}
+          {...(cell.nowOffset === null
+            ? {}
+            : { style: { '--now-offset': cell.nowOffset } as Record<string, string> })}
+        >
+          <span className="spa-admin-calendar__blocked-label">{cell.label}</span>
+          {/* Le trait d'heure courante traverse aussi les fermetures — midi, le
+              soir, un dimanche entier. Sans cette annonce, il ne serait visible
+              que des voyants. */}
+          {cell.nowOffset === null ? null : (
+            <span className="spa-visually-hidden">heure courante</span>
+          )}
+        </div>
+      </li>
+    );
+  }
 
   if (cell.kind === 'free') {
     const dropping = drag.picked;
