@@ -1,6 +1,8 @@
 import type { PublicTenant } from '@spa/shared';
 import Link from 'next/link';
 
+import { PUBLIC_EXIT_LABELS } from './public-exits';
+
 interface SalonHeaderProps {
   readonly tenant: PublicTenant;
   /** Chemin du tunnel de réservation — construit par la page, qui tient les URL. */
@@ -22,6 +24,10 @@ interface SalonHeaderProps {
  * Le chemin arrive en propriété plutôt que d'être recomposé ici : les
  * composants de ce dossier ne connaissent pas l'arborescence des routes, c'est
  * la page qui la tient (`salon-data.ts`).
+ *
+ * Le **libellé**, lui, vient du registre des sorties publiques
+ * (`public-exits.tsx`) : cet appel à l'action et les barres de sorties nomment
+ * la même page, et deux chaînes écrites à deux endroits finissent par diverger.
  */
 export function SalonHeader({ tenant, reservationHref }: SalonHeaderProps) {
   return (
@@ -33,7 +39,7 @@ export function SalonHeader({ tenant, reservationHref }: SalonHeaderProps) {
         votre rendez-vous en quelques minutes.
       </p>
       <Link className="spa-button spa-button--accent" href={reservationHref}>
-        Prendre rendez-vous
+        {PUBLIC_EXIT_LABELS.reservation}
       </Link>
     </header>
   );

@@ -684,20 +684,10 @@
 
 /* --- Pied de page ---------------------------------------------------------- */
 
-.spa-booking__footer {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spa-space-4);
-  padding-top: var(--spa-space-4);
-  border-top: 1px solid var(--spa-color-border);
-}
-
-.spa-booking__back {
-  color: var(--spa-color-accent-text);
-  font-weight: var(--spa-font-weight-medium);
-  text-decoration: underline;
-  /* La cible reste tapable au doigt même quand le texte est court (WCAG 2.5.8). */
-  min-height: var(--spa-target-min-size);
-  display: inline-flex;
-  align-items: center;
-}
+/*
+ * Le pied du tunnel est désormais rendu par `.spa-public-exits--footer`
+ * (`components/salon.css`, #739) : ses liens sont les mêmes que ceux de la
+ * vitrine, et deux jeux de règles pour un seul jeu de liens laissaient les deux
+ * écrans diverger. `.spa-booking__footer` et `.spa-booking__back` ont été
+ * retirés faute de porteur.
+ */

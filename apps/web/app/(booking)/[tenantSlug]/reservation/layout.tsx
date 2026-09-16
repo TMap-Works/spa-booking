@@ -1,10 +1,10 @@
-import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 
+import { PublicExits } from '@/components/salon/public-exits';
 import { ApiClientError } from '@/lib/api-client';
 
-import { loadSalonTenant, salonPath } from '../salon-data';
+import { accountPath, loadSalonTenant, salonPath } from '../salon-data';
 
 /**
  * L'enveloppe de page du tunnel de réservation (#623).
@@ -82,14 +82,18 @@ export default async function BookingLayout({ children, params }: BookingLayoutP
       <main className="spa-booking__main" id="contenu">
         {children}
       </main>
-      <footer className="spa-booking__footer">
-        <Link className="spa-booking__back" href={salonPath(tenantSlug)}>
-          Voir toutes les prestations
-        </Link>
-        <Link className="spa-booking__back" href={`${salonPath(tenantSlug)}/compte`}>
-          Mes rendez-vous
-        </Link>
-      </footer>
+      {/*
+        Les mêmes sorties que la vitrine, rendues par le même composant (#739) :
+        c'est ce qui garantit qu'un écran ne nomme pas « Mon compte » ce que
+        l'autre appelle « Mes rendez-vous ».
+      */}
+      <PublicExits
+        variant="footer"
+        exits={[
+          { key: 'vitrine', href: salonPath(tenantSlug) },
+          { key: 'compte', href: accountPath(tenantSlug) },
+        ]}
+      />
     </div>
   );
 }

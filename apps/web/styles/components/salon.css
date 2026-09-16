@@ -18,7 +18,9 @@
 .spa-salon {
   display: flex;
   flex-direction: column;
-  gap: var(--spa-space-10);
+  /* L'écart entre la barre de sorties et le contenu, et lui seul : les sections
+   * de la page sont espacées par `.spa-salon__main`. */
+  gap: var(--spa-space-6);
   /* La lecture d'une page de texte se dégrade au-delà d'une soixantaine de
    * caractères par ligne ; la borne haute tient la mesure sur un grand écran
    * sans brider la grille de prestations. */
@@ -26,6 +28,13 @@
   margin-inline: auto;
   padding-block: var(--spa-space-10);
   padding-inline: var(--spa-space-4);
+}
+
+/* Le contenu propre de la page, sous la barre de sorties (#739). */
+.spa-salon__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-10);
 }
 
 /* --- En-tête --------------------------------------------------------------- */
@@ -156,4 +165,43 @@
 .spa-salon__hours-day {
   min-inline-size: 6rem;
   color: var(--spa-color-text-muted);
+}
+
+/* --- Sorties du parcours public -------------------------------------------- */
+
+/*
+ * Les liens de sortie communs à la vitrine et au tunnel (#739) — voir
+ * `components/salon/public-exits.tsx`. Ils vivent dans cette feuille parce que
+ * le composant vit dans `components/salon/` ; le tunnel les emploie pour son
+ * pied de page, où ils remplacent `.spa-booking__footer`, que rien d'autre ne
+ * portait.
+ */
+
+.spa-public-exits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-4);
+}
+
+/* En tête d'écran : l'accès à l'espace client se range à droite, là où il se
+ * cherche, et retombe au fil du texte quand la largeur ne le permet plus. */
+.spa-public-exits--header {
+  justify-content: flex-end;
+  padding-bottom: var(--spa-space-3);
+  border-bottom: 1px solid var(--spa-color-border);
+}
+
+.spa-public-exits--footer {
+  padding-top: var(--spa-space-4);
+  border-top: 1px solid var(--spa-color-border);
+}
+
+.spa-public-exits__link {
+  display: inline-flex;
+  align-items: center;
+  /* La cible reste tapable au doigt même quand le texte est court (WCAG 2.5.8). */
+  min-height: var(--spa-target-min-size);
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-medium);
+  text-decoration: underline;
 }

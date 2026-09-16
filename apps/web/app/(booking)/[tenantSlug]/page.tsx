@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
+import { PublicExits } from '@/components/salon/public-exits';
 import { SalonHeader } from '@/components/salon/salon-header';
 import { SalonInfo } from '@/components/salon/salon-info';
 import { ServiceCatalog } from '@/components/salon/service-catalog';
@@ -9,6 +10,7 @@ import { ApiClientError } from '@/lib/api-client';
 
 import { BookingErrorNotice } from './booking-error-notice';
 import {
+  accountPath,
   loadSalonServices,
   loadSalonTenant,
   reservationPath,
@@ -109,17 +111,25 @@ export default async function SalonPage({ params }: PageProps) {
     const canonicalUrl = salonUrl(tenant.slug);
 
     return (
-      <main className="spa-salon">
-        <SalonStructuredData
-          tenant={tenant}
-          services={services}
-          url={canonicalUrl}
-          reservationUrl={`${canonicalUrl}/reservation`}
-        />
-        <SalonHeader tenant={tenant} reservationHref={reservationPath(tenant.slug)} />
-        <ServiceCatalog services={services} />
-        <SalonInfo tenant={tenant} />
-      </main>
+      <div className="spa-salon">
+        {/*
+          L'accès à l'espace client, au-dessus du contenu et hors du `<main>`
+          (#739) : c'est une navigation de site, elle a son propre repère, et
+          elle précède le titre comme sur les autres écrans du parcours.
+        */}
+        <PublicExits variant="header" exits={[{ key: 'compte', href: accountPath(tenant.slug) }]} />
+        <main className="spa-salon__main" id="contenu">
+          <SalonStructuredData
+            tenant={tenant}
+            services={services}
+            url={canonicalUrl}
+            reservationUrl={`${canonicalUrl}/reservation`}
+          />
+          <SalonHeader tenant={tenant} reservationHref={reservationPath(tenant.slug)} />
+          <ServiceCatalog services={services} />
+          <SalonInfo tenant={tenant} />
+        </main>
+      </div>
     );
   } catch (error) {
     // Établissement inconnu, désactivé, ou d'un slug mal formé : l'API répond
@@ -129,10 +139,16 @@ export default async function SalonPage({ params }: PageProps) {
       notFound();
     }
 
+    // L'établissement n'a pas pu être chargé, mais le slug de l'URL suffit à
+    // adresser l'espace client : la sortie reste donc offerte, sans quoi une
+    // panne du catalogue enfermerait la visiteuse sur un écran sans issue.
     return (
-      <main className="spa-salon">
-        <BookingErrorNotice title="La page du salon n’a pas pu être chargée" error={error} />
-      </main>
+      <div className="spa-salon">
+        <PublicExits variant="header" exits={[{ key: 'compte', href: accountPath(tenantSlug) }]} />
+        <main className="spa-salon__main" id="contenu">
+          <BookingErrorNotice title="La page du salon n’a pas pu être chargée" error={error} />
+        </main>
+      </div>
     );
   }
 }
