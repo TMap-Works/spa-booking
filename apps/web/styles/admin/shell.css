@@ -223,26 +223,41 @@
  * pour un écran qu'on n'a pas encore écrit, et elle se retire d'elle-même le
  * jour où une enveloppe gagne sa propre mise en page.
  *
- * ## Les deux écrans que le combinateur enfant ne voit pas, et pourquoi c'est sans
- * conséquence
+ * ## L'écran que le combinateur enfant ne voit pas (#718)
  *
  * Les écrans du back-office rendent leur région nommée **à même** la zone de
- * contenu, et la règle les atteint. Deux font exception : `/reglages` la range
- * dans le `<div class="spa-admin-form">` qui borne sa colonne (#630), et
- * `/catalogue/rubriques` porte la sienne autour de `CategoryManager`. Aucun des
- * deux ne présentait le défaut, et c'est la même raison des deux côtés : tous
- * deux rendent **un second `.spa-admin__content`** autour de leurs blocs — un
- * `<form>` pour l'un, un `<div>` pour l'autre — qui leur redéclare la gouttière
- * une couche plus bas. C'est d'ailleurs à ce titre que la QA a pris
- * /catalogue/rubriques pour référence : elle mesurait, sans le savoir, ce que la
- * règle ci-dessous rend maintenant partout.
+ * contenu, et la règle les atteint. `/reglages` fait exception : sa page range la
+ * sienne dans le `<div class="spa-admin-form">` qui borne sa colonne (#630), soit
+ * un cran plus bas que ce qu'un combinateur enfant sait voir. Le sélecteur
+ * descend donc d'un cran pour elle — **nommément**, par la borne de colonne, et
+ * non par un combinateur descendant qui rattraperait la moindre `<section>` nue
+ * posée au fond d'une carte.
  *
- * Il en reste une couture de 20 px entre le `<h1>` de `/reglages` et son premier
- * champ — le remplissage de ce conteneur imbriqué, mesuré au navigateur — là où
- * les autres coutures de l'écran valent 16. Un écart de quatre pixels sur une
- * seule couture d'un écran que la campagne n'a pas relevé : ce n'est pas ce
- * ticket-ci, et le corriger demande de reprendre le balisage de l'écran, pas
- * cette règle.
+ * ## Ce qui masquait le défaut le causait (#718)
+ *
+ * Deux écrans rangent leurs blocs sous un conteneur intermédiaire : `/reglages`
+ * dans le `<form>` de `TenantSettingsForm`, `/catalogue/rubriques` dans le
+ * `<div>` de `CategoryManager`. Tous deux rendent **un second
+ * `.spa-admin__content`**, qui leur redéclarait la gouttière une couche plus bas
+ * — c'est à ce titre que la campagne de #700 a pris /catalogue/rubriques pour
+ * référence, mesurant sans le savoir ce que la règle ci-dessus rend désormais
+ * partout.
+ *
+ * Mais la classe de la coquille ne porte pas que la gouttière : elle porte aussi
+ * le **remplissage** de la zone de contenu, dont un conteneur imbriqué n'a que
+ * faire. Il se lisait de deux façons, relevées à 1920 px :
+ *
+ *   - `/reglages` — 20 px entre le `<h1>` et le champ « Nom de l'établissement »,
+ *     là où les coutures suivantes du même écran valent 16 : ce qui les sépare
+ *     n'est pas la gouttière du `<form>` mais son remplissage ;
+ *   - `/catalogue/rubriques` — les cartes de `CategoryManager` insérées de 20 px
+ *     sur le titre et la barre d'outils de l'écran, qui les surplombent.
+ *
+ * La déclaration plus bas le retire : **imbriqué, `.spa-admin__content` n'emprunte à la
+ * coquille que sa gouttière**. C'est une déclaration de feuille et non une reprise
+ * de balisage, parce que le balisage ne peut pas trancher ici — retirer la classe
+ * du `<form>` lui retirerait la gouttière avec le remplissage, et ses sept blocs
+ * se rejoindraient à 0 px, c'est-à-dire le défaut de #700 rouvert sur cet écran.
  *
  * ## La valeur est celle de la zone de contenu
  *
@@ -251,11 +266,23 @@
  * `--spa-space-3` ici et un `--spa-space-4` sur la zone donneraient deux
  * gouttières différentes selon qu'un écran s'enveloppe ou non — /catalogue/apercu
  * rend un fragment, ses blocs sont déjà les enfants directs de la zone (#633).
+ *
+ * La gouttière du conteneur imbriqué suit d'elle-même, et c'est voulu : elle n'est
+ * pas redéclarée ici, elle est celle que `.spa-admin__content` porte au palier
+ * courant. Seul le remplissage est neutralisé — le sélecteur pèse 0,2,0 et
+ * l'emporte donc sur les redéclarations de palier, qui ne pèsent que 0,1,0.
  */
-.spa-admin__content > section:not([class]) {
+.spa-admin__content > section:not([class]),
+.spa-admin__content > .spa-admin-form > section:not([class]) {
   display: flex;
   flex-direction: column;
   gap: var(--spa-space-4);
+}
+
+/* Imbriqué, ce conteneur n'emprunte à la coquille que sa gouttière — voir
+ * « Ce qui masquait le défaut le causait » ci-dessus (#718). */
+.spa-admin__content .spa-admin__content {
+  padding: 0;
 }
 
 /* Liste à gauche, détail à droite — fiche client, personnel, encaissement. */
@@ -832,8 +859,14 @@
 
   /* L'enveloppe d'écran suit la zone qu'elle traverse (#700) : sans cette ligne,
    * un écran enveloppé garderait 16 px de gouttière là où un écran en fragment
-   * passe à 12, et le téléphone aurait deux rythmes selon la page ouverte. */
-  .spa-admin__content > section:not([class]) {
+   * passe à 12, et le téléphone aurait deux rythmes selon la page ouverte.
+   *
+   * La seconde forme est celle de `/reglages`, dont l'enveloppe est rangée sous la
+   * borne de colonne de #630 (#718) : elle suit le palier comme les autres, sans
+   * quoi le titre de cet écran resterait à 16 px de son premier champ quand tout le
+   * reste passe à 12. */
+  .spa-admin__content > section:not([class]),
+  .spa-admin__content > .spa-admin-form > section:not([class]) {
     gap: var(--spa-space-3);
   }
 
