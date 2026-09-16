@@ -1,7 +1,7 @@
 'use client';
 
 import type { BookedAppointment, PublicService, PublicTenant, UtcInstant } from '@spa/shared';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { Notification, type NotificationTone } from '@/components/ui/notification';
 import {
@@ -42,6 +42,21 @@ interface BookingTunnelProps {
   readonly tenant: PublicTenant;
   readonly services: readonly PublicService[];
 }
+
+/**
+ * L'effet qui écrit l'adresse — de disposition dans le navigateur, passif au
+ * rendu serveur.
+ *
+ * `useLayoutEffect` ne s'exécute pas au rendu serveur et React le dit sur la
+ * console, ce qu'un parcours critique qui vérifie la console ne tolère pas.
+ * Cette bascule est l'idiome habituel : le serveur n'a de toute façon ni
+ * historique ni adresse à corriger, et le choix est figé au chargement du
+ * module — jamais au fil des rendus, ce qui changerait l'ordre des hooks.
+ *
+ * Pourquoi un effet de disposition est indispensable ici : voir l'effet
+ * lui-même, plus bas.
+ */
+const useHistoryEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 /**
  * Le tunnel de réservation (#45) — prestation, créneau, coordonnées,
@@ -150,12 +165,34 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
    *
    * ## Pourquoi l'API du navigateur et non `router.push`
    *
-   * La page est un Server Component en `force-dynamic` : chaque `push` du
-   * routeur redemanderait le rendu serveur de l'écran, soit un aller-retour
-   * réseau par étape sur le parcours qui vise un LCP sous 2,5 s en 4G. Ce n'est
-   * pas de navigation qu'il s'agit ici — l'écran est déjà monté, il ne change
-   * pas de route —, seulement d'une adresse qui doit dire la vérité. Next
-   * reconnaît ces appels natifs et garde son routeur d'accord avec eux.
+   * Il ne s'agit pas de naviguer : l'écran est déjà monté, il ne change pas de
+   * route, et seule son adresse doit dire la vérité. Un `router.push` en ferait
+   * une navigation complète — remontage de la page, et sur un Server Component
+   * en `force-dynamic`, un nouveau rendu serveur avec ses appels à l'API. Next
+   * reconnaît les appels natifs et garde son routeur d'accord avec eux, pour un
+   * coût bien moindre : la recherche du nœud de cache de la nouvelle adresse.
+   *
+   * ## Pourquoi en `useLayoutEffect`, et pas en `useEffect`
+   *
+   * Ce n'est pas une préférence : c'est la condition pour que le tunnel
+   * fonctionne. Écrire l'adresse fait dispatcher à Next une action `RESTORE`,
+   * et sa file d'actions **écarte l'action serveur en vol** quand une
+   * navigation arrive par-dessus (`app-router-instance.js` :
+   * « Navigations take priority over any pending actions »,
+   * `pending.discarded = true`). La promesse de l'action écartée ne se résout
+   * jamais.
+   *
+   * Or chaque étape charge ses données dans un `useEffect` — `SlotStep`
+   * interroge les disponibilités dès son montage. En `useEffect`, l'ordre du
+   * commit est : l'enfant d'abord, le parent ensuite ; l'adresse s'écrivait donc
+   * **après** le départ de l'action, et le calendrier restait en squelette
+   * jusqu'à la revalidation d'une minute. C'est ce qui a fait échouer le
+   * parcours critique.
+   *
+   * Les effets de disposition, eux, s'exécutent **tous** avant les effets
+   * passifs, quel que soit l'étage de l'arbre. L'action `RESTORE` est donc
+   * déposée dans la file avant que l'étape ne demande ses données : celle-ci
+   * s'y range derrière, au lieu d'être écartée par elle.
    *
    * ## Pousser, ou corriger sur place
    *
@@ -184,7 +221,7 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
    * résout encore : une prestation retirée entre deux visites laisserait sinon
    * un identifiant mort dans une URL qu'on partage.
    */
-  useEffect(() => {
+  useHistoryEffect(() => {
     if (!hydrated) {
       return;
     }
