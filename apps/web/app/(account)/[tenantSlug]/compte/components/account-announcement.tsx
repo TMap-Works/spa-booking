@@ -202,10 +202,10 @@ export function AccountAnnouncementProvider({ children }: AccountAnnouncementPro
  *
  * - `spa-visually-hidden` tant qu'il n'y a rien à dire. La classe sort l'élément
  *   du flux (`position: absolute`, `base.css`), si bien qu'une région vide ne
- *   consomme pas une gouttière de `.spa-account__main` — 32 px au-dessus du menu
- *   du compte, sur tous les écrans, pour rien. Elle reste dans le DOM et dans
- *   l'arbre d'accessibilité : c'est la classe qui change, jamais le nœud, et
- *   React ne le remplace donc pas ;
+ *   consomme pas une gouttière de `.spa-account__main` — 32 px au-dessus de la
+ *   première section de l'écran, sur tous les écrans, pour rien. Elle reste dans
+ *   le DOM et dans l'arbre d'accessibilité : c'est la classe qui change, jamais
+ *   le nœud, et React ne le remplace donc pas ;
  * - `aria-atomic="true"` pour que le titre et la phrase soient lus d'un bloc. Un
  *   titre lu seul — « Votre rendez-vous est déplacé » — perdrait justement la
  *   nouvelle heure.
