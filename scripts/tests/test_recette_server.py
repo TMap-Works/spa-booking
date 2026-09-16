@@ -26,7 +26,10 @@ d'écrire. Ce qui est vérifié ici :
    deviner quand rien ne dit lequel des deux ;
 5. `MasquageDesSorties` — aucun jeton, mot de passe ou secret d'environnement ne
    franchit la frontière du serveur ;
-6. `AllocationDesPorts` — deux agents d'une même vague obtiennent deux ports.
+6. `AllocationDesPorts` — deux agents d'une même vague obtiennent deux ports ;
+7. `MigrationsDeLaBase` — `api_jeu_dessai` sur une base en retard nomme les
+   migrations manquantes et la commande à poser, au lieu de rendre une trace
+   Prisma (#318) ; une base en avance avertit sans bloquer.
 
 Aucune dépendance : `unittest` de la bibliothèque standard, comme les autres
 harnais de `scripts/tests`.
@@ -41,6 +44,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -597,6 +601,189 @@ class AllocationDesPorts(unittest.TestCase):
             sonde.bind(("127.0.0.1", 0))
             candidat = sonde.getsockname()[1]
         self.assertEqual(rs.port_libre(candidat), candidat)
+
+
+SOCLE = "20260101000000_socle"
+BRANCHE = "20260201000000_branche"
+VOISINE = "20260301000000_voisine"
+
+
+def ligne(nom, terminee=True, annulee=False):
+    return {"nom": nom, "terminee": terminee, "annulee": annulee}
+
+
+class MigrationsDeLaBase(unittest.TestCase):
+    """Une base en retard se dit avant que Prisma n'échoue (#318).
+
+    Le dépôt est réel — `migrations_sur_develop` interroge git —, la base ne
+    l'est pas : la fixture Node est remplacée par un double qui rend la table
+    `_prisma_migrations` voulue. Le job « scripts » de la CI n'installe ni Node
+    ni Prisma, et c'est la décision du serveur qui est à prouver ici.
+
+    `origin/develop` porte le socle ; la migration de la branche n'existe que
+    dans le dépôt du ticket — le cas de tout ticket qui écrit une migration.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = Path(tempfile.mkdtemp(prefix="recette-migrations-"))
+        cls.depot = cls.temp / "depot"
+        cls.depot.mkdir()
+        migrations = cls.depot / "apps" / "api" / "prisma" / "migrations"
+        git(cls.depot, "init", "-q")
+        ecrire(migrations / SOCLE / "migration.sql", "CREATE TABLE socle ();\n")
+        ecrire(migrations / "migration_lock.toml", 'provider = "postgresql"\n')
+        git(cls.depot, "add", "-A")
+        git(cls.depot, "commit", "-q", "-m", "socle")
+        git(cls.depot, "update-ref", "refs/remotes/origin/develop", "HEAD")
+        ecrire(migrations / BRANCHE / "migration.sql", "ALTER TABLE socle ADD x int;\n")
+        # Un dossier sans migration.sql — un reste d'édition — n'en est pas une.
+        (migrations / "20260401000000_vide").mkdir()
+
+        # Composé plutôt qu'écrit : le scan de fuites refuserait une URL à mot de
+        # passe en clair, fût-elle inventée.
+        cls.mot_de_passe = "-".join(["mot", "de", "passe"] * 3)
+        ecrire(cls.depot / ".env.local",
+               "DATABASE_URL=postgresql://spa:%s@127.0.0.1:5433/spa_dev\n" % cls.mot_de_passe)
+
+    @classmethod
+    def tearDownClass(cls):
+        effacer(cls.temp)
+
+    def setUp(self):
+        self.vraie_racine = rs.RACINE
+        rs.RACINE = self.depot
+        rs.RACINE_ACTIVE["chemin"] = None
+        rs.RACINE_ACTIVE["origine"] = None
+        self.appels = []
+        self.lecture = None
+        self.jeu = subprocess.CompletedProcess([], 0, stdout=json.dumps({"ticket": "318"}) + "\n", stderr="")
+        rustines = [
+            mock.patch.object(rs, "executer_fixture", self.fixture),
+            mock.patch.object(rs, "service_joignable", lambda url, port: (True, "127.0.0.1:5433")),
+            mock.patch.dict(os.environ),
+        ]
+        for rustine in rustines:
+            rustine.start()
+            self.addCleanup(rustine.stop)
+        os.environ.pop("DATABASE_URL", None)
+
+    def tearDown(self):
+        rs.RACINE = self.vraie_racine
+        rs.RACINE_ACTIVE["chemin"] = None
+        rs.RACINE_ACTIVE["origine"] = None
+        rs.ETAT["jeu"] = None
+
+    def fixture(self, script, racine, env, arguments, delai=180):
+        self.appels.append({"script": Path(script), "arguments": list(arguments)})
+        if "--migrations" in arguments:
+            if isinstance(self.lecture, subprocess.CompletedProcess):
+                return self.lecture
+            return subprocess.CompletedProcess([], 0, stdout=json.dumps(self.lecture) + "\n", stderr="")
+        return self.jeu
+
+    def jeu_dessai(self):
+        return rs.outil_api_jeu_dessai({"racine": str(self.depot), "ticket": "318"})
+
+    def jeu_lance(self):
+        return [a for a in self.appels if "--ticket" in a["arguments"]]
+
+    def test_lecart_separe_attente_echec_et_inconnues(self):
+        ecart = rs.ecart_migrations(
+            ["a", "b", "c", "d"],
+            [ligne("a"), ligne("b", terminee=False), ligne("d", annulee=True), ligne("z")],
+        )
+        self.assertEqual(ecart["en_attente"], ["c", "d"])
+        self.assertEqual(ecart["en_echec"], ["b"])
+        self.assertEqual(ecart["inconnues"], ["z"])
+
+    def test_seuls_les_dossiers_a_migration_sql_comptent(self):
+        self.assertEqual(rs.migrations_locales(self.depot), [SOCLE, BRANCHE])
+
+    def test_une_base_en_retard_refuse_en_nommant_la_migration_et_la_commande(self):
+        self.lecture = {"table": True, "migrations": [ligne(SOCLE)]}
+        resultat = self.jeu_dessai()
+        self.assertIn(BRANCHE, resultat["erreur"])
+        self.assertEqual(resultat["remede"]["commande"], "npm run db:migrate:deploy -w @spa/api")
+        self.assertEqual(Path(resultat["remede"]["depuis"]), self.depot)
+        self.assertEqual([m["nom"] for m in resultat["migrations_en_attente"]], [BRANCHE])
+        # Le diagnostic ne passe plus par une trace à déchiffrer.
+        self.assertNotIn("sortie", resultat)
+        self.assertEqual(self.jeu_lance(), [])
+
+    def test_une_migration_propre_a_la_branche_previent_des_voisins(self):
+        self.lecture = {"table": True, "migrations": [ligne(SOCLE)]}
+        resultat = self.jeu_dessai()
+        self.assertIs(resultat["migrations_en_attente"][0]["sur_develop"], False)
+        self.assertIn(BRANCHE, resultat["attention"])
+
+    def test_une_migration_de_develop_manquante_nalerte_pas_sur_les_voisins(self):
+        self.lecture = {"table": True, "migrations": [ligne(BRANCHE)]}
+        resultat = self.jeu_dessai()
+        self.assertEqual(resultat["migrations_en_attente"], [{"nom": SOCLE, "sur_develop": True}])
+        self.assertNotIn("attention", resultat)
+
+    def test_une_base_jamais_migree_le_dit(self):
+        self.lecture = {"table": False, "migrations": []}
+        resultat = self.jeu_dessai()
+        self.assertIn("jamais migrée", resultat["erreur"])
+        self.assertEqual([m["nom"] for m in resultat["migrations_en_attente"]], [SOCLE, BRANCHE])
+
+    def test_une_base_a_jour_pose_le_jeu_dessai(self):
+        self.lecture = {"table": True, "migrations": [ligne(SOCLE), ligne(BRANCHE)]}
+        resultat = self.jeu_dessai()
+        self.assertEqual(resultat, {"ticket": "318"})
+        self.assertEqual(self.jeu_lance()[0]["arguments"], ["--ticket", "318"])
+
+    def test_la_lecture_passe_par_la_fixture_du_serveur_et_le_jeu_par_celle_du_depot(self):
+        # Un worktree parti d'un develop plus ancien ne connaît pas --migrations :
+        # sa fixture poserait un jeu d'essai au lieu de lire.
+        self.lecture = {"table": True, "migrations": [ligne(SOCLE), ligne(BRANCHE)]}
+        self.jeu_dessai()
+        lecture = next(a for a in self.appels if "--migrations" in a["arguments"])
+        self.assertEqual(lecture["script"], rs.FIXTURE_DU_SERVEUR)
+        self.assertEqual(self.jeu_lance()[0]["script"],
+                         self.depot / "scripts" / "mcp" / "recette_fixture.mjs")
+
+    def test_une_base_en_avance_avertit_sans_bloquer(self):
+        # Le cas laissé par #796 sur spa_dev : une migration d'une branche non
+        # mergée, appliquée à la main pour sa recette.
+        self.lecture = {"table": True, "migrations": [ligne(SOCLE), ligne(BRANCHE), ligne(VOISINE)]}
+        resultat = self.jeu_dessai()
+        self.assertEqual(resultat["ticket"], "318")
+        self.assertIn(VOISINE, resultat["avertissement_migrations"])
+        self.assertIn("branche non mergée", resultat["avertissement_migrations"])
+
+    def test_une_migration_en_echec_nomme_sa_resolution(self):
+        self.lecture = {"table": True, "migrations": [ligne(SOCLE), ligne(BRANCHE, terminee=False)]}
+        resultat = self.jeu_dessai()
+        self.assertIn("en échec", resultat["erreur"])
+        self.assertEqual(resultat["migrations_en_echec"], [BRANCHE])
+        self.assertIn("migrate resolve --rolled-back %s" % BRANCHE, resultat["remede"]["commande"])
+        self.assertEqual(self.jeu_lance(), [])
+
+    def test_une_lecture_impossible_ne_bloque_pas_le_jeu_dessai(self):
+        self.lecture = subprocess.CompletedProcess(
+            [], 2, stdout="", stderr="Client Prisma indisponible (x). Lancer « npm run db:generate ».\n")
+        resultat = self.jeu_dessai()
+        self.assertEqual(resultat, {"ticket": "318"})
+
+    def test_sans_lecture_une_trace_de_colonne_absente_donne_la_piste(self):
+        self.lecture = subprocess.CompletedProcess([], 1, stdout="", stderr="connexion refusée\n")
+        self.jeu = subprocess.CompletedProcess(
+            [], 1, stdout="",
+            stderr="PrismaClientKnownRequestError: The column `slot_interval_minutes` "
+                   "does not exist in the current database. code: 'P2022'\n")
+        resultat = self.jeu_dessai()
+        self.assertEqual(resultat["erreur"], "le jeu d'essai a échoué")
+        self.assertIn("connexion refusée", resultat["verification_migrations"])
+        self.assertIn("npm run db:migrate:deploy -w @spa/api", resultat["piste"])
+
+    def test_aucun_identifiant_de_base_ne_sort(self):
+        self.lecture = {"table": True, "migrations": [ligne(SOCLE)]}
+        texte = json.dumps(self.jeu_dessai(), ensure_ascii=False)
+        self.assertNotIn(self.mot_de_passe, texte)
+        self.assertIn("127.0.0.1:5433/spa_dev", texte)
 
 
 class AppelsSansApi(unittest.TestCase):

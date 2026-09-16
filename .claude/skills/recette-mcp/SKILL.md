@@ -150,6 +150,24 @@ Lève l'API sur un port libre. Ce qu'il fait sans qu'on le demande, et pourquoi 
 `admin@ / manager@ / staff@ / client@recette.test`, et un établissement voisin
 `recette-42-voisin`. Idempotent.
 
+Avant d'écrire quoi que ce soit, il compare les migrations que la base a
+enregistrées au dossier `apps/api/prisma/migrations` du dépôt (#318) :
+
+- **base en retard** : il refuse sans rien poser, et nomme les migrations
+  manquantes (`migrations_en_attente`, chacune avec `sur_develop`) ainsi que le
+  `remede` à appliquer, à savoir `npm run db:migrate:deploy -w @spa/api` depuis
+  la racine du ticket, avec `DATABASE_URL` passée dans le shell. **Ce n'est pas
+  un échec de recette, et la migration du ticket n'est pas en cause** : poser
+  la commande, puis rappeler l'outil. Une migration à `sur_develop: false` est
+  celle du ticket, et l'appliquer écrit sur la base partagée avant le merge
+  (champ `attention`) : le journaliser en `--level DEBUG` ;
+- **migration en échec** : même refus, et le remède nomme la commande
+  `prisma migrate resolve` ;
+- **base en avance** : le jeu d'essai est posé, avec un
+  `avertissement_migrations`, parce qu'une autre branche a migré la base. Si une
+  écriture sur la table touchée par cette migration rend 500, le code du ticket
+  n'en est pas la cause.
+
 Le voisin n'est pas un ornement : c'est lui qui rend la sonde d'isolation
 possible. La même route, appelée avec son jeton, doit rendre **404** — jamais
 403, jamais la donnée du premier (tenant-isolation §4).

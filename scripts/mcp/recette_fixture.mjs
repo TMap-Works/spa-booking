@@ -26,6 +26,13 @@
  * déployé.
  *
  * Sortie : une seule ligne de JSON sur stdout — le serveur MCP ne lit que celle-là.
+ *
+ * ## `--migrations` : lire sans écrire
+ *
+ * Avant de poser quoi que ce soit, le serveur demande ici quelles migrations la
+ * base porte, et les compare au dossier `prisma/migrations` du dépôt (#318). Ce
+ * mode n'écrit rien : il lit `_prisma_migrations` et rend une ligne
+ * `{"table": …, "migrations": [{"nom", "terminee", "annulee"}]}`.
  */
 
 import { createRequire } from 'node:module';
@@ -78,14 +85,44 @@ async function poser(prisma, empreinte, slug, nom) {
   return { id: tenant.id, slug: tenant.slug, nom: tenant.name, comptes };
 }
 
+/**
+ * Les migrations que la base a enregistrées. Une base jamais migrée n'a pas de
+ * table `_prisma_migrations` : ce n'est pas une panne, c'est le retard le plus
+ * grand qui soit, et le serveur le dit comme tel.
+ */
+async function lireMigrations(prisma) {
+  try {
+    const lignes = await prisma.$queryRaw`
+      SELECT migration_name,
+             finished_at IS NOT NULL AS terminee,
+             rolled_back_at IS NOT NULL AS annulee
+        FROM _prisma_migrations`;
+    return {
+      table: true,
+      migrations: lignes.map((ligne) => ({
+        nom: ligne.migration_name,
+        terminee: ligne.terminee,
+        annulee: ligne.annulee,
+      })),
+    };
+  } catch (erreur) {
+    if (erreur?.meta?.code === '42P01' || /_prisma_migrations.*does not exist/s.test(String(erreur?.message))) {
+      return { table: false, migrations: [] };
+    }
+    throw erreur;
+  }
+}
+
 async function main() {
   const ticket = String(argument('--ticket', '0')).replace(/[^0-9a-z-]/gi, '') || '0';
+  const migrationsSeules = process.argv.includes('--migrations');
 
   let PrismaClient;
   let bcrypt;
   try {
     ({ PrismaClient } = require('@prisma/client'));
-    bcrypt = require('bcryptjs');
+    // La lecture des migrations ne hache rien : elle ne doit pas dépendre de bcrypt.
+    bcrypt = migrationsSeules ? null : require('bcryptjs');
   } catch (erreur) {
     process.stderr.write(
       `Client Prisma indisponible (${erreur.message}). Lancer « npm run db:generate ».\n`,
@@ -95,6 +132,11 @@ async function main() {
 
   const prisma = new PrismaClient();
   try {
+    if (migrationsSeules) {
+      process.stdout.write(`${JSON.stringify(await lireMigrations(prisma))}\n`);
+      return;
+    }
+
     // Coût 10 et non celui de BCRYPT_COST : ces comptes sont recréés à chaque
     // recette, et le quart de seconde par hachage se paierait cinq fois.
     const empreinte = await bcrypt.hash(MOT_DE_PASSE, 10);
