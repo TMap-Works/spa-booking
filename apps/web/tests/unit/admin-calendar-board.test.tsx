@@ -52,6 +52,17 @@ vi.mock('next/navigation', () => ({
 const TIMEZONE = 'Indian/Antananarivo';
 const SLUG = 'maison-lotus';
 
+/**
+ * Le titre de l'état vide dans les scénarios de ce fichier.
+ *
+ * Ils rendent tous un catalogue garni sans aucune fiche praticien : depuis #751
+ * l'état vide nomme ce qui manque plutôt que la période, et c'est donc le
+ * praticien absent qu'il annonce. Écrit une fois — la formulation appartient à
+ * `lib/admin/calendar-start.ts`, et ces scénarios-là n'éprouvent pas la
+ * formulation mais ce qui l'entoure.
+ */
+const PLANNING_VIDE = 'Aucune fiche praticien n’est ouverte';
+
 /** Le catalogue que la page passe au planning — de quoi ouvrir le tiroir de #50. */
 const CATALOGUE: readonly Service[] = [
   {
@@ -384,7 +395,7 @@ describe('virtualisation — troisième critère', () => {
     loadCalendarRangeAction.mockResolvedValue({ ok: true, data: { appointments: [matin] } });
     renderBoard({ periods: { 'jour:2026-08-26': [] } });
 
-    expect(screen.getByText('Aucun rendez-vous sur cette période')).toBeDefined();
+    expect(screen.getByText(PLANNING_VIDE)).toBeDefined();
 
     await user.click(screen.getByRole('radio', { name: 'Semaine' }));
 
@@ -444,12 +455,12 @@ describe('états', () => {
     await user.click(screen.getByRole('button', { name: 'Jour suivant' }));
 
     expect(screen.getByText('Chargement de la période…')).toBeDefined();
-    expect(screen.queryByText('Aucun rendez-vous sur cette période')).toBeNull();
+    expect(screen.queryByText(PLANNING_VIDE)).toBeNull();
 
     attente.settle?.({ ok: true, data: { appointments: [] } });
 
     await waitFor(() => {
-      expect(screen.getByText('Aucun rendez-vous sur cette période')).toBeDefined();
+      expect(screen.getByText(PLANNING_VIDE)).toBeDefined();
     });
   });
 
@@ -506,19 +517,17 @@ describe('états', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('explique un planning vide et propose la suite', async () => {
-    // Vide n'est pas une panne : le salon n'a peut-être rien ce jour-là. Depuis
-    // #507 cet état ne reste que pour un salon sans aucune fiche praticien — ou
-    // un répertoire illisible, ce que `staff: []` représente ici.
-    const user = userEvent.setup();
+  it('explique un planning vide par ce qui lui manque, jamais par la période', () => {
+    // Vide n'est pas une panne. Depuis #507 cet état ne reste que pour un salon
+    // sans aucune fiche praticien — ce que `staff: []` représente ici — et #751
+    // lui a retiré « Aller au jour suivant » : le lendemain serait vide à
+    // l'identique. L'amorce qui l'a remplacé a sa propre suite,
+    // `admin-calendar-start.test.tsx`.
     loadCalendarRangeAction.mockResolvedValue({ ok: true, data: { appointments: [] } });
     renderBoard({ periods: { 'jour:2026-08-26': [] } });
 
-    expect(screen.getByText('Aucun rendez-vous sur cette période')).toBeDefined();
-
-    await user.click(screen.getByRole('button', { name: 'Aller au jour suivant' }));
-
-    expect(screen.getAllByText('Jeudi 27 août 2026').length).toBeGreaterThan(0);
+    expect(screen.getByText(PLANNING_VIDE)).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Aller au jour suivant' })).toBeNull();
   });
 
   it('rappelle le fuseau dans lequel les heures sont lues', () => {
@@ -556,7 +565,7 @@ describe('journée sans rendez-vous — les deux premiers critères', () => {
   it('rend une grille de créneaux libres, et non l’état vide', () => {
     renderJourneeVide();
 
-    expect(screen.queryByText('Aucun rendez-vous sur cette période')).toBeNull();
+    expect(screen.queryByText(PLANNING_VIDE)).toBeNull();
     // Une colonne par praticienne du répertoire, chacune annoncée vide.
     expect(screen.getByRole('list', { name: /^Hasina/ })).toBeDefined();
     expect(screen.getByRole('list', { name: /^Tiana/ })).toBeDefined();
