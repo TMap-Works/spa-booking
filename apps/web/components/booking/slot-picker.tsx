@@ -1,12 +1,6 @@
 'use client';
 
-import type {
-  AvailabilitySlot,
-  CalendarDate,
-  DayAvailability,
-  TimeZone,
-  UtcInstant,
-} from '@spa/shared';
+import type { AvailabilitySlot, CalendarDate, DayAvailability, TimeZone, UtcInstant } from '@spa/shared';
 import {
   useCallback,
   useEffect,
@@ -18,25 +12,21 @@ import {
   type RefObject,
 } from 'react';
 
+import { AvailabilityCalendar } from '@/components/booking/availability-calendar';
 import { Button } from '@/components/ui/button';
-import { formatCalendarDayShort, formatCalendarMonth } from '@/lib/booking/calendar';
+import { monthOf, type BookingWindow, type CalendarMonth } from '@/lib/booking/month-grid';
 import {
-  canSelectDay,
-  dateBarDays,
-  dateBarMoveForKey,
   gridMoveForKey,
-  moveInDateBar,
   moveInGrid,
   openDays as openDaysOf,
   resolveActiveDay,
   selectableDays,
   slotRows,
-  type DateBarMove,
 } from '@/lib/booking/slots';
 import { formatCalendarDate, formatTimeInTimeZone, timeZoneMention } from '@/lib/format';
 
 /**
- * Le sélecteur de créneau — une bande de journées, puis la grille d'**une seule**
+ * Le sélecteur de créneau — un calendrier mensuel, puis la grille d'**une seule**
  * journée.
  *
  * ## Pourquoi il vit ici et non dans le tunnel (#622)
@@ -63,7 +53,7 @@ import { formatCalendarDate, formatTimeInTimeZone, timeZoneMention } from '@/lib
  *
  * Il ne charge rien. Les journées lui sont données — par une action serveur dans
  * le tunnel, par le rendu serveur de la page dans le report —, et c'est
- * l'appelant qui décide de les rafraîchir, d'élargir la fenêtre ou de rendre une
+ * l'appelant qui décide de les rafraîchir, de changer de mois ou de rendre une
  * panne. Le sélecteur ne fait que **montrer** ce qu'on lui donne et dire ce qui a
  * été touché.
  *
@@ -73,43 +63,56 @@ import { formatCalendarDate, formatTimeInTimeZone, timeZoneMention } from '@/lib
  * fixe le comportement clavier : `grid` › `row` › `gridcell` › `<button>`,
  * *roving tabindex*, flèches et `Début`/`Fin` (avec `Ctrl` pour les bornes de la
  * grille), **sans enroulement** aux bords, région `aria-live` pour le nombre de
- * créneaux, focus déplacé quand un créneau disparaît sous lui. La barre de dates
- * reprend le même roving tabindex sur une ligne, avec `PagePréc`/`PageSuiv` à la
- * semaine.
+ * créneaux, focus déplacé quand un créneau disparaît sous lui.
  *
  * [states.md](../../../../docs/design/appointments/states.md) fixe l'état de
- * chargement : squelette de grille **sous une barre de dates restée opérable**.
+ * chargement : squelette de grille **sous une navigation de dates restée
+ * opérable**.
  *
- * ## La bande se commande, elle ne se devine pas (#738)
+ * ## Le choix de la date est un calendrier (#827)
  *
- * [wireframes.md](../../../../docs/design/appointments/wireframes.md) coiffe la
- * bande d'une navigation de période — « ‹ août 2026 › » — et la termine par
- * « ( Voir plus de jours ) ». `states.md` reprend la même navigation dans ses
- * trois états de l'étape 3. Ni l'une ni l'autre n'était rendue : la bande listait
- * ses quatorze dates et s'arrêtait, dans un défilement horizontal sans la moindre
- * affordance — trois jours et demi visibles à 360 px, et aucun chemin pour qui
- * veut réserver dans trois semaines.
+ * [wireframes.md](../../../../docs/design/appointments/wireframes.md) étape 3
+ * dessine un calendrier — « ‹ août 2026 › », une ligne `L M M J V S D`, la date
+ * retenue mise en avant — et le CDC §1.4 prescrit un « calendrier de
+ * disponibilité temps réel ». Ce qui était rendu ici était une bande de journées
+ * à faire défiler : trois jours et demi visibles à 360 px, et « Voir plus de
+ * jours » pour passer de quatorze à trente et un.
  *
- * Les deux chevrons sont **l'équivalent souris de `PagePréc` / `PageSuiv`**, que
- * `keyboard-navigation.md` prescrit déjà sur cette bande : ils appellent le même
- * `moveInDateBar`, avec le même pas d'une semaine et la même absence
- * d'enroulement. Un geste, une règle — et non une seconde mécanique de
- * déplacement qui dériverait de la première.
+ * C'est [`AvailabilityCalendar`](availability-calendar.tsx) qui rend ce choix
+ * maintenant, et il le rend pour les **deux** écrans, puisqu'ils montent l'un et
+ * l'autre ce sélecteur. Le mois visible et la fenêtre de réservation restent à
+ * l'appelant — lui seul sait comment reposer la question au serveur —, et la
+ * bande, sa navigation à la semaine et « Voir plus de jours » disparaissent
+ * ensemble : changer de mois est le geste qui les remplace tous les trois.
  */
 interface SlotPickerProps {
   /**
    * Les journées à montrer, telles que l'API les rend.
    *
    * `null` veut dire « on ne sait pas encore » et non « il n'y a rien » : le
-   * sélecteur rend alors le squelette de `states.md`, sous une barre de dates
-   * posée sur `windowDates`.
+   * sélecteur rend alors le squelette de `states.md`, à côté d'un calendrier
+   * resté opérable — il se pose sans le serveur, ce sont des dates.
    */
   readonly days: readonly DayAvailability[] | null;
   /**
-   * Les dates civiles de la fenêtre demandée, pour que la barre soit à l'écran
-   * **avant** la réponse. Sans objet quand `days` est toujours fourni.
+   * Le mois que le calendrier affiche, `YYYY-MM`.
+   *
+   * `null` avec `bounds` : la date du jour n'est pas encore connue, et le
+   * calendrier n'est pas rendu. C'est le cas du **premier rendu du tunnel**, où
+   * « aujourd'hui dans le fuseau du salon » dérive de `new Date()` : le calculer
+   * au rendu le ferait diverger entre le serveur et l'hydratation, une nuit sur
+   * trois cent soixante-cinq, à minuit passé dans le fuseau du salon. Les écrans
+   * rendus par le serveur, eux, le connaissent d'emblée et ne passent jamais par
+   * là.
    */
-  readonly windowDates?: readonly CalendarDate[];
+  readonly month: CalendarMonth | null;
+  /**
+   * Les bornes réservables — première et dernière journée que le calendrier
+   * laisse atteindre, et donc les mois entre lesquels il navigue.
+   */
+  readonly bounds: BookingWindow | null;
+  /** Ce que fait un changement de mois : c'est l'appelant qui recharge. */
+  readonly onMonthChange: (month: CalendarMonth) => void;
   /** Le fuseau de l'établissement : les heures s'affichent dans celui-là. */
   readonly timeZone: TimeZone;
   /**
@@ -142,32 +145,10 @@ interface SlotPickerProps {
   readonly busy?: boolean;
   /** L'identifiant du titre de la grille — unique dans la page qui l'emploie. */
   readonly headingId?: string;
-  /** Le conteneur de la barre de dates, quand l'appelant doit y poser le focus. */
-  readonly dateBarRef?: RefObject<HTMLDivElement | null>;
-  /** Le conteneur de l'état vide, pour la même raison. */
-  readonly emptyStateRef?: RefObject<HTMLDivElement | null>;
-  /**
-   * Ce que fait « Voir plus de jours », en bout de bande — `wireframes.md` et
-   * `states.md`, étape 3.
-   *
-   * Absent : le bouton n'est pas rendu. C'est le cas dès que la fenêtre est déjà
-   * à son maximum (`MAX_AVAILABILITY_RANGE_DAYS`), où il n'aurait plus rien à
-   * élargir. L'élargissement lui-même appartient à l'appelant : c'est lui qui
-   * charge les journées, et lui seul sait jusqu'où son contrat le laisse aller.
-   */
-  readonly onWiden?: (() => void) | undefined;
+  /** Le conteneur du calendrier, quand l'appelant doit y poser le focus. */
+  readonly calendarRef?: RefObject<HTMLDivElement | null>;
   readonly onChoose: (startsAt: UtcInstant) => void;
 }
-
-/**
- * La fenêtre vide par défaut.
- *
- * Une constante de module et non un `[]` littéral dans la signature : ce dernier
- * rend un tableau neuf à chaque rendu, ce qui suffit à invalider la mémoïsation
- * de la barre de dates — et, avec elle, celle du gestionnaire de touches qui en
- * dépend — chez tout appelant qui ne passe pas la prop, c'est-à-dire le report.
- */
-const NO_WINDOW_DATES: readonly CalendarDate[] = [];
 
 /** « 3 créneaux », « 1 créneau » — le pluriel se voit à l'écran. */
 function slotCountLabel(count: number): string {
@@ -200,19 +181,19 @@ function spokenTime(shortTime: string): string {
 
 export function SlotPicker({
   days,
-  windowDates = NO_WINDOW_DATES,
+  month,
+  bounds,
+  onMonthChange,
   timeZone,
   emptyState,
   selectedSlot,
   lockedSlotNote,
   busy = false,
   headingId = 'creneaux-titre',
-  dateBarRef,
-  emptyStateRef,
-  onWiden,
+  calendarRef,
   onChoose,
 }: SlotPickerProps) {
-  /** La journée que la barre de dates montre comme retenue. */
+  /** La journée que le calendrier montre comme retenue. */
   const [selectedDate, setSelectedDate] = useState<CalendarDate | null>(null);
   /**
    * Le créneau qui porte le `tabindex` de la grille — le *roving tabindex* de
@@ -230,16 +211,6 @@ export function SlotPicker({
   const [activeSlot, setActiveSlot] = useState<UtcInstant | null>(null);
   const gridRef = useRef<HTMLDivElement | null>(null);
   /**
-   * Le conteneur de la barre de dates.
-   *
-   * La barre est parcourue aux flèches, ce qui demande de relire ses boutons
-   * dans le DOM : le sélecteur en tient donc toujours un `ref`. Quand l'appelant
-   * en veut un aussi — pour y rattraper un focus —, c'est le sien qui sert, ce
-   * qui évite d'avoir à fusionner deux `ref` sur un même nœud.
-   */
-  const ownDateBarRef = useRef<HTMLDivElement | null>(null);
-  const dateBarNode = dateBarRef ?? ownDateBarRef;
-  /**
    * `true` tant que le focus est **dans** la grille.
    *
    * Suivi par un drapeau et non relu sur `document.activeElement` au moment où
@@ -254,39 +225,35 @@ export function SlotPicker({
   const open = useMemo(() => openDaysOf(allDays), [allDays]);
   const activeDay = resolveActiveDay(open, selectedDate);
   /**
-   * Les journées de la barre de dates : la fenêtre civile tant que la réponse
-   * n'est pas là, la réponse elle-même ensuite.
+   * Le nombre de créneaux par date, tel que le calendrier peint ses cases.
+   *
+   * `null` tant que la réponse n'est pas là — « on ne sait pas encore » et « il
+   * n'y a rien » ne se rendent ni ne se parcourent pareil, et c'est ce qui
+   * permet au calendrier de rester opérable pendant le chargement (`states.md`
+   * étape 3). Les journées complètes y figurent avec zéro : le serveur les rend
+   * avec `slots: []` plutôt que de les omettre, précisément pour qu'un
+   * calendrier puisse écrire « complet » sans deviner les trous.
    */
-  const bar = useMemo(
-    () => dateBarDays(windowDates, days === null ? null : allDays),
-    [windowDates, days, allDays],
+  const slotCounts = useMemo(
+    () =>
+      days === null
+        ? null
+        : new Map<CalendarDate, number>(allDays.map((day) => [day.date, day.slots.length])),
+    [allDays, days],
   );
   /**
-   * La journée que la barre montre comme retenue — même en cours de chargement.
+   * La journée que le calendrier montre comme retenue — même en cours de
+   * chargement.
    *
-   * Le repli sur la première journée n'est pas décoratif : c'est elle qui porte
-   * le `tabindex` de la barre, et une barre où aucune pastille ne serait retenue
-   * n'aurait plus aucun arrêt de tabulation. La journée choisie peut sortir de
-   * la fenêtre — à minuit passé, « aujourd'hui » n'est plus le même jour et la
-   * fenêtre a glissé —, d'où la vérification plutôt qu'un simple `??`.
+   * La journée choisie peut sortir du mois affiché : un changement de mois
+   * n'emporte pas la journée dont la grille montre encore les créneaux, et à
+   * minuit passé « aujourd'hui » n'est plus le même jour. La vérification
+   * plutôt qu'un simple `??` évite de marquer comme retenue une case que le
+   * mois visible ne contient pas.
    */
-  const barActiveDate =
+  const calendarDate =
     activeDay?.date ??
-    (bar.some((day) => day.date === selectedDate) ? selectedDate : null) ??
-    bar[0]?.date ??
-    null;
-  /**
-   * Le rang de cette journée dans la bande — l'origine des chevrons de période.
-   *
-   * Les chevrons partent de la journée **retenue** et non de celle qui a le
-   * focus : ils sont d'abord un geste de souris, et une souris ne laisse aucun
-   * focus derrière elle. Le repli sur `0` ne sert que le cas d'une bande vide,
-   * où la navigation n'est de toute façon pas rendue.
-   */
-  const barActiveIndex = Math.max(
-    bar.findIndex((day) => day.date === barActiveDate),
-    0,
-  );
+    (selectedDate !== null && monthOf(selectedDate) === month ? selectedDate : null);
 
   /**
    * La mention du fuseau, calculée **après le montage** seulement.
@@ -403,237 +370,29 @@ export function SlotPicker({
   }, []);
 
   /**
-   * Les flèches circulent dans la barre de dates — `keyboard-navigation.md`,
-   * « Barre de dates ».
+   * Le calendrier mensuel — `wireframes.md` étape 3, CDC §1.4 (#827).
    *
-   * **Activation automatique** : la flèche déplace le focus *et* retient la
-   * journée, comme dans tout `radiogroup`. Le document décrit `Entrée`/`Espace`
-   * comme le geste de sélection, et ils le restent — mais un groupe de boutons
-   * radio où la flèche ne sélectionnerait pas serait un groupe où un lecteur
-   * d'écran annonce « non coché » sur quatorze journées d'affilée.
+   * Il remplace la bande de journées et sa navigation à la semaine. Ce qui reste
+   * **ici** est ce qui n'appartient qu'au sélecteur : quelle journée est retenue,
+   * et ce qu'on montre dessous. Le calendrier, lui, ne sait rien des créneaux —
+   * il reçoit des comptes par date et rend un choix.
    *
-   * Le focus **reste dans la barre** plutôt que de partir sur le premier créneau
-   * du nouveau jour, comme le suggère la prose du document : le déplacer
-   * interdirait d'enchaîner deux flèches pour comparer deux journées, qui est
-   * précisément ce à quoi une barre de dates sert.
+   * `busy` le traverse : le report rend tous ses contrôles inertes le temps
+   * qu'une confirmation parte, et une date retenue pendant ce vol désignerait
+   * une journée que le rendu suivant remplace.
    */
-  const moveDay = useCallback(
-    (event: ReactKeyboardEvent<HTMLDivElement>) => {
-      const move = dateBarMoveForKey(event.key);
-      const dateBar = dateBarNode.current;
-
-      if (move === null || dateBar === null) {
-        return;
-      }
-
-      const buttons = [...dateBar.querySelectorAll<HTMLButtonElement>('button')];
-      const index = buttons.findIndex((button) => button === document.activeElement);
-
-      if (index === -1) {
-        return;
-      }
-
-      const target = moveInDateBar(bar, index, move);
-      const day = bar[target];
-
-      // `PagePréc` et `PageSuiv` défileraient la page ; les flèches la
-      // déplaceraient latéralement. Seulement quand le focus est dans la barre.
-      event.preventDefault();
-
-      if (day === undefined) {
-        return;
-      }
-
-      buttons[target]?.focus();
-
-      // En bord de barre — ou quand plus rien n'est ouvert dans la direction
-      // demandée —, `moveInDateBar` rend le rang de départ. Celui-ci peut être
-      // une journée complète : la souris peut poser le focus dessus, là où les
-      // flèches ne s'y arrêtent jamais. La retenir mettrait `selectedDate` sur
-      // une date que `resolveActiveDay` ne retrouvera jamais, et la pastille
-      // cochée s'en irait ailleurs que là où le focus est.
-      if (canSelectDay(day)) {
-        setSelectedDate(day.date);
-      }
-    },
-    [bar, dateBarNode],
-  );
-
-  /**
-   * Le rang visé par un chevron de période, `null` s'il n'y a rien de plus dans
-   * cette direction.
-   *
-   * `moveInDateBar` rend le rang de départ quand le déplacement ne mène nulle
-   * part — bord de bande, ou plus aucune journée ouverte au-delà. C'est
-   * exactement ce qui doit éteindre le chevron : un contrôle qui ne fait rien
-   * mais se laisse cliquer est pire qu'un contrôle absent, il fait croire que la
-   * bande s'arrête là alors que c'est la commande qui est muette.
-   */
-  const periodTarget = (move: DateBarMove): number | null => {
-    if (bar.length === 0) {
-      return null;
-    }
-
-    const target = moveInDateBar(bar, barActiveIndex, move);
-
-    return target === barActiveIndex ? null : target;
-  };
-
-  const weekBefore = periodTarget('weekBefore');
-  const weekAfter = periodTarget('weekAfter');
-
-  /**
-   * Ce que fait un chevron : retenir la journée visée et l'amener sous les yeux.
-   *
-   * Le focus **ne suit pas** — il reste sur le chevron, pour qu'on puisse
-   * remonter trois semaines en trois clics sans avoir à viser de nouveau. C'est
-   * la différence avec `moveDay`, où le focus est déjà dans la bande et doit y
-   * rester. Le défilement est donc explicite : le navigateur ne le fait de
-   * lui-même que pour l'élément qu'il focalise.
-   *
-   * Les boutons sont relus dans le DOM plutôt que suivis par des `ref`, pour la
-   * raison qu'expose `moveDay` : la bande se réécrit à chaque revalidation.
-   */
-  const goToPeriod = (target: number | null) => {
-    const day = target === null ? undefined : bar[target];
-
-    if (target === null || day === undefined || !canSelectDay(day)) {
-      return;
-    }
-
-    setSelectedDate(day.date);
-
-    const buttons = dateBarNode.current?.querySelectorAll<HTMLButtonElement>('button');
-
-    buttons?.[target]?.scrollIntoView({ block: 'nearest', inline: 'center' });
-  };
-
-  /**
-   * La barre de dates — `keyboard-navigation.md`, « Barre de dates ».
-   *
-   * Un `radiogroup` et non un `<select>` natif : le document décrit une ligne de
-   * journées parcourue aux flèches, et un `<select>` ne montre qu'une journée à
-   * la fois — comparer mardi et jeudi demanderait d'ouvrir deux fois la liste.
-   *
-   * Les journées complètes restent rendues, inertes. Le serveur les renvoie avec
-   * `slots: []` plutôt que de les omettre précisément pour qu'un calendrier
-   * puisse afficher « complet » sans deviner les trous : les retirer ferait
-   * croire à un salon fermé ce jour-là.
-   */
-  const dateBar =
-    bar.length === 0 ? null : (
-      <div className="spa-date-bar-block">
-        {/*
-          La navigation de période — « ‹ août 2026 › » de `wireframes.md`.
-
-          Le mois **entre** les deux chevrons, comme la barre du back-office
-          (`admin/components/period-nav.tsx`) rend déjà le même geste : posé
-          avant eux, il laisserait deux contrôles orphelins. Le chevron est
-          `aria-hidden` — un signe typographique ne se lit pas —, et c'est le
-          libellé masqué qui nomme le contrôle.
-
-          `aria-disabled` et non `disabled` : le chevron éteint reste
-          atteignable au clavier, comme les journées complètes de la bande et
-          les créneaux inertes de la grille. Trois contrôles inactifs, une seule
-          façon de le dire.
-        */}
-        <div className="spa-date-bar-nav">
-          <Button
-            variant="neutral"
-            aria-disabled={weekBefore === null ? true : undefined}
-            onClick={() => {
-              goToPeriod(weekBefore);
-            }}
-          >
-            <span aria-hidden="true">‹</span>
-            <span className="spa-visually-hidden">Semaine précédente</span>
-          </Button>
-
-          <span className="spa-date-bar-nav__period">
-            {barActiveDate === null ? '' : formatCalendarMonth(barActiveDate)}
-          </span>
-
-          <Button
-            variant="neutral"
-            aria-disabled={weekAfter === null ? true : undefined}
-            onClick={() => {
-              goToPeriod(weekAfter);
-            }}
-          >
-            <span aria-hidden="true">›</span>
-            <span className="spa-visually-hidden">Semaine suivante</span>
-          </Button>
-        </div>
-
-        {/*
-          La bande et, à son bout, « Voir plus de jours ».
-
-          Le bouton est **hors** du `radiogroup` : un groupe de boutons radio ne
-          possède que des radios, et y glisser un bouton d'action ferait annoncer
-          « 15 sur 15 » sur une commande qui n'est pas une journée. Il est donc
-          posé à côté de la bande, dans la même ligne — visible sans avoir à
-          faire défiler jusqu'au dernier jour, ce qui est tout l'objet d'une
-          sortie de bande.
-        */}
-        <div className="spa-date-bar-track">
-          <div
-            ref={dateBarNode}
-            className="spa-date-bar"
-            role="radiogroup"
-            aria-label="Journée"
-            onKeyDown={moveDay}
-          >
-            {bar.map((day) => {
-              const selectable = canSelectDay(day);
-              const checked = day.date === barActiveDate;
-              const state =
-                day.slotCount === null
-                  ? 'disponibilités en cours de chargement'
-                  : day.slotCount === 0
-                    ? 'complet'
-                    : slotCountLabel(day.slotCount);
-
-              return (
-                <Button
-                  key={day.date}
-                  variant="neutral"
-                  role="radio"
-                  aria-checked={checked}
-                  aria-disabled={selectable ? undefined : true}
-                  aria-label={`${formatCalendarDate(day.date)} — ${state}`}
-                  tabIndex={checked ? 0 : -1}
-                  onClick={() => {
-                    // Une journée complète reste affichée et lisible, mais ne se
-                    // retient pas : il n'y aurait rien à montrer dessous.
-                    if (selectable) {
-                      setSelectedDate(day.date);
-                    }
-                  }}
-                >
-                  <span aria-hidden="true" className="spa-date-bar__day">
-                    {formatCalendarDayShort(day.date)}
-                  </span>
-                  <span aria-hidden="true" className="spa-date-bar__count">
-                    {day.slotCount === null
-                      ? '…'
-                      : day.slotCount === 0
-                        ? 'complet'
-                        : day.slotCount}
-                  </span>
-                </Button>
-              );
-            })}
-          </div>
-
-          {onWiden === undefined ? null : (
-            <div className="spa-date-bar-track__more">
-              <Button variant="neutral" onClick={onWiden}>
-                Voir plus de jours
-              </Button>
-            </div>
-          )}
-        </div>
-      </div>
+  const calendar =
+    month === null || bounds === null ? null : (
+      <AvailabilityCalendar
+        month={month}
+        bounds={bounds}
+        slotCounts={slotCounts}
+        selectedDate={calendarDate}
+        busy={busy}
+        calendarRef={calendarRef}
+        onMonthChange={onMonthChange}
+        onSelect={setSelectedDate}
+      />
     );
 
   return (
@@ -652,82 +411,104 @@ export function SlotPicker({
             }.`}
       </p>
 
-      {days === null ? (
-        // `states.md` étape 3 : « grille de créneaux en squelette, **en gardant
-        // la barre de dates interactive** pour changer de jour sans attendre ».
-        // La fenêtre est une suite de dates civiles, que le navigateur sait
-        // poser sans le serveur ; seuls les comptes de créneaux l'attendent.
-        <>
-          {dateBar}
-          <div className="spa-card spa-card--loading" aria-busy="true">
-            <span className="spa-visually-hidden">Chargement des disponibilités…</span>
-            <span className="spa-skeleton spa-field__skeleton" />
-            <span className="spa-skeleton spa-card__skeleton-line spa-card__skeleton-line--title" />
-            <span className="spa-skeleton spa-card__skeleton-line" />
-            <span className="spa-skeleton spa-card__skeleton-line spa-card__skeleton-line--short" />
-          </div>
-        </>
-      ) : open.length === 0 ? (
-        <div className="spa-card spa-card--empty" role="status" ref={emptyStateRef} tabIndex={-1}>
-          {emptyState}
-        </div>
-      ) : (
-        <>
-          {dateBar}
+      {/*
+        Le calendrier est rendu dans **tous** les états, celui d'un mois sans
+        créneau compris. C'est ce qui change avec lui : la bande disparaissait
+        quand la fenêtre n'offrait rien, emportant la seule commande qui menait
+        ailleurs, et l'état vide devait reposer un « Voir plus de jours » de son
+        côté. Un mois sans créneau est désormais un mois qu'on quitte d'un
+        chevron, sans que rien ne bouge autour.
 
-          <h3 className="spa-card__meta" id={headingId}>
-            {dayHeading}
-          </h3>
+        La grille prend place **à côté** du calendrier dès qu'il y a la largeur
+        pour deux colonnes (`calendar.css`) : à 360 px l'une suit l'autre, au
+        bureau on voit la date choisie et ses heures d'un seul regard, comme
+        `wireframes.md` le demande — « Desktop : le calendrier passe en vue
+        semaine, plus de créneaux visibles d'un coup ».
+      */}
+      <div className="spa-slot-picker">
+        {calendar}
 
-          {/*
-            Grille composite, telle que `keyboard-navigation.md` la décrit :
-            `grid` › `row` (un moment de la journée) › `gridcell` › `<button>`
-            natif. Le libellé du moment est un `rowheader`, ce qui le rend
-            visible **et** l'annonce comme l'en-tête de sa ligne — un titre posé
-            à côté de la grille ne dirait pas à quels créneaux il se rapporte.
-          */}
-          <div
-            ref={gridRef}
-            className="spa-slot-grid"
-            role="grid"
-            aria-labelledby={headingId}
-            onKeyDown={moveFocus}
-            onBlur={(event) => {
-              // Le focus quitte la grille pour de bon — le prochain
-              // rafraîchissement n'a plus à le rattraper. Un bouton **déjà
-              // détaché** ne dit pas cela : c'est la disparition d'un créneau,
-              // pas un départ, et c'est précisément le cas à rattraper.
-              if (event.target.isConnected) {
-                gridHasFocus.current = event.currentTarget.contains(event.relatedTarget);
-              }
-            }}
-          >
-            {rows.map((row) => (
-              <div role="row" className="spa-slot-grid__row" key={row.label}>
-                <span role="rowheader" className="spa-slot-grid__rowheader spa-card__meta">
-                  {row.label}
-                </span>
-                {row.slots.map((slot) => (
-                  <SlotCell
-                    key={slot.startsAt}
-                    slot={slot}
-                    timeZone={timeZone}
-                    note={lockedSlotNote?.(slot.startsAt) ?? null}
-                    busy={busy}
-                    pressed={selectedSlot === undefined ? undefined : slot.startsAt === selectedSlot}
-                    tabbable={slot.startsAt === tabbableSlot}
-                    onFocus={() => {
-                      gridHasFocus.current = true;
-                      setActiveSlot(slot.startsAt);
-                    }}
-                    onChoose={onChoose}
-                  />
+        <div className="spa-slot-picker__day">
+          {days === null ? (
+            // `states.md` étape 3 : « grille de créneaux en squelette, **en
+            // gardant la barre de dates interactive** pour changer de jour sans
+            // attendre ». Le calendrier ci-dessus se pose sans le serveur — ce
+            // sont des dates ; seuls les comptes de créneaux l'attendent.
+            <div className="spa-card spa-card--loading" aria-busy="true">
+              <span className="spa-visually-hidden">Chargement des disponibilités…</span>
+              <span className="spa-skeleton spa-field__skeleton" />
+              <span className="spa-skeleton spa-card__skeleton-line spa-card__skeleton-line--title" />
+              <span className="spa-skeleton spa-card__skeleton-line" />
+              <span className="spa-skeleton spa-card__skeleton-line spa-card__skeleton-line--short" />
+            </div>
+          ) : open.length === 0 ? (
+            // `role="status"` et non un focus déplacé : le calendrier reste à
+            // l'écran, et c'est lui que le focus suit après un changement de
+            // mois. La région annonce d'elle-même ce que le mois a donné, sans
+            // arracher le focus au contrôle qu'on vient d'actionner.
+            <div className="spa-card spa-card--empty" role="status">
+              {emptyState}
+            </div>
+          ) : (
+            <>
+              <h3 className="spa-card__meta" id={headingId}>
+                {dayHeading}
+              </h3>
+
+              {/*
+                Grille composite, telle que `keyboard-navigation.md` la décrit :
+                `grid` › `row` (un moment de la journée) › `gridcell` ›
+                `<button>` natif. Le libellé du moment est un `rowheader`, ce qui
+                le rend visible **et** l'annonce comme l'en-tête de sa ligne — un
+                titre posé à côté de la grille ne dirait pas à quels créneaux il
+                se rapporte.
+              */}
+              <div
+                ref={gridRef}
+                className="spa-slot-grid"
+                role="grid"
+                aria-labelledby={headingId}
+                onKeyDown={moveFocus}
+                onBlur={(event) => {
+                  // Le focus quitte la grille pour de bon — le prochain
+                  // rafraîchissement n'a plus à le rattraper. Un bouton **déjà
+                  // détaché** ne dit pas cela : c'est la disparition d'un
+                  // créneau, pas un départ, et c'est le cas à rattraper.
+                  if (event.target.isConnected) {
+                    gridHasFocus.current = event.currentTarget.contains(event.relatedTarget);
+                  }
+                }}
+              >
+                {rows.map((row) => (
+                  <div role="row" className="spa-slot-grid__row" key={row.label}>
+                    <span role="rowheader" className="spa-slot-grid__rowheader spa-card__meta">
+                      {row.label}
+                    </span>
+                    {row.slots.map((slot) => (
+                      <SlotCell
+                        key={slot.startsAt}
+                        slot={slot}
+                        timeZone={timeZone}
+                        note={lockedSlotNote?.(slot.startsAt) ?? null}
+                        busy={busy}
+                        pressed={
+                          selectedSlot === undefined ? undefined : slot.startsAt === selectedSlot
+                        }
+                        tabbable={slot.startsAt === tabbableSlot}
+                        onFocus={() => {
+                          gridHasFocus.current = true;
+                          setActiveSlot(slot.startsAt);
+                        }}
+                        onChoose={onChoose}
+                      />
+                    ))}
+                  </div>
                 ))}
               </div>
-            ))}
-          </div>
-        </>
-      )}
+            </>
+          )}
+        </div>
+      </div>
     </>
   );
 }

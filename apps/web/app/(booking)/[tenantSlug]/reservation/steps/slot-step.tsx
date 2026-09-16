@@ -1,25 +1,30 @@
 'use client';
 
-import {
-  MAX_AVAILABILITY_RANGE_DAYS,
-  type CalendarDate,
-  type DayAvailability,
-  type PublicService,
-  type PublicTenant,
-  type UtcInstant,
+import type {
+  CalendarDate,
+  DayAvailability,
+  PublicService,
+  PublicTenant,
+  UtcInstant,
 } from '@spa/shared';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { SlotPicker } from '@/components/booking/slot-picker';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
-import { addCalendarDays, calendarDateInTimeZone, calendarWindow } from '@/lib/booking/calendar';
+import { calendarDateInTimeZone } from '@/lib/booking/calendar';
+import {
+  addMonths,
+  bookingWindow,
+  formatMonth,
+  isNavigableMonth,
+  monthOf,
+  monthRange,
+  type CalendarMonth,
+} from '@/lib/booking/month-grid';
 
 import { loadAvailabilityAction } from '../actions';
-
-/** Fenêtre proposée d'emblée. Le contrat plafonne la plage à 31 jours. */
-const WINDOW_DAYS = 14;
 
 /**
  * Période de revalidation des disponibilités.
@@ -48,13 +53,23 @@ interface SlotStepProps {
 /**
  * Choix du praticien et du créneau (#44, #351).
  *
- * ## La bande de journées et la grille sont un composant partagé (#622)
+ * ## Le calendrier et la grille sont un composant partagé (#622, #827)
  *
- * Elles vivent dans [`SlotPicker`](../../../../../components/booking/slot-picker.tsx),
+ * Ils vivent dans [`SlotPicker`](../../../../../components/booking/slot-picker.tsx),
  * que l'écran de report de l'espace client emploie aussi. Ce qui reste **ici**
  * est ce qui n'appartient qu'au tunnel : le choix du praticien, le chargement et
- * sa revalidation, l'élargissement de la fenêtre, et ce que l'écran dit quand
- * l'agenda est vide. Le sélecteur, lui, ne fait que montrer ce qu'on lui donne.
+ * sa revalidation, le mois qu'on regarde, et ce que l'écran dit quand l'agenda
+ * est vide. Le sélecteur, lui, ne fait que montrer ce qu'on lui donne.
+ *
+ * ## La fenêtre chargée est le **mois visible** (#827)
+ *
+ * Elle était une fenêtre glissante de quatorze jours à partir d'aujourd'hui, que
+ * « Voir plus de jours » portait à trente et un. Le choix de la date étant
+ * devenu un calendrier mensuel, la question posée au serveur suit ce qu'on
+ * regarde : le mois affiché, rogné à aujourd'hui d'un côté et à la fin de la
+ * fenêtre de réservation de l'autre. Un mois civil ne dépasse jamais les trente
+ * et un jours que `availabilityQuerySchema` plafonne, et le mois courant en
+ * demande d'autant moins qu'il est entamé.
  *
  * ## Le praticien se change **ici**, pas un écran plus haut
  *
@@ -85,9 +100,11 @@ interface SlotStepProps {
  * ## Les états non nominaux suivent les documents de conception
  *
  * [states.md](../../../../../../../docs/design/appointments/states.md) fixe les
- * trois : squelette de grille **sous une barre de dates restée opérable** — que
- * `SlotPicker` rend —, état vide qui offre d'élargir la fenêtre au-delà des
- * quatorze jours, état d'erreur qui offre de réessayer.
+ * trois : squelette de grille **sous une navigation de dates restée opérable** —
+ * que `SlotPicker` rend —, état vide qui offre une sortie, état d'erreur qui
+ * offre de réessayer. La sortie de l'état vide est passée d'« élargir la
+ * fenêtre » à « voir le mois suivant » : c'est le même geste, dans l'idiome du
+ * calendrier.
  */
 export function SlotStep({
   tenant,
@@ -101,45 +118,32 @@ export function SlotStep({
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
   /**
-   * Largeur de la fenêtre demandée, en journées.
+   * La date du jour dans le fuseau du salon, et le mois que le calendrier
+   * montre.
    *
-   * Elle part à quatorze et ne s'élargit que sur demande explicite — « Voir plus
-   * de jours », `states.md` étape 3. Trente et un jours d'agenda coûtent au
-   * serveur, et la très grande majorité des clientes réservent dans la semaine.
+   * Tenues en état plutôt que calculées au rendu parce qu'elles dérivent de
+   * `new Date()` : les calculer dans le corps du composant les ferait diverger
+   * entre le rendu serveur et l'hydratation, une nuit sur trois cent
+   * soixante-cinq, à minuit passé dans le fuseau du salon. `null` tant qu'un
+   * effet ne les a pas posées — le calendrier n'est alors pas rendu, comme la
+   * bande ne l'était pas avant sa première fenêtre.
    */
-  const [windowDays, setWindowDays] = useState(WINDOW_DAYS);
+  const [today, setToday] = useState<CalendarDate | null>(null);
+  const [month, setMonth] = useState<CalendarMonth | null>(null);
+  const calendarRef = useRef<HTMLDivElement | null>(null);
   /**
-   * Les dates civiles de la fenêtre en cours, posées au **lancement** de la
-   * requête et non à son retour.
-   *
-   * C'est ce qui permet à la barre de dates d'être déjà là pendant que la grille
-   * est en squelette. Elle est tenue en état plutôt que calculée au rendu parce
-   * qu'elle dérive de `new Date()` : la calculer dans le corps du composant la
-   * ferait diverger entre le rendu serveur et l'hydratation, une nuit sur
-   * trois cent soixante-cinq, à minuit passé dans le fuseau du salon.
-   */
-  const [windowDates, setWindowDates] = useState<readonly CalendarDate[]>([]);
-  const dateBarRef = useRef<HTMLDivElement | null>(null);
-  /**
-   * Le conteneur de l'état vide, pour pouvoir y poser le focus.
-   *
-   * Il n'est pas naturellement focalisable : c'est un `tabIndex={-1}` que
-   * `SlotPicker` pose, qui le rend atteignable par programme sans l'ajouter à
-   * l'ordre de tabulation.
-   */
-  const emptyStateRef = useRef<HTMLDivElement | null>(null);
-  /**
-   * Où en est le rattrapage du focus après un élargissement de fenêtre.
+   * Où en est le rattrapage du focus après un changement de mois demandé depuis
+   * l'état vide.
    *
    * Trois états et non un booléen, parce qu'il faut laisser passer **deux**
-   * rendus : celui du clic, où les journées de l'ancienne fenêtre sont encore
-   * là, puis celui du chargement. S'arrêter au premier ferait poser le focus sur
-   * l'écran que l'élargissement est précisément en train de remplacer.
+   * rendus : celui du clic, où les journées de l'ancien mois sont encore là,
+   * puis celui du chargement. S'arrêter au premier ferait poser le focus sur
+   * l'écran que le changement de mois est précisément en train de remplacer.
    *
    * Un `ref` et non un état : il ne décide de rien à l'écran, et en faire un
    * état déclencherait un rendu de plus pour une valeur consommée aussitôt.
    */
-  const catchFocusAfterWidening = useRef<'inactif' | 'chargement' | 'resultat'>('inactif');
+  const catchFocusAfterMonthChange = useRef<'inactif' | 'chargement' | 'resultat'>('inactif');
   /**
    * Numéro de la requête la plus récente.
    *
@@ -150,18 +154,56 @@ export function SlotStep({
    */
   const latestRequest = useRef(0);
 
+  /**
+   * Le mois de départ, posé **après le montage** seulement.
+   *
+   * C'est le pendant du `windowDates` d'avant : l'écran ne peut pas savoir quel
+   * jour on est dans le fuseau du salon sans lire l'horloge, et la lire au rendu
+   * ferait diverger le serveur et le navigateur une nuit par an. Le mois déjà
+   * choisi n'est pas écrasé — un changement d'établissement en cours de tunnel
+   * est le seul cas où cet effet se rejoue, et il ne doit pas ramener la
+   * visiteuse au mois courant si elle en regardait un autre.
+   */
+  useEffect(() => {
+    const now = calendarDateInTimeZone(new Date(), tenant.timezone);
+
+    setToday(now);
+    setMonth((current) => current ?? monthOf(now));
+  }, [tenant.timezone]);
+
   const load = useCallback(async () => {
-    const from = calendarDateInTimeZone(new Date(), tenant.timezone);
+    if (month === null) {
+      return;
+    }
+
+    // Relue à chaque chargement et non prise dans l'état : une page laissée
+    // ouverte franchit minuit, et la fenêtre de réservation glisse avec.
+    const now = calendarDateInTimeZone(new Date(), tenant.timezone);
+    const bounds = bookingWindow(now);
+    // Minuit a pu emporter le mois qu'on regardait derrière la fenêtre.
+    const visible = isNavigableMonth(month, bounds) ? month : monthOf(now);
+    const range = monthRange(visible, bounds);
+
+    // Posés **avant** l'attente : c'est ce qui met le calendrier à l'écran en
+    // même temps que le squelette, et non une fois la réponse arrivée.
+    setToday(now);
+    setMonth(visible);
+
+    if (range === null) {
+      // Un mois entièrement hors de la fenêtre de réservation n'a rien à
+      // demander : le calendrier rend ses cases inertes, et l'écran dit qu'il
+      // n'y a rien plutôt que d'attendre une réponse qui ne viendra pas.
+      setError(null);
+      setDays([]);
+      return;
+    }
+
     const query = {
       serviceId: service.id,
-      from,
-      to: addCalendarDays(from, windowDays - 1),
+      from: range.from,
+      to: range.to,
       ...(staffId === null ? {} : { staffId }),
     };
-
-    // Posée **avant** l'attente : c'est ce qui met la barre de dates à l'écran
-    // en même temps que le squelette, et non une fois la réponse arrivée.
-    setWindowDates(calendarWindow(from, windowDays));
 
     latestRequest.current += 1;
     const ticket = latestRequest.current;
@@ -182,14 +224,14 @@ export function SlotStep({
       // liste vide, pour que l'écran ne reste pas en squelette indéfiniment.
       setDays((current) => current ?? []);
     }
-  }, [service.id, staffId, tenant.slug, tenant.timezone, windowDays]);
+  }, [month, service.id, staffId, tenant.slug, tenant.timezone]);
 
   useEffect(() => {
     // `load` ne change d'identité que lorsque la question posée change —
-    // prestation, praticien, établissement, largeur de fenêtre. Les créneaux
-    // affichés ne répondent alors plus à la question, et les garder à l'écran le
-    // temps de l'aller-retour proposerait l'agenda du praticien précédent. On
-    // repasse par le chargement.
+    // prestation, praticien, établissement, mois regardé. Les créneaux affichés
+    // ne répondent alors plus à la question, et les garder à l'écran le temps de
+    // l'aller-retour proposerait l'agenda du praticien précédent. On repasse par
+    // le chargement.
     setDays(null);
     setError(null);
     void load();
@@ -241,57 +283,57 @@ export function SlotStep({
       ? null
       : (service.staff.find((member) => member.id === staffId)?.displayName ?? 'ce praticien');
 
-  /**
-   * « Voir plus de jours » — `states.md` étape 3.
-   *
-   * Un seul geste pour deux boutons : celui que `SlotPicker` pose en bout de
-   * bande (#738) et celui que l'état vide portait déjà. Les deux ne sont jamais
-   * à l'écran en même temps — le sélecteur rend la bande **ou** l'état vide —,
-   * mais ils doivent faire exactement la même chose, rattrapage de focus compris.
-   *
-   * Le contrat autorise trente et un jours ; on n'en demande quatorze d'emblée
-   * que parce que la très grande majorité des clientes réservent dans la semaine,
-   * et qu'un mois d'agenda coûte au serveur ce que personne ne fait défiler.
-   */
-  const widen = useCallback(() => {
-    // Le clic peut emporter le bouton lui-même — c'est le cas dans l'état vide,
-    // que la fenêtre élargie remplace. Sans rattrapage, le focus retomberait sur
-    // `<body>` et le clavier repartirait du haut du document juste après un
-    // geste délibéré (`keyboard-navigation.md`, « Parcours complet réalisable
-    // sans souris »). On le rattrape sur la barre de dates, qui prend justement
-    // la place de cet écran.
-    catchFocusAfterWidening.current = 'chargement';
-    setWindowDays(MAX_AVAILABILITY_RANGE_DAYS);
-  }, []);
+  /** Les bornes réservables, dont le calendrier tire les mois qu'il atteint. */
+  const bounds = useMemo(() => (today === null ? null : bookingWindow(today)), [today]);
 
-  /** Rien à élargir une fois la fenêtre au maximum : le bouton n'est plus rendu. */
-  const canWiden = windowDays < MAX_AVAILABILITY_RANGE_DAYS;
+  /** Le mois suivant se laisse-t-il atteindre, ou la fenêtre s'arrête-t-elle là ? */
+  const canSeeNextMonth =
+    month !== null && bounds !== null && isNavigableMonth(addMonths(month, 1), bounds);
+
+  /**
+   * « Voir le mois suivant » — la sortie de l'état vide, `states.md` étape 3.
+   *
+   * Elle remplace « Voir plus de jours » : la fenêtre ne s'élargit plus, on
+   * change de page de calendrier. Le chevron du calendrier fait le même geste et
+   * reste à l'écran — celui-ci est là parce qu'un état vide sans sortie est un
+   * cul-de-sac, et que la commande doit se trouver là où l'on vient de lire
+   * qu'il n'y a rien.
+   */
+  const showNextMonth = useCallback(() => {
+    if (month === null) {
+      return;
+    }
+
+    // Le clic peut emporter le bouton lui-même — c'est le cas quand le mois
+    // atteint est le dernier de la fenêtre. Sans rattrapage, le focus
+    // retomberait sur `<body>` et le clavier repartirait du haut du document
+    // juste après un geste délibéré (`keyboard-navigation.md`, « Parcours
+    // complet réalisable sans souris »).
+    catchFocusAfterMonthChange.current = 'chargement';
+    setMonth(addMonths(month, 1));
+  }, [month]);
 
   /**
    * Le focus rattrapé quand le bouton qu'on vient d'actionner s'est effacé.
    *
-   * « Voir plus de jours » emporte l'état vide qui le portait : sans cela le
-   * focus retombe sur `<body>`, et le clavier repart du haut du document juste
-   * après un geste délibéré — exactement ce que `keyboard-navigation.md` refuse
-   * ailleurs, quand une revalidation emporte le créneau focalisé.
-   *
-   * On attend le **résultat** et pas le squelette : l'élargissement repasse par
-   * un chargement, et se poser sur la barre de dates de l'écran d'attente ferait
-   * perdre le focus une seconde fois à l'arrivée des données. Selon ce que le
-   * serveur rend, la cible est la journée retenue de la barre, ou l'état vide
-   * lui-même — qui dit alors, en `role="status"`, ce que l'élargissement a donné.
+   * On attend le **résultat** et pas le squelette : le changement de mois
+   * repasse par un chargement, et se poser sur le calendrier de l'écran
+   * d'attente ferait perdre le focus une seconde fois à l'arrivée des données.
+   * La cible est la journée que le calendrier retient dans le nouveau mois —
+   * lui, contrairement à la bande d'avant, ne disparaît jamais. Ce que le mois
+   * a donné est annoncé de son côté par le `role="status"` de l'état vide.
    *
    * Sans tableau de dépendances : ce n'est pas une valeur qu'on observe mais un
    * geste qu'on rattrape, au premier rendu où sa cible existe.
    */
   useEffect(() => {
-    if (catchFocusAfterWidening.current === 'inactif') {
+    if (catchFocusAfterMonthChange.current === 'inactif') {
       return;
     }
 
-    if (catchFocusAfterWidening.current === 'chargement') {
+    if (catchFocusAfterMonthChange.current === 'chargement') {
       if (days === null) {
-        catchFocusAfterWidening.current = 'resultat';
+        catchFocusAfterMonthChange.current = 'resultat';
       }
 
       return;
@@ -301,12 +343,10 @@ export function SlotStep({
       return;
     }
 
-    const target =
-      dateBarRef.current?.querySelector<HTMLButtonElement>('button[tabindex="0"]') ??
-      emptyStateRef.current;
+    const target = calendarRef.current?.querySelector<HTMLButtonElement>('button[tabindex="0"]');
 
     if (target !== null && target !== undefined) {
-      catchFocusAfterWidening.current = 'inactif';
+      catchFocusAfterMonthChange.current = 'inactif';
       target.focus();
     }
   });
@@ -370,34 +410,34 @@ export function SlotStep({
       {days !== null && error !== null && days.length === 0 ? null : (
         <SlotPicker
           days={days}
-          windowDates={windowDates}
+          month={month}
+          bounds={bounds}
+          onMonthChange={setMonth}
           timeZone={tenant.timezone}
-          dateBarRef={dateBarRef}
-          emptyStateRef={emptyStateRef}
-          onWiden={canWiden ? widen : undefined}
+          calendarRef={calendarRef}
           onChoose={onChoose}
           emptyState={
             <div className="spa-empty-state">
               <p className="spa-empty-state__title">
-                {staffLabel === null
-                  ? `Aucun créneau sur les ${String(windowDays)} prochains jours`
-                  : `Aucun créneau avec ${staffLabel} sur les ${String(windowDays)} prochains jours`}
+                {`Aucun créneau${staffLabel === null ? '' : ` avec ${staffLabel}`}${
+                  month === null ? '' : ` en ${formatMonth(month)}`
+                }`}
               </p>
               <p className="spa-empty-state__description">
                 {staffLabel === null
-                  ? 'Essayez une autre prestation, ou contactez le salon directement.'
-                  : 'Un autre praticien a peut-être de la place, sinon contactez le salon directement.'}
+                  ? 'Essayez un autre mois, une autre prestation, ou contactez le salon directement.'
+                  : 'Un autre mois ou un autre praticien a peut-être de la place, sinon contactez le salon directement.'}
               </p>
               {/*
-                « Voir plus de jours » — `states.md` étape 3. Le contrat autorise
-                trente et un jours ; on n'en demande quatorze d'emblée que parce
-                que la très grande majorité des clientes réservent dans la semaine.
-                Une fois la fenêtre élargie, le bouton disparaît : il n'aurait plus
-                rien à élargir.
+                La sortie de l'état vide — `states.md` étape 3. Elle a remplacé
+                « Voir plus de jours » : la fenêtre ne s'élargit plus, on tourne
+                la page du calendrier. Au dernier mois de la fenêtre de
+                réservation, le bouton disparaît : il n'aurait plus rien à
+                ouvrir.
               */}
-              {canWiden ? (
-                <Button variant="neutral" onClick={widen}>
-                  Voir plus de jours
+              {canSeeNextMonth ? (
+                <Button variant="neutral" onClick={showNextMonth}>
+                  Voir le mois suivant
                 </Button>
               ) : null}
               {staffLabel === null ? null : (

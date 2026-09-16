@@ -1,7 +1,8 @@
-import { MAX_AVAILABILITY_RANGE_DAYS, MY_APPOINTMENTS_MAX_LIMIT, uuidSchema } from '@spa/shared';
+import { MY_APPOINTMENTS_MAX_LIMIT, uuidSchema } from '@spa/shared';
 import { notFound } from 'next/navigation';
 
-import { addCalendarDays, calendarDateInTimeZone } from '@/lib/booking/calendar';
+import { calendarDateInTimeZone } from '@/lib/booking/calendar';
+import { bookingWindow, isNavigableMonth, monthOf, monthRange } from '@/lib/booking/month-grid';
 import { fetchAvailability, fetchMyAppointments, fetchPublicServices } from '@/lib/api-client';
 
 import { RescheduleForm } from '../../../components/reschedule-form';
@@ -43,55 +44,42 @@ import { accountTenant } from '../../../tenant';
  * geste, et l'API l'écarte donc de son cache — voir le README du module
  * `availability`.
  *
- * ## … et elle s'élargit sur demande (#738)
+ * ## … et elle suit le mois qu'on regarde (#738, #827)
  *
- * `states.md` étape 3 prescrit « Voir plus de jours » partout où le sélecteur
- * est rendu, et cet écran n'y échappait pas : la bande listait quinze dates et
- * s'arrêtait, sans la moindre commande pour aller au-delà. L'élargissement passe
- * par l'adresse et non par un état de composant, parce que c'est le serveur qui
- * lit le calendrier — voir `WIDE_WINDOW_PARAM`.
+ * Le choix de la date est devenu un **calendrier mensuel** : la fenêtre de
+ * créneaux n'est plus une profondeur en journées qu'on élargit, c'est le mois
+ * affiché, rogné à aujourd'hui d'un côté et à la fin de la fenêtre de
+ * réservation de l'autre. Un mois civil ne dépasse jamais les trente et un jours
+ * que `availabilityQuerySchema` plafonne.
+ *
+ * Le mois passe par l'**adresse** et non par un état de composant, pour la même
+ * raison que « Voir plus de jours » le faisait : c'est le serveur qui lit le
+ * calendrier, et c'est donc lui qu'il faut reposer la question. L'adresse a de
+ * surcroît le mérite de survivre au rafraîchissement et de se partager — un
+ * `useState` aurait ramené la visiteuse au mois courant au premier F5.
  */
 
 export const dynamic = 'force-dynamic';
 
 /**
- * Profondeur de la fenêtre proposée, en journées civiles.
+ * Le paramètre par lequel l'écran retient le mois regardé, `YYYY-MM`.
  *
- * Quatorze plutôt que les trente et un que l'API tolère : c'est l'horizon sur
- * lequel une cliente déplace réellement un rendez-vous, et une fenêtre plus large
- * ferait scruter au moteur de disponibilité un mois d'agenda pour des créneaux
- * que personne ne fait défiler.
+ * Il remplace le `?jours=31` de la fenêtre élargie (#738), qui n'a plus d'objet :
+ * on ne creuse plus une profondeur, on tourne une page de calendrier.
  */
-const RESCHEDULE_WINDOW_DAYS = 14;
+const MONTH_PARAM = 'mois';
 
 /**
- * La profondeur qu'ouvre « Voir plus de jours » — la borne du contrat, pas une
- * journée de plus.
+ * La forme d'un mois dans l'adresse — tout le reste retombe sur le mois courant.
  *
- * `- 1` n'est pas une marge de sécurité : `calendarDaysBetween` compte **les
- * deux bornes**, si bien qu'un `to` posé à `from + 31` demande trente-deux
- * journées et se fait refuser par `availabilityQuerySchema`. Le tunnel demande
- * la même profondeur, et la calcule de la même façon.
+ * Le quantième de mois est borné à `01`–`12` et non laissé à `\d{2}` : la
+ * comparaison de `isNavigableMonth` est lexicographique, si bien qu'un
+ * `?mois=2026-99` tombe entre « 2026-12 » et « 2027-01 » dès que la fenêtre
+ * franchit le nouvel an. Il serait alors déclaré atteignable, et la requête
+ * partirait avec un `from` de « 2026-99-01 » que `calendarDateSchema` refuse —
+ * une page d'erreur au lieu du repli qu'on vient d'écrire.
  */
-const WIDE_WINDOW_DAYS = MAX_AVAILABILITY_RANGE_DAYS - 1;
-
-/**
- * Ce que le paramètre porte : le nombre de journées **affichées**, bornes
- * comprises — ce que la visiteuse lit dans son adresse, et non l'écart interne
- * qui sépare les deux bornes de la requête.
- */
-const WIDE_WINDOW_VALUE = String(MAX_AVAILABILITY_RANGE_DAYS);
-
-/**
- * Le paramètre par lequel l'écran retient une fenêtre élargie.
- *
- * Dans l'adresse et non dans un état de composant : cette page est rendue par le
- * serveur, c'est lui qui lit le calendrier, et c'est donc lui qu'il faut
- * reposer la question. Le passer par l'URL a de surcroît le mérite de survivre
- * au rafraîchissement et de se partager — un `useState` aurait renvoyé la
- * visiteuse à quatorze jours au premier F5.
- */
-const WIDE_WINDOW_PARAM = 'jours';
+const MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 
 interface ReschedulePageProps {
   readonly params: Promise<{
@@ -106,15 +94,19 @@ export default async function ReschedulePage({ params, searchParams }: Reschedul
   const query = await searchParams;
 
   /**
-   * Fenêtre élargie ou non — et rien entre les deux.
+   * Le mois demandé par l'adresse, tel qu'il s'écrit — validé plus bas contre la
+   * fenêtre de réservation, une fois le fuseau du salon connu.
    *
-   * Une égalité stricte à la seule valeur qu'on écrit soi-même, plutôt qu'un
-   * entier analysé puis borné : le paramètre vient de l'adresse, donc du
-   * visiteur, et l'API refuserait une plage hors contrat par un 400 que cet
-   * écran rendrait en page d'erreur. Tout ce qui n'est pas la valeur attendue
-   * retombe donc sur la fenêtre par défaut.
+   * Le paramètre vient du visiteur : un `?mois=jamais` ou un `?mois=1970-01`
+   * demanderait au moteur de disponibilité une plage qu'il refuserait par un 400
+   * que cet écran rendrait en page d'erreur. Tout ce qui n'est pas atteignable
+   * retombe donc sur le mois courant.
    */
-  const wide = query[WIDE_WINDOW_PARAM] === WIDE_WINDOW_VALUE;
+  const requestedMonth = query[MONTH_PARAM];
+  const askedMonth =
+    typeof requestedMonth === 'string' && MONTH_PATTERN.test(requestedMonth)
+      ? requestedMonth
+      : null;
 
   const id = uuidSchema.safeParse(appointmentId);
   if (!id.success) {
@@ -138,15 +130,24 @@ export default async function ReschedulePage({ params, searchParams }: Reschedul
     notFound();
   }
 
-  const from = calendarDateInTimeZone(new Date(), tenant.timezone);
+  const today = calendarDateInTimeZone(new Date(), tenant.timezone);
+  const bounds = bookingWindow(today);
+  // Un mois hors de la fenêtre de réservation n'est pas une erreur de la
+  // visiteuse : c'est une adresse d'hier, ou trafiquée. On la ramène au mois
+  // courant plutôt que de rendre une page d'erreur.
+  const month =
+    askedMonth !== null && isNavigableMonth(askedMonth, bounds) ? askedMonth : monthOf(today);
+  // Non `null` par construction : `month` est atteignable, donc il coupe la
+  // fenêtre. Le repli n'existe que pour le compilateur.
+  const range = monthRange(month, bounds) ?? { from: today, to: today };
 
   const availability = await fetchAvailability(tenantSlug, {
     serviceId: appointment.serviceId,
     // Le même praticien : reporter ne change pas de praticien de lui-même, cela
     // déplacerait une cliente chez quelqu'un qu'elle n'a pas choisi.
     staffId: appointment.staffId,
-    from,
-    to: addCalendarDays(from, wide ? WIDE_WINDOW_DAYS : RESCHEDULE_WINDOW_DAYS),
+    from: range.from,
+    to: range.to,
     // Le rendez-vous en cours de déplacement n'a pas à se barrer la route : c'est
     // lui qu'on libère. Sans cette exclusion, un soin d'une heure ne pourrait
     // jamais être décalé de moins d'une heure.
@@ -161,9 +162,12 @@ export default async function ReschedulePage({ params, searchParams }: Reschedul
       serviceName={services.find((service) => service.id === appointment.serviceId)?.name ?? null}
       availability={availability}
       timeZone={tenant.timezone}
-      // « Voir plus de jours » n'a plus rien à élargir une fois la fenêtre au
-      // maximum du contrat : le bouton disparaît (`states.md`, étape 3).
-      widerHref={wide ? null : `${here}?${WIDE_WINDOW_PARAM}=${WIDE_WINDOW_VALUE}`}
+      month={month}
+      bounds={bounds}
+      // Changer de mois repose la question au serveur : c'est lui qui lit le
+      // calendrier. Le formulaire construit l'adresse à partir de ce gabarit
+      // plutôt que de connaître la route qui le rend.
+      monthHref={`${here}?${MONTH_PARAM}=`}
     />
   );
 }
