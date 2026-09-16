@@ -11,18 +11,27 @@ import {
   shiftAnchor,
   todayInTimeZone,
 } from '@/lib/admin/calendar-range';
-import { amountDue, isSettleable } from '@/lib/admin/checkout-summary';
+import {
+  amountDue,
+  isSettleable,
+  isSettled,
+  settlementBadge,
+  settlementOf,
+  type SettlementState,
+} from '@/lib/admin/checkout-summary';
 import {
   formatCalendarDate,
   formatDuration,
   formatMoney,
   formatTimeInTimeZone,
 } from '@/lib/format';
+import type { PaymentTransaction } from '@/lib/admin/payment-contract';
 
 import { CheckoutPanel } from '../components/checkout-panel';
 import { PeriodNav } from '../components/period-nav';
 import { adminCheckoutPath } from '../paths';
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
+import { readDaySettlements } from './settlements';
 
 /**
  * L'encaissement au comptoir — CDC §1.4, « encaissement en fin de prestation »
@@ -58,6 +67,20 @@ import { adminLoadFailure, requireAdminAccessToken } from '../guard';
  * Le montant dû est le **prix figé à la réservation**, relu du rendez-vous. Le
  * front ne fait jamais l'arithmétique d'un total : celui qui fait foi est
  * recalculé par le serveur (payments-stripe §4 et §5).
+ *
+ * ## Ce que la journée a déjà encaissé, lu **avec** elle (#828)
+ *
+ * Une seconde lecture, `GET /payments` sur la journée de caisse, jointe aux
+ * rendez-vous par `appointmentId`. Sans elle, l'écran ouvrait un rendez-vous
+ * déjà réglé avec « À encaisser » et un bouton actif, et le refus n'arrivait
+ * qu'après le clic : le CDC §1.4 range l'historique des ventes dans le
+ * périmètre Paiements, et un règlement inscrit doit se voir avant qu'on essaie
+ * d'en créer un second.
+ *
+ * Elle est **facultative par construction** — voir `settlements.ts` : la route
+ * est au seuil `MANAGER` quand cet écran est ouvert à `STAFF`, et son refus
+ * rend `null`, c'est-à-dire « inconnu ». L'écran tait alors le règlement au
+ * lieu de l'affirmer, et l'encaissement reste possible.
  */
 
 export const dynamic = 'force-dynamic';
@@ -117,6 +140,12 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
 
   const selected = rdv === undefined ? undefined : appointments.find((one) => one.id === rdv);
 
+  // Lue **après** l'agenda et jamais avant : elle est facultative, et un
+  // encaissement doit rester possible quand l'historique ne répond pas.
+  const settlements = await readDaySettlements(accessToken, anchor, tenant.timezone);
+  const settlementFor = (appointmentId: string): SettlementState | null =>
+    settlements === null ? null : settlementOf(settlements, appointmentId);
+
   return (
     <section aria-labelledby="encaissement-titre">
       <h1 className="spa-admin__title" id="encaissement-titre">
@@ -161,14 +190,20 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
         <AppointmentsToSettle
           anchor={anchor}
           appointments={appointments}
+          settlements={settlements}
           tenantSlug={tenantSlug}
           timeZone={tenant.timezone}
         />
       ) : (
         <div className="spa-admin-checkout">
-          <AppointmentRecap appointment={selected} timeZone={tenant.timezone} />
+          <AppointmentRecap
+            appointment={selected}
+            settlement={settlementFor(selected.id)}
+            timeZone={tenant.timezone}
+          />
           <CheckoutPanel
             appointment={selected}
+            settlement={settlementFor(selected.id)}
             tenantSlug={tenantSlug}
             timeZone={tenant.timezone}
           />
@@ -187,20 +222,47 @@ export default async function CheckoutPage({ params, searchParams }: CheckoutPag
 }
 
 /**
+ * La pastille de règlement d'une ligne — « réglé », « à encaisser », ou l'état
+ * intermédiaire d'une carte ouverte (#828).
+ *
+ * Le libellé est écrit en toutes lettres, la couleur ne fait qu'accélérer le
+ * balayage : une journée se lit d'un coup d'œil, et l'information ne doit jamais
+ * tenir à la seule teinte (WCAG 1.4.1).
+ */
+function SettlementBadge({ settlement }: { readonly settlement: SettlementState }) {
+  const badge = settlementBadge(settlement);
+
+  return (
+    <span className={`spa-admin-badge spa-admin-badge--settlement-${badge.modifier}`}>
+      {badge.label}
+    </span>
+  );
+}
+
+/**
  * Le récapitulatif du rendez-vous et du montant dû — premier critère de #59.
  *
  * Le montant est rendu **une fois**, en gros, sous la ligne des totaux : c'est
  * le seul chiffre que l'opérateur annonce à voix haute, et le chercher dans un
  * tableau devant une cliente est exactement ce qui fait dire un mauvais prix.
+ *
+ * Sur un rendez-vous déjà réglé, ce chiffre reste le même et **son libellé
+ * change** : « Réglé » et non « À encaisser » (#828). C'est la ligne que
+ * l'opérateur lit en premier, et lui faire annoncer une somme due sur une
+ * prestation déjà payée est ce qui l'amenait à cliquer.
  */
 function AppointmentRecap({
   appointment,
+  settlement,
   timeZone,
 }: {
   readonly appointment: Appointment;
+  /** `null` quand l'historique n'a pas répondu — l'état est alors inconnu. */
+  readonly settlement: SettlementState | null;
   readonly timeZone: TimeZone;
 }) {
   const due = amountDue(appointment);
+  const settled = settlement !== null && isSettled(settlement);
 
   return (
     <div className="spa-admin-checkout__ticket">
@@ -254,7 +316,7 @@ function AppointmentRecap({
           </span>
         </div>
         <div className="spa-admin-checkout__total-row spa-admin-checkout__total-row--grand">
-          <span className="spa-admin-checkout__total-label">À encaisser</span>
+          <span className="spa-admin-checkout__total-label">{settled ? 'Réglé' : 'À encaisser'}</span>
           <span className="spa-admin-checkout__total-value">{formatMoney(due)}</span>
         </div>
       </div>
@@ -267,15 +329,31 @@ function AppointmentRecap({
   );
 }
 
-/** La journée, du premier rendez-vous au dernier, avec un lien par ligne. */
+/**
+ * La journée, du premier rendez-vous au dernier, avec un lien par ligne.
+ *
+ * ## La colonne « Règlement », et pourquoi elle n'est pas toujours là (#828)
+ *
+ * Elle dit d'un coup d'œil ce qui est réglé et ce qui reste dû — ce que la
+ * liste taisait, obligeant à ouvrir chaque rendez-vous pour l'apprendre. Elle
+ * n'apparaît que lorsque l'historique a répondu : une colonne remplie de tirets
+ * ferait croire à une journée sans recette, et une colonne « à encaisser »
+ * partout serait un mensonge pur et simple.
+ *
+ * Une ligne réglée **reste cliquable** : c'est par là qu'on retrouve son reçu
+ * pour le réimprimer.
+ */
 function AppointmentsToSettle({
   anchor,
   appointments,
+  settlements,
   tenantSlug,
   timeZone,
 }: {
   readonly anchor: CalendarDate;
   readonly appointments: readonly Appointment[];
+  /** `null` quand l'historique n'a pas répondu — la colonne est alors tue. */
+  readonly settlements: readonly PaymentTransaction[] | null;
   readonly tenantSlug: string;
   readonly timeZone: TimeZone;
 }) {
@@ -313,44 +391,68 @@ function AppointmentsToSettle({
           <th className="spa-admin-table__head" scope="col">
             Statut
           </th>
+          {settlements === null ? null : (
+            <th className="spa-admin-table__head" scope="col">
+              Règlement
+            </th>
+          )}
         </tr>
       </thead>
       <tbody>
-        {appointments.map((appointment) => (
-          <tr className="spa-admin-table__row" key={appointment.id}>
-            <td className="spa-admin-table__cell">
-              {formatTimeInTimeZone(appointment.startsAt, timeZone)}
-            </td>
-            <td className="spa-admin-table__cell">
-              {isSettleable(appointment.status) ? (
-                <Link
-                  href={adminCheckoutPath(tenantSlug, {
-                    date: anchor,
-                    appointmentId: appointment.id,
-                  })}
+        {appointments.map((appointment) => {
+          const settlement =
+            settlements === null ? null : settlementOf(settlements, appointment.id);
+
+          return (
+            <tr className="spa-admin-table__row" key={appointment.id}>
+              <td className="spa-admin-table__cell">
+                {formatTimeInTimeZone(appointment.startsAt, timeZone)}
+              </td>
+              <td className="spa-admin-table__cell">
+                {isSettleable(appointment.status) ? (
+                  <Link
+                    href={adminCheckoutPath(tenantSlug, {
+                      date: anchor,
+                      appointmentId: appointment.id,
+                    })}
+                  >
+                    {appointment.client.firstName} {appointment.client.lastName}
+                    {/* Le nom accessible dit ce que le lien fait **ici** : sur
+                     * une ligne réglée il n'ouvre plus un encaissement, il ouvre
+                     * le règlement et son ticket. Promettre « encaisser » à un
+                     * lecteur d'écran sur un rendez-vous soldé serait le même
+                     * écart que celui que ce ticket corrige, un cran plus bas. */}
+                    <span className="spa-visually-hidden">
+                      {settlement !== null && isSettled(settlement)
+                        ? ' — voir le règlement'
+                        : ' — encaisser ce rendez-vous'}
+                    </span>
+                  </Link>
+                ) : (
+                  <>
+                    {appointment.client.firstName} {appointment.client.lastName}
+                  </>
+                )}
+              </td>
+              <td className="spa-admin-table__cell">{appointment.service.name}</td>
+              <td className="spa-admin-table__cell spa-admin-table__cell--numeric">
+                {formatMoney(amountDue(appointment))}
+              </td>
+              <td className="spa-admin-table__cell">
+                <span
+                  className={`spa-admin-badge spa-admin-badge--${statusModifier(appointment.status)}`}
                 >
-                  {appointment.client.firstName} {appointment.client.lastName}
-                  <span className="spa-visually-hidden"> — encaisser ce rendez-vous</span>
-                </Link>
-              ) : (
-                <>
-                  {appointment.client.firstName} {appointment.client.lastName}
-                </>
+                  {STATUS_LABELS[appointment.status]}
+                </span>
+              </td>
+              {settlement === null ? null : (
+                <td className="spa-admin-table__cell">
+                  <SettlementBadge settlement={settlement} />
+                </td>
               )}
-            </td>
-            <td className="spa-admin-table__cell">{appointment.service.name}</td>
-            <td className="spa-admin-table__cell spa-admin-table__cell--numeric">
-              {formatMoney(amountDue(appointment))}
-            </td>
-            <td className="spa-admin-table__cell">
-              <span
-                className={`spa-admin-badge spa-admin-badge--${statusModifier(appointment.status)}`}
-              >
-                {STATUS_LABELS[appointment.status]}
-              </span>
-            </td>
-          </tr>
-        ))}
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );

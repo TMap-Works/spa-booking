@@ -348,3 +348,49 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* --- Pastilles de règlement de la journée — #828 ---------------------------- */
+
+/*
+ * La liste de la journée distingue d'un coup d'œil ce qui est réglé de ce qui
+ * reste dû. Sans cette colonne, il fallait ouvrir chaque rendez-vous pour
+ * l'apprendre — et l'écran l'apprenait lui-même après le clic, en 409.
+ *
+ * Quatre rôles, empruntés aux rampes d'état sans emprunter leurs *noms* : un
+ * encaissement réglé n'est pas un rendez-vous « honoré », et un salon doit
+ * pouvoir repeindre l'un sans l'autre. C'est exactement la raison pour laquelle
+ * `tokens.css` sépare déjà les statuts d'agenda des rôles d'état.
+ *
+ * La couleur ne porte jamais l'information seule : le libellé — « réglé »,
+ * « à encaisser », « carte en cours », « carte en échec » — est toujours écrit
+ * (WCAG 1.4.1). Elle n'accélère que le balayage d'une journée.
+ */
+.spa-admin-badge--settlement-settled {
+  background-color: var(--spa-color-success-surface);
+  color: var(--spa-color-success);
+}
+
+.spa-admin-badge--settlement-refunded {
+  background-color: var(--spa-color-info-surface);
+  color: var(--spa-color-info);
+}
+
+.spa-admin-badge--settlement-open {
+  background-color: var(--spa-color-warning-surface);
+  color: var(--spa-color-warning);
+}
+
+.spa-admin-badge--settlement-failed {
+  background-color: var(--spa-color-danger-surface);
+  color: var(--spa-color-danger);
+}
+
+/*
+ * « À encaisser » est l'état ordinaire d'une journée : il se lit comme une
+ * absence de signal, pas comme une alerte. D'où la rampe neutre — mettre en
+ * couleur ce qui est normal ferait disparaître ce qui ne l'est pas.
+ */
+.spa-admin-badge--settlement-due {
+  background-color: var(--spa-color-status-cancelled-surface);
+  color: var(--spa-color-status-cancelled);
+}

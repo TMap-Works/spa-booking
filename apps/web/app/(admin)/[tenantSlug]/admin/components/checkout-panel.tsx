@@ -12,12 +12,15 @@ import {
   checkoutBlocker,
   checkoutFailureMessage,
   completionUnavailableMessage,
+  isAlreadySettledRefusal,
   isSettleable,
   methodHint,
   methodLabel,
+  methodPhrase,
+  type SettlementState,
 } from '@/lib/admin/checkout-summary';
 import type { AppointmentPaymentIntent, PaymentTransaction } from '@/lib/admin/payment-contract';
-import { formatMoney } from '@/lib/format';
+import { formatDateTimeInTimeZone, formatMoney } from '@/lib/format';
 
 import type { AdminActionResult } from '../action-result';
 import { openCardPaymentAction, settleInCashAction } from '../encaissement/actions';
@@ -51,6 +54,19 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * Il ne calcule aucun total — le montant dû est le prix figé à la réservation —
  * et il ne déclare aucun paiement carte abouti : c'est le webhook signé qui
  * inscrit l'encaissement, côté serveur (payments-stripe §2).
+ *
+ * ## L'encaissement déjà inscrit, connu **avant** le clic (#828)
+ *
+ * `settlement` porte ce que la journée de caisse dit de ce rendez-vous. Réglé,
+ * le panneau n'offre plus aucun encaissement : il annonce le règlement et
+ * propose d'en réimprimer le ticket. C'est le sens du critère `ds:etats` — un
+ * état de l'écran, pas un refus qui tombe après coup.
+ *
+ * Le 409 reste en place et reste le filet, pour les deux cas que la lecture ne
+ * couvre pas : un compte `STAFF`, à qui `GET /payments` répond 403, et la course
+ * contre le poste d'à côté. Mais il fait désormais **basculer l'écran** au lieu
+ * d'afficher une ligne rouge sous un bouton resté actif — un second clic ne
+ * pouvait qu'échouer de la même façon.
  */
 type Phase =
   | { readonly kind: 'choix' }
@@ -59,25 +75,45 @@ type Phase =
       readonly kind: 'regle';
       readonly method: PaymentMethod;
       readonly transaction: PaymentTransaction | null;
-    };
+    }
+  /** Le refus 409 : un encaissement existe déjà, et il n'est pas celui-ci. */
+  | { readonly kind: 'deja-regle'; readonly message: string };
 
 export function CheckoutPanel({
   appointment,
+  settlement = null,
   tenantSlug,
   timeZone,
 }: {
   readonly appointment: Appointment;
+  /**
+   * L'état de règlement lu avec la journée — `null` quand l'historique n'a pas
+   * répondu, ce qui n'est **pas** la même chose que « rien n'est réglé ».
+   */
+  readonly settlement?: SettlementState | null;
   readonly tenantSlug: string;
   readonly timeZone: TimeZone;
 }) {
   const due = amountDue(appointment);
-  const [method, setMethod] = useState<PaymentMethod>('cash');
+  const known: SettlementState = settlement ?? { kind: 'du' };
+  // Le moyen présélectionné est le premier qui soit **ouvert**, et non les
+  // espèces par principe : sur une intention carte en cours, les espèces sont
+  // refusées en 409, et ouvrir l'écran sur une case grisée ferait chercher la
+  // panne. L'ordre reste celui de `CHECKOUT_METHODS`, donc les espèces d'abord
+  // dans le cas ordinaire.
+  const [method, setMethod] = useState<PaymentMethod>(
+    () =>
+      CHECKOUT_METHODS.find(
+        (candidate) => checkoutBlocker(appointment.status, candidate, known) === null,
+      ) ?? 'cash',
+  );
   const [phase, setPhase] = useState<Phase>({ kind: 'choix' });
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
+  const [reprinting, setReprinting] = useState(false);
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
 
-  const blocker = checkoutBlocker(appointment.status, method);
+  const blocker = checkoutBlocker(appointment.status, method, known);
 
   /**
    * Déroule une action d'encaissement en tenant l'indicateur d'attente.
@@ -107,11 +143,23 @@ export function CheckoutPanel({
 
       // Une session à renouveler n'est pas un échec d'encaissement : rien n'a
       // été réglé, et l'écran revient tel quel une fois la session rouverte.
+      // Ce test passe **avant** la lecture du refus : une session expirée n'est
+      // pas un état du rendez-vous, et la traduire en message le laisserait
+      // croire.
       if (renewIfExpired(result)) {
         return;
       }
 
-      setFailure(checkoutFailureMessage(result.code, result.message));
+      const explained = checkoutFailureMessage(result.code, result.message);
+
+      // « Déjà encaissé » n'est pas une erreur de saisie qu'on corrige en
+      // recliquant : c'est un état du rendez-vous, et l'écran le devient.
+      if (isAlreadySettledRefusal(result.code)) {
+        setPhase({ kind: 'deja-regle', message: explained });
+        return;
+      }
+
+      setFailure(explained);
     } catch {
       // L'action n'a pas répondu du tout : rien n'a été encaissé, et le message
       // le dit plutôt que de laisser le comptoir deviner.
@@ -158,6 +206,61 @@ export function CheckoutPanel({
     );
   }
 
+  // L'état de règlement passe **avant** toute action : un rendez-vous réglé
+  // n'ouvre aucun moyen de paiement, et n'en montre aucun. C'est ce que le CDC
+  // §1.4 attend d'une vente déjà inscrite — elle se consulte et se réimprime.
+  if (known.kind === 'regle') {
+    const { payment } = known;
+    const refunded = payment.refunded.amountMinor > 0;
+    const settledAt = payment.capturedAt ?? payment.createdAt;
+
+    return (
+      <div className="spa-admin-checkout__payment">
+        <Notification
+          tone={refunded ? 'info' : 'success'}
+          title={`Réglé ${methodPhrase(payment.method)} — ${formatMoney(payment.amount)}`}
+        >
+          <p>
+            Encaissement inscrit le {formatDateTimeInTimeZone(settledAt, timeZone)}.
+            {refunded
+              ? ` Dont ${formatMoney(payment.refunded)} remboursés.`
+              : ' Il n’y a plus rien à encaisser sur ce rendez-vous.'}
+          </p>
+        </Notification>
+
+        {reprinting ? (
+          <CheckoutReceipt
+            appointment={appointment}
+            method={payment.method}
+            settled
+            timeZone={timeZone}
+            transaction={payment}
+          />
+        ) : (
+          <Button
+            block
+            onClick={() => {
+              setReprinting(true);
+            }}
+            variant="neutral"
+          >
+            Réimprimer le ticket
+          </Button>
+        )}
+      </div>
+    );
+  }
+
+  if (phase.kind === 'deja-regle') {
+    return (
+      <div className="spa-admin-checkout__payment">
+        <Notification tone="warning" title="Rendez-vous déjà encaissé">
+          <p>{phase.message}</p>
+        </Notification>
+      </div>
+    );
+  }
+
   if (phase.kind === 'regle') {
     return (
       <div className="spa-admin-checkout__payment">
@@ -180,7 +283,7 @@ export function CheckoutPanel({
         <legend className="spa-admin__section-title">Moyen de paiement</legend>
 
         {CHECKOUT_METHODS.map((candidate) => {
-          const unavailable = checkoutBlocker(appointment.status, candidate);
+          const unavailable = checkoutBlocker(appointment.status, candidate, known);
           const inputId = `moyen-${candidate}`;
 
           return (

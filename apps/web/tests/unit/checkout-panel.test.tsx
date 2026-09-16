@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CheckoutPanel } from '@/app/(admin)/[tenantSlug]/admin/components/checkout-panel';
+import type { SettlementState } from '@/lib/admin/checkout-summary';
 
 /**
  * Le panneau d'encaissement tel qu'il se manipule (#59, critères 2, 3, 4 et 5).
@@ -69,9 +70,17 @@ function appointment(status: AppointmentStatus = 'confirmed'): Appointment {
   };
 }
 
-function renderPanel(status: AppointmentStatus = 'confirmed'): void {
+function renderPanel(
+  status: AppointmentStatus = 'confirmed',
+  settlement: SettlementState | null = null,
+): void {
   render(
-    <CheckoutPanel appointment={appointment(status)} tenantSlug={SLUG} timeZone={TIMEZONE} />,
+    <CheckoutPanel
+      appointment={appointment(status)}
+      settlement={settlement}
+      tenantSlug={SLUG}
+      timeZone={TIMEZONE}
+    />,
   );
 }
 
@@ -126,6 +135,100 @@ describe('le choix du moyen de paiement', () => {
 
     expect(screen.getByText('Rien à encaisser')).toBeDefined();
     expect(screen.queryAllByRole('radio')).toHaveLength(0);
+  });
+});
+
+describe('un rendez-vous déjà réglé (#828)', () => {
+  const SETTLED_BY_CARD: SettlementState = {
+    kind: 'regle',
+    payment: { ...CASH_TRANSACTION, method: 'card' },
+  };
+
+  it('n’offre plus aucun encaissement — ni moyen, ni bouton', () => {
+    // L'écran ouvrait ce rendez-vous avec « À encaisser », ses deux moyens et un
+    // bouton actif ; le refus n'arrivait qu'après le clic, en 409.
+    renderPanel('completed', SETTLED_BY_CARD);
+
+    expect(screen.queryAllByRole('radio')).toHaveLength(0);
+    expect(screen.queryByRole('button', { name: /Encaisser/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Payer/ })).toBeNull();
+  });
+
+  it('annonce le règlement avant le clic — moyen, montant et instant', () => {
+    renderPanel('completed', SETTLED_BY_CARD);
+
+    expect(screen.getByText(/Réglé par carte/)).toBeDefined();
+    expect(screen.getByText(/35,00/)).toBeDefined();
+    expect(screen.getByText(/Encaissement inscrit le/)).toBeDefined();
+  });
+
+  it('propose de réimprimer le ticket, et ce reçu-là n’est pas provisoire', async () => {
+    // Le webhook signé a écrit la ligne qu'on vient de relire : la réimpression
+    // est définitive, là où le reçu imprimé sur la réponse du navigateur ne
+    // l'était pas (payments-stripe §2).
+    renderPanel('completed', SETTLED_BY_CARD);
+
+    await userEvent.click(screen.getByRole('button', { name: 'Réimprimer le ticket' }));
+
+    expect(await screen.findByText(/Encaissement enregistré/)).toBeDefined();
+    expect(screen.getByText(/définitif/i)).toBeDefined();
+    expect(screen.queryByText(/pas de capture/i)).toBeNull();
+  });
+
+  it('écrit le remboursement sur le ticket réimprimé, jamais la somme entière', async () => {
+    // Le ticket se remet en main propre : lui faire affirmer « Total 35,00 € »
+    // sur un encaissement que le prestataire a rendu contredirait le bandeau
+    // au-dessus, qui annonce déjà le remboursement (#63).
+    renderPanel('completed', {
+      kind: 'regle',
+      payment: {
+        ...CASH_TRANSACTION,
+        method: 'card',
+        status: 'refunded',
+        refunded: { amountMinor: 3500, currency: 'EUR' },
+      },
+    });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Réimprimer le ticket' }));
+
+    expect(await screen.findByText('Remboursé')).toBeDefined();
+    expect(screen.getByText('Reste acquis')).toBeDefined();
+    // « Total » ne subsiste que comme en-tête de la colonne des lignes ; la
+    // ligne des totaux, elle, ne l'écrit plus.
+    expect(screen.queryByText('Total', { selector: 'span' })).toBeNull();
+    expect(screen.getByText(/0,00/)).toBeDefined();
+  });
+
+  it('ferme les espèces et présélectionne la carte quand une intention court', () => {
+    // `replayOrRefuse` refuse les espèces tant qu'une intention carte existe :
+    // ouvrir l'écran sur une case grisée ferait chercher la panne.
+    renderPanel('confirmed', { kind: 'ouvert', payment: CASH_TRANSACTION });
+
+    expect(screen.getByRole('radio', { name: /Espèces/ })).toHaveProperty('disabled', true);
+    expect(screen.getByRole('radio', { name: /Carte/ })).toHaveProperty('checked', true);
+  });
+
+  it('laisse l’écran intact quand l’historique n’a pas répondu', () => {
+    // `null` n'est pas « rien n'est réglé » : la route est au seuil `MANAGER`, et
+    // un comptoir `STAFF` doit pouvoir encaisser malgré tout.
+    renderPanel('confirmed', null);
+
+    expect(screen.getAllByRole('radio')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: /en espèces/ })).toBeDefined();
+  });
+
+  it('bascule l’écran sur le refus 409 au lieu de laisser le bouton actif', async () => {
+    settleInCashAction.mockResolvedValue({
+      ok: false,
+      code: 'PAYMENT_ALREADY_SETTLED',
+      message: 'Already settled.',
+    });
+    renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+
+    expect(await screen.findByText('Rendez-vous déjà encaissé')).toBeDefined();
+    expect(screen.queryByRole('button', { name: /en espèces/ })).toBeNull();
   });
 });
 
