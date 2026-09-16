@@ -109,6 +109,14 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
    * ferait grossir la pile au moment précis où le visiteur cherche à en sortir.
    */
   const cameFromHistoryRef = useRef(false);
+  /**
+   * Le brouillon tel qu'il a été écrit dans `sessionStorage` la dernière fois (#737).
+   *
+   * Il sert à une seule chose : écrire le brouillon **sans passer par un
+   * rendu**, quand l'instant ne permet pas d'en attendre un — voir
+   * `saveContact`.
+   */
+  const persistedDraftRef = useRef<BookingDraft>(emptyBookingDraft());
 
   // Relecture du brouillon. Ni l'URL ni `sessionStorage` ne sont lisibles au
   // rendu serveur : l'état de départ est donc toujours vierge, et l'étape réelle
@@ -137,6 +145,7 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
 
   useEffect(() => {
     if (hydrated) {
+      persistedDraftRef.current = draft;
       writeBookingDraft(tenant.slug, draft);
     }
   }, [hydrated, draft, tenant.slug]);
@@ -331,10 +340,35 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
     setDraft((current) => ({ ...current, startsAt, step: 'coordonnees' }));
   }, []);
 
-  /** Report de la saisie en cours, sans changement d'étape — voir `ContactStep`. */
-  const saveContact = useCallback((contact: ContactDraft) => {
-    setDraft((current) => ({ ...current, contact }));
-  }, []);
+  /**
+   * Report de la saisie en cours, sans changement d'étape — voir `ContactStep`.
+   *
+   * L'écriture dans `sessionStorage` est faite **ici et tout de suite**, en plus
+   * de celle que l'effet ci-dessus fera au rendu suivant (#737). Ce doublon n'en
+   * est pas un : il y a un instant où le second chemin n'arrive jamais.
+   *
+   * `ContactStep` verse la saisie au masquage de la page — `pagehide`,
+   * `visibilitychange` —, c'est-à-dire sur le dernier signal qu'un navigateur
+   * donne avant de laisser partir l'onglet. Or le chemin normal du brouillon est
+   * `setDraft` → rendu → effet passif, et React planifie ses effets passifs dans
+   * une tâche distincte (`MessageChannel`), pas dans une microtâche : cette
+   * tâche-là n'a pas lieu quand le document s'en va. La saisie qu'on croyait
+   * sauver serait perdue exactement dans le cas que le ticket décrit.
+   *
+   * L'état React reste mis à jour par un `setDraft` fonctionnel, qui fait foi ;
+   * la référence n'est qu'un instantané de la dernière écriture, et l'effet
+   * rattrape sans bruit l'écart si elle a pris du retard.
+   */
+  const saveContact = useCallback(
+    (contact: ContactDraft) => {
+      const persisted = { ...persistedDraftRef.current, contact };
+
+      persistedDraftRef.current = persisted;
+      writeBookingDraft(tenant.slug, persisted);
+      setDraft((current) => ({ ...current, contact }));
+    },
+    [tenant.slug],
+  );
 
   const submitContact = useCallback((contact: ContactDraft) => {
     setDraft((current) => ({ ...current, contact, step: 'recapitulatif' }));
