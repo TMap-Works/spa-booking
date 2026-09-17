@@ -183,6 +183,30 @@ export const IDENTITY_ERROR_CODES = {
   INVALID_INVITATION: 'INVALID_INVITATION',
   /** Réémission demandée sur un compte déjà activé, par un administrateur authentifié. */
   INVITATION_ALREADY_ACCEPTED: 'INVITATION_ALREADY_ACCEPTED',
+  /**
+   * Connexion d'**opérateur plateforme** refusée — adresse inconnue, mot de
+   * passe faux, code MFA faux, ou compte désactivé (#806, ADR 0012).
+   *
+   * Un seul code pour les quatre, comme `INVALID_CREDENTIALS` côté
+   * établissement : l'annuaire des opérateurs est court, et distinguer les cas
+   * dirait à qui cherche s'il tient déjà le premier facteur.
+   */
+  INVALID_PLATFORM_CREDENTIALS: 'INVALID_PLATFORM_CREDENTIALS',
+  /**
+   * Le nom d'adresse demandé pour un nouvel établissement est déjà pris — ou
+   * **réservé** à la plateforme (`www`, `api`, `origin`…). `details.slug` le
+   * rend.
+   *
+   * Un seul code pour les deux : du point de vue de l'appelant, ils disent la
+   * même chose, et les distinguer ferait de la console un oracle sur la liste
+   * des noms que la plateforme se garde.
+   */
+  TENANT_SLUG_TAKEN: 'TENANT_SLUG_TAKEN',
+  /**
+   * Réémission d'invitation demandée sur un établissement qui n'a aucun compte
+   * administrateur — un salon créé avant la console, par le seed ou à la main.
+   */
+  TENANT_ADMIN_MISSING: 'TENANT_ADMIN_MISSING',
 } as const;
 
 /**
