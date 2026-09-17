@@ -78,6 +78,33 @@
 }
 
 /*
+ * L'entrée cliquée, dont l'écran arrive (#830).
+ *
+ * Le repère est poussé en bout d'entrée, et l'entrée prend l'aplat du survol :
+ * c'est elle qui vient d'être choisie, et elle le reste visiblement une fois le
+ * pointeur parti. L'aplat et le repère apparaissent ensemble, après le délai
+ * commun de `components/progress.css` — une navigation préchargée n'allume rien.
+ * Le liseré et la couleur d'accent restent à `aria-current`, qui ne ment pas :
+ * ils passeront sur cette entrée quand son écran sera là.
+ */
+.spa-admin__nav-pending {
+  margin-inline-start: auto;
+}
+
+.spa-admin__nav-link:has(.spa-admin__nav-pending[data-pending='true']) {
+  cursor: progress;
+  animation: spa-admin-nav-pending var(--spa-duration-fast) var(--spa-easing-standard)
+    var(--spa-duration-normal) both;
+}
+
+@keyframes spa-admin-nav-pending {
+  to {
+    background-color: var(--spa-color-surface-inverse-raised);
+    color: var(--spa-color-text-inverse);
+  }
+}
+
+/*
  * Une section annoncée mais pas encore servie (#48).
  *
  * Le sommaire du back-office est complet dès le premier jour — le tronquer

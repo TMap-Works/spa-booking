@@ -273,6 +273,25 @@
 }
 
 /*
+ * Le tunnel en cours de chargement (#830) — `reservation/loading.tsx`.
+ *
+ * Le squelette se pose dans le même panneau que le tunnel, sous le bandeau que
+ * le layout peint déjà : une rangée pour le fil des étapes, à la hauteur d'une
+ * pastille `.spa-booking__progress-name` ci-dessus, puis la carte en chargement
+ * que `BookingTunnel` affiche lui-même avant son hydratation. Le tunnel qui
+ * arrive reprend donc la place du squelette.
+ */
+.spa-booking-loading {
+  pointer-events: none;
+}
+
+.spa-booking-loading__steps {
+  block-size: var(--spa-space-6);
+  inline-size: min(30rem, 90%);
+  border-radius: var(--spa-radius-full);
+}
+
+/*
  * La racine d'une étape — le `<form>` ou la `<section>` que `BookingTunnel`
  * monte dans le panneau.
  *

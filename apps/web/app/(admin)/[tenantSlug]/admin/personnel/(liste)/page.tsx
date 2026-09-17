@@ -10,12 +10,12 @@ import { fetchOwnProfile, fetchStaffAccounts, fetchStaffMembers } from '@/lib/ap
 import { sortStaffMembers, staffInitials } from '@/lib/admin/staff-directory';
 import { isStaffRole } from '@/lib/admin/staff-contract';
 
-import { roleLabel } from '../components/navigation';
-import { adminLoadFailure, requireAdminAccessToken } from '../guard';
-import { StaffAccountActions } from './components/staff-account-actions';
-import { StaffInviteForm } from './components/staff-invite-form';
-import { StaffMemberForm } from './components/staff-member-form';
-import { adminStaffMemberPath, adminStaffPath } from './paths';
+import { roleLabel } from '../../components/navigation';
+import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
+import { StaffAccountActions } from '../components/staff-account-actions';
+import { StaffInviteForm } from '../components/staff-invite-form';
+import { StaffMemberForm } from '../components/staff-member-form';
+import { adminStaffMemberPath, adminStaffPath } from '../paths';
 
 /**
  * Le personnel de l'établissement (#53, premier critère).
@@ -54,6 +54,12 @@ import { adminStaffMemberPath, adminStaffPath } from './paths';
  * Dans les deux cas, le rôle **filtre l'affichage, il ne protège rien** :
  * masquer un contrôle évite d'offrir un bouton qui répondrait 403, et la seule
  * garde qui compte reste celle de l'API, qu'aucun front ne contourne.
+ *
+ * ## Pourquoi sous `(liste)/` (#830)
+ *
+ * Le groupe ne change pas l'URL. Il donne à la liste un dossier où poser son
+ * squelette (`loading.tsx`) sans envelopper la fiche voisine, dont le 404 doit
+ * partir avant tout squelette — voir `components/admin-screen-skeleton.tsx`.
  */
 
 export const dynamic = 'force-dynamic';

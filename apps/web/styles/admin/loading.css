@@ -1,0 +1,64 @@
+/*
+ * Admin — squelette d'écran (#830)
+ * =============================================================================
+ *
+ * Ce que les `loading.tsx` des écrans du back-office peignent
+ * (`components/admin-screen-skeleton.tsx`) entre le clic dans le rail et l'arrivée de
+ * l'écran. La forme est celle que partagent les écrans du back-office — un
+ * titre, une barre d'outils, une carte de lignes denses — et les mesures sont
+ * celles de leurs vraies classes : le titre à la taille de `.spa-admin__title`,
+ * les contrôles et les lignes à la cible tactile, la carte dans
+ * `.spa-admin__section`. L'écran qui arrive se pose donc à peu près là où le
+ * squelette l'annonçait, sans saut de mise en page
+ * (`docs/design/appointments/states.md`, « Règles générales »).
+ *
+ * La gouttière est celle de `.spa-admin__content` : le squelette n'est qu'une
+ * enveloppe, il rend le rythme de la zone et pas un autre.
+ */
+
+.spa-admin-loading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  /* Un squelette ne se clique pas, même si l'écran réel le sera. */
+  pointer-events: none;
+}
+
+/*
+ * Le titre et les contrôles sont posés à même la zone de contenu, dont le fond
+ * est `--spa-color-surface-sunken` — la teinte exacte que la pulsation partagée
+ * de `base.css` atteint à mi-course (`--spa-color-skeleton-highlight`). Ils y
+ * disparaissaient donc toutes les 1,4 s, relevé à la recette de #830. Ils restent
+ * immobiles, à la couleur du squelette ; la carte, sur fond clair, pulse seule.
+ */
+.spa-admin-loading__title,
+.spa-admin-loading__control {
+  animation: none;
+}
+
+.spa-admin-loading__title {
+  block-size: calc(var(--spa-font-size-xl) * var(--spa-line-height-tight));
+  inline-size: min(16rem, 60%);
+}
+
+.spa-admin-loading__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
+}
+
+.spa-admin-loading__control {
+  block-size: var(--spa-target-min-size);
+  inline-size: 9rem;
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-admin-loading__heading {
+  block-size: calc(var(--spa-font-size-md) * var(--spa-line-height-normal));
+  inline-size: min(12rem, 50%);
+}
+
+.spa-admin-loading__row {
+  block-size: var(--spa-admin-row-height);
+  inline-size: 100%;
+}

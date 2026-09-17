@@ -2,7 +2,7 @@ import type { BookedAppointment } from '@spa/shared';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import AccountPage from '@/app/(account)/[tenantSlug]/compte/page';
+import AccountPage from '@/app/(account)/[tenantSlug]/compte/(liste)/page';
 
 import { service, tenant } from './fixtures';
 

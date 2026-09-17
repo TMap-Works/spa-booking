@@ -4,16 +4,16 @@ import Link from 'next/link';
 import { fetchOwnProfile, fetchServices } from '@/lib/api-client';
 import { formatDuration, formatMoney } from '@/lib/format';
 
-import { CatalogStatusBadge } from '../components/catalog-status-badge';
-import { ServiceActivationButton } from '../components/service-activation-button';
-import { adminLoadFailure, requireAdminAccessToken } from '../guard';
+import { CatalogStatusBadge } from '../../components/catalog-status-badge';
+import { ServiceActivationButton } from '../../components/service-activation-button';
+import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
 import {
   adminCatalogPath,
   adminCatalogPreviewPath,
   adminNewServicePath,
   adminServiceCategoriesPath,
   adminServicePath,
-} from '../paths';
+} from '../../paths';
 
 /**
  * Le catalogue des prestations (#52, premier critère).
@@ -44,6 +44,12 @@ import {
  * « Actions » disparaît donc pour ce rôle, comme sur la liste du personnel, et la
  * barre d'outils dit pourquoi plutôt que de faire disparaître sans un mot. La
  * seule garde qui compte reste celle de l'API, qu'aucun front ne contourne.
+ *
+ * ## Pourquoi sous `(liste)/` (#830)
+ *
+ * Le groupe ne change pas l'URL. Il donne à la liste un dossier où poser son
+ * squelette (`loading.tsx`) sans envelopper la fiche voisine, dont le 404 doit
+ * partir avant tout squelette — voir `components/admin-screen-skeleton.tsx`.
  */
 
 /**

@@ -49,8 +49,15 @@ function withoutComments(source: string): string {
 
 describe('la page reste un Server Component', () => {
   it('ni la page ni ses composants n’ouvrent sur une directive client', () => {
+    // La page vit sous le groupe `(vitrine)` depuis #830, avec son layout et son
+    // squelette : tous trois sont servis avant le contenu, et tous trois restent
+    // serveur. Sa frontière d'erreur, elle, est client par contrat de Next — elle
+    // n'est pas de la liste.
+    const vitrine = path.join(webRoot, 'app', '(booking)', '[tenantSlug]', '(vitrine)');
     const files = [
-      path.join(webRoot, 'app', '(booking)', '[tenantSlug]', 'page.tsx'),
+      path.join(vitrine, 'page.tsx'),
+      path.join(vitrine, 'layout.tsx'),
+      path.join(vitrine, 'loading.tsx'),
       path.join(webRoot, 'app', '(booking)', '[tenantSlug]', 'salon-data.ts'),
       ...readdirSync(salonComponents).map((name) => path.join(salonComponents, name)),
     ];

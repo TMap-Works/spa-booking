@@ -3,6 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+import { LinkPending } from '@/components/ui/link-pending';
+
 import { LogoutButton } from './logout-button';
 import { accountPath } from '../paths';
 
@@ -71,6 +73,8 @@ export function AccountNav({ tenantSlug }: AccountNavProps) {
         href={profile}
       >
         Modifier mes coordonnées
+        {/* Le lien cliqué se dit « en cours » jusqu'à l'arrivée de l'écran (#830). */}
+        <LinkPending />
       </Link>
       <LogoutButton tenantSlug={tenantSlug} />
     </nav>

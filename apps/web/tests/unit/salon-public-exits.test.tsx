@@ -1,7 +1,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import SalonPage from '@/app/(booking)/[tenantSlug]/page';
+import SalonPage from '@/app/(booking)/[tenantSlug]/(vitrine)/page';
 import BookingLayout from '@/app/(booking)/[tenantSlug]/reservation/layout';
 import { ApiClientError } from '@/lib/api-client';
 

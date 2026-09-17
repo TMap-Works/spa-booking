@@ -205,3 +205,52 @@
   font-weight: var(--spa-font-weight-medium);
   text-decoration: underline;
 }
+
+/* --- Vitrine en cours de chargement (#830) --------------------------------- */
+
+/*
+ * Ce que `(vitrine)/loading.tsx` peint le temps que la page arrive. Le squelette
+ * se range dans les vraies classes de la page — `.spa-salon`, la barre de
+ * sorties, `.spa-salon__header`, `.spa-salon__services` et des `.spa-card` en
+ * chargement —, si bien que ses gouttières sont celles de la vitrine. Les blocs
+ * ci-dessous n'ajoutent que les hauteurs : celle de la ligne que chacun
+ * remplace, à la taille de texte de l'élément réel.
+ */
+.spa-salon-loading {
+  pointer-events: none;
+}
+
+.spa-salon-loading__exit {
+  block-size: var(--spa-target-min-size);
+  inline-size: 8rem;
+}
+
+.spa-salon-loading__eyebrow {
+  block-size: var(--spa-font-size-sm);
+  inline-size: 11rem;
+}
+
+.spa-salon-loading__title {
+  block-size: calc(var(--spa-font-size-3xl) * var(--spa-line-height-tight));
+  inline-size: min(22rem, 80%);
+}
+
+.spa-salon-loading__lede {
+  block-size: var(--spa-font-size-lg);
+  inline-size: min(44rem, 100%);
+}
+
+.spa-salon-loading__lede--short {
+  inline-size: min(26rem, 70%);
+}
+
+.spa-salon-loading__action {
+  block-size: var(--spa-target-min-size);
+  inline-size: 9rem;
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-salon-loading__section-title {
+  block-size: calc(var(--spa-font-size-2xl) * var(--spa-line-height-tight));
+  inline-size: min(16rem, 60%);
+}
