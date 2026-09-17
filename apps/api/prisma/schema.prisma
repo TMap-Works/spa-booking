@@ -101,9 +101,41 @@ enum AppointmentCancelledBy {
 }
 
 /// Moyen d'encaissement au comptoir — CDC §1.4 « carte/espèces ».
+///
+/// **Cette énumération ne bouge pas avec #834**, et c'est la décision de
+/// l'[ADR 0014](../../../docs/adr/0014-carte-au-comptoir-par-tpe.md) : le moyen
+/// dit ce que la cliente a présenté — un billet ou une carte —, pas par quel
+/// tuyau la carte est passée. Ce second fait est porté par
+/// `PaymentCardChannel`, ci-dessous.
 enum PaymentMethod {
   CARD
   CASH
+}
+
+/// Par quel tuyau une carte est passée — #834, troisième critère.
+///
+/// ## Un canal, et non une valeur de plus dans `PaymentMethod`
+///
+/// L'issue laissait le choix entre les deux. C'est le canal qui est retenu,
+/// pour la raison que l'ADR 0014 développe : `method` est lu par des
+/// consommateurs qui n'ont pas à connaître le tuyau — la ventilation du revenu
+/// par moyen, le libellé du reçu, le filtre de rapprochement — et ajouter
+/// `CARD_TERMINAL` à l'énumération aurait **changé le sens** de leur filtre
+/// `CARD` en silence. Les deux faits sont orthogonaux ; le schéma les sépare.
+///
+/// | Valeur | Ce qu'elle désigne |
+/// |---|---|
+/// | `STRIPE` | l'intention en ligne du tunnel public — le seul chemin où Stripe touche la carte |
+/// | `TERMINAL` | le **TPE autonome** du salon : celui de sa banque, non relié à l'application |
+///
+/// `payments_card_channel_check` interdit d'en porter un ailleurs que sur une
+/// carte. Il n'en **exige** pas de toute carte, et la migration dit pourquoi :
+/// l'exiger aurait demandé de reprendre les lignes existantes, et un `UPDATE`
+/// sur une ligne antérieure à #817 se heurte à `payments_sale_required_check`,
+/// posé `NOT VALID`.
+enum PaymentCardChannel {
+  STRIPE
+  TERMINAL
 }
 
 enum PaymentStatus {
@@ -1567,6 +1599,68 @@ model Payment {
   method PaymentMethod
   status PaymentStatus @default(PENDING)
 
+  /// Par quel tuyau la carte est passée — #834, troisième critère.
+  ///
+  /// `STRIPE` pour l'intention du tunnel en ligne, `TERMINAL` pour le TPE
+  /// autonome du salon. **Nul sur les espèces** :
+  /// `payments_card_channel_check` interdit qu'un billet se voie attribuer un
+  /// tuyau, faute de quoi le rapprochement compterait un passage au terminal qui
+  /// n'a pas eu lieu.
+  ///
+  /// ## Une carte au canal nul, et pourquoi elle reste représentable
+  ///
+  /// La contrainte est une **implication**, pas une équivalence : elle n'exige
+  /// pas le canal de toute carte. La raison est écrite dans la migration —
+  /// l'exiger aurait demandé de reprendre les lignes `CARD` existantes, et un
+  /// `UPDATE` sur une ligne antérieure à #817 se heurte à
+  /// `payments_sale_required_check`, posé `NOT VALID`, qui s'applique à toute
+  /// mise à jour d'une ligne ancienne. La migration aurait échoué sur toute base
+  /// où `pos.sale-backfill.ts` n'a pas tourné, et la CI ne l'aurait pas vu — sa
+  /// base est neuve, donc vide.
+  ///
+  /// Une carte sans canal ne peut donc qu'être **antérieure à #834**, c'est-à-dire
+  /// une intention Stripe : le TPE n'existait pas, et les deux seuls chemins
+  /// d'écriture d'une carte posent désormais leur canal. C'est ce que
+  /// `settlementMeanOf` énonce en la repliant sur `CARD_ONLINE`.
+  cardChannel PaymentCardChannel? @map("card_channel")
+
+  /// Le numéro du ticket ou de l'autorisation du TPE — #834, deuxième critère.
+  ///
+  /// **Ce n'est pas une donnée de carte**, et c'est la seule raison pour
+  /// laquelle la colonne peut exister : une référence de transaction de
+  /// terminal est un identifiant opaque émis par la banque du salon, du même
+  /// rang qu'un `pi_…` (payments-stripe §1). Ce qu'elle ne doit jamais porter
+  /// — un PAN dicté par la cliente — est refusé en 400 à la frontière HTTP par
+  /// le contrôle de Luhn de `terminal-reference.ts`, et la borne de 32
+  /// caractères alphanumériques y ajoute une seconde barrière de forme.
+  ///
+  /// Facultative : le caissier n'a pas toujours le ticket du terminal sous la
+  /// main, et refuser le règlement pour cela aurait bloqué la caisse sur un
+  /// champ de confort. `payments_terminal_reference_check` interdit en revanche
+  /// d'en porter une ailleurs que sur un règlement au terminal.
+  terminalReference String? @map("terminal_reference") @db.VarChar(32)
+
+  /// La clé d'idempotence du règlement de comptoir — #834, quatrième critère.
+  ///
+  /// Elle est choisie par l'appelant et **exigée** par
+  /// `POST /sales/{saleId}/payments` : cette route n'est pas rejouable par
+  /// construction — deux règlements de 25,00 € sur le même ticket sont deux
+  /// gestes distincts —, si bien que rien d'autre ne peut distinguer la double
+  /// soumission d'un double geste. C'est l'appelant qui le sait, et la clé est
+  /// la façon dont il le dit.
+  ///
+  /// L'unique est **par ticket** et non par établissement
+  /// (`@@unique([tenantId, saleId, idempotencyKey])`) : la clé dédoublonne une
+  /// soumission à *ce* ticket, et la même clé employée sur deux ventes décrit
+  /// deux opérations différentes. La portée par établissement aurait exigé un
+  /// code d'erreur de conflit inter-ventes que le contrat partagé ne porte pas.
+  ///
+  /// Nulle sur tout ce que le comptoir n'inscrit pas par cette route —
+  /// l'intention en ligne, le règlement d'un rendez-vous par
+  /// `POST /payments/cash`, et les lignes antérieures. PostgreSQL admettant
+  /// autant de nuls qu'on veut sous un unique, elles ne se gênent pas.
+  idempotencyKey String? @map("idempotency_key") @db.VarChar(128)
+
   /// Références Stripe. `provider_payment_intent_id` est unique **par tenant**,
   /// ce qui rend l'écriture idempotente une fois le tenant connu — mais un
   /// webhook Stripe n'arrive qu'avec `pi_xxx`. Le module `payments` devra donc
@@ -1588,6 +1682,10 @@ model Payment {
 
   @@unique([tenantId, appointmentId])
   @@unique([tenantId, providerPaymentIntentId])
+  // La clé d'idempotence du règlement de comptoir — #834. Portée au **ticket**,
+  // voir `idempotencyKey` ci-dessus : c'est ce qui rend la double soumission
+  // détectable sans qu'une même clé employée sur deux ventes devienne un conflit.
+  @@unique([tenantId, saleId, idempotencyKey])
   // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
   // Posé par #63 : `payment_refunds` référence l'encaissement, et la référence
   // doit embarquer le tenant pour qu'un remboursement d'un salon ne puisse pas
