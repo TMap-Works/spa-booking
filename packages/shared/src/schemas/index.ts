@@ -258,6 +258,25 @@ export { MAX_REPORT_EXPORT_TTL_SECONDS, reportExportSchema } from './reporting';
 export type { ReportExport } from './reporting';
 
 export {
+  myStaffAgendaSchema,
+  myStaffAppointmentClientSchema,
+  myStaffAppointmentSchema,
+  myStaffProfileSchema,
+  myStaffRangeQuerySchema,
+  myStaffScheduleSchema,
+  UTC_OFFSET_MINUTES_MAX,
+  UTC_OFFSET_MINUTES_MIN,
+} from './staff-portal';
+export type {
+  MyStaffAgenda,
+  MyStaffAppointment,
+  MyStaffAppointmentClient,
+  MyStaffProfile,
+  MyStaffRangeQuery,
+  MyStaffSchedule,
+} from './staff-portal';
+
+export {
   openingHoursEntrySchema,
   openingHoursOverlap,
   openingHoursSchema,

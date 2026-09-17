@@ -82,6 +82,7 @@ const EXPECTED_EXPORTS = [
   'publicTenantSchema',
   'saleReceiptSchema',
   'formatReceiptNumber',
+  'myStaffAgendaSchema',
 ] as const;
 
 /**

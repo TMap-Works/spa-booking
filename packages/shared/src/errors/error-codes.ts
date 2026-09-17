@@ -280,6 +280,26 @@ export const APPOINTMENTS_ERROR_CODES = {
    * calendrier.
    */
   APPOINTMENT_RANGE_TOO_WIDE: 'APPOINTMENT_RANGE_TOO_WIDE',
+  /**
+   * Le compte connecté n'a **aucune fiche praticien** dans cet établissement —
+   * les trois routes de l'espace praticien, `GET /v1/me/*` (#811). **404**.
+   *
+   * C'est le cas ordinaire d'un `MANAGER` ou d'un `ADMIN` qui tient le salon
+   * sans y donner de soins : il a un compte, il n'a pas d'agenda. Le refus n'est
+   * donc pas une erreur d'autorisation — le rôle est suffisant, c'est la
+   * ressource « mon agenda » qui n'existe pas —, et c'est pour cela qu'il sort
+   * en 404 et non en 403.
+   *
+   * Distinct de `NOT_FOUND` parce qu'il est **actionnable** : le front sait
+   * qu'il doit proposer « rattacher une fiche praticien à ce compte » plutôt
+   * qu'afficher « introuvable » sur un écran vide. Il n'apprend rien d'un autre
+   * établissement : il ne dit que ce que l'appelant sait déjà de lui-même.
+   *
+   * Déclaré dans la famille d'`appointments` parce que c'est ce module qui le
+   * lève — l'espace praticien y est servi, la fiche n'étant qu'une des trois
+   * matières qu'il assemble.
+   */
+  STAFF_PROFILE_NOT_FOUND: 'STAFF_PROFILE_NOT_FOUND',
 } as const;
 
 /**
