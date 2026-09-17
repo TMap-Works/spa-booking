@@ -1,10 +1,10 @@
-import { Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 
 import { StructuredLogger } from '../../common/logging/structured-logger';
 import { TenantContextService } from '../../common/tenant/tenant-context.service';
 import type { AppointmentCreatedEvent } from '../appointments/events/appointment-created.event';
 import { AppointmentEvents } from '../appointments/events/appointment-events';
-import { NotificationDispatchService } from './notification-dispatch.service';
+import { NOTIFICATION_PUBLISHER, type NotificationPublisher } from './notification-publisher';
 import { NotificationsRepository } from './notifications.repository';
 import {
   appointmentDedupeKey,
@@ -38,11 +38,30 @@ import {
  * garde de son émetteur est un abonné dont on ne sait plus, en le lisant, s'il
  * est sûr. La garde du bus est une seconde barrière, pas la première.
  *
- * La conséquence est explicite : **un envoi qui échoue ne remonte nulle part.**
- * Il laisse une ligne `FAILED` en base, visible au back-office
- * (`GET /notifications`), et un journal d'erreur. C'est le comportement voulu
- * tant que la publication est en mémoire ; le jour où elle passera par SQS,
- * c'est la file qui reprendra, et cette classe deviendra le consommateur.
+ * La conséquence est explicite : **une remise qui échoue ne remonte nulle
+ * part.** Elle laisse un journal d'erreur, et — quand l'expédition a lieu dans
+ * le processus faute de file branchée — une ligne `FAILED` en base, visible au
+ * back-office (`GET /notifications`).
+ *
+ * ## Il **publie** depuis #799, il n'expédie plus
+ *
+ * `NOTIFICATION_PUBLISHER` a pris la place de `NotificationDispatchService`, et
+ * c'est le septième critère d'acceptation de #799 : « l'API publie dans la file
+ * au lieu d'expédier en processus […] conformément à *une réservation ne doit
+ * jamais échouer parce qu'un e-mail n'est pas parti* » (CDC §4.8). Ce qui
+ * changeait ici n'est pas ce que l'abonné décide — les canaux, les clés, les
+ * types sont les mêmes — mais **jusqu'où il va** : il compose et remet, la
+ * Lambda d'envoi fait le reste en rappelant l'API.
+ *
+ * Le gain n'est pas seulement une latence : le bus est en mémoire et n'a
+ * **aucun rejeu**. Un envoi qui échouait ici ne repartait jamais, là où un
+ * message de file est rejoué jusqu'à cinq fois avant sa DLQ, dont l'alarme
+ * parle (notifications §4).
+ *
+ * Sur un déploiement sans `NOTIFICATION_QUEUE_URL` — un poste local, une suite
+ * d'intégration — le publieur retombe sur l'expédition en processus et la
+ * conduite est celle d'avant, ligne `FAILED` comprise. Voir
+ * `notification-publisher.ts`.
  *
  * ## La portée de tenant est rouverte explicitement
  *
@@ -67,7 +86,7 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
 
   public constructor(
     private readonly events: AppointmentEvents,
-    private readonly dispatch: NotificationDispatchService,
+    @Inject(NOTIFICATION_PUBLISHER) private readonly publisher: NotificationPublisher,
     private readonly repository: NotificationsRepository,
     private readonly tenants: TenantContextService,
     private readonly logger: StructuredLogger,
@@ -110,7 +129,7 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
         // dépendre l'ordre des lignes de l'ordonnancement, ce que le journal du
         // back-office affiche.
         for (const channel of channels) {
-          await this.dispatchOne(event, channel);
+          await this.publishOne(event, channel);
         }
       });
     } catch (error: unknown) {
@@ -139,7 +158,7 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
   }
 
   /**
-   * Un canal, un message.
+   * Un canal, une enveloppe.
    *
    * L'échec est **absorbé ici**, canal par canal, et pas seulement au niveau du
    * `handle` : un SMS qui échoue ne doit pas empêcher l'e-mail suivant de
@@ -150,14 +169,16 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
    * `scheduledFor: null` : la confirmation est immédiate. Le champ existe pour
    * le rappel J-1, qui est le seul message planifié du MVP.
    */
-  private async dispatchOne(
+  private async publishOne(
     event: AppointmentCreatedEvent,
     channel: NotificationChannel,
   ): Promise<void> {
     const message: NotificationMessage = {
-      // Le même identifiant que celui dont `handle` ouvre la portée. Il ne sert
-      // à rien tant que la publication est en mémoire ; il sert à tout le jour où
-      // elle passe par SQS, et c'est justement ce que #71 met en service.
+      // Le même identifiant que celui dont `handle` ouvre la portée. C'est la
+      // seule chose de l'enveloppe que le consommateur ne relise pas : hors de
+      // toute requête HTTP, il n'a ni jeton ni `AsyncLocalStorage` dont hériter
+      // sa portée de tenant. Depuis #799, ce champ n'est plus une prévoyance —
+      // il est ce que la route interne emploie pour ouvrir la sienne.
       tenantId: event.tenantId,
       dedupeKey: appointmentDedupeKey(event.appointmentId, 'BOOKING_CONFIRMATION', channel),
       appointmentId: event.appointmentId,
@@ -168,7 +189,7 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
     };
 
     try {
-      await this.dispatch.dispatch(message);
+      await this.publisher.publish(message);
     } catch (error: unknown) {
       this.failed(event, error, channel);
     }
@@ -185,7 +206,7 @@ export class BookingConfirmationListener implements OnModuleInit, OnModuleDestro
     error: unknown,
     channel?: NotificationChannel,
   ): void {
-    this.logger.error('confirmation de réservation non expédiée', {
+    this.logger.error("confirmation de réservation non remise à la chaîne d'envoi", {
       appointmentId: event.appointmentId,
       ...(channel === undefined ? {} : { channel }),
       error: error instanceof Error ? error.message : `erreur non standard (${typeof error})`,

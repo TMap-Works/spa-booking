@@ -134,6 +134,21 @@ export interface FakeNotificationsRepository {
    */
   emailSuppressed: boolean;
   /**
+   * La coordonnée que l'**expéditeur** relit juste avant d'appeler SES ou SNS
+   * (#799).
+   *
+   * Distincte de `contact`, et la distinction est tout l'intérêt : `contact` est
+   * ce que le **producteur** consulte pour décider des canaux — deux booléens,
+   * aucune donnée personnelle — là où celle-ci est la seule lecture du module
+   * qui rende une adresse et un numéro. Les tenir séparés permet à une suite de
+   * poser ce qu'aucune requête réelle ne montrerait autrement : un compte
+   * joignable à la publication dont le numéro est devenu illisible à l'envoi.
+   *
+   * `null` fait disparaître le compte — anonymisé, ou d'un autre établissement,
+   * ce que le client scopé traite de la même façon.
+   */
+  address: { email: string; phone: string | null } | null;
+  /**
    * Le compte du praticien du rendez-vous — #72.
    *
    * `null` fait disparaître la ligne `staff`, ce que le client scopé produit
@@ -251,12 +266,16 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
 
   const state: {
     contact: { hasEmail: boolean; hasSms: boolean } | null;
+    address: { email: string; phone: string | null } | null;
     reminder: ReminderEligibility | null;
     emailSuppressed: boolean;
     staffUserId: string | null;
     staffLookupError: Error | null;
   } = {
     contact: { hasEmail: true, hasSms: true },
+    // Une adresse et un numéro composable, cohérents avec le `contact` par
+    // défaut : les suites qui ne parlent pas de coordonnées n'ont rien à régler.
+    address: { email: 'cliente@example.test', phone: '+261341234567' },
     emailSuppressed: false,
     staffUserId: 'staff-user',
     staffLookupError: null,
@@ -270,6 +289,9 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
 
   const findRecipientContact = (): Promise<{ hasEmail: boolean; hasSms: boolean } | null> =>
     Promise.resolve(state.contact);
+
+  const findRecipientAddress = (): Promise<{ email: string; phone: string | null } | null> =>
+    Promise.resolve(state.address);
 
   const findReminderEligibility = (): Promise<ReminderEligibility | null> =>
     Promise.resolve(state.reminder);
@@ -286,6 +308,7 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     markSent,
     markFailed,
     findRecipientContact,
+    findRecipientAddress,
     findReminderEligibility,
     isEmailSuppressed,
     findStaffRecipient,
@@ -299,6 +322,12 @@ export function fakeNotificationsRepository(): FakeNotificationsRepository {
     },
     set contact(value) {
       state.contact = value;
+    },
+    get address() {
+      return state.address;
+    },
+    set address(value) {
+      state.address = value;
     },
     get reminder() {
       return state.reminder;

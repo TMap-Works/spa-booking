@@ -15,8 +15,78 @@ canaux, rien de plus — le marketing et les campagnes sont hors périmètre MVP
 | #72 | L'**avis d'annulation** — abonnement à `appointment.cancelled`, modèles de plateforme e-mail et SMS, mention de l'origine de la décision, et résolution du destinataire selon d'où elle vient |
 | #534 | Les **deux publics** de l'avis d'annulation — l'index d'idempotence remplacé pour porter le destinataire, la parité du dépôt avec sa nouvelle définition, la résolution de deux destinataires, et le CTA du modèle e-mail réservé à la cliente |
 | #493 | La preuve **comportementale** de l'idempotence — huit `claim()` parallèles contre un vrai PostgreSQL, jouées par `npm run test:concurrency` |
+| #799 | Les **passerelles SES et SNS** — l'expéditeur réel derrière `NOTIFICATION_SENDER`, la publication des abonnés du bus sur SQS au lieu d'une expédition en processus, et `POST /api/v1/interne/notifications/dispatch`, la route que la Lambda d'envoi appelle |
 
-À venir : les passerelles SES et SNS.
+## La chaîne complète, depuis #799
+
+```
+POST /appointments ──► appointment.created ──► abonné ──► NOTIFICATION_PUBLISHER
+        (rend la main)                                            │
+                                                                  ▼
+                                              spa-{env}-notifications (SQS)
+                                                                  │
+                                                                  ▼
+                                              spa-{env}-notification-dispatcher
+                                                                  │  POST { messageId, message }
+                                                                  ▼
+                               POST /api/v1/interne/notifications/dispatch
+                                                                  │
+                                       portée de tenant sur message.tenantId
+                                                                  │
+                                    PENDING ──► SES / SNS ──► SENT
+```
+
+Les trois messages du CDC §1.4 partent réellement. Ce qui a changé et ce qui
+n'a pas changé se résume en deux lignes :
+
+- **changé** : l'abonné au bus s'arrête à la publication, et le port
+  d'expédition appelle AWS au lieu de refuser ;
+- **inchangé** : l'ordre d'écriture `PENDING → fournisseur → SENT`, l'index
+  d'idempotence, le rendu, la reprise après échec, le choix des canaux et les
+  clés de livraison. C'est ce que #68 promettait en nommant la frontière —
+  « rien d'autre du module n'aura à changer ».
+
+### Les codes que rend la route interne, et ce qu'ils font à la file
+
+Le contrat ne se décide pas ici : il est écrit dans
+`infra/terraform/modules/notifications/README.md` et la Lambda le traduit déjà.
+
+| Ce qui s'est passé | Code | Sort du message SQS |
+|---|---|---|
+| le message est parti | `200` | acquitté, compté `Sent` |
+| rejeu, adresse supprimée, rappel sans objet | `204` | acquitté, compté `Skipped` |
+| enveloppe non conforme | `400` | acquitté, `PermanentFailures` |
+| jeton absent ou faux | `401` | **rendu à SQS** — un refus d'authentification ne dit rien du message |
+| le rendez-vous annoncé n'existe plus | `404` | acquitté, `PermanentFailures` |
+| destinataire injoignable — adresse vide, numéro non normalisable | `422` | acquitté, `PermanentFailures` |
+| aucun expéditeur configuré, modèle absent, base injoignable | `5xx` | **rendu à SQS**, rejoué puis DLQ |
+
+### Le défaut reste fermé, canal par canal
+
+Sans `SES_FROM_EMAIL`, l'e-mail est refusé en 503 ; sans `SNS_SMS_SENDER_ID`, le
+SMS l'est. La ligne finit en `FAILED`, donc **hors** de
+`notifications_live_once`, et le message redevient envoyable le jour où la
+passerelle est branchée — jamais un `SENT` silencieux.
+
+Le refus est **par canal** parce que les deux capacités s'acquièrent séparément :
+SES se vérifie par DNS et sort du bac à sable, SNS demande un plafond de dépense
+et un sender ID enregistré. Un environnement où l'e-mail part et le SMS pas est
+l'état normal d'une mise en service.
+
+Les trois variables — `SES_FROM_EMAIL`, `SNS_SMS_SENDER_ID`,
+`NOTIFICATION_QUEUE_URL` — sont lues au **premier usage** et non au démarrage :
+`AppModule` monte les huit modules métier, et une adresse mal formée ne doit pas
+faire échouer l'amorçage de suites qui ne parlent que de créneaux. Sans
+`NOTIFICATION_QUEUE_URL`, les abonnés retombent sur l'expédition en processus —
+c'est le mode de marche local, et le journal d'envois y reste peuplé.
+
+### Ce que #799 laisse à faire ailleurs
+
+Deux démarches AWS, aucune ligne de code (#590) : la sortie du **bac à sable
+SES**, sans laquelle rien n'atteint une adresse non vérifiée, et
+l'**enregistrement du sender ID** auprès des opérateurs de Madagascar et de
+France (notifications §5). Les deux sont décrites, commande comprise, dans
+`infra/terraform/modules/notifications/README.md`.
 
 ## Les modèles de message (#69)
 
@@ -619,8 +689,13 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
 | `reminder-sweep.repository.ts` | Le balayage : la **seule** injection du client non scopé du module |
 | `reminder-sweep.service.ts` | Une portée par salon, une enveloppe par canal, un départ qui tourne |
 | `internal-caller.guard.ts` | La garde à jeton partagé des routes internes |
-| `notifications.config.ts` | Le jeton d'appel interne, résolu et validé |
+| `notifications.config.ts` | Le jeton d'appel interne, et les trois réglages AWS lus au premier usage |
 | `notification-sender.ts` | Le **port** vers SES/SNS, et son implémentation par défaut qui refuse |
+| `aws-notification.sender.ts` | L'expéditeur réel : le canal décide, la coordonnée se relit, le défaut reste fermé |
+| `ses-email.gateway.ts` | La frontière avec SES — une méthode, pour que le double de test soit honnête |
+| `sns-sms.gateway.ts` | La frontière avec SNS — `Transactional`, sender ID, E.164 déjà normalisé |
+| `notification-publisher.ts` | Le port de publication : SQS quand la file est là, expédition en processus sinon |
+| `notification-dispatch.controller.ts` | `POST /interne/notifications/dispatch` — la route que la Lambda d'envoi appelle |
 | `notification-renderer.ts` | Le **port** de rendu : modèle du salon d'abord, défaut de la plateforme sinon |
 | `notification-template.ts` | Le moteur — substitution, sections, échappement, mesure GSM-7 / UCS-2 |
 | `notification-default-templates.ts` | Les modèles **par défaut** de la plateforme, versionnés en code |
@@ -639,9 +714,13 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
 - **Aucune reprise maison.** Un échec remonte à SQS, qui réessaie avec son
   backoff natif avant la DLQ (notifications §4). Boucler ici doublerait la file
   et masquerait la profondeur de DLQ sur laquelle repose l'alarme CloudWatch.
-- **Aucun appel depuis un chemin de requête HTTP.** « L'API ne parle jamais
-  directement à SES ou SNS » (notifications §1) : une réservation ne doit pas
-  échouer parce qu'un e-mail n'est pas parti.
+- **Aucun appel à SES ou SNS depuis le chemin de requête d'une réservation.**
+  « Une réservation ne doit jamais échouer parce qu'un e-mail n'est pas parti »
+  (CDC §4.8) : l'abonné au bus **publie** et rend la main, et l'appel au
+  fournisseur a lieu à l'autre bout de la file, dans la requête interne que la
+  Lambda d'envoi déclenche (#799). C'est bien l'API qui parle à SES — il faut
+  qu'elle le fasse, l'ordre d'écriture et l'index d'idempotence lui appartenant
+  — mais jamais depuis la requête d'une cliente.
 - **Aucune coordonnée en base ni dans les messages de file.** Le destinataire est
   désigné par l'identifiant de son compte ; l'adresse se relit dessus au moment
   de l'envoi (CDC §5.1, notifications §7).
@@ -657,9 +736,15 @@ la relecture et l'écriture, et c'est `notifications_live_once` qui l'arrête.
   « Annuler ». Une URL signée qui annulerait en un clic ajouterait un secret à
   faire tourner, une durée de validité à choisir et une route publique de plus :
   c'est une décision de conception à part entière, qui appartient à son issue.
-- **Aucun envoi réel.** `UnconfiguredNotificationSender` refuse tout en 503 tant
-  que les passerelles SES et SNS ne sont pas branchées. Le refus laisse la ligne
-  `FAILED`, donc reprenable — ce qu'un faux `SENT` aurait rendu impossible.
+- **Aucun envoi sur un environnement non configuré.** Sans `SES_FROM_EMAIL` ni
+  `SNS_SMS_SENDER_ID`, l'expéditeur refuse en 503, canal par canal. Le refus
+  laisse la ligne `FAILED`, donc reprenable — ce qu'un faux `SENT` aurait rendu
+  impossible. C'est aussi ce que voit une suite de test : aucune n'ouvre de
+  connexion vers AWS, les deux passerelles étant des paramètres substituables
+  (notifications §8).
+- **Aucune démarche AWS.** La sortie du bac à sable SES et l'enregistrement du
+  sender ID sont des dossiers instruits par un humain, pas du code : ils
+  relèvent de la mise en production (#590).
 
 ## Ce que les tests prouvent
 

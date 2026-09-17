@@ -7,6 +7,7 @@ import {
 import { AppointmentEvents } from '../../appointments/events/appointment-events';
 import { CancellationNoticeListener } from '../cancellation-notice.listener';
 import { NotificationDispatchService } from '../notification-dispatch.service';
+import { InProcessNotificationPublisher } from '../notification-publisher';
 import {
   countingSender,
   fakeNotificationsRepository,
@@ -74,7 +75,11 @@ function build(behaviour: readonly (string | Error)[] = []) {
 
   const listener = new CancellationNoticeListener(
     events,
-    dispatch,
+    // L'implémentation servie quand aucune file n'est branchée (#799) : ce que
+    // cette suite établit est le **branchement** de l'écouteur — destinataires,
+    // canaux, clés de livraison —, pas le transport. Monter le publieur SQS
+    // aurait doublé un client AWS pour ne rien prouver de plus.
+    new InProcessNotificationPublisher(dispatch),
     repository.repository,
     tenants,
     logger.logger,
