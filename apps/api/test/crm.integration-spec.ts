@@ -71,7 +71,10 @@ describe('CRM — fichier client', () => {
         firstName: 'Alice',
         lastName: 'Durand',
         email: 'alice@example.test',
-        phone: '+261 34 12 345 67',
+        // Envoyé « +261 34 12 345 67 », rendu en E.164 : c'est la forme sous
+        // laquelle l'API écrit tout numéro depuis #824. L'écart entre ce qui est
+        // envoyé (l. 58) et ce qui est rendu **est** la normalisation.
+        phone: '+261341234567',
         isActive: true,
         internalNote: 'allergique au monoï',
       });
@@ -346,7 +349,10 @@ describe('CRM — fichier client', () => {
       expect(response.body).toMatchObject({
         firstName: 'Alice',
         lastName: 'Martin',
-        phone: '+261 34 12 345 67',
+        // Le numéro posé à la création, inchangé — donc dans la forme E.164 sous
+        // laquelle il a été écrit (#824). Un `PATCH` qui ne porte pas `phone`
+        // n'y touche pas, et ne le renormalise pas non plus.
+        phone: '+261341234567',
         internalNote: 'allergique au monoï',
       });
     });

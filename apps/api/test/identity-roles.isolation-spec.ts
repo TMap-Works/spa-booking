@@ -483,7 +483,9 @@ describe('Rôles, permissions et isolation — #22', () => {
       expect(response.body).toMatchObject({
         id: holder,
         firstName: 'Camille',
-        phone: '+261 34 12 345 67',
+        // Envoyé « +261 34 12 345 67 » juste au-dessus, rendu — et écrit — en
+        // E.164 (#824). La mise en forme lisible revient au front.
+        phone: '+261341234567',
       });
 
       const written = harness.identity.users.find((user) => user.id === holder);
