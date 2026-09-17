@@ -8,6 +8,7 @@ import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
+import { TextArea } from '@/components/ui/textarea';
 import { BOOKING_CONSENT, ConsentField, consentSchema } from '@/lib/booking/consent';
 import type { ContactDraft } from '@/lib/booking/draft';
 
@@ -235,7 +236,22 @@ export function ContactStep({ contact, tenantSlug, onSave, onBack, onSubmit }: C
         error={errors.phone === undefined ? undefined : PHONE_FORMAT_ERROR}
         {...register('phone')}
       />
-      <Field
+      {/* Le seul champ long du formulaire, donc le seul en `TextArea` (#748).
+          Son contrat est `longTextSchema` — deux mille caractères — et une
+          phrase d'allergie tapée à 360 px défilait dans un `<input>` d'une
+          ligne : la cliente ne pouvait plus relire le début de ce qu'elle
+          écrivait. Le back-office emploie déjà `TextArea` pour le même objet
+          (« Note jointe au rendez-vous », `appointment-panel.tsx`) et pour cinq
+          autres champs longs ; le parcours client était le seul à ne pas s'en
+          servir.
+
+          Rien d'autre ne change : `TextArea` ne déclare aucun style propre et
+          porte les classes de `.spa-field`, donc le même cadre, le même anneau
+          de focus, le même contraste et la même erreur sous le contrôle. Et pas
+          de `rows` : les trois lignes par défaut du composant, comme les quatre
+          autres champs longs du produit qui ne le précisent pas — seuls ceux
+          d'un panneau contraint en hauteur y dérogent. */}
+      <TextArea
         id="clientNote"
         label="Un mot pour le salon"
         hint="Allergie, préférence, retard annoncé — facultatif."
