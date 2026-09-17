@@ -173,14 +173,17 @@ export function toSettlementRequest(dto: SettleSaleDto): SettlementRequest {
   };
 }
 
-/** Le règlement d'un rendez-vous : espèces, et le reste dû par défaut. */
-export function toCashSettlementRequest(dto: CreateCashPaymentDto): SettlementRequest {
-  return {
-    method: 'CASH',
-    ...(dto.tenderedAmountMinor === undefined
-      ? {}
-      : { tenderedAmountMinor: dto.tenderedAmountMinor }),
-  };
+/**
+ * Le règlement d'un rendez-vous : espèces, et **tout le reste dû**.
+ *
+ * Aucune part, aucun billet tendu : le geste de cette route est « solder ce
+ * rendez-vous », et le montant est celui que le serveur a composé. Le règlement
+ * partiel et la monnaie rendue vivent sur `POST /sales/{saleId}/payments`, qui
+ * rend l'enveloppe où l'un et l'autre se lisent — celle-ci rend la ligne
+ * d'encaissement, comme depuis #62.
+ */
+export function toCashSettlementRequest(_dto: CreateCashPaymentDto): SettlementRequest {
+  return { method: 'CASH' };
 }
 
 /** Les lignes ajoutées au ticket d'un rendez-vous, ou aucune. */

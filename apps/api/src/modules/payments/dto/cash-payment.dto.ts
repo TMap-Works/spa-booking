@@ -4,24 +4,15 @@ import {
   ArrayMaxSize,
   IsArray,
   IsIn,
-  IsInt,
   IsOptional,
   IsUUID,
-  Max,
-  Min,
   Validate,
   ValidateNested,
 } from 'class-validator';
 
 import { PAYMENT_METHODS, PAYMENT_STATUSES } from '../payments.types';
 import type { PaymentHistoryFilter, PaymentTransaction } from '../payments.types';
-import {
-  AtMostOneTipLine,
-  MAX_AMOUNT_MINOR,
-  MoneyDto,
-  SaleLineDto,
-  toMoneyDto,
-} from './sale.dto';
+import { AtMostOneTipLine, MoneyDto, SaleLineDto, toMoneyDto } from './sale.dto';
 import { IsOffsetDateTime, PageQueryDto, toPageBounds, toWindowBound } from './validation';
 
 /**
@@ -93,19 +84,6 @@ export class CreateCashPaymentDto {
   @Type(() => SaleLineDto)
   public lines?: SaleLineDto[];
 
-  @ApiPropertyOptional({
-    minimum: 1,
-    maximum: MAX_AMOUNT_MINOR,
-    description:
-      'Ce que la cliente a tendu. Omis, le règlement porte exactement le reste ' +
-      'dû ; fourni et plus grand, la différence revient en `change` — c’est la ' +
-      'monnaie, jamais une recette (#817).',
-  })
-  @IsOptional()
-  @IsInt({ message: 'tenderedAmountMinor : entier attendu, dans la plus petite unité monétaire' })
-  @Min(1, { message: 'tenderedAmountMinor : un billet nul ne se tend pas' })
-  @Max(MAX_AMOUNT_MINOR)
-  public tenderedAmountMinor?: number;
 }
 
 /**

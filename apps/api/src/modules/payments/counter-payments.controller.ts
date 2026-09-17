@@ -17,17 +17,13 @@ import { CurrentUser } from '../identity/jwt-auth.guard';
 import {
   CreateCashPaymentDto,
   ListPaymentsQueryDto,
+  PaymentTransactionDto,
   PaymentTransactionPageDto,
   toPaymentHistoryFilter,
   toPaymentTransactionDto,
 } from './dto/cash-payment.dto';
 import { CreateRefundDto, RefundDto, toRefundDto } from './dto/refund.dto';
-import {
-  SaleSettlementDto,
-  toCashSettlementRequest,
-  toExtraLines,
-  toSaleSettlementDto,
-} from './dto/settlement.dto';
+import { toCashSettlementRequest, toExtraLines } from './dto/settlement.dto';
 import { PaymentsHistoryService } from './payments-history.service';
 import { RefundsService } from './refunds.service';
 import { SettlementService } from './settlement.service';
@@ -109,9 +105,9 @@ export class CounterPaymentsController {
    * carte est encore en vol — le comptoir tranche alors, plutôt que d'écraser
    * une pièce comptable.
    *
-   * Un billet plus petit que le reste dû n'est pas un refus : c'est un
-   * règlement partiel, et la réponse dit ce qui reste. Un billet plus grand
-   * n'en est pas un non plus : la différence revient en `change`.
+   * Elle solde **tout le reste dû** : c'est le geste « encaisser ce
+   * rendez-vous ». Le règlement partiel et la monnaie rendue relèvent de
+   * `POST /sales/{saleId}/payments`, qui porte l'enveloppe où ils se lisent.
    *
    * Un rendez-vous **non confirmé** est réglable, et c'est une décision écrite :
    * voir `UNSETTLEABLE_APPOINTMENT_STATUS` dans `settlement.service.ts`.
@@ -123,7 +119,7 @@ export class CounterPaymentsController {
   @HttpCode(HttpStatus.OK)
   @AuthAtLeast('STAFF')
   @ApiOperation({ summary: 'Composer la vente d’un rendez-vous et la régler en espèces' })
-  @ApiOkResponse({ type: SaleSettlementDto })
+  @ApiOkResponse({ type: PaymentTransactionDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
   @ApiNotFoundResponse({
     description: 'Aucun rendez-vous de cet établissement ne porte cet identifiant.',
@@ -135,15 +131,21 @@ export class CounterPaymentsController {
   public async settleInCash(
     @Body() body: CreateCashPaymentDto,
     @CurrentUser() operator: AuthenticatedUser,
-  ): Promise<SaleSettlementDto> {
-    return toSaleSettlementDto(
-      await this.settlements.settleAppointment(
-        body.appointmentId,
-        operator.userId,
-        toCashSettlementRequest(body),
-        toExtraLines(body),
-      ),
+  ): Promise<PaymentTransactionDto> {
+    const settlement = await this.settlements.settleAppointment(
+      body.appointmentId,
+      operator.userId,
+      toCashSettlementRequest(body),
+      toExtraLines(body),
     );
+
+    // **La ligne d'encaissement, et non l'enveloppe de règlement** : c'est le
+    // contrat que cette route sert depuis #62, et l'écran de caisse le lit tel
+    // quel. #817 change ce que la route *fait* — elle compose la pièce avant de
+    // l'encaisser — sans changer ce qu'elle *rend*, parce qu'il n'y a rien de
+    // neuf à y lire : elle solde tout le reste dû, donc ni reste, ni monnaie.
+    // Le règlement partiel a sa propre route, et sa propre enveloppe.
+    return toPaymentTransactionDto(settlement.payment);
   }
 
   /**
