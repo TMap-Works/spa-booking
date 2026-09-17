@@ -157,6 +157,7 @@ describe('informations du salon', () => {
     render(
       <SalonInfo
         tenant={{ ...tenant, contactEmail: 'contact@lotus.test', contactPhone: '+261341234567' }}
+        bookable
       />,
     );
 
@@ -170,7 +171,7 @@ describe('informations du salon', () => {
   });
 
   it('dit l’absence d’informations plutôt que de rendre une section vide', () => {
-    render(<SalonInfo tenant={tenant} />);
+    render(<SalonInfo tenant={tenant} bookable />);
 
     expect(screen.getByText('Informations non communiquées')).toBeDefined();
     expect(screen.queryByRole('link')).toBeNull();
@@ -194,6 +195,7 @@ describe('informations du salon', () => {
             { weekday: 6, opensAt: '10:00', closesAt: '24:00' },
           ],
         }}
+        bookable
       />,
     );
 
@@ -215,7 +217,7 @@ describe('informations du salon', () => {
     // Le critère de #343 : les deux champs sont facultatifs, et la page d'un
     // salon qui n'a rien saisi doit rester servie — c'est le cas le plus courant
     // à l'inscription.
-    render(<SalonInfo tenant={{ ...tenant, contactPhone: '+261341234567' }} />);
+    render(<SalonInfo tenant={{ ...tenant, contactPhone: '+261341234567' }} bookable />);
 
     expect(screen.getByText('+261341234567')).toBeDefined();
     expect(screen.queryByText('Adresse')).toBeNull();

@@ -7,8 +7,17 @@ import { PUBLIC_EXIT_LABELS } from './public-exits';
 
 interface SalonHeaderProps {
   readonly tenant: PublicTenant;
-  /** Chemin du tunnel de réservation — construit par la page, qui tient les URL. */
-  readonly reservationHref: string;
+  /**
+   * Chemin du tunnel de réservation — construit par la page, qui tient les URL —
+   * ou `null` quand la réservation en ligne n'est pas ouverte (#773).
+   *
+   * Le `null` n'est pas une commodité de typage : c'est la seule chose que
+   * l'en-tête a besoin de savoir de l'état du catalogue. Un salon sans
+   * prestation publiée n'a pas de tunnel où envoyer qui que ce soit, et le
+   * chemin n'existe donc pas pour lui — plutôt qu'un chemin valide assorti d'un
+   * second drapeau qui dirait de ne pas s'en servir.
+   */
+  readonly reservationHref: string | null;
 }
 
 /**
@@ -35,20 +44,45 @@ interface SalonHeaderProps {
  * `LinkPending` y remplace le libellé par un spinner, à largeur conservée, comme
  * un `Button` en chargement. C'est le seul îlot client de cet en-tête, et il ne
  * peint rien avant le clic — le titre qui porte le LCP reste rendu serveur.
+ *
+ * ## Ce que l'accroche promet, elle le tient (#773)
+ *
+ * L'accroche annonçait « Découvrez les prestations…, leurs durées et leurs
+ * tarifs » et l'action accentuée « Prendre rendez-vous » quel que soit l'état du
+ * catalogue. Sur la vitrine d'un salon qui n'a rien publié, les deux étaient
+ * faux du même coup : la page ne montrait aucune prestation, et le bouton menait
+ * à un tunnel qui refusait de démarrer, « Choisir un créneau » désactivé. C'est
+ * l'écart relevé par l'audit `d20260916-1` au titre de `ds:confiance`.
+ *
+ * L'accroche dit donc désormais l'état réel, et l'appel à l'action **disparaît**
+ * au lieu de se désactiver : un bouton grisé sur une page publique laisse croire
+ * qu'il manque une condition à remplir, là où il n'y a rien à faire côté
+ * visiteuse. Ce qu'il y a à faire — joindre le salon — est proposé par l'état
+ * vide du catalogue, juste en dessous, et seulement si le salon a publié de quoi
+ * le joindre (`salon-contact.ts`).
  */
 export function SalonHeader({ tenant, reservationHref }: SalonHeaderProps) {
   return (
     <header className="spa-salon__header">
       <p className="spa-salon__eyebrow">Réservation en ligne</p>
       <h1 className="spa-salon__title">{tenant.name}</h1>
-      <p className="spa-salon__lede">
-        Découvrez les prestations de {tenant.name}, leurs durées et leurs tarifs, puis réservez
-        votre rendez-vous en quelques minutes.
-      </p>
-      <Link className="spa-button spa-button--accent" href={reservationHref}>
-        <span className="spa-button__label">{PUBLIC_EXIT_LABELS.reservation}</span>
-        <LinkPending />
-      </Link>
+
+      {reservationHref === null ? (
+        <p className="spa-salon__lede">
+          La réservation en ligne de {tenant.name} n’est pas encore ouverte.
+        </p>
+      ) : (
+        <>
+          <p className="spa-salon__lede">
+            Découvrez les prestations de {tenant.name}, leurs durées et leurs tarifs, puis réservez
+            votre rendez-vous en quelques minutes.
+          </p>
+          <Link className="spa-button spa-button--accent" href={reservationHref}>
+            <span className="spa-button__label">{PUBLIC_EXIT_LABELS.reservation}</span>
+            <LinkPending />
+          </Link>
+        </>
+      )}
     </header>
   );
 }

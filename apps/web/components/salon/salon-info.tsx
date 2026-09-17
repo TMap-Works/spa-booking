@@ -1,6 +1,7 @@
 import type { PostalAddress, PublicTenant } from '@spa/shared';
 
 import { formatOpeningRange, groupOpeningHoursByDay } from './opening-hours';
+import { telUri } from './salon-contact';
 
 /** Identifiant du titre de section, repris par `aria-labelledby`. */
 export const INFO_HEADING_ID = 'informations-pratiques';
@@ -72,8 +73,32 @@ function countryName(code: string): string {
  * Quand rien n'est renseigné, la section rend son état vide plutôt que de
  * disparaître : une page sans « informations pratiques » se lit comme une page
  * incomplète, là où un état vide explicite dit ce qu'il en est.
+ *
+ * ## Le lot de consolation n'est plus affirmé à tort (#773)
+ *
+ * Cet état vide rassurait d'un « La réservation en ligne reste ouverte » écrit
+ * en toutes circonstances. Sur la vitrine d'un salon qui n'a **ni** coordonnées
+ * **ni** prestation, c'était faux : le tunnel refusait de démarrer deux clics
+ * plus loin. Trois messages se contredisaient alors sur un seul écran de 360 px
+ * (audit `d20260916-1`, `ds:confiance`).
+ *
+ * La phrase n'est donc plus dite que quand elle est vraie. Le constat qui la
+ * précède, lui, ne bouge pas : il est exact dans les deux cas, et c'est la seule
+ * place de la page où l'absence de coordonnées est énoncée.
  */
-export function SalonInfo({ tenant }: { readonly tenant: PublicTenant }) {
+interface SalonInfoProps {
+  readonly tenant: PublicTenant;
+  /**
+   * La réservation en ligne est-elle ouverte, c'est-à-dire le salon a-t-il
+   * publié au moins une prestation ? (#773)
+   *
+   * La section n'a pas à charger le catalogue pour le savoir : la page le tient
+   * déjà, elle le lui dit.
+   */
+  readonly bookable: boolean;
+}
+
+export function SalonInfo({ tenant, bookable }: SalonInfoProps) {
   const openingDays = groupOpeningHoursByDay(tenant.openingHours ?? []);
   const hasInfo =
     tenant.contactEmail !== undefined ||
@@ -143,9 +168,10 @@ export function SalonInfo({ tenant }: { readonly tenant: PublicTenant }) {
             <div className="spa-salon__info-row">
               <dt className="spa-salon__info-term">Téléphone</dt>
               <dd className="spa-salon__info-value">
-                {/* Le numéro est déjà en E.164 dans le contrat : il fait un
-                    `tel:` valide sans retouche. */}
-                <a href={`tel:${tenant.contactPhone}`}>{tenant.contactPhone}</a>
+                {/* Le texte garde l'écriture du salon ; la destination, elle,
+                    passe par `telUri` — `storedPhoneSchema` conserve espaces et
+                    parenthèses, que RFC 3966 n'admet pas (#773). */}
+                <a href={telUri(tenant.contactPhone)}>{tenant.contactPhone}</a>
               </dd>
             </div>
           )}
@@ -165,8 +191,9 @@ export function SalonInfo({ tenant }: { readonly tenant: PublicTenant }) {
         <div className="spa-card spa-card--empty">
           <p className="spa-empty-state__title">Informations non communiquées</p>
           <p className="spa-empty-state__description">
-            Ce salon n’a pas encore publié ses coordonnées, son adresse ni ses horaires. La
-            réservation en ligne reste ouverte.
+            {bookable
+              ? 'Ce salon n’a pas encore publié ses coordonnées, son adresse ni ses horaires. La réservation en ligne reste ouverte.'
+              : 'Ce salon n’a pas encore publié ses coordonnées, son adresse ni ses horaires.'}
           </p>
         </div>
       )}

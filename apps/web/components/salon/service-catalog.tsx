@@ -3,6 +3,7 @@ import type { PublicService } from '@spa/shared';
 import { formatDuration, formatMoney } from '@/lib/format';
 
 import { groupServicesByCategory } from './group-services';
+import type { SalonContactAction } from './salon-contact';
 
 /** Identifiant du titre de section, repris par `aria-labelledby` de la page. */
 export const CATALOG_HEADING_ID = 'catalogue';
@@ -56,8 +57,36 @@ export const UNSTAFFED_SERVICE_LABEL = 'Aucun praticien — pas de créneau en l
  * noms : c'est la même information, dans son état vide, et non un avertissement
  * de plus à faire cohabiter avec le reste de la carte. Elle ne repose sur aucune
  * couleur — le texte porte le sens à lui seul (WCAG 1.4.1).
+ *
+ * ## Un catalogue vide ne donne plus d'ordre irréalisable (#773)
+ *
+ * L'état vide écrivait « Contactez-le directement pour connaître son offre »
+ * sans distinguer le salon qui a publié un numéro de celui qui n'a rien publié
+ * du tout — et, sur la vitrine auditée, la section d'en dessous répondait
+ * précisément « Ce salon n'a pas encore publié ses coordonnées ». L'unique
+ * action proposée n'avait donc aucun moyen de s'exercer (audit `d20260916-1`,
+ * `ds:confiance`).
+ *
+ * L'instruction est désormais liée à ce qui la rend possible : quand le salon a
+ * publié un moyen d'être joint, l'état vide porte l'action elle-même — un vrai
+ * `tel:` ou `mailto:` (`salon-contact.ts`), comme le dessine
+ * `docs/design/appointments/states.md` pour l'étape service. Sinon il se borne
+ * au constat, et la section « informations pratiques » dit, une seule fois et à
+ * sa place, que le salon n'a pas publié de coordonnées.
  */
-export function ServiceCatalog({ services }: { readonly services: readonly PublicService[] }) {
+interface ServiceCatalogProps {
+  readonly services: readonly PublicService[];
+  /**
+   * Comment joindre le salon, quand il a publié de quoi le faire (#773).
+   *
+   * Facultatif, et par défaut absent : l'aperçu du back-office réemploie ce
+   * catalogue (`admin/catalogue/apercu`) et n'a personne à faire appeler — la
+   * gérante est déjà chez elle. Son état vide reste donc le constat seul.
+   */
+  readonly contact?: SalonContactAction | null;
+}
+
+export function ServiceCatalog({ services, contact = null }: ServiceCatalogProps) {
   const sections = groupServicesByCategory(services);
 
   return (
@@ -73,9 +102,18 @@ export function ServiceCatalog({ services }: { readonly services: readonly Publi
         <div className="spa-card spa-card--empty">
           <p className="spa-empty-state__title">Catalogue en cours de préparation</p>
           <p className="spa-empty-state__description">
-            Ce salon n’a pas encore publié ses prestations en ligne. Contactez-le directement pour
-            connaître son offre.
+            {contact === null
+              ? 'Ce salon n’a pas encore publié ses prestations en ligne.'
+              : 'Ce salon n’a pas encore publié ses prestations en ligne. Contactez-le directement pour connaître son offre.'}
           </p>
+          {contact === null ? null : (
+            // Un `<a>` et non un `<button>` : `tel:` et `mailto:` sont des
+            // destinations, et le composeur du téléphone est ce qui doit s'ouvrir
+            // au doigt. C'est aussi ce qui garde l'état vide sans îlot client.
+            <a className="spa-button spa-button--neutral" href={contact.href}>
+              {contact.label}
+            </a>
+          )}
         </div>
       ) : (
         sections.map((section) => (
