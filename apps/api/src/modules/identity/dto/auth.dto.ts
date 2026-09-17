@@ -167,6 +167,18 @@ export class RegisterDto extends TenantScopedRequest {
       'numéro dans aucune convention (#66).',
   })
   public phone?: string;
+
+  @ApiProperty({
+    example: true,
+    description:
+      'Accord au traitement des données, **obligatoire** : `false` et l’absence ' +
+      'sont refusés de la même façon. C’est le seul champ de ce corps qui ne ' +
+      'décrit pas le compte — il décrit ce qui autorise l’établissement à le ' +
+      'tenir (CDC §5.1, RGPD art. 7.1). **Aucune date n’est acceptée** : le ' +
+      'serveur horodate la réception lui-même, et un `dataConsentAt` glissé ici ' +
+      'est refusé par le `.strict()` du contrat.',
+  })
+  public dataConsent!: boolean;
 }
 
 /**

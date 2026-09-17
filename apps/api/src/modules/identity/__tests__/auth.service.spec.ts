@@ -1,6 +1,6 @@
 import { JwtService } from '@nestjs/jwt';
 
-import { ConflictError, NotFoundError } from '../../../common/errors';
+import { BusinessRuleError, ConflictError, NotFoundError } from '../../../common/errors';
 import { getTenantId, runInTenantScope, runWithTenant } from '../../../common/tenant';
 import { AuthService, REFRESH_ROTATION_GRACE_MS } from '../auth.service';
 import {
@@ -55,6 +55,7 @@ describe('AuthService', () => {
           password: PASSWORD,
           firstName: 'Alice',
           lastName: 'Durand',
+          dataConsent: true,
         }),
       );
 
@@ -82,6 +83,7 @@ describe('AuthService', () => {
           password: PASSWORD,
           firstName: 'Alice',
           lastName: 'Durand',
+          dataConsent: true,
         }),
       );
 
@@ -89,6 +91,54 @@ describe('AuthService', () => {
       expect(stored).toBeDefined();
       expect(stored?.passwordHash).not.toBe(PASSWORD);
       expect(stored?.passwordHash).toMatch(/^\$2[aby]\$/);
+    });
+
+    it('date le consentement sur l’horloge du serveur, et ne le rend à personne', async () => {
+      const avant = Date.now();
+
+      const result = await inRequest(() =>
+        service.register({
+          tenantSlug: SLUG,
+          email: 'alice@example.test',
+          password: PASSWORD,
+          firstName: 'Alice',
+          lastName: 'Durand',
+          dataConsent: true,
+        }),
+      );
+
+      const apres = Date.now();
+      const preuve = repository.users[0]?.dataConsentAt;
+
+      // Datée, et datée *maintenant* : rien dans la demande ne portait de date,
+      // et c'est ce qui donne sa valeur à la preuve (RGPD art. 7.1).
+      expect(preuve).toBeInstanceOf(Date);
+      expect(preuve?.getTime()).toBeGreaterThanOrEqual(avant);
+      expect(preuve?.getTime()).toBeLessThanOrEqual(apres);
+
+      // Et elle ne ressort pas par la session : c'est une donnée de registre,
+      // du côté de l'établissement. `USER_SELECT` ne la lit même pas.
+      expect(JSON.stringify(result)).not.toContain('dataConsent');
+    });
+
+    it('refuse une inscription dont l’accord est absent, sans écrire de ligne', async () => {
+      const error = await inRequest(() =>
+        service
+          .register({
+            tenantSlug: SLUG,
+            email: 'alice@example.test',
+            password: PASSWORD,
+            firstName: 'Alice',
+            lastName: 'Durand',
+            dataConsent: false,
+          })
+          .catch((caught: unknown) => caught),
+      );
+
+      expect(error).toBeInstanceOf(BusinessRuleError);
+      // Rien en base : le refus précède la résolution du tenant comme
+      // l'écriture, et un compte à moitié créé serait le pire des deux mondes.
+      expect(repository.users).toHaveLength(0);
     });
 
     it('force le rôle CLIENT — une inscription publique ne fabrique pas d’administrateur', async () => {
@@ -99,6 +149,7 @@ describe('AuthService', () => {
           password: PASSWORD,
           firstName: 'Alice',
           lastName: 'Durand',
+          dataConsent: true,
         }),
       );
 
@@ -113,6 +164,7 @@ describe('AuthService', () => {
           password: PASSWORD,
           firstName: 'Alice',
           lastName: 'Durand',
+          dataConsent: true,
         }),
       );
 
@@ -126,6 +178,7 @@ describe('AuthService', () => {
             password: PASSWORD,
             firstName: 'Alice',
             lastName: 'Durand',
+            dataConsent: true,
           }),
         ),
       ).rejects.toBeInstanceOf(EmailAlreadyRegisteredError);
@@ -140,6 +193,7 @@ describe('AuthService', () => {
             password: PASSWORD,
             firstName: 'Alice',
             lastName: 'Durand',
+            dataConsent: true,
           })
           .catch((caught: unknown) => caught),
       );
@@ -160,6 +214,7 @@ describe('AuthService', () => {
           password: PASSWORD,
           firstName: 'Alice',
           lastName: 'Durand',
+          dataConsent: true,
         }),
       );
 
@@ -172,6 +227,7 @@ describe('AuthService', () => {
             password: PASSWORD,
             firstName: 'Alice',
             lastName: 'Durand',
+            dataConsent: true,
           }),
         ),
       ).resolves.toBeDefined();

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 
-import { ConflictError, NotFoundError } from '../../common/errors';
+import { BusinessRuleError, ConflictError, NotFoundError } from '../../common/errors';
 import { getTenantId, setRequestTenantId } from '../../common/tenant';
 import { StructuredLogger } from '../../common/logging/structured-logger';
 import { normalizeEmail } from './email';
@@ -112,6 +112,20 @@ export class AuthService {
    * publique qui accepterait un rôle laisserait n'importe qui se déclarer `ADMIN`
    * de l'établissement. La création d'un compte staff ou admin relève du
    * back-office, pas de ce point d'entrée.
+   *
+   * ## La preuve de consentement est datée ici, et par personne d'autre (#880)
+   *
+   * `dataConsent` arrive à `true` ou n'arrive pas : le contrat partagé refuse
+   * `false` et refuse l'absence, si bien qu'aucun compte ne naît par cette porte
+   * sans accord. Ce que ce service ajoute, c'est la **date** : elle est lue sur
+   * l'horloge du serveur au moment de l'écriture, jamais reçue de l'appelant.
+   * RGPD art. 7.1 met la preuve à la charge du responsable du traitement, et une
+   * preuve horodatée par celui qu'elle engage n'en est pas une.
+   *
+   * Le booléen est quand même reçu plutôt que déduit du fait qu'on est ici : un
+   * service qui daterait un consentement sans qu'aucun paramètre ne le porte
+   * daterait aussi bien l'absence d'accord, le jour où un second appelant
+   * l'invoquerait. Le type est ce qui oblige à le poser.
    */
   public async register(input: {
     tenantSlug: string;
@@ -120,7 +134,26 @@ export class AuthService {
     firstName: string;
     lastName: string;
     phone?: string | undefined;
+    dataConsent: boolean;
   }): Promise<AuthenticationResult> {
+    if (!input.dataConsent) {
+      // Une seconde barrière derrière celle du contrat, et elle n'est pas
+      // redondante : c'est ce service, et non le pipe de validation, qui décide
+      // ce qui entre en base. Un futur appelant interne qui l'invoquerait sans
+      // passer par `registerBody` se verrait refusé ici plutôt que d'écrire une
+      // ligne dont rien ne dirait qu'elle a été consentie.
+      //
+      // `BusinessRuleError` et non un code d'erreur neuf : le refus que le front
+      // traite est celui du contrat, rendu champ par champ par le pipe de
+      // validation. Celui-ci ne peut être atteint que par un appelant interne
+      // qui aurait contourné le pipe — il n'a donc aucun écran à renseigner, et
+      // inventer un code que la clientèle ne verra jamais élargirait la surface
+      // du contrat pour rien.
+      throw new BusinessRuleError(
+        'Le traitement des données doit être accepté pour créer un compte.',
+      );
+    }
+
     const tenantId = await this.openTenantScope(input.tenantSlug);
     const email = normalizeEmail(input.email);
 
@@ -138,6 +171,7 @@ export class AuthService {
       firstName: input.firstName.trim(),
       lastName: input.lastName.trim(),
       phone: input.phone?.trim() ?? null,
+      dataConsentAt: new Date(),
     });
 
     return this.openSession(tenantId, user);

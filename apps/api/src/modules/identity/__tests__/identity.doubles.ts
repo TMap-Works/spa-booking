@@ -75,6 +75,22 @@ interface StoredTenant extends PublicTenantRecord {
 
 interface StoredUser extends UserRecord {
   tenantId: string;
+  /**
+   * La preuve de consentement, telle que la colonne la porte (#880).
+   *
+   * Sur le **stockage** et non sur `UserRecord` : `USER_SELECT` ne la lit pas,
+   * et un double qui la rendrait avec le compte laisserait passer une projection
+   * élargie par distraction. Ce qui l'observe, c'est la suite qui l'observe en
+   * base — la lire ici sert à prouver ce que le service a écrit, pas à l'offrir
+   * à `toProfile`.
+   *
+   * Facultative, et c'est ce qui la rend adoptable : des suites d'autres modules
+   * poussent des comptes directement dans `users` pour se donner un praticien ou
+   * une cliente, et exiger ici une preuve de consentement leur ferait renseigner
+   * un champ dont leur scénario ne dit rien. Absent se lit comme `null` — aucun
+   * accord recueilli en ligne —, ce que la colonne signifie déjà.
+   */
+  dataConsentAt?: Date | null;
 }
 
 interface StoredSession extends SessionRecord {
@@ -152,6 +168,14 @@ export class FakeIdentityRepository {
      */
     role?: UserRole;
     isActive?: boolean;
+    /**
+     * Facultatif ici, obligatoire sur `createUser` — et l'asymétrie est
+     * délibérée (#880). `createUser` est le **code de production** : il doit
+     * décider. `addUser` sème un compte déjà là, dont l'immense majorité des
+     * suites ne sait rien du consentement ; `null` est ce qu'est un compte
+     * antérieur à la colonne, et c'est le bon défaut.
+     */
+    dataConsentAt?: Date | null;
   }): StoredUser {
     const user: StoredUser = {
       id: randomUUID(),
@@ -163,6 +187,7 @@ export class FakeIdentityRepository {
       lastName: 'Durand',
       phone: null,
       isActive: input.isActive ?? true,
+      dataConsentAt: input.dataConsentAt ?? null,
     };
     this.users.push(user);
     return user;
@@ -311,6 +336,8 @@ export class FakeIdentityRepository {
     firstName: string;
     lastName: string;
     phone: string | null;
+    /** Comme le vrai (#880) : posé par l'appelant, `null` quand rien n'a été coché. */
+    dataConsentAt: Date | null;
   }): Promise<UserRecord> {
     const tenantId = this.requireTenant();
     const user: StoredUser = {
@@ -323,9 +350,13 @@ export class FakeIdentityRepository {
       lastName: input.lastName,
       phone: input.phone,
       isActive: true,
+      dataConsentAt: input.dataConsentAt,
     };
     this.users.push(user);
-    return user;
+    // `USER_SELECT` ne porte pas la preuve : la retirer ici est ce qui fait de ce
+    // double un témoin fidèle du vrai dépôt.
+    const { dataConsentAt: _proof, tenantId: _scope, ...record } = user;
+    return record;
   }
 
   public async touchLastLogin(_userId: string): Promise<void> {

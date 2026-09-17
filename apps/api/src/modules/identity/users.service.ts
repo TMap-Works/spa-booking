@@ -116,6 +116,12 @@ export class UsersService {
       firstName: input.firstName.trim(),
       lastName: input.lastName.trim(),
       phone: input.phone?.trim() ?? null,
+      // `null`, et ce n'est pas un oubli : personne n'a coché de case ici. Le
+      // compte est créé **par l'établissement** pour un membre de son personnel,
+      // et la base légale d'un compte professionnel n'est pas le consentement de
+      // son titulaire (#880). Dater l'accord d'aujourd'hui en fabriquerait un
+      // que nul n'a donné.
+      dataConsentAt: null,
     });
 
     return this.issueInvitation(input.tenantId, user);

@@ -89,6 +89,10 @@ export class AuthController {
       firstName: body.firstName,
       lastName: body.lastName,
       phone: body.phone,
+      // Le booléen, pas une date : le service lit l'horloge du serveur (#880,
+      // RGPD art. 7.1), et le `.strict()` du contrat refuse déjà tout
+      // `dataConsentAt` glissé dans le corps.
+      dataConsent: body.dataConsent,
     });
 
     return this.respondWithSession(response, result);
