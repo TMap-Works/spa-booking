@@ -118,6 +118,24 @@ describe('ReportingRepository — le revenu', () => {
     expect(sql()[0]).not.toContain('created_at');
   });
 
+  it('lit le revenu sur les **ventes réglées**, par une jointure interne — #817', async () => {
+    // Le constat de #817 : le revenu se calculait sur les seuls encaissements,
+    // et une vente de produits — qui n'en portait aucun, faute de colonne pour
+    // l'y rattacher — n'entrait jamais au chiffre d'affaires. La jointure est ce
+    // qui fait dire à cet agrégat « les ventes réglées » plutôt que « les
+    // encaissements ».
+    const { repository, sql } = repositoryWith();
+
+    await runWithTenant(TENANT, async () => repository.dailyRevenue(SEPTEMBRE, 'UTC'));
+
+    expect(sql()[0]).toContain('INNER JOIN "sales"');
+    // Sur le **couple**, jamais sur l'identifiant seul : une jointure qui
+    // ignorerait le tenant traverserait la frontière si une ligne d'un salon
+    // référençait celle d'un autre (tenant-isolation §1).
+    expect(sql()[0]).toContain('"sales"."tenant_id" = "payments"."tenant_id"');
+    expect(sql()[0]).toContain('"sales"."id" = "payments"."sale_id"');
+  });
+
   it('lie le fuseau plutôt que de le concaténer dans le SQL', async () => {
     const { repository, sql, values } = repositoryWith();
 
