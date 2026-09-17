@@ -36,6 +36,9 @@ import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/p
 /** L'établissement, tel que l'en-tête de la pièce le nomme. */
 const ISSUER_SELECT = {
   name: true,
+  // Il ne s'imprime pas : il compose le lien de réservation du QR code de pied
+  // de ticket (#819). Voir `ReceiptIssuer.slug`.
+  slug: true,
   legalName: true,
   legalIdType: true,
   legalId: true,
@@ -130,6 +133,7 @@ export interface ReceiptRow {
   totalAmountMinor: number;
   tenant: {
     name: string;
+    slug: string;
     legalName: string | null;
     legalIdType: LegalIdType | null;
     legalId: string | null;

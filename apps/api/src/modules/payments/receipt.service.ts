@@ -55,6 +55,7 @@ function toParty(person: { firstName: string; lastName: string }): ReceiptParty 
 function toIssuer(tenant: ReceiptRow['tenant']): ReceiptIssuer {
   return {
     name: tenant.name,
+    slug: tenant.slug,
     legalName: tenant.legalName,
     legalIdType: tenant.legalIdType,
     legalId: tenant.legalId,
