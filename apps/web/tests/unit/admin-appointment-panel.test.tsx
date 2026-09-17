@@ -755,3 +755,88 @@ describe('#611 — le tiroir n’offre que des créneaux réservables', () => {
     expect(screen.queryByText(DESK_SLOTS_UNREADABLE_MESSAGE)).toBeNull();
   });
 });
+
+/**
+ * Ce qu'est devenu le rendez-vous, tel que le tiroir le raconte — #756.
+ *
+ * L'audit `d20260916-1` reproche au back-office de ne rien dire d'une
+ * annulation : le planning affichait « annulé » et s'arrêtait là, pendant que
+ * l'espace client distinguait quatre sorties. Le motif est écrit en base depuis
+ * #40 et servi à cette route depuis #444 ; ce qui suit vérifie qu'il est lu.
+ *
+ * Le pendant de ces cas est la **retenue** : le contrat de l'agenda ne portant
+ * pas `cancelledBy`, un motif absent ne prouve pas un report, et l'écran ne doit
+ * pas l'affirmer.
+ */
+
+/** 09:00 – 10:00, annulé au comptoir avec un motif consigné. */
+const ANNULE_AVEC_MOTIF: Appointment = {
+  ...CONFIRME,
+  status: 'cancelled',
+  cancelledAt: '2026-08-25T11:30:00.000Z',
+  cancellationReason: 'Praticienne souffrante, cliente prévenue par téléphone.',
+};
+
+/** La même ligne, annulée sans un mot — ce qu'un report laisse aussi derrière lui. */
+const ANNULE_SANS_MOTIF: Appointment = {
+  ...CONFIRME,
+  status: 'cancelled',
+  cancelledAt: '2026-08-25T11:30:00.000Z',
+};
+
+/** Le rendez-vous **né** d'un report : c'est lui, et lui seul, qui porte le lien. */
+const NE_D_UN_REPORT: Appointment = {
+  ...CONFIRME,
+  rescheduledFromId: 'aaaaaaaa-0000-4000-8000-000000000009',
+};
+
+describe('#756 — le tiroir dit ce qu’est devenu le rendez-vous', () => {
+  it('affiche le motif d’annulation et la date, dans le fuseau du salon', async () => {
+    renderPanel({ kind: 'edit', appointment: ANNULE_AVEC_MOTIF });
+
+    expect(await screen.findByRole('heading', { name: 'Annulation' })).toBeDefined();
+    expect(
+      screen.getByText('Praticienne souffrante, cliente prévenue par téléphone.'),
+    ).toBeDefined();
+    // 11:30 UTC lu à Antananarivo (UTC+3) donne 14:30 — jamais l'heure du
+    // navigateur qui exécute le test.
+    expect(screen.getByText(/Annulé le .*14:30/)).toBeDefined();
+  });
+
+  it('dit l’absence de motif sans conclure au report', async () => {
+    renderPanel({ kind: 'edit', appointment: ANNULE_SANS_MOTIF });
+
+    expect(await screen.findByRole('heading', { name: 'Annulation' })).toBeDefined();
+    expect(screen.getByText(/Aucun motif n’a été consigné/)).toBeDefined();
+    // `cancelledBy` n'étant pas servi à cette route, rien ne distingue ici un
+    // report d'une annulation muette : l'écran ne doit pas trancher.
+    expect(screen.queryByText(/Ce rendez-vous en remplace un autre/)).toBeNull();
+  });
+
+  it('signale un rendez-vous né d’un report', async () => {
+    renderPanel({ kind: 'edit', appointment: NE_D_UN_REPORT });
+
+    expect(await screen.findByRole('heading', { name: 'Report' })).toBeDefined();
+    expect(screen.getByText(/Ce rendez-vous en remplace un autre/)).toBeDefined();
+    // Il n'est pas annulé : aucune ligne d'annulation ne doit apparaître.
+    expect(screen.queryByText(/Annulé le/)).toBeNull();
+  });
+
+  it('ne raconte rien d’un rendez-vous qui suit son cours', async () => {
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+
+    await screen.findByLabelText<HTMLSelectElement>(/Heure de début/);
+
+    expect(screen.queryByRole('heading', { name: 'Annulation' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Report' })).toBeNull();
+  });
+
+  it('ne raconte rien à la création — le rendez-vous n’existe pas encore', async () => {
+    renderPanel(CREATION);
+
+    await screen.findByLabelText<HTMLSelectElement>(/Heure de début/);
+
+    expect(screen.queryByRole('heading', { name: 'Annulation' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Report' })).toBeNull();
+  });
+});
