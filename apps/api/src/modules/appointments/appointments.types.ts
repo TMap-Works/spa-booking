@@ -821,13 +821,18 @@ export interface StaffProfileView {
 }
 
 /**
- * La fenêtre d'une lecture « mes … » une fois **résolue** : bornes complétées,
- * écart jugé, et le fuseau dans lequel les deux dates se lisent.
+ * La fenêtre d'un agenda une fois **résolue** : bornes complétées, écart jugé,
+ * et le fuseau dans lequel les deux dates se lisent.
  *
  * Le fuseau voyage avec elles parce que sans lui deux dates civiles ne
  * désignent aucun intervalle : « du 1er au 7 » ne vaut pas les mêmes instants à
  * Paris et à Papeete, et c'est ce couple-là — jamais une date seule — que la
  * conversion en instants consomme.
+ *
+ * Rendue par `resolveAgendaRange` d'`agenda-window.ts`, et consommée par
+ * `agendaWindowOf` : c'est la forme que les **trois** lectures d'agenda
+ * partagent depuis #932 — le comptoir comme les deux routes du praticien
+ * connecté —, et non plus celle des seules lectures « mes … ».
  */
 export interface ResolvedRange {
   readonly from: string;
