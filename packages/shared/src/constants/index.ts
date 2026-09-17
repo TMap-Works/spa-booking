@@ -88,6 +88,9 @@ export {
 } from './receipt';
 export type { LegalIdType } from './receipt';
 
+export { PERMISSIONS, hasAnyPermission, isPermission } from './permissions';
+export type { Permission } from './permissions';
+
 export { RESERVED_TENANT_SLUGS } from './reserved-slugs';
 export type { ReservedTenantSlug } from './reserved-slugs';
 

@@ -184,6 +184,24 @@ export const IDENTITY_ERROR_CODES = {
   /** Réémission demandée sur un compte déjà activé, par un administrateur authentifié. */
   INVITATION_ALREADY_ACCEPTED: 'INVITATION_ALREADY_ACCEPTED',
   /**
+   * L'appelant n'a le droit d'agir que sur **son propre** périmètre, et la
+   * ressource visée n'en fait pas partie — #812, ADR 0013.
+   *
+   * **403 et non 404, et c'est le seul endroit du contrat où un refus d'accès
+   * s'assume.** La règle du 404 protège l'existence d'une ressource d'un *autre
+   * établissement* (tenant-isolation §4) : là, dire « interdit » plutôt que
+   * « introuvable » apprendrait à un salon ce que le salon voisin possède. Ici
+   * la ressource est du **même** établissement, et l'appelant en connaît déjà
+   * l'existence — il travaille dans le salon, il croise sa collègue, il voit le
+   * fauteuil occupé. Un 404 ne cacherait donc rien et ferait seulement croire à
+   * un rendez-vous effacé.
+   *
+   * `details.scope` porte la permission qui aurait permis le geste
+   * (`appointment:write:all`, `customers:read:all`…), jamais l'identifiant de la
+   * ressource ni le nom de qui la détient.
+   */
+  OWN_SCOPE_ONLY: 'OWN_SCOPE_ONLY',
+  /**
    * Connexion d'**opérateur plateforme** refusée — adresse inconnue, mot de
    * passe faux, code MFA faux, ou compte désactivé (#806, ADR 0012).
    *
