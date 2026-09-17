@@ -8,6 +8,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  * Elle doit ouvrir un salon sans qu'on tape d'URL, redonner le salon de la
  * dernière visite, et ne jamais lister d'établissements (place de marché, hors
  * périmètre CDC §1.4).
+ *
+ * Les libellés des portes sont lus dans `SALON_DOOR_LABELS` plutôt que réécrits
+ * ici : ils viennent du registre des sorties du parcours client, et une page qui
+ * les recopierait laisserait ce test vert pendant que l'accueil nommerait la
+ * même destination autrement que la vitrine — l'écart même que le registre
+ * existe pour empêcher (#749).
  */
 
 const readSalonIdentity = vi.fn();
@@ -34,6 +40,7 @@ vi.mock('next/headers', () => ({
 }));
 
 import HomePage from '@/app/page';
+import { SALON_DOOR_LABELS } from '@/app/salon-doors';
 import { SalonFinder } from '@/components/home/salon-finder';
 
 async function rendreLAccueil(): Promise<HTMLElement> {
@@ -57,7 +64,7 @@ describe('une première visite', () => {
     const champ = within(acces).getByLabelText(/nom ou adresse du salon/i) as HTMLInputElement;
     expect(champ.value).toBe('');
 
-    for (const porte of ['Prendre rendez-vous', 'Mes rendez-vous', 'Back-office du salon']) {
+    for (const porte of Object.values(SALON_DOOR_LABELS)) {
       expect(within(acces).getByRole('button', { name: porte })).toBeDefined();
     }
     expect(readSalonIdentity).not.toHaveBeenCalled();
@@ -101,15 +108,17 @@ describe('le salon de la dernière visite', () => {
     expect(within(salon).getByRole('link', { name: 'Maison Lotus' }).getAttribute('href')).toBe(
       '/maison-lotus',
     );
-    expect(within(salon).getByRole('link', { name: 'Prendre rendez-vous' }).getAttribute('href')).toBe(
-      '/maison-lotus/reservation',
-    );
-    expect(within(salon).getByRole('link', { name: 'Mes rendez-vous' }).getAttribute('href')).toBe(
-      '/maison-lotus/compte',
-    );
-    expect(within(salon).getByRole('link', { name: 'Back-office du salon' }).getAttribute('href')).toBe(
-      '/maison-lotus/admin/connexion',
-    );
+    expect(
+      within(salon).getByRole('link', { name: SALON_DOOR_LABELS.reservation }).getAttribute('href'),
+    ).toBe('/maison-lotus/reservation');
+    expect(
+      within(salon).getByRole('link', { name: SALON_DOOR_LABELS.compte }).getAttribute('href'),
+    ).toBe('/maison-lotus/compte');
+    expect(
+      within(salon)
+        .getByRole('link', { name: SALON_DOOR_LABELS['back-office'] })
+        .getAttribute('href'),
+    ).toBe('/maison-lotus/admin/connexion');
 
     const acces = screen.getByRole('form', { name: 'Un autre salon ?' });
     expect((within(acces).getByRole('textbox') as HTMLInputElement).value).toBe('');
@@ -155,7 +164,7 @@ describe('le formulaire d’accès', () => {
     render(<SalonFinder initialAddress="" title="Accéder à mon salon" />);
 
     await userEvent.type(screen.getByRole('textbox'), 'Salon Fantôme');
-    await userEvent.click(screen.getByRole('button', { name: 'Mes rendez-vous' }));
+    await userEvent.click(screen.getByRole('button', { name: SALON_DOOR_LABELS.compte }));
 
     const champ = await screen.findByRole('textbox', { description: /aucun salon ne répond/i });
     expect(champ.getAttribute('aria-invalid')).toBe('true');

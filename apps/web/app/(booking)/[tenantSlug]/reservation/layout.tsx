@@ -85,7 +85,8 @@ export default async function BookingLayout({ children, params }: BookingLayoutP
       {/*
         Les mêmes sorties que la vitrine, rendues par le même composant (#739) :
         c'est ce qui garantit qu'un écran ne nomme pas « Mon compte » ce que
-        l'autre appelle « Mes rendez-vous ».
+        l'autre appelle « Mes rendez-vous ». Le registre a tranché depuis #749 —
+        c'est le titre de la destination qui fait foi.
       */}
       <PublicExits
         variant="footer"

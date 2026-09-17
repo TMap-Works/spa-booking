@@ -27,6 +27,11 @@ import { service, tenant } from './fixtures';
  * - **Le même mot d'un écran à l'autre** : le tunnel et la vitrine passent par
  *   le même composant, donc par le même libellé. C'est ce qui empêche « Mon
  *   compte » ici et « Mes rendez-vous » là pour la même page.
+ * - **Et ce mot est celui de la destination** : « Mon compte », le titre que
+ *   porte l'espace client (#749, `ds:libelles` de l'audit `d20260916-1`). Un
+ *   lien porte le nom de l'écran qu'il ouvre — WCAG 2.4.4, et 3.2.4 pour la
+ *   constance. L'assertion d'identité entre le libellé et le titre est tenue
+ *   là où le gabarit du compte se rend, `account-nav.test.tsx`.
  * - **L'appel à l'action reste unique sur la vitrine** : y ajouter un second
  *   « Prendre rendez-vous » casserait le sélecteur du parcours E2E
  *   (`tests/e2e/support/scene.ts`), qui clique ce lien par son nom.
@@ -62,12 +67,12 @@ afterEach(() => {
 });
 
 describe("l'accès à l'espace client depuis la vitrine", () => {
-  it('offre « Mes rendez-vous » vers le compte de l’établissement', async () => {
+  it('offre « Mon compte » vers le compte de l’établissement', async () => {
     servir();
 
     await rendreLaVitrine();
 
-    const acces = screen.getByRole('link', { name: 'Mes rendez-vous' });
+    const acces = screen.getByRole('link', { name: 'Mon compte' });
 
     // `/compte` redirige lui-même vers la connexion sans session : un seul
     // libellé sert la cliente inscrite et celle qui ne l'est pas.
@@ -81,11 +86,11 @@ describe("l'accès à l'espace client depuis la vitrine", () => {
 
     const navigation = screen.getByRole('navigation');
 
-    expect(within(navigation).getByRole('link', { name: 'Mes rendez-vous' })).toBeDefined();
+    expect(within(navigation).getByRole('link', { name: 'Mon compte' })).toBeDefined();
     // Hors du `<main>` : c'est une navigation de site, pas une ligne du
     // catalogue, et un lecteur d'écran doit l'atteindre par sa liste de repères.
     expect(
-      within(screen.getByRole('main')).queryByRole('link', { name: 'Mes rendez-vous' }),
+      within(screen.getByRole('main')).queryByRole('link', { name: 'Mon compte' }),
     ).toBeNull();
   });
 
@@ -109,7 +114,7 @@ describe("l'accès à l'espace client depuis la vitrine", () => {
 
     await rendreLaVitrine();
 
-    expect(screen.getByRole('link', { name: 'Mes rendez-vous' }).getAttribute('href')).toBe(
+    expect(screen.getByRole('link', { name: 'Mon compte' }).getAttribute('href')).toBe(
       `/${tenant.slug}/compte`,
     );
   });
@@ -126,7 +131,7 @@ describe('le tunnel nomme les mêmes sorties', () => {
       }),
     );
 
-    expect(screen.getByRole('link', { name: 'Mes rendez-vous' }).getAttribute('href')).toBe(
+    expect(screen.getByRole('link', { name: 'Mon compte' }).getAttribute('href')).toBe(
       `/${tenant.slug}/compte`,
     );
     expect(

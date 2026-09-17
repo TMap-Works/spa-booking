@@ -2,6 +2,8 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { PUBLIC_EXIT_LABELS } from '@/components/salon/public-exits';
+
 import { tenant } from './fixtures';
 
 /**
@@ -94,18 +96,23 @@ describe('espace client, sans session', () => {
     expect(main?.textContent).toContain('formulaire de connexion');
   });
 
-  it('propose des chemins de retour, et non « Mes rendez-vous » qui ramène ici', async () => {
+  it('propose des chemins de retour, et non l’espace qui ramène ici', async () => {
     await rendre();
 
     const sorties = screen.getByRole('navigation', { name: 'Autres pages' });
-    expect(within(sorties).getByRole('link', { name: 'Prendre rendez-vous' }).getAttribute('href')).toBe(
-      `/${tenant.slug}/reservation`,
-    );
     expect(
-      within(sorties).getByRole('link', { name: 'Voir toutes les prestations' }).getAttribute('href'),
+      within(sorties)
+        .getByRole('link', { name: PUBLIC_EXIT_LABELS.reservation })
+        .getAttribute('href'),
+    ).toBe(`/${tenant.slug}/reservation`);
+    expect(
+      within(sorties).getByRole('link', { name: PUBLIC_EXIT_LABELS.vitrine }).getAttribute('href'),
     ).toBe(`/${tenant.slug}`);
     expect(within(sorties).getByRole('link', { name: /^Accueil/ }).getAttribute('href')).toBe('/');
-    expect(screen.queryByRole('link', { name: 'Mes rendez-vous' })).toBeNull();
+    // La sortie qu'on n'offre pas est celle de l'espace client lui-même, quel que
+    // soit le nom que le registre lui donne — « Mon compte » depuis #749 : elle
+    // ramènerait à cet écran même.
+    expect(screen.queryByRole('link', { name: PUBLIC_EXIT_LABELS.compte })).toBeNull();
   });
 
   it('ne peint toujours pas la barre du compte', async () => {
