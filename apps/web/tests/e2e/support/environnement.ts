@@ -62,8 +62,26 @@ export const MOT_DE_PASSE = 'Recette-2026!';
 
 export const COMPTES = {
   admin: 'admin@e2e.test',
+  /**
+   * **Le comptoir**, depuis #812.
+   *
+   * Le rang `STAFF` tenait ce rôle tant qu'il ouvrait l'agenda du salon. Il ne
+   * l'ouvre plus : `agenda:read:all`, `appointment:write:all` et
+   * `checkout:collect` sont au rang gérant, et l'arbitrage du PO du 16/09 en
+   * donne la raison — l'agenda du salon porte les noms des clientes de toutes
+   * les praticiennes, et l'écran d'encaissement liste la journée entière.
+   *
+   * Le produit n'a pas de rôle « réception » distinct de « praticien » : un
+   * salon qui confie l'accueil à quelqu'un lui donne le rang gérant. Ces
+   * parcours suivent donc le produit tel qu'il est, et non l'inverse
+   * (ADR 0013).
+   */
   manager: 'manager@e2e.test',
-  /** Le comptoir. `STAFF` est le rang le plus bas qu'acceptent les routes d'agenda. */
+  /**
+   * La praticienne. Elle ne tient plus le comptoir : son périmètre est le sien,
+   * et ce que la matrice lui ouvre ou lui ferme est couvert sans navigateur —
+   * `apps/api/src/modules/identity/__tests__/route-permissions.spec.ts`.
+   */
   staff: 'staff@e2e.test',
   client: 'client@e2e.test',
 } as const;

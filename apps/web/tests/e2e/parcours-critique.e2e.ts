@@ -37,7 +37,7 @@ test.describe('Parcours critique', () => {
       ({ identifiant } = await reserverParLeTunnel(page));
     });
 
-    const jetonComptoir = await connecter(request, COMPTES.staff);
+    const jetonComptoir = await connecter(request, COMPTES.manager);
 
     await test.step('Confirmer — le salon accepte le rendez-vous', async () => {
       const avant = await trouverRendezVous(request, jetonComptoir, identifiant);
@@ -59,7 +59,7 @@ test.describe('Parcours critique', () => {
     });
 
     await test.step('Confirmer — le comptoir voit le rendez-vous confirmé', async () => {
-      await connexionComptoir(page, COMPTES.staff);
+      await connexionComptoir(page, COMPTES.manager);
       await page.goto(chemins.calendrier(dateSalon));
 
       // Le bloc est désigné par son **heure**, et non pris au premier venu.

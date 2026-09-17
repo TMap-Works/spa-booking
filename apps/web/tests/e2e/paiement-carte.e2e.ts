@@ -60,7 +60,7 @@ test.describe('Encaissement par carte', () => {
   test.describe.configure({ retries: 2 });
 
   test("la clé publiable rendue par l'API est en mode test", async ({ request, jeu }) => {
-    const jeton = await connecter(request, COMPTES.staff);
+    const jeton = await connecter(request, COMPTES.manager);
     const rendezVous = await poserRendezVous(request, jeton, {
       serviceId: jeu.prestation.id,
       clientId: compteClient(jeu),
@@ -93,7 +93,7 @@ test.describe('Encaissement par carte', () => {
     traficReseau,
   }) => {
     const jour = jourDuScenario(5);
-    const jeton = await connecter(request, COMPTES.staff);
+    const jeton = await connecter(request, COMPTES.manager);
     const rendezVous = await poserRendezVous(request, jeton, {
       serviceId: jeu.prestation.id,
       clientId: compteClient(jeu),
@@ -101,7 +101,7 @@ test.describe('Encaissement par carte', () => {
     });
     await changerStatut(request, jeton, rendezVous.id, 'confirmed');
 
-    await connexionComptoir(page, COMPTES.staff);
+    await connexionComptoir(page, COMPTES.manager);
 
     await test.step('Choisir le règlement par carte', async () => {
       await page.goto(chemins.encaissement(jour, rendezVous.id));

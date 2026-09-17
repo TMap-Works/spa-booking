@@ -46,7 +46,7 @@ const CLIENTE_FICHIER = 'Clara Parcours';
 
 test.describe('Comptoir', () => {
   test.beforeEach(async ({ page }) => {
-    await connexionComptoir(page, COMPTES.staff);
+    await connexionComptoir(page, COMPTES.manager);
   });
 
   /**
@@ -110,7 +110,7 @@ test.describe('Comptoir', () => {
 
   test('report depuis le tiroir', async ({ page, request, jeu }) => {
     const jour = jourDuScenario(1);
-    const jeton = await connecter(request, COMPTES.staff);
+    const jeton = await connecter(request, COMPTES.manager);
 
     const rendezVous = await poserRendezVous(request, jeton, {
       serviceId: jeu.prestation.id,
@@ -207,7 +207,7 @@ test.describe('Comptoir', () => {
 
   test('no-show depuis le tiroir', async ({ page, request, jeu }) => {
     const jour = jourDuScenario(2);
-    const jeton = await connecter(request, COMPTES.staff);
+    const jeton = await connecter(request, COMPTES.manager);
 
     const rendezVous = await poserRendezVous(request, jeton, {
       serviceId: jeu.prestation.id,
@@ -250,7 +250,7 @@ test.describe('Comptoir', () => {
 
   test('annulation au comptoir', async ({ page, request, jeu }) => {
     const jour = jourDuScenario(3);
-    const jeton = await connecter(request, COMPTES.staff);
+    const jeton = await connecter(request, COMPTES.manager);
 
     const rendezVous = await poserRendezVous(request, jeton, {
       serviceId: jeu.prestation.id,
