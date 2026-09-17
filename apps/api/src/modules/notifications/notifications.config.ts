@@ -1,8 +1,9 @@
 import { Injectable } from '@nestjs/common';
 
 /**
- * La configuration propre au module `notifications` — pour l'instant, un seul
- * secret : le jeton que présentent les fonctions Lambda de la chaîne d'envoi.
+ * La configuration propre au module `notifications` — le jeton que présentent
+ * les fonctions Lambda de la chaîne d'envoi, et les trois réglages des
+ * passerelles AWS (#799).
  *
  * ## Pourquoi ici et non dans `config/env.schema.ts`
  *
@@ -92,13 +93,254 @@ export function resolveInternalToken(source: NodeJS.ProcessEnv): string | null {
   return raw;
 }
 
+/**
+ * ## Les trois réglages des passerelles AWS, et pourquoi ils sont **différés**
+ *
+ * `NOTIFICATIONS_INTERNAL_TOKEN` est résolu au constructeur : il conditionne une
+ * garde, donc le premier appel venu, et son seul mode de panne — une valeur trop
+ * courte — est une faute d'exploitation qu'on veut voir au démarrage.
+ *
+ * Les trois suivants sont résolus au **premier usage**, et c'est le quatrième
+ * critère d'acceptation de #799, au mot près : « validés au premier usage et non
+ * au démarrage de l'API ». Trois raisons, dans cet ordre d'importance :
+ *
+ * 1. `AppModule` monte les huit modules métier, donc **toutes** les suites
+ *    d'intégration du dépôt. Une adresse d'expéditeur mal formée ferait échouer
+ *    l'amorçage de suites qui ne parlent que de créneaux ;
+ * 2. une API qui refuserait de démarrer pour une capacité d'envoi immobiliserait
+ *    la réservation, l'encaissement et le reporting — c'est-à-dire tout le
+ *    produit — pour un e-mail. Le régime du module est le **défaut fermé par
+ *    requête**, pas le refus de démarrer ;
+ * 3. sur un déploiement sans SES ni SNS, rien n'est jamais lu : la configuration
+ *    n'est pas seulement tolérée absente, elle n'est même pas consultée.
+ *
+ * ## Ce qu'aucune de ces valeurs ne fait, et c'est ce qui compte
+ *
+ * Aucune n'apparaît dans un message d'erreur ni dans un journal. Ce ne sont pas
+ * des secrets au sens du jeton — une adresse d'expéditeur est publique, elle
+ * s'affiche dans chaque e-mail reçu — mais l'URL de file porte l'identifiant du
+ * compte AWS, et un journal est lu par plus de monde qu'une réponse. Les
+ * messages de ce fichier nomment la **variable**, jamais sa valeur.
+ */
+
+/** Adresse d'expéditeur des e-mails — identité vérifiée côté SES. */
+export const SES_FROM_EMAIL_ENV = 'SES_FROM_EMAIL';
+
+/** Nom d'expéditeur alphanumérique des SMS, tel que SNS l'attend. */
+export const SNS_SMS_SENDER_ID_ENV = 'SNS_SMS_SENDER_ID';
+
+/**
+ * URL de la file de découplage.
+ *
+ * ## Le nom est celui de l'infrastructure, au **singulier**, et c'est un piège
+ *
+ * `.env.example` a longtemps écrit `NOTIFICATIONS_QUEUE_URL`, au pluriel, là où
+ * `infra/terraform/envs/{dev,staging,prod}/main.tf` compose
+ * `notification_queue_env` sur la clé `NOTIFICATION_QUEUE_URL` — et la sortie
+ * `dispatch_queue_url` du module le dit mot pour mot : « `NOTIFICATION_QUEUE_URL`
+ * sur le conteneur de l'API ».
+ *
+ * Tant que la variable n'était lue par **personne** — c'est le cinquième constat
+ * de #799 — les deux orthographes ont pu coexister sans conséquence. Du jour où
+ * le publieur la lit, la divergence devient une panne muette : tout déploiement
+ * retomberait sur l'expédition en processus sans qu'aucun journal ne le dise,
+ * c'est-à-dire que le découplage que ce ticket pose serait supprimé en silence.
+ *
+ * C'est donc le nom d'ECS qui l'emporte, et `.env.example` qui a été corrigé. La
+ * variable n'ayant jamais été lue, il n'y a aucune compatibilité à préserver, et
+ * accepter les deux orthographes aurait laissé deux noms pour un réglage — la
+ * situation dont cette divergence est née. Le contrat du README du module
+ * Terraform ne se redéfinit pas ici : on s'y conforme.
+ */
+export const NOTIFICATION_QUEUE_URL_ENV = 'NOTIFICATION_QUEUE_URL';
+
+/**
+ * Région des clients AWS du module.
+ *
+ * `AWS_REGION` plutôt qu'une variable dédiée, pour la raison qu'expose déjà
+ * `reporting/export/report-export.config.ts` : c'est le nom que le SDK lit de
+ * lui-même, et deux variables de région pour un même compte finissent par
+ * diverger. La constante est **redéclarée** ici plutôt qu'importée de là-bas :
+ * api-module §3 tient les modules métier étanches, et un `import` depuis
+ * `reporting` ferait dépendre l'expédition d'un message du module de reporting.
+ *
+ * Facultative : sur un poste local, un profil AWS la fournit ; en déployé, la
+ * définition de tâche ECS la pose explicitement — ECS n'injecte aucune région
+ * dans le conteneur, contrairement à Lambda.
+ */
+export const AWS_REGION_ENV = 'AWS_REGION';
+
+/**
+ * Longueur maximale d'un sender ID SNS — onze caractères alphanumériques.
+ *
+ * Le module Terraform pose la même borne, et pour la même raison qu'elle est
+ * reprise ici : SNS refuse au-delà, et un refus au moment d'envoyer coûte une
+ * ligne `FAILED` par message plutôt qu'un message d'erreur à la configuration.
+ */
+export const SMS_SENDER_ID_MAX_LENGTH = 11;
+
+/** Ce qu'il faut pour écrire un e-mail — l'identité d'expéditeur, et la région. */
+export interface SesSettings {
+  readonly fromEmail: string;
+  readonly region: string | null;
+}
+
+/** Ce qu'il faut pour émettre un SMS — le nom d'expéditeur, et la région. */
+export interface SnsSettings {
+  readonly senderId: string;
+  readonly region: string | null;
+}
+
+/** Ce qu'il faut pour publier une enveloppe — l'URL de la file, et la région. */
+export interface QueueSettings {
+  readonly queueUrl: string;
+  readonly region: string | null;
+}
+
+/** La région résolue, ou `null` quand l'environnement la laisse au SDK. */
+function resolveRegion(source: NodeJS.ProcessEnv): string | null {
+  const region = source[AWS_REGION_ENV]?.trim() ?? '';
+
+  return region === '' ? null : region;
+}
+
+/**
+ * Résout l'expéditeur SES depuis un environnement.
+ *
+ * Fonction pure et exportée pour elle-même : c'est le cœur testable du
+ * fournisseur, exercé sans monter la moindre application Nest.
+ *
+ * @throws {Error} si l'adresse est présente mais n'en est pas une. Le message
+ * nomme la variable, **jamais** sa valeur — une adresse est une donnée
+ * personnelle dès qu'elle désigne quelqu'un, et un message d'erreur est
+ * journalisé (notifications §7).
+ */
+export function resolveSesSettings(source: NodeJS.ProcessEnv): SesSettings | null {
+  const fromEmail = source[SES_FROM_EMAIL_ENV]?.trim() ?? '';
+
+  // `''` est ce qu'ECS produit pour une variable déclarée sans valeur : c'est
+  // « pas posée », pas « mal posée ».
+  if (fromEmail === '') {
+    return null;
+  }
+
+  // Contrôle délibérément minimal — une seule arobase, rien autour d'elle qui
+  // soit vide ou espacé. Valider finement une adresse est un problème sans fond
+  // et sans intérêt ici : c'est SES qui tranche, sur une identité qu'il a
+  // vérifiée. Ce qu'on arrête, c'est la valeur que personne n'a renseignée —
+  // un nom de variable recopié, une chaîne de gabarit non substituée.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fromEmail)) {
+    throw new Error(
+      `Configuration notifications invalide : ${SES_FROM_EMAIL_ENV} doit être une adresse ` +
+        "e-mail — c'est l'identité d'expéditeur vérifiée côté SES, et SES refuse tout envoi " +
+        'depuis une adresse qui ne lui appartient pas.',
+    );
+  }
+
+  return { fromEmail, region: resolveRegion(source) };
+}
+
+/**
+ * Résout l'expéditeur SNS depuis un environnement.
+ *
+ * @throws {Error} si le sender ID est présent mais inacceptable. Onze
+ * caractères alphanumériques au plus, **dont au moins une lettre** : un
+ * expéditeur purement numérique est refusé par les opérateurs, qui y voient une
+ * usurpation de numéro court (notifications §5).
+ */
+export function resolveSnsSettings(source: NodeJS.ProcessEnv): SnsSettings | null {
+  const senderId = source[SNS_SMS_SENDER_ID_ENV]?.trim() ?? '';
+
+  if (senderId === '') {
+    return null;
+  }
+
+  if (senderId.length > SMS_SENDER_ID_MAX_LENGTH || !/^[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*$/.test(senderId)) {
+    throw new Error(
+      `Configuration notifications invalide : ${SNS_SMS_SENDER_ID_ENV} doit compter au plus ` +
+        `${SMS_SENDER_ID_MAX_LENGTH} caractères alphanumériques dont au moins une lettre — un ` +
+        'expéditeur purement numérique est refusé par les opérateurs, qui y voient une ' +
+        'usurpation de numéro court.',
+    );
+  }
+
+  return { senderId, region: resolveRegion(source) };
+}
+
+/**
+ * Résout la file de découplage depuis un environnement.
+ *
+ * @throws {Error} si l'URL est présente mais n'est pas une URL de file SQS. Le
+ * message nomme la variable, jamais sa valeur : elle porte l'identifiant du
+ * compte AWS.
+ */
+export function resolveQueueSettings(source: NodeJS.ProcessEnv): QueueSettings | null {
+  const queueUrl = source[NOTIFICATION_QUEUE_URL_ENV]?.trim() ?? '';
+
+  if (queueUrl === '') {
+    return null;
+  }
+
+  if (!/^https:\/\/[^\s/]+\/\d+\/[^\s/]+$/.test(queueUrl)) {
+    throw new Error(
+      `Configuration notifications invalide : ${NOTIFICATION_QUEUE_URL_ENV} doit être l'URL ` +
+        "d'une file SQS (https://sqs.<région>.amazonaws.com/<compte>/<file>) — c'est la sortie " +
+        '`dispatch_queue_url` du module Terraform.',
+    );
+  }
+
+  return { queueUrl, region: resolveRegion(source) };
+}
+
+/**
+ * Mémoïse une résolution, **y compris son échec**.
+ *
+ * Une configuration invalide doit lever à chaque usage, et lever la *même*
+ * chose : sans cela, le second envoi trouverait un cache vide, relirait
+ * l'environnement, et la panne changerait de forme entre deux messages.
+ */
+function once<T>(resolve: () => T): () => T {
+  let settled: { readonly value: T } | { readonly error: unknown } | null = null;
+
+  return (): T => {
+    settled ??= attempt(resolve);
+
+    if ('error' in settled) {
+      throw settled.error;
+    }
+
+    return settled.value;
+  };
+}
+
+function attempt<T>(resolve: () => T): { readonly value: T } | { readonly error: unknown } {
+  try {
+    return { value: resolve() };
+  } catch (error) {
+    return { error };
+  }
+}
+
 @Injectable()
 export class NotificationsConfig {
   /** `null` quand la variable est absente — jamais quand elle est trop courte : ce cas a fait échouer l'amorçage. */
   private readonly internalToken: string | null;
 
+  private readonly ses: () => SesSettings | null;
+
+  private readonly sns: () => SnsSettings | null;
+
+  private readonly queue: () => QueueSettings | null;
+
   public constructor(source: NodeJS.ProcessEnv = process.env) {
     this.internalToken = resolveInternalToken(source);
+    // Les trois lectures sont **capturées**, pas exécutées : l'environnement
+    // n'est consulté qu'au premier appel du getter correspondant. C'est ce qui
+    // fait qu'une API sans SES ni SNS ne lit jamais ces variables, et qu'une
+    // valeur fautive échoue à l'envoi plutôt qu'à l'amorçage.
+    this.ses = once(() => resolveSesSettings(source));
+    this.sns = once(() => resolveSnsSettings(source));
+    this.queue = once(() => resolveQueueSettings(source));
   }
 
   /** `false` sur un poste sans chaîne d'envoi branchée. */
@@ -116,5 +358,34 @@ export class NotificationsConfig {
    */
   public get expectedInternalToken(): string | null {
     return this.internalToken;
+  }
+
+  /**
+   * L'expéditeur e-mail, ou `null` si aucun n'est branché.
+   *
+   * @throws {Error} si `SES_FROM_EMAIL` est présente mais invalide — au premier
+   * appel, et à tous les suivants.
+   */
+  public get sesSettings(): SesSettings | null {
+    return this.ses();
+  }
+
+  /**
+   * L'expéditeur SMS, ou `null` si aucun n'est branché.
+   *
+   * @throws {Error} si `SNS_SMS_SENDER_ID` est présente mais invalide.
+   */
+  public get snsSettings(): SnsSettings | null {
+    return this.sns();
+  }
+
+  /**
+   * La file de découplage, ou `null` — auquel cas les abonnés du bus expédient
+   * en processus, comme avant #799.
+   *
+   * @throws {Error} si `NOTIFICATION_QUEUE_URL` est présente mais invalide.
+   */
+  public get queueSettings(): QueueSettings | null {
+    return this.queue();
   }
 }
