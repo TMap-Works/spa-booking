@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import AccountLayout from '@/app/(account)/[tenantSlug]/compte/layout';
+import { PUBLIC_EXIT_LABELS } from '@/components/salon/public-exits';
 
 import { tenant } from './fixtures';
 
@@ -45,6 +46,39 @@ import { tenant } from './fixtures';
  * - le lien reste présent sur l'écran qu'il désigne, `aria-current="page"` en
  *   plus. Le retirer là rendrait la barre différente d'un écran à l'autre,
  *   c'est-à-dire l'écart qu'on corrige.
+ *
+ * ## Le pied de page du même gabarit — #749
+ *
+ * Il ne range pas ce qui se fait dans l'espace, il en **sort** : deux liens, le
+ * tunnel et le compte. L'audit `d20260916-1` y relève deux écarts `ds:libelles`,
+ * et la seconde moitié de ce fichier les tient :
+ *
+ * - **le libellé est celui de la destination** : le pied réécrivait « Mes
+ *   rendez-vous » pour une page titrée « Mon compte ». Il lit maintenant le
+ *   registre des sorties du parcours public, et l'assertion porte sur
+ *   l'**identité** entre ce registre et le `<h1>` du gabarit — la seule forme
+ *   qu'une réécriture d'un seul des deux côtés ne peut pas satisfaire ;
+ * - **une sortie qui ramène à l'écran courant n'est pas une sortie** : sur la
+ *   connexion, le lien menait à `/{slug}/compte`, qui redirige aussitôt vers la
+ *   connexion (`session.ts`, cas 3). Il s'efface donc là, comme sur la liste
+ *   elle-même — et reste partout où il mène réellement ailleurs, l'inscription
+ *   comprise.
+ *
+ * Contrairement à la barre, ce n'est pas la session qui décide mais la
+ * **destination effective** : c'est ce qui distingue la connexion, où le lien
+ * boucle, de l'inscription, où il n'y boucle pas. Et la destination se lit sur
+ * le **cookie d'accès** seul — une session renouvelable déposée sur la connexion
+ * par un renouvellement refusé sans révocation y bouclerait tout autant.
+ *
+ * ## Là où #927 a déplacé la frontière
+ *
+ * Le cadre d'accueil des écrans d'identification remplace désormais ce pied
+ * quand **aucun** cookie n'est là : ses sorties nomment le tunnel, la vitrine et
+ * l'accueil de la plateforme, jamais l'espace qu'on est en train d'ouvrir. La
+ * boucle est donc fermée deux fois, et cette suite le dit des deux côtés : par
+ * l'absence de sortie « compte » dans le cadre, et par son effacement dans le
+ * pied — qui reste le seul rendu sur la connexion tant qu'une session est
+ * renouvelable.
  */
 
 const readAccessToken = vi.fn();
@@ -55,6 +89,7 @@ const COMPTE = `/${tenant.slug}/compte`;
 const COORDONNEES = `${COMPTE}/coordonnees`;
 const REPORT = `${COMPTE}/rendez-vous/3f7c1f4e-2a9d-4c53-8f0e-1b2c3d4e5f60/report`;
 const CONNEXION = `${COMPTE}/connexion`;
+const INSCRIPTION = `${COMPTE}/inscription`;
 
 /**
  * Le chemin courant, piloté par le test — `AccountNav` le lit pour marquer son
@@ -202,5 +237,108 @@ describe('la navigation de l’espace client', () => {
     // reste servi, et le titre de l'espace avec lui.
     expect(screen.getByText('contenu de l’écran')).toBeDefined();
     expect(screen.getByRole('heading', { level: 1, name: 'Mon compte' })).toBeDefined();
+  });
+});
+
+describe('les sorties du pied de page', () => {
+  /** Le pied de page du gabarit, où qu'il soit dans l'arbre. */
+  function pied(container: HTMLElement): HTMLElement {
+    const footer = container.querySelector<HTMLElement>('footer.spa-account__footer');
+
+    if (footer === null) {
+      throw new Error('le gabarit doit rendre le pied de page de l’espace client');
+    }
+
+    return footer;
+  }
+
+  it('nomme la sortie du compte comme la destination se titre elle-même', async () => {
+    const container = await rendreLeGabarit('ouverte', COORDONNEES);
+
+    const titre = screen.getByRole('heading', { level: 1 }).textContent;
+
+    // Un `toBe` d'identité entre le registre et le titre, et non deux littéraux
+    // écrits côte à côte : c'est la seule forme qu'une réécriture d'un seul des
+    // deux côtés ne peut pas satisfaire (#749).
+    expect(PUBLIC_EXIT_LABELS.compte).toBe(titre);
+    expect(
+      within(pied(container))
+        .getByRole('link', { name: PUBLIC_EXIT_LABELS.compte })
+        .getAttribute('href'),
+    ).toBe(COMPTE);
+  });
+
+  it.each([
+    ['les coordonnées', COORDONNEES],
+    ['le report d’un rendez-vous', REPORT],
+  ])('garde la sortie du compte sur %s, d’où elle mène ailleurs', async (_ecran, chemin) => {
+    const container = await rendreLeGabarit('ouverte', chemin);
+
+    expect(
+      within(pied(container)).getByRole('link', { name: PUBLIC_EXIT_LABELS.compte }),
+    ).toBeDefined();
+  });
+
+  it('efface la sortie du compte sur la liste, qui est déjà cet écran', async () => {
+    const container = await rendreLeGabarit('ouverte', COMPTE);
+
+    expect(
+      within(pied(container)).queryByRole('link', { name: PUBLIC_EXIT_LABELS.compte }),
+    ).toBeNull();
+  });
+
+  it('n’offre nulle part la sortie du compte sur la connexion, où elle boucle', async () => {
+    const container = await rendreLeGabarit('absente', CONNEXION);
+
+    // Sans session, `/{slug}/compte` redirige vers la connexion : le lien
+    // ramenait la visiteuse à l'écran qu'elle lisait déjà (#749). Depuis #927,
+    // cet état ne rend plus le pied du tout — c'est le cadre d'accueil qui porte
+    // les sorties —, et l'assertion vaut donc pour l'écran entier : aucune des
+    // deux barres ne propose l'espace qu'on essaie précisément d'ouvrir.
+    expect(container.querySelector('footer.spa-account__footer')).toBeNull();
+    expect(screen.queryByRole('link', { name: PUBLIC_EXIT_LABELS.compte })).toBeNull();
+  });
+
+  it('efface la sortie du compte sur la connexion même quand la session est renouvelable', async () => {
+    const container = await rendreLeGabarit('a-renouveler', CONNEXION);
+
+    // C'est l'état où un renouvellement **refusé sans révocation** — limiteur,
+    // API injoignable — dépose la visiteuse ici, ses deux cookies intacts
+    // (`session/refresh/route.ts`). Compter cette session comme « mène à la
+    // liste » y rouvrirait la boucle : `/compte` repartirait au renouvellement,
+    // qui échouerait de nouveau et ramènerait à cet écran.
+    expect(
+      within(pied(container)).queryByRole('link', { name: PUBLIC_EXIT_LABELS.compte }),
+    ).toBeNull();
+    // La barre, elle, reste peinte : elle ne tranche pas la même question, et la
+    // retirer la ferait clignoter à chaque expiration (#747).
+    expect(screen.getByRole('navigation', { name: 'Mon compte' })).toBeDefined();
+  });
+
+  it('la garde sur l’inscription, d’où elle mène bien à la connexion', async () => {
+    const container = await rendreLeGabarit('a-renouveler', INSCRIPTION);
+
+    // C'est la destination effective qui décide, pas la session : d'ici, le lien
+    // mène ailleurs, et un seul libellé sert la cliente inscrite et l'autre.
+    // La session est dite renouvelable parce que c'est le seul état où
+    // l'inscription porte encore ce pied depuis #927 — sans aucun cookie, c'est
+    // le cadre d'accueil qui rend les sorties. La règle testée, elle, ne change
+    // pas : le cookie d'accès manque des deux côtés.
+    expect(
+      within(pied(container)).getByRole('link', { name: PUBLIC_EXIT_LABELS.compte }),
+    ).toBeDefined();
+  });
+
+  it('garde en toutes circonstances la sortie vers le tunnel', async () => {
+    const container = await rendreLeGabarit('a-renouveler', CONNEXION);
+
+    // Le tunnel n'appartient pas à cet espace : aucun de ses écrans ne peut être
+    // celui qu'on lit, et la sortie ne boucle donc jamais — pas même sur l'écran
+    // où l'autre sortie, elle, vient de s'effacer.
+    expect(
+      within(pied(container))
+        .getByRole('link', { name: 'Prendre un nouveau rendez-vous' })
+        .getAttribute('href'),
+    ).toBe(`/${tenant.slug}/reservation`);
   });
 });

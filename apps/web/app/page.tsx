@@ -163,8 +163,10 @@ const QUESTIONS: readonly { readonly question: string; readonly answer: string }
   },
   {
     question: 'Comment reporter ou annuler un rendez-vous ?',
-    answer:
-      'Depuis « Mes rendez-vous », dans l’espace client de votre salon, tant que le délai fixé par le salon le permet. Le salon est prévenu automatiquement.',
+    // La porte est nommée par le registre et non recopiée : cette réponse
+    // désigne le bouton qui se trouve juste au-dessus, et deux libellés écrits
+    // séparément finissent par diverger — c'est l'écart que #749 a fermé.
+    answer: `Depuis « ${SALON_DOOR_LABELS.compte} », dans l’espace client de votre salon, tant que le délai fixé par le salon le permet. Le salon est prévenu automatiquement.`,
   },
   {
     question: 'Mes données de carte bancaire sont-elles conservées ?',

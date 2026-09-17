@@ -251,7 +251,7 @@ describe('reprise — les issues', () => {
   it('garde sur la vitrine la sortie vers l’espace client, qu’aucun layout ne porte', () => {
     render(<VitrineError error={new Error('panne')} reset={vi.fn()} />);
 
-    const sortie = screen.getByRole('link', { name: 'Mes rendez-vous' });
+    const sortie = screen.getByRole('link', { name: 'Mon compte' });
     expect(sortie.getAttribute('href')).toBe('/maison-lotus/compte');
   });
 

@@ -18,7 +18,7 @@ import { Notification, type NotificationTone } from '@/components/ui/notificatio
  *
  * ## Ce qui manquait
  *
- * « Déplacer au mercredi 16 septembre 2026 à 14:55 » et « Confirmer
+ * « Reporter au mercredi 16 septembre 2026 à 14:55 » et « Confirmer
  * l'annulation » ramenaient l'une et l'autre à la liste **sans un mot**. La carte
  * quittait « Rendez-vous à venir » et réapparaissait sous « Historique », souvent
  * hors de vue à 360 px : rien ne disait que l'opération avait abouti, là où le

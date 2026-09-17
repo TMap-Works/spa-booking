@@ -54,8 +54,17 @@ l'écart qu'on corrige. Les classes CSS sont celles qui existaient déjà, et
 propriétaire, pas d'apparence.
 
 Le pied de page complète la barre et n'en fait pas partie : « Prendre un nouveau
-rendez-vous » et « Mes rendez-vous » sortent de l'espace ou y reviennent, là où
-la barre range ce qui s'y fait.
+rendez-vous » et « Mon compte » sortent de l'espace ou y reviennent, là où la
+barre range ce qui s'y fait. Il est rendu par `components/account-exits.tsx`, et
+deux règles le tiennent depuis #749 : le libellé de la sortie « compte » vient du
+registre des sorties du parcours public (`components/salon/public-exits.tsx`), et
+cette sortie **disparaît quand elle ramènerait à l'écran qu'on lit** — sur la
+connexion, elle menait à `/{slug}/compte`, qui redirige aussitôt ici. La
+destination se juge sur le **cookie d'accès** seul, et non sur « il y a une
+session » : un renouvellement refusé sans révocation — limiteur, API injoignable
+— dépose la visiteuse sur la connexion avec ses deux cookies intacts, et le lien
+y bouclerait de nouveau. Les écrans gardés, eux, ne se rendent pas du tout sans
+jeton d'accès.
 
 ## Les deux moitiés se nomment par ce qu'elles rangent
 

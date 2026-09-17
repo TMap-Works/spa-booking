@@ -200,7 +200,9 @@ describe('report — les créneaux qui chevauchent le rendez-vous déplacé', ()
 
     await user.click(screen.getByRole('button', { name: '14 h 15' }));
 
-    const confirm = screen.getByRole('button', { name: /Déplacer au/ });
+    // « Reporter au … » et non « Déplacer au … » : le CDC nomme l'action
+    // « report », et le bouton porte le même mot que le lien qui y mène (#749).
+    const confirm = screen.getByRole('button', { name: /Reporter au/ });
     await user.click(confirm);
 
     expect(rescheduleOwnAppointmentAction).toHaveBeenCalledTimes(1);

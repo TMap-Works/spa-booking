@@ -17,8 +17,9 @@ import Link from 'next/link';
  * Trois écrans du parcours client nomment déjà les mêmes destinations — la
  * vitrine, le tunnel, l'espace client. Les laisser écrire chacun leur libellé,
  * c'est ce qui produit « Mes rendez-vous » ici et « Mon compte » là pour la même
- * page. Les libellés sont donc tenus ici, une fois, et une destination
- * s'attrape par sa clé.
+ * page — et c'est précisément ce que l'espace client faisait encore, son pied de
+ * page réécrivant la chaîne au lieu de la lire ici (#749). Les libellés sont donc
+ * tenus ici, une fois, et une destination s'attrape par sa clé.
  *
  * Les **chemins**, eux, restent à l'appelant : les composants de ce dossier ne
  * connaissent pas l'arborescence des routes, c'est la page qui la tient
@@ -37,21 +38,35 @@ export type PublicExitKey = 'vitrine' | 'reservation' | 'compte';
 /**
  * Le libellé de chaque destination — **source unique**.
  *
- * « Mes rendez-vous » plutôt que « Se connecter » : `/{slug}/compte` redirige de
- * lui-même vers la connexion quand aucune session n'est ouverte
- * (`compte/session.ts`). Un seul libellé sert donc la cliente inscrite et celle
- * qui ne l'est pas, et il dit ce qu'elle vient chercher plutôt que la formalité
- * qu'il faut traverser pour l'obtenir.
+ * Toujours pas « Se connecter » : `/{slug}/compte` redirige de lui-même vers la
+ * connexion quand aucune session n'est ouverte (`compte/session.ts`). Un seul
+ * libellé sert donc la cliente inscrite et celle qui ne l'est pas, et il dit où
+ * elle va plutôt que la formalité qu'il faut traverser pour y arriver.
  *
- * Exporté parce que la destination « réservation » est aussi nommée hors d'une
- * barre de sorties — l'appel à l'action de `SalonHeader` est un bouton, pas un
- * lien de navigation, mais il désigne la même page. Le laisser réécrire la
- * chaîne, c'est exactement ce que ce registre existe pour empêcher.
+ * ## « Mon compte » et non plus « Mes rendez-vous » (#749)
+ *
+ * L'audit `d20260916-1` relève au titre de `ds:libelles` qu'un lien nommait
+ * « Mes rendez-vous » une destination dont le titre est « Mon compte »
+ * (`(account)/…/compte/layout.tsx`, `<h1>` et `metadata.title`). Un lien porte le
+ * nom de sa destination — WCAG 2.4.4, et 3.2.4 pour la constance d'un écran à
+ * l'autre —, et des deux côtés de l'écart c'est le libellé qui bouge : le titre
+ * couvre les **cinq** écrans de l'espace — liste, coordonnées, report, connexion,
+ * inscription —, dont trois ne montrent aucun rendez-vous.
+ *
+ * Le CDC §1.4 nomme d'ailleurs la fonctionnalité « compte client avec
+ * historique », et le benchmark (BM-COMPTE-01) décrit « Mes rendez-vous » comme
+ * une **entrée du menu** de l'espace, pas comme le nom de l'espace lui-même.
+ *
+ * Exporté parce que deux destinations sont aussi nommées hors d'une barre de
+ * sorties — l'appel à l'action de `SalonHeader` est un bouton, pas un lien de
+ * navigation, et le pied de page de l'espace client rend ses sorties lui-même —
+ * mais désignent les mêmes pages. Les laisser réécrire la chaîne, c'est
+ * exactement ce que ce registre existe pour empêcher.
  */
 export const PUBLIC_EXIT_LABELS: Readonly<Record<PublicExitKey, string>> = {
   vitrine: 'Voir toutes les prestations',
   reservation: 'Prendre rendez-vous',
-  compte: 'Mes rendez-vous',
+  compte: 'Mon compte',
 };
 
 export interface PublicExit {

@@ -11,8 +11,9 @@ interface AccountErrorProps {
  * Un écran de l'espace client qui n'a pas pu se rendre (#830).
  *
  * Posée sous le gabarit du compte : le titre « Mon compte », la barre du compte
- * et le pied — « Prendre un nouveau rendez-vous », « Mes rendez-vous » — restent
- * affichés, si bien que la cliente a toujours une issue en plus de la reprise.
+ * et le pied — « Prendre un nouveau rendez-vous », et « Mon compte » quand il ne
+ * ramène pas à l'écran courant (#749) — restent affichés, si bien que la cliente
+ * a toujours une issue en plus de la reprise.
  * Le gabarit porte déjà le titre de niveau 1 ; l'encart n'en ajoute pas.
  */
 export default function AccountError({ reset }: AccountErrorProps) {

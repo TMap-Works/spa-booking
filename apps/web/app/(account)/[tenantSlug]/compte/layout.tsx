@@ -11,8 +11,11 @@ import {
   AccountAnnouncementProvider,
   AccountAnnouncementRegion,
 } from './components/account-announcement';
+import { AccountExits } from './components/account-exits';
 import { AccountNav } from './components/account-nav';
-import { accountPath, bookingPath, salonPath } from './paths';
+// `accountPath` a suivi le pied de page dans `components/account-exits.tsx`
+// (#749) ; les deux chemins qui restent servent les sorties du cadre d'accueil.
+import { bookingPath, salonPath } from './paths';
 import { readAccessToken, readRefreshToken } from './session';
 import { accountTenant } from './tenant';
 
@@ -72,6 +75,22 @@ import { accountTenant } from './tenant';
  * dessiner, jamais pour décider d'une issue. Rediriger d'ici doublerait la
  * décision de la page — et bouclerait sur l'écran de connexion, qui est sous ce
  * même layout.
+ *
+ * ## … et le pied de page, qui a la même raison d'être client (#749)
+ *
+ * Ses deux liens sortent de l'écran courant, et l'un d'eux pouvait y ramener :
+ * sur la connexion, « Mes rendez-vous » menait à `/{slug}/compte`, qui redirige
+ * aussitôt vers la connexion. Décider de cela demande le chemin courant, que ce
+ * gabarit ne connaît pas — il n'est pas rejoué d'un écran à l'autre du segment.
+ * Le pied est donc rendu par `components/account-exits.tsx`, qui lit aussi ses
+ * libellés dans le registre des sorties plutôt que de les réécrire.
+ *
+ * Depuis #927, les écrans servis **sans aucun cookie** ne passent plus par ce
+ * pied : ils reçoivent le cadre d'accueil, dont les sorties ne proposent pas
+ * l'espace qu'on essaie d'ouvrir. La boucle reste néanmoins atteignable par le
+ * seul chemin où ce pied est peint sur la connexion — une session *renouvelable*
+ * qui vient d'y être déposée sans que ses cookies soient effacés —, et c'est
+ * précisément ce cas que le pied tranche sur le cookie d'accès.
  *
  * ## La barre est posée **avant** `<main>`, et hors de lui
  *
@@ -149,8 +168,12 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
    * Aucun appel à l'API : cette barre ne dit rien du compte, seulement où aller.
    * L'interroger ajouterait un aller-retour à chacun des cinq écrans pour deux
    * libellés qui ne dépendent de personne.
+   *
+   * Le **pied de page**, lui, ne lit que le cookie d'accès, et c'est délibéré :
+   * il n'a pas la même question à trancher. Voir `components/account-exits.tsx`.
    */
-  const signedIn = (await readAccessToken()) !== null || (await readRefreshToken()) !== null;
+  const accessToken = await readAccessToken();
+  const signedIn = accessToken !== null || (await readRefreshToken()) !== null;
 
   /*
    * Sans session, les seuls écrans que ce gabarit sert pour de bon sont la
@@ -208,14 +231,12 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
           <AccountAnnouncementRegion />
           {children}
         </main>
-        <footer className="spa-account__footer">
-          <a className="spa-account__back" href={bookingPath(tenantSlug)}>
-            Prendre un nouveau rendez-vous
-          </a>
-          <a className="spa-account__back" href={accountPath(tenantSlug)}>
-            Mes rendez-vous
-          </a>
-        </footer>
+        {/*
+          Le pied est rendu par son propre composant depuis #749 : ses libellés
+          viennent du registre des sorties, et sa sortie « compte » s'efface quand
+          elle ramènerait à l'écran qu'on lit — voir `components/account-exits.tsx`.
+        */}
+        <AccountExits hasAccessToken={accessToken !== null} tenantSlug={tenantSlug} />
       </div>
     </AccountAnnouncementProvider>
   );
