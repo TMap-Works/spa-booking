@@ -5,6 +5,8 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { FocusEvent } from 'react';
 
+import { LinkPending } from '@/components/ui/link-pending';
+
 import { AdminLogoutButton } from './admin-logout-button';
 import { EstablishmentSwitcher, type AdminEstablishment } from './establishment-switcher';
 import { adminNavigation, isCurrentEntry, roleLabel } from './navigation';
@@ -172,6 +174,12 @@ export function AdminRail({
               onFocus={revealEntry}
             >
               {entry.label}
+              {/*
+               * L'entrée cliquée se dit « en cours » jusqu'à l'arrivée de son
+               * écran (#830) : sans elle, le surlignage restait sur l'écran
+               * qu'on quittait, et rien ne montrait que le clic avait porté.
+               */}
+              <LinkPending className="spa-admin__nav-pending" />
             </Link>
           ),
         )}

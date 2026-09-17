@@ -1,0 +1,143 @@
+/*
+ * Navigation en cours — barre de progression et repère de lien (#830)
+ * =============================================================================
+ *
+ * Deux indicateurs, un pour chaque question qu'on se pose après un clic :
+ *
+ *   .spa-progress        « est-ce que ça charge ? » — une barre fine en haut de
+ *                        la fenêtre, la même pour les trois produits ;
+ *   .spa-link-pending    « est-ce que mon clic a été pris ? » — un repère posé
+ *                        dans le lien cliqué, que chaque lien place à sa façon.
+ *
+ * Tous deux sont décoratifs : l'attente se dit aux lecteurs d'écran par le
+ * squelette de l'écran d'arrivée (`aria-busy` et son message masqué).
+ *
+ * ## Apparition différée
+ *
+ * Une navigation préchargée aboutit en quelques dizaines de millisecondes. Un
+ * indicateur affiché aussitôt clignoterait alors à chaque clic : les deux
+ * n'apparaissent qu'après `--spa-duration-normal`, par une animation d'opacité
+ * sans durée et retardée. Elle n'est pas neutralisée par la règle
+ * `prefers-reduced-motion` de `base.css`, qui raccourcit les durées sans
+ * toucher aux délais — et n'a rien à raccourcir ici.
+ */
+
+@keyframes spa-progress-appear {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes spa-progress-vanish {
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes spa-progress-slide {
+  from {
+    translate: -100% 0;
+  }
+
+  to {
+    translate: 250% 0;
+  }
+}
+
+/* --- Barre de progression ----------------------------------------------- */
+
+/*
+ * Au-dessus de tout, y compris d'une modale ouverte : une navigation lancée
+ * depuis un tiroir doit se voir. Elle ne capte aucun pointeur, si bien qu'elle ne
+ * masque jamais le haut d'un bandeau collant.
+ */
+.spa-progress {
+  position: fixed;
+  inset-block-start: 0;
+  inset-inline: 0;
+  z-index: var(--spa-z-notification);
+  block-size: 0.1875rem;
+  overflow: hidden;
+  pointer-events: none;
+  background-color: var(--spa-color-accent-soft);
+  animation: spa-progress-appear 0s linear var(--spa-duration-normal) both;
+}
+
+/*
+ * Indéterminée : la durée d'un écran ne se connaît pas d'avance, et une barre qui
+ * se remplit à un rythme inventé promettrait une fin qu'elle ignore.
+ */
+.spa-progress__bar {
+  display: block;
+  block-size: 100%;
+  inline-size: 40%;
+  background-color: var(--spa-color-accent);
+  animation: spa-progress-slide 1.2s var(--spa-easing-standard) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* Immobile : la barre pleine dit « ça charge » sans rien faire défiler. */
+  .spa-progress__bar {
+    inline-size: 100%;
+    animation: none;
+  }
+}
+
+/* --- Repère de lien ------------------------------------------------------ */
+
+/*
+ * Un petit spinner, à la taille du texte du lien. Sa place est réservée même au
+ * repos — `visibility` et non `display` — pour que le libellé ne bouge pas au
+ * clic.
+ */
+.spa-link-pending {
+  display: inline-block;
+  flex: none;
+  inline-size: 0.875em;
+  block-size: 0.875em;
+  visibility: hidden;
+}
+
+.spa-link-pending[data-pending='true'] {
+  visibility: visible;
+  border: 2px solid currentcolor;
+  border-block-start-color: transparent;
+  border-radius: var(--spa-radius-full);
+  animation:
+    spa-progress-appear 0s linear var(--spa-duration-normal) both,
+    spa-spin 0.7s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spa-link-pending[data-pending='true'] {
+    border-block-start-color: currentcolor;
+    opacity: 0.6;
+  }
+}
+
+/*
+ * Dans un bouton-lien (« Réserver »), le repère prend la place du libellé, comme
+ * le spinner de `.spa-button--loading` : le bouton garde sa largeur, et le texte
+ * disparaît le temps que l'écran suivant arrive.
+ */
+.spa-button .spa-link-pending {
+  position: absolute;
+  inset-block-start: 50%;
+  inset-inline-start: 50%;
+  translate: -50% -50%;
+  font-size: var(--spa-font-size-lg);
+}
+
+.spa-button:has(.spa-link-pending[data-pending='true']) {
+  cursor: progress;
+}
+
+/* Le libellé s'efface au moment où le repère apparaît, pas avant : sans le même
+ * délai, le bouton resterait vide le temps que le repère se montre. */
+.spa-button:has(.spa-link-pending[data-pending='true']) .spa-button__label {
+  animation: spa-progress-vanish 0s linear var(--spa-duration-normal) both;
+}

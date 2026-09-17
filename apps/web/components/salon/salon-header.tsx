@@ -1,6 +1,8 @@
 import type { PublicTenant } from '@spa/shared';
 import Link from 'next/link';
 
+import { LinkPending } from '@/components/ui/link-pending';
+
 import { PUBLIC_EXIT_LABELS } from './public-exits';
 
 interface SalonHeaderProps {
@@ -28,6 +30,11 @@ interface SalonHeaderProps {
  * Le **libellé**, lui, vient du registre des sorties publiques
  * (`public-exits.tsx`) : cet appel à l'action et les barres de sorties nomment
  * la même page, et deux chaînes écrites à deux endroits finissent par diverger.
+ *
+ * Au clic, le bouton se dit « en cours » jusqu'à l'arrivée du tunnel (#830) :
+ * `LinkPending` y remplace le libellé par un spinner, à largeur conservée, comme
+ * un `Button` en chargement. C'est le seul îlot client de cet en-tête, et il ne
+ * peint rien avant le clic — le titre qui porte le LCP reste rendu serveur.
  */
 export function SalonHeader({ tenant, reservationHref }: SalonHeaderProps) {
   return (
@@ -39,7 +46,8 @@ export function SalonHeader({ tenant, reservationHref }: SalonHeaderProps) {
         votre rendez-vous en quelques minutes.
       </p>
       <Link className="spa-button spa-button--accent" href={reservationHref}>
-        {PUBLIC_EXIT_LABELS.reservation}
+        <span className="spa-button__label">{PUBLIC_EXIT_LABELS.reservation}</span>
+        <LinkPending />
       </Link>
     </header>
   );

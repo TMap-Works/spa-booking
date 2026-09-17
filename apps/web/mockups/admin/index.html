@@ -17,7 +17,21 @@
           <a class="spa-admin__nav-link" href="fiche-client.html">Clients</a>
           <a class="spa-admin__nav-link" href="personnel.html">Personnel</a>
           <a class="spa-admin__nav-link" href="encaissement.html">Encaissement</a>
-          <a class="spa-admin__nav-link" href="reporting.html">Reporting</a>
+          <!--
+            NAVIGATION EN COURS (#830). L'entrée cliquée porte son repère
+            « en cours » jusqu'à l'arrivée de son écran : aplat du survol, spinner
+            en bout d'entrée. Figé ici pour être vu ; dans l'application, il ne
+            s'allume qu'après un court délai, et `aria-current` le rejoint à
+            l'arrivée de l'écran.
+          -->
+          <a class="spa-admin__nav-link" href="reporting.html">
+            Reporting
+            <span
+              class="spa-link-pending spa-admin__nav-pending"
+              data-pending="true"
+              aria-hidden="true"
+            ></span>
+          </a>
         </div>
         <div class="spa-admin__rail-footer">
           <strong>Maison Lotus — Antananarivo</strong>
