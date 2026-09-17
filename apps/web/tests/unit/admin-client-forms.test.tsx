@@ -109,22 +109,37 @@ describe('la note interne d’une fiche', () => {
   it('pré-remplit la note en place et dit qu’enregistrer la remplace', () => {
     renderNote(FARA.internalNote);
 
-    const field = screen.getByLabelText(/note interne/i) as HTMLTextAreaElement;
+    const field = screen.getByLabelText(/ce que le salon doit savoir/i) as HTMLTextAreaElement;
     expect(field.value).toBe(FARA.internalNote);
     expect(screen.getByText(/remplace la note précédente/i)).toBeDefined();
+  });
+
+  it('ne nomme « note interne » qu’une fois, et ne recopie pas le champ — #763', () => {
+    renderNote(FARA.internalNote);
+
+    // Le titre de section est la seule mention du nom : le libellé du champ dit
+    // ce qu'on y écrit, et le bloc « Note en place » qui redonnait le texte déjà
+    // affiché dans le champ a disparu.
+    expect(screen.getAllByText(/note interne/i)).toHaveLength(1);
+    expect(screen.queryByText('Note en place')).toBeNull();
+    expect(screen.queryByText(FARA.internalNote ?? '')).toBeNull();
   });
 
   it('dit ce qu’on note quand la fiche n’en porte aucune', () => {
     renderNote(null);
 
-    expect(screen.getByText('Aucune note pour l’instant')).toBeDefined();
+    // Plus d'état vide séparé : le champ vide **est** l'absence de note, et sa
+    // légende est ce qui dit quoi y écrire.
+    const field = screen.getByLabelText(/ce que le salon doit savoir/i) as HTMLTextAreaElement;
+    expect(field.value).toBe('');
+    expect(screen.getByText(/préférences, allergies, sensibilités/i)).toBeDefined();
   });
 
   it('enregistre le texte saisi sans toucher aux coordonnées', async () => {
     updateCustomerAction.mockResolvedValue({ ok: true, data: FARA });
     renderNote(null);
 
-    await userEvent.type(screen.getByLabelText(/note interne/i), 'Préfère la fin de journée.');
+    await userEvent.type(screen.getByLabelText(/ce que le salon doit savoir/i), 'Préfère la fin de journée.');
     await userEvent.click(screen.getByRole('button', { name: /enregistrer la note/i }));
 
     // Un seul champ dans le corps : `PATCH` laisse en place ce qu'il ne nomme
@@ -139,7 +154,7 @@ describe('la note interne d’une fiche', () => {
     updateCustomerAction.mockResolvedValue({ ok: true, data: { ...FARA, internalNote: null } });
     renderNote(FARA.internalNote);
 
-    await userEvent.clear(screen.getByLabelText(/note interne/i));
+    await userEvent.clear(screen.getByLabelText(/ce que le salon doit savoir/i));
     await userEvent.click(screen.getByRole('button', { name: /enregistrer la note/i }));
 
     expect(updateCustomerAction).toHaveBeenCalledWith('maison-lotus', FARA.id, {
@@ -155,11 +170,11 @@ describe('la note interne d’une fiche', () => {
     });
     renderNote(null);
 
-    await userEvent.type(screen.getByLabelText(/note interne/i), 'Allergie amande.');
+    await userEvent.type(screen.getByLabelText(/ce que le salon doit savoir/i), 'Allergie amande.');
     await userEvent.click(screen.getByRole('button', { name: /enregistrer la note/i }));
 
     expect(screen.getByRole('alert').textContent).toMatch(/L’enregistrement a échoué/);
-    expect((screen.getByLabelText(/note interne/i) as HTMLTextAreaElement).value).toBe(
+    expect((screen.getByLabelText(/ce que le salon doit savoir/i) as HTMLTextAreaElement).value).toBe(
       'Allergie amande.',
     );
     expect(refresh).not.toHaveBeenCalled();

@@ -39,6 +39,30 @@ import { useAdminSessionRenewal } from '../../components/use-admin-session-renew
  * une migration et une décision de produit — c'est une issue, pas une ligne de
  * code d'ici. Le champ est donc pré-rempli avec la note existante, et le dire
  * évite qu'on croie ajouter alors qu'on remplace.
+ *
+ * ## Et donc : la note ne se nomme qu'une fois — #763
+ *
+ * L'écran l'écrivait trois fois de suite — titre de section, libellé du champ,
+ * puis un bloc « Note en place · Visible du personnel du salon uniquement » qui
+ * **recopiait le texte déjà affiché dans le champ**, deux centimètres plus haut.
+ * Ce dernier venait de la maquette à fil : avec plusieurs notes horodatées il
+ * montrait l'historique ; avec une note unique et un champ pré-rempli, il ne
+ * montrait que le doublon de ce qu'on était en train d'éditer — et laissait
+ * croire à deux objets là où il n'y en a qu'un, jusqu'à faire chercher lequel
+ * des deux fait foi.
+ *
+ * Ce qui subsiste se répartit donc sans se répéter :
+ *
+ * - le **titre** nomme la section et porte la mention « Interne au salon » —
+ *   c'est le motif de `styles/admin/README.md`, et la seule mention du nom ;
+ * - le **libellé du champ** dit ce qu'on y écrit, et non comment la section
+ *   s'appelle : un libellé qui répète son titre n'apprend rien à qui le lit, et
+ *   il est en outre ce qu'un lecteur d'écran annonce juste après lui ;
+ * - la **légende** garde les deux garanties qui décident si l'on ose écrire :
+ *   rien ne part vers le client, et enregistrer remplace.
+ *
+ * Le champ pré-rempli est ce qui rend la note en place lisible ; il n'y a rien à
+ * afficher en plus, ni quand elle existe, ni quand elle manque.
  */
 
 const noteFormSchema = z.object({ internalNote: longTextSchema });
@@ -114,7 +138,7 @@ export function ClientNoteForm({ tenantSlug, customerId, internalNote }: ClientN
       <form onSubmit={(event) => void submit(event)} noValidate>
         <TextArea
           id={`client-note-${customerId}`}
-          label="Note interne"
+          label="Ce que le salon doit savoir"
           rows={4}
           hint="Préférences, allergies, sensibilités. Jamais transmise au client — ni dans un e-mail, ni dans un SMS. Enregistrer remplace la note précédente ; vider le champ l’efface."
           error={errors.internalNote?.message}
@@ -129,26 +153,6 @@ export function ClientNoteForm({ tenantSlug, customerId, internalNote }: ClientN
           Enregistrer la note
         </Button>
       </form>
-
-      {internalNote === null ? (
-        <div className="spa-empty-state spa-empty-state--inline">
-          <p className="spa-empty-state__title">Aucune note pour l’instant</p>
-          <p className="spa-empty-state__description">
-            Ce qui aide à mieux recevoir la prochaine fois se note ici, et n’est lu que par le
-            salon.
-          </p>
-        </div>
-      ) : (
-        <ul className="spa-admin-notes__list">
-          <li className="spa-admin-notes__item">
-            <div className="spa-admin-notes__meta">
-              <span>Note en place</span>
-              <span>Visible du personnel du salon uniquement</span>
-            </div>
-            <p className="spa-admin-notes__body">{internalNote}</p>
-          </li>
-        </ul>
-      )}
     </div>
   );
 }
