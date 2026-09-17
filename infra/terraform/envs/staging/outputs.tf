@@ -235,8 +235,47 @@ output "notification_dispatch_producer_policy_arn" {
 }
 
 output "notification_sms_publisher_policy_arn" {
-  description = "Politique IAM du droit d'émettre un SMS, à attacher au rôle de tâche de l'API quand cet environnement composera `ecs-service`. Elle n'accorde aucun droit sur les réglages SMS du compte — plafond de dépense compris — que seule la production détient (#66)."
+  description = "Politique IAM du droit d'émettre un SMS, déjà attachée au rôle de tâche de l'API. Elle n'accorde aucun droit sur les réglages SMS du compte — plafond de dépense compris — que seule la production détient (#66)."
   value       = one(module.notifications[*].sms_publisher_policy_arn)
+}
+
+output "notification_email_publisher_policy_arn" {
+  description = "Politique IAM du droit d'émettre un e-mail, déjà attachée au rôle de tâche de l'API (#918). Bornée à l'identité de domaine de cet environnement et à son jeu de configuration — jamais `*` : aucune autre identité du compte n'est joignable par elle."
+  value       = one(module.notifications[*].email_publisher_policy_arn)
+}
+
+output "notification_from_email" {
+  description = "Adresse d'expéditeur posée en `SES_FROM_EMAIL` sur le conteneur de l'API. Composée par le module dans le domaine dont SES détient l'identité — une adresse hors de ce domaine ferait refuser chaque envoi."
+  value       = one(module.notifications[*].from_email)
+}
+
+output "notification_email_sender_configured" {
+  description = "Vrai quand l'API a une adresse d'expéditeur **et** le droit d'émettre : le canal e-mail est câblé en déployé. Faux ou nul, chaque e-mail est refusé en 503 avec une ligne `FAILED` motivée. À vérifier en premier quand aucun e-mail ne part — avant `notification_dispatch_configured`, qui ne parle que de la Lambda. Elle ne dit ni que le domaine est vérifié (`notification_verified_for_sending_status`), ni que le compte est sorti du bac à sable SES."
+  value       = one(module.notifications[*].email_sender_configured)
+}
+
+output "notification_sms_publisher_sender_id" {
+  description = "Nom d'expéditeur posé en `SNS_SMS_SENDER_ID` sur le conteneur de l'API, présenté à chaque publication. Distinct du défaut du compte — nul ici, la production détenant les préférences —, parce que l'expéditeur est un attribut du message et non un réglage de compte (#918)."
+  value       = one(module.notifications[*].sms_publisher_sender_id)
+}
+
+# Exposée ici et pas seulement en production : c'est la description de
+# `notification_sms_sender_id` qui y renvoie, et la recette est justement
+# l'environnement où l'on éprouve le canal SMS pour de vrai (#918). Sans cette
+# sortie, `terraform output notification_sms_sender_id_registration` échouait sur
+# « output not found » exactement là où l'opérateur venait d'arrêter un
+# expéditeur.
+output "notification_sms_sender_id_registration" {
+  description = <<-EOT
+    Démarches d'enregistrement d'expéditeur restant à mener, pays par pays.
+    Chaque entrée porte `pays`, `statut` et `exigence`.
+
+    Aucune ressource Terraform ne couvre cet enregistrement, chez aucun
+    fournisseur : c'est un dossier instruit par un humain, au même titre que la
+    sortie du bac à sable SES. Un `statut` valant `a-verifier` ou `a-reconfirmer`
+    n'est pas un critère de go-live coché.
+  EOT
+  value       = one(module.notifications[*].sms_sender_id_registration)
 }
 
 output "notification_dispatcher_function_name" {

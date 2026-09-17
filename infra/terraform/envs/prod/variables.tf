@@ -403,12 +403,19 @@ variable "notification_sms_sender_id" {
     destinataire l'accepte — onze caractères alphanumériques au plus, dont au
     moins une lettre.
 
-    `null` — le défaut — laisse SNS émettre depuis un numéro partagé : le rappel
-    n'a alors l'air de venir de personne, ce qui est la première raison de ne pas
-    le lire. Le poser ici ne l'**enregistre** nulle part ; la sortie
-    `notification_sms_sender_id_registration` dit ce qu'il reste à faire pays par
-    pays, et c'est une démarche administrative qu'aucune ressource Terraform ne
-    couvre.
+    Deux effets, et le second est celui que #918 a ajouté : la valeur est posée
+    sur les préférences SMS du compte — que cet environnement détient pour les
+    trois —, **et** exposée en `SNS_SMS_SENDER_ID` sur le conteneur de l'API, que
+    `sns-sms.gateway.ts` reporte dans l'attribut `AWS.SNS.SMS.SenderID` de chaque
+    publication.
+
+    `null` — le défaut — n'expose pas la variable : l'API refuse alors le SMS en
+    503 en inscrivant sa ligne `FAILED`, plutôt que de le laisser partir depuis
+    un numéro partagé dont le rappel n'aurait l'air de venir de personne — la
+    première raison de ne pas le lire. Le poser ici ne l'**enregistre** nulle
+    part ; la sortie `notification_sms_sender_id_registration` dit ce qu'il reste
+    à faire pays par pays, et c'est une démarche administrative qu'aucune
+    ressource Terraform ne couvre.
   EOT
   type        = string
   default     = null

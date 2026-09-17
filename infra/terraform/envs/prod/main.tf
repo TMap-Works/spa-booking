@@ -145,9 +145,38 @@ locals {
   # une liste vide.
   notification_queue_env = { for url in module.notifications[*].dispatch_queue_url : "NOTIFICATION_QUEUE_URL" => url }
 
+  # L'identité d'expéditeur des deux canaux, prise aux sorties du module et non
+  # écrite ici (#918) : l'adresse doit être dans le domaine dont SES détient
+  # l'identité, et le sender ID dans les onze caractères qu'SNS accepte — deux
+  # contraintes que le module valide déjà, et qu'une valeur recopiée dans cet
+  # environnement contournerait sans que rien ne le dise.
+  #
+  # Même forme que `notification_queue_env`, avec un filtre de plus : ces deux
+  # sorties peuvent valoir `null` — l'expéditeur e-mail quand `from_local_part`
+  # est retiré, le sender ID tant qu'aucun n'est arrêté. Une clé posée à `null`
+  # ferait échouer la définition de tâche ; posée à la chaîne vide, elle
+  # vaudrait « pas configurée » pour l'API (`notifications.config.ts`) mais
+  # déclencherait un déploiement à chaque `apply`. Absente, elle laisse le canal
+  # en défaut fermé, ce que dit `notification_email_sender_configured` — une
+  # sortie de la liste de vérification du go-live (#83), au même titre que
+  # `notification_dispatch_configured`.
+  notification_sender_env = merge(
+    { for email in module.notifications[*].from_email : "SES_FROM_EMAIL" => email if email != null },
+    { for id in module.notifications[*].sms_publisher_sender_id : "SNS_SMS_SENDER_ID" => id if id != null },
+  )
+
+  # La politique e-mail est ajoutée **en queue de cette liste**, et il faut dire
+  # ce que cela ne suffit pas à éviter : `task_role_policy_arns` est indexé sur
+  # le rang (module `ecs-service`, `iam.tf`), et l'appel plus bas concatène
+  # encore la politique d'export de reporting **après** cette liste. Le troisième
+  # rang lui appartenait ; il passe à la politique e-mail, et l'export glisse au
+  # quatrième. Les deux attachements correspondants sont donc redétachés puis
+  # rattachés au prochain `apply` — sans conséquence, comme le dit `iam.tf`, mais
+  # ce n'est pas rien à zéro. Insérer en tête aurait fait glisser les quatre.
   notification_api_policy_arns = concat(
     module.notifications[*].dispatch_producer_policy_arn,
     module.notifications[*].sms_publisher_policy_arn,
+    module.notifications[*].email_publisher_policy_arn,
   )
 
   # Vrai dès qu'une des routes **internes** de la chaîne a une destination. Les
@@ -792,21 +821,32 @@ module "ecs_service" {
       # de requête HTTP (CDC §4.8). Une URL de file n'est pas un secret — elle ne
       # donne aucun droit à qui la connaît sans la politique qui va avec.
       #
+      # `SES_FROM_EMAIL` et `SNS_SMS_SENDER_ID` l'accompagnent, prises aux
+      # sorties du module (#918). Ce ne sont pas davantage des secrets : une
+      # adresse d'expéditeur s'affiche dans chaque e-mail reçu, un sender ID dans
+      # chaque SMS. Sans elles, les passerelles de #799 refusent chaque envoi en
+      # 503 et inscrivent une ligne `FAILED` par message : ni confirmation, ni
+      # rappel J-1, ni avis d'annulation — c'est-à-dire la moitié de la boucle de
+      # valeur du MVP, muette sans qu'aucune alarme ne le dise.
+      #
       # `REPORT_EXPORT_BUCKET` obéit à la même règle (#563), et `AWS_REGION`
       # n'est pas facultative : contrairement à Lambda, ECS ne pose **aucune**
       # variable de région dans le conteneur, et le SDK JS v3 échouerait sur
       # « Region is missing » au premier export.
-      environment = merge(local.notification_queue_env, {
+      environment = merge(local.notification_queue_env, local.notification_sender_env, {
         LOG_LEVEL            = "info"
         PORT                 = "3001"
         AWS_REGION           = data.aws_region.current.name
         REPORT_EXPORT_BUCKET = module.reporting_export.bucket_name
       })
 
-      # Le droit de publier sur cette file, et celui d'émettre un SMS — rien
-      # d'autre. La première n'accorde pas `ReceiveMessage`, un producteur qui
-      # pourrait dépiler pouvant faire disparaître un rappel ; la seconde
-      # n'accorde aucun droit sur les réglages SMS du compte (#66).
+      # Le droit de publier sur cette file, celui d'émettre un SMS et celui
+      # d'émettre un e-mail — rien d'autre. La première n'accorde pas
+      # `ReceiveMessage`, un producteur qui pourrait dépiler pouvant faire
+      # disparaître un rappel ; la deuxième n'accorde aucun droit sur les réglages
+      # SMS du compte (#66) ; la troisième borne `ses:SendEmail` à l'identité de
+      # domaine de cet environnement et à son jeu de configuration, sans quoi
+      # l'appel de #799 reviendrait en `AccessDenied` (#918).
       #
       # S'y ajoute le droit de déposer et de signer un export de reporting
       # (#563) : ni `ListBucket` — qui donnerait à l'API le droit d'énumérer les

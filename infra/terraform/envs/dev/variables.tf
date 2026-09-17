@@ -253,3 +253,38 @@ variable "notification_delivery_events_url" {
     error_message = "notification_delivery_events_url doit être `null` ou une URL en `https://` — un appel en clair porterait le jeton d'appel interne et l'adresse du destinataire sur le réseau."
   }
 }
+
+# --- Canal SMS (#918) ---------------------------------------------------------
+
+variable "notification_sms_sender_id" {
+  description = <<-EOT
+    Nom d'expéditeur que l'API présente à chaque publication SMS — onze
+    caractères alphanumériques au plus, dont au moins une lettre. Posé en
+    `SNS_SMS_SENDER_ID` sur le conteneur de l'API depuis la sortie
+    `sms_publisher_sender_id` du module.
+
+    `null` — le défaut — n'expose pas la variable, et l'API refuse le SMS en 503
+    en inscrivant sa ligne `FAILED` : défaut fermé, jamais un envoi depuis un
+    numéro partagé dont personne ne reconnaît l'expéditeur.
+
+    Cet environnement ne détient pas les préférences SMS du compte — la
+    production les détient — et il a pourtant besoin de cette valeur :
+    l'expéditeur est un attribut de la publication, pas un réglage de compte.
+    Le poser ici ne l'**enregistre** nulle part ; la sortie
+    `notification_sms_sender_id_registration` dit ce qu'il reste à faire pays par
+    pays, et c'est une démarche administrative qu'aucune ressource Terraform ne
+    couvre.
+  EOT
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.notification_sms_sender_id == null || can(regex("^[A-Za-z0-9]{1,11}$", var.notification_sms_sender_id))
+    error_message = "notification_sms_sender_id doit être `null` ou une chaîne de 1 à 11 caractères alphanumériques sans espace ni accent."
+  }
+
+  validation {
+    condition     = var.notification_sms_sender_id == null || can(regex("[A-Za-z]", var.notification_sms_sender_id))
+    error_message = "notification_sms_sender_id doit comporter au moins une lettre : un expéditeur purement numérique est refusé par les opérateurs, qui y voient une usurpation de numéro court."
+  }
+}
