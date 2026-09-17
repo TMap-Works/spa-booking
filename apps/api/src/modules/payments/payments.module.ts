@@ -10,6 +10,7 @@ import { PosRepository } from './pos.repository';
 import { ProductsController } from './products.controller';
 import { ProductsService } from './products.service';
 import { PublicPaymentsController } from './public-payments.controller';
+import { ReceiptPdfService } from './receipt-pdf/receipt-pdf.service';
 import { ReceiptRepository } from './receipt.repository';
 import { ReceiptService } from './receipt.service';
 import { RefundsRepository } from './refunds.repository';
@@ -214,6 +215,10 @@ import {
     // légale du salon, trois personnes et les avoirs à chaque `GET /sales/:id`.
     ReceiptService,
     ReceiptRepository,
+    // #819 — l'impression de cette pièce. Il ne relit rien : il demande le reçu
+    // à `ReceiptService` et le met en page, ce qui est la seule façon que le PDF
+    // et le JSON de `GET /sales/:id/receipt` ne puissent pas diverger.
+    ReceiptPdfService,
     StripeWebhookService,
     StripeWebhookRepository,
     // `useFactory` et non `useClass` : le paramètre de ce fournisseur de
