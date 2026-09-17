@@ -291,6 +291,7 @@ describe('historique agrégé', () => {
     totalVisits: 0,
     honoredVisits: 0,
     cancelledVisits: 0,
+    rescheduledVisits: 0,
     noShowVisits: 0,
     upcomingVisits: 0,
     firstVisitAt: null,
@@ -312,6 +313,10 @@ describe('historique agrégé', () => {
       staffName: 'Alice',
       price: { amountMinor: 3500, currency: 'EUR' },
       clientNote: null,
+      // Les deux moitiés de « perdue ou déplacée » (#917), `nullable` comme
+      // `clientNote` : l'API émet toujours les deux clés.
+      cancelledBy: null,
+      rescheduledFromId: null,
     };
 
     const tropDeVisites = {
@@ -344,6 +349,8 @@ describe('historique agrégé', () => {
           staffName: null,
           price: { amountMinor: 3500, currency: 'EUR' },
           clientNote: null,
+          cancelledBy: null,
+          rescheduledFromId: null,
         },
       ],
     };
@@ -374,6 +381,8 @@ describe('historique agrégé', () => {
         staffName: 'Alice',
         price: { amountMinor: 3500, currency: 'EUR' },
         clientNote: null,
+        cancelledBy: null,
+        rescheduledFromId: null,
       },
     ],
   });
@@ -416,6 +425,8 @@ describe('historique agrégé', () => {
           serviceName: 'Gommage corps',
           staffName: 'Alice',
           price: { amountMinor: 3500, currency: 'EUR' },
+          cancelledBy: null,
+          rescheduledFromId: null,
           ...notes,
         },
       ],

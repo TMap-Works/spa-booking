@@ -227,18 +227,18 @@ test.describe('Comptoir', () => {
 
       const panneau = tiroir(page);
       await expect(panneau).toBeVisible();
-      await panneau.getByRole('button', { name: 'Marquer non présenté' }).click();
+      await panneau.getByRole('button', { name: 'Marquer non honoré' }).click();
       await expect(panneau).toBeHidden({ timeout: 20_000 });
     });
 
-    await test.step('Le planning affiche « non présenté »', async () => {
+    await test.step('Le planning affiche « Non honoré »', async () => {
       // Le statut se lit dans le texte du repère, et non plus dans un nom
       // accessible : un rendez-vous soldé n'occupe plus son créneau (#753), son
       // bloc est donc un `<div>` inerte — un élément générique n'expose aucun
       // nom accessible, seul le contrôle du coin en porte un. `toContainText`
       // lit `textContent`, `.spa-visually-hidden` compris.
       await expect(blocRendezVous(page, CLIENTE_FICHIER).first()).toContainText(
-        'Statut : non présenté',
+        'Statut : Non honoré',
       );
     });
 
@@ -286,7 +286,7 @@ test.describe('Comptoir', () => {
       // Même raison qu'au no-show : le repère d'un soldé est un bloc inerte
       // sans nom accessible, et c'est son texte qui porte le statut (#753).
       await expect(blocRendezVous(page, CLIENTE_FICHIER).first()).toContainText(
-        'Statut : annulé',
+        'Statut : Annulé par le salon',
         { timeout: 20_000 },
       );
     });

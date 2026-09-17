@@ -78,8 +78,10 @@ cet espace affichait « En attente de confirmation » sur ce rendez-vous-là, sa
 dire ce qu'on attendait ni de qui (#743).
 
 Le mot est désormais **« À confirmer par le salon »**, et il n'existe qu'une
-fois : `components/appointment-status.ts` l'exporte
-(`PENDING_CONFIRMATION_LABEL`), l'écran terminal du tunnel l'importe. Il nomme
+fois : `lib/appointment-status.ts` l'exporte (`PENDING_CONFIRMATION_LABEL`),
+l'écran terminal du tunnel l'importe. Ce module a quitté cet espace pour `lib/`
+en #917, quand le back-office s'est mis à lire le même vocabulaire — planning,
+fiche cliente, encaissement et reporting compris. Il nomme
 l'acteur, ce qui lève la contradiction sans mentir — le rendez-vous naît bien
 `PENDING` côté API, et reprendre le « Réservation confirmée » du wireframe
 (Étape 6) aurait contredit la pastille au lieu de l'accorder.

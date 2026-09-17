@@ -216,6 +216,15 @@ const VISIT_SELECT = {
   priceAmountMinor: true,
   priceCurrency: true,
   clientNote: true,
+  // Les deux moitiés de « ce rendez-vous a-t-il été perdu, ou déplacé » (#917) :
+  // l'auteur d'annulation, nul sur l'origine d'un report, et le lien que porte
+  // son successeur. `cancellationReason` reste dehors, avec `staffNote` et pour
+  // la même raison — un texte libre écrit par un humain ne sort que par une
+  // route gardée par un rôle (#317). Un auteur d'annulation, lui, est une
+  // énumération de trois valeurs, déjà servie au parcours public par
+  // `bookedAppointmentSchema` : l'ajouter ici n'ouvre aucune surface nouvelle.
+  cancelledBy: true,
+  rescheduledFromId: true,
   service: { select: { name: true, durationMinutes: true, bufferBeforeMinutes: true } },
   staff: { select: { displayName: true } },
 } as const;
@@ -361,9 +370,18 @@ export interface CustomerSearchResult {
   totalItems: number;
 }
 
-/** Le décompte des visites par statut, tel que `groupBy` le rend. */
+/**
+ * Le décompte des visites par statut **et par auteur d'annulation**, tel que
+ * `groupBy` le rend.
+ *
+ * La seconde dimension n'a de sens que sur `CANCELLED`, et elle y est tout le
+ * propos (#917) : `cancelledBy` nul y désigne l'origine d'un report, que
+ * l'agrégat doit compter à part d'une annulation véritable. Partout ailleurs
+ * elle vaut `null` sans rien dire, et le service l'ignore.
+ */
 export interface VisitCountByStatus {
   status: string;
+  cancelledBy: string | null;
   count: number;
 }
 
@@ -1087,6 +1105,8 @@ export class CrmRepository {
         priceAmountMinor: row.priceAmountMinor,
         priceCurrency: row.priceCurrency,
         clientNote: row.clientNote,
+        cancelledBy: row.cancelledBy,
+        rescheduledFromId: row.rescheduledFromId,
       };
     });
   }
@@ -1098,15 +1118,28 @@ export class CrmRepository {
    * sixième statut au schéma n'en demanderait pas une sixième. C'est le service
    * qui décide ce que chaque statut vaut dans l'agrégat — le dépôt ne fait que
    * compter.
+   *
+   * ## Pourquoi `cancelled_by` est une seconde dimension du groupe (#917)
+   *
+   * Parce que la question « combien de créneaux cette cliente a-t-elle perdus »
+   * n'a pas la même réponse que « combien en a-t-elle déplacés », et que la base
+   * porte déjà la distinction : un report annule la ligne d'origine **sans**
+   * auteur. Grouper sur le couple la rend d'une seule requête, là où un second
+   * `count` filtré aurait parcouru les mêmes lignes une deuxième fois — et deux
+   * requêtes qui comptent la même chose finissent par se contredire.
    */
   public async countVisitsByStatus(customerId: string): Promise<VisitCountByStatus[]> {
     const rows = await this.prisma.appointment.groupBy({
-      by: ['status'],
+      by: ['status', 'cancelledBy'],
       where: { clientId: customerId },
       _count: { _all: true },
     });
 
-    return rows.map((row) => ({ status: row.status, count: row._count._all }));
+    return rows.map((row) => ({
+      status: row.status,
+      cancelledBy: row.cancelledBy,
+      count: row._count._all,
+    }));
   }
 
   /**

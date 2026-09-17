@@ -57,7 +57,10 @@ const HISTORY = {
   summary: {
     totalVisits: 3,
     honoredVisits: 2,
+    // Annulations et reports se comptent séparément depuis #917 : un créneau
+    // déplacé n'est pas un créneau perdu, et l'agrégat ne les fond plus.
     cancelledVisits: 0,
+    rescheduledVisits: 0,
     noShowVisits: 1,
     upcomingVisits: 0,
     firstVisitAt: '2026-05-14T07:00:00.000Z',
@@ -78,6 +81,10 @@ const HISTORY = {
       // déclare `nullable` et non `optional`, et le client HTTP du back-office
       // valide chaque réponse — une clé manquante ferait tomber la page entière.
       clientNote: 'Allergie aux huiles essentielles d’agrumes.',
+      // Les deux moitiés de « perdu ou déplacé » (#917), `nullable` comme
+      // `clientNote` et pour la même raison : l'API les émet toujours.
+      cancelledBy: null,
+      rescheduledFromId: null,
     },
   ],
 };

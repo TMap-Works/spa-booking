@@ -3,7 +3,8 @@ import Link from 'next/link';
 
 import { Notification } from '@/components/ui/notification';
 import { fetchAppointments, fetchPublicTenant } from '@/lib/api-client';
-import { STATUS_LABELS, statusModifier } from '@/lib/admin/calendar-grid';
+import { statusModifier } from '@/lib/admin/calendar-grid';
+import { appointmentOutcomeLabel } from '@/lib/appointment-status';
 import {
   parseCalendarDate,
   rangeLabel,
@@ -275,7 +276,7 @@ function AppointmentRecap({
         <span
           className={`spa-admin-badge spa-admin-badge--${statusModifier(appointment.status)}`}
         >
-          {STATUS_LABELS[appointment.status]}
+          {appointmentOutcomeLabel(appointment)}
         </span>
       </div>
 
@@ -447,7 +448,7 @@ function AppointmentsToSettle({
                 <span
                   className={`spa-admin-badge spa-admin-badge--${statusModifier(appointment.status)}`}
                 >
-                  {STATUS_LABELS[appointment.status]}
+                  {appointmentOutcomeLabel(appointment)}
                 </span>
               </td>
               {settlement === null ? null : (

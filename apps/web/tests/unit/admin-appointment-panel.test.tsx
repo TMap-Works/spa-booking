@@ -387,19 +387,19 @@ describe('quatrième critère — le créneau perdu n’est pas une panne', () =
   });
 });
 
-describe('cinquième critère — marquer honoré et non présenté', () => {
+describe('cinquième critère — marquer honoré et non honoré', () => {
   it('n’offre les deux gestes que depuis un rendez-vous confirmé', () => {
     renderPanel({ kind: 'edit', appointment: CONFIRME });
 
     expect(screen.getByRole('button', { name: 'Marquer honoré' })).toBeDefined();
-    expect(screen.getByRole('button', { name: 'Marquer non présenté' })).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Marquer non honoré' })).toBeDefined();
   });
 
   it('n’en offre aucun sur un rendez-vous déjà soldé', () => {
     renderPanel({ kind: 'edit', appointment: { ...CONFIRME, status: 'completed' } });
 
     expect(screen.queryByRole('button', { name: 'Marquer honoré' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Marquer non présenté' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Marquer non honoré' })).toBeNull();
   });
 
   it('envoie le statut du contrat, puis referme et relit le planning', async () => {
@@ -411,7 +411,7 @@ describe('cinquième critère — marquer honoré et non présenté', () => {
 
     const { onReload, onClose } = renderPanel({ kind: 'edit', appointment: CONFIRME });
 
-    await user.click(screen.getByRole('button', { name: 'Marquer non présenté' }));
+    await user.click(screen.getByRole('button', { name: 'Marquer non honoré' }));
 
     await waitFor(() => {
       expect(markDeskAppointmentStatusAction).toHaveBeenCalledWith(SLUG, CONFIRME.id, {
@@ -764,9 +764,10 @@ describe('#611 — le tiroir n’offre que des créneaux réservables', () => {
  * l'espace client distinguait quatre sorties. Le motif est écrit en base depuis
  * #40 et servi à cette route depuis #444 ; ce qui suit vérifie qu'il est lu.
  *
- * Le pendant de ces cas est la **retenue** : le contrat de l'agenda ne portant
- * pas `cancelledBy`, un motif absent ne prouve pas un report, et l'écran ne doit
- * pas l'affirmer.
+ * La retenue que #756 avait dû s'imposer — « un motif absent ne prouve pas un
+ * report » — n'a plus lieu d'être depuis #917 : le contrat de l'agenda porte
+ * `cancelledBy`, et son **absence** nomme le report. Ce qui se vérifie ici est
+ * donc l'inverse : que l'écran tranche, et tranche juste.
  */
 
 /** 09:00 – 10:00, annulé au comptoir avec un motif consigné. */
@@ -774,11 +775,25 @@ const ANNULE_AVEC_MOTIF: Appointment = {
   ...CONFIRME,
   status: 'cancelled',
   cancelledAt: '2026-08-25T11:30:00.000Z',
+  cancelledBy: 'staff',
   cancellationReason: 'Praticienne souffrante, cliente prévenue par téléphone.',
 };
 
-/** La même ligne, annulée sans un mot — ce qu'un report laisse aussi derrière lui. */
+/** La même ligne, annulée par le salon sans un mot. */
 const ANNULE_SANS_MOTIF: Appointment = {
+  ...CONFIRME,
+  status: 'cancelled',
+  cancelledAt: '2026-08-25T11:30:00.000Z',
+  cancelledBy: 'staff',
+};
+
+/**
+ * L'**origine** d'un report : annulée, et sans auteur.
+ *
+ * C'est la ligne que le salon prenait pour un créneau perdu — même statut, même
+ * `cancelledAt`, et rien pour l'en distinguer avant #917.
+ */
+const ORIGINE_D_UN_REPORT: Appointment = {
   ...CONFIRME,
   status: 'cancelled',
   cancelledAt: '2026-08-25T11:30:00.000Z',
@@ -800,17 +815,33 @@ describe('#756 — le tiroir dit ce qu’est devenu le rendez-vous', () => {
     ).toBeDefined();
     // 11:30 UTC lu à Antananarivo (UTC+3) donne 14:30 — jamais l'heure du
     // navigateur qui exécute le test.
-    expect(screen.getByText(/Annulé le .*14:30/)).toBeDefined();
+    expect(screen.getByText(/Annulé par le salon le .*14:30/)).toBeDefined();
   });
 
-  it('dit l’absence de motif sans conclure au report', async () => {
+  it('dit l’absence de motif sur une annulation qui en porte un auteur', async () => {
     renderPanel({ kind: 'edit', appointment: ANNULE_SANS_MOTIF });
 
     expect(await screen.findByRole('heading', { name: 'Annulation' })).toBeDefined();
     expect(screen.getByText(/Aucun motif n’a été consigné/)).toBeDefined();
-    // `cancelledBy` n'étant pas servi à cette route, rien ne distingue ici un
-    // report d'une annulation muette : l'écran ne doit pas trancher.
-    expect(screen.queryByText(/Ce rendez-vous en remplace un autre/)).toBeNull();
+    // L'auteur est nommé : ce n'est pas un report, et l'écran ne doit pas le
+    // laisser croire.
+    expect(screen.queryByText(/déplacement/)).toBeNull();
+  });
+
+  /**
+   * Le créneau déplacé, enfin nommé — #917.
+   *
+   * Même statut, même `cancelledAt`, aucun motif : avant #917 cette ligne était
+   * rigoureusement indiscernable de la précédente, et le bloc s'en tenait à
+   * « aucun motif n'a été consigné ». L'absence d'auteur tranche désormais.
+   */
+  it('dit le report sur l’origine d’un déplacement, plutôt qu’une annulation muette', async () => {
+    renderPanel({ kind: 'edit', appointment: ORIGINE_D_UN_REPORT });
+
+    expect(await screen.findByRole('heading', { name: 'Report' })).toBeDefined();
+    expect(screen.getByText(/Déplacé le .*14:30/)).toBeDefined();
+    expect(screen.getByText(/libéré par un déplacement/)).toBeDefined();
+    expect(screen.queryByText(/Aucun motif n’a été consigné/)).toBeNull();
   });
 
   it('signale un rendez-vous né d’un report', async () => {

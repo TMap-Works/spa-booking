@@ -711,6 +711,27 @@ describe('appointments', () => {
     // Ce qui n'est pas un statut reste refusé, casse ou pas.
     expect(appointmentSchema.shape.status.safeParse('ARCHIVED').success).toBe(false);
   });
+
+  /**
+   * L'auteur de l'annulation au contrat de l'agenda — #917.
+   *
+   * Il y est entré pour ce que son **absence** signifie : un report annule la
+   * ligne d'origine sans y inscrire personne, et c'est la seule marque qui
+   * sépare, dans l'agenda du salon, un créneau perdu d'un créneau déplacé.
+   */
+  it('lit l’auteur d’une annulation, l’omet quand il n’y en a pas, et refuse un `null`', () => {
+    const champ = appointmentSchema.shape.cancelledBy;
+
+    // Même normalisation de casse que le statut : l'API émet `CLIENT`.
+    expect(champ.safeParse('CLIENT').success && champ.parse('CLIENT')).toBe('client');
+    expect(champ.safeParse('staff').success).toBe(true);
+    // Absent, jamais `null` : la ligne d'agenda **omet** ses champs facultatifs,
+    // là où la sortie publique les pose à `null` (`bookedAppointmentSchema`).
+    expect(champ.safeParse(undefined).success).toBe(true);
+    expect(champ.safeParse(null).success).toBe(false);
+    // Et ce n'est pas un rôle : un `MANAGER` qui annule est du côté du salon.
+    expect(champ.safeParse('MANAGER').success).toBe(false);
+  });
 });
 
 describe('availability', () => {

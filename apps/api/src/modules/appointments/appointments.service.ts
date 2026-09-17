@@ -1379,6 +1379,12 @@ function agendaView(record: AgendaAppointmentRecord): AgendaAppointmentView {
     // « jamais servie au parcours public » (#317).
     ...(record.staffNote === null ? {} : { staffNote: record.staffNote }),
     ...(record.cancelledAt === null ? {} : { cancelledAt: record.cancelledAt.toISOString() }),
+    // L'auteur de l'annulation (#917). Absent quand il n'y en a pas — et une
+    // ligne annulée **sans** auteur est précisément l'origine d'un report, que
+    // le repository laisse délibérément sans auteur pour ne pas la compter comme
+    // une annulation dans le reporting du CDC §1.4. C'est cette absence que le
+    // planning lit pour écrire « Déplacé » plutôt qu'« Annulé ».
+    ...(record.cancelledBy === null ? {} : { cancelledBy: record.cancelledBy }),
     // Même régime que la note interne : un motif d'annulation est un texte libre
     // écrit par un humain, que `AppointmentView` refuse délibérément de rendre au
     // parcours public. Le comptoir, lui, en a l'usage — c'est ce que #40

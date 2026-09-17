@@ -53,6 +53,9 @@ describe('historique d’une fiche', () => {
       tenantId: TENANT,
       clientId: fiche.id,
       status: 'CANCELLED',
+      // Une annulation véritable : elle porte un auteur. Sans lui, elle serait
+      // comptée comme un report (#917).
+      cancelledBy: 'CLIENT',
       startsAt: new Date('2026-07-10T09:00:00.000Z'),
       priceAmountMinor: 9900,
     });
@@ -76,6 +79,7 @@ describe('historique d’une fiche', () => {
       totalVisits: 5,
       honoredVisits: 2,
       cancelledVisits: 1,
+      rescheduledVisits: 0,
       noShowVisits: 1,
       upcomingVisits: 1,
       // Les bornes ne comptent que les visites **honorées** : un rendez-vous à
@@ -87,6 +91,54 @@ describe('historique d’une fiche', () => {
       totalSpentAmountMinor: 8000,
       totalSpentCurrency: 'EUR',
     });
+  });
+
+  /**
+   * Le troisième critère de #917 — « la fiche cliente compte séparément
+   * annulations et reports ».
+   *
+   * L'audit `d20260916-1` a relevé une fiche qui affichait « 5 Annulés » là où
+   * elle comptait trois abandons et deux déplacements. Les deux lignes sont
+   * `CANCELLED` en base ; seule l'absence d'auteur les distingue, et un report en
+   * laisse une derrière lui à chaque déplacement.
+   */
+  it('sépare les annulations des reports, sans jamais en perdre un', async () => {
+    const { service, repository } = build();
+    const fiche = repository.addCustomer({ tenantId: TENANT });
+
+    for (const cancelledBy of ['CLIENT', 'STAFF', 'SYSTEM'] as const) {
+      repository.addVisit({
+        tenantId: TENANT,
+        clientId: fiche.id,
+        status: 'CANCELLED',
+        cancelledBy,
+        startsAt: new Date('2026-07-10T09:00:00.000Z'),
+      });
+    }
+
+    // Deux reports : la ligne d'origine, annulée sans auteur, et son successeur
+    // qui porte le lien. Le second n'est pas annulé — il n'entre donc dans aucun
+    // des deux compteurs.
+    repository.addVisit({
+      tenantId: TENANT,
+      clientId: fiche.id,
+      status: 'CANCELLED',
+      startsAt: new Date('2026-07-11T09:00:00.000Z'),
+    });
+    repository.addVisit({
+      tenantId: TENANT,
+      clientId: fiche.id,
+      status: 'CANCELLED',
+      startsAt: new Date('2026-07-12T09:00:00.000Z'),
+    });
+
+    const { summary } = await chez(TENANT, () => service.byCustomerId(fiche.id, 50));
+
+    expect(summary.cancelledVisits).toBe(3);
+    expect(summary.rescheduledVisits).toBe(2);
+    // Les deux compteurs partitionnent les lignes annulées : aucune n'est
+    // comptée deux fois, aucune ne disparaît.
+    expect(summary.cancelledVisits + summary.rescheduledVisits).toBe(summary.totalVisits);
   });
 
   it('rend un agrégat vide sans inventer un total à zéro', async () => {

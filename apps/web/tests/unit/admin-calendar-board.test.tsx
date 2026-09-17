@@ -1,6 +1,7 @@
 import type {
   Appointment,
   AppointmentStatus,
+  CancellationActor,
   OpeningHoursEntry,
   Service,
   StaffMemberSummary,
@@ -96,6 +97,15 @@ function appointment(overrides: {
   readonly staff?: { readonly id: string; readonly displayName: string };
   readonly client?: { readonly firstName: string; readonly lastName: string };
   readonly status?: AppointmentStatus;
+  /**
+   * L'auteur de l'annulation — **omis** sur l'origine d'un report (#917).
+   *
+   * Le contrat de l'agenda omet la clé quand il n'y a personne à nommer, et
+   * cette fabrique fait pareil : poser un auteur d'office aurait rendu tout
+   * report indiscernable d'une annulation, et le planning ne dirait jamais
+   * « Déplacé ».
+   */
+  readonly cancelledBy?: CancellationActor;
 }): Appointment {
   sequence += 1;
   const id = `aaaaaaaa-0000-4000-8000-${String(sequence).padStart(12, '0')}`;
@@ -121,6 +131,10 @@ function appointment(overrides: {
     endsAt: overrides.endsAt,
     price: { amountMinor: 3500, currency: 'EUR' },
     createdAt: '2026-08-01T08:00:00.000Z',
+    ...(overrides.status === 'cancelled'
+      ? { cancelledAt: '2026-08-01T09:00:00.000Z' }
+      : {}),
+    ...(overrides.cancelledBy === undefined ? {} : { cancelledBy: overrides.cancelledBy }),
   };
 }
 
@@ -130,7 +144,7 @@ const matin = appointment({
   endsAt: '2026-08-26T07:00:00.000Z',
 });
 
-/** 11:00 – 12:00 chez une autre praticienne, statut « non présenté ». */
+/** 11:00 – 12:00 chez une autre praticienne, statut « Non honoré ». */
 const midi = appointment({
   startsAt: '2026-08-26T08:00:00.000Z',
   endsAt: '2026-08-26T09:00:00.000Z',
@@ -232,14 +246,14 @@ describe('vue jour — ce que l’écran montre', () => {
   it('porte le statut par la classe **et** par le texte, jamais par la seule couleur', () => {
     renderBoard();
 
-    // Un « non présenté » est un statut terminal : depuis #753 il ne capte plus
+    // Un « Non honoré » est un statut terminal : depuis #753 il ne capte plus
     // son créneau, et son repère n'est donc plus un bouton mais un bloc inerte.
     // Le contrôle du coin, lui, en ouvre la fiche.
     const bloc = screen.getByText('Lova Andrian').closest('div');
 
     expect(bloc?.className).toContain('spa-admin-calendar__event--no-show');
     // WCAG 1.4.1 : la couleur ne peut pas être le seul véhicule de l'information.
-    expect(bloc?.textContent).toContain('Statut : non présenté.');
+    expect(bloc?.textContent).toContain('Statut : Non honoré.');
   });
 
   it('écrit l’heure du salon, pas celle du navigateur', () => {
@@ -872,6 +886,10 @@ describe('un rendez-vous soldé rend son créneau (#753)', () => {
     startsAt: '2026-09-16T07:10:00.000Z',
     endsAt: '2026-09-16T08:40:00.000Z',
     status: 'cancelled',
+    // Une annulation **véritable** : le salon a repris son créneau. C'est
+    // l'auteur qui le dit, et son absence dirait au contraire un report (#917) —
+    // le cas voisin est éprouvé juste en dessous.
+    cancelledBy: 'staff',
     client: { firstName: 'Claire', lastName: 'Fanja' },
   });
 
@@ -916,8 +934,35 @@ describe('un rendez-vous soldé rend son créneau (#753)', () => {
     expect(repere().className).toContain('spa-admin-calendar__event--cancelled');
     expect(repere().className).toContain('spa-admin-calendar__event--ghost');
     // WCAG 1.4.1, et le cœur du ticket : ce que la couleur seule ne dit pas.
-    expect(repere().textContent).toContain('Statut : annulé.');
+    expect(repere().textContent).toContain('Statut : Annulé par le salon.');
     expect(repere().textContent).toContain('Ce créneau est de nouveau réservable.');
+  });
+
+  /**
+   * Le créneau déplacé n'est pas le créneau perdu — #917.
+   *
+   * Même statut en base, même repère barré, même créneau rendu : ce qui les
+   * sépare est l'**absence** d'auteur, que le contrat de l'agenda exprime en
+   * omettant la clé. Sans elle, le salon lisait « annulé » sur les deux et ne
+   * savait pas, dans son propre planning, lequel des deux il avait perdu.
+   */
+  it('dit « Déplacé » sur l’origine d’un report, et non « Annulé »', () => {
+    const deplace = appointment({
+      startsAt: '2026-09-16T07:10:00.000Z',
+      endsAt: '2026-09-16T08:40:00.000Z',
+      status: 'cancelled',
+      client: { firstName: 'Claire', lastName: 'Fanja' },
+    });
+
+    loadDeskServiceStaffAction.mockResolvedValue({ ok: true, data: { staff: [] } });
+    loadDeskAvailabilityAction.mockResolvedValue({
+      ok: true,
+      data: { slots: deskSlots('2026-09-16') },
+    });
+    renderBoard({ date: '2026-09-16', periods: { 'jour:2026-09-16': [deplace] } });
+
+    expect(repere().textContent).toContain('Statut : Déplacé.');
+    expect(repere().textContent).not.toContain('Annulé');
   });
 
   it('laisse la cellule du soldé passer les clics à la grille', () => {
@@ -1072,7 +1117,7 @@ describe('l’état vide ne dépend plus de la vue (#758)', () => {
  * Le bloc de la vue semaine se nomme entièrement — #762.
  *
  * L'audit `d20260916-1` a relevé un nom accessible réduit à « 09:10 Qa B.
- * Statut : à confirmer. » : ni la prestation, ni le praticien, alors que le
+ * Statut : À confirmer. » : ni la prestation, ni le praticien, alors que le
  * CDC §2.4 définit le rendez-vous par « statut, créneau, praticien ». La vue
  * jour, sur la même donnée, les porte tous les trois. Les blocs de la semaine
  * n'ont pas gagné un pixel — ils ont gagné un nom et une infobulle.
@@ -1096,7 +1141,7 @@ describe('la vue semaine nomme le praticien et la prestation (#762)', () => {
     // accessible qui gagne le reste.
     expect(
       screen.getByRole('button', {
-        name: /^09:00 Rina A\. Prestation : Massage suédois\. Praticien : Hasina\. Statut : confirmé\.$/,
+        name: /^09:00 Rina A\. Prestation : Massage suédois\. Praticien : Hasina\. Statut : Confirmé\.$/,
       }),
     ).toBeDefined();
   });
@@ -1131,7 +1176,7 @@ describe('la vue semaine nomme le praticien et la prestation (#762)', () => {
   });
 
   it('nomme de même le repère d’un rendez-vous soldé', () => {
-    // Un « non présenté » ne prend plus son créneau (#753) mais reste à l'écran
+    // Un « Non honoré » ne prend plus son créneau (#753) mais reste à l'écran
     // pour expliquer le trou : il se lit comme les autres.
     renderSemaine();
 

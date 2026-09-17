@@ -388,6 +388,7 @@ describe('AppointmentsService.listAgenda', () => {
         'clientNote',
         'staffNote',
         'cancelledAt',
+        'cancelledBy',
         'cancellationReason',
         'rescheduledFromId',
       ] as const) {
@@ -395,19 +396,16 @@ describe('AppointmentsService.listAgenda', () => {
       }
     });
 
-    it('n’expose jamais le tenant ni l’auteur de l’annulation', async () => {
+    it('n’expose jamais le tenant', async () => {
       seed('2026-03-04T10:00:00.000Z');
 
       const [row] = await listAgenda(repository, { from: '2026-03-04' });
 
-      // Le premier n'apprend rien à l'appelant et invite aux essais
-      // (tenant-isolation §4) ; le second n'est pas dans `appointmentSchema` —
-      // « vous avez annulé » est une question du parcours public.
+      // Il n'apprend rien à l'appelant et invite aux essais (tenant-isolation §4).
       expect(JSON.stringify(row)).not.toContain(TENANT);
-      expect(row).not.toHaveProperty('cancelledBy');
     });
 
-    it('rend la trace d’annulation quand il y en a une', async () => {
+    it('rend la trace d’annulation quand il y en a une, auteur compris', async () => {
       const annule = seed('2026-03-04T10:00:00.000Z');
       await runWithTenant(TENANT, () =>
         repository.cancel({
@@ -421,9 +419,52 @@ describe('AppointmentsService.listAgenda', () => {
       const [row] = await listAgenda(repository, { from: '2026-03-04' });
 
       expect(row?.cancelledAt).toBe('2026-03-03T08:00:00.000Z');
+      // L'auteur est au contrat depuis #917 : c'est lui qui permet au planning
+      // d'écrire « Annulé par le salon » plutôt qu'« annulé » tout court.
+      expect(row?.cancelledBy).toBe('STAFF');
       // Le motif ne sort **que** par cette route : `AppointmentView` le refuse
       // délibérément au parcours public (#40).
       expect(row?.cancellationReason).toBe('cliente injoignable');
+    });
+
+    /**
+     * Le premier critère de #917, et la propriété qui porte tout le reste.
+     *
+     * Un report annule la ligne d'origine **sans** auteur. Tant que la
+     * sérialisation perdait le champ, l'agenda rendait deux lignes rigoureusement
+     * identiques — `cancelledAt` posé, rien d'autre — pour un créneau perdu et un
+     * créneau déplacé. C'est cette indiscernabilité que la suite ferme.
+     */
+    it('omet l’auteur sur l’origine d’un report, là où une annulation le nomme', async () => {
+      const origine = seed('2026-03-04T10:00:00.000Z');
+      const annule = seed('2026-03-04T14:00:00.000Z', { staffId: OTHER_STAFF });
+
+      await runWithTenant(TENANT, () =>
+        repository.reschedule({
+          previousId: origine,
+          staffId: STAFF,
+          ...occupied(new Date('2026-03-05T10:00:00.000Z')),
+        }),
+      );
+      await runWithTenant(TENANT, () =>
+        repository.cancel({
+          appointmentId: annule,
+          cancelledAt: new Date('2026-03-03T08:00:00.000Z'),
+          cancelledBy: 'CLIENT',
+          reason: null,
+        }),
+      );
+
+      const rows = await listAgenda(repository, { from: '2026-03-04' });
+      const deplacee = rows.find((row) => row.id === origine);
+      const abandonnee = rows.find((row) => row.id === annule);
+
+      // Les deux sont bien annulées en base…
+      expect(deplacee?.cancelledAt).toBeDefined();
+      expect(abandonnee?.cancelledAt).toBeDefined();
+      // …et seule l'absence d'auteur les sépare.
+      expect(deplacee).not.toHaveProperty('cancelledBy');
+      expect(abandonnee?.cancelledBy).toBe('CLIENT');
     });
   });
 });

@@ -40,7 +40,7 @@ import { nonNegativeMoneySchema } from '../common/money';
 import { paginatedSchema, paginationQuerySchema } from '../common/pagination';
 import { utcInstantSchema } from '../common/time';
 
-import { receivedAppointmentStatusSchema } from './appointment';
+import { receivedAppointmentStatusSchema, receivedCancellationActorSchema } from './appointment';
 
 /**
  * Longueur minimale d'un terme de recherche.
@@ -380,8 +380,9 @@ export type SetCustomerStatusRequest = z.infer<typeof setCustomerStatusRequestSc
  * casse d'une chaîne, liste et recherche comprises.
  *
  * Le champ inféré reste `AppointmentStatus`, en minuscules — rien ne change pour
- * qui consomme ce type, et les libellés d'agenda (`STATUS_LABELS`) s'y lisent
- * sans conversion locale.
+ * qui consomme ce type, et le vocabulaire du front
+ * (`apps/web/lib/appointment-status.ts`, `appointmentOutcomeLabel`) s'y lit sans
+ * conversion locale.
  */
 export const customerVisitSchema = z.object({
   appointmentId: uuidSchema,
@@ -393,6 +394,31 @@ export const customerVisitSchema = z.object({
   price: nonNegativeMoneySchema,
   /** Ce que le client a écrit en réservant, ou `null` — jamais la note du salon. */
   clientNote: longTextSchema.nullable(),
+  /**
+   * De quel côté du comptoir l'annulation vient, ou `null` (#917).
+   *
+   * `null` **sur une visite annulée** n'est pas une donnée manquante : c'est
+   * l'annulation qu'un report produit sur la ligne d'origine, où il n'y a pas
+   * d'auteur à nommer. C'est ce qui permet à la fiche cliente d'écrire
+   * « Déplacé » là où elle écrivait « Annulé » — le constat de l'audit
+   * `d20260916-1` : « 5 Annulés » là où la fiche compte trois annulations et
+   * deux reports.
+   *
+   * Ce champ-ci **n'ouvre aucune surface nouvelle** : il est déjà servi au
+   * parcours public par `bookedAppointmentSchema`. Le motif d'annulation, lui,
+   * reste dehors pour la raison qui y garde `staffNote` — c'est un texte libre
+   * écrit par un humain, borné à une sortie gardée par un rôle (#317).
+   */
+  cancelledBy: receivedCancellationActorSchema.nullable(),
+  /**
+   * Le rendez-vous que cette visite **remplace**, ou `null` (#917).
+   *
+   * Porté par le **successeur** d'un report, jamais par l'origine — l'origine,
+   * elle, se reconnaît à son `cancelledBy` nul. Les deux moitiés sont
+   * nécessaires : sans celle-ci, l'historique montrerait une visite annulée et
+   * une visite sans passé, au lieu d'une même visite déplacée.
+   */
+  rescheduledFromId: uuidSchema.nullable(),
 });
 
 export type CustomerVisit = z.infer<typeof customerVisitSchema>;
@@ -415,7 +441,29 @@ export type CustomerVisit = z.infer<typeof customerVisitSchema>;
 export const customerVisitSummarySchema = z.object({
   totalVisits: z.number().int().min(0),
   honoredVisits: z.number().int().min(0),
+  /**
+   * Les annulations **véritables** — celles qui portent un auteur (#917).
+   *
+   * Ce compteur comptait jusqu'ici toutes les lignes `cancelled`, reports
+   * compris : une fiche affichait « 5 Annulés » là où trois rendez-vous avaient
+   * été abandonnés et deux seulement déplacés. Un créneau déplacé n'est pas un
+   * créneau perdu, et les additionner donnait au salon un chiffre de fidélité
+   * faux — c'est le constat de l'audit `d20260916-1`.
+   *
+   * Les deux compteurs sont **disjoints**, et leur somme est le nombre de lignes
+   * `cancelled` : `totalVisits` reste donc `honored + cancelled + rescheduled +
+   * noShow + upcoming`.
+   */
   cancelledVisits: z.number().int().min(0),
+  /**
+   * Les **reports** — lignes annulées sans auteur, parce qu'un report en produit
+   * une à chaque déplacement (#917).
+   *
+   * Compté sur l'**origine** et non sur le successeur : c'est elle qui occupe la
+   * place d'une annulation dans l'historique, et c'est elle que le salon prendrait
+   * pour un créneau perdu.
+   */
+  rescheduledVisits: z.number().int().min(0),
   noShowVisits: z.number().int().min(0),
   upcomingVisits: z.number().int().min(0),
   firstVisitAt: utcInstantSchema.nullable(),

@@ -6,6 +6,7 @@ import {
   type Appointment,
   type AppointmentStatus,
   type CalendarDate,
+  type CancellationActor,
   type CustomerSummary,
   // Aliasé : `Notification` est aussi le composant du design system que ce
   // fichier importe deux lignes plus bas.
@@ -51,7 +52,8 @@ import {
   tenantFields,
   type DeskSlotOption,
 } from '@/lib/admin/appointment-desk';
-import { STATUS_LABELS, statusModifier } from '@/lib/admin/calendar-grid';
+import { statusModifier } from '@/lib/admin/calendar-grid';
+import { appointmentOutcomeLabel } from '@/lib/appointment-status';
 import { parseCalendarDate } from '@/lib/admin/calendar-range';
 import {
   catalogStartLink,
@@ -734,7 +736,11 @@ export function AppointmentPanel({
           <span
             className={`spa-admin-badge spa-admin-badge--${statusModifier(editing.status)}`}
           >
-            {STATUS_LABELS[editing.status]}
+            {/* Le mot du comptoir, pas celui de la colonne : sur une ligne
+                annulée il dit « Déplacé », « Annulé par la cliente » ou
+                « Annulé par le salon » selon l'auteur — au mot près ce que
+                l'espace client montre à la cliente (#917). */}
+            {appointmentOutcomeLabel(editing)}
           </span>
         )}
         <Button variant="quiet" onClick={onClose}>
@@ -797,6 +803,11 @@ export function AppointmentPanel({
         {editing === null ? null : (
           <AppointmentCancellation
             cancelledAt={editing.cancelledAt ?? null}
+            // Le contrat de l'agenda **omet** la clé quand il n'y a pas d'auteur
+            // (`appointmentSchema`, #917) ; le bloc raisonne sur `null`. Les deux
+            // formes disent la même chose — « personne à nommer », c'est-à-dire
+            // un report — et la conversion se fait ici, une fois.
+            cancelledBy={editing.cancelledBy ?? null}
             reason={editing.cancellationReason ?? null}
             rescheduledFromId={editing.rescheduledFromId ?? null}
             timeZone={timeZone}
@@ -1170,20 +1181,19 @@ export function AppointmentPanel({
  * écrite depuis #40, servie à cette route depuis #444, et aucun écran ne la
  * lisait. C'est ce bloc qui la lit.
  *
- * ## Ce qu'il dit, et ce qu'il se garde de dire
+ * ## Ce qu'il dit — et ce qu'il a enfin de quoi dire (#917)
  *
- * Il dit **quand** l'annulation a eu lieu et **pourquoi**, quand un motif a été
- * consigné, et il signale un rendez-vous **né d'un report**.
+ * Il dit **quand** l'annulation a eu lieu, **de quel côté du comptoir** elle
+ * vient et **pourquoi**, quand un motif a été consigné ; et il signale un
+ * rendez-vous **né d'un report**.
  *
- * Il ne dit **pas** qui a annulé, et ce n'est pas un oubli : `appointmentSchema`
- * — la ligne d'agenda du back-office — ne porte pas `cancelledBy`. Seule la
- * sortie du parcours public le porte (`bookedAppointmentSchema`), et c'est
- * précisément ce qui permet à `appointment-status.ts` d'écrire « Déplacé »
- * quand il est nul. Tant que le contrat de l'agenda ne l'expose pas, un motif
- * absent couvre deux cas que rien ne sépare ici — un report, et une annulation
- * sans explication. Le bloc s'en tient donc au constat, plutôt que d'affirmer
- * l'un des deux : « aucun motif consigné » est vrai des deux, « déplacé » ne
- * l'est que d'un.
+ * L'auteur lui manquait : `appointmentSchema` — la ligne d'agenda du
+ * back-office — ne portait pas `cancelledBy`, seule la sortie du parcours public
+ * le portait. Le bloc s'en tenait donc au constat « aucun motif n'a été
+ * consigné », vrai aussi bien d'un report que d'une annulation sans explication,
+ * et utile dans aucun des deux cas. Le contrat le porte depuis #917, et
+ * l'**absence** d'auteur est ce qui nomme le report : un report annule la ligne
+ * d'origine sans y inscrire personne.
  *
  * ## Le report se dit par le successeur, jamais par l'origine
  *
@@ -1203,6 +1213,7 @@ export function AppointmentPanel({
  */
 function AppointmentCancellation({
   cancelledAt,
+  cancelledBy,
   reason,
   rescheduledFromId,
   timeZone,
@@ -1210,6 +1221,13 @@ function AppointmentCancellation({
 }: {
   /** Quand la ligne est passée `cancelled`, ou `null` — le contrat omet le champ. */
   readonly cancelledAt: UtcInstant | null;
+  /**
+   * De quel côté du comptoir l'annulation vient, ou `null` (#917).
+   *
+   * `null` **avec** un `cancelledAt` posé se lit « déplacé », jamais « auteur
+   * inconnu » : c'est l'annulation qu'un report produit sur la ligne d'origine.
+   */
+  readonly cancelledBy: CancellationActor | null;
   /** Le motif écrit au comptoir ou par la cliente, ou `null`. */
   readonly reason: string | null;
   /** Le rendez-vous que celui-ci remplace, s'il est né d'un report. */
@@ -1226,8 +1244,12 @@ function AppointmentCancellation({
 
   return (
     <section aria-labelledby={titleId} className="spa-admin-notes">
+      {/* Le titre nomme ce qui s'est passé, et le sait désormais : une ligne
+          annulée sans auteur est une origine de report, pas une annulation
+          (#917). Dire « Annulation » au-dessus d'un créneau simplement déplacé
+          était la moitié du constat de l'audit. */}
       <h3 className="spa-admin__section-title" id={titleId}>
-        {cancelledAt === null ? 'Report' : 'Annulation'}
+        {cancelledAt === null || cancelledBy === null ? 'Report' : 'Annulation'}
       </h3>
 
       <ul className="spa-admin-notes__list">
@@ -1250,13 +1272,21 @@ function AppointmentCancellation({
                   navigateur : une annulation lue depuis un autre fuseau
                   s'afficherait au mauvais jour (CLAUDE.md, « tout est stocké en
                   UTC, converti à l'affichage selon le fuseau du tenant »). */}
-              <span>Annulé le {formatDateTimeInTimeZone(cancelledAt, timeZone)}</span>
+              <span>
+                {appointmentOutcomeLabel({ status: 'cancelled', cancelledBy })} le{' '}
+                {formatDateTimeInTimeZone(cancelledAt, timeZone)}
+              </span>
             </div>
-            {reason === null || reason.trim() === '' ? (
+            {cancelledBy === null ? (
+              // Un report : il n'y a pas de motif à chercher, et il n'y a pas
+              // non plus de créneau perdu. Le dire lève l'ambiguïté que #756
+              // avait dû laisser ouverte, faute de connaître l'auteur.
               <p className="spa-admin-notes__body">
-                Aucun motif n’a été consigné. Un report n’en laisse pas non plus : le rendez-vous a
-                pu être déplacé plutôt qu’abandonné.
+                Ce créneau a été libéré par un déplacement, non par une annulation : la cliente a
+                gardé son rendez-vous à une autre heure. Un report ne laisse pas de motif.
               </p>
+            ) : reason === null || reason.trim() === '' ? (
+              <p className="spa-admin-notes__body">Aucun motif n’a été consigné.</p>
             ) : (
               <p className="spa-admin-notes__body">{reason}</p>
             )}
