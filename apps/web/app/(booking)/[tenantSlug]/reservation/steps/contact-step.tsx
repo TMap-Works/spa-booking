@@ -92,6 +92,15 @@ const PHONE_FORMAT_ERROR = 'numéro attendu au format international, indicatif d
 interface ContactStepProps {
   readonly contact: ContactDraft;
   /**
+   * L'établissement du tunnel — de quoi lier sa politique de données (#790).
+   *
+   * Descendu en propriété plutôt que lu d'un `useParams()` : cette étape est
+   * déjà rendue avec tout ce qu'elle affiche, et une lecture du routeur ferait
+   * dépendre un composant de saisie du contexte de navigation, que ses suites
+   * unitaires devraient alors simuler pour rien.
+   */
+  readonly tenantSlug: string;
+  /**
    * Verse la saisie en cours au brouillon **sans changer d'étape**.
    *
    * Le formulaire est non contrôlé (react-hook-form) : sans ce report, ce que la
@@ -117,7 +126,7 @@ interface ContactStepProps {
  * en haut de page (skill web-frontend §4) : un bloc oblige à retrouver
  * soi-même le champ fautif, sur un écran mobile où il est souvent hors vue.
  */
-export function ContactStep({ contact, onSave, onBack, onSubmit }: ContactStepProps) {
+export function ContactStep({ contact, tenantSlug, onSave, onBack, onSubmit }: ContactStepProps) {
   const {
     register,
     handleSubmit,
@@ -247,6 +256,7 @@ export function ContactStep({ contact, onSave, onBack, onSubmit }: ContactStepPr
           la seconde où la case est cochée. */}
       <ConsentField
         id="consent"
+        tenantSlug={tenantSlug}
         copy={BOOKING_CONSENT}
         error={isSubmitted ? errors.consent?.message : undefined}
         {...register('consent')}

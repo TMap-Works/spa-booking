@@ -15,6 +15,7 @@ function renderContactStep() {
   render(
     <ContactStep
       contact={emptyBookingDraft().contact}
+      tenantSlug="salon-zen"
       onSave={onSave}
       onBack={onBack}
       onSubmit={onSubmit}

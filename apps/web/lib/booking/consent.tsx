@@ -18,23 +18,22 @@
  * cliente passe de l'un à l'autre sans changer de site : elle doit y lire la
  * même chose.
  *
- * ## Pourquoi les finalités sont écrites ici, et non derrière un lien
+ * ## Les finalités sont écrites en place, **et** la page publique est liée
  *
- * La direction d'audit proposait « un lien vers la politique de données ». Le
- * dépôt n'a pas de page de politique de données — ni route, ni champ de contrat
- * qui porterait celle de l'établissement (`publicTenantSchema` n'en a pas) — et
- * un lien vers une page inexistante informe moins que pas de lien du tout.
+ * La direction d'audit proposait « un lien vers la politique de données ». #734
+ * a porté l'information **en place** faute de page à lier : une phrase toujours
+ * visible qui dit à quoi servent ces données, et un dépliant qui les reprend
+ * champ par champ, avec la base légale de chacun et la façon d'exercer ses
+ * droits. Rien n'est à charger, rien ne fait quitter un formulaire à moitié
+ * rempli — ce que la §3 de la skill `web-frontend` reproche précisément à une
+ * sortie de tunnel.
  *
- * Ce qui est dû à la cliente, c'est l'information ; le lien n'est qu'un moyen de
- * la porter. Elle est donc portée **en place** : une phrase toujours visible qui
- * dit à quoi servent ses données, et un dépliant qui les reprend champ par
- * champ, avec la base légale de chacun et la façon d'exercer ses droits. Rien
- * n'est à charger, rien ne fait quitter un formulaire à moitié rempli — ce que
- * la §3 de la skill `web-frontend` reproche précisément à une sortie de tunnel.
- *
- * La page publique de politique de données reste à écrire ; elle vit hors du
- * périmètre de ce ticket, et le dépliant ci-dessous n'a pas à disparaître
- * lorsqu'elle existera : il restera ce qui se lit sans cliquer.
+ * La page existe depuis #790 (`/{salon}/politique-donnees`), et le dépliant n'a
+ * pas disparu pour autant : il reste ce qui se lit **sans cliquer**, et c'est le
+ * seul texte que la cliente est sûre d'avoir sous les yeux au moment où elle
+ * coche. Le lien s'ajoute à côté, pour qui veut le texte complet — l'un ne
+ * remplace pas l'autre, et la §3 vaut toujours : il s'ouvre dans un **nouvel
+ * onglet**, de sorte que le tunnel à moitié rempli reste là où il était.
  *
  * ## Pourquoi sous `lib/booking/`
  *
@@ -66,6 +65,25 @@ export const consentSchema = z.boolean().refine((accepted) => accepted, {
   message:
     'cochez cette case pour continuer : sans votre accord, nous ne pouvons pas traiter vos données',
 });
+
+/**
+ * L'adresse de la politique de données d'un établissement (#790).
+ *
+ * ## Pourquoi ici, et non dans `salon-data.ts` ou dans `compte/paths.ts`
+ *
+ * Parce que c'est le seul module que les **deux** écrans de consentement
+ * importent déjà, l'un dans le groupe de routes `(booking)` et l'autre dans
+ * `(account)` — la raison même qui a fait naître ce fichier, écrite en son
+ * en-tête. Le chemin posé dans l'un des deux groupes aurait obligé l'autre à
+ * l'importer à travers la frontière, ou à le réécrire ; et deux écritures d'une
+ * même URL, c'est un lien mort le jour où la route bouge.
+ *
+ * `encodeURIComponent` comme les chemins voisins (`compte/paths.ts`) : le slug
+ * vient d'un segment d'URL et rien ne garantit qu'il soit inoffensif.
+ */
+export function dataPolicyPath(tenantSlug: string): string {
+  return `/${encodeURIComponent(tenantSlug)}/politique-donnees`;
+}
 
 /** Une donnée demandée, et ce à quoi elle sert. */
 interface ConsentPurpose {
@@ -197,6 +215,17 @@ interface ConsentFieldProps
   readonly id: string;
   readonly copy: ConsentCopy;
   /**
+   * L'établissement dont on lit la politique de données (#790).
+   *
+   * Obligatoire, et non facultatif : la page est servie **par salon**
+   * (`/{salon}/politique-donnees`), il n'existe pas d'adresse générique vers
+   * laquelle se rabattre, et un lien absent est exactement ce que le quatrième
+   * critère de #790 demande de corriger. Le rendre facultatif aurait laissé un
+   * troisième écran de consentement naître sans lien, sans que rien ne
+   * l'arrête.
+   */
+  readonly tenantSlug: string;
+  /**
    * Le message de refus **de cette case**, rendu sous elle et référencé par
    * `aria-describedby` — jamais en bloc en haut de page (skill `web-frontend`
    * §4), exactement comme `Field` le fait pour les autres champs de ces deux
@@ -220,7 +249,7 @@ interface ConsentFieldProps
  * pré-coché n'est pas un consentement, et le schéma ci-dessus exige un `true`
  * que seule la cliente peut poser.
  */
-export function ConsentField({ id, copy, error, ref, ...input }: ConsentFieldProps) {
+export function ConsentField({ id, copy, tenantSlug, error, ref, ...input }: ConsentFieldProps) {
   const introId = `${id}-finalites`;
   const errorId = `${id}-error`;
   const describedBy = [introId, error === undefined ? null : errorId]
@@ -230,7 +259,34 @@ export function ConsentField({ id, copy, error, ref, ...input }: ConsentFieldPro
   return (
     <div className="spa-consent">
       <p className="spa-consent__intro" id={introId}>
-        {copy.intro}
+        {copy.intro}{' '}
+        {/*
+          Le lien vit **dans** le paragraphe d'intro, et non dans le libellé de
+          la case : un lien à l'intérieur d'un `<label>` est activé par le clic
+          qui coche, et la cliente se retrouverait sur une autre page en croyant
+          consentir. Ce paragraphe est par ailleurs la cible d'`aria-describedby`
+          ci-dessous, si bien que le lien fait partie de ce qu'un lecteur d'écran
+          annonce avec la case.
+
+          `target="_blank"` pour la raison écrite en tête de fichier : le tunnel
+          est à moitié rempli, et rien de ce qui informe ne doit le faire perdre.
+          `rel` va avec — une page ouverte par `_blank` sans lui garde une prise
+          sur celle qui l'a ouverte. La mention entre parenthèses est écrite en
+          toutes lettres plutôt que laissée à un attribut : c'est ce que voit
+          aussi la personne qui n'a pas de lecteur d'écran, et c'est elle qu'un
+          nouvel onglet surprend.
+        */}
+        {/* Aucune classe : le socle (`styles/base.css`) donne déjà à tout `a` la
+            couleur d'accent et le soulignement, et une classe sans règle est une
+            promesse de style que rien ne tient. Le lien ressort donc du gris de
+            ce paragraphe sans qu'on ait à le redire. */}
+        <a
+          href={dataPolicyPath(tenantSlug)}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Lire la politique de données (nouvel onglet)
+        </a>
       </p>
 
       <details className="spa-consent__details">

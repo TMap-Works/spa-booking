@@ -572,6 +572,7 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
       ) : step === 'coordonnees' ? (
         <ContactStep
           contact={draft.contact}
+          tenantSlug={tenant.slug}
           onSave={saveContact}
           onBack={() => {
             goTo('creneau');

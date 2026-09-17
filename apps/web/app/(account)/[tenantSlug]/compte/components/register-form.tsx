@@ -187,6 +187,7 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
             que la question ait été posée. */}
         <ConsentField
           id="register-consent"
+          tenantSlug={tenantSlug}
           copy={ACCOUNT_CONSENT}
           error={errors.consent?.message}
           {...register('consent')}
