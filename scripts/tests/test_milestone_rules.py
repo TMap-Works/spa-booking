@@ -258,7 +258,7 @@ class Relecture(BaseRegles):
         self.assertEqual(code, milestone_rules.OK)
         self.assertEqual(json.loads(sortie),
                          {"issue": 11, "resources": [], "depends": [10],
-                          "why": self.DEPART["why"]["11"]})
+                          "why": self.DEPART["why"]["11"], "weight": None})
 
     def test_show_d_une_issue_inconnue_le_dit_sans_echouer(self):
         code, sortie = self.lancer("show", "999")
@@ -314,6 +314,77 @@ class LePlanVoitLaCorrection(BaseRegles):
         rules = milestone_plan.load_rules()
         self.assertEqual(rules["depends"]["208"], [179])
         self.assertEqual(rules["why"]["208"], "la même empreinte")
+
+
+class ReglageDImportance(BaseRegles):
+    """La section `weights` : ce que l'humain sait et que le plan ne peut pas déduire.
+
+    Une démo le lendemain soir, un écran que le client verra en premier — aucun
+    label ne le dit. Le réglage remonte un ticket dans **sa** bande de priorité,
+    et le plan le borne de son côté ; les deux gardes se recoupent à dessein.
+    """
+
+    def test_un_reglage_pose_se_relit(self):
+        code, _ = self.lancer("set-weight", "961", "20", "--why", "démo du 18/09")
+        self.assertEqual(code, milestone_rules.OK)
+        data = milestone_rules.load()
+        self.assertEqual(data["weights"]["961"],
+                         {"points": 20, "why": "démo du 18/09"})
+
+    def test_zero_retire_le_reglage_au_lieu_d_ecrire_zero(self):
+        """Un réglage neutre laissé dans le fichier se lit comme une décision."""
+        self.lancer("set-weight", "961", "20", "--why", "démo")
+        code, out = self.lancer("set-weight", "961", "0", "--why", "démo passée")
+        self.assertEqual(code, milestone_rules.OK)
+        self.assertIn("retiré", out)
+        self.assertNotIn("961", milestone_rules.load().get("weights", {}))
+
+    def test_retirer_un_reglage_absent_ne_casse_rien(self):
+        code, out = self.lancer("set-weight", "404", "0", "--why", "rien à retirer")
+        self.assertEqual(code, milestone_rules.OK)
+        self.assertIn("aucun réglage", out)
+
+    def test_un_reglage_negatif_est_recevable(self):
+        """Faire redescendre un ticket dans sa bande est aussi une décision."""
+        code, _ = self.lancer("set-weight", "961", "-15", "--why", "peut attendre")
+        self.assertEqual(code, milestone_rules.OK)
+        self.assertEqual(milestone_rules.load()["weights"]["961"]["points"], -15)
+
+    def test_hors_bornes_est_refuse_plutot_que_rabote(self):
+        """Qui tape 500 croit avoir mis le ticket en tête du jalon : le détromper
+        tout de suite coûte moins que de le lui faire découvrir dans le plan."""
+        code, out = self.lancer("set-weight", "961", "500", "--why", "beaucoup")
+        self.assertEqual(code, milestone_rules.USAGE)
+        self.assertIn("hors bornes", out)
+        self.assertEqual(milestone_rules.load().get("weights", {}), {})
+
+    def test_un_reglage_qui_n_est_pas_un_entier_est_refuse(self):
+        for saisie in ("beaucoup", "1.5", "", "٢٠"):
+            with self.subTest(saisie=saisie):
+                code, _ = self.lancer("set-weight", "961", saisie, "--why", "x")
+                self.assertEqual(code, milestone_rules.USAGE)
+
+    def test_le_reglage_s_affiche_a_la_relecture(self):
+        self.lancer("set-weight", "961", "20", "--why", "démo du 18/09")
+        code, out = self.lancer("show", "961")
+        self.assertEqual(code, milestone_rules.OK)
+        self.assertIn("+20", out)
+        self.assertIn("démo du 18/09", out)
+
+    def test_le_reglage_ne_marche_pas_sur_la_justification_d_un_prerequis(self):
+        """`why` appartient aux prérequis. Un réglage qui l'écraserait effacerait
+        la raison d'être d'une arête du graphe, ce que personne ne verrait."""
+        self.lancer("add-depends", "961", "947", "--why", "le contrat avant l'écran")
+        self.lancer("set-weight", "961", "20", "--why", "démo du 18/09")
+        data = milestone_rules.load()
+        self.assertEqual(data["why"]["961"], "le contrat avant l'écran")
+        self.assertEqual(data["weights"]["961"]["why"], "démo du 18/09")
+
+    def test_le_plan_voit_le_reglage(self):
+        """Le bout de la chaîne : ce que le script écrit, le planificateur le lit."""
+        self.lancer("set-weight", "961", "20", "--why", "démo du 18/09")
+        self.assertEqual(
+            milestone_plan.manual_weight(961, milestone_rules.load()), 20)
 
 
 if __name__ == "__main__":
