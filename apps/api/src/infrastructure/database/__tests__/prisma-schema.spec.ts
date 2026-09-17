@@ -34,6 +34,32 @@ import { MIGRATIONS_DIR, PRISMA_DIR, readMigrationSql, readMigrations } from './
 const TENANT_ROOT_TABLE = 'tenants';
 
 /**
+ * Les tables de l'**espace plateforme** — la seconde exception, et la seule
+ * autre, tranchée par l'[ADR 0012](../../../../../../docs/adr/0012-operateur-plateforme-hors-tenant.md)
+ * (#806).
+ *
+ * Le critère y est écrit : `tenant_id` protège les données **d'un
+ * établissement**, et une ligne qui n'appartient à aucun établissement n'a rien
+ * à discriminer. Un opérateur plateforme est au-dessus de tous les salons ; lui
+ * poser la colonne le rattacherait à l'un d'eux, c'est-à-dire l'inverse exact de
+ * ce que la règle cherche à obtenir.
+ *
+ * Cette liste est ce qui rend l'exception **visible en revue** : une table
+ * ajoutée sans `tenant_id` et sans y figurer fait rougir cette suite, et l'y
+ * ajouter sans ADR se voit dans le diff. C'est exactement ce que
+ * tenant-isolation §1 demande d'une exception.
+ */
+const PLATFORM_TABLES: ReadonlySet<string> = new Set([
+  'platform_operators',
+  'platform_tenant_provisionings',
+]);
+
+/** Une table exemptée de `tenant_id` — la racine, ou l'espace plateforme. */
+function isTenantlessTable(name: string): boolean {
+  return name === TENANT_ROOT_TABLE || PLATFORM_TABLES.has(name);
+}
+
+/**
  * Les sept entités du CDC §2.4, plus la jonction N–N Service↔Staff et la table
  * de sessions du module `identity`.
  *
@@ -150,6 +176,9 @@ const EXPECTED_TABLES = [
   'refresh_tokens',
   'processed_webhook_events',
   'stripe_webhook_deliveries',
+  // L'espace plateforme (#806) — voir `PLATFORM_TABLES` ci-dessus et l'ADR 0012.
+  'platform_operators',
+  'platform_tenant_provisionings',
 ] as const;
 
 interface Column {
@@ -354,7 +383,7 @@ const indexes = parseIndexes(sql);
 const foreignKeys = parseForeignKeys(sql);
 const compositeForeignKeys = parseCompositeForeignKeys(sql);
 const checkConstraints = parseCheckConstraints(sql);
-const businessTables = tables.filter((table) => table.name !== TENANT_ROOT_TABLE);
+const businessTables = tables.filter((table) => !isTenantlessTable(table.name));
 
 function lookupTable(name: string): Table {
   const found = tables.find((candidate) => candidate.name === name);
@@ -417,10 +446,20 @@ describe('Schéma Prisma — isolation multi-tenant', () => {
     const models = [...schema.matchAll(/^model (\w+) \{([\s\S]*?)^\}/gm)];
     expect(models.length).toBe(EXPECTED_TABLES.length);
 
+    // Les modèles exemptés, reconnus par le `@@map` qu'ils portent : c'est la
+    // même liste que `PLATFORM_TABLES`, lue du côté Prisma.
+    const tenantless = new RegExp(
+      `@@map\\("(?:${[TENANT_ROOT_TABLE, ...PLATFORM_TABLES].join('|')})"\\)`,
+    );
+
     for (const model of models) {
       const body = group(model, 2);
-      if (group(model, 1) === 'Tenant') {
-        expect(body).not.toContain('tenantId');
+      if (tenantless.test(body)) {
+        // Aucun champ `tenantId` : l'absence est le propos. Le journal de la
+        // console nomme bien un établissement, mais sous `createdTenantId` —
+        // `tenant-scope.extension.ts` déduit du nom `tenantId` les modèles à
+        // filtrer, et cette ligne n'appartient pas au salon qu'elle nomme.
+        expect(body).not.toMatch(/^\s+tenantId\s/m);
         continue;
       }
       expect(body).toMatch(/^\s+tenantId\s+String\s+@map\("tenant_id"\)/m);
@@ -429,7 +468,7 @@ describe('Schéma Prisma — isolation multi-tenant', () => {
 
   it('préfixe de `tenant_id` tout index posé sur une table métier', () => {
     const offenders = indexes
-      .filter((index) => index.table !== TENANT_ROOT_TABLE)
+      .filter((index) => !isTenantlessTable(index.table))
       .filter((index) => index.columns[0] !== 'tenant_id')
       .map((index) => `${index.name} (${index.columns.join(', ')})`);
 
@@ -438,7 +477,7 @@ describe('Schéma Prisma — isolation multi-tenant', () => {
 
   it('rend composite avec `tenant_id` tout unique métier', () => {
     const uniques = indexes.filter(
-      (index) => index.unique && index.table !== TENANT_ROOT_TABLE,
+      (index) => index.unique && !isTenantlessTable(index.table),
     );
 
     // Sans cette borne, le test passerait sur un schéma qui n'aurait plus aucun
@@ -699,6 +738,10 @@ describe('Schéma Prisma — ce que Prisma ne sait pas exprimer', () => {
     // nécessaire, il n'est pas suffisant.
     const missing = foreignKeys
       .filter((key) => key.referencedTable !== TENANT_ROOT_TABLE)
+      // Une clé **partant** d'une table plateforme n'a pas de `tenant_id` à
+      // doubler : ni elle ni sa cible n'appartiennent à un établissement
+      // (ADR 0012). La clé vers `tenants`, elle, est déjà écartée ci-dessus.
+      .filter((key) => !PLATFORM_TABLES.has(key.table))
       .filter(
         (key) =>
           !compositeForeignKeys.some(

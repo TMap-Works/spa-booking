@@ -78,6 +78,28 @@ export const TENANT_ROOT_MODEL = 'Tenant';
 const GLOBAL_MODELS: ReadonlySet<string> = new Set<string>();
 
 /**
+ * Modèles de l'**espace plateforme** — l'identité de l'éditeur, au-dessus des
+ * établissements (ADR 0012, #806).
+ *
+ * Ils ne portent pas de `tenant_id` parce qu'ils n'appartiennent à aucun
+ * établissement, et ils ne sont **pas** globalement légitimes pour autant : le
+ * client scopé les refuse, exactement comme il refuse un modèle inconnu. La
+ * différence avec `GLOBAL_MODELS` est le propos de cette liste — un modèle
+ * global serait lisible depuis n'importe quel repository métier, ceux-ci ne le
+ * sont que depuis `identity/platform`, par `prismaUnscoped`, sous commentaire.
+ *
+ * Cette liste existe donc pour **dire** l'exception, pas pour l'ouvrir : le
+ * comportement d'exécution est le même que sans elle, et c'est
+ * `prisma-schema.spec.ts` et `tenant-scope.extension.spec.ts` qui s'appuient
+ * dessus pour distinguer « table plateforme, tranchée en ADR » de « table
+ * ajoutée sans `tenant_id` par distraction ».
+ */
+export const PLATFORM_MODELS: ReadonlySet<string> = new Set<string>([
+  'PlatformOperator',
+  'PlatformTenantProvisioning',
+]);
+
+/**
  * Modèles scopés, **déduits du schéma** et non énumérés à la main : tout modèle
  * portant un champ scalaire `tenantId`. Une huitième entité ajoutée demain est
  * couverte sans que personne ait pensé à l'inscrire ici — et si elle oublie son
@@ -134,7 +156,9 @@ export class UnscopedModelNotAllowedError extends TenantContextError {
     super(
       `Le modèle « ${model} » ne porte pas de \`tenantId\` et n'est pas déclaré ` +
         'globalement légitime : aucune requête ne peut lui être adressée par le client ' +
-        'scopé. Ajouter `tenant_id` au modèle, ou l’inscrire dans `GLOBAL_MODELS` avec un ADR.',
+        'scopé. Ajouter `tenant_id` au modèle, l’inscrire dans `GLOBAL_MODELS` avec un ADR, ' +
+        'ou — s’il relève de l’espace plateforme (`PLATFORM_MODELS`) — passer par ' +
+        '`prismaUnscoped`, qui est sa seule porte.',
     );
   }
 }

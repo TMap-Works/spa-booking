@@ -3,6 +3,7 @@ import { Prisma, PrismaClient } from '@prisma/client';
 import { MissingTenantContextError } from '../../../common/tenant/tenant-context.errors';
 import { runInTenantScope, runWithTenant } from '../../../common/tenant/tenant-context';
 import {
+  PLATFORM_MODELS,
   TENANT_ROOT_MODEL,
   TENANT_SCOPED_MODELS,
   TenantReassignmentError,
@@ -114,14 +115,35 @@ describe('Extension de scoping tenant', () => {
     });
 
     it('couvre tout modèle du schéma, sans exception silencieuse', () => {
-      // Si un modèle du datamodel n'est ni scopé ni la racine, c'est qu'il a été
-      // ajouté sans `tenant_id` : le principe 2 le refusera à l'exécution, et ce
-      // test le dit avant.
+      // Si un modèle du datamodel n'est ni scopé, ni la racine, ni déclaré dans
+      // l'espace plateforme, c'est qu'il a été ajouté sans `tenant_id` : le
+      // principe 2 le refusera à l'exécution, et ce test le dit avant.
+      //
+      // `PLATFORM_MODELS` est l'exception de l'ADR 0012 (#806), et elle est
+      // **nommée** plutôt que silencieuse : ces deux modèles-là restent refusés
+      // par le client scopé — cette liste ne les ouvre pas, elle les distingue
+      // d'une table ajoutée sans `tenant_id` par distraction.
       const inconnus = Prisma.dmmf.datamodel.models
         .map((model) => model.name)
-        .filter((name) => !TENANT_SCOPED_MODELS.has(name) && name !== TENANT_ROOT_MODEL);
+        .filter(
+          (name) =>
+            !TENANT_SCOPED_MODELS.has(name) &&
+            name !== TENANT_ROOT_MODEL &&
+            !PLATFORM_MODELS.has(name),
+        );
 
       expect(inconnus).toEqual([]);
+    });
+
+    it('refuse au client scopé les modèles de l’espace plateforme', () => {
+      // La contrepartie de l'exception ci-dessus : être nommé dans
+      // `PLATFORM_MODELS` n'ouvre **aucune** porte. `PlatformRepository` est la
+      // seule surface qui les atteint, et elle passe par `prismaUnscoped`.
+      for (const model of PLATFORM_MODELS) {
+        expect(() => applyTenantScope(model, 'findMany', {}, TENANT)).toThrow(
+          UnscopedModelNotAllowedError,
+        );
+      }
     });
 
     it('refuse un modèle qui n’est ni scopé ni déclaré globalement légitime', () => {
