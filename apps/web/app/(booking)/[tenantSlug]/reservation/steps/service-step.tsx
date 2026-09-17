@@ -3,9 +3,9 @@
 import type { PublicService } from '@spa/shared';
 import { useState } from 'react';
 
+import { ServiceChoice } from '@/components/booking/service-choice';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
-import { formatDuration, formatMoney } from '@/lib/format';
 
 /** Valeur du choix « premier disponible » — l'absence de préférence, pas un praticien. */
 const FIRST_AVAILABLE = '';
@@ -24,6 +24,30 @@ interface ServiceStepProps {
  * valeur manquante : elle dit que la cliente n'a pas de préférence, et c'est le
  * serveur qui affecte le praticien à la réservation. Le front ne choisit donc
  * jamais à sa place — il déciderait sur un agenda déjà périmé.
+ *
+ * ## La prestation se choisit en cartes, et le CTA tient le bas de l'écran (#741)
+ *
+ * Les deux écarts que l'audit `d20260916-1` a relevés ici tiennent au même
+ * endroit — `docs/design/appointments/wireframes.md`, étape 1 puis « Structure
+ * commune à toutes les étapes » :
+ *
+ * - le choix de la prestation est un `radiogroup` de cartes, et c'est
+ *   [`ServiceChoice`](../../../../../components/booking/service-choice.tsx) qui
+ *   le rend — le sélecteur qu'il remplace tronquait le prix à 360 px ;
+ * - *« le CTA primaire pleine largeur »* est *« ancré en bas de l'écran (barre
+ *   collante) »*, *« le contenu défile derrière »*. C'est `.spa-booking__cta`
+ *   ci-dessous, calquée sur la barre de résumé de #735 — même ancrage, mêmes
+ *   marges négatives qui la ramènent aux bords du panneau.
+ *
+ * Le libellé du bouton dit **pourquoi** il est désactivé tant que rien n'est
+ * retenu, comme le wireframe le demande (« Le CTA est désactivé tant que l'étape
+ * n'est pas valide, avec un libellé qui dit pourquoi »). Une barre pleine largeur
+ * posée en travers de l'écran et inerte, sans un mot, se lit sinon comme une
+ * panne.
+ *
+ * Le choix du praticien reste un sélecteur : le wireframe en fait une étape à
+ * part entière, avec ses propres cartes, et la déplacer sort d'un ticket qui
+ * porte sur la lisibilité de l'étape 1.
  */
 export function ServiceStep({
   services,
@@ -47,29 +71,15 @@ export function ServiceStep({
         }
       }}
     >
-      <Select
-        id="prestation"
-        label="Prestation"
-        value={serviceId}
-        emptyLabel={
-          services.length === 0
-            ? 'Ce salon ne propose aucune prestation en ligne pour le moment.'
-            : undefined
-        }
-        onChange={(event) => {
-          setServiceId(event.target.value);
+      <ServiceChoice
+        services={services}
+        selectedServiceId={service?.id ?? null}
+        onSelect={(chosen) => {
+          setServiceId(chosen);
           // Le praticien retenu peut ne pas tenir la nouvelle prestation.
           setStaffId(FIRST_AVAILABLE);
         }}
-      >
-        <option value={FIRST_AVAILABLE}>Choisir une prestation…</option>
-        {services.map((candidate) => (
-          <option key={candidate.id} value={candidate.id}>
-            {candidate.name} — {formatDuration(candidate.durationMinutes)} —{' '}
-            {formatMoney(candidate.price)}
-          </option>
-        ))}
-      </Select>
+      />
 
       <Select
         id="praticien"
@@ -94,11 +104,14 @@ export function ServiceStep({
         ))}
       </Select>
 
-      {/* Seul, mais groupé quand même : la colonne flex de `.spa-booking__step`
-          étirerait un `.spa-button` sur toute la largeur du panneau. */}
-      <div className="spa-booking__actions">
-        <Button type="submit" variant="accent" disabled={service === null}>
-          Choisir un créneau
+      {/* Dernier enfant du formulaire, et c'est ce qui la rend collante : elle
+          tient le bas de la fenêtre tant que la liste des prestations déborde,
+          puis se pose au bas du panneau dès qu'il tient en entier — le même
+          mécanisme que `BookingSummaryBar`, qui prend le relais à l'étape
+          suivante. */}
+      <div className="spa-booking__cta">
+        <Button type="submit" variant="accent" block disabled={service === null}>
+          {service === null ? 'Choisir une prestation pour continuer' : 'Choisir un créneau'}
         </Button>
       </div>
     </form>

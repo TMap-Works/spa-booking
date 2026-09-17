@@ -27,8 +27,9 @@
  *    gouttière **intérieure** d'un champ — l'invariant dont découle la lecture
  *    correcte, énoncé en jetons résolus et non en pixels de rendu ;
  * 2. les cinq étapes du tunnel portent bien cette mise en page ;
- * 3. chacune groupe ses boutons, faute de quoi la colonne flex les étirerait sur
- *    toute la largeur du panneau ;
+ * 3. chacune groupe ses boutons — dans la rangée `.spa-booking__actions`, ou dans
+ *    la barre collante `.spa-booking__cta` de l'étape 1 (#741) —, faute de quoi la
+ *    colonne flex les étirerait sur toute la largeur du panneau ;
  * 4. la grille de créneaux ne cumule pas ses marges avec le `gap` de l'étape.
  *
  * La preuve visuelle, elle, est au navigateur : phase de recette de #624.
@@ -228,13 +229,24 @@ describe('Les cinq étapes du tunnel portent cette mise en page', () => {
     it(`${name} groupe ses boutons`, () => {
       // Une colonne flex étire ses enfants : un `.spa-button`, qui est
       // `inline-flex`, occuperait toute la largeur du panneau et deux boutons
-      // passeraient l'un sous l'autre.
+      // passeraient l'un sous l'autre. Ce qui est exigé est donc un **conteneur**,
+      // et le tunnel en a deux, que rien ne confond :
+      //
+      // - `.spa-booking__actions` — la rangée qui suit le contenu dans le flux,
+      //   celle de #624, et le cas des quatre étapes qui offrent une paire de
+      //   boutons (« Corriger mes coordonnées » / « Confirmer la réservation ») ;
+      // - `.spa-booking__cta` — la barre collante de l'étape 1, où le bouton est
+      //   seul et prend **exprès** toute la largeur : `wireframes.md` prescrit à
+      //   cet endroit un « CTA primaire pleine largeur, ancré en bas de l'écran »
+      //   (#741). Ce que #624 interdit — un bouton étiré sans l'avoir voulu —
+      //   reste interdit : la largeur y vient de `--block`, pas d'un oubli de
+      //   conteneur, et `booking-service-cards.test.mjs` tient cette barre-là.
       assert.match(
         source,
-        /className="spa-booking__actions"/,
-        `${name} ne groupe pas ses boutons dans \`.spa-booking__actions\` : ` +
-          'posés directement dans la colonne flex de l’étape, ils s’étirent sur ' +
-          'toute la largeur du panneau (#624).',
+        /className="spa-booking__(?:actions|cta)"/,
+        `${name} ne groupe ses boutons ni dans \`.spa-booking__actions\` ni dans ` +
+          '`.spa-booking__cta` : posés directement dans la colonne flex de l’étape, ' +
+          'ils s’étirent sur toute la largeur du panneau (#624).',
       );
     });
   }

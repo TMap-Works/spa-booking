@@ -515,6 +515,278 @@
   gap: var(--spa-space-3);
 }
 
+/* --- Cartes de prestation, étape 1 ------------------------------------------ */
+
+/*
+ * Le choix de la prestation, en cartes (#741).
+ *
+ * `wireframes.md` étape 1 dessine des cartes portant nom, durée, prix et
+ * description, et dit que *« la sélection est un `radiogroup` »*. Ce qui était
+ * rendu était un `<select>` dont les options concaténaient les trois valeurs :
+ * refermé à 360 px, le contrôle affichait « Rituel duo 90 min — 1 h 30 — 14… »,
+ * le prix coupé net, et les descriptions de la vitrine n'y figuraient pas du
+ * tout (audit `d20260916-1`, critère `ds:hierarchie`).
+ *
+ * ## `min-inline-size: 0`, et pourquoi c'est la première déclaration
+ *
+ * Un `<fieldset>` porte `min-inline-size: min-content` dans la feuille de
+ * l'agent utilisateur, et cette valeur-là ne se laisse pas oublier : elle
+ * empêche la boîte de descendre sous la largeur de son contenu le plus large —
+ * un nom de prestation sans espace, une description longue — et le `<fieldset>`
+ * dépasserait alors du panneau au lieu de laisser son texte passer à la ligne.
+ * C'est exactement le défaut qu'on vient de corriger, rouvert par la mise en
+ * page.
+ *
+ * ## Pourquoi pas `.spa-card--selectable`
+ *
+ * Le socle porte bien une carte sélectionnable, et elle dit la même chose que
+ * celle-ci — cadre d'accent, liseré, fond doux. Mais elle expose son état par
+ * `aria-checked` **sur la carte elle-même**, c'est-à-dire sur un
+ * `<button role="radio">` : l'adopter obligerait à réécrire à la main le groupe,
+ * le *roving tabindex* et la navigation aux flèches que des boutons radio natifs
+ * donnent pour rien. Le contrôle natif est le choix que le design system fait
+ * déjà partout ailleurs (`select.tsx`, `checkout-panel.tsx`), et c'est le plus
+ * sûr des deux sur le parcours qui génère le revenu.
+ *
+ * ## `auto-fit` plutôt qu'un point de rupture
+ *
+ * *« Desktop : grille de 2–3 cartes par ligne »*. La mesure qui décide n'est pas
+ * la fenêtre mais la largeur **du panneau**, qui vaut 44rem au plus et se réduit
+ * de ses remplissages : un point de rupture sur la fenêtre se tromperait des
+ * deux côtés. `minmax(16rem, 1fr)` pose la seule règle qui compte — une carte
+ * sous 16rem ne se lit plus —, et la grille en met autant par ligne qu'il en
+ * tient. À 360 px, la colonne utile mesure ~280 px : une carte par ligne, sans
+ * qu'aucune requête média ait à le dire.
+ */
+.spa-booking__services {
+  min-inline-size: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: var(--spa-space-3);
+  /* Les trois valeurs par lesquelles un `<fieldset>` se rend transparent : sans
+   * elles, il porterait le cadre et les marges du navigateur autour de la
+   * grille. Même remise à zéro que `.spa-admin-checkout__methods`. */
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+/*
+ * La `<legend>` est le libellé du groupe, et elle se lit comme celui d'un champ :
+ * même corps et même graisse que `.spa-select__label`, pour que « Prestation » et
+ * « Praticien » — qui se suivent sur cet écran — ne se lisent pas comme deux
+ * niveaux de titre différents.
+ *
+ * `float: none` et `padding: 0` : la feuille de l'agent utilisateur réserve à la
+ * légende une place dans le cadre du `<fieldset>`, qu'on vient de retirer.
+ */
+.spa-booking__services-legend {
+  float: none;
+  padding: 0;
+  margin-block-end: var(--spa-space-2);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+}
+
+/*
+ * Une carte de prestation — un `<label>` qui enveloppe son bouton radio.
+ *
+ * `--spa-target-min-size` garantit la cible tactile de `styles/README.md` §3 ;
+ * en pratique une carte la dépasse largement, mais une prestation sans
+ * description ni praticien ne doit pas pouvoir passer dessous.
+ */
+.spa-booking__service {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+  min-block-size: var(--spa-target-min-size);
+  padding: var(--spa-space-3);
+  background: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border-interactive);
+  border-radius: var(--spa-radius-md);
+  cursor: pointer;
+}
+
+/*
+ * La place que la barre collante prend au défilement, réservée à ce qui passe
+ * dessous.
+ *
+ * La barre recouvre le bas de la fenêtre, et le navigateur l'ignore quand il
+ * fait défiler la page vers l'élément qui vient de prendre le focus : il
+ * l'amène à ras du bord, c'est-à-dire **sous** la barre. Sur un catalogue qui
+ * dépasse la hauteur de l'écran, la flèche bas menait à une carte qu'on ne
+ * voyait plus — constaté à 360 px pendant la recette de #741.
+ *
+ * Deux porteurs, et c'est la liste des choses focalisables de l'étape :
+ *
+ * - la **carte**, atteinte à la flèche dans le `radiogroup` ;
+ * - le **`<select>` « Praticien »**, dernier arrêt de la tabulation avant la
+ *   barre — et donc celui que le défilement range le plus sûrement dessous. La
+ *   marge est portée par le contrôle et non par son enveloppe `.spa-select` :
+ *   c'est l'élément focalisé que le navigateur amène en vue, et une marge posée
+ *   sur le `<div>` parent ne le concernerait pas. Elle ne vaut que sous une
+ *   étape qui porte la barre — les autres n'ont rien à réserver à cet endroit.
+ *
+ * La hauteur est composée de ses parts plutôt que mesurée : le bouton
+ * (`--spa-target-min-size`), les deux remplissages de la barre, et un
+ * interstice pour que le contenu ne la touche pas.
+ *
+ * Portée par le contenu et non par le conteneur de défilement : celui-ci est le
+ * document, que `base.css` décrit — et un `scroll-padding` posé sur la racine du
+ * site vaudrait pour tous les écrans du produit, dont aucun autre ne porte cette
+ * barre.
+ */
+.spa-booking__service,
+.spa-booking__step:has(> .spa-booking__cta) .spa-select__control {
+  scroll-margin-block-end: calc(
+    var(--spa-target-min-size) + var(--spa-space-3) * 2 + var(--spa-space-2)
+  );
+}
+
+.spa-booking__service:hover {
+  border-color: var(--spa-color-border-strong);
+}
+
+/*
+ * La pastille reste **visible**, là où `.spa-admin-checkout__method-input` la
+ * masque : l'état « retenue » ne doit pas tenir à la seule couleur du cadre
+ * (WCAG 1.4.1), et le wireframe dessine bien une case — « [x] Massage aux
+ * pierres ». `accent-color` la peint aux couleurs du produit sans rien
+ * reconstruire, et le contrôle garde son anneau de focus natif.
+ *
+ * La taille est écrite en toutes lettres, faute d'un jeton qui la dise : le
+ * socle gradue des espacements et des corps de texte, pas des contrôles. 1,125rem
+ * est la mesure du corps `--spa-font-size-lg`, c'est-à-dire un cran au-dessus du
+ * nom de la prestation qu'elle accompagne — la pastille de 13 px du navigateur
+ * disparaît à côté d'une carte de trois lignes. La marge haute la descend d'un
+ * cheveu pour l'aligner sur la ligne de base de ce nom plutôt que sur le haut de
+ * sa boîte, et remet du même geste à zéro celle de l'agent utilisateur.
+ */
+.spa-booking__service-input {
+  flex: none;
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+  margin: var(--spa-space-1) 0 0;
+  accent-color: var(--spa-color-accent);
+}
+
+/*
+ * La carte retenue. Le cadre accentué **et** le fond doux, en plus de la
+ * pastille cochée : trois signaux pour un seul état, dont un seul est une
+ * couleur de trait. C'est le même traitement que le moyen de paiement du
+ * comptoir, et les deux se lisent donc pareil.
+ */
+.spa-booking__service:has(.spa-booking__service-input:checked) {
+  background: var(--spa-color-accent-soft);
+  border-color: var(--spa-color-accent);
+  box-shadow: inset 0 0 0 1px var(--spa-color-accent);
+}
+
+/*
+ * L'anneau de focus est porté par la **carte** et non par la seule pastille :
+ * c'est la carte entière qui reçoit le clic et le doigt, et un anneau de 18 px
+ * au milieu d'une carte de 300 px ne dit pas où l'on est. Le contrôle natif
+ * garde le sien à l'intérieur.
+ */
+.spa-booking__service:has(.spa-booking__service-input:focus-visible) {
+  outline: var(--spa-focus-ring-width) solid var(--spa-color-focus);
+  outline-offset: var(--spa-focus-ring-offset);
+}
+
+.spa-booking__service-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  /* Sans lui, un mot plus long que la colonne — une description d'un seul tenant —
+   * pousserait la carte au-delà de la grille au lieu de passer à la ligne. */
+  min-inline-size: 0;
+}
+
+.spa-booking__service-name {
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+}
+
+/*
+ * Durée et prix, sur leur propre ligne — c'est ici que se joue l'écart relevé.
+ *
+ * Ils ne sont plus des morceaux d'une chaîne composée : ce sont deux boîtes qui
+ * passent à la ligne l'une sous l'autre plutôt que d'être coupées. Rien, à
+ * aucune largeur, ne peut plus tronquer le prix.
+ */
+.spa-booking__service-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-1) var(--spa-space-3);
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+/* Le prix est le fait qu'on cherche du regard quand on compare deux cartes : il
+ * se distingue par la graisse et par le ton plein, comme dans la barre de
+ * résumé. */
+.spa-booking__service-price {
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+}
+
+/*
+ * La description — ce que le sélecteur ne pouvait pas porter, et ce qui permet
+ * de choisir entre deux prestations sans quitter l'étape.
+ *
+ * Bornée à trois lignes : une carte doit rester comparable à sa voisine dans la
+ * grille, et un paragraphe de dix lignes repousserait le prix de la carte
+ * d'à-côté hors de l'écran. Le texte entier reste à la vitrine, qui le rend sans
+ * borne.
+ */
+.spa-booking__service-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+  font-size: var(--spa-font-size-sm);
+  line-height: var(--spa-line-height-normal);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Barre d'action collante ------------------------------------------------ */
+
+/*
+ * Le CTA de l'étape 1, ancré au bas de l'écran (#741).
+ *
+ * `wireframes.md` — « Structure commune à toutes les étapes » — dessine
+ * *« [ Continuer ]  CTA primaire pleine largeur, au pouce »* dans une barre
+ * *« collante en bas »*, *« le contenu défile derrière »*. Ce qui était rendu
+ * était un `.spa-booking__actions` : un bouton de largeur automatique, dans le
+ * flux, qu'une liste de prestations un peu longue repousse sous la ligne de
+ * flottaison (audit `d20260916-1`).
+ *
+ * Tout ce qui suit est repris de `.spa-booking__summary` : même ancrage, mêmes
+ * marges négatives qui annulent le remplissage du panneau, même fond opaque et
+ * même filet. C'est voulu — les deux barres se succèdent d'une étape à l'autre,
+ * et deux ancrages différents pour un même bas d'écran se verraient au passage
+ * de l'une à l'autre.
+ *
+ * Calque et non partage, pour la même raison que `.spa-booking__terms` :
+ * l'une porte l'action, l'autre les faits, et rien ne garantit qu'elles
+ * changeront ensemble.
+ */
+.spa-booking__cta {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: var(--spa-z-sticky);
+  margin-inline: calc(var(--spa-space-6) * -1);
+  margin-block-end: calc(var(--spa-space-6) * -1);
+  padding: var(--spa-space-3) var(--spa-space-6);
+  background: var(--spa-color-surface-raised);
+  border-block-start: 1px solid var(--spa-color-border);
+  border-end-start-radius: var(--spa-radius-lg);
+  border-end-end-radius: var(--spa-radius-lg);
+}
+
 /* --- Barre de résumé collante ----------------------------------------------- */
 
 /*
