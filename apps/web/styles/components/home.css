@@ -1,0 +1,915 @@
+/*
+ * Page d'accueil de la plateforme — #927
+ * =============================================================================
+ *
+ * La racine du domaine : présentation du produit et accès aux salons
+ * (`app/page.tsx`). Aucune couleur littérale, aucune primitive : l'aplat de
+ * marque passe par `--spa-color-surface-brand` et ses rôles « sur marque », si
+ * bien qu'une rampe substituée repeint la page sans la réécrire, et que le thème
+ * sombre la retourne comme le reste du produit.
+ *
+ * Une seule action pleine par écran (BM-VISUEL-02) : le bouton « Prendre
+ * rendez-vous » du formulaire d'accès. Tout ce qui renvoie vers ce formulaire
+ * — barre, cartes, bandeau de fin — est un lien, souligné ou cerné, jamais un
+ * second aplat d'accent.
+ *
+ * Paliers : 30 rem (480 px), 48 rem (768 px), 60 rem (960 px) — ceux que le
+ * reste du design system emploie déjà.
+ */
+
+/* --- Enveloppe -------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: no-preference) {
+  html:has(.spa-home) {
+    scroll-behavior: smooth;
+  }
+}
+
+.spa-home {
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100dvh;
+  background-color: var(--spa-color-surface);
+}
+
+/* La colonne de lecture commune à toutes les bandes. La gouttière latérale ne
+ * descend jamais sous 16 px, à 360 px compris. */
+.spa-home__inner,
+.spa-home-bar__inner {
+  inline-size: 100%;
+  max-inline-size: 72rem;
+  margin-inline: auto;
+  padding-inline: var(--spa-space-4);
+}
+
+@media (min-width: 48rem) {
+  .spa-home__inner,
+  .spa-home-bar__inner {
+    padding-inline: var(--spa-space-8);
+  }
+}
+
+.spa-home__eyebrow {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-accent-text);
+}
+
+/* Pastille de pictogramme — trust, parcours, publics. */
+.spa-home__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  inline-size: var(--spa-target-min-size);
+  block-size: var(--spa-target-min-size);
+  border-radius: var(--spa-radius-lg);
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+}
+
+.spa-home__badge .spa-icon {
+  inline-size: 1.375rem;
+  block-size: 1.375rem;
+}
+
+.spa-home__badge--brand {
+  background-color: var(--spa-color-surface-brand-raised);
+  color: var(--spa-color-accent-on-brand);
+}
+
+/* Sur l'aplat de marque, l'anneau de focus ordinaire tombe sous 2:1. */
+.spa-home-return :focus-visible,
+.spa-home-audience--brand :focus-visible,
+.spa-home-closing :focus-visible {
+  outline-color: var(--spa-color-focus-on-brand);
+}
+
+/* --- Barre ------------------------------------------------------------------ */
+
+.spa-home-bar {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--spa-z-sticky);
+  background-color: var(--spa-color-surface);
+  border-block-end: 1px solid var(--spa-color-border);
+}
+
+.spa-home-bar__inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-4);
+  min-block-size: var(--spa-space-16);
+}
+
+.spa-home-bar__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  min-block-size: var(--spa-target-min-size);
+  color: var(--spa-color-text);
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-bold);
+  letter-spacing: var(--spa-letter-spacing-tight);
+  text-decoration: none;
+}
+
+.spa-home-bar__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--spa-space-8);
+  block-size: var(--spa-space-8);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-surface-brand);
+  color: var(--spa-color-accent-on-brand);
+}
+
+.spa-home-bar__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-1);
+}
+
+.spa-home-bar__link {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-3);
+  border-radius: var(--spa-radius-md);
+  color: var(--spa-color-text-muted);
+  font-weight: var(--spa-font-weight-medium);
+  text-decoration: none;
+  transition: background-color var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-home-bar__link:hover {
+  background-color: var(--spa-color-surface-sunken);
+  color: var(--spa-color-text);
+}
+
+/* L'accès au formulaire : cerné, pas plein — le plein est au formulaire. */
+.spa-home-bar__link--access {
+  margin-inline-start: var(--spa-space-2);
+  border: 1px solid var(--spa-color-border-interactive);
+  color: var(--spa-color-accent-text);
+}
+
+/*
+ * Sur un téléphone, la barre ne garde que la marque et l'accès au formulaire :
+ * les trois ancres de section ne tiennent pas à côté, et la page se lit de
+ * toute façon d'un seul défilement.
+ */
+@media (max-width: 48rem) {
+  .spa-home-bar__link:not(.spa-home-bar__link--access) {
+    display: none;
+  }
+}
+
+/*
+ * À 360 px, la marque et « Accéder à mon salon » ensemble dépassent la largeur
+ * utile de 30 px. Le nom de la plateforme quitte alors l'écran — pas l'arbre
+ * d'accessibilité : le lien garde son nom, le pictogramme reste la marque.
+ */
+@media (max-width: 30rem) {
+  .spa-home-bar__name {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+/* --- Héros ------------------------------------------------------------------ */
+
+.spa-home-hero {
+  padding-block: var(--spa-space-10) var(--spa-space-16);
+  background-color: var(--spa-color-surface);
+  /* Un halo de la couleur du salon, en haut à gauche, qui s'efface avant le
+   * formulaire : il colore la page sans rien désigner. */
+  background-image: radial-gradient(
+    64rem 36rem at 0% 0%,
+    var(--spa-color-accent-soft),
+    transparent 70%
+  );
+}
+
+.spa-home-hero__inner {
+  display: grid;
+  align-items: center;
+  gap: var(--spa-space-10);
+}
+
+@media (min-width: 60rem) {
+  .spa-home-hero {
+    padding-block: var(--spa-space-16);
+  }
+
+  .spa-home-hero__inner {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+    gap: var(--spa-space-16);
+  }
+}
+
+.spa-home-hero__copy {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-5);
+}
+
+.spa-home-hero__title {
+  font-size: var(--spa-font-size-display);
+  font-weight: var(--spa-font-weight-bold);
+  line-height: var(--spa-line-height-tight);
+  letter-spacing: var(--spa-letter-spacing-tight);
+  text-wrap: balance;
+}
+
+/* La seconde moitié de l'accroche, en retrait : deux tons de texte plutôt
+ * qu'un fragment coloré, l'accent restant réservé à ce qui se clique. */
+.spa-home-hero__title-accent {
+  color: var(--spa-color-text-muted);
+}
+
+.spa-home-hero__lead {
+  max-inline-size: 36rem;
+  font-size: var(--spa-font-size-lg);
+  line-height: var(--spa-line-height-relaxed);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-home-hero__proofs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2) var(--spa-space-5);
+}
+
+.spa-home-hero__proof {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+}
+
+.spa-home-hero__proof-icon {
+  color: var(--spa-color-success);
+}
+
+/* Sur une seule colonne, l'accès garde la mesure de l'accroche au lieu de
+ * tirer trois boutons sur toute la largeur d'une tablette. */
+.spa-home-hero__access {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  max-inline-size: 36rem;
+}
+
+@media (min-width: 60rem) {
+  .spa-home-hero__access {
+    max-inline-size: none;
+  }
+}
+
+/* --- Formulaire d'accès ----------------------------------------------------- */
+
+.spa-home-finder {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-5);
+  padding: var(--spa-space-6);
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-xl);
+  box-shadow: var(--spa-shadow-lg);
+}
+
+@media (min-width: 48rem) {
+  .spa-home-finder {
+    padding: var(--spa-space-8);
+  }
+}
+
+.spa-home-finder__heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+}
+
+.spa-home-finder__title {
+  font-size: var(--spa-font-size-xl);
+}
+
+.spa-home-finder__lead {
+  color: var(--spa-color-text-muted);
+}
+
+.spa-home-finder__doors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+}
+
+/* --- Salon de la dernière visite ------------------------------------------- */
+
+.spa-home-return {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-5) var(--spa-space-6);
+  border-radius: var(--spa-radius-xl);
+  background-color: var(--spa-color-surface-brand);
+  color: var(--spa-color-text-on-brand);
+  box-shadow: var(--spa-shadow-md);
+}
+
+.spa-home-return__eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-text-on-brand-muted);
+}
+
+.spa-home-return__name {
+  font-size: var(--spa-font-size-xl);
+}
+
+.spa-home-return__name a {
+  color: var(--spa-color-text-on-brand);
+  text-decoration: none;
+}
+
+.spa-home-return__name a:hover {
+  text-decoration: underline;
+}
+
+.spa-home-return__doors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
+}
+
+.spa-home-return__door {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-3);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-surface-brand-raised);
+  color: var(--spa-color-text-on-brand);
+  font-weight: var(--spa-font-weight-medium);
+  text-decoration: none;
+}
+
+.spa-home-return__door:hover {
+  text-decoration: underline;
+}
+
+.spa-home-return__door-icon {
+  color: var(--spa-color-accent-on-brand);
+}
+
+/* --- Engagements ------------------------------------------------------------ */
+
+.spa-home-trust {
+  background-color: var(--spa-color-surface-raised);
+  border-block: 1px solid var(--spa-color-border);
+}
+
+.spa-home-trust__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--spa-space-6);
+  padding-block: var(--spa-space-8);
+}
+
+.spa-home-trust__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+}
+
+.spa-home-trust__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+}
+
+.spa-home-trust__text strong {
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-home-trust__text span {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Sections ---------------------------------------------------------------- */
+
+.spa-home-section {
+  padding-block: var(--spa-space-16);
+}
+
+.spa-home-section--sunken {
+  background-color: var(--spa-color-surface-sunken);
+}
+
+.spa-home-section__heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  max-inline-size: 44rem;
+  margin-block-end: var(--spa-space-10);
+}
+
+.spa-home-section__title {
+  font-size: var(--spa-font-size-2xl);
+  text-wrap: balance;
+}
+
+@media (min-width: 48rem) {
+  .spa-home-section__title {
+    font-size: var(--spa-font-size-3xl);
+  }
+}
+
+.spa-home-section__lead {
+  font-size: var(--spa-font-size-lg);
+  line-height: var(--spa-line-height-relaxed);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- La boucle d'un rendez-vous -------------------------------------------- */
+
+/* Cinq étapes : sur une rangée à partir de 1100 px environ, puis en grille. */
+.spa-home-loop {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--spa-space-4);
+}
+
+.spa-home-loop__step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-6);
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-xl);
+}
+
+.spa-home-loop__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-block-end: var(--spa-space-2);
+}
+
+.spa-home-loop__index {
+  font-size: var(--spa-font-size-xl);
+  font-weight: var(--spa-font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  color: var(--spa-color-text-subtle);
+}
+
+.spa-home-loop__title {
+  font-size: var(--spa-font-size-lg);
+}
+
+.spa-home-loop__text {
+  font-size: var(--spa-font-size-sm);
+  line-height: var(--spa-line-height-relaxed);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Les deux publics ------------------------------------------------------- */
+
+.spa-home-audiences {
+  display: grid;
+  gap: var(--spa-space-6);
+}
+
+@media (min-width: 48rem) {
+  .spa-home-audiences {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.spa-home-audience {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spa-space-4);
+  padding: var(--spa-space-6);
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-xl);
+}
+
+@media (min-width: 48rem) {
+  .spa-home-audience {
+    padding: var(--spa-space-8);
+  }
+}
+
+.spa-home-audience--brand {
+  background-color: var(--spa-color-surface-brand);
+  border-color: var(--spa-color-surface-brand);
+  color: var(--spa-color-text-on-brand);
+}
+
+.spa-home-audience__title {
+  font-size: var(--spa-font-size-xl);
+}
+
+.spa-home-audience__list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+}
+
+.spa-home-audience__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+  line-height: var(--spa-line-height-snug);
+}
+
+.spa-home-audience__check {
+  color: var(--spa-color-success);
+}
+
+.spa-home-audience--brand .spa-home-audience__check {
+  color: var(--spa-color-accent-on-brand);
+}
+
+.spa-home-audience__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  min-block-size: var(--spa-target-min-size);
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-home-audience--brand .spa-home-audience__link {
+  color: var(--spa-color-accent-on-brand);
+}
+
+/* --- Réserver en trois gestes ---------------------------------------------- */
+
+.spa-home-steps {
+  display: grid;
+  align-items: center;
+  gap: var(--spa-space-10);
+}
+
+@media (min-width: 60rem) {
+  .spa-home-steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--spa-space-16);
+  }
+}
+
+.spa-home-steps__copy .spa-home-section__heading {
+  margin-block-end: var(--spa-space-8);
+}
+
+.spa-home-steps__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-6);
+}
+
+.spa-home-steps__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-4);
+}
+
+.spa-home-steps__number {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  inline-size: var(--spa-space-10);
+  block-size: var(--spa-space-10);
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-surface-brand);
+  color: var(--spa-color-text-on-brand);
+  font-weight: var(--spa-font-weight-bold);
+}
+
+.spa-home-steps__title {
+  margin-block-end: var(--spa-space-1);
+  font-size: var(--spa-font-size-lg);
+}
+
+.spa-home-steps__text {
+  line-height: var(--spa-line-height-relaxed);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Illustration ----------------------------------------------------------- */
+
+.spa-home-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  inline-size: 100%;
+  max-inline-size: 30rem;
+  margin-inline: auto;
+  padding: var(--spa-space-5);
+  border-radius: var(--spa-radius-xl);
+  background-color: var(--spa-color-surface-sunken);
+}
+
+.spa-home-preview__card {
+  padding: var(--spa-space-5);
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-lg);
+  box-shadow: var(--spa-shadow-md);
+}
+
+/* Les cartes se décalent l'une de l'autre dès que la largeur le permet : la
+ * superposition dit « une étape après l'autre » mieux qu'une pile alignée. */
+@media (min-width: 30rem) {
+  .spa-home-preview {
+    padding: var(--spa-space-8);
+  }
+
+  .spa-home-preview__card--service {
+    margin-inline-end: var(--spa-space-12);
+  }
+
+  .spa-home-preview__card--slots {
+    margin-inline-start: var(--spa-space-12);
+  }
+
+  .spa-home-preview__toast {
+    margin-inline: var(--spa-space-6);
+  }
+}
+
+.spa-home-preview__card--service {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spa-space-1);
+}
+
+.spa-home-preview__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-1);
+  margin-block-end: var(--spa-space-2);
+  padding: var(--spa-space-1) var(--spa-space-3);
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-home-preview__title {
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-home-preview__meta {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+/* Le prix en gras, la durée en retrait (BM-VISUEL-03). */
+.spa-home-preview__price {
+  margin-block-start: var(--spa-space-2);
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-bold);
+}
+
+.spa-home-preview__day {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  margin-block-end: var(--spa-space-3);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-home-preview__day-icon {
+  color: var(--spa-color-text-muted);
+}
+
+.spa-home-preview__slots {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--spa-space-2);
+}
+
+.spa-home-preview__slot {
+  padding-block: var(--spa-space-2);
+  border: 1px solid var(--spa-color-border-interactive);
+  border-radius: var(--spa-radius-md);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.spa-home-preview__slot--taken {
+  background-color: var(--spa-color-disabled-surface);
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  text-decoration: line-through;
+}
+
+/* La sélection est l'un des trois emplois de l'accent (BM-VISUEL-01). */
+.spa-home-preview__slot--selected {
+  background-color: var(--spa-color-accent);
+  border-color: var(--spa-color-accent);
+  color: var(--spa-color-text-on-accent);
+}
+
+.spa-home-preview__toast {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-4) var(--spa-space-5);
+  border-radius: var(--spa-radius-lg);
+  background-color: var(--spa-color-surface-inverse);
+  color: var(--spa-color-text-inverse);
+  box-shadow: var(--spa-shadow-lg);
+}
+
+.spa-home-preview__toast-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  inline-size: var(--spa-space-8);
+  block-size: var(--spa-space-8);
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-success);
+  color: var(--spa-color-text-on-accent);
+}
+
+.spa-home-preview__toast-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.spa-home-preview__toast-text span {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-inverse-muted);
+}
+
+/* --- Questions -------------------------------------------------------------- */
+
+.spa-home-faq {
+  display: grid;
+  gap: var(--spa-space-8);
+}
+
+@media (min-width: 60rem) {
+  .spa-home-faq {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+    align-items: start;
+  }
+}
+
+.spa-home-faq .spa-home-section__heading {
+  margin-block-end: 0;
+}
+
+.spa-home-faq__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+}
+
+.spa-home-faq__item {
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-lg);
+}
+
+.spa-home-faq__question {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-4);
+  min-block-size: var(--spa-target-min-size);
+  padding: var(--spa-space-4) var(--spa-space-5);
+  border-radius: var(--spa-radius-lg);
+  font-weight: var(--spa-font-weight-semibold);
+  list-style: none;
+  cursor: pointer;
+}
+
+.spa-home-faq__question::-webkit-details-marker {
+  display: none;
+}
+
+/* Le signe se tourne en croix à l'ouverture. Son texte de remplacement est
+ * vide : le lecteur d'écran annonce déjà « réduit » ou « développé ». */
+.spa-home-faq__question::after {
+  content: '+';
+  content: '+' / '';
+  flex: none;
+  font-size: var(--spa-font-size-xl);
+  font-weight: var(--spa-font-weight-regular);
+  line-height: 1;
+  color: var(--spa-color-accent-text);
+  transition: transform var(--spa-duration-normal) var(--spa-easing-standard);
+}
+
+.spa-home-faq__item[open] > .spa-home-faq__question::after {
+  transform: rotate(45deg);
+}
+
+.spa-home-faq__answer {
+  padding: 0 var(--spa-space-5) var(--spa-space-5);
+  line-height: var(--spa-line-height-relaxed);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Bandeau de fin --------------------------------------------------------- */
+
+.spa-home-closing {
+  padding-block: var(--spa-space-12);
+  background-color: var(--spa-color-surface-brand);
+  color: var(--spa-color-text-on-brand);
+}
+
+.spa-home-closing__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-6);
+}
+
+.spa-home-closing__title {
+  max-inline-size: 32rem;
+  font-size: var(--spa-font-size-2xl);
+  text-wrap: balance;
+}
+
+.spa-home-closing__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-5);
+  border: 1px solid var(--spa-color-text-on-brand-muted);
+  border-radius: var(--spa-radius-md);
+  color: var(--spa-color-text-on-brand);
+  font-weight: var(--spa-font-weight-semibold);
+  text-decoration: none;
+  transition: background-color var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-home-closing__link:hover {
+  background-color: var(--spa-color-surface-brand-raised);
+}
+
+.spa-home-closing__link-icon {
+  color: var(--spa-color-accent-on-brand);
+}
+
+/* --- Pied de page ----------------------------------------------------------- */
+
+.spa-home-footer {
+  padding-block: var(--spa-space-8);
+  background-color: var(--spa-color-surface);
+  border-block-start: 1px solid var(--spa-color-border);
+}
+
+.spa-home-footer__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spa-space-2) var(--spa-space-6);
+}
+
+.spa-home-footer__brand {
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-home-footer__text {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
