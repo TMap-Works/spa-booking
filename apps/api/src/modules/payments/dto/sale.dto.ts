@@ -80,7 +80,7 @@ const MAX_LINES = 100;
 const MAX_QUANTITY = 1000;
 
 /** Borne haute d'un montant — celle du type de la colonne. */
-const MAX_AMOUNT_MINOR = 2_147_483_647;
+export const MAX_AMOUNT_MINOR = 2_147_483_647;
 
 /**
  * Une ligne demandée par le comptoir.
@@ -314,6 +314,32 @@ export class SaleDto {
   })
   public total!: MoneyDto;
 
+  @ApiProperty({
+    type: MoneyDto,
+    description:
+      'Ce qui est déjà **engagé** sur ce ticket — la somme de ses encaissements ' +
+      'aboutis (#817).',
+  })
+  public settled!: MoneyDto;
+
+  @ApiProperty({
+    type: MoneyDto,
+    description:
+      '`total − settled`. C’est ce que `POST /sales/{saleId}/payments` règle ' +
+      'lorsqu’aucun montant n’est précisé.',
+  })
+  public remaining!: MoneyDto;
+
+  @ApiProperty({
+    format: 'date-time',
+    nullable: true,
+    type: String,
+    description:
+      'Instant UTC du solde, ou `null` tant qu’il reste un centime dû. Un ' +
+      'ticket daté ici ne se règle plus — 409 `SALE_ALREADY_SETTLED`.',
+  })
+  public settledAt!: string | null;
+
   @ApiProperty({ type: [SaleItemDto] })
   public items!: SaleItemDto[];
 
@@ -434,20 +460,28 @@ export function toSaleHistoryFilter(dto: ListSalesQueryDto): SaleHistoryFilter {
  * `SERVICE` sans `serviceId` a déjà été refusée en 400 avant d'arriver ici.
  */
 export function toSaleRequest(dto: CreateSaleDto): SaleRequest {
-  return {
-    appointmentId: dto.appointmentId ?? null,
-    lines: dto.lines.map((line): SaleLineRequest => {
-      if (line.kind === 'SERVICE') {
-        return { kind: 'SERVICE', serviceId: line.serviceId as string, quantity: line.quantity as number };
-      }
+  return { appointmentId: dto.appointmentId ?? null, lines: toSaleLineRequests(dto.lines) };
+}
 
-      if (line.kind === 'PRODUCT') {
-        return { kind: 'PRODUCT', productId: line.productId as string, quantity: line.quantity as number };
-      }
+/**
+ * Les lignes d'un ticket, ramenées à ce que le domaine connaît.
+ *
+ * Extraite de `toSaleRequest` par #817 : le règlement d'un rendez-vous accepte
+ * lui aussi des lignes ajoutées, et la conversion recopiée aurait été le second
+ * endroit où un champ interdit par le `kind` pourrait passer.
+ */
+export function toSaleLineRequests(lines: readonly SaleLineDto[]): readonly SaleLineRequest[] {
+  return lines.map((line): SaleLineRequest => {
+    if (line.kind === 'SERVICE') {
+      return { kind: 'SERVICE', serviceId: line.serviceId as string, quantity: line.quantity as number };
+    }
 
-      return { kind: 'TIP', amountMinor: line.amountMinor as number };
-    }),
-  };
+    if (line.kind === 'PRODUCT') {
+      return { kind: 'PRODUCT', productId: line.productId as string, quantity: line.quantity as number };
+    }
+
+    return { kind: 'TIP', amountMinor: line.amountMinor as number };
+  });
 }
 
 /**
@@ -485,6 +519,9 @@ export function toSaleSummaryDto(sale: SaleSummary): SaleSummaryDto {
     tax: toMoneyDto(sale.tax),
     tip: toMoneyDto(sale.tip),
     total: toMoneyDto(sale.total),
+    settled: toMoneyDto(sale.settled),
+    remaining: toMoneyDto(sale.remaining),
+    settledAt: sale.settledAt === null ? null : sale.settledAt.toISOString(),
     // `…Z` et rien d'autre : un seul référentiel, deux horodatages se comparent
     // alors par simple ordre lexicographique (ADR 0006).
     createdAt: sale.createdAt.toISOString(),

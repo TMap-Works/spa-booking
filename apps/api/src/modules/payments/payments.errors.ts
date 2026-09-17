@@ -471,3 +471,96 @@ export class SaleAmountOutOfRangeError extends DomainError {
     super('Le total de ce ticket dépasse le montant maximal admis.');
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Règlement d'un ticket (#817)                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Ce ticket est soldé — le troisième critère de #817.
+ *
+ * **409 et non 422** : le refus porte sur l'état d'une ressource que l'appelant
+ * désigne et connaît, pas sur le contenu de sa demande. C'est le même code que
+ * `PaymentAlreadySettledError`, dont il est le pendant côté vente — celui-là
+ * désigne une ligne `payments` déjà aboutie, celui-ci une pièce comptable close.
+ *
+ * ## Ce n'est pas ce service qui l'empêche
+ *
+ * `sales_settled_amount_minor_check` rend un règlement de trop **impossible à
+ * écrire**, et la ligne `sales` est verrouillée : deux comptoirs qui règlent la
+ * même vente au même instant ne peuvent pas lire tous deux « rien d'encaissé »
+ * et conclure tous deux que le geste est possible. Cette classe n'est que la
+ * traduction du refus de la base en réponse HTTP — c'est la conduite que
+ * CLAUDE.md impose au double encaissement comme à la double réservation.
+ *
+ * `details.settledAt` est un instant, jamais une donnée personnelle : il dit au
+ * comptoir quand la vente a été réglée, ce qu'aucune relecture de l'écran ne
+ * lui donnerait sans un aller-retour de plus.
+ */
+export class SaleAlreadySettledError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.SALE_ALREADY_SETTLED;
+  public override readonly status = CONFLICT;
+
+  public constructor(settledAt: Date | null) {
+    super('Ce ticket a déjà été réglé.', {
+      settledAt: settledAt === null ? null : settledAt.toISOString(),
+    });
+  }
+}
+
+/**
+ * Le règlement demandé dépasse le reste dû — quatrième critère de #817.
+ *
+ * **422 et non 409** : la vente existe, elle n'est pas close, et c'est le
+ * **montant envoyé** qui ne convient pas. L'appelant a une conduite à tenir —
+ * refaire le geste avec le reste dû —, et `details.remainingAmountMinor` la lui
+ * donne sans qu'il ait à relire le ticket.
+ *
+ * ## Les espèces n'y tombent jamais
+ *
+ * Un billet de 100,00 € posé sur un ticket de 78,00 € n'est pas un dépassement,
+ * c'est 22,00 € de monnaie à rendre. Le règlement n'engage alors que le reste
+ * dû, et l'excédent est rendu à la cliente — il n'entre nulle part en base,
+ * puisqu'il n'a jamais été encaissé. Toute autre forme de règlement — un
+ * passage de carte au terminal, un virement — porte un montant exact : il n'y a
+ * pas de monnaie à rendre sur un débit, et l'excédent y serait une erreur de
+ * saisie qu'il vaut mieux refuser que constater au rapprochement.
+ */
+export class SaleOverpaymentError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.SALE_OVERPAYMENT;
+  public override readonly status = UNPROCESSABLE_ENTITY;
+
+  public constructor(remainingAmountMinor: number) {
+    super('Ce règlement dépasse ce qui reste dû sur le ticket.', { remainingAmountMinor });
+  }
+}
+
+/**
+ * Le rendez-vous a déjà son ticket, et l'appel voulait y ajouter des lignes.
+ *
+ * **409** : c'est l'état d'une ressource que l'appelant désigne qui refuse, pas
+ * le contenu de sa demande.
+ *
+ * ## Pourquoi un refus plutôt qu'un ajout
+ *
+ * Parce qu'une vente écrite ne se recompose pas : ses totaux sont figés, un
+ * règlement peut déjà s'y être adossé, et `sales_settled_amount_minor_check`
+ * borne l'engagé par un total qu'on ne peut plus faire varier sous lui. Et
+ * parce que le silence était pire : jusqu'à ce refus, les lignes ajoutées à un
+ * rendez-vous qui avait déjà un ticket étaient **écartées sans rien dire** — la
+ * marchandise sortait du rayon sans jamais être facturée.
+ *
+ * `details.saleId` donne au comptoir de quoi poursuivre : régler le ticket
+ * existant par `POST /sales/{saleId}/payments`, et ouvrir une vente à part
+ * (`POST /sales`) pour ce qui devait s'y ajouter.
+ */
+export class AppointmentTicketAlreadyOpenError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.APPOINTMENT_TICKET_ALREADY_OPEN;
+  public override readonly status = CONFLICT;
+
+  public constructor(saleId: string) {
+    super('Ce rendez-vous porte déjà un ticket : les lignes ajoutées n’y entrent plus.', {
+      saleId,
+    });
+  }
+}

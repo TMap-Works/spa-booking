@@ -2,7 +2,6 @@ import { Module } from '@nestjs/common';
 
 import { CatalogModule } from '../catalog/catalog.module';
 import { IdentityModule } from '../identity/identity.module';
-import { CashPaymentsService } from './cash-payments.service';
 import { CounterPaymentsController } from './counter-payments.controller';
 import { PaymentsHistoryService } from './payments-history.service';
 import { PaymentsRepository } from './payments.repository';
@@ -15,6 +14,8 @@ import { RefundsRepository } from './refunds.repository';
 import { RefundsService } from './refunds.service';
 import { SalesController } from './sales.controller';
 import { SalesService } from './sales.service';
+import { SettlementRepository } from './settlement.repository';
+import { SettlementService } from './settlement.service';
 import { StripeWebhookController } from './stripe-webhook.controller';
 import { DurableWebhookQueue, WEBHOOK_QUEUE } from './stripe-webhook.queue';
 import { StripeWebhookRepository } from './stripe-webhook.repository';
@@ -54,10 +55,18 @@ import {
  * fait.
  *
  * #62 referme la boucle par l'autre bout : il encaisse **sans prestataire**.
- * `CashPaymentsService` n'injecte ni `StripeConfig` ni `STRIPE_GATEWAY`, et
- * c'est ce qui rend son quatrième critère vrai par construction — il n'y a rien
- * à appeler depuis ce chemin-là. C'est aussi pourquoi il est un service à part
- * plutôt qu'une méthode de `PaymentsService`, qui les injecte tous deux.
+ * `SettlementService` — qui a pris la place de `CashPaymentsService` avec #817 —
+ * n'injecte ni `StripeConfig` ni `STRIPE_GATEWAY`, et c'est ce qui rend son
+ * quatrième critère vrai par construction : il n'y a rien à appeler depuis ce
+ * chemin-là. C'est aussi pourquoi il est un service à part plutôt qu'une
+ * méthode de `PaymentsService`, qui les injecte tous deux.
+ *
+ * #817 rattache les deux moitiés : un règlement porte désormais la **vente**
+ * qu'il solde, et encaisser un rendez-vous revient à composer son ticket puis à
+ * le régler, dans une seule transaction. `SettlementRepository` existe pour
+ * cette transaction-là, et pour elle seule — même raison que
+ * `RefundsRepository` : un « lire, décider, écrire » qui doit se sérialiser ne
+ * se loge pas dans un dépôt qui sert aussi des lectures ordinaires.
  *
  * #63 est le pendant exact de #57 : il **sort** de l'argent là où l'autre en
  * fait entrer. `RefundsService` et `RefundsRepository` sont donc à part de
@@ -166,15 +175,15 @@ import {
  * `WEBHOOK_QUEUE`, pour la seule raison qui vaille : les suites d'intégration
  * doivent pouvoir attendre que la file se vide avant d'asserter sur la base.
  *
- * `ProductsService`, `CashPaymentsService`, `PaymentsHistoryService` et
+ * `ProductsService`, `SettlementService`, `PaymentsHistoryService` et
  * `RefundsService` ne sont **pas** exportés : le rayon retail, l'encaissement au comptoir et la lecture
  * de rapprochement n'intéressent aucun autre module du périmètre MVP, et un
  * `exports` posé « au cas où » ouvrirait une porte que personne ne franchit et
  * qu'il faudrait pourtant maintenir. Le jour où `reporting` lira le chiffre
  * d'affaires, c'est `SalesService` — déjà exporté — qui le sert.
  *
- * `PaymentsRepository`, `StripeWebhookRepository`, `PosRepository` et
- * `RefundsRepository` ne sont pas exportés non plus : un module n'importe jamais le repository d'un autre
+ * `PaymentsRepository`, `StripeWebhookRepository`, `PosRepository`,
+ * `RefundsRepository` et `SettlementRepository` ne sont pas exportés non plus : un module n'importe jamais le repository d'un autre
  * (api-module §3).
  */
 @Module({
@@ -188,7 +197,8 @@ import {
   ],
   providers: [
     PaymentsService,
-    CashPaymentsService,
+    SettlementService,
+    SettlementRepository,
     PaymentsHistoryService,
     RefundsService,
     RefundsRepository,

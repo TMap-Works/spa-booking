@@ -111,6 +111,28 @@ export const RESERVING_REFUND_STATUSES = ['PENDING', 'SUCCEEDED'] as const;
 export interface PayableAppointment {
   readonly id: string;
   readonly status: string;
+  /**
+   * La prestation réservée — #817, deuxième critère.
+   *
+   * Elle est ce que la ligne `SERVICE` du ticket référence lorsque
+   * l'encaissement compose la vente du rendez-vous. Le **prix**, lui, ne vient
+   * pas d'elle mais de `price` ci-dessous : c'est le montant figé à la
+   * réservation, et un tarif changé depuis ne doit pas réécrire ce que la
+   * cliente a accepté de payer.
+   */
+  readonly serviceId: string;
+  /**
+   * La cliente qui a réservé — #817.
+   *
+   * Elle sert d'**opérateur** au ticket composé par le tunnel en ligne :
+   * `sales.cashier_user_id` est `NOT NULL` et référence un compte de
+   * l'établissement, et il n'y a personne au comptoir quand la réservation se
+   * paie depuis un navigateur. C'est le compte auquel le ticket est
+   * attribuable, et c'est ce que la colonne veut dire — « qui a composé cette
+   * addition ». Un ticket de comptoir porte l'opérateur du jeton, comme depuis
+   * #60.
+   */
+  readonly clientId: string;
   readonly price: Money;
 }
 
@@ -124,37 +146,83 @@ export interface PayableAppointment {
  */
 export interface PaymentRecord {
   readonly id: string;
+  /**
+   * Le rendez-vous réglé, **résolu** — #817.
+   *
+   * Il vient de la colonne `payments.appointment_id` pour une intention en
+   * ligne, et du ticket (`sales.appointment_id`) pour un règlement de comptoir,
+   * qui n'écrit plus la colonne. Le consommateur n'a pas à savoir lequel des
+   * deux chemins l'a produit : la question qu'il pose est « quel rendez-vous ce
+   * règlement solde-t-il ? », et elle a une seule réponse.
+   */
   readonly appointmentId: string | null;
+  /**
+   * Le ticket que ce règlement solde — la moitié manquante du CDC §2.4.
+   *
+   * `null` seulement sur les lignes inscrites avant #817 : la base exige une
+   * vente de tout règlement neuf (`payments_sale_required_check`), et
+   * `pos.sale-backfill.ts` rattache les anciennes.
+   */
+  readonly saleId: string | null;
   readonly amount: Money;
   readonly method: PaymentMethod;
   readonly status: PaymentStatus;
   readonly providerPaymentIntentId: string | null;
 }
 
-/** Ce que le repository écrit lorsqu'une intention vient d'être créée. */
+/**
+ * Ce que le repository écrit lorsqu'une intention vient d'être créée.
+ *
+ * `saleId` y est entré avec #817 : la base exige désormais qu'un règlement
+ * porte sa vente, et une intention en ligne n'y fait pas exception — c'est ce
+ * qui rend imprimable la pièce d'un rendez-vous payé par carte, ce qu'aucun
+ * chemin ne produisait auparavant.
+ */
 export interface CardPaymentDraft {
   readonly appointmentId: string;
+  readonly saleId: string;
   readonly amount: Money;
   readonly providerPaymentIntentId: string;
 }
 
 /**
- * Ce que le repository écrit lorsqu'un rendez-vous est réglé en espèces (#62).
+ * L'issue d'un règlement de ticket, telle que le dépôt la rend — #817.
  *
- * **Il n'y a pas de champ pour une référence de prestataire**, et c'est la forme
- * du quatrième critère : le chemin espèces n'a nulle part où ranger un
- * `pi_…`, parce qu'aucun appel Stripe n'a eu lieu pour en produire un. Le
- * montant, lui, n'est pas non plus dans le corps de la requête — il est relu au
- * rendez-vous, comme sur le chemin carte (payments-stripe §4).
- *
- * Ni `method` ni `status` : cette écriture n'a qu'un sens — un billet posé sur
- * le comptoir, donc `CASH` et `SUCCEEDED`, dès l'écriture. Contrairement à la
- * carte, il n'y a aucun tiers dont on attendrait la confirmation : la caisse
- * fait foi (payments-stripe §4).
+ * Un type somme plutôt qu'une exception levée depuis le dépôt : `api-module §2`
+ * réserve la décision au service, et les deux refus que la base oppose — ticket
+ * soldé, dépassement — sont des **faits** que la transaction constate, pas des
+ * règles qu'elle applique. Le service les traduit en 409 et 422.
  */
-export interface CashPaymentDraft {
-  readonly appointmentId: string;
-  readonly amount: Money;
+export type CounterSettlementOutcome =
+  | { readonly outcome: 'settled'; readonly settlement: SaleSettlement }
+  | { readonly outcome: 'already-settled'; readonly settledAt: Date | null }
+  | { readonly outcome: 'overpayment'; readonly remainingAmountMinor: number }
+  | { readonly outcome: 'card-intent-in-flight' }
+  | { readonly outcome: 'sale-not-found' }
+  /**
+   * Le rendez-vous avait déjà son ticket, et l'appel portait des lignes à y
+   * ajouter. Une vente écrite ne se recompose pas — et les écarter en silence
+   * ferait sortir la marchandise sans la facturer.
+   */
+  | { readonly outcome: 'ticket-already-open'; readonly saleId: string };
+
+/**
+ * Ce que le comptoir reçoit d'un règlement : la ligne inscrite, l'état du
+ * ticket après elle, et la monnaie à rendre.
+ *
+ * Les trois sont nécessaires et aucun n'est déductible des autres depuis
+ * l'écran : `remaining` dit s'il reste à encaisser, `change` ce qu'il faut
+ * sortir du tiroir, et `payment` est la pièce du rapprochement.
+ */
+export interface SaleSettlement {
+  readonly payment: PaymentTransaction;
+  readonly saleId: string;
+  readonly total: Money;
+  readonly settled: Money;
+  readonly remaining: Money;
+  /** `0` dès que rien n'est à rendre — jamais un champ absent. */
+  readonly change: Money;
+  readonly settledAt: Date | null;
 }
 
 /**
@@ -216,6 +284,8 @@ export interface PaymentIntentView {
 export interface PaymentTransaction {
   readonly id: string;
   readonly appointmentId: string | null;
+  /** Le ticket soldé — voir {@link PaymentRecord.saleId}. */
+  readonly saleId: string | null;
   readonly amount: Money;
   readonly refunded: Money;
   readonly method: PaymentMethod;

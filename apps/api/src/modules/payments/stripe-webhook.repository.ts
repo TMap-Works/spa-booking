@@ -763,7 +763,10 @@ export class StripeWebhookRepository {
     // Une intention d'un autre établissement est donc simplement introuvable.
     const payment = await tx.payment.findFirst({
       where: { providerPaymentIntentId: fact.paymentIntentId },
-      select: { id: true, appointmentId: true },
+      // `saleId` et `amountMinor` sont entrés avec #817 : c'est le succès du
+      // paiement qui fait avancer le compte du ticket, et il ne peut pas le
+      // faire sans savoir lequel, ni de combien.
+      select: { id: true, appointmentId: true, saleId: true, amountMinor: true },
     });
 
     if (payment === null) {
@@ -824,18 +827,44 @@ export class StripeWebhookRepository {
   private async settle(
     tx: ScopedTransaction,
     fact: Extract<WebhookFact, { kind: 'payment-succeeded' }>,
-    payment: { readonly id: string; readonly appointmentId: string | null },
+    payment: {
+      readonly id: string;
+      readonly appointmentId: string | null;
+      readonly saleId: string | null;
+      readonly amountMinor: number;
+    },
   ): Promise<Omit<WebhookApplication, 'outcome'>> {
     // Le filtre de statut est un test-et-pose atomique : un encaissement déjà
     // remboursé ne redevient pas abouti parce qu'une livraison arrive en retard.
+    const capturedAt = new Date();
+
     const settled = await tx.payment.updateMany({
       where: { id: payment.id, status: { in: ['PENDING', 'FAILED'] } },
       data: {
         status: 'SUCCEEDED',
-        capturedAt: new Date(),
+        capturedAt,
         ...(fact.chargeId === null ? {} : { providerChargeId: fact.chargeId }),
       },
     });
+
+    if (settled.count === 1) {
+      // Le ticket avance **dans la même transaction** que l'encaissement — #817.
+      //
+      // C'est ici, et nulle part ailleurs, qu'une carte en ligne compte pour
+      // réglée : l'intention ne réservait rien tant qu'elle était en vol, parce
+      // qu'une carte refusée ne doit pas condamner le ticket
+      // (`settlement.repository.ts`). Le filtre de statut ci-dessus étant un
+      // test-et-pose atomique, ce bloc ne s'exécute qu'à la **transition**, donc
+      // au plus une fois : une livraison rejouée ne double pas le compte.
+      //
+      // Si l'addition dépassait le total — un encaissement de comptoir passé
+      // entre-temps —, `sales_settled_amount_minor_check` annule la transaction
+      // entière. Rien de faux n'est écrit, l'événement n'est pas marqué traité,
+      // et la file durable finit par alerter : même conduite que pour
+      // `payments_refunded_amount_minor_check`, et pour la même raison — un
+      // écart de réconciliation se tranche par une personne, pas en silence.
+      await this.advanceSale(tx, payment.saleId, payment.amountMinor, capturedAt);
+    }
 
     if (payment.appointmentId === null || settled.count === 0) {
       // Deux sorties sans confirmation, pour deux raisons distinctes :
@@ -861,5 +890,54 @@ export class StripeWebhookRepository {
     });
 
     return { paymentsTouched: settled.count, appointmentsConfirmed: confirmed.count };
+  }
+
+  /**
+   * Fait avancer le compte du ticket d'un encaissement qui vient d'aboutir —
+   * #817.
+   *
+   * Rien à faire quand la ligne n'a pas de ticket : ce sont les encaissements
+   * inscrits **avant** #817, que `pos.sale-backfill.ts` rattache. Le webhook ne
+   * les invente pas, et ne bloque pas dessus.
+   *
+   * L'ajout est **atomique** — `SET settled_amount_minor = settled_amount_minor
+   * + n` —, et non une relecture suivie d'une valeur absolue. La distinction
+   * n'est pas cosmétique : une lecture ordinaire ne prend aucun verrou, si bien
+   * qu'un règlement de comptoir qui commiterait entre elle et l'écriture serait
+   * **effacé** par la valeur absolue calculée sur l'état d'avant. Le `CHECK` ne
+   * rattraperait rien — le compte redescendrait au lieu de dépasser.
+   *
+   * La relecture qui suit l'ajout porte donc sur la ligne que cette transaction
+   * tient désormais verrouillée, et elle n'existe que pour `settled_at` :
+   * « soldé » est une comparaison entre deux colonnes qu'`updateMany` ne sait
+   * pas exprimer.
+   */
+  private async advanceSale(
+    tx: ScopedTransaction,
+    saleId: string | null,
+    amountMinor: number,
+    capturedAt: Date,
+  ): Promise<void> {
+    if (saleId === null) {
+      return;
+    }
+
+    const advanced = await tx.sale.updateMany({
+      where: { id: saleId },
+      data: { settledAmountMinor: { increment: amountMinor } },
+    });
+
+    if (advanced.count === 0) {
+      return;
+    }
+
+    const sale = await tx.sale.findFirst({
+      where: { id: saleId },
+      select: { settledAmountMinor: true, totalAmountMinor: true },
+    });
+
+    if (sale !== null && sale.settledAmountMinor === sale.totalAmountMinor) {
+      await tx.sale.updateMany({ where: { id: saleId }, data: { settledAt: capturedAt } });
+    }
   }
 }

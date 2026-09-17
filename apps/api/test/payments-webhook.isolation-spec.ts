@@ -203,11 +203,30 @@ describe('Webhook Stripe — isolation et idempotence contre un vrai PostgreSQL'
       },
     });
 
+    // Le ticket que l'intention solde — `payments_sale_required_check` l'exige
+    // de tout encaissement neuf depuis #817. Le tunnel en ligne le compose
+    // avant d'inscrire son intention ; ce semis fait la même chose à la main,
+    // parce qu'il écrit la ligne `payments` en direct.
+    const sale = await prismaUnscoped.sale.create({
+      data: {
+        tenantId: tenant.id,
+        appointmentId: appointment.id,
+        cashierUserId: client.id,
+        subtotalAmountMinor: PRICE.amountMinor,
+        taxAmountMinor: 0,
+        tipAmountMinor: 0,
+        totalAmountMinor: PRICE.amountMinor,
+        currency: PRICE.currency,
+      },
+      select: { id: true },
+    });
+
     const paymentIntentId = `pi_${randomUUID()}`;
     const payment = await prismaUnscoped.payment.create({
       data: {
         tenantId: tenant.id,
         appointmentId: appointment.id,
+        saleId: sale.id,
         amountMinor: PRICE.amountMinor,
         currency: PRICE.currency,
         method: 'CARD',
