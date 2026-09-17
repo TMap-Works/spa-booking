@@ -73,6 +73,8 @@ const EXPECTED_EXPORTS = [
   'notificationSchema',
   'paymentSchema',
   'publicTenantSchema',
+  'saleReceiptSchema',
+  'formatReceiptNumber',
 ] as const;
 
 /**
