@@ -208,6 +208,45 @@ describe('notifications — le récapitulatif de la confirmation', () => {
   });
 });
 
+/**
+ * Ce que la confirmation **affirme** — #911.
+ *
+ * Elle part sur `appointment.created`, donc sur un rendez-vous que le dépôt vient
+ * d'écrire au statut `PENDING` : « votre rendez-vous est confirmé » y était faux
+ * au moment même de l'envoi, et contredisait l'espace client qui affiche, sur ce
+ * rendez-vous-là, « À confirmer par le salon » (#743).
+ *
+ * Ces assertions pincent le **fait annoncé**, pas le style. Le jour où la
+ * confirmation deviendra un message du salon — s'il y en a un un jour —, ce sont
+ * elles qui diront qu'il faut reprendre le gabarit, et non une relecture.
+ */
+describe('notifications — ce que la confirmation affirme', () => {
+  it('dit la réservation enregistrée et la confirmation attendue du salon', () => {
+    const { subject, text } = renderBookingConfirmationEmail(PARIS, CANCEL_URL);
+
+    expect(subject).toContain('À confirmer par le salon');
+    expect(text).toContain('est enregistré');
+    expect(text).toContain('à confirmer par le salon');
+  });
+
+  it('n’annonce pas un rendez-vous « confirmé » — il ne l’est pas encore', () => {
+    const { subject, html, text } = renderBookingConfirmationEmail(PARIS, CANCEL_URL);
+
+    expect(subject).not.toContain('est confirmé');
+    expect(html).not.toContain('est confirmé');
+    expect(text).not.toContain('est confirmé');
+  });
+
+  it('ne promet aucun message de suite, qu’aucun type du MVP ne servirait', () => {
+    // Rien ne part à la confirmation : les trois types du MVP sont
+    // `BOOKING_CONFIRMATION`, `REMINDER_24H` et `CANCELLATION` (CDC §1.4).
+    // Remplacer une phrase fausse par une promesse creuse n'aurait rien réglé.
+    const { text } = renderBookingConfirmationEmail(PARIS, CANCEL_URL);
+
+    expect(text).not.toContain('vous recevrez');
+  });
+});
+
 describe('notifications — le lien d’annulation', () => {
   it('figure dans l’e-mail, en HTML comme en texte', () => {
     const { html, text } = renderBookingConfirmationEmail(PARIS, CANCEL_URL);
@@ -272,6 +311,26 @@ describe('notifications — le SMS de confirmation', () => {
 
     expect(text).toContain('Maison Lotus');
     expect(text).toContain('14:30');
+  });
+
+  it('dit la confirmation attendue, comme l’e-mail parti au même instant', () => {
+    // Les deux canaux partent du même `appointment.created` : n'en corriger
+    // qu'un aurait fait arriver, sur la même réservation, deux messages qui se
+    // contredisent (#911).
+    const { text } = renderBookingConfirmationSms(PARIS);
+
+    expect(text).toContain('à confirmer par le salon');
+    expect(text).not.toContain('rendez-vous confirmé');
+  });
+
+  it('emploie la minuscule « à », seule accentuée que GSM-7 connaisse', () => {
+    // La capitale `À` du libellé du front n'est pas dans l'alphabet de base :
+    // elle basculerait le message en UCS-2 et doublerait son coût
+    // (notifications §5). Le coût lui-même est mesuré sur le modèle, dans
+    // `notification-template.spec.ts` ; ici c'est le caractère qu'on pince.
+    const { text } = renderBookingConfirmationSms(PARIS);
+
+    expect(text).not.toContain('À');
   });
 
   it('ne porte ni HTML ni objet — un expéditeur SNS ne lit que le texte', () => {
