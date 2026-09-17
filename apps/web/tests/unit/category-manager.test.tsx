@@ -231,6 +231,102 @@ describe('rubriques — l’écran d’une rubrique (#769)', () => {
   });
 });
 
+/**
+ * L'ordre de tabulation de l'écran — audit `d20260916-1`, critère `ds:a11y` (#770).
+ *
+ * WCAG 2.2 AA, 2.4.3 « Ordre de focus » : quand un contrôle révèle du contenu,
+ * la tabulation suivante doit entrer dans ce qui vient d'apparaître. La liste
+ * des rubriques y manquait, et d'une façon coûteuse : le bouton « Modifier »
+ * dépliait le formulaire dans la **première** cellule de la ligne, donc avant
+ * son déclencheur dans l'ordre du document. Le focus restait sur le bouton, une
+ * seule frappe Tab le portait sur « Désactiver » — l'action destructive de cette
+ * même rubrique —, et les quatre champs du formulaire comme son « Enregistrer »
+ * étaient entièrement sautés. Un opérateur au clavier était à un Entrée de
+ * désactiver la rubrique qu'il voulait renommer.
+ *
+ * #769 a refermé l'écart plus fort que la direction proposée au ticket (« une
+ * ligne de détail sous la ligne ») : il n'y a plus de contenu révélé du tout,
+ * le formulaire vit sur `rubriques/{id}`. Ce qui restait dû, c'est la
+ * **serrure** — sans elle, rien n'empêche une reprise de rouvrir un formulaire
+ * dans une cellule. Ces trois tests parcourent l'écran à la tabulation et en
+ * figent la séquence ; ils ne relisent pas le balisage, ils déplacent le focus.
+ */
+describe('rubriques — ordre de tabulation (#770, WCAG 2.2 AA 2.4.3)', () => {
+  /** Ce sur quoi le focus se pose, tabulation après tabulation, dans l'ordre. */
+  async function suitLaTabulation(
+    user: ReturnType<typeof userEvent.setup>,
+    attendu: readonly Element[],
+  ): Promise<void> {
+    for (const cible of attendu) {
+      await user.tab();
+      expect(document.activeElement).toBe(cible);
+    }
+  }
+
+  it('déroule la liste dans l’ordre du document — le formulaire, puis chaque ligne par son nom', async () => {
+    const user = userEvent.setup();
+    renderManager();
+
+    const visageRow = screen.getByRole('row', { name: /Soins du visage/ });
+    const coiffureRow = screen.getByRole('row', { name: /Coiffure/ });
+
+    // Aucun saut, aucun retour en arrière : la séquence suit ce qui est lu.
+    await suitLaTabulation(user, [
+      screen.getByLabelText(/Nom de la rubrique/),
+      screen.getByLabelText(/Description/),
+      screen.getByLabelText(/Adresse publique/),
+      screen.getByRole('button', { name: /Créer la rubrique/ }),
+      within(visageRow).getByRole('link', { name: 'Soins du visage' }),
+      within(visageRow).getByRole('button', { name: /Désactiver/ }),
+      within(coiffureRow).getByRole('link', { name: 'Coiffure' }),
+      within(coiffureRow).getByRole('button', { name: /Réactiver/ }),
+    ]);
+  });
+
+  it('entre chaque ligne par le nom de la rubrique, jamais par son action destructive', () => {
+    renderManager();
+
+    const table = screen.getByRole('table');
+
+    // Un champ de saisie dans le tableau, c'est le formulaire revenu dans la
+    // cellule — et avec lui l'ordre de focus que ce ticket a fait fermer.
+    expect(table.querySelectorAll('input, textarea, select')).toHaveLength(0);
+
+    for (const { name } of categories) {
+      // Le nom se cherche en correspondance exacte, et la ligne se déduit de
+      // lui : une rubrique dont le nom en contient un autre ne doit pas faire
+      // échouer ce test sur une ambiguïté qui n'est pas la régression visée.
+      const lien = within(table).getByRole('link', { name });
+      const tabulables = Array.from(
+        lien.closest('tr')?.querySelectorAll('a[href], button, input, textarea, select') ?? [],
+      );
+
+      // Deux contrôles par ligne, et le premier est le nom : c'est par lui qu'on
+      // ouvre la rubrique, pas par la bascule qui la retire du catalogue.
+      expect(tabulables).toHaveLength(2);
+      expect(tabulables[0]).toBe(lien);
+      expect(tabulables[1]?.textContent).toContain(name);
+    }
+  });
+
+  it('déroule le formulaire d’une rubrique dans l’ordre annoncé, jusqu’à « Enregistrer »', async () => {
+    // Les quatre contrôles que la tabulation sautait sont désormais traversés
+    // dans l'ordre où ils se lisent. C'est le formulaire seul qui est monté ici,
+    // tel que `rubriques/[categoryId]/page.tsx` le rend : la page le fait
+    // précéder du lien « Retour aux rubriques » de sa barre d'outils, et ne pose
+    // aucune action destructive à ses côtés.
+    const user = userEvent.setup();
+    render(<CategoryForm tenantSlug="salon-des-lilas" category={visage} />);
+
+    await suitLaTabulation(user, [
+      screen.getByLabelText(/Nom de la rubrique/),
+      screen.getByLabelText(/Description/),
+      screen.getByLabelText(/Adresse publique/),
+      screen.getByRole('button', { name: /^Enregistrer$/ }),
+    ]);
+  });
+});
+
 describe('rubriques — activité', () => {
   it('bascule l’activité sans toucher au reste de la rubrique', async () => {
     // `PATCH` est partiel : n'envoyer que `isActive`, c'est ne pas réécrire le
