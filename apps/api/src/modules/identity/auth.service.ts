@@ -18,6 +18,7 @@ import {
 } from './identity.repository';
 import type { AuthenticationResult, RefreshResult, UserProfile } from './identity.types';
 import { PasswordHasher } from './password.hasher';
+import { toE164OrNull } from './phone';
 import { isStaffRole } from './roles';
 import { hashJti, TokenService } from './token.service';
 
@@ -106,6 +107,25 @@ export class AuthService {
   }
 
   /**
+   * Le numéro tel qu'il entre en base — E.164, ou `null` (#824).
+   *
+   * Le pays de l'établissement n'est lu **que** si un numéro est fourni : la
+   * grande majorité des inscriptions n'en portent pas, et une requête de plus sur
+   * chacune ne servirait à compléter rien.
+   *
+   * La portée est déjà ouverte quand on arrive ici — `openTenantScope` a posé le
+   * tenant dans le contexte de requête —, si bien que cette lecture est bornée
+   * par l'extension de scoping comme n'importe quelle autre.
+   */
+  private async toE164(phone: string | undefined): Promise<string | null> {
+    if (phone === undefined || phone.trim() === '') {
+      return null;
+    }
+
+    return toE164OrNull('phone', phone, await this.repository.findCurrentTenantCountryCode());
+  }
+
+  /**
    * Inscription d'un **client**.
    *
    * Le rôle est figé à `CLIENT` et n'est pas un paramètre : une inscription
@@ -157,6 +177,10 @@ export class AuthService {
     const tenantId = await this.openTenantScope(input.tenantSlug);
     const email = normalizeEmail(input.email);
 
+    // Avant l'empreinte du mot de passe, qui coûte une centaine de millisecondes
+    // d'argon2id : un numéro illisible doit être refusé sans les dépenser.
+    const phone = await this.toE164(input.phone);
+
     const existing = await this.repository.findUserByEmail(email);
     if (existing !== null) {
       throw new EmailAlreadyRegisteredError();
@@ -170,7 +194,7 @@ export class AuthService {
       passwordHash,
       firstName: input.firstName.trim(),
       lastName: input.lastName.trim(),
-      phone: input.phone?.trim() ?? null,
+      phone,
       dataConsentAt: new Date(),
     });
 

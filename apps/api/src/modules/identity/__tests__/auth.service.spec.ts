@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 
 import { BusinessRuleError, ConflictError, NotFoundError } from '../../../common/errors';
@@ -233,6 +234,57 @@ describe('AuthService', () => {
       ).resolves.toBeDefined();
 
       expect(repository.users).toHaveLength(2);
+    });
+
+    /**
+     * Le téléphone en E.164 — #824.
+     *
+     * L'inscription est la porte par laquelle la cliente saisit elle-même son
+     * numéro, au format qu'elle a sous les yeux : « 06 12 34 56 78 ». C'est le
+     * cas de la capture du ticket, et c'est celui qui doit passer.
+     */
+    it('complète un numéro national avec le pays de l’établissement', async () => {
+      repository.addTenant(SLUG, tenantId, { countryCode: 'FR' });
+
+      const result = await inRequest(() =>
+        service.register({
+          tenantSlug: SLUG,
+          email: 'alice@example.test',
+          password: PASSWORD,
+          firstName: 'Alice',
+          lastName: 'Durand',
+          phone: '06 12 34 56 78',
+          dataConsent: true,
+        }),
+      );
+
+      expect(result.user.phone).toBe('+33612345678');
+      expect(repository.users[0]?.phone).toBe('+33612345678');
+    });
+
+    it('refuse un numéro invalide en 400 nommant le champ, sans créer le compte', async () => {
+      repository.addTenant(SLUG, tenantId, { countryCode: 'FR' });
+
+      const failure = await rejectionOf(
+        inRequest(() =>
+          service.register({
+            tenantSlug: SLUG,
+            email: 'alice@example.test',
+            password: PASSWORD,
+            firstName: 'Alice',
+            lastName: 'Durand',
+            phone: '06 12 34',
+            dataConsent: true,
+          }),
+        ),
+      );
+
+      expect(failure).toBeInstanceOf(BadRequestException);
+      const response = (failure as BadRequestException).getResponse() as { message: unknown };
+      expect(response.message).toEqual([expect.stringMatching(/^phone : /)]);
+      // Aucun compte, et surtout : le refus est tombé **avant** l'empreinte
+      // argon2id, qui coûte une centaine de millisecondes.
+      expect(repository.users).toHaveLength(0);
     });
   });
 

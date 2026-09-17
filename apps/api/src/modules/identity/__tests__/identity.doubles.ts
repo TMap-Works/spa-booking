@@ -123,8 +123,13 @@ export class FakeIdentityRepository {
    * l'ignorerait ferait passer au vert une résolution que la production refuse.
    */
   public addTenant(
+    // `string` et non le littéral gabarit qu'infère `randomUUID()` : une suite
+    // qui **re-déclare** l'établissement de sa fixture pour lui poser un pays
+    // (#824) lui repasse l'identifiant qu'elle a reçu, et il est typé `string`.
+    // Le gabarit ne décrivait de toute façon rien qu'on veuille imposer ici —
+    // le double ne valide pas la forme d'un UUID.
     slug: string,
-    tenantId = randomUUID(),
+    tenantId: string = randomUUID(),
     overrides: Partial<Omit<StoredTenant, 'id' | 'slug'>> = {},
   ): string {
     this.tenants.set(slug, tenantId);
@@ -264,6 +269,20 @@ export class FakeIdentityRepository {
   public async findCurrentTenant(): Promise<StoredTenant | null> {
     const tenantId = this.requireTenant();
     return this.tenantRecords.get(tenantId) ?? null;
+  }
+
+  /**
+   * Le pays de l'établissement de la portée — la seule chose dont la
+   * normalisation d'un numéro ait besoin (#824).
+   *
+   * Même `requireTenant()` que ses deux voisines : un double qui rendrait le
+   * pays sans portée résolue ferait passer au vert une normalisation menée hors
+   * de tout établissement, c'est-à-dire un numéro complété avec le pays du
+   * voisin.
+   */
+  public async findCurrentTenantCountryCode(): Promise<string | null> {
+    const tenantId = this.requireTenant();
+    return this.tenantRecords.get(tenantId)?.countryCode ?? null;
   }
 
   /**

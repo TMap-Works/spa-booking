@@ -45,7 +45,7 @@ import { USER_ROLES } from '../roles';
  * | `password` (connexion) | `@MaxLength(200)` | `submittedPasswordSchema` — `.min(1).max(128)` | resserré, dans le sens autorisé : aucun mot de passe légitime ne dépasse 72 octets, puisque c'est là que bcrypt s'arrête |
  * | `password` (inscription) | `@MinLength(12)` + `@MaxLength(72)` | `passwordSchema` — `.min(12).max(128)` | **le seul écart de fond**, et il va dans le sens interdit : 128 relâcherait la borne de 72. Voir le `.extend()` ci-dessous |
  * | `firstName`, `lastName` | `@MinLength(1)` + `@MaxLength(80)` | `nameSchema` — `.trim().min(1).max(80)` | identique, plus l'élagage : sans lui, `"   "` passait pour un prénom |
- * | `phone` (inscription) | `@IsString()` + `@MaxLength(32)` | `phoneSchema` — motif de numéro **et** plancher de chiffres (#66) | resserré, et c'est le sens que l'en-tête d'`e164PhoneSchema` réclamait : le formulaire d'`apps/web` valide déjà avec ce schéma-là, si bien que le refus s'affiche sur le champ avant la soumission plutôt qu'en bloc après |
+ * | `phone` (inscription) | `@IsString()` + `@MaxLength(32)` | `phoneSchema` — motif de numéro **et** plancher de chiffres (#66) | resserré, et c'est le sens que l'en-tête d'`e164PhoneSchema` réclamait : le formulaire d'`apps/web` valide déjà avec ce schéma-là, si bien que le refus s'affiche sur le champ avant la soumission plutôt qu'en bloc après. Depuis #824 le contrat s'arrête là — il décrit la **forme** de la saisie, national compris — et le dernier mot revient au service, qui normalise en E.164 avec le pays de l'établissement (`../phone`) |
  *
  * Le `.strict()` du contrat remplace `forbidNonWhitelisted` : un `tenantId` ou
  * un `role` glissé dans un de ces corps est **refusé**, pas silencieusement
@@ -165,9 +165,12 @@ export class RegisterDto extends TenantScopedRequest {
     example: '+261 34 12 345 67',
     maxLength: PHONE_MAX_LENGTH,
     description:
-      'Facultatif. Format libre borné — le rappel SMS le normalise —, mais il doit ' +
-      'porter assez de chiffres pour être composable : un « + » seul n’est un ' +
-      'numéro dans aucune convention (#66).',
+      'Facultatif. Accepté au format national (« 06 12 34 56 78 ») comme ' +
+      'international (« +261 34 12 345 67 »), et **enregistré en E.164** : le ' +
+      'national est complété avec le pays de l’établissement, et un numéro ' +
+      'qu’aucun plan de numérotation n’attribue est refusé en 400 sur le champ ' +
+      '(#824). Sans pays renseigné sur l’établissement, seule la forme ' +
+      'internationale est acceptable.',
   })
   public phone?: string;
 
@@ -255,7 +258,16 @@ export class UserProfileDto implements UserProfile {
   @ApiProperty()
   public lastName!: string;
 
-  @ApiProperty({ nullable: true, type: String })
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    example: '+261341234567',
+    description:
+      'Toujours en **E.164**, sans séparateur — c’est la forme sous laquelle ' +
+      'l’API écrit tout numéro depuis #824. La mise en forme lisible revient au ' +
+      'front, qui seul connaît la locale de qui regarde. `null` quand aucun ' +
+      'numéro n’est renseigné.',
+  })
   public phone!: string | null;
 }
 
