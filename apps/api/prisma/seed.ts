@@ -110,6 +110,13 @@ import {
   UserRole,
 } from '@prisma/client';
 
+// Le calcul du ticket vient du module qui le compose en production, jamais
+// d'une copie : `netOf` extrait la part hors taxe d'un prix TTC,
+// `taxIncludedIn` la taxe qui y est comprise, et `taxLineLabel` écrit la ligne
+// de ventilation. Trois fonctions **pures** — importer ce fichier n'embarque ni
+// Nest, ni Prisma, ni configuration.
+import { netOf, taxIncludedIn, taxLineLabel } from '../src/modules/payments/pos.totals';
+
 // ---------------------------------------------------------------------------
 // Sortie
 // ---------------------------------------------------------------------------
@@ -1192,6 +1199,118 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
     });
   }
 
+  // --- Les tickets de caisse -------------------------------------------------
+  //
+  // Une ligne de catalogue telle qu'elle est présentée au comptoir : son prix
+  // est celui du catalogue, donc **TTC** (#816). Les quatre montants du ticket
+  // s'en déduisent, ils ne s'y ajoutent pas.
+  interface CatalogLine {
+    readonly kind: SaleItemKind;
+    readonly label: string;
+    readonly quantity: number;
+    readonly unitAmountMinor: number;
+    readonly serviceId: string | null;
+    readonly productId: string | null;
+  }
+
+  /**
+   * Écrit un ticket et ses lignes, et rend son total.
+   *
+   * Les montants se déduisent des prix affichés **par les fonctions du module
+   * `payments`** — `netOf` et `taxIncludedIn` —, jamais par une formule recopiée
+   * ici : c'est une copie de l'ancienne formule qui avait laissé ce jeu de
+   * données redémontrer le bug que #816 ferme (#892).
+   *
+   * La ligne `TAX` est une **ventilation** : elle redécoupe les prix affichés au
+   * lieu de s'y ajouter, et se libelle comme telle. À taux nul, elle n'existe
+   * pas — une ligne à zéro n'apprendrait rien et se lirait comme une anomalie.
+   */
+  const seedSale = async (
+    key: string,
+    saleAppointmentId: string | null,
+    catalogLines: readonly CatalogLine[],
+  ): Promise<number> => {
+    const grossAmountMinor = catalogLines.reduce(
+      (sum, line) => sum + line.unitAmountMinor * line.quantity,
+      0,
+    );
+    const subtotal = netOf(grossAmountMinor, fixture.taxRateBps);
+    const tax = taxIncludedIn(grossAmountMinor, fixture.taxRateBps);
+    const tip = 0;
+    // `subtotal + tax` **est** la somme des prix affichés ; la forme est gardée
+    // parce que c'est celle que `sales_total_amount_minor_check` vérifie en base.
+    const total = subtotal + tax + tip;
+
+    const saleId = seedId('sale', fixture.slug, key);
+    const saleShape = {
+      appointmentId: saleAppointmentId,
+      cashierUserId: managerId,
+      subtotalAmountMinor: subtotal,
+      taxAmountMinor: tax,
+      tipAmountMinor: tip,
+      totalAmountMinor: total,
+      currency: fixture.currency,
+    };
+    await prisma.sale.upsert({
+      where: { id: saleId },
+      create: { id: saleId, tenantId, ...saleShape },
+      update: saleShape,
+    });
+
+    const lines: readonly (CatalogLine & { readonly position: number })[] = [
+      ...catalogLines.map((line, index) => ({ ...line, position: index })),
+      ...(tax > 0
+        ? [
+            {
+              position: catalogLines.length,
+              kind: SaleItemKind.TAX,
+              // « dont TVA 20 % » — le libellé que compose le POS, et qui dit ce
+              // que la ligne est : la part déjà comprise dans les prix au-dessus.
+              // « TVA 20 % » se lisait comme une ligne de plus à payer, ce
+              // qu'elle n'est plus depuis #816.
+              label: taxLineLabel(fixture.taxRateBps),
+              quantity: 1,
+              unitAmountMinor: tax,
+              serviceId: null,
+              productId: null,
+            },
+          ]
+        : []),
+    ];
+
+    for (const line of lines) {
+      const lineId = seedId('sale-item', fixture.slug, key, `${line.position}`);
+      const lineShape = {
+        saleId,
+        kind: line.kind,
+        label: line.label,
+        quantity: line.quantity,
+        unitAmountMinor: line.unitAmountMinor,
+        lineAmountMinor: line.unitAmountMinor * line.quantity,
+        currency: fixture.currency,
+        position: line.position,
+        serviceId: line.serviceId,
+        productId: line.productId,
+      };
+      await prisma.saleItem.upsert({
+        where: { id: lineId },
+        create: { id: lineId, tenantId, ...lineShape },
+        update: lineShape,
+      });
+    }
+
+    // Les rangs qu'une exécution précédente avait écrits et que celle-ci ne
+    // réécrit pas. Un `upsert` par ligne suffit tant qu'un ticket ne fait que
+    // s'allonger ; il en laisse une orpheline dès qu'il raccourcit — ce que
+    // #892 fait précisément, en sortant l'article du rayon du ticket du
+    // rendez-vous. Une base déjà semée garderait sinon une seconde ligne de TVA.
+    await prisma.saleItem.deleteMany({
+      where: { tenantId, saleId, position: { gte: lines.length } },
+    });
+
+    return total;
+  };
+
   // --- Encaissement du rendez-vous honoré -----------------------------------
   //
   // « Réserver → confirmer → honorer → **encaisser** → mesurer » : sans une
@@ -1216,10 +1335,32 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
       service.durationMinutes,
     );
 
+    // Le ticket d'abord, l'encaissement ensuite : c'est le ticket qui dit ce
+    // qui a été dû, et l'encaissement ne fait que le constater.
+    //
+    // Il facture **la prestation, et elle seule** : c'est ce que le rendez-vous
+    // a fait naître, et le prix qui y est figé. L'article du rayon a son propre
+    // ticket, plus bas — régler un ticket demanderait `payments.sale_id`, que le
+    // MVP n'a pas (README du module `payments`).
+    const honouredTotal = await seedSale(honouredKey, appointmentId, [
+      {
+        kind: SaleItemKind.SERVICE,
+        label: service.name,
+        quantity: 1,
+        unitAmountMinor: service.priceAmountMinor,
+        serviceId: required(serviceIds, service.key, 'prestation'),
+        productId: null,
+      },
+    ]);
+
     const paymentId = seedId('payment', fixture.slug, honouredKey);
     const paymentShape = {
       appointmentId,
-      amountMinor: service.priceAmountMinor,
+      // Le total du ticket — qui vaut ici le prix figé à la réservation, la
+      // taxe étant comprise dedans (#816). C'est exactement le montant
+      // qu'écrivent `POST /payments/cash` et le tunnel carte : le jeu de données
+      // ne pose donc aucune ligne qu'un encaissement réel ne produirait pas.
+      amountMinor: honouredTotal,
       currency: fixture.currency,
       method: PaymentMethod.CARD,
       status: PaymentStatus.SUCCEEDED,
@@ -1235,97 +1376,30 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
       update: paymentShape,
     });
 
-    // Le ticket : la prestation, l'article vendu au comptoir, et la ligne de
-    // taxe quand l'établissement en applique une. Le total **somme ses parts** —
-    // une contrainte de base l'exige, et c'est ce qui fait du serveur la seule
-    // autorité sur le montant.
-    const subtotal = service.priceAmountMinor + fixture.product.priceAmountMinor;
-    // Multiplication puis division **entières** : deux tickets identiques
-    // produisent le même centime, aujourd'hui et au prochain rapprochement.
-    const tax = Math.floor((subtotal * fixture.taxRateBps) / 10_000);
-    const tip = 0;
-
-    const saleId = seedId('sale', fixture.slug, honouredKey);
-    const saleShape = {
-      appointmentId,
-      cashierUserId: managerId,
-      subtotalAmountMinor: subtotal,
-      taxAmountMinor: tax,
-      tipAmountMinor: tip,
-      totalAmountMinor: subtotal + tax + tip,
-      currency: fixture.currency,
-    };
-    await prisma.sale.upsert({
-      where: { id: saleId },
-      create: { id: saleId, tenantId, ...saleShape },
-      update: saleShape,
-    });
-
-    const lines: readonly {
-      readonly position: number;
-      readonly kind: SaleItemKind;
-      readonly label: string;
-      readonly quantity: number;
-      readonly unitAmountMinor: number;
-      readonly serviceId: string | null;
-      readonly productId: string | null;
-    }[] = [
-      {
-        position: 0,
-        kind: SaleItemKind.SERVICE,
-        label: service.name,
-        quantity: 1,
-        unitAmountMinor: service.priceAmountMinor,
-        serviceId: required(serviceIds, service.key, 'prestation'),
-        productId: null,
-      },
-      {
-        position: 1,
-        kind: SaleItemKind.PRODUCT,
-        label: fixture.product.name,
-        quantity: 1,
-        unitAmountMinor: fixture.product.priceAmountMinor,
-        serviceId: null,
-        productId,
-      },
-      // Une ligne de taxe à zéro n'apprendrait rien et encombrerait le ticket
-      // de l'établissement qui n'en applique pas.
-      ...(tax > 0
-        ? [
-            {
-              position: 2,
-              kind: SaleItemKind.TAX,
-              label: `TVA ${(fixture.taxRateBps / 100).toFixed(0)} %`,
-              quantity: 1,
-              unitAmountMinor: tax,
-              serviceId: null,
-              productId: null,
-            },
-          ]
-        : []),
-    ];
-
-    for (const line of lines) {
-      const lineId = seedId('sale-item', fixture.slug, honouredKey, `${line.position}`);
-      const lineShape = {
-        saleId,
-        kind: line.kind,
-        label: line.label,
-        quantity: line.quantity,
-        unitAmountMinor: line.unitAmountMinor,
-        lineAmountMinor: line.unitAmountMinor * line.quantity,
-        currency: fixture.currency,
-        position: line.position,
-        serviceId: line.serviceId,
-        productId: line.productId,
-      };
-      await prisma.saleItem.upsert({
-        where: { id: lineId },
-        create: { id: lineId, tenantId, ...lineShape },
-        update: lineShape,
-      });
-    }
   }
+
+  // --- La vente retail autonome ---------------------------------------------
+  //
+  // `sales.appointment_id` est nullable dès le départ, et ce n'est pas un
+  // aménagement : « la vente retail au comptoir n'est pas un cas dégradé de la
+  // prestation, c'est la moitié du POS » (schema.prisma). Sans ce ticket-là, le
+  // jeu de données n'exerce jamais ce cas et le rayon n'apparaît sur aucune
+  // addition.
+  //
+  // Elle ne porte **aucun encaissement**, et c'est fidèle au produit : régler un
+  // ticket demanderait `payments.sale_id`, que le MVP n'a pas encore — un
+  // règlement se rattache aujourd'hui à un rendez-vous (README du module
+  // `payments`, « Un ticket ne s'encaisse toujours pas »).
+  await seedSale('retail', null, [
+    {
+      kind: SaleItemKind.PRODUCT,
+      label: fixture.product.name,
+      quantity: 1,
+      unitAmountMinor: fixture.product.priceAmountMinor,
+      serviceId: null,
+      productId,
+    },
+  ]);
 
   log(
     `  ${fixture.slug} — ${fixture.staff.length} praticien(s), ${fixture.services.length} prestation(s), ` +
