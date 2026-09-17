@@ -171,6 +171,11 @@ export default async function ReschedulePage({ params, searchParams }: Reschedul
       timeZone={tenant.timezone}
       month={month}
       bounds={bounds}
+      // Les horaires que le salon publie sur sa vitrine : le calendrier y lit
+      // « fermé » plutôt que « complet » sur un jour où l'établissement n'ouvre
+      // pas (#742). La vitrine est déjà chargée pour le fuseau — rien de plus
+      // n'est demandé au serveur.
+      openingHours={tenant.openingHours}
       // Changer de mois repose la question au serveur : c'est lui qui lit le
       // calendrier. Le formulaire construit l'adresse à partir de ce gabarit
       // plutôt que de connaître la route qui le rend.
