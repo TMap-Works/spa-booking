@@ -1,4 +1,4 @@
-import type { BookedAppointment } from '@spa/shared';
+import type { AppointmentScope, BookedAppointment } from '@spa/shared';
 
 /**
  * Ce qu'une ligne d'historique annonce, et le ton avec lequel elle l'annonce.
@@ -22,7 +22,46 @@ export interface AppointmentBadge {
   readonly tone: AppointmentTone;
 }
 
-export function appointmentBadge(appointment: BookedAppointment): AppointmentBadge {
+/**
+ * Le seul endroit du front où s'écrit l'état d'un rendez-vous pris mais que le
+ * salon n'a pas encore confirmé (#743).
+ *
+ * ## Pourquoi une constante, et pourquoi exportée
+ *
+ * Le parcours enchaînait trois mots pour un même fait : le tunnel annonçait
+ * « Votre rendez-vous est enregistré », l'espace client affichait, sur ce
+ * rendez-vous-là, « En attente de confirmation », et rien ne disait ce qu'on
+ * attendait ni de qui. Une cliente qui vient de cliquer « Confirmer la
+ * réservation » lit alors qu'il manque *encore* une confirmation, sans savoir
+ * si elle en est redevable.
+ *
+ * Le libellé **nomme l'acteur** : c'est le salon qui confirme, et le geste de la
+ * cliente est déjà fait. C'est ce qui lève la contradiction sans mentir — le
+ * rendez-vous naît bien `PENDING` côté API (`appointments.repository.ts`), et
+ * l'annoncer « confirmé » comme le fait le wireframe — Étape 6 — contredirait la
+ * pastille au lieu de l'accorder.
+ *
+ * Elle est exportée parce que l'écran terminal du tunnel reprend **la même**
+ * phrase (`(booking)/[tenantSlug]/reservation/steps/confirmation-step.tsx`).
+ * Deux littéraux dans deux fichiers, c'est exactement la façon dont ces deux
+ * surfaces ont divergé ; il n'y en a donc plus qu'un. Ce module s'y prête : il
+ * ne dépend que d'un type partagé, comme `paths.ts` que le tunnel importe déjà.
+ */
+export const PENDING_CONFIRMATION_LABEL = 'À confirmer par le salon';
+
+/**
+ * La pastille d'une ligne, pour la moitié d'historique d'où elle vient.
+ *
+ * `scope` n'est pas décoratif : un rendez-vous resté `pending` dont l'heure est
+ * passée tombe dans l'historique — l'API définit « à venir » comme « l'intervalle
+ * n'est pas terminé **et** le statut occupe encore le créneau » — et lui
+ * promettre une confirmation à venir serait faux. Il n'y a plus rien à attendre
+ * de ce rendez-vous-là : la pastille se borne à constater (#743).
+ */
+export function appointmentBadge(
+  appointment: BookedAppointment,
+  scope: AppointmentScope,
+): AppointmentBadge {
   if (appointment.status === 'cancelled') {
     return appointment.cancelledBy === null
       ? { label: 'Déplacé', tone: 'cancelled' }
@@ -34,7 +73,10 @@ export function appointmentBadge(appointment: BookedAppointment): AppointmentBad
 
   switch (appointment.status) {
     case 'pending':
-      return { label: 'En attente de confirmation', tone: 'pending' };
+      return {
+        label: scope === 'upcoming' ? PENDING_CONFIRMATION_LABEL : 'Non confirmé',
+        tone: 'pending',
+      };
     case 'confirmed':
       return { label: 'Confirmé', tone: 'confirmed' };
     case 'completed':

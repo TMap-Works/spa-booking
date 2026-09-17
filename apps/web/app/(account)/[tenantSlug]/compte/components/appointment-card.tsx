@@ -45,6 +45,13 @@ import { useAccountSessionRenewal } from './use-account-session-renewal';
  * visites honorées du CDC §1.4. La moitié d'où vient la ligne est donc passée
  * explicitement, et c'est elle qui commande.
  *
+ * La **pastille** obéit à la même règle depuis #743 : un rendez-vous resté
+ * `pending` dont l'heure est passée descend dans l'historique, et lui annoncer
+ * « À confirmer par le salon » lui promettrait une suite qui ne viendra pas.
+ * `scope` est donc passé à `appointmentBadge` comme il l'est à
+ * `isStillActionable` — le statut seul ne suffit ni pour les gestes, ni pour ce
+ * que la ligne annonce.
+ *
  * ## L'annulation aboutie s'annonce, et pas ici (#746)
  *
  * Elle ne peut pas s'annoncer ici : le rafraîchissement qui suit fait quitter la
@@ -102,7 +109,7 @@ export function AppointmentCard({
     setMounted(true);
   }, []);
 
-  const badge = appointmentBadge(appointment);
+  const badge = appointmentBadge(appointment, scope);
   const actionable = scope === 'upcoming' && isStillActionable(appointment);
   const mention = mounted ? timeZoneMention(timeZone) : null;
 
