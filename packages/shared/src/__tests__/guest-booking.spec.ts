@@ -150,6 +150,8 @@ describe('bookGuestAppointmentRequestSchema', () => {
       lastName: 'Rakoto',
       email: 'camille@example.test',
     },
+    // L'accord au traitement des données, obligatoire depuis #790.
+    dataConsent: true,
   };
 
   it('normalise l’instant de début en UTC', () => {
@@ -176,6 +178,39 @@ describe('bookGuestAppointmentRequestSchema', () => {
       bookGuestAppointmentRequestSchema.safeParse({ ...request, startsAt: '2026-09-01T11:00:00' })
         .success,
     ).toBe(false);
+  });
+
+  /**
+   * Le consentement, tenu **par le contrat** et non par le formulaire (#790).
+   *
+   * La case est bloquante à l'écran depuis #734, et une barrière qui ne tient
+   * que dans le navigateur n'est pas une barrière : un appel direct à la route
+   * publique la contournerait, et le salon garderait une fiche cliente sans
+   * base légale pour l'avoir constituée (CDC §5.1).
+   */
+  describe('le consentement au traitement des données', () => {
+    it('refuse une demande qui ne le porte pas', () => {
+      const { dataConsent: _absent, ...sansConsentement } = request;
+
+      expect(bookGuestAppointmentRequestSchema.safeParse(sansConsentement).success).toBe(false);
+    });
+
+    it('refuse un consentement refusé — `false` n’est pas un accord', () => {
+      expect(
+        bookGuestAppointmentRequestSchema.safeParse({ ...request, dataConsent: false }).success,
+      ).toBe(false);
+    });
+
+    it('refuse une date envoyée par l’appelant — le serveur horodate seul', () => {
+      // `.strict()` ferme la porte : une preuve dont l'horloge appartient à
+      // celui qu'elle engage n'en est pas une (RGPD art. 7.1).
+      expect(
+        bookGuestAppointmentRequestSchema.safeParse({
+          ...request,
+          dataConsentAt: '2026-09-01T09:00:00.000Z',
+        }).success,
+      ).toBe(false);
+    });
   });
 });
 

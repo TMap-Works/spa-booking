@@ -52,6 +52,9 @@ const DRAFT: AppointmentDraft = {
   endsAt: new Date('2026-09-01T10:00:00.000Z'),
   price: { amountMinor: 3500, currency: 'EUR' },
   clientNote: null,
+  // Daté par le service, jamais par le repository (#790) : le brouillon porte
+  // déjà l'instant, et l'insertion ne fait que l'écrire.
+  dataConsentAt: new Date('2026-08-27T08:00:00.000Z'),
 };
 
 const ROW = {

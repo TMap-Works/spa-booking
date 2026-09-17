@@ -74,6 +74,7 @@ describe('Isolation inter-tenant — annulation de rendez-vous', () => {
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
 
     expect(response.status).toBe(201);

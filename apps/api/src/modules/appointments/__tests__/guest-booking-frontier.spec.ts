@@ -38,6 +38,11 @@ function body(overrides: Record<string, unknown> = {}): Record<string, unknown> 
       lastName: 'Rakoto',
       email: 'camille@example.test',
     },
+    // L'accord au traitement des données, obligatoire depuis #790 : c'est le
+    // corps d'un tunnel qui a fait cocher la case, et le seul que cette
+    // frontière laisse passer. Les cas qui l'omettent ou le refusent le disent
+    // par `overrides`.
+    dataConsent: true,
     ...overrides,
   };
 }
@@ -85,6 +90,50 @@ describe('la frontière de POST /public/:tenantSlug/appointments', () => {
     expect(accepts(body({ tenantId: SERVICE_ID }))).toBe(false);
     expect(accepts(body({ clientId: CLIENT_ID }))).toBe(false);
     expect(accepts(body({ price: { amountMinor: 1, currency: 'EUR' } }))).toBe(false);
+  });
+
+  /**
+   * Le câblage du consentement — ce que cette suite existe pour tenir (#790).
+   *
+   * Elle ne revérifie pas la règle, qui est celle de `dataConsentSchema` et que
+   * `packages/shared/src/__tests__/guest-booking.spec.ts` exerce. Elle vérifie
+   * que **cette route-ci** est bien montée dessus : c'est exactement ce que son
+   * en-tête annonce pour le téléphone et pour la version d'UUID, et c'est le
+   * seul endroit où un pipe monté sur un schéma trop permissif se verrait.
+   */
+  describe('le consentement au traitement des données', () => {
+    it('refuse un corps qui ne le porte pas', () => {
+      const { dataConsent: _absent, ...sansConsentement } = body();
+
+      expect(accepts(sansConsentement)).toBe(false);
+    });
+
+    it('refuse un consentement refusé, et ne réserve donc pas', () => {
+      expect(accepts(body({ dataConsent: false }))).toBe(false);
+    });
+
+    it('laisse passer l’accord tel quel — c’est le service qui l’horodate', () => {
+      expect(accepted(body()).dataConsent).toBe(true);
+    });
+
+    it('refuse une date de consentement envoyée par l’appelant', () => {
+      expect(accepts(body({ dataConsentAt: '2026-09-01T09:00:00.000Z' }))).toBe(false);
+    });
+
+    it('nomme le champ dans son refus, plutôt que de le taire', () => {
+      let message = '';
+      try {
+        bookAppointmentBody.transform(body({ dataConsent: false }));
+      } catch (error) {
+        message = JSON.stringify((error as BadRequestException).getResponse());
+      }
+
+      // Le message remonte jusqu'au formulaire : « Invalid literal value,
+      // expected true » se lit par un développeur, pas par une cliente. C'est ce
+      // que l'en-tête de `dataConsentSchema` motive.
+      expect(message).toContain('dataConsent');
+      expect(message).not.toContain('Invalid literal');
+    });
   });
 
   describe('téléphone — l’écart de #314 refermé sur l’E.164', () => {

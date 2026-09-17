@@ -97,6 +97,16 @@ interface StoredAppointment {
    * ticket doit rendre impossible — la note interne servie au parcours public.
    */
   staffNote: string | null;
+  /**
+   * La preuve de consentement (#790).
+   *
+   * Portée par le stock et **jamais par `toRecord`**, exactement comme
+   * `staffNote` et pour la même raison : le `select` de sortie du vrai
+   * repository ne la demande pas, et un double qui la ferait ressortir rendrait
+   * vert un scénario que ce ticket doit rendre impossible — une donnée de
+   * registre servie au parcours public.
+   */
+  dataConsentAt: Date | null;
   rescheduledFromId: string | null;
   cancelledAt: Date | null;
   cancelledBy: AppointmentCancelledBy | null;
@@ -229,6 +239,8 @@ export class FakeAppointmentsRepository {
     serviceId?: string;
     /** La note interne du praticien — de quoi exercer sa reprise au report (#317). */
     staffNote?: string | null;
+    /** La preuve de consentement — de quoi exercer sa reprise au report (#790). */
+    dataConsentAt?: Date | null;
     /** Le mot de la cliente, servi par l'agenda du back-office (#444). */
     clientNote?: string | null;
     /** Prix **figé** sur la ligne, à distinguer du tarif courant du catalogue. */
@@ -251,6 +263,9 @@ export class FakeAppointmentsRepository {
       priceCurrency: 'EUR',
       clientNote: input.clientNote ?? null,
       staffNote: input.staffNote ?? null,
+      // `null` par défaut — celui d'un rendez-vous semé, dont personne n'a coché
+      // la case. Les suites qui observent la preuve la posent explicitement.
+      dataConsentAt: input.dataConsentAt ?? null,
       rescheduledFromId: null,
       // Semé sans trace d'annulation, y compris quand le statut est `CANCELLED` :
       // une suite qui veut la trace passe par `cancel`, qui est ce qui l'écrit.
@@ -327,6 +342,10 @@ export class FakeAppointmentsRepository {
       // Une réservation ne peut pas porter de note interne : `AppointmentDraft`
       // n'en a pas de champ, et c'est délibéré — la note s'écrit au back-office.
       staffNote: null,
+      // La preuve de consentement, elle, vient bien du brouillon : c'est le
+      // service qui l'a datée, et l'insertion la pose dans le même geste que la
+      // ligne (#790).
+      dataConsentAt: draft.dataConsentAt,
       rescheduledFromId: null,
       cancelledAt: null,
       cancelledBy: null,
@@ -401,6 +420,9 @@ export class FakeAppointmentsRepository {
       clientNote: previous.clientNote,
       // La note suit le rendez-vous, pas le créneau (#317).
       staffNote: previous.staffNote,
+      // La preuve de consentement aussi (#790) : reporter n'est pas recueillir
+      // un nouvel accord, c'est déplacer le rendez-vous qu'il autorisait.
+      dataConsentAt: previous.dataConsentAt,
       rescheduledFromId: previous.id,
       cancelledAt: null,
       cancelledBy: null,
@@ -690,6 +712,7 @@ export class FakeAppointmentsRepository {
       },
       staffNote: stored.staffNote,
       createdAt: stored.createdAt,
+      dataConsentAt: stored.dataConsentAt,
     };
   }
 

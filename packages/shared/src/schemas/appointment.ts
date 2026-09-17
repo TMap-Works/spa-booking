@@ -209,6 +209,21 @@ export const appointmentSchema = z.object({
    */
   rescheduledFromId: uuidSchema.optional(),
   createdAt: utcInstantSchema,
+  /**
+   * Quand la cliente a accepté le traitement de ses données, en ISO 8601 UTC —
+   * la **preuve de consentement** du salon (#790, CDC §5.1, RGPD art. 7.1).
+   *
+   * Servie ici et nulle part ailleurs, pour la raison qui vaut déjà pour
+   * `staffNote` : c'est une donnée de registre, que le salon doit pouvoir
+   * produire, et cette route vit derrière une garde de rôle. Le parcours public
+   * n'en a aucun usage — la cliente sait ce qu'elle vient de cocher.
+   *
+   * Absente, et non `null`, quand il n'y en a pas : un rendez-vous saisi au
+   * comptoir n'a recueilli aucun accord en ligne, et le salon répond alors de sa
+   * base légale autrement. « Absent » se lit « aucun consentement en ligne »,
+   * jamais « refusé » — la route publique, elle, refuse de réserver sans accord.
+   */
+  dataConsentAt: utcInstantSchema.optional(),
 });
 
 export type Appointment = z.infer<typeof appointmentSchema>;
@@ -309,6 +324,37 @@ export const guestContactSchema = z
 export type GuestContact = z.infer<typeof guestContactSchema>;
 
 /**
+ * L'accord donné au traitement des données personnelles, tel qu'il **entre**
+ * dans l'API (#790).
+ *
+ * ## Un booléen, et pas un horodatage
+ *
+ * La date du consentement est posée par le **serveur**, jamais envoyée par
+ * l'appelant. C'est la règle qui vaut déjà pour `status` ou pour le prix figé,
+ * et elle vaut d'autant plus ici : RGPD art. 7.1 met à la charge du responsable
+ * de traitement la **preuve** que le consentement a été donné, et une preuve
+ * dont l'horloge appartient à celui qu'elle engage n'en est pas une. Le champ
+ * dit donc l'accord, et le serveur dit quand.
+ *
+ * ## Pourquoi il est **obligatoire**, et pourquoi il refuse `false`
+ *
+ * Parce que la case est bloquante à l'écran depuis #734, et qu'une barrière
+ * qui ne tient que dans le navigateur n'est pas une barrière : un appel direct
+ * à la route publique la contournerait, et le salon garderait une fiche cliente
+ * sans base légale pour l'avoir constituée (CDC §5.1). Le facultatif aurait
+ * par ailleurs rendu le champ indistinct — « absent » se serait lu tantôt
+ * « pas encore demandé », tantôt « refusé ».
+ *
+ * `refine` plutôt que `z.literal(true)` pour une raison de message : le refus
+ * littéral de Zod 3 s'annonce « Invalid literal value, expected true », et ce
+ * message-là remonte jusqu'au formulaire. C'est la même raison, et la même
+ * écriture, que `consentSchema` côté web (`apps/web/lib/booking/consent.tsx`).
+ */
+export const dataConsentSchema = z.boolean().refine((accepted) => accepted, {
+  message: 'le traitement des données doit être accepté pour réserver',
+});
+
+/**
  * Prise de rendez-vous depuis le **parcours public**, par une cliente sans
  * compte.
  *
@@ -338,6 +384,15 @@ export const bookGuestAppointmentRequestSchema = z
     startsAt: offsetDateTimeSchema,
     client: guestContactSchema,
     clientNote: longTextSchema.optional(),
+    /**
+     * L'accord au traitement des données, **obligatoire** (#790).
+     *
+     * C'est le seul champ de cette demande qui ne décrit pas le rendez-vous : il
+     * décrit ce qui autorise le salon à en garder la trace. Voir
+     * `dataConsentSchema` pour le sens de l'obligation, et
+     * `appointmentSchema.dataConsentAt` pour ce que le serveur en fait.
+     */
+    dataConsent: dataConsentSchema,
   })
   .strict();
 

@@ -450,6 +450,9 @@ export function bookingDraft(
     endsAt: new Date(startsAt.getTime() + salon.shape.durationMinutes * ONE_MINUTE),
     price: { amountMinor: 3500, currency: 'EUR' },
     clientNote: null,
+    // Le tunnel public : la case a été cochée, et le service a daté l'accord
+    // avant que le brouillon n'arrive ici (#790).
+    dataConsentAt: startsAt,
   };
 }
 

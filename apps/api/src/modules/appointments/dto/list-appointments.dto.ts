@@ -371,6 +371,20 @@ export class AgendaAppointmentDto implements AgendaAppointmentView {
     example: '2026-08-20T08:12:00.000Z',
   })
   public createdAt!: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Instant où la cliente a accepté le traitement de ses données, ISO 8601 ' +
+      'UTC — la **preuve de consentement** de l’établissement (CDC §5.1, RGPD ' +
+      'art. 7.1). **Absent**, et jamais `null`, quand il n’y a pas d’accord en ' +
+      'ligne : c’est le cas d’un rendez-vous saisi au comptoir, où personne n’a ' +
+      'coché de case. « Absent » se lit « aucun accord recueilli », jamais ' +
+      '« refusé » — la route publique de réservation refuse de réserver sans ' +
+      'accord. Servi par cette route seule, derrière sa garde de rôle : c’est ' +
+      'une donnée de registre, dont le parcours public n’a aucun usage.',
+    example: '2026-08-20T08:12:00.000Z',
+  })
+  public dataConsentAt?: string;
 }
 
 // ---------------------------------------------------------------------------

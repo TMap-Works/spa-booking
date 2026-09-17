@@ -1,0 +1,86 @@
+-- Preuve de consentement au traitement des données, rendez-vous par rendez-vous
+-- — #790, CDC §5.1 « base légale explicite pour chaque traitement », RGPD art.
+-- 7.1 « le responsable du traitement est en mesure de démontrer que la personne
+-- a donné son consentement ».
+--
+-- ## Ce que #734 avait laissé ouvert
+--
+-- La case était bloquante à l'écran, et elle vivait dans `sessionStorage` : elle
+-- mourait avec l'onglet. L'accord était donc recueilli et jamais conservé — le
+-- salon gardait une fiche cliente, un nom, un e-mail, un téléphone et parfois
+-- une donnée de santé dans le mot au praticien, sans rien pouvoir produire de ce
+-- qui l'autorisait à les garder.
+--
+-- ## Une colonne sur `appointments`, et aucune table nouvelle
+--
+-- Même arbitrage que `20260906150000_add_customer_privacy_rights`, et pour le
+-- même motif : le consentement porte sur un traitement précis — « gérer ce
+-- rendez-vous » —, il se donne au moment où la ligne se crée, et il se lit avec
+-- elle. Une table `consents` parallèle aurait posé la question qu'une table
+-- parallèle pose toujours — laquelle des deux fait foi ? — pour un seul instant
+-- par ligne, et aurait demandé son propre scoping là où `appointments` porte
+-- déjà `tenant_id NOT NULL` et sa clé étrangère vers `tenants`.
+--
+-- L'isolation est donc celle de la table hôte, sans rien de neuf à tenir :
+-- l'extension Prisma filtre toute lecture de `appointments` sur le tenant de la
+-- requête, et les clés étrangères composites interdisent qu'une ligne d'un salon
+-- en désigne une d'un autre. `apps/api/test/appointments-consent.isolation-spec.ts`
+-- l'exerce sur la lecture de cette colonne précisément.
+--
+-- ## Un instant seul, là où `users` porte un booléen **et** un instant
+--
+-- Parce que les deux consentements n'ont pas le même nombre d'états.
+-- `users.marketing_consent` peut être refusé : il faut y distinguer « refusé »
+-- de « jamais demandé », et c'est le booléen qui le fait. Celui-ci n'a pas de
+-- « refusé » à enregistrer — la route publique de réservation n'écrit aucune
+-- ligne sans accord, le contrat partagé exigeant `dataConsent: true`. Un booléen
+-- n'aurait jamais valu autre chose que `true` partout où cet instant est posé,
+-- c'est-à-dire redit la même chose une seconde fois.
+--
+-- `NULL` se lit « aucun accord recueilli en ligne », et jamais « refusé » :
+-- c'est l'état d'un rendez-vous saisi **au comptoir** (#461), où personne n'a
+-- coché de case et où le salon répond de sa base légale autrement.
+--
+-- ## Nullable, et ce n'est pas un relâchement
+--
+-- Un `NOT NULL DEFAULT now()` aurait daté d'aujourd'hui les rendez-vous
+-- antérieurs à cette migration, c'est-à-dire **fabriqué** des consentements que
+-- personne n'a donnés. Une preuve inventée est pire que pas de preuve : elle
+-- s'oppose à la personne qu'elle prétend protéger. Les lignes déjà en base
+-- restent donc à `NULL`, ce qui est exactement ce qu'elles sont.
+--
+-- ## `TIMESTAMPTZ`, comme tout instant de ce schéma
+--
+-- Stocké en UTC, converti au fuseau du salon à l'affichage (CLAUDE.md,
+-- ADR 0006). Une date-heure nue aurait rendu la preuve illisible dès qu'un salon
+-- change de fuseau ou qu'un second salon en a un autre — et `prisma-schema.spec.ts`
+-- refuse de toute façon tout instant sans fuseau.
+--
+-- ## Aucun index, et c'est un choix
+--
+-- La colonne ne sert aucun prédicat de recherche : on la lit une ligne à la
+-- fois, par la clé du rendez-vous qu'on regarde, sur la route d'agenda du
+-- comptoir. Un index posé « au cas où » coûterait une écriture à chaque
+-- réservation pour ne servir aucune lecture. Le jour où un registre les
+-- énumérera, il se posera avec lui, préfixé de `tenant_id` comme tous les autres
+-- (tenant-isolation §1).
+--
+-- ## Purement additive, et réversible
+--
+-- Une colonne nullable ajoutée, rien de retypé, rien de retiré, aucune ligne
+-- réécrite : `ADD COLUMN` d'une colonne nullable ne touche que le catalogue sur
+-- PostgreSQL 11+, et le verrou est bref. L'inverse exact est le retrait de cette
+-- colonne, et il ne perd que les accords recueillis depuis le déploiement.
+--
+-- La fenêtre de bascule se tient d'elle-même : la version précédente de l'API
+-- ignore la colonne et insère sans elle, ce que la nullabilité autorise ; la
+-- nouvelle refuse une réservation publique sans accord, ce qui ne concerne que
+-- les appelants qu'elle sert.
+--
+-- (Ce dernier paragraphe évite délibérément les mots-clés SQL de suppression :
+-- `prisma-schema.spec.ts` relit le **texte** de la migration, commentaires
+-- compris, pour interdire toute instruction destructive. Il ne peut pas
+-- distinguer une phrase d'une instruction.)
+
+-- AlterTable
+ALTER TABLE "appointments" ADD COLUMN     "data_consent_at" TIMESTAMPTZ(6);

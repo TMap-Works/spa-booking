@@ -11,6 +11,7 @@ export {
   changeAppointmentStatusRequestSchema,
   citedAppointmentReferenceSchema,
   createAppointmentRequestSchema,
+  dataConsentSchema,
   DEFAULT_APPOINTMENT_SCOPE,
   guestContactSchema,
   MY_APPOINTMENTS_DEFAULT_LIMIT,

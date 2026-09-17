@@ -255,6 +255,10 @@ function bookingInput(overrides: Partial<BookAppointmentInput> = {}): BookAppoin
       phone: '+261 34 12 345 67',
     },
     clientNote: null,
+    // La case cochée — le cas normal du tunnel, et le seul que le contrat
+    // partagé laisse passer (#790). Les suites qui veulent l'inverse passent par
+    // `overrides`.
+    dataConsent: true,
     ...overrides,
   };
 }

@@ -139,7 +139,9 @@ function rescheduleRefusal(startsAt: string): string {
 
 /** Corps de réservation complet, dont seul `startsAt` varie d'un cas à l'autre. */
 function bookingBody(startsAt: string): Record<string, unknown> {
-  return { serviceId: SERVICE_ID, startsAt, client: { ...CLIENT } };
+  // `dataConsent` est obligatoire depuis #790 : sans lui, le refus observé ici
+  // serait celui du consentement manquant et non celui du `startsAt` visé.
+  return { serviceId: SERVICE_ID, startsAt, client: { ...CLIENT }, dataConsent: true };
 }
 
 /** Le refus que la frontière de `book` oppose à ce `startsAt`. */

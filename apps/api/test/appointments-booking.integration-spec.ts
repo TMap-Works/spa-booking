@@ -68,6 +68,10 @@ describe('POST /api/v1/public/:tenantSlug/appointments', () => {
     staffId: harness.a.staffId,
     startsAt: slot.startsAt.toISOString(),
     client: guest(),
+    // L'accord au traitement des données, obligatoire depuis #790 : le corps
+    // par défaut est celui d'un tunnel qui a fait cocher la case. Les cas qui
+    // l'omettent ou le refusent le disent par `overrides`.
+    dataConsent: true,
     ...overrides,
   });
 
