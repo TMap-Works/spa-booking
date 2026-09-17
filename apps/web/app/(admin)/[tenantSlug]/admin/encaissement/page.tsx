@@ -379,8 +379,13 @@ function AppointmentsToSettle({
           <th className="spa-admin-table__head" scope="col">
             Heure
           </th>
+          {/* « Client » — le nom que le CDC §2.4 donne à l'entité, et celui que
+              le rail, le fichier et le tiroir du planning emploient déjà. Le
+              féminin d'avant était faux la moitié du temps : le produit vise
+              aussi barbershops et studios de massage (CDC §1.2), et un comptoir
+              ne choisit pas ses clients (#761). */}
           <th className="spa-admin-table__head" scope="col">
-            Cliente
+            Client
           </th>
           <th className="spa-admin-table__head" scope="col">
             Prestation

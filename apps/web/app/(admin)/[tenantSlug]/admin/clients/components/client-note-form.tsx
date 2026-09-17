@@ -116,7 +116,7 @@ export function ClientNoteForm({ tenantSlug, customerId, internalNote }: ClientN
           id={`client-note-${customerId}`}
           label="Note interne"
           rows={4}
-          hint="Préférences, allergies, sensibilités. Jamais transmise à la cliente — ni dans un e-mail, ni dans un SMS. Enregistrer remplace la note précédente ; vider le champ l’efface."
+          hint="Préférences, allergies, sensibilités. Jamais transmise au client — ni dans un e-mail, ni dans un SMS. Enregistrer remplace la note précédente ; vider le champ l’efface."
           error={errors.internalNote?.message}
           {...register('internalNote')}
         />
