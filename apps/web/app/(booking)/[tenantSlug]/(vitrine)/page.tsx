@@ -8,7 +8,7 @@ import { ServiceCatalog } from '@/components/salon/service-catalog';
 import { SalonStructuredData } from '@/components/salon/structured-data';
 import { ApiClientError } from '@/lib/api-client';
 
-import { BookingErrorNotice } from './booking-error-notice';
+import { BookingErrorNotice } from '../booking-error-notice';
 import {
   accountPath,
   loadSalonServices,
@@ -17,21 +17,33 @@ import {
   salonPath,
   salonUrl,
   siteOrigin,
-} from './salon-data';
+} from '../salon-data';
 
 /**
  * Page publique d'un salon (#43) — vitrine et catalogue.
  *
  * **Server Component, sans `"use client"`.** C'est la première page vue par une
- * cliente et la seule indexable du produit : elle est rendue côté serveur, elle
- * n'embarque aucun JavaScript applicatif, et ses deux appels à l'API partent du
- * serveur sans aller-retour par le navigateur (skill web-frontend §1). C'est
- * aussi ce qui tient le budget de LCP sous 2,5 s en 4G — la page ne dépend
- * d'aucune hydratation pour afficher son titre, son catalogue et ses tarifs.
+ * cliente et la seule indexable du produit : elle est rendue côté serveur, et ses
+ * deux appels à l'API partent du serveur sans aller-retour par le navigateur
+ * (skill web-frontend §1). Le seul JavaScript applicatif qu'elle embarque tient
+ * en deux îlots de quelques lignes, qui ne peignent rien avant un clic :
+ * l'indicateur de navigation du layout racine et le repère « en cours » du
+ * bouton « Réserver » (#830). C'est ce qui tient le budget de LCP sous 2,5 s en
+ * 4G — la page ne dépend d'aucune hydratation pour afficher son titre, son
+ * catalogue et ses tarifs.
  *
- * Le tunnel de réservation, lui, a de l'état : il vit sur `./reservation` et
+ * Le tunnel de réservation, lui, a de l'état : il vit sur `../reservation` et
  * c'est un autre écran. Cette page y renvoie par un lien, elle ne l'embarque
  * pas.
+ *
+ * ## Pourquoi sous `(vitrine)/` (#830)
+ *
+ * Le groupe ne change pas l'URL — la page reste `/{slug}` — mais il lui donne un
+ * dossier à elle, où poser son squelette (`loading.tsx`) et sa reprise
+ * (`error.tsx`) sans qu'ils enveloppent aussi le tunnel voisin, qui a les siens.
+ * Le `layout.tsx` du groupe résout l'établissement **au-dessus** du squelette :
+ * c'est ce qui garde le 404 d'un slug inconnu, que le `notFound()` ci-dessous ne
+ * peut plus poser seul une fois l'en-tête de réponse parti avec le squelette.
  *
  * ## `force-dynamic`
  *

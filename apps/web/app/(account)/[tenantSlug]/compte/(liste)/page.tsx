@@ -2,10 +2,10 @@ import { MY_APPOINTMENTS_DEFAULT_LIMIT } from '@spa/shared';
 
 import { fetchMyAppointments, fetchPublicServices } from '@/lib/api-client';
 
-import { AppointmentList } from './components/appointment-list';
-import { accountPath, bookingPath, salonPath } from './paths';
-import { readAccountData } from './session';
-import { accountTenant } from './tenant';
+import { AppointmentList } from '../components/appointment-list';
+import { accountPath, bookingPath, salonPath } from '../paths';
+import { readAccountData } from '../session';
+import { accountTenant } from '../tenant';
 
 /**
  * L'accueil de l'espace client : les rendez-vous **à venir** et l'**historique**
@@ -67,6 +67,12 @@ import { accountTenant } from './tenant';
  * sa session. Ce qui appartient à l'espace et non à un écran est passé au
  * gabarit (`layout.tsx`, `components/account-nav.tsx`). Cette page ne rend plus
  * que ses deux moitiés — ce qui lui est propre.
+ *
+ * ## Pourquoi sous `(liste)/` (#830)
+ *
+ * Le groupe ne change pas l'URL — la liste reste `/compte`. Il lui donne un
+ * dossier où poser son squelette sans envelopper le report d'un rendez-vous,
+ * dont le 404 doit partir avant tout squelette (voir `loading.tsx`).
  */
 
 export const dynamic = 'force-dynamic';

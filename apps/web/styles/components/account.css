@@ -297,3 +297,36 @@
   background: var(--spa-color-status-no-show-surface);
   color: var(--spa-color-status-no-show);
 }
+
+/* --- Écran en cours de chargement (#830) ---------------------------------- */
+
+/*
+ * Ce que `compte/(liste)/loading.tsx` peint sous la barre du compte, le temps qu'un
+ * écran arrive. La forme est celle de la liste des rendez-vous — l'écran
+ * d'arrivée de l'espace —, dans ses vraies classes : un titre de moitié à la
+ * taille de `.spa-account__section-title`, sa légende, puis des cartes
+ * `.spa-appointment`. Aucune donnée n'y est inventée : les lignes sont des
+ * squelettes, pas des rendez-vous factices.
+ */
+.spa-account-loading {
+  pointer-events: none;
+}
+
+.spa-account-loading__title {
+  block-size: calc(var(--spa-font-size-xl) * var(--spa-line-height-tight));
+  inline-size: min(14rem, 70%);
+}
+
+.spa-account-loading__hint {
+  block-size: var(--spa-font-size-sm);
+  inline-size: min(22rem, 90%);
+}
+
+.spa-account-loading__line {
+  block-size: var(--spa-font-size-md);
+  inline-size: min(18rem, 80%);
+}
+
+.spa-account-loading__line--short {
+  inline-size: min(11rem, 50%);
+}

@@ -9,13 +9,15 @@ Conventions du front : [.claude/skills/web-frontend/SKILL.md](../../../../.claud
 
 ```
 styles/admin/
-  index.css        point d'entrée du back-office — importe les six feuilles ci-dessous
+  index.css        point d'entrée du back-office — importe les huit feuilles ci-dessous
   shell.css        coquille, barre d'outils, sélecteur segmenté, badge, tableau, tiroir, métrique
   calendar.css     calendrier jour et semaine
   appointment.css  création et édition manuelle d'un rendez-vous
   client.css       fiche client, notes internes, historique
   staff.css        personnel, horaires hebdomadaires, exceptions
   checkout.css     encaissement et POS
+  reporting.css    filtres, tuiles et graphiques du reporting
+  loading.css      squelette d'un écran qui arrive (components/admin-screen-skeleton.tsx)
 
 mockups/admin/
   index.html       sommaire
@@ -303,6 +305,23 @@ largeur de l'écran les réduirait à un trait d'un demi-pixel.
 Aucune couleur n'est écrite dans le SVG ni dans cette feuille : tout passe par
 les six rôles `--spa-color-chart-*`, ce qui fait basculer les graphiques en thème
 sombre sans une ligne à changer ici.
+
+### 3.7 Écran en cours de chargement — `loading.css`
+
+Ce que les `loading.tsx` des écrans peignent — `components/admin-screen-skeleton.tsx` —
+entre un clic dans le rail et l'arrivée de l'écran (#830) : un titre, une barre
+d'outils, une carte de lignes denses, aux
+mesures des vraies classes — `.spa-admin__title`, la cible tactile,
+`.spa-admin__section`. Le rail reste en place, et l'entrée cliquée se dit « en
+cours » (`.spa-admin__nav-pending`, dans `shell.css`) jusqu'à ce que
+`aria-current` la rejoigne. La barre de progression, commune aux trois
+produits, vit dans `../components/progress.css`.
+
+Le squelette est posé **écran par écran**, jamais au-dessus d'une fiche : il
+part avec l'en-tête de réponse, et une fiche de prestation ou de praticien qui
+lève `notFound()` sous lui répondrait 200 au lieu de 404. Les listes du
+catalogue et du personnel vivent pour cela sous un groupe `(liste)/`, et les
+fiches n'ont que la barre de progression.
 
 ## 4. Accessibilité
 

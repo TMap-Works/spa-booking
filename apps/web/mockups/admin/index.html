@@ -126,6 +126,36 @@
               <a href="../../styles/admin/README.md">styles/admin/README.md</a>.
             </p>
           </section>
+
+          <!--
+            ÉCRAN EN COURS DE CHARGEMENT (#830). Ce que les `loading.tsx` des écrans peignent à
+            la place de l'écran, sous le rail, entre le clic et l'arrivée des
+            données : la forme commune des écrans — titre, barre d'outils, carte de
+            lignes —, sans aucune donnée inventée. Dans l'application, il est rendu
+            à même la zone de contenu ; il est encarté ici pour être lu à côté du
+            reste. La barre de progression, commune aux trois produits, court en
+            haut de la fenêtre pendant ce temps.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-navigation">
+            <h2 class="spa-admin__section-title" id="titre-navigation">Changer d’écran</h2>
+            <div class="spa-progress" aria-hidden="true">
+              <span class="spa-progress__bar"></span>
+            </div>
+            <div class="spa-admin-loading" aria-busy="true">
+              <p class="spa-visually-hidden">Chargement de l’écran…</p>
+              <span class="spa-skeleton spa-admin-loading__title"></span>
+              <div class="spa-admin-loading__toolbar">
+                <span class="spa-skeleton spa-admin-loading__control"></span>
+                <span class="spa-skeleton spa-admin-loading__control"></span>
+              </div>
+              <div class="spa-admin__section">
+                <span class="spa-skeleton spa-admin-loading__heading"></span>
+                <span class="spa-skeleton spa-admin-loading__row"></span>
+                <span class="spa-skeleton spa-admin-loading__row"></span>
+                <span class="spa-skeleton spa-admin-loading__row"></span>
+              </div>
+            </div>
+          </section>
         </main>
       </div>
     </div>

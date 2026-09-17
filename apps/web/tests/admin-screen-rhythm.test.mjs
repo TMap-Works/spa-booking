@@ -196,8 +196,8 @@ function isScreenRoot(source, id) {
  * doit prouver corrigés.
  */
 const ecrans = [
-  ['/personnel', join(adminDir, 'personnel', 'page.tsx'), 'personnel-titre'],
-  ['/catalogue', join(adminDir, 'catalogue', 'page.tsx'), 'catalogue-titre'],
+  ['/personnel', join(adminDir, 'personnel', '(liste)', 'page.tsx'), 'personnel-titre'],
+  ['/catalogue', join(adminDir, 'catalogue', '(liste)', 'page.tsx'), 'catalogue-titre'],
   ['/catalogue/nouveau', join(adminDir, 'catalogue', 'nouveau', 'page.tsx'), 'prestation-nouvelle'],
   [
     '/catalogue/[serviceId]',
