@@ -17,6 +17,7 @@ import {
   revenueSeries,
   scopedActivity,
   volumePoints,
+  volumeQualification,
 } from '@/lib/admin/reporting-view';
 
 /**
@@ -290,6 +291,107 @@ describe('l’activité du périmètre', () => {
 
     expect(activity.appointments).toBe(0);
     expect(activity.noShows.rate).toBeNull();
+  });
+});
+
+describe('ce que la tuile du volume dit de son compte', () => {
+  /**
+   * Le cas de l'audit `d20260916-1` : 17 rendez-vous dont 1 honoré, 1 non
+   * honoré, 8 annulés et 7 à venir. La tuile disait « 17 », sa voisine « 50 % »,
+   * et rien ne disait que le taux portait sur 2 (#772).
+   */
+  const AUDIT_CASE: NoShowReport = {
+    window: WINDOW,
+    timeZone: TIME_ZONE,
+    noShows: 1,
+    honored: 1,
+    cancelled: 8,
+    pending: 7,
+    total: 17,
+    rate: 0.5,
+  };
+
+  function activityOf(report: NoShowReport) {
+    return scopedActivity(
+      WHOLE_TENANT,
+      volumeReport('day', []),
+      report,
+      volumeReport('day', [
+        { key: '2026-09-01', label: null, total: report.total, byStatus: counts({}) },
+      ]),
+    );
+  }
+
+  it('nomme ce que le taux de no-show met de côté', () => {
+    expect(volumeQualification(activityOf(AUDIT_CASE))).toBe('dont 8 annulés · 7 à venir');
+  });
+
+  it('tait un compte nul plutôt que d’écrire « dont 0 annulés »', () => {
+    expect(volumeQualification(activityOf({ ...AUDIT_CASE, cancelled: 0, total: 9 }))).toBe(
+      'dont 7 à venir',
+    );
+    expect(volumeQualification(activityOf({ ...AUDIT_CASE, pending: 0, total: 10 }))).toBe(
+      'dont 8 annulés',
+    );
+  });
+
+  it('dit avec les mots de sa voisine qu’il n’y a rien à retrancher', () => {
+    // Les deux tuiles portent alors le même ensemble : c'est ce qu'il faut
+    // pouvoir lire, et le silence ne le dirait pas.
+    expect(
+      volumeQualification(activityOf({ ...AUDIT_CASE, cancelled: 0, pending: 0, total: 2 })),
+    ).toBe('tous arrivés à échéance');
+  });
+
+  it('accorde le libellé au compte qu’il suit', () => {
+    // « dont 1 annulés » est la faute que la table des statuts ne pouvait pas
+    // commettre — elle titre une colonne, la tuile écrit une phrase.
+    expect(
+      volumeQualification(activityOf({ ...AUDIT_CASE, cancelled: 1, pending: 0, total: 3 })),
+    ).toBe('dont 1 annulé');
+    expect(
+      volumeQualification(
+        activityOf({ ...AUDIT_CASE, noShows: 0, honored: 1, cancelled: 0, pending: 0, total: 1 }),
+      ),
+    ).toBe('arrivé à échéance');
+  });
+
+  it('ne qualifie pas une période vide', () => {
+    expect(
+      volumeQualification(
+        activityOf({ ...AUDIT_CASE, noShows: 0, honored: 0, cancelled: 0, pending: 0, total: 0 }),
+      ),
+    ).toBeNull();
+  });
+
+  it('sous filtre, compte sur la ligne de l’axe et non sur l’établissement', () => {
+    const byStaff = volumeReport('staff', [
+      {
+        key: 'a',
+        label: 'Hasina',
+        total: 30,
+        // `confirmed` et `pending` se fondent dans un seul « à venir » : 1 + 2.
+        byStatus: counts({ completed: 24, no_show: 1, cancelled: 2, confirmed: 1, pending: 2 }),
+      },
+    ]);
+    const scope = parseReportScope('praticien:a', filterOptions(byStaff), []);
+
+    expect(volumeQualification(scopedActivity(scope, byStaff, AUDIT_CASE, byStaff))).toBe(
+      'dont 2 annulés · 3 à venir',
+    );
+  });
+
+  it('sépare les milliers comme le chiffre qu’elle qualifie', () => {
+    const qualification = volumeQualification(
+      activityOf({ ...AUDIT_CASE, cancelled: 1200, total: 1209 }),
+    );
+
+    // `formatCount` et non `String` : la tuile et sa qualification écrivent le
+    // même nombre de la même façon. Le séparateur de fr-FR est une espace
+    // insécable dont la forme exacte dépend de l'ICU — d'où `\s` plutôt qu'un
+    // littéral.
+    expect(qualification).not.toContain('1200');
+    expect(qualification).toMatch(/1\s200 annulés/u);
   });
 });
 
