@@ -69,6 +69,29 @@ import {
  * barre d'outils qui les appelle est celle de /catalogue : une action accentuée,
  * une action secondaire, sous le titre. La liste redevient une liste.
  *
+ * ## Les états vides ne nomment qu'un geste, et c'est celui du bouton (#767)
+ *
+ * Même audit, critère `ds:etats`, et même règle que
+ * `docs/design/appointments/states.md` : « Vide : toujours accompagné d'une
+ * explication et d'**au moins une action** pour sortir de l'impasse. » Le
+ * déplacement des formulaires (#766) a posé cette action — l'état vide des
+ * praticiens porte le bouton accentué que `mockups/admin/personnel.html` y
+ * dessine, et le « ci-dessous » du constat a disparu avec le formulaire qu'il
+ * désignait.
+ *
+ * Restait le motif que ce constat condamne, déplacé d'un cran : la description
+ * nommait **un second geste en prose** — « invitez-en un d'abord s'il n'y en a
+ * aucun » —, sans contrôle pour l'exécuter. Deux défauts d'un coup. Il était
+ * mort : `GET /v1/users` rend tout le personnel de l'établissement, **le compte
+ * qui lit compris**, si bien que la liste en porte toujours au moins un et que
+ * la condition « s'il n'y en a aucun » ne se vérifie jamais. Et il s'adressait
+ * au rang gérant, à qui `POST /v1/users/invitations` répondrait 403 — la
+ * promesse de refus que #619 a précisément chassée de cet écran.
+ *
+ * La règle tenue ici, dans les deux états vides : **le texte ne nomme que le
+ * geste que le contrôle d'à côté exécute**, et quand le rang n'en accorde
+ * aucun, il dit qui peut agir au lieu de donner un ordre irréalisable.
+ *
  * ## Pourquoi sous `(liste)/` (#830)
  *
  * Le groupe ne change pas l'URL. Il donne à la liste un dossier où poser son
@@ -168,8 +191,8 @@ export default async function StaffPage({ params }: StaffPageProps) {
             <p className="spa-empty-state__description">
               Tant que personne n’est déclarée, le parcours de réservation ne propose aucun créneau.
               {canManage
-                ? ' Une fiche se crée à partir d’un compte du personnel — invitez-en un d’abord s’il n’y en a aucun.'
-                : ' Un gérant ou un administrateur peut en créer une à partir d’un compte du personnel.'}
+                ? ' Créez une fiche praticien à partir d’un compte du personnel pour rendre la personne réservable.'
+                : ' Un gérant ou un administrateur peut créer une fiche praticien à partir d’un compte du personnel.'}
             </p>
             {/* Un lien et non un bouton : c'est une destination. Posé
                 directement dans `.spa-empty-state`, déjà une colonne centrée avec
@@ -225,7 +248,9 @@ export default async function StaffPage({ params }: StaffPageProps) {
           <div className="spa-empty-state">
             <p className="spa-empty-state__title">Aucun compte du personnel</p>
             <p className="spa-empty-state__description">
-              Invitez au moins une personne pour que le salon puisse être tenu à plusieurs.
+              {canAdminister
+                ? 'Invitez au moins une personne pour que le salon puisse être tenu à plusieurs.'
+                : 'Un administrateur du salon peut inviter les personnes qui le tiendront avec vous.'}
             </p>
             {canAdminister ? (
               <Link
