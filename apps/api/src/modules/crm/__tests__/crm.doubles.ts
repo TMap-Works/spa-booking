@@ -8,6 +8,9 @@ import type {
 import { billedIntervalOf, type BilledInterval } from '../../appointments/billed-interval';
 import type { EmailSuppressionReason } from '../../notifications/notifications.types';
 import { CustomerEmailTakenError } from '../crm.errors';
+// Import **de valeur** : la règle de recherche par téléphone est celle du vrai
+// dépôt, appelée et non recopiée (#824). Voir `matches` en bas de ce fichier.
+import { phoneSearchForms } from '../crm.repository';
 import type {
   AnonymizationOutcome,
   AnonymizedIdentity,
@@ -151,6 +154,17 @@ export class FakeCrmRepository {
   public readonly visits: StoredVisit[] = [];
 
   /**
+   * Le pays des établissements, par identifiant — ce que le vrai dépôt lit sur
+   * `tenants.country_code` pour compléter un numéro national (#824).
+   *
+   * Vide par défaut, donc `null` : c'est l'état d'un salon qui n'a pas saisi son
+   * adresse, et celui de tous les établissements au moment de la migration. Les
+   * suites qui veulent un pays le déclarent, ce qui rend visible dans le test
+   * **lequel** des deux établissements le porte.
+   */
+  public readonly tenantCountryCodes = new Map<string, string>();
+
+  /**
    * Déclare une fiche **sans passer par le service** — le pas 1 du protocole de
    * fuite : « créer une ressource avec le tenant A ».
    *
@@ -265,6 +279,17 @@ export class FakeCrmRepository {
     };
     this.visits.push(stored);
     return stored;
+  }
+
+  /**
+   * Le pays de l'établissement **de la portée** (#824).
+   *
+   * Même `requireTenant()` que toutes les lectures de ce double : sans portée
+   * résolue, rien. Un double qui rendrait un pays hors portée ferait passer au
+   * vert un numéro complété avec l'indicatif du salon voisin.
+   */
+  public async findCurrentTenantCountryCode(): Promise<string | null> {
+    return this.tenantCountryCodes.get(this.requireTenant()) ?? null;
   }
 
   public async search(criteria: CustomerSearchCriteria): Promise<CustomerSearchResult> {
@@ -572,13 +597,24 @@ function billedOf(row: StoredVisit): BilledInterval {
   });
 }
 
-/** `true` si la fiche répond au terme, par **préfixe**, comme le vrai `where`. */
+/**
+ * `true` si la fiche répond au terme, par **préfixe**, comme le vrai `where`.
+ *
+ * L'axe téléphone appelle `phoneSearchForms` du vrai dépôt plutôt que de
+ * recopier sa règle (#824), pour la raison qui a fait appeler `billedIntervalOf`
+ * juste au-dessus : la colonne est canonisée en E.164, un terme tapé comme le
+ * numéro se lit — « +261 34 99 » — n'en est plus le préfixe, et une propriété
+ * réécrite des deux côtés cesse d'être testée. `crm.integration-spec.ts`
+ * substitue justement ce double au dépôt, donc c'est **lui** qui répond à la
+ * recherche du comptoir dans cette suite.
+ */
 function matches(row: StoredCustomer, term: string): boolean {
   return (
     row.lastName.toLowerCase().startsWith(term) ||
     row.firstName.toLowerCase().startsWith(term) ||
     row.email.startsWith(term) ||
-    (row.phone !== null && row.phone.startsWith(term))
+    (row.phone !== null &&
+      phoneSearchForms(term).some((form) => row.phone?.startsWith(form) === true))
   );
 }
 

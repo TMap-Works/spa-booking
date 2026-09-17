@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 
 import { BusinessRuleError, NotFoundError } from '../../../common/errors';
@@ -433,6 +434,112 @@ describe('UsersService', () => {
     });
   });
 
+
+  /**
+   * Le téléphone en E.164 — #824.
+   *
+   * Ce qui se vérifie ici n'est pas le format lui-même (`packages/shared` s'en
+   * charge, cas par cas) mais la **jonction** : que le service lise le pays de
+   * l'établissement de la portée, et qu'il refuse en `BadRequestException`
+   * portant un tableau de messages — la forme exacte que `ZodValidationPipe`
+   * lève, donc celle que `DomainExceptionFilter` sert en `VALIDATION_ERROR`
+   * avec le champ nommé. Un refus d'une autre forme s'afficherait en bloc en
+   * tête de page au lieu du champ.
+   */
+  describe('téléphone en E.164 — #824', () => {
+    it('complète un national avec le pays de l’établissement, et écrit la forme normalisée', async () => {
+      const f = fixture();
+      f.repository.addTenant('lilas', TENANT_A, { countryCode: 'FR' });
+
+      const updated = await runWithTenant(TENANT_A, () =>
+        f.service.updateOwnContactDetails({
+          userId: f.clientA,
+          changes: { phone: '06 12 34 56 78' },
+        }),
+      );
+
+      // Rendu **et** écrit : le front affiche ce que la base contient, jamais ce
+      // qu'il vient d'envoyer (cinquième critère).
+      expect(updated.phone).toBe('+33612345678');
+      expect(f.repository.users.find((user) => user.id === f.clientA)?.phone).toBe('+33612345678');
+    });
+
+    it('lit le pays de **son** établissement, pas celui du voisin', async () => {
+      const f = fixture();
+      f.repository.addTenant('lilas', TENANT_A, { countryCode: 'FR' });
+      f.repository.addTenant('port', TENANT_B, { countryCode: 'MG' });
+
+      const updated = await runWithTenant(TENANT_A, () =>
+        f.service.updateOwnContactDetails({
+          userId: f.clientA,
+          changes: { phone: '06 12 34 56 78' },
+        }),
+      );
+
+      // `+261…` ici serait le signe que la portée n'a pas borné la lecture du
+      // pays — le même défaut qu'une lecture inter-tenant, sur un champ qui
+      // n'en a pas l'air.
+      expect(updated.phone).toBe('+33612345678');
+    });
+
+    it('refuse en 400 nommant le champ, sans rien écrire', async () => {
+      const f = fixture();
+      f.repository.addTenant('lilas', TENANT_A, { countryCode: 'FR' });
+
+      const failure = await rejectionOf(
+        runWithTenant(TENANT_A, () =>
+          f.service.updateOwnContactDetails({ userId: f.clientA, changes: { phone: '06 12 34' } }),
+        ),
+      );
+
+      expect(failure).toBeInstanceOf(BadRequestException);
+      // Un **tableau** de messages, chacun préfixé de son champ : c'est ce que
+      // `DomainExceptionFilter` traduit en `details.violations`.
+      const response = (failure as BadRequestException).getResponse() as { message: unknown };
+      expect(response.message).toEqual([expect.stringMatching(/^phone : /)]);
+      expect(f.repository.users.find((user) => user.id === f.clientA)?.phone).toBeNull();
+    });
+
+    it('refuse un national quand l’établissement n’a pas de pays — plutôt que d’en deviner un', async () => {
+      // Un salon qui n'a pas saisi son adresse n'a pas de pays. Compléter au
+      // hasard produirait un numéro valide et faux, c'est-à-dire un rappel
+      // envoyé à un inconnu.
+      const f = fixture();
+      f.repository.addTenant('lilas', TENANT_A);
+
+      const failure = await rejectionOf(
+        runWithTenant(TENANT_A, () =>
+          f.service.updateOwnContactDetails({
+            userId: f.clientA,
+            changes: { phone: '06 12 34 56 78' },
+          }),
+        ),
+      );
+
+      expect(failure).toBeInstanceOf(BadRequestException);
+    });
+
+    it('normalise aussi le numéro d’une invitation', async () => {
+      const f = fixture();
+      f.repository.addTenant('lilas', TENANT_A, { countryCode: 'MG' });
+
+      const invitation = await runWithTenant(TENANT_A, () =>
+        f.service.inviteStaffMember({
+          tenantId: TENANT_A,
+          email: 'hanta@lilas.test',
+          role: 'STAFF',
+          firstName: 'Hanta',
+          lastName: 'Rasoa',
+          phone: '034 12 345 67',
+        }),
+      );
+
+      expect(invitation.user.phone).toBe('+261341234567');
+      expect(f.repository.users.find((user) => user.id === invitation.user.id)?.phone).toBe(
+        '+261341234567',
+      );
+    });
+  });
 
   describe('inviteStaffMember — #55', () => {
     const INVITATION = {

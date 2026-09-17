@@ -403,6 +403,31 @@ export class IdentityRepository {
   }
 
   /**
+   * Le seul champ dont la normalisation d'un numéro de téléphone a besoin — le
+   * pays de l'établissement courant, ISO 3166-1 alpha-2 (#824).
+   *
+   * Une lecture à un champ plutôt qu'un `findCurrentTenant` déjà écrit au-dessus,
+   * et ce n'est pas une micro-optimisation : cette requête a lieu sur
+   * l'inscription publique et sur chaque invitation, où rien d'autre de la fiche
+   * du salon n'est utilisé. Rendre la vitrine entière ferait voyager jusque dans
+   * ces services les coordonnées de contact du salon, qui n'ont aucune raison
+   * d'y être (même arbitrage que `TenantTimeZoneRecord`, #604).
+   *
+   * `null` a deux causes indistinctes, et c'est voulu : l'établissement n'a pas
+   * saisi son adresse — les cinq colonnes sont nullables —, ou la ligne a
+   * disparu. Les deux se traitent pareil en aval : sans pays, un numéro national
+   * n'est pas complétable et le refus le dit.
+   *
+   * Par le client **scopé** et sans `where`, comme ses deux voisines :
+   * l'extension borne le modèle racine sur son `id`.
+   */
+  public async findCurrentTenantCountryCode(): Promise<string | null> {
+    const tenant = await this.prisma.tenant.findFirst({ select: { countryCode: true } });
+
+    return tenant?.countryCode ?? null;
+  }
+
+  /**
    * Écrit les réglages de l'établissement courant — colonnes **et** semaine
    * d'ouverture — dans **une seule transaction** (#343, corrigé par #416).
    *

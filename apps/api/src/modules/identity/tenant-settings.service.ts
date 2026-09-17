@@ -8,6 +8,7 @@ import {
   type TenantRecord,
   type TenantSettingsChanges,
 } from './identity.repository';
+import { toE164OrNull } from './phone';
 import { toOpeningHours, toPostalAddress } from './public-tenant.service';
 import { wallClockToMinutesOrNull } from './opening-hours';
 
@@ -55,7 +56,7 @@ export class TenantSettingsService {
    * une mise à jour qui n'a touché aucune ligne.
    */
   public async update(changes: UpdateTenantDto): Promise<TenantDto> {
-    await this.read();
+    const current = await this.read();
 
     const openingHours =
       changes.openingHours === undefined
@@ -66,7 +67,7 @@ export class TenantSettingsService {
     // `exactOptionalPropertyTypes`, les deux ne sont pas la même chose, et
     // c'est l'absence qui signifie « ne touche pas à la semaine ».
     const applied = await this.repository.updateTenantSettings({
-      changes: TenantSettingsService.toSettingsChanges(changes),
+      changes: TenantSettingsService.toSettingsChanges(changes, current),
       ...(openingHours === undefined ? {} : { openingHours }),
     });
 
@@ -121,9 +122,25 @@ export class TenantSettingsService {
    * compris, remis à `null` s'ils ne sont pas fournis. C'est ce qui rend
    * impossible l'adresse à moitié réécrite : on ne peut pas garder l'ancien
    * complément d'adresse sous une nouvelle rue.
+   *
+   * ## Le numéro de contact est normalisé ici, et avec le pays de la **même**
+   * charge utile (#824)
+   *
+   * `contactPhone` part en E.164 comme tout numéro écrit par l'API. Le pays qui
+   * complète un numéro national est celui que cette requête pose, s'il en pose
+   * un, et celui déjà en base sinon : un salon qui saisit d'un coup son adresse
+   * en France et son « 01 42 33 44 55 » doit voir ce numéro complété en `+33…`,
+   * et non refusé au motif que la colonne `country_code` était encore nulle une
+   * ligne plus tôt. Une adresse effacée (`address: null`) retire aussi le pays —
+   * il ne reste alors rien pour compléter un national, et le refus le dit.
    */
-  private static toSettingsChanges(changes: UpdateTenantDto): TenantSettingsChanges {
+  private static toSettingsChanges(
+    changes: UpdateTenantDto,
+    current: TenantRecord,
+  ): TenantSettingsChanges {
     const address = changes.address;
+    const country =
+      address === undefined ? current.countryCode : address === null ? null : address.country;
 
     return {
       ...(changes.name === undefined ? {} : { name: changes.name }),
@@ -132,7 +149,9 @@ export class TenantSettingsService {
         ? {}
         : { defaultCurrency: changes.defaultCurrency }),
       ...(changes.contactEmail === undefined ? {} : { contactEmail: changes.contactEmail }),
-      ...(changes.contactPhone === undefined ? {} : { contactPhone: changes.contactPhone }),
+      ...(changes.contactPhone === undefined
+        ? {}
+        : { contactPhone: toE164OrNull('contactPhone', changes.contactPhone, country) }),
       ...(address === undefined
         ? {}
         : address === null

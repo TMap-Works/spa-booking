@@ -418,6 +418,28 @@ export class CrmRepository {
   public constructor(@Inject(PRISMA) private readonly prisma: ScopedPrismaClient) {}
 
   /**
+   * Le pays de l'établissement courant — ISO 3166-1 alpha-2, `null` s'il n'a pas
+   * encore saisi son adresse (#824).
+   *
+   * Le seul champ de la table `tenants` que ce dépôt lise, et il ne le lit que
+   * pour une chose : compléter un numéro de téléphone **national** saisi au
+   * comptoir. Une lecture à un champ, pour la raison qui borne déjà
+   * `CUSTOMER_SELECT` — une projection large ferait voyager les coordonnées du
+   * salon dans un service qui n'en a pas l'usage.
+   *
+   * Ce n'est pas une entorse au « `crm` n'importe pas le dépôt d'`identity` »
+   * (voir l'en-tête de ce fichier) : la requête est écrite ici, sur le client
+   * scopé de ce module, et l'extension borne le modèle racine sur son `id`
+   * (`tenant-scope.extension.ts`). Il n'y a ni `where`, ni identifiant en
+   * paramètre — donc aucun moyen de désigner l'établissement d'à côté.
+   */
+  public async findCurrentTenantCountryCode(): Promise<string | null> {
+    const tenant = await this.prisma.tenant.findFirst({ select: { countryCode: true } });
+
+    return tenant?.countryCode ?? null;
+  }
+
+  /**
    * Le fichier client de l'établissement courant, filtré et paginé.
    *
    * ## Ce que la recherche interroge, et avec quel index
@@ -1296,11 +1318,26 @@ function ownedByPredicate(userId: string | null): Prisma.UserWhereInput {
 }
 
 /**
- * Les quatre prédicats de la recherche libre, pour un terme donné.
+ * Les prédicats de la recherche libre, pour un terme donné — quatre axes (nom,
+ * prénom, adresse, téléphone), le dernier cherché sous deux écritures quand la
+ * saisie porte des séparateurs.
  *
  * Hors de la classe et exporté : c'est la seule partie de la recherche qui soit
  * du raisonnement plutôt que de l'accès, et la sortir la rend testable sans
  * client Prisma — la forme du `OR` est ce qui décide de l'index utilisé.
+ *
+ * ## Le numéro est cherché sous sa forme compactée aussi (#824)
+ *
+ * Depuis que `users.phone` est canonisé en E.164, la colonne ne porte **aucun
+ * séparateur** : `+261341234567`. Un terme tapé comme le numéro se lit — « +261
+ * 34 99 » — ne serait plus le préfixe de rien, alors que c'est exactement la
+ * recherche que le comptoir fait. Le terme est donc cherché deux fois : tel
+ * quel, pour le stock que la reprise n'a pas su convertir, et compacté, pour la
+ * forme canonique. Le `00` de composition internationale cède la place au `+`,
+ * comme à l'écriture (`normalizeToE164`).
+ *
+ * Deux `startsWith` sur la même colonne restent servis par
+ * `(tenant_id, phone)` : c'est deux parcours d'index, pas un balayage.
  */
 export function matchesTerm(term: string): Prisma.UserWhereInput[] {
   // Un terme est une saisie, jamais un motif : ce qu'il contient de `%` ou de
@@ -1314,6 +1351,35 @@ export function matchesTerm(term: string): Prisma.UserWhereInput[] {
     // contient que des minuscules (`normalizeEmail` à l'écriture), et c'est ce
     // qui permet à l'index unique `(tenant_id, email)` de servir ce préfixe.
     { email: { startsWith: prefix.toLowerCase() } },
-    { phone: { startsWith: prefix } },
+    ...phoneSearchForms(term).map((value) => ({ phone: { startsWith: escapeLikeTerm(value) } })),
   ];
+}
+
+/**
+ * Les écritures sous lesquelles un terme peut désigner un numéro en base —
+ * dédupliquées, dans l'ordre où l'index les servira (#824).
+ *
+ * Le terme brut d'abord : c'est lui qui trouve le stock que la reprise E.164 n'a
+ * pas su convertir. Puis sa forme compactée, quand elle en diffère — le préfixe
+ * de la colonne canonisée.
+ *
+ * Rendu **non échappé**, et c'est ce qui permet à `FakeCrmRepository` de
+ * l'appeler : le double rejoue la recherche en mémoire, par `startsWith` de
+ * JavaScript, où un `\` inséré devant un `%` ne neutraliserait rien mais
+ * ajouterait un caractère. L'échappement pour `LIKE` appartient donc à
+ * `matchesTerm`, qui est le seul à parler à PostgreSQL. C'est l'arbitrage que
+ * `crm.repository.spec.ts` réclame : une propriété réécrite des deux côtés
+ * cesse d'être testée.
+ *
+ * Ce qui n'y est **pas**, et qui demanderait le pays de l'établissement : le
+ * national à préfixe interurbain (« 0612 ») ne se ramène pas à « +33612 » sans
+ * savoir dans quel pays on se trouve, et ce `where` est construit sans lecture.
+ * Une issue de suivi le porte.
+ */
+export function phoneSearchForms(term: string): string[] {
+  const trimmed = term.trim();
+  const compact = trimmed.replace(/[\s().-]/g, '');
+  const candidate = compact.startsWith('00') ? `+${compact.slice(2)}` : compact;
+
+  return candidate === trimmed || candidate === '' ? [term] : [term, candidate];
 }

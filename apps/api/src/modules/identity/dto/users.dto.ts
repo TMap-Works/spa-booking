@@ -50,11 +50,29 @@ const PHONE_MAX_LENGTH = 32;
 const NAME_MAX_LENGTH = 80;
 
 /**
- * Numéro de téléphone — volontairement permissif, comme `phoneSchema` de
- * `@spa/shared` : refuser un numéro pourtant valide empêche d'être rappelée, en
- * accepter un douteux ne coûte qu'un SMS non délivré.
+ * Numéro de téléphone — la **forme d'une saisie**, comme `phoneSchema` de
+ * `@spa/shared` : des chiffres, un `+` en tête au plus, et les séparateurs qu'un
+ * humain intercale.
+ *
+ * Volontairement permissif, et depuis #824 c'est un choix actif plutôt qu'un
+ * renoncement : il doit accepter le national qu'on dicte au téléphone — « 06 12
+ * 34 56 78 » —, puisque c'est le service qui le complète avec le pays de
+ * l'établissement (`../phone`) avant de l'écrire. Le format d'enregistrement,
+ * lui, est E.164 pour toutes les portes, et un numéro qu'aucun plan de
+ * numérotation n'attribue est refusé en 400 sur le champ.
  */
 const PHONE_PATTERN = /^[+0-9][0-9\s().-]*$/;
+
+/**
+ * Ce que `/api/docs` doit dire d'un champ `phone` en **entrée** — écrit une
+ * fois, monté sur l'invitation et sur la modification des coordonnées.
+ */
+const PHONE_DESCRIPTION =
+  'Accepté au format national (« 06 12 34 56 78 ») comme international ' +
+  '(« +261 34 12 345 67 »). **Enregistré et rendu en E.164** : le national est ' +
+  'complété avec le pays de l’établissement, et un numéro qu’aucun plan de ' +
+  'numérotation n’attribue est refusé en 400 sur le champ. Sans pays renseigné ' +
+  'sur l’établissement, seule la forme internationale est acceptable.';
 
 /**
  * Élague une chaîne avant que les bornes ne la jugent — sans quoi `"   "`
@@ -120,7 +138,11 @@ export class InviteStaffMemberDto {
   @MaxLength(NAME_MAX_LENGTH)
   public lastName!: string;
 
-  @ApiPropertyOptional({ example: '+261 34 12 345 67', maxLength: PHONE_MAX_LENGTH })
+  @ApiPropertyOptional({
+    example: '+261 34 12 345 67',
+    maxLength: PHONE_MAX_LENGTH,
+    description: PHONE_DESCRIPTION,
+  })
   // `@IsOptional()` et non le `@ValidateIf` des coordonnées : à la création il
   // n'y a pas de valeur antérieure à effacer, « absent » et « null » disent donc
   // la même chose — pas de numéro.
@@ -269,7 +291,7 @@ export class UpdateContactDetailsDto {
     example: '+261 34 12 345 67',
     nullable: true,
     type: String,
-    description: '`null` efface le numéro ; le champ absent le laisse tel quel.',
+    description: `\`null\` efface le numéro ; le champ absent le laisse tel quel. ${PHONE_DESCRIPTION}`,
   })
   // `null` traverse : c'est la valeur par laquelle on retire son numéro.
   @ValidateIf((_object: unknown, value: unknown) => value !== undefined && value !== null)

@@ -1,8 +1,11 @@
 export {
+  COUNTRY_CODE_PATTERN,
   E164_PATTERN,
   UUID_V4_PATTERN,
+  countryCodeSchema,
   displayNameSchema,
   e164PhoneSchema,
+  e164PhoneSchemaFor,
   emailSchema,
   longTextSchema,
   nameSchema,
@@ -17,7 +20,15 @@ export {
   submittedPasswordSchema,
   uuidSchema,
 } from './identifiers';
-export type { E164Phone, Email, Phone, ResourceSlug, Slug, Uuid } from './identifiers';
+export type {
+  CountryCodeAlpha2,
+  E164Phone,
+  Email,
+  Phone,
+  ResourceSlug,
+  Slug,
+  Uuid,
+} from './identifiers';
 
 export {
   DNS_LABEL_PATTERN,

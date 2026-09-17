@@ -1,3 +1,5 @@
+import { BadRequestException } from '@nestjs/common';
+
 import { BusinessRuleError, NotFoundError } from '../../../common/errors';
 import { runWithTenant } from '../../../common/tenant';
 import type { UpdateTenantDto } from '../dto/tenant-settings.dto';
@@ -167,6 +169,59 @@ describe('TenantSettingsService', () => {
     await update(harness, { contactPhone: null });
 
     expect(harness.changes()).toEqual({ contactPhone: null });
+  });
+
+  /**
+   * Le numéro publié en E.164 — #824.
+   *
+   * Le cas qui distingue cette surface des six autres est le **pays de la même
+   * charge utile** : un salon qui saisit d'un coup son adresse et son numéro
+   * national doit voir le second complété par le premier. Lire la colonne
+   * `country_code` seule l'aurait refusé, la colonne étant encore nulle une
+   * ligne plus tôt.
+   */
+  it('normalise `contactPhone` avec le pays déjà enregistré', async () => {
+    const harness = harnessOver({ ...FICHE, countryCode: 'FR' });
+    await update(harness, { contactPhone: '01 42 33 44 55' });
+
+    expect(harness.changes()).toEqual({ contactPhone: '+33142334455' });
+  });
+
+  it('normalise `contactPhone` avec le pays de la **même** requête', async () => {
+    const harness = harnessOver(FICHE);
+    await update(harness, {
+      contactPhone: '034 12 345 67',
+      address: { line1: '12 rue des Lilas', city: 'Antananarivo', country: 'MG' },
+    });
+
+    expect(harness.changes()).toMatchObject({
+      contactPhone: '+261341234567',
+      countryCode: 'MG',
+    });
+  });
+
+  it('refuse un national quand la requête efface l’adresse — il ne reste aucun pays', async () => {
+    const harness = harnessOver({ ...FICHE, countryCode: 'FR' });
+
+    await expect(
+      update(harness, { contactPhone: '01 42 33 44 55', address: null }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    // Rien d'écrit : le refus précède l'écriture unique du dépôt (#416), donc
+    // l'adresse n'est pas effacée au passage.
+    expect(harness.writes()).toBe(0);
+  });
+
+  it('refuse un numéro invalide en 400 nommant le champ', async () => {
+    const harness = harnessOver({ ...FICHE, countryCode: 'FR' });
+
+    const erreur = await update(harness, { contactPhone: '01 42' }).catch(
+      (caught: unknown) => caught,
+    );
+
+    expect(erreur).toBeInstanceOf(BadRequestException);
+    const reponse = (erreur as BadRequestException).getResponse() as { message: unknown };
+    expect(reponse.message).toEqual([expect.stringMatching(/^contactPhone : /)]);
   });
 
   it('pose les cinq colonnes d’adresse d’un coup, complément absent remis à `null`', async () => {

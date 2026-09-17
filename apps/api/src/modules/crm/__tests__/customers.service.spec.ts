@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { BadRequestException } from '@nestjs/common';
+
 import { NotFoundError } from '../../../common/errors';
 import { runWithTenant } from '../../../common/tenant';
 import { CustomerEmailTakenError } from '../crm.errors';
@@ -105,7 +107,11 @@ describe('création d’une fiche', () => {
       email: 'alice@example.test',
       firstName: 'Alice',
       lastName: 'Durand',
-      phone: '+261 34 12 345 67',
+      // Plus seulement élagué : **normalisé** en E.164 (#824). Les séparateurs
+      // d'un numéro dicté au comptoir ne portent aucune information, et les
+      // garder faisait de `+261 34 12 345 67` et de `+261341234567` deux clés
+      // de recherche pour un seul destinataire.
+      phone: '+261341234567',
       note: null,
     });
 
@@ -163,6 +169,105 @@ describe('création d’une fiche', () => {
     // L'unicité est **par tenant** : une même personne peut être cliente de deux
     // salons sans que l'un puisse deviner l'existence de l'autre.
     expect(chezA.id).not.toBe(chezB.id);
+  });
+});
+
+/**
+ * Le téléphone en E.164 — #824.
+ *
+ * La fiche cliente est la porte la plus exposée au numéro **national** : le
+ * front-desk recopie ce qu'une cliente dicte, et personne ne dicte son
+ * indicatif pays. Ce qui se vérifie ici est que le service lise le pays de
+ * l'établissement — le sien, pas celui du voisin — et refuse plutôt que de
+ * deviner quand il n'y en a pas.
+ */
+describe('téléphone en E.164 — #824', () => {
+  it('complète un national avec le pays de l’établissement, à la création', async () => {
+    const { service, repository } = build();
+    repository.tenantCountryCodes.set(TENANT, 'MG');
+
+    const creee = await chez(TENANT, () =>
+      service.create({
+        email: 'camille@example.test',
+        firstName: 'Camille',
+        lastName: 'Rakoto',
+        phone: '034 12 345 67',
+        internalNote: null,
+      }),
+    );
+
+    expect(creee.phone).toBe('+261341234567');
+    expect(repository.customers[0]?.phone).toBe('+261341234567');
+  });
+
+  it('complète un national à la modification, et rend la forme écrite', async () => {
+    const { service, repository } = build();
+    repository.tenantCountryCodes.set(TENANT, 'FR');
+    const fiche = repository.addCustomer({ tenantId: TENANT, phone: null });
+
+    const modifiee = await chez(TENANT, () =>
+      service.update(fiche.id, { phone: '06 12 34 56 78' }),
+    );
+
+    expect(modifiee.phone).toBe('+33612345678');
+    expect(repository.customers[0]?.phone).toBe('+33612345678');
+  });
+
+  it('lit le pays de **son** établissement, pas celui du voisin', async () => {
+    const { service, repository } = build();
+    repository.tenantCountryCodes.set(TENANT, 'FR');
+    repository.tenantCountryCodes.set(VOISIN, 'MG');
+    const fiche = repository.addCustomer({ tenantId: TENANT, phone: null });
+
+    const modifiee = await chez(TENANT, () =>
+      service.update(fiche.id, { phone: '06 12 34 56 78' }),
+    );
+
+    // `+261…` ici serait une lecture sortie de la portée — le même défaut
+    // qu'une fuite inter-tenant, sur un champ qui n'en a pas l'air.
+    expect(modifiee.phone).toBe('+33612345678');
+  });
+
+  it('refuse un numéro invalide en 400 nommant le champ, sans rien écrire', async () => {
+    const { service, repository } = build();
+    repository.tenantCountryCodes.set(TENANT, 'FR');
+    const fiche = repository.addCustomer({ tenantId: TENANT, phone: null });
+
+    // Une saisie choisie pour n'être le fragment d'aucun exemple du message :
+    // sans quoi l'assertion de non-recopie ci-dessous serait vraie par accident.
+    const erreur = await chez(TENANT, () =>
+      service.update(fiche.id, { phone: '07 77 77' }).catch((caught: unknown) => caught),
+    );
+
+    expect(erreur).toBeInstanceOf(BadRequestException);
+    const reponse = (erreur as BadRequestException).getResponse() as { message: unknown };
+    expect(reponse.message).toEqual([expect.stringMatching(/^phone : /)]);
+    expect(repository.customers[0]?.phone).toBeNull();
+
+    // Cinquième critère de #56 : le corps d'erreur ne recopie pas la saisie.
+    // Un message de validation finit dans les journaux du front, où un numéro
+    // de téléphone n'a rien à faire.
+    expect(JSON.stringify(reponse)).not.toContain('07 77 77');
+  });
+
+  it('refuse un national quand l’établissement n’a pas de pays', async () => {
+    const { service, repository } = build();
+    const fiche = repository.addCustomer({ tenantId: TENANT, phone: null });
+
+    const erreur = await chez(TENANT, () =>
+      service.update(fiche.id, { phone: '06 12 34 56 78' }).catch((caught: unknown) => caught),
+    );
+
+    expect(erreur).toBeInstanceOf(BadRequestException);
+  });
+
+  it('efface toujours sur `null`, et ne lit alors aucun pays', async () => {
+    const { service, repository } = build();
+    const fiche = repository.addCustomer({ tenantId: TENANT, phone: '+261341234567' });
+
+    const modifiee = await chez(TENANT, () => service.update(fiche.id, { phone: null }));
+
+    expect(modifiee.phone).toBeNull();
   });
 });
 

@@ -13,6 +13,12 @@ import { CrmRepository, type CustomerPatch } from './crm.repository';
 // un import de repository voisin — ce qu'api-module §3 interdit —, c'est le
 // même geste que l'import d'`identity/auth.decorator` par `catalog`.
 import { normalizeEmail } from '../identity/email';
+// `identity/phone` pour la raison exacte qui a fait importer `identity/email`
+// juste au-dessus : le numéro d'une fiche saisie au comptoir et celui d'une
+// inscription doivent avoir **une seule** forme canonique, sans quoi la
+// recherche par téléphone ne rapproche jamais les deux lignes et le canal SMS
+// ne compose que l'une des deux (#824).
+import { toE164OrNull } from '../identity/phone';
 import type { Customer, CustomerPage } from './crm.types';
 
 /**
@@ -146,11 +152,14 @@ export class CustomersService {
       email: normalizeEmail(input.email),
       firstName: input.firstName.trim(),
       lastName: input.lastName.trim(),
-      // `emptyToNull` et non `.trim()` : une saisie réduite à des espaces vaut
+      // `emptyToNull` **puis** E.164 : une saisie réduite à des espaces vaut
       // « pas de numéro » et « aucune note », jamais la chaîne vide. Deux
       // représentations d'une même absence finiraient par se comparer mal — et
       // la colonne, elle, est nullable précisément pour dire cette absence-là.
-      phone: emptyToNull(input.phone),
+      // Un numéro, lui, entre sous la forme que SNS sait composer (#824) — le
+      // national que la cliente dicte au comptoir est complété avec le pays de
+      // l'établissement.
+      phone: await this.toE164(input.phone),
       internalNote: emptyToNull(input.internalNote),
       // Le défaut est le refus, jamais l'acceptation : le consentement est un
       // acte positif (RGPD art. 4.11). Sa date n'est posée que si quelqu'un
@@ -193,6 +202,7 @@ export class CustomersService {
 
     const normalized = {
       ...normalizePatch(changes),
+      ...(changes.phone === undefined ? {} : { phone: await this.toE164(changes.phone) }),
       ...this.consentChange(current, changes.marketingConsent),
     };
 
@@ -340,6 +350,26 @@ export class CustomersService {
   private now(): Date {
     return new Date();
   }
+
+  /**
+   * Le numéro tel qu'il entre en base — E.164, ou `null` (#824).
+   *
+   * Le pays de l'établissement n'est lu **que** s'il y a un numéro à compléter :
+   * une fiche sans téléphone, ou un `PATCH` qui efface le numéro, ne paie pas
+   * une requête de plus. Un numéro déjà international n'a de toute façon rien à
+   * compléter, mais la lecture a lieu quand même — distinguer les deux cas
+   * demanderait de préjuger de la forme avant de l'analyser, c'est-à-dire de
+   * réécrire ici la moitié de `normalizeToE164`.
+   */
+  private async toE164(phone: string | null): Promise<string | null> {
+    const trimmed = emptyToNull(phone);
+
+    if (trimmed === null) {
+      return null;
+    }
+
+    return toE164OrNull('phone', trimmed, await this.repository.findCurrentTenantCountryCode());
+  }
 }
 
 /**
@@ -394,7 +424,9 @@ function normalizePatch(changes: CustomerPatch): CustomerPatch {
   return {
     ...(changes.firstName === undefined ? {} : { firstName: changes.firstName.trim() }),
     ...(changes.lastName === undefined ? {} : { lastName: changes.lastName.trim() }),
-    ...(changes.phone === undefined ? {} : { phone: emptyToNull(changes.phone) }),
+    // `phone` n'est **pas** ici : sa normalisation lit le pays de
+    // l'établissement, donc la base, et cette fonction est pure (#824). Elle est
+    // posée par `CustomersService.update`, juste après cet étalement.
     ...(changes.internalNote === undefined
       ? {}
       : { internalNote: emptyToNull(changes.internalNote) }),

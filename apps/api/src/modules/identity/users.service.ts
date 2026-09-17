@@ -15,6 +15,7 @@ import type {
   StaffInvitation,
   UserProfile,
 } from './identity.types';
+import { toE164OrNull } from './phone';
 import type { StaffRole, UserRole } from './roles';
 import { TokenService } from './token.service';
 
@@ -103,6 +104,11 @@ export class UsersService {
     // (`./email`) : une invitation envoyée à `Alice@Lilas.test` créerait sinon
     // une ligne prise que la connexion, qui normalise, ne retrouverait jamais.
     const email = normalizeEmail(input.email);
+    // Même règle qu'à l'inscription, et **la même fonction** : un numéro écrit
+    // « 06 12 34 56 78 » sur une invitation et « +33612345678 » sur une
+    // inscription désigne la même personne sans qu'aucune recherche par
+    // téléphone ne puisse les rapprocher (#824).
+    const phone = await this.toE164(input.phone);
 
     const existing = await this.repository.findUserByEmail(email);
     if (existing !== null) {
@@ -115,7 +121,7 @@ export class UsersService {
       passwordHash: null,
       firstName: input.firstName.trim(),
       lastName: input.lastName.trim(),
-      phone: input.phone?.trim() ?? null,
+      phone,
       // `null`, et ce n'est pas un oubli : personne n'a coché de case ici. Le
       // compte est créé **par l'établissement** pour un membre de son personnel,
       // et la base légale d'un compte professionnel n'est pas le consentement de
@@ -310,9 +316,11 @@ export class UsersService {
       throw new NotFoundError('Compte introuvable.');
     }
 
+    const changes = await this.toE164Changes(input.changes);
+
     const updated = await this.repository.updateContactDetails({
       userId: input.userId,
-      changes: input.changes,
+      changes,
     });
     if (!updated) {
       // La ligne a disparu entre la lecture et l'écriture. Même réponse que si
@@ -320,7 +328,7 @@ export class UsersService {
       throw new NotFoundError('Compte introuvable.');
     }
 
-    return { ...toProfile(current), ...input.changes };
+    return { ...toProfile(current), ...changes };
   }
 
   /**
@@ -451,9 +459,11 @@ export class UsersService {
       throw new NotFoundError('Compte introuvable.');
     }
 
+    const changes = await this.toE164Changes(input.changes);
+
     const updated = await this.repository.updateContactDetails({
       userId: input.userId,
-      changes: input.changes,
+      changes,
     });
     if (!updated) {
       // La ligne a disparu entre la lecture et l'écriture. Même réponse que si
@@ -463,7 +473,46 @@ export class UsersService {
 
     // Recomposé plutôt que relu : les champs écrits sont exactement ceux que
     // `changes` porte, et une seconde lecture ne ferait qu'ajouter un
-    // aller-retour pour retrouver ce qu'on vient d'envoyer.
-    return { ...toProfile(current), ...input.changes };
+    // aller-retour pour retrouver ce qu'on vient d'envoyer. Le numéro rendu est
+    // celui **écrit** — donc normalisé —, et non celui reçu : le front affiche
+    // ce que la base contient, comme le veut le cinquième critère de #824.
+    return { ...toProfile(current), ...changes };
+  }
+
+  /**
+   * La même charge utile, son numéro ramené à l'E.164 du pays de
+   * l'établissement (#824).
+   *
+   * Trois états à distinguer, et l'omission de la propriété est ce qui les
+   * sépare sous `exactOptionalPropertyTypes` : `phone` **absent** ne touche à
+   * rien, `null` efface, une chaîne est normalisée. Recopier `undefined` dans le
+   * `data` Prisma effacerait le numéro là où l'appelant demandait seulement de
+   * ne pas y toucher.
+   *
+   * Le pays n'est lu qu'en présence d'un numéro à compléter — un `PATCH` de
+   * prénom ne paie pas une requête de plus.
+   */
+  private async toE164Changes(changes: {
+    firstName?: string;
+    lastName?: string;
+    phone?: string | null;
+  }): Promise<{ firstName?: string; lastName?: string; phone?: string | null }> {
+    if (changes.phone === undefined) {
+      return changes;
+    }
+
+    return {
+      ...changes,
+      phone: await this.toE164(changes.phone),
+    };
+  }
+
+  /** Voir `AuthService.toE164` — même règle, même fonction, même parcimonie. */
+  private async toE164(phone: string | null | undefined): Promise<string | null> {
+    if (phone === null || phone === undefined || phone.trim() === '') {
+      return null;
+    }
+
+    return toE164OrNull('phone', phone, await this.repository.findCurrentTenantCountryCode());
   }
 }

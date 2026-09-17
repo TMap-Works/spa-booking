@@ -305,11 +305,24 @@ export class UpdateTenantDto {
   public contactEmail?: string | null;
 
   /** `null` efface le numéro publié. */
-  @ApiPropertyOptional({ type: String, nullable: true })
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    example: '+261 34 12 345 67',
+    description:
+      '`null` efface le numéro publié. Accepté au format national comme ' +
+      'international, et **enregistré en E.164** (#824) : le national est ' +
+      'complété avec le pays de `address.country` — celui de cette même requête ' +
+      's’il en pose un, celui déjà enregistré sinon. Un numéro qu’aucun plan de ' +
+      'numérotation n’attribue est refusé en 400 sur le champ.',
+  })
   @IsOptional()
   @Trim()
   @IsString()
   @MaxLength(PHONE_MAX_LENGTH)
+  // Le motif juge la **forme** d'une saisie, jamais le format d'enregistrement :
+  // il doit laisser passer le national que le service complète. Voir
+  // `identity/phone`.
   @Matches(/^[+0-9][0-9\s().-]*$/, { message: 'contactPhone : numéro de téléphone attendu' })
   public contactPhone?: string | null;
 
