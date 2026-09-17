@@ -17,6 +17,8 @@ import {
   type ValidatorConstraintInterface,
 } from 'class-validator';
 
+import { SETTLEMENT_MEANS } from '../payments.types';
+import type { SettlementMean } from '../payments.types';
 import { SALE_ITEM_KINDS } from '../pos.types';
 import type {
   Sale,
@@ -428,6 +430,21 @@ export class ListSalesQueryDto extends PageQueryDto {
   @IsOptional()
   @IsUUID('4', { message: 'appointmentId : identifiant de rendez-vous attendu' })
   public appointmentId?: string;
+
+  @ApiPropertyOptional({
+    enum: SETTLEMENT_MEANS,
+    description:
+      'Restreindre aux tickets **réglés par ce moyen** — sixième critère de ' +
+      '#834. `CARD_TERMINAL` posé sur une journée rend les tickets passés au ' +
+      'TPE du salon, dont le total se compare au relevé de fin de journée du ' +
+      'terminal. Un ticket réglé en partie en espèces et en partie au terminal ' +
+      'apparaît sous les deux : il *a* été réglé par les deux, et son `total` ' +
+      'reste celui du ticket entier — la part de chaque moyen se lit sur les ' +
+      'lignes de `GET /payments`. Seuls les encaissements aboutis comptent.',
+  })
+  @IsOptional()
+  @IsIn(SETTLEMENT_MEANS, { message: `method : une valeur parmi ${SETTLEMENT_MEANS.join(', ')}` })
+  public method?: SettlementMean;
 }
 
 /**
@@ -447,6 +464,7 @@ export function toSaleHistoryFilter(dto: ListSalesQueryDto): SaleHistoryFilter {
     ...(to === undefined ? {} : { to }),
     ...(dto.cashierUserId === undefined ? {} : { cashierUserId: dto.cashierUserId }),
     ...(dto.appointmentId === undefined ? {} : { appointmentId: dto.appointmentId }),
+    ...(dto.method === undefined ? {} : { mean: dto.method }),
     ...toPageBounds(dto),
   };
 }

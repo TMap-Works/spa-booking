@@ -4,6 +4,8 @@ import { Prisma } from '@prisma/client';
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
 import { createdAtWithin } from './history';
 import { isUniqueViolation } from './payments.repository';
+import { SETTLED_PAYMENT_STATUSES, storedSettlementOf } from './payments.types';
+import type { SettlementMean } from './payments.types';
 import type {
   Product,
   ProductDraft,
@@ -224,7 +226,56 @@ function saleWhere(filter: SaleHistoryFilter): Prisma.SaleWhereInput {
     ...(filter.cashierUserId === undefined ? {} : { cashierUserId: filter.cashierUserId }),
     ...(filter.appointmentId === undefined ? {} : { appointmentId: filter.appointmentId }),
     ...(createdAt === undefined ? {} : { createdAt }),
+    ...(filter.mean === undefined ? {} : { payments: { some: settledBy(filter.mean) } }),
   };
+}
+
+/**
+ * « Ce ticket a-t-il été réglé par ce moyen ? » — #834, sixième critère.
+ *
+ * Trois choses à dire, et la troisième est celle qu'on oublie :
+ *
+ * 1. le **moyen** est le couple (`method`, `card_channel`) : filtrer sur
+ *    `method = CARD` seul mélangerait le TPE du salon et les intentions du
+ *    tunnel public, ce qui est exactement ce que la relève de fin de journée ne
+ *    peut pas se permettre ;
+ * 2. `CARD_ONLINE` accepte le canal `STRIPE` **et le canal nul**. Ce n'est pas
+ *    une tolérance de confort : la migration de #834 ne reprend pas les lignes
+ *    existantes — un `UPDATE` sur un règlement antérieur à #817 se heurte à
+ *    `payments_sale_required_check` —, si bien qu'une carte inscrite avant ce
+ *    ticket porte un canal nul. Elle ne peut être qu'une intention Stripe, le
+ *    TPE n'existant pas alors, et l'exclure du filtre ferait disparaître du
+ *    rapprochement en ligne tout l'historique du produit ;
+ * 3. seuls les encaissements **aboutis** comptent. Une intention en vol n'a
+ *    rien pris, une carte refusée n'est pas un règlement — et un ticket qui
+ *    apparaîtrait sous « terminal » pour une tentative avortée ferait chercher
+ *    au comptoir une ligne que son relevé ne porte pas. La liste est celle de
+ *    `payments.types.ts`, la **même** que celle du reçu, et écrite une fois
+ *    pour que les deux lecteurs ne puissent pas en dire deux choses.
+ *
+ * Le prédicat porte sur la relation `payments`, donc sur le client **scopé** :
+ * la jointure ne peut pas franchir la frontière de l'établissement, et la clé
+ * composite `(tenant_id, sale_id)` l'interdit jusqu'en base (tenant-isolation §1).
+ */
+function settledBy(mean: SettlementMean): Prisma.PaymentWhereInput {
+  const stored = storedSettlementOf(mean);
+  const settled = { status: { in: [...SETTLED_PAYMENT_STATUSES] }, method: stored.method };
+
+  if (stored.cardChannel === null) {
+    // Les espèces : aucun canal, et `payments_card_channel_check` garantit
+    // qu'aucune ligne `CASH` n'en porte. Il n'y a rien à ajouter au prédicat.
+    return settled;
+  }
+
+  if (stored.cardChannel === 'TERMINAL') {
+    return { ...settled, cardChannel: 'TERMINAL' };
+  }
+
+  // `CARD_ONLINE` : `STRIPE`, **ou nul** — voir le point 2 ci-dessus. Un `OR`
+  // explicite plutôt qu'un `not: 'TERMINAL'`, dont le rendu SQL sur une colonne
+  // nullable dépend de la version de Prisma : `card_channel <> 'TERMINAL'` est
+  // nul, donc faux, pour une ligne au canal nul.
+  return { ...settled, OR: [{ cardChannel: 'STRIPE' }, { cardChannel: null }] };
 }
 
 @Injectable()
