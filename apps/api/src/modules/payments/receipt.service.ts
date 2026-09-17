@@ -132,6 +132,7 @@ function toSettlement(payment: ReceiptRow['payments'][number]): ReceiptSettlemen
     amount: money(payment.amountMinor, payment.currency),
     tendered: tendered === null ? null : money(tendered, payment.currency),
     change: tendered === null ? null : money(tendered - payment.amountMinor, payment.currency),
+    terminalReference: payment.terminalReference,
     capturedAt: payment.capturedAt,
   };
 }

@@ -168,6 +168,7 @@ export function receiptFixture(overrides: Partial<SaleReceipt> = {}): SaleReceip
         amount: { amountMinor: 5000, currency },
         tendered: { amountMinor: 6000, currency },
         change: { amountMinor: 1000, currency },
+        terminalReference: null,
         capturedAt: new Date('2026-09-17T09:29:00.000Z'),
       },
       {
@@ -175,6 +176,9 @@ export function receiptFixture(overrides: Partial<SaleReceipt> = {}): SaleReceip
         amount: { amountMinor: 4600, currency },
         tendered: null,
         change: null,
+        // La référence du ticket du TPE, telle que le caissier l'a relevée —
+        // #834. C'est ce que la ligne « Carte bancaire (TPE) — réf. … » imprime.
+        terminalReference: 'A0000123',
         capturedAt: new Date('2026-09-17T09:30:00.000Z'),
       },
     ],
@@ -271,6 +275,7 @@ export function ariaryReceiptFixture(): SaleReceipt {
         amount: { amountMinor: 24_000, currency },
         tendered: { amountMinor: 25_000, currency },
         change: { amountMinor: 1000, currency },
+        terminalReference: null,
         capturedAt: new Date('2026-09-17T09:30:00.000Z'),
       },
     ],

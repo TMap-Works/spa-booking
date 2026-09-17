@@ -5,6 +5,7 @@ import type { PaymentsRepository } from '../payments.repository';
 import type {
   CardPaymentDraft,
   PayableAppointment,
+  PaymentCardChannel,
   PaymentHistoryFilter,
   PaymentMethod,
   PaymentRecord,
@@ -69,9 +70,13 @@ interface StoredPayment {
   refundedAmountMinor: number;
   currency: string;
   method: PaymentMethod;
+  /** Le tuyau de la carte — #834. `null` sur les espèces, comme en base. */
+  cardChannel: PaymentCardChannel | null;
   status: PaymentStatus;
   providerPaymentIntentId: string | null;
   providerChargeId: string | null;
+  /** La référence du ticket du TPE — #834. Nulle partout ailleurs. */
+  terminalReference: string | null;
   capturedAt: Date | null;
   createdAt: Date;
 }
@@ -153,9 +158,11 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
     refundedAmountMinor?: number;
     currency?: string;
     method?: PaymentMethod;
+    cardChannel?: PaymentCardChannel | null;
     status?: PaymentStatus;
     providerPaymentIntentId?: string | null;
     providerChargeId?: string | null;
+    terminalReference?: string | null;
     capturedAt?: Date | null;
     createdAt?: Date;
   }): StoredPayment {
@@ -168,12 +175,22 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
       refundedAmountMinor: input.refundedAmountMinor ?? 0,
       currency: input.currency ?? 'EUR',
       method: input.method ?? 'CARD',
+      // Le couple que `payments_card_channel_check` impose : toute carte dit son
+      // tuyau, aucune espèce n'en porte. Le double le reproduit plutôt que de
+      // laisser un `null` que la base refuserait (#834).
+      cardChannel:
+        input.cardChannel !== undefined
+          ? input.cardChannel
+          : (input.method ?? 'CARD') === 'CARD'
+            ? 'STRIPE'
+            : null,
       status: input.status ?? 'PENDING',
       providerPaymentIntentId:
         input.providerPaymentIntentId === undefined
           ? `pi_${randomUUID()}`
           : input.providerPaymentIntentId,
       providerChargeId: input.providerChargeId ?? null,
+      terminalReference: input.terminalReference ?? null,
       capturedAt: input.capturedAt ?? null,
       createdAt: input.createdAt ?? new Date(),
     };
@@ -231,9 +248,13 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
       refundedAmountMinor: 0,
       currency: draft.amount.currency,
       method: 'CARD',
+      // L'intention en ligne est le seul chemin du produit où Stripe touche une
+      // carte (#834) — le comptoir passe par le TPE du salon.
+      cardChannel: 'STRIPE',
       status: 'PENDING',
       providerPaymentIntentId: draft.providerPaymentIntentId,
       providerChargeId: null,
+      terminalReference: null,
       capturedAt: null,
       createdAt: new Date(),
     };
@@ -309,6 +330,7 @@ function toRecord(row: StoredPayment): PaymentRecord {
     saleId: row.saleId,
     amount: { amountMinor: row.amountMinor, currency: row.currency },
     method: row.method,
+    cardChannel: row.cardChannel,
     status: row.status,
     providerPaymentIntentId: row.providerPaymentIntentId,
   };
@@ -319,6 +341,7 @@ function toTransaction(row: StoredPayment): PaymentTransaction {
     ...toRecord(row),
     refunded: { amountMinor: row.refundedAmountMinor, currency: row.currency },
     providerChargeId: row.providerChargeId,
+    terminalReference: row.terminalReference,
     capturedAt: row.capturedAt,
     createdAt: row.createdAt,
   };

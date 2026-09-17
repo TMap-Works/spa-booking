@@ -162,6 +162,15 @@ export class ReceiptSettlementDto {
   })
   public change?: MoneyDto;
 
+  @ApiPropertyOptional({
+    example: 'A0000123',
+    description:
+      'Le numéro du ticket du TPE, quand le caissier l’a saisi — #834. Il ' +
+      's’imprime à côté du moyen : « Carte bancaire (TPE) — réf. A0000123 ». ' +
+      'Absent partout ailleurs, et **jamais une donnée de carte**.',
+  })
+  public terminalReference?: string;
+
   @ApiProperty({ format: 'date-time', nullable: true, type: String })
   public capturedAt!: string | null;
 }
@@ -381,6 +390,9 @@ function toSettlementDto(settlement: ReceiptSettlement): ReceiptSettlementDto {
     amount: toMoneyDto(settlement.amount),
     ...(settlement.tendered === null ? {} : { tendered: toMoneyDto(settlement.tendered) }),
     ...(settlement.change === null ? {} : { change: toMoneyDto(settlement.change) }),
+    ...(settlement.terminalReference === null
+      ? {}
+      : { terminalReference: settlement.terminalReference }),
     capturedAt: settlement.capturedAt === null ? null : settlement.capturedAt.toISOString(),
   };
 }

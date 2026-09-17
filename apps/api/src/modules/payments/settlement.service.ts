@@ -11,6 +11,7 @@ import {
 } from './payments.errors';
 import { PaymentsRepository } from './payments.repository';
 import type { CounterSettlementOutcome, SaleSettlement } from './payments.types';
+import { settlementMeanOf } from './payments.types';
 import type { SaleLineRequest } from './pos.types';
 import { SalesService } from './sales.service';
 import { SettlementRepository } from './settlement.repository';
@@ -45,9 +46,14 @@ import type { SettlementRequest } from './settlement.rules';
  * celui qui tient le total du POS : on ne contrôle pas qu'un appel n'a pas eu
  * lieu, on fait qu'il n'y ait nulle part où le passer.
  *
- * Le moyen `CARD` désigne ici le **terminal du salon**, jamais Stripe
- * (arbitrage du 16/09, #834) : rien de ce que le terminal manipule ne traverse
- * notre code, et le serveur n'en conserve que l'issue (payments-stripe §4).
+ * Depuis #834 (ADR 0015), le comptoir ne sait plus produire que deux moyens —
+ * `CASH` et `CARD_TERMINAL` —, et c'est le **type** qui le tient :
+ * `CounterSettlementMean` n'a pas de valeur pour une intention en ligne, donc
+ * aucun corps de requête ne peut en demander une. La carte se règle sur le TPE
+ * de la banque du salon ; rien de ce que le terminal manipule ne traverse notre
+ * code, et le serveur n'en conserve que l'issue — le moyen, le montant,
+ * l'opérateur, l'horodatage, et le numéro du ticket du terminal s'il a été
+ * saisi (payments-stripe §4).
  *
  * ## Où se joue l'isolation
  *
@@ -152,6 +158,13 @@ export class SettlementService {
    * ticket, elle y inscrit autant d'encaissements, et le ticket est soldé quand
    * leur somme égale son total.
    *
+   * @param idempotencyKey la clé de la soumission — #834, quatrième critère.
+   * Rejouée sur le même ticket, elle rend le règlement déjà inscrit **sans rien
+   * écrire**, et le `replayed` de l'enveloppe le dit. C'est la seule protection
+   * possible ici : deux règlements de 25,00 € sur le même ticket sont deux
+   * gestes légitimes, et rien d'autre que l'appelant ne sait s'il en a voulu un
+   * ou deux.
+   *
    * @throws {NotFoundError} ticket inconnu, ou d'un autre établissement.
    * @throws {SaleAlreadySettledError} ticket déjà soldé.
    * @throws {SaleOverpaymentError} le montant demandé dépasse le reste dû.
@@ -161,8 +174,12 @@ export class SettlementService {
     saleId: string,
     operatorUserId: string,
     request: SettlementRequest,
+    idempotencyKey: string,
   ): Promise<SaleSettlement> {
-    return this.record(await this.settlements.settleSale(saleId, request), operatorUserId);
+    return this.record(
+      await this.settlements.settleSale(saleId, request, idempotencyKey),
+      operatorUserId,
+    );
   }
 
   /**
@@ -196,20 +213,30 @@ export class SettlementService {
         // payer en ligne. Écraser l'intention ferait disparaître une pièce.
         throw new PaymentAlreadySettledError('PENDING');
 
+      case 'replayed':
       case 'settled': {
         const { settlement } = outcome;
 
         this.logger.log(
-          'règlement au comptoir',
+          // Le rejeu se distingue dans le journal, et il faut qu'il s'y
+          // distingue : deux lignes « règlement au comptoir » identiques
+          // laisseraient croire, à la relève, que la caisse a encaissé deux fois
+          // (#834).
+          settlement.replayed ? 'règlement au comptoir rejoué' : 'règlement au comptoir',
           {
             paymentId: settlement.payment.id,
             saleId: settlement.saleId,
             operatorUserId,
-            method: settlement.payment.method,
+            // Le **moyen**, recomposé des deux colonnes : `CARD` seul ne dirait
+            // pas si l'argent est passé par le terminal du salon ou par une
+            // intention Stripe, et c'est précisément ce que la relève compare au
+            // relevé de fin de journée du TPE.
+            mean: settlementMeanOf(settlement.payment.method, settlement.payment.cardChannel),
             amountMinor: settlement.payment.amount.amountMinor,
             changeMinor: settlement.change.amountMinor,
             currency: settlement.payment.amount.currency,
             settled: settlement.settledAt !== null,
+            replayed: settlement.replayed,
           },
           SettlementService.name,
         );

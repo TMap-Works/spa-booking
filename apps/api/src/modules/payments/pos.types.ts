@@ -1,4 +1,4 @@
-import type { Money } from './payments.types';
+import type { Money, SettlementMean } from './payments.types';
 
 /**
  * Le vocabulaire du POS — ce que le service et le dépôt de la caisse acceptent
@@ -262,6 +262,28 @@ export interface SaleHistoryFilter {
   readonly to?: Date;
   readonly cashierUserId?: string;
   readonly appointmentId?: string;
+  /**
+   * Restreindre aux tickets **réglés par ce moyen** — #834, sixième critère.
+   *
+   * C'est ce qui rend la relève du TPE possible : `mean=CARD_TERMINAL` posé sur
+   * la journée de caisse rend les tickets passés au terminal, dont le total se
+   * compare au relevé de fin de journée que le terminal imprime.
+   *
+   * ## Ce que le filtre retient exactement
+   *
+   * Un ticket portant **au moins un** encaissement abouti par ce moyen. C'est
+   * la seule sémantique tenable en présence du règlement mixte de #817 : un
+   * ticket de 78,00 € réglé 50,00 € en espèces puis 28,00 € au terminal
+   * apparaît sous les deux moyens, parce qu'il *a* été réglé par les deux. Son
+   * `total` reste celui du ticket entier — la part passée au terminal se lit sur
+   * les lignes de `GET /payments`, qui portent un montant par encaissement.
+   *
+   * La **journée**, elle, est le couple `from`/`to` déjà présent : borne basse
+   * incluse, borne haute exclue, à offset explicite. C'est la convention qui
+   * permet de poser deux journées bout à bout sans compter le ticket de minuit
+   * deux fois, et c'est ce qui dit « par jour » ici.
+   */
+  readonly mean?: SettlementMean;
   readonly page: number;
   readonly pageSize: number;
 }

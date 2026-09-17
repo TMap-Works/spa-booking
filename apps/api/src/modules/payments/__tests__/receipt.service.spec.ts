@@ -150,6 +150,7 @@ describe('Les règlements — moyen, montant, monnaie rendue', () => {
     amountMinor: 6500,
     currency: EUR,
     tenderedAmountMinor: null,
+    terminalReference: null,
     capturedAt: new Date('2026-09-17T09:30:00.000Z'),
     refunds: [],
     ...overrides,
@@ -166,6 +167,7 @@ describe('Les règlements — moyen, montant, monnaie rendue', () => {
         amount: { amountMinor: 6500, currency: EUR },
         tendered: { amountMinor: 10_000, currency: EUR },
         change: { amountMinor: 3500, currency: EUR },
+        terminalReference: null,
         capturedAt: new Date('2026-09-17T09:30:00.000Z'),
       },
     ]);
@@ -210,6 +212,7 @@ describe('Les avoirs — sixième critère', () => {
         amountMinor: 5000,
         currency: EUR,
         tenderedAmountMinor: null,
+        terminalReference: null,
         capturedAt: null,
         refunds: [refund('b', '2026-09-17T11:00:00.000Z', 500)],
       },
@@ -218,6 +221,7 @@ describe('Les avoirs — sixième critère', () => {
         amountMinor: 1500,
         currency: EUR,
         tenderedAmountMinor: null,
+        terminalReference: null,
         capturedAt: null,
         refunds: [refund('a', '2026-09-17T10:00:00.000Z', 300)],
       },
@@ -236,6 +240,7 @@ describe('Les avoirs — sixième critère', () => {
         amountMinor: 5000,
         currency: EUR,
         tenderedAmountMinor: null,
+        terminalReference: null,
         capturedAt: null,
         refunds: [
           refund('b', '2026-09-17T10:00:00.000Z', 300),
@@ -256,6 +261,7 @@ describe('Les avoirs — sixième critère', () => {
             amountMinor: 6500,
             currency: EUR,
             tenderedAmountMinor: null,
+            terminalReference: null,
             capturedAt: null,
             refunds: [
               refund('a', '2026-09-17T10:00:00.000Z', 1000),

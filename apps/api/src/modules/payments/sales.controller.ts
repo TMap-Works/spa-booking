@@ -1,7 +1,9 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -14,6 +16,7 @@ import {
   ApiBadRequestResponse,
   ApiConflictResponse,
   ApiCreatedResponse,
+  ApiHeader,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -48,6 +51,20 @@ import { ReceiptPdfService } from './receipt-pdf/receipt-pdf.service';
 import { ReceiptService } from './receipt.service';
 import { SalesService } from './sales.service';
 import { SettlementService } from './settlement.service';
+
+/**
+ * Le nom de l'en-tête d'idempotence, écrit une fois — #834, quatrième critère.
+ *
+ * Même en-tête, mêmes bornes et même refus que la console de l'éditeur
+ * (`identity/platform`), mais les constantes sont **redéclarées ici** : un
+ * module n'atteint pas les internes d'un autre (api-module §3), et les
+ * remonter dans le tronc commun serait un mouvement hors de l'empreinte de ce
+ * ticket. La valeur des bornes est un détail de forme ; ce qui compte est
+ * qu'elles soient écrites à côté de la route qu'elles gardent.
+ */
+const IDEMPOTENCY_HEADER = 'Idempotency-Key';
+const IDEMPOTENCY_KEY_MIN_LENGTH = 8;
+const IDEMPOTENCY_KEY_MAX_LENGTH = 128;
 
 /**
  * La caisse du comptoir — CDC §1.4, « POS de base » (#60).
@@ -318,13 +335,48 @@ export class SalesController {
    * **Le montant réglé est toujours celui que le serveur a composé**, relu sous
    * verrou : le corps ne porte aucun total, seulement la part qu'on règle
    * maintenant (cinquième critère).
+   *
+   * ## La carte se règle au **TPE du salon** — #834, ADR 0015
+   *
+   * `mean` vaut `CASH` ou `CARD_TERMINAL`, et rien d'autre : le comptoir ne sait
+   * plus produire d'intention Stripe. `CARD_TERMINAL` signifie « la carte est
+   * passée sur le terminal de la banque du salon » — l'API n'appelle aucun
+   * prestataire, ne reçoit ni ne stocke de donnée de carte, et enregistre
+   * l'issue que le caissier déclare, avec l'opérateur et l'horodatage.
+   * `terminalReference` est le numéro du ticket du terminal, facultatif ; une
+   * valeur qui ressemble à un numéro de carte sort en **400**.
+   *
+   * ## L'en-tête `Idempotency-Key` est **obligatoire** — quatrième critère
+   *
+   * Cette route n'est pas rejouable par construction, et ne peut pas l'être :
+   * deux règlements de 25,00 € sur le même ticket sont deux gestes distincts,
+   * et rien du côté serveur ne distingue la double soumission du double geste.
+   * C'est l'appelant qui le sait, et la clé est la façon dont il le dit —
+   * rejouée, elle rend le règlement déjà inscrit **sans rien écrire**, et
+   * `replayed` vaut alors `true`.
+   *
+   * Une clé absente ou hors bornes est un **400**, du même
+   * `{ code: "VALIDATION_ERROR", details.violations }` qu'un champ de corps
+   * invalide : un appelant n'a pas à traiter deux formes de 400 selon que la
+   * faute est dans le corps ou dans un en-tête.
    */
   @Post(':saleId/payments')
   @HttpCode(HttpStatus.CREATED)
   @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Régler un ticket, en totalité ou en partie' })
+  @ApiHeader({
+    name: IDEMPOTENCY_HEADER,
+    required: true,
+    description:
+      'Clé choisie par l’appelant. Rejouée sur le même ticket, elle rend le ' +
+      'règlement déjà inscrit au lieu d’en inscrire un second.',
+  })
   @ApiCreatedResponse({ type: SaleSettlementDto })
-  @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
+  @ApiBadRequestResponse({
+    description:
+      'Corps ou en-tête invalide — le champ fautif est nommé. Une ' +
+      '`terminalReference` qui ressemble à un numéro de carte tombe ici.',
+  })
   @ApiNotFoundResponse({ description: 'Aucun ticket de cet établissement ne porte cet identifiant.' })
   @ApiConflictResponse({
     description: 'Ticket déjà soldé, ou intention carte encore en vol.',
@@ -335,10 +387,44 @@ export class SalesController {
   public async settle(
     @Param('saleId', new ParseUUIDPipe({ version: '4' })) saleId: string,
     @Body() body: SettleSaleDto,
+    @Headers('idempotency-key') idempotencyKey: string | undefined,
     @CurrentUser() operator: AuthenticatedUser,
   ): Promise<SaleSettlementDto> {
     return toSaleSettlementDto(
-      await this.settlements.settleSale(saleId, operator.userId, toSettlementRequest(body)),
+      await this.settlements.settleSale(
+        saleId,
+        operator.userId,
+        toSettlementRequest(body),
+        readIdempotencyKey(idempotencyKey),
+      ),
     );
   }
+}
+
+/**
+ * Lit l'en-tête d'idempotence, ou refuse la requête — #834, quatrième critère.
+ *
+ * **Obligatoire**, et ce n'est pas un excès de zèle : le règlement d'un ticket
+ * inscrit une pièce comptable à chaque appel, et une clé facultative aurait
+ * rendu la garantie du critère conditionnelle au soin de l'appelant — c'est-à-
+ * dire inexistante le jour où un réseau coupe entre la requête et sa réponse.
+ *
+ * Le refus prend la forme d'un rapport de validation — `message` en tableau —
+ * pour que `DomainExceptionFilter` le rende sous le même
+ * `{ code: "VALIDATION_ERROR", details.violations }` que n'importe quel champ de
+ * corps invalide.
+ */
+function readIdempotencyKey(raw: string | undefined): string {
+  const key = (raw ?? '').trim();
+
+  if (key.length < IDEMPOTENCY_KEY_MIN_LENGTH || key.length > IDEMPOTENCY_KEY_MAX_LENGTH) {
+    throw new BadRequestException({
+      message: [
+        `${IDEMPOTENCY_HEADER} : en-tête obligatoire, de ` +
+          `${String(IDEMPOTENCY_KEY_MIN_LENGTH)} à ${String(IDEMPOTENCY_KEY_MAX_LENGTH)} caractères`,
+      ],
+    });
+  }
+
+  return key;
 }

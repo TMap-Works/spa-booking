@@ -62,6 +62,126 @@ export interface Money {
 export const PAYMENT_METHODS = ['CARD', 'CASH'] as const;
 export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
+/**
+ * Par quel tuyau une carte est passée — `enum PaymentCardChannel` du schéma
+ * (#834, ADR 0015), même régime de témoin que ci-dessus.
+ *
+ * `STRIPE` est l'intention du tunnel public, le seul endroit du produit où
+ * Stripe touche une carte. `TERMINAL` est le **TPE autonome** du salon : celui
+ * de sa banque, non relié à l'application, dont nous n'enregistrons que l'issue.
+ */
+export const PAYMENT_CARD_CHANNELS = ['STRIPE', 'TERMINAL'] as const;
+export type PaymentCardChannel = (typeof PAYMENT_CARD_CHANNELS)[number];
+
+/**
+ * Le vocabulaire des **moyens de règlement**, tel que l'API le nomme (#834).
+ *
+ * ## Pourquoi un vocabulaire distinct de `PAYMENT_METHODS`
+ *
+ * Parce que la base porte deux faits là où l'appelant en désigne un seul. « La
+ * cliente a payé au terminal » est une phrase ; en base, c'est le couple
+ * (`method = CARD`, `card_channel = TERMINAL`). Demander à l'écran de caisse
+ * d'envoyer les deux champs l'aurait rendu capable d'en composer un troisième
+ * qui n'existe pas — une espèce avec un canal, une carte sans tuyau —, alors que
+ * `payments_card_channel_check` refuse précisément ces couples-là.
+ *
+ * Le vocabulaire nomme donc les **combinaisons légitimes**, et la conversion se
+ * fait une fois, à un seul endroit ({@link storedSettlementOf}).
+ *
+ * | Moyen | En base |
+ * |---|---|
+ * | `CASH` | `CASH`, aucun canal |
+ * | `CARD_TERMINAL` | `CARD` + `TERMINAL` — le TPE du salon |
+ * | `CARD_ONLINE` | `CARD` + `STRIPE` — l'intention du tunnel public |
+ */
+export const SETTLEMENT_MEANS = ['CASH', 'CARD_TERMINAL', 'CARD_ONLINE'] as const;
+export type SettlementMean = (typeof SETTLEMENT_MEANS)[number];
+
+/**
+ * Les moyens que le **comptoir** sait produire — deuxième critère de #834.
+ *
+ * `CARD_ONLINE` n'y est pas, et c'est le cœur du ticket : « Stripe n'est plus
+ * utilisé au comptoir » (premier critère). Une carte réglée devant le caissier
+ * passe par le TPE de la banque du salon ; l'application n'appelle aucun
+ * prestataire et n'a aucun formulaire de carte à afficher.
+ *
+ * Ce n'est pas un contrôle défensif mais la **forme du contrat** : le DTO de
+ * règlement n'accepte que ces deux valeurs, si bien qu'aucun corps de requête ne
+ * peut demander au comptoir d'ouvrir une intention.
+ *
+ * ## Pourquoi ce vocabulaire s'arrête à la frontière HTTP
+ *
+ * Le **domaine**, lui, continue de parler de `PaymentMethod` — `CASH` ou
+ * `CARD` —, et c'est délibéré : au comptoir, « carte » n'a plus qu'un sens
+ * depuis l'ADR 0015, celui du terminal du salon. La conversion se fait une fois,
+ * dans `toSettlementRequest`, et `counterSettlementOf` en tire le couple de
+ * colonnes. Porter la valeur `CARD_TERMINAL` jusqu'au dépôt aurait ajouté une
+ * seconde orthographe de la même chose à toutes les couches, pour un fait que
+ * la route porte déjà dans son nom.
+ */
+export const COUNTER_SETTLEMENT_MEANS = ['CASH', 'CARD_TERMINAL'] as const;
+export type CounterSettlementMean = (typeof COUNTER_SETTLEMENT_MEANS)[number];
+
+/** Le couple que la base porte pour un moyen donné. */
+export interface StoredSettlementMean {
+  readonly method: PaymentMethod;
+  readonly cardChannel: PaymentCardChannel | null;
+}
+
+/**
+ * Le moyen, traduit dans les deux colonnes qui le portent.
+ *
+ * Un seul endroit de conversion, dans les deux sens ({@link settlementMeanOf}) :
+ * deux traductions recopiées, ce serait deux endroits où une carte pourrait
+ * s'inscrire sans son canal, donc deux endroits où
+ * `payments_card_channel_check` refuserait l'écriture en cours de transaction.
+ */
+export function storedSettlementOf(mean: SettlementMean): StoredSettlementMean {
+  switch (mean) {
+    case 'CASH':
+      return { method: 'CASH', cardChannel: null };
+    case 'CARD_TERMINAL':
+      return { method: 'CARD', cardChannel: 'TERMINAL' };
+    case 'CARD_ONLINE':
+      return { method: 'CARD', cardChannel: 'STRIPE' };
+  }
+}
+
+/**
+ * Le couple de colonnes d'un règlement **de comptoir** — #834.
+ *
+ * Une seule règle, et c'est celle de l'ADR 0015 : au comptoir, une carte est
+ * passée au **terminal du salon**. Il n'y a pas d'autre chemin — le comptoir
+ * n'ouvre plus d'intention Stripe —, si bien que le canal se déduit du moyen
+ * sans que l'appelant ait à le dire, et sans qu'aucun corps de requête ne
+ * puisse demander le contraire.
+ *
+ * C'est ce qui permet au domaine de garder `PaymentMethod` pour vocabulaire :
+ * le fait supplémentaire n'est pas dans la demande, il est dans la **route**.
+ */
+export function counterSettlementOf(method: PaymentMethod): StoredSettlementMean {
+  return storedSettlementOf(method === 'CASH' ? 'CASH' : 'CARD_TERMINAL');
+}
+
+/**
+ * Le moyen, relu des deux colonnes.
+ *
+ * `CARD` sans canal rend `CARD_ONLINE` : c'est le cas des lignes antérieures à
+ * #834 que la migration n'aurait pas reprises, et elles ne peuvent être que des
+ * intentions Stripe — le TPE n'existait pas. Le repli est donc l'énoncé d'un
+ * fait, pas une valeur par défaut choisie au hasard.
+ */
+export function settlementMeanOf(
+  method: PaymentMethod,
+  cardChannel: PaymentCardChannel | null,
+): SettlementMean {
+  if (method === 'CASH') {
+    return 'CASH';
+  }
+
+  return cardChannel === 'TERMINAL' ? 'CARD_TERMINAL' : 'CARD_ONLINE';
+}
+
 /** Statut d'un encaissement — `enum PaymentStatus` du schéma, même régime. */
 export const PAYMENT_STATUSES = [
   'PENDING',
@@ -71,6 +191,28 @@ export const PAYMENT_STATUSES = [
   'PARTIALLY_REFUNDED',
 ] as const;
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
+
+/**
+ * Les statuts d'un encaissement qui a **réellement pris l'argent**.
+ *
+ * Un remboursement ne défait pas l'encaissement — l'argent est bien entré, et
+ * l'avoir se lit à part : `REFUNDED` et `PARTIALLY_REFUNDED` en font donc
+ * partie. Ce qui est exclu est ce qui n'a rien pris, `PENDING` et `FAILED`.
+ *
+ * ## Écrite une fois, parce que deux lecteurs doivent en dire la même chose
+ *
+ * Le reçu (`receipt.repository.ts`) et le filtre par moyen de l'historique des
+ * ventes (`pos.repository.ts`) se posent la même question — « cet encaissement
+ * a-t-il pris l'argent ? » — et leurs réponses doivent coïncider : un ticket
+ * qui apparaîtrait dans la relève d'un moyen dont le reçu n'imprime pas la
+ * ligne est un rapprochement qui ne tombe plus juste. Deux listes recopiées,
+ * c'est un jour où l'une bouge et pas l'autre.
+ */
+export const SETTLED_PAYMENT_STATUSES = [
+  'SUCCEEDED',
+  'PARTIALLY_REFUNDED',
+  'REFUNDED',
+] as const satisfies readonly PaymentStatus[];
 
 /**
  * Sort d'une **demande** de remboursement — `enum RefundStatus` du schéma (#63).
@@ -166,6 +308,14 @@ export interface PaymentRecord {
   readonly saleId: string | null;
   readonly amount: Money;
   readonly method: PaymentMethod;
+  /**
+   * Le tuyau de la carte — `null` sur un règlement en espèces (#834).
+   *
+   * Avec `method`, il forme le **moyen** : `settlementMeanOf` les recompose.
+   * C'est ce couple, et non `method` seul, qui distingue le TPE du salon de
+   * l'intention du tunnel public.
+   */
+  readonly cardChannel: PaymentCardChannel | null;
   readonly status: PaymentStatus;
   readonly providerPaymentIntentId: string | null;
 }
@@ -195,6 +345,16 @@ export interface CardPaymentDraft {
  */
 export type CounterSettlementOutcome =
   | { readonly outcome: 'settled'; readonly settlement: SaleSettlement }
+  /**
+   * La clé d'idempotence désignait un règlement déjà inscrit sur ce ticket —
+   * #834, quatrième critère. **Rien n'a été écrit**, et ce qui est rendu est le
+   * règlement de la première soumission.
+   *
+   * Un cas nominal et non une erreur : c'est ce que « la double soumission rend
+   * le même règlement » veut dire, et c'est la seule conduite qui ne fasse pas
+   * payer deux fois un réseau qui a coupé entre la requête et sa réponse.
+   */
+  | { readonly outcome: 'replayed'; readonly settlement: SaleSettlement }
   | { readonly outcome: 'already-settled'; readonly settledAt: Date | null }
   | { readonly outcome: 'overpayment'; readonly remainingAmountMinor: number }
   | { readonly outcome: 'card-intent-in-flight' }
@@ -223,6 +383,15 @@ export interface SaleSettlement {
   /** `0` dès que rien n'est à rendre — jamais un champ absent. */
   readonly change: Money;
   readonly settledAt: Date | null;
+  /**
+   * `true` lorsque ce règlement était **déjà inscrit** et que la clé
+   * d'idempotence l'a fait relire plutôt que réécrire (#834).
+   *
+   * L'écran n'a rien de différent à faire des deux cas — c'est tout l'intérêt —
+   * mais le comptoir a le droit de savoir qu'il n'a pas encaissé deux fois, et
+   * le journal structuré a le droit de le distinguer d'un geste réel.
+   */
+  readonly replayed: boolean;
 }
 
 /**
@@ -289,9 +458,20 @@ export interface PaymentTransaction {
   readonly amount: Money;
   readonly refunded: Money;
   readonly method: PaymentMethod;
+  readonly cardChannel: PaymentCardChannel | null;
   readonly status: PaymentStatus;
   readonly providerPaymentIntentId: string | null;
   readonly providerChargeId: string | null;
+  /**
+   * La référence du ticket du TPE, quand le caissier l'a saisie — #834.
+   *
+   * Elle est au rapprochement du terminal ce que `providerChargeId` est au
+   * relevé Stripe : la ligne par laquelle on retrouve l'opération chez celui qui
+   * l'a exécutée. `null` partout ailleurs, et jamais une donnée de carte — la
+   * frontière HTTP refuse en 400 ce qui ressemble à un numéro
+   * (`terminal-reference.ts`).
+   */
+  readonly terminalReference: string | null;
   readonly capturedAt: Date | null;
   readonly createdAt: Date;
 }

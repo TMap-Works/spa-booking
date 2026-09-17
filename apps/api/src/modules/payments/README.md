@@ -16,8 +16,11 @@ notre périmètre PCI en SAQ A.
 | #63 | Le remboursement total et partiel : l’ordre au prestataire, le cumul borné côté serveur, la trace « qui, quand, pourquoi » |
 | #410 | La consolidation de #57 et #58 : une seule `StripeConfig`, un seul fichier d’erreurs, un critère de découpage des dépôts, et la marque d’idempotence conditionnée à l’effet |
 | #816 | Les prix du catalogue sont **TTC** : la TVA s’en extrait au lieu de s’y ajouter, la ligne de taxe devient une ventilation, et un script reprend les tickets composés avant |
+| #834 | La **carte au comptoir par TPE** — canal de carte, référence de terminal, clé d’idempotence exigée, filtre par moyen sur l’historique des ventes ([ADR 0015](../../../../../docs/adr/0015-carte-au-comptoir-par-tpe.md)) |
 
-À venir : le montage d’Elements côté tunnel (#59).
+À venir : le montage d’Elements côté tunnel (#59), et la reprise de l’écran
+d’encaissement du back-office, qui appelle encore l’intention Stripe (#834,
+issue de suivi).
 
 ## Ce qui décide du découpage interne (#410)
 
@@ -66,8 +69,13 @@ seulement écrit.
 | `GET` | `/api/v1/sales` | `STAFF` |
 | `GET` | `/api/v1/sales/:id` | `STAFF` |
 | `POST` | `/api/v1/payments/cash` | `STAFF` |
+| `POST` | `/api/v1/sales/:saleId/payments` | `STAFF` |
 | `GET` | `/api/v1/payments` | `MANAGER` |
 | `POST` | `/api/v1/payments/:paymentId/refunds` | `MANAGER` |
+
+Les rangs de ce tableau sont ceux d'origine ; depuis #812, **toutes** les routes
+du comptoir exigent la permission `checkout:collect`, portée par `manager` et
+`admin` (ADR 0013).
 
 Les routes du comptoir sont gardées et **n'ont aucune surface publique** : un
 ticket de caisse est une pièce comptable du salon, son rayon une donnée
@@ -75,6 +83,28 @@ commerciale. La ligne entre `STAFF` et `MANAGER` passe où le CDC la met —
 composer une addition, lire le rayon, encaisser un billet et faire la relève de
 caisse sont des gestes de comptoir ; fixer un prix de vente et rapprocher les
 relevés du prestataire sont des décisions de gestion.
+
+### `POST /public/:tenantSlug/payments/intents` **ne sert pas le comptoir** (#834)
+
+C'est la cinquième exigence de #834, et elle mérite d'être écrite ici plutôt que
+déduite. Cette route ouvre une intention Stripe pour le **paiement en ligne** du
+tunnel public, et pour lui seul. Elle reste en place, servie et gardée comme
+avant.
+
+Ce qu'elle ne fait plus : servir l'encaissement au comptoir. La carte se règle
+sur le **TPE de la banque du salon**, par `POST /v1/sales/{saleId}/payments` avec
+`method=CARD_TERMINAL` — l'API n'appelle alors aucun prestataire et n'affiche
+aucun formulaire de carte. Le raisonnement complet est dans
+l'[ADR 0015](../../../../../docs/adr/0015-carte-au-comptoir-par-tpe.md) ; en deux
+phrases : la saisie d'une carte sur l'écran du back-office est ce que SAQ A
+interdit (payments-stripe §4), et Stripe n'ouvre pas de compte marchand pour un
+établissement installé à Madagascar — c'est-à-dire pour l'un des deux salons du
+jeu d'essai.
+
+**Dette connue, hors de l'empreinte de #834** : l'écran d'encaissement du
+back-office appelle encore cette route et monte encore le formulaire de carte de
+Stripe. L'API ne sert plus ce chemin ; la page existe encore. Voir « Dette
+connue » plus bas.
 
 La route du tunnel n'est pas gardée, et c'est délibéré : on réserve sans compte (#37),
 donc on paie sans compte. Ce qui autorise l'appel est la **connaissance de
@@ -417,6 +447,8 @@ créer une intention.
 | `__tests__/sales-history.service.spec.ts` | L'historique des ventes : opérateur, horodatage, montants — et l'absence des lignes |
 | `__tests__/history-filters.spec.ts` | La frontière HTTP des deux historiques : bornes à offset explicite, critères absents, plafonds de pagination |
 | `__tests__/refunds.service.spec.ts` | Les trois critères de #63 : total et partiel, le cumul borné dans les deux sens, la trace — et que le service n'écrit pas le statut de l'encaissement |
+| `__tests__/terminal-reference.spec.ts` | Les deux barrières de la référence du TPE, numéro de test par numéro de test, et le 400 qu'elles rendent au `ValidationPipe` (#834) |
+| `__tests__/counter-terminal.spec.ts` | Le septième critère de #834 : aucun chemin vers `stripe/` depuis le règlement, espèces puis TPE qui soldent, le 422 du dépassement, le 404 du voisin, et le rejeu de la clé d'idempotence |
 
 Les trois routes de #62 et celle de #63 n'ont pas de suite d'**intégration** ni
 d'**isolation**
@@ -725,6 +757,95 @@ Elle n'annule pas non plus une intention `FAILED` — le cas que #62 renvoyait
 ici. Une annulation n'est pas un remboursement : rien n'a été capturé, et
 `PaymentNotRefundableError` le dit en 422. Une issue de suivi porte ce geste.
 
+## La carte au comptoir par TPE (#834)
+
+`POST /api/v1/sales/{saleId}/payments` règle un ticket. Depuis #834, son champ
+`method` vaut `CASH` ou **`CARD_TERMINAL`**, et rien d'autre : le comptoir ne
+sait plus produire d'intention Stripe, et ce n'est pas un contrôle mais un
+**type** — il n'y a pas de valeur à refuser.
+
+### Le canal, et non un moyen de plus
+
+| En base | Ce que cela désigne |
+|---|---|
+| `method = CASH`, `card_channel = NULL` | un billet ; la caisse fait foi |
+| `method = CARD`, `card_channel = TERMINAL` | le TPE autonome du salon |
+| `method = CARD`, `card_channel = STRIPE` | l'intention du tunnel public |
+
+`PaymentMethod` **n'a pas gagné de troisième valeur**, et l'ADR 0015 dit
+pourquoi : `method` est lu par la ventilation du revenu, le libellé du reçu et le
+filtre de rapprochement, et y ajouter `CARD_TERMINAL` aurait changé en silence le
+sens de leur filtre `CARD`. Deux contraintes bornent le couple :
+`payments_card_channel_check` — un canal n'existe que sur une carte — et
+`payments_terminal_reference_check`.
+
+**Une quatrième ligne est représentable, et il faut la connaître** :
+`method = CARD`, `card_channel = NULL`. Ce sont les cartes inscrites **avant**
+#834. La migration ne les reprend pas, et c'est une décision, pas un oubli : un
+`UPDATE` sur un règlement antérieur à #817 se heurte à
+`payments_sale_required_check`, posé `NOT VALID`, qui s'applique à toute mise à
+jour d'une ligne ancienne — la migration échouait sur toute base où
+`pos.sale-backfill.ts` n'a pas tourné, `spa_dev` comprise, et la CI ne le voyait
+pas (base neuve, donc vide). Une telle ligne ne peut être qu'une intention
+Stripe, le TPE n'existant pas alors : `settlementMeanOf` la replie sur
+`CARD_ONLINE`, et le filtre de `GET /sales?method=CARD_ONLINE` l'accepte
+explicitement.
+
+### Ce que l'API enregistre, et ce qu'elle ne fait pas
+
+| Elle enregistre | Elle ne fait pas |
+|---|---|
+| le moyen, le montant, l'opérateur du jeton, l'horodatage | aucun appel à un prestataire |
+| `terminal_reference` — le numéro du ticket du TPE, facultatif | aucune réception de donnée de carte |
+| `SUCCEEDED` dès l'écriture, comme les espèces | aucune attente de webhook |
+
+Un règlement au terminal **ne se rembourse pas** par
+`POST /payments/:id/refunds` : il ne porte aucune référence d'intention, et la
+route le refuse en 422. Rendre l'argent d'un passage au TPE est un geste qui se
+fait sur le terminal.
+
+### La référence du terminal n'est pas un champ de carte
+
+Deux barrières, et il en faut deux (`terminal-reference.ts`) :
+
+| Barrière | Ce qu'elle arrête |
+|---|---|
+| 32 caractères alphanumériques au plus | un PAN espacé ou tirets compris, un nom de porteur |
+| la clé de Luhn sur 13 à 19 chiffres | un PAN collé, la saisie la plus probable |
+
+Le refus est un **400 du `ValidationPipe`** : avant le contrôleur, avant le
+service, avant toute écriture, et avant tout journal. Ce contrôle ne prétend pas
+rendre impossible d'écrire un PAN — un numéro mal recopié échoue à Luhn — et
+la garantie structurelle reste celle du module : il n'existe aucun champ de carte.
+
+### `Idempotency-Key` est obligatoire
+
+Cette route inscrit une pièce comptable à chaque appel et n'est pas rejouable :
+deux règlements de 25,00 € sur le même ticket sont deux gestes distincts. Rien
+côté serveur ne distingue donc la double soumission du double geste, et la clé
+est la façon dont l'appelant le dit. Rejouée, elle rend le règlement déjà
+inscrit **sans rien écrire**, et `replayed` vaut `true`.
+
+L'unique est **par ticket** (`@@unique([tenantId, saleId, idempotencyKey])`) : la
+même clé sur deux ventes décrit deux opérations. La relecture vit dans la
+transaction, sous le verrou de la ligne `sales`, et **avant tout refus** — une
+double soumission ne doit pas recevoir le 409 « déjà soldé » que son propre
+premier appel a provoqué.
+
+### La relève du terminal
+
+`GET /api/v1/sales?method=CARD_TERMINAL&from=…&to=…` rend les tickets réglés au
+terminal sur la journée — `from` inclus, `to` exclu, à offset explicite, comme
+les deux autres historiques.
+
+Ce que le filtre retient exactement : un ticket portant **au moins un**
+encaissement abouti par ce moyen. C'est la seule sémantique tenable avec le
+règlement mixte de #817 — un ticket réglé moitié espèces, moitié terminal
+apparaît sous les deux, parce qu'il *a* été réglé par les deux. Son `total` reste
+celui du ticket entier ; **la part passée au terminal se lit sur les lignes de
+`GET /payments`**, qui portent un montant par encaissement. La gestion de caisse
+— clôture, écarts — reste hors MVP (CDC §1.3).
+
 ## Dette connue
 
 - **Une écriture de #816 est restée hors de l'empreinte `api/payments`**, et elle
@@ -768,6 +889,22 @@ ici. Une annulation n'est pas un remboursement : rien n'a été capturé, et
   fiscal du salon relève du back-office, pas du POS : la colonne existe pour que
   le total soit calculable côté serveur, sa saisie viendra avec l'écran qui la
   porte. À `0` — la valeur par défaut — aucun ticket ne porte de ligne de taxe.
+- **Le front du comptoir n'est pas reprisé.** `apps/web/lib/api-client.ts`
+  appelle encore `POST /public/{slug}/payments/intents` et
+  `apps/web/app/(admin)/[tenantSlug]/admin/encaissement/` monte encore le
+  formulaire de carte de Stripe. L'API ne sert plus ce chemin depuis #834, mais
+  **la page existe encore** : tant qu'elle n'est pas reprise, la faute relevée le
+  16/09 reste à l'écran. `apps/web/` est hors de l'empreinte de fichiers de
+  #834 ; une issue de suivi porte la reprise — choix « Espèces / Carte (TPE) »,
+  champ de référence facultatif, envoi d'un `Idempotency-Key`.
+- **Les deux suites de concurrence du règlement n'exercent pas la clé
+  d'idempotence.** `apps/api/test/pos-settlement.concurrency-spec.ts` et
+  `pos-receipt.concurrency-spec.ts` appellent `SettlementRepository.settleSale`
+  sans clé — le paramètre est resté optionnel au dépôt pour cela. La relecture
+  sous verrou n'est donc éprouvée **que séquentiellement**
+  (`__tests__/counter-terminal.spec.ts`) ; la course de deux soumissions portant
+  la même clé attend une suite contre un vrai PostgreSQL. `apps/api/test/` est
+  hors de l'empreinte de #834, et une issue de suivi la porte.
 - **`payments` n'a pas de colonne d'opérateur.** payments-stripe §4 demande
   d'enregistrer une vente en espèces « avec `method: 'cash'`, l'opérateur,
   l'horodatage et le montant ». Trois des quatre sont écrits en base ; l'opérateur

@@ -50,11 +50,30 @@ export interface SaleBalance {
  * dirait laquelle l'emporte.
  */
 export interface SettlementRequest {
+  /**
+   * Le moyen, tel que le domaine le connaît : un billet ou une carte.
+   *
+   * `CARD` désigne ici le **terminal du salon**, et il n'y a pas d'ambiguïté à
+   * lever : depuis l'ADR 0015, le comptoir n'a plus d'autre chemin pour une
+   * carte — il n'ouvre plus d'intention Stripe. Le canal en est déduit par
+   * `counterSettlementOf`, et la frontière HTTP nomme la valeur
+   * `CARD_TERMINAL` pour que le contrat, lui, ne laisse rien à déduire.
+   */
   readonly method: PaymentMethod;
   /** La part réglée maintenant. Omise, c'est **tout le reste dû**. */
   readonly amountMinor?: number;
   /** Ce que la cliente a tendu — espèces seulement. */
   readonly tenderedAmountMinor?: number;
+  /**
+   * Le numéro du ticket du TPE, quand le caissier l'a saisi — TPE seulement.
+   *
+   * Il n'entre dans aucun calcul : cette fonction ne le lit pas, et il est
+   * recopié tel quel par le dépôt. Il vit ici parce qu'il fait partie du
+   * **geste demandé** — « j'ai passé la carte au terminal, voici la référence de
+   * l'opération » —, et que le séparer en aurait fait un second paramètre à
+   * faire traverser les mêmes quatre couches.
+   */
+  readonly terminalReference?: string;
 }
 
 /** Ce que la transaction doit écrire, ou la raison de ne rien écrire. */

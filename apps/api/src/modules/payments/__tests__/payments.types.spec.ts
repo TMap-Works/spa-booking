@@ -1,14 +1,21 @@
 import {
+  PaymentCardChannel as PrismaPaymentCardChannel,
   PaymentMethod as PrismaPaymentMethod,
   PaymentStatus as PrismaPaymentStatus,
   RefundStatus as PrismaRefundStatus,
 } from '@prisma/client';
 
 import {
+  COUNTER_SETTLEMENT_MEANS,
+  PAYMENT_CARD_CHANNELS,
   PAYMENT_METHODS,
   PAYMENT_STATUSES,
   REFUND_STATUSES,
   RESERVING_REFUND_STATUSES,
+  SETTLEMENT_MEANS,
+  counterSettlementOf,
+  settlementMeanOf,
+  storedSettlementOf,
 } from '../payments.types';
 
 /**
@@ -36,6 +43,21 @@ describe('payments — vocabulaire et colonnes', () => {
 
   it('reprend `enum PaymentMethod` du schéma, dans l’ordre de déclaration', () => {
     expect([...PAYMENT_METHODS]).toEqual(Object.values(PrismaPaymentMethod));
+  });
+
+  /**
+   * **#834 n'a pas touché à `PaymentMethod`**, et cette assertion est ce qui le
+   * dit : l'ADR 0015 a écarté la valeur `CARD_TERMINAL` au profit d'un canal,
+   * précisément pour ne pas changer en silence le sens du filtre `CARD` chez les
+   * consommateurs qui le lisent — la ventilation du revenu, le libellé du reçu,
+   * le rapprochement du back-office.
+   */
+  it('n’a pas gagné de troisième moyen avec le TPE — ADR 0015', () => {
+    expect([...PAYMENT_METHODS]).toEqual(['CARD', 'CASH']);
+  });
+
+  it('reprend `enum PaymentCardChannel` du schéma, dans l’ordre de déclaration', () => {
+    expect([...PAYMENT_CARD_CHANNELS]).toEqual(Object.values(PrismaPaymentCardChannel));
   });
 
   it('reprend `enum PaymentStatus` du schéma, dans l’ordre de déclaration', () => {
@@ -68,5 +90,66 @@ describe('payments — vocabulaire et colonnes', () => {
     for (const status of RESERVING_REFUND_STATUSES) {
       expect(REFUND_STATUSES).toContain(status);
     }
+  });
+});
+
+/**
+ * Le **moyen** — ce que la cliente a présenté *et* par quel tuyau — et sa
+ * traduction dans les deux colonnes qui le portent (#834, ADR 0015).
+ *
+ * La propriété qui compte ici n'est pas l'exemple mais l'**aller-retour** : tout
+ * moyen se traduit en un couple que `payments_card_channel_check` accepte, et
+ * tout couple se relit comme le moyen dont il vient. Une conversion qui perdrait
+ * le canal en route ferait passer un règlement au terminal pour une intention
+ * Stripe — c'est-à-dire ferait chercher au comptoir, sur son relevé de fin de
+ * journée, une ligne qui ne s'y trouve pas.
+ */
+describe('payments — le moyen et ses deux colonnes', () => {
+  it('nomme les trois combinaisons légitimes, et elles seules', () => {
+    expect(SETTLEMENT_MEANS).toEqual(['CASH', 'CARD_TERMINAL', 'CARD_ONLINE']);
+  });
+
+  it('n’en laisse que deux au comptoir — Stripe n’y est plus, premier critère', () => {
+    expect(COUNTER_SETTLEMENT_MEANS).toEqual(['CASH', 'CARD_TERMINAL']);
+    expect(COUNTER_SETTLEMENT_MEANS).not.toContain('CARD_ONLINE');
+  });
+
+  it.each([
+    ['CASH', { method: 'CASH', cardChannel: null }],
+    ['CARD_TERMINAL', { method: 'CARD', cardChannel: 'TERMINAL' }],
+    ['CARD_ONLINE', { method: 'CARD', cardChannel: 'STRIPE' }],
+  ] as const)('traduit « %s » dans les colonnes du schéma', (mean, expected) => {
+    expect(storedSettlementOf(mean)).toEqual(expected);
+  });
+
+  it('relit chaque couple comme le moyen dont il vient', () => {
+    for (const mean of SETTLEMENT_MEANS) {
+      const stored = storedSettlementOf(mean);
+
+      expect(settlementMeanOf(stored.method, stored.cardChannel)).toBe(mean);
+    }
+  });
+
+  it('satisfait `payments_card_channel_check` pour les trois moyens', () => {
+    // « Toute carte dit son tuyau, aucune espèce n'en porte » — l'équivalence
+    // que la base impose. Une conversion qui la violerait ne se verrait qu'au
+    // milieu d'une transaction de règlement, en production.
+    for (const mean of SETTLEMENT_MEANS) {
+      const stored = storedSettlementOf(mean);
+
+      expect({ mean, coherent: (stored.method === 'CARD') === (stored.cardChannel !== null) }).toEqual({
+        mean,
+        coherent: true,
+      });
+    }
+  });
+
+  it('range toute carte de comptoir sur le terminal du salon — ADR 0015', () => {
+    // C'est l'énoncé du premier critère de #834, rendu mécanique : le comptoir
+    // n'a pas d'autre chemin pour une carte, donc le canal se déduit du moyen
+    // sans qu'aucun corps de requête n'ait à le dire — ni à pouvoir dire le
+    // contraire.
+    expect(counterSettlementOf('CARD')).toEqual({ method: 'CARD', cardChannel: 'TERMINAL' });
+    expect(counterSettlementOf('CASH')).toEqual({ method: 'CASH', cardChannel: null });
   });
 });
