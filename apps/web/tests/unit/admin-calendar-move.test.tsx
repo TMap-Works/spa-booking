@@ -68,6 +68,7 @@ const CATALOGUE: readonly Service[] = [
     occupiedMinutes: 75,
     price: { amountMinor: 3500, currency: 'EUR' },
     isActive: true,
+    assignedStaffCount: 1,
   },
 ];
 
