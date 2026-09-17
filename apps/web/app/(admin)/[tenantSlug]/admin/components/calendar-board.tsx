@@ -1250,6 +1250,7 @@ function CalendarCellView({
               lu au clavier verrait un rendez-vous et des créneaux libres au
               même endroit sans comprendre lequel des deux fait foi. */}
           <span className="spa-visually-hidden">
+            {cell.detailLabel === null ? null : `${cell.detailLabel} `}
             Statut : {STATUS_LABELS[settled.status]}. Ce créneau est de nouveau réservable.
           </span>
 
@@ -1262,6 +1263,13 @@ function CalendarCellView({
           <button
             className="spa-admin-calendar__ghost-open"
             type="button"
+            // Même infobulle que le bloc vivant (#762), mais portée par ce
+            // contrôle-ci et non par le repère : le repère est
+            // `pointer-events: none` sur toute sa surface — c'est ce qui rend
+            // les créneaux libres de dessous cliquables (#753) —, il ne connaît
+            // donc pas le survol et un `title` y resterait lettre morte. Le
+            // coin « ⋯ » est le seul point du repère qui reçoit la souris.
+            {...(cell.tooltip === null ? {} : { title: cell.tooltip })}
             onClick={() => {
               onOpen({ kind: 'edit', appointment: settled });
             }}
@@ -1363,6 +1371,11 @@ function CalendarCellView({
           .join(' ')}
         draggable={movable}
         type="button"
+        // L'infobulle de la vue semaine — le rendez-vous entier sous le curseur,
+        // là où le bloc n'a la place que d'une heure et d'un nom abrégé (#762).
+        // `null` en vue jour, où tout est déjà écrit : `title` y doublerait
+        // l'annonce des lecteurs d'écran, qui le rendent en description.
+        {...(cell.tooltip === null ? {} : { title: cell.tooltip })}
         onClick={() => {
           onOpen({ kind: 'edit', appointment });
         }}
@@ -1385,8 +1398,13 @@ function CalendarCellView({
           <span className="spa-admin-calendar__event-service">{cell.serviceLabel}</span>
         )}
         {/* Le statut est porté par le liseré **et** par ce nom accessible :
-            jamais par la seule couleur de fond (WCAG 1.4.1). */}
-        <span className="spa-visually-hidden">Statut : {STATUS_LABELS[status]}.</span>
+            jamais par la seule couleur de fond (WCAG 1.4.1). La prestation et le
+            praticien l'y rejoignent en vue semaine, où rien ne les écrit — JSX
+            mange le saut de ligne, d'où l'espace posé ici à la main (#762). */}
+        <span className="spa-visually-hidden">
+          {cell.detailLabel === null ? null : `${cell.detailLabel} `}
+          Statut : {STATUS_LABELS[status]}.
+        </span>
       </button>
 
       {/* La poignée est un frère du bloc, jamais son enfant : un bouton dans un

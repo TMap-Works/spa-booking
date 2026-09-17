@@ -191,6 +191,8 @@ export interface CalendarEventCell {
   readonly timeLabel: string;
   readonly clientLabel: string;
   readonly serviceLabel: string | null;
+  readonly detailLabel: string | null;
+  readonly tooltip: string | null;
 }
 
 /**
@@ -234,6 +236,8 @@ export interface CalendarGhostCell {
   readonly timeLabel: string;
   readonly clientLabel: string;
   readonly serviceLabel: string | null;
+  readonly detailLabel: string | null;
+  readonly tooltip: string | null;
 }
 
 export interface CalendarFreeCell {
@@ -731,28 +735,74 @@ function clampSpan(span: SlotSpan, context: ColumnContext): { start: number; end
 }
 
 /**
- * Les trois libellés d'un rendez-vous, vivant ou soldé.
+ * Les libellés d'un rendez-vous, vivant ou soldé.
  *
  * L'heure affichée est celle du **rendez-vous**, pas celle de la rangée où il
  * est posé : le bloc se cale sur la grille, son libellé non (#538). La vue
  * semaine masque la prestation en CSS faute de place — ne pas l'émettre du tout
  * épargne autant de nœuds qu'il y a de rendez-vous.
+ *
+ * ## Ce que la vue semaine n'a pas la place de montrer (#762)
+ *
+ * Le CDC §2.4 définit le rendez-vous par « statut, créneau, praticien » : les
+ * trois sont ce qu'un agenda doit permettre de lire. La vue jour les porte tous
+ * — l'heure de début et de fin, la prestation nommée, le praticien par sa
+ * colonne. La vue semaine n'en porte plus que deux : sept colonnes dans la
+ * largeur d'un écran laissent la place d'une heure et d'un nom abrégé, les
+ * colonnes y sont des **journées**, et le praticien n'est donc écrit nulle part.
+ * Deux soins à la même heure chez deux praticiennes différentes y devenaient
+ * indiscernables — à l'œil comme au lecteur d'écran, le nom accessible se
+ * réduisant à « 09:10 Alice M. Statut : à confirmer. ».
+ *
+ * La place manque, l'information non : deux libellés de plus la portent sans
+ * rien ajouter au dessin.
+ *
+ * - `detailLabel` entre dans le **nom accessible** du bloc, à côté du statut et
+ *   dans la même construction que lui (« Prestation : … Praticien : … ») ;
+ * - `tooltip` est l'**infobulle** du survol — le rendez-vous entier, heure de
+ *   fin et nom de famille compris, pour l'œil qui n'ouvre pas la fiche.
+ *
+ * Les deux disent la même chose à deux publics : `title` n'est pas atteignable
+ * au clavier et ne peut donc pas être le seul porteur, et un nom accessible ne
+ * se survole pas. Les deux valent `null` en vue jour, où l'écran porte déjà
+ * l'information : un second exemplaire n'y ferait que doubler l'annonce.
  */
 function labelsOf(
   appointment: Appointment,
   span: SlotSpan,
   view: CalendarView,
-): { timeLabel: string; clientLabel: string; serviceLabel: string | null } {
+): {
+  timeLabel: string;
+  clientLabel: string;
+  serviceLabel: string | null;
+  detailLabel: string | null;
+  tooltip: string | null;
+} {
+  const timeRange = `${clockOf(span.startMinutes)} – ${clockOf(span.endMinutes)}`;
+  const fullClientName = `${appointment.client.firstName} ${appointment.client.lastName}`;
+
+  if (view !== 'semaine') {
+    return {
+      timeLabel: timeRange,
+      clientLabel: fullClientName,
+      serviceLabel: appointment.service.name,
+      detailLabel: null,
+      tooltip: null,
+    };
+  }
+
+  const service = appointment.service.name;
+  const staffName = appointment.staff.displayName;
+
   return {
-    timeLabel:
-      view === 'semaine'
-        ? clockOf(span.startMinutes)
-        : `${clockOf(span.startMinutes)} – ${clockOf(span.endMinutes)}`,
-    clientLabel:
-      view === 'semaine'
-        ? shortClientName(appointment.client)
-        : `${appointment.client.firstName} ${appointment.client.lastName}`,
-    serviceLabel: view === 'semaine' ? null : appointment.service.name,
+    timeLabel: clockOf(span.startMinutes),
+    clientLabel: shortClientName(appointment.client),
+    serviceLabel: null,
+    // « Prestation » et « Praticien » sont les mots du tiroir de rendez-vous et
+    // du comptoir d'encaissement : le planning nomme les mêmes objets de la même
+    // façon, ce que `ds:coherence` demande.
+    detailLabel: `Prestation : ${service}. Praticien : ${staffName}.`,
+    tooltip: `${timeRange} · ${fullClientName} · ${service} · ${staffName}`,
   };
 }
 

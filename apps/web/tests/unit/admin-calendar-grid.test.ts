@@ -549,6 +549,10 @@ describe('virtualisation — troisième critère', () => {
       timeLabel: '08:00 – 11:00',
       clientLabel: 'Ravaka Mamy',
       serviceLabel: 'Rituel corps',
+      // Une cellule de vue jour : l'écran y porte déjà la prestation et le
+      // praticien, et les deux libellés de #762 n'y ont rien à dire.
+      detailLabel: null,
+      tooltip: null,
     };
 
     expect(cellsInWindow([longSoin], { first: 3, last: 10 })).toHaveLength(1);
@@ -617,6 +621,111 @@ describe('un rendez-vous hors grille dit son heure, pas celle de sa rangée (#53
     const event = eventsOf(board.columns[2]?.cells ?? [])[0];
 
     expect(event?.timeLabel).toBe('09:15');
+  });
+});
+
+/**
+ * La vue semaine nomme le praticien et la prestation — #762.
+ *
+ * CDC §2.4 : le rendez-vous, c'est « statut, créneau, praticien ». La vue jour
+ * porte les trois — l'heure, la prestation, et le praticien par sa colonne. La
+ * colonne de la vue semaine étant une **journée**, le praticien n'y est écrit
+ * nulle part et la prestation n'y tient pas dans la largeur : deux soins à la
+ * même heure chez deux praticiennes y étaient indiscernables. La place manque,
+ * l'information non — elle passe par le nom accessible et par l'infobulle.
+ */
+describe('la vue semaine dit le praticien et la prestation qu’elle ne montre pas (#762)', () => {
+  const HASINA = { id: 'staff-hasina', displayName: 'Hasina' };
+  const TIANA = { id: 'staff-tiana', displayName: 'Tiana' };
+
+  /** 09:00 – 10:00 au salon, le mercredi 26 août 2026 — colonne d'indice 2. */
+  function mercredi(overrides: {
+    readonly staff: { readonly id: string; readonly displayName: string };
+    readonly client?: { readonly firstName: string; readonly lastName: string };
+    readonly serviceName?: string;
+    readonly status?: AppointmentStatus;
+  }): Appointment {
+    return appointment({
+      startsAt: '2026-08-26T06:00:00.000Z',
+      endsAt: '2026-08-26T07:00:00.000Z',
+      ...overrides,
+    });
+  }
+
+  function cellsOfWednesday(appointments: readonly Appointment[]): readonly CalendarCell[] {
+    const board = buildCalendarBoard({
+      view: 'semaine',
+      range: rangeOf('semaine', '2026-08-26'),
+      appointments,
+      timeZone: TIMEZONE,
+    });
+
+    return board.columns[2]?.cells ?? [];
+  }
+
+  it('porte la prestation et le praticien dans le nom accessible du bloc', () => {
+    const event = eventsOf(
+      cellsOfWednesday([mercredi({ staff: HASINA, serviceName: 'Soin du visage' })]),
+    )[0];
+
+    // Les mêmes mots que le tiroir de rendez-vous et que le comptoir
+    // d'encaissement : un même objet se nomme d'un écran à l'autre de la même
+    // façon, ce que `ds:coherence` demande.
+    expect(event?.detailLabel).toBe('Prestation : Soin du visage. Praticien : Hasina.');
+  });
+
+  it('rend dans l’infobulle ce que le bloc abrège — l’heure de fin et le nom entier', () => {
+    const event = eventsOf(
+      cellsOfWednesday([
+        mercredi({ staff: HASINA, client: { firstName: 'Rina', lastName: 'Andriamana' } }),
+      ]),
+    )[0];
+
+    // Le bloc, lui, ne montre que « 09:00 » et « Rina A. ».
+    expect(event?.timeLabel).toBe('09:00');
+    expect(event?.clientLabel).toBe('Rina A.');
+    expect(event?.tooltip).toBe('09:00 – 10:00 · Rina Andriamana · Massage suédois · Hasina');
+  });
+
+  it('distingue deux rendez-vous de même heure chez deux praticiennes', () => {
+    // Le constat de l'audit, tel qu'il se relève : même journée, même heure,
+    // deux blocs que rien ne séparait — ni à l'œil, ni au lecteur d'écran.
+    const events = eventsOf(
+      cellsOfWednesday([mercredi({ staff: HASINA }), mercredi({ staff: TIANA })]),
+    );
+
+    expect(events).toHaveLength(2);
+    expect(new Set(events.map((event) => event.detailLabel))).toEqual(
+      new Set([
+        'Prestation : Massage suédois. Praticien : Hasina.',
+        'Prestation : Massage suédois. Praticien : Tiana.',
+      ]),
+    );
+  });
+
+  it('donne les mêmes libellés au repère d’un rendez-vous soldé', () => {
+    // Un annulé ne prend plus son créneau (#753), mais il reste à l'écran pour
+    // expliquer le trou de la journée : il doit se lire comme les autres.
+    const ghost = ghostsOf(cellsOfWednesday([mercredi({ staff: TIANA, status: 'cancelled' })]))[0];
+
+    expect(ghost?.detailLabel).toBe('Prestation : Massage suédois. Praticien : Tiana.');
+    expect(ghost?.tooltip).toContain('Tiana');
+  });
+
+  it('n’en émet rien en vue jour, où l’écran les porte déjà', () => {
+    // La colonne y est le praticien et le bloc y écrit la prestation : un second
+    // exemplaire ne ferait que doubler l'annonce d'un lecteur d'écran.
+    const board = buildCalendarBoard({
+      view: 'jour',
+      range: rangeOf('jour', '2026-08-26'),
+      appointments: [mercredi({ staff: HASINA })],
+      timeZone: TIMEZONE,
+    });
+    const event = eventsOf(board.columns[0]?.cells ?? [])[0];
+
+    expect(event?.detailLabel).toBeNull();
+    expect(event?.tooltip).toBeNull();
+    expect(event?.serviceLabel).toBe('Massage suédois');
   });
 });
 

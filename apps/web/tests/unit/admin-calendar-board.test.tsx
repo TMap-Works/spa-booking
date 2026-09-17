@@ -1065,3 +1065,98 @@ describe('l’état vide ne dépend plus de la vue (#758)', () => {
     expect(screen.getAllByRole('list')).toHaveLength(7);
   });
 });
+
+/**
+ * Le bloc de la vue semaine se nomme entièrement — #762.
+ *
+ * L'audit `d20260916-1` a relevé un nom accessible réduit à « 09:10 Qa B.
+ * Statut : à confirmer. » : ni la prestation, ni le praticien, alors que le
+ * CDC §2.4 définit le rendez-vous par « statut, créneau, praticien ». La vue
+ * jour, sur la même donnée, les porte tous les trois. Les blocs de la semaine
+ * n'ont pas gagné un pixel — ils ont gagné un nom et une infobulle.
+ */
+describe('la vue semaine nomme le praticien et la prestation (#762)', () => {
+  /** La semaine du 24 au 30 août 2026 — celle qui porte le mercredi 26. */
+  const SEMAINE: Readonly<Record<string, readonly Appointment[]>> = {
+    'semaine:2026-08-24': [matin, midi],
+  };
+
+  function renderSemaine(
+    periods: Readonly<Record<string, readonly Appointment[]>> = SEMAINE,
+  ): void {
+    renderBoard({ view: 'semaine', date: '2026-08-24', periods });
+  }
+
+  it('porte la prestation et le praticien dans le nom accessible du bloc', () => {
+    renderSemaine();
+
+    // Le bloc ne montre toujours que « 09:00 » et « Rina A. » — c'est le nom
+    // accessible qui gagne le reste.
+    expect(
+      screen.getByRole('button', {
+        name: /^09:00 Rina A\. Prestation : Massage suédois\. Praticien : Hasina\. Statut : confirmé\.$/,
+      }),
+    ).toBeDefined();
+  });
+
+  it('rend le rendez-vous entier dans l’infobulle du survol', () => {
+    renderSemaine();
+
+    const bloc = screen.getByRole('button', { name: /^09:00 Rina A\./ });
+
+    // L'heure de fin et le nom de famille, que la largeur d'une colonne sur sept
+    // ne laisse pas écrire.
+    expect(bloc.getAttribute('title')).toBe(
+      '09:00 – 10:00 · Rina Andriamana · Massage suédois · Hasina',
+    );
+  });
+
+  it('distingue deux rendez-vous de même heure chez deux praticiennes', () => {
+    // Le constat de l'audit, mot pour mot : « Deux rendez-vous à la même heure
+    // chez deux praticiennes différentes deviennent indiscernables, à l'œil
+    // comme au lecteur d'écran. »
+    const jumelle = appointment({
+      startsAt: '2026-08-26T06:00:00.000Z',
+      endsAt: '2026-08-26T07:00:00.000Z',
+      staff: { id: 'staff-tiana', displayName: 'Tiana' },
+      client: { firstName: 'Rina', lastName: 'Andriamana' },
+    });
+
+    renderSemaine({ 'semaine:2026-08-24': [matin, jumelle] });
+
+    expect(screen.getByRole('button', { name: /^09:00 Rina A\..*Praticien : Hasina\./ })).toBeDefined();
+    expect(screen.getByRole('button', { name: /^09:00 Rina A\..*Praticien : Tiana\./ })).toBeDefined();
+  });
+
+  it('nomme de même le repère d’un rendez-vous soldé', () => {
+    // Un « non présenté » ne prend plus son créneau (#753) mais reste à l'écran
+    // pour expliquer le trou : il se lit comme les autres.
+    renderSemaine();
+
+    const repere = screen.getByText('Lova A.').closest('div');
+
+    expect(repere?.textContent).toContain('Prestation : Massage suédois. Praticien : Tiana.');
+
+    // L'infobulle est portée par le contrôle « ⋯ » et non par le repère : ce
+    // dernier est `pointer-events: none` sur toute sa surface pour laisser les
+    // créneaux libres de dessous cliquables (#753), il ne reçoit donc aucun
+    // survol et un `title` posé là ne s'afficherait jamais.
+    const ouvrir = screen.getByRole('button', { name: /^Ouvrir la fiche de Lova A\./ });
+
+    expect(ouvrir.getAttribute('title')).toBe(
+      '11:00 – 12:00 · Lova Andrian · Massage suédois · Tiana',
+    );
+    expect(repere?.getAttribute('title')).toBeNull();
+  });
+
+  it('n’ajoute rien en vue jour, où l’écran porte déjà les deux', () => {
+    // La colonne y est le praticien, le bloc y écrit la prestation : une
+    // infobulle et un doublon dans le nom accessible n'y seraient que du bruit.
+    renderBoard();
+
+    const bloc = screen.getByRole('button', { name: /^09:00 – 10:00 Rina Andriamana/ });
+
+    expect(bloc.getAttribute('title')).toBeNull();
+    expect(bloc.textContent).not.toContain('Praticien :');
+  });
+});
