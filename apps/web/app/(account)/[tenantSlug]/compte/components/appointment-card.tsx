@@ -12,7 +12,7 @@ import { formatDateTimeInTimeZone, formatMoney, timeZoneMention } from '@/lib/fo
 import { cancelOwnAppointmentAction } from '../actions';
 import { accountPath } from '../paths';
 import { useAccountAnnouncement } from './account-announcement';
-import { appointmentBadge, isStillActionable } from './appointment-status';
+import { appointmentBadge, isStillActionable } from '@/lib/appointment-status';
 import { useAccountSessionRenewal } from './use-account-session-renewal';
 
 /**

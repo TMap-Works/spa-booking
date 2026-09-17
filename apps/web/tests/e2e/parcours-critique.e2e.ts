@@ -51,7 +51,7 @@ test.describe('Parcours critique', () => {
       heureSalon = heureDuSalon(new Date(avant.startsAt));
 
       // Passage par la route et non par le tiroir : `DESK_STATUS_LABELS`
-      // n'expose que « Marquer honoré » et « Marquer non présenté », si bien
+      // n'expose que « Marquer honoré » et « Marquer non honoré », si bien
       // qu'un rendez-vous en attente n'affiche aucun bouton de statut. Le manque
       // est côté IHM, la route est servie — voir support/api.ts.
       const apres = await changerStatut(request, jetonComptoir, identifiant, 'confirmed');
@@ -72,7 +72,7 @@ test.describe('Parcours critique', () => {
       // qui distingue une heure de début de l'heure de fin d'un voisin.
       const bloc = blocRendezVous(page, CLIENTE.nom).filter({ hasText: `${heureSalon} –` });
       await expect(bloc).toHaveCount(1, { timeout: 20_000 });
-      await expect(bloc).toHaveAccessibleName(/Statut : confirmé/);
+      await expect(bloc).toHaveAccessibleName(/Statut : Confirmé/);
     });
 
     await test.step('Encaisser — régler la prestation en espèces au comptoir', async () => {

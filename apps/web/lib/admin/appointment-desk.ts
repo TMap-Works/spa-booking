@@ -36,6 +36,7 @@ import {
   type TimeZone,
 } from '@spa/shared';
 
+import { appointmentStatusLabelInSentence } from '../appointment-status';
 import { zonedFields } from './calendar-grid';
 
 // ---------------------------------------------------------------------------
@@ -446,10 +447,25 @@ export interface DeskStatusAction {
  * propre confirmation. Ce sont ces trois choses que le pied du tiroir rend
  * désormais (#754), par `isCancellable` et `cancelDeskAppointmentAction` ; ce
  * qui manquait n'était pas une entrée de plus dans cette table, c'était l'écran.
+ *
+ * ## Les deux libellés sont **composés**, jamais réécrits (#917)
+ *
+ * Le bouton du no-show disait « Marquer non présenté » quand la pastille juste à
+ * côté allait dire « Non honoré », pour la même transition. Les deux se lisent
+ * désormais de `lib/appointment-status.ts`, qui est le seul endroit du front où
+ * ce vocabulaire s'écrit.
  */
 const DESK_STATUS_LABELS: Partial<Record<AppointmentStatus, DeskStatusAction>> = {
-  completed: { status: 'completed', label: 'Marquer honoré', variant: 'neutral' },
-  no_show: { status: 'no_show', label: 'Marquer non présenté', variant: 'quiet' },
+  completed: {
+    status: 'completed',
+    label: `Marquer ${appointmentStatusLabelInSentence('completed')}`,
+    variant: 'neutral',
+  },
+  no_show: {
+    status: 'no_show',
+    label: `Marquer ${appointmentStatusLabelInSentence('no_show')}`,
+    variant: 'quiet',
+  },
 };
 
 /**

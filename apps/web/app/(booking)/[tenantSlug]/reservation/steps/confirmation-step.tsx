@@ -11,9 +11,10 @@ import { useState } from 'react';
 //
 // Même raison pour le libellé de l'état : l'espace client et cet écran parlent
 // du même rendez-vous, et c'est d'avoir écrit deux fois la même chose qu'ils ont
-// fini par la dire autrement (#743). `appointment-status.ts` ne dépend, lui
-// aussi, que d'un type partagé.
-import { PENDING_CONFIRMATION_LABEL } from '@/app/(account)/[tenantSlug]/compte/components/appointment-status';
+// fini par la dire autrement (#743). `lib/appointment-status.ts` ne dépend, lui
+// aussi, que de types partagés — c'est ce qui lui permet d'être lu du tunnel, de
+// l'espace client et du back-office à la fois (#917).
+import { PENDING_CONFIRMATION_LABEL } from '@/lib/appointment-status';
 import { accountPath } from '@/app/(account)/[tenantSlug]/compte/paths';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';

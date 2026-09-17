@@ -22,7 +22,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { PENDING_CONFIRMATION_LABEL } from '@/app/(account)/[tenantSlug]/compte/components/appointment-status';
+import { PENDING_CONFIRMATION_LABEL } from '@/lib/appointment-status';
 import { ConfirmationStep } from '@/app/(booking)/[tenantSlug]/reservation/steps/confirmation-step';
 
 import { contact, service, tenant } from './fixtures';

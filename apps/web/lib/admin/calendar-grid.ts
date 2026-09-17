@@ -44,6 +44,7 @@ import type {
 // diverger l'agenda affiché de l'agenda que le moteur sait honorer.
 import { isBlockingAppointmentStatus, isoWeekdayOf } from '@spa/shared';
 
+import { appointmentTone } from '../appointment-status';
 import { minutesOfClock } from './appointment-desk';
 import type { CalendarRange, CalendarView } from './calendar-range';
 import { daysOf, weekdayLabel } from './calendar-range';
@@ -83,19 +84,25 @@ export const OVERSCAN_SLOTS = 4;
  */
 export const FALLBACK_VISIBLE_SLOTS = 12;
 
-/** Classe de statut, telle que `styles/admin/calendar.css` la nomme. */
+/**
+ * Classe de statut, telle que `styles/admin/calendar.css` la nomme.
+ *
+ * Déléguée à `appointmentTone` depuis #917 : la classe du planning et le ton de
+ * la pastille de l'espace client sont la même dérivation — `no_show` →
+ * `no-show` —, et l'écrire deux fois aurait laissé un sixième statut n'en
+ * changer qu'une.
+ */
 export function statusModifier(status: AppointmentStatus): string {
-  return status.replace(/_/g, '-');
+  return appointmentTone(status);
 }
 
-/** Libellé d'un statut, tel que la légende et le nom accessible l'annoncent. */
-export const STATUS_LABELS: Readonly<Record<AppointmentStatus, string>> = {
-  pending: 'à confirmer',
-  confirmed: 'confirmé',
-  completed: 'honoré',
-  cancelled: 'annulé',
-  no_show: 'non présenté',
-};
+// `STATUS_LABELS` a quitté ce module en #917. Le vocabulaire du cycle de vie
+// s'écrit désormais dans `lib/appointment-status.ts`, et **là seulement** : ce
+// module-ci écrivait « non présenté » quand l'espace client écrivait « Non
+// honoré » et le reporting « No-shows », pour le même rendez-vous. Les lecteurs
+// de cette table — planning, tiroir, fiche cliente, encaissement — appellent
+// désormais `appointmentOutcomeLabel`, qui sait en plus dire « Déplacé » sur
+// l'origine d'un report.
 
 interface ZonedFields {
   readonly date: CalendarDate;

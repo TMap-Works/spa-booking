@@ -220,14 +220,13 @@ export const noShowReportSchema = z
 
 export type NoShowReport = z.infer<typeof noShowReportSchema>;
 
-/** Le statut d'un rendez-vous, tel que l'écran l'écrit. */
-export const APPOINTMENT_STATUS_LABELS: Readonly<Record<AppointmentStatus, string>> = {
-  pending: 'En attente',
-  confirmed: 'Confirmés',
-  completed: 'Honorés',
-  cancelled: 'Annulés',
-  no_show: 'No-shows',
-};
+// Le statut d'un rendez-vous ne s'écrit plus ici (#917). Cette table disait
+// « En attente » et « No-shows » là où l'espace client disait « À confirmer par
+// le salon » et « Non honoré », et le planning « à confirmer » et « non
+// présenté » : trois mots pour un même fait, sur trois écrans du même produit.
+// Le reporting lit désormais `APPOINTMENT_STATUS_PLURAL_LABELS` de
+// `lib/appointment-status.ts` — les mêmes mots, accordés au pluriel, parce qu'un
+// rapport compte des rendez-vous.
 
 /** Le moyen d'encaissement, tel que l'écran l'écrit. */
 export const PAYMENT_METHOD_LABELS: Readonly<Record<PaymentMethod, string>> = {

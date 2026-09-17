@@ -27,7 +27,6 @@ import {
   cellsInWindow,
   computeSlotWindow,
   statusModifier,
-  STATUS_LABELS,
   type CalendarCell,
   type CalendarColumn,
   type SlotWindow,
@@ -42,6 +41,7 @@ import {
   type CalendarView,
 } from '@/lib/admin/calendar-range';
 import { calendarPeriodEmptyState, calendarStartState } from '@/lib/admin/calendar-start';
+import { APPOINTMENT_STATUS_LABELS, appointmentOutcomeLabel } from '@/lib/appointment-status';
 
 import type { AdminActionResult } from '../action-result';
 import { loadCalendarRangeAction, rescheduleDeskAppointmentAction } from '../calendrier/actions';
@@ -968,12 +968,18 @@ export function CalendarBoard({
         {loading ? <p className="spa-visually-hidden">Chargement du planning…</p> : null}
 
         <div className="spa-admin-calendar__legend">
-          {(Object.keys(STATUS_LABELS) as (keyof typeof STATUS_LABELS)[]).map((status) => (
+          {/* La légende décrit les cinq **statuts**, sans les raconter : elle dit
+              ce que chaque couleur veut dire, pas ce qu'un rendez-vous précis est
+              devenu. C'est la seule surface du planning qui lise la table brute
+              plutôt qu'`appointmentOutcomeLabel` (#917). */}
+          {(
+            Object.keys(APPOINTMENT_STATUS_LABELS) as (keyof typeof APPOINTMENT_STATUS_LABELS)[]
+          ).map((status) => (
             <span
               className={`spa-admin-badge spa-admin-badge--${statusModifier(status)}`}
               key={status}
             >
-              {STATUS_LABELS[status]}
+              {APPOINTMENT_STATUS_LABELS[status]}
             </span>
           ))}
         </div>
@@ -1251,7 +1257,7 @@ function CalendarCellView({
               même endroit sans comprendre lequel des deux fait foi. */}
           <span className="spa-visually-hidden">
             {cell.detailLabel === null ? null : `${cell.detailLabel} `}
-            Statut : {STATUS_LABELS[settled.status]}. Ce créneau est de nouveau réservable.
+            Statut : {appointmentOutcomeLabel(settled)}. Ce créneau est de nouveau réservable.
           </span>
 
           {/* La fiche s'ouvre par ce bouton-là, et non par le repère entier.
@@ -1403,7 +1409,7 @@ function CalendarCellView({
             mange le saut de ligne, d'où l'espace posé ici à la main (#762). */}
         <span className="spa-visually-hidden">
           {cell.detailLabel === null ? null : `${cell.detailLabel} `}
-          Statut : {STATUS_LABELS[status]}.
+          Statut : {appointmentOutcomeLabel(appointment)}.
         </span>
       </button>
 

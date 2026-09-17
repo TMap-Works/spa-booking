@@ -9,12 +9,22 @@ import {
 } from '@/lib/api-client';
 import { formatMoney, formatMoneyCompact } from '@/lib/format';
 import {
-  APPOINTMENT_STATUS_LABELS,
   PAYMENT_METHOD_LABELS,
   type AppointmentVolumeReport,
   type DailyRevenueReport,
   type NoShowReport,
 } from '@/lib/admin/reporting-contract';
+// Les libellés de statut viennent du module de vocabulaire du front, et non plus
+// de ce contrat-ci (#917) : un rapport compte des rendez-vous, d'où la table
+// accordée au pluriel — les mêmes mots que la pastille du planning et que
+// l'espace client, et non plus « En attente » et « No-shows » pour eux seuls.
+// La tuile de tête et le graphique de volume lisent la **même** table : nommer
+// « No-shows » sur l'une ce que la table des statuts appelle « Non honorés »
+// aurait rejoué la divergence à l'intérieur d'un seul écran.
+import {
+  APPOINTMENT_STATUS_PLURAL_LABELS,
+  appointmentStatusPluralLabelInSentence,
+} from '@/lib/appointment-status';
 import {
   filterOptions,
   formatCount,
@@ -242,8 +252,14 @@ export default async function ReportingPage({ params, searchParams }: ReportingP
 
         <div className="spa-admin-metric">
           <span className="spa-admin-metric__value">{formatRate(activity.noShows.rate)}</span>
+          {/* Le même mot que la table des statuts trois blocs plus bas, et que
+              la pastille du planning — pris à la table de vocabulaire plutôt
+              qu'écrit ici (#917). « No-shows » sur la tuile et « Non honorés »
+              dans la table auraient rejoué, sur un seul écran, la divergence que
+              le ticket vient de fermer entre trois écrans. */}
           <span className="spa-admin-metric__label">
-            No-shows · {formatCount(activity.noShows.noShows)} sur{' '}
+            {APPOINTMENT_STATUS_PLURAL_LABELS.no_show} ·{' '}
+            {formatCount(activity.noShows.noShows)} sur{' '}
             {formatCount(activity.noShows.honored + activity.noShows.noShows)} arrivés à échéance
           </span>
         </div>
@@ -254,8 +270,8 @@ export default async function ReportingPage({ params, searchParams }: ReportingP
           <p>
             Le revenu reste celui de l’établissement entier&nbsp;: l’API agrège les encaissements
             sans les rattacher à un praticien ni à une prestation, et les répartir au prorata des
-            rendez-vous inventerait un chiffre. Le volume et les no-shows, eux, portent bien sur
-            «&nbsp;{scope.label}&nbsp;».
+            rendez-vous inventerait un chiffre. Le volume et les rendez-vous non honorés, eux,
+            portent bien sur «&nbsp;{scope.label}&nbsp;».
           </p>
         </Notification>
       )}
@@ -313,8 +329,8 @@ export default async function ReportingPage({ params, searchParams }: ReportingP
             ...(point.selected ? { highlighted: true } : {}),
           }))}
           emptyLabel="Aucun rendez-vous sur la période."
-          innerHeader="Dont no-shows"
-          innerSeriesLabel="dont no-shows"
+          innerHeader={`Dont ${appointmentStatusPluralLabelInSentence('no_show')}`}
+          innerSeriesLabel={`dont ${appointmentStatusPluralLabelInSentence('no_show')}`}
           layout={axis.groupBy === 'day' ? 'colonnes' : 'barres'}
           seriesLabel="Rendez-vous"
           summary={volumeSummary(axis.groupBy, range)}
@@ -424,7 +440,10 @@ function volumeSummary(groupBy: AppointmentVolumeReport['groupBy'], range: Repor
   const axis =
     groupBy === 'staff' ? 'par praticien' : groupBy === 'service' ? 'par prestation' : 'par jour';
 
-  return `Nombre de rendez-vous ${axis}, dont no-shows, du ${range.from} au ${range.to} inclus.`;
+  return (
+    `Nombre de rendez-vous ${axis}, dont ${appointmentStatusPluralLabelInSentence('no_show')}, ` +
+    `du ${range.from} au ${range.to} inclus.`
+  );
 }
 
 /** Les statuts de la période, dans l'ordre où ils intéressent la gérante. */
@@ -438,19 +457,19 @@ function statusRows(
     // `pending` et `confirmed` en un seul compte — « pas encore jugés ». On
     // n'invente pas la ventilation qu'il ne rend pas.
     return [
-      { label: APPOINTMENT_STATUS_LABELS.completed, count: activity.noShows.honored },
-      { label: APPOINTMENT_STATUS_LABELS.no_show, count: activity.noShows.noShows },
-      { label: APPOINTMENT_STATUS_LABELS.cancelled, count: activity.noShows.cancelled },
+      { label: APPOINTMENT_STATUS_PLURAL_LABELS.completed, count: activity.noShows.honored },
+      { label: APPOINTMENT_STATUS_PLURAL_LABELS.no_show, count: activity.noShows.noShows },
+      { label: APPOINTMENT_STATUS_PLURAL_LABELS.cancelled, count: activity.noShows.cancelled },
       { label: 'À venir', count: activity.noShows.pending },
     ];
   }
 
   return [
-    { label: APPOINTMENT_STATUS_LABELS.completed, count: counts.completed },
-    { label: APPOINTMENT_STATUS_LABELS.no_show, count: counts.no_show },
-    { label: APPOINTMENT_STATUS_LABELS.cancelled, count: counts.cancelled },
-    { label: APPOINTMENT_STATUS_LABELS.confirmed, count: counts.confirmed },
-    { label: APPOINTMENT_STATUS_LABELS.pending, count: counts.pending },
+    { label: APPOINTMENT_STATUS_PLURAL_LABELS.completed, count: counts.completed },
+    { label: APPOINTMENT_STATUS_PLURAL_LABELS.no_show, count: counts.no_show },
+    { label: APPOINTMENT_STATUS_PLURAL_LABELS.cancelled, count: counts.cancelled },
+    { label: APPOINTMENT_STATUS_PLURAL_LABELS.confirmed, count: counts.confirmed },
+    { label: APPOINTMENT_STATUS_PLURAL_LABELS.pending, count: counts.pending },
   ];
 }
 

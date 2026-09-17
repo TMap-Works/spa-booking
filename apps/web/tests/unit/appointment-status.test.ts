@@ -2,10 +2,15 @@ import type { BookedAppointment } from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
+  APPOINTMENT_STATUS_LABELS,
+  APPOINTMENT_STATUS_PLURAL_LABELS,
   appointmentBadge,
+  appointmentOutcomeLabel,
+  appointmentStatusLabelInSentence,
+  appointmentTone,
   isStillActionable,
   PENDING_CONFIRMATION_LABEL,
-} from '@/app/(account)/[tenantSlug]/compte/components/appointment-status';
+} from '@/lib/appointment-status';
 
 /**
  * Ce que l'espace client annonce d'un rendez-vous (#47).
@@ -108,6 +113,90 @@ describe('pastille de statut', () => {
     // Le ton ne bouge pas : c'est bien le même statut, et la couleur ne porte
     // jamais l'information seule.
     expect(badge.tone).toBe('pending');
+  });
+});
+
+/**
+ * Ce que le **back-office** lit du même rendez-vous — #917.
+ *
+ * Le planning, le tiroir, la fiche cliente et l'encaissement appellent tous
+ * `appointmentOutcomeLabel` : c'est le geste unique par lequel les quatre
+ * surfaces disent la même chose. Le cas qui compte reste le même qu'à l'espace
+ * client — l'absence d'auteur —, à ceci près que le contrat de l'agenda l'exprime
+ * par une clé **omise** là où les deux autres posent `null`.
+ */
+describe('le mot du comptoir', () => {
+  it('lit « Déplacé » aussi bien sur une clé absente que sur un `null`', () => {
+    // `appointmentSchema` omet la clé, `bookedAppointmentSchema` et
+    // `customerVisitSchema` la posent à `null`. Les deux disent « personne à
+    // nommer », c'est-à-dire l'origine d'un report.
+    expect(appointmentOutcomeLabel({ status: 'cancelled' })).toBe('Déplacé');
+    expect(appointmentOutcomeLabel({ status: 'cancelled', cancelledBy: null })).toBe('Déplacé');
+    expect(appointmentOutcomeLabel({ status: 'cancelled', cancelledBy: undefined })).toBe(
+      'Déplacé',
+    );
+  });
+
+  it('nomme l’auteur d’une vraie annulation, à la personne de son audience', () => {
+    const parLaCliente = { status: 'cancelled', cancelledBy: 'client' } as const;
+
+    expect(appointmentOutcomeLabel(parLaCliente)).toBe('Annulé par la cliente');
+    // Le comptoir parle du salon à la troisième personne, l'espace client à la
+    // deuxième. Même fait, même table, deux interlocuteurs.
+    expect(appointmentOutcomeLabel(parLaCliente, 'client')).toBe('Annulé par vous');
+    expect(appointmentOutcomeLabel({ status: 'cancelled', cancelledBy: 'staff' })).toBe(
+      'Annulé par le salon',
+    );
+    // `system` — une annulation automatique — reste du côté du salon : c'est sa
+    // décision, prise par son outil.
+    expect(appointmentOutcomeLabel({ status: 'cancelled', cancelledBy: 'system' })).toBe(
+      'Annulé par le salon',
+    );
+  });
+
+  it('ignore l’auteur sur tout statut qui n’est pas une annulation', () => {
+    // Une donnée résiduelle sur une ligne rouverte ne doit pas faire dire
+    // « Déplacé » à un rendez-vous honoré.
+    expect(appointmentOutcomeLabel({ status: 'completed', cancelledBy: null })).toBe('Honoré');
+    expect(appointmentOutcomeLabel({ status: 'no_show' })).toBe('Non honoré');
+  });
+});
+
+/**
+ * Le vocabulaire lui-même — la table que six surfaces lisent désormais.
+ *
+ * C'est le cinquième critère de #917 : « le vocabulaire n'est plus écrit qu'à un
+ * seul endroit du front ». Ce qui se vérifie ici est ce que cette unicité devait
+ * produire — « Non honoré » et non plus « non présenté » ni « No-shows », et le
+ * même mot au singulier et au pluriel.
+ */
+describe('table de vocabulaire', () => {
+  it('dit « Non honoré » du no-show, au singulier comme au pluriel', () => {
+    expect(APPOINTMENT_STATUS_LABELS.no_show).toBe('Non honoré');
+    expect(APPOINTMENT_STATUS_PLURAL_LABELS.no_show).toBe('Non honorés');
+  });
+
+  it('accorde chaque statut sans jamais changer de mot', () => {
+    for (const status of Object.keys(APPOINTMENT_STATUS_LABELS) as (keyof typeof APPOINTMENT_STATUS_LABELS)[]) {
+      const singulier = APPOINTMENT_STATUS_LABELS[status];
+      const pluriel = APPOINTMENT_STATUS_PLURAL_LABELS[status];
+
+      // Le pluriel est le singulier, éventuellement suivi d'un `s`. Rien d'autre :
+      // c'est ce qui interdit qu'une des deux tables reparte vers « No-shows ».
+      expect([singulier, `${singulier}s`]).toContain(pluriel);
+    }
+  });
+
+  it('descend l’initiale pour les libellés insérés au fil d’une phrase', () => {
+    // « Marquer non honoré », et non « Marquer Non honoré » : une capitale au
+    // milieu d'une phrase se lit comme un nom propre.
+    expect(appointmentStatusLabelInSentence('no_show')).toBe('non honoré');
+    expect(appointmentStatusLabelInSentence('completed')).toBe('honoré');
+  });
+
+  it('dérive le ton d’un statut vers le vocabulaire des feuilles de style', () => {
+    expect(appointmentTone('no_show')).toBe('no-show');
+    expect(appointmentTone('confirmed')).toBe('confirmed');
   });
 });
 

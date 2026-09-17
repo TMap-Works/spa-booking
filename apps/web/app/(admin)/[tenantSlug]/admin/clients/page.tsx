@@ -17,7 +17,8 @@ import {
   fetchPublicTenant,
   searchCustomers,
 } from '@/lib/api-client';
-import { STATUS_LABELS, statusModifier, zonedFields } from '@/lib/admin/calendar-grid';
+import { statusModifier, zonedFields } from '@/lib/admin/calendar-grid';
+import { appointmentOutcomeLabel } from '@/lib/appointment-status';
 import { formatCalendarDate, formatMoney, formatTimeInTimeZone } from '@/lib/format';
 
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
@@ -534,9 +535,20 @@ function ClientRecord({
           value={String(summary.honoredVisits)}
         />
         <Metric label="À venir" value={String(summary.upcomingVisits)} />
+        {/*
+          Deux compteurs et non un — #917. « 5 Annulés » là où la fiche comptait
+          trois abandons et deux déplacements donnait au salon un chiffre de
+          fidélité faux, et c'est le constat de l'audit `d20260916-1` : un créneau
+          déplacé n'est pas un créneau perdu. Les deux sont disjoints, et leur
+          somme reste le nombre de rendez-vous annulés en base.
+        */}
         <Metric
           label={countedLabel(summary.cancelledVisits, 'Annulé', 'Annulés')}
           value={String(summary.cancelledVisits)}
+        />
+        <Metric
+          label={countedLabel(summary.rescheduledVisits, 'Déplacé', 'Déplacés')}
+          value={String(summary.rescheduledVisits)}
         />
         <Metric
           label={countedLabel(
@@ -681,7 +693,11 @@ function VisitHistory({
                     : `avec ${visit.staffName}`}
                 </span>
                 <span className={`spa-admin-badge spa-admin-badge--${statusModifier(visit.status)}`}>
-                  {STATUS_LABELS[visit.status]}
+                  {/* « Déplacé » plutôt qu'« Annulé » sur l'origine d'un report
+                      — la visite n'a pas été perdue, elle a changé d'heure
+                      (#917). Le mot est celui que l'espace client montre à la
+                      cliente, à la personne grammaticale près. */}
+                  {appointmentOutcomeLabel(visit)}
                 </span>
                 {note === null ? null : (
                   <span className="spa-admin-history__note">

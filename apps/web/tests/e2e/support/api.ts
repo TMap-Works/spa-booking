@@ -11,7 +11,7 @@
  * 1. **Le back-office n'expose pas le geste.** C'est le cas de la confirmation
  *    d'un rendez-vous en attente : `DESK_STATUS_LABELS`
  *    (`apps/web/lib/admin/appointment-desk.ts`) ne connaît que « Marquer honoré »
- *    et « Marquer non présenté », et aucun bouton ne déclenche
+ *    et « Marquer non honoré », et aucun bouton ne déclenche
  *    `pending → confirmed`. La route, elle, existe et est servie —
  *    `POST /appointments/:id/status`. C'est donc l'IHM qui manque, pas le
  *    produit, et un test E2E n'a pas à combler ce manque en inventant un écran.
