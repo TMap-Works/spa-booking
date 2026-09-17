@@ -154,3 +154,51 @@ describe('formulaire de coordonnées', () => {
     expect(screen.getByRole('alert').textContent).toContain('e-mail');
   });
 });
+
+/**
+ * #748 — « Un mot pour le salon » se saisissait dans un `<input>` d'une ligne,
+ * alors que son contrat est `longTextSchema` et que le design system fournit
+ * `components/ui/textarea.tsx` pour exactement cet usage. À 360 px, une phrase
+ * d'allergie défilait dans le champ : la cliente ne pouvait plus relire le début
+ * de ce qu'elle venait d'écrire.
+ *
+ * Ce qui est éprouvé ici est la **nature du contrôle**, pas sa mise en forme :
+ * c'est elle qui décide si la saisie tient sur plusieurs lignes, et c'est la
+ * seule chose qu'un `<input>` ne saura jamais faire.
+ */
+describe('« Un mot pour le salon »', () => {
+  function champDuMot(): HTMLTextAreaElement {
+    return screen.getByLabelText<HTMLTextAreaElement>(/Un mot pour le salon/);
+  }
+
+  it('se saisit dans un champ multiligne du design system', () => {
+    renderContactStep();
+
+    const champ = champDuMot();
+
+    expect(champ.tagName).toBe('TEXTAREA');
+    // Plus d'une ligne visible : sans cela, le `<textarea>` ferait défiler la
+    // saisie tout comme l'`<input>` qu'il remplace, et le ticket ne serait pas
+    // traité.
+    expect(champ.rows).toBeGreaterThan(1);
+    // `TextArea` ne déclare aucun style propre : il porte les classes de
+    // `.spa-field`, donc le même cadre et le même contraste que les quatre
+    // champs d'une ligne au-dessus de lui.
+    expect(champ.className).toContain('spa-field__control');
+  });
+
+  it('conserve un mot écrit sur plusieurs lignes jusqu’à la soumission', async () => {
+    const { onSubmit, user } = renderContactStep();
+
+    await fillRequiredFields(user);
+    await user.type(champDuMot(), 'Allergie aux huiles essentielles.{enter}Je serai peut-être en retard.');
+    await user.click(screen.getByRole('button', { name: /Vérifier ma réservation/ }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    // Le saut de ligne fait foi : un `<input>` l'aurait avalé, et la touche
+    // « Entrée » y aurait soumis le formulaire au lieu d'aérer la note.
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
+      clientNote: 'Allergie aux huiles essentielles.\nJe serai peut-être en retard.',
+    });
+  });
+});

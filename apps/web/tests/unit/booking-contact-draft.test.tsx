@@ -215,8 +215,10 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
     vi.useFakeTimers();
   });
 
-  function champDuMot(): HTMLInputElement {
-    return screen.getByLabelText<HTMLInputElement>(/Un mot pour le salon/);
+  // `<textarea>` depuis #748 : le champ est le seul du formulaire dont le
+  // contrat est `longTextSchema`, et le design system lui donne `TextArea`.
+  function champDuMot(): HTMLTextAreaElement {
+    return screen.getByLabelText<HTMLTextAreaElement>(/Un mot pour le salon/);
   }
 
   /**
@@ -228,7 +230,7 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
    * les touches. Ce qu'il faut éprouver n'est pas le clavier — c'est l'instant où
    * le brouillon est écrit, et il doit rester sous le contrôle du test.
    */
-  function taperLeMot(): HTMLInputElement {
+  function taperLeMot(): HTMLTextAreaElement {
     const champ = champDuMot();
 
     act(() => {
