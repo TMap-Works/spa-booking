@@ -197,9 +197,14 @@ describe('le ticket 80 mm', () => {
       .filter((call) => call.amount.includes('€') && call.label !== 'TOTAL')
       .map((call) => call.label);
 
-    expect(methods).toContain('Carte bancaire (TPE)');
+    // Depuis #834, la ligne porte **la référence du ticket du TPE** quand le
+    // caissier l'a relevée. Ce n'est pas un relâchement de la garantie
+    // ci-dessus : `A0000123` est un identifiant d'opération émis par la banque
+    // du salon, la frontière HTTP refuse en 400 ce qui ressemble à un numéro de
+    // carte, et les trois assertions précédentes continuent de l'exiger ici.
+    expect(methods).toContain('Carte bancaire (TPE) — réf. A0000123');
     expect(methods.filter((label) => label.toLowerCase().includes('carte'))).toStrictEqual([
-      'Carte bancaire (TPE)',
+      'Carte bancaire (TPE) — réf. A0000123',
     ]);
   });
 
