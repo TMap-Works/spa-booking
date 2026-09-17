@@ -16,7 +16,7 @@ import {
   groupServicesByCategory,
 } from '@/components/salon/group-services';
 import { SalonInfo } from '@/components/salon/salon-info';
-import { ServiceCatalog } from '@/components/salon/service-catalog';
+import { ServiceCatalog, UNSTAFFED_SERVICE_LABEL } from '@/components/salon/service-catalog';
 
 import { service, tenant } from './fixtures';
 
@@ -117,6 +117,31 @@ describe('rendu du catalogue', () => {
     render(<ServiceCatalog services={[service]} />);
 
     expect(screen.getByText(/Hery/)).toBeDefined();
+    expect(screen.queryByText(UNSTAFFED_SERVICE_LABEL)).toBeNull();
+  });
+
+  it('dit qu’une prestation sans praticien n’offre aucun créneau (#765)', () => {
+    // Le cas de l'audit : la prestation est active — elle est donc servie par le
+    // point d'entrée public —, mais personne ne la pratique. Sans la mention, sa
+    // carte est indiscernable de celle d'à côté, qui est réservable.
+    render(<ServiceCatalog services={[{ ...service, staff: [] }, soinVisage]} />);
+
+    expect(screen.getByText(UNSTAFFED_SERVICE_LABEL)).toBeDefined();
+    // La prestation reste affichée avec sa durée et son prix : le catalogue dit
+    // ce que le salon propose, il ne masque pas une prestation en ligne.
+    expect(screen.getByRole('heading', { name: 'Massage suédois' })).toBeDefined();
+    expect(screen.getByText(/35,00/)).toBeDefined();
+    // Et la mention ne déborde pas sur la voisine, qui a bien ses praticiens.
+    expect(screen.getAllByText(UNSTAFFED_SERVICE_LABEL)).toHaveLength(1);
+  });
+
+  it('n’annonce pas de praticiens quand il n’y en a aucun', () => {
+    // L'ancien rendu masquait la ligne ; le nouveau la remplace. Ni l'un ni
+    // l'autre ne doit faire lire « Praticiens : aucun praticien » à un lecteur
+    // d'écran, d'où l'absence de préfixe sur la mention.
+    render(<ServiceCatalog services={[{ ...service, staff: [] }]} />);
+
+    expect(screen.queryByText(/Praticiens :/)).toBeNull();
   });
 
   it('explique un catalogue vide au lieu de laisser la page blanche', () => {
