@@ -1,6 +1,7 @@
-import { IDENTITY_ERROR_CODES } from '@spa/shared';
+import { IDENTITY_ERROR_CODES, type Permission } from '@spa/shared';
 
-import { DomainError, type DomainErrorDetails } from '../../common/errors';
+import { DomainError, DOMAIN_HTTP_STATUS } from '../../common/errors';
+import type { DomainErrorDetails } from '../../common/errors';
 
 /**
  * Erreurs du module `identity`.
@@ -117,5 +118,52 @@ export class InvitationAlreadyAcceptedError extends DomainError {
 
   public constructor() {
     super('Ce compte a déjà été activé : son invitation ne peut plus être réémise.');
+  }
+}
+
+/**
+ * L'appelant n'a le droit d'agir que sur **son propre** périmètre, et la
+ * ressource visée n'en fait pas partie — #812, troisième critère, ADR 0013.
+ *
+ * ## 403, et pourquoi ce n'est pas la fuite que le 404 évite ailleurs
+ *
+ * La règle « une ressource d'un autre établissement rend 404, jamais 403 »
+ * (tenant-isolation §4) protège une chose précise : qu'un salon ne puisse pas
+ * apprendre ce que possède le salon voisin. Ici, la ressource est du **même**
+ * établissement. Le praticien qui vise le rendez-vous de sa collègue sait déjà
+ * qu'il existe — il travaille dans la pièce d'à côté, il voit le fauteuil
+ * occupé, il a croisé la cliente. Un 404 ne lui cacherait rien et lui ferait
+ * seulement croire à un rendez-vous effacé, ce qui est une mauvaise réponse à
+ * une bonne question.
+ *
+ * Le ticket le tranche mot pour mot : « Le 403 est juste ici, car la ressource
+ * est du même établissement. La règle du 404 reste celle des ressources d'un
+ * autre établissement. »
+ *
+ * ## Ce que `details` porte, et ce qu'il ne porte pas
+ *
+ * La **permission** qui aurait permis le geste — `appointment:write:all`,
+ * `customers:read:all`. C'est actionnable : l'écran peut dire « demandez à votre
+ * gérante » plutôt que « une erreur est survenue ». Jamais l'identifiant de la
+ * ressource, jamais le nom du praticien qui la détient : ce serait rendre par le
+ * message ce que le refus vient d'interdire, et la note interne d'une collègue
+ * n'a pas à transiter par un corps d'erreur.
+ *
+ * ## Elle est levée par les services, jamais par une garde
+ *
+ * Une garde ne consulte aucune ressource, par construction — c'est ce qui rend
+ * son 403 indiscernable d'une route à l'autre. Décider « ce rendez-vous est-il
+ * le vôtre ? » demande de le lire ; cette décision appartient donc au service,
+ * après que la garde a jugé la route.
+ */
+export class OwnScopeOnlyError extends DomainError {
+  public override readonly code = IDENTITY_ERROR_CODES.OWN_SCOPE_ONLY;
+  public override readonly status = DOMAIN_HTTP_STATUS.FORBIDDEN;
+
+  public constructor(scope: Permission, details: DomainErrorDetails = {}) {
+    super(
+      'Cette ressource est hors de votre périmètre : vous n’agissez que sur le vôtre.',
+      { scope, ...details },
+    );
   }
 }

@@ -18,18 +18,19 @@ import { Auth } from './auth.decorator';
 import { AuthService } from './auth.service';
 import {
   AcceptInvitationDto,
+  AuthenticatedAccountDto,
   AuthTokensDto,
   type LoginBody,
   LoginDto,
   type RegisterBody,
   RegisterDto,
-  UserProfileDto,
   loginBody,
   registerBody,
 } from './dto/auth.dto';
 import type { RefreshResult } from './identity.types';
 import { CurrentUser } from './jwt-auth.guard';
 import type { AuthenticatedUser } from './identity.types';
+import { permissionsOf } from './permissions';
 import { clearRefreshCookie, readRefreshCookie, setRefreshCookie } from './refresh-cookie';
 import { SessionThrottlerGuard, ThrottleBySession } from './session-throttler.guard';
 
@@ -242,21 +243,49 @@ export class AuthController {
   }
 
   /**
-   * Le compte porté par le jeton d'accès.
+   * Le compte porté par le jeton d'accès — **et ce qu'il a le droit de faire**
+   * (#812, cinquième critère).
    *
    * `userId` vient de `@CurrentUser()`, donc d'un jeton vérifié — jamais d'un
    * paramètre d'URL. Une route `/users/:id` qui accepterait l'identifiant en
    * chemin serait la première fuite à écrire.
+   *
+   * ## Les permissions se dérivent du rôle **relu en base**, pas de celui du jeton
+   *
+   * Les deux coïncident presque toujours, et la nuance décide du cas qui compte :
+   * un jeton d'accès vit quinze minutes, et un rôle rétrogradé pendant ce
+   * quart d'heure y reste écrit. Dériver la liste de `profile.role` fait donc
+   * disparaître l'entrée du sommaire au prochain rendu du shell plutôt qu'à la
+   * prochaine connexion. L'inverse — un rôle promu — profite de la même
+   * fraîcheur, sans qu'aucune route ne s'ouvre pour autant : c'est la garde qui
+   * juge chaque appel, sur le jeton, et cette liste n'est qu'un affichage.
+   *
+   * ## Pourquoi la liste sort ici et nulle part ailleurs
+   *
+   * Voir l'en-tête d'`AuthenticatedAccountDto` : la porter dans la réponse d'une
+   * connexion inviterait à la ranger avec le jeton, c'est-à-dire à la conserver
+   * après qu'un administrateur l'a retirée.
    */
   @Get('me')
   // `@Auth()` sans argument : toute identité vérifiée, quel que soit son rôle.
   // Lire son propre compte n'est pas un privilège, et la restreindre priverait
-  // la clientèle de la seule route qui lui rend son profil.
+  // la clientèle de la seule route qui lui rend son profil. Surtout, aucune
+  // permission ne peut être exigée ici : c'est la route qui les **annonce**, et
+  // en demander une la rendrait inaccessible à qui n'en a aucune.
   @Auth()
-  @ApiOperation({ summary: 'Lire le compte authentifié' })
-  @ApiOkResponse({ type: UserProfileDto })
-  public async me(@CurrentUser() user: AuthenticatedUser): Promise<UserProfileDto> {
-    return this.auth.profileOf(user.userId);
+  @ApiOperation({ summary: 'Lire le compte authentifié et ses permissions effectives' })
+  @ApiOkResponse({ type: AuthenticatedAccountDto })
+  public async me(@CurrentUser() user: AuthenticatedUser): Promise<AuthenticatedAccountDto> {
+    const profile = await this.auth.profileOf(user.userId);
+
+    return {
+      ...profile,
+      // Copié plutôt que partagé : `permissionsOf` rend le tableau gelé de la
+      // matrice, et le laisser filer dans un corps de réponse ferait dépendre
+      // l'intégrité d'une table de processus de la discrétion de tout ce qui la
+      // traverse ensuite.
+      permissions: [...permissionsOf(profile.role)],
+    };
   }
 
   /**
