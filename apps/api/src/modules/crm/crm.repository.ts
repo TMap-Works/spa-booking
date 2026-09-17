@@ -362,6 +362,22 @@ export interface CustomerSearchCriteria {
   includeInactive: boolean;
   page: number;
   pageSize: number;
+  /**
+   * Restreint la lecture aux clientes qui ont — ou ont eu — un rendez-vous avec
+   * le **compte** désigné, et à elles seules (#812, quatrième critère).
+   *
+   * `null` se lit « tout le fichier de l'établissement », ce qu'ouvre
+   * `customers:read:all`. Un identifiant se lit « celles de ce praticien »,
+   * ce qu'ouvre `customers:read:own`.
+   *
+   * C'est un **identifiant de compte** (`users.id`) et non de fiche praticien :
+   * le service le tient du jeton vérifié, et faire la traversée en une seule
+   * requête évite une lecture de `staff` dont ce module n'a par ailleurs aucun
+   * besoin. Un compte sans fiche praticien ne satisfait donc aucune ligne — le
+   * `some` est faux partout — et la page rendue est vide, ce qui est la bonne
+   * réponse : il n'a pas de clientèle.
+   */
+  ownedByUserId: string | null;
 }
 
 /** Une page brute : les lignes, et le total sur lequel se calcule le nombre de pages. */
@@ -480,10 +496,22 @@ export class CrmRepository {
    * `findFirst` et non `findUnique` : l'extension injecte `tenantId` dans le
    * `where`, et `findUnique` exige que le `where` désigne *exactement* une clé
    * unique — ce que `{ id, tenantId, role }` ne fait pas sous cette forme.
+   *
+   * ## `ownedByUserId` ajoute un **quatrième** cas au même `null` (#812)
+   *
+   * « Existe dans cet établissement, mais n'est pas une de vos clientes » rejoint
+   * les trois autres, et rend donc 404 comme elles — jamais 403. La nuance est
+   * délibérée, et elle ne contredit pas l'`OWN_SCOPE_ONLY` des rendez-vous : là-
+   * bas, l'appelant connaît déjà l'existence de la ressource — il voit le
+   * fauteuil occupé —, et un 404 lui mentirait. Ici, c'est **l'existence de la
+   * fiche qui est l'information protégée** : un 403 sur les identifiants du
+   * fichier et un 404 sur les autres ferait de cette route un oracle qui
+   * énumère la clientèle du salon, c'est-à-dire exactement ce que ce ticket
+   * ferme (capture 3).
    */
-  public async findById(id: string): Promise<Customer | null> {
+  public async findById(id: string, ownedByUserId: string | null = null): Promise<Customer | null> {
     return this.prisma.user.findFirst({
-      where: { id, role: CUSTOMER_ROLE },
+      where: { id, role: CUSTOMER_ROLE, ...ownedByPredicate(ownedByUserId) },
       select: CUSTOMER_SELECT,
     });
   }
@@ -1205,6 +1233,7 @@ export class CrmRepository {
       // retrouver le demande explicitement.
       ...(criteria.includeInactive ? {} : { isActive: true }),
       ...(criteria.term === null ? {} : { OR: matchesTerm(criteria.term) }),
+      ...ownedByPredicate(criteria.ownedByUserId),
     };
   }
 }
@@ -1230,6 +1259,40 @@ const LIKE_METACHARACTERS = /[\\%_]/g;
  */
 export function escapeLikeTerm(term: string): string {
   return term.replace(LIKE_METACHARACTERS, '\\$&');
+}
+
+/**
+ * Le prédicat « ses clientes à lui », ou rien du tout — #812.
+ *
+ * ## Ce qu'il traverse, et pourquoi en une seule requête
+ *
+ * `users` (la cliente) → `clientAppointments` → `staff` → `userId`. La relation
+ * nommée `AppointmentClient` est celle que le schéma déclare, et le `some`
+ * s'écrit donc sans jointure explicite ni seconde lecture. Résoudre d'abord la
+ * fiche praticien du compte aurait ajouté une requête **et** fait lire `staff` à
+ * un module qui n'en a pas d'autre usage.
+ *
+ * ## Aucun `tenantId` ici, et ce n'est pas un oubli
+ *
+ * L'extension de scoping le pose sur le `where` de la lecture principale, et les
+ * clés étrangères composites `(tenant_id, id)` du schéma interdisent qu'un
+ * rendez-vous d'un salon désigne le praticien d'un autre : la traversée ne peut
+ * donc pas sortir de l'établissement courant (tenant-isolation §1 et §3).
+ *
+ * ## Tous les statuts comptent, annulations comprises
+ *
+ * La question à laquelle ce prédicat répond est « cette personne est-elle une de
+ * mes clientes ? », et une annulation ne la retire pas du fichier de qui devait
+ * la recevoir : le praticien qui la rappelle pour reproposer un créneau a besoin
+ * de son numéro. Restreindre aux rendez-vous honorés aurait fait disparaître une
+ * fiche le jour où elle devient la plus utile.
+ */
+function ownedByPredicate(userId: string | null): Prisma.UserWhereInput {
+  if (userId === null) {
+    return {};
+  }
+
+  return { clientAppointments: { some: { staff: { userId } } } };
 }
 
 /**

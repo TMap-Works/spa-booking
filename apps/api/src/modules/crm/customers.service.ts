@@ -63,6 +63,13 @@ export class CustomersService {
     includeInactive: boolean;
     page: number;
     pageSize: number;
+    /**
+     * Le compte dont on rend la clientèle, ou `null` pour le fichier entier
+     * (#812). Il vient du jeton vérifié, jamais de la requête : un champ l'aurait
+     * laissé à la main de l'appelant, qui aurait alors lu la clientèle de qui il
+     * veut au lieu de la sienne.
+     */
+    ownedByUserId: string | null;
   }): Promise<CustomerPage> {
     const term = query.q === undefined ? null : query.q.trim();
 
@@ -71,6 +78,7 @@ export class CustomersService {
       includeInactive: query.includeInactive,
       page: query.page,
       pageSize: query.pageSize,
+      ownedByUserId: query.ownedByUserId,
     });
 
     return {
@@ -89,13 +97,16 @@ export class CustomersService {
   /**
    * Une fiche cliente de l'établissement courant.
    *
-   * Le 404 couvre indistinctement trois situations — « n'existe nulle part »,
-   * « existe dans un autre établissement » et « est un compte du personnel ».
-   * La différence entre les deux premières est précisément l'information à ne
-   * pas donner ; la troisième relève de `GET /users/:id`, pas du fichier client.
+   * Le 404 couvre indistinctement quatre situations — « n'existe nulle part »,
+   * « existe dans un autre établissement », « est un compte du personnel » et,
+   * depuis #812, « n'est pas une de vos clientes » quand l'appelant n'a que
+   * `customers:read:own`. La différence entre les deux premières est précisément
+   * l'information à ne pas donner ; la troisième relève de `GET /users/:id` ; la
+   * quatrième rend 404 et non 403 parce qu'ici c'est **l'existence de la fiche**
+   * qui est protégée — voir `CrmRepository.findById`.
    */
-  public async byId(id: string): Promise<Customer> {
-    const customer = await this.repository.findById(id);
+  public async byId(id: string, ownedByUserId: string | null = null): Promise<Customer> {
+    const customer = await this.repository.findById(id, ownedByUserId);
     if (customer === null) {
       throw new NotFoundError('Fiche cliente introuvable.');
     }
