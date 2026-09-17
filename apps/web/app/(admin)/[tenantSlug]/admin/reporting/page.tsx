@@ -33,7 +33,9 @@ import {
   revenueByCurrency,
   revenueSeries,
   scopedActivity,
+  UPCOMING_PLURAL_LABEL,
   volumePoints,
+  volumeQualification,
   WHOLE_TENANT,
   type ReportFilterOption,
   type ReportScope,
@@ -198,6 +200,7 @@ export default async function ReportingPage({ params, searchParams }: ReportingP
   const axis = scope.kind === 'praticien' ? byStaff : scope.kind === 'prestation' ? byService : byDay;
   const activity = scopedActivity(scope, axis, noShows, byDay);
 
+  const qualification = volumeQualification(activity);
   const totals = revenueByCurrency(revenue.totals);
   const series = revenueSeries(revenue, range);
   const volume = volumePoints(scope, axis, range, shortDayLabel);
@@ -247,7 +250,15 @@ export default async function ReportingPage({ params, searchParams }: ReportingP
 
         <div className="spa-admin-metric">
           <span className="spa-admin-metric__value">{formatCount(activity.appointments)}</span>
-          <span className="spa-admin-metric__label">Rendez-vous · {scope.label}</span>
+          {/* La tuile dit ce qu'elle compte, comme ses deux voisines (#772). Sans
+              cette ligne, « 17 rendez-vous » et « 50 % de non honorés » se
+              lisaient comme deux faces du même ensemble, alors que 8 des 17
+              étaient des annulations et 7 des rendez-vous à venir — un écart
+              qu'il fallait descendre jusqu'à la table des statuts pour voir. */}
+          <span className="spa-admin-metric__label">
+            Rendez-vous · {scope.label}
+            {qualification === null ? null : ` · ${qualification}`}
+          </span>
         </div>
 
         <div className="spa-admin-metric">
@@ -460,7 +471,10 @@ function statusRows(
       { label: APPOINTMENT_STATUS_PLURAL_LABELS.completed, count: activity.noShows.honored },
       { label: APPOINTMENT_STATUS_PLURAL_LABELS.no_show, count: activity.noShows.noShows },
       { label: APPOINTMENT_STATUS_PLURAL_LABELS.cancelled, count: activity.noShows.cancelled },
-      { label: 'À venir', count: activity.noShows.pending },
+      // Le même mot que la tuile du volume, pris à la même constante (#772) :
+      // deux littéraux dans deux fichiers sont exactement la façon dont les
+      // libellés de statut avaient divergé sur trois écrans (#917).
+      { label: UPCOMING_PLURAL_LABEL, count: activity.noShows.pending },
     ];
   }
 
