@@ -227,6 +227,16 @@ describe('graphe schema.org', () => {
   it('omet le catalogue plutôt que d’en publier un vide', () => {
     expect(graphOf([])['hasOfferCatalog']).toBeUndefined();
   });
+
+  it('n’annonce pas de réservation à un moteur quand rien n’est réservable (#773)', () => {
+    // La version lisible par machine du bouton que l'en-tête retire : sans
+    // prestation publiée, le tunnel refuse de démarrer, et publier son point
+    // d'entrée reviendrait à indexer un cul-de-sac. Même règle que l'adresse et
+    // les horaires — une donnée structurée fausse coûte plus cher qu'une donnée
+    // absente.
+    expect(graphOf([])['potentialAction']).toBeUndefined();
+    expect(graphOf([service])['potentialAction']).toBeDefined();
+  });
 });
 
 describe('sérialisation du script', () => {
