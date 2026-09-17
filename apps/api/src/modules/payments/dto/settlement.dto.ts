@@ -3,6 +3,7 @@ import {
   IsIn,
   IsInt,
   IsOptional,
+  IsString,
   Max,
   Min,
   Validate,
@@ -11,10 +12,11 @@ import {
   type ValidatorConstraintInterface,
 } from 'class-validator';
 
-import { PAYMENT_METHODS } from '../payments.types';
-import type { PaymentMethod, SaleSettlement } from '../payments.types';
+import { COUNTER_SETTLEMENT_MEANS } from '../payments.types';
+import type { CounterSettlementMean, SaleSettlement } from '../payments.types';
 import type { SaleLineRequest } from '../pos.types';
 import type { SettlementRequest } from '../settlement.rules';
+import { MAX_TERMINAL_REFERENCE_LENGTH, judgeTerminalReference } from '../terminal-reference';
 import {
   CreateCashPaymentDto,
   PaymentTransactionDto,
@@ -79,16 +81,67 @@ export class CoherentSettlementAmounts implements ValidatorConstraintInterface {
   }
 }
 
+/**
+ * La référence du ticket du TPE : réservée au terminal, et jamais un numéro de
+ * carte — #834, deuxième critère.
+ *
+ * Trois refus sous un seul validateur, parce qu'ils portent tous sur le même
+ * champ et qu'un message par faute est ce dont le comptoir a besoin :
+ *
+ * | Ce qui est envoyé | Le message |
+ * |---|---|
+ * | une référence sur un règlement en espèces | « seul un passage au terminal en porte une » |
+ * | autre chose que 32 caractères alphanumériques au plus | « forme attendue » |
+ * | 13 à 19 chiffres dont la clé de Luhn est juste | « ce champ n'est pas celui d'un numéro de carte » |
+ *
+ * **400 et non 422** : c'est la forme de la requête qui est fautive, pas une
+ * règle métier qu'un état de la base rendrait vraie ou fausse. Le refus tombe
+ * donc dans le `ValidationPipe` global, avant qu'aucune ligne de code métier ne
+ * s'exécute et avant que la valeur n'atteigne un journal — ce qui est la seule
+ * façon de garantir qu'un PAN saisi par mégarde ne laisse aucune trace
+ * (payments-stripe §1).
+ */
+@ValidatorConstraint({ name: 'legitimateTerminalReference', async: false })
+export class LegitimateTerminalReference implements ValidatorConstraintInterface {
+  public validate(value: unknown, args: ValidationArguments): boolean {
+    const dto = args.object as SettleSaleDto;
+
+    if (typeof value !== 'string') {
+      // La forme est le problème d'`@IsString`, pas le nôtre : un second refus
+      // sur la même faute produirait deux messages qui parlent d'autre chose.
+      return true;
+    }
+
+    return dto.method === 'CARD_TERMINAL' && judgeTerminalReference(value) === 'ok';
+  }
+
+  public defaultMessage(args: ValidationArguments): string {
+    const dto = args.object as SettleSaleDto;
+
+    if (dto.method !== 'CARD_TERMINAL') {
+      return 'terminalReference : seul un passage au terminal en porte une';
+    }
+
+    return judgeTerminalReference(String(args.value)) === 'ressemble-a-une-carte'
+      ? 'terminalReference : ce champ n’est pas celui d’un numéro de carte — saisir le numéro du ticket du terminal'
+      : `terminalReference : ${String(MAX_TERMINAL_REFERENCE_LENGTH)} caractères alphanumériques au plus`;
+  }
+}
+
 export class SettleSaleDto {
   @ApiProperty({
-    enum: PAYMENT_METHODS,
+    enum: COUNTER_SETTLEMENT_MEANS,
     description:
-      'Le moyen employé au comptoir. `CARD` désigne le **terminal du salon** — ' +
-      'jamais Stripe (#834) : rien de ce que le terminal manipule ne traverse ' +
-      'notre code, et le serveur n’en conserve que l’issue.',
+      'Le moyen employé au comptoir. `CARD_TERMINAL` est le **TPE autonome du ' +
+      'salon** — celui de sa banque, non relié à l’application : l’API n’appelle ' +
+      'aucun prestataire, et rien de ce que le terminal manipule ne traverse ' +
+      'notre code (#834, ADR 0014). Le paiement par carte **en ligne** n’est pas ' +
+      'une valeur de ce champ : il vit dans le tunnel public, pas au comptoir.',
   })
-  @IsIn(PAYMENT_METHODS, { message: `method : une valeur parmi ${PAYMENT_METHODS.join(', ')}` })
-  public method!: PaymentMethod;
+  @IsIn(COUNTER_SETTLEMENT_MEANS, {
+    message: `method : une valeur parmi ${COUNTER_SETTLEMENT_MEANS.join(', ')}`,
+  })
+  public method!: CounterSettlementMean;
 
   @ApiPropertyOptional({
     minimum: 1,
@@ -119,6 +172,22 @@ export class SettleSaleDto {
   @Min(1, { message: 'tenderedAmountMinor : un billet nul ne se tend pas' })
   @Max(MAX_AMOUNT_MINOR)
   public tenderedAmountMinor?: number;
+
+  @ApiPropertyOptional({
+    maxLength: MAX_TERMINAL_REFERENCE_LENGTH,
+    example: 'A0000123',
+    description:
+      'Le numéro du ticket ou de l’autorisation imprimé par le TPE — **TPE ' +
+      'seulement**, et facultatif : le caissier n’a pas toujours le ticket sous ' +
+      'la main, et refuser le règlement pour cela bloquerait la caisse sur un ' +
+      'champ de confort. Il sert le rapprochement de fin de journée avec le ' +
+      'relevé du terminal. **Ce n’est pas un champ de carte** : une valeur de 13 ' +
+      'à 19 chiffres dont la clé de Luhn est juste est refusée en 400.',
+  })
+  @IsOptional()
+  @Validate(LegitimateTerminalReference)
+  @IsString({ message: 'terminalReference : chaîne attendue' })
+  public terminalReference?: string;
 }
 
 /**
@@ -160,16 +229,34 @@ export class SaleSettlementDto {
     description: 'Instant UTC du solde, ou `null` s’il reste à encaisser.',
   })
   public settledAt!: string | null;
+
+  @ApiProperty({
+    description:
+      '`true` lorsque la clé `Idempotency-Key` désignait un règlement **déjà ' +
+      'inscrit** : rien n’a été écrit, et `payment` est celui de la première ' +
+      'soumission (#834). L’écran n’a rien de différent à faire des deux cas — ' +
+      'c’est l’intérêt de la clé — mais le comptoir a le droit de savoir qu’il ' +
+      'n’a pas encaissé deux fois.',
+  })
+  public replayed!: boolean;
 }
 
 /** Le geste demandé, tel que le service le lit. */
 export function toSettlementRequest(dto: SettleSaleDto): SettlementRequest {
   return {
-    method: dto.method,
+    // La frontière est ici, et elle est le seul endroit où les deux
+    // vocabulaires se rencontrent : le contrat nomme `CARD_TERMINAL` pour ne
+    // rien laisser à deviner, le domaine dit `CARD` parce qu'au comptoir une
+    // carte n'a plus qu'un chemin (ADR 0014). Même partage que la casse des
+    // statuts, documentée en tête de `payments.types.ts`.
+    method: dto.method === 'CASH' ? 'CASH' : 'CARD',
     ...(dto.amountMinor === undefined ? {} : { amountMinor: dto.amountMinor }),
     ...(dto.tenderedAmountMinor === undefined
       ? {}
       : { tenderedAmountMinor: dto.tenderedAmountMinor }),
+    ...(dto.terminalReference === undefined
+      ? {}
+      : { terminalReference: dto.terminalReference }),
   };
 }
 
@@ -201,5 +288,6 @@ export function toSaleSettlementDto(settlement: SaleSettlement): SaleSettlementD
     remaining: toMoneyDto(settlement.remaining),
     change: toMoneyDto(settlement.change),
     settledAt: settlement.settledAt === null ? null : settlement.settledAt.toISOString(),
+    replayed: settlement.replayed,
   };
 }

@@ -10,7 +10,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-import { PAYMENT_METHODS, PAYMENT_STATUSES } from '../payments.types';
+import { PAYMENT_CARD_CHANNELS, PAYMENT_METHODS, PAYMENT_STATUSES } from '../payments.types';
 import type { PaymentHistoryFilter, PaymentTransaction } from '../payments.types';
 import { AtMostOneTipLine, MoneyDto, SaleLineDto, toMoneyDto } from './sale.dto';
 import { IsOffsetDateTime, PageQueryDto, toPageBounds, toWindowBound } from './validation';
@@ -132,9 +132,35 @@ export class PaymentTransactionDto {
 
   @ApiProperty({
     enum: PAYMENT_METHODS,
-    description: '`CASH` n’a jamais appelé Stripe ; `CARD` s’y retrouve.',
+    description:
+      'Ce que la cliente a présenté : un billet ou une carte. Il ne dit **pas** ' +
+      'par quel tuyau la carte est passée — c’est `mean` qui le dit (#834).',
   })
   public method!: PaymentTransaction['method'];
+
+  @ApiProperty({
+    enum: PAYMENT_CARD_CHANNELS,
+    nullable: true,
+    type: String,
+    description:
+      'Par quel tuyau la carte est passée (#834). `TERMINAL` : le TPE de la ' +
+      'banque du salon, à rapprocher de son relevé de fin de journée. `STRIPE` : ' +
+      'une intention du tunnel public, à rapprocher du relevé Stripe. `null` sur ' +
+      'un règlement en espèces. C’est ce champ, avec `method`, qui sépare les ' +
+      'deux rapprochements — `method` seul les confondrait.',
+  })
+  public cardChannel!: PaymentTransaction['cardChannel'];
+
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    description:
+      'Le numéro du ticket du TPE, quand le caissier l’a saisi — #834. Il est au ' +
+      'rapprochement du terminal ce que `providerChargeId` est au relevé Stripe. ' +
+      '`null` partout ailleurs, et **jamais une donnée de carte** : la frontière ' +
+      'HTTP refuse en 400 ce qui ressemble à un numéro.',
+  })
+  public terminalReference!: string | null;
 
   @ApiProperty({ enum: PAYMENT_STATUSES })
   public status!: PaymentTransaction['status'];
@@ -271,6 +297,8 @@ export function toPaymentTransactionDto(
     amount: toMoneyDto(transaction.amount),
     refunded: toMoneyDto(transaction.refunded),
     method: transaction.method,
+    cardChannel: transaction.cardChannel,
+    terminalReference: transaction.terminalReference,
     status: transaction.status,
     providerPaymentIntentId: transaction.providerPaymentIntentId,
     providerChargeId: transaction.providerChargeId,

@@ -96,6 +96,10 @@ export const PAYMENT_SELECT = {
   amountMinor: true,
   currency: true,
   method: true,
+  // Le tuyau de la carte — #834. Lu partout où `method` l'est : les deux
+  // colonnes forment le **moyen**, et en lire une sans l'autre ferait passer un
+  // règlement au terminal pour une intention Stripe.
+  cardChannel: true,
   status: true,
   providerPaymentIntentId: true,
 } as const;
@@ -116,6 +120,11 @@ export const PAYMENT_TRANSACTION_SELECT = {
   ...PAYMENT_SELECT,
   refundedAmountMinor: true,
   providerChargeId: true,
+  // La référence du ticket du TPE — #834. Elle est au rapprochement ce que
+  // `provider_charge_id` est au relevé Stripe : la ligne par laquelle on
+  // retrouve l'opération chez celui qui l'a exécutée. Ce n'est pas une donnée
+  // de carte, et il n'y a nulle part où en ranger une (payments-stripe §1).
+  terminalReference: true,
   capturedAt: true,
   createdAt: true,
 } as const;
@@ -128,6 +137,7 @@ type PaymentRow = {
   amountMinor: number;
   currency: string;
   method: string;
+  cardChannel: string | null;
   status: string;
   providerPaymentIntentId: string | null;
 };
@@ -135,6 +145,7 @@ type PaymentRow = {
 export type PaymentTransactionRow = PaymentRow & {
   refundedAmountMinor: number;
   providerChargeId: string | null;
+  terminalReference: string | null;
   capturedAt: Date | null;
   createdAt: Date;
 };
@@ -169,6 +180,7 @@ export function toPaymentRecord(row: PaymentRow): PaymentRecord {
     // Les deux énumérations du schéma sont reprises telles quelles : le témoin
     // de `payments.types.ts` garantit que les libellés coïncident.
     method: row.method as PaymentRecord['method'],
+    cardChannel: row.cardChannel as PaymentRecord['cardChannel'],
     status: row.status as PaymentRecord['status'],
     providerPaymentIntentId: row.providerPaymentIntentId,
   };
@@ -182,6 +194,7 @@ export function toPaymentTransaction(row: PaymentTransactionRow): PaymentTransac
     // qui additionne deux monnaies.
     refunded: { amountMinor: row.refundedAmountMinor, currency: row.currency },
     providerChargeId: row.providerChargeId,
+    terminalReference: row.terminalReference,
     capturedAt: row.capturedAt,
     createdAt: row.createdAt,
   };
@@ -237,9 +250,12 @@ export class PaymentsRepository {
    * la ligne gagnante et rend la même intention aux deux appelants — c'est la
    * base qui tranche l'unicité, jamais une vérification applicative.
    *
-   * `method` et `status` ne sont pas des paramètres : cette écriture n'a qu'un
-   * sens — une intention carte, en attente. Le passage à `SUCCEEDED` est
-   * l'affaire du webhook (#58), et de lui seul (payments-stripe §2).
+   * `method`, `cardChannel` et `status` ne sont pas des paramètres : cette
+   * écriture n'a qu'un sens — une intention carte **chez Stripe**, en attente.
+   * Le passage à `SUCCEEDED` est l'affaire du webhook (#58), et de lui seul
+   * (payments-stripe §2). Le canal est `STRIPE` parce que c'est le seul chemin
+   * du produit où Stripe touche une carte (#834) : le comptoir, lui, passe par
+   * le TPE du salon et n'appelle aucun prestataire.
    */
   public async recordCardIntent(draft: CardPaymentDraft): Promise<PaymentRecord | null> {
     try {
@@ -253,6 +269,15 @@ export class PaymentsRepository {
           amountMinor: draft.amount.amountMinor,
           currency: draft.amount.currency,
           method: 'CARD',
+          // **Posé ici, et par aucune contrainte** :
+          // `payments_card_channel_check` est une *implication* — il interdit
+          // un canal ailleurs que sur une carte, il n'en exige pas de toute
+          // carte, faute de quoi la migration aurait dû reprendre les lignes
+          // antérieures à #817. C'est donc cette ligne, et la ligne jumelle de
+          // `settlement.repository.ts`, qui tiennent l'invariant : les deux
+          // seuls chemins d'écriture d'une carte posent leur canal, et une
+          // carte sans canal ne peut être qu'antérieure à #834.
+          cardChannel: 'STRIPE',
           status: 'PENDING',
           providerPaymentIntentId: draft.providerPaymentIntentId,
         }),

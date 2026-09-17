@@ -9,6 +9,7 @@ import {
   type PaymentTransactionRow,
 } from './payments.repository';
 import type { CounterSettlementOutcome, Money, SaleSettlement } from './payments.types';
+import { counterSettlementOf } from './payments.types';
 import type { SaleDraft } from './pos.types';
 import { allocateReceiptNumber } from './receipt.numbering';
 import { planSettlement, type SaleBalance, type SettlementRequest } from './settlement.rules';
@@ -100,12 +101,18 @@ export class SettlementRepository {
    *
    * @param saleId le ticket, désigné par l'URL et jamais par le corps.
    * @param request ce que le comptoir demande : un moyen, et au plus une part.
+   * @param idempotencyKey la clé que l'appelant a choisie — #834, quatrième
+   * critère. Elle est **exigée** sur cette route, et la relecture qu'elle
+   * permet vit dans {@link apply}, sous le verrou de la ligne `sales` : c'est ce
+   * verrou, et non un test préalable, qui fait que deux soumissions concurrentes
+   * ne peuvent pas conclure toutes deux qu'elles sont la première.
    */
   public async settleSale(
     saleId: string,
     request: SettlementRequest,
+    idempotencyKey: string | null = null,
   ): Promise<CounterSettlementOutcome> {
-    return this.prisma.$transaction(async (tx) => this.apply(tx, saleId, request));
+    return this.prisma.$transaction(async (tx) => this.apply(tx, saleId, request, idempotencyKey));
   }
 
   /**
@@ -314,11 +321,27 @@ export class SettlementRepository {
     tx: ScopedTransaction,
     saleId: string,
     request: SettlementRequest,
+    idempotencyKey: string | null = null,
   ): Promise<CounterSettlementOutcome> {
     const sale = await this.lockSale(tx, saleId);
 
     if (sale === null) {
       return { outcome: 'sale-not-found' };
+    }
+
+    // **La relecture d'idempotence, sous le verrou et avant tout refus** (#834).
+    //
+    // Avant, parce qu'une double soumission ne doit pas recevoir le 409 « déjà
+    // soldé » que son propre premier appel a provoqué : elle doit recevoir le
+    // règlement qu'elle a inscrit. Sous le verrou, parce qu'un test préalable
+    // hors transaction laisserait passer les deux concurrentes — c'est la même
+    // raison qui met la marque d'idempotence des webhooks *dans* la transaction
+    // de l'effet (payments-stripe §3).
+    const replay =
+      idempotencyKey === null ? null : await this.findByIdempotencyKey(tx, sale, idempotencyKey);
+
+    if (replay !== null) {
+      return { outcome: 'replayed', settlement: replay };
     }
 
     if (await this.hasLiveCardIntent(tx, saleId)) {
@@ -349,6 +372,14 @@ export class SettlementRepository {
     // en trois fois est **une** pièce, pas trois.
     const receiptNumber = plan.settlesSale ? await allocateReceiptNumber(tx) : null;
 
+    // Le moyen, traduit dans les deux colonnes qui le portent — #834. La
+    // conversion vit dans `payments.types.ts` et nulle part ailleurs : un couple
+    // composé à la main ici pourrait être (`CARD`, aucun canal), que
+    // `payments_card_channel_check` refuserait au milieu de la transaction. Au
+    // comptoir, une carte est **toujours** passée au terminal du salon
+    // (ADR 0014), et c'est ce que `counterSettlementOf` énonce.
+    const stored = counterSettlementOf(request.method);
+
     const payment = await tx.payment.create({
       data: withScopedTenant<Prisma.PaymentUncheckedCreateInput>({
         // Aucun `appointmentId` : le rendez-vous est porté par le ticket, et
@@ -359,7 +390,26 @@ export class SettlementRepository {
         // La devise du ticket, relue sous le verrou : jamais celle de
         // l'appelant, qui n'a pas de champ pour l'envoyer.
         currency: sale.currency,
-        method: request.method,
+        method: stored.method,
+        cardChannel: stored.cardChannel,
+        // La clé de la soumission, quand la route en exige une. C'est elle que
+        // {@link findByIdempotencyKey} relira au deuxième clic.
+        ...(idempotencyKey === null ? {} : { idempotencyKey }),
+        // La référence du ticket du TPE, telle que le caissier l'a saisie. La
+        // frontière HTTP l'a déjà jugée : forme alphanumérique, 32 caractères au
+        // plus, et refus de ce qui ressemble à un numéro de carte
+        // (`terminal-reference.ts`). Ce qui arrive ici est donc un identifiant
+        // d'opération, jamais une donnée de carte (payments-stripe §1).
+        //
+        // **Elle n'est écrite que sur un passage au terminal**, et pour la même
+        // raison que le couple ci-dessus vient de `counterSettlementOf` :
+        // `payments_terminal_reference_check` refuse une référence portée
+        // ailleurs, et ce refus tomberait au milieu de la transaction — donc en
+        // 500. `SettlementRequest` laisse le couple (`CASH`, une référence)
+        // représentable ; c'est ici qu'il cesse de l'être.
+        ...(request.terminalReference === undefined || stored.cardChannel !== 'TERMINAL'
+          ? {}
+          : { terminalReference: request.terminalReference }),
         // `SUCCEEDED` dès l'écriture : il n'y a aucun tiers dont on attendrait
         // la confirmation au comptoir, et la caisse fait foi
         // (payments-stripe §4). `captured_at` du même geste — un encaissement
@@ -419,11 +469,86 @@ export class SettlementRepository {
    */
   private async hasLiveCardIntent(tx: ScopedTransaction, saleId: string): Promise<boolean> {
     const live = await tx.payment.findFirst({
+      // **Le canal n'entre pas dans ce filtre, et c'est délibéré** (#834).
+      //
+      // L'ajouter — `cardChannel: 'STRIPE'` — aurait paru plus précis et aurait
+      // ouvert le trou que cette garde existe pour fermer : une intention en vol
+      // inscrite **avant** #834 porte un canal nul, la migration ne reprenant
+      // aucune ligne. Elle serait sortie du filtre, et le comptoir aurait pu
+      // encaisser un ticket que la cliente est en train de payer en ligne.
+      //
+      // Le couple `CARD` + `PENDING` suffit par construction : un règlement au
+      // terminal naît `SUCCEEDED` — il n'y a aucun tiers dont on attende la
+      // confirmation —, donc aucune ligne `TERMINAL` n'est jamais en vol.
       where: { saleId, method: 'CARD', status: 'PENDING' },
       select: { id: true },
     });
 
     return live !== null;
+  }
+
+  /**
+   * Le règlement que cette clé a déjà inscrit sur ce ticket — #834, quatrième
+   * critère.
+   *
+   * ## Ce que l'enveloppe rendue porte, et ce qu'elle ne porte pas
+   *
+   * Le **règlement** est celui de la première soumission, à l'octet près : même
+   * identifiant, même montant, même instant de capture, même référence de
+   * terminal. C'est ce que « rend le même règlement » veut dire.
+   *
+   * L'**état du ticket** autour de lui, en revanche, est celui de maintenant :
+   * si un second règlement légitime a soldé la vente entre-temps, `settled`,
+   * `remaining` et `settledAt` le disent. Figer l'enveloppe d'alors aurait
+   * demandé de la stocker, et aurait rendu à l'écran un reste dû faux — c'est-à-
+   * dire exactement ce dont une caisse ne peut pas se servir.
+   *
+   * ## La portée de la clé est le ticket
+   *
+   * `@@unique([tenantId, saleId, idempotencyKey])`, et la lecture porte donc le
+   * `saleId`. La même clé employée sur deux ventes décrit deux opérations
+   * distinctes, et les confondre aurait rendu à la seconde le règlement de la
+   * première — un ticket soldé par l'encaissement d'un autre.
+   *
+   * @param sale le ticket **tel que le verrou vient de le rendre**, passé par
+   * {@link apply} plutôt que relu ici : les quatre valeurs de l'enveloppe y sont
+   * déjà, et une seconde lecture n'aurait su qu'en rendre l'absence — c'est-à-dire
+   * un cas que le verrou rend impossible et qu'il aurait fallu replier sur un
+   * `null` faisant réécrire un second règlement sous la même clé.
+   */
+  private async findByIdempotencyKey(
+    tx: ScopedTransaction,
+    sale: LockedSaleRow,
+    idempotencyKey: string,
+  ): Promise<SaleSettlement | null> {
+    const payment = await tx.payment.findFirst({
+      where: { saleId: sale.id, idempotencyKey },
+      // Le billet tendu s'ajoute à la projection de rapprochement : c'est de lui
+      // que la monnaie rendue se déduit, et il n'est pas du ressort de
+      // `PAYMENT_TRANSACTION_SELECT`, qui sert l'historique où elle ne figure pas.
+      select: { ...PAYMENT_TRANSACTION_SELECT, tenderedAmountMinor: true },
+    });
+
+    if (payment === null) {
+      return null;
+    }
+
+    // La monnaie rendue se **déduit** du billet tendu, comme partout ailleurs
+    // dans le module : elle n'est pas stockée, et la déduire ici est ce qui
+    // évite qu'un rejeu annonce « rien à rendre » sur un billet qui en a rendu.
+    const tendered = payment.tenderedAmountMinor;
+    const changeAmountMinor = tendered === null ? 0 : tendered - payment.amountMinor;
+
+    return {
+      payment: toPaymentTransaction(payment),
+      saleId: sale.id,
+      total: money(sale.total, sale.currency),
+      settled: money(sale.settled, sale.currency),
+      remaining: money(sale.total - sale.settled, sale.currency),
+      change: money(changeAmountMinor, sale.currency),
+      settledAt: sale.settledAt,
+      replayed: true,
+    };
   }
 
   /**
@@ -472,6 +597,8 @@ export class SettlementRepository {
       remaining: money(sale.total - settledAmountMinor, sale.currency),
       change: money(changeAmountMinor, sale.currency),
       settledAt: marks.settlesSale ? marks.capturedAt : null,
+      // Un geste réel, par opposition au rejeu de {@link findByIdempotencyKey}.
+      replayed: false,
     };
   }
 }
