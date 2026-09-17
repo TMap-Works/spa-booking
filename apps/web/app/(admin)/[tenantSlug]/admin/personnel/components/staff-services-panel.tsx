@@ -128,9 +128,17 @@ export function StaffServicesPanel({
                 <span className="spa-admin-badge spa-admin-badge--confirmed">Affectée</span>
               ) : null}
               <span className="spa-admin-toolbar__spacer" />
+              {/* La bascule d'une ligne rend les autres inertes : `pending` est une
+               * clé unique, et laisser les autres boutons cliquables ouvrait deux
+               * appels concurrents — le premier à répondre remettait `pending` à
+               * `null`, rendant le second bouton cliquable alors que sa requête
+               * était toujours en vol : un second POST pour une seule intention,
+               * donc un 409 sur un geste qu'on n'a demandé qu'une fois. La même
+               * ligne qu'en face (#768) : les deux vues d'un même lien se
+               * défendent de la même façon. */}
               {canManage ? (
                 <Button
-                  disabled={refreshing}
+                  disabled={refreshing || (pending !== null && pending !== service.id)}
                   loading={pending === service.id}
                   loadingLabel="Enregistrement…"
                   onClick={() => void toggle(service)}

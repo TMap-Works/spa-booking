@@ -23,7 +23,10 @@ import { formatDuration } from '@/lib/format';
 
 import { CatalogStatusBadge } from '../../components/catalog-status-badge';
 import { ServiceForm } from '../../components/service-form';
-import { ServiceStaffPanel } from '../../components/service-staff-panel';
+import {
+  ServiceStaffPanel,
+  type ServiceStaffChoice,
+} from '../../components/service-staff-panel';
 import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
 import { adminCatalogPath, adminCatalogPreviewPath, adminServicePath } from '../../paths';
 
@@ -53,6 +56,11 @@ import { adminCatalogPath, adminCatalogPreviewPath, adminServicePath } from '../
  * fiche de l'établissement, le back-office est justement l'endroit où on la
  * retrouve, et l'API accepte de l'affecter. Le panneau la propose donc, en
  * disant qu'elle est désactivée plutôt qu'en la masquant.
+ *
+ * Depuis #768 elle n'est plus amputée des praticiens **déjà** affectés : le
+ * panneau liste tout l'établissement et bascule chaque ligne, comme la fiche
+ * praticien liste tout le catalogue. C'est le même lien (CDC §2.4), vu des deux
+ * bouts ; il n'avait aucune raison de s'éditer de deux façons.
  *
  * ## Le rang qui écrit n'est pas celui qui ouvre la fiche
  *
@@ -158,7 +166,34 @@ export default async function ServicePage({ params }: ServicePageProps) {
   // `sortStaffMembers` qui donne l'ordre d'affichage — le même que sur l'écran
   // Personnel —, actives d'abord puis `localeCompare` en `fr-FR`.
   const affected = new Set(assigned.map((member) => member.id));
-  const candidates = sortStaffMembers(staff.filter((member) => !affected.has(member.id)));
+
+  /*
+   * L'annuaire tout entier, chaque fiche portant son état vis-à-vis de cette
+   * prestation (#768) — et non plus les seuls non affectés.
+   *
+   * Le filet : une affectation dont la fiche ne figure pas dans l'annuaire est
+   * ajoutée à la liste. Les deux lectures portent le même établissement et le
+   * cas ne devrait pas se produire ; s'il se produisait, la ligne manquante
+   * serait une affectation invisible — donc impossible à retirer depuis l'écran
+   * qui la gère.
+   */
+  const directory = new Map(staff.map((member) => [member.id, member]));
+  for (const member of assigned) {
+    if (!directory.has(member.id)) {
+      directory.set(member.id, {
+        id: member.id,
+        displayName: member.displayName,
+        isActive: member.isActive,
+      });
+    }
+  }
+
+  const roster: ServiceStaffChoice[] = sortStaffMembers([...directory.values()]).map((member) => ({
+    id: member.id,
+    displayName: member.displayName,
+    isActive: member.isActive,
+    assigned: affected.has(member.id),
+  }));
   const canManage = hasAtLeastRole(profile.role, 'manager');
 
   return (
@@ -188,28 +223,34 @@ export default async function ServicePage({ params }: ServicePageProps) {
         </div>
       </div>
 
-      <div className="spa-admin__split">
-        <ServiceStaffPanel
+      {/* Plus de `spa-admin__split` ici (#768) : sa première colonne est bornée
+       * à 22 rem, et le panneau des praticiens n'y listait que les non affectés
+       * — une liste courte par construction. Il liste désormais l'établissement
+       * entier, et une liste longue dans une colonne étroite est précisément ce
+       * que la fiche praticien avait déjà refusé pour sa semaine d'horaires. Les
+       * sections s'empilent donc sur toute la largeur, dans l'ordre où on les
+       * remplit : la prestation, puis qui la pratique. La longueur du panneau ne
+       * pousse plus rien vers le bas, puisqu'il est dernier.
+       *
+       * Le conteneur borne le formulaire à la mesure de saisie du produit, la
+       * même qu'à la création : sans lui il prendrait les 1 900 px de la zone de
+       * contenu pour des champs de durée et de prix (#630). */}
+      <div className="spa-admin-form">
+        <ServiceForm
           tenantSlug={tenantSlug}
-          serviceId={service.id}
-          assigned={assigned}
-          candidates={candidates}
+          currency={service.price.currency}
+          categories={categories}
+          service={service}
           canManage={canManage}
         />
-        {/* La seconde colonne du partage est en `1fr` : elle prenait tout ce
-         * que le panneau des praticiens laissait, soit 1 269 px à 1920 pour des
-         * champs de durée et de prix (#630). Le conteneur la borne à la mesure
-         * de saisie du produit, la même qu'à la création. */}
-        <div className="spa-admin-form">
-          <ServiceForm
-            tenantSlug={tenantSlug}
-            currency={service.price.currency}
-            categories={categories}
-            service={service}
-            canManage={canManage}
-          />
-        </div>
       </div>
+
+      <ServiceStaffPanel
+        tenantSlug={tenantSlug}
+        serviceId={service.id}
+        staff={roster}
+        canManage={canManage}
+      />
     </section>
   );
 }

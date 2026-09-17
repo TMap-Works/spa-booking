@@ -97,8 +97,9 @@ export default async function NewServicePage({ params }: NewServicePageProps) {
        * vaut la fenêtre moins le rail, et « Durée du soin (minutes) » mesurait
        * 1 637 px à 1920 pour y taper « 60 ». La borne se pose sur un conteneur
        * d'écran et non dans `ServiceForm` : le même formulaire sert la fiche
-       * d'une prestation, où il est rangé dans une colonne de `spa-admin__split`
-       * — deux enveloppes différentes, une seule mesure. */}
+       * d'une prestation, qui le borne par le même conteneur depuis qu'elle
+       * empile ses sections (#768) — deux écrans, une seule mesure, et aucun des
+       * deux ne la fait porter au composant. */}
       <div className="spa-admin-form">
         <ServiceForm
           tenantSlug={tenantSlug}
