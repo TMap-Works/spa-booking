@@ -311,6 +311,7 @@ describe('historique agrégé', () => {
       serviceName: 'Massage 60 min',
       staffName: 'Alice',
       price: { amountMinor: 3500, currency: 'EUR' },
+      clientNote: null,
     };
 
     const tropDeVisites = {
@@ -342,6 +343,7 @@ describe('historique agrégé', () => {
           serviceName: 'Massage 60 min',
           staffName: null,
           price: { amountMinor: 3500, currency: 'EUR' },
+          clientNote: null,
         },
       ],
     };
@@ -371,6 +373,7 @@ describe('historique agrégé', () => {
         serviceName: 'Massage 60 min',
         staffName: 'Alice',
         price: { amountMinor: 3500, currency: 'EUR' },
+        clientNote: null,
       },
     ],
   });
@@ -389,5 +392,67 @@ describe('historique agrégé', () => {
     // statut inventé reste une réponse invalide, et c'est ce qui distingue ce
     // schéma d'un `z.string()` complaisant.
     expect(customerVisitHistorySchema.safeParse(visiteDuFil('ARCHIVED')).success).toBe(false);
+  });
+
+  /**
+   * Les deux notes du rendez-vous, et la frontière entre elles — #870.
+   *
+   * Une seule des deux entre au contrat de l'historique. C'est la propriété la
+   * plus coûteuse à perdre de ce fichier : `CustomerVisit` est un type
+   * **partagé**, et un `staffNote` qui s'y glisserait rendrait légitime, du seul
+   * fait d'exister, de le servir depuis n'importe quel lecteur du contrat — y
+   * compris le parcours public, qui n'a aucune raison de lire ce que le salon
+   * écrit sur quelqu'un (#317).
+   */
+  describe('la remarque du client, et elle seule', () => {
+    const avecNotes = (notes: Record<string, unknown>) => ({
+      summary: { ...EMPTY, totalVisits: 1, honoredVisits: 1 },
+      visits: [
+        {
+          appointmentId: '22222222-2222-4222-8222-222222222222',
+          status: 'COMPLETED',
+          startsAt: '2026-09-21T09:00:00.000Z',
+          endsAt: '2026-09-21T10:00:00.000Z',
+          serviceName: 'Gommage corps',
+          staffName: 'Alice',
+          price: { amountMinor: 3500, currency: 'EUR' },
+          ...notes,
+        },
+      ],
+    });
+
+    it('rend la remarque écrite à la réservation, mot pour mot', () => {
+      const consigne =
+        'Allergie aux huiles essentielles d’agrumes, merci d’en tenir compte pour le gommage.';
+
+      expect(
+        customerVisitHistorySchema.parse(avecNotes({ clientNote: consigne })).visits[0]?.clientNote,
+      ).toBe(consigne);
+    });
+
+    it('rend `null` — et non un champ absent — quand rien n’a été écrit', () => {
+      const visite = customerVisitHistorySchema.parse(avecNotes({ clientNote: null })).visits[0];
+
+      // `nullable` et non `optional`, comme dans `bookedAppointmentSchema` :
+      // l'API émet toujours la clé, et le front n'a qu'un seul cas à traiter.
+      expect(visite).toHaveProperty('clientNote', null);
+    });
+
+    it('refuse une visite dont la remarque manque tout à fait', () => {
+      expect(customerVisitHistorySchema.safeParse(avecNotes({})).success).toBe(false);
+    });
+
+    it('retire `staffNote` d’une réponse qui la porterait, plutôt que de la rendre', () => {
+      const lue = customerVisitHistorySchema.parse(
+        avecNotes({ clientNote: null, staffNote: 'Peau réactive, diluer de moitié.' }),
+      ).visits[0];
+
+      // Le schéma n'est pas `.strict()` — un champ ajouté par l'API ne doit pas
+      // faire tomber un front qui ne s'en sert pas —, et c'est précisément ce
+      // qui fait de cette assertion la frontière : ce qui n'est pas déclaré est
+      // **retiré**, et aucun lecteur du contrat ne peut donc en hériter.
+      expect(lue).not.toHaveProperty('staffNote');
+      expect(lue?.clientNote).toBeNull();
+    });
   });
 });

@@ -339,14 +339,33 @@ export type SetCustomerStatusRequest = z.infer<typeof setCustomerStatusRequestSc
  * Une visite, telle que l'historique la rend.
  *
  * Volontairement plus pauvre qu'`appointmentSchema` : l'historique d'une fiche
- * répond à « qu'a-t-elle pris, quand, avec qui, pour combien », et n'a pas à
- * rejouer le contrat complet du rendez-vous. `clientNote` et `staffNote` en sont
- * absentes — la première appartient au rendez-vous, la seconde se lit sur sa
- * fiche.
+ * répond à « qu'a-t-elle pris, quand, avec qui, pour combien, et qu'avait-il
+ * demandé », et n'a pas à rejouer le contrat complet du rendez-vous.
  *
  * `staff` est `.nullable()` : un praticien peut avoir été retiré de
  * l'établissement, et une visite sans praticien nommé reste une visite à
  * compter.
+ *
+ * ## Les deux notes n'ont pas le même sort ici, et c'est délibéré — #870
+ *
+ * `clientNote` **est** du contrat depuis #870. C'est ce que la personne a écrit
+ * elle-même en réservant — « allergie aux huiles essentielles d'agrumes, merci
+ * d'en tenir compte pour le gommage » —, et la tenir hors de l'historique la
+ * rendait illisible partout ailleurs que sur le tiroir du rendez-vous concerné :
+ * la praticienne qui prépare la cabine ouvre la fiche, pas les quatre agendas
+ * des quatre venues précédentes. Elle est `nullable` et non `optional`, comme
+ * dans `bookedAppointmentSchema` : l'API l'émet toujours, à `null` quand rien
+ * n'a été écrit. Un champ absent et un champ vide se distinguent mal à la
+ * lecture, et le front n'a alors plus de cas unique à traiter.
+ *
+ * `staffNote`, elle, n'y entre pas — et n'y entrera pas. C'est une note de
+ * séance écrite **sur** quelqu'un par le salon, et la frontière posée par
+ * `appointmentSchema` (#317) veut qu'elle ne sorte que par une route gardée par
+ * un rôle. Ce schéma-ci est bien servi au rang `staff`, mais son type est
+ * partagé avec le parcours public : l'y ajouter ferait du contrat le lieu où la
+ * frontière se perd. Le schéma n'étant pas `.strict()`, une réponse qui la
+ * porterait par accident serait **retirée** à la lecture plutôt que rejetée —
+ * c'est le comportement que verrouille `crm.spec.ts`.
  *
  * ## Le statut est normalisé à la réception, comme partout ailleurs (#610)
  *
@@ -372,6 +391,8 @@ export const customerVisitSchema = z.object({
   serviceName: z.string().min(1),
   staffName: z.string().min(1).nullable(),
   price: nonNegativeMoneySchema,
+  /** Ce que le client a écrit en réservant, ou `null` — jamais la note du salon. */
+  clientNote: longTextSchema.nullable(),
 });
 
 export type CustomerVisit = z.infer<typeof customerVisitSchema>;

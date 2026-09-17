@@ -123,6 +123,16 @@ export interface CustomerPage {
  * ferait annoncer chaque visite cinq à dix minutes avant l'heure du rendez-vous
  * (#750). La conversion est celle d'`appointments/billed-interval.ts`, la même
  * que celle de l'agenda.
+ *
+ * ## Une seule des deux notes du rendez-vous y figure — #870
+ *
+ * `clientNote`, ce que le client a écrit lui-même en réservant, et rien d'autre.
+ * `staffNote` reste en dehors : elle est écrite **sur** quelqu'un par le salon,
+ * et le contrat partagé la borne à `appointmentSchema`, dont la seule sortie est
+ * gardée par un rôle (#317). Elle est lue par `EXPORT_APPOINTMENT_SELECT`, parce
+ * que l'art. 15 du RGPD ne connaît pas d'exception pour les notes qu'on aurait
+ * préféré garder pour soi — mais cette lecture-là remet un document à la
+ * personne, elle n'alimente aucun écran.
  */
 export interface CustomerVisit {
   appointmentId: string;
@@ -139,6 +149,14 @@ export interface CustomerVisit {
   staffName: string | null;
   priceAmountMinor: number;
   priceCurrency: string;
+  /**
+   * La remarque écrite par le client à la réservation, ou `null` (#870).
+   *
+   * Le champ facultatif de l'étape 4 du tunnel
+   * (`docs/design/appointments/wireframes.md`). Il n'est jamais réécrit par le
+   * salon : ce qu'écrit le salon est `staffNote`, que cette vue ne porte pas.
+   */
+  clientNote: string | null;
 }
 
 /**
@@ -179,8 +197,11 @@ export interface CustomerVisitHistory {
  * L'export sert le droit d'accès (RGPD art. 15), qui porte sur **toutes** les
  * données concernant la personne — y compris les textes libres qu'un humain a
  * saisis à son sujet, et y compris ce qu'elle a elle-même écrit en réservant.
- * D'où les trois champs que l'historique ne montre pas : `clientNote`,
- * `staffNote` et le motif d'annulation.
+ * D'où les deux champs que l'historique ne montre pas : `staffNote`, écrite
+ * **sur** la personne par le salon, et le motif d'annulation. `clientNote`, le
+ * troisième texte libre, est dans les deux depuis #870 — l'écran le montre
+ * parce que la praticienne en a besoin pour préparer la cabine, l'export le
+ * restitue parce que la personne l'a écrit elle-même.
  *
  * Ce qu'il ne porte pas, en revanche : ni `tenantId`, ni `staffId`, ni
  * `serviceId`. Ce sont des identifiants internes de l'établissement, et le

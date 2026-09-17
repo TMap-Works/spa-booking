@@ -73,6 +73,11 @@ const HISTORY = {
       serviceName: 'Soin visage',
       staffName: 'Hasina',
       price: { amountMinor: 18000, currency: 'MGA' },
+      // La remarque écrite par le client à la réservation (#870). Elle est
+      // **toujours** émise, à `null` quand rien n'a été écrit : le contrat la
+      // déclare `nullable` et non `optional`, et le client HTTP du back-office
+      // valide chaque réponse — une clé manquante ferait tomber la page entière.
+      clientNote: 'Allergie aux huiles essentielles d’agrumes.',
     },
   ],
 };

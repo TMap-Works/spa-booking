@@ -511,6 +511,73 @@ describe('CRM — fichier client', () => {
       });
     });
 
+    /**
+     * La remarque du client atteint la fiche, la note du salon n'en sort pas —
+     * #870, critères 3 et 4.
+     *
+     * Les deux assertions sont indissociables et c'est pour cela qu'elles vivent
+     * dans le même cas : ce qui est demandé n'est pas « servir une note », c'est
+     * servir **celle des deux** que le client a écrite lui-même. Un historique
+     * qui les servirait toutes les deux satisferait le critère 1 et violerait le
+     * critère 3, et rien dans une capture d'écran ne le dirait.
+     */
+    it('rend la remarque du client sur la ligne de visite, jamais la note du salon', async () => {
+      const fiche = harness.repository.addCustomer({ tenantId: harness.tenantId });
+      const consigne =
+        'Allergie aux huiles essentielles d’agrumes, merci d’en tenir compte pour le gommage.';
+
+      harness.repository.addVisit({
+        tenantId: harness.tenantId,
+        clientId: fiche.id,
+        status: 'COMPLETED',
+        startsAt: new Date('2026-09-21T09:00:00.000Z'),
+        clientNote: consigne,
+        staffNote: 'Peau réactive, diluer de moitié — ne pas relire au comptoir.',
+      });
+
+      const response = await request(server())
+        .get(`${BASE}/${fiche.id}/history`)
+        .set('Authorization', await harness.bearer('STAFF'))
+        .expect(200);
+
+      const { visits } = response.body as { visits: Record<string, unknown>[] };
+
+      expect(visits[0]).toMatchObject({ clientNote: consigne });
+      // Ce que cette assertion couvre, exactement : le dépôt est ici substitué
+      // par son double (`crm.harness.ts`), et c'est donc la chaîne double →
+      // service → DTO → sérialisation qu'elle traverse, pas la vraie projection
+      // SQL. Ce qui interdit à `staffNote` d'entrer dans `VISIT_SELECT` est le
+      // typage — `recentVisits` rend `CustomerVisit[]`, qui ne porte pas le
+      // champ, et un `staffNote` de plus ne compilerait pas. La suite garde ici
+      // la couche que le compilateur ne voit pas : le DTO et sa sérialisation.
+      expect(visits[0]).not.toHaveProperty('staffNote');
+      // Le corps entier, et pas seulement la première ligne : un agrégat ou un
+      // champ oublié ailleurs dans la charge fuiterait tout autant.
+      expect(JSON.stringify(response.body)).not.toContain('diluer de moitié');
+    });
+
+    it('rend `clientNote` à `null` quand le rendez-vous n’en porte pas', async () => {
+      const fiche = harness.repository.addCustomer({ tenantId: harness.tenantId });
+      harness.repository.addVisit({
+        tenantId: harness.tenantId,
+        clientId: fiche.id,
+        status: 'COMPLETED',
+        startsAt: new Date('2026-09-21T09:00:00.000Z'),
+      });
+
+      const response = await request(server())
+        .get(`${BASE}/${fiche.id}/history`)
+        .set('Authorization', await harness.bearer('STAFF'))
+        .expect(200);
+
+      const { visits } = response.body as { visits: Record<string, unknown>[] };
+
+      // La clé est **présente**, à `null` : le contrat la déclare `nullable` et
+      // non `optional`, et un champ absent ferait échouer la lecture côté
+      // back-office, qui valide chaque réponse.
+      expect(visits[0]).toHaveProperty('clientNote', null);
+    });
+
     it('rend 404 plutôt qu’un historique vide sur un identifiant inconnu', async () => {
       await request(server())
         .get(`${BASE}/99999999-9999-4999-8999-999999999999/history`)

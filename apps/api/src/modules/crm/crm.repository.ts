@@ -142,11 +142,12 @@ const CUSTOMER_SELECT = {
  * Un rendez-vous **tel que l'export le lit** — plus large que `VISIT_SELECT`,
  * parce que le droit d'accès n'a pas le même périmètre qu'un écran (#81).
  *
- * Les trois champs de texte libre que l'historique ne montre pas sont ici :
- * `client_note`, ce que la cliente a écrit en réservant ; `staff_note`, ce que
- * le salon a noté sur ce rendez-vous ; et le motif d'annulation. Tous les trois
- * sont des données **la concernant**, et l'art. 15 du RGPD ne connaît pas
- * d'exception pour celles qu'on aurait préféré garder pour soi.
+ * Les trois champs de texte libre y sont : `client_note`, ce que la cliente a
+ * écrit en réservant — le seul des trois que `VISIT_SELECT` lise aussi, depuis
+ * #870 ; `staff_note`, ce que le salon a noté sur ce rendez-vous ; et le motif
+ * d'annulation. Tous les trois sont des données **la concernant**, et l'art. 15
+ * du RGPD ne connaît pas d'exception pour celles qu'on aurait préféré garder
+ * pour soi.
  *
  * Ce qui n'y est **pas** : `tenant_id`, `staff_id`, `service_id`. Le nom du
  * praticien et celui de la prestation sont lus par relation — ils décrivent la
@@ -198,6 +199,14 @@ const OCCUPYING_STATUSES = ['PENDING', 'CONFIRMED'] as const;
  * le nom, et pour la même raison que l'agenda les lit : ce sont eux qui
  * convertissent l'intervalle **occupé** de la colonne en intervalle **facturé**,
  * seul affichable (#750).
+ *
+ * `clientNote` y est entrée en #870, `staffNote` non — et l'écart entre les deux
+ * est la seule chose à retenir de cette projection. La première est écrite par
+ * le client sur son propre rendez-vous ; la seconde est écrite sur lui par le
+ * salon, et `EXPORT_APPOINTMENT_SELECT` est la seule lecture de ce dépôt qui la
+ * porte, parce qu'un droit d'accès n'a pas le périmètre d'un écran. Ajouter
+ * `staffNote: true` ici la ferait remonter jusqu'au type partagé
+ * `CustomerVisit`, que le parcours public lit aussi.
  */
 const VISIT_SELECT = {
   id: true,
@@ -206,6 +215,7 @@ const VISIT_SELECT = {
   endsAt: true,
   priceAmountMinor: true,
   priceCurrency: true,
+  clientNote: true,
   service: { select: { name: true, durationMinutes: true, bufferBeforeMinutes: true } },
   staff: { select: { displayName: true } },
 } as const;
@@ -1076,6 +1086,7 @@ export class CrmRepository {
         staffName: row.staff.displayName,
         priceAmountMinor: row.priceAmountMinor,
         priceCurrency: row.priceCurrency,
+        clientNote: row.clientNote,
       };
     });
   }

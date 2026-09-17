@@ -7,6 +7,7 @@ import {
   isVoidVisit,
   parsePageNumber,
   parseSearchTerm,
+  visitClientNote,
 } from '@/app/(admin)/[tenantSlug]/admin/clients/client-view';
 import { adminClientsPath } from '@/app/(admin)/[tenantSlug]/admin/clients/paths';
 
@@ -82,6 +83,29 @@ describe('le prix d’une visite qui n’a rien encaissé', () => {
     expect(isVoidVisit('completed')).toBe(false);
     expect(isVoidVisit('confirmed')).toBe(false);
     expect(isVoidVisit('pending')).toBe(false);
+  });
+});
+
+/**
+ * La remarque du client sur une ligne d'historique — #870.
+ *
+ * Ce que cette fonction tranche tient en une phrase : « rien d'écrit » et
+ * « écrit du blanc » sont le même cas. Le contrat accepte les deux — il borne la
+ * longueur d'un texte libre, pas son contenu —, et les distinguer à l'affichage
+ * aurait fait apparaître, sur une ligne de visite, l'étiquette « Remarque du
+ * client » suivie de rien.
+ */
+describe('la remarque écrite par le client à la réservation', () => {
+  it('rend le texte tel quel, retours à la ligne compris', () => {
+    const consigne = 'Allergie aux agrumes.\nMerci d’en tenir compte pour le gommage.';
+
+    expect(visitClientNote(consigne)).toBe(consigne);
+  });
+
+  it('ne rend rien quand rien n’a été écrit — `null` comme une chaîne blanche', () => {
+    for (const vide of [null, '', '   ', '\n', ' \t ']) {
+      expect(visitClientNote(vide)).toBeNull();
+    }
   });
 });
 
