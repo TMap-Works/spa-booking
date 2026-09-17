@@ -28,6 +28,7 @@ import type {
   ClientReference,
   RescheduleDraft,
   RescheduleOutcome,
+  StaffProfileRecord,
   StatusChangeDraft,
 } from './appointments.types';
 
@@ -1148,5 +1149,75 @@ export class AppointmentsRepository {
     const tenant = await this.prisma.tenant.findFirst({ select: { timezone: true } });
 
     return tenant?.timezone ?? null;
+  }
+
+  /**
+   * La fiche praticien rattachée à un **compte** de l'établissement courant —
+   * `null` s'il n'y en a pas (#811).
+   *
+   * C'est le lien que rien ne lisait jusqu'ici : la relation `User.staffProfiles`
+   * existait au schéma, `StaffMemberDto` masquait `userId`, et aucun code
+   * n'allait du compte à sa fiche. C'est pourtant la seule façon de servir « mon
+   * agenda » sans laisser l'appelant désigner de qui il parle.
+   *
+   * ## La clé est `(tenant_id, user_id)`, et c'est la contrainte du schéma
+   *
+   * `@@unique([tenantId, userId])` sur `staff` : un compte a au plus une fiche
+   * par établissement, et c'est ce qui rend la dérivation **totale** — il n'y a
+   * jamais deux agendas candidats, donc jamais de choix à faire. `findFirst` et
+   * non `findUnique`, pour la raison de `findById` : c'est l'extension qui
+   * injecte `tenantId` dans le `where`, et `findUnique` exigerait que le `where`
+   * écrive lui-même la clé complète.
+   *
+   * La conséquence est celle qu'on veut : un compte qui existe dans le salon
+   * voisin rend `null` ici — indiscernable d'un compte sans fiche
+   * (tenant-isolation §4). Le `userId` vient d'un jeton signé, si bien que le cas
+   * ne se produit pas ; c'est la **structure** qui l'interdit, pas une
+   * comparaison écrite quelque part.
+   *
+   * ## Pourquoi cette lecture est ici et non derrière un appel de service
+   *
+   * Même raison que `currentTimeZone` juste au-dessus : `CatalogModule` exporte
+   * `ServicesService` et rien qui aille du compte à la fiche, et `staff` est
+   * pourtant la table que ce module joint déjà à chaque ligne d'agenda
+   * (`AGENDA_SELECT`). Le jour où `catalog` exposera « la fiche de ce compte »,
+   * cette lecture deviendra cet appel, et rien d'autre ne bougera.
+   *
+   * Une fiche **désactivée** est rendue. Son agenda ne s'efface pas quand on la
+   * désactive — les rendez-vous déjà pris restent à honorer —, et un praticien
+   * qui ne verrait plus rien de sa semaine passée ne saurait pas pourquoi.
+   * `isActive` voyage jusqu'à l'écran, qui a de quoi le dire.
+   */
+  public async findStaffByUserId(userId: string): Promise<StaffProfileRecord | null> {
+    const staff = await this.prisma.staff.findFirst({
+      where: { userId },
+      select: { id: true, displayName: true, bio: true, isActive: true },
+    });
+
+    return staff ?? null;
+  }
+
+  /**
+   * Les jours de fermeture récurrents de l'établissement courant, en
+   * numérotation ISO 8601 — 1 lundi … 7 dimanche (#811).
+   *
+   * Troisième lecture d'une table que ce module ne possède pas, et la dernière :
+   * `AvailabilityModule` exporte `StaffScheduleService` et `StaffTimeOffService`
+   * — d'où viennent les deux autres matières de `GET /me/schedule` — mais pas
+   * `ClosingDaysService`. Rendre ce dernier public relève du module qui le
+   * possède ; recopier ici une règle de fermeture serait en revanche une seconde
+   * écriture, et c'est ce qu'on refuse : il n'y a **aucune règle** ici, seulement
+   * `SELECT weekday FROM tenant_closing_days`.
+   *
+   * Trié à la lecture plutôt qu'à l'affichage : une liste de jours se lit dans
+   * l'ordre de la semaine, et le front n'a pas à le redécider.
+   */
+  public async listClosedWeekdays(): Promise<number[]> {
+    const rows = await this.prisma.tenantClosingDay.findMany({
+      select: { weekday: true },
+      orderBy: { weekday: 'asc' },
+    });
+
+    return rows.map((row) => row.weekday);
   }
 }

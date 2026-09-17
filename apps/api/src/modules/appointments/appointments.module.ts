@@ -9,6 +9,8 @@ import { AppointmentsController } from './appointments.controller';
 import { AppointmentsRepository } from './appointments.repository';
 import { AppointmentsService } from './appointments.service';
 import { AppointmentEvents } from './events/appointment-events';
+import { MyStaffController } from './my-staff.controller';
+import { MyStaffService } from './my-staff.service';
 import { PublicAppointmentsController } from './public-appointments.controller';
 import { SlotLockService } from './slot-lock.service';
 
@@ -38,7 +40,8 @@ import { SlotLockService } from './slot-lock.service';
  *   prix d'une prestation. C'est la porte que le catalogue a explicitement
  *   ouverte pour ce module — un **appel de service**, la première des deux voies
  *   autorisées entre modules (api-module §3), jamais un import de son repository.
- * - `AvailabilityModule`, pour deux services et deux seulement.
+ * - `AvailabilityModule`, pour quatre services — deux pour le chemin de
+ *   réservation, deux pour l'espace praticien (#811).
  *   `AvailabilityService` sert le contrôle « ce créneau était-il proposable ? » ;
  *   rejouer le moteur plutôt que réécrire ses six règles est ce qui empêche
  *   l'agenda affiché et l'agenda réservable de diverger, et son en-tête annonce
@@ -51,6 +54,19 @@ import { SlotLockService } from './slot-lock.service';
  *   créneau sur une réponse cachée. C'est la forme que prend ici le cinquième
  *   critère de #35 — « un cache périmé ne peut jamais provoquer une double
  *   réservation ».
+ *
+ *   `StaffScheduleService` et `StaffTimeOffService` sont arrivés avec #811, et
+ *   pour un usage strictement en **lecture** : l'espace praticien rend au
+ *   praticien connecté ses propres horaires et ses propres absences. Les deux
+ *   étaient exportés de longue date — c'est une porte, pas une ouverture faite
+ *   pour ce ticket. Ce que ce module n'atteint toujours pas :
+ *   `AvailabilityRepository` et `StaffTimeOffRepository`, qu'`AvailabilityModule`
+ *   n'exporte pas, et `ClosingDaysService`, qu'il n'exporte pas non plus — d'où
+ *   la lecture d'une seule colonne dans `AppointmentsRepository`, documentée
+ *   là-bas sur le modèle de `currentTimeZone`.
+ *
+ *   L'espace praticien n'**écrit** rien de tout cela : poser un horaire ou un
+ *   congé reste du back-office, sur les routes que `availability` sert déjà.
  *
  * - `IdentityModule`, et **seulement pour ses gardes** : `@AuthAtLeast('STAFF')`
  *   monte `JwtAuthGuard` et `RolesGuard`, qui ont des dépendances à injecter.
@@ -103,13 +119,14 @@ import { SlotLockService } from './slot-lock.service';
  */
 @Module({
   imports: [CatalogModule, AvailabilityModule, IdentityModule, CrmModule],
-  controllers: [PublicAppointmentsController, AppointmentsController],
+  controllers: [PublicAppointmentsController, AppointmentsController, MyStaffController],
   providers: [
     AppointmentsService,
     AppointmentsRepository,
     AppointmentEvents,
     AppointmentLifecycleService,
     SlotLockService,
+    MyStaffService,
   ],
   exports: [AppointmentsService, AppointmentEvents],
 })

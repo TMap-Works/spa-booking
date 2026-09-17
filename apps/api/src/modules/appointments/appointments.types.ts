@@ -740,3 +740,150 @@ export interface AppointmentView {
    */
   readonly cancelledBy: AppointmentCancelledBy | null;
 }
+
+// ---------------------------------------------------------------------------
+// L'espace du praticien connecté — #811
+// ---------------------------------------------------------------------------
+
+/**
+ * La fiche praticien d'un compte, telle que ce module la lit.
+ *
+ * **Sans `userId`**, alors que c'est par lui qu'on l'a trouvée : l'appelant
+ * *est* ce compte, et le lui rendre n'apprendrait rien — c'est la même
+ * discipline que `StaffMemberDto` du catalogue, qui le masque déjà. Sans
+ * `tenantId` non plus, pour la raison de tenant-isolation §4.
+ */
+export interface StaffProfileRecord {
+  readonly id: string;
+  readonly displayName: string;
+  readonly bio: string | null;
+  readonly isActive: boolean;
+}
+
+/**
+ * La même fiche, telle que l'API la rend — `staffMemberSchema` de `@spa/shared`.
+ *
+ * Une seule différence avec la ligne lue, et elle est imposée par le contrat :
+ * `bio` y est `.optional()` et non `.nullable()`, si bien qu'un `null` explicite
+ * ferait échouer la lecture de la fiche entière. Absent se lit « pas de
+ * présentation », ce qui est exactement ce que la colonne nulle veut dire.
+ *
+ * C'est le même régime que les facultatifs d'`AgendaAppointmentView`, et la
+ * raison pour laquelle la conversion ne se fait pas au repository : la colonne
+ * est nullable, c'est un fait du schéma ; l'omission est une décision de
+ * frontière.
+ */
+export interface StaffProfileView {
+  readonly id: string;
+  readonly displayName: string;
+  readonly bio?: string;
+  readonly isActive: boolean;
+}
+
+/**
+ * La fenêtre d'une lecture « mes … » une fois **résolue** : bornes complétées,
+ * écart jugé, et le fuseau dans lequel les deux dates se lisent.
+ *
+ * Le fuseau voyage avec elles parce que sans lui deux dates civiles ne
+ * désignent aucun intervalle : « du 1er au 7 » ne vaut pas les mêmes instants à
+ * Paris et à Papeete, et c'est ce couple-là — jamais une date seule — que la
+ * conversion en instants consomme.
+ */
+export interface ResolvedRange {
+  readonly from: string;
+  readonly to: string;
+  readonly timeZone: string;
+}
+
+/**
+ * Ce que le praticien connecté demande de son agenda ou de son emploi du temps.
+ *
+ * Il n'y a **aucun `staffId`**, et c'est tout le propos du ticket : le périmètre
+ * se dérive de `(tenantId, userId)` du jeton, jamais d'un paramètre
+ * (tenant-isolation §2). Le type l'interdit au même titre que le schéma
+ * `.strict()` du contrat le refuse en 400 — deux barrières pour la même règle,
+ * l'une à la compilation, l'autre à la frontière HTTP.
+ *
+ * Les deux bornes sont facultatives, comme celles de l'agenda du comptoir : le
+ * service complète avec la journée courante **du salon**, seul référentiel dans
+ * lequel « aujourd'hui » veut dire quelque chose.
+ */
+export interface MyStaffRangeInput {
+  readonly userId: string;
+  readonly from: string | null;
+  readonly to: string | null;
+}
+
+/** La cliente d'une ligne de planning — prénom, et initiale du nom (CDC §5.1). */
+export interface MyStaffAppointmentClientView {
+  readonly firstName: string;
+  readonly lastInitial: string;
+}
+
+/**
+ * Un rendez-vous tel que le praticien connecté le lit —
+ * `myStaffAppointmentSchema` de `@spa/shared`.
+ *
+ * `startsAt` / `endsAt` sont l'intervalle **facturé**, comme partout dans ce
+ * module. `utcOffsetMinutes` est le décalage du salon **à cet instant-là** : une
+ * fenêtre d'un mois peut enjamber un changement d'heure, et un décalage porté
+ * par la réponse plutôt que par la ligne en aurait faussé la moitié.
+ */
+export interface MyStaffAppointmentView {
+  readonly id: string;
+  readonly reference: string;
+  readonly status: AppointmentStatus;
+  readonly startsAt: string;
+  readonly endsAt: string;
+  readonly utcOffsetMinutes: number;
+  readonly service: {
+    readonly id: string;
+    readonly name: string;
+    readonly durationMinutes: number;
+  };
+  readonly client: MyStaffAppointmentClientView;
+  readonly clientNote?: string;
+  readonly staffNote?: string;
+}
+
+/** Le planning du praticien connecté — `myStaffAgendaSchema`. */
+export interface MyStaffAgendaView {
+  readonly staffId: string;
+  readonly timezone: string;
+  readonly from: string;
+  readonly to: string;
+  readonly appointments: readonly MyStaffAppointmentView[];
+}
+
+/** Une plage de travail récurrente — `staffScheduleEntrySchema`. */
+export interface MyStaffScheduleEntryView {
+  readonly weekday: number;
+  readonly startsAt: string;
+  readonly endsAt: string;
+}
+
+/** Une absence du praticien — `staffTimeOffSchema`. */
+export interface MyStaffTimeOffView {
+  readonly id: string;
+  readonly staffId: string;
+  readonly startsAt: string;
+  readonly endsAt: string;
+  readonly reason: string | null;
+}
+
+/**
+ * L'emploi du temps du praticien connecté — `myStaffScheduleSchema`.
+ *
+ * Les trois sources qui déterminent ce qu'il travaille, servies ensemble parce
+ * qu'aucune ne se lit sans les deux autres : un écran qui n'aurait que les
+ * plages récurrentes afficherait « lundi 9 h – 18 h » sur un lundi fermé.
+ */
+export interface MyStaffScheduleView {
+  readonly staffId: string;
+  readonly timezone: string;
+  readonly from: string;
+  readonly to: string;
+  readonly entries: readonly MyStaffScheduleEntryView[];
+  readonly timeOff: readonly MyStaffTimeOffView[];
+  readonly closedWeekdays: readonly number[];
+}
