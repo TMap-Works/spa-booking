@@ -90,22 +90,41 @@ export class FakeReportingRepository {
   /** Le slug que rend `currentSlug`, par tenant — voir {@link seedTenant}. */
   private readonly slugs = new Map<string, string>();
 
+  /**
+   * Le taux de taxe que rend `currentTaxRateBps`, par tenant (#891).
+   *
+   * Stocké à part des deux autres, et non dérivé d'eux : deux établissements du
+   * même harnais doivent pouvoir porter des taux différents, sans quoi une
+   * confusion d'établissement dans l'export ne se verrait pas dans le fichier.
+   */
+  private readonly taxRates = new Map<string, number>();
+
   private readonly payments: StoredPayment[] = [];
 
   private readonly appointments: StoredAppointment[] = [];
 
   /**
-   * Sème le fuseau et le slug d'un établissement — sans quoi tous les rapports
-   * rendent 404.
+   * Sème le fuseau, le slug et le taux de taxe d'un établissement — sans quoi
+   * tous les rapports rendent 404.
    *
    * Le slug est facultatif : les trois routes de lecture ne le regardent pas,
    * seul l'export s'en sert pour nommer son fichier (#563). À défaut, un slug
    * dérivé de l'identifiant, qui reste distinct d'un établissement à l'autre —
    * ce qui est la seule propriété dont une suite d'isolation ait besoin.
+   *
+   * Le taux l'est aussi, et son défaut est celui de la colonne : `0`, comme
+   * `tenants.tax_rate_bps` (#891). Un établissement semé sans taux rend donc un
+   * hors-taxes égal au brut — le quatrième critère, obtenu sans rien semer.
    */
-  public seedTenant(tenantId: string, timeZone = 'Europe/Paris', slug?: string): void {
+  public seedTenant(
+    tenantId: string,
+    timeZone = 'Europe/Paris',
+    slug?: string,
+    taxRateBps = 0,
+  ): void {
     this.timeZones.set(tenantId, timeZone);
     this.slugs.set(tenantId, slug ?? `salon-${tenantId.slice(0, 8)}`);
+    this.taxRates.set(tenantId, taxRateBps);
   }
 
   public seedPayment(payment: StoredPayment): void {
@@ -126,6 +145,16 @@ export class FakeReportingRepository {
     const tenantId = this.requireScope('currentSlug');
 
     return Promise.resolve(this.slugs.get(tenantId) ?? null);
+  }
+
+  public async currentTaxRateBps(): Promise<number | null> {
+    const tenantId = this.requireScope('currentTaxRateBps');
+
+    // `?? null` et non `?? 0` : un établissement jamais semé n'existe pas, et le
+    // vrai dépôt rend `null` pour lui. Replier sur `0` ici ferait passer pour un
+    // salon à taux nul un salon qui n'est pas là, et le 404 du service ne se
+    // déclencherait jamais en test.
+    return Promise.resolve(this.taxRates.get(tenantId) ?? null);
   }
 
   public async dailyRevenue(
