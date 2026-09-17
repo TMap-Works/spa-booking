@@ -12,6 +12,7 @@
 import { z } from 'zod';
 
 import {
+  countryCodeSchema,
   displayNameSchema,
   emailSchema,
   phoneSchema,
@@ -67,17 +68,13 @@ export const postalAddressSchema = z
     /**
      * Pays en ISO 3166-1 alpha-2, majuscules — « FR », « MG », « BE ».
      *
-     * Un code et non un nom : « France », « france » et « FRANCE » sont trois
-     * chaînes pour un seul pays, et `schema.org/addressCountry` accepte
-     * explicitement le code à deux lettres. La casse est normalisée à la
-     * lecture, comme celle d'un slug, pour que la même adresse saisie deux fois
-     * produise la même valeur.
+     * `countryCodeSchema` et non un motif recopié : depuis #824 ce même code
+     * décide aussi du pays par défaut d'un numéro national
+     * (`e164PhoneSchemaFor`), et deux écritures de « code pays » auraient fini
+     * par en accepter deux formes — `libphonenumber-js` ne connaît que `FR`,
+     * jamais `fr`.
      */
-    country: z
-      .string()
-      .trim()
-      .toUpperCase()
-      .regex(/^[A-Z]{2}$/, { message: 'code pays ISO 3166-1 alpha-2 attendu (« FR »)' }),
+    country: countryCodeSchema,
   })
   .strict();
 

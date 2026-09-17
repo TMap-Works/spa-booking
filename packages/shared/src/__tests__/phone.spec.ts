@@ -18,13 +18,23 @@
  *    bloc en tête de page au lieu du champ, ce que la skill web-frontend §4
  *    interdit.
  *
+ * 3. **Le pays par défaut** (#824). Ce qu'un numéro national devient, et ce
+ *    qu'il reste quand aucun pays n'est connu. C'est la moitié de la règle que
+ *    ni #66 ni #404 n'avaient à leur disposition : le pays de l'établissement.
+ *
  * Un cas de la seconde partie qui échoue n'est donc pas forcément une
  * régression : c'est peut-être la migration de #404 qui commence. Elle se fait
  * alors d'un seul tenant — schéma de requête, DTO `class-validator` d'`apps/api`
  * et formulaire d'`apps/web` —, et ces cas se retournent avec elle.
  */
 
-import { e164PhoneSchema, phoneSchema, storedPhoneSchema } from '../common/identifiers';
+import {
+  e164PhoneSchema,
+  e164PhoneSchemaFor,
+  normalizeToE164,
+  phoneSchema,
+  storedPhoneSchema,
+} from '../common/identifiers';
 import { PHONE_MIN_DIGITS } from '../constants/limits';
 import {
   createCustomerRequestSchema,
@@ -93,8 +103,97 @@ describe('e164PhoneSchema — la frontière du canal SMS', () => {
     expect(e164PhoneSchema.parse('00261341234567')).toBe('+261341234567');
   });
 
-  it('refuse un numéro national — le compléter reviendrait à deviner un pays', () => {
+  it('refuse un numéro national — sans pays, le compléter reviendrait à en deviner un', () => {
     expect(e164PhoneSchema.safeParse(NATIONAL).success).toBe(false);
+  });
+});
+
+/**
+ * Le pays par défaut — le sixième critère de #824, cas par cas.
+ *
+ * Ce qui se verrouille ici est la différence entre les deux bibliothèques de
+ * validation possibles : un **motif** juge la syntaxe d'E.164 et laisse passer
+ * `+12345678901234`, qui n'est le numéro de personne ; `isValidPhoneNumber`
+ * confronte le numéro au plan de numérotation de son pays — longueur *et*
+ * préfixe d'attribution. C'est la seule vérification qui distingue un numéro
+ * joignable d'une suite de chiffres bien formée, et c'est elle qui décide si un
+ * rappel J-1 part ou se perd.
+ */
+describe('e164PhoneSchemaFor — le pays par défaut complète le national', () => {
+  it.each([
+    // France : les trois écritures d'un même mobile.
+    ['FR', '06 12 34 56 78', '+33612345678'],
+    ['FR', '+33 6 12 34 56 78', '+33612345678'],
+    ['FR', '0033612345678', '+33612345678'],
+    // Madagascar : mobile national et international.
+    ['MG', '034 12 345 67', '+261341234567'],
+    ['MG', '+261 34 12 345 67', '+261341234567'],
+    // Un fixe, et non un mobile : le canal SMS n'en fera rien, mais une fiche
+    // cliente a le droit de porter le numéro du domicile — le refuser aurait
+    // été refuser la moitié de la clientèle d'un salon de quartier.
+    ['FR', '01 42 33 44 55', '+33142334455'],
+    ['MG', '020 22 123 45', '+261202212345'],
+  ])('%s : « %s » devient %s', (country, input, expected) => {
+    expect(e164PhoneSchemaFor(country).parse(input)).toBe(expected);
+  });
+
+  it.each([
+    // Trop court pour le plan français, alors que le motif d'E.164 s'en
+    // contenterait.
+    ['FR', '06 12 34'],
+    // Un mobile malgache lu avec le pays français : le préfixe `034` n'est
+    // attribué à personne en France. C'est exactement ce qu'un motif ne voit
+    // pas, et ce qui produirait un SMS envoyé à un inconnu.
+    ['FR', '0349999'],
+    // Syntaxiquement E.164, attribué à aucun pays.
+    ['FR', '+12345678901234'],
+    // Une lettre n'est pas un chiffre, même dans un numéro « vanity ».
+    ['MG', '+261 34 SPA 4567'],
+    ['MG', ''],
+    ['MG', '+'],
+  ])('%s : refuse « %s »', (country, input) => {
+    expect(e164PhoneSchemaFor(country).safeParse(input).success).toBe(false);
+  });
+
+  it('ignore le pays par défaut quand le numéro est déjà international', () => {
+    // Le pays sert à **compléter**, jamais à contredire : un numéro malgache
+    // saisi dans un salon français reste malgache.
+    expect(e164PhoneSchemaFor('FR').parse('+261341234567')).toBe('+261341234567');
+  });
+
+  it.each([
+    // Le pays est lu en base, où il n'est pas encore contraint en casse, et sur
+    // une colonne nullable. Aucune de ces trois formes ne doit lever.
+    [undefined],
+    [null],
+    ['ZZ'],
+  ])('sans pays exploitable (%s), un national est refusé plutôt que deviné', (country) => {
+    expect(normalizeToE164(NATIONAL, country)).toBeNull();
+  });
+
+  it('accepte un code pays en minuscules — la colonne n’en garantit pas la casse', () => {
+    expect(normalizeToE164('0612345678', 'fr')).toBe('+33612345678');
+  });
+
+  it('dit comment corriger, et le message dépend de ce qu’on sait du pays', () => {
+    const avecPays = e164PhoneSchemaFor('FR').safeParse('06 12 34');
+    const sansPays = e164PhoneSchemaFor().safeParse('06 12 34');
+
+    // Avec un pays, le national est une correction possible : l'annoncer évite
+    // d'envoyer quelqu'un chercher un indicatif dont il n'a pas besoin.
+    expect(avecPays.success === false && avecPays.error.issues[0]?.message).toContain(
+      'format national',
+    );
+    // Sans pays, seule la forme internationale est complétable — promettre
+    // autre chose enverrait corriger un numéro que rien ne pourra accepter.
+    // L'exemple cité est donc international, et aucune forme nationale n'est
+    // proposée.
+    expect(sansPays.success === false && sansPays.error.issues[0]?.message).toContain(
+      'format international',
+    );
+    expect(sansPays.success === false && sansPays.error.issues[0]?.message).not.toContain(
+      'format national',
+    );
   });
 });
 
@@ -165,8 +264,18 @@ describe('carte des règles téléphoniques', () => {
   });
 
   it.each(FREE_FORM_SURFACES)(
-    '$nom conserve le format libre — un numéro national y est accepté',
+    '$nom accepte un numéro national — c’est le serveur qui le complète (#824)',
     ({ parse }) => {
+      // Le contrat décrit la **forme** de la saisie, et s'arrête là : le pays
+      // qui permet de compléter ce numéro est `tenants.country_code`, une donnée
+      // de requête qu'un schéma monté à l'amorçage ne voit pas. Le dernier mot
+      // appartient donc au service (`apps/api/src/modules/identity/phone.ts`),
+      // qui instancie `e164PhoneSchemaFor(pays)`.
+      //
+      // Resserrer ces schémas-ci sur `e164PhoneSchema` — sans pays, donc — ne
+      // serait pas un progrès : ce serait refuser dans le navigateur le
+      // « 06 12 34 56 78 » que le serveur sait maintenant accepter, c'est-à-dire
+      // reproduire exactement le défaut que #824 corrige.
       expect(parse(NATIONAL).success).toBe(true);
     },
   );

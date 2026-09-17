@@ -7,6 +7,7 @@
  * 500 là où l'utilisateur attendait un message de champ.
  */
 
+import { type CountryCode, isValidPhoneNumber, parsePhoneNumberFromString } from 'libphonenumber-js';
 import { z } from 'zod';
 
 import {
@@ -198,6 +199,35 @@ export const emailSchema = z
 export type Email = z.infer<typeof emailSchema>;
 
 /**
+ * Motif d'un code pays ISO 3166-1 alpha-2, en majuscules — « FR », « MG ».
+ */
+export const COUNTRY_CODE_PATTERN = /^[A-Z]{2}$/;
+
+/**
+ * Pays en ISO 3166-1 alpha-2, majuscules — « FR », « MG », « BE ».
+ *
+ * Un code et non un nom : « France », « france » et « FRANCE » sont trois
+ * chaînes pour un seul pays, et `schema.org/addressCountry` accepte
+ * explicitement le code à deux lettres. La casse est normalisée à la lecture,
+ * comme celle d'un slug, pour que la même adresse saisie deux fois produise la
+ * même valeur.
+ *
+ * Écrit ici plutôt que dans `postalAddressSchema` seul parce qu'il a désormais
+ * **deux** lecteurs : l'adresse de l'établissement, et le pays par défaut dont
+ * `e164PhoneSchemaFor` complète un numéro national (#824). Deux écritures d'un
+ * même code pays auraient fini par en accepter deux formes, et c'est justement
+ * la casse qui décide ici — `libphonenumber-js` ne connaît que `FR`, jamais
+ * `fr`.
+ */
+export const countryCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(COUNTRY_CODE_PATTERN, { message: 'code pays ISO 3166-1 alpha-2 attendu (« FR »)' });
+
+export type CountryCodeAlpha2 = z.infer<typeof countryCodeSchema>;
+
+/**
  * Numéro de téléphone — format libre borné à ce stade du MVP.
  *
  * Volontairement permissif : la validation stricte d'un numéro dépend du pays et
@@ -237,6 +267,18 @@ export const storedPhoneSchema = z
  * d'`apps/web`, qui importent ce schéma directement, si bien que le refus
  * s'affiche sur le champ. Les schémas de réponse prennent `storedPhoneSchema` —
  * voir son commentaire pour ce qui se casserait sinon.
+ *
+ * ## Ce qu'il décrit depuis #824 : la forme, jamais le dernier mot
+ *
+ * Ce schéma reste celui des champs `phone` d'entrée du contrat, et il laisse
+ * toujours passer un numéro national. Ce n'est plus parce que la règle E.164
+ * s'arrête là : c'est parce que le pays qui permet de compléter ce numéro est
+ * lu **par le serveur**, sur l'établissement de la requête, et qu'un schéma
+ * statique ne peut pas le connaître. Le verdict final appartient donc à
+ * `e164PhoneSchemaFor(pays)`, côté service, dont l'en-tête porte le détail de
+ * cette répartition. Ce qui se joue ici est la borne de colonne et le plancher
+ * de chiffres — de quoi refuser sur le champ, avant la soumission, ce qui n'est
+ * un numéro dans aucune convention.
  */
 export const phoneSchema = storedPhoneSchema.refine(
   (value) => (value.match(/\d/g) ?? []).length >= PHONE_MIN_DIGITS,
@@ -260,26 +302,86 @@ export const E164_PATTERN = /^\+[1-9]\d{1,14}$/;
 const PHONE_SEPARATORS = /[\s().-]/g;
 
 /**
- * Ramène un numéro saisi à sa forme E.164, ou rend `null` s'il n'y a pas de
- * forme E.164 déductible **sans deviner un pays**.
+ * Ramène un numéro saisi à sa forme E.164, ou rend `null` si ce n'est pas un
+ * numéro **attribuable** — dans le plan de numérotation international quand il
+ * est écrit en international, dans celui de `defaultCountry` sinon.
  *
- * Deux écritures internationales entrent : `+261341234567` et `00261341234567`
- * — le préfixe `00` est la forme que composent la plupart des plans de
- * numérotation, `+` celle qu'exige E.164. Les séparateurs sont retirés.
+ * Trois écritures entrent :
  *
- * Ce qui n'entre **pas**, et c'est le point : un numéro national comme
- * `0341234567`. Le compléter demanderait de connaître le pays de la personne,
- * que rien dans la requête ne dit — ni le fuseau du salon, qui n'est pas un
- * pays, ni la langue du navigateur. Deviner produirait un numéro
- * syntaxiquement valide et faux, c'est-à-dire un SMS de rappel envoyé à
- * quelqu'un d'autre. Refuser laisse la correction à la seule personne qui
- * connaisse la réponse, et le formulaire l'annonce dans son libellé d'aide.
+ * - `+261341234567` — la forme qu'exige E.164 ;
+ * - `00261341234567` — le préfixe que composent la plupart des plans de
+ *   numérotation, ramené à `+` avant tout examen : `00` est un préfixe de
+ *   composition, pas un indicatif, et `libphonenumber-js` ne le reconnaît qu'en
+ *   présence d'un pays d'origine, que nous n'avons pas ;
+ * - `0341234567` **accompagné d'un pays** — voir ci-dessous.
+ *
+ * Les séparateurs sont retirés ; un numéro déjà international ignore le pays
+ * par défaut, qui n'a rien à y compléter.
+ *
+ * ## Le pays par défaut — ce que #824 change
+ *
+ * Jusqu'ici cette fonction refusait tout numéro national, au motif qu'aucun
+ * pays n'était déductible de la requête. Le raisonnement tenait pour le canal
+ * SMS vu du module `notifications`, qui ne lit qu'une colonne ; il ne tenait
+ * pas à l'**écriture**, où le pays de l'établissement est connu
+ * (`tenants.country_code`). Le résultat était le défaut que ce ticket corrige :
+ * un « 06 12 34 56 78 » tapé normalement était refusé, et six autres surfaces
+ * l'enregistraient tel quel — donc ni cherchable, ni composable par SNS.
+ *
+ * Le pays reste **facultatif**, et son absence garde exactement l'ancien
+ * comportement : deviner un pays produirait un numéro syntaxiquement valide et
+ * faux, c'est-à-dire un SMS de rappel envoyé à quelqu'un d'autre. C'est
+ * pourquoi l'appelant le fournit ou s'en passe, et jamais cette fonction qui le
+ * suppose.
+ *
+ * ## `isValidPhoneNumber`, et non un compte de chiffres
+ *
+ * `E164_PATTERN` décrit la **syntaxe** d'E.164 : un `+`, un indicatif non nul,
+ * quinze chiffres au plus. Il accepte donc `+12345678901234`, qui n'est le
+ * numéro de personne. `isValidPhoneNumber` confronte le numéro au plan de
+ * numérotation de son pays — longueur **et** préfixe d'attribution —, ce qui
+ * est la seule vérification qui distingue un numéro joignable d'une suite de
+ * chiffres bien formée. C'est le premier critère de #824.
+ *
+ * Un code pays inconnu (`ZZ`) ou mal casé (`fr`) ne lève pas : il rend un
+ * numéro national invalide, donc `null`. La casse est donc normalisée ici, et
+ * pas seulement dans `countryCodeSchema` — cette fonction est appelée avec une
+ * colonne lue en base autant qu'avec une saisie validée.
  */
-export function normalizeToE164(value: string): string | null {
+export function normalizeToE164(value: string, defaultCountry?: string | null): string | null {
   const compact = value.trim().replace(PHONE_SEPARATORS, '');
-  const withPlus = compact.startsWith('00') ? `+${compact.slice(2)}` : compact;
+  const candidate = compact.startsWith('00') ? `+${compact.slice(2)}` : compact;
+  const country = candidate.startsWith('+') ? undefined : asCountryCode(defaultCountry);
 
-  return E164_PATTERN.test(withPlus) ? withPlus : null;
+  if (!isValidPhoneNumber(candidate, country)) {
+    return null;
+  }
+
+  // `.number` **est** la forme E.164 — `parsePhoneNumberFromString` la compose à
+  // partir de l'indicatif et du numéro national, sans séparateur. Il ne peut
+  // pas rendre `undefined` après un `isValidPhoneNumber` passant, les deux
+  // s'appuyant sur le même analyseur ; le repli est là pour le type, pas pour un
+  // cas atteignable.
+  return parsePhoneNumberFromString(candidate, country)?.number ?? null;
+}
+
+/**
+ * Le code pays tel que `libphonenumber-js` le veut, ou `undefined`.
+ *
+ * `CountryCode` est une union de deux cent quarante littéraux : aucune chaîne
+ * lue en base ne s'y assigne sans conversion. La conversion est sûre parce
+ * qu'elle est **vérifiée en aval** — un code hors de l'union rend simplement
+ * tout numéro national invalide, ce qui est le refus attendu pour un pays que
+ * la bibliothèque ne connaît pas.
+ */
+function asCountryCode(value: string | null | undefined): CountryCode | undefined {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  const upper = value.trim().toUpperCase();
+
+  return COUNTRY_CODE_PATTERN.test(upper) ? (upper as CountryCode) : undefined;
 }
 
 /**
@@ -337,26 +439,71 @@ export function normalizeToE164(value: string): string | null {
  * doit être. Le plancher s'arrête à la saisie : les schémas de réponse gardent
  * `storedPhoneSchema`, sans quoi le durcissement rendrait illisible le stock
  * écrit avant lui.
+ *
+ * ## Ce que #824 change à cette carte
+ *
+ * La dernière ligne du tableau n'est plus un constat : les six surfaces qu'elle
+ * nomme — inscription, profil, fiche cliente, compte du personnel, invitation,
+ * `contactPhone` de l'établissement — normalisent désormais, mais **côté
+ * serveur**, là où le pays de l'établissement est lisible. C'est ce que règle
+ * l'arbitrage du ticket, et il n'y avait pas d'autre place :
+ *
+ * - le pays est une donnée de requête (`tenants.country_code`), que le schéma
+ *   monté sur un paramètre de handler ne voit pas — un `ZodValidationPipe` est
+ *   construit à l'amorçage, une fois pour toutes ;
+ * - le contrat garde donc `phoneSchema` sur ces champs, qui décrit la **forme**
+ *   de la saisie et laisse passer un numéro national. Il n'est pas plus
+ *   permissif que l'API pour autant : le national est accepté *parce que* le
+ *   serveur le complète, pas parce que la règle s'arrête là.
+ *
+ * Le refus, lui, reste rattaché au champ : les services lèvent le même tableau
+ * de messages `champ : …` que `ZodValidationPipe`, servi en
+ * `{ code: "VALIDATION_ERROR", details.violations }`.
  */
-export const e164PhoneSchema = z
-  .string()
-  .trim()
-  .max(PHONE_MAX_LENGTH)
-  .transform((value, ctx): string => {
-    const normalized = normalizeToE164(value);
+export function e164PhoneSchemaFor(defaultCountry?: string | null) {
+  return z
+    .string()
+    .trim()
+    .max(PHONE_MAX_LENGTH)
+    .transform((value, ctx): string => {
+      const normalized = normalizeToE164(value, defaultCountry);
 
-    if (normalized === null) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          'numéro attendu au format international, indicatif compris — par exemple +261 34 12 345 67',
-      });
+      if (normalized === null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          // Le message dit ce que l'appelant peut faire, et cela dépend de ce
+          // qu'on sait de lui : sans pays, seule la forme internationale est
+          // complétable, et l'annoncer autrement enverrait la personne corriger
+          // un numéro que rien ne pourra accepter.
+          //
+          // Avec un pays, le message **ne donne pas d'exemple national** : le
+          // seul qu'on saurait écrire serait celui d'un plan de numérotation
+          // particulier, et « 06 12 34 56 78 » proposé à un salon américain
+          // décrirait une forme que rien n'y acceptera jamais. Le pays est
+          // nommé, ce qui suffit — c'est celui que l'établissement a saisi.
+          message:
+            defaultCountry === null || defaultCountry === undefined
+              ? 'numéro attendu au format international, indicatif compris — par exemple +261 34 12 345 67'
+              : 'numéro de téléphone invalide — au format national du pays de l’établissement, ou au format international (+261 34 12 345 67)',
+        });
 
-      return z.NEVER;
-    }
+        return z.NEVER;
+      }
 
-    return normalized;
-  });
+      return normalized;
+    });
+}
+
+/**
+ * Numéro **normalisé en E.164 sans pays par défaut** — la frontière du tunnel
+ * public, et le seul cas où un numéro national n'est pas complétable.
+ *
+ * Conservé comme valeur, et pas seulement comme `e164PhoneSchemaFor()` écrit à
+ * chaque site d'appel : `guestContactSchema` et le formulaire de coordonnées
+ * d'`apps/web` le composent tous deux, et un schéma recréé à chaque import
+ * multiplierait des objets identiques sans rien gagner.
+ */
+export const e164PhoneSchema = e164PhoneSchemaFor();
 
 export type E164Phone = z.infer<typeof e164PhoneSchema>;
 
