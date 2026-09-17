@@ -13,6 +13,13 @@ locals {
   # `From` change.
   mail_from_domain = "${var.mail_from_subdomain}.${var.domain}"
 
+  # Adresse d'expéditeur de l'en-tête `From`, composée dans `domain` et non dans
+  # `mail_from_domain` : le `MAIL FROM` est l'enveloppe, que le destinataire ne
+  # voit pas, et l'alignement DMARC relâché (`aspf=r`) suffit à faire tenir les
+  # deux ensemble. Écrire l'adresse visible sur le sous-domaine d'enveloppe
+  # afficherait `reservations@mail.exemple.fr` à la cliente.
+  from_email = var.from_local_part == null ? null : "${var.from_local_part}@${var.domain}"
+
   configuration_set_name = "${local.name_prefix}-email"
 
   dispatcher_function_name = "${local.name_prefix}-notification-dispatcher"

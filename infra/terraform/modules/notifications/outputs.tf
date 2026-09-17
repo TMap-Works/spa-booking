@@ -32,6 +32,56 @@ output "mail_from_domain" {
   value       = aws_sesv2_email_identity_mail_from_attributes.this.mail_from_domain
 }
 
+# --- Expéditeur e-mail (#918) -------------------------------------------------
+
+output "from_email" {
+  description = <<-EOT
+    Adresse d'expéditeur de l'en-tête `From`, composée dans `domain`. C'est la
+    valeur à poser en `SES_FROM_EMAIL` sur le conteneur de l'API — jamais une
+    adresse écrite en dur dans un environnement, qui pourrait désigner un domaine
+    dont SES ne détient pas l'identité et ferait refuser chaque envoi.
+
+    `null` quand `from_local_part` l'est : l'environnement n'expose alors pas la
+    variable, et l'API refuse l'e-mail en 503 plutôt que de l'avaler.
+  EOT
+  value       = local.from_email
+}
+
+output "email_sender_configured" {
+  description = <<-EOT
+    Vrai quand une adresse d'expéditeur est composée, donc quand l'API peut
+    émettre un e-mail. Faux, elle refuse chaque envoi en 503 et inscrit une ligne
+    `FAILED` motivée — le défaut fermé de #799, qui laisse le message reprenable
+    le jour où l'adresse est posée.
+
+    Même usage que `dispatch_configured` : c'est la première chose à regarder
+    quand aucun e-mail ne part, avant de chercher la panne dans la chaîne.
+    Attention à ce qu'elle ne dit pas — ni que le domaine est **vérifié** (voir
+    `verified_for_sending_status`), ni que le compte est sorti du bac à sable SES,
+    qui est une démarche humaine (#590).
+  EOT
+  value       = local.from_email != null
+}
+
+output "email_publisher_policy_arn" {
+  description = <<-EOT
+    Politique IAM à attacher au rôle de tâche de l'API — `task_role_policy_arns`
+    du module `ecs-service` — pour qu'elle puisse émettre un e-mail. Sans elle,
+    `SES_FROM_EMAIL` ne suffit pas : l'appel part et revient en `AccessDenied`.
+
+    Elle accorde `ses:SendEmail` sur l'identité de domaine de cet environnement
+    **et** sur son jeu de configuration, jamais sur `*` : aucune autre identité du
+    compte n'est joignable par elle. Elle n'accorde aucun droit sur les réglages
+    d'envoi du compte ni sur la liste de suppression, qui est ce qui protège la
+    réputation du domaine d'un bug applicatif.
+
+    Créée dès que le module est composé, comme celle du canal SMS, et pour la
+    même raison : le droit d'émettre est propre à l'environnement, et il n'y a
+    rien à gagner à le faire dépendre d'un réglage qui pourrait changer sans lui.
+  EOT
+  value       = aws_iam_policy.email_publisher.arn
+}
+
 # --- DNS ----------------------------------------------------------------------
 
 output "dns_managed" {
@@ -329,6 +379,27 @@ output "sms_publisher_policy_arn" {
     explicite sur les ARN de topic (#79).
   EOT
   value       = aws_iam_policy.sms_publisher.arn
+}
+
+output "sms_publisher_sender_id" {
+  description = <<-EOT
+    Nom d'expéditeur que l'API doit présenter à **chaque** publication —
+    `SNS_SMS_SENDER_ID` sur le conteneur de l'API, que `sns-sms.gateway.ts`
+    reporte dans l'attribut de message `AWS.SNS.SMS.SenderID`.
+
+    Distincte de `sms_sender_id`, et la nuance est ce qui fait qu'un SMS part ou
+    non hors production : `sms_sender_id` rend le **défaut du compte**, donc
+    `null` partout où `manage_sms_account_preferences` vaut faux, c'est-à-dire en
+    développement et en recette. La valeur demandée au module, elle, vaut dans
+    les trois environnements — l'expéditeur d'un message est un attribut de la
+    publication, pas un réglage de compte, et le poser par message est ce qui
+    rend le canal indépendant de l'environnement qui détient les préférences.
+
+    `null` tant qu'aucun expéditeur n'est arrêté : l'environnement n'expose alors
+    pas la variable, et l'API refuse le SMS en 503 plutôt que de le laisser
+    partir depuis un numéro partagé qui n'a l'air de venir de personne.
+  EOT
+  value       = var.sms_sender_id
 }
 
 output "sms_account_preferences_managed" {
