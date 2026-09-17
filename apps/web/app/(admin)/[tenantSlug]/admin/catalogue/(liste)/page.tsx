@@ -90,6 +90,30 @@ import {
  * « Aucun praticien affecté » sans regarder `isActive` : une prestation désactivée
  * que personne ne peut honorer n'offrira rien de plus le jour où on la réactive, et
  * c'est utile de l'apprendre avant.
+ *
+ * ## Un en-tête dit ce que sa valeur mesure (#776)
+ *
+ * Deux colonnes sur huit se taisaient. « Tampons » coiffait « 10 / 15 min » sans
+ * dire lequel des deux nombres précède le soin, et « Agenda » coiffait « 1 h 25 »
+ * sans dire qu'il s'agit du temps réellement bloqué. Ni l'un ni l'autre ne se
+ * devine : un lecteur qui hésite entre « 10 avant » et « 10 après » se trompe une
+ * fois sur deux, et « Agenda » pouvait tout aussi bien annoncer une date.
+ *
+ * Les deux libellés sont repris **d'ailleurs**, pas inventés ici — c'est ce qui
+ * les rend justes :
+ *
+ * - « Tampons avant / après » est le vocabulaire du formulaire de prestation,
+ *   « Tampon avant (minutes) » et « Tampon après (minutes) » (`ServiceForm`), et
+ *   son ordre est celui des deux nombres de la cellule ;
+ * - « Durée bloquée » est ce que la fiche de la même prestation écrit déjà en
+ *   toutes lettres — « Bloque 1 h 25 sur l'agenda, tampons compris. » La liste qui
+ *   ouvre cette fiche ne peut pas le nommer autrement.
+ *
+ * La mention `spa-visually-hidden` « avant et après le soin » disparaît du même
+ * geste, et ce n'est pas une perte pour les lecteurs d'écran : l'en-tête est lié à
+ * sa cellule par `scope="col"` et se restitue avec elle. L'information change de
+ * porteur, elle ne s'efface pas — et elle cesse d'être réservée à une partie des
+ * lecteurs, ce qui était l'écart relevé.
  */
 
 /**
@@ -219,10 +243,10 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
                   Durée
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  Tampons
+                  Tampons avant / après
                 </th>
                 <th className="spa-admin-table__head" scope="col">
-                  Agenda
+                  Durée bloquée
                 </th>
                 <th className="spa-admin-table__head spa-admin-table__head--numeric" scope="col">
                   Prix
@@ -245,9 +269,11 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
                   </td>
                   <td className="spa-admin-table__cell">{service.category?.name ?? 'Non classée'}</td>
                   <td className="spa-admin-table__cell">{formatDuration(service.durationMinutes)}</td>
+                  {/* L'ordre des deux nombres est celui de l'en-tête, et plus
+                      aucune mention n'est réservée aux seuls lecteurs d'écran :
+                      « Tampons avant / après » le dit à tout le monde (#776). */}
                   <td className="spa-admin-table__cell">
                     {service.bufferBeforeMinutes} / {service.bufferAfterMinutes} min
-                    <span className="spa-visually-hidden"> avant et après le soin</span>
                   </td>
                   {/* La durée réellement bloquée, tampons compris : c'est elle
                       qui explique pourquoi le créneau suivant n'est pas libre à
