@@ -227,12 +227,23 @@ export class FakeCatalogRepository {
    * `(tenant_id, category_id)` interdit qu'elle en désigne une d'ailleurs. Le
    * double filtre donc lui aussi sur le tenant de la prestation — sans quoi il
    * autoriserait un rattachement que la base refuse.
+   *
+   * Le compte des praticiens reproduit l'agrégat scopé du vrai repository
+   * (`countAssignedStaff`) : **toutes** les affectations de la prestation, sans
+   * filtrer sur l'activité du praticien — c'est ce qui distingue ce compte de
+   * celui du catalogue public, et un double qui les confondrait ferait passer le
+   * test pour de mauvaises raisons. Le filtre sur `tenantId` est celui que
+   * l'extension de scoping pose sur la vraie requête.
    */
   private toServiceRecord(service: StoredService): ServiceRecord {
     const category = this.categories.find(
       (candidate) =>
         candidate.tenantId === service.tenantId && candidate.id === service.categoryId,
     );
+    const assignedStaffCount = this.assignments.filter(
+      (assignment) =>
+        assignment.tenantId === service.tenantId && assignment.serviceId === service.id,
+    ).length;
 
     return {
       id: service.id,
@@ -249,6 +260,7 @@ export class FakeCatalogRepository {
       priceAmountMinor: service.priceAmountMinor,
       priceCurrency: service.priceCurrency,
       isActive: service.isActive,
+      assignedStaffCount,
     };
   }
 

@@ -51,6 +51,7 @@ function service(overrides: Partial<Service> = {}): Service {
     occupiedMinutes: 75,
     price: { amountMinor: 3500, currency: 'EUR' },
     isActive: true,
+    assignedStaffCount: 1,
     ...overrides,
   };
 }

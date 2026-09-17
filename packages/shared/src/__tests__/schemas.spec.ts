@@ -299,6 +299,7 @@ describe('catalog', () => {
     occupiedMinutes: 85,
     price: { amountMinor: 7500, currency: 'EUR' },
     isActive: true,
+    assignedStaffCount: 2,
   };
 
   it('porte le prix comme un couple montant/devise indissociable', () => {
@@ -327,6 +328,36 @@ describe('catalog', () => {
         occupiedMinutes: 60,
       }).success,
     ).toBe(true);
+  });
+
+  /**
+   * Le compte de praticiens que la liste du back-office affiche (#885).
+   *
+   * Il est **obligatoire** : le rendre facultatif aurait laissé l'écran hésiter
+   * entre « personne ne la pratique » et « on ne sait pas », deux états qui ne se
+   * traitent pas de la même façon. Zéro est la seule façon de dire le premier, et
+   * c'est précisément la valeur qui déclenche le badge.
+   */
+  it('porte un compte de praticiens entier et jamais négatif', () => {
+    expect(serviceSchema.parse({ ...service, assignedStaffCount: 0 }).assignedStaffCount).toBe(0);
+    expect(serviceSchema.safeParse({ ...service, assignedStaffCount: -1 }).success).toBe(false);
+    expect(serviceSchema.safeParse({ ...service, assignedStaffCount: 1.5 }).success).toBe(false);
+    // Absent n'est pas zéro : une réponse qui l'omettrait serait un contrat rompu,
+    // pas une prestation sans praticien.
+    expect(serviceSchema.safeParse({ ...service, assignedStaffCount: undefined }).success).toBe(
+      false,
+    );
+  });
+
+  /**
+   * Le catalogue public, lui, ne le porte pas — et c'est délibéré : il expose
+   * `staff`, les praticiens **actifs** qu'on peut réserver, quand ce compte-ci
+   * répond à « à qui cette prestation est-elle rattachée ». Publier les deux
+   * laisserait une page publique annoncer un effectif que personne ne peut
+   * réserver.
+   */
+  it('ne publie pas ce compte sur le catalogue public', () => {
+    expect(Object.keys(publicServiceSchema.shape)).not.toContain('assignedStaffCount');
   });
 
   it('rattache la prestation à une rubrique par identifiant, jamais par son nom', () => {

@@ -495,6 +495,9 @@ export class FakeServicesService implements ServicesServicePort {
       occupiedMinutes: durationMinutes,
       price: { amountMinor: input.amountMinor ?? 7000, currency: input.currency ?? 'EUR' },
       isActive: input.isActive ?? true,
+      // Le comptoir ne lit d'une prestation que son prix et sa durée ; le compte
+      // de praticiens est là parce que le contrat le porte depuis #885.
+      assignedStaffCount: 1,
     };
     this.services.push(row);
     return row;

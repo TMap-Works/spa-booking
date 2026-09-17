@@ -1,6 +1,7 @@
 import { hasAtLeastRole, type Service, type SessionUser } from '@spa/shared';
 import Link from 'next/link';
 
+import { UNSTAFFED_SERVICE_LABEL } from '@/components/salon/service-catalog';
 import { fetchOwnProfile, fetchServices } from '@/lib/api-client';
 import { formatDuration, formatMoney } from '@/lib/format';
 
@@ -50,6 +51,31 @@ import {
  * Le groupe ne change pas l'URL. Il donne à la liste un dossier où poser son
  * squelette (`loading.tsx`) sans envelopper la fiche voisine, dont le 404 doit
  * partir avant tout squelette — voir `components/admin-screen-skeleton.tsx`.
+ *
+ * ## « Active » ne veut pas dire « réservable » (#885)
+ *
+ * Une prestation qu'aucun praticien ne pratique n'offre aucun créneau, active ou
+ * non — le moteur de disponibilité part des affectations. La colonne « État »
+ * portait jusqu'ici la seule activité, si bien qu'il fallait ouvrir chaque fiche
+ * pour distinguer une prestation réservable d'une prestation qui ne le sera
+ * jamais. Le second badge dit la condition là où l'œil la cherche.
+ *
+ * Trois points tenus, et chacun a sa raison :
+ *
+ * - **le compte vient de l'API** (`assignedStaffCount`, `GET /v1/services`), et le
+ *   front ne le recompose pas. Le déduire du point d'entrée public aurait fait
+ *   diverger la liste de la fiche, celui-là ne comptant que les praticiens actifs
+ *   là où la fiche garde les désactivés sous « Compte désactivé » ;
+ * - **le libellé est celui de la vitrine**, importé et non recopié : trois écrans
+ *   qui nomment le même état de trois façons, c'est l'écart `ds:coherence` que ce
+ *   ticket referme, pas un qu'il rouvre ;
+ * - **le signal est écrit**, pas seulement coloré (WCAG 1.4.1) — c'est la règle
+ *   que `CatalogStatusBadge` suit déjà.
+ *
+ * Le badge s'affiche quel que soit l'état d'activité, comme la fiche affiche
+ * « Aucun praticien affecté » sans regarder `isActive` : une prestation désactivée
+ * que personne ne pratique n'offrira rien de plus le jour où on la réactive, et
+ * c'est utile de l'apprendre avant.
  */
 
 /**
@@ -222,6 +248,18 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
                   </td>
                   <td className="spa-admin-table__cell">
                     <CatalogStatusBadge isActive={service.isActive} />
+                    {/* Le second badge, et l'espace qui le sépare du premier :
+                        les deux peuvent alors passer à la ligne quand la colonne
+                        se resserre, là où un `white-space: nowrap` commun les
+                        aurait poussés hors du conteneur qui défile (#612). */}
+                    {service.assignedStaffCount === 0 ? (
+                      <>
+                        {' '}
+                        <span className="spa-admin-badge spa-admin-badge--pending">
+                          {UNSTAFFED_SERVICE_LABEL}
+                        </span>
+                      </>
+                    ) : null}
                   </td>
                   {canManage ? (
                     <td className="spa-admin-table__cell">

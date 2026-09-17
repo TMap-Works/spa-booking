@@ -221,6 +221,59 @@ describe('ServicesService', () => {
       expect(listed.map((service: ServiceView) => service.name)).toEqual(['Coupe']);
     });
 
+    /**
+     * Le compte de praticiens que la liste du back-office affiche (#885).
+     *
+     * Trois propriétés en un test, parce qu'elles ne se séparent pas : le compte
+     * existe sur la liste **et** sur la fiche, il vaut zéro pour une prestation
+     * que personne ne pratique, et il **inclut les praticiens désactivés**. Ce
+     * dernier point est ce qui le distingue de `staff` du catalogue public, et
+     * c'est l'alignement liste ↔ fiche qu'il existe pour tenir : la fiche garde
+     * ses affectations désactivées sous « Compte désactivé ».
+     *
+     * L'affectation du **voisin** est posée sur la même prestation pour vérifier
+     * que le compte ne la ramasse pas — les clés étrangères composites l'y
+     * interdisent en base, le double reproduit le filtre, et sans cette ligne
+     * rien ne le prouverait.
+     */
+    it('compte les praticiens affectés, désactivés compris, et jamais ceux du voisin', async () => {
+      const coupe = repository.seedService({ tenantId: TENANT_A, name: 'Coupe', slug: 'coupe' });
+      repository.seedService({ tenantId: TENANT_A, name: 'Barbe', slug: 'barbe' });
+      const camille = repository.seedStaff({ tenantId: TENANT_A });
+      const suspendue = repository.seedStaff({
+        tenantId: TENANT_A,
+        displayName: 'Léa Suspendue',
+        isActive: false,
+      });
+      const chezB = repository.seedStaff({ tenantId: TENANT_B, displayName: 'Voisin' });
+      repository.seedAssignment({
+        tenantId: TENANT_A,
+        serviceId: coupe.id,
+        staffId: camille.id,
+      });
+      repository.seedAssignment({
+        tenantId: TENANT_A,
+        serviceId: coupe.id,
+        staffId: suspendue.id,
+      });
+      repository.seedAssignment({
+        tenantId: TENANT_B,
+        serviceId: coupe.id,
+        staffId: chezB.id,
+      });
+
+      const listed = await inTenantA(async () => services.list({ activeOnly: false }));
+      const fiche = await inTenantA(async () => services.byId(coupe.id));
+
+      expect(
+        listed.map((service: ServiceView) => [service.name, service.assignedStaffCount]),
+      ).toEqual([
+        ['Barbe', 0],
+        ['Coupe', 2],
+      ]);
+      expect(fiche.assignedStaffCount).toBe(2);
+    });
+
     it('filtre sur l’activité quand on le demande, et rend tout sinon', async () => {
       repository.seedService({ tenantId: TENANT_A, name: 'Coupe', slug: 'coupe' });
       repository.seedService({

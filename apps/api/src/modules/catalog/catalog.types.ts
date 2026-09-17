@@ -92,6 +92,21 @@ export interface ServiceView {
   readonly occupiedMinutes: number;
   readonly price: Money;
   readonly isActive: boolean;
+  /**
+   * Combien de praticiens pratiquent la prestation, **désactivés compris**.
+   *
+   * Rendu parce que la liste du back-office doit distinguer une prestation active
+   * que personne ne pratique d'une prestation réservable, sans ouvrir chaque
+   * fiche. Le compte vient d'une agrégation unique pour tout le lot lu — jamais
+   * d'une requête par ligne, qui ferait payer un aller-retour par prestation du
+   * catalogue.
+   *
+   * Les désactivés y sont comptés pour que la liste dise la même chose que la
+   * fiche, qui les garde sous « Compte désactivé ». Le compte des seuls praticiens
+   * **actifs** existe ailleurs et répond à une autre question :
+   * `PublicServiceView.staff`, c'est-à-dire « qui peut-on réserver ».
+   */
+  readonly assignedStaffCount: number;
 }
 
 /**
