@@ -163,6 +163,28 @@ enum SaleItemKind {
   TIP
 }
 
+/// Nature de l'identifiant d'entreprise d'un établissement — #818, troisième
+/// critère.
+///
+/// Deux pays sont servis, et ils ne nomment pas la même chose : la France
+/// identifie l'établissement par son `SIRET` et l'entreprise par son `SIREN` ;
+/// Madagascar identifie le contribuable par son `NIF` et l'établissement par son
+/// numéro `STAT`. `OTHER` — le « AUTRE » du critère — absorbe les autres pays
+/// sans prétendre connaître leur plan de numérotation.
+///
+/// Une énumération et non une chaîne libre, parce que la **vérification** en
+/// dépend : un `SIRET` se contrôle par une clé de Luhn, un `NIF` ne se contrôle
+/// pas, et sans la nature il n'y a aucun moyen de savoir laquelle des deux
+/// règles appliquer. Le témoin du contrat vit dans
+/// `packages/shared/src/constants/receipt.ts`.
+enum LegalIdType {
+  SIRET
+  SIREN
+  NIF
+  STAT
+  OTHER
+}
+
 enum NotificationChannel {
   EMAIL
   SMS
@@ -324,6 +346,65 @@ model Tenant {
   /// porte.
   taxRateBps Int @default(0) @map("tax_rate_bps")
 
+  /// Raison sociale — le nom **juridique** de l'entreprise, quand il diffère de
+  /// l'enseigne (#818, troisième critère).
+  ///
+  /// `name` est ce que la cliente lit sur la vitrine ; `legal_name` est ce
+  /// qu'une pièce de caisse doit porter. « Barber Tana » et « TANA COIFFURE
+  /// SARL » sont le même salon, et un ticket qui ne porte que le premier
+  /// n'identifie personne au sens comptable.
+  ///
+  /// Nullable, comme les cinq colonnes qui suivent : un salon inscrit avant ce
+  /// ticket n'a rien saisi, et son reçu doit continuer d'être servi. C'est ce
+  /// qui rend la migration purement additive.
+  legalName String? @map("legal_name") @db.VarChar(160)
+
+  /// Nature de l'identifiant d'entreprise — voir `enum LegalIdType`.
+  ///
+  /// Indissociable de `legal_id` : `tenants_legal_id_completeness_check` exige
+  /// que les deux soient nuls ou les deux renseignés. Un identifiant sans sa
+  /// nature ne se vérifie pas, et une nature sans identifiant ne dit rien.
+  legalIdType LegalIdType? @map("legal_id_type")
+
+  /// L'identifiant d'entreprise lui-même — SIRET, SIREN, NIF ou STAT.
+  ///
+  /// Sa **forme** dépend de sa nature, et la vérification vit dans le contrat
+  /// partagé (`isValidLegalId`) plutôt qu'en base : une clé de Luhn ne s'écrit
+  /// pas en `CHECK`, et la coder deux fois aurait produit deux avis sur ce
+  /// qu'est un SIRET valide.
+  legalId String? @map("legal_id") @db.VarChar(32)
+
+  /// Numéro de TVA intracommunautaire — « FR12345678901 ».
+  ///
+  /// À part de `legal_id` et non confondu avec lui : ce sont deux numéros
+  /// distincts, attribués par deux administrations, et un ticket professionnel
+  /// porte les deux. Le numéro français se recalcule depuis le SIREN
+  /// (`isValidFrenchVatNumber`) ; les autres sont bornés en forme, faute d'une
+  /// règle unique aux vingt-six plans de numérotation de l'Union.
+  vatNumber String? @map("vat_number") @db.VarChar(32)
+
+  /// Mentions imprimées en pied de ticket — conditions de remboursement,
+  /// médiation de la consommation, remerciements.
+  ///
+  /// Cinq cents caractères : de quoi porter ce que la loi impose, pas de quoi
+  /// faire du reçu un support de communication.
+  receiptFooter String? @map("receipt_footer") @db.VarChar(500)
+
+  /// Préfixe de la numérotation des pièces — le `{PRÉFIXE}` du deuxième critère,
+  /// `TIC` dans `TIC-2026-000123`.
+  ///
+  /// `NOT NULL` avec un défaut, là où les cinq colonnes précédentes sont
+  /// nullables, et la différence est de nature : les autres décrivent une
+  /// identité qu'un salon a ou n'a pas encore saisie, celle-ci gouverne la
+  /// **forme d'une pièce comptable** qui doit être rendue pour toute vente
+  /// close, y compris celle d'un établissement qui n'a jamais ouvert son écran
+  /// de réglages. Un préfixe nul aurait fait de `null-2026-000123` un numéro.
+  ///
+  /// Majuscules et chiffres seulement, deux à huit caractères
+  /// (`tenants_receipt_prefix_check`) : le tiret est le séparateur du format, et
+  /// un préfixe qui en porterait rendrait le numéro indécomposable.
+  receiptPrefix String @default("TIC") @map("receipt_prefix") @db.VarChar(8)
+
   isActive Boolean @default(true) @map("is_active")
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -344,6 +425,7 @@ model Tenant {
   products          Product[]
   sales             Sale[]
   saleItems         SaleItem[]
+  receiptCounter    ReceiptCounter?
   notifications     Notification[]
   refreshTokens     RefreshToken[]
 
@@ -1355,6 +1437,23 @@ model Payment {
   refundedAmountMinor Int    @default(0) @map("refunded_amount_minor")
   currency            String @db.Char(3)
 
+  /// Ce que la cliente a **tendu** en espèces — #818, cinquième critère,
+  /// « règlements : moyen, montant, et monnaie rendue pour les espèces ».
+  ///
+  /// La monnaie rendue était calculée à la volée par `settlement.rules.ts` puis
+  /// rendue dans la réponse du règlement, et **perdue** : rien en base ne la
+  /// portait, si bien qu'un reçu réimprimé une heure plus tard ne pouvait plus
+  /// la dire. Elle ne se stocke pas pour autant — elle se **déduit** de
+  /// `tendered − amount`, et stocker les deux aurait rendu représentable une
+  /// monnaie incohérente avec le billet.
+  ///
+  /// Nullable, et elle le restera : la grande majorité des règlements n'ont rien
+  /// à tendre — une carte débite le montant exact, et des espèces d'appoint
+  /// laissent `tendered = amount`. `payments_tendered_amount_minor_check` borne
+  /// les deux faits qui comptent : seul un règlement en espèces peut en porter
+  /// un, et un billet tendu n'est jamais inférieur à ce qu'il règle.
+  tenderedAmountMinor Int? @map("tendered_amount_minor")
+
   method PaymentMethod
   status PaymentStatus @default(PENDING)
 
@@ -1610,6 +1709,21 @@ model Sale {
   /// il y en a une. `0` quand l'établissement n'a pas de taux.
   taxAmountMinor Int @map("tax_amount_minor")
 
+  /// Le taux **sous lequel ce ticket a été composé**, en points de base — #818,
+  /// cinquième critère, « ventilation de la TVA par taux ».
+  ///
+  /// Figé sur la vente, comme `sale_items.label` fige le nom de l'article : un
+  /// salon qui passe de 20 % à 10 % ne doit pas réécrire la ventilation de ses
+  /// tickets passés. Relire `tenants.tax_rate_bps` à l'affichage aurait fait
+  /// exactement cela.
+  ///
+  /// Et non déduit des montants : `subtotal` étant arrondi à l'unité, le taux
+  /// qu'on en retire ne revient pas toujours à celui qui l'a produit — un ticket
+  /// de 65,00 € à 20 % donne 54,17 € hors taxe et 10,83 € de taxe, dont la
+  /// division rend 19,99 %. Une pièce comptable ne peut pas annoncer un taux
+  /// faux d'un point de base.
+  taxRateBps Int @default(0) @map("tax_rate_bps")
+
   /// Somme des lignes `TIP` — le pourboire, hors taxe par nature : il n'entre
   /// dans aucune extraction. `0` quand la cliente n'a rien laissé.
   tipAmountMinor Int @map("tip_amount_minor")
@@ -1657,6 +1771,43 @@ model Sale {
   /// déduire de l'égalité de deux montants.
   settledAt DateTime? @map("settled_at") @db.Timestamptz(6)
 
+  /// Le **rang de la pièce** dans la suite de l'établissement — #818, premier
+  /// critère.
+  ///
+  /// ## Nul tant que la vente n'est pas close, et c'est tout le dispositif
+  ///
+  /// Le numéro est attribué **à la clôture**, dans la transaction même qui pose
+  /// `settled_at`, par {@link ReceiptCounter} verrouillé en `SELECT … FOR
+  /// UPDATE`. Un ticket ouvert puis abandonné au comptoir ne consomme donc
+  /// aucun rang, et c'est précisément ce que « la suite n'a aucun trou » exige :
+  /// numéroter à l'ouverture aurait percé la suite au premier panier délaissé.
+  ///
+  /// La colonne est nullable pour la même raison — un ticket ouvert n'a pas de
+  /// numéro —, et PostgreSQL tenant deux `NULL` pour distincts, autant de
+  /// tickets ouverts qu'on veut cohabitent sous l'unique.
+  ///
+  /// ## Pourquoi un compteur verrouillé et non une séquence
+  ///
+  /// Une `SEQUENCE` PostgreSQL ne revient **pas** en arrière quand la
+  /// transaction qui l'a consommée échoue : c'est sa propriété de conception, et
+  /// c'est exactement le trou que le critère interdit. Une ligne de compteur
+  /// verrouillée, elle, est incrémentée **dans** la transaction : un règlement
+  /// annulé rend son rang, et le suivant le reprend.
+  ///
+  /// `MAX(receipt_number) + 1` a été écarté pour l'autre raison, symétrique :
+  /// deux clôtures simultanées liraient le même maximum et écriraient le même
+  /// rang — l'unique en refuserait une, et le comptoir recevrait une panne là
+  /// où il doit recevoir un ticket.
+  ///
+  /// ## Un entier, et l'affichage se compose ailleurs
+  ///
+  /// `TIC-2026-000123` est une **forme**, pas une valeur : le préfixe vit sur
+  /// l'établissement, l'année se lit sur la date de la pièce, et seul le rang
+  /// est stocké. Le contrat partagé compose les trois (`formatReceiptNumber`),
+  /// si bien qu'un salon qui change de préfixe ne réécrit pas ses tickets
+  /// passés — il change ce que les prochains afficheront.
+  receiptNumber Int? @map("receipt_number")
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
@@ -1665,6 +1816,14 @@ model Sale {
 
   // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
   @@unique([tenantId, id])
+  // **La suite des pièces de caisse** (#818, premier critère) : unique par
+  // établissement, jamais globalement — deux salons ne se citent pas l'un
+  // l'autre, et une unicité globale aurait fait dépendre la numérotation d'un
+  // salon du volume de tous les autres (tenant-isolation §1).
+  //
+  // L'index sert les deux usages d'un seul objet : il **garantit** l'unicité du
+  // rang et il **sert** la recherche d'un ticket par son numéro au comptoir.
+  @@unique([tenantId, receiptNumber])
   // L'historique des ventes, du plus récent au plus ancien (#62).
   @@index([tenantId, createdAt])
   // « Qu'a-t-on facturé sur ce rendez-vous ? » — la lecture de la fiche client
@@ -1739,6 +1898,64 @@ model SaleItem {
   // Un rang par ticket — c'est ce qui rend l'ordre du reçu stable.
   @@unique([tenantId, saleId, position])
   @@map("sale_items")
+}
+
+/// Le compteur de pièces d'un établissement — #818, premier critère.
+///
+/// **Une ligne par salon**, et c'est la clé primaire qui le dit : `@@id([tenantId])`.
+/// Un compteur en double serait deux suites concurrentes sur la même colonne
+/// `sales.receipt_number`, c'est-à-dire un trou garanti dès la deuxième
+/// clôture ; la base l'interdit plutôt que le code ne le surveille.
+///
+/// ## Ce que `next_value` signifie exactement
+///
+/// **Le prochain rang à attribuer**, jamais le dernier attribué. Un salon qui
+/// n'a rien vendu porte `1`, et la première clôture prend `1` puis écrit `2`.
+/// L'autre convention aurait obligé chaque lecteur à savoir s'il faut ajouter un
+/// — et le premier qui l'oublie écrit deux fois le même rang.
+///
+/// ## Le verrou, et pourquoi il est dans la transaction de clôture
+///
+/// `SELECT "next_value" … FOR UPDATE` sérialise les clôtures concurrentes d'un
+/// même établissement : le second entrant **attend** que le premier ait
+/// commité, relit la valeur qu'il vient d'écrire, et prend le rang suivant.
+/// C'est la conduite qu'ADR 0002 impose au moteur de réservation, appliquée ici
+/// au seul invariant équivalent de la caisse — « la suite n'a aucun trou, même
+/// sous concurrence ».
+///
+/// Et parce que l'incrément vit **dans** la transaction de clôture, il revient
+/// en arrière avec elle : un règlement qui échoue au `CHECK` de
+/// `sales_settled_amount_minor_check` ne consomme aucun rang. C'est ce qu'une
+/// `SEQUENCE` PostgreSQL ne sait pas faire, et c'est la raison pour laquelle
+/// cette table existe au lieu d'un `nextval()`.
+///
+/// ## Ni année, ni série
+///
+/// La suite est **continue par établissement**, et l'année du format
+/// `{PRÉFIXE}-{AAAA}-{000123}` n'en est que la lecture : un compteur remis à
+/// zéro chaque année produirait deux ventes de même rang dans deux exercices,
+/// que `sales_tenant_id_receipt_number_key` refuse d'écrire.
+///
+/// ## Le `id` de cette table ne sert d'accès à personne
+///
+/// Toute table de ce schéma porte un `id` en UUID — c'est l'invariant que
+/// `prisma-schema.spec.ts` relit, et il existe pour qu'aucun identifiant
+/// séquentiel ne soit exposé. Un compteur n'a pas d'identité publique : il
+/// s'adresse par son établissement, qui est aussi sa clé primaire. La colonne
+/// est donc là, et rien ne la lit.
+model ReceiptCounter {
+  id       String @default(uuid()) @db.Uuid
+  tenantId String @map("tenant_id") @db.Uuid
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  /// Le prochain rang à attribuer — jamais le dernier attribué.
+  nextValue Int @default(1) @map("next_value")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@id([tenantId])
+  @@map("receipt_counters")
 }
 
 // ---------------------------------------------------------------------------

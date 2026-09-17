@@ -98,6 +98,7 @@ import {
   APPOINTMENT_REFERENCE_GROUP_LENGTH,
   APPOINTMENT_REFERENCE_PREFIX,
   APPOINTMENT_REFERENCE_SUFFIX_LENGTH,
+  type LegalIdType,
 } from '@spa/shared';
 import { hash } from 'bcryptjs';
 import {
@@ -539,6 +540,23 @@ interface TenantFixture {
     readonly city: string;
     readonly countryCode: string;
   };
+  /**
+   * L'identité légale que le ticket de caisse imprime — #818, troisième critère.
+   *
+   * Sans elle, le reçu du jeu de démonstration serait exactement celui que le PO
+   * a relevé le 16/09/2026 : une ligne, ni salon, ni numéro. Les deux
+   * établissements portent donc chacun l'identité de **son** pays — SIRET et TVA
+   * intracommunautaire côté France, NIF côté Madagascar —, ce qui exerce du même
+   * coup les deux branches de `isValidLegalId`.
+   */
+  readonly legal: {
+    readonly name: string;
+    readonly idType: LegalIdType;
+    readonly id: string;
+    readonly vatNumber?: string;
+    readonly receiptPrefix: string;
+    readonly receiptFooter: string;
+  };
   readonly categories: readonly { readonly key: string; readonly name: string }[];
   readonly staff: readonly StaffFixture[];
   readonly services: readonly ServiceFixture[];
@@ -580,6 +598,19 @@ const TENANTS: readonly TenantFixture[] = [
       postalCode: '69003',
       city: 'Lyon',
       countryCode: 'FR',
+    },
+    legal: {
+      name: 'SPA LUMIERE SAS',
+      idType: 'SIRET',
+      // Clé de Luhn juste — `isValidSiret` la vérifie, et un jeu de
+      // démonstration qui porterait un identifiant fautif ferait rougir la
+      // première saisie du formulaire de réglages.
+      id: '73282932000074',
+      vatNumber: 'FR40303265045',
+      receiptPrefix: 'SPL',
+      receiptFooter:
+        'Merci de votre visite. Tout soin réglé est dû ; réclamation sous 14 jours ' +
+        'sur présentation de ce ticket.',
     },
     categories: [
       { key: 'soins-visage', name: 'Soins du visage' },
@@ -716,6 +747,17 @@ const TENANTS: readonly TenantFixture[] = [
       postalCode: '101',
       city: 'Antananarivo',
       countryCode: 'MG',
+    },
+    legal: {
+      name: 'TANA COIFFURE SARL',
+      // Madagascar identifie le contribuable par son NIF : format libre borné,
+      // aucune clé à recalculer. C'est la seconde branche d'`isValidLegalId`,
+      // et elle existe pour ne pas refuser des établissements réels sur une
+      // règle française.
+      idType: 'NIF',
+      id: '3000123456',
+      receiptPrefix: 'BTN',
+      receiptFooter: 'Misaotra tompoko. Merci de votre visite.',
     },
     categories: [
       { key: 'coupe', name: 'Coupe' },
@@ -858,6 +900,28 @@ function required<T>(map: ReadonlyMap<string, T>, key: string, what: string): T 
   return value;
 }
 
+/**
+ * L'identité légale de l'établissement, telle que le ticket de caisse l'imprime
+ * (#818).
+ *
+ * Écrite à la création **et** à la mise à jour : un jeu de données rejoué doit
+ * porter la même identité, sans quoi le reçu d'une base semée avant #818
+ * resterait celui d'un salon anonyme.
+ *
+ * `vat_number` est omis quand le pays n'en attribue pas — la clé absente, jamais
+ * une chaîne vide.
+ */
+function legalIdentityOf(fixture: TenantFixture) {
+  return {
+    legalName: fixture.legal.name,
+    legalIdType: fixture.legal.idType,
+    legalId: fixture.legal.id,
+    receiptPrefix: fixture.legal.receiptPrefix,
+    receiptFooter: fixture.legal.receiptFooter,
+    ...(fixture.legal.vatNumber === undefined ? {} : { vatNumber: fixture.legal.vatNumber }),
+  };
+}
+
 async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise<void> {
   const tenantId = seedId('tenant', fixture.slug);
 
@@ -882,6 +946,7 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
       slotIntervalMinutes: fixture.slotIntervalMinutes,
       minBookingNoticeMinutes: fixture.minBookingNoticeMinutes,
       taxRateBps: fixture.taxRateBps,
+      ...legalIdentityOf(fixture),
       isActive: true,
     },
     update: {
@@ -895,6 +960,7 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
       slotIntervalMinutes: fixture.slotIntervalMinutes,
       minBookingNoticeMinutes: fixture.minBookingNoticeMinutes,
       taxRateBps: fixture.taxRateBps,
+      ...legalIdentityOf(fixture),
       isActive: true,
     },
   });

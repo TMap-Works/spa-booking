@@ -8,6 +8,7 @@ import {
   type ScopedPrismaClient,
   type UnscopedPrismaClient,
 } from '../../infrastructure/database/prisma-clients';
+import { allocateReceiptNumber } from './receipt.numbering';
 import {
   reviveWebhookEvent,
   type StripeWebhookEvent,
@@ -933,11 +934,27 @@ export class StripeWebhookRepository {
 
     const sale = await tx.sale.findFirst({
       where: { id: saleId },
-      select: { settledAmountMinor: true, totalAmountMinor: true },
+      select: { settledAmountMinor: true, totalAmountMinor: true, receiptNumber: true },
     });
 
     if (sale !== null && sale.settledAmountMinor === sale.totalAmountMinor) {
-      await tx.sale.updateMany({ where: { id: saleId }, data: { settledAt: capturedAt } });
+      // La clôture par carte en ligne est une clôture comme une autre : elle
+      // prend son numéro de pièce ici, dans la transaction qui pose
+      // `settled_at` (#818, premier critère). Le webhook est le **second**
+      // chemin de clôture du module, et une suite sans trou n'a de sens que si
+      // tous les chemins passent par le même compteur.
+      //
+      // `receiptNumber` est relu pour ne pas en prendre un second : ce bloc ne
+      // s'exécute qu'à la transition vers `SUCCEEDED` — donc au plus une fois
+      // par encaissement —, mais un ticket déjà soldé au comptoir puis crédité
+      // d'un encaissement de zéro passerait deux fois. Un rang pris pour rien
+      // serait un trou.
+      const receiptNumber = sale.receiptNumber ?? (await allocateReceiptNumber(tx));
+
+      await tx.sale.updateMany({
+        where: { id: saleId },
+        data: { settledAt: capturedAt, receiptNumber },
+      });
     }
   }
 }

@@ -82,6 +82,17 @@ describe('Extension de scoping tenant', () => {
         'PaymentRefund',
         'ProcessedWebhookEvent',
         'Product',
+        // Puis `ReceiptCounter` par #818 : le compteur de pièces de caisse. Son
+        // cas est celui de `ProcessedWebhookEvent` — une table de mécanique, qui
+        // aurait pu prétendre au global —, et la réponse est la même : elle
+        // porte `tenant_id`, elle est donc scopée. Le seul chemin qui l'écrive
+        // passe par du SQL brut — `SELECT … FOR UPDATE` ne s'exprime pas dans
+        // l'API de Prisma —, et ce SQL porte son propre prédicat
+        // d'établissement, tiré du contexte de requête et jamais d'un paramètre
+        // (tenant-isolation §2). L'inscrire ici ne le protège donc pas ; l'en
+        // retirer, en revanche, ouvrirait la porte à une lecture Prisma non
+        // filtrée le jour où une en arriverait une.
+        'ReceiptCounter',
         'RefreshToken',
         'Sale',
         'SaleItem',

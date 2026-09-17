@@ -248,6 +248,10 @@ export class SalesService {
 
     return this.repository.createSale({
       ...composed,
+      // Le taux est **figé sur le ticket** (#818) : il ne participe à aucun des
+      // quatre montants, mais la ventilation du reçu en dépend, et la relire sur
+      // l'établissement réécrirait les tickets passés à chaque changement.
+      taxRateBps: settings.taxRateBps,
       appointmentId: request.appointmentId,
       cashierUserId,
     });
@@ -346,7 +350,12 @@ export class SalesService {
       throw new SaleAmountOutOfRangeError();
     }
 
-    return { ...composed, appointmentId: appointment.id, cashierUserId };
+    return {
+      ...composed,
+      taxRateBps: settings.taxRateBps,
+      appointmentId: appointment.id,
+      cashierUserId,
+    };
   }
 
   /**

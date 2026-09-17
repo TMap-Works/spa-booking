@@ -178,6 +178,17 @@ export interface ComposedSale {
 export interface SaleDraft extends ComposedSale {
   readonly appointmentId: string | null;
   readonly cashierUserId: string;
+  /**
+   * Le taux **sous lequel ce ticket est composé**, en points de base — #818,
+   * cinquième critère.
+   *
+   * Il est figé sur la vente, et non relu sur l'établissement à l'affichage :
+   * un salon qui change de taux ne doit pas réécrire la ventilation de ses
+   * tickets passés. Il est porté ici plutôt que par {@link ComposedSale} parce
+   * qu'il ne participe à aucun des quatre montants — `composeSale` le consomme,
+   * le ticket le conserve.
+   */
+  readonly taxRateBps: number;
 }
 
 /** Le ticket tel que l'API le rend. */

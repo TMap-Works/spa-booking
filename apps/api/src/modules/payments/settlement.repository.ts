@@ -10,6 +10,7 @@ import {
 } from './payments.repository';
 import type { CounterSettlementOutcome, Money, SaleSettlement } from './payments.types';
 import type { SaleDraft } from './pos.types';
+import { allocateReceiptNumber } from './receipt.numbering';
 import { planSettlement, type SaleBalance, type SettlementRequest } from './settlement.rules';
 
 /**
@@ -268,6 +269,7 @@ export class SettlementRepository {
         cashierUserId: draft.cashierUserId,
         subtotalAmountMinor: draft.subtotalAmountMinor,
         taxAmountMinor: draft.taxAmountMinor,
+        taxRateBps: draft.taxRateBps,
         tipAmountMinor: draft.tipAmountMinor,
         totalAmountMinor: draft.totalAmountMinor,
         currency: draft.currency,
@@ -339,6 +341,14 @@ export class SettlementRepository {
 
     const capturedAt = new Date();
 
+    // **Le numéro de pièce est pris ici, et seulement si ce geste solde le
+    // ticket** — #818, premier critère. Dans cette transaction, donc sous le
+    // verrou du compteur, et donc annulé avec elle si l'écriture qui suit se
+    // heurte à `sales_settled_amount_minor_check` : un règlement refusé ne perce
+    // pas la suite. Un versement partiel, lui, ne prend rien — un ticket réglé
+    // en trois fois est **une** pièce, pas trois.
+    const receiptNumber = plan.settlesSale ? await allocateReceiptNumber(tx) : null;
+
     const payment = await tx.payment.create({
       data: withScopedTenant<Prisma.PaymentUncheckedCreateInput>({
         // Aucun `appointmentId` : le rendez-vous est porté par le ticket, et
@@ -356,6 +366,15 @@ export class SettlementRepository {
         // abouti sans instant de capture serait irréconciliable.
         status: 'SUCCEEDED',
         capturedAt,
+        // Ce que la cliente a tendu, quand elle a tendu plus que le dû — #818,
+        // cinquième critère. La monnaie rendue n'est pas stockée : elle se
+        // déduit de `tendered − amount`, et inscrire les deux aurait rendu
+        // représentable une monnaie incohérente avec le billet. Rien n'est écrit
+        // quand l'appoint est exact, ni sur un passage au terminal :
+        // `payments_tendered_amount_minor_check` refuse d'ailleurs le second.
+        ...(request.tenderedAmountMinor === undefined || plan.changeAmountMinor === 0
+          ? {}
+          : { tenderedAmountMinor: request.tenderedAmountMinor }),
       }),
       select: PAYMENT_TRANSACTION_SELECT,
     });
@@ -367,6 +386,7 @@ export class SettlementRepository {
       data: {
         settledAmountMinor: settled,
         ...(plan.settlesSale ? { settledAt: capturedAt } : {}),
+        ...(receiptNumber === null ? {} : { receiptNumber }),
       },
     });
 

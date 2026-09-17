@@ -116,6 +116,16 @@ const TENANT_ROOT_TABLE = 'tenants';
  * `tenant_id` nullable dans la table même qui décide de ce que les clientes de
  * chaque salon reçoivent. Elle est donc soumise aux mêmes exigences que les
  * autres, sans exception : `tenant_id` non nullable, unique composite préfixé.
+ *
+ * `receipt_counters` est le compteur de pièces de caisse (#818). Elle n'est pas
+ * une entité neuve du CDC : c'est l'**état** qui rend la numérotation des
+ * tickets continue et sans trou, au même titre que `processed_webhook_events`
+ * est l'état qui rend le rejeu d'un webhook inoffensif. Une table plutôt qu'une
+ * séquence PostgreSQL, parce qu'une séquence ne revient pas en arrière quand la
+ * transaction qui l'a consommée échoue — c'est exactement le trou que le premier
+ * critère de #818 interdit. Elle porte `tenant_id` comme les autres, et sa clé
+ * primaire **est** ce `tenant_id` : un compteur en double serait deux suites
+ * concurrentes sur la même colonne, donc un trou dès la deuxième clôture.
  */
 const EXPECTED_TABLES = [
   'tenants',
@@ -134,6 +144,7 @@ const EXPECTED_TABLES = [
   'products',
   'sales',
   'sale_items',
+  'receipt_counters',
   'notifications',
   'notification_templates',
   'refresh_tokens',
