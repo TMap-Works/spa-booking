@@ -304,7 +304,11 @@ describe('recherche', () => {
     });
   }
 
-  const QUERY = { includeInactive: false, page: 1, pageSize: 20 };
+  // `ownedByUserId: null` — « tout le fichier », le périmètre d'un rang gérant.
+  // Il est **obligatoire** dans la signature depuis #812 : un défaut à `null`
+  // aurait fait retomber sur le fichier entier toute surface qui oublierait de
+  // se prononcer, c'est-à-dire ouvert en silence ce que ce ticket ferme.
+  const QUERY = { includeInactive: false, page: 1, pageSize: 20, ownedByUserId: null };
 
   it('ne rend que les fiches actives de l’établissement courant', async () => {
     const { service, repository } = build();
@@ -395,14 +399,138 @@ describe('recherche', () => {
   });
 });
 
+describe('portée du praticien — « ses clientes, et elles seules » (#812)', () => {
+  /*
+   * Le quatrième critère de #812 : `GET /v1/customers` ne rend au praticien que
+   * les clientes de ses rendez-vous.
+   *
+   * Ce que ces cas protègent est la **portée**, pas l'accès : `PermissionsGuard`
+   * a déjà laissé entrer — le fichier client s'ouvre avec `customers:read:own`
+   * comme avec `customers:read:all` — et c'est le critère de recherche qui décide
+   * de ce qui revient. Le refus n'est donc pas un 403 mais une liste plus courte,
+   * et un 404 sur la fiche qu'on n'a pas le droit de lire : là où l'appelant
+   * connaît déjà l'existence d'un rendez-vous, il ne connaît pas celle d'une
+   * fiche, et un refus distinct aurait fait de cette route un oracle qui énumère
+   * la clientèle du salon (capture 3 du ticket).
+   */
+
+  const CLAIRE = randomUUID();
+  const COLLEGUE = randomUUID();
+
+  const PORTEE_GERANTE = { includeInactive: false, page: 1, pageSize: 20, ownedByUserId: null };
+
+  function seedDeuxPraticiennes(repository: FakeCrmRepository): {
+    readonly aMoi: string;
+    readonly aLaCollegue: string;
+  } {
+    const aMoi = repository.addCustomer({
+      tenantId: TENANT,
+      firstName: 'Camille',
+      lastName: 'Bernard',
+      email: 'camille@example.test',
+    });
+    const aLaCollegue = repository.addCustomer({
+      tenantId: TENANT,
+      firstName: 'Ines',
+      lastName: 'Bertrand',
+      email: 'ines@example.test',
+    });
+
+    repository.addVisit({ tenantId: TENANT, clientId: aMoi.id, staffUserId: CLAIRE });
+    repository.addVisit({ tenantId: TENANT, clientId: aLaCollegue.id, staffUserId: COLLEGUE });
+
+    return { aMoi: aMoi.id, aLaCollegue: aLaCollegue.id };
+  }
+
+  it('ne rend que les clientes de ses propres rendez-vous', async () => {
+    const { service, repository } = build();
+    seedDeuxPraticiennes(repository);
+
+    const page = await chez(TENANT, () =>
+      service.search({ ...PORTEE_GERANTE, ownedByUserId: CLAIRE }),
+    );
+
+    expect(page.items.map((item) => item.firstName)).toEqual(['Camille']);
+    expect(page.totalItems).toBe(1);
+  });
+
+  it('rend le fichier entier quand la portée est celle de la gérante', async () => {
+    const { service, repository } = build();
+    seedDeuxPraticiennes(repository);
+
+    const page = await chez(TENANT, () => service.search(PORTEE_GERANTE));
+
+    expect(page.items.map((item) => item.firstName)).toEqual(['Camille', 'Ines']);
+  });
+
+  it('garde une cliente dont le rendez-vous a été annulé — elle reste la sienne', async () => {
+    const { service, repository } = build();
+    const desistee = repository.addCustomer({
+      tenantId: TENANT,
+      firstName: 'Nour',
+      lastName: 'Aubry',
+      email: 'nour@example.test',
+    });
+    repository.addVisit({
+      tenantId: TENANT,
+      clientId: desistee.id,
+      staffUserId: CLAIRE,
+      status: 'CANCELLED',
+    });
+
+    const page = await chez(TENANT, () =>
+      service.search({ ...PORTEE_GERANTE, ownedByUserId: CLAIRE }),
+    );
+
+    // Le praticien qui la rappelle pour reproposer un créneau a besoin de son
+    // numéro : restreindre aux visites honorées aurait fait disparaître la fiche
+    // le jour où elle devient la plus utile.
+    expect(page.items.map((item) => item.firstName)).toEqual(['Nour']);
+  });
+
+  it('rend une page vide à un compte sans clientèle, plutôt que le fichier', async () => {
+    const { service, repository } = build();
+    seedDeuxPraticiennes(repository);
+
+    const page = await chez(TENANT, () =>
+      service.search({ ...PORTEE_GERANTE, ownedByUserId: randomUUID() }),
+    );
+
+    // Le défaut fail-open aurait été de traiter « aucune ligne rattachée » comme
+    // « aucune restriction ».
+    expect({ items: page.items.length, totalItems: page.totalItems }).toEqual({
+      items: 0,
+      totalItems: 0,
+    });
+  });
+
+  it('ouvre la fiche d’une de ses clientes', async () => {
+    const { service, repository } = build();
+    const { aMoi } = seedDeuxPraticiennes(repository);
+
+    const fiche = await chez(TENANT, () => service.byId(aMoi, CLAIRE));
+
+    expect(fiche.firstName).toBe('Camille');
+  });
+
+  it('rend « introuvable » sur la fiche d’une cliente qui n’est pas la sienne', async () => {
+    const { service, repository } = build();
+    const { aLaCollegue } = seedDeuxPraticiennes(repository);
+
+    await expect(chez(TENANT, () => service.byId(aLaCollegue, CLAIRE))).rejects.toThrow(
+      NotFoundError,
+    );
+  });
+});
+
 describe('portée de tenant', () => {
   it('refuse toute opération hors portée — défaut fermé', async () => {
     const { service } = build();
 
     // Le vrai dépôt lève de même : l'extension de scoping ne retombe jamais sur
     // « toutes les données » quand aucun tenant n'est résolu.
-    await expect(service.search({ includeInactive: false, page: 1, pageSize: 20 })).rejects.toThrow(
-      /portée de tenant/,
-    );
+    await expect(
+      service.search({ includeInactive: false, page: 1, pageSize: 20, ownedByUserId: null }),
+    ).rejects.toThrow(/portée de tenant/);
   });
 });

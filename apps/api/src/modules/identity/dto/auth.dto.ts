@@ -3,10 +3,13 @@ import {
   EMAIL_ADDRESS_MAX_LENGTH,
   NAME_MAX_LENGTH,
   PASSWORD_MIN_LENGTH,
+  PERMISSIONS,
   PHONE_MAX_LENGTH,
   SLUG_MAX_LENGTH,
+  type Permission,
   type TenantScopedLoginRequest,
   authSessionResponseSchema,
+  authenticatedAccountSchema,
   passwordSchema,
   sessionUserSchema,
   tenantScopedLoginRequestSchema,
@@ -257,6 +260,36 @@ export class UserProfileDto implements UserProfile {
 }
 
 /**
+ * Le compte connecté **et ses permissions effectives** — ce que `GET /auth/me`
+ * rend depuis #812 (cinquième critère, ADR 0013).
+ *
+ * ## Pourquoi cette classe étend `UserProfileDto` au lieu de le modifier
+ *
+ * Parce que `UserProfileDto` est aussi le `user` d'`AuthTokensDto`, c'est-à-dire
+ * le corps des trois routes de session. Y ajouter les permissions les ferait
+ * voyager dans la réponse d'une connexion, où elles n'ont rien à faire : un
+ * droit qu'on découvre en même temps que son jeton invite à le mettre en cache
+ * avec lui — donc à le garder après qu'un administrateur l'a retiré. La liste se
+ * lit sur `/auth/me`, un appel que le back-office fait déjà à chaque rendu de
+ * son shell, et qui coûte donc zéro requête de plus.
+ *
+ * La séparation est la même que celle de `staffAccountStateSchema` côté
+ * contrat : une surface de plus, pas un champ de plus sur toutes les surfaces.
+ */
+export class AuthenticatedAccountDto extends UserProfileDto {
+  @ApiProperty({
+    description:
+      'Les permissions effectives du compte, dans l’ordre du vocabulaire. ' +
+      'Toujours émise, éventuellement vide — un compte `client` n’en a aucune. ' +
+      'Le back-office construit son sommaire à partir de cette liste plutôt que ' +
+      'd’une matrice recopiée.',
+    enum: PERMISSIONS,
+    isArray: true,
+  })
+  public permissions!: Permission[];
+}
+
+/**
  * Réponse d'une connexion réussie — la documentation
  * d'`authSessionResponseSchema`.
  *
@@ -324,6 +357,27 @@ type _UserProfileDtoHasTheContractKeys = AssertNever<
 
 type _UserProfileDtoIsReadableByTheContract = AssertTrue<
   UserProfileDto extends SessionUserWire ? true : false
+>;
+
+/**
+ * La sortie de `/auth/me`, tenue contre `authenticatedAccountSchema` dans le
+ * même sens que les deux précédentes : la classe annonce exactement les champs
+ * que le contrat sait lire, ni un de plus, ni un de moins.
+ *
+ * Sans cette garde, une permission ajoutée au vocabulaire sans sa `@ApiProperty`
+ * décrirait une route qui rend ce qu'elle n'annonce pas — et le front, qui
+ * construit son sommaire sur cette liste, afficherait une entrée de moins sans
+ * qu'aucun test ne rougisse.
+ */
+type AuthenticatedAccountWire = z.input<typeof authenticatedAccountSchema>;
+
+type _AuthenticatedAccountDtoHasTheContractKeys = AssertNever<
+  | Exclude<keyof AuthenticatedAccountDto, keyof AuthenticatedAccountWire>
+  | Exclude<keyof AuthenticatedAccountWire, keyof AuthenticatedAccountDto>
+>;
+
+type _AuthenticatedAccountDtoIsReadableByTheContract = AssertTrue<
+  AuthenticatedAccountDto extends AuthenticatedAccountWire ? true : false
 >;
 
 type _AuthTokensDtoHasTheContractKeys = AssertNever<

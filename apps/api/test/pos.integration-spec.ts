@@ -11,7 +11,10 @@ import { createPosHarness, type PosHarness } from './pos.harness';
  *   `controllers` de son module compile, passe ses tests unitaires, et rend 404
  *   en vrai ;
  * - **les gardes sont montées** — sans jeton 401, avec un jeton `CLIENT` 403, et
- *   la tenue du rayon exige `MANAGER` là où la caisse se contente de `STAFF` ;
+ *   toute la caisse exige désormais `checkout:collect` (#812). Le rang `STAFF`
+ *   ne la porte plus : l'écran d'encaissement liste la journée **de tout le
+ *   salon**, et il rendait par cette porte l'agenda que le ticket ferme par
+ *   ailleurs ;
  * - **le `ValidationPipe` global mord** — `forbidNonWhitelisted` refuse en 400
  *   un `total`, un `priceAmountMinor` ou un `tenantId` glissés dans un corps de
  *   ticket, ce qui est la moitié exécutoire du troisième critère ;
@@ -98,7 +101,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
         name: 'Retiré',
         isActive: false,
       });
-      const bearer = await harness.bearer('STAFF');
+      const bearer = await harness.bearer('MANAGER');
 
       const vendable = await request(harness.server())
         .get(PRODUCTS)
@@ -154,7 +157,11 @@ describe('POS — rayon retail et ticket de caisse', () => {
           .expect(403);
       });
 
-      it('réserve la tenue du rayon au rang `MANAGER`', async () => {
+      it('réserve la tenue du rayon à `checkout:collect`', async () => {
+        // Le rang `STAFF` ne porte plus cette permission depuis #812 : toute la
+        // caisse s'est refermée d'un bloc, rayon compris. Une caisse dont une
+        // moitié s'ouvre plus bas que l'autre est une caisse qu'on contourne par
+        // sa moitié basse.
         await request(harness.server())
           .post(PRODUCTS)
           .set('Authorization', await harness.bearer('STAFF'))
@@ -181,7 +188,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
 
       const response = await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({
           lines: [
             { kind: 'SERVICE', serviceId: prestation.id, quantity: 1 },
@@ -214,7 +221,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
 
       const response = await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({
           lines: [
             { kind: 'PRODUCT', productId: article.id, quantity: 1 },
@@ -234,7 +241,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
 
       const response = await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({
           appointmentId: rendezVous.id,
           lines: [{ kind: 'PRODUCT', productId: article.id, quantity: 1 }],
@@ -249,7 +256,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
 
       const response = await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({ lines: [{ kind: 'PRODUCT', productId: article.id, quantity: 1 }] })
         .expect(201);
 
@@ -264,7 +271,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
 
       const response = await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({
           lines: [
             { kind: 'PRODUCT', productId: article.id, quantity: 1, unitAmountMinor: 1 },
@@ -280,7 +287,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
 
       await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({
           total: { amountMinor: 1, currency: 'EUR' },
           lines: [{ kind: 'PRODUCT', productId: article.id, quantity: 1 }],
@@ -293,7 +300,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
       // navigateur l'autorité sur ce que le salon doit au fisc.
       await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({ lines: [{ kind: 'TAX', amountMinor: 1 }] })
         .expect(400);
     });
@@ -306,7 +313,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
 
       const response = await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({
           lines: [
             { kind: 'PRODUCT', productId: article.id, quantity: 1 },
@@ -323,7 +330,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
     it('refuse en 400 un ticket sans aucune ligne', async () => {
       await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({ lines: [] })
         .expect(400);
     });
@@ -333,7 +340,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
 
       await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({ lines: [{ kind: 'PRODUCT', productId: article.id, quantity: 0 }] })
         .expect(400);
     });
@@ -346,7 +353,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
 
       const response = await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({ lines: [{ kind: 'PRODUCT', productId: article.id, quantity: 1 }] })
         .expect(422);
 
@@ -373,7 +380,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
 
       const response = await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({
           lines: [
             { kind: 'PRODUCT', productId: vendable.id, quantity: 1 },
@@ -405,7 +412,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
 
       const response = await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({
           lines: [
             ...Array.from({ length: 5 }, () => ({
@@ -441,7 +448,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
 
     it('relit un ticket avec ses lignes, dans l’ordre du reçu', async () => {
       const article = harness.repository.seedProduct({ tenantId: harness.tenantId });
-      const bearer = await harness.bearer('STAFF');
+      const bearer = await harness.bearer('MANAGER');
 
       const created = await request(harness.server())
         .post(SALES)
@@ -463,7 +470,7 @@ describe('POS — rayon retail et ticket de caisse', () => {
     it('rend 404 sur un ticket inconnu', async () => {
       await request(harness.server())
         .get(`${SALES}/99999999-9999-4999-8999-999999999999`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(404);
     });
 

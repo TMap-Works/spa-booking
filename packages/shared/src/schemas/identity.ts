@@ -29,9 +29,16 @@ import {
   uuidSchema,
 } from '../common/identifiers';
 import { utcInstantSchema } from '../common/time';
+import { PERMISSIONS } from '../constants/permissions';
 import { USER_ROLES } from '../constants/roles';
 
 export const userRoleSchema = z.enum(USER_ROLES);
+
+/**
+ * Une permission nommée — le vocabulaire de `constants/permissions.ts`, rendu
+ * lisible par un schéma (#812, ADR 0013).
+ */
+export const permissionSchema = z.enum(PERMISSIONS);
 
 /**
  * Compte tel que l'API le renvoie.
@@ -264,6 +271,47 @@ export const staffAccountStateSchema = sessionUserSchema.extend({
 });
 
 export type StaffAccountState = z.infer<typeof staffAccountStateSchema>;
+
+/**
+ * Le compte connecté **et ce qu'il a le droit de faire** — ce que rend
+ * `GET /api/v1/auth/me` depuis #812 (ADR 0013).
+ *
+ * ## Pourquoi une extension de `sessionUserSchema`, et non le schéma lui-même
+ *
+ * Parce que les trois routes de session — connexion, inscription,
+ * rafraîchissement — rendent `sessionUserSchema` **imbriqué** dans
+ * `authSessionResponseSchema`, et qu'y ajouter les permissions les ferait
+ * voyager dans le corps d'une réponse d'authentification. Elles n'y ont rien à
+ * faire : le rail se construit après la connexion, sur un appel qui a déjà lieu
+ * (`GET /auth/me`, fait par le layout du back-office), et un droit qu'on
+ * découvre au même instant que son jeton invite à le mettre en cache avec lui —
+ * c'est-à-dire à le garder après qu'un administrateur l'a retiré.
+ *
+ * ## Pourquoi la liste est **émise** plutôt que déduite
+ *
+ * C'est le cinquième critère de #812 : « le front construit son rail à partir de
+ * cette liste au lieu de recopier la matrice ». Une matrice recopiée dans
+ * `apps/web` aurait deux écritures pour une seule décision, et elles auraient
+ * divergé au premier ticket — la trajectoire exacte des seuils du sommaire du
+ * back-office (#458, #480, #484), corrigés trois fois pour la même cause.
+ *
+ * La liste ne **protège** rien pour autant : un sommaire qui affiche une entrée
+ * de trop n'ouvre aucune donnée, la seule frontière étant la garde de l'API.
+ *
+ * Non `.strict()`, comme tous les schémas de sortie du contrat.
+ */
+export const authenticatedAccountSchema = sessionUserSchema.extend({
+  /**
+   * Les permissions **effectives** du compte, dans l'ordre du vocabulaire.
+   *
+   * Toujours émise, éventuellement vide : un compte `client` connecté au
+   * back-office n'en a aucune, et le tableau vide est la réponse — pas l'absence
+   * du champ, qu'un front distinguerait mal d'une version d'API plus ancienne.
+   */
+  permissions: z.array(permissionSchema),
+});
+
+export type AuthenticatedAccount = z.infer<typeof authenticatedAccountSchema>;
 
 /**
  * Ce que rendent `POST /auth/register`, `POST /auth/login` et

@@ -23,7 +23,8 @@ import {
  * 2. le **DTO de requête** est appliqué : un champ non déclaré est refusé, un
  *    statut hors du vocabulaire du contrat aussi, et la forme répétée de
  *    `statuses` est lue comme un tableau ;
- * 3. la **garde** tient : `STAFF` au minimum, jamais le parcours client ;
+ * 3. la **garde** tient : `agenda:read:all` — donc `MANAGER` au minimum depuis
+ *    #812 —, ni le praticien, ni le parcours client ;
  * 4. la réponse porte l'intervalle **facturé** et les trois *summaries*.
  *
  * La frontière inter-tenant, elle, a sa propre suite
@@ -137,7 +138,10 @@ describe('GET /api/v1/appointments', () => {
     await harness.close();
   });
 
-  const bearer = async (role: UserRole = 'STAFF'): Promise<string> => {
+  // `MANAGER` par défaut depuis #812 : l'agenda du salon exige désormais
+  // `agenda:read:all`, que le rang `STAFF` ne porte plus. Le praticien lit le
+  // sien par `GET /api/v1/me/appointments` (#811), qui a sa propre suite.
+  const bearer = async (role: UserRole = 'MANAGER'): Promise<string> => {
     const token = await harness.app
       .get(TokenService)
       .signAccessToken({ userId: randomUUID(), tenantId: harness.a.tenant.id, role });
@@ -283,12 +287,27 @@ describe('GET /api/v1/appointments', () => {
     expect(JSON.stringify(response.body)).not.toContain(demain);
   });
 
-  it('l’ouvre au rang le plus bas autorisé — `STAFF`', async () => {
-    // Sans ce cas, une garde trop haute — `MANAGER` — ferait verdir tous les
-    // refus ci-dessus sans que personne ne puisse ouvrir son agenda.
-    await request(harness.server())
+  it('la refuse au praticien — arbitrage du PO du 16/09 (#812)', async () => {
+    // Le constat du ticket : connectée comme praticienne, elle arrivait sur le
+    // planning de tout le salon, avec les rendez-vous et les noms des clientes de
+    // sa collègue. `agenda:read:all` n'est plus portée par le rang `STAFF`.
+    const response = await request(harness.server())
       .get(AGENDA_PATH)
       .set('Authorization', await bearer('STAFF'))
+      .expect(403);
+
+    expect(response.body.code).toBe('FORBIDDEN');
+    expect(response.body.details.requiredPermissions).toEqual(['agenda:read:all']);
+    // Et surtout : rien de l'agenda ne franchit le refus.
+    expect(JSON.stringify(response.body)).not.toContain(demain);
+  });
+
+  it('l’ouvre au rang le plus bas autorisé — `MANAGER`', async () => {
+    // Sans ce cas, une garde trop haute — `ADMIN` — ferait verdir tous les refus
+    // ci-dessus sans que le comptoir puisse ouvrir sa journée.
+    await request(harness.server())
+      .get(AGENDA_PATH)
+      .set('Authorization', await bearer('MANAGER'))
       .expect(200);
   });
 });

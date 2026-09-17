@@ -12,6 +12,8 @@ import { AvailabilityService } from '../availability/availability.service';
 import { TenantClockService } from '../availability/tenant-clock.service';
 import type { ServiceView } from '../catalog/catalog.types';
 import { ServicesService } from '../catalog/services.service';
+import { OwnScopeOnlyError } from '../identity/identity.errors';
+import { roleHasPermission } from '../identity/permissions';
 import { AppointmentLifecycleService } from './appointment-lifecycle.service';
 import { occupiesSlot } from './appointment-status';
 import {
@@ -23,6 +25,7 @@ import { AppointmentsRepository } from './appointments.repository';
 import type {
   AgendaAppointmentRecord,
   AgendaAppointmentView,
+  AppointmentActor,
   AppointmentDraft,
   AppointmentRecord,
   AppointmentView,
@@ -563,6 +566,27 @@ export class AppointmentsService {
     input: RescheduleAppointmentInput,
     now: Date = new Date(),
   ): Promise<AgendaAppointmentView> {
+    if (input.actor !== undefined) {
+      // Une lecture de plus, et seulement sur la porte de back-office : elle est
+      // ce qui permet de juger la portée **avant** que `reschedule` n'ouvre sa
+      // transaction. La faire à l'intérieur aurait mêlé une décision d'accès au
+      // mécanisme de report, que le tunnel public emprunte aussi.
+      const previous = await this.repository.findById(input.appointmentId);
+
+      if (previous === null) {
+        // 404 avant 403, comme partout ailleurs : le rendez-vous d'un autre
+        // établissement reste indiscernable d'un identifiant qui n'existe pas
+        // (tenant-isolation §4).
+        throw new NotFoundError('Rendez-vous introuvable.');
+      }
+
+      // Les **deux** praticiens sont jugés : celui d'où part le rendez-vous, et
+      // celui vers qui on le déplace. Sans le second, un praticien restreint à
+      // son propre périmètre pourrait s'attribuer le créneau d'une collègue en
+      // deux gestes — d'abord le sien, puis le report vers lui-même.
+      await this.assertOwnScope(input.actor, [previous.staffId, input.staffId]);
+    }
+
     const moved = await this.reschedule(input, now);
 
     return this.agendaById(moved.id);
@@ -629,6 +653,12 @@ export class AppointmentsService {
       // indiscernable d'un identifiant qui n'existe pas (tenant-isolation §4).
       throw new NotFoundError('Rendez-vous introuvable.');
     }
+
+    // La portée, après le 404 et avant tout le reste : l'ordre est ce qui fait
+    // qu'un identifiant d'un autre établissement rend « introuvable » plutôt que
+    // « hors de votre périmètre » — le second aurait dit qu'il existe ailleurs
+    // (tenant-isolation §4, #812).
+    await this.assertOwnScope(input.actor, [previous.staffId]);
 
     // Avant toute écriture, et par le service dédié : ce n'est pas la garde —
     // celle-là est l'écriture conditionnelle du repository —, c'est ce qui rend
@@ -731,6 +761,10 @@ export class AppointmentsService {
       // indiscernable d'un identifiant qui n'existe pas (tenant-isolation §4).
       throw new NotFoundError('Rendez-vous introuvable.');
     }
+
+    // Même ordre que dans `changeStatus`, et pour la même raison : le 404 du
+    // voisin d'abord, la portée ensuite (#812).
+    await this.assertOwnScope(input.actor, [previous.staffId]);
 
     // Le service dédié, avant toute écriture. Il ne protège pas la base — c'est
     // l'`UPDATE` conditionnel qui le fait — il rend la **réponse** juste.
@@ -943,6 +977,60 @@ export class AppointmentsService {
     return records
       .map(agendaView)
       .sort((left, right) => left.startsAt.localeCompare(right.startsAt));
+  }
+
+  /**
+   * Refuse le geste si l'acteur n'agit que sur **son propre** périmètre et que
+   * la cible n'en fait pas partie — #812, troisième critère, ADR 0013.
+   *
+   * ## Trois sorties, dans cet ordre
+   *
+   * 1. **Aucun acteur** : la porte n'en impose pas — le tunnel public, où une
+   *    cliente annule son propre rendez-vous sans jeton ni fiche praticien. La
+   *    portée n'est pas la question sur cette porte-là.
+   * 2. **`appointment:write:all`** : le gérant et l'administratrice tiennent
+   *    l'agenda du salon, il n'y a rien à comparer. La matrice répond seule, sans
+   *    aucune lecture — c'est le cas courant du comptoir, et il reste gratuit.
+   * 3. **Sinon** : une lecture, `(tenantId, userId)` → fiche praticien, et la
+   *    comparaison. Un compte sans fiche praticien ne possède aucun rendez-vous :
+   *    il est refusé, et non traité comme s'il les possédait tous.
+   *
+   * ## Pourquoi `OwnScopeOnlyError` et non `NotFoundError`
+   *
+   * Parce que la ressource est du **même établissement** : le praticien qui vise
+   * le rendez-vous de sa collègue en connaît déjà l'existence — il partage la
+   * pièce. Un 404 ne cacherait rien et lui ferait croire à un rendez-vous
+   * effacé. La règle du 404 protège l'existence d'une ressource d'un *autre*
+   * établissement, et ce cas-là est déjà traité plus haut, avant cet appel
+   * (tenant-isolation §4).
+   *
+   * ## Pourquoi une liste de praticiens et non un seul
+   *
+   * Parce qu'un report en met deux en jeu — celui d'où le rendez-vous part et
+   * celui vers qui il va. Les juger ensemble, sur une seule lecture de la fiche
+   * de l'appelant, évite d'en oublier un : c'est l'oubli qui aurait permis de
+   * s'attribuer le créneau d'une collègue.
+   *
+   * `null` dans la liste se lit « inchangé » — le report qui ne change pas de
+   * praticien — et n'a donc rien à juger de plus que la ligne d'origine.
+   */
+  private async assertOwnScope(
+    actor: AppointmentActor | undefined,
+    staffIds: readonly (string | null)[],
+  ): Promise<void> {
+    if (actor === undefined || roleHasPermission(actor.role, 'appointment:write:all')) {
+      return;
+    }
+
+    const own = await this.repository.findStaffByUserId(actor.userId);
+    const targets = staffIds.filter((staffId): staffId is string => staffId !== null);
+
+    if (own === null || targets.some((staffId) => staffId !== own.id)) {
+      // `details.scope` porte la permission qui aurait permis le geste, jamais
+      // l'identifiant du rendez-vous ni le nom de qui le détient : ce serait
+      // rendre par le message ce que le refus vient d'interdire.
+      throw new OwnScopeOnlyError('appointment:write:all');
+    }
   }
 
   /**

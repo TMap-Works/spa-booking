@@ -20,7 +20,7 @@ import {
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 
-import { Auth, AuthAtLeast } from './auth.decorator';
+import { Auth, AuthAtLeast, AuthWith } from './auth.decorator';
 import { UserProfileDto } from './dto/auth.dto';
 import {
   ChangeUserRoleDto,
@@ -152,7 +152,11 @@ export class UsersController {
    * qu'un rechargement de page effaçait ce que l'écran croyait savoir.
    */
   @Get()
-  @AuthAtLeast('STAFF')
+  // `accounts:read` et non `@AuthAtLeast('STAFF')` — #812, quatrième critère.
+  // Cette liste rend l'adresse e-mail et le rôle des quatre comptes du salon,
+  // administratrice comprise (capture 2 du ticket) : c'est l'annuaire interne,
+  // et un praticien n'a rien à y lire. La permission est au rang `MANAGER`.
+  @AuthWith('accounts:read')
   @ApiOperation({ summary: 'Lister les comptes internes de l’établissement' })
   @ApiOkResponse({ type: [StaffAccountStateDto] })
   public async list(): Promise<StaffAccountStateDto[]> {
@@ -170,7 +174,9 @@ export class UsersController {
    * après l'avoir modifié doit rendre ce que la liste en montrait.
    */
   @Get(':id')
-  @AuthAtLeast('STAFF')
+  // Même permission que la liste : rendre une ligne à l'unité de ce qu'on vient
+  // de fermer en lot ferait de cette route la porte de service de l'autre.
+  @AuthWith('accounts:read')
   @ApiOperation({ summary: 'Lire un compte de l’établissement' })
   @ApiOkResponse({ type: StaffAccountStateDto })
   @ApiNotFoundResponse({ description: 'Aucun compte de cet établissement ne porte cet identifiant.' })

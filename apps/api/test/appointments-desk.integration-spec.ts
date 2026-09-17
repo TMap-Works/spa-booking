@@ -29,7 +29,14 @@ import type { TenantFixture } from './utils/tenant-harness';
  *    `POST /appointments` refuse : c'est le pendant, côté API, du `.strict()` qui
  *    sépare les deux schémas de création dans `packages/shared` — le comptoir
  *    désigne une fiche, il n'en crée pas ;
- * 3. la **garde** tient : `STAFF` au minimum, jamais le parcours client ;
+ * 3. la **garde** tient. Depuis #812 elle se lit en permissions et non plus en
+ *    rang : `appointment:write:all` pour la prise de rendez-vous, et
+ *    `appointment:write:own` **ou** `:all` pour le report, le statut et
+ *    l'annulation. Le rang `MANAGER` porte les deux, et c'est lui que ces cas
+ *    présentent ; ce que le praticien peut et ne peut pas a sa propre suite
+ *    (`src/modules/appointments/__tests__/appointments.own-scope.spec.ts`), qui
+ *    n'a besoin ni d'HTTP ni de base pour l'exercer. Ni l'un ni l'autre n'ouvre
+ *    la surface au parcours client ;
  * 4. le **report** produit bien une ligne neuve liée à l'ancienne, et libère le
  *    créneau de départ dans le même geste ;
  * 5. le **cycle de vie** refuse `pending → completed` en 422, et le refus vient
@@ -125,7 +132,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
   async function createAtDesk(overrides: Record<string, unknown> = {}): Promise<AgendaRow> {
     const response = await request(harness.server())
       .post(DESK_PATH)
-      .set('Authorization', await bearer('STAFF'))
+      .set('Authorization', await bearer('MANAGER'))
       .send(creation(overrides));
 
     expect(response.status).toBe(201);
@@ -209,7 +216,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
     it('refuse en 400 un `client` — le comptoir ne crée pas de fiche', async () => {
       const response = await request(harness.server())
         .post(DESK_PATH)
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send(
           creation({
             client: { firstName: 'Camille', lastName: 'Rakoto', email: 'autre@example.test' },
@@ -228,7 +235,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
     it('refuse en 400 un corps sans `clientId`', async () => {
       const response = await request(harness.server())
         .post(DESK_PATH)
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send(creation({ clientId: undefined }));
 
       // Le jeton est celui d'un membre du personnel : il n'y a aucune cliente à
@@ -241,7 +248,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
     it('refuse en 400 une date-heure sans offset explicite', async () => {
       const response = await request(harness.server())
         .post(DESK_PATH)
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send(creation({ startsAt: '2026-09-01T09:00:00' }));
 
       expect(response.status).toBe(400);
@@ -254,7 +261,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
     it('refuse en 404 une fiche cliente que cet établissement ne connaît pas', async () => {
       const response = await request(harness.server())
         .post(DESK_PATH)
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send(creation({ clientId: randomUUID() }));
 
       expect(response.status).toBe(404);
@@ -266,7 +273,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
 
       const response = await request(harness.server())
         .post(DESK_PATH)
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send(creation());
 
       expect(response.status).toBe(409);
@@ -293,7 +300,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(posé.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ startsAt: ailleurs.startsAt.toISOString() });
 
       expect(response.status).toBe(201);
@@ -319,14 +326,14 @@ describe('Écritures de rendez-vous au comptoir', () => {
 
       await request(harness.server())
         .post(RESCHEDULE_PATH(posé.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ startsAt: ailleurs.startsAt.toISOString() });
 
       // La ligne d'origine a quitté les statuts occupants : le créneau est
       // vendable au `COMMIT`, sans qu'aucune libération n'ait été écrite.
       const repris = await request(harness.server())
         .post(DESK_PATH)
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send(creation());
 
       expect(repris.status).toBe(201);
@@ -337,7 +344,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(posé.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ startsAt: slot.startsAt.toISOString(), staffId: harness.a.staffId });
 
       // Même praticien, même instant : rien n'est écrit, et l'identifiant que la
@@ -352,12 +359,12 @@ describe('Écritures de rendez-vous au comptoir', () => {
 
       await request(harness.server())
         .post(`${DESK_PATH}/${posé.id}/cancel`)
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({});
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(posé.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ startsAt: bookableSlot(14).startsAt.toISOString() });
 
       expect(response.status).toBe(422);
@@ -367,12 +374,12 @@ describe('Écritures de rendez-vous au comptoir', () => {
     it('refuse en 404 un rendez-vous inconnu, et en 400 un identifiant mal formé', async () => {
       const inconnu = await request(harness.server())
         .post(RESCHEDULE_PATH(randomUUID()))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ startsAt: bookableSlot(14).startsAt.toISOString() });
 
       const malformé = await request(harness.server())
         .post(RESCHEDULE_PATH('pas-un-uuid'))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ startsAt: bookableSlot(14).startsAt.toISOString() });
 
       expect(inconnu.status).toBe(404);
@@ -402,7 +409,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
     async function confirm(id: string): Promise<AgendaRow> {
       const response = await request(harness.server())
         .post(STATUS_PATH(id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'confirmed' });
 
       expect(response.status).toBe(200);
@@ -426,7 +433,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
 
       const soldé = await request(harness.server())
         .post(STATUS_PATH(posé.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'completed' });
 
       expect(soldé.status).toBe(200);
@@ -436,7 +443,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
       // vers l'annulation (booking-engine §5).
       const retour = await request(harness.server())
         .post(STATUS_PATH(posé.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'cancelled' });
 
       expect(retour.status).toBe(422);
@@ -449,7 +456,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
 
       const absent = await request(harness.server())
         .post(STATUS_PATH(posé.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'no_show' });
 
       expect(absent.status).toBe(200);
@@ -459,7 +466,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
       // vendable, et c'est tout l'intérêt de le marquer plutôt que de l'effacer.
       const repris = await request(harness.server())
         .post(DESK_PATH)
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send(creation());
 
       expect(repris.status).toBe(201);
@@ -470,7 +477,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
 
       const response = await request(harness.server())
         .post(STATUS_PATH(posé.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'completed' });
 
       // Quatrième critère du ticket. On ne solde pas un soin qui n'a pas été
@@ -491,7 +498,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
 
       const response = await request(harness.server())
         .post(STATUS_PATH(posé.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'pending' });
 
       expect(response.status).toBe(422);
@@ -503,7 +510,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
 
       const response = await request(harness.server())
         .post(STATUS_PATH(posé.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'cancelled', reason: 'Cliente injoignable' });
 
       expect(response.status).toBe(200);
@@ -523,7 +530,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
 
       const response = await request(harness.server())
         .post(STATUS_PATH(posé.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'HONORE' });
 
       // 400 et non 422 : le mot n'existe pas, ce n'est pas un passage qui
@@ -537,7 +544,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
 
       const response = await request(harness.server())
         .post(STATUS_PATH(posé.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'confirmed', cancelledAt: '2026-01-01T00:00:00Z' });
 
       // Antidater la trace depuis le corps est exactement ce que le
@@ -548,7 +555,7 @@ describe('Écritures de rendez-vous au comptoir', () => {
     it('refuse en 404 un rendez-vous inconnu', async () => {
       const response = await request(harness.server())
         .post(STATUS_PATH(randomUUID()))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ status: 'confirmed' });
 
       expect(response.status).toBe(404);

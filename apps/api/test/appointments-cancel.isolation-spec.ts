@@ -168,7 +168,7 @@ describe('Isolation inter-tenant — annulation de rendez-vous', () => {
 
       const response = await request(harness.server())
         .post(DESK_CANCEL_PATH(inA))
-        .set('Authorization', await bearer('STAFF', harness.b.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.b.tenant))
         .send({ reason: 'tentative' });
 
       // 404 et non 403 : le rang est suffisant, c'est l'établissement qui ne
@@ -199,7 +199,7 @@ describe('Isolation inter-tenant — annulation de rendez-vous', () => {
 
       await request(harness.server())
         .post(DESK_CANCEL_PATH(inA))
-        .set('Authorization', await bearer('STAFF', harness.b.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.b.tenant))
         .send({ reason: 'tentative' });
 
       const kept = harness.appointments.appointments.find((row) => row.id === inA);
@@ -214,7 +214,7 @@ describe('Isolation inter-tenant — annulation de rendez-vous', () => {
 
       const response = await request(harness.server())
         .post(DESK_CANCEL_PATH(inA))
-        .set('Authorization', await bearer('STAFF', harness.a.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.a.tenant))
         .send({});
 
       // Le contrôle de la contrepartie : sans lui, un refus systématique — une

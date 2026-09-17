@@ -1,6 +1,6 @@
 'use client';
 
-import type { UserRole } from '@spa/shared';
+import type { Permission, UserRole } from '@spa/shared';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { FocusEvent } from 'react';
@@ -8,6 +8,7 @@ import type { FocusEvent } from 'react';
 import { LinkPending } from '@/components/ui/link-pending';
 
 import { AdminLogoutButton } from './admin-logout-button';
+import { entriesAllowedBy } from './admin-rail-permissions';
 import { EstablishmentSwitcher, type AdminEstablishment } from './establishment-switcher';
 import { adminNavigation, isCurrentEntry, roleLabel } from './navigation';
 
@@ -132,6 +133,23 @@ interface AdminRailProps {
    */
   readonly userName: string | null;
   readonly role: UserRole;
+  /**
+   * Les permissions effectives du compte, telles que `GET /v1/auth/me` les rend
+   * (#812, cinquième critère).
+   *
+   * Le sommaire se construit sur **cette liste** plutôt que sur une matrice
+   * recopiée : c'est la seule façon qu'une seconde écriture de « qui voit quoi »
+   * ne diverge pas de la première — ce qui est arrivé trois fois sur les seuils
+   * de ce rail (#458, #480, #484).
+   *
+   * `null` se lit « le serveur n'a pas dit » : `/auth/me` n'a pas répondu, ou le
+   * layout ne relaie pas encore la liste. Le sommaire reste alors celui que le
+   * rang produit — le comportement d'avant #812 —, parce qu'un rail effacé sur
+   * une panne de lecture ferait croire à une session dégradée, là où un rail trop
+   * large ne fait que proposer un écran qui répondra 403. La frontière reste
+   * celle de l'API.
+   */
+  readonly permissions?: readonly Permission[] | null;
 }
 
 export function AdminRail({
@@ -140,9 +158,14 @@ export function AdminRail({
   timeZone,
   userName,
   role,
+  permissions = null,
 }: AdminRailProps) {
   const pathname = usePathname();
-  const entries = adminNavigation(tenantSlug, role);
+  // Deux filtres, et ils ne disent pas la même chose : le rang écarte ce qui est
+  // au-dessus de l'appelant, les permissions écartent ce que le rang ne sait pas
+  // exprimer — un praticien est bien au rang `staff`, et n'a pourtant ni le
+  // planning du salon ni l'encaissement (#812).
+  const entries = entriesAllowedBy(adminNavigation(tenantSlug, role), permissions);
   const brand = establishments.find((salon) => salon.slug === tenantSlug)?.name ?? tenantSlug;
 
   return (

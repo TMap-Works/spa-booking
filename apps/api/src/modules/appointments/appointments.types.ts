@@ -4,6 +4,7 @@
 // casse de l'énumération PostgreSQL, parce qu'aucune colonne ne le stocke.
 import type { AppointmentScope } from '@spa/shared';
 
+import type { UserRole } from '../identity/roles';
 import type { AppointmentCancelledBy, AppointmentStatus } from './appointment-status';
 
 /**
@@ -187,12 +188,47 @@ export interface AppointmentRecord {
  * `STAFF`. Un champ de requête l'aurait laissé à la main de l'appelant, et une
  * cliente aurait pu inscrire au registre du salon que le salon l'avait annulée.
  */
+/**
+ * Qui agit, quand la portée du geste dépend de lui — #812, troisième critère.
+ *
+ * ## Pourquoi cette forme entre dans le domaine plutôt que de rester à la porte
+ *
+ * Parce que la question « ce rendez-vous est-il le vôtre ? » ne se répond pas
+ * sans le lire, et qu'une garde ne lit aucune ressource — c'est ce qui rend son
+ * 403 indiscernable d'une route à l'autre (`roles.guard.ts`). La garde de
+ * permission tranche donc l'accès à la **route** ; la portée, elle, se tranche
+ * ici, après la lecture, et le refus est un `OwnScopeOnlyError`.
+ *
+ * ## `undefined` n'est pas « aucun droit », c'est « aucune restriction »
+ *
+ * Les deux mêmes méthodes servent le tunnel public, où il n'y a ni jeton ni
+ * personnel : une cliente qui annule son propre rendez-vous n'a pas de fiche
+ * praticien à comparer. L'absence d'acteur s'y lit « la portée n'est pas la
+ * question sur cette porte-là », et c'est la porte — non le corps de la requête
+ * — qui en décide, comme pour `cancelledBy`.
+ */
+export interface AppointmentActor {
+  /** Le compte du jeton vérifié, jamais un identifiant reçu de l'appelant. */
+  readonly userId: string;
+  /**
+   * Son rôle, tel que le jeton le porte. La portée s'en déduit par la matrice de
+   * permissions (`identity/permissions.ts`), jamais par un rang comparé ici :
+   * deux écritures de la même décision finissent par différer.
+   */
+  readonly role: UserRole;
+}
+
 export interface CancelAppointmentInput {
   /** Le rendez-vous à annuler, dans l'établissement courant. */
   readonly appointmentId: string;
   readonly cancelledBy: AppointmentCancelledBy;
   /** Motif saisi, ou `null` — le CDC ne le rend obligatoire d'aucun côté. */
   readonly reason: string | null;
+  /**
+   * L'auteur, quand la porte en impose un — le back-office. Absent sur le tunnel
+   * public : voir {@link AppointmentActor}.
+   */
+  readonly actor?: AppointmentActor;
 }
 
 /**
@@ -321,6 +357,8 @@ export interface ChangeAppointmentStatusInput {
   readonly status: AppointmentStatus;
   /** Motif saisi, ou `null`. Consigné sur une annulation, ignoré ailleurs. */
   readonly reason: string | null;
+  /** L'auteur — voir {@link AppointmentActor}. */
+  readonly actor?: AppointmentActor;
 }
 
 /**
@@ -357,6 +395,8 @@ export interface RescheduleAppointmentInput {
   readonly startsAt: Date;
   /** Nouveau praticien, ou `null` pour conserver celui du rendez-vous d'origine. */
   readonly staffId: string | null;
+  /** L'auteur, quand la porte en impose un — voir {@link AppointmentActor}. */
+  readonly actor?: AppointmentActor;
 }
 
 /**

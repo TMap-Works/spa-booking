@@ -61,10 +61,17 @@ async function exiger(
   throw new Error(`${contexte} : HTTP ${reponse.status()} — ${detail}`);
 }
 
-/** Le jeton d'accès d'un compte de l'établissement d'essai. */
+/**
+ * Le jeton d'accès d'un compte de l'établissement d'essai.
+ *
+ * Le défaut est le **comptoir**, c'est-à-dire le rang gérant depuis #812 : les
+ * appels que ces parcours passent en direct — poser un rendez-vous, le solder,
+ * l'encaisser — exigent tous une permission que le rang praticien ne porte
+ * plus. Voir `COMPTES` dans `environnement.ts`.
+ */
 export async function connecter(
   request: APIRequestContext,
-  email: string = COMPTES.staff,
+  email: string = COMPTES.manager,
 ): Promise<string> {
   const reponse = await request.post(`${BASE_API}/auth/login`, {
     data: { tenantSlug: SLUG, email, password: MOT_DE_PASSE },

@@ -221,7 +221,13 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
   });
 }
 
-/** Ouvre une session de comptoir. Le rang `STAFF` est le plus bas qu'admet l'agenda. */
+/**
+ * Ouvre une session de comptoir.
+ *
+ * Le rang attendu est `MANAGER` depuis #812 : c'est le plus bas qui porte
+ * `agenda:read:all`, et donc le plus bas qui ouvre le planning du salon. Voir
+ * `COMPTES` dans `environnement.ts` pour la raison du déplacement.
+ */
 export async function connexionComptoir(page: Page, email: string): Promise<void> {
   await test.step('Comptoir — se connecter au back-office', async () => {
     await page.goto(chemins.connexionAdmin());
@@ -231,7 +237,7 @@ export async function connexionComptoir(page: Page, email: string): Promise<void
 
     // La connexion réussie dépose ce rang sur le planning — la première section
     // que le sommaire lui ouvre (#618) — et non plus sur les réglages, qu'un
-    // rang `STAFF` recevait en « Accès réservé ». Le repère qui dit que la
+    // rang sous `ADMIN` recevait en « Accès réservé ». Le repère qui dit que la
     // session est posée reste le rail, présent sur toutes ces destinations.
     await expect(
       page.getByRole('navigation', { name: 'Sections du tableau de bord' }),

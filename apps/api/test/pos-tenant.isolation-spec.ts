@@ -98,7 +98,7 @@ describe('Isolation inter-tenant — POS', () => {
 
       const response = await request(harness.server())
         .get(`${PRODUCTS}?includeInactive=true`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
 
       expectListScopedTo(response.body, { ownIds: [chezA], foreignIds: [chezB] });
@@ -109,7 +109,7 @@ describe('Isolation inter-tenant — POS', () => {
 
       const response = await request(harness.server())
         .get(`${PRODUCTS}?includeInactive=true`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
 
       expectExcludesForeignIds(response.body, [chezB, b]);
@@ -181,7 +181,7 @@ describe('Isolation inter-tenant — POS', () => {
             send: async () =>
               request(harness.server())
                 .post(SALES)
-                .set('Authorization', await harness.bearer('STAFF'))
+                .set('Authorization', await harness.bearer('MANAGER'))
                 .send({ lines: [{ kind: 'PRODUCT', productId: chezB, quantity: 1 }] }),
           },
         ],
@@ -202,7 +202,7 @@ describe('Isolation inter-tenant — POS', () => {
             send: async () =>
               request(harness.server())
                 .post(SALES)
-                .set('Authorization', await harness.bearer('STAFF'))
+                .set('Authorization', await harness.bearer('MANAGER'))
                 .send({ lines: [{ kind: 'SERVICE', serviceId: chezB.id, quantity: 1 }] }),
           },
         ],
@@ -225,7 +225,7 @@ describe('Isolation inter-tenant — POS', () => {
             send: async () =>
               request(harness.server())
                 .post(SALES)
-                .set('Authorization', await harness.bearer('STAFF'))
+                .set('Authorization', await harness.bearer('MANAGER'))
                 .send({
                   appointmentId: rendezVousVoisin.id,
                   lines: [{ kind: 'PRODUCT', productId: chezA.id, quantity: 1 }],
@@ -246,7 +246,7 @@ describe('Isolation inter-tenant — POS', () => {
 
       const chezB = await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF', b))
+        .set('Authorization', await harness.bearer('MANAGER', b))
         .send({ lines: [{ kind: 'PRODUCT', productId: article.id, quantity: 1 }] })
         .expect(201);
 
@@ -259,7 +259,7 @@ describe('Isolation inter-tenant — POS', () => {
             send: async () =>
               request(harness.server())
                 .get(`${SALES}/${ticketVoisin}`)
-                .set('Authorization', await harness.bearer('STAFF')),
+                .set('Authorization', await harness.bearer('MANAGER')),
           },
         ],
         hidden: [ticketVoisin, b, article.id],
@@ -271,12 +271,12 @@ describe('Isolation inter-tenant — POS', () => {
       const article = harness.repository.seedProduct({ tenantId: b });
       const chezB = await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF', b))
+        .set('Authorization', await harness.bearer('MANAGER', b))
         .send({ lines: [{ kind: 'PRODUCT', productId: article.id, quantity: 1 }] })
         .expect(201);
 
       const ticketVoisin = (chezB.body as { id: string }).id;
-      const bearer = await harness.bearer('STAFF');
+      const bearer = await harness.bearer('MANAGER');
 
       const voisin = await request(harness.server())
         .get(`${SALES}/${ticketVoisin}`)
@@ -300,7 +300,7 @@ describe('Isolation inter-tenant — POS', () => {
       // qu'ignorée (tenant-isolation §2).
       await request(harness.server())
         .post(SALES)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({
           tenantId: b,
           lines: [{ kind: 'PRODUCT', productId: chezA.id, quantity: 1 }],

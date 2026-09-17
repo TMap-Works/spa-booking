@@ -9,7 +9,7 @@ import {
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 
-import { AuthAtLeast } from '../identity/auth.decorator';
+import { AuthWith } from '../identity/auth.decorator';
 import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
 import {
@@ -58,14 +58,20 @@ import { MyStaffService } from './my-staff.service';
  * les portes exportées (`StaffScheduleService`, `StaffTimeOffService`), jamais
  * par un repository voisin (api-module §3).
  *
- * ## Pourquoi `@AuthAtLeast('STAFF')` sur les trois
+ * ## Pourquoi `agenda:read:own` sur les trois
  *
- * C'est le rang de la conduite de la journée, celui de l'agenda du comptoir. La
- * clientèle n'a rien à faire ici — elle n'a pas de fiche praticien, et la route
- * rendrait 404 de toute façon ; le seuil évite que ce 404 devienne une sonde à
- * bon marché depuis un compte client. Au-dessus, un `MANAGER` ou un `ADMIN` qui
- * donne aussi des soins y trouve son propre agenda : la hiérarchie des rôles est
- * emboîtée, et avoir une fiche praticien n'est pas une question de rang.
+ * C'est **la** permission du praticien depuis #812, et cette surface en est la
+ * contrepartie : l'agenda du salon lui est fermé (`agenda:read:all`), celui-ci
+ * lui est ouvert. L'arbitrage du PO du 16/09 se lit donc en une ligne dans la
+ * matrice — `staff` a l'un et pas l'autre —, là où un rang ne savait pas
+ * exprimer la différence.
+ *
+ * La clientèle n'a rien à faire ici — elle n'a pas de fiche praticien, et la
+ * route rendrait 404 de toute façon ; la permission évite que ce 404 devienne
+ * une sonde à bon marché depuis un compte client. Au-dessus, un `MANAGER` ou un
+ * `ADMIN` qui donne aussi des soins y trouve son propre agenda : la matrice leur
+ * accorde `agenda:read:own` en plus de `:all`, parce qu'avoir une fiche
+ * praticien n'est pas une question de rang.
  *
  * ## Ce que ces routes ne peuvent pas faire, par construction
  *
@@ -76,7 +82,7 @@ import { MyStaffService } from './my-staff.service';
  */
 @ApiTags('Espace praticien')
 @Controller('me')
-@AuthAtLeast('STAFF')
+@AuthWith('agenda:read:own')
 export class MyStaffController {
   public constructor(private readonly me: MyStaffService) {}
 

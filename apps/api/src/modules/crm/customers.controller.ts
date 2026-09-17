@@ -22,7 +22,10 @@ import {
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 
-import { AuthAtLeast } from '../identity/auth.decorator';
+import { AuthAtLeast, AuthWith } from '../identity/auth.decorator';
+import type { AuthenticatedUser } from '../identity/identity.types';
+import { CurrentUser } from '../identity/jwt-auth.guard';
+import { roleHasPermission } from '../identity/permissions';
 import { CustomerExportService } from './customer-export.service';
 import { CustomerHistoryService } from './customer-history.service';
 import { CustomersService } from './customers.service';
@@ -51,49 +54,60 @@ import {
  * Le fichier client de l'établissement — CDC §1.4, « le front-desk gère
  * l'agenda, le staff et les fiches clients ».
  *
- * | Route | Rôles | Ce qu'elle sert |
+ * | Route | Permission exigée | Ce qu'elle sert |
  * |---|---|---|
- * | `GET /customers` | staff et au-dessus | le fichier, recherché et paginé |
- * | `GET /customers/:id` | staff et au-dessus | la fiche, note interne comprise |
- * | `GET /customers/:id/history` | staff et au-dessus | l'historique agrégé |
- * | `GET /customers/:id/export` | manager et au-dessus | le dossier complet, à remettre |
- * | `POST /customers` | staff et au-dessus | la saisie au comptoir |
- * | `POST /customers/:id/anonymize` | admin | le droit à l'oubli |
- * | `PATCH /customers/:id` | staff et au-dessus | coordonnées, note et consentement |
- * | `PATCH /customers/:id/status` | manager et au-dessus | désactive **sans supprimer** |
+ * | `GET /customers` | `customers:read:own` **ou** `:all` | le fichier, recherché et paginé — **borné à sa propre clientèle** pour le premier |
+ * | `GET /customers/:id` | `customers:read:own` **ou** `:all` | la fiche, note interne comprise |
+ * | `GET /customers/:id/history` | `customers:read:all` | l'historique agrégé |
+ * | `GET /customers/:id/export` | `customers:read:all` | le dossier complet, à remettre |
+ * | `POST /customers` | `customers:write` | la saisie au comptoir |
+ * | `POST /customers/:id/anonymize` | rang `ADMIN` | le droit à l'oubli |
+ * | `PATCH /customers/:id` | `customers:write` | coordonnées, note et consentement |
+ * | `PATCH /customers/:id/status` | `customers:write` | désactive **sans supprimer** |
  *
- * ## Deux seuils, et pourquoi la ligne passe là
+ * ## Ce que #812 a déplacé, et pourquoi le seuil `STAFF` a dû tomber
  *
- * `STAFF` fait tout ce qui relève de la relation client au quotidien : chercher
- * une fiche, la créer au téléphone, corriger un numéro, noter une allergie.
- * Placer ce seuil à `MANAGER` aurait rendu le fichier inutilisable par les
- * personnes qui le tiennent — celles qui décrochent — et le CDC range
- * explicitement les fiches clients dans les gestes de front-desk.
+ * Ces routes s'ouvraient au rang `STAFF`, au motif — juste — que tenir le
+ * fichier client est un geste de front-desk. Le retour de test du PO du 16/09 a
+ * montré ce que cela donnait pour l'autre métier qui porte ce rang : une
+ * praticienne connectée ouvrait les dix-sept fiches du salon, téléphone, e-mail
+ * et note interne comprises (capture 3 du ticket). L'arbitrage tranche : « ne
+ * voit que les clientes de ses rendez-vous ».
  *
- * `MANAGER` garde la seule opération qui **retire** quelque chose des écrans :
- * la désactivation. Ce n'est pas une suppression, mais c'est une décision sur le
- * fichier plutôt qu'une correction dedans, et elle mérite le rang au-dessus —
- * même partage que `PATCH /users/:id` (coordonnées, `MANAGER`) et
- * `PATCH /users/:id/status` (activation, `ADMIN`) chez `identity`.
+ * La lecture se scinde donc en deux permissions plutôt que de descendre d'un
+ * rang : `customers:read:own` rend **le même écran**, borné aux personnes que
+ * l'appelant a reçues ou doit recevoir ; `customers:read:all` rend le fichier.
+ * Aucun `if` sur le rôle dans le service — la portée est un critère de
+ * recherche, résolu une fois, à l'entrée (voir `CrmRepository.searchWhere`).
  *
- * ## Les deux seuils que #81 ajoute
+ * L'**écriture**, elle, part entière au rang gérant (`customers:write`) : créer
+ * une fiche, corriger un numéro, la désactiver sont des décisions **sur** le
+ * fichier du salon, pas des lectures dedans, et le praticien n'a de sa clientèle
+ * qu'une vue de consultation. Ce qu'il écrit sur une visite reste à sa place —
+ * la note interne d'un rendez-vous, par `POST /appointments/:id/status`.
  *
- * `MANAGER` pour l'**export**. Il ne modifie rien, mais il produit en un seul
- * appel la totalité de ce que le salon détient sur une personne — notes internes
- * et textes libres compris. Le laisser à `STAFF` aurait mis à portée d'un clic,
- * sur chaque poste du comptoir, un dossier complet exportable ; le sortir du
- * périmètre du back-office aurait rendu le droit d'accès impraticable. La
- * minimisation du CDC §5.1 se joue autant sur qui peut lire que sur ce qui est
- * lu.
+ * L'**historique agrégé** et l'**export** exigent `customers:read:all` : tous
+ * deux couvrent la relation entière du salon avec la personne, visites chez les
+ * collègues comprises. Les ouvrir à `:own` aurait rendu par l'agrégat ce que la
+ * liste vient de fermer. Pour l'export, le raisonnement de #81 tient inchangé :
+ * il produit en un appel la totalité de ce que le salon détient sur une
+ * personne, notes internes et textes libres compris, et la minimisation du
+ * CDC §5.1 se joue autant sur qui peut lire que sur ce qui est lu.
  *
- * `ADMIN` pour l'**anonymisation**. C'est la seule opération de tout le module
+ * ## Le rang `ADMIN` survit à un seul endroit
+ *
+ * L'**anonymisation**. C'est la seule opération de tout le module
  * qui **détruise** irréversiblement une donnée : ni la désactivation, ni la
  * modification, ni rien d'autre ne perd quoi que ce soit. Il n'y a pas de
  * retour arrière — c'est le propos —, et une opération sans retour arrière
  * appartient au rang le plus élevé de l'établissement. Même seuil que
- * `PATCH /users/:id/role` chez `identity`, pour la même raison.
+ * `PATCH /users/:id/role` chez `identity`, pour la même raison. Elle reste
+ * exprimée par un rang parce que les rangs restent **vrais** là où ils le sont :
+ * la matrice de l'ADR 0013 n'a pas remplacé la hiérarchie, elle a remplacé ce
+ * que la hiérarchie ne savait pas dire.
  *
- * **Aucune route n'est ouverte au rôle `CLIENT`.** Une cliente lit et corrige
+ * **Aucune route n'est ouverte au rôle `CLIENT`** — il ne porte aucune des
+ * permissions citées ci-dessus. Une cliente lit et corrige
  * son propre profil par `PATCH /users/me` et `GET /auth/me` — des routes sans
  * identifiant en chemin, donc sans rien à comparer. Ouvrir ici la moindre route
  * à `CLIENT` reviendrait à laisser une cliente désigner la fiche d'une autre par
@@ -143,12 +157,18 @@ export class CustomersController {
    * ce chemin.
    */
   @Get()
-  @AuthAtLeast('STAFF')
+  @AuthWith('customers:read:own', 'customers:read:all')
   @ApiOperation({ summary: 'Rechercher dans le fichier client' })
   @ApiOkResponse({ type: CustomerPageDto })
   @ApiBadRequestResponse({ description: 'Paramètre invalide — le champ fautif est nommé.' })
-  public async list(@Query() query: ListCustomersQueryDto): Promise<CustomerPageDto> {
-    return this.customers.search(toSearchQuery(query));
+  public async list(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Query() query: ListCustomersQueryDto,
+  ): Promise<CustomerPageDto> {
+    return this.customers.search({
+      ...toSearchQuery(query),
+      ownedByUserId: ownScopeOf(actor),
+    });
   }
 
   /**
@@ -161,12 +181,20 @@ export class CustomersController {
    * travaille au salon.
    */
   @Get(':id')
-  @AuthAtLeast('STAFF')
+  @AuthWith('customers:read:own', 'customers:read:all')
   @ApiOperation({ summary: 'Lire une fiche cliente' })
   @ApiOkResponse({ type: CustomerDto })
-  @ApiNotFoundResponse({ description: 'Aucune fiche de cet établissement ne porte cet identifiant.' })
-  public async byId(@Param('id', ParseUUIDPipe) id: string): Promise<CustomerDto> {
-    return toCustomerDto(await this.customers.byId(id));
+  @ApiNotFoundResponse({
+    description:
+      'Aucune fiche de cet établissement ne porte cet identifiant — ou elle ne ' +
+      'fait pas partie de votre clientèle, ce qui est indiscernable et le reste ' +
+      'délibérément.',
+  })
+  public async byId(
+    @CurrentUser() actor: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<CustomerDto> {
+    return toCustomerDto(await this.customers.byId(id, ownScopeOf(actor)));
   }
 
   /**
@@ -182,7 +210,10 @@ export class CustomersController {
    * agrégat vide en 200, indiscernable de celui d'une cliente jamais venue.
    */
   @Get(':id/history')
-  @AuthAtLeast('STAFF')
+  // `customers:read:all` : l'agrégat couvre la relation entière du salon avec la
+  // personne, visites chez les collègues comprises. L'ouvrir au périmètre propre
+  // aurait rendu par la somme ce que la liste vient de fermer (#812).
+  @AuthWith('customers:read:all')
   @ApiOperation({ summary: 'Lire l’historique de visites agrégé d’une fiche' })
   @ApiOkResponse({ type: CustomerVisitHistoryDto })
   @ApiNotFoundResponse({ description: 'Aucune fiche de cet établissement ne porte cet identifiant.' })
@@ -210,7 +241,9 @@ export class CustomersController {
    * que personne ne s'aperçoive de l'erreur.
    */
   @Get(':id/export')
-  @AuthAtLeast('MANAGER')
+  // Même population qu'avant #812 — `customers:read:all` est au rang gérant —,
+  // exprimée dans le vocabulaire des permissions plutôt qu'en rang.
+  @AuthWith('customers:read:all')
   @ApiOperation({ summary: 'Exporter les données personnelles d’une cliente (RGPD)' })
   @ApiOkResponse({ type: CustomerDataExportDto })
   @ApiNotFoundResponse({ description: 'Aucune fiche de cet établissement ne porte cet identifiant.' })
@@ -231,7 +264,7 @@ export class CustomersController {
    * global refuse en 400 celui qui l'y glisserait.
    */
   @Post()
-  @AuthAtLeast('STAFF')
+  @AuthWith('customers:write')
   @ApiOperation({ summary: 'Créer une fiche cliente' })
   @ApiCreatedResponse({ type: CustomerDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
@@ -303,7 +336,7 @@ export class CustomersController {
    * son propre chemin — ou n'en a délibérément aucun, pour l'adresse.
    */
   @Patch(':id')
-  @AuthAtLeast('STAFF')
+  @AuthWith('customers:write')
   @ApiOperation({ summary: 'Modifier une fiche cliente' })
   @ApiOkResponse({ type: CustomerDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
@@ -329,7 +362,7 @@ export class CustomersController {
    * déjà.
    */
   @Patch(':id/status')
-  @AuthAtLeast('MANAGER')
+  @AuthWith('customers:write')
   @ApiOperation({ summary: 'Désactiver ou réactiver une fiche cliente' })
   // Déclaré explicitement : le corps est validé par le contrat partagé et le
   // paramètre est typé par un alias de type, dont `@nestjs/swagger` ne peut plus
@@ -349,4 +382,23 @@ export class CustomersController {
   ): Promise<CustomerDto> {
     return toCustomerDto(await this.customers.setActive(id, body.isActive));
   }
+}
+
+/**
+ * Le périmètre de lecture de l'appelant : `null` pour « tout le fichier »,
+ * son identifiant de compte pour « ses clientes à lui » (#812).
+ *
+ * ## Pourquoi ici et non dans le service
+ *
+ * Parce que c'est une traduction de la **porte** vers le domaine, comme
+ * `cancelledBy` chez `appointments` : la garde a déjà décidé que l'appelant
+ * entre, il reste à dire avec quelle portée. Le service, lui, ne connaît qu'un
+ * critère de recherche — il n'a ni rôle ni matrice à interroger, et c'est ce qui
+ * le laisse testable sans couche d'autorisation.
+ *
+ * `customers:read:all` l'emporte quand les deux sont portées : un gérant qui
+ * donne aussi des soins lit le fichier entier, comme avant.
+ */
+function ownScopeOf(actor: AuthenticatedUser): string | null {
+  return roleHasPermission(actor.role, 'customers:read:all') ? null : actor.userId;
 }

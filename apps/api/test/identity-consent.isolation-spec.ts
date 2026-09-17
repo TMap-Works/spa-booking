@@ -273,7 +273,7 @@ describe('Preuve de consentement à l’inscription — ce que les routes exigen
     // sert. Elle ne montre pas la clientèle, et elle ne montre aucun accord.
     const liste = await request(harness.server())
       .get('/api/v1/users')
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(200);
 
     expect(JSON.stringify(liste.body)).not.toContain('dataConsent');
