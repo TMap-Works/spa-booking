@@ -1,4 +1,4 @@
--- Encaisser la carte au comptoir par TPE — #834, ADR 0014 et payments-stripe §4.
+-- Encaisser la carte au comptoir par TPE — #834, ADR 0015 et payments-stripe §4.
 --
 -- ## Ce que la migration pose
 --
@@ -31,7 +31,7 @@
 --
 -- ## Pourquoi un canal et non une valeur de plus dans `PaymentMethod`
 --
--- Le troisième critère de l'issue laissait le choix ; l'ADR 0014 tranche pour le
+-- Le troisième critère de l'issue laissait le choix ; l'ADR 0015 tranche pour le
 -- canal, et pour une raison qui se mesure. `method` est lu par des
 -- consommateurs qui n'ont aucune raison de connaître le tuyau : la ventilation
 -- du revenu par moyen (`reporting`), le libellé du reçu, le filtre de

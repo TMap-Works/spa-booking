@@ -135,7 +135,7 @@ export class SettleSaleDto {
       'Le moyen employé au comptoir. `CARD_TERMINAL` est le **TPE autonome du ' +
       'salon** — celui de sa banque, non relié à l’application : l’API n’appelle ' +
       'aucun prestataire, et rien de ce que le terminal manipule ne traverse ' +
-      'notre code (#834, ADR 0014). Le paiement par carte **en ligne** n’est pas ' +
+      'notre code (#834, ADR 0015). Le paiement par carte **en ligne** n’est pas ' +
       'une valeur de ce champ : il vit dans le tunnel public, pas au comptoir.',
   })
   @IsIn(COUNTER_SETTLEMENT_MEANS, {
@@ -247,7 +247,7 @@ export function toSettlementRequest(dto: SettleSaleDto): SettlementRequest {
     // La frontière est ici, et elle est le seul endroit où les deux
     // vocabulaires se rencontrent : le contrat nomme `CARD_TERMINAL` pour ne
     // rien laisser à deviner, le domaine dit `CARD` parce qu'au comptoir une
-    // carte n'a plus qu'un chemin (ADR 0014). Même partage que la casse des
+    // carte n'a plus qu'un chemin (ADR 0015). Même partage que la casse des
     // statuts, documentée en tête de `payments.types.ts`.
     method: dto.method === 'CASH' ? 'CASH' : 'CARD',
     ...(dto.amountMinor === undefined ? {} : { amountMinor: dto.amountMinor }),

@@ -46,7 +46,7 @@ import type { SettlementRequest } from './settlement.rules';
  * celui qui tient le total du POS : on ne contrôle pas qu'un appel n'a pas eu
  * lieu, on fait qu'il n'y ait nulle part où le passer.
  *
- * Depuis #834 (ADR 0014), le comptoir ne sait plus produire que deux moyens —
+ * Depuis #834 (ADR 0015), le comptoir ne sait plus produire que deux moyens —
  * `CASH` et `CARD_TERMINAL` —, et c'est le **type** qui le tient :
  * `CounterSettlementMean` n'a pas de valeur pour une intention en ligne, donc
  * aucun corps de requête ne peut en demander une. La carte se règle sur le TPE

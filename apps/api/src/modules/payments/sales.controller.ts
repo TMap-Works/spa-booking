@@ -336,7 +336,7 @@ export class SalesController {
    * verrou : le corps ne porte aucun total, seulement la part qu'on règle
    * maintenant (cinquième critère).
    *
-   * ## La carte se règle au **TPE du salon** — #834, ADR 0014
+   * ## La carte se règle au **TPE du salon** — #834, ADR 0015
    *
    * `mean` vaut `CASH` ou `CARD_TERMINAL`, et rien d'autre : le comptoir ne sait
    * plus produire d'intention Stripe. `CARD_TERMINAL` signifie « la carte est

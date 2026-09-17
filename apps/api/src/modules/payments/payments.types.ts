@@ -64,7 +64,7 @@ export type PaymentMethod = (typeof PAYMENT_METHODS)[number];
 
 /**
  * Par quel tuyau une carte est passée — `enum PaymentCardChannel` du schéma
- * (#834, ADR 0014), même régime de témoin que ci-dessus.
+ * (#834, ADR 0015), même régime de témoin que ci-dessus.
  *
  * `STRIPE` est l'intention du tunnel public, le seul endroit du produit où
  * Stripe touche une carte. `TERMINAL` est le **TPE autonome** du salon : celui
@@ -113,7 +113,7 @@ export type SettlementMean = (typeof SETTLEMENT_MEANS)[number];
  *
  * Le **domaine**, lui, continue de parler de `PaymentMethod` — `CASH` ou
  * `CARD` —, et c'est délibéré : au comptoir, « carte » n'a plus qu'un sens
- * depuis l'ADR 0014, celui du terminal du salon. La conversion se fait une fois,
+ * depuis l'ADR 0015, celui du terminal du salon. La conversion se fait une fois,
  * dans `toSettlementRequest`, et `counterSettlementOf` en tire le couple de
  * colonnes. Porter la valeur `CARD_TERMINAL` jusqu'au dépôt aurait ajouté une
  * seconde orthographe de la même chose à toutes les couches, pour un fait que
@@ -150,7 +150,7 @@ export function storedSettlementOf(mean: SettlementMean): StoredSettlementMean {
 /**
  * Le couple de colonnes d'un règlement **de comptoir** — #834.
  *
- * Une seule règle, et c'est celle de l'ADR 0014 : au comptoir, une carte est
+ * Une seule règle, et c'est celle de l'ADR 0015 : au comptoir, une carte est
  * passée au **terminal du salon**. Il n'y a pas d'autre chemin — le comptoir
  * n'ouvre plus d'intention Stripe —, si bien que le canal se déduit du moyen
  * sans que l'appelant ait à le dire, et sans qu'aucun corps de requête ne

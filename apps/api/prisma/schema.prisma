@@ -103,7 +103,7 @@ enum AppointmentCancelledBy {
 /// Moyen d'encaissement au comptoir — CDC §1.4 « carte/espèces ».
 ///
 /// **Cette énumération ne bouge pas avec #834**, et c'est la décision de
-/// l'[ADR 0014](../../../docs/adr/0014-carte-au-comptoir-par-tpe.md) : le moyen
+/// l'[ADR 0015](../../../docs/adr/0015-carte-au-comptoir-par-tpe.md) : le moyen
 /// dit ce que la cliente a présenté — un billet ou une carte —, pas par quel
 /// tuyau la carte est passée. Ce second fait est porté par
 /// `PaymentCardChannel`, ci-dessous.
@@ -117,7 +117,7 @@ enum PaymentMethod {
 /// ## Un canal, et non une valeur de plus dans `PaymentMethod`
 ///
 /// L'issue laissait le choix entre les deux. C'est le canal qui est retenu,
-/// pour la raison que l'ADR 0014 développe : `method` est lu par des
+/// pour la raison que l'ADR 0015 développe : `method` est lu par des
 /// consommateurs qui n'ont pas à connaître le tuyau — la ventilation du revenu
 /// par moyen, le libellé du reçu, le filtre de rapprochement — et ajouter
 /// `CARD_TERMINAL` à l'énumération aurait **changé le sens** de leur filtre

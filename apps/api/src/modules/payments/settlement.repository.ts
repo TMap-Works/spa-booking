@@ -377,7 +377,7 @@ export class SettlementRepository {
     // composé à la main ici pourrait être (`CARD`, aucun canal), que
     // `payments_card_channel_check` refuserait au milieu de la transaction. Au
     // comptoir, une carte est **toujours** passée au terminal du salon
-    // (ADR 0014), et c'est ce que `counterSettlementOf` énonce.
+    // (ADR 0015), et c'est ce que `counterSettlementOf` énonce.
     const stored = counterSettlementOf(request.method);
 
     const payment = await tx.payment.create({

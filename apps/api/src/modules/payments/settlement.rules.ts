@@ -54,7 +54,7 @@ export interface SettlementRequest {
    * Le moyen, tel que le domaine le connaît : un billet ou une carte.
    *
    * `CARD` désigne ici le **terminal du salon**, et il n'y a pas d'ambiguïté à
-   * lever : depuis l'ADR 0014, le comptoir n'a plus d'autre chemin pour une
+   * lever : depuis l'ADR 0015, le comptoir n'a plus d'autre chemin pour une
    * carte — il n'ouvre plus d'intention Stripe. Le canal en est déduit par
    * `counterSettlementOf`, et la frontière HTTP nomme la valeur
    * `CARD_TERMINAL` pour que le contrat, lui, ne laisse rien à déduire.

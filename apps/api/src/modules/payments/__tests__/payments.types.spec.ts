@@ -47,12 +47,12 @@ describe('payments — vocabulaire et colonnes', () => {
 
   /**
    * **#834 n'a pas touché à `PaymentMethod`**, et cette assertion est ce qui le
-   * dit : l'ADR 0014 a écarté la valeur `CARD_TERMINAL` au profit d'un canal,
+   * dit : l'ADR 0015 a écarté la valeur `CARD_TERMINAL` au profit d'un canal,
    * précisément pour ne pas changer en silence le sens du filtre `CARD` chez les
    * consommateurs qui le lisent — la ventilation du revenu, le libellé du reçu,
    * le rapprochement du back-office.
    */
-  it('n’a pas gagné de troisième moyen avec le TPE — ADR 0014', () => {
+  it('n’a pas gagné de troisième moyen avec le TPE — ADR 0015', () => {
     expect([...PAYMENT_METHODS]).toEqual(['CARD', 'CASH']);
   });
 
@@ -95,7 +95,7 @@ describe('payments — vocabulaire et colonnes', () => {
 
 /**
  * Le **moyen** — ce que la cliente a présenté *et* par quel tuyau — et sa
- * traduction dans les deux colonnes qui le portent (#834, ADR 0014).
+ * traduction dans les deux colonnes qui le portent (#834, ADR 0015).
  *
  * La propriété qui compte ici n'est pas l'exemple mais l'**aller-retour** : tout
  * moyen se traduit en un couple que `payments_card_channel_check` accepte, et
@@ -144,7 +144,7 @@ describe('payments — le moyen et ses deux colonnes', () => {
     }
   });
 
-  it('range toute carte de comptoir sur le terminal du salon — ADR 0014', () => {
+  it('range toute carte de comptoir sur le terminal du salon — ADR 0015', () => {
     // C'est l'énoncé du premier critère de #834, rendu mécanique : le comptoir
     // n'a pas d'autre chemin pour une carte, donc le canal se déduit du moyen
     // sans qu'aucun corps de requête n'ait à le dire — ni à pouvoir dire le

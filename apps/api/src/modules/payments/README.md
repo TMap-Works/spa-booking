@@ -16,7 +16,7 @@ notre périmètre PCI en SAQ A.
 | #63 | Le remboursement total et partiel : l’ordre au prestataire, le cumul borné côté serveur, la trace « qui, quand, pourquoi » |
 | #410 | La consolidation de #57 et #58 : une seule `StripeConfig`, un seul fichier d’erreurs, un critère de découpage des dépôts, et la marque d’idempotence conditionnée à l’effet |
 | #816 | Les prix du catalogue sont **TTC** : la TVA s’en extrait au lieu de s’y ajouter, la ligne de taxe devient une ventilation, et un script reprend les tickets composés avant |
-| #834 | La **carte au comptoir par TPE** — canal de carte, référence de terminal, clé d’idempotence exigée, filtre par moyen sur l’historique des ventes ([ADR 0014](../../../../../docs/adr/0014-carte-au-comptoir-par-tpe.md)) |
+| #834 | La **carte au comptoir par TPE** — canal de carte, référence de terminal, clé d’idempotence exigée, filtre par moyen sur l’historique des ventes ([ADR 0015](../../../../../docs/adr/0015-carte-au-comptoir-par-tpe.md)) |
 
 À venir : le montage d’Elements côté tunnel (#59), et la reprise de l’écran
 d’encaissement du back-office, qui appelle encore l’intention Stripe (#834,
@@ -95,7 +95,7 @@ Ce qu'elle ne fait plus : servir l'encaissement au comptoir. La carte se règle
 sur le **TPE de la banque du salon**, par `POST /v1/sales/{saleId}/payments` avec
 `method=CARD_TERMINAL` — l'API n'appelle alors aucun prestataire et n'affiche
 aucun formulaire de carte. Le raisonnement complet est dans
-l'[ADR 0014](../../../../../docs/adr/0014-carte-au-comptoir-par-tpe.md) ; en deux
+l'[ADR 0015](../../../../../docs/adr/0015-carte-au-comptoir-par-tpe.md) ; en deux
 phrases : la saisie d'une carte sur l'écran du back-office est ce que SAQ A
 interdit (payments-stripe §4), et Stripe n'ouvre pas de compte marchand pour un
 établissement installé à Madagascar — c'est-à-dire pour l'un des deux salons du
@@ -772,7 +772,7 @@ sait plus produire d'intention Stripe, et ce n'est pas un contrôle mais un
 | `method = CARD`, `card_channel = TERMINAL` | le TPE autonome du salon |
 | `method = CARD`, `card_channel = STRIPE` | l'intention du tunnel public |
 
-`PaymentMethod` **n'a pas gagné de troisième valeur**, et l'ADR 0014 dit
+`PaymentMethod` **n'a pas gagné de troisième valeur**, et l'ADR 0015 dit
 pourquoi : `method` est lu par la ventilation du revenu, le libellé du reçu et le
 filtre de rapprochement, et y ajouter `CARD_TERMINAL` aurait changé en silence le
 sens de leur filtre `CARD`. Deux contraintes bornent le couple :

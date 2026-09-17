@@ -33,7 +33,7 @@ Version anglaise : [docs/specs/cdc-en.txt](docs/specs/cdc-en.txt).
 | ORM / migrations | Prisma sur PostgreSQL |
 | Base de données | PostgreSQL 16 — Amazon RDS Multi-AZ |
 | Cache / verrous | Redis — Amazon ElastiCache |
-| Paiements | Comptoir : TPE autonome du salon, règlement déclaré (ADR 0014) · En ligne : Stripe (tokenisation, webhooks signés) |
+| Paiements | Comptoir : TPE autonome du salon, règlement déclaré (ADR 0015) · En ligne : Stripe (tokenisation, webhooks signés) |
 | E-mail / SMS | Amazon SES / Amazon SNS |
 | Planification | EventBridge Scheduler → SQS → Lambda |
 | Conteneurs | Docker → Amazon ECS Fargate |
