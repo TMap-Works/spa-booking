@@ -8,6 +8,12 @@ import { useState } from 'react';
 // front qui sache comment cette adresse s'écrit. Le réécrire ici en ferait une
 // seconde source de vérité, et `paths.ts` est justement bâti pour être importé
 // par des Client Components : il ne dépend de rien du serveur (voir son en-tête).
+//
+// Même raison pour le libellé de l'état : l'espace client et cet écran parlent
+// du même rendez-vous, et c'est d'avoir écrit deux fois la même chose qu'ils ont
+// fini par la dire autrement (#743). `appointment-status.ts` ne dépend, lui
+// aussi, que d'un type partagé.
+import { PENDING_CONFIRMATION_LABEL } from '@/app/(account)/[tenantSlug]/compte/components/appointment-status';
 import { accountPath } from '@/app/(account)/[tenantSlug]/compte/paths';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
@@ -182,6 +188,29 @@ export function ConfirmationStep({
         </Notification>
       ) : (
         <Notification tone="success" title="Votre rendez-vous est enregistré">
+          {/* L'état vient **en premier**, et dans les mots exacts de la pastille
+              de l'espace client (#743).
+
+              Le titre dit ce qui vient d'avoir lieu — la réservation est
+              écrite, le créneau est pris —, mais il ne disait pas dans quel
+              état elle laisse le rendez-vous. Faute de le dire ici, la cliente
+              l'apprenait de l'espace client, sous un troisième mot : « En
+              attente de confirmation », après avoir cliqué « Confirmer la
+              réservation ». Trois formulations pour un fait, et aucune qui
+              nomme l'acteur attendu.
+
+              Ce n'est pas « Réservation confirmée » du wireframe — Étape 6 —
+              qui est repris : le rendez-vous naît `PENDING` côté API
+              (`appointments.repository.ts`), et l'annoncer confirmé ferait
+              mentir cet écran **et** contredire la pastille. C'est l'autre
+              branche que l'audit laissait ouverte — l'attente est réelle, donc
+              on dit ce qu'elle attend et de qui. */}
+          <p>
+            <strong>{PENDING_CONFIRMATION_LABEL}.</strong> Votre créneau est retenu dès maintenant —
+            personne d’autre ne peut le prendre — et le salon confirme le rendez-vous avant votre
+            venue, sans démarche de votre part. C’est la mention que porte ce rendez-vous dans votre
+            espace client.
+          </p>
           {/* L'espace client est nommé, mais il reste conditionné : une
               réservation d'invitée crée une fiche sans mot de passe, et
               `AuthService.register` refuse ensuite cette même adresse
@@ -196,9 +225,16 @@ export function ConfirmationStep({
               de compte —, et la dernière phrase le reprend à son compte : elle
               nomme le bouton qui est juste au-dessous, et la durée pendant
               laquelle il existe, au lieu de demander de garder un onglet
-              ouvert. */}
+              ouvert.
+
+              « Un e-mail récapitulatif » et non plus « de confirmation » : cet
+              e-mail est l'accusé automatique du CDC §1.4, émis sur
+              `appointment.created` (`appointments.service.ts`) — donc sur un
+              rendez-vous encore `PENDING`. L'appeler « confirmation » deux
+              lignes sous « à confirmer par le salon » ferait croire que la
+              confirmation attendue est déjà arrivée. */}
           <p>
-            Un e-mail de confirmation part vers {contact.email}. Avec un compte client chez{' '}
+            Un e-mail récapitulatif part vers {contact.email}. Avec un compte client chez{' '}
             {tenant.name}, ce rendez-vous se retrouve dans votre espace, d’où il se reporte et
             s’annule. Sans compte, vous pouvez encore l’annuler ci-dessous, tant que cet onglet
             reste ouvert.
