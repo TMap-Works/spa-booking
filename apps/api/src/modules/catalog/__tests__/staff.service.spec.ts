@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { staffMemberSchema } from '@spa/shared';
+
 import { NotFoundError } from '../../../common/errors';
 import { runWithTenant } from '../../../common/tenant';
 import { StaffProfileAlreadyExistsError } from '../catalog.errors';
@@ -226,5 +228,113 @@ describe('StaffService', () => {
 
     await expect(staff.create({ userId: compte.id, displayName: 'Léa' })).rejects.toThrow(/tenant/i);
     expect(repository.staff).toHaveLength(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // La présentation — #771
+  // -------------------------------------------------------------------------
+  //
+  // Ce que ces cas protègent n'est pas un champ de plus : c'est le fait que
+  // l'écran de la fiche puisse **relire** ce qui est publié sous le nom de la
+  // praticienne. Sans cela, le champ s'ouvrait vide au-dessus d'un texte en
+  // ligne, et la gérante le réécrivait de mémoire.
+  //
+  // La forme compte autant que la présence. Le contrat partagé déclare `bio`
+  // facultatif et **non** nullable : une fiche sans présentation doit rendre une
+  // charge utile *sans la clé*, faute de quoi le front — qui parse cette réponse
+  // avec ce schéma — échouerait à la lire.
+
+  it('rend la présentation publiée, celle que l’écran vient corriger', async () => {
+    const camille = repository.seedStaff({
+      tenantId: TENANT_A,
+      displayName: 'Claire F.',
+      bio: 'Quinze ans de massage suédois.',
+    });
+
+    const liste = await inTenantA(async () => staff.list(false));
+
+    expect(liste).toEqual([
+      { id: camille.id, displayName: 'Claire F.', bio: 'Quinze ans de massage suédois.', isActive: true },
+    ]);
+  });
+
+  it('omet la clé plutôt que de rendre null quand il n’y a pas de présentation', async () => {
+    repository.seedStaff({ tenantId: TENANT_A, bio: null });
+
+    const [membre] = await inTenantA(async () => staff.list(false));
+
+    // `toEqual` ignore les clés à `undefined` : seul `hasOwn` distingue « absente »
+    // de « présente et vide », et c'est exactement la distinction qui décide si
+    // le front sait relire la réponse.
+    expect(Object.hasOwn(membre!, 'bio')).toBe(false);
+  });
+
+  it('rend une fiche que le contrat partagé sait relire, avec ou sans présentation', async () => {
+    // Le front parse cette réponse avec `staffMemberSchema` : un `bio: null` y
+    // échouerait, et l'assertion de compilation de `dto/staff.dto.ts` ne juge
+    // que les types, pas la valeur que le service compose à l'exécution.
+    repository.seedStaff({ tenantId: TENANT_A, displayName: 'Avec', bio: 'Un texte.' });
+    repository.seedStaff({ tenantId: TENANT_A, displayName: 'Sans', bio: null });
+
+    const liste = await inTenantA(async () => staff.list(false));
+
+    expect(liste).toHaveLength(2);
+    for (const membre of liste) {
+      expect(staffMemberSchema.safeParse(membre).success).toBe(true);
+    }
+  });
+
+  it('rend la présentation posée à la création', async () => {
+    const compte = users.seedAccount({ tenantId: TENANT_A });
+
+    const creee = await inTenantA(async () =>
+      staff.create({ userId: compte.id, displayName: 'Léa', bio: 'Coloriste.' }),
+    );
+
+    expect(creee.bio).toBe('Coloriste.');
+  });
+
+  it('rend la présentation corrigée, et la retire quand elle est effacée', async () => {
+    // Les deux gestes que l'écran offre désormais sans manœuvre : on lit ce qui
+    // est publié, on le remplace, ou on vide le champ pour ne plus rien publier.
+    const membre = repository.seedStaff({ tenantId: TENANT_A, bio: 'Ancienne.' });
+
+    const corrigee = await inTenantA(async () => staff.update(membre.id, { bio: 'Nouvelle.' }));
+    expect(corrigee.bio).toBe('Nouvelle.');
+
+    const effacee = await inTenantA(async () => staff.update(membre.id, { bio: null }));
+    expect(Object.hasOwn(effacee, 'bio')).toBe(false);
+    expect(repository.staff[0]!.bio).toBeNull();
+  });
+
+  it('écrit `NULL` et non une chaîne vide, quelle que soit la forme reçue', async () => {
+    // Le second constat de la revue de #694. `longTextSchema` rogne sans
+    // minimum : `"   "` arrive donc en `""`, et l'écrire tel quel rendrait la
+    // ligne inatteignable depuis l'écran — champ vide, rien de changé, bouton
+    // éteint, et plus rien pour ramener la colonne à `NULL`.
+    const compte = users.seedAccount({ tenantId: TENANT_A });
+
+    const creee = await inTenantA(async () =>
+      staff.create({ userId: compte.id, displayName: 'Léa', bio: '' }),
+    );
+    expect(Object.hasOwn(creee, 'bio')).toBe(false);
+    expect(repository.staff[0]!.bio).toBeNull();
+
+    await inTenantA(async () => staff.update(creee.id, { bio: 'Un texte.' }));
+    const videe = await inTenantA(async () => staff.update(creee.id, { bio: '' }));
+
+    expect(Object.hasOwn(videe, 'bio')).toBe(false);
+    expect(repository.staff[0]!.bio).toBeNull();
+  });
+
+  it('ne touche pas à la présentation quand seul le nom change', async () => {
+    // La garde qui remplace le drapeau « ce champ a été touché » du panneau :
+    // un corps sans `bio` laisse la présentation en place, et c'est ce qui
+    // permet à l'écran de tout renvoyer sans rien effacer par mégarde.
+    const membre = repository.seedStaff({ tenantId: TENANT_A, bio: 'Intacte.' });
+
+    const modifiee = await inTenantA(async () => staff.update(membre.id, { displayName: 'Léa' }));
+
+    expect(modifiee).toEqual({ id: membre.id, displayName: 'Léa', bio: 'Intacte.', isActive: true });
   });
 });

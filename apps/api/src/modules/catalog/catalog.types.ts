@@ -134,33 +134,53 @@ export interface ServiceView {
  * le lui cacher — et un praticien déjà affecté qu'on masquerait ferait croire à
  * une affectation perdue.
  *
- * Ni `userId`, ni `bio` : le premier révélerait le compte derrière la fiche, le
- * second ferait transiter deux mille caractères par ligne dans une liste de
- * choix. `staffMemberSchema` de `@spa/shared` déclare d'ailleurs `bio`
- * facultatif, précisément pour qu'une liste puisse s'en passer.
+ * Pas de `userId` : il révélerait le compte derrière la fiche.
+ *
+ * `bio`, en revanche, y figure depuis #771. Ces routes-ci **sont** la fiche —
+ * c'est par elles que le back-office ouvre ce qui est publié sous le nom de la
+ * praticienne pour le corriger —, et le taire condamnait l'écran à réécrire de
+ * mémoire un texte qu'il ne voyait nulle part. Il reste absent de
+ * `ServiceStaffMemberView`, où la fiche n'est qu'une ligne d'une liste de cases
+ * à cocher.
+ *
+ * Le champ est **facultatif et jamais `null`** : c'est la forme exacte de
+ * `staffMemberSchema` de `@spa/shared` (`bio: longTextSchema.optional()`), que
+ * `dto/staff.dto.ts` vérifie à la compilation et que le front parse déjà. Une
+ * fiche sans présentation rend donc une charge utile **sans la clé**, plutôt
+ * qu'un `null` que le contrat refuserait.
  */
 export interface StaffMemberView {
   readonly id: string;
   readonly displayName: string;
+  readonly bio?: string;
   readonly isActive: boolean;
 }
 
 /**
  * Un praticien affecté à une prestation, tel que le back-office le liste.
  *
- * Même forme que `StaffMemberView`, et c'est un alias plutôt qu'une seconde
- * déclaration : les deux sorties portent la même fiche, vue depuis deux routes.
- * En dupliquer les champs laisserait les deux diverger à la première colonne
- * ajoutée d'un seul côté. Le contrat partagé fait le même choix —
+ * Déclarée à part de `StaffMemberView` depuis #771, où les deux ont cessé de se
+ * confondre : la fiche rend désormais sa présentation, cette liste-ci non. Le
+ * contrat partagé pose exactement la même frontière —
  * `serviceStaffMemberSchema` y est `staffMemberSummarySchema.extend({ isActive })`,
- * soit `staffMemberSchema` sans `bio`.
+ * soit `staffMemberSchema` **sans** `bio` —, et un alias ferait tomber en panne
+ * de compilation l'assertion de `dto/service-staff.dto.ts` au premier champ
+ * ajouté à la fiche.
+ *
+ * Ce que l'écart coûte est ce qu'il achète : une liste d'affectations d'un
+ * catalogue entier ne transporte pas deux mille caractères de vitrine par ligne,
+ * pour les afficher nulle part.
  *
  * `isActive` compte ici pour une raison propre : une affectation survit à la
  * désactivation du praticien, et la masquer ferait croire à une affectation
  * perdue — pour se heurter au conflit d'unicité de `service_staff` en tentant de
  * la recréer.
  */
-export type ServiceStaffMemberView = StaffMemberView;
+export interface ServiceStaffMemberView {
+  readonly id: string;
+  readonly displayName: string;
+  readonly isActive: boolean;
+}
 
 /** Forme réduite d'un praticien, telle que la page publique la reçoit. */
 export interface StaffMemberSummaryView {

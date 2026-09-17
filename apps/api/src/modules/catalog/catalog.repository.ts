@@ -88,11 +88,28 @@ export interface ServicePatch {
   isActive?: boolean;
 }
 
-/** Une fiche praticien, réduite à ce que le catalogue en montre. */
+/** Une fiche praticien, réduite à ce qu'une liste d'affectations en montre. */
 export interface StaffRecord {
   id: string;
   displayName: string;
   isActive: boolean;
+}
+
+/**
+ * La même fiche, **présentation comprise** (#771).
+ *
+ * C'est la forme que rendent les routes dont la fiche est l'objet — `GET /staff`,
+ * `POST /staff`, `PATCH /staff/:id` —, par opposition à `listServiceStaff`, où la
+ * fiche n'est qu'une ligne d'une liste d'affectations.
+ *
+ * La séparation est ce qui permet d'ouvrir l'une sans alourdir l'autre : la
+ * présentation est un texte de vitrine qui peut approcher deux mille caractères,
+ * et une liste de cases à cocher n'a aucune raison de le transporter. Elle est en
+ * revanche exactement ce que l'écran de la fiche vient corriger, et le lui
+ * cacher le faisait écrire à l'aveugle sur un texte publié qu'il ne voyait pas.
+ */
+export interface StaffProfileRecord extends StaffRecord {
+  bio: string | null;
 }
 
 /**
@@ -181,13 +198,30 @@ const SERVICE_SELECT = {
 } as const;
 
 /**
- * La fiche praticien, réduite à ce que le catalogue a le droit d'en montrer.
+ * La fiche praticien, réduite à ce qu'une liste d'affectations a besoin d'en
+ * montrer.
  *
  * Ni `userId` — il révélerait le compte derrière la fiche —, ni `bio`, qui est
  * de la vitrine et n'a rien à faire dans une liste d'affectations où il ferait
- * transiter deux mille caractères par ligne.
+ * transiter deux mille caractères par ligne. C'est le `select` de
+ * `listServiceStaff`, et de lui seul.
  */
 const STAFF_SELECT = { id: true, displayName: true, isActive: true } as const;
+
+/**
+ * La fiche praticien telle que les routes qui la gèrent la lisent (#771).
+ *
+ * La présentation s'y ajoute parce que ces routes-là **sont** la fiche : le
+ * back-office l'ouvre pour corriger ce qui est publié sous le nom de la
+ * praticienne, et ne pas la lui rendre le condamnait à réécrire de mémoire un
+ * texte qu'il ne voyait nulle part.
+ *
+ * L'effectif d'un salon est borné par nature — c'est déjà ce qui dispense
+ * `listStaff` de pagination —, si bien que la colonne ajoutée pèse sur un nombre
+ * de lignes que l'établissement contrôle, et sur des routes **authentifiées** du
+ * back-office. Le catalogue public, lui, garde `STAFF_SUMMARY_SELECT`.
+ */
+const STAFF_PROFILE_SELECT = { ...STAFF_SELECT, bio: true } as const;
 
 /** Forme réduite du praticien, telle que la page publique la reçoit. */
 const STAFF_SUMMARY_SELECT = { id: true, displayName: true } as const;
@@ -685,8 +719,8 @@ export class CatalogRepository {
    * `identity`, et c'est un appel de service qui le vérifie (api-module §3) —
    * jamais une lecture de la table `users` depuis ce dépôt.
    */
-  public async findStaffById(id: string): Promise<StaffRecord | null> {
-    return this.prisma.staff.findFirst({ where: { id }, select: STAFF_SELECT });
+  public async findStaffById(id: string): Promise<StaffProfileRecord | null> {
+    return this.prisma.staff.findFirst({ where: { id }, select: STAFF_PROFILE_SELECT });
   }
 
   /**
@@ -707,10 +741,10 @@ export class CatalogRepository {
    * pagination — l'effectif d'un salon est borné par nature, comme le nombre de
    * rubriques de son catalogue.
    */
-  public async listStaff(activeOnly: boolean): Promise<StaffRecord[]> {
+  public async listStaff(activeOnly: boolean): Promise<StaffProfileRecord[]> {
     return this.prisma.staff.findMany({
       where: activeOnly ? { isActive: true } : {},
-      select: STAFF_SELECT,
+      select: STAFF_PROFILE_SELECT,
       orderBy: [{ displayName: 'asc' }],
     });
   }
@@ -740,11 +774,11 @@ export class CatalogRepository {
     userId: string;
     displayName: string;
     bio: string | null;
-  }): Promise<StaffRecord> {
+  }): Promise<StaffProfileRecord> {
     try {
       return await this.prisma.staff.create({
         data: withScopedTenant<Prisma.StaffUncheckedCreateInput>(input),
-        select: STAFF_SELECT,
+        select: STAFF_PROFILE_SELECT,
       });
     } catch (error: unknown) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === UNIQUE_VIOLATION) {
@@ -769,7 +803,7 @@ export class CatalogRepository {
    * `isActive` n'en portent — deux praticiennes homonymes sont un fait
    * d'état civil, pas une faute de saisie.
    */
-  public async updateStaff(id: string, patch: StaffPatch): Promise<StaffRecord | null> {
+  public async updateStaff(id: string, patch: StaffPatch): Promise<StaffProfileRecord | null> {
     const { count } = await this.prisma.staff.updateMany({ where: { id }, data: patch });
 
     return count === 0 ? null : this.findStaffById(id);

@@ -17,6 +17,7 @@ import type {
   ServicePatch,
   ServiceRecord,
   StaffPatch,
+  StaffProfileRecord,
   StaffRecord,
 } from '../catalog.repository';
 
@@ -459,12 +460,26 @@ export class FakeCatalogRepository {
     return { id: member.id, displayName: member.displayName, isActive: member.isActive };
   }
 
-  public async findStaffById(id: string): Promise<StaffRecord | null> {
+  /**
+   * La fiche **présentation comprise** — la projection des routes dont la fiche
+   * est l'objet (#771).
+   *
+   * Deux projections plutôt qu'une, comme le vrai repository : `listServiceStaff`
+   * lit `STAFF_SELECT` et les trois autres `STAFF_PROFILE_SELECT`. Un double qui
+   * rendrait `bio` partout laisserait passer une liste d'affectations qui
+   * transporte la vitrine, et un double qui ne le rendrait nulle part ferait
+   * passer les tests de la fiche sans rien prouver.
+   */
+  private toStaffProfileRecord(member: StoredStaff): StaffProfileRecord {
+    return { ...this.toStaffRecord(member), bio: member.bio };
+  }
+
+  public async findStaffById(id: string): Promise<StaffProfileRecord | null> {
     const tenantId = this.requireTenant();
     const member = this.staff.find(
       (candidate) => candidate.tenantId === tenantId && candidate.id === id,
     );
-    return member === undefined ? null : this.toStaffRecord(member);
+    return member === undefined ? null : this.toStaffProfileRecord(member);
   }
 
   /**
@@ -476,12 +491,12 @@ export class FakeCatalogRepository {
    * avec `listServiceStaff`, et c'est ce qui permet d'amorcer un salon où rien
    * n'est encore affecté.
    */
-  public async listStaff(activeOnly: boolean): Promise<StaffRecord[]> {
+  public async listStaff(activeOnly: boolean): Promise<StaffProfileRecord[]> {
     const tenantId = this.requireTenant();
     return this.staff
       .filter((member) => member.tenantId === tenantId && (!activeOnly || member.isActive))
       .sort((left, right) => left.displayName.localeCompare(right.displayName))
-      .map((member) => this.toStaffRecord(member));
+      .map((member) => this.toStaffProfileRecord(member));
   }
 
   /**
@@ -499,7 +514,7 @@ export class FakeCatalogRepository {
     userId: string;
     displayName: string;
     bio: string | null;
-  }): Promise<StaffRecord> {
+  }): Promise<StaffProfileRecord> {
     const tenantId = this.requireTenant();
 
     if (
@@ -512,11 +527,11 @@ export class FakeCatalogRepository {
 
     const member: StoredStaff = { tenantId, id: randomUUID(), isActive: true, ...input };
     this.staff.push(member);
-    return this.toStaffRecord(member);
+    return this.toStaffProfileRecord(member);
   }
 
   /** Reproduit la valeur de retour d'un `updateMany` scopé — `null` pour zéro ligne. */
-  public async updateStaff(id: string, patch: StaffPatch): Promise<StaffRecord | null> {
+  public async updateStaff(id: string, patch: StaffPatch): Promise<StaffProfileRecord | null> {
     const tenantId = this.requireTenant();
     const member = this.staff.find(
       (candidate) => candidate.tenantId === tenantId && candidate.id === id,
@@ -526,7 +541,7 @@ export class FakeCatalogRepository {
     }
 
     Object.assign(member, patch);
-    return this.toStaffRecord(member);
+    return this.toStaffProfileRecord(member);
   }
 
   /**
