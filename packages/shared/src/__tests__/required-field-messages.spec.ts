@@ -141,7 +141,15 @@ describe('les huit écrans soumis à vide', () => {
     [
       'inscription',
       registerRequestSchema,
-      { email: 'ida@exemple.test', password: 'correct horse battery', firstName: '', lastName: '' },
+      {
+        email: 'ida@exemple.test',
+        password: 'correct horse battery',
+        firstName: '',
+        lastName: '',
+        // Coché : ce que cet écran mesure, c'est le message d'un champ laissé
+        // vide, pas celui d'une case laissée décochée — qui a le sien (#880).
+        dataConsent: true,
+      },
       ['firstName', 'lastName'],
       CHAMP_REQUIS,
     ],

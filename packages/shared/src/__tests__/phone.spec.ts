@@ -130,6 +130,7 @@ const FREE_FORM_SURFACES = [
         firstName: 'Camille',
         lastName: 'Rakoto',
         phone,
+        dataConsent: true,
       }),
   },
   {

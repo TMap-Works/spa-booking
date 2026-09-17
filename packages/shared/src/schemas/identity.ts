@@ -68,7 +68,47 @@ export const userSummarySchema = userSchema.pick({
 
 export type UserSummary = z.infer<typeof userSummarySchema>;
 
-/** Inscription d'un client depuis le parcours public. */
+/**
+ * L'accord au traitement des données donné **à la création de compte** —
+ * obligatoire, et refusant `false` (#880, CDC §5.1, RGPD art. 7.1).
+ *
+ * ## Pourquoi obligatoire plutôt que facultatif
+ *
+ * Parce que la case est bloquante à l'écran depuis #734, et qu'une barrière qui
+ * ne tient que dans le navigateur n'est pas une barrière : un appel direct à
+ * `POST /auth/register` la contournerait, et l'établissement garderait une fiche
+ * cliente — nom, adresse, téléphone, historique de rendez-vous — sans rien
+ * pouvoir produire de ce qui l'autorise à la constituer. Le facultatif aurait
+ * par ailleurs rendu le champ indistinct : « absent » se serait lu tantôt
+ * « pas encore demandé », tantôt « refusé ».
+ *
+ * ## Pourquoi un schéma à part, et non `dataConsentSchema` de `./appointment`
+ *
+ * Les deux disent la même règle et n'ont pas le même message, parce qu'ils ne
+ * refusent pas le même geste : celui-là s'affiche sur un tunnel de réservation,
+ * celui-ci sur un formulaire d'inscription, et « pour réserver » y serait faux.
+ * Le message d'un refus est lu par la cliente ; le partager aurait économisé
+ * trois lignes au prix d'une phrase qui ne décrit pas l'écran où elle
+ * apparaît.
+ *
+ * `refine` plutôt que `z.literal(true)` pour la même raison que son voisin : le
+ * refus littéral de Zod 3 s'annonce « Invalid literal value, expected true », et
+ * ce message-là remonterait jusqu'au formulaire.
+ */
+export const accountDataConsentSchema = z.boolean().refine((accepted) => accepted, {
+  message: 'le traitement des données doit être accepté pour créer un compte',
+});
+
+/**
+ * Inscription d'un client depuis le parcours public.
+ *
+ * `dataConsent` est le seul champ qui ne décrit pas le compte : il décrit ce qui
+ * autorise l'établissement à le tenir. Le serveur en **date** la réception —
+ * `users.data_consent_at` — et n'accepte aucune date de l'appelant : RGPD art.
+ * 7.1 met la preuve à la charge du responsable du traitement, et une preuve
+ * horodatée par celui qu'elle engage n'en est pas une. Le `.strict()` ci-dessous
+ * est ce qui refuse un `dataConsentAt` glissé dans le corps.
+ */
 export const registerRequestSchema = z
   .object({
     email: emailSchema,
@@ -76,6 +116,7 @@ export const registerRequestSchema = z
     firstName: nameSchema,
     lastName: nameSchema,
     phone: phoneSchema.optional(),
+    dataConsent: accountDataConsentSchema,
   })
   .strict();
 
