@@ -84,7 +84,11 @@ describe('rendu à l’envoi — quel modèle part', () => {
 
     const rendered = await runWithTenant(SALON, () => rendererOn(templates).render(MESSAGE));
 
-    expect(rendered.subject).toContain('est confirmé');
+    // Le mot de #743, celui que l'espace client affiche au même instant sur ce
+    // rendez-vous-là. Le défaut disait « est confirmé » d'un rendez-vous que le
+    // dépôt venait d'écrire `PENDING` (#911) : l'assertion reconnaît désormais
+    // le modèle de la plateforme au libellé **juste**, et non à l'ancien.
+    expect(rendered.subject).toContain('À confirmer par le salon');
     expect(rendered.html).toContain('Maison Lotus');
   });
 
