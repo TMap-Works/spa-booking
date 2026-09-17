@@ -92,7 +92,7 @@ describe('Isolation inter-tenant — écritures de rendez-vous au comptoir', () 
   async function poseChezA(): Promise<string> {
     const response = await request(harness.server())
       .post(DESK_PATH)
-      .set('Authorization', await bearer('STAFF', harness.a.tenant))
+      .set('Authorization', await bearer('MANAGER', harness.a.tenant))
       .send({
         serviceId: harness.a.serviceId,
         staffId: harness.a.staffId,
@@ -105,10 +105,10 @@ describe('Isolation inter-tenant — écritures de rendez-vous au comptoir', () 
   }
 
   describe('POST /appointments — poser chez le voisin', () => {
-    it('refuse en 404 la prestation de A avec un jeton `STAFF` de B', async () => {
+    it('refuse en 404 la prestation de A avec un jeton `MANAGER` de B', async () => {
       const response = await request(harness.server())
         .post(DESK_PATH)
-        .set('Authorization', await bearer('STAFF', harness.b.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.b.tenant))
         .send({
           serviceId: harness.a.serviceId,
           staffId: harness.a.staffId,
@@ -127,7 +127,7 @@ describe('Isolation inter-tenant — écritures de rendez-vous au comptoir', () 
     it('refuse en 404 la fiche cliente du voisin, dans son propre établissement', async () => {
       const response = await request(harness.server())
         .post(DESK_PATH)
-        .set('Authorization', await bearer('STAFF', harness.b.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.b.tenant))
         .send({
           serviceId: harness.b.serviceId,
           staffId: harness.b.staffId,
@@ -155,11 +155,11 @@ describe('Isolation inter-tenant — écritures de rendez-vous au comptoir', () 
 
       const inventée = await request(harness.server())
         .post(DESK_PATH)
-        .set('Authorization', await bearer('STAFF', harness.b.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.b.tenant))
         .send(corps(randomUUID()));
       const duVoisin = await request(harness.server())
         .post(DESK_PATH)
-        .set('Authorization', await bearer('STAFF', harness.b.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.b.tenant))
         .send(corps(clientDeA));
 
       // « Inexistante » et « existante ailleurs » doivent être indiscernables,
@@ -183,7 +183,7 @@ describe('Isolation inter-tenant — écritures de rendez-vous au comptoir', () 
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(chezA))
-        .set('Authorization', await bearer('STAFF', harness.b.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.b.tenant))
         .send({ startsAt: bookableSlot(14).startsAt.toISOString() });
 
       expect(response.status).toBe(404);
@@ -209,7 +209,7 @@ describe('Isolation inter-tenant — écritures de rendez-vous au comptoir', () 
 
       await request(harness.server())
         .post(RESCHEDULE_PATH(chezA))
-        .set('Authorization', await bearer('STAFF', harness.b.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.b.tenant))
         .send({ startsAt: bookableSlot(14).startsAt.toISOString() });
 
       const gardé = harness.appointments.appointments.find((row) => row.id === chezA);
@@ -225,7 +225,7 @@ describe('Isolation inter-tenant — écritures de rendez-vous au comptoir', () 
 
       const response = await request(harness.server())
         .post(RESCHEDULE_PATH(chezA))
-        .set('Authorization', await bearer('STAFF', harness.a.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.a.tenant))
         .send({ startsAt: bookableSlot(14).startsAt.toISOString() });
 
       // Le contrôle de la contrepartie : sans lui, un refus systématique — une
@@ -240,7 +240,7 @@ describe('Isolation inter-tenant — écritures de rendez-vous au comptoir', () 
 
       const response = await request(harness.server())
         .post(STATUS_PATH(chezA))
-        .set('Authorization', await bearer('STAFF', harness.b.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.b.tenant))
         .send({ status: 'confirmed' });
 
       expect(response.status).toBe(404);
@@ -268,11 +268,11 @@ describe('Isolation inter-tenant — écritures de rendez-vous au comptoir', () 
 
       const inconnu = await request(harness.server())
         .post(STATUS_PATH(randomUUID()))
-        .set('Authorization', await bearer('STAFF', harness.b.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.b.tenant))
         .send({ status: 'confirmed' });
       const ailleurs = await request(harness.server())
         .post(STATUS_PATH(chezA))
-        .set('Authorization', await bearer('STAFF', harness.b.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.b.tenant))
         .send({ status: 'confirmed' });
 
       expect(inconnu.status).toBe(ailleurs.status);
@@ -284,7 +284,7 @@ describe('Isolation inter-tenant — écritures de rendez-vous au comptoir', () 
 
       const response = await request(harness.server())
         .post(STATUS_PATH(chezA))
-        .set('Authorization', await bearer('STAFF', harness.a.tenant))
+        .set('Authorization', await bearer('MANAGER', harness.a.tenant))
         .send({ status: 'confirmed' });
 
       expect(response.status).toBe(200);

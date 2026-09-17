@@ -130,8 +130,8 @@ describe('Rôles, permissions et isolation — #22', () => {
     });
   });
 
-  describe('GET /api/v1/users — `@AuthAtLeast(STAFF)`', () => {
-    it.each(['STAFF', 'MANAGER', 'ADMIN'] as const)('laisse passer %s', async (role) => {
+  describe('GET /api/v1/users — `@AuthWith(accounts:read)`', () => {
+    it.each(['MANAGER', 'ADMIN'] as const)('laisse passer %s', async (role) => {
       const token = await tokenFor(role);
       const response = await request(server())
         .get('/api/v1/users')
@@ -158,15 +158,24 @@ describe('Rôles, permissions et isolation — #22', () => {
       ]);
     });
 
-    it('refuse CLIENT en 403', async () => {
-      const token = await tokenFor('CLIENT');
+    it.each(['CLIENT', 'STAFF'] as const)('refuse %s en 403', async (role) => {
+      // `STAFF` a rejoint `CLIENT` du côté du refus avec #812 : cet annuaire rend
+      // l'adresse e-mail et le rôle des quatre comptes du salon,
+      // administratrice comprise, et une praticienne les lisait (capture 2 du
+      // ticket). `accounts:read` est au rang gérant.
+      const token = await tokenFor(role);
       const response = await request(server())
         .get('/api/v1/users')
         .set('Authorization', `Bearer ${token}`)
         .expect(403);
 
       expect(response.body.code).toBe('FORBIDDEN');
-      expect(response.body.details).toEqual({ requiredRoles: ['STAFF', 'MANAGER', 'ADMIN'] });
+      // `requiredPermissions` et non plus `requiredRoles` : la route annonce ce
+      // qu'elle exige, et c'est un droit, pas un rang. Ni le rôle du porteur ni
+      // ses permissions effectives n'y figurent — le premier confirmerait au
+      // voleur d'un jeton ce qu'il vient de dérober, la seconde lui dresserait la
+      // carte de ce qu'il peut encore essayer.
+      expect(response.body.details).toEqual({ requiredPermissions: ['accounts:read'] });
     });
 
     it('ne liste ni la clientèle, ni aucun compte de l’autre établissement', async () => {
@@ -190,8 +199,8 @@ describe('Rôles, permissions et isolation — #22', () => {
     });
   });
 
-  describe('GET /api/v1/users/:id — `@AuthAtLeast(STAFF)`', () => {
-    it.each(['STAFF', 'MANAGER', 'ADMIN'] as const)('laisse passer %s', async (role) => {
+  describe('GET /api/v1/users/:id — `@AuthWith(accounts:read)`', () => {
+    it.each(['MANAGER', 'ADMIN'] as const)('laisse passer %s', async (role) => {
       const token = await tokenFor(role);
       const response = await request(server())
         .get(`/api/v1/users/${staffA}`)
@@ -214,8 +223,11 @@ describe('Rôles, permissions et isolation — #22', () => {
       ]);
     });
 
-    it('refuse CLIENT en 403', async () => {
-      const token = await tokenFor('CLIENT');
+    it.each(['CLIENT', 'STAFF'] as const)('refuse %s en 403', async (role) => {
+      // Même permission que la liste : rendre une ligne à l'unité de ce qu'on
+      // vient de fermer en lot ferait de cette route la porte de service de
+      // l'autre (#812).
+      const token = await tokenFor(role);
       await request(server())
         .get(`/api/v1/users/${staffA}`)
         .set('Authorization', `Bearer ${token}`)
@@ -253,9 +265,13 @@ describe('Rôles, permissions et isolation — #22', () => {
     it('rend 404 sur une fiche cliente du même établissement', async () => {
       // La route administre les droits ; les données personnelles de la clientèle
       // relèvent du module `crm` et de ses permissions (CDC §5.1). Sans ce
-      // filtre, le rang interne le plus bas lirait nom, e-mail et téléphone d'une
-      // cliente depuis un point d'entrée qui s'annonce « comptes internes ».
-      const token = await tokenFor('STAFF');
+      // filtre, un point d'entrée qui s'annonce « comptes internes » rendrait
+      // nom, e-mail et téléphone d'une cliente.
+      //
+      // Le jeton est celui d'une administratrice depuis #812 : un `STAFF`
+      // n'atteint plus la route — il reçoit 403 avant toute lecture —, et ce cas
+      // ne prouverait alors plus le filtre qu'il existe pour prouver.
+      const token = await tokenFor('ADMIN');
       const response = await request(server())
         .get(`/api/v1/users/${clientA}`)
         .set('Authorization', `Bearer ${token}`)

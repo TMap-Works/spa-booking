@@ -162,14 +162,28 @@ describe('Isolation inter-tenant — module identity', () => {
       expect(JSON.stringify(body)).not.toContain(harness.b.id);
     }
 
+    // `permissions` a rejoint la liste avec #812 : `/auth/me` est la seule route
+    // qui rende les droits effectifs du compte, et c'est sur eux que le
+    // back-office construit son sommaire plutôt que sur une matrice recopiée.
+    // Ce qu'elle ne rend toujours pas : `tenantId`, `isActive`, et les
+    // horodatages techniques.
     expect(Object.keys(profile.body).sort()).toEqual([
       'email',
       'firstName',
       'id',
       'lastName',
+      'permissions',
       'phone',
       'role',
     ]);
+
+    // Des noms de droits, jamais un identifiant d'établissement : la liste est le
+    // même vocabulaire pour tous les salons, et c'est ce qui la rend inoffensive
+    // à publier (tenant-isolation §4).
+    expect(Array.isArray(profile.body.permissions)).toBe(true);
+    for (const permission of profile.body.permissions as string[]) {
+      expect(permission).not.toContain(harness.a.id);
+    }
   });
 
   it('ne laisse pas un `tenantSlug` inconnu servir de sonde d’existence', async () => {

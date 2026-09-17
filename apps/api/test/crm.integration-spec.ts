@@ -12,9 +12,14 @@ import { createCrmHarness, type CrmHarness } from './crm.harness';
  * - **les huit routes sont servies** — un contrôleur oublié dans les
  *   `controllers` de son module compile, passe ses tests unitaires, et rend 404
  *   en vrai ;
- * - **les gardes sont montées** — `@AuthAtLeast('STAFF')` sans jeton rend 401,
- *   avec un jeton `CLIENT` rend 403, la désactivation et l'export exigent
- *   `MANAGER`, et l'anonymisation `ADMIN` (#81) ;
+ * - **les gardes sont montées**. Depuis #812 elles se lisent en permissions et
+ *   non plus en rang : sans jeton 401, avec un jeton `CLIENT` 403, la lecture
+ *   exige `customers:read:own` ou `:all`, l'écriture et la désactivation
+ *   `customers:write`, l'export `customers:read:all`, et l'anonymisation reste
+ *   au rang `ADMIN` (#81). Le rang `MANAGER` porte toutes ces permissions, et
+ *   c'est lui que ces cas présentent ; ce que le praticien voit de sa seule
+ *   clientèle a sa propre suite
+ *   (`src/modules/crm/__tests__/customers.service.spec.ts`) ;
  * - **le `ValidationPipe` global mord** — `forbidNonWhitelisted` refuse en 400
  *   un `tenantId`, un `role` ou un `isActive` glissés dans un corps ;
  * - **la sérialisation est celle du contrat** — instants en UTC suffixés `Z`,
@@ -45,7 +50,7 @@ describe('CRM — fichier client', () => {
   ): Promise<Record<string, unknown>> {
     const response = await request(server())
       .post(BASE)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .send({
         email: 'alice@example.test',
         firstName: 'Alice',
@@ -87,7 +92,7 @@ describe('CRM — fichier client', () => {
 
       const response = await request(server())
         .post(BASE)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({ email: 'ALICE@example.test', firstName: 'Alice', lastName: 'Durand' })
         .expect(409);
 
@@ -100,7 +105,7 @@ describe('CRM — fichier client', () => {
     it('refuse en 400 un corps invalide, en nommant le champ', async () => {
       const response = await request(server())
         .post(BASE)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({ email: 'pas-une-adresse', firstName: '', lastName: 'Durand' })
         .expect(400);
 
@@ -114,7 +119,7 @@ describe('CRM — fichier client', () => {
       // absent est la seule façon de dire « la question n'a pas été posée ».
       await request(server())
         .post(BASE)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({
           email: 'bob@example.test',
           firstName: 'Bob',
@@ -131,7 +136,7 @@ describe('CRM — fichier client', () => {
     ])('refuse en 400 un `%s` glissé dans le corps', async (_champ, intrus) => {
       await request(server())
         .post(BASE)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({ email: 'bob@example.test', firstName: 'Bob', lastName: 'Martin', ...intrus })
         .expect(400);
     });
@@ -141,7 +146,7 @@ describe('CRM — fichier client', () => {
     it('rend une page vide avec « page 1 sur 0 » sur un fichier vide', async () => {
       const response = await request(server())
         .get(BASE)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
 
       expect(response.body).toEqual({
@@ -171,7 +176,7 @@ describe('CRM — fichier client', () => {
       const parNom = await request(server())
         .get(BASE)
         .query({ q: 'DU' })
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
       expect((parNom.body as { items: { lastName: string }[] }).items.map((i) => i.lastName)).toEqual(
         ['Durand', 'Duval'],
@@ -180,14 +185,14 @@ describe('CRM — fichier client', () => {
       const parEmail = await request(server())
         .get(BASE)
         .query({ q: 'chloe@' })
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
       expect((parEmail.body as { totalItems: number }).totalItems).toBe(1);
 
       const parNumero = await request(server())
         .get(BASE)
         .query({ q: '+261 34 99' })
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
       expect((parNumero.body as { totalItems: number }).totalItems).toBe(1);
     });
@@ -197,7 +202,7 @@ describe('CRM — fichier client', () => {
 
       const response = await request(server())
         .get(BASE)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
 
       expect(JSON.stringify(response.body)).not.toContain('monoï');
@@ -213,20 +218,20 @@ describe('CRM — fichier client', () => {
 
       const parDefaut = await request(server())
         .get(BASE)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
       expect((parDefaut.body as { totalItems: number }).totalItems).toBe(0);
 
       const avecInactives = await request(server())
         .get(BASE)
         .query({ includeInactive: 'true' })
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
       expect((avecInactives.body as { totalItems: number }).totalItems).toBe(1);
     });
 
     it('refuse un terme d’une seule lettre et une page hors bornes', async () => {
-      const bearer = await harness.bearer('STAFF');
+      const bearer = await harness.bearer('MANAGER');
 
       await request(server()).get(BASE).query({ q: 'a' }).set('Authorization', bearer).expect(400);
       await request(server()).get(BASE).query({ page: 0 }).set('Authorization', bearer).expect(400);
@@ -245,14 +250,14 @@ describe('CRM — fichier client', () => {
 
       const response = await request(server())
         .get(`${BASE}/${String(creee['id'])}`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
 
       expect(response.body).toMatchObject({ internalNote: 'allergique au monoï' });
     });
 
     it('rend 404 sur un identifiant inconnu et 400 sur un identifiant mal formé', async () => {
-      const bearer = await harness.bearer('STAFF');
+      const bearer = await harness.bearer('MANAGER');
 
       const inconnu = await request(server())
         .get(`${BASE}/99999999-9999-4999-8999-999999999999`)
@@ -272,7 +277,7 @@ describe('CRM — fichier client', () => {
 
       await request(server())
         .get(`${BASE}/${praticienne.id}`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(404);
     });
 
@@ -295,7 +300,7 @@ describe('CRM — fichier client', () => {
 
       const response = await request(server())
         .get(`${BASE}/${supprimee.id}`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
 
       // `…Z` et rien d'autre : la conversion au fuseau du salon est le travail
@@ -311,7 +316,7 @@ describe('CRM — fichier client', () => {
 
       const response = await request(server())
         .get(`${BASE}/${String(creee['id'])}`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
 
       // `toMatchObject` ne distingue pas « absent » de « nul » : le contrat
@@ -334,7 +339,7 @@ describe('CRM — fichier client', () => {
 
       const response = await request(server())
         .patch(`${BASE}/${String(creee['id'])}`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({ lastName: 'Martin' })
         .expect(200);
 
@@ -351,7 +356,7 @@ describe('CRM — fichier client', () => {
 
       const response = await request(server())
         .patch(`${BASE}/${String(creee['id'])}`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send({ phone: null, internalNote: null })
         .expect(200);
 
@@ -367,7 +372,7 @@ describe('CRM — fichier client', () => {
 
       await request(server())
         .patch(`${BASE}/${String(creee['id'])}`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .send(intrus)
         .expect(400);
     });
@@ -442,7 +447,7 @@ describe('CRM — fichier client', () => {
       const response = await request(server())
         .get(`${BASE}/${fiche.id}/history`)
         .query({ limit: 2 })
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
 
       const body = response.body as {
@@ -476,7 +481,7 @@ describe('CRM — fichier client', () => {
 
       const response = await request(server())
         .get(`${BASE}/${String(creee['id'])}/history`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
 
       expect(response.body).toMatchObject({
@@ -500,7 +505,7 @@ describe('CRM — fichier client', () => {
 
       const response = await request(server())
         .get(`${BASE}/${fiche.id}/history`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
 
       const { visits } = response.body as { visits: { startsAt: string; endsAt: string }[] };
@@ -540,7 +545,7 @@ describe('CRM — fichier client', () => {
 
       const response = await request(server())
         .get(`${BASE}/${fiche.id}/history`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
 
       const { visits } = response.body as { visits: Record<string, unknown>[] };
@@ -570,7 +575,7 @@ describe('CRM — fichier client', () => {
 
       const response = await request(server())
         .get(`${BASE}/${fiche.id}/history`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(200);
 
       const { visits } = response.body as { visits: Record<string, unknown>[] };
@@ -584,7 +589,7 @@ describe('CRM — fichier client', () => {
     it('rend 404 plutôt qu’un historique vide sur un identifiant inconnu', async () => {
       await request(server())
         .get(`${BASE}/99999999-9999-4999-8999-999999999999/history`)
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(404);
     });
 
@@ -594,7 +599,7 @@ describe('CRM — fichier client', () => {
       await request(server())
         .get(`${BASE}/${String(creee['id'])}/history`)
         .query({ limit: 500 })
-        .set('Authorization', await harness.bearer('STAFF'))
+        .set('Authorization', await harness.bearer('MANAGER'))
         .expect(400);
     });
   });
@@ -755,11 +760,12 @@ describe('CRM — fichier client', () => {
         .expect(403);
     });
 
-    it('réserve la désactivation au rang MANAGER', async () => {
+    it('réserve la désactivation à `customers:write`', async () => {
       const creee = await creerFiche();
 
-      // `STAFF` corrige une fiche mais ne la retire pas des écrans : c'est une
-      // décision sur le fichier, pas une correction dedans.
+      // Le praticien ne touche pas au fichier du salon : depuis #812, ni pour le
+      // corriger ni pour le retirer des écrans. Ce qu'il écrit sur une visite
+      // reste à sa place — la note interne d'un rendez-vous.
       await request(server())
         .patch(`${BASE}/${String(creee['id'])}/status`)
         .set('Authorization', await harness.bearer('STAFF'))
@@ -773,11 +779,14 @@ describe('CRM — fichier client', () => {
         .expect(200);
     });
 
-    it('réserve l’export au rang MANAGER', async () => {
+    it('réserve l’export à `customers:read:all`', async () => {
       const creee = await creerFiche();
 
       // Un dossier complet exportable à portée de chaque poste du comptoir
-      // n'aurait pas été de la minimisation (CDC §5.1).
+      // n'aurait pas été de la minimisation (CDC §5.1). L'export couvre par
+      // ailleurs la relation entière du salon avec la personne, visites chez les
+      // collègues comprises : l'ouvrir au périmètre propre aurait rendu par
+      // l'agrégat ce que la liste vient de fermer (#812).
       await request(server())
         .get(`${BASE}/${String(creee['id'])}/export`)
         .set('Authorization', await harness.bearer('STAFF'))

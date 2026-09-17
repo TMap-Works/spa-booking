@@ -122,7 +122,7 @@ describe('Isolation inter-tenant — module crm', () => {
     const response = await request(server())
       .get(BASE)
       .query({ q: NOM })
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(200);
 
     const body = response.body as { items: { id: string }[]; totalItems: number };
@@ -136,7 +136,9 @@ describe('Isolation inter-tenant — module crm', () => {
 
   it('la fiche du voisin est introuvable — 404, jamais 403, et rien n’est écrit', async () => {
     const { chezB } = semerDesDeuxCotes();
-    const bearer = await harness.bearer('STAFF');
+    // Un seul jeton gérant depuis #812 : la lecture, l'historique et l'écriture
+    // du fichier client sont toutes passées au rang gérant, et les deux jetons
+    // distincts d'avant désignaient désormais le même public.
     const bearerManager = await harness.bearer('MANAGER');
     const bearerAdmin = await harness.bearer('ADMIN');
 
@@ -144,19 +146,19 @@ describe('Isolation inter-tenant — module crm', () => {
       attempts: [
         {
           label: 'lecture',
-          send: () => request(server()).get(`${BASE}/${chezB}`).set('Authorization', bearer),
+          send: () => request(server()).get(`${BASE}/${chezB}`).set('Authorization', bearerManager),
         },
         {
           label: 'historique',
           send: () =>
-            request(server()).get(`${BASE}/${chezB}/history`).set('Authorization', bearer),
+            request(server()).get(`${BASE}/${chezB}/history`).set('Authorization', bearerManager),
         },
         {
           label: 'modification',
           send: () =>
             request(server())
               .patch(`${BASE}/${chezB}`)
-              .set('Authorization', bearer)
+              .set('Authorization', bearerManager)
               .send({ lastName: 'Piraté', internalNote: 'écrit depuis A' }),
         },
         {
@@ -187,7 +189,7 @@ describe('Isolation inter-tenant — module crm', () => {
 
   it('« connu ailleurs » répond exactement comme « inconnu partout »', async () => {
     const { chezB } = semerDesDeuxCotes();
-    const bearer = await harness.bearer('STAFF');
+    const bearer = await harness.bearer('MANAGER');
 
     const [voisin, inconnu] = await Promise.all([
       request(server()).get(`${BASE}/${chezB}`).set('Authorization', bearer),
@@ -213,7 +215,7 @@ describe('Isolation inter-tenant — module crm', () => {
 
     const response = await request(server())
       .get(`${BASE}/${chezA}/history`)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .expect(200);
 
     const serialise = JSON.stringify(response.body);
@@ -235,7 +237,7 @@ describe('Isolation inter-tenant — module crm', () => {
 
     const response = await request(server())
       .post(BASE)
-      .set('Authorization', await harness.bearer('STAFF'))
+      .set('Authorization', await harness.bearer('MANAGER'))
       .send({ email: ADRESSE, firstName: 'Alice', lastName: NOM })
       .expect(201);
 
@@ -249,7 +251,7 @@ describe('Isolation inter-tenant — module crm', () => {
     const { chezA } = semerDesDeuxCotes();
     // Le jeton porte la revendication de B : c'est `JwtAuthGuard` qui ouvre la
     // portée, et le dépôt scopé ne voit alors que le fichier de B.
-    const bearerVoisin = await harness.bearer('STAFF', b);
+    const bearerVoisin = await harness.bearer('MANAGER', b);
 
     const liste = await request(server())
       .get(BASE)
@@ -321,7 +323,7 @@ describe('Isolation inter-tenant — module crm', () => {
       emailSuppressedAt: new Date('2026-09-05T10:30:00.000Z'),
       emailSuppressionReason: 'COMPLAINT',
     }).id;
-    const bearer = await harness.bearer('STAFF');
+    const bearer = await harness.bearer('MANAGER');
 
     // La fiche du salon A ne prend rien de l'état du salon B — ni la date, ni
     // le motif. Une projection qui aurait perdu son filtre de tenant afficherait

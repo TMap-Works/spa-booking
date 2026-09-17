@@ -112,6 +112,17 @@ export interface StoredVisit {
   /** Le temps de préparation de la cabine, qui sépare `startsAt` du soin. */
   serviceBufferBeforeMinutes: number;
   staffName: string;
+  /**
+   * Le **compte** du praticien qui donne le soin — `staff.user_id` du schéma,
+   * ajouté par #812.
+   *
+   * C'est ce que traverse le prédicat « ses clientes à lui » du vrai dépôt
+   * (`users` → `clientAppointments` → `staff` → `userId`), et sans lui le double
+   * n'aurait pas eu de quoi distinguer la clientèle d'une praticienne de celle
+   * du salon. `null` se lit « ce cas ne parle pas de portée » — le défaut, qui
+   * laisse les suites antérieures dire exactement ce qu'elles disaient.
+   */
+  staffUserId: string | null;
   priceAmountMinor: number;
   priceCurrency: string;
   /** Les trois textes libres que l'export restitue et que l'anonymisation vide. */
@@ -212,6 +223,7 @@ export class FakeCrmRepository {
     serviceBufferBeforeMinutes?: number;
     serviceBufferAfterMinutes?: number;
     staffName?: string;
+    staffUserId?: string | null;
     priceAmountMinor?: number;
     priceCurrency?: string;
     clientNote?: string | null;
@@ -240,6 +252,7 @@ export class FakeCrmRepository {
       serviceDurationMinutes: durationMinutes,
       serviceBufferBeforeMinutes: bufferBeforeMinutes,
       staffName: input.staffName ?? 'Camille',
+      staffUserId: input.staffUserId ?? null,
       priceAmountMinor: input.priceAmountMinor ?? 3500,
       priceCurrency: input.priceCurrency ?? 'EUR',
       clientNote: input.clientNote ?? null,
@@ -262,6 +275,11 @@ export class FakeCrmRepository {
       .filter((row) => row.tenantId === tenantId && row.role === 'CLIENT')
       .filter((row) => criteria.includeInactive || row.isActive)
       .filter((row) => term === null || matches(row, term))
+      // Le prédicat de portée du vrai dépôt, rejoué en mémoire : « a — ou a eu —
+      // un rendez-vous avec ce compte ». Tous les statuts comptent, annulations
+      // comprises : une annulation ne retire pas la personne du fichier de qui
+      // devait la recevoir (#812).
+      .filter((row) => this.withinScope(row, criteria.ownedByUserId))
       .sort(
         (left, right) =>
           left.lastName.localeCompare(right.lastName) ||
@@ -277,9 +295,29 @@ export class FakeCrmRepository {
     };
   }
 
-  public async findById(id: string): Promise<Customer | null> {
+  public async findById(id: string, ownedByUserId: string | null = null): Promise<Customer | null> {
     const row = this.find(id);
-    return row === undefined ? null : toCustomer(row);
+    // Hors périmètre se confond avec « introuvable », comme dans le vrai dépôt :
+    // un refus distinct aurait fait de la route un oracle sur la clientèle du
+    // salon (#812).
+    return row === undefined || !this.withinScope(row, ownedByUserId) ? null : toCustomer(row);
+  }
+
+  /**
+   * `true` si la fiche entre dans le périmètre demandé — `null` = tout le
+   * fichier de l'établissement.
+   */
+  private withinScope(row: StoredCustomer, ownedByUserId: string | null): boolean {
+    if (ownedByUserId === null) {
+      return true;
+    }
+
+    return this.visits.some(
+      (visit) =>
+        visit.tenantId === row.tenantId &&
+        visit.clientId === row.id &&
+        visit.staffUserId === ownedByUserId,
+    );
   }
 
   public async create(input: {

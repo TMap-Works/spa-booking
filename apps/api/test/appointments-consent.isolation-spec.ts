@@ -108,7 +108,7 @@ describe('Isolation inter-tenant — preuve de consentement', () => {
   });
 
   /** Un porteur signé pour cet établissement-**là**. */
-  async function bearer(tenant: TenantFixture, role: UserRole = 'STAFF'): Promise<string> {
+  async function bearer(tenant: TenantFixture, role: UserRole = 'MANAGER'): Promise<string> {
     const token = await harness.app
       .get(TokenService)
       .signAccessToken({ userId: randomUUID(), tenantId: tenant.id, role });

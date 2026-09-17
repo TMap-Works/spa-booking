@@ -386,7 +386,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
       const response = await request(harness.server())
         .post(DESK_CANCEL_PATH(booked.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ reason: 'Cliente injoignable' });
 
       expect(response.status).toBe(200);
@@ -428,8 +428,8 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
       );
     });
 
-    it.each(['STAFF', 'MANAGER', 'ADMIN'] as const)(
-      'laisse le rang %s annuler — c’est de la tenue d’agenda',
+    it.each(['MANAGER', 'ADMIN'] as const)(
+      'laisse le rang %s annuler n’importe quel rendez-vous — c’est de la tenue d’agenda',
       async (role) => {
         const booked = await book();
 
@@ -445,10 +445,32 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
       },
     );
 
+    it('refuse au praticien le créneau qui n’est pas le sien — 403 `OWN_SCOPE_ONLY`', async () => {
+      // #812, troisième critère. Le rang `STAFF` porte bien
+      // `appointment:write:own` : la garde le laisse entrer, et c'est le service
+      // qui refuse — le rendez-vous semé ici est celui d'un praticien auquel ce
+      // jeton n'est rattaché par aucune fiche.
+      const booked = await book();
+
+      const response = await request(harness.server())
+        .post(DESK_CANCEL_PATH(booked.id))
+        .set('Authorization', await bearer('STAFF'))
+        .send({});
+
+      expect(response.status).toBe(403);
+      expect(response.body.code).toBe('OWN_SCOPE_ONLY');
+      // 403 et non 404 : la ressource est du **même** établissement, et
+      // l'appelant en connaît déjà l'existence (ADR 0013).
+      expect(response.body.details).toEqual({ scope: 'appointment:write:all' });
+      expect(harness.appointments.appointments.find((row) => row.id === booked.id)?.status).toBe(
+        'PENDING',
+      );
+    });
+
     it('refuse en 404 un rendez-vous inconnu de l’établissement du jeton', async () => {
       const response = await request(harness.server())
         .post(DESK_CANCEL_PATH(randomUUID()))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({});
 
       expect(response.status).toBe(404);
@@ -459,7 +481,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
 
       await request(harness.server())
         .post(DESK_CANCEL_PATH(booked.id))
-        .set('Authorization', await bearer('STAFF'))
+        .set('Authorization', await bearer('MANAGER'))
         .send({ reason: 'Fermeture exceptionnelle' });
 
       const reprise = await request(harness.server())
