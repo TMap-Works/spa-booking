@@ -1,0 +1,238 @@
+/*
+ * Écrans d'identification — #927
+ * =============================================================================
+ *
+ * Le cadre partagé par la connexion et l'inscription de l'espace client, et par
+ * la connexion du back-office (`components/auth/auth-screen.tsx`).
+ *
+ * Il est dans l'entrée partagée et non dans `admin/index.css` : l'espace client
+ * s'en sert, et c'est lui qui paie le moins cher un octet de CSS en plus. Il
+ * nomme pourtant deux classes du back-office — `.spa-admin__section` et
+ * `.spa-admin__content` — pour les seuls réglages que la carte de connexion
+ * reçoit une fois posée dans ce cadre. Ces règles portent deux classes et
+ * l'emportent donc sur celles de `admin/shell.css`, chargées après.
+ *
+ * Palier : 56 rem (896 px), la largeur à partir de laquelle deux volets gardent
+ * chacun une mesure de lecture confortable.
+ */
+
+.spa-auth {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spa-space-6);
+  min-block-size: 100dvh;
+  padding: var(--spa-space-8) var(--spa-space-4);
+  background-color: var(--spa-color-surface-sunken);
+  /* Le même halo que l'accueil, dans l'autre coin : la continuité se voit sans
+   * qu'aucun aplat d'accent ne s'ajoute. */
+  background-image: radial-gradient(
+    56rem 36rem at 100% 0%,
+    var(--spa-color-accent-soft),
+    transparent 70%
+  );
+}
+
+/*
+ * Dans le back-office, le cadre est l'unique contenu d'une zone qui porte son
+ * propre retrait (`.spa-admin__content` : 20 px, puis 12 et 8 px aux paliers
+ * étroits). La zone y renonce quand elle porte le cadre : son fond va alors
+ * jusqu'aux bords de la fenêtre comme côté client, et la gouttière est celle du
+ * cadre, 16 px à toutes les largeurs. Une marge négative aurait dû recopier les
+ * trois valeurs, et déborde de la fenêtre dès qu'elle en manque une.
+ */
+.spa-admin__content:has(> .spa-auth) {
+  padding: 0;
+}
+
+.spa-auth__frame {
+  display: grid;
+  inline-size: 100%;
+  max-inline-size: 64rem;
+  overflow: hidden;
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-xl);
+  box-shadow: var(--spa-shadow-lg);
+}
+
+@media (min-width: 56rem) {
+  .spa-auth__frame {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+    min-block-size: 36rem;
+  }
+}
+
+/* --- Volet d'accueil -------------------------------------------------------- */
+
+.spa-auth__intro {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-5);
+  padding: var(--spa-space-6);
+  background-color: var(--spa-color-surface-brand);
+  color: var(--spa-color-text-on-brand);
+}
+
+@media (min-width: 56rem) {
+  .spa-auth__intro {
+    gap: var(--spa-space-8);
+    padding: var(--spa-space-10);
+  }
+}
+
+/* Sur l'aplat de marque, l'anneau de focus ordinaire tombe sous 2:1. */
+.spa-auth__intro :focus-visible {
+  outline-color: var(--spa-color-focus-on-brand);
+}
+
+.spa-auth__brand {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--spa-space-2);
+  min-block-size: var(--spa-target-min-size);
+  color: var(--spa-color-text-on-brand);
+  font-weight: var(--spa-font-weight-bold);
+  letter-spacing: var(--spa-letter-spacing-tight);
+  text-decoration: none;
+}
+
+.spa-auth__brand:hover {
+  text-decoration: underline;
+}
+
+.spa-auth__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--spa-space-8);
+  block-size: var(--spa-space-8);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-surface-brand-raised);
+  color: var(--spa-color-accent-on-brand);
+}
+
+.spa-auth__welcome {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+}
+
+.spa-auth__salon {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-accent-on-brand);
+}
+
+/* `h1` ou `p` selon l'espace : la même allure dans les deux cas. */
+.spa-auth__headline {
+  font-size: var(--spa-font-size-2xl);
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: var(--spa-line-height-tight);
+  letter-spacing: var(--spa-letter-spacing-tight);
+  text-wrap: balance;
+}
+
+.spa-auth__lead {
+  line-height: var(--spa-line-height-relaxed);
+  color: var(--spa-color-text-on-brand-muted);
+}
+
+.spa-auth__highlights {
+  display: none;
+}
+
+@media (min-width: 56rem) {
+  .spa-auth__headline {
+    font-size: var(--spa-font-size-3xl);
+  }
+
+  .spa-auth__highlights {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spa-space-4);
+    margin-block-start: auto;
+  }
+}
+
+.spa-auth__highlight {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  line-height: var(--spa-line-height-snug);
+}
+
+.spa-auth__highlight-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  inline-size: var(--spa-space-10);
+  block-size: var(--spa-space-10);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-surface-brand-raised);
+  color: var(--spa-color-accent-on-brand);
+}
+
+/* --- Volet du formulaire ---------------------------------------------------- */
+
+.spa-auth__panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: var(--spa-space-6);
+}
+
+@media (min-width: 56rem) {
+  .spa-auth__panel {
+    padding: var(--spa-space-10) var(--spa-space-12);
+  }
+}
+
+/*
+ * La carte du formulaire **est** le volet : le cadre en porte déjà la surface,
+ * la bordure et l'ombre. Une seconde carte à l'intérieur se lirait comme un
+ * encart dans l'encart. La classe reste posée — elle porte aussi le rythme
+ * vertical (#699) —, seul son habillage s'efface.
+ */
+.spa-auth__panel .spa-account__panel,
+.spa-auth__panel .spa-admin__section {
+  gap: var(--spa-space-4);
+  padding: 0;
+  background-color: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+/* Le même titre de carte dans les deux espaces. */
+.spa-auth__panel .spa-account__section-title,
+.spa-auth__panel .spa-admin__section-title {
+  font-size: var(--spa-font-size-xl);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+/* Le bouton de soumission se détache des champs qu'il conclut. */
+.spa-auth__panel .spa-button--block[type='submit'] {
+  margin-block-start: var(--spa-space-2);
+}
+
+/* --- Chemins de retour ------------------------------------------------------ */
+
+.spa-auth__exits {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--spa-space-1) var(--spa-space-6);
+}
+
+.spa-auth__exit {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--spa-target-min-size);
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-medium);
+}

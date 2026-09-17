@@ -19,6 +19,9 @@ styles/
     card.css           carte
     modal.css          modale
     notification.css   notification
+    icon.css           pictogramme au trait (`components/ui/icon.tsx`, #927)
+    auth.css           cadre des écrans de connexion et d'inscription (#927)
+    home.css           page d'accueil de la plateforme (#927)
   admin/               chrome du tableau de bord — voir admin/README.md (#30)
     index.css          second point d'entrée, chargé par le seul layout admin
 ```
@@ -80,7 +83,7 @@ vérifier avant de livrer un thème évite un bouton « Réserver » illisible.
 
 | Famille | Préfixe | Échelle |
 |---|---|---|
-| Couleur | `--spa-color-*` | surfaces, texte, bordures, accent, états, statuts de rendez-vous, focus |
+| Couleur | `--spa-color-*` | surfaces, texte, bordures, accent, aplat de marque et ses rôles « sur marque », états, statuts de rendez-vous, focus |
 | Typographie | `--spa-font-*`, `--spa-line-height-*`, `--spa-letter-spacing-*` | `xs` → `3xl` |
 | Espacement | `--spa-space-*` | base 4 px, `0` → `16` |
 | Rayons | `--spa-radius-*` | `none` → `full` |
