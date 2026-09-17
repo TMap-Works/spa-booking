@@ -453,7 +453,10 @@ describe('CRM — fichier client', () => {
       expect(body.summary).toEqual({
         totalVisits: 5,
         honoredVisits: 4,
+        // Annulations et reports se comptent à part depuis #917 : la fiche
+        // disait « 5 Annulés » là où deux d'entre eux n'étaient que déplacés.
         cancelledVisits: 0,
+        rescheduledVisits: 0,
         noShowVisits: 1,
         upcomingVisits: 0,
         firstVisitAt: '2026-01-01T09:00:00.000Z',

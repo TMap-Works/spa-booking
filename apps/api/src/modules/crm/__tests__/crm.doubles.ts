@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
 import { getTenantId } from '../../../common/tenant';
-import type { AppointmentStatus } from '../../appointments/appointment-status';
+import type {
+  AppointmentCancelledBy,
+  AppointmentStatus,
+} from '../../appointments/appointment-status';
 import { billedIntervalOf, type BilledInterval } from '../../appointments/billed-interval';
 import type { EmailSuppressionReason } from '../../notifications/notifications.types';
 import { CustomerEmailTakenError } from '../crm.errors';
@@ -116,6 +119,17 @@ export interface StoredVisit {
   staffNote: string | null;
   cancellationReason: string | null;
   cancelledAt: Date | null;
+  /**
+   * L'auteur de l'annulation, **nul sur l'origine d'un report** (#917).
+   *
+   * Le double stocke ici ce que la colonne stocke, et laisse ses projections en
+   * tirer la distinction entre un créneau perdu et un créneau déplacé — comme le
+   * vrai dépôt. Poser un auteur d'office aurait rendu tout report indiscernable
+   * d'une annulation dans les suites.
+   */
+  cancelledBy: AppointmentCancelledBy | null;
+  /** Le rendez-vous que celui-ci remplace, porté par le **successeur** (#917). */
+  rescheduledFromId: string | null;
   createdAt: Date;
 }
 
@@ -204,6 +218,8 @@ export class FakeCrmRepository {
     staffNote?: string | null;
     cancellationReason?: string | null;
     cancelledAt?: Date | null;
+    cancelledBy?: AppointmentCancelledBy | null;
+    rescheduledFromId?: string | null;
   }): StoredVisit {
     const startsAt = input.startsAt ?? new Date('2026-08-01T09:00:00.000Z');
     const durationMinutes = input.serviceDurationMinutes ?? 60;
@@ -230,6 +246,8 @@ export class FakeCrmRepository {
       staffNote: input.staffNote ?? null,
       cancellationReason: input.cancellationReason ?? null,
       cancelledAt: input.cancelledAt ?? null,
+      cancelledBy: input.cancelledBy ?? null,
+      rescheduledFromId: input.rescheduledFromId ?? null,
       createdAt: new Date(startsAt.getTime() - 86_400_000),
     };
     this.visits.push(stored);
@@ -412,15 +430,25 @@ export class FakeCrmRepository {
         // projection du vrai dépôt (`VISIT_SELECT`, #870), et c'est cet écart-là
         // que la suite d'intégration vient éprouver.
         clientNote: row.clientNote,
+        cancelledBy: row.cancelledBy,
+        rescheduledFromId: row.rescheduledFromId,
       }));
   }
 
+  /**
+   * Le décompte groupé sur le **couple** (statut, auteur d'annulation), comme le
+   * vrai dépôt depuis #917 : c'est la seconde dimension qui sépare une annulation
+   * véritable de l'origine d'un report, et un double groupé sur le seul statut
+   * aurait rendu le scindement intestable.
+   */
   public async countVisitsByStatus(customerId: string): Promise<VisitCountByStatus[]> {
-    const counts = new Map<string, number>();
+    const counts = new Map<string, VisitCountByStatus>();
     for (const row of this.visitsOf(customerId)) {
-      counts.set(row.status, (counts.get(row.status) ?? 0) + 1);
+      const key = `${row.status} ${row.cancelledBy ?? ''}`;
+      const group = counts.get(key) ?? { status: row.status, cancelledBy: row.cancelledBy, count: 0 };
+      counts.set(key, { ...group, count: group.count + 1 });
     }
-    return [...counts].map(([status, count]) => ({ status, count }));
+    return [...counts.values()];
   }
 
   public async honoredVisitBounds(customerId: string): Promise<VisitBounds> {

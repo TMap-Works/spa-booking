@@ -1,4 +1,7 @@
-import type { AppointmentStatus } from '../appointments/appointment-status';
+import type {
+  AppointmentCancelledBy,
+  AppointmentStatus,
+} from '../appointments/appointment-status';
 // Même import que le précédent, et pour la même raison : un **vocabulaire** de
 // module voisin, en `import type`, effacé à la compilation. Ce n'est pas
 // l'import du repository d'un autre module qu'api-module §3 interdit — c'est le
@@ -157,6 +160,22 @@ export interface CustomerVisit {
    * salon : ce qu'écrit le salon est `staffNote`, que cette vue ne porte pas.
    */
   clientNote: string | null;
+  /**
+   * De quel côté du comptoir l'annulation vient, ou `null` (#917).
+   *
+   * `null` sur une visite **annulée** est l'origine d'un report, pas une donnée
+   * manquante : `appointments.repository.ts` annule la ligne d'origine sans lui
+   * inscrire d'auteur. C'est ce qui permet à la fiche cliente d'écrire
+   * « Déplacé » là où elle écrivait « Annulé ».
+   */
+  cancelledBy: AppointmentCancelledBy | null;
+  /**
+   * Le rendez-vous que cette visite remplace, ou `null` (#917).
+   *
+   * L'autre moitié du même fait, portée par le **successeur** : l'origine se
+   * reconnaît à son auteur nul, le successeur à cette colonne.
+   */
+  rescheduledFromId: string | null;
 }
 
 /**
@@ -174,7 +193,16 @@ export interface CustomerVisit {
 export interface CustomerVisitSummary {
   totalVisits: number;
   honoredVisits: number;
+  /**
+   * Les annulations **véritables**, celles qui portent un auteur (#917).
+   *
+   * Disjoint de `rescheduledVisits` : leur somme est le nombre de lignes
+   * `CANCELLED`, et `totalVisits` reste `honored + cancelled + rescheduled +
+   * noShow + upcoming`.
+   */
   cancelledVisits: number;
+  /** Les **reports** — lignes annulées sans auteur, comptées sur l'origine (#917). */
+  rescheduledVisits: number;
   noShowVisits: number;
   upcomingVisits: number;
   firstVisitAt: Date | null;

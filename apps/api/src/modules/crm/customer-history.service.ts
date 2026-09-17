@@ -1,7 +1,11 @@
 import { Injectable } from '@nestjs/common';
 
 import { NotFoundError } from '../../common/errors';
-import { CrmRepository, type HonoredTotalByCurrency } from './crm.repository';
+import {
+  CrmRepository,
+  type HonoredTotalByCurrency,
+  type VisitCountByStatus,
+} from './crm.repository';
 import type { CustomerVisitHistory, CustomerVisitSummary } from './crm.types';
 
 /**
@@ -60,8 +64,12 @@ export class CustomerHistoryService {
       this.repository.sumHonoredByCurrency(customerId),
     ]);
 
-    const byStatus = new Map(counts.map((row) => [row.status, row.count]));
-    const countOf = (status: string): number => byStatus.get(status) ?? 0;
+    // Le dépôt groupe désormais sur le couple (statut, auteur d'annulation) :
+    // additionner les lignes d'un même statut est ce qui redonne le décompte
+    // par statut, et les séparer sur `cancelledBy` est ce qui distingue une
+    // annulation d'un report (#917).
+    const countOf = (status: string): number =>
+      counts.reduce((total, row) => (row.status === status ? total + row.count : total), 0);
     const spent = singleCurrencyTotal(totals);
 
     const summary: CustomerVisitSummary = {
@@ -70,7 +78,14 @@ export class CustomerHistoryService {
       // finissent par se contredire sous concurrence.
       totalVisits: counts.reduce((total, row) => total + row.count, 0),
       honoredVisits: countOf('COMPLETED'),
-      cancelledVisits: countOf('CANCELLED'),
+      // Une annulation **véritable** porte un auteur ; une ligne annulée qui n'en
+      // porte pas est l'origine d'un report, que `appointments.repository.ts`
+      // laisse délibérément sans auteur pour ne pas la compter comme un abandon.
+      // Les deux compteurs sont disjoints et leur somme est le nombre de lignes
+      // `CANCELLED` : la fiche comptait « 5 Annulés » là où elle comptait trois
+      // annulations et deux reports — le constat de l'audit `d20260916-1`.
+      cancelledVisits: cancelledCount(counts, (author) => author !== null),
+      rescheduledVisits: cancelledCount(counts, (author) => author === null),
       noShowVisits: countOf('NO_SHOW'),
       // « À venir » est ce qui occupe encore l'agenda — la même liste que le
       // prédicat partiel de la contrainte d'exclusion. Un `PENDING` du mois
@@ -85,6 +100,27 @@ export class CustomerHistoryService {
 
     return { summary, visits };
   }
+}
+
+/**
+ * Les lignes `CANCELLED` dont l'auteur satisfait le prédicat — #917.
+ *
+ * Un seul filtre, deux appels, et c'est ce qui garantit que les deux compteurs
+ * ne se recouvrent pas : `author !== null` et `author === null` partitionnent le
+ * même ensemble. Les écrire séparément aurait laissé une troisième valeur
+ * d'énumération, ajoutée un jour à `AppointmentCancelledBy`, tomber hors des
+ * deux — et un rendez-vous annulé disparaître de la fiche sans que rien ne le
+ * dise.
+ */
+function cancelledCount(
+  counts: readonly VisitCountByStatus[],
+  hasAuthor: (author: string | null) => boolean,
+): number {
+  return counts.reduce(
+    (total, row) =>
+      row.status === 'CANCELLED' && hasAuthor(row.cancelledBy) ? total + row.count : total,
+    0,
+  );
 }
 
 /**

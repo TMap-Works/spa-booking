@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
-import { APPOINTMENT_STATUSES } from '../../appointments/appointment-status';
+import { APPOINTMENT_STATUSES, CANCELLATION_AUTHORS } from '../../appointments/appointment-status';
 import type { CustomerVisitHistory } from '../crm.types';
 import { HISTORY_MAX_VISITS } from './customer.dto';
 
@@ -75,6 +75,28 @@ export class CustomerVisitDto {
       'la note interne du salon (`staffNote`), que cette route ne lit pas.',
   })
   public clientNote!: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    enum: CANCELLATION_AUTHORS,
+    example: 'CLIENT',
+    description:
+      'De quel côté du comptoir l’annulation vient, ou `null`. `null` sur une ' +
+      'visite **annulée** se lit « déplacée » : un report annule la ligne ' +
+      'd’origine sans lui inscrire d’auteur (#917).',
+  })
+  public cancelledBy!: string | null;
+
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    format: 'uuid',
+    description:
+      'Le rendez-vous que cette visite remplace, ou `null`. Porté par le ' +
+      '**successeur** d’un report ; l’origine, elle, se reconnaît à son ' +
+      '`cancelledBy` nul.',
+  })
+  public rescheduledFromId!: string | null;
 }
 
 /**
@@ -90,8 +112,22 @@ export class CustomerVisitSummaryDto {
   @ApiProperty({ minimum: 0, description: 'Rendez-vous `COMPLETED`.' })
   public honoredVisits!: number;
 
-  @ApiProperty({ minimum: 0 })
+  @ApiProperty({
+    minimum: 0,
+    description:
+      'Les annulations **véritables** — celles qui portent un auteur. Disjoint ' +
+      'de `rescheduledVisits` : leur somme est le nombre de rendez-vous ' +
+      '`CANCELLED` (#917).',
+  })
   public cancelledVisits!: number;
+
+  @ApiProperty({
+    minimum: 0,
+    description:
+      'Les **reports** — rendez-vous annulés sans auteur, comptés sur la ligne ' +
+      'd’origine. Un créneau déplacé n’est pas un créneau perdu (#917).',
+  })
+  public rescheduledVisits!: number;
 
   @ApiProperty({ minimum: 0 })
   public noShowVisits!: number;
@@ -159,6 +195,7 @@ export function toHistoryDto(history: CustomerVisitHistory): CustomerVisitHistor
       totalVisits: summary.totalVisits,
       honoredVisits: summary.honoredVisits,
       cancelledVisits: summary.cancelledVisits,
+      rescheduledVisits: summary.rescheduledVisits,
       noShowVisits: summary.noShowVisits,
       upcomingVisits: summary.upcomingVisits,
       firstVisitAt: summary.firstVisitAt?.toISOString() ?? null,
@@ -183,6 +220,8 @@ export function toHistoryDto(history: CustomerVisitHistory): CustomerVisitHistor
       staffName: visit.staffName,
       price: { amountMinor: visit.priceAmountMinor, currency: visit.priceCurrency },
       clientNote: visit.clientNote,
+      cancelledBy: visit.cancelledBy,
+      rescheduledFromId: visit.rescheduledFromId,
     })),
   };
 }
