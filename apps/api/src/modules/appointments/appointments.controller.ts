@@ -13,7 +13,7 @@ import {
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 
-import { Auth, AuthAtLeast } from '../identity/auth.decorator';
+import { Auth, AuthWith } from '../identity/auth.decorator';
 import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
 import { AppointmentsService } from './appointments.service';
@@ -58,20 +58,36 @@ import {
  * Les rendez-vous **derrière un jeton** — le comptoir (#40) et l'espace client
  * (#47).
  *
- * | Route | Rôles |
+ * | Route | Permission exigée |
  * |---|---|
- * | `GET /appointments` | staff et au-dessus |
- * | `GET /appointments/mine` | toute identité vérifiée |
- * | `POST /appointments` | staff et au-dessus |
- * | `POST /appointments/:id/reschedule` | staff et au-dessus |
- * | `POST /appointments/:id/status` | staff et au-dessus |
- * | `POST /appointments/:id/cancel` | staff et au-dessus |
+ * | `GET /appointments` | `agenda:read:all` |
+ * | `GET /appointments/reference/:reference` | `agenda:read:all` |
+ * | `GET /appointments/mine` | aucune — toute identité vérifiée |
+ * | `POST /appointments` | `appointment:write:all` |
+ * | `POST /appointments/:id/reschedule` | `appointment:write:own` **ou** `:all` |
+ * | `POST /appointments/:id/status` | `appointment:write:own` **ou** `:all` |
+ * | `POST /appointments/:id/cancel` | `appointment:write:own` **ou** `:all` |
+ *
+ * ## Des permissions et non un rang, depuis #812
+ *
+ * Ces routes vivaient derrière `@AuthAtLeast('STAFF')`, et le retour de test du
+ * PO du 16/09 a montré ce que ce seuil ouvrait : une praticienne connectée
+ * lisait le planning de tout le salon, avec les rendez-vous et les noms des
+ * clientes de sa collègue, et pouvait agir sur n'importe lequel d'entre eux.
+ * Le rang n'était pas mal placé — il était **inapplicable** : ce qui sépare le
+ * praticien du gérant n'est pas un cran de capacité mais l'ensemble des objets
+ * sur lesquels il agit. Voir
+ * [ADR 0013](../../../../../docs/adr/0013-matrice-de-permissions-par-role.md).
+ *
+ * Deux permissions citées sur une route se lisent « l'une **ou** l'autre » : la
+ * garde ouvre, et c'est le service qui refuse ensuite en 403 `OWN_SCOPE_ONLY` si
+ * la cible n'est pas du périmètre de l'appelant.
  *
  * Les trois cohabitent parce qu'elles désignent l'établissement de la **même**
  * façon — le jeton, et lui seul — ce qui est le critère qui a fait séparer ce
  * contrôleur du tunnel public. Ce qui les distingue, le rang de l'appelant, se
  * déclare par route : `@Auth()` pour la cliente qui lit son propre historique,
- * `@AuthAtLeast('STAFF')` pour le comptoir qui lit et écrit dans l'agenda du
+ * `@AuthWith(...)` pour le comptoir qui lit et écrit dans l'agenda du
  * salon. C'est la même conduite que `UsersController`, où `PATCH /users/me`
  * voisine avec des routes d'administration sans rien leur ouvrir.
  *
@@ -152,18 +168,23 @@ export class AppointmentsController {
    * prestation **imbriqués** : c'est ce qui permet à une grille d'afficher
    * « Camille — Massage 60 min » sans une requête par cellule.
    *
-   * ## `@AuthAtLeast('STAFF')`, et pourquoi pas `MANAGER`
+   * ## `agenda:read:all`, et pourquoi le seuil `STAFF` a dû tomber
    *
-   * Parce que consulter l'agenda est le geste d'ouverture de la journée, pas un
-   * acte de gestion : le praticien qui regarde ce qui l'attend, la personne
-   * d'accueil qui cherche le rendez-vous de 14 h. Exiger un manager rendrait
-   * l'écran principal du back-office inaccessible à ceux qui l'utilisent toute la
-   * journée. Le CDC §1.4 réserve à l'encadrement la **configuration** de
-   * l'établissement, pas la conduite de la journée — même partage que
-   * l'annulation ci-dessous.
+   * Cette route servait le rang `STAFF`, au motif que consulter l'agenda est le
+   * geste d'ouverture de la journée. L'argument valait pour la personne
+   * d'accueil ; il ne valait pas pour la praticienne, à qui cet écran montrait
+   * les rendez-vous **et les noms des clientes** de sa collègue (#812,
+   * capture 1). L'arbitrage du PO du 16/09 tranche : « le praticien ne voit que
+   * son propre planning ».
    *
-   * Ce que la garde interdit, en revanche, est net : **le parcours client n'y
-   * accède pas**. Un jeton `CLIENT` reçoit 403, et la cliente qui veut ses
+   * Ce qui le lui rend n'est pas un filtre sur cette route mais une route à
+   * part, `GET /v1/me/appointments` (#811) : elle ne porte aucun `staffId`, ni
+   * dans le chemin ni dans sa requête `.strict()`, si bien qu'il n'y a **rien à
+   * comparer** — là où un filtre aurait dépendu d'un `if` sur le rôle, c'est-à-
+   * dire de ce qu'on oublie un jour de réécrire.
+   *
+   * Ce que la garde interdit par ailleurs est inchangé : **le parcours client
+   * n'y accède pas**. Un jeton `CLIENT` reçoit 403, et la cliente qui veut ses
    * rendez-vous a `/appointments/mine`, qui ne lui montre que les siens.
    *
    * ## Ce que cette route ne peut pas faire, par construction
@@ -189,7 +210,11 @@ export class AppointmentsController {
    * enchaîne légitimement les appels.
    */
   @Get()
-  @AuthAtLeast('STAFF')
+  // `agenda:read:all` depuis #812, et c'est le renversement que le retour du PO
+  // a imposé : cet agenda porte les rendez-vous **et les noms des clientes** de
+  // tout le salon (capture 1 du ticket). Un praticien lit désormais le sien par
+  // `GET /v1/me/appointments` (#811) et reçoit 403 ici.
+  @AuthWith('agenda:read:all')
   @ApiOperation({ summary: 'Lister les rendez-vous de l’établissement sur une plage de jours' })
   @ApiOkResponse({ type: [AgendaAppointmentDto] })
   @ApiBadRequestResponse({
@@ -280,10 +305,11 @@ export class AppointmentsController {
    * rendez-vous. Une cliente qui appelait en la citant ne pouvait pas être
    * retrouvée par ce code.
    *
-   * ## `@AuthAtLeast('STAFF')`, et ici la garde n'est pas qu'une question de rôle
+   * ## `agenda:read:all`, et ici la garde n'est pas qu'une question de droit
    *
-   * Même seuil que l'agenda, pour la même raison de métier : décrocher le
-   * téléphone est la conduite de la journée, pas un acte de gestion.
+   * Même permission que l'agenda, pour une raison simple : ce que cette route
+   * rend **est** une ligne d'agenda, cliente comprise. La laisser plus ouverte
+   * aurait rouvert par l'unité ce que #812 vient de fermer en lot.
    *
    * Mais la garde porte ici une seconde charge, et elle est structurelle. Une
    * référence fait **six symboles** : cent millions de valeurs, c'est-à-dire un
@@ -314,7 +340,11 @@ export class AppointmentsController {
    * **404** quand la référence est bien formée mais ne désigne rien ici.
    */
   @Get('reference/:reference')
-  @AuthAtLeast('STAFF')
+  // Même permission que l'agenda, et pour la même raison : ce que cette route
+  // rend est une ligne d'agenda complète. La laisser ouverte plus bas aurait
+  // fait d'elle la porte de service de celle qu'on vient de fermer — six
+  // symboles suffisent à désigner un rendez-vous, et on les énumère.
+  @AuthWith('agenda:read:all')
   @ApiOperation({ summary: 'Retrouver un rendez-vous par sa référence citable' })
   @ApiParam({
     name: 'reference',
@@ -377,7 +407,12 @@ export class AppointmentsController {
    * dont tout le personnel partage la même sortie réseau.
    */
   @Post()
-  @AuthAtLeast('STAFF')
+  // `appointment:write:all` : poser un rendez-vous, c'est désigner une cliente
+  // **et** un praticien — ou laisser le salon en choisir un par l'option
+  // « premier disponible ». C'est un geste de comptoir, pas de fauteuil, et il
+  // n'a pas d'équivalent « sur son propre périmètre » : un praticien qui
+  // s'attribuerait des créneaux composerait la journée de tout le monde.
+  @AuthWith('appointment:write:all')
   @ApiOperation({ summary: 'Poser un rendez-vous depuis le back-office' })
   @ApiCreatedResponse({ type: AgendaAppointmentDto })
   @ApiBadRequestResponse({
@@ -435,7 +470,10 @@ export class AppointmentsController {
    * d'un `if` sur le rôle ce qui dépend aujourd'hui de la porte.
    */
   @Post(':appointmentId/reschedule')
-  @AuthAtLeast('STAFF')
+  // Les deux portées : le gérant déplace n'importe quel rendez-vous, le
+  // praticien seulement les siens — et **vers lui-même**. Le second cas rend 403
+  // `OWN_SCOPE_ONLY`, jamais 404 : la ressource est du même établissement.
+  @AuthWith('appointment:write:own', 'appointment:write:all')
   @ApiOperation({ summary: 'Reporter un rendez-vous depuis le back-office' })
   @ApiParam({
     name: 'appointmentId',
@@ -463,6 +501,10 @@ export class AppointmentsController {
       '(`INVALID_STATE_TRANSITION`).',
   })
   public async reschedule(
+    // L'acteur vient du **jeton vérifié**, jamais du corps : c'est lui qui
+    // décide de la portée du geste, et un champ de requête l'aurait laissé à la
+    // main de l'appelant — la faute exacte que `cancelledBy` évite déjà.
+    @CurrentUser() actor: AuthenticatedUser,
     // `ParseUUIDPipe` pour la raison qu'expose `ServicesController` : un
     // identifiant mal formé est un 400 nommant le paramètre, jamais une requête
     // qui descend jusqu'au pilote PostgreSQL pour en revenir en 500.
@@ -474,6 +516,7 @@ export class AppointmentsController {
     @Body(rescheduleAppointmentBody) body: RescheduleAppointmentBody,
   ): Promise<AgendaAppointmentDto> {
     return this.appointments.rescheduleAtDesk({
+      actor: { userId: actor.userId, role: actor.role },
       appointmentId,
       // La chaîne a été validée **et normalisée en UTC** par
       // `offsetDateTimeSchema` : `new Date` ne peut donc produire ici ni une
@@ -522,7 +565,9 @@ export class AppointmentsController {
    */
   @Post(':appointmentId/status')
   @HttpCode(200)
-  @AuthAtLeast('STAFF')
+  // Les deux portées — c'est le geste que l'arbitrage du PO laisse au praticien :
+  // « honoré », « non présenté » sur **ses** rendez-vous.
+  @AuthWith('appointment:write:own', 'appointment:write:all')
   @ApiOperation({ summary: 'Changer le statut d’un rendez-vous depuis le back-office' })
   @ApiParam({
     name: 'appointmentId',
@@ -544,10 +589,15 @@ export class AppointmentsController {
       '`details` portant `from` et `to`.',
   })
   public async changeStatus(
+    @CurrentUser() actor: AuthenticatedUser,
     @Param('appointmentId', ParseUUIDPipe) appointmentId: string,
     @Body(changeAppointmentStatusBody) body: ChangeAppointmentStatusBody,
   ): Promise<AgendaAppointmentDto> {
-    return this.appointments.changeStatus(toStatusChangeInput(appointmentId, body));
+    return this.appointments.changeStatus({
+      ...toStatusChangeInput(appointmentId, body),
+      // Du jeton vérifié — voir le report ci-dessus.
+      actor: { userId: actor.userId, role: actor.role },
+    });
   }
 
   /**
@@ -585,7 +635,10 @@ export class AppointmentsController {
    */
   @Post(':appointmentId/cancel')
   @HttpCode(200)
-  @AuthAtLeast('STAFF')
+  // Les deux portées. Le praticien dont la cliente ne vient pas doit libérer son
+  // créneau dans la minute — c'est tout l'intérêt de le libérer, puisqu'il
+  // redevient vendable —, mais le créneau qu'il libère est le sien.
+  @AuthWith('appointment:write:own', 'appointment:write:all')
   @ApiOperation({ summary: 'Annuler un rendez-vous depuis le back-office' })
   @ApiParam({
     name: 'appointmentId',
@@ -605,6 +658,7 @@ export class AppointmentsController {
       '(`INVALID_STATE_TRANSITION`).',
   })
   public async cancel(
+    @CurrentUser() actor: AuthenticatedUser,
     // `ParseUUIDPipe` pour la raison qu'expose `ServicesController` : un
     // identifiant mal formé est un 400 nommant le paramètre, jamais une requête
     // qui descend jusqu'au pilote PostgreSQL pour en revenir en 500.
@@ -612,6 +666,8 @@ export class AppointmentsController {
     @Body(cancelAppointmentBody) body: CancelAppointmentBody,
   ): Promise<AppointmentDto> {
     return this.appointments.cancel({
+      // Du jeton vérifié — voir le report ci-dessus.
+      actor: { userId: actor.userId, role: actor.role },
       appointmentId,
       // Fixé par la **porte**, jamais lu du corps.
       cancelledBy: 'STAFF',
