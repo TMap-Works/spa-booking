@@ -13,9 +13,12 @@ import { isStaffRole } from '@/lib/admin/staff-contract';
 import { roleLabel } from '../../components/navigation';
 import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
 import { StaffAccountActions } from '../components/staff-account-actions';
-import { StaffInviteForm } from '../components/staff-invite-form';
-import { StaffMemberForm } from '../components/staff-member-form';
-import { adminStaffMemberPath, adminStaffPath } from '../paths';
+import {
+  adminNewStaffMemberPath,
+  adminStaffInvitePath,
+  adminStaffMemberPath,
+  adminStaffPath,
+} from '../paths';
 
 /**
  * Le personnel de l'établissement (#53, premier critère).
@@ -53,7 +56,18 @@ import { adminStaffMemberPath, adminStaffPath } from '../paths';
  *
  * Dans les deux cas, le rôle **filtre l'affichage, il ne protège rien** :
  * masquer un contrôle évite d'offrir un bouton qui répondrait 403, et la seule
- * garde qui compte reste celle de l'API, qu'aucun front ne contourne.
+ * garde qui compte reste celle de l'API, qu'aucun front ne contourne. Les deux
+ * écrans vers lesquels ces actions mènent relisent le rang pour eux-mêmes : une
+ * adresse se saisit, et un signet se garde.
+ *
+ * ## Les deux gestes sont en tête, et les formulaires ailleurs (#766)
+ *
+ * L'écran ouvrait sur deux listes et rien d'autre : à 1280 px, la première
+ * action — « Créer la fiche » — était à quelque 700 px de défilement, la seconde
+ * — « Inviter » — à 1 050, toutes deux accentuées et donc sans hiérarchie entre
+ * elles. Les deux formulaires vivent désormais sur leur propre écran, et la
+ * barre d'outils qui les appelle est celle de /catalogue : une action accentuée,
+ * une action secondaire, sous le titre. La liste redevient une liste.
  *
  * ## Pourquoi sous `(liste)/` (#830)
  *
@@ -97,8 +111,8 @@ export default async function StaffPage({ params }: StaffPageProps) {
   // Composer l'équipe réservable est une décision d'exploitation, pas une
   // distribution de droits : `POST /v1/staff` s'arrête au rang `MANAGER`, là où
   // l'invitation et le changement de rôle exigent `ADMIN`. Les deux seuils sont
-  // donc distincts ici aussi — masquer le formulaire aux gérantes leur cacherait
-  // un geste que l'API leur accorde.
+  // donc distincts ici aussi — masquer l'action aux gérantes leur cacherait un
+  // geste que l'API leur accorde.
   const canManage = hasAtLeastRole(profile.role, 'manager');
   // Un compte `client` n'a rien à faire dans cette liste — `GET /v1/users` ne
   // rend que le personnel — mais toutes les actions de la ligne supposent un
@@ -111,6 +125,35 @@ export default async function StaffPage({ params }: StaffPageProps) {
       <h1 className="spa-admin__title" id="personnel-titre">
         Personnel et horaires
       </h1>
+
+      {/* La barre d'outils de /catalogue, aux mêmes classes et dans le même
+          ordre : l'entretoise pousse les actions à droite du titre, l'accentuée
+          en dernier. Deux rangs, donc deux visibilités — et quand le rang n'en
+          accorde aucune, la barre dit pourquoi plutôt que de disparaître sans un
+          mot (#619). */}
+      <div className="spa-admin-toolbar">
+        <span className="spa-admin-toolbar__spacer" />
+        <div className="spa-admin-toolbar__group">
+          {canAdminister ? (
+            <Link className="spa-button spa-button--neutral" href={adminStaffInvitePath(tenantSlug)}>
+              Inviter un membre
+            </Link>
+          ) : null}
+          {canManage ? (
+            <Link
+              className="spa-button spa-button--accent"
+              href={adminNewStaffMemberPath(tenantSlug)}
+            >
+              Créer une fiche praticien
+            </Link>
+          ) : (
+            <span className="spa-admin-toolbar__hint">
+              La création des fiches praticien et l’invitation de comptes sont réservées aux rangs
+              gérant et administrateur.
+            </span>
+          )}
+        </div>
+      </div>
 
       <div className="spa-admin__section">
         <h2 className="spa-admin__section-title">Praticiens — {practitioners.length}</h2>
@@ -125,9 +168,20 @@ export default async function StaffPage({ params }: StaffPageProps) {
             <p className="spa-empty-state__description">
               Tant que personne n’est déclarée, le parcours de réservation ne propose aucun créneau.
               {canManage
-                ? ' Créez une fiche ci-dessous à partir d’un compte du personnel — invitez-en un d’abord s’il n’y en a aucun.'
+                ? ' Une fiche se crée à partir d’un compte du personnel — invitez-en un d’abord s’il n’y en a aucun.'
                 : ' Un gérant ou un administrateur peut en créer une à partir d’un compte du personnel.'}
             </p>
+            {/* Un lien et non un bouton : c'est une destination. Posé
+                directement dans `.spa-empty-state`, déjà une colonne centrée avec
+                son écart — même motif que l'état vide de l'espace client. */}
+            {canManage ? (
+              <Link
+                className="spa-button spa-button--accent"
+                href={adminNewStaffMemberPath(tenantSlug)}
+              >
+                <span className="spa-button__label">Créer une fiche praticien</span>
+              </Link>
+            ) : null}
           </div>
         ) : (
           <ul className="spa-admin-staff">
@@ -173,6 +227,14 @@ export default async function StaffPage({ params }: StaffPageProps) {
             <p className="spa-empty-state__description">
               Invitez au moins une personne pour que le salon puisse être tenu à plusieurs.
             </p>
+            {canAdminister ? (
+              <Link
+                className="spa-button spa-button--neutral"
+                href={adminStaffInvitePath(tenantSlug)}
+              >
+                <span className="spa-button__label">Inviter un membre</span>
+              </Link>
+            ) : null}
           </div>
         ) : (
           <table className="spa-admin-table">
@@ -238,10 +300,6 @@ export default async function StaffPage({ params }: StaffPageProps) {
           </table>
         )}
       </div>
-
-      {canManage ? <StaffMemberForm accounts={staffAccounts} tenantSlug={tenantSlug} /> : null}
-
-      {canAdminister ? <StaffInviteForm tenantSlug={tenantSlug} /> : null}
     </section>
   );
 }
