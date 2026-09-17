@@ -260,6 +260,53 @@ describe('ReportingRepository — les no-shows', () => {
   });
 });
 
+describe('ReportingRepository — le taux de taxe', () => {
+  /**
+   * Un client dont la seule porte est `tenant.findFirst`, et dont la réponse se
+   * choisit — ce que {@link clientWith} ne permet pas, son double rendant
+   * toujours le fuseau.
+   */
+  function repositoryReading(tenant: unknown): {
+    repository: ReportingRepository;
+    findFirst: jest.Mock;
+  } {
+    const findFirst = jest.fn(async () => Promise.resolve(tenant));
+    const prisma = { tenant: { findFirst } } as unknown as ScopedPrismaClient;
+
+    return { repository: new ReportingRepository(prisma), findFirst };
+  }
+
+  it('rend `0` — et non `null` — pour un salon à taux nul', async () => {
+    // Le piège du `?? null` : `0` est une valeur, pas une absence. S'il se
+    // repliait sur `null`, `ReportExportService` rendrait 404 à tout salon sans
+    // taux, et le quatrième critère de #891 ne serait jamais atteignable.
+    const { repository } = repositoryReading({ taxRateBps: 0 });
+
+    await expect(runWithTenant(TENANT, async () => repository.currentTaxRateBps())).resolves.toBe(
+      0,
+    );
+  });
+
+  it('ne projette que le taux, et laisse la portée à l’extension', async () => {
+    // Pas de `where` écrit à la main : `tenant` passe par `$allOperations`, qui
+    // borne la racine sur `id`. Une projection élargie ferait payer aux trois
+    // routes de lecture une colonne dont seul l'export a besoin.
+    const { repository, findFirst } = repositoryReading({ taxRateBps: 2_000 });
+
+    await runWithTenant(TENANT, async () => repository.currentTaxRateBps());
+
+    expect(findFirst).toHaveBeenCalledWith({ select: { taxRateBps: true } });
+  });
+
+  it('rend `null` quand l’établissement n’existe plus — d’où le 404 du service', async () => {
+    const { repository } = repositoryReading(null);
+
+    await expect(
+      runWithTenant(TENANT, async () => repository.currentTaxRateBps()),
+    ).resolves.toBeNull();
+  });
+});
+
 describe('foldVolumeRows', () => {
   it('rend les cinq statuts sur chaque groupe, les absents à zéro', () => {
     expect(foldVolumeRows([row('2026-09-01', null, 'COMPLETED', 3n)])).toEqual([

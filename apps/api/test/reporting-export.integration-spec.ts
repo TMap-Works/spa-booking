@@ -110,6 +110,17 @@ describe('Export du reporting — URL présignée', () => {
       expect(objet?.body).toContain('Europe/Paris');
     });
 
+    it('porte le montant hors taxes, au taux de l’établissement lu en base', async () => {
+      // 120,00 € TTC à 20 % font 100,00 € HT (#891). Ce que cette assertion
+      // ajoute aux suites unitaires : le taux traverse réellement le câblage —
+      // dépôt, service, sérialiseur — et n'est pas resté dans une fixture.
+      await creer();
+      const [objet] = [...harness.storage.objects.values()];
+
+      expect(objet?.body).toContain('revenu_jour;2026-09-03;2026-09-03 · CARD;ht_minor;10000;EUR');
+      expect(objet?.body).toContain('revenu_total;CARD-EUR;CARD;ht_minor;10000;EUR');
+    });
+
     it('rend une échéance future, et à moins de quinze minutes', async () => {
       const avant = Date.now();
       const response = await creer();

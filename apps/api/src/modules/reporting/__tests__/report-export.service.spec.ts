@@ -8,13 +8,17 @@ import { ReportExportUnavailableError, ReportWindowInvalidError } from '../repor
 import { ReportingService } from '../reporting.service';
 import type { ReportWindow } from '../reporting.types';
 import { FakeReportExportStorage } from './report-export.doubles';
-import { asReportingRepository, FakeReportingRepository } from './reporting.doubles';
+import {
+  asReportingRepository,
+  FakeReportingRepository,
+  type StoredPayment,
+} from './reporting.doubles';
 
 /**
  * Ce que `ReportExportService` décide — #563.
  *
  * Le dépôt et l'entrepôt sont des doubles : ce qui est éprouvé ici est ce que
- * le service **ajoute**, et rien d'autre. Quatre choses, et chacune casse en
+ * le service **ajoute**, et rien d'autre. Cinq choses, et chacune casse en
  * silence si personne ne la garde :
  *
  * 1. la clé déposée est **préfixée par l'établissement du contexte**, jamais par
@@ -23,7 +27,10 @@ import { asReportingRepository, FakeReportingRepository } from './reporting.doub
  *    fichier derrière lui ;
  * 3. la re-signature vérifie l'existence sous le préfixe de l'appelant, d'où le
  *    404 du voisin ;
- * 4. la durée de vie annoncée est celle qui a été signée, et elle est bornée.
+ * 4. la durée de vie annoncée est celle qui a été signée, et elle est bornée ;
+ * 5. le **taux de taxe** passé au sérialiseur est celui de l'établissement de
+ *    l'appel, relu à chaque export — jamais une constante, jamais celui du
+ *    précédent appelant (#891).
  */
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -35,6 +42,21 @@ const SEPTEMBRE: ReportWindow = {
   to: new Date('2026-09-30T22:00:00Z'),
 };
 
+/**
+ * Un encaissement de 120,00 € dans la fenêtre — de quoi que le fichier porte une
+ * ligne de revenu, sans quoi il n'y aurait aucun montant à ventiler.
+ */
+const ENCAISSEMENT: StoredPayment = {
+  tenantId: TENANT,
+  date: '2026-09-03',
+  capturedAt: new Date('2026-09-03T14:00:00Z'),
+  method: 'CARD',
+  currency: 'EUR',
+  status: 'SUCCEEDED',
+  amountMinor: 12_000,
+  refundedAmountMinor: 0,
+};
+
 interface Montage {
   readonly service: ReportExportService;
   readonly storage: FakeReportExportStorage;
@@ -43,8 +65,11 @@ interface Montage {
 
 function monter(env: NodeJS.ProcessEnv = { REPORT_EXPORT_BUCKET: 'spa-test-exports' }): Montage {
   const repository = new FakeReportingRepository();
-  repository.seedTenant(TENANT, 'Europe/Paris', 'maison-lotus');
-  repository.seedTenant(VOISIN, 'Pacific/Tahiti', 'lagon-bleu');
+  // Deux taux **différents** : c'est ce qui fait qu'un export produit sous le
+  // mauvais établissement se verrait dans le fichier, et non seulement dans la
+  // clé (#891, critère 3).
+  repository.seedTenant(TENANT, 'Europe/Paris', 'maison-lotus', 2_000);
+  repository.seedTenant(VOISIN, 'Pacific/Tahiti', 'lagon-bleu', 0);
 
   const storage = new FakeReportExportStorage();
   const service = new ReportExportService(
@@ -82,6 +107,33 @@ describe('ReportExportService.create', () => {
 
     expect(objet?.contentType).toBe('text/csv;charset=utf-8');
     expect(objet?.body).toContain('section;cle;libelle;mesure;valeur;devise');
+  });
+
+  it('extrait le hors taxes au taux de l’établissement, relu en base', async () => {
+    const { service, storage, repository } = monter();
+    repository.seedPayment(ENCAISSEMENT);
+
+    await runWithTenant(TENANT, async () => service.create(SEPTEMBRE));
+    const [objet] = [...storage.objects.values()];
+
+    // 120,00 € TTC à 20 % — le taux semé pour `maison-lotus` — font 100,00 € HT.
+    expect(objet?.body).toContain('revenu_total;CARD-EUR;CARD;ht_minor;10000;EUR');
+  });
+
+  it('applique au voisin **son** taux, et non celui de l’appelant précédent', async () => {
+    // Le taux ne se met pas en cache entre deux exports : `lagon-bleu` est à
+    // taux nul, son fichier doit donc porter un hors-taxes égal au brut
+    // (critères 3 et 4 de #891).
+    const { service, storage, repository } = monter();
+    repository.seedPayment(ENCAISSEMENT);
+    repository.seedPayment({ ...ENCAISSEMENT, tenantId: VOISIN });
+
+    await runWithTenant(TENANT, async () => service.create(SEPTEMBRE));
+    await runWithTenant(VOISIN, async () => service.create(SEPTEMBRE));
+    const [chezNous, chezLeVoisin] = [...storage.objects.values()];
+
+    expect(chezNous?.body).toContain('revenu_total;CARD-EUR;CARD;ht_minor;10000;EUR');
+    expect(chezLeVoisin?.body).toContain('revenu_total;CARD-EUR;CARD;ht_minor;12000;EUR');
   });
 
   it('tire une clé différente à chaque appel — deux exports ne s’écrasent pas', async () => {

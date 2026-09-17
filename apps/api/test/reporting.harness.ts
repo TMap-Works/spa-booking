@@ -95,9 +95,12 @@ export async function createReportingHarness(): Promise<ReportingHarness> {
   // et les suites prouveraient la mauvaise chose. Des fuseaux **différents**,
   // pour qu'une confusion d'établissement se voie dans la réponse elle-même.
   // Des slugs différents aussi, pour la même raison — c'est le slug qui nomme le
-  // fichier d'export.
-  repository.seedTenant(harness.a.id, 'Europe/Paris', 'maison-lotus');
-  repository.seedTenant(harness.b.id, 'Pacific/Tahiti', 'lagon-bleu');
+  // fichier d'export. Et des **taux de taxe** différents depuis #891 : c'est le
+  // taux qui décide du hors-taxes de l'export, et 20 % contre 0 % fait qu'un
+  // fichier produit sous le mauvais établissement porte des chiffres faux, pas
+  // seulement un mauvais nom.
+  repository.seedTenant(harness.a.id, 'Europe/Paris', 'maison-lotus', 2_000);
+  repository.seedTenant(harness.b.id, 'Pacific/Tahiti', 'lagon-bleu', 0);
 
   return {
     app: harness.app,

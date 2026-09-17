@@ -65,10 +65,12 @@ export class ReportExportService {
   /**
    * Produit l'export de la fenêtre et rend son URL présignée.
    *
-   * Les cinq lectures partent **ensemble** : aucune ne dépend d'une autre, et
-   * les enchaîner ferait payer cinq allers-retours à un geste déjà lent. C'est
-   * le même arbitrage que celui de l'écran de #75, qui mène exactement les mêmes
-   * cinq lectures de front.
+   * Les lectures partent **ensemble** : aucune ne dépend d'une autre, et les
+   * enchaîner ferait payer autant d'allers-retours à un geste déjà lent. C'est
+   * le même arbitrage que celui de l'écran de #75, qui mène les cinq rapports de
+   * front — les deux lectures d'identité de l'établissement, le slug qui nomme
+   * le fichier et le taux de taxe qui en extrait le hors-taxes (#891), voyagent
+   * dans la même volée et n'ajoutent donc aucune latence.
    *
    * **Les trois axes de volume, et pas seulement `day`.** L'écran de #75
    * exportait l'axe que la gérante avait filtré — par praticien, par prestation
@@ -91,13 +93,14 @@ export class ReportExportService {
     const ttlSeconds = this.requireTtlSeconds();
     const tenantId = requireTenantId('Tenant', 'createReportExport');
 
-    const [revenue, byDay, byStaff, byService, noShows, slug] = await Promise.all([
+    const [revenue, byDay, byStaff, byService, noShows, slug, taxRateBps] = await Promise.all([
       this.reporting.dailyRevenue(window),
       this.reporting.appointmentVolume(window, 'day'),
       this.reporting.appointmentVolume(window, 'staff'),
       this.reporting.appointmentVolume(window, 'service'),
       this.reporting.noShows(window),
       this.requireSlug(),
+      this.requireTaxRateBps(),
     ]);
 
     const exportId = randomUUID();
@@ -110,6 +113,7 @@ export class ReportExportService {
       body: buildReportExportCsv({
         window,
         timeZone: revenue.timeZone,
+        taxRateBps,
         revenue,
         volumes: [byDay, byStaff, byService],
         noShows,
@@ -202,6 +206,31 @@ export class ReportExportService {
     }
 
     return slug;
+  }
+
+  /**
+   * Le taux de taxe de l'établissement courant — ou 404 (#891, critère 3).
+   *
+   * C'est lui qui fait que le hors-taxes du fichier est celui **de
+   * l'établissement de la ligne** et non d'une constante : il est relu en base à
+   * chaque export, par la même portée de tenant que les cinq rapports.
+   *
+   * `tenants.tax_rate_bps` est `NOT NULL DEFAULT 0` — `null` ne peut donc venir
+   * que d'un établissement qui n'existe plus, et la conduite est celle de
+   * {@link requireSlug} et de `ReportingService.requireTimeZone` : 404, la seule
+   * réponse qui n'apprenne rien. Un repli silencieux sur `0` aurait été pire
+   * qu'une erreur — le fichier serait sorti avec un hors-taxes égal au brut, ce
+   * qui est exactement ce qu'un salon à taux nul doit lire, et rien ne l'aurait
+   * distingué d'un chiffre juste.
+   */
+  private async requireTaxRateBps(): Promise<number> {
+    const taxRateBps = await this.repository.currentTaxRateBps();
+
+    if (taxRateBps === null) {
+      throw new NotFoundError('Établissement introuvable.');
+    }
+
+    return taxRateBps;
   }
 
   /**

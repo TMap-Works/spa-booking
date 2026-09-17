@@ -1,3 +1,4 @@
+import { netOf } from '../../payments/pos.totals';
 import {
   REPORT_EXPORT_CSV_HEADER,
   buildReportExportCsv,
@@ -21,6 +22,8 @@ import {
 const CONTENT: ReportExportContent = {
   window: { from: new Date('2026-08-31T22:00:00Z'), to: new Date('2026-09-30T22:00:00Z') },
   timeZone: 'Europe/Paris',
+  /** 20 % — le taux de l'établissement, tel que `tenants.tax_rate_bps` le porte. */
+  taxRateBps: 2_000,
   revenue: {
     window: { from: new Date('2026-08-31T22:00:00Z'), to: new Date('2026-09-30T22:00:00Z') },
     timeZone: 'Europe/Paris',
@@ -122,6 +125,86 @@ describe('buildReportExportCsv', () => {
     expect(rows).toContain('revenu_jour;2026-09-03;2026-09-03 · CARD;rembourse_minor;1500;EUR');
     expect(rows).toContain('revenu_jour;2026-09-03;2026-09-03 · CARD;net_minor;10500;EUR');
     expect(rows).toContain('revenu_total;CARD-EUR;CARD;net_minor;10500;EUR');
+  });
+
+  it('porte le montant hors taxes à côté du brut, par jour et par moyen de paiement', () => {
+    const rows = lines(buildReportExportCsv(CONTENT));
+
+    // 120,00 € TTC à 20 % font 100,00 € HT — le premier critère de #891.
+    expect(rows).toContain('revenu_jour;2026-09-03;2026-09-03 · CARD;ht_minor;10000;EUR');
+    expect(rows).toContain('revenu_total;CARD-EUR;CARD;ht_minor;10000;EUR');
+  });
+
+  it('range le hors taxes **immédiatement après** le brut, jamais ailleurs', () => {
+    // « À côté du brut » se lit dans le fichier, pas seulement dans l'issue :
+    // une mesure rangée après `net_minor` obligerait à chercher dans un tableur.
+    const rows = lines(buildReportExportCsv(CONTENT));
+    const brut = rows.findIndex((line) => line.includes(';brut_minor;'));
+
+    expect(rows[brut + 1]).toContain(';ht_minor;');
+  });
+
+  it('extrait le hors taxes du **brut**, jamais du net de remboursements', () => {
+    // Un remboursement défait une vente ; ce n'est pas une base taxable de
+    // moins. `ht_minor` porte donc sur `brut_minor` (12 000) et non sur
+    // `net_minor` (10 500), dont le hors-taxes vaudrait 8 750.
+    const rows = lines(buildReportExportCsv(CONTENT));
+
+    expect(rows).not.toContain('revenu_jour;2026-09-03;2026-09-03 · CARD;ht_minor;8750;EUR');
+  });
+
+  it('applique le taux reçu, et non un taux écrit dans le sérialiseur', () => {
+    // Le même fichier, le même brut, un autre établissement : si la valeur ne
+    // bougeait pas, c'est qu'une constante aurait remplacé le taux lu en base
+    // (troisième critère de #891).
+    const aDixPourCent = lines(buildReportExportCsv({ ...CONTENT, taxRateBps: 1_000 }));
+
+    expect(aDixPourCent).toContain('revenu_jour;2026-09-03;2026-09-03 · CARD;ht_minor;10909;EUR');
+  });
+
+  it('rend un hors taxes égal au brut pour un établissement à taux nul', () => {
+    // Quatrième critère de #891 : aucune taxe à extraire, le prix affiché *est*
+    // le montant hors taxes.
+    const rows = lines(buildReportExportCsv({ ...CONTENT, taxRateBps: 0 }));
+
+    expect(rows).toContain('revenu_jour;2026-09-03;2026-09-03 · CARD;ht_minor;12000;EUR');
+    expect(rows).toContain('revenu_total;CARD-EUR;CARD;ht_minor;12000;EUR');
+  });
+
+  it('reprend l’arrondi de `netOf`, sans en réinventer un second', () => {
+    // C'est *le* deuxième critère de #891 : 65,00 € à 20 % valent 54,17 € au
+    // comptoir, et doivent valoir 54,17 € dans le fichier. Une règle d'arrondi
+    // recopiée ici rendrait 54,16 € le jour où l'une des deux dérive — c'est la
+    // divergence que #816 vient de corriger.
+    const jour = {
+      date: '2026-09-04',
+      method: 'CASH' as const,
+      currency: 'EUR',
+      transactions: 1,
+      grossAmountMinor: 6_500,
+      refundedAmountMinor: 0,
+      netAmountMinor: 6_500,
+    };
+    const csv = buildReportExportCsv({
+      ...CONTENT,
+      revenue: {
+        ...CONTENT.revenue,
+        days: [jour],
+        totals: [
+          {
+            method: 'CASH',
+            currency: 'EUR',
+            transactions: 1,
+            grossAmountMinor: 6_500,
+            refundedAmountMinor: 0,
+            netAmountMinor: 6_500,
+          },
+        ],
+      },
+    });
+
+    expect(netOf(6_500, 2_000)).toBe(5_417);
+    expect(lines(csv)).toContain('revenu_jour;2026-09-04;2026-09-04 · CASH;ht_minor;5417;EUR');
   });
 
   it('n’écrit aucun montant en unité principale — pas un seul séparateur décimal', () => {
