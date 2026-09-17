@@ -131,8 +131,18 @@ export default async function AccountPage({ params, searchParams }: AccountPageP
           <h2 className="spa-account__section-title" id="rdv-a-venir">
             Rendez-vous à venir
           </h2>
+          {/* La légende répond à ce que la pastille « À confirmer par le salon »
+              laisse ouvert : ce qu'on attend, de qui, et pendant combien de
+              temps (#743). Le créneau est **déjà** retenu — `pending` fait
+              partie des `BLOCKING_APPOINTMENT_STATUSES`, la contrainte
+              d'exclusion l'oppose à toute autre réservation —, si bien que
+              l'attente ne coûte rien à la cliente et ne lui demande rien.
+              Aucun délai chiffré n'est annoncé : l'API n'en expose aucun, et
+              en inventer un serait une promesse que le salon n'a pas faite. */}
           <p className="spa-account__section-hint">
-            Ceux que vous pouvez encore reporter ou annuler.
+            Ceux que vous pouvez encore reporter ou annuler. Votre créneau est retenu dès la
+            réservation ; le salon confirme le rendez-vous avant votre venue, sans démarche de votre
+            part.
           </p>
         </div>
         <AppointmentList
@@ -156,9 +166,14 @@ export default async function AccountPage({ params, searchParams }: AccountPageP
           <h2 className="spa-account__section-title" id="historique">
             Historique
           </h2>
+          {/* « Non confirmés » complète la liste depuis #743 : un rendez-vous
+              resté `pending` dont l'heure est passée descend ici sans avoir été
+              ni honoré, ni annulé, ni déplacé. Une légende qui ne l'énumère pas
+              ferait de sa ligne une anomalie de tri, exactement comme
+              « Rendez-vous passés » le faisait d'une date future (#744). */}
           <p className="spa-account__section-hint">
-            Vos rendez-vous honorés, annulés ou déplacés — même lorsque leur date n’est pas encore
-            passée.
+            Vos rendez-vous honorés, annulés, déplacés ou restés non confirmés — même lorsque leur
+            date n’est pas encore passée.
           </p>
         </div>
         <AppointmentList

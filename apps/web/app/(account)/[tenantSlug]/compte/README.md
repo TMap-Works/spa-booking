@@ -70,6 +70,30 @@ précisément pourquoi cette moitié ne peut pas s'intituler « Rendez-vous pass
 elle annoncerait un critère de créneau là où elle range par statut (#744,
 CDC §2.4).
 
+## Un rendez-vous pas encore confirmé se dit d'un seul mot
+
+Le produit en avait trois pour le même fait : le tunnel annonçait « Votre
+rendez-vous est enregistré », son bouton disait « Confirmer la réservation », et
+cet espace affichait « En attente de confirmation » sur ce rendez-vous-là, sans
+dire ce qu'on attendait ni de qui (#743).
+
+Le mot est désormais **« À confirmer par le salon »**, et il n'existe qu'une
+fois : `components/appointment-status.ts` l'exporte
+(`PENDING_CONFIRMATION_LABEL`), l'écran terminal du tunnel l'importe. Il nomme
+l'acteur, ce qui lève la contradiction sans mentir — le rendez-vous naît bien
+`PENDING` côté API, et reprendre le « Réservation confirmée » du wireframe
+(Étape 6) aurait contredit la pastille au lieu de l'accorder.
+
+Deux conséquences dans la même ligne :
+
+- **la légende de « Rendez-vous à venir »** dit ce que l'attente attend, et que
+  le créneau est déjà retenu — `pending` fait partie des
+  `BLOCKING_APPOINTMENT_STATUSES`. Aucun délai chiffré : l'API n'en expose
+  aucun ;
+- **la pastille dépend de la moitié**, comme les gestes. Un rendez-vous resté
+  `pending` dont l'heure est passée descend dans l'historique : il s'y lit
+  « Non confirmé », parce qu'il n'y a plus de confirmation à attendre.
+
 ## Un état vide porte toujours une sortie
 
 `docs/design/appointments/states.md` § « Règles générales » : *« Vide : toujours
