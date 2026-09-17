@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { calendarDateInTimeZone } from '@/lib/booking/calendar';
 import { bookingWindow, isNavigableMonth, monthOf, monthRange } from '@/lib/booking/month-grid';
 import { fetchAvailability, fetchMyAppointments, fetchPublicServices } from '@/lib/api-client';
+import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
 
 import { RescheduleForm } from '../../../components/reschedule-form';
 import { accountPath } from '../../../paths';
@@ -120,8 +121,14 @@ export default async function ReschedulePage({ params, searchParams }: Reschedul
   const [tenant, services, upcoming] = await Promise.all([
     accountTenant(tenantSlug),
     fetchPublicServices(tenantSlug),
-    readAccountData(tenantSlug, here, async (accessToken) =>
-      fetchMyAppointments(accessToken, { scope: 'upcoming', limit: MY_APPOINTMENTS_MAX_LIMIT }),
+    readAccountData(
+      tenantSlug,
+      here,
+      async (accessToken) =>
+        fetchMyAppointments(accessToken, { scope: 'upcoming', limit: MY_APPOINTMENTS_MAX_LIMIT }),
+      // Le marqueur de renouvellement, s'il est là : c'est ce qui borne la
+      // tentative à une seule et empêche la chaîne de redirections (#861).
+      isRenewalReturn(query[RENEWAL_PARAM]),
     ),
   ]);
 

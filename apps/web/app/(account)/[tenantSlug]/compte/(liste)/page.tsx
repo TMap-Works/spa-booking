@@ -1,6 +1,7 @@
 import { MY_APPOINTMENTS_DEFAULT_LIMIT } from '@spa/shared';
 
 import { fetchMyAppointments, fetchPublicServices } from '@/lib/api-client';
+import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
 
 import { AppointmentList } from '../components/appointment-list';
 import { accountPath, bookingPath, salonPath } from '../paths';
@@ -79,23 +80,45 @@ export const dynamic = 'force-dynamic';
 
 interface AccountPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
+  /**
+   * Cet écran n'a qu'un paramètre d'URL, et il ne l'écrit pas lui-même : le
+   * marqueur de renouvellement, posé par la route de renouvellement au retour
+   * d'un 401 (#861). Sans lui, la garde retenterait un renouvellement à chaque
+   * rendu et une API qui refuse jusqu'aux jetons qu'elle vient d'émettre
+   * enchaînerait les redirections jusqu'à la page d'erreur du navigateur.
+   *
+   * Facultatif parce que Next le passe toujours et que les doubles de test, eux,
+   * ne le passent pas : l'exiger ferait échouer sur un `undefined` des rendus que
+   * l'application ne produit jamais.
+   */
+  readonly searchParams?: Promise<{ readonly session?: string | readonly string[] }>;
 }
 
-export default async function AccountPage({ params }: AccountPageProps) {
+export default async function AccountPage({ params, searchParams }: AccountPageProps) {
   const { tenantSlug } = await params;
+  const query = (await searchParams) ?? {};
   const here = accountPath(tenantSlug);
 
   const [tenant, services, appointments] = await Promise.all([
     accountTenant(tenantSlug),
     fetchPublicServices(tenantSlug),
-    readAccountData(tenantSlug, here, async (accessToken) =>
-      Promise.all([
-        fetchMyAppointments(accessToken, {
-          scope: 'upcoming',
-          limit: MY_APPOINTMENTS_DEFAULT_LIMIT,
-        }),
-        fetchMyAppointments(accessToken, { scope: 'past', limit: MY_APPOINTMENTS_DEFAULT_LIMIT }),
-      ]),
+    readAccountData(
+      tenantSlug,
+      here,
+      async (accessToken) =>
+        Promise.all([
+          fetchMyAppointments(accessToken, {
+            scope: 'upcoming',
+            limit: MY_APPOINTMENTS_DEFAULT_LIMIT,
+          }),
+          fetchMyAppointments(accessToken, {
+            scope: 'past',
+            limit: MY_APPOINTMENTS_DEFAULT_LIMIT,
+          }),
+        ]),
+      // Le marqueur de renouvellement, s'il est là : c'est ce qui borne la
+      // tentative à une seule et empêche la chaîne de redirections (#861).
+      isRenewalReturn(query[RENEWAL_PARAM]),
     ),
   ]);
 
