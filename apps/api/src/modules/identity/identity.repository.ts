@@ -840,8 +840,16 @@ export class IdentityRepository {
   /**
    * Éteint **toutes** les sessions vivantes d'un compte.
    *
-   * Appelé sur détection de réemploi : si un jeton déjà consommé ressort, on ne
-   * sait pas lequel des deux porteurs est légitime, donc aucun ne garde la main.
+   * Appelée quand c'est le **compte** qui change d'état, et par personne d'autre :
+   * une rétrogradation de rôle et une désactivation voyagent dans des jetons déjà
+   * signés, et resteraient sans effet le temps du renouvellement si la chaîne
+   * n'était pas coupée partout (`users.service.ts`).
+   *
+   * Un réemploi de jeton, lui, n'est pas de cette nature et n'appelle plus cette
+   * méthode depuis #862 : il n'incrimine qu'une session — celle dont l'empreinte
+   * ressort —, et `revokeSession` suffit à l'éteindre. Étendre la révocation au
+   * compte entier déconnectait les autres appareils sans rien ôter à qui aurait
+   * volé le jeton.
    */
   public async revokeAllSessionsOfUser(userId: string): Promise<void> {
     await this.prisma.refreshToken.updateMany({

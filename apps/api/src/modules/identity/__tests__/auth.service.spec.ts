@@ -368,6 +368,34 @@ describe('AuthService', () => {
       expect(repository.sessions.every((session) => session.revokedAt !== null)).toBe(true);
     });
 
+    it('n’éteint que la session réemployée — l’autre appareil reste connecté', async () => {
+      // #862 : la rotation est écrite avant que le navigateur ait reçu le
+      // cookie. Onglet fermé, rechargement en plein vol, navigation annulée —
+      // la réponse se perd, le poste garde l'ancien jeton, et le représente
+      // bien après le délai de grâce. Rien ne distingue ce cookie perdu d'un
+      // cookie volé : la session tombe. Le téléphone, lui, n'a jamais porté ce
+      // jeton et n'a aucune raison de tomber avec elle.
+      const poste = await openSession();
+      const telephone = await inRequest(() =>
+        service.login({ tenantSlug: SLUG, email: 'alice@example.test', password: PASSWORD }),
+      );
+
+      await inRequest(() => service.refresh(poste));
+      ageLastRotation();
+
+      await expect(inRequest(() => service.refresh(poste))).rejects.toBeInstanceOf(
+        InvalidRefreshTokenError,
+      );
+
+      const [sessionDuPoste, sessionDuTelephone] = repository.sessions;
+      expect(sessionDuPoste?.revokedAt).toBeInstanceOf(Date);
+      expect(sessionDuTelephone?.revokedAt).toBeNull();
+
+      // Et le second appareil renouvelle encore, sans rien avoir à ressaisir.
+      const suite = await inRequest(() => service.refresh(telephone.refreshToken));
+      expect(suite.refreshToken).not.toBeNull();
+    });
+
     describe('renouvellements concurrents — #856', () => {
       it('garde trace de l’empreinte remplacée et de l’instant de la rotation', async () => {
         const first = await openSession();
