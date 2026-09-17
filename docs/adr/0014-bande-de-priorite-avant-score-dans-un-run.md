@@ -1,4 +1,4 @@
-# ADR 0013 — La bande de priorité passe avant le score d'importance dans un run de jalon
+# ADR 0014 — La bande de priorité passe avant le score d'importance dans un run de jalon
 
 - **Statut** : Accepté
 - **Date** : 2026-09-17
