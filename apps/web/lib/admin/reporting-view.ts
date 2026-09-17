@@ -44,6 +44,10 @@
 
 import type { CalendarDate } from '@spa/shared';
 
+import {
+  appointmentStatusLabelInSentence,
+  appointmentStatusPluralLabelInSentence,
+} from '../appointment-status';
 import { addCalendarDays } from '../booking/calendar';
 import type {
   AppointmentStatusCounts,
@@ -402,6 +406,79 @@ function emptyCounts(): AppointmentStatusCounts {
   return { pending: 0, confirmed: 0, completed: 0, cancelled: 0, no_show: 0 };
 }
 
+/**
+ * Les rendez-vous de la période qui n'ont pas encore été jugés — `pending` et
+ * `confirmed` fondus en un seul compte.
+ *
+ * Écrit ici et pas ailleurs parce que les deux surfaces de l'écran qui nomment
+ * ce paquet — la tuile du volume et la table « Détail des statuts » — doivent le
+ * nommer pareil. C'est le mot que la table employait déjà, en clair dans le JSX ;
+ * le sortir de là est ce qui empêche la tuile d'en inventer un second (#772).
+ *
+ * Il n'a pas sa place dans `lib/appointment-status.ts` : ce n'est pas un statut
+ * du contrat, c'est une **agrégation** que seul le rapport de no-shows impose —
+ * il fond les deux comptes et ne les rend pas séparément.
+ */
+export const UPCOMING_PLURAL_LABEL = 'À venir';
+
+/**
+ * Ce que la tuile du volume dit de son compte — « dont 8 annulés · 7 à venir ».
+ *
+ * ## Le problème qu'elle ferme
+ *
+ * Les trois tuiles de tête ne se tenaient pas au même niveau d'explicitation :
+ * le revenu disait ses encaissements et son remboursé, le taux de no-show disait
+ * son dénominateur, et le volume ne disait que son filtre. Lues côte à côte,
+ * « 17 rendez-vous » et « 50 % de no-shows » se lisaient comme deux faces d'un
+ * même ensemble — alors que le taux portait sur 2 rendez-vous et que 8 des 17
+ * étaient des annulations. Il fallait descendre de 900 px, jusqu'à la table
+ * « Détail des statuts », pour le découvrir (audit `d20260916-1`, `ds:confiance`).
+ *
+ * ## Ce qu'elle met de côté, et pourquoi ces deux-là
+ *
+ * Les annulations et les rendez-vous à venir : ce sont exactement les deux
+ * paquets que le dénominateur du taux de no-show exclut — « les rendez-vous
+ * arrivés à échéance, annulations exclues », le README du module `reporting`. Les
+ * nommer sur la tuile du volume réconcilie les deux chiffres sans en changer
+ * aucun : ce que l'une retranche, l'autre le dit.
+ *
+ * Un compte nul ne s'écrit pas — « dont 0 annulés » n'apprend rien et allonge une
+ * ligne déjà dense. Quand il n'y a rien à retrancher, la tuile le dit avec **les
+ * mots de sa voisine** plutôt que par le silence : les deux tuiles portent alors
+ * le même ensemble, et c'est précisément ce qu'on veut pouvoir lire.
+ *
+ * `null` sur une période vide : il n'y a pas de zéro à qualifier.
+ */
+export function volumeQualification(activity: ScopedActivity): string | null {
+  if (activity.appointments === 0) {
+    return null;
+  }
+
+  const cancelled = activity.noShows.cancelled;
+  const setAside = [
+    {
+      // Accordé au compte : la table des statuts titre une colonne — toujours
+      // au pluriel — là où la tuile écrit un nombre suivi du mot, et « dont 1
+      // annulés » est une faute que la colonne, elle, ne pouvait pas commettre.
+      // « à venir » est invariable, il n'a pas de singulier à choisir.
+      label:
+        cancelled === 1
+          ? appointmentStatusLabelInSentence('cancelled')
+          : appointmentStatusPluralLabelInSentence('cancelled'),
+      count: cancelled,
+    },
+    { label: inSentence(UPCOMING_PLURAL_LABEL), count: activity.noShows.pending },
+  ].filter((part) => part.count > 0);
+
+  if (setAside.length === 0) {
+    // Même accord : « 1 rendez-vous · tous arrivés à échéance » parlerait d'un
+    // pluriel que la tuile vient d'écrire au singulier.
+    return activity.appointments === 1 ? 'arrivé à échéance' : 'tous arrivés à échéance';
+  }
+
+  return `dont ${setAside.map((part) => `${formatCount(part.count)} ${part.label}`).join(' · ')}`;
+}
+
 /** Le taux tel que l'écran l'écrit — « 3,3 % », ou « — » faute de dénominateur. */
 export function formatRate(rate: number | null): string {
   return rate === null
@@ -416,4 +493,20 @@ export function formatRate(rate: number | null): string {
 /** Un entier tel que l'écran l'écrit — séparateurs de milliers compris. */
 export function formatCount(value: number): string {
   return new Intl.NumberFormat('fr-FR').format(value);
+}
+
+/**
+ * L'initiale d'un libellé ramenée en bas de casse — « À venir » au fil d'une
+ * phrase.
+ *
+ * `lib/appointment-status.ts` tient la même règle pour les libellés de statut, et
+ * ne l'expose pas. La revue de #772 proposait de l'y exporter ; ce ticket ne l'a
+ * pas fait, parce que ce module de vocabulaire est lu par six surfaces — espace
+ * client, tunnel, planning, comptoir, fiche cliente, reporting — et qu'il sort de
+ * l'empreinte d'un ticket qui ne touche que l'écran d'indicateurs. Deux lignes
+ * recopiées valent mieux qu'une modification non recettée d'un module partagé ;
+ * la mutualisation est une issue de suivi.
+ */
+function inSentence(label: string): string {
+  return label.charAt(0).toLocaleLowerCase('fr-FR') + label.slice(1);
 }
