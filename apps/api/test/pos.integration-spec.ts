@@ -194,10 +194,13 @@ describe('POS — rayon retail et ticket de caisse', () => {
       const body = response.body as Record<string, { amountMinor: number; currency: string }> &
         Record<string, unknown>;
 
-      expect(body.subtotal).toEqual({ amountMinor: 10_700, currency: 'EUR' });
-      expect(body.tax).toEqual({ amountMinor: 2140, currency: 'EUR' });
+      // Les prix du catalogue sont TTC (#816) : 107,00 € affichés, dont 17,83 €
+      // de TVA à 20 %. Le total est la somme des prix affichés plus le
+      // pourboire — jamais 133,40 €, comme avant la correction.
+      expect(body.subtotal).toEqual({ amountMinor: 8917, currency: 'EUR' });
+      expect(body.tax).toEqual({ amountMinor: 1783, currency: 'EUR' });
       expect(body.tip).toEqual({ amountMinor: 500, currency: 'EUR' });
-      expect(body.total).toEqual({ amountMinor: 13_340, currency: 'EUR' });
+      expect(body.total).toEqual({ amountMinor: 11_200, currency: 'EUR' });
       expect(body.appointmentId).toBeNull();
       expect(typeof body.createdAt).toBe('string');
       expect(body.createdAt).toMatch(/Z$/);
@@ -427,9 +430,10 @@ describe('POS — rayon retail et ticket de caisse', () => {
         total: { amountMinor: number };
         items: { kind: string }[];
       };
-      // Cinq prestations à 7 000 et cinq lignes de deux articles à 1 000.
-      expect(body.subtotal.amountMinor).toBe(45_000);
-      expect(body.total.amountMinor).toBe(54_000);
+      // Cinq prestations à 7 000 et cinq lignes de deux articles à 1 000 :
+      // 450,00 € affichés, dont 75,00 € de TVA à 20 % (#816).
+      expect(body.subtotal.amountMinor).toBe(37_500);
+      expect(body.total.amountMinor).toBe(45_000);
       // Dix lignes de catalogue, plus la ligne de taxe composée par le serveur.
       expect(body.items).toHaveLength(11);
       expect(body.items.filter((item) => item.kind === 'TAX')).toHaveLength(1);

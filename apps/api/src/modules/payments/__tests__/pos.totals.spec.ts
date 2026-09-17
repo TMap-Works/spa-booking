@@ -1,10 +1,11 @@
 import {
   MAX_SALE_AMOUNT_MINOR,
-  TAX_LINE_LABEL,
   TIP_LINE_LABEL,
   composeSale,
   fitsInAmountColumn,
-  taxOn,
+  netOf,
+  taxIncludedIn,
+  taxLineLabel,
 } from '../pos.totals';
 import type { PricedCatalogItem } from '../pos.types';
 
@@ -16,6 +17,9 @@ import type { PricedCatalogItem } from '../pos.types';
  * Aucune base, aucun serveur, aucun double : `composeSale` est une fonction, et
  * c'est précisément ce qui rend le calcul d'argent exerçable centime par
  * centime.
+ *
+ * Depuis #816, les prix du catalogue sont **TTC** et la taxe s'en extrait : ce
+ * que cette suite exerce d'abord, c'est cette extraction et son arrondi.
  */
 
 const EUR = 'EUR';
@@ -42,29 +46,70 @@ function product(overrides: Partial<PricedCatalogItem> = {}): PricedCatalogItem 
   };
 }
 
-describe('taxOn — la taxe en points de base', () => {
-  it('ne compose rien à taux nul', () => {
-    expect(taxOn(10_000, 0)).toBe(0);
+describe('netOf / taxIncludedIn — la TVA extraite du prix TTC (#816, critère 1)', () => {
+  it('rend l’exemple de l’issue : 65,00 € à 20 % donnent 54,17 € HT et 10,83 € de TVA', () => {
+    // `arrondi(6500 × 10000 / 12000)` = `arrondi(5416,66…)` = 5417.
+    expect(netOf(6500, 2000)).toBe(5417);
+    expect(taxIncludedIn(6500, 2000)).toBe(1083);
   });
 
-  it('applique un taux entier exactement', () => {
-    // 20 % de 100,00 € = 20,00 €.
-    expect(taxOn(10_000, 2000)).toBe(2000);
+  it('ventile 89,00 € à 20 % en 74,17 € HT et 14,83 € de TVA', () => {
+    // Le ticket du constat : une prestation à 65,00 € et un article à 24,00 €.
+    expect(netOf(8900, 2000)).toBe(7417);
+    expect(taxIncludedIn(8900, 2000)).toBe(1483);
   });
 
-  it('arrondit au centime le plus proche, sans jamais passer par un flottant', () => {
-    // 5,5 % de 3,33 € vaut 0,18315 € : le centime le plus proche est 18.
-    expect(taxOn(333, 550)).toBe(18);
-    // 5,5 % de 1,00 € vaut 0,055 € — la demie exacte, arrondie au supérieur.
-    expect(taxOn(100, 550)).toBe(6);
+  it('laisse le prix intact à taux nul — septième critère de #816', () => {
+    expect(netOf(8900, 0)).toBe(8900);
+    expect(taxIncludedIn(8900, 0)).toBe(0);
   });
 
-  it('reste exact sur une base proche de la borne d’une colonne', () => {
-    // Le produit `base × taux` vaut ici ≈ 2,1 × 10^13, très en deçà de
-    // `Number.MAX_SAFE_INTEGER` : aucune perte de précision, donc aucun centime
-    // qui se déplacerait selon la taille du ticket.
-    expect(Number.isSafeInteger(taxOn(MAX_SALE_AMOUNT_MINOR, 10_000))).toBe(true);
-    expect(taxOn(MAX_SALE_AMOUNT_MINOR, 10_000)).toBe(MAX_SALE_AMOUNT_MINOR);
+  it('refait exactement le prix affiché, quel que soit le taux', () => {
+    // La propriété qui porte tout le reste : la taxe est obtenue **par
+    // différence**, donc `ht + tva` ne peut pas s'écarter du TTC d'un centime —
+    // c'est ce qui garantit qu'une cliente paie le prix qu'elle a lu.
+    for (const taxRateBps of [0, 1, 550, 2000, 2100, 1755, 10_000]) {
+      for (const grossAmountMinor of [0, 1, 99, 100, 333, 6500, 8900, 123_457]) {
+        expect(netOf(grossAmountMinor, taxRateBps) + taxIncludedIn(grossAmountMinor, taxRateBps)).toBe(
+          grossAmountMinor,
+        );
+      }
+    }
+  });
+
+  it('arrondit au centime le plus proche, la demie au supérieur', () => {
+    // 3 unités à 100 % : la part hors taxe vaut exactement 1,5 — la demie, qui
+    // monte. C'est l'arrondi commercial usuel, et il est documenté comme tel
+    // dans `roundedQuotient`.
+    expect(netOf(3, 10_000)).toBe(2);
+    expect(taxIncludedIn(3, 10_000)).toBe(1);
+  });
+
+  it('reste exact sur un dénominateur impair', () => {
+    // `10 000 + 1` : la demie du dénominateur n'est pas un entier, et c'est
+    // précisément le cas que `floor((2n + d) / 2d)` existe pour traiter.
+    expect(netOf(10_001, 1)).toBe(10_000);
+    expect(taxIncludedIn(10_001, 1)).toBe(1);
+  });
+
+  it('n’emploie que des entiers, et reste sûr jusqu’à la borne d’une colonne', () => {
+    // `2 × ttc × 10^4` vaut ici ≈ 4,3 × 10^13, deux ordres de grandeur sous
+    // `Number.MAX_SAFE_INTEGER` : aucun centime ne se déplace selon la taille du
+    // ticket.
+    const net = netOf(MAX_SALE_AMOUNT_MINOR, 2000);
+
+    expect(Number.isSafeInteger(net)).toBe(true);
+    expect(net + taxIncludedIn(MAX_SALE_AMOUNT_MINOR, 2000)).toBe(MAX_SALE_AMOUNT_MINOR);
+  });
+});
+
+describe('taxLineLabel — la ligne de taxe dit qu’elle est comprise', () => {
+  it('nomme le taux tel qu’il s’imprime sur un reçu français', () => {
+    expect(taxLineLabel(2000)).toBe('dont TVA 20 %');
+    expect(taxLineLabel(550)).toBe('dont TVA 5,5 %');
+    expect(taxLineLabel(1755)).toBe('dont TVA 17,55 %');
+    // Le zéro de tête compte : `2,05 %` et non `2,5 %`.
+    expect(taxLineLabel(205)).toBe('dont TVA 2,05 %');
   });
 });
 
@@ -136,12 +181,71 @@ describe('composeSale — le ticket composé côté serveur', () => {
 
     expect(sale.items.map((item) => item.kind)).toEqual(['SERVICE', 'TAX', 'TIP']);
     expect(sale.items[1]).toMatchObject({
-      label: TAX_LINE_LABEL,
+      label: 'dont TVA 20 %',
       quantity: 1,
       serviceId: null,
       productId: null,
     });
     expect(sale.items[2]).toMatchObject({ label: TIP_LINE_LABEL, quantity: 1 });
+  });
+
+  it('porte les prix affichés sur les lignes, et la taxe en **ventilation** — #816, critère 2', () => {
+    // Le ticket du constat de l'issue : 65,00 € de prestation et 24,00 €
+    // d'article, annoncés TTC. Ce que la cliente doit est 89,00 €, et non
+    // 106,80 € comme avant #816.
+    const sale = composeSale({
+      currency: EUR,
+      taxRateBps: 2000,
+      items: [
+        service({ unitPrice: { amountMinor: 6500, currency: EUR } }),
+        product({ unitPrice: { amountMinor: 2400, currency: EUR } }),
+      ],
+      tipAmountMinor: 0,
+    });
+
+    // Les lignes de catalogue gardent le prix affiché, taxe comprise.
+    expect(sale.items[0]?.lineAmount.amountMinor).toBe(6500);
+    expect(sale.items[1]?.lineAmount.amountMinor).toBe(2400);
+    // La ligne de taxe redécoupe ces montants ; elle ne s'y ajoute pas.
+    expect(sale.items[2]).toMatchObject({
+      kind: 'TAX',
+      label: 'dont TVA 20 %',
+      lineAmount: { amountMinor: 1483, currency: EUR },
+    });
+
+    expect(sale.subtotalAmountMinor).toBe(7417);
+    expect(sale.taxAmountMinor).toBe(1483);
+    expect(sale.totalAmountMinor).toBe(8900);
+  });
+
+  it('rend un total égal à la somme des prix affichés, plus le pourboire', () => {
+    // Le deuxième critère de #816, écrit comme une égalité : le total ne dépend
+    // plus du taux, seulement de ce qui a été annoncé.
+    const items = [service({ quantity: 2 }), product({ quantity: 3 })];
+    const displayed = 7000 * 2 + 1850 * 3;
+
+    for (const taxRateBps of [0, 550, 2000, 10_000]) {
+      const sale = composeSale({ currency: EUR, taxRateBps, items, tipAmountMinor: 777 });
+
+      expect(sale.totalAmountMinor).toBe(displayed + 777);
+      expect(sale.subtotalAmountMinor + sale.taxAmountMinor).toBe(displayed);
+    }
+  });
+
+  it('laisse un établissement sans taxe totalement inchangé — #816, critère 7', () => {
+    // Barber Tana : `tax_rate_bps` à zéro. Aucune ligne de taxe, un sous-total
+    // qui vaut les prix affichés, un total qui vaut la somme.
+    const sale = composeSale({
+      currency: 'MGA',
+      taxRateBps: 0,
+      items: [service({ unitPrice: { amountMinor: 40_000, currency: 'MGA' } })],
+      tipAmountMinor: 5000,
+    });
+
+    expect(sale.items.map((item) => item.kind)).toEqual(['SERVICE', 'TIP']);
+    expect(sale.subtotalAmountMinor).toBe(40_000);
+    expect(sale.taxAmountMinor).toBe(0);
+    expect(sale.totalAmountMinor).toBe(45_000);
   });
 
   it('n’ajoute aucune ligne pour une taxe ou un pourboire nuls', () => {
@@ -158,9 +262,10 @@ describe('composeSale — le ticket composé côté serveur', () => {
     expect(sale.tipAmountMinor).toBe(0);
   });
 
-  it('assoit la taxe sur le sous-total, jamais sur le pourboire', () => {
+  it('extrait la taxe des seules lignes du catalogue, jamais du pourboire', () => {
     // Un pourboire n'est pas une prestation vendue : le taxer serait une erreur
-    // comptable autant qu'un mauvais service rendu à qui l'a laissé.
+    // comptable autant qu'un mauvais service rendu à qui l'a laissé. Il entre
+    // donc au total sans passer par l'extraction.
     const sale = composeSale({
       currency: EUR,
       taxRateBps: 2000,
@@ -168,8 +273,10 @@ describe('composeSale — le ticket composé côté serveur', () => {
       tipAmountMinor: 10_000,
     });
 
-    expect(sale.taxAmountMinor).toBe(1400);
-    expect(sale.totalAmountMinor).toBe(7000 + 1400 + 10_000);
+    // 70,00 € TTC à 20 % : 58,33 € HT et 11,67 € de TVA.
+    expect(sale.subtotalAmountMinor).toBe(5833);
+    expect(sale.taxAmountMinor).toBe(1167);
+    expect(sale.totalAmountMinor).toBe(7000 + 10_000);
   });
 
   it('numérote les lignes dans l’ordre du comptoir, taxe et pourboire en queue', () => {

@@ -137,12 +137,39 @@ export type SaleItemDraft = Omit<SaleItem, 'id'>;
  * Rien ici ne vient de l'appelant hormis les quantités, les références et le
  * pourboire. C'est le résultat de `composeSale`, et c'est ce que le dépôt écrit
  * — jamais un montant qui aurait traversé HTTP.
+ *
+ * ## Les prix du catalogue sont TTC (#816)
+ *
+ * Les lignes `SERVICE` et `PRODUCT` portent le prix **affiché** — celui du
+ * tunnel, celui du reçu, taxe comprise. Les quatre montants ci-dessous en
+ * découlent par **extraction**, jamais par addition : c'est la correction de
+ * #816, et c'est ce qui fait qu'un soin annoncé 65,00 € se facture 65,00 €.
  */
 export interface ComposedSale {
   readonly currency: string;
+  /**
+   * La part **hors taxe** des lignes du catalogue —
+   * `arrondi(ttc × 10 000 / (10 000 + taux))`.
+   *
+   * Jusqu'à #816, c'était la somme des prix affichés, sur laquelle la taxe
+   * s'ajoutait ensuite. Le nom de la colonne n'a pas changé, son sens si : voir
+   * le README du module.
+   */
   readonly subtotalAmountMinor: number;
+  /**
+   * La taxe **comprise dans** les prix affichés — `ttc − ht`, jamais un montant
+   * de plus à payer.
+   */
   readonly taxAmountMinor: number;
+  /** Le pourboire, hors taxe par nature : ce n'est pas une prestation vendue. */
   readonly tipAmountMinor: number;
+  /**
+   * Ce que la cliente doit : `sous-total + taxe + pourboire`, c'est-à-dire la
+   * **somme des prix affichés** plus le pourboire.
+   *
+   * La forme est celle que `sales_total_amount_minor_check` vérifie en base, et
+   * elle tient telle quelle depuis que `subtotal` est le montant hors taxe.
+   */
   readonly totalAmountMinor: number;
   readonly items: readonly SaleItemDraft[];
 }

@@ -8,6 +8,30 @@ import type { ComposedSale, PricedCatalogItem, SaleItemDraft } from './pos.types
  * le calcul d'argent est exactement le genre de code dont on veut cette
  * couverture-là (CLAUDE.md, « unitaires : logique métier pure … montants »).
  *
+ * ## Le prix du catalogue est un prix **TTC** (#816)
+ *
+ * C'est la correction que ce fichier porte, et elle change le sens de deux de
+ * ses quatre montants. Jusqu'à #816, la taxe était **ajoutée** au sous-total :
+ * un soin annoncé 65,00 € dans le tunnel se facturait 78,00 € à la caisse, et le
+ * même rendez-vous réglé au comptoir n'encaissait que 65,00 € — la même
+ * prestation avait deux prix selon le chemin d'encaissement.
+ *
+ * En France, un prix annoncé au consommateur s'entend toutes taxes comprises
+ * (arrêté du 3 décembre 1987 relatif à l'information du consommateur sur les
+ * prix). Le prix du catalogue est donc le prix **dû**, et la TVA s'en
+ * **extrait** :
+ *
+ * ```
+ * ht  = arrondi(ttc × 10 000 / (10 000 + taux))
+ * tva = ttc − ht
+ * ```
+ *
+ * 65,00 € à 20 % donnent 54,17 € HT et 10,83 € de TVA, dont la somme fait
+ * exactement les 65,00 € affichés. Ce qu'un ticket additionne n'a pas changé de
+ * forme — `total = sous-total + taxe + pourboire` reste vrai, et
+ * `sales_total_amount_minor_check` le vérifie en base — mais `sous-total` est
+ * désormais le **montant hors taxe**, et non plus la somme des prix affichés.
+ *
  * ## Les trois invariants qu'elle tient
  *
  * 1. **Aucun montant ne vient de l'appelant, sauf le pourboire.** Les prix
@@ -16,23 +40,15 @@ import type { ComposedSale, PricedCatalogItem, SaleItemDraft } from './pos.types
  *    pourrait entrer. Le pourboire est la seule exception, et il n'en est une
  *    que parce qu'il n'existe dans aucune table à relire.
  * 2. **Rien n'est calculé en flottant.** Tout est entier, dans la plus petite
- *    unité monétaire, et le taux de taxe est en points de base pour que la
- *    seule division du calcul reste entière (payments-stripe §5).
- * 3. **Taxes et pourboires sont des lignes**, jamais des colonnes fondues dans
- *    un prix — cinquième critère de #60, et payments-stripe §5.
+ *    unité monétaire, et le taux de taxe est en points de base pour que les
+ *    deux divisions du calcul restent entières (payments-stripe §5).
+ * 3. **La taxe reste une ligne**, jamais un montant fondu dans un prix
+ *    (payments-stripe §5, cinquième critère de #60) — mais c'est désormais une
+ *    ligne de **ventilation**, « dont TVA 20 % », et non plus un montant ajouté.
  */
 
 /** Le dénominateur des points de base : `2000 bps` valent 20 %. */
 const BPS_DENOMINATOR = 10_000;
-
-/**
- * Moitié du dénominateur, pour un arrondi au centime le plus proche.
- *
- * `floor((base × taux + 5000) / 10000)` est l'arrondi arithmétique classique
- * écrit en entiers : il évite `Math.round`, qui aurait exigé de passer par un
- * quotient fractionnaire — donc par le seul type que ce chemin n'admet pas.
- */
-const BPS_ROUNDING_OFFSET = BPS_DENOMINATOR / 2;
 
 /**
  * Rang des deux lignes composées par le serveur, relativement aux lignes du
@@ -51,9 +67,46 @@ const COMPOSED_LINE_ORDER = ['TAX', 'TIP'] as const;
  */
 export const MAX_SALE_AMOUNT_MINOR = 2_147_483_647;
 
-/** Libellés des deux lignes composées, tels qu'ils apparaissent sur le reçu. */
-export const TAX_LINE_LABEL = 'Taxe';
+/** Libellé de la ligne de pourboire, tel qu'il apparaît sur le reçu. */
 export const TIP_LINE_LABEL = 'Pourboire';
+
+/**
+ * Le taux en toutes lettres — `2000` bps donnent `« 20 »`, `550` donnent
+ * `« 5,5 »`.
+ *
+ * Écrit en arithmétique entière comme tout le reste de ce fichier, alors qu'un
+ * libellé n'aurait rien fait perdre en passant par un flottant : `bps / 100`
+ * rendrait `17.549999999999997` sur un taux de 1755, et un reçu qui affiche un
+ * taux faux se lit comme un reçu qui affiche un montant faux.
+ *
+ * Virgule décimale et non point : c'est un libellé français, imprimé tel quel.
+ */
+function formatTaxRate(taxRateBps: number): string {
+  const units = Math.floor(taxRateBps / 100);
+  const hundredths = taxRateBps % 100;
+
+  if (hundredths === 0) {
+    return String(units);
+  }
+
+  // `5,5 %` et non `5,50 %` — mais `2,05 %` garde son zéro de tête, sans quoi il
+  // se lirait `2,5 %`.
+  const decimals =
+    hundredths % 10 === 0 ? String(hundredths / 10) : String(hundredths).padStart(2, '0');
+
+  return `${units},${decimals}`;
+}
+
+/**
+ * Le libellé de la ligne de taxe — **une ventilation**, pas un supplément (#816).
+ *
+ * « dont TVA 20 % » dit ce que la ligne est : la part de taxe **déjà comprise**
+ * dans les prix au-dessus. L'ancien libellé, « Taxe », se lisait comme une ligne
+ * de plus à payer — ce qu'elle était, et ce qui était le bug.
+ */
+export function taxLineLabel(taxRateBps: number): string {
+  return `dont TVA ${formatTaxRate(taxRateBps)} %`;
+}
 
 export interface SaleComposition {
   /** La devise de l'établissement — celle du ticket entier. */
@@ -84,26 +137,89 @@ export function fitsInAmountColumn(sale: ComposedSale): boolean {
 }
 
 /**
- * La taxe due sur une base hors taxe, au centime le plus proche.
+ * `arrondi(numérateur / dénominateur)` au plus proche, la demie au supérieur,
+ * **sans jamais former le quotient fractionnaire**.
  *
- * Le produit `base × taux` peut atteindre `2^31 × 10^4 ≈ 2,1 × 10^13`, très en
- * deçà de `Number.MAX_SAFE_INTEGER` : le calcul reste exact en entiers, sans
- * qu'aucune étape ne passe par une valeur fractionnaire.
+ * `floor((2n + d) / 2d)` plutôt que `floor((n + d/2) / d)` : `d` vaut ici
+ * `10 000 + taux` et peut être **impair** — un taux de 1 point de base suffit —,
+ * auquel cas `d / 2` n'est pas un entier et l'arrondi partirait d'un demi-centime
+ * décalé. Doubler les deux termes garde chaque étape entière, quel que soit le
+ * taux.
+ *
+ * ## Pourquoi la demie monte, et ce que cela coûte
+ *
+ * C'est l'arrondi commercial usuel, celui de l'administration fiscale française
+ * comme celui que le tunnel affiche. Il fait pencher la part **hors taxe** d'un
+ * demi-centime au maximum, jamais le total : la taxe étant obtenue par
+ * différence (`ttc − ht`), le prix que la cliente paie reste au centime près
+ * celui qui lui a été annoncé — l'écart d'arrondi ne se déplace qu'entre les
+ * deux parts d'un montant qui, lui, ne bouge pas.
+ *
+ * ## Pourquoi il n'y a pas de dépassement
+ *
+ * `2 × n` vaut au plus `2 × 2^31 × 10^4 ≈ 4,3 × 10^13`, soit deux ordres de
+ * grandeur sous `Number.MAX_SAFE_INTEGER` (≈ 9 × 10^15) : le calcul est exact,
+ * et le reste pour n'importe quel ticket qu'une colonne `INTEGER` accepte.
  */
-export function taxOn(baseAmountMinor: number, taxRateBps: number): number {
+function roundedQuotient(numerator: number, denominator: number): number {
+  return Math.floor((2 * numerator + denominator) / (2 * denominator));
+}
+
+/**
+ * La part **hors taxe** d'un prix toutes taxes comprises, au centime le plus
+ * proche — `ht = arrondi(ttc × 10 000 / (10 000 + taux))` (#816, critère 1).
+ *
+ * 65,00 € à 20 % rendent 54,17 € : `arrondi(6500 × 10000 / 12000)` vaut
+ * `arrondi(5416,66…)`, donc `5417`.
+ *
+ * Le court-circuit à taux nul n'est pas qu'une économie : il rend littéral le
+ * septième critère de #816 — un établissement sans taux garde des totaux
+ * inchangés, et le prix affiché *est* le montant hors taxe.
+ */
+export function netOf(grossAmountMinor: number, taxRateBps: number): number {
   if (taxRateBps === 0) {
-    return 0;
+    return grossAmountMinor;
   }
 
-  return Math.floor((baseAmountMinor * taxRateBps + BPS_ROUNDING_OFFSET) / BPS_DENOMINATOR);
+  return roundedQuotient(grossAmountMinor * BPS_DENOMINATOR, BPS_DENOMINATOR + taxRateBps);
+}
+
+/**
+ * La taxe **comprise dans** un prix toutes taxes comprises — `tva = ttc − ht`.
+ *
+ * Obtenue par différence et non par un second arrondi : c'est ce qui garantit
+ * que `ht + tva` refait exactement le prix affiché, quel que soit le taux. Un
+ * `arrondi(ttc × taux / (10 000 + taux))` calculé séparément pourrait, lui,
+ * rendre un centime de trop ou de moins.
+ */
+export function taxIncludedIn(grossAmountMinor: number, taxRateBps: number): number {
+  return grossAmountMinor - netOf(grossAmountMinor, taxRateBps);
 }
 
 /**
  * Compose le ticket définitif : les lignes, leur ordre, et les quatre montants.
  *
- * La taxe porte sur le **sous-total hors pourboire**, et non sur le total : un
- * pourboire n'est pas une prestation vendue, le taxer serait une erreur
- * comptable autant qu'un mauvais service rendu à la personne qui l'a laissé.
+ * ## Ce que chaque montant veut dire (#816, critère 3)
+ *
+ * | Montant | Ce qu'il porte |
+ * |---|---|
+ * | `subtotalAmountMinor` | la part **hors taxe** des lignes du catalogue |
+ * | `taxAmountMinor` | la taxe **comprise dans** les prix affichés |
+ * | `tipAmountMinor` | le pourboire, hors taxe par nature |
+ * | `totalAmountMinor` | ce que la cliente doit : `sous-total + taxe + pourboire`, c'est-à-dire la somme des prix affichés plus le pourboire |
+ *
+ * Le pourboire n'est **pas** taxé, et n'entre donc dans aucune extraction : ce
+ * n'est pas une prestation vendue, le taxer serait une erreur comptable autant
+ * qu'un mauvais service rendu à la personne qui l'a laissé.
+ *
+ * ## Ce que la somme des lignes vaut, et ce qu'elle ne vaut pas
+ *
+ * Les lignes `SERVICE` et `PRODUCT` portent des prix **TTC** — ceux du
+ * catalogue, ceux du reçu. La ligne `TAX` en est la ventilation : elle
+ * **redécoupe** ces montants, elle ne s'y ajoute pas. Additionner les
+ * `lineAmount` d'un ticket compterait donc la taxe deux fois, et ne donne pas le
+ * total. Le total est `totalAmountMinor`, écrit par le serveur et vérifié en
+ * base — c'est déjà la règle que le front suit (`saleTotalRows` ne somme rien).
  *
  * Les lignes `TAX` et `TIP` ne sont composées que si elles portent quelque
  * chose. Un ticket sans taxe et sans pourboire n'a donc que ses articles — deux
@@ -113,11 +229,17 @@ export function taxOn(baseAmountMinor: number, taxRateBps: number): number {
 export function composeSale(input: SaleComposition): ComposedSale {
   const items: SaleItemDraft[] = [];
   let position = 0;
-  let subtotalAmountMinor = 0;
+
+  /**
+   * La somme des prix **affichés** — ce que la cliente a lu dans le tunnel ou
+   * au comptoir, taxe comprise. C'est de ce montant que la taxe s'extrait, et
+   * c'est lui qu'on retrouve au centime près dans le total.
+   */
+  let grossAmountMinor = 0;
 
   for (const item of input.items) {
     const lineAmountMinor = item.unitPrice.amountMinor * item.quantity;
-    subtotalAmountMinor += lineAmountMinor;
+    grossAmountMinor += lineAmountMinor;
 
     items.push({
       kind: item.kind,
@@ -135,12 +257,15 @@ export function composeSale(input: SaleComposition): ComposedSale {
     position += 1;
   }
 
-  const taxAmountMinor = taxOn(subtotalAmountMinor, input.taxRateBps);
+  const subtotalAmountMinor = netOf(grossAmountMinor, input.taxRateBps);
+  // Par différence, jamais par un second arrondi : `sous-total + taxe` doit
+  // refaire exactement la somme des prix affichés.
+  const taxAmountMinor = grossAmountMinor - subtotalAmountMinor;
   const tipAmountMinor = input.tipAmountMinor;
 
   const composed: Record<(typeof COMPOSED_LINE_ORDER)[number], { amount: number; label: string }> =
     {
-      TAX: { amount: taxAmountMinor, label: TAX_LINE_LABEL },
+      TAX: { amount: taxAmountMinor, label: taxLineLabel(input.taxRateBps) },
       TIP: { amount: tipAmountMinor, label: TIP_LINE_LABEL },
     };
 
@@ -172,6 +297,10 @@ export function composeSale(input: SaleComposition): ComposedSale {
     subtotalAmountMinor,
     taxAmountMinor,
     tipAmountMinor,
+    // `grossAmountMinor + tipAmountMinor` écrit autrement : la taxe étant
+    // extraite, `sous-total + taxe` **est** la somme des prix affichés. La forme
+    // est gardée parce que c'est celle que `sales_total_amount_minor_check`
+    // vérifie en base.
     totalAmountMinor: subtotalAmountMinor + taxAmountMinor + tipAmountMinor,
     items,
   };

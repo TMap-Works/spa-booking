@@ -286,10 +286,21 @@ export class SaleDto {
   })
   public cashierUserId!: string;
 
-  @ApiProperty({ type: MoneyDto, description: 'Somme des lignes `SERVICE` et `PRODUCT`.' })
+  @ApiProperty({
+    type: MoneyDto,
+    description:
+      'Part **hors taxe** des lignes `SERVICE` et `PRODUCT`. Les prix du ' +
+      'catalogue étant TTC depuis #816, ce montant est **plus petit** que la ' +
+      'somme de leurs `lineAmount` — la taxe s’en extrait au lieu de s’y ajouter.',
+  })
   public subtotal!: MoneyDto;
 
-  @ApiProperty({ type: MoneyDto, description: 'Somme des lignes `TAX`.' })
+  @ApiProperty({
+    type: MoneyDto,
+    description:
+      'Somme des lignes `TAX` — la taxe **comprise dans** les prix affichés, ' +
+      'une ventilation et non un montant de plus à payer.',
+  })
   public tax!: MoneyDto;
 
   @ApiProperty({ type: MoneyDto, description: 'Somme des lignes `TIP`.' })
