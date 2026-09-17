@@ -1,10 +1,10 @@
-import { Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
 
 import { StructuredLogger } from '../../common/logging/structured-logger';
 import { TenantContextService } from '../../common/tenant/tenant-context.service';
 import type { AppointmentCancelledEvent } from '../appointments/events/appointment-cancelled.event';
 import { AppointmentEvents } from '../appointments/events/appointment-events';
-import { NotificationDispatchService } from './notification-dispatch.service';
+import { NOTIFICATION_PUBLISHER, type NotificationPublisher } from './notification-publisher';
 import { NotificationsRepository } from './notifications.repository';
 import {
   appointmentDedupeKey,
@@ -73,12 +73,28 @@ import {
  * sur l'implémentation du bus, et `AppointmentCancelledEvent` porte `tenantId`
  * précisément pour ne pas avoir à le faire.
  *
+ * ## Il **publie** depuis #799, il n'expédie plus
+ *
+ * `NOTIFICATION_PUBLISHER` a pris la place de `NotificationDispatchService` —
+ * septième critère d'acceptation de #799, et même raison que pour la
+ * confirmation : « une réservation ne doit jamais échouer parce qu'un e-mail
+ * n'est pas parti » (CDC §4.8). Elle vaut ici avec une nuance de plus : une
+ * annulation qui échouerait à prévenir laisserait une cliente se déplacer pour
+ * un créneau revendu, et le bus en mémoire n'a **aucun rejeu** pour la
+ * rattraper. Une enveloppe en file, elle, est rejouée jusqu'à cinq fois avant
+ * sa DLQ, dont l'alarme parle (notifications §4).
+ *
+ * Ce que l'abonné décide ne change pas : les destinataires, les canaux et les
+ * clés de livraison sont composés exactement comme avant. Seul change jusqu'où
+ * il va.
+ *
  * ## Il ne lève jamais
  *
  * `handle` rattrape lui-même, comme `BookingConfirmationListener` : un abonné qui
  * se repose sur la garde de son émetteur est un abonné dont on ne sait plus, en
- * le lisant, s'il est sûr. Un envoi qui échoue laisse une ligne `FAILED` visible
- * au back-office (`GET /notifications`) et un journal d'erreur.
+ * le lisant, s'il est sûr. Une remise qui échoue laisse un journal d'erreur —
+ * et, quand l'expédition a lieu dans le processus faute de file branchée, une
+ * ligne `FAILED` visible au back-office (`GET /notifications`).
  */
 @Injectable()
 export class CancellationNoticeListener implements OnModuleInit, OnModuleDestroy {
@@ -87,7 +103,7 @@ export class CancellationNoticeListener implements OnModuleInit, OnModuleDestroy
 
   public constructor(
     private readonly events: AppointmentEvents,
-    private readonly dispatch: NotificationDispatchService,
+    @Inject(NOTIFICATION_PUBLISHER) private readonly publisher: NotificationPublisher,
     private readonly repository: NotificationsRepository,
     private readonly tenants: TenantContextService,
     private readonly logger: StructuredLogger,
@@ -144,7 +160,7 @@ export class CancellationNoticeListener implements OnModuleInit, OnModuleDestroy
     }
 
     for (const channel of channels) {
-      await this.dispatchOne(event, recipientUserId, channel);
+      await this.publishOne(event, recipientUserId, channel);
     }
   }
 
@@ -274,7 +290,7 @@ export class CancellationNoticeListener implements OnModuleInit, OnModuleDestroy
   }
 
   /**
-   * Un canal, un message.
+   * Un canal, une enveloppe.
    *
    * L'échec est **absorbé ici**, canal par canal : un SMS qui échoue ne doit pas
    * empêcher l'e-mail suivant de partir, ni l'inverse.
@@ -290,7 +306,7 @@ export class CancellationNoticeListener implements OnModuleInit, OnModuleDestroy
    * `scheduledFor: null` : l'avis est immédiat. Le champ existe pour le rappel
    * J-1, seul message planifié du MVP.
    */
-  private async dispatchOne(
+  private async publishOne(
     event: AppointmentCancelledEvent,
     recipientUserId: string,
     channel: NotificationChannel,
@@ -311,7 +327,7 @@ export class CancellationNoticeListener implements OnModuleInit, OnModuleDestroy
     };
 
     try {
-      await this.dispatch.dispatch(message);
+      await this.publisher.publish(message);
     } catch (error: unknown) {
       this.failed(event, error, channel);
     }
@@ -329,7 +345,7 @@ export class CancellationNoticeListener implements OnModuleInit, OnModuleDestroy
     error: unknown,
     channel?: NotificationChannel,
   ): void {
-    this.logger.error("avis d'annulation non expédié", {
+    this.logger.error("avis d'annulation non remis à la chaîne d'envoi", {
       appointmentId: event.appointmentId,
       ...(channel === undefined ? {} : { channel }),
       error: error instanceof Error ? error.message : `erreur non standard (${typeof error})`,

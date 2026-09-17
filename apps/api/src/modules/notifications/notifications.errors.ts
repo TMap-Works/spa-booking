@@ -1,6 +1,6 @@
 import { NOTIFICATION_ERROR_CODES } from '@spa/shared';
 
-import { DomainError } from '../../common/errors';
+import { BusinessRuleError, DomainError } from '../../common/errors';
 
 /**
  * Erreurs du module `notifications` — le seul fichier d'erreurs du module.
@@ -98,6 +98,53 @@ export class NotificationContextGoneError extends DomainError {
 
   public constructor(appointmentId: string) {
     super("Le rendez-vous que ce message annonce n'existe plus.", { appointmentId });
+  }
+}
+
+/**
+ * Le destinataire n'est plus joignable sur ce canal — #799.
+ *
+ * **422, donc un échec permanent.** C'est la seule chose qui compte pour
+ * l'appelant réel de cette erreur, qui n'est pas un navigateur mais la Lambda
+ * d'envoi : le contrat de `dispatch_url`
+ * (`infra/terraform/modules/notifications/README.md`) classe `422` en « adresse
+ * ou numéro invalide » et l'acquitte auprès de SQS en le comptant dans
+ * `PermanentFailures`. C'est exactement le cinquième critère d'acceptation —
+ * « un numéro non normalisable est un échec **permanent**, pas un rejeu ».
+ *
+ * Rejouer n'y changerait rien : un numéro que SNS ne sait pas composer ne
+ * deviendra pas composable en le répétant cinq fois, et chaque tentative coûte
+ * une invocation, un appel à l'API et une ligne `FAILED` de plus. La métrique
+ * `PermanentFailures` et son alarme sont là pour cela : un destinataire perdu
+ * est invisible dans la profondeur d'une file, puisqu'il n'y reste pas.
+ *
+ * ## Les trois situations qu'elle recouvre
+ *
+ * | Ce que l'expéditeur trouve | Pourquoi rien ne part |
+ * |---|---|
+ * | plus de compte | anonymisé, ou d'un autre établissement — le client scopé traite les deux de la même façon |
+ * | adresse vide sur le canal e-mail | la colonne est `NOT NULL`, une chaîne vide n'est pas une adresse |
+ * | numéro non normalisable en E.164 | SNS ne connaît pas le pays d'où il serait composé ; le compléter au hasard enverrait le message à quelqu'un d'autre |
+ *
+ * ## Ni l'adresse, ni le numéro dans le `details`
+ *
+ * Le canal, et rien d'autre. Un `details` d'erreur est journalisé, et
+ * notifications §7 interdit d'y faire figurer une coordonnée — c'est
+ * précisément la coordonnée fautive qu'on serait tenté d'y mettre pour
+ * diagnostiquer, et c'est celle qui désigne une personne. L'identifiant de la
+ * notification, lui, est déjà au journal de l'expédition.
+ *
+ * ## Elle n'a pas de code propre au module
+ *
+ * `BUSINESS_RULE_VIOLATION` est le code du contrat partagé pour « requête bien
+ * formée, règle métier qui s'y oppose », et c'en est une : l'enveloppe est
+ * valide, c'est le monde qu'elle décrit qui a changé. Le consommateur de cette
+ * réponse lit le **statut**, jamais le code — la Lambda d'envoi ne désérialise
+ * même pas le corps, elle l'annule pour rendre la connexion au pool.
+ */
+export class NotificationRecipientUnreachableError extends BusinessRuleError {
+  public constructor(channel: string) {
+    super("Le destinataire n'est plus joignable sur ce canal de notification.", { channel });
   }
 }
 

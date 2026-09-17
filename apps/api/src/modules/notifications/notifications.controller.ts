@@ -40,6 +40,14 @@ import { ReminderSweepService } from './reminder-sweep.service';
  * ni établissement — et les deux traitements traversent de toute façon tous les
  * établissements. Voir `internal-caller.guard.ts`.
  *
+ * La **troisième** route interne du module, `POST /interne/notifications/dispatch`
+ * (#799), n'est pas ici : son chemin ne part pas de `notifications`, et ce n'est
+ * pas une question de rangement — c'est le contrat que `dispatch_url` désigne
+ * depuis #67, et le segment `interne` sépare à la racine ce qu'une personne
+ * authentifiée peut appeler de ce que seule l'infrastructure appelle. Voir
+ * `notification-dispatch.controller.ts`, qui porte la même garde et le même
+ * jeton.
+ *
  * ## Pourquoi `STAFF` et non `MANAGER`
  *
  * La question à laquelle cette route répond est « ma cliente dit n'avoir rien

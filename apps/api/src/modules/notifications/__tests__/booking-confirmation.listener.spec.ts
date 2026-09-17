@@ -7,6 +7,7 @@ import {
 import { AppointmentEvents } from '../../appointments/events/appointment-events';
 import { BookingConfirmationListener } from '../booking-confirmation.listener';
 import { NotificationDispatchService } from '../notification-dispatch.service';
+import { InProcessNotificationPublisher } from '../notification-publisher';
 import {
   countingSender,
   fakeNotificationsRepository,
@@ -27,6 +28,17 @@ import {
  * « un abonné qui lève ne fait pas échouer la réservation ».
  *
  * Seuls le dépôt (Prisma), le rendu (base) et l'expéditeur (AWS) sont doublés.
+ *
+ * ## Le publieur est celui **en processus**, et c'est le bon choix ici
+ *
+ * Depuis #799, l'écouteur remet son enveloppe à `NOTIFICATION_PUBLISHER` au lieu
+ * d'appeler l'expédition. Ces suites montent `InProcessNotificationPublisher`,
+ * qui est l'implémentation servie quand aucune file n'est branchée : le
+ * comportement observé reste donc celui qu'elles décrivent — une ligne `FAILED`
+ * par canal en échec, une boucle qui ne s'interrompt pas, un abonné qui ne lève
+ * jamais. Monter le publieur SQS aurait doublé un client AWS pour ne rien
+ * prouver de plus : ce que ces cas établissent est le **branchement** de
+ * l'écouteur, pas le transport.
  */
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -65,7 +77,7 @@ function build() {
 
   const listener = new BookingConfirmationListener(
     events,
-    dispatch,
+    new InProcessNotificationPublisher(dispatch),
     repository.repository,
     tenants,
     logger.logger,
@@ -222,7 +234,7 @@ describe('notifications — un abonné qui échoue ne fait échouer personne', (
     );
     const listener = new BookingConfirmationListener(
       new AppointmentEvents(logger.logger),
-      dispatch,
+      new InProcessNotificationPublisher(dispatch),
       repository.repository,
       new TenantContextService(),
       logger.logger,
@@ -244,7 +256,7 @@ describe('notifications — un abonné qui échoue ne fait échouer personne', (
     );
     const listener = new BookingConfirmationListener(
       new AppointmentEvents(logger.logger),
-      dispatch,
+      new InProcessNotificationPublisher(dispatch),
       repository.repository,
       new TenantContextService(),
       logger.logger,
@@ -269,7 +281,7 @@ describe('notifications — un abonné qui échoue ne fait échouer personne', (
     );
     const listener = new BookingConfirmationListener(
       new AppointmentEvents(logger.logger),
-      dispatch,
+      new InProcessNotificationPublisher(dispatch),
       repository.repository,
       new TenantContextService(),
       logger.logger,
@@ -294,7 +306,7 @@ describe('notifications — un abonné qui échoue ne fait échouer personne', (
     );
     const listener = new BookingConfirmationListener(
       new AppointmentEvents(logger.logger),
-      dispatch,
+      new InProcessNotificationPublisher(dispatch),
       repository.repository,
       new TenantContextService(),
       logger.logger,

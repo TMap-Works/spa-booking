@@ -1,14 +1,18 @@
 import { Module } from '@nestjs/common';
 
+import { StructuredLogger } from '../../common/logging/structured-logger';
 import { AppointmentsModule } from '../appointments/appointments.module';
 import { IdentityModule } from '../identity/identity.module';
+import { AwsNotificationSender } from './aws-notification.sender';
 import { BookingConfirmationListener } from './booking-confirmation.listener';
 import { CancellationNoticeListener } from './cancellation-notice.listener';
 import { DeliveryEventRepository } from './delivery-event.repository';
 import { DeliveryEventService } from './delivery-event.service';
+import { NotificationDispatchController } from './notification-dispatch.controller';
 import { NotificationDispatchService } from './notification-dispatch.service';
+import { NOTIFICATION_PUBLISHER, notificationPublisherFactory } from './notification-publisher';
 import { AppointmentNotificationRenderer, NOTIFICATION_RENDERER } from './notification-renderer';
-import { NOTIFICATION_SENDER, UnconfiguredNotificationSender } from './notification-sender';
+import { NOTIFICATION_SENDER } from './notification-sender';
 import { NotificationTemplatesController } from './notification-templates.controller';
 import { NotificationTemplatesRepository } from './notification-templates.repository';
 import { NotificationTemplatesService } from './notification-templates.service';
@@ -32,7 +36,11 @@ import { ReminderSweepService } from './reminder-sweep.service';
  * #72 y ajoute le **troisième et dernier** message du CDC §1.4 — l'avis
  * d'annulation — et avec lui le second abonné du module au bus d'`appointments`.
  *
- * Restent à venir : les passerelles SES et SNS, et la Lambda d'envoi.
+ * #799 **ferme la chaîne** : les passerelles SES et SNS prennent la place du
+ * refus en 503, les deux abonnés publient dans la file au lieu d'expédier en
+ * processus, et `POST /api/v1/interne/notifications/dispatch` sert le contrat
+ * que la Lambda d'envoi appelle depuis #67. Les trois messages du CDC §1.4
+ * partent réellement.
  *
  * ## Il importe `AppointmentsModule`, et le sens compte
  *
@@ -57,20 +65,39 @@ import { ReminderSweepService } from './reminder-sweep.service';
  *
  * ## Il n'exige toujours aucune variable d'environnement pour démarrer
  *
- * `NOTIFICATION_SENDER` reste branché sur `UnconfiguredNotificationSender`, qui
- * refuse tout envoi en 503 — le même régime que `payments` sans clés Stripe.
- * Sans passerelle AWS, une confirmation laisse donc une ligne `FAILED` assortie
- * de son motif, visible au back-office, et reprenable telle quelle le jour où un
- * expéditeur réel prend la place. C'est ce qu'un faux `SENT` aurait rendu
- * impossible.
+ * C'est vrai après #799 comme avant, et c'est ce qui a demandé le plus de soin.
+ * `NOTIFICATION_SENDER` est désormais `AwsNotificationSender`, mais il ne lit
+ * `SES_FROM_EMAIL` ni `SNS_SMS_SENDER_ID` qu'au **premier envoi** — quatrième
+ * critère d'acceptation — et il refuse alors en 503, canal par canal, si rien
+ * n'est configuré. La conduite observable est donc exactement celle
+ * d'`UnconfiguredNotificationSender` : une ligne `FAILED` assortie de son motif,
+ * visible au back-office, reprenable telle quelle le jour où la passerelle est
+ * branchée. C'est ce qu'un faux `SENT` aurait rendu impossible.
  *
  * `AppConfigService`, dont le renderer tire l'origine du lien d'annulation, vient
  * d'un module `@Global()` déjà validé au démarrage : `APP_URL` est une variable
  * existante, pas une nouvelle exigence.
+ *
+ * ## Les deux fabriques, et pourquoi elles ne se ressemblent pas
+ *
+ * `NOTIFICATION_SENDER` est un **objet unique** qui décide par canal, au moment
+ * d'envoyer : il doit l'être, puisque la lecture de sa configuration est
+ * différée. `NOTIFICATION_PUBLISHER`, lui, est choisi à l'amorçage — la file est
+ * là ou elle ne l'est pas, et ce choix détermine l'objet injecté dans deux
+ * écouteurs qui s'abonnent au bus dès `onModuleInit`. Voir l'en-tête de
+ * `notification-publisher.ts`.
  */
 @Module({
   imports: [IdentityModule, AppointmentsModule],
-  controllers: [NotificationsController, NotificationTemplatesController],
+  controllers: [
+    NotificationsController,
+    NotificationTemplatesController,
+    // La route d'envoi interne (#799). Un contrôleur à part parce que son chemin
+    // l'est — `interne/notifications`, ce que `dispatch_url` désigne — et non
+    // parce qu'on aurait voulu ranger. Un contrôleur oublié ici compile, passe
+    // ses tests unitaires, et rend 404 en vrai.
+    NotificationDispatchController,
+  ],
   providers: [
     NotificationsRepository,
     NotificationsService,
@@ -111,10 +138,35 @@ import { ReminderSweepService } from './reminder-sweep.service';
     // exactement l'intérêt d'avoir nommé la frontière plutôt que d'appeler les
     // fonctions de rendu en dur.
     { provide: NOTIFICATION_RENDERER, useClass: AppointmentNotificationRenderer },
-    // Le port d'expédition. Un ticket ultérieur remplacera ce fournisseur par
-    // les passerelles SES et SNS ; rien d'autre du module n'aura à changer, et
-    // c'est tout l'intérêt d'avoir nommé la frontière.
-    { provide: NOTIFICATION_SENDER, useClass: UnconfiguredNotificationSender },
+    // Le port d'expédition, désormais tenu par les passerelles SES et SNS
+    // (#799). La promesse de #68 est tenue au pied de la lettre : « rien
+    // d'autre du module n'aura à changer », et rien d'autre n'a changé — ni
+    // l'ordre d'écriture, ni l'index d'idempotence, ni le rendu.
+    //
+    // `useFactory` et non `useClass` : les deux derniers paramètres du
+    // constructeur sont les fabriques de passerelles, que Nest chercherait
+    // sinon à résoudre comme des dépendances. Leur défaut est la vraie
+    // passerelle ; une suite passe un double, et aucun test du dépôt n'ouvre de
+    // connexion vers AWS (notifications §8).
+    {
+      provide: NOTIFICATION_SENDER,
+      useFactory: (
+        config: NotificationsConfig,
+        repository: NotificationsRepository,
+        logger: StructuredLogger,
+      ) => new AwsNotificationSender(config, repository, logger),
+      inject: [NotificationsConfig, NotificationsRepository, StructuredLogger],
+    },
+    // Le port de publication (#799). C'est lui que les deux abonnés du bus
+    // appellent désormais : ils composent une enveloppe, la remettent, et
+    // rendent la main — « une réservation ne doit jamais échouer parce qu'un
+    // e-mail n'est pas parti » (CDC §4.8). Sans `NOTIFICATION_QUEUE_URL`, la
+    // fabrique retombe sur l'expédition en processus, exactement comme avant.
+    {
+      provide: NOTIFICATION_PUBLISHER,
+      useFactory: notificationPublisherFactory,
+      inject: [NotificationsConfig, NotificationDispatchService, StructuredLogger],
+    },
   ],
   exports: [NotificationDispatchService],
 })
