@@ -125,6 +125,27 @@
    * claire de la même rampe monte à 7.24:1 et peut donc porter du texte. */
   --spa-color-accent-inverse: var(--spa-palette-brand-300);
 
+  /* Aplat de marque — le bandeau de clôture de la page d'accueil, sa carte
+   * « équipe » et le volet d'accueil des écrans de connexion (#927).
+   * -------------------------------------------------------------------------
+   * Une surface **pleine** de la couleur du salon, pour les rares zones qui
+   * doivent porter l'identité plutôt qu'une action. Rôle distinct de
+   * `accent` : l'accent désigne ce qu'on clique (BM-VISUEL-01), et un aplat de
+   * marque qui lui emprunterait sa nuance ferait passer un bandeau pour un
+   * bouton. Il prend la nuance la plus profonde de la rampe, pour que le texte
+   * clair y tienne largement l'AA — et qu'un salon qui substitue sa rampe
+   * repeigne ces zones sans toucher une page.
+   *
+   * Le texte, l'accent et l'anneau de focus ont chacun leur version « sur
+   * marque » : ceux du fond clair n'y atteignent pas les seuils — l'anneau
+   * `--spa-color-focus` y tombe sous 2:1 et deviendrait invisible au clavier. */
+  --spa-color-surface-brand: var(--spa-palette-brand-800);
+  --spa-color-surface-brand-raised: var(--spa-palette-brand-700);
+  --spa-color-text-on-brand: var(--spa-palette-neutral-0);
+  --spa-color-text-on-brand-muted: var(--spa-palette-brand-200);
+  --spa-color-accent-on-brand: var(--spa-palette-brand-300);
+  --spa-color-focus-on-brand: var(--spa-palette-brand-200);
+
   /* États */
   --spa-color-success: var(--spa-palette-green-600);
   --spa-color-success-surface: var(--spa-palette-green-50);
@@ -224,6 +245,10 @@
   --spa-font-size-xl: 1.375rem;
   --spa-font-size-2xl: 1.75rem;
   --spa-font-size-3xl: 2.25rem;
+  /* Titre d'accroche de la page d'accueil (#927) — le seul texte du produit qui
+   * dépasse `3xl`. Fluide entre 360 px et 1280 px : un titre fixe à 52 px
+   * occuperait quatre lignes d'un écran de téléphone. */
+  --spa-font-size-display: clamp(2rem, 1.25rem + 3.2vw, 3.25rem);
 
   --spa-font-weight-regular: 400;
   --spa-font-weight-medium: 500;

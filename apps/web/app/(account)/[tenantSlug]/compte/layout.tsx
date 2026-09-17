@@ -2,14 +2,17 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 
+import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
+import { PUBLIC_EXIT_LABELS } from '@/components/salon/public-exits';
 import { ApiClientError } from '@/lib/api-client';
+import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
 import {
   AccountAnnouncementProvider,
   AccountAnnouncementRegion,
 } from './components/account-announcement';
 import { AccountNav } from './components/account-nav';
-import { accountPath, bookingPath } from './paths';
+import { accountPath, bookingPath, salonPath } from './paths';
 import { readAccessToken, readRefreshToken } from './session';
 import { accountTenant } from './tenant';
 
@@ -106,6 +109,13 @@ export const metadata: Metadata = {
  */
 export const dynamic = 'force-dynamic';
 
+/** Ce que l'espace ouvre, dit à qui n'y est pas encore entré (#927). */
+const SIGNED_OUT_HIGHLIGHTS: readonly AuthHighlight[] = [
+  { icon: 'calendar', text: 'Vos rendez-vous à venir et passés, au même endroit' },
+  { icon: 'clock', text: 'Un report ou une annulation en ligne, sans appeler' },
+  { icon: 'bell', text: 'Des coordonnées à jour pour recevoir vos rappels' },
+];
+
 interface AccountLayoutProps {
   readonly children: ReactNode;
   readonly params: Promise<{ readonly tenantSlug: string }>;
@@ -142,6 +152,42 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
    */
   const signedIn = (await readAccessToken()) !== null || (await readRefreshToken()) !== null;
 
+  /*
+   * Sans session, les seuls écrans que ce gabarit sert pour de bon sont la
+   * connexion et l'inscription — les autres renvoient à la connexion avant de
+   * rendre quoi que ce soit. Ils reçoivent le cadre d'accueil des écrans
+   * d'identification (#927), et non l'en-tête d'un compte qu'on ne voit pas
+   * encore : le salon, ce que l'espace ouvre, et les chemins de retour que le
+   * pied « Mes rendez-vous » ne pouvait pas offrir — il ramenait ici même.
+   *
+   * La condition est celle de la barre du compte, et elle n'est pas une garde :
+   * la décision d'une issue reste dans chaque page.
+   */
+  if (!signedIn) {
+    return (
+      <AccountAnnouncementProvider>
+        <AuthScreen
+          space="client"
+          salonName={tenantName}
+          headline="Mon compte"
+          headlineAs="h1"
+          lead="Vos rendez-vous à venir, votre historique et vos coordonnées."
+          highlights={SIGNED_OUT_HIGHLIGHTS}
+          exits={[
+            { href: bookingPath(tenantSlug), label: PUBLIC_EXIT_LABELS.reservation },
+            { href: salonPath(tenantSlug), label: PUBLIC_EXIT_LABELS.vitrine },
+            { href: PLATFORM_HOME_PATH, label: `Accueil ${PLATFORM_NAME}` },
+          ]}
+        >
+          <main className="spa-account__main" id="contenu">
+            <AccountAnnouncementRegion />
+            {children}
+          </main>
+        </AuthScreen>
+      </AccountAnnouncementProvider>
+    );
+  }
+
   return (
     <AccountAnnouncementProvider>
       <div className="spa-account">
@@ -152,7 +198,8 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
             Vos rendez-vous à venir, votre historique et vos coordonnées.
           </p>
         </header>
-        {signedIn ? <AccountNav tenantSlug={tenantSlug} /> : null}
+        {/* Sans session, le cadre d'accueil ci-dessus a déjà répondu. */}
+        <AccountNav tenantSlug={tenantSlug} />
         <main className="spa-account__main" id="contenu">
           {/*
             En tête du contenu, et non au pied : ce qui vient de se passer se lit

@@ -1,6 +1,11 @@
-import { redirect } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 
+import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
+import { PUBLIC_EXIT_LABELS } from '@/components/salon/public-exits';
+import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
+import { readSalonIdentity } from '@/lib/salon-identity';
 import { readSessionNotice } from '@/lib/session-refresh';
+import { salonPath } from '@/app/(account)/[tenantSlug]/compte/paths';
 
 import { AdminLoginForm } from '../components/admin-login-form';
 import { adminLandingPath } from '../components/navigation';
@@ -83,9 +88,37 @@ import { adminCalendarPath } from '../paths';
  * et jamais un écran qui répondrait 403 (#618). L'écran d'arrivée a la garde de
  * `guard.tsx`, qui ne renvoie ici que si le cookie d'accès a disparu — ce qui ne
  * peut pas être le cas, puisque `loadAdminShell` vient de le lire.
+ *
+ * ## Le cadre d'accueil (#927)
+ *
+ * Le formulaire se pose dans le cadre des écrans d'identification
+ * (`AuthScreen`) : la plateforme, le salon, ce que le back-office ouvre, et deux
+ * chemins de retour. Le formulaire, lui, ne change pas — il reste la carte, avec
+ * son titre et sa borne de colonne (#699).
+ *
+ * Le nom du salon vient de sa vitrine **publique** (`readSalonIdentity`), la
+ * seule lecture qu'un visiteur anonyme puisse faire. Ce n'est pas une seconde
+ * lecture de la session : la question « le rail s'affiche-t-il ? » reste posée
+ * une seule fois, à `loadAdminShell`, et cette lecture-ci n'intervient qu'une
+ * fois la réponse connue — non. Elle a deux effets, et aucun autre :
+ *
+ * - un salon **inconnu** rend 404, comme l'espace client le fait déjà depuis son
+ *   gabarit. Servir un formulaire de connexion pour un établissement qui
+ *   n'existe pas, c'était promettre une session qu'aucun mot de passe ne
+ *   pouvait ouvrir ;
+ * - une API **muette** n'empêche rien : le cadre se passe du nom, et le
+ *   formulaire dira lui-même la panne à la soumission (#759).
  */
 
 export const dynamic = 'force-dynamic';
+
+/** Ce que le back-office ouvre, dit avant qu'on y entre (#927). */
+const BACK_OFFICE_HIGHLIGHTS: readonly AuthHighlight[] = [
+  { icon: 'calendar', text: 'Le planning du jour et de la semaine' },
+  { icon: 'users', text: 'Les fiches clientes et l’équipe du salon' },
+  { icon: 'card', text: 'L’encaissement au comptoir, carte ou espèces' },
+  { icon: 'chart', text: 'Le revenu, les rendez-vous et les no-shows' },
+];
 
 interface AdminLoginPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
@@ -114,6 +147,12 @@ export default async function AdminLoginPage({ params, searchParams }: AdminLogi
     redirect(adminLandingPath(tenantSlug, shell.role) ?? adminCalendarPath(tenantSlug));
   }
 
+  const salon = await readSalonIdentity(tenantSlug);
+
+  if (salon.status === 'unknown') {
+    notFound();
+  }
+
   /*
    * Le motif qui a renvoyé ici, quand il y en a un (#860) — il n'a de sens que
    * sur le formulaire, et la redirection ci-dessus l'emporte donc toujours : une
@@ -123,5 +162,20 @@ export default async function AdminLoginPage({ params, searchParams }: AdminLogi
    * paramètre est fourni par l'appelant, il peut être répété ou inventé, et cet
    * écran n'a pas à afficher un encart que personne n'a écrit.
    */
-  return <AdminLoginForm tenantSlug={tenantSlug} notice={readSessionNotice(motif)} />;
+  return (
+    <AuthScreen
+      space="back-office"
+      salonName={salon.status === 'found' ? salon.name : null}
+      headline="Le back-office de votre salon"
+      headlineAs="p"
+      lead="Votre journée au même endroit : planning, clientèle, caisse et activité."
+      highlights={BACK_OFFICE_HIGHLIGHTS}
+      exits={[
+        { href: salonPath(tenantSlug), label: PUBLIC_EXIT_LABELS.vitrine },
+        { href: PLATFORM_HOME_PATH, label: `Accueil ${PLATFORM_NAME}` },
+      ]}
+    >
+      <AdminLoginForm tenantSlug={tenantSlug} notice={readSessionNotice(motif)} />
+    </AuthScreen>
+  );
 }
