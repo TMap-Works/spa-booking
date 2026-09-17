@@ -4,6 +4,7 @@ import { redirect } from 'next/navigation';
 
 import { Notification } from '@/components/ui/notification';
 import { ApiClientError } from '@/lib/api-client';
+import { renewalReturnTo } from '@/lib/session-refresh';
 
 import { AdminRetryButton } from './components/admin-retry-button';
 import { adminLoginPath, adminSessionRefreshPath } from './paths';
@@ -41,6 +42,10 @@ import { readAdminAccessToken, readAdminRefreshToken } from './session';
  *    peut pas y renvoyer deux fois de suite : au retour, le cookie d'accès
  *    existe forcément, sans quoi c'est le cas 3 ;
  * 3. **les deux ont disparu** — écran de connexion.
+ *
+ * Il en existe un quatrième, que cette fonction ne voit pas : le cookie d'accès
+ * est là, et l'API refuse quand même le jeton. Il ne se constate qu'à l'appel,
+ * et c'est `adminUnauthorizedPath` qui en décide (#861).
  *
  * `returnTo` est la page où revenir après un renouvellement, et il est
  * **obligatoire** (#458). Facultatif, il n'était passé par aucune page : un
@@ -98,13 +103,60 @@ function failureMessage(error: ApiClientError): string {
 }
 
 /**
+ * Ce qu'un écran sait de son propre renouvellement — voir `adminUnauthorizedPath`.
+ *
+ * Les deux champs vont ensemble et ne se séparent pas : sans `returnTo` il n'y a
+ * nulle part où revenir, et sans `attempted` rien n'arrête la seconde tentative.
+ */
+export interface AdminRenewal {
+  /** Le chemin de l'écran, paramètres compris — celui où revenir après coup. */
+  readonly returnTo: string;
+  /** `true` si l'URL courante revient déjà d'un renouvellement (voir `isRenewalReturn`). */
+  readonly attempted: boolean;
+}
+
+/**
+ * Où mène un **401 reçu alors que le cookie d'accès est là** (#861).
+ *
+ * C'est le quatrième cas de `requireAdminAccessToken`, et il ne se confond avec
+ * aucun des trois autres : le cookie existe, donc le jeton n'est pas « absent » ;
+ * l'API le refuse pourtant. Trois causes le produisent sans que la session soit
+ * morte — secret changé au déploiement, horloge de l'API dérivée, rendu plus long
+ * que la marge de trente secondes du cookie —, et toutes trois se réparent par un
+ * renouvellement. Y répondre par la connexion, comme avant ce ticket, faisait
+ * retaper un mot de passe dont personne n'avait besoin.
+ *
+ * Trois issues, et aucune ne boucle :
+ *
+ * 1. **l'écran ne dit rien de son renouvellement** — il ne sait pas où revenir :
+ *    connexion, exactement comme avant. C'est le cas des écrans qui ne passent
+ *    pas encore de `renewal` ;
+ * 2. **il en revient déjà** (`?session=renouvelee`) — la session neuve a été
+ *    refusée elle aussi, et une troisième ne changerait rien : connexion, en
+ *    disant que la session a expiré ;
+ * 3. **il n'a pas encore essayé** — route de renouvellement, avec le chemin
+ *    marqué. Elle pose une session neuve et rend la main à l'écran, ou refuse et
+ *    mène elle-même à la connexion : c'est elle, et elle seule, qui efface les
+ *    cookies (`lib/session-refresh.ts`).
+ */
+export function adminUnauthorizedPath(tenantSlug: string, renewal?: AdminRenewal): string {
+  if (renewal === undefined) {
+    return adminLoginPath(tenantSlug);
+  }
+
+  return renewal.attempted
+    ? adminLoginPath(tenantSlug, 'session-expiree')
+    : adminSessionRefreshPath(tenantSlug, renewalReturnTo(renewal.returnTo));
+}
+
+/**
  * Ce qu'une page affiche quand un chargement de l'API échoue.
  *
  * Trois issues, et aucune ne boucle :
  *
- * 1. **401** — la session a été révoquée en base ou l'API a changé de secret. On
- *    ne tente pas de renouveler, ce qui échouerait pour la même raison : retour
- *    à la connexion ;
+ * 1. **401** — le cookie d'accès est là et l'API refuse quand même le jeton. Un
+ *    renouvellement est tenté d'abord, et une seule fois : voir
+ *    `adminUnauthorizedPath` ;
  * 2. **403** — la session est valide mais le rôle ne suffit pas. Ce n'est **pas**
  *    une raison de renvoyer à la connexion : se reconnecter avec le même compte
  *    donnerait le même refus, et la boucle serait sans fin. L'écran le dit, et
@@ -131,14 +183,27 @@ function failureMessage(error: ApiClientError): string {
 export function adminLoadFailure(
   error: unknown,
   tenantSlug: string,
-  options: { readonly deniedTitle: string; readonly deniedHint: string; readonly failedTitle: string },
+  options: {
+    readonly deniedTitle: string;
+    readonly deniedHint: string;
+    readonly failedTitle: string;
+    /**
+     * Ce que l'écran sait de son renouvellement, s'il en sait quelque chose.
+     *
+     * Facultatif, et il l'est délibérément : un écran qui ne le passe pas garde
+     * le comportement d'avant #861 — la connexion —, ce qui est sûr mais ne
+     * renouvelle rien. Le passer est le seul moyen d'obtenir la tentative, et
+     * c'est aussi ce qui la borne à une.
+     */
+    readonly renewal?: AdminRenewal;
+  },
 ): ReactElement {
   if (!(error instanceof ApiClientError)) {
     throw error;
   }
 
   if (error.status === 401) {
-    redirect(adminLoginPath(tenantSlug));
+    redirect(adminUnauthorizedPath(tenantSlug, options.renewal));
   }
 
   if (error.status === 403) {

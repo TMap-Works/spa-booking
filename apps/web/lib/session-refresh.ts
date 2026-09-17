@@ -1,4 +1,5 @@
 import { ApiClientError, refreshSession, type ApiSession } from '@/lib/api-client';
+import { sitePath } from '@/lib/site-path';
 
 /**
  * Le renouvellement de session côté serveur Next, commun au back-office et à
@@ -70,6 +71,75 @@ export function readSessionNotice(
   const candidate = typeof value === 'string' ? value : value?.[0];
 
   return SESSION_NOTICES.find((notice) => notice === candidate) ?? null;
+}
+
+/**
+ * Le paramètre d'URL qui dit qu'un écran revient déjà d'un renouvellement
+ * déclenché par un 401 (#861).
+ *
+ * ## Pourquoi un marqueur, et pourquoi dans l'URL
+ *
+ * Un 401 reçu **avec** un cookie d'accès en main vaut un renouvellement : le
+ * secret de l'API a pu changer au déploiement, son horloge dériver, ou le rendu
+ * durer plus longtemps que la marge de trente secondes du cookie. Aucune de ces
+ * trois causes ne survit à une session neuve — mais une quatrième, elle, y
+ * survivrait : une API qui refuse jusqu'aux jetons qu'elle vient d'émettre.
+ * Renvoyer l'écran au renouvellement à chaque passage produirait alors une
+ * chaîne de redirections que le navigateur coupe par une page d'erreur.
+ *
+ * Le marqueur borne la tentative à **une seule** : il part avec le chemin de
+ * retour confié à la route de renouvellement, revient avec lui, et le second
+ * 401 mène à la connexion — c'est-à-dire exactement ce que faisait le premier
+ * avant ce ticket.
+ *
+ * Il voyage par l'URL et non par un cookie parce que la session est **deux
+ * cookies `httpOnly`, et rien d'autre** (#47, cinquième critère) : un troisième,
+ * fût-il transitoire, ouvrirait cette porte-là. Le prix est un paramètre qui
+ * reste dans la barre d'adresse après un renouvellement réussi ; il est ignoré
+ * de tous les écrans, et disparaît à la première navigation.
+ */
+export const RENEWAL_PARAM = 'session';
+
+/** La seule valeur que `RENEWAL_PARAM` porte jamais. */
+const RENEWAL_ATTEMPTED = 'renouvelee';
+
+/**
+ * `true` si l'écran courant revient d'un renouvellement déclenché par un 401.
+ *
+ * Le paramètre vient de l'URL : il peut être absent, répété (`?session=a&session=b`,
+ * que Next rend comme un tableau) ou inventé. Seule la valeur déclarée compte —
+ * tout le reste vaut « aucune tentative », c'est-à-dire la branche qui renouvelle.
+ */
+export function isRenewalReturn(value: string | readonly string[] | undefined): boolean {
+  return (typeof value === 'string' ? value : value?.[0]) === RENEWAL_ATTEMPTED;
+}
+
+/** Une origine factice : elle ne sert qu'à recomposer un chemin, jamais émise. */
+const MARKER_ORIGIN = 'http://site.invalid';
+
+/**
+ * Le chemin de retour à confier à la route de renouvellement — celui de l'écran,
+ * marqué.
+ *
+ * Le marqueur est **posé** et non ajouté : un chemin qui le porterait déjà ne
+ * doit pas en recevoir un second, sans quoi `?session=renouvelee&session=renouvelee`
+ * finirait par rallonger l'URL à chaque tour.
+ *
+ * Un chemin que `sitePath` refuse est rendu tel quel : la route de renouvellement
+ * le revalide de toute façon et retombe sur l'accueil de sa surface, et c'est
+ * elle qui doit trancher — pas ce calcul de chaîne.
+ */
+export function renewalReturnTo(currentPath: string): string {
+  const path = sitePath(currentPath);
+
+  if (path === null) {
+    return currentPath;
+  }
+
+  const url = new URL(path, MARKER_ORIGIN);
+  url.searchParams.set(RENEWAL_PARAM, RENEWAL_ATTEMPTED);
+
+  return `${url.pathname}${url.search}${url.hash}`;
 }
 
 /** Ce qu'une surface expose de sa session à une action serveur. */

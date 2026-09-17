@@ -2,7 +2,11 @@ import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 
 import { ApiClientError, type ApiSession } from '@/lib/api-client';
-import { accessTokenForAction, type ActionAccess } from '@/lib/session-refresh';
+import {
+  accessTokenForAction,
+  renewalReturnTo,
+  type ActionAccess,
+} from '@/lib/session-refresh';
 
 import { accountPath, loginPath, refreshPath, sessionEndPath } from './paths';
 
@@ -215,16 +219,27 @@ export function accountActionAccess(tenantSlug: string): Promise<ActionAccess> {
  *    existe forcément, sans quoi c'est le cas 3 ;
  * 3. **les deux ont disparu** — écran de connexion.
  *
- * Un 401 malgré un cookie d'accès présent est le quatrième cas, et il est
- * **anormal** : la session a été révoquée en base — changement de rôle, réemploi
- * de jeton détecté — ou l'API a changé de secret. On ne tente alors pas de
- * renouveler, ce qui échouerait pour la même raison : on ferme la session et on
- * renvoie à la connexion, en le disant.
+ * Un 401 malgré un cookie d'accès présent est le quatrième cas, et il passe
+ * désormais par le renouvellement (#861) : voir `unauthorizedPath`.
  */
 export async function readAccountData<T>(
   tenantSlug: string,
   currentPath: string,
   read: (accessToken: string) => Promise<T>,
+  /**
+   * `true` si l'URL courante revient déjà d'un renouvellement déclenché par un
+   * 401 — ce que la page lit de son `?session=renouvelee` (`isRenewalReturn`).
+   *
+   * **Obligatoire**, et pour la raison qui rend `returnTo` obligatoire côté
+   * back-office (#458) : facultatif, il n'aurait été passé par aucun écran. Un
+   * écran qui l'omet retente un renouvellement à chaque rendu, et une API qui
+   * refuse jusqu'aux jetons qu'elle vient d'émettre enchaîne alors les
+   * redirections entre l'écran et la route de renouvellement jusqu'à la page
+   * d'erreur du navigateur — exactement ce que le marqueur existe pour empêcher
+   * (voir `RENEWAL_PARAM`). Le type est la seule forme de rappel qu'un écran neuf
+   * ne puisse pas ignorer.
+   */
+  renewalAttempted: boolean,
 ): Promise<T> {
   const accessToken = await readAccessToken();
 
@@ -239,8 +254,48 @@ export async function readAccountData<T>(
     return await read(accessToken);
   } catch (error) {
     if (error instanceof ApiClientError && error.status === 401) {
-      redirect(sessionEndPath(tenantSlug));
+      redirect(await unauthorizedPath(tenantSlug, currentPath, renewalAttempted));
     }
     throw error;
   }
+}
+
+/**
+ * Où mène un **401 reçu alors que le cookie d'accès est là** (#861).
+ *
+ * L'écran partait jusqu'ici vers `session/fin`, qui **révoque la session en
+ * base** avant de mener à la connexion. C'était trop, et irréversible : trois
+ * causes produisent ce 401 sans que la session soit morte — le secret de l'API
+ * changé au déploiement, son horloge dérivée, un rendu plus long que la marge de
+ * trente secondes du cookie —, et toutes trois se réparent par un
+ * renouvellement. La visiteuse perdait sa session pour un jeton de quinze
+ * minutes.
+ *
+ * Trois issues, et aucune ne boucle :
+ *
+ * 1. **le renouvellement a déjà été tenté** — la session neuve a été refusée
+ *    elle aussi. Celle-là est bien morte : `session/fin`, qui la révoque et le
+ *    dit ;
+ * 2. **il n'y a plus rien à renouveler** — pas de cookie de rafraîchissement.
+ *    `session/fin` encore : il efface le cookie d'accès resté seul, ce que la
+ *    route de renouvellement ne ferait pas ;
+ * 3. **il reste une chance** — route de renouvellement, avec le chemin marqué.
+ *    Elle pose une session neuve et rend la main à l'écran, ou refuse et mène
+ *    elle-même à la connexion : c'est elle, et elle seule, qui efface les
+ *    cookies (`lib/session-refresh.ts`).
+ */
+async function unauthorizedPath(
+  tenantSlug: string,
+  currentPath: string,
+  renewalAttempted: boolean,
+): Promise<string> {
+  if (renewalAttempted) {
+    return sessionEndPath(tenantSlug);
+  }
+
+  const refreshToken = await readRefreshToken();
+
+  return refreshToken === null
+    ? sessionEndPath(tenantSlug)
+    : refreshPath(tenantSlug, renewalReturnTo(currentPath));
 }
