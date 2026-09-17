@@ -1,6 +1,13 @@
 'use client';
 
-import type { AvailabilitySlot, CalendarDate, DayAvailability, TimeZone, UtcInstant } from '@spa/shared';
+import type {
+  AvailabilitySlot,
+  CalendarDate,
+  DayAvailability,
+  OpeningHoursEntry,
+  TimeZone,
+  UtcInstant,
+} from '@spa/shared';
 import {
   useCallback,
   useEffect,
@@ -111,6 +118,14 @@ interface SlotPickerProps {
    * laisse atteindre, et donc les mois entre lesquels il navigue.
    */
   readonly bounds: BookingWindow | null;
+  /**
+   * Les plages d'ouverture publiées par l'établissement.
+   *
+   * Traversées jusqu'au calendrier, qui s'en sert pour écrire « fermé » plutôt
+   * que « complet » sur une journée où le salon n'ouvre pas (#742). Le sélecteur
+   * n'en fait rien d'autre : elles ne décident d'aucun créneau.
+   */
+  readonly openingHours?: readonly OpeningHoursEntry[] | undefined;
   /** Ce que fait un changement de mois : c'est l'appelant qui recharge. */
   readonly onMonthChange: (month: CalendarMonth) => void;
   /** Le fuseau de l'établissement : les heures s'affichent dans celui-là. */
@@ -183,6 +198,7 @@ export function SlotPicker({
   days,
   month,
   bounds,
+  openingHours,
   onMonthChange,
   timeZone,
   emptyState,
@@ -387,6 +403,7 @@ export function SlotPicker({
         month={month}
         bounds={bounds}
         slotCounts={slotCounts}
+        openingHours={openingHours}
         selectedDate={calendarDate}
         busy={busy}
         calendarRef={calendarRef}

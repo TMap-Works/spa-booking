@@ -412,6 +412,10 @@ export function SlotStep({
           days={days}
           month={month}
           bounds={bounds}
+          // Ce que le salon **annonce** — le calendrier s'en sert pour écrire
+          // « fermé » plutôt que « complet » sur un jour où il n'ouvre pas
+          // (#742), jamais pour décider d'un créneau.
+          openingHours={tenant.openingHours}
           onMonthChange={setMonth}
           timeZone={tenant.timezone}
           calendarRef={calendarRef}

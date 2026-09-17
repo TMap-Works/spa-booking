@@ -13,7 +13,13 @@
  * tunnel, une navigation dans le report.
  */
 
-import type { AvailabilitySlot, CalendarDate, DayAvailability, UtcInstant } from '@spa/shared';
+import type {
+  AvailabilitySlot,
+  CalendarDate,
+  DayAvailability,
+  OpeningHoursEntry,
+  UtcInstant,
+} from '@spa/shared';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -53,9 +59,23 @@ const SEPTEMBRE = journees(
 
 const OCTOBRE = journees(['2026-10-01', '2026-10-02'], ['2026-10-02']);
 
+/**
+ * Les horaires que le salon publie sur sa vitrine — du lundi au vendredi, comme
+ * l'établissement semé (`apps/api/prisma/seed.ts`, `WORKING_WEEKDAYS`).
+ *
+ * C'est la semaine qui a motivé #742 : les samedis et dimanches s'annonçaient
+ * « complet » alors que le salon n'ouvre simplement pas ces jours-là.
+ */
+const SEMAINE_OUVREE: readonly OpeningHoursEntry[] = [1, 2, 3, 4, 5].map((weekday) => ({
+  weekday: weekday as OpeningHoursEntry['weekday'],
+  opensAt: '09:00',
+  closesAt: '19:00',
+}));
+
 function afficher(options: {
   readonly days?: readonly DayAvailability[] | null;
   readonly month?: string;
+  readonly openingHours?: readonly OpeningHoursEntry[];
   readonly onMonthChange?: (month: string) => void;
   readonly onChoose?: (startsAt: UtcInstant) => void;
 }): ReturnType<typeof userEvent.setup> {
@@ -64,6 +84,7 @@ function afficher(options: {
       days={options.days === undefined ? SEPTEMBRE : options.days}
       month={options.month ?? '2026-09'}
       bounds={BOUNDS}
+      openingHours={options.openingHours}
       onMonthChange={options.onMonthChange ?? vi.fn()}
       timeZone={TIMEZONE}
       emptyState={<p>Aucun créneau</p>}
@@ -156,6 +177,72 @@ describe('la grille du mois', () => {
     expect(screen.getByText('Aucun créneau')).toBeDefined();
     expect(screen.getByRole('grid', { name: /Journée/ })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Mois suivant' })).toBeDefined();
+  });
+});
+
+/**
+ * #742 — le salon qui n'ouvre pas ne s'annonce pas « complet ».
+ *
+ * CDC §2.3, module Disponibilités & agenda : le module distingue les horaires du
+ * salon des rendez-vous pris, et l'interface doit dire lequel des deux empêche
+ * de réserver. « Complet » invite à repasser plus tard ; « Fermé » invite à
+ * choisir un autre jour.
+ */
+describe('une journée où le salon n’ouvre pas', () => {
+  it('s’annonce « fermé » là où une journée pleine s’annonce « complet »', () => {
+    afficher({ openingHours: SEMAINE_OUVREE });
+
+    // Samedi : le salon n'ouvre pas — ce ne sont pas les rendez-vous qui manquent.
+    expect(journee(/19 septembre 2026/).getAttribute('aria-label')).toBe(
+      'samedi 19 septembre 2026 — fermé',
+    );
+    // Mercredi : le salon ouvre, et tout est pris.
+    expect(journee(/16 septembre 2026/).getAttribute('aria-label')).toBe(
+      'mercredi 16 septembre 2026 — complet',
+    );
+  });
+
+  it('porte son quantième barré, pour se distinguer sans la seule couleur', () => {
+    // `BM-CRENEAU-04` : un jour de fermeture doit se distinguer autrement que par
+    // la couleur, les plateformes du benchmark grisant **ou barrant** les jours
+    // impossibles (WCAG 1.4.1).
+    afficher({ openingHours: SEMAINE_OUVREE });
+
+    expect(journee(/19 septembre 2026/).querySelector('s')?.textContent).toBe('19');
+    expect(journee(/16 septembre 2026/).querySelector('s')).toBeNull();
+  });
+
+  it('reste inerte, et atteignable au clavier comme une journée pleine', () => {
+    afficher({ openingHours: SEMAINE_OUVREE });
+
+    const samedi = journee(/19 septembre 2026/);
+
+    expect(samedi.getAttribute('aria-disabled')).toBe('true');
+    expect(samedi.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('garde ses créneaux quand le moteur en rend, quoi qu’annonce la vitrine', () => {
+    // Les horaires publiés décrivent la vitrine, pas l'agenda : un praticien qui
+    // ouvre exceptionnellement un samedi ne doit pas voir sa journée masquée.
+    afficher({
+      days: journees(['2026-09-18', '2026-09-19'], ['2026-09-19']),
+      openingHours: SEMAINE_OUVREE,
+    });
+
+    expect(journee(/19 septembre 2026/).getAttribute('aria-label')).toBe(
+      'samedi 19 septembre 2026 — 2 créneaux',
+    );
+  });
+
+  it('s’en tient à « complet » quand le salon n’a publié aucun horaire', () => {
+    // L'API omet `openingHours` plutôt que de rendre une semaine vide : rien ne
+    // distingue alors « ferme le samedi » de « pas encore renseigné », et
+    // affirmer le premier enverrait une cliente devant une porte ouverte.
+    afficher({});
+
+    expect(journee(/19 septembre 2026/).getAttribute('aria-label')).toBe(
+      'samedi 19 septembre 2026 — complet',
+    );
   });
 });
 

@@ -1,6 +1,12 @@
 'use client';
 
-import { ERROR_CODES, type AvailabilityResponse, type TimeZone, type UtcInstant } from '@spa/shared';
+import {
+  ERROR_CODES,
+  type AvailabilityResponse,
+  type OpeningHoursEntry,
+  type TimeZone,
+  type UtcInstant,
+} from '@spa/shared';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState, useTransition } from 'react';
@@ -99,6 +105,15 @@ interface RescheduleFormProps {
   /** Les bornes réservables, calculées par le serveur dans le fuseau du salon. */
   readonly bounds: BookingWindow;
   /**
+   * Les plages d'ouverture publiées par l'établissement.
+   *
+   * Le report montre le même calendrier que le tunnel, et il doit donc y lire le
+   * même mot : « fermé » là où le salon n'ouvre pas, « complet » là où il ouvre
+   * sans créneau libre (#742). L'écart relevé par l'audit se retrouvait à
+   * l'identique sur les deux écrans, puisqu'ils montent le même sélecteur.
+   */
+  readonly openingHours?: readonly OpeningHoursEntry[] | undefined;
+  /**
    * Le gabarit d'adresse d'un changement de mois : le mois s'y ajoute.
    *
    * Une adresse et non un geste, parce que c'est le rendu serveur de la page qui
@@ -118,6 +133,7 @@ export function RescheduleForm({
   timeZone,
   month,
   bounds,
+  openingHours,
   monthHref,
 }: RescheduleFormProps) {
   const router = useRouter();
@@ -318,6 +334,7 @@ export function RescheduleForm({
         days={availability.days}
         month={month}
         bounds={bounds}
+        openingHours={openingHours}
         onMonthChange={goToMonth}
         timeZone={timeZone}
         headingId="report-creneaux-titre"

@@ -1,6 +1,6 @@
 'use client';
 
-import type { CalendarDate } from '@spa/shared';
+import type { CalendarDate, OpeningHoursEntry } from '@spa/shared';
 import {
   useCallback,
   useEffect,
@@ -12,6 +12,7 @@ import {
 } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { isPublishedClosedDay, publishedOpenWeekdays } from '@/lib/booking/opening-days';
 import {
   WEEKDAY_INITIALS,
   WEEKDAY_NAMES,
@@ -74,6 +75,21 @@ import { formatCalendarDate } from '@/lib/format';
  * atteindre sans se laisser retenir : dans une grille de dates, une case qu'on
  * ne peut pas atteindre est une case dont on ne peut pas lire l'état, et
  * « complet » est précisément ce qu'on vient y lire.
+ *
+ * ## « Fermé » n'est pas « complet » (#742)
+ *
+ * Le calendrier écrivait « complet » sur toute journée sans créneau, samedis et
+ * dimanches compris — alors que la vitrine du même salon publie des horaires du
+ * lundi au vendredi. Le CDC §2.3 demande pourtant que l'interface dise **lequel
+ * des deux** empêche de réserver : les horaires du salon, ou les rendez-vous
+ * déjà pris. « Complet » invite à repasser plus tard, « Fermé » à choisir un
+ * autre jour.
+ *
+ * La distinction se lit dans les horaires publiés de l'établissement
+ * (`openingHours`), et seulement pour **nommer** une journée que le moteur a
+ * déjà déclarée sans créneau — voir
+ * [`opening-days.ts`](../../lib/booking/opening-days.ts) pour ce que ces plages
+ * décrivent et ce qu'elles ne décident pas.
  */
 interface AvailabilityCalendarProps {
   /** Le mois affiché, `YYYY-MM`. */
@@ -89,6 +105,17 @@ interface AvailabilityCalendarProps {
    * table est une date dont le serveur n'a rien dit, donc une date sans créneau.
    */
   readonly slotCounts: ReadonlyMap<CalendarDate, number> | null;
+  /**
+   * Les plages d'ouverture publiées par l'établissement, telles que la vitrine
+   * les affiche.
+   *
+   * Elles ne servent qu'à **nommer** une journée déjà sans créneau : « Fermé »
+   * quand le salon n'ouvre pas ce jour-là, « Complet » sinon (#742). Absentes —
+   * le cas d'un salon qui n'a rien publié —, aucune journée n'est déclarée
+   * fermée : l'API omet ces horaires plutôt que de rendre une semaine vide, et
+   * « pas encore renseigné » ne se lit pas « ne travaille jamais ».
+   */
+  readonly openingHours?: readonly OpeningHoursEntry[] | undefined;
   /** La journée retenue, quand elle tombe dans le mois affiché. */
   readonly selectedDate: CalendarDate | null;
   /** Une action est en vol : plus rien ne se retient tant qu'elle n'a pas rendu. */
@@ -104,13 +131,22 @@ function slotCountLabel(count: number): string {
   return count === 1 ? '1 créneau' : `${String(count)} créneaux`;
 }
 
-/** Ce qu'une case dit d'elle-même, au-delà de sa date. */
-type DayState = 'chargement' | 'ferme' | 'complet' | 'libre';
+/**
+ * Ce qu'une case dit d'elle-même, au-delà de sa date.
+ *
+ * `hors-fenetre` s'est longtemps appelé `ferme`, du temps où le calendrier
+ * n'avait qu'un seul mot pour « on ne peut pas réserver ce jour-là ». Les deux
+ * états coexistent depuis #742 et ne disent pas la même chose : l'un porte sur
+ * la période que le produit ouvre à la réservation, l'autre sur les horaires que
+ * le salon publie.
+ */
+type DayState = 'chargement' | 'hors-fenetre' | 'ferme' | 'complet' | 'libre';
 
 /** Ce que le nom accessible d'une case ajoute à sa date, hors journée libre. */
 const DAY_STATE_LABEL: Record<Exclude<DayState, 'libre'>, string> = {
   chargement: 'disponibilités en cours de chargement',
-  ferme: 'hors de la période de réservation',
+  'hors-fenetre': 'hors de la période de réservation',
+  ferme: 'fermé',
   complet: 'complet',
 };
 
@@ -118,6 +154,7 @@ export function AvailabilityCalendar({
   month,
   bounds,
   slotCounts,
+  openingHours,
   selectedDate,
   busy = false,
   calendarRef,
@@ -125,6 +162,8 @@ export function AvailabilityCalendar({
   onSelect,
 }: AvailabilityCalendarProps) {
   const weeks = useMemo(() => monthWeeks(month), [month]);
+  /** Les jours de semaine que le salon annonce ouverts — `null` s'il n'a rien publié. */
+  const openWeekdays = useMemo(() => publishedOpenWeekdays(openingHours), [openingHours]);
 
   /**
    * L'état d'une case.
@@ -132,11 +171,17 @@ export function AvailabilityCalendar({
    * Hors fenêtre prime sur tout le reste : une date de novembre n'est pas
    * « complète », elle n'est pas encore ouverte à la réservation, et les deux ne
    * se disent pas pareil.
+   *
+   * « Fermé » vient **en dernier**, et ne fait que renommer ce qui serait
+   * « complet » : les horaires publiés décrivent la vitrine, pas l'agenda (#742).
+   * Une journée que le moteur rend avec des créneaux reste donc libre, quoi
+   * qu'annonce la semaine d'ouverture — un praticien qui ouvre exceptionnellement
+   * un samedi ne verra pas son agenda masqué par un horaire d'affichage.
    */
   const stateOf = useCallback(
     (date: CalendarDate): DayState => {
       if (!isWithinWindow(date, bounds)) {
-        return 'ferme';
+        return 'hors-fenetre';
       }
 
       // Une date hors du mois affiché n'est dans aucune table de comptes : la
@@ -148,9 +193,13 @@ export function AvailabilityCalendar({
         return 'chargement';
       }
 
-      return (slotCounts.get(date) ?? 0) > 0 ? 'libre' : 'complet';
+      if ((slotCounts.get(date) ?? 0) > 0) {
+        return 'libre';
+      }
+
+      return isPublishedClosedDay(date, openWeekdays) ? 'ferme' : 'complet';
     },
-    [bounds, month, slotCounts],
+    [bounds, month, openWeekdays, slotCounts],
   );
 
   /** Une case se retient quand elle a — ou peut encore avoir — quelque chose à montrer. */
@@ -444,6 +493,22 @@ interface CalendarDayProps {
  * accessible le nombre de créneaux ; une journée pleine n'en porte pas et
  * s'annonce « complet ». La forme et le mot portent donc l'information, que
  * l'atténuation ne fait qu'appuyer (WCAG 1.4.1).
+ *
+ * ## Une journée fermée porte son quantième **barré** (#742)
+ *
+ * Une journée fermée et une journée complète sont toutes deux atténuées et sans
+ * pastille : rien ne les distinguait avant le clic, ce que le benchmark du
+ * marché relève en propre — `BM-CRENEAU-04`, « un jour de fermeture est-il
+ * distinguable autrement que par la seule couleur ? », où les cinq plateformes
+ * observées grisent **ou barrent** les jours impossibles
+ * ([parcours-client.md](../../../../docs/design/benchmark/parcours-client.md)).
+ *
+ * Le trait est porté par un `<s>` et non par une classe : `Button` n'accepte pas
+ * de `className` — le design system garde la main sur l'allure d'un bouton —, et
+ * le quantième vit **dans** le bouton. L'élément le barre de lui-même, sans
+ * qu'aucune feuille n'ait à décrire un état de plus. Il est de surcroît
+ * `aria-hidden` avec le quantième qu'il enveloppe : c'est le nom accessible qui
+ * dit « fermé », le trait ne fait que le montrer.
  */
 function CalendarDay({
   date,
@@ -478,7 +543,7 @@ function CalendarDay({
         }}
       >
         <span aria-hidden="true" className="spa-calendar__day">
-          {dayOfMonth(date)}
+          {state === 'ferme' ? <s>{dayOfMonth(date)}</s> : dayOfMonth(date)}
         </span>
         {state === 'libre' ? <span aria-hidden="true" className="spa-calendar__mark" /> : null}
       </Button>
