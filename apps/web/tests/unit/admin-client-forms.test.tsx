@@ -99,11 +99,11 @@ describe('la note interne d’une fiche', () => {
 
   it('écrit que la note est interne, plutôt que de le suggérer par une teinte', () => {
     // C'est la seule garantie qui survive à un daltonisme, à une impression en
-    // gris, et à un opérateur qui tourne son écran vers la cliente.
+    // gris, et à un opérateur qui tourne son écran vers le client.
     renderNote(FARA.internalNote);
 
     expect(screen.getByText('Interne au salon')).toBeDefined();
-    expect(screen.getByText(/jamais transmise à la cliente/i)).toBeDefined();
+    expect(screen.getByText(/jamais transmise au client/i)).toBeDefined();
   });
 
   it('pré-remplit la note en place et dit qu’enregistrer la remplace', () => {

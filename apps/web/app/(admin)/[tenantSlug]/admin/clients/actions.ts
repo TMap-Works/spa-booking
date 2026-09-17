@@ -97,7 +97,7 @@ export async function updateCustomerAction(
   const parsed = updateCustomerRequestSchema.safeParse(input);
 
   if (!id.success) {
-    return invalid('Fiche cliente inconnue.');
+    return invalid('Fiche client inconnue.');
   }
   if (!parsed.success) {
     return invalid(

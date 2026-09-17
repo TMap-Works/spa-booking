@@ -314,23 +314,23 @@ describe('#757 — la note du rendez-vous se lit dans le tiroir', () => {
   it('traite une note blanche comme une absence, et non comme un bloc vide', () => {
     // `longTextSchema` n'a pas de `.min(1)` : une remarque tapée en espaces
     // traverse le tunnel (l'étape de contact soumet `getValues()`, valeur brute)
-    // et l'API la range à `''`. S'arrêter à `null` titrerait « Visible de la
-    // cliente » au-dessus d'un paragraphe vide — le tiroir affirmerait une note
+    // et l'API la range à `''`. S'arrêter à `null` titrerait « Visible du
+    // client » au-dessus d'un paragraphe vide — le tiroir affirmerait une note
     // qu'il ne montre pas.
     renderPanel({ kind: 'edit', appointment: { ...CONFIRME, clientNote: '   ' } });
 
     expect(screen.getByText('Aucune note jointe à ce rendez-vous')).toBeDefined();
-    expect(screen.queryByText(/Visible de la cliente/)).toBeNull();
+    expect(screen.queryByText(/Visible du client/)).toBeNull();
   });
 
-  it('dit que la note est visible de la cliente, et qu’elle n’est pas celle du salon', () => {
+  it('dit que la note est visible du client, et qu’elle n’est pas celle du salon', () => {
     // Les deux textes libres du produit ne se confondent sous aucun prétexte :
     // celui-ci est repris dans la confirmation, la note interne de la fiche ne
     // sort par aucune route. L'appartenance est écrite, jamais portée par une
     // teinte (WCAG 1.4.1).
     renderPanel({ kind: 'edit', appointment: { ...CONFIRME, clientNote: ALLERGIE } });
 
-    expect(screen.getByText(/Visible de la cliente/)).toBeDefined();
+    expect(screen.getByText(/Visible du client/)).toBeDefined();
     expect(screen.getByText(/ce n’est pas la note interne du salon/)).toBeDefined();
   });
 

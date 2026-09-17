@@ -193,7 +193,7 @@ export async function createDeskClientAction(
   const parsed = createCustomerRequestSchema.safeParse(payload);
 
   if (!parsed.success) {
-    return invalid(parsed.error.issues[0]?.message ?? 'La fiche cliente saisie est invalide.');
+    return invalid(parsed.error.issues[0]?.message ?? 'La fiche client saisie est invalide.');
   }
 
   try {

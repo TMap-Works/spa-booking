@@ -320,7 +320,7 @@ function ClientDirectory({
     return (
       <div className="spa-empty-state spa-empty-state--inline">
         <p className="spa-empty-state__title">
-          {term === null ? 'Aucune fiche cliente' : `Aucune fiche pour « ${term} »`}
+          {term === null ? 'Aucune fiche client' : `Aucune fiche pour « ${term} »`}
         </p>
         <p className="spa-empty-state__description">
           {term === null
@@ -500,7 +500,7 @@ function ClientRecord({
           </p>
           <p>
             Ni confirmation, ni rappel, ni avis d’annulation ne partent vers{' '}
-            {customer.email}. Prévenez la cliente autrement — par téléphone ou au comptoir. Son
+            {customer.email}. Prévenez le client autrement — par téléphone ou au comptoir. Son
             adresse ne se corrige pas d’ici : le back-office ne la modifie pas, faute de pouvoir
             vérifier la nouvelle.
           </p>

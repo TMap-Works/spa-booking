@@ -972,7 +972,7 @@ export function AppointmentPanel({
                   label="Note jointe au rendez-vous"
                   rows={2}
                   value={note}
-                  hint="Reprise dans la confirmation : elle est visible de la cliente."
+                  hint="Reprise dans la confirmation : elle est visible du client."
                   onChange={(event) => {
                     setNote(event.target.value);
                   }}
@@ -1176,8 +1176,8 @@ export function AppointmentPanel({
  * soumet `getValues()`, donc la valeur brute que le `.trim()` de Zod n'a pas
  * touchée, et le récapitulatif n'omet le champ que s'il vaut exactement `''` —,
  * l'API la range élaguée à `''` plutôt qu'à `null`, et l'agenda la sert telle
- * quelle. S'arrêter à `null` afficherait alors un bloc titré « Visible de la
- * cliente » au-dessus d'un paragraphe vide : le tiroir affirmerait une note qu'il
+ * quelle. S'arrêter à `null` afficherait alors un bloc titré « Visible du
+ * client » au-dessus d'un paragraphe vide : le tiroir affirmerait une note qu'il
  * ne montre pas, exactement le doute que ce composant existe pour lever.
  * `appointment-card.tsx`, côté espace client, garde déjà ce cas.
  *
@@ -1220,7 +1220,7 @@ function AppointmentNote({
           <p className="spa-empty-state__title">Aucune note jointe à ce rendez-vous</p>
           <p className="spa-empty-state__description">
             Rien n’a été écrit à la réservation. La note interne du salon, elle, se tient sur la
-            fiche de la cliente.
+            fiche client.
           </p>
         </div>
       ) : (
@@ -1228,7 +1228,7 @@ function AppointmentNote({
           <li className="spa-admin-notes__item">
             <div className="spa-admin-notes__meta">
               <span>Jointe à la réservation</span>
-              <span>Visible de la cliente — ce n’est pas la note interne du salon</span>
+              <span>Visible du client — ce n’est pas la note interne du salon</span>
             </div>
             <p className="spa-admin-notes__body">{written}</p>
           </li>
