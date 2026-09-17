@@ -388,6 +388,46 @@ export class NotificationsRepository {
   }
 
   /**
+   * La coordonnée du destinataire — **au moment d'envoyer**, et pour lui seul
+   * (#799).
+   *
+   * ## La seule lecture du module qui rende une donnée personnelle
+   *
+   * `findRecipientContact` rend deux booléens, `findStaffRecipient` un
+   * identifiant, et tout le reste du module désigne ses destinataires par leur
+   * compte : c'est la règle de notifications §7 — « une coordonnée ne se recopie
+   * pas, sans quoi une demande RGPD devrait l'effacer à deux endroits, et c'est
+   * toujours la seconde copie qu'on oublie ».
+   *
+   * Cette méthode est l'exception qui rend la règle tenable. Il faut bien que
+   * l'adresse sorte de la base **une fois**, à l'instant d'appeler SES ou SNS ;
+   * ce que la règle interdit, c'est qu'elle sorte plus tôt — dans une enveloppe
+   * SQS, dans un contexte de rendu, dans un journal. Elle est donc appelée par
+   * l'expéditeur, et par personne d'autre : le message n'en porte rien, et ce
+   * qu'elle rend ne persiste nulle part.
+   *
+   * ## Elle est relue à chaque tentative, jamais mémorisée
+   *
+   * Un message de file survit à sa file. Une cliente qui corrige son adresse
+   * entre la publication et le rejeu doit recevoir sur la nouvelle — et une
+   * cliente anonymisée ne doit recevoir sur aucune.
+   *
+   * Rend `null` si le compte n'existe pas ou appartient à un autre
+   * établissement — le client scopé ne fait pas la différence, et c'est bien
+   * ainsi (tenant-isolation §4).
+   */
+  public async findRecipientAddress(
+    userId: string,
+  ): Promise<{ email: string; phone: string | null } | null> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId },
+      select: { email: true, phone: true },
+    });
+
+    return user === null ? null : { email: user.email, phone: user.phone };
+  }
+
+  /**
    * Cette adresse a-t-elle cessé d'être sollicitée — **au moment d'envoyer** ?
    * (#73)
    *
