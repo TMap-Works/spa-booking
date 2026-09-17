@@ -114,7 +114,10 @@ export class SaveNotificationTemplateDto {
     description:
       'Objet de l’e-mail — **obligatoire** sur le canal e-mail, où un `Subject` vide fait ' +
       'un message que personne ne sait relire. Ignoré, et stocké vide, sur le canal SMS.',
-    example: 'Votre rendez-vous du {{date}} est confirmé — {{salon}}',
+    // Le défaut de la plateforme, au mot près (#911). Un exemple d'OpenAPI est
+    // ce qu'un intégrateur recopie : y laisser l'ancien « est confirmé » aurait
+    // remis en circulation la phrase que ce ticket retire.
+    example: 'À confirmer par le salon : votre rendez-vous du {{date}} — {{salon}}',
   })
   @IsOptional()
   @IsString({ message: 'subject : chaîne attendue' })
@@ -137,7 +140,7 @@ export class SaveNotificationTemplateDto {
     description:
       'Version texte brut — obligatoire. Elle accompagne systématiquement le HTML : un e-mail ' +
       'qui n’a que du HTML est pénalisé par les filtres anti-spam. C’est aussi le corps du SMS.',
-    example: '{{salon}} : rendez-vous confirmé le {{date}} ({{fuseau}}).',
+    example: '{{salon}} : rendez-vous du {{date}} ({{fuseau}}) enregistré, à confirmer par le salon.',
   })
   @IsString({ message: 'text : chaîne attendue' })
   // Le corps texte n'est jamais facultatif, sur aucun canal : c'est le quatrième
