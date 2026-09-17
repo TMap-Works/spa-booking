@@ -77,6 +77,7 @@ describe('POST /api/v1/public/:tenantSlug/appointments/:appointmentId/reschedule
         staffId: harness.a.staffId,
         startsAt: from.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
 
     expect(response.status).toBe(201);

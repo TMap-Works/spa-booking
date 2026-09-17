@@ -204,6 +204,19 @@ export class BookAppointmentDto {
     maxLength: LONG_TEXT_MAX_LENGTH,
   })
   public clientNote?: string;
+
+  @ApiProperty({
+    description:
+      'L’accord de la cliente au traitement de ses données. **Obligatoire, et ' +
+      '`true` obligatoirement** : une demande sans accord, ou avec un accord ' +
+      'refusé, est un 400 — le salon n’écrit pas de fiche cliente sans base ' +
+      'légale (CDC §5.1). **Aucune date n’est attendue ici** : le serveur ' +
+      'horodate lui-même l’accord, en UTC, dans l’insertion du rendez-vous. ' +
+      'RGPD art. 7.1 fait porter la preuve au responsable de traitement, et une ' +
+      'preuve datée par l’appelant n’en serait pas une.',
+    example: true,
+  })
+  public dataConsent!: boolean;
 }
 
 /**

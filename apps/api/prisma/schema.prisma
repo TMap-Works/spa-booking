@@ -1101,6 +1101,43 @@ model Appointment {
   clientNote String? @map("client_note") @db.VarChar(2000)
   staffNote  String? @map("staff_note") @db.VarChar(2000)
 
+  /// Quand la cliente a accepté le traitement de ses données — la **preuve de
+  /// consentement** du salon (#790, CDC §5.1, RGPD art. 7.1).
+  ///
+  /// ## Pourquoi un instant seul, là où `users` porte un booléen **et** un instant
+  ///
+  /// Parce que les deux consentements n'ont pas le même nombre d'états.
+  /// `users.marketing_consent` peut être refusé — il faut donc distinguer
+  /// « refusé » de « jamais demandé », et c'est ce que le booléen fait. Celui-ci
+  /// n'a pas de « refusé » à enregistrer : la route publique **n'écrit aucune
+  /// ligne** sans accord (`dataConsentSchema`, contrat partagé). Un booléen
+  /// n'aurait donc jamais valu autre chose que `true` partout où cet instant est
+  /// posé, c'est-à-dire redit la même chose une seconde fois — et une seconde
+  /// écriture d'une même règle est ce qui finit par diverger.
+  ///
+  /// `NULL` se lit « aucun accord recueilli en ligne », jamais « refusé » : c'est
+  /// le cas du rendez-vous saisi **au comptoir** (#461), où la cliente n'a coché
+  /// aucune case et où le salon répond de sa base légale autrement.
+  ///
+  /// ## Posé par le serveur, à l'insertion
+  ///
+  /// L'appelant envoie un accord, jamais une date : RGPD art. 7.1 fait porter la
+  /// preuve au responsable de traitement, et une preuve horodatée par celui
+  /// qu'elle engage n'en est pas une. `Timestamptz(6)` comme tout instant de ce
+  /// schéma — stocké en UTC, converti au fuseau du salon à l'affichage
+  /// (CLAUDE.md, ADR 0006).
+  ///
+  /// ## Recopié par le report
+  ///
+  /// Un report (#39) crée une ligne neuve et annule l'ancienne. L'accord suit le
+  /// rendez-vous déplacé, comme `staff_note` : il a bien été donné, et le perdre
+  /// ferait disparaître la preuve au premier changement d'heure.
+  ///
+  /// Aucun index : cette colonne ne sert aucun prédicat de recherche. Elle se lit
+  /// une ligne à la fois, par la clé du rendez-vous qu'on regarde. Même
+  /// arbitrage, et même motif, que les colonnes de `20260906150000`.
+  dataConsentAt DateTime? @map("data_consent_at") @db.Timestamptz(6)
+
   /// Traçabilité de l'annulation — #40, booking-engine §5.
   ///
   /// Les trois colonnes se lisent ensemble, et `cancelled_at` est celle qui les

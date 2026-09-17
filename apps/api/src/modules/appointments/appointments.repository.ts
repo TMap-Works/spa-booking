@@ -149,6 +149,13 @@ type AppointmentRow = Prisma.AppointmentGetPayload<{ select: typeof APPOINTMENT_
 const RESCHEDULE_SOURCE_SELECT = {
   ...APPOINTMENT_SELECT,
   staffNote: true,
+  // La preuve de consentement, recopiée comme la note interne (#790). Un report
+  // n'est pas un nouvel accord : la cliente a consenti au traitement de ses
+  // données pour ce rendez-vous-là, et le déplacer d'une heure n'y change rien.
+  // Ne pas la recopier ferait disparaître la preuve au premier changement
+  // d'heure — c'est-à-dire précisément sur les rendez-vous dont l'historique est
+  // le plus chargé.
+  dataConsentAt: true,
 } as const;
 
 /**
@@ -185,6 +192,12 @@ const AGENDA_SELECT = {
   ...APPOINTMENT_SELECT,
   staffNote: true,
   createdAt: true,
+  // La preuve de consentement (#790). Quatrième ajout, même raison que
+  // `staffNote` : c'est une donnée de **registre**, que le salon doit pouvoir
+  // produire et que le parcours public n'a aucune raison de lire. La mettre dans
+  // `APPOINTMENT_SELECT` l'aurait fait charger sur les six lectures du module,
+  // dont l'historique public de #47.
+  dataConsentAt: true,
   client: { select: { id: true, firstName: true, lastName: true } },
   staff: { select: { id: true, displayName: true } },
   service: {
@@ -267,6 +280,7 @@ function toAgendaRecord(row: AgendaRow): AgendaAppointmentRecord {
     },
     staffNote: row.staffNote,
     createdAt: row.createdAt,
+    dataConsentAt: row.dataConsentAt,
   };
 }
 
@@ -683,6 +697,14 @@ export class AppointmentsRepository {
           // avait pris la peine d'écrire. Recopiée à l'aveugle : elle est écrite
           // ici, jamais relue — le `select` ci-dessous ne la demande pas.
           staffNote: previous.staffNote,
+          // La preuve de consentement suit elle aussi le rendez-vous, et pour une
+          // raison plus forte encore (#790) : un report n'est pas un nouvel
+          // accord à recueillir, c'est le même rendez-vous à une autre heure. La
+          // laisser sur la ligne annulée aurait fait perdre au salon, à chaque
+          // déplacement, la preuve de ce que la cliente avait accepté — et rien
+          // ne l'aurait signalé, la colonne étant nullable. Recopiée à l'aveugle,
+          // comme la note : le `select` ci-dessous ne la relit pas.
+          dataConsentAt: previous.dataConsentAt,
           status: previous.status,
           staffId: draft.staffId,
           startsAt: draft.startsAt,
@@ -799,6 +821,11 @@ export class AppointmentsRepository {
           priceAmountMinor: draft.price.amountMinor,
           priceCurrency: draft.price.currency,
           clientNote: draft.clientNote,
+          // La preuve de consentement, posée dans la **même** insertion que la
+          // ligne qu'elle autorise (#790) : elles sont validées ou abandonnées
+          // ensemble, et il n'existe donc aucun instant où le salon détiendrait
+          // un rendez-vous sans l'accord qui le permet.
+          dataConsentAt: draft.dataConsentAt,
         }),
         select: APPOINTMENT_SELECT,
       });

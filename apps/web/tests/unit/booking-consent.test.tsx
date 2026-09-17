@@ -24,7 +24,11 @@
  * 5. le récapitulatif du tunnel reste hors d'atteinte sans consentement, y
  *    compris par une URL écrite à la main — la garde de `reachableStep` ;
  * 6. le consentement survit à un rafraîchissement, et un brouillon écrit avant
- *    ce ticket ne coûte ni la prestation ni le créneau, seulement la case.
+ *    ce ticket ne coûte ni la prestation ni le créneau, seulement la case ;
+ * 7. depuis #790, l'information en place porte à côté d'elle le lien vers la
+ *    politique de données **de cet établissement**, ouvert dans un nouvel
+ *    onglet — un lien qui se rabattrait sur une adresse générique, ou qui
+ *    emporterait le tunnel à moitié rempli, serait un lien de moins qu'aucun.
  *
  * Suite propre au ticket : les suites voisines — `contact-step`,
  * `register-form`, `booking-tunnel`, `draft` — cochent la case comme un
@@ -71,6 +75,7 @@ function renderContactStep() {
   render(
     <ContactStep
       contact={emptyBookingDraft().contact}
+      tenantSlug="salon-zen"
       onSave={onSave}
       onBack={vi.fn()}
       onSubmit={onSubmit}
@@ -131,6 +136,25 @@ describe('l’information due avant la collecte (CDC §5.1)', () => {
     }
     // Droits des personnes — la troisième exigence de la même section du CDC.
     expect(details?.textContent).toMatch(/suppression/);
+  });
+
+  it('mène à la politique de données de l’établissement, dans un nouvel onglet', () => {
+    renderContactStep();
+
+    // Le lien vit **dans** le paragraphe d'intro, jamais dans le libellé de la
+    // case : un lien à l'intérieur d'un `<label>` serait activé par le clic qui
+    // coche (#790).
+    const finalites = document.getElementById('consent-finalites') as HTMLElement;
+    const lien = within(finalites).getByRole('link', { name: /politique de données/i });
+
+    // Par salon : il n'existe pas d'adresse générique, et c'est la politique de
+    // **cet** établissement que la cliente s'apprête à accepter.
+    expect(lien.getAttribute('href')).toBe('/salon-zen/politique-donnees');
+    // Nouvel onglet : le tunnel est à moitié rempli, et rien de ce qui informe
+    // ne doit le faire perdre. `rel` va avec — sans lui, la page ouverte garde
+    // une prise sur celle qui l'a ouverte.
+    expect(lien.getAttribute('target')).toBe('_blank');
+    expect(lien.getAttribute('rel')).toContain('noopener');
   });
 
   it('ne coche jamais la case d’avance', () => {
@@ -220,6 +244,13 @@ describe('le consentement est bloquant', () => {
 
     expect(finalites?.textContent).toMatch(/aucune prospection, aucune revente/);
     expect(screen.getByText('Ce que nous faisons de vos données').tagName).toBe('SUMMARY');
+    // Et la même sortie vers la politique de données, sur le salon de cet
+    // écran-ci : le lien ne se rabat sur aucune adresse générique (#790).
+    expect(
+      within(finalites as HTMLElement)
+        .getByRole('link', { name: /politique de données/i })
+        .getAttribute('href'),
+    ).toBe(`/${SLUG}/politique-donnees`);
   });
 });
 

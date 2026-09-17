@@ -179,6 +179,11 @@ export class PublicAppointmentsController {
       startsAt: new Date(body.startsAt),
       client: toGuestContact(body.client),
       clientNote: body.clientNote ?? null,
+      // L'accord passe tel quel — un booléen, jamais une date (#790). Le
+      // contrat l'a déjà jugé : `dataConsentSchema` refuse `false` comme il
+      // refuse l'absence, si bien qu'aucune réservation sans accord n'atteint
+      // le service. C'est lui qui l'horodate, depuis son horloge.
+      dataConsent: body.dataConsent,
     });
   }
 

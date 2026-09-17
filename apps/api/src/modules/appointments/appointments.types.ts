@@ -73,6 +73,20 @@ export interface AppointmentDraft {
   /** Prix figé à la réservation — le tarif du catalogue peut changer ensuite. */
   readonly price: Money;
   readonly clientNote: string | null;
+  /**
+   * L'instant où la cliente a accepté le traitement de ses données, ou `null`
+   * (#790).
+   *
+   * Un instant, et non le booléen reçu : la conversion se fait **une fois**, dans
+   * le service, à partir de l'horloge qu'il porte déjà en paramètre. C'est la
+   * conduite de `CancelDraft.cancelledAt`, et pour la même raison — une preuve
+   * horodatée par un `new Date()` enfoui dans le repository ne serait observable
+   * par aucun test sans décaler l'horloge de la machine.
+   *
+   * `null` pour la prise de rendez-vous **au comptoir** (#461) : personne n'y a
+   * coché de case. Ce n'est pas un refus, c'est une autre base légale.
+   */
+  readonly dataConsentAt: Date | null;
 }
 
 /**
@@ -239,6 +253,22 @@ export interface BookAppointmentInput {
   readonly startsAt: Date;
   readonly client: GuestContact;
   readonly clientNote: string | null;
+  /**
+   * L'accord au traitement des données personnelles — le seul champ de cette
+   * demande qui ne décrit pas le rendez-vous (#790, CDC §5.1).
+   *
+   * Un booléen ici, un instant en base : le service pose la date depuis son
+   * horloge, jamais l'appelant (voir `AppointmentDraft.dataConsentAt`). Le
+   * contrat partagé le rend obligatoire et refuse `false`, si bien qu'il vaut
+   * `true` sur tout appel qui a franchi la frontière — le type reste un booléen
+   * parce que le domaine n'a pas à dépendre de la façon dont un schéma
+   * d'entrée le garantit.
+   *
+   * Absent de `CreateAppointmentInput`, et c'est la seule asymétrie de fond
+   * entre les deux surfaces : au comptoir, la cliente n'est pas devant un
+   * écran.
+   */
+  readonly dataConsent: boolean;
 }
 
 /**
@@ -532,6 +562,16 @@ export interface AgendaAppointmentRecord extends AppointmentRecord {
   /** Note interne du praticien, `null` quand il n'y en a pas. */
   readonly staffNote: string | null;
   readonly createdAt: Date;
+  /**
+   * La preuve de consentement, `null` quand il n'y en a pas (#790).
+   *
+   * Lue ici et non dans `AppointmentRecord`, exactement pour la raison qui y
+   * garde `staffNote` : `APPOINTMENT_SELECT` sert six lectures du module, dont
+   * l'historique public de #47 et la réservation d'invitée. Une donnée de
+   * registre n'a rien à faire sur ces sorties-là — le salon la produit, la
+   * cliente n'en a pas l'usage.
+   */
+  readonly dataConsentAt: Date | null;
 }
 
 /**
@@ -600,6 +640,15 @@ export interface AgendaAppointmentView {
   readonly cancellationReason?: string;
   readonly rescheduledFromId?: string;
   readonly createdAt: string;
+  /**
+   * Quand la cliente a accepté le traitement de ses données, en ISO 8601 UTC —
+   * **absent** quand il n'y a pas d'accord en ligne (#790).
+   *
+   * Absent et non `null`, comme les autres facultatifs de cette vue :
+   * `appointmentSchema` les déclare `.optional()`, et un `null` explicite y
+   * échouerait.
+   */
+  readonly dataConsentAt?: string;
 }
 
 /**

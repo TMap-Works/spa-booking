@@ -82,6 +82,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
 
     expect(response.status).toBe(201);
@@ -192,6 +193,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
           staffId: harness.a.staffId,
           startsAt: slot.startsAt.toISOString(),
           client: { ...GUEST, email: 'autre@example.test' },
+          dataConsent: true,
         });
 
       expect(reprise.status).toBe(201);
@@ -209,6 +211,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
         client: { ...GUEST, email: 'autre@example.test' },
+        dataConsent: true,
       };
       await request(harness.server()).post(BOOKING_PATH(harness.a.tenant.slug)).send(payload);
       const troisieme = await request(harness.server())
@@ -466,6 +469,7 @@ describe('Annulation d’un rendez-vous — les deux surfaces', () => {
           staffId: harness.a.staffId,
           startsAt: slot.startsAt.toISOString(),
           client: { ...GUEST, email: 'autre@example.test' },
+          dataConsent: true,
         });
 
       // C'est tout l'intérêt de libérer : le créneau redevient vendable.

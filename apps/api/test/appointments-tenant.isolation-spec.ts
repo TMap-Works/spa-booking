@@ -65,6 +65,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
 
     // 404 et non 403 : un 403 confirmerait que cette prestation existe ailleurs.
@@ -83,6 +84,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
         staffId: harness.b.staffId,
         startsAt: slot.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
 
     expect(response.status).toBe(404);
@@ -97,6 +99,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
         staffId: harness.b.staffId,
         startsAt: slot.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
 
     // Le praticien du voisin n'est candidat à aucune prestation d'ici : il ne
@@ -115,6 +118,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
     const inB = await request(harness.server())
       .post(BOOKING_PATH(harness.b.tenant.slug))
@@ -123,6 +127,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
         staffId: harness.b.staffId,
         startsAt: slot.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
 
     expect(inA.status).toBe(201);
@@ -155,6 +160,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
 
     expect(response.status).toBe(201);
@@ -175,6 +181,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
 
     const response = await request(harness.server())
@@ -184,6 +191,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
         staffId: harness.b.staffId,
         startsAt: slot.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
 
     // La frontière du tenant est dans l'index d'exclusion, pas seulement dans
@@ -203,6 +211,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
         staffId: harness.a.staffId,
         startsAt: slot.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
 
     expect(response.status).toBe(201);
@@ -237,6 +246,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
           serviceId: harness.a.serviceId,
           startsAt: slot.startsAt.toISOString(),
           client: GUEST,
+          dataConsent: true,
         });
 
       expect(response.status).toBe(201);
@@ -256,6 +266,7 @@ describe('Isolation inter-tenant — réservation publique', () => {
           serviceId: harness.b.serviceId,
           startsAt: slot.startsAt.toISOString(),
           client: GUEST,
+          dataConsent: true,
         });
 
       // 404 : la prestation du voisin est introuvable d'ici. Sans `staffId` à
@@ -303,6 +314,7 @@ describe('Isolation inter-tenant — report de rendez-vous', () => {
         staffId: harness.a.staffId,
         startsAt: from.startsAt.toISOString(),
         client: GUEST,
+        dataConsent: true,
       });
 
     expect(response.status).toBe(201);

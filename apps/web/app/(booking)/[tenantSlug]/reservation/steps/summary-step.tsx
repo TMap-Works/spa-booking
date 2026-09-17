@@ -130,6 +130,15 @@ export function SummaryStep({
         ...(contact.phone === '' ? {} : { phone: contact.phone }),
       },
       ...(contact.clientNote === '' ? {} : { clientNote: contact.clientNote }),
+      // L'accord coché à l'étape « Coordonnées », transporté jusqu'à l'API
+      // (#790). Il vient du brouillon et non d'une constante : c'est ce qui
+      // relie la case que la cliente a cochée à la ligne que le salon
+      // conservera. Envoyé tel quel, y compris `false` — la validation de
+      // l'action serveur le refusera alors, et c'est ce qu'on veut : un
+      // récapitulatif atteint sans consentement est un état que le tunnel ne
+      // doit pas savoir réparer tout seul, et `draft.ts` interdit déjà d'y
+      // arriver.
+      dataConsent: contact.consent,
     });
 
     if (result.ok) {

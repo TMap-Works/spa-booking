@@ -291,6 +291,9 @@ export function draft(
     endsAt,
     price: { amountMinor: 3500, currency: 'EUR' },
     clientNote: null,
+    // Le brouillon du **tunnel public** : la case a été cochée, et le service a
+    // daté l'accord avant d'arriver ici (#790).
+    dataConsentAt: startsAt,
   };
 }
 
@@ -326,6 +329,9 @@ export function deskDraft(
     endsAt,
     price: { amountMinor: 3500, currency: 'EUR' },
     clientNote: null,
+    // Le brouillon du **comptoir** : aucune case cochée, donc aucune preuve à
+    // inscrire au registre du salon (#790).
+    dataConsentAt: null,
   };
 }
 

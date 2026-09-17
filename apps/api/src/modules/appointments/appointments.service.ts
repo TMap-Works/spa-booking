@@ -249,7 +249,20 @@ export class AppointmentsService {
       // Les coordonnées, et non un identifiant de fiche : la résolution a lieu
       // dans la transaction d'insertion, chez `crm` (#313). C'est ce qui fait
       // qu'un créneau refusé ne laisse aucune fiche au fichier du salon.
-      { ...input, client: { contact: input.client } },
+      {
+        ...input,
+        client: { contact: input.client },
+        // L'accord devient un **instant**, ici et nulle part ailleurs (#790) :
+        // c'est l'horloge du service qui date la preuve, jamais celle de
+        // l'appelant (RGPD art. 7.1), et `now` est déjà le paramètre par lequel
+        // ce module rend ses horodatages observables en test.
+        //
+        // Le ternaire n'est pas une précaution contre un `false` que le contrat
+        // partagé refuse déjà : c'est ce qui garde la règle **lisible ici**
+        // plutôt que déduite d'un schéma lu ailleurs — et ce qui la tient encore
+        // si un jour une surface appelle ce service sans passer par lui.
+        dataConsentAt: input.dataConsent ? now : null,
+      },
       now,
     );
 
@@ -292,7 +305,19 @@ export class AppointmentsService {
     input: CreateAppointmentInput,
     now: Date = new Date(),
   ): Promise<AgendaAppointmentView> {
-    const { record } = await this.place({ ...input, client: { clientId: input.clientId } }, now);
+    const { record } = await this.place(
+      {
+        ...input,
+        client: { clientId: input.clientId },
+        // Aucun accord en ligne : la cliente n'est pas devant un écran, personne
+        // n'a coché de case, et inscrire un consentement au registre du salon
+        // parce qu'un opérateur a saisi un rendez-vous fabriquerait une preuve
+        // que personne n'a donnée (#790). `null` dit exactement cela, et le salon
+        // répond de sa base légale autrement.
+        dataConsentAt: null,
+      },
+      now,
+    );
 
     return this.agendaById(record.id);
   }
@@ -332,6 +357,7 @@ export class AppointmentsService {
       // cette cliente-là, non.
       price: service.price,
       clientNote: input.clientNote,
+      dataConsentAt: input.dataConsentAt,
     }));
 
     // Le créneau vient d'être pris : le cache qui le proposait encore doit
@@ -1206,6 +1232,15 @@ interface PlacementInput {
   readonly startsAt: Date;
   readonly client: ClientReference;
   readonly clientNote: string | null;
+  /**
+   * La preuve de consentement à poser sur la ligne, ou `null` (#790).
+   *
+   * Un **instant** et non le booléen reçu : la conversion appartient aux deux
+   * surfaces, qui savent laquelle recueille un accord et laquelle n'en recueille
+   * aucun. Le corps commun, lui, ne doit pas avoir à le savoir — c'est la raison
+   * d'être de ce type, et la même que pour `ClientReference`.
+   */
+  readonly dataConsentAt: Date | null;
 }
 
 /**
@@ -1355,6 +1390,13 @@ function agendaView(record: AgendaAppointmentRecord): AgendaAppointmentView {
       ? {}
       : { rescheduledFromId: record.rescheduledFromId }),
     createdAt: record.createdAt.toISOString(),
+    // La preuve de consentement, rendue **ici et nulle part ailleurs** (#790) :
+    // cette route vit derrière `@AuthAtLeast('STAFF')`, et c'est le salon qui
+    // doit pouvoir la produire (RGPD art. 7.1). Même régime que `staffNote` et
+    // que le motif d'annulation, pour la même raison de surface.
+    ...(record.dataConsentAt === null
+      ? {}
+      : { dataConsentAt: record.dataConsentAt.toISOString() }),
   };
 }
 
