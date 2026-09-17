@@ -1291,12 +1291,65 @@ model Payment {
   tenantId String @map("tenant_id") @db.Uuid
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
 
-  /// Nul pour une vente retail sans rendez-vous. Un rendez-vous n'a qu'un
-  /// encaissement : c'est `@@unique([tenantId, appointmentId])` qui le garantit
-  /// — PostgreSQL autorise autant de lignes nulles qu'on veut sous une
-  /// contrainte d'unicité, donc les ventes retail ne se gênent pas entre elles.
+  /// Le rendez-vous que l'**intention en ligne** vise, ou `null`.
+  ///
+  /// `@@unique([tenantId, appointmentId])` tient toujours, et il tient
+  /// exactement ce pour quoi il a été posé : *une* intention Stripe par
+  /// rendez-vous. Deux appels concurrents à `POST
+  /// /appointments/:id/payment-intent` rendent la même (`payments.service.ts`),
+  /// et c'est la base qui tranche la course — jamais une relecture applicative.
+  ///
+  /// ## Ce que le comptoir n'écrit plus ici depuis #817
+  ///
+  /// Rien. Un règlement de comptoir désigne sa **vente** (`sale_id`), et c'est
+  /// la vente qui porte le rendez-vous. La raison est arithmétique : le
+  /// quatrième critère de #817 veut qu'un ticket de 78,00 € se règle en
+  /// 50,00 € d'espèces puis 28,00 € par TPE, donc qu'une vente porte
+  /// **plusieurs** encaissements ; deux lignes portant le même
+  /// `appointment_id` se heurteraient à l'unique ci-dessus.
+  ///
+  /// La colonne reste donc lisible — le premier critère de #817 l'exige — et
+  /// elle reste écrite par le seul chemin qui ait besoin de son unicité. Le
+  /// rendez-vous d'un règlement de comptoir se lit par `sale_id → sales.
+  /// appointment_id`, et c'est cette résolution que `PaymentTransaction` sert
+  /// à l'API. PostgreSQL autorisant autant de lignes nulles qu'on veut sous une
+  /// contrainte d'unicité, ces lignes-là ne se gênent entre elles ni avec les
+  /// ventes retail.
   appointmentId String?      @map("appointment_id") @db.Uuid
   appointment   Appointment? @relation(fields: [appointmentId], references: [id], onDelete: Restrict)
+
+  /// **La pièce que ce règlement solde** — #817, CDC §2.4 : « Payment —
+  /// Transaction (montant, moyen, statut) — 1–1 vers Appointment *ou vente
+  /// POS* ». Le schéma ne portait que la première moitié de cette phrase.
+  ///
+  /// ## Ce que l'absence de cette colonne rendait représentable
+  ///
+  /// Une vente sans le moindre encaissement possible — onze des douze tickets
+  /// de Barber Tana —, et un règlement de rendez-vous sans pièce à imprimer :
+  /// le constat de #817, relevé sur `spa_dev`. Le revenu s'en déduisait sur les
+  /// seuls `payments`, si bien qu'une vente de produits n'entrait **jamais** au
+  /// reporting, et qu'un ticket de 106,80 € n'y comptait que pour les 65,00 €
+  /// de l'encaissement adossé à son rendez-vous.
+  ///
+  /// ## Nullable dans Prisma, obligatoire en base pour toute ligne neuve
+  ///
+  /// La colonne est `String?` ici, et c'est la seule forme qui permette à la
+  /// migration d'être additive : les lignes déjà écrites n'ont pas de vente, et
+  /// aucune valeur par défaut ne peut en inventer une. L'obligation est portée
+  /// par `payments_sale_required_check`, posé **`NOT VALID`** : PostgreSQL
+  /// l'applique à toute écriture nouvelle sans relire l'existant. Le troisième
+  /// critère de #817 est donc tenu par la base — « tout nouveau paiement porte
+  /// une vente » — pendant que le script de reprise
+  /// (`pos.sale-backfill.ts`) rattrape les anciennes.
+  ///
+  /// La clé étrangère est **composite** — `(tenant_id, sale_id)` vers
+  /// `sales (tenant_id, id)` — et non la colonne seule : sans elle, un salon
+  /// pourrait rattacher son encaissement au ticket d'un autre
+  /// (tenant-isolation §1). La déclaration Prisma ne porte que `sale_id` ;
+  /// le couple vit en SQL brut dans la migration, comme pour `payment_refunds`
+  /// et `sale_items` (api-module §6).
+  saleId String? @map("sale_id") @db.Uuid
+  sale   Sale?   @relation(fields: [saleId], references: [id], onDelete: Restrict)
 
   amountMinor         Int    @map("amount_minor")
   refundedAmountMinor Int    @default(0) @map("refunded_amount_minor")
@@ -1340,6 +1393,10 @@ model Payment {
   // la veille. Le statut précède la date parce que l'agrégat ne somme que les
   // encaissements aboutis : `SUCCEEDED`, `PARTIALLY_REFUNDED`, `REFUNDED`.
   @@index([tenantId, status, capturedAt])
+  // « Qu'a-t-on déjà encaissé sur ce ticket ? » — la somme que le règlement
+  // relit avant d'inscrire une ligne de plus (#817), et la jointure sur
+  // laquelle le revenu du reporting s'appuie désormais.
+  @@index([tenantId, saleId])
   @@map("payments")
 }
 
@@ -1564,18 +1621,59 @@ model Sale {
 
   currency String @db.Char(3)
 
+  /// Ce qui a déjà été **engagé** sur ce ticket, en plus petite unité — #817.
+  ///
+  /// ## C'est ici que « zéro double encaissement » se tient
+  ///
+  /// `sales_settled_amount_minor_check` impose `0 ≤ settled ≤ total` : un
+  /// règlement qui dépasserait le reste dû est **non représentable**, et ce
+  /// n'est donc pas une vérification applicative qui le refuse. Le service
+  /// ajoute le montant sous le verrou de la ligne (`SELECT … FOR UPDATE`) — la
+  /// conduite qu'ADR 0002 impose au moteur de réservation : deux comptoirs qui
+  /// règlent la même vente au même instant ne peuvent pas lire tous deux « rien
+  /// d'encaissé » et conclure tous deux que le geste est possible.
+  ///
+  /// ## « Capturé » et non « engagé », et c'est décisif
+  ///
+  /// Une intention carte en ligne ne compte **pas** tant que Stripe n'a rien
+  /// confirmé : c'est le webhook `payment_intent.succeeded` qui fait avancer ce
+  /// compte, dans la transaction même où il écrit `SUCCEEDED`. Réserver dès
+  /// l'ouverture de l'intention a été écarté — un refus de banque est un
+  /// incident ordinaire, et il aurait condamné le ticket jusqu'à ce qu'un
+  /// webhook relâche la somme.
+  ///
+  /// Ce que cela laisse ouvert — un ticket réglé au comptoir pendant qu'une
+  /// intention est en vol — est fermé un cran plus haut : `SettlementRepository`
+  /// refuse un règlement de comptoir sur un ticket qui porte une intention
+  /// carte `PENDING`.
+  settledAmountMinor Int @default(0) @map("settled_amount_minor")
+
+  /// L'instant où le ticket a été **soldé** — nul tant qu'il reste un centime
+  /// dû, et c'est ce que `sales_settled_at_check` vérifie.
+  ///
+  /// Une colonne plutôt qu'une comparaison recalculée à la lecture : c'est elle
+  /// que le refus 409 `SALE_ALREADY_SETTLED` du troisième critère relit, et une
+  /// pièce comptable doit porter la date à laquelle elle a été soldée, pas la
+  /// déduire de l'égalité de deux montants.
+  settledAt DateTime? @map("settled_at") @db.Timestamptz(6)
+
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  items SaleItem[]
+  items    SaleItem[]
+  payments Payment[]
 
   // Cible des clés étrangères composites — voir `User.@@unique([tenantId, id])`.
   @@unique([tenantId, id])
   // L'historique des ventes, du plus récent au plus ancien (#62).
   @@index([tenantId, createdAt])
   // « Qu'a-t-on facturé sur ce rendez-vous ? » — la lecture de la fiche client
-  // et du rapprochement.
+  // et du rapprochement. C'est aussi par lui que l'encaissement d'un rendez-vous
+  // retrouve son ticket avant d'en composer un second (#817).
   @@index([tenantId, appointmentId])
+  // « Qu'a-t-on soldé, et quand ? » — l'axe du rapprochement de caisse depuis
+  // que le revenu se lit sur les ventes réglées (sixième critère de #817).
+  @@index([tenantId, settledAt])
   @@map("sales")
 }
 

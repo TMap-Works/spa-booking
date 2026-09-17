@@ -205,6 +205,7 @@ export type {
 } from './notification';
 
 export {
+  counterPaymentMethodSchema,
   createPaymentIntentRequestSchema,
   paymentIntentSchema,
   paymentListQuerySchema,
@@ -213,14 +214,19 @@ export {
   paymentStatusSchema,
   recordCounterPaymentRequestSchema,
   refundPaymentRequestSchema,
+  saleSettlementSchema,
+  settleSaleRequestSchema,
 } from './payment';
 export type {
+  CounterPaymentMethod,
   CreatePaymentIntentRequest,
   Payment,
   PaymentIntent,
   PaymentListQuery,
   RecordCounterPaymentRequest,
   RefundPaymentRequest,
+  SaleSettlement,
+  SettleSaleRequest,
 } from './payment';
 
 export { MAX_REPORT_EXPORT_TTL_SECONDS, reportExportSchema } from './reporting';

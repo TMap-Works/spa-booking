@@ -1229,7 +1229,15 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
     key: string,
     saleAppointmentId: string | null,
     catalogLines: readonly CatalogLine[],
-  ): Promise<number> => {
+    /**
+     * L'instant du solde, ou `null` pour un ticket encore ouvert — #817.
+     *
+     * Un ticket réglé porte son total en `settled_amount_minor` : c'est ce que
+     * la transaction de règlement écrit, et `sales_settled_at_check` refuserait
+     * une date sur un ticket qui ne l'est pas.
+     */
+    settledAt: Date | null = null,
+  ): Promise<{ readonly saleId: string; readonly totalAmountMinor: number }> => {
     const grossAmountMinor = catalogLines.reduce(
       (sum, line) => sum + line.unitAmountMinor * line.quantity,
       0,
@@ -1249,6 +1257,8 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
       taxAmountMinor: tax,
       tipAmountMinor: tip,
       totalAmountMinor: total,
+      settledAmountMinor: settledAt === null ? 0 : total,
+      settledAt,
       currency: fixture.currency,
     };
     await prisma.sale.upsert({
@@ -1308,7 +1318,7 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
       where: { tenantId, saleId, position: { gte: lines.length } },
     });
 
-    return total;
+    return { saleId, totalAmountMinor: total };
   };
 
   // --- Encaissement du rendez-vous honoré -----------------------------------
@@ -1336,31 +1346,41 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
     );
 
     // Le ticket d'abord, l'encaissement ensuite : c'est le ticket qui dit ce
-    // qui a été dû, et l'encaissement ne fait que le constater.
+    // qui a été dû, et l'encaissement ne fait que le constater — et, depuis
+    // #817, il le **porte** : `payments.sale_id` rend cette phrase vraie en
+    // base, là où elle n'était qu'une intention.
     //
     // Il facture **la prestation, et elle seule** : c'est ce que le rendez-vous
     // a fait naître, et le prix qui y est figé. L'article du rayon a son propre
-    // ticket, plus bas — régler un ticket demanderait `payments.sale_id`, que le
-    // MVP n'a pas (README du module `payments`).
-    const honouredTotal = await seedSale(honouredKey, appointmentId, [
-      {
-        kind: SaleItemKind.SERVICE,
-        label: service.name,
-        quantity: 1,
-        unitAmountMinor: service.priceAmountMinor,
-        serviceId: required(serviceIds, service.key, 'prestation'),
-        productId: null,
-      },
-    ]);
+    // ticket, plus bas — et il porte désormais son propre règlement.
+    const honouredSale = await seedSale(
+      honouredKey,
+      appointmentId,
+      [
+        {
+          kind: SaleItemKind.SERVICE,
+          label: service.name,
+          quantity: 1,
+          unitAmountMinor: service.priceAmountMinor,
+          serviceId: required(serviceIds, service.key, 'prestation'),
+          productId: null,
+        },
+      ],
+      capturedAt,
+    );
 
     const paymentId = seedId('payment', fixture.slug, honouredKey);
     const paymentShape = {
       appointmentId,
+      // La pièce que ce règlement solde — #817. Sans elle,
+      // `payments_sale_required_check` refuserait la ligne : la base exige
+      // qu'un encaissement neuf porte sa vente.
+      saleId: honouredSale.saleId,
       // Le total du ticket — qui vaut ici le prix figé à la réservation, la
       // taxe étant comprise dedans (#816). C'est exactement le montant
       // qu'écrivent `POST /payments/cash` et le tunnel carte : le jeu de données
       // ne pose donc aucune ligne qu'un encaissement réel ne produirait pas.
-      amountMinor: honouredTotal,
+      amountMinor: honouredSale.totalAmountMinor,
       currency: fixture.currency,
       method: PaymentMethod.CARD,
       status: PaymentStatus.SUCCEEDED,
@@ -1386,20 +1406,52 @@ async function seedTenant(prisma: PrismaClient, fixture: TenantFixture): Promise
   // jeu de données n'exerce jamais ce cas et le rayon n'apparaît sur aucune
   // addition.
   //
-  // Elle ne porte **aucun encaissement**, et c'est fidèle au produit : régler un
-  // ticket demanderait `payments.sale_id`, que le MVP n'a pas encore — un
-  // règlement se rattache aujourd'hui à un rendez-vous (README du module
-  // `payments`, « Un ticket ne s'encaisse toujours pas »).
-  await seedSale('retail', null, [
-    {
-      kind: SaleItemKind.PRODUCT,
-      label: fixture.product.name,
-      quantity: 1,
-      unitAmountMinor: fixture.product.priceAmountMinor,
-      serviceId: null,
-      productId,
-    },
-  ]);
+  // Elle porte **son règlement**, et c'est la moitié du constat de #817 : une
+  // vente de produit qu'aucun encaissement ne pouvait solder n'entrait jamais
+  // au chiffre d'affaires, si bien que le reporting sous-estimait la journée
+  // d'autant. Le jeu de données l'exerce désormais — c'est ce qui rend le
+  // sixième critère visible sur l'écran de recette, et pas seulement en test.
+  //
+  // Espèces, capturées à l'ouverture du jour de caisse : le rayon se règle au
+  // comptoir, sans prestataire, donc sans référence à rapprocher.
+  const retailCapturedAt = appointmentStart(openDayOffset(0), at(11), fixture.timezone);
+  const retailSale = await seedSale(
+    'retail',
+    null,
+    [
+      {
+        kind: SaleItemKind.PRODUCT,
+        label: fixture.product.name,
+        quantity: 1,
+        unitAmountMinor: fixture.product.priceAmountMinor,
+        serviceId: null,
+        productId,
+      },
+    ],
+    retailCapturedAt,
+  );
+
+  const retailPaymentId = seedId('payment', fixture.slug, 'retail');
+  const retailPaymentShape = {
+    // Aucun rendez-vous : c'est une vente de rayon, et la colonne reste nulle —
+    // un règlement de comptoir ne l'écrit plus du tout (#817).
+    appointmentId: null,
+    saleId: retailSale.saleId,
+    amountMinor: retailSale.totalAmountMinor,
+    currency: fixture.currency,
+    method: PaymentMethod.CASH,
+    status: PaymentStatus.SUCCEEDED,
+    // `null` aux deux références : aucun appel au prestataire n'a eu lieu, et
+    // c'est ce `null` qui distingue la caisse du relevé (payments-stripe §4).
+    providerPaymentIntentId: null,
+    providerChargeId: null,
+    capturedAt: retailCapturedAt,
+  };
+  await prisma.payment.upsert({
+    where: { id: retailPaymentId },
+    create: { id: retailPaymentId, tenantId, ...retailPaymentShape },
+    update: retailPaymentShape,
+  });
 
   log(
     `  ${fixture.slug} — ${fixture.staff.length} praticien(s), ${fixture.services.length} prestation(s), ` +
