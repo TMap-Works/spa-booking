@@ -3,7 +3,7 @@ import type { CreateStaffMemberRequest, UpdateStaffMemberRequest } from '@spa/sh
 
 import { NotFoundError } from '../../common/errors';
 import { UsersService } from '../identity/users.service';
-import { CatalogRepository, type StaffRecord } from './catalog.repository';
+import { CatalogRepository, type StaffProfileRecord } from './catalog.repository';
 import type { StaffMemberView } from './catalog.types';
 
 /**
@@ -114,8 +114,10 @@ export class StaffService {
       userId: input.userId,
       displayName: input.displayName,
       // « Absente » et « vide » disent la même chose à la création : pas de
-      // présentation. La colonne est nullable, elle porte cette absence.
-      bio: input.bio ?? null,
+      // présentation. La colonne est nullable, elle porte cette absence — et
+      // c'est `StaffService.toStoredBio` qui ramène l'une à l'autre, `?? null`
+      // seul laissant passer la chaîne vide qu'il prétendait exclure.
+      bio: StaffService.toStoredBio(input.bio),
     });
 
     return StaffService.toView(created);
@@ -155,7 +157,7 @@ export class StaffService {
   public async update(id: string, patch: UpdateStaffMemberRequest): Promise<StaffMemberView> {
     const updated = await this.repository.updateStaff(id, {
       ...(patch.displayName !== undefined && { displayName: patch.displayName }),
-      ...(patch.bio !== undefined && { bio: patch.bio }),
+      ...(patch.bio !== undefined && { bio: StaffService.toStoredBio(patch.bio) }),
       ...(patch.isActive !== undefined && { isActive: patch.isActive }),
     });
 
@@ -167,13 +169,49 @@ export class StaffService {
   }
 
   /**
+   * « Pas de présentation », écrit d'une seule façon en base : `NULL`.
+   *
+   * Le contrat accepte trois formes pour dire la même chose — champ absent,
+   * `null`, et chaîne vide, que `longTextSchema` produit dès qu'on n'envoie que
+   * des espaces (il rogne, sans minimum). Sans cette normalisation, la
+   * troisième s'écrivait telle quelle, et la ligne devenait **inatteignable
+   * depuis l'écran** : le champ s'ouvre vide, rien n'a changé, le bouton reste
+   * éteint, et plus rien ne ramène jamais la colonne à `NULL`.
+   *
+   * C'est le second des deux constats laissés par la revue de #694 ; le premier
+   * — l'écran qui envoie `null` plutôt que `""` — se referme côté panneau. Les
+   * deux se rejoignent ici : l'écran dit proprement ce qu'il veut, et l'API ne
+   * dépend plus de sa politesse.
+   */
+  private static toStoredBio(bio: string | null | undefined): string | null {
+    return bio === undefined || bio === null || bio === '' ? null : bio;
+  }
+
+  /**
    * Recopie champ par champ plutôt qu'un `{ ...member }`.
    *
    * L'étalement rendrait ce que le repository a lu — donc, le jour où quelqu'un
    * élargit la projection sans penser à la réponse, un champ interne de plus
    * dans une réponse d'API. Ici, publier demande d'écrire une ligne.
+   *
+   * ## Pourquoi la présentation absente plutôt que `null`
+   *
+   * La base porte l'absence de présentation par un `NULL`, et le contrat partagé
+   * la porte par une **clé absente** : `staffMemberSchema` déclare
+   * `bio: longTextSchema.optional()`, sans `.nullable()`. Rendre `bio: null`
+   * ferait échouer la lecture du front, qui parse cette réponse avec ce schéma —
+   * la traduction se fait donc ici, à la frontière, et nulle part ailleurs.
+   *
+   * L'étalement conditionnel est ce qui la réalise sous
+   * `exactOptionalPropertyTypes` : `{ bio: undefined }` n'est pas la même chose
+   * qu'un objet sans `bio`, et seul le second se sérialise sans la clé.
    */
-  private static toView(member: StaffRecord): StaffMemberView {
-    return { id: member.id, displayName: member.displayName, isActive: member.isActive };
+  private static toView(member: StaffProfileRecord): StaffMemberView {
+    return {
+      id: member.id,
+      displayName: member.displayName,
+      ...(member.bio !== null && { bio: member.bio }),
+      isActive: member.isActive,
+    };
   }
 }

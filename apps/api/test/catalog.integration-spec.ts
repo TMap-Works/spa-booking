@@ -557,19 +557,71 @@ describe('Catalogue — API', () => {
       expect(repository.assignments).toHaveLength(1);
     });
 
-    it('n’expose ni le `tenantId`, ni le compte, ni la biographie', async () => {
-      repository.seedStaff({ tenantId: harness.tenantId, displayName: 'Camille' });
+    it('n’expose ni le `tenantId`, ni le compte — et omet la présentation absente', async () => {
+      repository.seedStaff({ tenantId: harness.tenantId, displayName: 'Camille', bio: null });
 
       const response = await request(server())
         .get('/api/v1/staff')
         .set('Authorization', `Bearer ${await harness.tokenFor('STAFF')}`)
         .expect(200);
 
-      // Trois champs, et pas un de plus : `userId` révélerait le compte derrière
-      // la fiche, `bio` ferait transiter deux mille caractères par ligne, et le
-      // `tenantId` est une information interne (tenant-isolation §4).
+      // Trois champs sur une fiche sans présentation, et pas un de plus :
+      // `userId` révélerait le compte derrière la fiche, le `tenantId` est une
+      // information interne (tenant-isolation §4), et `bio` est **absente**
+      // plutôt que nulle — `staffMemberSchema` la déclare facultative et non
+      // nullable, et c'est avec ce schéma que le front relit la réponse.
       expect(Object.keys(response.body[0]).sort()).toEqual(['displayName', 'id', 'isActive']);
       expect(JSON.stringify(response.body)).not.toContain(harness.tenantId);
+    });
+
+    it('rend la présentation publiée, celle que la fiche vient corriger (#771)', async () => {
+      // Le défaut que le ticket referme : l'écran ouvrait un champ vide au-dessus
+      // d'un texte déjà en ligne, et la gérante ne pouvait ni le relire ni le
+      // corriger autrement que de mémoire.
+      const claire = repository.seedStaff({
+        tenantId: harness.tenantId,
+        displayName: 'Claire F.',
+        bio: 'Quinze ans de massage suédois.',
+      });
+
+      const response = await request(server())
+        .get('/api/v1/staff')
+        .set('Authorization', `Bearer ${await harness.tokenFor('STAFF')}`)
+        .expect(200);
+
+      expect(response.body).toEqual([
+        {
+          id: claire.id,
+          displayName: 'Claire F.',
+          bio: 'Quinze ans de massage suédois.',
+          isActive: true,
+        },
+      ]);
+    });
+
+    it('garde la liste d’affectation allégée — la vitrine n’y transite pas', async () => {
+      // La frontière que #771 pose : la fiche sert sa présentation,
+      // `GET /services/:id/staff` non. C'est une liste de cases à cocher, et un
+      // catalogue entier y transporterait sinon la vitrine de chaque praticien.
+      const service = repository.seedService({ tenantId: harness.tenantId });
+      const membre = repository.seedStaff({
+        tenantId: harness.tenantId,
+        bio: 'Quinze ans de massage suédois.',
+      });
+      const manager = await harness.tokenFor('MANAGER');
+
+      await request(server())
+        .post(`/api/v1/services/${service.id}/staff`)
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ staffId: membre.id })
+        .expect(201);
+
+      const affectes = await request(server())
+        .get(`/api/v1/services/${service.id}/staff`)
+        .set('Authorization', `Bearer ${manager}`)
+        .expect(200);
+
+      expect(Object.keys(affectes.body[0]).sort()).toEqual(['displayName', 'id', 'isActive']);
     });
 
     it('filtre sur l’activité, et refuse une valeur qui n’est pas booléenne', async () => {
@@ -844,6 +896,48 @@ describe('Catalogue — API', () => {
         .set('Authorization', `Bearer ${manager}`)
         .send({ displayName: 'Personne' })
         .expect(400);
+    });
+
+    it('corrige la présentation, l’efface, et ne la touche pas sans y toucher (#771)', async () => {
+      // Le cycle complet que l'écran de la fiche offre désormais sans manœuvre,
+      // maintenant qu'il relit ce qui est publié : on corrige, on n'y touche
+      // pas, on efface.
+      const membre = repository.seedStaff({
+        tenantId: harness.tenantId,
+        displayName: 'Claire F.',
+        bio: 'Quinze ans de massage suédois.',
+      });
+      const manager = await harness.tokenFor('MANAGER');
+
+      const corrigee = await request(server())
+        .patch(`/api/v1/staff/${membre.id}`)
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ bio: 'Vingt ans de massage suédois.' })
+        .expect(200);
+      expect(corrigee.body.bio).toBe('Vingt ans de massage suédois.');
+
+      // Un corps qui ne porte pas `bio` laisse la présentation en place : c'est
+      // ce qui permet à l'écran de corriger le seul nom sans rien effacer.
+      const renommee = await request(server())
+        .patch(`/api/v1/staff/${membre.id}`)
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ displayName: 'Claire Fontaine' })
+        .expect(200);
+      expect(renommee.body).toEqual({
+        id: membre.id,
+        displayName: 'Claire Fontaine',
+        bio: 'Vingt ans de massage suédois.',
+        isActive: true,
+      });
+
+      // `null` efface — et la réponse **omet** la clé, la forme que le contrat
+      // partagé décrit et que le front sait relire.
+      const effacee = await request(server())
+        .patch(`/api/v1/staff/${membre.id}`)
+        .set('Authorization', `Bearer ${manager}`)
+        .send({ bio: null })
+        .expect(200);
+      expect(Object.keys(effacee.body).sort()).toEqual(['displayName', 'id', 'isActive']);
     });
 
     it('réserve l’écriture au rang `MANAGER`, et exige une identité vérifiée', async () => {

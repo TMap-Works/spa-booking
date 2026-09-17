@@ -94,6 +94,19 @@ describe('ServiceStaffService', () => {
         { id: member.id, displayName: member.displayName, isActive: false },
       ]);
     });
+
+    it('ne transporte pas la présentation — c’est une liste de cases à cocher', async () => {
+      // La frontière posée par #771 : la fiche rend sa présentation, cette
+      // liste-ci non. Un catalogue entier transporterait sinon deux mille
+      // caractères de vitrine par ligne, pour les afficher nulle part.
+      const service = repository.seedService({ tenantId: TENANT_A });
+      const member = repository.seedStaff({ tenantId: TENANT_A, bio: 'Quinze ans de suédois.' });
+
+      await inTenantA(async () => assignments.assign(service.id, member.id));
+      const [affecte] = await inTenantA(async () => assignments.list(service.id));
+
+      expect(Object.hasOwn(affecte!, 'bio')).toBe(false);
+    });
   });
 
   describe('retrait', () => {

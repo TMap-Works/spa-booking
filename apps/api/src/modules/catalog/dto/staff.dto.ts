@@ -3,7 +3,7 @@ import {
   type CreateStaffMemberRequest,
   type UpdateStaffMemberRequest,
   createStaffMemberRequestSchema,
-  serviceStaffMemberSchema,
+  staffMemberSchema,
   updateStaffMemberRequestSchema,
 } from '@spa/shared';
 import { IsBoolean } from 'class-validator';
@@ -145,10 +145,16 @@ export class UpdateStaffMemberDto {
  * Une fiche praticien telle qu'elle sort de l'API de back-office.
  *
  * **Sans `tenantId`** — information interne (tenant-isolation §4) — et sans
- * `userId`, qui révélerait le compte derrière la fiche. Sans `bio` non plus :
- * une liste de choix n'a pas à transporter deux mille caractères par ligne, et
- * `staffMemberSchema` de `@spa/shared` la déclare facultative pour cette raison
- * même. Le `select` du repository ne les lit pas.
+ * `userId`, qui révélerait le compte derrière la fiche.
+ *
+ * `bio`, lui, y est depuis #771. Ces trois routes **sont** la fiche : c'est par
+ * elles que le back-office ouvre ce qui est publié sous le nom de la praticienne
+ * pour le corriger, et le taire obligeait l'écran à ouvrir un champ vide
+ * au-dessus d'un texte déjà en ligne — la gérante réécrivait de mémoire, à
+ * l'aveugle, ce qu'elle ne pouvait relire nulle part. La liste d'affectations
+ * `GET /services/{id}/staff`, elle, garde sa forme allégée : là, la fiche n'est
+ * qu'une ligne de cases à cocher, et deux mille caractères par ligne n'y
+ * serviraient rien.
  *
  * `id` est l'identifiant de la **fiche**, celui qu'attend
  * `POST /services/{serviceId}/staff`. C'est tout l'objet de la route : le
@@ -166,6 +172,15 @@ export class StaffMemberDto implements StaffMemberView {
   @ApiProperty({ example: 'Camille Rousseau' })
   public displayName!: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Présentation enregistrée pour ce praticien — aucune surface publique ne la ' +
+      'rend aujourd’hui. **Absente** quand la fiche n’en porte pas, jamais `null` : ' +
+      'le contrat partagé la déclare facultative et non nullable, et c’est cette ' +
+      'forme-là que le front relit.',
+  })
+  public bio?: string;
+
   @ApiProperty({
     description:
       'Un praticien désactivé reste une fiche de l’établissement : c’est à l’écran ' +
@@ -180,19 +195,22 @@ export class StaffMemberDto implements StaffMemberView {
 // ---------------------------------------------------------------------------
 
 /**
- * Le schéma de référence est `serviceStaffMemberSchema` et non
- * `staffMemberSchema`, et ce n'est pas un raccourci : le contrat décrit la fiche
- * complète avec sa `bio`, que cette route ne sert pas — une liste de choix n'a
- * pas à transporter deux mille caractères par ligne. `serviceStaffMemberSchema`
- * est exactement le résumé plus `isActive`, c'est-à-dire la forme servie ici, et
- * `catalog.types.ts` fait déjà de `ServiceStaffMemberView` un alias de
- * `StaffMemberView` pour la même raison.
+ * Le schéma de référence est `staffMemberSchema` depuis #771 — la fiche
+ * **complète**, présentation comprise —, et non plus le
+ * `serviceStaffMemberSchema` allégé, qui reste celui de `service-staff.dto.ts`.
+ * Les deux formes ont cessé de coïncider le jour où la fiche a servi sa `bio` ;
+ * `catalog.types.ts` a séparé les vues pour la même raison.
+ *
+ * Ce que l'assertion tient, et qui compte plus que la parenté : `bio` y est
+ * `optional()` et **non** `nullable()`. Rendre `null` cesserait donc de
+ * compiler — ce qui est exactement la garde voulue, le front parsant cette
+ * réponse avec ce schéma.
  *
  * Les assertions coûtent zéro à l'exécution et échouent au `tsc` : un champ
- * ajouté d'un côté et pas de l'autre — une `bio` qui reviendrait par
+ * ajouté d'un côté et pas de l'autre — un `userId` qui remonterait par
  * inadvertance dans le `select` du repository — casse la compilation.
  */
-type StaffMemberWire = z.input<typeof serviceStaffMemberSchema>;
+type StaffMemberWire = z.input<typeof staffMemberSchema>;
 
 type AssertNever<T extends never> = T;
 type AssertTrue<T extends true> = T;
