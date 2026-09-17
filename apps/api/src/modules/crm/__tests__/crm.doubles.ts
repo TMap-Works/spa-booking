@@ -408,6 +408,10 @@ export class FakeCrmRepository {
         staffName: row.staffName,
         priceAmountMinor: row.priceAmountMinor,
         priceCurrency: row.priceCurrency,
+        // `clientNote` et pas `staffNote` — le double reproduit ici la
+        // projection du vrai dépôt (`VISIT_SELECT`, #870), et c'est cet écart-là
+        // que la suite d'intégration vient éprouver.
+        clientNote: row.clientNote,
       }));
   }
 

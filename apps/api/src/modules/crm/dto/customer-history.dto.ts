@@ -9,13 +9,22 @@ import { HISTORY_MAX_VISITS } from './customer.dto';
 /**
  * DTO de l'historique de visites — #56, troisième critère.
  *
- * ## Ce que l'historique ne rend pas
+ * ## Ce que l'historique rend des deux notes, et pourquoi pas les deux — #870
  *
- * Ni `clientNote`, ni `staffNote` du rendez-vous : la première appartient au
- * rendez-vous et se lit sur son écran, la seconde est une note de séance que la
- * fiche ne résume pas. Un historique qui les recopierait diffuserait à chaque
- * ligne du texte libre saisi par un humain sur une cliente — exactement ce que
- * le CDC §5.1 demande de garder au plus près de son usage.
+ * `clientNote` **oui** : c'est ce que le client a écrit lui-même en réservant,
+ * au champ « Remarque (facultatif) » de l'étape 4 du tunnel
+ * (`docs/design/appointments/wireframes.md`). La tenir hors de l'historique
+ * revenait à ne jamais la faire atteindre la praticienne : celle qui prépare la
+ * cabine ouvre la fiche du client, pas les quatre agendas de ses quatre venues
+ * précédentes. Une consigne d'allergie qui n'arrive pas est le constat d'origine
+ * de l'audit `d20260916-1`.
+ *
+ * `staffNote` **non** : c'est une note de séance écrite **sur** quelqu'un par le
+ * salon, et `appointmentSchema` la borne à une sortie gardée par un rôle (#317).
+ * `CustomerVisit` n'en porte même pas le champ, si bien que ce fichier n'a rien
+ * à filtrer : la frontière tient dans la projection SQL (`VISIT_SELECT`), pas
+ * dans un `delete` posé une couche plus haut. C'est aussi pour cela qu'un
+ * export RGPD, lui, la restitue — il ne passe pas par ici (`toExportDto`).
  */
 
 /** Le prix figé d'une visite — un entier et sa devise, jamais un flottant. */
@@ -56,6 +65,16 @@ export class CustomerVisitDto {
 
   @ApiProperty({ type: MoneyDto, description: 'Prix figé au moment de la réservation.' })
   public price!: MoneyDto;
+
+  @ApiProperty({
+    nullable: true,
+    type: String,
+    example: 'Allergie aux huiles essentielles d’agrumes, merci d’en tenir compte pour le gommage.',
+    description:
+      'La remarque écrite **par le client** à la réservation, ou `null`. Jamais ' +
+      'la note interne du salon (`staffNote`), que cette route ne lit pas.',
+  })
+  public clientNote!: string | null;
 }
 
 /**
@@ -163,6 +182,7 @@ export function toHistoryDto(history: CustomerVisitHistory): CustomerVisitHistor
       serviceName: visit.serviceName,
       staffName: visit.staffName,
       price: { amountMinor: visit.priceAmountMinor, currency: visit.priceCurrency },
+      clientNote: visit.clientNote,
     })),
   };
 }
