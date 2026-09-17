@@ -3,7 +3,10 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { CategoryManager } from '@/app/(admin)/[tenantSlug]/admin/components/category-manager';
+import {
+  CategoryForm,
+  CategoryManager,
+} from '@/app/(admin)/[tenantSlug]/admin/components/category-manager';
 
 const createServiceCategoryAction = vi.fn();
 const updateServiceCategoryAction = vi.fn();
@@ -21,16 +24,24 @@ vi.mock('next/navigation', () => ({
 const VISAGE = '0a5b1e6c-1111-4c53-8f0e-1b2c3d4e5f60';
 const COIFFURE = '0a5b1e6c-2222-4c53-8f0e-1b2c3d4e5f60';
 
-const categories: ServiceCategory[] = [
-  {
-    id: VISAGE,
-    slug: 'soins-du-visage',
-    name: 'Soins du visage',
-    description: 'Nettoyage, gommage.',
-    isActive: true,
-  },
-  { id: COIFFURE, slug: 'coiffure', name: 'Coiffure', description: null, isActive: false },
-];
+/** Nommée : l'écran d'une rubrique la reçoit seule, et un accès par indice la rendrait `| undefined`. */
+const visage: ServiceCategory = {
+  id: VISAGE,
+  slug: 'soins-du-visage',
+  name: 'Soins du visage',
+  description: 'Nettoyage, gommage.',
+  isActive: true,
+};
+
+const coiffure: ServiceCategory = {
+  id: COIFFURE,
+  slug: 'coiffure',
+  name: 'Coiffure',
+  description: null,
+  isActive: false,
+};
+
+const categories: ServiceCategory[] = [visage, coiffure];
 
 afterEach(() => {
   cleanup();
@@ -60,6 +71,35 @@ describe('rubriques — ce que l’écran montre', () => {
     ).toBeDefined();
   });
 
+  it('ouvre la rubrique par son nom, comme la liste des prestations (#769)', () => {
+    // L'écart `ds:coherence` de l'audit `d20260916-1` : les deux listes du module
+    // catalogue ouvrent le même type d'objet, et l'une le faisait dans la cellule
+    // du tableau quand l'autre le fait sur un écran.
+    renderManager();
+
+    const lien = within(screen.getByRole('row', { name: /Soins du visage/ })).getByRole('link', {
+      name: 'Soins du visage',
+    });
+
+    expect(lien.getAttribute('href')).toBe(
+      `/salon-des-lilas/admin/catalogue/rubriques/${VISAGE}`,
+    );
+  });
+
+  it('laisse le tableau au rôle de tableau — aucun formulaire déplié dans une ligne', () => {
+    // Le bouton « Modifier » dépliait le formulaire complet dans la première
+    // cellule : la ligne passait à quelque 370 px de haut, le nom s'y affichait
+    // deux fois, et « Enregistrer » entrait en concurrence avec « Créer la
+    // rubrique » sans rien qui les distingue.
+    renderManager();
+
+    expect(screen.queryByRole('button', { name: /Modifier/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Fermer/ })).toBeNull();
+    // Un seul champ « Nom » à l'écran, et c'est celui de la création.
+    expect(screen.getAllByLabelText(/Nom de la rubrique/)).toHaveLength(1);
+    expect(screen.queryAllByRole('button', { name: /^Enregistrer/ })).toHaveLength(0);
+  });
+
   it('explique un catalogue sans rubrique au lieu de laisser un vide', () => {
     renderManager([]);
 
@@ -76,7 +116,7 @@ describe('rubriques — ce que l’écran montre', () => {
 
 describe('rubriques — création', () => {
   it('laisse le serveur dériver le slug quand il n’est pas saisi', async () => {
-    createServiceCategoryAction.mockResolvedValue({ ok: true, data: categories[0] });
+    createServiceCategoryAction.mockResolvedValue({ ok: true, data: visage });
     const user = userEvent.setup();
     renderManager();
 
@@ -125,32 +165,21 @@ describe('rubriques — création', () => {
   });
 });
 
-describe('rubriques — modification et activité', () => {
-  it('n’ouvre l’édition que sur demande, et une seule à la fois', async () => {
-    const user = userEvent.setup();
-    renderManager();
-
-    // Au repos, seul le formulaire de création porte un champ « Nom ».
-    expect(screen.getAllByLabelText(/Nom de la rubrique/)).toHaveLength(1);
-
-    await user.click(screen.getByRole('button', { name: /Modifier Soins du visage/ }));
-    expect(screen.getAllByLabelText(/Nom de la rubrique/)).toHaveLength(2);
-
-    await user.click(screen.getByRole('button', { name: /Modifier Coiffure/ }));
-    // Deux formulaires ouverts sur la même liste inviteraient à en enregistrer
-    // un et à perdre l'autre sans le voir.
-    expect(screen.getAllByLabelText(/Nom de la rubrique/)).toHaveLength(2);
-  });
+describe('rubriques — l’écran d’une rubrique (#769)', () => {
+  /** Le formulaire tel que le rend `rubriques/{categoryId}/page.tsx`. */
+  function renderScreen(canManage = true): void {
+    render(
+      <CategoryForm tenantSlug="salon-des-lilas" category={visage} canManage={canManage} />,
+    );
+  }
 
   it('envoie `null` — et non la chaîne vide — quand la description est effacée', async () => {
-    updateServiceCategoryAction.mockResolvedValue({ ok: true, data: categories[0] });
+    updateServiceCategoryAction.mockResolvedValue({ ok: true, data: visage });
     const user = userEvent.setup();
-    renderManager();
+    renderScreen();
 
-    await user.click(screen.getByRole('button', { name: /Modifier Soins du visage/ }));
-    const row = screen.getByRole('row', { name: /Soins du visage/ });
-    await user.clear(within(row).getByLabelText(/Description/));
-    await user.click(within(row).getByRole('button', { name: /^Enregistrer$/ }));
+    await user.clear(screen.getByLabelText(/Description/));
+    await user.click(screen.getByRole('button', { name: /^Enregistrer$/ }));
 
     expect(updateServiceCategoryAction).toHaveBeenCalledWith('salon-des-lilas', VISAGE, {
       name: 'Soins du visage',
@@ -159,11 +188,55 @@ describe('rubriques — modification et activité', () => {
     });
   });
 
+  it('dit que c’est enregistré, et redemande l’écran au serveur', async () => {
+    // L'écran est rendu côté serveur : sans ce rafraîchissement, il
+    // réafficherait les valeurs d'avant l'enregistrement.
+    updateServiceCategoryAction.mockResolvedValue({ ok: true, data: visage });
+    const user = userEvent.setup();
+    renderScreen();
+
+    await user.click(screen.getByRole('button', { name: /^Enregistrer$/ }));
+
+    expect(await screen.findByText('Rubrique enregistrée')).toBeDefined();
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it('retire le bandeau de succès dès qu’une saisie est refusée', async () => {
+    // Une saisie refusée par le schéma n'appelle pas l'action : le bandeau du
+    // précédent enregistrement resterait sinon au-dessus de l'erreur du champ,
+    // et annoncerait comme enregistré un nom vide qui ne l'est pas.
+    updateServiceCategoryAction.mockResolvedValue({ ok: true, data: visage });
+    const user = userEvent.setup();
+    renderScreen();
+
+    await user.click(screen.getByRole('button', { name: /^Enregistrer$/ }));
+    expect(await screen.findByText('Rubrique enregistrée')).toBeDefined();
+
+    await user.clear(screen.getByLabelText(/Nom de la rubrique/));
+    await user.click(screen.getByRole('button', { name: /^Enregistrer$/ }));
+
+    expect(updateServiceCategoryAction).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Rubrique enregistrée')).toBeNull();
+  });
+
+  it('rend les champs inertes au rang praticien, et dit pourquoi (#619)', () => {
+    // `PATCH /v1/service-categories/{id}` est `@AuthAtLeast('MANAGER')` : laisser
+    // les champs vifs, c'était faire saisir puis rendre « Droits insuffisants ».
+    renderScreen(false);
+
+    expect(screen.getByLabelText(/Nom de la rubrique/).hasAttribute('disabled')).toBe(true);
+    expect(screen.getByLabelText(/Adresse publique/).hasAttribute('disabled')).toBe(true);
+    expect(screen.queryByRole('button', { name: /^Enregistrer$/ })).toBeNull();
+    expect(screen.getByText(/réservée au rang gérant/i)).toBeDefined();
+  });
+});
+
+describe('rubriques — activité', () => {
   it('bascule l’activité sans toucher au reste de la rubrique', async () => {
     // `PATCH` est partiel : n'envoyer que `isActive`, c'est ne pas réécrire le
     // nom avec la valeur qu'affichait la page — donc ne pas écraser ce qu'un
     // collègue vient de modifier.
-    updateServiceCategoryAction.mockResolvedValue({ ok: true, data: categories[1] });
+    updateServiceCategoryAction.mockResolvedValue({ ok: true, data: coiffure });
     const user = userEvent.setup();
     renderManager();
 
@@ -194,6 +267,15 @@ describe('rubriques — ce que le rang praticien voit (#619)', () => {
     expect(screen.queryByRole('button', { name: /Modifier/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Désactiver/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /Réactiver/ })).toBeNull();
+  });
+
+  it('garde le nom cliquable — l’écran d’une rubrique se lit à ce rang', () => {
+    // `GET /v1/service-categories` se lit dès le rang praticien, et l'écran rend
+    // ses champs inertes plutôt que de disparaître : une praticienne a besoin de
+    // lire la description et l'adresse publique de ce sous quoi elle travaille.
+    renderReadOnly();
+
+    expect(screen.getByRole('link', { name: 'Soins du visage' })).toBeDefined();
   });
 
   it('retire le formulaire de création et dit pourquoi', () => {

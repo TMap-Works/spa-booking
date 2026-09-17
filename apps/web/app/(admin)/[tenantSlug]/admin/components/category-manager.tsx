@@ -8,6 +8,7 @@ import {
   slugSchema,
   type ServiceCategory,
 } from '@spa/shared';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import { useForm } from 'react-hook-form';
@@ -19,6 +20,7 @@ import { Notification } from '@/components/ui/notification';
 import { TextArea } from '@/components/ui/textarea';
 
 import { createServiceCategoryAction, updateServiceCategoryAction } from '../catalogue/actions';
+import { adminServiceCategoryPath } from '../catalogue/paths';
 import { CatalogStatusBadge } from './catalog-status-badge';
 import { useAdminSessionRenewal } from './use-admin-session-renewal';
 
@@ -45,6 +47,27 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * disparaissent donc pour ce rôle — comme la colonne « Actions » de la liste du
  * personnel — et une mention dit pourquoi (#619). Ce filtrage ne protège rien :
  * la seule garde qui compte est celle de l'API.
+ *
+ * Le **nom** reste un lien pour tous les rangs, comme celui d'une prestation :
+ * `GET /v1/service-categories` se lit dès le rang praticien, et l'écran d'une
+ * rubrique rend ses champs inertes plutôt que de disparaître — une praticienne a
+ * besoin de lire la description et l'adresse publique de ce sous quoi elle
+ * travaille.
+ *
+ * ## L'édition a quitté la cellule du tableau (#769)
+ *
+ * Elle s'y dépliait derrière un bouton « Modifier », dans la première cellule de
+ * la ligne : la ligne passait à quelque 370 px de haut, le nom de la rubrique
+ * s'affichait deux fois — dans la cellule et dans le champ —, les trois autres
+ * cellules restaient centrées à mi-hauteur loin du formulaire, et « Enregistrer »
+ * entrait en concurrence avec « Créer la rubrique » sans rien qui les distingue.
+ * Deux boutons accentués pleine largeur, pour deux gestes différents.
+ *
+ * La prestation, elle, s'édite depuis toujours sur sa propre page. L'audit de
+ * conception `d20260916-1` a relevé l'écart (`ds:coherence`) : deux listes du
+ * même module ouvraient le même type d'objet de deux gestes différents. Le nom
+ * mène donc à `rubriques/{id}`, la colonne « Actions » ne porte plus que la
+ * bascule d'activité, et le tableau retrouve son rôle de tableau.
  */
 
 const categoryFormSchema = z.object({
@@ -77,9 +100,9 @@ type CategoryFormValues = z.input<typeof categoryFormSchema>;
  * ticket. Le titre de la section descend donc dans le formulaire, faute de quoi il
  * resterait hors de la carte qu'il nomme.
  *
- * Le formulaire d'édition en ligne, lui, gagne la même carte dans sa cellule de
- * tableau : c'est le même composant, il avait le même défaut, et le liseré qui en
- * résulte délimite l'édition ouverte au milieu d'une liste.
+ * L'écran d'une rubrique le rend tel quel, sans conteneur autour : le `<form>`
+ * porte déjà sa carte et sa borne de colonne, et une seconde enveloppe ne
+ * mesurerait rien de plus.
  *
  * ## Le bouton primaire occupe sa carte (#634)
  *
@@ -97,8 +120,7 @@ type CategoryFormValues = z.input<typeof categoryFormSchema>;
  * `block` est posé sans condition, comme dans `ServiceForm` : création et
  * édition partagent le même formulaire, et n'en habiller qu'une moitié
  * réintroduirait à l'intérieur d'un composant l'incohérence qu'on vient de
- * retirer entre deux écrans. Dans la cellule de tableau, la carte est étroite —
- * le bouton occupe sa carte, pas la page.
+ * retirer entre deux écrans.
  *
  * `spa-admin-form` vient avec lui, et sans lui la correction serait fausse. Un
  * bouton en pleine largeur mesure sa carte : `/catalogue/nouveau` borne la
@@ -114,18 +136,25 @@ type CategoryFormValues = z.input<typeof categoryFormSchema>;
  * rubriques, elle, garde ses 926 px, parce qu'un tableau profite de la place
  * qu'un formulaire gaspille.
  */
-function CategoryForm({
+export function CategoryForm({
   tenantSlug,
   category,
-  onDone,
+  canManage = true,
 }: {
   readonly tenantSlug: string;
+  /** Absente, le formulaire crée ; présente, il modifie. */
   readonly category?: ServiceCategory;
-  /** Appelé après un enregistrement réussi — referme l'édition en ligne. */
-  readonly onDone: () => void;
+  /**
+   * `false` au rang praticien : `POST` et `PATCH /v1/service-categories` sont
+   * `@AuthAtLeast('MANAGER')`. Les champs restent lisibles et deviennent
+   * inertes, et le bouton cède la place à la raison — le geste de `ServiceForm`
+   * sur la fiche d'une prestation (#619).
+   */
+  readonly canManage?: boolean;
 }) {
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
+  const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const suffix = category?.id ?? 'nouvelle';
 
@@ -145,42 +174,60 @@ function CategoryForm({
     mode: 'onTouched',
   });
 
-  const submit = handleSubmit(async (values) => {
-    setFailure(null);
+  const submit = handleSubmit(
+    async (values) => {
+      setFailure(null);
+      setSaved(false);
 
-    const result =
-      category === undefined
-        ? await createServiceCategoryAction(tenantSlug, {
-            name: values.name,
-            ...(values.slug === '' ? {} : { slug: values.slug }),
-            ...(values.description === '' ? {} : { description: values.description }),
-          })
-        : await updateServiceCategoryAction(tenantSlug, category.id, {
-            name: values.name,
-            slug: values.slug === '' ? category.slug : values.slug,
-            // `null` efface le texte ; la chaîne vide descendrait jusqu'à la
-            // colonne comme une description d'un caractère nul.
-            description: values.description === '' ? null : values.description,
-          });
+      const result =
+        category === undefined
+          ? await createServiceCategoryAction(tenantSlug, {
+              name: values.name,
+              ...(values.slug === '' ? {} : { slug: values.slug }),
+              ...(values.description === '' ? {} : { description: values.description }),
+            })
+          : await updateServiceCategoryAction(tenantSlug, category.id, {
+              name: values.name,
+              slug: values.slug === '' ? category.slug : values.slug,
+              // `null` efface le texte ; la chaîne vide descendrait jusqu'à la
+              // colonne comme une description d'un caractère nul.
+              description: values.description === '' ? null : values.description,
+            });
 
-    if (!result.ok) {
-      if (renewIfExpired(result)) {
+      if (!result.ok) {
+        if (renewIfExpired(result)) {
+          return;
+        }
+        if (result.code === ERROR_CODES.CONFLICT) {
+          setError('slug', { message: 'une autre rubrique porte déjà cette adresse.' });
+          return;
+        }
+        setFailure(result.message);
         return;
       }
-      if (result.code === ERROR_CODES.CONFLICT) {
-        setError('slug', { message: 'une autre rubrique porte déjà cette adresse.' });
-        return;
-      }
-      setFailure(result.message);
-      return;
-    }
 
-    if (category === undefined) {
-      reset({ name: '', slug: '', description: '' });
-    }
-    onDone();
-    router.refresh();
-  });
+      if (category === undefined) {
+        reset({ name: '', slug: '', description: '' });
+      } else {
+        setSaved(true);
+      }
+
+      // Les deux écrans sont rendus côté serveur : sans ce rafraîchissement, la
+      // liste garderait le nom d'avant l'enregistrement et l'écran de la rubrique
+      // réafficherait les valeurs qu'on vient de remplacer.
+      router.refresh();
+    },
+    () => {
+      /*
+       * Une saisie refusée par le schéma n'atteint jamais le rappel ci-dessus :
+       * sans ce second rappel, le bandeau « Rubrique enregistrée » du précédent
+       * enregistrement resterait à l'écran **au-dessus** de l'erreur du champ,
+       * et annoncerait comme enregistré un nom vide qui ne l'est pas.
+       */
+      setSaved(false);
+      setFailure(null);
+    },
+  );
 
   return (
     <form
@@ -195,6 +242,12 @@ function CategoryForm({
         </h2>
       ) : null}
 
+      {saved ? (
+        <Notification tone="success" title="Rubrique enregistrée">
+          <p>La page publique du salon reflète désormais ces informations.</p>
+        </Notification>
+      ) : null}
+
       {failure === null ? null : (
         <Notification tone="danger" title="L’enregistrement a échoué">
           <p>{failure}</p>
@@ -206,6 +259,7 @@ function CategoryForm({
         label="Nom de la rubrique"
         required
         placeholder="Soins du visage"
+        disabled={!canManage}
         error={errors.name?.message}
         {...register('name')}
       />
@@ -213,6 +267,7 @@ function CategoryForm({
         id={`category-description-${suffix}`}
         label="Description"
         hint="Facultative."
+        disabled={!canManage}
         error={errors.description?.message}
         {...register('description')}
       />
@@ -224,19 +279,26 @@ function CategoryForm({
             ? 'Laissez vide : elle sera dérivée du nom.'
             : 'La changer casse les liens déjà partagés vers cette rubrique.'
         }
+        disabled={!canManage}
         error={errors.slug?.message}
         {...register('slug')}
       />
 
-      <Button
-        type="submit"
-        variant="accent"
-        block
-        loading={isSubmitting}
-        loadingLabel="Enregistrement…"
-      >
-        {category === undefined ? 'Créer la rubrique' : 'Enregistrer'}
-      </Button>
+      {canManage ? (
+        <Button
+          type="submit"
+          variant="accent"
+          block
+          loading={isSubmitting}
+          loadingLabel="Enregistrement…"
+        >
+          {category === undefined ? 'Créer la rubrique' : 'Enregistrer'}
+        </Button>
+      ) : (
+        <p className="spa-admin-toolbar__hint">
+          La modification des rubriques est réservée au rang gérant.
+        </p>
+      )}
     </form>
   );
 }
@@ -312,16 +374,13 @@ export function CategoryManager({
   readonly tenantSlug: string;
   readonly categories: readonly ServiceCategory[];
   /**
-   * `false` au rang praticien : la création, le renommage et la bascule
-   * d'activité sont toutes `@AuthAtLeast('MANAGER')`. La liste reste lisible,
-   * ses commandes disparaissent.
+   * `false` au rang praticien : la création et la bascule d'activité sont
+   * toutes deux `@AuthAtLeast('MANAGER')`. La liste reste lisible, ses commandes
+   * disparaissent — le nom, lui, reste un lien : l'écran d'une rubrique se lit à
+   * ce rang, et il dit lui-même ce qu'il ne permet pas d'y changer.
    */
   readonly canManage?: boolean;
 }) {
-  // Une seule rubrique s'édite à la fois : deux formulaires ouverts sur la même
-  // liste inviteraient à en enregistrer un et à perdre l'autre sans le voir.
-  const [editing, setEditing] = useState<string | null>(null);
-
   return (
     <div className="spa-admin__content">
       {canManage ? (
@@ -330,7 +389,7 @@ export function CategoryManager({
         // lui remettrait une carte dans une carte — et surtout, la gouttière de
         // cette enveloppe n'écarterait que le titre et le `<form>` qu'elle
         // contiendrait, jamais les champs, qui sont ce qu'il fallait écarter.
-        <CategoryForm tenantSlug={tenantSlug} onDone={() => setEditing(null)} />
+        <CategoryForm tenantSlug={tenantSlug} />
       ) : (
         <p className="spa-admin-toolbar__hint">
           La création et la modification des rubriques sont réservées au rang gérant.
@@ -377,14 +436,12 @@ export function CategoryManager({
               {categories.map((category) => (
                 <tr className="spa-admin-table__row" key={category.id}>
                   <td className="spa-admin-table__cell">
-                    {category.name}
-                    {canManage && editing === category.id ? (
-                      <CategoryForm
-                        tenantSlug={tenantSlug}
-                        category={category}
-                        onDone={() => setEditing(null)}
-                      />
-                    ) : null}
+                    {/* Le geste de la liste des prestations : le nom ouvre
+                        l'objet. Il l'ouvre pour tous les rangs — l'écran est
+                        lisible au rang praticien, et inerte (#769). */}
+                    <Link href={adminServiceCategoryPath(tenantSlug, category.id)}>
+                      {category.name}
+                    </Link>
                   </td>
                   <td className="spa-admin-table__cell">{category.slug}</td>
                   <td className="spa-admin-table__cell">
@@ -392,14 +449,6 @@ export function CategoryManager({
                   </td>
                   {canManage ? (
                     <td className="spa-admin-table__cell">
-                      <Button
-                        variant="quiet"
-                        aria-expanded={editing === category.id}
-                        onClick={() => setEditing(editing === category.id ? null : category.id)}
-                      >
-                        {editing === category.id ? 'Fermer' : 'Modifier'}
-                        <span className="spa-visually-hidden"> {category.name}</span>
-                      </Button>
                       <CategoryActivationButton tenantSlug={tenantSlug} category={category} />
                     </td>
                   ) : null}

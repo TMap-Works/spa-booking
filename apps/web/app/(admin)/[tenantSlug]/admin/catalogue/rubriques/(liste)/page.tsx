@@ -3,9 +3,9 @@ import Link from 'next/link';
 
 import { fetchOwnProfile, fetchServiceCategories } from '@/lib/api-client';
 
-import { CategoryManager } from '../../components/category-manager';
-import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
-import { adminCatalogPath, adminServiceCategoriesPath } from '../../paths';
+import { CategoryManager } from '../../../components/category-manager';
+import { adminLoadFailure, requireAdminAccessToken } from '../../../guard';
+import { adminCatalogPath, adminServiceCategoriesPath } from '../../../paths';
 
 /**
  * Rubriques du catalogue (#52, deuxième critère).
@@ -18,6 +18,15 @@ import { adminCatalogPath, adminServiceCategoriesPath } from '../../paths';
  * `PATCH /v1/service-categories` sont `@AuthAtLeast('MANAGER')`. Le rang est donc
  * lu ici et descendu au gestionnaire, qui retire ce qu'il ne sert à rien
  * d'offrir (#619).
+ *
+ * ## Pourquoi sous `(liste)/` (#769)
+ *
+ * Le groupe ne change pas l'URL. Il donne à la liste un dossier où poser son
+ * squelette (`loading.tsx`) sans envelopper l'écran d'une rubrique, dont le 404
+ * doit partir **avant** tout squelette — sans quoi l'en-tête de réponse serait
+ * déjà parti en 200. C'est la répartition que #830 a posée sur `/catalogue`, et
+ * que `tests/unit/route-boundaries.test.tsx` vérifie sur toute page qui lève
+ * `notFound()`.
  */
 
 export const dynamic = 'force-dynamic';

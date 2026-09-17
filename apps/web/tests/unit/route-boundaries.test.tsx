@@ -96,6 +96,7 @@ describe('frontières de chargement — le 404 part avant le squelette', () => {
     expect(pagesWithNotFound).toEqual(
       expect.arrayContaining([
         '(admin)/[tenantSlug]/admin/catalogue/[serviceId]/page.tsx',
+        '(admin)/[tenantSlug]/admin/catalogue/rubriques/[categoryId]/page.tsx',
         '(admin)/[tenantSlug]/admin/personnel/[staffId]/page.tsx',
         '(account)/[tenantSlug]/compte/rendez-vous/[appointmentId]/report/page.tsx',
       ]),
@@ -128,7 +129,10 @@ describe('frontières de chargement — le 404 part avant le squelette', () => {
     'reglages',
     'catalogue/(liste)',
     'catalogue/nouveau',
-    'catalogue/rubriques',
+    // Sous `(liste)/` depuis #769 : l'écran d'une rubrique lève `notFound()`, et
+    // un squelette posé sur `catalogue/rubriques` l'envelopperait — l'en-tête de
+    // réponse partirait en 200 avant que la page ne décide du 404.
+    'catalogue/rubriques/(liste)',
     'catalogue/apercu',
     'personnel/(liste)',
   ])('le back-office a un squelette pour %s', (screenDir) => {
