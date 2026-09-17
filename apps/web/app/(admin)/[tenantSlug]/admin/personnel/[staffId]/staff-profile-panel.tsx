@@ -34,19 +34,42 @@ import { useAdminSessionRenewal } from '../../components/use-admin-session-renew
  * horaires et ses affectations — elle cesse seulement de produire des créneaux.
  * Le bouton le dit, et l'écran ne propose rien qui ressemble à une suppression.
  *
- * ## La présentation ne se relit pas, donc elle ne s'écrase pas
+ * ## La présentation se relit, depuis #771
  *
- * Aucune route ne publie `bio` : `StaffMemberDto` ne porte que `id`,
- * `displayName` et `isActive`, en lecture comme en réponse au `PATCH`. Le champ
- * s'ouvre donc **vide**, et le panneau n'envoie `bio` que s'il a été touché.
- * Préremplir avec du vide puis tout renvoyer effacerait, à chaque correction de
- * nom, une présentation que la gérante ne voit même pas.
+ * Elle ne se relisait pas : `StaffMemberDto` ne portait que `id`, `displayName`
+ * et `isActive`, si bien que le champ s'ouvrait **vide** au-dessus d'un texte
+ * déjà enregistré. La gérante ne pouvait ni savoir ce que le salon retenait de
+ * sa praticienne, ni le corriger sans le réécrire de mémoire — et l'aide qu'elle
+ * lisait lui expliquait une contrainte de l'API au lieu de lui dire quoi faire.
  *
- * Quand il a été touché et qu'il est vide, ce qui part est `null` — « il n'y a
- * pas de présentation » — et non `""`, qui écrirait une chaîne vide en base là
- * où `NULL` porte déjà ce sens. C'est le premier des deux constats laissés par la
- * revue de #694, et l'écran est l'endroit où il se referme : l'API accepte les
- * deux formes.
+ * `GET /v1/staff` sert désormais `bio`, et le champ s'ouvre donc sur le texte
+ * enregistré. Le geste redevient celui qu'on attend d'un formulaire : ce qu'on
+ * lit est ce qui est en base, ce qu'on laisse est ce qui y reste, ce qu'on
+ * efface disparaît — sans manœuvre, ni bouton dédié à l'effacement.
+ *
+ * ## Ce que l'aide ne promet pas
+ *
+ * Elle ne dit pas « affichée sur la page publique du salon ». **Aucune surface
+ * publique ne rend `bio` aujourd'hui** — le catalogue public sert
+ * `staffMemberSummarySchema`, soit l'identifiant et le nom —, et le CDC ne
+ * prescrit nulle part une présentation de praticien en vitrine. Le ticket porte
+ * sur une microcopie qui disait faux ; lui en substituer une autre serait le
+ * rouvrir en le fermant.
+ *
+ * Deux conséquences dans ce fichier :
+ *
+ * - **Ce qui part est ce qui a changé**, mesuré contre la valeur enregistrée et
+ *   non contre un drapeau « ce champ a été touché ». Retaper un texte à
+ *   l'identique n'envoie rien, et corriger le seul nom ne touche pas à la
+ *   présentation.
+ * - **Un champ vidé envoie `null`** — « il n'y a pas de présentation » — et non
+ *   `""`, qui écrirait une chaîne vide en base là où `NULL` porte déjà ce sens.
+ *   C'est le premier des deux constats laissés par la revue de #694, et l'écran
+ *   reste l'endroit où il se referme : l'API accepte les deux formes.
+ *
+ * La réponse, elle, omet `bio` quand la fiche n'en porte pas — le contrat le
+ * déclare facultatif et non nullable —, d'où les `?? ''` : c'est la traduction
+ * entre « pas de présentation » et « champ vide », et elle n'a qu'un sens.
  *
  * ## Deux boutons plutôt qu'un formulaire unique
  *
@@ -81,11 +104,13 @@ export function StaffProfilePanel({
 }) {
   const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
+  // La présentation publiée, telle que la fiche la rend. Absente vaut « aucune
+  // présentation » (le contrat la déclare facultative, pas nullable) et se lit
+  // dans un champ de saisie comme une chaîne vide : la traduction se fait ici,
+  // une fois, et les deux comparaisons ci-dessous portent sur la même valeur.
+  const publishedBio = member.bio ?? '';
   const [displayName, setDisplayName] = useState(member.displayName);
-  const [bio, setBio] = useState('');
-  // Tant que la présentation n'a pas été touchée, elle ne part pas : l'API ne la
-  // rend jamais, et un champ vide ne veut donc pas dire « efface ».
-  const [bioEdited, setBioEdited] = useState(false);
+  const [bio, setBio] = useState(publishedBio);
   const [active, setActive] = useState(member.isActive);
   // Ce que le dernier rendu serveur disait. La fiche relue — après
   // `router.refresh()`, ou parce qu'une collègue a modifié depuis un autre poste
@@ -101,6 +126,11 @@ export function StaffProfilePanel({
     setKnownName(member.displayName);
     setDisplayName(member.displayName);
   }
+  const [knownBio, setKnownBio] = useState(publishedBio);
+  if (knownBio !== publishedBio) {
+    setKnownBio(publishedBio);
+    setBio(publishedBio);
+  }
   const [knownActive, setKnownActive] = useState(member.isActive);
   if (knownActive !== member.isActive) {
     setKnownActive(member.isActive);
@@ -114,7 +144,14 @@ export function StaffProfilePanel({
   const trimmedName = displayName.trim();
   const trimmedBio = bio.trim();
   const nameChanged = trimmedName !== member.displayName;
-  const somethingToSave = nameChanged || bioEdited;
+  // La comparaison porte sur la valeur **publiée**, et non sur un drapeau « ce
+  // champ a été touché » : depuis que la présentation se relit, retaper le même
+  // texte n'est plus une modification, et le bouton n'a pas à s'allumer pour un
+  // aller-retour dans le champ. Les deux côtés sont rognés — `longTextSchema`
+  // rogne à l'entrée, si bien qu'une espace ajoutée en fin de ligne partirait
+  // sinon pour être écrite à l'identique.
+  const bioChanged = trimmedBio !== publishedBio;
+  const somethingToSave = nameChanged || bioChanged;
   /*
    * Écran neutralisé : une écriture est en vol, ou la fiche se relit.
    *
@@ -159,7 +196,7 @@ export function StaffProfilePanel({
     // corrections.
     const parsed = updateStaffMemberRequestSchema.safeParse({
       ...(nameChanged ? { displayName: trimmedName } : {}),
-      ...(bioEdited ? { bio: trimmedBio === '' ? null : trimmedBio } : {}),
+      ...(bioChanged ? { bio: trimmedBio === '' ? null : trimmedBio } : {}),
     });
 
     if (!parsed.success) {
@@ -202,8 +239,7 @@ export function StaffProfilePanel({
     }
 
     setDisplayName(result.data.displayName);
-    setBio('');
-    setBioEdited(false);
+    setBio(result.data.bio ?? '');
     setNotice({ tone: 'success', message: 'Fiche enregistrée.' });
     startRefresh(() => {
       router.refresh();
@@ -248,8 +284,9 @@ export function StaffProfilePanel({
         Fiche praticien
       </h2>
       <p className="spa-admin-toolbar__hint">
-        Le nom que la cliente lit au moment de choisir son praticien, et l’état de la fiche. Une
-        fiche suspendue reste listée&nbsp;: elle cesse seulement d’être proposée à la réservation.
+        Le nom que la cliente lit au moment de choisir son praticien, la présentation enregistrée
+        pour lui, et l’état de la fiche. Une fiche suspendue reste listée&nbsp;: elle cesse
+        seulement d’être proposée à la réservation.
       </p>
 
       {notice === null ? null : (
@@ -278,11 +315,26 @@ export function StaffProfilePanel({
       <TextArea
         disabled={!canManage || locked}
         error={fieldErrors.bio}
-        hint="Facultatif — affichée sur la page publique du salon. L’API ne la relit pas : laissez ce champ vide pour ne pas y toucher, videz-le après l’avoir modifié pour l’effacer."
+        /*
+         * Ce que cette phrase dit, et ce qu'elle se garde de promettre.
+         *
+         * Elle nomme l'état réel — « voici le texte enregistré », « il n'y en a
+         * pas » — et le geste qui l'efface. Elle ne dit pas « affichée sur la
+         * page publique du salon », comme le faisait la précédente : **aucune
+         * surface publique ne rend `bio` aujourd'hui**. Le catalogue public sert
+         * `staffMemberSummarySchema`, c'est-à-dire l'identifiant et le nom, et
+         * le CDC ne prescrit nulle part une présentation de praticien en
+         * vitrine. Remplacer une phrase fausse par une autre serait rouvrir le
+         * ticket en le fermant.
+         */
+        hint={
+          publishedBio === ''
+            ? 'Facultatif — quelques lignes qui présentent cette praticienne. Aucune présentation n’est enregistrée pour le moment.'
+            : 'Facultatif — quelques lignes qui présentent cette praticienne. Le champ montre la présentation enregistrée aujourd’hui : corrigez-la, ou videz-le pour l’effacer.'
+        }
         id="fiche-presentation"
         label="Présentation"
         onChange={(event) => {
-          setBioEdited(true);
           setBio(event.target.value);
           clearMark('bio');
         }}

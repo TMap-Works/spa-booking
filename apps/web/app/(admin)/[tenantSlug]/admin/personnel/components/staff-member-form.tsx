@@ -291,7 +291,10 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
       <TextArea
         disabled={accounts.length === 0}
         error={fieldErrors.bio}
-        hint="Facultatif — affichée sur la page publique du salon."
+        // Même formulation que sur la fiche (#771) : aucune surface publique ne
+        // rend `bio` aujourd'hui, et deux écrans du même parcours ne peuvent pas
+        // dire deux choses différentes du même champ.
+        hint="Facultatif — quelques lignes qui présentent cette praticienne."
         id="fiche-praticien-presentation"
         label="Présentation"
         onChange={(event) => {
