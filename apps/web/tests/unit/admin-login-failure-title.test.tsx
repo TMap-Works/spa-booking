@@ -52,7 +52,7 @@ const signIn = async (): Promise<void> => {
 /** Soumet le formulaire face à ce refus, et rend l'encart affiché. */
 const refus = async (code: string, message: string): Promise<HTMLElement> => {
   adminLoginAction.mockResolvedValue({ ok: false, code, message });
-  render(<AdminLoginForm tenantSlug={SLUG} />);
+  render(<AdminLoginForm tenantSlug={SLUG} notice={null} />);
 
   await signIn();
 

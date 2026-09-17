@@ -11,6 +11,7 @@ import type { CalendarDate } from '@spa/shared';
 
 import { DEFAULT_CALENDAR_VIEW, type CalendarView } from '@/lib/admin/calendar-range';
 import { DEFAULT_REPORT_PERIOD } from '@/lib/admin/reporting-window';
+import type { SessionNotice } from '@/lib/session-refresh';
 import { sitePath } from '@/lib/site-path';
 
 /** Racine du back-office d'un établissement. */
@@ -18,9 +19,20 @@ export function adminPath(tenantSlug: string): string {
   return `/${encodeURIComponent(tenantSlug)}/admin`;
 }
 
-/** Écran de connexion du back-office. */
-export function adminLoginPath(tenantSlug: string): string {
-  return `${adminPath(tenantSlug)}/connexion`;
+/**
+ * Écran de connexion du back-office, éventuellement avec le motif qui y renvoie.
+ *
+ * Le back-office n'en portait aucun (#860) : un renouvellement refusé par le
+ * limiteur y déposait l'opérateur sans un mot, devant un formulaire qui laissait
+ * croire à une déconnexion. Le motif est celui de l'espace client, écrit une
+ * fois dans `lib/session-refresh.ts` — et importé en `import type`, pour que les
+ * Client Components qui construisent ces chemins n'emportent pas le client
+ * d'API dans leur graphe de modules.
+ */
+export function adminLoginPath(tenantSlug: string, motif?: SessionNotice): string {
+  const login = `${adminPath(tenantSlug)}/connexion`;
+
+  return motif === undefined ? login : `${login}?motif=${motif}`;
 }
 
 /** Réglages de l'établissement — adresse, horaires, coordonnées (#343). */

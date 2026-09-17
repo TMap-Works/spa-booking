@@ -2,15 +2,18 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ERROR_CODES, loginRequestSchema, type LoginRequest } from '@spa/shared';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
-import { Notification } from '@/components/ui/notification';
+import { Notification, type NotificationTone } from '@/components/ui/notification';
+import type { SessionNotice } from '@/lib/session-refresh';
 
 import { adminLoginAction, adminLogoutAction } from '../actions';
+import { adminCalendarPath } from '../paths';
 import { adminLandingPath } from './navigation';
 
 /**
@@ -214,7 +217,48 @@ function failureNotice(code: string, message: string): AdminLoginFailure {
   };
 }
 
-export function AdminLoginForm({ tenantSlug }: { readonly tenantSlug: string }) {
+/**
+ * Ce que l'écran dit du chemin qui y mène — et qu'il ne disait pas (#860).
+ *
+ * Le back-office ne portait aucun motif : un renouvellement refusé par le
+ * limiteur déposait l'opérateur devant ce formulaire, muet, qui ne se lit que
+ * d'une façon — « on m'a déconnecté ». Sa session était pourtant intacte.
+ *
+ * Deux encarts, et la distinction qu'ils portent est la seule qui compte :
+ * `session-expiree` dit qu'il faut se reconnecter, `renouvellement-indisponible`
+ * dit qu'il ne faut rien faire d'autre qu'attendre. Le ton suit — `warning` pour
+ * une session finie, `info` pour une attente de quelques secondes.
+ *
+ * Séparé de `FAILURE_COPY` à dessein : celle-ci écrit ce qu'une **tentative de
+ * connexion** a donné, celle-là ce qui a **amené ici**. Les deux encarts peuvent
+ * d'ailleurs coexister — on peut échouer à se connecter sur un écran où l'on
+ * vient d'arriver par un renouvellement raté.
+ */
+const NOTICE_COPY: Readonly<
+  Record<
+    SessionNotice,
+    { readonly tone: NotificationTone; readonly title: string; readonly body: string }
+  >
+> = {
+  'session-expiree': {
+    tone: 'warning',
+    title: 'Votre session a expiré',
+    body: 'Reconnectez-vous pour reprendre là où vous en étiez.',
+  },
+  'renouvellement-indisponible': {
+    tone: 'info',
+    title: 'Session non renouvelée pour l’instant',
+    body: 'Vous n’avez pas été déconnecté·e : le renouvellement de votre session n’a pas abouti à l’instant. Réessayez dans quelques secondes.',
+  },
+};
+
+interface AdminLoginFormProps {
+  readonly tenantSlug: string;
+  /** Le motif qui a renvoyé ici, s'il y en a un. */
+  readonly notice: SessionNotice | null;
+}
+
+export function AdminLoginForm({ tenantSlug, notice }: AdminLoginFormProps) {
   const router = useRouter();
   const [failure, setFailure] = useState<AdminLoginFailure | null>(null);
 
@@ -278,6 +322,25 @@ export function AdminLoginForm({ tenantSlug }: { readonly tenantSlug: string }) 
       <h1 className="spa-admin__section-title" id="admin-connexion-titre">
         Back-office — se connecter
       </h1>
+
+      {notice === null ? null : (
+        <Notification tone={NOTICE_COPY[notice].tone} title={NOTICE_COPY[notice].title}>
+          <p>{NOTICE_COPY[notice].body}</p>
+          {/*
+           * Une reprise, comme l'exige `docs/design/appointments/states.md`
+           * (« Règles générales ») de tout état d'erreur — et comme `guard.tsx`
+           * en pose une sur les pages du back-office. Elle vise le planning et
+           * non cet écran : c'est la garde d'une page qui repassera par la route
+           * de renouvellement, avec les cookies qu'on vient précisément de ne
+           * pas effacer. Rafraîchir cet écran-ci ne retenterait rien.
+           */}
+          {notice === 'renouvellement-indisponible' ? (
+            <p>
+              <Link href={adminCalendarPath(tenantSlug)}>Réessayer</Link>
+            </p>
+          ) : null}
+        </Notification>
+      )}
 
       {failure === null ? null : (
         <Notification tone="danger" title={failure.title}>

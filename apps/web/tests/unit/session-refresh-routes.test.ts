@@ -126,6 +126,12 @@ describe.each(surfaces)('la route de renouvellement — $name', (surface) => {
     return new URL(raw, 'http://127.0.0.1:3000').pathname;
   };
 
+  /** Le motif porté par la destination, ou `null` quand elle n'en porte aucun. */
+  const motif = (response: NextResponse): string | null =>
+    new URL(response.headers.get('location') ?? '', 'http://127.0.0.1:3000').searchParams.get(
+      'motif',
+    );
+
   it('pose les deux cookies neufs et rend la main sur la page quittée', async () => {
     jar.set(surface.refresh, 'jeton-de-rafraichissement');
     refreshSession.mockResolvedValue(RENEWED);
@@ -163,6 +169,7 @@ describe.each(surfaces)('la route de renouvellement — $name', (surface) => {
     const cookies = setCookies(response);
 
     expect(location(response)).toBe(surface.login);
+    expect(motif(response)).toBe('session-expiree');
     expect(cookies.get(surface.access)).toMatchObject({ value: '', maxAge: 0 });
     expect(cookies.get(surface.refresh)).toMatchObject({ value: '', maxAge: 0 });
   });
@@ -175,6 +182,26 @@ describe.each(surfaces)('la route de renouvellement — $name', (surface) => {
 
     expect(location(response)).toBe(surface.login);
     expect(setCookies(response).size).toBe(0);
+  });
+
+  /**
+   * Le second volet de #860 : garder les cookies ne suffisait pas.
+   *
+   * L'écran d'arrivée était le même dans les deux cas — muet côté back-office,
+   * « Votre session a expiré » côté espace client —, et cette phrase-là est
+   * fausse sous le limiteur : la session est valide, elle a six jours devant
+   * elle, et rien de ce qui est affiché ne le dit.
+   */
+  it.each(REFUSALS)('annonce un renouvellement momentané, et non une expiration, sur %s', async (
+    _label,
+    error,
+  ) => {
+    jar.set(surface.refresh, 'jeton-de-rafraichissement');
+    refreshSession.mockRejectedValue(error);
+
+    const response = await call();
+
+    expect(motif(response)).toBe('renouvellement-indisponible');
   });
 
   it('ne redirige jamais hors du site, même après résolution des `..`', async () => {

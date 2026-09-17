@@ -1,3 +1,5 @@
+import { readSessionNotice } from '@/lib/session-refresh';
+
 import { LoginForm } from '../components/login-form';
 
 /**
@@ -21,5 +23,8 @@ export default async function LoginPage({ params, searchParams }: LoginPageProps
   const { tenantSlug } = await params;
   const { motif } = await searchParams;
 
-  return <LoginForm tenantSlug={tenantSlug} expired={motif === 'session-expiree'} />;
+  // Le motif n'est pas comparé ici à une chaîne écrite sur place (#860) : il y
+  // en a désormais deux, et chaque écran qui les réécrirait finirait par en
+  // oublier un. `readSessionNotice` écarte aussi ce que personne n'a écrit.
+  return <LoginForm tenantSlug={tenantSlug} notice={readSessionNotice(motif)} />;
 }

@@ -60,7 +60,7 @@ afterEach(() => {
 describe('la destination après connexion', () => {
   it('dépose une praticienne sur le planning, jamais sur les réglages', async () => {
     adminLoginAction.mockResolvedValue({ ok: true, data: account('staff') });
-    render(<AdminLoginForm tenantSlug={SLUG} />);
+    render(<AdminLoginForm tenantSlug={SLUG} notice={null} />);
 
     await signIn();
 
@@ -74,7 +74,7 @@ describe('la destination après connexion', () => {
   it('dépose aussi la gérante et l’administratrice sur leur première section', async () => {
     for (const role of ['manager', 'admin'] as const) {
       adminLoginAction.mockResolvedValue({ ok: true, data: account(role) });
-      render(<AdminLoginForm tenantSlug={SLUG} />);
+      render(<AdminLoginForm tenantSlug={SLUG} notice={null} />);
 
       await signIn();
 
@@ -86,7 +86,7 @@ describe('la destination après connexion', () => {
 
   it('encode le slug de la destination', async () => {
     adminLoginAction.mockResolvedValue({ ok: true, data: account('admin') });
-    render(<AdminLoginForm tenantSlug="salon/lilas" />);
+    render(<AdminLoginForm tenantSlug="salon/lilas" notice={null} />);
 
     await signIn();
 
@@ -98,7 +98,7 @@ describe('un compte client sur l’écran du back-office', () => {
   it('ne l’emmène nulle part, et le lui dit sans parler d’identifiants', async () => {
     adminLoginAction.mockResolvedValue({ ok: true, data: account('client') });
     adminLogoutAction.mockResolvedValue({ ok: true, data: null });
-    render(<AdminLoginForm tenantSlug={SLUG} />);
+    render(<AdminLoginForm tenantSlug={SLUG} notice={null} />);
 
     await signIn();
 
@@ -112,7 +112,7 @@ describe('un compte client sur l’écran du back-office', () => {
   it('referme la session qu’il vient d’ouvrir', async () => {
     adminLoginAction.mockResolvedValue({ ok: true, data: account('client') });
     adminLogoutAction.mockResolvedValue({ ok: true, data: null });
-    render(<AdminLoginForm tenantSlug={SLUG} />);
+    render(<AdminLoginForm tenantSlug={SLUG} notice={null} />);
 
     await signIn();
 
@@ -127,7 +127,7 @@ describe('un compte client sur l’écran du back-office', () => {
     // session venait d'être ouverte. Le pire des deux mondes.
     adminLoginAction.mockResolvedValue({ ok: true, data: account('client') });
     adminLogoutAction.mockRejectedValue(new Error('action serveur injoignable'));
-    render(<AdminLoginForm tenantSlug={SLUG} />);
+    render(<AdminLoginForm tenantSlug={SLUG} notice={null} />);
 
     await signIn();
 
@@ -141,7 +141,7 @@ describe('un compte client sur l’écran du back-office', () => {
 describe('la mise en forme de l’écran (#699)', () => {
   /** La carte rendue par le composant — c'est le `<form>`, et c'est le sujet. */
   const carte = (): HTMLFormElement => {
-    render(<AdminLoginForm tenantSlug={SLUG} />);
+    render(<AdminLoginForm tenantSlug={SLUG} notice={null} />);
     const form = screen.getByRole('form', { name: /back-office — se connecter/i });
     return form as HTMLFormElement;
   };
@@ -173,7 +173,7 @@ describe('la mise en forme de l’écran (#699)', () => {
   });
 
   it('ne rend que la carte, ce dont dépend son centrage', () => {
-    const { container } = render(<AdminLoginForm tenantSlug={SLUG} />);
+    const { container } = render(<AdminLoginForm tenantSlug={SLUG} notice={null} />);
 
     // `admin/shell.css` centre une colonne de saisie qui est l'unique enfant de
     // `.spa-admin__content` — la condition qui distingue cet écran des cinq
@@ -203,7 +203,7 @@ describe('un refus de l’API', () => {
       code: ERROR_CODES.INVALID_CREDENTIALS,
       message: 'Identifiants invalides.',
     });
-    render(<AdminLoginForm tenantSlug={SLUG} />);
+    render(<AdminLoginForm tenantSlug={SLUG} notice={null} />);
 
     await signIn();
 

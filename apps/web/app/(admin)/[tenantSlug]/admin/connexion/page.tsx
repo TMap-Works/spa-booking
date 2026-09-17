@@ -1,5 +1,7 @@
 import { redirect } from 'next/navigation';
 
+import { readSessionNotice } from '@/lib/session-refresh';
+
 import { AdminLoginForm } from '../components/admin-login-form';
 import { adminLandingPath } from '../components/navigation';
 import { loadAdminShell } from '../layout';
@@ -87,10 +89,12 @@ export const dynamic = 'force-dynamic';
 
 interface AdminLoginPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
+  readonly searchParams: Promise<Record<string, string | string[] | undefined>>;
 }
 
-export default async function AdminLoginPage({ params }: AdminLoginPageProps) {
+export default async function AdminLoginPage({ params, searchParams }: AdminLoginPageProps) {
   const { tenantSlug } = await params;
+  const { motif } = await searchParams;
   const shell = await loadAdminShell(tenantSlug);
 
   /*
@@ -110,5 +114,14 @@ export default async function AdminLoginPage({ params }: AdminLoginPageProps) {
     redirect(adminLandingPath(tenantSlug, shell.role) ?? adminCalendarPath(tenantSlug));
   }
 
-  return <AdminLoginForm tenantSlug={tenantSlug} />;
+  /*
+   * Le motif qui a renvoyé ici, quand il y en a un (#860) — il n'a de sens que
+   * sur le formulaire, et la redirection ci-dessus l'emporte donc toujours : une
+   * session ouverte n'a aucun motif à expliquer.
+   *
+   * `readSessionNotice` plutôt qu'une comparaison écrite sur place : le
+   * paramètre est fourni par l'appelant, il peut être répété ou inventé, et cet
+   * écran n'a pas à afficher un encart que personne n'a écrit.
+   */
+  return <AdminLoginForm tenantSlug={tenantSlug} notice={readSessionNotice(motif)} />;
 }

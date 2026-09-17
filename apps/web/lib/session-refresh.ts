@@ -16,8 +16,9 @@ import { ApiClientError, refreshSession, type ApiSession } from '@/lib/api-clien
  *
  * Un 429 du limiteur de débit, un 503, une coupure réseau ne disent rien du
  * jeton : effacer les cookies sur cette foi-là déconnecterait pour de bon une
- * session valide. Le limiteur n'est pas hypothétique — il compte par adresse
- * IP, et tous les appels partent du serveur Next, donc d'une seule.
+ * session valide. Le limiteur n'est pas hypothétique — il compte désormais par
+ * session et non plus par adresse (#860), mais un quota par session reste un
+ * quota, et deux onglets d'un même poste savent l'atteindre.
  *
  * Le perdant d'une course entre deux renouvellements n'est pas un refus non
  * plus : l'API lui rend un jeton d'accès, sans cookie de rafraîchissement
@@ -25,6 +26,50 @@ import { ApiClientError, refreshSession, type ApiSession } from '@/lib/api-clien
  */
 export function isRefreshRefused(error: unknown): boolean {
   return error instanceof ApiClientError && (error.status === 401 || error.status === 403);
+}
+
+/**
+ * Les motifs qu'un écran de connexion sait expliquer — et le vocabulaire des
+ * deux surfaces, écrit une fois (#860).
+ *
+ * Il n'y en avait qu'un, et c'était le défaut : `session-expiree` s'affichait,
+ * ou rien du tout, quelle que soit la raison. Une session que le limiteur
+ * refuse de renouveler n'est pas une session expirée — elle est parfaitement
+ * valide, ses cookies sont en place, et lui dire le contraire envoie ressaisir
+ * un mot de passe dont personne n'avait besoin.
+ *
+ * Le motif voyage dans l'URL (`?motif=`) parce que c'est une **redirection** qui
+ * l'émet : une route ne rend pas d'écran, elle en désigne un, et ce qu'elle a à
+ * transmettre ne peut passer que par là.
+ */
+export const SESSION_NOTICES = ['session-expiree', 'renouvellement-indisponible'] as const;
+
+export type SessionNotice = (typeof SESSION_NOTICES)[number];
+
+/**
+ * Le motif qu'un renouvellement échoué doit afficher.
+ *
+ * Les deux branches sont exactement celles d'`isRefreshRefused` : seul un refus
+ * du jeton ferme la session, tout le reste est momentané.
+ */
+export function sessionNoticeFor(error: unknown): SessionNotice {
+  return isRefreshRefused(error) ? 'session-expiree' : 'renouvellement-indisponible';
+}
+
+/**
+ * Le motif porté par `?motif=`, ou `null` si le paramètre n'en nomme aucun.
+ *
+ * Un paramètre d'URL est fourni par l'appelant : il peut être absent, répété
+ * (`?motif=a&motif=b`, que Next rend comme un tableau) ou inventé. Rien n'en
+ * sort qui ne soit l'un des motifs déclarés — un écran ne doit pas pouvoir
+ * afficher un encart que personne n'a écrit.
+ */
+export function readSessionNotice(
+  value: string | readonly string[] | undefined,
+): SessionNotice | null {
+  const candidate = typeof value === 'string' ? value : value?.[0];
+
+  return SESSION_NOTICES.find((notice) => notice === candidate) ?? null;
 }
 
 /** Ce qu'une surface expose de sa session à une action serveur. */

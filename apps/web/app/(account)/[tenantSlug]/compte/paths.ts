@@ -12,6 +12,8 @@
  * jeton jusqu'au bundle.
  */
 
+import type { SessionNotice } from '@/lib/session-refresh';
+
 /** Racine de l'espace client d'un établissement — et portée de ses cookies. */
 export function accountPath(tenantSlug: string, suffix = ''): string {
   return `/${encodeURIComponent(tenantSlug)}/compte${suffix}`;
@@ -38,8 +40,16 @@ export function bookingPath(tenantSlug: string): string {
   return `${salonPath(tenantSlug)}/reservation`;
 }
 
-/** L'écran de connexion, éventuellement avec le motif qui y renvoie. */
-export function loginPath(tenantSlug: string, motif?: 'session-expiree'): string {
+/**
+ * L'écran de connexion, éventuellement avec le motif qui y renvoie.
+ *
+ * Le motif vient de `lib/session-refresh.ts`, en `import type` : les Client
+ * Components construisent ces chemins, et une importation de valeur ferait
+ * entrer le client d'API dans leur graphe de modules — exactement ce que
+ * l'en-tête de ce fichier interdit. Un type, lui, ne survit pas à la
+ * compilation.
+ */
+export function loginPath(tenantSlug: string, motif?: SessionNotice): string {
   return accountPath(tenantSlug, motif === undefined ? '/connexion' : `/connexion?motif=${motif}`);
 }
 
