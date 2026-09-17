@@ -197,6 +197,33 @@ export const appointmentSchema = z.object({
    */
   staffNote: longTextSchema.optional(),
   cancelledAt: utcInstantSchema.optional(),
+  /**
+   * De quel côté du comptoir l'annulation vient — **absent** quand il n'y a pas
+   * d'auteur à nommer (#917).
+   *
+   * ## Un champ absent **avec** `cancelledAt` posé n'est pas une donnée manquante
+   *
+   * C'est l'annulation qu'un **report** (#39) produit sur la ligne d'origine :
+   * `appointments.repository.ts` y pose `cancelled_at` et rien d'autre, et
+   * refuse délibérément d'y inscrire un auteur — « un report n'est pas un
+   * abandon ». C'est donc cette absence, et elle seule, qui distingue au
+   * back-office un créneau **perdu** d'un créneau **déplacé** :
+   * `rescheduledFromId` est porté par le successeur, pas par l'origine, et
+   * ouvrir l'origine n'apprenait rien jusqu'ici.
+   *
+   * ## Pourquoi `.optional()` là où la sortie publique est `.nullable()`
+   *
+   * Parce que les deux vues ne sérialisent pas de la même façon, et que chacune
+   * le fait explicitement : `bookedAppointmentSchema` émet toujours la clé, à
+   * `null` quand elle est sans objet ; cette ligne d'agenda **omet** la clé,
+   * comme elle omet déjà `cancelledAt`, `cancellationReason` et
+   * `rescheduledFromId`. Les deux absences se lisent pareil — « aucun auteur » —
+   * et `lib/appointment-status.ts`, côté front, les ramène à un seul cas.
+   *
+   * Ce que ce champ n'est **pas** : un rôle. Un `MANAGER` qui annule est du côté
+   * du salon, comme un `STAFF`, et `system` n'est le rôle de personne.
+   */
+  cancelledBy: receivedCancellationActorSchema.optional(),
   cancellationReason: reasonSchema.optional(),
   /**
    * Le rendez-vous que celui-ci **remplace**, s'il est né d'un report.

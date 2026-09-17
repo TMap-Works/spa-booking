@@ -637,6 +637,20 @@ export interface AgendaAppointmentView {
   /** Note interne du praticien — **jamais** servie au parcours public (#317). */
   readonly staffNote?: string;
   readonly cancelledAt?: string;
+  /**
+   * De quel côté du comptoir l'annulation vient — **absent** quand il n'y a
+   * personne à nommer (#917).
+   *
+   * Le repository le lit depuis toujours (`APPOINTMENT_SELECT`) ; c'est la
+   * sérialisation qui le perdait, et avec lui la seule chose qui distingue au
+   * planning un créneau **perdu** d'un créneau **déplacé** : un report pose
+   * `cancelled_at` sur la ligne d'origine sans y inscrire d'auteur. Absent
+   * **avec** `cancelledAt` posé se lit donc « déplacé », jamais « auteur
+   * inconnu ».
+   *
+   * Absent et non `null`, comme les autres facultatifs de cette vue.
+   */
+  readonly cancelledBy?: AppointmentCancelledBy;
   readonly cancellationReason?: string;
   readonly rescheduledFromId?: string;
   readonly createdAt: string;

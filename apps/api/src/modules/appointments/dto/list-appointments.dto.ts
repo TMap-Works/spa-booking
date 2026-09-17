@@ -12,8 +12,8 @@ import { Transform } from 'class-transformer';
 import { ArrayNotEmpty, IsArray, IsIn, IsUUID } from 'class-validator';
 import type { z } from 'zod';
 
-import type { AppointmentStatus } from '../appointment-status';
-import { APPOINTMENT_STATUSES } from '../appointment-status';
+import type { AppointmentCancelledBy, AppointmentStatus } from '../appointment-status';
+import { APPOINTMENT_STATUSES, CANCELLATION_AUTHORS } from '../appointment-status';
 import { MAX_APPOINTMENT_RANGE_DAYS } from '../appointments.errors';
 import type {
   AgendaAppointmentView,
@@ -292,12 +292,15 @@ export class AgendaServiceDto {
  * servis au parcours public » — et cette route est précisément la « sortie
  * distincte, gardée par un rôle » qu'ils annonçaient (#317, #40).
  *
- * ## Ce qu'elle ne porte pas, à la différence d'`AppointmentDto`
+ * ## `cancelledBy` y est entré en #917, et ce n'est pas une commodité
  *
- * `cancelledBy`. `appointmentSchema` ne le déclare pas : ce que le comptoir lit
- * de l'annulation, c'est **quand** et **pourquoi** — l'auteur sert au parcours
- * public à distinguer « vous avez annulé » de « le salon a annulé », question qui
- * ne se pose pas de ce côté du comptoir.
+ * On avait d'abord jugé que l'auteur ne servait qu'au parcours public —
+ * distinguer « vous avez annulé » de « le salon a annulé ». C'était passer à côté
+ * de ce que son **absence** signifie : un report pose `cancelled_at` sur la ligne
+ * d'origine sans y inscrire d'auteur (`appointments.repository.ts`), si bien que
+ * l'auteur nul est la seule marque qui sépare, dans l'agenda du salon, un créneau
+ * perdu d'un créneau déplacé. Sans lui, le tiroir du planning ne pouvait dire que
+ * « aucun motif n'a été consigné », vrai des deux cas et utile dans aucun.
  *
  * ## Les champs facultatifs sont **absents**, jamais `null`
  *
@@ -356,6 +359,18 @@ export class AgendaAppointmentDto implements AgendaAppointmentView {
     example: '2026-08-27T14:32:10.000Z',
   })
   public cancelledAt?: string;
+
+  @ApiPropertyOptional({
+    enum: CANCELLATION_AUTHORS,
+    example: 'CLIENT',
+    description:
+      'De quel côté du comptoir l’annulation vient. **Absent** quand il n’y a ' +
+      'personne à nommer — et absent **avec** `cancelledAt` posé se lit ' +
+      '« déplacé » : un report annule la ligne d’origine sans lui inscrire ' +
+      'd’auteur, et c’est la seule marque qui distingue un créneau perdu d’un ' +
+      'créneau déplacé (#917).',
+  })
+  public cancelledBy?: AppointmentCancelledBy;
 
   @ApiPropertyOptional({ description: 'Motif saisi à l’annulation — champ de back-office.' })
   public cancellationReason?: string;
