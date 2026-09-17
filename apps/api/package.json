@@ -23,6 +23,7 @@
     "db:migrate": "prisma migrate dev",
     "db:migrate:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
+    "platform:operator": "node --require ts-node/register src/modules/identity/platform/platform-operator.cli.ts",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate"
   },

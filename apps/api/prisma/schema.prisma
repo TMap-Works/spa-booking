@@ -433,6 +433,12 @@ model Tenant {
   processedWebhookEvents  ProcessedWebhookEvent[]
   stripeWebhookDeliveries StripeWebhookDelivery[]
 
+  /// L'acte d'ouverture de ce salon, côté console plateforme (#806). La relation
+  /// pointe **vers le haut** — vers l'éditeur — et non vers une donnée du salon :
+  /// c'est pourquoi la table d'en face ne porte pas de `tenant_id`, voir
+  /// l'ADR 0012.
+  platformProvisionings PlatformTenantProvisioning[]
+
   @@map("tenants")
 }
 
@@ -737,6 +743,110 @@ model RefreshToken {
   // (déconnexion globale, purge) et le balayage des sessions expirées.
   @@index([tenantId, userId, expiresAt])
   @@map("refresh_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Console plateforme — l'éditeur, au-dessus des établissements
+// ---------------------------------------------------------------------------
+//
+// Les deux modèles qui suivent sont les **seules** tables de ce schéma, avec
+// `tenants`, à ne porter aucun `tenant_id`. L'exception est tranchée par
+// l'ADR 0012, et le critère y est écrit : `tenant_id` protège les données
+// **d'un établissement**, et une ligne qui n'appartient à aucun établissement
+// n'a rien à discriminer. Lui ajouter la colonne rattacherait l'identité de
+// l'éditeur à l'un des salons qu'il administre — l'inverse exact de ce que la
+// règle cherche à obtenir.
+//
+// Trois garde-fous rendent l'exception vérifiable :
+// `prisma-schema.spec.ts` les nomme dans sa liste de tables plateforme,
+// `tenant-scope.extension.ts` les **refuse** au client scopé (elles ne sont
+// atteignables que par `prismaUnscoped`, sous commentaire), et aucune des deux
+// ne porte de donnée de client final.
+
+/// Opérateur plateforme — l'identité de l'éditeur, hors établissement (#806).
+///
+/// Elle ne vit pas dans `users`, et ce n'est pas une préférence de rangement :
+/// un compte de `users` porte un `tenant_id`, que `JwtAuthGuard` pose dans le
+/// contexte de requête et qui **arme** le scoping Prisma. Un opérateur logé là
+/// arriverait dans les contrôleurs avec la portée d'un établissement technique,
+/// et la seule façon d'ouvrir un vrai salon serait de contourner cette portée
+/// depuis une route authentifiée. Voir l'ADR 0012, option A.
+model PlatformOperator {
+  id String @id @default(uuid()) @db.Uuid
+
+  /// Unique **globalement**, là où `users.email` ne l'est que par établissement :
+  /// il n'y a qu'un espace plateforme, et deux opérateurs qui partageraient une
+  /// adresse seraient deux identités pour un seul compte de messagerie.
+  email String @unique @db.VarChar(320)
+
+  /// Empreinte bcrypt — jamais le mot de passe. `NOT NULL`, contrairement à
+  /// `users.password_hash` : un opérateur ne naît pas « invité », il naît par la
+  /// commande d'exploitation qui lui pose son mot de passe initial.
+  passwordHash String @map("password_hash") @db.VarChar(255)
+
+  /// Secret TOTP en base32 (RFC 4648), pour la MFA que l'ADR 0012 exige.
+  ///
+  /// En clair, et cela se dit plutôt que se cache : un secret TOTP ne peut pas
+  /// être haché, sa vérification consistant à le recalculer. Une fuite de cette
+  /// table donne donc le **second** facteur, jamais le premier — qui reste sous
+  /// bcrypt. Le chiffrement au repos de cette colonne est la suite naturelle ;
+  /// il n'est pas au périmètre de #806.
+  totpSecret String @map("totp_secret") @db.VarChar(64)
+
+  firstName String @map("first_name") @db.VarChar(80)
+  lastName  String @map("last_name") @db.VarChar(80)
+
+  /// Ferme l'accès sans rien supprimer — même conduite que `users.is_active`.
+  /// Les ouvertures de salon qu'il a signées restent, et doivent rester : c'est
+  /// le journal du critère 6.
+  isActive Boolean @default(true) @map("is_active")
+
+  lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  provisionings PlatformTenantProvisioning[]
+
+  @@map("platform_operators")
+}
+
+/// Journal des ouvertures d'établissement, et registre de leur idempotence —
+/// critère 6 de #806.
+///
+/// Une ligne par salon ouvert : **qui** l'a ouvert, **quand**, et **lequel**.
+/// La même ligne porte la clé `Idempotency-Key` de la requête, si bien que le
+/// journal et le registre ne peuvent pas se contredire — un rejeu retrouve la
+/// ligne, donc l'établissement déjà créé, et n'en ouvre pas un second.
+model PlatformTenantProvisioning {
+  id String @id @default(uuid()) @db.Uuid
+
+  operatorId String           @map("operator_id") @db.Uuid
+  operator   PlatformOperator @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+
+  /// L'établissement ouvert. Le champ se nomme `createdTenantId` et **jamais**
+  /// `tenantId` : `tenant-scope.extension.ts` déduit du nom `tenantId` les
+  /// modèles qu'il doit filtrer, et cette ligne n'appartient pas au salon
+  /// qu'elle nomme — elle appartient à l'acte de l'éditeur qui l'a ouvert. Le
+  /// nom n'est donc pas un contournement : c'est l'énoncé du fait.
+  createdTenantId String @map("created_tenant_id") @db.Uuid
+  createdTenant   Tenant @relation(fields: [createdTenantId], references: [id], onDelete: Restrict)
+
+  /// La clé d'idempotence, unique globalement — c'est ce qui la rend utile.
+  /// L'en-tête est **obligatoire** sur la création : ouvrir un salon n'est pas
+  /// une opération qu'on rejoue à l'aveugle, et une clé facultative aurait rendu
+  /// la garantie conditionnelle au soin de l'appelant.
+  idempotencyKey String @unique @map("idempotency_key") @db.VarChar(128)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  /// « Les salons ouverts par cet opérateur », et le tri du journal par date.
+  /// Déclaré ici parce que la migration le pose : un index qui n'existe que dans
+  /// le SQL est une dérive que le prochain `prisma migrate dev` corrigerait en
+  /// le **supprimant**.
+  @@index([operatorId, createdAt])
+  @@map("platform_tenant_provisionings")
 }
 
 // ---------------------------------------------------------------------------

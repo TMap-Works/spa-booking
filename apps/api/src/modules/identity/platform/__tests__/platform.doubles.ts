@@ -1,0 +1,170 @@
+import { randomUUID } from 'node:crypto';
+
+import type { PlatformRepository, ProvisioningRecord, TenantAdminRecord } from '../platform.repository';
+import { TenantSlugTakenError } from '../platform.errors';
+import type {
+  PlatformOperatorRecord,
+  ProvisionTenantInput,
+  ProvisionedTenantRecord,
+  TenantSummary,
+} from '../platform.types';
+
+/**
+ * Le dépôt de la console, en mémoire.
+ *
+ * Il rejoue les **invariants de la base**, et c'est tout ce qu'on lui demande :
+ * l'unicité globale du slug, l'unicité de la clé d'idempotence, et le refus
+ * d'un opérateur désactivé. Ce sont les trois contraintes sur lesquelles repose
+ * le comportement du service — un double qui les ignorerait ferait passer au
+ * vert un service qui ne tient rien.
+ *
+ * Il ne rejoue **pas** la transaction : les trois écritures sont faites à la
+ * suite, et un double ne prouverait rien de leur atomicité. C'est
+ * `test/platform-console.isolation-spec.ts`, contre l'application réellement
+ * câblée, qui exerce le chemin HTTP de bout en bout.
+ */
+export class FakePlatformRepository {
+  private readonly operators = new Map<string, PlatformOperatorRecord>();
+  private readonly tenants = new Map<string, TenantSummary>();
+  private readonly admins = new Map<string, TenantAdminRecord>();
+  private readonly provisionings = new Map<string, ProvisioningRecord>();
+
+  /** Les rejeux d'idempotence observés — ce que le service a demandé deux fois. */
+  public lastLoginTouched: string | null = null;
+
+  public addOperator(input: {
+    email: string;
+    passwordHash: string;
+    totpSecret: string;
+    isActive?: boolean;
+  }): PlatformOperatorRecord {
+    const operator: PlatformOperatorRecord = {
+      id: randomUUID(),
+      email: input.email,
+      passwordHash: input.passwordHash,
+      totpSecret: input.totpSecret,
+      firstName: 'Opé',
+      lastName: 'Rateur',
+      isActive: input.isActive ?? true,
+    };
+    this.operators.set(operator.id, operator);
+    return operator;
+  }
+
+  public addTenant(input: { slug: string; name?: string; withAdmin?: boolean }): TenantSummary {
+    const tenant: TenantSummary = {
+      id: randomUUID(),
+      slug: input.slug,
+      name: input.name ?? input.slug,
+      timezone: 'Europe/Paris',
+      defaultCurrency: 'EUR',
+      isActive: true,
+      createdAt: new Date('2026-09-01T10:00:00.000Z'),
+    };
+    this.tenants.set(tenant.id, tenant);
+    if (input.withAdmin !== false) {
+      this.admins.set(tenant.id, {
+        id: randomUUID(),
+        email: `admin@${input.slug}.test`,
+        firstName: 'Alice',
+        lastName: 'Durand',
+      });
+    }
+    return tenant;
+  }
+
+  public async findActiveOperatorByEmail(email: string): Promise<PlatformOperatorRecord | null> {
+    for (const operator of this.operators.values()) {
+      if (operator.email === email && operator.isActive) {
+        return operator;
+      }
+    }
+    return null;
+  }
+
+  public async findActiveOperatorById(id: string): Promise<{ id: string; email: string } | null> {
+    const operator = this.operators.get(id);
+    return operator === undefined || !operator.isActive
+      ? null
+      : { id: operator.id, email: operator.email };
+  }
+
+  public async touchOperatorLastLogin(id: string): Promise<void> {
+    this.lastLoginTouched = id;
+  }
+
+  public async findProvisioningByIdempotencyKey(key: string): Promise<ProvisioningRecord | null> {
+    return this.provisionings.get(key) ?? null;
+  }
+
+  public async provisionTenant(input: ProvisionTenantInput): Promise<ProvisionedTenantRecord> {
+    for (const tenant of this.tenants.values()) {
+      if (tenant.slug === input.slug) {
+        throw new TenantSlugTakenError(input.slug);
+      }
+    }
+    if (this.provisionings.has(input.idempotencyKey)) {
+      throw new Error('clé d’idempotence déjà consommée');
+    }
+
+    const createdAt = new Date('2026-09-17T12:00:00.000Z');
+    const tenant: TenantSummary = {
+      id: randomUUID(),
+      slug: input.slug,
+      name: input.name,
+      timezone: input.timezone,
+      defaultCurrency: input.defaultCurrency,
+      isActive: true,
+      createdAt,
+    };
+    this.tenants.set(tenant.id, tenant);
+
+    const admin: TenantAdminRecord = {
+      id: randomUUID(),
+      email: input.adminEmail,
+      firstName: input.adminFirstName,
+      lastName: input.adminLastName,
+    };
+    this.admins.set(tenant.id, admin);
+
+    this.provisionings.set(input.idempotencyKey, {
+      operatorId: input.operatorId,
+      createdTenantId: tenant.id,
+      createdAt,
+    });
+
+    return {
+      tenantId: tenant.id,
+      slug: tenant.slug,
+      name: tenant.name,
+      timezone: tenant.timezone,
+      defaultCurrency: tenant.defaultCurrency,
+      adminUserId: admin.id,
+      adminEmail: admin.email,
+      createdAt,
+    };
+  }
+
+  public async findTenantById(id: string): Promise<TenantSummary | null> {
+    return this.tenants.get(id) ?? null;
+  }
+
+  public async listTenants(input: {
+    page: number;
+    pageSize: number;
+  }): Promise<{ items: TenantSummary[]; totalItems: number }> {
+    const all = [...this.tenants.values()].sort(
+      (left, right) => right.createdAt.getTime() - left.createdAt.getTime(),
+    );
+    const start = (input.page - 1) * input.pageSize;
+    return { items: all.slice(start, start + input.pageSize), totalItems: all.length };
+  }
+
+  public async findTenantAdmin(tenantId: string): Promise<TenantAdminRecord | null> {
+    return this.admins.get(tenantId) ?? null;
+  }
+
+  public asRepository(): PlatformRepository {
+    return this as unknown as PlatformRepository;
+  }
+}

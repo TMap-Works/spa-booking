@@ -11,6 +11,12 @@ import { AuthService } from './auth.service';
 import { IdentityRepository } from './identity.repository';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PasswordHasher } from './password.hasher';
+import { PlatformAuthController } from './platform/platform-auth.controller';
+import { PlatformAuthGuard } from './platform/platform-auth.guard';
+import { PlatformRepository } from './platform/platform.repository';
+import { PlatformService } from './platform/platform.service';
+import { PlatformTenantsController } from './platform/platform-tenants.controller';
+import { PlatformTokenService } from './platform/platform-token.service';
 import { PublicTenantController } from './public-tenant.controller';
 import { PublicTenantService } from './public-tenant.service';
 import { RolesGuard } from './roles.guard';
@@ -93,6 +99,26 @@ const publicTenantResolver: PublicTenantResolverProvider = {
  * déclare le contrôleur — `TokenService` en fait partie. La déclarer ici laisse
  * les trois gardes du module visibles au même endroit (#860).
  *
+ * ## La console plateforme vit dans ce module, sous `platform/`
+ *
+ * Le CDC §2.3 range les tenants dans Identité & accès, et ouvrir un
+ * établissement est d'abord une question d'identité : qui a le droit de le
+ * faire, et quel compte naît avec le salon. Un neuvième module se serait
+ * justifié en ADR (api-module §1) ; l'ADR 0012 tranche en sens inverse — c'est
+ * la même table `tenants` et le même mécanisme d'invitation que `UsersService`
+ * emploie déjà.
+ *
+ * Le sous-dossier, lui, n'est pas décoratif : **rien** de ce qu'il contient ne
+ * s'applique à l'espace des établissements. `PlatformAuthGuard` ne pose aucune
+ * portée là où `JwtAuthGuard` en pose une, `PlatformTokenService` signe avec une
+ * troisième clé, et `PlatformRepository` est la seule porte vers deux tables que
+ * le client scopé refuse. Les mêler aux fichiers de l'espace salon aurait rendu
+ * cette frontière invisible à la relecture.
+ *
+ * Rien n'en est **exporté** : aucun autre module n'a de raison d'ouvrir un
+ * établissement, et un export serait le premier pas vers une route de salon qui
+ * emprunte la porte de la console.
+ *
  * ## Un fournisseur sans route : `TenantTimeZoneAudit`
  *
  * Il ne sert aucun contrôleur et n'est exporté par personne — il existe pour son
@@ -119,6 +145,8 @@ const publicTenantResolver: PublicTenantResolverProvider = {
     UsersController,
     PublicTenantController,
     TenantSettingsController,
+    PlatformAuthController,
+    PlatformTenantsController,
   ],
   providers: [
     AuthService,
@@ -133,6 +161,10 @@ const publicTenantResolver: PublicTenantResolverProvider = {
     RolesGuard,
     SessionThrottlerGuard,
     publicTenantResolver,
+    PlatformService,
+    PlatformRepository,
+    PlatformTokenService,
+    PlatformAuthGuard,
   ],
   exports: [JwtAuthGuard, RolesGuard, TokenService, UsersService, PUBLIC_TENANT_RESOLVER],
 })
