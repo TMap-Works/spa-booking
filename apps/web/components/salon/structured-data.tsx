@@ -151,10 +151,21 @@ export function buildSalonGraph(
             })),
           },
         }),
-    potentialAction: {
-      '@type': 'ReserveAction',
-      target: { '@type': 'EntryPoint', urlTemplate: reservationUrl },
-    },
+    // La `ReserveAction` suit exactement la même condition que le catalogue
+    // (#773) : un salon sans prestation publiée n'a pas de réservation à
+    // annoncer, et son tunnel refuse de démarrer. La déclarer quand même
+    // publierait à un moteur de recherche le point d'entrée d'un cul-de-sac —
+    // la version lisible par machine du bouton que l'en-tête vient de retirer.
+    // Même règle que l'adresse et les horaires juste au-dessus : une donnée
+    // structurée fausse coûte plus cher en référencement qu'une donnée absente.
+    ...(sections.length === 0
+      ? {}
+      : {
+          potentialAction: {
+            '@type': 'ReserveAction',
+            target: { '@type': 'EntryPoint', urlTemplate: reservationUrl },
+          },
+        }),
   };
 }
 

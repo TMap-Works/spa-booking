@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
 import { PublicExits } from '@/components/salon/public-exits';
+import { salonContactAction } from '@/components/salon/salon-contact';
 import { SalonHeader } from '@/components/salon/salon-header';
 import { SalonInfo } from '@/components/salon/salon-info';
 import { ServiceCatalog } from '@/components/salon/service-catalog';
@@ -59,6 +60,27 @@ interface PageProps {
 }
 
 /**
+ * La description que lit un moteur de recherche, accordée à l'état du catalogue
+ * (#773).
+ *
+ * C'est **mot pour mot l'accroche** de `SalonHeader`, servie à une autre
+ * surface : la laisser promettre « Découvrez les prestations…, leurs durées et
+ * leurs tarifs » pour un salon qui n'a rien publié ferait dire au résultat de
+ * recherche ce que la page vient précisément de cesser de dire.
+ *
+ * Fonction **pure** : l'état du catalogue lui est donné, elle ne le charge pas.
+ * C'est ce qui permet à `generateMetadata` de lancer les deux chargements
+ * ensemble plutôt que de les enchaîner — voir ci-dessous.
+ */
+function salonDescription(tenantName: string, bookable: boolean): string {
+  return bookable
+    ? `Découvrez les prestations de ${tenantName}, leurs durées et leurs tarifs, ` +
+        `et réservez votre rendez-vous en ligne.`
+    : `${tenantName} n’a pas encore publié ses prestations en ligne : ` +
+        `la réservation en ligne n’est pas encore ouverte.`;
+}
+
+/**
  * Métadonnées SEO de la page.
  *
  * Le titre et la description portent le nom du salon : c'est ce qu'un moteur
@@ -71,12 +93,25 @@ interface PageProps {
 export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
   const { tenantSlug } = await params;
 
+  // Le catalogue part **avant** l'attente de la fiche, et sous la même clé de
+  // mémoïsation que le composant (`tenantSlug`, celui de l'URL) : les deux
+  // chargements sont indépendants, les enchaîner ajouterait un aller-retour
+  // d'API sur le chemin du LCP que cette page tient sous 2,5 s.
+  //
+  // Le repli à `true` quand le catalogue n'a pas pu être lu : annoncer une
+  // réservation fermée sur la foi d'une panne transitoire écrirait dans l'index
+  // un état que le salon n'a pas choisi. Même raisonnement que le `noindex`
+  // réservé au 404, plus bas. La rejection est traitée ici même — rien ne reste
+  // en suspens si la fiche, elle, échoue.
+  const bookable = loadSalonServices(tenantSlug).then(
+    (services) => services.length > 0,
+    () => true,
+  );
+
   try {
     const tenant = await loadSalonTenant(tenantSlug);
     const title = `${tenant.name} — prestations et réservation en ligne`;
-    const description =
-      `Découvrez les prestations de ${tenant.name}, leurs durées et leurs tarifs, ` +
-      `et réservez votre rendez-vous en ligne.`;
+    const description = salonDescription(tenant.name, await bookable);
 
     return {
       metadataBase: new URL(siteOrigin()),
@@ -121,6 +156,10 @@ export default async function SalonPage({ params }: PageProps) {
     ]);
 
     const canonicalUrl = salonUrl(tenant.slug);
+    // La réservation en ligne suppose une prestation à réserver (#773). Tout ce
+    // que la page promet en dépend : l'accroche, l'appel à l'action, l'action de
+    // l'état vide du catalogue, et jusqu'à la `ReserveAction` du graphe.
+    const bookable = services.length > 0;
 
     return (
       <div className="spa-salon">
@@ -137,9 +176,12 @@ export default async function SalonPage({ params }: PageProps) {
             url={canonicalUrl}
             reservationUrl={`${canonicalUrl}/reservation`}
           />
-          <SalonHeader tenant={tenant} reservationHref={reservationPath(tenant.slug)} />
-          <ServiceCatalog services={services} />
-          <SalonInfo tenant={tenant} />
+          <SalonHeader
+            tenant={tenant}
+            reservationHref={bookable ? reservationPath(tenant.slug) : null}
+          />
+          <ServiceCatalog services={services} contact={salonContactAction(tenant)} />
+          <SalonInfo tenant={tenant} bookable={bookable} />
         </main>
       </div>
     );
