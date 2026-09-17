@@ -1,3 +1,4 @@
+import { TENANT_URL_MODES } from '@spa/shared';
 import { z } from 'zod';
 
 /**
@@ -75,6 +76,55 @@ export const envSchema = z.object({
 
   APP_URL: z.string().url(),
   API_URL: z.string().url(),
+
+  /**
+   * Forme de l'adresse publique d'un salon — critère 4 de #837.
+   *
+   * Depuis l'arbitrage du PO du 16/09/2026 (#832), un salon est servi sur
+   * `{slug}.{domaine}`. Tout environnement ne sait pas résoudre un sous-domaine :
+   * les suites d'intégration et la recette tapent sur `127.0.0.1`, où
+   * `maison-lotus.127.0.0.1` n'est pas un nom. D'où un **mode de repli par
+   * chemin**, `https://{domaine}/{slug}/…`, et ce réglage pour en décider.
+   *
+   * | Valeur | Effet |
+   * |---|---|
+   * | `auto` (défaut) | `path` quand l'hôte d'`APP_URL` ne peut porter aucune étiquette — adresse IP, hôte d'une seule étiquette comme `localhost` — et `subdomain` partout ailleurs |
+   * | `subdomain` | force la forme retenue, quelle que soit la base |
+   * | `path` | force le repli — le temps qu'un certificat générique ou une entrée DNS manquants soient posés |
+   *
+   * `auto` est le défaut parce que le seul cas de repli réellement rencontré est
+   * mécaniquement détectable. Exiger un réglage explicite aurait voulu dire qu'un
+   * oubli produit un lien mort dans un e-mail, et un lien d'annulation mort ne se
+   * constate qu'au moment où une cliente essaie de s'en servir.
+   *
+   * Le réglage vaut pour **la plateforme**, pas pour un module : il gouverne
+   * autant le lien que l'API écrit dans un e-mail (`tenantPublicUrl`, appliqué
+   * par `cancellationUrl`) que le routage du middleware de sous-domaine
+   * d'`apps/web`, qui lit cette même variable (#838). C'est ce qui le distingue
+   * des clés propres à un module — `NOTIFICATIONS_INTERNAL_TOKEN`,
+   * `STRIPE_SECRET_KEY` — que leur module lit lui-même, et c'est pourquoi il est
+   * déclaré ici. Il a une valeur par défaut : il n'empêche aucun démarrage.
+   *
+   * Les valeurs sont celles de `TENANT_URL_MODES` (`@spa/shared`) — une seule
+   * liste, pour que le réglage lu par le front et celui lu par l'API ne puissent
+   * pas diverger.
+   *
+   * ## Ce qui l'applique aujourd'hui, et ce qui reste à brancher — #920
+   *
+   * Le **repli automatique** est en place : `cancellationUrl` compose avec
+   * `auto`, qui déduit `path` d'un hôte sans sous-domaine. C'est le cas que le
+   * critère 4 nomme, et il ne demande aucun réglage.
+   *
+   * En revanche, **forcer** une valeur n'a pas encore d'effet sur l'API : le
+   * getter d'`AppConfigService` et le passage du mode par
+   * `AppointmentNotificationRenderer` appartiennent à #920 — ces deux fichiers
+   * étaient réécrits en parallèle par un autre ticket du jalon, et deux auteurs
+   * sur les mêmes lignes se seraient conflictés. La variable est déclarée ici
+   * dès maintenant parce qu'elle est **du ressort de la plateforme** et que le
+   * middleware de sous-domaine du front (#838) la lit de son côté : la déclarer
+   * après coup aurait voulu dire deux noms possibles le temps d'un sprint.
+   */
+  PUBLIC_TENANT_URL_MODE: z.enum(TENANT_URL_MODES).default('auto'),
 
   DATABASE_URL: postgresUrl,
   REDIS_URL: redisUrl,

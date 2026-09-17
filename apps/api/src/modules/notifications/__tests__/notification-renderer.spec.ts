@@ -156,7 +156,11 @@ describe('rendu à l’envoi — quel modèle part', () => {
 
     const rendered = await runWithTenant(SALON, () => rendererOn(templates).render(MESSAGE));
 
-    expect(rendered.text).toBe('https://reservation.test/maison-lotus/compte');
+    // Sur le sous-domaine du salon depuis #837 (arbitrage du PO, #832). La forme
+    // elle-même est éprouvée dans `tenant-subdomain-links.spec.ts` ; ce qui se
+    // joue ici reste que l'adresse vient de `AppConfigService.appUrl`, pas du
+    // modèle.
+    expect(rendered.text).toBe('https://maison-lotus.reservation.test/compte');
   });
 
   it('sert l’avis d’annulation depuis le défaut de la plateforme', async () => {
