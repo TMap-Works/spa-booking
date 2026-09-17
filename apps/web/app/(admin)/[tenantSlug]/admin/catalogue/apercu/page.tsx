@@ -1,7 +1,7 @@
 import type { PublicService } from '@spa/shared';
 import Link from 'next/link';
 
-import { ServiceCatalog } from '@/components/salon/service-catalog';
+import { ServiceCatalog, UNSTAFFED_SERVICE_LABEL } from '@/components/salon/service-catalog';
 import { Notification } from '@/components/ui/notification';
 import { fetchPublicServices } from '@/lib/api-client';
 
@@ -26,6 +26,17 @@ import { adminCatalogPath, adminCatalogPreviewPath } from '../../paths';
  * inactifs et les tampons. Constater leur absence est exactement ce qu'on vient
  * vérifier : une prestation qu'on croyait en ligne et qui n'y est pas se voit
  * ici, avant qu'une cliente ne le remarque à notre place.
+ *
+ * ## Le cas inverse : présente, et pourtant irréservable (#765)
+ *
+ * Une prestation active sans praticien, elle, **figure** dans l'aperçu — et
+ * c'est le piège que cet écran doit désamorcer plutôt que reproduire. Le
+ * catalogue porte désormais la mention à la place des noms de praticiens
+ * (`ServiceCatalog`), et l'encart la reprend mot pour mot : ce que la gérante
+ * lit ici est ce qu'elle verra sur la carte, et c'est déjà ce que la fiche de la
+ * prestation lui dit une navigation plus loin. Le libellé vient du composant, il
+ * n'est pas recopié — deux écrans qui décrivent le même état avec deux phrases
+ * différentes est exactement l'écart relevé par l'audit.
  *
  * ## Pourquoi la garde de session malgré des données publiques
  *
@@ -93,6 +104,13 @@ export default async function CatalogPreviewPage({ params }: CatalogPreviewPageP
           Seules les prestations actives, classées sous une rubrique active, apparaissent ici. Les
           tampons de préparation et de remise en état n’y figurent pas : ils décrivent la cadence
           interne du salon.
+        </p>
+        <p>
+          Une prestation active qu’aucun praticien ne pratique y figure quand même, avec la mention
+          « {UNSTAFFED_SERVICE_LABEL} » à la place des noms : le moteur de disponibilité ne
+          proposera aucun créneau pour elle. La carte ne compte que les praticiens dont le compte
+          est actif — affectez-lui un praticien depuis sa fiche, ou réactivez celui qui y figure
+          déjà sous la mention « Compte désactivé ».
         </p>
       </Notification>
 
