@@ -727,20 +727,19 @@ ici. Une annulation n'est pas un remboursement : rien n'a été capturé, et
 
 ## Dette connue
 
-- **Trois écritures de #816 sont restées hors de l'empreinte `api/payments`**, et
-  chacune porte une issue de suivi :
-  - `apps/api/src/modules/reporting/export/` — le sixième critère demande que
-    l'export du reporting fournisse **aussi** le montant HT. Le revenu, lui, est
-    déjà TTC sans rien changer : `dailyRevenue` agrège `payments.amount_minor`,
-    c'est-à-dire le prix figé à la réservation, qui est un prix affiché. Seule la
-    colonne HT manque, et elle s'écrit dans le module `reporting` ;
-  - `apps/api/prisma/seed.ts` — le jeu de données de développement compose encore
-    une vente à l'ancienne règle (celle du constat, chez Spa Lumière). Le script
-    de reprise la corrige en base, mais un `db:seed` la recrée ;
-  - `apps/api/prisma/schema.prisma` — les commentaires de `Sale` décrivent encore
-    `subtotal_amount_minor` comme « somme des lignes `SERVICE` et `PRODUCT` » et
-    `tax_amount_minor` comme « somme des lignes `TAX` ». Le sens est celui du
-    tableau ci-dessus ; la colonne, elle, n'a pas bougé.
+- **Une écriture de #816 est restée hors de l'empreinte `api/payments`**, et elle
+  porte son issue de suivi : `apps/api/src/modules/reporting/export/` — le
+  sixième critère demande que l'export du reporting fournisse **aussi** le
+  montant HT. Le revenu, lui, est déjà TTC sans rien changer : `dailyRevenue`
+  agrège `payments.amount_minor`, c'est-à-dire le prix figé à la réservation, qui
+  est un prix affiché. Seule la colonne HT manque, et elle s'écrit dans le module
+  `reporting`.
+
+  Les deux autres sont closes par #892 : `apps/api/prisma/seed.ts` compose
+  désormais sa vente par `netOf` et `taxLineLabel` — importées d'ici, pas
+  recopiées —, et les commentaires de `Sale` dans `apps/api/prisma/schema.prisma`
+  disent le sens de la table ci-dessus. Aucune migration : les colonnes n'ont
+  jamais bougé, c'était le commentaire qui mentait.
 - **`PaymentsRepository` lit la table `appointments` directement**, pour le prix
   figé à la réservation. Le chemin conforme serait un appel de service
   (`AppointmentsService`, api-module §3), mais ce module n'expose aujourd'hui

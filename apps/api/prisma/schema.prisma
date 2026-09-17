@@ -1496,6 +1496,24 @@ model Product {
 /// `sales_total_amount_minor_check` : `total = subtotal + tax + tip`,
 /// vérifié par PostgreSQL et pas seulement par le service qui les compose.
 ///
+/// ## Les prix du catalogue sont **TTC** (#816)
+///
+/// Le sens de deux de ces montants a changé sans que leur colonne ne bouge, et
+/// c'est ce qui rend ces commentaires nécessaires. Jusqu'à #816, la taxe était
+/// **ajoutée** à un sous-total tenu pour hors taxes ; elle est désormais
+/// **extraite** des prix affichés, qui s'entendent toutes taxes comprises
+/// (arrêté du 3 décembre 1987 sur l'information du consommateur sur les prix).
+/// `subtotal + tax` refait donc exactement la somme des prix du catalogue, et
+/// `sales_total_amount_minor_check` tient telle quelle — d'où l'absence de
+/// migration. La table de référence est dans
+/// `apps/api/src/modules/payments/README.md`, et `pos.totals.ts` la répète au
+/// plus près du calcul.
+///
+/// Conséquence à connaître avant d'écrire une lecture : **additionner les
+/// `sale_items.line_amount_minor` d'un ticket ne donne pas son total**. La ligne
+/// `TAX` est une ventilation des lignes de catalogue, pas un supplément — la
+/// sommer compte la taxe deux fois. Le total est `total_amount_minor`.
+///
 /// ## Une devise, une seule
 ///
 /// `currency` est celle de l'établissement au moment de la vente, et toutes les
@@ -1525,16 +1543,23 @@ model Sale {
   cashierUserId String @map("cashier_user_id") @db.Uuid
   cashier       User   @relation("SaleCashier", fields: [cashierUserId], references: [id], onDelete: Restrict)
 
-  /// Somme des lignes `SERVICE` et `PRODUCT`, hors taxe et hors pourboire.
+  /// La part **hors taxe** des lignes `SERVICE` et `PRODUCT` — et non leur
+  /// somme, qui est un montant TTC depuis #816. Égale cette somme quand
+  /// l'établissement n'a pas de taux.
   subtotalAmountMinor Int @map("subtotal_amount_minor")
 
-  /// Somme des lignes `TAX`. `0` quand l'établissement n'a pas de taux.
+  /// La taxe **comprise dans** les prix de ces mêmes lignes — une ventilation,
+  /// pas un montant ajouté. C'est ce que porte la ligne `TAX` du ticket, quand
+  /// il y en a une. `0` quand l'établissement n'a pas de taux.
   taxAmountMinor Int @map("tax_amount_minor")
 
-  /// Somme des lignes `TIP`. `0` quand la cliente n'a rien laissé.
+  /// Somme des lignes `TIP` — le pourboire, hors taxe par nature : il n'entre
+  /// dans aucune extraction. `0` quand la cliente n'a rien laissé.
   tipAmountMinor Int @map("tip_amount_minor")
 
-  /// `subtotal + tax + tip`, écrit et vérifié en base.
+  /// Ce que la cliente doit : la **somme des prix affichés**, plus le
+  /// pourboire. Écrit sous la forme `subtotal + tax + tip`, celle que
+  /// `sales_total_amount_minor_check` vérifie en base.
   totalAmountMinor Int @map("total_amount_minor")
 
   currency String @db.Char(3)
