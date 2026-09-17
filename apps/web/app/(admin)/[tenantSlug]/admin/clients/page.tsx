@@ -21,12 +21,15 @@ import { STATUS_LABELS, statusModifier, zonedFields } from '@/lib/admin/calendar
 import { formatCalendarDate, formatMoney, formatTimeInTimeZone } from '@/lib/format';
 
 import { adminLoadFailure, requireAdminAccessToken } from '../guard';
+import { adminCalendarPath } from '../paths';
 import {
+  countedLabel,
   customerContactLine,
   emailSuppressionNotice,
   isVoidVisit,
   parsePageNumber,
   parseSearchTerm,
+  searchHint,
   visitClientNote,
 } from './client-view';
 import { ClientContactForm } from './components/client-contact-form';
@@ -251,24 +254,6 @@ function fullName(customer: CustomerSummary): string {
 }
 
 /**
- * Ce que le champ de recherche dit sous lui.
- *
- * Le nombre de résultats est celui de l'API — `totalItems`, pas la longueur de
- * la page : « 3 fiches » alors que le fichier en compte deux cents serait faux
- * dès la deuxième page.
- */
-function searchHint(term: string | null, page: CustomerPage): string {
-  const count =
-    page.totalItems === 0
-      ? 'aucune fiche'
-      : `${String(page.totalItems)} fiche${page.totalItems > 1 ? 's' : ''}`;
-
-  return term === null
-    ? `Nom, téléphone ou e-mail — le fichier compte ${count}.`
-    : `Nom, téléphone ou e-mail — ${count} pour « ${term} ».`;
-}
-
-/**
  * La liste du fichier — premier critère.
  *
  * Chaque ligne est un **lien** et non un bouton : elle change l'URL, elle
@@ -306,8 +291,8 @@ function ClientDirectory({
       <div className="spa-empty-state spa-empty-state--inline">
         <p className="spa-empty-state__title">Cette page est vide</p>
         <p className="spa-empty-state__description">
-          Le fichier compte {totalItems} fiche{totalItems > 1 ? 's' : ''}, mais aucune sur cette
-          page.{' '}
+          Le fichier compte {totalItems} {countedLabel(totalItems, 'fiche', 'fiches')}, mais aucune
+          sur cette page.{' '}
           <Link href={adminClientsPath(tenantSlug, { ...(term === null ? {} : { term }) })}>
             Revenir à la première page
           </Link>
@@ -318,15 +303,31 @@ function ClientDirectory({
   }
 
   if (customers.length === 0) {
+    // La sortie est un **lien**, et non la phrase qu'elle était — #763. « Créez
+    // la fiche depuis le planning » est une consigne dont l'écran connaît la
+    // destination : la laisser en texte obligeait à retrouver le planning dans
+    // le rail, au moment précis où l'on a quelqu'un au téléphone. Le chemin vient
+    // d'`adminCalendarPath` comme partout ailleurs, jamais d'une URL concaténée.
+    const planning = <Link href={adminCalendarPath(tenantSlug)}>le planning</Link>;
+
     return (
       <div className="spa-empty-state spa-empty-state--inline">
+        {/*
+          Le terme cherché est répété ici, et **seulement** ici : la légende du
+          champ ne dit plus l'absence de résultat (`searchHint`), pour que la
+          même phrase ne se lise pas deux fois à trois centimètres d'écart.
+        */}
         <p className="spa-empty-state__title">
           {term === null ? 'Aucune fiche client' : `Aucune fiche pour « ${term} »`}
         </p>
         <p className="spa-empty-state__description">
-          {term === null
-            ? 'Le fichier se remplit à la première réservation, ou depuis le planning — la prise de rendez-vous au comptoir crée la fiche au passage.'
-            : 'La recherche porte sur le début du nom, du téléphone ou de l’adresse. Essayez les premières lettres seulement, ou créez la fiche depuis le planning.'}
+          {term === null ? (
+            <>Le fichier se remplit à la première réservation, ou depuis {planning} — la prise de
+            rendez-vous au comptoir crée la fiche au passage.</>
+          ) : (
+            <>La recherche porte sur le début du nom, du téléphone ou de l’adresse. Essayez les
+            premières lettres seulement, ou créez la fiche depuis {planning}.</>
+          )}
         </p>
       </div>
     );
@@ -511,23 +512,56 @@ function ClientRecord({
       {summary.noShowVisits > 0 ? (
         <Notification
           tone="warning"
-          title={`${String(summary.noShowVisits)} absence${summary.noShowVisits > 1 ? 's' : ''} non prévenue${summary.noShowVisits > 1 ? 's' : ''}`}
+          title={`${String(summary.noShowVisits)} ${countedLabel(
+            summary.noShowVisits,
+            'absence non prévenue',
+            'absences non prévenues',
+          )}`}
         >
           <p>À prendre en compte avant d’accorder un créneau de forte affluence.</p>
         </Notification>
       ) : null}
 
+      {/*
+        Chaque libellé s'accorde au compteur qu'il porte — #763. « 1 Visites
+        honorées » se lit d'un seul tenant et le désaccord saute aux yeux avant
+        le chiffre. « À venir » et « Total honoré » sont invariables : rien à
+        accorder.
+      */}
       <div className="spa-admin-client__metrics">
-        <Metric label="Visites honorées" value={String(summary.honoredVisits)} />
+        <Metric
+          label={countedLabel(summary.honoredVisits, 'Visite honorée', 'Visites honorées')}
+          value={String(summary.honoredVisits)}
+        />
         <Metric label="À venir" value={String(summary.upcomingVisits)} />
-        <Metric label="Annulés" value={String(summary.cancelledVisits)} />
-        <Metric label="Absences non prévenues" value={String(summary.noShowVisits)} />
+        <Metric
+          label={countedLabel(summary.cancelledVisits, 'Annulé', 'Annulés')}
+          value={String(summary.cancelledVisits)}
+        />
+        <Metric
+          label={countedLabel(
+            summary.noShowVisits,
+            'Absence non prévenue',
+            'Absences non prévenues',
+          )}
+          value={String(summary.noShowVisits)}
+        />
         <Metric
           label="Total honoré"
           value={summary.totalSpent === null ? '—' : formatMoney(summary.totalSpent)}
         />
       </div>
 
+      {/*
+        La légende ne dépend plus de l'existence d'un rendez-vous — #763. Elle
+        n'était rendue que sur une fiche qui en portait, si bien que la fiche
+        **sans** visite — celle qui affiche justement « Total honoré — » —
+        montrait un tiret cadratin que rien n'expliquait. C'est l'inverse de ce
+        qu'il faut : le tiret a d'autant plus besoin d'être lu qu'il est seul.
+        Seule la phrase d'ouverture varie donc ; l'explication est constante, et
+        couvre les deux raisons du tiret — aucune visite honorée, ou plusieurs
+        devises mêlées.
+      */}
       <p className="spa-admin-toolbar__hint">
         {summary.totalVisits === 0
           ? 'Aucun rendez-vous à ce jour.'
@@ -535,7 +569,10 @@ function ClientRecord({
               summary.firstVisitAt === null ? '—' : dayLabel(summary.firstVisitAt, timeZone)
             } · dernière le ${
               summary.lastVisitAt === null ? '—' : dayLabel(summary.lastVisitAt, timeZone)
-            }. Compteurs calculés sur la totalité des rendez-vous ; « total honoré » ne compte que les visites honorées, et reste vide quand la fiche mêle plusieurs devises.`}
+            }.`}{' '}
+        Les compteurs portent sur la totalité des rendez-vous ; « Total honoré » ne somme que les
+        visites honorées, et affiche « — » tant qu’il n’y en a aucune ou quand la fiche mêle
+        plusieurs devises.
       </p>
 
       <ClientNoteForm
