@@ -6,6 +6,8 @@
     python scripts/milestone_rules.py show 208 --json          # la même, pour un script
     python scripts/milestone_rules.py set-resources 208 scripts/milestone-rules .claude/settings
     python scripts/milestone_rules.py add-depends 22 202 --why "l'énumération avant son usage"
+    python scripts/milestone_rules.py set-weight 961 20 --why "démo du 18/09 au soir"
+    python scripts/milestone_rules.py set-weight 961 0 --why "démo passée"   # retire le réglage
 
 Pourquoi un script plutôt qu'un `Edit` (#208). En session non interactive —
 c'est-à-dire dans **toutes les vagues d'un run de jalon** — le classifieur
@@ -29,6 +31,14 @@ Le fichier de règles reste sous `.claude/` : sept références y pointent depui
 `.claude/commands/` et `.claude/skills/`, que cette même barrière empêche de
 corriger. Le déplacer sans elles laisserait deux sources de vérité. C'est le
 point d'écriture qui contourne la barrière, pas la donnée qui déménage.
+
+Ce que le fichier fige, section par section : `resources` (l'empreinte de
+fichiers), `depends` et `why` (les prérequis durs et leur justification), et
+`weights` — le réglage d'importance posé à la main. Ce dernier ne déplace un
+ticket qu'**à l'intérieur de sa bande de priorité** : il remonte un `P2` devant
+les autres `P2`, jamais devant un `P1`. C'est voulu — une pondération manuelle
+sert à dire « cet écran-là passe en premier », pas à réécrire ce qui est
+indispensable. Le planificateur la borne à `WEIGHT_RANGE` quoi qu'il arrive.
 
 `SPA_MILESTONE_RULES` déroute le fichier — les tests s'en servent, rien d'autre.
 
@@ -58,7 +68,14 @@ OK, FAIL, USAGE = 0, 1, 4
 # Les sections indexées par numéro d'issue — celles que `show` parcourt pour
 # savoir quelles issues le fichier fige. `$doc` en est volontairement absent :
 # c'est la notice, pas une donnée, et ses clés ne sont pas des numéros.
-SECTIONS = ("resources", "depends", "why")
+SECTIONS = ("resources", "depends", "why", "weights")
+
+# Bornes du réglage manuel d'importance. Assez large pour remonter un ticket en
+# tête de sa bande — un `P2` moyen de la boucle de valeur pèse une cinquantaine
+# de points —, trop étroit pour franchir une bande, ce que `milestone_plan.py`
+# interdit de toute façon par construction. Les deux gardes se recoupent à
+# dessein : celle-ci refuse la saisie, l'autre borne une valeur déjà écrite.
+WEIGHT_RANGE = (-40, 40)
 
 
 class RulesError(Exception):
@@ -153,6 +170,26 @@ def resource_name(raw):
     return name
 
 
+def weight_points(raw):
+    """Un réglage d'importance : un entier relatif, dans les bornes.
+
+    Refuser à l'écriture plutôt que raboter en silence : un opérateur qui tape
+    `500` croit avoir mis le ticket en tête du jalon, et il faut qu'on le
+    détrompe tout de suite, pas qu'il le découvre dans le plan.
+    """
+    text = str(raw).strip()
+    body = text[1:] if text[:1] in "+-" else text
+    if not (body.isascii() and body.isdigit()):
+        raise Usage(f"entier relatif attendu, reçu « {raw} »")
+    value = int(text)
+    low, high = WEIGHT_RANGE
+    if not low <= value <= high:
+        raise Usage(f"réglage hors bornes : {value} (attendu entre {low} et "
+                    f"{high} — au-delà, c'est la priorité de l'issue qu'il faut "
+                    f"corriger, pas son réglage)")
+    return value
+
+
 def cycle_through(depends, child, parents):
     """Le chemin qui reboucle si l'on pose `child` après `parents`, sinon None.
 
@@ -189,6 +226,7 @@ def describe(data, number):
     resources = data.get("resources", {}).get(key)
     depends = data.get("depends", {}).get(key)
     why = data.get("why", {}).get(key)
+    weight = data.get("weights", {}).get(key)
     lines = []
     if resources:
         lines.append(f"  empreinte  {', '.join(resources)}")
@@ -196,6 +234,11 @@ def describe(data, number):
         lines.append(f"  après      {', '.join('#' + str(p) for p in depends)}")
     if why:
         lines.append(f"  parce que  {why}")
+    if weight:
+        points = weight.get("points") if isinstance(weight, dict) else weight
+        motif = weight.get("why") if isinstance(weight, dict) else None
+        lines.append(f"  réglage    {points:+d} pt(s) dans sa bande"
+                     + (f" — {motif}" if motif else ""))
     if not lines:
         lines.append("  rien de figé — le plan s'en remet à l'heuristique")
     return lines
@@ -207,7 +250,8 @@ def entry(data, number):
     return {"issue": number,
             "resources": data.get("resources", {}).get(key, []),
             "depends": data.get("depends", {}).get(key, []),
-            "why": data.get("why", {}).get(key)}
+            "why": data.get("why", {}).get(key),
+            "weight": data.get("weights", {}).get(key)}
 
 
 def cmd_show(args, data):
@@ -298,13 +342,48 @@ def cmd_add_depends(args, data):
     return OK
 
 
+def cmd_set_weight(args, data):
+    """Pose — ou retire — le réglage d'importance d'une issue.
+
+    `0` retire plutôt qu'il n'écrit zéro : un réglage neutre laissé dans le
+    fichier se lit comme une décision, alors qu'il n'en est plus une. Et
+    `--why` est obligatoire, ici comme ailleurs : un ticket remonté sans motif
+    est indiscernable d'une erreur de frappe trois semaines plus tard.
+    """
+    number = issue_number(args.issue)
+    points = weight_points(args.points)
+    why = str(args.why).strip()
+    if not why:
+        raise Usage("--why vide")
+
+    weights = section(data, "weights")
+    before = weights.get(str(number))
+    previous = (before.get("points") if isinstance(before, dict) else before) or 0
+
+    if points == 0:
+        if before is None:
+            print(f"#{number} aucun réglage à retirer")
+            return OK
+        del weights[str(number)]
+        save(data)
+        print(f"#{number} réglage retiré ({previous:+d} pt(s)) : {why}")
+        return OK
+
+    weights[str(number)] = {"points": points, "why": why}
+    save(data)
+    origine = f"{previous:+d}" if previous else "aucun"
+    print(f"#{number} réglage : {origine} → {points:+d} pt(s) dans sa bande "
+          f"de priorité — {why}")
+    return OK
+
+
 # --------------------------------------------------------------------------- #
 
 def build_parser():
     parser = argparse.ArgumentParser(
         prog="milestone_rules.py",
         description="Lit et écrit les règles de plan de jalon "
-                    "(empreintes et prérequis figés).")
+                    "(empreintes, prérequis et réglages d'importance figés).")
     subs = parser.add_subparsers(dest="command", required=True)
 
     show = subs.add_parser("show", help="relire les règles figées")
@@ -326,6 +405,17 @@ def build_parser():
     dep.add_argument("parents", nargs="+", help="numéros des issues prérequises")
     dep.add_argument("--why", help="justification affichée dans le plan")
     dep.set_defaults(handler=cmd_add_depends)
+
+    weight = subs.add_parser(
+        "set-weight",
+        help="régler l'importance d'une issue dans sa bande de priorité")
+    weight.add_argument("issue")
+    weight.add_argument("points",
+                        help=f"entier relatif entre {WEIGHT_RANGE[0]} et "
+                             f"{WEIGHT_RANGE[1]} ; 0 retire le réglage")
+    weight.add_argument("--why", required=True,
+                        help="pourquoi ce ticket passe avant les autres de sa bande")
+    weight.set_defaults(handler=cmd_set_weight)
 
     return parser
 

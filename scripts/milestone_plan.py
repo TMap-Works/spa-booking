@@ -9,9 +9,12 @@
 
 Le plan répond à deux questions, et à elles seules :
 
-  1. **Dans quel ordre ?** Un score d'importance : priorité, risque, sécurité, et
-     surtout le nombre d'issues qu'une issue débloque. Ce qui ouvre la voie passe
-     avant ce qui est seulement urgent.
+  1. **Dans quel ordre ?** D'abord la **bande de priorité** — tous les `P0`,
+     puis tous les `P1`, puis tous les `P2` —, et à l'intérieur d'une bande un
+     score d'importance : ce que l'issue débloque, l'impact que l'audit lui a
+     donné, l'étape de la boucle de valeur qu'elle touche, le risque, la
+     sécurité. Ce qui ouvre la voie passe avant ce qui est seulement urgent,
+     mais **jamais** devant ce qui est indispensable.
   2. **Quoi en même temps ?** Deux issues ne partagent une vague que si aucune ne
      dépend de l'autre *et* si leurs empreintes de fichiers sont disjointes. Deux
      branches qui écrivent le même fichier finissent en conflit de fusion : c'est
@@ -72,6 +75,7 @@ session non interactive, donc dans toutes les vagues d'un run de jalon (#208).
 Codes de sortie : 0 plan produit · 1 aucune issue traitable · 4 erreur d'appel.
 """
 import argparse
+import collections
 import json
 import os
 import re
@@ -101,6 +105,56 @@ OK, EMPTY, USAGE = 0, 1, 4
 PRIORITY_SCORE = {"P0": 100, "P1": 60, "P2": 25}
 LABEL_BONUS = {"risk": 15, "security": 10}
 UNBLOCK_WEIGHT = 4
+
+# La priorité est une **bande**, pas un bonus (#1020). Tant qu'elle n'était
+# qu'un terme de plus dans une somme, un `P2` qui débloquait neuf tickets
+# (25 + 9×4 = 61) passait devant un `P1` seul (60) — c'est ce qui sortait #970
+# en vague 2 du jalon « Design & UX », devant cinq des six `P1`. Un run qui
+# s'interrompt — coupure de quota, fin de nuit, démo à tenir — doit avoir livré
+# l'indispensable avant le souhaitable, et cela ne se négocie pas contre du
+# déblocage. Le score continue d'ordonner, mais **à l'intérieur** de la bande.
+PRIORITY_BAND = {"P0": 0, "P1": 1, "P2": 2}
+
+# Ce que l'audit de conception écrit dans le corps du ticket, et que le label
+# écrase : `moyen` et `faible` valent tous deux `P2`
+# (`.claude/skills/design-audit/SKILL.md` §4), alors qu'ils ne disent pas la
+# même chose — « dégrade l'usage sans l'empêcher » contre « finition ». Sur les
+# 76 `P2` du jalon « Design & UX », c'est la seule information qui distingue 54
+# tickets des 19 autres ; sans elle ils sont à égalité et se départagent par
+# leur numéro d'issue, c'est-à-dire par leur ordre de création.
+AUDIT_HEADER = re.compile(
+    r"crit[eè]re\s*`(ds:[a-z0-9]+)`.{0,24}?impact\s*\*\*([a-zé]+)\*\*", re.I)
+IMPACT_WEIGHT = {"fort": 20, "moyen": 12, "faible": 0}
+
+# L'étape de la boucle de valeur du MVP que l'issue touche — « réserver →
+# confirmer → honorer → encaisser → mesurer » (CLAUDE.md). Une étape amont
+# conditionne toutes celles qui la suivent : un catalogue qu'on ne lit pas
+# empêche d'atteindre l'encaissement, l'inverse n'est pas vrai. C'est ce qui
+# départage deux tickets de même priorité et de même impact.
+LOOP_WEIGHT = {
+    "catalog": 10, "availability": 10, "appointments": 10,   # réserver → honorer
+    "identity": 8, "notifications": 8,                       # l'accès, la confirmation
+    "payments": 6,                                           # encaisser
+    "crm": 4, "reporting": 4,                                # le fichier client, mesurer
+    "infra": 0,
+}
+
+# Le critère de la grille d'audit, quand il porte sur ce qui **empêche de
+# décider ou d'avancer** plutôt que sur la façon dont l'écran se lit. Les
+# critères absents valent 0 : la pondération corrige une égalité, elle ne
+# hiérarchise pas les dix critères de la grille, qui n'ont pas d'ordre écrit.
+CRITERION_WEIGHT = {
+    "ds:parcours": 6,     # une étape prescrite absente — le parcours ne mène plus où le CDC dit
+    "ds:confiance": 6,    # prix, durée, annulation : ce sans quoi on ne réserve pas (CDC §1.3)
+    "ds:etats": 4,        # le premier jour d'un salon — un écran vide sans amorce
+    "ds:mobile": 2,       # 360 px, la surface qui génère le revenu (CDC §1.4)
+}
+
+# Les bornes du réglage manuel appartiennent au fichier de règles, pas au
+# planificateur : c'est `milestone_rules` qui dit ce que le fichier peut
+# contenir, ici on s'y conforme. Les redéclarer donnerait deux vérités, dont une
+# se périmerait.
+WEIGHT_RANGE = milestone_rules.WEIGHT_RANGE
 
 # Ce qu'un plan déroule. `projet` et `outillage` s'excluent — c'est tout l'objet
 # du filtre ; `toutes` le lève, et n'est pas le cas normal.
@@ -350,8 +404,24 @@ def qualify(issue, busy, me, nature="projet"):
     return True, None
 
 
+def audit_grade(body):
+    """Le critère et l'impact que l'audit de conception a écrits en tête du
+    ticket, ou `(None, None)`.
+
+    Un ticket qui ne vient pas d'un audit n'en porte pas, et ce n'est pas un
+    défaut de classement : `qualify()` n'en exige aucun. Ce qui est absent ne
+    pèse simplement rien dans le score.
+    """
+    found = AUDIT_HEADER.search(body or "")
+    if not found:
+        return None, None
+    return found.group(1).lower(), found.group(2).lower()
+
+
 def describe(issue):
     labels = {label["name"] for label in issue["labels"]}
+    body = issue.get("body") or ""
+    critere, impact = audit_grade(body)
     return {
         "number": issue["number"],
         "title": issue["title"],
@@ -362,7 +432,9 @@ def describe(issue):
         "type": next((l[5:] for l in labels if l.startswith("type:")), "?"),
         "nature": next((l[7:] for l in labels if l.startswith("nature:")), "?"),
         "priority": next((l for l in labels if l in PRIORITY_SCORE), "P2"),
-        "body": issue.get("body") or "",
+        "critere": critere,
+        "impact": impact,
+        "body": body,
     }
 
 
@@ -583,12 +655,61 @@ def downstream(closure):
     return counts
 
 
-def score(node, unblocks):
-    value = PRIORITY_SCORE[node["priority"]]
+def manual_weight(number, rules):
+    """Le réglage posé à la main dans `.claude/milestone-rules.json`, borné.
+
+    C'est la soupape : quand l'heuristique ne sait pas ce que l'humain sait —
+    une démo le lendemain, un écran que le client verra en premier —, on remonte
+    un ticket en tête de **sa** bande sans toucher au code. Bornée à
+    `WEIGHT_RANGE`, elle ne peut pas lui en faire changer.
+    """
+    posed = (rules.get("weights") or {}).get(str(number))
+    # `set-weight` écrit `{"points": n, "why": "…"}` ; un entier nu est accepté
+    # pour qui aurait édité le fichier à la main, plutôt que de l'ignorer en
+    # silence — c'est un réglage lisible, il vaut mieux l'honorer.
+    raw = posed.get("points") if isinstance(posed, dict) else posed
+    if isinstance(raw, bool) or not isinstance(raw, int):
+        return 0
+    low, high = WEIGHT_RANGE
+    return max(low, min(high, raw))
+
+
+def score(node, unblocks, rules=None):
+    """Ce qui ordonne **à l'intérieur** d'une bande de priorité — jamais entre
+    deux bandes, c'est `rank_key()` qui s'en charge.
+
+    Le détail est conservé dans le nœud (`score_parts`) : un ordre qu'on ne peut
+    pas expliquer est un ordre qu'on finit par contourner à la main, et le plan
+    part tel quel dans `run.json`, que l'arbitre relit.
+    """
+    parts = {"priorité": PRIORITY_SCORE[node["priority"]],
+             "débloque": UNBLOCK_WEIGHT * unblocks}
     for label, bonus in LABEL_BONUS.items():
         if label in node["labels"]:
-            value += bonus
-    return value + UNBLOCK_WEIGHT * unblocks
+            parts[label] = bonus
+    if node.get("impact") in IMPACT_WEIGHT:
+        parts["impact"] = IMPACT_WEIGHT[node["impact"]]
+    if node.get("critere") in CRITERION_WEIGHT:
+        parts["critère"] = CRITERION_WEIGHT[node["critere"]]
+    if LOOP_WEIGHT.get(node["module"]):
+        parts["boucle"] = LOOP_WEIGHT[node["module"]]
+    tuned = manual_weight(node["number"], rules or {})
+    if tuned:
+        parts["réglage"] = tuned
+    node["score_parts"] = {k: v for k, v in parts.items() if v}
+    return sum(parts.values())
+
+
+def rank_key(node):
+    """L'ordre du plan, en un seul endroit : la bande d'abord, le score ensuite.
+
+    Une issue sans priorité connue — il n'en passe pas, `qualify()` l'écarte —
+    se rangerait derrière `P2` plutôt que devant `P0` : se tromper vers le bas
+    coûte un retard, se tromper vers le haut coûte la promesse.
+    """
+    unknown = max(PRIORITY_BAND.values()) + 1
+    return (PRIORITY_BAND.get(node["priority"], unknown),
+            -node["score"], node["number"])
 
 
 # --------------------------------------------------------------------------- #
@@ -605,10 +726,10 @@ def plan_waves(nodes, prereqs, width):
         ready = [n for n in remaining if not prereqs[n] & remaining]
         if not ready:
             # Cycle résiduel : le trancher plutôt que rendre un plan vide.
-            ready = [min(remaining, key=lambda n: (-index[n]["score"], n))]
+            ready = [min(remaining, key=lambda n: rank_key(index[n]))]
             cut.append(ready[0])
 
-        ready.sort(key=lambda n: (-index[n]["score"], n))
+        ready.sort(key=lambda n: rank_key(index[n]))
 
         # Une seule vague par tour, puis on recalcule ce qui est prêt. Vider la
         # couche entière d'un coup ferait passer une issue de faible score avant
@@ -676,6 +797,10 @@ def render(milestone, waves, index, excluded, edges, cut, width, closure,
     print(f"Jalon {milestone['title']} · {due_in(milestone)} · nature {nature}")
     print(f"{milestone['open_issues']} ouvertes · {milestone['closed_issues']} fermées · "
           f"{counted} · {len(waves)} vagues · largeur max {width}")
+    bands = collections.Counter(node["priority"] for node in index.values())
+    print("ordre : " + " puis ".join(f"{bands[p]} {p}" for p in PRIORITY_BAND
+                                     if bands[p])
+          + " — la bande passe avant le score, le score ordonne dedans")
     print()
 
     rank = 0
@@ -688,7 +813,8 @@ def render(milestone, waves, index, excluded, edges, cut, width, closure,
             title = node["title"]
             if len(title) > 46:
                 title = title[:45] + "…"
-            print(f"  {rank:>2}. #{number:<4} {node['priority']} {node['score']:>4} pts  "
+            print(f"  {rank:>2}. #{number:<4} {node['priority']} "
+                  f"{(node.get('impact') or ''):<6} {node['score']:>4} pts  "
                   f"{node['workstream']:<8} {node['module']:<13} {title:<46} "
                   f"[{', '.join(node['resources'])}]")
         print()
@@ -858,7 +984,7 @@ def main():
     unblocks = downstream(closure)
     for node in nodes:
         node["unblocks"] = unblocks[node["number"]]
-        node["score"] = score(node, node["unblocks"])
+        node["score"] = score(node, node["unblocks"], rules)
 
     # Ce qu'un prérequis retenu bloque sort du plan sans être « écarté » : le
     # ticket est recevable, c'est sa base qui n'est pas prête.

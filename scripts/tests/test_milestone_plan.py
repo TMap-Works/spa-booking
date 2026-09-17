@@ -834,5 +834,171 @@ class WithheldBy(unittest.TestCase):
         self.assertEqual(blocked, {1: {8, 9}})
 
 
+# --------------------------------------------------------------------------- #
+# L'ordre du plan (#1020)
+# --------------------------------------------------------------------------- #
+
+def design(number, priorite="P2", impact="moyen", critere="ds:libelles",
+           module="catalog", titre=None):
+    """Un ticket tel que `design_tickets.py` l'ouvre, en-tête d'audit comprise.
+
+    L'en-tête est recopiée du gabarit de `design_tickets.corps()` : c'est elle
+    que `audit_grade()` relit, et le jour où le gabarit changera, ce sont ces
+    tests-là qui doivent rougir — pas le plan, en silence, six semaines plus
+    tard.
+    """
+    entete = (f"> **Audit design `d20260917-1`** — critère `{critere}` · "
+              f"impact **{impact}** (`{priorite}`)\n\n"
+              "## La référence\n\nCDC §1.4\n")
+    return issue(number, titre, body=entete,
+                 labels=("ws:frontend", f"mod:{module}", "type:design",
+                         priorite, "nature:projet"))
+
+
+def ordre(plan):
+    """Les numéros dans l'ordre où le plan les dispatche."""
+    return [node["number"] for wave in plan["waves"] for node in wave["issues"]]
+
+
+def par_numero(plan):
+    return {node["number"]: node for wave in plan["waves"] for node in wave["issues"]}
+
+
+class BandeDePriorite(unittest.TestCase):
+    """Le cas #970 : un `P2` qui débloque tout le jalon passait devant les `P1`.
+
+    Tant que la priorité n'était qu'un terme de plus dans une somme, 25 points de
+    `P2` plus quatre par dépendant suffisaient à dépasser les 60 points d'un `P1`
+    seul. Le jalon « Design & UX » en donnait l'exemple exact : #970 sortait en
+    vague 2 avec 345 points, devant cinq des six `P1` du jalon. Un run qui
+    s'interrompt — coupure de quota, fin de nuit, démo à tenir — avait alors
+    livré le souhaitable avant l'indispensable.
+    """
+
+    def hub(self):
+        """Un `P2` dont douze tickets dépendent, et un `P1` qui ne bloque personne."""
+        issues = [design(10, "P2", "moyen", module="catalog"),
+                  design(20, "P1", "fort", module="reporting")]
+        issues += [design(n, "P2", "faible", module="crm") for n in range(30, 42)]
+        rules = {"depends": {str(n): [10] for n in range(30, 42)},
+                 "resources": {str(n): [f"web/ecran-{n}"]
+                               for n in [10, 20, *range(30, 42)]}}
+        return FakeHub(issues), rules
+
+    def test_le_p2_pese_plus_que_le_p1_et_passe_pourtant_apres(self):
+        hub, rules = self.hub()
+        code, plan = plan_of(hub, rules, ["--width", "1"])
+        self.assertEqual(code, milestone_plan.OK)
+        index = par_numero(plan)
+        # Le score dit bien que #10 ouvre la voie : c'est ce qui le faisait
+        # passer devant. La bande, elle, ne se négocie pas.
+        self.assertGreater(index[10]["score"], index[20]["score"])
+        self.assertEqual(ordre(plan)[:2], [20, 10])
+
+    def test_la_bande_ne_franchit_pas_une_dependance(self):
+        """Un `P1` qui dépend d'un `P2` reste derrière lui : l'ordre topologique
+        prime sur la bande, sans quoi le plan dispatcherait sur une base amputée."""
+        hub, rules = self.hub()
+        rules["depends"]["20"] = [10]
+        code, plan = plan_of(hub, rules, ["--width", "1"])
+        self.assertEqual(code, milestone_plan.OK)
+        self.assertEqual(ordre(plan)[:2], [10, 20])
+
+    def test_rank_key_range_une_priorite_inconnue_en_dernier(self):
+        inconnue = {"priority": "P9", "score": 10_000, "number": 1}
+        p2 = {"priority": "P2", "score": 0, "number": 2}
+        self.assertLess(milestone_plan.rank_key(p2), milestone_plan.rank_key(inconnue))
+
+
+class ImpactDeLAudit(unittest.TestCase):
+    """`moyen` et `faible` valent tous deux `P2` — c'est le corps qui les sépare.
+
+    Sans cette lecture, les 76 `P2` du jalon « Design & UX » sont à égalité
+    parfaite et se départagent par leur numéro d'issue, c'est-à-dire par leur
+    ordre de création. « Dégrade l'usage sans l'empêcher » et « finition »
+    partiraient alors dans le désordre.
+    """
+
+    def test_l_entete_d_audit_se_relit(self):
+        node = milestone_plan.describe(design(1, "P2", "moyen", "ds:parcours"))
+        self.assertEqual((node["critere"], node["impact"]), ("ds:parcours", "moyen"))
+
+    def test_un_ticket_sans_entete_n_a_ni_critere_ni_impact(self):
+        node = milestone_plan.describe(issue(1, body="Pas un ticket d'audit."))
+        self.assertEqual((node["critere"], node["impact"]), (None, None))
+
+    def test_moyen_passe_avant_faible_a_priorite_egale(self):
+        hub = FakeHub([design(10, "P2", "faible", module="catalog"),
+                       design(20, "P2", "moyen", module="catalog")])
+        rules = {"resources": {"10": ["web/a"], "20": ["web/b"]}}
+        code, plan = plan_of(hub, rules, ["--width", "1"])
+        self.assertEqual(code, milestone_plan.OK)
+        self.assertEqual(ordre(plan), [20, 10])
+
+
+class BoucleDeValeur(unittest.TestCase):
+    """À priorité et impact égaux, l'étape amont de la boucle passe devant.
+
+    « réserver → confirmer → honorer → encaisser → mesurer » (CLAUDE.md) : un
+    catalogue qu'on ne lit pas empêche d'atteindre le reporting, l'inverse n'est
+    pas vrai.
+    """
+
+    def test_le_catalogue_passe_devant_le_reporting(self):
+        hub = FakeHub([design(10, "P2", "moyen", module="reporting"),
+                       design(20, "P2", "moyen", module="catalog")])
+        rules = {"resources": {"10": ["web/a"], "20": ["web/b"]}}
+        code, plan = plan_of(hub, rules, ["--width", "1"])
+        self.assertEqual(code, milestone_plan.OK)
+        self.assertEqual(ordre(plan), [20, 10])
+
+
+class ReglageManuel(unittest.TestCase):
+    """La soupape : ce que l'heuristique ne peut pas savoir, l'humain le pose.
+
+    Elle remonte un ticket dans **sa** bande, et s'arrête là. Un réglage capable
+    de faire passer un `P2` devant un `P1` rendrait la bande décorative, et le
+    fichier de règles n'est relu par personne à chaque plan.
+    """
+
+    def plan(self, weights):
+        hub = FakeHub([design(10, "P2", "moyen", module="catalog"),
+                       design(20, "P2", "moyen", module="catalog"),
+                       design(30, "P1", "fort", module="reporting")])
+        rules = {"resources": {"10": ["web/a"], "20": ["web/b"], "30": ["web/c"]},
+                 "weights": weights}
+        code, plan = plan_of(hub, rules, ["--width", "1"])
+        self.assertEqual(code, milestone_plan.OK)
+        return plan
+
+    def test_sans_reglage_le_plus_petit_numero_l_emporte(self):
+        self.assertEqual(ordre(self.plan({})), [30, 10, 20])
+
+    def test_un_reglage_remonte_le_ticket_dans_sa_bande(self):
+        weights = {"20": {"points": 20, "why": "démo du 18/09 au soir"}}
+        self.assertEqual(ordre(self.plan(weights)), [30, 20, 10])
+
+    def test_un_reglage_ne_fait_pas_changer_de_bande(self):
+        """Même au maximum, et même en creusant l'écart par le bas."""
+        weights = {"20": {"points": 40, "why": "démo"},
+                   "30": {"points": -40, "why": "peut attendre"}}
+        self.assertEqual(ordre(self.plan(weights))[0], 30)
+
+    def test_un_reglage_hors_bornes_est_rabote(self):
+        self.assertEqual(
+            milestone_plan.manual_weight(20, {"weights": {"20": {"points": 5_000}}}),
+            milestone_plan.WEIGHT_RANGE[1])
+
+    def test_un_entier_nu_vaut_un_reglage(self):
+        """Le fichier s'édite aussi à la main — l'ignorer en silence serait pire."""
+        self.assertEqual(milestone_plan.manual_weight(20, {"weights": {"20": 7}}), 7)
+
+    def test_un_reglage_illisible_ne_pese_rien(self):
+        for pose in ({"points": "beaucoup"}, True, "12", None, {}):
+            with self.subTest(pose=pose):
+                self.assertEqual(
+                    milestone_plan.manual_weight(20, {"weights": {"20": pose}}), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
