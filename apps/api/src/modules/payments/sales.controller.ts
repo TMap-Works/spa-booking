@@ -22,7 +22,7 @@ import {
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 
-import { AuthAtLeast } from '../identity/auth.decorator';
+import { AuthWith } from '../identity/auth.decorator';
 import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
 import { ReceiptPdfQueryDto, toReceiptPdfFormat } from './dto/receipt-pdf.dto';
@@ -100,6 +100,22 @@ import { SettlementService } from './settlement.service';
  * arbitraire descende jusqu'au pilote PostgreSQL, qui la refuserait par une
  * erreur de type remontée en 500.
  */
+/*
+ * ## `checkout:collect` remplace le rang, depuis #812
+ *
+ * Toutes les routes de ce contrôleur exigent la même permission. Le rang `STAFF`
+ * qui ouvrait la caisse est tombé pour une raison que le retour de test du PO du
+ * 16/09 a rendue visible : l'écran d'encaissement liste la journée **de tout le
+ * salon**, si bien qu'il rendait par une autre porte l'agenda complet que #812
+ * ferme par ailleurs. Une praticienne y lisait les rendez-vous et les noms des
+ * clientes de sa collègue.
+ *
+ * `checkout:collect` est portée par `manager` et `admin` (ADR 0013) : les routes
+ * qui étaient déjà au seuil `MANAGER` — historique, remboursement, prix de vente
+ * — ne changent donc pas de public, et seules celles qui étaient à `STAFF` se
+ * referment. L'uniformité est délibérée : une caisse dont une moitié s'ouvre
+ * plus bas que l'autre est une caisse qu'on contourne par sa moitié basse.
+ */
 @ApiTags('payments')
 @Controller({ path: 'sales', version: '1' })
 export class SalesController {
@@ -123,7 +139,7 @@ export class SalesController {
    * serveur** : c'est la seule autorité sur ce que la cliente doit.
    */
   @Post()
-  @AuthAtLeast('STAFF')
+  @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Composer un ticket de caisse' })
   @ApiCreatedResponse({ type: SaleDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
@@ -154,7 +170,7 @@ export class SalesController {
    * page vide ferait conclure à une journée sans vente.
    */
   @Get()
-  @AuthAtLeast('STAFF')
+  @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Lister les tickets de caisse' })
   @ApiOkResponse({ type: SalePageDto })
   @ApiBadRequestResponse({ description: 'Paramètre invalide — le champ fautif est nommé.' })
@@ -178,7 +194,7 @@ export class SalesController {
    * autre établissement, indistinctement (tenant-isolation §4).
    */
   @Get(':id')
-  @AuthAtLeast('STAFF')
+  @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Lire un ticket de caisse' })
   @ApiOkResponse({ type: SaleDto })
   @ApiNotFoundResponse({ description: 'Aucun ticket de cet établissement ne porte cet identifiant.' })
@@ -213,7 +229,7 @@ export class SalesController {
    * autre établissement, indistinctement (tenant-isolation §4).
    */
   @Get(':id/receipt')
-  @AuthAtLeast('STAFF')
+  @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Éditer le ticket de caisse d’une vente' })
   @ApiOkResponse({ type: SaleReceiptDto })
   @ApiNotFoundResponse({
@@ -253,7 +269,7 @@ export class SalesController {
    * inconnu.
    */
   @Get(':id/receipt.pdf')
-  @AuthAtLeast('STAFF')
+  @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Éditer le ticket de caisse d’une vente en PDF' })
   @ApiProduces('application/pdf')
   @ApiOkResponse({
@@ -305,7 +321,7 @@ export class SalesController {
    */
   @Post(':saleId/payments')
   @HttpCode(HttpStatus.CREATED)
-  @AuthAtLeast('STAFF')
+  @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Régler un ticket, en totalité ou en partie' })
   @ApiCreatedResponse({ type: SaleSettlementDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })

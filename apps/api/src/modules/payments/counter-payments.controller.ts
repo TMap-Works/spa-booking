@@ -11,7 +11,7 @@ import {
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 
-import { AuthAtLeast } from '../identity/auth.decorator';
+import { AuthWith } from '../identity/auth.decorator';
 import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
 import {
@@ -77,6 +77,22 @@ import { SettlementService } from './settlement.service';
  * touche à l'encaissement se lit sous `payments`, quelle que soit la porte par
  * laquelle il entre.
  */
+/*
+ * ## `checkout:collect` remplace le rang, depuis #812
+ *
+ * Toutes les routes de ce contrôleur exigent la même permission. Le rang `STAFF`
+ * qui ouvrait la caisse est tombé pour une raison que le retour de test du PO du
+ * 16/09 a rendue visible : l'écran d'encaissement liste la journée **de tout le
+ * salon**, si bien qu'il rendait par une autre porte l'agenda complet que #812
+ * ferme par ailleurs. Une praticienne y lisait les rendez-vous et les noms des
+ * clientes de sa collègue.
+ *
+ * `checkout:collect` est portée par `manager` et `admin` (ADR 0013) : les routes
+ * qui étaient déjà au seuil `MANAGER` — historique, remboursement, prix de vente
+ * — ne changent donc pas de public, et seules celles qui étaient à `STAFF` se
+ * referment. L'uniformité est délibérée : une caisse dont une moitié s'ouvre
+ * plus bas que l'autre est une caisse qu'on contourne par sa moitié basse.
+ */
 @ApiTags('payments')
 @Controller({ path: 'payments', version: '1' })
 export class CounterPaymentsController {
@@ -117,7 +133,7 @@ export class CounterPaymentsController {
    */
   @Post('cash')
   @HttpCode(HttpStatus.OK)
-  @AuthAtLeast('STAFF')
+  @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Composer la vente d’un rendez-vous et la régler en espèces' })
   @ApiOkResponse({ type: PaymentTransactionDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
@@ -161,7 +177,7 @@ export class CounterPaymentsController {
    * page vide ferait conclure à une journée sans recette.
    */
   @Get()
-  @AuthAtLeast('MANAGER')
+  @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Lister les transactions, pour le rapprochement' })
   @ApiOkResponse({ type: PaymentTransactionPageDto })
   @ApiBadRequestResponse({ description: 'Paramètre invalide — le champ fautif est nommé.' })
@@ -208,7 +224,7 @@ export class CounterPaymentsController {
    * effet sur la ligne `payments` (payments-stripe §6).
    */
   @Post(':paymentId/refunds')
-  @AuthAtLeast('MANAGER')
+  @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Rembourser un encaissement, en totalité ou en partie' })
   @ApiCreatedResponse({ type: RefundDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })

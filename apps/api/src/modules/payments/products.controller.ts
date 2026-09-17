@@ -9,7 +9,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
-import { AuthAtLeast } from '../identity/auth.decorator';
+import { AuthWith } from '../identity/auth.decorator';
 import {
   CreateProductDto,
   ListProductsQueryDto,
@@ -53,6 +53,22 @@ import { ProductsService } from './products.service';
  * (tenant-isolation §2). Il n'y a ici rien à comparer, le client Prisma est déjà
  * borné.
  */
+/*
+ * ## `checkout:collect` remplace le rang, depuis #812
+ *
+ * Toutes les routes de ce contrôleur exigent la même permission. Le rang `STAFF`
+ * qui ouvrait la caisse est tombé pour une raison que le retour de test du PO du
+ * 16/09 a rendue visible : l'écran d'encaissement liste la journée **de tout le
+ * salon**, si bien qu'il rendait par une autre porte l'agenda complet que #812
+ * ferme par ailleurs. Une praticienne y lisait les rendez-vous et les noms des
+ * clientes de sa collègue.
+ *
+ * `checkout:collect` est portée par `manager` et `admin` (ADR 0013) : les routes
+ * qui étaient déjà au seuil `MANAGER` — historique, remboursement, prix de vente
+ * — ne changent donc pas de public, et seules celles qui étaient à `STAFF` se
+ * referment. L'uniformité est délibérée : une caisse dont une moitié s'ouvre
+ * plus bas que l'autre est une caisse qu'on contourne par sa moitié basse.
+ */
 @ApiTags('payments')
 @Controller({ path: 'products', version: '1' })
 export class ProductsController {
@@ -60,7 +76,7 @@ export class ProductsController {
 
   /** Le rayon de l'établissement, trié par nom. */
   @Get()
-  @AuthAtLeast('STAFF')
+  @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Lister les articles revendables' })
   @ApiOkResponse({ type: [ProductDto] })
   @ApiBadRequestResponse({ description: 'Paramètre invalide — le champ fautif est nommé.' })
@@ -81,7 +97,7 @@ export class ProductsController {
    * base. Un article libellé ailleurs serait invendable au comptoir.
    */
   @Post()
-  @AuthAtLeast('MANAGER')
+  @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Créer un article revendable' })
   @ApiCreatedResponse({ type: ProductDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
@@ -104,7 +120,7 @@ export class ProductsController {
    * confirmerait son existence (tenant-isolation §4).
    */
   @Patch(':id')
-  @AuthAtLeast('MANAGER')
+  @AuthWith('checkout:collect')
   @ApiOperation({ summary: 'Modifier un article revendable' })
   @ApiOkResponse({ type: ProductDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
