@@ -205,6 +205,35 @@ export class ReportingRepository {
   }
 
   /**
+   * Le taux de taxe de l'établissement courant, en points de base, ou `null`
+   * s'il n'existe plus — #891.
+   *
+   * C'est ce qui rend le montant hors taxes de l'export **calculable sans
+   * constante** (troisième critère de #891) : le taux est celui de
+   * l'établissement dont les lignes sont exportées, relu en base à chaque
+   * export. Une valeur figée dans le sérialiseur aurait fait mentir le fichier
+   * de tout salon qui n'est pas à 20 %, et de tous le jour où un taux change.
+   *
+   * Une troisième lecture de la même ligne plutôt qu'un `select` élargi sur
+   * {@link currentTimeZone}, pour l'argument que {@link currentSlug} pose déjà :
+   * les trois routes de lecture n'ont que faire du taux, et élargir leur
+   * projection ferait payer une colonne de plus à chaque ouverture d'écran pour
+   * un besoin que seul l'export a. Les trois lectures partent de toute façon
+   * **ensemble** dans le `Promise.all` de `ReportExportService.create` — c'est
+   * une colonne de plus sur le fil, pas un aller-retour de plus.
+   *
+   * `tax_rate_bps` est `NOT NULL DEFAULT 0` : `null` ne peut donc signifier
+   * qu'un établissement disparu, et non un salon qui n'aurait pas renseigné son
+   * taux. Un salon à taux nul rend bien `0`, et l'export rendra alors un montant
+   * hors taxes égal au brut (quatrième critère de #891).
+   */
+  public async currentTaxRateBps(): Promise<number | null> {
+    const tenant = await this.prisma.tenant.findFirst({ select: { taxRateBps: true } });
+
+    return tenant?.taxRateBps ?? null;
+  }
+
+  /**
    * Le revenu de la fenêtre, ventilé par **jour civil du salon** et par moyen de
    * paiement — premier critère de #74, sixième critère de #817.
    *

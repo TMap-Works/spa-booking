@@ -16,6 +16,7 @@ reproductible n'est pas un état métier — c'est une photographie de lectures.
 |---|---|
 | #74 | Les trois rapports, leurs agrégats SQL et les deux index qui les servent |
 | #563 | L'export CSV servi par URL présignée : sérialisation serveur, dépôt S3, deux routes |
+| #891 | Le montant **hors taxes** dans l'export, extrait du brut par le `netOf` de `payments` au taux de l'établissement |
 
 Hors périmètre MVP, et donc non livré : insights de performance, reporting
 transactionnel détaillé, comparaisons entre périodes, objectifs, prévisions. Le
@@ -231,10 +232,54 @@ vide — une section `volume_total` commune, répétée trois fois avec le même
 se serait lue comme trois totaux qui se contredisent.
 
 **Les montants restent entiers**, en plus petite unité monétaire, avec leur code
-devise dans la colonne prévue (`brut_minor`, `rembourse_minor`, `net_minor`).
-Convertir en unité principale pour faire joli dans le tableur aurait introduit
-exactement le flottant que CLAUDE.md interdit. Le taux de no-show est la seule
-valeur non entière du fichier, et c'en est une par nature : c'est un ratio.
+devise dans la colonne prévue (`brut_minor`, `ht_minor`, `rembourse_minor`,
+`net_minor`). Convertir en unité principale pour faire joli dans le tableur aurait
+introduit exactement le flottant que CLAUDE.md interdit. Le taux de no-show est la
+seule valeur non entière du fichier, et c'en est une par nature : c'est un ratio.
+
+#### `ht_minor` — le hors-taxes, et ce qu'il n'est pas (#891)
+
+`brut_minor` somme `payments.amount_minor`, c'est-à-dire des prix **affichés**,
+donc toutes taxes comprises (#816). `ht_minor` en est la part hors taxes, rangée
+immédiatement après le brut sur `revenu_jour` comme sur `revenu_total`.
+
+Trois propriétés tiennent ce chiffre :
+
+- l'extraction passe par **`netOf` de `payments/pos.totals.ts`**, importée et non
+  recopiée. Une seconde règle d'arrondi dans un second module est exactement la
+  divergence que #816 vient de corriger — un soin à 65,00 € valait 54,17 € au
+  comptoir et 54,16 € ailleurs ;
+- le **taux** vient de `tenants.tax_rate_bps`, relu à chaque export pour
+  l'établissement dont on sort les lignes. Aucune constante n'est écrite nulle
+  part, et un salon à taux nul lit un `ht_minor` égal à son `brut_minor` ;
+- le **cumul** est extrait de son propre brut, pas reconstitué en sommant les
+  jours. Les deux peuvent différer d'un centime, chaque extraction s'arrondissant ;
+  c'est le total de la période qui fait foi, comme sur n'importe quel relevé de
+  TVA.
+
+`ht_minor` n'est pas `net_minor` : le second est le brut moins les
+remboursements, une notion de caisse et non de fiscalité. Les deux ne
+s'additionnent pas.
+
+**Ce que ce chiffre approxime.** C'est une ventilation indicative du chiffre
+d'affaires encaissé, **pas une base déclarative de TVA**. Deux écarts sont connus,
+relevés en revue de #891 et ouverts en suivi — #938 et #939 :
+
+- **le pourboire est compté comme taxable** (#938). `payments.amount_minor` vaut
+  `sales.total_amount_minor` = `sous-total + taxe + pourboire`
+  (`settlement.rules.ts`), or un pourboire n'est pas taxé. Sur un soin à 65,00 €
+  avec 10,00 € de pourboire à 20 %, `ht_minor` rend 6 250 là où la base vaut
+  6 417. Écart nul sans pourboire ;
+- **le taux est celui d'aujourd'hui, pas celui de la période** (#939). `sales` fige son
+  taux (`sales.tax_rate_bps`), l'export relit celui de l'établissement au moment
+  de l'export — c'est ce que le troisième critère de #891 demande. Un changement
+  de taux reventile donc l'historique.
+
+Les deux se corrigent du même geste — ventiler par vente depuis le
+`sales.subtotal_amount_minor` déjà figé, réparti sur les règlements de la vente —
+qui change l'agrégat SQL et demande une règle de répartition pour une vente
+réglée en deux fois. C'est une décision de conception, laissée au ticket qui la
+tranchera.
 
 Ce que l'export **perd** par rapport à celui de #75, et il faut le dire : le
 fichier n'est plus garanti identique à ce que l'écran affiche, puisqu'il est

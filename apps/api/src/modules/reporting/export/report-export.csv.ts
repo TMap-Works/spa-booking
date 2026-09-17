@@ -1,3 +1,4 @@
+import { netOf } from '../../payments/pos.totals';
 import type {
   AppointmentVolumeReport,
   DailyRevenueReport,
@@ -55,6 +56,66 @@ import type {
  * une par nature : c'est un ratio, pas un montant. Il sort sans devise, avec les
  * quatre décimales que le service lui a déjà données.
  *
+ * ## Le hors-taxes se **retire** du brut, il ne se recalcule pas (#891)
+ *
+ * `brut_minor` est un montant **TTC** : c'est la somme de `payments.amount_minor`,
+ * c'est-à-dire des prix affichés, et un prix affiché au consommateur s'entend
+ * toutes taxes comprises (#816). La mesure `ht_minor` en est la part hors taxes,
+ * obtenue par `netOf` — la fonction de `payments/pos.totals.ts`, **importée et
+ * non recopiée**.
+ *
+ * C'est le deuxième critère de #891, et il ne relève pas du goût : #816 vient de
+ * corriger une divergence née d'une seconde règle d'arrondi vivant dans un second
+ * module, où un soin à 65,00 € valait 54,17 € d'un côté et 54,16 € de l'autre.
+ * Réécrire ici `arrondi(ttc × 10 000 / (10 000 + taux))` aurait rouvert cette
+ * divergence exactement là où elle se voit le moins — dans un fichier qu'une
+ * gérante recoupe avec ses tickets de caisse.
+ *
+ * L'import traverse la frontière de module, et c'est assumé : `pos.totals.ts` ne
+ * porte ni Nest, ni Prisma, ni HTTP — c'est un calcul pur, du même ordre
+ * qu'`appointments/appointment-status.ts` que `crm` importe déjà. La règle
+ * d'api-module §3 interdit d'importer le **repository** d'un autre module, ce
+ * qui n'est pas le cas ici : aucune lecture, aucune décision de cycle de vie,
+ * une fonction d'arithmétique entière.
+ *
+ * Le **taux** n'est pas une constante de ce fichier : il arrive dans
+ * {@link ReportExportContent}, relu en base par `ReportingRepository` pour
+ * l'établissement dont on exporte les lignes (troisième critère de #891). Un
+ * salon à taux nul voit donc `ht_minor` valoir exactement `brut_minor`, ce que
+ * `netOf` rend par son court-circuit — quatrième critère.
+ *
+ * Ce que `ht_minor` n'est **pas** : `net_minor`. Le second est le brut moins les
+ * remboursements — une notion de caisse, pas de fiscalité —, et « net » se lit
+ * volontiers « net de taxe » dans un tableur. D'où `ht_minor`, qui ne se lit que
+ * d'une façon, plutôt qu'un second « net » qu'il aurait fallu qualifier. Les
+ * deux mesures se rangent côte à côte sur la même clé, et ne se somment pas
+ * entre elles.
+ *
+ * ### Ce que `ht_minor` approxime, et qu'il faut savoir avant de le déclarer
+ *
+ * C'est une **ventilation indicative du chiffre d'affaires encaissé**, pas une
+ * base déclarative de TVA. Deux écarts sont connus, relevés en revue de #891 et
+ * ouverts en suivi — #938 et #939 :
+ *
+ * 1. **le pourboire est compté comme taxable** (#938). `payments.amount_minor` vaut
+ *    `sales.total_amount_minor`, c'est-à-dire `sous-total + taxe + pourboire`
+ *    (`settlement.rules.ts`). Or un pourboire n'est pas taxé — `composeSale` le
+ *    laisse hors de toute extraction. Sur un soin à 65,00 € avec 10,00 € de
+ *    pourboire à 20 %, `ht_minor` rend 6 250 là où la base réelle vaut 6 417.
+ *    L'écart croît avec le volume de pourboires, et il est nul sans eux ;
+ * 2. **le taux est celui d'aujourd'hui, pas celui de la période** (#939). `sales`
+ *    **fige** son taux (`sales.tax_rate_bps`) ; l'export, lui, relit celui de
+ *    l'établissement au moment où on l'exporte, comme le troisième critère de
+ *    #891 le demande. Un salon qui change de taux verra donc son historique
+ *    reventilé au nouveau taux.
+ *
+ * Les deux se corrigent du même geste — ventiler par vente, depuis le
+ * `sales.subtotal_amount_minor` déjà figé, réparti sur les règlements de la
+ * vente —, et ce geste sort des critères de #891 autant que de son empreinte :
+ * il change l'agrégat SQL, la forme de `DailyRevenueRow`, et demande une règle
+ * de répartition pour une vente réglée en deux fois. C'est une décision de
+ * conception, pas une correction de revue.
+ *
  * ## Le point-virgule, et l'assumer
  *
  * RFC 4180 ne normalise que la virgule. Mais ce fichier s'ouvre dans le tableur
@@ -94,6 +155,17 @@ export const REPORT_EXPORT_CSV_HEADER = [
 export interface ReportExportContent {
   readonly window: ReportWindow;
   readonly timeZone: string;
+  /**
+   * Le taux de taxe de l'établissement exporté, en points de base — `2000` vaut
+   * 20 % (#891, troisième critère).
+   *
+   * Il vient de `tenants.tax_rate_bps`, relu en base par `ReportExportService` ;
+   * ce fichier ne le connaît que comme une donnée d'entrée, et n'en porte
+   * aucune valeur par défaut. Un paramètre optionnel aurait été une constante
+   * déguisée : le jour où le service oublierait de le passer, le fichier
+   * annoncerait un hors-taxes faux sans que rien ne rougisse.
+   */
+  readonly taxRateBps: number;
   readonly revenue: DailyRevenueReport;
   /**
    * Le volume, sur **tous** les axes demandés — `day`, `staff`, `service`.
@@ -127,7 +199,7 @@ interface CsvRow {
 export function buildReportExportCsv(content: ReportExportContent): string {
   const rows: CsvRow[] = [
     ...periodRows(content),
-    ...revenueRows(content.revenue),
+    ...revenueRows(content.revenue, content.taxRateBps),
     ...content.volumes.flatMap(volumeRows),
     ...noShowRows(content.noShows),
   ];
@@ -160,8 +232,24 @@ function periodRows(content: ReportExportContent): CsvRow[] {
  *
  * Les jours sans recette sont absents, comme du rapport lui-même : un fichier ne
  * fabrique pas les jours où le salon était fermé.
+ *
+ * `ht_minor` suit immédiatement `brut_minor` — « à côté du brut », premier
+ * critère de #891 —, aussi bien par jour et par moyen de paiement que sur le
+ * cumul. L'extraction porte sur le **brut** et non sur le net : c'est le prix
+ * affiché qui porte la taxe, un remboursement n'est pas une base taxable de
+ * moins mais une vente défaite.
+ *
+ * Le cumul est extrait de **son propre brut**, et non reconstitué en sommant les
+ * `ht_minor` des jours. Les deux peuvent différer d'un centime — chaque
+ * extraction s'arrondit —, et c'est la première forme qui est juste : le total
+ * hors taxes d'une période est la part hors taxes de son total, comme un ticket
+ * extrait sa taxe de son sous-total et non ligne à ligne (`pos.totals.ts`).
+ * Sommer la colonne des jours dans un tableur peut donc rendre un centime d'écart
+ * avec la ligne de cumul ; c'est la même propriété que celle de n'importe quel
+ * relevé de TVA, et l'inverse — un total faux pour que la colonne s'additionne —
+ * serait le vrai défaut.
  */
-function revenueRows(revenue: DailyRevenueReport): CsvRow[] {
+function revenueRows(revenue: DailyRevenueReport, taxRateBps: number): CsvRow[] {
   const rows: CsvRow[] = [];
 
   for (const day of revenue.days) {
@@ -170,6 +258,14 @@ function revenueRows(revenue: DailyRevenueReport): CsvRow[] {
     rows.push(
       row('revenu_jour', day.date, label, 'encaissements', String(day.transactions)),
       money('revenu_jour', day.date, label, 'brut_minor', day.grossAmountMinor, day.currency),
+      money(
+        'revenu_jour',
+        day.date,
+        label,
+        'ht_minor',
+        netOf(day.grossAmountMinor, taxRateBps),
+        day.currency,
+      ),
       money('revenu_jour', day.date, label, 'rembourse_minor', day.refundedAmountMinor, day.currency),
       money('revenu_jour', day.date, label, 'net_minor', day.netAmountMinor, day.currency),
     );
@@ -181,6 +277,14 @@ function revenueRows(revenue: DailyRevenueReport): CsvRow[] {
     rows.push(
       row('revenu_total', key, total.method, 'encaissements', String(total.transactions)),
       money('revenu_total', key, total.method, 'brut_minor', total.grossAmountMinor, total.currency),
+      money(
+        'revenu_total',
+        key,
+        total.method,
+        'ht_minor',
+        netOf(total.grossAmountMinor, taxRateBps),
+        total.currency,
+      ),
       money(
         'revenu_total',
         key,
