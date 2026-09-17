@@ -22,6 +22,7 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { PENDING_CONFIRMATION_LABEL } from '@/app/(account)/[tenantSlug]/compte/components/appointment-status';
 import { ConfirmationStep } from '@/app/(booking)/[tenantSlug]/reservation/steps/confirmation-step';
 
 import { contact, service, tenant } from './fixtures';
@@ -184,6 +185,29 @@ describe('ce que l’écran a le droit d’affirmer', () => {
     expect(avis.parentElement?.textContent).toContain('agenda du salon');
     // La sortie, elle, reste offerte à celles qui en ont un.
     expect(screen.getByRole('link', { name: 'Voir mes rendez-vous' })).toBeDefined();
+  });
+
+  it('dit l’état dans les mots exacts de l’espace client, et pas dans les siens', () => {
+    // Le reproche de l'audit `d20260916-1` sur `ds:libelles` : trois mots pour un
+    // fait — « Confirmer la réservation », « Votre rendez-vous est enregistré »,
+    // « En attente de confirmation ». L'écran nomme désormais l'état avec la
+    // constante que la pastille emploie, si bien qu'aucun des deux ne peut
+    // dériver sans l'autre (#743).
+    renderConfirmation();
+
+    const message = screen.getByText('Votre rendez-vous est enregistré').parentElement?.textContent;
+
+    expect(screen.getByText(`${PENDING_CONFIRMATION_LABEL}.`)).toBeDefined();
+    // Ce que l'attente attend, et ce qu'elle ne coûte pas : le créneau est déjà
+    // retenu — `pending` bloque le créneau côté API — et rien n'est demandé à la
+    // cliente.
+    expect(message).toContain('Votre créneau est retenu dès maintenant');
+    expect(message).toContain('sans démarche de votre part');
+    // L'accusé automatique du CDC §1.4 part sur un rendez-vous encore `PENDING` :
+    // l'appeler « e-mail de confirmation » deux lignes sous « à confirmer par le
+    // salon » ferait croire que la confirmation attendue est arrivée.
+    expect(message).toContain('e-mail récapitulatif');
+    expect(message).not.toContain('e-mail de confirmation');
   });
 
   it('dit annulé ce que l’API vient d’annuler, même restitué depuis le brouillon', () => {

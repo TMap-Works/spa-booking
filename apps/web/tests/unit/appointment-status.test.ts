@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 import {
   appointmentBadge,
   isStillActionable,
+  PENDING_CONFIRMATION_LABEL,
 } from '@/app/(account)/[tenantSlug]/compte/components/appointment-status';
 
 /**
@@ -40,6 +41,7 @@ describe('pastille de statut', () => {
     // vient précisément de conserver son rendez-vous en le déplaçant.
     const deplace = appointmentBadge(
       appointment({ status: 'cancelled', cancelledAt: '2026-08-30T09:00:00.000Z' }),
+      'past',
     );
     const annuleParElle = appointmentBadge(
       appointment({
@@ -47,6 +49,7 @@ describe('pastille de statut', () => {
         cancelledAt: '2026-08-30T09:00:00.000Z',
         cancelledBy: 'client',
       }),
+      'past',
     );
     const annuleParLeSalon = appointmentBadge(
       appointment({
@@ -54,6 +57,7 @@ describe('pastille de statut', () => {
         cancelledAt: '2026-08-30T09:00:00.000Z',
         cancelledBy: 'staff',
       }),
+      'past',
     );
 
     expect(deplace.label).toBe('Déplacé');
@@ -69,12 +73,41 @@ describe('pastille de statut', () => {
   });
 
   it.each([
-    ['pending', 'En attente de confirmation'],
+    ['pending', 'À confirmer par le salon'],
     ['confirmed', 'Confirmé'],
     ['completed', 'Honoré'],
     ['no_show', 'Non honoré'],
   ] as const)('nomme le statut %s en clair', (status, label) => {
-    expect(appointmentBadge(appointment({ status })).label).toBe(label);
+    expect(appointmentBadge(appointment({ status }), 'upcoming').label).toBe(label);
+  });
+
+  /**
+   * Le mot de l'attente, et le seul (#743).
+   *
+   * L'écran terminal du tunnel importe cette même constante : c'est d'avoir
+   * écrit deux fois la même chose que les deux surfaces ont fini par la dire
+   * autrement — « Votre rendez-vous est enregistré » d'un côté, « En attente de
+   * confirmation » de l'autre, sur le même rendez-vous.
+   */
+  it('nomme l’acteur attendu plutôt qu’une attente sans sujet', () => {
+    expect(PENDING_CONFIRMATION_LABEL).toBe('À confirmer par le salon');
+    expect(appointmentBadge(appointment({ status: 'pending' }), 'upcoming').label).toBe(
+      PENDING_CONFIRMATION_LABEL,
+    );
+  });
+
+  it('ne promet plus de confirmation à un rendez-vous que son heure a dépassé', () => {
+    // « à venir » est l'intervalle non terminé **dont le statut occupe encore le
+    // créneau » : un `pending` dont l'heure est passée descend donc dans
+    // l'historique. Lui laisser « À confirmer par le salon » lui promettrait une
+    // suite qui ne viendra pas — c'est le rendez-vous de la veille que l'audit a
+    // relevé, pastille intacte.
+    const badge = appointmentBadge(appointment({ status: 'pending' }), 'past');
+
+    expect(badge.label).toBe('Non confirmé');
+    // Le ton ne bouge pas : c'est bien le même statut, et la couleur ne porte
+    // jamais l'information seule.
+    expect(badge.tone).toBe('pending');
   });
 });
 
