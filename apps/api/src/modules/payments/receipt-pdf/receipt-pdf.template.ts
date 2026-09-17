@@ -297,7 +297,12 @@ function settlements(canvas: ReceiptSurface, receipt: SaleReceipt): void {
   }
 
   for (const settlement of receipt.settlements) {
-    canvas.row(formatSettlementMethod(settlement.method), formatMoney(settlement.amount));
+    canvas.row(
+      // La référence du ticket du TPE, quand le caissier l'a saisie — #834. Le
+      // paramètre existait depuis #819 et n'avait rien à recevoir ; il l'a.
+      formatSettlementMethod(settlement.method, settlement.terminalReference),
+      formatMoney(settlement.amount),
+    );
 
     renderChange(canvas, settlement);
   }

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { LegalIdType } from '@spa/shared';
 
 import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/prisma-clients';
+import { SETTLED_PAYMENT_STATUSES } from './payments.types';
 
 /**
  * La lecture du **ticket de caisse** — #818, cinquième critère.
@@ -94,12 +95,21 @@ const RECEIPT_SELECT = {
     // en vol n'a rien pris, et une carte refusée n'est pas un règlement. Les
     // statuts remboursés y restent — l'argent a bien été encaissé, et l'avoir
     // se lit plus bas.
-    where: { status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED', 'REFUNDED'] } },
+    //
+    // La liste vient de `payments.types.ts` : le filtre par moyen de
+    // `pos.repository.ts` se pose la même question, et deux listes recopiées
+    // finiraient par répondre deux choses (#834).
+    where: { status: { in: [...SETTLED_PAYMENT_STATUSES] } },
     select: {
       method: true,
       amountMinor: true,
       currency: true,
       tenderedAmountMinor: true,
+      // Le numéro du ticket du TPE — #834. Il s'imprime à côté du moyen, et
+      // c'est la seule référence de prestataire que la pièce porte : les
+      // références Stripe n'y figurent pas, elles servent le rapprochement et
+      // non la cliente.
+      terminalReference: true,
       capturedAt: true,
       refunds: {
         // Un avoir n'existe que lorsque le prestataire — ou la caisse — a rendu
@@ -168,6 +178,7 @@ export interface ReceiptRow {
     amountMinor: number;
     currency: string;
     tenderedAmountMinor: number | null;
+    terminalReference: string | null;
     capturedAt: Date | null;
     refunds: {
       id: string;

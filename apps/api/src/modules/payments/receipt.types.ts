@@ -84,6 +84,21 @@ export interface ReceiptSettlement {
   readonly tendered: Money | null;
   /** `tendered − amount`, ou `null` quand rien n'a été rendu. */
   readonly change: Money | null;
+  /**
+   * Le numéro du ticket du TPE, quand le caissier l'a saisi — #834.
+   *
+   * C'est la couture que #819 avait laissée ouverte : `formatSettlementMethod`
+   * prenait déjà une référence en paramètre, et rien ne la lui donnait, faute de
+   * colonne. Elle existe, et la ligne du reçu s'imprime « Carte bancaire (TPE) —
+   * réf. A0000123 ». `null` sur les espèces, sur une carte en ligne, et sur un
+   * passage au terminal dont la référence n'a pas été relevée.
+   *
+   * **Ce n'est pas une donnée de carte** : ni PAN, ni quatre derniers chiffres,
+   * ni marque. Ce champ-là aurait été refusé (payments-stripe §1) ; celui-ci est
+   * l'identifiant d'opération que la banque du salon imprime, et la frontière
+   * HTTP refuse en 400 ce qui ressemble à un numéro.
+   */
+  readonly terminalReference: string | null;
   readonly capturedAt: Date | null;
 }
 
