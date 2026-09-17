@@ -170,6 +170,7 @@ describe('Catalogue — API', () => {
 
       expect(JSON.stringify(created.body)).not.toContain(harness.tenantId);
       expect(Object.keys(created.body).sort()).toEqual([
+        'assignedStaffCount',
         'bufferAfterMinutes',
         'bufferBeforeMinutes',
         'category',
@@ -182,6 +183,69 @@ describe('Catalogue — API', () => {
         'price',
         'slug',
       ]);
+    });
+
+    /**
+     * Le compte de praticiens que la liste du back-office affiche (#885).
+     *
+     * Ce que cette suite prouve et que l'unitaire ne peut pas : le champ franchit
+     * réellement la frontière HTTP — il traverse la vue, le DTO, la sérialisation,
+     * et il arrive sur le fil.
+     *
+     * Le praticien **désactivé** est le cœur du test, pas un ornement : c'est lui
+     * qui distingue ce compte de celui du catalogue public, et c'est l'écart qui
+     * aurait fait diverger la liste de la fiche si le compte s'était dérivé de
+     * `listPublicServices`.
+     */
+    it('rend le nombre de praticiens affectés, désactivés compris', async () => {
+      const service = repository.seedService({ tenantId: harness.tenantId });
+      const camille = repository.seedStaff({ tenantId: harness.tenantId });
+      const suspendue = repository.seedStaff({
+        tenantId: harness.tenantId,
+        displayName: 'Léa Suspendue',
+        isActive: false,
+      });
+      repository.seedAssignment({
+        tenantId: harness.tenantId,
+        serviceId: service.id,
+        staffId: camille.id,
+      });
+      repository.seedAssignment({
+        tenantId: harness.tenantId,
+        serviceId: service.id,
+        staffId: suspendue.id,
+      });
+      // Une prestation que personne ne pratique, pour que le zéro soit constaté
+      // et non supposé.
+      repository.seedService({
+        tenantId: harness.tenantId,
+        name: 'Soin sans praticien',
+        slug: 'soin-sans-praticien',
+      });
+      const token = await harness.tokenFor('STAFF');
+
+      const liste = await request(server())
+        .get('/api/v1/services')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(
+        (liste.body as { name: string; assignedStaffCount: number }[]).map((item) => [
+          item.name,
+          item.assignedStaffCount,
+        ]),
+      ).toEqual([
+        ['Massage 60 min', 2],
+        ['Soin sans praticien', 0],
+      ]);
+
+      // La fiche dit la même chose que la liste — c'est tout l'objet du ticket.
+      const fiche = await request(server())
+        .get(`/api/v1/services/${service.id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      expect(fiche.body.assignedStaffCount).toBe(2);
     });
 
     it('désactive et réactive une prestation, sans jamais la supprimer', async () => {

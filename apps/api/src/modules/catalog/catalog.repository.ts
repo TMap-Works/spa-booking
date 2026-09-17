@@ -44,7 +44,19 @@ export interface ServiceRecord {
   priceAmountMinor: number;
   priceCurrency: string;
   isActive: boolean;
+  /** Combien de praticiens la pratiquent, **désactivés compris**. */
+  assignedStaffCount: number;
 }
+
+/**
+ * La ligne telle que `SERVICE_SELECT` la rend.
+ *
+ * Elle diffère de `ServiceRecord` sur un seul point : le compte des praticiens
+ * n'y est pas — il vient d'une seconde lecture, agrégée et bornée au tenant
+ * (voir `countAssignedStaff`). Rien au-dessus du repository ne connaît donc ni
+ * la projection, ni la forme de l'agrégat (api-module §2).
+ */
+type ServiceRow = Omit<ServiceRecord, 'assignedStaffCount'>;
 
 /** Champs modifiables d'une prestation — tous facultatifs, aucun ne l'est tous. */
 export interface ServicePatch {
@@ -143,6 +155,13 @@ const SERVICE_SELECT = {
   // `(tenant_id, category_id)` de la migration qui interdisent que cette ligne
   // en désigne une d'un autre établissement.
   category: { select: CATEGORY_SUMMARY_SELECT },
+  // Le compte des praticiens (#885) n'est **pas** ici : un `_count` de relation
+  // n'est pas filtré par l'extension de scoping, et Prisma le traduit par un
+  // `LEFT JOIN` sur une agrégation **sans le moindre prédicat** —
+  // `SELECT service_id, COUNT(*) FROM service_staff GROUP BY service_id`, donc
+  // un parcours séquentiel de la table de *toute* la plateforme à chaque lecture
+  // de prestation, réservation et ticket de caisse compris. Il se lit par
+  // `countAssignedStaff`, qui passe par l'extension et par l'index.
 } as const;
 
 /**
@@ -226,6 +245,30 @@ export function toCategoryView(category: ServiceCategoryRecord): ServiceCategory
   };
 }
 
+/**
+ * La ligne lue, sous la forme que le reste du module manipule.
+ *
+ * Recopiée champ par champ plutôt qu'étalée, pour la même raison que
+ * `toPublicServiceView` : un `{ ...row }` publierait le jour venu tout champ
+ * ajouté à la projection, sans qu'aucune revue ait à le décider.
+ */
+function toServiceRecord(row: ServiceRow, assignedStaffCount: number): ServiceRecord {
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    category: row.category,
+    durationMinutes: row.durationMinutes,
+    bufferBeforeMinutes: row.bufferBeforeMinutes,
+    bufferAfterMinutes: row.bufferAfterMinutes,
+    priceAmountMinor: row.priceAmountMinor,
+    priceCurrency: row.priceCurrency,
+    isActive: row.isActive,
+    assignedStaffCount,
+  };
+}
+
 export function toServiceView(service: ServiceRecord): ServiceView {
   return {
     id: service.id,
@@ -245,6 +288,7 @@ export function toServiceView(service: ServiceRecord): ServiceView {
     // de raison de manipuler un entier sans sa devise.
     price: { amountMinor: service.priceAmountMinor, currency: service.priceCurrency },
     isActive: service.isActive,
+    assignedStaffCount: service.assignedStaffCount,
   };
 }
 
@@ -385,6 +429,51 @@ export class CatalogRepository {
   // -------------------------------------------------------------------------
 
   /**
+   * Combien de praticiens pratiquent chacune de ces prestations, **désactivés
+   * compris** (#885).
+   *
+   * Une opération de premier niveau, et c'est tout l'intérêt : elle repasse par
+   * l'extension de scoping, qui pose `tenant_id` sur le `where`. Le prédicat
+   * devient `(tenant_id, service_id IN …)` et l'unicité
+   * `(tenant_id, service_id, staff_id)` le sert par son préfixe — là où le
+   * `_count` de relation d'un `select` agrégeait `service_staff` en entier, pour
+   * toute la plateforme, à chaque lecture de prestation.
+   *
+   * **Sans filtre sur l'activité du praticien**, à la différence de
+   * `PUBLIC_SERVICE_SELECT` : ce compte-ci répond à « à qui cette prestation
+   * est-elle rattachée », la question que la fiche pose, et non à « qui peut-on
+   * réserver ». Les désactivés y sont donc comptés.
+   *
+   * Une prestation sans aucune affectation n'a pas de ligne dans le résultat :
+   * l'absence vaut zéro, et c'est l'appelant qui le dit.
+   */
+  private async countAssignedStaff(serviceIds: readonly string[]): Promise<Map<string, number>> {
+    if (serviceIds.length === 0) {
+      return new Map();
+    }
+
+    const counts = await this.prisma.serviceStaff.groupBy({
+      by: ['serviceId'],
+      where: { serviceId: { in: [...serviceIds] } },
+      _count: { _all: true },
+    });
+
+    return new Map(counts.map((row) => [row.serviceId, row._count._all]));
+  }
+
+  /**
+   * Les lignes lues, complétées de leur compte de praticiens.
+   *
+   * Deux allers-retours pour un lot, quel que soit le nombre de prestations —
+   * jamais un par ligne.
+   */
+  private async toServiceRecords(rows: readonly ServiceRow[]): Promise<ServiceRecord[]> {
+    const counts = await this.countAssignedStaff(rows.map((row) => row.id));
+
+    return rows.map((row) => toServiceRecord(row, counts.get(row.id) ?? 0));
+  }
+
+  /**
    * Les prestations de l'établissement courant.
    *
    * `@@index([tenantId, isActive])` sert le filtre d'activité,
@@ -395,7 +484,7 @@ export class CatalogRepository {
     activeOnly: boolean;
     categoryId?: string;
   }): Promise<ServiceRecord[]> {
-    return this.prisma.service.findMany({
+    const services = await this.prisma.service.findMany({
       where: {
         ...(filters.activeOnly && { isActive: true }),
         ...(filters.categoryId !== undefined && { categoryId: filters.categoryId }),
@@ -403,11 +492,22 @@ export class CatalogRepository {
       select: SERVICE_SELECT,
       orderBy: [{ name: 'asc' }],
     });
+
+    // Le compte des praticiens est agrégé en une lecture pour la liste entière :
+    // deux allers-retours, quel que soit le nombre de prestations (#885).
+    return this.toServiceRecords(services);
   }
 
   /** Une prestation de l'établissement courant — `null` hors de celui-ci. */
   public async findServiceById(id: string): Promise<ServiceRecord | null> {
-    return this.prisma.service.findFirst({ where: { id }, select: SERVICE_SELECT });
+    const service = await this.prisma.service.findFirst({ where: { id }, select: SERVICE_SELECT });
+    if (service === null) {
+      return null;
+    }
+
+    const counts = await this.countAssignedStaff([service.id]);
+
+    return toServiceRecord(service, counts.get(service.id) ?? 0);
   }
 
   /**
@@ -437,10 +537,12 @@ export class CatalogRepository {
 
     // Copie mutable : `as const` et `readonly` ne se laissent pas passer au
     // `in` de Prisma, qui attend un tableau modifiable.
-    return this.prisma.service.findMany({
+    const services = await this.prisma.service.findMany({
       where: { id: { in: [...ids] } },
       select: SERVICE_SELECT,
     });
+
+    return this.toServiceRecords(services);
   }
 
   public async createService(input: {
@@ -455,7 +557,7 @@ export class CatalogRepository {
     priceCurrency: string;
   }): Promise<ServiceRecord> {
     try {
-      return await this.prisma.service.create({
+      const created = await this.prisma.service.create({
         data: withScopedTenant<Prisma.ServiceUncheckedCreateInput>({
           slug: input.slug,
           name: input.name,
@@ -469,6 +571,14 @@ export class CatalogRepository {
         }),
         select: SERVICE_SELECT,
       });
+
+      // Zéro, et la base n'a rien à en dire : `createServiceRequestSchema` est
+      // `.strict()` et ne porte pas d'affectation, l'affectation a sa propre
+      // route, et il n'existe donc aucun instant où une prestation naîtrait
+      // rattachée. L'agréger ici serait une lecture qui ne peut rien rendre.
+      // Le jour où la création accepterait des affectations, elle passerait par
+      // `toServiceRecords` comme les lectures.
+      return toServiceRecord(created, 0);
     } catch (error: unknown) {
       if (isSlugConflict(error)) {
         throw new ServiceSlugTakenError(input.slug);

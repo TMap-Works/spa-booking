@@ -321,6 +321,17 @@ export class ServiceDto implements ServiceView {
 
   @ApiProperty()
   public isActive!: boolean;
+
+  @ApiProperty({
+    description:
+      'Combien de praticiens pratiquent la prestation, **désactivés compris** — ' +
+      'le même ensemble que `GET /v1/services/{id}/staff` liste. Une prestation à ' +
+      'zéro n’offre aucun créneau, quel que soit son état d’activité. Le compte des ' +
+      'seuls praticiens réservables est ailleurs : `staff` du catalogue public.',
+    minimum: 0,
+    example: 2,
+  })
+  public assignedStaffCount!: number;
 }
 
 // ---------------------------------------------------------------------------
