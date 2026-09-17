@@ -20,9 +20,11 @@ import {
   type CalendarView,
 } from '@/lib/admin/calendar-range';
 
+import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
+
 import { CalendarBoard } from '../components/calendar-board';
-import { adminLoadFailure, requireAdminAccessToken } from '../guard';
-import { adminCalendarPath, adminLoginPath } from '../paths';
+import { adminLoadFailure, adminUnauthorizedPath, requireAdminAccessToken } from '../guard';
+import { adminCalendarPath } from '../paths';
 
 /**
  * Le planning du salon — l'écran le plus regardé du back-office (#49, CDC §1.4).
@@ -99,23 +101,34 @@ export const dynamic = 'force-dynamic';
 
 interface CalendarPageProps {
   readonly params: Promise<{ readonly tenantSlug: string }>;
-  readonly searchParams: Promise<{ readonly vue?: string; readonly date?: string }>;
+  readonly searchParams: Promise<{
+    readonly vue?: string;
+    readonly date?: string;
+    /** Le marqueur de renouvellement — lu par `RENEWAL_PARAM`, jamais écrit ici (#861). */
+    readonly session?: string | readonly string[];
+  }>;
 }
 
 export default async function CalendarPage({ params, searchParams }: CalendarPageProps) {
   const { tenantSlug } = await params;
-  const { vue, date } = await searchParams;
+  const query = await searchParams;
 
   // La vue et la date sont lues **avant** la garde : elles ne demandent aucun
   // jeton, et c'est ce qui permet de dire à la garde où revenir après un
   // renouvellement de session. Sans elles, l'opérateur repartait de la journée
   // courante en vue jour, quelle que soit la période qu'il regardait (#458).
-  const view: CalendarView = parseCalendarView(vue);
-  const requested = parseCalendarDate(date);
-  const accessToken = await requireAdminAccessToken(
-    tenantSlug,
-    adminCalendarPath(tenantSlug, { view, ...(requested === null ? {} : { date: requested }) }),
-  );
+  const view: CalendarView = parseCalendarView(query.vue);
+  const requested = parseCalendarDate(query.date);
+  const here = adminCalendarPath(tenantSlug, {
+    view,
+    ...(requested === null ? {} : { date: requested }),
+  });
+
+  // Ce que l'écran sait de son propre renouvellement : où revenir, et s'il en
+  // revient déjà. Le marqueur ne survit pas à `adminCalendarPath`, qui ne
+  // recompose que la vue et la date — c'est donc l'URL reçue qui en fait foi.
+  const renewal = { returnTo: here, attempted: isRenewalReturn(query[RENEWAL_PARAM]) };
+  const accessToken = await requireAdminAccessToken(tenantSlug, here);
 
   let tenant: PublicTenant;
   try {
@@ -125,6 +138,7 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
       deniedTitle: 'Accès réservé',
       deniedHint: 'La vitrine publique de ce salon n’a pas pu être lue avec ce compte.',
       failedTitle: 'Planning indisponible',
+      renewal,
     });
   }
 
@@ -192,14 +206,18 @@ export default async function CalendarPage({ params, searchParams }: CalendarPag
     }
 
     // Un 401 ne se raconte pas dans une bannière : le cookie d'accès est là,
-    // mais l'API refuse le jeton — session révoquée en base, ou secret changé.
-    // Le renouvellement échouerait pour la même raison, et laisser l'écran se
-    // peindre autour du refus donnerait un planning vide sans dire pourquoi.
-    // C'est `fetchTenantSettings` qui rendait ce verdict jusqu'à ce que le
-    // fuseau vienne de la vitrine publique : l'appel qui reste est le premier à
-    // porter le jeton, et c'est à lui de le rendre (voir `adminLoadFailure`).
+    // mais l'API refuse le jeton, et laisser l'écran se peindre autour du refus
+    // donnerait un planning vide sans dire pourquoi. C'est `fetchTenantSettings`
+    // qui rendait ce verdict jusqu'à ce que le fuseau vienne de la vitrine
+    // publique : l'appel qui reste est le premier à porter le jeton, et c'est à
+    // lui de le rendre.
+    //
+    // Où cela mène est la décision d'`adminUnauthorizedPath`, et non plus la
+    // connexion sèche (#861) : un renouvellement d'abord, une seule fois.
+    // L'appel est le même que celui d'`adminLoadFailure`, parce que deux écrans
+    // qui répondent différemment au même 401 finissent par diverger.
     if (result.error instanceof ApiClientError && result.error.status === 401) {
-      redirect(adminLoginPath(tenantSlug));
+      redirect(adminUnauthorizedPath(tenantSlug, renewal));
     }
 
     // L'échec d'un **préchargement** ne se montre pas : personne ne l'a demandé,

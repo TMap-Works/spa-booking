@@ -25,6 +25,7 @@ import { staffInitials } from '@/lib/admin/staff-directory';
 import { timeOffWindow } from '@/lib/admin/staff-time-off';
 import { addCalendarDays } from '@/lib/booking/calendar';
 import { formatCalendarDate, formatTimeInTimeZone } from '@/lib/format';
+import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
 
 import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
 import { StaffScheduleEditor } from '../components/staff-schedule-editor';
@@ -96,14 +97,27 @@ const AVAILABILITY_PREVIEW_DAYS = 7;
 
 interface StaffMemberPageProps {
   readonly params: Promise<{ readonly tenantSlug: string; readonly staffId: string }>;
+  /**
+   * Cette fiche n'a qu'un paramètre d'URL, et elle ne l'écrit pas elle-même : le
+   * marqueur de renouvellement, posé par la route de renouvellement au retour
+   * d'un 401 (#861).
+   *
+   * Facultatif parce que Next le passe toujours et que les doubles de test, eux,
+   * ne le passent pas : l'exiger ferait échouer sur un `undefined` des rendus que
+   * l'application ne produit jamais.
+   */
+  readonly searchParams?: Promise<{ readonly session?: string | readonly string[] }>;
 }
 
-export default async function StaffMemberPage({ params }: StaffMemberPageProps) {
+export default async function StaffMemberPage({ params, searchParams }: StaffMemberPageProps) {
   const { tenantSlug, staffId } = await params;
-  const accessToken = await requireAdminAccessToken(
-    tenantSlug,
-    adminStaffMemberPath(tenantSlug, staffId),
-  );
+  const query = (await searchParams) ?? {};
+  const here = adminStaffMemberPath(tenantSlug, staffId);
+
+  // Où revenir après un renouvellement, et si l'on en revient déjà — voir
+  // `adminUnauthorizedPath`.
+  const renewal = { returnTo: here, attempted: isRenewalReturn(query[RENEWAL_PARAM]) };
+  const accessToken = await requireAdminAccessToken(tenantSlug, here);
 
   /*
    * Un identifiant mal formé ne désigne aucune fiche : il se refuse ici, avant
@@ -202,10 +216,10 @@ export default async function StaffMemberPage({ params }: StaffMemberPageProps) 
          *   même jeton. S'il montait, un compte qui a droit à la grille doit
          *   garder sa fiche et perdre le seul aperçu — la dégradation est donc
          *   ici, et non sur la page ;
-         * - **401** — la session a été révoquée en cours de rendu. Celui-là n'est
+         * - **401** — l'API a refusé le jeton en cours de rendu. Celui-là n'est
          *   pas un défaut d'aperçu : il périme la page entière, panneaux
-         *   compris. Il est donc relancé, et `adminLoadFailure` le renvoie à la
-         *   connexion comme partout ailleurs dans ce back-office.
+         *   compris. Il est donc relancé, et `adminLoadFailure` décide — un
+         *   renouvellement d'abord, la connexion ensuite (#861).
          *
          * La publique rendait en plus **429**, et la gardée jamais : c'est tout
          * l'objet du ticket.
@@ -247,6 +261,7 @@ export default async function StaffMemberPage({ params }: StaffMemberPageProps) 
       deniedHint:
         'Les horaires du personnel sont réservés aux comptes du salon. Demandez l’accès à l’administrateur.',
       failedTitle: 'Fiche indisponible',
+      renewal,
     });
   }
 
