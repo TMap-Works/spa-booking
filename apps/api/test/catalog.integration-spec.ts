@@ -170,6 +170,7 @@ describe('Catalogue — API', () => {
 
       expect(JSON.stringify(created.body)).not.toContain(harness.tenantId);
       expect(Object.keys(created.body).sort()).toEqual([
+        'activeAssignedStaffCount',
         'assignedStaffCount',
         'bufferAfterMinutes',
         'bufferBeforeMinutes',
@@ -186,16 +187,20 @@ describe('Catalogue — API', () => {
     });
 
     /**
-     * Le compte de praticiens que la liste du back-office affiche (#885).
+     * Les deux comptes de praticiens que la liste du back-office affiche (#885,
+     * #895).
      *
-     * Ce que cette suite prouve et que l'unitaire ne peut pas : le champ franchit
-     * réellement la frontière HTTP — il traverse la vue, le DTO, la sérialisation,
-     * et il arrive sur le fil.
+     * Ce que cette suite prouve et que l'unitaire ne peut pas : les champs
+     * franchissent réellement la frontière HTTP — ils traversent la vue, le DTO, la
+     * sérialisation, et ils arrivent sur le fil. Et, seul endroit où cela se voie,
+     * que le second coïncide avec le `staff` du catalogue **public** : les deux
+     * points d'entrée sont interrogés ici côte à côte, et c'est cette coïncidence
+     * qui empêche la liste et l'aperçu de se contredire à nouveau.
      *
      * Le praticien **désactivé** est le cœur du test, pas un ornement : c'est lui
-     * qui distingue ce compte de celui du catalogue public, et c'est l'écart qui
-     * aurait fait diverger la liste de la fiche si le compte s'était dérivé de
-     * `listPublicServices`.
+     * qui sépare les deux comptes. `assignedStaffCount` le retient, parce que la
+     * fiche le liste sous « Compte désactivé » ; `activeAssignedStaffCount`
+     * l'écarte, parce que le moteur de disponibilité l'écarte.
      */
     it('rend le nombre de praticiens affectés, désactivés compris', async () => {
       const service = repository.seedService({ tenantId: harness.tenantId });
@@ -230,22 +235,83 @@ describe('Catalogue — API', () => {
         .expect(200);
 
       expect(
-        (liste.body as { name: string; assignedStaffCount: number }[]).map((item) => [
-          item.name,
-          item.assignedStaffCount,
-        ]),
+        (
+          liste.body as {
+            name: string;
+            assignedStaffCount: number;
+            activeAssignedStaffCount: number;
+          }[]
+        ).map((item) => [item.name, item.assignedStaffCount, item.activeAssignedStaffCount]),
       ).toEqual([
-        ['Massage 60 min', 2],
-        ['Soin sans praticien', 0],
+        // Deux affectations, une seule réservable : c'est l'écart de #895, et il
+        // n'apparaît que sur une prestation dont un praticien a été désactivé.
+        ['Massage 60 min', 2, 1],
+        ['Soin sans praticien', 0, 0],
       ]);
 
-      // La fiche dit la même chose que la liste — c'est tout l'objet du ticket.
+      // La fiche dit la même chose que la liste — c'est tout l'objet de #885.
       const fiche = await request(server())
         .get(`/api/v1/services/${service.id}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
 
       expect(fiche.body.assignedStaffCount).toBe(2);
+      expect(fiche.body.activeAssignedStaffCount).toBe(1);
+
+      // Et le catalogue public dit la même chose que le second compte — c'est
+      // l'objet de #895. La correspondance porte sur le cardinal, parce que c'est
+      // tout ce que la liste du back-office affiche : elle n'y montre pas de noms.
+      const publique = await request(server())
+        .get(`/api/v1/public/${harness.tenantSlug}/services`)
+        .expect(200);
+
+      const publiee = (publique.body as { id: string; staff: unknown[] }[]).find(
+        (item) => item.id === service.id,
+      );
+
+      expect(publiee?.staff).toHaveLength(1);
+      expect(publiee?.staff).toHaveLength(fiche.body.activeAssignedStaffCount);
+    });
+
+    /**
+     * Le cas que l'audit a relevé (#895) : le **seul** praticien affecté est
+     * désactivé.
+     *
+     * Les deux points d'entrée se contredisaient exactement ici — la liste du
+     * back-office rendait `assignedStaffCount: 1`, quand le catalogue public rendait
+     * `staff: []`. Ils disent désormais la même chose, chacun dans son champ.
+     */
+    it('rend zéro praticien actif quand le seul affecté est désactivé', async () => {
+      const service = repository.seedService({ tenantId: harness.tenantId });
+      const suspendue = repository.seedStaff({
+        tenantId: harness.tenantId,
+        displayName: 'Léa Suspendue',
+        isActive: false,
+      });
+      repository.seedAssignment({
+        tenantId: harness.tenantId,
+        serviceId: service.id,
+        staffId: suspendue.id,
+      });
+
+      const fiche = await request(server())
+        .get(`/api/v1/services/${service.id}`)
+        .set('Authorization', `Bearer ${await harness.tokenFor('STAFF')}`)
+        .expect(200);
+
+      const publique = await request(server())
+        .get(`/api/v1/public/${harness.tenantSlug}/services`)
+        .expect(200);
+
+      // Rattachée à quelqu'un — la fiche le montre, sous « Compte désactivé ».
+      expect(fiche.body.assignedStaffCount).toBe(1);
+      // Et pourtant sans le moindre créneau en ligne.
+      expect(fiche.body.activeAssignedStaffCount).toBe(0);
+      expect(
+        (publique.body as { id: string; staff: unknown[] }[]).find(
+          (item) => item.id === service.id,
+        )?.staff,
+      ).toEqual([]);
     });
 
     it('désactive et réactive une prestation, sans jamais la supprimer', async () => {

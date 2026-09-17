@@ -228,21 +228,30 @@ export class FakeCatalogRepository {
    * double filtre donc lui aussi sur le tenant de la prestation — sans quoi il
    * autoriserait un rattachement que la base refuse.
    *
-   * Le compte des praticiens reproduit l'agrégat scopé du vrai repository
-   * (`countAssignedStaff`) : **toutes** les affectations de la prestation, sans
-   * filtrer sur l'activité du praticien — c'est ce qui distingue ce compte de
-   * celui du catalogue public, et un double qui les confondrait ferait passer le
-   * test pour de mauvaises raisons. Le filtre sur `tenantId` est celui que
-   * l'extension de scoping pose sur la vraie requête.
+   * Les deux comptes de praticiens reproduisent les deux agrégats scopés du vrai
+   * repository (`countStaffAssignments`) : **toutes** les affectations de la
+   * prestation d'un côté, celles dont le praticien est actif de l'autre. Un double
+   * qui les confondrait ferait passer le test pour de mauvaises raisons — c'est
+   * précisément leur écart que #895 a rendu observable. Le filtre sur `tenantId`
+   * est celui que l'extension de scoping pose sur les vraies requêtes.
    */
   private toServiceRecord(service: StoredService): ServiceRecord {
     const category = this.categories.find(
       (candidate) =>
         candidate.tenantId === service.tenantId && candidate.id === service.categoryId,
     );
-    const assignedStaffCount = this.assignments.filter(
+    const assigned = this.assignments.filter(
       (assignment) =>
         assignment.tenantId === service.tenantId && assignment.serviceId === service.id,
+    );
+    const assignedStaffCount = assigned.length;
+    const activeAssignedStaffCount = assigned.filter((assignment) =>
+      this.staff.some(
+        (member) =>
+          member.tenantId === service.tenantId &&
+          member.id === assignment.staffId &&
+          member.isActive,
+      ),
     ).length;
 
     return {
@@ -261,6 +270,7 @@ export class FakeCatalogRepository {
       priceCurrency: service.priceCurrency,
       isActive: service.isActive,
       assignedStaffCount,
+      activeAssignedStaffCount,
     };
   }
 

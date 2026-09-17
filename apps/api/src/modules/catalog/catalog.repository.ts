@@ -46,17 +46,33 @@ export interface ServiceRecord {
   isActive: boolean;
   /** Combien de praticiens la pratiquent, **désactivés compris**. */
   assignedStaffCount: number;
+  /** Combien de ces praticiens sont **actifs**, donc réservables (#895). */
+  activeAssignedStaffCount: number;
 }
+
+/**
+ * Les deux comptes de praticiens d'une prestation.
+ *
+ * `active` est un sous-ensemble de `assigned` : ce sont les mêmes affectations,
+ * celles dont le praticien n'a pas été désactivé.
+ */
+interface StaffCounts {
+  readonly assigned: number;
+  readonly active: number;
+}
+
+/** Aucune affectation du tout — ce que vaut une prestation absente de l'agrégat. */
+const NO_STAFF: StaffCounts = { assigned: 0, active: 0 };
 
 /**
  * La ligne telle que `SERVICE_SELECT` la rend.
  *
- * Elle diffère de `ServiceRecord` sur un seul point : le compte des praticiens
- * n'y est pas — il vient d'une seconde lecture, agrégée et bornée au tenant
- * (voir `countAssignedStaff`). Rien au-dessus du repository ne connaît donc ni
+ * Elle diffère de `ServiceRecord` sur un seul point : les comptes de praticiens
+ * n'y sont pas — ils viennent d'une seconde lecture, agrégée et bornée au tenant
+ * (voir `countStaffAssignments`). Rien au-dessus du repository ne connaît donc ni
  * la projection, ni la forme de l'agrégat (api-module §2).
  */
-type ServiceRow = Omit<ServiceRecord, 'assignedStaffCount'>;
+type ServiceRow = Omit<ServiceRecord, 'assignedStaffCount' | 'activeAssignedStaffCount'>;
 
 /** Champs modifiables d'une prestation — tous facultatifs, aucun ne l'est tous. */
 export interface ServicePatch {
@@ -155,13 +171,13 @@ const SERVICE_SELECT = {
   // `(tenant_id, category_id)` de la migration qui interdisent que cette ligne
   // en désigne une d'un autre établissement.
   category: { select: CATEGORY_SUMMARY_SELECT },
-  // Le compte des praticiens (#885) n'est **pas** ici : un `_count` de relation
-  // n'est pas filtré par l'extension de scoping, et Prisma le traduit par un
-  // `LEFT JOIN` sur une agrégation **sans le moindre prédicat** —
+  // Les comptes de praticiens (#885, #895) ne sont **pas** ici : un `_count` de
+  // relation n'est pas filtré par l'extension de scoping, et Prisma le traduit par
+  // un `LEFT JOIN` sur une agrégation **sans le moindre prédicat** —
   // `SELECT service_id, COUNT(*) FROM service_staff GROUP BY service_id`, donc
   // un parcours séquentiel de la table de *toute* la plateforme à chaque lecture
-  // de prestation, réservation et ticket de caisse compris. Il se lit par
-  // `countAssignedStaff`, qui passe par l'extension et par l'index.
+  // de prestation, réservation et ticket de caisse compris. Ils se lisent par
+  // `countStaffAssignments`, qui passe par l'extension et par l'index.
 } as const;
 
 /**
@@ -252,7 +268,7 @@ export function toCategoryView(category: ServiceCategoryRecord): ServiceCategory
  * `toPublicServiceView` : un `{ ...row }` publierait le jour venu tout champ
  * ajouté à la projection, sans qu'aucune revue ait à le décider.
  */
-function toServiceRecord(row: ServiceRow, assignedStaffCount: number): ServiceRecord {
+function toServiceRecord(row: ServiceRow, staff: StaffCounts): ServiceRecord {
   return {
     id: row.id,
     slug: row.slug,
@@ -265,7 +281,8 @@ function toServiceRecord(row: ServiceRow, assignedStaffCount: number): ServiceRe
     priceAmountMinor: row.priceAmountMinor,
     priceCurrency: row.priceCurrency,
     isActive: row.isActive,
-    assignedStaffCount,
+    assignedStaffCount: staff.assigned,
+    activeAssignedStaffCount: staff.active,
   };
 }
 
@@ -289,6 +306,7 @@ export function toServiceView(service: ServiceRecord): ServiceView {
     price: { amountMinor: service.priceAmountMinor, currency: service.priceCurrency },
     isActive: service.isActive,
     assignedStaffCount: service.assignedStaffCount,
+    activeAssignedStaffCount: service.activeAssignedStaffCount,
   };
 }
 
@@ -429,48 +447,76 @@ export class CatalogRepository {
   // -------------------------------------------------------------------------
 
   /**
-   * Combien de praticiens pratiquent chacune de ces prestations, **désactivés
-   * compris** (#885).
+   * Combien de praticiens pratiquent chacune de ces prestations — **en tout**, et
+   * parmi eux **combien sont actifs** (#885, #895).
    *
-   * Une opération de premier niveau, et c'est tout l'intérêt : elle repasse par
-   * l'extension de scoping, qui pose `tenant_id` sur le `where`. Le prédicat
+   * Deux opérations de premier niveau, et c'est tout l'intérêt : elles repassent
+   * par l'extension de scoping, qui pose `tenant_id` sur leur `where`. Le prédicat
    * devient `(tenant_id, service_id IN …)` et l'unicité
    * `(tenant_id, service_id, staff_id)` le sert par son préfixe — là où le
    * `_count` de relation d'un `select` agrégeait `service_staff` en entier, pour
    * toute la plateforme, à chaque lecture de prestation.
    *
-   * **Sans filtre sur l'activité du praticien**, à la différence de
-   * `PUBLIC_SERVICE_SELECT` : ce compte-ci répond à « à qui cette prestation
-   * est-elle rattachée », la question que la fiche pose, et non à « qui peut-on
-   * réserver ». Les désactivés y sont donc comptés.
+   * **Pourquoi deux agrégats et non un.** Prisma ne sait pas exprimer un
+   * `COUNT(*) FILTER (WHERE …)` dans un `groupBy` ; l'écrire en SQL brut sortirait
+   * du client scopé, donc de la seule chose qui garantisse le `tenant_id`. Les
+   * deux agrégats partent donc **ensemble** (`Promise.all`) : deux requêtes, mais
+   * une seule latence — ce qui compte pour `findServiceById`, que le moteur de
+   * disponibilité appelle sur un chemin chaud.
    *
-   * Une prestation sans aucune affectation n'a pas de ligne dans le résultat :
-   * l'absence vaut zéro, et c'est l'appelant qui le dit.
+   * Le second filtre sur l'activité du praticien exactement comme
+   * `PUBLIC_SERVICE_SELECT` — `staff: { isActive: true }` —, et c'est délibéré :
+   * les deux doivent désigner le même ensemble, sans quoi la liste du back-office
+   * se remettrait à contredire l'aperçu public. Le filtre porte sur la relation,
+   * pas sur la ligne d'affectation, qui survit intacte à la désactivation.
+   *
+   * Une prestation sans aucune affectation n'a de ligne dans aucun des deux
+   * résultats : l'absence vaut zéro, et c'est l'appelant qui le dit (`NO_STAFF`).
    */
-  private async countAssignedStaff(serviceIds: readonly string[]): Promise<Map<string, number>> {
+  private async countStaffAssignments(
+    serviceIds: readonly string[],
+  ): Promise<Map<string, StaffCounts>> {
     if (serviceIds.length === 0) {
       return new Map();
     }
 
-    const counts = await this.prisma.serviceStaff.groupBy({
-      by: ['serviceId'],
-      where: { serviceId: { in: [...serviceIds] } },
-      _count: { _all: true },
-    });
+    // Copie mutable : `readonly` ne se laisse pas passer au `in` de Prisma.
+    const scope = { serviceId: { in: [...serviceIds] } };
 
-    return new Map(counts.map((row) => [row.serviceId, row._count._all]));
+    const [assigned, active] = await Promise.all([
+      this.prisma.serviceStaff.groupBy({
+        by: ['serviceId'],
+        where: scope,
+        _count: { _all: true },
+      }),
+      this.prisma.serviceStaff.groupBy({
+        by: ['serviceId'],
+        where: { ...scope, staff: { isActive: true } },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const activeByService = new Map(active.map((row) => [row.serviceId, row._count._all]));
+
+    return new Map(
+      assigned.map((row) => [
+        row.serviceId,
+        { assigned: row._count._all, active: activeByService.get(row.serviceId) ?? 0 },
+      ]),
+    );
   }
 
   /**
-   * Les lignes lues, complétées de leur compte de praticiens.
+   * Les lignes lues, complétées de leurs comptes de praticiens.
    *
-   * Deux allers-retours pour un lot, quel que soit le nombre de prestations —
+   * Deux allers-retours pour un lot — la lecture puis l'agrégat, les deux moitiés
+   * de celui-ci partant de front —, quel que soit le nombre de prestations, et
    * jamais un par ligne.
    */
   private async toServiceRecords(rows: readonly ServiceRow[]): Promise<ServiceRecord[]> {
-    const counts = await this.countAssignedStaff(rows.map((row) => row.id));
+    const counts = await this.countStaffAssignments(rows.map((row) => row.id));
 
-    return rows.map((row) => toServiceRecord(row, counts.get(row.id) ?? 0));
+    return rows.map((row) => toServiceRecord(row, counts.get(row.id) ?? NO_STAFF));
   }
 
   /**
@@ -505,9 +551,9 @@ export class CatalogRepository {
       return null;
     }
 
-    const counts = await this.countAssignedStaff([service.id]);
+    const counts = await this.countStaffAssignments([service.id]);
 
-    return toServiceRecord(service, counts.get(service.id) ?? 0);
+    return toServiceRecord(service, counts.get(service.id) ?? NO_STAFF);
   }
 
   /**
@@ -572,13 +618,13 @@ export class CatalogRepository {
         select: SERVICE_SELECT,
       });
 
-      // Zéro, et la base n'a rien à en dire : `createServiceRequestSchema` est
-      // `.strict()` et ne porte pas d'affectation, l'affectation a sa propre
-      // route, et il n'existe donc aucun instant où une prestation naîtrait
-      // rattachée. L'agréger ici serait une lecture qui ne peut rien rendre.
-      // Le jour où la création accepterait des affectations, elle passerait par
-      // `toServiceRecords` comme les lectures.
-      return toServiceRecord(created, 0);
+      // Zéro des deux côtés, et la base n'a rien à en dire :
+      // `createServiceRequestSchema` est `.strict()` et ne porte pas
+      // d'affectation, l'affectation a sa propre route, et il n'existe donc aucun
+      // instant où une prestation naîtrait rattachée. L'agréger ici serait une
+      // lecture qui ne peut rien rendre. Le jour où la création accepterait des
+      // affectations, elle passerait par `toServiceRecords` comme les lectures.
+      return toServiceRecord(created, NO_STAFF);
     } catch (error: unknown) {
       if (isSlugConflict(error)) {
         throw new ServiceSlugTakenError(input.slug);

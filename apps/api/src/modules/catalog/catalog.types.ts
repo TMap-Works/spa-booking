@@ -102,11 +102,23 @@ export interface ServiceView {
    * catalogue.
    *
    * Les désactivés y sont comptés pour que la liste dise la même chose que la
-   * fiche, qui les garde sous « Compte désactivé ». Le compte des seuls praticiens
-   * **actifs** existe ailleurs et répond à une autre question :
-   * `PublicServiceView.staff`, c'est-à-dire « qui peut-on réserver ».
+   * fiche, qui les garde sous « Compte désactivé ». Ce compte ne dit donc rien de
+   * la réservabilité : c'est `activeAssignedStaffCount` qui y répond.
    */
   readonly assignedStaffCount: number;
+  /**
+   * Combien de ces praticiens sont **actifs**, donc réservables (#895).
+   *
+   * Le même ensemble que `PublicServiceView.staff`, réduit à son cardinal : c'est
+   * de ceux-là, et d'eux seuls, que le moteur de disponibilité tire des créneaux.
+   * `0` vaut « aucun créneau en ligne », que personne ne soit affecté ou que tous
+   * les affectés soient désactivés — deux causes que la liste du back-office doit
+   * distinguer, et qu'un compte unique confondait.
+   *
+   * Toujours inférieur ou égal à `assignedStaffCount`, dont il est un
+   * sous-ensemble.
+   */
+  readonly activeAssignedStaffCount: number;
 }
 
 /**

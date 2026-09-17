@@ -272,6 +272,52 @@ describe('ServicesService', () => {
         ['Coupe', 2],
       ]);
       expect(fiche.assignedStaffCount).toBe(2);
+
+      // Le second compte, lui, écarte la suspendue : c'est la question de la
+      // réservabilité, pas celle du rattachement (#895).
+      expect(
+        listed.map((service: ServiceView) => [service.name, service.activeAssignedStaffCount]),
+      ).toEqual([
+        ['Barbe', 0],
+        ['Coupe', 1],
+      ]);
+      expect(fiche.activeAssignedStaffCount).toBe(1);
+    });
+
+    /**
+     * L'état qui faisait se contredire la liste et l'aperçu public (#895).
+     *
+     * La prestation reste rattachée — la fiche affiche le praticien sous « Compte
+     * désactivé », et l'affectation survit intacte à la désactivation —, mais plus
+     * personne ne peut l'honorer. Les deux comptes divergent donc, et c'est
+     * exactement ce que le back-office doit pouvoir lire : un seul entier forçait à
+     * mentir à l'un des deux écrans.
+     *
+     * Que ce second compte coïncide avec le `staff` du catalogue public — la seule
+     * chose qui garantisse que les deux écrans ne divergent plus — se vérifie sur
+     * les réponses HTTP, les deux points d'entrée côte à côte :
+     * `catalog.integration-spec.ts`.
+     */
+    it('distingue le rattachement de la réservabilité quand le praticien est désactivé', async () => {
+      const coupe = repository.seedService({ tenantId: TENANT_A, name: 'Coupe', slug: 'coupe' });
+      const suspendue = repository.seedStaff({
+        tenantId: TENANT_A,
+        displayName: 'Léa Suspendue',
+        isActive: false,
+      });
+      repository.seedAssignment({
+        tenantId: TENANT_A,
+        serviceId: coupe.id,
+        staffId: suspendue.id,
+      });
+
+      const listed = await inTenantA(async () => services.list({ activeOnly: false }));
+      const fiche = await inTenantA(async () => services.byId(coupe.id));
+
+      expect(listed.map((service: ServiceView) => service.assignedStaffCount)).toEqual([1]);
+      expect(listed.map((service: ServiceView) => service.activeAssignedStaffCount)).toEqual([0]);
+      expect(fiche.assignedStaffCount).toBe(1);
+      expect(fiche.activeAssignedStaffCount).toBe(0);
     });
 
     it('filtre sur l’activité quand on le demande, et rend tout sinon', async () => {

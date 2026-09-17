@@ -1,12 +1,12 @@
 import { hasAtLeastRole, type Service, type SessionUser } from '@spa/shared';
 import Link from 'next/link';
 
-import { UNSTAFFED_SERVICE_LABEL } from '@/components/salon/service-catalog';
 import { fetchOwnProfile, fetchServices } from '@/lib/api-client';
 import { formatDuration, formatMoney } from '@/lib/format';
 
 import { CatalogStatusBadge } from '../../components/catalog-status-badge';
 import { ServiceActivationButton } from '../../components/service-activation-button';
+import { ServiceBookabilityBadge } from '../../components/service-bookability-badge';
 import { adminLoadFailure, requireAdminAccessToken } from '../../guard';
 import {
   adminCatalogPath,
@@ -62,19 +62,33 @@ import {
  *
  * Trois points tenus, et chacun a sa raison :
  *
- * - **le compte vient de l'API** (`assignedStaffCount`, `GET /v1/services`), et le
- *   front ne le recompose pas. Le déduire du point d'entrée public aurait fait
- *   diverger la liste de la fiche, celui-là ne comptant que les praticiens actifs
- *   là où la fiche garde les désactivés sous « Compte désactivé » ;
+ * - **les comptes viennent de l'API** (`GET /v1/services`), et le front ne les
+ *   recompose pas. Les déduire du point d'entrée public ne dirait rien des
+ *   prestations désactivées, que le catalogue public ne publie pas et que cette
+ *   liste montre pourtant ;
  * - **le libellé est celui de la vitrine**, importé et non recopié : trois écrans
  *   qui nomment le même état de trois façons, c'est l'écart `ds:coherence` que ce
  *   ticket referme, pas un qu'il rouvre ;
  * - **le signal est écrit**, pas seulement coloré (WCAG 1.4.1) — c'est la règle
  *   que `CatalogStatusBadge` suit déjà.
  *
+ * ## Deux comptes, parce que deux questions (#895)
+ *
+ * `assignedStaffCount` compte les praticiens affectés, désactivés compris — c'est
+ * ce que montre la fiche, et #885 a posé que la liste ne devait pas la contredire.
+ * Le badge, lui, ne se fonde pas dessus : il se fonde sur
+ * `activeAssignedStaffCount`, parce que la question qu'il pose est celle de la
+ * vitrine — « peut-on en réserver un créneau ». Une prestation dont le seul
+ * praticien affecté a été désactivé vaut `1` et `0` : la liste se taisait, quand
+ * l'aperçu public l'annonçait injoignable.
+ *
+ * C'est `ServiceBookabilityBadge` qui tranche entre les deux libellés — « aucun
+ * praticien affecté » et « aucun praticien actif » —, parce que les deux causes
+ * appellent deux gestes différents : affecter quelqu'un, ou réactiver un compte.
+ *
  * Le badge s'affiche quel que soit l'état d'activité, comme la fiche affiche
  * « Aucun praticien affecté » sans regarder `isActive` : une prestation désactivée
- * que personne ne pratique n'offrira rien de plus le jour où on la réactive, et
+ * que personne ne peut honorer n'offrira rien de plus le jour où on la réactive, et
  * c'est utile de l'apprendre avant.
  */
 
@@ -248,18 +262,16 @@ export default async function CatalogPage({ params, searchParams }: CatalogPageP
                   </td>
                   <td className="spa-admin-table__cell">
                     <CatalogStatusBadge isActive={service.isActive} />
-                    {/* Le second badge, et l'espace qui le sépare du premier :
-                        les deux peuvent alors passer à la ligne quand la colonne
-                        se resserre, là où un `white-space: nowrap` commun les
-                        aurait poussés hors du conteneur qui défile (#612). */}
-                    {service.assignedStaffCount === 0 ? (
-                      <>
-                        {' '}
-                        <span className="spa-admin-badge spa-admin-badge--pending">
-                          {UNSTAFFED_SERVICE_LABEL}
-                        </span>
-                      </>
-                    ) : null}
+                    {/* Le second badge dit la réservabilité — nul si la
+                        prestation en a une —, et porte lui-même l'espace qui le
+                        sépare du premier : les deux peuvent alors passer à la
+                        ligne quand la colonne se resserre, là où un
+                        `white-space: nowrap` commun les aurait poussés hors du
+                        conteneur qui défile (#612). */}
+                    <ServiceBookabilityBadge
+                      assignedStaffCount={service.assignedStaffCount}
+                      activeAssignedStaffCount={service.activeAssignedStaffCount}
+                    />
                   </td>
                   {canManage ? (
                     <td className="spa-admin-table__cell">

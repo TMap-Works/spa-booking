@@ -173,16 +173,43 @@ export const serviceSchema = z.object({
    * affiche déjà. Une liste qui compterait les seuls praticiens actifs se mettrait
    * à contredire la fiche qu'elle ouvre.
    *
-   * Ce n'est pas le même compte que `publicServiceSchema.staff.length`, qui ne
-   * retient que les praticiens **actifs** : celui-là répond à « qui peut-on
-   * réserver », celui-ci à « à qui cette prestation est-elle rattachée ». Les deux
-   * valent zéro ensemble dans le seul cas qui intéresse l'écran de catalogue —
-   * une prestation que personne ne pratique n'offre aucun créneau.
+   * Ce compte ne dit **rien de la réservabilité** : c'est `activeAssignedStaffCount`,
+   * juste en dessous, qui y répond. Une prestation dont le seul praticien affecté
+   * a été désactivé vaut `1` ici et `0` là — elle est rattachée à quelqu'un, et
+   * n'offre pourtant aucun créneau (#895).
    *
    * Un entier plutôt que la liste : l'écran de catalogue n'affiche pas de noms, et
    * embarquer les fiches ferait transiter l'annuaire complet à chaque ligne.
    */
   assignedStaffCount: z
+    .number()
+    .int({ message: 'un nombre de praticiens s’exprime en entier' })
+    .min(0, { message: 'un nombre de praticiens n’est jamais négatif' }),
+  /**
+   * Combien de ces praticiens sont **actifs** — donc combien peuvent réellement
+   * honorer la prestation.
+   *
+   * C'est le même ensemble que `publicServiceSchema.staff`, réduit à son cardinal :
+   * le catalogue public ne publie que les praticiens actifs, et le moteur de
+   * disponibilité ne part que de ceux-là. `0` veut donc dire « aucun créneau en
+   * ligne », que la cause soit l'absence d'affectation ou la désactivation des
+   * comptes affectés.
+   *
+   * **Pourquoi deux comptes plutôt qu'un.** Ils répondent à deux questions qu'aucun
+   * entier unique ne peut porter ensemble : « à qui cette prestation est-elle
+   * rattachée » pour la fiche, qui liste ses affectations sans en masquer aucune, et
+   * « qui peut-on réserver » pour la vitrine. Tant que la liste du back-office n'en
+   * portait qu'un, elle contredisait l'un des deux écrans — la fiche si elle
+   * comptait les seuls actifs, l'aperçu public sinon (#895, et la règle d'alignement
+   * liste ↔ fiche de #885). Elle porte désormais les deux, et distingue « aucun
+   * praticien affecté » de « aucun praticien actif ».
+   *
+   * Toujours inférieur ou égal à `assignedStaffCount` — c'en est un sous-ensemble.
+   * L'invariant n'est pas exprimé par un `refine` : il rendrait un `ZodEffects`, et
+   * `serviceSummarySchema` comme `publicServiceSchema` dérivent de ce schéma par
+   * `.pick()`, que seul un `ZodObject` offre.
+   */
+  activeAssignedStaffCount: z
     .number()
     .int({ message: 'un nombre de praticiens s’exprime en entier' })
     .min(0, { message: 'un nombre de praticiens n’est jamais négatif' }),
