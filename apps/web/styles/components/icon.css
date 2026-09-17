@@ -1,0 +1,14 @@
+/*
+ * Composant — Pictogramme (#927)
+ * =============================================================================
+ *
+ * `components/ui/icon.tsx`. Le trait suit la couleur du texte (`currentColor`) :
+ * ce fichier ne fixe que la taille par défaut, relative au corps du texte
+ * voisin, et interdit au pictogramme de se faire écraser dans une rangée flex.
+ */
+
+.spa-icon {
+  inline-size: 1.25em;
+  block-size: 1.25em;
+  flex: none;
+}

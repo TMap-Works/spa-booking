@@ -137,6 +137,14 @@ const PAIRS = [
   // repère. C'est ce qui a écarté `--spa-color-accent`, qui n'y atteint que 3.09:1.
   ['--spa-color-accent-inverse', '--spa-color-surface-inverse', AA_TEXT, 'accent inversé / surface inversée'],
   ['--spa-color-accent-inverse', '--spa-color-surface-inverse-raised', AA_TEXT, 'accent inversé / surface inversée surélevée'],
+  // Aplat de marque (#927) — bandeau de l'accueil et volet des écrans de
+  // connexion. Tout ce qui s'y écrit est du texte, pastilles comprises : les
+  // coches de la liste accompagnent un libellé, mais l'accent y porte aussi le
+  // titre en exergue.
+  ['--spa-color-text-on-brand', '--spa-color-surface-brand', AA_TEXT, 'texte sur marque / aplat de marque'],
+  ['--spa-color-text-on-brand-muted', '--spa-color-surface-brand', AA_TEXT, 'texte atténué sur marque / aplat de marque'],
+  ['--spa-color-accent-on-brand', '--spa-color-surface-brand', AA_TEXT, 'accent sur marque / aplat de marque'],
+  ['--spa-color-text-on-brand', '--spa-color-surface-brand-raised', AA_TEXT, 'texte sur marque / aplat de marque surélevé'],
 
   // --- États, sur surface neutre et sur leur propre surface ---
   ['--spa-color-success', '--spa-color-surface', AA_TEXT, 'succès / surface'],
@@ -164,6 +172,11 @@ const PAIRS = [
   // bien « focus / surface », y compris pour un bouton d'accent.
   ['--spa-color-focus', '--spa-color-surface', AA_NON_TEXT, 'anneau de focus / surface'],
   ['--spa-color-focus', '--spa-color-surface-raised', AA_NON_TEXT, 'anneau de focus / surface surélevée'],
+  // Les sections alternées de l'accueil et le fond des écrans de connexion (#927).
+  ['--spa-color-focus', '--spa-color-surface-sunken', AA_NON_TEXT, 'anneau de focus / surface creusée'],
+  // Sur l'aplat de marque, l'anneau ordinaire tombe sous 2:1 : il a le sien.
+  ['--spa-color-focus-on-brand', '--spa-color-surface-brand', AA_NON_TEXT, 'anneau de focus sur marque / aplat de marque'],
+  ['--spa-color-accent-on-brand', '--spa-color-surface-brand-raised', AA_NON_TEXT, 'pastille sur marque / aplat de marque surélevé'],
   // Bordure de notification et aplat d'accent : des repères, pas du texte.
   ['--spa-color-accent', '--spa-color-surface', AA_NON_TEXT, 'accent plein / surface'],
   ['--spa-color-success', '--spa-color-success-surface', AA_NON_TEXT, 'bordure de succès / sa surface'],
