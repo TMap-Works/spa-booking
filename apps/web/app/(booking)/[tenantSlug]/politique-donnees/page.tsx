@@ -209,12 +209,17 @@ export default async function DataPolicyPage({ params }: PageProps) {
             qu’elle ne l’est pas.
           </p>
           <p>
-            Quand vous <strong>prenez rendez-vous</strong>, cet accord est de surcroît
-            enregistré avec la <strong>date et l’heure exactes</strong> auxquelles vous l’avez
-            donné, parce que l’établissement doit pouvoir démontrer qu’il l’a bien reçu — et la
-            réservation est refusée sans lui. Quand vous <strong>créez un compte</strong>, la
-            case est aujourd’hui posée à l’écran seulement : elle conditionne l’envoi du
-            formulaire, mais aucune preuve horodatée n’en est encore conservée.
+            Que vous <strong>preniez rendez-vous</strong> ou que vous{' '}
+            <strong>créiez un compte</strong>, cet accord est de surcroît enregistré avec la{' '}
+            <strong>date et l’heure exactes</strong> auxquelles vous l’avez donné, parce que
+            l’établissement doit pouvoir démontrer qu’il l’a bien reçu. Dans les deux cas, la
+            demande est refusée sans lui — y compris si elle nous parvient autrement que par le
+            formulaire.
+          </p>
+          <p>
+            Cette date est relevée par nos serveurs au moment où votre accord nous parvient :
+            elle n’est jamais fournie par l’appareil depuis lequel vous écrivez, pour qu’elle
+            garde sa valeur de preuve.
           </p>
           <p>
             Trois traitements n’en dépendent pas, et il faut le dire : la confirmation de votre
