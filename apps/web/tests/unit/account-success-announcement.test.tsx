@@ -15,7 +15,7 @@ import { RescheduleForm } from '@/app/(account)/[tenantSlug]/compte/components/r
 /**
  * L'annonce d'un geste mené à son terme dans l'espace client — #746.
  *
- * Le défaut relevé par l'audit `d20260916-1` : « Déplacer au … » et « Confirmer
+ * Le défaut relevé par l'audit `d20260916-1` : « Reporter au … » et « Confirmer
  * l'annulation » ramenaient l'un et l'autre à la liste **sans rien annoncer**. La
  * carte quittait « Rendez-vous à venir » et réapparaissait sous « Historique »,
  * souvent hors de vue à 360 px.
@@ -277,9 +277,9 @@ describe('espace client — le report mené à son terme s’annonce sur la list
 
     await user.click(screen.getByRole('button', { name: '14 h 15' }));
 
-    const confirmer = screen.getByRole('button', { name: /Déplacer au/ });
+    const confirmer = screen.getByRole('button', { name: /Reporter au/ });
     /** L'heure telle que le bouton la nomme — l'annonce devra nommer la même. */
-    const quand = (confirmer.textContent ?? '').replace('Déplacer au ', '');
+    const quand = (confirmer.textContent ?? '').replace('Reporter au ', '');
 
     await user.click(confirmer);
 
@@ -314,7 +314,7 @@ describe('espace client — le report mené à son terme s’annonce sur la list
     const user = userEvent.setup();
 
     await user.click(screen.getByRole('button', { name: '14 h 15' }));
-    await user.click(screen.getByRole('button', { name: /Déplacer au/ }));
+    await user.click(screen.getByRole('button', { name: /Reporter au/ }));
 
     expect(screen.getByText('Ce créneau vient d’être pris')).toBeDefined();
 

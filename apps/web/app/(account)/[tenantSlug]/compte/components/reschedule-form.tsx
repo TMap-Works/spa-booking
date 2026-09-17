@@ -86,11 +86,28 @@ import { useAccountSessionRenewal } from './use-account-session-renewal';
  *
  * ## Le report abouti s'annonce sur la liste (#746)
  *
- * L'écran disait tout de l'échec et rien du succès : « Déplacer au … » ramenait à
- * la liste sans un mot, la carte ayant simplement changé d'heure quelque part plus
- * bas. Le succès part maintenant vers la région `aria-live` du layout
- * (`account-announcement.tsx`), qui survit à cette navigation et n'affiche
+ * L'écran disait tout de l'échec et rien du succès : le bouton de validation
+ * ramenait à la liste sans un mot, la carte ayant simplement changé d'heure
+ * quelque part plus bas. Le succès part maintenant vers la région `aria-live` du
+ * layout (`account-announcement.tsx`), qui survit à cette navigation et n'affiche
  * l'annonce qu'à l'arrivée.
+ *
+ * ## Le geste porte le mot du CDC, du lien jusqu'au bouton (#749)
+ *
+ * Une même action s'écrivait de deux façons : le lien de la carte dit
+ * « Reporter », le titre de cet écran « Reporter mon rendez-vous », et son bouton
+ * disait « Déplacer au … ». Le CDC nomme l'action **report** — §1.4
+ * (« réservation/report/annulation ») et §2.4 (« création, report, annulation,
+ * no-show ») —, et c'est donc le bouton qui s'aligne : « Reporter au … ».
+ *
+ * Le bouton nomme toujours l'**effet** et non le geste tant que rien n'est
+ * retenu — « Choisissez un créneau » dit ce qui manque, comme
+ * `docs/design/appointments/wireframes.md` le demande d'un CTA désactivé.
+ *
+ * Reste l'**état** d'un rendez-vous reporté, la pastille « Déplacé » : elle est
+ * tenue par `lib/appointment-status.ts` (`RESCHEDULED_LABEL`), que le
+ * back-office lit aussi depuis #917. Elle sort de l'empreinte de ce ticket et
+ * n'a pas été touchée.
  */
 interface RescheduleFormProps {
   readonly tenantSlug: string;
@@ -375,7 +392,7 @@ export function RescheduleForm({
         >
           {chosen === null
             ? 'Choisissez un créneau'
-            : `Déplacer au ${formatDateTimeInTimeZone(chosen, timeZone)}`}
+            : `Reporter au ${formatDateTimeInTimeZone(chosen, timeZone)}`}
         </Button>
         <Link className="spa-account__nav-link" href={accountPath(tenantSlug)}>
           Renoncer au report
