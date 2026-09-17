@@ -13,6 +13,7 @@ import {
   type Service,
   type ServiceStaffMember,
   type TimeZone,
+  type UtcInstant,
 } from '@spa/shared';
 import Link from 'next/link';
 import {
@@ -57,7 +58,7 @@ import {
   CATALOG_EMPTY_DESCRIPTION,
   CATALOG_EMPTY_TITLE,
 } from '@/lib/admin/calendar-start';
-import { formatMoney } from '@/lib/format';
+import { formatDateTimeInTimeZone, formatMoney } from '@/lib/format';
 
 import {
   cancelDeskAppointmentAction,
@@ -140,6 +141,15 @@ import { NotificationStatusList } from './notification-status-list';
  * grille inerte, donc interdirait de cliquer un autre créneau sans refermer —
  * un geste que ce composant sait faire (voir la `key` du tiroir, côté planning).
  * Aucun voile n'est posé pour la même raison : il avalerait ces clics-là.
+ *
+ * ## Ce qu'est devenu le rendez-vous se lit aussi — #756
+ *
+ * Le tiroir montrait le statut et rien d'autre : un rendez-vous annulé s'y
+ * annonçait « annulé », sans dire **quand** ni **pourquoi**, alors que la
+ * colonne du motif est écrite depuis #40 et servie à cette route depuis. Une
+ * opératrice qui rappelle une cliente ne pouvait donc pas savoir, sans quitter
+ * l'écran, si l'annulation venait d'elle, d'un empêchement du salon, ou d'un
+ * déplacement. Voir `AppointmentCancellation`, au bas de ce fichier.
  *
  * ## La note du rendez-vous se lit en édition — #757
  *
@@ -778,6 +788,22 @@ export function AppointmentPanel({
           </div>
         )}
 
+        {/* Ce qu'est devenu le rendez-vous — #756.
+
+            Après les deux alertes, qui portent sur ce que l'opérateur vient de
+            tenter, et avant tout le reste : c'est ce qu'on cherche en ouvrant un
+            rendez-vous qui n'a pas eu lieu. Absent à la création, et sur un
+            rendez-vous qui suit son cours — il n'y a alors rien à raconter. */}
+        {editing === null ? null : (
+          <AppointmentCancellation
+            cancelledAt={editing.cancelledAt ?? null}
+            reason={editing.cancellationReason ?? null}
+            rescheduledFromId={editing.rescheduledFromId ?? null}
+            timeZone={timeZone}
+            titleId={`${formId}-annulation`}
+          />
+        )}
+
         {/* La question d'annulation, et le motif qui l'accompagne — #754.
 
             Dans le corps et non dans le pied : le motif est une saisie, et une
@@ -1129,6 +1155,115 @@ export function AppointmentPanel({
         )}
       </div>
     </aside>
+  );
+}
+
+/**
+ * Ce qu'est devenu un rendez-vous qui n'a pas suivi son cours — #756.
+ *
+ * ## Le constat de l'audit
+ *
+ * L'espace client distingue quatre sorties — « Déplacé », « Annulé par vous »,
+ * « Annulé par le salon », « Non honoré » — là où le back-office n'affichait
+ * qu'un mot, « annulé », et jamais le motif. Le salon ne pouvait donc pas dire,
+ * dans son propre agenda, pourquoi un créneau lui était revenu : la colonne est
+ * écrite depuis #40, servie à cette route depuis #444, et aucun écran ne la
+ * lisait. C'est ce bloc qui la lit.
+ *
+ * ## Ce qu'il dit, et ce qu'il se garde de dire
+ *
+ * Il dit **quand** l'annulation a eu lieu et **pourquoi**, quand un motif a été
+ * consigné, et il signale un rendez-vous **né d'un report**.
+ *
+ * Il ne dit **pas** qui a annulé, et ce n'est pas un oubli : `appointmentSchema`
+ * — la ligne d'agenda du back-office — ne porte pas `cancelledBy`. Seule la
+ * sortie du parcours public le porte (`bookedAppointmentSchema`), et c'est
+ * précisément ce qui permet à `appointment-status.ts` d'écrire « Déplacé »
+ * quand il est nul. Tant que le contrat de l'agenda ne l'expose pas, un motif
+ * absent couvre deux cas que rien ne sépare ici — un report, et une annulation
+ * sans explication. Le bloc s'en tient donc au constat, plutôt que d'affirmer
+ * l'un des deux : « aucun motif consigné » est vrai des deux, « déplacé » ne
+ * l'est que d'un.
+ *
+ * ## Le report se dit par le successeur, jamais par l'origine
+ *
+ * `rescheduledFromId` est porté par le rendez-vous **créé**, pas par celui qu'il
+ * remplace (`rescheduleAppointmentRequestSchema`). Ouvrir le successeur apprend
+ * donc qu'il vient d'un déplacement ; ouvrir l'origine n'apprend rien de tel, et
+ * c'est l'autre moitié du même manque de contrat.
+ *
+ * ## Aucune feuille de style n'est ajoutée
+ *
+ * Même composition que `AppointmentNote` juste en dessous : `spa-admin-notes`,
+ * la présentation d'une note du design system, déjà chargée par le layout du
+ * back-office (`styles/admin/index.css`). Un bloc de trace et un bloc de note se
+ * lisent de la même façon — une méta, un corps —, et leurs **libellés** les
+ * distinguent, ce qui est la seule distinction qui survive à une impression en
+ * gris (WCAG 1.4.1).
+ */
+function AppointmentCancellation({
+  cancelledAt,
+  reason,
+  rescheduledFromId,
+  timeZone,
+  titleId,
+}: {
+  /** Quand la ligne est passée `cancelled`, ou `null` — le contrat omet le champ. */
+  readonly cancelledAt: UtcInstant | null;
+  /** Le motif écrit au comptoir ou par la cliente, ou `null`. */
+  readonly reason: string | null;
+  /** Le rendez-vous que celui-ci remplace, s'il est né d'un report. */
+  readonly rescheduledFromId: string | null;
+  readonly timeZone: TimeZone;
+  readonly titleId: string;
+}) {
+  // Rien à raconter sur un rendez-vous qui suit son cours, et le dire serait
+  // pire que se taire : un bloc « aucune annulation » sur les neuf rendez-vous
+  // sur dix qui se déroulent normalement noierait celui qui compte.
+  if (cancelledAt === null && rescheduledFromId === null) {
+    return null;
+  }
+
+  return (
+    <section aria-labelledby={titleId} className="spa-admin-notes">
+      <h3 className="spa-admin__section-title" id={titleId}>
+        {cancelledAt === null ? 'Report' : 'Annulation'}
+      </h3>
+
+      <ul className="spa-admin-notes__list">
+        {rescheduledFromId === null ? null : (
+          <li className="spa-admin-notes__item">
+            <div className="spa-admin-notes__meta">
+              <span>Né d’un report</span>
+            </div>
+            <p className="spa-admin-notes__body">
+              Ce rendez-vous en remplace un autre, déplacé. Le rendez-vous d’origine est resté au
+              planning, à son heure initiale, marqué annulé.
+            </p>
+          </li>
+        )}
+
+        {cancelledAt === null ? null : (
+          <li className="spa-admin-notes__item">
+            <div className="spa-admin-notes__meta">
+              {/* L'instant est ramené au fuseau du salon, jamais à celui du
+                  navigateur : une annulation lue depuis un autre fuseau
+                  s'afficherait au mauvais jour (CLAUDE.md, « tout est stocké en
+                  UTC, converti à l'affichage selon le fuseau du tenant »). */}
+              <span>Annulé le {formatDateTimeInTimeZone(cancelledAt, timeZone)}</span>
+            </div>
+            {reason === null || reason.trim() === '' ? (
+              <p className="spa-admin-notes__body">
+                Aucun motif n’a été consigné. Un report n’en laisse pas non plus : le rendez-vous a
+                pu être déplacé plutôt qu’abandonné.
+              </p>
+            ) : (
+              <p className="spa-admin-notes__body">{reason}</p>
+            )}
+          </li>
+        )}
+      </ul>
+    </section>
   );
 }
 
