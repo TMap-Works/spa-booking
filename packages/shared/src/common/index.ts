@@ -11,12 +11,29 @@ export {
   passwordSchema,
   phoneSchema,
   reasonSchema,
+  resourceSlugSchema,
   slugSchema,
   storedPhoneSchema,
   submittedPasswordSchema,
   uuidSchema,
 } from './identifiers';
-export type { E164Phone, Email, Phone, Slug, Uuid } from './identifiers';
+export type { E164Phone, Email, Phone, ResourceSlug, Slug, Uuid } from './identifiers';
+
+export {
+  DNS_LABEL_PATTERN,
+  TENANT_URL_MODES,
+  canHostTenantSubdomain,
+  isReservedTenantSlug,
+  isTenantSubdomainLabel,
+  resolveTenantUrlMode,
+  tenantBaseHost,
+  tenantPublicUrl,
+} from './tenant-url';
+export type {
+  ResolvedTenantUrlMode,
+  TenantPublicUrlOptions,
+  TenantUrlMode,
+} from './tenant-url';
 
 export {
   AMOUNT_MINOR_MAX,

@@ -123,7 +123,12 @@ const PARIS: AppointmentMessageContext = {
   cancelledBy: null,
 };
 
-const CANCEL_URL = 'https://reservation.test/maison-lotus/compte';
+/**
+ * Sur sous-domaine depuis #837 : un salon est servi sur `{slug}.{domaine}`
+ * (arbitrage du PO du 16/09/2026, #832). Les cas de repli par chemin et de mode
+ * forcé vivent dans `tenant-subdomain-links.spec.ts`.
+ */
+const CANCEL_URL = 'https://maison-lotus.reservation.test/compte';
 
 describe('notifications — l’heure est celle du salon, jamais UTC', () => {
   it('convertit l’instant UTC au fuseau du tenant', () => {
@@ -216,7 +221,7 @@ describe('notifications — le lien d’annulation', () => {
     expect(text).toContain(CANCEL_URL);
   });
 
-  it('se compose depuis l’origine du front et le slug de l’établissement', () => {
+  it('se compose depuis l’origine du front et le sous-domaine de l’établissement', () => {
     expect(cancellationUrl('https://reservation.test', 'maison-lotus')).toBe(CANCEL_URL);
   });
 

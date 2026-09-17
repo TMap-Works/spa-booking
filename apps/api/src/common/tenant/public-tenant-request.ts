@@ -25,6 +25,13 @@
  * bonne façon d'en choisir un.
  */
 
+import {
+  DNS_LABEL_PATTERN,
+  SLUG_MAX_LENGTH,
+  isReservedTenantSlug,
+  tenantBaseHost,
+} from '@spa/shared';
+
 /** Segment qui ouvre l'espace d'URL public, juste après le préfixe et la version. */
 export const PUBLIC_ROUTE_SEGMENT = 'public';
 
@@ -53,39 +60,37 @@ const PUBLIC_PATH_PATTERN = new RegExp(
 );
 
 /**
- * Minuscules, chiffres et tirets simples — la même forme que `LoginDto`, et
- * celle que `slugSchema` fige dans le contrat partagé.
- */
-const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
-/** `Tenant.slug` est un `VARCHAR(63)` : au-delà, aucun établissement ne peut correspondre. */
-const SLUG_MAX_LENGTH = 63;
-
-/**
- * Étiquettes qu'un sous-domaine ne peut pas désigner comme établissement.
+ * ## Les noms réservés viennent du contrat partagé — #837
+ *
+ * `RESERVED_TENANT_SLUGS` et `DNS_LABEL_PATTERN` vivaient ici, en copies
+ * locales. Ils vivent désormais dans `@spa/shared`, et ce fichier les
+ * **importe** : la même liste sert à refuser la création d'un salon
+ * (`slugSchema`), à refuser sa résolution ici, et à ne pas router son
+ * sous-domaine côté web (#838). Trois copies d'une liste de noms se
+ * désynchronisent au premier ajout, et le symptôme — un salon créable puis
+ * injoignable — n'apparaît qu'en déployé.
  *
  * Sans cette liste, déployer l'API sur `api.exemple.test` alors que le front est
  * sur `exemple.test` ferait lire « établissement *api* » à chaque requête — donc
  * un désaccord avec le segment d'URL, donc **404 sur tout l'espace public**.
  * C'est un piège d'exploitation, pas une hypothèse : c'est la topologie normale
- * d'un déploiement.
+ * d'un déploiement, et `origin` s'y ajoute depuis l'ADR 0009, qui le réserve
+ * pour joindre l'équilibreur derrière le CDN.
  *
- * Elle ne s'applique qu'au sous-domaine. Un slug en chemin n'a pas le même
- * risque — il ne peut pas être posé par la topologie de déploiement — et le
- * filtrer casserait un établissement légitimement nommé ainsi.
+ * ## Elle s'applique maintenant aux deux sources, et pas seulement à l'hôte
+ *
+ * Jusqu'à #837, un slug **en chemin** échappait à la liste, au motif qu'un
+ * établissement pouvait légitimement s'appeler ainsi. Ce motif est tombé avec le
+ * critère 2 : `slugSchema` refuse désormais ces noms à la création, donc aucun
+ * établissement légitime ne peut plus en porter un. Ce qui reste — une ligne
+ * écrite avant ce ticket — est précisément ce que le critère 5 demande de
+ * refuser : « une requête publique reçue sur un label réservé rend 404 », quelle
+ * que soit la source qui l'a désigné.
+ *
+ * `SLUG_MAX_LENGTH` vient de la même source : `Tenant.slug` est un
+ * `VARCHAR(63)`, et c'est aussi la borne d'un label DNS (RFC 1035 §2.3.4).
+ * Au-delà, aucun établissement ne peut correspondre.
  */
-const RESERVED_SUBDOMAINS: ReadonlySet<string> = new Set([
-  'admin',
-  'api',
-  'app',
-  'assets',
-  'cdn',
-  'dev',
-  'mail',
-  'staging',
-  'static',
-  'www',
-]);
 
 /** Ce que la requête dit de l'établissement — avant toute vérification. */
 export type PublicTenantDesignation =
@@ -93,7 +98,7 @@ export type PublicTenantDesignation =
   | { readonly kind: 'none' }
   /**
    * Requête publique dont aucun établissement ne peut être tiré : slug absent,
-   * mal formé, trop long, ou sources qui se contredisent. L'appelant répond
+   * mal formé, trop long, **réservé**, ou sources qui se contredisent. L'appelant répond
    * 404 — **le même** 404 qu'un slug inconnu, pour ne pas distinguer « mal
    * écrit » de « n'existe pas ».
    */
@@ -126,7 +131,7 @@ function normalizeSlug(raw: string): string | null {
   if (slug.length === 0 || slug.length > SLUG_MAX_LENGTH) {
     return null;
   }
-  return SLUG_PATTERN.test(slug) ? slug : null;
+  return DNS_LABEL_PATTERN.test(slug) ? slug : null;
 }
 
 /**
@@ -163,19 +168,19 @@ function hostnameOf(value: string | undefined): string | null {
  *
  * `www.` est retiré : le front servi sur `www.exemple.test` n'empêche pas
  * `salon-des-lilas.exemple.test` de désigner un salon.
+ *
+ * ## Une seule règle pour lire et pour écrire — #837
+ *
+ * Le calcul est délégué à `tenantBaseHost` de `@spa/shared`, qui sert aussi à
+ * **composer** l'adresse publique d'un salon (`tenantPublicUrl`, le lien
+ * d'annulation des e-mails). Deux implémentations de « l'hôte de base » — l'une
+ * qui lit, l'autre qui écrit — finiraient par diverger sur le `www.`, et le
+ * symptôme serait un lien d'e-mail que le middleware ne sait pas relire.
+ * `publicBaseHost` reste le nom sous lequel l'API l'appelle : c'est lui qui dit
+ * *à quoi* la valeur sert de ce côté-ci.
  */
 export function publicBaseHost(appUrl: string): string | null {
-  let host: string;
-  try {
-    host = new URL(appUrl).hostname;
-  } catch {
-    return null;
-  }
-  const base = hostnameOf(host);
-  if (base === null) {
-    return null;
-  }
-  return base.startsWith('www.') ? base.slice('www.'.length) : base;
+  return tenantBaseHost(appUrl);
 }
 
 /**
@@ -203,7 +208,7 @@ export function readSubdomainSlug(host: string | undefined, baseHost: string | n
   }
 
   const slug = normalizeSlug(label);
-  if (slug === null || RESERVED_SUBDOMAINS.has(slug)) {
+  if (slug === null || isReservedTenantSlug(slug)) {
     return null;
   }
   return slug;
@@ -237,8 +242,12 @@ export function describePublicTenantRequest(
       : { kind: 'slug', slug: subdomainSlug, source: 'subdomain' };
   }
 
+  // Un label réservé ne désigne aucun établissement, d'où qu'il vienne
+  // (critère 5 de #837). Le refuser **ici** plutôt qu'à la résolution en base
+  // est ce qui le fait rendre 404 même pour une ligne écrite avant que
+  // `slugSchema` ne refuse ces noms à la création.
   const pathSlug = normalizeSlug(rawSegment);
-  if (pathSlug === null) {
+  if (pathSlug === null || isReservedTenantSlug(pathSlug)) {
     return { kind: 'unresolvable' };
   }
 

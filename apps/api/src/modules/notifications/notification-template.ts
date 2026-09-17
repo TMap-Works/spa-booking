@@ -574,7 +574,12 @@ export const SMS_REFERENCE_VARIABLES: TemplateVariables = {
   // Les deux espaces sont écrites en échappement : invisibles à l'œil dans le
   // fichier, ce sont pourtant elles qui décident de l'encodage.
   prix: '1\u202f250,00\u00a0MGA',
-  lien_annulation: 'https://reservation.spa-booking.app/maison-lotus/compte',
+  // Sur sous-domaine depuis #837, comme le lien que compose `cancellationUrl`.
+  // La mesure ne bouge pas d'un caractère — le slug change de place, pas de
+  // longueur, et le point qui le rattache au domaine remplace exactement la
+  // barre oblique qui l'en séparait —, mais un exemple resté sur l'ancienne
+  // forme aurait fini recopié dans un modèle de salon.
+  lien_annulation: 'https://maison-lotus.reservation.spa-booking.app/compte',
   // La plus longue des trois formulations que `cancellationOrigin` sait rendre :
   // mesurer la plus courte aurait annoncé un segment à un salon dont l'avis
   // d'annulation en coûte deux dès qu'une annulation vient du système.

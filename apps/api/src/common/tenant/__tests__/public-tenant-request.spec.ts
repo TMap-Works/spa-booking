@@ -1,3 +1,5 @@
+import { RESERVED_TENANT_SLUGS } from '@spa/shared';
+
 import { API_DEFAULT_VERSION, API_PREFIX } from '../../../bootstrap';
 import {
   describePublicTenantRequest,
@@ -94,6 +96,36 @@ describe('describePublicTenantRequest', () => {
       expect(describePublicTenantRequest(url, undefined, BASE)).toEqual({ kind: 'unresolvable' });
     });
 
+    it.each(RESERVED_TENANT_SLUGS)(
+      '« %s » en segment d’URL → refus, comme en sous-domaine (critère 5 de #837)',
+      (label) => {
+        // Le critère ne distingue pas les deux sources : « une requête publique
+        // reçue sur un label réservé rend 404 ». Refuser ici — et non à la
+        // résolution en base — est ce qui le rend vrai même pour une ligne
+        // `tenants` écrite avant que `slugSchema` ne refuse ces noms.
+        expect(
+          describePublicTenantRequest(`/api/v1/public/${label}/services`, undefined, BASE),
+        ).toEqual({ kind: 'unresolvable' });
+      },
+    );
+
+    it('404 et non 403 : le refus est indistinct d’un slug inconnu', () => {
+      // `TenantScopeMiddleware.resolveOrRefuse` lève le même `NotFoundError`
+      // pour les cinq refus. Un 403 confirmerait qu'un établissement porte ce
+      // nom (tenant-isolation §4).
+      const reserve = describePublicTenantRequest('/api/v1/public/www', undefined, BASE);
+      const inconnu = describePublicTenantRequest('/api/v1/public/salon_inconnu', undefined, BASE);
+      expect(reserve).toEqual(inconnu);
+    });
+
+    it('un nom réservé n’est pas un préfixe : `api-beaute` reste un salon', () => {
+      expect(describePublicTenantRequest('/api/v1/public/api-beaute', undefined, BASE)).toEqual({
+        kind: 'slug',
+        slug: 'api-beaute',
+        source: 'path',
+      });
+    });
+
     it('accepte exactement 63 caractères — la borne de `Tenant.slug`', () => {
       const slug = 'a'.repeat(63);
       expect(describePublicTenantRequest(`/api/v1/public/${slug}`, undefined, BASE)).toEqual({
@@ -156,15 +188,30 @@ describe('readSubdomainSlug', () => {
     expect(readSubdomainSlug(host, BASE)).toBeNull();
   });
 
-  it.each(['api', 'www', 'app', 'admin', 'staging', 'static', 'assets', 'cdn', 'dev', 'mail'])(
+  it.each(RESERVED_TENANT_SLUGS)(
     '« %s » est réservé : la topologie de déploiement ne désigne pas un salon',
     (label) => {
       // Sans cette liste, déployer l'API sur `api.exemple.test` ferait lire
       // « établissement *api* » à chaque requête — donc un désaccord avec le
       // slug d'URL, donc 404 sur tout l'espace public, et seulement en déployé.
+      //
+      // La liste est **celle du contrat partagé** depuis #837, et cette suite
+      // l'énumère plutôt que d'en recopier un échantillon : un nom ajouté à
+      // `RESERVED_TENANT_SLUGS` est exercé ici sans qu'on ait à y penser, et un
+      // nom retiré fait tomber le cas qui le couvrait.
       expect(readSubdomainSlug(`${label}.${BASE}`, BASE)).toBeNull();
     },
   );
+
+  it('`origin` en particulier — la composition de production s’en sert pour joindre l’ALB', () => {
+    // ADR 0009 et `docs/runbooks/mise-en-production.md` : le CDN joint
+    // l'équilibreur sur `origin.{domaine}`. Sans ce nom dans la liste, chaque
+    // requête que le CDN relaie lirait « établissement *origin* ».
+    expect(readSubdomainSlug(`origin.${BASE}`, BASE)).toBeNull();
+    expect(describePublicTenantRequest('/api/v1/public', `origin.${BASE}`, BASE)).toEqual({
+      kind: 'unresolvable',
+    });
+  });
 
   it('ne lit rien sans domaine de base connu', () => {
     // C'est la borne qui empêche le DNS de l'équilibreur de charge — dont la

@@ -1,3 +1,5 @@
+import { tenantPublicUrl, type TenantUrlMode } from '@spa/shared';
+
 import {
   SMS_TENANT_NAME_MAX,
   capSmsBody,
@@ -128,9 +130,29 @@ export function formatMoney(amountMinor: number, currency: string): string {
  * l'espace client existe déjà et authentifie. Un lien d'annulation directe est
  * une décision de conception à part entière ; elle appartient à son issue, pas à
  * une ligne de modèle.
+ *
+ * ## Le sous-domaine, et le repli par chemin — #837
+ *
+ * L'arbitrage du PO du 16/09/2026 sert chaque salon sur `{slug}.{domaine}`
+ * (#832) : le lien devient `https://maison-lotus.exemple.test/compte` là où il
+ * était `https://exemple.test/maison-lotus/compte`. La composition est déléguée
+ * à `tenantPublicUrl` du contrat partagé, qui applique à l'écriture la règle
+ * d'hôte de base que `publicBaseHost` applique à la lecture — sans quoi un lien
+ * d'e-mail pourrait tomber sur un hôte que le middleware ne sait pas relire.
+ *
+ * `mode` vaut `auto` par défaut, et c'est ce qui rend les environnements sans
+ * sous-domaine sûrs sans configuration : sur `http://127.0.0.1:3001` ou
+ * `http://localhost:3000`, aucun `maison-lotus.127.0.0.1` ne se résout, et le
+ * constructeur retombe de lui-même sur la forme par chemin. Un e-mail de recette
+ * reste donc cliquable. `PUBLIC_TENANT_URL_MODE` permet de forcer l'un ou
+ * l'autre — voir `config/env.schema.ts`.
  */
-export function cancellationUrl(appBaseUrl: string, tenantSlug: string): string {
-  return `${appBaseUrl.replace(/\/+$/, '')}/${encodeURIComponent(tenantSlug)}/compte`;
+export function cancellationUrl(
+  appBaseUrl: string,
+  tenantSlug: string,
+  mode: TenantUrlMode = 'auto',
+): string {
+  return tenantPublicUrl(tenantSlug, '/compte', { baseUrl: appBaseUrl, mode });
 }
 
 /** Le nom d'usage de la cliente, tel qu'un message l'emploie. */

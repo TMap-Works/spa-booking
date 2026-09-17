@@ -20,7 +20,7 @@ import { z } from 'zod';
 import {
   displayNameSchema,
   longTextSchema,
-  slugSchema,
+  resourceSlugSchema,
   uuidSchema,
 } from '../common/identifiers';
 import { nonNegativeMoneySchema } from '../common/money';
@@ -77,7 +77,7 @@ const occupiedMinutesSchema = z
  */
 export const serviceCategorySchema = z.object({
   id: uuidSchema,
-  slug: slugSchema,
+  slug: resourceSlugSchema,
   name: displayNameSchema,
   description: longTextSchema.nullable(),
   isActive: z.boolean(),
@@ -101,7 +101,7 @@ export type ServiceCategorySummary = z.infer<typeof serviceCategorySummarySchema
 export const createServiceCategoryRequestSchema = z
   .object({
     name: displayNameSchema,
-    slug: slugSchema.optional(),
+    slug: resourceSlugSchema.optional(),
     description: longTextSchema.optional(),
   })
   .strict();
@@ -128,7 +128,7 @@ export type UpdateServiceCategoryRequest = z.infer<typeof updateServiceCategoryR
 /** Prestation vendue par l'établissement. */
 export const serviceSchema = z.object({
   id: uuidSchema,
-  slug: slugSchema,
+  slug: resourceSlugSchema,
   name: displayNameSchema,
   description: longTextSchema.nullable(),
   /**
@@ -242,7 +242,7 @@ export type ServiceSummary = z.infer<typeof serviceSummarySchema>;
 export const createServiceRequestSchema = z
   .object({
     name: displayNameSchema,
-    slug: slugSchema.optional(),
+    slug: resourceSlugSchema.optional(),
     description: longTextSchema.optional(),
     /** Rubrique du catalogue, par identifiant. Absent : prestation non classée. */
     categoryId: uuidSchema.optional(),

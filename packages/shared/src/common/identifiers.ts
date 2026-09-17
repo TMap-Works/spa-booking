@@ -21,6 +21,7 @@ import {
   REASON_MAX_LENGTH,
   SLUG_MAX_LENGTH,
 } from '../constants/limits';
+import { DNS_LABEL_PATTERN, isReservedTenantSlug } from './tenant-url';
 
 /**
  * Motif d'un UUID **version 4** — quatrième groupe préfixé de `4`, cinquième
@@ -78,21 +79,72 @@ export const uuidSchema = z
 export type Uuid = z.infer<typeof uuidSchema>;
 
 /**
- * Slug d'URL — label DNS minuscule, utilisé par les pages de réservation
- * publiques (`{slug}.exemple.test` ou `/{slug}`).
+ * Slug d'URL d'une ressource **à l'intérieur** d'un salon — rubrique du
+ * catalogue, prestation. Il vit dans un segment de chemin
+ * (`/{tenantSlug}/reservation#{slug}`), jamais dans un nom d'hôte.
  *
- * Ni tiret en tête ni tiret en fin : `-salon` n'est pas un label DNS valide, et
- * la page publique du tenant deviendrait injoignable.
+ * C'est la forme **du stock**, et c'est ce qui le distingue de `slugSchema`
+ * ci-dessous : les schémas de réponse du catalogue le portent, et toute réponse
+ * de l'API est revalidée côté front (`apps/web/lib/api-client.ts`), qui lève un
+ * `INTERNAL_ERROR` et fait échouer la page entière au moindre refus. Une règle
+ * ajoutée ici s'appliquerait donc rétroactivement à des lignes déjà écrites — le
+ * même piège que celui décrit sur `storedPhoneSchema`.
+ *
+ * Ni tiret en tête ni tiret en fin, ni deux tirets consécutifs : le motif est
+ * celui d'un label DNS (`DNS_LABEL_PATTERN`), parce qu'un slug de rubrique
+ * finit lui aussi dans une URL.
  */
-export const slugSchema = z
+export const resourceSlugSchema = z
   .string()
   .trim()
   .toLowerCase()
   .min(1)
   .max(SLUG_MAX_LENGTH)
-  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
+  .regex(DNS_LABEL_PATTERN, {
     message: 'slug attendu en minuscules, chiffres et tirets simples',
   });
+
+export type ResourceSlug = z.infer<typeof resourceSlugSchema>;
+
+/**
+ * Slug d'un **établissement** — l'étiquette qui le désigne dans son adresse
+ * publique, `maison-lotus.exemple.test` depuis l'arbitrage du 16/09/2026 (#832),
+ * `/maison-lotus` en repli.
+ *
+ * ## Un label DNS, et rien d'autre — #837
+ *
+ * Minuscules, chiffres et tirets simples, 63 caractères au plus, ni tiret en
+ * tête ni tiret en fin. Toutes ces règles tenaient déjà ; ce qui change est
+ * qu'elles ont maintenant une **raison opposable** : le slug n'est plus
+ * seulement un segment d'URL, c'est un nom d'hôte. Un slug que le DNS refuse est
+ * un salon qu'aucun navigateur ne peut joindre.
+ *
+ * Le préfixe `xn--` est refusé du même mouvement, sans règle supplémentaire : il
+ * demande deux tirets consécutifs, que le motif n'accepte pas. Voir
+ * `DNS_LABEL_PATTERN` pour ce qu'un slug Punycode aurait coûté.
+ *
+ * ## Les noms réservés
+ *
+ * `RESERVED_TENANT_SLUGS` est la liste, et elle vit à un seul endroit
+ * (`../constants/reserved-slugs`) précisément pour que la création, la
+ * résolution publique de l'API et le routage web de #838 ne puissent pas en
+ * avoir trois versions. Sans ce refus, un salon nommé `www` ou `origin` était
+ * créable — puis injoignable, la résolution publique refusant ces labels depuis
+ * #23. Le refuser à la création est ce qui transforme une panne silencieuse en
+ * message de formulaire.
+ *
+ * ## Pourquoi le catalogue ne prend pas ce schéma
+ *
+ * Une rubrique nommée `blog` n'a jamais menacé la délivrabilité d'un domaine :
+ * elle ne devient pas un nom d'hôte. Lui appliquer la liste aurait fait refuser,
+ * en **lecture**, une ligne parfaitement légitime écrite avant ce ticket — voir
+ * `resourceSlugSchema`.
+ */
+export const slugSchema = resourceSlugSchema.refine((value) => !isReservedTenantSlug(value), {
+  // Le message ne cite pas la valeur : il s'affiche sous le champ qui la porte,
+  // où l'utilisateur la relit déjà.
+  message: 'ce nom est réservé par la plateforme — choisissez-en un autre',
+});
 
 export type Slug = z.infer<typeof slugSchema>;
 
