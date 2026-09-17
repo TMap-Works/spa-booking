@@ -88,6 +88,9 @@ export {
 } from './receipt';
 export type { LegalIdType } from './receipt';
 
+export { RESERVED_TENANT_SLUGS } from './reserved-slugs';
+export type { ReservedTenantSlug } from './reserved-slugs';
+
 export {
   STAFF_ROLES,
   USER_ROLE_RANK,

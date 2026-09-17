@@ -45,6 +45,12 @@ const EXPECTED_EXPORTS = [
   'calendarDaysBetween',
   'uuidSchema',
   'emailSchema',
+  'slugSchema',
+  'resourceSlugSchema',
+  'tenantPublicUrl',
+  'tenantBaseHost',
+  'isReservedTenantSlug',
+  'TENANT_URL_MODES',
   'paginationMeta',
   'paginatedSchema',
   // constants
@@ -56,6 +62,7 @@ const EXPECTED_EXPORTS = [
   'PAYMENT_STATUSES',
   'MAX_AVAILABILITY_RANGE_DAYS',
   'MAX_APPOINTMENT_RANGE_DAYS',
+  'RESERVED_TENANT_SLUGS',
   // errors
   'ERROR_CODES',
   'isKnownErrorCode',

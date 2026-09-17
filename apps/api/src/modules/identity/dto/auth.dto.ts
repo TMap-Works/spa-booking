@@ -37,7 +37,7 @@ import { USER_ROLES } from '../roles';
  *
  * | Champ | Le DTO validait | Le contrat valide | Verdict |
  * |---|---|---|---|
- * | `tenantSlug` | `@Trim()` + minuscules + `@MaxLength(63)` + le motif de slug | `slugSchema` — les mêmes normalisations, le même motif, la même borne | identique |
+ * | `tenantSlug` | `@Trim()` + minuscules + `@MaxLength(63)` + le motif de slug | `slugSchema` — les mêmes normalisations, le même motif, la même borne | resserré depuis #837 : `slugSchema` refuse en plus les noms réservés à la plateforme (`www`, `api`, `origin`…). Aucun établissement ne peut en porter, et la résolution publique les rend déjà 404 : un corps qui en nomme un est refusé à la frontière plutôt qu'en `INVALID_CREDENTIALS` |
  * | `email` | `@IsEmail()` + `@MaxLength(320)` | `emailSchema` — `.trim().toLowerCase()`, `.max(254)`, `.email()` | identique **en refus** : validator.js porte déjà les 254 octets de la RFC 5321 en dur, et la borne de 320 (la largeur de la colonne) n'était donc jamais atteinte. La canonisation, elle, passe du service à la frontière — `normalizeEmail` y était déjà appliquée avant toute lecture |
  * | `password` (connexion) | `@MaxLength(200)` | `submittedPasswordSchema` — `.min(1).max(128)` | resserré, dans le sens autorisé : aucun mot de passe légitime ne dépasse 72 octets, puisque c'est là que bcrypt s'arrête |
  * | `password` (inscription) | `@MinLength(12)` + `@MaxLength(72)` | `passwordSchema` — `.min(12).max(128)` | **le seul écart de fond**, et il va dans le sens interdit : 128 relâcherait la borne de 72. Voir le `.extend()` ci-dessous |
