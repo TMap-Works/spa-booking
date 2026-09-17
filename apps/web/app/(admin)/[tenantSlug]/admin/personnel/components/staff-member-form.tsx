@@ -36,9 +36,9 @@ import { useAdminSessionRenewal } from '../../components/use-admin-session-renew
  * connecter pour voir son propre planning. Créer les deux d'un même geste
  * paraîtrait plus court, et coûterait la distinction : il faudrait décider à la
  * place de la gérante si la personne a un accès, et on ne saurait plus créer une
- * fiche pour une collègue déjà invitée. L'invitation est juste au-dessous sur
- * l'écran ; l'enchaînement se fait en deux temps, ce qui est aussi l'ordre dans
- * lequel les choses arrivent au salon.
+ * fiche pour une collègue déjà invitée. L'invitation est à un clic — la barre
+ * d'outils de cet écran la porte (#766) ; l'enchaînement se fait en deux temps,
+ * ce qui est aussi l'ordre dans lequel les choses arrivent au salon.
  *
  * ## La liste des comptes n'est pas filtrée, et c'est assumé
  *
@@ -219,13 +219,14 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
     });
   }
 
-  // `spa-admin-form` borne la colonne de saisie (#630), comme le formulaire
-  // d'invitation juste en dessous.
+  // `spa-admin-form` borne la colonne de saisie (#630).
+  //
+  // La carte n'a plus de titre à elle depuis #766 : le formulaire a son propre
+  // écran, dont le `<h1>` porte exactement le libellé de l'action qui y mène —
+  // « Créer une fiche praticien ». Le redire ici ferait deux titres pour une
+  // seule chose, ce que /catalogue/nouveau ne fait pas non plus.
   return (
-    <section className="spa-admin__section spa-admin-form" aria-labelledby="fiche-praticien-titre">
-      <h2 className="spa-admin__section-title" id="fiche-praticien-titre">
-        Créer une fiche praticien
-      </h2>
+    <section className="spa-admin__section spa-admin-form">
       <p className="spa-admin-toolbar__hint">
         Rattachez un compte du personnel à un agenda. Tant qu’une personne n’a pas sa fiche, aucune
         prestation ne peut lui être affectée et le parcours de réservation ne propose aucun créneau.
@@ -250,7 +251,12 @@ export function StaffMemberForm({ tenantSlug, accounts }: StaffMemberFormProps) 
         error={fieldErrors.userId}
         emptyLabel={
           accounts.length === 0
-            ? 'Aucun compte du personnel à rattacher. Invitez d’abord une personne ci-dessous.'
+            ? // Le geste nommé ici doit être celui que la personne qui lit peut
+              // faire. « Inviter un membre » n'est offert qu'au rang
+              // administrateur — sur cet écran comme sur la liste —, si bien
+              // qu'y renvoyer une gérante la laisserait chercher un bouton que
+              // son rang ne fait pas apparaître (#619).
+              'Aucun compte du personnel à rattacher. Un administrateur du salon doit d’abord inviter la personne.'
             : undefined
         }
         hint="Le compte porte l’accès au back-office ; la fiche porte l’agenda."

@@ -201,17 +201,15 @@ export function StaffInviteForm({ tenantSlug }: { readonly tenantSlug: string })
     });
   }
 
-  // `spa-admin-form` borne la colonne de saisie (#630). Les deux blocs qui
-  // précèdent sur l'écran — praticiens et comptes — gardent, eux, la largeur de
-  // la zone de contenu : ce sont une liste et un tableau, dont la lecture
-  // profite de la place, là où cinq champs d'identité étirés sur 1 637 px n'en
-  // profitent pas.
+  // `spa-admin-form` borne la colonne de saisie (#630) : cinq champs d'identité
+  // étirés sur 1 637 px à 1920 px de fenêtre ne profitent pas de la place, là où
+  // les listes du personnel en profitent.
+  //
+  // La carte n'a plus de titre à elle depuis #766 : le formulaire a son propre
+  // écran, dont le `<h1>` reprend ce libellé. Le redire ici ferait deux titres
+  // pour une seule chose.
   return (
-    <section className="spa-admin__section spa-admin-form" aria-labelledby="invitation-titre">
-      <h2 className="spa-admin__section-title" id="invitation-titre">
-        Inviter un membre du personnel
-      </h2>
-
+    <section className="spa-admin__section spa-admin-form">
       {formError === null ? null : (
         <Notification tone="danger" title="Invitation impossible">
           <p>{formError}</p>

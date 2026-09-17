@@ -30,3 +30,29 @@ export function adminStaffPath(tenantSlug: string): string {
 export function adminStaffMemberPath(tenantSlug: string, staffId: string): string {
   return `${adminStaffPath(tenantSlug)}/${encodeURIComponent(staffId)}`;
 }
+
+/*
+ * Les deux gestes de l'écran, et pourquoi ils ont chacun une adresse (#766).
+ *
+ * L'audit de conception a relevé que /personnel n'offrait aucune action en tête
+ * d'écran : ses deux boutons accentués étaient ceux de deux formulaires
+ * déployés en permanence, à 700 et 1 050 px de défilement. La correction est
+ * celle que /catalogue tient déjà — une barre d'outils sous le titre, dont
+ * l'action accentuée **mène** au formulaire au lieu de le laisser traîner sous
+ * la liste.
+ *
+ * Les deux segments sont des mots et non des identifiants : aucune collision
+ * avec `/personnel/{staffId}`, dont le segment est un UUID, et Next fait de
+ * toute façon primer le segment statique sur le dynamique — c'est déjà ce qui
+ * fait cohabiter `/catalogue/nouveau` et `/catalogue/{serviceId}`.
+ */
+
+/** Créer une fiche praticien à partir d'un compte du personnel. */
+export function adminNewStaffMemberPath(tenantSlug: string): string {
+  return `${adminStaffPath(tenantSlug)}/nouveau`;
+}
+
+/** Inviter un compte du personnel — l'accès, pas l'agenda. */
+export function adminStaffInvitePath(tenantSlug: string): string {
+  return `${adminStaffPath(tenantSlug)}/inviter`;
+}
