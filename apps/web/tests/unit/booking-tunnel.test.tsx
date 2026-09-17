@@ -17,7 +17,7 @@ import type {
   CalendarDate,
   UtcInstant,
 } from '@spa/shared';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -617,5 +617,150 @@ describe('la barre de résumé collante (#735)', () => {
     // Et ce n'est pas une perte : le récapitulatif les redit tous, durée
     // comprise depuis ce même ticket.
     expect(screen.getByText('Durée')).toBeDefined();
+  });
+});
+
+/**
+ * L'indicateur d'étape, vu du tunnel (#740).
+ *
+ * `docs/design/appointments/wireframes.md` — « Structure commune à toutes les
+ * étapes » — lui demande deux choses : *« étape courante mise en avant »*, et
+ * *« permet de revenir à une étape déjà franchie (les étapes futures ne sont pas
+ * cliquables) »*. L'audit de conception n'en a trouvé aucune des deux : les cinq
+ * libellés sortaient à l'identique, et aucun ne se cliquait.
+ *
+ * Ce qui s'éprouve ici est donc l'**état** et la **navigation** — ce que le
+ * composant décide. La peinture qui s'y accroche est tenue ailleurs, par
+ * `tests/booking-step-indicator.test.mjs` : aucune feuille de style n'est
+ * chargée sous jsdom, et un `aria-current` de nouveau nu passerait ces
+ * assertions-ci sans broncher — c'est exactement la panne que l'audit a relevée.
+ */
+describe('l’indicateur d’étape (#740)', () => {
+  /** Les cinq rangées du fil, dans l'ordre du parcours. */
+  function fil(): HTMLElement[] {
+    return within(
+      screen.getByRole('list', { name: 'Étapes de la réservation' }),
+    ).getAllByRole('listitem');
+  }
+
+  /** Le libellé d'une rangée, débarrassé de ce que seul le lecteur d'écran entend. */
+  function libelle(element: Element): string {
+    return (element.textContent ?? '').replace('Revenir à l’étape ', '').trim();
+  }
+
+  /** Les étapes que le fil annonce comme courantes — une, normalement. */
+  function courantes(): string[] {
+    return fil()
+      .filter((etape) => etape.getAttribute('aria-current') === 'step')
+      .map(libelle);
+  }
+
+  /** Les étapes qu'un clic rouvre, dans l'ordre du fil. */
+  function rouvrables(): string[] {
+    return screen.queryAllByRole('button', { name: /^Revenir à l’étape / }).map(libelle);
+  }
+
+  it('désigne une étape courante, et une seule, à chaque étape', async () => {
+    const user = renderTunnel();
+
+    await waitFor(() => {
+      expect(courantes()).toEqual(['Prestation']);
+    });
+
+    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+
+    expect(courantes()).toEqual(['Créneau']);
+
+    await user.click(await screen.findByRole('button', { name: '09 h 00' }));
+
+    expect(courantes()).toEqual(['Coordonnées']);
+  });
+
+  it('ne rend cliquables que les étapes déjà franchies', async () => {
+    const user = renderTunnel();
+
+    // Première étape : rien derrière soi, donc rien à rouvrir.
+    await waitFor(() => {
+      expect(courantes()).toEqual(['Prestation']);
+    });
+    expect(rouvrables()).toEqual([]);
+
+    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+
+    expect(rouvrables()).toEqual(['Prestation']);
+
+    await user.click(await screen.findByRole('button', { name: '09 h 00' }));
+
+    // Ni l'étape courante, ni celles qui restent : le wireframe est explicite
+    // sur les secondes, et la première n'a nulle part où ramener.
+    expect(rouvrables()).toEqual(['Prestation', 'Créneau']);
+  });
+
+  it('ramène à l’étape cliquée sans rien faire perdre de la saisie', async () => {
+    const user = renderTunnel();
+    await allerJusquAuRecapitulatif(user, '09 h 00');
+
+    expect(courantes()).toEqual(['Récapitulatif']);
+
+    await user.click(screen.getByRole('button', { name: 'Revenir à l’étape Coordonnées' }));
+
+    // Le formulaire est rendu tel qu'il a été quitté : le fil est un raccourci,
+    // pas une remise à zéro.
+    expect(screen.getByLabelText(/Prénom/)).toHaveProperty('value', 'Camille');
+    expect(screen.getByLabelText(/Adresse e-mail/)).toHaveProperty(
+      'value',
+      'camille@example.test',
+    );
+    expect(courantes()).toEqual(['Coordonnées']);
+
+    // Et l'adresse suit, comme elle suit les boutons du bas (#733) : le fil
+    // n'ouvre pas un second chemin d'étape qui lui échapperait.
+    await waitFor(() => {
+      expect(query().get('etape')).toBe('coordonnees');
+    });
+  });
+
+  it('rend le focus à l’étape rouverte, que le bouton cliqué vient d’emporter', async () => {
+    const user = renderTunnel();
+    await allerJusquAuRecapitulatif(user, '09 h 00');
+
+    await user.click(screen.getByRole('button', { name: 'Revenir à l’étape Coordonnées' }));
+
+    // Le bouton cliqué n'existe plus : l'étape franchie est devenue l'étape
+    // courante, qui n'est pas un bouton. Sans rattrapage, le focus retomberait
+    // sur `<body>` et la tabulation repartirait du haut du document (skill
+    // web-frontend §7).
+    const [courante] = fil().filter((etape) => etape.getAttribute('aria-current') === 'step');
+
+    expect(document.activeElement).toBe(courante);
+  });
+
+  it('remonte jusqu’au calendrier, dont les créneaux sont rechargés', async () => {
+    const user = renderTunnel();
+    await allerJusquAuRecapitulatif(user, '09 h 00');
+
+    await user.click(screen.getByRole('button', { name: 'Revenir à l’étape Créneau' }));
+
+    // `SlotStep` est remonté, et interroge les disponibilités à son montage : la
+    // cliente ne choisit pas dans la liste d'il y a trois écrans.
+    expect(await screen.findByRole('button', { name: '09 h 00' })).toBeDefined();
+    expect(loadAvailabilityAction).toHaveBeenCalledTimes(2);
+  });
+
+  it('ne rouvre aucune étape une fois le rendez-vous pris', async () => {
+    bookAppointmentAction.mockResolvedValue({ ok: true, data: rendezVous() });
+
+    const user = renderTunnel();
+    await allerJusquAuRecapitulatif(user, '09 h 00');
+    await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
+    await screen.findByText('Votre rendez-vous est enregistré');
+
+    // L'écran terminal (#732) : `step` vaut `confirmation` quoi que porte le
+    // brouillon, et rouvrir une étape n'afficherait donc rien de neuf. Un bouton
+    // qui ne fait rien est pire que pas de bouton.
+    expect(courantes()).toEqual(['Confirmation']);
+    expect(rouvrables()).toEqual([]);
   });
 });

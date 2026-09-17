@@ -117,6 +117,13 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
    * `saveContact`.
    */
   const persistedDraftRef = useRef<BookingDraft>(emptyBookingDraft());
+  /**
+   * L'étape vient d'être rouverte depuis l'indicateur, et le focus est à
+   * rattraper (#740) — voir `goToFromProgress`.
+   */
+  const progressJumpRef = useRef(false);
+  /** La rangée de l'indicateur qui porte `aria-current`, cible de ce rattrapage. */
+  const currentProgressRef = useRef<HTMLLIElement | null>(null);
 
   // Relecture du brouillon. Ni l'URL ni `sessionStorage` ne sont lisibles au
   // rendu serveur : l'état de départ est donc toujours vierge, et l'étape réelle
@@ -379,6 +386,24 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
     setDraft((current) => ({ ...current, step: target }));
   }, []);
 
+  /**
+   * Le même geste, déclenché depuis l'indicateur d'étape (#740).
+   *
+   * Il se distingue de `goTo` par une seule chose : le bouton cliqué **cesse
+   * d'exister** au rendu suivant, l'étape franchie devenant l'étape courante,
+   * qui n'est pas un bouton. Sans rien de plus, le focus retomberait sur
+   * `<body>` et la navigation au clavier repartirait du haut du document — au
+   * moment précis où la visiteuse vient de désigner où elle voulait aller. Le
+   * drapeau dit à l'effet ci-dessous de le rattraper.
+   */
+  const goToFromProgress = useCallback(
+    (target: BookingStep) => {
+      progressJumpRef.current = true;
+      goTo(target);
+    },
+    [goTo],
+  );
+
   const onBooked = useCallback((appointment: BookedAppointment) => {
     setNotice(null);
     // Le rendez-vous sort de la réponse de l'API : à cet instant précis, et à
@@ -474,6 +499,32 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
     }
   }, [notice]);
 
+  /**
+   * Le focus suit l'étape rouverte depuis l'indicateur (#740).
+   *
+   * Même correction que celle de la notification juste au-dessus, et pour la
+   * même raison : le bouton cliqué disparaît avec son état — l'étape franchie
+   * devient l'étape courante, qui n'est pas un bouton —, et le focus retomberait
+   * sur `<body>`. Le parcours de réservation doit rester praticable sans souris
+   * (skill web-frontend §7).
+   *
+   * La cible est la rangée qui porte `aria-current="step"`, et non le contenu de
+   * l'étape : c'est l'élément qui dit *« étape courante, Coordonnées »*, la
+   * réponse exacte à ce que la visiteuse vient de demander. Elle reste ainsi
+   * dans l'indicateur, d'où la tabulation repart sur le formulaire qui suit.
+   *
+   * Posé sur `step` et non sur le drapeau : c'est le changement d'étape qui doit
+   * déclencher le rattrapage, et le drapeau ne fait que distinguer les étapes
+   * rouvertes depuis l'indicateur de toutes les autres — un bouton « Continuer »
+   * ne déplace pas le focus vers le fil des étapes.
+   */
+  useEffect(() => {
+    if (progressJumpRef.current) {
+      progressJumpRef.current = false;
+      currentProgressRef.current?.focus();
+    }
+  }, [step]);
+
   const zoneMention = hydrated ? timeZoneMention(tenant.timezone) : null;
 
   /**
@@ -503,6 +554,33 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
    */
   const showSummary = step === 'creneau' || step === 'coordonnees';
 
+  /**
+   * Le rang de l'étape affichée dans la séquence — ce qui sépare les étapes
+   * franchies de celles qui restent (#740).
+   *
+   * Il est calculé sur l'étape **affichée** et non sur celle du brouillon :
+   * `step` a déjà passé les rattrapages ci-dessus, et une prestation retirée du
+   * catalogue ramène l'écran — donc l'indicateur — à la première étape, sans
+   * laisser derrière lui quatre libellés cliquables qui ne mèneraient nulle part.
+   */
+  const rank = BOOKING_STEPS.indexOf(step);
+
+  /**
+   * Le tunnel est terminé : plus aucune étape ne se rouvre (#732, #740).
+   *
+   * Ce n'est pas une précaution d'ergonomie, c'est ce qui empêche un bouton
+   * mort : le rendez-vous pris, `step` vaut `confirmation` quoi que porte
+   * `draft.step`, et un `goTo('coordonnees')` déclenché depuis cet écran ne
+   * changerait rien à ce qui s'affiche.
+   *
+   * `wireframes.md` va plus loin à son étape 6 — « Plus d'indicateur d'étape ni
+   * de barre collante : le tunnel est terminé » : le fil ne devrait pas y être
+   * *rendu du tout*. Il l'est encore, et ce ticket ne le retire pas — l'écart
+   * précède ce diff, l'audit ne l'a pas relevé, et le supprimer déborderait
+   * d'un ticket qui ne porte que sur l'état et le retour en arrière.
+   */
+  const rewindable = step !== 'confirmation';
+
   return (
     // Ni `<main>` ni `<h1>` ici : le layout voisin porte les deux (#623). Le
     // tunnel n'est plus qu'un panneau dans une page, comme un écran de l'espace
@@ -518,19 +596,66 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
           ce rôle, l'`aria-label` ci-dessous ne nomme plus une liste et la
           séquence des étapes — toute l'information que ce fil transporte — n'est
           plus annoncée comme telle (styles/README.md §3). */}
-      <ol className="spa-card__meta" role="list" aria-label="Étapes de la réservation">
-        {BOOKING_STEPS.map((name, index) => (
-          <li key={name} aria-current={name === step ? 'step' : undefined}>
-            {STEP_LABELS[name]}
-            {/* Séparateur visuel, masqué à l'arbre d'accessibilité : la liste
-                ordonnée dit déjà la séquence, un lecteur d'écran n'a pas à
-                entendre un point médian entre chaque étape. Il est posé en fin
-                d'élément et non en tête du suivant : aucun marqueur n'est plus
-                rendu depuis le reset du socle, et le séparateur se rattache donc
-                à l'étape qu'il termine. */}
-            {index === BOOKING_STEPS.length - 1 ? null : <span aria-hidden="true"> · </span>}
-          </li>
-        ))}
+      <ol className="spa-booking__progress" role="list" aria-label="Étapes de la réservation">
+        {BOOKING_STEPS.map((name, index) => {
+          // Franchie, donc rouvrable : « l'indicateur d'étape montre la
+          // progression et permet de revenir à une étape déjà franchie (les
+          // étapes futures ne sont pas cliquables) » — wireframes.md,
+          // « Structure commune à toutes les étapes ».
+          const done = index < rank;
+          const current = name === step;
+
+          return (
+            <li
+              key={name}
+              className="spa-booking__progress-step"
+              /* Le seul porteur de l'état, à l'écran comme au lecteur
+                 d'écran : la feuille suit l'attribut plutôt qu'une classe
+                 `--active` qui pourrait en diverger — le motif de
+                 `admin/shell.css` et de `admin/client.css`. */
+              aria-current={current ? 'step' : undefined}
+              /* `tabIndex={-1}` rend la rangée courante focalisable par
+                 programme sans l'insérer dans l'ordre de tabulation — même
+                 usage que l'enveloppe de la notification, plus bas. C'est là
+                 que l'effet de rattrapage dépose le focus. */
+              tabIndex={current ? -1 : undefined}
+              ref={current ? currentProgressRef : undefined}
+            >
+              {/* La pastille est ce nœud-ci, et non le `<li>` : le trait qui
+                  suit l'étape appartient à la séquence et non à l'étape, et le
+                  laisser dans la boîte peinte étirerait l'aplat de l'étape
+                  courante jusque sous la suivante. */}
+              {done && rewindable ? (
+                <button
+                  type="button"
+                  className="spa-booking__progress-name spa-booking__progress-link"
+                  onClick={() => {
+                    goToFromProgress(name);
+                  }}
+                >
+                  {/* « Prestation » tout court nommerait mal un bouton : le
+                      libellé dit où l'on est, pas ce que le clic fait. La
+                      phrase entière est donnée au lecteur d'écran, l'œil se
+                      contentant du libellé et de la forme cliquable. */}
+                  <span className="spa-visually-hidden">Revenir à l’étape </span>
+                  {STEP_LABELS[name]}
+                </button>
+              ) : (
+                <span className="spa-booking__progress-name">{STEP_LABELS[name]}</span>
+              )}
+              {/* Le trait qui relie deux étapes — « ①──②──③ » du wireframe —,
+                  masqué à l'arbre d'accessibilité : la liste ordonnée dit déjà
+                  la séquence, un lecteur d'écran n'a pas à entendre un
+                  séparateur entre chaque étape. Il est posé en fin d'élément et
+                  non en tête du suivant : aucun marqueur n'est plus rendu depuis
+                  le reset du socle, et le trait se rattache donc à l'étape qu'il
+                  termine. */}
+              {index === BOOKING_STEPS.length - 1 ? null : (
+                <span className="spa-booking__progress-joint" aria-hidden="true" />
+              )}
+            </li>
+          );
+        })}
       </ol>
 
       {notice === null ? null : (
