@@ -61,8 +61,10 @@ describe('SalesService — composition d’un ticket', () => {
         ),
       );
 
-      expect(sale.subtotal).toEqual({ amountMinor: 7000, currency: 'EUR' });
-      expect(sale.total).toEqual({ amountMinor: 8400, currency: 'EUR' });
+      // 70,00 € TTC au catalogue : c'est le total, et le sous-total en est la
+      // part hors taxe — 58,33 € à 20 % (#816).
+      expect(sale.subtotal).toEqual({ amountMinor: 5833, currency: 'EUR' });
+      expect(sale.total).toEqual({ amountMinor: 7000, currency: 'EUR' });
     });
 
     it('relit le prix de l’article au rayon, pas dans la requête', async () => {
@@ -75,7 +77,7 @@ describe('SalesService — composition d’un ticket', () => {
         ),
       );
 
-      expect(sale.subtotal.amountMinor).toBe(3700);
+      expect(sale.total.amountMinor).toBe(3700);
     });
 
     it('fige sur la ligne le prix du jour de la vente, pas celui d’avant', async () => {
@@ -103,8 +105,10 @@ describe('SalesService — composition d’un ticket', () => {
         ),
       );
 
-      expect(premier.subtotal.amountMinor).toBe(1850);
-      expect(second.subtotal.amountMinor).toBe(1950);
+      // Les prix du catalogue sont TTC depuis #816 : c'est le **total** qui les
+      // reprend au centime près, le sous-total en étant la part hors taxe.
+      expect(premier.total.amountMinor).toBe(1850);
+      expect(second.total.amountMinor).toBe(1950);
       // Le ticket déjà émis n'a pas bougé.
       const relu = await inTenantA(() => service.byId(premier.id));
       expect(relu.items[0]?.unitAmount.amountMinor).toBe(1850);
@@ -130,7 +134,9 @@ describe('SalesService — composition d’un ticket', () => {
       );
 
       expect(sale.items.map((item) => item.kind)).toEqual(['SERVICE', 'PRODUCT', 'TAX']);
-      expect(sale.subtotal.amountMinor).toBe(7000 + 3700);
+      // Prix TTC du catalogue (#816) : le total est la somme de ce qui est
+      // affiché, et la ligne de taxe en est la ventilation.
+      expect(sale.total.amountMinor).toBe(7000 + 3700);
     });
 
     it('fige le libellé de chaque article sur sa ligne', async () => {
@@ -210,7 +216,11 @@ describe('SalesService — composition d’un ticket', () => {
         ),
       );
 
-      expect(sale.tax.amountMinor).toBe(2000);
+      // 100,00 € TTC à 20 % : 83,33 € HT et 16,67 € de TVA **comprise** (#816).
+      // Le total reste les 100,00 € affichés.
+      expect(sale.tax.amountMinor).toBe(1667);
+      expect(sale.subtotal.amountMinor).toBe(8333);
+      expect(sale.total.amountMinor).toBe(10_000);
       expect(sale.items.at(-1)).toMatchObject({ kind: 'TAX', serviceId: null, productId: null });
     });
 
@@ -231,10 +241,10 @@ describe('SalesService — composition d’un ticket', () => {
       );
 
       expect(sale.tip.amountMinor).toBe(500);
-      // La taxe reste assise sur le sous-total : un pourboire n'est pas une
-      // prestation vendue.
-      expect(sale.tax.amountMinor).toBe(2000);
-      expect(sale.total.amountMinor).toBe(12_500);
+      // La taxe s'extrait des seules lignes du catalogue : un pourboire n'est
+      // pas une prestation vendue, et entre au total sans être ventilé (#816).
+      expect(sale.tax.amountMinor).toBe(1667);
+      expect(sale.total.amountMinor).toBe(10_500);
     });
 
     it('n’ajoute aucune ligne de taxe dans un établissement sans taux', async () => {
@@ -329,7 +339,9 @@ describe('SalesService — composition d’un ticket', () => {
     });
 
     it('refuse un total qui déborde ce qu’une colonne de montant peut porter', async () => {
-      const article = repository.seedProduct({ tenantId: TENANT_A, amountMinor: 2_000_000 });
+      // 30,00 € × 1 000 : la ligne seule dépasse la borne, sans que la taxe ait
+      // à s'y ajouter — elle ne s'y ajoute plus depuis #816, elle s'en extrait.
+      const article = repository.seedProduct({ tenantId: TENANT_A, amountMinor: 3_000_000 });
 
       await expect(
         inTenantA(() =>
@@ -368,7 +380,7 @@ describe('SalesService — composition d’un ticket', () => {
       expect(catalog.serviceReads).toEqual({ byId: 0, byIds: 1 });
       expect(repository.productReads).toEqual({ byId: 0, byIds: 1 });
       // Et le total, lui, ne bouge pas d'un centime.
-      expect(sale.subtotal.amountMinor).toBe(5 * 7000 + 5 * 1000);
+      expect(sale.total.amountMinor).toBe(5 * 7000 + 5 * 1000);
       expect(sale.items.filter((item) => item.kind !== 'TAX')).toHaveLength(10);
     });
 
@@ -432,7 +444,7 @@ describe('SalesService — composition d’un ticket', () => {
       // le reçu, chacune à son rang, pour une seule lecture.
       expect(repository.productReads.byIds).toBe(1);
       expect(sale.items.filter((item) => item.kind === 'PRODUCT')).toHaveLength(2);
-      expect(sale.subtotal.amountMinor).toBe(4000);
+      expect(sale.total.amountMinor).toBe(4000);
     });
   });
 

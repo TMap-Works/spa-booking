@@ -15,6 +15,7 @@ notre périmètre PCI en SAQ A.
 | #62 | Le règlement en espèces, l’historique des ventes et celui des transactions — la matière du rapprochement |
 | #63 | Le remboursement total et partiel : l’ordre au prestataire, le cumul borné côté serveur, la trace « qui, quand, pourquoi » |
 | #410 | La consolidation de #57 et #58 : une seule `StripeConfig`, un seul fichier d’erreurs, un critère de découpage des dépôts, et la marque d’idempotence conditionnée à l’effet |
+| #816 | Les prix du catalogue sont **TTC** : la TVA s’en extrait au lieu de s’y ajouter, la ligne de taxe devient une ventilation, et un script reprend les tickets composés avant |
 
 À venir : le montage d’Elements côté tunnel (#59).
 
@@ -450,6 +451,93 @@ de base. Un taux fractionnaire aurait introduit un type inexact sur le chemin de
 l'argent ; le calcul reste une multiplication d'entiers suivie d'une division
 entière, exacte et reproductible.
 
+## Les prix du catalogue sont **TTC** (#816)
+
+C'est la règle la plus structurante du calcul d'un ticket, et celle que #816 a
+corrigée. Jusque-là, `composeSale` **ajoutait** la taxe au sous-total : les prix
+du catalogue étaient traités comme des prix hors taxes. Un soin annoncé 65,00 €
+dans le tunnel se facturait 78,00 € à la caisse, et le même rendez-vous réglé au
+comptoir n'encaissait que 65,00 € — la même prestation avait **deux prix** selon
+le chemin d'encaissement.
+
+En France, un prix annoncé au consommateur s'entend toutes taxes comprises
+(arrêté du 3 décembre 1987 relatif à l'information du consommateur sur les prix).
+Le prix du catalogue est donc le prix **dû**, et la TVA s'en **extrait** :
+
+```
+ht  = arrondi(ttc × 10 000 / (10 000 + taux))
+tva = ttc − ht
+```
+
+65,00 € à 20 % donnent 54,17 € HT et 10,83 € de TVA, dont la somme refait
+exactement les 65,00 € affichés.
+
+### Ce que veut dire chaque colonne de `sales`
+
+Les noms des colonnes n'ont pas changé ; le sens de deux d'entre elles, si. La
+table de référence est ici, et `pos.totals.ts` la répète au plus près du calcul.
+
+| Colonne | Ce qu'elle porte depuis #816 | Ce qu'elle portait avant |
+|---|---|---|
+| `subtotal_amount_minor` | la part **hors taxe** des lignes `SERVICE` et `PRODUCT` | la somme des prix affichés, tenue pour hors taxes |
+| `tax_amount_minor` | la taxe **comprise dans** ces prix — une ventilation | la taxe **ajoutée** à ce sous-total |
+| `tip_amount_minor` | le pourboire, hors taxe par nature — inchangé | idem |
+| `total_amount_minor` | ce que la cliente doit : la **somme des prix affichés**, plus le pourboire | la somme des prix affichés, plus la taxe, plus le pourboire |
+
+`sales_total_amount_minor_check` — `total = subtotal + tax + tip` — **tient telle
+quelle** : `subtotal + tax` valant désormais la somme des prix affichés, l'égalité
+reste vraie, et la contrainte n'a pas eu à bouger. C'est la raison pour laquelle
+#816 n'emporte aucune migration.
+
+### L'arrondi, et de quel côté il penche
+
+`netOf` divise en entiers, sans jamais former le quotient fractionnaire :
+`floor((2n + d) / 2d)`, où `d = 10 000 + taux`. Le doublement n'est pas une
+coquetterie — `d` peut être **impair** (un taux de 1 point de base suffit), et
+`d / 2` ne serait alors pas un entier.
+
+L'arrondi est **au plus proche, la demie au supérieur** : l'arrondi commercial
+usuel. Il porte sur la part hors taxe, jamais sur le total — la taxe étant
+obtenue **par différence** (`ttc − ht`), le prix que la cliente paie reste au
+centime près celui qui lui a été annoncé. Un demi-centime d'écart ne peut se
+déplacer qu'entre les deux parts d'un montant qui, lui, ne bouge pas.
+`pos.totals.spec.ts` l'exerce sur sept taux et huit montants.
+
+### La ligne `TAX` est une **ventilation**, pas un supplément
+
+Elle reste une ligne du ticket — payments-stripe §5 demande que la taxe ne soit
+jamais fondue dans un prix — mais elle se libelle désormais « dont TVA 20 % » et
+**redécoupe** les prix affichés au lieu de s'y ajouter.
+
+Conséquence à connaître : **additionner les `line_amount_minor` d'un ticket ne
+donne pas son total**, puisque la ligne `TAX` compte une seconde fois une taxe
+déjà comprise dans les lignes de catalogue. Le total est `total_amount_minor`,
+écrit par le serveur et vérifié en base. C'est déjà la règle que le front suit —
+`saleTotalRows` lit les quatre montants et n'additionne rien.
+
+### Reprendre les tickets composés avant #816
+
+`pos.tax-backfill.ts` classe chaque ticket de la base à partir de ses seuls
+montants : la somme des lignes de catalogue vaut `subtotal + tax` sous la règle
+actuelle, et `subtotal` seul sous l'ancienne. Les deux lectures coïncident quand
+la taxe est nulle, et c'est alors « conforme » qui l'emporte — un établissement
+sans taux n'a rien à reprendre.
+
+```bash
+# le constat, sans rien écrire — mode par défaut
+node --require ts-node/register apps/api/src/modules/payments/pos.tax-backfill.ts
+
+# la reprise, une fois le constat relu
+node --require ts-node/register apps/api/src/modules/payments/pos.tax-backfill.ts --apply
+```
+
+Un ticket que la fonction ne sait pas classer est **signalé et jamais réécrit** :
+deviner les intentions d'un montant qu'on ne reconnaît pas serait la pire des
+options sur une pièce comptable. Le script balaie tous les établissements — c'est
+une reprise de données jouée hors requête HTTP, donc sans tenant courant ; son
+client Prisma est nommé `prismaUnscoped` pour que la convention de relecture de
+tenant-isolation §3 continue de valoir.
+
 ## L'encaissement en espèces (#62)
 
 `POST /api/v1/payments/cash` règle un rendez-vous au comptoir. Le corps ne porte
@@ -639,6 +727,20 @@ ici. Une annulation n'est pas un remboursement : rien n'a été capturé, et
 
 ## Dette connue
 
+- **Trois écritures de #816 sont restées hors de l'empreinte `api/payments`**, et
+  chacune porte une issue de suivi :
+  - `apps/api/src/modules/reporting/export/` — le sixième critère demande que
+    l'export du reporting fournisse **aussi** le montant HT. Le revenu, lui, est
+    déjà TTC sans rien changer : `dailyRevenue` agrège `payments.amount_minor`,
+    c'est-à-dire le prix figé à la réservation, qui est un prix affiché. Seule la
+    colonne HT manque, et elle s'écrit dans le module `reporting` ;
+  - `apps/api/prisma/seed.ts` — le jeu de données de développement compose encore
+    une vente à l'ancienne règle (celle du constat, chez Spa Lumière). Le script
+    de reprise la corrige en base, mais un `db:seed` la recrée ;
+  - `apps/api/prisma/schema.prisma` — les commentaires de `Sale` décrivent encore
+    `subtotal_amount_minor` comme « somme des lignes `SERVICE` et `PRODUCT` » et
+    `tax_amount_minor` comme « somme des lignes `TAX` ». Le sens est celui du
+    tableau ci-dessus ; la colonne, elle, n'a pas bougé.
 - **`PaymentsRepository` lit la table `appointments` directement**, pour le prix
   figé à la réservation. Le chemin conforme serait un appel de service
   (`AppointmentsService`, api-module §3), mais ce module n'expose aujourd'hui
