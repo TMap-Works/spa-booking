@@ -59,11 +59,38 @@ describe('identity', () => {
       password: 'correct horse battery',
       firstName: 'Alice',
       lastName: 'Martin',
+      dataConsent: true,
     };
 
     expect(registerRequestSchema.safeParse(base).success).toBe(true);
     expect(registerRequestSchema.safeParse({ ...base, tenantId: UUID }).success).toBe(false);
     expect(registerRequestSchema.safeParse({ ...base, role: 'admin' }).success).toBe(false);
+    // Le même `.strict()` refuse la **date** du consentement : elle est posée
+    // par le serveur, jamais reçue de l'appelant (#880, RGPD art. 7.1).
+    expect(
+      registerRequestSchema.safeParse({ ...base, dataConsentAt: '2026-09-17T10:00:00Z' }).success,
+    ).toBe(false);
+  });
+
+  it('refuse une inscription sans consentement, ou avec un consentement refusé', () => {
+    const base = {
+      email: 'alice@example.test',
+      password: 'correct horse battery',
+      firstName: 'Alice',
+      lastName: 'Martin',
+    };
+
+    // Absent : la case n'a pas été posée, et l'API n'a pas à deviner laquelle
+    // des deux choses cela veut dire.
+    expect(registerRequestSchema.safeParse(base).success).toBe(false);
+
+    const refus = registerRequestSchema.safeParse({ ...base, dataConsent: false });
+    expect(refus.success).toBe(false);
+    // Le message est celui de l'écran d'inscription, pas celui du tunnel : il
+    // se lit sur la case, par la cliente.
+    expect(refus.error?.issues[0]?.message).toBe(
+      'le traitement des données doit être accepté pour créer un compte',
+    );
   });
 
   it('canonise l’e-mail — c’est ce qui rend l’unicité (tenant, email) fiable', () => {
@@ -72,6 +99,7 @@ describe('identity', () => {
       password: 'correct horse battery',
       firstName: 'Alice',
       lastName: 'Martin',
+      dataConsent: true,
     });
 
     expect(parsed.email).toBe('alice@example.test');
@@ -83,6 +111,7 @@ describe('identity', () => {
       password: ' correct horse battery ',
       firstName: 'Alice',
       lastName: 'Martin',
+      dataConsent: true,
     };
 
     expect(registerRequestSchema.parse(withSpaces).password).toBe(' correct horse battery ');

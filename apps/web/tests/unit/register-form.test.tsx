@@ -151,6 +151,9 @@ describe('inscription — correction', () => {
       password: 'correct horse battery',
       firstName: 'Zoé',
       lastName: 'Ranaivo',
+      // L'accord part avec l'inscription depuis #880 — et lui seul : aucune
+      // date n'accompagne le booléen, c'est le serveur qui l'horodate.
+      dataConsent: true,
     });
   });
 });

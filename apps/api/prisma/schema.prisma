@@ -436,6 +436,56 @@ model User {
   /// qu'un refus daté.
   marketingConsentAt DateTime? @map("marketing_consent_at") @db.Timestamptz(6)
 
+  /// Quand la personne a accepté le traitement de ses données **en créant son
+  /// compte** — la preuve de consentement de l'établissement (#880, CDC §5.1,
+  /// RGPD art. 7.1).
+  ///
+  /// ## Ce que cette colonne n'est pas
+  ///
+  /// Ce n'est ni `marketing_consent` ni sa date : celui-là gouverne la
+  /// prospection, dont le MVP ne fait rien, et il a un « refusé » à enregistrer,
+  /// d'où son booléen. Celui-ci porte sur le traitement **nécessaire au
+  /// service** — tenir un compte, ses coordonnées et ses rendez-vous — et n'a
+  /// pas de refus à consigner : `registerRequestSchema` exige `dataConsent:
+  /// true`, si bien qu'aucune ligne ne naît sans accord par cette porte. Les
+  /// confondre reviendrait à couper le service à qui refuse une campagne.
+  ///
+  /// Même arbitrage, et même forme, qu'`appointments.data_consent_at` (#790) :
+  /// un instant seul, parce que la seule valeur qu'un booléen pourrait prendre
+  /// là où l'instant est posé serait `true`.
+  ///
+  /// ## Nullable, et ce n'est pas un relâchement
+  ///
+  /// `NULL` se lit « aucun accord recueilli **par cette porte-ci** », et jamais
+  /// « refusé ». C'est l'état des quatre autres portes par lesquelles une ligne
+  /// `users` existe : la fiche cliente saisie au comptoir (#461), le compte du
+  /// personnel invité par un administrateur (#55), tout compte antérieur à cette
+  /// colonne, et — celle-là mérite d'être nommée — la fiche qu'ouvre une
+  /// réservation sans compte (`CrmRepository.resolveClientWithin`, #45). Un
+  /// `NOT NULL DEFAULT now()` leur aurait **fabriqué** un consentement que
+  /// personne n'a donné — une preuve inventée est pire que pas de preuve, elle
+  /// s'oppose à la personne qu'elle prétend protéger.
+  ///
+  /// La quatrième n'est pas un trou dans la preuve : la visiteuse du tunnel a
+  /// bien coché, et son accord est daté là où il a été donné,
+  /// `appointments.data_consent_at` (#790). Ce qui est vrai, c'est qu'une
+  /// colonne nulle **ici** ne veut donc pas dire « jamais consenti » : le jour
+  /// où un registre énumérera les accords, il joindra les deux colonnes plutôt
+  /// que de lire celle-ci seule.
+  ///
+  /// ## Posée par le serveur, à la création
+  ///
+  /// L'appelant envoie un accord, jamais une date : RGPD art. 7.1 fait porter la
+  /// preuve au responsable du traitement, et une preuve horodatée par celui
+  /// qu'elle engage n'en est pas une. `Timestamptz(6)` comme tout instant de ce
+  /// schéma — stocké en UTC, converti au fuseau du salon à l'affichage
+  /// (CLAUDE.md, ADR 0006).
+  ///
+  /// Aucun index : la colonne ne sert aucun prédicat de recherche, elle se lit
+  /// avec la fiche qu'on regarde. Même arbitrage, et même motif, que ses deux
+  /// voisines de `20260906150000`.
+  dataConsentAt DateTime? @map("data_consent_at") @db.Timestamptz(6)
+
   /// Instant de l'anonymisation de la fiche — #81, CDC §5.1 « droit à l'oubli ».
   ///
   /// Nul sur toute fiche vivante ; daté, la ligne ne porte plus aucune donnée

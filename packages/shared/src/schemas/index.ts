@@ -153,6 +153,7 @@ export type {
 } from './crm';
 
 export {
+  accountDataConsentSchema,
   authSessionResponseSchema,
   authSessionSchema,
   authTokensSchema,

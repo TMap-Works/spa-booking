@@ -232,9 +232,11 @@ describe('le consentement est bloquant', () => {
     await user.click(screen.getByRole('button', { name: /Créer mon compte/ }));
 
     expect(registerAction).toHaveBeenCalledTimes(1);
-    // Le consentement ne descend pas au contrat : aucun champ ne le porte, et
-    // l'inventer côté client le ferait refuser par un schéma strict.
-    expect(registerAction.mock.calls[0]?.[1]).not.toHaveProperty('consent');
+    // Le consentement descend désormais au contrat (#880) : c'est lui que
+    // l'API horodate. Ce qui ne descend pas, c'est la **date** — le serveur la
+    // relève, et le `.strict()` du contrat refuserait celle d'un navigateur.
+    expect(registerAction.mock.calls[0]?.[1]).toMatchObject({ dataConsent: true });
+    expect(registerAction.mock.calls[0]?.[1]).not.toHaveProperty('dataConsentAt');
   });
 
   it('annonce la même chose des deux côtés du parcours', () => {

@@ -572,6 +572,20 @@ export class IdentityRepository {
     firstName: string;
     lastName: string;
     phone: string | null;
+    /**
+     * Instant auquel la personne a accepté le traitement de ses données —
+     * `null` quand personne n'a rien coché (#880).
+     *
+     * Obligatoire à l'appel, et non facultatif : les deux seuls points de
+     * création de compte du module doivent **décider**, et un paramètre qu'on
+     * peut omettre se serait oublié sur le chemin qui recueille l'accord. Le
+     * chemin qui ne le recueille pas — l'invitation d'un membre du personnel
+     * (#55) — passe `null`, ce qui est exactement ce que la colonne signifie.
+     *
+     * La date vient du **serveur** : ni le corps de la requête ni le contrat
+     * n'en portent une (RGPD art. 7.1).
+     */
+    dataConsentAt: Date | null;
   }): Promise<UserRecord> {
     try {
       return await this.prisma.user.create({
@@ -582,7 +596,11 @@ export class IdentityRepository {
           firstName: input.firstName,
           lastName: input.lastName,
           phone: input.phone,
+          dataConsentAt: input.dataConsentAt,
         }),
+        // `USER_SELECT` et non une projection élargie : la preuve s'écrit ici,
+        // elle ne ressort pas par la porte de l'authentification. Aucune
+        // surface d'`identity` n'a à la lire — voir l'en-tête de `USER_SELECT`.
         select: USER_SELECT,
       });
     } catch (error: unknown) {

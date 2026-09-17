@@ -95,6 +95,9 @@ describe('Authentification — parcours HTTP', () => {
           password: PASSWORD,
           firstName: 'Nouvelle',
           lastName: 'Cliente',
+          // Obligatoire depuis #880 : une inscription sans accord est refusée,
+          // et ce que cette suite exerce est le cas passant.
+          dataConsent: true,
         })
         .expect(201);
 
@@ -146,6 +149,7 @@ describe('Authentification — parcours HTTP', () => {
           password: PASSWORD,
           firstName: 'A',
           lastName: 'B',
+          dataConsent: true,
         })
         .expect(409);
 
@@ -406,6 +410,7 @@ describe('Authentification — parcours HTTP', () => {
             password: PASSWORD,
             firstName: 'A',
             lastName: 'B',
+            dataConsent: true,
           });
         statuses.push(response.status);
       }

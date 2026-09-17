@@ -29,16 +29,22 @@ import { accountPath } from '../paths';
  * de ne pas remplir — et le `transform` la ramène à l'absence avant l'envoi.
  * Même conduite que le formulaire de coordonnées du tunnel.
  *
- * La seconde extension est le **consentement** (#734, CDC §5.1). Il n'appartient
- * pas au contrat — l'API ne le reçoit pas, aucun champ ne le porte — mais au
- * formulaire, qui est l'endroit où se décide si l'inscription part. Écrire la
- * même règle ici et dans l'étape « Coordonnées » du tunnel n'aurait pas été
- * deux fois la même : `consentSchema` est partagé par les deux, comme le texte
- * qui l'accompagne (`lib/booking/consent.tsx`).
+ * La seconde extension est le **consentement** (#734, CDC §5.1). Il appartient
+ * désormais au contrat — `registerRequestSchema.dataConsent`, obligatoire et
+ * refusé à `false` depuis #880 —, et ce que le formulaire en fait ici tient en
+ * un mot : il **substitue le message**. Le refus du contrat s'adresse à un
+ * appelant d'API (« le traitement des données doit être accepté pour créer un
+ * compte ») ; celui de `consentSchema` s'adresse à la cliente, sur sa case, et
+ * il est le même que dans l'étape « Coordonnées » du tunnel — une cliente passe
+ * de l'un à l'autre sans changer de produit (`lib/booking/consent.tsx`).
+ *
+ * Le champ garde donc le nom du contrat, `dataConsent`, et non plus `consent` :
+ * c'est lui qui part dans le corps de l'inscription, et le renommer à la
+ * soumission aurait rendu la correspondance invisible.
  */
 const registerFormSchema = registerRequestSchema.extend({
   phone: z.union([z.literal(''), phoneSchema]),
-  consent: consentSchema,
+  dataConsent: consentSchema,
 });
 
 type RegisterFormValues = z.input<typeof registerFormSchema>;
@@ -65,7 +71,7 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
       firstName: '',
       lastName: '',
       phone: '',
-      consent: false,
+      dataConsent: false,
     },
     // Validation à la **soumission**, puis à chaque frappe — et non au `blur`
     // de chaque champ. Ce n'est pas une préférence de style : `onTouched`
@@ -103,6 +109,9 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
       // Absent plutôt que vide : le contrat distingue les deux, et une chaîne
       // vide descendrait jusqu'à la colonne comme un numéro de zéro caractère.
       ...(values.phone === '' ? {} : { phone: values.phone }),
+      // L'accord part avec l'inscription, et c'est le serveur qui le date
+      // (#880) : aucune date n'est envoyée d'ici, le contrat la refuserait.
+      dataConsent: values.dataConsent,
     });
 
     if (!result.ok) {
@@ -189,8 +198,8 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
           id="register-consent"
           tenantSlug={tenantSlug}
           copy={ACCOUNT_CONSENT}
-          error={errors.consent?.message}
-          {...register('consent')}
+          error={errors.dataConsent?.message}
+          {...register('dataConsent')}
         />
 
         <Button
