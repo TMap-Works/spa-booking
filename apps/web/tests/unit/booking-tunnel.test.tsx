@@ -146,12 +146,28 @@ function renderTunnel() {
   return userEvent.setup();
 }
 
+/**
+ * La carte de prestation de l'étape 1 — un bouton radio depuis #741.
+ *
+ * Le nom accessible de la carte est **tout** ce qu'elle porte : le nom de la
+ * prestation, puis sa durée et son prix formatés en `fr-FR`. Seul le premier est
+ * cherché ici — l'espace insécable d'un montant et la forme d'une durée varient
+ * d'une version d'ICU à l'autre, et un libellé complet ferait échouer la suite
+ * sur le poste ou sur la CI selon le moteur.
+ */
+const CARTE = new RegExp(`^${service.name}`);
+
+/** Le geste de l'étape 1 : cocher la carte. Le CTA reste à l'appelant. */
+async function choisirLaPrestation(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole('radio', { name: CARTE }));
+}
+
 /** Prestation → créneau → coordonnées → récapitulatif, prêt à confirmer. */
 async function allerJusquAuRecapitulatif(
   user: ReturnType<typeof userEvent.setup>,
   creneau: string,
 ): Promise<void> {
-  await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+  await choisirLaPrestation(user);
   await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
 
   await user.click(await screen.findByRole('button', { name: creneau }));
@@ -315,7 +331,7 @@ describe('la progression est portée par l’adresse (#733)', () => {
       expect(query().get('etape')).toBe('prestation');
     });
 
-    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
 
     await waitFor(() => {
@@ -337,7 +353,7 @@ describe('la progression est portée par l’adresse (#733)', () => {
   it('ne met pas les coordonnées dans une adresse qu’on partage', async () => {
     const user = renderTunnel();
 
-    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
     await user.click(await screen.findByRole('button', { name: '09 h 00' }));
     await user.type(screen.getByLabelText(/Adresse e-mail/), 'camille@example.test');
@@ -349,7 +365,7 @@ describe('la progression est portée par l’adresse (#733)', () => {
   it('revient d’une étape au geste retour, sans rendre le formulaire à remplir', async () => {
     const user = renderTunnel();
 
-    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
     await user.click(await screen.findByRole('button', { name: '09 h 00' }));
     await user.type(screen.getByLabelText(/Prénom/), 'Camille');
@@ -373,7 +389,7 @@ describe('la progression est portée par l’adresse (#733)', () => {
   it('n’empile pas une entrée par praticien essayé', async () => {
     const user = renderTunnel();
 
-    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
     await screen.findByRole('button', { name: '09 h 00' });
 
@@ -440,7 +456,7 @@ describe('la progression est portée par l’adresse (#733)', () => {
     try {
       renderTunnel();
 
-      expect(await screen.findByLabelText('Prestation')).toBeDefined();
+      expect(await screen.findByRole('radio', { name: CARTE })).toBeDefined();
       await waitFor(() => {
         expect(query().get('etape')).toBe('prestation');
       });
@@ -514,12 +530,12 @@ describe('l’écran terminal rend la main au tunnel (#732)', () => {
 
     // Première étape, catalogue en main : le tunnel n'est plus bloqué sur la
     // confirmation précédente.
-    expect(await screen.findByLabelText('Prestation')).toHaveProperty('value', '');
+    expect(await screen.findByRole('radio', { name: CARTE })).toHaveProperty('checked', false);
     expect(screen.queryByText('Votre rendez-vous est enregistré')).toBeNull();
 
     // Les coordonnées aussi sont reparties : une nouvelle réservation n'est pas
     // forcément pour la même personne.
-    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
     await user.click(await screen.findByRole('button', { name: '14 h 00' }));
 
@@ -581,7 +597,7 @@ describe('la barre de résumé collante (#735)', () => {
     });
     expect(barre()).toBeNull();
 
-    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
 
     const creneau = barre();
@@ -596,7 +612,7 @@ describe('la barre de résumé collante (#735)', () => {
   it('rappelle l’horaire retenu à l’étape « Coordonnées », où rien ne le redisait', async () => {
     const user = renderTunnel();
 
-    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
     await user.click(await screen.findByRole('button', { name: '09 h 00' }));
 
@@ -667,7 +683,7 @@ describe('l’indicateur d’étape (#740)', () => {
       expect(courantes()).toEqual(['Prestation']);
     });
 
-    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
 
     expect(courantes()).toEqual(['Créneau']);
@@ -686,7 +702,7 @@ describe('l’indicateur d’étape (#740)', () => {
     });
     expect(rouvrables()).toEqual([]);
 
-    await user.selectOptions(screen.getByLabelText('Prestation'), service.id);
+    await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
 
     expect(rouvrables()).toEqual(['Prestation']);

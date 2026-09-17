@@ -89,22 +89,21 @@ export interface Reservation {
 }
 
 /**
- * Le sélecteur de prestation du tunnel — et pourquoi il est `exact`.
+ * Les cartes de prestation du tunnel — un `radiogroup` depuis #741.
  *
- * `getByLabel('Prestation')` cherche une sous-chaîne, et la **vitrine** porte
- * une section dont `aria-labelledby` désigne le titre « Nos prestations »
- * (`components/salon/service-catalog.tsx`). Le nom accessible de cette section
- * contient donc « Prestation », et le locator non exact la capturait.
+ * L'étape 1 était un `<select>`, et le désigner demandait un `getByLabel`
+ * **exact** : la vitrine porte une section dont `aria-labelledby` vise le titre
+ * « Nos prestations » (`components/salon/service-catalog.tsx`), et un nom non
+ * exact la capturait. L'assertion d'étape passait alors sur la vitrine — une
+ * `<section>` est toujours « enabled » —, et la faute n'apparaissait qu'à
+ * l'étape suivante.
  *
- * L'effet n'était pas un simple échec de sélecteur, il était pire : l'assertion
- * `toBeEnabled()` de l'étape 1 passait **sur la vitrine** — une `<section>` est
- * toujours « enabled » —, si bien que le tunnel n'était jamais attendu. Le test
- * n'échouait qu'à l'étape suivante, sur un « Element is not a `<select>` » qui
- * accusait la mauvaise étape. Un nom exact ne peut plus désigner la section, et
- * `waitForURL` ne laisse plus l'étape 1 conclure avant la navigation.
+ * Le rôle règle la question à la racine : une `<section>` n'est pas un `radio`,
+ * et le groupe ne peut désigner que le tunnel. `waitForURL` reste malgré tout,
+ * pour que l'étape 1 ne conclue pas avant la navigation.
  */
-function selecteurPrestation(page: Page): Locator {
-  return page.getByLabel('Prestation', { exact: true });
+function cartesPrestation(page: Page): Locator {
+  return page.getByRole('radio');
 }
 
 /**
@@ -118,17 +117,17 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
     await page.goto(chemins.salon());
     await page.getByRole('link', { name: 'Prendre rendez-vous' }).click();
     // La navigation d'abord : sans elle, l'étape se conclurait sur la vitrine,
-    // et la faute apparaîtrait deux étapes plus loin (voir `selecteurPrestation`).
+    // et la faute apparaîtrait deux étapes plus loin (voir `cartesPrestation`).
     await page.waitForURL(`**${chemins.reservation()}`);
-    await expect(selecteurPrestation(page)).toBeEnabled();
+    await expect(cartesPrestation(page).first()).toBeEnabled();
   });
 
   await test.step('2. Prestation — choisir le soin', async () => {
-    // Par index et non par libellé : l'intitulé de l'option porte la durée et le
-    // prix formatés en `fr-FR`, dont l'espace insécable avant « € » varie d'une
-    // version d'ICU à l'autre. L'index 1 est la première prestation réelle,
-    // l'index 0 étant « Choisir une prestation… ».
-    await selecteurPrestation(page).selectOption({ index: 1 });
+    // Par rang et non par libellé : le nom accessible d'une carte porte la durée
+    // et le prix formatés en `fr-FR`, dont l'espace insécable avant « € » varie
+    // d'une version d'ICU à l'autre. La première carte suffit — le parcours
+    // n'éprouve pas *quelle* prestation est retenue, mais qu'elle le soit.
+    await cartesPrestation(page).first().check();
     await page.getByRole('button', { name: 'Choisir un créneau' }).click();
   });
 
