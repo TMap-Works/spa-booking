@@ -208,7 +208,10 @@ describe('StaffMemberForm — ce qu’il signale', () => {
     // il faut donc en inviter un d'abord. Un sélecteur muet ne le dirait pas.
     renderForm([]);
 
-    expect(screen.getByText(/Invitez d’abord une personne/)).toBeTruthy();
+    // Le message nomme le rang qui peut inviter, et non un bouton : « Inviter
+    // un membre » n'apparaît qu'au rang administrateur, et une gérante le
+    // chercherait en vain sur cet écran comme sur la liste.
+    expect(screen.getByText(/Un administrateur du salon doit d’abord inviter/)).toBeTruthy();
     expect((screen.getByRole('button', { name: /Créer la fiche/ }) as HTMLButtonElement).disabled).toBe(
       true,
     );
