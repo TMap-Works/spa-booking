@@ -51,6 +51,28 @@ import '../../../../styles/admin/index.css';
  * la session pour savoir quoi dessiner, et se rabat sur la forme dégradée dès
  * que quelque chose manque. Rediriger d'ici doublerait la décision de la page —
  * et bouclerait sur l'écran de connexion, qui est sous ce même layout.
+ *
+ * ## Ce que la décision du rail est devenue : une réponse, et non un secret (#760)
+ *
+ * `loadAdminShell` est **exportée**. Elle ne l'était pas, et c'est ce qui a rendu
+ * possible l'écart relevé par l'audit `d20260916-1` : l'écran de connexion,
+ * servi sous ce layout, recevait le rail entier — sept sections,
+ * « Connecté·e : Adèle A. », « Se déconnecter » — juste à côté d'un formulaire
+ * titré « Back-office — se connecter ». Le même écran affirmait deux choses
+ * contraires.
+ *
+ * Un layout de l'App Router ne sait pas quelle route il enveloppe : il ne peut
+ * donc pas s'abstenir de peindre le rail « sur la connexion ». C'est l'écran de
+ * connexion qui doit cesser d'être **servi** quand une session existe, et il ne
+ * peut le décider sans savoir ce que ce layout aurait dessiné. La fonction est
+ * donc lue par les deux — `connexion/page.tsx` redirige exactement dans les cas
+ * où elle rend un shell —, et l'invariant « l'écran de connexion est le seul du
+ * back-office servi sans rail » cesse d'être une prémisse écrite dans un
+ * commentaire pour devenir une conséquence.
+ *
+ * Une seconde lecture de la session côté page aurait divergé de celle-ci au
+ * premier changement — c'est le raisonnement qui met déjà `adminLandingPath`
+ * dans `components/navigation.ts` plutôt que dans le formulaire de connexion.
  */
 
 export const metadata: Metadata = {
@@ -68,7 +90,7 @@ export const metadata: Metadata = {
 export const dynamic = 'force-dynamic';
 
 /** Ce qu'il faut savoir pour peindre le rail. */
-interface AdminShell {
+export interface AdminShell {
   /** Vide quand la vitrine publique n'a pas répondu — le rail se rabat sur le slug. */
   readonly establishments: readonly AdminEstablishment[];
   /** `null` quand la vitrine publique n'a pas répondu : on n'invente pas un fuseau. */
@@ -159,8 +181,24 @@ function isDenial(settled: PromiseSettledResult<unknown>): boolean {
  *
  * Ce fichier ne redirige toujours pas : la page a la garde, et c'est elle qui
  * décide de l'issue.
+ *
+ * ## Pourquoi elle est exportée (#760)
+ *
+ * Elle répond, pour un établissement, à une question que l'écran de connexion se
+ * pose aussi : **y a-t-il un back-office à dessiner ici ?** Rendre un shell, c'est
+ * dire que le rail va être peint ; rendre `null`, c'est dire qu'il ne le sera
+ * pas. `connexion/page.tsx` redirige sur la première réponse et rend son
+ * formulaire sur la seconde, si bien que les deux formes du layout et les deux
+ * écrans possibles ne peuvent plus se contredire.
+ *
+ * L'appel est fait deux fois sur une visite de l'écran de connexion — une par le
+ * layout, une par la page —, et les deux `fetch` sont mémoïsés par Next sur la
+ * durée du rendu (Request Memoization, `GET` sans `signal`). Même sans cette
+ * mémoïsation, le coût serait celui d'une navigation rare — on n'ouvre pas la
+ * connexion en boucle — et le prix est celui d'une décision unique : une seconde
+ * lecture de la session, écrite ailleurs, aurait divergé de celle-ci.
  */
-async function loadAdminShell(tenantSlug: string): Promise<AdminShell | null> {
+export async function loadAdminShell(tenantSlug: string): Promise<AdminShell | null> {
   const accessToken = await readAdminAccessToken();
 
   if (accessToken === null) {
