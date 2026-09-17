@@ -205,12 +205,34 @@
                     rouvrirait la régression (#684).
                   -->
                   <ol class="spa-admin-history" role="list">
+                    <!--
+                      La première ligne porte la remarque écrite par le client à
+                      la réservation (#870). Deux notes coexistent sur cet écran,
+                      et l'unique garde-fou qui survive à une impression en gris
+                      est le **libellé** : « Remarque du client, écrite à la
+                      réservation » ici, « Interne au salon » sur la note du
+                      salon, quelques blocs plus haut. L'aplat reprend d'ailleurs
+                      volontairement la même famille — les deux sont du texte
+                      libre écrit par un humain, et les distinguer par la couleur
+                      aurait été la plus fragile des distinctions (WCAG 1.4.1).
+
+                      La remarque est *dans* la ligne de la visite qu'elle
+                      concerne : elle ne vaut que pour ce rendez-vous-là, là où
+                      la note interne vaut pour la fiche entière. Les visites
+                      suivantes n'en portent pas, et ne portent rien à la place :
+                      sur une fenêtre de cinquante lignes, cinquante « aucune
+                      remarque » diraient moins que le silence.
+                    -->
                     <li class="spa-admin-history__item">
                       <span class="spa-admin-history__date">12 août 2026</span>
                       <span class="spa-admin-history__body">
                         <span class="spa-admin-history__service">Soin visage — 90 min</span>
                         <span class="spa-admin-history__practitioner">avec Hasina</span>
                         <span class="spa-admin-badge spa-admin-badge--completed">Honoré</span>
+                        <span class="spa-admin-history__note">
+                          <span class="spa-admin-history__note-label">Remarque du client, écrite à la réservation</span>
+                          <span class="spa-admin-history__note-body">Allergie aux huiles essentielles d’agrumes, merci d’en tenir compte pour le gommage.</span>
+                        </span>
                       </span>
                       <span class="spa-admin-history__amount">180 000 MGA</span>
                     </li>

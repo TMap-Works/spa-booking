@@ -77,6 +77,26 @@ export function isVoidVisit(status: AppointmentStatus): boolean {
 }
 
 /**
+ * La remarque écrite par le client sur une visite, ou `null` s'il n'y en a pas
+ * à lire — #870.
+ *
+ * Le contrat rend `clientNote` à `null` quand le champ « Remarque (facultatif) »
+ * de l'étape 4 n'a pas été rempli. Mais il accepte aussi une chaîne **blanche** :
+ * `longTextSchema` borne la longueur, il n'oblige personne à écrire autre chose
+ * qu'un espace ou un retour à la ligne, et une réservation passée par une autre
+ * surface a pu en poser un. Les deux cas veulent dire la même chose — rien n'a
+ * été écrit —, et les distinguer à l'affichage aurait fait apparaître sur une
+ * ligne d'historique l'étiquette « Remarque du client » suivie de rien.
+ *
+ * Même règle que le tiroir du planning (`AppointmentNote`, #757), ici sous forme
+ * de fonction pure parce que la fiche l'applique dans une liste : la ligne qui
+ * n'a rien à dire ne rend aucun élément du tout.
+ */
+export function visitClientNote(clientNote: string | null): string | null {
+  return clientNote === null || clientNote.trim() === '' ? null : clientNote;
+}
+
+/**
  * La ligne de coordonnées d'une fiche dans la liste — ce qu'on lit à voix haute.
  *
  * Le téléphone d'abord : c'est ce qu'un comptoir compose. L'adresse ensuite,

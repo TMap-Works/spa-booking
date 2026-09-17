@@ -228,6 +228,47 @@
   color: var(--spa-color-text-muted);
 }
 
+/*
+ * La remarque écrite par le client à la réservation — #870.
+ *
+ * `flex-basis: 100%` la fait passer à la ligne sous la prestation, le praticien
+ * et le statut, dans la colonne médiane de la grille : elle appartient à cette
+ * visite-là, et l'aligner à côté du montant en aurait fait une troisième
+ * colonne que le format long d'une phrase aurait aussitôt fait déborder.
+ *
+ * L'aplat reprend la famille de `.spa-admin-notes__item` — même surface, même
+ * filet d'appel — et c'est délibéré, comme sur le tiroir du planning (#757) :
+ * les deux notes sont du texte libre écrit par un humain, et ce sont leurs
+ * **libellés** qui les distinguent, seule distinction qui survive à un
+ * daltonisme ou à une impression en gris. Le filet est plus fin et le calage
+ * plus serré parce que celle-ci vit dans une ligne de liste, non dans une
+ * section.
+ */
+.spa-admin-history__note {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  margin-block-start: var(--spa-space-1);
+  padding: var(--spa-space-2);
+  background-color: var(--spa-color-surface-raised);
+  border-inline-start: 2px solid var(--spa-color-border-interactive);
+  border-radius: var(--spa-radius-sm);
+}
+
+.spa-admin-history__note-label {
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text-muted);
+}
+
+/* Les retours à la ligne saisis par le client sont conservés, et un mot trop
+ * long pour la colonne se coupe plutôt que d'élargir la grille. */
+.spa-admin-history__note-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .spa-admin-history__amount {
   font-variant-numeric: tabular-nums;
   text-align: end;

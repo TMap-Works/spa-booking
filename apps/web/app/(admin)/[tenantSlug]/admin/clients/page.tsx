@@ -27,6 +27,7 @@ import {
   isVoidVisit,
   parsePageNumber,
   parseSearchTerm,
+  visitClientNote,
 } from './client-view';
 import { ClientContactForm } from './components/client-contact-form';
 import { ClientNoteForm } from './components/client-note-form';
@@ -571,6 +572,34 @@ function Metric({ label, value }: { readonly label: string; readonly value: stri
  * historique. Le prix d'un rendez-vous jamais honoré est rendu barré : il dit
  * l'ordre de grandeur de ce qui a été perdu sans se laisser lire comme une
  * recette.
+ *
+ * ## La remarque du client, et ce qui la distingue de la note interne — #870
+ *
+ * Chaque ligne porte ce que le client a écrit **lui-même** en réservant, quand
+ * il a écrit quelque chose. Sans elle, « allergie aux huiles essentielles
+ * d'agrumes » restait enfermée dans le tiroir du rendez-vous concerné, et la
+ * praticienne qui prépare la cabine — laquelle ouvre la fiche, pas les quatre
+ * agendas des quatre venues précédentes — ne la voyait jamais. C'est le constat
+ * d'origine de l'audit `d20260916-1`.
+ *
+ * Deux notes coexistent désormais sur cet écran, et les confondre serait pire
+ * que n'en montrer qu'une : la note **interne** est écrite par le salon, ne sort
+ * jamais vers le client et vaut pour la fiche entière ; celle-ci est écrite par
+ * le client, il l'a sous les yeux dans son espace, et elle ne vaut que pour ce
+ * rendez-vous-là. Trois choses les séparent ici, dont deux survivent à une
+ * impression en gris :
+ *
+ * 1. **l'emplacement** — la remarque est *dans* la ligne de la visite qu'elle
+ *    concerne, la note interne est une section à part, au-dessus de
+ *    l'historique ;
+ * 2. **le libellé**, écrit en toutes lettres et jamais porté par la seule
+ *    couleur (WCAG 1.4.1) : « Remarque du client, écrite à la réservation » face
+ *    au « Interne au salon » de l'autre ;
+ * 3. l'aplat, qui ne fait qu'accélérer le balayage.
+ *
+ * Aucun état vide par ligne : sur une fenêtre de cinquante visites, cinquante
+ * « aucune remarque » diraient moins que le silence. L'absence de remarque est
+ * l'absence de l'élément.
  */
 function VisitHistory({
   history,
@@ -597,33 +626,50 @@ function VisitHistory({
           l'ordre chronologique des visites fait sens — il doit rester annoncé
           comme une liste (styles/README.md §3). */}
       <ol className="spa-admin-history" role="list">
-        {history.visits.map((visit) => (
-          <li className="spa-admin-history__item" key={visit.appointmentId}>
-            <span className="spa-admin-history__date">
-              {dayLabel(visit.startsAt, timeZone)}
-              <br />
-              {formatTimeInTimeZone(visit.startsAt, timeZone)}
-            </span>
-            <span className="spa-admin-history__body">
-              <span className="spa-admin-history__service">{visit.serviceName}</span>
-              <span className="spa-admin-history__practitioner">
-                {visit.staffName === null ? 'praticien retiré du salon' : `avec ${visit.staffName}`}
+        {history.visits.map((visit) => {
+          const note = visitClientNote(visit.clientNote);
+
+          return (
+            <li className="spa-admin-history__item" key={visit.appointmentId}>
+              <span className="spa-admin-history__date">
+                {dayLabel(visit.startsAt, timeZone)}
+                <br />
+                {formatTimeInTimeZone(visit.startsAt, timeZone)}
               </span>
-              <span className={`spa-admin-badge spa-admin-badge--${statusModifier(visit.status)}`}>
-                {STATUS_LABELS[visit.status]}
+              <span className="spa-admin-history__body">
+                <span className="spa-admin-history__service">{visit.serviceName}</span>
+                <span className="spa-admin-history__practitioner">
+                  {visit.staffName === null
+                    ? 'praticien retiré du salon'
+                    : `avec ${visit.staffName}`}
+                </span>
+                <span className={`spa-admin-badge spa-admin-badge--${statusModifier(visit.status)}`}>
+                  {STATUS_LABELS[visit.status]}
+                </span>
+                {note === null ? null : (
+                  <span className="spa-admin-history__note">
+                    {/* Le libellé porte l'appartenance, pas l'aplat : c'est lui
+                        qui interdit de lire cette remarque comme la note interne
+                        du salon, y compris sans couleur (WCAG 1.4.1). */}
+                    <span className="spa-admin-history__note-label">
+                      Remarque du client, écrite à la réservation
+                    </span>
+                    <span className="spa-admin-history__note-body">{note}</span>
+                  </span>
+                )}
               </span>
-            </span>
-            <span
-              className={
-                isVoidVisit(visit.status)
-                  ? 'spa-admin-history__amount spa-admin-history__amount--void'
-                  : 'spa-admin-history__amount'
-              }
-            >
-              {formatMoney(visit.price)}
-            </span>
-          </li>
-        ))}
+              <span
+                className={
+                  isVoidVisit(visit.status)
+                    ? 'spa-admin-history__amount spa-admin-history__amount--void'
+                    : 'spa-admin-history__amount'
+                }
+              >
+                {formatMoney(visit.price)}
+              </span>
+            </li>
+          );
+        })}
       </ol>
 
       {history.summary.totalVisits > history.visits.length ? (
