@@ -13,6 +13,7 @@ import {
   CUSTOMER_SEARCH_MIN_LENGTH,
   type AppointmentStatus,
   type Customer,
+  type CustomerPage,
   type CustomerSummary,
   type EmailSuppressionReason,
 } from '@spa/shared';
@@ -58,6 +59,56 @@ export function parsePageNumber(raw: string | string[] | undefined): number {
   const page = Number(typeof raw === 'string' ? raw : Number.NaN);
 
   return Number.isInteger(page) && page >= 1 ? page : 1;
+}
+
+/**
+ * Un libellé accordé au nombre qu'il porte — #763.
+ *
+ * Les tuiles de la fiche affichaient « 1 Visites honorées » et « 1 Absences non
+ * prévenues » : un compteur et son libellé se lisent d'un seul tenant, et le
+ * désaccord se voit avant le chiffre. Le libellé n'est donc plus une constante
+ * mais une fonction du compteur qu'il commente.
+ *
+ * La bascule est à **deux**, et non à un : en français, zéro prend le singulier
+ * — « 0 visite honorée », « 1 visite honorée », « 2 visites honorées ». C'est
+ * déjà la règle que suivent les `${n > 1 ? 's' : ''}` de cet écran ; l'écrire
+ * une fois évite qu'une tuile l'applique et la suivante non.
+ */
+export function countedLabel(count: number, one: string, many: string): string {
+  return count > 1 ? many : one;
+}
+
+/**
+ * Ce que le champ de recherche dit sous lui — la légende, pas le résultat.
+ *
+ * Le nombre est celui de l'API — `totalItems`, pas la longueur de la page :
+ * « 3 fiches » alors que le fichier en compte deux cents serait faux dès la
+ * deuxième page.
+ *
+ * ## Pourquoi le vide ne s'y dit pas — #763
+ *
+ * Parce que le bloc de résultat le dit déjà, trois centimètres plus bas, et avec
+ * le terme cherché : « aucune fiche pour “zzzzz” » sous le champ **puis**
+ * « Aucune fiche pour “zzzzz” » dans la liste, c'est la même phrase lue deux
+ * fois, dont aucune n'ajoute à l'autre. La légende revient donc à ce qu'elle est
+ * quand elle n'a rien à compter — l'énoncé de ce que le champ accepte — et
+ * l'absence de résultat appartient à l'endroit où le résultat aurait été.
+ *
+ * Cela retire du même geste un « le fichier compte aucune fiche » qui ne
+ * s'accordait avec rien.
+ */
+export function searchHint(term: string | null, page: CustomerPage): string {
+  const field = 'Nom, téléphone ou e-mail';
+
+  if (page.totalItems === 0) {
+    return `${field}.`;
+  }
+
+  const count = `${String(page.totalItems)} ${countedLabel(page.totalItems, 'fiche', 'fiches')}`;
+
+  return term === null
+    ? `${field} — le fichier compte ${count}.`
+    : `${field} — ${count} pour « ${term} ».`;
 }
 
 /**

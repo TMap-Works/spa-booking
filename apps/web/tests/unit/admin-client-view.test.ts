@@ -1,12 +1,19 @@
-import { CUSTOMER_SEARCH_MAX_LENGTH, type Customer, type CustomerSummary } from '@spa/shared';
+import {
+  CUSTOMER_SEARCH_MAX_LENGTH,
+  type Customer,
+  type CustomerPage,
+  type CustomerSummary,
+} from '@spa/shared';
 import { describe, expect, it } from 'vitest';
 
 import {
+  countedLabel,
   customerContactLine,
   emailSuppressionNotice,
   isVoidVisit,
   parsePageNumber,
   parseSearchTerm,
+  searchHint,
   visitClientNote,
 } from '@/app/(admin)/[tenantSlug]/admin/clients/client-view';
 import { adminClientsPath } from '@/app/(admin)/[tenantSlug]/admin/clients/paths';
@@ -70,6 +77,70 @@ describe('le numéro de page lu de l’URL', () => {
     for (const raw of [undefined, '', '0', '-3', 'deux', '1.5', 'NaN']) {
       expect(parsePageNumber(raw)).toBe(1);
     }
+  });
+});
+
+/**
+ * L'accord en nombre des libellés — #763.
+ *
+ * L'audit de conception relevait « 1 Visites honorées » et « 1 Absences non
+ * prévenues » sur les tuiles de la fiche : un compteur et son libellé se lisent
+ * d'un seul tenant, et le désaccord se voit avant le chiffre.
+ */
+describe('un libellé accordé au nombre qu’il porte', () => {
+  it('bascule au pluriel à partir de deux', () => {
+    expect(countedLabel(2, 'Visite honorée', 'Visites honorées')).toBe('Visites honorées');
+    expect(countedLabel(37, 'Absence non prévenue', 'Absences non prévenues')).toBe(
+      'Absences non prévenues',
+    );
+  });
+
+  it('garde le singulier à un — le cas qui avait produit « 1 Visites honorées »', () => {
+    expect(countedLabel(1, 'Visite honorée', 'Visites honorées')).toBe('Visite honorée');
+  });
+
+  it('garde le singulier à zéro, comme le veut le français', () => {
+    // « 0 visite honorée », et non « 0 visites honorées » : c'est la bascule à
+    // deux, pas à un, et c'est déjà la règle que suivent les autres libellés de
+    // cet écran.
+    expect(countedLabel(0, 'Annulé', 'Annulés')).toBe('Annulé');
+  });
+});
+
+/**
+ * La légende du champ de recherche — #763.
+ *
+ * Ce qu'elle protège : que l'absence de résultat ne se lise pas deux fois, une
+ * fois sous le champ et une fois dans le bloc de résultat, à trois centimètres
+ * d'écart et avec le même terme entre guillemets.
+ */
+describe('la légende du champ de recherche', () => {
+  function directory(totalItems: number): CustomerPage {
+    // `totalPages` vaut 0 sur un ensemble vide, comme le rend l'API : « page 1
+    // sur 0 » décrit une liste sans résultat (`common/pagination.ts`).
+    return { items: [], page: 1, pageSize: 20, totalItems, totalPages: totalItems === 0 ? 0 : 1 };
+  }
+
+  it('compte le fichier entier quand on n’a rien cherché', () => {
+    expect(searchHint(null, directory(12))).toBe(
+      'Nom, téléphone ou e-mail — le fichier compte 12 fiches.',
+    );
+  });
+
+  it('accorde « fiche » au nombre trouvé', () => {
+    expect(searchHint('rako', directory(1))).toBe(
+      'Nom, téléphone ou e-mail — 1 fiche pour « rako ».',
+    );
+    expect(searchHint('rako', directory(3))).toBe(
+      'Nom, téléphone ou e-mail — 3 fiches pour « rako ».',
+    );
+  });
+
+  it('se tait sur le vide — c’est le bloc de résultat qui le dit', () => {
+    // Et cela retire du même geste le « le fichier compte aucune fiche » que
+    // l'ancienne légende produisait sur un fichier neuf.
+    expect(searchHint('zzzzz', directory(0))).toBe('Nom, téléphone ou e-mail.');
+    expect(searchHint(null, directory(0))).toBe('Nom, téléphone ou e-mail.');
   });
 });
 
