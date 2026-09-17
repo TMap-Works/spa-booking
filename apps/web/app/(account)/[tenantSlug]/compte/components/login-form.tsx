@@ -9,7 +9,8 @@ import { useForm } from 'react-hook-form';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
-import { Notification } from '@/components/ui/notification';
+import { Notification, type NotificationTone } from '@/components/ui/notification';
+import type { SessionNotice } from '@/lib/session-refresh';
 
 import { loginAction } from '../actions';
 import { accountPath } from '../paths';
@@ -35,10 +36,37 @@ import { accountPath } from '../paths';
 interface LoginFormProps {
   readonly tenantSlug: string;
   /** Le motif qui a renvoyé ici, s'il y en a un. */
-  readonly expired: boolean;
+  readonly notice: SessionNotice | null;
 }
 
-export function LoginForm({ tenantSlug, expired }: LoginFormProps) {
+/**
+ * Ce que chaque motif dit — et ce qu'il se garde de dire (#860).
+ *
+ * `renouvellement-indisponible` est le cas que ce ticket sépare : la session
+ * n'est pas fermée, ses cookies sont en place, et le renouvellement suivant
+ * aboutira. L'annoncer comme une expiration enverrait ressaisir un mot de passe
+ * dont personne n'a besoin — et, sur un quota partagé, cela arrivait à des gens
+ * dont la session avait encore six jours devant elle.
+ *
+ * Le ton suit la même distinction : `warning` pour une session finie, `info`
+ * pour une attente de quelques secondes.
+ */
+const NOTICE_COPY: Readonly<
+  Record<SessionNotice, { readonly tone: NotificationTone; readonly title: string; readonly body: string }>
+> = {
+  'session-expiree': {
+    tone: 'warning',
+    title: 'Votre session a expiré',
+    body: 'Reconnectez-vous pour retrouver vos rendez-vous.',
+  },
+  'renouvellement-indisponible': {
+    tone: 'info',
+    title: 'Session non renouvelée pour l’instant',
+    body: 'Vous n’avez pas été déconnecté·e : nous n’avons pas pu renouveler votre session à l’instant. Réessayez dans quelques secondes.',
+  },
+};
+
+export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
   const router = useRouter();
   const [failure, setFailure] = useState<string | null>(null);
 
@@ -79,11 +107,23 @@ export function LoginForm({ tenantSlug, expired }: LoginFormProps) {
         Se connecter
       </h2>
 
-      {expired ? (
-        <Notification tone="warning" title="Votre session a expiré">
-          <p>Reconnectez-vous pour retrouver vos rendez-vous.</p>
+      {notice === null ? null : (
+        <Notification tone={NOTICE_COPY[notice].tone} title={NOTICE_COPY[notice].title}>
+          <p>{NOTICE_COPY[notice].body}</p>
+          {/*
+           * Une reprise, comme l'exige `docs/design/appointments/states.md`
+           * (« Règles générales ») de tout état d'erreur. Elle vise l'espace
+           * client et non cet écran : c'est la garde de l'espace client qui
+           * repassera par la route de renouvellement, avec les cookies qu'on
+           * vient précisément de ne pas effacer.
+           */}
+          {notice === 'renouvellement-indisponible' ? (
+            <p>
+              <Link href={accountPath(tenantSlug)}>Réessayer</Link>
+            </p>
+          ) : null}
         </Notification>
-      ) : null}
+      )}
 
       {failure === null ? null : (
         <Notification tone="danger" title="Connexion refusée">

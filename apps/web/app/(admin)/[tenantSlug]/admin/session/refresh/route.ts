@@ -2,7 +2,7 @@ import type { NextRequest, NextResponse } from 'next/server';
 
 import { refreshSession } from '@/lib/api-client';
 import { redirectWithinSite } from '@/lib/relative-redirect';
-import { isRefreshRefused } from '@/lib/session-refresh';
+import { isRefreshRefused, sessionNoticeFor } from '@/lib/session-refresh';
 
 import { adminLoginPath, safeAdminNext } from '../../paths';
 import { attachAdminSession, clearAdminSession, readAdminRefreshToken } from '../../session';
@@ -75,7 +75,11 @@ export async function GET(
     // coupure réseau ne disent rien du jeton (voir `isRefreshRefused`).
     const revoked = isRefreshRefused(error);
 
-    const response = redirectWithinSite(adminLoginPath(tenantSlug));
+    // Et l'écran d'arrivée le dit (#860). Sans motif, l'opérateur tombait sur un
+    // formulaire de connexion muet, qui ne se lit que d'une façon : « on m'a
+    // déconnecté ». Sa session est pourtant intacte — ses deux cookies sont
+    // encore là —, et la seule chose à faire est d'attendre quelques secondes.
+    const response = redirectWithinSite(adminLoginPath(tenantSlug, sessionNoticeFor(error)));
 
     if (revoked) {
       clearAdminSession(response.cookies, tenantSlug);

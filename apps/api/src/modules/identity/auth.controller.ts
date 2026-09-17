@@ -10,7 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBody, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
 import { AppConfigService } from '../../config/app-config.service';
@@ -31,6 +31,7 @@ import type { RefreshResult } from './identity.types';
 import { CurrentUser } from './jwt-auth.guard';
 import type { AuthenticatedUser } from './identity.types';
 import { clearRefreshCookie, readRefreshCookie, setRefreshCookie } from './refresh-cookie';
+import { SessionThrottlerGuard, ThrottleBySession } from './session-throttler.guard';
 
 /**
  * Points d'entrée d'authentification. Traduit HTTP ↔ service, et **rien
@@ -38,8 +39,8 @@ import { clearRefreshCookie, readRefreshCookie, setRefreshCookie } from './refre
  *
  * ## Limitation de débit
  *
- * `ThrottlerGuard` couvre tout le contrôleur, et les quotas sont resserrés là où
- * ils comptent. Sans elle, un formulaire de connexion est un oracle qu'on
+ * `SessionThrottlerGuard` couvre tout le contrôleur, et les quotas sont resserrés
+ * là où ils comptent. Sans elle, un formulaire de connexion est un oracle qu'on
  * interroge à la vitesse du réseau : bcrypt coût 12 rend le forçage *hors ligne*
  * coûteux, il ne fait rien contre le forçage *en ligne*, où c'est notre propre
  * serveur qui paie le hachage.
@@ -49,10 +50,28 @@ import { clearRefreshCookie, readRefreshCookie, setRefreshCookie } from './refre
  * contourne. Elle arrête ce qu'elle doit arrêter à ce stade — le forçage depuis
  * une seule origine — et le durcissement par compte, avec compteur en Redis,
  * demandera le stockage partagé que le MVP n'a pas encore câblé.
+ *
+ * **Une route fait exception, et elle le dit** : `refresh`, où l'adresse IP ne
+ * désigne plus personne parce qu'aucun navigateur ne l'appelle. Elle porte
+ * `@ThrottleBySession()`, et son compteur suit la session
+ * (`session-throttler.guard.ts`, #860).
+ *
+ * **Le même angle mort vaut pour les autres routes, et il reste ouvert.**
+ * `login`, `register`, `invitations/accept` et `logout` ne sont pas davantage
+ * appelées depuis un navigateur : le front les atteint par des actions serveur
+ * (`apps/web/lib/api-client.ts` lit `API_URL`, non préfixée `NEXT_PUBLIC_`), si
+ * bien que leur `req.ip` est lui aussi celui de la tâche ECS du front. Leurs
+ * quotas — dix connexions, cinq inscriptions par minute — valent donc pour le
+ * **produit entier** et non par visiteur. `@ThrottleBySession()` ne peut pas les
+ * couvrir, et pas par oubli : un compteur par session y rendrait le forçage
+ * amplifiable (voir `session-throttler.guard.ts`). Les fermer demande soit le
+ * compteur par compte en Redis évoqué ci-dessus, soit la propagation de
+ * l'adresse réelle du visiteur par le serveur Next — deux chantiers que le MVP
+ * n'a pas câblés.
  */
 @ApiTags('auth')
 @Controller({ path: 'auth', version: '1' })
-@UseGuards(ThrottlerGuard)
+@UseGuards(SessionThrottlerGuard)
 export class AuthController {
   public constructor(
     private readonly auth: AuthService,
@@ -171,8 +190,24 @@ export class AuthController {
    * **200 sans `Set-Cookie`** quand la requête a perdu une course contre un
    * autre renouvellement du même jeton (#856) : le jeton d'accès est rendu, le
    * cookie posé par le gagnant reste celui du client.
+   *
+   * ## Trente par minute, **et par session** (#860)
+   *
+   * C'est la seule route de ce contrôleur dont le quota ne se compte pas par
+   * adresse IP, et la raison tient à qui l'appelle : personne, jamais, depuis un
+   * navigateur. Le cookie est posé sur le domaine du front, et c'est le serveur
+   * Next qui le relaie ici — tous les établissements arrivaient donc sur le même
+   * compteur, et trente renouvellements par minute valaient pour le produit
+   * entier. `@ThrottleBySession()` rattache le compteur au `sid` du jeton
+   * vérifié ; le repli reste l'adresse pour une requête qui ne prouve aucune
+   * session. Voir `session-throttler.guard.ts`.
+   *
+   * Trente par minute et par session restent larges : une session renouvelle
+   * toutes les quinze minutes, et la marge couvre les onglets multiples d'un
+   * même poste sans rien laisser passer d'une boucle emballée.
    */
   @Post('refresh')
+  @ThrottleBySession()
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Renouveler le jeton d’accès depuis le cookie de session' })

@@ -3,7 +3,7 @@ import type { NextRequest, NextResponse } from 'next/server';
 import { refreshSession } from '@/lib/api-client';
 import { redirectWithinSite } from '@/lib/relative-redirect';
 import { sitePath } from '@/lib/site-path';
-import { isRefreshRefused } from '@/lib/session-refresh';
+import { isRefreshRefused, sessionNoticeFor } from '@/lib/session-refresh';
 
 import { accountPath, loginPath } from '../../paths';
 import { attachSessionCookies, clearSessionCookies, readRefreshToken } from '../../session';
@@ -104,7 +104,11 @@ export async function GET(
     // suivante repassera par ici et pourra aboutir.
     const revoked = isRefreshRefused(error);
 
-    const response = redirectWithinSite(loginPath(tenantSlug, 'session-expiree'));
+    // Et l'écran d'arrivée dit **laquelle** des deux choses est arrivée (#860).
+    // « Votre session a expiré » sous un refus du limiteur était un mensonge
+    // commode : la session est valide, ses cookies sont en place, et la
+    // visiteuse n'a rien à ressaisir.
+    const response = redirectWithinSite(loginPath(tenantSlug, sessionNoticeFor(error)));
 
     if (revoked) {
       clearSessionCookies(response.cookies, tenantSlug);

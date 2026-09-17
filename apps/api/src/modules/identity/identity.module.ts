@@ -14,6 +14,7 @@ import { PasswordHasher } from './password.hasher';
 import { PublicTenantController } from './public-tenant.controller';
 import { PublicTenantService } from './public-tenant.service';
 import { RolesGuard } from './roles.guard';
+import { SessionThrottlerGuard } from './session-throttler.guard';
 import { TenantSettingsController } from './tenant-settings.controller';
 import { TenantSettingsService } from './tenant-settings.service';
 import { TenantTimeZoneAudit } from './tenant-timezone.audit';
@@ -86,6 +87,12 @@ const publicTenantResolver: PublicTenantResolverProvider = {
  * global imposerait un quota à `/health`, que les sondes de l'ALB interrogent
  * bien plus souvent qu'un humain ne se connecte.
  *
+ * `SessionThrottlerGuard` y figure comme les deux autres gardes de ce module,
+ * par convention et non par nécessité : Nest sait instancier une garde
+ * référencée par `@UseGuards` en résolvant ses dépendances dans le module qui
+ * déclare le contrôleur — `TokenService` en fait partie. La déclarer ici laisse
+ * les trois gardes du module visibles au même endroit (#860).
+ *
  * ## Un fournisseur sans route : `TenantTimeZoneAudit`
  *
  * Il ne sert aucun contrôleur et n'est exporté par personne — il existe pour son
@@ -124,6 +131,7 @@ const publicTenantResolver: PublicTenantResolverProvider = {
     TokenService,
     JwtAuthGuard,
     RolesGuard,
+    SessionThrottlerGuard,
     publicTenantResolver,
   ],
   exports: [JwtAuthGuard, RolesGuard, TokenService, UsersService, PUBLIC_TENANT_RESOLVER],

@@ -4,6 +4,8 @@ import { ApiClientError, type ApiSession } from '@/lib/api-client';
 import {
   accessTokenForAction,
   isRefreshRefused,
+  readSessionNotice,
+  sessionNoticeFor,
   type ActionSessionStore,
 } from '@/lib/session-refresh';
 
@@ -133,5 +135,51 @@ describe('isRefreshRefused', () => {
     expect(isRefreshRefused(new ApiClientError('TOO_MANY_REQUESTS', 'x', 429))).toBe(false);
     expect(isRefreshRefused(new ApiClientError('SERVICE_UNAVAILABLE', 'x', 503))).toBe(false);
     expect(isRefreshRefused(new Error('x'))).toBe(false);
+  });
+});
+
+/**
+ * Le motif affiché par l'écran d'arrivée (#860).
+ *
+ * Il suit exactement la frontière ci-dessus : ce qui ne ferme pas la session ne
+ * doit pas non plus s'annoncer comme une expiration.
+ */
+describe('sessionNoticeFor', () => {
+  it('n’annonce une expiration que sur un refus du jeton', () => {
+    expect(sessionNoticeFor(new ApiClientError('INVALID_REFRESH_TOKEN', 'x', 401))).toBe(
+      'session-expiree',
+    );
+    expect(sessionNoticeFor(new ApiClientError('FORBIDDEN', 'x', 403))).toBe('session-expiree');
+  });
+
+  it('annonce un renouvellement momentané sur le limiteur, une panne ou une coupure', () => {
+    expect(sessionNoticeFor(new ApiClientError('TOO_MANY_REQUESTS', 'x', 429))).toBe(
+      'renouvellement-indisponible',
+    );
+    expect(sessionNoticeFor(new ApiClientError('INTERNAL_ERROR', 'x', 500))).toBe(
+      'renouvellement-indisponible',
+    );
+    expect(sessionNoticeFor(new Error('coupure'))).toBe('renouvellement-indisponible');
+  });
+});
+
+describe('readSessionNotice', () => {
+  it('rend les motifs déclarés, et rien d’autre', () => {
+    expect(readSessionNotice('session-expiree')).toBe('session-expiree');
+    expect(readSessionNotice('renouvellement-indisponible')).toBe('renouvellement-indisponible');
+    expect(readSessionNotice(undefined)).toBeNull();
+    expect(readSessionNotice('')).toBeNull();
+    // Un motif inventé n'affiche aucun encart : l'écran ne dit que ce que nous
+    // avons écrit.
+    expect(readSessionNotice('compte-pirate')).toBeNull();
+  });
+
+  it('retient le premier d’un paramètre répété', () => {
+    // `?motif=a&motif=b` : Next rend un tableau, et une comparaison directe à
+    // une chaîne le manquerait en silence.
+    expect(readSessionNotice(['renouvellement-indisponible', 'session-expiree'])).toBe(
+      'renouvellement-indisponible',
+    );
+    expect(readSessionNotice([])).toBeNull();
   });
 });
