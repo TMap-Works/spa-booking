@@ -309,8 +309,7 @@ export class AuthService {
    *    établissement ne se trouve pas ;
    * 4. l'empreinte présentée est comparée à l'empreinte courante. Si elle diffère
    *    et n'est pas celle que la dernière rotation vient de remplacer, c'est
-   *    qu'un jeton déjà consommé ressort : toutes les sessions du compte sont
-   *    éteintes ;
+   *    qu'un jeton déjà consommé ressort : **cette session** est éteinte ;
    * 5. la rotation elle-même est conditionnée à l'empreinte attendue, ce qui la
    *    rend atomique face à deux rafraîchissements concurrents.
    *
@@ -329,6 +328,31 @@ export class AuthService {
    * vers ce même renouvellement, qui le refuserait encore, en boucle jusqu'à la
    * fin du délai puis jusqu'à la révocation. Avec un jeton d'accès, la page
    * s'affiche, et le prochain renouvellement tranche.
+   *
+   * ## Ce qu'un réemploi éteint : la session, pas le compte (#862)
+   *
+   * La révocation porte sur **la session où le réemploi a eu lieu**, et sur elle
+   * seule. C'est la portée que prescrit l'OAuth 2.0 Security BCP (RFC 9700
+   * §4.14.2) : révoquer « la famille » du jeton, c'est-à-dire la chaîne de
+   * rotations issue d'une autorisation — ici la ligne `refresh_tokens`, que
+   * chaque rotation met à jour en place. Les sessions des **autres appareils**
+   * du même compte n'ont jamais porté ce jeton : les éteindre n'ôte rien à qui
+   * l'aurait volé, et déconnecte tout le monde ailleurs.
+   *
+   * Ce n'est pas une nuance de doctrine, c'est la correction d'un dommage
+   * observé. Le délai de grâce ci-dessus est borné, et le déclencheur ne l'est
+   * pas : une réponse de renouvellement qui n'arrive jamais au navigateur —
+   * onglet fermé, rechargement en plein vol, navigation annulée — laisse le
+   * client sur l'ancien jeton alors que la ligne a déjà tourné. Représenté
+   * au-delà du délai, il est pris pour un réemploi, et il l'est de bonne foi :
+   * le serveur ne peut pas distinguer un cookie perdu d'un cookie volé, les deux
+   * porteurs présentant exactement la même empreinte. Ce qu'il peut faire, c'est
+   * ne pas punir au-delà de ce que la preuve porte — un incident réseau sur un
+   * poste n'a pas à fermer la session ouverte sur un autre.
+   *
+   * La session concernée, elle, est bien éteinte : entre deux porteurs de la même
+   * empreinte, aucun ne garde la main, et le jeton remplacé comme son successeur
+   * cessent de valoir quoi que ce soit.
    */
   public async refresh(refreshToken: string): Promise<RefreshResult> {
     const claims = await this.tokens.verifyRefreshToken(refreshToken);
@@ -362,9 +386,11 @@ export class AuthService {
     const isCurrent = session.tokenHash === presented;
 
     if (!isCurrent && !AuthService.isJustReplaced(session, presented)) {
-      await this.repository.revokeAllSessionsOfUser(session.userId);
+      // La session, et elle seule (#862) : les autres appareils du compte n'ont
+      // jamais porté ce jeton. Voir « Ce qu'un réemploi éteint » ci-dessus.
+      await this.repository.revokeSession(session.id);
       this.logger.warn(
-        'Réemploi d’un jeton de rafraîchissement détecté : toutes les sessions du compte sont révoquées.',
+        'Réemploi d’un jeton de rafraîchissement détecté : la session est révoquée.',
         { sessionId: session.id },
         AuthService.name,
       );
