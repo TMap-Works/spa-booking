@@ -32,12 +32,17 @@ import type {
  *
  * ## Ce qu'ils reproduisent
  *
- * Exactement les messages que #70 et #71 ont livrés, à la balise près. Ce fichier
- * n'est pas une réécriture : c'est le même texte, dont les variables sont
- * désormais nommées au lieu d'être interpolées. Les suites de
+ * Les messages que #70 et #71 ont livrés, à la balise près. Ce fichier n'était
+ * pas une réécriture : c'était le même texte, dont les variables sont désormais
+ * nommées au lieu d'être interpolées. Les suites de
  * `notification-content.spec.ts` continuent de les exercer, et c'est leur rôle —
  * elles sont la preuve que le passage au moteur n'a rien changé à ce qu'une
  * cliente lit.
+ *
+ * La seule exception est la **confirmation**, que #911 a reformulée : elle
+ * annonçait un rendez-vous « confirmé » alors qu'elle part sur la création,
+ * c'est-à-dire sur un rendez-vous encore `PENDING`. Ce n'est pas un changement de
+ * ton, c'est la correction d'un fait faux.
  *
  * ## `CANCELLATION` en a un depuis #72
  *
@@ -106,14 +111,40 @@ const TEXT_SUMMARY = [
  * L'heure est **toujours** suivie de son fuseau. Sans mention, « 14:30 » est
  * ambigu pour une cliente qui voyage, et c'est précisément l'ambiguïté que
  * CLAUDE.md classe en sévérité haute.
+ *
+ * ## Elle ne dit pas « confirmé », et c'est le correctif de #911
+ *
+ * Ce message part sur `appointment.created` — `BookingConfirmationListener`
+ * s'abonne à cet événement-là — c'est-à-dire sur un rendez-vous que le dépôt
+ * vient d'écrire au statut `PENDING`. Annoncer « votre rendez-vous est
+ * confirmé » y était donc faux au moment même de l'envoi, et contredisait
+ * l'espace client qui affichait, sur ce rendez-vous-là, « À confirmer par le
+ * salon ».
+ *
+ * Le libellé repris est **celui de #743**, au mot près
+ * (`(account)/[tenantSlug]/compte/components/appointment-status.ts`,
+ * `PENDING_CONFIRMATION_LABEL`). Il est recopié plutôt qu'importé : `apps/api`
+ * ne dépend pas de `apps/web`, et un contrat partagé pour un libellé de gabarit
+ * qu'un salon peut de toute façon réécrire n'aurait rien garanti de plus.
+ *
+ * Le message dit **deux choses**, dans cet ordre : la réservation est
+ * enregistrée — c'est ce qui rassure quelqu'un qui vient de cliquer —, et la
+ * confirmation est attendue du salon — c'est ce qui nomme l'acteur, pour que la
+ * cliente ne se croie pas redevable d'un geste.
+ *
+ * Il ne dit **rien de plus** : ni délai de confirmation, ni « vous recevrez un
+ * message dès que ce sera fait ». L'API n'expose aucun délai, et aucun message
+ * ne part à la confirmation — les trois types du MVP sont `BOOKING_CONFIRMATION`,
+ * `REMINDER_24H` et `CANCELLATION` (CDC §1.4). Promettre l'un ou l'autre serait
+ * remplacer une phrase fausse par une autre.
  */
 const BOOKING_CONFIRMATION_EMAIL: NotificationTemplateSource = {
-  subject: 'Votre rendez-vous du {{date}} est confirmé — {{salon}}',
+  subject: 'À confirmer par le salon : votre rendez-vous du {{date}} — {{salon}}',
   html: [
     '<!DOCTYPE html>',
     '<html lang="fr"><body>',
     '<p>Bonjour {{client}},</p>',
-    '<p>Votre rendez-vous chez {{salon}} est confirmé.</p>',
+    '<p>Votre rendez-vous chez {{salon}} est enregistré. Il reste à confirmer par le salon.</p>',
     `<table role="presentation">${HTML_SUMMARY}</table>`,
     '<p>Les horaires sont donnés à l’heure de {{fuseau}}.</p>',
     '<p><a href="{{lien_annulation}}">Modifier ou annuler mon rendez-vous</a></p>',
@@ -123,7 +154,7 @@ const BOOKING_CONFIRMATION_EMAIL: NotificationTemplateSource = {
   text: [
     'Bonjour {{client}},',
     '',
-    'Votre rendez-vous chez {{salon}} est confirmé.',
+    'Votre rendez-vous chez {{salon}} est enregistré. Il reste à confirmer par le salon.',
     '',
     TEXT_SUMMARY,
     'Les horaires sont donnés à l’heure de {{fuseau}}.',
@@ -142,14 +173,47 @@ const BOOKING_CONFIRMATION_EMAIL: NotificationTemplateSource = {
  * détail et le lien d'annulation sont dans l'e-mail, qui part toujours
  * (notifications §6).
  *
- * Chacun de ses caractères est dans l'alphabet GSM-7 — `é` en fait partie, à la
- * différence de `’` ou de `…`. Le modèle tient donc en **un** segment, et
+ * ## Il portait le même mot faux que l'e-mail — #911
+ *
+ * « rendez-vous confirmé le … » disait de ce rendez-vous `PENDING` exactement ce
+ * que l'objet de l'e-mail en disait. Le corriger d'un côté seulement aurait
+ * laissé partir, sur le même événement, deux messages qui se contredisent — et
+ * le SMS est celui des deux qu'on lit sans l'ouvrir.
+ *
+ * Il dit donc les deux mêmes choses que l'e-mail, en une phrase : enregistré, à
+ * confirmer par le salon.
+ *
+ * ## La capitale `À` n'existe pas en GSM-7, la minuscule si
+ *
+ * L'alphabet GSM 03.38 de base connaît `à`, `é` et `è`, mais de ses voyelles
+ * accentuées capitales il ne garde que `É`. Écrire ici « À confirmer », comme le
+ * fait le libellé du front, aurait basculé le message entier en UCS-2 et
+ * **doublé son coût** (notifications §5) — d'où la minuscule, obtenue en plaçant
+ * la locution en seconde partie de phrase plutôt qu'en tête.
+ *
+ * Mesuré sur `SMS_REFERENCE_VARIABLES` — dont le nom de salon vaut le pire cas de
+ * 40 caractères —, le modèle coûte 152 septets : **un** segment, et
  * `notification-template.spec.ts` le vérifie plutôt que de l'espérer.
+ *
+ * ## Ce que cette mesure ne couvre pas : la longueur de `{{fuseau}}`
+ *
+ * La référence porte `Indian/Antananarivo`, dix-neuf caractères — un fuseau
+ * « parmi les plus longs », mais pas le plus long : `America/Argentina/Buenos_Aires`
+ * en fait trente, et `America/Argentina/ComodRivadavia` trente-deux. Le message
+ * reformulé y coûte 163 à 165 septets, c'est-à-dire **deux** segments, sans que
+ * la suite rougisse — elle mesure sur la référence, pas sur le fuseau du salon.
+ *
+ * Les huit septets de marge qui restent ici sont donc une marge réelle, pas une
+ * garantie : avant #911 le modèle en coûtait 123 et absorbait n'importe quel
+ * fuseau IANA. Le jour où un établissement d'un tel fuseau s'inscrit, c'est
+ * `SMS_REFERENCE_VARIABLES.fuseau` qu'il faut porter au pire cas — et les trois
+ * modèles de la plateforme qu'il faut alors raccourcir, `CANCELLATION` (153
+ * septets) au même titre que celui-ci.
  */
 const BOOKING_CONFIRMATION_SMS: NotificationTemplateSource = {
   subject: '',
   html: '',
-  text: '{{salon}} : rendez-vous confirmé le {{date}} ({{fuseau}}).',
+  text: '{{salon}} : rendez-vous du {{date}} ({{fuseau}}) enregistré, à confirmer par le salon.',
 };
 
 /**
