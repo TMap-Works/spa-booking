@@ -117,6 +117,161 @@
   box-shadow: var(--spa-shadow-sm);
 }
 
+/* --- Indicateur d'étape ----------------------------------------------------- */
+
+/*
+ * Le fil des cinq étapes, en tête du panneau (#740).
+ *
+ * `wireframes.md` — « Structure commune à toutes les étapes » — le dessine
+ * « ①──②──③──④──⑤──⑥ », *« étape courante mise en avant »*, et ajoute qu'il
+ * *« montre la progression et permet de revenir à une étape déjà franchie (les
+ * étapes futures ne sont pas cliquables) »*.
+ *
+ * ## Ce qui était rendu
+ *
+ * Rien de tout cela. La liste portait `.spa-card__meta` — corps réduit, ton
+ * atténué —, si bien que les cinq libellés sortaient à l'identique : même
+ * graisse, même couleur, même taille, à toutes les étapes. `aria-current="step"`
+ * était pourtant posé depuis le premier jour, mais **aucune règle ne
+ * l'habillait** : un lecteur d'écran savait où l'on en était, l'œil non.
+ *
+ * ## Les trois états, et leur unique source
+ *
+ * | État | Ce qui le déclenche | Ce qu'on voit |
+ * |---|---|---|
+ * | courante | `[aria-current='step']` sur le `<li>` | aplat d'accent, bordure d'accent, texte d'accent, graisse |
+ * | franchie | `.spa-booking__progress-link` — le `<button>` n'existe que là | ton d'accent, cible cliquable, soulignement au survol |
+ * | à venir | ni l'un ni l'autre, c'est le défaut | ton effacé, rien à cliquer |
+ *
+ * Aucune classe `--active`, `--done` ni `--todo` : l'état visuel est lu là où
+ * l'état sémantique est déjà écrit, et ne peut donc pas en diverger. C'est le
+ * motif que le back-office tient depuis #30 — `.spa-admin__nav-link[aria-current='page']`
+ * dans `admin/shell.css`, `.spa-admin-client-list__item[aria-current='true']`
+ * dans `admin/client.css` —, et l'aplat + bordure retenus ici sont exactement
+ * ceux du second : la cliente ne voit qu'un produit, il n'a pas à se marquer de
+ * deux façons.
+ *
+ * Trois repères pour l'étape courante et non la seule couleur : le rapport de
+ * contraste d'un aplat d'accent ne suffit pas à distinguer un état (WCAG 1.4.1),
+ * et la graisse comme la bordure restent lisibles en monochrome.
+ *
+ * ## À la confirmation
+ *
+ * Plus aucun bouton — `booking-tunnel.tsx` le décide, le rendez-vous étant pris
+ * (#732) — donc plus rien d'accentué que l'étape courante. C'est voulu : rien
+ * n'y est rouvrable, rien ne doit y paraître actionnable.
+ *
+ * ## Sur un écran étroit
+ *
+ * `flex-wrap` fait la dégradation : à 360 px un panneau offre ~280 px utiles,
+ * les cinq pastilles tiennent sur deux à trois rangées plutôt que de déborder.
+ * La gouttière verticale est plus serrée que l'horizontale — deux rangées du
+ * même fil sont plus proches l'une de l'autre que deux étapes voisines ne le
+ * sont côte à côte, même règle que `.spa-booking__summary-facts`.
+ */
+.spa-booking__progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spa-space-1) var(--spa-space-2);
+  /* Le corps réduit de `.spa-card__meta`, que la liste portait jusqu'ici, et pas
+   * le `xs` d'une mention de second plan : le fil répond à « où en suis-je »,
+   * une question qu'on se pose du coin de l'œil. */
+  font-size: var(--spa-font-size-sm);
+  /* Le défaut est l'étape à venir : ni franchie, ni courante. */
+  color: var(--spa-color-text-subtle);
+}
+
+/*
+ * La rangée d'une étape : sa pastille, puis le trait qui la relie à la suivante.
+ *
+ * Le `<li>` ne porte donc aucune peinture — c'est la pastille qu'il contient qui
+ * la porte. Peindre le `<li>` étirerait l'aplat de l'étape courante jusque sous
+ * le trait, c'est-à-dire jusqu'à la lisière de l'étape suivante.
+ */
+.spa-booking__progress-step {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+}
+
+/*
+ * La pastille — le libellé de l'étape, franchie, courante ou à venir.
+ *
+ * La bordure transparente est posée dès le défaut, et non ajoutée à l'étape
+ * courante : sans elle, l'étape gagnerait 2 px de large et de haut en le
+ * devenant, et le fil entier se décalerait à chaque geste. Même précaution que
+ * `.spa-admin-client-list__item`.
+ *
+ * `min-block-size` : 24 px, le minimum d'une cible selon WCAG 2.5.8 — la
+ * pastille est cliquable dès qu'elle est franchie — et non les 44 px de
+ * `--spa-target-min-size`, qui sont ceux des contrôles de saisie : un fil
+ * d'étapes haut de 44 px par rangée pousserait le contenu de l'étape hors de
+ * l'écran sur un mobile. Même arbitrage que `.spa-consent__control`.
+ *
+ * `white-space: nowrap` sur la pastille et non sur la rangée : un libellé ne se
+ * coupe pas en deux — « Récapi- / tulatif » ne se lit plus —, mais le fil entier
+ * doit pouvoir passer à la ligne entre deux étapes.
+ */
+.spa-booking__progress-name {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--spa-space-6);
+  padding: var(--spa-space-1) var(--spa-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--spa-radius-full);
+  white-space: nowrap;
+}
+
+/* L'étape courante — l'aplat, la bordure, la couleur, la graisse. */
+.spa-booking__progress-step[aria-current='step'] .spa-booking__progress-name {
+  background-color: var(--spa-color-accent-soft);
+  border-color: var(--spa-color-accent);
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+/*
+ * Le retour à une étape franchie.
+ *
+ * Chrome de bouton entièrement neutralisé : c'est un `<button>` parce que
+ * l'action n'est pas une navigation — le tunnel ne change pas de route, il
+ * change d'étape — et non parce qu'on veut un bouton à l'écran. Il se lit comme
+ * le lien qu'il remplace.
+ */
+.spa-booking__progress-link {
+  background: none;
+  color: var(--spa-color-accent-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Le soulignement n'apparaît qu'au survol et au focus : posé en permanence, il
+ * mettrait les étapes franchies plus en avant que l'étape courante, qui est
+ * pourtant la réponse à « où en suis-je ». */
+.spa-booking__progress-link:hover,
+.spa-booking__progress-link:focus-visible {
+  text-decoration: underline;
+}
+
+/*
+ * Le trait qui relie deux étapes — le « ── » du wireframe.
+ *
+ * Un élément vide et non un caractère : le point médian qu'il remplace se
+ * sélectionnait à la souris, se copiait avec le texte, et changeait de chasse
+ * d'une police à l'autre. Un filet de 0,75 rem tient la même place partout et
+ * ne fait pas partie du texte.
+ *
+ * `flex: none` : sans lui, un conteneur flex étroit comprimerait le trait
+ * jusqu'à le faire disparaître avant de passer les pastilles à la ligne.
+ */
+.spa-booking__progress-joint {
+  flex: none;
+  inline-size: var(--spa-space-3);
+  block-size: 1px;
+  background-color: var(--spa-color-border);
+}
+
 /*
  * La racine d'une étape — le `<form>` ou la `<section>` que `BookingTunnel`
  * monte dans le panneau.
