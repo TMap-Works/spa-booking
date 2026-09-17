@@ -47,6 +47,26 @@ describe('matchesTerm', () => {
     expect(matchesTerm('+261 34')).toContainEqual({ phone: { startsWith: '+261 34' } });
   });
 
+  /**
+   * La colonne est canonisée en E.164 depuis #824 — `+261341234567`, sans
+   * séparateur. Un terme tapé comme le numéro se lit ne serait donc plus le
+   * préfixe de rien : c'est la recherche du comptoir qui cesserait de trouver,
+   * et aucune autre suite ne le verrait (`FakeCrmRepository` réimplémente la
+   * recherche en mémoire).
+   */
+  it('cherche aussi le numéro compacté — la colonne est en E.164 (#824)', () => {
+    expect(matchesTerm('+261 34 99')).toEqual(
+      expect.arrayContaining([
+        { phone: { startsWith: '+261 34 99' } },
+        { phone: { startsWith: '+2613499' } },
+      ]),
+    );
+  });
+
+  it('ramène le `00` de composition internationale au `+` (#824)', () => {
+    expect(matchesTerm('0026134')).toContainEqual({ phone: { startsWith: '+26134' } });
+  });
+
   it('neutralise les métacaractères de `LIKE` sur les quatre axes', () => {
     // `startsWith` de Prisma n'échappe rien : sans cette neutralisation,
     // `?q=%%` deviendrait `LIKE '%%%'` — le fichier client entier, au prix d'un

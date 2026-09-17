@@ -149,13 +149,37 @@ export const HISTORY_MAX_VISITS = CUSTOMER_HISTORY_MAX_VISITS;
  * `storedPhoneSchema`** de `@spa/shared`, recopié faute que le paquet l'exporte
  * (il n'en publie que `E164_PATTERN` et `UUID_V4_PATTERN`).
  *
- * Le régime est celui que l'ADR 0008 arrête pour la fiche cliente : format libre
- * borné, **jamais** E.164. Une fiche s'enregistre et s'affiche ; elle ne se
- * compose pas — c'est le rappel SMS J-1 qui compose, et il part d'ailleurs.
- * Refuser un numéro pourtant valide empêche d'être rappelée, en accepter un
- * douteux ne coûte qu'un SMS non délivré.
+ * ## Ce que ce motif juge, et ce qu'il ne juge plus — #824
+ *
+ * Il juge la **forme d'une saisie** : des chiffres, un `+` en tête au plus, et
+ * les séparateurs qu'un humain intercale. Il ne juge plus le format
+ * d'enregistrement : le service normalise en E.164 avec le pays de
+ * l'établissement (`identity/phone`), et refuse en 400 — champ nommé — ce qui
+ * n'est un numéro dans aucun plan de numérotation.
+ *
+ * Le motif reste permissif **exprès**, et c'est le sens qui compte : il doit
+ * accepter le national que la cliente dicte au comptoir — « 06 12 34 56 78 » —,
+ * puisque c'est le serveur qui le complète. Le resserrer ici déplacerait le
+ * refus sur une saisie parfaitement légitime.
+ *
+ * L'ADR 0008 disait « format libre borné, jamais E.164 » pour cette surface. Ce
+ * n'est plus vrai de la **colonne**, et ce l'est resté du **corps de requête** :
+ * ce qui a changé est que le pays de l'établissement rend la normalisation
+ * possible sans deviner, ce que ni #66 ni #404 n'avaient à leur disposition.
  */
 const PHONE_PATTERN = /^[+0-9][0-9\s().-]*$/;
+
+/**
+ * Ce que `/api/docs` doit dire d'un champ `phone` en **entrée** — écrit une
+ * fois, monté sur la création et sur la modification.
+ */
+const PHONE_DESCRIPTION =
+  'Accepté au format national (« 06 12 34 56 78 ») comme international ' +
+  '(« +261 34 12 345 67 »). **Enregistré et rendu en E.164** : le national est ' +
+  'complété avec le pays de l’établissement (`address.country`), et un numéro ' +
+  'qu’aucun plan de numérotation n’attribue est refusé en 400 sur le champ. ' +
+  'Sans pays renseigné sur l’établissement, seule la forme internationale est ' +
+  'acceptable.';
 
 /**
  * Élague une chaîne avant que les bornes ne la jugent — sans quoi `"   "`
@@ -449,7 +473,11 @@ export class CreateCustomerDto {
   @MaxLength(NAME_MAX_LENGTH)
   public lastName!: string;
 
-  @ApiPropertyOptional({ example: '+261 34 12 345 67', maxLength: PHONE_MAX_LENGTH })
+  @ApiPropertyOptional({
+    example: '+261 34 12 345 67',
+    maxLength: PHONE_MAX_LENGTH,
+    description: PHONE_DESCRIPTION,
+  })
   // `@IsOptional()` et non le `@ValidateIf` de la modification : à la création
   // il n'y a pas de valeur antérieure à effacer, « absent » et « null » disent
   // donc la même chose — pas de numéro.
@@ -530,7 +558,7 @@ export class UpdateCustomerDto {
     nullable: true,
     type: String,
     maxLength: PHONE_MAX_LENGTH,
-    description: '`null` efface le numéro ; le champ absent le laisse tel quel.',
+    description: `\`null\` efface le numéro ; le champ absent le laisse tel quel. ${PHONE_DESCRIPTION}`,
   })
   @ValidateIf((_object: unknown, value: unknown) => value !== undefined && value !== null)
   @IsString()
