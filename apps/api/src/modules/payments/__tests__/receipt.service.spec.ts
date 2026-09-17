@@ -19,6 +19,7 @@ const SALE_ID = '6a7f1f52-3f1e-4b19-9c0a-1d4e2f5b6c7d';
 function issuer(overrides: Partial<ReceiptRow['tenant']> = {}): ReceiptRow['tenant'] {
   return {
     name: 'Barber Tana',
+    slug: 'barber-tana',
     legalName: null,
     legalIdType: null,
     legalId: null,

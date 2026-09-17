@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  StreamableFile,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -16,6 +17,7 @@ import {
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiProduces,
   ApiTags,
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
@@ -23,6 +25,7 @@ import {
 import { AuthAtLeast } from '../identity/auth.decorator';
 import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
+import { ReceiptPdfQueryDto, toReceiptPdfFormat } from './dto/receipt-pdf.dto';
 import { SaleReceiptDto, toSaleReceiptDto } from './dto/receipt.dto';
 import {
   CreateSaleDto,
@@ -40,6 +43,8 @@ import {
   toSaleSettlementDto,
   toSettlementRequest,
 } from './dto/settlement.dto';
+import { contentDisposition } from './receipt-pdf/receipt-pdf.format';
+import { ReceiptPdfService } from './receipt-pdf/receipt-pdf.service';
 import { ReceiptService } from './receipt.service';
 import { SalesService } from './sales.service';
 import { SettlementService } from './settlement.service';
@@ -52,6 +57,8 @@ import { SettlementService } from './settlement.service';
  * | `POST /sales` | staff et au-dessus | compose un ticket et l'inscrit |
  * | `GET /sales` | staff et au-dessus | l'historique, filtrable (#62) |
  * | `GET /sales/:id` | staff et au-dessus | relit un ticket, lignes comprises |
+ * | `GET /sales/:id/receipt` | staff et au-dessus | le ticket de caisse, en JSON (#818) |
+ * | `GET /sales/:id/receipt.pdf` | staff et au-dessus | la même pièce imprimable — rouleau 80 mm ou facture A4 (#819) |
  * | `POST /sales/:saleId/payments` | staff et au-dessus | règle le ticket, en une fois ou en plusieurs (#817) |
  *
  * ## Le seuil, et pourquoi il est à `STAFF`
@@ -100,6 +107,7 @@ export class SalesController {
     private readonly sales: SalesService,
     private readonly settlements: SettlementService,
     private readonly receipts: ReceiptService,
+    private readonly receiptPdfs: ReceiptPdfService,
   ) {}
 
   /**
@@ -213,6 +221,61 @@ export class SalesController {
   })
   public async receipt(@Param('id', ParseUUIDPipe) id: string): Promise<SaleReceiptDto> {
     return toSaleReceiptDto(await this.receipts.bySaleId(id));
+  }
+
+  /**
+   * Le ticket de caisse **en PDF** — #819, premier critère.
+   *
+   * Deux documents sous une seule route, que `?format=` départage : le rouleau
+   * thermique **80 mm** du comptoir (défaut) et la **facture A4** qu'on envoie.
+   * Le contenu est celui de `GET /sales/:id/receipt` — mêmes montants, même
+   * numéro de pièce, même fuseau —, mis en page.
+   *
+   * ## Le même seuil que le reçu JSON, et pourquoi
+   *
+   * `STAFF`, comme tout le reste de la caisse : imprimer le ticket **est** le
+   * geste de comptoir qui suit l'encaissement, et c'est la personne qui encaisse
+   * qui le fait. Un seuil plus haut aurait obligé à appeler un responsable pour
+   * réimprimer un ticket perdu ; un seuil plus bas n'existe pas ici — aucune
+   * route de `sales` n'est ouverte au rôle `CLIENT` ni au public.
+   *
+   * ## Ce que le document ne porte pas
+   *
+   * Aucune donnée de carte — ni PAN, ni quatre derniers chiffres, ni marque
+   * (septième critère, payments-stripe §1). Il n'y a rien à filtrer : ces
+   * colonnes n'existent pas, et un règlement au terminal s'imprime « Carte
+   * bancaire (TPE) ». Les métadonnées du PDF ne portent pas davantage de nom de
+   * personne : un visualiseur les affiche, et elles survivent au document.
+   *
+   * **404** pour un identifiant inconnu comme pour celui d'un ticket d'un autre
+   * établissement, indistinctement (tenant-isolation §4) — le refus vient de la
+   * lecture, avant qu'aucun octet ne soit produit. **400** sur un `format`
+   * inconnu.
+   */
+  @Get(':id/receipt.pdf')
+  @AuthAtLeast('STAFF')
+  @ApiOperation({ summary: 'Éditer le ticket de caisse d’une vente en PDF' })
+  @ApiProduces('application/pdf')
+  @ApiOkResponse({
+    description:
+      'Le PDF. `Content-Disposition` porte le numéro de pièce — « proforma » tant que la vente est ouverte.',
+    schema: { type: 'string', format: 'binary' },
+  })
+  @ApiBadRequestResponse({ description: 'Format inconnu — seuls `ticket-80` et `a4` sont servis.' })
+  @ApiNotFoundResponse({
+    description: 'Aucun ticket de cet établissement ne porte cet identifiant.',
+  })
+  public async receiptPdf(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query() query: ReceiptPdfQueryDto,
+  ): Promise<StreamableFile> {
+    const pdf = await this.receiptPdfs.bySaleId(id, toReceiptPdfFormat(query));
+
+    return new StreamableFile(pdf.bytes, {
+      type: 'application/pdf',
+      disposition: contentDisposition(pdf.fileName),
+      length: pdf.bytes.byteLength,
+    });
   }
 
   /**

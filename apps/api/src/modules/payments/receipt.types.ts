@@ -21,6 +21,16 @@ import type { SaleItemKind } from './pos.types';
 /** L'établissement tel que la pièce le nomme. */
 export interface ReceiptIssuer {
   readonly name: string;
+  /**
+   * Le slug de l'établissement — la part variable de ses URL publiques.
+   *
+   * Il ne s'**imprime** pas : il compose le lien de réservation que le QR code
+   * du pied de ticket porte (#819, troisième critère). C'est pour cette raison
+   * qu'il vit dans le domaine et **pas** dans `SaleReceiptDto` : le contrat
+   * partagé sert un écran, qui connaît déjà le slug par son URL, et l'y ajouter
+   * aurait été un champ que personne ne lit.
+   */
+  readonly slug: string;
   readonly legalName: string | null;
   readonly legalIdType: LegalIdType | null;
   readonly legalId: string | null;
