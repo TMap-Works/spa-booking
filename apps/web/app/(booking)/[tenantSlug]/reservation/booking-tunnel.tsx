@@ -541,7 +541,8 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
    *   soumission, si bien qu'une barre alimentée par le brouillon annoncerait la
    *   prestation précédente pendant qu'on en désigne une autre — deux réponses
    *   différentes à la même question, sur le même écran. Rien n'y manque pour
-   *   autant : chaque option du sélecteur porte déjà sa durée et son prix ;
+   *   autant : depuis #741, chaque carte de l'étape porte sa durée et son prix,
+   *   et c'est le bas de cet écran-là qu'occupe la barre d'action collante ;
    * - **« Récapitulatif »**, parce que ces faits **y sont l'écran**. Le
    *   wireframe garde la barre à son étape 5, mais cette étape-là est le
    *   paiement — un conteneur Stripe, sous lequel un rappel a tout son sens.
