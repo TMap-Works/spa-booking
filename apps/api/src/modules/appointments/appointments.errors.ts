@@ -93,6 +93,46 @@ export class AppointmentRangeTooWideError extends DomainError {
 }
 
 /**
+ * 404 : la ressource n'existe pas **ici**, et rien ne dit si elle existe
+ * ailleurs. Même table que ci-dessus.
+ */
+const NOT_FOUND = DOMAIN_HTTP_STATUS.NOT_FOUND;
+
+/**
+ * Le compte connecté n'a aucune fiche praticien dans cet établissement (#811).
+ *
+ * ## 404, et surtout pas 403
+ *
+ * Le rang de l'appelant est suffisant — la garde l'a déjà jugé —, c'est la
+ * **ressource** « mon agenda » qui n'existe pas : un manager qui tient le salon
+ * sans y donner de soins n'a pas de fiche, et ce n'est pas un refus
+ * d'autorisation. Un 403 aurait laissé croire à l'écran qu'il faut demander un
+ * droit, là où il faut créer une fiche.
+ *
+ * ## Un code à lui, plutôt que le `NOT_FOUND` générique
+ *
+ * Parce qu'il est **actionnable** : c'est le seul 404 de ce module dont le front
+ * puisse faire quelque chose d'utile — proposer le rattachement plutôt
+ * qu'afficher un écran vide. Les autres — rendez-vous, référence — ne se
+ * distinguent d'un identifiant inventé par rien, et c'est précisément ce qu'on
+ * veut d'eux.
+ *
+ * ## `details` est vide, délibérément
+ *
+ * Ni `userId`, ni `tenantId` : les deux viennent du jeton de l'appelant, les lui
+ * rendre ne lui apprend rien, et un corps d'erreur repart vers un journal
+ * d'accès ou une capture d'écran de ticket (tenant-isolation §4).
+ */
+export class StaffProfileNotFoundError extends DomainError {
+  public override readonly code = APPOINTMENTS_ERROR_CODES.STAFF_PROFILE_NOT_FOUND;
+  public override readonly status = NOT_FOUND;
+
+  public constructor() {
+    super('Aucune fiche praticien n’est rattachée à ce compte.');
+  }
+}
+
+/**
  * Le créneau a été pris entre l'affichage et la validation.
  *
  * ## Ce que cette erreur signifie exactement

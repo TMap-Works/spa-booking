@@ -22,6 +22,7 @@ import type {
   ClientReference,
   RescheduleDraft,
   RescheduleOutcome,
+  StaffProfileRecord,
   StatusChangeDraft,
 } from '../appointments.types';
 
@@ -177,9 +178,31 @@ interface StoredClient {
   role: UserRole;
 }
 
+/**
+ * Une fiche praticien telle que la table `staff` la porte (#811).
+ *
+ * `userId` est la colonne que rien ne lisait avant ce ticket, et c'est
+ * précisément ce que le double doit tenir : la fiche se trouve par
+ * `(tenant_id, user_id)`, jamais par `user_id` seul. Un double qui chercherait
+ * sur le compte sans la portée aurait rendu vert un praticien lisant l'agenda du
+ * salon voisin.
+ */
+interface StoredStaffProfile {
+  tenantId: string;
+  id: string;
+  userId: string;
+  displayName: string;
+  bio: string | null;
+  isActive: boolean;
+}
+
 export class FakeAppointmentsRepository {
   public readonly appointments: StoredAppointment[] = [];
   public readonly clients: StoredClient[] = [];
+  /** Fiches praticien, par établissement — voir `seedStaffProfile` (#811). */
+  public readonly staffProfiles: StoredStaffProfile[] = [];
+  /** Jours de fermeture par établissement — voir `seedClosedWeekdays` (#811). */
+  private readonly closedWeekdays = new Map<string, number[]>();
   /** Fuseau par établissement — `UTC` par défaut, voir `seedTimeZone`. */
   private readonly timeZones = new Map<string, string | null>();
   /** Affichage d'agenda par prestation — voir `seedServiceDisplay`. */
@@ -677,6 +700,83 @@ export class FakeAppointmentsRepository {
     // d'établissement**, et l'écraser par le défaut priverait la suite du seul
     // chemin qui mène au 404.
     return this.timeZones.has(tenantId) ? (this.timeZones.get(tenantId) ?? null) : 'UTC';
+  }
+
+  /**
+   * Rattache une fiche praticien à un **compte**, dans un établissement (#811).
+   *
+   * Le couple `(tenantId, userId)` est celui de l'unique `staff` du schéma : le
+   * double le tient par construction, en refusant le second rattachement du même
+   * compte. Sans ce refus, une suite pourrait semer deux fiches pour un compte et
+   * verdir sur un `findFirst` que la base n'aurait jamais laissé ambigu.
+   */
+  public seedStaffProfile(input: {
+    tenantId: string;
+    staffId: string;
+    userId: string;
+    displayName?: string;
+    bio?: string | null;
+    isActive?: boolean;
+  }): StoredStaffProfile {
+    const already = this.staffProfiles.find(
+      (candidate) => candidate.tenantId === input.tenantId && candidate.userId === input.userId,
+    );
+
+    if (already !== undefined) {
+      throw new Error(
+        `le compte ${input.userId} a déjà une fiche praticien dans ${input.tenantId} — ` +
+          '`staff.@@unique([tenantId, userId])` l’interdit',
+      );
+    }
+
+    const profile: StoredStaffProfile = {
+      tenantId: input.tenantId,
+      id: input.staffId,
+      userId: input.userId,
+      displayName: input.displayName ?? DEFAULT_DISPLAY.staffDisplayName,
+      bio: input.bio ?? null,
+      isActive: input.isActive ?? true,
+    };
+
+    this.staffProfiles.push(profile);
+
+    return profile;
+  }
+
+  /** Déclare les jours de fermeture récurrents d'un établissement (#811). */
+  public seedClosedWeekdays(tenantId: string, weekdays: readonly number[]): void {
+    this.closedWeekdays.set(tenantId, [...weekdays].sort((left, right) => left - right));
+  }
+
+  /**
+   * La fiche praticien rattachée à un compte de l'établissement courant (#811).
+   *
+   * Filtrée sur `(tenantId, userId)` et jamais sur `userId` seul : c'est ce que
+   * l'extension Prisma impose au vrai, et c'est la propriété que les suites de
+   * fuite vérifient — un compte connu du salon voisin rend `null` ici, jamais sa
+   * fiche.
+   */
+  public async findStaffByUserId(userId: string): Promise<StaffProfileRecord | null> {
+    const tenantId = this.requireTenant();
+    const found = this.staffProfiles.find(
+      (candidate) => candidate.tenantId === tenantId && candidate.userId === userId,
+    );
+
+    return found === undefined
+      ? null
+      : {
+          id: found.id,
+          displayName: found.displayName,
+          bio: found.bio,
+          isActive: found.isActive,
+        };
+  }
+
+  /** Les jours de fermeture de l'établissement courant — vide par défaut. */
+  public async listClosedWeekdays(): Promise<number[]> {
+    const tenantId = this.requireTenant();
+
+    return [...(this.closedWeekdays.get(tenantId) ?? [])];
   }
 
   /** Ce que la jointure rendrait pour cette prestation — le défaut à défaut. */
