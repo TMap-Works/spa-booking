@@ -169,7 +169,12 @@ describe('POS — le dépôt contre un vrai PostgreSQL', () => {
       tipAmountMinor,
     });
 
-    return { ...composed, appointmentId: tenant.appointmentId, cashierUserId: tenant.cashierUserId };
+    return {
+      ...composed,
+      taxRateBps: TAX_RATE_BPS,
+      appointmentId: tenant.appointmentId,
+      cashierUserId: tenant.cashierUserId,
+    };
   }
 
   beforeAll(async () => {

@@ -1,5 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 
+import { allocateReceiptNumberFor } from './receipt.numbering';
+
 /**
  * La reprise des encaissements inscrits **avant** #817 — septième critère de
  * l'issue.
@@ -260,6 +262,7 @@ export async function runSaleBackfill(
         if (apply) {
           await attachToSale(
             prismaUnscoped,
+            payment.tenantId,
             payment.id,
             plan.saleId,
             payment.amountMinor,
@@ -326,6 +329,7 @@ export async function runSaleBackfill(
  */
 async function attachToSale(
   prismaUnscoped: PrismaClient,
+  tenantId: string,
   paymentId: string,
   saleId: string,
   amountMinor: number,
@@ -343,11 +347,18 @@ async function attachToSale(
     // qu'`update` ne sait pas exprimer.
     const sale = await tx.sale.findUniqueOrThrow({
       where: { id: saleId },
-      select: { settledAmountMinor: true, totalAmountMinor: true },
+      select: { settledAmountMinor: true, totalAmountMinor: true, receiptNumber: true },
     });
 
     if (sale.settledAmountMinor === sale.totalAmountMinor) {
-      await tx.sale.update({ where: { id: saleId }, data: { settledAt } });
+      // Une vente que cette reprise **clôt** prend son numéro de pièce comme
+      // n'importe quelle autre clôture (#818) : la suite d'un salon ne peut pas
+      // avoir de vente close sans rang, sans quoi le reçu du ticket rattrapé
+      // n'aurait rien à afficher. La migration a numéroté ce qui était déjà
+      // clos ; ce bloc couvre ce que la reprise clôt après elle.
+      const receiptNumber = sale.receiptNumber ?? (await allocateReceiptNumberFor(tx, tenantId));
+
+      await tx.sale.update({ where: { id: saleId }, data: { settledAt, receiptNumber } });
     }
   });
 }
@@ -395,6 +406,11 @@ async function createSaleFor(
         totalAmountMinor: payment.amountMinor,
         settledAmountMinor: payment.amountMinor,
         settledAt,
+        // La vente naît **close** : elle prend donc son numéro de pièce dans la
+        // transaction qui l'écrit (#818). Le rang suit celui de la migration,
+        // qui a numéroté l'existant — une reprise jouée après elle continue la
+        // suite au lieu d'en ouvrir une seconde.
+        receiptNumber: await allocateReceiptNumberFor(tx, payment.tenantId),
         currency: payment.currency,
         createdAt: payment.createdAt,
       },

@@ -10,6 +10,8 @@ import { PosRepository } from './pos.repository';
 import { ProductsController } from './products.controller';
 import { ProductsService } from './products.service';
 import { PublicPaymentsController } from './public-payments.controller';
+import { ReceiptRepository } from './receipt.repository';
+import { ReceiptService } from './receipt.service';
 import { RefundsRepository } from './refunds.repository';
 import { RefundsService } from './refunds.service';
 import { SalesController } from './sales.controller';
@@ -183,7 +185,7 @@ import {
  * d'affaires, c'est `SalesService` — déjà exporté — qui le sert.
  *
  * `PaymentsRepository`, `StripeWebhookRepository`, `PosRepository`,
- * `RefundsRepository` et `SettlementRepository` ne sont pas exportés non plus : un module n'importe jamais le repository d'un autre
+ * `RefundsRepository`, `SettlementRepository` et `ReceiptRepository` ne sont pas exportés non plus : un module n'importe jamais le repository d'un autre
  * (api-module §3).
  */
 @Module({
@@ -206,6 +208,12 @@ import {
     ProductsService,
     SalesService,
     PosRepository,
+    // #818 — le ticket de caisse. Un service et un dépôt à part de la caisse :
+    // composer une addition et composer une **pièce comptable** ne demandent
+    // pas les mêmes lectures, et les fondre aurait fait charger l'identité
+    // légale du salon, trois personnes et les avoirs à chaque `GET /sales/:id`.
+    ReceiptService,
+    ReceiptRepository,
     StripeWebhookService,
     StripeWebhookRepository,
     // `useFactory` et non `useClass` : le paramètre de ce fournisseur de

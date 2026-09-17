@@ -405,6 +405,7 @@ describe('Règlements concurrents d’un ticket — contre un vrai PostgreSQL', 
         currency: 'EUR',
         subtotalAmountMinor: TICKET_MINOR,
         taxAmountMinor: 0,
+        taxRateBps: 0,
         tipAmountMinor: 0,
         totalAmountMinor: TICKET_MINOR,
         items: [

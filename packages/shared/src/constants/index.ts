@@ -65,6 +65,30 @@ export {
 export type { PaymentMethod, PaymentStatus } from './payment';
 
 export {
+  DEFAULT_RECEIPT_PREFIX,
+  FREE_FORM_LEGAL_ID_PATTERN,
+  LEGAL_ID_MAX_LENGTH,
+  LEGAL_ID_TYPES,
+  LEGAL_NAME_MAX_LENGTH,
+  RECEIPT_FOOTER_MAX_LENGTH,
+  RECEIPT_PREFIX_MAX_LENGTH,
+  RECEIPT_PREFIX_MIN_LENGTH,
+  RECEIPT_PREFIX_PATTERN,
+  RECEIPT_SEQUENCE_PAD,
+  VAT_NUMBER_PATTERN,
+  formatReceiptNumber,
+  formatRefundReceiptNumber,
+  isLegalIdType,
+  isReceiptPrefix,
+  isValidFrenchVatNumber,
+  isValidLegalId,
+  isValidSiren,
+  isValidSiret,
+  isValidVatNumber,
+} from './receipt';
+export type { LegalIdType } from './receipt';
+
+export {
   STAFF_ROLES,
   USER_ROLE_RANK,
   USER_ROLES,

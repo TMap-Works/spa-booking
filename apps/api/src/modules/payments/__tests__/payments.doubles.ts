@@ -503,6 +503,7 @@ export class FakeAppointmentTicket {
       currency: appointment.price.currency,
       subtotalAmountMinor: appointment.price.amountMinor,
       taxAmountMinor: 0,
+      taxRateBps: 0,
       tipAmountMinor: 0,
       totalAmountMinor: appointment.price.amountMinor,
       items: [],

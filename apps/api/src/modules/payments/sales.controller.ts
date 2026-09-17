@@ -23,6 +23,7 @@ import {
 import { AuthAtLeast } from '../identity/auth.decorator';
 import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
+import { SaleReceiptDto, toSaleReceiptDto } from './dto/receipt.dto';
 import {
   CreateSaleDto,
   ListSalesQueryDto,
@@ -39,6 +40,7 @@ import {
   toSaleSettlementDto,
   toSettlementRequest,
 } from './dto/settlement.dto';
+import { ReceiptService } from './receipt.service';
 import { SalesService } from './sales.service';
 import { SettlementService } from './settlement.service';
 
@@ -97,6 +99,7 @@ export class SalesController {
   public constructor(
     private readonly sales: SalesService,
     private readonly settlements: SettlementService,
+    private readonly receipts: ReceiptService,
   ) {}
 
   /**
@@ -173,6 +176,43 @@ export class SalesController {
   @ApiNotFoundResponse({ description: 'Aucun ticket de cet établissement ne porte cet identifiant.' })
   public async byId(@Param('id', ParseUUIDPipe) id: string): Promise<SaleDto> {
     return toSaleDto(await this.sales.byId(id));
+  }
+
+  /**
+   * Le **ticket de caisse** d'une vente — #818, cinquième et sixième critères.
+   *
+   * C'est la pièce comptable, et non l'addition : elle porte l'identité légale
+   * du salon et ses coordonnées, le numéro de pièce, la date et l'heure en UTC
+   * avec le fuseau du salon, le caissier, la cliente et le praticien, les lignes
+   * avec leur prix unitaire TTC, la ventilation de la taxe par taux, les
+   * règlements avec la monnaie rendue, le pourboire, et les avoirs émis.
+   *
+   * ## Pourquoi une route à part de `GET /sales/:id`
+   *
+   * Parce que ce sont deux lectures différentes. L'addition sert l'écran de
+   * caisse — elle est appelée à chaque frappe. La pièce sert l'impression et la
+   * réclamation, et charge pour cela l'établissement, trois personnes et les
+   * remboursements. Les fondre aurait fait payer ces lectures à chaque
+   * consultation d'un ticket, pour un écran qui n'en affiche rien.
+   *
+   * ## Le numéro est nul tant que la vente n'est pas close
+   *
+   * Le rang est attribué **à la clôture** (`receipt.numbering.ts`) : un ticket
+   * encore ouvert n'en a pas, et ce que la route rend est alors un proforma.
+   * En attribuer un ici en percerait la suite à chaque consultation.
+   *
+   * Répond **404** pour un identifiant inconnu comme pour celui d'un ticket d'un
+   * autre établissement, indistinctement (tenant-isolation §4).
+   */
+  @Get(':id/receipt')
+  @AuthAtLeast('STAFF')
+  @ApiOperation({ summary: 'Éditer le ticket de caisse d’une vente' })
+  @ApiOkResponse({ type: SaleReceiptDto })
+  @ApiNotFoundResponse({
+    description: 'Aucun ticket de cet établissement ne porte cet identifiant.',
+  })
+  public async receipt(@Param('id', ParseUUIDPipe) id: string): Promise<SaleReceiptDto> {
+    return toSaleReceiptDto(await this.receipts.bySaleId(id));
   }
 
   /**

@@ -229,6 +229,31 @@ export type {
   SettleSaleRequest,
 } from './payment';
 
+export {
+  legalIdSchema,
+  legalIdTypeSchema,
+  legalNameSchema,
+  receiptFooterSchema,
+  receiptIssuerSchema,
+  receiptLineKindSchema,
+  receiptLineSchema,
+  receiptPartySchema,
+  receiptPrefixSchema,
+  receiptRefundSchema,
+  receiptSettlementSchema,
+  receiptTaxLineSchema,
+  saleReceiptSchema,
+} from './receipt';
+export type {
+  ReceiptIssuer,
+  ReceiptLine,
+  ReceiptParty,
+  ReceiptRefund,
+  ReceiptSettlement,
+  ReceiptTaxLine,
+  SaleReceipt,
+} from './receipt';
+
 export { MAX_REPORT_EXPORT_TTL_SECONDS, reportExportSchema } from './reporting';
 export type { ReportExport } from './reporting';
 

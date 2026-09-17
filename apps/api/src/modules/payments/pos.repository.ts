@@ -381,6 +381,7 @@ export class PosRepository {
           cashierUserId: draft.cashierUserId,
           subtotalAmountMinor: draft.subtotalAmountMinor,
           taxAmountMinor: draft.taxAmountMinor,
+          taxRateBps: draft.taxRateBps,
           tipAmountMinor: draft.tipAmountMinor,
           totalAmountMinor: draft.totalAmountMinor,
           currency: draft.currency,
