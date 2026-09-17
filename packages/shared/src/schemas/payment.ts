@@ -50,6 +50,27 @@ export const paymentStatusSchema = z.enum(PAYMENT_STATUSES);
 export const paymentSchema = z.object({
   id: uuidSchema,
   appointmentId: uuidSchema.nullable(),
+  /**
+   * Le ticket que ce règlement solde — #817, CDC §2.4.
+   *
+   * `nullable` parce que l'API émet explicitement `null` sur les encaissements
+   * inscrits **avant** que la colonne n'existe : c'est le script de reprise
+   * (`pos.sale-backfill.ts`) qui les rattache, et tout règlement neuf en porte
+   * un — la base l'exige par `payments_sale_required_check`.
+   *
+   * `optional` **en plus**, et c'est une décision de contrat plutôt qu'une
+   * commodité : un champ ajouté à une réponse s'ajoute de façon **additive**,
+   * comme une colonne s'ajoute à une table (api-module §6). Le déclarer exigé
+   * d'emblée ferait échouer à la compilation tout consommateur qui construit un
+   * encaissement — le tableau d'encaissement du back-office et ses fixtures en
+   * premier — pour un champ qu'aucun d'eux ne lit encore. Le resserrer en
+   * `nullable` seul est le travail du ticket qui le fera lire, une fois que
+   * chacun le produit.
+   *
+   * Ce que l'assouplissement **ne** dit pas : que l'API puisse l'omettre. Elle
+   * ne l'omet jamais — `PaymentTransactionDto` le sert toujours, `null` compris.
+   */
+  saleId: uuidSchema.nullable().optional(),
   amount: nonNegativeMoneySchema,
   refunded: nonNegativeMoneySchema,
   method: paymentMethodSchema,
@@ -162,6 +183,92 @@ export const refundPaymentRequestSchema = z
   .strict();
 
 export type RefundPaymentRequest = z.infer<typeof refundPaymentRequestSchema>;
+
+/**
+ * Les moyens de règlement **au comptoir**, dans la casse que la caisse emploie
+ * sur le fil — #817.
+ *
+ * ## Pourquoi cette liste et non `paymentMethodSchema`
+ *
+ * Parce que les routes du POS servent la casse de l'énumération PostgreSQL
+ * (`CASH`), là où le reste du contrat nomme les moyens en minuscules. Ce n'est
+ * pas un oubli : `pos.types.ts` le dit depuis #510, `SALE_ITEM_KINDS` est dans
+ * le même cas, et unifier la casse est une décision de contrat qui se prend une
+ * fois pour tout le POS — pas au détour d'un ticket de correction. Décrire ici
+ * ce que la route accepte réellement vaut mieux que décrire ce qu'elle
+ * *devrait* accepter : c'est l'écart que #554 a tranché en faveur de la
+ * réponse, et que le corps de `refundPaymentRequestSchema` documente encore
+ * faute d'avoir pu le refermer.
+ *
+ * `CARD` au comptoir désigne le **terminal de paiement du salon**, jamais
+ * Stripe (arbitrage du 16/09, #834) : rien de ce que le terminal manipule ne
+ * traverse notre code, et le serveur n'en conserve que l'issue
+ * (payments-stripe §4).
+ */
+export const counterPaymentMethodSchema = z.enum(['CASH', 'CARD']);
+
+export type CounterPaymentMethod = z.infer<typeof counterPaymentMethodSchema>;
+
+/**
+ * Régler un ticket, en une fois ou en plusieurs — quatrième critère de #817.
+ *
+ * ## Aucun total n'entre ici
+ *
+ * Ni `total`, ni `currency` : le montant dû est celui que le serveur a composé
+ * en écrivant le ticket, relu en base à chaque règlement (cinquième critère).
+ * Ce que l'appelant fixe est la **part** qu'il règle maintenant, et rien
+ * d'autre — c'est ce qui permet à un ticket de 78,00 € de se régler en 50,00 €
+ * d'espèces puis 28,00 € au terminal.
+ *
+ * - `amountMinor` omis vaut **tout le reste dû**. L'écran de caisse n'a donc
+ *   rien à calculer pour le cas courant, qui est le règlement en une fois.
+ * - `amountMinor` fourni et supérieur au reste dû sort en `SALE_OVERPAYMENT`
+ *   (422) : le serveur ne rogne jamais un montant en silence.
+ * - `tenderedAmountMinor` est **ce que la cliente a tendu**, et il n'a de sens
+ *   qu'en espèces. L'excédent n'est pas un dépassement, c'est la monnaie
+ *   rendue : le règlement n'engage que le reste dû, et la réponse dit ce qu'il
+ *   faut rendre. Les deux montants s'excluent — tendre un billet *et* désigner
+ *   une part serait deux instructions pour un seul geste.
+ *
+ * Le `.strict()` refuse ce qu'il ne connaît pas, à commencer par un `saleId`
+ * glissé dans le corps : la vente est désignée par l'URL, et l'établissement
+ * par le jeton (tenant-isolation §2).
+ */
+export const settleSaleRequestSchema = z
+  .object({
+    method: counterPaymentMethodSchema,
+    amountMinor: z.number().int().positive().optional(),
+    tenderedAmountMinor: z.number().int().positive().optional(),
+  })
+  .strict();
+
+export type SettleSaleRequest = z.infer<typeof settleSaleRequestSchema>;
+
+/**
+ * Ce que le comptoir reçoit en retour d'un règlement — #817.
+ *
+ * Trois faits, et il faut les trois pour que l'écran sache quoi afficher :
+ * l'encaissement qui vient d'être inscrit, l'état du ticket après lui, et la
+ * monnaie à rendre. Sans le deuxième, la caisse ne saurait pas s'il reste
+ * quelque chose à encaisser ; sans le troisième, elle devrait recalculer une
+ * différence dont le serveur est seul à connaître les deux termes.
+ *
+ * `change` vaut zéro dès que rien n'est à rendre — un `Money` à zéro plutôt
+ * qu'un champ absent, pour que l'écran n'ait pas deux formes à lire.
+ */
+export const saleSettlementSchema = z
+  .object({
+    payment: paymentSchema,
+    saleId: uuidSchema,
+    total: nonNegativeMoneySchema,
+    settled: nonNegativeMoneySchema,
+    remaining: nonNegativeMoneySchema,
+    change: nonNegativeMoneySchema,
+    settledAt: utcInstantSchema.nullable(),
+  })
+  .strict();
+
+export type SaleSettlement = z.infer<typeof saleSettlementSchema>;
 
 /**
  * Filtres du journal des encaissements du back-office.

@@ -206,7 +206,29 @@ export class ReportingRepository {
 
   /**
    * Le revenu de la fenêtre, ventilé par **jour civil du salon** et par moyen de
-   * paiement — premier critère de #74.
+   * paiement — premier critère de #74, sixième critère de #817.
+   *
+   * ## Le revenu se lit sur les **ventes réglées**
+   *
+   * La jointure interne avec `sales` n'est pas un enrichissement : c'est ce qui
+   * fait dire à cet agrégat ce que #817 lui demande de dire. Avant elle, le
+   * revenu se calculait sur les seuls encaissements, et une vente de produits —
+   * qui n'en portait aucun, faute de colonne pour l'y rattacher — n'entrait
+   * jamais au chiffre d'affaires. L'écran de Spa Lumière annonçait
+   * « 385,00 € · 5 encaissements » pour une unique vente de 106,80 €, comptée
+   * 65,00 €.
+   *
+   * Une vente réglée porte désormais ses règlements, et chacun d'eux porte sa
+   * vente : sommer les seconds revient donc à sommer les premières, en gardant
+   * la ventilation par moyen — qu'un total lu sur `sales` seul ne donnerait pas,
+   * puisqu'une vente peut se régler en espèces **et** au terminal.
+   *
+   * Ce que la jointure écarte : les encaissements inscrits **avant** #817, qui
+   * n'ont pas de vente. C'est voulu — ce sont précisément les lignes sans pièce
+   * comptable —, et c'est temporaire : `pos.sale-backfill.ts` leur en crée une,
+   * après quoi plus rien n'est écarté. La jointure est aussi une seconde
+   * frontière d'établissement, sur le couple `(tenant_id, id)` et non sur
+   * l'identifiant seul (tenant-isolation §1).
    *
    * ## Ce que la requête compte, et ce qu'elle écarte
    *
@@ -231,11 +253,15 @@ export class ReportingRepository {
    *
    * ## L'index emprunté
    *
-   * `payments (tenant_id, status, captured_at)`, posé par ce ticket, sert la
-   * clause `WHERE` telle qu'elle est écrite : établissement, puis statut, puis
+   * `payments (tenant_id, status, captured_at)`, posé par #74, sert la clause
+   * `WHERE` telle qu'elle est écrite : établissement, puis statut, puis
    * fenêtre. Le `GROUP BY` porte sur une expression et ne peut donc pas être
    * servi par un index — mais il ne trie plus qu'un sous-ensemble déjà réduit à
    * la fenêtre.
+   *
+   * La jointure de #817 part de ce sous-ensemble et remonte
+   * `sales (tenant_id, id)`, qui est l'index unique posé par #60 : une
+   * recherche par clé, une par ligne retenue, jamais un balayage de `sales`.
    */
   public async dailyRevenue(
     window: ReportWindow,
@@ -245,21 +271,24 @@ export class ReportingRepository {
 
     const rows = await this.prisma.$queryRaw<RevenueSqlRow[]>`
       SELECT
-        to_char(("captured_at" AT TIME ZONE ${timeZone})::date, 'YYYY-MM-DD') AS bucket,
-        "method"::text AS method,
-        "currency" AS currency,
+        to_char(("payments"."captured_at" AT TIME ZONE ${timeZone})::date, 'YYYY-MM-DD') AS bucket,
+        "payments"."method"::text AS method,
+        "payments"."currency" AS currency,
         COUNT(*)::bigint AS transactions,
-        COALESCE(SUM("amount_minor"), 0)::bigint AS gross,
-        COALESCE(SUM("refunded_amount_minor"), 0)::bigint AS refunded
+        COALESCE(SUM("payments"."amount_minor"), 0)::bigint AS gross,
+        COALESCE(SUM("payments"."refunded_amount_minor"), 0)::bigint AS refunded
       FROM "payments"
-      WHERE "tenant_id" = ${tenantId}::uuid
-        AND "status" IN (
+      INNER JOIN "sales"
+        ON "sales"."tenant_id" = "payments"."tenant_id"
+       AND "sales"."id" = "payments"."sale_id"
+      WHERE "payments"."tenant_id" = ${tenantId}::uuid
+        AND "payments"."status" IN (
           ${REVENUE_STATUS_1}::"PaymentStatus",
           ${REVENUE_STATUS_2}::"PaymentStatus",
           ${REVENUE_STATUS_3}::"PaymentStatus"
         )
-        AND "captured_at" >= ${window.from.toISOString()}::timestamptz
-        AND "captured_at" < ${window.to.toISOString()}::timestamptz
+        AND "payments"."captured_at" >= ${window.from.toISOString()}::timestamptz
+        AND "payments"."captured_at" < ${window.to.toISOString()}::timestamptz
       GROUP BY 1, 2, 3
       ORDER BY 1, 2, 3
     `;

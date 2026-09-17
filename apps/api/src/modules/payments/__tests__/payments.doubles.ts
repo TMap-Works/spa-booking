@@ -4,7 +4,6 @@ import { getTenantId } from '../../../common/tenant';
 import type { PaymentsRepository } from '../payments.repository';
 import type {
   CardPaymentDraft,
-  CashPaymentDraft,
   PayableAppointment,
   PaymentHistoryFilter,
   PaymentMethod,
@@ -12,6 +11,7 @@ import type {
   PaymentStatus,
   PaymentTransaction,
 } from '../payments.types';
+import type { SaleDraft } from '../pos.types';
 import { StripeConfig } from '../stripe/stripe.config';
 import type {
   CreatePaymentIntentCommand,
@@ -51,6 +51,10 @@ interface StoredAppointment {
   tenantId: string;
   id: string;
   status: string;
+  /** La prestation réservée — ce que la ligne `SERVICE` du ticket référence (#817). */
+  serviceId: string;
+  /** La cliente — l'opérateur du ticket composé par le tunnel en ligne (#817). */
+  clientId: string;
   amountMinor: number;
   currency: string;
 }
@@ -59,6 +63,8 @@ interface StoredPayment {
   tenantId: string;
   id: string;
   appointmentId: string | null;
+  /** Le ticket soldé — `null` sur une ligne d'avant #817. */
+  saleId: string | null;
   amountMinor: number;
   refundedAmountMinor: number;
   currency: string;
@@ -101,7 +107,6 @@ type PaymentsRepositoryPort = Pick<
   | 'findPaymentByAppointment'
   | 'findTransactionByAppointment'
   | 'recordCardIntent'
-  | 'recordCashPayment'
   | 'listTransactions'
 >;
 
@@ -120,6 +125,8 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
     tenantId: string;
     id?: string;
     status?: string;
+    serviceId?: string;
+    clientId?: string;
     amountMinor?: number;
     currency?: string;
   }): StoredAppointment {
@@ -127,6 +134,8 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
       tenantId: input.tenantId,
       id: input.id ?? randomUUID(),
       status: input.status ?? 'PENDING',
+      serviceId: input.serviceId ?? randomUUID(),
+      clientId: input.clientId ?? randomUUID(),
       amountMinor: input.amountMinor ?? 7000,
       currency: input.currency ?? 'EUR',
     };
@@ -138,6 +147,7 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
   public seedPayment(input: {
     tenantId: string;
     appointmentId: string | null;
+    saleId?: string | null;
     id?: string;
     amountMinor?: number;
     refundedAmountMinor?: number;
@@ -153,6 +163,7 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
       tenantId: input.tenantId,
       id: input.id ?? randomUUID(),
       appointmentId: input.appointmentId,
+      saleId: input.saleId ?? null,
       amountMinor: input.amountMinor ?? 7000,
       refundedAmountMinor: input.refundedAmountMinor ?? 0,
       currency: input.currency ?? 'EUR',
@@ -187,6 +198,8 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
         : {
             id: row.id,
             status: row.status,
+            serviceId: row.serviceId,
+            clientId: row.clientId,
             price: { amountMinor: row.amountMinor, currency: row.currency },
           },
     );
@@ -213,6 +226,7 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
       tenantId,
       id: randomUUID(),
       appointmentId: draft.appointmentId,
+      saleId: draft.saleId,
       amountMinor: draft.amount.amountMinor,
       refundedAmountMinor: 0,
       currency: draft.amount.currency,
@@ -235,41 +249,6 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
     );
 
     return Promise.resolve(row === undefined ? null : toTransaction(row));
-  }
-
-  /**
-   * L'écriture du chemin espèces — `CASH`, `SUCCEEDED`, `captured_at` posé,
-   * **aucune référence de prestataire**.
-   *
-   * Le double reproduit ces quatre faits parce qu'ils sont exactement ce qui
-   * distingue ce chemin de celui de la carte : un double qui écrirait `PENDING`
-   * ferait passer pour vraie une caisse qui attend une confirmation qui ne
-   * viendra jamais.
-   */
-  public recordCashPayment(draft: CashPaymentDraft): Promise<PaymentTransaction | null> {
-    const tenantId = requireTenant();
-
-    if (this.isTaken(tenantId, draft.appointmentId)) {
-      return Promise.resolve(null);
-    }
-
-    const row: StoredPayment = {
-      tenantId,
-      id: randomUUID(),
-      appointmentId: draft.appointmentId,
-      amountMinor: draft.amount.amountMinor,
-      refundedAmountMinor: 0,
-      currency: draft.amount.currency,
-      method: 'CASH',
-      status: 'SUCCEEDED',
-      providerPaymentIntentId: null,
-      providerChargeId: null,
-      capturedAt: new Date(),
-      createdAt: new Date(),
-    };
-    this.payments.push(row);
-
-    return Promise.resolve(toTransaction(row));
   }
 
   /**
@@ -302,7 +281,13 @@ export class FakePaymentsRepository implements PaymentsRepositoryPort {
     });
   }
 
-  /** L'unicité `(tenantId, appointmentId)` — `null` ne se gêne pas lui-même. */
+  /**
+   * L'unicité `(tenantId, appointmentId)` — `null` ne se gêne pas lui-même.
+   *
+   * Depuis #817 elle ne protège plus qu'un chemin, mais c'est toujours celui
+   * pour lequel elle avait été posée : une intention en ligne par rendez-vous.
+   * Le comptoir n'écrit plus cette colonne du tout.
+   */
   private isTaken(tenantId: string, appointmentId: string): boolean {
     return this.payments.some(
       (candidate) => candidate.tenantId === tenantId && candidate.appointmentId === appointmentId,
@@ -321,6 +306,7 @@ function toRecord(row: StoredPayment): PaymentRecord {
   return {
     id: row.id,
     appointmentId: row.appointmentId,
+    saleId: row.saleId,
     amount: { amountMinor: row.amountMinor, currency: row.currency },
     method: row.method,
     status: row.status,
@@ -483,4 +469,88 @@ export const TEST_STRIPE_ENV = {
 /** Une configuration Stripe complète, pour les suites qui n'en testent pas l'absence. */
 export function testStripeConfig(): StripeConfig {
   return new StripeConfig({ NODE_ENV: 'test', ...TEST_STRIPE_ENV });
+}
+
+/**
+ * Le ticket qu'un rendez-vous compose, réduit à ce que le tunnel en ligne en
+ * fait — #817.
+ *
+ * `PaymentsService` ne compose une vente que pour avoir un `sale_id` à inscrire
+ * sur l'intention : il n'en lit ni les lignes, ni les montants. Le double rend
+ * donc un brouillon minimal et un identifiant, et c'est tout ce que la
+ * substituabilité exige ici — les règles de composition sont exercées par
+ * `sales.service.spec.ts`, celles du règlement par la suite de concurrence.
+ */
+export class FakeAppointmentTicket {
+  /** Les rendez-vous pour lesquels un ticket a été composé, dans l'ordre. */
+  public readonly composed: string[] = [];
+
+  private readonly ticketIds = new Map<string, string>();
+
+  /** Ce qui reste dû par rendez-vous — tout, sauf semis contraire. */
+  private readonly remaining = new Map<string, number>();
+
+  public composeForAppointment(
+    appointment: PayableAppointment,
+    _extraLines: readonly unknown[],
+    cashierUserId: string,
+  ): Promise<SaleDraft> {
+    this.composed.push(appointment.id);
+
+    return Promise.resolve({
+      appointmentId: appointment.id,
+      cashierUserId,
+      currency: appointment.price.currency,
+      subtotalAmountMinor: appointment.price.amountMinor,
+      taxAmountMinor: 0,
+      tipAmountMinor: 0,
+      totalAmountMinor: appointment.price.amountMinor,
+      items: [],
+    });
+  }
+
+  /**
+   * Ce qui reste dû sur le ticket d'un rendez-vous.
+   *
+   * Le double le tient **ouvert** : le tunnel en ligne n'écrit que l'intention,
+   * et c'est le webhook qui solde. Les scénarios de règlement au comptoir sont
+   * exercés contre un vrai PostgreSQL (`test/pos-settlement.concurrency-spec.ts`),
+   * seul endroit où la course entre les deux chemins veut dire quelque chose.
+   */
+  public appointmentTicketBalance(
+    appointmentId: string,
+  ): Promise<{ readonly saleId: string; readonly remainingAmountMinor: number } | null> {
+    const known = this.ticketIds.get(appointmentId);
+
+    return Promise.resolve(
+      known === undefined
+        ? null
+        : { saleId: known, remainingAmountMinor: this.remaining.get(appointmentId) ?? 1 },
+    );
+  }
+
+  /** Sème un ticket déjà soldé — le rendez-vous réglé au comptoir. */
+  public seedSettledTicket(appointmentId: string): string {
+    const id = randomUUID();
+    this.ticketIds.set(appointmentId, id);
+    this.remaining.set(appointmentId, 0);
+
+    return id;
+  }
+
+  public ticketForAppointment(appointmentId: string, _draft: SaleDraft): Promise<string> {
+    // Un identifiant **stable par rendez-vous** : deux appels concurrents
+    // doivent retrouver le même ticket, comme le verrou consultatif du vrai
+    // dépôt le garantit.
+    const known = this.ticketIds.get(appointmentId);
+
+    if (known !== undefined) {
+      return Promise.resolve(known);
+    }
+
+    const id = randomUUID();
+    this.ticketIds.set(appointmentId, id);
+
+    return Promise.resolve(id);
+  }
 }

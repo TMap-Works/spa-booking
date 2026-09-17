@@ -65,6 +65,11 @@ describe('SalesService — historique des ventes', () => {
       tax: { amountMinor: 0, currency: 'EUR' },
       tip: { amountMinor: 0, currency: 'EUR' },
       total: { amountMinor: 1850, currency: 'EUR' },
+      // Un ticket composé n'est pas encaissé : la caisse doit lire son reste dû
+      // sur la page d'historique, sans une lecture de plus par ligne (#817).
+      settled: { amountMinor: 0, currency: 'EUR' },
+      remaining: { amountMinor: 1850, currency: 'EUR' },
+      settledAt: null,
       createdAt: instant('2026-09-01T10:00:00.000Z'),
     });
     // Le détail se demande par `GET /sales/:id` : une page de cinquante tickets

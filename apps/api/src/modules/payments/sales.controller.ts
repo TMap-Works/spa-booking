@@ -1,6 +1,17 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Query } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  Query,
+} from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiConflictResponse,
   ApiCreatedResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -22,7 +33,14 @@ import {
   toSaleRequest,
   toSaleSummaryDto,
 } from './dto/sale.dto';
+import {
+  SaleSettlementDto,
+  SettleSaleDto,
+  toSaleSettlementDto,
+  toSettlementRequest,
+} from './dto/settlement.dto';
 import { SalesService } from './sales.service';
+import { SettlementService } from './settlement.service';
 
 /**
  * La caisse du comptoir — CDC §1.4, « POS de base » (#60).
@@ -32,6 +50,7 @@ import { SalesService } from './sales.service';
  * | `POST /sales` | staff et au-dessus | compose un ticket et l'inscrit |
  * | `GET /sales` | staff et au-dessus | l'historique, filtrable (#62) |
  * | `GET /sales/:id` | staff et au-dessus | relit un ticket, lignes comprises |
+ * | `POST /sales/:saleId/payments` | staff et au-dessus | règle le ticket, en une fois ou en plusieurs (#817) |
  *
  * ## Le seuil, et pourquoi il est à `STAFF`
  *
@@ -75,7 +94,10 @@ import { SalesService } from './sales.service';
 @ApiTags('payments')
 @Controller({ path: 'sales', version: '1' })
 export class SalesController {
-  public constructor(private readonly sales: SalesService) {}
+  public constructor(
+    private readonly sales: SalesService,
+    private readonly settlements: SettlementService,
+  ) {}
 
   /**
    * Compose un ticket et l'inscrit.
@@ -151,5 +173,53 @@ export class SalesController {
   @ApiNotFoundResponse({ description: 'Aucun ticket de cet établissement ne porte cet identifiant.' })
   public async byId(@Param('id', ParseUUIDPipe) id: string): Promise<SaleDto> {
     return toSaleDto(await this.sales.byId(id));
+  }
+
+  /**
+   * Règle un ticket — en une fois, ou en plusieurs (#817, quatrième critère).
+   *
+   * C'est la porte du **règlement mixte** : un ticket de 78,00 € se règle en
+   * 50,00 € d'espèces puis 28,00 € au terminal, et il est soldé quand la somme
+   * de ses encaissements égale son total. Une vente sans rendez-vous se règle
+   * exactement de la même façon qu'une vente adossée à un soin — c'est la même
+   * route, et c'est le point.
+   *
+   * **201** : chaque appel inscrit un encaissement de plus, qui est une pièce
+   * comptable. La route n'est **pas** rejouable, et ne peut pas l'être : deux
+   * règlements de 25,00 € sur le même ticket sont deux gestes distincts, et les
+   * confondre effacerait l'un des deux du rapprochement. Ce qui protège du
+   * double clic est ailleurs — le reste dû décroît au premier appel, et le
+   * second se heurte au ticket soldé.
+   *
+   * **404** si le ticket est inconnu, ou appartient à un autre établissement —
+   * indistinctement (tenant-isolation §4). **409** `SALE_ALREADY_SETTLED` s'il
+   * est déjà soldé. **422** `SALE_OVERPAYMENT` si le montant demandé dépasse le
+   * reste dû, avec ce reste dans `details`.
+   *
+   * **Le montant réglé est toujours celui que le serveur a composé**, relu sous
+   * verrou : le corps ne porte aucun total, seulement la part qu'on règle
+   * maintenant (cinquième critère).
+   */
+  @Post(':saleId/payments')
+  @HttpCode(HttpStatus.CREATED)
+  @AuthAtLeast('STAFF')
+  @ApiOperation({ summary: 'Régler un ticket, en totalité ou en partie' })
+  @ApiCreatedResponse({ type: SaleSettlementDto })
+  @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
+  @ApiNotFoundResponse({ description: 'Aucun ticket de cet établissement ne porte cet identifiant.' })
+  @ApiConflictResponse({
+    description: 'Ticket déjà soldé, ou intention carte encore en vol.',
+  })
+  @ApiUnprocessableEntityResponse({
+    description: 'Le règlement dépasse le reste dû — il est dans `details`.',
+  })
+  public async settle(
+    @Param('saleId', new ParseUUIDPipe({ version: '4' })) saleId: string,
+    @Body() body: SettleSaleDto,
+    @CurrentUser() operator: AuthenticatedUser,
+  ): Promise<SaleSettlementDto> {
+    return toSaleSettlementDto(
+      await this.settlements.settleSale(saleId, operator.userId, toSettlementRequest(body)),
+    );
   }
 }

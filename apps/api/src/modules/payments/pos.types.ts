@@ -196,6 +196,24 @@ export interface Sale {
   readonly tax: Money;
   readonly tip: Money;
   readonly total: Money;
+  /**
+   * Ce qui a été **capturé** sur ce ticket — #817.
+   *
+   * « Capturé » et non « engagé » : une intention carte en vol n'y compte
+   * **pas**, et c'est délibéré — une carte refusée ne doit pas condamner le
+   * ticket jusqu'à ce qu'un webhook relâche la somme. C'est le webhook
+   * `payment_intent.succeeded` qui fait avancer ce compte.
+   *
+   * Ce que cela laisserait ouvert — un ticket réglé au comptoir pendant qu'une
+   * intention est en vol — est fermé un cran plus haut : `SettlementRepository`
+   * refuse un règlement de comptoir sur un ticket qui porte une intention
+   * vivante.
+   */
+  readonly settled: Money;
+  /** `total − settled`, jamais négatif : la base l'interdit. */
+  readonly remaining: Money;
+  /** L'instant du solde, ou `null` tant qu'il reste un centime dû. */
+  readonly settledAt: Date | null;
   readonly items: readonly SaleItem[];
   readonly createdAt: Date;
 }

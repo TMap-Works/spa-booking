@@ -453,6 +453,47 @@ export const PAYMENT_ERROR_CODES = {
    */
   SALE_AMOUNT_OUT_OF_RANGE: 'SALE_AMOUNT_OUT_OF_RANGE',
 
+  /* --- Règlement d'un ticket (#817) --------------------------------------- */
+
+  /**
+   * Ce ticket est **soldé** : la somme de ses encaissements égale déjà son
+   * total, et un règlement de plus ferait payer deux fois.
+   *
+   * 409, comme `PAYMENT_ALREADY_SETTLED` dont il est le pendant côté vente —
+   * celui-là désigne une ligne `payments` déjà aboutie, celui-ci une pièce
+   * comptable close. Le refus n'est pas une vérification applicative :
+   * `sales_settled_amount_minor_check` rend l'écriture impossible, et ce code
+   * est ce que le service lit de son échec.
+   *
+   * `details.settledAt` porte l'instant du solde, pour que le comptoir sache
+   * quand la vente a été réglée plutôt que d'avoir à le chercher.
+   */
+  SALE_ALREADY_SETTLED: 'SALE_ALREADY_SETTLED',
+  /**
+   * Le règlement demandé dépasse le **reste dû** du ticket — 422.
+   *
+   * `details.remainingAmountMinor` dit ce qu'il restait, pour que l'écran de
+   * caisse corrige sans avoir à relire le ticket. Les espèces font exception et
+   * ne tombent jamais ici : l'excédent d'un billet est la monnaie rendue, pas
+   * un dépassement (quatrième critère de #817).
+   */
+  SALE_OVERPAYMENT: 'SALE_OVERPAYMENT',
+  /**
+   * Ce rendez-vous porte déjà un ticket, et l'appel voulait y **ajouter des
+   * lignes** — 409.
+   *
+   * Composer le ticket d'un rendez-vous n'a lieu qu'une fois : les lignes
+   * ajoutées entrent dans la vente que `POST /payments/cash` écrit, et une
+   * vente déjà écrite ne se recompose pas — ses totaux sont figés, et un
+   * règlement peut déjà s'y adosser. Le refus vaut mieux que le silence :
+   * ignorer les lignes ferait sortir la marchandise sans la facturer.
+   *
+   * `details.saleId` désigne le ticket existant, pour que le comptoir sache
+   * quoi régler — et ouvre une vente à part (`POST /sales`) pour ce qui devait
+   * s'y ajouter.
+   */
+  APPOINTMENT_TICKET_ALREADY_OPEN: 'APPOINTMENT_TICKET_ALREADY_OPEN',
+
   /* --- Garde arithmétique du contrat lui-même ----------------------------- */
 
   /**

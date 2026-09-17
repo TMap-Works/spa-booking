@@ -2,13 +2,9 @@ import { randomUUID } from 'node:crypto';
 
 import { runWithTenant } from '../../../common/tenant';
 import type { ServicesService } from '../../catalog/services.service';
-import { CashPaymentsService } from '../cash-payments.service';
-import type { PaymentsRepository } from '../payments.repository';
 import type { PosRepository } from '../pos.repository';
 import { SalesService } from '../sales.service';
-import { FakePaymentsRepository } from './payments.doubles';
 import { FakePosRepository, FakeServicesService } from './pos.doubles';
-import { recordingLogger } from './webhook.doubles';
 
 /**
  * **Un rendez-vous, un prix** — quatrième critère de #816.
@@ -19,14 +15,24 @@ import { recordingLogger } from './webhook.doubles';
  * et aucun test ne les confrontait, parce qu'ils vivent dans deux services
  * distincts qui n'ont aucune raison de se connaître.
  *
- * C'est exactement ce que cette suite fait : elle monte les deux chemins sur le
- * **même rendez-vous**, au **même prix de catalogue**, et vérifie qu'ils
- * s'accordent au centime. Elle n'aurait pas passé avant #816.
+ * C'est exactement ce que cette suite fait : elle monte les deux compositions
+ * sur le **même rendez-vous**, au **même prix de catalogue**, et vérifie
+ * qu'elles s'accordent au centime. Elle n'aurait pas passé avant #816.
  *
- * Deux doubles de dépôt plutôt qu'un : `SalesService` lit le catalogue et écrit
- * le ticket, `CashPaymentsService` lit le rendez-vous et écrit l'encaissement.
- * Ils ne partagent aucune table, et c'est le rendez-vous — son identifiant, son
- * prix figé — qui les relie, comme en base.
+ * ## Ce que #817 a changé, et ce que la suite continue de prouver
+ *
+ * Il n'y a plus **deux écritures** à confronter : encaisser un rendez-vous
+ * revient à composer sa vente puis à la régler, et l'encaissement porte le
+ * total de cette vente-là. La divergence de #816 est donc devenue
+ * structurellement impossible — ce qui n'est une bonne nouvelle que tant que la
+ * composition du rendez-vous et celle du comptoir donnent le même total.
+ *
+ * C'est cela que la suite mesure désormais : `composeForAppointment` — qui part
+ * du **prix figé à la réservation** — et `open` — qui part du **prix du
+ * catalogue** — doivent tomber sur le même montant lorsque les deux prix sont
+ * les mêmes, à tout taux et dans une devise sans sous-unité. Si l'une des deux
+ * se remettait à ajouter la taxe au lieu de l'extraire, l'écart reparaîtrait
+ * ici avant d'atteindre une caisse.
  */
 
 const TENANT = '11111111-1111-4111-8111-111111111111';
@@ -63,22 +69,9 @@ describe('parité entre l’encaissement d’un rendez-vous et le total de sa ve
       currency,
     });
 
-    const payments = new FakePaymentsRepository();
-    payments.seedAppointment({
-      tenantId: TENANT,
-      id: appointmentId,
-      status: 'COMPLETED',
-      amountMinor: CATALOG_PRICE_MINOR,
-      currency,
-    });
-
     const sales = new SalesService(
       pos as unknown as PosRepository,
       catalog as unknown as ServicesService,
-    );
-    const cash = new CashPaymentsService(
-      payments as unknown as PaymentsRepository,
-      recordingLogger().logger,
     );
 
     const sale = await inTenant(() =>
@@ -87,12 +80,28 @@ describe('parité entre l’encaissement d’un rendez-vous et le total de sa ve
         CASHIER,
       ),
     );
-    const payment = await inTenant(() => cash.settle(appointmentId, OPERATOR));
 
-    return { settled: payment.amount.amountMinor, sold: sale.total.amountMinor };
+    // L'autre composition : celle que le règlement d'un rendez-vous emploie.
+    // Elle part du prix **figé à la réservation**, que le tunnel a recopié du
+    // catalogue — donc du même montant.
+    const draft = await inTenant(() =>
+      sales.composeForAppointment(
+        {
+          id: appointmentId,
+          status: 'COMPLETED',
+          serviceId: prestation.id,
+          clientId: OPERATOR,
+          price: { amountMinor: CATALOG_PRICE_MINOR, currency },
+        },
+        [],
+        OPERATOR,
+      ),
+    );
+
+    return { settled: draft.totalAmountMinor, sold: sale.total.amountMinor };
   };
 
-  it('encaisse exactement le total du ticket, taxe comprise', async () => {
+  it('compose exactement le total du ticket, taxe comprise', async () => {
     const { settled, sold } = await settleAndSell(2000);
 
     expect(sold).toBe(CATALOG_PRICE_MINOR);

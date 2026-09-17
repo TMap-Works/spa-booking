@@ -10,8 +10,11 @@ import {
 } from '../payments.errors';
 import type { PaymentsRepository } from '../payments.repository';
 import { PaymentsService } from '../payments.service';
+import type { SalesService } from '../sales.service';
+import type { SettlementRepository } from '../settlement.repository';
 import { STRIPE_GATEWAY } from '../stripe/stripe.gateway';
 import {
+  FakeAppointmentTicket,
   FakePaymentsRepository,
   FakeStripeGateway,
   TEST_STRIPE_ENV,
@@ -39,15 +42,19 @@ const TENANT_B = '22222222-2222-4222-8222-222222222222';
 describe('PaymentsService — intention de paiement d’un rendez-vous', () => {
   let repository: FakePaymentsRepository;
   let stripe: FakeStripeGateway;
+  let ticket: FakeAppointmentTicket;
   let service: PaymentsService;
 
   beforeEach(() => {
     repository = new FakePaymentsRepository();
     stripe = new FakeStripeGateway();
+    ticket = new FakeAppointmentTicket();
     service = new PaymentsService(
       repository as unknown as PaymentsRepository,
       new TenantContextService(),
       testStripeConfig(),
+      ticket as unknown as SalesService,
+      ticket as unknown as SettlementRepository,
       stripe,
     );
   });
@@ -255,6 +262,24 @@ describe('PaymentsService — intention de paiement d’un rendez-vous', () => {
       },
     );
 
+    it('refuse d’ouvrir une intention sur un rendez-vous déjà réglé au comptoir', async () => {
+      // Depuis #817, un règlement de comptoir n'écrit plus
+      // `payments.appointment_id` : la relecture par rendez-vous ne le voit
+      // donc pas, et sans le refus posé sur le **ticket** la cliente paierait
+      // une seconde fois — l'intention partirait chez Stripe, et le webhook qui
+      // la conclurait échouerait ensuite indéfiniment sur
+      // `sales_settled_amount_minor_check`.
+      const appointment = repository.seedAppointment({ tenantId: TENANT_A });
+      ticket.seedSettledTicket(appointment.id);
+
+      await expect(
+        inTenantA(() => service.createIntentForAppointment(appointment.id)),
+      ).rejects.toThrow(PaymentAlreadySettledError);
+      // Refusé **avant** l'appel au prestataire : il n'y a aucune intention à
+      // annuler derrière ce 409.
+      expect(stripe.commands).toHaveLength(0);
+    });
+
     it('laisse repayer après une carte refusée', async () => {
       // Le cas le plus banal du tunnel, et celui qui coûterait la vente s'il
       // était traité comme un encaissement clos : `@@unique([tenantId,
@@ -349,10 +374,13 @@ describe('PaymentsService — intention de paiement d’un rendez-vous', () => {
   it('exige une portée de tenant ouverte', () => {
     // Le mode ouvert par défaut est ce qui produit les fuites : hors portée, le
     // dépôt refuse plutôt que de rendre « toutes les lignes ».
+    const ticket2 = new FakeAppointmentTicket();
     const service2 = new PaymentsService(
       new FakePaymentsRepository() as unknown as PaymentsRepository,
       new TenantContextService(),
       testStripeConfig(),
+      ticket2 as unknown as SalesService,
+      ticket2 as unknown as SettlementRepository,
       new FakeStripeGateway(),
     );
 

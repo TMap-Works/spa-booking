@@ -5,6 +5,8 @@ import { TenantContextService } from '../../common/tenant/tenant-context.service
 import { AppointmentNotPayableError, PaymentAlreadySettledError } from './payments.errors';
 import { PaymentsRepository } from './payments.repository';
 import type { Money, PaymentIntentView, PaymentRecord } from './payments.types';
+import { SalesService } from './sales.service';
+import { SettlementRepository } from './settlement.repository';
 import { StripeConfig } from './stripe/stripe.config';
 import {
   STRIPE_GATEWAY,
@@ -25,9 +27,13 @@ import {
  *    à la réservation. C'est la règle de payments-stripe §4 appliquée au tunnel
  *    public — un `amount` accepté du front aurait laissé payer un massage un
  *    centime.
- * 2. **Un rendez-vous, un encaissement.** Garanti en base par
+ * 2. **Un rendez-vous, une intention.** Garanti en base par
  *    `@@unique([tenantId, appointmentId])`, pas par la vigilance de ce fichier.
- *    Deux appels concurrents rendent la **même** intention.
+ *    Deux appels concurrents rendent la **même** intention. Depuis #817 la
+ *    contrainte ne dit plus « un rendez-vous, un encaissement » — une vente
+ *    peut recevoir plusieurs règlements —, mais elle continue de dire « une
+ *    intention en ligne », ce pour quoi elle avait été posée : le comptoir
+ *    n'écrit plus cette colonne du tout.
  * 3. **Aucune donnée de carte ne traverse ce service.** Il n'y a pas de
  *    paramètre pour en recevoir et pas de champ pour en rendre : la saisie se
  *    fait dans les iframes de Stripe, au navigateur (payments-stripe §1).
@@ -103,6 +109,16 @@ export class PaymentsService {
     private readonly payments: PaymentsRepository,
     private readonly tenants: TenantContextService,
     private readonly config: StripeConfig,
+    /**
+     * La caisse, pour **composer** le ticket du rendez-vous — #817.
+     *
+     * Le tunnel en ligne n'encaisse pas au comptoir, mais il inscrit un
+     * règlement, et un règlement porte désormais la pièce qu'il solde
+     * (`payments_sale_required_check`). Sans cela, un rendez-vous payé par
+     * carte n'aurait toujours rien à imprimer — le constat même de l'issue.
+     */
+    private readonly sales: SalesService,
+    private readonly settlements: SettlementRepository,
     @Inject(STRIPE_GATEWAY) private readonly stripe: StripeGateway,
   ) {}
 
@@ -154,6 +170,36 @@ export class PaymentsService {
       return this.resume(existing, appointmentId);
     }
 
+    // Le ticket du rendez-vous, s'il en a déjà un — **et ce qui y reste dû**.
+    //
+    // Cette lecture est ce qui empêche la cliente de payer deux fois depuis
+    // #817 : un règlement de comptoir n'écrit plus `payments.appointment_id`,
+    // si bien que la relecture ci-dessus ne le voit pas. Sans ce refus, un
+    // rendez-vous déjà réglé à la caisse — et dont le statut n'a pas bougé,
+    // parce que régler ne confirme rien — recevrait une seconde intention
+    // Stripe, puis un webhook que `sales_settled_amount_minor_check` ferait
+    // échouer indéfiniment : l'argent pris chez le prestataire, et rien inscrit.
+    //
+    // Refusée **avant** l'appel au prestataire, pour qu'aucune intention
+    // n'existe à annuler.
+    const ticket = await this.settlements.appointmentTicketBalance(appointmentId);
+
+    if (ticket !== null && ticket.remainingAmountMinor === 0) {
+      throw new PaymentAlreadySettledError('SUCCEEDED');
+    }
+
+    // Le ticket est **composé** ici, avant l'appel au prestataire : composer ne
+    // lit que le catalogue et ne écrit rien, mais peut refuser — devise du
+    // rendez-vous étrangère à celle de l'établissement, paramétrage absent,
+    // prestation disparue. Le faire après aurait laissé une intention vivante
+    // chez Stripe pour un refus que chaque reprise reproduirait à l'identique.
+    // L'**écriture** du ticket, elle, reste après : voir plus bas.
+    //
+    // L'opérateur du ticket est la **cliente** : personne n'est au comptoir
+    // quand la réservation se paie depuis un navigateur, et la colonne demande
+    // un compte de l'établissement.
+    const draft = await this.sales.composeForAppointment(appointment, [], appointment.clientId);
+
     // Lue **avant** l'appel au prestataire, et pas au moment de composer la
     // réponse : sur un serveur sans clés Stripe, la demande est refusée avant
     // qu'une intention n'existe et qu'une ligne `payments` ne soit inscrite.
@@ -199,8 +245,15 @@ export class PaymentsService {
       return this.resume(concurrent, appointmentId);
     }
 
+    // Le ticket du rendez-vous, **écrit** s'il n'existe pas encore — sous le
+    // verrou consultatif qui empêche deux onglets d'en produire deux (#817).
+    // L'écriture est **après** l'appel au prestataire : une intention qui échoue
+    // ne doit pas laisser un ticket ouvert que personne n'a demandé.
+    const saleId = await this.settlements.ticketForAppointment(appointmentId, draft);
+
     const created = await this.payments.recordCardIntent({
       appointmentId,
+      saleId,
       amount: appointment.price,
       providerPaymentIntentId: intent.id,
     });

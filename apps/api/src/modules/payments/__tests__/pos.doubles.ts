@@ -199,6 +199,9 @@ export class FakePosRepository implements PosRepositoryPort {
     appointmentId?: string | null;
     cashierUserId?: string;
     totalAmountMinor?: number;
+    /** Ce qui est déjà engagé sur le ticket — `0` par défaut (#817). */
+    settledAmountMinor?: number;
+    settledAt?: Date | null;
     currency?: string;
     createdAt?: Date;
   }): StoredSale {
@@ -213,6 +216,9 @@ export class FakePosRepository implements PosRepositoryPort {
       tax: { amountMinor: 0, currency },
       tip: { amountMinor: 0, currency },
       total: { amountMinor: total, currency },
+      settled: { amountMinor: input.settledAmountMinor ?? 0, currency },
+      remaining: { amountMinor: total - (input.settledAmountMinor ?? 0), currency },
+      settledAt: input.settledAt ?? null,
       items: [],
       createdAt: input.createdAt ?? new Date(),
     };
@@ -351,6 +357,10 @@ export class FakePosRepository implements PosRepositoryPort {
       tax: { amountMinor: draft.taxAmountMinor, currency: draft.currency },
       tip: { amountMinor: draft.tipAmountMinor, currency: draft.currency },
       total: { amountMinor: draft.totalAmountMinor, currency: draft.currency },
+      // Un ticket naît **ouvert** : composer n'encaisse rien (#817).
+      settled: { amountMinor: 0, currency: draft.currency },
+      remaining: { amountMinor: draft.totalAmountMinor, currency: draft.currency },
+      settledAt: null,
       items: draft.items.map((item): SaleItem => ({ id: randomUUID(), ...item })),
       createdAt: new Date(),
     };
@@ -443,6 +453,9 @@ function toSaleSummary(row: StoredSale): SaleSummary {
     tax: { ...row.tax },
     tip: { ...row.tip },
     total: { ...row.total },
+    settled: { ...row.settled },
+    remaining: { ...row.remaining },
+    settledAt: row.settledAt,
     createdAt: row.createdAt,
   };
 }

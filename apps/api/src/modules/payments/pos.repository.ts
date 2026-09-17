@@ -89,6 +89,11 @@ const SALE_SUMMARY_SELECT = {
   taxAmountMinor: true,
   tipAmountMinor: true,
   totalAmountMinor: true,
+  // Ce qui est déjà engagé sur le ticket et l'instant de son solde (#817) : un
+  // écran de caisse qui liste des tickets doit pouvoir distinguer ce qui reste
+  // à encaisser de ce qui est réglé, sans une lecture de plus par ligne.
+  settledAmountMinor: true,
+  settledAt: true,
   currency: true,
   createdAt: true,
 } as const;
@@ -128,6 +133,8 @@ interface SaleSummaryRow {
   taxAmountMinor: number;
   tipAmountMinor: number;
   totalAmountMinor: number;
+  settledAmountMinor: number;
+  settledAt: Date | null;
   currency: string;
   createdAt: Date;
 }
@@ -183,6 +190,14 @@ function toSaleSummary(row: SaleSummaryRow): SaleSummary {
     tax: { amountMinor: row.taxAmountMinor, currency: row.currency },
     tip: { amountMinor: row.tipAmountMinor, currency: row.currency },
     total: { amountMinor: row.totalAmountMinor, currency: row.currency },
+    settled: { amountMinor: row.settledAmountMinor, currency: row.currency },
+    // Jamais négatif : `sales_settled_amount_minor_check` borne l'engagé par le
+    // total, et le `max` n'est ici que pour le dire à la lecture aussi.
+    remaining: {
+      amountMinor: Math.max(0, row.totalAmountMinor - row.settledAmountMinor),
+      currency: row.currency,
+    },
+    settledAt: row.settledAt,
     createdAt: row.createdAt,
   };
 }

@@ -1,9 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsUUID } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsIn,
+  IsOptional,
+  IsUUID,
+  Validate,
+  ValidateNested,
+} from 'class-validator';
 
 import { PAYMENT_METHODS, PAYMENT_STATUSES } from '../payments.types';
 import type { PaymentHistoryFilter, PaymentTransaction } from '../payments.types';
-import { MoneyDto, toMoneyDto } from './sale.dto';
+import { AtMostOneTipLine, MoneyDto, SaleLineDto, toMoneyDto } from './sale.dto';
 import { IsOffsetDateTime, PageQueryDto, toPageBounds, toWindowBound } from './validation';
 
 /**
@@ -42,16 +51,39 @@ import { IsOffsetDateTime, PageQueryDto, toPageBounds, toWindowBound } from './v
  * contrat un second schéma, comme il a `createAppointmentRequestSchema` et
  * `bookGuestAppointmentRequestSchema` pour les deux portes de la réservation.
  */
+/** Au plus autant de lignes ajoutées qu'un ticket ordinaire en accepte. */
+const MAX_EXTRA_LINES = 100;
+
 export class CreateCashPaymentDto {
   @ApiProperty({
     format: 'uuid',
     description:
-      'Le rendez-vous réglé. **Seul champ du corps** : le montant est celui figé ' +
-      'à la réservation, l’opérateur vient du jeton, l’établissement de la ' +
-      'revendication signée.',
+      'Le rendez-vous réglé. Aucun montant de prestation ne l’accompagne : il ' +
+      'est celui figé à la réservation, l’opérateur vient du jeton, ' +
+      'l’établissement de la revendication signée.',
   })
   @IsUUID('4', { message: 'appointmentId : identifiant de rendez-vous attendu' })
   public appointmentId!: string;
+
+  @ApiPropertyOptional({
+    type: [SaleLineDto],
+    maxItems: MAX_EXTRA_LINES,
+    description:
+      'Les lignes **ajoutées** au ticket du rendez-vous : produits vendus au ' +
+      'comptoir, pourboire. La prestation y est déjà, au prix figé à la ' +
+      'réservation — la redemander la facturerait deux fois (#817).',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(MAX_EXTRA_LINES)
+  @Validate(AtMostOneTipLine)
+  @ValidateNested({ each: true })
+  // `@Type` est nécessaire : sans lui, `class-transformer` laisse des objets nus
+  // et `@ValidateNested` n'a aucune classe sur laquelle appliquer les
+  // décorateurs.
+  @Type(() => SaleLineDto)
+  public lines?: SaleLineDto[];
+
 }
 
 /**
@@ -74,6 +106,17 @@ export class PaymentTransactionDto {
     description: '`null` pour une vente retail sans rendez-vous.',
   })
   public appointmentId!: string | null;
+
+  @ApiProperty({
+    format: 'uuid',
+    nullable: true,
+    type: String,
+    description:
+      'Le ticket que ce règlement solde — la pièce comptable du CDC §2.4. ' +
+      '`null` seulement sur les encaissements inscrits avant #817 : la base ' +
+      'exige une vente de tout règlement neuf.',
+  })
+  public saleId!: string | null;
 
   @ApiProperty({ type: MoneyDto })
   public amount!: MoneyDto;
@@ -224,6 +267,7 @@ export function toPaymentTransactionDto(
   return {
     id: transaction.id,
     appointmentId: transaction.appointmentId,
+    saleId: transaction.saleId,
     amount: toMoneyDto(transaction.amount),
     refunded: toMoneyDto(transaction.refunded),
     method: transaction.method,

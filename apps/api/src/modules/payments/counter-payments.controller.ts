@@ -14,7 +14,6 @@ import {
 import { AuthAtLeast } from '../identity/auth.decorator';
 import type { AuthenticatedUser } from '../identity/identity.types';
 import { CurrentUser } from '../identity/jwt-auth.guard';
-import { CashPaymentsService } from './cash-payments.service';
 import {
   CreateCashPaymentDto,
   ListPaymentsQueryDto,
@@ -24,15 +23,17 @@ import {
   toPaymentTransactionDto,
 } from './dto/cash-payment.dto';
 import { CreateRefundDto, RefundDto, toRefundDto } from './dto/refund.dto';
+import { toCashSettlementRequest, toExtraLines } from './dto/settlement.dto';
 import { PaymentsHistoryService } from './payments-history.service';
 import { RefundsService } from './refunds.service';
+import { SettlementService } from './settlement.service';
 
 /**
  * L'encaissement au comptoir et son historique — CDC §1.4 et §4.9 (#62).
  *
  * | Route | Rôles | Ce qu'elle sert |
  * |---|---|---|
- * | `POST /payments/cash` | staff et au-dessus | règle un rendez-vous en espèces |
+ * | `POST /payments/cash` | staff et au-dessus | compose la vente d'un rendez-vous et la règle en espèces |
  * | `GET /payments` | manager et au-dessus | l'historique des transactions, pour le rapprochement |
  * | `POST /payments/:paymentId/refunds` | manager et au-dessus | rembourse, en totalité ou en partie (#63) |
  *
@@ -80,24 +81,36 @@ import { RefundsService } from './refunds.service';
 @Controller({ path: 'payments', version: '1' })
 export class CounterPaymentsController {
   public constructor(
-    private readonly cash: CashPaymentsService,
+    private readonly settlements: SettlementService,
     private readonly history: PaymentsHistoryService,
     private readonly refunds: RefundsService,
   ) {}
 
   /**
-   * Règle un rendez-vous en espèces.
+   * Règle un rendez-vous en espèces — **en composant d'abord sa vente** (#817).
    *
-   * **200 et non 201**, et c'est délibéré : la route est **rejouable**. Un
-   * deuxième clic ne crée pas une seconde ressource, il rend le même
-   * encaissement que le premier — annoncer `201` à chaque fois aurait laissé
-   * croire à deux recettes là où la base n'en porte qu'une.
+   * C'est le deuxième critère de l'issue : encaisser un rendez-vous revient à
+   * composer son ticket — la prestation au prix figé, plus les lignes ajoutées —
+   * puis à le régler, dans une seule transaction. Jusque-là, régler ne créait
+   * aucune vente : il n'existait donc aucune pièce à imprimer, et le revenu se
+   * lisait sur des encaissements sans contrepartie.
+   *
+   * **200 et non 201**, et c'est délibéré : la route reste **rejouable**. Un
+   * deuxième clic ne compose pas un second ticket — le verrou du rendez-vous
+   * le garantit — et se heurte au ticket déjà soldé.
    *
    * **404** si le rendez-vous est inconnu — ou appartient à un autre
    * établissement, ce qui doit être indiscernable. **422** s'il est annulé.
-   * **409** si un *autre* encaissement existe déjà : une intention carte en
-   * cours, aboutie ou remboursée. Le comptoir tranche alors, plutôt que d'écraser
+   * **409** si le ticket de ce rendez-vous est déjà soldé, ou si une intention
+   * carte est encore en vol — le comptoir tranche alors, plutôt que d'écraser
    * une pièce comptable.
+   *
+   * Elle solde **tout le reste dû** : c'est le geste « encaisser ce
+   * rendez-vous ». Le règlement partiel et la monnaie rendue relèvent de
+   * `POST /sales/{saleId}/payments`, qui porte l'enveloppe où ils se lisent.
+   *
+   * Un rendez-vous **non confirmé** est réglable, et c'est une décision écrite :
+   * voir `UNSETTLEABLE_APPOINTMENT_STATUS` dans `settlement.service.ts`.
    *
    * **Aucun appel Stripe n'a lieu sur ce chemin** — le service qui le sert n'a
    * pas la passerelle parmi ses dépendances (quatrième critère de #62).
@@ -105,7 +118,7 @@ export class CounterPaymentsController {
   @Post('cash')
   @HttpCode(HttpStatus.OK)
   @AuthAtLeast('STAFF')
-  @ApiOperation({ summary: 'Encaisser un rendez-vous en espèces' })
+  @ApiOperation({ summary: 'Composer la vente d’un rendez-vous et la régler en espèces' })
   @ApiOkResponse({ type: PaymentTransactionDto })
   @ApiBadRequestResponse({ description: 'Corps invalide — le champ fautif est nommé.' })
   @ApiNotFoundResponse({
@@ -113,13 +126,26 @@ export class CounterPaymentsController {
   })
   @ApiUnprocessableEntityResponse({ description: 'Rendez-vous annulé — plus rien à encaisser.' })
   @ApiConflictResponse({
-    description: 'Un autre encaissement existe déjà pour ce rendez-vous.',
+    description: 'Le ticket de ce rendez-vous est déjà soldé, ou une carte est en vol.',
   })
   public async settleInCash(
     @Body() body: CreateCashPaymentDto,
     @CurrentUser() operator: AuthenticatedUser,
   ): Promise<PaymentTransactionDto> {
-    return toPaymentTransactionDto(await this.cash.settle(body.appointmentId, operator.userId));
+    const settlement = await this.settlements.settleAppointment(
+      body.appointmentId,
+      operator.userId,
+      toCashSettlementRequest(body),
+      toExtraLines(body),
+    );
+
+    // **La ligne d'encaissement, et non l'enveloppe de règlement** : c'est le
+    // contrat que cette route sert depuis #62, et l'écran de caisse le lit tel
+    // quel. #817 change ce que la route *fait* — elle compose la pièce avant de
+    // l'encaisser — sans changer ce qu'elle *rend*, parce qu'il n'y a rien de
+    // neuf à y lire : elle solde tout le reste dû, donc ni reste, ni monnaie.
+    // Le règlement partiel a sa propre route, et sa propre enveloppe.
+    return toPaymentTransactionDto(settlement.payment);
   }
 
   /**

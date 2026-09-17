@@ -5,7 +5,6 @@ import { PRISMA, type ScopedPrismaClient } from '../../infrastructure/database/p
 import { createdAtWithin } from './history';
 import type {
   CardPaymentDraft,
-  CashPaymentDraft,
   PayableAppointment,
   PaymentHistoryFilter,
   PaymentRecord,
@@ -68,13 +67,32 @@ export function isUniqueViolation(error: unknown): boolean {
 const APPOINTMENT_SELECT = {
   id: true,
   status: true,
+  serviceId: true,
+  clientId: true,
   priceAmountMinor: true,
   priceCurrency: true,
 } as const;
 
-const PAYMENT_SELECT = {
+/**
+ * Ce que le module lit d'un encaissement — et, depuis #817, **du ticket qu'il
+ * solde**.
+ *
+ * La jointure ne rapporte qu'une colonne, `sales.appointment_id`, et elle est
+ * là pour une raison précise : un règlement de comptoir n'écrit plus
+ * `payments.appointment_id` — il ne le peut pas, une vente portant plusieurs
+ * règlements et l'unique par rendez-vous en refusant le second. Le rendez-vous
+ * se lit donc sur la pièce qui le porte, et `toPaymentRecord` le résout une
+ * fois pour que le consommateur n'ait pas deux chemins à connaître.
+ *
+ * Aucune colonne personnelle n'est lue de `sales` : un identifiant, rien
+ * d'autre. Ce qu'on ne lit pas ne peut pas fuiter, et la jointure est bornée à
+ * l'établissement par la clé composite `(tenant_id, sale_id)`.
+ */
+export const PAYMENT_SELECT = {
   id: true,
   appointmentId: true,
+  saleId: true,
+  sale: { select: { appointmentId: true } },
   amountMinor: true,
   currency: true,
   method: true,
@@ -94,7 +112,7 @@ const PAYMENT_SELECT = {
  * Toujours une projection explicite, jamais la ligne entière : ce qu'on ne lit
  * pas ne peut pas fuiter.
  */
-const PAYMENT_TRANSACTION_SELECT = {
+export const PAYMENT_TRANSACTION_SELECT = {
   ...PAYMENT_SELECT,
   refundedAmountMinor: true,
   providerChargeId: true,
@@ -105,6 +123,8 @@ const PAYMENT_TRANSACTION_SELECT = {
 type PaymentRow = {
   id: string;
   appointmentId: string | null;
+  saleId: string | null;
+  sale: { appointmentId: string | null } | null;
   amountMinor: number;
   currency: string;
   method: string;
@@ -112,7 +132,7 @@ type PaymentRow = {
   providerPaymentIntentId: string | null;
 };
 
-type PaymentTransactionRow = PaymentRow & {
+export type PaymentTransactionRow = PaymentRow & {
   refundedAmountMinor: number;
   providerChargeId: string | null;
   capturedAt: Date | null;
@@ -137,10 +157,14 @@ function withScopedTenant<T>(data: Omit<T, 'tenantId' | 'tenant'>): T {
   return data as T;
 }
 
-function toPaymentRecord(row: PaymentRow): PaymentRecord {
+export function toPaymentRecord(row: PaymentRow): PaymentRecord {
   return {
     id: row.id,
-    appointmentId: row.appointmentId,
+    // Le rendez-vous est **résolu** : la colonne pour une intention en ligne,
+    // le ticket pour un règlement de comptoir, qui ne l'écrit plus (#817). Le
+    // consommateur pose une seule question, il reçoit une seule réponse.
+    appointmentId: row.appointmentId ?? row.sale?.appointmentId ?? null,
+    saleId: row.saleId,
     amount: { amountMinor: row.amountMinor, currency: row.currency },
     // Les deux énumérations du schéma sont reprises telles quelles : le témoin
     // de `payments.types.ts` garantit que les libellés coïncident.
@@ -150,7 +174,7 @@ function toPaymentRecord(row: PaymentRow): PaymentRecord {
   };
 }
 
-function toPaymentTransaction(row: PaymentTransactionRow): PaymentTransaction {
+export function toPaymentTransaction(row: PaymentTransactionRow): PaymentTransaction {
   return {
     ...toPaymentRecord(row),
     // Le remboursement porte **la devise de l'encaissement** : il n'y en a
@@ -187,6 +211,8 @@ export class PaymentsRepository {
     return {
       id: row.id,
       status: row.status,
+      serviceId: row.serviceId,
+      clientId: row.clientId,
       price: { amountMinor: row.priceAmountMinor, currency: row.priceCurrency },
     };
   }
@@ -220,6 +246,10 @@ export class PaymentsRepository {
       const row = await this.prisma.payment.create({
         data: withScopedTenant<Prisma.PaymentUncheckedCreateInput>({
           appointmentId: draft.appointmentId,
+          // La vente du rendez-vous, composée juste avant (#817). Sans elle,
+          // `payments_sale_required_check` refuserait l'insertion : la base
+          // exige qu'un règlement neuf porte la pièce qu'il solde.
+          saleId: draft.saleId,
           amountMinor: draft.amount.amountMinor,
           currency: draft.amount.currency,
           method: 'CARD',
@@ -257,49 +287,22 @@ export class PaymentsRepository {
   }
 
   /**
-   * Inscrit un règlement en espèces au comptoir (#62).
+   * Inscrit un règlement en espèces au comptoir — **retiré par #817**.
    *
-   * **Aucun appel Stripe n'a précédé cette écriture, et aucun ne la suivra** :
-   * il n'y a pas de paramètre pour une référence de prestataire, et
-   * `provider_payment_intent_id` reste donc `null` — ce `null` est exactement ce
-   * qui distingue, à la reprise comme au rapprochement, un billet d'une carte.
+   * Cette écriture a disparu, et pas par simplification : elle inscrivait un
+   * encaissement **sans pièce**. Régler un rendez-vous revient désormais à
+   * composer sa vente puis la régler, dans une seule transaction — c'est le
+   * deuxième critère de #817, et c'est `SettlementRepository` qui le tient,
+   * parce que les deux écritures doivent se sérialiser entre elles sous le
+   * verrou de la ligne `sales`.
    *
-   * `method` et `status` ne sont pas des paramètres, pour la même raison que
-   * dans `recordCardIntent` : cette écriture n'a qu'un sens. Mais le statut y est
-   * l'inverse — `SUCCEEDED` **dès l'écriture**, là où la carte naît `PENDING`.
-   * Il n'y a aucun tiers dont on attendrait la confirmation : l'argent est sur
-   * le comptoir au moment où la requête part, et c'est la caisse qui fait foi
-   * (payments-stripe §4). `captured_at` est posé du même geste, parce qu'un
-   * encaissement abouti sans instant de capture serait irréconciliable.
-   *
-   * Rend `null` — et non une erreur — quand la ligne existe déjà, comme
-   * `recordCardIntent` : `@@unique([tenantId, appointmentId])` tranche la course
-   * de deux comptoirs, ou le double clic d'un seul, et le service relit alors la
-   * ligne gagnante. Un rendez-vous n'a qu'un encaissement, et ce n'est pas la
-   * vigilance de ce fichier qui le garantit.
+   * Ce que l'ancienne méthode tenait et qui n'est pas perdu : le montant venait
+   * de la base et non de l'appelant (il en va de même, à la ligne de ticket
+   * près), et l'unicité tranchait le double clic (c'est maintenant
+   * `sales_settled_amount_minor_check`, sur un invariant plus fort — une vente
+   * ne peut pas recevoir plus que son total, quel que soit le nombre de
+   * règlements).
    */
-  public async recordCashPayment(draft: CashPaymentDraft): Promise<PaymentTransaction | null> {
-    try {
-      const row = await this.prisma.payment.create({
-        data: withScopedTenant<Prisma.PaymentUncheckedCreateInput>({
-          appointmentId: draft.appointmentId,
-          amountMinor: draft.amount.amountMinor,
-          currency: draft.amount.currency,
-          method: 'CASH',
-          status: 'SUCCEEDED',
-          capturedAt: new Date(),
-        }),
-        select: PAYMENT_TRANSACTION_SELECT,
-      });
-
-      return toPaymentTransaction(row);
-    } catch (error) {
-      if (isUniqueViolation(error)) {
-        return null;
-      }
-      throw error;
-    }
-  }
 
   /**
    * Une page de l'historique des transactions de l'établissement courant (#62).

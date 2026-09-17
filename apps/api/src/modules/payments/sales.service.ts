@@ -11,12 +11,13 @@ import {
   SaleCurrencyMismatchError,
   SaleItemUnavailableError,
 } from './payments.errors';
-import type { Money } from './payments.types';
+import type { Money, PayableAppointment } from './payments.types';
 import { PosRepository } from './pos.repository';
 import { composeSale, fitsInAmountColumn } from './pos.totals';
 import type {
   PricedCatalogItem,
   Sale,
+  SaleDraft,
   SaleHistoryFilter,
   SaleLineRequest,
   SalePage,
@@ -250,6 +251,102 @@ export class SalesService {
       appointmentId: request.appointmentId,
       cashierUserId,
     });
+  }
+
+  /**
+   * Compose — **sans rien écrire** — le ticket d'un rendez-vous : sa prestation
+   * au prix figé, plus les lignes que le comptoir ajoute (#817, deuxième
+   * critère).
+   *
+   * ## Pourquoi le prix ne vient pas du catalogue
+   *
+   * Parce que c'est celui de la réservation qui fait foi. La cliente a accepté
+   * un montant ; un tarif changé depuis ne doit pas réécrire ce qu'elle doit.
+   * `ServicesService` n'est donc lu ici que pour le **libellé** de la ligne —
+   * ce que la cliente lit sur son reçu —, jamais pour le montant. C'est la
+   * parité que `pos.settlement-parity.spec.ts` tient depuis #816, et elle passe
+   * désormais par une seule composition au lieu de deux chemins à confronter.
+   *
+   * ## Pourquoi elle n'écrit pas
+   *
+   * Parce que composer et régler doivent tenir dans **une** transaction : une
+   * vente écrite dont le règlement échouerait laisserait au comptoir un ticket
+   * ouvert que personne n'a demandé. C'est `SettlementRepository` qui écrit les
+   * deux, et cette méthode ne lui rend que la matière.
+   *
+   * @throws {NotFoundError} prestation du rendez-vous introuvable, ou article
+   * d'une ligne ajoutée inconnu — ou appartenant à un autre établissement.
+   * @throws {SaleItemUnavailableError} article existant mais retiré du rayon.
+   * @throws {SaleCurrencyMismatchError} article libellé dans une autre devise.
+   * @throws {SaleAmountOutOfRangeError} total hors des bornes d'un montant.
+   */
+  public async composeForAppointment(
+    appointment: PayableAppointment,
+    extraLines: readonly SaleLineRequest[],
+    cashierUserId: string,
+  ): Promise<SaleDraft> {
+    const settings = await this.requireSettings();
+
+    if (appointment.price.currency !== settings.defaultCurrency) {
+      // Le rendez-vous a été réservé dans une autre devise que celle que
+      // l'établissement pratique aujourd'hui. Composer le ticket ferait
+      // additionner deux monnaies ; le refus nomme la ligne de la prestation,
+      // qui est toujours la première.
+      throw new SaleCurrencyMismatchError(0);
+    }
+
+    // La prestation du rendez-vous entre dans le **même lot** que les lignes
+    // ajoutées : une lecture de catalogue pour le ticket entier, comme pour un
+    // ticket composé au comptoir (#420).
+    const catalog = await this.readCatalog([
+      { kind: 'SERVICE', serviceId: appointment.serviceId, quantity: 1 },
+      ...extraLines,
+    ]);
+
+    const prestation = catalog.services.get(appointment.serviceId);
+
+    if (prestation === undefined) {
+      // Une prestation qu'on ne retrouve plus : le libellé du reçu n'a pas de
+      // source, et l'inventer figerait un texte faux sur une pièce comptable.
+      throw new NotFoundError('Prestation introuvable.');
+    }
+
+    const items: PricedCatalogItem[] = [
+      {
+        kind: 'SERVICE',
+        referenceId: appointment.serviceId,
+        label: prestation.name,
+        // **Le prix figé à la réservation**, et lui seul.
+        unitPrice: appointment.price,
+        quantity: 1,
+      },
+    ];
+
+    let tipAmountMinor = 0;
+
+    for (const [position, line] of extraLines.entries()) {
+      if (line.kind === 'TIP') {
+        tipAmountMinor += line.amountMinor;
+        continue;
+      }
+
+      // Le rang désigné dans un refus tient compte de la ligne de prestation,
+      // qui occupe la position zéro du ticket composé.
+      items.push(priceLine(line, position + 1, settings, catalog));
+    }
+
+    const composed = composeSale({
+      currency: settings.defaultCurrency,
+      taxRateBps: settings.taxRateBps,
+      items,
+      tipAmountMinor,
+    });
+
+    if (!fitsInAmountColumn(composed)) {
+      throw new SaleAmountOutOfRangeError();
+    }
+
+    return { ...composed, appointmentId: appointment.id, cashierUserId };
   }
 
   /**

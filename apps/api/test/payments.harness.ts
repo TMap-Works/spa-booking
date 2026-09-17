@@ -1,9 +1,12 @@
 import type { INestApplication } from '@nestjs/common';
 
 import { PaymentsRepository } from '../src/modules/payments/payments.repository';
+import { SalesService } from '../src/modules/payments/sales.service';
+import { SettlementRepository } from '../src/modules/payments/settlement.repository';
 import { StripeConfig } from '../src/modules/payments/stripe/stripe.config';
 import { STRIPE_GATEWAY } from '../src/modules/payments/stripe/stripe.gateway';
 import {
+  FakeAppointmentTicket,
   FakePaymentsRepository,
   FakeStripeGateway,
   TEST_STRIPE_ENV,
@@ -17,13 +20,20 @@ import { createTenantHarness, TENANT_A, TENANT_B, type TenantHarness } from './u
  * C'est une **spécialisation** du harnais partagé (`utils/tenant-harness.ts`) :
  * deux établissements, l'application réellement câblée par `configureApp`, des
  * jetons signés par le vrai `TokenService`. Il ne reste ici que ce qui est
- * propre à l'encaissement — trois substitutions, chacune pour une raison
+ * propre à l'encaissement — quatre substitutions, chacune pour une raison
  * distincte :
  *
  * 1. `PaymentsRepository` → son double en mémoire, qui reproduit le **scoping
  *    par tenant** de l'extension Prisma. C'est cette propriété-là que les
  *    suites de fuite exercent ; un double qui l'ignorerait ferait verdir
  *    exactement ce qu'on cherche.
+ * 1 bis. `SalesService` et `SettlementRepository` → un même double, celui du
+ *    **ticket du rendez-vous** (#817). Le tunnel en ligne compose la vente
+ *    avant d'inscrire son intention — `payments_sale_required_check` l'exige —
+ *    et les deux vrais collaborateurs parlent à PostgreSQL. Ce que ces suites
+ *    jugent est le tunnel, pas la composition : celle-ci a ses propres suites
+ *    (`sales.service.spec.ts`) et son propre banc contre une vraie base
+ *    (`pos-settlement.concurrency-spec.ts`).
  * 2. `STRIPE_GATEWAY` → une passerelle en mémoire. **Aucune suite de ce dépôt
  *    n'atteint Stripe**, live ou test (payments-stripe §7), et une suite qui
  *    dépendrait du réseau d'un tiers rougirait pour des raisons qui ne nous
@@ -79,6 +89,11 @@ export async function createPaymentsHarness(
 ): Promise<PaymentsHarness> {
   const repository = new FakePaymentsRepository();
   const stripe = new FakeStripeGateway();
+  // Le ticket du rendez-vous, en mémoire — #817. Le tunnel en ligne compose
+  // désormais la vente avant d'inscrire son intention (la base l'exige), et les
+  // deux vrais collaborateurs parlent à PostgreSQL : sans ce double, chaque
+  // ouverture d'intention partirait chercher une base que ces suites n'ont pas.
+  const ticket = new FakeAppointmentTicket();
 
   const config =
     options.withoutStripeKeys === true
@@ -88,6 +103,8 @@ export async function createPaymentsHarness(
   const harness: TenantHarness = await createTenantHarness({
     overrides: [
       { provide: PaymentsRepository, useValue: repository },
+      { provide: SalesService, useValue: ticket },
+      { provide: SettlementRepository, useValue: ticket },
       { provide: STRIPE_GATEWAY, useValue: stripe },
       { provide: StripeConfig, useValue: config },
     ],
