@@ -64,9 +64,11 @@ function serviceView(overrides: Partial<ServiceView> = {}): ServiceView {
     occupiedMinutes: 80,
     price: { amountMinor: 7500, currency: 'EUR' },
     isActive: true,
-    // Une prestation que quelqu'un pratique — le module n'en lit que la durée et
-    // les tampons, mais le contrat porte le compte depuis #885.
+    // Une prestation qu'un praticien actif pratique — le module n'en lit que la
+    // durée et les tampons, mais le contrat porte les deux comptes depuis #885
+    // et #895.
     assignedStaffCount: 1,
+    activeAssignedStaffCount: 1,
     ...overrides,
   };
 }

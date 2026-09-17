@@ -325,13 +325,24 @@ export class ServiceDto implements ServiceView {
   @ApiProperty({
     description:
       'Combien de praticiens pratiquent la prestation, **désactivés compris** — ' +
-      'le même ensemble que `GET /v1/services/{id}/staff` liste. Une prestation à ' +
-      'zéro n’offre aucun créneau, quel que soit son état d’activité. Le compte des ' +
-      'seuls praticiens réservables est ailleurs : `staff` du catalogue public.',
+      'le même ensemble que `GET /v1/services/{id}/staff` liste. Ne dit rien de la ' +
+      'réservabilité : c’est `activeAssignedStaffCount` qui y répond.',
     minimum: 0,
     example: 2,
   })
   public assignedStaffCount!: number;
+
+  @ApiProperty({
+    description:
+      'Combien de ces praticiens sont **actifs**, donc réservables — le même ' +
+      'ensemble que `staff` du catalogue public, et celui dont le moteur de ' +
+      'disponibilité tire des créneaux. Zéro vaut « aucun créneau en ligne », que ' +
+      'personne ne soit affecté ou que tous les affectés soient désactivés. ' +
+      'Toujours inférieur ou égal à `assignedStaffCount`.',
+    minimum: 0,
+    example: 1,
+  })
+  public activeAssignedStaffCount!: number;
 }
 
 // ---------------------------------------------------------------------------

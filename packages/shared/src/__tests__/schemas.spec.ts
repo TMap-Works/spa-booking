@@ -300,6 +300,7 @@ describe('catalog', () => {
     price: { amountMinor: 7500, currency: 'EUR' },
     isActive: true,
     assignedStaffCount: 2,
+    activeAssignedStaffCount: 2,
   };
 
   it('porte le prix comme un couple montant/devise indissociable', () => {
@@ -350,14 +351,40 @@ describe('catalog', () => {
   });
 
   /**
-   * Le catalogue public, lui, ne le porte pas — et c'est délibéré : il expose
-   * `staff`, les praticiens **actifs** qu'on peut réserver, quand ce compte-ci
-   * répond à « à qui cette prestation est-elle rattachée ». Publier les deux
-   * laisserait une page publique annoncer un effectif que personne ne peut
-   * réserver.
+   * Le second compte, celui des praticiens **actifs** (#895).
+   *
+   * Obligatoire pour la même raison que son aîné, et distinct de lui pour une
+   * raison que le seul type ne dit pas : c'est le seul des deux qui réponde à
+   * « peut-on en réserver un créneau ». Une prestation dont l'unique praticien
+   * affecté a été désactivé vaut `1` et `0` — l'état exact où la liste du
+   * back-office et l'aperçu public se contredisaient.
    */
-  it('ne publie pas ce compte sur le catalogue public', () => {
+  it('porte un second compte, celui des praticiens actifs', () => {
+    const desactive = { ...service, assignedStaffCount: 1, activeAssignedStaffCount: 0 };
+
+    expect(serviceSchema.parse(desactive).activeAssignedStaffCount).toBe(0);
+    expect(serviceSchema.parse(desactive).assignedStaffCount).toBe(1);
+    expect(
+      serviceSchema.safeParse({ ...service, activeAssignedStaffCount: -1 }).success,
+    ).toBe(false);
+    expect(
+      serviceSchema.safeParse({ ...service, activeAssignedStaffCount: 1.5 }).success,
+    ).toBe(false);
+    // Absent n'est pas zéro, ici non plus.
+    expect(
+      serviceSchema.safeParse({ ...service, activeAssignedStaffCount: undefined }).success,
+    ).toBe(false);
+  });
+
+  /**
+   * Le catalogue public, lui, n'en porte aucun — et c'est délibéré : il expose
+   * `staff`, les praticiens **actifs** qu'on peut réserver, dont il donne les noms
+   * plutôt qu'un cardinal. Publier `assignedStaffCount` laisserait en plus une page
+   * publique annoncer un effectif que personne ne peut réserver.
+   */
+  it('ne publie aucun de ces comptes sur le catalogue public', () => {
     expect(Object.keys(publicServiceSchema.shape)).not.toContain('assignedStaffCount');
+    expect(Object.keys(publicServiceSchema.shape)).not.toContain('activeAssignedStaffCount');
   });
 
   it('rattache la prestation à une rubrique par identifiant, jamais par son nom', () => {
