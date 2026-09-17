@@ -160,6 +160,32 @@ export const serviceSchema = z.object({
   /** Prix affiché. Un soin offert vaut zéro ; il n'a jamais un prix négatif. */
   price: nonNegativeMoneySchema,
   isActive: z.boolean(),
+  /**
+   * Combien de praticiens pratiquent cette prestation.
+   *
+   * **Les praticiens désactivés y sont comptés.** C'est la réponse qui décide du
+   * libellé côté écran, et elle n'est pas arbitraire : la fiche d'une prestation
+   * liste ses affectations sans en masquer aucune — un praticien désactivé y
+   * figure, sous « Compte désactivé » —, parce que la masquer ferait croire à une
+   * affectation perdue et inviterait à la recréer, pour se heurter au conflit
+   * d'unicité de `service_staff`. Ce compte dit donc exactement ce que la fiche
+   * montre, et `0` veut dire « aucun praticien affecté », la phrase que la fiche
+   * affiche déjà. Une liste qui compterait les seuls praticiens actifs se mettrait
+   * à contredire la fiche qu'elle ouvre.
+   *
+   * Ce n'est pas le même compte que `publicServiceSchema.staff.length`, qui ne
+   * retient que les praticiens **actifs** : celui-là répond à « qui peut-on
+   * réserver », celui-ci à « à qui cette prestation est-elle rattachée ». Les deux
+   * valent zéro ensemble dans le seul cas qui intéresse l'écran de catalogue —
+   * une prestation que personne ne pratique n'offre aucun créneau.
+   *
+   * Un entier plutôt que la liste : l'écran de catalogue n'affiche pas de noms, et
+   * embarquer les fiches ferait transiter l'annuaire complet à chaque ligne.
+   */
+  assignedStaffCount: z
+    .number()
+    .int({ message: 'un nombre de praticiens s’exprime en entier' })
+    .min(0, { message: 'un nombre de praticiens n’est jamais négatif' }),
 });
 
 export type Service = z.infer<typeof serviceSchema>;
