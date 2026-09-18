@@ -10,11 +10,15 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { SlotPicker } from '@/components/booking/slot-picker';
-import { NO_PREFERENCE_LABEL } from '@/components/booking/staff-choice';
+import {
+  NO_PREFERENCE_LABEL,
+  NO_STAFF_NOTICE,
+  StaffChoice,
+} from '@/components/booking/staff-choice';
 import { BookingActionBar, type BookingSummary } from '@/components/booking/summary-bar';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
-import { Select } from '@/components/ui/select';
+import { Sheet } from '@/components/ui/sheet';
 import { calendarDateInTimeZone } from '@/lib/booking/calendar';
 import {
   addMonths,
@@ -38,9 +42,6 @@ import { loadAvailabilityAction } from '../actions';
  * serveur — ce rafraîchissement réduit la fenêtre d'erreur, il ne la ferme pas.
  */
 const REFRESH_INTERVAL_MS = 60_000;
-
-/** Valeur du choix « premier disponible » — l'absence de préférence, pas un praticien. */
-const FIRST_AVAILABLE = '';
 
 interface SlotStepProps {
   readonly tenant: PublicTenant;
@@ -106,11 +107,21 @@ interface SlotStepProps {
  *
  * ## Le praticien se change **ici**, pas un écran plus haut
  *
- * Il se choisit déjà à l'étape prestation, mais c'est devant le calendrier qu'on
+ * Il se choisit déjà à l'étape prestation, mais c'est devant les créneaux qu'on
  * découvre qu'on s'y est mal pris : la personne demandée n'a rien de libre cette
  * semaine, ou au contraire il n'y avait aucune raison de la demander. Renvoyer à
  * l'étape précédente pour cela ferait perdre la journée qu'on regardait. Le
  * sélecteur est donc rendu dans les deux écrans, sur le même état du brouillon.
+ *
+ * Une **puce** et non une liste déroulante depuis #1049 — `BM-PRATICIEN-04`,
+ * *« au-dessus du calendrier, un sélecteur “Sans préférence ⌄” ; changer de
+ * praticien recalcule les créneaux sur place »*. Elle tient sur une ligne, là où
+ * la `<select>` et sa phrase d'aide prenaient trois hauteurs de texte au-dessus
+ * de la date — sur un écran dont l'enjeu est précisément de remonter les horaires
+ * au-dessus de la ligne de flottaison. Le choix lui-même s'ouvre dans un panneau
+ * (`BM-TUNNEL-12`) et emploie les **cartes** de l'étape prestation
+ * ([`StaffChoice`](../../../../../components/booking/staff-choice.tsx), #1048) :
+ * un seul objet nomme et dessine le praticien sur tout le parcours.
  *
  * « Premier disponible » n'est pas une valeur manquante (CDC §1.4) : c'est
  * l'absence de préférence, et c'est le serveur qui affecte alors le praticien.
@@ -152,6 +163,8 @@ export function SlotStep({
   const [days, setDays] = useState<readonly DayAvailability[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [retrying, setRetrying] = useState(false);
+  /** Le choix du praticien est-il ouvert dans son panneau ? — `BM-PRATICIEN-04`. */
+  const [staffOpen, setStaffOpen] = useState(false);
   /**
    * La date du jour dans le fuseau du salon, et le mois que le calendrier
    * montre.
@@ -340,6 +353,9 @@ export function SlotStep({
       ? null
       : (service.staff.find((member) => member.id === staffId)?.displayName ?? 'ce praticien');
 
+  /** Ce que la puce porte — l'absence de préférence est un choix, pas un vide. */
+  const staffName = staffLabel ?? NO_PREFERENCE_LABEL;
+
   /** Les bornes réservables, dont le calendrier tire les mois qu'il atteint. */
   const bounds = useMemo(() => (today === null ? null : bookingWindow(today)), [today]);
 
@@ -374,11 +390,12 @@ export function SlotStep({
    * Le focus rattrapé quand le bouton qu'on vient d'actionner s'est effacé.
    *
    * On attend le **résultat** et pas le squelette : le changement de mois
-   * repasse par un chargement, et se poser sur le calendrier de l'écran
-   * d'attente ferait perdre le focus une seconde fois à l'arrivée des données.
-   * La cible est la journée que le calendrier retient dans le nouveau mois —
-   * lui, contrairement à la bande d'avant, ne disparaît jamais. Ce que le mois
-   * a donné est annoncé de son côté par le `role="status"` de l'état vide.
+   * repasse par un chargement, et se poser sur la bande de l'écran d'attente
+   * ferait perdre le focus une seconde fois à l'arrivée des données. La cible est
+   * la journée que la **bande** retient dans le nouveau mois — elle est rendue
+   * dans tous les états et ne disparaît jamais, là où le calendrier n'est dans le
+   * document que tant que son panneau est ouvert (#1049). Ce que le mois a donné
+   * est annoncé de son côté par le `role="status"` de l'état vide.
    *
    * Sans tableau de dépendances : ce n'est pas une valeur qu'on observe mais un
    * geste qu'on rattrape, au premier rendu où sa cible existe.
@@ -415,31 +432,65 @@ export function SlotStep({
     >
       <h2 className="spa-card__title">{service.name}</h2>
 
-      <Select
-        id="creneau-praticien"
-        label="Praticien"
-        value={staffId ?? FIRST_AVAILABLE}
-        hint="Sans préférence, le salon vous attribue le premier praticien disponible."
-        emptyLabel={
-          service.staff.length === 0
-            ? 'Aucun praticien ne propose cette prestation actuellement.'
-            : undefined
-        }
-        onChange={(event) => {
-          onStaffChange(event.target.value === FIRST_AVAILABLE ? null : event.target.value);
+      {/*
+        « Avec : Premier disponible ▾ » — `BM-PRATICIEN-04`. Le libellé est le
+        même qu'à l'étape 1, et **le même mot** : `ds:libelles` relève comme un
+        défaut la même chose nommée de deux façons sur un seul parcours, et il vit
+        donc à un seul endroit (`components/booking/staff-choice.tsx`).
+
+        Le nom accessible porte la préposition et le nom retenu ; le chevron est
+        `aria-hidden`, un signe typographique ne se lisant pas.
+      */}
+      <div className="spa-booking__staff-chip">
+        {service.staff.length === 0 ? (
+          // Ouvrir un panneau pour y lire qu'il n'y a personne est un geste
+          // perdu : la `<select>` d'avant portait déjà ce constat en clair, et
+          // l'étape le garde. C'est aussi ce qui explique la grille vide en
+          // dessous.
+          <p className="spa-booking__staff-empty">{NO_STAFF_NOTICE}</p>
+        ) : (
+          <Button
+            variant="neutral"
+            aria-haspopup="dialog"
+            aria-label={`Praticien : ${staffName}. Choisir un praticien`}
+            onClick={() => {
+              setStaffOpen(true);
+            }}
+          >
+            <span aria-hidden="true">{`Avec : ${staffName}`}</span>
+            <span aria-hidden="true" className="spa-booking__staff-chip-caret">
+              ▾
+            </span>
+          </Button>
+        )}
+      </div>
+
+      {/*
+        Le choix lui-même, dans un panneau qui garde l'étape dessous
+        (`BM-TUNNEL-12`). Il se referme dès qu'un praticien est retenu : c'est le
+        geste pour lequel on l'a ouvert, et les créneaux se recalculent derrière —
+        « changer de praticien recalcule les créneaux sur place ».
+      */}
+      <Sheet
+        open={staffOpen}
+        title="Choisir un praticien"
+        onClose={() => {
+          setStaffOpen(false);
         }}
       >
-        {/* Le même libellé qu'à l'étape 1, et **le même mot** : `ds:libelles`
-            relève comme un défaut la même chose nommée de deux façons sur un
-            seul parcours. Il vit donc à un seul endroit
-            (`components/booking/staff-choice.tsx`). */}
-        <option value={FIRST_AVAILABLE}>{NO_PREFERENCE_LABEL}</option>
-        {service.staff.map((member) => (
-          <option key={member.id} value={member.id}>
-            {member.displayName}
-          </option>
-        ))}
-      </Select>
+        {/* Monté seulement panneau ouvert : fermé, ses boutons radio resteraient
+            focalisables derrière un voile. */}
+        {staffOpen ? (
+          <StaffChoice
+            staff={service.staff}
+            value={staffId}
+            onSelect={(member) => {
+              onStaffChange(member);
+              setStaffOpen(false);
+            }}
+          />
+        ) : null}
+      </Sheet>
 
       {error === null ? null : (
         <Notification tone="danger" title="Les disponibilités n’ont pas pu être chargées">
@@ -479,6 +530,10 @@ export function SlotStep({
           openingHours={tenant.openingHours}
           onMonthChange={setMonth}
           timeZone={tenant.timezone}
+          // Le conteneur où rattraper le focus : la **bande de jours** depuis
+          // #1049 — c'est elle qui reste à l'écran quand le mois change, le
+          // calendrier n'étant dans le document que tant que son panneau est
+          // ouvert.
           calendarRef={calendarRef}
           // Rendue conditionnelle, et non passée à `null` : `SlotPicker`
           // distingue « aucun créneau retenu » — le cas de la première visite,

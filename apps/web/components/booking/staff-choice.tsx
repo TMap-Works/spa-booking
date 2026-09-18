@@ -34,6 +34,19 @@ export const NO_PREFERENCE_LABEL = 'Premier disponible';
 /** Ce que l'option rapporte à la cliente — `BM-PRATICIEN-01`. */
 export const NO_PREFERENCE_BENEFIT = 'Le plus de créneaux';
 
+/**
+ * Le constat qu'une prestation que personne ne pratique n'a pas de créneau à
+ * offrir.
+ *
+ * Exporté parce que l'étape « créneau » l'écrit aussi (#1049) : le choix du
+ * praticien y est une puce qui ouvre un panneau, et ouvrir un panneau pour y lire
+ * qu'il n'y a personne est un geste perdu — la phrase se lit donc à la place de
+ * la puce. Une seule fois dans le produit : `ds:libelles` relève comme un défaut
+ * la même chose nommée de deux façons sur un seul parcours.
+ */
+export const NO_STAFF_NOTICE =
+  'Aucun praticien ne propose cette prestation actuellement : le salon n’a aucun créneau à offrir pour elle.';
+
 interface StaffChoiceProps {
   /** Les praticiens **actifs** qui tiennent la prestation retenue. */
   readonly staff: readonly StaffMemberSummary[];
@@ -92,10 +105,7 @@ export function StaffChoice({ staff, value, onSelect }: StaffChoiceProps) {
       <legend className="spa-booking__staff-legend">Praticien</legend>
 
       {staff.length === 0 ? (
-        <p className="spa-booking__staff-empty">
-          Aucun praticien ne propose cette prestation actuellement : le salon n’a aucun créneau à
-          offrir pour elle.
-        </p>
+        <p className="spa-booking__staff-empty">{NO_STAFF_NOTICE}</p>
       ) : (
         <>
           <div className="spa-booking__staff-row">

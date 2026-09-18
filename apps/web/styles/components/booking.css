@@ -1135,6 +1135,36 @@
   color: var(--spa-color-text-muted);
 }
 
+/*
+ * La puce « Avec : Premier disponible ▾ » de l'étape « créneau » (#1049).
+ *
+ * `BM-PRATICIEN-04` : *« au-dessus du calendrier, un sélecteur “Sans
+ * préférence ⌄” ; changer de praticien recalcule les créneaux sur place »*. Elle
+ * remplace une `<select>` étiquetée et sa phrase d'aide — trois hauteurs de texte
+ * au-dessus de la date, sur un écran dont l'enjeu est précisément de remonter les
+ * horaires au-dessus de la ligne de flottaison.
+ *
+ * Un conteneur autour du bouton, et non un bouton nu : la colonne flex de
+ * `.spa-booking__step` étirerait un `.spa-button` sur toute la largeur, là où une
+ * puce se lit à sa mesure. C'est le même détour que `.spa-booking__actions`.
+ */
+.spa-booking__staff-chip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
+}
+
+.spa-booking__staff-chip .spa-button {
+  min-block-size: var(--spa-target-min-size);
+  border-radius: var(--spa-radius-full);
+}
+
+/* Le chevron, détaché du libellé : il annonce le panneau, il ne le nomme pas. */
+.spa-booking__staff-chip-caret {
+  margin-inline-start: var(--spa-space-1);
+  color: var(--spa-color-text-muted);
+}
+
 /* --- Barre basse ------------------------------------------------------------ */
 
 /*
