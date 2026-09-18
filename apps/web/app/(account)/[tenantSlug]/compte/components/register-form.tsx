@@ -3,7 +3,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ERROR_CODES, PASSWORD_MIN_LENGTH, phoneSchema, registerRequestSchema } from '@spa/shared';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -15,6 +15,7 @@ import { PasswordField } from '@/components/ui/password-field';
 import { ACCOUNT_CONSENT, ConsentField, consentSchema } from '@/lib/booking/consent';
 
 import { registerAction } from '../actions';
+import { RETURN_QUERY_KEY, safeReturnPath, withReturnPath } from '../connexion/return-path';
 import { accountPath } from '../paths';
 
 /**
@@ -71,6 +72,13 @@ interface RegisterFormProps {
 
 export function RegisterForm({ tenantSlug }: RegisterFormProps) {
   const router = useRouter();
+  /*
+   * Le retour reçu du lien « Créer mon compte » de la connexion, rejugé ici
+   * comme il l'a été là-bas (#1087) : cet écran est atteignable directement, et
+   * un paramètre revalidé en amont ne prouve rien sur celui qui arrive ici.
+   * Voir `connexion/return-path.ts`.
+   */
+  const returnTo = safeReturnPath(useSearchParams().get(RETURN_QUERY_KEY), tenantSlug);
   const [failure, setFailure] = useState<string | null>(null);
 
   const {
@@ -144,7 +152,8 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
       return;
     }
 
-    router.replace(accountPath(tenantSlug));
+    // Là d'où l'on vient quand l'adresse le dit, l'espace client sinon (#1087).
+    router.replace(returnTo ?? accountPath(tenantSlug));
     router.refresh();
   });
 
@@ -253,7 +262,10 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
 
       <p className="spa-account__switch">
         Vous avez déjà un compte ?{' '}
-        <Link href={accountPath(tenantSlug, '/connexion')}>Se connecter</Link>
+        {/* Le retour traverse le lien dans les deux sens (#1087). */}
+        <Link href={withReturnPath(accountPath(tenantSlug, '/connexion'), returnTo)}>
+          Se connecter
+        </Link>
       </p>
     </section>
   );

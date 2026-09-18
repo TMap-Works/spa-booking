@@ -53,6 +53,9 @@ vi.mock('@/app/(account)/[tenantSlug]/compte/actions', () => ({
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn(), replace: vi.fn(), push: vi.fn() }),
+  // Le formulaire d'inscription lit le paramètre de retour (#1087) ; ici,
+  // l'adresse n'en porte aucun.
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 const SLUG = 'maison-lotus';
