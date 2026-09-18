@@ -10,6 +10,7 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { SlotPicker } from '@/components/booking/slot-picker';
+import { NO_PREFERENCE_LABEL } from '@/components/booking/staff-choice';
 import { BookingActionBar, type BookingSummary } from '@/components/booking/summary-bar';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
@@ -428,7 +429,11 @@ export function SlotStep({
           onStaffChange(event.target.value === FIRST_AVAILABLE ? null : event.target.value);
         }}
       >
-        <option value={FIRST_AVAILABLE}>Premier disponible</option>
+        {/* Le même libellé qu'à l'étape 1, et **le même mot** : `ds:libelles`
+            relève comme un défaut la même chose nommée de deux façons sur un
+            seul parcours. Il vit donc à un seul endroit
+            (`components/booking/staff-choice.tsx`). */}
+        <option value={FIRST_AVAILABLE}>{NO_PREFERENCE_LABEL}</option>
         {service.staff.map((member) => (
           <option key={member.id} value={member.id}>
             {member.displayName}
