@@ -44,6 +44,16 @@ interface SlotStepProps {
   readonly tenant: PublicTenant;
   readonly service: PublicService;
   readonly staffId: string | null;
+  /**
+   * Le créneau déjà retenu par le brouillon, quand on **revient** sur l'étape
+   * (#947).
+   *
+   * `null` à la première visite : rien n'a encore été choisi, et l'écran ouvre
+   * le mois courant. Non `null`, c'est le geste retour du navigateur, le fil
+   * d'étapes ou un lien qui rouvrent l'étape sur un choix déjà fait — l'écran
+   * doit alors montrer **ce** moment-là, pas le premier venu.
+   */
+  readonly startsAt: UtcInstant | null;
   readonly onBack: () => void;
   /** Remonte le praticien retenu au brouillon : il survit au rafraîchissement et sert à la réservation. */
   readonly onStaffChange: (staffId: string | null) => void;
@@ -70,6 +80,19 @@ interface SlotStepProps {
  * fenêtre de réservation de l'autre. Un mois civil ne dépasse jamais les trente
  * et un jours que `availabilityQuerySchema` plafonne, et le mois courant en
  * demande d'autant moins qu'il est entamé.
+ *
+ * ## On revient sur cette étape, et elle doit s'en souvenir (#947)
+ *
+ * Le composant se démonte à chaque fois qu'on la quitte : le geste retour du
+ * navigateur, le fil d'étapes et un lien rouvert le remontent à neuf, sans rien
+ * de ce qu'il avait à l'écran. Le créneau déjà retenu lui est donc **rendu** par
+ * le tunnel (`startsAt`), et l'écran s'ouvre sur son mois, cet horaire marqué
+ * comme retenu — plutôt que sur le mois courant.
+ *
+ * La **journée** ouverte, elle, appartient encore à `SlotPicker`, qui la replie
+ * sur la première journée ouverte de la plage : le mois est juste, la grille
+ * peut encore montrer un autre jour. Cet écart-là sort de l'empreinte de ce
+ * ticket et reste ouvert — voir #947.
  *
  * ## Le praticien se change **ici**, pas un écran plus haut
  *
@@ -110,6 +133,7 @@ export function SlotStep({
   tenant,
   service,
   staffId,
+  startsAt,
   onBack,
   onStaffChange,
   onChoose,
@@ -155,6 +179,19 @@ export function SlotStep({
   const latestRequest = useRef(0);
 
   /**
+   * La journée du créneau déjà retenu, dans le fuseau du salon (#947).
+   *
+   * Un instant UTC ne dit pas à lui seul de quelle journée il relève : 21:30 à
+   * Antananarivo s'écrit `18:30Z`, et `2026-09-21T22:30:00Z` est déjà le 22 pour
+   * le salon. C'est le référentiel de `availabilityQuerySchema` et celui du
+   * calendrier — la conversion passe donc par la même fonction que « aujourd'hui ».
+   */
+  const retainedDate = useMemo(
+    () => (startsAt === null ? null : calendarDateInTimeZone(new Date(startsAt), tenant.timezone)),
+    [startsAt, tenant.timezone],
+  );
+
+  /**
    * Le mois de départ, posé **après le montage** seulement.
    *
    * C'est le pendant du `windowDates` d'avant : l'écran ne peut pas savoir quel
@@ -163,13 +200,22 @@ export function SlotStep({
    * choisi n'est pas écrasé — un changement d'établissement en cours de tunnel
    * est le seul cas où cet effet se rejoue, et il ne doit pas ramener la
    * visiteuse au mois courant si elle en regardait un autre.
+   *
+   * Il part du **mois du créneau retenu** dès qu'il y en a un (#947). L'étape se
+   * remonte à chaque retour dessus — geste retour du navigateur, fil d'étapes,
+   * lien rouvert —, et repartir du mois courant reposait alors au serveur la
+   * question de septembre pour un rendez-vous visé en octobre : la journée
+   * choisie n'était même pas dans la réponse. `bookingWindow` plafonnant la
+   * fenêtre à trente et un jours, ce mois-là est toujours le mois courant ou le
+   * suivant ; `load` le repasse de toute façon par `isNavigableMonth`, qui a le
+   * dernier mot si minuit l'a emporté derrière la fenêtre.
    */
   useEffect(() => {
     const now = calendarDateInTimeZone(new Date(), tenant.timezone);
 
     setToday(now);
-    setMonth((current) => current ?? monthOf(now));
-  }, [tenant.timezone]);
+    setMonth((current) => current ?? monthOf(retainedDate ?? now));
+  }, [retainedDate, tenant.timezone]);
 
   const load = useCallback(async () => {
     if (month === null) {
@@ -419,6 +465,19 @@ export function SlotStep({
           onMonthChange={setMonth}
           timeZone={tenant.timezone}
           calendarRef={calendarRef}
+          // Rendue conditionnelle, et non passée à `null` : `SlotPicker`
+          // distingue « aucun créneau retenu » — le cas de la première visite,
+          // où le clic avance aussitôt et où aucun bouton ne porte
+          // `aria-pressed` — de « celui-ci l'est ». Annoncer « non pressé » sur
+          // trente créneaux ferait chercher un état qui n'existe pas.
+          //
+          // Elle ne suffit pas à rouvrir l'étape sur la **journée** du créneau
+          // retenu : le sélecteur tient sa journée dans son propre état, replié
+          // sur la première journée ouverte de la plage tant qu'aucune n'est
+          // désignée. Le mois est juste, la grille peut donc encore montrer un
+          // autre jour — écart traité hors de l'empreinte de ce ticket, voir
+          // #947.
+          {...(startsAt === null ? {} : { selectedSlot: startsAt })}
           onChoose={onChoose}
           emptyState={
             <div className="spa-empty-state">

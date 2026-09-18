@@ -60,6 +60,54 @@ interface BookingTunnelProps {
 const useHistoryEffect = typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 /**
+ * Le créneau retenu ne tombe pas au geste retour (#947).
+ *
+ * ## Ce qui se passait
+ *
+ * L'entrée d'historique d'une étape est écrite **en y arrivant**, avant que le
+ * choix qu'on y fait n'existe : celle de l'étape « Créneau » ne porte donc pas
+ * de `creneau`, qui n'est retenu qu'au clic qui la quitte. Le geste retour
+ * depuis « Coordonnées » rendait ainsi une étape amnésique — barre de résumé
+ * sans date, calendrier rouvert au premier jour libre, alors que la cliente
+ * venait de choisir son horaire. `BM-TUNNEL-08`
+ * (`docs/design/benchmark/parcours-client.md`) le dit à l'endroit : « la cliente
+ * retrouve la même étape avec les mêmes choix ».
+ *
+ * ## Pourquoi ici, et non en réécrivant l'entrée qu'on quitte
+ *
+ * Parce qu'une entrée ne se corrige pas dans le même rendu qu'un `pushState` :
+ * deux écritures d'adresse d'affilée écartent l'action serveur qui suit, et
+ * l'étape reste en squelette (voir l'effet d'adresse, « Une écriture par
+ * rendu »). Le rattrapage se fait donc à l'arrivée plutôt qu'au départ, et ne
+ * coûte aucune écriture : l'effet d'adresse remet de lui-même le `creneau` dans
+ * l'entrée retrouvée, **sur place**, puisqu'on vient de l'historique.
+ *
+ * ## Pourquoi c'est légitime alors que « l'URL fait foi »
+ *
+ * La règle de `draftFromSearch` vise le **lien partagé** : ce qu'il ne dit pas
+ * n'a pas été choisi. Or un `popstate` ne peut pas venir d'un lien — il ramène
+ * toujours à une entrée que ce tunnel a écrite lui-même, dans cet onglet, et
+ * qui est par construction en retard sur ce qui a été choisi après elle. Un
+ * lien ouvert dans un onglet neuf passe, lui, par l'hydratation, qui ne touche
+ * pas à cette fonction.
+ *
+ * Le repli ne vaut que si l'entrée retrouvée décrit **la même question** : même
+ * prestation, même praticien. Ces deux-là changés, le créneau venait d'un autre
+ * agenda et n'a plus rien à dire — c'est déjà ce que `chooseService` et
+ * `chooseStaff` font en le faisant tomber.
+ */
+function keepChosenSlot(current: BookingDraft, merged: BookingDraft): BookingDraft {
+  const rewound =
+    merged.startsAt === null &&
+    current.startsAt !== null &&
+    merged.serviceId !== null &&
+    merged.serviceId === current.serviceId &&
+    merged.staffId === current.staffId;
+
+  return rewound ? { ...merged, startsAt: current.startsAt } : merged;
+}
+
+/**
  * Le tunnel de réservation (#45) — prestation, créneau, coordonnées,
  * récapitulatif, confirmation.
  *
@@ -231,6 +279,20 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
    * ferait grossir la pile d'historique à chaque appui sur « retour », c'est-à-dire
    * au moment exact où le visiteur demande qu'elle diminue.
    *
+   * ## Une écriture d'adresse par rendu, jamais deux (#947)
+   *
+   * Chaque appel à `replaceState` ou `pushState` dépose une action `RESTORE`
+   * dans la file de Next, et une file où deux d'entre elles se suivent ne rend
+   * pas la main à l'action serveur qui arrive derrière : la promesse de
+   * `loadAvailabilityAction` ne se résolvait plus, et l'étape « Créneau »
+   * restait en squelette jusqu'à la revalidation d'une minute — exactement la
+   * panne que la section précédente décrit, et le parcours critique l'a
+   * attrapée. Corriger l'entrée qu'on quitte **avant** d'en empiler une
+   * nouvelle était la façon évidente de lui faire garder les choix faits sur
+   * elle ; c'est cette voie-là qui est fermée. Le créneau retenu est donc
+   * rattrapé au retour arrière, par le brouillon — voir l'écouteur `popstate`
+   * ci-dessous.
+   *
    * ## Ce qui n'y va pas
    *
    * Les coordonnées et le rendez-vous obtenu restent hors de l'adresse
@@ -263,7 +325,10 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
 
     if (url === `${window.location.pathname}${window.location.search}`) {
       // Rien à corriger : c'est le cas de tous les rendus où seule la saisie a
-      // changé, et celui du retour arrière qui vient de nous amener ici.
+      // changé, et celui du retour arrière qui retrouve une entrée déjà exacte.
+      // Un retour arrière qui rattrape le créneau retenu (#947), lui, passe
+      // outre : l'entrée retrouvée ne le portait pas, et c'est `cameFromHistory`
+      // qui fait poser la correction **sur place**, sans empiler d'entrée.
       return;
     }
 
@@ -302,7 +367,7 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
       // un retour arrière ne crée jamais d'entrée.
       cameFromHistoryRef.current = true;
       setDraft((current) => {
-        const merged = draftFromSearch(window.location.search, current);
+        const merged = keepChosenSlot(current, draftFromSearch(window.location.search, current));
 
         return { ...merged, step: reachableStep(merged) };
       });
@@ -689,6 +754,10 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
           tenant={tenant}
           service={selectedService}
           staffId={draft.staffId}
+          // Le créneau déjà retenu, quand on revient sur l'étape (#947) :
+          // l'écran s'ouvre sur son mois et le marque, au lieu de repartir du
+          // mois courant et de la première journée libre.
+          startsAt={draft.startsAt}
           onBack={() => {
             goTo('prestation');
           }}

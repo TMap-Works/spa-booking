@@ -15,6 +15,7 @@ import type {
   AvailabilitySlot,
   CalendarDate,
   PublicService,
+  TimeZone,
   UtcInstant,
 } from '@spa/shared';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
@@ -62,10 +63,28 @@ vi.mock('@/lib/format', async (importActual) => {
  */
 const AUJOURDHUI = '2026-09-01' as CalendarDate;
 
+/**
+ * L'appel porte-t-il l'**horloge**, plutôt qu'un instant que le test a daté ?
+ *
+ * L'étape lit les deux par la même fonction : « aujourd'hui » pour borner la
+ * fenêtre de réservation, et la journée du créneau déjà retenu pour rouvrir son
+ * mois (#947). Seule la première se pilote — la seconde est précisément le
+ * calcul qu'on éprouve, et la remplacer ferait passer le test quel que soit le
+ * fuseau employé. `new Date()` est construit dans le même tour de boucle que
+ * l'appel ; un instant du jeu d'essai, lui, en est à des jours.
+ */
+function estLHorloge(instant: Date): boolean {
+  return Math.abs(Date.now() - instant.getTime()) < 1_000;
+}
+
 vi.mock('@/lib/booking/calendar', async (importActual) => {
   const actual = await importActual<typeof import('@/lib/booking/calendar')>();
 
-  return { ...actual, calendarDateInTimeZone: () => AUJOURDHUI };
+  return {
+    ...actual,
+    calendarDateInTimeZone: (instant: Date, timeZone: TimeZone): CalendarDate =>
+      estLHorloge(instant) ? AUJOURDHUI : actual.calendarDateInTimeZone(instant, timeZone),
+  };
 });
 
 /** Le salon est à Antananarivo (UTC+3) : 06:00 UTC s'affiche « 09:00 ». */
@@ -108,13 +127,18 @@ const onStaffChange = vi.fn();
 const onChoose = vi.fn();
 
 function renderStep(
-  overrides: Partial<{ service: PublicService; staffId: string | null }> = {},
+  overrides: Partial<{
+    service: PublicService;
+    staffId: string | null;
+    startsAt: UtcInstant | null;
+  }> = {},
 ): ReturnType<typeof userEvent.setup> {
   render(
     <SlotStep
       tenant={tenant}
       service={overrides.service ?? service}
       staffId={overrides.staffId ?? null}
+      startsAt={overrides.startsAt ?? null}
       onBack={onBack}
       onStaffChange={onStaffChange}
       onChoose={onChoose}
@@ -272,6 +296,7 @@ describe('choix du praticien', () => {
         tenant={tenant}
         service={deuxPraticiens}
         staffId={null}
+        startsAt={null}
         onBack={onBack}
         onStaffChange={onStaffChange}
         onChoose={onChoose}
@@ -293,6 +318,7 @@ describe('choix du praticien', () => {
         tenant={tenant}
         service={deuxPraticiens}
         staffId={NIVO}
+        startsAt={null}
         onBack={onBack}
         onStaffChange={onStaffChange}
         onChoose={onChoose}
@@ -844,5 +870,79 @@ describe('navigation au clavier', () => {
     await user.keyboard('{Enter}');
 
     expect(onChoose).toHaveBeenCalledWith(MATIN);
+  });
+});
+
+/**
+ * On revient sur cette étape, et elle doit s'en souvenir (#947).
+ *
+ * Le composant se démonte chaque fois qu'on la quitte : le geste retour du
+ * navigateur, le fil d'étapes et un lien rouvert le remontent à neuf. Ce qu'il
+ * sait du choix déjà fait ne peut donc venir que du brouillon, que le tunnel lui
+ * rend par `startsAt`.
+ *
+ * La référence est `BM-TUNNEL-08` (`docs/design/benchmark/parcours-client.md`) —
+ * « la cliente retrouve la même étape avec les mêmes choix » — et la skill
+ * `web-frontend` §3, qui exige que l'état de l'étape survive à un
+ * rafraîchissement.
+ */
+describe('retour sur l’étape avec un créneau déjà retenu (#947)', () => {
+  /** Un créneau d'octobre : dans la fenêtre de réservation, hors du mois courant. */
+  const OCTOBRE = '2026-10-01T06:00:00.000Z' as UtcInstant;
+  const PREMIER_OCTOBRE = '2026-10-01' as CalendarDate;
+
+  it('rouvre le mois du créneau retenu, et non le mois courant', async () => {
+    loadAvailabilityAction.mockResolvedValue({
+      ok: true,
+      data: availability([{ date: PREMIER_OCTOBRE, slots: [slot(OCTOBRE, HERY)] }]),
+    });
+
+    renderStep({ startsAt: OCTOBRE });
+
+    expect(await screen.findByRole('button', { name: '09 h 00' })).toBeDefined();
+    // Sans cela, l'étape reposait au serveur la question de septembre pour un
+    // rendez-vous visé en octobre : la journée retenue n'était même pas dans la
+    // réponse, et la grille ne pouvait que montrer autre chose.
+    expect(loadAvailabilityAction.mock.calls[0]?.[1]).toMatchObject({
+      from: PREMIER_OCTOBRE,
+      to: PREMIER_OCTOBRE,
+    });
+    expect(screen.getByText('octobre 2026')).toBeDefined();
+  });
+
+  it('marque comme retenu l’horaire que le brouillon porte', async () => {
+    renderStep({ startsAt: MATIN });
+
+    // `aria-pressed` et non une classe : c'est l'état qu'un lecteur d'écran
+    // annonce, et l'atténuation seule ne porterait pas l'information.
+    const matin = await screen.findByRole('button', { name: '09 h 00' });
+
+    expect(matin.getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: '14 h 00' }).getAttribute('aria-pressed')).toBe(
+      'false',
+    );
+  });
+
+  it('n’annonce aucun état retenu à la première visite', async () => {
+    // Rien n'a encore été choisi et le clic avance aussitôt : annoncer « non
+    // pressé » sur chaque créneau ferait chercher un état qui n'existe pas.
+    renderStep();
+
+    const matin = await screen.findByRole('button', { name: '09 h 00' });
+
+    expect(matin.hasAttribute('aria-pressed')).toBe(false);
+  });
+
+  it('laisse changer de mois depuis celui du créneau retenu', async () => {
+    // Le mois retenu est un point de départ, pas un verrou : la cliente qui
+    // revient pour changer d'avis garde ses chevrons.
+    const user = renderStep({ startsAt: MATIN });
+
+    await screen.findByRole('button', { name: '09 h 00' });
+    await user.click(screen.getByRole('button', { name: 'Mois suivant' }));
+
+    await waitFor(() => {
+      expect(screen.getByText('octobre 2026')).toBeDefined();
+    });
   });
 });
