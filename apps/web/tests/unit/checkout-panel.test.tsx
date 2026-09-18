@@ -1,6 +1,7 @@
 import type { Appointment, AppointmentStatus } from '@spa/shared';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, type RenderResult } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import type { ReactElement } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CheckoutPanel } from '@/app/(admin)/[tenantSlug]/admin/components/checkout-panel';
@@ -23,6 +24,7 @@ import type { SettlementState } from '@/lib/admin/checkout-summary';
 const settleInCashAction = vi.fn();
 const openCardPaymentAction = vi.fn();
 const replace = vi.fn();
+const refresh = vi.fn();
 const confirmPayment = vi.fn();
 const mount = vi.fn();
 const destroy = vi.fn();
@@ -33,9 +35,10 @@ vi.mock('@/app/(admin)/[tenantSlug]/admin/encaissement/actions', () => ({
 }));
 
 // Le panneau part vers la route de renouvellement sur une session expirée
-// (#856) : le routeur est doublé pour observer ce départ.
+// (#856), et redemande le rendu serveur quand la journée de caisse change
+// (#1004) : le routeur est doublé pour observer l'un et l'autre.
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace }),
+  useRouter: () => ({ push: vi.fn(), refresh, replace }),
 }));
 
 vi.mock('@/lib/admin/payment-stripe', () => ({
@@ -70,18 +73,32 @@ function appointment(status: AppointmentStatus = 'confirmed'): Appointment {
   };
 }
 
-function renderPanel(
+function panel(
   status: AppointmentStatus = 'confirmed',
   settlement: SettlementState | null = null,
-): void {
-  render(
+): ReactElement {
+  return (
     <CheckoutPanel
       appointment={appointment(status)}
       settlement={settlement}
       tenantSlug={SLUG}
       timeZone={TIMEZONE}
-    />,
+    />
   );
+}
+
+/**
+ * Monte le panneau, et rend de quoi le **remonter avec d'autres props**.
+ *
+ * Ce second usage est ce qui permet d'exercer `router.refresh()` sans routeur :
+ * ce que le rafraîchissement produit, vu d'ici, est exactement un nouveau rendu
+ * du même panneau avec le `settlement` que la page vient de relire (#1004).
+ */
+function renderPanel(
+  status: AppointmentStatus = 'confirmed',
+  settlement: SettlementState | null = null,
+): RenderResult {
+  return render(panel(status, settlement));
 }
 
 const CASH_TRANSACTION = {
@@ -100,6 +117,7 @@ afterEach(() => {
   settleInCashAction.mockReset();
   openCardPaymentAction.mockReset();
   confirmPayment.mockReset();
+  refresh.mockReset();
   mount.mockReset();
   destroy.mockReset();
 });
@@ -426,5 +444,106 @@ describe('le paiement par carte', () => {
       'Votre carte a été refusée.',
     );
     expect(screen.queryByText(/Paiement accepté/)).toBeNull();
+  });
+
+  it('ne redemande aucun rendu serveur : seul le webhook inscrit la capture', async () => {
+    // Le récapitulatif d'à côté dit « À encaisser », et c'est **vrai** tant que
+    // le webhook signé n'a rien inscrit — le reçu d'en face s'annonce d'ailleurs
+    // provisoire. Relire la journée de caisse ici ne ramènerait qu'une intention
+    // `pending` et coûterait un aller-retour devant la cliente (#1004).
+    confirmPayment.mockResolvedValue({ paymentIntent: { status: 'succeeded' } });
+    await openCard();
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /par carte$/ })).toHaveProperty(
+        'disabled',
+        false,
+      );
+    });
+    await userEvent.click(screen.getByRole('button', { name: /par carte$/ }));
+
+    expect(await screen.findByText('Paiement accepté par le prestataire')).toBeDefined();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Le récapitulatif rendu côté serveur, après l'encaissement (#1004).
+ *
+ * L'écran se contredisait d'une moitié à l'autre : « Encaissement enregistré —
+ * 65,00 € » à droite, « À encaisser 65,00 € » à gauche, et rien pour le
+ * corriger sinon un rechargement complet. Le récapitulatif est un Server
+ * Component, ce panneau ne peut pas le réécrire — il ne peut que **redemander
+ * son rendu**.
+ *
+ * Ce que ces cas exercent est donc les deux moitiés du geste : le
+ * rafraîchissement est-il demandé quand la journée de caisse a changé, et le
+ * panneau tient-il bon quand le rendu revient ?
+ */
+describe('le récapitulatif rendu côté serveur, après l’encaissement (#1004)', () => {
+  const SETTLED_IN_CASH: SettlementState = { kind: 'regle', payment: CASH_TRANSACTION };
+
+  it('redemande le rendu serveur quand les espèces aboutissent', async () => {
+    settleInCashAction.mockResolvedValue({ ok: true, data: CASH_TRANSACTION });
+    renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+
+    await waitFor(() => {
+      expect(refresh).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('garde le ticket à l’écran quand le rendu revient avec le règlement', async () => {
+    // Le piège du correctif : le panneau sait déjà rendre un rendez-vous réglé —
+    // un bandeau et un bouton « Réimprimer le ticket ». Si cet état-là l'emporte
+    // sur le reçu qu'on vient de produire, le rafraîchissement escamote le
+    // ticket au moment précis où l'opérateur le tend à sa cliente.
+    settleInCashAction.mockResolvedValue({ ok: true, data: CASH_TRANSACTION });
+    const { rerender } = renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+    expect(await screen.findByText(/Encaissement enregistré/)).toBeDefined();
+
+    // Ce que `router.refresh()` produit, vu d'ici : la page a relu la journée de
+    // caisse, et ce panneau reçoit le règlement qu'il vient lui-même d'obtenir.
+    rerender(panel('confirmed', SETTLED_IN_CASH));
+
+    expect(screen.getByText(/Encaissement enregistré/)).toBeDefined();
+    expect(screen.getByRole('button', { name: 'Imprimer le ticket' })).toBeDefined();
+    expect(screen.queryByRole('button', { name: 'Réimprimer le ticket' })).toBeNull();
+  });
+
+  it('ne redemande rien quand rien n’a été encaissé', async () => {
+    // Un refus, une panne de réseau : la journée de caisse n'a pas bougé, et un
+    // rafraîchissement ne ferait que coûter un aller-retour devant la cliente.
+    settleInCashAction.mockRejectedValue(new Error('Failed to fetch'));
+    renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+
+    expect(await screen.findByRole('alert')).toBeDefined();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('ne redemande rien sur le refus « déjà encaissé » non plus', async () => {
+    // Le refus qu'un poste voisin provoque apprend, lui aussi, que la journée de
+    // caisse a changé — mais le corriger suppose d'abord que l'écran le
+    // **classe** comme tel, et `SALE_ALREADY_SETTLED`, le seul code que
+    // `POST /payments/cash` rende vraiment depuis #817, n'est pas rangé là par
+    // `isAlreadySettledRefusal`. Ce classement vit dans
+    // `lib/admin/checkout-summary.ts`, hors de l'empreinte de ce ticket : ce cas
+    // est donc laissé tel qu'il était, et ce test le dit plutôt que de le taire.
+    settleInCashAction.mockResolvedValue({
+      ok: false,
+      code: 'PAYMENT_ALREADY_SETTLED',
+      message: 'Already settled.',
+    });
+    renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+
+    expect(await screen.findByText('Rendez-vous déjà encaissé')).toBeDefined();
+    expect(refresh).not.toHaveBeenCalled();
   });
 });

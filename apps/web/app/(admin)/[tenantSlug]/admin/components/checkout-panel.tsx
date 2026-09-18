@@ -1,6 +1,7 @@
 'use client';
 
 import type { Appointment, PaymentMethod, TimeZone } from '@spa/shared';
+import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
@@ -67,6 +68,37 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * contre le poste d'à côté. Mais il fait désormais **basculer l'écran** au lieu
  * d'afficher une ligne rouge sous un bouton resté actif — un second clic ne
  * pouvait qu'échouer de la même façon.
+ *
+ * ## Le récapitulatif d'à côté suit, au lieu de rester à « À encaisser » (#1004)
+ *
+ * `settlement` est une **donnée du serveur** : elle est lue par la page, qui est
+ * un Server Component, et ce panneau ne peut pas la réécrire. Tant que rien ne
+ * redemandait ce rendu, l'écran se contredisait d'une moitié à l'autre — « À
+ * encaisser 65,00 € » à gauche pendant que le reçu annonçait « Encaissement
+ * enregistré — 65,00 € » à droite. Ce n'est pas un affichage qui traîne : sans
+ * rechargement complet, il ne se corrigeait jamais.
+ *
+ * `router.refresh()` rejoue donc le segment serveur quand le règlement en
+ * espèces **aboutit** — la journée de caisse est relue, `settlement` revient à
+ * `regle`, et le récapitulatif bascule sur « Réglé » dans le même écran que le
+ * reçu. Il enveloppe déjà son travail dans une transition et ne remonte pas ce
+ * composant : ni `useTransition` à poser, ni état d'attente à rendre — le reçu
+ * est affiché avant l'appel et le reste pendant.
+ *
+ * **Rien de tel sur le chemin carte**, et ce n'est pas un oubli. Ni l'ouverture
+ * de l'intention ni l'acceptation par Stripe n'inscrivent quoi que ce soit chez
+ * nous : c'est le webhook signé qui le fait, plus tard (payments-stripe §2).
+ * Relire la journée à l'acceptation ne ramènerait qu'une intention `pending`, et
+ * le récapitulatif dirait toujours « À encaisser » — ce qui est alors la vérité,
+ * et non la contradiction que ce ticket corrige : le reçu d'en face s'annonce
+ * lui-même provisoire, « pas de capture confirmée ».
+ *
+ * Ce que ce rafraîchissement **ne doit pas** faire, c'est emporter le ticket
+ * qu'on vient de produire. L'état local le rend, il survit au rafraîchissement
+ * (l'App Router réconcilie sans remonter), et c'est pourquoi `phase` est
+ * examinée **avant** `settlement` plus bas : sinon le reçu cédait la place à un
+ * bouton « Réimprimer le ticket », et l'opérateur devait recliquer pour
+ * retrouver ce qu'il avait sous les yeux.
  */
 type Phase =
   | { readonly kind: 'choix' }
@@ -111,6 +143,7 @@ export function CheckoutPanel({
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
   const [reprinting, setReprinting] = useState(false);
+  const router = useRouter();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
 
   const blocker = checkoutBlocker(appointment.status, method, known);
@@ -174,6 +207,10 @@ export function CheckoutPanel({
       () => settleInCashAction(tenantSlug, appointment.id),
       (transaction) => {
         setPhase({ kind: 'regle', method: 'cash', transaction });
+        // La journée de caisse vient de changer, et c'est le serveur qui la
+        // rend : sans cette relecture, le récapitulatif d'à côté réclamerait
+        // encore la somme que ce reçu déclare encaissée (#1004).
+        router.refresh();
       },
     );
   }
@@ -202,6 +239,29 @@ export function CheckoutPanel({
         <Notification tone="warning" title="Rien à encaisser">
           <p>{checkoutBlocker(appointment.status, 'cash')}</p>
         </Notification>
+      </div>
+    );
+  }
+
+  // Le règlement que **ce poste** vient d'obtenir passe en premier, avant même
+  // ce que l'historique en dit (#1004). Les deux décrivent alors le même
+  // encaissement — c'est ce rafraîchissement-ci qui l'a fait apparaître dans
+  // l'historique —, mais ils n'en montrent pas la même chose : ici le ticket,
+  // déjà à l'écran, prêt à imprimer ; plus bas un bouton « Réimprimer le
+  // ticket ». Laisser le second l'emporter aurait escamoté le reçu au moment
+  // précis où l'opérateur le tend à sa cliente.
+  if (phase.kind === 'regle') {
+    return (
+      <div className="spa-admin-checkout__payment">
+        <CheckoutReceipt
+          appointment={appointment}
+          method={phase.method}
+          timeZone={timeZone}
+          transaction={phase.transaction}
+        />
+        <p className="spa-admin-checkout__pci">
+          {completionUnavailableMessage(phase.method)}
+        </p>
       </div>
     );
   }
@@ -257,22 +317,6 @@ export function CheckoutPanel({
         <Notification tone="warning" title="Rendez-vous déjà encaissé">
           <p>{phase.message}</p>
         </Notification>
-      </div>
-    );
-  }
-
-  if (phase.kind === 'regle') {
-    return (
-      <div className="spa-admin-checkout__payment">
-        <CheckoutReceipt
-          appointment={appointment}
-          method={phase.method}
-          timeZone={timeZone}
-          transaction={phase.transaction}
-        />
-        <p className="spa-admin-checkout__pci">
-          {completionUnavailableMessage(phase.method)}
-        </p>
       </div>
     );
   }
