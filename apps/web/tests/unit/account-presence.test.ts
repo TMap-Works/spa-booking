@@ -8,15 +8,18 @@ import { PRESENCE_COOKIE, parsePresence, presenceCookieValue } from '@/lib/accou
 import type { ApiSession } from '@/lib/api-client';
 
 /*
- * Le cookie de présence (#1045) — le prénom que l'en-tête du salon salue hors
- * de l'espace client, où les jetons ne voyagent pas.
+ * Le cookie de présence (#1045, élargi par #1086) — ce que le salon sait de la
+ * cliente hors de l'espace client, où les jetons ne voyagent pas.
  *
  * Ce que la suite protège :
- * - il ne porte **que** le prénom et le nom, jamais un jeton ;
+ * - il porte **les coordonnées du compte et rien d'autre** — jamais un jeton,
+ *   jamais l'identifiant du compte, jamais son rôle ;
  * - il vit sur tout le salon (`/{slug}`), là où les jetons restent bornés à
  *   `/{slug}/compte` ;
  * - il part avec la session ;
- * - relu du navigateur, il est validé : une valeur trafiquée ne s'affiche pas.
+ * - relu du navigateur, il est validé : une valeur trafiquée ne s'affiche pas ;
+ * - un cookie posé **avant #1086** se relit encore, sans quoi toutes les
+ *   clientes connectées au déploiement cesseraient d'être saluées.
  */
 
 vi.mock('next/headers', () => ({ cookies: vi.fn() }));
@@ -52,8 +55,18 @@ describe('cookie de présence', () => {
     const presence = set.mock.calls.find(([name]) => name === PRESENCE_COOKIE);
     expect(presence).toBeDefined();
     const [, value, options] = presence as [string, string, { path: string; httpOnly: boolean; maxAge: number }];
-    expect(JSON.parse(value)).toEqual({ firstName: 'Alice', lastName: 'Marchand' });
+    // Les quatre coordonnées depuis #1086 — et l'égalité stricte est le fond de
+    // l'assertion : c'est elle qui refuserait l'identifiant du compte ou son
+    // rôle, que `sessionUserSchema` porte à côté et qu'un `...user` ferait
+    // voyager sur chaque page du salon sans que rien ne le signale.
+    expect(JSON.parse(value)).toEqual({
+      firstName: 'Alice',
+      lastName: 'Marchand',
+      email: 'alice@maison-lotus.test',
+      phone: '',
+    });
     expect(value).not.toContain('jeton');
+    expect(value).not.toContain(opened.session.user.id);
     expect(options).toMatchObject({ path: '/maison-lotus', httpOnly: true, maxAge: 604800 });
 
     // Les jetons, eux, restent bornés à l'espace client.
@@ -62,6 +75,32 @@ describe('cookie de présence', () => {
         expect(tokenOptions.path).toBe('/maison-lotus/compte');
       }
     }
+  });
+
+  /**
+   * `sessionUserSchema` émet `phone: null` quand le compte n'a pas de numéro, et
+   * le cookie écrit `''` — la convention de `lastName` depuis #1045, et celle de
+   * `ContactDraft` côté tunnel. C'est `presenceCookieValue` qui fait la
+   * traduction, pour que ni `session.ts` ni `compte/actions.ts` n'aient à la
+   * refaire chacun de son côté.
+   */
+  it('écrit le numéro du compte, et la chaîne vide quand il n’y en a pas', () => {
+    const avecNumero = presenceCookieValue({
+      firstName: 'Alice',
+      lastName: 'Marchand',
+      email: 'alice@maison-lotus.test',
+      phone: '+33612345678',
+    });
+    const sansNumero = presenceCookieValue({
+      firstName: 'Alice',
+      lastName: 'Marchand',
+      email: 'alice@maison-lotus.test',
+      phone: null,
+    });
+
+    expect(JSON.parse(avecNumero)).toMatchObject({ phone: '+33612345678' });
+    expect(JSON.parse(sansNumero)).toMatchObject({ phone: '' });
+    expect(sansNumero).not.toContain('null');
   });
 
   it('part avec la session', () => {
@@ -77,14 +116,43 @@ describe('cookie de présence', () => {
   });
 
   it('se relit, et refuse ce qui n’en a pas la forme', () => {
-    expect(parsePresence(presenceCookieValue({ firstName: 'Alice', lastName: 'Marchand' }))).toEqual({
+    const alice = {
       firstName: 'Alice',
       lastName: 'Marchand',
-    });
+      email: 'alice@maison-lotus.test',
+      phone: '+33612345678',
+    };
+
+    expect(parsePresence(presenceCookieValue(alice))).toEqual(alice);
     expect(parsePresence(undefined)).toBeNull();
     expect(parsePresence('')).toBeNull();
     expect(parsePresence('pas du json')).toBeNull();
-    expect(parsePresence(JSON.stringify({ firstName: '', lastName: 'X' }))).toBeNull();
-    expect(parsePresence(JSON.stringify({ firstName: 'A'.repeat(500), lastName: '' }))).toBeNull();
+    expect(parsePresence(JSON.stringify({ ...alice, firstName: '' }))).toBeNull();
+    expect(parsePresence(JSON.stringify({ ...alice, firstName: 'A'.repeat(500) }))).toBeNull();
+    // L'adresse et le numéro sont relus avec les schémas du contrat, ceux-là
+    // mêmes dont dépend le formulaire du tunnel : préremplir un champ que
+    // `guestContactSchemaFor` refuserait aussitôt afficherait une erreur sur une
+    // saisie que la cliente n'a pas faite.
+    expect(parsePresence(JSON.stringify({ ...alice, email: 'pas-une-adresse' }))).toBeNull();
+    expect(parsePresence(JSON.stringify({ ...alice, phone: 'appelez-moi' }))).toBeNull();
+  });
+
+  /**
+   * Le cookie d'avant #1086 ne porte que les deux noms. Exiger les deux nouveaux
+   * champs le rendrait illisible, et l'en-tête du salon cesserait de saluer
+   * toutes les clientes déjà connectées à l'instant du déploiement — jusqu'à ce
+   * qu'elles se reconnectent, ce qu'elles n'ont aucune raison de faire.
+   *
+   * Le repli est la chaîne vide, et c'est exactement ce que l'étape
+   * « Coordonnées » sait traiter : elle rouvre alors le champ concerné au lieu
+   * de le résumer.
+   */
+  it('relit encore un cookie posé avant que l’adresse n’y entre', () => {
+    expect(parsePresence(JSON.stringify({ firstName: 'Alice', lastName: 'Marchand' }))).toEqual({
+      firstName: 'Alice',
+      lastName: 'Marchand',
+      email: '',
+      phone: '',
+    });
   });
 });

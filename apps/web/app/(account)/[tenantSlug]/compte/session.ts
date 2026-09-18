@@ -5,7 +5,7 @@ import {
   PRESENCE_COOKIE,
   presenceCookieOptions,
   presenceCookieValue,
-  type AccountPresence,
+  type PresenceSource,
 } from '@/lib/account-presence';
 import { ApiClientError, type ApiSession } from '@/lib/api-client';
 import {
@@ -152,14 +152,20 @@ export function sessionCookieOptions(tenantSlug: string, maxAge: number): Sessio
 }
 
 /**
- * Pose le cookie de présence (#1045) : le prénom que l'en-tête du salon affiche
- * hors de l'espace client, où les jetons ne voyagent pas. Voir
- * `lib/account-presence.ts`. Il vit aussi longtemps que la session qu'il annonce.
+ * Pose le cookie de présence (#1045) : ce que le salon peut afficher — et, depuis
+ * #1086, préremplir — hors de l'espace client, où les jetons ne voyagent pas.
+ * Voir `lib/account-presence.ts`, qui porte l'arbitrage sur ce qu'il emporte et
+ * ce qu'il continue de laisser dehors. Il vit aussi longtemps que la session
+ * qu'il annonce.
+ *
+ * `PresenceSource` et non `AccountPresence` : c'est le sens **écriture** du
+ * cookie, celui que `SessionUser` satisfait tel quel — l'API y émet `phone` à
+ * `null`, que `presenceCookieValue` ramène à la chaîne vide du cookie.
  */
 export function attachPresenceCookie(
   target: WritableCookies,
   tenantSlug: string,
-  user: AccountPresence,
+  user: PresenceSource,
   maxAge: number = DEFAULT_REFRESH_MAX_AGE_SECONDS,
 ): void {
   target.set(PRESENCE_COOKIE, presenceCookieValue(user), presenceCookieOptions(tenantSlug, maxAge));

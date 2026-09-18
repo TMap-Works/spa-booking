@@ -129,6 +129,29 @@ function phoneFormatError(countryCode: string | null): string {
     : 'numéro attendu au format du pays de l’établissement, ou au format international';
 }
 
+/**
+ * L'adresse coupée juste après l'arobase, pour y poser un `<wbr />` (#1086).
+ *
+ * Une adresse ne porte ni espace ni césure : le navigateur n'a aucun endroit où
+ * la rompre, et une adresse un peu longue déborde la colonne d'un téléphone
+ * plutôt que de passer à la ligne. L'arobase est le point de coupure d'usage —
+ * `alice@` / `example.test` —, et le seul qui laisse l'adresse lisible des deux
+ * côtés.
+ *
+ * Rendue en deux morceaux plutôt qu'en une chaîne : `<wbr>` est un élément, pas
+ * un caractère. C'est ce qui lui permet de n'apparaître ni dans une copie, ni
+ * dans une recherche de page, ni dans ce qu'annonce un lecteur d'écran.
+ *
+ * Sans arobase — une valeur que `parsePresence` n'aurait pas dû laisser passer,
+ * ou une adresse que la cliente vient de corriger à la main —, la chaîne reste
+ * entière et le second morceau est vide : la ligne s'affiche telle quelle.
+ */
+function emailBreakParts(email: string): readonly [string, string] {
+  const at = email.indexOf('@');
+
+  return at === -1 ? [email, ''] : [email.slice(0, at + 1), email.slice(at + 1)];
+}
+
 interface ContactStepProps {
   readonly contact: ContactDraft;
   /**
@@ -159,15 +182,16 @@ interface ContactStepProps {
    */
   readonly summary: BookingSummary | null;
   /**
-   * La cliente connectée chez ce salon, ou `null` (#1050).
+   * La cliente connectée chez ce salon, ou `null` (#1050, élargi par #1086).
    *
    * Elle vient du **cookie de présence** posé par #1045
    * (`lib/account-presence.ts`), lu côté serveur par la page du tunnel et
    * descendu jusqu'ici : aucune donnée de compte ne transite par l'URL, et rien
    * n'est relu du navigateur. Le cookie est `httpOnly`, porté sur `/{salon}`, et
-   * ne contient **ni jeton ni identifiant** — seulement le prénom et le nom que
-   * l'en-tête du salon affiche déjà. Il sert à afficher, pas à décider : l'API
-   * revalide de son côté ce que la réservation lui envoie.
+   * ne contient **ni jeton ni identifiant** — seulement les coordonnées que
+   * cette étape demande, et que l'en-tête du salon affiche déjà pour partie. Il
+   * sert à afficher, pas à décider : l'API revalide de son côté ce que la
+   * réservation lui envoie.
    *
    * `import type` et non une importation de valeur : `lib/account-presence.ts`
    * importe `next/headers`, qui n'existe pas côté navigateur. Le type ne
@@ -228,8 +252,8 @@ export function ContactStep({
   const resolver = useMemo(() => zodResolver(contactFormSchemaFor(countryCode)), [countryCode]);
 
   /**
-   * Ce que le formulaire porte à l'ouverture — le brouillon, complété par
-   * l'identité du compte quand elle manque (#1050).
+   * Ce que le formulaire porte à l'ouverture — le brouillon, complété par les
+   * coordonnées du compte quand elles manquent (#1050, #1086).
    *
    * ## Pourquoi la complétion se fait ici, et pas dans le brouillon
    *
@@ -248,6 +272,19 @@ export function ContactStep({
    * corrigé son nom ne le voit pas revenir à celui du compte au retour du
    * créneau.
    *
+   * ## Les quatre champs depuis #1086, et non plus deux
+   *
+   * Le cookie ne portait que le prénom et le nom, et l'adresse e-mail restait à
+   * saisir — le premier critère de #1050, *« connectée, l'étape se valide sans
+   * rien saisir »*, tombait sur ce champ-là, qui est requis. Le cookie porte
+   * désormais les quatre, et le même arbitrage vaut pour chacun : le compte ne
+   * complète que ce que le brouillon laisse vide.
+   *
+   * Le téléphone y compris, bien qu'il soit facultatif : c'est le canal du
+   * rappel J-1 par SMS (CDC §1.4), et le laisser vide alors que le compte le
+   * connaît reviendrait à faire perdre ce rappel à qui ne prend pas la peine de
+   * le retaper.
+   *
    * Calculé une fois — `useMemo` sur les seules valeurs qui le composent : un
    * objet recréé à chaque rendu serait inoffensif ici, `defaultValues` n'étant
    * lu qu'au montage, mais il laisserait croire le contraire à la lecture.
@@ -257,10 +294,31 @@ export function ContactStep({
       return contact;
     }
 
+    // Le brouillon n'a jamais rien reçu de cette étape : le `''` d'un champ
+    // facultatif y est une absence, pas un choix. Dès la première écriture —
+    // un `focusout`, un report de frappe —, il porte les quatre valeurs, celles
+    // du compte comprises : un `''` qui subsiste après cela est une suppression
+    // délibérée. Voir le téléphone ci-dessous.
+    const untouched =
+      contact.firstName === '' &&
+      contact.lastName === '' &&
+      contact.email === '' &&
+      contact.phone === '';
+
     return {
       ...contact,
       firstName: contact.firstName === '' ? presence.firstName : contact.firstName,
       lastName: contact.lastName === '' ? presence.lastName : contact.lastName,
+      email: contact.email === '' ? presence.email : contact.email,
+      // Le téléphone est le seul des quatre dont la chaîne vide est une valeur
+      // **valable** : `contactFormSchemaFor` l'accepte telle quelle. Le compléter
+      // comme les trois autres reviendrait à rendre son numéro à la cliente qui
+      // vient de l'effacer — et, pire, à le replier derrière « Modifier »,
+      // `phoneSummarised` redevenant vrai. Elle repartirait au récapitulatif
+      // avec le rappel SMS qu'elle venait de refuser, sans qu'un champ à l'écran
+      // le dise. Les trois autres sont requis : leur `''` n'est jamais un choix,
+      // et la complétion y reste inconditionnelle.
+      phone: untouched ? presence.phone : contact.phone,
     };
   }, [contact, presence]);
 
@@ -279,39 +337,57 @@ export function ContactStep({
   });
 
   /**
-   * L'identité est-elle ouverte à la correction ?
+   * Les coordonnées du compte sont-elles ouvertes à la correction ?
    *
-   * Fermée au départ pour qui est connectée — c'est tout l'objet du ticket :
-   * « Réservé au nom de Alice Marchand » remplace deux champs déjà remplis.
-   * Ouverte sans condition pour qui ne l'est pas : il n'y a alors rien à
-   * résumer, et le formulaire est celui d'avant, à la mise en page près.
+   * Fermées au départ pour qui est connectée — c'est tout l'objet du ticket :
+   * « Réservé au nom de Alice Marchand · alice@… · +33 6… » remplace quatre
+   * champs déjà remplis. Ouvertes sans condition pour qui ne l'est pas : il n'y
+   * a alors rien à résumer, et le formulaire est celui d'avant, à la mise en
+   * page près.
    *
    * L'état ne redescend jamais au brouillon : c'est une préférence d'affichage
    * de cet écran, pas une donnée de la réservation.
    */
   const [editingIdentity, setEditingIdentity] = useState(false);
   /**
-   * Le résumé ne remplace les deux champs que s'il porte **de quoi réserver**.
+   * Le résumé ne remplace les champs que s'il porte **de quoi réserver**.
    *
    * Il se lit sur `defaultValues` et non sur `presence` : ce sont les valeurs
-   * que les deux champs masqués portent réellement, donc celles que la
-   * soumission emportera. Les lire ailleurs ferait mentir l'encart — la cliente
-   * qui a corrigé son nom en « Alix », puis est repartie changer de créneau,
-   * verrait « Réservé au nom de Alice Marchand » au-dessus d'un formulaire qui
-   * réserve pour Alix.
+   * que les champs masqués portent réellement, donc celles que la soumission
+   * emportera. Les lire ailleurs ferait mentir l'encart — la cliente qui a
+   * corrigé son nom en « Alix », puis est repartie changer de créneau, verrait
+   * « Réservé au nom de Alice Marchand » au-dessus d'un formulaire qui réserve
+   * pour Alix.
    *
-   * Et le cookie de présence accepte un nom de famille vide
-   * (`account-presence.ts`) là où `nameSchema` l'exige : résumer « Réservé au
-   * nom de Alice » cacherait alors un champ requis derrière un encart qui
-   * prétend le remplir, et la soumission échouerait sur une erreur invisible.
-   * Dans ce cas — rare, mais réel — l'étape s'ouvre sur les champs, préremplis
-   * de ce que le compte sait.
+   * Les trois champs **requis** conditionnent le résumé, et pour la même raison.
+   * Le cookie de présence accepte un nom de famille vide, et depuis #1086 une
+   * adresse vide — celle d'un cookie posé avant ce ticket-ci
+   * (`account-presence.ts`) — là où `nameSchema` et `emailSchema` les exigent :
+   * résumer « Réservé au nom de Alice » cacherait alors un champ requis derrière
+   * un encart qui prétend le remplir, et la soumission échouerait sur une erreur
+   * invisible. Dans ces cas — rares, mais réels — l'étape s'ouvre sur les
+   * champs, préremplis de ce que le compte sait.
    */
   const identitySummarised =
     presence !== null &&
     defaultValues.firstName.trim() !== '' &&
     defaultValues.lastName.trim() !== '' &&
+    defaultValues.email.trim() !== '' &&
     !editingIdentity;
+  /**
+   * Le téléphone, lui, ne se replie que s'il est **prérempli**.
+   *
+   * L'audit `d20260918-1` écrit « déplie les champs pré-remplis » : ce qui se
+   * replie est ce que l'encart résume, et un champ vide ne se résume pas. Le
+   * replier tout de même pour un compte sans numéro — `sessionUserSchema` le
+   * porte à `null`, c'est le cas courant — cacherait derrière « Modifier » le
+   * seul choix qui reste à faire à la cliente connectée, alors que c'est celui
+   * qui lui vaut le rappel par SMS. Il reste donc ouvert, sous l'encart, avec
+   * son aide qui dit à quoi il sert (BM-TUNNEL-03).
+   */
+  const phoneSummarised = identitySummarised && defaultValues.phone.trim() !== '';
+  /** Les deux moitiés de l'adresse résumée — voir `emailBreakParts`. */
+  const [emailLocalPart, emailDomainPart] = emailBreakParts(defaultValues.email);
   /**
    * Le focus suit « Modifier » sur le premier champ qu'il vient d'ouvrir.
    *
@@ -390,15 +466,21 @@ export function ContactStep({
             // normalisée est produite au moment de composer la requête.
             onSubmit(getValues());
           },
-          // Un refus sur le prénom ou le nom **rouvre l'encart d'identité**
-          // (#1050). Sans cela, le message serait rendu dans le groupe masqué :
-          // le formulaire refuserait de partir sans que rien à l'écran dise
-          // pourquoi, et `shouldFocusError` viserait un champ que `hidden` rend
-          // infocalisable. Le cas n'est pas théorique — un nom trop long ou
-          // porteur d'un caractère que `nameSchema` écarte peut venir du compte
+          // Un refus sur l'un des champs repliés **rouvre l'encart** (#1050,
+          // étendu à l'adresse et au téléphone par #1086). Sans cela, le message
+          // serait rendu dans un groupe masqué : le formulaire refuserait de
+          // partir sans que rien à l'écran dise pourquoi, et `shouldFocusError`
+          // viserait un champ que `hidden` rend infocalisable. Le cas n'est pas
+          // théorique — un nom trop long, ou un numéro que le pays de
+          // l'établissement ne permet pas de compléter, peut venir du compte
           // aussi bien que du clavier.
           (invalid) => {
-            if (invalid.firstName !== undefined || invalid.lastName !== undefined) {
+            if (
+              invalid.firstName !== undefined ||
+              invalid.lastName !== undefined ||
+              invalid.email !== undefined ||
+              invalid.phone !== undefined
+            ) {
               setEditingIdentity(true);
             }
           },
@@ -425,9 +507,9 @@ export function ContactStep({
         </p>
       ) : null}
 
-      {/* L'identité que le compte connaît, résumée plutôt que redemandée.
+      {/* Les coordonnées que le compte connaît, résumées plutôt que redemandées.
 
-          Le `hidden` plutôt qu'un démontage : les deux champs restent dans le
+          Le `hidden` plutôt qu'un démontage : les champs restent dans le
           DOM, donc dans le formulaire, et `react-hook-form` n'a rien à
           réenregistrer au dépliage. `hidden` les retire de l'arbre
           d'accessibilité comme de l'ordre de tabulation — un champ requis
@@ -436,11 +518,31 @@ export function ContactStep({
         <div className="spa-booking__identity">
           <div className="spa-booking__identity-text">
             <p className="spa-booking__identity-label">Réservé au nom de</p>
-            {/* Ce que les deux champs masqués portent, et donc ce qui sera
+            {/* Ce que les champs masqués portent, et donc ce qui sera
                 réservé : le nom corrigé par la cliente l'emporte sur celui du
                 compte ici comme dans le formulaire. */}
             <p className="spa-booking__identity-name">
               {defaultValues.firstName} {defaultValues.lastName}
+            </p>
+            {/* L'adresse, et le numéro s'il y en a un — la ligne que l'audit
+                `d20260918-1` dessine sous le nom (#1086). Elle n'est pas
+                décorative : c'est là que part la confirmation, et une cliente
+                qui ne voit pas à quelle adresse ne peut pas corriger celle d'un
+                compte ouvert il y a deux ans.
+
+                `<wbr />` avant le domaine, et c'est le seul artifice de cette
+                ligne : une adresse n'a ni espace ni césure, et
+                `marie-christine.andriamanantena@spa-lumiere.test` déborderait
+                la colonne de 360 px — la feuille de styles du tunnel appartient
+                à d'autres écrans que celui-ci, et le point de coupure se pose
+                aussi bien dans le balisage, qui est l'endroit prévu pour lui.
+                Le texte reste d'un seul tenant pour la copie comme pour un
+                lecteur d'écran : `<wbr>` n'insère aucun caractère. */}
+            <p className="spa-booking__identity-label">
+              {emailLocalPart}
+              <wbr />
+              {emailDomainPart}
+              {phoneSummarised ? ` · ${defaultValues.phone}` : null}
             </p>
           </div>
           <Button
@@ -478,25 +580,41 @@ export function ContactStep({
           {...register('lastName')}
         />
       </div>
-      <Field
-        id="email"
-        label="Adresse e-mail"
-        type="email"
-        autoComplete="email"
-        required
-        hint="La confirmation y sera envoyée."
-        error={errors.email?.message}
-        {...register('email')}
-      />
-      <Field
-        id="phone"
-        label="Téléphone"
-        type="tel"
-        autoComplete="tel"
-        hint={phoneHint(countryCode)}
-        error={errors.phone === undefined ? undefined : phoneFormatError(countryCode)}
-        {...register('phone')}
-      />
+      {/* L'adresse et le numéro se replient avec les noms quand l'encart les
+          résume (#1086) — « déplie les champs pré-remplis », audit
+          `d20260918-1`. Le `hidden` est porté par une enveloppe et non par le
+          champ : `Field` reverse ses propriétés restantes à l'`<input>`, et un
+          `hidden` posé là masquerait la saisie en laissant son libellé, son
+          aide et son message d'erreur à l'écran.
+
+          Une enveloppe nue plutôt qu'une classe : elle ne déclare aucun
+          `display`, donc la règle `[hidden] { display: none }` du navigateur
+          s'y applique sans contre-mesure — c'est ce que `.spa-booking__names`
+          doit rattraper en CSS pour sa grille —, et elle reste un enfant direct
+          de `.spa-booking__step`, dont le `gap` fait le rythme. */}
+      <div hidden={identitySummarised}>
+        <Field
+          id="email"
+          label="Adresse e-mail"
+          type="email"
+          autoComplete="email"
+          required
+          hint="La confirmation y sera envoyée."
+          error={errors.email?.message}
+          {...register('email')}
+        />
+      </div>
+      <div hidden={phoneSummarised}>
+        <Field
+          id="phone"
+          label="Téléphone"
+          type="tel"
+          autoComplete="tel"
+          hint={phoneHint(countryCode)}
+          error={errors.phone === undefined ? undefined : phoneFormatError(countryCode)}
+          {...register('phone')}
+        />
+      </div>
       {/* Le seul champ long du formulaire, donc le seul en `TextArea` (#748).
           Son contrat est `longTextSchema` — deux mille caractères — et une
           phrase d'allergie tapée à 360 px défilait dans un `<input>` d'une
