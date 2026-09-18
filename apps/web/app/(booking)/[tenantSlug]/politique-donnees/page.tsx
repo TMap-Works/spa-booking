@@ -1,8 +1,11 @@
+import type { PublicTenant } from '@spa/shared';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import type { ReactNode } from 'react';
 
-import { PublicExits } from '@/components/salon/public-exits';
+import { SalonShell } from '@/components/salon/salon-shell';
+import { readAccountPresence } from '@/lib/account-presence';
 import { ApiClientError } from '@/lib/api-client';
 import { ACCOUNT_CONSENT, BOOKING_CONSENT, type ConsentCopy } from '@/lib/booking/consent';
 
@@ -134,10 +137,24 @@ function PurposeSection({
 export default async function DataPolicyPage({ params }: PageProps) {
   const { tenantSlug } = await params;
 
-  let tenantName: string;
+  // Le gabarit du salon (#1045) : même en-tête et même pied que la vitrine.
+  const presence = await readAccountPresence();
+  const shell = (tenant: PublicTenant | null, content: ReactNode) => (
+    <SalonShell
+      tenantSlug={tenantSlug}
+      tenant={tenant}
+      signedIn={presence !== null}
+      presence={presence}
+      bookingHref={reservationPath(tenantSlug)}
+    >
+      {content}
+    </SalonShell>
+  );
+
+  let tenant: PublicTenant;
 
   try {
-    tenantName = (await loadSalonTenant(tenantSlug)).name;
+    tenant = await loadSalonTenant(tenantSlug);
   } catch (error) {
     // Établissement inconnu, désactivé, ou slug mal formé : l'API répond 404 sans
     // distinguer les trois, et c'est voulu — un 403 confirmerait l'existence de
@@ -147,20 +164,22 @@ export default async function DataPolicyPage({ params }: PageProps) {
     }
 
     // La panne ne prive pas de la sortie : le slug de l'URL suffit à adresser
-    // l'espace client, comme sur la vitrine.
-    return (
+    // l'espace client depuis l'en-tête, comme sur la vitrine.
+    return shell(
+      null,
       <div className="spa-salon">
-        <PublicExits variant="header" exits={[{ key: 'compte', href: accountPath(tenantSlug) }]} />
         <main className="spa-salon__main" id="contenu">
           <BookingErrorNotice title="La politique de données n’a pas pu être chargée" error={error} />
         </main>
-      </div>
+      </div>,
     );
   }
 
-  return (
+  const tenantName = tenant.name;
+
+  return shell(
+    tenant,
     <div className="spa-salon">
-      <PublicExits variant="header" exits={[{ key: 'compte', href: accountPath(tenantSlug) }]} />
       <main className="spa-salon__main" id="contenu">
         <header className="spa-salon__header">
           <p className="spa-salon__eyebrow">{tenantName}</p>
@@ -289,6 +308,6 @@ export default async function DataPolicyPage({ params }: PageProps) {
           </ul>
         </section>
       </main>
-    </div>
+    </div>,
   );
 }

@@ -147,16 +147,26 @@ const notFound = vi.fn(() => {
   throw new Error('NEXT_NOT_FOUND');
 });
 const fetchPublicTenant = vi.fn();
+const fetchPublicServices = vi.fn();
 
 vi.mock('next/navigation', () => ({
   notFound: () => notFound(),
   useParams: () => ({ tenantSlug: 'maison-lotus' }),
+  usePathname: () => '/maison-lotus',
   useRouter: () => ({ refresh, replace: vi.fn(), push: vi.fn() }),
 }));
 
 vi.mock('@/lib/api-client', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/lib/api-client')>()),
   fetchPublicTenant: (...args: unknown[]) => fetchPublicTenant(...args),
+  fetchPublicServices: (...args: unknown[]) => fetchPublicServices(...args),
+}));
+
+// Le gabarit du salon (#1045) lit le cookie de présence : hors requête, aucune
+// cliente n'est connectée.
+vi.mock('@/lib/account-presence', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/account-presence')>()),
+  readAccountPresence: async () => null,
 }));
 
 afterEach(() => {
@@ -164,6 +174,7 @@ afterEach(() => {
   refresh.mockReset();
   notFound.mockClear();
   fetchPublicTenant.mockReset();
+  fetchPublicServices.mockReset();
 });
 
 const LOADINGS: readonly (readonly [string, ComponentType, string])[] = [
@@ -248,11 +259,22 @@ describe('reprise — les issues', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Écran indisponible' })).not.toBeNull();
   });
 
-  it('garde sur la vitrine la sortie vers l’espace client, qu’aucun layout ne porte', () => {
-    render(<VitrineError error={new Error('panne')} reset={vi.fn()} />);
+  it('laisse la sortie vers l’espace client à l’en-tête que le layout pose au-dessus d’elle', async () => {
+    // Depuis #1045, la frontière d'erreur se rend sous le gabarit du salon : elle
+    // ne redouble plus l'accès au compte, que l'en-tête porte déjà.
+    fetchPublicTenant.mockResolvedValue(tenant);
+    fetchPublicServices.mockResolvedValue([]);
 
-    const sortie = screen.getByRole('link', { name: 'Mon compte' });
-    expect(sortie.getAttribute('href')).toBe('/maison-lotus/compte');
+    render(
+      await VitrineLayout({
+        children: <VitrineError error={new Error('panne')} reset={vi.fn()} />,
+        params: Promise.resolve({ tenantSlug: tenant.slug }),
+      }),
+    );
+
+    const sortie = within(screen.getByRole('banner')).getByRole('link', { name: 'Se connecter' });
+    expect(sortie.getAttribute('href')).toBe(`/${tenant.slug}/compte/connexion`);
+    expect(screen.getAllByRole('link', { name: /Se connecter|Mon compte/ })).toHaveLength(1);
   });
 
   it('rend à l’espace client tombé avec son gabarit un titre et la vitrine pour issue', () => {
@@ -274,13 +296,17 @@ describe('vitrine — le 404 se décide avant le squelette', () => {
     );
   }
 
-  it('rend la page d’un salon connu', async () => {
+  it('rend la page d’un salon connu, sous l’en-tête du salon', async () => {
     fetchPublicTenant.mockResolvedValue(tenant);
+    fetchPublicServices.mockResolvedValue([]);
 
     await renderLayout();
 
     expect(screen.getByText('Contenu de la vitrine')).not.toBeNull();
     expect(fetchPublicTenant).toHaveBeenCalledWith(tenant.slug);
+    expect(
+      within(screen.getByRole('banner')).getByRole('link', { name: new RegExp(tenant.name) }),
+    ).not.toBeNull();
   });
 
   it('répond 404 pour un salon inconnu', async () => {
@@ -294,6 +320,9 @@ describe('vitrine — le 404 se décide avant le squelette', () => {
 
   it('laisse une panne à la page, qui sait en rendre l’encart', async () => {
     fetchPublicTenant.mockRejectedValue(
+      new ApiClientError('SERVICE_UNAVAILABLE', 'Service indisponible.', 503),
+    );
+    fetchPublicServices.mockRejectedValue(
       new ApiClientError('SERVICE_UNAVAILABLE', 'Service indisponible.', 503),
     );
 

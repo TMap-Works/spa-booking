@@ -115,7 +115,9 @@ function cartesPrestation(page: Page): Locator {
 export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
   await test.step('1. Vitrine — entrer dans le tunnel', async () => {
     await page.goto(chemins.salon());
-    await page.getByRole('link', { name: 'Prendre rendez-vous' }).click();
+    // Le bouton de la vitrine, dans le contenu : l'en-tête et le pied du salon
+    // portent aussi un « Prendre rendez-vous » depuis #1045.
+    await page.getByRole('main').getByRole('link', { name: 'Prendre rendez-vous' }).click();
     // La navigation d'abord : sans elle, l'étape se conclurait sur la vitrine,
     // et la faute apparaîtrait deux étapes plus loin (voir `cartesPrestation`).
     await page.waitForURL(`**${chemins.reservation()}`);

@@ -31,7 +31,7 @@ function humanTimeZone(timezone: string): string {
  * disponible dans Node comme dans tous les navigateurs visés ; le repli existe
  * pour ne jamais rendre une chaîne vide si un code inconnu passait.
  */
-function addressLines(address: PostalAddress): readonly string[] {
+export function addressLines(address: PostalAddress): readonly string[] {
   const locality = [address.postalCode, address.city].filter((part) => part !== undefined);
 
   return [

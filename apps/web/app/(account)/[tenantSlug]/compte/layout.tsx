@@ -1,21 +1,20 @@
+import type { PublicTenant } from '@spa/shared';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 
 import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
-import { PUBLIC_EXIT_LABELS } from '@/components/salon/public-exits';
+import { SalonShell } from '@/components/salon/salon-shell';
+import { readAccountPresence } from '@/lib/account-presence';
 import { ApiClientError } from '@/lib/api-client';
-import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
 import {
   AccountAnnouncementProvider,
   AccountAnnouncementRegion,
 } from './components/account-announcement';
-import { AccountExits } from './components/account-exits';
-import { AccountNav } from './components/account-nav';
-// `accountPath` a suivi le pied de page dans `components/account-exits.tsx`
-// (#749) ; les deux chemins qui restent servent les sorties du cadre d'accueil.
-import { bookingPath, salonPath } from './paths';
+import { AccountTabs } from './components/account-tabs';
+import { LogoutButton } from './components/logout-button';
+import { bookingPath } from './paths';
 import { readAccessToken, readRefreshToken } from './session';
 import { accountTenant } from './tenant';
 
@@ -55,58 +54,30 @@ import { accountTenant } from './tenant';
  * traverse le retour vers la liste, alors qu'un état porté par la page de report
  * serait démonté avec elle. Voir `components/account-announcement.tsx`.
  *
- * ## … et la navigation du compte, pour la même raison (#747)
+ * ## … et le gabarit du salon, pour la même raison (#1045)
  *
- * « Modifier mes coordonnées | Se déconnecter » était rendue par `page.tsx`,
- * donc par **un écran sur trois** : ni les coordonnées ni le report ne la
- * portaient, et fermer sa session depuis l'écran de ses coordonnées demandait de
- * revenir d'abord à la liste. Ce qui appartient à l'espace et non à un écran se
- * pose ici — comme le rail du back-office, posé par le layout de `(admin)`.
+ * L'en-tête, le menu du compte et le pied de page sont ceux de la vitrine
+ * (`components/salon/salon-shell.tsx`) : passer de la vitrine à son compte ne
+ * doit plus donner l'impression de changer de site. Ce qui appartient à
+ * l'espace et non à un écran se pose ici, et ce layout étant conservé d'un
+ * écran à l'autre, l'en-tête ne clignote pas.
  *
- * Elle n'est peinte que **s'il y a une session**, et ce n'est pas une garde :
- * connexion et inscription partagent ce gabarit, et n'ont nulle part où
- * naviguer — leur proposer « Se déconnecter » offrirait de fermer une session
- * qui n'est pas ouverte. Le constat suffit donc, et il est le même que celui
- * d'`AdminRail` : *« le rail n'est pas rendu du tout tant qu'il n'y a pas de
- * session : c'est le layout qui en décide »*. La garde des écrans, elle, reste
- * dans chaque page.
+ * - **Avec une session**, le menu du compte porte « Se déconnecter » — ici et
+ *   nulle part ailleurs : l'action serveur de déconnexion doit lire le jeton de
+ *   rafraîchissement pour le révoquer, et ce cookie n'est envoyé qu'aux pages
+ *   de `/{slug}/compte`. Sous le titre, les onglets « Mes rendez-vous · Mes
+ *   coordonnées » (`components/account-tabs.tsx`), posés **avant** `<main>` et
+ *   hors de lui : d'abord où aller, ensuite ce qu'on lit (WCAG 1.3.2).
+ * - **Sans session**, les seuls écrans servis pour de bon sont la connexion et
+ *   l'inscription : ils reçoivent le cadre d'accueil des écrans
+ *   d'identification (#927), dans le même gabarit. L'entrée « Se connecter » de
+ *   l'en-tête s'y efface d'elle-même, où elle ramènerait à l'écran qu'on lit
+ *   (#749) ; le pied de page remplace les liens soulignés du cadre.
  *
  * Ce layout ne redirige pas pour autant : il lit la session pour savoir quoi
  * dessiner, jamais pour décider d'une issue. Rediriger d'ici doublerait la
  * décision de la page — et bouclerait sur l'écran de connexion, qui est sous ce
  * même layout.
- *
- * ## … et le pied de page, qui a la même raison d'être client (#749)
- *
- * Ses deux liens sortent de l'écran courant, et l'un d'eux pouvait y ramener :
- * sur la connexion, « Mes rendez-vous » menait à `/{slug}/compte`, qui redirige
- * aussitôt vers la connexion. Décider de cela demande le chemin courant, que ce
- * gabarit ne connaît pas — il n'est pas rejoué d'un écran à l'autre du segment.
- * Le pied est donc rendu par `components/account-exits.tsx`, qui lit aussi ses
- * libellés dans le registre des sorties plutôt que de les réécrire.
- *
- * Depuis #927, les écrans servis **sans aucun cookie** ne passent plus par ce
- * pied : ils reçoivent le cadre d'accueil, dont les sorties ne proposent pas
- * l'espace qu'on essaie d'ouvrir. La boucle reste néanmoins atteignable par le
- * seul chemin où ce pied est peint sur la connexion — une session *renouvelable*
- * qui vient d'y être déposée sans que ses cookies soient effacés —, et c'est
- * précisément ce cas que le pied tranche sur le cookie d'accès.
- *
- * ## La barre est posée **avant** `<main>`, et hors de lui
- *
- * `<main>` est le repère qui porte *le contenu de l'écran*, et rien d'autre : une
- * navigation rendue à l'intérieur — ce que faisait `page.tsx` — s'y trouvait à
- * tort, si bien que le geste « aller au contenu principal » d'un lecteur d'écran
- * y atterrissait sur la barre plutôt que sur la liste. Dehors, et avant lui,
- * l'ordre du document dit ce qu'il énonce : d'abord où aller, ensuite ce qu'on
- * lit (HTML `main` / `navigation`, WCAG 1.3.2). C'est aussi ce que sauterait un
- * lien d'évitement vers `#contenu` — `apps/web` n'en pose encore aucun, mais
- * l'`id` est là pour lui et la barre n'est plus sur son chemin.
- *
- * Le rythme, lui, ne bouge pas : `.spa-account` et `.spa-account__main`
- * partagent la même gouttière `--spa-space-8`, si bien que la barre garde
- * exactement l'espacement qu'elle avait sous l'en-tête — aucune retouche de
- * `styles/components/account.css` n'a été nécessaire.
  */
 
 export const metadata: Metadata = {
@@ -118,13 +89,9 @@ export const metadata: Metadata = {
 };
 
 /**
- * Ce gabarit lit un cookie de session pour savoir s'il doit peindre la barre du
- * compte : le mettre en cache servirait la barre de la première visiteuse à
- * quelqu'un qui n'est pas connecté — ou l'inverse (#747).
- *
- * `cookies()` suffirait à sortir du rendu statique ; le dire explicitement, comme
- * le fait le layout du back-office, empêche qu'une revalidation posée un jour
- * au-dessus rattrape la page.
+ * Ce gabarit lit un cookie de session pour savoir quoi peindre : le mettre en
+ * cache servirait l'en-tête de la première visiteuse à quelqu'un qui n'est pas
+ * connecté — ou l'inverse (#747).
  */
 export const dynamic = 'force-dynamic';
 
@@ -146,9 +113,9 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
   // L'établissement est résolu ici plutôt que dans chaque page : c'est ce qui
   // fait qu'un slug inconnu rend 404 avant tout écran de connexion, et non un
   // formulaire qui n'aurait nulle part où s'envoyer.
-  let tenantName: string;
+  let tenant: PublicTenant;
   try {
-    tenantName = (await accountTenant(tenantSlug)).name;
+    tenant = await accountTenant(tenantSlug);
   } catch (error) {
     if (error instanceof ApiClientError && error.status === 404) {
       notFound();
@@ -156,88 +123,74 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
     throw error;
   }
 
-  /**
-   * Y a-t-il une session à laquelle la barre du compte s'adresse ?
-   *
-   * La même lecture que `readAccountData` fait pour décider d'une issue, moins
-   * la décision : le cookie d'accès, ou à défaut celui de rafraîchissement — qui
-   * annonce une session que la prochaine page renouvellera sur place. Se borner
-   * au seul cookie d'accès aurait fait clignoter la barre à chaque expiration,
-   * juste avant le renouvellement qui la ramène.
-   *
-   * Aucun appel à l'API : cette barre ne dit rien du compte, seulement où aller.
-   * L'interroger ajouterait un aller-retour à chacun des cinq écrans pour deux
-   * libellés qui ne dépendent de personne.
-   *
-   * Le **pied de page**, lui, ne lit que le cookie d'accès, et c'est délibéré :
-   * il n'a pas la même question à trancher. Voir `components/account-exits.tsx`.
-   */
-  const accessToken = await readAccessToken();
-  const signedIn = accessToken !== null || (await readRefreshToken()) !== null;
-
   /*
-   * Sans session, les seuls écrans que ce gabarit sert pour de bon sont la
-   * connexion et l'inscription — les autres renvoient à la connexion avant de
-   * rendre quoi que ce soit. Ils reçoivent le cadre d'accueil des écrans
-   * d'identification (#927), et non l'en-tête d'un compte qu'on ne voit pas
-   * encore : le salon, ce que l'espace ouvre, et les chemins de retour que le
-   * pied « Mes rendez-vous » ne pouvait pas offrir — il ramenait ici même.
+   * Y a-t-il une session ? Le cookie d'accès, ou à défaut celui de
+   * rafraîchissement — qui annonce une session que la prochaine page
+   * renouvellera sur place. Se borner au seul cookie d'accès aurait fait
+   * clignoter l'en-tête à chaque expiration (#747).
    *
-   * La condition est celle de la barre du compte, et elle n'est pas une garde :
-   * la décision d'une issue reste dans chaque page.
+   * Aucun appel à l'API : le prénom que l'en-tête salue vient du cookie de
+   * présence (`lib/account-presence.ts`), posé avec la session.
    */
+  const signedIn = (await readAccessToken()) !== null || (await readRefreshToken()) !== null;
+  const presence = signedIn ? await readAccountPresence() : null;
+
   if (!signedIn) {
     return (
       <AccountAnnouncementProvider>
-        <AuthScreen
-          space="client"
-          salonName={tenantName}
-          headline="Mon compte"
-          headlineAs="h1"
-          lead="Vos rendez-vous à venir, votre historique et vos coordonnées."
-          highlights={SIGNED_OUT_HIGHLIGHTS}
-          exits={[
-            { href: bookingPath(tenantSlug), label: PUBLIC_EXIT_LABELS.reservation },
-            { href: salonPath(tenantSlug), label: PUBLIC_EXIT_LABELS.vitrine },
-            { href: PLATFORM_HOME_PATH, label: `Accueil ${PLATFORM_NAME}` },
-          ]}
+        <SalonShell
+          tenantSlug={tenantSlug}
+          tenant={tenant}
+          signedIn={false}
+          presence={null}
+          bookingHref={bookingPath(tenantSlug)}
         >
-          <main className="spa-account__main" id="contenu">
-            <AccountAnnouncementRegion />
-            {children}
-          </main>
-        </AuthScreen>
+          <AuthScreen
+            space="client"
+            salonName={tenant.name}
+            headline="Mon compte"
+            headlineAs="h1"
+            lead="Vos rendez-vous à venir, votre historique et vos coordonnées."
+            highlights={SIGNED_OUT_HIGHLIGHTS}
+            exits={[]}
+          >
+            <main className="spa-account__main" id="contenu">
+              <AccountAnnouncementRegion />
+              {children}
+            </main>
+          </AuthScreen>
+        </SalonShell>
       </AccountAnnouncementProvider>
     );
   }
 
   return (
     <AccountAnnouncementProvider>
-      <div className="spa-account">
-        <header className="spa-account__header">
-          <p className="spa-account__tenant">{tenantName}</p>
-          <h1 className="spa-account__title">Mon compte</h1>
-          <p className="spa-account__lead">
-            Vos rendez-vous à venir, votre historique et vos coordonnées.
-          </p>
-        </header>
-        {/* Sans session, le cadre d'accueil ci-dessus a déjà répondu. */}
-        <AccountNav tenantSlug={tenantSlug} />
-        <main className="spa-account__main" id="contenu">
-          {/*
-            En tête du contenu, et non au pied : ce qui vient de se passer se lit
-            avant ce qu'il reste à faire, et le lien d'évitement mène ici.
-          */}
-          <AccountAnnouncementRegion />
-          {children}
-        </main>
-        {/*
-          Le pied est rendu par son propre composant depuis #749 : ses libellés
-          viennent du registre des sorties, et sa sortie « compte » s'efface quand
-          elle ramènerait à l'écran qu'on lit — voir `components/account-exits.tsx`.
-        */}
-        <AccountExits hasAccessToken={accessToken !== null} tenantSlug={tenantSlug} />
-      </div>
+      <SalonShell
+        tenantSlug={tenantSlug}
+        tenant={tenant}
+        signedIn
+        presence={presence}
+        bookingHref={bookingPath(tenantSlug)}
+        accountMenuExtra={<LogoutButton tenantSlug={tenantSlug} />}
+      >
+        <div className="spa-account">
+          <header className="spa-account__header">
+            <h1 className="spa-account__title">
+              {presence === null ? 'Mon compte' : `Bonjour ${presence.firstName}`}
+            </h1>
+            <AccountTabs tenantSlug={tenantSlug} />
+          </header>
+          <main className="spa-account__main" id="contenu">
+            {/*
+              En tête du contenu, et non au pied : ce qui vient de se passer se lit
+              avant ce qu'il reste à faire, et le lien d'évitement mène ici.
+            */}
+            <AccountAnnouncementRegion />
+            {children}
+          </main>
+        </div>
+      </SalonShell>
     </AccountAnnouncementProvider>
   );
 }

@@ -32,12 +32,24 @@
   color: var(--spa-color-text-muted);
 }
 
+/*
+ * Le titre de l'espace, à la taille des titres de l'accueil (#1045) :
+ * « Bonjour Alice » ouvre l'écran comme le titre display ouvre la plateforme.
+ */
+.spa-account__header {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+}
+
 .spa-account__title {
-  margin: var(--spa-space-1) 0 0;
-  font-size: var(--spa-font-size-2xl);
-  font-weight: var(--spa-font-weight-semibold);
+  margin: 0;
+  font-size: var(--spa-font-size-display);
+  font-weight: var(--spa-font-weight-bold);
+  line-height: var(--spa-line-height-tight);
   letter-spacing: var(--spa-letter-spacing-tight);
   color: var(--spa-color-text);
+  text-wrap: balance;
 }
 
 .spa-account__lead {
@@ -50,34 +62,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--spa-space-8);
-}
-
-.spa-account__nav {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--spa-space-3);
-}
-
-/*
- * « Se déconnecter » est un `<button>` et non un lien, pour la raison de
- * sécurité expliquée dans `logout-button.tsx`. Il se lit pourtant comme le lien
- * qui le précède, et se range sous lui dès que la barre se replie — à 360 px,
- * toujours. Le retrait interne du bouton (`--spa-space-5`, 20 px) n'a alors
- * plus de fond ni de bordure pour se lire comme une marge de clic : il ne se
- * voit que comme un décalage du libellé vers la droite (#625). On le retire ;
- * la hauteur minimale du bouton suffit à garder la cible tapable (WCAG 2.5.8).
- *
- * Le retrait n'est pas mis à zéro sec, mais compensé par une marge négative de
- * même valeur : le libellé s'aligne exactement comme s'il n'y avait pas de
- * retrait, et l'aplat de survol — que la variante `--quiet` peint toujours —
- * garde de quoi se dessiner autour du texte au lieu d'en épouser les jambages.
- * La marge négative de 8 px reste logée dans les 16 px de gouttière de
- * `.spa-account`, elle ne peut donc pas faire déborder la page.
- */
-.spa-account__nav .spa-button--quiet {
-  padding-inline: var(--spa-space-2);
-  margin-inline: calc(var(--spa-space-2) * -1);
 }
 
 .spa-account__nav-link,

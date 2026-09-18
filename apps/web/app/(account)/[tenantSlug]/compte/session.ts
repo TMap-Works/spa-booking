@@ -1,6 +1,12 @@
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 
+import {
+  PRESENCE_COOKIE,
+  presenceCookieOptions,
+  presenceCookieValue,
+  type AccountPresence,
+} from '@/lib/account-presence';
 import { ApiClientError, type ApiSession } from '@/lib/api-client';
 import {
   accessTokenForAction,
@@ -145,16 +151,26 @@ export function sessionCookieOptions(tenantSlug: string, maxAge: number): Sessio
   };
 }
 
+/**
+ * Pose le cookie de présence (#1045) : le prénom que l'en-tête du salon affiche
+ * hors de l'espace client, où les jetons ne voyagent pas. Voir
+ * `lib/account-presence.ts`. Il vit aussi longtemps que la session qu'il annonce.
+ */
+export function attachPresenceCookie(
+  target: WritableCookies,
+  tenantSlug: string,
+  user: AccountPresence,
+  maxAge: number = DEFAULT_REFRESH_MAX_AGE_SECONDS,
+): void {
+  target.set(PRESENCE_COOKIE, presenceCookieValue(user), presenceCookieOptions(tenantSlug, maxAge));
+}
+
 /** Pose la session dans le magasin de cookies — depuis une action serveur. */
 export async function writeSessionCookies(
   tenantSlug: string,
   opened: ApiSession,
 ): Promise<void> {
-  const store = await cookies();
-
-  for (const cookie of sessionCookies(opened)) {
-    store.set(cookie.name, cookie.value, sessionCookieOptions(tenantSlug, cookie.maxAge));
-  }
+  attachSessionCookies(await cookies(), tenantSlug, opened);
 }
 
 /** Pose la session sur une réponse — depuis une route de renouvellement. */
@@ -166,6 +182,12 @@ export function attachSessionCookies(
   for (const cookie of sessionCookies(opened)) {
     target.set(cookie.name, cookie.value, sessionCookieOptions(tenantSlug, cookie.maxAge));
   }
+  attachPresenceCookie(
+    target,
+    tenantSlug,
+    opened.session.user,
+    opened.refreshTokenMaxAge ?? DEFAULT_REFRESH_MAX_AGE_SECONDS,
+  );
 }
 
 /**
@@ -179,6 +201,7 @@ export function clearSessionCookies(target: WritableCookies, tenantSlug: string)
   for (const name of [ACCESS_COOKIE, REFRESH_COOKIE]) {
     target.set(name, '', sessionCookieOptions(tenantSlug, 0));
   }
+  target.set(PRESENCE_COOKIE, '', presenceCookieOptions(tenantSlug, 0));
 }
 
 /** Le jeton d'accès courant, ou `null` s'il a expiré — voir l'en-tête. */
