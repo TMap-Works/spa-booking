@@ -25,6 +25,7 @@ import { formatAmountInput, formatDuration, parseAmountInput } from '@/lib/forma
 
 import { adminServicePath } from '../paths';
 import { createServiceAction, updateServiceAction } from '../catalogue/actions';
+import { useAdminAnnouncement } from './admin-announcement';
 import { useAdminSessionRenewal } from './use-admin-session-renewal';
 
 /**
@@ -37,6 +38,17 @@ import { useAdminSessionRenewal } from './use-admin-session-renewal';
  * Trois choses seulement diffèrent : le titre, le libellé du bouton, et ce qui
  * se passe après — la création ouvre la fiche de la prestation, pour que
  * l'affectation des praticiens s'enchaîne.
+ *
+ * ## Les deux issues s'annoncent, et la création par un détour (#1037)
+ *
+ * L'enregistrement d'une prestation existante a son bandeau ici même : l'écran
+ * ne bouge pas, l'état local suffit. La **création**, elle, change d'écran — et
+ * un état porté par ce composant serait démonté avec lui. Elle passe donc par le
+ * fournisseur du layout (`admin-announcement.tsx`), qui porte une région
+ * `aria-live` montée d'avance et délivre l'annonce sur la fiche d'arrivée, en la
+ * **nommant** et en offrant « Affecter un praticien ». Un `?annonce=…` aurait
+ * rejoué le succès à chaque F5 ; c'est le geste déjà écrit pour l'espace client
+ * (#746), et l'issue l'écarte explicitement.
  *
  * ## Le prix ne passe jamais par un flottant
  *
@@ -139,6 +151,7 @@ export function ServiceForm({
   canManage = true,
 }: ServiceFormProps) {
   const router = useRouter();
+  const announce = useAdminAnnouncement();
   const { renewIfExpired } = useAdminSessionRenewal(tenantSlug);
   const [saved, setSaved] = useState(false);
   const [failure, setFailure] = useState<string | null>(null);
@@ -233,7 +246,15 @@ export function ServiceForm({
     }
 
     if (service === undefined) {
-      router.push(adminServicePath(tenantSlug, result.data.id));
+      const sheet = adminServicePath(tenantSlug, result.data.id);
+
+      // L'annonce part **avant** la navigation, et porte le chemin où elle doit
+      // se lire : elle attend la fiche plutôt que de clignoter une demi-seconde
+      // au-dessus du formulaire qu'on quitte (#1037). Le nom vient de la réponse
+      // de l'API et non de la saisie — le serveur est ce qui fait foi de ce qui
+      // a été enregistré.
+      announce({ kind: 'service-created', subject: result.data.name, path: sheet });
+      router.push(sheet);
       return;
     }
 
