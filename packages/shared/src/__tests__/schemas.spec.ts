@@ -46,6 +46,7 @@ import {
   postalAddressSchema,
   publicTenantSchema,
   sortOpeningHours,
+  tenantSchema,
   updateTenantRequestSchema,
 } from '../schemas/tenant';
 
@@ -283,6 +284,103 @@ describe('tenant', () => {
     // Absent ≠ `null` : un formulaire partiel ne doit pas effacer ce qu'il
     // n'affiche pas. Les deux formes sont donc distinctes dans le type.
     expect(Object.keys(updateTenantRequestSchema.parse({ name: 'Salon' }))).toEqual(['name']);
+  });
+
+  // --- Identité légale et taux de taxe — #913 -------------------------------
+
+  /** Le SIRET du jeu d'essai — clé de Luhn juste. */
+  const SIRET = '73282932000074';
+
+  it('porte l’identité légale sur la vue back-office, et **pas** sur la vitrine', () => {
+    // La propriété qui compte : `publicTenantSchema` est servi sans
+    // authentification à qui connaît le slug du salon. Un SIRET, un numéro de
+    // TVA et un taux de taxe s'impriment sur une pièce comptable remise à la
+    // cliente qui a payé — ils ne se publient pas.
+    const clefsPubliques = Object.keys(publicTenantSchema.shape);
+
+    for (const champ of ['legalName', 'legalIdType', 'legalId', 'vatNumber', 'taxRateBps']) {
+      expect(clefsPubliques).not.toContain(champ);
+      expect(Object.keys(tenantSchema.shape)).toContain(champ);
+    }
+  });
+
+  it('rend le préfixe et le taux **toujours**, l’identité légale seulement si saisie', () => {
+    const base = {
+      id: UUID,
+      slug: 'salon-lumiere',
+      name: 'Salon Lumière',
+      timezone: 'Europe/Paris',
+      defaultCurrency: 'EUR',
+      isActive: true,
+    };
+
+    // Leurs colonnes sont `NOT NULL` avec un défaut : il n'existe pas
+    // d'établissement qui n'en ait pas, et les omettre obligerait chaque écran à
+    // réinventer le défaut de son côté.
+    expect(tenantSchema.safeParse(base).success).toBe(false);
+    expect(tenantSchema.safeParse({ ...base, receiptPrefix: 'SPL', taxRateBps: 2000 }).success).toBe(
+      true,
+    );
+  });
+
+  it('juge l’identifiant d’entreprise selon sa nature', () => {
+    expect(
+      updateTenantRequestSchema.safeParse({ legalIdType: 'SIRET', legalId: SIRET }).success,
+    ).toBe(true);
+    // Un SIRET dont la clé de Luhn est fausse n'est rapprochable par aucune
+    // comptabilité, et l'erreur ne se découvrirait qu'au contrôle.
+    expect(
+      updateTenantRequestSchema.safeParse({ legalIdType: 'SIRET', legalId: '73282932000075' })
+        .success,
+    ).toBe(false);
+    // Un NIF malgache ne se vérifie pas : le prétendre refuserait des
+    // établissements réels sur une règle inventée.
+    expect(
+      updateTenantRequestSchema.safeParse({ legalIdType: 'NIF', legalId: '3000123456' }).success,
+    ).toBe(true);
+  });
+
+  it('refuse une moitié de paire posée ou effacée seule, quand les deux sont dans la charge utile', () => {
+    expect(
+      updateTenantRequestSchema.safeParse({ legalIdType: 'SIRET', legalId: null }).success,
+    ).toBe(false);
+    expect(updateTenantRequestSchema.safeParse({ legalIdType: null, legalId: SIRET }).success).toBe(
+      false,
+    );
+    expect(updateTenantRequestSchema.safeParse({ legalIdType: null, legalId: null }).success).toBe(
+      true,
+    );
+    // Une moitié **seule** reste licite : l'autre est en base, et ce schéma ne
+    // la connaît pas. C'est l'API qui compose la paire résultante.
+    expect(updateTenantRequestSchema.safeParse({ legalId: SIRET }).success).toBe(true);
+  });
+
+  it('vérifie la clé du numéro de TVA français, et borne les autres en forme', () => {
+    expect(updateTenantRequestSchema.safeParse({ vatNumber: 'FR40303265045' }).success).toBe(true);
+    expect(updateTenantRequestSchema.safeParse({ vatNumber: 'FR41303265045' }).success).toBe(false);
+    expect(updateTenantRequestSchema.safeParse({ vatNumber: 'BE0403170701' }).success).toBe(true);
+    expect(updateTenantRequestSchema.safeParse({ vatNumber: '40303265045' }).success).toBe(false);
+  });
+
+  it('normalise le préfixe de ticket et refuse ce que la base refuse', () => {
+    expect(updateTenantRequestSchema.parse({ receiptPrefix: ' spl ' })).toEqual({
+      receiptPrefix: 'SPL',
+    });
+    for (const receiptPrefix of ['A', 'TROPLONGPREFIXE', 'TI-C', 'TI C']) {
+      expect(updateTenantRequestSchema.safeParse({ receiptPrefix }).success).toBe(false);
+    }
+    // `null` n'est pas accepté : la colonne est `NOT NULL`, et un préfixe nul
+    // aurait fait de `null-2026-000123` un numéro.
+    expect(updateTenantRequestSchema.safeParse({ receiptPrefix: null }).success).toBe(false);
+  });
+
+  it('borne le taux de taxe à des points de base entiers', () => {
+    expect(updateTenantRequestSchema.safeParse({ taxRateBps: 0 }).success).toBe(true);
+    expect(updateTenantRequestSchema.safeParse({ taxRateBps: 10_000 }).success).toBe(true);
+    expect(updateTenantRequestSchema.safeParse({ taxRateBps: 10_001 }).success).toBe(false);
+    expect(updateTenantRequestSchema.safeParse({ taxRateBps: -1 }).success).toBe(false);
+    // Jamais de flottant sur le chemin de l'argent (CLAUDE.md).
+    expect(updateTenantRequestSchema.safeParse({ taxRateBps: 19.6 }).success).toBe(false);
   });
 });
 

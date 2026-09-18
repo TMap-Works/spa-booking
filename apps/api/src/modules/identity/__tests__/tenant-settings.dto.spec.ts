@@ -115,3 +115,94 @@ describe('UpdateTenantDto — le fuseau horaire est validé contre la base IANA'
     expect(await violations({ name: 'Salon des Lilas' })).toHaveLength(0);
   });
 });
+
+/**
+ * L'identité légale et le taux de taxe, à la même frontière (#913).
+ *
+ * Ce qui se démontre ici est ce que le DTO peut juger **seul** : la forme d'un
+ * champ. La paire `(legalIdType, legalId)` ne s'y prête pas — un `PATCH` a le
+ * droit de n'en porter qu'une moitié, l'autre étant en base —, et elle est
+ * exercée par `tenant-settings.service.spec.ts`.
+ */
+describe('UpdateTenantDto — identité légale et fiscalité', () => {
+  it('normalise en majuscules ce qui se recopie d’un document officiel', async () => {
+    // « fr40303265045 » et « FR40303265045 » sont le même numéro, et la base ne
+    // connaît que le second. Sans normalisation, la saisie en minuscules
+    // tomberait sur une contrainte — donc en 500 — au lieu d'un message de
+    // champ.
+    const body = await run({
+      legalId: ' 73282932000074 ',
+      vatNumber: 'fr40303265045',
+      receiptPrefix: ' spl ',
+      legalIdType: 'siret',
+    });
+
+    expect(body).toMatchObject({
+      legalId: '73282932000074',
+      vatNumber: 'FR40303265045',
+      receiptPrefix: 'SPL',
+      legalIdType: 'SIRET',
+    });
+  });
+
+  it('refuse un numéro de TVA dont la clé française est fausse', async () => {
+    // La forme est bonne — deux lettres puis onze caractères. C'est la clé,
+    // recalculée depuis le SIREN, qui ne tombe pas juste : le contrat partagé
+    // est seul à le savoir, et ce décorateur l'interroge plutôt que de recoder
+    // le calcul.
+    const refus = await violations({ vatNumber: 'FR41303265045' });
+
+    expect(refus).toHaveLength(1);
+    expect(refus[0]).toContain('vatNumber');
+  });
+
+  it('accepte un numéro de TVA étranger, que le MVP ne sait pas juger', async () => {
+    // Refuser un numéro belge valide coûterait plus cher que d'accepter une
+    // saisie libre : les vingt-six plans de numérotation de l'Union n'ont pas de
+    // règle commune au-delà de la forme.
+    expect(await violations({ vatNumber: 'BE0403170701' })).toHaveLength(0);
+  });
+
+  it('refuse un préfixe de ticket hors du motif de la base', async () => {
+    // `tenants_receipt_prefix_check` porte la même règle : le tiret est le
+    // séparateur du format, un préfixe qui en porterait rendrait
+    // `TI-C-2026-000123` indécomposable.
+    for (const receiptPrefix of ['A', 'TROPLONGPREFIXE', 'TI-C', 'TI C', 'tic!']) {
+      expect((await violations({ receiptPrefix })).join(' ')).toContain('receiptPrefix');
+    }
+  });
+
+  it('n’accepte pas d’effacer le préfixe ni le taux — leurs colonnes sont `NOT NULL`', async () => {
+    expect(await violations({ receiptPrefix: null })).not.toHaveLength(0);
+    expect(await violations({ taxRateBps: null })).not.toHaveLength(0);
+  });
+
+  it('refuse un taux hors bornes ou à virgule', async () => {
+    // Jamais de flottant sur le chemin de l'argent : un taux à virgule ferait du
+    // calcul de la ligne de taxe une opération non reproductible.
+    for (const taxRateBps of [-1, 10_001, 19.6]) {
+      expect((await violations({ taxRateBps })).join(' ')).toContain('taxRateBps');
+    }
+  });
+
+  it('accepte les deux bornes du taux', async () => {
+    expect((await run({ taxRateBps: 0 })).taxRateBps).toBe(0);
+    expect((await run({ taxRateBps: 10_000 })).taxRateBps).toBe(10_000);
+  });
+
+  it('refuse une nature d’identifiant inconnue', async () => {
+    expect((await violations({ legalIdType: 'KBIS' })).join(' ')).toContain('legalIdType');
+  });
+
+  it('accepte d’effacer les cinq champs nullables', async () => {
+    expect(
+      await violations({
+        legalName: null,
+        legalIdType: null,
+        legalId: null,
+        vatNumber: null,
+        receiptFooter: null,
+      }),
+    ).toHaveLength(0);
+  });
+});

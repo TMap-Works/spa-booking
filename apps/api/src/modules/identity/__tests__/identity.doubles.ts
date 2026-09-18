@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { DEFAULT_RECEIPT_PREFIX } from '@spa/shared';
+
 import { getTenantId } from '../../../common/tenant';
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
 import type { AppConfigService } from '../../../config/app-config.service';
@@ -10,6 +12,7 @@ import type {
   PasswordResetState,
   PublicTenantRecord,
   SessionRecord,
+  TenantRecord,
   TenantSettingsChanges,
   TenantTimeZoneRecord,
   UserRecord,
@@ -77,9 +80,7 @@ export function silentLogger(): StructuredLogger {
   } as unknown as StructuredLogger;
 }
 
-interface StoredTenant extends PublicTenantRecord {
-  isActive: boolean;
-}
+type StoredTenant = TenantRecord;
 
 interface StoredUser extends UserRecord {
   tenantId: string;
@@ -177,6 +178,18 @@ export class FakeIdentityRepository {
       countryCode: null,
       openingHours: [],
       isActive: true,
+      // Identité légale **absente** par défaut, pour la raison qui vaut déjà
+      // pour l'adresse : c'est l'état d'un salon fraîchement inscrit, et celui
+      // de tous les établissements en base au moment de la migration de #818.
+      legalName: null,
+      legalIdType: null,
+      legalId: null,
+      vatNumber: null,
+      receiptFooter: null,
+      // Le préfixe et le taux, eux, ont un défaut en base — les poser ici à
+      // `null` ferait passer au vert un ticket numéroté `null-2026-000123`.
+      receiptPrefix: DEFAULT_RECEIPT_PREFIX,
+      taxRateBps: 0,
       ...overrides,
     });
     return tenantId;
@@ -269,6 +282,13 @@ export class FakeIdentityRepository {
    * Elle passe par `requireTenant()` comme toutes les autres lectures : sans
    * portée résolue, rien. C'est ce qui rend probant le test « une route publique
    * ne répond pas avant que le middleware ait résolu le slug ».
+   *
+   * Les colonnes réservées au back-office sont **retirées une par une**, et non
+   * par un `...reste` qui n'en écarterait qu'une : le vrai dépôt ne les lit pas
+   * (`PUBLIC_TENANT_SELECT` les ignore), et un double qui les rendrait quand
+   * même ferait passer au vert une projection publique élargie — c'est-à-dire un
+   * SIRET, un numéro de TVA et un taux de taxe servis sans authentification à
+   * qui connaît le slug (#913).
    */
   public async findCurrentPublicTenant(): Promise<PublicTenantRecord | null> {
     const tenantId = this.requireTenant();
@@ -276,7 +296,17 @@ export class FakeIdentityRepository {
     if (stored === undefined) {
       return null;
     }
-    const { isActive: _isActive, ...vitrine } = stored;
+    const {
+      isActive: _isActive,
+      legalName: _legalName,
+      legalIdType: _legalIdType,
+      legalId: _legalId,
+      vatNumber: _vatNumber,
+      receiptFooter: _receiptFooter,
+      receiptPrefix: _receiptPrefix,
+      taxRateBps: _taxRateBps,
+      ...vitrine
+    } = stored;
     return vitrine;
   }
 

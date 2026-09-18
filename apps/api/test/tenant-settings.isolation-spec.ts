@@ -106,13 +106,19 @@ describe('Réglages de l’établissement — #343', () => {
         'id',
         'isActive',
         'name',
+        'receiptPrefix',
         'slug',
+        'taxRateBps',
         'timezone',
       ]);
       // Adresse et horaires **omis** tant qu'ils ne sont pas saisis, ici comme
-      // sur la vitrine : c'est ce qui rend la migration transparente.
+      // sur la vitrine : c'est ce qui rend la migration transparente. Les cinq
+      // champs d'identité légale suivent le même régime depuis #913 ;
+      // `receiptPrefix` et `taxRateBps` non, leurs colonnes étant `NOT NULL`.
       expect(response.body).not.toHaveProperty('address');
       expect(response.body).not.toHaveProperty('openingHours');
+      expect(response.body).not.toHaveProperty('legalName');
+      expect(response.body).not.toHaveProperty('legalId');
     });
   });
 
@@ -180,6 +186,88 @@ describe('Réglages de l’établissement — #343', () => {
         .set('Authorization', admin)
         .send({ slug: harness.b.slug })
         .expect(400);
+    });
+  });
+
+  describe('l’identité légale ne franchit pas la frontière — #913', () => {
+    /** Le SIRET du jeu d'essai — clé de Luhn juste. */
+    const IDENTITE = {
+      legalName: 'SPA LUMIERE SAS',
+      legalIdType: 'SIRET',
+      legalId: '73282932000074',
+      vatNumber: 'FR40303265045',
+      receiptFooter: 'Réclamation sous 14 jours sur présentation de ce ticket.',
+      receiptPrefix: 'SPL',
+      taxRateBps: 2000,
+    };
+
+    it('s’écrit chez l’appelant, se relit chez lui, et laisse le voisin au défaut', async () => {
+      // Le risque exact : ces sept colonnes composent une **pièce comptable**.
+      // Une écriture qui déborderait ferait imprimer le SIRET d'un salon sur le
+      // ticket d'un autre — et la numérotation des deux se confondrait, le
+      // préfixe étant la première moitié du numéro.
+      await request(server())
+        .patch(CHEMIN)
+        .set('Authorization', await harness.bearer('ADMIN'))
+        .send(IDENTITE)
+        .expect(200);
+
+      const chezA = await request(server())
+        .get(CHEMIN)
+        .set('Authorization', await harness.bearer('ADMIN'))
+        .expect(200);
+      const chezB = await request(server())
+        .get(CHEMIN)
+        .set('Authorization', await harness.bearer('ADMIN', harness.b))
+        .expect(200);
+
+      expect(chezA.body).toMatchObject(IDENTITE);
+      expect(chezB.body).not.toHaveProperty('legalId');
+      expect(chezB.body).not.toHaveProperty('vatNumber');
+      // Le défaut de la colonne, et non la valeur du voisin.
+      expect(chezB.body.receiptPrefix).toBe('TIC');
+      expect(chezB.body.taxRateBps).toBe(0);
+    });
+
+    it('n’apparaît jamais sur la vitrine publique, qui n’est pas authentifiée', async () => {
+      // Un SIRET et un taux de taxe s'impriment sur la pièce remise à la cliente
+      // qui a payé. Ils ne se publient pas à qui connaît le slug du salon.
+      await request(server())
+        .patch(CHEMIN)
+        .set('Authorization', await harness.bearer('ADMIN'))
+        .send(IDENTITE)
+        .expect(200);
+
+      const vitrine = await request(server()).get(CHEMIN_PUBLIC(harness.a.slug)).expect(200);
+
+      for (const champ of ['legalName', 'legalIdType', 'legalId', 'vatNumber', 'taxRateBps']) {
+        expect(vitrine.body).not.toHaveProperty(champ);
+      }
+    });
+
+    it('refuse en 400 un identifiant qui ne satisfait pas sa nature', async () => {
+      const refus = await request(server())
+        .patch(CHEMIN)
+        .set('Authorization', await harness.bearer('ADMIN'))
+        .send({ legalIdType: 'SIRET', legalId: '73282932000075' })
+        .expect(400);
+
+      expect(refus.body).toMatchObject({ code: 'VALIDATION_ERROR' });
+      expect(JSON.stringify(refus.body.details)).toContain('legalId');
+    });
+
+    it('refuse en 400 un préfixe que la base refuserait, et n’écrit rien', async () => {
+      const admin = await harness.bearer('ADMIN');
+
+      await request(server())
+        .patch(CHEMIN)
+        .set('Authorization', admin)
+        .send({ name: 'Salon repeint', receiptPrefix: 'TI-C' })
+        .expect(400);
+
+      const apres = await request(server()).get(CHEMIN).set('Authorization', admin).expect(200);
+      expect(apres.body.name).toBe(harness.a.name);
+      expect(apres.body.receiptPrefix).toBe('TIC');
     });
   });
 

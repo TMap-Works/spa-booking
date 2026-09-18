@@ -23,6 +23,11 @@ const tenant: Tenant = {
   timezone: 'Indian/Antananarivo',
   defaultCurrency: 'MGA',
   isActive: true,
+  // Toujours présents depuis #913 : leurs colonnes sont `NOT NULL` avec un
+  // défaut, si bien qu'aucun établissement n'en est dépourvu. Le formulaire ne
+  // les affiche pas encore — il vient avec son propre ticket.
+  receiptPrefix: 'TIC',
+  taxRateBps: 0,
   openingHours: [
     { weekday: 1, opensAt: '09:00', closesAt: '12:00' },
     { weekday: 1, opensAt: '14:00', closesAt: '19:00' },

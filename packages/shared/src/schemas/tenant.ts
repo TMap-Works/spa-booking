@@ -32,6 +32,16 @@ import {
   MIN_SLOT_INTERVAL_MINUTES,
   POSTAL_CODE_MAX_LENGTH,
 } from '../constants/limits';
+import {
+  LEGAL_ID_MAX_LENGTH,
+  LEGAL_ID_TYPES,
+  LEGAL_NAME_MAX_LENGTH,
+  MAX_TAX_RATE_BPS,
+  RECEIPT_FOOTER_MAX_LENGTH,
+  RECEIPT_PREFIX_PATTERN,
+  isValidLegalId,
+  isValidVatNumber,
+} from '../constants/receipt';
 import { isoWeekdaySchema, scheduleEndTimeSchema, wallMinutesOrNull } from './availability';
 
 /**
@@ -239,15 +249,128 @@ export function sortOpeningHours(
 
 export type PublicTenant = z.infer<typeof publicTenantSchema>;
 
+// ---------------------------------------------------------------------------
+// Identité légale et fiscalité de l'établissement — #818, #913
+// ---------------------------------------------------------------------------
+
 /**
- * Vue back-office du même établissement : la vitrine, plus l'état
- * d'activation que seul le staff a besoin de connaître.
+ * Les six colonnes d'identité légale et le taux de taxe vivent sur `tenants`, et
+ * leurs schémas vivent donc **ici** — non dans `receipt.ts`, qui n'en est qu'un
+ * lecteur.
+ *
+ * Le sens de la dépendance est ce qui compte : `receipt.ts` importe déjà
+ * `postalAddressSchema` de ce fichier, et l'inverse aurait fermé un cycle
+ * d'imports. Un cycle entre deux modules dont l'évaluation construit des schémas
+ * n'échoue pas à la compilation mais au **démarrage**, sur une liaison encore
+ * non initialisée — le pire moment pour l'apprendre. Les cinq schémas que #818
+ * avait posés dans `receipt.ts` sont donc déplacés ici, et y restent réexportés
+ * pour que rien de ce qui les importait ne change.
+ */
+export const legalIdTypeSchema = z.enum(LEGAL_ID_TYPES);
+
+/** La raison sociale — `VARCHAR(160)`, jamais vide quand elle est posée. */
+export const legalNameSchema = z.string().trim().min(1).max(LEGAL_NAME_MAX_LENGTH);
+
+/** Un identifiant d'entreprise **borné**, sans jugement sur sa nature. */
+export const legalIdSchema = z.string().trim().min(1).max(LEGAL_ID_MAX_LENGTH);
+
+/** Les mentions de pied de ticket — `VARCHAR(500)`. */
+export const receiptFooterSchema = z.string().trim().min(1).max(RECEIPT_FOOTER_MAX_LENGTH);
+
+/** Le préfixe de numérotation, normalisé en majuscules dès la lecture. */
+export const receiptPrefixSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(RECEIPT_PREFIX_PATTERN, {
+    message: 'préfixe attendu : 2 à 8 lettres majuscules ou chiffres, sans tiret',
+  });
+
+/**
+ * Le numéro de TVA **tel qu'on le saisit** — forme commune à l'Union, plus la
+ * clé recalculée pour la France (`isValidVatNumber`).
+ *
+ * Plus strict que `legalIdSchema`, que `receiptIssuerSchema` emploie pour
+ * **restituer** le même numéro. L'asymétrie est voulue et elle a un sens précis :
+ * on refuse une saisie fautive à l'entrée, mais on continue de servir le reçu
+ * d'un établissement dont la valeur a été posée avant que cette règle n'existe.
+ * Durcir la sortie aurait rendu illisible la fiche d'un salon déjà en base —
+ * c'est-à-dire cassé la lecture pour corriger l'écriture.
+ */
+export const vatNumberSchema = legalIdSchema.toUpperCase().refine(isValidVatNumber, {
+  message:
+    'numéro de TVA attendu : deux lettres de pays puis 8 à 13 caractères ' +
+    '(la clé du numéro français est vérifiée)',
+});
+
+/**
+ * Le taux de taxe des ventes au comptoir, en **points de base** — `2000` vaut
+ * 20 % (#60).
+ *
+ * Un entier, jamais un flottant : le projet n'accepte aucun nombre à virgule sur
+ * le chemin de l'argent (CLAUDE.md), et le calcul de la ligne de taxe reste ainsi
+ * une multiplication d'entiers suivie d'une division entière — exacte et
+ * reproductible au centime près.
+ */
+export const taxRateBpsSchema = z
+  .number()
+  .int({ message: 'un taux de taxe s’exprime en points de base entiers' })
+  .min(0, { message: `taux attendu entre 0 et ${String(MAX_TAX_RATE_BPS)} points de base` })
+  .max(MAX_TAX_RATE_BPS, {
+    message: `taux attendu entre 0 et ${String(MAX_TAX_RATE_BPS)} points de base`,
+  });
+
+/**
+ * La nature et l'identifiant **tels qu'on les saisit**, casse normalisée.
+ *
+ * Le pendant contractuel du `TrimUpper` de `UpdateTenantDto` : un SIRET et une
+ * nature se recopient d'un document officiel, et « siret » comme « hrb12345 »
+ * désignent la même chose que leurs majuscules. `receiptPrefixSchema` et
+ * `vatNumberSchema` normalisent déjà ; sans ces deux-ci, l'action serveur du
+ * back-office — qui valide contre ce schéma **avant** d'appeler l'API — aurait
+ * refusé une saisie que `PATCH /v1/tenant` accepte et corrige, en la déclarant
+ * « identifiant invalide pour la nature ». Les deux frontières du contrat
+ * doivent refuser les mêmes valeurs.
+ *
+ * Bornés avant la mise en majuscules, comme `legalIdSchema` : la largeur de la
+ * colonne ne dépend pas de la casse.
+ */
+const submittedLegalIdTypeSchema = z.string().trim().toUpperCase().pipe(legalIdTypeSchema);
+
+const submittedLegalIdSchema = legalIdSchema.toUpperCase();
+
+/**
+ * Vue back-office du même établissement : la vitrine, plus l'état d'activation
+ * que seul le staff a besoin de connaître, plus l'identité légale et le taux de
+ * taxe qui composent le ticket de caisse (#913).
  *
  * Composé par `.extend` et non réécrit — ajouter un champ à la vitrine le
- * propage ici, l'inverse n'est pas vrai.
+ * propage ici, l'inverse n'est pas vrai. **Et c'est l'inverse qui compte ici** :
+ * une raison sociale, un SIRET, un numéro de TVA et un taux de taxe n'ont rien à
+ * faire sur la page publique d'un salon. Ils sont imprimés sur une pièce
+ * comptable remise à la cliente qui a payé, pas publiés à qui connaît le slug.
+ *
+ * ## Facultatifs et **omis**, sauf les deux qui ne peuvent pas l'être
+ *
+ * Les cinq premiers suivent le régime de l'adresse (#343) : `.optional()`,
+ * jamais `.nullable()`, l'API omet la clé plutôt que de rendre `null`. Un salon
+ * qui n'a rien saisi se lit donc exactement comme avant #818.
+ *
+ * `receiptPrefix` et `taxRateBps` sont **toujours présents**, parce que leurs
+ * colonnes sont `NOT NULL` avec un défaut (`TIC`, `0`) : il n'existe aucun
+ * établissement qui n'en ait pas, et les déclarer facultatifs aurait obligé
+ * chaque écran à inventer le défaut de son côté.
  */
 export const tenantSchema = publicTenantSchema.extend({
   isActive: z.boolean(),
+  /** La raison sociale, quand elle diffère de l'enseigne. */
+  legalName: legalNameSchema.optional(),
+  legalIdType: legalIdTypeSchema.optional(),
+  legalId: legalIdSchema.optional(),
+  vatNumber: legalIdSchema.optional(),
+  receiptFooter: receiptFooterSchema.optional(),
+  receiptPrefix: receiptPrefixSchema,
+  taxRateBps: taxRateBpsSchema,
 });
 
 export type Tenant = z.infer<typeof tenantSchema>;
@@ -291,9 +414,61 @@ export const updateTenantRequestSchema = z
      * appels. Un tableau vide efface les horaires publiés.
      */
     openingHours: openingHoursSchema,
+    /**
+     * L'identité légale et la fiscalité (#913), au régime des contacts :
+     * **absent** ne touche à rien, `null` efface.
+     *
+     * `receiptPrefix` et `taxRateBps` font exception et ne sont pas
+     * `.nullable()` : leurs colonnes sont `NOT NULL`, et « efface le préfixe »
+     * ne veut rien dire — un numéro de pièce doit rester décomposable. Pour
+     * revenir au défaut, on repose `TIC`.
+     */
+    legalName: legalNameSchema.nullable(),
+    legalIdType: submittedLegalIdTypeSchema.nullable(),
+    legalId: submittedLegalIdSchema.nullable(),
+    vatNumber: vatNumberSchema.nullable(),
+    receiptFooter: receiptFooterSchema.nullable(),
+    receiptPrefix: receiptPrefixSchema,
+    taxRateBps: taxRateBpsSchema,
   })
   .strict()
-  .partial();
+  .partial()
+  .superRefine((changes, ctx) => {
+    // La nature et l'identifiant vont **par paire** — c'est ce que la contrainte
+    // `tenants_legal_id_completeness_check` tient en base, et ce qu'un
+    // identifiant sans sa nature rendrait invérifiable.
+    //
+    // Le contrôle ne porte que sur ce que la charge utile pose : un `PATCH` qui
+    // ne change que l'identifiant s'appuie sur la nature **déjà enregistrée**, et
+    // ce schéma ne la connaît pas. C'est l'API, qui a lu l'établissement, qui
+    // juge la paire résultante — ici on refuse seulement ce qui se voit d'un
+    // bloc, pour que le formulaire n'ait pas à faire l'aller-retour.
+    if (changes.legalIdType === undefined || changes.legalId === undefined) {
+      return;
+    }
+
+    if ((changes.legalIdType === null) !== (changes.legalId === null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [changes.legalId === null ? 'legalId' : 'legalIdType'],
+        message:
+          'la nature et l’identifiant d’entreprise se posent ou s’effacent ensemble',
+      });
+      return;
+    }
+
+    if (
+      changes.legalIdType !== null &&
+      changes.legalId !== null &&
+      !isValidLegalId(changes.legalIdType, changes.legalId)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['legalId'],
+        message: `identifiant invalide pour la nature « ${changes.legalIdType} »`,
+      });
+    }
+  });
 
 export type UpdateTenantRequest = z.infer<typeof updateTenantRequestSchema>;
 

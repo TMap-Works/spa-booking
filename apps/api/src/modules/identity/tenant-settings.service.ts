@@ -8,6 +8,7 @@ import {
   type TenantRecord,
   type TenantSettingsChanges,
 } from './identity.repository';
+import { resolveLegalIdentity } from './legal-identity';
 import { toE164OrNull } from './phone';
 import { toOpeningHours, toPostalAddress } from './public-tenant.service';
 import { wallClockToMinutesOrNull } from './opening-hours';
@@ -109,6 +110,20 @@ export class TenantSettingsService {
       ...(address === undefined ? {} : { address }),
       ...(openingHours === undefined ? {} : { openingHours }),
       isActive: tenant.isActive,
+      // Identité légale : la clé est **omise** quand elle n'est pas saisie,
+      // jamais rendue `null` — même régime que l'adresse (#913). La propriété
+      // est retirée plutôt que posée à `undefined` : sous
+      // `exactOptionalPropertyTypes` les deux ne sont pas la même chose, et un
+      // `Object.keys` d'appelant distingue les deux là où le JSON ne le fait
+      // pas.
+      ...(tenant.legalName === null ? {} : { legalName: tenant.legalName }),
+      ...(tenant.legalIdType === null ? {} : { legalIdType: tenant.legalIdType }),
+      ...(tenant.legalId === null ? {} : { legalId: tenant.legalId }),
+      ...(tenant.vatNumber === null ? {} : { vatNumber: tenant.vatNumber }),
+      ...(tenant.receiptFooter === null ? {} : { receiptFooter: tenant.receiptFooter }),
+      // Toujours rendus : leurs colonnes sont `NOT NULL` avec un défaut.
+      receiptPrefix: tenant.receiptPrefix,
+      taxRateBps: tenant.taxRateBps,
     };
   }
 
@@ -142,6 +157,13 @@ export class TenantSettingsService {
     const country =
       address === undefined ? current.countryCode : address === null ? null : address.country;
 
+    // La nature et l'identifiant d'entreprise s'écrivent **ensemble ou pas du
+    // tout** : la contrainte `tenants_legal_id_completeness_check` refuse l'un
+    // sans l'autre, et un `PATCH` a le droit de n'en porter qu'une moitié. La
+    // paire résultante se compose donc à partir de la charge utile *et* de
+    // l'état enregistré, comme le pays d'un numéro national juste au-dessus.
+    const legalIdentity = resolveLegalIdentity(changes, current);
+
     return {
       ...(changes.name === undefined ? {} : { name: changes.name }),
       ...(changes.timezone === undefined ? {} : { timezone: changes.timezone }),
@@ -169,6 +191,12 @@ export class TenantSettingsService {
               city: address.city,
               countryCode: address.country,
             }),
+      ...(changes.legalName === undefined ? {} : { legalName: changes.legalName }),
+      ...(legalIdentity === undefined ? {} : legalIdentity),
+      ...(changes.vatNumber === undefined ? {} : { vatNumber: changes.vatNumber }),
+      ...(changes.receiptFooter === undefined ? {} : { receiptFooter: changes.receiptFooter }),
+      ...(changes.receiptPrefix === undefined ? {} : { receiptPrefix: changes.receiptPrefix }),
+      ...(changes.taxRateBps === undefined ? {} : { taxRateBps: changes.taxRateBps }),
     };
   }
 

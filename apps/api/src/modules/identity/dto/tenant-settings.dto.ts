@@ -1,11 +1,23 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { isValidTimeZone, tenantSchema } from '@spa/shared';
+import {
+  LEGAL_ID_MAX_LENGTH,
+  LEGAL_ID_TYPES,
+  LEGAL_NAME_MAX_LENGTH,
+  MAX_TAX_RATE_BPS,
+  RECEIPT_FOOTER_MAX_LENGTH,
+  RECEIPT_PREFIX_PATTERN,
+  type LegalIdType,
+  isValidTimeZone,
+  isValidVatNumber,
+  tenantSchema,
+} from '@spa/shared';
 import { Transform, Type } from 'class-transformer';
 import type { z } from 'zod';
 import {
   ArrayMaxSize,
   IsArray,
   IsEmail,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -117,6 +129,21 @@ const Trim = (): PropertyDecorator =>
   Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value));
 
 /**
+ * Élague **et met en majuscules** — la normalisation des identifiants (#913).
+ *
+ * Un SIRET, un numéro de TVA et un préfixe de ticket se recopient d'un document
+ * officiel : « fr40303265045 » et « FR40303265045 » sont le même numéro, et la
+ * base ne connaît que le second (`tenants_receipt_prefix_check` borne le préfixe
+ * aux majuscules). Sans cette normalisation, une saisie en minuscules serait
+ * refusée par une contrainte — donc en 500 — là où l'utilisateur attendait au
+ * pire un message de champ. Même arbitrage que le code pays de l'adresse.
+ */
+const TrimUpper = (): PropertyDecorator =>
+  Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  );
+
+/**
  * Champ facultatif dont `null` n'est **pas** une valeur acceptée.
  *
  * `@IsOptional()` confond les deux : il ignore les validateurs aussi bien sur
@@ -168,6 +195,36 @@ function IsIanaTimeZone(options?: ValidationOptions): PropertyDecorator {
         defaultMessage: (args?: ValidationArguments): string =>
           `${args?.property ?? 'timezone'} : identifiant de fuseau horaire IANA attendu ` +
           '(« Europe/Paris », « Indian/Antananarivo »)',
+      },
+    });
+  };
+}
+
+/**
+ * Le champ porte un numéro de TVA que le contrat accepte (#913).
+ *
+ * Le prédicat est celui de `@spa/shared` — `isValidVatNumber`, que
+ * `vatNumberSchema` applique déjà — plutôt qu'un motif recopié ici : le numéro
+ * **français** s'y vérifie par une clé recalculée depuis le SIREN, et une
+ * seconde implémentation de ce calcul aurait fini par rendre un avis différent
+ * sur le seul cas qui compte, la clé alphabétique attribuée depuis 2009.
+ *
+ * Les numéros des autres pays ne sont bornés qu'en forme, faute d'une règle
+ * unique aux vingt-six plans de numérotation de l'Union : refuser un numéro
+ * belge valide coûterait plus cher que d'accepter une saisie libre.
+ */
+function IsVatNumber(options?: ValidationOptions): PropertyDecorator {
+  return (target: object, propertyName: string | symbol): void => {
+    registerDecorator({
+      name: 'isVatNumber',
+      target: target.constructor,
+      propertyName: propertyName.toString(),
+      options: options ?? {},
+      validator: {
+        validate: (value: unknown): boolean => typeof value === 'string' && isValidVatNumber(value),
+        defaultMessage: (args?: ValidationArguments): string =>
+          `${args?.property ?? 'vatNumber'} : numéro de TVA attendu — deux lettres de ` +
+          'pays puis 8 à 13 caractères (« FR40303265045 »)',
       },
     });
   };
@@ -360,6 +417,162 @@ export class UpdateTenantDto {
   @ValidateNested({ each: true })
   @Type(() => UpdateOpeningHoursEntryDto)
   public openingHours?: UpdateOpeningHoursEntryDto[];
+
+  // -------------------------------------------------------------------------
+  // Identité légale et fiscalité — #913, le quatrième critère de #818 câblé
+  // -------------------------------------------------------------------------
+
+  /** `null` efface la raison sociale : le ticket retombe sur l'enseigne. */
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: LEGAL_NAME_MAX_LENGTH,
+    example: 'TANA COIFFURE SARL',
+    description:
+      'Raison sociale — le nom **juridique** de l’entreprise, quand il diffère ' +
+      'de l’enseigne. `null` l’efface.',
+  })
+  @IsOptional()
+  @Trim()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(LEGAL_NAME_MAX_LENGTH)
+  public legalName?: string | null;
+
+  /**
+   * La nature de l'identifiant — et elle va **par paire** avec lui.
+   *
+   * `tenants_legal_id_completeness_check` refuse l'une sans l'autre. La paire
+   * résultante — ce que la requête pose, complété par ce qui est déjà
+   * enregistré — est composée et jugée par `resolveLegalIdentity`, qui refuse en
+   * 400 en nommant le champ fautif. Le DTO ne peut pas le faire : il ne voit que
+   * la charge utile, et un `PATCH` a le droit de n'en porter qu'une moitié.
+   */
+  @ApiPropertyOptional({
+    enum: LEGAL_ID_TYPES,
+    nullable: true,
+    example: 'SIRET',
+    description:
+      'Nature de l’identifiant d’entreprise. Se pose et s’efface **avec** ' +
+      '`legalId` : l’un sans l’autre est refusé en 400.',
+  })
+  @IsOptional()
+  @TrimUpper()
+  @IsIn(LEGAL_ID_TYPES, {
+    message: `legalIdType : nature attendue parmi ${LEGAL_ID_TYPES.join(', ')}`,
+  })
+  public legalIdType?: LegalIdType | null;
+
+  /**
+   * L'identifiant lui-même — SIRET, SIREN, NIF ou STAT.
+   *
+   * Sa **forme dépend de sa nature**, et la règle est celle du contrat partagé
+   * (`isValidLegalId`) : 14 chiffres et une clé de Luhn pour un SIRET, 9 pour un
+   * SIREN, un format libre borné pour ce que le MVP ne sait pas juger. Le DTO ne
+   * borne ici que la largeur de la colonne ; le jugement a lieu une fois la
+   * paire connue.
+   */
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: LEGAL_ID_MAX_LENGTH,
+    example: '30326504500019',
+    description:
+      'Identifiant d’entreprise. Vérifié **selon sa nature** — clé de Luhn pour ' +
+      'un SIRET ou un SIREN. La casse est normalisée en majuscules.',
+  })
+  @IsOptional()
+  @TrimUpper()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(LEGAL_ID_MAX_LENGTH)
+  public legalId?: string | null;
+
+  /** `null` efface le numéro de TVA publié sur le ticket. */
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: LEGAL_ID_MAX_LENGTH,
+    example: 'FR40303265045',
+    description:
+      'Numéro de TVA intracommunautaire. La clé du numéro **français** est ' +
+      'recalculée depuis le SIREN ; les autres pays ne sont bornés qu’en forme.',
+  })
+  @IsOptional()
+  @TrimUpper()
+  @IsString()
+  @MaxLength(LEGAL_ID_MAX_LENGTH)
+  @IsVatNumber()
+  public vatNumber?: string | null;
+
+  /** `null` efface les mentions de pied de ticket. */
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: RECEIPT_FOOTER_MAX_LENGTH,
+    description:
+      'Mentions imprimées en pied de ticket — conditions de remboursement, ' +
+      'médiation de la consommation. `null` les efface.',
+  })
+  @IsOptional()
+  @Trim()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(RECEIPT_FOOTER_MAX_LENGTH)
+  public receiptFooter?: string | null;
+
+  /**
+   * Le préfixe de numérotation des pièces — le `TIC` de `TIC-2026-000123`.
+   *
+   * `null` n'est **pas** accepté, à la différence des cinq champs précédents : la
+   * colonne est `NOT NULL`, et toute vente close doit porter un numéro
+   * décomposable. Pour revenir au défaut, on repose `TIC`.
+   *
+   * Changer le préfixe ne renumérote rien : les pièces déjà émises gardent le
+   * leur, la suite étant continue par établissement (#818, deuxième critère).
+   */
+  @ApiPropertyOptional({
+    type: String,
+    example: 'SPL',
+    description:
+      'Préfixe de numérotation : 2 à 8 lettres majuscules ou chiffres, sans ' +
+      'tiret — le tiret est le séparateur du format. La casse est normalisée.',
+  })
+  @OptionalPresent()
+  @TrimUpper()
+  @IsString()
+  @Matches(RECEIPT_PREFIX_PATTERN, {
+    message:
+      'receiptPrefix : 2 à 8 lettres majuscules ou chiffres attendus, sans tiret ni espace',
+  })
+  public receiptPrefix?: string;
+
+  /**
+   * Le taux de taxe des ventes au comptoir, en **points de base** — `2000` vaut
+   * 20 % (#60).
+   *
+   * Un entier, jamais un taux à virgule : le projet n'accepte aucun flottant sur
+   * le chemin de l'argent. `null` n'est pas accepté — la colonne est `NOT NULL`,
+   * et « pas de taxe » s'écrit `0`, ce qui est une valeur et non une absence.
+   *
+   * Le changer n'affecte que les ventes **à venir** : la ventilation d'un ticket
+   * déjà composé est figée sur ses montants (`receiptTaxLineSchema`), jamais
+   * relue sur l'établissement.
+   */
+  @ApiPropertyOptional({
+    type: Number,
+    minimum: 0,
+    maximum: MAX_TAX_RATE_BPS,
+    example: 2000,
+    description: 'Taux de taxe en points de base — 2000 vaut 20 %. `0` : aucune taxe.',
+  })
+  @OptionalPresent()
+  @IsInt({ message: 'taxRateBps : un taux de taxe s’exprime en points de base entiers' })
+  @Min(0, { message: `taxRateBps : taux attendu entre 0 et ${String(MAX_TAX_RATE_BPS)}` })
+  @Max(MAX_TAX_RATE_BPS, {
+    message: `taxRateBps : taux attendu entre 0 et ${String(MAX_TAX_RATE_BPS)}`,
+  })
+  public taxRateBps?: number;
 }
 
 /**
@@ -382,6 +595,46 @@ export class TenantDto extends PublicTenantDto {
       'la vitrine.',
   })
   public isActive!: boolean;
+
+  /**
+   * L'identité légale, au régime de l'adresse : **omise** quand elle n'est pas
+   * saisie, jamais rendue `null` (#913).
+   *
+   * Aucun de ces champs n'est sur `PublicTenantDto`, et c'est le point : un
+   * SIRET et un numéro de TVA s'impriment sur la pièce remise à la cliente qui a
+   * payé, ils ne se publient pas à qui connaît le slug du salon.
+   */
+  @ApiPropertyOptional({ type: String, maxLength: LEGAL_NAME_MAX_LENGTH })
+  public legalName?: string | undefined;
+
+  @ApiPropertyOptional({ enum: LEGAL_ID_TYPES })
+  public legalIdType?: LegalIdType | undefined;
+
+  @ApiPropertyOptional({ type: String, maxLength: LEGAL_ID_MAX_LENGTH })
+  public legalId?: string | undefined;
+
+  @ApiPropertyOptional({ type: String, maxLength: LEGAL_ID_MAX_LENGTH })
+  public vatNumber?: string | undefined;
+
+  @ApiPropertyOptional({ type: String, maxLength: RECEIPT_FOOTER_MAX_LENGTH })
+  public receiptFooter?: string | undefined;
+
+  /**
+   * Toujours présents, à la différence des cinq champs ci-dessus : leurs
+   * colonnes sont `NOT NULL` avec un défaut (`TIC`, `0`). Il n'existe pas
+   * d'établissement qui n'ait ni préfixe ni taux, et les rendre facultatifs
+   * aurait obligé chaque écran à réinventer le défaut de son côté.
+   */
+  @ApiProperty({ example: 'SPL', description: 'Préfixe de numérotation des pièces.' })
+  public receiptPrefix!: string;
+
+  @ApiProperty({
+    example: 2000,
+    minimum: 0,
+    maximum: MAX_TAX_RATE_BPS,
+    description: 'Taux de taxe en points de base — 2000 vaut 20 %.',
+  })
+  public taxRateBps!: number;
 }
 
 // Réexportés pour que le contrôleur et le service n'aient qu'un import de DTO à

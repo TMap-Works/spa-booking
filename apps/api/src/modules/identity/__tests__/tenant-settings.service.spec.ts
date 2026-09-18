@@ -45,6 +45,15 @@ const FICHE: TenantRecord = {
   countryCode: null,
   openingHours: [],
   isActive: true,
+  // Identité légale non saisie — l'état d'un salon inscrit avant #818, et celui
+  // depuis lequel #913 doit permettre de la renseigner.
+  legalName: null,
+  legalIdType: null,
+  legalId: null,
+  vatNumber: null,
+  receiptFooter: null,
+  receiptPrefix: 'TIC',
+  taxRateBps: 0,
 };
 
 /**
@@ -143,6 +152,11 @@ describe('TenantSettingsService', () => {
     );
 
     expect(reglages.isActive).toBe(true);
+    // Égalité de clés, et non `toContain` : un champ interne ajouté par mégarde
+    // à la projection doit faire rougir ce test. `receiptPrefix` et `taxRateBps`
+    // en font partie — leurs colonnes sont `NOT NULL`, ils sont toujours là —,
+    // là où les cinq champs d'identité légale sont **omis** tant qu'ils ne sont
+    // pas saisis (#913).
     expect(Object.keys(reglages).sort()).toEqual([
       'contactEmail',
       'contactPhone',
@@ -150,9 +164,142 @@ describe('TenantSettingsService', () => {
       'id',
       'isActive',
       'name',
+      'receiptPrefix',
       'slug',
+      'taxRateBps',
       'timezone',
     ]);
+  });
+
+  describe('identité légale et taux de taxe — #913', () => {
+    it('rend les champs saisis, et omet ceux qui ne le sont pas', async () => {
+      const reglages = await runWithTenant(TENANT_A, async () =>
+        harnessOver({
+          ...FICHE,
+          legalName: 'TANA COIFFURE SARL',
+          legalIdType: 'SIRET',
+          legalId: '73282932000074',
+          receiptPrefix: 'SPL',
+          taxRateBps: 2000,
+        }).service.currentTenant(),
+      );
+
+      expect(reglages).toMatchObject({
+        legalName: 'TANA COIFFURE SARL',
+        legalIdType: 'SIRET',
+        legalId: '73282932000074',
+        receiptPrefix: 'SPL',
+        taxRateBps: 2000,
+      });
+      // `undefined`, donc **absent** du JSON : c'est ce que `.optional()` du
+      // contrat accepte, là où `null` ferait échouer la validation côté front.
+      expect(reglages).not.toHaveProperty('vatNumber');
+      expect(reglages).not.toHaveProperty('receiptFooter');
+    });
+
+    it('écrit les sept réglages', async () => {
+      const harness = harnessOver(FICHE);
+      await update(harness, {
+        legalName: 'TANA COIFFURE SARL',
+        legalIdType: 'SIRET',
+        legalId: '73282932000074',
+        vatNumber: 'FR40303265045',
+        receiptFooter: 'Aucun remboursement après 30 jours.',
+        receiptPrefix: 'SPL',
+        taxRateBps: 2000,
+      });
+
+      expect(harness.changes()).toEqual({
+        legalName: 'TANA COIFFURE SARL',
+        legalIdType: 'SIRET',
+        legalId: '73282932000074',
+        vatNumber: 'FR40303265045',
+        receiptFooter: 'Aucun remboursement après 30 jours.',
+        receiptPrefix: 'SPL',
+        taxRateBps: 2000,
+      });
+    });
+
+    it('efface l’identité légale sur des `null` explicites', async () => {
+      const harness = harnessOver({
+        ...FICHE,
+        legalName: 'TANA COIFFURE SARL',
+        legalIdType: 'SIRET',
+        legalId: '73282932000074',
+      });
+
+      await update(harness, { legalName: null, legalIdType: null, legalId: null });
+
+      expect(harness.changes()).toEqual({
+        legalName: null,
+        legalIdType: null,
+        legalId: null,
+      });
+    });
+
+    it('juge l’identifiant contre la nature **déjà enregistrée**', async () => {
+      // Le cas qui justifie que la règle vive dans le service et non au DTO : la
+      // charge utile ne porte que l'identifiant, et la nature à laquelle il doit
+      // satisfaire est en base. Un SIRET de 14 chiffres n'est pas un SIREN.
+      const harness = harnessOver({
+        ...FICHE,
+        legalIdType: 'SIREN',
+        legalId: '303265045',
+      });
+
+      const erreur = await update(harness, { legalId: '73282932000074' }).catch(
+        (caught: unknown) => caught,
+      );
+
+      expect(erreur).toBeInstanceOf(BadRequestException);
+      const reponse = (erreur as BadRequestException).getResponse() as { message: unknown };
+      expect(reponse.message).toEqual([expect.stringMatching(/^legalId : /)]);
+      // Rien d'écrit : le refus précède l'écriture unique du dépôt.
+      expect(harness.writes()).toBe(0);
+    });
+
+    it('refuse un SIRET dont la clé de Luhn est fausse', async () => {
+      const harness = harnessOver(FICHE);
+
+      await expect(
+        update(harness, { legalIdType: 'SIRET', legalId: '73282932000075' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('accepte un identifiant libre pour une nature que le MVP ne juge pas', async () => {
+      // Un NIF malgache ne se vérifie pas, et le prétendre refuserait des
+      // établissements réels (contrat partagé, `isValidLegalId`).
+      const harness = harnessOver(FICHE);
+      await update(harness, { legalIdType: 'NIF', legalId: '4001234567' });
+
+      expect(harness.changes()).toEqual({ legalIdType: 'NIF', legalId: '4001234567' });
+    });
+
+    it('refuse une nature sans identifiant, et un identifiant sans nature', async () => {
+      // `tenants_legal_id_completeness_check` refuse l'un sans l'autre : l'y
+      // laisser descendre aurait rendu un 500 sur une saisie.
+      await expect(
+        update(harnessOver(FICHE), { legalIdType: 'SIRET' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+
+      await expect(
+        update(harnessOver(FICHE), { legalId: '73282932000074' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('n’écrit la paire que si la charge utile y touche', async () => {
+      // « Ne touche pas » doit rester distinct de « repose la même valeur » :
+      // sans cela, chaque enregistrement réécrirait deux colonnes pour rien.
+      const harness = harnessOver({
+        ...FICHE,
+        legalIdType: 'SIRET',
+        legalId: '73282932000074',
+      });
+
+      await update(harness, { taxRateBps: 850 });
+
+      expect(harness.changes()).toEqual({ taxRateBps: 850 });
+    });
   });
 
   it('ne touche pas aux champs absents de la charge utile', async () => {
