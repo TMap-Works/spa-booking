@@ -13,7 +13,7 @@ import {
   PENDING_HOLD_NOTE,
   type AppointmentBrief,
 } from '@/components/account/appointment-brief';
-import { addressLines } from '@/components/salon/salon-info';
+import { addressLines } from '@/components/salon/salon-address';
 import { telUri } from '@/components/salon/salon-contact';
 import { Avatar } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
