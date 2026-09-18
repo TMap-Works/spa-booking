@@ -258,13 +258,20 @@ export function CheckoutPanel({
   // ticket ». Laisser le second l'emporter aurait escamoté le reçu au moment
   // précis où l'opérateur le tend à sa cliente.
   if (phase.kind === 'regle') {
+    // Un reçu carte naît sans encaissement — le webhook l'inscrit plus tard.
+    // Quand le rendu serveur le rapporte enfin, c'est lui qui donne la pièce à
+    // imprimer : le ticket cesse alors d'être provisoire.
+    const confirmed = phase.transaction === null && known.kind === 'regle' ? known.payment : null;
+
     return (
       <div className="spa-admin-checkout__payment">
         <CheckoutReceipt
           appointment={appointment}
           method={phase.method}
+          settled={confirmed !== null}
+          tenantSlug={tenantSlug}
           timeZone={timeZone}
-          transaction={phase.transaction}
+          transaction={confirmed ?? phase.transaction}
         />
         <p className="spa-admin-checkout__pci">
           {completionUnavailableMessage(phase.method)}
@@ -300,6 +307,7 @@ export function CheckoutPanel({
             appointment={appointment}
             method={payment.method}
             settled
+            tenantSlug={tenantSlug}
             timeZone={timeZone}
             transaction={payment}
           />

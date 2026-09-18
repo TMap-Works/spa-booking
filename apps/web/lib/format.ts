@@ -26,6 +26,24 @@ export function formatDateTimeInTimeZone(instant: UtcInstant, timeZone: TimeZone
   }).format(new Date(instant));
 }
 
+/**
+ * « 18/09/2026 14:32 » — l'horodatage d'un ticket de caisse, dans le fuseau du
+ * salon. Court et chiffré, comme sur un rouleau de 80 mm, où le jour de la
+ * semaine en toutes lettres ne tiendrait pas sur une ligne.
+ */
+export function formatTicketDateTime(instant: UtcInstant, timeZone: TimeZone): string {
+  return new Intl.DateTimeFormat(LOCALE, {
+    timeZone,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+    .format(new Date(instant))
+    .replace(',', '');
+}
+
 /** « 11:00 » — pour une liste de créneaux, où la date est déjà en titre. */
 export function formatTimeInTimeZone(instant: UtcInstant, timeZone: TimeZone): string {
   return new Intl.DateTimeFormat(LOCALE, { timeZone, timeStyle: 'short' }).format(

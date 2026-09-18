@@ -23,6 +23,7 @@ import type { SettlementState } from '@/lib/admin/checkout-summary';
 
 const settleInCashAction = vi.fn();
 const openCardPaymentAction = vi.fn();
+const loadReceiptAction = vi.fn();
 const replace = vi.fn();
 const refresh = vi.fn();
 const confirmPayment = vi.fn();
@@ -32,6 +33,7 @@ const destroy = vi.fn();
 vi.mock('@/app/(admin)/[tenantSlug]/admin/encaissement/actions', () => ({
   settleInCashAction: (...args: unknown[]) => settleInCashAction(...args),
   openCardPaymentAction: (...args: unknown[]) => openCardPaymentAction(...args),
+  loadReceiptAction: (...args: unknown[]) => loadReceiptAction(...args),
 }));
 
 // Le panneau part vers la route de renouvellement sur une session expirée
@@ -116,6 +118,7 @@ afterEach(() => {
   cleanup();
   settleInCashAction.mockReset();
   openCardPaymentAction.mockReset();
+  loadReceiptAction.mockReset();
   confirmPayment.mockReset();
   refresh.mockReset();
   mount.mockReset();
@@ -576,4 +579,155 @@ describe('le récapitulatif rendu côté serveur, après l’encaissement (#1004
       expect(refresh).not.toHaveBeenCalled();
     },
   );
+});
+
+describe('le ticket de caisse de la vente (#818)', () => {
+  const SALE_ID = '99999999-0000-4000-8000-000000000009';
+  const SOLD = { ...CASH_TRANSACTION, saleId: SALE_ID };
+  const RECEIPT = {
+    saleId: SALE_ID,
+    number: 'TIC-2026-000123',
+    sequence: 123,
+    issuedAt: '2026-09-05T07:05:00.000Z',
+    openedAt: '2026-09-05T07:04:00.000Z',
+    timezone: TIMEZONE,
+    issuer: {
+      name: 'Maison Lotus',
+      legalName: 'LOTUS BIEN-ÊTRE SARL',
+      legalIdType: 'SIRET' as const,
+      legalId: '73282932000074',
+      vatNumber: 'FR44732829320',
+      address: { line1: '12 rue des Lilas', postalCode: '75011', city: 'Paris', country: 'FR' },
+      contactPhone: '+33123456789',
+      footer: 'Ni repris ni échangé.',
+    },
+    cashier: { displayName: 'Hasina R.' },
+    client: { displayName: 'Rina Andriamana' },
+    practitioner: { displayName: 'Hasina' },
+    lines: [
+      {
+        position: 0,
+        kind: 'SERVICE' as const,
+        label: 'Massage suédois',
+        quantity: 1,
+        unitPrice: { amountMinor: 3500, currency: 'EUR' },
+        total: { amountMinor: 3500, currency: 'EUR' },
+      },
+      {
+        position: 1,
+        kind: 'TAX' as const,
+        label: 'TVA 20 %',
+        quantity: 1,
+        unitPrice: { amountMinor: 583, currency: 'EUR' },
+        total: { amountMinor: 583, currency: 'EUR' },
+      },
+    ],
+    taxBreakdown: [
+      {
+        rateBps: 2000,
+        base: { amountMinor: 2917, currency: 'EUR' },
+        tax: { amountMinor: 583, currency: 'EUR' },
+      },
+    ],
+    subtotal: { amountMinor: 2917, currency: 'EUR' },
+    taxTotal: { amountMinor: 583, currency: 'EUR' },
+    tip: { amountMinor: 0, currency: 'EUR' },
+    total: { amountMinor: 3500, currency: 'EUR' },
+    settlements: [
+      {
+        method: 'CASH' as const,
+        amount: { amountMinor: 3500, currency: 'EUR' },
+        tendered: { amountMinor: 5000, currency: 'EUR' },
+        change: { amountMinor: 1500, currency: 'EUR' },
+        capturedAt: '2026-09-05T07:05:00.000Z',
+      },
+    ],
+    refunds: [],
+  };
+
+  async function settleWithSale(): Promise<void> {
+    settleInCashAction.mockResolvedValue({ ok: true, data: SOLD });
+    loadReceiptAction.mockResolvedValue({ ok: true, data: RECEIPT });
+    renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+  }
+
+  it('affiche la pièce de l’API : salon, numéro, client, HT, TVA, TTC', async () => {
+    await settleWithSale();
+
+    const ticket = await screen.findByRole('article', { name: 'Ticket n° TIC-2026-000123' });
+
+    expect(loadReceiptAction).toHaveBeenCalledWith(SLUG, SALE_ID);
+    expect(ticket.textContent).toContain('Maison Lotus');
+    expect(ticket.textContent).toContain('LOTUS BIEN-ÊTRE SARL');
+    expect(ticket.textContent).toContain('SIRET 73282932000074');
+    expect(ticket.textContent).toContain('Rina Andriamana');
+    expect(ticket.textContent).toContain('Total HT');
+    expect(ticket.textContent).toContain('Total TTC');
+    expect(ticket.textContent).toContain('20 %');
+    expect(ticket.textContent).toContain('Rendu');
+    expect(ticket.textContent).toContain('Ni repris ni échangé.');
+  });
+
+  it('n’imprime pas la ligne de taxe parmi les articles — c’est une ventilation', async () => {
+    await settleWithSale();
+
+    await screen.findByRole('article', { name: 'Ticket n° TIC-2026-000123' });
+    const items = screen.getByRole('table', { name: 'Articles' });
+
+    expect(items.textContent).toContain('Massage suédois');
+    expect(items.textContent).not.toContain('TVA 20 %');
+  });
+
+  it('imprime le ticket seul, et non la page', async () => {
+    const print = vi.spyOn(window, 'print').mockImplementation(() => undefined);
+    await settleWithSale();
+    await screen.findByRole('article', { name: 'Ticket n° TIC-2026-000123' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Imprimer le ticket' }));
+
+    expect(print).toHaveBeenCalledTimes(1);
+    // La copie destinée à l'imprimante vit directement sous <body>, hors de la
+    // page, et <html> porte la classe qui efface tout le reste à l'impression.
+    const copy = document.body.querySelector(':scope > .spa-print-ticket');
+    expect(copy?.textContent).toContain('TIC-2026-000123');
+    expect(document.documentElement.classList.contains('spa-printing-ticket')).toBe(true);
+
+    window.dispatchEvent(new Event('afterprint'));
+    expect(document.documentElement.classList.contains('spa-printing-ticket')).toBe(false);
+    print.mockRestore();
+  });
+
+  it('ouvre les deux PDF de l’API — rouleau 80 mm et facture A4', async () => {
+    await settleWithSale();
+    await screen.findByRole('article', { name: 'Ticket n° TIC-2026-000123' });
+
+    expect(screen.getByRole('link', { name: 'PDF ticket' }).getAttribute('href')).toBe(
+      `/${SLUG}/admin/encaissement/ticket/${SALE_ID}?format=ticket-80`,
+    );
+    expect(screen.getByRole('link', { name: 'Facture A4' }).getAttribute('href')).toBe(
+      `/${SLUG}/admin/encaissement/ticket/${SALE_ID}?format=a4`,
+    );
+  });
+
+  it('dit que le ticket est indisponible, et laisse réessayer', async () => {
+    settleInCashAction.mockResolvedValue({ ok: true, data: SOLD });
+    loadReceiptAction.mockResolvedValueOnce({
+      ok: false,
+      code: 'SERVICE_UNAVAILABLE',
+      message: 'Le service est momentanément injoignable.',
+    });
+    loadReceiptAction.mockResolvedValueOnce({ ok: true, data: RECEIPT });
+    renderPanel();
+
+    await userEvent.click(screen.getByRole('button', { name: /en espèces/ }));
+    expect(await screen.findByText('Ticket indisponible')).toBeDefined();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Réessayer' }));
+
+    expect(
+      await screen.findByRole('article', { name: 'Ticket n° TIC-2026-000123' }),
+    ).toBeDefined();
+  });
 });
