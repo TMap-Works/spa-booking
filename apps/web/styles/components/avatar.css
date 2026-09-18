@@ -1,0 +1,57 @@
+/*
+ * Composant — Pastille d'initiales (#1044)
+ * =============================================================================
+ *
+ * `components/ui/avatar.tsx`. Deux tons : `accent` pour une personne (texte
+ * d'accent sur accent doux), `brand` pour le monogramme d'un salon (texte clair
+ * sur l'aplat de marque). Les deux paires sont vérifiées par
+ * `tests/contrast.test.mjs`.
+ */
+
+.spa-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  inline-size: var(--avatar-size);
+  block-size: var(--avatar-size);
+  font-size: calc(var(--avatar-size) * 0.4);
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: 1;
+  letter-spacing: var(--spa-letter-spacing-wide);
+  user-select: none;
+}
+
+.spa-avatar--sm {
+  --avatar-size: var(--spa-space-8);
+}
+
+.spa-avatar--md {
+  --avatar-size: var(--spa-space-10);
+}
+
+.spa-avatar--lg {
+  --avatar-size: 3.5rem;
+}
+
+.spa-avatar--xl {
+  --avatar-size: var(--spa-space-16);
+}
+
+.spa-avatar--circle {
+  border-radius: var(--spa-radius-full);
+}
+
+.spa-avatar--square {
+  border-radius: var(--spa-radius-lg);
+}
+
+.spa-avatar--accent {
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+}
+
+.spa-avatar--brand {
+  background-color: var(--spa-color-surface-brand);
+  color: var(--spa-color-text-on-brand);
+}

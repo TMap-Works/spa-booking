@@ -1,0 +1,83 @@
+/*
+ * Composant — Pastille de statut (#1044)
+ * =============================================================================
+ *
+ * `components/ui/badge.tsx`. Le libellé est toujours écrit ; le point et la
+ * teinte l'appuient (BM-VISUEL-05, WCAG 1.4.1). Chaque paire texte / fond est
+ * une paire vérifiée par `tests/contrast.test.mjs`.
+ */
+
+.spa-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-1);
+  padding-block: var(--spa-space-1);
+  padding-inline: var(--spa-space-2) var(--spa-space-3);
+  border-radius: var(--spa-radius-full);
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: var(--spa-line-height-tight);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  white-space: nowrap;
+  background-color: var(--spa-color-surface-sunken);
+  color: var(--spa-color-text-muted);
+}
+
+/* Le point prend la couleur du texte : il n'ajoute aucune paire à vérifier. */
+.spa-badge::before {
+  content: '';
+  flex: none;
+  inline-size: 0.4rem;
+  block-size: 0.4rem;
+  border-radius: var(--spa-radius-full);
+  background-color: currentcolor;
+}
+
+/* --- Tonalités d'état ------------------------------------------------------ */
+
+.spa-badge--info {
+  background-color: var(--spa-color-info-surface);
+  color: var(--spa-color-info);
+}
+
+.spa-badge--success {
+  background-color: var(--spa-color-success-surface);
+  color: var(--spa-color-success);
+}
+
+.spa-badge--warning {
+  background-color: var(--spa-color-warning-surface);
+  color: var(--spa-color-warning);
+}
+
+.spa-badge--danger {
+  background-color: var(--spa-color-danger-surface);
+  color: var(--spa-color-danger);
+}
+
+/* --- Statuts de rendez-vous ------------------------------------------------ */
+
+.spa-badge--pending {
+  background-color: var(--spa-color-status-pending-surface);
+  color: var(--spa-color-status-pending);
+}
+
+.spa-badge--confirmed {
+  background-color: var(--spa-color-status-confirmed-surface);
+  color: var(--spa-color-status-confirmed);
+}
+
+.spa-badge--completed {
+  background-color: var(--spa-color-status-completed-surface);
+  color: var(--spa-color-status-completed);
+}
+
+.spa-badge--cancelled {
+  background-color: var(--spa-color-status-cancelled-surface);
+  color: var(--spa-color-status-cancelled);
+}
+
+.spa-badge--no-show {
+  background-color: var(--spa-color-status-no-show-surface);
+  color: var(--spa-color-status-no-show);
+}

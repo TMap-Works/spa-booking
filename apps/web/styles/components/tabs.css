@@ -1,0 +1,130 @@
+/*
+ * Composant — Onglets (#1044)
+ * =============================================================================
+ *
+ * `components/ui/tabs.tsx` (onglets d'une page) et `components/ui/nav-tabs.tsx`
+ * (onglets qui mènent à des pages). Même allure, deux sémantiques : l'état
+ * actif est `[aria-selected='true']` pour l'un, `[aria-current='page']` pour
+ * l'autre.
+ *
+ *   underline   rubriques — un trait d'accent sous l'onglet actif
+ *   segmented   filtre de liste — l'onglet actif en pastille sur fond creusé
+ *
+ * La rangée défile horizontalement à 360 px au lieu de passer à la ligne
+ * (BM-SERVICE-02) ; la barre de défilement est masquée, le geste reste.
+ */
+
+.spa-tabs,
+.spa-tabs__list {
+  display: flex;
+  gap: var(--spa-space-1);
+  overflow-x: auto;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+}
+
+.spa-tabs::-webkit-scrollbar,
+.spa-tabs__list::-webkit-scrollbar {
+  display: none;
+}
+
+/* Le `<nav>` porte le trait de fond ; sa liste porte la rangée. */
+.spa-tabs--nav {
+  display: block;
+}
+
+.spa-tabs__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-tabs__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  flex: none;
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-3);
+  border: 0;
+  background: transparent;
+  color: var(--spa-color-text-muted);
+  font: inherit;
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    color var(--spa-duration-fast) var(--spa-easing-standard),
+    background-color var(--spa-duration-fast) var(--spa-easing-standard),
+    border-color var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-tabs__tab:hover {
+  color: var(--spa-color-text);
+}
+
+.spa-tabs__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-inline-size: 1.5rem;
+  padding-inline: var(--spa-space-1);
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-surface-sunken);
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: 1.5;
+}
+
+/* --- Soulignés -------------------------------------------------------------- */
+
+.spa-tabs--underline {
+  box-shadow: inset 0 -1px 0 var(--spa-color-border);
+}
+
+.spa-tabs--underline .spa-tabs__tab {
+  border-block-end: 2px solid transparent;
+  border-radius: 0;
+}
+
+.spa-tabs--underline .spa-tabs__tab[aria-selected='true'],
+.spa-tabs--underline .spa-tabs__tab[aria-current='page'] {
+  border-block-end-color: var(--spa-color-accent);
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-tabs--underline .spa-tabs__tab[aria-selected='true'] .spa-tabs__count,
+.spa-tabs--underline .spa-tabs__tab[aria-current='page'] .spa-tabs__count {
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+}
+
+/* --- Segmentés -------------------------------------------------------------- */
+
+.spa-tabs--segmented {
+  inline-size: fit-content;
+  max-inline-size: 100%;
+  padding: var(--spa-space-1);
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-surface-sunken);
+}
+
+.spa-tabs--segmented .spa-tabs__tab {
+  padding-inline: var(--spa-space-4);
+  border-radius: var(--spa-radius-full);
+}
+
+.spa-tabs--segmented .spa-tabs__tab[aria-selected='true'] {
+  background-color: var(--spa-color-surface);
+  color: var(--spa-color-text);
+  box-shadow: var(--spa-shadow-sm);
+}
+
+.spa-tabs--segmented .spa-tabs__tab[aria-selected='true'] .spa-tabs__count {
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+}
