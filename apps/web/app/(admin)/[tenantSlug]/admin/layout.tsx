@@ -5,6 +5,10 @@ import type { ReactNode } from 'react';
 
 import { ApiClientError, fetchOwnProfile, fetchPublicTenant } from '@/lib/api-client';
 
+import {
+  AdminAnnouncementProvider,
+  AdminAnnouncementRegion,
+} from './components/admin-announcement';
 import { AdminRail } from './components/admin-rail';
 import { AdminTopbar } from './components/admin-topbar';
 import type { AdminEstablishment } from './components/establishment-switcher';
@@ -87,6 +91,18 @@ const adminFont = Inter({
  * Une seconde lecture de la session côté page aurait divergé de celle-ci au
  * premier changement — c'est le raisonnement qui met déjà `adminLandingPath`
  * dans `components/navigation.ts` plutôt que dans le formulaire de connexion.
+ *
+ * ## Ce qu'il porte en plus depuis #1037 : la région qui annonce les succès
+ *
+ * Le layout est le seul point du back-office qu'une navigation ne démonte pas :
+ * l'App Router le conserve d'un écran à l'autre du segment `admin`. C'est donc
+ * ici, et nulle part ailleurs, qu'une annonce peut survivre au `router.push` qui
+ * mène du formulaire de création à la fiche créée — et ici que la région
+ * `aria-live` doit être **montée d'avance**, une région insérée avec son message
+ * n'étant annoncée par aucun lecteur d'écran de façon fiable (WCAG 2.2 AA
+ * 4.1.3). Le fournisseur enveloppe la zone de contenu — la même dans les deux
+ * formes du shell —, et non la grille : le rail n'annonce rien, et la décision
+ * du repli garde le `return main` nu dont #760 fait une prémisse vérifiable.
  */
 
 export const metadata: Metadata = {
@@ -265,11 +281,37 @@ export default async function AdminLayout({ children, params }: AdminLayoutProps
 
   const content = (
     <main className="spa-admin__content" id="contenu">
+      {/*
+        En tête du contenu, et non au pied : ce qui vient de se passer se lit
+        avant ce qu'il reste à faire, et le lien d'évitement mène ici.
+
+        C'est aussi ce qui la rend annonçable — la région est montée avant
+        tout écran et avant tout geste, et reste vide jusqu'à ce qu'un geste
+        y écrive. Voir `components/admin-announcement.tsx` (#1037).
+      */}
+      <AdminAnnouncementRegion />
       {children}
     </main>
   );
 
-  const main = <div className={`spa-admin__main ${adminFont.variable}`}>{content}</div>;
+  /*
+   * Le fournisseur enveloppe la zone de contenu, et elle seule (#1037) : c'est
+   * là que la région vit, et le rail n'annonce rien. Il ne rend aucun nœud du
+   * DOM — les enfants directs de `.spa-admin` restent le rail et
+   * `.spa-admin__main`, et la grille à deux colonnes est celle d'avant. Dans la
+   * forme avec rail, il enveloppe aussi la barre haute (#1058), qui n'annonce
+   * rien elle non plus.
+   *
+   * Envelopper les **deux** formes en même temps aurait demandé de sortir la
+   * décision du repli de son `if (shell === null) { return main; }` — la seule
+   * condition sans rail du back-office, et celle dont #760 fait une prémisse
+   * vérifiable. Une annonce ne vaut pas qu'on la rende inobservable.
+   */
+  const main = (
+    <AdminAnnouncementProvider>
+      <div className={`spa-admin__main ${adminFont.variable}`}>{content}</div>
+    </AdminAnnouncementProvider>
+  );
 
   if (shell === null) {
     return main;
@@ -287,10 +329,12 @@ export default async function AdminLayout({ children, params }: AdminLayoutProps
         timeZone={shell.timeZone}
         userName={shell.userName}
       />
-      <div className="spa-admin__main">
-        <AdminTopbar salonName={salonName} tenantSlug={tenantSlug} timeZone={shell.timeZone} />
-        {content}
-      </div>
+      <AdminAnnouncementProvider>
+        <div className="spa-admin__main">
+          <AdminTopbar salonName={salonName} tenantSlug={tenantSlug} timeZone={shell.timeZone} />
+          {content}
+        </div>
+      </AdminAnnouncementProvider>
     </div>
   );
 }

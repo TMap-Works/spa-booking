@@ -18,8 +18,14 @@ vi.mock('@/app/(admin)/[tenantSlug]/admin/catalogue/actions', () => ({
   updateServiceAction: (...args: unknown[]) => updateServiceAction(...args),
 }));
 
+// `usePathname` sert au fournisseur d'annonce du back-office (#1037), que ce
+// formulaire importe désormais. Il n'est pas monté ici — l'annonce se replie
+// alors sur le silence, et ces suites éprouvent le formulaire seul — mais le
+// double doit porter l'export, sous peine d'un « No export is defined on the
+// mock » au premier écran qui l'appellerait.
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push, refresh, replace: vi.fn() }),
+  usePathname: () => '/salon-des-lilas/admin/catalogue/nouveau',
 }));
 
 const categories: ServiceCategory[] = [
