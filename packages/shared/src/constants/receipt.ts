@@ -270,6 +270,18 @@ export function isValidLegalId(type: LegalIdType, value: string): boolean {
  */
 export const VAT_NUMBER_PATTERN = /^[A-Z]{2}[0-9A-Z]{8,13}$/;
 
+/**
+ * La borne haute d'un taux de taxe, en points de base — `10000` vaut 100 %.
+ *
+ * Écrite ici et non recopiée dans les deux schémas qui la portent : la colonne
+ * `tenants.tax_rate_bps` la tient déjà en base (`tenants_tax_rate_bps_check`), et
+ * un taux au-delà de 100 % n'est pas un taux. C'est la même valeur pour le
+ * réglage de l'établissement et pour la ventilation figée du ticket — deux
+ * écritures de « cent pour cent » auraient fini par diverger sur le seul cas
+ * intéressant, la borne elle-même.
+ */
+export const MAX_TAX_RATE_BPS = 10_000;
+
 /** `true` si `value` est un numéro de TVA acceptable. */
 export function isValidVatNumber(value: string): boolean {
   if (!VAT_NUMBER_PATTERN.test(value)) {

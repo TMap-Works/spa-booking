@@ -236,16 +236,14 @@ export type {
   SettleSaleRequest,
 } from './payment';
 
+// Les cinq schémas d'identité légale sont réexportés depuis `./tenant`, où ils
+// vivent depuis #913 — ce sont des colonnes de `tenants`. Les nommer ici sous
+// leur module d'origine aurait fait croire que le reçu les possède.
 export {
-  legalIdSchema,
-  legalIdTypeSchema,
-  legalNameSchema,
-  receiptFooterSchema,
   receiptIssuerSchema,
   receiptLineKindSchema,
   receiptLineSchema,
   receiptPartySchema,
-  receiptPrefixSchema,
   receiptRefundSchema,
   receiptSettlementSchema,
   receiptTaxLineSchema,
@@ -284,15 +282,22 @@ export type {
 } from './staff-portal';
 
 export {
+  legalIdSchema,
+  legalIdTypeSchema,
+  legalNameSchema,
   openingHoursEntrySchema,
   openingHoursOverlap,
   openingHoursSchema,
   postalAddressSchema,
   publicTenantSchema,
+  receiptFooterSchema,
+  receiptPrefixSchema,
   sortOpeningHours,
+  taxRateBpsSchema,
   tenantBookingSettingsSchema,
   tenantSchema,
   updateTenantRequestSchema,
+  vatNumberSchema,
 } from './tenant';
 export type {
   OpeningHoursEntry,

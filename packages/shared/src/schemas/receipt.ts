@@ -22,32 +22,33 @@ import { z } from 'zod';
 import { displayNameSchema, emailSchema, storedPhoneSchema, uuidSchema } from '../common/identifiers';
 import { moneySchema, nonNegativeMoneySchema } from '../common/money';
 import { timeZoneSchema, utcInstantSchema } from '../common/time';
-import {
-  LEGAL_ID_MAX_LENGTH,
-  LEGAL_ID_TYPES,
-  LEGAL_NAME_MAX_LENGTH,
-  RECEIPT_FOOTER_MAX_LENGTH,
-  RECEIPT_PREFIX_PATTERN,
-} from '../constants/receipt';
+import { MAX_TAX_RATE_BPS } from '../constants/receipt';
 import { counterPaymentMethodSchema } from './payment';
-import { postalAddressSchema } from './tenant';
+import {
+  legalIdSchema,
+  legalIdTypeSchema,
+  legalNameSchema,
+  postalAddressSchema,
+  receiptFooterSchema,
+} from './tenant';
 
-export const legalIdTypeSchema = z.enum(LEGAL_ID_TYPES);
-
-export const legalNameSchema = z.string().trim().min(1).max(LEGAL_NAME_MAX_LENGTH);
-
-export const legalIdSchema = z.string().trim().min(1).max(LEGAL_ID_MAX_LENGTH);
-
-export const receiptFooterSchema = z.string().trim().min(1).max(RECEIPT_FOOTER_MAX_LENGTH);
-
-/** Le préfixe de numérotation, normalisé en majuscules dès la lecture. */
-export const receiptPrefixSchema = z
-  .string()
-  .trim()
-  .toUpperCase()
-  .regex(RECEIPT_PREFIX_PATTERN, {
-    message: 'préfixe attendu : 2 à 8 lettres majuscules ou chiffres, sans tiret',
-  });
+/**
+ * Les cinq schémas d'identité légale vivent désormais dans `./tenant` — ce sont
+ * des colonnes de `tenants`, et ce fichier n'en est qu'un lecteur (#913).
+ *
+ * Réexportés ici, et non déplacés à la sauvette : ils font partie du contrat
+ * depuis #818, sous ces noms, et le baril comme les suites les importent de
+ * `./receipt`. Le déplacement était dicté par le sens de la dépendance —
+ * `receiptIssuerSchema` a besoin de `postalAddressSchema`, si bien que
+ * `./tenant` ne pouvait pas importer d'ici sans fermer un cycle.
+ */
+export {
+  legalIdSchema,
+  legalIdTypeSchema,
+  legalNameSchema,
+  receiptFooterSchema,
+  receiptPrefixSchema,
+} from './tenant';
 
 /**
  * L'émetteur de la pièce — le cinquième critère, « identité légale et
@@ -124,7 +125,7 @@ export type ReceiptLine = z.infer<typeof receiptLineSchema>;
  */
 export const receiptTaxLineSchema = z.object({
   /** Le taux, en points de base — `2000` vaut 20 % (jamais un flottant). */
-  rateBps: z.number().int().min(0).max(10_000),
+  rateBps: z.number().int().min(0).max(MAX_TAX_RATE_BPS),
   /** L'assiette hors taxe à laquelle ce taux s'applique. */
   base: nonNegativeMoneySchema,
   /** La taxe **comprise dans** les prix affichés de cette assiette. */
