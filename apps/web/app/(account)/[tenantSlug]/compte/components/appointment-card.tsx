@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react';
 import {
   appointmentTimeRange,
   PENDING_HOLD_NOTE,
+  RESCHEDULED_NOTE,
   type AppointmentBrief,
 } from '@/components/account/appointment-brief';
 import { Badge } from '@/components/ui/badge';
@@ -177,7 +178,7 @@ function statusNote(label: string, scope: AppointmentScope): string | null {
   }
 
   if (label === RESCHEDULED_LABEL) {
-    return 'Ce créneau a été libéré au profit d’un autre rendez-vous.';
+    return RESCHEDULED_NOTE;
   }
 
   return null;

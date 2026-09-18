@@ -51,6 +51,19 @@ export interface AppointmentBrief {
 export const PENDING_HOLD_NOTE = 'Votre créneau est retenu ; rien à faire de votre côté.';
 
 /**
+ * La phrase qui suit la pastille « Déplacé ».
+ *
+ * Même raison d'être que la précédente, et même exigence d'unicité : « Déplacé »
+ * est le seul mot de la table de statuts qui ne corresponde à aucun statut
+ * (`lib/appointment-status.ts`), et il ne dit pas de lui-même où est passé le
+ * rendez-vous. La carte compacte l'affichait déjà ; la liste d'historique la
+ * reprend depuis #1054, d'où la remontée du littéral ici plutôt qu'une seconde
+ * copie — c'est précisément ainsi que les libellés de statut avaient divergé sur
+ * trois écrans (#917).
+ */
+export const RESCHEDULED_NOTE = 'Ce créneau a été libéré au profit d’un autre rendez-vous.';
+
+/**
  * Le rendez-vous et les noms qui vont avec.
  *
  * La durée vient des bornes du **rendez-vous** et non de `durationMinutes` du
