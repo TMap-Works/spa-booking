@@ -424,6 +424,63 @@ describe('cinquième critère — marquer honoré et non honoré', () => {
 });
 
 /**
+ * La première marche du cycle de vie — #973.
+ *
+ * Le tiroir d'un rendez-vous « À confirmer » n'offrait que l'annulation, la
+ * fermeture et le report : aucun écran du back-office ne savait le confirmer.
+ * Comme le cycle de vie refuse `pending → completed`, un rendez-vous jamais
+ * confirmé ne pouvait jamais non plus être marqué honoré ni non honoré — la
+ * boucle « réserver → confirmer → honorer » (CDC §1.3) était coupée à son
+ * deuxième maillon, et le suivi des no-shows lui échappait.
+ *
+ * Ce qui est éprouvé ici est donc l'escalier entier : la marche offerte là où le
+ * contrat l'autorise, retirée là où elle n'a plus lieu d'être, et ce qu'elle
+ * envoie quand on la monte.
+ */
+describe('#973 — le salon confirme depuis le tiroir', () => {
+  /** Le rendez-vous tel qu'il naît : `pending`, quel que soit le guichet. */
+  const EN_ATTENTE: Appointment = { ...CONFIRME, status: 'pending' };
+
+  it('offre la confirmation sur un rendez-vous « À confirmer », et elle seule', () => {
+    renderPanel({ kind: 'edit', appointment: EN_ATTENTE });
+
+    expect(screen.getByRole('button', { name: 'Confirmer le rendez-vous' })).toBeDefined();
+    // Le solde reste hors d'atteinte tant que le salon n'a pas confirmé : l'API
+    // refuserait `pending → completed` en `INVALID_STATE_TRANSITION`, et un
+    // bouton qui mène à un 422 est un bouton qui ment.
+    expect(screen.queryByRole('button', { name: 'Marquer honoré' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Marquer non honoré' })).toBeNull();
+  });
+
+  it('ne l’offre plus une fois le rendez-vous confirmé, ni sur un rendez-vous soldé', () => {
+    renderPanel({ kind: 'edit', appointment: CONFIRME });
+    expect(screen.queryByRole('button', { name: 'Confirmer le rendez-vous' })).toBeNull();
+
+    cleanup();
+
+    renderPanel({ kind: 'edit', appointment: { ...CONFIRME, status: 'completed' } });
+    expect(screen.queryByRole('button', { name: 'Confirmer le rendez-vous' })).toBeNull();
+  });
+
+  it('envoie `confirmed` sur la route de statut, puis referme et relit le planning', async () => {
+    const user = userEvent.setup();
+    markDeskAppointmentStatusAction.mockResolvedValue({ ok: true, data: CONFIRME });
+
+    const { onReload, onClose } = renderPanel({ kind: 'edit', appointment: EN_ATTENTE });
+
+    await user.click(screen.getByRole('button', { name: 'Confirmer le rendez-vous' }));
+
+    await waitFor(() => {
+      expect(markDeskAppointmentStatusAction).toHaveBeenCalledWith(SLUG, EN_ATTENTE.id, {
+        status: 'confirmed',
+      });
+    });
+    expect(onReload).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
  * L'annulation par le salon — #754.
  *
  * Le tiroir invitait à « annuler et reposer le rendez-vous » sans offrir

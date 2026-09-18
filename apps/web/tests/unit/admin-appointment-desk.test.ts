@@ -135,10 +135,31 @@ describe('ce que le pied du tiroir propose', () => {
       'no_show',
     ]);
     // `pending → completed` n'est pas dans la table du contrat : un bouton qui y
-    // mènerait ne rendrait qu'un 422.
-    expect(deskStatusActions('pending')).toEqual([]);
+    // mènerait ne rendrait qu'un 422. La seule marche offerte depuis `pending`
+    // est donc la confirmation (#973).
+    expect(deskStatusActions('pending').map((action) => action.status)).toEqual(['confirmed']);
     expect(deskStatusActions('completed')).toEqual([]);
     expect(deskStatusActions('no_show')).toEqual([]);
+    expect(deskStatusActions('cancelled')).toEqual([]);
+  });
+
+  it('offre la confirmation sur un rendez-vous en attente — #973', () => {
+    // Le constat de l'audit `d20260917-2` : un rendez-vous « À confirmer »
+    // n'avait, dans tout le back-office, aucun bouton pour le confirmer, et ne
+    // pouvait donc jamais atteindre `completed` ni `no_show`.
+    expect(deskStatusActions('pending')).toEqual([
+      { status: 'confirmed', label: 'Confirmer le rendez-vous', variant: 'neutral' },
+    ]);
+  });
+
+  it('ne double jamais l’annulation, qui a sa propre route', () => {
+    // `cancelled` est dans `APPOINTMENT_STATUS_TRANSITIONS` depuis `pending` et
+    // depuis `confirmed`, mais il n'a pas d'entrée dans la table des libellés :
+    // l'annulation passe par `POST /appointments/:id/cancel` et sa confirmation
+    // en deux temps (#754), jamais par la route de statut.
+    for (const status of ['pending', 'confirmed'] as const) {
+      expect(deskStatusActions(status).map((action) => action.status)).not.toContain('cancelled');
+    }
   });
 
   it('ne laisse déplacer que ce qui n’est pas soldé', () => {

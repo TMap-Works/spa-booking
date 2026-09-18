@@ -12,11 +12,7 @@
  * première ligne du journal dit lequel des trois a cédé.
  */
 
-import {
-  changerStatut,
-  connecter,
-  trouverRendezVous,
-} from './support/api';
+import { connecter, trouverRendezVous } from './support/api';
 import { CLIENTE, COMPTES, chemins, dateDuSalon, heureDuSalon } from './support/environnement';
 import { assertAucunAppelStripe } from './support/stripe-garde';
 import {
@@ -25,6 +21,7 @@ import {
   expect,
   reserverParLeTunnel,
   test,
+  tiroir,
 } from './support/scene';
 
 test.describe('Parcours critique', () => {
@@ -39,7 +36,7 @@ test.describe('Parcours critique', () => {
 
     const jetonComptoir = await connecter(request, COMPTES.manager);
 
-    await test.step('Confirmer — le salon accepte le rendez-vous', async () => {
+    await test.step('Confirmer — le rendez-vous pris en ligne naît « en attente »', async () => {
       const avant = await trouverRendezVous(request, jetonComptoir, identifiant);
       expect(
         avant.status.toLowerCase(),
@@ -49,30 +46,46 @@ test.describe('Parcours critique', () => {
 
       dateSalon = dateDuSalon(new Date(avant.startsAt));
       heureSalon = heureDuSalon(new Date(avant.startsAt));
-
-      // Passage par la route et non par le tiroir : `DESK_STATUS_LABELS`
-      // n'expose que « Marquer honoré » et « Marquer non honoré », si bien
-      // qu'un rendez-vous en attente n'affiche aucun bouton de statut. Le manque
-      // est côté IHM, la route est servie — voir support/api.ts.
-      const apres = await changerStatut(request, jetonComptoir, identifiant, 'confirmed');
-      expect(apres.status.toLowerCase()).toBe('confirmed');
     });
 
-    await test.step('Confirmer — le comptoir voit le rendez-vous confirmé', async () => {
+    // Le bloc est désigné par son **heure**, et non pris au premier venu.
+    // Une reprise de `retries` rejoue le tunnel : la tentative précédente a
+    // laissé sa propre réservation, au nom de la même cliente et le plus
+    // souvent le même jour. Un `.first()` serait alors tombé sur elle — en
+    // attente, faute d'avoir été confirmée — et l'assertion aurait accusé le
+    // planning de ne pas voir une confirmation qui, elle, avait bien eu lieu.
+    // En vue jour, le libellé du bloc est « HH:MM – HH:MM » : le tiret est ce
+    // qui distingue une heure de début de l'heure de fin d'un voisin.
+    const blocDuJour = () =>
+      blocRendezVous(page, CLIENTE.nom).filter({ hasText: `${heureSalon} –` });
+
+    await test.step('Confirmer — le salon accepte depuis le tiroir', async () => {
       await connexionComptoir(page, COMPTES.manager);
       await page.goto(chemins.calendrier(dateSalon));
 
-      // Le bloc est désigné par son **heure**, et non pris au premier venu.
-      // Une reprise de `retries` rejoue le tunnel : la tentative précédente a
-      // laissé sa propre réservation, au nom de la même cliente et le plus
-      // souvent le même jour. Un `.first()` serait alors tombé sur elle — en
-      // attente, faute d'avoir été confirmée — et l'assertion aurait accusé le
-      // planning de ne pas voir une confirmation qui, elle, avait bien eu lieu.
-      // En vue jour, le libellé du bloc est « HH:MM – HH:MM » : le tiret est ce
-      // qui distingue une heure de début de l'heure de fin d'un voisin.
-      const bloc = blocRendezVous(page, CLIENTE.nom).filter({ hasText: `${heureSalon} –` });
+      const bloc = blocDuJour();
       await expect(bloc).toHaveCount(1, { timeout: 20_000 });
-      await expect(bloc).toHaveAccessibleName(/Statut : Confirmé/);
+      await bloc.click();
+
+      // Par l'IHM, et non plus par la route : `DESK_STATUS_LABELS` porte
+      // `confirmed` depuis #973, et le raccourci qui suppléait l'écran a donc
+      // été retiré — la règle de `support/api.ts`, déjà appliquée à
+      // l'annulation à #754. Le maillon « confirmer » de la boucle de valeur
+      // est ce que ce scénario existe pour éprouver : le traverser par l'API ne
+      // prouvait rien du comptoir.
+      const panneau = tiroir(page);
+      await expect(panneau).toBeVisible();
+      await panneau.getByRole('button', { name: 'Confirmer le rendez-vous' }).click();
+      await expect(panneau).toBeHidden({ timeout: 20_000 });
+    });
+
+    await test.step('Confirmer — le comptoir voit le rendez-vous confirmé', async () => {
+      await expect(blocDuJour()).toHaveAccessibleName(/Statut : Confirmé/, { timeout: 20_000 });
+
+      // Et l'API l'a bien inscrit : la pastille du planning dit ce que l'écran
+      // a lu, la relecture dit ce que le clic a écrit.
+      const apres = await trouverRendezVous(request, jetonComptoir, identifiant);
+      expect(apres.status.toLowerCase()).toBe('confirmed');
     });
 
     await test.step('Encaisser — régler la prestation en espèces au comptoir', async () => {
