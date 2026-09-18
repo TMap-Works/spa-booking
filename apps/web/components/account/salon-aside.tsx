@@ -2,8 +2,8 @@ import type { PublicTenant } from '@spa/shared';
 
 import { directionsUrl } from '@/components/account/appointment-brief';
 import { formatOpeningRange, groupOpeningHoursByDay } from '@/components/salon/opening-hours';
+import { addressLines } from '@/components/salon/salon-address';
 import { telUri } from '@/components/salon/salon-contact';
-import { addressLines } from '@/components/salon/salon-info';
 import { Avatar } from '@/components/ui/avatar';
 import { Icon } from '@/components/ui/icon';
 

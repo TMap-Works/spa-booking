@@ -7,7 +7,7 @@ import type {
   UtcInstant,
 } from '@spa/shared';
 
-import { addressLines } from '@/components/salon/salon-info';
+import { addressLines } from '@/components/salon/salon-address';
 import { formatTimeInTimeZone } from '@/lib/format';
 
 /**
