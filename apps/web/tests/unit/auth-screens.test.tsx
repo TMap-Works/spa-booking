@@ -85,15 +85,19 @@ describe('espace client, sans session', () => {
     return container;
   }
 
-  it('accueille dans le cadre : le salon, l’espace, puis l’écran', async () => {
+  it('sert l’écran dans le gabarit du salon, sans cadre à lui (#1052)', async () => {
     const page = await rendre();
 
-    const cadre = page.querySelector<HTMLElement>('.spa-auth--client');
-    expect(cadre).not.toBeNull();
-    // Le nom du salon est aussi dans l'en-tête et le pied du gabarit (#1045) :
-    // c'est dans le cadre qu'on le cherche.
-    expect(within(cadre as HTMLElement).getByText(tenant.name)).toBeDefined();
-    expect(screen.getByRole('heading', { level: 1, name: 'Mon compte' })).toBeDefined();
+    // Le gabarit porte l'identité du salon — en-tête et pied (#1045).
+    const entete = page.querySelector<HTMLElement>('header.spa-shell__header');
+    expect(within(entete as HTMLElement).getByText(tenant.name)).toBeDefined();
+
+    // Le cadre d'accueil, lui, n'est plus posé ici : son titre nomme l'écran
+    // autant que le salon (« Bienvenue chez … » / « Créez votre compte … »), et
+    // un layout de l'App Router ne sait pas quelle route il enveloppe. Chaque
+    // page le porte désormais — voir `salon-auth-screen.test.tsx`.
+    expect(page.querySelector('.spa-auth')).toBeNull();
+    expect(screen.queryByRole('heading', { level: 1 })).toBeNull();
 
     // L'écran reste servi, dans le repère du contenu que le lien d'évitement vise.
     const main = page.querySelector('main#contenu');

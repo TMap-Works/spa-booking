@@ -10,6 +10,7 @@ import { useForm } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification, type NotificationTone } from '@/components/ui/notification';
+import { PasswordField } from '@/components/ui/password-field';
 import type { SessionNotice } from '@/lib/session-refresh';
 
 import { loginAction } from '../actions';
@@ -141,10 +142,16 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
           error={errors.email?.message}
           {...register('email')}
         />
-        <Field
+        {/*
+          `PasswordField` (#1044) et non un `Field type="password"` : WCAG 2.2,
+          3.3.8 tient l'authentification pour accessible dès lors qu'on peut
+          **voir** ce qu'on tape et le coller. Le bouton « Afficher / Masquer »
+          est un vrai bouton, donc atteint et actionné au clavier, et rien
+          n'entrave le collage depuis un gestionnaire de mots de passe.
+        */}
+        <PasswordField
           id="login-password"
           label="Mot de passe"
-          type="password"
           autoComplete="current-password"
           required
           error={errors.password?.message}

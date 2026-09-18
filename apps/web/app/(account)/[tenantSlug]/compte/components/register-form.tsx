@@ -1,7 +1,7 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ERROR_CODES, phoneSchema, registerRequestSchema } from '@spa/shared';
+import { ERROR_CODES, PASSWORD_MIN_LENGTH, phoneSchema, registerRequestSchema } from '@spa/shared';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { Notification } from '@/components/ui/notification';
+import { PasswordField } from '@/components/ui/password-field';
 import { ACCOUNT_CONSENT, ConsentField, consentSchema } from '@/lib/booking/consent';
 
 import { registerAction } from '../actions';
@@ -49,6 +50,21 @@ const registerFormSchema = registerRequestSchema.extend({
 
 type RegisterFormValues = z.input<typeof registerFormSchema>;
 
+/**
+ * Le critère de longueur, dit au présent et coché en direct (#1052).
+ *
+ * L'audit `d20260918-1` relève qu'« aucun bouton pour afficher le mot de passe »
+ * et qu'on n'apprend la longueur exigée qu'en échouant. La phrase est portée par
+ * le `hint` de `PasswordField`, donc par l'`aria-describedby` du champ : un
+ * lecteur d'écran l'annonce en y arrivant, et la relit quand elle change. Un
+ * texte posé à côté du champ ne l'aurait pas été.
+ *
+ * La longueur vient du contrat (`PASSWORD_MIN_LENGTH`) et n'est pas recopiée :
+ * la relever un jour ne doit pas laisser cet écran promettre l'ancienne.
+ */
+const PASSWORD_RULE_PENDING = `${String(PASSWORD_MIN_LENGTH)} caractères au minimum.`;
+const PASSWORD_RULE_MET = `${String(PASSWORD_MIN_LENGTH)} caractères : c’est bon.`;
+
 interface RegisterFormProps {
   readonly tenantSlug: string;
 }
@@ -60,6 +76,7 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<RegisterFormValues, unknown, z.output<typeof registerFormSchema>>({
     resolver: zodResolver(registerFormSchema),
@@ -97,6 +114,10 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
     mode: 'onSubmit',
     reValidateMode: 'onChange',
   });
+
+  // `watch` rend le critère vivant : il se coche à la frappe, sans attendre une
+  // soumission ni la perte du focus.
+  const passwordRuleMet = (watch('password') ?? '').length >= PASSWORD_MIN_LENGTH;
 
   const submit = handleSubmit(async (values) => {
     setFailure(null);
@@ -140,22 +161,31 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
       )}
 
       <form className="spa-account__form" onSubmit={(event) => void submit(event)} noValidate>
-        <Field
-          id="register-first-name"
-          label="Prénom"
-          autoComplete="given-name"
-          required
-          error={errors.firstName?.message}
-          {...register('firstName')}
-        />
-        <Field
-          id="register-last-name"
-          label="Nom"
-          autoComplete="family-name"
-          required
-          error={errors.lastName?.message}
-          {...register('lastName')}
-        />
+        {/*
+          Prénom et nom côte à côte dès 30 rem (#1052) : deux champs courts, de
+          même nature, remplis d'un même geste. Empilés, ils coûtaient 150 px
+          d'un écran de téléphone où le bouton tombait déjà à 1 290 px. Sous le
+          palier, la rangée retombe en colonne — deux champs de 90 px de large ne
+          se remplissent pas.
+        */}
+        <div className="spa-account__form-row">
+          <Field
+            id="register-first-name"
+            label="Prénom"
+            autoComplete="given-name"
+            required
+            error={errors.firstName?.message}
+            {...register('firstName')}
+          />
+          <Field
+            id="register-last-name"
+            label="Nom"
+            autoComplete="family-name"
+            required
+            error={errors.lastName?.message}
+            {...register('lastName')}
+          />
+        </div>
         <Field
           id="register-email"
           label="Adresse e-mail"
@@ -175,16 +205,24 @@ export function RegisterForm({ tenantSlug }: RegisterFormProps) {
           error={errors.phone?.message}
           {...register('phone')}
         />
-        <Field
-          id="register-password"
-          label="Mot de passe"
-          type="password"
-          autoComplete="new-password"
-          required
-          hint="Douze caractères au minimum."
-          error={errors.password?.message}
-          {...register('password')}
-        />
+        {/*
+          Le critère se coche à la frappe : `data-met` porte l'état, la feuille
+          de style colore la phrase et pose la coche. La couleur ne porte jamais
+          l'information seule — c'est le texte lui-même qui change (« … au
+          minimum. » / « … : c'est bon. »), et c'est lui que le champ référence
+          par `aria-describedby`.
+        */}
+        <div className="spa-account__password-rule" data-met={passwordRuleMet}>
+          <PasswordField
+            id="register-password"
+            label="Mot de passe"
+            autoComplete="new-password"
+            required
+            hint={passwordRuleMet ? PASSWORD_RULE_MET : PASSWORD_RULE_PENDING}
+            error={errors.password?.message}
+            {...register('password')}
+          />
+        </div>
 
         {/* Même bloc, même texte de base et même règle que l'étape
             « Coordonnées » du tunnel : une cliente passe de l'un à l'autre sans
