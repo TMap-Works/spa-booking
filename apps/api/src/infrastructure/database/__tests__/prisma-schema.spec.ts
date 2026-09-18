@@ -52,6 +52,7 @@ const TENANT_ROOT_TABLE = 'tenants';
 const PLATFORM_TABLES: ReadonlySet<string> = new Set([
   'platform_operators',
   'platform_tenant_provisionings',
+  'platform_tenant_events',
 ]);
 
 /** Une table exemptée de `tenant_id` — la racine, ou l'espace plateforme. */
@@ -179,6 +180,7 @@ const EXPECTED_TABLES = [
   // L'espace plateforme (#806) — voir `PLATFORM_TABLES` ci-dessus et l'ADR 0012.
   'platform_operators',
   'platform_tenant_provisionings',
+  'platform_tenant_events',
 ] as const;
 
 interface Column {

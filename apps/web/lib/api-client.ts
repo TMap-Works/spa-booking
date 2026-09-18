@@ -34,7 +34,11 @@ import {
   authenticatedAccountSchema,
   billingRedirectSchema,
   tenantBillingSchema,
+  platformOverviewSchema,
   platformSessionSchema,
+  platformTenantDetailSchema,
+  platformTenantEventSchema,
+  platformTenantSchema,
   platformTenantPageSchema,
   provisionedTenantSchema,
   reissuedTenantInvitationSchema,
@@ -87,7 +91,13 @@ import {
   type Notification as NotificationTrace,
   type PlatformLoginRequest,
   type PlatformSession,
+  type PlatformOverview,
+  type PlatformTenant,
+  type PlatformTenantDetail,
+  type PlatformTenantEvent,
+  type PlatformTenantListQuery,
   type PlatformTenantPage,
+  type UpdateTenantStatusRequest,
   type ProvisionedTenant,
   type PublicService,
   type PublicTenant,
@@ -2067,12 +2077,30 @@ export async function loginPlatformOperator(
   return payload;
 }
 
-/** Les établissements de la plateforme, les plus récents d'abord. */
+/**
+ * Les établissements de la plateforme, les plus récents d'abord — filtrés par
+ * un terme, un statut de facturation, un état. Les filtres absents ne partent
+ * pas : l'API les tient pour « tous ».
+ */
 export async function fetchPlatformTenants(
   accessToken: string,
-  page: number,
+  filters: PlatformTenantListQuery = {},
 ): Promise<PlatformTenantPage> {
-  const query = new URLSearchParams({ page: String(page) });
+  const query = new URLSearchParams({ page: String(filters.page ?? 1) });
+
+  if (filters.pageSize !== undefined) {
+    query.set('pageSize', String(filters.pageSize));
+  }
+  if (filters.q !== undefined && filters.q !== '') {
+    query.set('q', filters.q);
+  }
+  if (filters.billingStatus !== undefined) {
+    query.set('billingStatus', filters.billingStatus);
+  }
+  if (filters.state !== undefined) {
+    query.set('state', filters.state);
+  }
+
   const { payload } = await authorizedRequest({
     method: 'GET',
     path: `/platform/tenants?${query.toString()}`,
@@ -2102,6 +2130,67 @@ export async function provisionTenant(
     headers: { 'idempotency-key': idempotencyKey },
     body,
     schema: provisionedTenantSchema,
+  });
+
+  return payload;
+}
+
+/** La vue d'ensemble de la plateforme — revenu, statuts, essais, ouvertures, activation. */
+export async function fetchPlatformOverview(accessToken: string): Promise<PlatformOverview> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: '/platform/overview',
+    accessToken,
+    schema: platformOverviewSchema,
+  });
+
+  return payload;
+}
+
+/** La fiche d'un salon — mise en route, activité en nombres, comptes internes, historique. */
+export async function fetchPlatformTenantDetail(
+  accessToken: string,
+  tenantId: string,
+): Promise<PlatformTenantDetail> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/platform/tenants/${encodeURIComponent(tenantId)}`,
+    accessToken,
+    schema: platformTenantDetailSchema,
+  });
+
+  return payload;
+}
+
+/** Ajoute une note interne à l'historique d'un salon. */
+export async function addPlatformTenantNote(
+  accessToken: string,
+  tenantId: string,
+  body: string,
+): Promise<PlatformTenantEvent> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: `/platform/tenants/${encodeURIComponent(tenantId)}/notes`,
+    accessToken,
+    body: { body },
+    schema: platformTenantEventSchema,
+  });
+
+  return payload;
+}
+
+/** Suspend ou réactive un salon, motif à l'appui. */
+export async function updatePlatformTenantStatus(
+  accessToken: string,
+  tenantId: string,
+  request: UpdateTenantStatusRequest,
+): Promise<PlatformTenant> {
+  const { payload } = await authorizedRequest({
+    method: 'PUT',
+    path: `/platform/tenants/${encodeURIComponent(tenantId)}/status`,
+    accessToken,
+    body: request,
+    schema: platformTenantSchema,
   });
 
   return payload;

@@ -1,14 +1,28 @@
 import { ApiProperty, ApiPropertyOptional, PickType } from '@nestjs/swagger';
 import {
   DNS_LABEL_PATTERN,
+  PLATFORM_NOTE_MAX_LENGTH,
+  PLATFORM_STATUS_REASON_MAX_LENGTH,
+  PLATFORM_STATUS_REASON_MIN_LENGTH,
+  PLATFORM_TENANT_EVENT_KINDS,
+  PLATFORM_TENANT_ORIGINS,
+  PLATFORM_TENANT_SEARCH_MAX_LENGTH,
+  PLATFORM_TENANT_STATES,
   SLUG_MAX_LENGTH,
   TENANT_BILLING_STATUSES,
+  type PlatformOverview,
+  type PlatformTenantDetail,
+  type PlatformTenantEvent,
+  type PlatformTenantOrigin,
+  type PlatformTenantState,
   type TenantBillingStatus,
   isValidTimeZone,
 } from '@spa/shared';
 import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEmail,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -25,10 +39,14 @@ import {
 import {
   PLATFORM_PASSWORD_MAX_LENGTH,
   PLATFORM_PASSWORD_MIN_LENGTH,
+  type PlatformOverviewView,
   type PlatformSession,
   type ProvisionedTenant,
   type ReissuedTenantInvitation,
   type TenantAccessLinks,
+  type TenantDetailView,
+  type TenantEventRecord,
+  type TenantListQuery,
   type TenantPage,
   type TenantSummary,
 } from '../platform.types';
@@ -379,6 +397,14 @@ export class TenantSummaryDto implements Omit<TenantSummary, 'createdAt' | 'tria
 
   @ApiProperty({ format: 'date-time', description: 'Instant d’ouverture, en UTC.' })
   public createdAt!: string;
+
+  @ApiProperty({
+    enum: PLATFORM_TENANT_ORIGINS,
+    description:
+      '`console` : ouvert par l’éditeur ; `signup` : inscrit en libre-service ; ' +
+      '`legacy` : antérieur à la console (seed, jeu d’essai).',
+  })
+  public origin!: PlatformTenantOrigin;
 }
 
 /** Le compte administrateur ouvert avec l'établissement. */
@@ -486,11 +512,39 @@ export class ListTenantsQueryDto {
   // `?pageSize=100000` est un déni de service à une requête.
   @Max(MAX_PAGE_SIZE)
   public pageSize?: number;
+
+  @ApiPropertyOptional({
+    maxLength: PLATFORM_TENANT_SEARCH_MAX_LENGTH,
+    description:
+      'Cherche dans le nom, l’adresse, l’e-mail de contact et l’e-mail des gérants ' +
+      'et administrateurs. Insensible à la casse.',
+  })
+  @IsOptional()
+  @Trim()
+  @IsString()
+  @MaxLength(PLATFORM_TENANT_SEARCH_MAX_LENGTH)
+  public q?: string;
+
+  @ApiPropertyOptional({ enum: TENANT_BILLING_STATUSES })
+  @IsOptional()
+  @IsIn(TENANT_BILLING_STATUSES, { message: 'billingStatus : statut de facturation inconnu' })
+  public billingStatus?: TenantBillingStatus;
+
+  @ApiPropertyOptional({ enum: PLATFORM_TENANT_STATES })
+  @IsOptional()
+  @IsIn(PLATFORM_TENANT_STATES, { message: 'state : « active » ou « suspended » attendu' })
+  public state?: PlatformTenantState;
 }
 
-/** Les valeurs par défaut de la pagination, appliquées une fois. */
-export function toTenantPageQuery(dto: ListTenantsQueryDto): { page: number; pageSize: number } {
-  return { page: dto.page ?? 1, pageSize: dto.pageSize ?? DEFAULT_PAGE_SIZE };
+/** Les valeurs par défaut de la pagination, appliquées une fois ; un terme vide ne filtre pas. */
+export function toTenantPageQuery(dto: ListTenantsQueryDto): TenantListQuery {
+  return {
+    page: dto.page ?? 1,
+    pageSize: dto.pageSize ?? DEFAULT_PAGE_SIZE,
+    ...(dto.q === undefined || dto.q === '' ? {} : { q: dto.q }),
+    ...(dto.billingStatus === undefined ? {} : { billingStatus: dto.billingStatus }),
+    ...(dto.state === undefined ? {} : { state: dto.state }),
+  };
 }
 
 /** Un établissement, mis en forme pour la réponse — l'instant en ISO 8601 UTC. */
@@ -505,6 +559,7 @@ export function toTenantSummaryDto(tenant: TenantSummary): TenantSummaryDto {
     billingStatus: tenant.billingStatus,
     trialEndsAt: tenant.trialEndsAt === null ? null : tenant.trialEndsAt.toISOString(),
     createdAt: tenant.createdAt.toISOString(),
+    origin: tenant.origin,
   };
 }
 
@@ -526,5 +581,297 @@ export function toProvisionedTenantDto(provisioned: ProvisionedTenant): Provisio
     admin: { ...provisioned.admin },
     links: { ...provisioned.links },
     replayed: provisioned.replayed,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Tableau de bord et fiche salon
+// ---------------------------------------------------------------------------
+
+/**
+ * Une note interne — `POST /platform/tenants/:id/notes`.
+ *
+ * Élaguée avant d'être jugée : une note faite d'espaces est une note vide.
+ */
+export class CreatePlatformNoteDto {
+  @ApiProperty({ maxLength: PLATFORM_NOTE_MAX_LENGTH, example: 'Relancée par téléphone le 18/09.' })
+  @Trim()
+  @IsString()
+  @MinLength(1, { message: 'body : la note est vide' })
+  @MaxLength(PLATFORM_NOTE_MAX_LENGTH)
+  public body!: string;
+}
+
+/**
+ * Suspendre ou réactiver un salon — `PUT /platform/tenants/:id/status`.
+ *
+ * Le motif est obligatoire dans les deux sens : c'est lui que l'historique
+ * garde.
+ */
+export class UpdateTenantStatusDto {
+  @ApiProperty({ description: '`false` suspend le salon, `true` le réactive.' })
+  @IsBoolean({ message: 'isActive : booléen attendu' })
+  public isActive!: boolean;
+
+  @ApiProperty({
+    minLength: PLATFORM_STATUS_REASON_MIN_LENGTH,
+    maxLength: PLATFORM_STATUS_REASON_MAX_LENGTH,
+    example: 'Impayé depuis 30 jours, gérant injoignable.',
+  })
+  @Trim()
+  @IsString()
+  @MinLength(PLATFORM_STATUS_REASON_MIN_LENGTH, { message: 'reason : indiquez le motif' })
+  @MaxLength(PLATFORM_STATUS_REASON_MAX_LENGTH)
+  public reason!: string;
+}
+
+class MoneyAmountDto {
+  @ApiProperty({ example: 2900, description: 'Plus petite unité monétaire — jamais un flottant.' })
+  public amountMinor!: number;
+
+  @ApiProperty({ example: 'EUR' })
+  public currency!: string;
+}
+
+class OverviewTenantsDto {
+  @ApiProperty()
+  public total!: number;
+
+  @ApiProperty({ description: 'Salons suspendus par l’éditeur.' })
+  public suspended!: number;
+
+  @ApiProperty({
+    description: 'Nombre de salons par statut de facturation — les six statuts, zéro compris.',
+    example: { managed: 3, pending: 1, trialing: 4, active: 12, past_due: 1, canceled: 2 },
+  })
+  public byBillingStatus!: Record<TenantBillingStatus, number>;
+}
+
+class OverviewRevenueDto {
+  @ApiProperty({ type: MoneyAmountDto, description: 'Salons abonnés × tarif mensuel.' })
+  public monthlyRecurring!: MoneyAmountDto;
+
+  @ApiProperty({ type: MoneyAmountDto, description: 'Salons en impayé × tarif mensuel.' })
+  public atRisk!: MoneyAmountDto;
+
+  @ApiProperty({ type: MoneyAmountDto, description: 'Salons en essai × tarif mensuel.' })
+  public inTrial!: MoneyAmountDto;
+}
+
+class SignupWeekDto {
+  @ApiProperty({ example: '2026-09-14', description: 'Le lundi de la semaine, en UTC.' })
+  public weekStart!: string;
+
+  @ApiProperty()
+  public console!: number;
+
+  @ApiProperty()
+  public signup!: number;
+}
+
+class ActivationDto {
+  @ApiProperty({ description: 'Salons ouverts — hors inscriptions non payées.' })
+  public opened!: number;
+
+  @ApiProperty({ description: 'Avec au moins une prestation et un praticien actifs.' })
+  public configured!: number;
+
+  @ApiProperty({ description: 'Avec au moins un rendez-vous, depuis toujours.' })
+  public booked!: number;
+
+  @ApiProperty({ description: 'Avec au moins un rendez-vous pris dans les 30 derniers jours.' })
+  public activeLast30Days!: number;
+}
+
+/** La vue d'ensemble de la plateforme — `GET /platform/overview`. */
+export class PlatformOverviewDto {
+  @ApiProperty({ format: 'date-time' })
+  public generatedAt!: string;
+
+  @ApiProperty({ type: OverviewTenantsDto })
+  public tenants!: OverviewTenantsDto;
+
+  @ApiProperty({ type: OverviewRevenueDto })
+  public revenue!: OverviewRevenueDto;
+
+  @ApiProperty({ type: [TenantSummaryDto] })
+  public trialsEndingSoon!: TenantSummaryDto[];
+
+  @ApiProperty({ type: [SignupWeekDto] })
+  public signupsByWeek!: SignupWeekDto[];
+
+  @ApiProperty({ type: ActivationDto })
+  public activation!: ActivationDto;
+
+  @ApiProperty({ type: [TenantSummaryDto] })
+  public recent!: TenantSummaryDto[];
+}
+
+/** Une ligne de l'historique d'un salon. */
+export class PlatformTenantEventDto {
+  @ApiProperty()
+  public id!: string;
+
+  @ApiProperty({ enum: PLATFORM_TENANT_EVENT_KINDS })
+  public kind!: PlatformTenantEvent['kind'];
+
+  @ApiProperty({ nullable: true, type: String })
+  public body!: string | null;
+
+  @ApiProperty({ nullable: true, type: String, example: 'Alice D.' })
+  public operatorName!: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  public createdAt!: string;
+}
+
+class TenantAccountDto {
+  @ApiProperty()
+  public id!: string;
+
+  @ApiProperty()
+  public firstName!: string;
+
+  @ApiProperty()
+  public lastName!: string;
+
+  @ApiProperty()
+  public email!: string;
+
+  @ApiProperty({ enum: ['staff', 'manager', 'admin'] })
+  public role!: 'staff' | 'manager' | 'admin';
+
+  @ApiProperty()
+  public isActive!: boolean;
+
+  @ApiProperty({ description: 'L’invitation a été acceptée : un mot de passe est posé.' })
+  public activated!: boolean;
+
+  @ApiProperty({ format: 'date-time', nullable: true, type: String })
+  public lastLoginAt!: string | null;
+
+  @ApiProperty({ format: 'date-time' })
+  public createdAt!: string;
+}
+
+/** La fiche d'un salon — `GET /platform/tenants/:id`. Le schéma complet vit dans `@spa/shared`. */
+export class PlatformTenantDetailDto {
+  @ApiProperty({ type: TenantSummaryDto })
+  public tenant!: TenantSummaryDto;
+
+  @ApiProperty({ description: 'Coordonnées de contact du salon.' })
+  public contact!: PlatformTenantDetail['contact'];
+
+  @ApiProperty({ nullable: true, description: 'Adresse postale, ou `null` si non saisie.' })
+  public address!: PlatformTenantDetail['address'];
+
+  @ApiProperty({ nullable: true, type: String })
+  public legalName!: string | null;
+
+  @ApiProperty({ description: 'Statut, fin d’essai, fin de période et client Stripe.' })
+  public billing!: PlatformTenantDetail['billing'];
+
+  @ApiProperty({ description: 'Vitrine et back-office — jamais le lien d’activation.' })
+  public links!: PlatformTenantDetail['links'];
+
+  @ApiProperty({ type: [TenantAccountDto] })
+  public accounts!: TenantAccountDto[];
+
+  @ApiProperty({ description: 'Nombre de comptes clients — jamais leur liste.' })
+  public clientCount!: number;
+
+  @ApiProperty({ description: 'Où en est la mise en route du salon.' })
+  public setup!: PlatformTenantDetail['setup'];
+
+  @ApiProperty({ description: 'Trente jours d’activité, en nombres.' })
+  public activity!: PlatformTenantDetail['activity'];
+
+  @ApiProperty({ type: [PlatformTenantEventDto] })
+  public events!: PlatformTenantEventDto[];
+}
+
+function isoOrNull(instant: Date | null): string | null {
+  return instant === null ? null : instant.toISOString();
+}
+
+/** Une ligne d'historique, mise en forme pour la réponse. */
+export function toPlatformTenantEventDto(event: TenantEventRecord): PlatformTenantEvent {
+  return {
+    id: event.id,
+    kind: event.kind,
+    body: event.body,
+    operatorName: event.operatorName,
+    createdAt: event.createdAt.toISOString(),
+  };
+}
+
+/** La vue d'ensemble, mise en forme pour la réponse — le type du contrat en garantit la forme. */
+export function toPlatformOverviewDto(view: PlatformOverviewView): PlatformOverview {
+  return {
+    generatedAt: view.generatedAt.toISOString(),
+    tenants: {
+      total: view.tenants.total,
+      suspended: view.tenants.suspended,
+      byBillingStatus: { ...view.tenants.byBillingStatus },
+    },
+    revenue: {
+      monthlyRecurring: { ...view.revenue.monthlyRecurring },
+      atRisk: { ...view.revenue.atRisk },
+      inTrial: { ...view.revenue.inTrial },
+    },
+    trialsEndingSoon: view.trialsEndingSoon.map(toTenantSummaryDto),
+    signupsByWeek: view.signupsByWeek.map((week) => ({ ...week })),
+    activation: { ...view.activation },
+    recent: view.recent.map(toTenantSummaryDto),
+  };
+}
+
+/** La fiche d'un salon, mise en forme pour la réponse. */
+export function toPlatformTenantDetailDto(view: TenantDetailView): PlatformTenantDetail {
+  const { record } = view;
+
+  return {
+    tenant: toTenantSummaryDto(record.summary),
+    contact: { email: record.contactEmail, phone: record.contactPhone },
+    address: record.address === null ? null : { ...record.address },
+    legalName: record.legalName,
+    billing: {
+      status: record.summary.billingStatus,
+      trialEndsAt: isoOrNull(record.summary.trialEndsAt),
+      currentPeriodEndsAt: isoOrNull(record.currentPeriodEndsAt),
+      stripeCustomerId: record.stripeCustomerId,
+    },
+    links: { ...view.links },
+    accounts: view.accounts.map((account) => ({
+      id: account.id,
+      firstName: account.firstName,
+      lastName: account.lastName,
+      email: account.email,
+      role: account.role,
+      isActive: account.isActive,
+      activated: account.activated,
+      lastLoginAt: isoOrNull(account.lastLoginAt),
+      createdAt: account.createdAt.toISOString(),
+    })),
+    clientCount: view.clientCount,
+    setup: {
+      adminActivated: view.setup.adminActivated,
+      address: view.setup.address,
+      legalIdentity: view.setup.legalIdentity,
+      openingHours: view.setup.openingHours,
+      activeServices: view.setup.activeServices,
+      activeStaff: view.setup.activeStaff,
+      staffWithSchedule: view.setup.staffWithSchedule,
+      firstAppointmentAt: isoOrNull(view.setup.firstAppointmentAt),
+    },
+    activity: {
+      createdLast30Days: view.activity.createdLast30Days,
+      upcoming: view.activity.upcoming,
+      completedLast30Days: view.activity.completedLast30Days,
+      noShowLast30Days: view.activity.noShowLast30Days,
+      cancelledLast30Days: view.activity.cancelledLast30Days,
+      lastBookingAt: isoOrNull(view.activity.lastBookingAt),
+    },
+    events: view.events.map(toPlatformTenantEventDto),
   };
 }

@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Maquette — Console de l’éditeur</title>
+    <link rel="stylesheet" href="../../styles/index.css" />
+    <link rel="stylesheet" href="../../styles/admin/index.css" />
+  </head>
+  <body>
+    <!--
+      Console de l'éditeur — #1093.
+
+      Trois écrans en un : le tableau de bord (revenu, essais, ouvertures,
+      activation), la liste filtrée des salons, et la fiche d'un salon (mise en
+      route, activité en nombres, comptes, historique, suspension). Elle exerce
+      chaque règle de `styles/admin/platform-console.css`, états de chargement
+      et vide compris.
+
+      Des agrégats seulement (ADR 0012) : aucun rendez-vous, aucune cliente,
+      aucun montant encaissé par un salon n'y figure.
+    -->
+    <div class="spa-admin">
+      <nav class="spa-admin__rail" aria-label="Sections de la console">
+        <span class="spa-admin__brand">Spa &amp; Salon Booking</span>
+        <div class="spa-admin__nav">
+          <a class="spa-admin__nav-link" href="console.html" aria-current="page">Tableau de bord</a>
+          <a class="spa-admin__nav-link" href="#console-liste">Salons</a>
+          <a class="spa-admin__nav-link" href="#console-fiche">Ouvrir un salon</a>
+        </div>
+        <div class="spa-admin__rail-footer">
+          <strong>Console plateforme</strong>
+          <span>Session de 30 minutes</span>
+        </div>
+      </nav>
+
+      <div class="spa-admin__main">
+        <main class="spa-admin__content" id="contenu">
+          <!-- TABLEAU DE BORD -->
+          <section class="spa-admin-dashboard" aria-labelledby="console-titre">
+            <header class="spa-admin-dashboard__hero">
+              <div class="spa-admin-dashboard__greeting">
+                <span class="spa-admin-dashboard__eyebrow">Console plateforme</span>
+                <h1 class="spa-admin__title" id="console-titre">Vue d’ensemble</h1>
+                <p class="spa-admin-dashboard__lead">24 salons ouverts · état au 18 septembre 2026 à 20:15</p>
+              </div>
+              <div class="spa-admin-dashboard__hero-actions">
+                <a class="spa-button spa-button--neutral" href="#console-liste">Tous les salons</a>
+                <a class="spa-button spa-button--accent" href="#console-fiche">Ouvrir un salon</a>
+              </div>
+            </header>
+
+            <div class="spa-admin-dashboard__kpis">
+              <div class="spa-admin-metric spa-admin-dashboard__kpi spa-admin-dashboard__kpi--accent">
+                <span class="spa-admin-dashboard__kpi-head">
+                  <span class="spa-admin-dashboard__kpi-label">Revenu mensuel récurrent</span>
+                </span>
+                <span class="spa-admin-metric__value">348,00 €</span>
+                <span class="spa-admin-metric__label">12 salons abonnés</span>
+              </div>
+              <div class="spa-admin-metric spa-admin-dashboard__kpi spa-admin-dashboard__kpi--success">
+                <span class="spa-admin-dashboard__kpi-head">
+                  <span class="spa-admin-dashboard__kpi-label">Essais en cours</span>
+                </span>
+                <span class="spa-admin-metric__value">5</span>
+                <span class="spa-admin-metric__label">145,00 € / mois à convertir · 2 sous 7 jours</span>
+              </div>
+              <div class="spa-admin-metric spa-admin-dashboard__kpi spa-admin-dashboard__kpi--warning">
+                <span class="spa-admin-dashboard__kpi-head">
+                  <span class="spa-admin-dashboard__kpi-label">Impayés</span>
+                </span>
+                <span class="spa-admin-metric__value">1</span>
+                <span class="spa-admin-metric__label">29,00 € / mois à risque</span>
+              </div>
+              <div class="spa-admin-metric spa-admin-dashboard__kpi spa-admin-dashboard__kpi--danger">
+                <span class="spa-admin-dashboard__kpi-head">
+                  <span class="spa-admin-dashboard__kpi-label">Salons suspendus</span>
+                </span>
+                <span class="spa-admin-metric__value">1</span>
+                <span class="spa-admin-metric__label">2 résiliés · 1 paiement en attente</span>
+              </div>
+            </div>
+
+            <div class="spa-admin-dashboard__grid">
+              <div class="spa-admin-dashboard__side">
+                <section class="spa-admin__section" aria-labelledby="console-ouvertures">
+                  <div class="spa-admin-dashboard__section-head">
+                    <h2 class="spa-admin__section-title" id="console-ouvertures">Ouvertures — 12 dernières semaines</h2>
+                  </div>
+                  <figure class="spa-console-weeks">
+                    <ol class="spa-console-weeks__bars" aria-label="Ouvertures de salons par semaine" role="list">
+                      <li class="spa-console-weeks__bar">
+                        <span class="spa-console-weeks__value">1</span>
+                        <span class="spa-console-weeks__track" aria-hidden="true">
+                          <span class="spa-console-weeks__fill spa-console-weeks__fill--signup"></span>
+                          <span class="spa-console-weeks__fill spa-console-weeks__fill--console"></span>
+                        </span>
+                        <span class="spa-console-weeks__label" aria-hidden="true">29 juin</span>
+                      </li>
+                      <li class="spa-console-weeks__bar">
+                        <span class="spa-console-weeks__value">4</span>
+                        <span class="spa-console-weeks__track" aria-hidden="true">
+                          <span class="spa-console-weeks__fill spa-console-weeks__fill--signup"></span>
+                          <span class="spa-console-weeks__fill spa-console-weeks__fill--console"></span>
+                        </span>
+                        <span class="spa-console-weeks__label" aria-hidden="true">14 sept.</span>
+                      </li>
+                    </ol>
+                    <figcaption class="spa-console-legend">
+                      <span class="spa-console-legend__item">
+                        <span class="spa-console-legend__swatch spa-console-legend__swatch--signup" aria-hidden="true"></span>
+                        Inscription en ligne
+                      </span>
+                      <span class="spa-console-legend__item">
+                        <span class="spa-console-legend__swatch spa-console-legend__swatch--console" aria-hidden="true"></span>
+                        Ouvert par la console
+                      </span>
+                    </figcaption>
+                  </figure>
+                </section>
+
+                <section class="spa-admin__section" aria-labelledby="console-activation">
+                  <h2 class="spa-admin__section-title" id="console-activation">Activation des salons</h2>
+                  <ol class="spa-console-funnel" role="list">
+                    <li class="spa-console-funnel__step">
+                      <span class="spa-console-funnel__head">
+                        <span class="spa-console-funnel__label">Salons ouverts</span>
+                        <span class="spa-console-funnel__value"><strong>24</strong><span>100 %</span></span>
+                      </span>
+                      <span class="spa-console-funnel__track" aria-hidden="true">
+                        <span class="spa-console-funnel__fill"></span>
+                      </span>
+                    </li>
+                    <li class="spa-console-funnel__step">
+                      <span class="spa-console-funnel__head">
+                        <span class="spa-console-funnel__label">Au moins un rendez-vous</span>
+                        <span class="spa-console-funnel__value"><strong>15</strong><span>63 %</span></span>
+                      </span>
+                      <span class="spa-console-funnel__track" aria-hidden="true">
+                        <span class="spa-console-funnel__fill"></span>
+                      </span>
+                    </li>
+                  </ol>
+                </section>
+              </div>
+
+              <div class="spa-admin-dashboard__side">
+                <section class="spa-admin__section" aria-labelledby="console-essais">
+                  <h2 class="spa-admin__section-title" id="console-essais">Essais qui se terminent</h2>
+                  <ul class="spa-console-list" role="list">
+                    <li class="spa-console-list__item">
+                      <a class="spa-console-list__name" href="#console-fiche">Maison Lotus</a>
+                      <span class="spa-admin-badge spa-admin-badge--no-show">2 j</span>
+                    </li>
+                    <li class="spa-console-list__item">
+                      <span class="spa-console-list__who">
+                        <a class="spa-console-list__name" href="#console-fiche">Barber Tana</a>
+                        <span>Inscrit en ligne · 12 sept. 2026</span>
+                      </span>
+                      <strong class="spa-console-list__count">6 j</strong>
+                    </li>
+                  </ul>
+                </section>
+              </div>
+            </div>
+          </section>
+
+          <!-- LISTE FILTRÉE -->
+          <section class="spa-admin__section" aria-labelledby="console-liste">
+            <h2 class="spa-admin__section-title" id="console-liste">Salons de la plateforme</h2>
+
+            <form class="spa-console-filters" action="console.html" method="get" role="search">
+              <div class="spa-console-filters__search">
+                <div class="spa-field">
+                  <label class="spa-field__label" for="salons-recherche">Rechercher</label>
+                  <input class="spa-field__control" id="salons-recherche" name="q" type="search" value="lotus" />
+                </div>
+              </div>
+              <div class="spa-select">
+                <label class="spa-select__label" for="salons-facturation">Facturation</label>
+                <div class="spa-select__shell">
+                  <select class="spa-select__control" id="salons-facturation" name="facturation">
+                    <option value="">Toutes</option>
+                    <option value="trialing" selected>Essai</option>
+                  </select>
+                  <span class="spa-select__chevron" aria-hidden="true"></span>
+                </div>
+              </div>
+              <div class="spa-select">
+                <label class="spa-select__label" for="salons-etat">État</label>
+                <div class="spa-select__shell">
+                  <select class="spa-select__control" id="salons-etat" name="etat">
+                    <option value="">Tous</option>
+                  </select>
+                  <span class="spa-select__chevron" aria-hidden="true"></span>
+                </div>
+              </div>
+              <div class="spa-console-filters__actions">
+                <button class="spa-button spa-button--accent" type="submit">
+                  <span class="spa-button__label">Filtrer</span>
+                </button>
+              </div>
+            </form>
+
+            <table class="spa-admin-table">
+              <thead>
+                <tr>
+                  <th class="spa-admin-table__head" scope="col">Salon</th>
+                  <th class="spa-admin-table__head" scope="col">Facturation</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="spa-admin-table__row">
+                  <td class="spa-admin-table__cell">
+                    <a class="spa-console-table__name" href="#console-fiche">Maison Lotus</a>
+                    <span class="spa-console-table__origin">Ouvert par la console</span>
+                  </td>
+                  <td class="spa-admin-table__cell">
+                    <span class="spa-admin-badge spa-admin-badge--confirmed">Essai · fin le 20/09/2026</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+
+            <!-- ÉTAT VIDE — des filtres qui ne retiennent rien. -->
+            <div class="spa-empty-state">
+              <p class="spa-empty-state__title">Aucun salon ne correspond</p>
+              <p class="spa-empty-state__description">
+                Élargissez la recherche, ou effacez les filtres pour revoir tous les salons.
+              </p>
+            </div>
+
+            <!-- ÉTAT DE CHARGEMENT -->
+            <div class="spa-admin__section" aria-busy="true">
+              <p class="spa-visually-hidden">Chargement des salons…</p>
+              <span class="spa-admin-skeleton-line spa-skeleton"></span>
+              <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
+            </div>
+          </section>
+
+          <!-- FICHE SALON -->
+          <section class="spa-console-record" aria-labelledby="console-fiche">
+            <nav class="spa-console-record__crumbs" aria-label="Fil d’Ariane">
+              <a href="#console-liste">Salons</a>
+              <span aria-hidden="true">›</span>
+              <span aria-current="page">Maison Lotus</span>
+            </nav>
+
+            <header class="spa-console-record__head">
+              <div class="spa-console-record__title">
+                <h2 class="spa-admin__title" id="console-fiche">Maison Lotus</h2>
+                <div class="spa-console-record__badges">
+                  <span class="spa-admin-badge spa-admin-badge--confirmed">Essai · fin le 20/09/2026</span>
+                  <span class="spa-admin-badge spa-admin-badge--confirmed">Actif</span>
+                </div>
+              </div>
+              <div class="spa-console-record__links">
+                <a class="spa-button spa-button--neutral" href="#console-fiche">Vitrine</a>
+                <a class="spa-button spa-button--neutral" href="#console-fiche">Back-office</a>
+              </div>
+            </header>
+
+            <div class="spa-admin-dashboard__grid">
+              <div class="spa-admin-dashboard__side">
+                <section class="spa-admin__section" aria-labelledby="fiche-demarrage">
+                  <h3 class="spa-admin__section-title" id="fiche-demarrage">Mise en route</h3>
+                  <div class="spa-console-progress" role="progressbar" aria-label="Mise en route : 5 étapes sur 7" aria-valuemin="0" aria-valuemax="7" aria-valuenow="5">
+                    <span class="spa-console-progress__fill"></span>
+                  </div>
+                  <ol class="spa-console-steps" role="list">
+                    <li class="spa-console-steps__item spa-console-steps__item--done">
+                      <span class="spa-console-steps__mark" aria-hidden="true"></span>
+                      <span class="spa-console-steps__text">
+                        <strong>Compte administrateur activé</strong>
+                        <span>Le gérant a posé son mot de passe.</span>
+                      </span>
+                    </li>
+                    <li class="spa-console-steps__item">
+                      <span class="spa-console-steps__mark" aria-hidden="true"></span>
+                      <span class="spa-console-steps__text">
+                        <strong>Identité légale (ticket de caisse)</strong>
+                        <span>Raison sociale ou SIRET / NIF manquant.</span>
+                      </span>
+                    </li>
+                  </ol>
+                </section>
+
+                <section class="spa-admin__section" aria-labelledby="fiche-activite">
+                  <h3 class="spa-admin__section-title" id="fiche-activite">Activité — 30 derniers jours</h3>
+                  <dl class="spa-console-stats">
+                    <div class="spa-console-stats__item"><dt>Réservations prises</dt><dd>42</dd></div>
+                    <div class="spa-console-stats__item"><dt>À venir</dt><dd>9</dd></div>
+                    <div class="spa-console-stats__item"><dt>Non honorés</dt><dd>2</dd></div>
+                  </dl>
+                </section>
+
+                <section class="spa-admin__section" aria-labelledby="fiche-historique">
+                  <h3 class="spa-admin__section-title" id="fiche-historique">Historique et notes</h3>
+                  <form class="spa-console-record__stack" action="console.html" method="post">
+                    <div class="spa-field">
+                      <label class="spa-field__label" for="note-fiche">Ajouter une note</label>
+                      <textarea class="spa-field__control" id="note-fiche" rows="3"></textarea>
+                    </div>
+                    <div class="spa-console-record__buttons">
+                      <button class="spa-button spa-button--accent" type="submit">
+                        <span class="spa-button__label">Enregistrer la note</span>
+                      </button>
+                    </div>
+                  </form>
+                  <ol class="spa-console-timeline" role="list">
+                    <li class="spa-console-timeline__item spa-console-timeline__item--note">
+                      <span class="spa-console-timeline__head">
+                        <strong>Note</strong>
+                        <span>18/09/2026 19:40 · Alice D.</span>
+                      </span>
+                      <p class="spa-console-timeline__body">Gérante relancée par téléphone, rappel lundi.</p>
+                    </li>
+                    <li class="spa-console-timeline__item spa-console-timeline__item--reactivated">
+                      <span class="spa-console-timeline__head">
+                        <strong>Salon réactivé</strong>
+                        <span>17/09/2026 10:02 · Alice D.</span>
+                      </span>
+                      <p class="spa-console-timeline__body">Régularisé.</p>
+                    </li>
+                    <li class="spa-console-timeline__item spa-console-timeline__item--suspended">
+                      <span class="spa-console-timeline__head">
+                        <strong>Salon suspendu</strong>
+                        <span>15/09/2026 09:12 · Alice D.</span>
+                      </span>
+                      <p class="spa-console-timeline__body">Impayé depuis 30 jours.</p>
+                    </li>
+                  </ol>
+                </section>
+              </div>
+
+              <div class="spa-admin-dashboard__side">
+                <section class="spa-admin__section" aria-labelledby="fiche-abonnement">
+                  <h3 class="spa-admin__section-title" id="fiche-abonnement">Abonnement</h3>
+                  <dl class="spa-console-facts">
+                    <div><dt>Fin de l’essai</dt><dd>20 sept. 2026</dd></div>
+                    <div><dt>Client Stripe</dt><dd>cus_Qx8…</dd></div>
+                  </dl>
+                </section>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

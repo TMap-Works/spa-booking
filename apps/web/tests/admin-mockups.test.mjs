@@ -51,6 +51,7 @@ const SCREENS = {
   'personnel.html': 'personnel et horaires',
   'encaissement.html': 'encaissement et POS',
   'reporting.html': 'indicateurs d’activité et export CSV',
+  'console.html': 'console de l’éditeur — tableau de bord et fiche salon',
 };
 const SUMMARY = 'index.html';
 

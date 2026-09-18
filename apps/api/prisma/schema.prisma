@@ -511,6 +511,7 @@ model Tenant {
   /// c'est pourquoi la table d'en face ne porte pas de `tenant_id`, voir
   /// l'ADR 0012.
   platformProvisionings PlatformTenantProvisioning[]
+  platformEvents        PlatformTenantEvent[]
 
   @@map("tenants")
 }
@@ -945,6 +946,7 @@ model PlatformOperator {
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   provisionings PlatformTenantProvisioning[]
+  tenantEvents  PlatformTenantEvent[]
 
   @@map("platform_operators")
 }
@@ -985,6 +987,58 @@ model PlatformTenantProvisioning {
   /// le **supprimant**.
   @@index([operatorId, createdAt])
   @@map("platform_tenant_provisionings")
+}
+
+/// Ce que l'éditeur a fait **sur** un salon, ou noté à son sujet — la fiche
+/// salon de la console et son historique.
+///
+/// Une seule table pour deux usages, parce que la console les lit ensemble :
+/// l'historique d'un salon mêle les gestes (suspension, réactivation,
+/// réinvitation) et les notes de suivi (« relancé par téléphone le 18 »), dans
+/// l'ordre où ils se sont produits. `body` porte le texte de la note, ou le
+/// motif d'une suspension.
+enum PlatformTenantEventKind {
+  NOTE
+  SUSPENDED
+  REACTIVATED
+  INVITATION_REISSUED
+}
+
+/// Le journal de la console sur un salon — ADR 0012, espace plateforme.
+///
+/// ## Pas de `tenant_id`, et pourquoi c'est licite
+///
+/// Même lecture que `platform_tenant_provisionings` : la ligne n'appartient pas
+/// au salon qu'elle nomme, elle appartient à l'éditeur qui l'a écrite. Le salon
+/// ne la voit jamais, et la colonne se nomme `subject_tenant_id` pour que
+/// `tenant-scope.extension.ts`, qui déduit du champ `tenantId` les modèles à
+/// filtrer, ne la prenne pas pour une table de salon.
+///
+/// ## Aucune donnée de client final
+///
+/// Une note est écrite par un opérateur pour d'autres opérateurs. Elle ne doit
+/// porter ni coordonnées de cliente ni contenu d'agenda — la console ne lit pas
+/// ces données (ADR 0012), elle n'a donc aucune raison de les recopier ici.
+model PlatformTenantEvent {
+  id String @id @default(uuid()) @db.Uuid
+
+  subjectTenantId String @map("subject_tenant_id") @db.Uuid
+  subjectTenant   Tenant @relation(fields: [subjectTenantId], references: [id], onDelete: Restrict)
+
+  operatorId String           @map("operator_id") @db.Uuid
+  operator   PlatformOperator @relation(fields: [operatorId], references: [id], onDelete: Restrict)
+
+  kind PlatformTenantEventKind
+
+  /// Le texte d'une note, ou le motif d'une suspension — `null` pour une
+  /// réinvitation, qui n'a rien à dire de plus que son nom.
+  body String? @db.VarChar(2000)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([subjectTenantId, createdAt])
+  @@map("platform_tenant_events")
 }
 
 // ---------------------------------------------------------------------------

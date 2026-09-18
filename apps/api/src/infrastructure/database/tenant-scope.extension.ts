@@ -97,6 +97,7 @@ const GLOBAL_MODELS: ReadonlySet<string> = new Set<string>();
 export const PLATFORM_MODELS: ReadonlySet<string> = new Set<string>([
   'PlatformOperator',
   'PlatformTenantProvisioning',
+  'PlatformTenantEvent',
 ]);
 
 /**

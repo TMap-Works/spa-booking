@@ -35,7 +35,7 @@ export default async function PlatformConsoleLayout({ children }: { readonly chi
         <header className="spa-admin-topbar">
           <div className="spa-admin-topbar__context">
             <span className="spa-admin-topbar__eyebrow">Console plateforme</span>
-            <span className="spa-admin-topbar__date">Les salons de la plateforme</span>
+            <span className="spa-admin-topbar__date">Suivi des salons de la plateforme</span>
           </div>
           <div className="spa-admin-topbar__actions">
             <ThemeToggle />

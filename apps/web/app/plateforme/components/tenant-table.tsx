@@ -4,10 +4,14 @@ import { ERROR_CODES, type PlatformTenant, type TenantAccessLinks } from '@spa/s
 import { useRouter } from 'next/navigation';
 import { Fragment, useState } from 'react';
 
+import Link from 'next/link';
+
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
+import { billingBadge, formatPlatformDate, originLabel } from '@/lib/platform-console';
 
 import { reissueTenantInvitationAction } from '../actions';
+import { platformTenantPath } from '../paths';
 import { PLATFORM_SESSION_END_PATH } from '../session/fin/path';
 import { AccessLinks } from './access-links';
 
@@ -16,36 +20,6 @@ import { AccessLinks } from './access-links';
  * déplie, sous la ligne, les trois liens à lui remettre : c'est le geste qu'on
  * fait quand un gérant a perdu son e-mail ou laissé expirer son lien.
  */
-
-function openedOn(tenant: PlatformTenant): string {
-  return new Intl.DateTimeFormat('fr-FR', { timeZone: tenant.timezone, dateStyle: 'medium' }).format(
-    new Date(tenant.createdAt),
-  );
-}
-
-/** La facturation d'un salon, telle que la console l'annonce (ADR 0016). */
-function billingBadge(tenant: PlatformTenant): { label: string; tone: string } {
-  switch (tenant.billingStatus) {
-    case 'managed':
-      return { label: 'Géré par la plateforme', tone: 'completed' };
-    case 'pending':
-      return { label: 'Paiement en attente', tone: 'pending' };
-    case 'trialing':
-      return {
-        label:
-          tenant.trialEndsAt === null
-            ? 'Essai en cours'
-            : `Essai · fin le ${new Intl.DateTimeFormat('fr-FR', { timeZone: tenant.timezone, dateStyle: 'short' }).format(new Date(tenant.trialEndsAt))}`,
-        tone: 'confirmed',
-      };
-    case 'active':
-      return { label: 'Abonné', tone: 'confirmed' };
-    case 'past_due':
-      return { label: 'Impayé — relance', tone: 'no-show' };
-    case 'canceled':
-      return { label: 'Résilié', tone: 'cancelled' };
-  }
-}
 
 type RowState =
   | { readonly kind: 'idle' }
@@ -123,7 +97,10 @@ export function TenantTable({ tenants }: { readonly tenants: readonly PlatformTe
             <Fragment key={tenant.id}>
               <tr className="spa-admin-table__row">
                 <td className="spa-admin-table__cell">
-                  <strong>{tenant.name}</strong>
+                  <Link className="spa-console-table__name" href={platformTenantPath(tenant.id)}>
+                    {tenant.name}
+                  </Link>
+                  <span className="spa-console-table__origin">{originLabel(tenant)}</span>
                 </td>
                 <td className="spa-admin-table__cell">
                   <a href={`/${tenant.slug}`} target="_blank" rel="noreferrer">
@@ -133,7 +110,7 @@ export function TenantTable({ tenants }: { readonly tenants: readonly PlatformTe
                 <td className="spa-admin-table__cell">
                   {tenant.timezone} · {tenant.defaultCurrency}
                 </td>
-                <td className="spa-admin-table__cell">{openedOn(tenant)}</td>
+                <td className="spa-admin-table__cell">{formatPlatformDate(tenant.createdAt, tenant.timezone)}</td>
                 <td className="spa-admin-table__cell">
                   <span className={`spa-admin-badge spa-admin-badge--${billingBadge(tenant).tone}`}>
                     {billingBadge(tenant).label}

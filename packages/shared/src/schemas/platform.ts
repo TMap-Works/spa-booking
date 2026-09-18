@@ -21,8 +21,8 @@ import {
   slugSchema,
   uuidSchema,
 } from '../common/identifiers';
-import { currencyCodeSchema } from '../common/money';
-import { timeZoneSchema, utcInstantSchema } from '../common/time';
+import { currencyCodeSchema, nonNegativeMoneySchema } from '../common/money';
+import { calendarDateSchema, timeZoneSchema, utcInstantSchema } from '../common/time';
 import { ADDRESS_LINE_MAX_LENGTH, CITY_MAX_LENGTH, POSTAL_CODE_MAX_LENGTH } from '../constants/limits';
 import { tenantBillingStatusSchema } from './billing';
 
@@ -95,6 +95,21 @@ export const createTenantRequestSchema = z
 
 export type CreateTenantRequest = z.input<typeof createTenantRequestSchema>;
 
+/**
+ * D'où vient un salon — déduit, aucune colonne ne le stocke :
+ *
+ * - `console` : une ligne `platform_tenant_provisionings` le désigne ;
+ * - `signup` : inscrit en libre-service (ADR 0016) — il est né `pending`, et
+ *   n'est donc jamais `managed` ;
+ * - `legacy` : ni l'un ni l'autre — un salon `managed` sans ligne d'ouverture,
+ *   créé avant la console par le seed, un jeu d'essai ou à la main.
+ */
+export const PLATFORM_TENANT_ORIGINS = ['console', 'signup', 'legacy'] as const;
+
+export const platformTenantOriginSchema = z.enum(PLATFORM_TENANT_ORIGINS);
+
+export type PlatformTenantOrigin = z.infer<typeof platformTenantOriginSchema>;
+
 /** Un établissement, tel que la console le liste. */
 export const platformTenantSchema = z.object({
   id: uuidSchema,
@@ -107,9 +122,41 @@ export const platformTenantSchema = z.object({
   billingStatus: tenantBillingStatusSchema,
   trialEndsAt: utcInstantSchema.nullable(),
   createdAt: utcInstantSchema,
+  origin: platformTenantOriginSchema,
 });
 
 export type PlatformTenant = z.infer<typeof platformTenantSchema>;
+
+/**
+ * Les deux états d'exploitation d'un salon, tels que la liste les filtre :
+ * ouvert, ou suspendu par l'éditeur (`tenants.is_active`).
+ */
+export const PLATFORM_TENANT_STATES = ['active', 'suspended'] as const;
+
+export const platformTenantStateSchema = z.enum(PLATFORM_TENANT_STATES);
+
+export type PlatformTenantState = z.infer<typeof platformTenantStateSchema>;
+
+/** Le terme de recherche de la liste — nom, adresse, e-mail de contact ou d'un gérant. */
+export const PLATFORM_TENANT_SEARCH_MAX_LENGTH = 120;
+
+/**
+ * Ce que la liste des salons accepte en filtre — `GET /platform/tenants`.
+ *
+ * Tous facultatifs, et combinés en « et » : « les essais suspendus dont le nom
+ * contient lotus ».
+ */
+export const platformTenantListQuerySchema = z
+  .object({
+    q: z.string().trim().max(PLATFORM_TENANT_SEARCH_MAX_LENGTH).optional(),
+    billingStatus: tenantBillingStatusSchema.optional(),
+    state: platformTenantStateSchema.optional(),
+    page: z.number().int().min(1).optional(),
+    pageSize: z.number().int().min(1).max(100).optional(),
+  })
+  .strict();
+
+export type PlatformTenantListQuery = z.infer<typeof platformTenantListQuerySchema>;
 
 export const platformTenantPageSchema = z.object({
   items: z.array(platformTenantSchema),
@@ -158,3 +205,232 @@ export const reissuedTenantInvitationSchema = z.object({
 });
 
 export type ReissuedTenantInvitation = z.infer<typeof reissuedTenantInvitationSchema>;
+
+// ---------------------------------------------------------------------------
+// Le tableau de bord de l'éditeur
+// ---------------------------------------------------------------------------
+
+/** Une semaine d'ouvertures de salons, par origine. `weekStart` est un lundi, en UTC. */
+export const platformSignupWeekSchema = z.object({
+  weekStart: calendarDateSchema,
+  console: z.number().int().min(0),
+  signup: z.number().int().min(0),
+});
+
+export type PlatformSignupWeek = z.infer<typeof platformSignupWeekSchema>;
+
+/**
+ * La vue d'ensemble de la plateforme — `GET /platform/overview`.
+ *
+ * ## Des agrégats, jamais une donnée de salon
+ *
+ * L'éditeur est sous-traitant des salons (registre des traitements) : ce qu'il
+ * lit ici se compte, rien ne s'y nomme au-delà du salon lui-même. Ni cliente,
+ * ni montant encaissé par un salon — le revenu affiché est **celui de
+ * l'éditeur**, les abonnements (ADR 0016).
+ *
+ * ## Le revenu récurrent est une estimation, et le nom le dit
+ *
+ * `monthlyRecurring` compte les salons `active` au tarif unique de l'offre
+ * (`SUBSCRIPTION_PLAN`). C'est exact tant qu'il n'y a qu'une offre et aucune
+ * remise ; le jour où Stripe portera des coupons, le chiffre juste se lira
+ * chez Stripe.
+ */
+export const platformOverviewSchema = z.object({
+  generatedAt: utcInstantSchema,
+  tenants: z.object({
+    total: z.number().int().min(0),
+    suspended: z.number().int().min(0),
+    byBillingStatus: z.object({
+      managed: z.number().int().min(0),
+      pending: z.number().int().min(0),
+      trialing: z.number().int().min(0),
+      active: z.number().int().min(0),
+      past_due: z.number().int().min(0),
+      canceled: z.number().int().min(0),
+    }),
+  }),
+  revenue: z.object({
+    /** Salons abonnés × tarif mensuel. */
+    monthlyRecurring: nonNegativeMoneySchema,
+    /** Salons en impayé × tarif mensuel — le revenu qui peut être perdu. */
+    atRisk: nonNegativeMoneySchema,
+    /** Salons en essai × tarif mensuel — le revenu à convertir. */
+    inTrial: nonNegativeMoneySchema,
+  }),
+  /** Les essais qui se terminent dans les sept jours, le plus proche d'abord. */
+  trialsEndingSoon: z.array(platformTenantSchema),
+  /** Douze semaines d'ouvertures, la plus ancienne d'abord. */
+  signupsByWeek: z.array(platformSignupWeekSchema),
+  /**
+   * L'entonnoir d'activation : combien de salons ouverts ont un catalogue et un
+   * praticien, combien ont reçu au moins un rendez-vous, combien en ont reçu un
+   * dans les trente derniers jours.
+   */
+  activation: z.object({
+    opened: z.number().int().min(0),
+    configured: z.number().int().min(0),
+    booked: z.number().int().min(0),
+    activeLast30Days: z.number().int().min(0),
+  }),
+  /** Les cinq derniers salons ouverts. */
+  recent: z.array(platformTenantSchema),
+});
+
+export type PlatformOverview = z.infer<typeof platformOverviewSchema>;
+
+// ---------------------------------------------------------------------------
+// La fiche d'un salon
+// ---------------------------------------------------------------------------
+
+/** Ce que l'historique d'un salon porte. `provisioned` vient du journal d'ouverture. */
+export const PLATFORM_TENANT_EVENT_KINDS = [
+  'provisioned',
+  'note',
+  'suspended',
+  'reactivated',
+  'invitation_reissued',
+] as const;
+
+export const platformTenantEventKindSchema = z.enum(PLATFORM_TENANT_EVENT_KINDS);
+
+export type PlatformTenantEventKind = z.infer<typeof platformTenantEventKindSchema>;
+
+export const platformTenantEventSchema = z.object({
+  id: z.string().min(1),
+  kind: platformTenantEventKindSchema,
+  /** Le texte d'une note, ou le motif d'une suspension. */
+  body: z.string().nullable(),
+  /** « Prénom N. » de l'opérateur. */
+  operatorName: z.string().nullable(),
+  createdAt: utcInstantSchema,
+});
+
+export type PlatformTenantEvent = z.infer<typeof platformTenantEventSchema>;
+
+/** Les rôles internes d'un salon, tels que la fiche les affiche. */
+export const PLATFORM_ACCOUNT_ROLES = ['staff', 'manager', 'admin'] as const;
+
+/**
+ * Un compte **interne** du salon — gérant, praticien. Jamais une cliente :
+ * leurs comptes ne se comptent qu'en nombre (`clientCount`).
+ */
+export const platformTenantAccountSchema = z.object({
+  id: uuidSchema,
+  firstName: z.string(),
+  lastName: z.string(),
+  email: z.string(),
+  role: z.enum(PLATFORM_ACCOUNT_ROLES),
+  isActive: z.boolean(),
+  /** Le mot de passe a été posé : l'invitation a été acceptée. */
+  activated: z.boolean(),
+  lastLoginAt: utcInstantSchema.nullable(),
+  createdAt: utcInstantSchema,
+});
+
+export type PlatformTenantAccount = z.infer<typeof platformTenantAccountSchema>;
+
+/**
+ * Où en est la mise en route d'un salon — ce qu'il faut pour que la vitrine
+ * prenne des rendez-vous.
+ */
+export const platformTenantSetupSchema = z.object({
+  adminActivated: z.boolean(),
+  address: z.boolean(),
+  legalIdentity: z.boolean(),
+  openingHours: z.boolean(),
+  activeServices: z.number().int().min(0),
+  activeStaff: z.number().int().min(0),
+  staffWithSchedule: z.number().int().min(0),
+  firstAppointmentAt: utcInstantSchema.nullable(),
+});
+
+export type PlatformTenantSetup = z.infer<typeof platformTenantSetupSchema>;
+
+/** L'activité d'un salon sur trente jours — des comptes, jamais un rendez-vous. */
+export const platformTenantActivitySchema = z.object({
+  createdLast30Days: z.number().int().min(0),
+  upcoming: z.number().int().min(0),
+  completedLast30Days: z.number().int().min(0),
+  noShowLast30Days: z.number().int().min(0),
+  cancelledLast30Days: z.number().int().min(0),
+  lastBookingAt: utcInstantSchema.nullable(),
+});
+
+export type PlatformTenantActivity = z.infer<typeof platformTenantActivitySchema>;
+
+/** La fiche d'un salon — `GET /platform/tenants/:id`. */
+export const platformTenantDetailSchema = z.object({
+  tenant: platformTenantSchema,
+  contact: z.object({
+    email: z.string().nullable(),
+    phone: z.string().nullable(),
+  }),
+  address: z
+    .object({
+      line1: z.string(),
+      line2: z.string().nullable(),
+      postalCode: z.string().nullable(),
+      city: z.string(),
+      country: z.string(),
+    })
+    .nullable(),
+  legalName: z.string().nullable(),
+  billing: z.object({
+    status: tenantBillingStatusSchema,
+    trialEndsAt: utcInstantSchema.nullable(),
+    currentPeriodEndsAt: utcInstantSchema.nullable(),
+    stripeCustomerId: z.string().nullable(),
+  }),
+  links: z.object({
+    bookingUrl: z.string().url(),
+    adminLoginUrl: z.string().url(),
+  }),
+  accounts: z.array(platformTenantAccountSchema),
+  clientCount: z.number().int().min(0),
+  setup: platformTenantSetupSchema,
+  activity: platformTenantActivitySchema,
+  /** Le plus récent d'abord ; l'ouverture depuis la console en dernier. */
+  events: z.array(platformTenantEventSchema),
+});
+
+export type PlatformTenantDetail = z.infer<typeof platformTenantDetailSchema>;
+
+/** Une note interne — `POST /platform/tenants/:id/notes`. */
+export const PLATFORM_NOTE_MAX_LENGTH = 2000;
+
+export const createPlatformNoteRequestSchema = z
+  .object({
+    body: z
+      .string()
+      .trim()
+      .min(1, { message: 'la note est vide' })
+      .max(PLATFORM_NOTE_MAX_LENGTH, {
+        message: `${String(PLATFORM_NOTE_MAX_LENGTH)} caractères au plus`,
+      }),
+  })
+  .strict();
+
+export type CreatePlatformNoteRequest = z.infer<typeof createPlatformNoteRequestSchema>;
+
+/**
+ * Suspendre ou réactiver un salon — `PUT /platform/tenants/:id/status`.
+ *
+ * Le motif est **obligatoire** dans les deux sens : c'est lui que l'historique
+ * garde, et une suspension sans motif est une question que le suivant posera.
+ */
+export const PLATFORM_STATUS_REASON_MIN_LENGTH = 3;
+export const PLATFORM_STATUS_REASON_MAX_LENGTH = 500;
+
+export const updateTenantStatusRequestSchema = z
+  .object({
+    isActive: z.boolean(),
+    reason: z
+      .string()
+      .trim()
+      .min(PLATFORM_STATUS_REASON_MIN_LENGTH, { message: 'indiquez le motif' })
+      .max(PLATFORM_STATUS_REASON_MAX_LENGTH),
+  })
+  .strict();
+
+export type UpdateTenantStatusRequest = z.infer<typeof updateTenantStatusRequestSchema>;

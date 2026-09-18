@@ -1,11 +1,18 @@
 import { randomUUID } from 'node:crypto';
 
+import type { PlatformConsoleRepository } from '../platform-console.repository';
 import type { PlatformRepository, ProvisioningRecord, TenantAdminRecord } from '../platform.repository';
 import { TenantSlugTakenError } from '../platform.errors';
 import type {
+  OverviewCounts,
   PlatformOperatorRecord,
   ProvisionTenantInput,
   ProvisionedTenantRecord,
+  TenantAccountRecord,
+  TenantActivityRecord,
+  TenantDetailRecord,
+  TenantEventRecord,
+  TenantSetupRecord,
   TenantSummary,
 } from '../platform.types';
 
@@ -62,6 +69,7 @@ export class FakePlatformRepository {
       billingStatus: 'managed',
       trialEndsAt: null,
       createdAt: new Date('2026-09-01T10:00:00.000Z'),
+      origin: 'console',
     };
     this.tenants.set(tenant.id, tenant);
     if (input.withAdmin !== false) {
@@ -120,6 +128,7 @@ export class FakePlatformRepository {
       billingStatus: 'managed',
       trialEndsAt: null,
       createdAt,
+      origin: 'console',
     };
     this.tenants.set(tenant.id, tenant);
 
@@ -168,7 +177,154 @@ export class FakePlatformRepository {
     return this.admins.get(tenantId) ?? null;
   }
 
+  /** Pose l'état d'un salon — ce que la console fait par sa propre table. */
+  public setActive(id: string, isActive: boolean): void {
+    const tenant = this.tenants.get(id);
+    if (tenant !== undefined) {
+      this.tenants.set(id, { ...tenant, isActive });
+    }
+  }
+
   public asRepository(): PlatformRepository {
     return this as unknown as PlatformRepository;
+  }
+}
+
+/**
+ * Le double du dépôt de la console — une mémoire, et de quoi régler ce que la
+ * fiche d'un salon rapporte.
+ *
+ * Il s'appuie sur le double de `PlatformRepository` pour savoir quels salons
+ * existent : c'est la même base, lue par deux dépôts.
+ */
+export class FakePlatformConsoleRepository {
+  public readonly events: (TenantEventRecord & { tenantId: string })[] = [];
+  public counts: OverviewCounts = {
+    total: 0,
+    suspended: 0,
+    byBillingStatus: { managed: 0, pending: 0, trialing: 0, active: 0, past_due: 0, canceled: 0 },
+    trialsEndingSoon: [],
+    recentOpenings: [],
+    activation: { opened: 0, configured: 0, booked: 0, activeLast30Days: 0 },
+    recent: [],
+  };
+  public lastOverviewWindow: { now: Date; trialHorizon: Date; openingsSince: Date } | null = null;
+  public accounts: TenantAccountRecord[] = [];
+  public setupRecord: TenantSetupRecord = {
+    openingHours: false,
+    activeServices: 0,
+    activeStaff: 0,
+    staffWithSchedule: 0,
+    firstAppointmentAt: null,
+  };
+  public activityRecord: TenantActivityRecord = {
+    createdLast30Days: 0,
+    upcoming: 0,
+    completedLast30Days: 0,
+    noShowLast30Days: 0,
+    cancelledLast30Days: 0,
+    lastBookingAt: null,
+  };
+  public revokedSessions = 0;
+
+  public constructor(private readonly tenants: FakePlatformRepository) {}
+
+  public async overviewCounts(input: {
+    now: Date;
+    trialHorizon: Date;
+    openingsSince: Date;
+    activitySince: Date;
+  }): Promise<OverviewCounts> {
+    this.lastOverviewWindow = input;
+    return this.counts;
+  }
+
+  public async findTenantDetail(id: string): Promise<TenantDetailRecord | null> {
+    const summary = await this.tenants.findTenantById(id);
+    if (summary === null) {
+      return null;
+    }
+    return {
+      summary,
+      contactEmail: 'contact@salon.test',
+      contactPhone: '+33142000000',
+      address: { line1: '12 rue des Lilas', line2: null, postalCode: '75011', city: 'Paris', country: 'FR' },
+      legalName: null,
+      hasLegalId: false,
+      currentPeriodEndsAt: null,
+      stripeCustomerId: null,
+    };
+  }
+
+  public async listInternalAccounts(): Promise<TenantAccountRecord[]> {
+    return this.accounts;
+  }
+
+  public async countClients(): Promise<number> {
+    return 7;
+  }
+
+  public async setup(): Promise<TenantSetupRecord> {
+    return this.setupRecord;
+  }
+
+  public async activity(): Promise<TenantActivityRecord> {
+    return this.activityRecord;
+  }
+
+  public async listEvents(tenantId: string): Promise<TenantEventRecord[]> {
+    return this.events
+      .filter((event) => event.tenantId === tenantId)
+      .map(({ tenantId: _tenantId, ...event }) => event)
+      .reverse();
+  }
+
+  public async recordEvent(input: {
+    tenantId: string;
+    operatorId: string;
+    kind: 'NOTE' | 'INVITATION_REISSUED';
+    body: string | null;
+  }): Promise<TenantEventRecord> {
+    const event = {
+      id: randomUUID(),
+      tenantId: input.tenantId,
+      kind: input.kind.toLowerCase() as TenantEventRecord['kind'],
+      body: input.body,
+      operatorName: 'Opé R.',
+      createdAt: new Date('2026-09-18T12:00:00.000Z'),
+    };
+    this.events.push(event);
+    const { tenantId: _tenantId, ...record } = event;
+    return record;
+  }
+
+  public async setTenantActive(input: {
+    tenantId: string;
+    operatorId: string;
+    isActive: boolean;
+    reason: string;
+    now: Date;
+  }): Promise<{ changed: boolean; revokedSessions: number } | null> {
+    const tenant = await this.tenants.findTenantById(input.tenantId);
+    if (tenant === null) {
+      return null;
+    }
+    if (tenant.isActive === input.isActive) {
+      return { changed: false, revokedSessions: 0 };
+    }
+    this.tenants.setActive(input.tenantId, input.isActive);
+    this.events.push({
+      id: randomUUID(),
+      tenantId: input.tenantId,
+      kind: input.isActive ? 'reactivated' : 'suspended',
+      body: input.reason,
+      operatorName: 'Opé R.',
+      createdAt: input.now,
+    });
+    return { changed: true, revokedSessions: input.isActive ? 0 : this.revokedSessions };
+  }
+
+  public asRepository(): PlatformConsoleRepository {
+    return this as unknown as PlatformConsoleRepository;
   }
 }

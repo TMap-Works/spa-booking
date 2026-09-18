@@ -1,4 +1,11 @@
-import type { TenantBillingStatus } from '@spa/shared';
+import type {
+  Money,
+  PlatformSignupWeek,
+  PlatformTenantEventKind,
+  PlatformTenantOrigin,
+  PlatformTenantState,
+  TenantBillingStatus,
+} from '@spa/shared';
 
 /**
  * Formes de données de la console plateforme — #806.
@@ -101,6 +108,23 @@ export interface TenantSummary {
   readonly billingStatus: TenantBillingStatus;
   readonly trialEndsAt: Date | null;
   readonly createdAt: Date;
+  /** Ouvert depuis la console, ou inscrit en libre-service (ADR 0016). */
+  readonly origin: PlatformTenantOrigin;
+}
+
+/**
+ * Les filtres de la liste — tous facultatifs, combinés en « et ».
+ *
+ * `q` cherche dans le nom, l'adresse (slug), l'e-mail de contact du salon et
+ * l'e-mail de ses gérants et administrateurs : c'est ce qu'un opérateur a sous
+ * la main quand un salon l'appelle.
+ */
+export interface TenantListQuery {
+  readonly page: number;
+  readonly pageSize: number;
+  readonly q?: string;
+  readonly billingStatus?: TenantBillingStatus;
+  readonly state?: PlatformTenantState;
 }
 
 /** Une page d'établissements, avec de quoi afficher un sélecteur de page. */
@@ -158,4 +182,119 @@ export interface ReissuedTenantInvitation {
     readonly email: string;
   };
   readonly links: TenantAccessLinks;
+}
+
+// ---------------------------------------------------------------------------
+// Le tableau de bord et la fiche salon
+// ---------------------------------------------------------------------------
+
+/** Une ligne de l'historique d'un salon — note, geste, ou ouverture. */
+export interface TenantEventRecord {
+  readonly id: string;
+  readonly kind: PlatformTenantEventKind;
+  readonly body: string | null;
+  /** « Prénom N. » — l'opérateur, jamais son adresse. */
+  readonly operatorName: string | null;
+  readonly createdAt: Date;
+}
+
+/** Ce que la base compte pour la vue d'ensemble — la matière brute du service. */
+export interface OverviewCounts {
+  readonly total: number;
+  readonly suspended: number;
+  readonly byBillingStatus: Readonly<Record<TenantBillingStatus, number>>;
+  readonly trialsEndingSoon: readonly TenantSummary[];
+  /** Les salons ouverts depuis le début de la fenêtre, avec leur origine. */
+  readonly recentOpenings: readonly { createdAt: Date; origin: PlatformTenantOrigin }[];
+  readonly activation: {
+    readonly opened: number;
+    readonly configured: number;
+    readonly booked: number;
+    readonly activeLast30Days: number;
+  };
+  readonly recent: readonly TenantSummary[];
+}
+
+/** La fiche d'un salon telle que la base la rend, avant mise en forme. */
+export interface TenantDetailRecord {
+  readonly summary: TenantSummary;
+  readonly contactEmail: string | null;
+  readonly contactPhone: string | null;
+  readonly address: {
+    readonly line1: string;
+    readonly line2: string | null;
+    readonly postalCode: string | null;
+    readonly city: string;
+    readonly country: string;
+  } | null;
+  readonly legalName: string | null;
+  readonly hasLegalId: boolean;
+  readonly currentPeriodEndsAt: Date | null;
+  readonly stripeCustomerId: string | null;
+}
+
+/** Un compte interne du salon — jamais une cliente, jamais une empreinte. */
+export interface TenantAccountRecord {
+  readonly id: string;
+  readonly firstName: string;
+  readonly lastName: string;
+  readonly email: string;
+  readonly role: 'staff' | 'manager' | 'admin';
+  readonly isActive: boolean;
+  readonly activated: boolean;
+  readonly lastLoginAt: Date | null;
+  readonly createdAt: Date;
+}
+
+/** Où en est la mise en route d'un salon. */
+export interface TenantSetupRecord {
+  readonly openingHours: boolean;
+  readonly activeServices: number;
+  readonly activeStaff: number;
+  readonly staffWithSchedule: number;
+  readonly firstAppointmentAt: Date | null;
+}
+
+/** Trente jours d'activité, en nombres. */
+export interface TenantActivityRecord {
+  readonly createdLast30Days: number;
+  readonly upcoming: number;
+  readonly completedLast30Days: number;
+  readonly noShowLast30Days: number;
+  readonly cancelledLast30Days: number;
+  readonly lastBookingAt: Date | null;
+}
+
+/** La vue d'ensemble, telle que le service la compose. */
+export interface PlatformOverviewView {
+  readonly generatedAt: Date;
+  readonly tenants: {
+    readonly total: number;
+    readonly suspended: number;
+    readonly byBillingStatus: Readonly<Record<TenantBillingStatus, number>>;
+  };
+  readonly revenue: {
+    readonly monthlyRecurring: Money;
+    readonly atRisk: Money;
+    readonly inTrial: Money;
+  };
+  readonly trialsEndingSoon: readonly TenantSummary[];
+  readonly signupsByWeek: readonly PlatformSignupWeek[];
+  readonly activation: OverviewCounts['activation'];
+  readonly recent: readonly TenantSummary[];
+}
+
+/** La fiche d'un salon, telle que le service la compose. */
+export interface TenantDetailView {
+  readonly record: TenantDetailRecord;
+  readonly links: { readonly bookingUrl: string; readonly adminLoginUrl: string };
+  readonly accounts: readonly TenantAccountRecord[];
+  readonly clientCount: number;
+  readonly setup: TenantSetupRecord & {
+    readonly adminActivated: boolean;
+    readonly address: boolean;
+    readonly legalIdentity: boolean;
+  };
+  readonly activity: TenantActivityRecord;
+  readonly events: readonly TenantEventRecord[];
 }

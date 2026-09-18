@@ -19,7 +19,7 @@ import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
 
 import { provisionTenantAction } from '../actions';
-import { PLATFORM_CONSOLE_PATH } from '../paths';
+import { PLATFORM_TENANTS_PATH, platformTenantPath } from '../paths';
 import { PLATFORM_SESSION_END_PATH } from '../session/fin/path';
 import { AccessLinks } from './access-links';
 import {
@@ -139,8 +139,8 @@ export function TenantCreateForm() {
             <Button variant="neutral" onClick={openAnother}>
               Ouvrir un autre salon
             </Button>
-            <Link className="spa-button spa-button--accent" href={PLATFORM_CONSOLE_PATH}>
-              Voir la liste des salons
+            <Link className="spa-button spa-button--accent" href={platformTenantPath(opened.tenant.id)}>
+              Voir la fiche du salon
             </Link>
           </div>
         </div>
@@ -306,7 +306,7 @@ export function TenantCreateForm() {
       <div className="spa-admin-toolbar">
         <span className="spa-admin-toolbar__spacer" />
         <div className="spa-admin-toolbar__group">
-          <Link className="spa-button spa-button--neutral" href={PLATFORM_CONSOLE_PATH}>
+          <Link className="spa-button spa-button--neutral" href={PLATFORM_TENANTS_PATH}>
             Annuler
           </Link>
           <Button type="submit" variant="accent" loading={isSubmitting} loadingLabel="Ouverture du salon…">

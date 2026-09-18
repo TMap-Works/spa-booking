@@ -9,6 +9,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import {
@@ -22,19 +23,30 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 
+import type { PlatformTenant, PlatformTenantDetail, PlatformTenantEvent } from '@spa/shared';
+
 import {
+  CreatePlatformNoteDto,
   CreateTenantDto,
   IDEMPOTENCY_KEY_MAX_LENGTH,
   IDEMPOTENCY_KEY_MIN_LENGTH,
   ListTenantsQueryDto,
+  PlatformTenantDetailDto,
+  PlatformTenantEventDto,
   ProvisionedTenantDto,
   ReissuedTenantInvitationDto,
   TenantPageDto,
+  TenantSummaryDto,
+  UpdateTenantStatusDto,
+  toPlatformTenantDetailDto,
+  toPlatformTenantEventDto,
   toProvisionedTenantDto,
   toTenantPageDto,
   toTenantPageQuery,
+  toTenantSummaryDto,
 } from './dto/platform.dto';
 import { CurrentOperator, PlatformAuth } from './platform-auth.guard';
+import { PlatformConsoleService } from './platform-console.service';
 import { PlatformService } from './platform.service';
 import type { AuthenticatedOperator } from './platform.types';
 
@@ -50,6 +62,9 @@ const IDEMPOTENCY_HEADER = 'Idempotency-Key';
  * | `POST /platform/tenants` | un jeton d'établissement, même `ADMIN`, reçoit **401** |
  * | `GET /platform/tenants` | la liste est celle de la plateforme, jamais d'un salon |
  * | `POST /platform/tenants/:id/invitation` | un gérant retrouve son lien, même après expiration |
+ * | `GET /platform/tenants/:id` | la fiche : mise en route, activité en nombres, comptes internes, historique |
+ * | `POST /platform/tenants/:id/notes` | l'éditeur garde trace de ses échanges avec le salon |
+ * | `PUT /platform/tenants/:id/status` | suspendre ou réactiver, motif à l'appui |
  *
  * ## Pourquoi `:id` en chemin ne viole pas tenant-isolation §2
  *
@@ -65,16 +80,19 @@ const IDEMPOTENCY_HEADER = 'Idempotency-Key';
  * ## Ce que la console ne fait pas
  *
  * Elle ne lit aucune donnée **de** salon : ni agenda, ni fiche cliente, ni
- * encaissement. Les trois routes ci-dessus ne touchent que `tenants`, le compte
- * administrateur du salon nommé, et les deux tables de l'espace plateforme. Le
- * multi-établissement côté client — un gérant qui pilote plusieurs salons —
- * reste hors périmètre (CDC §1.4).
+ * encaissement. La fiche compte des rendez-vous et des comptes clients, elle
+ * n'en rend aucun ; elle nomme les comptes **internes** du salon, ceux à qui
+ * l'éditeur a affaire. Le multi-établissement côté client — un gérant qui
+ * pilote plusieurs salons — reste hors périmètre (CDC §1.4).
  */
 @ApiTags('platform')
 @Controller({ path: 'platform/tenants', version: '1' })
 @PlatformAuth()
 export class PlatformTenantsController {
-  public constructor(private readonly platform: PlatformService) {}
+  public constructor(
+    private readonly platform: PlatformService,
+    private readonly console: PlatformConsoleService,
+  ) {}
 
   /**
    * Ouvre un établissement et invite son administrateur — critère 2.
@@ -136,7 +154,8 @@ export class PlatformTenantsController {
    * Les établissements de la plateforme, page par page — critère 4.
    *
    * Les plus récents d'abord : la console sert à suivre les ouvertures, et le
-   * salon qu'on vient d'ouvrir est celui qu'on cherche.
+   * salon qu'on vient d'ouvrir est celui qu'on cherche. `q`, `billingStatus` et
+   * `state` filtrent, combinés en « et ».
    */
   @Get()
   @ApiOperation({ summary: 'Lister les établissements de la plateforme' })
@@ -166,12 +185,78 @@ export class PlatformTenantsController {
     @CurrentOperator() operator: AuthenticatedOperator,
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<ReissuedTenantInvitationDto> {
-    const reissued = await this.platform.reissueAdminInvitation({ operator, tenantId: id });
+    // Par le service de la console : la réémission s'inscrit dans l'historique
+    // du salon, pour que l'opérateur suivant sache qu'un lien est déjà parti.
+    const reissued = await this.console.reissueAdminInvitation({ operator, tenantId: id });
     return {
       tenantId: reissued.tenantId,
       admin: { ...reissued.admin },
       links: { ...reissued.links },
     };
+  }
+
+  /**
+   * La fiche d'un salon — identité, abonnement, mise en route, activité sur
+   * trente jours **en nombres**, comptes internes et historique.
+   *
+   * **404** pour un identifiant inconnu.
+   */
+  @Get(':id')
+  @ApiOperation({ summary: 'Lire la fiche d’un établissement' })
+  @ApiOkResponse({ type: PlatformTenantDetailDto })
+  @ApiNotFoundResponse({ description: 'Aucun établissement ne porte cet identifiant.' })
+  public async detail(@Param('id', ParseUUIDPipe) id: string): Promise<PlatformTenantDetail> {
+    return toPlatformTenantDetailDto(await this.console.tenantDetail(id));
+  }
+
+  /**
+   * Ajoute une note interne à l'historique d'un salon.
+   *
+   * **201** : la note créée. **404** pour un identifiant inconnu. **400** sur une
+   * note vide ou trop longue.
+   */
+  @Post(':id/notes')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Noter un échange avec un établissement' })
+  @ApiCreatedResponse({ type: PlatformTenantEventDto })
+  @ApiBadRequestResponse({ description: 'Note vide ou trop longue.' })
+  @ApiNotFoundResponse({ description: 'Aucun établissement ne porte cet identifiant.' })
+  public async addNote(
+    @CurrentOperator() operator: AuthenticatedOperator,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: CreatePlatformNoteDto,
+  ): Promise<PlatformTenantEvent> {
+    return toPlatformTenantEventDto(
+      await this.console.addNote({ operator, tenantId: id, body: body.body }),
+    );
+  }
+
+  /**
+   * Suspend ou réactive un salon — **PUT**, parce que la requête décrit l'état
+   * voulu et qu'elle est rejouable : la rejouer ne réécrit rien.
+   *
+   * Suspendre rend le salon introuvable par son adresse (vitrine, réservation,
+   * connexion) et révoque ses sessions. **200** : le salon tel qu'il est
+   * désormais. **404** pour un identifiant inconnu.
+   */
+  @Put(':id/status')
+  @ApiOperation({ summary: 'Suspendre ou réactiver un établissement' })
+  @ApiOkResponse({ type: TenantSummaryDto })
+  @ApiBadRequestResponse({ description: 'Motif manquant ou état non booléen.' })
+  @ApiNotFoundResponse({ description: 'Aucun établissement ne porte cet identifiant.' })
+  public async updateStatus(
+    @CurrentOperator() operator: AuthenticatedOperator,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: UpdateTenantStatusDto,
+  ): Promise<PlatformTenant> {
+    return toTenantSummaryDto(
+      await this.console.updateStatus({
+        operator,
+        tenantId: id,
+        isActive: body.isActive,
+        reason: body.reason,
+      }),
+    );
   }
 }
 

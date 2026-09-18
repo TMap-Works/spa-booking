@@ -1,0 +1,442 @@
+/*
+ * Console de l'éditeur — tableau de bord, liste filtrée, fiche salon
+ * =============================================================================
+ *
+ * Ce qui est propre à la console. Les tuiles, la grille à deux colonnes et les
+ * en-têtes de section viennent de `dashboard.css`, pour que la console et le
+ * back-office d'un salon parlent la même langue visuelle.
+ *
+ * Maquette : `mockups/admin/console.html`.
+ */
+
+/* --- Ouvertures par semaine ---------------------------------------------- */
+
+.spa-console-weeks {
+  display: grid;
+  gap: var(--spa-space-3);
+  margin: 0;
+}
+
+.spa-console-weeks__bars {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--spa-space-2);
+  block-size: 10rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-console-weeks__bar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  justify-items: center;
+  gap: var(--spa-space-1);
+  min-block-size: 0;
+}
+
+.spa-console-weeks__value {
+  min-block-size: 1rem;
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.spa-console-weeks__track {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-start;
+  inline-size: 100%;
+  max-inline-size: 2rem;
+  min-block-size: 0;
+  overflow: hidden;
+  border-radius: var(--spa-radius-sm);
+  background-color: var(--spa-color-surface-sunken);
+}
+
+.spa-console-weeks__fill {
+  display: block;
+  inline-size: 100%;
+}
+
+.spa-console-weeks__fill--console {
+  background-color: var(--spa-color-chart-primary-strong);
+}
+
+.spa-console-weeks__fill--signup {
+  background-color: var(--spa-color-info);
+}
+
+.spa-console-weeks__label {
+  min-block-size: 1rem;
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+  white-space: nowrap;
+}
+
+.spa-console-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-4);
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-console-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+}
+
+.spa-console-legend__swatch {
+  inline-size: 0.75rem;
+  block-size: 0.75rem;
+  border-radius: var(--spa-radius-xs);
+}
+
+.spa-console-legend__swatch--console {
+  background-color: var(--spa-color-chart-primary-strong);
+}
+
+.spa-console-legend__swatch--signup {
+  background-color: var(--spa-color-info);
+}
+
+/* --- Entonnoir d'activation ------------------------------------------------ */
+
+.spa-console-funnel {
+  display: grid;
+  gap: var(--spa-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-console-funnel__step {
+  display: grid;
+  gap: var(--spa-space-2);
+}
+
+.spa-console-funnel__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--spa-space-3);
+}
+
+.spa-console-funnel__label {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text);
+}
+
+.spa-console-funnel__value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--spa-space-2);
+  font-variant-numeric: tabular-nums;
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-console-funnel__value strong {
+  font-size: var(--spa-font-size-lg);
+  color: var(--spa-color-text);
+}
+
+.spa-console-funnel__track {
+  display: block;
+  block-size: 0.5rem;
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-surface-sunken);
+  overflow: hidden;
+}
+
+.spa-console-funnel__fill {
+  display: block;
+  block-size: 100%;
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-accent);
+}
+
+/* --- Listes courtes (essais, statuts, derniers salons) -------------------- */
+
+.spa-console-list {
+  display: grid;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-console-list__item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--spa-space-3);
+  padding-block: var(--spa-space-3);
+  border-block-end: 1px solid var(--spa-color-border);
+}
+
+.spa-console-list__item:last-child {
+  border-block-end: 0;
+}
+
+.spa-console-list__name {
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+  text-decoration: none;
+}
+
+.spa-console-list__name:hover,
+.spa-console-list__name:focus-visible {
+  color: var(--spa-color-accent-text);
+  text-decoration: underline;
+}
+
+.spa-console-list__count {
+  font-variant-numeric: tabular-nums;
+}
+
+.spa-console-list__who {
+  display: grid;
+  gap: var(--spa-space-1);
+  min-inline-size: 0;
+}
+
+.spa-console-list__who span {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Filtres de la liste --------------------------------------------------- */
+
+.spa-console-filters {
+  display: grid;
+  grid-template-columns: minmax(14rem, 2fr) repeat(2, minmax(10rem, 1fr)) auto;
+  align-items: end;
+  gap: var(--spa-space-3);
+  margin-block: var(--spa-space-4);
+}
+
+.spa-console-filters__actions {
+  display: flex;
+  gap: var(--spa-space-2);
+}
+
+@media (width <= 56rem) {
+  .spa-console-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .spa-console-filters__search {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (width <= 30rem) {
+  .spa-console-filters {
+    grid-template-columns: 1fr;
+  }
+}
+
+.spa-console-table__name {
+  display: block;
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+}
+
+.spa-console-table__origin {
+  display: block;
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Fiche salon ----------------------------------------------------------- */
+
+.spa-console-record {
+  display: grid;
+  gap: var(--spa-space-5);
+}
+
+.spa-console-record__crumbs {
+  display: flex;
+  gap: var(--spa-space-2);
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-console-record__head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--spa-space-4);
+}
+
+.spa-console-record__title {
+  display: grid;
+  gap: var(--spa-space-2);
+}
+
+.spa-console-record__badges,
+.spa-console-record__links,
+.spa-console-record__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
+}
+
+.spa-console-record__stack {
+  display: grid;
+  gap: var(--spa-space-3);
+}
+
+.spa-console-progress {
+  block-size: 0.5rem;
+  margin-block-end: var(--spa-space-3);
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-surface-sunken);
+  overflow: hidden;
+}
+
+.spa-console-progress__fill {
+  display: block;
+  block-size: 100%;
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-success);
+}
+
+.spa-console-steps {
+  display: grid;
+  gap: var(--spa-space-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-console-steps__item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--spa-space-3);
+  align-items: start;
+}
+
+.spa-console-steps__mark {
+  display: grid;
+  place-items: center;
+  inline-size: 1.5rem;
+  block-size: 1.5rem;
+  border: 2px solid var(--spa-color-border-interactive);
+  border-radius: var(--spa-radius-full);
+  color: var(--spa-color-text-on-accent);
+}
+
+.spa-console-steps__item--done .spa-console-steps__mark {
+  border-color: var(--spa-color-success);
+  background-color: var(--spa-color-success);
+}
+
+.spa-console-steps__mark .spa-icon {
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+}
+
+.spa-console-steps__text {
+  display: grid;
+  gap: var(--spa-space-1);
+}
+
+.spa-console-steps__text span {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-console-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: var(--spa-space-3);
+  margin: 0 0 var(--spa-space-3);
+}
+
+.spa-console-stats__item {
+  display: grid;
+  align-content: space-between;
+  gap: var(--spa-space-1);
+  padding: var(--spa-space-3);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-surface-sunken);
+}
+
+.spa-console-stats__item dt {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-console-stats__item dd {
+  margin: 0;
+  font-size: var(--spa-font-size-xl);
+  font-weight: var(--spa-font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+}
+
+.spa-console-facts {
+  display: grid;
+  gap: var(--spa-space-3);
+  margin: 0;
+}
+
+.spa-console-facts dt {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-console-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.spa-console-timeline {
+  display: grid;
+  gap: var(--spa-space-3);
+  margin: var(--spa-space-4) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-console-timeline__item {
+  display: grid;
+  gap: var(--spa-space-1);
+  padding: var(--spa-space-3) var(--spa-space-4);
+  border-inline-start: 3px solid var(--spa-color-border-strong);
+  border-radius: var(--spa-radius-sm);
+  background-color: var(--spa-color-surface-sunken);
+}
+
+.spa-console-timeline__item--suspended {
+  border-inline-start-color: var(--spa-color-danger);
+}
+
+.spa-console-timeline__item--reactivated {
+  border-inline-start-color: var(--spa-color-success);
+}
+
+.spa-console-timeline__item--note {
+  border-inline-start-color: var(--spa-color-accent);
+}
+
+.spa-console-timeline__head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--spa-space-2);
+}
+
+.spa-console-timeline__head span {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-console-timeline__body {
+  margin: 0;
+  white-space: pre-wrap;
+}

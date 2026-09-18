@@ -21,6 +21,7 @@ import type {
   ProvisionedTenantRecord,
   ReissuedTenantInvitation,
   TenantAccessLinks,
+  TenantListQuery,
   TenantPage,
 } from './platform.types';
 import { verifyTotp } from './totp';
@@ -220,6 +221,7 @@ export class PlatformService {
         billingStatus: 'managed',
         trialEndsAt: null,
         createdAt: provisioned.createdAt,
+        origin: 'console',
       },
       admin: {
         id: provisioned.adminUserId,
@@ -232,8 +234,8 @@ export class PlatformService {
     };
   }
 
-  /** Les établissements de la plateforme, page par page — critère 4. */
-  public async listTenants(input: { page: number; pageSize: number }): Promise<TenantPage> {
+  /** Les établissements de la plateforme, page par page, filtrés — critère 4. */
+  public async listTenants(input: TenantListQuery): Promise<TenantPage> {
     const { items, totalItems } = await this.repository.listTenants(input);
 
     return {
