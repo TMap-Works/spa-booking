@@ -3,29 +3,53 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ContactStep } from '@/app/(booking)/[tenantSlug]/reservation/steps/contact-step';
-import { emptyBookingDraft } from '@/lib/booking/draft';
+import type { AccountPresence } from '@/lib/account-presence';
+import { emptyBookingDraft, type ContactDraft } from '@/lib/booking/draft';
 
 afterEach(cleanup);
 
 /**
- * `countryCode` vaut `null` par défaut — l'établissement qui n'a pas publié son
- * adresse (#1028). C'est l'état sous lequel toutes les assertions antérieures
- * ont été écrites : un numéro national y reste refusé, et l'aide y exige
- * l'indicatif. Les cas qui parlent du pays le nomment.
+ * Ce qui distingue un rendu d'un autre — tout est facultatif, et chaque défaut
+ * est l'état sous lequel les assertions antérieures ont été écrites. Les cas qui
+ * s'en écartent le nomment.
  */
-function renderContactStep(countryCode: string | null = null) {
+interface RenderOptions {
+  /**
+   * `null` par défaut — l'établissement qui n'a pas publié son adresse (#1028).
+   * Un numéro national y reste refusé, et l'aide y annonce le format
+   * international.
+   */
+  readonly countryCode?: string | null;
+  /**
+   * La cliente connectée, telle que la page l'a lue du cookie de présence
+   * (#1050). `null` par défaut : la visiteuse sans compte est l'état sous lequel
+   * toutes les assertions antérieures ont été écrites, et le chemin par défaut
+   * du CDC §1.4.
+   */
+  readonly presence?: AccountPresence | null;
+  /** Le brouillon déjà posé — vierge sauf mention contraire. */
+  readonly contact?: ContactDraft;
+}
+
+function renderContactStep({
+  countryCode = null,
+  presence = null,
+  contact = emptyBookingDraft().contact,
+}: RenderOptions = {}) {
   const onSubmit = vi.fn();
   const onSave = vi.fn();
   const onBack = vi.fn();
 
   render(
     <ContactStep
-      contact={emptyBookingDraft().contact}
+      contact={contact}
       tenantSlug="salon-zen"
       countryCode={countryCode}
       // Le rappel de la barre basse (#1047) : cette suite éprouve la saisie, et
       // rien à rappeler est un état que l'étape sait rendre.
       summary={null}
+      presence={presence}
+      loginHref="/salon-zen/compte/connexion"
       onSave={onSave}
       onBack={onBack}
       onSubmit={onSubmit}
@@ -49,6 +73,118 @@ async function fillRequiredFields(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText(/Adresse e-mail/), 'camille@example.test');
   await user.click(screen.getByRole('checkbox'));
 }
+
+/**
+ * #1050 — l'étape s'ouvrait sur cinq champs vides à une cliente connectée, dont
+ * trois que le compte connaît. `BM-COMPTE-01` demande l'inverse : la cliente
+ * connectée doit le savoir, et ne pas retaper ce qu'elle a déjà donné.
+ *
+ * Ce que cette suite tient, et ce qu'elle laisse dehors :
+ *
+ * - l'identité du compte est **résumée** et non redemandée — c'est le défaut ;
+ * - elle reste **corrigible** : « Modifier » rouvre les deux champs, préremplis,
+ *   et le focus les suit ;
+ * - la saisie de la cliente **l'emporte** sur le compte : revenir du créneau ne
+ *   fait pas repartir un nom corrigé ;
+ * - rien ne change pour qui n'est pas connectée, troisième critère du ticket ;
+ * - l'adresse e-mail reste à saisir : le cookie de présence ne la porte pas
+ *   (`lib/account-presence.ts`), et l'élargir sort de l'empreinte du ticket.
+ */
+describe('la cliente connectée ne retape pas son nom (#1050)', () => {
+  const alice: AccountPresence = { firstName: 'Alice', lastName: 'Marchand' };
+
+  it('résume l’identité du compte au lieu d’en redemander les champs', () => {
+    renderContactStep({ presence: alice });
+
+    expect(screen.getByText('Alice Marchand')).toBeDefined();
+    // Les champs existent toujours — ils portent la valeur qui sera soumise —
+    // mais `hidden` les retire de l'arbre d'accessibilité comme de l'ordre de
+    // tabulation : un champ requis invisible et focalisable serait un piège.
+    // D'où la recherche par rôle, la seule qui tienne compte de l'accessibilité
+    // — `getByLabelText` trouverait un champ que personne ne peut atteindre.
+    expect(screen.queryByRole('textbox', { name: /Prénom/ })).toBeNull();
+    expect(document.querySelector<HTMLInputElement>('#firstName')?.value).toBe('Alice');
+    expect(document.querySelector<HTMLInputElement>('#lastName')?.value).toBe('Marchand');
+  });
+
+  it('soumet l’identité du compte sans qu’un seul champ de nom soit touché', async () => {
+    const { onSubmit, user } = renderContactStep({ presence: alice });
+
+    await user.type(screen.getByLabelText(/Adresse e-mail/), 'alice@example.test');
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: /Vérifier ma réservation/ }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({
+      firstName: 'Alice',
+      lastName: 'Marchand',
+      email: 'alice@example.test',
+    });
+  });
+
+  it('rouvre les champs préremplis sur « Modifier », et y pose le focus', async () => {
+    const { user } = renderContactStep({ presence: alice });
+
+    await user.click(screen.getByRole('button', { name: /Modifier/ }));
+
+    const prenom = screen.getByLabelText<HTMLInputElement>(/Prénom/);
+
+    expect(prenom.value).toBe('Alice');
+    expect(screen.getByLabelText<HTMLInputElement>(/^Nom/).value).toBe('Marchand');
+    // Le bouton cliqué disparaît avec l'encart : sans ce rattrapage, le focus
+    // retomberait sur `<body>` et la tabulation repartirait du haut du document
+    // (skill web-frontend §7).
+    expect(document.activeElement).toBe(prenom);
+    // Et le résumé s'efface : deux réponses à la même question sur un écran en
+    // seraient une de trop.
+    expect(screen.queryByText('Alice Marchand')).toBeNull();
+  });
+
+  it('laisse la saisie de la cliente l’emporter sur le nom du compte', () => {
+    // Le brouillon d'une cliente qui a corrigé son nom, puis est repartie
+    // changer de créneau : au retour, c'est le sien qu'elle doit retrouver.
+    renderContactStep({
+      presence: alice,
+      contact: { ...emptyBookingDraft().contact, firstName: 'Alix', lastName: 'Marchand' },
+    });
+
+    expect(document.querySelector<HTMLInputElement>('#firstName')?.value).toBe('Alix');
+    // Et l'encart dit ce qui sera réservé, pas ce que le compte connaît :
+    // afficher « Alice Marchand » au-dessus d'un formulaire qui porte « Alix »
+    // annoncerait une réservation à un autre nom que celui qui partira.
+    expect(screen.getByText('Alix Marchand')).toBeDefined();
+    expect(screen.queryByText('Alice Marchand')).toBeNull();
+  });
+
+  it('ouvre les champs quand le compte n’a pas de nom de famille', () => {
+    // `account-presence.ts` accepte un nom vide là où `nameSchema` l'exige :
+    // résumer « Réservé au nom de Alice » cacherait un champ requis derrière un
+    // encart qui prétend le remplir, et la soumission échouerait sans rien dire.
+    renderContactStep({ presence: { firstName: 'Alice', lastName: '' } });
+
+    expect(screen.getByLabelText<HTMLInputElement>(/Prénom/).value).toBe('Alice');
+    expect(screen.queryByRole('button', { name: /Modifier/ })).toBeNull();
+  });
+
+  it('ne change rien pour la réservation sans compte', () => {
+    renderContactStep();
+
+    // Deuxième critère du ticket : les cinq champs, et aucun encart d'identité.
+    expect(screen.getByLabelText<HTMLInputElement>(/Prénom/).value).toBe('');
+    expect(screen.queryByRole('button', { name: /Modifier/ })).toBeNull();
+    // À la place, l'entrée de celle qui a déjà un compte (BM-COMPTE-01) — en
+    // tête d'étape, avant le premier champ qu'elle évite de remplir.
+    expect(
+      screen.getByRole('link', { name: /Se connecter/ }).getAttribute('href'),
+    ).toBe('/salon-zen/compte/connexion');
+  });
+
+  it('ne propose pas de se connecter à qui l’est déjà', () => {
+    renderContactStep({ presence: alice });
+
+    expect(screen.queryByRole('link', { name: /Se connecter/ })).toBeNull();
+  });
+});
 
 describe('la saisie part au brouillon avant la soumission', () => {
   it('verse ce qui a été tapé dès qu’un champ est quitté', async () => {
@@ -146,7 +282,7 @@ describe('formulaire de coordonnées', () => {
    * soumettre en affichant tout de même son refus serait aussi faux.
    */
   it('accepte un numéro national quand l’établissement a un pays', async () => {
-    const { onSubmit, user } = renderContactStep('FR');
+    const { onSubmit, user } = renderContactStep({ countryCode: 'FR' });
 
     await fillRequiredFields(user);
     await user.type(screen.getByLabelText(/Téléphone/), '06 12 34 56 78');
@@ -166,7 +302,7 @@ describe('formulaire de coordonnées', () => {
    * (en-tête d'`e164PhoneSchemaFor`).
    */
   it('cesse d’exiger l’indicatif dans l’aide quand l’établissement a un pays', () => {
-    renderContactStep('FR');
+    renderContactStep({ countryCode: 'FR' });
 
     const hint = document.getElementById('phone-hint');
 

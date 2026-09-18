@@ -22,6 +22,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { BookingTunnel } from '@/app/(booking)/[tenantSlug]/reservation/booking-tunnel';
+import type { AccountPresence } from '@/lib/account-presence';
 
 import { service, tenant } from './fixtures';
 
@@ -140,8 +141,23 @@ afterEach(() => {
   cancelAppointmentAction.mockReset();
 });
 
-function renderTunnel() {
-  render(<BookingTunnel tenant={tenant} services={[service]} exitHref={`/${tenant.slug}`} />);
+/**
+ * `presence` vaut `null` par défaut — la visiteuse qui n'a pas de compte
+ * ouvert (#1050). C'est l'état sous lequel toutes les assertions antérieures ont
+ * été écrites : l'étape « Coordonnées » y montre ses cinq champs, et la
+ * réservation sans compte reste le chemin par défaut du CDC §1.4. Les cas qui
+ * parlent d'une cliente connectée la nomment.
+ */
+function renderTunnel(presence: AccountPresence | null = null) {
+  render(
+    <BookingTunnel
+      tenant={tenant}
+      services={[service]}
+      exitHref={`/${tenant.slug}`}
+      presence={presence}
+      loginHref={`/${tenant.slug}/compte/connexion`}
+    />,
+  );
 
   return userEvent.setup();
 }

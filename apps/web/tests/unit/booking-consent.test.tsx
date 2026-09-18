@@ -83,6 +83,11 @@ function renderContactStep() {
       // Le rappel de la barre basse (#1047) : cette suite ne parle que du
       // consentement, et rien à rappeler est un état que l'étape sait rendre.
       summary={null}
+      // Le consentement ne dépend pas davantage du compte (#1050) : la case est
+      // due à qui réserve, connectée ou non, et c'est la visiteuse sans compte
+      // qui porte les assertions antérieures.
+      presence={null}
+      loginHref="/salon-zen/compte/connexion"
       onSave={onSave}
       onBack={vi.fn()}
       onSubmit={onSubmit}

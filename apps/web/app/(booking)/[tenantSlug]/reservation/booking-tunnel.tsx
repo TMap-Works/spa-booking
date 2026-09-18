@@ -7,6 +7,7 @@ import { BookingSummaryAside, type BookingSummary } from '@/components/booking/s
 import { BookingTunnelHeader } from '@/components/booking/tunnel-header';
 import { BookingProgress } from '@/components/booking/tunnel-progress';
 import { Notification, type NotificationTone } from '@/components/ui/notification';
+import type { AccountPresence } from '@/lib/account-presence';
 import {
   bookingSearch,
   draftFromSearch,
@@ -58,6 +59,25 @@ interface BookingTunnelProps {
    * l'en-tête de la vitrine.
    */
   readonly exitHref: string;
+  /**
+   * La cliente connectée chez ce salon, ou `null` (#1050).
+   *
+   * Lue **côté serveur** par la page, dans le cookie de présence posé par #1045
+   * : un Client Component ne peut pas la lire lui-même — le cookie est
+   * `httpOnly`, et c'est très bien ainsi. Elle traverse donc l'arbre comme une
+   * propriété, jamais par l'URL ni par `sessionStorage`.
+   *
+   * Le tunnel n'en fait rien lui-même : seule l'étape « Coordonnées » s'en sert,
+   * et il n'y a pas d'état à en tirer. Elle descend telle quelle.
+   */
+  readonly presence: AccountPresence | null;
+  /**
+   * L'écran de connexion du salon — « Déjà cliente ? » de l'étape coordonnées.
+   *
+   * Composé par la page comme `exitHref`, et pour la même raison : c'est elle
+   * qui tient l'arborescence des routes (`salon-data.ts`).
+   */
+  readonly loginHref: string;
 }
 
 /**
@@ -159,7 +179,13 @@ function keepChosenSlot(current: BookingDraft, merged: BookingDraft): BookingDra
  * pour le partage des rôles. Le composant relit les deux au montage, réécrit le
  * stockage à chaque changement, et tient l'adresse à jour à chaque étape.
  */
-export function BookingTunnel({ tenant, services, exitHref }: BookingTunnelProps) {
+export function BookingTunnel({
+  tenant,
+  services,
+  exitHref,
+  presence,
+  loginHref,
+}: BookingTunnelProps) {
   const [draft, setDraft] = useState<BookingDraft>(emptyBookingDraft);
   const [hydrated, setHydrated] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -790,6 +816,9 @@ export function BookingTunnel({ tenant, services, exitHref }: BookingTunnelProps
                 // consulte.
                 countryCode={tenant.address?.country ?? null}
                 summary={summary}
+                // La cliente connectée, telle que le serveur l'a lue (#1050).
+                presence={presence}
+                loginHref={loginHref}
                 onSave={saveContact}
                 onBack={() => {
                   goTo('creneau');

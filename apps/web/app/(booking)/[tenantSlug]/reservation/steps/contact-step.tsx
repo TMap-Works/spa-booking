@@ -2,7 +2,8 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { e164PhoneSchemaFor, guestContactSchemaFor, longTextSchema } from '@spa/shared';
-import { useCallback, useMemo } from 'react';
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -10,6 +11,7 @@ import { BookingActionBar, type BookingSummary } from '@/components/booking/summ
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { TextArea } from '@/components/ui/textarea';
+import type { AccountPresence } from '@/lib/account-presence';
 import { BOOKING_CONSENT, ConsentField, consentSchema } from '@/lib/booking/consent';
 import type { ContactDraft } from '@/lib/booking/draft';
 
@@ -89,11 +91,21 @@ type ContactFormValues = z.output<ReturnType<typeof contactFormSchemaFor>>;
  * l'indicatif, qui est alors la seule forme complétable. `publicTenantSchema`
  * porte l'adresse en `.optional()`, et un salon qui n'a pas publié la sienne
  * retombe exactement sur le libellé d'avant.
+ *
+ * ## Ce que #1050 y change : la longueur, jamais la règle
+ *
+ * L'audit `d20260918-1` demande des *« aides de champ en une ligne »*. Les deux
+ * libellés faisaient deux phrases, donc deux à trois lignes à 360 px sous un
+ * champ facultatif — plus de hauteur que le champ lui-même. Ils disent
+ * désormais la même chose d'un trait : à quoi sert le numéro, et quelle forme
+ * est acceptée. Ni l'exemple retiré par #626 ni le pays introduit par #1028 ne
+ * reviennent : aucun des deux n'écrit de numéro national, et c'est toujours
+ * `e164PhoneSchemaFor` qui accepte ou refuse.
  */
 function phoneHint(countryCode: string | null): string {
   return countryCode === null
-    ? 'Facultatif, pour le rappel par SMS. Au format international, indicatif du pays compris.'
-    : 'Facultatif, pour le rappel par SMS. Au format du pays de l’établissement, ou au format international.';
+    ? 'Facultatif, pour le rappel par SMS — au format international.'
+    : 'Facultatif, pour le rappel par SMS — au format du pays de l’établissement.';
 }
 
 /**
@@ -147,6 +159,31 @@ interface ContactStepProps {
    */
   readonly summary: BookingSummary | null;
   /**
+   * La cliente connectée chez ce salon, ou `null` (#1050).
+   *
+   * Elle vient du **cookie de présence** posé par #1045
+   * (`lib/account-presence.ts`), lu côté serveur par la page du tunnel et
+   * descendu jusqu'ici : aucune donnée de compte ne transite par l'URL, et rien
+   * n'est relu du navigateur. Le cookie est `httpOnly`, porté sur `/{salon}`, et
+   * ne contient **ni jeton ni identifiant** — seulement le prénom et le nom que
+   * l'en-tête du salon affiche déjà. Il sert à afficher, pas à décider : l'API
+   * revalide de son côté ce que la réservation lui envoie.
+   *
+   * `import type` et non une importation de valeur : `lib/account-presence.ts`
+   * importe `next/headers`, qui n'existe pas côté navigateur. Le type ne
+   * survit pas à la compilation, et ce Client Component reste compilable —
+   * c'est l'arbitrage déjà écrit en tête de `compte/paths.ts`.
+   */
+  readonly presence: AccountPresence | null;
+  /**
+   * L'écran de connexion de ce salon — où mène « Déjà cliente ? » (#1050).
+   *
+   * Composé par la page, comme `exitHref` du tunnel : les composants ne
+   * connaissent pas l'arborescence des routes, et le groupe `(booking)` tient
+   * la sienne dans `salon-data.ts`.
+   */
+  readonly loginHref: string;
+  /**
    * Verse la saisie en cours au brouillon **sans changer d'étape**.
    *
    * Le formulaire est non contrôlé (react-hook-form) : sans ce report, ce que la
@@ -177,6 +214,8 @@ export function ContactStep({
   tenantSlug,
   countryCode,
   summary,
+  presence,
+  loginHref,
   onSave,
   onBack,
   onSubmit,
@@ -188,6 +227,43 @@ export function ContactStep({
   // évite ici.
   const resolver = useMemo(() => zodResolver(contactFormSchemaFor(countryCode)), [countryCode]);
 
+  /**
+   * Ce que le formulaire porte à l'ouverture — le brouillon, complété par
+   * l'identité du compte quand elle manque (#1050).
+   *
+   * ## Pourquoi la complétion se fait ici, et pas dans le brouillon
+   *
+   * Le brouillon est ce que la **cliente** a posé : s'il portait d'office le nom
+   * du compte, `hasDraftInput` — qui décide si « ✕ Quitter » demande
+   * confirmation — retiendrait toute cliente connectée sur un tunnel où elle n'a
+   * pourtant rien saisi. Et le prénom relu d'une session fermée entre-temps
+   * survivrait dans `sessionStorage` à la déconnexion.
+   *
+   * Posé en valeur par défaut, il n'entre dans le brouillon qu'au premier geste
+   * — une frappe, un champ quitté, la soumission —, c'est-à-dire au moment où il
+   * devient la saisie de cette réservation. C'est exactement ce que le brouillon
+   * est fait pour conserver (`lib/booking/draft.ts`), ni plus ni moins.
+   *
+   * Le brouillon l'emporte quand il porte quelque chose : la cliente qui a
+   * corrigé son nom ne le voit pas revenir à celui du compte au retour du
+   * créneau.
+   *
+   * Calculé une fois — `useMemo` sur les seules valeurs qui le composent : un
+   * objet recréé à chaque rendu serait inoffensif ici, `defaultValues` n'étant
+   * lu qu'au montage, mais il laisserait croire le contraire à la lecture.
+   */
+  const defaultValues = useMemo<ContactDraft>(() => {
+    if (presence === null) {
+      return contact;
+    }
+
+    return {
+      ...contact,
+      firstName: contact.firstName === '' ? presence.firstName : contact.firstName,
+      lastName: contact.lastName === '' ? presence.lastName : contact.lastName,
+    };
+  }, [contact, presence]);
+
   const {
     register,
     handleSubmit,
@@ -195,12 +271,68 @@ export function ContactStep({
     formState: { errors, isSubmitted, isSubmitting },
   } = useForm<ContactDraft, unknown, ContactFormValues>({
     resolver,
-    defaultValues: contact,
+    defaultValues,
     // Le message apparaît quand la cliente quitte le champ, pas à la première
     // frappe : signaler « adresse invalide » sur un `c` en cours de saisie est
     // du bruit.
     mode: 'onTouched',
   });
+
+  /**
+   * L'identité est-elle ouverte à la correction ?
+   *
+   * Fermée au départ pour qui est connectée — c'est tout l'objet du ticket :
+   * « Réservé au nom de Alice Marchand » remplace deux champs déjà remplis.
+   * Ouverte sans condition pour qui ne l'est pas : il n'y a alors rien à
+   * résumer, et le formulaire est celui d'avant, à la mise en page près.
+   *
+   * L'état ne redescend jamais au brouillon : c'est une préférence d'affichage
+   * de cet écran, pas une donnée de la réservation.
+   */
+  const [editingIdentity, setEditingIdentity] = useState(false);
+  /**
+   * Le résumé ne remplace les deux champs que s'il porte **de quoi réserver**.
+   *
+   * Il se lit sur `defaultValues` et non sur `presence` : ce sont les valeurs
+   * que les deux champs masqués portent réellement, donc celles que la
+   * soumission emportera. Les lire ailleurs ferait mentir l'encart — la cliente
+   * qui a corrigé son nom en « Alix », puis est repartie changer de créneau,
+   * verrait « Réservé au nom de Alice Marchand » au-dessus d'un formulaire qui
+   * réserve pour Alix.
+   *
+   * Et le cookie de présence accepte un nom de famille vide
+   * (`account-presence.ts`) là où `nameSchema` l'exige : résumer « Réservé au
+   * nom de Alice » cacherait alors un champ requis derrière un encart qui
+   * prétend le remplir, et la soumission échouerait sur une erreur invisible.
+   * Dans ce cas — rare, mais réel — l'étape s'ouvre sur les champs, préremplis
+   * de ce que le compte sait.
+   */
+  const identitySummarised =
+    presence !== null &&
+    defaultValues.firstName.trim() !== '' &&
+    defaultValues.lastName.trim() !== '' &&
+    !editingIdentity;
+  /**
+   * Le focus suit « Modifier » sur le premier champ qu'il vient d'ouvrir.
+   *
+   * Le bouton cliqué disparaît avec l'encart, et le focus retomberait sur
+   * `<body>` : la tabulation repartirait du haut du document au moment précis
+   * où la cliente vient de demander à corriger son nom (skill web-frontend §7).
+   *
+   * Le focus vise le **groupe** et non le champ : `register` rend une référence
+   * neuve à chaque rendu, et la fusionner avec la nôtre ferait démonter puis
+   * remonter la référence de `react-hook-form` à chaque frappe. Le groupe, lui,
+   * est un nœud stable dont le premier `input` est le prénom.
+   */
+  const focusFirstNameRef = useRef(false);
+  const namesRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (focusFirstNameRef.current) {
+      focusFirstNameRef.current = false;
+      namesRef.current?.querySelector('input')?.focus();
+    }
+  }, [editingIdentity]);
 
   /**
    * Ce que le report enregistre : la saisie **telle qu'elle a été tapée**.
@@ -251,40 +383,108 @@ export function ContactStep({
         // #737. `flush` n'écrit que s'il y a quelque chose en attente : rien
         // n'est réécrit pour rien quand le `focusout` a déjà versé.
         autosave.flush();
-        void handleSubmit(() => {
-          // Le brouillon conserve la saisie **telle qu'elle a été tapée** : c'est
-          // ce que la cliente doit retrouver si elle revient en arrière. La forme
-          // normalisée est produite au moment de composer la requête.
-          onSubmit(getValues());
-        })(event);
+        void handleSubmit(
+          () => {
+            // Le brouillon conserve la saisie **telle qu'elle a été tapée** : c'est
+            // ce que la cliente doit retrouver si elle revient en arrière. La forme
+            // normalisée est produite au moment de composer la requête.
+            onSubmit(getValues());
+          },
+          // Un refus sur le prénom ou le nom **rouvre l'encart d'identité**
+          // (#1050). Sans cela, le message serait rendu dans le groupe masqué :
+          // le formulaire refuserait de partir sans que rien à l'écran dise
+          // pourquoi, et `shouldFocusError` viserait un champ que `hidden` rend
+          // infocalisable. Le cas n'est pas théorique — un nom trop long ou
+          // porteur d'un caractère que `nameSchema` écarte peut venir du compte
+          // aussi bien que du clavier.
+          (invalid) => {
+            if (invalid.firstName !== undefined || invalid.lastName !== undefined) {
+              setEditingIdentity(true);
+            }
+          },
+        )(event);
       }}
     >
       {/* Plus de titre d'étape ici : le `<h1>` du tunnel pose la question —
           « Comment vous joindre ? » —, et « Vos coordonnées » juste au-dessous
           la redisait en d'autres mots (#1047, BM-TUNNEL-11). */}
-      <Field
-        id="firstName"
-        label="Prénom"
-        autoComplete="given-name"
-        required
-        error={errors.firstName?.message}
-        {...register('firstName')}
-      />
-      <Field
-        id="lastName"
-        label="Nom"
-        autoComplete="family-name"
-        required
-        error={errors.lastName?.message}
-        {...register('lastName')}
-      />
+
+      {/* La porte d'entrée de la cliente qui a déjà un compte (BM-COMPTE-01,
+          #1050). Elle est **en tête d'étape**, avant le premier champ : plus
+          bas, elle serait lue après avoir retapé ce qu'elle évite.
+
+          Ce n'est pas une sortie de tunnel au sens de la §3 de la skill
+          web-frontend : le brouillon vit dans `sessionStorage`, qui suit
+          l'onglet et non la page, et la réservation en cours est donc retrouvée
+          telle quelle au retour. Le lien le dit, parce qu'une cliente qui a
+          rempli la moitié d'un formulaire n'a aucune raison de le croire. */}
+      {presence === null ? (
+        <p className="spa-booking__signin">
+          Déjà cliente ? <Link href={loginHref}>Se connecter</Link> — votre réservation en
+          cours est conservée.
+        </p>
+      ) : null}
+
+      {/* L'identité que le compte connaît, résumée plutôt que redemandée.
+
+          Le `hidden` plutôt qu'un démontage : les deux champs restent dans le
+          DOM, donc dans le formulaire, et `react-hook-form` n'a rien à
+          réenregistrer au dépliage. `hidden` les retire de l'arbre
+          d'accessibilité comme de l'ordre de tabulation — un champ requis
+          invisible mais focalisable serait un piège au clavier. */}
+      {identitySummarised ? (
+        <div className="spa-booking__identity">
+          <div className="spa-booking__identity-text">
+            <p className="spa-booking__identity-label">Réservé au nom de</p>
+            {/* Ce que les deux champs masqués portent, et donc ce qui sera
+                réservé : le nom corrigé par la cliente l'emporte sur celui du
+                compte ici comme dans le formulaire. */}
+            <p className="spa-booking__identity-name">
+              {defaultValues.firstName} {defaultValues.lastName}
+            </p>
+          </div>
+          <Button
+            variant="quiet"
+            onClick={() => {
+              focusFirstNameRef.current = true;
+              setEditingIdentity(true);
+            }}
+          >
+            Modifier
+          </Button>
+        </div>
+      ) : null}
+
+      {/* Prénom et nom côte à côte dès 30 rem (audit `d20260918-1`) : deux
+          champs courts empilés sur toute la largeur d'un écran de bureau
+          allongeaient le formulaire sans rien gagner en lisibilité. Le
+          regroupement est aussi ce qui les fait apparaître et disparaître d'un
+          bloc avec l'encart d'identité. */}
+      <div className="spa-booking__names" hidden={identitySummarised} ref={namesRef}>
+        <Field
+          id="firstName"
+          label="Prénom"
+          autoComplete="given-name"
+          required
+          error={errors.firstName?.message}
+          {...register('firstName')}
+        />
+        <Field
+          id="lastName"
+          label="Nom"
+          autoComplete="family-name"
+          required
+          error={errors.lastName?.message}
+          {...register('lastName')}
+        />
+      </div>
       <Field
         id="email"
         label="Adresse e-mail"
         type="email"
         autoComplete="email"
         required
-        hint="C’est là que sera envoyée la confirmation de votre rendez-vous."
+        hint="La confirmation y sera envoyée."
         error={errors.email?.message}
         {...register('email')}
       />
