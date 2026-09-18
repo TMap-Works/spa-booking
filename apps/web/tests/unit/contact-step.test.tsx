@@ -22,9 +22,9 @@ interface RenderOptions {
   readonly countryCode?: string | null;
   /**
    * La cliente connectée, telle que la page l'a lue du cookie de présence
-   * (#1050). `null` par défaut : la visiteuse sans compte est l'état sous lequel
-   * toutes les assertions antérieures ont été écrites, et le chemin par défaut
-   * du CDC §1.4.
+   * (#1050, élargi aux coordonnées par #1086). `null` par défaut : la visiteuse
+   * sans compte est l'état sous lequel toutes les assertions antérieures ont été
+   * écrites, et le chemin par défaut du CDC §1.4.
    */
   readonly presence?: AccountPresence | null;
   /** Le brouillon déjà posé — vierge sauf mention contraire. */
@@ -75,42 +75,68 @@ async function fillRequiredFields(user: ReturnType<typeof userEvent.setup>) {
 }
 
 /**
- * #1050 — l'étape s'ouvrait sur cinq champs vides à une cliente connectée, dont
- * trois que le compte connaît. `BM-COMPTE-01` demande l'inverse : la cliente
- * connectée doit le savoir, et ne pas retaper ce qu'elle a déjà donné.
+ * #1050 puis #1086 — l'étape s'ouvrait sur cinq champs vides à une cliente
+ * connectée, dont trois que le compte connaît. `BM-COMPTE-01` demande l'inverse :
+ * la cliente connectée doit le savoir, et ne pas retaper ce qu'elle a déjà donné.
  *
- * Ce que cette suite tient, et ce qu'elle laisse dehors :
+ * #1050 a résumé le prénom et le nom ; l'adresse e-mail restait à saisir, faute
+ * d'être portée par le cookie de présence — et le premier critère du ticket,
+ * *« connectée, l'étape se valide sans rien saisir »*, tombait sur ce champ
+ * requis. #1086 élargit le cookie à l'adresse et au numéro, et c'est cette
+ * dernière moitié que la suite tient désormais.
  *
- * - l'identité du compte est **résumée** et non redemandée — c'est le défaut ;
- * - elle reste **corrigible** : « Modifier » rouvre les deux champs, préremplis,
+ * Ce que cette suite tient :
+ *
+ * - les coordonnées du compte sont **résumées** et non redemandées — c'est le
+ *   défaut, et l'étape se valide sans qu'un seul champ soit touché ;
+ * - elles restent **corrigibles** : « Modifier » rouvre les champs, préremplis,
  *   et le focus les suit ;
  * - la saisie de la cliente **l'emporte** sur le compte : revenir du créneau ne
  *   fait pas repartir un nom corrigé ;
- * - rien ne change pour qui n'est pas connectée, troisième critère du ticket ;
- * - l'adresse e-mail reste à saisir : le cookie de présence ne la porte pas
- *   (`lib/account-presence.ts`), et l'élargir sort de l'empreinte du ticket.
+ * - un champ que le compte ne renseigne pas **reste ouvert** plutôt que d'être
+ *   replié derrière un encart qui ne le résume pas ;
+ * - rien ne change pour qui n'est pas connectée, troisième critère du ticket.
  */
-describe('la cliente connectée ne retape pas son nom (#1050)', () => {
-  const alice: AccountPresence = { firstName: 'Alice', lastName: 'Marchand' };
+describe('la cliente connectée ne retape pas ses coordonnées (#1050, #1086)', () => {
+  const alice: AccountPresence = {
+    firstName: 'Alice',
+    lastName: 'Marchand',
+    email: 'alice@example.test',
+    phone: '+261341234567',
+  };
 
-  it('résume l’identité du compte au lieu d’en redemander les champs', () => {
+  it('résume les coordonnées du compte au lieu d’en redemander les champs', () => {
     renderContactStep({ presence: alice });
 
     expect(screen.getByText('Alice Marchand')).toBeDefined();
+    // L'adresse et le numéro sur la ligne que l'audit `d20260918-1` dessine sous
+    // le nom : c'est là que part la confirmation, et une cliente qui ne la voit
+    // pas ne peut pas corriger l'adresse d'un compte ouvert il y a deux ans.
+    expect(screen.getByText('alice@example.test · +261341234567')).toBeDefined();
     // Les champs existent toujours — ils portent la valeur qui sera soumise —
     // mais `hidden` les retire de l'arbre d'accessibilité comme de l'ordre de
     // tabulation : un champ requis invisible et focalisable serait un piège.
     // D'où la recherche par rôle, la seule qui tienne compte de l'accessibilité
     // — `getByLabelText` trouverait un champ que personne ne peut atteindre.
     expect(screen.queryByRole('textbox', { name: /Prénom/ })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: /Adresse e-mail/ })).toBeNull();
+    expect(screen.queryByRole('textbox', { name: /Téléphone/ })).toBeNull();
     expect(document.querySelector<HTMLInputElement>('#firstName')?.value).toBe('Alice');
     expect(document.querySelector<HTMLInputElement>('#lastName')?.value).toBe('Marchand');
+    expect(document.querySelector<HTMLInputElement>('#email')?.value).toBe('alice@example.test');
+    expect(document.querySelector<HTMLInputElement>('#phone')?.value).toBe('+261341234567');
   });
 
-  it('soumet l’identité du compte sans qu’un seul champ de nom soit touché', async () => {
+  /**
+   * Le premier critère de #1050, enfin tenu : **rien n'est saisi**.
+   *
+   * Le consentement reste à cocher, et ce n'est pas une saisie — `BM-TUNNEL-06`
+   * exige une case décochée, distincte de la réservation elle-même (RGPD). C'est
+   * le seul geste qui subsiste, et il est délibéré.
+   */
+  it('se valide sans qu’un seul champ soit saisi', async () => {
     const { onSubmit, user } = renderContactStep({ presence: alice });
 
-    await user.type(screen.getByLabelText(/Adresse e-mail/), 'alice@example.test');
     await user.click(screen.getByRole('checkbox'));
     await user.click(screen.getByRole('button', { name: /Vérifier ma réservation/ }));
 
@@ -119,6 +145,7 @@ describe('la cliente connectée ne retape pas son nom (#1050)', () => {
       firstName: 'Alice',
       lastName: 'Marchand',
       email: 'alice@example.test',
+      phone: '+261341234567',
     });
   });
 
@@ -131,6 +158,12 @@ describe('la cliente connectée ne retape pas son nom (#1050)', () => {
 
     expect(prenom.value).toBe('Alice');
     expect(screen.getByLabelText<HTMLInputElement>(/^Nom/).value).toBe('Marchand');
+    // Les quatre champs repliés se rouvrent d'un bloc : « Modifier » ne
+    // promet pas de corriger le nom seul.
+    expect(screen.getByLabelText<HTMLInputElement>(/Adresse e-mail/).value).toBe(
+      'alice@example.test',
+    );
+    expect(screen.getByLabelText<HTMLInputElement>(/Téléphone/).value).toBe('+261341234567');
     // Le bouton cliqué disparaît avec l'encart : sans ce rattrapage, le focus
     // retomberait sur `<body>` et la tabulation repartirait du haut du document
     // (skill web-frontend §7).
@@ -160,10 +193,99 @@ describe('la cliente connectée ne retape pas son nom (#1050)', () => {
     // `account-presence.ts` accepte un nom vide là où `nameSchema` l'exige :
     // résumer « Réservé au nom de Alice » cacherait un champ requis derrière un
     // encart qui prétend le remplir, et la soumission échouerait sans rien dire.
-    renderContactStep({ presence: { firstName: 'Alice', lastName: '' } });
+    renderContactStep({ presence: { ...alice, lastName: '' } });
 
     expect(screen.getByLabelText<HTMLInputElement>(/Prénom/).value).toBe('Alice');
     expect(screen.queryByRole('button', { name: /Modifier/ })).toBeNull();
+  });
+
+  /**
+   * Le cookie posé **avant #1086** ne porte pas d'adresse, et `parsePresence` la
+   * relit à la chaîne vide plutôt que de rejeter le cookie entier — sans quoi
+   * toutes les clientes connectées à l'instant du déploiement cesseraient d'être
+   * saluées. L'étape doit alors se comporter comme sous #1050 : le nom résumé
+   * cacherait un champ requis vide, donc les champs s'ouvrent.
+   */
+  it('ouvre les champs quand le cookie ne porte pas encore d’adresse', () => {
+    renderContactStep({ presence: { ...alice, email: '', phone: '' } });
+
+    expect(screen.getByLabelText<HTMLInputElement>(/Prénom/).value).toBe('Alice');
+    expect(screen.getByLabelText<HTMLInputElement>(/Adresse e-mail/).value).toBe('');
+    expect(screen.queryByRole('button', { name: /Modifier/ })).toBeNull();
+  });
+
+  /**
+   * `sessionUserSchema` porte `phone` à `null`, et c'est le cas courant : le
+   * numéro est facultatif à l'inscription.
+   *
+   * L'audit dit « déplie les champs pré-remplis » — ce qui se replie est ce que
+   * l'encart résume. Replier un téléphone vide cacherait derrière « Modifier »
+   * le seul choix qui reste à la cliente connectée, et c'est celui qui lui vaut
+   * le rappel par SMS (CDC §1.4).
+   */
+  it('laisse le téléphone ouvert quand le compte n’en connaît pas', () => {
+    renderContactStep({ presence: { ...alice, phone: '' } });
+
+    // Le reste est bien résumé : c'est le téléphone seul qui reste à l'écran.
+    expect(screen.getByText('Alice Marchand')).toBeDefined();
+    expect(screen.getByText('alice@example.test')).toBeDefined();
+    expect(screen.queryByRole('textbox', { name: /Adresse e-mail/ })).toBeNull();
+    expect(screen.getByLabelText<HTMLInputElement>(/Téléphone/).value).toBe('');
+  });
+
+  /**
+   * Le téléphone est le seul des quatre dont la chaîne vide est une valeur
+   * **valable** : `contactFormSchemaFor` l'accepte telle quelle.
+   *
+   * Le compléter comme les trois champs requis rendrait son numéro à la cliente
+   * qui vient de l'effacer — et le replierait derrière « Modifier », puisque
+   * l'encart le résumerait de nouveau. Elle repartirait au récapitulatif avec le
+   * rappel par SMS qu'elle venait de refuser, sans qu'un champ à l'écran le
+   * dise. La complétion ne vaut donc que pour un brouillon **vierge**, seul état
+   * où un champ vide est une absence et non un choix.
+   */
+  it('ne rend pas le numéro que la cliente vient d’effacer', () => {
+    // Le brouillon d'une cliente qui a rouvert l'encart, vidé le téléphone, puis
+    // est repartie changer de créneau.
+    renderContactStep({
+      presence: alice,
+      contact: {
+        ...emptyBookingDraft().contact,
+        firstName: 'Alice',
+        lastName: 'Marchand',
+        email: 'alice@example.test',
+        phone: '',
+      },
+    });
+
+    expect(document.querySelector<HTMLInputElement>('#phone')?.value).toBe('');
+    // Et le champ reste ouvert : l'encart ne résume pas ce qu'il ne porte pas.
+    expect(screen.getByLabelText<HTMLInputElement>(/Téléphone/).value).toBe('');
+    expect(screen.getByText('alice@example.test')).toBeDefined();
+  });
+
+  /**
+   * Un numéro que le compte porte mais que le pays de l'établissement ne permet
+   * pas de compléter est refusé par `e164PhoneSchemaFor` comme n'importe quelle
+   * saisie. Replié, son message serait rendu dans un groupe masqué : le
+   * formulaire refuserait de partir sans que rien à l'écran dise pourquoi.
+   */
+  it('rouvre l’encart quand un champ replié est refusé à la soumission', async () => {
+    const { onSubmit, user } = renderContactStep({
+      presence: { ...alice, phone: '0341234567' },
+    });
+
+    await user.click(screen.getByRole('checkbox'));
+    await user.click(screen.getByRole('button', { name: /Vérifier ma réservation/ }));
+
+    expect(onSubmit).not.toHaveBeenCalled();
+    // L'encart s'est effacé au profit des champs, et le message est sur le sien.
+    expect(screen.queryByText('Alice Marchand')).toBeNull();
+    const telephone = screen.getByLabelText(/Téléphone/);
+    expect(telephone.getAttribute('aria-invalid')).toBe('true');
+    expect(telephone.getAttribute('aria-describedby')).toContain(
+      screen.getByRole('alert').id,
+    );
   });
 
   it('ne change rien pour la réservation sans compte', () => {
