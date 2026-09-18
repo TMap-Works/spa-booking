@@ -146,6 +146,93 @@ describe('rubriques — création', () => {
     );
   });
 
+  it('annonce la rubrique créée par son nom, et offre d’ouvrir son écran (#998)', async () => {
+    // L'audit `d20260917-2`, critère `ds:etats` : le formulaire se vidait sans un
+    // mot, quand enregistrer une rubrique **existante** affichait « Rubrique
+    // enregistrée ». Deux issues du même geste, deux traitements — et la seule
+    // trace de la création était une ligne de plus dans un tableau qui passe sous
+    // le pli dès la dixième rubrique.
+    createServiceCategoryAction.mockResolvedValue({ ok: true, data: visage });
+    const user = userEvent.setup();
+    renderManager();
+
+    await user.type(screen.getByLabelText(/Nom de la rubrique/), 'Soins du visage');
+    await user.click(screen.getByRole('button', { name: /Créer la rubrique/ }));
+
+    // Le bandeau **nomme** ce qui vient d'être créé : le formulaire est vide
+    // juste après, et un « c'est fait » anonyme laisserait chercher dans la liste.
+    expect(await screen.findByText('Rubrique « Soins du visage » créée')).toBeDefined();
+
+    // Le geste suivant que l'audit demandait — c'est là que se corrige un slug
+    // dérivé du nom qu'on ne voulait pas.
+    expect(
+      screen.getByRole('link', { name: 'Ouvrir la rubrique' }).getAttribute('href'),
+    ).toBe(`/salon-des-lilas/admin/catalogue/rubriques/${VISAGE}`);
+
+    // Et le formulaire est bien reparti à vide : le bandeau n'est pas un
+    // succédané de la réinitialisation, il s'y ajoute.
+    expect((screen.getByLabelText(/Nom de la rubrique/) as HTMLInputElement).value).toBe('');
+  });
+
+  it('écrit l’annonce dans une région montée d’avance, et dans le même nœud (#998)', async () => {
+    // WCAG 2.2 AA, 4.1.3 « Messages d'état ». Une région `aria-live` insérée
+    // **avec** son message n'est annoncée par aucun lecteur d'écran de façon
+    // fiable : l'annonce se déclenche sur la mutation d'une région déjà suivie.
+    // C'est donc l'identité du nœud qui se vérifie, pas la présence d'un texte.
+    createServiceCategoryAction.mockResolvedValue({ ok: true, data: visage });
+    const user = userEvent.setup();
+    const { container } = render(
+      <CategoryManager tenantSlug="salon-des-lilas" categories={categories} />,
+    );
+
+    const region = container.querySelector<HTMLElement>('[aria-live="polite"]');
+
+    // Avant tout geste : montée, vide, hors du flux — une région qui
+    // consommerait la gouttière de `.spa-admin__section` poserait du blanc
+    // au-dessus du premier champ, sur tous les écrans, pour ne rien dire.
+    expect(region).not.toBeNull();
+    expect(region?.textContent).toBe('');
+    expect(region?.className).toContain('spa-visually-hidden');
+    // Le titre lu seul perdrait le nom de la rubrique.
+    expect(region?.getAttribute('aria-atomic')).toBe('true');
+
+    await user.type(screen.getByLabelText(/Nom de la rubrique/), 'Soins du visage');
+    await user.click(screen.getByRole('button', { name: /Créer la rubrique/ }));
+
+    const banniere = await screen.findByText('Rubrique « Soins du visage » créée');
+
+    // Le même nœud qu'avant le geste — c'est ce qui rend la mutation annonçable.
+    expect(container.querySelector('[aria-live="polite"]')).toBe(region);
+    expect(region?.contains(banniere)).toBe(true);
+    expect(region?.className ?? '').not.toContain('spa-visually-hidden');
+  });
+
+  it('laisse l’échec hors de la région polie — il interrompt, il n’attend pas (#998)', async () => {
+    // `Notification` rend le ton `danger` en `role="alert"`, assertif par nature.
+    // L'enfermer dans une région `aria-live="polite"` reviendrait à le faire
+    // attendre une pause du lecteur d'écran.
+    createServiceCategoryAction.mockResolvedValue({
+      ok: false,
+      code: 'INTERNAL',
+      message: 'Le service est indisponible.',
+    });
+    const user = userEvent.setup();
+    const { container } = render(
+      <CategoryManager tenantSlug="salon-des-lilas" categories={categories} />,
+    );
+
+    await user.type(screen.getByLabelText(/Nom de la rubrique/), 'Massages');
+    await user.click(screen.getByRole('button', { name: /Créer la rubrique/ }));
+
+    const alerte = await screen.findByRole('alert');
+    const region = container.querySelector<HTMLElement>('[aria-live="polite"]');
+
+    expect(alerte.textContent).toContain('Le service est indisponible.');
+    expect(region?.contains(alerte)).toBe(false);
+    // Et la région reste vide : un échec n'annonce aucun succès.
+    expect(region?.textContent).toBe('');
+  });
+
   it('pose le conflit de slug sur le champ d’adresse', async () => {
     createServiceCategoryAction.mockResolvedValue({
       ok: false,
