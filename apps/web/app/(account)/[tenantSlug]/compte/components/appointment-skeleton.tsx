@@ -9,9 +9,11 @@ import { ProgressBar } from '@/components/ui/progress-bar';
  * — un slug inconnu répond donc toujours 404 avant qu'un squelette soit envoyé.
  *
  * Aucune donnée n'y est inventée : ce sont des blocs gris, pas des rendez-vous
- * factices. La forme suit celle de l'écran qui arrive — une carte héros sur
- * « Mes rendez-vous », des cartes compactes sur « Historique » —, faute de quoi
- * la mise en page saute à l'arrivée du contenu.
+ * factices. La forme suit celle de l'écran qui arrive — une carte héros puis des
+ * cartes compactes sur « Mes rendez-vous », une rangée de filtres puis des lignes
+ * sur « Historique » depuis #1054 —, faute de quoi la mise en page saute à
+ * l'arrivée du contenu. C'est tout l'objet de la forme demandée : peindre des
+ * cartes là où une liste arrive rendrait le squelette pire qu'un écran blanc.
  *
  * `aria-busy` et une phrase masquée, comme le squelette du tunnel ; la barre de
  * progression prend le relais de celle du clic
@@ -21,11 +23,17 @@ import { ProgressBar } from '@/components/ui/progress-bar';
 interface AppointmentSkeletonProps {
   /** `true` sur « Mes rendez-vous », où la première carte est la carte héros. */
   readonly hero?: boolean;
-  /** Nombre de cartes compactes — ce qu'une cliente a d'ordinaire sous les yeux. */
+  /** Nombre de rendez-vous esquissés — ce qu'une cliente a d'ordinaire sous les yeux. */
   readonly cards?: number;
+  /** `list` pour l'historique (#1054), `cards` pour les rendez-vous à venir. */
+  readonly shape?: 'cards' | 'list';
 }
 
-export function AppointmentSkeleton({ hero = false, cards = 2 }: AppointmentSkeletonProps) {
+export function AppointmentSkeleton({
+  hero = false,
+  cards = 2,
+  shape = 'cards',
+}: AppointmentSkeletonProps) {
   return (
     <div aria-busy="true" className="spa-account__section spa-account-loading">
       <ProgressBar />
@@ -39,14 +47,35 @@ export function AppointmentSkeleton({ hero = false, cards = 2 }: AppointmentSkel
         </div>
       ) : null}
 
-      <div className="spa-appointment-list">
-        {Array.from({ length: cards }, (_unused, index) => (
-          <div className="spa-appointment" key={index}>
-            <span className="spa-skeleton spa-account-loading__line" />
-            <span className="spa-skeleton spa-account-loading__line spa-account-loading__line--short" />
+      {shape === 'cards' ? (
+        <div className="spa-appointment-list">
+          {Array.from({ length: cards }, (_unused, index) => (
+            <div className="spa-appointment" key={index}>
+              <span className="spa-skeleton spa-account-loading__line" />
+              <span className="spa-skeleton spa-account-loading__line spa-account-loading__line--short" />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="spa-history">
+          {/* La rangée de filtres tient déjà sa place : elle coiffe la liste dès
+              qu'elle arrive, et l'oublier ferait descendre toutes les lignes
+              d'un cran au dernier moment. */}
+          <span className="spa-skeleton spa-account-loading__filters" />
+
+          <div className="spa-history__list">
+            {Array.from({ length: cards }, (_unused, index) => (
+              <div className="spa-history__row" key={index}>
+                <span className="spa-skeleton spa-account-loading__date" />
+                <div className="spa-history__body">
+                  <span className="spa-skeleton spa-account-loading__line" />
+                  <span className="spa-skeleton spa-account-loading__line spa-account-loading__line--short" />
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
