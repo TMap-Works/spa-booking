@@ -462,3 +462,19 @@ export const passwordResetConfirmRequestSchema = z
   .strict();
 
 export type PasswordResetConfirmRequest = z.infer<typeof passwordResetConfirmRequestSchema>;
+
+/**
+ * Activation d'un compte invité — `POST /auth/invitations/accept` (#55).
+ *
+ * Même forme que la réinitialisation, et pour la même raison : l'établissement
+ * et le compte sont des revendications **signées** du jeton, le corps n'a rien
+ * d'autre à dire que le mot de passe choisi.
+ */
+export const acceptInvitationRequestSchema = z
+  .object({
+    token: receivedTokenSchema,
+    password: passwordSchema,
+  })
+  .strict();
+
+export type AcceptInvitationRequest = z.infer<typeof acceptInvitationRequestSchema>;

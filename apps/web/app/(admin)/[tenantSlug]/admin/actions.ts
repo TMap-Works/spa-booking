@@ -16,6 +16,7 @@
  */
 
 import {
+  acceptInvitationRequestSchema,
   loginRequestSchema,
   slugSchema,
   updateTenantRequestSchema,
@@ -24,7 +25,12 @@ import {
 } from '@spa/shared';
 import { cookies } from 'next/headers';
 
-import { loginToAccount, logoutSession, updateTenantSettings } from '@/lib/api-client';
+import {
+  acceptInvitation,
+  loginToAccount,
+  logoutSession,
+  updateTenantSettings,
+} from '@/lib/api-client';
 
 import { failure, invalid, type AdminActionResult } from './action-result';
 import {
@@ -57,6 +63,37 @@ export async function adminLoginAction(
 
   try {
     const opened = await loginToAccount(slug.data, parsed.data);
+    await writeAdminSession(slug.data, opened);
+    return { ok: true, data: opened.session.user };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * Active un compte invité — le gérant d'un salon qu'on vient d'ouvrir, ou un
+ * membre de son équipe — et ouvre sa session dans la foulée.
+ *
+ * L'établissement est une revendication signée du jeton : le slug de l'URL ne
+ * sert qu'à borner le chemin des cookies, comme à la connexion.
+ */
+export async function adminAcceptInvitationAction(
+  tenantSlug: string,
+  values: unknown,
+): Promise<AdminActionResult<SessionUser>> {
+  const slug = slugSchema.safeParse(tenantSlug);
+  const parsed = acceptInvitationRequestSchema.safeParse(values);
+
+  if (!slug.success || !parsed.success) {
+    return invalid(
+      parsed.success
+        ? 'Établissement inconnu.'
+        : (parsed.error.issues[0]?.message ?? 'Le mot de passe choisi est invalide.'),
+    );
+  }
+
+  try {
+    const opened = await acceptInvitation(parsed.data);
     await writeAdminSession(slug.data, opened);
     return { ok: true, data: opened.session.user };
   } catch (error) {

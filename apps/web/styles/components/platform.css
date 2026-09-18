@@ -1,0 +1,77 @@
+/*
+ * Console de l'éditeur — `app/plateforme` (ADR 0012)
+ * =============================================================================
+ *
+ * La console emprunte la coquille du back-office (rail, sections, tableaux) ;
+ * ce fichier ne porte que ce qu'elle a en propre : le formulaire d'ouverture
+ * d'un salon, en deux groupes, et les liens à remettre au gérant.
+ */
+
+.spa-platform-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  max-inline-size: 44rem;
+}
+
+/* Un `<fieldset>` : ses bordure, marge et retrait natifs cèdent à la section. */
+.spa-platform-form__group {
+  margin: 0;
+  min-inline-size: 0;
+}
+
+.spa-platform-form__group > legend {
+  float: inline-start;
+  inline-size: 100%;
+  padding: 0;
+}
+
+.spa-platform-form__row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: var(--spa-space-3);
+}
+
+.spa-platform-links {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  max-inline-size: 52rem;
+}
+
+.spa-platform-link {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+}
+
+.spa-platform-link__label {
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-platform-link__hint {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-platform-link__row {
+  display: flex;
+  gap: var(--spa-space-2);
+  align-items: center;
+}
+
+.spa-platform-link__value {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  font-family: var(--spa-font-mono);
+  font-size: var(--spa-font-size-sm);
+}
+
+/* La ligne dépliée sous un salon : ses liens, détachés de la ligne du dessus. */
+.spa-platform-reveal {
+  padding-block: var(--spa-space-4);
+}
+
+.spa-platform-reveal > p {
+  margin-block-end: var(--spa-space-3);
+}

@@ -1,0 +1,110 @@
+'use server';
+
+/**
+ * Les actions serveur de la console de l'éditeur.
+ *
+ * Même doctrine que le back-office : aucune action ne rend le jeton de console,
+ * la validation est refaite ici avec les schémas de `@spa/shared`, et un refus
+ * est un résultat, jamais une exception.
+ *
+ * Les **liens** rendus par l'ouverture d'un salon portent, eux, un jeton
+ * d'invitation : c'est leur raison d'être — l'opérateur les remet au gérant — et
+ * ils ne sont affichés qu'à lui.
+ */
+
+import {
+  createTenantRequestSchema,
+  platformLoginRequestSchema,
+  uuidSchema,
+  type PlatformOperator,
+  type ProvisionedTenant,
+  type ReissuedTenantInvitation,
+} from '@spa/shared';
+
+import {
+  loginPlatformOperator,
+  provisionTenant,
+  reissueTenantInvitation,
+} from '@/lib/api-client';
+
+import { expired, failure, invalid, type AdminActionResult } from '@/app/(admin)/[tenantSlug]/admin/action-result';
+import { clearPlatformSession, readPlatformAccessToken, writePlatformSession } from './session';
+
+export type PlatformActionResult<TData> = AdminActionResult<TData>;
+
+export async function platformLoginAction(
+  credentials: unknown,
+): Promise<PlatformActionResult<PlatformOperator>> {
+  const parsed = platformLoginRequestSchema.safeParse(credentials);
+
+  if (!parsed.success) {
+    return invalid('Renseignez votre adresse e-mail, votre mot de passe et le code à six chiffres.');
+  }
+
+  try {
+    const session = await loginPlatformOperator(parsed.data);
+    await writePlatformSession(session);
+    return { ok: true, data: session.operator };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/** Aucun jeton de rafraîchissement à révoquer : effacer les cookies suffit. */
+export async function platformLogoutAction(): Promise<PlatformActionResult<null>> {
+  await clearPlatformSession();
+  return { ok: true, data: null };
+}
+
+/**
+ * Ouvre un salon. `idempotencyKey` vient du formulaire et ne change qu'avec lui :
+ * un double clic ou une soumission rejouée après une coupure rend le même salon.
+ */
+export async function provisionTenantAction(
+  idempotencyKey: string,
+  values: unknown,
+): Promise<PlatformActionResult<ProvisionedTenant>> {
+  const parsed = createTenantRequestSchema.safeParse(values);
+
+  if (!parsed.success) {
+    return invalid(parsed.error.issues[0]?.message ?? 'Le formulaire contient une erreur.');
+  }
+  if (!/^[A-Za-z0-9-]{8,128}$/.test(idempotencyKey)) {
+    return invalid('Clé de soumission invalide — rechargez la page.');
+  }
+
+  const accessToken = await readPlatformAccessToken();
+
+  if (accessToken === null) {
+    return expired();
+  }
+
+  try {
+    return { ok: true, data: await provisionTenant(accessToken, idempotencyKey, parsed.data) };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/** Réémet l'invitation du gérant d'un salon — et rend ses liens d'accès. */
+export async function reissueTenantInvitationAction(
+  tenantId: string,
+): Promise<PlatformActionResult<ReissuedTenantInvitation>> {
+  const id = uuidSchema.safeParse(tenantId);
+
+  if (!id.success) {
+    return invalid('Établissement inconnu.');
+  }
+
+  const accessToken = await readPlatformAccessToken();
+
+  if (accessToken === null) {
+    return expired();
+  }
+
+  try {
+    return { ok: true, data: await reissueTenantInvitation(accessToken, id.data) };
+  } catch (error) {
+    return failure(error);
+  }
+}
