@@ -61,12 +61,17 @@
  * coïncide alors avec la grille que les flèches parcourent, ce qui est la seule
  * façon pour `↓` de tomber là où l'œil l'attend.
  *
- * `auto-fill` et non `auto-fit` : `auto-fit` étirerait trois créneaux du soir
- * sur toute la largeur, et deux journées de suite n'auraient pas la même trame.
+ * **Trois colonnes** à 360 px et **six** au bureau, comme la direction de #1049
+ * l'écrit. Un nombre de colonnes fixe et non `auto-fill` : la trame ne dépend
+ * plus de la longueur du texte d'un créneau, deux journées de suite ont donc la
+ * même, et l'axe vertical des flèches reste celui que l'œil voit. C'est aussi ce
+ * qui permet de tenir la promesse du premier critère d'acceptation — *« au moins
+ * une rangée d'horaires visible sans défiler »* — sans dépendre d'une mesure de
+ * police.
  */
 .spa-slot-grid__row {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(5.5rem, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--spa-space-2);
 }
 
@@ -154,14 +159,26 @@
   scroll-margin-block: var(--spa-space-16) var(--spa-space-16);
 }
 
-/* --- Écrans étroits -------------------------------------------------------- */
+/* --- Écrans larges --------------------------------------------------------- */
 
 /*
- * Sous 30rem, la trame passe à des colonnes plus serrées : « 14:00 » tient dans
- * moins de place que la cible tactile minimale, qui reste le vrai plancher.
+ * Au-delà de 48rem, six colonnes : la bande de jours occupe désormais toute la
+ * largeur de l'étape (`calendar.css`), et les horaires disposent de la même —
+ * là où le calendrier leur laissait une colonne étroite à droite. C'est le
+ * *« plus de créneaux visibles d'un coup »* de `wireframes.md`, et le second
+ * constat de l'audit `d20260918-1` — *« à 1 280 px, la vue reste la même »*.
+ *
+ * Un palier intermédiaire à 30rem pour quatre colonnes : passer de trois à six
+ * d'un coup laisserait une grande tablette avec des pastilles de 12 rem.
  */
-@media (max-width: 30rem) {
+@media (min-width: 30rem) {
   .spa-slot-grid__row {
-    grid-template-columns: repeat(auto-fill, minmax(4.5rem, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 48rem) {
+  .spa-slot-grid__row {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
   }
 }

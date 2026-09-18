@@ -12,7 +12,14 @@ import {
 } from 'react';
 
 import { Button } from '@/components/ui/button';
-import { isPublishedClosedDay, publishedOpenWeekdays } from '@/lib/booking/opening-days';
+import {
+  dayStateOf,
+  dayStateSaid,
+  isSelectableState,
+  type DayState,
+  type DayStateContext,
+} from '@/lib/booking/day-state';
+import { publishedOpenWeekdays } from '@/lib/booking/opening-days';
 import {
   WEEKDAY_INITIALS,
   WEEKDAY_NAMES,
@@ -124,31 +131,17 @@ interface AvailabilityCalendarProps {
   readonly calendarRef?: RefObject<HTMLDivElement | null> | undefined;
   readonly onMonthChange: (month: CalendarMonth) => void;
   readonly onSelect: (date: CalendarDate) => void;
+  /**
+   * L'**activation délibérée** d'une case — un clic, `Entrée` ou `Espace` —, par
+   * opposition au déplacement du focus, qui retient la journée sans conclure.
+   *
+   * Les deux ne peuvent pas être confondus depuis que le calendrier vit dans un
+   * panneau (#1049) : l'activation automatique des flèches est voulue — elle date
+   * de la bande d'avant #827 —, mais refermer le panneau à chaque `→` rendrait le
+   * mois impossible à parcourir au clavier.
+   */
+  readonly onConfirm?: ((date: CalendarDate) => void) | undefined;
 }
-
-/** « 3 créneaux », « 1 créneau » — le pluriel se voit à l'écran. */
-function slotCountLabel(count: number): string {
-  return count === 1 ? '1 créneau' : `${String(count)} créneaux`;
-}
-
-/**
- * Ce qu'une case dit d'elle-même, au-delà de sa date.
- *
- * `hors-fenetre` s'est longtemps appelé `ferme`, du temps où le calendrier
- * n'avait qu'un seul mot pour « on ne peut pas réserver ce jour-là ». Les deux
- * états coexistent depuis #742 et ne disent pas la même chose : l'un porte sur
- * la période que le produit ouvre à la réservation, l'autre sur les horaires que
- * le salon publie.
- */
-type DayState = 'chargement' | 'hors-fenetre' | 'ferme' | 'complet' | 'libre';
-
-/** Ce que le nom accessible d'une case ajoute à sa date, hors journée libre. */
-const DAY_STATE_LABEL: Record<Exclude<DayState, 'libre'>, string> = {
-  chargement: 'disponibilités en cours de chargement',
-  'hors-fenetre': 'hors de la période de réservation',
-  ferme: 'fermé',
-  complet: 'complet',
-};
 
 export function AvailabilityCalendar({
   month,
@@ -160,55 +153,33 @@ export function AvailabilityCalendar({
   calendarRef,
   onMonthChange,
   onSelect,
+  onConfirm,
 }: AvailabilityCalendarProps) {
   const weeks = useMemo(() => monthWeeks(month), [month]);
   /** Les jours de semaine que le salon annonce ouverts — `null` s'il n'a rien publié. */
   const openWeekdays = useMemo(() => publishedOpenWeekdays(openingHours), [openingHours]);
 
   /**
-   * L'état d'une case.
+   * L'état d'une case, tel que [`day-state.ts`](../../lib/booking/day-state.ts)
+   * le définit.
    *
-   * Hors fenêtre prime sur tout le reste : une date de novembre n'est pas
-   * « complète », elle n'est pas encore ouverte à la réservation, et les deux ne
-   * se disent pas pareil.
-   *
-   * « Fermé » vient **en dernier**, et ne fait que renommer ce qui serait
-   * « complet » : les horaires publiés décrivent la vitrine, pas l'agenda (#742).
-   * Une journée que le moteur rend avec des créneaux reste donc libre, quoi
-   * qu'annonce la semaine d'ouverture — un praticien qui ouvre exceptionnellement
-   * un samedi ne verra pas son agenda masqué par un horaire d'affichage.
+   * La règle est partagée avec la bande de jours (#1049) : les deux contrôles
+   * peignent les mêmes journées et doivent en dire exactement la même chose, et
+   * deux implémentations divergeraient au premier correctif.
    */
-  const stateOf = useCallback(
-    (date: CalendarDate): DayState => {
-      if (!isWithinWindow(date, bounds)) {
-        return 'hors-fenetre';
-      }
-
-      // Une date hors du mois affiché n'est dans aucune table de comptes : la
-      // fenêtre chargée est celle du mois visible, et « le serveur n'a rien dit »
-      // n'est pas « complet ». Seules les flèches y mènent — elles traversent les
-      // mois —, et la traiter comme pleine ferait franchir le 30 septembre au
-      // focus sans que le 1er octobre se retienne.
-      if (slotCounts === null || monthOf(date) !== month) {
-        return 'chargement';
-      }
-
-      if ((slotCounts.get(date) ?? 0) > 0) {
-        return 'libre';
-      }
-
-      return isPublishedClosedDay(date, openWeekdays) ? 'ferme' : 'complet';
-    },
+  const context = useMemo<DayStateContext>(
+    () => ({ month, bounds, slotCounts, openWeekdays }),
     [bounds, month, openWeekdays, slotCounts],
+  );
+
+  const stateOf = useCallback(
+    (date: CalendarDate): DayState => dayStateOf(date, context),
+    [context],
   );
 
   /** Une case se retient quand elle a — ou peut encore avoir — quelque chose à montrer. */
   const canSelect = useCallback(
-    (date: CalendarDate): boolean => {
-      const state = stateOf(date);
-
-      return !busy && (state === 'libre' || state === 'chargement');
-    },
+    (date: CalendarDate): boolean => !busy && isSelectableState(stateOf(date)),
     [busy, stateOf],
   );
 
@@ -287,14 +258,20 @@ export function AvailabilityCalendar({
 
   /** Retenir une journée : elle devient la case active, et la grille la détaille. */
   const choose = useCallback(
-    (date: CalendarDate) => {
+    (date: CalendarDate, activated: boolean) => {
       setActiveDate(date);
 
-      if (canSelect(date)) {
-        onSelect(date);
+      if (!canSelect(date)) {
+        return;
+      }
+
+      onSelect(date);
+
+      if (activated) {
+        onConfirm?.(date);
       }
     },
-    [canSelect, onSelect],
+    [canSelect, onConfirm, onSelect],
   );
 
   /**
@@ -318,8 +295,15 @@ export function AvailabilityCalendar({
       const target = moveInMonth(tabbableDate, move, bounds);
       const targetMonth = monthOf(target);
 
-      pendingFocus.current = target;
-      choose(target);
+      // Armé seulement quand la case visée **change** : en bord de fenêtre la
+      // touche ne mène nulle part, aucun état ne bouge, donc aucun rendu ne vient
+      // consommer la cible — elle resterait armée et le premier rendu venu
+      // ramènerait le focus dans le calendrier, qu'on l'ait quitté ou non.
+      if (target !== tabbableDate) {
+        pendingFocus.current = target;
+      }
+
+      choose(target, false);
 
       if (targetMonth !== month) {
         onMonthChange(targetMonth);
@@ -473,7 +457,7 @@ interface CalendarDayProps {
   readonly selected: boolean;
   readonly selectable: boolean;
   readonly tabbable: boolean;
-  readonly onChoose: (date: CalendarDate) => void;
+  readonly onChoose: (date: CalendarDate, activated: boolean) => void;
 }
 
 /**
@@ -519,9 +503,7 @@ function CalendarDay({
   tabbable,
   onChoose,
 }: CalendarDayProps) {
-  // `slotCount` ne peut pas manquer sur une journée libre — l'état en dérive —,
-  // mais le compilateur ne le sait pas depuis deux propriétés indépendantes.
-  const said = state === 'libre' ? slotCountLabel(slotCount ?? 0) : DAY_STATE_LABEL[state];
+  const said = dayStateSaid(state, slotCount);
 
   return (
     <span
@@ -539,7 +521,9 @@ function CalendarDay({
         aria-disabled={selectable ? undefined : true}
         tabIndex={tabbable ? 0 : -1}
         onClick={() => {
-          onChoose(date);
+          // `onClick` couvre le clic **et** `Entrée`/`Espace` sur un `<button>`
+          // natif : c'est exactement ce qu'on appelle une activation.
+          onChoose(date, true);
         }}
       >
         <span aria-hidden="true" className="spa-calendar__day">

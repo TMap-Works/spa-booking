@@ -165,22 +165,24 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
     await page.getByRole('button', { name: 'Choisir un créneau' }).click();
   });
 
-  await test.step('3. Créneau — retenir le premier jour ouvert du calendrier', async () => {
+  await test.step('3. Créneau — retenir le premier jour ouvert de la bande', async () => {
     const etape = page.getByRole('region', { name: 'Choix du praticien et du créneau' });
     await expect(etape).toBeVisible();
 
-    // Le choix de la date est un calendrier mensuel depuis #827 : deux `grid`
-    // cohabitent donc dans l'étape, et chacune se désigne par son nom accessible
-    // plutôt que par son rang. Celle du calendrier s'appelle « Journée — <mois> ».
-    const calendrier = etape.getByRole('grid', { name: /^Journée —/ });
-    await expect(calendrier).toBeVisible({ timeout: 20_000 });
+    // Le choix de la date est une **bande de jours** depuis #1049, le mois
+    // complet ne s'ouvrant qu'à la demande dans un panneau (`BM-CRENEAU-01`).
+    // Deux `grid` cohabitent donc dans l'étape, et chacune se désigne par son nom
+    // accessible plutôt que par son rang : la bande s'appelle « Jour du
+    // rendez-vous — <mois> », la grille d'heures « Créneaux du <jour> ».
+    const bande = etape.getByRole('grid', { name: /^Jour du rendez-vous —/ });
+    await expect(bande).toBeVisible({ timeout: 20_000 });
 
     // Les journées pleines s'annoncent « complet », celles hors fenêtre « hors
     // de la période de réservation » et celles en cours de chargement
     // « disponibilités en cours de chargement » : ne retenir que celles dont le
     // libellé se termine par un décompte évite d'avoir à interroger
     // `aria-disabled`.
-    const jourOuvert = calendrier.getByRole('button', { name: /\d+ créneaux?$/ }).first();
+    const jourOuvert = bande.getByRole('button', { name: /\d+ créneaux?$/ }).first();
     await expect(jourOuvert).toBeVisible({ timeout: 20_000 });
     await jourOuvert.click();
 

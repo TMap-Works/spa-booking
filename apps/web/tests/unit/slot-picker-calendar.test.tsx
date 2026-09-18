@@ -1,11 +1,16 @@
 /**
- * Le calendrier mensuel du sélecteur de créneau (#827).
+ * Le calendrier mensuel du sélecteur de créneau (#827, #1049).
  *
  * `docs/design/appointments/wireframes.md` étape 3 dessine un calendrier —
  * « ‹ août 2026 › », une ligne `L M M J V S D`, la date retenue mise en avant —
- * et le CDC §1.4 prescrit un « calendrier de disponibilité temps réel ». Ce qui
- * était rendu était une bande de journées à faire défiler, dont trois et demie
- * tenaient à 360 px.
+ * et le CDC §1.4 prescrit un « calendrier de disponibilité temps réel ».
+ *
+ * Il n'est plus le contrôle de **premier plan** depuis #1049 : à 360 px,
+ * trente-cinq cases de 40 px passaient avant le premier horaire, et
+ * `BM-CRENEAU-01` décrit l'usage du marché — une rangée de jours d'abord, le mois
+ * complet *à la demande*. Le calendrier s'ouvre donc dans un panneau
+ * (`BM-TUNNEL-12`), et c'est le bouton de période de la bande qui l'appelle. Ce
+ * qu'il fait une fois ouvert n'a pas changé, et c'est ce que cette suite vérifie.
  *
  * Éprouvé sur `SlotPicker` directement plutôt qu'au travers de ses deux écrans :
  * c'est le composant partagé qui porte le calendrier, et les deux appelants n'en
@@ -95,18 +100,60 @@ function afficher(options: {
   return userEvent.setup();
 }
 
+/**
+ * Ouvrir le mois complet — le geste que `BM-CRENEAU-01` place en second.
+ *
+ * Toutes les épreuves du calendrier passent par là depuis #1049 : fermé, il n'est
+ * pas monté du tout, précisément pour que ses trente et une cases ne restent pas
+ * focalisables derrière un voile.
+ */
+async function ouvrirLeCalendrier(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  await user.click(screen.getByRole('button', { name: /^Ouvrir le calendrier/ }));
+}
+
 /** La case du calendrier dont le nom accessible commence par cette date. */
 function journee(nom: string | RegExp): HTMLElement {
-  return within(screen.getByRole('grid', { name: /Journée/ })).getByRole('button', { name: nom });
+  return within(screen.getByRole('grid', { name: /^Journée/ })).getByRole('button', { name: nom });
 }
 
 afterEach(() => {
   cleanup();
 });
 
+describe('l’ouverture du mois complet', () => {
+  it('ne monte le calendrier que lorsqu’on le demande', async () => {
+    const user = afficher({});
+
+    expect(screen.queryByRole('grid', { name: /^Journée/ })).toBeNull();
+
+    await ouvrirLeCalendrier(user);
+
+    expect(screen.getByRole('grid', { name: /^Journée/ })).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Choisir une date' })).toBeDefined();
+  });
+
+  it('se referme sur la date retenue, et la bande la ramène sous les yeux', async () => {
+    // Le panneau s'ouvre pour un seul geste : le garder ouvert sur sa réponse
+    // obligerait à un second pour voir ce qu'on vient de demander.
+    const user = afficher({ days: journees(['2026-10-01', '2026-10-16'], ['2026-10-16']), month: '2026-10' });
+
+    await ouvrirLeCalendrier(user);
+    await user.click(journee(/^vendredi 16 octobre 2026/));
+
+    expect(screen.queryByRole('grid', { name: /^Journée/ })).toBeNull();
+    expect(screen.getByRole('heading', { name: /vendredi 16 octobre 2026/ })).toBeDefined();
+    expect(
+      within(screen.getByRole('grid', { name: /^Jour du rendez-vous/ })).getByRole('button', {
+        name: /^vendredi 16 octobre 2026/,
+      }),
+    ).toBeDefined();
+  });
+});
+
 describe('la grille du mois', () => {
-  it('coiffe les colonnes des sept jours, lundi en tête', () => {
-    afficher({});
+  it('coiffe les colonnes des sept jours, lundi en tête', async () => {
+    const user = afficher({});
+    await ouvrirLeCalendrier(user);
 
     const entetes = screen.getAllByRole('columnheader');
 
@@ -123,8 +170,9 @@ describe('la grille du mois', () => {
     expect(entetes[0]?.textContent).toBe('L');
   });
 
-  it('rend le mois entier, jours hors fenêtre compris', () => {
-    afficher({});
+  it('rend le mois entier, jours hors fenêtre compris', async () => {
+    const user = afficher({});
+    await ouvrirLeCalendrier(user);
 
     // Le 1er septembre précède la fenêtre : la case existe et se lit, mais elle
     // n'est pas réservable.
@@ -137,45 +185,51 @@ describe('la grille du mois', () => {
     expect(avant.hasAttribute('disabled')).toBe(false);
   });
 
-  it('dit le nombre de créneaux d’une journée libre et le mot « complet » d’une journée pleine', () => {
-    afficher({});
+  it('dit le nombre de créneaux d’une journée libre et le mot « complet » d’une journée pleine', async () => {
+    const user = afficher({});
+    await ouvrirLeCalendrier(user);
 
-    expect(journee(/17 septembre 2026/).getAttribute('aria-label')).toBe(
+    expect(journee(/^jeudi 17 septembre 2026/).getAttribute('aria-label')).toBe(
       'jeudi 17 septembre 2026 — 2 créneaux',
     );
-    expect(journee(/16 septembre 2026/).getAttribute('aria-label')).toBe(
+    expect(journee(/^mercredi 16 septembre 2026/).getAttribute('aria-label')).toBe(
       'mercredi 16 septembre 2026 — complet',
     );
   });
 
-  it('marque la journée retenue sur sa cellule, là où le lecteur d’écran la lit', () => {
-    afficher({});
+  it('marque la journée retenue sur sa cellule, là où le lecteur d’écran la lit', async () => {
+    const user = afficher({});
+    await ouvrirLeCalendrier(user);
 
     // À défaut de choix, le sélecteur retient la première journée ouverte.
-    const cellule = journee(/17 septembre 2026/).closest('[role="gridcell"]');
+    const cellule = journee(/^jeudi 17 septembre 2026/).closest('[role="gridcell"]');
 
     expect(cellule?.getAttribute('aria-selected')).toBe('true');
     expect(screen.getByRole('heading', { name: /jeudi 17 septembre 2026/ })).toBeDefined();
   });
 
-  it('reste opérable pendant le chargement, sous un squelette de grille', () => {
+  it('reste opérable pendant le chargement, sous un squelette de grille', async () => {
     // `states.md` étape 3 : « grille de créneaux en squelette, en gardant la
     // navigation de dates interactive pour changer de jour sans attendre ».
-    afficher({ days: null });
+    const user = afficher({ days: null });
+    await ouvrirLeCalendrier(user);
 
-    expect(screen.getByRole('grid', { name: /Journée/ })).toBeDefined();
-    expect(journee(/17 septembre 2026/).getAttribute('aria-label')).toContain(
+    expect(screen.getByRole('grid', { name: /^Journée/ })).toBeDefined();
+    expect(journee(/^jeudi 17 septembre 2026/).getAttribute('aria-label')).toContain(
       'disponibilités en cours de chargement',
     );
   });
 
-  it('garde le calendrier à l’écran quand le mois n’a rien à proposer', () => {
-    // C'est ce qui change avec lui : la bande disparaissait, emportant la seule
-    // commande qui menait ailleurs.
-    afficher({ days: journees(['2026-09-16', '2026-09-17'], []) });
+  it('reste atteignable quand le mois n’a rien à proposer', async () => {
+    // C'est la bande qui ne disparaît jamais — le calendrier, lui, se rouvre du
+    // même bouton, et l'état vide n'emporte donc aucune commande.
+    const user = afficher({ days: journees(['2026-09-16', '2026-09-17'], []) });
 
     expect(screen.getByText('Aucun créneau')).toBeDefined();
-    expect(screen.getByRole('grid', { name: /Journée/ })).toBeDefined();
+    expect(screen.getByRole('grid', { name: /^Jour du rendez-vous/ })).toBeDefined();
+
+    await ouvrirLeCalendrier(user);
+
     expect(screen.getByRole('button', { name: 'Mois suivant' })).toBeDefined();
   });
 });
@@ -189,75 +243,105 @@ describe('la grille du mois', () => {
  * choisir un autre jour.
  */
 describe('une journée où le salon n’ouvre pas', () => {
-  it('s’annonce « fermé » là où une journée pleine s’annonce « complet »', () => {
-    afficher({ openingHours: SEMAINE_OUVREE });
+  it('s’annonce « fermé » là où une journée pleine s’annonce « complet »', async () => {
+    const user = afficher({ openingHours: SEMAINE_OUVREE });
+    await ouvrirLeCalendrier(user);
 
     // Samedi : le salon n'ouvre pas — ce ne sont pas les rendez-vous qui manquent.
-    expect(journee(/19 septembre 2026/).getAttribute('aria-label')).toBe(
+    expect(journee(/^samedi 19 septembre 2026/).getAttribute('aria-label')).toBe(
       'samedi 19 septembre 2026 — fermé',
     );
     // Mercredi : le salon ouvre, et tout est pris.
-    expect(journee(/16 septembre 2026/).getAttribute('aria-label')).toBe(
+    expect(journee(/^mercredi 16 septembre 2026/).getAttribute('aria-label')).toBe(
       'mercredi 16 septembre 2026 — complet',
     );
   });
 
-  it('porte son quantième barré, pour se distinguer sans la seule couleur', () => {
+  it('porte son quantième barré, pour se distinguer sans la seule couleur', async () => {
     // `BM-CRENEAU-04` : un jour de fermeture doit se distinguer autrement que par
     // la couleur, les plateformes du benchmark grisant **ou barrant** les jours
     // impossibles (WCAG 1.4.1).
-    afficher({ openingHours: SEMAINE_OUVREE });
+    const user = afficher({ openingHours: SEMAINE_OUVREE });
+    await ouvrirLeCalendrier(user);
 
-    expect(journee(/19 septembre 2026/).querySelector('s')?.textContent).toBe('19');
-    expect(journee(/16 septembre 2026/).querySelector('s')).toBeNull();
+    expect(journee(/^samedi 19 septembre 2026/).querySelector('s')?.textContent).toBe('19');
+    expect(journee(/^mercredi 16 septembre 2026/).querySelector('s')).toBeNull();
   });
 
-  it('reste inerte, et atteignable au clavier comme une journée pleine', () => {
-    afficher({ openingHours: SEMAINE_OUVREE });
+  it('reste inerte, et atteignable au clavier comme une journée pleine', async () => {
+    const user = afficher({ openingHours: SEMAINE_OUVREE });
+    await ouvrirLeCalendrier(user);
 
-    const samedi = journee(/19 septembre 2026/);
+    const samedi = journee(/^samedi 19 septembre 2026/);
 
     expect(samedi.getAttribute('aria-disabled')).toBe('true');
     expect(samedi.hasAttribute('disabled')).toBe(false);
   });
 
-  it('garde ses créneaux quand le moteur en rend, quoi qu’annonce la vitrine', () => {
+  it('garde ses créneaux quand le moteur en rend, quoi qu’annonce la vitrine', async () => {
     // Les horaires publiés décrivent la vitrine, pas l'agenda : un praticien qui
     // ouvre exceptionnellement un samedi ne doit pas voir sa journée masquée.
-    afficher({
+    const user = afficher({
       days: journees(['2026-09-18', '2026-09-19'], ['2026-09-19']),
       openingHours: SEMAINE_OUVREE,
     });
+    await ouvrirLeCalendrier(user);
 
-    expect(journee(/19 septembre 2026/).getAttribute('aria-label')).toBe(
+    expect(journee(/^samedi 19 septembre 2026/).getAttribute('aria-label')).toBe(
       'samedi 19 septembre 2026 — 2 créneaux',
     );
   });
 
-  it('s’en tient à « complet » quand le salon n’a publié aucun horaire', () => {
+  it('s’en tient à « complet » quand le salon n’a publié aucun horaire', async () => {
     // L'API omet `openingHours` plutôt que de rendre une semaine vide : rien ne
     // distingue alors « ferme le samedi » de « pas encore renseigné », et
     // affirmer le premier enverrait une cliente devant une porte ouverte.
-    afficher({});
+    const user = afficher({});
+    await ouvrirLeCalendrier(user);
 
-    expect(journee(/19 septembre 2026/).getAttribute('aria-label')).toBe(
+    expect(journee(/^samedi 19 septembre 2026/).getAttribute('aria-label')).toBe(
       'samedi 19 septembre 2026 — complet',
     );
   });
 });
 
 describe('la navigation de mois', () => {
-  it('annonce le mois affiché entre les deux chevrons', () => {
-    afficher({});
+  it('annonce le mois affiché entre les deux chevrons', async () => {
+    const user = afficher({});
+    await ouvrirLeCalendrier(user);
 
-    expect(screen.getByText('septembre 2026')).toBeDefined();
+    // Dans le panneau : la bande porte elle aussi le mois, sur le bouton qui
+    // ouvre ce calendrier.
+    const panneau = screen.getByRole('dialog');
+
+    expect(within(panneau).getByText('septembre 2026')).toBeDefined();
     expect(screen.getByRole('button', { name: 'Mois précédent' })).toBeDefined();
     expect(screen.getByRole('button', { name: 'Mois suivant' })).toBeDefined();
+  });
+
+  it('ne referme pas le panneau quand une flèche traverse le mois', async () => {
+    // L'activation automatique des flèches date de la bande d'avant #827 : elle
+    // retient la journée au passage. Refermer le panneau à chaque `→` rendrait le
+    // mois impossible à parcourir au clavier.
+    const user = afficher({});
+    await ouvrirLeCalendrier(user);
+
+    journee(/^jeudi 17 septembre 2026/).focus();
+    await user.keyboard('{ArrowRight}');
+
+    expect(screen.getByRole('grid', { name: /^Journée/ })).toBeDefined();
+
+    await user.keyboard('{Enter}');
+
+    // `Entrée` sur un `<button>` natif, c'est une activation : elle conclut.
+    expect(screen.queryByRole('grid', { name: /^Journée/ })).toBeNull();
+    expect(screen.getByRole('heading', { name: /vendredi 18 septembre 2026/ })).toBeDefined();
   });
 
   it('remonte le mois demandé à l’appelant, qui seul sait recharger', async () => {
     const onMonthChange = vi.fn();
     const user = afficher({ onMonthChange });
+    await ouvrirLeCalendrier(user);
 
     await user.click(screen.getByRole('button', { name: 'Mois suivant' }));
 
@@ -267,6 +351,8 @@ describe('la navigation de mois', () => {
   it('éteint le chevron qui ne mène nulle part, sans le retirer du clavier', async () => {
     const onMonthChange = vi.fn();
     const user = afficher({ onMonthChange });
+    await ouvrirLeCalendrier(user);
+
     const avant = screen.getByRole('button', { name: 'Mois précédent' });
 
     expect(avant.getAttribute('aria-disabled')).toBe('true');
@@ -277,8 +363,9 @@ describe('la navigation de mois', () => {
     expect(onMonthChange).not.toHaveBeenCalled();
   });
 
-  it('éteint le chevron suivant au dernier mois de la fenêtre', () => {
-    afficher({ days: OCTOBRE, month: '2026-10' });
+  it('éteint le chevron suivant au dernier mois de la fenêtre', async () => {
+    const user = afficher({ days: OCTOBRE, month: '2026-10' });
+    await ouvrirLeCalendrier(user);
 
     expect(screen.getByRole('button', { name: 'Mois suivant' }).getAttribute('aria-disabled')).toBe(
       'true',
@@ -290,6 +377,8 @@ describe('la navigation de mois', () => {
 
   it('laisse le focus sur le chevron, pour enchaîner les mois sans viser de nouveau', async () => {
     const user = afficher({ onMonthChange: vi.fn() });
+    await ouvrirLeCalendrier(user);
+
     const apres = screen.getByRole('button', { name: 'Mois suivant' });
 
     await user.click(apres);
@@ -299,10 +388,11 @@ describe('la navigation de mois', () => {
 });
 
 describe('le clavier du calendrier', () => {
-  it('n’a qu’un seul arrêt de tabulation — le roving tabindex', () => {
-    afficher({});
+  it('n’a qu’un seul arrêt de tabulation — le roving tabindex', async () => {
+    const user = afficher({});
+    await ouvrirLeCalendrier(user);
 
-    const grille = screen.getByRole('grid', { name: /Journée/ });
+    const grille = screen.getByRole('grid', { name: /^Journée/ });
     const arrets = [...grille.querySelectorAll('button')].filter(
       (bouton) => bouton.getAttribute('tabindex') === '0',
     );
@@ -313,8 +403,9 @@ describe('le clavier du calendrier', () => {
 
   it('déplace le focus et retient la journée sous une flèche', async () => {
     const user = afficher({});
+    await ouvrirLeCalendrier(user);
 
-    journee(/17 septembre 2026/).focus();
+    journee(/^jeudi 17 septembre 2026/).focus();
     await user.keyboard('{ArrowRight}');
 
     expect(document.activeElement?.getAttribute('aria-label')).toContain('18 septembre 2026');
@@ -323,8 +414,9 @@ describe('le clavier du calendrier', () => {
 
   it('descend d’une semaine sous `↓`, et ne boucle pas au bord de la fenêtre', async () => {
     const user = afficher({});
+    await ouvrirLeCalendrier(user);
 
-    journee(/17 septembre 2026/).focus();
+    journee(/^jeudi 17 septembre 2026/).focus();
     await user.keyboard('{ArrowUp}');
 
     // Le 10 septembre précède la fenêtre : le déplacement s'arrête sur sa borne.
@@ -338,8 +430,9 @@ describe('le clavier du calendrier', () => {
   it('change de mois sous `PageSuiv`, et le remonte à l’appelant', async () => {
     const onMonthChange = vi.fn();
     const user = afficher({ onMonthChange });
+    await ouvrirLeCalendrier(user);
 
-    journee(/17 septembre 2026/).focus();
+    journee(/^jeudi 17 septembre 2026/).focus();
     await user.keyboard('{PageDown}');
 
     expect(onMonthChange).toHaveBeenCalledWith('2026-10');
@@ -347,8 +440,9 @@ describe('le clavier du calendrier', () => {
 
   it('atteint une journée complète sans la retenir', async () => {
     const user = afficher({});
+    await ouvrirLeCalendrier(user);
 
-    journee(/17 septembre 2026/).focus();
+    journee(/^jeudi 17 septembre 2026/).focus();
     await user.keyboard('{ArrowLeft}');
 
     // Le 16 est complet : le focus s'y pose — c'est là qu'on lit « complet » —

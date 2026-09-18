@@ -1,18 +1,21 @@
 /*
- * Composant — Calendrier mensuel de disponibilité
+ * Composant — Choix de la date : bande de jours, puis calendrier mensuel
  * =============================================================================
  *
- * Le choix de la date de l'étape 3 du tunnel et du report, tel que
- * `docs/design/appointments/wireframes.md` le dessine (#827) : « ‹ août 2026 › »,
- * une ligne `L M M J V S D`, la date retenue mise en avant.
+ * Le choix de la date de l'étape 3 du tunnel et du report.
  *
- *   .spa-calendar         le bloc entier — navigation de mois, puis grille
+ *   .spa-date-band        la rangée de jours — le contrôle de premier plan (#1049)
+ *   .spa-calendar         le mois complet — ouvert à la demande, dans un `Sheet`
  *   .spa-calendar__grid   role="grid" › row › columnheader / gridcell
- *   .spa-slot-picker      le calendrier et la journée choisie, côte à côte au bureau
+ *   .spa-slot-picker      la bande, puis les horaires du jour retenu
  *
- * Il remplace `.spa-date-bar`, une ligne de journées à défilement horizontal.
- * Ce que le calendrier apporte tient en une mesure : la bande ne montrait que
- * trois jours et demi à 360 px, un mois en montre trente et un.
+ * #827 avait fait du calendrier le contrôle de premier plan, sur la foi de
+ * `docs/design/appointments/wireframes.md` étape 3. La mesure a montré le coût, et
+ * l'audit `d20260918-1` l'a relevé : à 360 px, trente-cinq cases de 40 px passent
+ * avant le premier horaire, et la grille des créneaux tombe sous la ligne de
+ * flottaison. `BM-CRENEAU-01` décrit l'usage du marché — une rangée de jours
+ * d'abord, le mois complet à la demande —, et c'est ce que le sélecteur rend
+ * depuis #1049. Le calendrier n'a pas disparu : il a changé de rang.
  *
  * ## Aucune classe sur les boutons
  *
@@ -24,7 +27,192 @@
  * impossible.
  */
 
-/* --- Le bloc et sa navigation de mois -------------------------------------- */
+/* --- La bande de jours (#1049) --------------------------------------------- */
+
+/*
+ * `--spa-space-2` entre la navigation et la rangée, comme entre la navigation de
+ * mois et la grille du calendrier : les deux forment un seul objet, et l'écart
+ * qui les lie doit rester plus petit que celui qui sépare le bloc de ce qui le
+ * suit — lequel vaut le `gap` de l'étape, 16 px.
+ */
+.spa-date-band {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  min-inline-size: 0;
+}
+
+/*
+ * « ‹ septembre 2026 › », la même grammaire que la navigation de mois du
+ * calendrier — à ceci près que les chevrons portent ici la semaine, et que le
+ * libellé de période est le bouton qui ouvre le mois complet.
+ *
+ * Les chevrons tiennent la cible de 44 px du bout du doigt (WCAG 2.5.8) : un
+ * chevron est un glyphe étroit, et sans plancher il ferait une cible de 12 px.
+ */
+.spa-date-band__nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spa-space-2);
+}
+
+.spa-date-band__nav .spa-button {
+  flex: 0 0 auto;
+  min-inline-size: var(--spa-target-min-size);
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-3);
+}
+
+/* Le bouton de période s'étale entre les deux chevrons et se centre dessus. */
+.spa-date-band__nav .spa-button:nth-child(2) {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+
+/*
+ * Le chevron éteint — plus aucune journée dans cette direction, ni dans le mois
+ * chargé ni dans le voisin. Même peinture et même attribut que les journées
+ * complètes et que les créneaux inertes : l'atténuation ne porte pas seule
+ * l'information, `aria-disabled` l'annonce (WCAG 1.4.1).
+ */
+.spa-date-band__nav .spa-button[aria-disabled='true'] {
+  background-color: var(--spa-color-disabled-surface);
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  cursor: not-allowed;
+}
+
+/*
+ * La rangée elle-même, et **son défilement horizontal**.
+ *
+ * `BM-CRENEAU-01` décrit une rangée qu'on balaye : quatorze blocs de 3 rem ne
+ * tiennent pas à 360 px, et les chevrons ne sont que le second moyen d'y
+ * arriver. `overscroll-behavior-inline: contain` empêche le geste de remonter à
+ * la page une fois la rangée en butée — sans quoi un balayage un peu franc fait
+ * reculer le navigateur sur certains téléphones.
+ *
+ * `scroll-padding` réserve de quoi voir la journée voisine quand le focus clavier
+ * amène une case au bord : un bloc collé contre l'arête ne dit pas qu'il y en a
+ * d'autres derrière.
+ */
+.spa-date-band__grid {
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scroll-snap-type: inline proximity;
+  scroll-padding-inline: var(--spa-space-6);
+  /* La rangée défile, mais elle reste un arrêt de tabulation unique : le
+   * `scrollbar-gutter` évite que l'apparition de la barre ne fasse sauter la
+   * hauteur du bloc au premier balayage. */
+  scrollbar-gutter: stable;
+}
+
+.spa-date-band__row {
+  display: flex;
+  gap: var(--spa-space-2);
+  /* `max-content` : sans elle, les blocs se compriment pour tenir dans la
+   * largeur au lieu de déborder, et la rangée cesse de défiler. */
+  inline-size: max-content;
+  padding-block-end: var(--spa-space-1);
+}
+
+.spa-date-band__cell {
+  display: block;
+  scroll-snap-align: start;
+}
+
+/*
+ * Le bloc de date vit **dans** le bouton : c'est `DateBlock` (#1044) qui écrit
+ * « VEN · 18 · SEPT », et le bouton qui porte l'état et la cible tactile. Sa
+ * surface propre est donc neutralisée — une carte dans une carte se lirait comme
+ * deux objets empilés.
+ */
+.spa-date-band__cell .spa-button {
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-1);
+  padding-block: var(--spa-space-1);
+}
+
+.spa-date-band__cell .spa-button__label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.spa-date-band__cell .spa-date-block {
+  background-color: transparent;
+  padding-block: 0;
+  color: inherit;
+}
+
+.spa-date-band__cell .spa-date-block__weekday,
+.spa-date-band__cell .spa-date-block__month {
+  color: inherit;
+  opacity: 0.75;
+}
+
+/*
+ * La pastille d'une journée libre — une **forme** et non une teinte, comme dans
+ * le calendrier : c'est ce qui distingue une journée qui a des créneaux d'une
+ * journée complète pour qui ne perçoit pas la couleur (WCAG 1.4.1), le nom
+ * accessible portant par ailleurs le compte exact.
+ */
+.spa-date-band__mark {
+  inline-size: 5px;
+  block-size: 5px;
+  border-radius: 50%;
+  background-color: var(--spa-color-accent);
+}
+
+/*
+ * La journée retenue, en plein accent. `aria-selected` sur la cellule et non une
+ * classe : c'est l'attribut que le lecteur d'écran annonce, et le faire porter
+ * aussi la peinture garantit que les deux ne peuvent pas diverger.
+ */
+.spa-date-band__cell[aria-selected='true'] .spa-button {
+  background-color: var(--spa-color-accent);
+  border-color: var(--spa-color-accent);
+  border-width: 2px;
+  color: var(--spa-color-text-on-accent);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-date-band__cell[aria-selected='true'] .spa-date-band__mark {
+  background-color: var(--spa-color-text-on-accent);
+}
+
+/* Journée complète, fermée ou hors fenêtre : rendue, lisible, mais inerte. */
+.spa-date-band__cell .spa-button[aria-disabled='true'] {
+  background-color: var(--spa-color-disabled-surface);
+  border-color: var(--spa-color-disabled-border);
+  color: var(--spa-color-disabled-text);
+  cursor: not-allowed;
+}
+
+/*
+ * Une journée où le salon n'ouvre pas porte son quantième **barré** (#742), comme
+ * la case du calendrier : `BM-CRENEAU-04`, où les cinq plateformes observées
+ * grisent **ou** barrent les jours impossibles. Le trait est porté par la feuille
+ * et non par un `<s>` — le quantième est écrit par `DateBlock`, que le sélecteur
+ * ne compose pas —, et l'état est lu sur le `data-*` que la cellule déclare.
+ */
+.spa-date-band__cell[data-state='ferme'] .spa-date-block__day {
+  text-decoration: line-through;
+}
+
+/*
+ * `scroll-margin` — « Focus visible » de `keyboard-navigation.md` : *« la grille
+ * défile pour garder le créneau focalisé dans le viewport (scroll-margin sous
+ * l'en-tête et au-dessus de la barre collante) »*. La règle vaut pour la bande au
+ * même titre que pour la grille de créneaux.
+ */
+.spa-date-band__cell .spa-button {
+  scroll-margin-block: var(--spa-space-16) var(--spa-space-16);
+  scroll-margin-inline: var(--spa-space-6);
+}
+
+/* --- Le mois complet, dans son panneau ------------------------------------- */
 
 /*
  * `--spa-space-2` et non `--spa-space-4` : la navigation et la grille sont un
@@ -221,22 +409,22 @@
   scroll-margin-block: var(--spa-space-16) var(--spa-space-16);
 }
 
-/* --- Le calendrier et la journée choisie ----------------------------------- */
+/* --- La bande et les horaires du jour retenu ------------------------------- */
 
 /*
- * À 360 px, l'un sous l'autre ; dès qu'il y a la largeur pour deux colonnes,
- * côte à côte.
+ * Une seule colonne, à **toutes** les largeurs.
  *
- * `wireframes.md` étape 3 : *« Desktop : le calendrier passe en vue semaine
- * (colonnes de jours), plus de créneaux visibles d'un coup »*. L'intention est
- * de voir la date choisie **et** ses heures d'un seul regard ; deux colonnes la
- * servent sans dédoubler le composant en deux vues qui dériveraient l'une de
- * l'autre.
+ * Le calendrier occupait ici une colonne de 16 à 20 rem à gauche, les horaires se
+ * serrant à droite : c'est le second constat de l'audit `d20260918-1` — *« à
+ * 1 280 px, même grille mensuelle à gauche, horaires dans une colonne étroite à
+ * droite »*. `wireframes.md` demandait pourtant l'inverse pour cette étape-là,
+ * *« plus de créneaux visibles d'un coup »*, et `BM-CRENEAU-01` place les
+ * horaires **sous** la rangée de jours.
  *
- * Le seuil est en `rem` et porte sur le conteneur du tunnel, plus étroit que la
- * fenêtre : 48rem est la largeur à partir de laquelle un calendrier de 7 × 44 px
- * et une grille de créneaux de deux colonnes tiennent côte à côte sans que l'un
- * écrase l'autre.
+ * La bande prend donc toute la largeur — quatorze journées y tiennent d'un coup
+ * dès 48 rem, là où il en fallait faire défiler à 360 px —, et les horaires
+ * s'étalent dessous sur autant de colonnes que la mesure en permet
+ * (`slot-grid.css`).
  */
 .spa-slot-picker {
   display: flex;
@@ -251,11 +439,11 @@
   min-inline-size: 0;
 }
 
-@media (min-width: 48rem) {
-  .spa-slot-picker {
-    display: grid;
-    grid-template-columns: minmax(16rem, 20rem) minmax(0, 1fr);
-    align-items: start;
-    gap: var(--spa-space-6);
-  }
+/*
+ * Le calendrier vit dans un `Sheet`, dont le corps borne déjà la mesure : il n'a
+ * plus à se disputer la largeur de l'étape, et se centre dans le panneau.
+ */
+.spa-sheet__body .spa-calendar {
+  max-inline-size: 22rem;
+  margin-inline: auto;
 }
