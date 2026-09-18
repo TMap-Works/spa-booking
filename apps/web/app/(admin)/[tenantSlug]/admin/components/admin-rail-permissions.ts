@@ -58,6 +58,8 @@ const ENTRY_PERMISSIONS: Readonly<Record<string, readonly Permission[]>> = {
   reporting: ['reporting:read'],
   // `GET /v1/tenant` — inchangé, déjà au rang administrateur.
   reglages: ['settings:write'],
+  // `GET /v1/billing/subscription` — la même permission que les réglages.
+  abonnement: ['settings:write'],
 };
 
 /**

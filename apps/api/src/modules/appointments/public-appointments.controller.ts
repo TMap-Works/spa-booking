@@ -33,6 +33,7 @@ import {
   RescheduleAppointmentDto,
   rescheduleAppointmentBody,
 } from './dto/reschedule-appointment.dto';
+import { RequireBookableSalon } from '../identity/tenant-billing.guard';
 
 /**
  * Le tunnel public du rendez-vous — le point d'entrée du revenu (#37), son
@@ -147,6 +148,8 @@ export class PublicAppointmentsController {
    * de fiche derrière lui. La fiche est écrite par `crm`, jamais par ce module.
    */
   @Post()
+  // Un salon sans abonnement en cours ne prend plus de réservation (ADR 0016).
+  @RequireBookableSalon()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @ApiOperation({ summary: 'Réserver un créneau, sans compte' })
   // Déclaré explicitement : le corps est validé par le contrat partagé et le

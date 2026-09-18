@@ -22,6 +22,14 @@ import { provisionTenantAction } from '../actions';
 import { PLATFORM_CONSOLE_PATH } from '../paths';
 import { PLATFORM_SESSION_END_PATH } from '../session/fin/path';
 import { AccessLinks } from './access-links';
+import {
+  COUNTRY_PRESETS as COUNTRIES,
+  CURRENCY_CHOICES as CURRENCIES,
+  DEFAULT_COUNTRY,
+  TIMEZONE_CHOICES as TIMEZONES,
+  countryPreset,
+  slugifySalonName as slugify,
+} from '@/lib/salon-presets';
 
 /**
  * Le formulaire d'ouverture d'un salon.
@@ -44,43 +52,6 @@ import { AccessLinks } from './access-links';
  * double clic, ou une soumission rejouée après une coupure, rend le salon déjà
  * ouvert au lieu d'en créer un second.
  */
-
-interface CountryPreset {
-  readonly code: string;
-  readonly label: string;
-  readonly timezone: string;
-  readonly currency: string;
-}
-
-const COUNTRIES: readonly CountryPreset[] = [
-  { code: 'FR', label: 'France', timezone: 'Europe/Paris', currency: 'EUR' },
-  { code: 'MG', label: 'Madagascar', timezone: 'Indian/Antananarivo', currency: 'MGA' },
-  { code: 'RE', label: 'La Réunion', timezone: 'Indian/Reunion', currency: 'EUR' },
-  { code: 'MU', label: 'Maurice', timezone: 'Indian/Mauritius', currency: 'MUR' },
-  { code: 'BE', label: 'Belgique', timezone: 'Europe/Brussels', currency: 'EUR' },
-  { code: 'CH', label: 'Suisse', timezone: 'Europe/Zurich', currency: 'CHF' },
-  { code: 'CA', label: 'Canada (Québec)', timezone: 'America/Toronto', currency: 'CAD' },
-  { code: 'SN', label: 'Sénégal', timezone: 'Africa/Dakar', currency: 'XOF' },
-  { code: 'CI', label: 'Côte d’Ivoire', timezone: 'Africa/Abidjan', currency: 'XOF' },
-  { code: 'MA', label: 'Maroc', timezone: 'Africa/Casablanca', currency: 'MAD' },
-];
-
-const TIMEZONES = [...new Set(COUNTRIES.map((country) => country.timezone))];
-const CURRENCIES = [...new Set(COUNTRIES.map((country) => country.currency))];
-
-const DEFAULT_COUNTRY = COUNTRIES[0] as CountryPreset;
-
-/** « Maison Lotus & Spa » → « maison-lotus-spa ». */
-function slugify(name: string): string {
-  return name
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 63)
-    .replace(/-+$/g, '');
-}
 
 const EMPTY_VALUES: CreateTenantRequest = {
   name: '',
@@ -256,7 +227,7 @@ export function TenantCreateForm() {
             {...countryField}
             onChange={(event) => {
               void countryField.onChange(event);
-              const preset = COUNTRIES.find((country) => country.code === event.target.value);
+              const preset = countryPreset(event.target.value);
               if (preset !== undefined) {
                 setValue('timezone', preset.timezone);
                 setValue('defaultCurrency', preset.currency);

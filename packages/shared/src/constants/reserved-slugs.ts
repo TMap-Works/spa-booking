@@ -47,6 +47,7 @@ export const RESERVED_TENANT_SLUGS = [
   'docs',
   'ftp',
   'help',
+  'inscription',
   'm',
   'mail',
   'origin',
@@ -56,6 +57,7 @@ export const RESERVED_TENANT_SLUGS = [
   'static',
   'status',
   'support',
+  'tarifs',
   'www',
 ] as const;
 

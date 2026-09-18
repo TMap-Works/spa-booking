@@ -53,8 +53,21 @@ const TENANT_SUMMARY_SELECT = {
   timezone: true,
   defaultCurrency: true,
   isActive: true,
+  billingStatus: true,
+  trialEndsAt: true,
   createdAt: true,
 } as const;
+
+/** La ligne telle que Prisma la rend, avant la casse du contrat. */
+type TenantSummaryRow = Prisma.TenantGetPayload<{ select: typeof TENANT_SUMMARY_SELECT }>;
+
+/** Le statut de facturation passe en minuscules, comme toutes les énumérations du contrat. */
+function toTenantSummary(row: TenantSummaryRow): TenantSummary {
+  return {
+    ...row,
+    billingStatus: row.billingStatus.toLowerCase() as TenantSummary['billingStatus'],
+  };
+}
 
 /**
  * La projection d'un opérateur — empreinte et secret compris.
@@ -247,10 +260,11 @@ export class PlatformRepository {
   }
 
   public async findTenantById(id: string): Promise<TenantSummary | null> {
-    return this.prismaUnscoped.tenant.findUnique({
+    const row = await this.prismaUnscoped.tenant.findUnique({
       where: { id },
       select: TENANT_SUMMARY_SELECT,
     });
+    return row === null ? null : toTenantSummary(row);
   }
 
   /**
@@ -275,7 +289,7 @@ export class PlatformRepository {
       this.prismaUnscoped.tenant.count(),
     ]);
 
-    return { items, totalItems };
+    return { items: items.map(toTenantSummary), totalItems };
   }
 
   /**

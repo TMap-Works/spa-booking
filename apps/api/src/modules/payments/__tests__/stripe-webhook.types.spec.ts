@@ -25,14 +25,17 @@ function stripeEvent(type: string, object: Record<string, unknown>, id = 'evt_1'
 }
 
 describe('readWebhookEvent — périmètre', () => {
-  it('déclare exactement les quatre événements du MVP', () => {
-    // La liste est celle de payments-stripe §3. L'y comparer ici évite qu'un
-    // cinquième type s'y glisse sans décision.
+  it('déclare exactement les quatre événements du MVP et les trois de l’abonnement', () => {
+    // Les quatre de payments-stripe §3, et les trois de l'ADR 0016. L'y comparer
+    // ici évite qu'un type de plus s'y glisse sans décision.
     expect([...HANDLED_EVENT_TYPES]).toEqual([
       'payment_intent.succeeded',
       'payment_intent.payment_failed',
       'charge.refunded',
       'charge.dispute.created',
+      'customer.subscription.created',
+      'customer.subscription.updated',
+      'customer.subscription.deleted',
     ]);
   });
 
@@ -351,5 +354,47 @@ describe('reviveWebhookEvent', () => {
     expect(reviveWebhookEvent(null)).toBeNull();
     expect(reviveWebhookEvent('evt_1')).toBeNull();
     expect(reviveWebhookEvent([spooled])).toBeNull();
+  });
+});
+
+describe('readWebhookEvent — customer.subscription.* (ADR 0016)', () => {
+  const subscription = {
+    id: 'sub_1',
+    object: 'subscription',
+    customer: 'cus_1',
+    status: 'trialing',
+    trial_end: 1_790_000_000,
+    metadata: { tenantId: 'tenant-1' },
+    // Version `basil` : l'échéance vit sur la ligne, plus sur l'abonnement.
+    items: { data: [{ id: 'si_1', current_period_end: 1_790_000_000 }] },
+  };
+
+  it('rend l’état de l’abonnement et le salon annoncé', () => {
+    const outcome = readWebhookEvent(stripeEvent('customer.subscription.updated', subscription));
+
+    expect(outcome).toEqual({
+      status: 'handled',
+      event: {
+        eventId: 'evt_1',
+        eventType: 'customer.subscription.updated',
+        tenantHint: 'tenant-1',
+        fact: {
+          kind: 'subscription-changed',
+          subscription: {
+            id: 'sub_1',
+            customerId: 'cus_1',
+            status: 'trialing',
+            trialEndsAt: new Date(1_790_000_000 * 1000),
+            currentPeriodEndsAt: new Date(1_790_000_000 * 1000),
+          },
+        },
+      },
+    });
+  });
+
+  it('acquitte sans traiter un abonnement sans client ni statut', () => {
+    expect(
+      readWebhookEvent(stripeEvent('customer.subscription.created', { id: 'sub_1' })),
+    ).toEqual({ status: 'ignored', eventId: 'evt_1', eventType: 'customer.subscription.created' });
   });
 });

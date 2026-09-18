@@ -2,6 +2,10 @@ import { Module } from '@nestjs/common';
 
 import { CatalogModule } from '../catalog/catalog.module';
 import { IdentityModule } from '../identity/identity.module';
+import { BillingController } from './billing/billing.controller';
+import { BillingRepository } from './billing/billing.repository';
+import { BillingService } from './billing/billing.service';
+import { STRIPE_BILLING_GATEWAY, StripeBillingHttpGateway } from './billing/stripe-billing.gateway';
 import { CounterPaymentsController } from './counter-payments.controller';
 import { PaymentsHistoryService } from './payments-history.service';
 import { PaymentsRepository } from './payments.repository';
@@ -197,6 +201,7 @@ import {
     ProductsController,
     SalesController,
     CounterPaymentsController,
+    BillingController,
   ],
   providers: [
     PaymentsService,
@@ -229,6 +234,10 @@ import {
     // environnement fabriqué.
     { provide: StripeConfig, useFactory: () => new StripeConfig(process.env) },
     { provide: STRIPE_GATEWAY, useClass: StripeHttpGateway },
+    // L'abonnement des salons (ADR 0016) : même compte Stripe, port distinct.
+    { provide: STRIPE_BILLING_GATEWAY, useClass: StripeBillingHttpGateway },
+    BillingService,
+    BillingRepository,
     { provide: WEBHOOK_RETRY_SCHEDULE, useValue: DEFAULT_RETRY_SCHEDULE },
     { provide: WEBHOOK_SWEEP_SCHEDULE, useValue: DEFAULT_SWEEP_SCHEDULE },
     { provide: WEBHOOK_CLOCK, useValue: SYSTEM_CLOCK },

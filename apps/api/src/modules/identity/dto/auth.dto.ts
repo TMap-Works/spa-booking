@@ -8,6 +8,7 @@ import {
   SLUG_MAX_LENGTH,
   type PasswordResetRequest,
   type Permission,
+  type TenantBillingStatus,
   type TenantScopedLoginRequest,
   authSessionResponseSchema,
   authenticatedAccountSchema,
@@ -381,6 +382,13 @@ export class AuthenticatedAccountDto extends UserProfileDto {
     isArray: true,
   })
   public permissions!: Permission[];
+
+  @ApiPropertyOptional({
+    description:
+      'Où en est la facturation du salon (ADR 0016) : `status` et fin d’essai. ' +
+      'Absent si le salon est introuvable.',
+  })
+  public billing?: { status: TenantBillingStatus; trialEndsAt: string | null };
 }
 
 /**

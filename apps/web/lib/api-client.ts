@@ -31,6 +31,9 @@
 import {
   ERROR_CODES,
   apiErrorSchema,
+  authenticatedAccountSchema,
+  billingRedirectSchema,
+  tenantBillingSchema,
   platformSessionSchema,
   platformTenantPageSchema,
   provisionedTenantSchema,
@@ -61,6 +64,7 @@ import {
   type AuthSessionResponse,
   type AvailabilityQuery,
   type AvailabilityResponse,
+  type BillingRedirect,
   type BookGuestAppointmentRequest,
   type BookedAppointment,
   type CancelAppointmentRequest,
@@ -89,6 +93,7 @@ import {
   type RegisterRequest,
   type ReissuedTenantInvitation,
   type RescheduleAppointmentRequest,
+  type SalonSignupRequest,
   type Service,
   type ServiceCategory,
   type ServiceStaffMember,
@@ -99,6 +104,7 @@ import {
   type StaffSchedule,
   type StaffTimeOff,
   type Tenant,
+  type TenantBilling,
   type UpdateCustomerRequest,
   type UpdateProfileRequest,
   type UpdateServiceCategoryRequest,
@@ -659,6 +665,14 @@ export function acceptInvitation(body: AcceptInvitationRequest): Promise<ApiSess
 }
 
 /**
+ * Inscription d'un salon en libre-service (ADR 0016) — la session de son
+ * administrateur s'ouvre dans la foulée.
+ */
+export function signupSalon(body: SalonSignupRequest): Promise<ApiSession> {
+  return openSession('/signup', body);
+}
+
+/**
  * Rotation du jeton de rafraîchissement.
  *
  * Le corps est vide, et il doit le rester : l'API lit le jeton dans le cookie
@@ -681,15 +695,24 @@ export async function logoutSession(refreshToken: string): Promise<void> {
 }
 
 /** Le compte porté par le jeton d'accès. */
-export async function fetchOwnProfile(accessToken: string): Promise<SessionUser> {
+export async function fetchOwnProfile(accessToken: string): Promise<OwnProfile> {
   const { payload } = await authorizedRequest({
     method: 'GET',
     path: '/auth/me',
-    schema: sessionUserSchema,
+    schema: ownProfileSchema,
     accessToken,
   });
   return payload;
 }
+
+/**
+ * Le profil, et où en est la facturation du salon (ADR 0016) — ce qui décide
+ * du bandeau d'essai et de la fermeture du back-office. `billing` manque quand
+ * l'API ne l'émet pas : le salon est alors traité comme ouvert.
+ */
+const ownProfileSchema = sessionUserSchema.merge(authenticatedAccountSchema.pick({ billing: true }));
+
+export type OwnProfile = z.infer<typeof ownProfileSchema>;
 
 /** Modification de ses propres coordonnées. */
 export async function updateOwnProfile(
@@ -2018,6 +2041,47 @@ export async function reissueTenantInvitation(
     path: `/platform/tenants/${encodeURIComponent(tenantId)}/invitation`,
     accessToken,
     schema: reissuedTenantInvitationSchema,
+  });
+
+  return payload;
+}
+
+/*
+ * Abonnement du salon à la plateforme — ADR 0016. Réservé à l'administrateur,
+ * et ouvert même quand l'abonnement est inactif.
+ */
+
+/** L'état de l'abonnement, relu chez Stripe par l'API. */
+export async function fetchBilling(accessToken: string): Promise<TenantBilling> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: '/billing/subscription',
+    accessToken,
+    schema: tenantBillingSchema,
+  });
+
+  return payload;
+}
+
+/** La page de paiement Stripe de l'essai — son adresse. */
+export async function startBillingCheckout(accessToken: string): Promise<BillingRedirect> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/billing/checkout',
+    accessToken,
+    schema: billingRedirectSchema,
+  });
+
+  return payload;
+}
+
+/** Le portail client de Stripe — son adresse. */
+export async function openBillingPortal(accessToken: string): Promise<BillingRedirect> {
+  const { payload } = await authorizedRequest({
+    method: 'POST',
+    path: '/billing/portal',
+    accessToken,
+    schema: billingRedirectSchema,
   });
 
   return payload;

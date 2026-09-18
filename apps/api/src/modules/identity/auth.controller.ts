@@ -48,6 +48,8 @@ import type { AuthenticatedUser } from './identity.types';
 import { permissionsOf } from './permissions';
 import { clearRefreshCookie, readRefreshCookie, setRefreshCookie } from './refresh-cookie';
 import { SessionThrottlerGuard, ThrottleBySession } from './session-throttler.guard';
+import { TenantBillingGate } from './tenant-billing.gate';
+import { AllowUnpaidTenant } from './tenant-billing.guard';
 
 /**
  * Points d'entrée d'authentification. Traduit HTTP ↔ service, et **rien
@@ -92,6 +94,7 @@ export class AuthController {
   public constructor(
     private readonly auth: AuthService,
     private readonly config: AppConfigService,
+    private readonly billing: TenantBillingGate,
   ) {}
 
   /**
@@ -403,12 +406,26 @@ export class AuthController {
   // permission ne peut être exigée ici : c'est la route qui les **annonce**, et
   // en demander une la rendrait inaccessible à qui n'en a aucune.
   @Auth()
+  // Ouverte même quand l'abonnement est inactif : c'est par elle que le
+  // back-office apprend qu'il est fermé (ADR 0016).
+  @AllowUnpaidTenant()
   @ApiOperation({ summary: 'Lire le compte authentifié et ses permissions effectives' })
   @ApiOkResponse({ type: AuthenticatedAccountDto })
   public async me(@CurrentUser() user: AuthenticatedUser): Promise<AuthenticatedAccountDto> {
-    const profile = await this.auth.profileOf(user.userId);
+    const [profile, billing] = await Promise.all([
+      this.auth.profileOf(user.userId),
+      this.billing.billingOf(user.tenantId),
+    ]);
 
     return {
+      ...(billing === null
+        ? {}
+        : {
+            billing: {
+              status: billing.status,
+              trialEndsAt: billing.trialEndsAt === null ? null : billing.trialEndsAt.toISOString(),
+            },
+          }),
       ...profile,
       // Copié plutôt que partagé : `permissionsOf` rend le tableau gelé de la
       // matrice, et le laisser filer dans un corps de réponse ferait dépendre

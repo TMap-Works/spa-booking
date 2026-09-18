@@ -7,7 +7,7 @@ import { ApiClientError } from '@/lib/api-client';
 import { renewalReturnTo } from '@/lib/session-refresh';
 
 import { AdminRetryButton } from './components/admin-retry-button';
-import { adminLoginPath, adminSessionRefreshPath } from './paths';
+import { adminBillingPath, adminLoginPath, adminSessionRefreshPath } from './paths';
 import { readAdminAccessToken, readAdminRefreshToken } from './session';
 
 /**
@@ -204,6 +204,11 @@ export function adminLoadFailure(
 
   if (error.status === 401) {
     redirect(adminUnauthorizedPath(tenantSlug, options.renewal));
+  }
+  // L'abonnement du salon n'est pas en cours (ADR 0016) : tous les écrans
+  // mènent à celui qui permet de le rétablir.
+  if (error.status === 402) {
+    redirect(adminBillingPath(tenantSlug));
   }
 
   if (error.status === 403) {

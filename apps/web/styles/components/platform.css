@@ -75,3 +75,8 @@
 .spa-platform-reveal > p {
   margin-block-end: var(--spa-space-3);
 }
+
+/* Sept colonnes depuis la facturation (ADR 0016) : l'action tient sur une ligne. */
+.spa-platform-actions .spa-button {
+  white-space: nowrap;
+}

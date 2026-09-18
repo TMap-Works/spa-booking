@@ -29,6 +29,8 @@ import {
   acceptInvitation,
   loginToAccount,
   logoutSession,
+  openBillingPortal,
+  startBillingCheckout,
   updateTenantSettings,
 } from '@/lib/api-client';
 
@@ -165,6 +167,47 @@ export async function updateTenantSettingsAction(
 
   try {
     return { ok: true, data: await updateTenantSettings(accessToken, parsed.data) };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * Ouvre la page de paiement Stripe de l'abonnement (ADR 0016) et en rend
+ * l'adresse — le navigateur y part aussitôt. La carte n'est saisie que chez
+ * Stripe (payments-stripe §1).
+ */
+export async function startBillingCheckoutAction(
+  tenantSlug: string,
+): Promise<AdminActionResult<string>> {
+  return billingRedirect(tenantSlug, startBillingCheckout);
+}
+
+/** Ouvre le portail client de Stripe : carte, factures, résiliation. */
+export async function openBillingPortalAction(
+  tenantSlug: string,
+): Promise<AdminActionResult<string>> {
+  return billingRedirect(tenantSlug, openBillingPortal);
+}
+
+async function billingRedirect(
+  tenantSlug: string,
+  open: (accessToken: string) => Promise<{ url: string }>,
+): Promise<AdminActionResult<string>> {
+  const slug = slugSchema.safeParse(tenantSlug);
+
+  if (!slug.success) {
+    return invalid('Établissement inconnu.');
+  }
+
+  const access = await adminActionAccess(slug.data);
+
+  if (!access.ok) {
+    return access;
+  }
+
+  try {
+    return { ok: true, data: (await open(access.accessToken)).url };
   } catch (error) {
     return failure(error);
   }

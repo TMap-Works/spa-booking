@@ -29,6 +29,7 @@ import {
   uuidSchema,
 } from '../common/identifiers';
 import { utcInstantSchema } from '../common/time';
+import { tenantBillingSchema } from './billing';
 import { PERMISSIONS } from '../constants/permissions';
 import { USER_ROLES } from '../constants/roles';
 
@@ -309,6 +310,15 @@ export const authenticatedAccountSchema = sessionUserSchema.extend({
    * du champ, qu'un front distinguerait mal d'une version d'API plus ancienne.
    */
   permissions: z.array(permissionSchema),
+  /**
+   * Où en est la facturation du salon (ADR 0016) — ce qui décide si le
+   * back-office s'ouvre, et le bandeau d'essai qu'il affiche.
+   *
+   * Facultatif en lecture : une API antérieure à l'ADR ne l'émet pas, et le
+   * front traite alors le salon comme ouvert — la garde, elle, reste celle de
+   * l'API.
+   */
+  billing: tenantBillingSchema.pick({ status: true, trialEndsAt: true }).optional(),
 });
 
 export type AuthenticatedAccount = z.infer<typeof authenticatedAccountSchema>;

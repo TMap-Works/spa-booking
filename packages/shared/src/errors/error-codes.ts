@@ -239,6 +239,17 @@ export const IDENTITY_ERROR_CODES = {
    * administrateur — un salon créé avant la console, par le seed ou à la main.
    */
   TENANT_ADMIN_MISSING: 'TENANT_ADMIN_MISSING',
+  /**
+   * L'abonnement du salon n'est pas en cours — paiement jamais finalisé, ou
+   * abonnement résilié. **402** : le back-office ne s'ouvre plus, sauf l'écran
+   * d'abonnement qui permet de le rétablir (ADR 0016).
+   */
+  SUBSCRIPTION_REQUIRED: 'SUBSCRIPTION_REQUIRED',
+  /**
+   * Le salon n'accepte pas de réservation en ligne : son abonnement n'est pas en
+   * cours. **409** sur les créneaux et la réservation publics (ADR 0016).
+   */
+  SALON_BOOKING_CLOSED: 'SALON_BOOKING_CLOSED',
 } as const;
 
 /**
@@ -423,6 +434,20 @@ export const CRM_ERROR_CODES = {
  * l'endroit où la frontière SAQ A se perd (payments-stripe §1).
  */
 export const PAYMENT_ERROR_CODES = {
+  /* --- Abonnement du salon à la plateforme (ADR 0016) ---------------------- */
+
+  /**
+   * Ce salon n'est pas facturé : il a été ouvert par la console de l'éditeur,
+   * qui en gère les conditions. Aucun paiement d'abonnement ne s'y ouvre.
+   */
+  BILLING_NOT_APPLICABLE: 'BILLING_NOT_APPLICABLE',
+  /**
+   * Le salon n'a encore aucun compte de facturation chez le prestataire — le
+   * paiement de l'essai n'a jamais été lancé. Le portail de gestion n'a rien à
+   * montrer.
+   */
+  BILLING_ACCOUNT_MISSING: 'BILLING_ACCOUNT_MISSING',
+
   /* --- Encaissement en ligne et au comptoir (#57, #62, #63) --------------- */
 
   /**

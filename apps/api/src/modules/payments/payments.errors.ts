@@ -564,3 +564,30 @@ export class AppointmentTicketAlreadyOpenError extends DomainError {
     });
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Abonnement du salon à la plateforme — ADR 0016                            */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Aucun paiement d'abonnement ne s'ouvre ici : le salon est géré par la console
+ * de l'éditeur, ou son abonnement est déjà en cours.
+ */
+export class BillingNotApplicableError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.BILLING_NOT_APPLICABLE;
+  public override readonly status = CONFLICT;
+
+  public constructor(message = 'Ce salon n’a pas d’abonnement à régler.') {
+    super(message);
+  }
+}
+
+/** Le portail de gestion n'a rien à montrer : aucun paiement n'a encore été lancé. */
+export class BillingAccountMissingError extends DomainError {
+  public override readonly code = PAYMENT_ERROR_CODES.BILLING_ACCOUNT_MISSING;
+  public override readonly status = CONFLICT;
+
+  public constructor() {
+    super('Aucun moyen de paiement n’est encore enregistré pour ce salon.');
+  }
+}

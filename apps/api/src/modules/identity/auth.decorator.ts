@@ -5,6 +5,7 @@ import type { Permission } from '@spa/shared';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { PermissionsGuard, RequirePermissions } from './permissions.guard';
 import { Roles, RolesGuard } from './roles.guard';
+import { TenantBillingGuard } from './tenant-billing.guard';
 import { rolesAtLeast, USER_ROLES, type UserRole } from './roles';
 
 /**
@@ -34,7 +35,9 @@ export function Auth(...roles: readonly UserRole[]): MethodDecorator & ClassDeco
 
   return applyDecorators(
     Roles(...allowed),
-    UseGuards(JwtAuthGuard, RolesGuard),
+    // La facturation juste après la portée : un salon fermé répond 402 avant
+    // qu'aucune règle de rôle ne soit jugée (ADR 0016).
+    UseGuards(JwtAuthGuard, TenantBillingGuard, RolesGuard),
     ApiBearerAuth(),
     ApiUnauthorizedResponse({ description: 'Jeton d’accès absent, invalide ou expiré.' }),
     // Annoncé seulement là où il peut réellement tomber : une route ouverte à
@@ -108,7 +111,7 @@ export function AuthWith(
     // seconde écriture est celle qui diverge.
     Roles(...USER_ROLES),
     RequirePermissions(...permissions),
-    UseGuards(JwtAuthGuard, RolesGuard, PermissionsGuard),
+    UseGuards(JwtAuthGuard, TenantBillingGuard, RolesGuard, PermissionsGuard),
     ApiBearerAuth(),
     ApiUnauthorizedResponse({ description: 'Jeton d’accès absent, invalide ou expiré.' }),
     ApiForbiddenResponse({

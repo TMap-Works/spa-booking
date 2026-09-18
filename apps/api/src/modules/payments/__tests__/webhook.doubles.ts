@@ -362,6 +362,10 @@ export class FakeStripeWebhookRepository {
       // L'alerte **est** l'effet : appliqué, et marqué, même sans ligne.
       return { paymentsTouched: 0, appointmentsConfirmed: 0 };
     }
+    if (fact.kind === 'subscription-changed') {
+      // L'abonnement d'un salon (ADR 0016) : aucune ligne d'encaissement touchée.
+      return { paymentsTouched: 0, appointmentsConfirmed: 0 };
+    }
 
     const payment = this.payments.get(fact.paymentIntentId);
     if (payment === undefined) {
@@ -424,5 +428,7 @@ function referenceOf(fact: WebhookFact): {
     case 'charge-refunded':
     case 'dispute-opened':
       return { paymentIntentId: fact.paymentIntentId, chargeId: fact.chargeId };
+    case 'subscription-changed':
+      return { paymentIntentId: null, chargeId: null };
   }
 }

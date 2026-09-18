@@ -1,4 +1,4 @@
-import type { UserRole } from '@spa/shared';
+import type { TenantBillingStatus, UserRole } from '@spa/shared';
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
 import type { ReactNode } from 'react';
@@ -128,6 +128,16 @@ export interface AdminShell {
   /** `null` quand `/auth/me` n'a pas répondu : on n'annonce pas un compte qu'on ignore. */
   readonly userName: string | null;
   readonly role: UserRole;
+  /**
+   * Où en est l'abonnement du salon (ADR 0016) — `null` quand `/auth/me` ne l'a
+   * pas dit : le bandeau d'essai s'efface, rien d'autre ne change.
+   */
+  readonly billing: AdminShellBilling | null;
+}
+
+export interface AdminShellBilling {
+  readonly status: TenantBillingStatus;
+  readonly trialEndsAt: string | null;
 }
 
 /**
@@ -267,6 +277,7 @@ export async function loadAdminShell(tenantSlug: string): Promise<AdminShell | n
         ? `${profile.value.firstName} ${profile.value.lastName.slice(0, 1)}.`
         : null,
     role: profile.status === 'fulfilled' ? profile.value.role : OUTAGE_ROLE,
+    billing: profile.status === 'fulfilled' ? (profile.value.billing ?? null) : null,
   };
 }
 
@@ -331,7 +342,13 @@ export default async function AdminLayout({ children, params }: AdminLayoutProps
       />
       <AdminAnnouncementProvider>
         <div className="spa-admin__main">
-          <AdminTopbar salonName={salonName} tenantSlug={tenantSlug} timeZone={shell.timeZone} />
+          <AdminTopbar
+          billing={shell.billing}
+          role={shell.role}
+          salonName={salonName}
+          tenantSlug={tenantSlug}
+          timeZone={shell.timeZone}
+        />
           {content}
         </div>
       </AdminAnnouncementProvider>

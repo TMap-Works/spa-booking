@@ -18,6 +18,7 @@
 
 /** Codes HTTP utilisés par la table de correspondance d'api-module §5. */
 export const DOMAIN_HTTP_STATUS = {
+  PAYMENT_REQUIRED: 402,
   FORBIDDEN: 403,
   NOT_FOUND: 404,
   CONFLICT: 409,

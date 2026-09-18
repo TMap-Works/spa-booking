@@ -24,6 +24,7 @@ const NAV_ICONS: Readonly<Record<string, IconName>> = {
   personnel: 'team',
   reporting: 'chart',
   reglages: 'sliders',
+  abonnement: 'card',
 };
 
 /**
@@ -34,7 +35,7 @@ const NAV_ICONS: Readonly<Record<string, IconName>> = {
 const NAV_GROUPS: readonly { readonly label: string; readonly keys: readonly string[] }[] = [
   { label: 'Au quotidien', keys: ['tableau-de-bord', 'planning', 'encaissement', 'clients'] },
   { label: 'Gestion', keys: ['prestations', 'personnel'] },
-  { label: 'Pilotage', keys: ['reporting', 'reglages'] },
+  { label: 'Pilotage', keys: ['reporting', 'reglages', 'abonnement'] },
 ];
 
 interface NavGroup {

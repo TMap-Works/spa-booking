@@ -1,7 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 
 import { StructuredLogger } from '../../common/logging/structured-logger';
 import { TenantContextService } from '../../common/tenant/tenant-context.service';
+import { TenantBillingGate } from '../identity/tenant-billing.gate';
 import { StripeWebhookRepository } from './stripe-webhook.repository';
 import { referenceOf, type StripeWebhookEvent, type WebhookFact } from './stripe-webhook.types';
 
@@ -32,6 +33,13 @@ export class StripeWebhookService {
     private readonly repository: StripeWebhookRepository,
     private readonly tenants: TenantContextService,
     private readonly logger: StructuredLogger,
+    /**
+     * Le cache de la garde de facturation (ADR 0016), vidé quand un événement
+     * d'abonnement vient d'écrire l'état du salon. Facultatif : sans lui, la
+     * garde voit le changement à l'expiration de son cache, vingt secondes au
+     * plus.
+     */
+    @Optional() private readonly billingGate?: TenantBillingGate,
   ) {}
 
   /**
@@ -100,6 +108,10 @@ export class StripeWebhookService {
       meta,
       StripeWebhookService.name,
     );
+
+    if (application.outcome === 'applied' && event.fact.kind === 'subscription-changed') {
+      this.billingGate?.invalidate(tenantId);
+    }
 
     if (application.outcome === 'applied' && event.fact.kind === 'dispute-opened') {
       this.alertOnDispute(tenantId, event.fact);
