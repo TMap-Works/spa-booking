@@ -3,10 +3,11 @@
 import type { BookedAppointment, PublicService, PublicTenant, UtcInstant } from '@spa/shared';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
-import { BookingSummaryBar } from '@/components/booking/summary-bar';
+import { BookingSummaryAside, type BookingSummary } from '@/components/booking/summary-bar';
+import { BookingTunnelHeader } from '@/components/booking/tunnel-header';
+import { BookingProgress } from '@/components/booking/tunnel-progress';
 import { Notification, type NotificationTone } from '@/components/ui/notification';
 import {
-  BOOKING_STEPS,
   bookingSearch,
   draftFromSearch,
   emptyBookingDraft,
@@ -25,12 +26,19 @@ import { ServiceStep } from './steps/service-step';
 import { SlotStep } from './steps/slot-step';
 import { SummaryStep } from './steps/summary-step';
 
-const STEP_LABELS: Readonly<Record<BookingStep, string>> = {
-  prestation: 'Prestation',
-  creneau: 'Créneau',
-  coordonnees: 'Coordonnées',
-  recapitulatif: 'Récapitulatif',
-  confirmation: 'Confirmation',
+/**
+ * L'étape que « ← Retour » rouvre, ou `null` quand il n'y a rien derrière.
+ *
+ * La première étape n'a pas de précédente, et la confirmation est terminale :
+ * le rendez-vous est pris, et revenir au récapitulatif y réserverait une
+ * seconde fois (#732). Le bouton n'est alors pas rendu du tout.
+ */
+const PREVIOUS_STEP: Readonly<Record<BookingStep, BookingStep | null>> = {
+  prestation: null,
+  creneau: 'prestation',
+  coordonnees: 'creneau',
+  recapitulatif: 'coordonnees',
+  confirmation: null,
 };
 
 interface Notice {
@@ -42,6 +50,36 @@ interface Notice {
 interface BookingTunnelProps {
   readonly tenant: PublicTenant;
   readonly services: readonly PublicService[];
+  /**
+   * La vitrine du salon — où mène « ✕ Quitter » (#1047).
+   *
+   * Le chemin arrive en propriété plutôt que d'être recomposé ici : c'est la
+   * page qui tient l'arborescence des routes (`salon-data.ts`), comme pour
+   * l'en-tête de la vitrine.
+   */
+  readonly exitHref: string;
+}
+
+/**
+ * Quelque chose a-t-il été choisi ou tapé ?
+ *
+ * C'est ce qui décide si « Quitter » demande confirmation. Le brouillon vit
+ * dans `sessionStorage` et meurt avec l'onglet : sortir d'un tunnel où l'on a
+ * déjà tapé son nom n'est pas le même geste que sortir d'un tunnel qu'on vient
+ * d'ouvrir, et seul le second se fait sans rien demander.
+ *
+ * Le consentement n'y figure pas : cocher une case n'est pas une saisie qu'on
+ * regretterait de perdre, et elle ne peut de toute façon l'être qu'à une étape
+ * où le reste du formulaire est déjà rempli.
+ */
+function hasDraftInput(draft: BookingDraft): boolean {
+  const { firstName, lastName, email, phone, clientNote } = draft.contact;
+
+  return (
+    draft.serviceId !== null ||
+    draft.startsAt !== null ||
+    [firstName, lastName, email, phone, clientNote].some((value) => value.trim() !== '')
+  );
 }
 
 /**
@@ -121,7 +159,7 @@ function keepChosenSlot(current: BookingDraft, merged: BookingDraft): BookingDra
  * pour le partage des rôles. Le composant relit les deux au montage, réécrit le
  * stockage à chaque changement, et tient l'adresse à jour à chaque étape.
  */
-export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
+export function BookingTunnel({ tenant, services, exitHref }: BookingTunnelProps) {
   const [draft, setDraft] = useState<BookingDraft>(emptyBookingDraft);
   const [hydrated, setHydrated] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
@@ -166,12 +204,12 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
    */
   const persistedDraftRef = useRef<BookingDraft>(emptyBookingDraft());
   /**
-   * L'étape vient d'être rouverte depuis l'indicateur, et le focus est à
-   * rattraper (#740) — voir `goToFromProgress`.
+   * L'étape vient d'être rouverte par « ← Retour », et le focus est à rattraper
+   * (#740, #1047) — voir `goBack`.
    */
-  const progressJumpRef = useRef(false);
-  /** La rangée de l'indicateur qui porte `aria-current`, cible de ce rattrapage. */
-  const currentProgressRef = useRef<HTMLLIElement | null>(null);
+  const backJumpRef = useRef(false);
+  /** Le titre de l'étape, cible de ce rattrapage. */
+  const titleRef = useRef<HTMLHeadingElement | null>(null);
 
   // Relecture du brouillon. Ni l'URL ni `sessionStorage` ne sont lisibles au
   // rendu serveur : l'état de départ est donc toujours vierge, et l'étape réelle
@@ -452,18 +490,23 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
   }, []);
 
   /**
-   * Le même geste, déclenché depuis l'indicateur d'étape (#740).
+   * Le même geste, déclenché depuis « ← Retour » de l'en-tête (#740, #1047).
    *
-   * Il se distingue de `goTo` par une seule chose : le bouton cliqué **cesse
-   * d'exister** au rendu suivant, l'étape franchie devenant l'étape courante,
-   * qui n'est pas un bouton. Sans rien de plus, le focus retomberait sur
-   * `<body>` et la navigation au clavier repartirait du haut du document — au
-   * moment précis où la visiteuse vient de désigner où elle voulait aller. Le
-   * drapeau dit à l'effet ci-dessous de le rattraper.
+   * Il se distingue de `goTo` par le focus. Le bouton cliqué **peut cesser
+   * d'exister** au rendu suivant — c'est le cas du retour vers la première
+   * étape, qui n'a pas de précédente —, et le focus retomberait alors sur
+   * `<body>` : la navigation au clavier repartirait du haut du document au
+   * moment précis où la visiteuse vient de demander à revenir en arrière.
+   *
+   * Le rattrapage se pose sur le **titre de l'étape**, et pas seulement dans ce
+   * cas-là : c'est la phrase qui dit où l'on vient d'arriver — « Quelle
+   * prestation souhaitez-vous ? » —, et la tabulation repart de là sur le
+   * contenu de l'étape. C'est le motif habituel d'une navigation sans
+   * rechargement (skill web-frontend §7).
    */
-  const goToFromProgress = useCallback(
+  const goBack = useCallback(
     (target: BookingStep) => {
-      progressJumpRef.current = true;
+      backJumpRef.current = true;
       goTo(target);
     },
     [goTo],
@@ -565,35 +608,54 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
   }, [notice]);
 
   /**
-   * Le focus suit l'étape rouverte depuis l'indicateur (#740).
+   * Le focus suit l'étape rouverte par « ← Retour » (#740, #1047).
    *
    * Même correction que celle de la notification juste au-dessus, et pour la
-   * même raison : le bouton cliqué disparaît avec son état — l'étape franchie
-   * devient l'étape courante, qui n'est pas un bouton —, et le focus retomberait
-   * sur `<body>`. Le parcours de réservation doit rester praticable sans souris
-   * (skill web-frontend §7).
-   *
-   * La cible est la rangée qui porte `aria-current="step"`, et non le contenu de
-   * l'étape : c'est l'élément qui dit *« étape courante, Coordonnées »*, la
-   * réponse exacte à ce que la visiteuse vient de demander. Elle reste ainsi
-   * dans l'indicateur, d'où la tabulation repart sur le formulaire qui suit.
+   * même raison : le bouton cliqué peut disparaître avec son état, et le focus
+   * retomberait sur `<body>`. Le parcours de réservation doit rester praticable
+   * sans souris (skill web-frontend §7).
    *
    * Posé sur `step` et non sur le drapeau : c'est le changement d'étape qui doit
-   * déclencher le rattrapage, et le drapeau ne fait que distinguer les étapes
-   * rouvertes depuis l'indicateur de toutes les autres — un bouton « Continuer »
-   * ne déplace pas le focus vers le fil des étapes.
+   * déclencher le rattrapage, et le drapeau ne fait que distinguer le retour en
+   * arrière de tout le reste — un bouton « Continuer » ne renvoie pas le focus
+   * au titre de l'écran qu'il vient d'ouvrir, la suite de la tabulation y mène
+   * déjà.
    */
   useEffect(() => {
-    if (progressJumpRef.current) {
-      progressJumpRef.current = false;
-      currentProgressRef.current?.focus();
+    if (backJumpRef.current) {
+      backJumpRef.current = false;
+      titleRef.current?.focus();
     }
   }, [step]);
 
   const zoneMention = hydrated ? timeZoneMention(tenant.timezone) : null;
 
   /**
-   * Les deux étapes où la barre de résumé est rendue (#735).
+   * Ce que le tunnel rappelle de la réservation en cours (#735, #1047).
+   *
+   * Un seul objet, composé ici et passé aux surfaces qui le rendent — la barre
+   * basse de l'étape, la colonne de bureau, la feuille dépliée. Les étapes n'ont
+   * ainsi rien à savoir du catalogue pour rappeler ce qui a été choisi.
+   *
+   * `null` tant qu'aucune prestation n'est résolue : il n'y a alors ni durée, ni
+   * prix, ni praticien à nommer.
+   */
+  const summary: BookingSummary | null =
+    selectedService === null
+      ? null
+      : {
+          serviceName: selectedService.name,
+          durationMinutes: selectedService.durationMinutes,
+          price: selectedService.price,
+          staffName:
+            selectedService.staff.find((member) => member.id === draft.staffId)?.displayName ??
+            null,
+          startsAt: draft.startsAt,
+          timeZone: tenant.timezone,
+        };
+
+  /**
+   * Les deux étapes où le rappel est rendu (#735).
    *
    * Ce sont exactement celles que l'audit de conception a relevées : « Créneau »,
    * où l'écran ne portait que le nom de la prestation — son prix avait disparu
@@ -603,220 +665,170 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
    *
    * - **« Prestation »**, parce que le choix n'y est pas encore *retenu* :
    *   `ServiceStep` garde sa sélection dans son propre état jusqu'à la
-   *   soumission, si bien qu'une barre alimentée par le brouillon annoncerait la
+   *   soumission, si bien qu'un rappel alimenté par le brouillon annoncerait la
    *   prestation précédente pendant qu'on en désigne une autre — deux réponses
    *   différentes à la même question, sur le même écran. Rien n'y manque pour
-   *   autant : depuis #741, chaque carte de l'étape porte sa durée et son prix,
-   *   et c'est le bas de cet écran-là qu'occupe la barre d'action collante ;
+   *   autant : depuis #741, chaque carte de l'étape porte sa durée et son prix ;
    * - **« Récapitulatif »**, parce que ces faits **y sont l'écran**. Le
    *   wireframe garde la barre à son étape 5, mais cette étape-là est le
    *   paiement — un conteneur Stripe, sous lequel un rappel a tout son sens.
-   *   Le tunnel du MVP n'en a pas : l'étape porte le récapitulatif entier, et
-   *   une barre collante sous lui redirait trois de ses lignes à quelques
-   *   pixels d'elles ;
+   *   Le tunnel du MVP n'en a pas : l'étape porte le récapitulatif entier, et un
+   *   rappel à côté de lui redirait trois de ses lignes ;
    * - **« Confirmation »**, parce que `wireframes.md` l'écarte explicitement à
    *   l'étape 6 : « Plus d'indicateur d'étape ni de barre collante : le tunnel
    *   est terminé ».
    */
-  const showSummary = step === 'creneau' || step === 'coordonnees';
+  const recalled = summary !== null && (step === 'creneau' || step === 'coordonnees');
 
-  /**
-   * Le rang de l'étape affichée dans la séquence — ce qui sépare les étapes
-   * franchies de celles qui restent (#740).
-   *
-   * Il est calculé sur l'étape **affichée** et non sur celle du brouillon :
-   * `step` a déjà passé les rattrapages ci-dessus, et une prestation retirée du
-   * catalogue ramène l'écran — donc l'indicateur — à la première étape, sans
-   * laisser derrière lui quatre libellés cliquables qui ne mèneraient nulle part.
-   */
-  const rank = BOOKING_STEPS.indexOf(step);
-
-  /**
-   * Le tunnel est terminé : plus aucune étape ne se rouvre (#732, #740).
-   *
-   * Ce n'est pas une précaution d'ergonomie, c'est ce qui empêche un bouton
-   * mort : le rendez-vous pris, `step` vaut `confirmation` quoi que porte
-   * `draft.step`, et un `goTo('coordonnees')` déclenché depuis cet écran ne
-   * changerait rien à ce qui s'affiche.
-   *
-   * `wireframes.md` va plus loin à son étape 6 — « Plus d'indicateur d'étape ni
-   * de barre collante : le tunnel est terminé » : le fil ne devrait pas y être
-   * *rendu du tout*. Il l'est encore, et ce ticket ne le retire pas — l'écart
-   * précède ce diff, l'audit ne l'a pas relevé, et le supprimer déborderait
-   * d'un ticket qui ne porte que sur l'état et le retour en arrière.
-   */
-  const rewindable = step !== 'confirmation';
+  /** L'étape que « ← Retour » rouvre — `null` quand il n'y a rien derrière. */
+  const previousStep = PREVIOUS_STEP[step];
 
   return (
-    // Ni `<main>` ni `<h1>` ici : le layout voisin porte les deux (#623). Le
-    // tunnel n'est plus qu'un panneau dans une page, comme un écran de l'espace
-    // compte l'est dans la sienne — et le titre, désormais porté par un Server
-    // Component, ne voyage plus dans le bundle client de ce composant-ci.
-    <div className="spa-booking__panel">
-      {zoneMention === null ? null : (
-        <p className="spa-card__meta">Tous les horaires sont affichés en {zoneMention}.</p>
-      )}
+    // Le tunnel porte désormais son propre en-tête et son `<main>` (#1047) : le
+    // layout voisin n'est plus qu'une enveloppe de page. C'est ce qui permet à
+    // l'en-tête de se réduire à « ← Retour » et « ✕ Quitter » — deux commandes
+    // qui dépendent de l'étape et du brouillon, donc de cet état-ci
+    // (BM-TUNNEL-10).
+    <>
+      <BookingTunnelHeader
+        tenantName={tenant.name}
+        exitHref={exitHref}
+        onBack={
+          previousStep === null
+            ? null
+            : () => {
+                goBack(previousStep);
+              }
+        }
+        // Avant l'hydratation, le brouillon n'a pas encore été relu : annoncer
+        // « rien à perdre » serait faux pour qui revient sur l'onglet, et la
+        // sortie demande donc confirmation par défaut.
+        //
+        // La confirmation fait exception : le rendez-vous est pris, il n'y a
+        // plus de réservation en cours à interrompre, et retenir la visiteuse
+        // sur un écran terminal n'aurait rien à protéger (#732).
+        unsavedWork={step !== 'confirmation' && (!hydrated || hasDraftInput(draft))}
+      />
 
-      {/* `role="list"` explicite : le socle retire le marqueur de tout `<ol>`
-          (#625), et Safari retire alors à VoiceOver la sémantique de liste. Sans
-          ce rôle, l'`aria-label` ci-dessous ne nomme plus une liste et la
-          séquence des étapes — toute l'information que ce fil transporte — n'est
-          plus annoncée comme telle (styles/README.md §3). */}
-      <ol className="spa-booking__progress" role="list" aria-label="Étapes de la réservation">
-        {BOOKING_STEPS.map((name, index) => {
-          // Franchie, donc rouvrable : « l'indicateur d'étape montre la
-          // progression et permet de revenir à une étape déjà franchie (les
-          // étapes futures ne sont pas cliquables) » — wireframes.md,
-          // « Structure commune à toutes les étapes ».
-          const done = index < rank;
-          const current = name === step;
+      <main className="spa-booking__main" id="contenu">
+        <div
+          className={
+            recalled ? 'spa-booking__frame spa-booking__frame--aside' : 'spa-booking__frame'
+          }
+        >
+          <div className="spa-booking__content">
+            <BookingProgress
+              step={step}
+              // Tue à l'étape « Prestation » : aucun horaire n'y est affiché,
+              // et une mention de fuseau au-dessus d'un catalogue de
+              // prestations répond à une question que l'écran ne pose pas. Elle
+              // reparaît dès le calendrier, où elle qualifie ce qu'on lit.
+              timeZoneMention={step === 'prestation' ? null : zoneMention}
+              titleRef={titleRef}
+            />
 
-          return (
-            <li
-              key={name}
-              className="spa-booking__progress-step"
-              /* Le seul porteur de l'état, à l'écran comme au lecteur
-                 d'écran : la feuille suit l'attribut plutôt qu'une classe
-                 `--active` qui pourrait en diverger — le motif de
-                 `admin/shell.css` et de `admin/client.css`. */
-              aria-current={current ? 'step' : undefined}
-              /* `tabIndex={-1}` rend la rangée courante focalisable par
-                 programme sans l'insérer dans l'ordre de tabulation — même
-                 usage que l'enveloppe de la notification, plus bas. C'est là
-                 que l'effet de rattrapage dépose le focus. */
-              tabIndex={current ? -1 : undefined}
-              ref={current ? currentProgressRef : undefined}
-            >
-              {/* La pastille est ce nœud-ci, et non le `<li>` : le trait qui
-                  suit l'étape appartient à la séquence et non à l'étape, et le
-                  laisser dans la boîte peinte étirerait l'aplat de l'étape
-                  courante jusque sous la suivante. */}
-              {done && rewindable ? (
-                <button
-                  type="button"
-                  className="spa-booking__progress-name spa-booking__progress-link"
-                  onClick={() => {
-                    goToFromProgress(name);
-                  }}
-                >
-                  {/* « Prestation » tout court nommerait mal un bouton : le
-                      libellé dit où l'on est, pas ce que le clic fait. La
-                      phrase entière est donnée au lecteur d'écran, l'œil se
-                      contentant du libellé et de la forme cliquable. */}
-                  <span className="spa-visually-hidden">Revenir à l’étape </span>
-                  {STEP_LABELS[name]}
-                </button>
-              ) : (
-                <span className="spa-booking__progress-name">{STEP_LABELS[name]}</span>
-              )}
-              {/* Le trait qui relie deux étapes — « ①──②──③ » du wireframe —,
-                  masqué à l'arbre d'accessibilité : la liste ordonnée dit déjà
-                  la séquence, un lecteur d'écran n'a pas à entendre un
-                  séparateur entre chaque étape. Il est posé en fin d'élément et
-                  non en tête du suivant : aucun marqueur n'est plus rendu depuis
-                  le reset du socle, et le trait se rattache donc à l'étape qu'il
-                  termine. */}
-              {index === BOOKING_STEPS.length - 1 ? null : (
-                <span className="spa-booking__progress-joint" aria-hidden="true" />
-              )}
-            </li>
-          );
-        })}
-      </ol>
+            {notice === null ? null : (
+              // `tabIndex={-1}` rend l'enveloppe focalisable par programme sans
+              // l'insérer dans l'ordre de tabulation : elle ne devient une étape
+              // du clavier ni avant ni après avoir reçu le focus.
+              <div ref={noticeRef} tabIndex={-1}>
+                <Notification tone={notice.tone} title={notice.title}>
+                  <p>{notice.body}</p>
+                </Notification>
+              </div>
+            )}
 
-      {notice === null ? null : (
-        // `tabIndex={-1}` rend l'enveloppe focalisable par programme sans
-        // l'insérer dans l'ordre de tabulation : elle ne devient une étape du
-        // clavier ni avant ni après avoir reçu le focus.
-        <div ref={noticeRef} tabIndex={-1}>
-          <Notification tone={notice.tone} title={notice.title}>
-            <p>{notice.body}</p>
-          </Notification>
+            {!hydrated ? (
+              <div className="spa-card spa-card--loading" aria-busy="true">
+                <span className="spa-visually-hidden">Chargement de votre réservation…</span>
+                <span className="spa-card__skeleton-line spa-card__skeleton-line--title" />
+                <span className="spa-card__skeleton-line" />
+                <span className="spa-card__skeleton-line spa-card__skeleton-line--short" />
+              </div>
+            ) : step === 'prestation' ? (
+              <ServiceStep
+                services={services}
+                selectedServiceId={draft.serviceId}
+                selectedStaffId={draft.staffId}
+                onSubmit={chooseService}
+              />
+            ) : step === 'creneau' && selectedService !== null ? (
+              <SlotStep
+                tenant={tenant}
+                service={selectedService}
+                staffId={draft.staffId}
+                // Le créneau déjà retenu, quand on revient sur l'étape (#947) :
+                // l'écran s'ouvre sur son mois et le marque, au lieu de repartir
+                // du mois courant et de la première journée libre.
+                startsAt={draft.startsAt}
+                // Le rappel de la barre basse. Il est rendu par l'étape et non
+                // ici, parce que c'est l'étape qui porte l'action primaire, et
+                // qu'une soumission doit rester dans son formulaire
+                // (`components/booking/summary-bar.tsx`).
+                summary={summary}
+                onBack={() => {
+                  goTo('prestation');
+                }}
+                onStaffChange={chooseStaff}
+                onChoose={chooseSlot}
+              />
+            ) : step === 'coordonnees' ? (
+              <ContactStep
+                contact={draft.contact}
+                tenantSlug={tenant.slug}
+                // Le pays de l'établissement, d'où le téléphone tire son
+                // indicatif par défaut (#1028). `address` est absente tant que
+                // le salon n'a pas publié la sienne, et `null` dit alors
+                // exactement ce que l'API en dira : pas de pays, donc pas de
+                // numéro national acceptable.
+                //
+                // Lire le pays **dans l'adresse** ne perd rien : la contrainte
+                // `tenants_address_completeness_check` veut qu'`address_line1`,
+                // `city` et `country_code` soient les trois nuls ou les trois
+                // renseignés, si bien que cette lecture vaut
+                // `tenants.country_code` — la colonne même que le pipe serveur
+                // consulte.
+                countryCode={tenant.address?.country ?? null}
+                summary={summary}
+                onSave={saveContact}
+                onBack={() => {
+                  goTo('creneau');
+                }}
+                onSubmit={submitContact}
+              />
+            ) : step === 'recapitulatif' && selectedService !== null && draft.startsAt !== null ? (
+              <SummaryStep
+                tenant={tenant}
+                service={selectedService}
+                staffId={draft.staffId}
+                startsAt={draft.startsAt}
+                contact={draft.contact}
+                onBack={() => {
+                  goTo('coordonnees');
+                }}
+                onBooked={onBooked}
+                onSlotLost={onSlotLost}
+              />
+            ) : step === 'confirmation' && draft.appointment !== null ? (
+              <ConfirmationStep
+                tenant={tenant}
+                service={selectedService}
+                appointment={draft.appointment}
+                contact={draft.contact}
+                restored={restoredAppointment}
+                onCancelled={onCancelled}
+                onRestart={restart}
+              />
+            ) : null}
+          </div>
+
+          {/* La colonne de bureau, rendue par le tunnel et non par l'étape :
+              elle est la seconde piste de la grille, donc une sœur du contenu.
+              En dessous de 64 rem, la feuille l'efface — la barre basse de
+              l'étape y dit la même chose en une ligne. */}
+          {recalled && summary !== null ? <BookingSummaryAside summary={summary} /> : null}
         </div>
-      )}
-
-      {!hydrated ? (
-        <div className="spa-card spa-card--loading" aria-busy="true">
-          <span className="spa-visually-hidden">Chargement de votre réservation…</span>
-          <span className="spa-card__skeleton-line spa-card__skeleton-line--title" />
-          <span className="spa-card__skeleton-line" />
-          <span className="spa-card__skeleton-line spa-card__skeleton-line--short" />
-        </div>
-      ) : step === 'prestation' ? (
-        <ServiceStep
-          services={services}
-          selectedServiceId={draft.serviceId}
-          selectedStaffId={draft.staffId}
-          onSubmit={chooseService}
-        />
-      ) : step === 'creneau' && selectedService !== null ? (
-        <SlotStep
-          tenant={tenant}
-          service={selectedService}
-          staffId={draft.staffId}
-          // Le créneau déjà retenu, quand on revient sur l'étape (#947) :
-          // l'écran s'ouvre sur son mois et le marque, au lieu de repartir du
-          // mois courant et de la première journée libre.
-          startsAt={draft.startsAt}
-          onBack={() => {
-            goTo('prestation');
-          }}
-          onStaffChange={chooseStaff}
-          onChoose={chooseSlot}
-        />
-      ) : step === 'coordonnees' ? (
-        <ContactStep
-          contact={draft.contact}
-          tenantSlug={tenant.slug}
-          // Le pays de l'établissement, d'où le téléphone tire son indicatif par
-          // défaut (#1028). `address` est absente tant que le salon n'a pas
-          // publié la sienne, et `null` dit alors exactement ce que l'API en
-          // dira : pas de pays, donc pas de numéro national acceptable.
-          //
-          // Lire le pays **dans l'adresse** ne perd rien : la contrainte
-          // `tenants_address_completeness_check` veut qu'`address_line1`, `city`
-          // et `country_code` soient les trois nuls ou les trois renseignés, si
-          // bien que cette lecture vaut `tenants.country_code` — la colonne même
-          // que le pipe serveur consulte.
-          countryCode={tenant.address?.country ?? null}
-          onSave={saveContact}
-          onBack={() => {
-            goTo('creneau');
-          }}
-          onSubmit={submitContact}
-        />
-      ) : step === 'recapitulatif' && selectedService !== null && draft.startsAt !== null ? (
-        <SummaryStep
-          tenant={tenant}
-          service={selectedService}
-          staffId={draft.staffId}
-          startsAt={draft.startsAt}
-          contact={draft.contact}
-          onBack={() => {
-            goTo('coordonnees');
-          }}
-          onBooked={onBooked}
-          onSlotLost={onSlotLost}
-        />
-      ) : step === 'confirmation' && draft.appointment !== null ? (
-        <ConfirmationStep
-          tenant={tenant}
-          service={selectedService}
-          appointment={draft.appointment}
-          contact={draft.contact}
-          restored={restoredAppointment}
-          onCancelled={onCancelled}
-          onRestart={restart}
-        />
-      ) : null}
-
-      {/* Dernier enfant du panneau, et c'est ce qui la rend collante : elle se
-          pose au bas du panneau tant qu'il tient dans la fenêtre, et reste au
-          bas de la fenêtre dès que l'étape déborde — l'étape « Créneau » et son
-          calendrier, d'abord. */}
-      {showSummary ? (
-        <BookingSummaryBar tenant={tenant} service={selectedService} startsAt={draft.startsAt} />
-      ) : null}
-    </div>
+      </main>
+    </>
   );
 }

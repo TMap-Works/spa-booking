@@ -247,7 +247,7 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
   }
 
   it('est enregistré sans que le champ ait été quitté', () => {
-    render(<BookingTunnel tenant={tenant} services={[service]} />);
+    render(<BookingTunnel tenant={tenant} services={[service]} exitHref={`/${tenant.slug}`} />);
 
     const champ = taperLeMot();
 
@@ -261,7 +261,7 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
   });
 
   it('est retrouvé dans le champ au montage suivant', () => {
-    render(<BookingTunnel tenant={tenant} services={[service]} />);
+    render(<BookingTunnel tenant={tenant} services={[service]} exitHref={`/${tenant.slug}`} />);
 
     taperLeMot();
     act(() => {
@@ -271,7 +271,7 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
     // Le rechargement de `/spa-lumiere/reservation` du ticket : le tunnel repart
     // de l'adresse et du stockage, sans rien de l'arbre précédent.
     cleanup();
-    render(<BookingTunnel tenant={tenant} services={[service]} />);
+    render(<BookingTunnel tenant={tenant} services={[service]} exitHref={`/${tenant.slug}`} />);
 
     expect(champDuMot().value).toBe(NOTE);
     // Les quatre champs qui survivaient déjà survivent toujours : la correction
@@ -280,7 +280,7 @@ describe('« Un mot pour le salon » face à un rechargement', () => {
   });
 
   it('est enregistré tout de suite si la page se masque pendant la frappe', () => {
-    render(<BookingTunnel tenant={tenant} services={[service]} />);
+    render(<BookingTunnel tenant={tenant} services={[service]} exitHref={`/${tenant.slug}`} />);
 
     taperLeMot();
     // Le report n'a pas encore couru : c'est le rechargement qui tombe pendant
@@ -327,7 +327,7 @@ describe('une soumission refusée sur le champ en cours de frappe', () => {
   });
 
   it('verse la saisie en attente au lieu de l’abandonner', async () => {
-    render(<BookingTunnel tenant={tenant} services={[service]} />);
+    render(<BookingTunnel tenant={tenant} services={[service]} exitHref={`/${tenant.slug}`} />);
 
     const champ = screen.getByLabelText<HTMLInputElement>(/Téléphone/);
 

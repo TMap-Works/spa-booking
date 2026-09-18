@@ -9,11 +9,15 @@
  * prescrit l'inverse pour cette étape-là : *« Desktop : le calendrier passe en
  * vue semaine (colonnes de jours), plus de créneaux visibles d'un coup »*.
  *
- * Les 44rem de `.spa-booking` ne sont pourtant pas une erreur : #623 les a posés
+ * La mesure de base n'est pourtant pas une erreur : #623 puis #1047 la posent
  * pour que le tunnel rende ses formulaires à la mesure de ceux de l'espace
  * compte, et cinq étapes sur six sont des formulaires. La sixième est un
  * calendrier, et c'est elle seule qui s'élargit — par `:has()`, qui lit l'étape
- * affichée là où elle est déjà plutôt que de la faire remonter jusqu'au layout.
+ * affichée là où elle est déjà plutôt que de la faire remonter jusqu'au cadre.
+ *
+ * Le porteur de la mesure a changé avec #1047 : la carte englobante a disparu,
+ * et c'est `.spa-booking__frame` — la grille du tunnel — qui borne désormais la
+ * colonne de contenu. La règle, elle, est la même.
  *
  * Le piège que cette suite tient : rien ne signale la disparition d'un
  * modificateur. `slot-step.tsx` perdrait `--calendar` que l'écran compilerait,
@@ -50,34 +54,39 @@ const MODIFIER = 'spa-booking__step--calendar';
 describe('L’étape « créneau » élargit l’enveloppe du tunnel (#738)', () => {
   const booking = stripComments(readStyleSheet(styleSheetPath('components/booking.css')));
 
-  it('garde 44rem par défaut — les cinq autres étapes sont des formulaires', () => {
+  it('borne la colonne de contenu à la mesure d’un formulaire', () => {
     // La règle de base est lue hors de toute requête de média : c'est elle qui
     // vaut sur un téléphone, et l'élargissement ne doit pas l'avoir remplacée.
-    assert.equal(
-      declaration(rulesFor(booking, '.spa-booking').join(' '), 'max-inline-size'),
-      '44rem',
-      '`.spa-booking` ne rend plus ses formulaires dans 44rem : les deux rendus du ' +
-        'même formulaire — tunnel et espace compte — cessent d’avoir la même mesure (#623).',
+    const nominal = declaration(
+      rulesFor(booking, '.spa-booking__frame').join(' '),
+      'max-inline-size',
+    );
+
+    assert.ok(
+      nominal !== null && Number.parseFloat(nominal) <= 48,
+      '`.spa-booking__frame` ne borne plus ses formulaires à la mesure de lecture ' +
+        `(lu : ${String(nominal)}) : les deux rendus du même formulaire — tunnel ` +
+        'et espace compte — cessent d’avoir la même mesure (#623).',
     );
   });
 
   it('s’élargit sur la seule étape qui porte un calendrier', () => {
-    const rule = rulesFor(booking, `.spa-booking:has(.${MODIFIER})`).join(' ');
+    const rule = rulesFor(booking, `.spa-booking__frame:has(.${MODIFIER})`).join(' ');
 
     assert.notEqual(
       rule,
       '',
-      'Aucune règle ne vise `.spa-booking:has(.' +
+      'Aucune règle ne vise `.spa-booking__frame:has(.' +
         MODIFIER +
-        ')` : la bande de journées retombe dans 44rem, et huit dates restent ' +
-        'visibles à 1 280 px pendant que la page reste vide de chaque côté (#738).',
+        ')` : la grille du calendrier retombe à la mesure d’un formulaire, et le ' +
+        'mois cesse de tenir d’un coup à 1 280 px (#738).',
     );
 
     const wider = declaration(rule, 'max-inline-size');
 
     assert.ok(
-      wider !== null && Number.parseFloat(wider) > 44,
-      `L’étape « créneau » ne s’élargit pas au-delà des 44rem de base (lu : ${String(wider)}).`,
+      wider !== null && Number.parseFloat(wider) > 48,
+      `L’étape « créneau » ne s’élargit pas au-delà de la mesure de base (lu : ${String(wider)}).`,
     );
   });
 
@@ -86,7 +95,7 @@ describe('L’étape « créneau » élargit l’enveloppe du tunnel (#738)', ()
     // disponible : l'élargissement n'a de sens que là où il y a de la place.
     assert.match(
       booking,
-      new RegExp(`@media[^{]+min-width[^{]+\\{\\s*\\.spa-booking:has\\(\\.${MODIFIER}\\)`),
+      new RegExp(`@media[^{]+min-width[^{]+\\{\\s*\\.spa-booking__frame:has\\(\\.${MODIFIER}\\)`),
       'L’élargissement de l’étape « créneau » n’est pas borné à une largeur ' +
         'minimale : il s’appliquerait sur un téléphone, où il ne change rien, ' +
         'et masquerait la régression le jour où le seuil compterait.',

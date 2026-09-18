@@ -23,6 +23,9 @@ function renderContactStep(countryCode: string | null = null) {
       contact={emptyBookingDraft().contact}
       tenantSlug="salon-zen"
       countryCode={countryCode}
+      // Le rappel de la barre basse (#1047) : cette suite éprouve la saisie, et
+      // rien à rappeler est un état que l'étape sait rendre.
+      summary={null}
       onSave={onSave}
       onBack={onBack}
       onSubmit={onSubmit}

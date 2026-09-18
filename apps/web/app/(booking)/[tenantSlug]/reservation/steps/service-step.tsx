@@ -4,6 +4,7 @@ import type { PublicService } from '@spa/shared';
 import { useState } from 'react';
 
 import { ServiceChoice } from '@/components/booking/service-choice';
+import { BookingActionBar } from '@/components/booking/summary-bar';
 import { Button } from '@/components/ui/button';
 import { Select } from '@/components/ui/select';
 
@@ -35,9 +36,8 @@ interface ServiceStepProps {
  *   [`ServiceChoice`](../../../../../components/booking/service-choice.tsx) qui
  *   le rend — le sélecteur qu'il remplace tronquait le prix à 360 px ;
  * - *« le CTA primaire pleine largeur »* est *« ancré en bas de l'écran (barre
- *   collante) »*, *« le contenu défile derrière »*. C'est `.spa-booking__cta`
- *   ci-dessous, calquée sur la barre de résumé de #735 — même ancrage, mêmes
- *   marges négatives qui la ramènent aux bords du panneau.
+ *   collante) »*, *« le contenu défile derrière »*. C'est `BookingActionBar`
+ *   ci-dessous, la barre basse commune à toutes les étapes depuis #1047.
  *
  * Le libellé du bouton dit **pourquoi** il est désactivé tant que rien n'est
  * retenu, comme le wireframe le demande (« Le CTA est désactivé tant que l'étape
@@ -106,14 +106,17 @@ export function ServiceStep({
 
       {/* Dernier enfant du formulaire, et c'est ce qui la rend collante : elle
           tient le bas de la fenêtre tant que la liste des prestations déborde,
-          puis se pose au bas du panneau dès qu'il tient en entier — le même
-          mécanisme que `BookingSummaryBar`, qui prend le relais à l'étape
-          suivante. */}
-      <div className="spa-booking__cta">
+          puis se pose au bas de la colonne dès qu'elle tient en entier.
+
+          Sans rappel : le choix n'est pas encore *retenu* — il vit dans l'état
+          de ce composant jusqu'à la soumission —, et une ligne alimentée par le
+          brouillon annoncerait la prestation précédente pendant qu'on en
+          désigne une autre. Les cartes portent déjà durée et prix (#741). */}
+      <BookingActionBar>
         <Button type="submit" variant="accent" block disabled={service === null}>
           {service === null ? 'Choisir une prestation pour continuer' : 'Choisir un créneau'}
         </Button>
-      </div>
+      </BookingActionBar>
     </form>
   );
 }

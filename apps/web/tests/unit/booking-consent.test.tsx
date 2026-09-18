@@ -80,6 +80,9 @@ function renderContactStep() {
       // le cas par défaut, et il laisse cette suite sur la règle du téléphone
       // qu'elle connaissait (#1028).
       countryCode={null}
+      // Le rappel de la barre basse (#1047) : cette suite ne parle que du
+      // consentement, et rien à rappeler est un état que l'étape sait rendre.
+      summary={null}
       onSave={onSave}
       onBack={vi.fn()}
       onSubmit={onSubmit}

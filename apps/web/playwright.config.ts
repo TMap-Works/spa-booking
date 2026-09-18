@@ -129,7 +129,7 @@ export default defineConfig({
     /**
      * Le fuseau et la langue sont **fixés**.
      *
-     * Le front n'affiche la mention « Tous les horaires sont affichés en … » que
+     * Le front n'affiche la mention « Horaires affichés en … » que
      * lorsque le fuseau du navigateur diffère de celui du salon : laisser le
      * fuseau du runner décider ferait apparaître et disparaître des libellés
      * d'une machine à l'autre. Les aligner sur le salon supprime la variable.

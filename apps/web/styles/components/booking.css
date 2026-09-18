@@ -1,299 +1,432 @@
 /*
- * Composant — Enveloppe du tunnel de réservation
+ * Composant — Le tunnel de réservation
  * =============================================================================
  *
- * Le tunnel (#45) était jusqu'ici rendu à même le `<body>` : le groupe
- * `(booking)` n'avait pas de layout, et sa carte s'étirait donc sur toute la
- * fenêtre — 1 880 px de champ de saisie sur un écran de 1 920 px, sans bandeau
- * ni pied de page, là où la vitrine et l'espace compte sont l'un et l'autre
- * dans un conteneur centré (#623).
+ * ## Ce que cette feuille a cessé de décrire (#1047)
  *
- * ## Pourquoi 44rem et non les 64rem de la vitrine
+ * Une **carte dans une page**. Le tunnel se rendait dans un `.spa-booking__panel`
+ * — fond creusé, bordure, ombre — posé sous un bandeau de page de trois lignes,
+ * lui-même dans un conteneur de 44 rem : à 1 280 px, le parcours entier tenait
+ * dans une colonne de 670 px au centre d'un écran vide, et le récapitulatif
+ * tombait en pied de carte, hors de vue dès qu'on défilait (audit
+ * `d20260918-1`, `ds:standard`).
  *
- * Les deux surfaces publiques n'ont pas le même contenu. `.spa-salon` porte une
- * grille de prestations qui gagne à s'étaler ; le tunnel porte un formulaire —
- * les mêmes champs, exactement, que `/compte/inscription`, qui les rend dans
- * 44rem. Aligner le tunnel sur l'espace compte plutôt que sur la vitrine met
- * donc les deux rendus du même formulaire à la même mesure, et tient la
- * longueur de ligne où elle se lit.
+ * `BM-TUNNEL-07` décrit ce que font Fresha, Treatwell, Booker et Square à cet
+ * endroit : *« à 1280 px, une carte collante à droite … ; à 390 px, une barre
+ * collée en bas … qui se déplie en détail »*. `wireframes.md` dit la même chose
+ * dans son tableau des adaptations desktop — *« Résumé en colonne latérale
+ * collante ; CTA dans le flux »*.
+ *
+ * La page est donc devenue le tunnel :
+ *
+ * | Bande | Rôle |
+ * |---|---|
+ * | `.spa-booking__header` | l'en-tête réduit — revenir, sortir (BM-TUNNEL-10) |
+ * | `.spa-booking__frame` | une colonne au pouce, deux pistes à partir de 64 rem |
+ * | `.spa-booking__content` | la progression, l'étape, et la barre basse |
+ * | `.spa-booking__aside` | le récapitulatif collant, à partir de 64 rem |
  *
  * Aucune couleur littérale, aucune primitive `--spa-palette-*` : tout passe par
  * les jetons sémantiques (styles/README.md §1).
  */
 
+/*
+ * L'enveloppe de page, rendue par le layout du tunnel.
+ *
+ * Elle porte la gouttière commune aux trois bandes — en-tête, contenu,
+ * colonne —, comme `--shell-gutter` le fait pour le gabarit du salon (#1045) :
+ * les deux surfaces publiques se suivent dans le parcours, et leurs bords
+ * gauches doivent tomber au même endroit.
+ *
+ * `100dvh` et non `100vh` : la barre d'adresse d'un navigateur mobile se
+ * rétracte au défilement, et `vh` laisserait un vide sous la page au moment
+ * précis où la barre basse doit toucher le bord.
+ */
 .spa-booking {
+  --booking-gutter: var(--spa-space-4);
+
   display: flex;
   flex-direction: column;
-  gap: var(--spa-space-8);
-  max-inline-size: 44rem;
-  margin-inline: auto;
-  padding-block: var(--spa-space-8) var(--spa-space-12);
-  padding-inline: var(--spa-space-4);
+  min-block-size: 100dvh;
+  background-color: var(--spa-color-surface);
 }
 
-/*
- * … sauf sur l'étape « créneau », qui ne porte pas un formulaire (#738).
- *
- * ## Ce que 44rem coûtait là
- *
- * Le raisonnement ci-dessus tient pour cinq étapes sur six : ce sont des champs,
- * et la longueur de ligne fait la lisibilité. La sixième est un calendrier. La
- * bande de journées y listait quatorze dates dans 44rem — huit visibles à
- * 1 280 px, le reste dans un défilement horizontal — pendant que des centaines de
- * pixels de page restaient vides de chaque côté. `wireframes.md` dit d'ailleurs
- * l'inverse pour cette étape-là : *« Desktop : le calendrier passe en vue
- * semaine (colonnes de jours), plus de créneaux visibles d'un coup »*.
- *
- * ## Pourquoi `:has()` plutôt qu'une classe sur l'enveloppe
- *
- * L'enveloppe est rendue une fois pour tout le tunnel, par son layout ; l'étape
- * affichée, elle, change à chaque geste. Poser la largeur sur l'enveloppe aurait
- * demandé de lui faire connaître l'étape en cours, c'est-à-dire de faire
- * remonter un état d'étape jusqu'au layout pour une question de pixels. Le
- * sélecteur lit la même information là où elle est déjà — le même motif que
- * `.spa-admin__content :has(> .spa-admin-table)` dans `admin/shell.css`.
- *
- * ## Pourquoi 60rem, et seulement au-delà de 64rem
- *
- * 60rem (960 px) montre la quinzaine entière sans défilement et laisse la page
- * respirer à 1 280 px. Le seuil est posé au-dessus de cette largeur, pour que
- * l'élargissement ne se déclenche jamais sur une fenêtre qui n'a pas de quoi le
- * tenir : en dessous, `max-inline-size` ne fait rien de plus que la largeur
- * disponible, et la bande défile comme avant.
- */
-@media (min-width: 64rem) {
-  .spa-booking:has(.spa-booking__step--calendar) {
-    max-inline-size: 60rem;
+@media (min-width: 48rem) {
+  .spa-booking {
+    --booking-gutter: var(--spa-space-8);
   }
 }
 
-/* --- Bandeau --------------------------------------------------------------- */
+/* --- En-tête ---------------------------------------------------------------- */
 
-.spa-booking__tenant {
-  margin: 0;
+/*
+ * La bande de tête — `components/booking/tunnel-header.tsx`.
+ *
+ * Collante, opaque, et bornée par un filet : c'est le même traitement que
+ * `.spa-shell__header`, et pour la même raison — le contenu passe dessous au
+ * défilement, et une bande translucide rendrait les deux textes illisibles.
+ *
+ * Elle n'est pas dans le gabarit du salon : elle ne porte ni l'entrée du
+ * compte, ni « Prendre rendez-vous », ni un pied de page. C'est tout l'objet de
+ * `BM-TUNNEL-10` — *« l'attention reste sur la réservation, et la sortie est
+ * claire »*.
+ */
+.spa-booking__header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--spa-z-sticky);
+  background-color: var(--spa-color-surface);
+  border-block-end: 1px solid var(--spa-color-border);
+}
+
+/*
+ * 3 rem, et c'est un budget.
+ *
+ * Le critère d'acceptation de #1047 veut « en-tête + progression ≤ 120 px de
+ * haut » à 360 px, faute de quoi le contenu de l'étape repart sous la ligne de
+ * flottaison. La somme, en pixels de référence : 48 (cette barre) + 16
+ * (`.spa-booking__main`, en tête) + 19 (le compte, `xs` en interligne normal) +
+ * 8 (la gouttière de `.spa-booking__progress`) + 27 (le titre, `xl` en
+ * interligne serré) = **118 px**. Chacune de ces cinq valeurs est gardée par
+ * `tests/booking-step-indicator.test.mjs`.
+ *
+ * 48 px laissent passer une cible tactile de 44 px (`--spa-target-min-size`)
+ * sans la comprimer, ce qui est le minimum que `BM-TUNNEL-10` demande de ses
+ * deux commandes. L'en-tête du gabarit du salon, lui, s'offre 4 rem : il n'a
+ * pas de progression à loger sous lui.
+ */
+.spa-booking__header-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  max-inline-size: 76rem;
+  min-block-size: 3rem;
+  margin-inline: auto;
+  padding-inline: var(--booking-gutter);
+}
+
+/*
+ * Les deux joues, de largeur égale : c'est ce qui tient le nom du salon au
+ * centre de la barre, que « Retour » soit rendu ou non. Une largeur de base
+ * nulle et un `flex: 1` partagé valent mieux qu'une mesure en dur — le libellé
+ * « Quitter » disparaît sous 26 rem, et les deux joues se réduisent ensemble.
+ */
+.spa-booking__header-side {
+  display: flex;
+  flex: 1 1 0;
+  min-inline-size: 0;
+}
+
+.spa-booking__header-side--end {
+  justify-content: flex-end;
+}
+
+/*
+ * « ← Retour » et « ✕ Quitter » — cibles tactiles pleines, comme le motif les
+ * décrit (*« en cibles tactiles larges »*). `--spa-target-min-size` est le
+ * minimum du système pour un contrôle qu'on vise au doigt.
+ */
+.spa-booking__header-action {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-2);
+  border: 0;
+  border-radius: var(--spa-radius-full);
+  background: transparent;
+  color: var(--spa-color-text);
+  font: inherit;
   font-size: var(--spa-font-size-sm);
   font-weight: var(--spa-font-weight-medium);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.spa-booking__header-action:hover {
+  background-color: var(--spa-color-surface-sunken);
+}
+
+/* La flèche du socle pointe à droite : c'est la même forme, retournée — plutôt
+ * qu'un second tracé à maintenir dans `components/ui/icon.tsx`. */
+.spa-booking__header-arrow {
+  rotate: 180deg;
+}
+
+/*
+ * Le libellé est écrit, et il le reste à toutes les largeurs.
+ *
+ * Une flèche seule ne dit pas où elle mène, et une croix seule ne dit pas ce
+ * qu'elle ferme : c'est ce que `BM-TUNNEL-10` demande de lisible. Les deux mots
+ * coûtent une centaine de pixels sur les 328 utiles d'un écran de 360 px, et
+ * c'est le **nom du salon** qui cède la place en se tronquant — il est le seul
+ * des trois à n'être la commande de rien.
+ */
+.spa-booking__header-label {
+  white-space: nowrap;
+}
+
+/*
+ * Le monogramme et le nom du salon, au centre.
+ *
+ * `flex: none` et `min-inline-size: 0` : la boîte ne s'étire pas, mais elle se
+ * laisse réduire — un nom long se tronque au lieu de pousser « Quitter » hors
+ * de la barre.
+ */
+.spa-booking__header-salon {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--spa-space-2);
+  min-inline-size: 0;
+  margin: 0;
+}
+
+.spa-booking__header-name {
+  overflow: hidden;
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-bold);
+  letter-spacing: var(--spa-letter-spacing-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--spa-color-text);
+}
+
+/* --- Corps ----------------------------------------------------------------- */
+
+/*
+ * L'espace de tête entre dans le budget des 120 px : c'est pour cela qu'il vaut
+ * `--spa-space-4` à 360 px et non le `6` des autres écrans publics. Il se
+ * détend dès qu'il y a de la hauteur pour cela.
+ */
+.spa-booking__main {
+  flex: 1 0 auto;
+  padding-block: var(--spa-space-4) var(--spa-space-10);
+  padding-inline: var(--booking-gutter);
+}
+
+@media (min-width: 48rem) {
+  .spa-booking__main {
+    padding-block-start: var(--spa-space-8);
+  }
+}
+
+/*
+ * La grille du tunnel — une colonne au pouce, deux pistes au bureau.
+ *
+ * `minmax(0, 1fr) 22rem` est la mesure demandée par l'issue #1047 : le contenu
+ * prend ce qui reste, la colonne récapitulative garde une largeur fixe où quatre
+ * faits et un total tiennent sans se couper. Le `minmax(0, …)` est ce qui
+ * autorise la première piste à **rétrécir** sous la largeur de son contenu : la
+ * valeur implicite est `auto`, c'est-à-dire `min-content`, et un calendrier ou
+ * un long nom de prestation feraient alors déborder la grille.
+ *
+ * `align-items: start` : sans lui, les deux pistes sont étirées à la hauteur de
+ * la plus grande, et une carte collée en haut d'une piste de 2 000 px ne colle
+ * plus à rien — elle a déjà toute la place de descendre.
+ *
+ * En dessous du seuil, la grille n'existe pas : une seule colonne, bornée à la
+ * mesure de lecture d'un formulaire. 48 rem plutôt que les 44 rem d'avant,
+ * parce que la carte qui les entourait a disparu avec ses deux fois 24 px de
+ * remplissage — le champ garde la même largeur qu'auparavant.
+ */
+.spa-booking__frame {
+  max-inline-size: 48rem;
+  margin-inline: auto;
+}
+
+@media (min-width: 64rem) {
+  .spa-booking__frame--aside {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 22rem;
+    gap: var(--spa-space-8);
+    align-items: start;
+    max-inline-size: 76rem;
+  }
+}
+
+/*
+ * L'étape « créneau » a droit à plus large (#738).
+ *
+ * Le raisonnement de la mesure de lecture tient pour les autres étapes : ce sont
+ * des champs, et la longueur de ligne fait la lisibilité. Celle-ci est un
+ * calendrier, et `wireframes.md` dit l'inverse pour elle — *« Desktop : le
+ * calendrier passe en vue semaine (colonnes de jours), plus de créneaux visibles
+ * d'un coup »*.
+ *
+ * `:has()` plutôt qu'une classe sur le cadre : le cadre est rendu une fois pour
+ * tout le tunnel, l'étape affichée change à chaque geste. Le sélecteur lit la
+ * même information là où elle est déjà — le motif de
+ * `.spa-admin__content :has(> .spa-admin-table)` dans `admin/shell.css`.
+ */
+@media (min-width: 64rem) {
+  .spa-booking__frame:has(.spa-booking__step--calendar) {
+    max-inline-size: 84rem;
+  }
+}
+
+.spa-booking__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-5);
+  /* La piste d'une grille ne se réduit pas sous son contenu sans cela, et le
+   * calendrier de l'étape « créneau » pousserait la colonne récapitulative hors
+   * de l'écran. */
+  min-inline-size: 0;
+}
+
+/* --- Progression ------------------------------------------------------------ */
+
+/*
+ * « Étape 2 sur 4 », un filet segmenté, et le titre de l'étape (#1047).
+ *
+ * ## Ce qui était rendu
+ *
+ * Un fil de cinq pastilles de texte cliquables (#740), qui tenait **trois
+ * lignes** à 360 px : la colonne utile en offre ~328, et « Prestation ·
+ * Créneau · Coordonnées · Récapitulatif · Confirmation » en demande le triple.
+ * Le contenu de l'étape s'en trouvait poussé sous la ligne de flottaison
+ * (audit `d20260918-1`).
+ *
+ * `BM-TUNNEL-09` veut que *« la cliente sache combien il reste à faire »*, et
+ * note que Fresha perd ce fil sur un téléphone : *« c'est la variante à ne pas
+ * reprendre »*. Un compte et quatre segments de 3 px tiennent sur une ligne à
+ * n'importe quelle largeur, et disent exactement la même chose.
+ *
+ * Le retour en arrière, lui, a quitté la progression pour l'en-tête, où
+ * `BM-TUNNEL-10` le place.
+ */
+.spa-booking__progress {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+}
+
+/* Le compte et le filet sur une même ligne : c'est la « progression compacte »
+ * demandée, et c'est ce qui tient l'en-tête et la progression réunis sous les
+ * 120 px de haut du critère d'acceptation. */
+.spa-booking__progress-line {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  margin: 0;
+}
+
+.spa-booking__progress-count {
+  flex: none;
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
   letter-spacing: var(--spa-letter-spacing-wide);
   text-transform: uppercase;
   color: var(--spa-color-text-muted);
 }
 
-.spa-booking__title {
-  margin: var(--spa-space-1) 0 0;
-  font-size: var(--spa-font-size-2xl);
-  font-weight: var(--spa-font-weight-semibold);
-  letter-spacing: var(--spa-letter-spacing-tight);
-  color: var(--spa-color-text);
-}
-
-.spa-booking__lead {
-  margin: var(--spa-space-2) 0 0;
-  color: var(--spa-color-text-muted);
-  line-height: var(--spa-line-height-relaxed);
-}
-
-/* --- Corps ----------------------------------------------------------------- */
-
-.spa-booking__main {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spa-space-8);
-}
-
 /*
- * Le panneau du tunnel — même relief que `.spa-account__panel`, parce que c'est
- * la comparaison que fait la cliente : elle passe de `/compte/inscription` au
- * tunnel sans changer de produit, et deux cartes différentes pour un même
- * formulaire se lisent comme deux sites.
+ * Le filet — quatre segments de largeur égale.
+ *
+ * Il est décoratif (`aria-hidden` côté composant) : le compte au-dessus est du
+ * texte, et tout lecteur d'écran le restitue déjà. Bornée à 12 rem pour que le
+ * filet ne s'étire pas sur toute une colonne de bureau, où il cesserait de se
+ * lire comme un indicateur pour ressembler à un séparateur.
  */
-.spa-booking__panel {
+.spa-booking__progress-track {
   display: flex;
-  flex-direction: column;
-  gap: var(--spa-space-4);
-  padding: var(--spa-space-6);
-  background: var(--spa-color-surface-raised);
-  border: 1px solid var(--spa-color-border);
-  border-radius: var(--spa-radius-lg);
-  box-shadow: var(--spa-shadow-sm);
+  flex: 1 1 auto;
+  gap: var(--spa-space-1);
+  max-inline-size: 12rem;
 }
 
-/* --- Indicateur d'étape ----------------------------------------------------- */
-
-/*
- * Le fil des cinq étapes, en tête du panneau (#740).
- *
- * `wireframes.md` — « Structure commune à toutes les étapes » — le dessine
- * « ①──②──③──④──⑤──⑥ », *« étape courante mise en avant »*, et ajoute qu'il
- * *« montre la progression et permet de revenir à une étape déjà franchie (les
- * étapes futures ne sont pas cliquables) »*.
- *
- * ## Ce qui était rendu
- *
- * Rien de tout cela. La liste portait `.spa-card__meta` — corps réduit, ton
- * atténué —, si bien que les cinq libellés sortaient à l'identique : même
- * graisse, même couleur, même taille, à toutes les étapes. `aria-current="step"`
- * était pourtant posé depuis le premier jour, mais **aucune règle ne
- * l'habillait** : un lecteur d'écran savait où l'on en était, l'œil non.
- *
- * ## Les trois états, et leur unique source
- *
- * | État | Ce qui le déclenche | Ce qu'on voit |
- * |---|---|---|
- * | courante | `[aria-current='step']` sur le `<li>` | aplat d'accent, bordure d'accent, texte d'accent, graisse |
- * | franchie | `.spa-booking__progress-link` — le `<button>` n'existe que là | ton d'accent, cible cliquable, soulignement au survol |
- * | à venir | ni l'un ni l'autre, c'est le défaut | ton effacé, rien à cliquer |
- *
- * Aucune classe `--active`, `--done` ni `--todo` : l'état visuel est lu là où
- * l'état sémantique est déjà écrit, et ne peut donc pas en diverger. C'est le
- * motif que le back-office tient depuis #30 — `.spa-admin__nav-link[aria-current='page']`
- * dans `admin/shell.css`, `.spa-admin-client-list__item[aria-current='true']`
- * dans `admin/client.css` —, et l'aplat + bordure retenus ici sont exactement
- * ceux du second : la cliente ne voit qu'un produit, il n'a pas à se marquer de
- * deux façons.
- *
- * Trois repères pour l'étape courante et non la seule couleur : le rapport de
- * contraste d'un aplat d'accent ne suffit pas à distinguer un état (WCAG 1.4.1),
- * et la graisse comme la bordure restent lisibles en monochrome.
- *
- * ## À la confirmation
- *
- * Plus aucun bouton — `booking-tunnel.tsx` le décide, le rendez-vous étant pris
- * (#732) — donc plus rien d'accentué que l'étape courante. C'est voulu : rien
- * n'y est rouvrable, rien ne doit y paraître actionnable.
- *
- * ## Sur un écran étroit
- *
- * `flex-wrap` fait la dégradation : à 360 px un panneau offre ~280 px utiles,
- * les cinq pastilles tiennent sur deux à trois rangées plutôt que de déborder.
- * La gouttière verticale est plus serrée que l'horizontale — deux rangées du
- * même fil sont plus proches l'une de l'autre que deux étapes voisines ne le
- * sont côte à côte, même règle que `.spa-booking__summary-facts`.
- */
-.spa-booking__progress {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--spa-space-1) var(--spa-space-2);
-  /* Le corps réduit de `.spa-card__meta`, que la liste portait jusqu'ici, et pas
-   * le `xs` d'une mention de second plan : le fil répond à « où en suis-je »,
-   * une question qu'on se pose du coin de l'œil. */
-  font-size: var(--spa-font-size-sm);
-  /* Le défaut est l'étape à venir : ni franchie, ni courante. */
-  color: var(--spa-color-text-subtle);
-}
-
-/*
- * La rangée d'une étape : sa pastille, puis le trait qui la relie à la suivante.
- *
- * Le `<li>` ne porte donc aucune peinture — c'est la pastille qu'il contient qui
- * la porte. Peindre le `<li>` étirerait l'aplat de l'étape courante jusque sous
- * le trait, c'est-à-dire jusqu'à la lisière de l'étape suivante.
- */
-.spa-booking__progress-step {
-  display: flex;
-  align-items: center;
-  gap: var(--spa-space-2);
-}
-
-/*
- * La pastille — le libellé de l'étape, franchie, courante ou à venir.
- *
- * La bordure transparente est posée dès le défaut, et non ajoutée à l'étape
- * courante : sans elle, l'étape gagnerait 2 px de large et de haut en le
- * devenant, et le fil entier se décalerait à chaque geste. Même précaution que
- * `.spa-admin-client-list__item`.
- *
- * `min-block-size` : 24 px, le minimum d'une cible selon WCAG 2.5.8 — la
- * pastille est cliquable dès qu'elle est franchie — et non les 44 px de
- * `--spa-target-min-size`, qui sont ceux des contrôles de saisie : un fil
- * d'étapes haut de 44 px par rangée pousserait le contenu de l'étape hors de
- * l'écran sur un mobile. Même arbitrage que `.spa-consent__control`.
- *
- * `white-space: nowrap` sur la pastille et non sur la rangée : un libellé ne se
- * coupe pas en deux — « Récapi- / tulatif » ne se lit plus —, mais le fil entier
- * doit pouvoir passer à la ligne entre deux étapes.
- */
-.spa-booking__progress-name {
-  display: inline-flex;
-  align-items: center;
-  min-block-size: var(--spa-space-6);
-  padding: var(--spa-space-1) var(--spa-space-2);
-  border: 1px solid transparent;
+.spa-booking__progress-segment {
+  flex: 1 1 0;
+  block-size: 3px;
   border-radius: var(--spa-radius-full);
-  white-space: nowrap;
-}
-
-/* L'étape courante — l'aplat, la bordure, la couleur, la graisse. */
-.spa-booking__progress-step[aria-current='step'] .spa-booking__progress-name {
-  background-color: var(--spa-color-accent-soft);
-  border-color: var(--spa-color-accent);
-  color: var(--spa-color-accent-text);
-  font-weight: var(--spa-font-weight-semibold);
-}
-
-/*
- * Le retour à une étape franchie.
- *
- * Chrome de bouton entièrement neutralisé : c'est un `<button>` parce que
- * l'action n'est pas une navigation — le tunnel ne change pas de route, il
- * change d'étape — et non parce qu'on veut un bouton à l'écran. Il se lit comme
- * le lien qu'il remplace.
- */
-.spa-booking__progress-link {
-  background: none;
-  color: var(--spa-color-accent-text);
-  font: inherit;
-  cursor: pointer;
-}
-
-/* Le soulignement n'apparaît qu'au survol et au focus : posé en permanence, il
- * mettrait les étapes franchies plus en avant que l'étape courante, qui est
- * pourtant la réponse à « où en suis-je ». */
-.spa-booking__progress-link:hover,
-.spa-booking__progress-link:focus-visible {
-  text-decoration: underline;
-}
-
-/*
- * Le trait qui relie deux étapes — le « ── » du wireframe.
- *
- * Un élément vide et non un caractère : le point médian qu'il remplace se
- * sélectionnait à la souris, se copiait avec le texte, et changeait de chasse
- * d'une police à l'autre. Un filet de 0,75 rem tient la même place partout et
- * ne fait pas partie du texte.
- *
- * `flex: none` : sans lui, un conteneur flex étroit comprimerait le trait
- * jusqu'à le faire disparaître avant de passer les pastilles à la ligne.
- */
-.spa-booking__progress-joint {
-  flex: none;
-  inline-size: var(--spa-space-3);
-  block-size: 1px;
   background-color: var(--spa-color-border);
 }
 
+/* Les étapes franchies **et** l'étape courante : le filet répond à « où en
+ * suis-je », et la barre remplie s'arrête donc à l'étape qu'on regarde. */
+.spa-booking__progress-segment--done {
+  background-color: var(--spa-color-accent);
+}
+
 /*
- * Le tunnel en cours de chargement (#830) — `reservation/loading.tsx`.
+ * Le titre de l'étape — le `<h1>` de la page, et il change à chaque écran.
  *
- * Le squelette se pose dans le même panneau que le tunnel, sous le bandeau que
- * le layout peint déjà : une rangée pour le fil des étapes, à la hauteur d'une
- * pastille `.spa-booking__progress-name` ci-dessus, puis la carte en chargement
- * que `BookingTunnel` affiche lui-même avant son hydratation. Le tunnel qui
- * arrive reprend donc la place du squelette.
+ * `BM-TUNNEL-11` : *« un grand titre par écran, formulé comme une action »*. Le
+ * tunnel affichait à la place « Prendre rendez-vous » du début à la fin, sous
+ * une surcapitale grise et au-dessus d'une accroche qui le redisait.
+ *
+ * Le corps monte d'un cran au-delà de 48 rem : à 360 px, `2xl` (28 px) sur deux
+ * lignes mangerait la moitié de ce qui reste au-dessus de la ligne de
+ * flottaison.
+ */
+.spa-booking__title {
+  margin: 0;
+  font-size: var(--spa-font-size-xl);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-tight);
+  line-height: var(--spa-line-height-tight);
+  color: var(--spa-color-text);
+}
+
+/* Focalisé par programme au retour en arrière : l'anneau du système, et pas
+ * celui du navigateur, qui varie d'un moteur à l'autre. */
+.spa-booking__title:focus-visible {
+  outline: var(--spa-focus-ring-width) solid var(--spa-color-focus);
+  outline-offset: var(--spa-focus-ring-offset);
+}
+
+@media (min-width: 48rem) {
+  .spa-booking__title {
+    font-size: var(--spa-font-size-2xl);
+  }
+}
+
+/* La mention de fuseau, rendue seulement quand le visiteur n'est pas dans celui
+ * du salon (`lib/format.ts`, `timeZoneMention`). */
+.spa-booking__timezone {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+/*
+ * Le tunnel en cours de chargement (#830, #1047) — `reservation/loading.tsx`.
+ *
+ * Le squelette reprend les trois bandes que le tunnel pose à son arrivée : la
+ * barre d'en-tête à sa hauteur exacte, la ligne de progression, le titre
+ * d'étape, puis la carte en chargement que `BookingTunnel` affiche lui-même
+ * avant son hydratation. Rien ne saute au passage de l'un à l'autre.
  */
 .spa-booking-loading {
   pointer-events: none;
 }
 
+/* La bande d'identité de l'en-tête — monogramme et nom réunis, faute de savoir
+ * lequel des deux arrivera. */
+.spa-booking-loading__brand {
+  block-size: var(--spa-space-8);
+  inline-size: min(12rem, 60%);
+  border-radius: var(--spa-radius-md);
+}
+
+/* La ligne « Étape n sur 4 » et son filet, à la hauteur de la ligne réelle. */
 .spa-booking-loading__steps {
-  block-size: var(--spa-space-6);
-  inline-size: min(30rem, 90%);
+  block-size: var(--spa-space-4);
+  inline-size: min(20rem, 80%);
   border-radius: var(--spa-radius-full);
+}
+
+/* Le titre d'étape, à la hauteur d'une ligne de `--spa-font-size-xl`. */
+.spa-booking-loading__title {
+  block-size: var(--spa-space-8);
+  inline-size: min(24rem, 90%);
+  border-radius: var(--spa-radius-md);
 }
 
 /*
  * La racine d'une étape — le `<form>` ou la `<section>` que `BookingTunnel`
- * monte dans le panneau.
+ * monte dans la colonne de contenu.
  *
  * ## Pourquoi il en faut une
  *
@@ -638,7 +771,7 @@
  * barre.
  */
 .spa-booking__service,
-.spa-booking__step:has(> .spa-booking__cta) .spa-select__control {
+.spa-booking__step:has(> .spa-booking__bar) .spa-select__control {
   scroll-margin-block-end: calc(
     var(--spa-target-min-size) + var(--spa-space-3) * 2 + var(--spa-space-2)
   );
@@ -752,118 +885,240 @@
   color: var(--spa-color-text-muted);
 }
 
-/* --- Barre d'action collante ------------------------------------------------ */
+/* --- Barre basse ------------------------------------------------------------ */
 
 /*
- * Le CTA de l'étape 1, ancré au bas de l'écran (#741).
+ * La barre basse — le rappel sur une ligne et l'action primaire (#1047).
  *
- * `wireframes.md` — « Structure commune à toutes les étapes » — dessine
- * *« [ Continuer ]  CTA primaire pleine largeur, au pouce »* dans une barre
- * *« collante en bas »*, *« le contenu défile derrière »*. Ce qui était rendu
- * était un `.spa-booking__actions` : un bouton de largeur automatique, dans le
- * flux, qu'une liste de prestations un peu longue repousse sous la ligne de
- * flottaison (audit `d20260916-1`).
+ * `wireframes.md`, « Structure commune à toutes les étapes », la dessine en deux
+ * rangs : *« Résumé · 45 min · 40,00 € »* puis *« [ Continuer ] CTA primaire
+ * pleine largeur, au pouce »*, le tout *« collant en bas »*, *« le contenu
+ * défile derrière »*. `BM-TUNNEL-07` décrit la même chose chez quatre
+ * plateformes.
  *
- * Tout ce qui suit est repris de `.spa-booking__summary` : même ancrage, mêmes
- * marges négatives qui annulent le remplissage du panneau, même fond opaque et
- * même filet. C'est voulu — les deux barres se succèdent d'une étape à l'autre,
- * et deux ancrages différents pour un même bas d'écran se verraient au passage
- * de l'une à l'autre.
+ * Ce qui était rendu : deux barres distinctes qui ne coexistaient jamais — un
+ * CTA collant à l'étape 1 (#741), une barre de quatre couples libellé / valeur
+ * aux étapes 2 et 3 (#735), cette dernière montant à **trois rangées** à
+ * l'étape « Coordonnées », où elle masquait ~160 px du formulaire.
  *
- * Calque et non partage, pour la même raison que `.spa-booking__terms` :
- * l'une porte l'action, l'autre les faits, et rien ne garantit qu'elles
- * changeront ensemble.
- */
-.spa-booking__cta {
-  position: sticky;
-  inset-block-end: 0;
-  z-index: var(--spa-z-sticky);
-  margin-inline: calc(var(--spa-space-6) * -1);
-  margin-block-end: calc(var(--spa-space-6) * -1);
-  padding: var(--spa-space-3) var(--spa-space-6);
-  background: var(--spa-color-surface-raised);
-  border-block-start: 1px solid var(--spa-color-border);
-  border-end-start-radius: var(--spa-radius-lg);
-  border-end-end-radius: var(--spa-radius-lg);
-}
-
-/* --- Barre de résumé collante ----------------------------------------------- */
-
-/*
- * La barre qui rappelle prestation, durée, date/heure et prix (#735).
+ * ## Pourquoi `sticky` et non `fixed`
  *
- * `docs/design/appointments/README.md` — « Mobile d'abord » — la prescrit
- * « collante en bas », et `wireframes.md` la dessine sous le contenu de chaque
- * étape, « le contenu défile derrière ».
- *
- * ## Pourquoi `sticky` suffit, et pourquoi elle est le dernier enfant du panneau
- *
- * Elle n'est pas `fixed` : une barre fixée flotterait au-dessus du pied de page
- * et du reste de la page une fois le tunnel dépassé, et il aurait fallu réserver
- * sa hauteur en bas du document pour qu'elle ne recouvre pas la dernière ligne.
- * Collée, elle reste dans le flux du panneau — elle tient le bas de la fenêtre
- * tant que l'étape déborde, puis se pose au bas du panneau dès qu'il tient en
- * entier. C'est exactement le comportement décrit, et il ne coûte aucune mesure.
+ * Une barre fixée flotterait au-dessus du reste du document une fois le tunnel
+ * dépassé, et il aurait fallu réserver sa hauteur en bas de la page. Collée,
+ * elle reste dans le flux de l'étape : elle tient le bas de la fenêtre tant que
+ * l'étape déborde, puis se pose sous son contenu dès qu'il tient en entier.
  *
  * ## Les marges négatives
  *
- * Le panneau porte `padding: var(--spa-space-6)`. Sans elles, la barre
- * s'arrêterait à 24 px des bords et laisserait voir le fond du panneau
- * au-dessous d'elle pendant le défilement — une barre qui ne touche pas le bas
- * ne se lit plus comme une barre. Elles la ramènent aux bords de la boîte de
- * remplissage ; les coins bas reprennent alors le rayon du panneau, faute de
- * quoi ses angles arrondis dépasseraient de chaque côté.
+ * Le contenu porte la gouttière de page. Sans elles, la barre s'arrêterait à
+ * 16 px des bords et laisserait voir la page défiler au-dessous d'elle — une
+ * barre qui ne touche pas le bord ne se lit plus comme une barre.
  */
-.spa-booking__summary {
+.spa-booking__bar {
   position: sticky;
   inset-block-end: 0;
   /* Au-dessus du contenu de l'étape qui défile derrière, et sous les surfaces
-   * qui recouvrent la page — modale et notification ont leurs propres jetons. */
+   * qui recouvrent la page — feuille et notification ont leurs propres jetons. */
   z-index: var(--spa-z-sticky);
-  margin-inline: calc(var(--spa-space-6) * -1);
-  margin-block-end: calc(var(--spa-space-6) * -1);
-  padding: var(--spa-space-3) var(--spa-space-6);
-  /* Opaque, et de la teinte du panneau : c'est ce qui masque le contenu qui
-   * passe dessous. Une barre translucide rendrait les deux textes illisibles. */
-  background: var(--spa-color-surface-raised);
-  border-block-start: 1px solid var(--spa-color-border);
-  border-end-start-radius: var(--spa-radius-lg);
-  border-end-end-radius: var(--spa-radius-lg);
-}
-
-/*
- * Les faits se suivent sur une ligne et passent à la ligne plutôt que de
- * déborder : à 360 px, un panneau offre ~280 px utiles et les quatre couples
- * tiennent sur deux rangées. La gouttière verticale est plus serrée que
- * l'horizontale — deux rangées de la même barre sont plus proches l'une de
- * l'autre que deux faits voisins ne le sont côte à côte.
- */
-.spa-booking__summary-facts {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--spa-space-2) var(--spa-space-5);
-  /* La marge par défaut d'une `<dl>`, que `base.css` ne remet pas à zéro : elle
-   * s'ajouterait au remplissage de la barre. Même correction que
-   * `.spa-booking__step > .spa-card__body` plus haut. */
-  margin: 0;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  margin-inline: calc(var(--booking-gutter) * -1);
+  margin-block-end: calc(var(--spa-space-10) * -1);
+  padding: var(--spa-space-3) var(--booking-gutter) var(--spa-space-4);
+  /* Opaque : c'est ce qui masque le contenu qui passe dessous. Une barre
+   * translucide rendrait les deux textes illisibles. */
+  background-color: var(--spa-color-surface);
+  border-block-start: 1px solid var(--spa-color-border);
 }
 
 /*
- * Le libellé **au-dessus** de sa valeur, là où le récapitulatif les met côte à
- * côte : une barre horizontale n'a pas de colonne de libellés à tenir, et les
- * empiler garde chaque couple insécable quand la barre passe à la ligne.
+ * La ligne de rappel — « Massage suédois · 1 h · 85,00 € », et rien de plus.
+ *
+ * C'est un bouton : la toucher déplie le récapitulatif complet dans un `Sheet`
+ * (`BM-TUNNEL-12`). Toute la ligne est la cible, `--spa-target-min-size` en
+ * garantit la hauteur.
  */
-.spa-booking__summary-fact {
+.spa-booking__bar-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  inline-size: 100%;
+  min-block-size: var(--spa-target-min-size);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--spa-color-text-muted);
+  font: inherit;
+  font-size: var(--spa-font-size-sm);
+  text-align: start;
+  cursor: pointer;
+}
+
+/*
+ * Une ligne, toujours : `nowrap` et non `flex-wrap`, c'est le défaut corrigé.
+ * Ce qui cède est le **nom de la prestation**, seul élément à se tronquer ;
+ * durée et prix gardent leur place, ce sont eux qu'on relit avant de décider.
+ */
+.spa-booking__bar-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spa-space-2);
+  min-inline-size: 0;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.spa-booking__bar-service {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--spa-color-text);
+  font-weight: var(--spa-font-weight-medium);
+}
+
+.spa-booking__bar-sep,
+.spa-booking__bar-fact {
+  flex: none;
+  white-space: nowrap;
+}
+
+/* Le prix est le fait qu'on cherche du regard : ton plein et graisse, comme sur
+ * les cartes de prestation (`.spa-booking__service-price`). */
+.spa-booking__bar-price {
+  flex: none;
+  white-space: nowrap;
+  color: var(--spa-color-text);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+/* Le chevron pointe vers le haut : la feuille monte du bas de l'écran. */
+.spa-booking__bar-chevron {
+  flex: none;
+  rotate: 180deg;
+}
+
+.spa-booking__bar-summary:hover .spa-booking__bar-service {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/* Le bouton de l'étape, pleine largeur : `Button` pose `block`, ce conteneur ne
+ * fait que le séparer de la ligne de rappel. */
+.spa-booking__bar-action {
   display: flex;
   flex-direction: column;
 }
 
 /*
- * Le même traitement que `.spa-booking__tenant` dans le bandeau : capitales,
- * corps réduit, ton atténué. C'est ce qui fait lire la ligne du dessous comme la
- * réponse et non comme une seconde étiquette.
+ * Au-delà de 64 rem, la barre se décolle et rend sa ligne à la colonne.
+ *
+ * `wireframes.md`, tableau des adaptations desktop : *« Résumé en colonne
+ * latérale collante ; CTA dans le flux »*. Le récapitulatif est alors sous les
+ * yeux en permanence (`.spa-booking__aside`), et une barre collée en bas
+ * redirait en plus petit ce que la colonne dit en entier.
+ *
+ * Le bouton, lui, reste — il retombe simplement dans le flux, sous le contenu
+ * de l'étape, où la cliente vient de finir de lire.
  */
-.spa-booking__summary-term {
+@media (min-width: 64rem) {
+  .spa-booking__bar {
+    position: static;
+    margin-inline: 0;
+    margin-block-end: 0;
+    padding: 0;
+    background: none;
+    border-block-start: 0;
+  }
+
+  .spa-booking__bar-summary {
+    display: none;
+  }
+
+  /* Un bouton pleine largeur de 48 rem se lit comme une bannière : au bureau, il
+   * reprend la largeur de son libellé, aligné au début de la ligne comme les
+   * actions secondaires juste au-dessus. */
+  .spa-booking__bar-action {
+    align-items: flex-start;
+  }
+
+  .spa-booking__bar-action .spa-button--block {
+    inline-size: auto;
+  }
+}
+
+/* --- Colonne récapitulative ------------------------------------------------- */
+
+/*
+ * La carte collante de droite, à partir de 64 rem (#1047).
+ *
+ * `BM-TUNNEL-07` : *« le panier et le total restent visibles à chaque étape »*.
+ * Le récapitulatif tombait jusqu'ici en pied de carte, sous le contenu de
+ * l'étape, et sortait de l'écran au premier défilement.
+ *
+ * Elle n'est pas rendue en dessous du seuil — la barre basse y tient le même
+ * rôle en une ligne, et deux rappels du même rendez-vous occuperaient le tiers
+ * d'un écran de 360 px.
+ *
+ * L'ancrage tient compte de l'en-tête collant : sans ce décalage, la carte
+ * viendrait se glisser dessous au défilement.
+ */
+.spa-booking__aside {
+  display: none;
+}
+
+@media (min-width: 64rem) {
+  .spa-booking__aside {
+    position: sticky;
+    /* La hauteur de l'en-tête collant, plus l'espace de tête du contenu : sans
+     * ce décalage, la carte se glisserait sous l'en-tête au défilement. */
+    inset-block-start: calc(3rem + var(--spa-space-8));
+    display: block;
+  }
+}
+
+.spa-booking__aside-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  padding: var(--spa-space-5);
+  background-color: var(--spa-color-surface-raised);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-lg);
+  box-shadow: var(--spa-shadow-sm);
+}
+
+.spa-booking__aside-title {
+  margin: 0;
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+}
+
+/* --- Les faits de la réservation -------------------------------------------- */
+
+/*
+ * Prestation, praticien, date et heure, total — rendus à l'identique dans la
+ * feuille du pouce et dans la colonne de bureau (`summary-bar.tsx`).
+ *
+ * `margin: 0` d'abord : `base.css` ne remet pas à zéro la marge d'une `<dl>`,
+ * et celle du navigateur s'ajouterait au remplissage de la carte.
+ */
+.spa-booking__facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  margin: 0;
+}
+
+.spa-booking__fact {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+}
+
+.spa-booking__fact-term {
   font-size: var(--spa-font-size-xs);
   font-weight: var(--spa-font-weight-medium);
   letter-spacing: var(--spa-letter-spacing-wide);
@@ -871,19 +1126,62 @@
   color: var(--spa-color-text-muted);
 }
 
-/* `margin: 0` d'abord : c'est lui qui retire les 40 px que le navigateur pose
- * sur un `<dd>` — même correction que `.spa-booking__recap-value`. */
-.spa-booking__summary-value {
+/* `margin: 0` retire les 40 px que le navigateur pose sur un `<dd>` — même
+ * correction que `.spa-booking__recap-value`. */
+.spa-booking__fact-value {
   margin: 0;
-  font-size: var(--spa-font-size-sm);
   color: var(--spa-color-text);
   overflow-wrap: anywhere;
 }
 
-/* Le prix est le fait qu'on cherche du regard : il se distingue par la graisse,
- * et non par une taille qui désalignerait les quatre rangées. */
-.spa-booking__summary-value--price {
+/* La durée, à côté du nom de la prestation : c'est une précision, pas un fait
+ * de plus, et lui donner sa propre rangée allongerait la carte d'un quart. */
+.spa-booking__fact-note {
+  margin-inline-start: var(--spa-space-2);
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+/* Les valeurs accompagnées d'une pastille ou d'un bloc date : l'image et le mot
+ * sur une ligne, alignés sur leur milieu. */
+.spa-booking__fact-value--figure {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+}
+
+/*
+ * Le total ferme la liste — libellé à gauche, montant à droite, séparés d'un
+ * filet. C'est la seule rangée en deux colonnes : le montant est ce que l'œil
+ * cherche en dernier, et l'aligner à droite le rend trouvable sans le lire.
+ */
+.spa-booking__fact--total {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spa-space-3);
+  padding-block-start: var(--spa-space-3);
+  border-block-start: 1px solid var(--spa-color-border);
+}
+
+.spa-booking__fact-value--total {
+  font-size: var(--spa-font-size-lg);
   font-weight: var(--spa-font-weight-semibold);
+}
+
+/*
+ * La politique d'annulation, en une ligne.
+ *
+ * Elle est ce qui manquait à la décision : `ds:confiance` porte sur *« ce qui
+ * permet de décider — prix, durée, annulation, identité du salon »*, et
+ * l'annulation n'était écrite qu'au récapitulatif, c'est-à-dire une fois tout
+ * choisi.
+ */
+.spa-booking__policy {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  line-height: var(--spa-line-height-relaxed);
+  color: var(--spa-color-text-muted);
 }
 
 /* --- Ce qu'il faut savoir avant de confirmer -------------------------------- */
@@ -951,7 +1249,7 @@
  * décrire deux fois — une fois ici, une fois dans `account.css` — aurait donné
  * deux blocs voués à diverger, sur le seul écran du parcours où la cliente
  * compare : elle passe de `/compte/inscription` au tunnel sans changer de
- * produit, comme le dit déjà `.spa-booking__panel` un peu plus haut.
+ * produit.
  *
  * Aucune règle n'y suppose l'un ou l'autre contexte : `.spa-booking__step` et
  * `.spa-account__form` sont deux colonnes flex au même `gap`, et le bloc s'y
@@ -1131,9 +1429,11 @@
 /* --- Pied de page ---------------------------------------------------------- */
 
 /*
- * Le pied du tunnel est désormais rendu par `.spa-public-exits--footer`
- * (`components/salon.css`, #739) : ses liens sont les mêmes que ceux de la
- * vitrine, et deux jeux de règles pour un seul jeu de liens laissaient les deux
- * écrans diverger. `.spa-booking__footer` et `.spa-booking__back` ont été
- * retirés faute de porteur.
+ * Le tunnel n'a plus de pied de page (#1047).
+ *
+ * Il en a eu deux successivement — le sien (#623), puis les sorties publiques
+ * partagées avec la vitrine (#739). `BM-TUNNEL-10` les écarte l'un comme
+ * l'autre : *« la navigation du site disparaît au profit d'un "←" et d'un
+ * "×" »*, pour que *« l'attention reste sur la réservation »*. La sortie du
+ * tunnel est l'en-tête, et elle est unique.
  */

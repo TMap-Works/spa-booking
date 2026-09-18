@@ -1,37 +1,41 @@
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 
-import { PublicExits } from '@/components/salon/public-exits';
 import { ApiClientError } from '@/lib/api-client';
 
-import { accountPath, loadSalonTenant, salonPath } from '../salon-data';
+import { loadSalonTenant } from '../salon-data';
 
 /**
- * L'enveloppe de page du tunnel de réservation (#623).
+ * L'enveloppe de page du tunnel de réservation (#623, #1047).
  *
- * ## Ce qu'elle répare
+ * ## Ce qu'elle porte, et ce qu'elle ne porte plus
  *
- * Le groupe `(booking)` n'avait pas de layout : la vitrine se centrait
- * elle-même par `.spa-salon`, et le tunnel — qui n'a pas d'équivalent — était
- * rendu à même le `<body>`. Résultat, la carte du tunnel touchait les bords de
- * la fenêtre et ses champs faisaient 1 880 px sur un écran de 1 920 px, quand
- * le même formulaire tient dans 672 px sur `/compte/inscription`. Il n'y avait
- * ni bandeau ni pied de page, seuls écrans du parcours client à en manquer.
+ * Elle posait jusqu'ici un bandeau de page — surcapitale « SPA LUMIÈRE », titre
+ * « Prendre rendez-vous », phrase d'accroche — et un pied de sorties publiques.
+ * `BM-TUNNEL-10` (`docs/design/benchmark/parcours-client.md`) dit le contraire
+ * de ce que faisaient ces deux bandes : *« la navigation du site disparaît au
+ * profit d'un "←" (étape précédente) et d'un "×" (quitter) »*, pour que
+ * *« l'attention reste sur la réservation »*. Le titre unique, lui, ne disait
+ * jamais ce que l'écran demandait — `BM-TUNNEL-11` veut un titre par étape.
+ *
+ * Les deux appartiennent désormais au tunnel lui-même
+ * (`components/booking/tunnel-header.tsx` et `tunnel-progress.tsx`), qui est le
+ * seul à connaître l'étape en cours et le brouillon — donc le seul à pouvoir
+ * décider de ce que « ← Retour » rouvre et de ce que « ✕ Quitter » fait perdre.
+ * Il ne reste ici que l'enveloppe de page et le 404 d'un établissement inconnu.
  *
  * ## Pourquoi sur `reservation/` et non sur `[tenantSlug]/`
  *
- * Un layout posé un cran plus haut envelopperait aussi la vitrine, qui porte
- * déjà son propre conteneur (`.spa-salon`, 64rem) et son propre `<h1>` — elle
- * se retrouverait avec deux bandeaux et deux titres de niveau 1. Le tunnel est
- * la seule route du groupe à n'avoir pas d'enveloppe : c'est donc à elle seule
- * qu'on en donne une.
+ * Un layout posé un cran plus haut envelopperait aussi la vitrine, qui a son
+ * propre gabarit depuis #1045 (`SalonShell`) — elle se retrouverait avec deux
+ * en-têtes. Le tunnel est la seule route du groupe à n'être pas dans ce
+ * gabarit, et c'est délibéré : le sien se réduit à revenir et sortir.
  *
  * ## L'établissement est résolu ici, et partagé avec la page
  *
  * `loadSalonTenant` est mémoïsé par requête (`salon-data.ts`) : le layout et la
- * page qu'il enveloppe n'en font qu'un seul appel à `GET /public/{slug}`. C'est
- * ce qui permet au bandeau de nommer le salon sans coûter un aller-retour de
- * plus au parcours qui vise un LCP < 2,5 s en 4G.
+ * page qu'il enveloppe n'en font qu'un seul appel à `GET /public/{slug}`. Ce
+ * qu'on en lit ici est la seule chose qu'un layout puisse en faire — le 404.
  *
  * Un layout n'est pas une frontière de sécurité dans l'App Router, et ce n'en
  * est pas une ici : il n'y a rien à garder sur le tunnel, qui est public.
@@ -59,42 +63,14 @@ export default async function BookingLayout({ children, params }: BookingLayoutP
   // Toute **autre** panne est laissée à la page, qui sait rendre son encart
   // d'erreur : la relancer ici la ferait remonter à la frontière d'erreur de
   // Next, et le visiteur verrait un écran de panne générique là où le parcours
-  // a une phrase à lui dire. Le bandeau perd alors le nom du salon, et lui
-  // seul.
-  let tenantName: string | null = null;
+  // a une phrase à lui dire.
   try {
-    tenantName = (await loadSalonTenant(tenantSlug)).name;
+    await loadSalonTenant(tenantSlug);
   } catch (error) {
     if (error instanceof ApiClientError && error.status === 404) {
       notFound();
     }
   }
 
-  return (
-    <div className="spa-booking">
-      <header className="spa-booking__header">
-        <p className="spa-booking__tenant">{tenantName ?? 'Réservation en ligne'}</p>
-        <h1 className="spa-booking__title">Prendre rendez-vous</h1>
-        <p className="spa-booking__lead">
-          Choisissez votre prestation, puis votre créneau, et laissez-nous vos coordonnées.
-        </p>
-      </header>
-      <main className="spa-booking__main" id="contenu">
-        {children}
-      </main>
-      {/*
-        Les mêmes sorties que la vitrine, rendues par le même composant (#739) :
-        c'est ce qui garantit qu'un écran ne nomme pas « Mon compte » ce que
-        l'autre appelle « Mes rendez-vous ». Le registre a tranché depuis #749 —
-        c'est le titre de la destination qui fait foi.
-      */}
-      <PublicExits
-        variant="footer"
-        exits={[
-          { key: 'vitrine', href: salonPath(tenantSlug) },
-          { key: 'compte', href: accountPath(tenantSlug) },
-        ]}
-      />
-    </div>
-  );
+  return <div className="spa-booking">{children}</div>;
 }

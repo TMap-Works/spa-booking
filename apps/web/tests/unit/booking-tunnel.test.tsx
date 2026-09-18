@@ -141,7 +141,7 @@ afterEach(() => {
 });
 
 function renderTunnel() {
-  render(<BookingTunnel tenant={tenant} services={[service]} />);
+  render(<BookingTunnel tenant={tenant} services={[service]} exitHref={`/${tenant.slug}`} />);
 
   return userEvent.setup();
 }
@@ -672,127 +672,143 @@ describe('la barre de résumé collante (#735)', () => {
 });
 
 /**
- * L'indicateur d'étape, vu du tunnel (#740).
+ * L'en-tête et la progression du tunnel (#740, #1047).
  *
- * `docs/design/appointments/wireframes.md` — « Structure commune à toutes les
- * étapes » — lui demande deux choses : *« étape courante mise en avant »*, et
- * *« permet de revenir à une étape déjà franchie (les étapes futures ne sont pas
- * cliquables) »*. L'audit de conception n'en a trouvé aucune des deux : les cinq
- * libellés sortaient à l'identique, et aucun ne se cliquait.
+ * `BM-TUNNEL-09` veut que *« la cliente sache combien il reste à faire »*,
+ * `BM-TUNNEL-10` que l'en-tête se réduise à *« un "←" (étape précédente) et un
+ * "×" (quitter) »*, et `BM-TUNNEL-11` que *« chaque écran dise ce qu'il
+ * demande »*. Le tunnel affichait à la place un fil de cinq pastilles sur trois
+ * lignes à 360 px, sous un titre unique — « Prendre rendez-vous » — qui ne
+ * changeait jamais (audit `d20260918-1`).
  *
- * Ce qui s'éprouve ici est donc l'**état** et la **navigation** — ce que le
- * composant décide. La peinture qui s'y accroche est tenue ailleurs, par
- * `tests/booking-step-indicator.test.mjs` : aucune feuille de style n'est
- * chargée sous jsdom, et un `aria-current` de nouveau nu passerait ces
- * assertions-ci sans broncher — c'est exactement la panne que l'audit a relevée.
+ * Ce qui s'éprouve ici est ce que le **composant** décide : le compte, le titre,
+ * ce que « ← Retour » rouvre, et ce que « ✕ Quitter » demande. La peinture qui
+ * s'y accroche — le filet segmenté — est hors de portée de jsdom, qui ne charge
+ * aucune feuille de style.
  */
-describe('l’indicateur d’étape (#740)', () => {
-  /** Les cinq rangées du fil, dans l'ordre du parcours. */
-  function fil(): HTMLElement[] {
-    return within(
-      screen.getByRole('list', { name: 'Étapes de la réservation' }),
-    ).getAllByRole('listitem');
+describe('l’en-tête et la progression du tunnel (#1047)', () => {
+  /** Le compte affiché, ou `null` à la confirmation, qui n'en porte pas. */
+  function compte(): string | null {
+    return screen.queryByText(/^Étape \d+ sur \d+$/)?.textContent ?? null;
   }
 
-  /** Le libellé d'une rangée, débarrassé de ce que seul le lecteur d'écran entend. */
-  function libelle(element: Element): string {
-    return (element.textContent ?? '').replace('Revenir à l’étape ', '').trim();
+  /** Le titre de l'étape — le seul `<h1>` de l'écran. */
+  function titre(): string {
+    return screen.getByRole('heading', { level: 1 }).textContent ?? '';
   }
 
-  /** Les étapes que le fil annonce comme courantes — une, normalement. */
-  function courantes(): string[] {
-    return fil()
-      .filter((etape) => etape.getAttribute('aria-current') === 'step')
-      .map(libelle);
-  }
-
-  /** Les étapes qu'un clic rouvre, dans l'ordre du fil. */
-  function rouvrables(): string[] {
-    return screen.queryAllByRole('button', { name: /^Revenir à l’étape / }).map(libelle);
-  }
-
-  it('désigne une étape courante, et une seule, à chaque étape', async () => {
+  it('compte les étapes parcourues, et n’en compte que quatre', async () => {
     const user = renderTunnel();
 
     await waitFor(() => {
-      expect(courantes()).toEqual(['Prestation']);
+      expect(compte()).toBe('Étape 1 sur 4');
     });
 
     await choisirLaPrestation(user);
     await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
 
-    expect(courantes()).toEqual(['Créneau']);
+    expect(compte()).toBe('Étape 2 sur 4');
 
     await user.click(await screen.findByRole('button', { name: '09 h 00' }));
 
-    expect(courantes()).toEqual(['Coordonnées']);
+    expect(compte()).toBe('Étape 3 sur 4');
   });
 
-  it('ne rend cliquables que les étapes déjà franchies', async () => {
-    const user = renderTunnel();
+  it('ne compte pas la confirmation, qui n’est pas une étape à franchir', async () => {
+    bookAppointmentAction.mockResolvedValue({ ok: true, data: rendezVous() });
 
-    // Première étape : rien derrière soi, donc rien à rouvrir.
-    await waitFor(() => {
-      expect(courantes()).toEqual(['Prestation']);
-    });
-    expect(rouvrables()).toEqual([]);
-
-    await choisirLaPrestation(user);
-    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
-
-    expect(rouvrables()).toEqual(['Prestation']);
-
-    await user.click(await screen.findByRole('button', { name: '09 h 00' }));
-
-    // Ni l'étape courante, ni celles qui restent : le wireframe est explicite
-    // sur les secondes, et la première n'a nulle part où ramener.
-    expect(rouvrables()).toEqual(['Prestation', 'Créneau']);
-  });
-
-  it('ramène à l’étape cliquée sans rien faire perdre de la saisie', async () => {
     const user = renderTunnel();
     await allerJusquAuRecapitulatif(user, '09 h 00');
 
-    expect(courantes()).toEqual(['Récapitulatif']);
+    expect(compte()).toBe('Étape 4 sur 4');
 
-    await user.click(screen.getByRole('button', { name: 'Revenir à l’étape Coordonnées' }));
+    await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
+    await screen.findByText('Votre rendez-vous est enregistré');
 
-    // Le formulaire est rendu tel qu'il a été quitté : le fil est un raccourci,
-    // pas une remise à zéro.
+    expect(compte()).toBeNull();
+  });
+
+  it('donne à chaque étape le titre de ce qu’elle demande', async () => {
+    const user = renderTunnel();
+
+    await waitFor(() => {
+      expect(titre()).toBe('Quelle prestation ?');
+    });
+
+    await choisirLaPrestation(user);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+
+    expect(titre()).toBe('Quand souhaitez-vous venir ?');
+
+    await user.click(await screen.findByRole('button', { name: '09 h 00' }));
+
+    expect(titre()).toBe('Comment vous joindre ?');
+  });
+
+  it('n’offre pas de retour là où il n’y a rien derrière', async () => {
+    bookAppointmentAction.mockResolvedValue({ ok: true, data: rendezVous() });
+
+    const user = renderTunnel();
+
+    // Première étape : rien à rouvrir. Un bouton grisé laisserait croire qu'il
+    // manque une condition à remplir.
+    await waitFor(() => {
+      expect(compte()).toBe('Étape 1 sur 4');
+    });
+    expect(screen.queryByRole('button', { name: 'Retour' })).toBeNull();
+
+    await allerJusquAuRecapitulatif(user, '09 h 00');
+
+    expect(screen.getByRole('button', { name: 'Retour' })).toBeDefined();
+
+    await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
+    await screen.findByText('Votre rendez-vous est enregistré');
+
+    // L'écran terminal (#732) : le rendez-vous est pris, et revenir au
+    // récapitulatif y réserverait une seconde fois.
+    expect(screen.queryByRole('button', { name: 'Retour' })).toBeNull();
+  });
+
+  it('ramène à l’étape précédente sans rien faire perdre de la saisie', async () => {
+    const user = renderTunnel();
+    await allerJusquAuRecapitulatif(user, '09 h 00');
+
+    await user.click(screen.getByRole('button', { name: 'Retour' }));
+
+    // Le formulaire est rendu tel qu'il a été quitté : le retour est un
+    // raccourci, pas une remise à zéro.
     expect(screen.getByLabelText(/Prénom/)).toHaveProperty('value', 'Camille');
     expect(screen.getByLabelText(/Adresse e-mail/)).toHaveProperty(
       'value',
       'camille@example.test',
     );
-    expect(courantes()).toEqual(['Coordonnées']);
+    expect(titre()).toBe('Comment vous joindre ?');
 
-    // Et l'adresse suit, comme elle suit les boutons du bas (#733) : le fil
+    // Et l'adresse suit, comme elle suit les boutons du bas (#733) : l'en-tête
     // n'ouvre pas un second chemin d'étape qui lui échapperait.
     await waitFor(() => {
       expect(query().get('etape')).toBe('coordonnees');
     });
   });
 
-  it('rend le focus à l’étape rouverte, que le bouton cliqué vient d’emporter', async () => {
+  it('rend le focus au titre de l’étape rouverte', async () => {
     const user = renderTunnel();
     await allerJusquAuRecapitulatif(user, '09 h 00');
 
-    await user.click(screen.getByRole('button', { name: 'Revenir à l’étape Coordonnées' }));
+    await user.click(screen.getByRole('button', { name: 'Retour' }));
 
-    // Le bouton cliqué n'existe plus : l'étape franchie est devenue l'étape
-    // courante, qui n'est pas un bouton. Sans rattrapage, le focus retomberait
-    // sur `<body>` et la tabulation repartirait du haut du document (skill
-    // web-frontend §7).
-    const [courante] = fil().filter((etape) => etape.getAttribute('aria-current') === 'step');
-
-    expect(document.activeElement).toBe(courante);
+    // Le bouton peut disparaître avec l'étape — c'est le cas du retour vers la
+    // première —, et sans rattrapage le focus retomberait sur `<body>` : la
+    // tabulation repartirait du haut du document (skill web-frontend §7).
+    expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1 }));
   });
 
   it('remonte jusqu’au calendrier, dont les créneaux sont rechargés', async () => {
     const user = renderTunnel();
     await allerJusquAuRecapitulatif(user, '09 h 00');
 
-    await user.click(screen.getByRole('button', { name: 'Revenir à l’étape Créneau' }));
+    await user.click(screen.getByRole('button', { name: 'Retour' }));
+    await user.click(screen.getByRole('button', { name: 'Retour' }));
 
     // `SlotStep` est remonté, et interroge les disponibilités à son montage : la
     // cliente ne choisit pas dans la liste d'il y a trois écrans.
@@ -800,18 +816,31 @@ describe('l’indicateur d’étape (#740)', () => {
     expect(loadAvailabilityAction).toHaveBeenCalledTimes(2);
   });
 
-  it('ne rouvre aucune étape une fois le rendez-vous pris', async () => {
-    bookAppointmentAction.mockResolvedValue({ ok: true, data: rendezVous() });
+  it('laisse sortir sans rien demander tant que rien n’a été choisi', async () => {
+    renderTunnel();
 
+    // Un lien, et non un bouton : il n'y a rien à perdre, la sortie est une
+    // navigation ordinaire.
+    const sortie = await screen.findByRole('link', { name: 'Quitter' });
+
+    expect(sortie.getAttribute('href')).toBe(`/${tenant.slug}`);
+  });
+
+  it('demande confirmation avant de quitter dès qu’un choix existe', async () => {
     const user = renderTunnel();
-    await allerJusquAuRecapitulatif(user, '09 h 00');
-    await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
-    await screen.findByText('Votre rendez-vous est enregistré');
 
-    // L'écran terminal (#732) : `step` vaut `confirmation` quoi que porte le
-    // brouillon, et rouvrir une étape n'afficherait donc rien de neuf. Un bouton
-    // qui ne fait rien est pire que pas de bouton.
-    expect(courantes()).toEqual(['Confirmation']);
-    expect(rouvrables()).toEqual([]);
+    await choisirLaPrestation(user);
+    await user.click(screen.getByRole('button', { name: 'Choisir un créneau' }));
+
+    // Le lien a laissé la place à un bouton : le brouillon vit dans
+    // `sessionStorage` et meurt avec l'onglet.
+    expect(screen.queryByRole('link', { name: 'Quitter' })).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'Quitter' }));
+
+    const confirmation = screen.getByRole('dialog');
+
+    expect(within(confirmation).getByRole('link', { name: 'Quitter sans réserver' })).toBeDefined();
+    expect(within(confirmation).getByRole('button', { name: 'Rester' })).toBeDefined();
   });
 });

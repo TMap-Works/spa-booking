@@ -10,6 +10,7 @@ import type {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { SlotPicker } from '@/components/booking/slot-picker';
+import { BookingActionBar, type BookingSummary } from '@/components/booking/summary-bar';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import { Select } from '@/components/ui/select';
@@ -54,6 +55,14 @@ interface SlotStepProps {
    * doit alors montrer **ce** moment-là, pas le premier venu.
    */
   readonly startsAt: UtcInstant | null;
+  /**
+   * Ce que la barre basse rappelle de la réservation en cours (#1047).
+   *
+   * `null` ne se produit pas depuis le tunnel — cette étape ne s'affiche pas
+   * sans prestation résolue — mais le type le porte : c'est l'orchestrateur qui
+   * compose le rappel, et lui seul sait s'il a de quoi le faire.
+   */
+  readonly summary: BookingSummary | null;
   readonly onBack: () => void;
   /** Remonte le praticien retenu au brouillon : il survit au rafraîchissement et sert à la réservation. */
   readonly onStaffChange: (staffId: string | null) => void;
@@ -134,6 +143,7 @@ export function SlotStep({
   service,
   staffId,
   startsAt,
+  summary,
   onBack,
   onStaffChange,
   onChoose,
@@ -519,12 +529,22 @@ export function SlotStep({
       )}
 
       {/* Seul, mais groupé quand même : la colonne flex de `.spa-booking__step`
-          étirerait un `.spa-button` sur toute la largeur du panneau. */}
+          étirerait un `.spa-button` sur toute la largeur de la colonne.
+
+          Il double « ← Retour » de l'en-tête, et c'est voulu : celui-ci nomme
+          ce qu'on va changer, là où l'en-tête ne dit que « revenir ». Le motif
+          est celui du benchmark — un retour générique en tête d'écran, une
+          correction nommée à l'endroit qu'elle corrige. */}
       <div className="spa-booking__actions">
         <Button variant="quiet" onClick={onBack}>
           Changer de prestation
         </Button>
       </div>
+
+      {/* Aucune action primaire à cette étape : choisir un créneau avance de
+          lui-même. La barre ne porte donc que le rappel — prestation, durée,
+          prix —, sur une ligne, dépliable d'un doigt (BM-TUNNEL-07). */}
+      <BookingActionBar summary={summary} />
     </section>
   );
 }
