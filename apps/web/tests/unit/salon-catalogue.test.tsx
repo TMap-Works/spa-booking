@@ -9,6 +9,7 @@
 
 import type { PublicService } from '@spa/shared';
 import { cleanup, render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
@@ -89,8 +90,8 @@ describe('groupement par rubrique', () => {
 });
 
 describe('rendu du catalogue', () => {
-  it('coiffe chaque rubrique de son titre et porte durée et prix', () => {
-    render(<ServiceCatalog services={[service, soinVisage]} />);
+  it('coiffe une rubrique unique de son titre et porte durée et prix', () => {
+    render(<ServiceCatalog services={[service, massageAssis]} />);
 
     const massages = screen.getByRole('region', { name: 'Massages' });
 
@@ -99,12 +100,52 @@ describe('rendu du catalogue', () => {
     // vient de `lib/format.ts`, aucun montant n'est divisé dans un composant.
     expect(within(massages).getByText(/1 h/)).toBeDefined();
     expect(within(massages).getByText(/35,00/)).toBeDefined();
+    expect(within(massages).getByText(/30 min/)).toBeDefined();
+    expect(within(massages).getByText(/20,00/)).toBeDefined();
+  });
 
-    const visage = screen.getByRole('region', { name: 'Soins du visage' });
+  it('range plusieurs rubriques en onglets, chacun avec son effectif (#1046)', () => {
+    // BM-SERVICE-02 et BM-SERVICE-05 : « une rangée de pastilles de catégories
+    // qui défile », et « un compteur — Épilation (3) ».
+    render(<ServiceCatalog services={[service, massageAssis, soinVisage]} />);
 
+    const massages = screen.getByRole('tab', { name: /Massages/ });
+
+    expect(massages.textContent).toContain('2');
+    expect(massages.getAttribute('aria-selected')).toBe('true');
+
+    const visage = screen.getByRole('tab', { name: /Soins du visage/ });
+
+    expect(visage.textContent).toContain('1');
+    // La première rubrique est ouverte d'emblée ; les autres attendent un geste.
+    expect(visage.getAttribute('aria-selected')).toBe('false');
+  });
+
+  it('ouvre la rubrique qu’on touche, et referme la précédente', async () => {
+    const user = userEvent.setup();
+
+    render(<ServiceCatalog services={[service, soinVisage]} />);
+
+    await user.click(screen.getByRole('tab', { name: /Soins du visage/ }));
+
+    const visage = screen.getByRole('tabpanel');
+
+    expect(within(visage).getByRole('heading', { name: 'Soin du visage' })).toBeDefined();
     expect(within(visage).getByText(/45 min/)).toBeDefined();
     expect(within(visage).getByText(/49,00/)).toBeDefined();
     expect(within(visage).getByText('Nettoyage et hydratation.')).toBeDefined();
+    // Un seul panneau visible à la fois : `getByRole` ignore ce qui est `hidden`.
+    expect(screen.queryByRole('heading', { name: 'Massage suédois' })).toBeNull();
+  });
+
+  it('sert toutes les rubriques dans le document, panneaux fermés compris', () => {
+    // Le catalogue est la partie indexable de la page : un moteur de recherche
+    // doit trouver les prestations des rubriques qui ne sont pas à l'écran, et
+    // les données structurées les publient de toute façon.
+    render(<ServiceCatalog services={[service, soinVisage]} />);
+
+    expect(document.getElementById('soin-visage')).not.toBeNull();
+    expect(screen.getAllByRole('tabpanel', { hidden: true })).toHaveLength(2);
   });
 
   it('ancre chaque prestation sur son slug — les données structurées y renvoient', () => {
@@ -153,11 +194,15 @@ describe('rendu du catalogue', () => {
 });
 
 describe('informations du salon', () => {
-  it('rend les coordonnées cliquables et le fuseau de l’établissement', () => {
+  /** Un mardi à 10 h 00 chez le tenant des fixtures (UTC+3, sans heure d'été). */
+  const MARDI_MATIN = new Date('2026-09-15T07:00:00.000Z');
+
+  it('rend les coordonnées cliquables dans la carte « Nous trouver »', () => {
     render(
       <SalonInfo
         tenant={{ ...tenant, contactEmail: 'contact@lotus.test', contactPhone: '+261341234567' }}
         bookable
+        now={MARDI_MATIN}
       />,
     );
 
@@ -167,17 +212,17 @@ describe('informations du salon', () => {
     expect(screen.getByRole('link', { name: '+261341234567' }).getAttribute('href')).toBe(
       'tel:+261341234567',
     );
-    expect(screen.getByText(/Indian\/Antananarivo/)).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Nous trouver' })).toBeDefined();
   });
 
   it('dit l’absence d’informations plutôt que de rendre une section vide', () => {
-    render(<SalonInfo tenant={tenant} bookable />);
+    render(<SalonInfo tenant={tenant} bookable now={MARDI_MATIN} />);
 
     expect(screen.getByText('Informations non communiquées')).toBeDefined();
     expect(screen.queryByRole('link')).toBeNull();
   });
 
-  it('rend l’adresse en lignes et les horaires jour par jour (#343)', () => {
+  it('rend l’adresse en lignes et la semaine entière, jours fermés compris (#343, #1046)', () => {
     render(
       <SalonInfo
         tenant={{
@@ -196,6 +241,7 @@ describe('informations du salon', () => {
           ],
         }}
         bookable
+        now={MARDI_MATIN}
       />,
     );
 
@@ -206,21 +252,62 @@ describe('informations du salon', () => {
 
     // Une journée à coupure tient sur **une** ligne, ses deux plages ensemble.
     expect(screen.getByText(/09:00.*12:00.*14:00.*19:00/)).toBeDefined();
-    expect(screen.getByText('Mardi')).toBeDefined();
-    // Les jours fermés n'apparaissent pas : l'API ne distingue pas « fermé » de
-    // « pas encore saisi », et l'inventer enverrait une cliente devant une porte
-    // close.
-    expect(screen.queryByText('Lundi')).toBeNull();
+    // BM-VITRINE-03 : les sept jours, et « Fermé » écrit pour les fermetures.
+    // La semaine est publiée — elle porte deux journées —, si bien que l'absence
+    // du lundi veut dire « fermé » et non « pas encore saisi ».
+    expect(screen.getAllByRole('listitem')).toHaveLength(7);
+    expect(screen.getAllByText('Fermé')).toHaveLength(5);
   });
 
-  it('sert un salon sans adresse ni horaires, section comprise', () => {
+  it('met le jour courant en évidence, dans le fuseau du salon (BM-VITRINE-03)', () => {
+    const { container } = render(
+      <SalonInfo
+        tenant={{
+          ...tenant,
+          openingHours: [{ weekday: 2, opensAt: '09:00', closesAt: '19:00' }],
+        }}
+        bookable
+        now={MARDI_MATIN}
+      />,
+    );
+
+    const today = container.querySelectorAll('[aria-current="date"]');
+
+    expect(today).toHaveLength(1);
+    expect(today[0]?.textContent).toContain('Mardi');
+    // La graisse ne suffit pas : le repère est aussi écrit (WCAG 1.4.1).
+    expect(today[0]?.textContent).toContain('aujourd’hui');
+  });
+
+  it('ne montre plus la ligne « Fuseau horaire », et nomme le fuseau sous les horaires', () => {
+    // L'audit `d20260918-1` la relève comme une information d'exploitation posée
+    // au milieu d'une page publique. BM-RDV-06 veut que le fuseau soit nommé là
+    // où il sert — sous les heures, et nulle part ailleurs.
+    render(
+      <SalonInfo
+        tenant={{
+          ...tenant,
+          openingHours: [{ weekday: 2, opensAt: '09:00', closesAt: '19:00' }],
+        }}
+        bookable
+        now={MARDI_MATIN}
+      />,
+    );
+
+    expect(screen.queryByText('Fuseau horaire')).toBeNull();
+    expect(screen.getByText(/fuseau du salon \(Indian\/Antananarivo\)/)).toBeDefined();
+  });
+
+  it('sert un salon sans adresse ni horaires, cartes comprises', () => {
     // Le critère de #343 : les deux champs sont facultatifs, et la page d'un
     // salon qui n'a rien saisi doit rester servie — c'est le cas le plus courant
     // à l'inscription.
-    render(<SalonInfo tenant={{ ...tenant, contactPhone: '+261341234567' }} bookable />);
+    render(
+      <SalonInfo tenant={{ ...tenant, contactPhone: '+261341234567' }} bookable now={MARDI_MATIN} />,
+    );
 
     expect(screen.getByText('+261341234567')).toBeDefined();
-    expect(screen.queryByText('Adresse')).toBeNull();
-    expect(screen.queryByText('Horaires d’ouverture')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Nous trouver' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'Horaires' })).toBeNull();
   });
 });
