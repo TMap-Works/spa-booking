@@ -149,7 +149,8 @@ describe('coquille du back-office — une panne ne retire plus le rail', () => {
 
     render(await ouvrirLaCoquille());
 
-    expect(screen.getByText(/Hasina R\., gérant·e/)).toBeTruthy();
+    expect(screen.getByText('Hasina R.')).toBeTruthy();
+    expect(screen.getByText('gérant·e')).toBeTruthy();
     expect(screen.queryByText(/Fuseau du salon/)).toBeNull();
     // Le salon se nomme alors par le slug de l'URL, la seule chose qu'on en
     // sache vraie — en tête de rail comme au pied, d'où le pluriel.

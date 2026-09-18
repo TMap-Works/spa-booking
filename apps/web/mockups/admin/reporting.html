@@ -310,6 +310,130 @@
               </tbody>
             </table>
           </div>
+          <!-- Tableau de bord : l'écran d'arrivée de la gérance, qui lit les mêmes rapports sur des fenêtres courtes. -->
+          <section class="spa-admin-dashboard" aria-labelledby="tableau-titre">
+            <header class="spa-admin-dashboard__hero">
+              <div class="spa-admin-dashboard__greeting">
+                <p class="spa-admin-dashboard__eyebrow">Aujourd’hui · mardi 26 août 2026</p>
+                <h2 class="spa-admin__title" id="tableau-titre">Bonjour Hasina</h2>
+                <p class="spa-admin-dashboard__lead">8 rendez-vous au programme aujourd’hui, dont 2 à confirmer.</p>
+              </div>
+              <div class="spa-admin-dashboard__hero-actions">
+                <a class="spa-button spa-button--neutral" href="encaissement.html"><svg class="spa-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg>Encaisser</a>
+                <a class="spa-button spa-button--accent" href="calendrier.html"><svg class="spa-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg>Ouvrir le planning</a>
+              </div>
+            </header>
+            <div class="spa-admin-dashboard__kpis">
+              <div class="spa-admin-metric spa-admin-dashboard__kpi spa-admin-dashboard__kpi--accent">
+                <span class="spa-admin-dashboard__kpi-head">
+                  <span class="spa-admin-dashboard__kpi-icon"><svg class="spa-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg></span>
+                  <span class="spa-admin-dashboard__kpi-label">Rendez-vous aujourd’hui</span>
+                </span>
+                <span class="spa-admin-metric__value">8</span>
+                <span class="spa-admin-metric__label">3 honorés · 5 à venir</span>
+              </div>
+              <div class="spa-admin-metric spa-admin-dashboard__kpi spa-admin-dashboard__kpi--success">
+                <span class="spa-admin-dashboard__kpi-head">
+                  <span class="spa-admin-dashboard__kpi-icon"><svg class="spa-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg></span>
+                  <span class="spa-admin-dashboard__kpi-label">Encaissé aujourd’hui</span>
+                </span>
+                <span class="spa-admin-metric__value">245 000 Ar</span>
+                <span class="spa-admin-metric__label">3 encaissements</span>
+              </div>
+              <div class="spa-admin-metric spa-admin-dashboard__kpi spa-admin-dashboard__kpi--warning">
+                <span class="spa-admin-dashboard__kpi-head">
+                  <span class="spa-admin-dashboard__kpi-icon"><svg class="spa-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg></span>
+                  <span class="spa-admin-dashboard__kpi-label">À confirmer</span>
+                </span>
+                <span class="spa-admin-metric__value">2</span>
+                <span class="spa-admin-metric__label">Demandes en attente de réponse</span>
+              </div>
+              <div class="spa-admin-metric spa-admin-dashboard__kpi spa-admin-dashboard__kpi--danger">
+                <span class="spa-admin-dashboard__kpi-head">
+                  <span class="spa-admin-dashboard__kpi-icon"><svg class="spa-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg></span>
+                  <span class="spa-admin-dashboard__kpi-label">Non honorés · 30 jours</span>
+                </span>
+                <span class="spa-admin-metric__value">4,2 %</span>
+                <span class="spa-admin-metric__label">3 sur 71 rendez-vous échus</span>
+              </div>
+            </div>
+            <div class="spa-admin-dashboard__grid">
+              <section class="spa-admin__section" aria-labelledby="tableau-prochains">
+                <div class="spa-admin-dashboard__section-head">
+                  <h3 class="spa-admin__section-title" id="tableau-prochains">Prochains rendez-vous</h3>
+                  <a class="spa-admin-dashboard__more" href="calendrier.html">Tout le planning<svg class="spa-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg></a>
+                </div>
+                <ol class="spa-admin-dashboard__agenda" role="list">
+                  <li class="spa-admin-dashboard__slot">
+                    <span class="spa-admin-dashboard__time"><strong>14:00</strong><span>60 min</span></span>
+                    <span class="spa-admin-dashboard__avatar" aria-hidden="true">FR</span>
+                    <span class="spa-admin-dashboard__who"><strong>Fara Rakotoson</strong><span>Massage relaxant · Hasina R.</span></span>
+                    <span class="spa-admin-badge spa-admin-badge--pending">À confirmer</span>
+                  </li>
+                </ol>
+              </section>
+              <div class="spa-admin-dashboard__side">
+                <section class="spa-admin__section" aria-labelledby="tableau-semaine">
+                  <div class="spa-admin-dashboard__section-head">
+                    <h3 class="spa-admin__section-title" id="tableau-semaine">Les 7 derniers jours</h3>
+                  </div>
+                  <p class="spa-admin-dashboard__week-total">
+                    <span class="spa-admin-dashboard__week-value">1 240 000 Ar</span>
+                    <span class="spa-admin-dashboard__week-caption">encaissés · 37 rendez-vous</span>
+                  </p>
+                  <ol class="spa-admin-dashboard__bars" role="list" aria-label="Rendez-vous par jour">
+                <li class="spa-admin-dashboard__bar">
+                  <span class="spa-admin-dashboard__bar-value">3</span>
+                  <span class="spa-admin-dashboard__bar-track"><span class="spa-admin-dashboard__bar-fill"></span></span>
+                  <span class="spa-admin-dashboard__bar-label">lun.</span>
+                </li>
+                <li class="spa-admin-dashboard__bar">
+                  <span class="spa-admin-dashboard__bar-value">5</span>
+                  <span class="spa-admin-dashboard__bar-track"><span class="spa-admin-dashboard__bar-fill"></span></span>
+                  <span class="spa-admin-dashboard__bar-label">mar.</span>
+                </li>
+                <li class="spa-admin-dashboard__bar">
+                  <span class="spa-admin-dashboard__bar-value">2</span>
+                  <span class="spa-admin-dashboard__bar-track"><span class="spa-admin-dashboard__bar-fill"></span></span>
+                  <span class="spa-admin-dashboard__bar-label">mer.</span>
+                </li>
+                <li class="spa-admin-dashboard__bar">
+                  <span class="spa-admin-dashboard__bar-value">6</span>
+                  <span class="spa-admin-dashboard__bar-track"><span class="spa-admin-dashboard__bar-fill"></span></span>
+                  <span class="spa-admin-dashboard__bar-label">jeu.</span>
+                </li>
+                <li class="spa-admin-dashboard__bar">
+                  <span class="spa-admin-dashboard__bar-value">8</span>
+                  <span class="spa-admin-dashboard__bar-track"><span class="spa-admin-dashboard__bar-fill"></span></span>
+                  <span class="spa-admin-dashboard__bar-label">ven.</span>
+                </li>
+                <li class="spa-admin-dashboard__bar">
+                  <span class="spa-admin-dashboard__bar-value">9</span>
+                  <span class="spa-admin-dashboard__bar-track"><span class="spa-admin-dashboard__bar-fill"></span></span>
+                  <span class="spa-admin-dashboard__bar-label">sam.</span>
+                </li>
+                <li class="spa-admin-dashboard__bar">
+                  <span class="spa-admin-dashboard__bar-value">4</span>
+                  <span class="spa-admin-dashboard__bar-track"><span class="spa-admin-dashboard__bar-fill"></span></span>
+                  <span class="spa-admin-dashboard__bar-label">dim.</span>
+                </li>
+                  </ol>
+                </section>
+                <nav class="spa-admin__section" aria-labelledby="tableau-raccourcis">
+                  <h3 class="spa-admin__section-title" id="tableau-raccourcis">Raccourcis</h3>
+                  <ul class="spa-admin-dashboard__shortcuts">
+                    <li>
+                      <a class="spa-admin-dashboard__shortcut" href="personnel.html">
+                        <span class="spa-admin-dashboard__shortcut-icon"><svg class="spa-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg></span>
+                        <span>Équipe et horaires</span>
+                        <svg class="spa-icon spa-admin-dashboard__shortcut-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg>
+                      </a>
+                    </li>
+                  </ul>
+                </nav>
+              </div>
+            </div>
+          </section>
         </main>
       </div>
     </div>

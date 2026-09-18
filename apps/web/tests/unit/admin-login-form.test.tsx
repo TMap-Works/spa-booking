@@ -71,14 +71,14 @@ describe('la destination après connexion', () => {
     expect(refresh).toHaveBeenCalled();
   });
 
-  it('dépose aussi la gérante et l’administratrice sur leur première section', async () => {
+  it('dépose la gérante et l’administratrice sur le tableau de bord, leur première section', async () => {
     for (const role of ['manager', 'admin'] as const) {
       adminLoginAction.mockResolvedValue({ ok: true, data: account(role) });
       render(<AdminLoginForm tenantSlug={SLUG} notice={null} />);
 
       await signIn();
 
-      expect(replace, `rang ${role}`).toHaveBeenCalledWith(`/${SLUG}/admin/calendrier`);
+      expect(replace, `rang ${role}`).toHaveBeenCalledWith(`/${SLUG}/admin/tableau-de-bord`);
       cleanup();
       replace.mockReset();
     }
@@ -90,7 +90,7 @@ describe('la destination après connexion', () => {
 
     await signIn();
 
-    expect(replace).toHaveBeenCalledWith('/salon%2Flilas/admin/calendrier');
+    expect(replace).toHaveBeenCalledWith('/salon%2Flilas/admin/tableau-de-bord');
   });
 });
 

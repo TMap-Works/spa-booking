@@ -1,0 +1,377 @@
+/**
+ * Tableau de bord du back-office — `admin/tableau-de-bord/page.tsx`.
+ *
+ * Chargé après `modern.css`, dont il reprend les cartes et les indicateurs :
+ * il n'ajoute que la mise en page propre à l'écran d'arrivée (salutation,
+ * quatre indicateurs teintés, prochains rendez-vous, semaine, raccourcis).
+ */
+
+.spa-admin-dashboard {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-6);
+}
+
+.spa-admin-dashboard__hero {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--spa-space-4);
+}
+
+.spa-admin-dashboard__greeting {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+}
+
+.spa-admin-dashboard__eyebrow {
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--spa-color-accent-text);
+}
+
+.spa-admin-dashboard__lead {
+  font-size: var(--spa-font-size-md);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-dashboard__hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
+}
+
+.spa-admin-dashboard__hero-actions .spa-icon {
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+}
+
+/* --- Indicateurs du jour -------------------------------------------------- */
+
+.spa-admin-dashboard__kpis {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: var(--spa-space-4);
+}
+
+.spa-admin .spa-admin-dashboard__kpi {
+  gap: var(--spa-space-2);
+}
+
+.spa-admin .spa-admin-dashboard__kpi--accent {
+  --spa-admin-kpi-tone: var(--spa-color-accent);
+  --spa-admin-kpi-tone-text: var(--spa-color-accent-text);
+}
+
+.spa-admin .spa-admin-dashboard__kpi--success {
+  --spa-admin-kpi-tone: var(--spa-color-success);
+  --spa-admin-kpi-tone-text: var(--spa-color-success);
+}
+
+.spa-admin .spa-admin-dashboard__kpi--warning {
+  --spa-admin-kpi-tone: var(--spa-color-warning);
+  --spa-admin-kpi-tone-text: var(--spa-color-warning);
+}
+
+.spa-admin .spa-admin-dashboard__kpi--danger {
+  --spa-admin-kpi-tone: var(--spa-color-danger);
+  --spa-admin-kpi-tone-text: var(--spa-color-danger);
+}
+
+.spa-admin .spa-admin-dashboard__kpi::before {
+  background-image: linear-gradient(
+    90deg,
+    var(--spa-admin-kpi-tone),
+    color-mix(in srgb, var(--spa-admin-kpi-tone) 25%, transparent)
+  );
+}
+
+.spa-admin-dashboard__kpi-head {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  margin-block-end: var(--spa-space-1);
+}
+
+.spa-admin-dashboard__kpi-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  border-radius: 0.625rem;
+  background-color: color-mix(in srgb, var(--spa-admin-kpi-tone) 12%, var(--spa-color-surface));
+  color: var(--spa-admin-kpi-tone-text);
+}
+
+.spa-admin-dashboard__kpi-icon .spa-icon {
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+}
+
+.spa-admin-dashboard__kpi-label {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Colonnes ------------------------------------------------------------- */
+
+.spa-admin-dashboard__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(18rem, 1fr);
+  gap: var(--spa-space-5);
+  align-items: start;
+}
+
+.spa-admin-dashboard__side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-5);
+}
+
+.spa-admin-dashboard__section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-3);
+}
+
+.spa-admin-dashboard__more {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-1);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-accent-text);
+  text-decoration: none;
+}
+
+.spa-admin-dashboard__more:hover {
+  text-decoration: underline;
+}
+
+.spa-admin-dashboard__more .spa-icon {
+  inline-size: 1rem;
+  block-size: 1rem;
+}
+
+/* --- Prochains rendez-vous ------------------------------------------------ */
+
+.spa-admin-dashboard__agenda {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-admin-dashboard__slot {
+  display: grid;
+  grid-template-columns: 4.25rem 2.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--spa-space-3);
+  padding-block: var(--spa-space-3);
+  border-block-start: 1px solid var(--spa-color-border);
+}
+
+.spa-admin-dashboard__slot:first-child {
+  border-block-start: 0;
+}
+
+.spa-admin-dashboard__time {
+  display: flex;
+  flex-direction: column;
+  font-variant-numeric: tabular-nums;
+  line-height: var(--spa-line-height-snug);
+}
+
+.spa-admin-dashboard__time strong {
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-bold);
+}
+
+.spa-admin-dashboard__time span {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-dashboard__avatar {
+  display: grid;
+  place-items: center;
+  inline-size: 2.5rem;
+  block-size: 2.5rem;
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-admin-dashboard__who {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  line-height: var(--spa-line-height-snug);
+}
+
+.spa-admin-dashboard__who strong {
+  overflow: hidden;
+  font-weight: var(--spa-font-weight-semibold);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.spa-admin-dashboard__who span {
+  overflow: hidden;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* --- Semaine -------------------------------------------------------------- */
+
+.spa-admin-dashboard__week-total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--spa-space-2);
+}
+
+.spa-admin-dashboard__week-value {
+  font-size: 1.625rem;
+  font-weight: var(--spa-font-weight-bold);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.spa-admin-dashboard__week-caption {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-dashboard__bars {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: var(--spa-space-2);
+  block-size: 9rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-admin-dashboard__bar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  justify-items: center;
+  gap: var(--spa-space-1);
+  min-block-size: 0;
+}
+
+.spa-admin-dashboard__bar-value {
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.spa-admin-dashboard__bar-track {
+  display: flex;
+  align-items: flex-end;
+  inline-size: 100%;
+  max-inline-size: 2rem;
+  min-block-size: 0;
+  border-radius: 0.5rem;
+  background-color: var(--spa-color-surface-sunken);
+}
+
+.spa-admin-dashboard__bar-fill {
+  inline-size: 100%;
+  border-radius: 0.5rem;
+  background-image: linear-gradient(
+    180deg,
+    var(--spa-color-accent),
+    color-mix(in srgb, var(--spa-color-accent) 70%, var(--spa-color-surface))
+  );
+}
+
+.spa-admin-dashboard__bar-label {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+  white-space: nowrap;
+}
+
+/* --- Raccourcis ----------------------------------------------------------- */
+
+.spa-admin-dashboard__shortcuts {
+  display: grid;
+  gap: var(--spa-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-admin-dashboard__shortcut {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  min-block-size: var(--spa-target-min-size);
+  padding: var(--spa-space-2) var(--spa-space-3);
+  border: 1px solid var(--spa-color-border);
+  border-radius: 0.75rem;
+  color: var(--spa-color-text);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  text-decoration: none;
+  transition:
+    border-color var(--spa-duration-fast) var(--spa-easing-standard),
+    background-color var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-admin-dashboard__shortcut:hover {
+  background-color: var(--spa-color-surface-raised);
+  border-color: var(--spa-color-border-interactive);
+}
+
+.spa-admin-dashboard__shortcut-icon {
+  display: grid;
+  place-items: center;
+  inline-size: 2rem;
+  block-size: 2rem;
+  border-radius: 0.5rem;
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+}
+
+.spa-admin-dashboard__shortcut-icon .spa-icon {
+  inline-size: 1rem;
+  block-size: 1rem;
+}
+
+.spa-admin-dashboard__shortcut-arrow {
+  margin-inline-start: auto;
+  inline-size: 1rem;
+  block-size: 1rem;
+  color: var(--spa-color-text-subtle);
+}
+
+@media (max-width: 64rem) {
+  .spa-admin-dashboard__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 30rem) {
+  .spa-admin-dashboard__slot {
+    grid-template-columns: 3.5rem minmax(0, 1fr) auto;
+  }
+
+  .spa-admin-dashboard__avatar {
+    display: none;
+  }
+}

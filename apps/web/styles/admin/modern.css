@@ -1,0 +1,978 @@
+/**
+ * Habillage du back-office — la couche visuelle, chargée en dernier.
+ *
+ * Les feuilles précédentes décrivent la structure de chaque écran ; celle-ci en
+ * fixe l'apparence : police Inter, barre latérale sombre à pictogrammes et
+ * groupes, barre haute collante, cartes à coins larges et ombre douce, tableaux
+ * aérés, pastilles de statut à point, planning à blocs arrondis.
+ *
+ * Tout est **scopé sous `.spa-admin`** (ou la coquille sans session) : le
+ * parcours client public n'en reçoit rien. Aucune couleur littérale — les
+ * teintes intermédiaires passent par `color-mix()` sur les jetons, si bien que
+ * le thème sombre (#855) suit sans une ligne de plus.
+ */
+
+/* ==========================================================================
+ * Coquille
+ * ========================================================================== */
+
+.spa-admin,
+.spa-admin__main {
+  font-family: var(--spa-admin-font);
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+}
+
+.spa-admin {
+  --spa-admin-rail-width: 16.5rem;
+
+  background-color: var(--spa-color-canvas);
+}
+
+/* --- Barre latérale ------------------------------------------------------ */
+
+.spa-admin__rail {
+  position: sticky;
+  inset-block-start: 0;
+  block-size: 100vh;
+  overflow-y: auto;
+  gap: var(--spa-space-6);
+  padding: var(--spa-space-5) var(--spa-space-3);
+  background-color: var(--spa-color-chrome);
+  color: var(--spa-color-text-on-chrome);
+  scrollbar-width: thin;
+}
+
+.spa-admin__brand-block {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  padding-inline: var(--spa-space-2);
+}
+
+.spa-admin__logo {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 2.5rem;
+  block-size: 2.5rem;
+  border-radius: 0.75rem;
+  background-image: linear-gradient(
+    135deg,
+    var(--spa-color-accent-on-chrome),
+    color-mix(in srgb, var(--spa-color-accent-on-chrome) 55%, var(--spa-color-chrome-active))
+  );
+  color: var(--spa-color-chrome);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-bold);
+  letter-spacing: 0.02em;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--spa-color-accent-on-chrome) 35%, transparent);
+}
+
+.spa-admin__brand-text {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  line-height: var(--spa-line-height-tight);
+}
+
+.spa-admin__rail .spa-admin__brand {
+  display: block;
+  overflow: hidden;
+  font-size: 0.9375rem;
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text-on-chrome);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.spa-admin__brand-caption {
+  margin-block-start: 2px;
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-on-chrome-muted);
+}
+
+.spa-admin__rail .spa-admin__nav {
+  gap: var(--spa-space-5);
+}
+
+.spa-admin__nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.spa-admin__nav-group-label {
+  padding-inline: var(--spa-space-3);
+  padding-block-end: var(--spa-space-1);
+  font-size: 0.6875rem;
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--spa-color-text-on-chrome-muted);
+}
+
+.spa-admin__rail .spa-admin__nav-link {
+  gap: var(--spa-space-3);
+  padding-inline: var(--spa-space-3);
+  border-inline-start: 0;
+  border-radius: 0.625rem;
+  color: var(--spa-color-text-on-chrome-muted);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  transition:
+    background-color var(--spa-duration-fast) var(--spa-easing-standard),
+    color var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-admin__nav-icon {
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+}
+
+.spa-admin__rail .spa-admin__nav-link:hover {
+  background-color: var(--spa-color-chrome-raised);
+  color: var(--spa-color-text-on-chrome);
+}
+
+.spa-admin__rail .spa-admin__nav-link[aria-current='page'] {
+  position: relative;
+  background-color: var(--spa-color-chrome-active);
+  color: var(--spa-color-text-on-chrome);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-admin__rail .spa-admin__nav-link[aria-current='page']::before {
+  content: '';
+  position: absolute;
+  inset-block: 0.625rem;
+  inset-inline-start: -0.75rem;
+  inline-size: 3px;
+  border-radius: 0 3px 3px 0;
+  background-color: var(--spa-color-accent-on-chrome);
+}
+
+.spa-admin__rail .spa-admin__nav-link[aria-current='page'] .spa-admin__nav-icon {
+  color: var(--spa-color-accent-on-chrome);
+}
+
+.spa-admin__rail .spa-admin__nav-link:has(.spa-admin__nav-pending[data-pending='true']) {
+  animation-name: spa-admin-nav-pending-chrome;
+}
+
+@keyframes spa-admin-nav-pending-chrome {
+  to {
+    background-color: var(--spa-color-chrome-raised);
+    color: var(--spa-color-text-on-chrome);
+  }
+}
+
+.spa-admin__rail .spa-admin__nav-link[aria-disabled='true'],
+.spa-admin__rail .spa-admin__nav-link[aria-disabled='true']:hover {
+  color: var(--spa-color-text-on-chrome-muted);
+}
+
+.spa-admin__rail .spa-admin__rail-footer {
+  gap: var(--spa-space-3);
+  padding-block-start: var(--spa-space-4);
+  border-block-start-color: var(--spa-color-chrome-active);
+  color: var(--spa-color-text-on-chrome-muted);
+}
+
+/* Le nom du salon est déjà en tête de barre : on le garde pour les lecteurs
+ * d'écran, sans le répéter à l'œil. */
+.spa-admin__rail-footer > strong {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.spa-admin__rail-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  padding-inline: var(--spa-space-2);
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-on-chrome-muted);
+}
+
+.spa-admin__rail-meta .spa-icon {
+  inline-size: 0.875rem;
+  block-size: 0.875rem;
+}
+
+.spa-admin__user {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-2);
+  border-radius: 0.75rem;
+  background-color: var(--spa-color-chrome-raised);
+}
+
+.spa-admin__avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-chrome-active);
+  color: var(--spa-color-accent-on-chrome);
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-bold);
+  letter-spacing: 0.02em;
+}
+
+.spa-admin__user-text {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  line-height: var(--spa-line-height-snug);
+}
+
+.spa-admin__user-name {
+  overflow: hidden;
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text-on-chrome);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.spa-admin__user-role {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-on-chrome-muted);
+}
+
+.spa-admin__user-role::first-letter {
+  text-transform: uppercase;
+}
+
+.spa-admin__rail .spa-admin__rail-footer .spa-button--quiet {
+  align-self: stretch;
+  justify-content: flex-start;
+  padding-inline: var(--spa-space-3);
+  border-radius: 0.625rem;
+  color: var(--spa-color-text-on-chrome-muted);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-admin__rail .spa-admin__rail-footer .spa-button--quiet .spa-button__label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+}
+
+.spa-admin__rail .spa-admin__rail-footer .spa-button--quiet:hover:not(:disabled, [aria-disabled='true']) {
+  background-color: var(--spa-color-chrome-raised);
+  color: var(--spa-color-text-on-chrome);
+}
+
+.spa-admin__logout-icon {
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+}
+
+/* --- Barre haute --------------------------------------------------------- */
+
+.spa-admin-topbar {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: calc(var(--spa-z-sticky) + 10);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-4);
+  min-block-size: var(--spa-admin-topbar-height);
+  padding-block: var(--spa-space-2);
+  padding-inline: var(--spa-space-8);
+  background-color: color-mix(in srgb, var(--spa-color-canvas) 85%, transparent);
+  border-block-end: 1px solid var(--spa-color-border);
+  backdrop-filter: saturate(1.4) blur(10px);
+}
+
+.spa-admin-topbar__context {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  line-height: var(--spa-line-height-snug);
+}
+
+.spa-admin-topbar__eyebrow {
+  font-size: 0.6875rem;
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin-topbar__date {
+  font-size: 0.9375rem;
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+}
+
+.spa-admin-topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+}
+
+.spa-admin-topbar__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  min-block-size: 2.5rem;
+  padding-inline: var(--spa-space-4);
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-full);
+  box-shadow: var(--spa-shadow-xs);
+  color: var(--spa-color-text);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  text-decoration: none;
+  transition:
+    border-color var(--spa-duration-fast) var(--spa-easing-standard),
+    box-shadow var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-admin-topbar__link:hover {
+  border-color: var(--spa-color-border-interactive);
+  box-shadow: var(--spa-shadow-sm);
+}
+
+.spa-admin-topbar__link .spa-icon {
+  inline-size: 1rem;
+  block-size: 1rem;
+  color: var(--spa-color-accent-text);
+}
+
+/* --- Zone de contenu ----------------------------------------------------- */
+
+.spa-admin > .spa-admin__main > .spa-admin__content {
+  inline-size: 100%;
+  max-inline-size: 90rem;
+  margin-inline: auto;
+  gap: var(--spa-space-5);
+  padding: var(--spa-space-8) var(--spa-space-8) var(--spa-space-12);
+}
+
+.spa-admin .spa-admin__title {
+  font-size: 1.75rem;
+  font-weight: var(--spa-font-weight-bold);
+  letter-spacing: -0.02em;
+  line-height: var(--spa-line-height-tight);
+  color: var(--spa-color-text);
+}
+
+/* ==========================================================================
+ * Cartes, barres d'outils, panneaux
+ * ========================================================================== */
+
+.spa-admin .spa-admin__section {
+  gap: var(--spa-space-4);
+  padding: var(--spa-space-5) var(--spa-space-6);
+  border-color: var(--spa-color-border);
+  border-radius: var(--spa-admin-card-radius);
+  box-shadow: var(--spa-shadow-card);
+}
+
+.spa-admin .spa-admin__section-title {
+  font-size: 1.0625rem;
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: -0.01em;
+}
+
+.spa-admin .spa-admin-toolbar {
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-3) var(--spa-space-4);
+  border-radius: var(--spa-admin-card-radius);
+  box-shadow: var(--spa-shadow-card);
+}
+
+.spa-admin .spa-admin-panel {
+  border-radius: var(--spa-admin-card-radius);
+  box-shadow: var(--spa-shadow-lg);
+}
+
+/* ==========================================================================
+ * Indicateurs
+ * ========================================================================== */
+
+.spa-admin .spa-admin-metric {
+  position: relative;
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-5) var(--spa-space-5) var(--spa-space-4);
+  overflow: hidden;
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-admin-card-radius);
+  box-shadow: var(--spa-shadow-card);
+}
+
+.spa-admin .spa-admin-metric::before {
+  content: '';
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  block-size: 3px;
+  background-image: linear-gradient(
+    90deg,
+    var(--spa-color-accent),
+    color-mix(in srgb, var(--spa-color-accent) 30%, transparent)
+  );
+}
+
+.spa-admin .spa-admin-metric__value {
+  font-size: 1.875rem;
+  font-weight: var(--spa-font-weight-bold);
+  letter-spacing: -0.02em;
+  line-height: var(--spa-line-height-tight);
+}
+
+.spa-admin .spa-admin-metric__label {
+  font-size: 0.8125rem;
+  line-height: var(--spa-line-height-snug);
+}
+
+/* ==========================================================================
+ * Tableaux
+ * ========================================================================== */
+
+.spa-admin .spa-admin-table {
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-admin .spa-admin-table__head {
+  padding-block: var(--spa-space-3);
+  padding-inline: var(--spa-space-3);
+  background-color: var(--spa-color-surface-raised);
+  font-size: 0.6875rem;
+  letter-spacing: 0.07em;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin .spa-admin-table__cell {
+  block-size: 3.25rem;
+  padding-inline: var(--spa-space-3);
+  transition: background-color var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-admin .spa-admin-table__row:last-child .spa-admin-table__cell {
+  border-block-end-color: transparent;
+}
+
+.spa-admin .spa-admin-table__head:first-child,
+.spa-admin .spa-admin-table__cell:first-child {
+  padding-inline-start: var(--spa-space-4);
+}
+
+.spa-admin .spa-admin-table__row:hover .spa-admin-table__cell {
+  background-color: color-mix(in srgb, var(--spa-color-accent-soft) 55%, var(--spa-color-surface));
+}
+
+/* Un tableau posé à même la page reçoit l'allure d'une carte : son conteneur
+ * s'il n'enveloppe que lui, le tableau lui-même quand le conteneur porte aussi
+ * le titre de l'écran (l'encaissement). */
+.spa-admin
+  > .spa-admin__main
+  > .spa-admin__content
+  > :has(> .spa-admin-table):not(:has(> .spa-admin__title)) {
+  overflow-x: auto;
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-admin-card-radius);
+  box-shadow: var(--spa-shadow-card);
+}
+
+.spa-admin > .spa-admin__main > .spa-admin__content > :has(> .spa-admin__title) > .spa-admin-table {
+  overflow: hidden;
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: var(--spa-admin-card-radius);
+  box-shadow: var(--spa-shadow-card);
+}
+
+.spa-admin .spa-admin-table a {
+  color: var(--spa-color-text);
+  font-weight: var(--spa-font-weight-semibold);
+  text-underline-offset: 3px;
+}
+
+.spa-admin .spa-admin-table a:hover {
+  color: var(--spa-color-accent-text);
+  text-decoration-color: currentcolor;
+}
+
+/* ==========================================================================
+ * Pastilles de statut
+ * ========================================================================== */
+
+.spa-admin .spa-admin-badge {
+  gap: 0.375rem;
+  padding-block: 0.1875rem;
+  padding-inline: 0.5rem 0.625rem;
+  font-size: 0.75rem;
+  font-weight: var(--spa-font-weight-semibold);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, currentcolor 14%, transparent);
+}
+
+.spa-admin .spa-admin-badge::before {
+  content: '';
+  flex: none;
+  inline-size: 0.375rem;
+  block-size: 0.375rem;
+  border-radius: var(--spa-radius-full);
+  background-color: currentcolor;
+}
+
+/* ==========================================================================
+ * Boutons et champs
+ * ========================================================================== */
+
+.spa-admin .spa-button {
+  border-radius: 0.625rem;
+  font-size: 0.9375rem;
+  font-weight: var(--spa-font-weight-semibold);
+  transition:
+    background-color var(--spa-duration-fast) var(--spa-easing-standard),
+    border-color var(--spa-duration-fast) var(--spa-easing-standard),
+    box-shadow var(--spa-duration-fast) var(--spa-easing-standard),
+    transform var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-admin .spa-button--accent {
+  box-shadow:
+    var(--spa-shadow-xs),
+    inset 0 1px 0 color-mix(in srgb, var(--spa-color-text-on-accent) 16%, transparent);
+}
+
+.spa-admin .spa-button--accent:hover:not(:disabled, [aria-disabled='true']) {
+  box-shadow: var(--spa-shadow-md);
+  transform: translateY(-1px);
+}
+
+.spa-admin .spa-button--neutral {
+  border-color: var(--spa-color-border);
+  box-shadow: var(--spa-shadow-xs);
+}
+
+.spa-admin .spa-button--neutral:hover:not(:disabled, [aria-disabled='true']) {
+  background-color: var(--spa-color-surface-raised);
+  border-color: var(--spa-color-border-interactive);
+}
+
+.spa-admin .spa-button:active:not(:disabled, [aria-disabled='true']) {
+  transform: translateY(0);
+}
+
+.spa-admin .spa-field__label {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+}
+
+.spa-admin .spa-field__control {
+  border-radius: 0.625rem;
+  box-shadow: var(--spa-shadow-xs);
+  transition:
+    border-color var(--spa-duration-fast) var(--spa-easing-standard),
+    box-shadow var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-admin .spa-select__control {
+  border-radius: 0.625rem;
+  box-shadow: var(--spa-shadow-xs);
+}
+
+.spa-admin .spa-field__control:focus-visible {
+  border-color: var(--spa-color-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--spa-color-accent) 16%, transparent);
+}
+
+/* --- Contrôle segmenté (Jour / Semaine, filtres) -------------------------- */
+
+.spa-admin .spa-admin-segmented {
+  padding: 3px;
+  border-radius: 0.75rem;
+}
+
+.spa-admin .spa-admin-segmented__option {
+  border-radius: 0.5625rem;
+}
+
+.spa-admin .spa-admin-segmented__input:checked + .spa-admin-segmented__option {
+  border-color: transparent;
+  box-shadow: var(--spa-shadow-sm);
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+/* ==========================================================================
+ * Planning
+ * ========================================================================== */
+
+.spa-admin .spa-admin-calendar__head {
+  inset-block-start: var(--spa-admin-topbar-height);
+  border-radius: var(--spa-admin-card-radius) var(--spa-admin-card-radius) 0 0;
+}
+
+.spa-admin .spa-admin-calendar__body {
+  border-radius: 0 0 var(--spa-admin-card-radius) var(--spa-admin-card-radius);
+  box-shadow: var(--spa-shadow-card);
+}
+
+.spa-admin .spa-admin-calendar__column-head {
+  padding: var(--spa-space-3) var(--spa-space-4);
+}
+
+.spa-admin .spa-admin-calendar__column-name {
+  font-size: 0.9375rem;
+}
+
+.spa-admin .spa-admin-calendar__column-head:has(.spa-admin-calendar__column-avatar) {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--spa-space-3);
+}
+
+.spa-admin-calendar__column-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-admin-calendar__column-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.spa-admin .spa-admin-calendar__gutter {
+  background-color: var(--spa-color-surface);
+}
+
+.spa-admin .spa-admin-calendar__hour {
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text-subtle);
+}
+
+.spa-admin .spa-admin-calendar__slot {
+  border-block-start-color: color-mix(in srgb, var(--spa-color-border) 70%, transparent);
+}
+
+.spa-admin .spa-admin-calendar__event {
+  gap: 3px;
+  padding-block: var(--spa-space-2);
+  padding-inline: var(--spa-space-3);
+  border-inline-start-width: 4px;
+  border-radius: 0.625rem;
+  box-shadow: var(--spa-shadow-xs);
+  transition:
+    box-shadow var(--spa-duration-fast) var(--spa-easing-standard),
+    transform var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-admin .spa-admin-calendar__event:not(.spa-admin-calendar__event--ghost):hover {
+  box-shadow: var(--spa-shadow-md);
+  transform: translateY(-1px);
+}
+
+.spa-admin .spa-admin-calendar__event-time {
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-admin .spa-admin-calendar__event-client {
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-admin .spa-admin-calendar__legend {
+  gap: var(--spa-space-3);
+}
+
+/* ==========================================================================
+ * Fichier client
+ * ========================================================================== */
+
+.spa-admin .spa-admin-client-list__item {
+  padding: var(--spa-space-3);
+  border-radius: 0.625rem;
+  transition: background-color var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-admin .spa-admin-client-list__item:hover {
+  background-color: var(--spa-color-surface-raised);
+}
+
+.spa-admin .spa-admin-client-list__item[aria-current='true'] {
+  box-shadow: inset 3px 0 0 var(--spa-color-accent);
+  border-color: transparent;
+}
+
+.spa-admin .spa-admin-client-list__name {
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+/* ==========================================================================
+ * Petits écrans
+ * ========================================================================== */
+
+@media (max-width: 48rem) {
+  .spa-admin__rail {
+    position: static;
+    block-size: auto;
+    overflow: visible;
+    gap: var(--spa-space-3);
+    padding: var(--spa-space-3);
+  }
+
+  .spa-admin__rail .spa-admin__nav {
+    gap: var(--spa-space-1);
+  }
+
+  .spa-admin__nav-group {
+    display: contents;
+  }
+
+  .spa-admin__nav-group-label {
+    display: none;
+  }
+
+  .spa-admin__rail .spa-admin__nav-link[aria-current='page']::before {
+    display: none;
+  }
+
+  .spa-admin__user {
+    padding: var(--spa-space-1) var(--spa-space-2);
+  }
+
+  .spa-admin-topbar {
+    position: static;
+    padding-inline: var(--spa-space-4);
+  }
+
+  /* Le libellé reste lu par les lecteurs d'écran ; seul le pictogramme se voit. */
+  .spa-admin-topbar__link span:not(.spa-visually-hidden) {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .spa-admin .spa-admin-calendar__head {
+    inset-block-start: 0;
+  }
+
+  .spa-admin > .spa-admin__main > .spa-admin__content {
+    padding: var(--spa-space-5) var(--spa-space-4) var(--spa-space-8);
+  }
+}
+
+@media (max-width: 30rem) {
+  .spa-admin > .spa-admin__main > .spa-admin__content {
+    padding: var(--spa-space-4) var(--spa-space-3) var(--spa-space-8);
+  }
+
+  .spa-admin .spa-admin__title {
+    font-size: 1.375rem;
+  }
+
+  .spa-admin__brand-caption {
+    display: none;
+  }
+}
+
+/* ==========================================================================
+ * Avatars à initiales (fichier client) et compteurs compacts de la fiche
+ * ========================================================================== */
+
+.spa-admin .spa-admin-client-list__item {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--spa-space-3);
+}
+
+.spa-admin-client-list__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-inline-size: 0;
+}
+
+.spa-admin-client-list__avatar,
+.spa-admin-client__avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: 0.02em;
+}
+
+.spa-admin-client-list__avatar {
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  font-size: var(--spa-font-size-xs);
+}
+
+.spa-admin-client__avatar {
+  inline-size: 3.5rem;
+  block-size: 3.5rem;
+  font-size: var(--spa-font-size-lg);
+}
+
+.spa-admin .spa-admin-client__header {
+  align-items: center;
+  gap: var(--spa-space-4);
+}
+
+.spa-admin .spa-admin-client__name {
+  font-size: 1.5rem;
+  font-weight: var(--spa-font-weight-bold);
+  letter-spacing: -0.02em;
+}
+
+.spa-admin .spa-admin-client__metrics .spa-admin-metric {
+  padding: var(--spa-space-3) var(--spa-space-4);
+  background-color: var(--spa-color-surface-raised);
+  box-shadow: none;
+}
+
+.spa-admin .spa-admin-client__metrics .spa-admin-metric::before {
+  content: none;
+}
+
+.spa-admin .spa-admin-client__metrics .spa-admin-metric__value {
+  font-size: 1.375rem;
+}
+
+/* ==========================================================================
+ * Personnel
+ * ========================================================================== */
+
+.spa-admin .spa-admin-staff__member {
+  padding: var(--spa-space-3);
+  border-radius: 0.625rem;
+  color: var(--spa-color-text);
+  text-decoration: none;
+  transition: background-color var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-admin .spa-admin-staff__member:hover .spa-admin-staff__name {
+  color: var(--spa-color-accent-text);
+}
+
+.spa-admin .spa-admin-staff__name {
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-admin .spa-admin-staff__role {
+  color: var(--spa-color-text-muted);
+}
+
+.spa-admin .spa-admin-staff__initials {
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+/* Les actions d'une ligne de tableau ne sont pas une carte : elles s'alignent
+ * dans la cellule, sans cadre ni ombre. */
+.spa-admin .spa-admin-table .spa-admin-toolbar {
+  padding: 0;
+  background-color: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* Dans une ligne de tableau, l'intitulé d'un sélecteur se répéterait à chaque
+ * ligne : l'en-tête de colonne le porte déjà. Il reste lu par les lecteurs
+ * d'écran. */
+.spa-admin .spa-admin-table .spa-admin-toolbar .spa-select__label {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.spa-admin .spa-admin-table .spa-admin-toolbar {
+  gap: var(--spa-space-2);
+}
+
+.spa-admin .spa-admin-table .spa-button {
+  padding-inline: var(--spa-space-4);
+  font-size: var(--spa-font-size-sm);
+}
+
+/* La barre latérale est collante et haute d'un écran : sa couleur se prolonge
+ * sur toute la hauteur de la page, même imprimée ou capturée en entier. */
+@media (min-width: 48.0625rem) {
+  .spa-admin {
+    background-image: linear-gradient(
+      to right,
+      var(--spa-color-chrome) var(--spa-admin-rail-width),
+      transparent var(--spa-admin-rail-width)
+    );
+  }
+}
+
+/* ==========================================================================
+ * Filtres en onglets et tableaux denses
+ * ========================================================================== */
+
+/* Un lien discret qui marque la vue courante se lit comme un onglet actif. */
+.spa-admin .spa-button--quiet[aria-current='page'] {
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--spa-color-accent) 25%, transparent);
+}
+
+/* Durées, prix, dates : sur une ligne. Les cellules à pastilles ou à actions
+ * gardent le droit de passer à la ligne. */
+.spa-admin
+  .spa-admin-table__cell:not(:first-child, :has(.spa-admin-badge), :has(.spa-admin-toolbar), :has(.spa-button)) {
+  white-space: nowrap;
+}
+
+
+.spa-admin .spa-admin-table a {
+  text-decoration: none;
+}
+
+.spa-admin .spa-admin-table a:hover {
+  text-decoration: underline;
+}
+
+/* ==========================================================================
+ * Formulaires en groupes (réglages, fiches)
+ * ========================================================================== */
+
+/* Une légende de `<fieldset>` se dessine sur le bord du cadre : flottante, elle
+ * redevient un titre de carte ordinaire, en tête du contenu. */
+.spa-admin fieldset.spa-admin__section > legend {
+  float: left;
+  inline-size: 100%;
+  margin-block-end: var(--spa-space-1);
+  padding: 0;
+}

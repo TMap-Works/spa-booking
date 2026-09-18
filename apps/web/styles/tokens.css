@@ -81,6 +81,17 @@
    * compose avec ce qu'il y a dessous, aucun rôle sémantique ne peut la dériver. */
   --spa-palette-scrim: rgb(28 25 23 / 55%);
 
+  /* Chrome du back-office (barre latérale) — sombre dans les DEUX thèmes : c'est
+   * un repère fixe de l'interface, pas une surface de contenu. */
+  --spa-palette-chrome-950: #0e1c19;
+  --spa-palette-chrome-900: #162a26;
+  --spa-palette-chrome-800: #22403a;
+  --spa-palette-chrome-300: #a9bcb7;
+  --spa-palette-chrome-100: #eef4f2;
+  --spa-palette-chrome-accent: #86dccd;
+  /* Fond de page du back-office : un cran sous les cartes, dans les deux thèmes. */
+  --spa-palette-canvas: #f4f2ef;
+
   /* ==========================================================================
    * 2. SÉMANTIQUES — couleur
    * ========================================================================== */
@@ -139,6 +150,13 @@
    * Le texte, l'accent et l'anneau de focus ont chacun leur version « sur
    * marque » : ceux du fond clair n'y atteignent pas les seuils — l'anneau
    * `--spa-color-focus` y tombe sous 2:1 et deviendrait invisible au clavier. */
+  --spa-color-canvas: var(--spa-palette-canvas);
+  --spa-color-chrome: var(--spa-palette-chrome-950);
+  --spa-color-chrome-raised: var(--spa-palette-chrome-900);
+  --spa-color-chrome-active: var(--spa-palette-chrome-800);
+  --spa-color-text-on-chrome: var(--spa-palette-chrome-100);
+  --spa-color-text-on-chrome-muted: var(--spa-palette-chrome-300);
+  --spa-color-accent-on-chrome: var(--spa-palette-chrome-accent);
   --spa-color-surface-brand: var(--spa-palette-brand-800);
   --spa-color-surface-brand-raised: var(--spa-palette-brand-700);
   --spa-color-text-on-brand: var(--spa-palette-neutral-0);
@@ -306,6 +324,8 @@
   --spa-shadow-sm: 0 1px 2px rgb(28 25 23 / 8%);
   --spa-shadow-md: 0 2px 4px rgb(28 25 23 / 8%), 0 4px 12px rgb(28 25 23 / 6%);
   --spa-shadow-lg: 0 8px 24px rgb(28 25 23 / 12%), 0 2px 6px rgb(28 25 23 / 8%);
+  --spa-shadow-xs: 0 1px 2px rgb(16 24 22 / 5%);
+  --spa-shadow-card: 0 1px 2px rgb(16 24 22 / 4%), 0 4px 16px rgb(16 24 22 / 5%);
 
   --spa-z-base: 0;
   --spa-z-sticky: 100;
@@ -341,6 +361,12 @@
   --spa-admin-slot-height: var(--spa-target-min-size);
   /* Colonne des heures du calendrier, à gauche de la grille. */
   --spa-admin-time-gutter: 4.5rem;
+  /* Remplacée par `next/font` (Inter) sur la coquille du back-office. */
+  --spa-admin-font: var(--spa-font-sans);
+  --spa-admin-card-radius: 0.875rem;
+  /* Teinte d'un indicateur du tableau de bord ; chaque variante la redéfinit. */
+  --spa-admin-kpi-tone: var(--spa-color-accent);
+  --spa-admin-kpi-tone-text: var(--spa-color-accent-text);
 }
 
 /* ==========================================================================
@@ -376,17 +402,18 @@
  * « éblouit ». Les valeurs ci-dessous sont désaturées d'un cran et vérifiées par
  * `tests/contrast.test.mjs`, qui rejoue **les mêmes paires** sur ce jeu-ci.
  *
- * ## Pourquoi `prefers-color-scheme` et pas un sélecteur de thème
+ * ## Système par défaut, et un choix explicite qui l'emporte (#855)
  *
- * Un interrupteur suppose un réglage à stocker, donc un choix par utilisateur,
- * donc un écran de préférences — hors périmètre MVP. La requête de média suit ce
- * que le système d'exploitation dit déjà, ce qui est le comportement attendu par
- * défaut et ne coûte aucune interface. Un salon qui substitue sa rampe de marque
- * doit redéfinir les deux jeux, comme il redéfinit déjà le clair.
+ * Sans choix, le thème suit `prefers-color-scheme`. Le sélecteur de thème pose
+ * `data-theme="light" | "dark"` sur `<html>` (voir `lib/theme.ts`) : « clair »
+ * neutralise la requête de média (`:not([data-theme='light'])`), « sombre »
+ * applique le même jeu que la requête de média, recopié dans le bloc
+ * `:root[data-theme='dark']` en fin de fichier. Les deux jeux sombres doivent
+ * rester identiques — `tests/tokens.test.mjs` le vérifie.
  * ========================================================================== */
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     color-scheme: dark;
 
     /* Neutres chauds, lus de l'autre bout. `neutral-0` reste « la surface de la
@@ -430,5 +457,76 @@
     /* Le voile de modale s'appuie sur du noir plus dense : sur fond sombre, un
      * voile clair éclaircirait la page au lieu de la mettre en retrait. */
     --spa-palette-scrim: rgb(0 0 0 / 68%);
+
+    /* Chrome du back-office : reste sombre, un cran plus profond que la page. */
+    --spa-palette-chrome-950: #0c1210;
+    --spa-palette-chrome-900: #141c1a;
+    --spa-palette-chrome-800: #1f2b28;
+    --spa-palette-chrome-300: #a9bcb7;
+    --spa-palette-chrome-100: #eef4f2;
+    --spa-palette-chrome-accent: #86dccd;
+    --spa-palette-canvas: #0d0c0a;
   }
+}
+
+/* Choix explicite « sombre » : le même jeu que la requête de média ci-dessus,
+ * appliqué quel que soit le réglage du système. */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  /* Neutres chauds, lus de l'autre bout. `neutral-0` reste « la surface de la
+   * page » et `neutral-900` « la couleur du texte » : ce sont des rôles, et ce
+   * sont eux qui doivent rester vrais. */
+  --spa-palette-neutral-0: #14120f;
+  --spa-palette-neutral-50: #1c1a16;
+  --spa-palette-neutral-100: #252220;
+  --spa-palette-neutral-200: #35312c;
+  --spa-palette-neutral-300: #4f4a44;
+  --spa-palette-neutral-400: #6e675f;
+  --spa-palette-neutral-500: #8f877e;
+  --spa-palette-neutral-600: #b3aaa1;
+  --spa-palette-neutral-700: #cfc7bf;
+  --spa-palette-neutral-800: #e6e0da;
+  --spa-palette-neutral-900: #f5f2ef;
+
+  /* Marque — la même rampe, parcourue à l'envers. */
+  --spa-palette-brand-50: #0b201d;
+  --spa-palette-brand-100: #12332e;
+  --spa-palette-brand-200: #194741;
+  --spa-palette-brand-300: #215c53;
+  --spa-palette-brand-400: #2a7268;
+  --spa-palette-brand-500: #6fb3a9;
+  --spa-palette-brand-600: #a5d2cb;
+  --spa-palette-brand-700: #d3e9e5;
+  --spa-palette-brand-800: #e5f1ef;
+  --spa-palette-brand-900: #eef6f5;
+
+  /* États. Le `-600`/`-700` porte toujours le texte, le `-50` toujours la
+   * surface : les deux échangent donc leur clarté, pas leur rôle. */
+  --spa-palette-green-600: #79d9a3;
+  --spa-palette-green-50: #10261a;
+  --spa-palette-amber-700: #f0b968;
+  --spa-palette-amber-50: #2b1d08;
+  --spa-palette-red-600: #f38b84;
+  --spa-palette-red-50: #2e1413;
+  --spa-palette-blue-700: #8ab7ec;
+  --spa-palette-blue-50: #10203a;
+
+  /* Le voile de modale s'appuie sur du noir plus dense : sur fond sombre, un
+   * voile clair éclaircirait la page au lieu de la mettre en retrait. */
+  --spa-palette-scrim: rgb(0 0 0 / 68%);
+
+  /* Chrome du back-office : reste sombre, un cran plus profond que la page. */
+  --spa-palette-chrome-950: #0c1210;
+  --spa-palette-chrome-900: #141c1a;
+  --spa-palette-chrome-800: #1f2b28;
+  --spa-palette-chrome-300: #a9bcb7;
+  --spa-palette-chrome-100: #eef4f2;
+  --spa-palette-chrome-accent: #86dccd;
+  --spa-palette-canvas: #0d0c0a;
+}
+
+/* Choix explicite « clair » : le jeu du bloc `:root`, même sur un système sombre. */
+:root[data-theme='light'] {
+  color-scheme: light;
 }

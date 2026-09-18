@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { Icon } from '@/components/ui/icon';
 
 import { adminLogoutAction } from '../actions';
 import { adminLoginPath } from '../paths';
@@ -66,6 +67,7 @@ export function AdminLogoutButton({ tenantSlug }: AdminLogoutButtonProps) {
       loadingLabel="Déconnexion en cours…"
       onClick={() => void logout()}
     >
+      <Icon className="spa-admin__logout-icon" name="logout" />
       Se déconnecter
     </Button>
   );

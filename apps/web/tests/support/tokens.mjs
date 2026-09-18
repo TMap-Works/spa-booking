@@ -322,7 +322,7 @@ export function readDarkTokenDeclarations() {
     throw new Error('tokens.css : aucun bloc @media (prefers-color-scheme: dark) trouvé.');
   }
 
-  const root = media[1].match(/:root\s*\{([\s\S]*?)\n\s+\}/);
+  const root = media[1].match(/:root[^{]*\{([\s\S]*?)\n\s+\}/);
   if (!root) {
     throw new Error('tokens.css : le bloc sombre ne déclare aucun :root.');
   }
@@ -331,6 +331,27 @@ export function readDarkTokenDeclarations() {
   const pattern = /(--[\w-]+)\s*:\s*([^;]+);/g;
   let match;
   while ((match = pattern.exec(root[1])) !== null) {
+    declarations.set(match[1], match[2].trim().replace(/\s+/g, ' '));
+  }
+  return declarations;
+}
+
+/**
+ * Déclarations du bloc `:root[data-theme='dark']` de `tokens.css` — le choix
+ * explicite « sombre » du sélecteur de thème (#855). Il doit rester identique
+ * au bloc de média, ce que `tokens.test.mjs` vérifie.
+ */
+export function readExplicitDarkTokenDeclarations() {
+  const css = stripComments(readStyleSheet(tokensFile));
+  const block = css.match(/:root\[data-theme='dark'\]\s*\{([\s\S]*?)\n\}/);
+  if (!block) {
+    throw new Error("tokens.css : aucun bloc :root[data-theme='dark'] trouvé.");
+  }
+
+  const declarations = new Map();
+  const pattern = /(--[\w-]+)\s*:\s*([^;]+);/g;
+  let match;
+  while ((match = pattern.exec(block[1])) !== null) {
     declarations.set(match[1], match[2].trim().replace(/\s+/g, ' '));
   }
   return declarations;

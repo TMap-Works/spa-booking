@@ -109,6 +109,8 @@ const PAIRS = [
   ['--spa-color-text', '--spa-color-surface', AA_TEXT, 'texte / surface'],
   ['--spa-color-text', '--spa-color-surface-raised', AA_TEXT, 'texte / surface surélevée'],
   ['--spa-color-text', '--spa-color-surface-sunken', AA_TEXT, 'texte / surface creusée'],
+  ['--spa-color-text', '--spa-color-canvas', AA_TEXT, 'texte / fond du back-office'],
+  ['--spa-color-text-muted', '--spa-color-canvas', AA_TEXT, 'texte atténué / fond du back-office'],
   ['--spa-color-text-muted', '--spa-color-surface', AA_TEXT, 'texte atténué / surface'],
   ['--spa-color-text-muted', '--spa-color-surface-raised', AA_TEXT, 'texte atténué / surface surélevée'],
   ['--spa-color-text-muted', '--spa-color-surface-sunken', AA_TEXT, 'texte atténué / surface creusée'],
@@ -122,6 +124,15 @@ const PAIRS = [
   ['--spa-color-text-inverse', '--spa-color-surface-inverse-raised', AA_TEXT, 'texte inversé / surface inversée surélevée'],
   ['--spa-color-text-inverse-muted', '--spa-color-surface-inverse', AA_TEXT, 'texte inversé atténué / surface inversée'],
   ['--spa-color-text-inverse-muted', '--spa-color-surface-inverse-raised', AA_TEXT, 'texte inversé atténué / surface inversée surélevée'],
+  // Chrome du back-office (barre latérale sombre dans les deux thèmes) : repos,
+  // survol, et entrée courante.
+  ['--spa-color-text-on-chrome', '--spa-color-chrome', AA_TEXT, 'texte chrome / chrome'],
+  ['--spa-color-text-on-chrome', '--spa-color-chrome-raised', AA_TEXT, 'texte chrome / chrome surélevé'],
+  ['--spa-color-text-on-chrome', '--spa-color-chrome-active', AA_TEXT, 'texte chrome / chrome actif'],
+  ['--spa-color-text-on-chrome-muted', '--spa-color-chrome', AA_TEXT, 'texte chrome atténué / chrome'],
+  ['--spa-color-text-on-chrome-muted', '--spa-color-chrome-raised', AA_TEXT, 'texte chrome atténué / chrome surélevé'],
+  ['--spa-color-accent-on-chrome', '--spa-color-chrome', AA_TEXT, 'accent chrome / chrome'],
+  ['--spa-color-accent-on-chrome', '--spa-color-chrome-active', AA_TEXT, 'accent chrome / chrome actif'],
 
   // --- Accent : les trois états du bouton « Réserver » ---
   ['--spa-color-text-on-accent', '--spa-color-accent', AA_TEXT, 'texte sur accent / accent au repos'],

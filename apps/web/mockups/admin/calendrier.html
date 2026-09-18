@@ -10,22 +10,53 @@
   <body>
     <div class="spa-admin">
       <nav class="spa-admin__rail" aria-label="Sections du tableau de bord">
-        <span class="spa-admin__brand">Maison Lotus</span>
+        <div class="spa-admin__brand-block">
+          <span class="spa-admin__logo" aria-hidden="true">ML</span>
+          <span class="spa-admin__brand-text">
+            <span class="spa-admin__brand">Maison Lotus</span>
+            <span class="spa-admin__brand-caption">Back-office</span>
+          </span>
+        </div>
         <div class="spa-admin__nav">
-          <a class="spa-admin__nav-link" href="calendrier.html" aria-current="page">Planning</a>
-          <a class="spa-admin__nav-link" href="rendez-vous.html">Rendez-vous</a>
-          <a class="spa-admin__nav-link" href="fiche-client.html">Clients</a>
-          <a class="spa-admin__nav-link" href="personnel.html">Personnel</a>
-          <a class="spa-admin__nav-link" href="encaissement.html">Encaissement</a>
+          <div class="spa-admin__nav-group">
+            <span class="spa-admin__nav-group-label" aria-hidden="true">Au quotidien</span>
+            <a class="spa-admin__nav-link" href="calendrier.html" aria-current="page"><svg class="spa-icon spa-admin__nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg>Planning</a>
+            <a class="spa-admin__nav-link" href="encaissement.html"><svg class="spa-icon spa-admin__nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg>Encaissement</a>
+            <a class="spa-admin__nav-link" href="fiche-client.html"><svg class="spa-icon spa-admin__nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg>Clients</a>
+          </div>
+          <div class="spa-admin__nav-group">
+            <span class="spa-admin__nav-group-label" aria-hidden="true">Gestion</span>
+            <a class="spa-admin__nav-link" href="rendez-vous.html"><svg class="spa-icon spa-admin__nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg>Rendez-vous</a>
+            <a class="spa-admin__nav-link" href="personnel.html"><svg class="spa-icon spa-admin__nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg>Personnel</a>
+          </div>
         </div>
         <div class="spa-admin__rail-footer">
           <strong>Maison Lotus — Antananarivo</strong>
-          <span>Fuseau du salon : Indian/Antananarivo (UTC+3)</span>
-          <span>Connectée : Hasina R., gérante</span>
+          <span class="spa-admin__rail-meta"><svg class="spa-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg><span>Fuseau du salon : Indian/Antananarivo (UTC+3)</span></span>
+          <div class="spa-admin__user">
+            <span class="spa-admin__avatar" aria-hidden="true">HR</span>
+            <span class="spa-admin__user-text">
+              <span class="spa-visually-hidden">Connectée : </span>
+              <span class="spa-admin__user-name">Hasina R.</span>
+              <span class="spa-admin__user-role">gérante</span>
+            </span>
+          </div>
+          <button class="spa-button spa-button--quiet" type="button">
+            <span class="spa-button__label"><svg class="spa-icon spa-admin__logout-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg>Se déconnecter</span>
+          </button>
         </div>
       </nav>
 
       <div class="spa-admin__main">
+        <header class="spa-admin-topbar">
+          <div class="spa-admin-topbar__context">
+            <span class="spa-admin-topbar__eyebrow">Maison Lotus</span>
+            <span class="spa-admin-topbar__date">Mardi 26 août 2026</span>
+          </div>
+          <div class="spa-admin-topbar__actions">
+            <a class="spa-admin-topbar__link" href="index.html"><svg class="spa-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="8"/></svg><span>Voir ma vitrine</span></a>
+          </div>
+        </header>
         <header class="spa-admin__topbar">
           <h1 class="spa-admin__title">Planning</h1>
           <div class="spa-admin__topbar-actions">
@@ -125,8 +156,11 @@
               <div class="spa-admin-calendar__head">
                 <div class="spa-admin-calendar__head-spacer"></div>
                 <div class="spa-admin-calendar__column-head" id="col-hasina">
-                  <span class="spa-admin-calendar__column-name">Hasina</span>
-                  <span class="spa-admin-calendar__column-meta">Massages · 09 h – 18 h</span>
+                  <span class="spa-admin-calendar__column-avatar" aria-hidden="true">HR</span>
+                  <span class="spa-admin-calendar__column-text">
+                    <span class="spa-admin-calendar__column-name">Hasina</span>
+                    <span class="spa-admin-calendar__column-meta">Massages · 09 h – 18 h</span>
+                  </span>
                 </div>
                 <div class="spa-admin-calendar__column-head" id="col-tiana">
                   <span class="spa-admin-calendar__column-name">Tiana</span>

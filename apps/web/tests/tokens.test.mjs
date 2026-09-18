@@ -18,6 +18,7 @@ import {
   entryPoints,
   listStyleSheets,
   readDarkTokenDeclarations,
+  readExplicitDarkTokenDeclarations,
   readSchemeDeclarations,
   readStyleSheet,
   readTokenDeclarations,
@@ -125,6 +126,19 @@ describe('Deux couches, et une seule qui porte des littéraux', () => {
         );
       }
     }
+  });
+});
+
+describe('Thème sombre — choix explicite (#855)', () => {
+  it('applique exactement le jeu de la requête de média', () => {
+    // Le sélecteur de thème pose `data-theme="dark"` sur `<html>` : le bloc qui
+    // lui répond est une recopie du bloc de média, et une valeur qui ne serait
+    // corrigée que dans l'un des deux ferait deux thèmes sombres différents.
+    assert.deepEqual(
+      [...readExplicitDarkTokenDeclarations()].sort(),
+      [...darkDeclarations].sort(),
+      "le bloc :root[data-theme='dark'] et le bloc de média sombre ont divergé.",
+    );
   });
 });
 

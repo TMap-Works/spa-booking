@@ -1,0 +1,61 @@
+/**
+ * Sélecteur de thème Système / Clair / Sombre (#855) — `components/ui/theme-toggle.tsx`.
+ *
+ * Trois radios natifs posés sur leur pastille : le bouton radio reste la cible
+ * réelle (clavier, lecteur d'écran), invisible mais couvrant toute la pastille.
+ */
+
+.spa-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-inline-size: 0;
+  margin: 0;
+  padding: 3px;
+  background-color: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-full);
+  box-shadow: var(--spa-shadow-xs);
+}
+
+.spa-theme-toggle__option {
+  position: relative;
+  display: grid;
+  place-items: center;
+  inline-size: 2.25rem;
+  block-size: 2.25rem;
+  border-radius: var(--spa-radius-full);
+  color: var(--spa-color-text-muted);
+  cursor: pointer;
+  transition:
+    background-color var(--spa-duration-fast) var(--spa-easing-standard),
+    color var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-theme-toggle__input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.spa-theme-toggle__option:hover {
+  background-color: var(--spa-color-surface-sunken);
+  color: var(--spa-color-text);
+}
+
+.spa-theme-toggle__option:has(.spa-theme-toggle__input:checked) {
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+}
+
+.spa-theme-toggle__option:has(.spa-theme-toggle__input:focus-visible) {
+  outline: var(--spa-focus-ring-width) solid var(--spa-color-focus);
+  outline-offset: var(--spa-focus-ring-offset);
+}
+
+.spa-theme-toggle__icon {
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+}

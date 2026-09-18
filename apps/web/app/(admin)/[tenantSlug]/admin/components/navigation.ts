@@ -3,6 +3,7 @@ import { hasAtLeastRole, type UserRole } from '@spa/shared';
 import { adminClientsPath } from '../clients/paths';
 import {
   adminCalendarPath,
+  adminDashboardPath,
   adminCatalogPath,
   adminCheckoutPath,
   adminReportingPath,
@@ -80,6 +81,13 @@ export function roleLabel(role: UserRole): string {
  */
 export function adminNavigation(tenantSlug: string, role: UserRole): readonly AdminNavEntry[] {
   const entries: readonly AdminNavEntry[] = [
+    {
+      key: 'tableau-de-bord',
+      label: 'Tableau de bord',
+      href: adminDashboardPath(tenantSlug),
+      minimumRole: 'manager',
+      upcoming: null,
+    },
     {
       key: 'planning',
       label: 'Planning',

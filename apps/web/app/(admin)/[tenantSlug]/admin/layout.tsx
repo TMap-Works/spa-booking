@@ -1,14 +1,28 @@
 import type { UserRole } from '@spa/shared';
 import type { Metadata } from 'next';
+import { Inter } from 'next/font/google';
 import type { ReactNode } from 'react';
 
 import { ApiClientError, fetchOwnProfile, fetchPublicTenant } from '@/lib/api-client';
 
 import { AdminRail } from './components/admin-rail';
+import { AdminTopbar } from './components/admin-topbar';
 import type { AdminEstablishment } from './components/establishment-switcher';
 import { readAdminAccessToken } from './session';
 
 import '../../../../styles/admin/index.css';
+
+/**
+ * La police du back-office : Inter, dessinée pour les interfaces denses — des
+ * chiffres tabulaires nets pour le planning, la caisse et le reporting.
+ * Auto-hébergée par `next/font` au build : aucune requête vers Google au
+ * chargement de la page.
+ */
+const adminFont = Inter({
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--spa-admin-font',
+});
 
 /**
  * L'enveloppe du back-office — le shell (#48).
@@ -249,20 +263,23 @@ export default async function AdminLayout({ children, params }: AdminLayoutProps
   const { tenantSlug } = await params;
   const shell = await loadAdminShell(tenantSlug);
 
-  const main = (
-    <div className="spa-admin__main">
-      <main className="spa-admin__content" id="contenu">
-        {children}
-      </main>
-    </div>
+  const content = (
+    <main className="spa-admin__content" id="contenu">
+      {children}
+    </main>
   );
+
+  const main = <div className={`spa-admin__main ${adminFont.variable}`}>{content}</div>;
 
   if (shell === null) {
     return main;
   }
 
+  const salonName =
+    shell.establishments.find((salon) => salon.slug === tenantSlug)?.name ?? tenantSlug;
+
   return (
-    <div className="spa-admin">
+    <div className={`spa-admin ${adminFont.variable}`}>
       <AdminRail
         establishments={shell.establishments}
         role={shell.role}
@@ -270,7 +287,10 @@ export default async function AdminLayout({ children, params }: AdminLayoutProps
         timeZone={shell.timeZone}
         userName={shell.userName}
       />
-      {main}
+      <div className="spa-admin__main">
+        <AdminTopbar salonName={salonName} tenantSlug={tenantSlug} timeZone={shell.timeZone} />
+        {content}
+      </div>
     </div>
   );
 }
