@@ -1,9 +1,8 @@
 /**
  * L'écran terminal du tunnel — ce qui en sort, et ce qu'il a le droit d'affirmer
- * (#732).
+ * (#732, #1051).
  *
- * Trois choses lui étaient reprochées par l'audit de conception `d20260916-1`, et
- * la suite les tient séparément :
+ * Trois choses lui étaient reprochées par l'audit de conception `d20260916-1` :
  *
  * - **il ne sortait nulle part.** La seule action offerte était « Annuler ce
  *   rendez-vous », alors que `docs/design/appointments/wireframes.md` — Étape 6
@@ -15,6 +14,13 @@
  * - **sa preuve de réservation ne se lisait pas** (#736). Un UUID de trente-six
  *   caractères en gris atténué, et le conseil de conserver une page qui ne
  *   survit pas à son onglet.
+ *
+ * `d20260918-1` en ajoute une quatrième, que #1051 traite : **le moment « c'est
+ * réservé » ne se voyait pas**. Un encart vert de douze lignes de texte ouvrait
+ * l'écran, la date était noyée dans une liste de définitions, et trois actions
+ * s'y présentaient dans trois styles différents. L'écran annonce désormais
+ * l'issue — pastille, titre, une phrase —, montre la carte du rendez-vous, et
+ * hiérarchise ses sorties autour d'un seul bouton plein.
  */
 
 import type { BookedAppointment } from '@spa/shared';
@@ -53,7 +59,11 @@ function appointment(overrides: Partial<BookedAppointment> = {}): BookedAppointm
 }
 
 function renderConfirmation(
-  options: { readonly restored?: boolean; readonly cancelled?: boolean } = {},
+  options: {
+    readonly restored?: boolean;
+    readonly cancelled?: boolean;
+    readonly pending?: boolean;
+  } = {},
 ) {
   const onRestart = vi.fn();
   const onCancelled = vi.fn();
@@ -65,7 +75,9 @@ function renderConfirmation(
       appointment={
         options.cancelled === true
           ? appointment({ status: 'cancelled', cancelledAt: '2026-08-31T10:00:00.000Z' })
-          : appointment()
+          : options.pending === true
+            ? appointment({ status: 'pending' })
+            : appointment()
       }
       contact={contact}
       restored={options.restored ?? false}
@@ -101,18 +113,54 @@ describe('l’écran terminal est une sortie', () => {
     expect(lien.getAttribute('href')).toBe('/maison-lotus/compte');
   });
 
-  it('donne l’accent au renvoi vers l’espace client, et non à la reprise (#736)', () => {
-    renderConfirmation();
+  /*
+   * `BM-RDV-03` — « le rendez-vous rejoint l'agenda du téléphone, ce qui réduit
+   * les oublis ». C'est l'action que l'écran met en avant depuis #1051 :
+   * « Voir mes rendez-vous » mène à une surface que la moitié des clientes — celles
+   * qui ont réservé sans compte — ne peuvent pas ouvrir, là où le fichier
+   * d'agenda fonctionne pour tout le monde, tout de suite.
+   */
+  it('donne l’accent à l’ajout à l’agenda, et un seul bouton plein à l’écran', () => {
+    const { container } = renderConfirmation();
 
-    // L'écran ne se conserve pas — il vit dans le `sessionStorage` de l'onglet.
-    // La sortie qu'il met en avant est donc celle qui mène là où le rendez-vous
-    // vit encore une fois l'onglet fermé, et non celle qui en ouvre un second.
+    const agenda = screen.getByRole('link', { name: 'Ajouter à mon agenda' });
+
+    expect(agenda.className).toContain('spa-button--accent');
     expect(screen.getByRole('link', { name: 'Voir mes rendez-vous' }).className).toContain(
-      'spa-button--accent',
-    );
-    expect(screen.getByRole('button', { name: 'Réserver à nouveau' }).className).toContain(
       'spa-button--neutral',
     );
+    expect(screen.getByRole('button', { name: 'Réserver à nouveau' }).className).toContain(
+      'spa-button--quiet',
+    );
+    // BM-VISUEL-02 : un seul bouton plein par écran.
+    expect(container.querySelectorAll('.spa-button--accent')).toHaveLength(1);
+  });
+
+  it('télécharge un fichier d’agenda nommé par la référence, pas par un UUID', () => {
+    renderConfirmation();
+
+    const agenda = screen.getByRole('link', { name: 'Ajouter à mon agenda' });
+
+    expect(agenda.getAttribute('download')).toBe('rendez-vous-RDV-8F3K-27.ics');
+
+    const href = agenda.getAttribute('href') ?? '';
+
+    expect(href.startsWith('data:text/calendar;charset=utf-8,')).toBe(true);
+
+    const ics = decodeURIComponent(href.slice('data:text/calendar;charset=utf-8,'.length));
+
+    // ADR 0006 : l'instant est écrit en UTC — la seule écriture qui désigne sans
+    // ambiguïté l'heure du salon, quel que soit le fuseau de l'agenda qui
+    // l'ouvre. 06:00 UTC, c'est bien le 09:00 affiché à Antananarivo.
+    expect(ics).toContain('DTSTART:20260901T060000Z');
+    expect(ics).toContain('DTEND:20260901T070000Z');
+    expect(
+      new Intl.DateTimeFormat('fr-FR', {
+        timeZone: tenant.timezone,
+        timeStyle: 'short',
+      }).format(new Date('2026-09-01T06:00:00.000Z')),
+    ).toBe('09:00');
+    expect(ics).toContain('SUMMARY:Massage suédois — Maison Lotus');
   });
 
   it('range l’annulation en action secondaire, le rouge restant au geste destructif', async () => {
@@ -140,6 +188,7 @@ describe('l’écran terminal est une sortie', () => {
     // y répondre.
     expect(screen.queryByRole('button', { name: 'Réserver à nouveau' })).toBeNull();
     expect(screen.queryByRole('link', { name: 'Voir mes rendez-vous' })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Ajouter à mon agenda' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Garder mon rendez-vous' })).toBeDefined();
   });
 
@@ -149,6 +198,13 @@ describe('l’écran terminal est une sortie', () => {
     expect(screen.getByRole('button', { name: 'Réserver à nouveau' })).toBeDefined();
     expect(screen.getByRole('link', { name: 'Voir mes rendez-vous' })).toBeDefined();
     expect(screen.queryByRole('button', { name: 'Annuler ce rendez-vous' })).toBeNull();
+    // Rien à ajouter à un agenda : le rendez-vous ne figure plus nulle part.
+    // Le bouton n'est pas rendu, plutôt que désactivé.
+    expect(screen.queryByRole('link', { name: 'Ajouter à mon agenda' })).toBeNull();
+    // L'accent passe alors à la seule action qui reste utile.
+    expect(screen.getByRole('button', { name: 'Réserver à nouveau' }).className).toContain(
+      'spa-button--accent',
+    );
   });
 
   it('nomme la reprise d’un seul libellé, celui du wireframe', () => {
@@ -162,20 +218,46 @@ describe('l’écran terminal est une sortie', () => {
   });
 });
 
+/**
+ * L'issue annoncée en tête d'écran (#1051, #948).
+ *
+ * `BM-CONFIRM-01` veut qu'on sache immédiatement où l'on en est ; #948 veut que
+ * ce soit honnête. Les deux se tiennent dans le même bloc : la pastille suit le
+ * **statut réel** du rendez-vous, et les mots de l'attente sont ceux de la
+ * pastille de l'espace client (#743, #917).
+ */
 describe('ce que l’écran a le droit d’affirmer', () => {
-  it('annonce le rendez-vous enregistré quand il sort de la réponse de l’API', () => {
+  it('annonce la réservation faite quand le salon a confirmé', () => {
     renderConfirmation();
 
-    expect(screen.getByText('Votre rendez-vous est enregistré')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'C’est réservé !' })).toBeDefined();
+  });
+
+  it('n’annonce qu’une demande tant que le salon n’a pas confirmé', () => {
+    // Le rendez-vous naît `pending` côté API : c'est le cas courant à la sortie
+    // du tunnel, et l'annoncer « réservé » ferait mentir l'écran.
+    renderConfirmation({ pending: true });
+
+    expect(screen.getByRole('heading', { name: 'Demande envoyée' })).toBeDefined();
+    expect(screen.queryByRole('heading', { name: 'C’est réservé !' })).toBeNull();
+
+    const ligne = screen.getByText(new RegExp(PENDING_CONFIRMATION_LABEL));
+
+    // Ce que l'attente attend, et ce qu'elle ne coûte pas : le créneau est déjà
+    // retenu — `pending` bloque le créneau côté API — et rien n'est demandé à la
+    // cliente. La phrase est celle de `appointment-brief.ts`, partagée avec la
+    // carte du prochain rendez-vous de l'espace client.
+    expect(ligne.textContent).toContain('Votre créneau est retenu');
+    expect(ligne.textContent).toContain('rien à faire de votre côté');
   });
 
   it('n’affirme plus rien quand il ne fait que resservir le brouillon', () => {
     renderConfirmation({ restored: true });
 
-    // « enregistré » est une affirmation sur l'agenda du salon, que le front n'a
-    // aucun moyen de vérifier : aucune lecture publique d'un rendez-vous
-    // n'existe côté API.
-    expect(screen.queryByText('Votre rendez-vous est enregistré')).toBeNull();
+    // Une pastille de succès est une affirmation sur l'agenda du salon, que le
+    // front n'a aucun moyen de vérifier : aucune lecture publique d'un
+    // rendez-vous n'existe côté API.
+    expect(screen.queryByRole('heading', { name: 'C’est réservé !' })).toBeNull();
 
     const avis = screen.getByText('Votre dernière réservation dans cet onglet');
 
@@ -187,35 +269,12 @@ describe('ce que l’écran a le droit d’affirmer', () => {
     expect(screen.getByRole('link', { name: 'Voir mes rendez-vous' })).toBeDefined();
   });
 
-  it('dit l’état dans les mots exacts de l’espace client, et pas dans les siens', () => {
-    // Le reproche de l'audit `d20260916-1` sur `ds:libelles` : trois mots pour un
-    // fait — « Confirmer la réservation », « Votre rendez-vous est enregistré »,
-    // « En attente de confirmation ». L'écran nomme désormais l'état avec la
-    // constante que la pastille emploie, si bien qu'aucun des deux ne peut
-    // dériver sans l'autre (#743).
-    renderConfirmation();
-
-    const message = screen.getByText('Votre rendez-vous est enregistré').parentElement?.textContent;
-
-    expect(screen.getByText(`${PENDING_CONFIRMATION_LABEL}.`)).toBeDefined();
-    // Ce que l'attente attend, et ce qu'elle ne coûte pas : le créneau est déjà
-    // retenu — `pending` bloque le créneau côté API — et rien n'est demandé à la
-    // cliente.
-    expect(message).toContain('Votre créneau est retenu dès maintenant');
-    expect(message).toContain('sans démarche de votre part');
-    // L'accusé automatique du CDC §1.4 part sur un rendez-vous encore `PENDING` :
-    // l'appeler « e-mail de confirmation » deux lignes sous « à confirmer par le
-    // salon » ferait croire que la confirmation attendue est arrivée.
-    expect(message).toContain('e-mail récapitulatif');
-    expect(message).not.toContain('e-mail de confirmation');
-  });
-
   it('dit annulé ce que l’API vient d’annuler, même restitué depuis le brouillon', () => {
     // L'annulation, elle, est un état que le brouillon ne peut pas inventer :
     // il n'y arrive que par la réponse de l'API.
     renderConfirmation({ restored: true, cancelled: true });
 
-    expect(screen.getByText('Votre rendez-vous est annulé')).toBeDefined();
+    expect(screen.getByRole('heading', { name: 'Votre rendez-vous est annulé' })).toBeDefined();
   });
 });
 
@@ -244,8 +303,7 @@ describe('la référence du rendez-vous', () => {
     // Rien de secret : c'est la donnée du brouillon de cet onglet, et celle que
     // l'annulation envoie déjà à l'API. Mais c'est aussi ce dont le parcours
     // critique se sert pour retrouver en API le rendez-vous qu'il vient de
-    // prendre (`tests/e2e/support/scene.ts`). La référence, elle, se résout
-    // désormais aussi — mais derrière une garde `STAFF` (#796).
+    // prendre (`tests/e2e/support/scene.ts`).
     expect(
       container.querySelector('[data-appointment-id]')?.getAttribute('data-appointment-id'),
     ).toBe('55555555-5555-4555-8555-555555555555');
@@ -261,44 +319,50 @@ describe('la référence du rendez-vous', () => {
 });
 
 describe('ce que l’écran demande de faire de lui', () => {
-  it('ne demande plus de conserver la page, et renvoie à l’espace client', () => {
-    renderConfirmation();
+  it('annonce l’e-mail et l’espace client en une ligne, sans demander de conserver la page', () => {
+    const { container } = renderConfirmation();
 
-    const message = screen.getByText('Votre rendez-vous est enregistré').parentElement?.textContent;
+    const ligne = container.querySelector('.spa-booking__sent')?.textContent ?? '';
 
     // « Conservez cette page : c'est d'ici que vous pouvez annuler » promettait
     // une permanence que la fermeture de l'onglet emporte —
     // `notification-content.ts` le dit lui-même en expliquant pourquoi le
     // `{{lien_annulation}}` de l'e-mail pointe l'espace client et pas cet écran.
-    expect(message).not.toContain('Conservez cette page');
-    expect(message).toContain('votre espace');
+    expect(ligne).not.toContain('Conservez cette page');
+    // L'accusé automatique du CDC §1.4 part sur un rendez-vous encore `PENDING` :
+    // l'appeler « e-mail de confirmation » sous une pastille « à confirmer par le
+    // salon » ferait croire que la confirmation attendue est arrivée.
+    expect(ligne).toContain('e-mail récapitulatif');
+    expect(ligne).not.toContain('e-mail de confirmation');
+    expect(ligne).toContain('camille@example.test');
     // La condition reste dite : une réservation d'invitée crée une fiche sans
     // mot de passe, et l'espace client n'est pas promis à qui n'a pas de compte.
-    expect(message).toContain('compte client');
+    expect(ligne).toContain('compte client');
   });
 
-  it('garde à qui n’a pas de compte le recours que « Conservez cette page » protégeait', () => {
-    renderConfirmation();
+  it('ne promet plus rien de l’e-mail une fois le rendez-vous annulé', () => {
+    const { container } = renderConfirmation({ cancelled: true });
 
-    const message = screen.getByText('Votre rendez-vous est enregistré').parentElement?.textContent;
-
-    // Retirer la phrase sans rien mettre à la place aurait laissé une cliente
-    // sans compte devant un renvoi qui l'envoie sur un mur de connexion, sans
-    // qu'on lui ait dit que le bouton d'annulation est juste au-dessous.
-    expect(message).toContain('Sans compte');
-    expect(message).toContain('tant que cet onglet reste ouvert');
-    expect(screen.getByRole('button', { name: 'Annuler ce rendez-vous' })).toBeDefined();
+    expect(container.querySelector('.spa-booking__sent')).toBeNull();
   });
 });
 
 /**
- * La durée figure au récapitulatif, et vient du rendez-vous (#735).
+ * La carte du rendez-vous (#735, #1051).
  *
- * Elle manquait à la liste : la cliente ne la lisait que parce que les
- * prestations du jeu d'essai la portent dans leur nom.
+ * La durée manquait à la liste : la cliente ne la lisait que parce que les
+ * prestations du jeu d'essai la portent dans leur nom. Depuis #1051 elle
+ * qualifie la plage horaire, en retrait typographique (`BM-VISUEL-03`).
  */
-describe('la durée du rendez-vous', () => {
-  it('est déduite de l’intervalle du rendez-vous, et non de la prestation reçue', () => {
+describe('la carte du rendez-vous', () => {
+  it('donne la plage horaire dans le fuseau du salon, au premier écran', () => {
+    renderConfirmation();
+
+    // 06:00 → 07:00 UTC, lus à Antananarivo (UTC+3).
+    expect(screen.getByText(/09:00 – 10:00/)).toBeDefined();
+  });
+
+  it('déduit la durée de l’intervalle du rendez-vous, et non de la prestation reçue', () => {
     // Le catalogue de ce rendu annonce 60 minutes, l'intervalle en porte 90 :
     // c'est bien le second qui s'affiche. Ce n'est pas une garantie de gel —
     // l'API recalcule `endsAt` avec la durée courante (`billed-interval.ts`) —
@@ -316,8 +380,7 @@ describe('la durée du rendez-vous', () => {
       />,
     );
 
-    expect(screen.getByText('Durée')).toBeDefined();
-    expect(screen.getByText('1 h 30')).toBeDefined();
+    expect(screen.getByText('· 1 h 30')).toBeDefined();
   });
 
   it('s’omet plutôt que de rendre une durée que l’intervalle ne donne pas', () => {
@@ -335,6 +398,14 @@ describe('la durée du rendez-vous', () => {
       />,
     );
 
-    expect(screen.queryByText('Durée')).toBeNull();
+    expect(screen.queryByText(/^·/)).toBeNull();
+    // L'heure de début reste écrite : c'est la borne dont on est sûr.
+    expect(screen.getByText('09:00')).toBeDefined();
+  });
+
+  it('n’offre aucune correction : le créneau est pris', () => {
+    renderConfirmation();
+
+    expect(screen.queryByRole('button', { name: /^Modifier/ })).toBeNull();
   });
 });

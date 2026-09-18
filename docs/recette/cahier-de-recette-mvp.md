@@ -161,11 +161,11 @@ rendez-vous ou de la ressource en cause. **Il ne se contourne pas.**
 - *Gestes* : choisir prestation et créneau, saisir prénom, nom, adresse e-mail
   **inconnue du salon**, téléphone au format international, un mot pour le salon,
   puis « Vérifier ma réservation » et « Confirmer la réservation ».
-- *Attendu* : l'écran de confirmation « Votre rendez-vous est enregistré », le
-  récapitulatif, et une **référence** (l'identifiant du rendez-vous). Le
-  rendez-vous apparaît immédiatement au planning du back-office, au statut
-  **« à confirmer »** : un rendez-vous public naît `PENDING` et **occupe déjà**
-  l'agenda.
+- *Attendu* : l'écran de confirmation « Demande envoyée » — l'issue annoncée est
+  celle du statut réel (#1051) —, la carte du rendez-vous, et une **référence**
+  (« Réf. RDV-… »). Le rendez-vous apparaît immédiatement au planning du
+  back-office, au statut **« à confirmer »** : un rendez-vous public naît
+  `PENDING` et **occupe déjà** l'agenda.
 - [ ] Verdict
 
 **RC-08 · Le double clic ne produit pas deux rendez-vous**

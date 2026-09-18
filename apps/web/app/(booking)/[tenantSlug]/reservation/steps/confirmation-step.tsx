@@ -16,13 +16,20 @@ import { useState } from 'react';
 // l'espace client et du back-office à la fois (#917).
 import { PENDING_CONFIRMATION_LABEL } from '@/lib/appointment-status';
 import { accountPath } from '@/app/(account)/[tenantSlug]/compte/paths';
+import {
+  appointmentIcsFilename,
+  appointmentIcsHref,
+  PENDING_HOLD_NOTE,
+  type AppointmentBrief,
+} from '@/components/account/appointment-brief';
 import { Button } from '@/components/ui/button';
+import { Icon, type IconName } from '@/components/ui/icon';
 import { Notification } from '@/components/ui/notification';
 import type { ContactDraft } from '@/lib/booking/draft';
 
 import { cancelAppointmentAction } from '../actions';
 
-import { Recap } from './recap';
+import { BookingAppointmentCard } from './appointment-card';
 
 interface ConfirmationStepProps {
   readonly tenant: PublicTenant;
@@ -72,9 +79,88 @@ function bookedMinutes(appointment: BookedAppointment): number | null {
   return Number.isFinite(minutes) && minutes > 0 ? Math.round(minutes) : null;
 }
 
+/** L'issue annoncée en tête d'écran — la pastille, le titre, et la phrase. */
+interface Outcome {
+  /** Le ton de la pastille : la couleur, et rien d'autre. */
+  readonly tone: 'done' | 'pending' | 'cancelled';
+  readonly icon: IconName;
+  readonly title: string;
+  readonly line: string;
+}
+
+/**
+ * Ce que l'écran annonce, selon l'état **réel** du rendez-vous (#948, #1051).
+ *
+ * Trois issues, et jamais une quatrième formulation : le rendez-vous naît
+ * `pending` côté API (`appointments.repository.ts`), et annoncer « c'est
+ * réservé » sur une demande que le salon n'a pas encore confirmée ferait mentir
+ * cet écran **et** contredire la pastille de l'espace client. Le mot de l'attente
+ * est donc celui de `lib/appointment-status.ts`, et la phrase qui la qualifie
+ * celle de `appointment-brief.ts` : deux écrans qui parlent du même rendez-vous
+ * doivent en parler pareil (#743, #917).
+ *
+ * Rend `null` quand l'écran n'a le droit de rien affirmer — le brouillon relu
+ * d'un rendez-vous encore actif. Voir « Ce que cet écran n'est pas ».
+ */
+function outcomeOf(appointment: BookedAppointment, restored: boolean): Outcome | null {
+  if (appointment.status === 'cancelled') {
+    // L'annulation est le seul état que le brouillon ne peut pas inventer : il
+    // n'y arrive que par la réponse de l'API. Elle prime donc sur `restored`.
+    return {
+      tone: 'cancelled',
+      icon: 'close',
+      title: 'Votre rendez-vous est annulé',
+      line: 'Il ne figure plus à l’agenda du salon. Vous pouvez en prendre un nouveau quand vous le souhaitez.',
+    };
+  }
+
+  if (restored) {
+    return null;
+  }
+
+  if (appointment.status === 'pending') {
+    return {
+      tone: 'pending',
+      icon: 'clock',
+      title: 'Demande envoyée',
+      line: `${PENDING_CONFIRMATION_LABEL}. ${PENDING_HOLD_NOTE}`,
+    };
+  }
+
+  return {
+    tone: 'done',
+    icon: 'check',
+    title: 'C’est réservé !',
+    line: 'Le salon a confirmé votre rendez-vous.',
+  };
+}
+
 /**
  * Écran de confirmation — cinquième critère d'acceptation de #45 : récapitulatif
  * et lien d'annulation.
+ *
+ * ## Ce que #1051 y change
+ *
+ * L'audit `d20260918-1` relève *« un encart vert de douze lignes de texte »*
+ * ouvrant l'écran, la date du rendez-vous noyée dans une liste de définitions, et
+ * *« trois actions dans trois styles différents »* — le moment « c'est réservé »
+ * ne se voyait pas. L'écran est donc devenu ce que `BM-CONFIRM-01` décrit :
+ *
+ * - une **pastille** et un titre qui disent l'issue en un coup d'œil, suivis
+ *   d'une seule phrase. Le statut annoncé est le statut réel (`outcomeOf`) ;
+ * - la **carte du rendez-vous**, celle du récapitulatif qu'on vient de valider et
+ *   celle de l'espace client : date en bloc, plage horaire, prestation,
+ *   praticien, salon, total. À 360 px la date et l'heure sont au premier écran ;
+ * - des actions **hiérarchisées** : « Ajouter à mon agenda » est le seul bouton
+ *   plein (`BM-RDV-03`, `BM-VISUEL-02`), « Voir mes rendez-vous » est en contour,
+ *   le reste est discret.
+ *
+ * Le fichier d'agenda n'a pas de route à lui : `appointmentIcsHref` (#1053) rend
+ * une URL de données calculée au rendu, si bien que le lien sort complet du
+ * serveur et fonctionne même si le script ne charge jamais. Ses `DTSTART` et
+ * `DTEND` sont des **instants** UTC — la seule écriture qui désigne sans
+ * ambiguïté l'heure du salon, quel que soit le fuseau de l'agenda qui l'ouvre
+ * (ADR 0006).
  *
  * ## C'est une sortie, pas un cul-de-sac (#732)
  *
@@ -84,16 +170,11 @@ function bookedMinutes(appointment: BookedAppointment): number | null {
  * visiteur revenu sur le tunnel dans la même session n'avait plus qu'un geste
  * disponible — et c'était le destructif.
  *
- * Les trois actions ne sont donc pas de même rang : **« Voir mes rendez-vous »**
- * mène à l'espace client et porte l'accent (#736), **« Réserver à nouveau »**
- * repart d'un brouillon vierge, et **« Annuler ce rendez-vous »** passe en
- * `quiet`. Le rouge ne disparaît pas pour autant : il est reporté sur
- * « Confirmer l'annulation », qui est le geste réellement destructif.
+ * Le rouge ne disparaît pas pour autant : il est porté par « Confirmer
+ * l'annulation », qui est le geste réellement destructif.
  *
- * L'accent a changé de main avec #736, et pas par goût : cet écran ne se
- * conserve pas — voir « Ce que cet écran n'est pas » plus bas —, si bien que la
- * sortie qu'il doit mettre en avant est celle qui mène là où le rendez-vous vit
- * encore une fois l'onglet fermé.
+ * Une fois le rendez-vous annulé, l'accent passe à « Réserver à nouveau » :
+ * l'agenda n'a plus rien à recevoir, et c'est la seule action qui reste utile.
  *
  * ## L'annulation demande une confirmation
  *
@@ -114,10 +195,7 @@ function bookedMinutes(appointment: BookedAppointment): number | null {
  * c'est d'ici que vous pouvez annuler » promettait une permanence qu'un onglet
  * fermé emporte — et `notification-content.ts` dit l'inverse noir sur blanc en
  * expliquant où pointe le `{{lien_annulation}}` de l'e-mail : *« l'espace client
- * … est la seule surface web qui annule durablement : l'écran de confirmation du
- * tunnel de réservation le fait aussi, mais il vit dans le `sessionStorage` de
- * l'onglet et ne survit pas à sa fermeture »*. Les deux surfaces nomment
- * désormais la même autorité.
+ * … est la seule surface web qui annule durablement »*.
  *
  * Il n'est pas non plus la source de vérité sur le rendez-vous. Le brouillon est
  * écrit une fois, à la réservation, et rien ne le relit ensuite : reporté ou
@@ -126,7 +204,8 @@ function bookedMinutes(appointment: BookedAppointment): number | null {
  * savoir — le contrôleur public ne sert que la création, le report et
  * l'annulation, pas la lecture d'un rendez-vous. Tant que cette lecture n'existe
  * pas, l'écran **cesse d'affirmer** ce qu'il ne peut pas vérifier : `restored`
- * le fait annoncer un instantané et renvoyer à l'espace client, qui fait foi.
+ * lui retire sa pastille, lui fait annoncer un instantané et renvoyer à l'espace
+ * client, qui fait foi.
  */
 export function ConfirmationStep({
   tenant,
@@ -144,6 +223,22 @@ export function ConfirmationStep({
   const isCancelled = appointment.status === 'cancelled';
   const staffName =
     service?.staff.find((member) => member.id === appointment.staffId)?.displayName ?? null;
+  const minutes = bookedMinutes(appointment);
+  const outcome = outcomeOf(appointment, restored);
+
+  /**
+   * Ce que le fichier d'agenda a besoin de savoir.
+   *
+   * Composé ici plutôt que par `appointmentBrief`, qui résout ses noms dans un
+   * **catalogue** : le tunnel n'en tient pas, il a déjà la prestation en main et
+   * elle vaut `null` quand elle a quitté le catalogue public.
+   */
+  const brief: AppointmentBrief = {
+    appointment,
+    serviceName: service?.name ?? null,
+    practitioner: staffName,
+    durationMinutes: minutes ?? 0,
+  };
 
   const cancel = async () => {
     if (cancelling) {
@@ -167,20 +262,12 @@ export function ConfirmationStep({
 
   return (
     <section className="spa-booking__step" aria-label="Confirmation de votre réservation">
-      {isCancelled ? (
-        <Notification tone="info" title="Votre rendez-vous est annulé">
-          <p>
-            Il ne figure plus à l’agenda du salon. Vous pouvez en prendre un nouveau quand vous le
-            souhaitez.
-          </p>
-        </Notification>
-      ) : restored ? (
+      {outcome === null ? (
         <Notification tone="info" title="Votre dernière réservation dans cet onglet">
-          {/* Aucune promesse d'espace client ici non plus, et pour la raison que
-              dit le message de succès : une cliente qui a réservé sans compte
-              n'en a pas. La phrase se borne à ce qui est vrai — cet écran ne
-              relit rien — et l'agenda du salon reste la seule autorité qu'on
-              puisse lui nommer sans se tromper. */}
+          {/* Aucune promesse d'espace client ici : une cliente qui a réservé
+              sans compte n'en a pas. La phrase se borne à ce qui est vrai — cet
+              écran ne relit rien — et l'agenda du salon reste la seule autorité
+              qu'on puisse lui nommer sans se tromper. */}
           <p>
             Ce récapitulatif date du moment où vous avez réservé : il n’a pas été relu depuis. Un
             report ou une annulation faits ailleurs n’y apparaissent pas — c’est l’agenda du salon
@@ -188,69 +275,33 @@ export function ConfirmationStep({
           </p>
         </Notification>
       ) : (
-        <Notification tone="success" title="Votre rendez-vous est enregistré">
-          {/* L'état vient **en premier**, et dans les mots exacts de la pastille
-              de l'espace client (#743).
-
-              Le titre dit ce qui vient d'avoir lieu — la réservation est
-              écrite, le créneau est pris —, mais il ne disait pas dans quel
-              état elle laisse le rendez-vous. Faute de le dire ici, la cliente
-              l'apprenait de l'espace client, sous un troisième mot : « En
-              attente de confirmation », après avoir cliqué « Confirmer la
-              réservation ». Trois formulations pour un fait, et aucune qui
-              nomme l'acteur attendu.
-
-              Ce n'est pas « Réservation confirmée » du wireframe — Étape 6 —
-              qui est repris : le rendez-vous naît `PENDING` côté API
-              (`appointments.repository.ts`), et l'annoncer confirmé ferait
-              mentir cet écran **et** contredire la pastille. C'est l'autre
-              branche que l'audit laissait ouverte — l'attente est réelle, donc
-              on dit ce qu'elle attend et de qui. */}
-          <p>
-            <strong>{PENDING_CONFIRMATION_LABEL}.</strong> Votre créneau est retenu dès maintenant —
-            personne d’autre ne peut le prendre — et le salon confirme le rendez-vous avant votre
-            venue, sans démarche de votre part. C’est la mention que porte ce rendez-vous dans votre
-            espace client.
-          </p>
-          {/* L'espace client est nommé, mais il reste conditionné : une
-              réservation d'invitée crée une fiche sans mot de passe, et
-              `AuthService.register` refuse ensuite cette même adresse
-              (`EMAIL_ALREADY_REGISTERED`). « Avec un compte client chez … » est
-              donc la condition que la phrase porte, et non un détail de style —
-              l'annulation de cet écran reste offerte plus bas, tant que
-              l'onglet vit, pour celles qui n'ont pas de compte.
-
-              Ce que la phrase ne dit plus, c'est de conserver la page : elle
-              promettait une permanence que la fermeture de l'onglet emporte.
-              Mais elle protégeait quelque chose — le seul recours de qui n'a pas
-              de compte —, et la dernière phrase le reprend à son compte : elle
-              nomme le bouton qui est juste au-dessous, et la durée pendant
-              laquelle il existe, au lieu de demander de garder un onglet
-              ouvert.
-
-              « Un e-mail récapitulatif » et non plus « de confirmation » : cet
-              e-mail est l'accusé automatique du CDC §1.4, émis sur
-              `appointment.created` (`appointments.service.ts`) — donc sur un
-              rendez-vous encore `PENDING`. L'appeler « confirmation » deux
-              lignes sous « à confirmer par le salon » ferait croire que la
-              confirmation attendue est déjà arrivée. */}
-          <p>
-            Un e-mail récapitulatif part vers {contact.email}. Avec un compte client chez{' '}
-            {tenant.name}, ce rendez-vous se retrouve dans votre espace, d’où il se reporte et
-            s’annule. Sans compte, vous pouvez encore l’annuler ci-dessous, tant que cet onglet
-            reste ouvert.
-          </p>
-        </Notification>
+        /* `role="status"` et non un simple bloc : l'étape qui vient de
+           disparaître emportait le bouton cliqué, et rien n'annoncerait
+           autrement à un lecteur d'écran ce qui s'est passé. C'est le rôle que
+           portait la notification qu'il remplace. */
+        <div className={`spa-booking__done spa-booking__done--${outcome.tone}`} role="status">
+          {/* Décorative : le titre juste au-dessous dit la même chose en
+              toutes lettres (WCAG 1.1.1). */}
+          <span className="spa-booking__done-badge" aria-hidden="true">
+            <Icon name={outcome.icon} />
+          </span>
+          <h2 className="spa-booking__done-title">{outcome.title}</h2>
+          <p className="spa-booking__done-line">{outcome.line}</p>
+        </div>
       )}
 
-      <Recap
+      <BookingAppointmentCard
         tenant={tenant}
         serviceName={service?.name ?? null}
-        durationMinutes={bookedMinutes(appointment)}
+        durationMinutes={minutes}
         staffName={staffName}
         startsAt={appointment.startsAt}
+        // La borne de fin n'est passée que si l'intervalle est une durée : sur
+        // un intervalle dégénéré, `bookedMinutes` rend `null` et la carte
+        // afficherait « 09:00 – 09:00 », c'est-à-dire un rendez-vous qui finit
+        // avant d'avoir commencé. L'heure de début seule est ce dont on est sûr.
+        endsAt={minutes === null ? null : appointment.endsAt}
         price={appointment.price}
-        contact={contact}
       />
 
       {/* « Réf. RDV-8F3K-27 », au mot près du wireframe — Étape 6. Ce n'est pas
@@ -258,14 +309,12 @@ export function ConfirmationStep({
           cet écran qu'on recopie ou qu'on dicte, et `.spa-card__meta` la rendait
           au ton des informations de second plan.
 
-          Elle vient désormais de l'**API** (#796) : c'est la colonne
-          `appointments.reference`, unique par établissement, que le contrat
-          rend dans `BookedAppointment`. Elle n'est plus calculée ici à partir de
+          Elle vient de l'**API** (#796) : c'est la colonne
+          `appointments.reference`, unique par établissement, que le contrat rend
+          dans `BookedAppointment`. Elle n'est plus calculée ici à partir de
           l'identifiant (#736), et c'est ce qui la rend citable ailleurs — le
           tiroir du planning affiche la même, l'e-mail de confirmation la reprend,
-          et `GET /appointments/reference/{…}` la résout. Une référence que seul
-          cet écran savait produire ne servait qu'à reconnaître ; celle-ci sert à
-          en parler.
+          et `GET /appointments/reference/{…}` la résout.
 
           Plus de repli non plus : le champ est requis par
           `bookedAppointmentSchema`, donc un brouillon qui ne le porte pas
@@ -283,6 +332,30 @@ export function ConfirmationStep({
         <strong className="spa-booking__reference-code">{appointment.reference}</strong>
       </p>
 
+      {isCancelled ? null : (
+        /* L'e-mail et l'espace client, en une ligne (#1051).
+
+           C'était un paragraphe de six lignes ; ce qu'il disait d'indispensable
+           tient en deux phrases. « Un e-mail récapitulatif » et non « de
+           confirmation » : cet e-mail est l'accusé automatique du CDC §1.4, émis
+           sur `appointment.created` (`appointments.service.ts`) — donc sur un
+           rendez-vous encore `PENDING`. L'appeler « confirmation » sous une
+           pastille « à confirmer par le salon » ferait croire que la
+           confirmation attendue est déjà arrivée.
+
+           L'espace client reste **conditionné** : une réservation d'invitée crée
+           une fiche sans mot de passe, et `AuthService.register` refuse ensuite
+           cette même adresse (`EMAIL_ALREADY_REGISTERED`). « Avec un compte
+           client chez … » est donc la condition que la phrase porte, et non un
+           détail de style — l'annulation de cet écran reste offerte plus bas,
+           tant que l'onglet vit, pour celles qui n'ont pas de compte. */
+        <p className="spa-booking__sent">
+          Un e-mail récapitulatif part vers <strong>{contact.email}</strong>. Avec un compte client
+          chez {tenant.name}, ce rendez-vous se retrouve dans votre espace, d’où il se reporte et
+          s’annule.
+        </p>
+      )}
+
       {error === null ? null : (
         <Notification tone="danger" title="L’annulation n’a pas abouti">
           <p>{error}</p>
@@ -295,9 +368,8 @@ export function ConfirmationStep({
           rendez-vous » (#623). Une question et sa réponse se lisent côte à côte.
 
           Et la question posée écarte tout le reste : tant qu'elle attend sa
-          réponse, « Réserver à nouveau » et « Voir mes rendez-vous » ne sont pas
-          offerts. Deux boutons face à une question, et rien qui invite à passer
-          à côté sans y répondre. */}
+          réponse, aucune autre sortie n'est offerte. Deux boutons face à une
+          question, et rien qui invite à passer à côté sans y répondre. */}
       <div className="spa-booking__actions">
         {confirmingCancellation ? (
           <>
@@ -323,23 +395,38 @@ export function ConfirmationStep({
           </>
         ) : (
           <>
+            {isCancelled ? null : (
+              /* Le seul bouton plein de l'écran (`BM-VISUEL-02`), et c'est
+                 `BM-RDV-03` qui lui donne ce rang : *« le rendez-vous rejoint
+                 l'agenda du téléphone, ce qui réduit les oublis »*. Rien à
+                 ajouter à un agenda quand le rendez-vous est annulé : le bouton
+                 n'est alors pas rendu, plutôt que désactivé.
+
+                 Un `<a download>` et non un bouton : c'est un fichier, il se
+                 copie et s'ouvre comme n'importe quelle adresse, et le style de
+                 bouton lui vient des classes du socle. */
+              <a
+                className="spa-button spa-button--accent"
+                href={appointmentIcsHref({ brief, tenant })}
+                download={appointmentIcsFilename(appointment)}
+              >
+                <span className="spa-button__label">Ajouter à mon agenda</span>
+              </a>
+            )}
+
             {/* Un lien et non un bouton : c'est une navigation, elle doit
                 s'ouvrir dans un onglet et se copier comme n'importe quelle
-                adresse. Le style de bouton lui vient des classes du socle,
-                comme pour le retour de `report/not-found.tsx`.
-
-                Et c'est lui qui porte l'accent (#736). L'écran renvoie vers
-                l'espace client faute de pouvoir se conserver lui-même : la
-                sortie principale est donc celle qui mène là où le rendez-vous
-                vit encore demain, pas celle qui en ouvre un second. Le
-                wireframe — Étape 6 — les ordonne de la même façon,
-                « Modifier / annuler » avant « Réserver à nouveau ». */}
-            <Link className="spa-button spa-button--accent" href={accountPath(tenant.slug)}>
+                adresse. L'écran renvoie vers l'espace client faute de pouvoir se
+                conserver lui-même — le wireframe, Étape 6, ordonne de la même
+                façon « Modifier / annuler » avant « Réserver à nouveau ». */}
+            <Link className="spa-button spa-button--neutral" href={accountPath(tenant.slug)}>
               Voir mes rendez-vous
             </Link>
-            <Button variant="neutral" onClick={onRestart}>
+
+            <Button variant={isCancelled ? 'accent' : 'quiet'} onClick={onRestart}>
               Réserver à nouveau
             </Button>
+
             {isCancelled ? null : (
               <Button
                 variant="quiet"
