@@ -15,6 +15,7 @@ import {
   BAND_DAYS,
   BAND_STEP,
   bandDates,
+  bandEntryDate,
   bandMoveForKey,
   bandSlice,
   bandStart,
@@ -131,6 +132,65 @@ describe('la fenêtre rendue', () => {
     expect(bandStartShowing(21, 5, 3)).toBe(3);
     // La cible est déjà visible : rien ne bouge.
     expect(bandStartShowing(21, 5, 10)).toBe(5);
+  });
+});
+
+describe('l’entrée dans le mois voisin', () => {
+  it('arrive sur la dernière fenêtre du mois précédent, pas sur son premier jour', () => {
+    // La journée contiguë à celle qu'on quitte est la **dernière** du mois
+    // d'arrivée : repartir du 10 sauterait le 24–30 (#1084).
+    const entree = bandEntryDate('2026-09', BOUNDS, -1);
+    const septembre = bandDates('2026-09', BOUNDS);
+
+    expect(entree).toBe('2026-09-17');
+    expect(bandSlice(septembre, bandStart(septembre, entree, null)).at(-1)).toBe('2026-09-30');
+  });
+
+  it('arrive sur le premier jour réservable du mois suivant', () => {
+    // La journée contiguë dans ce sens-là : le 30 septembre est suivi du 1er
+    // octobre, et la bande s'ouvre sur la fenêtre qui le porte.
+    expect(bandEntryDate('2026-10', BOUNDS, 1)).toBe('2026-10-01');
+  });
+
+  it('ne laisse pas `BM-CRENEAU-02` décaler la fenêtre d’un geste délibéré', () => {
+    // Se décaler sur la première journée libre est la règle du **premier
+    // affichage**. Appliquée à un chevron, elle ferait atterrir `›` loin de la
+    // journée contiguë, et `‹` ne ramènerait plus d'où l'on vient.
+    const bornes: BookingWindow = {
+      first: '2026-09-20' as CalendarDate,
+      last: '2026-10-20' as CalendarDate,
+    };
+    const octobre = bandDates('2026-10', bornes);
+    const premierLibre = '2026-10-18' as CalendarDate;
+
+    // Sans tête posée, la bande suivrait cette journée lointaine…
+    expect(bandStart(octobre, null, premierLibre)).toBeGreaterThan(0);
+    // …avec elle, elle s'en tient à la fenêtre contiguë, que le sélecteur sait
+    // rendre même pleine (« Complet du… au… », `BM-CRENEAU-03`).
+    expect(bandStart(octobre, bandEntryDate('2026-10', bornes, 1), premierLibre)).toBe(0);
+  });
+
+  it('fait des deux chevrons l’inverse l’un de l’autre', () => {
+    // `›` puis `‹` ramène là où l'on était : la dernière fenêtre de septembre
+    // est exactement celle depuis laquelle on est parti vers octobre.
+    const septembre = bandDates('2026-09', BOUNDS);
+    const depart = bandStart(septembre, '2026-09-17' as CalendarDate, null);
+
+    expect(depart + BAND_DAYS).toBe(septembre.length);
+    expect(bandStart(septembre, bandEntryDate('2026-09', BOUNDS, -1), null)).toBe(depart);
+  });
+
+  it('s’en tient au premier jour d’un mois plus court que la bande', () => {
+    // Octobre n'a que dix journées réservables : sa « dernière fenêtre » est la
+    // seule, et elle commence au premier jour.
+    expect(bandEntryDate('2026-10', BOUNDS, -1)).toBe('2026-10-01');
+  });
+
+  it('ne nomme rien d’un mois entièrement hors de la fenêtre', () => {
+    // Le composant ne l'appelle jamais dans ce cas — `isNavigableMonth` éteint
+    // le chevron —, mais un mois vide ne doit pas rendre une journée inventée.
+    expect(bandEntryDate('2026-08', BOUNDS, -1)).toBeNull();
+    expect(bandEntryDate('2026-11', BOUNDS, 1)).toBeNull();
   });
 });
 

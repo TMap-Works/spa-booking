@@ -21,11 +21,12 @@ import type {
 } from '@spa/shared';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { SlotPicker } from '@/components/booking/slot-picker';
-import { BAND_DAYS } from '@/lib/booking/day-band';
-import type { BookingWindow } from '@/lib/booking/month-grid';
+import { BAND_DAYS, bandDates } from '@/lib/booking/day-band';
+import type { BookingWindow, CalendarMonth } from '@/lib/booking/month-grid';
 
 const TIMEZONE = 'UTC';
 
@@ -87,6 +88,56 @@ function afficher(options: {
   return userEvent.setup();
 }
 
+/**
+ * La fenêtre de l'issue #1084 : ouverte au 5 septembre, trente et une journées.
+ *
+ * Septembre en porte vingt-six — deux crans de défilement, puis la butée —, et
+ * octobre les cinq dernières. C'est la fenêtre exacte sur laquelle l'issue
+ * décrit le saut du 19–30.
+ */
+const BORNES_1084: BookingWindow = {
+  first: '2026-09-05' as CalendarDate,
+  last: '2026-10-05' as CalendarDate,
+};
+
+/** Les journées d'un mois telles que l'API les rend — toutes ouvertes. */
+function moisCharge(month: CalendarMonth, bounds: BookingWindow): readonly DayAvailability[] {
+  return bandDates(month, bounds).map((date) => ({
+    date,
+    slots: [slot(date, '09'), slot(date, '14')],
+  }));
+}
+
+/**
+ * Le sélecteur sous un mois **réellement** changeant.
+ *
+ * Les autres essais passent un `month` figé et une espionne : il n'y a alors
+ * aucun mois d'arrivée, et rien ne dit par où la bande y entre. Ce qui se juge
+ * ici est précisément l'aller-retour entre deux mois, donc l'appelant tient son
+ * mois comme le tunnel tient le sien — un état, et les journées qui vont avec.
+ */
+function Ecran({ bounds }: { readonly bounds: BookingWindow }) {
+  const [month, setMonth] = useState<CalendarMonth>('2026-09');
+
+  return (
+    <SlotPicker
+      days={moisCharge(month, bounds)}
+      month={month}
+      bounds={bounds}
+      onMonthChange={setMonth}
+      timeZone={TIMEZONE}
+      emptyState={<p>Aucun créneau</p>}
+      onChoose={vi.fn()}
+    />
+  );
+}
+
+function afficherLeTunnel(bounds: BookingWindow): ReturnType<typeof userEvent.setup> {
+  render(<Ecran bounds={bounds} />);
+
+  return userEvent.setup();
+}
+
 /** La bande, nommée par le mois qu'elle parcourt. */
 function bande(): HTMLElement {
   return screen.getByRole('grid', { name: /^Jour du rendez-vous/ });
@@ -95,6 +146,13 @@ function bande(): HTMLElement {
 /** La case de la bande dont le nom accessible commence par cette date. */
 function journee(nom: string | RegExp): HTMLElement {
   return within(bande()).getByRole('button', { name: nom });
+}
+
+/** Les journées rendues, nommées, dans l'ordre de la rangée. */
+function journeesRendues(): readonly string[] {
+  return within(bande())
+    .getAllByRole('button')
+    .map((bouton) => bouton.getAttribute('aria-label') ?? '');
 }
 
 afterEach(() => {
@@ -278,6 +336,68 @@ describe('le défilement de la bande', () => {
 
     expect(document.activeElement).not.toBe(document.body);
     expect(bande().contains(document.activeElement)).toBe(true);
+  });
+});
+
+describe('le franchissement du mois', () => {
+  it('arrive sur le premier jour du mois suivant, contigu à celui qu’on quitte', async () => {
+    const user = afficherLeTunnel(BORNES_1084);
+    const suivants = screen.getByRole('button', { name: 'Jours suivants' });
+
+    // Vingt-six journées réservables en septembre, quatorze par fenêtre : deux
+    // crans de défilement mènent à la butée du mois.
+    await user.click(suivants);
+    await user.click(suivants);
+
+    expect(journeesRendues()[0]).toContain('jeudi 17 septembre 2026');
+    expect(journeesRendues().at(-1)).toContain('mercredi 30 septembre 2026');
+
+    await user.click(suivants);
+
+    // Le 1er octobre suit le 30 septembre : rien n'est sauté dans ce sens-là.
+    expect(journeesRendues()[0]).toContain('jeudi 1 octobre 2026');
+  });
+
+  it('revient sur la dernière fenêtre du mois précédent, et non sur son premier jour', async () => {
+    // Le constat de l'issue : reculer ramenait au 5–18 septembre en sautant le
+    // 19–30, alors que la journée contiguë au 1er octobre est le 30 septembre.
+    const user = afficherLeTunnel(BORNES_1084);
+    const suivants = screen.getByRole('button', { name: 'Jours suivants' });
+
+    await user.click(suivants);
+    await user.click(suivants);
+    await user.click(suivants);
+
+    const quitte = journeesRendues();
+
+    await user.click(screen.getByRole('button', { name: 'Jours précédents' }));
+
+    expect(journeesRendues()[0]).toContain('jeudi 17 septembre 2026');
+    expect(journeesRendues().at(-1)).toContain('mercredi 30 septembre 2026');
+    expect(within(bande()).queryByRole('button', { name: /^samedi 5 septembre 2026/ })).toBeNull();
+
+    // Les deux chevrons sont inverses l'un de l'autre : on est revenu très
+    // exactement sur la fenêtre d'où l'on était parti.
+    await user.click(suivants);
+
+    expect(journeesRendues()).toEqual(quitte);
+  });
+
+  it('laisse le calendrier ramener la bande à son point de départ naturel', async () => {
+    // Un mois demandé au calendrier n'est pas un défilement qu'on poursuit : on
+    // y est allé pour voir ce mois-là. La tête de bande posée par les chevrons
+    // ne doit pas le suivre.
+    const user = afficherLeTunnel(BORNES_1084);
+
+    await user.click(screen.getByRole('button', { name: 'Jours suivants' }));
+
+    expect(journeesRendues()[0]).toContain('samedi 12 septembre 2026');
+
+    await user.click(screen.getByRole('button', { name: /^Ouvrir le calendrier/ }));
+    await user.click(screen.getByRole('button', { name: 'Mois suivant' }));
+    await user.click(screen.getByRole('button', { name: 'Fermer' }));
+
+    expect(journeesRendues()[0]).toContain('jeudi 1 octobre 2026');
   });
 });
 
