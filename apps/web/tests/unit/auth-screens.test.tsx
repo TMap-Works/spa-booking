@@ -151,7 +151,15 @@ describe('back-office, écran de connexion', () => {
 
     const page = await rendre();
 
-    expect(page.querySelector('.spa-auth--back-office')).not.toBeNull();
+    // `.spa-auth` nu : le cadre ne porte plus de modificateur d'espace depuis
+    // #1080 — il ne sert que les espaces de travail, et la variante cliente a le
+    // sien (`.spa-auth--salon`).
+    const cadre = page.querySelector('.spa-auth');
+    expect(cadre).not.toBeNull();
+    // La classe **exacte**, et non l'absence de `.spa-auth--salon` : celle-ci
+    // laisserait revenir n'importe quel autre modificateur d'espace sans rien
+    // dire, alors que c'est précisément ce que le ticket retire.
+    expect(cadre?.className).toBe('spa-auth');
     expect(screen.getByText(tenant.name)).toBeDefined();
     // Un seul titre de premier niveau : celui du formulaire, qui nomme la carte.
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);

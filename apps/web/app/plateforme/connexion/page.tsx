@@ -33,10 +33,8 @@ export default async function PlatformLoginPage({ searchParams }: PlatformLoginP
 
   return (
     <AuthScreen
-      space="back-office"
       salonName={null}
       headline="La console de l’éditeur"
-      headlineAs="p"
       lead="L’espace réservé à l’équipe qui ouvre et accompagne les salons de la plateforme."
       highlights={CONSOLE_HIGHLIGHTS}
       exits={[{ href: PLATFORM_HOME_PATH, label: `Accueil ${PLATFORM_NAME}` }]}

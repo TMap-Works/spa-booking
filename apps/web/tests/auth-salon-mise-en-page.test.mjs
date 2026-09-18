@@ -65,8 +65,8 @@ describe('À 360 px, le volet d’accueil est une bande (#1052)', () => {
   });
 
   it('ne laisse pas 32 px de vide entre l’en-tête du salon et le cadre', () => {
-    // Deux classes sur le même élément : `.spa-shell .spa-auth--client` pesait
-    // autant que `.spa-shell .spa-auth` de `salon-shell.css` et ne l'emportait
+    // Deux classes sur le même élément : `.spa-shell .spa-auth--salon` pèserait
+    // autant que `.spa-shell .spa-auth` de `salon-shell.css` et ne l'emporterait
     // que par l'ordre des imports.
     const regle = rulesFor(etroit, '.spa-shell .spa-auth.spa-auth--salon').join(' ');
 

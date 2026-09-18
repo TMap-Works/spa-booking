@@ -5,23 +5,38 @@ import { Icon, type IconName } from '@/components/ui/icon';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
 /**
- * Le cadre des écrans d'identification — espace client et back-office (#927).
+ * Le cadre des écrans d'identification **des espaces de travail** (#927) : la
+ * connexion du back-office, l'activation d'un compte invité, et la connexion à
+ * la console de l'éditeur.
  *
  * ## Ce qu'il corrige
  *
- * Les deux écrans de connexion étaient un formulaire nu sur fond blanc : ni le
- * nom de la plateforme, ni ce que l'espace ouvre, ni un chemin de retour pour qui
- * s'était trompé de porte. Un écran qu'on traverse chaque matin, et qui est aussi
- * le premier que voit une cliente invitée à créer son compte.
+ * Ces écrans de connexion étaient un formulaire nu sur fond blanc : ni le nom de
+ * la plateforme, ni ce que l'espace ouvre, ni un chemin de retour pour qui
+ * s'était trompé de porte. Un écran qu'on traverse chaque matin.
+ *
+ * ## Il ne sert plus l'espace client (#1080)
+ *
+ * Il l'a servi : à sa création, le même cadre portait la connexion et
+ * l'inscription clientes, d'où une prop `space` à deux valeurs et un titre dont
+ * le rang changeait avec elle. Depuis #1052 ce parcours a son propre cadre —
+ * `salon-auth-screen.tsx`, qui met le salon en tête plutôt que la plateforme et
+ * se pose dans le gabarit de salon de #1045. Les quatre appelants qui restent
+ * ici sont tous des espaces de travail, et les branches « client » ne menaient
+ * plus nulle part : elles sont retirées plutôt que maintenues à vide.
+ *
+ * Les deux cadres gardent en revanche la même mise en page à deux volets, donc
+ * les mêmes classes de structure et la même feuille de style — la raison est
+ * écrite là où elle se vérifie, `styles/components/auth.css`.
  *
  * ## Deux volets
  *
  * - **L'accueil**, sur l'aplat de marque : la plateforme (lien vers l'accueil),
- *   le salon, l'espace, et ce qu'on y trouve. Il porte l'identité, jamais une
+ *   le salon, et ce que l'espace ouvre. Il porte l'identité, jamais une
  *   action : l'action pleine reste celle du formulaire (BM-VISUEL-02).
  * - **Le formulaire**, fourni par l'appelant et rendu **tel quel** : ce cadre ne
  *   connaît ni ses champs, ni ses encarts, ni sa soumission. C'est ce qui garde
- *   intacts les comportements que les deux écrans ont gagnés un à un — motifs de
+ *   intacts les comportements que ces écrans ont gagnés un à un — motifs de
  *   retour (#860), titres d'échec (#759), destination selon le rang (#618).
  *
  * Sous 56 rem, les volets s'empilent et l'accueil se réduit à son en-tête : la
@@ -30,12 +45,12 @@ import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
  *
  * ## Le titre de l'écran
  *
- * Il appartient à l'un des deux volets selon l'espace, d'où `headlineAs`.
- * Côté client, l'accueil porte le `<h1>` « Mon compte », comme le gabarit de
- * l'espace le fait sur tous ses écrans ; le formulaire garde son `<h2>`. Côté
- * back-office, c'est le formulaire qui porte le `<h1>` et qui nomme la carte
- * (`admin-login-form.tsx`, #699) : l'accueil se contente d'un paragraphe, pour
- * que l'écran n'ait pas deux titres de premier niveau.
+ * Il appartient au volet du formulaire, et non à l'accueil : c'est le formulaire
+ * qui porte le `<h1>` et qui nomme la carte (`admin-login-form.tsx`, #699). Le
+ * titre de l'accueil est donc un paragraphe, toujours, pour que l'écran n'ait
+ * pas deux titres de premier niveau. Il n'y a plus de réglage à passer — la
+ * seule raison d'en avoir un était la variante cliente, où le gabarit portait
+ * le `<h1>`.
  *
  * ## Server Component
  *
@@ -53,11 +68,14 @@ export interface AuthExit {
 }
 
 interface AuthScreenProps {
-  readonly space: 'client' | 'back-office';
-  /** Le nom du salon, s'il a pu être lu — le cadre s'en passe sinon. */
+  /**
+   * Le nom du salon, s'il a pu être lu — le cadre s'en passe sinon.
+   *
+   * `null` sur les deux écrans qui n'ont aucun salon à nommer : l'inscription
+   * d'un salon qui n'existe pas encore, et la console de l'éditeur.
+   */
   readonly salonName: string | null;
   readonly headline: string;
-  readonly headlineAs: 'h1' | 'p';
   readonly lead: string;
   readonly highlights: readonly AuthHighlight[];
   /** Les chemins de retour, sous le cadre. */
@@ -66,17 +84,15 @@ interface AuthScreenProps {
 }
 
 export function AuthScreen({
-  space,
   salonName,
   headline,
-  headlineAs: Headline,
   lead,
   highlights,
   exits,
   children,
 }: AuthScreenProps) {
   return (
-    <div className={`spa-auth spa-auth--${space}`}>
+    <div className="spa-auth">
       <div className="spa-auth__frame">
         <div className="spa-auth__intro">
           <Link className="spa-auth__brand" href={PLATFORM_HOME_PATH}>
@@ -88,7 +104,7 @@ export function AuthScreen({
 
           <div className="spa-auth__welcome">
             {salonName === null ? null : <p className="spa-auth__salon">{salonName}</p>}
-            <Headline className="spa-auth__headline">{headline}</Headline>
+            <p className="spa-auth__headline">{headline}</p>
             <p className="spa-auth__lead">{lead}</p>
           </div>
 

@@ -31,10 +31,8 @@ const SIGNUP_HIGHLIGHTS: readonly AuthHighlight[] = [
 export default function SignupPage() {
   return (
     <AuthScreen
-      space="back-office"
       salonName={null}
       headline="Ouvrez votre salon en ligne"
-      headlineAs="p"
       lead="Quelques minutes suffisent : votre page de réservation, votre planning et votre caisse, au même endroit."
       highlights={SIGNUP_HIGHLIGHTS}
       exits={[{ href: PLATFORM_HOME_PATH, label: `Accueil ${PLATFORM_NAME}` }]}
