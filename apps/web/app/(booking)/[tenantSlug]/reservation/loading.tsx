@@ -11,15 +11,28 @@ import { ProgressBar } from '@/components/ui/progress-bar';
  *
  * ## Sa forme
  *
- * Celle que le tunnel prend à son arrivée : la bande d'en-tête, la ligne de
- * progression, le titre d'étape, puis la carte en chargement que `BookingTunnel`
- * affiche lui-même avant son hydratation, avec la même phrase masquée. Le tunnel
- * qui arrive reprend donc la place du squelette, sans que rien saute.
+ * Les trois bandes hautes du tunnel : l'en-tête, la ligne de progression, le
+ * titre d'étape. Puis une carte grise, **générique**, et c'est le seul endroit du
+ * tunnel où elle reste légitime.
  *
  * L'en-tête est ici un squelette et non le vrai : il porte deux commandes qui
  * dépendent de l'étape et du brouillon, et aucune des deux n'existe tant que le
  * tunnel n'est pas là. Une barre inerte d'une hauteur juste vaut mieux qu'un
  * « ✕ Quitter » qui ne saurait pas encore ce qu'il fait perdre.
+ *
+ * ## Pourquoi elle ne prend pas la forme d'une étape (#1055)
+ *
+ * Parce qu'à cet instant il n'y a pas d'étape. Ce repli est rendu **avant** que
+ * la page ait obtenu l'établissement et son catalogue : rien ici ne sait combien
+ * de prestations la liste comptera, ni si les rubriques ouvriront une rangée
+ * d'onglets, et un `loading.tsx` ne reçoit par ailleurs aucun paramètre
+ * d'adresse. Dessiner six lignes devant un salon qui en propose une ferait
+ * sauter la page dans l'autre sens.
+ *
+ * Le squelette fidèle est donc **un cran plus bas**, dans le tunnel lui-même
+ * (`components/booking/step-skeleton.tsx`) : il est monté une fois
+ * l'établissement et le catalogue connus, sur l'étape que `initial-draft.ts` a
+ * lue dans l'adresse, et c'est lui que `BM-ECRAN-01` vise.
  */
 export default function BookingLoading() {
   return (
