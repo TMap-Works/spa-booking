@@ -164,10 +164,8 @@ export default async function AdminLoginPage({ params, searchParams }: AdminLogi
    */
   return (
     <AuthScreen
-      space="back-office"
       salonName={salon.status === 'found' ? salon.name : null}
       headline="Le back-office de votre salon"
-      headlineAs="p"
       lead="Votre journée au même endroit : planning, clientèle, caisse et activité."
       highlights={BACK_OFFICE_HIGHLIGHTS}
       exits={[

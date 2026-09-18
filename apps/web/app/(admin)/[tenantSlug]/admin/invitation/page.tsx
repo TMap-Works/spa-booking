@@ -58,10 +58,8 @@ export default async function AdminInvitationPage({
 
   return (
     <AuthScreen
-      space="back-office"
       salonName={salon.status === 'found' ? salon.name : null}
       headline="Bienvenue dans votre back-office"
-      headlineAs="p"
       lead="Choisissez votre mot de passe : vous arriverez directement dans votre espace."
       highlights={WELCOME_HIGHLIGHTS}
       exits={[

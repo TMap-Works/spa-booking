@@ -25,19 +25,23 @@ import { Icon, type IconName } from '@/components/ui/icon';
  *
  * ## Pourquoi un composant distinct d'`auth-screen.tsx`
  *
- * Le cadre partagé (#927) sert encore trois écrans dont ce ticket ne parle
- * pas : la connexion du back-office, l'invitation d'un praticien et la console
- * de l'éditeur. Ceux-là n'ont pas de salon à mettre en avant — la console n'en
- * a aucun —, et leur volet d'accueil dit ce que l'espace ouvre, ce qui est la
- * bonne réponse pour un outil de travail. Les faire passer par les mêmes props
- * aurait demandé d'y ajouter deux variantes conditionnelles pour ne jamais les
- * employer. Le critère d'acceptation du ticket l'autorise explicitement : « le
- * cadre partagé ne régresse pas — ou la variante client s'en sépare
- * proprement ». Elle s'en sépare.
+ * L'autre cadre (#927) sert les écrans des espaces de **travail** : la connexion
+ * du back-office, l'invitation d'un praticien et la console de l'éditeur.
+ * Ceux-là n'ont pas de salon à mettre en avant — la console n'en a aucun —, et
+ * leur volet d'accueil dit ce que l'espace ouvre, ce qui est la bonne réponse
+ * pour un outil de travail. Les faire passer par les mêmes props aurait demandé
+ * d'y ajouter deux variantes conditionnelles pour ne jamais les employer. Le
+ * critère d'acceptation du ticket l'autorise explicitement : « le cadre partagé
+ * ne régresse pas — ou la variante client s'en sépare proprement ». Elle s'en
+ * sépare — et #1080 en a tiré la conséquence : `auth-screen.tsx` n'a plus de
+ * branche « espace client », c'est le cadre des espaces de travail.
  *
- * Les deux variantes gardent en revanche les mêmes classes de structure
+ * Les deux cadres gardent en revanche les mêmes classes de structure
  * (`spa-auth__frame`, `spa-auth__intro`, `spa-auth__panel`) : c'est la même
  * mise en page à deux volets, et la dupliquer en CSS l'aurait fait diverger.
+ * Seul `spa-auth--salon` distingue celui-ci — `spa-auth--client`, qui le
+ * doublait sans qu'aucune règle ne le vise, est tombé avec la prop `space` à
+ * laquelle il faisait écho (#1080).
  *
  * ## Server Component
  *
@@ -93,8 +97,8 @@ interface SalonAuthScreenProps {
    * `/compte/connexion?motif=renouvellement-indisponible` (#860). Le gabarit
    * prend alors sa branche « connecté·e » et écrit « Bonjour Marie » en `h1` ;
    * un second `h1` ici donnerait deux titres de premier niveau sur le même
-   * écran. Même réglage, pour la même raison, que le cadre partagé
-   * (`auth-screen.tsx`, `headlineAs`).
+   * écran. C'est le seul cadre à garder ce réglage : celui des espaces de
+   * travail laisse toujours le `<h1>` au formulaire (`auth-screen.tsx`, #1080).
    */
   readonly headlineAs?: 'h1' | 'p';
   /**
@@ -151,7 +155,7 @@ export function SalonAuthScreen({
   const facts = tenant === null ? [] : salonFacts(tenant, now);
 
   return (
-    <div className="spa-auth spa-auth--client spa-auth--salon">
+    <div className="spa-auth spa-auth--salon">
       <div className="spa-auth__frame">
         <div className="spa-auth__intro">
           {/*
