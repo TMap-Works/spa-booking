@@ -1,118 +1,252 @@
-import type { PublicService, PublicTenant, UtcInstant } from '@spa/shared';
-import type { ReactNode } from 'react';
+'use client';
 
-import { formatDateTimeInTimeZone, formatDuration, formatMoney } from '@/lib/format';
+import type { Money, TimeZone, UtcInstant } from '@spa/shared';
+import { useId, useState, type ReactNode } from 'react';
 
-interface BookingSummaryBarProps {
-  readonly tenant: PublicTenant;
-  /** `null` tant qu'aucune prestation n'est retenue : la barre ne rend alors rien. */
-  readonly service: PublicService | null;
+import { Avatar } from '@/components/ui/avatar';
+import { DateBlock } from '@/components/ui/date-block';
+import { Icon } from '@/components/ui/icon';
+import { Sheet } from '@/components/ui/sheet';
+import { formatDuration, formatMoney, formatTimeInTimeZone } from '@/lib/format';
+
+/**
+ * Ce que le tunnel rappelle de la réservation en cours.
+ *
+ * Un seul objet, composé par le tunnel et passé tel quel aux étapes : sans
+ * lui, l'étape « Coordonnées » — un formulaire qui n'a rien à savoir du
+ * catalogue — aurait reçu quatre propriétés de plus pour afficher une ligne de
+ * rappel.
+ */
+export interface BookingSummary {
+  readonly serviceName: string;
+  readonly durationMinutes: number;
+  readonly price: Money;
+  /** `null` = « premier disponible » (CDC §1.4), pas « pas encore choisi ». */
+  readonly staffName: string | null;
   /** `null` tant qu'aucun créneau n'est retenu — l'étape « Créneau » est là pour ça. */
   readonly startsAt: UtcInstant | null;
+  readonly timeZone: TimeZone;
 }
 
-interface SummaryFactProps {
-  readonly term: string;
-  /** Classe supplémentaire portée par la valeur — le prix et lui seul, à ce jour. */
-  readonly valueClassName?: string;
-  readonly children: ReactNode;
+/** Le libellé de l'absence de préférence, écrit une fois pour les deux surfaces. */
+const NO_PREFERENCE = 'Premier disponible';
+
+/**
+ * L'annulation, en une ligne.
+ *
+ * Elle reprend au mot près la règle que le récapitulatif détaille avant de
+ * confirmer (`steps/summary-step.tsx`, « Avant de confirmer ») : ni frais ni
+ * préavis côté API — `AppointmentsService.cancel` ne refuse que sur le cycle de
+ * vie. Deux phrases différentes pour une même règle sur deux écrans qui se
+ * suivent, c'est ce que le critère `ds:coherence` relève.
+ */
+const CANCELLATION_LINE = 'Annulation sans frais tant que le rendez-vous n’a pas eu lieu.';
+
+interface SummaryFactsProps {
+  readonly summary: BookingSummary;
 }
 
 /**
- * Un fait de la barre : son libellé au-dessus, sa valeur en dessous.
+ * Les faits de la réservation, rendus à l'identique dans la feuille du pouce et
+ * dans la colonne de bureau.
  *
- * `<dl>` comme le récapitulatif, et pour la même raison : ce sont des couples
- * libellé / valeur, et c'est ce qu'un lecteur d'écran doit entendre. Le `<div>`
- * de groupe est admis par HTML — une `<dl>` accepte des `<div>` dont chacun
- * porte ses `<dt>` et ses `<dd>` — et c'est lui qui tient la valeur sous son
- * libellé quand la barre passe à la ligne (`recap.tsx` en dit plus long).
- *
- * Les libellés sont **visibles**, là où le wireframe sépare les valeurs par des
- * points médians. À 360 px, la barre passe de toute façon à la ligne : une suite
- * de valeurs nues y produirait des lignes commençant par un séparateur, et le
- * seul moyen de ne pas le faire entendre aux lecteurs d'écran aurait été un
- * contenu généré en CSS, que certains restituent quand même. Quatre couples
- * courts coûtent une ligne de plus et se lisent sans décodage.
+ * `BM-TUNNEL-07` veut le même récapitulatif des deux côtés — *« une carte
+ * collante à droite »* à 1280 px, *« une barre collée en bas … qui se déplie en
+ * détail »* à 390 px. Deux compositions séparées auraient fini par dire deux
+ * choses différentes du même rendez-vous.
  */
-function SummaryFact({ term, valueClassName, children }: SummaryFactProps) {
-  // Même composition de classes que `RecapRow` : la liste, puis le filtrage.
-  const classes = ['spa-booking__summary-value', valueClassName ?? null]
-    .filter((name) => name !== null)
-    .join(' ');
+function SummaryFacts({ summary }: SummaryFactsProps) {
+  return (
+    <dl className="spa-booking__facts">
+      <div className="spa-booking__fact">
+        <dt className="spa-booking__fact-term">Prestation</dt>
+        <dd className="spa-booking__fact-value">
+          {summary.serviceName}
+          <span className="spa-booking__fact-note">
+            {formatDuration(summary.durationMinutes)}
+          </span>
+        </dd>
+      </div>
+
+      <div className="spa-booking__fact">
+        <dt className="spa-booking__fact-term">Praticien</dt>
+        <dd className="spa-booking__fact-value spa-booking__fact-value--figure">
+          {/* Décoratif : le nom est écrit juste à côté. Sur « Premier
+              disponible », aucune pastille — il n'y a personne à représenter,
+              et « PD » se lirait comme des initiales. */}
+          {summary.staffName === null ? null : <Avatar name={summary.staffName} size="sm" />}
+          <span>{summary.staffName ?? NO_PREFERENCE}</span>
+        </dd>
+      </div>
+
+      {summary.startsAt === null ? null : (
+        // Rien n'est écrit tant que rien n'est choisi : une ligne « Date et
+        // heure : — » ferait passer un choix à venir pour une donnée manquante
+        // (`docs/design/appointments/states.md`).
+        <div className="spa-booking__fact">
+          <dt className="spa-booking__fact-term">Date et heure</dt>
+          <dd className="spa-booking__fact-value spa-booking__fact-value--figure">
+            <DateBlock instant={summary.startsAt} timeZone={summary.timeZone} />
+            <span>{formatTimeInTimeZone(summary.startsAt, summary.timeZone)}</span>
+          </dd>
+        </div>
+      )}
+
+      {/* Le total ferme la liste, et c'est le seul fait aligné à droite : c'est
+          ce que l'œil cherche en dernier avant de s'engager. */}
+      <div className="spa-booking__fact spa-booking__fact--total">
+        <dt className="spa-booking__fact-term">Total</dt>
+        <dd className="spa-booking__fact-value spa-booking__fact-value--total">
+          {formatMoney(summary.price)}
+        </dd>
+      </div>
+    </dl>
+  );
+}
+
+interface BookingActionBarProps {
+  /**
+   * Les faits rappelés sur une ligne, ou `null` quand il n'y a rien à rappeler.
+   *
+   * `null` à l'étape « Prestation », où le choix n'est pas encore *retenu* —
+   * `ServiceStep` le garde dans son propre état jusqu'à la soumission, et une
+   * ligne alimentée par le brouillon annoncerait la prestation précédente
+   * pendant qu'on en désigne une autre. `null` aussi au récapitulatif, où ces
+   * faits **sont** l'écran.
+   */
+  readonly summary?: BookingSummary | null;
+  /** L'action primaire de l'étape — absente à l'étape « Créneau », qui avance au clic. */
+  readonly children?: ReactNode;
+}
+
+/**
+ * La barre basse du tunnel (#1047) — le rappel sur une ligne, et l'action.
+ *
+ * ## Ce qu'elle remplace
+ *
+ * Une barre de quatre couples libellé / valeur en capitales (#735). À 360 px,
+ * elle passait à deux rangées à l'étape « Créneau » et à **trois** à l'étape
+ * « Coordonnées », où elle masquait environ 160 px du formulaire (audit
+ * `d20260918-1`). `BM-TUNNEL-07` décrit l'autre forme, celle de Fresha, de
+ * Treatwell, de Booker et de Square : *« une barre collée en bas (« 33 € ·
+ * 1 prestation · 30 min » et « Continuer ») qui se déplie en détail »*.
+ *
+ * D'où les trois décisions qui suivent :
+ *
+ * 1. **une seule ligne, toujours.** Le nom de la prestation se tronque, la
+ *    durée et le prix ne se tronquent jamais — ce sont eux qu'on relit ;
+ * 2. **le détail est à un doigt.** Toucher la ligne ouvre le récapitulatif
+ *    complet dans un `Sheet`, qui monte du bas au pouce (`BM-TUNNEL-12`) ;
+ * 3. **l'action est dans la barre.** *« [ Continuer ] CTA primaire pleine
+ *    largeur, au pouce »*, dit `wireframes.md` à la structure commune de toutes
+ *    les étapes.
+ *
+ * ## Pourquoi c'est l'étape qui la rend, et non le tunnel
+ *
+ * Parce que l'action primaire est presque toujours un `type="submit"`, et
+ * qu'un bouton de soumission doit être **dans** son `<form>` : rendu par le
+ * tunnel, il aurait fallu l'y rattacher par un attribut `form`, ou le remonter
+ * par un portail — deux façons de casser la soumission implicite à la touche
+ * Entrée. La barre est donc le dernier enfant de l'étape, et c'est aussi ce qui
+ * la rend collante sans mesurer quoi que ce soit.
+ *
+ * ## Au-delà de 64 rem
+ *
+ * Elle se décolle et sa ligne de rappel disparaît : `BookingSummaryAside` prend
+ * le relais en colonne, et le bouton retombe *« dans le flux »* — l'adaptation
+ * desktop que `wireframes.md` décrit pour toutes les étapes.
+ */
+export function BookingActionBar({ summary, children }: BookingActionBarProps) {
+  const [open, setOpen] = useState(false);
 
   return (
-    <div className="spa-booking__summary-fact">
-      <dt className="spa-booking__summary-term">{term}</dt>
-      <dd className={classes}>{children}</dd>
+    <div className="spa-booking__bar">
+      {summary === null || summary === undefined ? null : (
+        <>
+          <button
+            type="button"
+            className="spa-booking__bar-summary"
+            aria-haspopup="dialog"
+            aria-expanded={open}
+            onClick={() => {
+              setOpen(true);
+            }}
+          >
+            <span className="spa-booking__bar-line">
+              <span className="spa-booking__bar-service">{summary.serviceName}</span>
+              {/* Les séparateurs sont masqués à l'arbre d'accessibilité : un
+                  lecteur d'écran n'a pas à entendre « point » entre deux
+                  faits. */}
+              <span className="spa-booking__bar-sep" aria-hidden="true">
+                ·
+              </span>
+              <span className="spa-booking__bar-fact">
+                {formatDuration(summary.durationMinutes)}
+              </span>
+              <span className="spa-booking__bar-sep" aria-hidden="true">
+                ·
+              </span>
+              <span className="spa-booking__bar-price">{formatMoney(summary.price)}</span>
+            </span>
+            {/* Ce que le clic fait, écrit pour qui ne voit pas le chevron : le
+                nom accessible du bouton se terminerait sinon sur un montant,
+                sans dire qu'il ouvre quelque chose. */}
+            <span className="spa-visually-hidden">— voir le détail de votre réservation</span>
+            <Icon name="chevron-down" className="spa-booking__bar-chevron" />
+          </button>
+
+          <Sheet
+            open={open}
+            onClose={() => {
+              setOpen(false);
+            }}
+            title="Votre réservation"
+          >
+            <SummaryFacts summary={summary} />
+            <p className="spa-booking__policy">{CANCELLATION_LINE}</p>
+          </Sheet>
+        </>
+      )}
+
+      {children === undefined ? null : <div className="spa-booking__bar-action">{children}</div>}
     </div>
   );
 }
 
+interface BookingSummaryAsideProps {
+  readonly summary: BookingSummary;
+}
+
 /**
- * La barre de résumé collante du tunnel (#735).
+ * La colonne récapitulative, à partir de 64 rem (#1047).
  *
- * ## Ce qu'elle répare
+ * `BM-TUNNEL-07` : *« à 1280 px, une carte collante à droite (prestations,
+ * praticien, total, « Continuer ») »*, *« le panier et le total restent
+ * visibles à chaque étape »*. `wireframes.md` dit la même chose de son côté —
+ * *« Résumé en colonne latérale collante ; CTA dans le flux »* — et c'est cette
+ * répartition-là qui est suivie : la carte porte les faits, le bouton reste
+ * dans la colonne de contenu, où la cliente vient de finir de lire.
  *
- * `docs/design/appointments/README.md` — « Mobile d'abord » — prescrit une
- * « barre de résumé collante en bas rappelant service, praticien, date/heure et
- * **prix** dès qu'ils sont connus », et `wireframes.md` la dessine sur chaque
- * étape. Aucune n'existait : à l'étape « Créneau », l'écran ne portait que le nom
- * de la prestation — le prix avait disparu depuis l'étape précédente ; à l'étape
- * « Coordonnées », plus rien ne rappelait ni la prestation, ni la date, ni
- * l'heure, ni le prix. La cliente décidait de tête (audit `d20260916-1`,
- * critère `ds:confiance`).
+ * Ce que le tunnel rendait à la place : rien. Le récapitulatif tombait en pied
+ * de carte, sous le contenu de l'étape, et sortait de l'écran dès qu'on
+ * défilait.
  *
- * ## Ce qu'elle rappelle, et dans quel ordre
- *
- * Prestation, durée, date et heure, prix — l'ordre du parcours, et celui de la
- * direction demandée par l'issue. Le praticien qu'énumère le README en est
- * absent : il est **choisi sur l'étape « Créneau » elle-même**, où son sélecteur
- * est à l'écran, et le récapitulatif le redit avant la confirmation. L'ajouter
- * ferait une cinquième colonne sur une barre qui en tient déjà quatre à 360 px,
- * pour la seule information que la cliente peut lire là où elle la change.
- *
- * Ce qui n'est pas encore connu ne s'affiche pas : sans créneau retenu, la barre
- * porte trois faits, pas une ligne « Date et heure : — » qui ferait passer un
- * choix à venir pour une donnée manquante (`states.md`).
- *
- * ## Ce qu'elle n'est pas
- *
- * Elle ne porte pas l'action primaire, que le wireframe ancre au même endroit :
- * chaque étape garde le sien, dans son flux. Déplacer les boutons de cinq étapes
- * dans une barre commune remanierait la mise en page de tout le tunnel, pour une
- * issue qui demande de **rappeler ce qui permet de décider**.
+ * Elle n'est pas rendue en dessous de 64 rem — `BookingActionBar` y tient le
+ * même rôle en une ligne. Deux rappels du même rendez-vous sur un écran de
+ * 360 px en occuperaient le tiers.
  */
-export function BookingSummaryBar({ tenant, service, startsAt }: BookingSummaryBarProps) {
-  if (service === null) {
-    // Rien de connu, rien à rappeler : une barre vide occuperait le bas de
-    // l'écran sans rien y dire.
-    return null;
-  }
+export function BookingSummaryAside({ summary }: BookingSummaryAsideProps) {
+  const titleId = useId();
 
   return (
-    // `aria-label` plutôt qu'un titre visible : la barre est un rappel, et un
-    // intertitre de plus dans le panneau se lirait comme une section du
-    // formulaire. Le repère reste nommé pour qui navigue de région en région.
-    <aside className="spa-booking__summary" aria-label="Votre réservation">
-      <dl className="spa-booking__summary-facts">
-        <SummaryFact term="Prestation">{service.name}</SummaryFact>
-
-        <SummaryFact term="Durée">{formatDuration(service.durationMinutes)}</SummaryFact>
-
-        {startsAt === null ? null : (
-          <SummaryFact term="Date et heure">
-            {/* Dans le fuseau du salon, comme partout ailleurs dans le tunnel :
-                la mention du fuseau est portée une fois pour toutes par
-                l'en-tête, et la répéter ici la ferait apparaître deux fois sur
-                le même écran. */}
-            {formatDateTimeInTimeZone(startsAt, tenant.timezone)}
-          </SummaryFact>
-        )}
-
-        <SummaryFact term="Prix" valueClassName="spa-booking__summary-value--price">
-          {formatMoney(service.price)}
-        </SummaryFact>
-      </dl>
+    <aside className="spa-booking__aside" aria-labelledby={titleId}>
+      <div className="spa-booking__aside-card">
+        <h2 id={titleId} className="spa-booking__aside-title">
+          Votre réservation
+        </h2>
+        <SummaryFacts summary={summary} />
+        <p className="spa-booking__policy">{CANCELLATION_LINE}</p>
+      </div>
     </aside>
   );
 }

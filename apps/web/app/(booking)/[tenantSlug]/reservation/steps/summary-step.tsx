@@ -9,6 +9,7 @@ import {
 } from '@spa/shared';
 import { useState } from 'react';
 
+import { BookingActionBar } from '@/components/booking/summary-bar';
 import { Button } from '@/components/ui/button';
 import { Notification, type NotificationTone } from '@/components/ui/notification';
 import type { ContactDraft } from '@/lib/booking/draft';
@@ -179,8 +180,9 @@ export function SummaryStep({
 
   return (
     <section className="spa-booking__step" aria-label="Récapitulatif de votre réservation">
-      <h2 className="spa-card__title">Vérifiez votre réservation</h2>
-
+      {/* Plus de titre d'étape ici : le `<h1>` du tunnel pose la question —
+          « Tout est-il exact ? » —, et « Vérifiez votre réservation » juste
+          au-dessous la redisait en d'autres mots (#1047, BM-TUNNEL-11). */}
       {refusal === null ? null : (
         <Notification tone={refusal.tone} title={refusal.title}>
           <p>{refusal.body}</p>
@@ -247,7 +249,12 @@ export function SummaryStep({
         contrôle, et rien qui garde le bouton.
       */}
       <div className="spa-booking__terms">
-        <h3 className="spa-booking__terms-title">Avant de confirmer</h3>
+        {/* `<h2>` et non `<h3>` : le titre d'étape « Vérifiez votre réservation »
+            a disparu avec #1047 — le `<h1>` du tunnel pose désormais la question
+            —, et un `h3` sauterait le niveau 2 de la page (WCAG 1.3.1). Le corps
+            reste celui de `.spa-booking__terms-title` : c'est la classe qui le
+            décide, pas l'élément. */}
+        <h2 className="spa-booking__terms-title">Avant de confirmer</h2>
         <ul className="spa-list spa-booking__terms-list">
           <li>
             {/* Le montant n'est pas redit : il est deux lignes plus haut, dans
@@ -265,14 +272,22 @@ export function SummaryStep({
         </ul>
       </div>
 
-      {/* Même groupement que l'espace compte : les deux boutons se suivent au
-          lieu d'être plaqués aux extrémités par `.spa-card__footer` (#623). */}
+      {/* La correction nommée, dans le flux : c'est elle que désigne le refus
+          `CLIENT_EMAIL_NOT_BOOKABLE` ci-dessus (#452), et elle dit ce qu'on va
+          changer, là où « ← Retour » de l'en-tête ne dit que « revenir ». */}
       <div className="spa-booking__actions">
         <Button variant="quiet" onClick={onBack} disabled={submitting}>
           Corriger mes coordonnées
         </Button>
+      </div>
+
+      {/* L'action primaire dans la barre basse (#1047), sans rappel : ces faits
+          **sont** l'écran, et les redire deux cents pixels plus bas ferait lire
+          deux récapitulatifs pour une réservation. */}
+      <BookingActionBar>
         <Button
           variant="accent"
+          block
           loading={submitting}
           loadingLabel="Réservation en cours…"
           onClick={() => {
@@ -281,7 +296,7 @@ export function SummaryStep({
         >
           Confirmer la réservation
         </Button>
-      </div>
+      </BookingActionBar>
     </section>
   );
 }

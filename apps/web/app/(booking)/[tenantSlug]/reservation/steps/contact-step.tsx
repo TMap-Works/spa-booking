@@ -6,6 +6,7 @@ import { useCallback, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
+import { BookingActionBar, type BookingSummary } from '@/components/booking/summary-bar';
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
 import { TextArea } from '@/components/ui/textarea';
@@ -139,6 +140,13 @@ interface ContactStepProps {
    */
   readonly countryCode: string | null;
   /**
+   * Ce que la barre basse rappelle de la réservation en cours (#1047).
+   *
+   * Un seul objet, composé par le tunnel : ce formulaire n'a rien à savoir du
+   * catalogue ni du fuseau du salon pour afficher une ligne de rappel.
+   */
+  readonly summary: BookingSummary | null;
+  /**
    * Verse la saisie en cours au brouillon **sans changer d'étape**.
    *
    * Le formulaire est non contrôlé (react-hook-form) : sans ce report, ce que la
@@ -168,6 +176,7 @@ export function ContactStep({
   contact,
   tenantSlug,
   countryCode,
+  summary,
   onSave,
   onBack,
   onSubmit,
@@ -250,8 +259,9 @@ export function ContactStep({
         })(event);
       }}
     >
-      <h2 className="spa-card__title">Vos coordonnées</h2>
-
+      {/* Plus de titre d'étape ici : le `<h1>` du tunnel pose la question —
+          « Comment vous joindre ? » —, et « Vos coordonnées » juste au-dessous
+          la redisait en d'autres mots (#1047, BM-TUNNEL-11). */}
       <Field
         id="firstName"
         label="Prénom"
@@ -329,10 +339,8 @@ export function ContactStep({
         {...register('consent')}
       />
 
-      {/* Groupés, comme le récapitulatif et la confirmation le font déjà : la
-          colonne flex de `.spa-booking__step` étirerait sinon chaque bouton sur
-          toute la largeur du panneau, et les deux passeraient l'un sous
-          l'autre. */}
+      {/* La correction nommée, dans le flux : elle dit ce qu'on va changer, là
+          où « ← Retour » de l'en-tête ne dit que « revenir ». */}
       <div className="spa-booking__actions">
         <Button
           variant="quiet"
@@ -347,10 +355,17 @@ export function ContactStep({
         >
           Changer de créneau
         </Button>
-        <Button type="submit" variant="accent" loading={isSubmitting}>
+      </div>
+
+      {/* L'action primaire dans la barre basse, et le rappel avec elle (#1047).
+          Le bouton reste **dans** le formulaire : c'est ce qui garde la
+          soumission à la touche Entrée, et c'est la raison pour laquelle la
+          barre est rendue par l'étape et non par le tunnel. */}
+      <BookingActionBar summary={summary}>
+        <Button type="submit" variant="accent" block loading={isSubmitting}>
           Vérifier ma réservation
         </Button>
-      </div>
+      </BookingActionBar>
     </form>
   );
 }

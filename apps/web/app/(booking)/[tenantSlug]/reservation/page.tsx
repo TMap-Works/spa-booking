@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { ApiClientError } from '@/lib/api-client';
 
 import { BookingErrorNotice } from '../booking-error-notice';
-import { loadSalonServices, loadSalonTenant } from '../salon-data';
+import { loadSalonServices, loadSalonTenant, salonPath } from '../salon-data';
 import { BookingTunnel } from './booking-tunnel';
 
 /**
@@ -40,7 +40,12 @@ export default async function BookingPage({ params }: PageProps) {
       loadSalonServices(tenantSlug),
     ]);
 
-    return <BookingTunnel tenant={tenant} services={services} />;
+    // Le chemin de sortie est composé ici, et non dans le tunnel : les
+    // composants ne connaissent pas l'arborescence des routes, c'est la page qui
+    // la tient (`salon-data.ts`), comme pour l'en-tête de la vitrine.
+    return (
+      <BookingTunnel tenant={tenant} services={services} exitHref={salonPath(tenantSlug)} />
+    );
   } catch (error) {
     // Établissement inconnu, désactivé, ou d'un slug mal formé : l'API répond
     // 404 sans distinguer les trois — c'est voulu, un 403 confirmerait
@@ -49,16 +54,27 @@ export default async function BookingPage({ params }: PageProps) {
       notFound();
     }
 
-    // Pas de `<main>` ici : le layout en pose déjà un autour de cet écran, et
-    // deux régions principales dans un même document se disputent le repère de
-    // navigation des lecteurs d'écran.
+    // Le `<main>` est posé ici depuis #1047 : le layout n'est plus qu'une
+    // enveloppe, et c'est le tunnel — ou cet encart quand il ne peut pas se
+    // rendre — qui porte la région principale. Une seule par document.
+    //
+    // Sans en-tête de tunnel : il n'y a pas d'établissement à nommer, ni
+    // d'étape à quitter. La navigation du navigateur reste la sortie.
+    //
+    // Le `<h1>`, lui, reste : il a quitté le layout pour `BookingProgress`
+    // (#1047), c'est-à-dire pour un tunnel qui n'est justement pas rendu ici. Le
+    // titre de l'encart d'erreur est un `<p>` (`components/ui/notification.tsx`) :
+    // sans cette ligne, la page n'aurait aucun titre, et aucun de niveau 1.
     return (
-      <div className="spa-booking__panel">
-        <BookingErrorNotice
-          title="La page de réservation n’a pas pu être chargée"
-          error={error}
-        />
-      </div>
+      <main className="spa-booking__main" id="contenu">
+        <div className="spa-booking__frame spa-booking__content">
+          <h1 className="spa-booking__title">Prendre rendez-vous</h1>
+          <BookingErrorNotice
+            title="La page de réservation n’a pas pu être chargée"
+            error={error}
+          />
+        </div>
+      </main>
     );
   }
 }
