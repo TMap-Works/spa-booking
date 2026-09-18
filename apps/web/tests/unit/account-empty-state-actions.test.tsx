@@ -3,11 +3,13 @@ import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import AccountPage from '@/app/(account)/[tenantSlug]/compte/(liste)/page';
+import AccountHistoryPage from '@/app/(account)/[tenantSlug]/compte/historique/page';
 
 import { service, tenant } from './fixtures';
 
 /**
- * Ce que les deux états vides de l'espace client offrent à cliquer — #745.
+ * Ce que les deux états vides de l'espace client offrent à cliquer — #745,
+ * repris par #1053.
  *
  * ## La référence, et pourquoi elle est tenue ici
  *
@@ -18,23 +20,19 @@ import { service, tenant } from './fixtures';
  *
  * L'audit de conception a relevé l'écart sur un compte créé à l'instant, à
  * 360 px : les deux moitiés sont vides en même temps, toutes deux portent leur
- * explication — « Choisissez une prestation et un créneau… » — et aucune ne
- * porte quoi que ce soit de cliquable. Le seul chemin restant était un lien de
- * pied de page, situé **sous** les deux blocs : à cette largeur il faut faire
- * défiler pour le trouver, alors que la phrase demande d'agir tout de suite.
+ * explication et aucune ne porte quoi que ce soit de cliquable. Le seul chemin
+ * restant était un lien de pied de page, situé **sous** les deux blocs.
  *
- * La suite éprouve donc les deux moitiés, et pas seulement celle que la
- * direction proposée nommait : une moitié corrigée et l'autre laissée muette
- * contredirait la règle autant qu'avant.
+ * Les deux moitiés ayant leur onglet depuis #1053, chacune se juge sur son écran
+ * — mais la règle ne change pas : un vide sans sortie reste un cul-de-sac.
  *
- * ## Ce qu'elle protège en plus du simple « il y a un lien »
+ * ## Ce que #1053 y ajoute
  *
- * - **L'explication reste** : l'action s'ajoute au texte, elle ne le remplace
- *   pas. La règle exige les deux.
- * - **Un seul accent** : deux boutons primaires empilés ne hiérarchisent plus
- *   rien, et c'est le bloc « à venir » qui commande l'écran.
- * - **L'action appartient au vide** : une moitié peuplée ne la rend pas, sans
- *   quoi l'écran gagnerait un bouton à chaque section.
+ * `BM-HISTO-02` — « Réserver à nouveau » — veut que la cliente refasse la même
+ * prestation sans refaire tout le tunnel. L'état vide des rendez-vous **nomme**
+ * donc la dernière prestation honorée, quand il y en a une. Il ne la
+ * pré-sélectionne pas : le tunnel n'accepte aucun paramètre d'URL aujourd'hui, et
+ * promettre « en un clic » aurait été une promesse que le lien ne tient pas.
  */
 
 const fetchMyAppointments = vi.fn();
@@ -68,13 +66,13 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn(), replace: vi.fn(), push: vi.fn() }),
 }));
 
-function appointment(): BookedAppointment {
+function appointment(overrides: Partial<BookedAppointment> = {}): BookedAppointment {
   return {
     id: '3f7c1f4e-2a9d-4c53-8f0e-1b2c3d4e5f60',
     reference: 'RDV-8F3K-27',
     status: 'confirmed',
     serviceId: service.id,
-    staffId: '9a8b7c6d-5e4f-4a3b-9c8d-7e6f5a4b3c2e',
+    staffId: service.staff[0]?.id ?? '9a8b7c6d-5e4f-4a3b-9c8d-7e6f5a4b3c2e',
     clientId: '9a8b7c6d-5e4f-4a3b-9c8d-7e6f5a4b3c2f',
     startsAt: '2026-09-21T08:00:00.000Z',
     endsAt: '2026-09-21T09:00:00.000Z',
@@ -83,6 +81,7 @@ function appointment(): BookedAppointment {
     rescheduledFromId: null,
     cancelledAt: null,
     cancelledBy: null,
+    ...overrides,
   };
 }
 
@@ -94,9 +93,17 @@ function servir(upcoming: readonly BookedAppointment[], past: readonly BookedApp
   );
 }
 
-async function rendreLaPage(): Promise<HTMLElement> {
+async function rendreLesRendezVous(): Promise<HTMLElement> {
   const { container } = render(
     await AccountPage({ params: Promise.resolve({ tenantSlug: tenant.slug }) }),
+  );
+
+  return container;
+}
+
+async function rendreLHistorique(): Promise<HTMLElement> {
+  const { container } = render(
+    await AccountHistoryPage({ params: Promise.resolve({ tenantSlug: tenant.slug }) }),
   );
 
   return container;
@@ -109,84 +116,97 @@ afterEach(() => {
   fetchPublicTenant.mockReset();
 });
 
-describe("les états vides de l'espace client à la première visite", () => {
+describe('les états vides de l’espace client à la première visite', () => {
   it('offre le rendez-vous que la phrase du bloc « à venir » appelle déjà', async () => {
     servir([], []);
 
-    await rendreLaPage();
+    await rendreLesRendezVous();
 
     const aVenir = screen.getByRole('region', { name: 'Rendez-vous à venir' });
     const action = within(aVenir).getByRole('link', { name: 'Prendre rendez-vous' });
 
     expect(action.getAttribute('href')).toBe(`/${tenant.slug}/reservation`);
+    expect(within(aVenir).getByText('Aucun rendez-vous à venir')).toBeDefined();
+    expect(within(aVenir).getByText(/réserver votre prochaine visite/i)).toBeDefined();
   });
 
-  it('offre aussi une sortie au bloc « Historique », que la capture montrait muet', async () => {
+  it('offre aussi une sortie à l’historique, que la capture montrait muet', async () => {
     servir([], []);
 
-    await rendreLaPage();
+    await rendreLHistorique();
 
     const historique = screen.getByRole('region', { name: 'Historique' });
     const action = within(historique).getByRole('link', { name: 'Découvrir les prestations' });
 
     // La vitrine, et non le tunnel : l'historique se remplit d'un rendez-vous,
-    // et un rendez-vous commence par le choix d'un soin. Répéter à l'identique
-    // le bouton du bloc du dessus donnerait deux fois la même phrase empilée.
+    // et un rendez-vous commence par le choix d'un soin.
     expect(action.getAttribute('href')).toBe(`/${tenant.slug}`);
-  });
-
-  it("garde l'explication à côté de l'action — la règle exige les deux", async () => {
-    servir([], []);
-
-    await rendreLaPage();
-
-    const aVenir = screen.getByRole('region', { name: 'Rendez-vous à venir' });
-    const historique = screen.getByRole('region', { name: 'Historique' });
-
-    expect(within(aVenir).getByText('Aucun rendez-vous à venir')).toBeDefined();
-    expect(within(aVenir).getByText(/réserver votre prochaine visite/i)).toBeDefined();
     expect(within(historique).getByText('Votre historique est vide')).toBeDefined();
-    expect(
-      within(historique).getByText(/quittera la liste « Rendez-vous à venir »/i),
-    ).toBeDefined();
   });
 
-  it('ne laisse aucun bloc vide de la page sans quelque chose à cliquer', async () => {
+  it.each([
+    ['les rendez-vous', rendreLesRendezVous],
+    ['l’historique', rendreLHistorique],
+  ])('ne laisse aucun bloc vide de %s sans quelque chose à cliquer', async (_ecran, rendre) => {
     servir([], []);
 
-    const container = await rendreLaPage();
+    const container = await rendre();
 
     const vides = [...container.querySelectorAll('.spa-empty')];
 
-    // Deux blocs vides, c'est la situation de la capture : si une troisième
-    // moitié apparaissait un jour, elle tomberait sous la même règle.
-    expect(vides).toHaveLength(2);
+    expect(vides).toHaveLength(1);
     for (const vide of vides) {
       expect(vide.querySelector('a[href]')).not.toBeNull();
     }
   });
 
-  it("ne met l'accent que sur une seule des deux sorties", async () => {
+  it('ne met l’accent que sur la sortie des rendez-vous', async () => {
     servir([], []);
 
-    const container = await rendreLaPage();
+    const rendezVous = await rendreLesRendezVous();
+    expect(rendezVous.querySelectorAll('.spa-empty .spa-button--accent')).toHaveLength(1);
 
-    const accents = container.querySelectorAll('.spa-empty .spa-button--accent');
+    cleanup();
+    servir([], []);
 
-    expect(accents).toHaveLength(1);
-    expect(accents[0]?.textContent).toBe('Prendre rendez-vous');
+    // L'historique est le second rôle : deux accents empilés dans le parcours ne
+    // hiérarchiseraient plus rien (#745).
+    const historique = await rendreLHistorique();
+    expect(historique.querySelectorAll('.spa-empty .spa-button--accent')).toHaveLength(0);
   });
 
-  it("n'ajoute l'action qu'au vide : une moitié peuplée n'en porte pas", async () => {
+  it('n’ajoute l’action qu’au vide : une moitié peuplée n’en porte pas', async () => {
     servir([appointment()], []);
 
-    await rendreLaPage();
+    await rendreLesRendezVous();
+
+    expect(screen.queryByRole('link', { name: 'Prendre rendez-vous' })).toBeNull();
+  });
+});
+
+describe('l’état vide nomme la dernière prestation honorée (BM-HISTO-02, #1053)', () => {
+  it('la nomme avec sa durée et son praticien', async () => {
+    servir([], [appointment({ status: 'completed' })]);
+
+    await rendreLesRendezVous();
 
     const aVenir = screen.getByRole('region', { name: 'Rendez-vous à venir' });
-    const historique = screen.getByRole('region', { name: 'Historique' });
 
-    expect(within(aVenir).queryByRole('link', { name: 'Prendre rendez-vous' })).toBeNull();
-    // L'autre moitié, elle, est bien vide : sa sortie reste.
-    expect(within(historique).getByRole('link', { name: 'Découvrir les prestations' })).toBeDefined();
+    expect(within(aVenir).getByText(/Votre dernière visite/)).toBeDefined();
+    expect(within(aVenir).getByText(/Massage suédois/)).toBeDefined();
+    expect(within(aVenir).getByText(/Hery/)).toBeDefined();
+    // La sortie reste la même : c'est une suggestion, pas une seconde action.
+    expect(within(aVenir).getByRole('link', { name: 'Prendre rendez-vous' })).toBeDefined();
+  });
+
+  it('retombe sur la phrase générique quand rien n’a été honoré', async () => {
+    // Un rendez-vous annulé n'est pas une visite : le proposer « à nouveau »
+    // rappellerait à la cliente ce qu'elle a précisément décidé de ne pas faire.
+    servir([], [appointment({ status: 'cancelled', cancelledBy: 'client' })]);
+
+    await rendreLesRendezVous();
+
+    expect(screen.getByText(/réserver votre prochaine visite/i)).toBeDefined();
+    expect(screen.queryByText(/Votre dernière visite/)).toBeNull();
   });
 });

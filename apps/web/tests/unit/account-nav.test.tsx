@@ -29,6 +29,7 @@ const accountTenant = vi.fn();
 const readAccountPresence = vi.fn();
 
 const COMPTE = `/${tenant.slug}/compte`;
+const HISTORIQUE = `${COMPTE}/historique`;
 const COORDONNEES = `${COMPTE}/coordonnees`;
 const REPORT = `${COMPTE}/rendez-vous/3f7c1f4e-2a9d-4c53-8f0e-1b2c3d4e5f60/report`;
 const CONNEXION = `${COMPTE}/connexion`;
@@ -107,13 +108,18 @@ afterEach(() => {
 describe('la navigation de l’espace client', () => {
   it.each([
     ['la liste des rendez-vous', COMPTE],
+    ['l’historique', HISTORIQUE],
     ['les coordonnées', COORDONNEES],
     ['le report d’un rendez-vous', REPORT],
   ])('est servie par le gabarit sur %s, déconnexion comprise', async (_ecran, chemin) => {
     await rendreLeGabarit('ouverte', chemin);
 
     const nav = screen.getByRole('navigation', { name: 'Mon compte' });
+    // Trois onglets depuis #1053 : « À venir d'abord, Passés à part »
+    // (BM-RDV-01), et c'est cet onglet qu'attend #1054 pour reprendre
+    // l'historique.
     expect(within(nav).getByRole('link', { name: 'Mes rendez-vous' })).toBeDefined();
+    expect(within(nav).getByRole('link', { name: 'Historique' })).toBeDefined();
     expect(within(nav).getByRole('link', { name: 'Mes coordonnées' })).toBeDefined();
 
     // « Se déconnecter » manquait sur deux écrans sur trois avant #747 : il est
@@ -130,6 +136,9 @@ describe('la navigation de l’espace client', () => {
     );
     expect(within(nav).getByRole('link', { name: 'Mes rendez-vous' }).getAttribute('href')).toBe(
       COMPTE,
+    );
+    expect(within(nav).getByRole('link', { name: 'Historique' }).getAttribute('href')).toBe(
+      HISTORIQUE,
     );
   });
 
@@ -152,6 +161,7 @@ describe('la navigation de l’espace client', () => {
   it.each([
     ['les coordonnées', COORDONNEES, 'Mes coordonnées'],
     ['la liste', COMPTE, 'Mes rendez-vous'],
+    ['l’historique', HISTORIQUE, 'Historique'],
     ['le report, qui appartient aux rendez-vous', REPORT, 'Mes rendez-vous'],
   ])('marque l’onglet courant sur %s', async (_ecran, chemin, courant) => {
     await rendreLeGabarit('ouverte', chemin);

@@ -1,79 +1,47 @@
+import type { BookedAppointment, PublicService } from '@spa/shared';
 import { MY_APPOINTMENTS_DEFAULT_LIMIT } from '@spa/shared';
+import Link from 'next/link';
 
+import { appointmentBrief } from '@/components/account/appointment-brief';
+import { SalonAside } from '@/components/account/salon-aside';
+import { EmptyState } from '@/components/ui/empty-state';
 import { fetchMyAppointments, fetchPublicServices } from '@/lib/api-client';
+import { formatDuration } from '@/lib/format';
 import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
 
+import { AppointmentHero } from '../components/appointment-hero';
 import { AppointmentList } from '../components/appointment-list';
-import { accountPath, bookingPath, salonPath } from '../paths';
+import { accountPath, bookingPath } from '../paths';
 import { readAccountData } from '../session';
 import { accountTenant } from '../tenant';
 
 /**
- * L'accueil de l'espace client : les rendez-vous **à venir** et l'**historique**
- * (#47, deuxième critère ; CDC §1.4).
+ * L'onglet « Mes rendez-vous » de l'espace client : ce qu'il reste à honorer
+ * (#47, deuxième critère ; CDC §1.4). L'historique a le sien depuis #1053.
  *
- * Server Component, et rendu à la demande : un historique se lit connecté, il
- * n'y a rien à pré-rendre et rien à mettre en cache — deux visiteuses
- * partageraient l'historique de la première arrivée.
+ * Server Component, et rendu à la demande : des rendez-vous se lisent connectée,
+ * il n'y a rien à pré-rendre et rien à mettre en cache — deux visiteuses
+ * partageraient l'espace de la première arrivée.
  *
- * ## Deux appels et non un
+ * ## Ce que cet écran montre, et dans quel ordre (#1053)
  *
- * L'API sert une moitié à la fois (`?scope=`), parce que les deux n'ont ni le
- * même ordre ni la même borne : « à venir » se lit du plus proche au plus
- * lointain, l'historique du plus récent au plus ancien. Les deux lectures
- * partent en parallèle — elles ne dépendent pas l'une de l'autre, et les
- * enchaîner doublerait le temps d'affichage pour rien.
+ * `BM-RDV-01` — « À venir d'abord » — et l'audit `d20260918-1` : le prochain
+ * rendez-vous doit être « la première chose visible à 360 px », et non une carte
+ * parmi dix. L'écran s'ouvre donc sur **une** carte héros
+ * (`AppointmentHero`) ; les rendez-vous suivants sont des cartes compactes sous
+ * un titre qui les annonce pour ce qu'ils sont.
  *
- * ## La coupure n'est pas temporelle, et les intitulés le disent (#744)
+ * Aucun paragraphe d'explication sous un titre de section : les quatre lignes
+ * qui précédaient la liste tiennent désormais en une ligne, sous la pastille du
+ * rendez-vous qu'elles concernent (`AppointmentCard`).
  *
- * `scope=past` n'est pas « ce qui est passé » : c'est le **complément exact** de
- * `scope=upcoming`, que l'API définit comme « l'intervalle n'est pas terminé
- * **et** le statut occupe encore le créneau » (`appointments.repository.ts`,
- * `listForClient`). Un rendez-vous annulé pour la semaine prochaine n'occupe
- * plus rien : il tombe donc dans la seconde moitié tout en étant daté du futur.
- * C'est voulu — les deux moitiés sont disjointes et complémentaires, si bien
- * qu'aucun rendez-vous ne peut disparaître de l'espace client.
+ * ## La seconde moitié n'est plus chargée pour rien
  *
- * Intituler cette moitié « Rendez-vous passés » la faisait donc mentir sur son
- * propre contenu : le CDC §2.4 décrit le rendez-vous par un **statut** et un
- * **créneau** distincts, et un intitulé qui annonce un critère de créneau doit
- * être peuplé selon ce critère. La coupure réelle étant « encore actionnable »
- * contre « archivé », c'est elle qui est écrite — en titre pour la seconde
- * moitié, et en légende pour les deux, afin qu'une date future sous
- * « Historique » se lise comme une règle et non comme un bug.
- *
- * ## Les deux vides de la première visite portent chacun leur sortie (#745)
- *
- * Un compte créé à l'instant affiche les deux moitiés vides à la fois, et c'est
- * le seul moment où cet écran n'a rien à montrer. `states.md` § « Règles
- * générales » veut alors « une explication **et au moins une action** » : les
- * deux phrases étaient là, aucune action ne l'était — à 360 px le seul chemin
- * était un lien de pied de page situé **sous** les deux blocs.
- *
- * Les deux sorties sont distinctes à dessein, plutôt que deux exemplaires du
- * même bouton empilés :
- *
- * | Moitié vide | Sortie | Pourquoi celle-là |
- * |---|---|---|
- * | Rendez-vous à venir | **Prendre rendez-vous** → tunnel | l'action que la phrase appelle déjà ; c'est la sortie principale de l'écran, donc l'accent |
- * | Historique | Découvrir les prestations → vitrine | on n'archive rien sans avoir d'abord choisi un soin ; second rôle, donc `neutral` |
- *
- * Une seule action porte l'accent : deux boutons primaires côte à côte ne
- * hiérarchisent plus rien, et c'est le bloc « à venir » qui commande l'écran.
- *
- * ## Ce que cet écran ne rend plus : la navigation du compte (#747)
- *
- * « Modifier mes coordonnées | Se déconnecter » était rendue ici, et donc nulle
- * part ailleurs : les coordonnées et le report n'offraient aucun moyen de fermer
- * sa session. Ce qui appartient à l'espace et non à un écran est passé au
- * gabarit (`layout.tsx`, `components/account-nav.tsx`). Cette page ne rend plus
- * que ses deux moitiés — ce qui lui est propre.
- *
- * ## Pourquoi sous `(liste)/` (#830)
- *
- * Le groupe ne change pas l'URL — la liste reste `/compte`. Il lui donne un
- * dossier où poser son squelette sans envelopper le report d'un rendez-vous,
- * dont le 404 doit partir avant tout squelette (voir `loading.tsx`).
+ * L'écran demandait les deux moitiés à chaque visite. L'historique ayant son
+ * onglet, seule « à venir » est lue ici — **sauf** quand elle est vide : l'état
+ * vide nomme alors la dernière prestation honorée, ce que `BM-HISTO-02` demande
+ * de proposer. La seconde lecture ne part donc que dans le cas où elle sert, et
+ * dans le seul cas où l'écran n'a rien d'autre à afficher.
  */
 
 export const dynamic = 'force-dynamic';
@@ -105,103 +73,121 @@ export default async function AccountPage({ params, searchParams }: AccountPageP
     readAccountData(
       tenantSlug,
       here,
-      async (accessToken) =>
-        Promise.all([
-          fetchMyAppointments(accessToken, {
-            scope: 'upcoming',
-            limit: MY_APPOINTMENTS_DEFAULT_LIMIT,
-          }),
-          fetchMyAppointments(accessToken, {
-            scope: 'past',
-            limit: MY_APPOINTMENTS_DEFAULT_LIMIT,
-          }),
-        ]),
+      async (accessToken) => {
+        const upcoming = await fetchMyAppointments(accessToken, {
+          scope: 'upcoming',
+          limit: MY_APPOINTMENTS_DEFAULT_LIMIT,
+        });
+
+        // Voir l'en-tête : la seconde lecture ne sert qu'à nommer la dernière
+        // prestation honorée dans l'état vide.
+        const past =
+          upcoming.length > 0
+            ? []
+            : await fetchMyAppointments(accessToken, {
+                scope: 'past',
+                limit: MY_APPOINTMENTS_DEFAULT_LIMIT,
+              });
+
+        return { upcoming, past };
+      },
       // Le marqueur de renouvellement, s'il est là : c'est ce qui borne la
       // tentative à une seule et empêche la chaîne de redirections (#861).
       isRenewalReturn(query[RENEWAL_PARAM]),
     ),
   ]);
 
-  const [upcoming, past] = appointments;
+  const [next, ...others] = appointments.upcoming;
 
   return (
-    <>
+    <div className="spa-account__columns">
       <section className="spa-account__section" aria-labelledby="rdv-a-venir">
-        <div className="spa-account__section-heading">
-          <h2 className="spa-account__section-title" id="rdv-a-venir">
-            Rendez-vous à venir
-          </h2>
-          {/* La légende répond à ce que la pastille « À confirmer par le salon »
-              laisse ouvert : ce qu'on attend, de qui, et pendant combien de
-              temps (#743). Le créneau est **déjà** retenu — `pending` fait
-              partie des `BLOCKING_APPOINTMENT_STATUSES`, la contrainte
-              d'exclusion l'oppose à toute autre réservation —, si bien que
-              l'attente ne coûte rien à la cliente et ne lui demande rien.
-              Aucun délai chiffré n'est annoncé : l'API n'en expose aucun, et
-              en inventer un serait une promesse que le salon n'a pas faite. */}
-          <p className="spa-account__section-hint">
-            Ceux que vous pouvez encore reporter ou annuler. Votre créneau est retenu dès la
-            réservation ; le salon confirme le rendez-vous avant votre venue, sans démarche de votre
-            part.
-          </p>
-        </div>
-        <AppointmentList
-          tenantSlug={tenantSlug}
-          appointments={upcoming}
-          timeZone={tenant.timezone}
-          services={services}
-          scope="upcoming"
-          emptyTitle="Aucun rendez-vous à venir"
-          emptyDescription="Choisissez une prestation et un créneau pour réserver votre prochaine visite."
-          emptyAction={{
-            href: bookingPath(tenantSlug),
-            label: 'Prendre rendez-vous',
-            variant: 'accent',
-          }}
-        />
+        {/* Le titre de la section double l'onglet actif, qui dit déjà « Mes
+            rendez-vous » juste au-dessus : l'écrire une seconde fois en clair
+            serait le mur de texte que l'audit relève. Masqué, il garde à la
+            région son nom accessible (WCAG 1.3.1). */}
+        <h2 className="spa-visually-hidden" id="rdv-a-venir">
+          Rendez-vous à venir
+        </h2>
+
+        {next === undefined ? (
+          <AucunRendezVous tenantSlug={tenantSlug} past={appointments.past} services={services} />
+        ) : (
+          <>
+            <AppointmentHero
+              tenantSlug={tenantSlug}
+              brief={appointmentBrief(next, services)}
+              tenant={tenant}
+              timeZone={tenant.timezone}
+            />
+
+            {others.length === 0 ? null : (
+              <section className="spa-account__section" aria-labelledby="rdv-suivants">
+                <h3 className="spa-account__section-title" id="rdv-suivants">
+                  Ensuite
+                </h3>
+                <AppointmentList
+                  tenantSlug={tenantSlug}
+                  appointments={others}
+                  timeZone={tenant.timezone}
+                  services={services}
+                  scope="upcoming"
+                />
+              </section>
+            )}
+          </>
+        )}
       </section>
 
-      <section className="spa-account__section" aria-labelledby="historique">
-        <div className="spa-account__section-heading">
-          <h2 className="spa-account__section-title" id="historique">
-            Historique
-          </h2>
-          {/* « Non confirmés » complète la liste depuis #743 : un rendez-vous
-              resté `pending` dont l'heure est passée descend ici sans avoir été
-              ni honoré, ni annulé, ni déplacé. Une légende qui ne l'énumère pas
-              ferait de sa ligne une anomalie de tri, exactement comme
-              « Rendez-vous passés » le faisait d'une date future (#744). */}
-          <p className="spa-account__section-hint">
-            Vos rendez-vous honorés, annulés, déplacés ou restés non confirmés — même lorsque leur
-            date n’est pas encore passée.
-          </p>
-        </div>
-        <AppointmentList
-          tenantSlug={tenantSlug}
-          appointments={past}
-          timeZone={tenant.timezone}
-          services={services}
-          scope="past"
-          emptyTitle="Votre historique est vide"
-          // La légende au-dessus dit déjà ce que la section range : le vide n'a
-          // plus qu'à dire **quand** il se remplira, sans la répéter mot pour mot.
-          // « dès votre première visite » serait faux du même défaut que
-          // « Rendez-vous passés » : un rendez-vous annulé ou déplacé remplit
-          // cette moitié sans qu'aucune visite ait eu lieu. Le déclencheur est la
-          // sortie de l'autre moitié, et c'est lui qui est écrit.
-          emptyDescription="Il se remplira dès qu’un de vos rendez-vous quittera la liste « Rendez-vous à venir »."
-          // La vitrine et non le tunnel : l'historique se remplit d'un
-          // rendez-vous, et un rendez-vous commence par le choix d'un soin. Le
-          // catalogue et ses tarifs sont là, et le bouton « Réserver » de la
-          // vitrine rejoint le tunnel — la sortie est réelle sans répéter mot
-          // pour mot le bouton primaire posé juste au-dessus.
-          emptyAction={{
-            href: salonPath(tenantSlug),
-            label: 'Découvrir les prestations',
-            variant: 'neutral',
-          }}
-        />
-      </section>
-    </>
+      <SalonAside tenant={tenant} />
+    </div>
+  );
+}
+
+interface AucunRendezVousProps {
+  readonly tenantSlug: string;
+  readonly past: readonly BookedAppointment[];
+  readonly services: readonly PublicService[];
+}
+
+/**
+ * L'état vide de l'onglet — le seul moment où cet écran n'a rien à montrer.
+ *
+ * `docs/design/appointments/states.md` § « Règles générales » veut « une
+ * explication **et au moins une action** » : le bouton primaire mène au tunnel,
+ * qui est la sortie de cet écran (#745).
+ *
+ * `BM-HISTO-02` veut en plus que la cliente puisse « refaire la même prestation
+ * sans refaire tout le tunnel ». La dernière prestation honorée est donc
+ * **nommée** ici. Elle n'est pas encore pré-sélectionnée : le tunnel n'accepte
+ * aucun paramètre d'URL aujourd'hui, et lui en ajouter un appartient à son
+ * propre chantier. Nommer sans pré-remplir reste tenable — la phrase rappelle
+ * quoi rechoisir —, promettre « en un clic » ne l'aurait pas été.
+ */
+function AucunRendezVous({ tenantSlug, past, services }: AucunRendezVousProps) {
+  const derniere = past.find((appointment) => appointment.status === 'completed') ?? null;
+  const brief = derniere === null ? null : appointmentBrief(derniere, services);
+
+  return (
+    <EmptyState
+      icon="calendar"
+      title="Aucun rendez-vous à venir"
+      action={
+        // Un lien et non un bouton : c'est une **destination**, elle s'ouvre
+        // dans un onglet et se copie.
+        <Link className="spa-button spa-button--accent" href={bookingPath(tenantSlug)}>
+          <span className="spa-button__label">Prendre rendez-vous</span>
+        </Link>
+      }
+    >
+      {brief === null || brief.serviceName === null ? (
+        'Choisissez une prestation et un créneau pour réserver votre prochaine visite.'
+      ) : (
+        <>
+          Votre dernière visite : {brief.serviceName} · {formatDuration(brief.durationMinutes)}
+          {brief.practitioner === null ? null : <> · {brief.practitioner}</>}.
+        </>
+      )}
+    </EmptyState>
   );
 }
