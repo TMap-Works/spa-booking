@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { Avatar, initialsOf } from '@/components/ui/avatar';
+import { Avatar, avatarClasses, initialsOf } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { DateBlock, dateBlockParts } from '@/components/ui/date-block';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -59,6 +59,29 @@ describe('Avatar', () => {
     render(<Avatar name="Alice Marchand" label="Compte d’Alice Marchand" />);
     expect(screen.getByRole('img', { name: 'Compte d’Alice Marchand' })).toBeTruthy();
   });
+
+  /*
+   * Une pastille ne loge pas toujours des initiales : « Premier disponible »
+   * n'est personne, et `staff-choice.tsx` y met un pictogramme (#1079). C'est la
+   * raison d'être de `avatarClasses` — et ce que cette paire de tests tient,
+   * c'est qu'elle et `Avatar` ne puissent pas diverger.
+   */
+  it('compose les classes d’une pastille sans la rendre', () => {
+    expect(avatarClasses('lg', 'square', 'brand')).toBe(
+      'spa-avatar spa-avatar--lg spa-avatar--square spa-avatar--brand',
+    );
+    // Les mêmes défauts qu'`Avatar` : une pastille demandée sans précision est
+    // ronde, moyenne et d'accent.
+    expect(avatarClasses()).toBe('spa-avatar spa-avatar--md spa-avatar--circle spa-avatar--accent');
+  });
+
+  it('rend exactement les classes que `avatarClasses` compose', () => {
+    const { container } = render(<Avatar name="Spa Lumière" size="xl" shape="square" tone="brand" />);
+
+    expect(container.querySelector('.spa-avatar')?.className).toBe(
+      avatarClasses('xl', 'square', 'brand'),
+    );
+  });
 });
 
 describe('DateBlock', () => {
@@ -97,8 +120,14 @@ describe('EmptyState', () => {
   });
 });
 
-function Categories() {
+/** `marked` : l'identifiant de la rubrique qui porte la marque, s'il y en a une. */
+function Categories({ marked, markedLabel }: { marked?: string; markedLabel?: string }) {
   const [value, setValue] = useState('massages');
+  // `exactOptionalPropertyTypes` : passer `undefined` à une propriété optionnelle
+  // n'est pas la même chose que ne pas la passer — et c'est bien l'absence qu'on
+  // veut éprouver quand l'appelant ne précise rien.
+  const wording = markedLabel === undefined ? {} : { markedLabel };
+
   return (
     <>
       <Tabs
@@ -106,10 +135,11 @@ function Categories() {
         idPrefix="cat"
         value={value}
         onChange={setValue}
+        {...wording}
         items={[
-          { id: 'massages', label: 'Massages', count: 2 },
-          { id: 'visage', label: 'Soins du visage', count: 1 },
-          { id: 'corps', label: 'Corps' },
+          { id: 'massages', label: 'Massages', count: 2, marked: marked === 'massages' },
+          { id: 'visage', label: 'Soins du visage', count: 1, marked: marked === 'visage' },
+          { id: 'corps', label: 'Corps', marked: marked === 'corps' },
         ]}
       />
       <div {...tabPanelProps('cat', value)}>{value}</div>
@@ -141,6 +171,42 @@ describe('Tabs', () => {
   it('dit l’effectif dans le nom de l’onglet', () => {
     render(<Categories />);
     expect(screen.getByRole('tab', { name: 'Massages · 2' })).toBeTruthy();
+  });
+
+  /*
+   * La marque d'un onglet (#1079, `BM-SERVICE-06`) : ce qui a été retenu est
+   * dans ce panneau-là, qu'on l'ait ouvert ou non. Un état distinct de
+   * `aria-selected` — l'onglet ouvert est celui qu'on regarde, l'onglet marqué
+   * celui où se trouve le choix.
+   */
+  it('marque l’onglet qui contient ce qui a été retenu, sans le sélectionner', () => {
+    render(<Categories marked="corps" />);
+
+    const marque = screen.getByRole('tab', { name: /Corps/ });
+
+    expect(marque.querySelector('.spa-tabs__mark')).toBeTruthy();
+    // La marque ne déplace pas l'onglet ouvert : les deux états cohabitent.
+    expect(marque.getAttribute('aria-selected')).toBe('false');
+    expect(screen.getByRole('tab', { name: /Massages/ }).querySelector('.spa-tabs__mark')).toBeNull();
+  });
+
+  it('ne fait pas lire « coche » : le glyphe est décoratif, la phrase est écrite', () => {
+    render(<Categories marked="massages" markedLabel="prestation retenue" />);
+
+    // Le pictogramme est masqué aux technologies d'assistance — une coche
+    // annoncée à la suite d'un libellé n'apprend rien (`icon.tsx`, WCAG 1.1.1).
+    const glyphe = screen.getByRole('tab', { name: /Massages/ }).querySelector('.spa-tabs__mark-icon');
+    expect(glyphe?.getAttribute('aria-hidden')).toBe('true');
+
+    // L'information passe donc par du texte, dans le nom accessible de l'onglet,
+    // à la suite du libellé et de l'effectif. `TabItem.label` étant une `string`,
+    // c'est le seul endroit où elle puisse se ranger.
+    expect(screen.getByRole('tab', { name: 'Massages · 2 · prestation retenue' })).toBeTruthy();
+  });
+
+  it('dit « contient votre choix » quand l’appelant ne précise rien', () => {
+    render(<Categories marked="corps" />);
+    expect(screen.getByRole('tab', { name: 'Corps · contient votre choix' })).toBeTruthy();
   });
 });
 
