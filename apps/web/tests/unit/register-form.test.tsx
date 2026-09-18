@@ -17,6 +17,9 @@ vi.mock('@/app/(account)/[tenantSlug]/compte/actions', () => ({
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh, replace, push: vi.fn() }),
+  // Le paramètre de retour (#1087) : absent ici, ce que ces cas-là supposent.
+  // Ce qu'il fait quand il est présent est éprouvé par `account-return.test.tsx`.
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 afterEach(() => {

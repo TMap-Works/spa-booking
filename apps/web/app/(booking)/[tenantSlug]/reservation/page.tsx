@@ -4,7 +4,13 @@ import { readAccountPresence } from '@/lib/account-presence';
 import { ApiClientError } from '@/lib/api-client';
 
 import { BookingErrorNotice } from '../booking-error-notice';
-import { accountPath, loadSalonServices, loadSalonTenant, salonPath } from '../salon-data';
+import {
+  accountPath,
+  loadSalonServices,
+  loadSalonTenant,
+  reservationPath,
+  salonPath,
+} from '../salon-data';
 import { BookingTunnel } from './booking-tunnel';
 import { initialBookingDraft } from './initial-draft';
 
@@ -74,7 +80,32 @@ export default async function BookingPage({ params, searchParams }: PageProps) {
         // La page est déjà `force-dynamic` : cette lecture ne lui coûte pas la
         // mise en cache qu'elle n'avait pas.
         presence={presence}
-        loginHref={`${accountPath(tenantSlug)}/connexion`}
+        /*
+         * « Déjà cliente ? Se connecter » ramène ici (#1087).
+         *
+         * ## Pourquoi le retour ne porte aucune clé de progression
+         *
+         * Cet `href` est écrit une fois, au rendu serveur. Le tunnel, lui,
+         * réécrit l'adresse à chaque étape par `history.replaceState`
+         * (`booking-tunnel.tsx`) : quand la cliente atteint « Coordonnées » en
+         * cliquant depuis la première étape, l'adresse dit `etape=coordonnees`
+         * alors que cette chaîne-ci a été figée sur les paramètres du
+         * chargement. Y recopier ce qu'on avait alors reviendrait à la renvoyer
+         * sur une étape périmée — et ce serait pire qu'inutile : l'URL **fait
+         * foi** dès qu'elle porte une de nos clés (`draftFromSearch`), si bien
+         * qu'un `?etape=prestation` rapporté du chargement effacerait la
+         * prestation et le créneau que le brouillon conserve.
+         *
+         * Sans clé, `sessionStorage` a le dernier mot : le brouillon est repris
+         * intact et `reachableStep` rouvre l'étape quittée.
+         *
+         * La clé du paramètre est réécrite plutôt qu'importée du groupe
+         * `(account)` — même raison que les chemins voisins (`salon-data.ts`) :
+         * la duplication est celle du routeur, et importer ce module-là ferait
+         * entrer l'espace client dans le graphe du tunnel. Sa revalidation vit
+         * à l'arrivée, seul endroit qui compte (`compte/connexion/return-path.ts`).
+         */
+        loginHref={`${accountPath(tenantSlug)}/connexion?retour=${encodeURIComponent(reservationPath(tenantSlug))}`}
         // L'étape et les choix que l'adresse porte, résolus contre le catalogue
         // qu'on vient de charger (#1055). C'est ce qui fait que la progression
         // et le squelette sont justes dès le premier rendu, au lieu d'annoncer

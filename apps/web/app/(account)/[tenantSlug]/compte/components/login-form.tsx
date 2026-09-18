@@ -3,7 +3,7 @@
 import { zodResolver } from '@hookform/resolvers/zod';
 import { ERROR_CODES, loginRequestSchema, type LoginRequest } from '@spa/shared';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 
@@ -14,6 +14,7 @@ import { PasswordField } from '@/components/ui/password-field';
 import type { SessionNotice } from '@/lib/session-refresh';
 
 import { loginAction } from '../actions';
+import { RETURN_QUERY_KEY, safeReturnPath, withReturnPath } from '../connexion/return-path';
 import { accountPath } from '../paths';
 
 /**
@@ -69,6 +70,20 @@ const NOTICE_COPY: Readonly<
 
 export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
   const router = useRouter();
+  /*
+   * La destination de retour, lue dans l'adresse et **rejugée ici** (#1087).
+   *
+   * Lue par le formulaire et non reçue en propriété de la page : le même
+   * paramètre vaut pour l'inscription, qui le reçoit du lien croisé ci-dessous,
+   * et faire porter la lecture par les deux écrans aurait dédoublé la règle sans
+   * rien simplifier. Les deux pages sont `force-dynamic`, si bien que
+   * `useSearchParams` ne leur coûte pas le rendu statique qu'elles n'ont pas.
+   *
+   * `safeReturnPath` refuse tout ce qui sort du salon courant — une URL absolue,
+   * `//hôte`, un autre slug : sans cela, cet écran serait une redirection
+   * ouverte, et c'est celui du produit où il faut le moins en poser.
+   */
+  const returnTo = safeReturnPath(useSearchParams().get(RETURN_QUERY_KEY), tenantSlug);
   const [failure, setFailure] = useState<string | null>(null);
 
   const {
@@ -95,10 +110,12 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
       return;
     }
 
-    router.replace(accountPath(tenantSlug));
-    // La page de compte est rendue côté serveur : sans ce rafraîchissement, la
-    // navigation servirait le rendu fait **avant** que le cookie de session
-    // n'existe, et rebondirait aussitôt sur cet écran.
+    // Là d'où l'on vient quand l'adresse le dit, l'espace client sinon (#1087).
+    router.replace(returnTo ?? accountPath(tenantSlug));
+    // La page de destination est rendue côté serveur : sans ce rafraîchissement,
+    // la navigation servirait le rendu fait **avant** que le cookie de session
+    // n'existe — l'espace client rebondirait sur cet écran, et le tunnel
+    // redemanderait des coordonnées que le cookie de présence connaît (#1086).
     router.refresh();
   });
 
@@ -170,7 +187,14 @@ export function LoginForm({ tenantSlug, notice }: LoginFormProps) {
 
       <p className="spa-account__switch">
         Pas encore de compte ?{' '}
-        <Link href={accountPath(tenantSlug, '/inscription')}>Créer mon compte</Link>
+        {/*
+          Le retour traverse le lien (#1087) : une cliente venue du tunnel sans
+          compte le crée et revient au tunnel, pas dans un espace client qu'elle
+          n'a pas demandé à voir.
+        */}
+        <Link href={withReturnPath(accountPath(tenantSlug, '/inscription'), returnTo)}>
+          Créer mon compte
+        </Link>
       </p>
     </section>
   );

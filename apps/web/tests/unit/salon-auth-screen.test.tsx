@@ -33,6 +33,9 @@ const readRefreshToken = vi.fn();
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ refresh: vi.fn(), replace: vi.fn(), push: vi.fn() }),
+  // Les deux formulaires d'identité lisent le paramètre de retour (#1087) ;
+  // ces cas-ci portent sur le cadre d'accueil, et n'en fournissent aucun.
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('@/app/(account)/[tenantSlug]/compte/tenant', () => ({

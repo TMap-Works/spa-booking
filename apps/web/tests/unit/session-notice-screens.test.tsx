@@ -17,6 +17,9 @@ import { LoginForm } from '@/app/(account)/[tenantSlug]/compte/components/login-
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: vi.fn(), refresh: vi.fn(), push: vi.fn() }),
+  // L'écran de connexion cliente lit le paramètre de retour (#1087) ; aucun
+  // motif de session n'en porte, et ces cas-ci n'en fournissent donc pas.
+  useSearchParams: () => new URLSearchParams(),
 }));
 
 vi.mock('@/app/(admin)/[tenantSlug]/admin/actions', () => ({
