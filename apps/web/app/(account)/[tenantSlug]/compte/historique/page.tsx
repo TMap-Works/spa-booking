@@ -1,12 +1,15 @@
 import { MY_APPOINTMENTS_DEFAULT_LIMIT } from '@spa/shared';
 import Link from 'next/link';
 
+import { appointmentBrief } from '@/components/account/appointment-brief';
+import type { HistoryEntry } from '@/components/account/appointment-history';
+import { rebookHref } from '@/components/account/rebook';
 import { EmptyState } from '@/components/ui/empty-state';
 import { fetchMyAppointments, fetchPublicServices } from '@/lib/api-client';
 import { isRenewalReturn, RENEWAL_PARAM } from '@/lib/session-refresh';
 
-import { AppointmentList } from '../components/appointment-list';
-import { accountPath, salonPath } from '../paths';
+import { AppointmentHistory } from '../components/appointment-history';
+import { accountPath, bookingPath, salonPath } from '../paths';
 import { readAccountData } from '../session';
 import { accountTenant } from '../tenant';
 
@@ -31,6 +34,16 @@ import { accountTenant } from '../tenant';
  * moitié « Rendez-vous passés » la ferait mentir sur son propre contenu (#744) —
  * « Historique » ne promet aucun critère de créneau, et c'est ce qui la rend
  * juste sans l'aide d'une légende.
+ *
+ * ## Ce que la page prépare, et ce qu'elle délègue (#1054)
+ *
+ * Elle ne rend plus une pile de cartes mais une liste groupée, filtrable, et
+ * rejouable (`AppointmentHistory`). Le partage est net : **tout ce qui demande
+ * le catalogue ou la session est fait ici**, côté serveur — la résolution des
+ * noms (`appointmentBrief`) et l'adresse de reprise du tunnel (`rebookHref`,
+ * `BM-HISTO-02`) —, et l'îlot client ne reçoit que des lignes prêtes à peindre.
+ * C'est ce qui garde hors du navigateur le jeton, le catalogue entier et les
+ * schémas du brouillon de réservation.
  */
 
 export const dynamic = 'force-dynamic';
@@ -61,6 +74,11 @@ export default async function AccountHistoryPage({ params, searchParams }: Histo
     ),
   ]);
 
+  const entries: readonly HistoryEntry[] = past.map((appointment) => ({
+    brief: appointmentBrief(appointment, services),
+    rebookHref: rebookHref(bookingPath(tenantSlug), appointment, services),
+  }));
+
   return (
     <section className="spa-account__section" aria-labelledby="historique">
       {/* Le titre double l'onglet actif juste au-dessus : masqué, il garde à la
@@ -86,13 +104,7 @@ export default async function AccountHistoryPage({ params, searchParams }: Histo
           Il se remplira dès qu’un de vos rendez-vous quittera la liste « Mes rendez-vous ».
         </EmptyState>
       ) : (
-        <AppointmentList
-          tenantSlug={tenantSlug}
-          appointments={past}
-          timeZone={tenant.timezone}
-          services={services}
-          scope="past"
-        />
+        <AppointmentHistory entries={entries} timeZone={tenant.timezone} />
       )}
     </section>
   );

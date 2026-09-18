@@ -6,7 +6,8 @@
  * tableau de bord admin. Il partage le design system des deux — boutons, champs,
  * notifications, pastilles, bloc date, état vide — et n'ajoute ici que ce qui lui
  * est propre : la mise en page du compte, la carte du prochain rendez-vous, la
- * carte compacte des suivants, et la carte du salon en colonne latérale.
+ * carte compacte des suivants, la liste d'historique (#1054) et la carte du
+ * salon en colonne latérale.
  *
  * Aucune couleur littérale, aucune primitive `--spa-palette-*` : tout passe par
  * les jetons sémantiques (styles/README.md §1). Les pastilles de statut
@@ -561,14 +562,290 @@
   gap: var(--spa-space-2);
 }
 
-/* --- Écran en cours de chargement (#830, #1053) ---------------------------- */
+/* --- Historique : une liste, pas des cartes (#1054) ------------------------ */
+
+/*
+ * L'audit `d20260918-1` relève neuf cartes de même habillage, deux et demie par
+ * écran à 360 px. Ce qui coûtait cette place n'était pas le contenu mais le
+ * cadre : un fond levé, une bordure et 1 rem de rembourrage autour de trois
+ * lignes de texte. La liste garde les trois lignes et rend le cadre — un
+ * séparateur fin suffit à séparer deux rendez-vous.
+ */
+
+.spa-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+}
+
+.spa-history__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-2);
+}
+
+/* Le fuseau, une fois pour toute la liste — et non sur chacune de ses lignes. */
+.spa-history__timezone {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-subtle);
+}
+
+.spa-history__panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-5);
+}
+
+/*
+ * `display: flex` ci-dessus l'emporte sur la feuille de l'agent utilisateur :
+ * sans cette règle, les trois panneaux resteraient visibles à la fois — un
+ * défaut qu'aucun test de rendu ne voit, jsdom ne peignant rien (#1046).
+ */
+.spa-history__panel[hidden] {
+  display: none;
+}
+
+.spa-history__month {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+}
+
+.spa-history__month-title {
+  margin: 0;
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-history__list {
+  display: flex;
+  flex-direction: column;
+  border-block-start: 1px solid var(--spa-color-border);
+}
+
+/*
+ * ## La mesure qui gouverne cette mise en page
+ *
+ * Le premier critère d'acceptation de #1054 se compte en lignes par écran à
+ * 360 px, et ce qui les mangeait n'était pas la hauteur d'une ligne mais sa
+ * **largeur** : une colonne de droite portant la pastille, le prix et la
+ * reprise laissait 126 px au titre, qui passait alors à deux lignes, et la
+ * ligne de métadonnées avec lui — 106 px de haut pour trois faits.
+ *
+ * D'où deux gabarits et un seul point de bascule :
+ *
+ * | | ≥ 40 rem | < 40 rem |
+ * |---|---|---|
+ * | colonnes | date · corps · statut | date · corps |
+ * | pastille et reprise | en colonne, à droite | en rangée, sous les métadonnées |
+ *
+ * Le prix, lui, ne change pas de place : il est **apparié au titre** sur la
+ * même ligne, comme dans la liste de prestations de la vitrine. C'est ce qui
+ * rend la largeur au titre à 360 px.
+ */
+.spa-history__row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  column-gap: var(--spa-space-3);
+  row-gap: var(--spa-space-1);
+  padding-block: var(--spa-space-2);
+  border-block-end: 1px solid var(--spa-color-border);
+}
+
+/* Le bloc date n'a pas de cadre à remplir ici : il se resserre. */
+.spa-history__row .spa-date-block {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  padding-block: var(--spa-space-1);
+}
+
+.spa-history__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  grid-column: 2;
+  grid-row: 1;
+  min-inline-size: 0;
+}
+
+.spa-history__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spa-space-3);
+}
+
+.spa-history__service {
+  margin: 0;
+  min-inline-size: 0;
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: var(--spa-line-height-snug);
+  color: var(--spa-color-text);
+}
+
+.spa-history__meta {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  line-height: var(--spa-line-height-snug);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-history__dot {
+  color: var(--spa-color-text-subtle);
+}
+
+/* Ce que « Déplacé » laisse ouvert — voir `.spa-appointment__status-note`. */
+.spa-history__status-note {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  line-height: var(--spa-line-height-snug);
+  color: var(--spa-color-text-muted);
+}
+
+/*
+ * Sous 40 rem, la pastille et la reprise passent **sous** les métadonnées,
+ * en rangée : elles cessent alors de disputer sa largeur au titre.
+ */
+.spa-history__aside {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spa-space-2);
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.spa-history__price {
+  margin: 0;
+  flex: none;
+  font-size: var(--spa-font-size-sm);
+  line-height: var(--spa-line-height-snug);
+  color: var(--spa-color-text-muted);
+  white-space: nowrap;
+}
+
+/*
+ * La reprise est un lien de liste et non un bouton de formulaire : la hauteur
+ * de cible des boutons (2,75 rem) multipliée par dix lignes aurait rendu à
+ * l'écran ce que la suppression des cartes venait de lui gagner. 1,5 rem de
+ * hauteur et l'élargissement horizontal du libellé gardent la cible au-dessus
+ * du minimum de la WCAG 2.5.8 (24 × 24 px).
+ */
+.spa-history__rebook {
+  min-block-size: var(--spa-space-6);
+  padding-block: 0;
+  padding-inline: var(--spa-space-2);
+  margin-inline-start: calc(var(--spa-space-2) * -1);
+  font-size: var(--spa-font-size-sm);
+}
+
+@media (min-width: 40rem) {
+  /*
+   * Troisième colonne de largeur **fixe**, et non `auto` : chaque ligne est sa
+   * propre grille — les colonnes ne se partagent pas d'une ligne à l'autre —, si
+   * bien qu'une pastille courte y élargissait le corps et décalait le prix de
+   * quelques pixels d'une ligne à la suivante. 9 rem couvrent le plus long
+   * libellé de statut (« Annulé par le salon ») et rendent la colonne des prix
+   * rectiligne, qui est tout l'intérêt d'un prix à droite.
+   */
+  .spa-history__row {
+    grid-template-columns: auto minmax(0, 1fr) 9rem;
+  }
+
+  .spa-history__aside {
+    flex-direction: column;
+    align-items: flex-end;
+    gap: var(--spa-space-1);
+    grid-column: 3;
+    grid-row: 1 / span 2;
+  }
+
+  /* À cette largeur la reprise s'aligne sur la pastille, à droite. */
+  .spa-history__rebook {
+    margin-inline: 0 calc(var(--spa-space-2) * -1);
+  }
+}
+
+/*
+ * La note au salon : une ligne tronquée que l'on déplie. Le `<details>` n'a pas
+ * de corps — le texte entier est dans le résumé, et l'ouverture lève la
+ * troncature. Il est donc entier dans l'arbre d'accessibilité en permanence.
+ */
+.spa-history__note {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-history__note-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-1);
+  min-block-size: var(--spa-space-6);
+  cursor: pointer;
+  list-style: none;
+}
+
+/* Le chevron du composant remplace le marqueur natif, qui n'est pas stylable. */
+.spa-history__note-summary::-webkit-details-marker {
+  display: none;
+}
+
+/*
+ * Sélecteur à deux classes, et non `.spa-history__note-chevron` seul :
+ * `icon.css` est importé **après** cette feuille (`styles/index.css`), si bien
+ * qu'à spécificité égale sa taille par défaut (1,25em) l'emporterait et la
+ * mesure ci-dessous ne servirait à rien. Même geste que
+ * `.spa-salon-card__title .spa-icon`.
+ */
+.spa-history__note-summary .spa-history__note-chevron {
+  flex: none;
+  inline-size: 1rem;
+  block-size: 1rem;
+  color: var(--spa-color-text-subtle);
+  transition: transform var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-history__note[open] .spa-history__note-chevron {
+  transform: rotate(180deg);
+}
+
+.spa-history__note-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-style: italic;
+}
+
+.spa-history__note[open] .spa-history__note-text {
+  white-space: normal;
+}
+
+.spa-history__empty {
+  margin: 0;
+  padding-block: var(--spa-space-6);
+  color: var(--spa-color-text-muted);
+  text-align: center;
+}
+
+.spa-history__more {
+  align-self: center;
+}
+
+/* --- Écran en cours de chargement (#830, #1053, #1054) --------------------- */
 
 /*
  * Ce que les deux onglets de rendez-vous peignent le temps qu'un écran arrive.
  * La forme est celle de l'écran qui vient — une carte héros puis des cartes
- * compactes sur « Mes rendez-vous », des cartes compactes seules sur
- * « Historique » —, dans leurs vraies classes. Aucune donnée n'y est inventée :
- * les lignes sont des squelettes, pas des rendez-vous factices.
+ * compactes sur « Mes rendez-vous », une rangée de filtres puis des lignes sur
+ * « Historique » depuis #1054 —, dans leurs vraies classes. Aucune donnée n'y
+ * est inventée : les lignes sont des squelettes, pas des rendez-vous factices.
  */
 .spa-account-loading {
   pointer-events: none;
@@ -586,6 +863,22 @@
 .spa-account-loading__line {
   block-size: var(--spa-font-size-md);
   inline-size: min(18rem, 80%);
+}
+
+/* La rangée de filtres de l'historique, aux mesures de `Tabs --segmented`. */
+.spa-account-loading__filters {
+  block-size: calc(var(--spa-target-min-size) + var(--spa-space-2));
+  inline-size: min(17rem, 100%);
+  border-radius: var(--spa-radius-full);
+}
+
+/* Le bloc date d'une ligne d'historique, à ses mesures exactes. */
+.spa-account-loading__date {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  block-size: 3rem;
+  inline-size: 3rem;
+  border-radius: var(--spa-radius-md);
 }
 
 .spa-account-loading__line--short {
