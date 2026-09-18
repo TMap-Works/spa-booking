@@ -591,3 +591,46 @@
 .spa-account-loading__line--short {
   inline-size: min(11rem, 50%);
 }
+
+/* --- Les écrans d'identification, côté formulaire (#1052) ------------------ */
+
+/*
+ * Deux champs de même nature sur une ligne — prénom et nom à l'inscription.
+ *
+ * L'audit `d20260918-1` relève qu'à 360 px le bouton « Créer mon compte » tombe
+ * à 1 290 px : cinq champs empilés, trois aides et un bloc de finalités. Ces
+ * deux-là se remplissent d'un même geste et n'ont pas à coûter deux lignes dès
+ * qu'il y a la place. Sous 30 rem il n'y en a pas : deux champs de 90 px ne se
+ * remplissent pas, et la rangée retombe en colonne.
+ *
+ * Une grille et non deux colonnes flex : les deux champs gardent la même
+ * largeur même quand l'un porte un message d'erreur et l'autre non.
+ */
+.spa-account__form-row {
+  display: grid;
+  gap: var(--spa-space-4);
+}
+
+@media (min-width: 30rem) {
+  .spa-account__form-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/*
+ * Le critère de longueur du mot de passe, coché en direct.
+ *
+ * `data-met` est posé par `register-form.tsx` à chaque frappe. La couleur ne
+ * porte pas l'information seule : le texte de l'aide change avec l'état
+ * (« … au minimum. » / « … : c'est bon. »), et c'est lui que le champ référence
+ * par `aria-describedby` — un lecteur d'écran l'annonce, là où un vert n'aurait
+ * rien dit.
+ *
+ * `--spa-color-success` sur `--spa-color-surface` est une paire déjà vérifiée à
+ * 4,5:1 dans les deux thèmes (`tests/contrast.test.mjs`), et le panneau du cadre
+ * d'identification porte précisément cette surface.
+ */
+.spa-account__password-rule[data-met='true'] .spa-field__hint {
+  color: var(--spa-color-success);
+  font-weight: var(--spa-font-weight-medium);
+}

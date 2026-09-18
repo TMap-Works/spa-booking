@@ -3,7 +3,6 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 
-import { AuthScreen, type AuthHighlight } from '@/components/auth/auth-screen';
 import { SalonShell } from '@/components/salon/salon-shell';
 import { readAccountPresence } from '@/lib/account-presence';
 import { ApiClientError } from '@/lib/api-client';
@@ -69,10 +68,16 @@ import { accountTenant } from './tenant';
  *   coordonnées » (`components/account-tabs.tsx`), posés **avant** `<main>` et
  *   hors de lui : d'abord où aller, ensuite ce qu'on lit (WCAG 1.3.2).
  * - **Sans session**, les seuls écrans servis pour de bon sont la connexion et
- *   l'inscription : ils reçoivent le cadre d'accueil des écrans
- *   d'identification (#927), dans le même gabarit. L'entrée « Se connecter » de
- *   l'en-tête s'y efface d'elle-même, où elle ramènerait à l'écran qu'on lit
- *   (#749) ; le pied de page remplace les liens soulignés du cadre.
+ *   l'inscription : le gabarit du salon les enveloppe, et chacune **porte son
+ *   propre cadre d'accueil** (`components/auth/salon-auth-screen.tsx`, #1052).
+ *   Ce cadre était posé ici jusqu'à ce que son titre doive différer d'un écran
+ *   à l'autre — « Bienvenue chez … » d'un côté, « Créez votre compte … » de
+ *   l'autre : un layout de l'App Router ne sait pas quelle route il enveloppe,
+ *   et il n'est pas rejoué quand on passe de la connexion à l'inscription, si
+ *   bien qu'un titre calculé ici serait resté celui de l'écran précédent.
+ *   L'entrée « Se connecter » de l'en-tête s'efface d'elle-même, où elle
+ *   ramènerait à l'écran qu'on lit (#749) ; le pied de page porte les chemins
+ *   de retour et la mention de la plateforme.
  *
  * Ce layout ne redirige pas pour autant : il lit la session pour savoir quoi
  * dessiner, jamais pour décider d'une issue. Rediriger d'ici doublerait la
@@ -94,13 +99,6 @@ export const metadata: Metadata = {
  * connecté — ou l'inverse (#747).
  */
 export const dynamic = 'force-dynamic';
-
-/** Ce que l'espace ouvre, dit à qui n'y est pas encore entré (#927). */
-const SIGNED_OUT_HIGHLIGHTS: readonly AuthHighlight[] = [
-  { icon: 'calendar', text: 'Vos rendez-vous à venir et passés, au même endroit' },
-  { icon: 'clock', text: 'Un report ou une annulation en ligne, sans appeler' },
-  { icon: 'bell', text: 'Des coordonnées à jour pour recevoir vos rappels' },
-];
 
 interface AccountLayoutProps {
   readonly children: ReactNode;
@@ -145,20 +143,10 @@ export default async function AccountLayout({ children, params }: AccountLayoutP
           presence={null}
           bookingHref={bookingPath(tenantSlug)}
         >
-          <AuthScreen
-            space="client"
-            salonName={tenant.name}
-            headline="Mon compte"
-            headlineAs="h1"
-            lead="Vos rendez-vous à venir, votre historique et vos coordonnées."
-            highlights={SIGNED_OUT_HIGHLIGHTS}
-            exits={[]}
-          >
-            <main className="spa-account__main" id="contenu">
-              <AccountAnnouncementRegion />
-              {children}
-            </main>
-          </AuthScreen>
+          <main className="spa-account__main" id="contenu">
+            <AccountAnnouncementRegion />
+            {children}
+          </main>
         </SalonShell>
       </AccountAnnouncementProvider>
     );

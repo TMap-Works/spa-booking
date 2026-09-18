@@ -236,3 +236,151 @@
   color: var(--spa-color-accent-text);
   font-weight: var(--spa-font-weight-medium);
 }
+
+/* ===========================================================================
+ * La variante cliente — le salon d'abord (#1052)
+ * ===========================================================================
+ *
+ * `components/auth/salon-auth-screen.tsx`. Elle reprend la structure à deux
+ * volets ci-dessus — cadre, accueil, panneau —, et ne redéfinit que ce que
+ * l'audit `d20260918-1` reproche au volet d'accueil : la marque de la
+ * plateforme en tête, trois puces génériques à 1 280 px, et 270 px d'aplat
+ * sombre avant le premier champ à 360 px.
+ *
+ * Rien ici ne vise `.spa-auth--back-office` : les règles de la variante sont
+ * toutes préfixées par `.spa-auth--salon`, si bien que le cadre du back-office
+ * et celui de la console sortent de ce ticket exactement tels qu'ils y
+ * entraient.
+ *
+ * Le palier reste 56 rem, celui de la mise en page à deux volets.
+ *
+ * --- Sous 56 rem : une bande, et le formulaire ------------------------------
+ *
+ * L'accueil se couche : monogramme et titre sur une ligne, moins de 96 px en
+ * tout. Le nom écrit, le paragraphe d'accroche et les faits s'effacent — le
+ * titre nomme déjà le salon, et le reste se lit sur la vitrine d'où l'on
+ * vient. C'est ce qui fait arriver le champ « Adresse e-mail » dans le premier
+ * écran d'un téléphone, avec son bouton.
+ */
+
+.spa-auth--salon .spa-auth__intro {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-4) var(--spa-space-5);
+}
+
+/*
+ * Le cadre est déjà sous l'en-tête du salon : 32 px de retrait au-dessus de lui
+ * repoussaient d'autant le premier champ, pour du vide.
+ *
+ * Le palier de 48 rem est repris de `salon-shell.css`, et il le faut : cette
+ * règle-ci est plus spécifique que la sienne, et elle l'emporterait donc aussi
+ * sur un écran large — où le retrait généreux est au contraire ce qu'on veut.
+ *
+ * Deux classes sur le même élément, et non une seule : `.spa-shell
+ * .spa-auth--client` pesait exactement ce que pèse `.spa-shell .spa-auth` de
+ * `salon-shell.css`, et ne l'emportait que parce que cette feuille-ci est
+ * importée après elle (`styles/index.css`). Le jour où l'ordre des imports
+ * changerait, le retrait de 32 px reviendrait en silence — et
+ * `auth-salon-mise-en-page.test.mjs`, qui lit le texte de la feuille et non la
+ * cascade, resterait vert.
+ */
+.spa-shell .spa-auth.spa-auth--salon {
+  padding-block-start: var(--spa-space-4);
+}
+
+@media (min-width: 48rem) {
+  .spa-shell .spa-auth.spa-auth--salon {
+    padding-block-start: var(--spa-space-12);
+  }
+}
+
+.spa-auth__identity {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  margin: 0;
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-tight);
+}
+
+/* Redit le titre à cette largeur : il coûterait la moitié de la bande. */
+.spa-auth--salon .spa-auth__salon-name,
+.spa-auth--salon .spa-auth__lead,
+.spa-auth--salon .spa-auth__facts {
+  display: none;
+}
+
+.spa-auth--salon .spa-auth__welcome {
+  min-inline-size: 0;
+}
+
+.spa-auth--salon .spa-auth__headline {
+  font-size: var(--spa-font-size-lg);
+}
+
+/*
+ * --- À partir de 56 rem : les deux volets, et l'identité du salon -----------
+ *
+ * L'accueil se redresse. Le nom s'écrit à côté du monogramme, le titre reprend
+ * sa taille, et le bas du volet porte **ce que le salon est** — son adresse et
+ * son état d'ouverture, lus sur sa fiche publique — là où trois puces disaient
+ * la même chose pour tous les salons de la plateforme.
+ */
+
+@media (min-width: 56rem) {
+  .spa-auth--salon .spa-auth__intro {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spa-space-6);
+    padding: var(--spa-space-10);
+  }
+
+  .spa-auth--salon .spa-auth__salon-name {
+    display: inline;
+  }
+
+  .spa-auth--salon .spa-auth__lead {
+    display: block;
+  }
+
+  .spa-auth--salon .spa-auth__headline {
+    font-size: var(--spa-font-size-3xl);
+  }
+
+  .spa-auth--salon .spa-auth__facts {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spa-space-4);
+    margin-block-start: auto;
+  }
+}
+
+.spa-auth__fact {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+  line-height: var(--spa-line-height-snug);
+}
+
+.spa-auth__fact-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  inline-size: var(--spa-space-10);
+  block-size: var(--spa-space-10);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-surface-brand-raised);
+  color: var(--spa-color-accent-on-brand);
+}
+
+/* Une adresse se lit en lignes, comme sur une enveloppe (`salon-address.ts`). */
+.spa-auth__fact-lines {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 0;
+  color: var(--spa-color-text-on-brand-muted);
+  overflow-wrap: anywhere;
+}
