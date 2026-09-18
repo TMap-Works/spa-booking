@@ -222,11 +222,25 @@ enum NotificationChannel {
   SMS
 }
 
-/// Les trois messages du périmètre MVP — CDC §1.4 « Notifications ».
+/// Les messages que la chaîne d'envoi sait porter.
+///
+/// Les **trois premiers** sont ceux du CDC §1.4 « Notifications » : ce qu'un
+/// rendez-vous déclenche, et rien de plus. Le marketing et les campagnes restent
+/// hors périmètre.
+///
+/// `PASSWORD_RESET` est le quatrième, et il n'élargit pas ce périmètre-là : il
+/// n'annonce aucun rendez-vous et ne s'adresse à personne qui n'ait demandé
+/// quelque chose. C'est le message de la **récupération d'un accès perdu**
+/// (#809), que le CDC §2.3 exige au titre de l'authentification des clientes, du
+/// personnel et des administrateurs — pas au titre des notifications. Il passe
+/// par cette chaîne parce qu'il n'y a qu'une chaîne d'envoi, et que la seule
+/// autre issue serait un appel direct à SES depuis le chemin de requête HTTP,
+/// que notifications §1 interdit.
 enum NotificationType {
   BOOKING_CONFIRMATION
   REMINDER_24H
   CANCELLATION
+  PASSWORD_RESET
 }
 
 enum NotificationStatus {
@@ -505,6 +519,71 @@ model User {
 
   isActive    Boolean   @default(true) @map("is_active")
   lastLoginAt DateTime? @map("last_login_at") @db.Timestamptz(6)
+
+  /// Empreinte SHA-256 du `jti` du jeton de réinitialisation **en cours** — #809,
+  /// 64 caractères hexadécimaux.
+  ///
+  /// Ce qui est stocké n'est pas le jeton mais son empreinte, exactement comme
+  /// pour `RefreshToken.tokenHash` et pour la même raison : le `jti` est un aléa
+  /// de 256 bits, non devinable depuis son empreinte, si bien qu'une fuite de
+  /// cette colonne ne donne aucun accès. SHA-256 nu suffit — là où un mot de
+  /// passe exige bcrypt, un secret aléatoire de 256 bits n'a pas d'espace de
+  /// recherche à ralentir.
+  ///
+  /// ## Trois colonnes ici plutôt qu'une table `password_reset_tokens`
+  ///
+  /// C'est le seul choix de conception de ce ticket, et il découle du deuxième
+  /// critère d'acceptation lui-même : « le jeton est invalidé par l'émission d'un
+  /// nouveau jeton ». Il n'y a donc, **par définition, jamais plus d'un jeton
+  /// vivant par compte** — et une table ne peut porter cet invariant qu'en le
+  /// surveillant, par un balayage d'invalidation que chaque émission doit penser
+  /// à lancer. Ici, l'émission **écrase** l'empreinte : le jeton précédent cesse
+  /// d'ouvrir quoi que ce soit sans qu'aucune écriture supplémentaire ne soit
+  /// nécessaire, et l'invariant n'est plus surveillé mais non représentable.
+  ///
+  /// Les lignes qu'une table aurait gardées en plus seraient de l'**historique** :
+  /// des jetons morts, consommés ou périmés, que rien ne relit. Le module n'a
+  /// aucune lecture à leur adresser — la confirmation retrouve le compte par le
+  /// `sub` **signé** du jeton, jamais par une recherche sur l'empreinte, si bien
+  /// que même l'index qu'une table aurait exigé serait resté inemployé.
+  ///
+  /// C'est le raisonnement que `emailSuppressedAt` tient déjà quelques lignes
+  /// plus bas : la question à laquelle ces colonnes répondent — « ce compte a-t-il
+  /// un accès en cours de récupération ? » — se pose exactement là où le compte
+  /// est écrit, et une table séparée aurait dû recopier son identifiant pour être
+  /// utile. C'est aussi ce qui a fait livrer l'invitation de #55 sans table.
+  ///
+  /// Nullable, et nulle en même temps que `passwordResetExpiresAt` — la contrainte
+  /// `users_password_reset_pair_check` de la migration le rend non représentable
+  /// autrement. `null` se lit « aucune réinitialisation en cours », ce qui est
+  /// l'état de la quasi-totalité des comptes à tout instant.
+  passwordResetTokenHash String? @map("password_reset_token_hash") @db.VarChar(64)
+
+  /// Fin de vie du jeton de réinitialisation en cours — trente minutes après son
+  /// émission.
+  ///
+  /// C'est **la base qui tranche**, pas l'`exp` du porteur : les deux devraient
+  /// coïncider, et c'est justement pour cela qu'on ne se fie pas au second seul.
+  /// Même conduite que `RefreshToken.expiresAt`.
+  passwordResetExpiresAt DateTime? @map("password_reset_expires_at") @db.Timestamptz(6)
+
+  /// Instant de la **dernière demande** de réinitialisation — la limite de débit
+  /// par adresse du premier critère d'acceptation de #809.
+  ///
+  /// Elle ne s'efface pas avec le jeton, et c'est tout son objet : une demande
+  /// consommée ou périmée doit continuer de compter, sans quoi il suffirait de
+  /// se servir du lien pour pouvoir en redemander un aussitôt. Le compteur par
+  /// adresse IP de `@nestjs/throttler` ne peut pas la remplacer — il est en
+  /// mémoire de tâche, et les routes d'authentification de ce produit sont
+  /// appelées par le serveur Next, dont l'adresse est la même pour tous les
+  /// visiteurs (`auth.controller.ts`, « le même angle mort vaut pour les autres
+  /// routes »). Cette colonne, elle, est partagée par toutes les tâches ECS et
+  /// survit à leur redémarrage.
+  ///
+  /// Elle ne dit rien de plus qu'un instant : ni l'adresse IP du demandeur, ni un
+  /// compteur de tentatives. Un délai de grâce entre deux envois est ce que le
+  /// critère demande, et c'est tout ce qu'elle sert.
+  passwordResetRequestedAt DateTime? @map("password_reset_requested_at") @db.Timestamptz(6)
 
   /// Note interne du fichier client — #56, CDC §2.3 « notes » du module `crm`.
   ///

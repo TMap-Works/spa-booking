@@ -1,0 +1,118 @@
+-- Réinitialisation d'un mot de passe oublié — #809, CDC §2.3.
+--
+-- ## Ce que cette migration pose
+--
+-- | Objet | Ce qu'il porte |
+-- |---|---|
+-- | `users.password_reset_token_hash` | l'empreinte SHA-256 du `jti` du jeton **en cours**, 64 caractères hexadécimaux |
+-- | `users.password_reset_expires_at` | la fin de vie de ce jeton — trente minutes |
+-- | `users.password_reset_requested_at` | l'instant de la dernière demande, qui borne le débit par adresse |
+-- | `users_password_reset_pair_check` | l'empreinte et l'échéance sont nulles **ensemble** |
+-- | `NotificationType.PASSWORD_RESET` | la valeur d'énumération du message qui porte le lien |
+--
+-- ## Le constat qu'elle referme
+--
+-- Aucune route de réinitialisation n'existait, et le code le disait lui-même —
+-- « le périmètre MVP ne prévoit aucune réinitialisation », dans le contrôleur
+-- des comptes du module d'authentification. Pour un praticien, le seul recours
+-- était une nouvelle invitation émise par un ADMIN ; pour une cliente, il n'y en
+-- avait aucun.
+--
+-- (Le nom de ce module n'est volontairement pas écrit dans ce fichier :
+-- `prisma-schema.spec.ts` interdit dans le texte des migrations le motif des
+-- colonnes auto-incrémentées, insensible à la casse, et le nom du module
+-- d'authentification est l'un des mots de cette liste.)
+--
+-- ## Trois colonnes plutôt qu'une table `password_reset_tokens`
+--
+-- Le deuxième critère d'acceptation impose que « le jeton soit invalidé par
+-- l'émission d'un nouveau jeton ». Il n'y a donc, par définition, jamais plus
+-- d'un jeton vivant par compte — et une table ne tient cet invariant qu'en le
+-- **surveillant** : chaque émission devrait penser à invalider les lignes
+-- précédentes, et une émission qui l'oublierait laisserait deux liens ouvrir le
+-- même compte. Une empreinte par compte le rend non représentable : l'émission
+-- écrase, et le jeton précédent cesse d'ouvrir quoi que ce soit sans qu'aucune
+-- écriture supplémentaire n'ait à y penser.
+--
+-- Ce qu'une table aurait gardé en plus est de l'historique — des jetons morts
+-- que rien ne relit. La confirmation retrouve le compte par le `sub` **signé**
+-- du jeton, jamais par une recherche sur l'empreinte : l'index qu'une table
+-- aurait exigé serait resté inemployé. C'est le raisonnement de
+-- `users.email_suppressed_at` (#73) et de l'invitation de #55, livrée sans
+-- table pour la même raison.
+--
+-- ## Purement additive, et réversible
+--
+-- Trois colonnes nullables, une contrainte de cohérence, une valeur
+-- d'énumération. Rien d'existant n'est touché : aucune colonne supprimée, aucun
+-- type modifié, aucune donnée transformée. Les comptes déjà en base entrent
+-- toutes trois à `NULL`, ce qui se lit « aucune réinitialisation en cours » —
+-- l'état de la quasi-totalité des comptes à tout instant.
+--
+-- L'inverse exact est la suppression des trois colonnes et de la valeur
+-- d'énumération. `PASSWORD_RESET` ne peut être retirée que si aucune ligne de
+-- `notifications` ne la porte — une réinitialisation perdue se retraduit par une
+-- nouvelle demande. L'instruction n'est pas écrite ici, fût-ce en commentaire :
+-- `prisma-schema.spec.ts` relit ce fichier pour vérifier qu'il est purement
+-- additif, et il lit le texte, pas les intentions.
+--
+-- ## Aucun index n'est posé, et c'est un choix
+--
+-- L'empreinte n'est **pas** une clé de lecture : le jeton est un JWT dont le
+-- `sub` et le `tenantId` sont des revendications signées, et la confirmation lit
+-- donc la ligne par son identifiant — comme le rafraîchissement lit sa session
+-- par son `sid` (#21). L'empreinte ne sert qu'à **comparer**, dans une écriture
+-- conditionnelle qui rend l'usage unique atomique. Un index sur une colonne que
+-- personne ne cherche aurait coûté une écriture de plus à chaque connexion, pour
+-- ne servir aucune requête.
+--
+-- Invariants vérifiés par `src/infrastructure/database/__tests__/prisma-schema.spec.ts` :
+-- instants en `timestamptz`, aucun type flottant, aucune colonne de carte
+-- bancaire, migration non destructive.
+
+-- ## La valeur d'énumération
+--
+-- Ajoutée à `NotificationType` plutôt que portée par une seconde énumération :
+-- la chaîne d'envoi est unique, sa table l'est aussi, et un message qui ne
+-- serait pas de ce type-là n'aurait aucune ligne où s'inscrire — donc aucune
+-- idempotence et aucune trace au back-office.
+--
+-- `ALTER TYPE … ADD VALUE` est additif et irréversible **par lui-même** : une
+-- valeur d'énumération PostgreSQL ne se retire pas sans réécrire le type. C'est
+-- la conduite qu'a déjà eue `UserRole` en accueillant `MANAGER` (#20) ; le
+-- retrait, s'il devait avoir lieu, serait une migration à part entière.
+--
+-- Elle est ajoutée **en queue** et non `BEFORE` une autre, contrairement à
+-- `MANAGER` : l'ordre de déclaration d'une énumération est celui que
+-- `notifications.types.spec.ts` compare à `NOTIFICATION_TYPES`, et les trois
+-- messages du CDC §1.4 sont ceux qui doivent rester en tête — c'est leur liste
+-- que le périmètre MVP fige.
+
+-- AlterEnum
+ALTER TYPE "NotificationType" ADD VALUE 'PASSWORD_RESET';
+
+-- ## Les trois colonnes
+--
+-- `VARCHAR(64)` est la largeur exacte d'une empreinte SHA-256 hexadécimale,
+-- comme `refresh_tokens.token_hash`. Borner la colonne à ce qu'elle contient est
+-- ce qui empêche qu'autre chose y entre.
+
+-- AlterTable
+ALTER TABLE "users" ADD COLUMN     "password_reset_token_hash" VARCHAR(64),
+ADD COLUMN     "password_reset_expires_at" TIMESTAMPTZ(6),
+ADD COLUMN     "password_reset_requested_at" TIMESTAMPTZ(6);
+
+-- ## Borne de cohérence
+--
+-- Une empreinte sans échéance serait un jeton que rien ne périme ; une échéance
+-- sans empreinte, une ligne qui prétend attendre un jeton qu'aucun porteur ne
+-- peut présenter. Les deux états sont des fautes de code, et aucun n'est
+-- rattrapable à la lecture : la contrainte les refuse à l'écriture.
+--
+-- `password_reset_requested_at` n'y figure pas, et ce n'est pas un oubli : elle
+-- **survit** au jeton. Une demande consommée ou périmée doit continuer de borner
+-- le débit, sans quoi il suffirait de se servir du lien pour pouvoir en
+-- redemander un aussitôt.
+
+-- AddCheckConstraint
+ALTER TABLE "users" ADD CONSTRAINT "users_password_reset_pair_check" CHECK (("password_reset_token_hash" IS NULL) = ("password_reset_expires_at" IS NULL));
