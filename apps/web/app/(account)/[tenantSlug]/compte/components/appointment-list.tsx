@@ -1,61 +1,44 @@
-import type {
-  AppointmentScope,
-  BookedAppointment,
-  PublicService,
-  TimeZone,
-} from '@spa/shared';
-import Link from 'next/link';
+import type { AppointmentScope, BookedAppointment, PublicService, TimeZone } from '@spa/shared';
 
-import type { ButtonVariant } from '@/components/ui/button';
-import { EmptyState } from '@/components/ui/empty-state';
+import { appointmentBrief } from '@/components/account/appointment-brief';
 
 import { AppointmentCard } from './appointment-card';
 
-/** La sortie proposée par un état vide : une destination, jamais une commande. */
-interface AppointmentListAction {
-  readonly href: string;
-  readonly label: string;
-  /** `accent` pour la sortie principale de l'écran, `neutral` pour la seconde. */
-  readonly variant: ButtonVariant;
-}
-
 /**
- * Une moitié de l'espace client — « Rendez-vous à venir » ou « Historique ».
+ * Une liste de cartes compactes de rendez-vous — les rendez-vous à venir qui
+ * suivent le prochain, ou l'historique.
  *
- * Server Component : rien ici n'a d'état, et ce qui en a — les deux gestes d'une
- * ligne — vit dans `AppointmentCard`. C'est ce découpage qui garde la session
- * hors du bundle : la liste lit l'API avec le jeton, les cartes ne reçoivent que
+ * Server Component : rien ici n'a d'état, et ce qui en a — les gestes d'une
+ * carte — vit dans `AppointmentCard`. C'est ce découpage qui garde la session
+ * hors du bundle : la page lit l'API avec le jeton, les cartes ne reçoivent que
  * des rendez-vous.
  *
- * ## L'état vide dit **pourquoi** il est vide — et par où en sortir
+ * ## Ce qu'elle ne fait plus : l'état vide (#1053)
  *
- * Un écran vide sans explication est un bug d'UX (web-frontend §6), et les deux
- * moitiés n'ont pas le même vide : « aucun rendez-vous à venir » invite à
- * réserver, « votre historique est vide » constate. Le libellé est donc passé
- * par l'appelant plutôt que déduit ici.
+ * Elle le rendait, à partir d'un titre, d'une phrase et d'une action passés par
+ * l'appelant — trois paramètres qui ne servaient qu'à le composer. Depuis que
+ * l'espace a un onglet par moitié, les deux vides n'ont plus rien en commun :
+ * celui des rendez-vous porte une suggestion tirée de la dernière visite
+ * (`BM-HISTO-02`), celui de l'historique constate. Chaque page monte donc son
+ * `EmptyState`, et cette liste ne s'occupe que du cas peuplé.
  *
- * L'explication ne suffit pourtant pas : `docs/design/appointments/states.md`
- * § « Règles générales » exige qu'un vide porte « une explication **et au moins
- * une action** pour sortir de l'impasse — un cul-de-sac muet fait abandonner ».
- * Les deux moitiés d'un compte neuf étaient exactement cela : deux blocs qui
- * demandent de réserver sans rien offrir à cliquer (#745). L'action est donc un
- * **paramètre obligatoire** et non optionnel — une future moitié ne peut pas
- * réintroduire le cul-de-sac par omission.
+ * ## Les noms se résolvent ici, une fois
+ *
+ * Le contrat public ne sert que des identifiants (`serviceId`, `staffId`) : les
+ * noms viennent du catalogue, que la page a déjà chargé. `appointmentBrief` les
+ * résout carte par carte — voir `components/account/appointment-brief.ts`.
  */
 interface AppointmentListProps {
   readonly tenantSlug: string;
   readonly appointments: readonly BookedAppointment[];
   readonly timeZone: TimeZone;
-  /** Le catalogue public, pour nommer la prestation de chaque ligne. */
+  /** Le catalogue public, pour nommer la prestation et le praticien de chaque carte. */
   readonly services: readonly PublicService[];
   /**
-   * La moitié servie — c'est elle qui décide si une ligne porte encore ses deux
+   * La moitié servie — c'est elle qui décide si une carte porte encore ses deux
    * gestes. Voir l'en-tête d'`AppointmentCard` : le statut seul ne suffit pas.
    */
   readonly scope: AppointmentScope;
-  readonly emptyTitle: string;
-  readonly emptyDescription: string;
-  readonly emptyAction: AppointmentListAction;
 }
 
 export function AppointmentList({
@@ -64,44 +47,15 @@ export function AppointmentList({
   timeZone,
   services,
   scope,
-  emptyTitle,
-  emptyDescription,
-  emptyAction,
 }: AppointmentListProps) {
-  if (appointments.length === 0) {
-    return (
-      // L'état vide du design system (#1044) : un pictogramme qui dit l'objet
-      // absent, le titre, la phrase, et la sortie. L'action est un lien et non
-      // un bouton : c'est une **destination**, elle s'ouvre dans un onglet et se
-      // copie.
-      <EmptyState
-        icon={scope === 'upcoming' ? 'calendar' : 'clock'}
-        title={emptyTitle}
-        action={
-          <Link className={`spa-button spa-button--${emptyAction.variant}`} href={emptyAction.href}>
-            <span className="spa-button__label">{emptyAction.label}</span>
-          </Link>
-        }
-      >
-        {emptyDescription}
-      </EmptyState>
-    );
-  }
-
-  // Le catalogue **public** ne contient que les prestations encore en vente : un
-  // soin retiré depuis laisse une ligne sans nom, et la carte affiche alors un
-  // libellé générique plutôt que de disparaître de l'historique.
-  const namesById = new Map(services.map((service) => [service.id, service.name]));
-
   return (
     <ul className="spa-appointment-list">
       {appointments.map((appointment) => (
         <AppointmentCard
           key={appointment.id}
           tenantSlug={tenantSlug}
-          appointment={appointment}
+          brief={appointmentBrief(appointment, services)}
           timeZone={timeZone}
-          serviceName={namesById.get(appointment.serviceId) ?? null}
           scope={scope}
         />
       ))}

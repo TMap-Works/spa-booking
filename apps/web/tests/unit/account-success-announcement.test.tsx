@@ -125,9 +125,13 @@ function liste(): ReactNode {
     <ul className="spa-appointment-list">
       <AppointmentCard
         tenantSlug="salon-des-lilas"
-        appointment={appointment()}
+        brief={{
+          appointment: appointment(),
+          serviceName: 'Massage suédois',
+          practitioner: 'Hery',
+          durationMinutes: 60,
+        }}
         timeZone="Europe/Paris"
-        serviceName="Massage suédois"
         scope="upcoming"
       />
     </ul>,
