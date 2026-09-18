@@ -1,9 +1,4 @@
 import { Injectable } from '@nestjs/common';
-// La fenêtre d'agenda se compte avec la fonction du **contrat partagé** depuis
-// #510, et non plus avec une copie locale : `calendarDaysBetween` y a le même
-// nom et le même corps — `Date.parse` sur deux minuits UTC —, si bien que la
-// substitution ne déplace aucune borne. Voir la note qu'elle remplace, plus bas.
-import { calendarDaysBetween } from '@spa/shared';
 
 import { InvalidStateTransitionError, NotFoundError } from '../../common/errors';
 import { requireTenantId } from '../../common/tenant';
@@ -14,13 +9,10 @@ import type { ServiceView } from '../catalog/catalog.types';
 import { ServicesService } from '../catalog/services.service';
 import { OwnScopeOnlyError } from '../identity/identity.errors';
 import { roleHasPermission } from '../identity/permissions';
+import { agendaWindowOf, resolveAgendaRange } from './agenda-window';
 import { AppointmentLifecycleService } from './appointment-lifecycle.service';
 import { occupiesSlot } from './appointment-status';
-import {
-  AppointmentRangeTooWideError,
-  MAX_APPOINTMENT_RANGE_DAYS,
-  SlotNoLongerAvailableError,
-} from './appointments.errors';
+import { SlotNoLongerAvailableError } from './appointments.errors';
 import { AppointmentsRepository } from './appointments.repository';
 import type {
   AgendaAppointmentRecord,
@@ -888,14 +880,12 @@ export class AppointmentsService {
    *    aucune fenêtre : le 3 mars ne commence pas au même instant à Papeete et à
    *    Paris. C'est aussi ce qui rend le 404 possible — un jeton signé sur une
    *    portée disparue n'a pas d'établissement à interroger ;
-   * 2. **les bornes**, complétées puis jugées. Absentes, elles valent la journée
-   *    courante du salon — ce que le comptoir ouvre le matin. Jugées ensuite :
-   *    une plage inversée ou trop large sort en 422 avant toute lecture, faute de
-   *    quoi la taille de la réponse ne dépendrait que de l'appelant ;
-   * 3. **la fenêtre en instants**, par `TenantClockService.dayRange`. Elle va du
-   *    premier minuit du salon au dernier, borne haute exclue — et la journée
-   *    dure 23, 24 ou 25 heures selon la date, ce qu'une addition de 24 heures
-   *    n'aurait pas su.
+   * 2. **les bornes**, complétées puis jugées par `resolveAgendaRange` ;
+   * 3. **la fenêtre en instants**, par `agendaWindowOf`.
+   *
+   * Les deux dernières étapes sont celles d'`agenda-window.ts`, et non plus de
+   * ce service : l'agenda du praticien connecté pose la même question, et la
+   * règle y était écrite une seconde fois, mot pour mot (#932).
    *
    * ## D'où vient l'établissement, et d'où il ne vient jamais
    *
@@ -942,24 +932,22 @@ export class AppointmentsService {
       throw new NotFoundError('Établissement introuvable.');
     }
 
-    // Les deux bornes se complètent **l'une l'autre**, et la journée du salon ne
-    // sert que lorsqu'aucune n'est donnée : `appointmentListQuerySchema` déclare
-    // valide une borne seule, des deux côtés. Retomber sur « aujourd'hui » pour
-    // un `?to=` isolé aurait rendu 422 une requête que le contrat annonce —
-    // toute borne haute passée aurait donné une plage inversée.
+    // La règle de fenêtre vit dans `agenda-window.ts` depuis #932, et non plus
+    // ici : l'agenda du praticien pose la même question, et deux écritures de la
+    // borne auraient fini par faire diverger les deux agendas sur ce qu'est une
+    // semaine.
     //
     // `calendarDateOf` et non la date du serveur : c'est le seul endroit qui
     // sache quel jour il est à Papeete quand il est déjà demain à Paris.
-    const from = input.from ?? input.to ?? this.clock.calendarDateOf(now, timeZone);
-    const to = input.to ?? from;
-
-    if (to < from || calendarDaysBetween(from, to) > MAX_APPOINTMENT_RANGE_DAYS) {
-      throw new AppointmentRangeTooWideError(from, to);
-    }
+    const range = resolveAgendaRange(input, {
+      timeZone,
+      today: this.clock.calendarDateOf(now, timeZone),
+    });
+    const window = agendaWindowOf(range, this.clock);
 
     const records = await this.repository.listAgenda({
-      from: this.clock.dayRange(from, timeZone).startsAt,
-      to: this.clock.dayRange(to, timeZone).endsAt,
+      from: window.from,
+      to: window.to,
       staffId: input.staffId,
       clientId: input.clientId,
       serviceId: input.serviceId,

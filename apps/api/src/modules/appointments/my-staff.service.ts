@@ -1,15 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { calendarDaysBetween } from '@spa/shared';
 
 import { NotFoundError } from '../../common/errors';
 import { StaffScheduleService } from '../availability/staff-schedule.service';
 import { StaffTimeOffService } from '../availability/staff-time-off.service';
 import { TenantClockService } from '../availability/tenant-clock.service';
-import {
-  AppointmentRangeTooWideError,
-  MAX_APPOINTMENT_RANGE_DAYS,
-  StaffProfileNotFoundError,
-} from './appointments.errors';
+import { agendaWindowOf, resolveAgendaRange } from './agenda-window';
+import { StaffProfileNotFoundError } from './appointments.errors';
 import { AppointmentsRepository } from './appointments.repository';
 import type {
   AgendaAppointmentRecord,
@@ -124,7 +120,7 @@ export class MyStaffService {
     now: Date = new Date(),
   ): Promise<MyStaffAgendaView> {
     const { staff, range } = await this.resolve(input, now);
-    const window = this.windowOf(range);
+    const window = agendaWindowOf(range, this.clock);
 
     const records = await this.repository.listAgenda({
       from: window.from,
@@ -177,7 +173,7 @@ export class MyStaffService {
     now: Date = new Date(),
   ): Promise<MyStaffScheduleView> {
     const { staff, range } = await this.resolve(input, now);
-    const window = this.windowOf(range);
+    const window = agendaWindowOf(range, this.clock);
 
     const [schedule, timeOff, closedWeekdays] = await Promise.all([
       this.schedules.forStaff(staff.id),
@@ -225,43 +221,20 @@ export class MyStaffService {
       throw new NotFoundError('Établissement introuvable.');
     }
 
-    return { staff, range: this.resolveRange(input, timeZone, now) };
-  }
-
-  /**
-   * La fenêtre demandée, complétée et jugée.
-   *
-   * Les deux bornes se complètent **l'une l'autre**, et la journée du salon ne
-   * sert que lorsqu'aucune n'est donnée — la règle d'`AppointmentsService`, pour
-   * la même raison : retomber sur « aujourd'hui » pour un `?to=` isolé aurait
-   * rendu 422 une requête que le contrat annonce valide.
-   *
-   * `calendarDateOf` et non la date du serveur : c'est le seul endroit qui sache
-   * quel jour il est à Papeete quand il est déjà demain à Paris.
-   */
-  private resolveRange(input: MyStaffRangeInput, timeZone: string, now: Date): ResolvedRange {
-    const from = input.from ?? input.to ?? this.clock.calendarDateOf(now, timeZone);
-    const to = input.to ?? from;
-
-    if (to < from || calendarDaysBetween(from, to) > MAX_APPOINTMENT_RANGE_DAYS) {
-      throw new AppointmentRangeTooWideError(from, to);
-    }
-
-    return { from, to, timeZone };
-  }
-
-  /**
-   * Les deux instants qui bornent la fenêtre — minuit du salon à minuit du
-   * salon, borne haute exclue.
-   *
-   * `dayRange` et non une arithmétique de millisecondes : un jour de changement
-   * d'heure ne fait pas vingt-quatre heures, et une fenêtre calculée à la main
-   * aurait perdu ou doublé une heure d'agenda deux fois par an.
-   */
-  private windowOf(range: ResolvedRange): { from: Date; to: Date } {
+    // La règle de fenêtre est celle de l'agenda du comptoir, et elle n'est plus
+    // recopiée ici : `resolveAgendaRange` est le seul endroit qui complète les
+    // bornes, retombe sur la journée du salon et refuse au-delà de la borne du
+    // contrat (#932). `MyStaffRangeInput` le satisfait structurellement — le
+    // `userId` qu'il porte en plus ne l'intéresse pas.
+    //
+    // `calendarDateOf` et non la date du serveur : c'est le seul endroit qui
+    // sache quel jour il est à Papeete quand il est déjà demain à Paris.
     return {
-      from: this.clock.dayRange(range.from, range.timeZone).startsAt,
-      to: this.clock.dayRange(range.to, range.timeZone).endsAt,
+      staff,
+      range: resolveAgendaRange(input, {
+        timeZone,
+        today: this.clock.calendarDateOf(now, timeZone),
+      }),
     };
   }
 
