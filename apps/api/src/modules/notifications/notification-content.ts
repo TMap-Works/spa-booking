@@ -13,6 +13,7 @@ import type {
   AppointmentMessageContext,
   NotificationChannel,
   NotificationTemplateSource,
+  PasswordResetMessageContext,
   RenderedNotification,
 } from './notifications.types';
 
@@ -155,6 +156,122 @@ export function cancellationUrl(
   return tenantPublicUrl(tenantSlug, '/compte', { baseUrl: appBaseUrl, mode });
 }
 
+/**
+ * Les rôles internes à l'établissement, tels que `enum UserRole` les nomme —
+ * `identity/roles.ts`, `STAFF_ROLES`.
+ *
+ * Recopiés et non importés : `identity` est le module qui authentifie, et
+ * `notifications` n'en dépend pas (api-module §3). La liste est courte, close, et
+ * un rôle qui n'y figurerait pas mène à l'écran client — le moins privilégié —
+ * plutôt qu'à la console d'administration.
+ */
+const STAFF_RESET_ROLES: ReadonlySet<string> = new Set(['STAFF', 'MANAGER', 'ADMIN']);
+
+/**
+ * Le lien de réinitialisation d'un mot de passe — #809, quatrième critère.
+ *
+ * ## Deux écrans, et c'est le **rôle** qui tranche
+ *
+ * « Le lien pointe vers `/{slug}/admin/mot-de-passe` ou vers
+ * `/{slug}/compte/mot-de-passe`, selon le rôle du compte » : le critère est
+ * littéral, et la raison est qu'un praticien envoyé sur l'espace client se
+ * retrouverait, après avoir choisi son mot de passe, sur un écran qui n'est pas
+ * son agenda — et réciproquement, une cliente sur une console d'administration
+ * qu'elle n'a pas le droit d'ouvrir.
+ *
+ * Le rôle est lu **en base au moment du rendu**, jamais porté par le jeton : un
+ * rôle figé à l'émission enverrait une praticienne promue entre la demande et le
+ * clic vers le mauvais écran. C'est le même raisonnement que celui qui interdit
+ * à `InvitationTokenClaims` de porter un `role`.
+ *
+ * ## Le jeton est dans le **fragment de requête**, et le chemin est public
+ *
+ * L'écran qui reçoit ce lien est public — il doit l'être, la personne n'ayant
+ * plus de session. Le jeton voyage donc en paramètre de requête, seule forme
+ * qu'un lien cliquable depuis un client mail sache transporter.
+ *
+ * `encodeURIComponent` n'est pas une précaution de forme : un JWT est en
+ * base64url, qui ne contient ni `&` ni `=` hors du remplissage, mais c'est
+ * exactement le genre d'invariant qu'on ne veut pas faire dépendre de
+ * l'encodage d'un signataire. Un jeton mal échappé produirait un lien tronqué au
+ * premier `&`, donc un refus en 401 que personne ne saurait expliquer.
+ *
+ * ## L'origine vient de la configuration, comme celle du lien d'annulation
+ *
+ * Tout ce que dit l'en-tête de `cancellationUrl` vaut ici, et vaut davantage :
+ * ce lien-ci **ouvre un compte**. Une origine tirée d'un en-tête `Host` entrant
+ * en aurait fait le vecteur d'hameçonnage le plus efficace que ce produit puisse
+ * offrir — un courrier signé du nom du salon, qui demande un mot de passe, sur
+ * un domaine choisi par l'attaquant.
+ */
+export function passwordResetUrl(
+  appBaseUrl: string,
+  tenantSlug: string,
+  role: string,
+  token: string,
+  mode: TenantUrlMode = 'auto',
+): string {
+  // `isStaffRole` vit dans `identity` et ce module n'en dépend pas : la
+  // comparaison se fait sur les valeurs d'énumération, qui sont celles du schéma.
+  //
+  // Les rôles internes sont **énumérés**, et le défaut est l'espace client — le
+  // rôle le moins privilégié. C'est ce que l'écriture inverse (`role === 'CLIENT'
+  // ? client : admin`) promettait sans le tenir : elle envoyait vers la console
+  // d'administration toute valeur qu'elle ne reconnaissait pas, y compris un rôle
+  // ajouté à l'énumération sans que ce fichier soit revu, et y compris une faute
+  // de frappe. Un rôle inconnu doit mener à l'écran qui ne suppose aucun droit.
+  const path = STAFF_RESET_ROLES.has(role) ? '/admin/mot-de-passe' : '/compte/mot-de-passe';
+
+  return `${tenantPublicUrl(tenantSlug, path, { baseUrl: appBaseUrl, mode })}?jeton=${encodeURIComponent(token)}`;
+}
+
+/**
+ * Les variables d'un lien de réinitialisation — #809.
+ *
+ * ## Deux valeurs renseignées, toutes les autres **vides**
+ *
+ * `TemplateVariables` est un `Record` complet par construction : la liste des
+ * variables est close, et le rendu substitue ce qu'il trouve. Un message qui
+ * n'annonce aucun rendez-vous n'a donc rien à mettre dans `date`, `service` ou
+ * `prix` — et les laisser vides est exactement ce qui rend leur emploi en
+ * section inoffensif, comme `origine` l'est sur une confirmation.
+ *
+ * Ce n'est pas une lacune qu'on comble par des valeurs de repli : écrire
+ * « aucune » dans `service` aurait produit, sur le modèle d'un salon qui nomme
+ * cette variable par erreur, une phrase fausse plutôt qu'une phrase incomplète.
+ *
+ * ## `salon` est écourté sur le canal SMS, comme ailleurs
+ *
+ * La plateforme n'envoie ce message que par e-mail, mais un salon peut écrire
+ * son propre modèle de SMS : la règle d'écourtement doit donc s'appliquer ici
+ * aussi, faute de quoi le seul chemin par lequel un nom de salon de 160
+ * caractères entre dans un segment serait celui-là.
+ */
+export function buildPasswordResetVariables(
+  context: PasswordResetMessageContext,
+  resetUrl: string,
+  channel: NotificationChannel,
+): TemplateVariables {
+  return {
+    client: '',
+    reference: '',
+    service: '',
+    praticien: '',
+    salon: channel === 'SMS' ? shortenForSms(context.tenantName) : context.tenantName,
+    adresse: '',
+    telephone: '',
+    date: '',
+    heure: '',
+    fin: '',
+    fuseau: '',
+    prix: '',
+    lien_annulation: '',
+    origine: '',
+    destinataire_client: '',
+    lien_mot_de_passe: resetUrl,
+  };
+}
+
 /** Le nom d'usage de la cliente, tel qu'un message l'emploie. */
 function clientName(context: AppointmentMessageContext): string {
   return `${context.clientFirstName} ${context.clientLastName}`.trim();
@@ -269,6 +386,11 @@ export function buildTemplateVariables(
     lien_annulation: cancelUrl,
     origine: cancellationOrigin(context.cancelledBy),
     destinataire_client: recipientUserId === context.clientId ? 'oui' : '',
+    // Vide sur les trois messages de rendez-vous, comme `origine` l'est sur la
+    // confirmation et sur le rappel : un modèle qui la nommerait ici n'écrirait
+    // rien plutôt qu'un lien mort, et elle reste donc utilisable en section.
+    // Seule la réinitialisation la renseigne (`buildPasswordResetVariables`).
+    lien_mot_de_passe: '',
   };
 }
 

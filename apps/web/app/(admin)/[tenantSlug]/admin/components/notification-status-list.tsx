@@ -46,13 +46,23 @@ interface NotificationStatusListProps {
 }
 
 /**
- * Les trois messages du MVP, en clair. CDC §1.4 — il n'y en a pas d'autres, et
- * l'objet indexé se refuse à en inventer un.
+ * Les messages que la chaîne d'envoi porte, en clair.
+ *
+ * Les trois premiers sont ceux du CDC §1.4. Le quatrième est le lien de
+ * réinitialisation d'un mot de passe (#809) : il n'annonce aucun rendez-vous,
+ * mais il passe par la même chaîne et laisse donc une ligne dans ce journal —
+ * c'est ce que l'écran doit savoir nommer.
+ *
+ * L'objet est exhaustif par son type, et il se refuse à inventer une clé :
+ * `Record<NotificationTrace['type'], string>` est ce qui a fait échouer la
+ * compilation ici à l'instant où `password_reset` est entré dans
+ * `NOTIFICATION_TYPES`, plutôt que d'afficher une cellule vide au comptoir.
  */
 const TYPE_LABELS: Readonly<Record<NotificationTrace['type'], string>> = {
   booking_confirmation: 'Confirmation',
   reminder_24h: 'Rappel J-1',
   cancellation: 'Avis d’annulation',
+  password_reset: 'Mot de passe oublié',
 };
 
 const CHANNEL_LABELS: Readonly<Record<NotificationTrace['channel'], string>> = {

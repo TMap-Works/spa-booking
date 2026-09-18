@@ -12,6 +12,7 @@ import {
   type NotificationMessage,
   type NotificationRecord,
   type NotificationTrace,
+  type PasswordResetMessageContext,
   type ReminderEligibility,
 } from './notifications.types';
 
@@ -614,6 +615,62 @@ export class NotificationsRepository {
     });
 
     return staff === null ? null : staff.userId;
+  }
+
+  /**
+   * Ce qu'il faut savoir d'un compte pour lui écrire son lien de
+   * réinitialisation — #809.
+   *
+   * ## Ce n'est pas `loadAppointmentContext` avec moins de jointures
+   *
+   * Les deux composent un message, mais pas le même objet : celui-là part d'un
+   * **rendez-vous** et joint tout ce qui l'entoure ; celui-ci part d'un
+   * **compte** et ne joint que son établissement. Il n'y a ni heure à
+   * convertir, ni montant à formater, ni fuseau à nommer — ce message n'annonce
+   * rien de daté.
+   *
+   * ## Le rôle et l'activité sortent, les coordonnées non
+   *
+   * `role` décide du chemin du lien (quatrième critère) et `isActive` décide si
+   * le message part (sixième critère). Ni `email`, ni `phone`, ni les noms : le
+   * modèle ne salue personne — voir `PASSWORD_RESET_EMAIL` — et l'adresse se
+   * relit à l'envoi, comme pour les trois autres messages (notifications §7).
+   *
+   * ## La relecture de `isActive` **au moment d'envoyer**
+   *
+   * `identity` a déjà refusé d'armer un jeton sur un compte désactivé. La
+   * relecture n'est pas une redite : entre l'armement et l'envoi il y a un bus,
+   * une file, une Lambda et jusqu'à cinq réceptions, et une suspension tombée
+   * dans cet intervalle n'aurait été vue par personne. C'est exactement le
+   * raisonnement de `reminderStillDue` et d'`emailSuppressed` — « une décision
+   * d'envoi se prend à l'envoi ».
+   *
+   * Rend `null` si le compte n'existe plus, ou s'il appartient à un autre
+   * établissement : le client scopé ne fait pas la différence, et c'est ce qui
+   * fait qu'une enveloppe nommant le salon A ne peut rien lire du salon B.
+   */
+  public async loadPasswordResetContext(
+    userId: string,
+  ): Promise<PasswordResetMessageContext | null> {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId },
+      select: {
+        role: true,
+        isActive: true,
+        tenant: { select: { slug: true, name: true } },
+      },
+    });
+
+    if (user === null) {
+      return null;
+    }
+
+    return {
+      role: user.role,
+      isActive: user.isActive,
+      tenantSlug: user.tenant.slug,
+      tenantName: user.tenant.name,
+    };
   }
 
   /**

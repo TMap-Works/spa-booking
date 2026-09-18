@@ -4,7 +4,7 @@ import type { ReminderSweepResult } from '../reminder-sweep.service';
 import {
   NOTIFICATION_CHANNELS,
   NOTIFICATION_TYPES,
-  type NotificationMessage,
+  type AppointmentScopedMessage,
 } from '../notifications.types';
 
 /**
@@ -96,7 +96,7 @@ export class ReminderSweepDto {
  * convention de `toNotificationDto`, et la validation de la Lambda d'envoi
  * accepte l'absence comme le nul.
  */
-export function toReminderMessageDto(message: NotificationMessage): ReminderMessageDto {
+export function toReminderMessageDto(message: AppointmentScopedMessage): ReminderMessageDto {
   return {
     tenantId: message.tenantId,
     dedupeKey: message.dedupeKey,

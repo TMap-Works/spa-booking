@@ -47,6 +47,10 @@ const VALUES: TemplateVariables = {
   // La confirmation et le rappel ne partent qu'à la cliente : c'est l'état
   // ordinaire de cette variable.
   destinataire_client: 'oui',
+  // Vide, comme sur les trois messages de rendez-vous : seule la
+  // réinitialisation d'un mot de passe la renseigne (#809). Ces valeurs-ci sont
+  // celles d'une confirmation.
+  lien_mot_de_passe: '',
 };
 
 describe('modèles — la substitution des variables', () => {

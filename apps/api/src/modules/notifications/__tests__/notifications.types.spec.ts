@@ -27,10 +27,27 @@ import {
  * module, le dépôt mis à part.
  */
 describe('notifications — vocabulaire et colonnes', () => {
-  it('énumère les trois messages du CDC §1.4, et pas un de plus', () => {
-    // Un quatrième type serait un élargissement du périmètre MVP : cela passe
-    // par une issue, pas par une ligne (CLAUDE.md, contrainte 1).
-    expect(NOTIFICATION_TYPES).toEqual(['BOOKING_CONFIRMATION', 'REMINDER_24H', 'CANCELLATION']);
+  it('énumère les messages du périmètre, dans l’ordre du schéma', () => {
+    // Les **trois premiers** sont ceux du CDC §1.4 : ce qu'un rendez-vous
+    // déclenche, et rien de plus. Ils restent en tête, et c'est ce que l'ordre
+    // de cette liste tient.
+    //
+    // `PASSWORD_RESET` est le quatrième, entré par la porte que l'en-tête de
+    // `packages/shared/src/constants/notification.ts` prescrit — une issue,
+    // #809 — et non par une ligne. Il n'annonce aucun rendez-vous : il porte le
+    // lien de récupération d'un accès perdu, que le CDC §2.3 exige au titre de
+    // l'authentification. Il passe par cette chaîne parce qu'il n'y en a qu'une,
+    // et que la seule autre issue serait un appel direct à SES depuis le chemin
+    // de requête HTTP (notifications §1).
+    //
+    // Un **cinquième** type serait, lui, à instruire de la même façon : c'est
+    // toujours une issue, et jamais une ligne (CLAUDE.md, contrainte 1).
+    expect(NOTIFICATION_TYPES).toEqual([
+      'BOOKING_CONFIRMATION',
+      'REMINDER_24H',
+      'CANCELLATION',
+      'PASSWORD_RESET',
+    ]);
   });
 
   it('reprend `enum NotificationType` du schéma, dans l’ordre de déclaration', () => {

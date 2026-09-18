@@ -61,7 +61,11 @@ describe('Modèles de messages — routes du back-office', () => {
       const body = response.body as { items: TemplateBody[]; variables: string[] };
 
       // Six depuis #72, qui a livré l'avis d'annulation : les trois messages du
-      // CDC §1.4, sur les deux canaux.
+      // CDC §1.4, sur les deux canaux. **Sept depuis #809**, qui y ajoute le
+      // lien de réinitialisation d'un mot de passe — sur le canal e-mail
+      // seulement, et c'est son quatrième critère d'acceptation. Le couple
+      // `password_reset/sms` n'a pas de modèle de plateforme et n'apparaît donc
+      // pas : la liste répond à « que reçoit ma cliente ? ».
       expect(body.items.map((item) => `${item.type}/${item.channel}`)).toEqual([
         'booking_confirmation/email',
         'booking_confirmation/sms',
@@ -69,6 +73,7 @@ describe('Modèles de messages — routes du back-office', () => {
         'reminder_24h/sms',
         'cancellation/email',
         'cancellation/sms',
+        'password_reset/email',
       ]);
       expect(body.items.every((item) => item.origin === 'platform')).toBe(true);
       expect(body.variables).toEqual([...TEMPLATE_VARIABLES]);

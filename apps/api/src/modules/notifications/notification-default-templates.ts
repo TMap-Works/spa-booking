@@ -383,6 +383,78 @@ const CANCELLATION_SMS: NotificationTemplateSource = {
 };
 
 /**
+ * Le lien de réinitialisation d'un mot de passe — #809, quatrième critère.
+ *
+ * ## Il ne salue personne par son nom, et il ne nomme aucun compte
+ *
+ * « Bonjour, » et non « Bonjour {{client}}, ». Le message part à l'adresse
+ * demandée, et rien ne garantit que la personne qui la relève soit celle qui a
+ * demandé : une boîte partagée, une adresse professionnelle mutualisée, une
+ * demande faite par erreur sur l'adresse d'autrui. Y écrire le nom du titulaire
+ * du compte aurait fait de cet e-mail une réponse à la question « qui possède un
+ * compte à cette adresse ? » — la même divulgation que la réponse 202 uniforme
+ * de la route existe pour empêcher. Le message dit « un compte », jamais « votre
+ * compte de Mme Untel ».
+ *
+ * Il ne nomme pas non plus le rôle. Le lien, lui, pointe vers l'écran qui
+ * correspond — c'est le rendu qui le compose — mais l'écrire en clair aurait dit
+ * à qui relève l'adresse que ce compte administre le salon.
+ *
+ * ## Il dit ce qu'il faut faire, et ce qu'il faut faire si on n'a rien demandé
+ *
+ * Deux paragraphes, et le second n'est pas une politesse : quelqu'un qui reçoit
+ * ce courrier sans l'avoir demandé doit savoir que **rien n'a changé** et qu'il
+ * n'a rien à faire. Sans cette phrase, le réflexe est de cliquer pour « vérifier »
+ * — c'est-à-dire d'ouvrir le lien qu'on voulait justement laisser mourir.
+ *
+ * ## Il annonce les trente minutes
+ *
+ * En clair et en toutes lettres, parce que c'est court : un lien réclamé le soir
+ * et ouvert le lendemain matin échouera, et une personne qui n'a plus accès à
+ * son compte n'a pas à deviner pourquoi. La durée est **écrite** dans le modèle
+ * plutôt que substituée par une variable : `PASSWORD_RESET_TOKEN_TTL_SECONDS`
+ * vit dans `identity`, ce module n'en dépend pas, et une variable de gabarit de
+ * plus n'aurait servi qu'à ce seul texte. La contrepartie est explicite — changer
+ * la durée demande de reprendre cette phrase, et c'est écrit ici pour qu'on le
+ * sache.
+ *
+ * ## Aucun `{{fuseau}}`
+ *
+ * Il n'annonce aucune heure, donc il n'a pas à nommer de fuseau. C'est le seul
+ * des quatre messages dans ce cas, et c'est ce qui le distingue le plus
+ * nettement des trois autres : il ne parle pas d'un rendez-vous.
+ */
+const PASSWORD_RESET_EMAIL: NotificationTemplateSource = {
+  subject: 'Réinitialisation de votre mot de passe — {{salon}}',
+  html: [
+    '<!DOCTYPE html>',
+    '<html lang="fr"><body>',
+    '<p>Bonjour,</p>',
+    '<p>Une réinitialisation de mot de passe a été demandée pour un compte {{salon}} ' +
+      'associé à cette adresse.</p>',
+    '<p><a href="{{lien_mot_de_passe}}">Choisir un nouveau mot de passe</a></p>',
+    '<p>Ce lien est valable <strong>trente minutes</strong> et ne peut servir qu’une fois.</p>',
+    '<p>Si vous n’avez rien demandé, ignorez ce message : votre mot de passe reste inchangé, ' +
+      'et personne ne peut accéder à votre compte sans ce lien.</p>',
+    '<p>{{salon}}</p>',
+    '</body></html>',
+  ].join(''),
+  text: [
+    'Bonjour,',
+    '',
+    'Une réinitialisation de mot de passe a été demandée pour un compte {{salon}} associé à cette adresse.',
+    '',
+    'Choisir un nouveau mot de passe : {{lien_mot_de_passe}}',
+    '',
+    'Ce lien est valable trente minutes et ne peut servir qu’une fois.',
+    '',
+    'Si vous n’avez rien demandé, ignorez ce message : votre mot de passe reste inchangé, et personne ne peut accéder à votre compte sans ce lien.',
+    '',
+    '{{salon}}',
+  ].join('\n'),
+};
+
+/**
  * Les modèles de la plateforme, par type puis par canal.
  *
  * Les trois messages du CDC §1.4 y sont désormais, sur les deux canaux. La
@@ -401,6 +473,22 @@ export const DEFAULT_TEMPLATES: Readonly<
   BOOKING_CONFIRMATION: { EMAIL: BOOKING_CONFIRMATION_EMAIL, SMS: BOOKING_CONFIRMATION_SMS },
   REMINDER_24H: { EMAIL: REMINDER_EMAIL, SMS: REMINDER_SMS },
   CANCELLATION: { EMAIL: CANCELLATION_EMAIL, SMS: CANCELLATION_SMS },
+  // **E-mail seulement**, et c'est le quatrième critère de #809 au mot près :
+  // « modèle `password_reset`, canal e-mail ». Le SMS n'a délibérément pas de
+  // défaut, et c'est la structure partielle de cette table qui le permet — un
+  // couple absent se lit « aucun modèle par défaut », et `defaultTemplateFor`
+  // rend `null`.
+  //
+  // Pourquoi pas de SMS : un lien de 66 caractères sur les 160 d'un segment ne
+  // laisse rien pour la phrase qui dit quoi en faire, et un lien tronqué par un
+  // opérateur est un lien mort. Surtout, un SMS ne prouve pas la possession de
+  // l'**adresse** — or c'est bien l'adresse qui a été saisie dans le formulaire,
+  // et c'est elle que la procédure vérifie.
+  //
+  // Un salon reste libre d'écrire le sien : `NotificationTemplatesService.save`
+  // l'acceptera, et `SMS_REFERENCE_VARIABLES.lien_mot_de_passe` est là pour que
+  // la mesure de coût le refuse s'il dépasse trois segments.
+  PASSWORD_RESET: { EMAIL: PASSWORD_RESET_EMAIL },
 };
 
 /** Le modèle de plateforme pour ce message, s'il en existe un. */

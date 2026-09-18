@@ -12,6 +12,7 @@ import {
 import { NotificationsRepository } from './notifications.repository';
 import type {
   DispatchOutcome,
+  NotificationChannel,
   NotificationMessage,
   NotificationRecord,
   RenderedNotification,
@@ -125,8 +126,18 @@ export class NotificationDispatchService {
       return 'skipped';
     }
 
-    if (message.type === 'REMINDER_24H' && !(await this.reminderStillDue(message, now))) {
-      return 'skipped';
+    // Le rendez-vous est nommé explicitement plutôt que lu dans la méthode :
+    // `appointmentId` est nullable depuis #809, et c'est ici — sous la condition
+    // de type — que sa présence se vérifie. Un rappel J-1 sans rendez-vous est
+    // une faute de producteur et non un rappel à envoyer : même issue que le
+    // rendez-vous disparu, `skipped`, plutôt qu'une lecture sur `null`.
+    if (message.type === 'REMINDER_24H') {
+      if (
+        message.appointmentId === null ||
+        !(await this.reminderStillDue(message.appointmentId, message.channel, now))
+      ) {
+        return 'skipped';
+      }
     }
 
     const claim = await this.repository.claim(message);
@@ -279,21 +290,25 @@ export class NotificationDispatchService {
    * rejouer le message jusqu'à la file d'attente morte, et l'alarme de
    * profondeur aurait signalé une panne là où il n'y a qu'une annulation.
    */
-  private async reminderStillDue(message: NotificationMessage, now: Date): Promise<boolean> {
-    const eligibility = await this.repository.findReminderEligibility(message.appointmentId);
+  private async reminderStillDue(
+    appointmentId: string,
+    channel: NotificationChannel,
+    now: Date,
+  ): Promise<boolean> {
+    const eligibility = await this.repository.findReminderEligibility(appointmentId);
 
     if (eligibility === null) {
       this.logger.log('rappel J-1 sans objet, rendez-vous introuvable', {
-        appointmentId: message.appointmentId,
-        channel: message.channel,
+        appointmentId,
+        channel,
       });
       return false;
     }
 
     if (!isAppointmentStatus(eligibility.status) || !occupiesSlot(eligibility.status)) {
       this.logger.log('rappel J-1 supprimé, le rendez-vous ne tient plus le créneau', {
-        appointmentId: message.appointmentId,
-        channel: message.channel,
+        appointmentId,
+        channel,
         status: eligibility.status,
       });
       return false;
@@ -303,8 +318,8 @@ export class NotificationDispatchService {
 
     if (timing !== 'due') {
       this.logger.warn('rappel J-1 supprimé, hors de sa fenêtre', {
-        appointmentId: message.appointmentId,
-        channel: message.channel,
+        appointmentId,
+        channel,
         timing,
       });
       return false;
