@@ -3,21 +3,8 @@
 import type { StaffMemberSummary } from '@spa/shared';
 import type { ReactNode } from 'react';
 
-import { Avatar } from '@/components/ui/avatar';
+import { Avatar, avatarClasses } from '@/components/ui/avatar';
 import { Icon } from '@/components/ui/icon';
-
-/**
- * Les classes d'une pastille au format qu'`avatar.css` attend, recopiées.
- *
- * `Avatar` ne rend que des **initiales**, et « Premier disponible » n'est
- * personne : sa pastille loge un pictogramme. Le propre serait un
- * `avatarClasses()` exporté par `components/ui/avatar.tsx` — mais ce fichier est
- * hors de l'empreinte de #1048, et deux autres tickets de la même vague
- * travaillent dans `components/ui/`. La recopie est donc délibérée, et le
- * commentaire est ce qui la rend rattrapable : voir l'issue de suivi de #1048.
- */
-const NO_PREFERENCE_AVATAR_CLASSES =
-  'spa-avatar spa-avatar--md spa-avatar--circle spa-avatar--accent';
 
 /**
  * Le libellé de l'absence de préférence.
@@ -111,8 +98,13 @@ export function StaffChoice({ staff, value, onSelect }: StaffChoiceProps) {
           <div className="spa-booking__staff-row">
             <StaffOption
               // `BM-PRATICIEN-01` : en tête, et avec ce qu'elle rapporte.
+              // `Avatar` ne rend que des **initiales**, et « Premier disponible »
+              // n'est personne : sa pastille loge un pictogramme. Elle demande
+              // donc ses classes à `avatarClasses()` (#1079) au lieu de les
+              // recopier — la même mesure et le même ton que les pastilles de
+              // praticien juste à côté, sans chaîne à maintenir en double.
               avatar={
-                <span aria-hidden="true" className={NO_PREFERENCE_AVATAR_CLASSES}>
+                <span aria-hidden="true" className={avatarClasses('md')}>
                   <Icon name="users" />
                 </span>
               }

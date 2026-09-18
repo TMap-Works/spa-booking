@@ -2,11 +2,25 @@
 
 import { useRef, type KeyboardEvent } from 'react';
 
+import { Icon } from '@/components/ui/icon';
+
+/** Ce que la marque d'un onglet dit, à défaut d'une précision de l'appelant. */
+const DEFAULT_MARKED_LABEL = 'contient votre choix';
+
 export interface TabItem {
   readonly id: string;
   readonly label: string;
   /** Effectif affiché à côté du libellé — « Massages · 4 » (BM-SERVICE-05). */
   readonly count?: number;
+  /**
+   * L'onglet porte la **marque** : ce qui a été retenu est dans son panneau,
+   * ouvert ou non (`BM-SERVICE-06`, « la catégorie porte aussi la marque »).
+   *
+   * Sans état retenu, l'écran oublie le choix dès qu'on change d'onglet. C'est
+   * un état distinct de `aria-selected` : l'onglet ouvert est celui qu'on
+   * regarde, l'onglet marqué celui où se trouve ce qu'on a choisi.
+   */
+  readonly marked?: boolean;
 }
 
 interface TabsProps {
@@ -19,6 +33,16 @@ interface TabsProps {
   readonly idPrefix: string;
   /** `underline` pour des rubriques, `segmented` pour un filtre de liste. */
   readonly variant?: 'underline' | 'segmented';
+  /**
+   * Ce que dit la marque d'un onglet `marked`, en toutes lettres.
+   *
+   * Le glyphe est décoratif (`aria-hidden`) : une coche lue « coche » à la suite
+   * d'un libellé n'apprend rien, et `label` est une `string` où l'on ne peut pas
+   * glisser de texte alternatif. La phrase se range donc en lecture d'écran
+   * seule, à la suite du libellé et de l'effectif — « Massages · 2 · contient
+   * votre choix ». À préciser quand « choix » ne nomme pas ce qui est retenu.
+   */
+  readonly markedLabel?: string;
 }
 
 export function tabId(idPrefix: string, id: string): string {
@@ -48,8 +72,21 @@ export function tabPanelProps(idPrefix: string, id: string) {
  * flèches passent d'un onglet à l'autre et l'activent, Début et Fin vont aux
  * extrémités. À 360 px, la rangée défile horizontalement plutôt que de passer
  * à la ligne (BM-SERVICE-02).
+ *
+ * Un onglet peut porter la **marque** de ce qui a été retenu dans son panneau
+ * (`marked`, #1079) : une coche, le même signe que les lignes et les cartes du
+ * tunnel emploient déjà pour dire « retenu ». Un signe, et non une nuance de
+ * couleur — WCAG 1.4.1 refuse que la couleur seule porte une information.
  */
-export function Tabs({ label, items, value, onChange, idPrefix, variant = 'underline' }: TabsProps) {
+export function Tabs({
+  label,
+  items,
+  value,
+  onChange,
+  idPrefix,
+  variant = 'underline',
+  markedLabel = DEFAULT_MARKED_LABEL,
+}: TabsProps) {
   const list = useRef<HTMLDivElement>(null);
 
   const focusTab = (index: number): void => {
@@ -106,6 +143,12 @@ export function Tabs({ label, items, value, onChange, idPrefix, variant = 'under
               <span className="spa-tabs__count">
                 <span className="spa-visually-hidden"> · </span>
                 {item.count}
+              </span>
+            )}
+            {item.marked !== true ? null : (
+              <span className="spa-tabs__mark">
+                <Icon name="check" className="spa-tabs__mark-icon" />
+                <span className="spa-visually-hidden"> · {markedLabel}</span>
               </span>
             )}
           </button>

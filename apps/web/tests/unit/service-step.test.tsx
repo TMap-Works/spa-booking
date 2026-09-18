@@ -191,6 +191,37 @@ describe('les rubriques du catalogue se retrouvent à l’étape 1 (#1048, BM-SE
     expect(ligne('Rituel duo 90 min')).toHaveProperty('checked', true);
   });
 
+  it('marque l’onglet de la rubrique qui porte la prestation retenue (#1079, BM-SERVICE-06)', async () => {
+    const { user } = renderStep(DEUX_RUBRIQUES);
+
+    // Rien n'est retenu : aucun onglet ne porte de marque, sinon elle ne
+    // distinguerait plus rien.
+    expect(screen.queryByRole('tab', { name: /prestation retenue/u })).toBeNull();
+
+    await user.click(ligne('Rituel duo 90 min'));
+
+    // La marque n'est pas la sélection d'onglet : elle dit où se trouve le
+    // choix, et elle reste sur « Massages » quand on ouvre « Coiffure ». Sans
+    // elle, plus rien à l'écran ne rappellerait qu'une prestation est retenue —
+    // le CTA devenu actif mis à part, l'écart relevé par l'audit.
+    await user.click(screen.getByRole('tab', { name: /^Coiffure/u }));
+
+    const marque = screen.getByRole('tab', { name: /prestation retenue/u });
+
+    expect(marque.textContent).toContain('Massages');
+    expect(marque).toHaveProperty('ariaSelected', 'false');
+    // La coche est décorative : c'est la phrase en lecture d'écran qui porte
+    // l'information, jamais le glyphe (WCAG 1.1.1).
+    expect(marque.querySelector('.spa-tabs__mark-icon')?.getAttribute('aria-hidden')).toBe('true');
+
+    // Et elle suit le choix : changer de prestation déplace la marque.
+    await user.click(ligne('Coupe et brushing'));
+
+    expect(screen.getByRole('tab', { name: /prestation retenue/u }).textContent).toContain(
+      'Coiffure',
+    );
+  });
+
   it('ouvre la rubrique de la prestation déjà retenue au retour sur l’étape', () => {
     render(
       <ServiceStep

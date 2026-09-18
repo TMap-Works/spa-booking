@@ -79,6 +79,38 @@
   line-height: 1.5;
 }
 
+/* --- Marque de l'onglet retenu (#1079) -------------------------------------- */
+
+/*
+ * `BM-SERVICE-06` — « la catégorie porte aussi la marque ». L'onglet dont le
+ * panneau contient ce qui a été retenu porte une coche : sans elle, changer
+ * d'onglet efface de l'écran toute trace du choix fait.
+ *
+ * Une **coche**, et non une nuance de couleur : WCAG 1.4.1 refuse que la
+ * couleur seule porte une information, et c'est déjà le signe que les lignes de
+ * prestation et les cartes de praticien emploient pour dire « retenu »
+ * (`booking.css`) — trois surfaces du même écran, un seul signe.
+ *
+ * La pastille est pleine, comme celle d'une ligne retenue, et sa couleur ne
+ * dépend pas de l'onglet ouvert : c'est le choix qu'elle désigne, pas la
+ * sélection d'onglet.
+ */
+.spa-tabs__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-accent);
+  color: var(--spa-color-text-on-accent);
+  /* La taille du pictogramme se règle par le corps du texte de sa boîte, jamais
+   * en redéclarant `.spa-icon` : `icon.css` est importé **après** cette feuille
+   * (`styles/index.css`) et l'emporterait à spécificité égale. */
+  font-size: var(--spa-font-size-xs);
+}
+
 /* --- Soulignés -------------------------------------------------------------- */
 
 .spa-tabs--underline {

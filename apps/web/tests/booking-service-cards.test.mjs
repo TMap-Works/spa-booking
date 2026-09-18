@@ -153,6 +153,41 @@ describe('Les prestations se comparent en lignes (#741, #1048)', () => {
     );
   });
 
+  it('marque l’onglet de la rubrique retenue, par une coche et non par la couleur', () => {
+    assert.match(
+      readFileSync(serviceChoice, 'utf8'),
+      /marked:/u,
+      '`service-choice.tsx` ne marque plus l’onglet de la rubrique qui porte la ' +
+        'prestation retenue : en changeant d’onglet, plus rien à l’écran ne ' +
+        'rappelle qu’un choix est fait — l’écart exact de #1079 ' +
+        '(`BM-SERVICE-06`, « la catégorie porte aussi la marque »).',
+    );
+
+    // La marque vit dans `tabs.css` et non dans `booking.css` : c'est une brique
+    // du design system que la vitrine et l'espace client montent aussi.
+    const mark = rulesFor(
+      stripComments(readStyleSheet(styleSheetPath('components/tabs.css'))),
+      '.spa-tabs__mark',
+    ).join(' ');
+
+    assert.notEqual(
+      mark,
+      '',
+      'Aucune règle ne vise `.spa-tabs__mark` : la coche de l’onglet retenu n’est ' +
+        'plus mise en page, et la marque se réduit à rien.',
+    );
+
+    // Un aplat plein, comme la coche d'une ligne retenue : c'est la **forme**
+    // qui distingue l'onglet, la couleur ne faisant que l'accompagner
+    // (WCAG 1.4.1).
+    assert.equal(
+      declaration(mark, 'background-color'),
+      'var(--spa-color-accent)',
+      'La pastille de la marque n’est plus un aplat d’accent : elle cesse de se ' +
+        'lire comme la coche des lignes et des cartes du même écran (`booking.css`).',
+    );
+  });
+
   it('pose deux colonnes à partir de 48 rem, et une seule en dessous', () => {
     const rule = rulesFor(base, `.${LISTE}`).join(' ');
 
@@ -372,6 +407,25 @@ describe('Le praticien se choisit en cartes (#1048, BM-PRATICIEN-01)', () => {
       /<Avatar\b/u,
       '`staff-choice.tsx` ne rend plus de pastille : un praticien sans photo perd ' +
         'tout repère visuel (`BM-PRATICIEN-02`).',
+    );
+
+    // La pastille de « Premier disponible » loge un pictogramme et non des
+    // initiales : elle ne passe pas par `Avatar`, mais elle demande ses classes
+    // au même endroit (#1079). Recopiée, elle dériverait de toutes les autres au
+    // premier renommage de classe.
+    assert.match(
+      source,
+      /avatarClasses\(/u,
+      '`staff-choice.tsx` ne demande plus ses classes à `avatarClasses()` : la ' +
+        'pastille de « Premier disponible » retombe sur une chaîne recopiée, que ' +
+        'le premier renommage de `.spa-avatar--*` laissera derrière (#1079).',
+    );
+
+    assert.doesNotMatch(
+      source,
+      /'spa-avatar spa-avatar--/u,
+      '`staff-choice.tsx` recopie à nouveau les classes d’une pastille au lieu de ' +
+        'les demander à `avatarClasses()` (`components/ui/avatar.tsx`, #1079).',
     );
   });
 
