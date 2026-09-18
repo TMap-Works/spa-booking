@@ -258,46 +258,6 @@
   padding-top: var(--spa-space-2);
 }
 
-/*
- * La pastille de statut. La couleur ne porte jamais l'information seule : le
- * libellé est en toutes lettres à côté d'elle, et c'est lui que lit un lecteur
- * d'écran comme une personne daltonienne.
- */
-.spa-appointment__badge {
-  display: inline-flex;
-  align-items: center;
-  padding: var(--spa-space-1) var(--spa-space-2);
-  border-radius: var(--spa-radius-full);
-  font-size: var(--spa-font-size-xs);
-  font-weight: var(--spa-font-weight-medium);
-  white-space: nowrap;
-}
-
-.spa-appointment__badge--pending {
-  background: var(--spa-color-status-pending-surface);
-  color: var(--spa-color-status-pending);
-}
-
-.spa-appointment__badge--confirmed {
-  background: var(--spa-color-status-confirmed-surface);
-  color: var(--spa-color-status-confirmed);
-}
-
-.spa-appointment__badge--completed {
-  background: var(--spa-color-status-completed-surface);
-  color: var(--spa-color-status-completed);
-}
-
-.spa-appointment__badge--cancelled {
-  background: var(--spa-color-status-cancelled-surface);
-  color: var(--spa-color-status-cancelled);
-}
-
-.spa-appointment__badge--no-show {
-  background: var(--spa-color-status-no-show-surface);
-  color: var(--spa-color-status-no-show);
-}
-
 /* --- Écran en cours de chargement (#830) ---------------------------------- */
 
 /*

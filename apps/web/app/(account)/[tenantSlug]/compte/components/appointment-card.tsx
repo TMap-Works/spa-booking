@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Notification } from '@/components/ui/notification';
 import { formatDateTimeInTimeZone, formatMoney, timeZoneMention } from '@/lib/format';
@@ -159,9 +160,7 @@ export function AppointmentCard({
             <span className="spa-appointment__timezone"> ({mention})</span>
           )}
         </p>
-        <span className={`spa-appointment__badge spa-appointment__badge--${badge.tone}`}>
-          {badge.label}
-        </span>
+        <Badge tone={badge.tone}>{badge.label}</Badge>
       </div>
 
       <p className="spa-appointment__service">

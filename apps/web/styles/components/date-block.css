@@ -1,0 +1,59 @@
+/*
+ * Composant — Date en bloc (#1044)
+ * =============================================================================
+ *
+ * `components/ui/date-block.tsx`. Jour abrégé, numéro, mois : le numéro porte
+ * le poids, les deux abréviations l'encadrent en capitales atténuées.
+ *
+ *   sm   bande de jours du tunnel, ligne d'historique — 3 rem de large
+ *   lg   carte du prochain rendez-vous, récapitulatif — 4,5 rem
+ */
+
+.spa-date-block {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  gap: 0.125rem;
+  inline-size: 3rem;
+  padding-block: var(--spa-space-2);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-surface-sunken);
+  color: var(--spa-color-text);
+  line-height: 1;
+  text-align: center;
+}
+
+.spa-date-block__weekday,
+.spa-date-block__month {
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-date-block__day {
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-bold);
+  font-variant-numeric: tabular-nums;
+}
+
+.spa-date-block--lg {
+  inline-size: 4.5rem;
+  gap: var(--spa-space-1);
+  padding-block: var(--spa-space-3);
+  border-radius: var(--spa-radius-lg);
+  background-color: var(--spa-color-accent-soft);
+}
+
+.spa-date-block--lg .spa-date-block__weekday,
+.spa-date-block--lg .spa-date-block__month {
+  color: var(--spa-color-accent-text);
+}
+
+.spa-date-block--lg .spa-date-block__day {
+  font-size: var(--spa-font-size-2xl);
+  color: var(--spa-color-accent-text);
+}

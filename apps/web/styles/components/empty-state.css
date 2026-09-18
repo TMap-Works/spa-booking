@@ -1,0 +1,56 @@
+/*
+ * Composant — État vide (#1044)
+ * =============================================================================
+ *
+ * `components/ui/empty-state.tsx`. Un pictogramme dans un cercle d'accent
+ * doux, un titre, une phrase, une action — centrés dans une zone en tirets qui
+ * dit « rien ici, pour l'instant » sans ressembler à une erreur.
+ */
+
+.spa-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spa-space-2);
+  padding: var(--spa-space-8) var(--spa-space-6);
+  border: 1px dashed var(--spa-color-border-interactive);
+  border-radius: var(--spa-radius-xl);
+  background-color: var(--spa-color-surface);
+  text-align: center;
+}
+
+.spa-empty__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 3.5rem;
+  block-size: 3.5rem;
+  margin-block-end: var(--spa-space-2);
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+  font-size: var(--spa-font-size-xl);
+}
+
+.spa-empty__title {
+  margin: 0;
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: var(--spa-line-height-snug);
+  color: var(--spa-color-text);
+}
+
+.spa-empty__text {
+  max-inline-size: 32ch;
+  font-size: var(--spa-font-size-sm);
+  line-height: var(--spa-line-height-normal);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-empty__action {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--spa-space-3);
+  margin-block-start: var(--spa-space-3);
+}
