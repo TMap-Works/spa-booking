@@ -768,6 +768,17 @@ export function BookingTunnel({ tenant, services }: BookingTunnelProps) {
         <ContactStep
           contact={draft.contact}
           tenantSlug={tenant.slug}
+          // Le pays de l'établissement, d'où le téléphone tire son indicatif par
+          // défaut (#1028). `address` est absente tant que le salon n'a pas
+          // publié la sienne, et `null` dit alors exactement ce que l'API en
+          // dira : pas de pays, donc pas de numéro national acceptable.
+          //
+          // Lire le pays **dans l'adresse** ne perd rien : la contrainte
+          // `tenants_address_completeness_check` veut qu'`address_line1`, `city`
+          // et `country_code` soient les trois nuls ou les trois renseignés, si
+          // bien que cette lecture vaut `tenants.country_code` — la colonne même
+          // que le pipe serveur consulte.
+          countryCode={tenant.address?.country ?? null}
           onSave={saveContact}
           onBack={() => {
             goTo('creneau');

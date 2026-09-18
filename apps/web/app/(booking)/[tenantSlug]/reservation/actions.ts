@@ -23,12 +23,16 @@
  * correction : rien ne garantit qu'un appel d'action vienne du formulaire.
  * L'API revalidera de son côté — le front valide pour le confort, le back pour
  * la sécurité, jamais l'un sans l'autre (skill web-frontend §4).
+ *
+ * Elle **normalise** au passage : ce qui part vers l'API est la sortie
+ * transformée du schéma — instant ramené en UTC, adresse canonisée, téléphone
+ * en E.164 — et non le corps reçu du navigateur.
  */
 
 import {
   ERROR_CODES,
   availabilityQuerySchema,
-  bookGuestAppointmentRequestSchema,
+  bookGuestAppointmentRequestSchemaFor,
   cancelAppointmentRequestSchema,
   slugSchema,
   uuidSchema,
@@ -42,6 +46,8 @@ import {
   cancelAppointment,
   fetchAvailability,
 } from '@/lib/api-client';
+
+import { loadSalonTenant } from '../salon-data';
 
 export type ActionResult<TData> =
   | { readonly ok: true; readonly data: TData }
@@ -82,18 +88,50 @@ export async function loadAvailabilityAction(
   }
 }
 
+/**
+ * Compose et envoie la demande de réservation.
+ *
+ * ## Pourquoi l'établissement est chargé ici (#1028)
+ *
+ * Parce que c'est cette frontière-ci qui **normalise** le téléphone : ce qui
+ * part vers l'API est `parsed.data`, la sortie transformée du schéma, et non le
+ * corps reçu du navigateur. Depuis que la règle du téléphone admet un numéro
+ * national complété par le pays de l'établissement, valider avec la variante
+ * sans pays refuserait ici « 06 12 34 56 78 » que l'API accepte — et le refus
+ * arriverait **après** la soumission, en bloc au récapitulatif, pour un numéro
+ * que le champ venait d'accepter (web-frontend §4).
+ *
+ * Le pays est lu du salon et non reçu en argument : une action serveur ne tient
+ * pour vrai rien de ce que le navigateur lui donne, et un pays fourni par
+ * l'appelant reviendrait à laisser choisir son indicatif par défaut. C'est la
+ * même colonne que le pipe de l'API consulte — `tenants.country_code`, publiée
+ * dans l'adresse de la vitrine.
+ *
+ * Le coût est un `GET /public/{slug}` de plus, une fois par réservation
+ * confirmée, sur un chargement déjà mémoïsé par requête (`salon-data.ts`). Le
+ * payer ici est ce qui garde une seule écriture de la règle : la deviner
+ * localement en ferait une seconde, qui divergerait au premier durcissement.
+ */
 export async function bookAppointmentAction(
   tenantSlug: string,
   request: unknown,
 ): Promise<ActionResult<BookedAppointment>> {
   const slug = slugSchema.safeParse(tenantSlug);
-  const parsed = bookGuestAppointmentRequestSchema.safeParse(request);
 
-  if (!slug.success || !parsed.success) {
+  if (!slug.success) {
     return invalid('Les informations de réservation sont incomplètes.');
   }
 
   try {
+    const tenant = await loadSalonTenant(slug.data);
+    const parsed = bookGuestAppointmentRequestSchemaFor(tenant.address?.country ?? null).safeParse(
+      request,
+    );
+
+    if (!parsed.success) {
+      return invalid('Les informations de réservation sont incomplètes.');
+    }
+
     return { ok: true, data: await bookGuestAppointment(slug.data, parsed.data) };
   } catch (error) {
     return failure(error);
