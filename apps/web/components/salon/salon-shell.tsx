@@ -9,8 +9,8 @@ import type { AccountPresence } from '@/lib/account-presence';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
 import { PUBLIC_EXIT_LABELS } from './public-exits';
+import { addressLines } from './salon-address';
 import { telUri } from './salon-contact';
-import { addressLines } from './salon-info';
 
 export interface SalonShellProps {
   readonly tenantSlug: string;

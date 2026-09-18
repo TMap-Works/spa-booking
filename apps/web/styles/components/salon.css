@@ -2,13 +2,22 @@
  * Composant — Page publique du salon
  * =============================================================================
  *
- * Mise en page de la vitrine d'un établissement et de son catalogue (#43) :
- * en-tête, sections, grille de prestations, informations pratiques.
+ * Mise en page de la vitrine d'un établissement et de son catalogue (#43,
+ * refondue par #1046) : bandeau d'identité, deux colonnes, lignes de
+ * prestation, cartes d'informations pratiques, barre de réservation collante.
  *
- * Les cartes de prestation réemploient `.spa-card` — elles n'ont pas de style
- * propre, seulement une place dans une grille. Ce fichier ne redéclare donc ni
- * bordure, ni fond, ni rayon : un salon qui substitue sa rampe de marque doit
- * voir sa page changer avec le reste du système, pas à côté.
+ * Aucune couleur littérale, aucune primitive : tout passe par la couche
+ * sémantique, si bien qu'un salon qui substitue sa rampe repeint sa page sans
+ * qu'on la réécrive, et que le thème sombre la retourne comme le reste du
+ * produit (`tests/tokens.test.mjs` le vérifie).
+ *
+ * Une seule action **pleine** par écran (BM-VISUEL-02) : « Prendre
+ * rendez-vous », dans le bandeau et dans la barre collante — qui ne coexistent
+ * jamais à l'écran, la seconde ne servant qu'au pouce. Les boutons « Choisir »
+ * des prestations sont en contour.
+ *
+ * Paliers : 30 rem (480 px), 48 rem (768 px), 64 rem (1024 px) — ceux du reste
+ * du design system.
  *
  * États : le catalogue vide et les coordonnées absentes sont rendus par
  * `.spa-card--empty` et `.spa-empty-state` du socle, jamais par une variante
@@ -18,54 +27,205 @@
 .spa-salon {
   display: flex;
   flex-direction: column;
-  /* L'écart entre la barre de sorties et le contenu, et lui seul : les sections
-   * de la page sont espacées par `.spa-salon__main`. */
   gap: var(--spa-space-6);
-  /* La lecture d'une page de texte se dégrade au-delà d'une soixantaine de
-   * caractères par ligne ; la borne haute tient la mesure sur un grand écran
-   * sans brider la grille de prestations. */
   max-inline-size: 64rem;
   margin-inline: auto;
-  padding-block: var(--spa-space-10);
+  padding-block: var(--spa-space-8);
   padding-inline: var(--spa-space-4);
 }
 
-/* Le contenu propre de la page, sous la barre de sorties (#739). */
+/* Le contenu propre de la page (#739). */
 .spa-salon__main {
   display: flex;
   flex-direction: column;
   gap: var(--spa-space-10);
 }
 
-/* --- En-tête --------------------------------------------------------------- */
+/* --- Bandeau d'identité (BM-VITRINE-01, BM-VITRINE-02) ---------------------- */
 
-.spa-salon__header {
+/*
+ * L'aplat de marque, et non l'accent : l'accent désigne ce qu'on clique
+ * (BM-VISUEL-01), et un bandeau peint en accent passerait pour un bouton géant.
+ * Mêmes rôles que le bandeau de clôture de l'accueil (`home.css`).
+ */
+.spa-salon-hero {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  gap: var(--spa-space-5);
+  padding: var(--spa-space-6);
+  border-radius: var(--spa-radius-xl);
+  background-color: var(--spa-color-surface-brand);
+  color: var(--spa-color-text-on-brand);
+}
+
+/* Sur l'aplat de marque, l'anneau de focus ordinaire tombe sous 2:1. */
+.spa-salon-hero :focus-visible {
+  outline-color: var(--spa-color-focus-on-brand);
+}
+
+.spa-salon-hero__identity {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-4);
+}
+
+.spa-salon-hero__naming {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  min-inline-size: 0;
+}
+
+.spa-salon-hero__title {
+  font-size: var(--spa-font-size-2xl);
+  line-height: var(--spa-line-height-tight);
+  letter-spacing: var(--spa-letter-spacing-tight);
+  text-wrap: balance;
+}
+
+@media (min-width: 48rem) {
+  .spa-salon-hero {
+    padding: var(--spa-space-8);
+  }
+
+  .spa-salon-hero__title {
+    font-size: var(--spa-font-size-3xl);
+  }
+}
+
+/*
+ * La ligne d'identité — ville et état d'ouverture. Elle passe à la ligne plutôt
+ * que de déborder : à 360 px, « Fermé — ouvre demain à 10:00 » ne tient pas à
+ * côté d'un nom de ville.
+ */
+.spa-salon-hero__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2) var(--spa-space-4);
+  color: var(--spa-color-text-on-brand-muted);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-salon-hero__fact {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+}
+
+.spa-salon-hero__fact .spa-icon {
+  flex: none;
+  color: var(--spa-color-accent-on-brand);
+}
+
+.spa-salon-hero__link {
+  color: var(--spa-color-text-on-brand);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+/*
+ * L'état d'ouverture. La pastille est un repère de balayage, jamais le porteur
+ * du sens : le mot « Ouvert » ou « Fermé » est dans le texte (WCAG 1.4.1).
+ */
+.spa-salon-hero__status {
+  color: var(--spa-color-text-on-brand);
+}
+
+.spa-salon-hero__dot {
+  flex: none;
+  inline-size: var(--spa-space-2);
+  block-size: var(--spa-space-2);
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-text-on-brand-muted);
+}
+
+.spa-salon-hero__status--open .spa-salon-hero__dot {
+  background-color: var(--spa-color-accent-on-brand);
+}
+
+.spa-salon-hero__lede {
+  max-inline-size: 44rem;
+  color: var(--spa-color-text-on-brand-muted);
+  line-height: var(--spa-line-height-relaxed);
+}
+
+/*
+ * Au pouce, les deux actions prennent la largeur : côte à côte elles ne tiennent
+ * pas, et empilées à leur largeur de texte elles forment un escalier — deux
+ * boutons de tailles différentes qu'on ne lit pas comme un couple. Dès 480 px,
+ * elles se rangent sur une ligne, l'action pleine en tête.
+ */
+.spa-salon-hero__actions {
+  display: flex;
+  flex-direction: column;
   gap: var(--spa-space-3);
 }
 
-.spa-salon__eyebrow {
-  font-size: var(--spa-font-size-sm);
-  font-weight: var(--spa-font-weight-medium);
-  letter-spacing: var(--spa-letter-spacing-wide);
-  text-transform: uppercase;
-  color: var(--spa-color-text-muted);
+@media (min-width: 30rem) {
+  .spa-salon-hero__actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
 }
 
-.spa-salon__title {
-  font-size: var(--spa-font-size-3xl);
+/* L'action pleine de l'écran. Sur l'aplat de marque, « plein » veut dire la
+ * surface de la page : l'accent y perdrait le contraste que le texte exige. */
+.spa-salon-hero__action {
+  background-color: var(--spa-color-surface);
+  color: var(--spa-color-text);
 }
 
-.spa-salon__lede {
-  max-inline-size: 44rem;
-  font-size: var(--spa-font-size-lg);
-  line-height: var(--spa-line-height-relaxed);
-  color: var(--spa-color-text-muted);
+.spa-salon-hero__action:hover {
+  background-color: var(--spa-color-surface-sunken);
 }
 
-/* --- Sections -------------------------------------------------------------- */
+.spa-salon-hero__action--ghost {
+  background-color: transparent;
+  border-color: var(--spa-color-text-on-brand-muted);
+  color: var(--spa-color-text-on-brand);
+}
+
+.spa-salon-hero__action--ghost:hover {
+  background-color: var(--spa-color-surface-brand-raised);
+}
+
+/* --- Deux colonnes ---------------------------------------------------------- */
+
+.spa-salon__columns {
+  display: grid;
+  gap: var(--spa-space-10);
+}
+
+.spa-salon__column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-10);
+  /* Sans quoi une longue description ferait déborder la colonne de la grille. */
+  min-inline-size: 0;
+}
+
+.spa-salon__aside {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+}
+
+@media (min-width: 64rem) {
+  .spa-salon__columns {
+    grid-template-columns: minmax(0, 1fr) 19rem;
+    align-items: start;
+  }
+
+  /* Collante : les horaires et l'adresse restent lisibles pendant qu'on parcourt
+   * le catalogue (BM-VITRINE-04). L'en-tête du gabarit mesure 4 rem et reste
+   * collé lui aussi — la colonne se range dessous, pas dessous elle. */
+  .spa-salon__aside {
+    position: sticky;
+    inset-block-start: calc(4rem + var(--spa-space-4));
+  }
+}
+
+/* --- Sections --------------------------------------------------------------- */
 
 .spa-salon__section {
   display: flex;
@@ -88,83 +248,232 @@
   color: var(--spa-color-text-subtle);
 }
 
-/* --- Grille de prestations -------------------------------------------------- */
-
 /*
- * `auto-fill` et non `auto-fit` : une rubrique qui ne contient qu'une prestation
- * garde une carte de largeur normale au lieu de l'étirer sur toute la page, et
- * la lecture reste homogène d'une rubrique à l'autre.
+ * Le panneau d'une rubrique. La règle `[hidden]` n'est pas redondante : une
+ * classe qui pose `display` l'emporte sur `[hidden] { display: none }` de la
+ * feuille de l'agent utilisateur, et les panneaux fermés resteraient visibles.
  */
-.spa-salon__services {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
-  gap: var(--spa-space-4);
-}
-
-/* La carte occupe toute la hauteur de sa cellule : les prix s'alignent d'une
- * ligne à l'autre même quand les descriptions n'ont pas la même longueur. */
-.spa-salon__service {
-  block-size: 100%;
-}
-
-.spa-salon__service .spa-card__price {
-  margin-block-start: auto;
-}
-
-/* --- Informations pratiques ------------------------------------------------- */
-
-.spa-salon__info {
+.spa-salon__panel {
   display: flex;
   flex-direction: column;
   gap: var(--spa-space-3);
-  margin: 0;
 }
 
-.spa-salon__info-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--spa-space-1) var(--spa-space-3);
+.spa-salon__panel[hidden] {
+  display: none;
 }
 
-.spa-salon__info-term {
-  min-inline-size: 8rem;
-  font-weight: var(--spa-font-weight-medium);
-  color: var(--spa-color-text-muted);
-}
+/* --- Lignes de prestation (BM-SERVICE-01, BM-VISUEL-03) --------------------- */
 
-.spa-salon__info-value {
-  margin: 0;
-}
-
-.spa-salon__hint {
-  font-size: var(--spa-font-size-sm);
-  color: var(--spa-color-text-muted);
-}
-
-/* Adresse postale — une ligne par ligne d'enveloppe (#343). `<address>` hérite
-   de l'italique dans plusieurs navigateurs : on le neutralise, l'élément est ici
-   pour sa sémantique, pas pour son style. */
-.spa-salon__address {
+/*
+ * Une liste, et non une grille de cartes : le motif du marché est une ligne
+ * dense — nom, durée, praticiens à gauche ; prix et action à droite. C'est ce
+ * qui permet de comparer des prix en balayant une colonne, et ce qui libère la
+ * moitié de l'écran que la grille laissait vide à 1280 px.
+ */
+.spa-salon__services {
   display: flex;
   flex-direction: column;
-  font-style: normal;
 }
 
-.spa-salon__hours {
+.spa-salon-service {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spa-space-2) var(--spa-space-4);
+  padding-block: var(--spa-space-4);
+  border-block-end: 1px solid var(--spa-color-border);
+}
+
+.spa-salon-service:first-child {
+  border-block-start: 1px solid var(--spa-color-border);
+}
+
+.spa-salon-service__main {
   display: flex;
   flex-direction: column;
   gap: var(--spa-space-1);
+  flex: 1 1 14rem;
+  min-inline-size: 0;
 }
 
-.spa-salon__hours-row {
+.spa-salon-service__name {
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: var(--spa-line-height-snug);
+}
+
+/* La durée et les praticiens en retrait : le prix décide, eux qualifient. */
+.spa-salon-service__meta {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--spa-space-1) var(--spa-space-2);
+  gap: var(--spa-space-1) var(--spa-space-3);
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-sm);
 }
 
-.spa-salon__hours-day {
-  min-inline-size: 6rem;
+/*
+ * Bornée à deux lignes (BM-SERVICE-04) : une longue description ne repousse plus
+ * les prestations suivantes. Le texte entier reste dans le document — un moteur
+ * de recherche et un lecteur d'écran le lisent —, seule sa hauteur est contenue.
+ */
+.spa-salon-service__description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
   color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-sm);
+  line-height: var(--spa-line-height-normal);
+}
+
+/* Au pouce, le prix et l'action tiennent la largeur de la ligne, sous le nom ;
+ * dès 480 px, ils se rangent à droite de la prestation. */
+.spa-salon-service__aside {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-4);
+  flex: none;
+  inline-size: 100%;
+}
+
+.spa-salon-service__price {
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+  white-space: nowrap;
+}
+
+@media (min-width: 30rem) {
+  .spa-salon-service__aside {
+    inline-size: auto;
+    justify-content: flex-end;
+  }
+}
+
+.spa-salon-service__action {
+  padding-inline: var(--spa-space-4);
+}
+
+/* --- L'équipe (BM-VITRINE-06) ----------------------------------------------- */
+
+.spa-salon-team {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8rem, 1fr));
+  gap: var(--spa-space-5) var(--spa-space-4);
+}
+
+.spa-salon-team__member {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spa-space-2);
+  text-align: center;
+}
+
+.spa-salon-team__name {
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-salon-team__practices {
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-sm);
+  line-height: var(--spa-line-height-snug);
+}
+
+/* --- Cartes d'informations pratiques ---------------------------------------- */
+
+.spa-salon-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-5);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-lg);
+  background-color: var(--spa-color-surface);
+}
+
+.spa-salon-card__title {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-salon-card__title .spa-icon {
+  color: var(--spa-color-accent-text);
+}
+
+.spa-salon-card__hint {
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-xs);
+}
+
+/* `<address>` hérite de l'italique dans plusieurs navigateurs : on le
+   neutralise, l'élément est ici pour sa sémantique, pas pour son style. */
+.spa-salon-card__address {
+  display: flex;
+  flex-direction: column;
+  font-style: normal;
+  font-size: var(--spa-font-size-sm);
+  line-height: var(--spa-line-height-normal);
+}
+
+.spa-salon-card__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  /* La cible reste tapable au doigt même quand le texte est court (WCAG 2.5.8). */
+  min-block-size: var(--spa-target-min-size);
+  color: var(--spa-color-accent-text);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.spa-salon-card__link:hover {
+  text-decoration: underline;
+}
+
+.spa-salon-card__link .spa-icon {
+  flex: none;
+}
+
+/* --- Horaires de la semaine (BM-VITRINE-03) --------------------------------- */
+
+.spa-salon-hours {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-salon-hours__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spa-space-1) var(--spa-space-3);
+}
+
+.spa-salon-hours__day {
+  color: var(--spa-color-text-muted);
+}
+
+/*
+ * Le jour courant. La graisse le distingue, et le libellé « (aujourd'hui) » en
+ * lecture d'écran porte la même information sans la couleur ni la forme
+ * (WCAG 1.4.1) — c'est le composant qui l'écrit.
+ */
+.spa-salon-hours__row[aria-current='date'] .spa-salon-hours__day,
+.spa-salon-hours__row[aria-current='date'] .spa-salon-hours__ranges {
+  color: var(--spa-color-text);
+  font-weight: var(--spa-font-weight-semibold);
 }
 
 /* --- Sorties du parcours public -------------------------------------------- */
@@ -206,51 +515,111 @@
   text-decoration: underline;
 }
 
+/* --- Barre de réservation collante (BM-VITRINE-04) -------------------------- */
+
+/*
+ * Posée en dernier enfant de `.spa-salon`, elle reste collée au bas de l'écran
+ * tant que la page déborde de la fenêtre, puis se range à sa place à la fin du
+ * défilement. Aucun JavaScript : un `IntersectionObserver` aurait ajouté un îlot
+ * client sur le chemin du LCP de la surface qui génère le revenu.
+ *
+ * Au-delà de 48 rem elle disparaît — l'en-tête du gabarit porte déjà un
+ * « Prendre rendez-vous » permanent (#1045), et BM-VITRINE-04 accepte cette
+ * forme-là. Deux appels à l'action collants se disputeraient l'attention.
+ */
+.spa-salon-bookbar {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: var(--spa-z-sticky);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-3);
+  /* Les gouttières de la page sont annulées : la barre touche les deux bords.
+   * Sous le gabarit du salon, c'est `--shell-gutter` qui les fixe
+   * (`salon-shell.css`) ; le repli couvre la vitrine rendue hors gabarit. */
+  margin-inline: calc(-1 * var(--shell-gutter, var(--spa-space-4)));
+  padding-inline: var(--shell-gutter, var(--spa-space-4));
+  padding-block-start: var(--spa-space-3);
+  border-block-start: 1px solid var(--spa-color-border);
+  background-color: var(--spa-color-surface);
+  box-shadow: var(--spa-shadow-lg);
+  /* Le clavier virtuel et la barre d'outils du navigateur mobile mordent sur le
+   * bas de la fenêtre : la zone sûre garde le bouton entièrement tapable. */
+  padding-block-end: max(var(--spa-space-3), env(safe-area-inset-bottom));
+}
+
+.spa-salon-bookbar__count {
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-salon-bookbar__action {
+  flex: none;
+}
+
+@media (min-width: 48rem) {
+  .spa-salon-bookbar {
+    display: none;
+  }
+}
+
 /* --- Vitrine en cours de chargement (#830) --------------------------------- */
 
 /*
  * Ce que `(vitrine)/loading.tsx` peint le temps que la page arrive. Le squelette
- * se range dans les vraies classes de la page — `.spa-salon`, la barre de
- * sorties, `.spa-salon__header`, `.spa-salon__services` et des `.spa-card` en
- * chargement —, si bien que ses gouttières sont celles de la vitrine. Les blocs
- * ci-dessous n'ajoutent que les hauteurs : celle de la ligne que chacun
- * remplace, à la taille de texte de l'élément réel.
+ * se range dans les vraies classes de la page — `.spa-salon-hero`,
+ * `.spa-salon__columns`, `.spa-salon-service` —, si bien que ses gouttières sont
+ * celles de la vitrine. Les blocs ci-dessous n'ajoutent que les hauteurs : celle
+ * de la ligne que chacun remplace, à la taille de texte de l'élément réel.
  */
 .spa-salon-loading {
   pointer-events: none;
 }
 
-.spa-salon-loading__exit {
-  block-size: var(--spa-target-min-size);
-  inline-size: 8rem;
-}
-
-.spa-salon-loading__eyebrow {
-  block-size: var(--spa-font-size-sm);
-  inline-size: 11rem;
+.spa-salon-loading__mark {
+  flex: none;
+  inline-size: var(--spa-space-16);
+  block-size: var(--spa-space-16);
+  border-radius: var(--spa-radius-lg);
 }
 
 .spa-salon-loading__title {
-  block-size: calc(var(--spa-font-size-3xl) * var(--spa-line-height-tight));
-  inline-size: min(22rem, 80%);
+  block-size: calc(var(--spa-font-size-2xl) * var(--spa-line-height-tight));
+  inline-size: min(16rem, 70vw);
+}
+
+.spa-salon-loading__facts {
+  block-size: var(--spa-font-size-sm);
+  inline-size: min(12rem, 55vw);
 }
 
 .spa-salon-loading__lede {
-  block-size: var(--spa-font-size-lg);
-  inline-size: min(44rem, 100%);
-}
-
-.spa-salon-loading__lede--short {
-  inline-size: min(26rem, 70%);
+  block-size: var(--spa-font-size-md);
+  inline-size: min(40rem, 100%);
 }
 
 .spa-salon-loading__action {
   block-size: var(--spa-target-min-size);
-  inline-size: 9rem;
+  inline-size: 11rem;
   border-radius: var(--spa-radius-md);
 }
 
 .spa-salon-loading__section-title {
   block-size: calc(var(--spa-font-size-2xl) * var(--spa-line-height-tight));
   inline-size: min(16rem, 60%);
+}
+
+.spa-salon-loading__price {
+  block-size: var(--spa-font-size-lg);
+  inline-size: 4rem;
+}
+
+.spa-salon-loading__card {
+  gap: var(--spa-space-3);
+}
+
+.spa-salon-loading__card-title {
+  block-size: var(--spa-font-size-md);
+  inline-size: 8rem;
 }

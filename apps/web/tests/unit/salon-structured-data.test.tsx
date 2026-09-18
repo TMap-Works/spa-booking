@@ -47,6 +47,21 @@ function withoutComments(source: string): string {
   return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
 }
 
+/**
+ * Les îlots clients **admis** sous `components/salon/`, et la raison de chacun.
+ *
+ * La liste est fermée, et c'est tout l'intérêt : un `useState` ajouté par
+ * commodité dans `service-catalog.tsx` ferait basculer le catalogue — la partie
+ * indexable de la page, celle qui porte le LCP — côté client, et la suite le
+ * dirait avant la revue.
+ *
+ * - `catalog-categories.tsx` (#1046) : la rangée d'onglets de rubriques
+ *   (BM-SERVICE-02) porte l'état « quelle rubrique est ouverte ». Elle ne rend
+ *   **aucune** ligne de prestation : elle reçoit des panneaux déjà rendus par le
+ *   serveur et se borne à les masquer ou les montrer.
+ */
+const CLIENT_ISLANDS = new Set(['catalog-categories.tsx']);
+
 describe('la page reste un Server Component', () => {
   it('ni la page ni ses composants n’ouvrent sur une directive client', () => {
     // La page vit sous le groupe `(vitrine)` depuis #830, avec son layout et son
@@ -59,7 +74,9 @@ describe('la page reste un Server Component', () => {
       path.join(vitrine, 'layout.tsx'),
       path.join(vitrine, 'loading.tsx'),
       path.join(webRoot, 'app', '(booking)', '[tenantSlug]', 'salon-data.ts'),
-      ...readdirSync(salonComponents).map((name) => path.join(salonComponents, name)),
+      ...readdirSync(salonComponents)
+        .filter((name) => !CLIENT_ISLANDS.has(name))
+        .map((name) => path.join(salonComponents, name)),
     ];
 
     // Le garde-fou n'a de valeur que s'il regarde bien tous les fichiers.
@@ -73,6 +90,18 @@ describe('la page reste un Server Component', () => {
         `${path.basename(file)} s’ouvre sur une directive "use client"`,
       ).toBe(false);
     }
+  });
+
+  it('n’admet d’îlot client que ceux qui sont déclarés, et ils le sont vraiment', () => {
+    // Deux sens à la fois : un fichier client non déclaré fait rougir la suite,
+    // et une exemption devenue inutile — le fichier a cessé d'être client, ou a
+    // disparu — aussi. Une liste d'exceptions qui ne se périme pas finit par
+    // couvrir tout ce qu'elle était censée surveiller.
+    const clients = readdirSync(salonComponents).filter((name) =>
+      /^\s*(['"])use client\1/.test(withoutComments(readFileSync(path.join(salonComponents, name), 'utf8'))),
+    );
+
+    expect(new Set(clients)).toEqual(CLIENT_ISLANDS);
   });
 });
 

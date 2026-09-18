@@ -1,9 +1,11 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 
+import { SalonBookingBar } from '@/components/salon/salon-booking-bar';
 import { salonContactAction } from '@/components/salon/salon-contact';
 import { SalonHeader } from '@/components/salon/salon-header';
 import { SalonInfo } from '@/components/salon/salon-info';
+import { SalonTeam } from '@/components/salon/salon-team';
 import { ServiceCatalog } from '@/components/salon/service-catalog';
 import { SalonStructuredData } from '@/components/salon/structured-data';
 import { ApiClientError } from '@/lib/api-client';
@@ -158,6 +160,13 @@ export default async function SalonPage({ params }: PageProps) {
     // que la page promet en dépend : l'accroche, l'appel à l'action, l'action de
     // l'état vide du catalogue, et jusqu'à la `ReserveAction` du graphe.
     const bookable = services.length > 0;
+    const reservationHref = bookable ? reservationPath(tenant.slug) : null;
+    // Un seul instant pour toute la page (#1046) : le bandeau dit « Ouvert —
+    // ferme à 19:00 », la carte des horaires met « aujourd'hui » en évidence, et
+    // les deux doivent parler du même moment. Deux `new Date()` posés
+    // séparément divergeraient à la minute de bascule, et la page se
+    // contredirait à minuit dans le fuseau du salon.
+    const now = new Date();
 
     return (
       <div className="spa-salon">
@@ -168,13 +177,29 @@ export default async function SalonPage({ params }: PageProps) {
             url={canonicalUrl}
             reservationUrl={`${canonicalUrl}/reservation`}
           />
-          <SalonHeader
-            tenant={tenant}
-            reservationHref={bookable ? reservationPath(tenant.slug) : null}
-          />
-          <ServiceCatalog services={services} contact={salonContactAction(tenant)} />
-          <SalonInfo tenant={tenant} bookable={bookable} />
+          <SalonHeader tenant={tenant} reservationHref={reservationHref} now={now} />
+
+          {/* Deux colonnes au-delà de 64 rem : le catalogue à gauche, les
+              informations pratiques à droite, collantes (BM-VITRINE-04). En
+              deçà, tout retombe dans une colonne, informations en dernier — on
+              vient d'abord pour les prestations. */}
+          <div className="spa-salon__columns">
+            <div className="spa-salon__column">
+              <ServiceCatalog
+                services={services}
+                contact={salonContactAction(tenant)}
+                reservationPath={reservationHref}
+              />
+              <SalonTeam services={services} />
+            </div>
+
+            <aside className="spa-salon__aside" aria-label="Informations pratiques">
+              <SalonInfo tenant={tenant} bookable={bookable} now={now} />
+            </aside>
+          </div>
         </main>
+
+        <SalonBookingBar href={reservationHref} serviceCount={services.length} />
       </div>
     );
   } catch (error) {
