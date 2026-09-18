@@ -80,12 +80,15 @@ export class ZodValidationPipe<TSchema extends ZodTypeAny>
  * moitié des schémas qu'on lui présente n'est pas une garde : ici il n'y a plus
  * de `forbidNonWhitelisted` derrière elle pour rattraper l'oubli.
  */
-function assertRefusesUnknownKeys(schema: ZodTypeAny): void {
+export function assertRefusesUnknownKeys(schema: ZodTypeAny): void {
   const unwrapped = unwrapEffects(schema);
 
   if (unwrapped instanceof ZodObject && unwrapped._def.unknownKeys !== 'strict') {
     throw new TypeError(
-      'ZodValidationPipe : un schéma d’entrée doit être `.strict()` — sans quoi un champ ' +
+      // Pas de nom de pipe dans le message : cette garde sert aussi
+      // `tenantCountryValidationPipe`, et nommer l'un enverrait chercher le
+      // défaut dans l'autre fichier.
+      'Validation : un schéma d’entrée doit être `.strict()` — sans quoi un champ ' +
         'inconnu (un `tenantId`, par exemple) traverserait la frontière sans être refusé.',
     );
   }
@@ -111,7 +114,7 @@ function unwrapEffects(schema: ZodTypeAny): ZodTypeAny {
  * pas toujours. Un refus posé sur la racine (le `.refine()` d'un schéma entier)
  * n'a pas de chemin : son message part seul, sans préfixe orphelin.
  */
-function violationsOf(error: ZodError): string[] {
+export function violationsOf(error: ZodError): string[] {
   return error.issues.map((issue) => {
     const path = issue.path.join('.');
 

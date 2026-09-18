@@ -12,6 +12,11 @@ export {
   type PublicTenantResolverProvider,
 } from './public-tenant.resolver';
 export {
+  TENANT_COUNTRY_PROVIDER,
+  type TenantCountryProvider,
+  type TenantCountryProviderRegistration,
+} from './tenant-country.provider';
+export {
   getTenantId,
   hasTenantScope,
   requireTenantId,

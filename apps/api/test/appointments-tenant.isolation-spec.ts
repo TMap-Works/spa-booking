@@ -31,6 +31,13 @@ import { bookableSlot, createAppointmentsHarness, type AppointmentsHarness } fro
  *    du voisin. Aucun identifiant fautif ne traverse alors l'API : la fuite
  *    serait dans la décision elle-même.
  *
+ * S'y ajoute un sixième croisement depuis #1028, d'une autre nature : le
+ * **pays** de l'établissement entre désormais dans la validation du corps, pour
+ * compléter un numéro de téléphone national. C'est une donnée de l'établissement
+ * qui décide d'un refus, donc une surface de traversée de plus — et la seule où
+ * une fuite ne se lirait ni dans un statut ni dans un corps de réponse, mais
+ * dans un **numéro enregistré**.
+ *
  * S'y ajoute ce que le protocole exige toujours : aucune donnée du voisin n'a
  * bougé, et aucun corps de réponse ne porte son identifiant.
  */
@@ -74,6 +81,83 @@ describe('Isolation inter-tenant — réservation publique', () => {
     expect(JSON.stringify(response.body)).not.toContain(harness.a.tenant.id);
     expect(JSON.stringify(response.body)).not.toContain(harness.a.serviceId);
     expect(harness.appointments.appointments).toHaveLength(0);
+  });
+
+  /**
+   * Le pays lu est celui du slug de l'URL, jamais celui du voisin (#1028).
+   *
+   * Les deux établissements ont des pays **différents et incompatibles** :
+   * « 06 12 34 56 78 » est un numéro français complétable chez A, et rien du
+   * tout chez B, dont le plan de numérotation malgache ne le reconnaît pas. Le
+   * même corps doit donc être accepté sous un slug et refusé sous l'autre — un
+   * pays lu hors de la portée de tenant ferait verdir les deux, ou rougir les
+   * deux, selon celui qu'il aurait attrapé.
+   *
+   * La propriété ne vient d'aucune comparaison écrite quelque part : la lecture
+   * est un `findFirst` sans `where` sur le client scopé, que l'extension borne
+   * sur l'identifiant du contexte. Il n'existe aucune écriture par laquelle
+   * demander le pays d'un autre établissement.
+   */
+  describe('le pays qui complète un numéro national est celui du slug', () => {
+    beforeEach(() => {
+      harness.appointments.seedCountryCode(harness.a.tenant.id, 'FR');
+      harness.appointments.seedCountryCode(harness.b.tenant.id, 'MG');
+    });
+
+    it('accepte le numéro français sous le slug de A, qui est le salon français', async () => {
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.a.tenant.slug))
+        .send({
+          serviceId: harness.a.serviceId,
+          staffId: harness.a.staffId,
+          startsAt: slot.startsAt.toISOString(),
+          client: { ...GUEST, phone: '06 12 34 56 78' },
+          dataConsent: true,
+        });
+
+      expect(response.status).toBe(201);
+      expect(harness.appointments.clients[0]?.tenantId).toBe(harness.a.tenant.id);
+      expect(harness.appointments.clients[0]?.phone).toBe('+33612345678');
+    });
+
+    it('refuse le même numéro sous le slug de B — son pays n’est pas celui de A', async () => {
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.b.tenant.slug))
+        .send({
+          serviceId: harness.b.serviceId,
+          staffId: harness.b.staffId,
+          startsAt: slot.startsAt.toISOString(),
+          client: { ...GUEST, phone: '06 12 34 56 78' },
+          dataConsent: true,
+        });
+
+      // 400 et non 201 : si le pays de A avait traversé la frontière, ce corps
+      // serait passé, et le salon malgache aurait enregistré un numéro français
+      // qu'aucune cliente ne lui a donné.
+      expect(response.status).toBe(400);
+      expect(response.body).toMatchObject({ code: 'VALIDATION_ERROR' });
+      expect(harness.appointments.clients).toHaveLength(0);
+      expect(harness.appointments.appointments).toHaveLength(0);
+    });
+
+    it('n’expose le pays du voisin ni dans le refus ni dans la réponse', async () => {
+      const response = await request(harness.server())
+        .post(BOOKING_PATH(harness.b.tenant.slug))
+        .send({
+          serviceId: harness.b.serviceId,
+          staffId: harness.b.staffId,
+          startsAt: slot.startsAt.toISOString(),
+          client: { ...GUEST, phone: '06 12 34 56 78' },
+          dataConsent: true,
+        });
+
+      // Le corps d'erreur nomme le champ, jamais la valeur reçue ni le pays lu —
+      // un refus de validation finit dans les journaux du front (CDC §5.1).
+      const serialized = JSON.stringify(response.body);
+      expect(serialized).not.toContain('06 12 34 56 78');
+      expect(serialized).not.toContain(harness.a.tenant.id);
+      expect(serialized).not.toContain('FR');
+    });
   });
 
   it('refuse en 404 la prestation de B demandée sous le slug de A', async () => {

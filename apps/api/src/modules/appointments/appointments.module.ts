@@ -1,5 +1,10 @@
 import { Module } from '@nestjs/common';
 
+import {
+  TENANT_COUNTRY_PROVIDER,
+  type TenantCountryProviderRegistration,
+} from '../../common/tenant';
+
 import { AvailabilityModule } from '../availability/availability.module';
 import { CatalogModule } from '../catalog/catalog.module';
 import { CrmModule } from '../crm/crm.module';
@@ -13,6 +18,26 @@ import { MyStaffController } from './my-staff.controller';
 import { MyStaffService } from './my-staff.service';
 import { PublicAppointmentsController } from './public-appointments.controller';
 import { SlotLockService } from './slot-lock.service';
+
+/**
+ * Le pays de l'établissement courant, tel que ce module le fournit au socle de
+ * validation (#1028).
+ *
+ * `useExisting` et non `useClass` : c'est **le** repository de ce module qui
+ * répond, celui que les suites substituent par un double. Un second exemplaire
+ * aurait lu la même colonne à côté du premier, et se serait tu là où le double
+ * refuse de lire hors portée de tenant.
+ *
+ * Le sens de la dépendance est celui de `PUBLIC_TENANT_RESOLVER` :
+ * `common/tenant` déclare le contrat, un module métier le remplit. C'est
+ * `appointments` et non `identity` parce que c'est la route de ce module qui en
+ * a besoin, et que la lecture est déjà la sienne — une colonne, sur son client
+ * Prisma scopé, exactement comme `currentTimeZone`.
+ */
+const tenantCountryProvider: TenantCountryProviderRegistration = {
+  provide: TENANT_COUNTRY_PROVIDER,
+  useExisting: AppointmentsRepository,
+};
 
 /**
  * Module `appointments` — cycle de vie du rendez-vous (CDC §2.3).
@@ -127,6 +152,7 @@ import { SlotLockService } from './slot-lock.service';
     AppointmentLifecycleService,
     SlotLockService,
     MyStaffService,
+    tenantCountryProvider,
   ],
   exports: [AppointmentsService, AppointmentEvents],
 })

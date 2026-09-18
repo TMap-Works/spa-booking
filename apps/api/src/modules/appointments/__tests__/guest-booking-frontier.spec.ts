@@ -24,7 +24,8 @@
 
 import { BadRequestException } from '@nestjs/common';
 
-import { type BookAppointmentBody, bookAppointmentBody } from '../dto/book-appointment.dto';
+import type { BookAppointmentBody } from '../dto/book-appointment.dto';
+import { bookAppointmentPipe } from './appointments.doubles';
 
 const SERVICE_ID = '2b0f3a1c-6a4d-4a2e-9d3b-8f7c1e5a4b21';
 const CLIENT_ID = '2b0f3a1c-6a4d-4a2e-9d3b-8f7c1e5a4b22';
@@ -47,15 +48,28 @@ function body(overrides: Record<string, unknown> = {}): Record<string, unknown> 
   };
 }
 
+/**
+ * La frontière, telle qu'elle est montée pour un établissement **sans pays** —
+ * la variante par défaut, et celle qui vaut pour tous les cas de cette suite qui
+ * ne parlent pas de téléphone.
+ */
+const frontier = bookAppointmentPipe();
+
 /** Le corps validé, tel que le contrôleur le recevrait. */
-function accepted(raw: Record<string, unknown>): BookAppointmentBody {
-  return bookAppointmentBody.transform(raw) as BookAppointmentBody;
+async function accepted(
+  raw: Record<string, unknown>,
+  countryCode: string | null = null,
+): Promise<BookAppointmentBody> {
+  return bookAppointmentPipe(countryCode).transform(raw);
 }
 
 /** `true` si la frontière laisse passer ce corps. */
-function accepts(raw: Record<string, unknown>): boolean {
+async function accepts(
+  raw: Record<string, unknown>,
+  countryCode: string | null = null,
+): Promise<boolean> {
   try {
-    bookAppointmentBody.transform(raw);
+    await bookAppointmentPipe(countryCode).transform(raw);
 
     return true;
   } catch {
@@ -63,9 +77,16 @@ function accepts(raw: Record<string, unknown>): boolean {
   }
 }
 
+/** Un corps complet dont seul le téléphone varie. */
+function withPhone(phone: string): Record<string, unknown> {
+  return {
+    client: { firstName: 'Camille', lastName: 'Rakoto', email: 'camille@example.test', phone },
+  };
+}
+
 describe('la frontière de POST /public/:tenantSlug/appointments', () => {
-  it('normalise ce que le contrat normalise — adresse et instant', () => {
-    const parsed = accepted(
+  it('normalise ce que le contrat normalise — adresse et instant', async () => {
+    const parsed = await accepted(
       body({
         client: {
           firstName: '  Camille ',
@@ -83,13 +104,17 @@ describe('la frontière de POST /public/:tenantSlug/appointments', () => {
     expect(parsed.startsAt).toBe('2026-09-01T09:00:00.000Z');
   });
 
-  it('refuse un champ inconnu — c’est le `.strict()` du contrat qui tient la porte', () => {
+  it('refuse un champ inconnu — c’est le `.strict()` du contrat qui tient la porte', async () => {
     // `tenantId` est le champ dont l'absence est une propriété d'isolation
     // (tenant-isolation §2) ; `clientId` est celui qui ferait réserver au nom
     // d'un autre depuis le tunnel public.
-    expect(accepts(body({ tenantId: SERVICE_ID }))).toBe(false);
-    expect(accepts(body({ clientId: CLIENT_ID }))).toBe(false);
-    expect(accepts(body({ price: { amountMinor: 1, currency: 'EUR' } }))).toBe(false);
+    expect(await accepts(body({ tenantId: SERVICE_ID }))).toBe(false);
+    expect(await accepts(body({ clientId: CLIENT_ID }))).toBe(false);
+    expect(await accepts(body({ price: { amountMinor: 1, currency: 'EUR' } }))).toBe(false);
+
+    // Et la garde tient **quel que soit le pays** : c'est la forme du schéma
+    // qu'elle juge, et la fabrique ne fait varier que le contenu d'un champ.
+    expect(await accepts(body({ tenantId: SERVICE_ID }), 'FR')).toBe(false);
   });
 
   /**
@@ -102,28 +127,28 @@ describe('la frontière de POST /public/:tenantSlug/appointments', () => {
    * seul endroit où un pipe monté sur un schéma trop permissif se verrait.
    */
   describe('le consentement au traitement des données', () => {
-    it('refuse un corps qui ne le porte pas', () => {
+    it('refuse un corps qui ne le porte pas', async () => {
       const { dataConsent: _absent, ...sansConsentement } = body();
 
-      expect(accepts(sansConsentement)).toBe(false);
+      expect(await accepts(sansConsentement)).toBe(false);
     });
 
-    it('refuse un consentement refusé, et ne réserve donc pas', () => {
-      expect(accepts(body({ dataConsent: false }))).toBe(false);
+    it('refuse un consentement refusé, et ne réserve donc pas', async () => {
+      expect(await accepts(body({ dataConsent: false }))).toBe(false);
     });
 
-    it('laisse passer l’accord tel quel — c’est le service qui l’horodate', () => {
-      expect(accepted(body()).dataConsent).toBe(true);
+    it('laisse passer l’accord tel quel — c’est le service qui l’horodate', async () => {
+      expect((await accepted(body())).dataConsent).toBe(true);
     });
 
-    it('refuse une date de consentement envoyée par l’appelant', () => {
-      expect(accepts(body({ dataConsentAt: '2026-09-01T09:00:00.000Z' }))).toBe(false);
+    it('refuse une date de consentement envoyée par l’appelant', async () => {
+      expect(await accepts(body({ dataConsentAt: '2026-09-01T09:00:00.000Z' }))).toBe(false);
     });
 
-    it('nomme le champ dans son refus, plutôt que de le taire', () => {
+    it('nomme le champ dans son refus, plutôt que de le taire', async () => {
       let message = '';
       try {
-        bookAppointmentBody.transform(body({ dataConsent: false }));
+        await frontier.transform(body({ dataConsent: false }));
       } catch (error) {
         message = JSON.stringify((error as BadRequestException).getResponse());
       }
@@ -136,18 +161,20 @@ describe('la frontière de POST /public/:tenantSlug/appointments', () => {
     });
   });
 
-  describe('téléphone — l’écart de #314 refermé sur l’E.164', () => {
-    it('normalise un numéro international écrit avec des séparateurs', () => {
-      const parsed = accepted(
-        body({
-          client: {
-            firstName: 'Camille',
-            lastName: 'Rakoto',
-            email: 'camille@example.test',
-            phone: '+261 34 12 345 67',
-          },
-        }),
-      );
+  /**
+   * Le téléphone — l'écart de #314 refermé sur l'E.164, puis celui de #1028
+   * refermé sur le **pays de l'établissement**.
+   *
+   * Ce que cette suite tient ici n'est toujours pas la règle — elle est dans
+   * `e164PhoneSchemaFor`, et `packages/shared/src/__tests__/phone.spec.ts`
+   * l'exerce — mais le **câblage** : que le pipe de cette route-ci instancie
+   * bien la fabrique du contrat avec le pays qu'on lui fournit, au lieu d'un
+   * schéma figé. C'est le seul endroit où un pipe resté sur la variante sans
+   * pays se verrait.
+   */
+  describe('téléphone — l’E.164 et le pays de l’établissement', () => {
+    it('normalise un numéro international écrit avec des séparateurs', async () => {
+      const parsed = await accepted(body(withPhone('+261 34 12 345 67')));
 
       // Le DTO conservait la saisie. C'est ce numéro-ci que la chaîne SMS
       // compose, et il n'a plus qu'une écriture possible — donc une seule clé de
@@ -155,34 +182,59 @@ describe('la frontière de POST /public/:tenantSlug/appointments', () => {
       expect(parsed.client.phone).toBe('+261341234567');
     });
 
-    it('refuse un numéro national, dont le pays n’est déductible de rien', () => {
-      // Le DTO l'acceptait. Deviner l'indicatif produirait un numéro
-      // syntaxiquement valide et faux — un rappel envoyé à quelqu'un d'autre.
-      expect(
-        accepts(
-          body({
-            client: {
-              firstName: 'Camille',
-              lastName: 'Rakoto',
-              email: 'camille@example.test',
-              phone: '0341234567',
-            },
-          }),
-        ),
-      ).toBe(false);
+    it('accepte et complète un numéro national avec le pays de l’établissement', async () => {
+      // Le cas de la capture de #824 : « 06 12 34 56 78 » sur un salon français,
+      // refusé par ce tunnel alors que `/auth/register` l'accepte sur le même
+      // établissement. C'est le même numéro qui est désormais enregistré des deux
+      // côtés.
+      expect((await accepted(body(withPhone('06 12 34 56 78')), 'FR')).client.phone).toBe(
+        '+33612345678',
+      );
+
+      // Et le salon malgache, d'où vient le cas « refusé » de cette suite : même
+      // conduite, autre plan de numérotation.
+      expect((await accepted(body(withPhone('034 12 345 67')), 'MG')).client.phone).toBe(
+        '+261341234567',
+      );
+      expect((await accepted(body(withPhone('0341234567')), 'MG')).client.phone).toBe(
+        '+261341234567',
+      );
+    });
+
+    it('laisse passer l’international inchangé, même sous un pays par défaut', async () => {
+      // Le pays ne **remplace** rien : il ne sert qu'à compléter ce qui n'a pas
+      // d'indicatif. Un numéro malgache saisi chez un salon français reste
+      // malgache — c'est la cliente en voyage, et son rappel doit lui parvenir.
+      expect((await accepted(body(withPhone('+261341234567')), 'FR')).client.phone).toBe(
+        '+261341234567',
+      );
+    });
+
+    it('refuse un numéro national quand l’établissement n’a pas de pays', async () => {
+      // Le cas du salon qui n'a pas saisi son adresse. Deviner l'indicatif
+      // produirait un numéro syntaxiquement valide et faux — un rappel envoyé à
+      // quelqu'un d'autre.
+      expect(await accepts(body(withPhone('0341234567')))).toBe(false);
+      expect(await accepts(body(withPhone('06 12 34 56 78')))).toBe(false);
+    });
+
+    it('refuse un numéro que le pays ne permet pas de compléter', async () => {
+      // Le pays n'est pas un blanc-seing : trop court pour tout plan de
+      // numérotation, le numéro reste refusé.
+      expect(await accepts(body(withPhone('06 12 34')), 'FR')).toBe(false);
     });
   });
 
-  it('refuse un identifiant qui n’est pas une v4 — l’écart de #403 refermé', () => {
-    expect(accepts(body({ serviceId: '2b0f3a1c-6a4d-1a2e-9d3b-8f7c1e5a4b21' }))).toBe(false);
-    expect(accepts(body({ staffId: '00000000-0000-0000-0000-000000000000' }))).toBe(false);
+  it('refuse un identifiant qui n’est pas une v4 — l’écart de #403 refermé', async () => {
+    expect(await accepts(body({ serviceId: '2b0f3a1c-6a4d-1a2e-9d3b-8f7c1e5a4b21' }))).toBe(false);
+    expect(await accepts(body({ staffId: '00000000-0000-0000-0000-000000000000' }))).toBe(false);
   });
 
-  it('refuse en 400, avec le corps que `DomainExceptionFilter` sert en VALIDATION_ERROR', () => {
+  it('refuse en 400, le corps que `DomainExceptionFilter` sert en VALIDATION_ERROR', async () => {
     let caught: unknown = null;
 
     try {
-      bookAppointmentBody.transform(body({ serviceId: 'pas-un-uuid' }));
+      await frontier.transform(body({ serviceId: 'pas-un-uuid' }));
     } catch (error) {
       caught = error;
     }

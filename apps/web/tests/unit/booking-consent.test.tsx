@@ -76,6 +76,10 @@ function renderContactStep() {
     <ContactStep
       contact={emptyBookingDraft().contact}
       tenantSlug="salon-zen"
+      // Le consentement ne dépend pas du pays : l'établissement sans adresse est
+      // le cas par défaut, et il laisse cette suite sur la règle du téléphone
+      // qu'elle connaissait (#1028).
+      countryCode={null}
       onSave={onSave}
       onBack={vi.fn()}
       onSubmit={onSubmit}

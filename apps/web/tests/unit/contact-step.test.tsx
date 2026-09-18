@@ -7,7 +7,13 @@ import { emptyBookingDraft } from '@/lib/booking/draft';
 
 afterEach(cleanup);
 
-function renderContactStep() {
+/**
+ * `countryCode` vaut `null` par défaut — l'établissement qui n'a pas publié son
+ * adresse (#1028). C'est l'état sous lequel toutes les assertions antérieures
+ * ont été écrites : un numéro national y reste refusé, et l'aide y exige
+ * l'indicatif. Les cas qui parlent du pays le nomment.
+ */
+function renderContactStep(countryCode: string | null = null) {
   const onSubmit = vi.fn();
   const onSave = vi.fn();
   const onBack = vi.fn();
@@ -16,6 +22,7 @@ function renderContactStep() {
     <ContactStep
       contact={emptyBookingDraft().contact}
       tenantSlug="salon-zen"
+      countryCode={countryCode}
       onSave={onSave}
       onBack={onBack}
       onSubmit={onSubmit}
@@ -81,7 +88,7 @@ describe('formulaire de coordonnées', () => {
     });
   });
 
-  it('refuse un numéro national et affiche le message sur le champ', async () => {
+  it('refuse un numéro national sans pays d’établissement, sur le champ', async () => {
     const { onSubmit, user } = renderContactStep();
 
     await fillRequiredFields(user);
@@ -123,6 +130,45 @@ describe('formulaire de coordonnées', () => {
     const hint = document.getElementById('phone-hint');
 
     expect(hint?.textContent).toMatch(/format international/);
+    expect(hint?.textContent).not.toMatch(/\+\s?\d/);
+  });
+
+  /**
+   * Le défaut de #1028, vu du formulaire : le tunnel refusait dans le navigateur
+   * un numéro que `POST /public/{slug}/appointments` accepte sur le même salon,
+   * depuis que la frontière serveur le complète avec `tenants.country_code`.
+   *
+   * Le test porte sur les deux moitiés de la correction — la soumission passe
+   * **et** aucun message n'apparaît —, parce qu'un formulaire qui laisserait
+   * soumettre en affichant tout de même son refus serait aussi faux.
+   */
+  it('accepte un numéro national quand l’établissement a un pays', async () => {
+    const { onSubmit, user } = renderContactStep('FR');
+
+    await fillRequiredFields(user);
+    await user.type(screen.getByLabelText(/Téléphone/), '06 12 34 56 78');
+    await user.click(screen.getByRole('button', { name: /Vérifier ma réservation/ }));
+
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole('alert')).toBeNull();
+    // Le brouillon conserve la saisie telle qu'elle a été tapée, ici comme
+    // ailleurs : la forme E.164 est produite au moment de composer la requête.
+    expect(onSubmit.mock.calls[0]?.[0]).toMatchObject({ phone: '06 12 34 56 78' });
+  });
+
+  /**
+   * Le pendant du test de #626 juste au-dessus, sous un pays connu : l'aide
+   * cesse d'**exiger** l'indicatif — l'exiger serait devenu faux — sans pour
+   * autant donner d'exemple de numéro national, que le contrat refuse d'inventer
+   * (en-tête d'`e164PhoneSchemaFor`).
+   */
+  it('cesse d’exiger l’indicatif dans l’aide quand l’établissement a un pays', () => {
+    renderContactStep('FR');
+
+    const hint = document.getElementById('phone-hint');
+
+    expect(hint?.textContent).not.toMatch(/format international, indicatif/);
+    expect(hint?.textContent).toMatch(/pays de l’établissement/);
     expect(hint?.textContent).not.toMatch(/\+\s?\d/);
   });
 

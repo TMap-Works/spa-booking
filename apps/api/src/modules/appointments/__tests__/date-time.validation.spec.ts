@@ -23,8 +23,8 @@
  *
  * Elles sont désormais **de même nature**, et c'est le changement de #510 :
  *
- * - **`book`** est validée par `bookGuestAppointmentRequestSchema`, monté par
- *   `bookAppointmentBody`
+ * - **`book`** est validée par `bookGuestAppointmentRequestSchemaFor`, monté par
+ *   `BookAppointmentBodyPipe`
  *   ([ADR 0008](../../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)) ;
  * - **`reschedule`** l'est par `rescheduleAppointmentRequestSchema`, monté par
  *   `rescheduleAppointmentBody`.
@@ -45,7 +45,8 @@ import type {
   BookAppointmentInput,
   RescheduleAppointmentInput,
 } from '../appointments.types';
-import { type BookAppointmentBody, bookAppointmentBody } from '../dto/book-appointment.dto';
+import type { BookAppointmentBody } from '../dto/book-appointment.dto';
+import { bookAppointmentPipe } from './appointments.doubles';
 import {
   type RescheduleAppointmentBody,
   rescheduleAppointmentBody,
@@ -121,10 +122,16 @@ function view(): AppointmentView {
   };
 }
 
-/** Le corps d'erreur sérialisé, ou la chaîne vide si la frontière a laissé passer. */
-function refusalOf(attempt: () => unknown): string {
+/**
+ * Le corps d'erreur sérialisé, ou la chaîne vide si la frontière a laissé passer.
+ *
+ * `await` sur la tentative : le pipe de `book` lit le pays de l'établissement,
+ * donc transforme de façon asynchrone depuis #1028. Celui de `reschedule` reste
+ * synchrone, et `await` sur une valeur non promise ne change rien à son refus.
+ */
+async function refusalOf(attempt: () => unknown): Promise<string> {
   try {
-    attempt();
+    await attempt();
 
     return '';
   } catch (error) {
@@ -133,9 +140,16 @@ function refusalOf(attempt: () => unknown): string {
 }
 
 /** Le refus que la frontière de `reschedule` oppose à ce `startsAt`. */
-function rescheduleRefusal(startsAt: string): string {
+function rescheduleRefusal(startsAt: string): Promise<string> {
   return refusalOf(() => rescheduleAppointmentBody.transform({ startsAt }));
 }
+
+/**
+ * La frontière de `book`, **sans pays d'établissement** : le sujet de cette
+ * suite est l'instant, pas le téléphone, et aucun de ses corps ne porte de
+ * numéro.
+ */
+const bookBody = bookAppointmentPipe();
 
 /** Corps de réservation complet, dont seul `startsAt` varie d'un cas à l'autre. */
 function bookingBody(startsAt: string): Record<string, unknown> {
@@ -145,15 +159,15 @@ function bookingBody(startsAt: string): Record<string, unknown> {
 }
 
 /** Le refus que la frontière de `book` oppose à ce `startsAt`. */
-function bookingRefusal(startsAt: string): string {
-  return refusalOf(() => bookAppointmentBody.transform(bookingBody(startsAt)));
+function bookingRefusal(startsAt: string): Promise<string> {
+  return refusalOf(() => bookBody.transform(bookingBody(startsAt)));
 }
 
 /** L'instant que le service recevrait pour ce corps de réservation. */
 async function bookedInstant(startsAt: string): Promise<string> {
   const { controller, captured } = capturingService();
 
-  await controller.book(bookAppointmentBody.transform(bookingBody(startsAt)) as BookAppointmentBody);
+  await controller.book((await bookBody.transform(bookingBody(startsAt))) as BookAppointmentBody);
 
   return instantOf(captured.book, 'book');
 }
@@ -207,12 +221,12 @@ describe('début de rendez-vous entrant', () => {
     expect(await bookedInstant('2026-03-28T15:30:00.500-10:00')).toBe('2026-03-29T01:30:00.500Z');
   });
 
-  it('refuse une date-heure nue — le serveur n’a pas à deviner le fuseau', () => {
-    expect(bookingRefusal('2026-03-29T03:30:00')).toContain('offset explicite');
-    expect(rescheduleRefusal('2026-03-29T03:30:00')).toContain('offset explicite');
+  it('refuse une date-heure nue — le serveur n’a pas à deviner le fuseau', async () => {
+    expect(await bookingRefusal('2026-03-29T03:30:00')).toContain('offset explicite');
+    expect(await rescheduleRefusal('2026-03-29T03:30:00')).toContain('offset explicite');
   });
 
-  it('refuse une date civile seule, un epoch, une heure hors journée, un 31 février', () => {
+  it('refuse une date civile seule, un epoch, une heure hors journée, un 31 février', async () => {
     // Cette liste est reprise **mot pour mot** par le pendant côté contrat,
     // `packages/shared/src/__tests__/schemas.spec.ts` : c'est ce qui rend la
     // double écriture de la frontière vérifiable. Une liste plus courte d'un
@@ -234,8 +248,8 @@ describe('début de rendez-vous entrant', () => {
     ];
 
     for (const startsAt of refused) {
-      expect(bookingRefusal(startsAt)).toContain('offset explicite');
-      expect(rescheduleRefusal(startsAt)).toContain('offset explicite');
+      expect(await bookingRefusal(startsAt)).toContain('offset explicite');
+      expect(await rescheduleRefusal(startsAt)).toContain('offset explicite');
     }
   });
 });

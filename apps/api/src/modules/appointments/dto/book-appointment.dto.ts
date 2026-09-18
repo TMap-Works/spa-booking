@@ -8,13 +8,13 @@ import {
   LONG_TEXT_MAX_LENGTH,
   NAME_MAX_LENGTH,
   PHONE_MAX_LENGTH,
-  bookGuestAppointmentRequestSchema,
+  bookGuestAppointmentRequestSchemaFor,
   bookedAppointmentSchema,
   guestContactSchema,
 } from '@spa/shared';
 import type { z } from 'zod';
 
-import { ZodValidationPipe } from '../../../common/validation';
+import { tenantCountryValidationPipe } from '../../../common/validation';
 import type { AppointmentCancelledBy, AppointmentStatus } from '../appointment-status';
 import { CANCELLATION_AUTHORS } from '../appointment-status';
 import type { AppointmentView, GuestContact, Money } from '../appointments.types';
@@ -30,7 +30,7 @@ import type { AppointmentView, GuestContact, Money } from '../appointments.types
  *
  * | Ce fichier | `packages/shared/src/schemas/appointment.ts` |
  * |---|---|
- * | `bookAppointmentBody` (le pipe) | `bookGuestAppointmentRequestSchema` |
+ * | `BookAppointmentBodyPipe` (le pipe) | `bookGuestAppointmentRequestSchemaFor` |
  * | `GuestContactDto` (la documentation) | `guestContactSchema` |
  * | `AppointmentDto` (la documentation) | `bookedAppointmentSchema` |
  *
@@ -54,20 +54,18 @@ import type { AppointmentView, GuestContact, Money } from '../appointments.types
  *
  * ## Le `.strict()` du contrat remplace `forbidNonWhitelisted`
  *
- * `bookGuestAppointmentRequestSchema` et `guestContactSchema` sont l'un et
- * l'autre `.strict()` : un champ non déclaré est **refusé**, en particulier un
- * `tenantId` glissé dans le corps — la fuite que le scoping automatique supprime
- * (tenant-isolation §2). Sur une route publique, c'est la seule barrière avant
- * le service : il n'y a pas de garde à franchir. `ZodValidationPipe` refuse
- * d'ailleurs au montage un schéma d'entrée qui ne serait pas `.strict()`.
+ * Les deux schémas du contrat sont `.strict()` : un champ non déclaré est
+ * **refusé**, en particulier un `tenantId` glissé dans le corps — la fuite que
+ * le scoping automatique supprime (tenant-isolation §2). Sur une route publique,
+ * c'est la seule barrière avant le service : il n'y a pas de garde à franchir.
+ * `tenantCountryValidationPipe` refuse d'ailleurs au montage, comme
+ * `ZodValidationPipe`, un schéma d'entrée qui ne serait pas `.strict()`.
  *
  * ## Les deux écarts de #314, et comment ils se referment
  *
- * **Téléphone.** `guestContactSchema` valide `phone` avec `e164PhoneSchema`, qui
- * **normalise** (`+261 34 12 345 67` → `+261341234567`) et **refuse un numéro
- * national** (`0341234567`), dont le pays n'est déductible ni du fuseau du salon
- * ni de la langue du navigateur. C'est désormais le comportement de cette route,
- * là où le DTO acceptait un format libre borné et conservait la saisie.
+ * **Téléphone.** `phone` est validé par `e164PhoneSchemaFor`, qui **normalise**
+ * (`+261 34 12 345 67` → `+261341234567`) là où le DTO acceptait un format libre
+ * borné et conservait la saisie.
  *
  * Le sens de la décision est celui de #66 : les surfaces qui **composent** un
  * numéro l'exigent en E.164 — le rappel SMS J-1 part d'ici, sans qu'aucun humain
@@ -75,8 +73,16 @@ import type { AppointmentView, GuestContact, Money } from '../appointments.types
  * `phoneSchema`. `users.phone` n'est donc pas en E.164 pour tous ses écrivains,
  * et c'est délibéré : `identity` et `crm` y écrivent en format libre, et
  * durcir la colonne rendrait illisible le stock antérieur à la règle
- * (`storedPhoneSchema`). Le changement ne casse aucun appelant réel : le tunnel
- * de #45 valide déjà avec ce schéma, donc envoie déjà de l'E.164.
+ * (`storedPhoneSchema`).
+ *
+ * **Le pays par défaut vient de la requête, depuis #1028.** Cette route refusait
+ * « 06 12 34 56 78 » que `/auth/register` accepte sur le *même* salon : son
+ * schéma était figé à l'amorçage, quand les six autres portes du téléphone
+ * normalisent dans un service qui a lu `tenants.country_code`. Le pipe ci-dessus
+ * instancie désormais la fabrique du contrat avec le pays de l'établissement que
+ * le slug de l'URL a résolu ; sans pays renseigné, le refus d'un national reste
+ * le comportement — et reste le bon, faute de quoi le rappel partirait à un
+ * inconnu.
  *
  * **Version d'UUID.** `uuidSchema` acceptait n'importe quelle version là où
  * `@IsUUID('4')` exigeait la v4 ; le contrat a été resserré sur la v4 (#403),
@@ -88,11 +94,21 @@ import type { AppointmentView, GuestContact, Money } from '../appointments.types
  * Le pipe de la demande de réservation — c'est **lui** qui valide, et non les
  * classes ci-dessous.
  *
- * Instancié une fois au chargement du module plutôt qu'à chaque décoration : le
- * schéma ne change pas d'une requête à l'autre, et la garde `.strict()` du pipe
- * se paie ainsi une seule fois, à l'amorçage.
+ * Une **classe** et non une instance depuis #1028, et c'est la seule chose qui
+ * change : `@Body(BookAppointmentBodyPipe)` laisse Nest l'instancier, donc lui
+ * injecter le fournisseur du pays de l'établissement. Une instance écrite ici
+ * n'aurait rien à quoi le demander — un pipe construit au chargement du module
+ * ne voit pas une donnée de requête, et c'est précisément le défaut que le
+ * ticket referme.
+ *
+ * La garde `.strict()` se paie toujours une seule fois, à l'amorçage :
+ * `tenantCountryValidationPipe` la pose sur la forme du schéma, qui ne dépend
+ * pas du pays. La déclarer ici plutôt qu'au contrôleur garde apparié, dans un
+ * seul fichier, le schéma du contrat et le pipe qui le monte.
  */
-export const bookAppointmentBody = new ZodValidationPipe(bookGuestAppointmentRequestSchema);
+export const BookAppointmentBodyPipe = tenantCountryValidationPipe(
+  bookGuestAppointmentRequestSchemaFor,
+);
 
 /** La demande de réservation, telle que le contrat la rend au contrôleur. */
 export type BookAppointmentBody = BookGuestAppointmentRequest;
@@ -142,11 +158,14 @@ export class GuestContactDto {
   @ApiPropertyOptional({
     description:
       'Facultatif : le SMS de rappel est un confort, l’e-mail de confirmation est ' +
-      'le canal obligatoire. **Format international obligatoire**, indicatif ' +
-      'compris — c’est le seul numéro que la chaîne SMS compose sans qu’aucun ' +
-      'humain le relise, et le pays d’un numéro national n’est déductible ni du ' +
-      'fuseau du salon ni de la langue du navigateur. Normalisé à la frontière : ' +
-      '« +261 34 12 345 67 » est enregistré « +261341234567 ».',
+      'le canal obligatoire. **Normalisé en E.164 à la frontière** — c’est le ' +
+      'seul numéro que la chaîne SMS compose sans qu’aucun humain le relise : ' +
+      '« +261 34 12 345 67 » est enregistré « +261341234567 ». Le format ' +
+      'international est toujours accepté ; un numéro **national** ne l’est que ' +
+      'si l’établissement du slug a renseigné son pays, qui sert alors ' +
+      'd’indicatif par défaut — « 06 12 34 56 78 » devient « +33612345678 » chez ' +
+      'un salon français. Sans pays renseigné, le numéro national est refusé en ' +
+      '400 : le deviner enverrait le rappel à quelqu’un d’autre.',
     example: '+261341234567',
     maxLength: PHONE_MAX_LENGTH,
   })
@@ -155,7 +174,7 @@ export class GuestContactDto {
 
 /**
  * La demande de réservation — la documentation de
- * `bookGuestAppointmentRequestSchema`.
+ * `bookGuestAppointmentRequestSchemaFor`.
  *
  * **Aucun `endsAt`.** La cliente choisit un début et une prestation ; la fin se
  * dérive de la durée du catalogue, côté serveur. Laisser le client l'envoyer
@@ -379,9 +398,11 @@ type _AppointmentDtoIsReadableByTheContract = AssertTrue<
  * garde une seconde, et une `@ApiProperty` oubliée décrirait une route qui
  * refuse ce qu'elle annonce.
  */
+type BookGuestAppointmentWire = z.input<ReturnType<typeof bookGuestAppointmentRequestSchemaFor>>;
+
 type _BookAppointmentDtoHasTheContractKeys = AssertNever<
-  | Exclude<keyof BookAppointmentDto, keyof z.input<typeof bookGuestAppointmentRequestSchema>>
-  | Exclude<keyof z.input<typeof bookGuestAppointmentRequestSchema>, keyof BookAppointmentDto>
+  | Exclude<keyof BookAppointmentDto, keyof BookGuestAppointmentWire>
+  | Exclude<keyof BookGuestAppointmentWire, keyof BookAppointmentDto>
 >;
 
 type _GuestContactDtoHasTheContractKeys = AssertNever<

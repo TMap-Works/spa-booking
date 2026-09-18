@@ -18,8 +18,8 @@ import { AppointmentsService } from './appointments.service';
 import {
   AppointmentDto,
   type BookAppointmentBody,
+  BookAppointmentBodyPipe,
   BookAppointmentDto,
-  bookAppointmentBody,
   toGuestContact,
 } from './dto/book-appointment.dto';
 import {
@@ -51,6 +51,13 @@ import {
  * La conséquence utile : si le slug est inconnu, désactivé, mal formé ou en
  * désaccord avec le sous-domaine, **aucune méthode de ce fichier ne s'exécute**.
  *
+ * C'est aussi ce qui rend lisible, depuis `book`, le **pays** de l'établissement
+ * (#1028) : le cycle de Nest est middleware → garde → pipe → gestionnaire, si
+ * bien que la portée de tenant est ouverte et résolue quand le corps est validé.
+ * `BookAppointmentBodyPipe` y lit `tenants.country_code` pour compléter un
+ * numéro de téléphone national. Là encore, rien ne vient du chemin : le pays est
+ * celui de l'établissement **résolu**, pas d'une chaîne d'URL.
+ *
  * ## Pas de garde, et c'est le propos
  *
  * Le quatrième critère de #37 est « un client peut réserver sans compte, avec
@@ -59,7 +66,7 @@ import {
  *
  * 1. la validation de la frontière — aucun champ non déclaré, donc aucun
  *    `tenantId`, `clientId` ni `price` glissé dans le corps. Sur `book`, c'est
- *    le `.strict()` du contrat partagé, monté par `bookAppointmentBody`
+ *    le `.strict()` du contrat partagé, monté par `BookAppointmentBodyPipe`
  *    ([ADR 0008](../../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)) ;
  *    sur `reschedule` et `cancel`, c'est encore le `ValidationPipe` global avec
  *    `whitelist` et `forbidNonWhitelisted`. Les deux refusent la même chose et
@@ -166,7 +173,7 @@ export class PublicAppointmentsController {
     // n'a plus de décorateur `class-validator`, et la typer ici ferait rejouer
     // le `ValidationPipe` global, dont le `whitelist` viderait le corps de tous
     // ses champs (ADR 0008).
-    @Body(bookAppointmentBody) body: BookAppointmentBody,
+    @Body(BookAppointmentBodyPipe) body: BookAppointmentBody,
   ): Promise<AppointmentDto> {
     return this.appointments.book({
       serviceId: body.serviceId,

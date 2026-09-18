@@ -1,8 +1,8 @@
 'use client';
 
 import { zodResolver } from '@hookform/resolvers/zod';
-import { e164PhoneSchema, guestContactSchema, longTextSchema } from '@spa/shared';
-import { useCallback } from 'react';
+import { e164PhoneSchemaFor, guestContactSchemaFor, longTextSchema } from '@spa/shared';
+import { useCallback, useMemo } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -18,8 +18,8 @@ import { useDraftAutosave } from '../use-draft-autosave';
  * Le schéma du formulaire **dérive** du contrat, il ne le réécrit pas.
  *
  * Les règles de fond — longueurs des noms, adresse e-mail, format E.164 du
- * téléphone — viennent de `guestContactSchema`, qui est aussi ce que la frontière
- * serveur applique. Deux ajustements, et deux seulement, tiennent à la nature
+ * téléphone — viennent de `guestContactSchemaFor`, qui est aussi ce que la
+ * frontière serveur applique. Deux ajustements, et deux seulement, tiennent à la nature
  * d'un formulaire HTML :
  *
  * 1. **un champ non rempli vaut la chaîne vide**, pas `undefined`. Le téléphone
@@ -36,59 +36,85 @@ import { useDraftAutosave } from '../use-draft-autosave';
  * n'est pas une donnée que l'API reçoit — aucun champ du contrat ne le porte —
  * mais la condition pour la lui envoyer (CDC §5.1). Il vit donc dans le schéma
  * du formulaire, qui est l'endroit exact où se décide si la soumission a lieu.
+ *
+ * ## Pourquoi une fabrique, depuis #1028
+ *
+ * Parce que la règle du téléphone dépend désormais du **pays de
+ * l'établissement** : `POST /public/{slug}/appointments` complète un numéro
+ * national avec `tenants.country_code`, et un formulaire resté sur la variante
+ * sans pays refuserait dans le navigateur ce que l'API accepte. L'écart se
+ * verrait à l'écran — « 06 12 34 56 78 » barré sur un salon français — et c'est
+ * le défaut que le ticket referme.
+ *
+ * Les deux sens de l'écart sont mauvais, et c'est pourquoi les trois
+ * emplacements bougent ensemble : un formulaire **plus strict** que l'API refuse
+ * une réservation que le salon aurait prise ; un formulaire **plus permissif**
+ * déplace le refus après la soumission, en bloc en tête de page, pour un numéro
+ * que le champ venait d'accepter — ce qu'interdit la skill web-frontend §4.
  */
-const contactFormSchema = guestContactSchema.extend({
-  phone: z.union([z.literal(''), e164PhoneSchema]),
-  clientNote: longTextSchema,
-  consent: consentSchema,
-});
+function contactFormSchemaFor(countryCode: string | null) {
+  return guestContactSchemaFor(countryCode).extend({
+    phone: z.union([z.literal(''), e164PhoneSchemaFor(countryCode)]),
+    clientNote: longTextSchema,
+    consent: consentSchema,
+  });
+}
+
+/** La forme validée d'un formulaire de coordonnées, quel que soit le pays. */
+type ContactFormValues = z.output<ReturnType<typeof contactFormSchemaFor>>;
 
 /**
- * L'aide et l'erreur du champ « Téléphone » — **sans exemple de pays** (#626).
+ * L'aide et l'erreur du champ « Téléphone » — **sans exemple de pays** (#626),
+ * mais pas sans pays (#1028).
  *
- * Les deux disaient auparavant « +261… » et « par exemple +261 34 12 345 67 » :
- * un indicatif de Madagascar écrit en dur, donc proposé à l'identique à la
- * cliente d'un salon lyonnais dont la vitrine affiche pourtant un numéro en
- * +33.
+ * Les deux disaient d'abord « +261… » et « par exemple +261 34 12 345 67 » : un
+ * indicatif de Madagascar écrit en dur, donc proposé à l'identique à la cliente
+ * d'un salon lyonnais dont la vitrine affiche pourtant un numéro en +33. #626 a
+ * retiré l'exemple, et cette décision-là tient toujours : **aucun des deux
+ * libellés ci-dessous n'écrit de numéro national**. Le seul qu'on saurait former
+ * serait celui d'un plan de numérotation particulier, et « 06 12 34 56 78 »
+ * montré à un salon américain décrirait une forme que rien n'y acceptera jamais
+ * — c'est mot pour mot ce que motive `e164PhoneSchemaFor` côté contrat.
  *
- * ## Pourquoi neutre, plutôt que déduit de l'établissement
+ * Ce que #1028 change n'est pas l'exemple, c'est **ce que le champ accepte**.
+ * Tant que la validation refusait tout numéro national, exiger l'indicatif était
+ * la vérité à dire à la cliente. Depuis que l'établissement fournit son pays,
+ * l'exiger serait devenu faux : le formulaire annoncerait une contrainte que
+ * l'API n'applique plus, et une cliente française retaperait en +33 un numéro
+ * que le salon aurait accepté tel quel.
  *
- * Parce que le pays de la cliente n'est pas celui du salon, et que le contrat
- * partagé a déjà tranché exactement cette question à côté. L'en-tête de
- * `normalizeToE164` refuse de compléter un numéro national et dit pourquoi :
- * « Le compléter demanderait de connaître le pays de la personne, que rien dans
- * la requête ne dit — **ni le fuseau du salon, qui n'est pas un pays**, ni la
- * langue du navigateur. » Un exemple déduit de l'établissement ferait dire à
- * l'aide ce que la validation placée juste en dessous refuse de supposer.
- *
- * S'y ajoutent deux faits d'implémentation : `publicTenantSchema.address` est
- * `.optional()` — un salon qui n'a pas publié son adresse n'a aucun pays à
- * déduire —, et le projet n'embarque aucune base de métadonnées téléphoniques.
- * La déduction se réduirait donc à une table d'indicatifs écrits en dur doublée
- * d'un repli neutre : le même défaut, avec un aiguillage devant.
- *
- * Ce qui reste dit à la cliente est ce qui est vrai partout — un numéro
- * international porte son indicatif de pays — et c'est exactement ce que le
- * schéma vérifie.
+ * Les deux libellés suivent donc le pays, sans rien inventer de plus : avec un
+ * pays, ils disent que le format du salon convient ; sans, ils disent
+ * l'indicatif, qui est alors la seule forme complétable. `publicTenantSchema`
+ * porte l'adresse en `.optional()`, et un salon qui n'a pas publié la sienne
+ * retombe exactement sur le libellé d'avant.
  */
-const PHONE_HINT = 'Facultatif, pour le rappel par SMS. Au format international, indicatif du pays compris.';
+function phoneHint(countryCode: string | null): string {
+  return countryCode === null
+    ? 'Facultatif, pour le rappel par SMS. Au format international, indicatif du pays compris.'
+    : 'Facultatif, pour le rappel par SMS. Au format du pays de l’établissement, ou au format international.';
+}
 
 /**
- * Écrit ici et non repris de `e164PhoneSchema`, alors que c'est bien ce
+ * Écrit ici et non repris d'`e164PhoneSchemaFor`, alors que c'est bien ce
  * schéma-là qui refuse la saisie.
  *
- * Le message du contrat se termine par « par exemple +261 34 12 345 67 », et il
- * ne peut pas mieux faire : il sert aussi la frontière serveur, où aucun
- * établissement n'est en vue. **La règle reste unique** — c'est toujours
- * `e164PhoneSchema` qui accepte ou refuse, ce formulaire n'en redit rien ; seule
- * la formulation montrée à la cliente appartient à l'écran qui la montre.
+ * Le message du contrat cite « +261 34 12 345 67 », et il ne peut pas mieux
+ * faire : il sert aussi la frontière serveur, où le libellé n'est pas fait pour
+ * être lu par une cliente. **La règle reste unique** — c'est toujours le schéma
+ * du contrat qui accepte ou refuse, ce formulaire n'en redit rien ; seule la
+ * formulation montrée à la cliente appartient à l'écran qui la montre.
  *
  * Le message couvre toute valeur refusée sans distinguer laquelle : hors la
  * chaîne vide, qui est valable, ce champ n'a que deux façons d'échouer — une
- * saisie plus longue que `PHONE_MAX_LENGTH`, ou un numéro qui n'est pas au
- * format international — et les deux appellent la même correction.
+ * saisie plus longue que `PHONE_MAX_LENGTH`, ou un numéro que le pays connu ne
+ * permet pas de compléter — et les deux appellent la même correction.
  */
-const PHONE_FORMAT_ERROR = 'numéro attendu au format international, indicatif du pays compris';
+function phoneFormatError(countryCode: string | null): string {
+  return countryCode === null
+    ? 'numéro attendu au format international, indicatif du pays compris'
+    : 'numéro attendu au format du pays de l’établissement, ou au format international';
+}
 
 interface ContactStepProps {
   readonly contact: ContactDraft;
@@ -101,6 +127,17 @@ interface ContactStepProps {
    * unitaires devraient alors simuler pour rien.
    */
   readonly tenantSlug: string;
+  /**
+   * Le pays de l'établissement — ISO 3166-1 alpha-2, `null` s'il n'a pas publié
+   * son adresse (#1028).
+   *
+   * C'est l'indicatif par défaut du téléphone, et il vient du même endroit que
+   * celui du serveur : `tenants.country_code`. Descendu en propriété pour la
+   * raison qui vaut déjà pour `tenantSlug` — cette étape est rendue avec tout ce
+   * qu'elle affiche, et ses suites unitaires n'ont pas à simuler une lecture de
+   * contexte pour exercer un champ de saisie.
+   */
+  readonly countryCode: string | null;
   /**
    * Verse la saisie en cours au brouillon **sans changer d'étape**.
    *
@@ -127,14 +164,28 @@ interface ContactStepProps {
  * en haut de page (skill web-frontend §4) : un bloc oblige à retrouver
  * soi-même le champ fautif, sur un écran mobile où il est souvent hors vue.
  */
-export function ContactStep({ contact, tenantSlug, onSave, onBack, onSubmit }: ContactStepProps) {
+export function ContactStep({
+  contact,
+  tenantSlug,
+  countryCode,
+  onSave,
+  onBack,
+  onSubmit,
+}: ContactStepProps) {
+  // Le schéma ne dépend que du pays, qui ne change pas d'une frappe à l'autre :
+  // le reconstruire à chaque rendu recréerait un résolveur par caractère tapé.
+  // Le résolveur est mémoïsé **avec** lui — le mémoïser à moitié laisserait
+  // `zodResolver` rappelé à chaque frappe, c'est-à-dire précisément ce qu'on
+  // évite ici.
+  const resolver = useMemo(() => zodResolver(contactFormSchemaFor(countryCode)), [countryCode]);
+
   const {
     register,
     handleSubmit,
     getValues,
     formState: { errors, isSubmitted, isSubmitting },
-  } = useForm<ContactDraft, unknown, z.output<typeof contactFormSchema>>({
-    resolver: zodResolver(contactFormSchema),
+  } = useForm<ContactDraft, unknown, ContactFormValues>({
+    resolver,
     defaultValues: contact,
     // Le message apparaît quand la cliente quitte le champ, pas à la première
     // frappe : signaler « adresse invalide » sur un `c` en cours de saisie est
@@ -232,8 +283,8 @@ export function ContactStep({ contact, tenantSlug, onSave, onBack, onSubmit }: C
         label="Téléphone"
         type="tel"
         autoComplete="tel"
-        hint={PHONE_HINT}
-        error={errors.phone === undefined ? undefined : PHONE_FORMAT_ERROR}
+        hint={phoneHint(countryCode)}
+        error={errors.phone === undefined ? undefined : phoneFormatError(countryCode)}
         {...register('phone')}
       />
       {/* Le seul champ long du formulaire, donc le seul en `TextArea` (#748).

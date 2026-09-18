@@ -39,7 +39,7 @@
 import { z } from 'zod';
 
 import {
-  e164PhoneSchema,
+  e164PhoneSchemaFor,
   emailSchema,
   longTextSchema,
   nameSchema,
@@ -319,6 +319,24 @@ export type CreateAppointmentRequest = z.infer<typeof createAppointmentRequestSc
  * C'est ce schéma, et lui seul, que le formulaire de coordonnées du parcours
  * public valide : le front ne redéclare pas la règle, il importe celle-ci.
  *
+ * ## Une **fabrique**, parce que le pays est une donnée de requête (#1028)
+ *
+ * `guestContactSchemaFor(pays)` plutôt qu'une constante : la septième porte du
+ * téléphone — la réservation sans compte — refusait « 06 12 34 56 78 » que
+ * `/auth/register` accepte sur le **même** salon. L'écart ne venait pas de la
+ * règle, qui est celle d'`e164PhoneSchemaFor` des deux côtés, mais du pays :
+ * les six autres portes lisent `tenants.country_code` dans un service, celle-ci
+ * validait avec un schéma figé à l'amorçage de l'application.
+ *
+ * La fabrique déplace la décision d'un cran : le contrat continue de porter la
+ * règle et **une seule fois**, et c'est l'appelant qui l'instancie avec ce qu'il
+ * sait de l'établissement — le pipe à portée de requête côté API
+ * (`apps/api/src/common/validation/tenant-country-validation.pipe.ts`), le pays
+ * de la vitrine côté formulaire. Sans pays, le comportement est **exactement**
+ * celui d'avant : un numéro national reste irrattachable, et le refuser vaut
+ * mieux que deviner un indicatif — c'est-à-dire qu'envoyer le rappel de
+ * quelqu'un à un inconnu.
+ *
  * ## Ce schéma **est** la frontière de l'API, depuis #404
  *
  * `GuestContactDto` décrivait la même forme une seconde fois, en
@@ -327,8 +345,8 @@ export type CreateAppointmentRequest = z.infer<typeof createAppointmentRequestSc
  * normalise et refuse un numéro national.
  *
  * Il n'y a plus d'écart, parce qu'il n'y a plus de seconde écriture :
- * `POST /api/v1/public/:tenantSlug/appointments` valide avec **ce** schéma, monté
- * par `ZodValidationPipe`
+ * `POST /api/v1/public/:tenantSlug/appointments` valide avec **cette
+ * fabrique-ci**, instanciée par requête avec le pays de l'établissement du slug
  * ([ADR 0008](../../../../docs/adr/0008-validation-zod-classe-dto-documentaire.md)).
  * `GuestContactDto` survit dépouillé de ses décorateurs de validation, comme
  * porteur des `@ApiProperty` d'où sort `/api/docs`.
@@ -339,14 +357,28 @@ export type CreateAppointmentRequest = z.infer<typeof createAppointmentRequestSc
  * `apps/api/src/modules/appointments/__tests__/guest-booking-frontier.spec.ts`
  * tient le câblage — que la route est bien montée sur ce schéma-ci.
  */
-export const guestContactSchema = z
-  .object({
-    firstName: nameSchema,
-    lastName: nameSchema,
-    email: emailSchema,
-    phone: e164PhoneSchema.optional(),
-  })
-  .strict();
+export function guestContactSchemaFor(defaultCountry?: string | null) {
+  return z
+    .object({
+      firstName: nameSchema,
+      lastName: nameSchema,
+      email: emailSchema,
+      phone: e164PhoneSchemaFor(defaultCountry).optional(),
+    })
+    .strict();
+}
+
+/**
+ * Les mêmes coordonnées **sans pays par défaut** — la forme historique, et celle
+ * que tout appelant qui ne connaît pas l'établissement doit prendre.
+ *
+ * Conservée comme valeur pour la raison qui garde `e164PhoneSchema` : plusieurs
+ * fichiers la composent, et la recréer à chaque import multiplierait des objets
+ * identiques. Elle reste par ailleurs la référence de la **forme** — le
+ * `.strict()`, les noms de champs — que le pipe serveur vérifie à l'amorçage,
+ * une fois, plutôt qu'à chaque requête.
+ */
+export const guestContactSchema = guestContactSchemaFor();
 
 export type GuestContact = z.infer<typeof guestContactSchema>;
 
@@ -401,27 +433,45 @@ export const dataConsentSchema = z.boolean().refine((accepted) => accepted, {
  * fermer la porte qu'on regarde, et laisse l'autre ouverte — un `client` glissé
  * dans une demande de back-office ferait créer une fiche là où le comptoir en
  * avait désigné une. `guest-booking.spec.ts` exerce les deux (#314).
+ *
+ * ## Une fabrique, pour la seule raison qui vaut pour `guestContactSchemaFor`
+ *
+ * Le pays par défaut du téléphone (#1028), et rien d'autre : aucun autre champ
+ * de cette demande ne dépend de l'établissement. La forme — les clés, le
+ * `.strict()`, la version d'UUID — est donc **la même** quel que soit
+ * l'argument, ce dont le pipe serveur se sert pour ne payer sa garde de champ
+ * inconnu qu'une fois, à l'amorçage.
  */
-export const bookGuestAppointmentRequestSchema = z
-  .object({
-    serviceId: uuidSchema,
-    /** Absent = « premier disponible ». Voir `createAppointmentRequestSchema`. */
-    staffId: uuidSchema.optional(),
-    /** Début du soin, ISO 8601 avec offset explicite — normalisé en UTC ici. */
-    startsAt: offsetDateTimeSchema,
-    client: guestContactSchema,
-    clientNote: longTextSchema.optional(),
-    /**
-     * L'accord au traitement des données, **obligatoire** (#790).
-     *
-     * C'est le seul champ de cette demande qui ne décrit pas le rendez-vous : il
-     * décrit ce qui autorise le salon à en garder la trace. Voir
-     * `dataConsentSchema` pour le sens de l'obligation, et
-     * `appointmentSchema.dataConsentAt` pour ce que le serveur en fait.
-     */
-    dataConsent: dataConsentSchema,
-  })
-  .strict();
+export function bookGuestAppointmentRequestSchemaFor(defaultCountry?: string | null) {
+  return z
+    .object({
+      serviceId: uuidSchema,
+      /** Absent = « premier disponible ». Voir `createAppointmentRequestSchema`. */
+      staffId: uuidSchema.optional(),
+      /** Début du soin, ISO 8601 avec offset explicite — normalisé en UTC ici. */
+      startsAt: offsetDateTimeSchema,
+      client: guestContactSchemaFor(defaultCountry),
+      clientNote: longTextSchema.optional(),
+      /**
+       * L'accord au traitement des données, **obligatoire** (#790).
+       *
+       * C'est le seul champ de cette demande qui ne décrit pas le rendez-vous :
+       * il décrit ce qui autorise le salon à en garder la trace. Voir
+       * `dataConsentSchema` pour le sens de l'obligation, et
+       * `appointmentSchema.dataConsentAt` pour ce que le serveur en fait.
+       */
+      dataConsent: dataConsentSchema,
+    })
+    .strict();
+}
+
+/**
+ * La même demande **sans pays par défaut** — la forme historique du contrat.
+ *
+ * Elle reste la référence de tout ce qui ne dépend pas de l'établissement : le
+ * type inféré, la garde de champ inconnu du pipe, et les suites du contrat.
+ */
+export const bookGuestAppointmentRequestSchema = bookGuestAppointmentRequestSchemaFor();
 
 export type BookGuestAppointmentRequest = z.infer<typeof bookGuestAppointmentRequestSchema>;
 
