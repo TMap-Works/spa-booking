@@ -1090,6 +1090,71 @@ describe('AuthService', () => {
       expect(emitted).toHaveLength(1);
     });
 
+    it('refuse d’armer quand le seuil n’est pas écoulé, même si la lecture préalable a laissé passer', async () => {
+      // #1034 : le raccourci de lecture n'est pas la garantie. On le neutralise —
+      // comme le fait une course où deux demandes lisent la même valeur avant
+      // qu'aucune n'ait écrit — et c'est alors le `where` de l'écriture qui doit
+      // refuser. Sans le seuil dans le `where`, ce cas émettait un second
+      // message et écrasait l'empreinte du premier.
+      const userId = await seedClient();
+      await inRequest(() => service.requestPasswordReset({ tenantSlug: SLUG, email: EMAIL }));
+      const premiere = repository.users.find((user) => user.id === userId)?.passwordResetTokenHash;
+
+      const lecture = jest
+        .spyOn(repository, 'findPasswordResetState')
+        .mockResolvedValue({
+          id: userId,
+          role: 'CLIENT',
+          isActive: true,
+          passwordResetTokenHash: null,
+          passwordResetExpiresAt: null,
+          // La valeur qu'une demande concurrente lirait : celle d'avant
+          // l'écriture de l'autre.
+          passwordResetRequestedAt: null,
+        });
+
+      try {
+        await inRequest(() => service.requestPasswordReset({ tenantSlug: SLUG, email: EMAIL }));
+      } finally {
+        lecture.mockRestore();
+      }
+
+      expect(emitted).toHaveLength(1);
+      // Et l'empreinte du premier lien est intacte : la perdante n'a rien écrit.
+      expect(repository.users.find((user) => user.id === userId)?.passwordResetTokenHash).toBe(
+        premiere,
+      );
+    });
+
+    it('fait le même nombre de lectures sur une adresse inconnue que sur une adresse connue', async () => {
+      // #1034 : ce que l'égalisation garantit, et le seul énoncé qu'elle
+      // supporte. Une allée-retour en base se compte en millisecondes, là où la
+      // signature HMAC que les deux chemins partagent déjà n'en coûte que des
+      // microsecondes : c'était la lecture manquante, et non le HMAC, qui
+      // distinguait les deux chemins au chronomètre.
+      await seedClient();
+      const lecture = jest.spyOn(repository, 'findPasswordResetState');
+
+      try {
+        await inRequest(() =>
+          service.requestPasswordReset({ tenantSlug: SLUG, email: 'personne@example.test' }),
+        );
+        const surInconnue = lecture.mock.calls.length;
+
+        lecture.mockClear();
+        await inRequest(() => service.requestPasswordReset({ tenantSlug: SLUG, email: EMAIL }));
+
+        expect(surInconnue).toBe(1);
+        expect(lecture.mock.calls.length).toBe(surInconnue);
+      } finally {
+        lecture.mockRestore();
+      }
+
+      // Et l'effet, lui, reste distinct : seule l'adresse connue produit un
+      // message.
+      expect(emitted).toHaveLength(1);
+    });
+
     it('pose le mot de passe, consomme le jeton et révoque toutes les sessions', async () => {
       const userId = await seedClient();
       // Deux sessions ouvertes ailleurs — c'est ce que le troisième critère
