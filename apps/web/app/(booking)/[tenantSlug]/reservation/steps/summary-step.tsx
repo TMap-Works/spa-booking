@@ -16,7 +16,8 @@ import type { ContactDraft } from '@/lib/booking/draft';
 
 import { bookAppointmentAction } from '../actions';
 
-import { Recap } from './recap';
+import { BookingAppointmentCard, endOfBooking } from './appointment-card';
+import { ContactRecap } from './recap';
 
 interface SummaryStepProps {
   readonly tenant: PublicTenant;
@@ -24,7 +25,12 @@ interface SummaryStepProps {
   readonly staffId: string | null;
   readonly startsAt: UtcInstant;
   readonly contact: ContactDraft;
+  /** Rouvre l'étape « Coordonnées » — la correction du bloc, et celle du refus d'adresse. */
   readonly onBack: () => void;
+  /** Rouvre l'étape « Créneau » (`BM-TUNNEL-01`). */
+  readonly onEditSlot: () => void;
+  /** Rouvre l'étape « Prestation », où se choisissent le soin et le praticien. */
+  readonly onEditService: () => void;
   readonly onBooked: (appointment: BookedAppointment) => void;
   /**
    * Sans argument, délibérément : le créneau perdu et son libellé sont connus de
@@ -83,6 +89,21 @@ const EMAIL_NOT_BOOKABLE: Refusal = {
 /**
  * Récapitulatif et validation — quatrième critère d'acceptation de #45.
  *
+ * ## Ce que #1051 y change
+ *
+ * L'écran s'ouvre sur une **carte** — bloc date, plage horaire, prestation,
+ * praticien, salon, total aligné à droite — et non plus sur neuf couples
+ * libellé / valeur (`BM-TUNNEL-01`, `BM-VISUEL-03`). Chaque bloc porte son
+ * « Modifier », qui rouvre **son** étape sans faire perdre les autres choix :
+ * c'est ce que le motif demande, et ce que le brouillon permet déjà
+ * (`lib/booking/draft.ts`). Ne restent en liste que les coordonnées, qui sont
+ * réellement des couples libellé / valeur (`ContactRecap`).
+ *
+ * Un seul bouton plein sur l'écran, « Confirmer la réservation » dans la barre
+ * basse (`BM-VISUEL-02`) : les corrections sont des boutons discrets, et la
+ * seule autre action nommée — « Corriger mes coordonnées » — n'apparaît qu'avec
+ * le refus qui la désigne.
+ *
  * ## Le bouton se désactive dès le premier clic
  *
  * Deux verrous, et les deux sont nécessaires :
@@ -104,6 +125,8 @@ export function SummaryStep({
   startsAt,
   contact,
   onBack,
+  onEditSlot,
+  onEditService,
   onBooked,
   onSlotLost,
 }: SummaryStepProps) {
@@ -186,18 +209,33 @@ export function SummaryStep({
       {refusal === null ? null : (
         <Notification tone={refusal.tone} title={refusal.title}>
           <p>{refusal.body}</p>
+          {/* La correction nommée, **dans** le refus qui la désigne (#452,
+              #1051). Elle vivait en rangée permanente au bas de l'étape, où
+              elle doublait le « Modifier » du bloc de coordonnées ; ici, elle
+              n'apparaît qu'au moment où la phrase ci-dessus dit d'y aller, et
+              elle dit ce qu'on va changer, là où « ← Retour » de l'en-tête ne
+              dit que « revenir ». */}
+          <div className="spa-booking__actions">
+            <Button variant="quiet" onClick={onBack} disabled={submitting}>
+              Corriger mes coordonnées
+            </Button>
+          </div>
         </Notification>
       )}
 
-      <Recap
+      <BookingAppointmentCard
         tenant={tenant}
         serviceName={service.name}
         durationMinutes={service.durationMinutes}
         staffName={staffName}
         startsAt={startsAt}
+        endsAt={endOfBooking(startsAt, service.durationMinutes)}
         price={service.price}
-        contact={contact}
+        onEditSlot={onEditSlot}
+        onEditService={onEditService}
       />
+
+      <ContactRecap contact={contact} onEdit={onBack} />
 
       {/*
         Ce qu'il faut savoir avant de s'engager, et qui n'était écrit nulle part
@@ -227,19 +265,7 @@ export function SummaryStep({
         - **l'annulation.** `AppointmentsService.cancel` n'oppose ni frais ni
           préavis : seul le cycle de vie refuse le passage, une fois le
           rendez-vous honoré, déjà annulé ou marqué no-show. La phrase dit donc
-          « tant qu'il n'a pas eu lieu », et nomme les surfaces qui l'annulent
-          réellement — l'écran de confirmation qui suit, et l'espace client.
-
-          Le salon ferme la liste, et ce n'est pas une politesse : **on réserve
-          sans compte** (#37), et la fiche née de cette réservation naît
-          `passwordHash: null` (`crm.repository.ts`). Qui a réservé en visiteur
-          ne peut donc ni se connecter, ni s'inscrire ensuite avec la même
-          adresse — `register` rend `EmailAlreadyRegisteredError` —, et l'écran
-          de confirmation ne survit pas à la fermeture de l'onglet, son état
-          vivant dans `sessionStorage`. Nommer l'espace client comme seule autre
-          issue aurait promis à la majorité des clientes une porte qu'aucune clé
-          n'ouvre ; le comptoir, lui, annule depuis le back-office pour tout le
-          monde.
+          « tant que le rendez-vous n'a pas eu lieu », et rien de plus.
 
         Pourquoi un encart et non de la prose au fil de la carte : la même
         raison que `.spa-consent` à l'étape précédente — ce n'est pas une ligne
@@ -247,6 +273,23 @@ export function SummaryStep({
         hiérarchie le dit avant la lecture (skill `web-frontend` §6). Ce n'est
         pas `.spa-consent` pour autant : il n'y a rien à accepter ici, aucun
         contrôle, et rien qui garde le bouton.
+
+        ## Deux puces d'une ligne, et c'est une contrainte (#1051)
+
+        L'audit `d20260918-1` mesure cet encart à **neuf lignes** à 360 px, au
+        milieu d'un écran où la cliente cherche le bouton. Ce qui a été coupé est
+        ce qui se lit ailleurs, et mieux :
+
+        - *« Aucun paiement n'est demandé en ligne »* redisait « sur place » en
+          creux ; le tunnel n'a aucune étape de paiement, l'absence se constate
+          sans être annoncée deux fois ;
+        - la liste des surfaces qui annulent — écran suivant, espace client,
+          comptoir — est une aide au **geste**, pas à la décision. Elle est à sa
+          place sur l'écran de confirmation, où l'annulation se fait, et non sur
+          celui où l'on décide de réserver.
+
+        Il reste donc les deux faits qui engagent : où l'on paie, et à quelles
+        conditions on peut renoncer.
       */}
       <div className="spa-booking__terms">
         {/* `<h2>` et non `<h3>` : le titre d'étape « Vérifiez votre réservation »
@@ -258,27 +301,16 @@ export function SummaryStep({
         <ul className="spa-list spa-booking__terms-list">
           <li>
             {/* Le montant n'est pas redit : il est deux lignes plus haut, dans
-                le récapitulatif. Ce que cette phrase ajoute, c'est *où* et
-                *quand* il se règle, pas *combien*. */}
-            <span className="spa-booking__terms-label">Règlement sur place.</span> Aucun paiement
-            n’est demandé en ligne : le règlement se fait à l’établissement, le jour du
+                la carte. Ce que cette phrase ajoute, c'est *où* et *quand* il se
+                règle, pas *combien*. */}
+            <span className="spa-booking__terms-label">Règlement sur place</span>, le jour du
             rendez-vous.
           </li>
           <li>
-            <span className="spa-booking__terms-label">Annulation sans frais.</span> Vous pouvez
-            annuler tant que le rendez-vous n’a pas eu lieu — depuis l’écran qui suit la
-            confirmation, depuis votre espace client, ou en contactant l’établissement.
+            <span className="spa-booking__terms-label">Annulation sans frais</span> tant que le
+            rendez-vous n’a pas eu lieu.
           </li>
         </ul>
-      </div>
-
-      {/* La correction nommée, dans le flux : c'est elle que désigne le refus
-          `CLIENT_EMAIL_NOT_BOOKABLE` ci-dessus (#452), et elle dit ce qu'on va
-          changer, là où « ← Retour » de l'en-tête ne dit que « revenir ». */}
-      <div className="spa-booking__actions">
-        <Button variant="quiet" onClick={onBack} disabled={submitting}>
-          Corriger mes coordonnées
-        </Button>
       </div>
 
       {/* L'action primaire dans la barre basse (#1047), sans rappel : ces faits
