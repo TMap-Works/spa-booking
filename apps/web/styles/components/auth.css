@@ -2,12 +2,18 @@
  * Écrans d'identification — #927
  * =============================================================================
  *
- * Le cadre partagé par la connexion et l'inscription de l'espace client, et par
- * la connexion du back-office (`components/auth/auth-screen.tsx`).
+ * La mise en page à deux volets que se partagent les **deux** cadres
+ * d'identification : celui des espaces de travail — back-office, invitation,
+ * console — (`components/auth/auth-screen.tsx`) et celui des écrans clients
+ * (`components/auth/salon-auth-screen.tsx`, variante `.spa-auth--salon`).
  *
- * Il est dans l'entrée partagée et non dans `admin/index.css` : l'espace client
- * s'en sert, et c'est lui qui paie le moins cher un octet de CSS en plus. Il
- * nomme pourtant deux classes du back-office — `.spa-admin__section` et
+ * Les deux composants sont distincts depuis #1052, et `auth-screen.tsx` a cessé
+ * de servir l'espace client avec #1080 : ce qui reste commun, c'est cette
+ * feuille — le cadre, l'accueil sur l'aplat de marque, le panneau du formulaire.
+ *
+ * Elle est dans l'entrée partagée et non dans `admin/index.css` : l'espace
+ * client s'en sert, et c'est lui qui paie le moins cher un octet de CSS en plus.
+ * Elle nomme pourtant deux classes du back-office — `.spa-admin__section` et
  * `.spa-admin__content` — pour les seuls réglages que la carte de connexion
  * reçoit une fois posée dans ce cadre. Ces règles portent deux classes et
  * l'emportent donc sur celles de `admin/shell.css`, chargées après.
@@ -120,6 +126,13 @@
   gap: var(--spa-space-2);
 }
 
+/*
+ * La surcapitale qui nomme le salon au-dessus du titre, dans le cadre des
+ * espaces de travail seulement : la connexion du back-office et l'invitation la
+ * posent, l'inscription et la console n'ont aucun salon à nommer. À ne pas
+ * confondre avec `.spa-auth__salon-name`, qui est le nom **écrit à côté du
+ * monogramme** dans la variante cliente (#1052).
+ */
 .spa-auth__salon {
   font-size: var(--spa-font-size-sm);
   font-weight: var(--spa-font-weight-semibold);
@@ -128,7 +141,12 @@
   color: var(--spa-color-accent-on-brand);
 }
 
-/* `h1` ou `p` selon l'espace : la même allure dans les deux cas. */
+/*
+ * `p` dans le cadre des espaces de travail — le `<h1>` y est celui du formulaire
+ * (#699) —, `h1` ou `p` dans la variante cliente selon ce que le gabarit porte
+ * déjà (`salon-auth-screen.tsx`). La même allure dans tous les cas : c'est un
+ * titre d'écran, quel que soit son rang.
+ */
 .spa-auth__headline {
   font-size: var(--spa-font-size-2xl);
   font-weight: var(--spa-font-weight-semibold);
@@ -247,10 +265,12 @@
  * plateforme en tête, trois puces génériques à 1 280 px, et 270 px d'aplat
  * sombre avant le premier champ à 360 px.
  *
- * Rien ici ne vise `.spa-auth--back-office` : les règles de la variante sont
- * toutes préfixées par `.spa-auth--salon`, si bien que le cadre du back-office
- * et celui de la console sortent de ce ticket exactement tels qu'ils y
- * entraient.
+ * Les règles de la variante sont préfixées par `.spa-auth--salon`, si bien que
+ * le cadre du back-office et celui de la console sortent de ce ticket
+ * exactement tels qu'ils y entraient. Rien ne les vise en propre, et rien ne le
+ * peut sans y perdre : depuis #1080 ils portent `.spa-auth` **nu** — il n'y a
+ * plus de modificateur d'espace à nommer, et les viser demanderait une négation
+ * (`.spa-auth:not(.spa-auth--salon)`) qui se lirait pour ce qu'elle est.
  *
  * Le palier reste 56 rem, celui de la mise en page à deux volets.
  *
@@ -279,8 +299,8 @@
  * sur un écran large — où le retrait généreux est au contraire ce qu'on veut.
  *
  * Deux classes sur le même élément, et non une seule : `.spa-shell
- * .spa-auth--client` pesait exactement ce que pèse `.spa-shell .spa-auth` de
- * `salon-shell.css`, et ne l'emportait que parce que cette feuille-ci est
+ * .spa-auth--salon` pèserait exactement ce que pèse `.spa-shell .spa-auth` de
+ * `salon-shell.css`, et ne l'emporterait que parce que cette feuille-ci est
  * importée après elle (`styles/index.css`). Le jour où l'ordre des imports
  * changerait, le retrait de 32 px reviendrait en silence — et
  * `auth-salon-mise-en-page.test.mjs`, qui lit le texte de la feuille et non la
