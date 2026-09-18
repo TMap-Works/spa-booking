@@ -578,17 +578,25 @@ export class FakeIdentityRepository {
   }
 
   /**
-   * Arme le jeton de réinitialisation — #809.
+   * Arme le jeton de réinitialisation — #809, #1034.
    *
    * L'écriture **écrase** l'empreinte précédente, comme le vrai : c'est ce qui
    * fait que l'émission d'un nouveau jeton invalide l'ancien, et un double qui
    * les accumulerait ferait passer au vert deux liens vivants pour un compte.
+   *
+   * Les deux conditions du `where` réel sont reproduites — le compte, et le
+   * seuil de débit —, parce que c'est ce dernier qui porte la limite par
+   * adresse : un double qui écrirait sans le vérifier ferait passer au vert la
+   * seconde demande d'une fenêtre, que la base refuse. La course elle-même ne se
+   * joue pas ici, faute d'exécution concurrente réelle : elle est prouvée contre
+   * un vrai PostgreSQL par `identity-password-reset.concurrency-spec.ts`.
    */
   public async armPasswordReset(input: {
     userId: string;
     tokenHash: string;
     expiresAt: Date;
     requestedAt: Date;
+    notRequestedSince: Date;
   }): Promise<boolean> {
     const tenantId = this.requireTenant();
     const user = this.users.find(
@@ -596,6 +604,16 @@ export class FakeIdentityRepository {
     );
 
     if (user === undefined) {
+      return false;
+    }
+
+    const previous = user.passwordResetRequestedAt ?? null;
+
+    // Strictement `>`, comme le `lte` du vrai `where` : l'instant où l'écart
+    // vaut exactement le délai est servi, pas refusé — c'est ce que le raccourci
+    // d'`isWithinResetCooldown` décide déjà, et un double plus sévère que la
+    // base cacherait le désaccord au lieu de le montrer.
+    if (previous !== null && previous.getTime() > input.notRequestedSince.getTime()) {
       return false;
     }
 

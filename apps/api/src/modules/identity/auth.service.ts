@@ -42,19 +42,46 @@ import { hashJti, PASSWORD_RESET_COOLDOWN_MS, TokenService } from './token.servi
 export const REFRESH_ROTATION_GRACE_MS = 10_000;
 
 /**
- * Le `sub` du jeton qu'une demande de réinitialisation **jette** — #809.
+ * Le `sub` du jeton qu'une demande de réinitialisation **jette**, et
+ * l'identifiant de la lecture qu'elle jette avec — #809, #1034.
  *
- * Il ne désigne aucun compte, et c'est tout son objet : quand l'adresse
- * demandée n'a pas de compte joignable, la signature a quand même lieu, pour que
- * le temps de réponse des deux chemins soit le même. Sans elle, la rapidité du
- * chemin stérile dirait que l'adresse est inconnue dans ce salon — l'énumération
- * que la réponse 202 uniforme interdit, refaite au chronomètre. C'est le même
- * défaut que `PasswordHasher.burnComparableTime` corrige sur la connexion.
+ * Il ne désigne aucun compte, et c'est tout son objet : quand l'adresse demandée
+ * n'a pas de compte joignable, la signature et la lecture d'état ont quand même
+ * lieu, pour rapprocher le temps de réponse des deux chemins. C'est la même
+ * intention que `PasswordHasher.burnComparableTime` sur la connexion.
  *
  * Un UUID nul plutôt qu'un aléa : la valeur ne doit rien apprendre non plus.
  * Deux demandes sur deux adresses inconnues produisent ainsi des jetons qui ne
  * diffèrent que par leur `jti`, comme deux demandes légitimes. Le jeton produit
- * n'est jamais rendu, jamais émis, jamais écrit — il est signé et perdu.
+ * n'est jamais rendu, jamais émis, jamais écrit — il est signé et perdu ; l'état
+ * lu est toujours `null` — un compte dont l'identifiant est nul n'existe dans
+ * aucun établissement — et il est lu puis jeté.
+ *
+ * ## Ce que cette égalisation garantit, et ce qu'elle ne garantit pas
+ *
+ * Elle **garantit** que les deux chemins font le même travail cryptographique
+ * (une signature HMAC) et le même nombre d'allers-retours en base en **lecture**
+ * (deux : le compte, puis son état de réinitialisation). Sans elle, le chemin
+ * stérile en faisait un seul et ne signait rien : deux différences mesurables,
+ * dont l'une — une allée-retour réseau vers PostgreSQL — se compte en
+ * millisecondes, là où un HMAC-SHA256 sur quelques dizaines d'octets se compte
+ * en microsecondes.
+ *
+ * Elle **ne garantit pas** un temps de réponse constant, et le dire autrement
+ * serait faux (#1034). Ce qui reste observable est l'**écriture** d'un armement
+ * réussi — une allée-retour de plus, sur le seul chemin qui aboutit. Ce qui la
+ * borne n'est pas cette constante mais la limite de débit par adresse : une
+ * adresse ne peut armer qu'une fois par `PASSWORD_RESET_COOLDOWN_MS`, si bien
+ * que de la deuxième sonde à la N-ième — et il en faut beaucoup pour battre la
+ * gigue du réseau — une adresse connue coûte exactement ce que coûte une adresse
+ * inconnue : deux lectures, une signature, aucune écriture.
+ *
+ * Fermer complètement l'écart demanderait soit une écriture factice sur chaque
+ * demande, y compris sur une adresse inconnue — un vecteur de charge sur une
+ * route publique —, soit une réponse rendue après un délai constant borné, qui
+ * change la latence annoncée de la route. Les deux ont été écartés ici ; le jour
+ * où l'énumération au chronomètre devient un risque tenu pour réel, c'est parmi
+ * ces deux-là qu'il faut choisir.
  */
 const PLACEHOLDER_USER_ID = '00000000-0000-0000-0000-000000000000';
 
@@ -372,14 +399,21 @@ export class AuthService {
    * qu'aucun visiteur n'apprend qu'un salon a fermé — c'est la moitié
    * « établissement désactivé » du sixième critère.
    *
-   * ## Le temps de réponse ne dit rien non plus
+   * ## Le temps de réponse en dit le moins possible — mais pas rien
    *
    * Un compte introuvable ne coûterait, sans précaution, qu'une lecture indexée,
-   * là où un compte trouvé paie la signature d'un jeton et une écriture. L'écart
-   * est mesurable depuis l'extérieur, et il rétablirait au chronomètre
-   * l'énumération que la réponse uniforme interdit — c'est exactement le défaut
-   * que `burnComparableTime` corrige sur `login`. Les deux chemins passent donc
-   * par une signature de jeton : sur le chemin stérile, elle est **jetée**.
+   * là où un compte trouvé paie deux lectures, une signature de jeton et une
+   * écriture. L'écart est mesurable depuis l'extérieur, et il rétablirait au
+   * chronomètre l'énumération que la réponse uniforme interdit. Les deux chemins
+   * passent donc par les **mêmes deux lectures** et la **même signature** : sur
+   * le chemin stérile, l'une et l'autre sont **jetées** (voir
+   * `PLACEHOLDER_USER_ID`, qui porte le détail de ce que cela garantit).
+   *
+   * Ce que cela ne fait pas, et qu'il ne faut pas lui prêter (#1034) : rendre le
+   * temps de réponse constant. L'écriture d'un armement réussi reste une
+   * allée-retour de plus, sur le seul chemin qui aboutit — mais elle n'a lieu
+   * qu'une fois par fenêtre de débit et par adresse, si bien qu'à la deuxième
+   * sonde une adresse connue coûte déjà ce que coûte une adresse inconnue.
    *
    * ## Un compte sans mot de passe ne reçoit rien
    *
@@ -400,6 +434,21 @@ export class AuthService {
    * L'émission vient en dernier pour la raison qui vaut pour tous les événements
    * de ce dépôt : annoncer un jeton que la base n'a pas accepté enverrait un
    * lien qui ne pourrait rien ouvrir.
+   *
+   * ## La limite par adresse est tenue **par la base** — #1034
+   *
+   * La lecture d'état ci-dessous compare l'instant de la demande précédente au
+   * délai, mais elle ne décide de rien : deux demandes parties ensemble lisent la
+   * même valeur et passent toutes deux. C'est le `where` d'`armPasswordReset` qui
+   * tranche — le seuil y est la **condition de l'écriture** —, et la perdante
+   * rend `false` sans qu'aucun événement ne parte. Sans cela, deux courriers
+   * partaient pour une seule fenêtre, et le lien du premier n'ouvrait rien.
+   *
+   * La lecture reste parce qu'elle sert à deux choses que l'écriture ne peut pas
+   * rendre : distinguer dans le journal une demande trop rapprochée d'un compte
+   * disparu, et épargner l'écriture quand le refus est déjà certain. Elle est
+   * aussi, sur le chemin stérile, la seconde allée-retour qui égalise les deux
+   * chemins — c'est pourquoi elle a lieu même quand il n'y a personne à servir.
    */
   public async requestPasswordReset(input: { tenantSlug: string; email: string }): Promise<void> {
     const tenantId = await this.openTenantScope(input.tenantSlug);
@@ -408,14 +457,21 @@ export class AuthService {
     const user = await this.repository.findUserByEmail(email);
     const now = new Date();
 
-    // Signé avant de savoir si on s'en servira : c'est ce qui égalise le temps
-    // de réponse des deux chemins. Le coût est une signature HMAC de quelques
-    // microsecondes sur une route limitée en débit, et la route n'a de toute
-    // façon rien d'autre à faire.
+    // Signé avant de savoir si on s'en servira : le chemin stérile paie la même
+    // signature, et elle est jetée. Le coût est un HMAC de quelques microsecondes
+    // sur une route limitée en débit, et la route n'a de toute façon rien d'autre
+    // à faire.
     const issued = await this.tokens.signPasswordResetToken({
       userId: user?.id ?? PLACEHOLDER_USER_ID,
       tenantId,
     });
+
+    // La seconde lecture a lieu sur les deux chemins, pour la même raison que la
+    // signature : c'est l'allée-retour en base — des millisecondes, là où le HMAC
+    // n'en coûte que des microsecondes — qui trahissait l'existence du compte
+    // (#1034). Sur le chemin stérile, elle porte l'identifiant nul et rend
+    // toujours `null`.
+    const state = await this.repository.findPasswordResetState(user?.id ?? PLACEHOLDER_USER_ID);
 
     if (user === null || !user.isActive || user.passwordHash === null) {
       // Les trois refus qui ne se voient pas. Le journal, lui, les distingue —
@@ -432,11 +488,15 @@ export class AuthService {
       return;
     }
 
-    const state = await this.repository.findPasswordResetState(user.id);
+    // Le seuil que la base appliquera, calculé ici : la règle reste dans le
+    // service, la décision est à l'écriture.
+    const notRequestedSince = new Date(now.getTime() - PASSWORD_RESET_COOLDOWN_MS);
 
     if (state !== null && AuthService.isWithinResetCooldown(state.passwordResetRequestedAt, now)) {
-      // La moitié « par adresse » de la limite de débit. Silencieuse : un 429
-      // aurait dit que l'adresse existe.
+      // La moitié « par adresse » de la limite de débit, vue depuis la lecture :
+      // un raccourci qui épargne l'écriture quand le refus est déjà certain, pas
+      // la garantie elle-même — elle est dans le `where` ci-dessous. Silencieuse :
+      // un 429 aurait dit que l'adresse existe.
       this.logger.log(
         'réinitialisation trop rapprochée : demande sans effet',
         { userId: user.id },
@@ -450,13 +510,17 @@ export class AuthService {
       tokenHash: issued.tokenHash,
       expiresAt: issued.expiresAt,
       requestedAt: now,
+      notRequestedSince,
     });
 
     if (!armed) {
-      // Le compte a disparu entre la lecture et l'écriture. Rien à envoyer, et
-      // rien à dire au demandeur qu'il ne sache déjà — il reçoit 202.
-      this.logger.warn(
-        'réinitialisation : le jeton n’a pas pu être armé, aucun message n’est émis',
+      // Deux causes, indistinguables ici et sans conséquence différente : une
+      // demande concurrente a gagné la course — c'est le cas nominal que le
+      // `where` est là pour produire (#1034) —, ou le compte a disparu entre la
+      // lecture et l'écriture. Rien à envoyer, et rien à dire au demandeur qu'il
+      // ne sache déjà : il reçoit 202.
+      this.logger.log(
+        'réinitialisation non armée : demande concurrente ou compte disparu, aucun message n’est émis',
         { userId: user.id },
         AuthService.name,
       );
@@ -469,6 +533,12 @@ export class AuthService {
   /**
    * `true` si la demande précédente est trop récente pour qu'une nouvelle
    * produise un message — #809, limite de débit par adresse.
+   *
+   * **Un raccourci, pas la garantie** (#1034) : deux demandes simultanées lisent
+   * la même valeur et passent toutes deux ici. Ce qui départage est le `where`
+   * d'`armPasswordReset`, où le même seuil est la condition de l'écriture. Ce
+   * test-ci épargne l'écriture quand le refus est déjà certain, et permet au
+   * journal de nommer la cause.
    *
    * L'écart est pris en valeur absolue, comme celui du délai de grâce de
    * rotation, et pour la même raison : `password_reset_requested_at` est écrit
