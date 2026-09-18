@@ -103,15 +103,19 @@ interface AnnouncementWording {
  * est annulé »). Annuler réussit sans être une bonne nouvelle.
  *
  * Chaque phrase dit **où la ligne est passée**. C'est le constat de l'audit :
- * à 360 px la carte réapparaît sous « Historique », hors de vue — le message
- * qui se contenterait de dire « c'est fait » laisserait chercher.
+ * la carte quitte la liste sous les yeux de la cliente — le message qui se
+ * contenterait de dire « c'est fait » laisserait chercher.
+ *
+ * Depuis #1053, l'historique est un **onglet** et non plus la moitié basse du
+ * même écran : « plus bas » désignait un bloc qui n'y est plus, et renvoyait vers
+ * un endroit où il n'y a rien. La phrase nomme donc l'onglet.
  */
 const WORDING: Record<AccountAnnouncementKind, AnnouncementWording> = {
   'appointment-cancelled': {
     tone: 'info',
     title: 'Votre rendez-vous est annulé',
     body: (when) =>
-      `Celui du ${when} ne figure plus à l’agenda du salon : vous le retrouvez sous « Historique », plus bas.`,
+      `Celui du ${when} ne figure plus à l’agenda du salon : vous le retrouvez dans l’onglet « Historique ».`,
   },
   'appointment-rescheduled': {
     tone: 'success',

@@ -57,17 +57,67 @@ describe('coordonnées — pré-remplissage', () => {
 
     expect(valueOf(/Prénom/)).toBe('Camille');
     expect(valueOf(/Téléphone/)).toBe('+261 34 12 345 67');
-    expect(valueOf(/Adresse e-mail/)).toBe('camille@example.test');
+    expect(screen.getByText('camille@example.test')).toBeDefined();
   });
 
-  it('laisse l’adresse e-mail en lecture seule, et dit pourquoi', () => {
+  it('écrit l’adresse e-mail en information et non en champ grisé (#1053)', () => {
     // Elle est l'identifiant de connexion et la clé d'unicité du compte : la
-    // changer demande une vérification que le périmètre MVP ne porte pas.
+    // changer demande une vérification que le périmètre MVP ne porte pas. Un
+    // `<input readonly>` promettait pourtant une saisie — il prend le focus et
+    // porte un libellé de champ ; la valeur est donc une ligne d'information,
+    // avec la raison écrite à côté.
     renderForm();
 
-    const email = screen.getByLabelText(/Adresse e-mail/);
-    expect(email.hasAttribute('readonly')).toBe(true);
+    expect(screen.queryByLabelText(/Adresse e-mail/)).toBeNull();
+    expect(document.querySelector('.spa-account__readonly')).not.toBeNull();
     expect(screen.getByText(/identifiant de connexion/i)).toBeDefined();
+  });
+
+  it('groupe les champs en « Identité » et « Contact » (#1053)', () => {
+    renderForm();
+
+    // Deux `fieldset` nommés : leur `legend` est annoncée avec chaque champ du
+    // groupe (WCAG 1.3.1), là où quatre champs empilés ne disaient rien de ce
+    // qui va ensemble.
+    expect(screen.getByRole('group', { name: 'Identité' })).toBeDefined();
+    expect(screen.getByRole('group', { name: 'Contact' })).toBeDefined();
+  });
+});
+
+describe('coordonnées — « Enregistrer » attend un changement (#1053)', () => {
+  it('reste inactif tant que rien n’a bougé', () => {
+    renderForm();
+
+    // Un envoi sans modification déclenche une requête, une notification de
+    // succès et un rafraîchissement pour rien — et apprend à la cliente que le
+    // succès annoncé ne veut rien dire.
+    expect(screen.getByRole('button', { name: /Enregistrer/ }).hasAttribute('disabled')).toBe(true);
+  });
+
+  it('s’active à la première frappe', async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    await user.type(screen.getByLabelText(/Prénom/), 'e');
+
+    expect(screen.getByRole('button', { name: /Enregistrer/ }).hasAttribute('disabled')).toBe(
+      false,
+    );
+  });
+
+  it('redevient inactif une fois l’enregistrement abouti', async () => {
+    updateProfileAction.mockResolvedValue({ ok: true, data: profile });
+    const user = userEvent.setup();
+    renderForm();
+
+    await user.type(screen.getByLabelText(/Prénom/), 'e');
+    await user.click(screen.getByRole('button', { name: /Enregistrer/ }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Enregistrer/ }).hasAttribute('disabled')).toBe(
+        true,
+      );
+    });
   });
 });
 
@@ -120,6 +170,10 @@ describe('coordonnées — soumission', () => {
     const user = userEvent.setup();
     renderForm();
 
+    // Le bouton n'accepte un envoi qu'une fois quelque chose modifié (#1053) :
+    // c'est la frappe qui l'arme, le double clic qui est éprouvé ici.
+    await user.type(screen.getByLabelText(/Prénom/), 'e');
+
     const submit = screen.getByRole('button', { name: /Enregistrer/ });
     await user.click(submit);
     await user.click(submit);
@@ -137,10 +191,11 @@ describe('coordonnées — soumission', () => {
     const user = userEvent.setup();
     renderForm();
 
+    await user.type(screen.getByLabelText(/Prénom/), 'e');
     await user.click(screen.getByRole('button', { name: /Enregistrer/ }));
 
     expect(await screen.findByText('Les coordonnées saisies sont invalides.')).toBeDefined();
-    expect(valueOf(/Prénom/)).toBe('Camille');
+    expect(valueOf(/Prénom/)).toBe('Camillee');
   });
 
   it('renouvelle une session expirée au lieu de dire « reconnectez-vous » — #856', async () => {
@@ -152,6 +207,7 @@ describe('coordonnées — soumission', () => {
     const user = userEvent.setup();
     renderForm();
 
+    await user.type(screen.getByLabelText(/Prénom/), 'e');
     await user.click(screen.getByRole('button', { name: /Enregistrer/ }));
 
     await waitFor(() => {
@@ -160,6 +216,6 @@ describe('coordonnées — soumission', () => {
     expect(String(replace.mock.calls[0]?.[0])).toContain('/salon-des-lilas/compte/session/refresh?next=');
     expect(screen.queryByText(/Reconnectez-vous/)).toBeNull();
     // La saisie reste en place : la page revient telle quelle.
-    expect(valueOf(/Prénom/)).toBe('Camille');
+    expect(valueOf(/Prénom/)).toBe('Camillee');
   });
 });

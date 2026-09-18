@@ -6,13 +6,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppointmentCard } from '@/app/(account)/[tenantSlug]/compte/components/appointment-card';
 
 /**
- * Une ligne de l'historique de l'espace client.
+ * La carte compacte d'un rendez-vous — les rendez-vous à venir qui suivent le
+ * prochain, et les lignes de l'historique.
  *
  * Ce que la suite protège — et rien d'autre, les statuts et les gestes de la
- * ligne ayant déjà leurs suites (`appointment-status.test.ts`) :
+ * carte ayant déjà leurs suites (`appointment-status.test.ts`) :
  *
  * - **#680** — la mention du fuseau ne sort pas du rendu serveur, qui n'a aucun
- *   moyen de savoir où se trouve la visiteuse.
+ *   moyen de savoir où se trouve la visiteuse ;
+ * - **#1053** — ce que la carte nomme (`BM-RDV-02`), et la ligne sous la
+ *   pastille qui remplace les paragraphes d'explication de section.
  */
 
 const cancelOwnAppointmentAction = vi.fn();
@@ -71,9 +74,13 @@ function card(overrides: Partial<BookedAppointment> = {}) {
     <ul className="spa-appointment-list">
       <AppointmentCard
         tenantSlug="salon-des-lilas"
-        appointment={appointment(overrides)}
+        brief={{
+          appointment: appointment(overrides),
+          serviceName: 'Massage suédois',
+          practitioner: 'Hery',
+          durationMinutes: 60,
+        }}
         timeZone="Europe/Paris"
-        serviceName="Massage suédois"
         scope="upcoming"
       />
     </ul>
@@ -109,19 +116,56 @@ describe('historique — la mention du fuseau attend l’hydratation (#680)', ()
     // La ligne, elle, est bien rendue par le serveur : sans cette assertion,
     // celle du dessous serait verte même si la carte ne rendait rien.
     expect(markup).toContain('Massage suédois');
-    expect(markup).toContain('spa-appointment__when');
+    expect(markup).toContain('spa-appointment__meta');
     expect(markup).not.toContain(MENTION);
     expect(markup).not.toContain('spa-appointment__timezone');
   });
 
   it('la complète une fois la carte montée', () => {
+    const { container } = render(card());
+
+    // La plage horaire, elle, ne dépend d'aucun montage : elle est mise en forme
+    // dans le fuseau du salon des deux côtés, et c'est bien la mention seule qui
+    // arrive après coup.
+    const meta = container.querySelector('.spa-appointment__meta');
+
+    expect(meta?.textContent).toContain('11:00 – 12:00');
+    expect(meta?.textContent).toContain(`(${MENTION})`);
+  });
+});
+
+/**
+ * Ce que la carte compacte dit d'un rendez-vous — `BM-RDV-02`, #1053.
+ *
+ * Le motif veut « quoi, avec qui, quand, où, combien, et son statut » sur chaque
+ * carte, et reproche nommément à Planity de taire le praticien réservé. Le
+ * « où » appartient à la carte héros et à la colonne latérale : il est le même
+ * pour tous les rendez-vous d'un salon, et le répéter sur chaque ligne d'une
+ * liste n'apprendrait rien.
+ */
+describe('carte compacte — ce qu’elle nomme (BM-RDV-02)', () => {
+  it('nomme la prestation, le praticien, la durée, le prix et le statut', () => {
+    const { container } = render(card());
+
+    expect(screen.getByText('Massage suédois')).toBeDefined();
+    expect(container.querySelector('.spa-appointment__meta')?.textContent).toContain('Hery');
+    expect(container.querySelector('.spa-appointment__meta')?.textContent).toContain('1 h');
+    expect(screen.getByText('35,00 €')).toBeDefined();
+    expect(screen.getByText('Confirmé')).toBeDefined();
+  });
+
+  it('dit sous la pastille ce que « À confirmer par le salon » laisse ouvert', () => {
+    // C'est la ligne qui remplace les quatre lignes d'explication posées sous le
+    // titre de la section avant #1053.
+    render(card({ status: 'pending' }));
+
+    expect(screen.getByText('À confirmer par le salon')).toBeDefined();
+    expect(screen.getByText(/rien à faire de votre côté/i)).toBeDefined();
+  });
+
+  it('ne commente pas une pastille qui se suffit', () => {
     render(card());
 
-    // L'instant, lui, ne dépend d'aucun montage : il est mis en forme dans le
-    // fuseau du salon des deux côtés, et c'est bien la mention seule qui arrive
-    // après coup.
-    const when = screen.getByText(/septembre 2026/);
-
-    expect(when.textContent).toContain(`(${MENTION})`);
+    expect(document.querySelector('.spa-appointment__status-note')).toBeNull();
   });
 });

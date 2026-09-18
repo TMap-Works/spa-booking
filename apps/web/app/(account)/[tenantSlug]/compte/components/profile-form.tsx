@@ -2,7 +2,6 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { nameSchema, phoneSchema, type SessionUser } from '@spa/shared';
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
@@ -10,14 +9,14 @@ import { z } from 'zod';
 
 import { Button } from '@/components/ui/button';
 import { Field } from '@/components/ui/field';
+import { Icon } from '@/components/ui/icon';
 import { Notification } from '@/components/ui/notification';
 
 import { updateProfileAction } from '../actions';
-import { accountPath } from '../paths';
 import { useAccountSessionRenewal } from './use-account-session-renewal';
 
 /**
- * Modification de ses coordonnées (#47, quatrième critère).
+ * Modification de ses coordonnées (#47, quatrième critère ; repris par #1053).
  *
  * ## Le formulaire est complet, la requête est partielle
  *
@@ -29,14 +28,34 @@ import { useAccountSessionRenewal } from './use-account-session-renewal';
  * et non la chaîne vide, que la colonne prendrait pour un numéro de zéro
  * caractère.
  *
- * ## L'adresse e-mail est affichée, jamais modifiable
+ * ## Deux sections, et pourquoi (#1053)
+ *
+ * L'audit `d20260918-1` relève quatre champs empilés sans regroupement, dont un
+ * grisé sans autre explication qu'une phrase d'aide. Identité et contact ne se
+ * modifient ni pour les mêmes raisons ni à la même fréquence : deux `fieldset`
+ * les séparent, et leur `legend` donne à chaque groupe un nom que les lecteurs
+ * d'écran annoncent avec chaque champ (WCAG 1.3.1).
+ *
+ * ## L'adresse e-mail n'est plus un champ grisé, c'est une information
  *
  * Elle est l'identifiant de connexion et la clé d'unicité du compte dans
  * l'établissement : la changer demande une vérification de la nouvelle adresse,
- * sans quoi une faute de frappe rend le compte inatteignable. Le contrat l'exclut
- * (`updateProfileRequestSchema` ne la porte pas) et le DTO de l'API la refuse ;
- * ce champ est donc en lecture seule, avec la raison écrite à côté plutôt qu'une
- * absence inexpliquée.
+ * sans quoi une faute de frappe rend le compte inatteignable. Le contrat
+ * l'exclut (`updateProfileRequestSchema` ne la porte pas) et le DTO de l'API la
+ * refuse.
+ *
+ * Un `<input readonly>` promettait pourtant une saisie : il prend le focus, il
+ * porte un libellé de champ, et rien à l'œil ne le distingue d'un champ
+ * désactivé par erreur. La valeur est donc écrite en **ligne d'information**,
+ * avec un cadenas et la raison à côté — ce que la direction de #1053 demande, et
+ * ce qui retire du formulaire un champ qui n'en était pas un.
+ *
+ * ## « Enregistrer » reste inactif tant que rien n'a changé
+ *
+ * `isDirty` de react-hook-form compare aux valeurs par défaut, c'est-à-dire au
+ * profil servi. Un bouton qui accepte un envoi sans modification déclenche une
+ * requête, une notification de succès et un rafraîchissement pour rien — et
+ * apprend à la cliente que le succès annoncé ne veut rien dire.
  */
 const profileFormSchema = z.object({
   firstName: nameSchema,
@@ -60,7 +79,8 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
   const {
     register,
     handleSubmit,
-    formState: { errors, isSubmitting },
+    reset,
+    formState: { errors, isSubmitting, isDirty },
   } = useForm<ProfileFormValues, unknown, z.output<typeof profileFormSchema>>({
     resolver: zodResolver(profileFormSchema),
     defaultValues: {
@@ -92,8 +112,12 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
     }
 
     setSaved(true);
-    // L'en-tête et l'historique sont rendus côté serveur : sans ce
-    // rafraîchissement, le nom affiché ailleurs resterait l'ancien.
+    // Ce qui vient d'être enregistré devient la nouvelle référence : sans cela
+    // le bouton resterait actif après un succès, et proposerait de réenregistrer
+    // ce qui l'est déjà.
+    reset(values);
+    // L'en-tête est rendu côté serveur : sans ce rafraîchissement, le prénom
+    // affiché ailleurs resterait l'ancien.
     router.refresh();
   });
 
@@ -116,53 +140,61 @@ export function ProfileForm({ tenantSlug, profile }: ProfileFormProps) {
       )}
 
       <form className="spa-account__form" onSubmit={(event) => void submit(event)} noValidate>
-        <Field
-          id="profile-first-name"
-          label="Prénom"
-          autoComplete="given-name"
-          required
-          error={errors.firstName?.message}
-          {...register('firstName')}
-        />
-        <Field
-          id="profile-last-name"
-          label="Nom"
-          autoComplete="family-name"
-          required
-          error={errors.lastName?.message}
-          {...register('lastName')}
-        />
-        <Field
-          id="profile-phone"
-          label="Téléphone"
-          type="tel"
-          autoComplete="tel"
-          hint="Laissez vide pour ne plus recevoir de rappel par SMS."
-          error={errors.phone?.message}
-          {...register('phone')}
-        />
-        <Field
-          id="profile-email"
-          label="Adresse e-mail"
-          type="email"
-          value={profile.email}
-          readOnly
-          hint="Votre identifiant de connexion. Contactez le salon pour en changer."
-        />
+        <fieldset className="spa-account__fieldset">
+          <legend className="spa-account__legend">Identité</legend>
+          <Field
+            id="profile-first-name"
+            label="Prénom"
+            autoComplete="given-name"
+            required
+            error={errors.firstName?.message}
+            {...register('firstName')}
+          />
+          <Field
+            id="profile-last-name"
+            label="Nom"
+            autoComplete="family-name"
+            required
+            error={errors.lastName?.message}
+            {...register('lastName')}
+          />
+        </fieldset>
+
+        <fieldset className="spa-account__fieldset">
+          <legend className="spa-account__legend">Contact</legend>
+          <Field
+            id="profile-phone"
+            label="Téléphone"
+            type="tel"
+            autoComplete="tel"
+            hint="Laissez vide pour ne plus recevoir de rappel par SMS."
+            error={errors.phone?.message}
+            {...register('phone')}
+          />
+
+          <p className="spa-account__readonly">
+            <Icon name="lock" className="spa-account__readonly-icon" />
+            <span>
+              <span className="spa-account__readonly-label">Adresse e-mail</span>
+              <span className="spa-account__readonly-value">{profile.email}</span>
+              <span className="spa-account__readonly-hint">
+                Votre identifiant de connexion. Contactez le salon pour en changer.
+              </span>
+            </span>
+          </p>
+        </fieldset>
+
         <Button
           type="submit"
           variant="accent"
           block
+          disabled={!isDirty}
           loading={isSubmitting}
           loadingLabel="Enregistrement…"
         >
           Enregistrer
         </Button>
       </form>
-
-      <p className="spa-account__switch">
-        <Link href={accountPath(tenantSlug)}>Revenir à mes rendez-vous</Link>
-      </p>
     </section>
   );
 }

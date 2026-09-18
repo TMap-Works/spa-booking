@@ -1,12 +1,12 @@
 /*
- * Espace client — #47
+ * Espace client — #47, refondu par #1053
  * =============================================================================
  *
  * Le troisième produit servi par `apps/web`, après le parcours public et le
  * tableau de bord admin. Il partage le design system des deux — boutons, champs,
- * notifications, état vide — et n'ajoute ici que ce qui lui est propre : la
- * mise en page du compte, la ligne de rendez-vous et sa pastille de statut, la
- * grille de créneaux du report.
+ * notifications, pastilles, bloc date, état vide — et n'ajoute ici que ce qui lui
+ * est propre : la mise en page du compte, la carte du prochain rendez-vous, la
+ * carte compacte des suivants, et la carte du salon en colonne latérale.
  *
  * Aucune couleur littérale, aucune primitive `--spa-palette-*` : tout passe par
  * les jetons sémantiques (styles/README.md §1). Les pastilles de statut
@@ -21,15 +21,6 @@
   max-width: 44rem;
   margin: 0 auto;
   padding: var(--spa-space-8) var(--spa-space-4) var(--spa-space-12);
-}
-
-.spa-account__tenant {
-  margin: 0;
-  font-size: var(--spa-font-size-sm);
-  font-weight: var(--spa-font-weight-medium);
-  letter-spacing: var(--spa-letter-spacing-wide);
-  text-transform: uppercase;
-  color: var(--spa-color-text-muted);
 }
 
 /*
@@ -83,10 +74,8 @@
  *
  * `LinkPending` la réserve par défaut, pour que le libellé ne saute pas. Dans le
  * rail, elle est prise en bout d'entrée et ne se voit pas ; ici, le lien est une
- * ligne de texte suivie de « Se déconnecter », et l'espace réservé creusait
- * 22 px de blanc entre les deux à chaque visite — relevé à la recette. Le repère
- * n'apparaît donc qu'au clic, et ce qui se décale alors est le bouton voisin, en
- * réponse au geste, le temps que l'écran suivant arrive.
+ * ligne de texte, et l'espace réservé creusait 22 px de blanc à chaque visite —
+ * relevé à la recette. Le repère n'apparaît donc qu'au clic.
  */
 .spa-account__nav-link .spa-link-pending:not([data-pending='true']) {
   display: none;
@@ -98,22 +87,6 @@
   gap: var(--spa-space-4);
 }
 
-/*
- * Le titre d'une moitié et sa légende forment un bloc (#744).
- *
- * La gouttière de `.spa-account__section` sépare deux choses différentes — un
- * en-tête et la liste qu'il annonce — et vaut 16 px. La légende, elle,
- * appartient à son titre : elle s'en tient à 8 px, et c'est ce groupement qui la
- * fait lire comme la définition de la section plutôt que comme une première
- * ligne de contenu. D'où un conteneur avec sa propre gouttière, plutôt qu'une
- * marge négative qui annulerait celle du parent.
- */
-.spa-account__section-heading {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spa-space-2);
-}
-
 .spa-account__section-title {
   margin: 0;
   font-size: var(--spa-font-size-xl);
@@ -121,18 +94,103 @@
   color: var(--spa-color-text);
 }
 
+/* --- Les deux colonnes de l'onglet « Mes rendez-vous » (#1053) ------------- */
+
 /*
- * La légende dit le **critère** par lequel la moitié est peuplée — « encore
- * actionnable » ou « archivé » — et non son contenu du jour. Sans elle, un
- * rendez-vous annulé pour la semaine prochaine se lit comme une erreur de tri
- * sous « Historique » (#744).
+ * À 360 px, une seule colonne : les rendez-vous, puis la carte du salon. C'est
+ * l'ordre du document, et il est le bon — l'audit `d20260918-1` reproche
+ * précisément qu'à cette largeur tout ce qui n'est pas le prochain rendez-vous
+ * repousse celui-ci hors du premier écran.
+ *
+ * À partir de 64 rem, la carte du salon passe à droite et l'espace s'élargit
+ * pour l'accueillir. Le `:has()` borne l'élargissement à l'écran qui en a besoin :
+ * « Mes coordonnées » et le report n'ont qu'un formulaire, et un formulaire de
+ * 68 rem de large est illisible.
  */
-.spa-account__section-hint {
-  margin: 0;
-  color: var(--spa-color-text-muted);
-  font-size: var(--spa-font-size-sm);
-  line-height: var(--spa-line-height-relaxed);
+.spa-account__columns {
+  display: grid;
+  gap: var(--spa-space-8);
 }
+
+@media (min-width: 64rem) {
+  .spa-account:has(.spa-account__columns) {
+    max-width: 68rem;
+  }
+
+  .spa-account__columns {
+    grid-template-columns: minmax(0, 1fr) 19rem;
+    align-items: start;
+  }
+}
+
+/* --- La carte du salon, en colonne latérale (#1053) ------------------------ */
+
+.spa-account__card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  padding: var(--spa-space-5);
+  background: var(--spa-color-surface-raised);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-lg);
+}
+
+.spa-account__card-title {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  margin: 0;
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+}
+
+.spa-account__card-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-account__card-icon {
+  flex: none;
+  /* Aligné sur la première ligne de texte, et non sur le haut du bloc. */
+  margin-block-start: 0.1em;
+  color: var(--spa-color-text-subtle);
+}
+
+.spa-account__card-address {
+  display: flex;
+  flex-direction: column;
+  font-style: normal;
+}
+
+.spa-account__card-hours,
+.spa-account__card-address {
+  margin: 0;
+}
+
+.spa-account__card-hours {
+  display: flex;
+  flex-direction: column;
+}
+
+.spa-account__card-day {
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+}
+
+.spa-account__card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-1);
+  margin-block-start: var(--spa-space-1);
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-medium);
+  min-height: var(--spa-target-min-size);
+}
+
+/* --- Le formulaire des coordonnées ----------------------------------------- */
 
 .spa-account__panel {
   display: flex;
@@ -148,7 +206,80 @@
 .spa-account__form {
   display: flex;
   flex-direction: column;
+  gap: var(--spa-space-6);
+}
+
+/*
+ * Identité et contact ne se modifient ni pour les mêmes raisons ni à la même
+ * fréquence : deux groupes, chacun nommé (#1053). Le `fieldset` n'a ni cadre ni
+ * marge propres — le navigateur en pose par défaut, et ils casseraient le rythme
+ * du panneau.
+ */
+.spa-account__fieldset {
+  display: flex;
+  flex-direction: column;
   gap: var(--spa-space-4);
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.spa-account__legend {
+  padding: 0;
+  margin-block-end: var(--spa-space-1);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-text-muted);
+}
+
+/*
+ * L'adresse e-mail : une information, pas un champ grisé (#1053).
+ *
+ * Un `<input readonly>` prend le focus et porte un libellé de champ ; rien à
+ * l'œil ne le distingue d'un champ désactivé par erreur. Le cadenas et la raison
+ * écrite à côté disent ce qu'il en est sans promettre une saisie.
+ */
+.spa-account__readonly {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+  margin: 0;
+  padding: var(--spa-space-3) var(--spa-space-4);
+  background: var(--spa-color-surface-sunken);
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-account__readonly-icon {
+  flex: none;
+  margin-block-start: 0.2em;
+  color: var(--spa-color-text-subtle);
+}
+
+.spa-account__readonly-label,
+.spa-account__readonly-value,
+.spa-account__readonly-hint {
+  display: block;
+}
+
+.spa-account__readonly-label {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-account__readonly-value {
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+  /* Une adresse longue casse dans la carte plutôt que de la déborder à 360 px. */
+  overflow-wrap: anywhere;
+}
+
+.spa-account__readonly-hint {
+  margin-block-start: var(--spa-space-1);
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  line-height: var(--spa-line-height-relaxed);
 }
 
 .spa-account__actions {
@@ -172,7 +303,170 @@
   border-top: 1px solid var(--spa-color-border);
 }
 
-/* --- Une ligne d'historique ----------------------------------------------- */
+/* --- La carte du prochain rendez-vous (#1053) ------------------------------ */
+
+/*
+ * Ce qui la distingue d'une carte compacte, et pourquoi.
+ *
+ * L'audit relève que le prochain rendez-vous avait « l'habillage exact des neuf
+ * cartes d'historique ». Trois choses l'en séparent désormais : la surface
+ * (`surface` sur fond `surface-raised`, et non l'inverse), le filet d'accent qui
+ * la borde, et le bloc date en grand. Aucune n'est décorative — elles disent
+ * toutes la même chose : *c'est celle-ci qui vous concerne*.
+ */
+.spa-rdv-hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-5);
+  padding: var(--spa-space-5);
+  background: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-inline-start: 4px solid var(--spa-color-accent);
+  border-radius: var(--spa-radius-lg);
+  box-shadow: var(--spa-shadow-sm);
+}
+
+.spa-rdv-hero__head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--spa-space-4);
+  align-items: start;
+}
+
+.spa-rdv-hero__when {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  min-width: 0;
+}
+
+.spa-rdv-hero__time {
+  margin: 0;
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+}
+
+.spa-rdv-hero__duration,
+.spa-rdv-hero__timezone {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-regular);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-rdv-hero__service {
+  margin: 0;
+  font-size: var(--spa-font-size-xl);
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: var(--spa-line-height-snug);
+  color: var(--spa-color-text);
+  text-wrap: balance;
+}
+
+.spa-rdv-hero__price {
+  margin: 0;
+  color: var(--spa-color-text-muted);
+}
+
+/*
+ * La pastille passe sous le bloc date à 360 px — une troisième colonne y
+ * réduirait le nom de la prestation à deux mots par ligne — et remonte à droite
+ * dès que la place existe.
+ */
+.spa-rdv-hero__status {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spa-space-1);
+}
+
+@media (min-width: 40rem) {
+  .spa-rdv-hero__head {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .spa-rdv-hero__status {
+    grid-column: 3;
+    grid-row: 1;
+    align-items: flex-end;
+    text-align: end;
+  }
+}
+
+/*
+ * La ligne qui remplace les quatre lignes d'explication de la section (#1053) :
+ * ce que « À confirmer par le salon » laisse ouvert, dit sous la pastille et
+ * nulle part ailleurs.
+ */
+.spa-rdv-hero__status-note,
+.spa-appointment__status-note {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  line-height: var(--spa-line-height-snug);
+}
+
+.spa-rdv-hero__facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  padding-block: var(--spa-space-4);
+  border-block: 1px solid var(--spa-color-border);
+}
+
+.spa-rdv-hero__fact {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-rdv-hero__fact-icon {
+  flex: none;
+  margin-block-start: 0.15em;
+  color: var(--spa-color-text-subtle);
+}
+
+.spa-rdv-hero__address {
+  display: flex;
+  flex-direction: column;
+  font-style: normal;
+}
+
+.spa-rdv-hero__salon {
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+}
+
+.spa-rdv-hero__link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-1);
+  min-height: var(--spa-target-min-size);
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-medium);
+}
+
+.spa-rdv-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spa-space-3);
+}
+
+/*
+ * « Annuler » est un lien de danger et non un troisième bouton : deux actions en
+ * contour et un bouton plein se disputeraient l'accent, et l'accent n'appartient
+ * ici à aucune des trois — le geste que la carte sert est de *venir* au
+ * rendez-vous, pas de le défaire.
+ */
+.spa-appointment__cancel .spa-button--quiet {
+  color: var(--spa-color-danger);
+  text-decoration: underline;
+}
+
+/* --- Une carte compacte de rendez-vous ------------------------------------- */
 
 .spa-appointment-list {
   display: flex;
@@ -183,39 +477,65 @@
 .spa-appointment {
   display: flex;
   flex-direction: column;
-  gap: var(--spa-space-2);
+  gap: var(--spa-space-3);
   padding: var(--spa-space-4);
   background: var(--spa-color-surface-raised);
   border: 1px solid var(--spa-color-border);
   border-radius: var(--spa-radius-md);
 }
 
-.spa-appointment__heading {
+/*
+ * Bloc date, corps, statut : trois colonnes dès 360 px, parce que le bloc date
+ * et la pastille sont l'un et l'autre étroits et de hauteur fixe. C'est ce qui
+ * rend la liste balayable — l'œil trouve le jour avant de lire la ligne.
+ */
+.spa-appointment__summary {
   display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--spa-space-2);
+  align-items: flex-start;
+  gap: var(--spa-space-3);
 }
 
-.spa-appointment__when {
+.spa-appointment__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.spa-appointment__service {
   margin: 0;
   font-weight: var(--spa-font-weight-semibold);
   color: var(--spa-color-text);
 }
 
-.spa-appointment__timezone {
-  font-weight: var(--spa-font-weight-regular);
+.spa-appointment__meta {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
   color: var(--spa-color-text-muted);
 }
 
-.spa-appointment__service {
-  margin: 0;
-  color: var(--spa-color-text-muted);
+.spa-appointment__dot {
+  color: var(--spa-color-text-subtle);
+}
+
+.spa-appointment__timezone {
+  color: var(--spa-color-text-subtle);
+}
+
+.spa-appointment__status {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--spa-space-1);
+  flex: none;
 }
 
 .spa-appointment__price {
-  color: var(--spa-color-text-subtle);
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  white-space: nowrap;
 }
 
 .spa-appointment__note {
@@ -239,31 +559,28 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--spa-space-2);
-  padding-top: var(--spa-space-2);
 }
 
-/* --- Écran en cours de chargement (#830) ---------------------------------- */
+/* --- Écran en cours de chargement (#830, #1053) ---------------------------- */
 
 /*
- * Ce que `compte/(liste)/loading.tsx` peint sous la barre du compte, le temps qu'un
- * écran arrive. La forme est celle de la liste des rendez-vous — l'écran
- * d'arrivée de l'espace —, dans ses vraies classes : un titre de moitié à la
- * taille de `.spa-account__section-title`, sa légende, puis des cartes
- * `.spa-appointment`. Aucune donnée n'y est inventée : les lignes sont des
- * squelettes, pas des rendez-vous factices.
+ * Ce que les deux onglets de rendez-vous peignent le temps qu'un écran arrive.
+ * La forme est celle de l'écran qui vient — une carte héros puis des cartes
+ * compactes sur « Mes rendez-vous », des cartes compactes seules sur
+ * « Historique » —, dans leurs vraies classes. Aucune donnée n'y est inventée :
+ * les lignes sont des squelettes, pas des rendez-vous factices.
  */
 .spa-account-loading {
   pointer-events: none;
 }
 
+.spa-account-loading__hero {
+  gap: var(--spa-space-3);
+}
+
 .spa-account-loading__title {
   block-size: calc(var(--spa-font-size-xl) * var(--spa-line-height-tight));
   inline-size: min(14rem, 70%);
-}
-
-.spa-account-loading__hint {
-  block-size: var(--spa-font-size-sm);
-  inline-size: min(22rem, 90%);
 }
 
 .spa-account-loading__line {
