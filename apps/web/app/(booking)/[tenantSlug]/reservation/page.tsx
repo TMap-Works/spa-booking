@@ -1,9 +1,10 @@
 import { notFound } from 'next/navigation';
 
+import { readAccountPresence } from '@/lib/account-presence';
 import { ApiClientError } from '@/lib/api-client';
 
 import { BookingErrorNotice } from '../booking-error-notice';
-import { loadSalonServices, loadSalonTenant, salonPath } from '../salon-data';
+import { accountPath, loadSalonServices, loadSalonTenant, salonPath } from '../salon-data';
 import { BookingTunnel } from './booking-tunnel';
 
 /**
@@ -35,16 +36,35 @@ export default async function BookingPage({ params }: PageProps) {
   try {
     // En parallèle : deux requêtes indépendantes, et le parcours critique vise
     // un LCP sous 2,5 s en 4G (skill web-frontend §7).
-    const [tenant, services] = await Promise.all([
+    //
+    // La lecture de la présence les rejoint depuis #1050. Elle ne coûte aucun
+    // aller-retour — c'est un cookie de la requête en cours —, et la placer ici
+    // plutôt qu'avant le `Promise.all` évite de faire attendre les deux appels
+    // qui, eux, traversent le réseau.
+    const [tenant, services, presence] = await Promise.all([
       loadSalonTenant(tenantSlug),
       loadSalonServices(tenantSlug),
+      readAccountPresence(),
     ]);
 
-    // Le chemin de sortie est composé ici, et non dans le tunnel : les
-    // composants ne connaissent pas l'arborescence des routes, c'est la page qui
-    // la tient (`salon-data.ts`), comme pour l'en-tête de la vitrine.
+    // Les chemins sont composés ici, et non dans le tunnel : les composants ne
+    // connaissent pas l'arborescence des routes, c'est la page qui la tient
+    // (`salon-data.ts`), comme pour l'en-tête de la vitrine.
     return (
-      <BookingTunnel tenant={tenant} services={services} exitHref={salonPath(tenantSlug)} />
+      <BookingTunnel
+        tenant={tenant}
+        services={services}
+        exitHref={salonPath(tenantSlug)}
+        // La cliente connectée chez ce salon — **lue côté serveur**, dans le
+        // cookie `httpOnly` posé par #1045 et porté sur `/{salon}` (#1050).
+        // Le tunnel est un Client Component : il ne pourrait pas la lire
+        // lui-même, et rien de ce qui la décrit ne passe par l'URL.
+        //
+        // La page est déjà `force-dynamic` : cette lecture ne lui coûte pas la
+        // mise en cache qu'elle n'avait pas.
+        presence={presence}
+        loginHref={`${accountPath(tenantSlug)}/connexion`}
+      />
     );
   } catch (error) {
     // Établissement inconnu, désactivé, ou d'un slug mal formé : l'API répond

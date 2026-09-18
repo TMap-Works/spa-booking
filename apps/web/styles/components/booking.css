@@ -648,6 +648,117 @@
   gap: var(--spa-space-3);
 }
 
+/* --- Coordonnées, étape 3 --------------------------------------------------- */
+
+/*
+ * L'entrée de la cliente qui a déjà un compte (#1050, BM-COMPTE-01).
+ *
+ * En tête d'étape, sur une ligne : la proposition doit se lire **avant** le
+ * premier champ, sans quoi elle arriverait après le geste qu'elle évite. Le ton
+ * atténué et la taille réduite la tiennent sous le titre de l'étape — c'est une
+ * alternative offerte, pas l'action de l'écran : la réservation sans compte
+ * reste le chemin par défaut (CDC §1.4), et rien ici ne la retarde.
+ */
+.spa-booking__signin {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  line-height: var(--spa-line-height-normal);
+}
+
+/*
+ * L'identité que le compte connaît, résumée plutôt que redemandée (#1050).
+ *
+ * ## Ce que l'audit a relevé
+ *
+ * *« Connectée en tant qu'Alice Marchand, l'étape "Vos coordonnées" s'ouvre sur
+ * cinq champs vides : prénom, nom et e-mail que le compte connaît sont à
+ * retaper »* (audit `d20260918-1`, critère `ds:standard`). `BM-COMPTE-01`
+ * demande que la cliente connectée le sache ; le retaper est exactement le
+ * contraire.
+ *
+ * ## Pourquoi un encart et non deux champs préremplis en lecture seule
+ *
+ * Un champ désactivé reste un champ : il occupe la même hauteur, porte le même
+ * libellé, et se lit comme une saisie à faire. L'encart dit une phrase — « au
+ * nom de X » — et range la correction derrière un bouton, ce qui est la forme
+ * que le motif prend chez les plateformes citées. `surface-sunken` et la
+ * bordure sont celles de `.spa-consent__notice` ci-dessous : deux blocs qui
+ * informent, un seul vocabulaire.
+ *
+ * `wrap` et non une ligne fixe : à 360 px, « Réservé au nom de Marie-Christine
+ * Andriamanantena » et le bouton ne tiennent pas côte à côte, et le bouton
+ * passe dessous plutôt que de comprimer le nom.
+ */
+.spa-booking__identity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-4);
+  background: var(--spa-color-surface-sunken);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-md);
+}
+
+.spa-booking__identity-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  /* Le nom peut être long : il prend la place disponible et le bouton garde la
+   * sienne, au lieu que la ligne déborde. */
+  min-inline-size: 0;
+}
+
+/* Le libellé annonce la nature du fait, comme un `<dt>` de récapitulatif : même
+ * répartition de ton que `.spa-booking__recap-term` et sa valeur. */
+.spa-booking__identity-label {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-booking__identity-name {
+  margin: 0;
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+}
+
+/*
+ * Prénom et nom sur une ligne dès 30 rem (#1050).
+ *
+ * *« Les champs sont empilés pleine largeur même à 1280 px »* — deux champs de
+ * huit caractères occupaient chacun toute la colonne, et l'étape s'allongeait
+ * d'autant. Ce sont les deux seuls du formulaire à se ranger ainsi : l'adresse
+ * e-mail, le téléphone et le mot au salon gardent la largeur pleine, parce que
+ * leur contenu la remplit.
+ *
+ * Le seuil est celui que la feuille emploie déjà pour les mêmes raisons
+ * (`.spa-booking__service-aside`, `.spa-booking__recap`) : au pouce, deux champs
+ * côte à côte feraient deux colonnes de quatre caractères.
+ *
+ * `hidden` ferme le groupe entier quand l'identité est résumée. La règle qui
+ * suit est nécessaire : `display: grid` l'emporterait sur le `display: none`
+ * que la feuille de l'agent utilisateur attache à l'attribut, et les deux champs
+ * resteraient visibles sous l'encart censé les remplacer.
+ */
+.spa-booking__names {
+  display: grid;
+  gap: var(--spa-space-4);
+}
+
+.spa-booking__names[hidden] {
+  display: none;
+}
+
+@media (min-width: 30rem) {
+  .spa-booking__names {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
 /* --- Rubriques et lignes de prestation, étape 1 ----------------------------- */
 
 /*
@@ -1535,13 +1646,37 @@
  * `.spa-account__form` sont deux colonnes flex au même `gap`, et le bloc s'y
  * pose à l'identique.
  *
+ * ## Ce que #1050 y change : deux blocs au lieu d'un
+ *
+ * Le conteneur ne porte plus ni fond ni cadre — il aligne l'encart
+ * d'information et la case, qui sont deux choses distinctes : ce qu'on lit, et
+ * ce qu'on engage (`BM-TUNNEL-06`, et l'en-tête de `ConsentField`). Le fond
+ * creusé est descendu d'un cran, sur `.spa-consent__notice`.
+ *
+ * L'interstice passe de `2` à `3` : il sépare désormais deux blocs, là où il
+ * séparait des lignes d'un même pavé.
+ */
+.spa-consent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+}
+
+/*
+ * L'encart d'information — ce qu'il faut avoir lu avant de cocher.
+ *
  * ## Pourquoi un encart et non du texte au fil du formulaire
  *
  * Le fond `surface-sunken` et la bordure le détachent de la suite des champs :
  * ce n'est pas une saisie de plus, c'est ce qu'il faut avoir lu avant de
  * soumettre. La hiérarchie le dit avant la lecture (skill `web-frontend` §6).
+ *
+ * C'est le rôle que `.spa-consent` tenait jusqu'à #1050, la case en moins. Le
+ * pavé faisait alors *« huit lignes sur fond gris »* au-dessus du bouton de
+ * l'étape (audit `d20260918-1`) : il en fait deux, la phrase ayant été resserrée
+ * et le geste sorti.
  */
-.spa-consent {
+.spa-consent__notice {
   display: flex;
   flex-direction: column;
   gap: var(--spa-space-2);
