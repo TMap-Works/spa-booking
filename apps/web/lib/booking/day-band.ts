@@ -101,8 +101,12 @@ function lastStart(length: number): number {
  * Trois sources, dans cet ordre :
  *
  * 1. `from` — la journée que les chevrons ont posée en tête de bande. Elle n'est
- *    retenue que si elle appartient encore à la plage : un changement de mois la
- *    laisse en arrière, et la bande repart alors de son point de départ naturel.
+ *    retenue que si elle appartient encore à la plage : une tête laissée en
+ *    arrière par un changement de mois est ignorée, et la bande repart alors de
+ *    son point de départ naturel. C'est ce qui permet au chevron qui franchit le
+ *    mois de poser sa tête d'entrée (`bandEntryDate`) **dans le même geste** que
+ *    le changement de mois, sans avoir à attendre que la nouvelle plage soit
+ *    chargée : une tête qui n'y tomberait pas ne ferait rien de mal.
  * 2. `focus` — la journée déjà retenue, quand on rouvre l'étape sur un créneau
  *    choisi (#947) ou qu'on revient d'un report. La bande doit s'ouvrir sur
  *    **elle**, pas sur le premier jour du mois.
@@ -136,6 +140,53 @@ export function bandStart(
   }
 
   return wanted < BAND_DAYS ? 0 : Math.min(wanted, last);
+}
+
+/**
+ * La journée à poser en tête de bande en entrant dans le mois voisin — celle de
+ * la fenêtre qui **touche** celle qu'on quitte.
+ *
+ * Les deux chevrons doivent être **inverses l'un de l'autre** : `›` puis `‹`
+ * ramène là où l'on était, et réciproquement. La journée contiguë n'est pourtant
+ * pas à la même place dans les deux sens.
+ *
+ * - `›` sort par la fin du mois : la journée contiguë est le **premier** jour
+ *   réservable du suivant, et la bande s'ouvre sur sa première fenêtre.
+ * - `‹` sort par le début du mois : la journée contiguë est le **dernier** jour
+ *   du précédent, et la bande s'ouvre donc sur sa **dernière** fenêtre.
+ *
+ * Repartir du 1er dans les deux sens sautait tout ce qui séparait ce 1er de la
+ * fin du mois. Avec des bornes ouvertes au 5 septembre, avancer jusqu'à octobre
+ * puis reculer d'un cran ramenait au 5–18 septembre, en passant le 19–30 par
+ * dessus bord (#1084).
+ *
+ * ## Pourquoi `›` nomme le 1er plutôt que de laisser la bande se placer seule
+ *
+ * Laissée à elle-même (`bandStart` sans tête posée), la bande suit
+ * `BM-CRENEAU-02` et se décale sur la première journée qui a des créneaux. C'est
+ * la règle du **premier affichage** — *« la cliente ne tombe jamais sur un écran
+ * vide »* —, et elle n'a pas à s'appliquer à un geste délibéré : un mois dont la
+ * première quinzaine est pleine ferait alors atterrir `›` trois semaines plus
+ * loin, et `‹` ne ramènerait plus d'où l'on vient. La fenêtre contiguë, même
+ * pleine, n'est d'ailleurs pas une impasse : le sélecteur y rend « Complet du…
+ * au… » et le renvoi vers le prochain créneau libre (`BM-CRENEAU-03`).
+ *
+ * `null` ne subsiste donc que pour un mois sans aucune journée réservable — que
+ * le composant n'atteint jamais, `isNavigableMonth` éteignant son chevron.
+ *
+ * Les journées sont calculées (`bandDates`) et non attendues du serveur : le
+ * chevron pose sa tête d'entrée en même temps qu'il demande le mois, bien avant
+ * que la réponse n'arrive.
+ */
+export function bandEntryDate(
+  month: CalendarMonth,
+  bounds: BookingWindow,
+  /** Le sens du chevron, comme dans le composant : `-1` recule, `1` avance. */
+  delta: -1 | 1,
+): CalendarDate | null {
+  const dates = bandDates(month, bounds);
+
+  return (delta < 0 ? dates[lastStart(dates.length)] : dates[0]) ?? null;
 }
 
 /** Les journées effectivement rendues, à partir de `start`. */

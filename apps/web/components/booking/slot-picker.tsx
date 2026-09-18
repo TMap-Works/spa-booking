@@ -232,8 +232,10 @@ export function SlotPicker({
    * La journée posée en tête de bande, quand on l'a fait défiler.
    *
    * `null` — le cas nominal — laisse la bande s'ouvrir d'elle-même sur le premier
-   * jour disponible (`BM-CRENEAU-02`). Elle est remise à `null` à chaque
-   * changement de mois, la plage chargée changeant sous elle.
+   * jour disponible (`BM-CRENEAU-02`). Un changement de mois la reprend : la
+   * plage chargée change sous elle, et c'est celui qui demande le mois qui dit
+   * par où la bande y entre — `null` depuis le calendrier, la fenêtre contiguë
+   * depuis un chevron de la bande (#1084).
    */
   const [bandFrom, setBandFrom] = useState<CalendarDate | null>(null);
   /** Le mois complet est-il ouvert dans son panneau ? — `BM-TUNNEL-12`. */
@@ -534,13 +536,21 @@ export function SlotPicker({
   }, []);
 
   /**
-   * Changer de mois : la plage chargée change sous la bande, qui repart donc de
-   * son point de départ naturel plutôt que de chercher une journée qui n'existe
-   * plus.
+   * Changer de mois : la plage chargée change sous la bande, et c'est
+   * l'appelant du changement qui dit par quelle journée elle y entre.
+   *
+   * `null` par défaut — le point de départ naturel de la bande —, parce que
+   * c'est ce qu'un mois demandé **au calendrier** appelle : on y est allé pour
+   * voir ce mois-là, pas pour reprendre un défilement. Les chevrons de la bande,
+   * eux, nomment la fenêtre contiguë à celle qu'ils quittent (#1084).
+   *
+   * La tête de bande est posée ici et non par un `onFromChange` que le chevron
+   * enverrait juste avant : deux messages pour un seul geste, et c'est le second
+   * qui gagnait — le premier était systématiquement écrasé.
    */
   const goToMonth = useCallback(
-    (target: CalendarMonth) => {
-      setBandFrom(null);
+    (target: CalendarMonth, from: CalendarDate | null = null) => {
+      setBandFrom(from);
       onMonthChange(target);
     },
     [onMonthChange],
