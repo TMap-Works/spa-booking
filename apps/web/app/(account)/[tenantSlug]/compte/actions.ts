@@ -42,6 +42,7 @@ import {
 
 import {
   accountActionAccess,
+  attachPresenceCookie,
   clearSessionCookies,
   readRefreshToken,
   writeSessionCookies,
@@ -194,7 +195,10 @@ export async function updateProfileAction(
   }
 
   try {
-    return { ok: true, data: await updateOwnProfile(access.accessToken, parsed.data) };
+    const updated = await updateOwnProfile(access.accessToken, parsed.data);
+    // L'en-tête du salon salue la cliente par son prénom : il suit la correction.
+    attachPresenceCookie(await cookies(), slug.data, updated);
+    return { ok: true, data: updated };
   } catch (error) {
     return failure(error);
   }

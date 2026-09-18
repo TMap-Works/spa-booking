@@ -37,6 +37,7 @@
 @import './components/calendar.css';
 @import './components/slot-grid.css';
 @import './components/salon.css';
+@import './components/salon-shell.css';
 @import './components/booking.css';
 @import './components/account.css';
 @import './components/icon.css';

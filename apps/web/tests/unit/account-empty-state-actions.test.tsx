@@ -156,7 +156,7 @@ describe("les états vides de l'espace client à la première visite", () => {
 
     const container = await rendreLaPage();
 
-    const vides = [...container.querySelectorAll('.spa-empty-state')];
+    const vides = [...container.querySelectorAll('.spa-empty')];
 
     // Deux blocs vides, c'est la situation de la capture : si une troisième
     // moitié apparaissait un jour, elle tomberait sous la même règle.
@@ -171,7 +171,7 @@ describe("les états vides de l'espace client à la première visite", () => {
 
     const container = await rendreLaPage();
 
-    const accents = container.querySelectorAll('.spa-empty-state .spa-button--accent');
+    const accents = container.querySelectorAll('.spa-empty .spa-button--accent');
 
     expect(accents).toHaveLength(1);
     expect(accents[0]?.textContent).toBe('Prendre rendez-vous');

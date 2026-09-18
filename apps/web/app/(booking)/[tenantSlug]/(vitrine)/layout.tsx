@@ -1,9 +1,12 @@
+import type { PublicTenant } from '@spa/shared';
 import { notFound } from 'next/navigation';
 import type { ReactNode } from 'react';
 
+import { SalonShell } from '@/components/salon/salon-shell';
+import { readAccountPresence } from '@/lib/account-presence';
 import { ApiClientError } from '@/lib/api-client';
 
-import { loadSalonTenant } from '../salon-data';
+import { loadSalonServices, loadSalonTenant, reservationPath } from '../salon-data';
 
 /**
  * Le layout de la vitrine — un 404 avant le squelette (#830).
@@ -29,8 +32,18 @@ import { loadSalonTenant } from '../salon-data';
  * rendre l'encart, avec la sortie vers l'espace client ; la relancer ici la
  * ferait remonter à une frontière d'erreur, qui n'a pas cette phrase à dire.
  *
- * Il ne rend aucune enveloppe : la page porte son propre conteneur
- * (`.spa-salon`) et son propre titre.
+ * ## Le gabarit du salon (#1045)
+ *
+ * L'en-tête et le pied de page du salon sont posés ici plutôt que par la page :
+ * le squelette de chargement et l'écran de reprise, qui vivent sous ce layout,
+ * les ont ainsi dès le premier octet, et rien ne saute à l'arrivée de la page.
+ * Le catalogue est lu par le même loader mémoïsé que la page : « Prendre
+ * rendez-vous » ne s'affiche que s'il y a une prestation à réserver (#773),
+ * sans appel de plus. Une panne du catalogue n'y fait pas obstacle — l'en-tête
+ * garde alors le bouton, comme le fait `generateMetadata`.
+ *
+ * La vitrine ne reçoit pas les jetons de session, bornés à l'espace client :
+ * c'est le cookie de présence qui lui dit qui saluer (`lib/account-presence.ts`).
  */
 
 /** Même raison que la page qu'il enveloppe : l'établissement change sans prévenir. */
@@ -43,14 +56,35 @@ interface VitrineLayoutProps {
 
 export default async function VitrineLayout({ children, params }: VitrineLayoutProps) {
   const { tenantSlug } = await params;
+  // Le repli couvre toute la chaîne — une lecture qui échoue avant même de
+  // rendre sa promesse, une réponse inattendue — et la promesse ne rejette
+  // jamais : quand `notFound()` lève plus bas, personne ne l'attendra, et un
+  // rejet resté sans preneur serait une erreur non gérée.
+  const bookable = Promise.resolve(tenantSlug)
+    .then(loadSalonServices)
+    .then((services) => services.length > 0)
+    .catch(() => true);
 
+  let tenant: PublicTenant | null = null;
   try {
-    await loadSalonTenant(tenantSlug);
+    tenant = await loadSalonTenant(tenantSlug);
   } catch (error) {
     if (error instanceof ApiClientError && error.status === 404) {
       notFound();
     }
   }
 
-  return children;
+  const presence = await readAccountPresence();
+
+  return (
+    <SalonShell
+      tenantSlug={tenantSlug}
+      tenant={tenant}
+      signedIn={presence !== null}
+      presence={presence}
+      bookingHref={(await bookable) ? reservationPath(tenantSlug) : null}
+    >
+      {children}
+    </SalonShell>
+  );
 }

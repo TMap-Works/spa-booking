@@ -7,6 +7,7 @@ import type {
 import Link from 'next/link';
 
 import type { ButtonVariant } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
 
 import { AppointmentCard } from './appointment-card';
 
@@ -69,20 +70,21 @@ export function AppointmentList({
 }: AppointmentListProps) {
   if (appointments.length === 0) {
     return (
-      <div className="spa-empty-state">
-        <p className="spa-empty-state__title">{emptyTitle}</p>
-        <p className="spa-empty-state__description">{emptyDescription}</p>
-        {/*
-          Un lien et non un bouton : c'est une **destination**, elle s'ouvre dans
-          un onglet et se copie. Posé directement dans `.spa-empty-state`, qui
-          est déjà une colonne centrée avec son écart — même motif que l'état
-          vide du planning (#788), et aucune classe nouvelle à styler, donc
-          aucun style mort à faire vivre par une maquette.
-        */}
-        <Link className={`spa-button spa-button--${emptyAction.variant}`} href={emptyAction.href}>
-          <span className="spa-button__label">{emptyAction.label}</span>
-        </Link>
-      </div>
+      // L'état vide du design system (#1044) : un pictogramme qui dit l'objet
+      // absent, le titre, la phrase, et la sortie. L'action est un lien et non
+      // un bouton : c'est une **destination**, elle s'ouvre dans un onglet et se
+      // copie.
+      <EmptyState
+        icon={scope === 'upcoming' ? 'calendar' : 'clock'}
+        title={emptyTitle}
+        action={
+          <Link className={`spa-button spa-button--${emptyAction.variant}`} href={emptyAction.href}>
+            <span className="spa-button__label">{emptyAction.label}</span>
+          </Link>
+        }
+      >
+        {emptyDescription}
+      </EmptyState>
     );
   }
 

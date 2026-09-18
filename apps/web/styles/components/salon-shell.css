@@ -1,0 +1,380 @@
+/*
+ * Gabarit public du salon — #1045
+ * =============================================================================
+ *
+ * `components/salon/salon-shell.tsx` et `account-entry.tsx` : l'en-tête collant,
+ * le menu du compte et le pied de page que partagent la vitrine, l'espace
+ * client et la politique de données.
+ *
+ * Une seule mesure pour les trois bandes : 72 rem de contenu, gouttière de
+ * 16 px à 360 px et de 32 px à partir de 48 rem. Le contenu de chaque écran
+ * garde sa propre largeur de lecture à l'intérieur.
+ */
+
+.spa-shell {
+  /* La gouttière commune aux trois bandes : l'en-tête, le contenu et le pied
+   * alignent leur bord gauche. */
+  --shell-gutter: var(--spa-space-4);
+
+  display: flex;
+  flex-direction: column;
+  min-block-size: 100dvh;
+  background-color: var(--spa-color-surface);
+}
+
+@media (min-width: 48rem) {
+  .spa-shell {
+    --shell-gutter: var(--spa-space-8);
+  }
+}
+
+.spa-shell__body {
+  flex: 1 0 auto;
+}
+
+/* --- Lien d'évitement -------------------------------------------------------- */
+
+.spa-shell__skip {
+  position: absolute;
+  inset-block-start: var(--spa-space-2);
+  inset-inline-start: var(--spa-space-2);
+  z-index: var(--spa-z-notification);
+  padding: var(--spa-space-2) var(--spa-space-4);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-surface);
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-semibold);
+  box-shadow: var(--spa-shadow-md);
+  translate: 0 -200%;
+}
+
+.spa-shell__skip:focus-visible {
+  translate: 0 0;
+}
+
+/* --- En-tête ---------------------------------------------------------------- */
+
+.spa-shell__header {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--spa-z-sticky);
+  background-color: var(--spa-color-surface);
+  border-block-end: 1px solid var(--spa-color-border);
+}
+
+.spa-shell__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spa-space-3);
+  max-inline-size: 72rem;
+  min-block-size: 4rem;
+  margin-inline: auto;
+  padding-inline: var(--shell-gutter);
+}
+
+.spa-shell__brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  min-inline-size: 0;
+  min-block-size: var(--spa-target-min-size);
+  color: var(--spa-color-text);
+  text-decoration: none;
+}
+
+.spa-shell__salon {
+  overflow: hidden;
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-bold);
+  letter-spacing: var(--spa-letter-spacing-tight);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spa-shell__brand:hover .spa-shell__salon {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.spa-shell__actions {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: var(--spa-space-2);
+}
+
+/* Au pouce, l'en-tête tient sur une ligne : le rendez-vous se prend depuis
+ * l'écran, dont c'est le bouton plein. */
+.spa-shell__cta {
+  display: none;
+}
+
+@media (min-width: 48rem) {
+  .spa-shell__cta {
+    display: inline-flex;
+  }
+}
+
+/* --- Entrée du compte -------------------------------------------------------- */
+
+.spa-account-entry,
+.spa-account-menu__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-3);
+  border: 0;
+  border-radius: var(--spa-radius-full);
+  background: transparent;
+  color: var(--spa-color-text);
+  font: inherit;
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.spa-account-entry:hover,
+.spa-account-menu__trigger:hover,
+.spa-account-menu__trigger[aria-expanded='true'] {
+  background-color: var(--spa-color-surface-sunken);
+}
+
+.spa-account-menu__trigger {
+  padding-inline-start: var(--spa-space-1);
+}
+
+.spa-account-menu__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--spa-space-8);
+  block-size: var(--spa-space-8);
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+}
+
+.spa-account-menu__chevron {
+  color: var(--spa-color-text-muted);
+  transition: rotate var(--spa-duration-fast) var(--spa-easing-standard);
+}
+
+.spa-account-menu__trigger[aria-expanded='true'] .spa-account-menu__chevron {
+  rotate: 180deg;
+}
+
+.spa-account-menu {
+  position: relative;
+}
+
+.spa-account-menu__panel {
+  position: absolute;
+  inset-block-start: calc(100% + var(--spa-space-2));
+  inset-inline-end: 0;
+  z-index: var(--spa-z-modal);
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 16rem;
+  padding: var(--spa-space-2);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-lg);
+  background-color: var(--spa-color-surface);
+  box-shadow: var(--spa-shadow-lg);
+}
+
+.spa-account-menu__panel[hidden] {
+  display: none;
+}
+
+.spa-account-menu__who {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin: 0 0 var(--spa-space-2);
+  padding: var(--spa-space-2) var(--spa-space-3) var(--spa-space-3);
+  border-block-end: 1px solid var(--spa-color-border);
+}
+
+.spa-account-menu__who-name {
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-account-menu__who-hint {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-account-menu__list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-account-menu__link {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-3);
+  border-radius: var(--spa-radius-md);
+  color: var(--spa-color-text);
+  text-decoration: none;
+}
+
+.spa-account-menu__link .spa-icon {
+  color: var(--spa-color-text-muted);
+}
+
+.spa-account-menu__link:hover {
+  background-color: var(--spa-color-surface-sunken);
+}
+
+.spa-account-menu__link[aria-current='page'] {
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-account-menu__link[aria-current='page'] .spa-icon {
+  color: var(--spa-color-accent-text);
+}
+
+.spa-account-menu__extra {
+  margin-block-start: var(--spa-space-2);
+  padding-block-start: var(--spa-space-2);
+  border-block-start: 1px solid var(--spa-color-border);
+}
+
+.spa-account-menu__extra .spa-button {
+  justify-content: flex-start;
+  inline-size: 100%;
+  padding-inline: var(--spa-space-3);
+}
+
+/* --- Pied de page ------------------------------------------------------------ */
+
+.spa-shell__footer {
+  margin-block-start: var(--spa-space-16);
+  padding: var(--spa-space-10) var(--shell-gutter) var(--spa-space-6);
+  border-block-start: 1px solid var(--spa-color-border);
+  background-color: var(--spa-color-surface-raised);
+  color: var(--spa-color-text-muted);
+  font-size: var(--spa-font-size-sm);
+}
+
+.spa-shell__footer-grid {
+  display: grid;
+  gap: var(--spa-space-8);
+  max-inline-size: calc(72rem - 2 * var(--shell-gutter));
+  margin-inline: auto;
+}
+
+@media (min-width: 48rem) {
+  .spa-shell__footer-grid {
+    grid-template-columns: 1.4fr 1fr 1fr;
+  }
+}
+
+.spa-shell__footer-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+}
+
+.spa-shell__footer-salon {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-3);
+  margin: 0;
+  color: var(--spa-color-text);
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-bold);
+}
+
+.spa-shell__footer-address {
+  display: flex;
+  flex-direction: column;
+  font-style: normal;
+  line-height: var(--spa-line-height-normal);
+}
+
+.spa-shell__footer-title {
+  margin: 0;
+  color: var(--spa-color-text);
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+}
+
+.spa-shell__footer-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spa-shell__footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+  min-block-size: var(--spa-target-min-size);
+  color: var(--spa-color-text-muted);
+  text-decoration: none;
+}
+
+.spa-shell__footer-link:hover {
+  color: var(--spa-color-accent-text);
+  text-decoration: underline;
+}
+
+.spa-shell__legal {
+  max-inline-size: calc(72rem - 2 * var(--shell-gutter));
+  margin: var(--spa-space-8) auto 0;
+  padding-block-start: var(--spa-space-4);
+  border-block-start: 1px solid var(--spa-color-border);
+  font-size: var(--spa-font-size-xs);
+}
+
+.spa-shell__legal a {
+  color: var(--spa-color-text-muted);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+/* --- Pages du salon dans le gabarit ------------------------------------------- */
+
+/*
+ * La vitrine et la politique de données s'alignent sur l'en-tête : même
+ * largeur, même gouttière, et le bord gauche du titre tombe sous le monogramme.
+ * La mesure de lecture reste tenue par les paragraphes eux-mêmes
+ * (`.spa-salon__lede`, 44 rem).
+ */
+.spa-shell .spa-salon {
+  max-inline-size: 72rem;
+  padding-inline: var(--shell-gutter);
+}
+
+/* --- Écrans d'identification dans le gabarit ----------------------------------- */
+
+/*
+ * Le cadre de connexion occupait toute la fenêtre à lui seul (`auth.css`) ; sous
+ * l'en-tête du salon, il reprend la hauteur de son contenu. Le cadre du
+ * back-office, qui n'est pas dans ce gabarit, n'en est pas affecté.
+ */
+.spa-shell .spa-auth {
+  min-block-size: auto;
+  padding-block: var(--spa-space-8) 0;
+  background: none;
+}
+
+@media (min-width: 48rem) {
+  .spa-shell .spa-auth {
+    padding-block-start: var(--spa-space-12);
+  }
+}

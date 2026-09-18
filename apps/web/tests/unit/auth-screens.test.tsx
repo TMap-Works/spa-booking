@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { PUBLIC_EXIT_LABELS } from '@/components/salon/public-exits';
+import { PLATFORM_NAME } from '@/lib/platform';
 
 import { tenant } from './fixtures';
 
@@ -87,8 +88,11 @@ describe('espace client, sans session', () => {
   it('accueille dans le cadre : le salon, l’espace, puis l’écran', async () => {
     const page = await rendre();
 
-    expect(page.querySelector('.spa-auth--client')).not.toBeNull();
-    expect(screen.getByText(tenant.name)).toBeDefined();
+    const cadre = page.querySelector<HTMLElement>('.spa-auth--client');
+    expect(cadre).not.toBeNull();
+    // Le nom du salon est aussi dans l'en-tête et le pied du gabarit (#1045) :
+    // c'est dans le cadre qu'on le cherche.
+    expect(within(cadre as HTMLElement).getByText(tenant.name)).toBeDefined();
     expect(screen.getByRole('heading', { level: 1, name: 'Mon compte' })).toBeDefined();
 
     // L'écran reste servi, dans le repère du contenu que le lien d'évitement vise.
@@ -99,20 +103,24 @@ describe('espace client, sans session', () => {
   it('propose des chemins de retour, et non l’espace qui ramène ici', async () => {
     await rendre();
 
-    const sorties = screen.getByRole('navigation', { name: 'Autres pages' });
+    // Depuis #1045, les chemins de retour sont ceux du pied de page du salon, et
+    // non plus une rangée de liens soulignés sous le cadre.
+    const sorties = screen.getByRole('navigation', { name: 'Pages du salon' });
     expect(
       within(sorties)
         .getByRole('link', { name: PUBLIC_EXIT_LABELS.reservation })
         .getAttribute('href'),
     ).toBe(`/${tenant.slug}/reservation`);
     expect(
-      within(sorties).getByRole('link', { name: PUBLIC_EXIT_LABELS.vitrine }).getAttribute('href'),
+      within(sorties).getByRole('link', { name: 'Prestations et tarifs' }).getAttribute('href'),
     ).toBe(`/${tenant.slug}`);
-    expect(within(sorties).getByRole('link', { name: /^Accueil/ }).getAttribute('href')).toBe('/');
+    const pied = document.querySelector<HTMLElement>('footer.spa-shell__footer');
+    expect(within(pied as HTMLElement).getByRole('link', { name: PLATFORM_NAME }).getAttribute('href')).toBe('/');
     // La sortie qu'on n'offre pas est celle de l'espace client lui-même, quel que
-    // soit le nom que le registre lui donne — « Mon compte » depuis #749 : elle
-    // ramènerait à cet écran même.
+    // soit son nom — elle ramènerait à cet écran même (#749). L'en-tête efface
+    // « Se connecter » sur la connexion, et le pied ne nomme pas l'espace.
     expect(screen.queryByRole('link', { name: PUBLIC_EXIT_LABELS.compte })).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Se connecter' })).toBeNull();
   });
 
   it('ne peint toujours pas la barre du compte', async () => {

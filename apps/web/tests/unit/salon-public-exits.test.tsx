@@ -1,6 +1,7 @@
 import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import VitrineLayout from '@/app/(booking)/[tenantSlug]/(vitrine)/layout';
 import SalonPage from '@/app/(booking)/[tenantSlug]/(vitrine)/page';
 import BookingLayout from '@/app/(booking)/[tenantSlug]/reservation/layout';
 import { ApiClientError } from '@/lib/api-client';
@@ -37,10 +38,18 @@ import { service, tenant } from './fixtures';
  *   (`tests/e2e/support/scene.ts`), qui clique ce lien par son nom.
  * - **La sortie survit à la panne** : l'écran d'erreur du catalogue garde le
  *   lien, sans quoi une API injoignable enfermerait la visiteuse.
+ *
+ * ## Depuis #1045 : l'en-tête du salon
+ *
+ * La vitrine ne rend plus sa propre barre « Mon compte » : l'accès au compte
+ * est dans l'en-tête du gabarit du salon, posé par le layout — « Se connecter »
+ * sans session, le prénom et son menu avec. C'est donc le layout et la page,
+ * ensemble, que cette suite rend.
  */
 
 const fetchPublicServices = vi.fn();
 const fetchPublicTenant = vi.fn();
+const readAccountPresence = vi.fn();
 
 // Le module réel est repris et seules les lectures sont remplacées : `salon-data`
 // mémoïse par `cache()` de React, et `ApiClientError` doit rester la vraie classe
@@ -51,55 +60,77 @@ vi.mock('@/lib/api-client', async (importOriginal) => ({
   fetchPublicTenant: (...args: unknown[]) => fetchPublicTenant(...args),
 }));
 
+vi.mock('@/lib/account-presence', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/account-presence')>()),
+  readAccountPresence: () => readAccountPresence(),
+}));
+
+vi.mock('next/navigation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('next/navigation')>()),
+  usePathname: () => `/${tenant.slug}`,
+}));
+
 function servir(): void {
   fetchPublicTenant.mockResolvedValue(tenant);
   fetchPublicServices.mockResolvedValue([service]);
 }
 
+/** L'en-tête du gabarit du salon — la page a aussi son `<header>`, dans `<main>`. */
+function enTete(): HTMLElement {
+  const header = document.querySelector<HTMLElement>('header.spa-shell__header');
+  if (header === null) {
+    throw new Error('le layout de la vitrine doit poser l’en-tête du salon');
+  }
+  return header;
+}
+
 async function rendreLaVitrine(): Promise<void> {
-  render(await SalonPage({ params: Promise.resolve({ tenantSlug: tenant.slug }) }));
+  const params = Promise.resolve({ tenantSlug: tenant.slug });
+  render(await VitrineLayout({ children: await SalonPage({ params }), params }));
 }
 
 afterEach(() => {
   cleanup();
   fetchPublicServices.mockReset();
   fetchPublicTenant.mockReset();
+  readAccountPresence.mockReset();
 });
 
 describe("l'accès à l'espace client depuis la vitrine", () => {
-  it('offre « Mon compte » vers le compte de l’établissement', async () => {
+  it('offre « Se connecter » dans l’en-tête du salon, hors du contenu', async () => {
     servir();
+    readAccountPresence.mockResolvedValue(null);
 
     await rendreLaVitrine();
 
-    const acces = screen.getByRole('link', { name: 'Mon compte' });
-
-    // `/compte` redirige lui-même vers la connexion sans session : un seul
-    // libellé sert la cliente inscrite et celle qui ne l'est pas.
-    expect(acces.getAttribute('href')).toBe(`/${tenant.slug}/compte`);
-  });
-
-  it('en fait un repère de navigation, posé hors du contenu', async () => {
-    servir();
-
-    await rendreLaVitrine();
-
-    const navigation = screen.getByRole('navigation');
-
-    expect(within(navigation).getByRole('link', { name: 'Mon compte' })).toBeDefined();
+    const acces = within(enTete()).getByRole('link', { name: 'Se connecter' });
+    expect(acces.getAttribute('href')).toBe(`/${tenant.slug}/compte/connexion`);
     // Hors du `<main>` : c'est une navigation de site, pas une ligne du
-    // catalogue, et un lecteur d'écran doit l'atteindre par sa liste de repères.
-    expect(
-      within(screen.getByRole('main')).queryByRole('link', { name: 'Mon compte' }),
-    ).toBeNull();
+    // catalogue, et un lecteur d'écran l'atteint par le repère de l'en-tête.
+    expect(within(screen.getByRole('main')).queryByRole('link', { name: 'Se connecter' })).toBeNull();
   });
 
-  it('laisse un seul « Prendre rendez-vous » — le parcours E2E clique celui-là', async () => {
+  it('salue la cliente connectée, sans lire ses jetons', async () => {
     servir();
+    readAccountPresence.mockResolvedValue({ firstName: 'Alice', lastName: 'Marchand' });
 
     await rendreLaVitrine();
 
-    expect(screen.getAllByRole('link', { name: 'Prendre rendez-vous' })).toHaveLength(1);
+    expect(
+      within(enTete()).getByRole('button', { name: /Mon compte : Alice/ }),
+    ).toBeDefined();
+    expect(screen.queryByRole('link', { name: 'Se connecter' })).toBeNull();
+  });
+
+  it('laisse un seul « Prendre rendez-vous » dans le contenu — le parcours E2E clique celui-là', async () => {
+    servir();
+    readAccountPresence.mockResolvedValue(null);
+
+    await rendreLaVitrine();
+
+    expect(
+      within(screen.getByRole('main')).getAllByRole('link', { name: 'Prendre rendez-vous' }),
+    ).toHaveLength(1);
   });
 
   it('garde la sortie quand le catalogue ne se charge pas', async () => {
@@ -111,11 +142,12 @@ describe("l'accès à l'espace client depuis la vitrine", () => {
     fetchPublicServices.mockRejectedValue(
       new ApiClientError('UPSTREAM_UNAVAILABLE', 'API injoignable', 503),
     );
+    readAccountPresence.mockResolvedValue(null);
 
     await rendreLaVitrine();
 
-    expect(screen.getByRole('link', { name: 'Mon compte' }).getAttribute('href')).toBe(
-      `/${tenant.slug}/compte`,
+    expect(screen.getByRole('link', { name: 'Se connecter' }).getAttribute('href')).toBe(
+      `/${tenant.slug}/compte/connexion`,
     );
   });
 });
