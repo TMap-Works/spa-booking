@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import type { LegalIdType } from '@spa/shared';
 
 import {
   PRISMA,
@@ -67,9 +68,27 @@ export interface PublicTenantRecord {
   openingHours: OpeningHourRecord[];
 }
 
-/** La vue back-office : la vitrine, plus l'état d'activation (#343). */
+/**
+ * La vue back-office : la vitrine, plus l'état d'activation (#343), plus
+ * l'identité légale et le taux de taxe que le ticket de caisse imprime (#913).
+ *
+ * Ces sept colonnes n'appartiennent **pas** à `PublicTenantRecord`, et c'est
+ * tout l'intérêt de la distinction entre les deux projections : un SIRET, un
+ * numéro de TVA et un taux de taxe sont des données de pièce comptable, pas de
+ * vitrine. Les poser plus haut les aurait servies sans authentification à qui
+ * connaît le slug du salon.
+ */
 export interface TenantRecord extends PublicTenantRecord {
   isActive: boolean;
+  legalName: string | null;
+  legalIdType: LegalIdType | null;
+  legalId: string | null;
+  vatNumber: string | null;
+  receiptFooter: string | null;
+  /** `NOT NULL` avec défaut `TIC` — toute vente close doit avoir un numéro. */
+  receiptPrefix: string;
+  /** `NOT NULL` avec défaut `0` — en points de base, jamais un flottant. */
+  taxRateBps: number;
 }
 
 /**
@@ -108,6 +127,17 @@ export interface TenantSettingsChanges {
   postalCode?: string | null;
   city?: string | null;
   countryCode?: string | null;
+  // Identité légale et fiscalité (#913). `legalIdType` et `legalId` s'écrivent
+  // **toujours ensemble** : la contrainte `tenants_legal_id_completeness_check`
+  // refuse l'un sans l'autre, et c'est le service qui compose la paire à partir
+  // de la charge utile et de l'état enregistré.
+  legalName?: string | null;
+  legalIdType?: LegalIdType | null;
+  legalId?: string | null;
+  vatNumber?: string | null;
+  receiptFooter?: string | null;
+  receiptPrefix?: string;
+  taxRateBps?: number;
 }
 
 export interface SessionRecord {
@@ -267,8 +297,24 @@ const PUBLIC_TENANT_SELECT = {
   },
 } as const;
 
-/** La vue back-office ajoute le seul champ que le public n'a pas à connaître. */
-const TENANT_SELECT = { ...PUBLIC_TENANT_SELECT, isActive: true } as const;
+/**
+ * La vue back-office ajoute ce que le public n'a pas à connaître : l'état
+ * d'activation, l'identité légale et le taux de taxe (#913).
+ *
+ * Le contraste avec `PUBLIC_TENANT_SELECT` est la garde : un champ ajouté ici
+ * n'atteint jamais la vitrine, et c'est le seul endroit où cela se décide.
+ */
+const TENANT_SELECT = {
+  ...PUBLIC_TENANT_SELECT,
+  isActive: true,
+  legalName: true,
+  legalIdType: true,
+  legalId: true,
+  vatNumber: true,
+  receiptFooter: true,
+  receiptPrefix: true,
+  taxRateBps: true,
+} as const;
 
 /**
  * Charge utile de création **sans** le tenant, tel que le repository l'écrit.
