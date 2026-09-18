@@ -448,14 +448,53 @@ export interface DeskStatusAction {
  * désormais (#754), par `isCancellable` et `cancelDeskAppointmentAction` ; ce
  * qui manquait n'était pas une entrée de plus dans cette table, c'était l'écran.
  *
- * ## Les deux libellés sont **composés**, jamais réécrits (#917)
+ * ## `confirmed` y est entré, et c'était la **première** marche (#973)
+ *
+ * La table n'avait pas d'entrée pour lui, si bien que `deskStatusActions` ne
+ * rendait rien sur un rendez-vous `pending` : le tiroir n'y offrait que
+ * l'annulation, la fermeture et le report, et aucun écran du back-office ne
+ * portait de bouton de confirmation. Or `pending` est l'état où **naît tout
+ * rendez-vous** (`appointments.repository.ts`), et le cycle de vie refuse
+ * `pending → completed` en `INVALID_STATE_TRANSITION` : un rendez-vous que le
+ * salon n'avait pas confirmé ne pouvait donc jamais être marqué honoré ni non
+ * honoré, et le suivi des no-shows (CDC §1.4) lui échappait pour de bon. La
+ * boucle de valeur du produit — « réserver → confirmer → honorer le rendez-vous
+ * → encaisser » (CDC §1.3) — était coupée à son deuxième maillon, du côté du
+ * comptoir.
+ *
+ * Rien d'autre n'a eu à changer : la route est servie depuis #50
+ * (`POST /appointments/:id/status`, seuil `STAFF`), `APPOINTMENT_STATUS_TRANSITIONS`
+ * autorise `pending → confirmed` depuis l'origine, et
+ * `markDeskAppointmentStatusAction` passe n'importe quel statut que
+ * `changeAppointmentStatusRequestSchema` accepte. Il manquait la ligne qui dit
+ * comment nommer le bouton.
+ *
+ * ## Deux libellés sont **composés**, le troisième est **écrit** (#917, #973)
  *
  * Le bouton du no-show disait « Marquer non présenté » quand la pastille juste à
- * côté allait dire « Non honoré », pour la même transition. Les deux se lisent
- * désormais de `lib/appointment-status.ts`, qui est le seul endroit du front où
- * ce vocabulaire s'écrit.
+ * côté allait dire « Non honoré », pour la même transition. `completed` et
+ * `no_show` lisent donc leur mot de `lib/appointment-status.ts`, qui est le seul
+ * endroit du front où ce vocabulaire s'écrit.
+ *
+ * « Confirmer le rendez-vous » ne se compose pas de la même façon, et « Marquer
+ * confirmé » aurait été faux : les deux autres **constatent** ce qui a eu lieu
+ * au salon — la cliente est venue, ou elle n'est pas venue —, là où confirmer est
+ * un **acte** que le comptoir pose à l'instant du clic. Le bouton nomme donc le
+ * geste, exactement comme « Annuler le rendez-vous » à l'autre bout du pied, et
+ * la pastille continue de dire ce qu'il produit — « Confirmé ». Le vocabulaire ne
+ * diverge pas pour autant : c'est le même mot, au verbe plutôt qu'au participe.
  */
 const DESK_STATUS_LABELS: Partial<Record<AppointmentStatus, DeskStatusAction>> = {
+  confirmed: {
+    status: 'confirmed',
+    label: 'Confirmer le rendez-vous',
+    // `neutral`, et non `accent` : le design system réserve l'accent à l'action
+    // principale (`styles/README.md`, « Variantes »), et le pied en porte déjà
+    // une — le report. Deux accents côte à côte ne hiérarchisent plus rien.
+    // C'est aussi la variante de « Marquer honoré », qui est la marche suivante
+    // du même escalier.
+    variant: 'neutral',
+  },
   completed: {
     status: 'completed',
     label: `Marquer ${appointmentStatusLabelInSentence('completed')}`,
@@ -474,8 +513,12 @@ const DESK_STATUS_LABELS: Partial<Record<AppointmentStatus, DeskStatusAction>> =
  * Lues dans `APPOINTMENT_STATUS_TRANSITIONS` du contrat partagé, jamais
  * réécrites : le serveur refuse en `INVALID_STATE_TRANSITION` ce qui n'y figure
  * pas, et un bouton qui mène à un 422 est un bouton qui ment. Un rendez-vous
- * `pending` n'offre donc rien — on ne solde pas un soin qui n'a pas été confirmé
- * —, et un rendez-vous terminal n'offre plus rien du tout.
+ * `pending` n'offre donc que la confirmation — on ne solde pas un soin qui n'a
+ * pas été confirmé (#973) —, et un rendez-vous terminal n'offre plus rien du
+ * tout.
+ *
+ * L'ordre est celui de la table du contrat, et c'est celui dans lequel le pied
+ * du tiroir les rend : les marches se lisent dans le sens où on les monte.
  */
 export function deskStatusActions(status: AppointmentStatus): readonly DeskStatusAction[] {
   return APPOINTMENT_STATUS_TRANSITIONS[status]
@@ -490,7 +533,7 @@ export function deskStatusActions(status: AppointmentStatus): readonly DeskStatu
  * déjà annulé ou marqué non présenté est dans un état **terminal**, et l'API le
  * refuserait en `INVALID_STATE_TRANSITION`. Offrir le bouton quand même serait
  * offrir un 422 — un bouton qui mène à un refus est un bouton qui ment, c'est la
- * règle que `deskStatusActions` applique déjà à ses deux transitions.
+ * règle que `deskStatusActions` applique déjà à ses propres transitions.
  */
 export function isCancellable(status: AppointmentStatus): boolean {
   return canTransitionAppointment(status, 'cancelled');

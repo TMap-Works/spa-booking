@@ -8,19 +8,19 @@
  * **l'absence d'un chemin d'interface**, pas par la commodité. Deux motifs
  * seulement sont admis ici :
  *
- * 1. **Le back-office n'expose pas le geste.** C'est le cas de la confirmation
- *    d'un rendez-vous en attente : `DESK_STATUS_LABELS`
- *    (`apps/web/lib/admin/appointment-desk.ts`) ne connaît que « Marquer honoré »
- *    et « Marquer non honoré », et aucun bouton ne déclenche
- *    `pending → confirmed`. La route, elle, existe et est servie —
- *    `POST /appointments/:id/status`. C'est donc l'IHM qui manque, pas le
- *    produit, et un test E2E n'a pas à combler ce manque en inventant un écran.
+ * 1. **Le back-office n'expose pas le geste.** La route est servie, l'écran
+ *    manque : c'est l'IHM qui fait défaut, pas le produit, et un test E2E n'a
+ *    pas à combler ce manque en inventant un écran.
  *
- *    L'annulation au comptoir relevait du même motif jusqu'à #754, et n'en
- *    relève plus : le pied du tiroir porte l'action, et `front-desk.e2e.ts`
- *    l'exerce à l'écran. Le raccourci a donc été **retiré** plutôt que laissé
- *    disponible — un raccourci qui survit à l'écran qu'il suppléait finit par
- *    être repris par commodité, et le scénario cesse alors d'éprouver l'IHM.
+ *    Aucun raccourci ne relève plus de ce motif aujourd'hui. L'annulation au
+ *    comptoir en relevait jusqu'à #754, la confirmation d'un rendez-vous en
+ *    attente jusqu'à #973 : `DESK_STATUS_LABELS`
+ *    (`apps/web/lib/admin/appointment-desk.ts`) porte désormais `confirmed`
+ *    comme il portait déjà « Marquer honoré » et « Marquer non honoré », et le
+ *    parcours critique confirme au tiroir. Les deux raccourcis ont été
+ *    **retirés** de leur scénario plutôt que laissés disponibles — un raccourci
+ *    qui survit à l'écran qu'il suppléait finit par être repris par commodité,
+ *    et le scénario cesse alors d'éprouver l'IHM.
  * 2. **La mise en situation.** Éprouver le report exige un rendez-vous déjà
  *    posé ; le faire naître par le tunnel complet à chaque test tripleraît la
  *    durée de la suite sans rien éprouver de plus, le tunnel ayant sa propre
@@ -211,11 +211,14 @@ export async function poserRendezVous(
 }
 
 /**
- * Fait avancer un rendez-vous — motif 1 : le tiroir n'offre pas ce passage.
+ * Fait avancer un rendez-vous — mise en situation, motif 2 de l'en-tête.
  *
- * `pending → confirmed` est autorisé par `APPOINTMENT_STATUS_TRANSITIONS`, mais
- * `DESK_STATUS_LABELS` ne le rend pas : un rendez-vous en attente n'affiche
- * aucun bouton de statut. La confirmation du parcours critique passe donc ici.
+ * Le tiroir sait faire ce passage depuis #973, et le parcours critique le fait
+ * **à l'écran** : ce qui reste ici n'est plus la suppléance d'un geste absent,
+ * c'est l'amorçage d'un scénario qui commence ailleurs. Éprouver le no-show
+ * exige un rendez-vous déjà confirmé, et le régler par carte aussi ; les
+ * amener là par deux clics que le parcours critique exerce déjà allongerait la
+ * suite sans rien éprouver de plus.
  */
 export async function changerStatut(
   request: APIRequestContext,

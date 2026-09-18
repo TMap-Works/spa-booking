@@ -216,7 +216,10 @@ test.describe('Comptoir', () => {
     });
     // `no_show` n'est atteignable que depuis `confirmed`
     // (`APPOINTMENT_STATUS_TRANSITIONS`) : un rendez-vous en attente n'offre
-    // aucun bouton de statut, et c'est le produit qui en décide ainsi.
+    // que la confirmation, et c'est le produit qui en décide ainsi. Le passage
+    // est ici une **mise en situation** (motif 2 de `support/api.ts`) : le
+    // bouton « Confirmer le rendez-vous » est exercé à l'écran par le parcours
+    // critique, ce scénario-ci commence après lui.
     await changerStatut(request, jeton, rendezVous.id, 'confirmed');
 
     await test.step('Marquer la cliente non présentée', async () => {
