@@ -398,8 +398,13 @@ output "notification_sms_spend_alarm_threshold_usd" {
 }
 
 output "notification_sms_sender_id" {
-  description = "Nom d'expéditeur posé sur le compte, ou `null`. Le poser ne l'enregistre nulle part — voir `notification_sms_sender_id_registration`."
+  description = "Nom d'expéditeur posé sur le **compte**, ou `null`. La production est le seul environnement à le détenir ; les deux autres en héritent. Le poser ne l'enregistre nulle part — voir `notification_sms_sender_id_registration`."
   value       = one(module.notifications[*].sms_sender_id)
+}
+
+output "notification_sms_publisher_sender_id" {
+  description = "Nom d'expéditeur posé en `SNS_SMS_SENDER_ID` sur le conteneur de l'API, présenté à chaque publication. Même valeur que `notification_sms_sender_id` ici, parce que la production détient les préférences du compte — mais ce sont deux choses distinctes : l'expéditeur d'un message est un attribut de la publication, et c'est ce qui le rend disponible aussi en développement et en recette (#918)."
+  value       = one(module.notifications[*].sms_publisher_sender_id)
 }
 
 output "notification_sms_sender_id_registration" {
@@ -416,8 +421,25 @@ output "notification_sms_sender_id_registration" {
 }
 
 output "notification_sms_publisher_policy_arn" {
-  description = "Politique IAM du droit d'émettre un SMS, à attacher au rôle de tâche de l'API. Elle n'accorde aucun droit sur les réglages SMS du compte : une application capable de relever son propre plafond rendrait le plafond décoratif."
+  description = "Politique IAM du droit d'émettre un SMS, déjà attachée au rôle de tâche de l'API. Elle n'accorde aucun droit sur les réglages SMS du compte : une application capable de relever son propre plafond rendrait le plafond décoratif."
   value       = one(module.notifications[*].sms_publisher_policy_arn)
+}
+
+# --- Canal e-mail sur la tâche de l'API (#918) --------------------------------
+
+output "notification_email_publisher_policy_arn" {
+  description = "Politique IAM du droit d'émettre un e-mail, déjà attachée au rôle de tâche de l'API. Bornée à l'identité de domaine de cet environnement et à son jeu de configuration — jamais `*` : aucune autre identité du compte n'est joignable par elle, et elle n'accorde rien sur les réglages d'envoi ni sur la liste de suppression."
+  value       = one(module.notifications[*].email_publisher_policy_arn)
+}
+
+output "notification_from_email" {
+  description = "Adresse d'expéditeur posée en `SES_FROM_EMAIL` sur le conteneur de l'API. Composée par le module dans le domaine dont SES détient l'identité — une adresse hors de ce domaine ferait refuser chaque envoi. C'est l'adresse que la cliente voit dans l'en-tête `From`."
+  value       = one(module.notifications[*].from_email)
+}
+
+output "notification_email_sender_configured" {
+  description = "Vrai quand l'API a une adresse d'expéditeur **et** le droit d'émettre : le canal e-mail est câblé en déployé. Faux ou nul, chaque e-mail est refusé en 503 avec une ligne `FAILED` motivée — ni confirmation, ni rappel, ni avis d'annulation. Elle fait partie de la liste de vérification du go-live (#83), au même titre que `notification_dispatch_configured`, et elle ne dit ni que le domaine est vérifié (`notification_verified_for_sending_status`), ni que le compte est sorti du bac à sable SES (#590)."
+  value       = one(module.notifications[*].email_sender_configured)
 }
 
 # --- Supervision (#78) --------------------------------------------------------

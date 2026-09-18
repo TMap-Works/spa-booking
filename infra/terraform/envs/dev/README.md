@@ -201,6 +201,24 @@ et la politique `spa-dev-notifications-producer` sur son rôle de tâche : elle
 publie et rend la main, elle n'appelle jamais SES depuis le chemin de requête
 HTTP (CDC §4.8).
 
+Elle reçoit du même geste ce qu'il faut pour **émettre** quand la Lambda lui
+rend la main (#918) :
+
+| Sur le conteneur | Sur le rôle de tâche |
+|---|---|
+| `SES_FROM_EMAIL` — sortie `notification_from_email` | `spa-dev-notifications-email-publisher` — `ses:SendEmail`, borné à l'identité de domaine et au jeu de configuration |
+| `SNS_SMS_SENDER_ID` — sortie `notification_sms_publisher_sender_id` | `spa-dev-notifications-sms-publisher` — `sns:Publish` |
+
+```bash
+terraform output notification_email_sender_configured   # true : l'API peut émettre
+terraform output notification_from_email                # reservations@<notification_domain>
+```
+
+`SNS_SMS_SENDER_ID` n'est posée que si `-var notification_sms_sender_id=<nom>`
+est fourni : sans expéditeur arrêté, l'API refuse le SMS en 503 plutôt que de
+l'émettre depuis un numéro partagé. Le réglage SMS du **compte** — plafond, type
+de message — reste détenu par la production, cet environnement en hérite.
+
 **La Lambda reste en défaut fermé tant que `notification_dispatch_url` n'est pas
 posée.** Ce n'est pas un oubli : la route d'envoi côté API est le périmètre de
 #70, et la terminaison TLS de cet environnement est un certificat auto-signé

@@ -31,6 +31,52 @@ variable "domain" {
   }
 }
 
+variable "from_local_part" {
+  description = <<-EOT
+    Partie gauche de l'adresse d'expéditeur, préfixée à `domain` :
+    `reservations` donne `reservations@{domain}`. C'est l'adresse que la cliente
+    voit dans l'en-tête `From`, et la valeur que l'environnement pose en
+    `SES_FROM_EMAIL` sur le conteneur de l'API — voir la sortie `from_email`.
+
+    Le module la **compose** plutôt que de prendre l'adresse entière, pour une
+    raison de sûreté : SES refuse tout envoi depuis une adresse dont il ne détient
+    pas l'identité, et une adresse entière prise en variable pourrait désigner un
+    autre domaine que celui que ce module vient de vérifier. Composée, elle est
+    dans le domaine par construction.
+
+    `null` retire l'adresse : l'environnement n'expose alors pas `SES_FROM_EMAIL`,
+    et l'API refuse chaque e-mail en 503 en inscrivant sa ligne `FAILED` — le
+    défaut fermé de #799, canal par canal. C'est la seule façon de couper le canal
+    e-mail sans démonter la chaîne, et la sortie `email_sender_configured` le dit.
+  EOT
+  type        = string
+  default     = "reservations"
+
+  validation {
+    condition     = var.from_local_part == null || can(regex("^[a-z0-9._-]{1,63}$", var.from_local_part))
+    error_message = "from_local_part doit être `null` ou une partie locale en minuscules de 1 à 63 caractères — lettres, chiffres, point, tiret et souligné. Ni arobase, ni accent, ni espace : l'adresse est composée par le module, pas fournie entière."
+  }
+
+  # Le jeu de caractères ne suffit pas : c'est la **place** du point qui décide
+  # qu'une adresse est composable. Une partie locale non entre guillemets est un
+  # `dot-atom` (RFC 5322 §3.4.1) — des segments séparés par un point unique, et
+  # jamais de point en tête, en queue ou doublé. `-` et `_`, eux, sont des
+  # caractères ordinaires et n'ont aucune contrainte de position.
+  #
+  # Ce que le contrôle précédent laissait passer, et pourquoi il fallait le
+  # resserrer ici : `no-reply.` ne portait que des caractères autorisés, donc
+  # était accepté ; il composait `no-reply.@{domain}` ; ce dernier passait aussi
+  # le contrôle volontairement lâche de `notifications.config.ts` ; et SES
+  # refusait alors **chaque** envoi en `MessageRejected`, soit une ligne `FAILED`
+  # par confirmation, par rappel et par avis d'annulation. Exactement la panne
+  # muette que la composition de l'adresse par le module existe pour écarter — il
+  # n'y a aucune raison de la découvrir à l'envoi plutôt qu'au plan.
+  validation {
+    condition     = var.from_local_part == null || can(regex("^[a-z0-9][a-z0-9_-]*(\\.[a-z0-9][a-z0-9_-]*)*$", var.from_local_part))
+    error_message = "from_local_part doit commencer par une lettre ou un chiffre, et ne porter de point qu'entre deux segments : `no-reply` et `ne.pas.repondre` conviennent, `no-reply.`, `.reservations` et `ne..pas` non — SES refuserait chaque envoi depuis l'adresse composée, sans qu'aucun réglage ne paraisse manquer."
+  }
+}
+
 variable "mail_from_subdomain" {
   description = <<-EOT
     Étiquette du sous-domaine `MAIL FROM` personnalisé, préfixée à `domain` :

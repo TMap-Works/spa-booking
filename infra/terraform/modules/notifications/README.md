@@ -62,6 +62,7 @@ Périmètre volontairement resserré, et complémentaire d'autres tickets :
 | Alarmes CloudWatch | 8 | Balayage, DLQ, erreurs, retard, refus définitifs, rebonds |
 | Tableau de bord | `spa-{env}-notifications` | **Seulement si `create_dashboard`** |
 | Politique IAM | `spa-{env}-notifications-sms-publisher` | Émettre un SMS ; aucun droit sur les réglages du compte |
+| Politique IAM | `spa-{env}-notifications-email-publisher` | Émettre un e-mail, borné à l'identité de domaine **et** au jeu de configuration |
 | Préférences SMS d'SNS | *sans nom — une par compte et par région* | **Seulement si `manage_sms_account_preferences`** |
 | Alarme CloudWatch | `spa-{env}-notifications-sms-spend` | Dépense SMS du mois — **même condition** |
 
@@ -73,6 +74,11 @@ module "notifications" {
 
   environment = local.environment
   domain      = "mail.exemple.fr"
+
+  # Partie gauche de l'adresse d'expéditeur, composée dans `domain` :
+  # `reservations@mail.exemple.fr`. C'est le défaut ; `null` coupe le canal
+  # e-mail — voir « Le canal e-mail sur la tâche de l'API » plus bas.
+  from_local_part = "reservations"
 
   # Zone servie par Route 53 : le module publie DKIM, SPF et DMARC lui-même.
   # Omettre quand le DNS est ailleurs — voir « Domaine hors Route 53 ».
@@ -989,6 +995,97 @@ n'est pas dans ce module mais dans le contrat partagé : `normalizeToE164` et
 à la saisie et refusent ce qui n'est pas normalisable **sans deviner un pays**.
 Un numéro national compléterait un indicatif au hasard, c'est-à-dire enverrait le
 rappel à quelqu'un d'autre.
+
+## Le canal e-mail sur la tâche de l'API (#918)
+
+Ce module vérifie un domaine, signe les messages, route les rebonds et découple
+l'envoi par une file. Il ne restait plus, pour qu'un e-mail parte réellement, que
+les deux choses dont l'API a besoin **dans son conteneur** : savoir au nom de qui
+écrire, et en avoir le droit. C'est ce que #918 a posé, après que #799 a branché
+les passerelles côté code.
+
+| Ce que l'API reçoit | D'où ça vient | Sans quoi |
+|---|---|---|
+| `SES_FROM_EMAIL` | sortie `from_email` | e-mail refusé en 503, ligne `FAILED` |
+| `SNS_SMS_SENDER_ID` | sortie `sms_publisher_sender_id` | SMS refusé en 503, ligne `FAILED` |
+| `ses:SendEmail` | sortie `email_publisher_policy_arn` | `AccessDenied` au premier envoi |
+| `sns:Publish` | sortie `sms_publisher_policy_arn` | `AccessDenied` au premier SMS |
+
+Les quatre se posent dans les trois environnements, et **depuis ces sorties** :
+une adresse recopiée dans un environnement pourrait désigner un domaine dont SES
+ne détient pas l'identité, et un sender ID recopié dépasser les onze caractères
+qu'SNS accepte — deux contraintes que le module valide déjà.
+
+### L'adresse est composée, jamais fournie entière
+
+`from_local_part` donne la partie gauche ; le module concatène `domain`. Une
+adresse entière prise en variable aurait permis `contact@autre-domaine.fr`, que
+SES refuse puisqu'il n'en détient pas l'identité — et le refus se lit
+`MessageRejected`, pas « adresse hors du domaine vérifié ». Composée, elle est
+dans le domaine par construction.
+
+Elle est composée dans `domain` et non dans le sous-domaine d'enveloppe : le
+`MAIL FROM` est ce que voit le serveur destinataire, l'en-tête `From` est ce que
+voit la cliente, et l'alignement DMARC relâché (`aspf=r`) fait tenir les deux
+ensemble. Écrire l'adresse visible sur `mail.exemple.fr` afficherait le
+sous-domaine technique dans chaque message reçu.
+
+### La politique est bornée à deux ressources, et il en faut deux
+
+```hcl
+actions   = ["ses:SendEmail"]
+resources = [identité de domaine, jeu de configuration]
+```
+
+- **`ses:SendEmail`**, pas `sesv2:SendEmail` : ce préfixe IAM n'existe pas. SES v2
+  partage `ses` avec l'API d'origine. Une politique écrite sur `sesv2:` est
+  acceptée par IAM — qui ne valide pas le nom d'une action — et n'autorise rien.
+- **Les deux ressources**, parce que `ses:SendEmail` porte sur plusieurs types de
+  ressource et qu'IAM autorise alors chaque type séparément. Le jeu de
+  configuration est rattaché à l'identité (`identity.tf`) pour que le routage des
+  rebonds soit indépendant de la discipline de l'appelant : SES l'applique même
+  quand la passerelle ne le nomme pas, si bien qu'un `Resource` réduit à
+  l'identité refuserait chaque envoi.
+- **Jamais `Resource = "*"`.** C'est le pendant du canal SMS, où le joker est
+  inévitable — un `Publish` vers un numéro ne compare `Resource` à aucun ARN — et
+  se paie d'un `Deny` explicite sur les topics. L'e-mail, lui, a de vrais ARN à
+  nommer : il n'y a aucune raison de s'en priver.
+
+Ce qu'elle ne donne pas, et c'est le pendant du refus de `sns:SetSMSAttributes` :
+ni `ses:PutAccountSendingAttributes` — une application qui pourrait réactiver son
+propre envoi suspendu —, ni `ses:PutSuppressedDestination` /
+`ses:DeleteSuppressedDestination`, la liste de suppression du compte étant ce qui
+protège la réputation du domaine même d'un bug applicatif (skill notifications
+§4).
+
+### Pas de condition sur l'adresse, délibérément
+
+Le module connaît l'adresse exacte et pourrait l'épingler par une condition
+`ses:FromAddress`. Il ne le fait pas : l'identité est **de domaine** et non
+d'adresse, parce que le MVP envoie au nom de chaque salon et qu'une identité de
+domaine autorise n'importe quelle boîte du domaine sans nouvelle vérification à
+chaque tenant ajouté (`identity.tf`). Épingler une adresse retirerait exactement
+la liberté pour laquelle l'identité a été choisie — et la retirerait en IAM, là
+où la panne se lit `AccessDenied` et non « expéditeur non vérifié ». Le domaine,
+lui, est bien borné : c'est l'ARN de l'identité qui le fait.
+
+### Couper le canal sans démonter la chaîne
+
+`from_local_part = null` retire l'adresse : l'environnement n'expose pas
+`SES_FROM_EMAIL`, l'API refuse chaque e-mail en 503 et inscrit une ligne `FAILED`
+motivée, donc **hors** de l'index d'idempotence — le message redevient envoyable
+le jour où l'adresse est posée. Même régime que `dispatch_url`, et
+`email_sender_configured` le dit sans qu'il faille lire un plan.
+
+La politique, elle, est créée dans tous les cas, comme celle du canal SMS l'est
+même là où `manage_sms_account_preferences` vaut faux : le droit d'émettre est
+propre à l'environnement, et rien ne se gagne à le faire dépendre d'un réglage
+qui peut changer sans lui.
+
+Ce que `email_sender_configured` **ne** dit pas : ni que le domaine est vérifié —
+c'est `verified_for_sending_status`, asynchrone —, ni que le compte est sorti du
+bac à sable SES, qui reste une démarche humaine (voir « Sortie du bac à sable
+SES » plus haut, et #590).
 
 ## Coût
 
