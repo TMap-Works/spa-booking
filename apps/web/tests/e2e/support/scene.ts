@@ -89,7 +89,7 @@ export interface Reservation {
 }
 
 /**
- * Les cartes de prestation du tunnel — un `radiogroup` depuis #741.
+ * Les lignes de prestation du tunnel — un `radiogroup` depuis #741.
  *
  * L'étape 1 était un `<select>`, et le désigner demandait un `getByLabel`
  * **exact** : la vitrine porte une section dont `aria-labelledby` vise le titre
@@ -101,9 +101,31 @@ export interface Reservation {
  * Le rôle règle la question à la racine : une `<section>` n'est pas un `radio`,
  * et le groupe ne peut désigner que le tunnel. `waitForURL` reste malgré tout,
  * pour que l'étape 1 ne conclue pas avant la navigation.
+ *
+ * Les rubriques étant des onglets depuis #1048, les panneaux fermés gardent
+ * leurs lignes dans le document : `getByRole` les écarte de lui-même, un
+ * panneau `hidden` ne figurant pas dans l'arbre d'accessibilité.
  */
 function cartesPrestation(page: Page): Locator {
   return page.getByRole('radio');
+}
+
+/**
+ * La ligne entière — c'est elle qu'on touche, et non la pastille (#1048).
+ *
+ * `check()` visait le bouton radio, que #1048 a décalé hors de l'écran : il
+ * mesure 1 px, et le `<label>` qui l'enveloppe intercepte le clic. Playwright
+ * réessayait alors jusqu'au délai, et le parcours critique tombait sur
+ * « `<span class="spa-booking__service-name">` intercepts pointer events » —
+ * c'est-à-dire sur le comportement voulu, décrit du point de vue de l'outil.
+ *
+ * Une cliente ne vise pas une pastille de 1 px : elle touche la ligne. Le test
+ * fait désormais le même geste, et `check()` n'a plus de raison d'être ici —
+ * `force: true` masquerait au contraire la moindre régression qui rendrait la
+ * ligne inerte.
+ */
+function ligneDe(carte: Locator): Locator {
+  return carte.locator('xpath=ancestor::label[1]');
 }
 
 /**
@@ -125,11 +147,21 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
   });
 
   await test.step('2. Prestation — choisir le soin', async () => {
-    // Par rang et non par libellé : le nom accessible d'une carte porte la durée
+    // Par rang et non par libellé : le nom accessible d'une ligne porte la durée
     // et le prix formatés en `fr-FR`, dont l'espace insécable avant « € » varie
-    // d'une version d'ICU à l'autre. La première carte suffit — le parcours
+    // d'une version d'ICU à l'autre. La première ligne suffit — le parcours
     // n'éprouve pas *quelle* prestation est retenue, mais qu'elle le soit.
-    await cartesPrestation(page).first().check();
+    const premiere = cartesPrestation(page).first();
+
+    await ligneDe(premiere).click();
+    // Le clic a bien coché la ligne, et ce n'est pas une redite du `click()` :
+    // c'est ce qui distingue « la ligne a reçu le clic » de « la ligne a coché
+    // son contrôle ». Sans cette assertion, une ligne redevenue inerte laisserait
+    // le parcours échouer une étape plus loin, sur un CTA désactivé.
+    await expect(premiere).toBeChecked();
+    // Le praticien reste « Premier disponible », retenu d'emblée : le parcours
+    // n'éprouve pas *quel* praticien est choisi, et le laisser tel quel est le
+    // chemin de la cliente qui n'a pas de préférence.
     await page.getByRole('button', { name: 'Choisir un créneau' }).click();
   });
 
