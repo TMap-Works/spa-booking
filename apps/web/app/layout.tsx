@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { Suspense, type ReactNode } from 'react';
 
 import { NavigationProgress } from '@/components/ui/navigation-progress';
+import { THEME_BOOT_SCRIPT } from '@/lib/theme';
 
 import '../styles/index.css';
 
@@ -26,8 +27,13 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { readonly children: ReactNode }) {
+  // `suppressHydrationWarning` : le script d'amorçage du thème (#855) pose
+  // `data-theme` sur `<html>` avant l'hydratation, que le serveur ne connaît pas.
   return (
-    <html lang="fr">
+    <html lang="fr" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOT_SCRIPT }} />
+      </head>
       <body>
         <Suspense fallback={null}>
           <NavigationProgress />

@@ -33,6 +33,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@spa/shared': path.join(monorepoRoot, 'packages', 'shared', 'src', 'index.ts'),
+      // `next/font/google` n'existe qu'au sein du compilateur Next.
+      'next/font/google': path.join(here, 'tests', 'support', 'next-font-google.ts'),
       '@': here,
     },
   },

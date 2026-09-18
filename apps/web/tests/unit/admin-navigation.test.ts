@@ -10,6 +10,7 @@ import {
 import { adminClientsPath } from '@/app/(admin)/[tenantSlug]/admin/clients/paths';
 import {
   adminCalendarPath,
+  adminDashboardPath,
   adminCatalogPath,
   adminCheckoutPath,
   adminReportingPath,
@@ -63,6 +64,7 @@ describe('sommaire du back-office — ce que chaque rôle voit', () => {
     // `GET /v1/tenant` est `@AuthAtLeast('ADMIN')` : proposer les réglages ici
     // mènerait à un 403, sur un écran qu'on ne peut pas déverrouiller.
     expect(labels('manager')).toEqual([
+      'Tableau de bord',
       'Planning',
       'Clients',
       'Prestations',
@@ -72,8 +74,8 @@ describe('sommaire du back-office — ce que chaque rôle voit', () => {
     ]);
   });
 
-  it('donne au rang administrateur les sept sections, réglages compris', () => {
-    expect(labels('admin')).toHaveLength(7);
+  it('donne au rang administrateur les huit sections, réglages compris', () => {
+    expect(labels('admin')).toHaveLength(8);
     expect(labels('admin').at(-1)).toBe('Réglages');
   });
 
@@ -110,14 +112,16 @@ describe('où la connexion dépose chaque rôle (#618)', () => {
 
   it('dépose les trois rangs du back-office sur leur première section ouverte', () => {
     // Le sommaire est ordonné comme la journée d'un comptoir : ce qu'on regarde
-    // en arrivant vient en tête. C'est le planning pour les trois rangs — et
-    // c'est bien ce que le rail leur propose en premier.
+    // en arrivant vient en tête. Le tableau de bord pour la gérance, le planning
+    // pour la praticienne — c'est bien ce que le rail leur propose en premier.
     for (const role of ['staff', 'manager', 'admin'] as const) {
       const first = adminNavigation(SLUG, role)[0];
 
       expect(adminLandingPath(SLUG, role)).toBe(first?.href);
-      expect(adminLandingPath(SLUG, role)).toBe(adminCalendarPath(SLUG));
     }
+    expect(adminLandingPath(SLUG, 'staff')).toBe(adminCalendarPath(SLUG));
+    expect(adminLandingPath(SLUG, 'manager')).toBe(adminDashboardPath(SLUG));
+    expect(adminLandingPath(SLUG, 'admin')).toBe(adminDashboardPath(SLUG));
   });
 
   it('n’a aucune destination pour un compte client', () => {

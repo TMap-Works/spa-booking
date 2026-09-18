@@ -42,6 +42,7 @@ import {
 } from '@/lib/admin/calendar-range';
 import { calendarPeriodEmptyState, calendarStartState } from '@/lib/admin/calendar-start';
 import { APPOINTMENT_STATUS_LABELS, appointmentOutcomeLabel } from '@/lib/appointment-status';
+import { initialsOf } from '@/lib/initials';
 
 import type { AdminActionResult } from '../action-result';
 import { loadCalendarRangeAction, rescheduleDeskAppointmentAction } from '../calendrier/actions';
@@ -996,8 +997,17 @@ export function CalendarBoard({
           ) : (
             board.columns.map((column) => (
               <div className="spa-admin-calendar__column-head" id={column.id} key={column.id}>
-                <span className="spa-admin-calendar__column-name">{column.name}</span>
-                <span className="spa-admin-calendar__column-meta">{column.meta}</span>
+                {/* En vue jour, une colonne est un praticien : ses initiales le
+                    repèrent d'un coup d'œil. En vue semaine, c'est un jour. */}
+                {view === 'jour' ? (
+                  <span aria-hidden="true" className="spa-admin-calendar__column-avatar">
+                    {initialsOf(column.name)}
+                  </span>
+                ) : null}
+                <span className="spa-admin-calendar__column-text">
+                  <span className="spa-admin-calendar__column-name">{column.name}</span>
+                  <span className="spa-admin-calendar__column-meta">{column.meta}</span>
+                </span>
               </div>
             ))
           )}

@@ -205,9 +205,9 @@ describe('rail — le bandeau du téléphone', () => {
   it('amène l’entrée atteinte au clavier entièrement en vue', async () => {
     renderRail({ role: 'admin' });
 
-    // La reproduction du ticket, à la lettre : sept tabulations depuis le haut du
-    // rail mènent à la dernière entrée du sommaire.
-    for (let index = 0; index < 7; index += 1) {
+    // La reproduction du ticket : autant de tabulations que d'entrées (huit
+    // depuis le tableau de bord) mènent à la dernière entrée du sommaire.
+    for (let index = 0; index < 8; index += 1) {
       await userEvent.tab();
     }
 
@@ -226,12 +226,14 @@ describe('rail — le bandeau du téléphone', () => {
     // à chaque prise de focus et non sur la seule fin du bandeau.
     renderRail({ role: 'admin' });
 
+    // Les sections sont rangées par usage : le groupe « Au quotidien » ouvre
+    // sur le tableau de bord, puis le planning.
     await userEvent.tab();
-    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Planning' }));
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Tableau de bord' }));
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
 
     await userEvent.tab();
-    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Clients' }));
+    expect(document.activeElement).toBe(screen.getByRole('link', { name: 'Planning' }));
     expect(scrollIntoView).toHaveBeenCalledTimes(2);
   });
 
@@ -255,7 +257,9 @@ describe('rail — le contexte du salon', () => {
 
     expect(screen.getAllByText('Maison Lotus').length).toBeGreaterThan(0);
     expect(screen.getByText(/Indian\/Antananarivo/)).toBeDefined();
-    expect(screen.getByText(/Hasina R\., gérant·e/)).toBeDefined();
+    // Le compte se lit en deux lignes : le nom, puis le rôle.
+    expect(screen.getByText('Hasina R.')).toBeDefined();
+    expect(screen.getByText('gérant·e')).toBeDefined();
   });
 
   /*

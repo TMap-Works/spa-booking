@@ -17,6 +17,7 @@ import {
   fetchPublicTenant,
   searchCustomers,
 } from '@/lib/api-client';
+import { initialsOf } from '@/lib/initials';
 import { statusModifier, zonedFields } from '@/lib/admin/calendar-grid';
 import { appointmentOutcomeLabel } from '@/lib/appointment-status';
 import { formatCalendarDate, formatMoney, formatTimeInTimeZone } from '@/lib/format';
@@ -362,8 +363,13 @@ function ClientDirectory({
               fiche désactivée, et c'est par là qu'on arrive dessus depuis un
               rendez-vous passé.
             */}
-            <span className="spa-admin-client-list__name">{fullName(customer)}</span>
-            <span className="spa-admin-client-list__meta">{customerContactLine(customer)}</span>
+            <span aria-hidden="true" className="spa-admin-client-list__avatar">
+              {initialsOf(fullName(customer))}
+            </span>
+            <span className="spa-admin-client-list__text">
+              <span className="spa-admin-client-list__name">{fullName(customer)}</span>
+              <span className="spa-admin-client-list__meta">{customerContactLine(customer)}</span>
+            </span>
           </Link>
         </li>
       ))}
@@ -450,6 +456,9 @@ function ClientRecord({
   return (
     <div className="spa-admin-client">
       <div className="spa-admin-client__header">
+        <span aria-hidden="true" className="spa-admin-client__avatar">
+          {initialsOf(fullName(customer))}
+        </span>
         <div className="spa-admin-client__identity">
           <p className="spa-admin-client__name">{fullName(customer)}</p>
           <div className="spa-admin-client__contact">

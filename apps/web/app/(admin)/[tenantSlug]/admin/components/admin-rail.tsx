@@ -5,12 +5,60 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { FocusEvent } from 'react';
 
+import { Icon, type IconName } from '@/components/ui/icon';
 import { LinkPending } from '@/components/ui/link-pending';
+import { initialsOf } from '@/lib/initials';
 
 import { AdminLogoutButton } from './admin-logout-button';
 import { entriesAllowedBy } from './admin-rail-permissions';
 import { EstablishmentSwitcher, type AdminEstablishment } from './establishment-switcher';
-import { adminNavigation, isCurrentEntry, roleLabel } from './navigation';
+import { adminNavigation, isCurrentEntry, roleLabel, type AdminNavEntry } from './navigation';
+
+/** Le pictogramme de chaque section — décoratif, le libellé reste écrit. */
+const NAV_ICONS: Readonly<Record<string, IconName>> = {
+  'tableau-de-bord': 'home',
+  planning: 'calendar',
+  encaissement: 'card',
+  clients: 'users',
+  prestations: 'tag',
+  personnel: 'team',
+  reporting: 'chart',
+  reglages: 'sliders',
+};
+
+/**
+ * Les sections rangées par usage : ce qui sert toute la journée d'abord, la
+ * gestion du salon ensuite, le pilotage enfin. Une entrée qu'aucun groupe ne
+ * nomme rejoint le dernier plutôt que de disparaître.
+ */
+const NAV_GROUPS: readonly { readonly label: string; readonly keys: readonly string[] }[] = [
+  { label: 'Au quotidien', keys: ['tableau-de-bord', 'planning', 'encaissement', 'clients'] },
+  { label: 'Gestion', keys: ['prestations', 'personnel'] },
+  { label: 'Pilotage', keys: ['reporting', 'reglages'] },
+];
+
+interface NavGroup {
+  readonly label: string;
+  readonly entries: readonly AdminNavEntry[];
+}
+
+function groupEntries(entries: readonly AdminNavEntry[]): readonly NavGroup[] {
+  const known = new Set(NAV_GROUPS.flatMap((group) => group.keys));
+  const groups = NAV_GROUPS.map((group) => ({
+    label: group.label,
+    entries: group.keys
+      .map((key) => entries.find((entry) => entry.key === key))
+      .filter((entry): entry is AdminNavEntry => entry !== undefined),
+  }));
+  const orphans = entries.filter((entry) => !known.has(entry.key));
+  if (orphans.length > 0) {
+    const last = groups[groups.length - 1];
+    if (last !== undefined) {
+      groups[groups.length - 1] = { label: last.label, entries: [...last.entries, ...orphans] };
+    }
+  }
+  return groups.filter((group) => group.entries.length > 0);
+}
 
 /**
  * L'entrée qui prend le focus s'amène **entièrement** en vue (#701).
@@ -168,12 +216,9 @@ export function AdminRail({
   const entries = entriesAllowedBy(adminNavigation(tenantSlug, role), permissions);
   const brand = establishments.find((salon) => salon.slug === tenantSlug)?.name ?? tenantSlug;
 
-  return (
-    <nav className="spa-admin__rail" aria-label="Sections du tableau de bord">
-      <span className="spa-admin__brand">{brand}</span>
+  const groups = groupEntries(entries);
 
-      <div className="spa-admin__nav">
-        {entries.map((entry) =>
+  const renderEntry = (entry: AdminNavEntry) =>
           entry.href === null ? (
             /*
              * Une entrée sans écran est annoncée, pas cliquable : un `<span>`
@@ -183,6 +228,7 @@ export function AdminRail({
              * mot inerte, sans expliquer pourquoi il ne mène nulle part.
              */
             <span aria-disabled="true" className="spa-admin__nav-link" key={entry.key}>
+              <Icon className="spa-admin__nav-icon" name={NAV_ICONS[entry.key] ?? 'sparkle'} />
               {entry.label}
               <span className="spa-visually-hidden">
                 {` — ${entry.upcoming ?? 'écran à venir'}`}
@@ -196,6 +242,7 @@ export function AdminRail({
               key={entry.key}
               onFocus={revealEntry}
             >
+              <Icon className="spa-admin__nav-icon" name={NAV_ICONS[entry.key] ?? 'sparkle'} />
               {entry.label}
               {/*
                * L'entrée cliquée se dit « en cours » jusqu'à l'arrivée de son
@@ -204,8 +251,29 @@ export function AdminRail({
                */}
               <LinkPending className="spa-admin__nav-pending" />
             </Link>
-          ),
-        )}
+          );
+
+  return (
+    <nav className="spa-admin__rail" aria-label="Sections du tableau de bord">
+      <div className="spa-admin__brand-block">
+        <span aria-hidden="true" className="spa-admin__logo">
+          {initialsOf(brand)}
+        </span>
+        <span className="spa-admin__brand-text">
+          <span className="spa-admin__brand">{brand}</span>
+          <span className="spa-admin__brand-caption">Back-office</span>
+        </span>
+      </div>
+
+      <div className="spa-admin__nav">
+        {groups.map((group) => (
+          <div className="spa-admin__nav-group" key={group.label}>
+            <span aria-hidden="true" className="spa-admin__nav-group-label">
+              {group.label}
+            </span>
+            {group.entries.map(renderEntry)}
+          </div>
+        ))}
       </div>
 
       <div className="spa-admin__rail-footer">
@@ -220,7 +288,12 @@ export function AdminRail({
          * ici un fuseau de repli ferait lire les horaires de la journée dans
          * celui de personne, ce qui est pire que ne rien dire.
          */}
-        {timeZone === null ? null : <span>Fuseau du salon : {timeZone}</span>}
+        {timeZone === null ? null : (
+          <span className="spa-admin__rail-meta">
+            <Icon name="clock" />
+            <span>Fuseau du salon : {timeZone}</span>
+          </span>
+        )}
         {/*
          * Le compte manque quand `/auth/me` n'a pas répondu. La panne est écrite
          * plutôt que tue : c'est elle qui explique le sommaire écourté — le rang
@@ -229,11 +302,20 @@ export function AdminRail({
          * session a changé.
          */}
         {userName === null ? (
-          <span>Compte non vérifié — le serveur du salon est injoignable.</span>
-        ) : (
-          <span>
-            Connecté·e : {userName}, {roleLabel(role)}
+          <span className="spa-admin__rail-meta">
+            Compte non vérifié — le serveur du salon est injoignable.
           </span>
+        ) : (
+          <div className="spa-admin__user">
+            <span aria-hidden="true" className="spa-admin__avatar">
+              {initialsOf(userName)}
+            </span>
+            <span className="spa-admin__user-text">
+              <span className="spa-visually-hidden">Connecté·e : </span>
+              <span className="spa-admin__user-name">{userName}</span>
+              <span className="spa-admin__user-role">{roleLabel(role)}</span>
+            </span>
+          </div>
         )}
         <AdminLogoutButton tenantSlug={tenantSlug} />
       </div>

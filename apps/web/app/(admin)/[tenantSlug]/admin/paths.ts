@@ -36,6 +36,11 @@ export function adminLoginPath(tenantSlug: string, motif?: SessionNotice): strin
 }
 
 /** Réglages de l'établissement — adresse, horaires, coordonnées (#343). */
+/** Le tableau de bord — l'écran d'arrivée de la gestion du salon. */
+export function adminDashboardPath(tenantSlug: string): string {
+  return `${adminPath(tenantSlug)}/tableau-de-bord`;
+}
+
 export function adminSettingsPath(tenantSlug: string): string {
   return `${adminPath(tenantSlug)}/reglages`;
 }

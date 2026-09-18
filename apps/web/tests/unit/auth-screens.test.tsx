@@ -179,7 +179,8 @@ describe('back-office, écran de connexion', () => {
       role: 'admin',
     });
 
-    await expect(rendre()).rejects.toThrow(`redirect /${tenant.slug}/admin/calendrier`);
+    // Une administratrice arrive sur le tableau de bord, sa première section.
+    await expect(rendre()).rejects.toThrow(`redirect /${tenant.slug}/admin/tableau-de-bord`);
     expect(readSalonIdentity).not.toHaveBeenCalled();
   });
 });
