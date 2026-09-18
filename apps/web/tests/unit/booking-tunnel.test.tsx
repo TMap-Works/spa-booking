@@ -523,7 +523,7 @@ describe('la progression est portée par l’adresse (#733)', () => {
     const user = renderTunnel();
     await allerJusquAuRecapitulatif(user, '09 h 00');
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
-    await screen.findByText('Votre rendez-vous est enregistré');
+    await screen.findByText('C’est réservé !');
     await user.click(screen.getByRole('button', { name: 'Réserver à nouveau' }));
 
     await waitFor(() => {
@@ -554,7 +554,7 @@ describe('la progression est portée par l’adresse (#733)', () => {
     const avant = window.history.length;
 
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
-    await screen.findByText('Votre rendez-vous est enregistré');
+    await screen.findByText('C’est réservé !');
 
     // L'écran terminal prend la place du récapitulatif qui l'a produit plutôt
     // que d'ajouter un arrêt : il n'y a rien à revenir confirmer deux fois.
@@ -563,7 +563,7 @@ describe('la progression est portée par l’adresse (#733)', () => {
 
     await retourNavigateur();
 
-    expect(screen.getByText('Votre rendez-vous est enregistré')).toBeDefined();
+    expect(screen.getByText('C’est réservé !')).toBeDefined();
     expect(screen.queryByRole('button', { name: /Confirmer la réservation/ })).toBeNull();
   });
 });
@@ -576,13 +576,13 @@ describe('l’écran terminal rend la main au tunnel (#732)', () => {
     await allerJusquAuRecapitulatif(user, '09 h 00');
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
 
-    await screen.findByText('Votre rendez-vous est enregistré');
+    await screen.findByText('C’est réservé !');
     await user.click(screen.getByRole('button', { name: 'Réserver à nouveau' }));
 
     // Première étape, catalogue en main : le tunnel n'est plus bloqué sur la
     // confirmation précédente.
     expect(await screen.findByRole('radio', { name: CARTE })).toHaveProperty('checked', false);
-    expect(screen.queryByText('Votre rendez-vous est enregistré')).toBeNull();
+    expect(screen.queryByText('C’est réservé !')).toBeNull();
 
     // Les coordonnées aussi sont reparties : une nouvelle réservation n'est pas
     // forcément pour la même personne.
@@ -618,7 +618,7 @@ describe('l’écran terminal rend la main au tunnel (#732)', () => {
     renderTunnel();
 
     expect(await screen.findByText('Votre dernière réservation dans cet onglet')).toBeDefined();
-    expect(screen.queryByText('Votre rendez-vous est enregistré')).toBeNull();
+    expect(screen.queryByText('C’est réservé !')).toBeNull();
     // La sortie reste offerte, elle : c'est par là qu'on vérifie l'état réel.
     expect(screen.getByRole('link', { name: 'Voir mes rendez-vous' })).toBeDefined();
   });
@@ -681,9 +681,10 @@ describe('la barre de résumé collante (#735)', () => {
     await allerJusquAuRecapitulatif(user, '09 h 00');
 
     expect(barre()).toBeNull();
-    // Et ce n'est pas une perte : le récapitulatif les redit tous, durée
-    // comprise depuis ce même ticket.
-    expect(screen.getByText('Durée')).toBeDefined();
+    // Et ce n'est pas une perte : la carte du récapitulatif les redit tous,
+    // durée comprise depuis ce même ticket — en retrait de la plage horaire
+    // depuis #1051, et non plus en rangée « Durée / 1 h ».
+    expect(screen.getByText('· 1 h')).toBeDefined();
   });
 });
 
@@ -739,7 +740,7 @@ describe('l’en-tête et la progression du tunnel (#1047)', () => {
     expect(compte()).toBe('Étape 4 sur 4');
 
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
-    await screen.findByText('Votre rendez-vous est enregistré');
+    await screen.findByText('C’est réservé !');
 
     expect(compte()).toBeNull();
   });
@@ -778,7 +779,7 @@ describe('l’en-tête et la progression du tunnel (#1047)', () => {
     expect(screen.getByRole('button', { name: 'Retour' })).toBeDefined();
 
     await user.click(screen.getByRole('button', { name: /Confirmer la réservation/ }));
-    await screen.findByText('Votre rendez-vous est enregistré');
+    await screen.findByText('C’est réservé !');
 
     // L'écran terminal (#732) : le rendez-vous est pris, et revenir au
     // récapitulatif y réserverait une seconde fois.

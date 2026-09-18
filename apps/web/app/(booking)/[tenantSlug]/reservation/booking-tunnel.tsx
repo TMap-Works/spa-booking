@@ -832,8 +832,24 @@ export function BookingTunnel({
                 staffId={draft.staffId}
                 startsAt={draft.startsAt}
                 contact={draft.contact}
+                // Les trois corrections du récapitulatif (#1051, BM-TUNNEL-01) :
+                // chaque bloc rouvre **son** étape, et le brouillon garde tout le
+                // reste — c'est le « corriger sans repartir de zéro » du motif.
+                //
+                // Elles passent par `goBack` et non `goTo` : le « Modifier »
+                // cliqué vit **dans** le récapitulatif, que le changement
+                // d'étape démonte aussitôt. Sans rattrapage, le focus retombe
+                // sur `<body>` et la tabulation repart du haut du document au
+                // moment précis où la visiteuse vient de demander à corriger
+                // quelque chose (#740, skill web-frontend §7).
                 onBack={() => {
-                  goTo('coordonnees');
+                  goBack('coordonnees');
+                }}
+                onEditSlot={() => {
+                  goBack('creneau');
+                }}
+                onEditService={() => {
+                  goBack('prestation');
                 }}
                 onBooked={onBooked}
                 onSlotLost={onSlotLost}

@@ -230,7 +230,11 @@ export async function reserverParLeTunnel(page: Page): Promise<Reservation> {
       name: 'Confirmation de votre réservation',
     });
     await expect(confirmation).toBeVisible({ timeout: 20_000 });
-    await expect(page.getByText('Votre rendez-vous est enregistré')).toBeVisible();
+    // L'issue annoncée est celle du statut **réel** (#1051) : un rendez-vous
+    // public naît `PENDING` côté API (`appointments.repository.ts`), donc
+    // « Demande envoyée » et non « C'est réservé ! », que seul un rendez-vous
+    // déjà confirmé par le salon affiche.
+    await expect(page.getByRole('heading', { name: 'Demande envoyée' })).toBeVisible();
 
     // Ce que la cliente lit : la référence courte du wireframe — Étape 6,
     // « Réf. RDV-8F3K-27 » (#736). L'écran rendait l'identifiant tel quel

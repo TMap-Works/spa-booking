@@ -1,31 +1,17 @@
-import type { Money, PublicTenant, UtcInstant } from '@spa/shared';
 import type { ReactNode } from 'react';
 
 import type { ContactDraft } from '@/lib/booking/draft';
-import { formatDateTimeInTimeZone, formatDuration, formatMoney } from '@/lib/format';
 
-interface RecapProps {
-  readonly tenant: PublicTenant;
-  readonly serviceName: string | null;
-  /**
-   * Durée du soin, en minutes — `null` quand elle n'est pas connue (#735).
-   *
-   * Elle manquait à la liste : la cliente ne la lisait que parce que les
-   * prestations du jeu d'essai la portent dans leur nom. C'est pourtant l'un des
-   * quatre faits sur lesquels on décide, avec le prix, la date et l'heure
-   * (`docs/design/appointments/README.md`, « Mobile d'abord »).
-   */
-  readonly durationMinutes: number | null;
-  readonly staffName: string | null;
-  readonly startsAt: UtcInstant;
-  readonly price: Money | null;
+import { EditAction } from './appointment-card';
+
+interface ContactRecapProps {
   readonly contact: ContactDraft;
+  /** La correction, ou `null` quand l'écran n'en offre plus. */
+  readonly onEdit?: (() => void) | null;
 }
 
 interface RecapRowProps {
   readonly term: string;
-  /** Classe supplémentaire portée par la valeur — le prix et lui seul, à ce jour. */
-  readonly valueClassName?: string;
   readonly children: ReactNode;
 }
 
@@ -43,94 +29,73 @@ interface RecapRowProps {
  * ni à ce qu'en restitue un lecteur d'écran.
  *
  * C'est exactement la structure d'« Informations pratiques » sur la vitrine
- * (`components/salon/salon-info.tsx`), dont ce récapitulatif reprend la mise en
- * page : les deux surfaces publiques rendent des couples libellé / valeur, elles
+ * (`components/salon/salon-info.tsx`), dont ce bloc reprend la mise en page :
+ * les deux surfaces publiques rendent des couples libellé / valeur, elles
  * doivent les rendre pareil.
  */
-function RecapRow({ term, valueClassName, children }: RecapRowProps) {
-  // Même composition de classes que `Button`, `Field` ou `Select` : la liste
-  // puis le filtrage. Écrire la classe de base dans les deux branches d'un
-  // ternaire la ferait renommer deux fois le jour où elle change.
-  const classes = ['spa-booking__recap-value', valueClassName ?? null]
-    .filter((name) => name !== null)
-    .join(' ');
-
+function RecapRow({ term, children }: RecapRowProps) {
   return (
     <div className="spa-booking__recap-row">
       <dt className="spa-booking__recap-term">{term}</dt>
-      <dd className={classes}>{children}</dd>
+      <dd className="spa-booking__recap-value">{children}</dd>
     </div>
   );
 }
 
 /**
- * Le récapitulatif, partagé par l'écran de vérification et l'écran de
- * confirmation (#45).
+ * Les coordonnées, au récapitulatif (#45, #1051).
  *
- * Un seul composant pour les deux, à dessein : ce que la cliente valide et ce
- * qu'elle relit ensuite doivent être **la même liste**, sinon une différence de
- * présentation se lit comme une différence de rendez-vous.
+ * ## Ce que ce bloc n'est plus
  *
- * L'heure est affichée dans le fuseau de l'établissement — un rendez-vous mal
- * fuseau-horairé est un bug de sévérité haute (CLAUDE.md). La mention explicite
- * du fuseau, quand le visiteur est ailleurs, est portée une seule fois par
- * l'en-tête du tunnel : la répéter ici la ferait apparaître deux fois dans le
- * même écran.
+ * Il portait jusqu'ici **tout** le récapitulatif : établissement, prestation,
+ * durée, praticien, date, prix et coordonnées, neuf couples d'affilée dont trois
+ * passaient à la ligne à 360 px. L'audit `d20260918-1` le relève comme *« une
+ * liste désalignée »*, et `BM-TUNNEL-01` veut des blocs corrigeables plutôt
+ * qu'une liste. Les sept premiers faits sont donc passés à
+ * `BookingAppointmentCard`, qui les met en carte ; ce qui reste est ce qui est
+ * réellement un couple libellé / valeur — ce que la cliente vient de taper.
  *
- * ## La liste est mise en colonnes (#636)
+ * ## Pourquoi il garde la liste de définitions
  *
- * Elle était rendue avec le style par défaut du navigateur : chaque valeur
- * passait à la ligne sous son libellé et s'en décalait de 40 px — dix couples
- * étalés sur vingt lignes, à l'écran même où la cliente vérifie ce qu'elle
- * s'apprête à réserver. `.spa-booking__recap-*` rend les deux colonnes, et
- * `booking.css` dit pourquoi elles sont calquées sur la vitrine.
+ * Parce que c'est ce qu'il est : quatre étiquettes et leurs valeurs, dont une
+ * adresse e-mail que l'œil doit relire caractère par caractère. La mise en
+ * colonnes de `booking.css` — calquée sur « Informations pratiques » de la
+ * vitrine — reste la bonne forme pour cela, et elle est éprouvée par
+ * `tests/booking-recap-columns.test.mjs`.
+ *
+ * ## Où il n'est pas rendu
+ *
+ * Sur l'écran de confirmation. Ces coordonnées viennent d'être validées, le
+ * rendez-vous est pris, et l'adresse qui compte encore y est nommée par la ligne
+ * qui annonce l'e-mail récapitulatif — la redire en liste ferait de l'écran de
+ * succès un second formulaire relu.
  */
-export function Recap({
-  tenant,
-  serviceName,
-  durationMinutes,
-  staffName,
-  startsAt,
-  price,
-  contact,
-}: RecapProps) {
+export function ContactRecap({ contact, onEdit = null }: ContactRecapProps) {
   return (
-    <dl className="spa-card__body spa-booking__recap">
-      <RecapRow term="Établissement">{tenant.name}</RecapRow>
+    <section className="spa-booking__recap-block" aria-label="Vos coordonnées">
+      <div className="spa-booking__recap-head">
+        {/* Un `<p>` et non un titre : le plan du document du récapitulatif est
+            tenu par le `<h1>` de l'étape et par le `<h2>` « Avant de
+            confirmer », qui est ce qu'il faut avoir lu avant de soumettre. Le
+            nom accessible du bloc est porté par `aria-label` sur la `<section>`,
+            qui en fait une région nommée sans ajouter un niveau de titre. */}
+        <p className="spa-booking__recap-title">Vos coordonnées</p>
+        {onEdit === null ? null : <EditAction target="mes coordonnées" onClick={onEdit} />}
+      </div>
 
-      {serviceName === null ? null : <RecapRow term="Prestation">{serviceName}</RecapRow>}
-
-      {/* Juste après la prestation, parce qu'elle la qualifie — comme le prix
-          plus bas. Omise plutôt que rendue à zéro : une durée nulle n'existe
-          pas, et l'afficher ferait passer une donnée absente pour un soin
-          instantané. */}
-      {durationMinutes === null || durationMinutes <= 0 ? null : (
-        <RecapRow term="Durée">{formatDuration(durationMinutes)}</RecapRow>
-      )}
-
-      <RecapRow term="Praticien">{staffName ?? 'Premier disponible'}</RecapRow>
-
-      <RecapRow term="Date et heure">
-        {formatDateTimeInTimeZone(startsAt, tenant.timezone)}
-      </RecapRow>
-
-      {price === null ? null : (
-        <RecapRow term="Prix" valueClassName="spa-card__price">
-          {formatMoney(price)}
+      <dl className="spa-booking__recap">
+        <RecapRow term="Au nom de">
+          {contact.firstName} {contact.lastName}
         </RecapRow>
-      )}
 
-      <RecapRow term="Au nom de">
-        {contact.firstName} {contact.lastName}
-      </RecapRow>
+        <RecapRow term="Adresse e-mail">{contact.email}</RecapRow>
 
-      <RecapRow term="Adresse e-mail">{contact.email}</RecapRow>
+        {contact.phone === '' ? null : <RecapRow term="Téléphone">{contact.phone}</RecapRow>}
 
-      {contact.phone === '' ? null : <RecapRow term="Téléphone">{contact.phone}</RecapRow>}
-
-      {contact.clientNote === '' ? null : (
-        <RecapRow term="Votre mot au salon">{contact.clientNote}</RecapRow>
-      )}
-    </dl>
+        {contact.clientNote === '' ? null : (
+          <RecapRow term="Votre mot au salon">{contact.clientNote}</RecapRow>
+        )}
+      </dl>
+    </section>
   );
 }

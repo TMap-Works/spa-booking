@@ -648,6 +648,331 @@
   gap: var(--spa-space-3);
 }
 
+/* --- La carte du rendez-vous, étapes 4 et 5 (#1051) ------------------------- */
+
+/*
+ * Ce qu'elle remplace, et pourquoi c'est une carte.
+ *
+ * L'audit `d20260918-1` mesure au récapitulatif « neuf lignes libellé / valeur
+ * dont trois passent à la ligne » à 360 px, et à la confirmation une date
+ * « noyée » dans la même liste. `BM-TUNNEL-01` veut au contraire que l'étape
+ * finale s'ouvre sur un récapitulatif complet et corrigeable, et `BM-VISUEL-03`
+ * que « le prix soit en gras, la durée en retrait, les montants d'un total
+ * alignés ».
+ *
+ * La composition est celle de la carte du prochain rendez-vous de l'espace
+ * client (`.spa-rdv-hero`, `account.css`, #1053) : bloc date en grand, plage
+ * horaire et durée, prestation, faits, total. C'est ce que l'issue demande —
+ * « le même composant » — et ce que la cliente retrouvera à l'écran suivant.
+ *
+ * Calque et non partage, pour la raison déjà écrite plus haut à propos
+ * d'« Informations pratiques » : `account.css` décrit l'espace client,
+ * `booking.css` le tunnel, et aucune des deux n'a à connaître l'autre pour
+ * changer. Une règle commune coûterait un couplage entre deux écrans qui n'ont
+ * en partage que ce motif — et l'espace client est justement repris par un autre
+ * ticket du même jalon.
+ */
+.spa-booking__rdv {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+  padding: var(--spa-space-5);
+  background: var(--spa-color-surface);
+  border: 1px solid var(--spa-color-border);
+  border-inline-start: 4px solid var(--spa-color-accent);
+  border-radius: var(--spa-radius-lg);
+  box-shadow: var(--spa-shadow-sm);
+}
+
+/*
+ * Deux pistes à 360 px — le bloc date, puis le texte —, trois dès que la place
+ * existe. Le « Modifier » passe sous le texte tant que la colonne est étroite :
+ * une troisième piste y réduirait le nom de la prestation à deux mots par ligne.
+ */
+.spa-booking__rdv-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--spa-space-2) var(--spa-space-4);
+  align-items: start;
+}
+
+.spa-booking__rdv-when {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-1);
+  min-inline-size: 0;
+}
+
+.spa-booking__rdv-head-edit {
+  grid-column: 2;
+}
+
+@media (min-width: 30rem) {
+  .spa-booking__rdv-head {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .spa-booking__rdv-head-edit {
+    grid-column: 3;
+    grid-row: 1;
+  }
+}
+
+.spa-booking__rdv-hours {
+  margin: 0;
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+}
+
+/* La durée qualifie la plage horaire, elle ne lui dispute pas le regard :
+ * second niveau typographique, comme le veut `BM-VISUEL-03`. */
+.spa-booking__rdv-duration {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-regular);
+  color: var(--spa-color-text-muted);
+  white-space: nowrap;
+}
+
+.spa-booking__rdv-service {
+  margin: 0;
+  font-size: var(--spa-font-size-xl);
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: var(--spa-line-height-snug);
+  color: var(--spa-color-text);
+  text-wrap: balance;
+}
+
+/*
+ * Les faits qui ne sont pas des horaires — avec qui, et où. Le filet haut et bas
+ * les détache du bloc date sans ajouter de fond : la carte n'a qu'une surface.
+ */
+.spa-booking__rdv-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  padding-block: var(--spa-space-4);
+  border-block: 1px solid var(--spa-color-border);
+}
+
+.spa-booking__rdv-fact {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-3);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-booking__rdv-fact-icon {
+  flex: none;
+  margin-block-start: 0.15em;
+  color: var(--spa-color-text-subtle);
+}
+
+/* `min-inline-size: 0` : sans lui, un nom de praticien long refuse de se
+ * réduire et pousse le « Modifier » hors de la carte. */
+.spa-booking__rdv-fact-body {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  color: var(--spa-color-text);
+}
+
+.spa-booking__rdv-address {
+  display: flex;
+  flex-direction: column;
+  font-style: normal;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-booking__rdv-salon {
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text);
+}
+
+/*
+ * Le total ferme la carte — libellé à gauche, montant à droite.
+ *
+ * `BM-VISUEL-03` : « le prix en graisse forte, souvent aligné à droite ; les
+ * montants d'un récapitulatif alignés en colonne ». C'est le seul chiffre de
+ * l'écran, et c'est le dernier que l'œil cherche avant de s'engager.
+ */
+.spa-booking__rdv-total {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spa-space-3);
+  margin: 0;
+}
+
+.spa-booking__rdv-total-term {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-booking__rdv-total-value {
+  font-size: var(--spa-font-size-lg);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+  white-space: nowrap;
+}
+
+/*
+ * Le « Modifier » d'un bloc (`BM-TUNNEL-01`).
+ *
+ * Ce n'est pas un `.spa-button` : trois boutons en contour dans une carte se
+ * disputeraient l'accent avec « Confirmer la réservation », et `BM-VISUEL-02`
+ * n'en veut qu'un plein par écran. C'est donc un lien d'action — la forme que le
+ * motif montre chez Treatwell comme chez Square — mais il garde la cible
+ * tactile : `--spa-target-min-size` en hauteur, et l'interstice de la carte en
+ * largeur.
+ */
+.spa-booking__rdv-edit {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--spa-target-min-size);
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-medium);
+  color: var(--spa-color-accent-text);
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+  cursor: pointer;
+}
+
+.spa-booking__rdv-edit:hover {
+  color: var(--spa-color-accent-hover);
+}
+
+/* Le « Modifier » de la carte ne touche pas le bord du bloc à 360 px, où il
+ * tombe sous la plage horaire. */
+.spa-booking__rdv-fact .spa-booking__rdv-edit {
+  flex: none;
+  margin-inline-start: auto;
+}
+
+/* --- Les coordonnées, au récapitulatif (#1051) ------------------------------ */
+
+/*
+ * Ce qui reste en liste de définitions : ce que la cliente vient de taper.
+ *
+ * Le bloc porte son propre intitulé et sa correction, comme les blocs de la
+ * carte — c'est le septième « Modifier » que `BM-TUNNEL-01` demande, celui des
+ * coordonnées.
+ */
+.spa-booking__recap-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+}
+
+.spa-booking__recap-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spa-space-2) var(--spa-space-3);
+}
+
+.spa-booking__recap-title {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-text);
+}
+
+/* --- L'issue annoncée, étape 5 (#1051) -------------------------------------- */
+
+/*
+ * « Le moment "c'est réservé" ne se voit pas » — le constat de l'audit, et ce
+ * bloc est la réponse.
+ *
+ * L'écran s'ouvrait sur un encart de douze lignes de texte, au ton d'une
+ * notification parmi d'autres. `BM-CONFIRM-01` veut qu'on sache immédiatement où
+ * l'on en est, et le wireframe — Étape 6 — dessine exactement cela : une
+ * pastille, un titre, une phrase. Le tout est centré, parce qu'il n'y a rien à
+ * comparer ligne à ligne et que c'est le seul bloc de l'écran qui s'adresse à
+ * l'instant plutôt qu'au rendez-vous.
+ */
+.spa-booking__done {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spa-space-2);
+  text-align: center;
+}
+
+/* 3.5rem — la mesure de `.spa-avatar--lg`, et pour la même raison : c'est la
+ * plus grande pastille qui tienne dans la colonne d'un tunnel à 360 px sans
+ * pousser la carte sous la ligne de flottaison. */
+.spa-booking__done-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  inline-size: 3.5rem;
+  block-size: 3.5rem;
+  border-radius: var(--spa-radius-full);
+  /* Le pictogramme est dimensionné en `em` par `icon.css`, importé après cette
+   * feuille : c'est donc le corps de la pastille qui règle sa taille, et non une
+   * surcharge qui perdrait la cascade. 1,4 rem × 1,25 = 1,75 rem de trait dans
+   * un médaillon de 3,5 rem. */
+  font-size: 1.4rem;
+}
+
+/*
+ * Les trois issues, et leur couleur.
+ *
+ * Le vert est réservé au rendez-vous que le salon a **confirmé** : l'annoncer
+ * sur une demande encore `pending` ferait mentir l'écran, et c'est ce que #948
+ * reproche. L'attente porte donc l'ambre de l'avertissement — au sens du design
+ * system, « quelque chose est en cours », et non « quelque chose ne va pas ».
+ * Les deux paires sont vérifiées par `tests/contrast.test.mjs`.
+ */
+.spa-booking__done--done .spa-booking__done-badge {
+  background: var(--spa-color-success-surface);
+  color: var(--spa-color-success);
+}
+
+.spa-booking__done--pending .spa-booking__done-badge {
+  background: var(--spa-color-warning-surface);
+  color: var(--spa-color-warning);
+}
+
+.spa-booking__done--cancelled .spa-booking__done-badge {
+  background: var(--spa-color-surface-sunken);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-booking__done-title {
+  margin: 0;
+  font-size: var(--spa-font-size-2xl);
+  font-weight: var(--spa-font-weight-semibold);
+  line-height: var(--spa-line-height-snug);
+  color: var(--spa-color-text);
+  text-wrap: balance;
+}
+
+.spa-booking__done-line {
+  margin: 0;
+  max-inline-size: 34rem;
+  color: var(--spa-color-text-muted);
+  line-height: var(--spa-line-height-normal);
+  text-wrap: pretty;
+}
+
+/* L'e-mail et l'espace client, en une ligne — ce que six lignes de paragraphe
+ * disaient avant #1051. Le ton atténué la range sous la carte et ses actions :
+ * c'est une information, pas une consigne. */
+.spa-booking__sent {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  line-height: var(--spa-line-height-normal);
+}
+
 /* --- Coordonnées, étape 3 --------------------------------------------------- */
 
 /*

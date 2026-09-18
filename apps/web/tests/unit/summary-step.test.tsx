@@ -21,6 +21,9 @@ afterEach(() => {
 });
 
 function renderSummary() {
+  const onBack = vi.fn();
+  const onEditSlot = vi.fn();
+  const onEditService = vi.fn();
   const onBooked = vi.fn();
   const onSlotLost = vi.fn();
 
@@ -31,20 +34,25 @@ function renderSummary() {
       staffId={null}
       startsAt="2026-09-01T06:00:00.000Z"
       contact={contact}
-      onBack={vi.fn()}
+      onBack={onBack}
+      onEditSlot={onEditSlot}
+      onEditService={onEditService}
       onBooked={onBooked}
       onSlotLost={onSlotLost}
     />,
   );
 
-  return { onBooked, onSlotLost };
+  return { onBack, onEditSlot, onEditService, onBooked, onSlotLost };
 }
 
 describe('récapitulatif', () => {
-  it('affiche l’heure dans le fuseau du salon et le prix de la prestation', () => {
+  it('affiche la plage horaire dans le fuseau du salon et le prix de la prestation', () => {
     renderSummary();
 
-    expect(screen.getByText(/09:00/)).toBeDefined();
+    // 06:00 UTC lu à Antananarivo (UTC+3) : 09:00, et la prestation dure une
+    // heure — la carte donne les deux bornes, là où la liste ne donnait que le
+    // début (#1051).
+    expect(screen.getByText(/09:00 – 10:00/)).toBeDefined();
     expect(screen.getByText(/35,00/)).toBeDefined();
     expect(screen.getByText('camille@example.test')).toBeDefined();
   });
@@ -60,23 +68,24 @@ describe('récapitulatif', () => {
    * des quatre faits qui permettent de décider — durée, conditions
    * d'annulation, moment du paiement — n'y figuraient pas, jusqu'au bouton de
    * confirmation inclus (#735, critère `ds:confiance`).
+   *
+   * Depuis #1051 la durée n'est plus une rangée « Durée / 1 h » : elle qualifie
+   * la plage horaire, en retrait typographique (`BM-VISUEL-03`).
    */
   it('porte la durée de la prestation, et pas seulement son nom', () => {
     renderSummary();
 
-    expect(screen.getByText('Durée')).toBeDefined();
-    expect(screen.getByText('1 h')).toBeDefined();
+    expect(screen.getByText('· 1 h')).toBeDefined();
   });
 
-  it('dit que rien ne se paie en ligne avant de proposer de confirmer', () => {
+  it('dit où l’on règle avant de proposer de confirmer', () => {
     renderSummary();
 
     const encart = screen.getByRole('heading', { name: 'Avant de confirmer' }).parentElement;
 
-    expect(encart?.textContent).toContain('Aucun paiement n’est demandé en ligne');
-    expect(encart?.textContent).toContain('à l’établissement');
-    // Le montant n'y est pas redit : il est dans le récapitulatif, deux lignes
-    // plus haut, et le prix ne doit être lisible qu'à un seul endroit.
+    expect(encart?.textContent).toContain('Règlement sur place');
+    // Le montant n'y est pas redit : il est dans la carte, plus haut, et le prix
+    // ne doit être lisible qu'à un seul endroit.
     expect(screen.getAllByText(/35,00/)).toHaveLength(1);
   });
 
@@ -89,7 +98,62 @@ describe('récapitulatif', () => {
     // Ni frais ni préavis côté API : seul le cycle de vie refuse le passage une
     // fois le rendez-vous honoré. La phrase ne promet donc rien de plus.
     expect(encart?.textContent).toContain('tant que le rendez-vous n’a pas eu lieu');
-    expect(encart?.textContent).toContain('espace client');
+  });
+
+  /*
+   * `BM-TUNNEL-01` — « en tête, l'établissement, la date, l'heure, la durée, la
+   * prestation, le praticien et le prix, chaque élément avec "Modifier" », et la
+   * correction se fait « sans repartir de zéro ». L'audit `d20260918-1` relève
+   * que l'écran n'offrait qu'un retour aux coordonnées (#1051).
+   */
+  describe('chaque bloc se corrige sans perdre les autres', () => {
+    it('nomme l’établissement, qu’aucune autre ligne de l’étape ne portait', () => {
+      renderSummary();
+
+      expect(screen.getByText('Maison Lotus')).toBeDefined();
+    });
+
+    it('renvoie le créneau à son étape', async () => {
+      const user = userEvent.setup();
+      const { onEditSlot } = renderSummary();
+
+      await user.click(screen.getByRole('button', { name: 'Modifier la date et l’heure' }));
+
+      expect(onEditSlot).toHaveBeenCalledTimes(1);
+    });
+
+    it('renvoie la prestation et le praticien à leur étape', async () => {
+      const user = userEvent.setup();
+      const { onEditService } = renderSummary();
+
+      await user.click(
+        screen.getByRole('button', { name: 'Modifier la prestation et le praticien' }),
+      );
+
+      expect(onEditService).toHaveBeenCalledTimes(1);
+    });
+
+    it('renvoie les coordonnées à leur étape', async () => {
+      const user = userEvent.setup();
+      const { onBack } = renderSummary();
+
+      await user.click(screen.getByRole('button', { name: 'Modifier mes coordonnées' }));
+
+      expect(onBack).toHaveBeenCalledTimes(1);
+    });
+
+    it('ne laisse qu’un seul bouton plein sur l’écran (BM-VISUEL-02)', () => {
+      renderSummary();
+
+      // Les corrections sont des liens d'action, pas des boutons en contour :
+      // l'accent appartient à « Confirmer la réservation », et à lui seul.
+      const pleins = screen
+        .getAllByRole('button')
+        .filter((bouton) => bouton.className.includes('spa-button--accent'));
+
+      expect(pleins).toHaveLength(1);
+      expect(pleins[0]?.textContent).toContain('Confirmer la réservation');
+    });
   });
 });
 
