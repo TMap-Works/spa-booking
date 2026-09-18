@@ -1037,11 +1037,30 @@
 }
 
 /* Le libellé annonce la nature du fait, comme un `<dt>` de récapitulatif : même
- * répartition de ton que `.spa-booking__recap-term` et sa valeur. */
+ * répartition de ton que `.spa-booking__recap-term` et sa valeur.
+ *
+ * `overflow-wrap: anywhere` (#1088) : la classe sert aussi la ligne de
+ * coordonnées « alice@… · +33 6… », et une adresse e-mail n'a ni espace ni
+ * césure. Le `<wbr />` du balisage pose le point de coupure d'usage — après
+ * l'arobase — et couvre le cas courant du domaine long ; il ne peut rien pour
+ * une partie locale de quarante caractères, qui sortirait de la bordure de
+ * l'encart à 360 px. La déclaration autorise la coupure là où il n'y a aucun
+ * point prévu, et **seulement là** : `anywhere` n'agit que quand le mot ne tient
+ * pas, et la ligne « Réservé au nom de », qui a des espaces, se replie comme
+ * avant. C'est aussi ce qui fait entrer la coupure dans le calcul de la largeur
+ * minimale du bloc, là où `break-word` laisserait l'encart réserver la place
+ * d'une adresse insécable.
+ *
+ * Une classe dédiée — `.spa-booking__identity-contact` — serait plus explicite,
+ * et c'est ce que la revue de #1086 proposait. Elle demande de changer le
+ * `className` de la ligne dans `steps/contact-step.tsx`, hors de l'empreinte de
+ * ce ticket-ci ; la déclaration est donc posée sur la classe que le balisage
+ * porte déjà, faute de quoi le débordement resterait entier. */
 .spa-booking__identity-label {
   margin: 0;
   font-size: var(--spa-font-size-sm);
   color: var(--spa-color-text-muted);
+  overflow-wrap: anywhere;
 }
 
 .spa-booking__identity-name {

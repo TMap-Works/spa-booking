@@ -6,14 +6,23 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 import { Avatar } from '@/components/ui/avatar';
 import { Icon } from '@/components/ui/icon';
-import type { AccountPresence } from '@/lib/account-presence';
+import type { AccountName } from '@/lib/account-presence';
 
 interface AccountEntryProps {
   readonly tenantSlug: string;
   /** Une session est ouverte — lue sur les jetons dans l'espace, sur la présence ailleurs. */
   readonly signedIn: boolean;
-  /** Le prénom à saluer ; `null` quand la session précède le cookie de présence. */
-  readonly presence: AccountPresence | null;
+  /**
+   * Le nom à saluer ; `null` quand la session précède le cookie de présence.
+   *
+   * `AccountName` et non `AccountPresence` (#1088) : ce composant est un îlot
+   * client, et tout ce qu'un Server Component lui passe est sérialisé dans la
+   * charge utile RSC, donc écrit dans le HTML de la page — vitrine publique
+   * comprise. L'adresse et le numéro du compte n'y ont rien à faire : rien ici
+   * ne les lit. Le type refuse une présence entière à la compilation, et c'est
+   * `SalonShell` qui réduit, juste avant de passer.
+   */
+  readonly presence: AccountName | null;
   /** Ce que le menu ajoute sous ses liens — « Se déconnecter » dans l'espace client. */
   readonly children?: ReactNode;
 }

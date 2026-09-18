@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { AccountEntry } from '@/components/account/account-entry';
 import { Avatar } from '@/components/ui/avatar';
 import { Icon } from '@/components/ui/icon';
-import type { AccountPresence } from '@/lib/account-presence';
+import type { AccountName, AccountPresence } from '@/lib/account-presence';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 
 import { PUBLIC_EXIT_LABELS } from './public-exits';
@@ -17,6 +17,14 @@ export interface SalonShellProps {
   /** `null` quand la fiche n'a pas pu être lue : l'en-tête garde son lien vers la vitrine. */
   readonly tenant: PublicTenant | null;
   readonly signedIn: boolean;
+  /**
+   * La présence telle que le cookie la porte — les quatre champs.
+   *
+   * Le gabarit est un Server Component : ce qu'il reçoit ne quitte pas le
+   * serveur. C'est lui qui la réduit au nom avant de la passer à l'îlot client
+   * (`nameOnly`, #1088), et les trois écrans qui la lisent n'ont donc rien à
+   * changer.
+   */
   readonly presence: AccountPresence | null;
   /** « Prendre rendez-vous » dans l'en-tête et le pied — `null` quand rien n'est réservable. */
   readonly bookingHref: string | null;
@@ -27,6 +35,40 @@ export interface SalonShellProps {
 
 function salonHref(tenantSlug: string, suffix = ''): string {
   return `/${encodeURIComponent(tenantSlug)}${suffix}`;
+}
+
+/**
+ * Ce que l'en-tête a le droit de faire franchir la frontière serveur / client
+ * (#1088) : le nom, et rien d'autre.
+ *
+ * L'en-tête n'affiche que le prénom et les initiales, mais `AccountEntry` est un
+ * composant client : ses propriétés sont sérialisées dans la charge utile RSC,
+ * elle-même inscrite dans le HTML servi. Passer la présence entière écrivait
+ * l'adresse e-mail et le numéro de la cliente dans la source de **chaque page du
+ * salon**, vitrine publique comprise — à portée de n'importe quel script de la
+ * page, c'est-à-dire exactement ce que le `httpOnly` du cookie existe pour
+ * empêcher (CDC §5.1, minimisation).
+ *
+ * La réduction est ici, à la frontière, et **pas plus haut** : le tunnel est
+ * servi par `reservation/page.tsx`, qui descend les quatre champs à
+ * `BookingTunnel` pour que l'étape « Coordonnées » les préremplisse (#1086). Une
+ * donnée qui remplit un formulaire doit atteindre le navigateur ; celle qui ne
+ * fait que voyager, non.
+ *
+ * **Local, et non importé de `lib/account-presence.ts`** : ce module importe
+ * `next/headers`, et une importation de *valeur* le ferait entrer dans le graphe
+ * de tout module client qui atteindrait ce fichier — la raison déjà écrite en
+ * tête de `compte/paths.ts` et rappelée dans `contact-step.tsx`. Seul le type
+ * `AccountName` se partage : il s'efface à la compilation.
+ */
+function nameOnly(presence: AccountPresence | null): AccountName | null {
+  if (presence === null) {
+    return null;
+  }
+  // Construit champ par champ, jamais par un `...presence` amputé : une
+  // propriété ajoutée au cookie demain se retrouverait sinon dans le HTML sans
+  // que rien ne le signale.
+  return { firstName: presence.firstName, lastName: presence.lastName };
 }
 
 /**
@@ -51,7 +93,8 @@ function salonHref(tenantSlug: string, suffix = ''): string {
  * revenir et sortir (BM-TUNNEL-10), c'est l'objet de #1047.
  *
  * Server Component : seule l'entrée du compte, qui déplie un menu, est un îlot
- * client.
+ * client — et ce qui franchit cette frontière est réduit au nom (`nameOnly`,
+ * #1088), parce que tout ce qui la franchit est écrit dans le HTML servi.
  */
 export function SalonShell({
   tenantSlug,
@@ -78,7 +121,7 @@ export function SalonShell({
           </Link>
 
           <div className="spa-shell__actions">
-            <AccountEntry tenantSlug={tenantSlug} signedIn={signedIn} presence={presence}>
+            <AccountEntry tenantSlug={tenantSlug} signedIn={signedIn} presence={nameOnly(presence)}>
               {accountMenuExtra}
             </AccountEntry>
             {bookingHref === null ? null : (
