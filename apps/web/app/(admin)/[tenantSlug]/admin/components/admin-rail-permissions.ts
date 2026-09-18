@@ -45,6 +45,7 @@ const ENTRY_PERMISSIONS: Readonly<Record<string, readonly Permission[]>> = {
   // Le sien passe par l'espace praticien, qui n'est pas une entrée de ce
   // sommaire.
   'tableau-de-bord': ['reporting:read'],
+  'mon-planning': ['agenda:read:own'],
   planning: ['agenda:read:all'],
   // `GET /v1/customers` — l'écran s'ouvre aux deux portées, et c'est l'API qui
   // borne ensuite la liste à la clientèle de l'appelant.

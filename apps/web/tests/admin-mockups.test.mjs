@@ -52,6 +52,7 @@ const SCREENS = {
   'encaissement.html': 'encaissement et POS',
   'reporting.html': 'indicateurs d’activité et export CSV',
   'console.html': 'console de l’éditeur — tableau de bord et fiche salon',
+  'mon-planning.html': 'l’emploi du temps de la praticienne connectée',
 };
 const SUMMARY = 'index.html';
 

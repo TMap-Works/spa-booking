@@ -133,3 +133,31 @@ describe('quand le serveur n’a rien dit', () => {
     expect(sections()).toContain('Planning');
   });
 });
+
+describe('« Mon planning » dans le sommaire (#813)', () => {
+  it('ouvre le sommaire d’une praticienne, avant tout le reste', () => {
+    renderRail({ permissions: PRATICIENNE });
+
+    expect(sections()[0]).toContain('Mon planning');
+  });
+
+  it('est annoncé à une gérante qui a une fiche praticien, en plus du planning du salon', () => {
+    renderRail({ role: 'manager', permissions: GERANTE, hasStaffProfile: true });
+
+    const annoncees = sections();
+    expect(annoncees.some((label) => label.includes('Mon planning'))).toBe(true);
+    expect(annoncees.some((label) => label === 'Planning')).toBe(true);
+  });
+
+  it('n’est pas annoncé à une gérante sans fiche praticien — elle n’a pas d’agenda à elle', () => {
+    renderRail({ role: 'manager', permissions: GERANTE, hasStaffProfile: false });
+
+    expect(sections().some((label) => label.includes('Mon planning'))).toBe(false);
+  });
+
+  it('reste annoncé à une praticienne quand la fiche n’a pas pu être lue', () => {
+    renderRail({ permissions: PRATICIENNE, hasStaffProfile: null });
+
+    expect(sections().some((label) => label.includes('Mon planning'))).toBe(true);
+  });
+});

@@ -785,6 +785,14 @@
 }
 
 @media (max-width: 30rem) {
+  /* Sur un téléphone, le bandeau d'essai, la vitrine et le thème ne tiennent
+   * pas sur la ligne du contexte : ils passent dessous plutôt que de faire
+   * défiler toute la page à l'horizontale (« Mon planning », #813). */
+  .spa-admin-topbar,
+  .spa-admin-topbar__actions {
+    flex-wrap: wrap;
+  }
+
   .spa-admin > .spa-admin__main > .spa-admin__content {
     padding: var(--spa-space-4) var(--spa-space-3) var(--spa-space-8);
   }

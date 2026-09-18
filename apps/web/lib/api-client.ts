@@ -50,6 +50,9 @@ import {
   customerPageSchema,
   customerSchema,
   customerVisitHistorySchema,
+  myStaffAgendaSchema,
+  myStaffProfileSchema,
+  myStaffScheduleSchema,
   notificationSchema,
   publicServiceSchema,
   publicTenantSchema,
@@ -87,6 +90,10 @@ import {
   type CustomerSearchQuery,
   type CustomerVisitHistory,
   type LoginRequest,
+  type MyStaffAgenda,
+  type MyStaffProfile,
+  type MyStaffRangeQuery,
+  type MyStaffSchedule,
   type MyAppointmentsQuery,
   type Notification as NotificationTrace,
   type PlatformLoginRequest,
@@ -721,10 +728,75 @@ export async function fetchOwnProfile(accessToken: string): Promise<OwnProfile> 
  * Le profil, et où en est la facturation du salon (ADR 0016) — ce qui décide
  * du bandeau d'essai et de la fermeture du back-office. `billing` manque quand
  * l'API ne l'émet pas : le salon est alors traité comme ouvert.
+ *
+ * Les **permissions effectives** du compte en plus (ADR 0013, #942) : c'est
+ * elles, et non le rang, qui disent qu'une praticienne n'a ni le planning du
+ * salon ni l'encaissement. Facultatives à la lecture pour la même raison que
+ * `billing` — une API qui ne les émettrait pas laisse le sommaire du rang,
+ * plutôt qu'un rail vide.
  */
-const ownProfileSchema = sessionUserSchema.merge(authenticatedAccountSchema.pick({ billing: true }));
+const ownProfileSchema = sessionUserSchema.merge(
+  authenticatedAccountSchema.pick({ billing: true, permissions: true }).partial({ permissions: true }),
+);
 
 export type OwnProfile = z.infer<typeof ownProfileSchema>;
+
+/*
+ * L'espace du praticien connecté — `GET /v1/me/*` (#811, #813).
+ *
+ * Aucun identifiant n'y entre : la fiche est résolue par le jeton. La fenêtre
+ * se compte en journées du salon, bornes comprises, trente et une au plus.
+ */
+
+/** La fiche praticien du compte connecté — 404 `STAFF_PROFILE_NOT_FOUND` s'il n'en a pas. */
+export async function fetchMyStaffProfile(accessToken: string): Promise<MyStaffProfile> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: '/me/staff-profile',
+    schema: myStaffProfileSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+function myStaffRangeSearch(range: MyStaffRangeQuery): string {
+  const search = new URLSearchParams();
+  if (range.from !== undefined) {
+    search.set('from', range.from);
+  }
+  if (range.to !== undefined) {
+    search.set('to', range.to);
+  }
+  return search.size === 0 ? '' : `?${search.toString()}`;
+}
+
+/** Les rendez-vous du praticien connecté sur une fenêtre de journées du salon. */
+export async function fetchMyAgenda(
+  accessToken: string,
+  range: MyStaffRangeQuery = {},
+): Promise<MyStaffAgenda> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/me/appointments${myStaffRangeSearch(range)}`,
+    schema: myStaffAgendaSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/** Ses horaires, ses absences et les jours de fermeture, sur la même fenêtre. */
+export async function fetchMySchedule(
+  accessToken: string,
+  range: MyStaffRangeQuery = {},
+): Promise<MyStaffSchedule> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/me/schedule${myStaffRangeSearch(range)}`,
+    schema: myStaffScheduleSchema,
+    accessToken,
+  });
+  return payload;
+}
 
 /** Modification de ses propres coordonnées. */
 export async function updateOwnProfile(

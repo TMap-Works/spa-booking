@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Maquette — Mon planning</title>
+    <link rel="stylesheet" href="../../styles/index.css" />
+    <link rel="stylesheet" href="../../styles/admin/index.css" />
+  </head>
+  <body>
+    <!--
+      « Mon planning » — #813.
+
+      L'emploi du temps de la praticienne connectée, pensé pour le téléphone :
+      une carte par journée, un rendez-vous par ligne qui se déplie. Elle exerce
+      chaque règle de `styles/admin/my-planning.css`, états de chargement et
+      vide compris. Le rail d'une praticienne n'a que « Mon planning »,
+      « Clients » et « Prestations » : ni planning du salon, ni encaissement.
+    -->
+    <div class="spa-admin">
+      <nav class="spa-admin__rail" aria-label="Sections du tableau de bord">
+        <span class="spa-admin__brand">Maison Lotus</span>
+        <div class="spa-admin__nav">
+          <a class="spa-admin__nav-link" href="mon-planning.html" aria-current="page">Mon planning</a>
+          <a class="spa-admin__nav-link" href="fiche-client.html">Clients</a>
+        </div>
+        <div class="spa-admin__rail-footer">
+          <strong>Maison Lotus — Antananarivo</strong>
+          <span>Connectée : Hasina R., praticienne</span>
+        </div>
+      </nav>
+
+      <div class="spa-admin__main">
+        <main class="spa-admin__content" id="contenu">
+          <section class="spa-my-planning" aria-labelledby="mon-planning-titre">
+            <header class="spa-my-planning__head">
+              <span class="spa-my-planning__who">Hasina</span>
+              <h1 class="spa-admin__title" id="mon-planning-titre">Mon planning</h1>
+              <p class="spa-my-planning__period">vendredi 18 septembre 2026</p>
+            </header>
+
+            <nav class="spa-my-planning__nav" aria-label="Période">
+              <a class="spa-button spa-button--neutral" href="mon-planning.html">
+                <span aria-hidden="true">‹</span>
+                <span class="spa-visually-hidden">Jour précédent</span>
+              </a>
+              <a class="spa-button spa-button--quiet" href="mon-planning.html">Aujourd’hui</a>
+              <a class="spa-button spa-button--neutral" href="mon-planning.html">
+                <span aria-hidden="true">›</span>
+                <span class="spa-visually-hidden">Jour suivant</span>
+              </a>
+            </nav>
+
+            <div class="spa-my-planning__days">
+              <section class="spa-my-day" aria-labelledby="jour-2026-09-18">
+                <header class="spa-my-day__head">
+                  <h2 class="spa-my-day__title" id="jour-2026-09-18">
+                    vendredi 18 septembre 2026
+                    <span class="spa-my-day__today">Aujourd’hui</span>
+                  </h2>
+                  <p class="spa-my-day__hours">09:00 – 12:00 · 14:00 – 19:00</p>
+                  <p class="spa-my-day__absence">Absence : 16:00 – 17:00 · Formation</p>
+                </header>
+                <ol class="spa-my-day__list" role="list">
+                  <li>
+                    <details class="spa-my-appointment" open>
+                      <summary class="spa-my-appointment__summary">
+                        <span class="spa-my-appointment__time">
+                          <strong>10:00</strong>
+                          <span>11:00</span>
+                        </span>
+                        <span class="spa-my-appointment__what">
+                          <strong>Massage suédois</strong>
+                          <span>Rina A. · 1 h</span>
+                        </span>
+                        <span class="spa-admin-badge spa-admin-badge--confirmed">Confirmé</span>
+                      </summary>
+                      <div class="spa-my-appointment__details">
+                        <dl class="spa-my-appointment__facts">
+                          <div><dt>Référence</dt><dd>RDV-JJH5-96</dd></div>
+                          <div><dt>Note de la cliente</dt><dd>Préfère une pression légère.</dd></div>
+                        </dl>
+                        <div class="spa-my-appointment__actions">
+                          <button class="spa-button spa-button--neutral" type="button">
+                            <span class="spa-button__label">Marquer honoré</span>
+                          </button>
+                          <button class="spa-button spa-button--quiet" type="button">
+                            <span class="spa-button__label">Marquer non honoré</span>
+                          </button>
+                        </div>
+                      </div>
+                    </details>
+                  </li>
+                  <li>
+                    <details class="spa-my-appointment spa-my-appointment--cancelled">
+                      <summary class="spa-my-appointment__summary">
+                        <span class="spa-my-appointment__time">
+                          <strong>14:30</strong>
+                          <span>15:15</span>
+                        </span>
+                        <span class="spa-my-appointment__what">
+                          <strong>Soin visage</strong>
+                          <span>Voahangy R. · 45 min</span>
+                        </span>
+                        <span class="spa-admin-badge spa-admin-badge--cancelled">Annulé</span>
+                      </summary>
+                    </details>
+                  </li>
+                </ol>
+              </section>
+
+              <section class="spa-my-day" aria-labelledby="jour-2026-09-19">
+                <header class="spa-my-day__head">
+                  <h2 class="spa-my-day__title" id="jour-2026-09-19">samedi 19 septembre 2026</h2>
+                  <p class="spa-my-day__hours">Salon fermé</p>
+                </header>
+                <p class="spa-my-day__empty">Aucun rendez-vous.</p>
+              </section>
+            </div>
+
+            <!-- ÉTAT VIDE — la vue « À venir » sans rien de prévu. -->
+            <div class="spa-empty-state">
+              <p class="spa-empty-state__title">Rien de prévu pour l’instant</p>
+              <p class="spa-empty-state__description">
+                Aucun rendez-vous ne vous attend dans les 31 prochains jours. Les nouvelles
+                réservations apparaissent ici d’elles-mêmes.
+              </p>
+            </div>
+
+            <!-- ÉTAT DE CHARGEMENT -->
+            <div class="spa-admin__section" aria-busy="true">
+              <p class="spa-visually-hidden">Chargement de votre planning…</p>
+              <span class="spa-admin-skeleton-line spa-skeleton"></span>
+              <span class="spa-admin-skeleton-line spa-admin-skeleton-line--short spa-skeleton"></span>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

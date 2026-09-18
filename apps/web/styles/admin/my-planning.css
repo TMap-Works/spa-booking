@@ -1,0 +1,198 @@
+/*
+ * « Mon planning » — l'emploi du temps du praticien connecté (#813)
+ * =============================================================================
+ *
+ * Conçu à 360 px d'abord : la praticienne le consulte sur son téléphone entre
+ * deux soins. Une journée est une carte, un rendez-vous une ligne qui se
+ * déplie ; au-delà de 48 rem, les journées d'une semaine se rangent en deux
+ * colonnes.
+ *
+ * Maquette : `mockups/admin/mon-planning.html`.
+ */
+
+.spa-my-planning {
+  display: grid;
+  gap: var(--spa-space-4);
+}
+
+.spa-my-planning__head {
+  display: grid;
+  gap: var(--spa-space-1);
+}
+
+.spa-my-planning__who {
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  color: var(--spa-color-accent-text);
+}
+
+.spa-my-planning__period {
+  margin: 0;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-my-planning__nav {
+  display: flex;
+  align-items: center;
+  gap: var(--spa-space-2);
+}
+
+.spa-my-planning__days {
+  display: grid;
+  gap: var(--spa-space-4);
+}
+
+@media (width >= 48rem) {
+  .spa-my-planning__days {
+    grid-template-columns: repeat(auto-fill, minmax(22rem, 1fr));
+    align-items: start;
+  }
+}
+
+/* --- Une journée ---------------------------------------------------------- */
+
+.spa-my-day {
+  display: grid;
+  gap: var(--spa-space-3);
+  padding: var(--spa-space-4);
+  border: 1px solid var(--spa-color-border);
+  border-radius: var(--spa-radius-lg);
+  background-color: var(--spa-color-surface);
+  box-shadow: var(--spa-shadow-card);
+}
+
+.spa-my-day__head {
+  display: grid;
+  gap: var(--spa-space-1);
+}
+
+.spa-my-day__title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spa-space-2);
+  margin: 0;
+  font-size: var(--spa-font-size-md);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-my-day__title::first-letter {
+  text-transform: uppercase;
+}
+
+.spa-my-day__today {
+  padding: 0.125rem var(--spa-space-2);
+  border-radius: var(--spa-radius-full);
+  background-color: var(--spa-color-accent-soft);
+  color: var(--spa-color-accent-text);
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+}
+
+.spa-my-day__hours,
+.spa-my-day__empty {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-my-day__absence {
+  margin: 0;
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-warning);
+}
+
+.spa-my-day__list {
+  display: grid;
+  gap: var(--spa-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* --- Un rendez-vous ------------------------------------------------------- */
+
+.spa-my-appointment {
+  border: 1px solid var(--spa-color-border);
+  border-inline-start: 3px solid var(--spa-color-accent);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-surface-raised);
+}
+
+.spa-my-appointment--cancelled {
+  border-inline-start-color: var(--spa-color-border-strong);
+  opacity: 0.7;
+}
+
+.spa-my-appointment__summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--spa-space-1) var(--spa-space-3);
+  align-items: center;
+  padding: var(--spa-space-3);
+  min-block-size: 2.75rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.spa-my-appointment__summary::-webkit-details-marker {
+  display: none;
+}
+
+.spa-my-appointment__summary .spa-admin-badge {
+  grid-column: 2;
+  justify-self: start;
+}
+
+.spa-my-appointment__time {
+  display: grid;
+  grid-row: span 2;
+  align-content: start;
+  min-inline-size: 3.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.spa-my-appointment__time span {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-my-appointment__what {
+  display: grid;
+  gap: 0.125rem;
+  min-inline-size: 0;
+}
+
+.spa-my-appointment__what span {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-my-appointment__details {
+  display: grid;
+  gap: var(--spa-space-3);
+  padding: 0 var(--spa-space-3) var(--spa-space-3);
+}
+
+.spa-my-appointment__facts {
+  display: grid;
+  gap: var(--spa-space-2);
+  margin: 0;
+}
+
+.spa-my-appointment__facts dt {
+  font-size: var(--spa-font-size-xs);
+  color: var(--spa-color-text-muted);
+}
+
+.spa-my-appointment__facts dd {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.spa-my-appointment__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
+}
