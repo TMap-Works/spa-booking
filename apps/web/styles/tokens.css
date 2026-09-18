@@ -91,6 +91,12 @@
   --spa-palette-chrome-accent: #86dccd;
   /* Fond de page du back-office : un cran sous les cartes, dans les deux thèmes. */
   --spa-palette-canvas: #f4f2ef;
+  /* Papier et encre du ticket de caisse : blanc et noir dans les DEUX thèmes.
+   * Un ticket est une feuille qu'on imprime et qu'on tend ; en thème sombre, les
+   * neutres s'inversent et l'impression sortirait en texte clair sur papier
+   * blanc — illisible. */
+  --spa-palette-paper: #ffffff;
+  --spa-palette-ink: #1c1917;
 
   /* ==========================================================================
    * 2. SÉMANTIQUES — couleur
@@ -163,6 +169,10 @@
   --spa-color-text-on-brand-muted: var(--spa-palette-brand-200);
   --spa-color-accent-on-brand: var(--spa-palette-brand-300);
   --spa-color-focus-on-brand: var(--spa-palette-brand-200);
+
+  /* Ticket de caisse — papier blanc et encre noire, quel que soit le thème. */
+  --spa-color-paper: var(--spa-palette-paper);
+  --spa-color-ink: var(--spa-palette-ink);
 
   /* États */
   --spa-color-success: var(--spa-palette-green-600);
@@ -466,6 +476,8 @@
     --spa-palette-chrome-100: #eef4f2;
     --spa-palette-chrome-accent: #86dccd;
     --spa-palette-canvas: #0d0c0a;
+    --spa-palette-paper: #ffffff;
+    --spa-palette-ink: #1c1917;
   }
 }
 
@@ -524,6 +536,8 @@
   --spa-palette-chrome-100: #eef4f2;
   --spa-palette-chrome-accent: #86dccd;
   --spa-palette-canvas: #0d0c0a;
+  --spa-palette-paper: #ffffff;
+  --spa-palette-ink: #1c1917;
 }
 
 /* Choix explicite « clair » : le jeu du bloc `:root`, même sur un système sombre. */

@@ -262,6 +262,140 @@
             </div>
           </section>
 
+          <!--
+            TICKET DE CAISSE — #1091. Ce qui s'affiche après l'encaissement et à
+            la réimpression, et ce qui s'imprime seul : la pièce que compose
+            l'API (GET /sales/{id}/receipt), mise en page comme un rouleau 80 mm.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-ticket-caisse">
+            <h2 class="spa-admin__section-title" id="titre-ticket-caisse">Ticket de caisse</h2>
+
+            <article class="spa-ticket" aria-label="Ticket n° TIC-2026-000123">
+              <header class="spa-ticket__header">
+                <p class="spa-ticket__brand">Maison Lotus</p>
+                <p>LOTUS BIEN-ÊTRE SARL</p>
+                <p>12 rue des Lilas</p>
+                <p>75011 Paris</p>
+                <p>01 42 00 00 00 · bonjour@maison-lotus.test</p>
+                <p>SIREN 732 829 320</p>
+                <p>TVA intracom. FR44732829320</p>
+              </header>
+              <hr class="spa-ticket__rule">
+              <div class="spa-ticket__identity">
+                <p class="spa-ticket__title">Ticket n° TIC-2026-000123</p>
+                <p>18/09/2026 19:25</p>
+              </div>
+              <hr class="spa-ticket__rule">
+              <dl class="spa-ticket__rows">
+                <div class="spa-ticket__row"><dt>Client</dt><dd>Rina Andriamanana</dd></div>
+                <div class="spa-ticket__row"><dt>Praticien</dt><dd>Hasina</dd></div>
+                <div class="spa-ticket__row"><dt>Caisse</dt><dd>Ada R.</dd></div>
+              </dl>
+              <hr class="spa-ticket__rule">
+              <table class="spa-ticket__items">
+                <caption class="spa-visually-hidden">Articles</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Article</th>
+                    <th class="spa-ticket__num" scope="col">Qté</th>
+                    <th class="spa-ticket__num" scope="col">Montant</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>Massage suédois</td>
+                    <td class="spa-ticket__num">1</td>
+                    <td class="spa-ticket__num">65,00 €</td>
+                  </tr>
+                  <tr>
+                    <td>Huile de massage<span class="spa-ticket__detail">2 × 12,00 €</span></td>
+                    <td class="spa-ticket__num">2</td>
+                    <td class="spa-ticket__num">24,00 €</td>
+                  </tr>
+                </tbody>
+              </table>
+              <p class="spa-ticket__count">3 articles</p>
+              <hr class="spa-ticket__rule spa-ticket__rule--dashed">
+              <dl class="spa-ticket__rows">
+                <div class="spa-ticket__row"><dt>Total HT</dt><dd>74,17 €</dd></div>
+                <div class="spa-ticket__row"><dt>TVA</dt><dd>14,83 €</dd></div>
+                <div class="spa-ticket__row spa-ticket__row--grand"><dt>Total TTC</dt><dd>89,00 €</dd></div>
+              </dl>
+              <hr class="spa-ticket__rule">
+              <dl class="spa-ticket__rows">
+                <div class="spa-ticket__row"><dt>Espèces</dt><dd>89,00 €</dd></div>
+                <div class="spa-ticket__row spa-ticket__row--sub"><dt>Reçu</dt><dd>100,00 €</dd></div>
+                <div class="spa-ticket__row spa-ticket__row--sub"><dt>Rendu</dt><dd>11,00 €</dd></div>
+              </dl>
+              <hr class="spa-ticket__rule spa-ticket__rule--dashed">
+              <table class="spa-ticket__taxes">
+                <caption class="spa-visually-hidden">Détail de la TVA</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Taux</th>
+                    <th class="spa-ticket__num" scope="col">HT</th>
+                    <th class="spa-ticket__num" scope="col">TVA</th>
+                    <th class="spa-ticket__num" scope="col">TTC</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>20 %</td>
+                    <td class="spa-ticket__num">74,17 €</td>
+                    <td class="spa-ticket__num">14,83 €</td>
+                    <td class="spa-ticket__num">89,00 €</td>
+                  </tr>
+                </tbody>
+              </table>
+              <hr class="spa-ticket__rule spa-ticket__rule--dashed">
+              <p class="spa-ticket__section">Avoirs</p>
+              <dl class="spa-ticket__rows">
+                <div class="spa-ticket__row">
+                  <dt>TIC-2026-000123-R1<span class="spa-ticket__detail">19/09/2026 10:02 — geste commercial</span></dt>
+                  <dd>− 12,00 €</dd>
+                </div>
+              </dl>
+              <hr class="spa-ticket__rule">
+              <footer class="spa-ticket__footer">
+                <p class="spa-ticket__legal">Échange ou remboursement sous 14 jours sur présentation du ticket.</p>
+                <p class="spa-ticket__thanks">Merci de votre visite !</p>
+              </footer>
+            </article>
+            <div class="spa-ticket-actions">
+              <button class="spa-button spa-button--accent" type="button">
+                <span class="spa-button__label">Imprimer le ticket</span>
+              </button>
+              <a class="spa-button spa-button--neutral" href="#titre-ticket-caisse">
+                <span class="spa-button__label">PDF ticket</span>
+              </a>
+              <a class="spa-button spa-button--neutral" href="#titre-ticket-caisse">
+                <span class="spa-button__label">Facture A4</span>
+              </a>
+            </div>
+          </section>
+
+          <!--
+            REÇU PROVISOIRE — une carte acceptée par Stripe dont le webhook n'a
+            encore rien inscrit : pas de pièce à relire, un reçu réduit composé
+            du rendez-vous, qui se dit provisoire.
+          -->
+          <section class="spa-admin__section" aria-labelledby="titre-recu-provisoire">
+            <h2 class="spa-admin__section-title" id="titre-recu-provisoire">Reçu provisoire</h2>
+
+            <article class="spa-ticket" aria-label="Reçu">
+              <div class="spa-ticket__identity">
+                <p class="spa-ticket__title">Reçu provisoire</p>
+                <p>18/09/2026 19:25</p>
+                <p class="spa-ticket__note">Paiement en cours de confirmation.</p>
+              </div>
+              <hr class="spa-ticket__rule">
+              <dl class="spa-ticket__rows">
+                <div class="spa-ticket__row"><dt>Client</dt><dd>Rina Andriamanana</dd></div>
+                <div class="spa-ticket__row spa-ticket__row--grand"><dt>Total</dt><dd>65,00 €</dd></div>
+              </dl>
+            </article>
+          </section>
+
           <!-- Lecteur injoignable — le cas le plus fréquent au comptoir. -->
           <section class="spa-admin__section" aria-labelledby="titre-lecteur">
             <h2 class="spa-admin__section-title" id="titre-lecteur">Lecteur hors ligne</h2>

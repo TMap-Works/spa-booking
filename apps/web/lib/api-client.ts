@@ -38,6 +38,7 @@ import {
   platformTenantPageSchema,
   provisionedTenantSchema,
   reissuedTenantInvitationSchema,
+  saleReceiptSchema,
   appointmentSchema,
   authSessionResponseSchema,
   availabilityResponseSchema,
@@ -93,6 +94,7 @@ import {
   type RegisterRequest,
   type ReissuedTenantInvitation,
   type RescheduleAppointmentRequest,
+  type SaleReceipt,
   type SalonSignupRequest,
   type Service,
   type ServiceCategory,
@@ -1157,6 +1159,80 @@ export async function settleAppointmentInCash(
     accessToken,
   });
   return payload;
+}
+
+/**
+ * Le ticket de caisse d'une vente — `GET /sales/{id}/receipt` (#818).
+ *
+ * C'est la pièce comptable, pas l'addition : identité légale du salon, numéro
+ * de pièce, cliente, praticien, lignes, ventilation de la TVA, règlements. Le
+ * comptoir l'affiche tel quel et l'imprime ; il n'en recalcule aucun montant.
+ */
+export async function fetchSaleReceipt(accessToken: string, saleId: string): Promise<SaleReceipt> {
+  const { payload } = await authorizedRequest({
+    method: 'GET',
+    path: `/sales/${encodeURIComponent(saleId)}/receipt`,
+    schema: saleReceiptSchema,
+    accessToken,
+  });
+  return payload;
+}
+
+/** Les deux mises en page du ticket que l'API sait produire (#819). */
+export type ReceiptPdfFormat = 'ticket-80' | 'a4';
+
+/**
+ * Le ticket de caisse **en PDF** — `GET /sales/{id}/receipt.pdf` (#819) :
+ * rouleau thermique 80 mm ou facture A4.
+ *
+ * Hors d'`authorizedRequest`, qui lit du JSON : ici le corps est binaire, et
+ * seul un refus en porte. Le nom de fichier vient de l'API
+ * (`Content-Disposition`), qui y écrit le numéro de pièce.
+ */
+export async function fetchSaleReceiptPdf(
+  accessToken: string,
+  saleId: string,
+  format: ReceiptPdfFormat,
+): Promise<{ readonly bytes: ArrayBuffer; readonly disposition: string | null }> {
+  let response: Response;
+  try {
+    response = await fetch(
+      `${apiBaseUrl()}/sales/${encodeURIComponent(saleId)}/receipt.pdf?format=${format}`,
+      {
+        headers: { accept: 'application/pdf', authorization: `Bearer ${accessToken}` },
+        cache: 'no-store',
+      },
+    );
+  } catch (cause) {
+    throw new ApiClientError(
+      ERROR_CODES.SERVICE_UNAVAILABLE,
+      'Le service est momentanément injoignable. Merci de réessayer dans un instant.',
+      503,
+      { cause: cause instanceof Error ? cause.message : String(cause) },
+    );
+  }
+
+  if (!response.ok) {
+    const failure = apiErrorSchema.safeParse(await response.json().catch(() => null));
+
+    throw failure.success
+      ? new ApiClientError(
+          failure.data.code,
+          failure.data.message,
+          response.status,
+          failure.data.details,
+        )
+      : new ApiClientError(
+          `HTTP_${String(response.status)}`,
+          'Une erreur inattendue est survenue. Merci de réessayer dans un instant.',
+          response.status,
+        );
+  }
+
+  return {
+    bytes: await response.arrayBuffer(),
+    disposition: response.headers.get('content-disposition'),
+  };
 }
 
 /** Une fenêtre d'historique de caisse — `from` inclus, `to` exclu, et la page. */

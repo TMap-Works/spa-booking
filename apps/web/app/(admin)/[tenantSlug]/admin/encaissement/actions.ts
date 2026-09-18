@@ -33,9 +33,13 @@
  * que l'API exigerait : il empêche notre propre serveur de servir d'amplificateur.
  */
 
-import { slugSchema, uuidSchema } from '@spa/shared';
+import { slugSchema, uuidSchema, type SaleReceipt } from '@spa/shared';
 
-import { openAppointmentPaymentIntent, settleAppointmentInCash } from '@/lib/api-client';
+import {
+  fetchSaleReceipt,
+  openAppointmentPaymentIntent,
+  settleAppointmentInCash,
+} from '@/lib/api-client';
 import type { AppointmentPaymentIntent, PaymentTransaction } from '@/lib/admin/payment-contract';
 
 import { failure, invalid, type AdminActionResult } from '../action-result';
@@ -128,6 +132,37 @@ export async function settleInCashAction(
 
   try {
     return { ok: true, data: await settleAppointmentInCash(accessToken, target.appointmentId) };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * Le ticket de caisse d'une vente, tel que le comptoir l'affiche et l'imprime.
+ *
+ * C'est la pièce que l'API compose (`GET /sales/{id}/receipt`, #818) : l'écran
+ * ne recalcule ni taxe ni total, il met en page ce qu'on lui rend. La vente est
+ * celle que l'encaissement vient de solder — `saleId` de la ligne inscrite.
+ */
+export async function loadReceiptAction(
+  tenantSlug: string,
+  saleId: string,
+): Promise<AdminActionResult<SaleReceipt>> {
+  const slug = slugSchema.safeParse(tenantSlug);
+  const sale = uuidSchema.safeParse(saleId);
+
+  if (!slug.success || !sale.success) {
+    return invalid('Ticket ou établissement inconnu.');
+  }
+
+  const access = await adminActionAccess(slug.data);
+
+  if (!access.ok) {
+    return access;
+  }
+
+  try {
+    return { ok: true, data: await fetchSaleReceipt(access.accessToken, sale.data) };
   } catch (error) {
     return failure(error);
   }

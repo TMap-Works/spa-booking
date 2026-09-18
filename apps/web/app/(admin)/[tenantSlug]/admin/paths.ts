@@ -156,6 +156,20 @@ export function adminCheckoutPath(
 }
 
 /**
+ * Le ticket de caisse d'une vente en PDF — rouleau 80 mm ou facture A4 (#819).
+ *
+ * Une route du front et non l'URL de l'API : le jeton vit dans un cookie
+ * `httpOnly`, que seul le serveur Next peut joindre à la requête.
+ */
+export function adminReceiptPdfPath(
+  tenantSlug: string,
+  saleId: string,
+  format: 'ticket-80' | 'a4',
+): string {
+  return `${adminPath(tenantSlug)}/encaissement/ticket/${encodeURIComponent(saleId)}?format=${format}`;
+}
+
+/**
  * Les indicateurs d'activité — revenu, volume, no-shows (#75).
  *
  * La période **et** le filtre sont dans l'URL, pour la raison qui y met la vue

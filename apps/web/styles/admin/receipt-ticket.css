@@ -1,0 +1,198 @@
+/*
+ * Ticket de caisse — aperçu et impression
+ * =============================================================================
+ *
+ * Le ticket se lit comme un rouleau thermique de 80 mm : police à chasse fixe,
+ * montants alignés à droite, filets pleins et pointillés, total en gras. À
+ * l'écran il s'affiche en aperçu, sur son papier ; à l'impression il est seul
+ * sur la feuille (`TicketPrinter`).
+ *
+ * Papier et encre ont leurs propres jetons (`--spa-color-paper`,
+ * `--spa-color-ink`), blancs et noirs dans les deux thèmes : un ticket est une
+ * feuille qu'on tend, et en thème sombre les neutres s'inversent — l'impression
+ * sortirait en texte clair sur papier blanc.
+ *
+ * 72 mm de large : la zone imprimable d'un rouleau de 80 mm. Sur une
+ * imprimante A4, le même ticket sort étroit, en haut de la feuille, comme un
+ * ticket de grande surface.
+ */
+
+.spa-ticket {
+  inline-size: 100%;
+  max-inline-size: 72mm;
+  margin-inline: auto;
+  padding: var(--spa-space-4) var(--spa-space-3) var(--spa-space-5);
+  background: var(--spa-color-paper);
+  color: var(--spa-color-ink);
+  font-family: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, 'Courier New', monospace;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  box-shadow: var(--spa-shadow-card);
+}
+
+.spa-ticket p {
+  margin: 0;
+}
+
+.spa-ticket__header,
+.spa-ticket__identity,
+.spa-ticket__footer {
+  text-align: center;
+}
+
+.spa-ticket__brand {
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.spa-ticket__title {
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.spa-ticket__note,
+.spa-ticket__detail,
+.spa-ticket__count,
+.spa-ticket__legal {
+  font-size: 0.7rem;
+}
+
+.spa-ticket__detail {
+  display: block;
+  padding-inline-start: 1.5ch;
+}
+
+.spa-ticket__count {
+  text-align: end;
+}
+
+.spa-ticket__section {
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.spa-ticket__rule {
+  margin: var(--spa-space-2) 0;
+  border: 0;
+  border-block-start: 1px solid var(--spa-color-ink);
+}
+
+.spa-ticket__rule--dashed {
+  border-block-start-style: dashed;
+}
+
+.spa-ticket__rows {
+  margin: 0;
+}
+
+.spa-ticket__row {
+  display: flex;
+  gap: 1ch;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.spa-ticket__row dt,
+.spa-ticket__row dd {
+  margin: 0;
+}
+
+.spa-ticket__row dd {
+  text-align: end;
+  white-space: nowrap;
+}
+
+.spa-ticket__row--sub {
+  padding-inline-start: 1.5ch;
+}
+
+.spa-ticket__row--grand {
+  margin-block-start: var(--spa-space-1);
+  font-size: 1rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.spa-ticket__items,
+.spa-ticket__taxes {
+  inline-size: 100%;
+  border-collapse: collapse;
+}
+
+.spa-ticket__items th,
+.spa-ticket__taxes th {
+  padding: 0 0 var(--spa-space-1);
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-align: start;
+  text-transform: uppercase;
+}
+
+.spa-ticket__items td,
+.spa-ticket__taxes td {
+  padding: 0;
+  vertical-align: top;
+}
+
+.spa-ticket__taxes td {
+  font-size: 0.7rem;
+}
+
+.spa-ticket .spa-ticket__num {
+  padding-inline-start: 1ch;
+  text-align: end;
+  white-space: nowrap;
+}
+
+.spa-ticket__thanks {
+  margin-block-start: var(--spa-space-2);
+  font-weight: 700;
+}
+
+/* Les commandes sous l'aperçu : imprimer, puis les deux PDF. */
+.spa-ticket-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
+  justify-content: center;
+}
+
+/* La copie destinée à l'imprimante n'existe pas à l'écran. Attributs et non
+ * classes : `data-print-ticket` et `data-printing` sont des états que
+ * `TicketPrinter` pose, pas des styles du design system. */
+@media screen {
+  [data-print-ticket] {
+    display: none;
+  }
+}
+
+@media print {
+  /* Pendant une impression de ticket, la page entière s'efface — retirée du
+   * flux et non rendue invisible, sans quoi sa hauteur ajouterait des pages
+   * blanches derrière le ticket. */
+  html[data-printing='ticket'] body > :not([data-print-ticket]) {
+    display: none !important;
+  }
+
+  html[data-printing='ticket'] body {
+    margin: 0;
+    background: var(--spa-color-paper);
+  }
+
+  [data-print-ticket] {
+    page: spa-ticket;
+  }
+
+  [data-print-ticket] .spa-ticket {
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+}
+
+@page spa-ticket {
+  margin: 4mm;
+}
