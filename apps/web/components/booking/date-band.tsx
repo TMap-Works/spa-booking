@@ -17,6 +17,7 @@ import { Icon } from '@/components/ui/icon';
 import {
   BAND_DAYS,
   BAND_STEP,
+  bandEntryDate,
   bandMoveForKey,
   bandStartShowing,
   moveInBand,
@@ -107,9 +108,22 @@ interface DateBandProps {
   /**
    * La journée à poser en tête de bande — `null` remet la bande à son point de
    * départ naturel.
+   *
+   * Elle ne porte que le défilement **dans** le mois chargé. Franchir le mois
+   * passe par `onMonthChange`, qui emporte les deux en un seul message.
    */
   readonly onFromChange: (from: CalendarDate | null) => void;
-  readonly onMonthChange: (month: CalendarMonth) => void;
+  /**
+   * Changer de mois, en disant du même geste par quelle journée la bande entre
+   * dans le mois d'arrivée — `null` pour son point de départ naturel.
+   *
+   * Les deux vont ensemble parce qu'ils se contredisaient autrement : le
+   * sélecteur remet la tête de bande à zéro sur un changement de mois — c'est ce
+   * qu'il faut quand la demande vient du calendrier —, et un `onFromChange` posé
+   * juste avant se faisait donc écraser. Le chevron qui franchit le mois n'a
+   * plus deux messages à ordonner, il en a un (#1084).
+   */
+  readonly onMonthChange: (month: CalendarMonth, from: CalendarDate | null) => void;
   readonly onSelect: (date: CalendarDate) => void;
   /** Ouvrir le mois complet — `BM-CRENEAU-01`, `BM-TUNNEL-12`. */
   readonly onOpenMonth: () => void;
@@ -317,10 +331,13 @@ export function DateBand({
    * Un chevron de la bande, et ce qu'il fait.
    *
    * Il avance d'une semaine tant que le mois chargé en a, puis passe au mois
-   * voisin — la bande repart alors de son point de départ naturel, la plage
-   * chargée ayant changé sous elle. Le focus **ne suit pas** : il reste sur le
-   * chevron, pour qu'on puisse balayer trois semaines en trois clics sans avoir à
-   * viser de nouveau.
+   * voisin — sur la fenêtre qui **touche** celle qu'on quitte, `bandEntryDate` :
+   * la dernière du mois précédent en reculant, la première du suivant en
+   * avançant. Sans quoi les deux chevrons cesseraient d'être inverses l'un de
+   * l'autre et `‹` sauterait la fin du mois d'arrivée (#1084).
+   *
+   * Le focus **ne suit pas** : il reste sur le chevron, pour qu'on puisse
+   * balayer trois semaines en trois clics sans avoir à viser de nouveau.
    */
   const step = (delta: -1 | 1): void => {
     const shifted = start + delta * BAND_STEP;
@@ -338,8 +355,7 @@ export function DateBand({
       return;
     }
 
-    onFromChange(null);
-    onMonthChange(target);
+    onMonthChange(target, bandEntryDate(target, bounds, delta));
   };
 
   const monthLabel = formatMonth(month);
