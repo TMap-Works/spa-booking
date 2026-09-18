@@ -1,3 +1,5 @@
+import type { TenantBillingStatus } from '@spa/shared';
+
 import type { UserRole } from './roles';
 
 /**
@@ -127,3 +129,12 @@ export type RefreshResult =
   | (Omit<AuthenticationResult, 'refreshToken' | 'refreshTokenMaxAge'> & {
       readonly refreshToken: null;
     });
+
+/**
+ * Où en est la facturation du salon courant (ADR 0016) — ce que la garde du
+ * back-office et `GET /auth/me` ont besoin d'en savoir, et rien d'autre.
+ */
+export interface TenantBillingRecord {
+  readonly status: TenantBillingStatus;
+  readonly trialEndsAt: Date | null;
+}

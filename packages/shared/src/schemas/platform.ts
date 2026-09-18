@@ -24,6 +24,7 @@ import {
 import { currencyCodeSchema } from '../common/money';
 import { timeZoneSchema, utcInstantSchema } from '../common/time';
 import { ADDRESS_LINE_MAX_LENGTH, CITY_MAX_LENGTH, POSTAL_CODE_MAX_LENGTH } from '../constants/limits';
+import { tenantBillingStatusSchema } from './billing';
 
 /** Bornes du mot de passe d'un opérateur — `PLATFORM_PASSWORD_*` côté API. */
 export const PLATFORM_PASSWORD_MIN_LENGTH = 12;
@@ -102,6 +103,9 @@ export const platformTenantSchema = z.object({
   timezone: z.string(),
   defaultCurrency: z.string(),
   isActive: z.boolean(),
+  /** Où en est sa facturation — `managed` pour un salon ouvert ici (ADR 0016). */
+  billingStatus: tenantBillingStatusSchema,
+  trialEndsAt: utcInstantSchema.nullable(),
   createdAt: utcInstantSchema,
 });
 

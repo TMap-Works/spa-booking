@@ -197,3 +197,26 @@ export class OwnScopeOnlyError extends DomainError {
     );
   }
 }
+
+/**
+ * Le salon n'a pas d'abonnement en cours — ADR 0016. **402** : le back-office
+ * se ferme, sauf l'écran d'abonnement qui permet de le rétablir.
+ */
+export class SubscriptionRequiredError extends DomainError {
+  public override readonly code = IDENTITY_ERROR_CODES.SUBSCRIPTION_REQUIRED;
+  public override readonly status = DOMAIN_HTTP_STATUS.PAYMENT_REQUIRED;
+
+  public constructor() {
+    super('L’abonnement de ce salon n’est pas actif. Son administrateur peut le rétablir.');
+  }
+}
+
+/** Le salon n'accepte pas de réservation en ligne — son abonnement est inactif. */
+export class SalonBookingClosedError extends DomainError {
+  public override readonly code = IDENTITY_ERROR_CODES.SALON_BOOKING_CLOSED;
+  public override readonly status = CONFLICT;
+
+  public constructor() {
+    super('Ce salon n’accepte pas de réservation en ligne pour le moment.');
+  }
+}

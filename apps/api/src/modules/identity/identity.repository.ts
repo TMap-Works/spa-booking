@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { LegalIdType } from '@spa/shared';
+import type { LegalIdType, TenantBillingStatus } from '@spa/shared';
 
 import {
   PRISMA,
@@ -9,7 +9,12 @@ import {
   type UnscopedPrismaClient,
 } from '../../infrastructure/database/prisma-clients';
 import { EmailAlreadyRegisteredError } from './identity.errors';
-import type { StaffAccountState, UserProfile, UserRole } from './identity.types';
+import type {
+  StaffAccountState,
+  TenantBillingRecord,
+  UserProfile,
+  UserRole,
+} from './identity.types';
 import { STAFF_ROLES } from './roles';
 
 /**
@@ -505,6 +510,21 @@ export class IdentityRepository {
    * Par le client **scopé** et sans `where`, comme ses deux voisines :
    * l'extension borne le modèle racine sur son `id`.
    */
+  public async findCurrentTenantBilling(): Promise<TenantBillingRecord | null> {
+    // Client scopé, sans `where` : l'extension borne le modèle racine sur son
+    // `id`, comme les trois lectures voisines (ADR 0016).
+    const tenant = await this.prisma.tenant.findFirst({
+      select: { billingStatus: true, trialEndsAt: true },
+    });
+
+    return tenant === null
+      ? null
+      : {
+          status: tenant.billingStatus.toLowerCase() as TenantBillingStatus,
+          trialEndsAt: tenant.trialEndsAt,
+        };
+  }
+
   public async findCurrentTenantCountryCode(): Promise<string | null> {
     const tenant = await this.prisma.tenant.findFirst({ select: { countryCode: true } });
 

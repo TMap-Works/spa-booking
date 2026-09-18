@@ -13,6 +13,7 @@ import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 
 import { AvailabilityQueryService } from './availability.query.service';
 import { AvailabilityDto, AvailabilityQueryDto } from './dto/availability.dto';
+import { RequireBookableSalon } from '../identity/tenant-billing.guard';
 
 /**
  * `GET /api/v1/public/:tenantSlug/availability` — le calendrier du tunnel (#35).
@@ -114,6 +115,8 @@ export class PublicAvailabilityController {
    * `SLOT_NO_LONGER_AVAILABLE` qui le dit au front (booking-engine §1).
    */
   @Get()
+  // Un salon sans abonnement en cours ne prend plus de réservation (ADR 0016).
+  @RequireBookableSalon()
   @Throttle({ default: { limit: 120, ttl: 60_000 } })
   @ApiOperation({ summary: 'Lister les créneaux libres, sans compte' })
   @ApiOkResponse({ type: AvailabilityDto })

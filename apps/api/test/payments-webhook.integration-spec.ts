@@ -173,7 +173,7 @@ describe('Webhook Stripe — API', () => {
     });
 
     it('acquitte sans traiter un événement hors périmètre', async () => {
-      const body = eventBody('customer.subscription.created', { id: 'sub_1' });
+      const body = eventBody('invoice.created', { id: 'in_1' });
 
       await post(body, sign(body)).expect(200);
       await harness.drain();

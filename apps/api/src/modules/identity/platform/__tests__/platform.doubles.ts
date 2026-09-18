@@ -59,6 +59,8 @@ export class FakePlatformRepository {
       timezone: 'Europe/Paris',
       defaultCurrency: 'EUR',
       isActive: true,
+      billingStatus: 'managed',
+      trialEndsAt: null,
       createdAt: new Date('2026-09-01T10:00:00.000Z'),
     };
     this.tenants.set(tenant.id, tenant);
@@ -115,6 +117,8 @@ export class FakePlatformRepository {
       timezone: input.timezone,
       defaultCurrency: input.defaultCurrency,
       isActive: true,
+      billingStatus: 'managed',
+      trialEndsAt: null,
       createdAt,
     };
     this.tenants.set(tenant.id, tenant);

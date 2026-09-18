@@ -1,9 +1,11 @@
+import { SUBSCRIPTION_PLAN } from '@spa/shared';
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
 import { BookingPreview } from '@/components/home/booking-preview';
 import { SalonFinder } from '@/components/home/salon-finder';
 import { Icon, type IconName } from '@/components/ui/icon';
+import { PLAN_PRICE_LABEL, PLAN_PROMISE } from '@/lib/plan';
 import { PLATFORM_HOME_PATH, PLATFORM_NAME } from '@/lib/platform';
 import { readSalonIdentity } from '@/lib/salon-identity';
 
@@ -29,9 +31,11 @@ import { SALON_DOORS, SALON_DOOR_LABELS, salonDoorPath } from './salon-doors';
  * désigne, par la porte qu'on choisit (`SalonFinder`).
  *
  * Elle ne liste aucun salon — un annuaire est une place de marché, hors
- * périmètre (CDC §1.4) — et ne propose ni tarif ni inscription d'établissement
- * en libre-service : les abonnements le sont aussi. Chaque promesse écrite
- * ci-dessous correspond à une fonctionnalité livrée du MVP, et à rien de plus.
+ * périmètre (CDC §1.4). Depuis l'ADR 0016, elle propose en revanche **l'offre**
+ * de la plateforme et l'inscription d'un salon en libre-service
+ * (`/inscription`) : un essai gratuit, puis un abonnement mensuel. Chaque
+ * promesse écrite ci-dessous correspond à une fonctionnalité livrée, et à rien
+ * de plus.
  *
  * ## Le salon de la dernière visite
  *
@@ -150,6 +154,19 @@ const STEPS: readonly { readonly title: string; readonly text: string }[] = [
   },
 ];
 
+/** L'inscription d'un salon en libre-service (ADR 0016). */
+const SIGNUP_PATH = '/inscription';
+
+/** Ce que comprend l'offre unique — chaque ligne est une fonctionnalité livrée. */
+const PLAN_INCLUDES: readonly string[] = [
+  'Votre page de réservation en ligne, ouverte 24 h/24',
+  'Confirmations et rappels automatiques',
+  'Planning jour et semaine, équipe et horaires',
+  'Fiches clientes, notes et historique des visites',
+  'Encaissement au comptoir et reçus',
+  'Revenu, rendez-vous et absences en un coup d’œil',
+];
+
 const QUESTIONS: readonly { readonly question: string; readonly answer: string }[] = [
   {
     question: 'Je ne connais pas l’adresse de mon salon.',
@@ -172,6 +189,10 @@ const QUESTIONS: readonly { readonly question: string; readonly answer: string }
     question: 'Mes données de carte bancaire sont-elles conservées ?',
     answer:
       'Non. Le paiement est confié à Stripe : les données de votre carte vont directement de votre navigateur à Stripe, sans jamais passer par nos serveurs.',
+  },
+  {
+    question: 'Combien coûte la plateforme pour un salon ?',
+    answer: `${PLAN_PROMISE}, sans engagement. Votre carte est enregistrée par Stripe à l’inscription et n’est débitée qu’à la fin de l’essai ; vous résiliez quand vous voulez depuis votre back-office.`,
   },
   {
     question: 'Je travaille dans un salon : comment me connecter ?',
@@ -221,12 +242,18 @@ export default async function HomePage() {
             <a className="spa-home-bar__link" href="#reserver">
               Comment ça marche
             </a>
+            <a className="spa-home-bar__link" href="#tarifs">
+              Tarifs
+            </a>
             <a className="spa-home-bar__link" href="#questions">
               Questions
             </a>
             <a className="spa-home-bar__link spa-home-bar__link--access" href="#acces">
               Accéder à mon salon
             </a>
+            <Link className="spa-home-bar__cta" href={SIGNUP_PATH}>
+              Essai gratuit
+            </Link>
           </nav>
         </div>
       </header>
@@ -387,6 +414,10 @@ export default async function HomePage() {
                   Ouvrir le back-office
                   <Icon name="arrow" className="spa-home-audience__link-icon" />
                 </a>
+                <Link className="spa-home-audience__link" href={SIGNUP_PATH}>
+                  Pas encore inscrit ? Créer mon salon
+                  <Icon name="arrow" className="spa-home-audience__link-icon" />
+                </Link>
               </article>
             </div>
           </div>
@@ -417,6 +448,42 @@ export default async function HomePage() {
               </ol>
             </div>
             <BookingPreview />
+          </div>
+        </section>
+
+        <section className="spa-home-section" id="tarifs" aria-labelledby="tarifs-titre">
+          <div className="spa-home__inner spa-home-pricing">
+            <div className="spa-home-section__heading">
+              <p className="spa-home__eyebrow">Tarifs</p>
+              <h2 className="spa-home-section__title" id="tarifs-titre">
+                Une offre, tout compris
+              </h2>
+            </div>
+            <article className="spa-home-pricing__card" aria-labelledby="offre-titre">
+              <h3 className="spa-home-pricing__name" id="offre-titre">
+                {SUBSCRIPTION_PLAN.name}
+              </h3>
+              <p className="spa-home-pricing__price">
+                <span className="spa-home-pricing__amount">{PLAN_PRICE_LABEL}</span>
+                <span className="spa-home-pricing__period">par mois, sans engagement</span>
+              </p>
+              <p className="spa-home-pricing__trial">
+                {SUBSCRIPTION_PLAN.trialDays} jours d’essai gratuit — la carte n’est débitée qu’à la
+                fin de l’essai.
+              </p>
+              <ul className="spa-home-pricing__list">
+                {PLAN_INCLUDES.map((item) => (
+                  <li className="spa-home-pricing__item" key={item}>
+                    <Icon name="check" className="spa-home-pricing__check" />
+                    {item}
+                  </li>
+                ))}
+              </ul>
+              <Link className="spa-home-pricing__cta" href={SIGNUP_PATH}>
+                Démarrer mon essai gratuit
+                <Icon name="arrow" className="spa-home-pricing__cta-icon" />
+              </Link>
+            </article>
           </div>
         </section>
 
@@ -452,6 +519,10 @@ export default async function HomePage() {
               Accéder à mon salon
               <Icon name="arrow" className="spa-home-closing__link-icon" />
             </a>
+            <Link className="spa-home-closing__link" href={SIGNUP_PATH}>
+              Ouvrir mon salon — {SUBSCRIPTION_PLAN.trialDays} jours gratuits
+              <Icon name="arrow" className="spa-home-closing__link-icon" />
+            </Link>
           </div>
         </section>
       </main>

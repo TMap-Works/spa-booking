@@ -216,6 +216,9 @@ export class PlatformService {
         timezone: provisioned.timezone,
         defaultCurrency: provisioned.defaultCurrency,
         isActive: true,
+        // La console ouvre des salons hors facturation (ADR 0016).
+        billingStatus: 'managed',
+        trialEndsAt: null,
         createdAt: provisioned.createdAt,
       },
       admin: {

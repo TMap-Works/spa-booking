@@ -82,9 +82,12 @@ describe('une première visite', () => {
     const page = await rendreLAccueil();
 
     // Aucun lien de la page ne sort de la racine vers un établissement : les
-    // seuls liens sont des ancres de la page et la page elle-même.
+    // seuls liens sont des ancres de la page, la page elle-même, et
+    // l'inscription d'un salon (ADR 0016) — un slug réservé, jamais un salon.
     const cibles = [...page.querySelectorAll('a')].map((lien) => lien.getAttribute('href') ?? '');
-    expect(cibles.every((cible) => cible === '/' || cible.startsWith('#'))).toBe(true);
+    expect(
+      cibles.every((cible) => cible === '/' || cible === '/inscription' || cible.startsWith('#')),
+    ).toBe(true);
   });
 
   it('mène chaque renvoi vers le formulaire à une cible qui existe', async () => {

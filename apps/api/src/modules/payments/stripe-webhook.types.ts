@@ -21,8 +21,14 @@
  * juste est un 400 sans trace d'incident.
  */
 
+import {
+  readSubscriptionSnapshot,
+  type StripeSubscriptionSnapshot,
+} from './billing/stripe-billing.gateway';
+
 /**
- * Les quatre événements du périmètre MVP (payments-stripe §3).
+ * Les quatre événements du périmètre MVP (payments-stripe §3), et les trois de
+ * l'abonnement des salons (ADR 0016).
  *
  * Tout autre type reçu — et une terminaison Stripe abonnée largement en reçoit
  * — est **acquitté sans traitement**. Répondre autre chose que 200 ferait
@@ -34,6 +40,12 @@ export const HANDLED_EVENT_TYPES = [
   'payment_intent.payment_failed',
   'charge.refunded',
   'charge.dispute.created',
+  // L'abonnement des salons à la plateforme (ADR 0016) : l'état de l'abonnement
+  // est porté par l'objet de l'événement, et son `metadata.tenantId` désigne le
+  // salon — posé par la session Checkout (`subscription_data[metadata]`).
+  'customer.subscription.created',
+  'customer.subscription.updated',
+  'customer.subscription.deleted',
 ] as const;
 
 export type HandledEventType = (typeof HANDLED_EVENT_TYPES)[number];
@@ -56,6 +68,7 @@ export type WebhookFact =
       /** `true` quand Stripe a remboursé la totalité de ce qui avait été capturé. */
       readonly fullyRefunded: boolean;
     }
+  | { readonly kind: 'subscription-changed'; readonly subscription: StripeSubscriptionSnapshot }
   | {
       readonly kind: 'dispute-opened';
       readonly paymentIntentId: string | null;
@@ -189,6 +202,12 @@ function readFact(type: HandledEventType, object: Record<string, unknown>): Webh
       };
     }
 
+    case 'customer.subscription.created':
+    case 'customer.subscription.updated':
+    case 'customer.subscription.deleted': {
+      const subscription = readSubscriptionSnapshot(object);
+      return subscription === null ? null : { kind: 'subscription-changed', subscription };
+    }
     case 'charge.dispute.created': {
       const disputeId = readString(object, 'id');
       if (disputeId === null) {
@@ -265,6 +284,10 @@ export function referenceOf(fact: WebhookFact): {
       return { paymentIntentId: fact.paymentIntentId, chargeId: fact.chargeId };
     case 'dispute-opened':
       return { paymentIntentId: fact.paymentIntentId, chargeId: fact.chargeId };
+    case 'subscription-changed':
+      // Aucun encaissement ne porte un abonnement : le salon se résout par
+      // `metadata.tenantId`, la seconde voie de `resolveTenant`.
+      return { paymentIntentId: null, chargeId: null };
   }
 }
 

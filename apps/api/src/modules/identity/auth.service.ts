@@ -919,6 +919,29 @@ export class AuthService {
   }
 
   /** Ouvre une session neuve : ligne en base, puis les deux jetons. */
+  /**
+   * Ouvre la session du gérant d'un salon qui vient de s'inscrire (ADR 0016).
+   *
+   * Le salon et son compte ont été créés hors portée, par le client non scopé
+   * (`SignupRepository`) ; la portée de la requête est posée ici sur le salon
+   * neuf, puis la session s'ouvre comme à l'inscription d'une cliente.
+   */
+  public async openSessionForNewTenant(
+    tenantId: string,
+    userId: string,
+  ): Promise<AuthenticationResult> {
+    if (!AuthService.adoptTenantScope(tenantId)) {
+      throw new NotFoundError('Établissement introuvable.');
+    }
+
+    const user = await this.repository.findUserById(userId);
+    if (user === null) {
+      throw new NotFoundError('Compte introuvable.');
+    }
+
+    return this.openSession(tenantId, user);
+  }
+
   private async openSession(tenantId: string, user: UserRecord): Promise<AuthenticationResult> {
     // La ligne est créée avec une empreinte de remplissage, puis mise à jour avec
     // l'empreinte réelle : le `jti` ne peut pas être tiré avant de connaître le

@@ -41,6 +41,11 @@ export function adminDashboardPath(tenantSlug: string): string {
   return `${adminPath(tenantSlug)}/tableau-de-bord`;
 }
 
+/** L'abonnement du salon à la plateforme (ADR 0016). */
+export function adminBillingPath(tenantSlug: string): string {
+  return `${adminPath(tenantSlug)}/abonnement`;
+}
+
 export function adminSettingsPath(tenantSlug: string): string {
   return `${adminPath(tenantSlug)}/reglages`;
 }

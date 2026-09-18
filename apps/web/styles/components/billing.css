@@ -1,0 +1,256 @@
+/*
+ * Abonnement du salon à la plateforme — ADR 0016
+ * =============================================================================
+ *
+ * Trois surfaces : la pastille d'essai de la barre haute du back-office, l'écran
+ * d'abonnement, et le formulaire d'inscription d'un salon. Chargé par l'entrée
+ * partagée : `admin-mockups.test.mjs` exige que toute classe de `styles/admin/`
+ * soit exercée par l'une des maquettes figées du back-office.
+ */
+
+/* --- Pastille de la barre haute ------------------------------------------ */
+
+.spa-admin-topbar__billing {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: 2rem;
+  padding-inline: var(--spa-space-3);
+  border-radius: var(--spa-radius-full);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.spa-admin-topbar__billing--trial {
+  color: var(--spa-color-accent-text);
+  background-color: var(--spa-color-accent-soft);
+}
+
+.spa-admin-topbar__billing--closed {
+  color: var(--spa-color-danger);
+  background-color: var(--spa-color-danger-surface);
+}
+
+/* --- Écran d'abonnement --------------------------------------------------- */
+
+.spa-billing {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-4);
+}
+
+.spa-billing__next {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
+  margin-block-start: var(--spa-space-3);
+}
+
+.spa-billing__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: var(--spa-space-4);
+  align-items: start;
+}
+
+.spa-billing__eyebrow {
+  font-size: var(--spa-font-size-xs);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-billing__plan-name {
+  font-size: var(--spa-font-size-lg);
+}
+
+.spa-billing__price {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--spa-space-1);
+}
+
+.spa-billing__amount {
+  font-size: var(--spa-font-size-3xl);
+  font-weight: var(--spa-font-weight-bold);
+  color: var(--spa-color-accent-text);
+}
+
+.spa-billing__period {
+  color: var(--spa-color-text-muted);
+}
+
+.spa-billing__included {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.spa-billing__included-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-2);
+}
+
+.spa-billing__check {
+  flex: none;
+  color: var(--spa-color-success);
+}
+
+.spa-billing__status {
+  gap: var(--spa-space-4);
+}
+
+.spa-billing__secure {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+}
+
+/* --- Formulaire d'inscription -------------------------------------------- */
+
+.spa-signup-form__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-3);
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-inline-size: 0;
+}
+
+.spa-signup-form__legend {
+  padding: 0;
+  margin-block-end: var(--spa-space-2);
+  font-size: var(--spa-font-size-sm);
+  font-weight: var(--spa-font-weight-semibold);
+  letter-spacing: var(--spa-letter-spacing-wide);
+  text-transform: uppercase;
+  color: var(--spa-color-text-muted);
+}
+
+.spa-signup-form__fineprint {
+  font-size: var(--spa-font-size-sm);
+  color: var(--spa-color-text-muted);
+  text-align: center;
+}
+
+/* --- Accueil : l'essai gratuit et l'offre -------------------------------- */
+
+/* Le seul bouton plein de la barre : l'inscription est l'action de la page. */
+.spa-home-bar__cta {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--spa-target-min-size);
+  margin-inline-start: var(--spa-space-2);
+  padding-inline: var(--spa-space-4);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-accent);
+  color: var(--spa-color-text-on-accent);
+  font-weight: var(--spa-font-weight-semibold);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.spa-home-bar__cta:hover {
+  background-color: var(--spa-color-accent-hover);
+}
+
+/* À 360 px, la marque, l'accès et l'essai ne tiennent pas ensemble. */
+@media (max-width: 30rem) {
+  .spa-home-bar__cta {
+    padding-inline: var(--spa-space-3);
+  }
+}
+
+.spa-home-pricing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spa-space-6);
+  text-align: center;
+}
+
+.spa-home-pricing__card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--spa-space-4);
+  inline-size: 100%;
+  max-inline-size: 30rem;
+  padding: var(--spa-space-8) var(--spa-space-6);
+  background-color: var(--spa-color-surface);
+  border: 2px solid var(--spa-color-accent);
+  border-radius: var(--spa-radius-xl);
+  box-shadow: var(--spa-shadow-card);
+  text-align: start;
+}
+
+.spa-home-pricing__name {
+  font-size: var(--spa-font-size-lg);
+}
+
+.spa-home-pricing__price {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--spa-space-2);
+}
+
+.spa-home-pricing__amount {
+  font-size: var(--spa-font-size-display);
+  font-weight: var(--spa-font-weight-bold);
+  line-height: 1;
+  color: var(--spa-color-accent-text);
+}
+
+.spa-home-pricing__period,
+.spa-home-pricing__trial {
+  color: var(--spa-color-text-muted);
+}
+
+.spa-home-pricing__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spa-space-2);
+  padding: 0;
+  list-style: none;
+}
+
+.spa-home-pricing__item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spa-space-2);
+}
+
+.spa-home-pricing__check {
+  flex: none;
+  color: var(--spa-color-success);
+}
+
+.spa-home-pricing__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spa-space-2);
+  min-block-size: var(--spa-target-min-size);
+  padding-inline: var(--spa-space-5);
+  border-radius: var(--spa-radius-md);
+  background-color: var(--spa-color-accent);
+  color: var(--spa-color-text-on-accent);
+  font-weight: var(--spa-font-weight-semibold);
+  text-decoration: none;
+}
+
+.spa-home-pricing__cta:hover {
+  background-color: var(--spa-color-accent-hover);
+}
+
+.spa-home-pricing__cta-icon {
+  inline-size: 1.125rem;
+  block-size: 1.125rem;
+}

@@ -74,9 +74,10 @@ describe('sommaire du back-office — ce que chaque rôle voit', () => {
     ]);
   });
 
-  it('donne au rang administrateur les huit sections, réglages compris', () => {
-    expect(labels('admin')).toHaveLength(8);
-    expect(labels('admin').at(-1)).toBe('Réglages');
+  it('donne au rang administrateur les neuf sections, réglages et abonnement compris', () => {
+    expect(labels('admin')).toHaveLength(9);
+    // L'abonnement du salon à la plateforme (ADR 0016) ferme le sommaire.
+    expect(labels('admin').slice(-2)).toEqual(['Réglages', 'Abonnement']);
   });
 
   it('ne propose rien à un compte client', () => {

@@ -239,15 +239,42 @@ export function resolveWebhookSecret(source: NodeJS.ProcessEnv): string | null {
   return null;
 }
 
+/**
+ * `STRIPE_SUBSCRIPTION_PRICE_ID` — facultatif. Une valeur qui n'a pas la forme
+ * d'un identifiant de prix (`price_…`) refuse le démarrage, comme une clé mal
+ * préfixée : elle ferait échouer chaque inscription au moment de payer.
+ */
+export function resolveSubscriptionPriceId(source: NodeJS.ProcessEnv): string | null {
+  const raw = source['STRIPE_SUBSCRIPTION_PRICE_ID']?.trim() ?? '';
+  if (raw === '') {
+    return null;
+  }
+  if (!/^price_[A-Za-z0-9]+$/.test(raw)) {
+    throw new Error('STRIPE_SUBSCRIPTION_PRICE_ID doit être un identifiant de prix Stripe (price_…).');
+  }
+  return raw;
+}
+
 @Injectable()
 export class StripeConfig {
   private readonly keys: StripeEnv | null;
   /** `null` quand la variable est absente — jamais quand elle est mal formée : ce cas a fait échouer l'amorçage. */
   private readonly webhookSecret: string | null;
+  private readonly priceId: string | null;
 
   public constructor(source: NodeJS.ProcessEnv = process.env) {
     this.keys = resolveStripeKeys(source);
     this.webhookSecret = resolveWebhookSecret(source);
+    this.priceId = resolveSubscriptionPriceId(source);
+  }
+
+  /**
+   * Le prix Stripe de l'abonnement des salons (ADR 0016), s'il a été créé dans
+   * le tableau de bord Stripe. `null` : le prix est décrit à la volée depuis
+   * `SUBSCRIPTION_PLAN` — ce qui suffit en test et en recette.
+   */
+  public get subscriptionPriceId(): string | null {
+    return this.priceId;
   }
 
   /**

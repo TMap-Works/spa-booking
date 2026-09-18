@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { DEFAULT_RECEIPT_PREFIX } from '@spa/shared';
+import { DEFAULT_RECEIPT_PREFIX, type TenantBillingStatus } from '@spa/shared';
 
 import { getTenantId } from '../../../common/tenant';
 import type { StructuredLogger } from '../../../common/logging/structured-logger';
@@ -17,7 +17,7 @@ import type {
   TenantTimeZoneRecord,
   UserRecord,
 } from '../identity.repository';
-import type { StaffAccountState } from '../identity.types';
+import type { StaffAccountState, TenantBillingRecord } from '../identity.types';
 import { STAFF_ROLES, USER_ROLE_RANK, type UserRole } from '../roles';
 
 /**
@@ -80,7 +80,11 @@ export function silentLogger(): StructuredLogger {
   } as unknown as StructuredLogger;
 }
 
-type StoredTenant = TenantRecord;
+/** La fiche du salon, et sa facturation (ADR 0016) — que le vrai dépôt lit à part. */
+type StoredTenant = TenantRecord & {
+  billingStatus: TenantBillingStatus;
+  trialEndsAt: Date | null;
+};
 
 interface StoredUser extends UserRecord {
   tenantId: string;
@@ -190,6 +194,10 @@ export class FakeIdentityRepository {
       // `null` ferait passer au vert un ticket numéroté `null-2026-000123`.
       receiptPrefix: DEFAULT_RECEIPT_PREFIX,
       taxRateBps: 0,
+      // `managed` : un salon hors facturation, ouvert — l'état de tous les
+      // établissements d'avant l'ADR 0016, et de ceux qu'ouvre la console.
+      billingStatus: 'managed',
+      trialEndsAt: null,
       ...overrides,
     });
     return tenantId;
@@ -333,6 +341,14 @@ export class FakeIdentityRepository {
    * de tout établissement, c'est-à-dire un numéro complété avec le pays du
    * voisin.
    */
+  /** La facturation de l'établissement de la portée (ADR 0016). */
+  public async findCurrentTenantBilling(): Promise<TenantBillingRecord | null> {
+    const tenant = this.tenantRecords.get(this.requireTenant());
+    return tenant === undefined
+      ? null
+      : { status: tenant.billingStatus, trialEndsAt: tenant.trialEndsAt };
+  }
+
   public async findCurrentTenantCountryCode(): Promise<string | null> {
     const tenantId = this.requireTenant();
     return this.tenantRecords.get(tenantId)?.countryCode ?? null;

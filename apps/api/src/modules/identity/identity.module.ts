@@ -25,6 +25,11 @@ import { SessionThrottlerGuard } from './session-throttler.guard';
 import { TenantSettingsController } from './tenant-settings.controller';
 import { TenantSettingsService } from './tenant-settings.service';
 import { TenantTimeZoneAudit } from './tenant-timezone.audit';
+import { SignupController } from './signup/signup.controller';
+import { SignupRepository } from './signup/signup.repository';
+import { SignupService } from './signup/signup.service';
+import { TenantBillingGate } from './tenant-billing.gate';
+import { BookableSalonGuard, TenantBillingGuard } from './tenant-billing.guard';
 import { TokenService } from './token.service';
 import { UsersController } from './users.controller';
 import { UsersService } from './users.service';
@@ -148,6 +153,7 @@ const publicTenantResolver: PublicTenantResolverProvider = {
     TenantSettingsController,
     PlatformAuthController,
     PlatformTenantsController,
+    SignupController,
   ],
   providers: [
     AuthService,
@@ -173,10 +179,18 @@ const publicTenantResolver: PublicTenantResolverProvider = {
     PlatformRepository,
     PlatformTokenService,
     PlatformAuthGuard,
+    TenantBillingGate,
+    TenantBillingGuard,
+    BookableSalonGuard,
+    SignupService,
+    SignupRepository,
   ],
   exports: [
     JwtAuthGuard,
     RolesGuard,
+    TenantBillingGate,
+    TenantBillingGuard,
+    BookableSalonGuard,
     TokenService,
     UsersService,
     IdentityEvents,

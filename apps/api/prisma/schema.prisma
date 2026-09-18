@@ -69,6 +69,18 @@ enum UserRole {
   ADMIN
 }
 
+/// Facturation d'un salon par la plateforme — ADR 0016. Seuls `PENDING` et
+/// `CANCELED` ferment le salon ; `PAST_DUE` le laisse ouvert pendant les
+/// relances de Stripe.
+enum TenantBillingStatus {
+  MANAGED
+  PENDING
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
 /// Cycle de vie du rendez-vous. `CANCELLED` et `NO_SHOW` sont des statuts, pas
 /// des suppressions : le reporting de base du MVP compte les no-shows.
 enum AppointmentStatus {
@@ -452,6 +464,21 @@ model Tenant {
   receiptPrefix String @default("TIC") @map("receipt_prefix") @db.VarChar(8)
 
   isActive Boolean @default(true) @map("is_active")
+
+  /// Où en est l'abonnement du salon à la plateforme (ADR 0016). `MANAGED` par
+  /// défaut : les salons ouverts par la console — et tous ceux d'avant l'ADR —
+  /// ne sont pas facturés, et restent ouverts.
+  billingStatus           TenantBillingStatus @default(MANAGED) @map("billing_status")
+  /// Fin de l'essai gratuit, telle que Stripe l'annonce.
+  trialEndsAt             DateTime?           @map("trial_ends_at") @db.Timestamptz(6)
+  /// Prochaine échéance de l'abonnement.
+  currentPeriodEndsAt     DateTime?           @map("current_period_ends_at") @db.Timestamptz(6)
+  /// Identifiants Stripe — jamais une donnée de carte (payments-stripe §1).
+  stripeCustomerId        String?             @unique @map("stripe_customer_id") @db.VarChar(64)
+  stripeSubscriptionId    String?             @unique @map("stripe_subscription_id") @db.VarChar(64)
+  /// La dernière session Checkout ouverte : relue au retour du paiement, pour
+  /// ne pas dépendre du seul webhook — injoignable sur un poste de dév.
+  stripeCheckoutSessionId String?             @map("stripe_checkout_session_id") @db.VarChar(128)
 
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)

@@ -1,3 +1,5 @@
+import type { TenantBillingStatus } from '@spa/shared';
+
 /**
  * Formes de données de la console plateforme — #806.
  *
@@ -95,6 +97,9 @@ export interface TenantSummary {
   readonly timezone: string;
   readonly defaultCurrency: string;
   readonly isActive: boolean;
+  /** `managed` pour un salon ouvert par la console (ADR 0016). */
+  readonly billingStatus: TenantBillingStatus;
+  readonly trialEndsAt: Date | null;
   readonly createdAt: Date;
 }
 

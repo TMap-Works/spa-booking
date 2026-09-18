@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, type TenantBillingStatus as PrismaTenantBillingStatus } from '@prisma/client';
 import type { ITXClientDenyList } from '@prisma/client/runtime/library';
 
 import {
@@ -15,6 +15,7 @@ import {
   type WebhookFact,
 } from './stripe-webhook.types';
 import { WEBHOOK_CLOCK, type WebhookClock } from './webhook-clock';
+import { billingStatusFromStripe } from './billing/billing.status';
 
 /**
  * Accès Prisma du point d'entrée des webhooks (api-module §2).
@@ -749,6 +750,26 @@ export class StripeWebhookRepository {
    * ligne connu, jamais sur une référence de prestataire.
    */
   private async applyFact(tx: ScopedTransaction, fact: WebhookFact): Promise<WebhookEffect> {
+    if (fact.kind === 'subscription-changed') {
+      // L'abonnement du salon à la plateforme (ADR 0016). La même traduction de
+      // statut que la resynchronisation de l'écran d'abonnement ; un statut
+      // Stripe inconnu laisse l'état en place.
+      const { subscription } = fact;
+      const status = billingStatusFromStripe(subscription.status);
+      const { count } = await tx.tenant.updateMany({
+        data: {
+          ...(status === null
+            ? {}
+            : { billingStatus: status.toUpperCase() as PrismaTenantBillingStatus }),
+          trialEndsAt: subscription.trialEndsAt,
+          currentPeriodEndsAt: subscription.currentPeriodEndsAt,
+          stripeCustomerId: subscription.customerId,
+          stripeSubscriptionId: subscription.id,
+        },
+      });
+      return count === 0 ? null : { paymentsTouched: 0, appointmentsConfirmed: 0 };
+    }
+
     if (fact.kind === 'dispute-opened') {
       // Aucune écriture, et pourtant appliqué : un litige déclenche une alerte
       // vers l'équipe et n'est pas traité automatiquement au MVP

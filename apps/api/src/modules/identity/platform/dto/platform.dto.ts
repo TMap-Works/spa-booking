@@ -2,6 +2,8 @@ import { ApiProperty, ApiPropertyOptional, PickType } from '@nestjs/swagger';
 import {
   DNS_LABEL_PATTERN,
   SLUG_MAX_LENGTH,
+  TENANT_BILLING_STATUSES,
+  type TenantBillingStatus,
   isValidTimeZone,
 } from '@spa/shared';
 import { Transform, Type } from 'class-transformer';
@@ -347,7 +349,7 @@ export class TenantAccessLinksDto implements TenantAccessLinks {
 }
 
 /** Un établissement, tel que la console le rend. */
-export class TenantSummaryDto implements Omit<TenantSummary, 'createdAt'> {
+export class TenantSummaryDto implements Omit<TenantSummary, 'createdAt' | 'trialEndsAt'> {
   @ApiProperty()
   public id!: string;
 
@@ -365,6 +367,15 @@ export class TenantSummaryDto implements Omit<TenantSummary, 'createdAt'> {
 
   @ApiProperty()
   public isActive!: boolean;
+
+  @ApiProperty({
+    enum: TENANT_BILLING_STATUSES,
+    description: 'Facturation du salon — `managed` pour un salon ouvert par la console (ADR 0016).',
+  })
+  public billingStatus!: TenantBillingStatus;
+
+  @ApiProperty({ format: 'date-time', nullable: true, type: String })
+  public trialEndsAt!: string | null;
 
   @ApiProperty({ format: 'date-time', description: 'Instant d’ouverture, en UTC.' })
   public createdAt!: string;
@@ -491,6 +502,8 @@ export function toTenantSummaryDto(tenant: TenantSummary): TenantSummaryDto {
     timezone: tenant.timezone,
     defaultCurrency: tenant.defaultCurrency,
     isActive: tenant.isActive,
+    billingStatus: tenant.billingStatus,
+    trialEndsAt: tenant.trialEndsAt === null ? null : tenant.trialEndsAt.toISOString(),
     createdAt: tenant.createdAt.toISOString(),
   };
 }

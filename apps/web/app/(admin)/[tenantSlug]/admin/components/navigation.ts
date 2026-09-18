@@ -2,6 +2,7 @@ import { hasAtLeastRole, type UserRole } from '@spa/shared';
 
 import { adminClientsPath } from '../clients/paths';
 import {
+  adminBillingPath,
   adminCalendarPath,
   adminDashboardPath,
   adminCatalogPath,
@@ -224,6 +225,15 @@ export function adminNavigation(tenantSlug: string, role: UserRole): readonly Ad
       href: adminSettingsPath(tenantSlug),
       // `GET /v1/tenant` — @AuthAtLeast('ADMIN'). Proposé plus bas, l'écran
       // répondrait 403 à un rang gérant.
+      minimumRole: 'admin',
+      upcoming: null,
+    },
+    {
+      key: 'abonnement',
+      label: 'Abonnement',
+      href: adminBillingPath(tenantSlug),
+      // `GET /v1/billing/subscription` — `settings:write`, l'administrateur seul
+      // (ADR 0016).
       minimumRole: 'admin',
       upcoming: null,
     },
